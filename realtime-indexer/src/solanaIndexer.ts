@@ -463,6 +463,17 @@ async function setState(nextSlot: number) {
   );
 }
 
+async function resetState(nextSlot: number) {
+  await pool.query(
+    `insert into public.indexer_state(chain_id,cursor,last_indexed_block)
+     values($1,$2,$3)
+     on conflict (chain_id,cursor) do update
+       set last_indexed_block = excluded.last_indexed_block,
+           updated_at=now()`,
+    [SOLANA_CHAIN_ID, "solana:v4:program", nextSlot],
+  );
+}
+
 async function getHeadSlot(): Promise<number> {
   return rpc<number>("getSlot", [{ commitment: "confirmed" }]);
 }
@@ -1255,25 +1266,56 @@ export async function backfillSolanaTradeCurveState(limit = 500) {
 
 export async function runSolanaIndexerOnce() {
   const head = await getHeadSlot();
-  const currentState = await getState();
   const configuredStart = Number(ENV.SOLANA_START_SLOT || 0);
   const lookback = Math.max(1, Number(ENV.SOLANA_LOOKBACK_SLOTS || 50_000));
   const startSlot = configuredStart > 0 ? configuredStart : Math.max(0, head - lookback);
+  const maxTxPerTick = Math.max(20, Math.min(200, Number(process.env.SOLANA_INDEXER_MAX_TX_PER_TICK || 80)));
+
+  let currentState = await getState();
+  // A bogus getSlot plus GREATEST() parked the cursor ~44M slots in the future
+  // and the ingest filter (slot > cursor) skipped every live signature.
+  if (currentState > head + 64) {
+    const resetTo = startSlot > 0 ? Math.min(startSlot, head) : Math.max(0, head - lookback);
+    console.warn("[solana-indexer] future cursor; resetting", { currentState, head, resetTo });
+    await resetState(resetTo);
+    currentState = resetTo;
+  }
+
   const fromSlot = currentState > 0 ? currentState : startSlot;
   const signatures = await getSignatures(fromSlot, currentState);
 
   let maxSlot = currentState;
+  let processed = 0;
   for (const item of signatures) {
-    const tx = await getTransaction(item.signature);
-    const events = decodeEvents(tx?.meta?.logMessages);
-    const blockTime = timestampFrom(tx?.blockTime ?? item.blockTime);
-    for (let eventIndex = 0; eventIndex < events.length; eventIndex += 1) {
-      await handleEvent(events[eventIndex], item.signature, eventIndex, item.slot, blockTime);
+    if (processed >= maxTxPerTick) break;
+    try {
+      const tx = await getTransaction(item.signature);
+      const events = decodeEvents(tx?.meta?.logMessages);
+      const blockTime = timestampFrom(tx?.blockTime ?? item.blockTime);
+      for (let eventIndex = 0; eventIndex < events.length; eventIndex += 1) {
+        try {
+          await handleEvent(events[eventIndex], item.signature, eventIndex, item.slot, blockTime);
+        } catch (error) {
+          console.warn("[solana-indexer] event failed", {
+            signature: item.signature,
+            eventIndex,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    } catch (error) {
+      console.warn("[solana-indexer] tx failed", {
+        signature: item.signature,
+        slot: item.slot,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
     maxSlot = Math.max(maxSlot, item.slot);
+    processed += 1;
   }
 
-  if (maxSlot > currentState) await setState(maxSlot);
+  const safeSlot = Math.min(maxSlot, head + 64);
+  if (safeSlot > currentState) await setState(safeSlot);
   else if (currentState === 0) await setState(fromSlot);
 }
 
