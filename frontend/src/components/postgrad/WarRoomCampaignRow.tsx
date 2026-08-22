@@ -77,9 +77,26 @@ function DraftTextBlock({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function WarRoomCampaignRow({ campaign, bnbUsd = 0 }: { campaign: CampaignInfo; bnbUsd?: number }) {
-  const [expanded, setExpanded] = useState(false);
+export function WarRoomCampaignRow({
+  campaign,
+  bnbUsd = 0,
+  expanded: expandedProp,
+  onToggleExpand,
+}: {
+  campaign: CampaignInfo;
+  bnbUsd?: number;
+  expanded?: boolean;
+  onToggleExpand?: () => void;
+}) {
+  const [internalExpanded, setInternalExpanded] = useState(false);
+  const isControlled = typeof expandedProp === "boolean";
+  const expanded = isControlled ? expandedProp : internalExpanded;
   const [chartExpanded, setChartExpanded] = useState(false);
+
+  const handleToggleExpand = () => {
+    if (onToggleExpand) onToggleExpand();
+    if (!isControlled) setInternalExpanded((value) => !value);
+  };
 
   const tokenRoute = getPostGradTokenDetailRoute(campaign.token || campaign.campaign);
   const websiteHref = resolveExternalHref(campaign.website);
@@ -128,7 +145,7 @@ export function WarRoomCampaignRow({ campaign, bnbUsd = 0 }: { campaign: Campaig
       {/* Entire collapsed bar is the expand/collapse control */}
       <button
         type="button"
-        onClick={() => setExpanded((value) => !value)}
+        onClick={handleToggleExpand}
         className={
           isDraft
             ? "grid w-full grid-cols-1 gap-2 px-2.5 py-2.5 text-left transition-colors hover:bg-white/[0.035] lg:grid-cols-[minmax(320px,1.55fr)_110px_110px_110px] lg:items-center lg:gap-3 lg:px-4 lg:py-2.5"

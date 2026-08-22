@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { fetchPostGradWarRoomCampaignFeed, isWarRoomTestnetFeedEnabled } from "@/features/postgrad/apiClient";
+import { useLeagueRealtime, type LeagueCampaignCreated, type LeaguePatch } from "@/hooks/useLeagueRealtime";
 import { apiFetch } from "@/lib/apiBase";
 import { fetchCampaignDraft, fetchPublicCampaignDrafts, type CampaignDraft, type PrepareDraftBundle } from "@/lib/draftApi";
 import type { CampaignInfo } from "@/lib/launchpadClient";
@@ -103,6 +104,43 @@ function toNumber(value: unknown): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+function lookupLeaguePatch(campaign: WarRoomCampaign, patchByCampaign: Record<string, LeaguePatch>) {
+  const addr = String(campaign.campaign || "").trim();
+  if (!addr) return undefined;
+  return patchByCampaign[addr.toLowerCase()] || patchByCampaign[addr];
+}
+
+function overlayNumber(value: unknown): number | undefined {
+  if (value == null || value === "") return undefined;
+  return toNumber(value);
+}
+
+/** Overlay live league patches at read time so later inventory hydrates cannot wipe them. */
+function overlayLeaguePatch(campaign: WarRoomCampaign, patchByCampaign: Record<string, LeaguePatch>): WarRoomCampaign {
+  const patch = lookupLeaguePatch(campaign, patchByCampaign);
+  if (!patch) return campaign;
+
+  const next: WarRoomCampaign = { ...campaign };
+  const marketcapBnb = overlayNumber(patch.marketcapBnb);
+  if (marketcapBnb != null) (next as any).rtMarketcapBnb = marketcapBnb;
+  const vol24hBnb = overlayNumber(patch.vol24hBnb);
+  if (vol24hBnb != null) (next as any).rtVol24hBnb = vol24hBnb;
+  const lastPriceBnb = overlayNumber(patch.lastPriceBnb);
+  if (lastPriceBnb != null) {
+    (next as any).priceBnb = lastPriceBnb;
+    (next as any).lastPrice = lastPriceBnb;
+  }
+  const raisedTotalBnb = overlayNumber(patch.raisedTotalBnb);
+  if (raisedTotalBnb != null) (next as any).raisedTotalBnb = raisedTotalBnb;
+  const votes24h = overlayNumber(patch.votes24h);
+  if (votes24h != null) (next as any).votes24h = votes24h;
+  const votesAllTime = overlayNumber(patch.votesAllTime);
+  if (votesAllTime != null) (next as any).votesAllTime = votesAllTime;
+  const lastActivityAt = overlayNumber(patch.lastActivityAt);
+  if (lastActivityAt != null) (next as any).lastActivityAt = lastActivityAt;
+  return next;
+}
+
 function toUnixSeconds(value: unknown): number | undefined {
   if (value == null || value === "") return undefined;
   const n = Number(value);
@@ -178,6 +216,24 @@ function normalizeApiCampaign(item: any, index: number): WarRoomCampaign {
     votesAllTime: toNumber(item?.votesAllTime ?? item?.votes_all_time),
     dexPairAddress: item?.dexPairAddress ?? item?.dex_pair_address ?? undefined,
   } as WarRoomCampaign;
+}
+
+function stubFromCreatedCampaign(item: LeagueCampaignCreated, index: number, chainId: number): WarRoomCampaign {
+  return normalizeApiCampaign(
+    {
+      chainId,
+      campaignAddress: item.campaignAddress,
+      tokenAddress: item.tokenAddress,
+      creatorAddress: item.creatorAddress,
+      name: item.name ?? "Unknown",
+      symbol: item.symbol ?? "",
+      createdAtChain: item.createdAtChain ?? new Date().toISOString(),
+      status: "live",
+      isActive: true,
+      isDexTrading: false,
+    },
+    300000 + index,
+  );
 }
 
 function mapDraftToWarRoomCampaign(
@@ -521,6 +577,13 @@ export function useWarRoomCampaignFeed({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<WarRoomCampaignFeedSource>("empty");
+  const chainId = Number(activeChainId || getDefaultChainId());
+  const { patchByCampaign, created } = useLeagueRealtime({
+    enabled: true,
+    chainId,
+    fallbackMs: 25000,
+    softRefreshMs: 0, // no extra REST loop — feed is one-shot + Ably
+  });
 
   useEffect(() => {
     const controller = new AbortController();
@@ -763,7 +826,26 @@ export function useWarRoomCampaignFeed({
   }, [activeChainId]);
 
   // Mode filter is pure client — switching Trending ↔ Graduated is instant.
-  const campaigns = inventory.filter((campaign) => matchesMode(campaign, activeMode));
+  // Patches overlay at read time so later hydrate setInventory cannot bake over live values.
+  const campaigns = useMemo(() => {
+    const seen = new Set(
+      inventory
+        .map((campaign) => String(campaign.campaign || "").trim().toLowerCase())
+        .filter(Boolean),
+    );
+    const extras: WarRoomCampaign[] = [];
+    for (const item of created) {
+      const rawAddr = String(item?.campaignAddress || "").trim();
+      if (!rawAddr || seen.has(rawAddr.toLowerCase())) continue;
+      seen.add(rawAddr.toLowerCase());
+      extras.push(stubFromCreatedCampaign(item, extras.length, chainId));
+    }
+
+    const merged = extras.length ? [...inventory, ...extras] : inventory;
+    return merged
+      .map((campaign) => overlayLeaguePatch(campaign, patchByCampaign))
+      .filter((campaign) => matchesMode(campaign, activeMode));
+  }, [activeMode, chainId, created, inventory, patchByCampaign]);
 
   return { campaigns, loading, error, source };
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Search } from "lucide-react";
 import { ChainFeedSwitch, useSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
 import { WarRoomCampaignRow } from "@/components/postgrad/WarRoomCampaignRow";
@@ -82,6 +82,8 @@ const WarRoom = () => {
   const [activeMode, setActiveMode] = useState<WarRoomMode>("trending");
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [expandedCampaign, setExpandedCampaign] = useState<string | null>(null);
+  const frozenOrderKeysRef = useRef<string[] | null>(null);
 
   const { campaigns: rawCampaigns, loading, error, source } = useWarRoomCampaignFeed({
     activeMode,
@@ -141,7 +143,7 @@ const WarRoom = () => {
     });
   }, [rawCampaigns, logoCache, selectedChainId]);
 
-  const filteredCampaigns = useMemo(() => {
+  const liveOrder = useMemo(() => {
     const filtered = campaigns.filter((campaign) => warRoomCampaignMatchesSearch(campaign, search));
 
     return filtered.slice().sort((left, right) => {
@@ -153,11 +155,15 @@ const WarRoom = () => {
       }
 
       if (activeMode === "new") {
-        return Number(right.createdAt ?? 0) - Number(left.createdAt ?? 0);
+        const createdDelta = Number(right.createdAt ?? 0) - Number(left.createdAt ?? 0);
+        if (createdDelta !== 0) return createdDelta;
+        return String(left.campaign || "").localeCompare(String(right.campaign || ""));
       }
 
       if (activeMode === "draft") {
-        return draftMetricValue(right, "follows") - draftMetricValue(left, "follows");
+        const followsDelta = draftMetricValue(right, "follows") - draftMetricValue(left, "follows");
+        if (followsDelta !== 0) return followsDelta;
+        return String(left.campaign || "").localeCompare(String(right.campaign || ""));
       }
 
       const leftMetrics = getWarRoomCampaignMetrics(left, nativeUsd ?? 0);
@@ -167,9 +173,48 @@ const WarRoom = () => {
       }
       if (rightMetrics.volumeUsd !== leftMetrics.volumeUsd) return rightMetrics.volumeUsd - leftMetrics.volumeUsd;
       if (rightMetrics.marketCapUsd !== leftMetrics.marketCapUsd) return rightMetrics.marketCapUsd - leftMetrics.marketCapUsd;
-      return Number(right.createdAt ?? 0) - Number(left.createdAt ?? 0);
+      const createdDelta = Number(right.createdAt ?? 0) - Number(left.createdAt ?? 0);
+      if (createdDelta !== 0) return createdDelta;
+      return String(left.campaign || "").localeCompare(String(right.campaign || ""));
     });
   }, [activeMode, nativeUsd, campaigns, search, sortDirection, sortKey]);
+
+  const liveOrderRef = useRef(liveOrder);
+  liveOrderRef.current = liveOrder;
+
+  const filteredCampaigns = useMemo(() => {
+    const frozenKeys = expandedCampaign ? frozenOrderKeysRef.current : null;
+    if (!expandedCampaign || !frozenKeys?.length) return liveOrder;
+
+    const byKey = new Map<string, WarRoomCampaign>();
+    for (const campaign of liveOrder) {
+      byKey.set(String(campaign.campaign || ""), campaign);
+    }
+
+    const seen = new Set<string>();
+    const frozen: WarRoomCampaign[] = [];
+    for (const key of frozenKeys) {
+      const row = byKey.get(key);
+      if (!row) continue;
+      frozen.push(row);
+      seen.add(key);
+    }
+    for (const campaign of liveOrder) {
+      const key = String(campaign.campaign || "");
+      if (seen.has(key)) continue;
+      frozen.push(campaign);
+      seen.add(key);
+    }
+    return frozen;
+  }, [expandedCampaign, liveOrder]);
+
+  useEffect(() => {
+    if (!expandedCampaign) return;
+    const stillVisible = liveOrder.some((campaign) => String(campaign.campaign || "") === expandedCampaign);
+    if (stillVisible) return;
+    frozenOrderKeysRef.current = null;
+    setExpandedCampaign(null);
+  }, [expandedCampaign, liveOrder]);
 
   const handleSortClick = (nextKey: SortKey) => {
     if (sortKey === nextKey) {
@@ -184,7 +229,27 @@ const WarRoom = () => {
     setActiveMode(nextMode);
     setSortKey(null);
     setSortDirection("desc");
+    frozenOrderKeysRef.current = null;
+    setExpandedCampaign(null);
   };
+
+  const handleToggleExpand = (campaignKey: string) => {
+    setExpandedCampaign((current) => {
+      if (current === campaignKey) {
+        frozenOrderKeysRef.current = null;
+        return null;
+      }
+      if (!current) {
+        frozenOrderKeysRef.current = liveOrderRef.current.map((campaign) => String(campaign.campaign || ""));
+      }
+      return campaignKey;
+    });
+  };
+
+  useEffect(() => {
+    frozenOrderKeysRef.current = null;
+    setExpandedCampaign(null);
+  }, [selectedChainId]);
 
   return (
     <ContentContainer className="space-y-4 px-3 pb-10 pt-20 md:px-5 md:pt-24 lg:pt-24">
@@ -282,7 +347,18 @@ const WarRoom = () => {
               <RadarLoader label="Scanning trade radar…" size="md" />
             </div>
           ) : filteredCampaigns.length ? (
-            filteredCampaigns.map((campaign) => <WarRoomCampaignRow key={campaign.campaign} campaign={campaign} bnbUsd={nativeUsd ?? 0} />)
+            filteredCampaigns.map((campaign) => {
+              const campaignKey = String(campaign.campaign || "");
+              return (
+                <WarRoomCampaignRow
+                  key={campaignKey}
+                  campaign={campaign}
+                  bnbUsd={nativeUsd ?? 0}
+                  expanded={expandedCampaign === campaignKey}
+                  onToggleExpand={() => handleToggleExpand(campaignKey)}
+                />
+              );
+            })
           ) : (
             <div className="py-10 text-center text-sm text-white/55">
               {source === "empty"
