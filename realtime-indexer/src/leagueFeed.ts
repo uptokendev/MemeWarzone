@@ -2,7 +2,7 @@ import type { Pool } from "pg";
 import { publishLeague } from "./ably.js";
 
 export type LeagueCampaignPatch = {
-  campaignAddress: string; // lowercase
+  campaignAddress: string; // EVM lowercase; Solana (101/102) original case
 
   lastPriceBnb?: string | null;
   marketcapBnb?: string | null;
@@ -20,7 +20,15 @@ export type LeagueCampaignPatch = {
 type Opts = {
   pool: Pool;
   flushMs?: number; // default 500
+  publish?: (chainId: number, event: string, msg: any) => Promise<void>;
 };
+
+/** EVM addresses are lowercased; Solana base58 PDAs (101/102) keep trimmed original case. */
+export function leagueCampaignKey(chainId: number, campaign: string): string {
+  const trimmed = String(campaign ?? "").trim();
+  if (chainId === 101 || chainId === 102) return trimmed;
+  return trimmed.toLowerCase();
+}
 
 /**
  * Global league feed publisher:
@@ -30,6 +38,7 @@ type Opts = {
 export function createLeagueFeedPublisher(opts: Opts) {
   const pool = opts.pool;
   const flushMs = Math.max(100, Number(opts.flushMs ?? 500));
+  const publish = opts.publish ?? publishLeague;
 
   // chainId -> (campaign -> patch)
   const pendingByChain = new Map<number, Map<string, LeagueCampaignPatch>>();
@@ -60,14 +69,14 @@ export function createLeagueFeedPublisher(opts: Opts) {
   }
 
   function mergePatch(chainId: number, campaign: string, partial: Partial<LeagueCampaignPatch>) {
-    const addr = campaign.toLowerCase();
+    const addr = leagueCampaignKey(chainId, campaign);
     const m = getPending(chainId);
     const prev = m.get(addr) || ({ campaignAddress: addr } as LeagueCampaignPatch);
     m.set(addr, { ...prev, ...partial, campaignAddress: addr });
   }
 
   async function loadRaisedTotal(chainId: number, campaign: string): Promise<number> {
-    const addr = campaign.toLowerCase();
+    const addr = leagueCampaignKey(chainId, campaign);
     const r = await pool.query(
       `select
          coalesce(sum(case when side='buy' then bnb_amount else -bnb_amount end), 0) as raised_total_bnb
@@ -79,7 +88,7 @@ export function createLeagueFeedPublisher(opts: Opts) {
   }
 
   async function applyRaisedDelta(chainId: number, campaign: string, deltaBnb: number) {
-    const addr = campaign.toLowerCase();
+    const addr = leagueCampaignKey(chainId, campaign);
     const rm = getRaisedMap(chainId);
 
     let cur = rm.get(addr);
@@ -104,7 +113,7 @@ export function createLeagueFeedPublisher(opts: Opts) {
       m.clear(); // clear first to avoid buildup
 
       try {
-        await publishLeague(chainId, "campaign_patch", {
+        await publish(chainId, "campaign_patch", {
           type: "campaign_patch",
           chainId,
           ts,
@@ -132,6 +141,7 @@ export function createLeagueFeedPublisher(opts: Opts) {
   return {
     start,
     stop,
+    flush: flushOnce,
 
     queueStats(
       chainId: number,

@@ -3,7 +3,9 @@ import { PublicKey } from "@solana/web3.js";
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
 import { checkMilestones } from "./milestones.js";
-import { publishCandle, publishStats, publishTrade } from "./ably.js";
+import { publishCandle, publishLeague, publishStats, publishTrade } from "./ably.js";
+import { createLeagueFeedPublisher } from "./leagueFeed.js";
+import { buildCampaignCreatedMessage } from "./solanaLeaguePublish.js";
 import { TIMEFRAMES, bucketStart, type TF } from "./timeframes.js";
 import {
   SOLANA_MAINNET_GENESIS,
@@ -16,6 +18,8 @@ import {
 } from "./solanaIndexerCheckpoint.js";
 
 const SOLANA_CHAIN_ID = 101;
+const leagueFeed = createLeagueFeedPublisher({ pool, flushMs: 500 });
+leagueFeed.start();
 const DEFAULT_SOLANA_RPC = "https://api.mainnet-beta.solana.com";
 const DEFAULT_PROGRAM_ID = "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt";
 const LAMPORTS_PER_SOL = 1_000_000_000;
@@ -624,6 +628,13 @@ async function upsertCampaign(event: CampaignCreatedEvent, slot: number, blockTi
     token: event.mint,
     meta: { tokenVault: event.tokenVault, solVault: event.solVault },
   });
+
+  // Fire-and-forget: tip lane must not wait on Ably.
+  void publishLeague(
+    SOLANA_CHAIN_ID,
+    "campaign_created",
+    buildCampaignCreatedMessage(event, slot, blockTime),
+  ).catch(() => {});
 }
 
 async function touchCampaignActivity(campaign: string, at: Date) {
@@ -768,6 +779,12 @@ async function patchStats(campaign: string) {
     marketcapBnb: marketcap !== null ? String(marketcap) : null,
     vol24hBnb: String(vol24h),
   });
+
+  leagueFeed.queueStats(SOLANA_CHAIN_ID, campaign, {
+    lastPriceBnb: lastPrice !== null ? String(lastPrice) : null,
+    marketcapBnb: marketcap !== null ? String(marketcap) : null,
+    vol24hBnb: String(vol24h),
+  });
 }
 
 async function insertTrade(event: TokensBoughtEvent | TokensSoldEvent, signature: string, logIndex: number, slot: number, blockTime: Date) {
@@ -865,6 +882,9 @@ async function insertTrade(event: TokensBoughtEvent | TokensSoldEvent, signature
   };
   await publishTrade(SOLANA_CHAIN_ID, campaign, realtimeRow);
 
+  leagueFeed.queueActivity(SOLANA_CHAIN_ID, campaign, Math.floor(blockTime.getTime() / 1000));
+  leagueFeed.queueRaisedDelta(SOLANA_CHAIN_ID, campaign, isBuy ? nativeAmount : -nativeAmount);
+
   if (priceNative !== null && priceNative > 0) {
     const tsSec = Math.floor(blockTime.getTime() / 1000);
     for (const tf of TIMEFRAMES) {
@@ -960,6 +980,7 @@ async function persistGraduation(
     graduatedAt: graduatedAtChain.toISOString(),
     txHash: signature,
   });
+  leagueFeed.queueActivity(SOLANA_CHAIN_ID, event.campaign, Math.floor(blockTime.getTime() / 1000));
 }
 
 type Queryable = {
