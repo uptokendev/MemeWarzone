@@ -18,6 +18,7 @@ import { getReadProvider } from "@/lib/readProvider";
 import { isTestnetCampaignsEnabled } from "@/features/postgrad/apiClient";
 import { useSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
+import { liveCampaignKey, pickLiveNumeric } from "@/lib/liveMarketMerge";
 import LaunchFactoryArtifact from "@/abi/LaunchFactory.json";
 import LaunchCampaignArtifact from "@/abi/LaunchCampaign.json";
 import LaunchTokenArtifact from "@/abi/LaunchToken.json";
@@ -446,19 +447,21 @@ export function FeaturedCampaigns({ className, bare = false }: { className?: str
 
   const cards: FeaturedCardVM[] = useMemo(() => {
     const mapped = items.map((it, idx) => {
-      const addr = String(it.campaignAddress ?? "").toLowerCase();
-      const patch = patchByCampaign[addr] ?? {};
+      const rawAddr = String(it.campaignAddress ?? "").trim();
+      const chainId = Number(it.chainId ?? 0) || featuredChainId;
+      const addr = preserveFeaturedAddress(rawAddr, chainId) || rawAddr.toLowerCase();
+      const patchKey = liveCampaignKey(chainId, rawAddr);
+      const patch = patchByCampaign[patchKey] || patchByCampaign[addr] || patchByCampaign[rawAddr.toLowerCase()] || {};
       const createdAt = it.createdAtChain ? Math.floor(new Date(it.createdAtChain).getTime() / 1000) : undefined;
       const votes24h = Number((patch as { votes24h?: number }).votes24h ?? it.votes24h ?? 0);
       const votesAll = Number((patch as { votesAllTime?: number; votesAll?: number }).votesAllTime ?? (patch as { votesAll?: number }).votesAll ?? it.votesAllTime ?? 0);
       const rankVotes = voteMode === "24h" ? votes24h : votesAll;
       const activitySec = Number((patch as { lastActivityAt?: number }).lastActivityAt ?? 0);
-      // Canonical REST value wins; legacy realtime marketcap is fallback only.
-      const mcapBnb = Number(it.marketcapBnb ?? (patch as { marketcapBnb?: string | number }).marketcapBnb ?? NaN);
+      const liveMcap = pickLiveNumeric((patch as { marketcapBnb?: string | number }).marketcapBnb, NaN);
+      const mcapBnb = liveMcap > 0 ? liveMcap : pickLiveNumeric(it.marketcapBnb, NaN);
       const mcapUsdLabel = Number.isFinite(mcapBnb) && nativeUsd ? formatCompactUsd(mcapBnb * nativeUsd) : null;
-      const rawLogo = it.logoUri || logoCache[addr] || null;
+      const rawLogo = it.logoUri || logoCache[addr] || logoCache[rawAddr.toLowerCase()] || null;
       const resolved = resolveFeaturedImageUri(rawLogo);
-      const chainId = Number(it.chainId ?? 0) || featuredChainId;
       const tokenAddr = it.tokenAddress
         ? preserveFeaturedAddress(it.tokenAddress, chainId) || null
         : null;
