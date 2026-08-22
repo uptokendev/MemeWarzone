@@ -60,12 +60,14 @@ const ssl =
         ? { rejectUnauthorized: false, servername: host }
         : { rejectUnauthorized: true, servername: host };
 
-// Pool size: keep small for Supabase pooler to avoid exhausting pool_size.
+// This process runs many concurrent loops (BNB scan, Solana tip, Solana backfill,
+// Meteora, candles, FeeEscrow, HTTP). PG_POOL_MAX=3 starves token-summary and
+// lease queries with "timeout exceeded when trying to connect".
 const poolMax = (() => {
   const raw = String(process.env.PG_POOL_MAX || "").trim();
   const n = raw ? Number(raw) : NaN;
-  // Default 5 is safe for a single Railway instance.
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 5;
+  const requested = Number.isFinite(n) && n > 0 ? Math.floor(n) : 12;
+  return Math.max(8, Math.min(20, requested));
 })();
 
 // Supabase Transaction Pooler (port 6543) does not support PREPARE statements.
@@ -127,3 +129,14 @@ if (forceSimpleProtocol) {
 pool.on("error", (err) => {
   console.error("[db] pool error:", err);
 });
+
+setInterval(() => {
+  if (pool.waitingCount > 0) {
+    console.warn("[db] pool waiters", {
+      total: pool.totalCount,
+      idle: pool.idleCount,
+      waiting: pool.waitingCount,
+      max: poolMax,
+    });
+  }
+}, 15_000).unref();
