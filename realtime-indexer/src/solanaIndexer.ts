@@ -5,6 +5,15 @@ import { ENV } from "./env.js";
 import { checkMilestones } from "./milestones.js";
 import { publishCandle, publishStats, publishTrade } from "./ably.js";
 import { TIMEFRAMES, bucketStart, type TF } from "./timeframes.js";
+import {
+  SOLANA_MAINNET_GENESIS,
+  healthStatus,
+  nextBackfillCheckpoint,
+  recoverFutureCursor,
+  sortSignaturesAscending,
+  type IndexedSignature,
+  type ProcessedSignature,
+} from "./solanaIndexerCheckpoint.js";
 
 const SOLANA_CHAIN_ID = 101;
 const DEFAULT_SOLANA_RPC = "https://api.mainnet-beta.solana.com";
@@ -478,28 +487,69 @@ async function getHeadSlot(): Promise<number> {
   return rpc<number>("getSlot", [{ commitment: "confirmed" }]);
 }
 
-async function getSignatures(fromSlot: number, currentState: number): Promise<RpcSignature[]> {
-  const signatures: RpcSignature[] = [];
-  let before: string | undefined;
-  const limit = Math.max(1, Math.min(1000, ENV.SOLANA_SIGNATURE_LIMIT || 500));
+let genesisChecked = false;
+async function assertMainnetGenesis(): Promise<void> {
+  if (genesisChecked) return;
+  const genesis = await rpc<string>("getGenesisHash", []);
+  if (genesis !== SOLANA_MAINNET_GENESIS) {
+    throw new Error(`[solana-indexer] refusing non-mainnet genesis ${genesis}`);
+  }
+  genesisChecked = true;
+}
+
+function signatureLimit(): number {
+  return Math.max(1, Math.min(1000, ENV.SOLANA_SIGNATURE_LIMIT || 500));
+}
+
+async function fetchSignaturePage(before?: string): Promise<RpcSignature[]> {
+  const batch = await rpc<RpcSignature[]>("getSignaturesForAddress", [
+    programId(),
+    { limit: signatureLimit(), ...(before ? { before } : {}) },
+  ]);
+  return Array.isArray(batch) ? batch : [];
+}
+
+function toIndexed(item: RpcSignature): IndexedSignature {
+  return { signature: item.signature, slot: item.slot, err: item.err };
+}
+
+async function fetchTipSignatures(): Promise<IndexedSignature[]> {
+  const batch = await fetchSignaturePage();
+  return batch.filter((item) => !item.err).map(toIndexed);
+}
+
+async function fetchBackfillSignatures(checkpoint: number): Promise<{
+  items: IndexedSignature[];
+  reachedHistoricalFrontier: boolean;
+}> {
   const maxPages = Math.max(1, ENV.SOLANA_SIGNATURE_PAGE_LIMIT || 5);
+  const collected: IndexedSignature[] = [];
+  let before: string | undefined;
+  let reachedHistoricalFrontier = false;
 
   for (let page = 0; page < maxPages; page += 1) {
-    const batch = await rpc<RpcSignature[]>("getSignaturesForAddress", [
-      programId(),
-      { limit, ...(before ? { before } : {}) },
-    ]);
-    if (!batch.length) break;
+    const batch = await fetchSignaturePage(before);
+    if (!batch.length) {
+      reachedHistoricalFrontier = true;
+      break;
+    }
     for (const item of batch) {
-      if (item.slot > currentState && item.slot >= fromSlot && !item.err) signatures.push(item);
+      if (item.err) continue;
+      if (item.slot <= checkpoint) reachedHistoricalFrontier = true;
+      else collected.push(toIndexed(item));
     }
     const last = batch[batch.length - 1];
-    if (!last || last.slot <= fromSlot || last.slot <= currentState) break;
+    if (!last || last.slot <= checkpoint) {
+      reachedHistoricalFrontier = true;
+      break;
+    }
     before = last.signature;
   }
 
-  signatures.sort((a, b) => a.slot - b.slot || a.signature.localeCompare(b.signature));
-  return signatures;
+  return {
+    items: sortSignaturesAscending(collected),
+    reachedHistoricalFrontier,
+  };
 }
 
 async function getTransaction(signature: string): Promise<RpcTransaction> {
@@ -1264,87 +1314,192 @@ export async function backfillSolanaTradeCurveState(limit = 500) {
   };
 }
 
-export async function runSolanaIndexerOnce() {
-  const head = await getHeadSlot();
-  const configuredStart = Number(ENV.SOLANA_START_SLOT || 0);
-  const lookback = Math.max(1, Number(ENV.SOLANA_LOOKBACK_SLOTS || 50_000));
-  const startSlot = configuredStart > 0 ? configuredStart : Math.max(0, head - lookback);
-  const maxTxPerTick = Math.max(20, Math.min(200, Number(process.env.SOLANA_INDEXER_MAX_TX_PER_TICK || 80)));
-
-  let currentState = await getState();
-  // A bogus getSlot plus GREATEST() parked the cursor ~44M slots in the future
-  // and the ingest filter (slot > cursor) skipped every live signature.
-  if (currentState > head + 64) {
-    const resetTo = startSlot > 0 ? Math.min(startSlot, head) : Math.max(0, head - lookback);
-    console.warn("[solana-indexer] future cursor; resetting", { currentState, head, resetTo });
-    await resetState(resetTo);
-    currentState = resetTo;
-  }
-
-  const fromSlot = currentState > 0 ? currentState : startSlot;
-  const signatures = await getSignatures(fromSlot, currentState);
-
-  let maxSlot = currentState;
-  let processed = 0;
-  for (const item of signatures) {
-    if (processed >= maxTxPerTick) break;
+async function ingestSignature(item: IndexedSignature): Promise<boolean> {
+  let tx: RpcTransaction = null;
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      const tx = await getTransaction(item.signature);
-      const events = decodeEvents(tx?.meta?.logMessages);
-      const blockTime = timestampFrom(tx?.blockTime ?? item.blockTime);
-      for (let eventIndex = 0; eventIndex < events.length; eventIndex += 1) {
-        try {
-          await handleEvent(events[eventIndex], item.signature, eventIndex, item.slot, blockTime);
-        } catch (error) {
-          console.warn("[solana-indexer] event failed", {
-            signature: item.signature,
-            eventIndex,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
+      tx = await getTransaction(item.signature);
+      if (tx) break;
     } catch (error) {
-      console.warn("[solana-indexer] tx failed", {
+      lastError = error;
+    }
+  }
+  if (!tx) {
+    console.warn("[solana-indexer] tx unavailable", {
+      signature: item.signature,
+      slot: item.slot,
+      error: lastError instanceof Error ? lastError.message : String(lastError || "null"),
+    });
+    return false;
+  }
+  const events = decodeEvents(tx.meta?.logMessages);
+  const blockTime = timestampFrom(tx.blockTime ?? null);
+  for (let eventIndex = 0; eventIndex < events.length; eventIndex += 1) {
+    try {
+      await handleEvent(events[eventIndex], item.signature, eventIndex, item.slot, blockTime);
+    } catch (error) {
+      console.warn("[solana-indexer] event failed", {
         signature: item.signature,
-        slot: item.slot,
+        eventIndex,
         error: error instanceof Error ? error.message : String(error),
       });
+      return false;
     }
-    maxSlot = Math.max(maxSlot, item.slot);
-    processed += 1;
   }
-
-  const safeSlot = Math.min(maxSlot, head + 64);
-  if (safeSlot > currentState) await setState(safeSlot);
-  else if (currentState === 0) await setState(fromSlot);
+  return true;
 }
 
-let running = false;
+let lastLiveIngestMs = 0;
+let lastBackfillMs = 0;
+let lastTipSlot = 0;
+
+async function runTipLane(head: number): Promise<void> {
+  const signatures = await fetchTipSignatures();
+  let maxOk = 0;
+  for (const item of signatures) {
+    const ok = await ingestSignature(item);
+    if (ok) maxOk = Math.max(maxOk, item.slot);
+  }
+  if (maxOk > 0) {
+    lastTipSlot = Math.max(lastTipSlot, maxOk);
+    lastLiveIngestMs = Date.now();
+    await pool.query(
+      `insert into public.indexer_state(chain_id,cursor,last_indexed_block)
+       values ($1,$2,$3)
+       on conflict (chain_id,cursor) do update
+         set last_indexed_block = greatest(public.indexer_state.last_indexed_block, excluded.last_indexed_block),
+             updated_at=now()`,
+      [SOLANA_CHAIN_ID, "solana:v4:tip", Math.min(maxOk, head + 64)],
+    );
+  }
+}
+
+async function runBackfillLane(head: number): Promise<void> {
+  const configuredStart = Number(ENV.SOLANA_START_SLOT || 0);
+  const lookback = Math.max(1, Number(ENV.SOLANA_LOOKBACK_SLOTS || 50_000));
+  const recovered = recoverFutureCursor({
+    storedCursor: await getState(),
+    head,
+    startSlot: configuredStart,
+    lookback,
+  });
+  if (recovered.corrupt) {
+    console.warn("[solana-indexer] future cursor; resetting", {
+      head,
+      resetTo: recovered.cursor,
+    });
+    await resetState(recovered.cursor);
+  }
+  const checkpoint = recovered.cursor;
+  const fetched = await fetchBackfillSignatures(checkpoint);
+  const maxTxPerTick = Math.max(20, Math.min(200, Number(process.env.SOLANA_INDEXER_MAX_TX_PER_TICK || 80)));
+  const processed: ProcessedSignature[] = [];
+  for (const item of fetched.items.slice(0, maxTxPerTick)) {
+    const ok = await ingestSignature(item);
+    processed.push({ ...item, ok });
+    if (!ok) break;
+  }
+  const next = nextBackfillCheckpoint({
+    currentCheckpoint: checkpoint,
+    reachedHistoricalFrontier: fetched.reachedHistoricalFrontier,
+    processedOldestFirst: processed,
+  });
+  if (next > checkpoint) {
+    await setState(Math.min(next, head + 64));
+    lastBackfillMs = Date.now();
+  } else if (checkpoint === 0 && fetched.reachedHistoricalFrontier) {
+    await setState(Math.min(head, Math.max(checkpoint, configuredStart)));
+  }
+}
+
+export async function runSolanaIndexerOnce() {
+  await assertMainnetGenesis();
+  const head = await getHeadSlot();
+  await runTipLane(head);
+  await runBackfillLane(head);
+  const historical = await getState();
+  console.log("[solana-indexer] health", {
+    status: healthStatus({
+      head,
+      liveIndexedSlot: lastTipSlot || historical,
+      historicalCheckpoint: historical,
+      lastLiveIngestMs: lastLiveIngestMs || Date.now(),
+      nowMs: Date.now(),
+    }),
+    head,
+    liveIndexedSlot: lastTipSlot,
+    historicalCheckpoint: historical,
+    liveLag: Math.max(0, head - (lastTipSlot || 0)),
+    backfillLag: Math.max(0, head - historical),
+    lastLiveIngestMs,
+    lastBackfillMs,
+  });
+}
+
+let tipRunning = false;
+let backfillRunning = false;
 let started = false;
 
 export function startSolanaIndexerLoop() {
   if (started) return;
   started = true;
+  const tipMs = Math.max(2_000, Math.min(5_000, ENV.SOLANA_INDEXER_INTERVAL_MS || 10_000));
+  const backfillMs = Math.max(tipMs, ENV.SOLANA_INDEXER_INTERVAL_MS || 10_000);
 
   console.log("[solana-indexer] enabled", {
     chainId: SOLANA_CHAIN_ID,
     programId: programId(),
     rpcCount: solanaRpcUrls().length,
-    intervalMs: ENV.SOLANA_INDEXER_INTERVAL_MS,
+    tipIntervalMs: tipMs,
+    backfillIntervalMs: backfillMs,
   });
 
-  const tick = async () => {
-    if (running) return;
-    running = true;
+  const tipTick = async () => {
+    if (tipRunning) return;
+    tipRunning = true;
     try {
-      await runSolanaIndexerOnce();
+      await assertMainnetGenesis();
+      await runTipLane(await getHeadSlot());
     } catch (error) {
-      console.error("[solana-indexer] loop error", error);
+      console.error("[solana-indexer] tip loop error", error);
     } finally {
-      running = false;
+      tipRunning = false;
+    }
+  };
+  const backfillTick = async () => {
+    if (backfillRunning) return;
+    backfillRunning = true;
+    try {
+      await assertMainnetGenesis();
+      const head = await getHeadSlot();
+      await runBackfillLane(head);
+      const historical = await getState();
+      console.log("[solana-indexer] health", {
+        status: healthStatus({
+          head,
+          liveIndexedSlot: lastTipSlot || historical,
+          historicalCheckpoint: historical,
+          lastLiveIngestMs: lastLiveIngestMs || Date.now(),
+          nowMs: Date.now(),
+        }),
+        head,
+        liveIndexedSlot: lastTipSlot,
+        historicalCheckpoint: historical,
+        liveLag: Math.max(0, head - (lastTipSlot || 0)),
+        backfillLag: Math.max(0, head - historical),
+        lastLiveIngestMs,
+        lastBackfillMs,
+      });
+    } catch (error) {
+      console.error("[solana-indexer] backfill loop error", error);
+    } finally {
+      backfillRunning = false;
     }
   };
 
-  setTimeout(() => { void tick(); }, 2_000);
-  setInterval(() => { void tick(); }, Math.max(2_000, ENV.SOLANA_INDEXER_INTERVAL_MS || 10_000));
+  setTimeout(() => { void tipTick(); }, 1_000);
+  setTimeout(() => { void backfillTick(); }, 2_000);
+  setInterval(() => { void tipTick(); }, tipMs);
+  setInterval(() => { void backfillTick(); }, backfillMs);
 }
