@@ -12,6 +12,7 @@ import {
   isSolanaChainId,
   type SupportedChainId,
 } from "@/lib/chainConfig";
+import { liveCampaignKey } from "@/lib/liveMarketMerge";
 import { fetchOnChainCampaignStats } from "@/lib/onChainCampaignStats";
 import {
   lifecycleByCampaign,
@@ -107,7 +108,8 @@ function toNumber(value: unknown): number | undefined {
 function lookupLeaguePatch(campaign: WarRoomCampaign, patchByCampaign: Record<string, LeaguePatch>) {
   const addr = String(campaign.campaign || "").trim();
   if (!addr) return undefined;
-  return patchByCampaign[addr.toLowerCase()] || patchByCampaign[addr];
+  const key = liveCampaignKey(Number(campaign.chainId || 0), addr);
+  return patchByCampaign[key] || patchByCampaign[addr] || patchByCampaign[addr.toLowerCase()];
 }
 
 function overlayNumber(value: unknown): number | undefined {
