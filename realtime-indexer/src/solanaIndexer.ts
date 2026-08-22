@@ -710,13 +710,13 @@ async function upsertCandle(campaign: string, tf: TF, bucketSec: number, priceSo
     [SOLANA_CHAIN_ID, campaign, tf, new Date(bucketSec * 1000), priceSol, volumeSol],
   );
 
-  await publishCandle(SOLANA_CHAIN_ID, campaign, {
+  void publishCandle(SOLANA_CHAIN_ID, campaign, {
     type: "candle_upsert",
     tf,
     bucket: bucketSec,
     c: String(priceSol),
     v: String(volumeSol),
-  });
+  }).catch(() => undefined);
 }
 
 async function patchStats(campaign: string) {
@@ -773,12 +773,12 @@ async function patchStats(campaign: string) {
     [SOLANA_CHAIN_ID, campaign, lastPrice, soldTokens, marketcap, vol24h],
   );
 
-  await publishStats(SOLANA_CHAIN_ID, campaign, {
+  void publishStats(SOLANA_CHAIN_ID, campaign, {
     type: "stats_patch",
     lastPriceBnb: lastPrice !== null ? String(lastPrice) : null,
     marketcapBnb: marketcap !== null ? String(marketcap) : null,
     vol24hBnb: String(vol24h),
-  });
+  }).catch(() => undefined);
 
   leagueFeed.queueStats(SOLANA_CHAIN_ID, campaign, {
     lastPriceBnb: lastPrice !== null ? String(lastPrice) : null,
@@ -880,7 +880,7 @@ async function insertTrade(event: TokensBoughtEvent | TokensSoldEvent, signature
     price_bnb: priceNative,
     sold_tokens_after_raw: event.soldTokensAfter.toString(),
   };
-  await publishTrade(SOLANA_CHAIN_ID, campaign, realtimeRow);
+  void publishTrade(SOLANA_CHAIN_ID, campaign, realtimeRow).catch(() => undefined);
 
   leagueFeed.queueActivity(SOLANA_CHAIN_ID, campaign, Math.floor(blockTime.getTime() / 1000));
   leagueFeed.queueRaisedDelta(SOLANA_CHAIN_ID, campaign, isBuy ? nativeAmount : -nativeAmount);
@@ -969,7 +969,7 @@ async function persistGraduation(
     token: event.mint,
     meta: graduationMeta,
   });
-  await publishStats(SOLANA_CHAIN_ID, event.campaign, {
+  void publishStats(SOLANA_CHAIN_ID, event.campaign, {
     type: "stats_patch",
     graduated: true,
     dex: "meteora-damm-v2",
@@ -979,7 +979,7 @@ async function persistGraduation(
     graduationLiquidityTokensRaw: event.liquidityTokens.toString(),
     graduatedAt: graduatedAtChain.toISOString(),
     txHash: signature,
-  });
+  }).catch(() => undefined);
   leagueFeed.queueActivity(SOLANA_CHAIN_ID, event.campaign, Math.floor(blockTime.getTime() / 1000));
 }
 

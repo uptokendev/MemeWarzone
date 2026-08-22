@@ -406,13 +406,13 @@ async function upsertCandle(
       mcapSol,
     ],
   );
-  await publishCandle(SOLANA_CHAIN_ID, campaign, {
+  void publishCandle(SOLANA_CHAIN_ID, campaign, {
     type: "candle_upsert",
     tf,
     bucket: bucketSec,
     c: String(priceSol),
     v: String(volumeSol),
-  });
+  }).catch(() => undefined);
 }
 
 async function patchStats(campaign: string) {
@@ -452,14 +452,14 @@ async function patchStats(campaign: string) {
        updated_at=now()`,
     [SOLANA_CHAIN_ID, campaign, lastPrice, soldTokens, marketcap, vol24h],
   );
-  await publishStats(SOLANA_CHAIN_ID, campaign, {
+  void publishStats(SOLANA_CHAIN_ID, campaign, {
     type: "stats_patch",
     lastPriceBnb: lastPrice !== null ? String(lastPrice) : null,
     marketcapBnb: marketcap !== null ? String(marketcap) : null,
     vol24hBnb: String(vol24h),
     graduated: true,
     dex: "meteora-damm-v2",
-  });
+  }).catch(() => undefined);
 
   leagueFeed.queueStats(SOLANA_CHAIN_ID, campaign, {
     lastPriceBnb: lastPrice !== null ? String(lastPrice) : null,
@@ -562,7 +562,7 @@ async function insertSwap(input: {
     price_bnb: priceNative,
     venue: "meteora-damm-v2",
   };
-  await publishTrade(SOLANA_CHAIN_ID, input.market.campaign, realtimeRow);
+  void publishTrade(SOLANA_CHAIN_ID, input.market.campaign, realtimeRow).catch(() => undefined);
   // DEX fills update list rank/mcap/vol. Do not treat swap size as bonding raised.
   leagueFeed.queueActivity(SOLANA_CHAIN_ID, input.market.campaign, Math.floor(input.blockTime.getTime() / 1000));
   if (priceNative !== null && priceNative > 0) {
