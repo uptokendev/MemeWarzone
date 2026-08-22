@@ -5,9 +5,12 @@ import { PublicKey } from "@solana/web3.js";
 import { publishCandle, publishStats, publishTrade } from "./ably.js";
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
+import { createLeagueFeedPublisher } from "./leagueFeed.js";
 import { TIMEFRAMES, bucketStart, type TF } from "./timeframes.js";
 
 const SOLANA_CHAIN_ID = 101;
+const leagueFeed = createLeagueFeedPublisher({ pool, flushMs: 500 });
+leagueFeed.start();
 const DEFAULT_SOLANA_RPC = "https://api.mainnet-beta.solana.com";
 const METEORA_CP_AMM_PROGRAM_ID = new PublicKey("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG");
 const NATIVE_MINT = "So11111111111111111111111111111111111111112";
@@ -457,6 +460,12 @@ async function patchStats(campaign: string) {
     graduated: true,
     dex: "meteora-damm-v2",
   });
+
+  leagueFeed.queueStats(SOLANA_CHAIN_ID, campaign, {
+    lastPriceBnb: lastPrice !== null ? String(lastPrice) : null,
+    marketcapBnb: marketcap !== null ? String(marketcap) : null,
+    vol24hBnb: String(vol24h),
+  });
 }
 
 async function insertSwap(input: {
@@ -554,6 +563,8 @@ async function insertSwap(input: {
     venue: "meteora-damm-v2",
   };
   await publishTrade(SOLANA_CHAIN_ID, input.market.campaign, realtimeRow);
+  // DEX fills update list rank/mcap/vol. Do not treat swap size as bonding raised.
+  leagueFeed.queueActivity(SOLANA_CHAIN_ID, input.market.campaign, Math.floor(input.blockTime.getTime() / 1000));
   if (priceNative !== null && priceNative > 0) {
     const tsSec = Math.floor(input.blockTime.getTime() / 1000);
     for (const tf of TIMEFRAMES) {
