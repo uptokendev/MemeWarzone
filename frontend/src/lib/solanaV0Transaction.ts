@@ -360,8 +360,12 @@ export async function simulateLaunchpadV0OrThrow(
     );
   }
   if (simulation.value?.err) {
+    const errText = JSON.stringify(simulation.value.err);
+    const usefulLogs = logs.filter((line) => /Error|failed|Program log|custom program/i.test(line)).slice(-8);
     throw Object.assign(
-      new Error(`${label} RPC simulation failed.`),
+      new Error(
+        `${label} RPC simulation failed. ${errText}${usefulLogs.length ? ` ${usefulLogs.join(" | ")}` : ""}`,
+      ),
       { logs, simulationErr: simulation.value.err, source },
     );
   }
