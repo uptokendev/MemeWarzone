@@ -22,6 +22,7 @@ import {
   solanaMetaFromRow,
   normalizeCampaignIdHex,
 } from "./campaign-registry.js";
+import { getSolanaChainUnixTime } from "./solana-chain-unix-time.js";
 import {
   SYSVAR_INSTRUCTIONS_ID,
   SYSTEM_PROGRAM_ID,
@@ -338,15 +339,15 @@ async function rpcCall(rpcUrl, method, params) {
 }
 
 async function getChainUnixTime(rpcUrl) {
-  const slot = await rpcCall(rpcUrl, "getSlot", [{ commitment: "confirmed" }]);
-  const blockTime = await rpcCall(rpcUrl, "getBlockTime", [slot]);
-  if (!Number.isInteger(blockTime) || blockTime <= 0) {
-    throw new SolanaTradeAuthorizationError("Solana RPC did not return a confirmed block time.", {
+  try {
+    return await getSolanaChainUnixTime(rpcUrl);
+  } catch (error) {
+    throw new SolanaTradeAuthorizationError(error instanceof Error ? error.message : String(error), {
       code: "SOLANA_CHAIN_TIME_UNAVAILABLE",
       httpStatus: 503,
+      cause: error,
     });
   }
-  return blockTime;
 }
 
 function findAssociatedTokenAddress(owner, mint) {
