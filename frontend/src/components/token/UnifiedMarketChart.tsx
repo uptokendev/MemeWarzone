@@ -603,7 +603,13 @@ export function UnifiedMarketChart({
       Number.isFinite(livePrice) &&
       livePrice > 0 &&
       (metric === "price" || (Number.isFinite(liveSupply) && liveSupply > 0));
-    const hasLiveSpotOverlay = hasGraduatedSolanaSpot || hasLiveBnbBondingSpot;
+    const hasLiveSolanaBondingSpot =
+      solana &&
+      !solanaGraduated &&
+      Number.isFinite(livePrice) &&
+      livePrice > 0 &&
+      (metric === "price" || (Number.isFinite(liveSupply) && liveSupply > 0));
+    const hasLiveSpotOverlay = hasGraduatedSolanaSpot || hasLiveBnbBondingSpot || hasLiveSolanaBondingSpot;
 
     if (!hasHistoricalData && !hasLiveSpotOverlay) return [] as CandleRow[];
 
@@ -615,10 +621,9 @@ export function UnifiedMarketChart({
     const fromServer = marketCandlesForChart(marketCandles, marketState, metric, denomination, nativeUsd, tokenDecimals);
     const authoritative = authoritativeCandleData(fromTrades, fromServer);
 
-    // A graduated Solana campaign can have a live Meteora pool before the first
-    // DEX swap is indexed. Keep the chart's right edge on the exact same live
-    // pool-price x fixed-supply basis as the TokenDetails headline. This is only
-    // a visual live overlay; durable bonding/DEX history remains server-authoritative.
+    // Live overlay for: graduated Solana (Meteora spot), BNB bonding, and Solana
+    // bonding (curve spot). Only mutates the last bucket wick/close — do not remount
+    // the chart or reset the visible range. Durable history stays server-authoritative.
     if (!hasLiveSpotOverlay) return authoritative;
 
     const liveNativeValue = metric === "marketcap" ? livePrice * liveSupply : livePrice;

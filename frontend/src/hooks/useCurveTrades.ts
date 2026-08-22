@@ -322,7 +322,7 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
   const limit = Math.min(Math.max(Number(opts?.limit ?? 200), 1), 200);
   const canLoadTrades = enabled && isTradeCampaignAddress(campaignAddress, chainId);
 
-  const applySnapshot = useCallback((rows: any[], options?: { replaceEmpty?: boolean }) => {
+  const applySnapshot = useCallback((rows: any[]) => {
     const tokenDecimals = isSolanaChainId(chainId) ? 6 : 18;
     const nativeDecimals = isSolanaChainId(chainId) ? 9 : 18;
     const target = normalizeAddress(chainId, campaignAddress || "");
@@ -333,10 +333,11 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
       )
       .filter((t): t is CurveTradePoint => Boolean(t) && isValidTradeTxHash(t?.txHash) && Number.isFinite(Number(t?.blockNumber)));
 
-    if (!next.length && !options?.replaceEmpty) return 0;
+    // Empty indexer/REST snapshot must not wipe points Ably already applied.
+    if (!next.length) return 0;
 
     setPoints((prev) => {
-      const merged = next.length ? mergeTradePoints(prev, next) : prev;
+      const merged = mergeTradePoints(prev, next);
       if (campaignAddress && merged.length) saveCachedTradeHistory(chainId, campaignAddress, merged);
       return merged;
     });
@@ -379,11 +380,14 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
           setError(null);
           return;
         }
+        // Empty trades snapshot: keep Ably/cached points. Do not setPoints([]).
       } catch (apiError: any) {
         if (isAbortError(apiError)) return;
         console.warn("[useCurveTrades] indexer trade API failed", apiError);
       }
 
+      // EVM-only getLogs recovery. Do not enable this globally — Solana uses
+      // Ably `trade` + Token Details 5s curve read when the indexer is stuck.
       if (isEvmChainId(chainId) && ENABLE_ONCHAIN_TRADE_FALLBACK) {
         try {
           const isDelta = highestBlockScannedRef.current > 0;

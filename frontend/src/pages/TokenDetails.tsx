@@ -2450,8 +2450,8 @@ const toSeconds = (ts: number): number => {
     };
   }, [isSolanaPage]);
 
-  // Solana: load campaign curve snapshot (slow poll). Metrics are derived locally
-  // so a CoinGecko tick or wallet-balance tick cannot re-hit RPC.
+  // Solana: load campaign curve snapshot (5s poll while Token Details is open).
+  // Metrics are derived locally so a CoinGecko tick or wallet-balance tick cannot re-hit RPC.
   useEffect(() => {
     if (!isSolanaPage || !campaign?.campaign) {
       setSolanaCurve(null);
@@ -2479,8 +2479,19 @@ const toSeconds = (ts: number): number => {
           if (state && (state.curveTokenSupply > 0n || state.graduated)) break;
         }
         if (cancelled) return;
+        if (!state) {
+          // Empty resolve must not blank a previous curve for this campaign.
+          setSolanaCurve((prev) => {
+            if (!prev) return prev;
+            const prevAddr = String(prev.campaignAddress || "").trim();
+            const curr = String(campaign.campaign || "").trim();
+            const token = String(campaign.token || "").trim();
+            if (prevAddr && curr && prevAddr !== curr && prevAddr !== token) return null;
+            return prev;
+          });
+          return;
+        }
         setSolanaCurve(state);
-        if (!state) return;
         setCurveReserveWei(state.netRaisedLamports);
         if (state.mint && (!campaign.token || campaign.token === campaign.campaign)) {
           setCampaign((prev) =>
@@ -2496,11 +2507,11 @@ const toSeconds = (ts: number): number => {
         }
       } catch (e) {
         console.warn("[TokenDetails] Solana curve load failed", e);
-        if (!cancelled) setSolanaCurve(null);
+        // Transient RPC failure: keep the last good curve.
       }
     };
     void loadCurve();
-    const timer = window.setInterval(() => void loadCurve(), 15_000);
+    const timer = window.setInterval(() => void loadCurve(), 5_000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
