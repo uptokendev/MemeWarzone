@@ -65,7 +65,8 @@ function liveAgreesWithClose(close: number, liveValue: number): boolean {
   if (!Number.isFinite(close) || !Number.isFinite(liveValue) || liveValue <= 0) return false;
   if (close <= 0) return false;
   const diff = Math.abs(close - liveValue);
-  return diff <= 1e-12 || diff / Math.max(close, liveValue) <= 0.02;
+  const scale = Math.max(Math.abs(close), Math.abs(liveValue), 1e-18);
+  return diff <= 1e-12 || diff / scale <= 1e-6;
 }
 
 /**

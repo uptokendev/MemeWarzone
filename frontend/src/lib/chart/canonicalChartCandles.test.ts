@@ -164,6 +164,12 @@ test("live overlay patches the latest series candle with spot×sold", () => {
 
   const agrees = patchActiveLatestBucket(base, 1.64, 60, 1_260);
   assert.equal(agrees[1]?.close, 1.64);
+
+  const rounding = patchActiveLatestBucket(base, 1.64 + 1e-10, 60, 1_260);
+  assert.equal(rounding[1]?.close, 1.64 + 1e-10);
+
+  const twoPercent = patchActiveLatestBucket(base, 1.64 * 1.02, 60, 1_260);
+  assert.equal(twoPercent[1]?.close, 1.64);
 });
 
 test("sell-to-zero bonding candle is kept so the next buy can open at zero", () => {
