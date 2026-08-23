@@ -88,16 +88,44 @@ export function signatureScanFrontier(input: {
   fromSlot: number;
   pagesScanned: number;
   pageCap: number;
+  shortPage?: boolean;
 }): { reachedCreationSlot: boolean; incomplete: boolean } {
   const fromSlot = Math.max(0, Math.trunc(Number(input.fromSlot) || 0));
   const pagesScanned = Math.max(0, Math.trunc(Number(input.pagesScanned) || 0));
   const pageCap = Math.max(1, Math.trunc(Number(input.pageCap) || 1));
-  if (input.emptyBatch) return { reachedCreationSlot: true, incomplete: false };
+  if (input.emptyBatch || input.shortPage) return { reachedCreationSlot: true, incomplete: false };
   if (input.lastSlot != null && Number(input.lastSlot) < fromSlot) {
     return { reachedCreationSlot: true, incomplete: false };
   }
   if (pagesScanned >= pageCap) return { reachedCreationSlot: false, incomplete: true };
   return { reachedCreationSlot: false, incomplete: false };
+}
+
+export type CampaignPdaScanCheckpoint = {
+  beforeSignature: string | null;
+  oldestSlot: number | null;
+  reachedCreationSlot: boolean;
+};
+
+/** Resume older PDA pagination. getSignaturesForAddress `before` walks toward create. */
+export function nextCampaignPdaCursor(input: {
+  previousBefore?: string | null;
+  lastSignature?: string | null;
+  lastSlot?: number | null;
+  reachedCreationSlot: boolean;
+}): CampaignPdaScanCheckpoint {
+  if (input.reachedCreationSlot) {
+    return {
+      beforeSignature: null,
+      oldestSlot: input.lastSlot == null ? null : Number(input.lastSlot),
+      reachedCreationSlot: true,
+    };
+  }
+  return {
+    beforeSignature: input.lastSignature || input.previousBefore || null,
+    oldestSlot: input.lastSlot == null ? null : Number(input.lastSlot),
+    reachedCreationSlot: false,
+  };
 }
 
 /**

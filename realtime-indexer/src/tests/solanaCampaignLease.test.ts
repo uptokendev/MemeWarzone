@@ -22,6 +22,18 @@ test("an old run cannot clear a newer campaign lease", () => {
   assert.equal(leases.get("TRL"), undefined);
 });
 
+test("stale running leases are aborted and released", () => {
+  const leases = createCampaignLeaseRegistry();
+  const lease = leases.begin("FSH")!;
+  assert.equal(leases.expireStale(10_000, lease.startedAt + 1_000).length, 0);
+  assert.equal(leases.get("FSH")?.runId, lease.runId);
+  const expired = leases.expireStale(10_000, lease.startedAt + 10_001);
+  assert.deepEqual(expired, ["FSH"]);
+  assert.equal(lease.abort.signal.aborted, true);
+  assert.equal(leases.get("FSH"), undefined);
+  assert.ok(leases.begin("FSH"));
+});
+
 test("public lease list exposes runId, age and state", () => {
   const leases = createCampaignLeaseRegistry();
   const lease = leases.begin("FSH")!;

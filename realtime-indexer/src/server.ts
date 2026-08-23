@@ -380,7 +380,7 @@ app.get("/health", async (_req, res) => {
       ok: true,
       db: r.rows[0].ok,
       // Bump when shipping indexer loop fixes so deploy can be confirmed from /health.
-      indexerBuild: "live-c4d2-candle-rebuild-2026-08-23",
+      indexerBuild: "live-c4e-solana-repair-2026-08-23",
       normalScope: ENV.INDEXER_NORMAL_SCOPE,
       solana: solanaIndexerPublicHealth(),
     });

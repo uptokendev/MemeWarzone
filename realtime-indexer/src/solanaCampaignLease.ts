@@ -59,5 +59,19 @@ export function createCampaignLeaseRegistry() {
     }));
   }
 
-  return { begin, release, get, list };
+  function expireStale(maxAgeMs: number, nowMs = Date.now()): string[] {
+    const expired: string[] = [];
+    const limit = Math.max(1, Math.trunc(Number(maxAgeMs) || 0));
+    for (const [campaign, lease] of [...leases.entries()]) {
+      if (lease.status !== "running") continue;
+      if (nowMs - lease.startedAt <= limit) continue;
+      if (!lease.abort.signal.aborted) lease.abort.abort();
+      lease.status = "timeout";
+      leases.delete(campaign);
+      expired.push(campaign);
+    }
+    return expired;
+  }
+
+  return { begin, release, get, list, expireStale };
 }

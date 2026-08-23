@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { collectAccountSignatures, signatureScanFrontier, sortSignaturesAscending } from "../solanaIndexerCheckpoint.js";
+import { collectAccountSignatures, nextCampaignPdaCursor, signatureScanFrontier, sortSignaturesAscending } from "../solanaIndexerCheckpoint.js";
 
 test("campaign PDA pages keep only successful signatures in the create→head window", () => {
   const result = collectAccountSignatures({
@@ -67,6 +67,38 @@ test("durable scan is incomplete when the page cap fires before create slot", ()
   });
   assert.equal(capped.reachedCreationSlot, false);
   assert.equal(capped.incomplete, true);
+});
+
+test("PDA cursor advances only while create slot is not reached", () => {
+  const walking = nextCampaignPdaCursor({
+    previousBefore: null,
+    lastSignature: "oldest-on-page",
+    lastSlot: 440_530_611,
+    reachedCreationSlot: false,
+  });
+  assert.equal(walking.beforeSignature, "oldest-on-page");
+  assert.equal(walking.reachedCreationSlot, false);
+  const done = nextCampaignPdaCursor({
+    previousBefore: "oldest-on-page",
+    lastSignature: "create-adjacent",
+    lastSlot: 440_505_300,
+    reachedCreationSlot: true,
+  });
+  assert.equal(done.beforeSignature, null);
+  assert.equal(done.reachedCreationSlot, true);
+});
+
+test("a short PDA page means the account history is exhausted", () => {
+  const shortPage = signatureScanFrontier({
+    emptyBatch: false,
+    lastSlot: 440_530_611,
+    fromSlot: 440_505_373,
+    pagesScanned: 1,
+    pageCap: 2,
+    shortPage: true,
+  });
+  assert.equal(shortPage.reachedCreationSlot, true);
+  assert.equal(shortPage.incomplete, false);
 });
 
 test("durable scan is complete when the last page crosses the create slot", () => {

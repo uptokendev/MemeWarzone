@@ -5,6 +5,7 @@ import { pool } from "./db.js";
 import { ENV } from "./env.js";
 import { createCampaignLeaseRegistry, type CampaignLeaseState } from "./solanaCampaignLease.js";
 import { createIndexerSql } from "./solanaRepairSql.js";
+import { isDerivedFanoutSuppressed, runWithDerivedFanoutSuppressed } from "./derivedFanout.js";
 import { repairStateFromBackfill } from "./solanaHistoryStatus.js";
 import { checkMilestones } from "./milestones.js";
 import { publishCandle, publishLeague, publishStats, publishTrade } from "./ably.js";
@@ -17,6 +18,7 @@ import {
   collectAccountSignatures,
   healthStatus,
   signatureScanFrontier,
+  nextCampaignPdaCursor,
   nextBackfillCheckpoint,
   recoverFutureCursor,
   sortSignaturesAscending,
@@ -44,8 +46,12 @@ const CAMPAIGN_BACKFILL_COOLDOWN_MS = 60_000;
 const SOLANA_RPC_TIMEOUT_MS = 20_000;
 const CAMPAIGN_BACKFILL_DEADLINE_MS = 90_000;
 const CAMPAIGN_SIGNATURE_PAGE_CAP = Math.max(
-  500,
-  Number(process.env.SOLANA_CAMPAIGN_SIGNATURE_PAGE_CAP || 500),
+  1,
+  Math.min(32, Number(process.env.SOLANA_CAMPAIGN_SIGNATURE_PAGES_PER_TICK || 2)),
+);
+const CAMPAIGN_INGEST_MAX_PER_TICK = Math.max(
+  5,
+  Math.min(80, Number(process.env.SOLANA_CAMPAIGN_INGEST_MAX_PER_TICK || 40)),
 );
 const REPAIR_PG_STATEMENT_TIMEOUT_MS = Math.max(
   5_000,
@@ -108,6 +114,8 @@ async function persistSolanaHistoryMeta(
     createdSlot?: number;
     trades?: number;
     candles?: number;
+    scanBefore?: string | null;
+    scanOldestSlot?: number | null;
   },
 ) {
   const derived = repairStateFromBackfill(result);
@@ -127,6 +135,8 @@ async function persistSolanaHistoryMeta(
           creationSlot: Number(result.createdSlot || 0) || null,
           tradeCount: Number(result.trades || 0),
           candleCount: Number(result.candles || 0),
+          scanBefore: result.scanBefore || null,
+          scanOldestSlot: result.scanOldestSlot ?? null,
           at: new Date().toISOString(),
         },
       }),
@@ -134,10 +144,33 @@ async function persistSolanaHistoryMeta(
   );
 }
 
-/** Historical PDA replay writes durable rows only; derived candles/stats rebuild once at the end. */
-const derivedFanoutSuppressed = new AsyncLocalStorage<boolean>();
-function isDerivedFanoutSuppressed() {
-  return derivedFanoutSuppressed.getStore() === true;
+async function loadSolanaHistoryMeta(campaign: string): Promise<{
+  historyComplete?: boolean;
+  repairState?: string | null;
+  scanBefore?: string | null;
+  scanOldestSlot?: number | null;
+  creationSlot?: number | null;
+}> {
+  const result = await sql(
+    `select meta from public.campaigns where chain_id=$1 and campaign_address=$2`,
+    [SOLANA_CHAIN_ID, campaign],
+  );
+  const stored = (result.rows[0]?.meta as { solanaHistory?: Record<string, unknown> } | null)?.solanaHistory || {};
+  return {
+    historyComplete: stored.historyComplete === true,
+    repairState: stored.repairState != null ? String(stored.repairState) : null,
+    scanBefore: stored.scanBefore ? String(stored.scanBefore) : null,
+    scanOldestSlot: stored.scanOldestSlot != null ? Number(stored.scanOldestSlot) : null,
+    creationSlot: stored.creationSlot != null ? Number(stored.creationSlot) : null,
+  };
+}
+
+function expireStaleCampaignLeases() {
+  const expired = campaignLeases.expireStale(CAMPAIGN_BACKFILL_DEADLINE_MS + 5_000);
+  if (expired.length) {
+    console.warn("[solana-indexer] expired stale campaign leases", { campaigns: expired });
+  }
+  return expired;
 }
 const campaignBackfillLastRunMs = new Map<string, number>();
 let athColumnReady = false;
@@ -1682,16 +1715,19 @@ async function fetchSignaturesForAccount(
   fromSlot: number,
   head: number,
   signal?: AbortSignal,
+  opts?: { before?: string | null; pageCap?: number },
 ): Promise<{
   items: IndexedSignature[];
   reachedCreationSlot: boolean;
   incomplete: boolean;
   pagesScanned: number;
+  nextBefore: string | null;
+  oldestSlot: number | null;
 }> {
   const pages: RpcSignature[][] = [];
-  let before: string | undefined;
+  let before: string | undefined = opts?.before || undefined;
   const limit = signatureLimit();
-  const pageCap = CAMPAIGN_SIGNATURE_PAGE_CAP;
+  const pageCap = Math.max(1, Math.min(CAMPAIGN_SIGNATURE_PAGE_CAP, Number(opts?.pageCap || CAMPAIGN_SIGNATURE_PAGE_CAP)));
   let reachedCreationSlot = false;
   let incomplete = false;
 
@@ -1715,6 +1751,7 @@ async function fetchSignaturesForAccount(
       fromSlot,
       pagesScanned: page + 1,
       pageCap,
+      shortPage: batch.length < limit,
     });
     if (frontier.reachedCreationSlot) {
       reachedCreationSlot = true;
@@ -1730,13 +1767,34 @@ async function fetchSignaturesForAccount(
   }
 
   if (pages.length >= pageCap && !reachedCreationSlot) incomplete = true;
+  const lastPage = pages[pages.length - 1] || [];
+  const last = lastPage[lastPage.length - 1];
+  const cursor = nextCampaignPdaCursor({
+    previousBefore: opts?.before,
+    lastSignature: last?.signature,
+    lastSlot: last?.slot,
+    reachedCreationSlot,
+  });
 
   return {
     items: collectAccountSignatures({ pages, fromSlot, head }).items,
     reachedCreationSlot,
     incomplete,
     pagesScanned: pages.length,
+    nextBefore: cursor.beforeSignature,
+    oldestSlot: cursor.oldestSlot,
   };
+}
+
+async function existingCampaignTradeSignatures(campaign: string, signatures: string[]): Promise<Set<string>> {
+  if (!signatures.length) return new Set();
+  const result = await sql(
+    `select distinct tx_hash
+       from public.curve_trades
+      where chain_id=$1 and campaign_address=$2 and tx_hash = any($3::text[])`,
+    [SOLANA_CHAIN_ID, campaign, signatures],
+  );
+  return new Set(result.rows.map((row: { tx_hash?: string }) => String(row.tx_hash || "")).filter(Boolean));
 }
 
 async function dedupeSolanaCurveTrades(campaign?: string): Promise<string[]> {
@@ -1817,11 +1875,31 @@ export async function backfillSolanaCampaign(campaignAddress: string, signal?: A
     throw new Error("solana campaign PDA required");
   }
   throwIfAborted(signal);
+  expireStaleCampaignLeases();
+  const stored = await loadSolanaHistoryMeta(campaign);
+  if (stored.historyComplete && stored.repairState === "complete") {
+    return {
+      campaign,
+      createdSlot: Number(stored.creationSlot || 0),
+      head: 0,
+      scanned: 0,
+      ingested: 0,
+      failed: 0,
+      trades: 0,
+      candles: 0,
+      reachedCreationSlot: true,
+      incomplete: false,
+      pagesScanned: 0,
+      skipped: true,
+      alreadyComplete: true,
+      runId: null,
+    };
+  }
   const lease = campaignLeases.begin(campaign);
   if (!lease) {
     return {
       campaign,
-      createdSlot: 0,
+      createdSlot: Number(stored.creationSlot || 0),
       head: 0,
       scanned: 0,
       ingested: 0,
@@ -1829,7 +1907,7 @@ export async function backfillSolanaCampaign(campaignAddress: string, signal?: A
       trades: 0,
       candles: 0,
       reachedCreationSlot: false,
-      incomplete: false,
+      incomplete: true,
       pagesScanned: 0,
       skipped: true,
       runId: campaignLeases.get(campaign)?.runId ?? null,
@@ -1838,6 +1916,22 @@ export async function backfillSolanaCampaign(campaignAddress: string, signal?: A
 
   const runSignal = combineAbortSignals(signal, lease.abort.signal);
   let status: CampaignLeaseState = "failed";
+  let createdSlot = Number(stored.creationSlot || 0);
+  let scanBefore = stored.scanBefore || null;
+  let scanOldestSlot = stored.scanOldestSlot ?? null;
+  const persistProgress = async (extra: Record<string, unknown>) => {
+    await persistSolanaHistoryMeta(campaign, {
+      skipped: false,
+      incomplete: extra.incomplete === true,
+      failed: Number(extra.failed || 0),
+      reachedCreationSlot: extra.reachedCreationSlot === true,
+      createdSlot,
+      trades: Number(extra.trades || 0),
+      candles: Number(extra.candles || 0),
+      scanBefore,
+      scanOldestSlot,
+    }).catch(() => undefined);
+  };
   try {
     const result = await runWithRepairSql(async () => {
       await assertMainnetGenesis(runSignal);
@@ -1849,20 +1943,28 @@ export async function backfillSolanaCampaign(campaignAddress: string, signal?: A
           where chain_id=$1 and campaign_address=$2`,
         [SOLANA_CHAIN_ID, campaign],
       );
-      let createdSlot = Number(created.rows[0]?.created_block || 0);
+      createdSlot = Number(created.rows[0]?.created_block || createdSlot || 0);
       const fetched = await fetchSignaturesForAccount(
         campaign,
         Number.isFinite(createdSlot) && createdSlot > 0 ? createdSlot : 0,
         head,
         runSignal,
+        { before: scanBefore, pageCap: CAMPAIGN_SIGNATURE_PAGE_CAP },
       );
       if (!(createdSlot > 0) && fetched.items.length) createdSlot = fetched.items[0].slot;
       const window = createdSlot > 0 ? fetched.items.filter((item) => item.slot >= createdSlot) : fetched.items;
+      const known = await existingCampaignTradeSignatures(
+        campaign,
+        window.map((item) => item.signature),
+      );
+      const unknown = window.filter((item) => !known.has(item.signature));
+      const pending = unknown.slice(0, CAMPAIGN_INGEST_MAX_PER_TICK);
+      const ingestCapped = pending.length < unknown.length;
 
       let ingested = 0;
       let failed = 0;
-      await derivedFanoutSuppressed.run(true, async () => {
-        for (const item of window) {
+      await runWithDerivedFanoutSuppressed(async () => {
+        for (const item of pending) {
           throwIfAborted(runSignal);
           const ok = await ingestSignature(item, runSignal);
           if (ok) ingested += 1;
@@ -1871,19 +1973,27 @@ export async function backfillSolanaCampaign(campaignAddress: string, signal?: A
       });
 
       throwIfAborted(runSignal);
+      if (!ingestCapped) {
+        scanBefore = fetched.nextBefore;
+        scanOldestSlot = fetched.oldestSlot;
+      }
       const rebuilt = await rebuildSolanaDerivedFromTrades(campaign);
+      const reachedCreationSlot = fetched.reachedCreationSlot && !ingestCapped;
       return {
         campaign,
         createdSlot,
         head,
         scanned: window.length,
         ingested,
+        skippedKnown: known.size,
         failed,
         trades: rebuilt.trades,
         candles: rebuilt.candles,
-        reachedCreationSlot: fetched.reachedCreationSlot,
-        incomplete: fetched.incomplete,
+        reachedCreationSlot,
+        incomplete: !reachedCreationSlot || fetched.incomplete || ingestCapped,
         pagesScanned: fetched.pagesScanned,
+        scanBefore,
+        scanOldestSlot,
         skipped: false,
         runId: lease.runId,
       };
@@ -1895,6 +2005,11 @@ export async function backfillSolanaCampaign(campaignAddress: string, signal?: A
     status = runSignal?.aborted || (error instanceof Error && /timed out/i.test(error.message))
       ? "timeout"
       : "failed";
+    await persistProgress({
+      incomplete: true,
+      failed: 1,
+      reachedCreationSlot: false,
+    });
     throw error;
   } finally {
     if (!lease.abort.signal.aborted) lease.abort.abort();
@@ -1908,26 +2023,37 @@ export function kickSolanaCampaignHistoryBackfill(campaignAddress: string): void
     console.warn("[solana-indexer] campaign history backfill skipped; invalid PDA", campaign);
     return;
   }
+  expireStaleCampaignLeases();
   if (campaignLeases.get(campaign)?.status === "running") return;
   const last = campaignBackfillLastRunMs.get(campaign) || 0;
   if (Date.now() - last < CAMPAIGN_BACKFILL_COOLDOWN_MS) return;
-  console.log("[solana-indexer] campaign history backfill start", campaign);
-  void runWithAbortDeadline(
-    (signal) => backfillSolanaCampaign(campaign, signal),
-    CAMPAIGN_BACKFILL_DEADLINE_MS,
-    `solana campaign backfill ${campaign}`,
-  )
-    .then((result) => {
+  void (async () => {
+    const stored = await loadSolanaHistoryMeta(campaign);
+    if (stored.historyComplete && stored.repairState === "complete") return;
+    if (campaignLeases.get(campaign)?.status === "running") return;
+    console.log("[solana-indexer] campaign history backfill start", campaign);
+    try {
+      const result = await runWithAbortDeadline(
+        (signal) => backfillSolanaCampaign(campaign, signal),
+        CAMPAIGN_BACKFILL_DEADLINE_MS,
+        `solana campaign backfill ${campaign}`,
+      );
       campaignBackfillLastRunMs.set(campaign, Date.now());
       console.log("[solana-indexer] campaign history backfill", result);
-    })
-    .catch((error) => {
+    } catch (error) {
       console.warn(
         "[solana-indexer] campaign history backfill failed",
         campaign,
         error instanceof Error ? error.message : String(error),
       );
-    });
+    }
+  })().catch((error) => {
+    console.warn(
+      "[solana-indexer] campaign history backfill kick failed",
+      campaign,
+      error instanceof Error ? error.message : String(error),
+    );
+  });
 }
 
 let campaignRepairRunning = false;
@@ -1936,27 +2062,22 @@ export async function repairKnownSolanaCampaignHistory() {
   if (campaignRepairRunning) return [];
   campaignRepairRunning = true;
   try {
+    expireStaleCampaignLeases();
     const duplicated = await dedupeSolanaCurveTrades();
     const rows = await sql(
-      `select campaign_address
+      `select campaign_address, meta
          from public.campaigns
         where chain_id=$1
         order by created_block asc nulls last, campaign_address asc`,
       [SOLANA_CHAIN_ID],
     );
-    for (const row of rows.rows) {
-      const campaign = String(row.campaign_address || "").trim();
-      if (!isSolanaPublicKey(campaign)) continue;
+    for (const campaign of duplicated) {
       try {
         const rebuilt = await rebuildSolanaDerivedFromTrades(campaign);
-        console.log("[solana-indexer] derived rebuild", {
-          campaign,
-          deduped: duplicated.includes(campaign),
-          ...rebuilt,
-        });
+        console.log("[solana-indexer] duplicate trades removed", { campaign, ...rebuilt });
       } catch (error) {
         console.warn(
-          "[solana-indexer] derived rebuild failed",
+          "[solana-indexer] duplicate-trade rebuild failed",
           campaign,
           error instanceof Error ? error.message : String(error),
         );
@@ -1991,7 +2112,7 @@ export async function repairKnownSolanaCampaignHistory() {
     lastSolanaRepairAt = new Date().toISOString();
     lastSolanaRepairSummary = {
       campaigns: results.length,
-      ok: results.filter((row) => !row.error && !row.skipped && !row.incomplete).length,
+      ok: results.filter((row) => !row.error && (row.alreadyComplete || (!row.skipped && !row.incomplete))).length,
       skipped: results.filter((row) => row.skipped).length,
       failed: results.filter((row) => row.error).length,
       incomplete: results.filter((row) => row.incomplete).length,
@@ -2113,6 +2234,7 @@ export function startSolanaIndexerLoop() {
     if (tipRunning) return;
     tipRunning = true;
     try {
+      expireStaleCampaignLeases();
       await assertMainnetGenesis();
       await runTipLane(await getHeadSlot());
     } catch (error) {
@@ -2125,6 +2247,7 @@ export function startSolanaIndexerLoop() {
     if (backfillRunning) return;
     backfillRunning = true;
     try {
+      expireStaleCampaignLeases();
       await assertMainnetGenesis();
       const head = await getHeadSlot();
       await runBackfillLane(head);
