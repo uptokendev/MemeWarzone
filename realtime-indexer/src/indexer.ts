@@ -8,7 +8,7 @@ import { createLeagueFeedPublisher } from "./leagueFeed.js";
 import { recordCampaignCreatedActivity, recordTradeActivity } from "./rewards/attribution.js";
 import { upsertRewardEvent } from "./rewards/ingest.js";
 import { createStaticJsonRpcProvider, createWorkingProvider, parseRpcList } from "./rpcProvider.js";
-import { bnbCurveState } from "./bnbCurvePricing.js";
+import { bnbCurveState, parseRawTokenAmount } from "./bnbCurvePricing.js";
 import { campaignScanChunks } from "./campaignScanChunks.js";
 import { checkMilestones } from "./milestones.js";
 
@@ -785,23 +785,7 @@ async function loadBnbCurveParams(chainId: number, campaign: string): Promise<{ 
   }
 }
 
-function toRawTokenAmount(value: unknown): bigint {
-  const text = String(value ?? "0").trim();
-  if (!text) return 0n;
-  const intish = text.match(/^(-?\d+)(?:\.0+)?$/);
-  if (intish) {
-    try {
-      return BigInt(intish[1]);
-    } catch {
-      return 0n;
-    }
-  }
-  try {
-    return BigInt(text.split(".")[0] || "0");
-  } catch {
-    return 0n;
-  }
-}
+
 
 async function patchStats(chainId: number, campaign: string) {
   const r = await pool.query(
@@ -829,14 +813,15 @@ async function patchStats(chainId: number, campaign: string) {
 
   const soldRes = await pool.query(
     `select
-       coalesce(sum(case when side='buy' then token_amount_raw::numeric else 0 end),0) -
-       coalesce(sum(case when side='sell' then token_amount_raw::numeric else 0 end),0) as sold_raw
+       (coalesce(sum(case when side='buy' then token_amount_raw::numeric else 0 end),0) -
+        coalesce(sum(case when side='sell' then token_amount_raw::numeric else 0 end),0)
+       )::text as sold_raw
      from public.curve_trades
      where chain_id=$1 and campaign_address=$2`,
     [chainId, campaign.toLowerCase()]
   );
 
-  const soldRaw = toRawTokenAmount(soldRes.rows[0]?.sold_raw);
+  const soldRaw = parseRawTokenAmount(soldRes.rows[0]?.sold_raw);
   const params = await loadBnbCurveParams(chainId, campaign);
   const curve = params ? bnbCurveState(params.base, params.slope, soldRaw) : null;
   // Current token price is curve marginal spot. Fill VWAP stays on
