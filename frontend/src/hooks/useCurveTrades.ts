@@ -11,10 +11,13 @@ import {
 import { useAblyTokenChannel } from "@/hooks/useAblyTokenChannel";
 import { getBlockTimestamps, scanContractLogs } from "@/lib/rpcLogScan";
 import { indexerRowToCurvePoint } from "@/lib/chart/normalizeTrade";
+import { fetchSolanaOnChainTrades } from "@/lib/solanaOnChainTrades";
 import {
   isValidTradeTxHash,
   mergeTradePoints,
   normalizeTradeTxHash,
+  tradeDedupeKey,
+  unionIndexedAndLive,
 } from "@/lib/tradeDedupe";
 
 function resolveRealtimeApiBase(): string {
@@ -39,6 +42,8 @@ const ENABLE_TRADE_POLL = String(import.meta.env.VITE_DISABLE_TRADE_POLL || "").
 const ENABLE_ONCHAIN_TRADE_FALLBACK =
   String(import.meta.env.VITE_ENABLE_ONCHAIN_TRADE_FALLBACK || "").trim() === "1" &&
   String(import.meta.env.VITE_DISABLE_ONCHAIN_TRADE_FALLBACK || "").trim() !== "1";
+const ENABLE_SOLANA_ONCHAIN_TRADE_FALLBACK =
+  String(import.meta.env.VITE_DISABLE_SOLANA_ONCHAIN_TRADE_FALLBACK || "").trim() !== "1";
 const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
 type RealtimeChannel = any;
@@ -289,17 +294,21 @@ async function fetchOnChainTradeSnapshot(
 
 /**
  * Curve trades backed by:
- *  1) Railway realtime-indexer REST snapshot (BNB + Solana)
- *  2) EVM-only getLogs fallback
- *  3) Ably token channel
- *  4) Light HTTP polling for convergence
+ *  1) Indexer REST snapshot (authoritative history)
+ *  2) Solana campaign-PDA decode when that snapshot is empty or missing txs
+ *  3) EVM getLogs fallback (opt-in)
+ *  4) Ably / txConfirmed session-live rows not yet in the snapshot
  */
 export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOptions) {
   const enabled = opts?.enabled ?? true;
-  const [points, setPoints] = useState<CurveTradePoint[]>([]);
+  const [indexedPoints, setIndexedPoints] = useState<CurveTradePoint[]>([]);
+  const [livePoints, setLivePoints] = useState<CurveTradePoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const prevCampaignRef = useRef<string>("");
+  const indexedKeysRef = useRef<Set<string>>(new Set());
+  const indexedTxRef = useRef<Set<string>>(new Set());
+  const livePointsRef = useRef<CurveTradePoint[]>([]);
 
   const chainId = useMemo<SupportedChainId>(() => {
     const addr = String(campaignAddress || "");
@@ -321,42 +330,55 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
   const limit = Math.min(Math.max(Number(opts?.limit ?? 200), 1), 200);
   const canLoadTrades = enabled && isTradeCampaignAddress(campaignAddress, chainId);
 
-  const applySnapshot = useCallback((rows: any[]) => {
+  const rowsToPoints = useCallback((rows: any[]): CurveTradePoint[] => {
     const tokenDecimals = isSolanaChainId(chainId) ? 6 : 18;
     const nativeDecimals = isSolanaChainId(chainId) ? 9 : 18;
     const target = normalizeAddress(chainId, campaignAddress || "");
-
-    const next: CurveTradePoint[] = (rows || [])
+    return (rows || [])
       .map((r: any) =>
         indexerRowToCurvePoint(r, chainId, target, { token: tokenDecimals, native: nativeDecimals }),
       )
       .filter((t): t is CurveTradePoint => Boolean(t) && isValidTradeTxHash(t?.txHash) && Number.isFinite(Number(t?.blockNumber)));
-
-    if (!next.length) return 0;
-    setPoints((prev) => mergeTradePoints(prev, next));
-    return next.length;
   }, [campaignAddress, chainId]);
 
   const applyIndexerSnapshot = useCallback((rows: any[]) => {
-    const tokenDecimals = isSolanaChainId(chainId) ? 6 : 18;
-    const nativeDecimals = isSolanaChainId(chainId) ? 9 : 18;
-    const target = normalizeAddress(chainId, campaignAddress || "");
-    const next: CurveTradePoint[] = (rows || [])
-      .map((r: any) =>
-        indexerRowToCurvePoint(r, chainId, target, { token: tokenDecimals, native: nativeDecimals }),
-      )
-      .filter((t): t is CurveTradePoint => Boolean(t) && isValidTradeTxHash(t?.txHash) && Number.isFinite(Number(t?.blockNumber)));
-    // Indexer history + in-memory Ably/txConfirmed only. Never localStorage.
-    setPoints((prev) => mergeTradePoints(next, prev));
+    const next = rowsToPoints(rows);
+    const keys = new Set(next.map((point) => tradeDedupeKey(point)).filter(Boolean));
+    indexedKeysRef.current = keys;
+    indexedTxRef.current = new Set(next.map((point) => normalizeTradeTxHash(point.txHash)).filter(Boolean));
+    setIndexedPoints(next);
+    setLivePoints((prev) => prev.filter((point) => {
+      const key = tradeDedupeKey(point);
+      return Boolean(key) && !keys.has(key);
+    }));
     return next.length;
-  }, [campaignAddress, chainId]);
+  }, [rowsToPoints]);
+
+  const applyLivePoints = useCallback((incoming: CurveTradePoint[]) => {
+    if (!incoming.length) return 0;
+    setLivePoints((prev) => {
+      const extras = incoming.filter((point) => {
+        const key = tradeDedupeKey(point);
+        return Boolean(key) && !indexedKeysRef.current.has(key);
+      });
+      if (!extras.length) return prev;
+      return mergeTradePoints(prev, extras);
+    });
+    return incoming.length;
+  }, []);
+
+  const applyLiveRows = useCallback((rows: any[]) => applyLivePoints(rowsToPoints(rows)), [applyLivePoints, rowsToPoints]);
 
   const pullSnapshot = useCallback(async (
     signal?: AbortSignal,
     mode: "full" | "tip" = "full",
   ) => {
     if (!canLoadTrades || !campaignAddress) {
-      setPoints([]);
+      indexedKeysRef.current = new Set();
+      indexedTxRef.current = new Set();
+      livePointsRef.current = [];
+      setIndexedPoints([]);
+      setLivePoints([]);
       setLoading(false);
       setError(null);
       initialLoadedRef.current = true;
@@ -367,7 +389,7 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
     lock.current = true;
     try {
       if (!initialLoadedRef.current && mode === "full") setLoading(true);
-      let apiRows: any[] = [];
+      let indexerOk = false;
       try {
         const tokenAddress = String(opts?.tokenAddress || "").trim();
         const lookups = [campaignAddress];
@@ -375,30 +397,39 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
           lookups.push(tokenAddress);
         }
         const pages = await Promise.all(lookups.map((addr) => fetchIndexerTrades(addr, chainId, limit, signal)));
-        apiRows = pages.flat();
         if (signal?.aborted) return;
-        if (mode === "full") {
-          applyIndexerSnapshot(apiRows);
-          setLoading(false);
-          initialLoadedRef.current = true;
-          setError(null);
-          return;
-        }
-        if (apiRows.length) {
-          applySnapshot(apiRows);
-          setLoading(false);
-          initialLoadedRef.current = true;
-          setError(null);
-          return;
-        }
+        applyIndexerSnapshot(pages.flat());
+        indexerOk = true;
       } catch (apiError: any) {
         if (isAbortError(apiError)) return;
         console.warn("[useCurveTrades] indexer trade API failed", apiError);
       }
 
-      // EVM-only getLogs recovery. Do not enable this globally — Solana uses
-      // Ably `trade` + Token Details 5s curve read when the indexer is stuck.
-      if (isEvmChainId(chainId) && ENABLE_ONCHAIN_TRADE_FALLBACK) {
+      if (
+        isSolanaChainId(chainId) &&
+        ENABLE_SOLANA_ONCHAIN_TRADE_FALLBACK &&
+        (mode === "full" || !indexedKeysRef.current.size)
+      ) {
+        try {
+          const known = new Set<string>([
+            ...indexedTxRef.current,
+            ...livePointsRef.current.map((point) => normalizeTradeTxHash(point.txHash)).filter(Boolean),
+          ]);
+          const chainRows = await fetchSolanaOnChainTrades(campaignAddress, {
+            knownTxHashes: known,
+            signal,
+            limit,
+          });
+          if (signal?.aborted) return;
+          if (chainRows.length) applyLivePoints(chainRows);
+        } catch (chainError) {
+          if (!isAbortError(chainError)) {
+            console.warn("[useCurveTrades] Solana on-chain trade fallback failed", chainError);
+          }
+        }
+      }
+
+      if (isEvmChainId(chainId) && ENABLE_ONCHAIN_TRADE_FALLBACK && (mode === "full" || !indexerOk)) {
         try {
           const isDelta = highestBlockScannedRef.current > 0;
           const fallbackRows = await fetchOnChainTradeSnapshot(
@@ -411,8 +442,8 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
           );
           if (signal?.aborted) return;
           if (fallbackRows.length) {
-            applySnapshot(fallbackRows);
-            const maxBlock = Math.max(...fallbackRows.map(r => r.blockNumber));
+            applyLivePoints(fallbackRows);
+            const maxBlock = Math.max(...fallbackRows.map((row) => row.blockNumber));
             if (maxBlock > highestBlockScannedRef.current) {
               highestBlockScannedRef.current = maxBlock;
             }
@@ -434,7 +465,11 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
       setLoading(false);
       lock.current = false;
     }
-  }, [canLoadTrades, campaignAddress, applySnapshot, applyIndexerSnapshot, chainId, limit, opts?.tokenAddress]);
+  }, [canLoadTrades, campaignAddress, applyIndexerSnapshot, applyLivePoints, chainId, limit, opts?.tokenAddress]);
+
+  useEffect(() => {
+    livePointsRef.current = livePoints;
+  }, [livePoints]);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -442,7 +477,11 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
     const prev = prevCampaignRef.current;
     if (curr !== prev) {
       prevCampaignRef.current = curr;
-      setPoints([]);
+      indexedKeysRef.current = new Set();
+      indexedTxRef.current = new Set();
+      livePointsRef.current = [];
+      setIndexedPoints([]);
+      setLivePoints([]);
       setLoading(canLoadTrades);
       setError(null);
       initialLoadedRef.current = false;
@@ -469,7 +508,7 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
         (kind !== "buy" && kind !== "sell") ||
         (confirmedCampaign !== current && (!tokenKey || confirmedCampaign !== tokenKey))
       ) return;
-      if (Array.isArray(detail?.trades) && detail.trades.length) applySnapshot(detail.trades);
+      if (Array.isArray(detail?.trades) && detail.trades.length) applyLiveRows(detail.trades);
       void pullSnapshot(undefined, "tip");
       window.setTimeout(() => void pullSnapshot(undefined, "tip"), 1_500);
       window.setTimeout(() => void pullSnapshot(undefined, "tip"), 4_000);
@@ -477,7 +516,7 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
     };
     window.addEventListener("memewarzone:txConfirmed", onConfirmed as EventListener);
     return () => window.removeEventListener("memewarzone:txConfirmed", onConfirmed as EventListener);
-  }, [canLoadTrades, campaignAddress, chainId, applySnapshot, pullSnapshot]);
+  }, [canLoadTrades, campaignAddress, chainId, applyLiveRows, pullSnapshot, opts?.tokenAddress]);
 
   const ably = useAblyTokenChannel({ enabled: canLoadTrades, chainId, campaignAddress });
   useEffect(() => {
@@ -485,8 +524,8 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
     const channel: RealtimeChannel = ably.channel;
     const onTrade = (msg: any) => {
       const data = msg?.data;
-      if (Array.isArray(data)) applySnapshot(data);
-      else if (data && typeof data === "object") applySnapshot([data]);
+      if (Array.isArray(data)) applyLiveRows(data);
+      else if (data && typeof data === "object") applyLiveRows([data]);
     };
     try {
       channel.subscribe("trade", onTrade);
@@ -500,7 +539,12 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
         // ignore
       }
     };
-  }, [canLoadTrades, ably.channel, ably.missingBase, applySnapshot]);
+  }, [canLoadTrades, ably.channel, ably.missingBase, applyLiveRows]);
 
-  return { points, loading, error };
+  const points = useMemo(
+    () => unionIndexedAndLive(indexedPoints, livePoints),
+    [indexedPoints, livePoints],
+  );
+
+  return { points, loading, error, indexedPoints, livePoints };
 }

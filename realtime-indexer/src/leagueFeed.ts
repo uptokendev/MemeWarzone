@@ -7,6 +7,7 @@ export type LeagueCampaignPatch = {
   lastPriceBnb?: string | null;
   marketcapBnb?: string | null;
   vol24hBnb?: string | null;
+  athMarketcapBnb?: string | null;
 
   votes24h?: number;
   votesAllTime?: number;
@@ -146,12 +147,13 @@ export function createLeagueFeedPublisher(opts: Opts) {
     queueStats(
       chainId: number,
       campaign: string,
-      p: { lastPriceBnb: string | null; marketcapBnb: string | null; vol24hBnb: string }
+      p: { lastPriceBnb: string | null; marketcapBnb: string | null; vol24hBnb: string; athMarketcapBnb?: string | null }
     ) {
       mergePatch(chainId, campaign, {
         lastPriceBnb: p.lastPriceBnb,
         marketcapBnb: p.marketcapBnb,
         vol24hBnb: p.vol24hBnb,
+        ...(p.athMarketcapBnb != null ? { athMarketcapBnb: p.athMarketcapBnb } : {}),
       });
     },
 

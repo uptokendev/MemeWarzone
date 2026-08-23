@@ -583,6 +583,19 @@ app.post("/internal/indexer/ingest-tx", wrap(async (req, res) => {
   res.json(result);
 }));
 
+app.post("/internal/indexer/solana-backfill-campaign", wrap(async (req, res) => {
+  if (!requireInternalAuth(req, res)) return;
+  const campaign = String(
+    req.query.campaign || req.query.campaignAddress || req.body?.campaign || req.body?.campaignAddress || "",
+  ).trim();
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(campaign)) {
+    return res.status(400).json({ ok: false, error: "solana campaign PDA required" });
+  }
+  const { backfillSolanaCampaign } = await import("./solanaIndexer.js");
+  const result = await backfillSolanaCampaign(campaign);
+  res.json({ ok: true, ...result });
+}));
+
 /**
  * Ably token auth endpoint
  *
@@ -2147,6 +2160,10 @@ app.get("/api/token/:campaign/summary", wrap(async (req, res) => {
   const identity = await resolveMarketIdentityOrPassthrough(chainId, String(req.params.campaign || ""));
   const campaign = identity.campaignAddress;
 
+  await pool.query(
+    `alter table public.token_stats add column if not exists ath_marketcap_bnb double precision`,
+  );
+
   const r = await pool.query(
     `with stored as (
        select *
@@ -2180,6 +2197,7 @@ app.get("/api/token/:campaign/summary", wrap(async (req, res) => {
          when coalesce(agg.trade_count,0) > 0 and latest.price_bnb is not null then latest.price_bnb * agg.sold_tokens
          else stored.marketcap_bnb
        end as marketcap_bnb,
+       stored.ath_marketcap_bnb,
        case when coalesce(agg.trade_count,0) > 0 then agg.vol_24h_bnb else stored.vol_24h_bnb end as vol_24h_bnb,
        stored.change_5m,
        stored.change_1h,
@@ -2239,7 +2257,11 @@ async function handleTokenTrades(req: any, res: any) {
     res.json(r.rows.map((row: Record<string, unknown>) => serializeCurveTradeRow(row)));
     // EVM history can still repair its cursor in the background. Solana uses the
     // dedicated program-signature indexer and must never enter eth_getLogs recovery.
-    if (chainId !== 101) {
+    if (chainId === 101) {
+      void import("./solanaIndexer.js")
+        .then(({ kickSolanaCampaignHistoryBackfill }) => kickSolanaCampaignHistoryBackfill(campaign))
+        .catch(() => undefined);
+    } else {
       void import("./emptyTradeCursorRewind.js")
         .then(({ rewindEmptyCampaignTradeCursor }) => rewindEmptyCampaignTradeCursor(chainId, campaign))
         .catch(() => undefined);
@@ -2248,8 +2270,11 @@ async function handleTokenTrades(req: any, res: any) {
   }
 
   if (chainId === 101) {
-    // Fast empty response while the Solana V4 indexer catches up. The frontend
-    // polls and subscribes to Ably, so this converges without blocking the page.
+    // Return immediately, then scan this campaign PDA so empty books recover
+    // without blocking Token Details / WTR.
+    void import("./solanaIndexer.js")
+      .then(({ kickSolanaCampaignHistoryBackfill }) => kickSolanaCampaignHistoryBackfill(campaign))
+      .catch(() => undefined);
     return res.json([]);
   }
 
@@ -2508,11 +2533,13 @@ app.get("/api/token/:campaign/candles", wrap(async (req, res) => {
   const chainId = Number(req.query.chainId || ENV.DEFAULT_EVM_CHAIN_ID);
   const identity = await resolveMarketIdentityOrPassthrough(chainId, String(req.params.campaign || ""));
   const campaign = identity.campaignAddress;
-  const tf = String(req.query.tf || "5s");
+  const tf = String(req.query.tf || req.query.resolution || "5s");
   const limit = Math.min(Number(req.query.limit || 200), 2000);
 
   const r = await pool.query(
-    `select bucket_start, o,h,l,c,volume_bnb,trades_count
+    `select bucket_start, o,h,l,c,volume_bnb,trades_count,
+            price_o,price_h,price_l,price_c,
+            mcap_o,mcap_h,mcap_l,mcap_c
      from public.token_candles
      where chain_id=$1 and campaign_address=$2 and timeframe=$3
      order by bucket_start desc

@@ -148,3 +148,20 @@ export function mergeTradePoints(...streams: Array<CurveTradePoint[] | null | un
       Number(a.logIndex || 0) - Number(b.logIndex || 0),
   );
 }
+
+/**
+ * Indexed REST snapshot is authoritative history. Session-live rows (Ably /
+ * txConfirmed) only fill identities the snapshot does not yet contain.
+ */
+export function unionIndexedAndLive(
+  indexed: Array<CurveTradePoint> | null | undefined,
+  live: Array<CurveTradePoint> | null | undefined,
+): CurveTradePoint[] {
+  const indexedList = indexed || [];
+  const indexedKeys = new Set(indexedList.map((point) => tradeDedupeKey(point)).filter(Boolean));
+  const liveOnly = (live || []).filter((point) => {
+    const key = tradeDedupeKey(point);
+    return Boolean(key) && !indexedKeys.has(key);
+  });
+  return mergeTradePoints(indexedList, liveOnly);
+}

@@ -1125,7 +1125,9 @@ export function registerMarketContinuityRoutes(app: Express) {
         `select
            bucket_start,o,h,l,c,volume_bnb,trades_count,source_mask,
            bonding_trade_count,dex_trade_count,bonding_volume_bnb,dex_volume_bnb,
-           last_block_number,last_log_index
+           last_block_number,last_log_index,
+           price_o,price_h,price_l,price_c,
+           mcap_o,mcap_h,mcap_l,mcap_c
          from public.token_candles
          where chain_id=$1 and campaign_address=$2 and timeframe=$3
            and ($4::timestamptz is null or bucket_start >= $4)

@@ -10,6 +10,7 @@ import { candleUpsertPayload } from "./candlePublish.js";
 import { TIMEFRAMES, bucketStart, type TF } from "./timeframes.js";
 import {
   SOLANA_MAINNET_GENESIS,
+  collectAccountSignatures,
   healthStatus,
   nextBackfillCheckpoint,
   recoverFutureCursor,
@@ -28,6 +29,14 @@ const TOKEN_DECIMALS = 6;
 const TOKEN_UNITS = 10 ** TOKEN_DECIMALS;
 const PROGRAM_DATA_PREFIX = "Program data: ";
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+const CAMPAIGN_BACKFILL_COOLDOWN_MS = 60_000;
+
+/** Historical PDA replay writes durable rows only; derived candles/stats rebuild once at the end. */
+let suppressDerivedFanout = false;
+const campaignBackfillInFlight = new Set<string>();
+const campaignBackfillLastRunMs = new Map<string, number>();
+let athColumnReady = false;
 
 type RpcSignature = {
   signature: string;
@@ -652,11 +661,13 @@ async function upsertCampaign(event: CampaignCreatedEvent, slot: number, blockTi
   });
 
   // Fire-and-forget: tip lane must not wait on Ably.
-  void publishLeague(
-    SOLANA_CHAIN_ID,
-    "campaign_created",
-    buildCampaignCreatedMessage(event, slot, blockTime),
-  ).catch(() => {});
+  if (!suppressDerivedFanout) {
+    void publishLeague(
+      SOLANA_CHAIN_ID,
+      "campaign_created",
+      buildCampaignCreatedMessage(event, slot, blockTime),
+    ).catch(() => {});
+  }
 }
 
 async function touchCampaignActivity(campaign: string, at: Date) {
@@ -756,6 +767,14 @@ async function upsertCandle(campaign: string, tf: TF, bucketSec: number, priceSo
   void publishCandle(SOLANA_CHAIN_ID, campaign, candleUpsertPayload(tf, bucketSec, row)).catch(() => undefined);
 }
 
+async function ensureAthColumn() {
+  if (athColumnReady) return;
+  await pool.query(
+    `alter table public.token_stats add column if not exists ath_marketcap_bnb double precision`,
+  );
+  athColumnReady = true;
+}
+
 async function patchStats(campaign: string) {
   const latest = await pool.query(
     `with t as (
@@ -810,17 +829,49 @@ async function patchStats(campaign: string) {
     [SOLANA_CHAIN_ID, campaign, lastPrice, soldTokens, marketcap, vol24h],
   );
 
+  let athMarketcap = marketcap;
+  try {
+    await ensureAthColumn();
+    const ath = await pool.query(
+      `update public.token_stats as s
+          set ath_marketcap_bnb = greatest(
+            coalesce(s.ath_marketcap_bnb, 0),
+            coalesce($3::double precision, 0),
+            coalesce((
+              select max(mcap_h)
+                from public.token_candles
+               where chain_id=$1 and campaign_address=$2 and mcap_h is not null
+            ), 0)
+          )
+        where s.chain_id=$1 and s.campaign_address=$2
+        returning s.ath_marketcap_bnb`,
+      [SOLANA_CHAIN_ID, campaign, marketcap],
+    );
+    const indexedAth = Number(ath.rows[0]?.ath_marketcap_bnb);
+    if (Number.isFinite(indexedAth) && indexedAth > 0) athMarketcap = indexedAth;
+  } catch (error) {
+    console.warn(
+      "[solana-indexer] ATH update skipped",
+      campaign,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+
+  if (suppressDerivedFanout) return;
+
   void publishStats(SOLANA_CHAIN_ID, campaign, {
     type: "stats_patch",
     lastPriceBnb: lastPrice !== null ? String(lastPrice) : null,
     marketcapBnb: marketcap !== null ? String(marketcap) : null,
     vol24hBnb: String(vol24h),
+    athMarketcapBnb: athMarketcap !== null ? String(athMarketcap) : null,
   }).catch(() => undefined);
 
   leagueFeed.queueStats(SOLANA_CHAIN_ID, campaign, {
     lastPriceBnb: lastPrice !== null ? String(lastPrice) : null,
     marketcapBnb: marketcap !== null ? String(marketcap) : null,
     vol24hBnb: String(vol24h),
+    athMarketcapBnb: athMarketcap !== null ? String(athMarketcap) : null,
   });
 }
 
@@ -895,10 +946,12 @@ async function insertTrade(event: TokensBoughtEvent | TokensSoldEvent, signature
     price_bnb: priceNative,
     sold_tokens_after_raw: event.soldTokensAfter.toString(),
   };
-  void publishTrade(SOLANA_CHAIN_ID, campaign, realtimeRow).catch(() => undefined);
+  if (!suppressDerivedFanout) {
+    void publishTrade(SOLANA_CHAIN_ID, campaign, realtimeRow).catch(() => undefined);
+  }
 
   if (!firstFanout) {
-    await patchStats(campaign);
+    if (!suppressDerivedFanout) await patchStats(campaign);
     return;
   }
 
@@ -923,6 +976,8 @@ async function insertTrade(event: TokensBoughtEvent | TokensSoldEvent, signature
       netRaisedAfter: event.netRaisedAfter.toString(),
     },
   });
+
+  if (suppressDerivedFanout) return;
 
   leagueFeed.queueActivity(SOLANA_CHAIN_ID, campaign, Math.floor(blockTime.getTime() / 1000));
   leagueFeed.queueRaisedDelta(SOLANA_CHAIN_ID, campaign, isBuy ? nativeAmount : -nativeAmount);
@@ -1418,6 +1473,146 @@ async function ingestSignature(item: IndexedSignature): Promise<boolean> {
     }
   }
   return true;
+}
+
+function isSolanaPublicKey(value: string): boolean {
+  if (!SOLANA_ADDRESS_RE.test(value)) return false;
+  try {
+    new PublicKey(value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function fetchSignaturesForAccount(
+  address: string,
+  fromSlot: number,
+  head: number,
+): Promise<IndexedSignature[]> {
+  const pages: RpcSignature[][] = [];
+  let before: string | undefined;
+  const limit = signatureLimit();
+  const maxPages = Math.max(20, ENV.SOLANA_SIGNATURE_PAGE_LIMIT || 5);
+
+  for (let page = 0; page < maxPages; page += 1) {
+    const batch = await rpc<RpcSignature[]>("getSignaturesForAddress", [
+      address,
+      { limit, ...(before ? { before } : {}) },
+    ]);
+    if (!Array.isArray(batch) || !batch.length) {
+      pages.push([]);
+      break;
+    }
+    pages.push(batch);
+    const last = batch[batch.length - 1];
+    if (!last || last.slot < fromSlot) break;
+    before = last.signature;
+  }
+
+  return collectAccountSignatures({ pages, fromSlot, head }).items;
+}
+
+export async function rebuildSolanaDerivedFromTrades(campaign: string) {
+  const normalized = String(campaign || "").trim();
+  await pool.query(
+    `delete from public.token_candles
+      where chain_id=$1 and campaign_address=$2
+        and coalesce(dex_trade_count, 0)=0`,
+    [SOLANA_CHAIN_ID, normalized],
+  );
+  const { materializeCanonicalCandles } = await import("./canonicalCandleMaterializer.js");
+  const candles = await materializeCanonicalCandles(SOLANA_CHAIN_ID, normalized);
+  const previous = suppressDerivedFanout;
+  suppressDerivedFanout = false;
+  try {
+    await patchStats(normalized);
+  } finally {
+    suppressDerivedFanout = previous;
+  }
+  const trades = await pool.query(
+    `select count(*)::int as count
+       from public.curve_trades
+      where chain_id=$1 and campaign_address=$2`,
+    [SOLANA_CHAIN_ID, normalized],
+  );
+  return {
+    trades: Number(trades.rows[0]?.count ?? 0),
+    candles: Number(candles.candles ?? 0),
+  };
+}
+
+export async function backfillSolanaCampaign(campaignAddress: string) {
+  const campaign = String(campaignAddress || "").trim();
+  if (!isSolanaPublicKey(campaign)) {
+    throw new Error("solana campaign PDA required");
+  }
+  await assertMainnetGenesis();
+  const head = await getHeadSlot();
+  const created = await pool.query(
+    `select created_block
+       from public.campaigns
+      where chain_id=$1 and campaign_address=$2`,
+    [SOLANA_CHAIN_ID, campaign],
+  );
+  let createdSlot = Number(created.rows[0]?.created_block || 0);
+  const signatures = await fetchSignaturesForAccount(
+    campaign,
+    Number.isFinite(createdSlot) && createdSlot > 0 ? createdSlot : 0,
+    head,
+  );
+  if (!(createdSlot > 0) && signatures.length) createdSlot = signatures[0].slot;
+  const window = createdSlot > 0 ? signatures.filter((item) => item.slot >= createdSlot) : signatures;
+
+  let ingested = 0;
+  let failed = 0;
+  const previous = suppressDerivedFanout;
+  suppressDerivedFanout = true;
+  try {
+    for (const item of window) {
+      const ok = await ingestSignature(item);
+      if (ok) ingested += 1;
+      else failed += 1;
+    }
+  } finally {
+    suppressDerivedFanout = previous;
+  }
+
+  const rebuilt = await rebuildSolanaDerivedFromTrades(campaign);
+  return {
+    campaign,
+    createdSlot,
+    head,
+    scanned: window.length,
+    ingested,
+    failed,
+    trades: rebuilt.trades,
+    candles: rebuilt.candles,
+  };
+}
+
+export function kickSolanaCampaignHistoryBackfill(campaignAddress: string): void {
+  const campaign = String(campaignAddress || "").trim();
+  if (!isSolanaPublicKey(campaign)) return;
+  if (campaignBackfillInFlight.has(campaign)) return;
+  const last = campaignBackfillLastRunMs.get(campaign) || 0;
+  if (Date.now() - last < CAMPAIGN_BACKFILL_COOLDOWN_MS) return;
+  campaignBackfillInFlight.add(campaign);
+  void backfillSolanaCampaign(campaign)
+    .then((result) => {
+      console.log("[solana-indexer] campaign history backfill", result);
+    })
+    .catch((error) => {
+      console.warn(
+        "[solana-indexer] campaign history backfill failed",
+        campaign,
+        error instanceof Error ? error.message : String(error),
+      );
+    })
+    .finally(() => {
+      campaignBackfillInFlight.delete(campaign);
+      campaignBackfillLastRunMs.set(campaign, Date.now());
+    });
 }
 
 let lastLiveIngestMs = 0;

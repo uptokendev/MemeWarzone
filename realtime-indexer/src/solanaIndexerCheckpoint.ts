@@ -34,6 +34,53 @@ export function sortSignaturesAscending(items: IndexedSignature[]): IndexedSigna
   return [...items].sort((a, b) => a.slot - b.slot || a.signature.localeCompare(b.signature));
 }
 
+export type RpcSignatureLike = {
+  signature: string;
+  slot: number;
+  err?: unknown | null;
+};
+
+/**
+ * Campaign-PDA history: keep successful signatures in [fromSlot, head],
+ * oldest-first. Pagination stops once a page reaches slots before create.
+ */
+export function collectAccountSignatures(input: {
+  pages: RpcSignatureLike[][];
+  fromSlot: number;
+  head: number;
+}): { items: IndexedSignature[]; reachedHistoricalFrontier: boolean } {
+  const fromSlot = Math.max(0, Math.trunc(Number(input.fromSlot) || 0));
+  const head = Math.max(0, Math.trunc(Number(input.head) || 0));
+  const collected: IndexedSignature[] = [];
+  let reachedHistoricalFrontier = !input.pages.length;
+
+  for (const batch of input.pages) {
+    if (!batch.length) {
+      reachedHistoricalFrontier = true;
+      break;
+    }
+    for (const item of batch) {
+      if (item.err) continue;
+      if (item.slot < fromSlot) {
+        reachedHistoricalFrontier = true;
+        continue;
+      }
+      if (head > 0 && item.slot > head) continue;
+      collected.push({ signature: item.signature, slot: item.slot, err: item.err ?? null });
+    }
+    const last = batch[batch.length - 1];
+    if (!last || last.slot < fromSlot) {
+      reachedHistoricalFrontier = true;
+      break;
+    }
+  }
+
+  return {
+    items: sortSignaturesAscending(collected),
+    reachedHistoricalFrontier,
+  };
+}
+
 /**
  * Durable backfill checkpoint may move only through a successful oldest-first
  * prefix, and only when pagination actually reached the previous checkpoint
