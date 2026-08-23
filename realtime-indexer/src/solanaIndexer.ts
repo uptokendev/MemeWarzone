@@ -6,6 +6,11 @@ import { ENV } from "./env.js";
 import { createCampaignLeaseRegistry, type CampaignLeaseState } from "./solanaCampaignLease.js";
 import { createIndexerSql } from "./solanaRepairSql.js";
 import { isDerivedFanoutSuppressed, runWithDerivedFanoutSuppressed } from "./derivedFanout.js";
+import {
+  campaignHistoryComplete,
+  persistDecodedAnchorEvents,
+  shouldMarkPdaSignatureProcessed,
+} from "./solanaIngestResult.js";
 import { repairStateFromBackfill } from "./solanaHistoryStatus.js";
 import { checkMilestones } from "./milestones.js";
 import { publishCandle, publishLeague, publishStats, publishTrade } from "./ably.js";
@@ -1661,7 +1666,7 @@ export async function backfillSolanaTradeCurveState(limit = 500) {
   };
 }
 
-async function ingestSignature(item: IndexedSignature, signal?: AbortSignal): Promise<boolean> {
+async function ingestSignature(item: IndexedSignature, signal?: AbortSignal) {
   throwIfAborted(signal);
   let tx: RpcTransaction = null;
   let lastError: unknown = null;
@@ -1681,23 +1686,37 @@ async function ingestSignature(item: IndexedSignature, signal?: AbortSignal): Pr
       slot: item.slot,
       error: lastError instanceof Error ? lastError.message : String(lastError || "null"),
     });
-    return false;
+    return {
+      fetched: false,
+      decodedEvents: 0,
+      tradeEvents: 0,
+      persistedTradeEvents: 0,
+      failedEvents: 0,
+      retryableFailure: true,
+    };
   }
   const events = decodeEvents(tx.meta?.logMessages);
   const blockTime = timestampFrom(tx.blockTime ?? null);
-  for (let eventIndex = 0; eventIndex < events.length; eventIndex += 1) {
-    try {
-      await handleEvent(events[eventIndex], item.signature, eventIndex, item.slot, blockTime);
-    } catch (error) {
-      console.warn("[solana-indexer] event failed", {
-        signature: item.signature,
-        eventIndex,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      // Do not abort remaining events — a failed FeeSlices row used to skip TokensBought/Sold.
-    }
-  }
-  return true;
+  const persisted = await persistDecodedAnchorEvents({
+    events,
+    persistEvent: async (event, eventIndex) => {
+      try {
+        await handleEvent(events[eventIndex], item.signature, eventIndex, item.slot, blockTime);
+      } catch (error) {
+        console.warn("[solana-indexer] event failed", {
+          signature: item.signature,
+          eventIndex,
+          kind: event.kind,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+    },
+  });
+  return {
+    fetched: true,
+    ...persisted,
+  };
 }
 
 function isSolanaPublicKey(value: string): boolean {
@@ -1998,23 +2017,27 @@ export async function backfillSolanaCampaign(campaignAddress: string, signal?: A
       await runWithDerivedFanoutSuppressed(async () => {
         for (const item of pending) {
           throwIfAborted(runSignal);
-          const ok = await ingestSignature(item, runSignal);
-          if (ok) {
-            ingested += 1;
-            processed.push(item.signature);
-          } else {
-            failed += 1;
-          }
+          const result = await ingestSignature(item, runSignal);
+          if (result.fetched) ingested += 1;
+          if (result.retryableFailure) failed += 1;
+          if (shouldMarkPdaSignatureProcessed(result)) processed.push(item.signature);
         }
       });
       await markPdaSignaturesProcessed(campaign, processed);
 
       throwIfAborted(runSignal);
-      if (!ingestCapped) {
+      const retryableFailures = failed;
+      const unprocessedInWindow = unknown.length - processed.length;
+      if (!ingestCapped && retryableFailures === 0) {
         scanBefore = fetched.nextBefore;
         scanOldestSlot = fetched.oldestSlot;
       }
-      const reachedCreationSlot = fetched.reachedCreationSlot && !ingestCapped;
+      const reachedCreationSlot = campaignHistoryComplete({
+        reachedCreationSlot: fetched.reachedCreationSlot,
+        ingestCapped,
+        retryableFailures,
+        unprocessedInWindow,
+      });
       const rebuilt = reachedCreationSlot
         ? await rebuildSolanaDerivedFromTrades(campaign)
         : { trades: 0, candles: 0 };
@@ -2025,11 +2048,11 @@ export async function backfillSolanaCampaign(campaignAddress: string, signal?: A
         scanned: window.length,
         ingested,
         skippedKnown: known.size,
-        failed,
+        failed: retryableFailures,
         trades: rebuilt.trades,
         candles: rebuilt.candles,
         reachedCreationSlot,
-        incomplete: !reachedCreationSlot || fetched.incomplete || ingestCapped,
+        incomplete: !reachedCreationSlot,
         pagesScanned: fetched.pagesScanned,
         scanBefore,
         scanOldestSlot,
@@ -2172,8 +2195,8 @@ async function runTipLane(head: number): Promise<void> {
   const signatures = await fetchTipSignatures();
   let maxOk = 0;
   for (const item of signatures) {
-    const ok = await ingestSignature(item);
-    if (ok) maxOk = Math.max(maxOk, item.slot);
+    const result = await ingestSignature(item);
+    if (result.fetched && !result.retryableFailure) maxOk = Math.max(maxOk, item.slot);
   }
   if (maxOk > 0) {
     lastTipSlot = Math.max(lastTipSlot, maxOk);
@@ -2210,7 +2233,8 @@ async function runBackfillLane(head: number): Promise<void> {
   const maxTxPerTick = Math.max(20, Math.min(200, Number(process.env.SOLANA_INDEXER_MAX_TX_PER_TICK || 80)));
   const processed: ProcessedSignature[] = [];
   for (const item of fetched.items.slice(0, maxTxPerTick)) {
-    const ok = await ingestSignature(item);
+    const result = await ingestSignature(item);
+    const ok = result.fetched && !result.retryableFailure;
     processed.push({ ...item, ok });
     if (!ok) break;
   }
