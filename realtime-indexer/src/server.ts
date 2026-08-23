@@ -380,7 +380,7 @@ app.get("/health", async (_req, res) => {
       ok: true,
       db: r.rows[0].ok,
       // Bump when shipping indexer loop fixes so deploy can be confirmed from /health.
-      indexerBuild: "live-c4.2a-sql-fix-2026-08-23",
+      indexerBuild: "live-c4.3-history-complete-2026-08-23",
       normalScope: ENV.INDEXER_NORMAL_SCOPE,
       solana: solanaIndexerPublicHealth(),
     });
@@ -2233,6 +2233,47 @@ function serializeCurveTradeRow(row: Record<string, unknown>) {
   };
 }
 
+async function solanaHistoryEnvelope(campaign: string, items: unknown[], extra: Record<string, unknown> = {}) {
+  const [stats, campaignRow] = await Promise.all([
+    pool.query(
+      `select coalesce(max(block_number),0)::bigint as last_indexed_slot, count(*)::int as trade_count
+         from public.curve_trades
+        where chain_id=101 and campaign_address=$1`,
+      [campaign],
+    ),
+    pool.query(
+      `select created_block, meta
+         from public.campaigns
+        where chain_id=101 and campaign_address=$1
+        limit 1`,
+      [campaign],
+    ),
+  ]);
+  const stored = (campaignRow.rows[0]?.meta as any)?.solanaHistory || {};
+  let leaseRunning = false;
+  try {
+    const { isSolanaCampaignRepairRunning } = await import("./solanaIndexer.js");
+    leaseRunning = isSolanaCampaignRepairRunning(campaign);
+  } catch {
+    leaseRunning = false;
+  }
+  const { deriveSolanaHistoryComplete } = await import("./solanaHistoryStatus.js");
+  const derived = deriveSolanaHistoryComplete({
+    leaseRunning,
+    storedHistoryComplete: stored.historyComplete === true,
+    storedRepairState: stored.repairState || null,
+  });
+  return {
+    items,
+    historyComplete: derived.historyComplete,
+    lastIndexedSlot: Number(stats.rows[0]?.last_indexed_slot || 0) || null,
+    creationSlot: Number(campaignRow.rows[0]?.created_block || stored.creationSlot || 0) || null,
+    repairState: derived.repairState,
+    campaignAddress: campaign,
+    ...extra,
+  };
+}
+
 async function handleTokenTrades(req: any, res: any) {
   const chainId = Number(req.query.chainId || ENV.DEFAULT_EVM_CHAIN_ID);
   let identity = await resolveMarketIdentityOrPassthrough(chainId, String(req.params.campaign || ""));
@@ -2256,16 +2297,16 @@ async function handleTokenTrades(req: any, res: any) {
   );
 
   if ((r.rowCount ?? 0) > 0) {
-    res.json(r.rows.map((row: Record<string, unknown>) => serializeCurveTradeRow(row)));
-    // EVM history can still repair its cursor in the background. Solana uses the
-    // dedicated program-signature indexer and must never enter eth_getLogs recovery.
+    const items = r.rows.map((row: Record<string, unknown>) => serializeCurveTradeRow(row));
     if (chainId === 101) {
+      res.json(await solanaHistoryEnvelope(campaign, items));
       void import("./solanaIndexer.js")
         .then(({ kickSolanaCampaignHistoryBackfill }) => kickSolanaCampaignHistoryBackfill(campaign))
         .catch((error) => {
           console.warn("[api] solana campaign backfill kick failed", error instanceof Error ? error.message : String(error));
         });
     } else {
+      res.json(items);
       void import("./emptyTradeCursorRewind.js")
         .then(({ rewindEmptyCampaignTradeCursor }) => rewindEmptyCampaignTradeCursor(chainId, campaign))
         .catch(() => undefined);
@@ -2274,14 +2315,12 @@ async function handleTokenTrades(req: any, res: any) {
   }
 
   if (chainId === 101) {
-    // Return immediately, then scan this campaign PDA so empty books recover
-    // without blocking Token Details / WTR.
     void import("./solanaIndexer.js")
       .then(({ kickSolanaCampaignHistoryBackfill }) => kickSolanaCampaignHistoryBackfill(campaign))
       .catch((error) => {
         console.warn("[api] solana campaign backfill kick failed", error instanceof Error ? error.message : String(error));
       });
-    return res.json([]);
+    return res.json(await solanaHistoryEnvelope(campaign, []));
   }
 
   // Empty history: bounded ensure+backfill (paid RPC). Graduated tokens often need
@@ -2553,7 +2592,16 @@ app.get("/api/token/:campaign/candles", wrap(async (req, res) => {
     [chainId, campaign, tf, limit]
   );
 
-  res.json(r.rows.reverse());
+  const items = r.rows.reverse();
+  if (chainId === 101) {
+    const envelope = await solanaHistoryEnvelope(campaign, items, { timeframe: tf, candleCount: items.length });
+    envelope.historyComplete = envelope.historyComplete && items.length > 0;
+    if (envelope.historyComplete === false && envelope.repairState === "complete" && items.length === 0) {
+      envelope.repairState = "incomplete";
+    }
+    return res.json(envelope);
+  }
+  res.json(items);
 }));
 
 // ---------------------------------------------

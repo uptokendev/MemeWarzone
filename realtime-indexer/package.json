@@ -26,7 +26,7 @@
     "job:backfill-solana-trade-state": "node --enable-source-maps dist/jobs/backfillSolanaTradeCurveState.js",
     "job:backfill-solana-campaign": "node --enable-source-maps dist/jobs/backfillSolanaCampaign.js",
     "job:backfill-solana-campaign:dev": "tsx src/jobs/backfillSolanaCampaign.ts",
-    "test:solana-history": "tsx --test src/tests/solanaCampaignHistory.test.ts src/tests/solanaCampaignLease.test.ts src/tests/solanaRepairSql.test.ts src/tests/solanaIndexerCheckpoint.test.ts",
+    "test:solana-history": "tsx --test src/tests/solanaCampaignHistory.test.ts src/tests/solanaCampaignLease.test.ts src/tests/solanaRepairSql.test.ts src/tests/solanaHistoryStatus.test.ts src/tests/solanaIndexerCheckpoint.test.ts",
     "cron:generate-launch-digest": "node --enable-source-maps dist/jobs/generateLaunchDigest.js",
     "cron:generate-trending-digest": "node --enable-source-maps dist/jobs/generateTrendingDigest.js",
     "cron:generate-league-standings": "node --enable-source-maps dist/jobs/generateLeagueStandings.js",

@@ -12,6 +12,7 @@ import { useAblyTokenChannel } from "@/hooks/useAblyTokenChannel";
 import { getBlockTimestamps, scanContractLogs } from "@/lib/rpcLogScan";
 import { indexerRowToCurvePoint } from "@/lib/chart/normalizeTrade";
 import { fetchSolanaOnChainTrades } from "@/lib/solanaOnChainTrades";
+import { parseIndexerTradeBody, shouldRunSolanaHistoryFallback } from "@/lib/indexerTradeSnapshot";
 import {
   isValidTradeTxHash,
   mergeTradePoints,
@@ -142,26 +143,40 @@ function numberFromRaw(raw: bigint, decimals: number): number {
   }
 }
 
-async function fetchIndexerTrades(campaignAddress: string, chainId: number, limit: number, signal?: AbortSignal) {
+type IndexerTradeSnapshot = {
+  items: any[];
+  historyComplete: boolean | null;
+  repairState: string | null;
+  campaignAddress: string | null;
+  source: "relative" | "absolute";
+};
+
+async function fetchIndexerTrades(campaignAddress: string, chainId: number, limit: number, signal?: AbortSignal): Promise<IndexerTradeSnapshot> {
   const campaign = normalizeAddress(chainId, campaignAddress);
   const path = `/api/token/${encodeURIComponent(campaign)}/trades?chainId=${chainId}&limit=${limit}`;
   const timeout = new AbortController();
   const onParentAbort = () => timeout.abort();
   signal?.addEventListener("abort", onParentAbort, { once: true });
   const timer = setTimeout(() => timeout.abort(), isSolanaChainId(chainId) ? 7_000 : 5_000);
+  const empty: IndexerTradeSnapshot = {
+    items: [],
+    historyComplete: false,
+    repairState: "unknown",
+    campaignAddress: campaign,
+    source: "relative",
+  };
   try {
     try {
       const r = await apiFetch(path, { method: "GET", signal: timeout.signal, cache: "no-store" as RequestCache });
       if (r.ok) {
         const body = await r.json();
-        if (Array.isArray(body)) return body;
-        if (Array.isArray(body?.items)) return body.items;
+        return { ...parseIndexerTradeBody(body, chainId), source: "relative" };
       }
     } catch {
       // fall through to absolute indexer URL
     }
 
-    if (!API_BASE) return [];
+    if (!API_BASE) return empty;
     const absolute = `${API_BASE}/api/token/${encodeURIComponent(campaign)}/trades?chainId=${chainId}&limit=${limit}`;
     const r = await fetch(absolute, { method: "GET", signal: timeout.signal, cache: "no-store" });
     if (!r.ok) {
@@ -169,9 +184,7 @@ async function fetchIndexerTrades(campaignAddress: string, chainId: number, limi
       throw new Error(text || `HTTP ${r.status}`);
     }
     const body = await r.json();
-    if (Array.isArray(body)) return body;
-    if (Array.isArray(body?.items)) return body.items;
-    return [];
+    return { ...parseIndexerTradeBody(body, chainId), source: "absolute" };
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener("abort", onParentAbort);
@@ -390,15 +403,31 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
     try {
       if (!initialLoadedRef.current && mode === "full") setLoading(true);
       let indexerOk = false;
+      let indexerRows = 0;
+      let indexerLatencyMs = 0;
+      let historyComplete: boolean | null = null;
+      let repairState: string | null = null;
+      let fallbackRan = false;
+      let fallbackRows = 0;
+      let fallbackLatencyMs = 0;
       try {
-        const tokenAddress = String(opts?.tokenAddress || "").trim();
         const lookups = [campaignAddress];
-        if (tokenAddress && tokenAddress.toLowerCase() !== String(campaignAddress).toLowerCase()) {
-          lookups.push(tokenAddress);
+        if (
+          !isSolanaChainId(chainId) &&
+          opts?.tokenAddress &&
+          String(opts.tokenAddress).toLowerCase() !== String(campaignAddress).toLowerCase()
+        ) {
+          lookups.push(String(opts.tokenAddress).trim());
         }
+        const started = Date.now();
         const pages = await Promise.all(lookups.map((addr) => fetchIndexerTrades(addr, chainId, limit, signal)));
+        indexerLatencyMs = Date.now() - started;
         if (signal?.aborted) return;
-        applyIndexerSnapshot(pages.flat());
+        const snapshot = pages.reduce((best, page) => (page.items.length >= best.items.length ? page : best), pages[0]!);
+        applyIndexerSnapshot(snapshot.items);
+        indexerRows = snapshot.items.length;
+        historyComplete = snapshot.historyComplete;
+        repairState = snapshot.repairState;
         indexerOk = true;
       } catch (apiError: any) {
         if (isAbortError(apiError)) return;
@@ -407,20 +436,27 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
 
       if (
         isSolanaChainId(chainId) &&
-        ENABLE_SOLANA_ONCHAIN_TRADE_FALLBACK &&
-        (mode === "full" || !indexedKeysRef.current.size)
+        shouldRunSolanaHistoryFallback({
+          fallbackEnabled: ENABLE_SOLANA_ONCHAIN_TRADE_FALLBACK,
+          indexerOk,
+          historyComplete,
+        })
       ) {
+        fallbackRan = true;
         try {
           const known = new Set<string>([
             ...indexedTxRef.current,
             ...livePointsRef.current.map((point) => normalizeTradeTxHash(point.txHash)).filter(Boolean),
           ]);
+          const started = Date.now();
           const chainRows = await fetchSolanaOnChainTrades(campaignAddress, {
             knownTxHashes: known,
             signal,
             limit,
           });
+          fallbackLatencyMs = Date.now() - started;
           if (signal?.aborted) return;
+          fallbackRows = chainRows.length;
           if (chainRows.length) applyLivePoints(chainRows);
         } catch (chainError) {
           if (!isAbortError(chainError)) {
@@ -428,6 +464,21 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
           }
         }
       }
+
+      console.info("[useCurveTrades] snapshot", {
+        chainId,
+        campaign: campaignAddress,
+        mode,
+        indexerOk,
+        indexerRows,
+        indexerLatencyMs,
+        historyComplete,
+        repairState,
+        fallbackRan,
+        fallbackRows,
+        fallbackLatencyMs,
+        finalRows: indexedKeysRef.current.size + livePointsRef.current.length,
+      });
 
       if (isEvmChainId(chainId) && ENABLE_ONCHAIN_TRADE_FALLBACK && (mode === "full" || !indexerOk)) {
         try {

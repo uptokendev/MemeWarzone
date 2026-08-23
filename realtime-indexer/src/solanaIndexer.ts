@@ -6,6 +6,7 @@ import { pool } from "./db.js";
 import { ENV } from "./env.js";
 import { createCampaignLeaseRegistry, type CampaignLeaseState } from "./solanaCampaignLease.js";
 import { createIndexerSql } from "./solanaRepairSql.js";
+import { repairStateFromBackfill } from "./solanaHistoryStatus.js";
 import { checkMilestones } from "./milestones.js";
 import { publishCandle, publishLeague, publishStats, publishTrade } from "./ably.js";
 import { createLeagueFeedPublisher } from "./leagueFeed.js";
@@ -73,6 +74,46 @@ export function solanaIndexerPublicHealth() {
     lastRepair: lastSolanaRepairSummary,
     leases: campaignLeases.list(),
   };
+}
+
+export function isSolanaCampaignRepairRunning(campaign: string): boolean {
+  return campaignLeases.get(String(campaign || "").trim())?.status === "running";
+}
+
+async function persistSolanaHistoryMeta(
+  campaign: string,
+  result: {
+    skipped?: boolean;
+    incomplete?: boolean;
+    failed?: number;
+    reachedCreationSlot?: boolean;
+    createdSlot?: number;
+    trades?: number;
+    candles?: number;
+  },
+) {
+  const derived = repairStateFromBackfill(result);
+  if (!derived) return;
+  await pool.query(
+    `update public.campaigns
+        set meta = coalesce(meta, '{}'::jsonb) || $3::jsonb,
+            updated_at = now()
+      where chain_id=$1 and campaign_address=$2`,
+    [
+      SOLANA_CHAIN_ID,
+      campaign,
+      JSON.stringify({
+        solanaHistory: {
+          historyComplete: derived.historyComplete,
+          repairState: derived.repairState,
+          creationSlot: Number(result.createdSlot || 0) || null,
+          tradeCount: Number(result.trades || 0),
+          candleCount: Number(result.candles || 0),
+          at: new Date().toISOString(),
+        },
+      }),
+    ],
+  );
 }
 
 /** Historical PDA replay writes durable rows only; derived candles/stats rebuild once at the end. */
@@ -1802,6 +1843,7 @@ export async function backfillSolanaCampaign(campaignAddress: string, signal?: A
       };
     });
     status = runSignal?.aborted ? "timeout" : "success";
+    await persistSolanaHistoryMeta(campaign, result).catch(() => undefined);
     return result;
   } catch (error) {
     status = runSignal?.aborted || (error instanceof Error && /timed out/i.test(error.message))
