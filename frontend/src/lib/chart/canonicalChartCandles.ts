@@ -95,9 +95,11 @@ export function assembleMarketCapCandles(input: {
   liveMcapNative?: number | null;
   intervalSeconds: number;
   nowSec?: number;
+  fallbackRows?: CanonicalCandleRow[];
 }): CanonicalCandleRow[] {
   if (!input.historyReady) return [];
-  const rows = marketCandlesForChart(input.marketCandles, "marketcap", input.denomination, input.nativeUsd);
+  const canonical = marketCandlesForChart(input.marketCandles, "marketcap", input.denomination, input.nativeUsd);
+  const rows = canonical.length ? canonical : input.fallbackRows || [];
   if (!rows.length) return [];
   const liveNative = Number(input.liveMcapNative);
   if (!Number.isFinite(liveNative) || liveNative <= 0) return rows;

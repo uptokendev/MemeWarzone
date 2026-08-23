@@ -111,6 +111,39 @@ test("market-cap candles ignore trade-series reconstruction and skip live-only c
     }),
     [],
   );
+
+  const fromTrades = [{ time: 1_200, open: 0, high: 0.0012, low: 0, close: 0.0011 }];
+  const fallback = assembleMarketCapCandles({
+    marketCandles: [],
+    denomination: "BNB",
+    nativeUsd: 850,
+    historyReady: true,
+    intervalSeconds: 60,
+    nowSec: 1_200,
+    fallbackRows: fromTrades,
+  });
+  assert.equal(fallback.length, 1);
+  assert.equal(fallback[0]?.open, 0);
+
+  const canonicalWins = assembleMarketCapCandles({
+    marketCandles: [
+      candle({
+        bucket_start: "2026-08-23T20:00:00.000Z",
+        mcap_o: "0",
+        mcap_h: "0.0012",
+        mcap_l: "0",
+        mcap_c: "0.0011",
+      }),
+    ],
+    denomination: "BNB",
+    nativeUsd: 850,
+    historyReady: true,
+    intervalSeconds: 60,
+    nowSec: Date.parse("2026-08-23T20:00:30Z") / 1000,
+    fallbackRows: [{ time: 1_200, open: 0.9, high: 0.9, low: 0.9, close: 0.9 }],
+  });
+  assert.equal(canonicalWins[0]?.close, 0.0011);
+  assert.equal(canonicalWins[0]?.open, 0);
 });
 
 test("live overlay patches only the active latest bucket with spot×sold", () => {

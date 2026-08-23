@@ -1437,7 +1437,7 @@ const TokenDetails = () => {
     [campaign?.campaign, campaignAddr, isSolanaPage, resolvedCampaignAddress],
   );
 
-  const { points: liveCurvePoints, error: liveCurveError } = useCurveTrades(
+  const { points: liveCurvePoints, loading: liveCurveLoading, error: liveCurveError } = useCurveTrades(
     hasValidCampaignAddress ? resolvedCampaignAddress : undefined,
     {
       chainId: chainIdForStorage,
@@ -4493,7 +4493,7 @@ const toSeconds = (ts: number): number => {
                   onResolutionChange={setMarketResolution}
                   denomination={displayDenom}
                   historyReady={!unifiedMarket.loading}
-                  loading={unifiedMarket.loading}
+                  loading={unifiedMarket.loading || ((marketTradePoints?.length ?? 0) === 0 && liveCurveLoading)}
                   error={unifiedMarket.error || ((marketTradePoints?.length ?? 0) > 0 ? null : liveCurveError || topazMarket.error)}
                 />
               </div>

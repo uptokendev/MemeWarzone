@@ -273,8 +273,12 @@ export function useUnifiedMarket(input: {
       if (requestId !== requestRef.current || signal?.aborted) return;
 
       // Missing market-state row is normal for pre-handoff / older campaigns.
-      // Do not surface as an outage — the chart keeps its local trade fallback.
+      // Still keep any candles/trades from the snapshot — do not blank the chart.
       if (!nextState && !nextSummary) {
+        setTrades((current) => mergeTrades(current, nextTrades?.items || [], input.chainId));
+        setCandles((current) => applyRestCandles(current, nextCandles?.items || []));
+        setGraduationMarker(nextCandles?.graduationMarker || null);
+        setServerTime(nextCandles?.serverTime || null);
         setState((prev) =>
           prev || {
             chainId: input.chainId,

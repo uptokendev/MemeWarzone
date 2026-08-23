@@ -1,5 +1,6 @@
 import { apiFetch } from "@/lib/apiBase";
 import { encodeCampaignPath } from "@/lib/chart/normalizeTrade";
+import { parseMarketCandlePayload } from "@/lib/marketCandlePayload";
 
 export type MarketStage =
   | "BONDING"
@@ -217,23 +218,51 @@ export function fetchMarketTrades(
   );
 }
 
-export function fetchMarketCandles(
+export async function fetchMarketCandles(
   campaignAddress: string,
   chainId: number,
   resolution: string,
   options?: { limit?: number; from?: number; to?: number; signal?: AbortSignal },
 ) {
-  const params = new URLSearchParams({
+  const limit = String(options?.limit ?? 2500);
+  const canonicalParams = new URLSearchParams({
     chainId: String(chainId),
     resolution,
-    limit: String(options?.limit ?? 2500),
+    limit,
   });
-  if (options?.from != null) params.set("from", String(options.from));
-  if (options?.to != null) params.set("to", String(options.to));
-  return readJson<MarketCandleResponse>(
-    `/api/token/${campaignPath(campaignAddress, chainId)}/canonical-market-candles?${params.toString()}`,
-    options?.signal,
-  );
+  const durableParams = new URLSearchParams({
+    chainId: String(chainId),
+    tf: resolution,
+    limit,
+  });
+  if (options?.from != null) {
+    canonicalParams.set("from", String(options.from));
+    durableParams.set("from", String(options.from));
+  }
+  if (options?.to != null) {
+    canonicalParams.set("to", String(options.to));
+    durableParams.set("to", String(options.to));
+  }
+
+  const encoded = campaignPath(campaignAddress, chainId);
+  try {
+    const canonical = parseMarketCandlePayload(
+      await readJson(
+        `/api/token/${encoded}/canonical-market-candles?${canonicalParams.toString()}`,
+        options?.signal,
+      ),
+    ) as MarketCandleResponse;
+    if (canonical.items.length) return canonical;
+  } catch {
+    // /candles is the durable indexer history the Token Details chart already trusts.
+  }
+
+  return parseMarketCandlePayload(
+    await readJson(
+      `/api/token/${encoded}/candles?${durableParams.toString()}`,
+      options?.signal,
+    ),
+  ) as MarketCandleResponse;
 }
 
 export function fetchMarketSummary(campaignAddress: string, chainId: number, signal?: AbortSignal) {

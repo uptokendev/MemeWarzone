@@ -523,8 +523,10 @@ export function UnifiedMarketChart({
     return tradeSeriesPoints(curvePoints, metric, chartDenomination, chartUsd, marketState, graduationTimeSec, chainId, currentBondingSoldRaw, solanaCurvePricing, solanaGraduated, liveSupplyWhole);
   }, [chainId, currentBondingSoldRaw, solanaCurvePricing, solanaGraduated, liveSupplyWhole, curvePoints, denomination, graduationTimeSec, marketState, metric, nativeUsd]);
 
+  const waitingForUsd = denomination === "USD" && nativeUsd <= 0;
+
   const data = useMemo(() => {
-    if (!historyReady) return [] as CandleRow[];
+    if (!historyReady || waitingForUsd) return [] as CandleRow[];
 
     const livePrice = Number(livePriceNative);
     const liveSupply = Number(liveSupplyWhole);
@@ -541,6 +543,18 @@ export function UnifiedMarketChart({
         ? livePrice * liveSupply
         : null;
 
+    const tradeFallback = buildCandles(seriesPoints, intervalSeconds, {
+      extendToNow: false,
+      maxGapFillBuckets: 0,
+      genesisFromZero: metric === "marketcap",
+    }).candles.map((row) => ({
+      time: Number(row.time),
+      open: row.open,
+      high: row.high,
+      low: row.low,
+      close: row.close,
+    }));
+
     if (metric === "marketcap") {
       return toChartRows(
         assembleMarketCapCandles({
@@ -550,24 +564,13 @@ export function UnifiedMarketChart({
           historyReady,
           liveMcapNative,
           intervalSeconds,
+          fallbackRows: tradeFallback,
         }),
       );
     }
 
     const fromServer = toChartRows(marketCandlesForChart(marketCandles, metric, denomination, nativeUsd));
-    const fromTrades = toChartRows(
-      buildCandles(seriesPoints, intervalSeconds, {
-        extendToNow: false,
-        maxGapFillBuckets: 0,
-        genesisFromZero: false,
-      }).candles.map((row) => ({
-        time: Number(row.time),
-        open: row.open,
-        high: row.high,
-        low: row.low,
-        close: row.close,
-      })),
-    );
+    const fromTrades = toChartRows(tradeFallback);
     const authoritative = fromServer.length ? fromServer : fromTrades;
     const canPatchLivePrice =
       Number.isFinite(livePrice) && livePrice > 0 && (denomination !== "USD" || nativeUsd > 0);
@@ -599,6 +602,7 @@ export function UnifiedMarketChart({
     nativeUsd,
     seriesPoints,
     solana,
+    waitingForUsd,
   ]);
 
   const graduationMarkers = useMemo((): SeriesMarker<Time>[] => {
@@ -867,6 +871,7 @@ export function UnifiedMarketChart({
   const avatarSrc = resolvedAvatar || "/placeholder.svg";
   const displayName = resolvedName || shortenAddr(String(creatorAddress || ""));
   const hasData = data.length > 0;
+  const showChartLoading = Boolean(loading) || !historyReady || waitingForUsd;
   const serverClock = new Date(serverNowMs).toLocaleTimeString("en-GB", {
     timeZone: "UTC",
     hour: "2-digit",
@@ -984,7 +989,7 @@ export function UnifiedMarketChart({
           ) : null}
         </div>
 
-        {!hasData && <div className="absolute inset-0 flex items-center justify-center p-4 text-center text-xs text-muted-foreground">{loading || !historyReady ? "Loading market history…" : error ? error : "No trades in the loaded window yet. Buys/sells appear as continuous candles once history is recovered."}</div>}
+        {!hasData && <div className="absolute inset-0 flex items-center justify-center p-4 text-center text-xs text-muted-foreground">{showChartLoading ? "Loading market history…" : error ? error : "No trades in the loaded window yet. Buys/sells appear as continuous candles once history is recovered."}</div>}
       </div>
 
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-white/10 px-2 py-1.5 text-[10px] text-muted-foreground">
