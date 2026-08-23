@@ -71,6 +71,8 @@ export type UnifiedMarketChartProps = {
   solanaGraduated?: boolean;
   livePriceNative?: number | null;
   liveSupplyWhole?: number | null;
+  /** Header current mcap in native units. Chart live close must use this, not a second formula. */
+  liveMcapNative?: number | null;
   nativeUsdPrice?: number | null;
   resolution: UnifiedChartResolution;
   onResolutionChange: (resolution: UnifiedChartResolution) => void;
@@ -355,7 +357,12 @@ function formatValue(value: number, metric: UnifiedChartMetric, denomination: Un
   if (abs >= 1_000_000) return `${prefix}${(value / 1_000_000).toFixed(2)}M${suffix}`;
   if (abs >= 1_000) return `${prefix}${(value / 1_000).toFixed(2)}K${suffix}`;
   if (metric === "price" && abs > 0 && abs < 0.01) return `${prefix}${trimFixed(value, nativeSymbol === "SOL" ? 12 : 10)}${suffix}`;
-  if (metric === "marketcap" && denomination !== "USD" && abs > 0 && abs < 1) return `${trimFixed(value, nativeSymbol === "SOL" ? 6 : 5)}${suffix}`;
+  if (metric === "marketcap" && denomination === "USD") {
+    if (abs >= 1) return `$${value.toFixed(2)}`;
+    if (abs >= 0.01) return `$${value.toFixed(4)}`;
+    return `$${value.toFixed(6)}`;
+  }
+  if (metric === "marketcap" && abs > 0 && abs < 1) return `${trimFixed(value, nativeSymbol === "SOL" ? 6 : 5)}${suffix}`;
   return `${prefix}${value.toFixed(metric === "price" && abs < 1 ? 8 : 2)}${suffix}`;
 }
 
@@ -417,6 +424,7 @@ export function UnifiedMarketChart({
   solanaGraduated = false,
   livePriceNative = null,
   liveSupplyWhole = null,
+  liveMcapNative = null,
   nativeUsdPrice,
   resolution,
   onResolutionChange,
@@ -530,18 +538,22 @@ export function UnifiedMarketChart({
 
     const livePrice = Number(livePriceNative);
     const liveSupply = Number(liveSupplyWhole);
+    const headerMcap = Number(liveMcapNative);
     const canLiveMcap =
       Number.isFinite(livePrice) &&
       livePrice > 0 &&
       Number.isFinite(liveSupply) &&
       liveSupply >= 0;
+    // Prefer the same native mcap the Token Details header already computed.
     // Bonding: spot × sold. Graduated Solana: Meteora spot × sold. Do not patch
     // graduated BNB with curve sold × DEX price — that is a different market.
-    const liveMcapNative = !canLiveMcap
-      ? null
-      : solana || !isGraduatedStage(marketState)
-        ? livePrice * liveSupply
-        : null;
+    const overlayMcapNative = Number.isFinite(headerMcap) && headerMcap > 0
+      ? headerMcap
+      : !canLiveMcap
+        ? null
+        : solana || !isGraduatedStage(marketState)
+          ? livePrice * liveSupply
+          : null;
 
     const tradeFallback = buildCandles(seriesPoints, intervalSeconds, {
       extendToNow: false,
@@ -562,7 +574,7 @@ export function UnifiedMarketChart({
           denomination,
           nativeUsd,
           historyReady,
-          liveMcapNative,
+          liveMcapNative: overlayMcapNative,
           intervalSeconds,
           fallbackRows: tradeFallback,
         }),
@@ -594,6 +606,7 @@ export function UnifiedMarketChart({
     denomination,
     historyReady,
     intervalSeconds,
+    liveMcapNative,
     livePriceNative,
     liveSupplyWhole,
     marketCandles,

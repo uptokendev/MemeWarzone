@@ -2128,17 +2128,40 @@ const toSeconds = (ts: number): number => {
   }, [isSolanaPage, nativeUsdPrice]);
 
   const liveMarketCapNative = useMemo(() => {
-    const fromLabel = parseBnbLabel(tokenData.marketCap);
-    if (fromLabel != null && fromLabel > 0) return fromLabel;
-    if (rtStats?.marketcapBnb != null && Number.isFinite(rtStats.marketcapBnb) && rtStats.marketcapBnb > 0) {
-      return Number(rtStats.marketcapBnb);
+    if (
+      !isSolanaPage &&
+      !contractGraduatedEarly &&
+      metrics?.currentPrice != null &&
+      metrics.currentPrice > 0n &&
+      metrics.sold != null &&
+      metrics.sold > 0n
+    ) {
+      try {
+        const mcWei = (metrics.currentPrice * metrics.sold) / 10n ** 18n;
+        const n = Number(ethers.formatEther(mcWei));
+        if (Number.isFinite(n) && n > 0) return n;
+      } catch {
+        // fall through to the shared spot × sold float path
+      }
     }
     if (pageLivePriceNative != null && pageLiveSupplyWhole != null && pageLiveSupplyWhole > 0) {
       const product = pageLivePriceNative * pageLiveSupplyWhole;
-      return Number.isFinite(product) && product > 0 ? product : null;
+      if (Number.isFinite(product) && product > 0) return product;
     }
-    return fromLabel;
-  }, [pageLivePriceNative, pageLiveSupplyWhole, rtStats?.marketcapBnb, tokenData.marketCap]);
+    if (rtStats?.marketcapBnb != null && Number.isFinite(rtStats.marketcapBnb) && rtStats.marketcapBnb > 0) {
+      return Number(rtStats.marketcapBnb);
+    }
+    return parseBnbLabel(tokenData.marketCap);
+  }, [
+    contractGraduatedEarly,
+    isSolanaPage,
+    metrics?.currentPrice,
+    metrics?.sold,
+    pageLivePriceNative,
+    pageLiveSupplyWhole,
+    rtStats?.marketcapBnb,
+    tokenData.marketCap,
+  ]);
 
   const marketCapDisplay = useMemo(() => {
     if (displayDenom === "BNB") {
@@ -4485,6 +4508,7 @@ const toSeconds = (ts: number): number => {
                   solanaGraduated={Boolean(isSolanaPage && solanaCurve?.graduated)}
                   livePriceNative={pageLivePriceNative}
                   liveSupplyWhole={pageLiveSupplyWhole}
+                  liveMcapNative={liveMarketCapNative}
                   nativeUsdPrice={nativeUsd}
                   marketKey={`${chainIdForStorage}:${resolvedCampaignAddress || localTradeStorageAddress || ""}`}
                   expanded={chartExpanded}

@@ -76,7 +76,7 @@ test("market-cap candles ignore trade-series reconstruction and skip live-only c
   });
   assert.equal(assembled.length, 1);
   assert.equal(assembled[0]?.open, 0);
-  assert.equal(assembled[0]?.close, 0.0011);
+  assert.equal(assembled[0]?.close, 0.001216);
 
   assert.deepEqual(
     assembleMarketCapCandles({
@@ -146,7 +146,7 @@ test("market-cap candles ignore trade-series reconstruction and skip live-only c
   assert.equal(canonicalWins[0]?.open, 0);
 });
 
-test("live overlay patches only the active latest bucket with spot×sold", () => {
+test("live overlay patches the latest series candle with spot×sold", () => {
   const base = [
     { time: 1_140, open: 0, high: 2, low: 0, close: 1.5 },
     { time: 1_200, open: 1.5, high: 1.8, low: 1.4, close: 1.64 },
@@ -158,7 +158,8 @@ test("live overlay patches only the active latest bucket with spot×sold", () =>
   assert.equal(patched[1]?.open, 1.5);
 
   const laterBucket = patchActiveLatestBucket(base, 1.81, 60, 1_260);
-  assert.equal(laterBucket[1]?.close, 1.64);
+  assert.equal(laterBucket[0]?.close, 1.5);
+  assert.equal(laterBucket[1]?.close, 1.81);
   assert.equal(laterBucket.length, 2);
 });
 
@@ -195,6 +196,31 @@ test("sell-to-zero bonding candle is kept so the next buy can open at zero", () 
   assert.equal(rows[1]?.close, 0);
   assert.equal(rows[1]?.low, 0);
   assert.equal(rows[2]?.open, 0);
+});
+
+test("latest chart close equals header spot×sold in USD", () => {
+  const headerNative = 0.001216086475611437;
+  const usd = 699.5;
+  const rows = assembleMarketCapCandles({
+    marketCandles: [
+      candle({
+        bucket_start: "2026-08-22T12:16:00.000Z",
+        mcap_o: "0",
+        mcap_h: "0.0011",
+        mcap_l: "0",
+        mcap_c: "0.0011",
+      }),
+    ],
+    denomination: "USD",
+    nativeUsd: usd,
+    historyReady: true,
+    liveMcapNative: headerNative,
+    intervalSeconds: 60,
+    nowSec: Date.parse("2026-08-23T21:00:00Z") / 1000,
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]?.close, headerNative * usd);
+  assert.equal(rows[0]?.open, 0);
 });
 
 test("ATH is max of canonical highs and current mcap", () => {

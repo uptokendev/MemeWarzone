@@ -62,20 +62,20 @@ export function marketCandlesForChart(
 }
 
 /**
- * Live spot×sold (or live price) may patch only the active latest bucket.
- * Never appends a current-only candle onto an empty/partial history.
+ * Live spot×sold may patch the latest series candle so the chart live label
+ * matches the header. Older candles stay untouched. Never appends a new bar.
  */
 export function patchActiveLatestBucket(
   rows: CanonicalCandleRow[],
   liveValue: number,
-  intervalSeconds: number,
-  nowSec: number,
+  intervalSeconds?: number,
+  nowSec?: number,
 ): CanonicalCandleRow[] {
+  void intervalSeconds;
+  void nowSec;
   if (!rows.length || !Number.isFinite(liveValue) || liveValue <= 0) return rows;
-  if (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0) return rows;
-  const bucketSec = Math.floor(nowSec / intervalSeconds) * intervalSeconds;
   const last = rows[rows.length - 1];
-  if (!last || last.time !== bucketSec) return rows;
+  if (!last) return rows;
   return rows.map((row, index) => {
     if (index !== rows.length - 1) return row;
     return {
