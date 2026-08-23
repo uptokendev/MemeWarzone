@@ -16,8 +16,8 @@ import { normalizeTradeTxHash } from "@/lib/tradeDedupe";
 
 export type MarketResolution = "1s" | "5s" | "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d";
 
-// Durable server market data is additive to the existing curve/browser fallback.
-// When canonical candles exist, UnifiedMarketChart treats them as the source of truth.
+// Durable server market data is the chart source of truth for Market Cap.
+// UnifiedMarketChart does not reconstruct historical mcap from the trade tape.
 const ENABLE_MARKET_API = isMarketContinuityApiEnabled();
 
 function tradeKey(trade: Pick<MarketTrade, "txHash" | "logIndex">) {
@@ -207,7 +207,7 @@ export function useUnifiedMarket(input: {
   const [candles, setCandles] = useState<MarketCandle[]>([]);
   const [graduationMarker, setGraduationMarker] = useState<any | null>(null);
   const [serverTime, setServerTime] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const requestRef = useRef(0);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);

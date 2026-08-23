@@ -23,6 +23,12 @@ import {
 } from "@/lib/solanaCampaignRead";
 import { isSyntheticLogIndex, isValidTradeTxHash } from "@/lib/tradeDedupe";
 import { timestampSec } from "@/lib/chart/normalizeTrade";
+import {
+  assembleMarketCapCandles,
+  marketCandlesForChart,
+  patchActiveLatestBucket,
+  shouldEstablishChartRange,
+} from "@/lib/chart/canonicalChartCandles";
 
 export type UnifiedChartResolution = "1s" | "5s" | "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d";
 export type UnifiedChartMetric = "marketcap" | "price";
@@ -71,6 +77,8 @@ export type UnifiedMarketChartProps = {
   denomination?: UnifiedChartDenomination;
   loading?: boolean;
   error?: string | null;
+  /** True after the first durable candle snapshot has arrived. Do not fit before this. */
+  historyReady?: boolean;
   marketKey?: string;
   serverTime?: string | null;
   expanded?: boolean;
@@ -298,78 +306,14 @@ function formatCrosshairTime(time: Time): string {
   })} UTC`;
 }
 
-function marketCandlesForChart(
-  rows: MarketCandle[],
-  state: MarketState | null,
-  metric: UnifiedChartMetric,
-  denomination: UnifiedChartDenomination,
-  nativeUsd: number,
-  tokenDecimals: number,
-): CandleRow[] {
-  void state;
-  void tokenDecimals;
-  if (denomination === "USD" && nativeUsd <= 0) return [];
-  const denomMul = denomination === "USD" ? nativeUsd : 1;
-
-  return (rows || [])
-    .filter((row) => Number(row.trades_count || 0) > 0 || Number(row.bonding_trade_count || 0) > 0 || Number(row.dex_trade_count || 0) > 0)
-    .map((row): CandleRow | null => {
-      const timestamp = Math.floor(new Date(row.bucket_start).getTime() / 1000);
-      const canonicalValues = metric === "marketcap"
-        ? [row.mcap_o, row.mcap_h, row.mcap_l, row.mcap_c]
-        : [row.price_o, row.price_h, row.price_l, row.price_c];
-      const hasCanonical = canonicalValues.every((value) => value != null && value !== "" && Number.isFinite(Number(value)) && Number(value) >= 0);
-
-      let values: number[];
-      if (hasCanonical) {
-        values = canonicalValues.map((value) => Number(value));
-      } else if (metric === "marketcap") {
-        // Bonding o/h/l/c are native *price*. Do not multiply by post-burn or
-        // current supply — that invented $7 chart mcap against a $5 headline.
-        return null;
-      } else {
-        values = [row.o, row.h, row.l, row.c].map((value) => Number(value));
-      }
-
-      const [open, high, low, close] = values.map((value) => value * denomMul);
-      if (![open, high, low, close].every(Number.isFinite)) return null;
-      if (metric === "price" && (open <= 0 || high <= 0 || low <= 0 || close <= 0)) return null;
-      if (metric === "marketcap" && (open < 0 || high <= 0 || low < 0 || close <= 0)) return null;
-      return { time: timestamp as Time, open, high, low, close };
-    })
-    .filter((row): row is CandleRow => row != null);
-}
-
-function authoritativeCandleData(client: CandleRow[], server: CandleRow[]): CandleRow[] {
-  const byTime = new Map<number, CandleRow>();
-  const ingest = (rows: CandleRow[]) => {
-    for (const row of rows) {
-      const time = Number(row.time);
-      if (!Number.isFinite(time)) continue;
-      const prev = byTime.get(time);
-      if (!prev) {
-        byTime.set(time, { ...row, time: time as Time });
-        continue;
-      }
-      prev.high = Math.max(prev.high, row.high);
-      prev.low = Math.min(prev.low, row.low);
-      prev.close = row.close;
-    }
-  };
-  ingest(server);
-  ingest(client);
-  return [...byTime.keys()]
-    .sort((a, b) => a - b)
-    .map((time) => {
-      const row = byTime.get(time)!;
-      return {
-        time: time as Time,
-        open: row.open,
-        high: Math.max(row.open, row.high, row.low, row.close),
-        low: Math.min(row.open, row.high, row.low, row.close),
-        close: row.close,
-      };
-    });
+function toChartRows(rows: Array<{ time: number; open: number; high: number; low: number; close: number }>): CandleRow[] {
+  return rows.map((row) => ({
+    time: row.time as Time,
+    open: row.open,
+    high: row.high,
+    low: row.low,
+    close: row.close,
+  }));
 }
 
 function candlePolarity(row: CandleRow | undefined): number {
@@ -479,6 +423,7 @@ export function UnifiedMarketChart({
   denomination = "USD",
   loading,
   error,
+  historyReady = true,
   marketKey = "default",
   serverTime = null,
   expanded,
@@ -501,6 +446,8 @@ export function UnifiedMarketChart({
   const markerPluginRef = useRef<ReturnType<typeof createSeriesMarkers> | null>(null);
   const previousDataRef = useRef<CandleRow[]>([]);
   const initialRangeSetRef = useRef(false);
+  const userInteractedRef = useRef(false);
+  const programmaticRangeRef = useRef(false);
   const creatorPinsRef = useRef<CreatorTradePin[]>([]);
   const [placedPins, setPlacedPins] = useState<PlacedCreatorPin[]>([]);
   const [hoverPinId, setHoverPinId] = useState<string | null>(null);
@@ -577,63 +524,72 @@ export function UnifiedMarketChart({
   }, [chainId, currentBondingSoldRaw, solanaCurvePricing, solanaGraduated, liveSupplyWhole, curvePoints, denomination, graduationTimeSec, marketState, metric, nativeUsd]);
 
   const data = useMemo(() => {
-    const hasHistoricalData = seriesPoints.length > 0 || (marketCandles || []).length > 0;
+    if (!historyReady) return [] as CandleRow[];
+
     const livePrice = Number(livePriceNative);
     const liveSupply = Number(liveSupplyWhole);
-    const hasGraduatedSolanaSpot =
-      solana &&
-      solanaGraduated &&
+    const canLiveMcap =
       Number.isFinite(livePrice) &&
       livePrice > 0 &&
-      (metric === "price" || (Number.isFinite(liveSupply) && liveSupply > 0)) &&
-      (denomination !== "USD" || nativeUsd > 0);
-    const hasLiveBnbBondingSpot =
-      !solana &&
-      !isGraduatedStage(marketState) &&
-      Number.isFinite(livePrice) &&
-      livePrice > 0 &&
-      (metric === "price" || (Number.isFinite(liveSupply) && liveSupply > 0));
-    const hasLiveSolanaBondingSpot =
-      solana &&
-      !solanaGraduated &&
-      Number.isFinite(livePrice) &&
-      livePrice > 0 &&
-      (metric === "price" || (Number.isFinite(liveSupply) && liveSupply > 0));
-    const hasLiveSpotOverlay = hasGraduatedSolanaSpot || hasLiveBnbBondingSpot || hasLiveSolanaBondingSpot;
+      Number.isFinite(liveSupply) &&
+      liveSupply >= 0;
+    // Bonding: spot × sold. Graduated Solana: Meteora spot × sold. Do not patch
+    // graduated BNB with curve sold × DEX price — that is a different market.
+    const liveMcapNative = !canLiveMcap
+      ? null
+      : solana || !isGraduatedStage(marketState)
+        ? livePrice * liveSupply
+        : null;
 
-    if (!hasHistoricalData && !hasLiveSpotOverlay) return [] as CandleRow[];
-
-    const fromTrades = buildCandles(seriesPoints, intervalSeconds, {
-      extendToNow: false,
-      maxGapFillBuckets: 0,
-      genesisFromZero: false,
-    }).candles as CandleRow[];
-    const fromServer = marketCandlesForChart(marketCandles, marketState, metric, denomination, nativeUsd, tokenDecimals);
-    const authoritative = authoritativeCandleData(fromTrades, fromServer);
-
-    // Live overlay for: graduated Solana (Meteora spot), BNB bonding, and Solana
-    // bonding (curve spot). Only mutates the last bucket wick/close — do not remount
-    // the chart or reset the visible range. Durable history stays server-authoritative.
-    if (!hasLiveSpotOverlay) return authoritative;
-
-    const liveNativeValue = metric === "marketcap" ? livePrice * liveSupply : livePrice;
-    const liveValue = denomination === "USD" && nativeUsd > 0 ? liveNativeValue * nativeUsd : liveNativeValue;
-    if (!Number.isFinite(liveValue) || liveValue <= 0) return authoritative;
-
-    const nowSec = Math.floor(Date.now() / 1000);
-    const bucketSec = Math.floor(nowSec / intervalSeconds) * intervalSeconds;
-    const rows = authoritative.map((row) => ({ ...row }));
-    const last = rows[rows.length - 1];
-    const lastSec = last ? timeToSec(last.time) : 0;
-
-    if (last && lastSec === bucketSec) {
-      last.high = Math.max(last.high, liveValue, last.open, last.close);
-      last.low = Math.min(last.low, liveValue, last.open, last.close);
-      last.close = liveValue;
+    if (metric === "marketcap") {
+      return toChartRows(
+        assembleMarketCapCandles({
+          marketCandles,
+          denomination,
+          nativeUsd,
+          historyReady,
+          liveMcapNative,
+          intervalSeconds,
+        }),
+      );
     }
-    return rows;
+
+    const fromServer = toChartRows(marketCandlesForChart(marketCandles, metric, denomination, nativeUsd));
+    const fromTrades = toChartRows(
+      buildCandles(seriesPoints, intervalSeconds, {
+        extendToNow: false,
+        maxGapFillBuckets: 0,
+        genesisFromZero: false,
+      }).candles.map((row) => ({
+        time: Number(row.time),
+        open: row.open,
+        high: row.high,
+        low: row.low,
+        close: row.close,
+      })),
+    );
+    const authoritative = fromServer.length ? fromServer : fromTrades;
+    const canPatchLivePrice =
+      Number.isFinite(livePrice) && livePrice > 0 && (denomination !== "USD" || nativeUsd > 0);
+    if (!canPatchLivePrice) return authoritative;
+    const liveValue = denomination === "USD" && nativeUsd > 0 ? livePrice * nativeUsd : livePrice;
+    return toChartRows(
+      patchActiveLatestBucket(
+        authoritative.map((row) => ({
+          time: timeToSec(row.time),
+          open: row.open,
+          high: row.high,
+          low: row.low,
+          close: row.close,
+        })),
+        liveValue,
+        intervalSeconds,
+        Math.floor(Date.now() / 1000),
+      ),
+    );
   }, [
     denomination,
+    historyReady,
     intervalSeconds,
     livePriceNative,
     liveSupplyWhole,
@@ -643,8 +599,6 @@ export function UnifiedMarketChart({
     nativeUsd,
     seriesPoints,
     solana,
-    solanaGraduated,
-    tokenDecimals,
   ]);
 
   const graduationMarkers = useMemo((): SeriesMarker<Time>[] => {
@@ -776,7 +730,10 @@ export function UnifiedMarketChart({
     chartRef.current = chart;
     seriesRef.current = series;
     markerPluginRef.current = createSeriesMarkers(series, []);
-    const onVisible = () => repositionCreatorPins();
+    const onVisible = () => {
+      if (initialRangeSetRef.current && !programmaticRangeRef.current) userInteractedRef.current = true;
+      repositionCreatorPins();
+    };
     chart.timeScale().subscribeVisibleLogicalRangeChange(onVisible);
     chart.timeScale().subscribeVisibleTimeRangeChange(onVisible);
     const observer = new ResizeObserver(() => {
@@ -796,6 +753,7 @@ export function UnifiedMarketChart({
       markerPluginRef.current = null;
       previousDataRef.current = [];
       initialRangeSetRef.current = false;
+      userInteractedRef.current = false;
     };
   }, []);
 
@@ -827,7 +785,11 @@ export function UnifiedMarketChart({
     });
   }, [denomination, metric, nativeSymbol, solana]);
 
-  useEffect(() => { initialRangeSetRef.current = false; }, [intervalSeconds]);
+  useEffect(() => {
+    initialRangeSetRef.current = false;
+    userInteractedRef.current = false;
+    previousDataRef.current = [];
+  }, [intervalSeconds, marketKey, metric, denomination]);
 
   useEffect(() => {
     const series = seriesRef.current;
@@ -839,14 +801,35 @@ export function UnifiedMarketChart({
     const appendedBar = previous.length > 0 && data.length === previous.length + 1 && Number(data[data.length - 1]?.time || 0) > Number(previous[previous.length - 1]?.time || 0);
     const polarityFlipped = candlePolarity(previous[previous.length - 1]) !== candlePolarity(data[data.length - 1]);
     const incremental = canUpdateIncrementally(previous, data) && !polarityFlipped;
+    const rangePlan = shouldEstablishChartRange({
+      historyReady,
+      candleCount: data.length,
+      initialHistoryFitted: initialRangeSetRef.current,
+      userInteracted: userInteractedRef.current,
+      previousCandleCount: previous.length,
+      previousFirstTime: previous.length ? timeToSec(previous[0].time) : null,
+      nextFirstTime: data.length ? timeToSec(data[0].time) : null,
+    });
+
+    if (!historyReady || data.length === 0) {
+      if (previous.length) {
+        try { series.setData([]); } catch { /* keep last painted snapshot */ }
+      }
+      previousDataRef.current = data;
+      initialRangeSetRef.current = false;
+      setPlacedPins([]);
+      return;
+    }
 
     try {
-      if (incremental) {
+      if (incremental && !rangePlan.fit) {
         series.update(data[data.length - 1] as any);
       } else {
         series.setData(data as any);
-        if (initialRangeSetRef.current && visibleBefore && data.length > 0) {
+        if (initialRangeSetRef.current && visibleBefore && !rangePlan.fit) {
+          programmaticRangeRef.current = true;
           try { chart.timeScale().setVisibleLogicalRange(visibleBefore); } catch { /* invalidated by snapshot/timeframe */ }
+          requestAnimationFrame(() => { programmaticRangeRef.current = false; });
         }
       }
     } catch {
@@ -861,18 +844,21 @@ export function UnifiedMarketChart({
       try { chart.priceScale("right").applyOptions({ autoScale: true, scaleMargins: { top: 0.20, bottom: 0.12 } }); } catch { /* ignore */ }
     }
 
-    if (data.length === 0) { initialRangeSetRef.current = false; setPlacedPins([]); return; }
-    if (!initialRangeSetRef.current) {
+    if (rangePlan.fit) {
       const width = containerRef.current?.getBoundingClientRect().width || 800;
       const slotsThatFit = Math.max(MIN_VISIBLE_SLOTS, Math.min(MAX_VISIBLE_SLOTS, Math.floor(width / desiredBarPx)));
+      programmaticRangeRef.current = true;
       chart.timeScale().applyOptions({ barSpacing: desiredBarPx, minBarSpacing: MIN_BAR_SPACING, rightOffset: 10 });
       chart.timeScale().setVisibleLogicalRange({ from: data.length - slotsThatFit, to: data.length + 6 });
       initialRangeSetRef.current = true;
-    } else if (appendedBar && wasFollowingRealtime) {
+      requestAnimationFrame(() => { programmaticRangeRef.current = false; });
+    } else if (appendedBar && wasFollowingRealtime && !userInteractedRef.current) {
+      programmaticRangeRef.current = true;
       try { chart.timeScale().scrollToRealTime(); } catch { /* ignore */ }
+      requestAnimationFrame(() => { programmaticRangeRef.current = false; });
     }
     requestAnimationFrame(() => repositionCreatorPins());
-  }, [autoScaleEnabled, data, desiredBarPx, repositionCreatorPins]);
+  }, [autoScaleEnabled, data, desiredBarPx, historyReady, repositionCreatorPins]);
 
   useEffect(() => { markerPluginRef.current?.setMarkers(graduationMarkers); }, [graduationMarkers]);
   useEffect(() => { repositionCreatorPins(); }, [creatorPins, denomination, metric, repositionCreatorPins]);
@@ -893,16 +879,26 @@ export function UnifiedMarketChart({
     const chart = chartRef.current;
     if (!chart || !data.length) return;
     const bars = Math.max(20, Math.min(data.length, Math.ceil(seconds / Math.max(1, intervalSeconds))));
+    userInteractedRef.current = true;
+    programmaticRangeRef.current = true;
     try { chart.timeScale().setVisibleLogicalRange({ from: data.length - bars - 1, to: data.length + 6 }); } catch { /* ignore */ }
-    requestAnimationFrame(() => repositionCreatorPins());
+    requestAnimationFrame(() => {
+      programmaticRangeRef.current = false;
+      repositionCreatorPins();
+    });
   };
 
   const goLive = () => {
+    userInteractedRef.current = true;
+    programmaticRangeRef.current = true;
     try { chartRef.current?.timeScale().scrollToRealTime(); } catch { /* ignore */ }
     if (autoScaleEnabled) {
       try { chartRef.current?.priceScale("right").applyOptions({ autoScale: true }); } catch { /* ignore */ }
     }
-    requestAnimationFrame(() => repositionCreatorPins());
+    requestAnimationFrame(() => {
+      programmaticRangeRef.current = false;
+      repositionCreatorPins();
+    });
   };
 
   return (
@@ -988,7 +984,7 @@ export function UnifiedMarketChart({
           ) : null}
         </div>
 
-        {!hasData && <div className="absolute inset-0 flex items-center justify-center p-4 text-center text-xs text-muted-foreground">{loading ? "Loading trade history…" : error ? error : "No trades in the loaded window yet. Buys/sells appear as continuous candles once history is recovered."}</div>}
+        {!hasData && <div className="absolute inset-0 flex items-center justify-center p-4 text-center text-xs text-muted-foreground">{loading || !historyReady ? "Loading market history…" : error ? error : "No trades in the loaded window yet. Buys/sells appear as continuous candles once history is recovered."}</div>}
       </div>
 
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-white/10 px-2 py-1.5 text-[10px] text-muted-foreground">

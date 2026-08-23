@@ -55,6 +55,7 @@ import { TokenComments } from "@/components/token/TokenComments";
 import { TokenWarRoom } from "@/components/token/TokenWarRoom";
 import { AthBar } from "@/components/token/AthBar";
 import { canonicalAthUsd } from "@/lib/canonicalMarket";
+import { canonicalAthNativeFromCandles } from "@/lib/chart/canonicalChartCandles";
 import { UpvoteDialog } from "@/components/token/UpvoteDialog";
 import { useWallet } from "@/contexts/WalletContext";
 import { followCampaign, unfollowCampaign, isFollowingCampaign } from "@/lib/followApi";
@@ -1436,7 +1437,7 @@ const TokenDetails = () => {
     [campaign?.campaign, campaignAddr, isSolanaPage, resolvedCampaignAddress],
   );
 
-  const { points: liveCurvePoints, loading: liveCurveLoading, error: liveCurveError } = useCurveTrades(
+  const { points: liveCurvePoints, error: liveCurveError } = useCurveTrades(
     hasValidCampaignAddress ? resolvedCampaignAddress : undefined,
     {
       chainId: chainIdForStorage,
@@ -4392,6 +4393,9 @@ const toSeconds = (ts: number): number => {
                 currentLabel={marketCapUsdLabel ?? undefined}
                 canonicalAthUsd={canonicalAthUsd(
                   liveMarketCapNative != null && nativeUsd ? liveMarketCapNative * nativeUsd : 0,
+                  nativeUsd
+                    ? canonicalAthNativeFromCandles(unifiedMarket.candles, liveMarketCapNative ?? 0) * nativeUsd
+                    : 0,
                 )}
                 storageKey={`ath:${String(chainIdForStorage)}:${isSolanaPage ? String((campaignAddress ?? campaign?.campaign ?? "")) : String((campaignAddress ?? campaign?.campaign ?? "")).toLowerCase()}`}
                 className="w-full min-w-0"
@@ -4488,16 +4492,9 @@ const toSeconds = (ts: number): number => {
                   resolution={marketResolution}
                   onResolutionChange={setMarketResolution}
                   denomination={displayDenom}
-                  loading={
-                    (marketTradePoints?.length ?? 0) > 0
-                      ? false
-                      : liveCurveLoading || unifiedMarket.loading || topazMarket.loading
-                  }
-                  error={
-                    (marketTradePoints?.length ?? 0) > 0
-                      ? null
-                      : liveCurveError || unifiedMarket.error || topazMarket.error
-                  }
+                  historyReady={!unifiedMarket.loading}
+                  loading={unifiedMarket.loading}
+                  error={unifiedMarket.error || ((marketTradePoints?.length ?? 0) > 0 ? null : liveCurveError || topazMarket.error)}
                 />
               </div>
             </div>

@@ -161,7 +161,8 @@ export function ContinuousMarketChartPanel({
           resolution={resolution}
           onResolutionChange={setResolution}
           denomination={denomination}
-          loading={market.loading}
+          historyReady={!market.unifiedMarket.loading}
+          loading={market.unifiedMarket.loading}
           error={market.error}
           marketKey={`${chainId}:${campaignAddress || tokenAddress || ""}`}
           expanded={chartExpanded}
