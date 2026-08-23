@@ -1768,17 +1768,17 @@ async function dedupeSolanaCurveTrades(campaign?: string): Promise<string[]> {
 export async function rebuildSolanaDerivedFromTrades(campaign: string) {
   const normalized = String(campaign || "").trim();
   await dedupeSolanaCurveTrades(normalized);
+  const started = await sql(`select clock_timestamp() as rebuild_started_at`);
+  const rebuildStartedAt = started.rows[0]?.rebuild_started_at;
   const { materializeCanonicalCandles } = await import("./canonicalCandleMaterializer.js");
   const candles = await materializeCanonicalCandles(SOLANA_CHAIN_ID, normalized);
-  if (Number(candles.candles ?? 0) > 0) {
-    await sql(
-      `delete from public.token_candles
-        where chain_id=$1 and campaign_address=$2
-          and coalesce(dex_trade_count, 0)=0
-          and coalesce(canonical_updated_at, to_timestamp(0)) < now() - interval '2 seconds'`,
-      [SOLANA_CHAIN_ID, normalized],
-    );
-  }
+  await sql(
+    `delete from public.token_candles
+      where chain_id=$1 and campaign_address=$2
+        and coalesce(dex_trade_count, 0)=0
+        and coalesce(canonical_updated_at, to_timestamp(0)) < $3::timestamptz`,
+    [SOLANA_CHAIN_ID, normalized, rebuildStartedAt],
+  );
   await patchStats(normalized);
   const trades = await sql(
     `select count(*)::int as count
@@ -1937,18 +1937,6 @@ export async function repairKnownSolanaCampaignHistory() {
   campaignRepairRunning = true;
   try {
     const duplicated = await dedupeSolanaCurveTrades();
-    for (const campaign of duplicated) {
-      try {
-        const rebuilt = await rebuildSolanaDerivedFromTrades(campaign);
-        console.log("[solana-indexer] duplicate trades removed", { campaign, ...rebuilt });
-      } catch (error) {
-        console.warn(
-          "[solana-indexer] duplicate-trade rebuild failed",
-          campaign,
-          error instanceof Error ? error.message : String(error),
-        );
-      }
-    }
     const rows = await sql(
       `select campaign_address
          from public.campaigns
@@ -1956,6 +1944,24 @@ export async function repairKnownSolanaCampaignHistory() {
         order by created_block asc nulls last, campaign_address asc`,
       [SOLANA_CHAIN_ID],
     );
+    for (const row of rows.rows) {
+      const campaign = String(row.campaign_address || "").trim();
+      if (!isSolanaPublicKey(campaign)) continue;
+      try {
+        const rebuilt = await rebuildSolanaDerivedFromTrades(campaign);
+        console.log("[solana-indexer] derived rebuild", {
+          campaign,
+          deduped: duplicated.includes(campaign),
+          ...rebuilt,
+        });
+      } catch (error) {
+        console.warn(
+          "[solana-indexer] derived rebuild failed",
+          campaign,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
     const results: Array<Record<string, unknown>> = [];
     for (const row of rows.rows) {
       const campaign = String(row.campaign_address || "").trim();

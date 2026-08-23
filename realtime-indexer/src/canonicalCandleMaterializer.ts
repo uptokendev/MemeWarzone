@@ -4,10 +4,11 @@ import { ENV } from "./env.js";
 import { createWorkingProvider, parseRpcList } from "./rpcProvider.js";
 import { TIMEFRAMES, bucketStart, type TF } from "./timeframes.js";
 import { BNB_WAD, bnbCurveState } from "./bnbCurvePricing.js";
+import { bondingCandleConflictSetSql } from "./canonicalCandleRebuild.js";
 
 const LOOP_SYMBOL = Symbol.for("memewarzone.canonicalCandleMaterializerStarted");
 const globalState = globalThis as any;
-const VERSION = 3;
+const VERSION = 4;
 const WAD = BNB_WAD;
 const LAMPORTS_PER_SOL = 1_000_000_000;
 const DEFAULT_SOLANA_RPC = "https://api.mainnet-beta.solana.com";
@@ -384,16 +385,7 @@ async function writeBucket(chainId: number, campaign: string, candle: CanonicalB
        $17,now(),now()
      )
      on conflict(chain_id,campaign_address,timeframe,bucket_start) do update set
-       price_o=excluded.price_o,
-       price_h=excluded.price_h,
-       price_l=excluded.price_l,
-       price_c=excluded.price_c,
-       mcap_o=excluded.mcap_o,
-       mcap_h=excluded.mcap_h,
-       mcap_l=excluded.mcap_l,
-       mcap_c=excluded.mcap_c,
-       canonical_version=excluded.canonical_version,
-       canonical_updated_at=now()
+       ${bondingCandleConflictSetSql()}
      where coalesce(public.token_candles.dex_trade_count,0)=0`,
     [
       chainId,
