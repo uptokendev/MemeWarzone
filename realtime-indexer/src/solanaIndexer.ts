@@ -1768,14 +1768,17 @@ async function dedupeSolanaCurveTrades(campaign?: string): Promise<string[]> {
 export async function rebuildSolanaDerivedFromTrades(campaign: string) {
   const normalized = String(campaign || "").trim();
   await dedupeSolanaCurveTrades(normalized);
-  await sql(
-    `delete from public.token_candles
-      where chain_id=$1 and campaign_address=$2
-        and coalesce(dex_trade_count, 0)=0`,
-    [SOLANA_CHAIN_ID, normalized],
-  );
   const { materializeCanonicalCandles } = await import("./canonicalCandleMaterializer.js");
   const candles = await materializeCanonicalCandles(SOLANA_CHAIN_ID, normalized);
+  if (Number(candles.candles ?? 0) > 0) {
+    await sql(
+      `delete from public.token_candles
+        where chain_id=$1 and campaign_address=$2
+          and coalesce(dex_trade_count, 0)=0
+          and coalesce(canonical_updated_at, to_timestamp(0)) < now() - interval '2 seconds'`,
+      [SOLANA_CHAIN_ID, normalized],
+    );
+  }
   await patchStats(normalized);
   const trades = await sql(
     `select count(*)::int as count

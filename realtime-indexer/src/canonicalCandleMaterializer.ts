@@ -192,6 +192,7 @@ async function solanaRpc<T>(method: string, params: unknown[]): Promise<T> {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        signal: AbortSignal.timeout(8_000),
       });
       if (!response.ok) throw new Error(`Solana RPC ${method} HTTP ${response.status}`);
       const body = await response.json() as { result?: T; error?: { message?: string } };
