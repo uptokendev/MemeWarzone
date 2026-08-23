@@ -6,6 +6,7 @@ import { publishCandle, publishStats, publishTrade } from "./ably.js";
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
 import { createLeagueFeedPublisher } from "./leagueFeed.js";
+import { candleUpsertPayload } from "./candlePublish.js";
 import { TIMEFRAMES, bucketStart, type TF } from "./timeframes.js";
 
 const SOLANA_CHAIN_ID = 101;
@@ -350,7 +351,7 @@ async function upsertCandle(
   const mcapSol = Number.isFinite(fixedSupplyWhole) && fixedSupplyWhole > 0
     ? priceSol * fixedSupplyWhole
     : null;
-  await pool.query(
+  const written = await pool.query(
     `insert into public.token_candles(
        chain_id,campaign_address,timeframe,bucket_start,o,h,l,c,volume_bnb,trades_count,
        source_mask,bonding_trade_count,dex_trade_count,bonding_volume_bnb,dex_volume_bnb,
@@ -393,7 +394,8 @@ async function upsertCandle(
        mcap_c=coalesce(excluded.mcap_c,public.token_candles.mcap_c),
        canonical_version=greatest(coalesce(public.token_candles.canonical_version,0),excluded.canonical_version),
        canonical_updated_at=now(),
-       updated_at=now()`,
+       updated_at=now()
+     returning o,h,l,c,volume_bnb,trades_count`,
     [
       SOLANA_CHAIN_ID,
       campaign,
@@ -406,13 +408,15 @@ async function upsertCandle(
       mcapSol,
     ],
   );
-  void publishCandle(SOLANA_CHAIN_ID, campaign, {
-    type: "candle_upsert",
-    tf,
-    bucket: bucketSec,
-    c: String(priceSol),
-    v: String(volumeSol),
-  }).catch(() => undefined);
+  const row = written.rows[0] || {
+    o: priceSol,
+    h: priceSol,
+    l: priceSol,
+    c: priceSol,
+    volume_bnb: volumeSol,
+    trades_count: 1,
+  };
+  void publishCandle(SOLANA_CHAIN_ID, campaign, candleUpsertPayload(tf, bucketSec, row)).catch(() => undefined);
 }
 
 async function patchStats(campaign: string) {

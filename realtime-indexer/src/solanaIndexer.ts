@@ -6,6 +6,7 @@ import { checkMilestones } from "./milestones.js";
 import { publishCandle, publishLeague, publishStats, publishTrade } from "./ably.js";
 import { createLeagueFeedPublisher } from "./leagueFeed.js";
 import { buildCampaignCreatedMessage } from "./solanaLeaguePublish.js";
+import { candleUpsertPayload } from "./candlePublish.js";
 import { TIMEFRAMES, bucketStart, type TF } from "./timeframes.js";
 import {
   SOLANA_MAINNET_GENESIS,
@@ -259,6 +260,27 @@ const EVENT_DECODERS = new Map<string, Decoder>([
     squad: r.u64(),
     protocol: r.u64(),
   })],
+  [eventDiscriminator("FeeSlicesRouted"), (r) => {
+    const campaign = r.pubkey();
+    const trader = r.pubkey();
+    const side = r.u8();
+    const routeProfile = r.u8();
+    r.u64();
+    return {
+      kind: "FeeSlicesAccrued" as const,
+      campaign,
+      trader,
+      side,
+      routeProfile,
+      feeLamports: r.u64(),
+      weekly: r.u64(),
+      monthly: r.u64(),
+      recruiter: r.u64(),
+      airdrop: r.u64(),
+      squad: r.u64(),
+      protocol: r.u64(),
+    };
+  }],
   [eventDiscriminator("FeeEscrowInitialized"), (r) => ({
     kind: "FeeEscrowInitialized",
     campaign: r.pubkey(),
@@ -696,7 +718,7 @@ async function insertActivityEvent(row: {
 }
 
 async function upsertCandle(campaign: string, tf: TF, bucketSec: number, priceSol: number, volumeSol: number) {
-  await pool.query(
+  const written = await pool.query(
     `insert into public.token_candles(
        chain_id,campaign_address,timeframe,bucket_start,o,h,l,c,volume_bnb,trades_count
      ) values($1,$2,$3,$4,$5,$5,$5,$5,$6,1)
@@ -706,17 +728,20 @@ async function upsertCandle(campaign: string, tf: TF, bucketSec: number, priceSo
        c=excluded.c,
        volume_bnb=public.token_candles.volume_bnb + excluded.volume_bnb,
        trades_count=public.token_candles.trades_count + 1,
-       updated_at=now()`,
+       updated_at=now()
+     returning o,h,l,c,volume_bnb,trades_count`,
     [SOLANA_CHAIN_ID, campaign, tf, new Date(bucketSec * 1000), priceSol, volumeSol],
   );
 
-  void publishCandle(SOLANA_CHAIN_ID, campaign, {
-    type: "candle_upsert",
-    tf,
-    bucket: bucketSec,
-    c: String(priceSol),
-    v: String(volumeSol),
-  }).catch(() => undefined);
+  const row = written.rows[0] || {
+    o: priceSol,
+    h: priceSol,
+    l: priceSol,
+    c: priceSol,
+    volume_bnb: volumeSol,
+    trades_count: 1,
+  };
+  void publishCandle(SOLANA_CHAIN_ID, campaign, candleUpsertPayload(tf, bucketSec, row)).catch(() => undefined);
 }
 
 async function patchStats(campaign: string) {
@@ -798,13 +823,13 @@ async function insertTrade(event: TokensBoughtEvent | TokensSoldEvent, signature
   const nativeAmount = toSol(nativeRaw);
   const priceNative = tokenAmount > 0 ? nativeAmount / tokenAmount : null;
 
-  // A replay of an already indexed Solana trade is a backfill operation only.
-  // Persist the authoritative post-trade curve state from the Anchor event,
-  // then stop so candles/volume/activity are never counted twice.
-  const backfilled = await pool.query(
+  // Only complete *partial* rows (missing sold_tokens_after_raw). A match on a
+  // fully processed row used to return before publish/candles/stats forever.
+  const completedPartial = await pool.query(
     `update public.curve_trades
         set sold_tokens_after_raw=$4
       where chain_id=$1 and tx_hash=$2 and log_index=$3
+        and sold_tokens_after_raw is null
       returning tx_hash`,
     [
       SOLANA_CHAIN_ID,
@@ -814,35 +839,56 @@ async function insertTrade(event: TokensBoughtEvent | TokensSoldEvent, signature
     ],
   );
 
-  if ((backfilled.rowCount ?? 0) > 0) return;
+  let firstFanout = (completedPartial.rowCount ?? 0) > 0;
+  if (!firstFanout) {
+    const inserted = await pool.query(
+      `insert into public.curve_trades(
+         chain_id,campaign_address,tx_hash,log_index,block_number,block_time,
+         side,wallet,token_amount_raw,bnb_amount_raw,token_amount,bnb_amount,price_bnb,
+         sold_tokens_after_raw
+       ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+       on conflict (chain_id,tx_hash,log_index) do nothing
+       returning tx_hash`,
+      [
+        SOLANA_CHAIN_ID,
+        campaign,
+        signature,
+        logIndex,
+        slot,
+        blockTime,
+        isBuy ? "buy" : "sell",
+        wallet,
+        tokenRaw.toString(),
+        nativeRaw.toString(),
+        tokenAmount,
+        nativeAmount,
+        priceNative,
+        event.soldTokensAfter.toString(),
+      ],
+    );
+    firstFanout = (inserted.rowCount ?? 0) > 0;
+  }
 
-  const inserted = await pool.query(
-    `insert into public.curve_trades(
-       chain_id,campaign_address,tx_hash,log_index,block_number,block_time,
-       side,wallet,token_amount_raw,bnb_amount_raw,token_amount,bnb_amount,price_bnb,
-       sold_tokens_after_raw
-     ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
-     on conflict (chain_id,tx_hash,log_index) do nothing
-     returning tx_hash`,
-    [
-      SOLANA_CHAIN_ID,
-      campaign,
-      signature,
-      logIndex,
-      slot,
-      blockTime,
-      isBuy ? "buy" : "sell",
-      wallet,
-      tokenRaw.toString(),
-      nativeRaw.toString(),
-      tokenAmount,
-      nativeAmount,
-      priceNative,
-      event.soldTokensAfter.toString(),
-    ],
-  );
+  const realtimeRow = {
+    tx_hash: signature,
+    log_index: logIndex,
+    block_number: slot,
+    block_time: blockTime.toISOString(),
+    side: isBuy ? "buy" : "sell",
+    wallet,
+    token_amount_raw: tokenRaw.toString(),
+    bnb_amount_raw: nativeRaw.toString(),
+    token_amount: tokenAmount,
+    bnb_amount: nativeAmount,
+    price_bnb: priceNative,
+    sold_tokens_after_raw: event.soldTokensAfter.toString(),
+  };
+  void publishTrade(SOLANA_CHAIN_ID, campaign, realtimeRow).catch(() => undefined);
 
-  if ((inserted.rowCount ?? 0) === 0) return;
+  if (!firstFanout) {
+    await patchStats(campaign);
+    return;
+  }
 
   await touchCampaignActivity(campaign, blockTime);
   await insertActivityEvent({
@@ -865,22 +911,6 @@ async function insertTrade(event: TokensBoughtEvent | TokensSoldEvent, signature
       netRaisedAfter: event.netRaisedAfter.toString(),
     },
   });
-
-  const realtimeRow = {
-    tx_hash: signature,
-    log_index: logIndex,
-    block_number: slot,
-    block_time: blockTime.toISOString(),
-    side: isBuy ? "buy" : "sell",
-    wallet,
-    token_amount_raw: tokenRaw.toString(),
-    bnb_amount_raw: nativeRaw.toString(),
-    token_amount: tokenAmount,
-    bnb_amount: nativeAmount,
-    price_bnb: priceNative,
-    sold_tokens_after_raw: event.soldTokensAfter.toString(),
-  };
-  void publishTrade(SOLANA_CHAIN_ID, campaign, realtimeRow).catch(() => undefined);
 
   leagueFeed.queueActivity(SOLANA_CHAIN_ID, campaign, Math.floor(blockTime.getTime() / 1000));
   leagueFeed.queueRaisedDelta(SOLANA_CHAIN_ID, campaign, isBuy ? nativeAmount : -nativeAmount);
@@ -1365,7 +1395,7 @@ async function ingestSignature(item: IndexedSignature): Promise<boolean> {
         eventIndex,
         error: error instanceof Error ? error.message : String(error),
       });
-      return false;
+      // Do not abort remaining events — a failed FeeSlices row used to skip TokensBought/Sold.
     }
   }
   return true;
