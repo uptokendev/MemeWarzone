@@ -627,6 +627,15 @@ const TokenDetails = () => {
       routeId: campaignAddress,
     }),
   );
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const queryChainId = Number(params.get("chainId") || "");
+    if (queryChainId !== 56 && queryChainId !== 101) return;
+    params.delete("chainId");
+    const next = params.toString();
+    navigate({ pathname: location.pathname, search: next ? `?${next}` : "" }, { replace: true });
+  }, [location.pathname, location.search, navigate]);
   const chainIdForStorage = pageChainId;
 
   useEffect(() => {
