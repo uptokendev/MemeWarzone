@@ -375,12 +375,14 @@ app.get("/healthz", (_req, res) => {
 app.get("/health", async (_req, res) => {
   try {
     const r = await pool.query("select 1 as ok");
+    const { solanaIndexerPublicHealth } = await import("./solanaIndexer.js");
     res.json({
       ok: true,
       db: r.rows[0].ok,
       // Bump when shipping indexer loop fixes so deploy can be confirmed from /health.
-      indexerBuild: "live-c4-pda-repair-2026-08-23",
+      indexerBuild: "live-c4-rpc-fallback-2026-08-23",
       normalScope: ENV.INDEXER_NORMAL_SCOPE,
+      solana: solanaIndexerPublicHealth(),
     });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e?.message || String(e) });

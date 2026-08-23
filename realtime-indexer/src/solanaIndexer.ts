@@ -23,6 +23,11 @@ const SOLANA_CHAIN_ID = 101;
 const leagueFeed = createLeagueFeedPublisher({ pool, flushMs: 500 });
 leagueFeed.start();
 const DEFAULT_SOLANA_RPC = "https://api.mainnet-beta.solana.com";
+const FALLBACK_SOLANA_RPCS = [
+  "https://api.mainnet-beta.solana.com",
+  "https://solana-rpc.publicnode.com",
+  "https://solana.drpc.org",
+];
 const DEFAULT_PROGRAM_ID = "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt";
 const LAMPORTS_PER_SOL = 1_000_000_000;
 const TOKEN_DECIMALS = 6;
@@ -31,8 +36,26 @@ const PROGRAM_DATA_PREFIX = "Program data: ";
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const CAMPAIGN_BACKFILL_COOLDOWN_MS = 60_000;
-const SOLANA_RPC_TIMEOUT_MS = 12_000;
+const SOLANA_RPC_TIMEOUT_MS = 20_000;
 const CAMPAIGN_BACKFILL_DEADLINE_MS = 90_000;
+
+let lastSolanaError: string | null = null;
+let lastSolanaRepairAt: string | null = null;
+let lastSolanaRepairSummary: Record<string, unknown> | null = null;
+
+function noteSolanaError(message: string) {
+  lastSolanaError = message;
+}
+
+export function solanaIndexerPublicHealth() {
+  return {
+    rpcConfigured: Boolean(String(ENV.SOLANA_RPC_HTTP || process.env.SOLANA_RPC_URL || "").trim()),
+    rpcEndpointCount: solanaRpcUrls().length,
+    lastError: lastSolanaError,
+    lastRepairAt: lastSolanaRepairAt,
+    lastRepair: lastSolanaRepairSummary,
+  };
+}
 
 /** Historical PDA replay writes durable rows only; derived candles/stats rebuild once at the end. */
 let suppressDerivedFanout = false;
@@ -354,8 +377,13 @@ export function deriveFeeEscrowAddress(campaign: string, launchpadProgramId = pr
 }
 
 function solanaRpcUrls(): string[] {
-  const configured = String(ENV.SOLANA_RPC_HTTP || process.env.SOLANA_RPC_URL || "").trim();
-  return parseRpcList(configured || DEFAULT_SOLANA_RPC);
+  const configured = parseRpcList(String(ENV.SOLANA_RPC_HTTP || process.env.SOLANA_RPC_URL || "").trim());
+  const urls = configured.length ? [...configured] : [];
+  for (const fallback of FALLBACK_SOLANA_RPCS) {
+    if (!urls.includes(fallback)) urls.push(fallback);
+  }
+  if (!urls.length) urls.push(DEFAULT_SOLANA_RPC);
+  return urls;
 }
 
 function toSol(raw: bigint): number {
@@ -498,9 +526,9 @@ async function rpc<T>(method: string, params: unknown[]): Promise<T> {
     } catch (error) {
       const aborted = error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
       lastError = aborted ? new Error(`Solana RPC ${method} timed out after ${SOLANA_RPC_TIMEOUT_MS}ms`) : error;
+      noteSolanaError(lastError instanceof Error ? lastError.message : String(lastError));
       console.warn("[solana-indexer] RPC endpoint failed", {
         method,
-        url,
         error: lastError instanceof Error ? lastError.message : String(lastError),
       });
     } finally {
@@ -1689,13 +1717,23 @@ export async function repairKnownSolanaCampaignHistory() {
           campaign,
           error: error instanceof Error ? error.message : String(error),
         });
+        const message = error instanceof Error ? error.message : String(error);
+        noteSolanaError(`${campaign}: ${message}`);
         console.warn(
           "[solana-indexer] campaign history repair failed",
           campaign,
-          error instanceof Error ? error.message : String(error),
+          message,
         );
       }
     }
+    lastSolanaRepairAt = new Date().toISOString();
+    lastSolanaRepairSummary = {
+      campaigns: results.length,
+      ok: results.filter((row) => !row.error && !row.skipped).length,
+      failed: results.filter((row) => row.error).length,
+      trades: results.reduce((sum, row) => sum + Number(row.trades || 0), 0),
+    };
+    if (lastSolanaRepairSummary.failed === 0 && results.length) lastSolanaError = null;
     return results;
   } finally {
     campaignRepairRunning = false;
