@@ -1786,15 +1786,46 @@ async function fetchSignaturesForAccount(
   };
 }
 
+let pdaScanTableReady = false;
+async function ensurePdaScanTable() {
+  if (pdaScanTableReady) return;
+  await sql(
+    `create table if not exists public.solana_pda_scan_sigs (
+       chain_id integer not null,
+       campaign_address text not null,
+       tx_hash text not null,
+       processed_at timestamptz not null default now(),
+       primary key (chain_id, campaign_address, tx_hash)
+     )`,
+  );
+  pdaScanTableReady = true;
+}
+
 async function existingCampaignTradeSignatures(campaign: string, signatures: string[]): Promise<Set<string>> {
   if (!signatures.length) return new Set();
+  await ensurePdaScanTable();
   const result = await sql(
-    `select distinct tx_hash
-       from public.curve_trades
+    `select tx_hash from public.curve_trades
+      where chain_id=$1 and campaign_address=$2 and tx_hash = any($3::text[])
+     union
+     select tx_hash from public.solana_pda_scan_sigs
       where chain_id=$1 and campaign_address=$2 and tx_hash = any($3::text[])`,
     [SOLANA_CHAIN_ID, campaign, signatures],
   );
   return new Set(result.rows.map((row: { tx_hash?: string }) => String(row.tx_hash || "")).filter(Boolean));
+}
+
+async function markPdaSignaturesProcessed(campaign: string, signatures: string[]) {
+  if (!signatures.length) return;
+  await ensurePdaScanTable();
+  for (const signature of signatures) {
+    await sql(
+      `insert into public.solana_pda_scan_sigs(chain_id,campaign_address,tx_hash)
+       values ($1,$2,$3)
+       on conflict do nothing`,
+      [SOLANA_CHAIN_ID, campaign, signature],
+    );
+  }
 }
 
 async function dedupeSolanaCurveTrades(campaign?: string): Promise<string[]> {
@@ -1963,22 +1994,30 @@ export async function backfillSolanaCampaign(campaignAddress: string, signal?: A
 
       let ingested = 0;
       let failed = 0;
+      const processed: string[] = [];
       await runWithDerivedFanoutSuppressed(async () => {
         for (const item of pending) {
           throwIfAborted(runSignal);
           const ok = await ingestSignature(item, runSignal);
-          if (ok) ingested += 1;
-          else failed += 1;
+          if (ok) {
+            ingested += 1;
+            processed.push(item.signature);
+          } else {
+            failed += 1;
+          }
         }
       });
+      await markPdaSignaturesProcessed(campaign, processed);
 
       throwIfAborted(runSignal);
       if (!ingestCapped) {
         scanBefore = fetched.nextBefore;
         scanOldestSlot = fetched.oldestSlot;
       }
-      const rebuilt = await rebuildSolanaDerivedFromTrades(campaign);
       const reachedCreationSlot = fetched.reachedCreationSlot && !ingestCapped;
+      const rebuilt = reachedCreationSlot
+        ? await rebuildSolanaDerivedFromTrades(campaign)
+        : { trades: 0, candles: 0 };
       return {
         campaign,
         createdSlot,
