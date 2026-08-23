@@ -62,10 +62,12 @@ export function CampaignCard({
   vm,
   chainIdForStorage,
   className,
+  liveId,
 }: {
   vm: CampaignCardVM;
   chainIdForStorage: number;
   className?: string;
+  liveId?: string;
 }) {
   const navigate = useNavigate();
   const wallet = useWallet();
@@ -206,6 +208,7 @@ export function CampaignCard({
 
   return (
     <div
+      data-live-id={liveId || undefined}
       className={cn(
         "mwz-card group relative flex w-full flex-col overflow-hidden rounded-none",
         "min-h-[322px] border-success/35 bg-black/70",

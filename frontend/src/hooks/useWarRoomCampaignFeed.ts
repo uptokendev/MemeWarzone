@@ -13,6 +13,7 @@ import {
   type SupportedChainId,
 } from "@/lib/chainConfig";
 import { liveCampaignKey } from "@/lib/liveMarketMerge";
+import { maxVoteCount } from "@/lib/liveCampaignRank";
 import { fetchOnChainCampaignStats } from "@/lib/onChainCampaignStats";
 import {
   lifecycleByCampaign,
@@ -138,11 +139,21 @@ function overlayLeaguePatch(campaign: WarRoomCampaign, patchByCampaign: Record<s
   const raisedTotalBnb = overlayNumber(patch.raisedTotalBnb);
   if (raisedTotalBnb != null) (next as any).raisedTotalBnb = raisedTotalBnb;
   const votes24h = overlayNumber(patch.votes24h);
-  if (votes24h != null) (next as any).votes24h = votes24h;
+  if (votes24h != null) (next as any).votes24h = maxVoteCount(votes24h, (campaign as any).votes24h);
   const votesAllTime = overlayNumber(patch.votesAllTime);
-  if (votesAllTime != null) (next as any).votesAllTime = votesAllTime;
+  if (votesAllTime != null) (next as any).votesAllTime = maxVoteCount(votesAllTime, (campaign as any).votesAllTime);
   const lastActivityAt = overlayNumber(patch.lastActivityAt);
   if (lastActivityAt != null) (next as any).lastActivityAt = lastActivityAt;
+  if (patch.trendingScore != null) (next as any).voteTrendingScore = overlayNumber(patch.trendingScore);
+  if (patch.isDexTrading) {
+    (next as any).isDexTrading = true;
+    (next as any).status = "graduated";
+    (next as any).isActive = false;
+  }
+  if (patch.graduatedAt) (next as any).graduatedAtChain = patch.graduatedAt;
+  if (patch.progressPct != null && Number.isFinite(Number(patch.progressPct))) {
+    (next as any).progressPct = Number(patch.progressPct);
+  }
   return next;
 }
 
@@ -313,7 +324,8 @@ function isGraduatedCampaign(campaign: WarRoomCampaign) {
       rich.status === "graduated" ||
       rich.status === "ended" ||
       rich.dexPairAddress ||
-      rich.graduatedAt,
+      rich.graduatedAt ||
+      rich.graduatedAtChain,
   );
 }
 
@@ -582,12 +594,14 @@ export function useWarRoomCampaignFeed({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<WarRoomCampaignFeedSource>("empty");
+  const [healNonce, setHealNonce] = useState(0);
   const chainId = Number(activeChainId || getDefaultChainId());
   const { patchByCampaign, created } = useLeagueRealtime({
     enabled: true,
     chainId,
     fallbackMs: 25000,
-    softRefreshMs: 0, // no extra REST loop — feed is one-shot + Ably
+    softRefreshMs: 0,
+    onFallbackRefresh: () => setHealNonce((n) => n + 1),
   });
 
   useEffect(() => {
@@ -828,7 +842,7 @@ export function useWarRoomCampaignFeed({
       cancelled = true;
       controller.abort();
     };
-  }, [activeChainId]);
+  }, [activeChainId, healNonce]);
 
   // Mode filter is pure client — switching Trending ↔ Graduated is instant.
   // Patches overlay at read time so later hydrate setInventory cannot bake over live values.

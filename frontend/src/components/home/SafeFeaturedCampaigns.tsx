@@ -769,6 +769,7 @@ export function SafeFeaturedCampaigns({ className = "" }: { className?: string }
               return (
                 <div
                   key={item.campaignAddress}
+                  data-live-id={`${item.chainId}:${item.campaignAddress}`}
                   className="mwz-hud-frame group flex h-[150px] w-full cursor-pointer overflow-hidden rounded-none border border-orange-400/30 bg-black/70 transition hover:border-orange-400/80 hover:shadow-[0_0_18px_rgba(240,106,26,0.22)]"
                   role="button"
                   tabIndex={0}

@@ -13,6 +13,9 @@ import { isTestnetCampaignsEnabled } from "@/features/postgrad/apiClient";
 import { useSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
 import { getBnbCampaignFeedChainIds } from "@/lib/feedChainConfig";
 import { liveCampaignKey, mergeFeedWithCreated, pickLiveNumeric } from "@/lib/liveMarketMerge";
+import { compareLiveCampaigns, maxVoteCount, rankIdentity, type LiveRankRow } from "@/lib/liveCampaignRank";
+import { useLiveListMotion } from "@/hooks/useLiveListMotion";
+import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 
 export type FeedTabKey = "drafts" | "trending" | "new" | "ending" | "dex";
 
@@ -32,7 +35,9 @@ export type HomeQuery = {
     | "progress_desc"
     | "popular_desc"
     | "created_desc"
-    | "created_asc";
+    | "created_asc"
+    | "volume_desc"
+    | "holders_desc";
   timeFilter?: "1h" | "24h" | "7d" | "all";
   search?: string;
 };
@@ -54,6 +59,8 @@ type CampaignFeedItemApi = {
   raisedTotalBnb?: string | null;
   gradTargetBnb?: number | null;
   votes24h?: number;
+  vol24hBnb?: string | null;
+  holderCount?: number | null;
   progressPct?: number | null;
   etaSec?: number | null;
 };
@@ -132,6 +139,14 @@ function mergeCampaignItems(primary: CampaignFeedItemApi[], fallback: CampaignFe
       if (!(incomingMcap > 0) && oldMcap > 0) {
         delete presentValues.marketcapBnb;
       }
+      const incomingVotes = Number(presentValues.votes24h);
+      const oldVotes = Number(existing.votes24h);
+      if (Number.isFinite(oldVotes) && Number.isFinite(incomingVotes) && incomingVotes < oldVotes) {
+        delete presentValues.votes24h;
+      }
+      if (existing.isDexTrading && presentValues.isDexTrading === false) {
+        delete presentValues.isDexTrading;
+      }
     }
     map.set(key, { ...(existing || {}), ...presentValues } as CampaignFeedItemApi);
   }
@@ -155,6 +170,8 @@ function createdToFeedItem(it: LeagueCampaignCreated, chainId: number): Campaign
     isDexTrading: false,
     marketcapBnb: null,
     votes24h: 0,
+    vol24hBnb: null,
+    holderCount: 0,
     progressPct: 0,
     etaSec: null,
   };
@@ -568,7 +585,7 @@ export function CampaignGrid({ className, query }: { className?: string; query: 
     const progressMinPct = baseParams.progressMinPct != null ? Number(baseParams.progressMinPct) : NaN;
     const progressMaxPct = baseParams.progressMaxPct != null ? Number(baseParams.progressMaxPct) : NaN;
 
-    type InternalVm = CampaignCardVM & { _mcapUsd: number; _mcapBnb: number; _createdAt: number; _activity: number; _votes: number; _progress: number };
+    type InternalVm = CampaignCardVM & LiveRankRow & { _mcapUsd: number };
     const mapped: InternalVm[] = (items || []).map((it) => {
       // Preserve Solana base58 case — lowercasing breaks /token routes and registry match.
       const rawAddr = String(it.campaignAddress ?? "").trim();
@@ -581,7 +598,7 @@ export function CampaignGrid({ className, query }: { className?: string; query: 
       const patch = patchByCampaign[lookupKey] || patchByCampaign[addr] || patchByCampaign[rawAddr.toLowerCase()];
       const onChain = onChainByCampaign[lookupKey] || onChainByCampaign[addr] || onChainByCampaign[rawAddr.toLowerCase()];
       const gradTarget = Number(it.gradTargetBnb ?? DEFAULT_GRAD_TARGET_BNB) || DEFAULT_GRAD_TARGET_BNB;
-      const isDex = Boolean(it.isDexTrading || it.graduatedAtChain || onChain?.isDexTrading);
+      const isDex = Boolean(patch?.isDexTrading || it.isDexTrading || it.graduatedAtChain || onChain?.isDexTrading);
 
       // Live Ably mcap wins when finite > 0; otherwise keep on-chain hydrate / REST.
       const liveMcap = pickLiveNumeric(patch?.marketcapBnb, NaN);
@@ -603,7 +620,9 @@ export function CampaignGrid({ className, query }: { className?: string; query: 
       );
 
       let progressPct: number | null = null;
-      if (isDex) {
+      if (patch?.progressPct != null && Number.isFinite(Number(patch.progressPct))) {
+        progressPct = Math.max(0, Math.min(100, Number(patch.progressPct)));
+      } else if (isDex) {
         progressPct = 100;
       } else if (it.progressPct != null && Number.isFinite(Number(it.progressPct))) {
         progressPct = Math.max(0, Math.min(100, Number(it.progressPct)));
@@ -615,7 +634,13 @@ export function CampaignGrid({ className, query }: { className?: string; query: 
 
       const activitySec = (patch?.lastActivityAt != null ? Number(patch.lastActivityAt) : safeUnixSeconds((it as any).lastActivityAt ?? null)) ?? 0;
       const createdAt = safeUnixSeconds(it.createdAtChain ?? null) ?? 0;
-      const votes24h = Number(patch?.votes24h ?? it.votes24h ?? 0);
+      const votes24h = maxVoteCount(patch?.votes24h, it.votes24h);
+      const holderCount = Number(it.holderCount);
+      const canonicalHolders = Number.isFinite(holderCount) && holderCount > 0 ? Math.trunc(holderCount) : 0;
+      const vol24hBnb = pickLiveNumeric(patch?.vol24hBnb, it.vol24hBnb);
+      const voteTrendingScore = pickLiveNumeric(patch?.trendingScore, 0);
+      const graduatedAt = safeUnixSeconds(patch?.graduatedAt ?? it.graduatedAtChain ?? null) ?? 0;
+      const etaSec = it.etaSec != null && Number.isFinite(Number(it.etaSec)) ? Number(it.etaSec) : null;
       const rawToken = it.tokenAddress ? String(it.tokenAddress).trim() : "";
       return {
         campaignAddress: addr,
@@ -633,87 +658,63 @@ export function CampaignGrid({ className, query }: { className?: string; query: 
         marketCapUsdLabel,
         athLabel,
         athUsd: Number.isFinite(athUsd) && athUsd > 0 ? athUsd : Number.isFinite(mcapUsd) ? mcapUsd : null,
-        progressPct,
+        progressPct: progressPct != null && Number.isFinite(progressPct) ? progressPct : -1,
         isDexTrading: isDex,
         votes24h,
+        chainId: Number(it.chainId || activeChainId),
+        createdAt,
+        lastActivityAt: activitySec,
+        vol24hBnb: Number.isFinite(vol24hBnb) ? vol24hBnb : 0,
+        holderCount: canonicalHolders,
+        marketcapBnb: Number.isFinite(mcapBnb) ? mcapBnb : 0,
+        etaSec,
+        voteTrendingScore: Number.isFinite(voteTrendingScore) ? voteTrendingScore : 0,
+        graduatedAt,
         _mcapUsd: Number.isFinite(mcapUsd) ? mcapUsd : 0,
-        _mcapBnb: Number.isFinite(mcapBnb) ? mcapBnb : 0,
-        _createdAt: createdAt,
-        _activity: activitySec,
-        _votes: votes24h,
-        _progress: progressPct != null && Number.isFinite(progressPct) ? progressPct : -1,
       } as InternalVm;
     });
 
     // Client filters use hydrated mcap/progress so dropdowns work even when API mcap is null.
-    let filtered = mapped.filter((vm) => {
+    const filtered = mapped.filter((vm) => {
       // Ending Soon = live bonding only (never graduated / 100% progress).
-      if (tab === "ending" && (vm.isDexTrading || vm._progress >= 100)) return false;
+      if (tab === "ending" && (vm.isDexTrading || vm.progressPct >= 100)) return false;
       // DEX tab = graduated only.
       if (tab === "dex" && !vm.isDexTrading) return false;
       if (Number.isFinite(mcapMinUsd) && vm._mcapUsd < mcapMinUsd) return false;
       if (Number.isFinite(mcapMaxUsd) && vm._mcapUsd > mcapMaxUsd) return false;
-      if (Number.isFinite(progressMinPct) && vm._progress < progressMinPct) return false;
-      if (Number.isFinite(progressMaxPct) && vm._progress > progressMaxPct) return false;
+      if (Number.isFinite(progressMinPct) && vm.progressPct < progressMinPct) return false;
+      if (Number.isFinite(progressMaxPct) && vm.progressPct > progressMaxPct) return false;
       return true;
     });
 
-    const byAddr = (a: InternalVm, b: InternalVm) => String(a.campaignAddress).localeCompare(String(b.campaignAddress));
-    filtered = filtered.slice().sort((a, b) => {
-      if (sort === "mcap_desc") {
-        if (b._mcapUsd !== a._mcapUsd) return b._mcapUsd - a._mcapUsd;
-        if (b._mcapBnb !== a._mcapBnb) return b._mcapBnb - a._mcapBnb;
-        return byAddr(a, b);
-      }
-      if (sort === "mcap_asc") {
-        // Push unknown (0) mcaps to the end for low→high.
-        const aUnknown = a._mcapUsd <= 0 && a._mcapBnb <= 0 ? 1 : 0;
-        const bUnknown = b._mcapUsd <= 0 && b._mcapBnb <= 0 ? 1 : 0;
-        if (aUnknown !== bUnknown) return aUnknown - bUnknown;
-        if (a._mcapUsd !== b._mcapUsd) return a._mcapUsd - b._mcapUsd;
-        if (a._mcapBnb !== b._mcapBnb) return a._mcapBnb - b._mcapBnb;
-        return byAddr(a, b);
-      }
-      if (sort === "votes_desc") {
-        if (b._votes !== a._votes) return b._votes - a._votes;
-        return byAddr(a, b);
-      }
-      if (sort === "progress_desc") {
-        if (b._progress !== a._progress) return b._progress - a._progress;
-        return byAddr(a, b);
-      }
-      if (sort === "created_asc") {
-        if (a._createdAt !== b._createdAt) return a._createdAt - b._createdAt;
-        return byAddr(a, b);
-      }
-      if (sort === "created_desc" || tab === "new") {
-        if (b._createdAt !== a._createdAt) return b._createdAt - a._createdAt;
-        return byAddr(a, b);
-      }
-      // default / trending: activity then created
-      if (b._activity !== a._activity) return b._activity - a._activity;
-      if (b._createdAt !== a._createdAt) return b._createdAt - a._createdAt;
-      return byAddr(a, b);
-    });
-
-    // Strip internal sort keys before render.
-    return filtered.map(({ _mcapUsd, _mcapBnb, _createdAt, _activity, _votes, _progress, ...vm }) => vm);
+    return filtered.slice().sort((a, b) =>
+      compareLiveCampaigns(a, b, { tab, sort, context: "explore" }),
+    );
   }, [items, nativeUsd, logoCache, patchByCampaign, onChainByCampaign, baseParams]);
+
+  const reducedMotion = usePrefersReducedMotion();
+  const { items: paintedVms, containerRef } = useLiveListMotion({
+    items: vms,
+    identity: (vm) => rankIdentity(activeChainId, vm.campaignAddress),
+    frozen: false,
+    reducedMotion,
+    snapToken: feedIdentity,
+  });
 
   const gridClass = "grid grid-cols-2 gap-3 justify-items-stretch sm:[grid-template-columns:repeat(auto-fill,minmax(180px,220px))] sm:justify-start sm:gap-4";
 
   return (
     <div className={cn("w-full", className)}>
       
-      {loading && !vms.length ? (
+      {loading && !paintedVms.length ? (
         <div className={gridClass}>
           {Array.from({ length: 12 }).map((_, i) => (
             <div key={i} className="aspect-[1/2] w-full rounded-2xl border border-border/40 bg-card/40 animate-pulse" />
           ))}
         </div>
-      ) : err && !vms.length ? (
+      ) : err && !paintedVms.length ? (
         <div className="py-10 text-center text-sm text-muted-foreground">{err}</div>
-      ) : vms.length === 0 ? (
+      ) : paintedVms.length === 0 ? (
         <div className="py-10 text-center text-sm text-muted-foreground">No campaigns yet.</div>
       ) : (
         <>
@@ -722,8 +723,15 @@ export function CampaignGrid({ className, query }: { className?: string; query: 
               Background refresh failed. Showing the last loaded campaigns.
             </div>
           )}
-          <div className={gridClass}>
-            {vms.map((vm) => <CampaignCard key={vm.campaignAddress} vm={vm} chainIdForStorage={activeChainId} />)}
+          <div ref={containerRef} className={gridClass}>
+            {paintedVms.map((vm) => (
+              <CampaignCard
+                key={rankIdentity(activeChainId, vm.campaignAddress)}
+                vm={vm}
+                chainIdForStorage={activeChainId}
+                liveId={rankIdentity(activeChainId, vm.campaignAddress)}
+              />
+            ))}
           </div>
           <div ref={sentinelRef} className="h-12" />
           {loadingMore ? (

@@ -16,6 +16,9 @@ export type LeagueCampaignPatch = {
   raisedTotalBnb?: string | null;
 
   lastActivityAt?: number; // unix seconds
+  isDexTrading?: boolean;
+  graduatedAt?: string | null;
+  progressPct?: number;
 };
 
 type Opts = {
@@ -167,6 +170,14 @@ export function createLeagueFeedPublisher(opts: Opts) {
 
     queueActivity(chainId: number, campaign: string, lastActivityAt: number) {
       mergePatch(chainId, campaign, { lastActivityAt });
+    },
+
+    queueGraduation(chainId: number, campaign: string, graduatedAt: string) {
+      mergePatch(chainId, campaign, {
+        isDexTrading: true,
+        graduatedAt,
+        progressPct: 100,
+      });
     },
 
     queueRaisedDelta(chainId: number, campaign: string, deltaBnb: number) {

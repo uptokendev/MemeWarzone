@@ -13,6 +13,10 @@ export type LeaguePatch = {
   raisedTotalBnb?: string | null;
   lastActivityAt?: number;
   ts?: number;
+  isDexTrading?: boolean;
+  graduatedAt?: string | null;
+  progressPct?: number;
+  holderCount?: number;
 };
 
 export type LeagueCampaignCreated = {
@@ -113,7 +117,17 @@ export function useLeagueRealtime(opts: Opts) {
           const next = { ...prev };
           for (const k of keys) {
             const it = buf[k];
-            next[k] = { ...(next[k] ?? { campaignAddress: k }), ...it, campaignAddress: k };
+            const cur = next[k] ?? { campaignAddress: k };
+            const votes24h = Math.max(Number(cur.votes24h ?? 0), Number(it.votes24h ?? 0));
+            const votesAllTime = Math.max(Number(cur.votesAllTime ?? 0), Number(it.votesAllTime ?? 0));
+            next[k] = {
+              ...cur,
+              ...it,
+              campaignAddress: k,
+              votes24h: Number.isFinite(votes24h) ? votes24h : cur.votes24h,
+              votesAllTime: Number.isFinite(votesAllTime) ? votesAllTime : cur.votesAllTime,
+              isDexTrading: Boolean(cur.isDexTrading || it.isDexTrading),
+            };
           }
           return next;
         });

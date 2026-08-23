@@ -549,6 +549,20 @@ export async function solanaVoteIngest(req, res) {
 
     const agg = await patchVoteAggregates(chainId, canonicalCampaign);
 
+    try {
+      const { publishLeagueCampaignPatch } = await import("../lib/leagueAblyPublish.js");
+      await publishLeagueCampaignPatch(chainId, [
+        {
+          campaignAddress: canonicalCampaign,
+          votes24h: Number(agg.votes_24h || 0),
+          votesAllTime: Number(agg.votes_all_time || 0),
+          lastActivityAt: Math.floor(Date.now() / 1000),
+        },
+      ]);
+    } catch {
+      // Ably must never fail a confirmed vote ingest.
+    }
+
     return json(res, 200, {
       ok: true,
       items: [

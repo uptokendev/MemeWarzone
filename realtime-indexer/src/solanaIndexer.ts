@@ -1312,6 +1312,7 @@ async function persistGraduation(
     txHash: signature,
   }).catch(() => undefined);
   leagueFeed.queueActivity(SOLANA_CHAIN_ID, event.campaign, Math.floor(blockTime.getTime() / 1000));
+  leagueFeed.queueGraduation(SOLANA_CHAIN_ID, event.campaign, graduatedAtChain.toISOString());
 }
 
 type Queryable = {

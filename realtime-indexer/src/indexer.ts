@@ -1539,6 +1539,7 @@ async function scanCampaignRange(
 
         // Graduation marker for league categories
         await setCampaignGraduated(chainId, campaign, log.blockNumber, new Date(tsSec * 1000), txHash);
+        leagueFeed.queueGraduation(chainId, campaign, new Date(tsSec * 1000).toISOString());
       }
     }
 
