@@ -534,14 +534,18 @@ async function runWithAbortDeadline<T>(
 ): Promise<T> {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), ms);
+  const timedOut = new Promise<never>((_, reject) => {
+    const fail = () => reject(new Error(`${label} timed out after ${ms}ms`));
+    if (ac.signal.aborted) fail();
+    else ac.signal.addEventListener("abort", fail, { once: true });
+  });
+  const running = work(ac.signal);
   try {
     throwIfAborted(ac.signal);
-    return await work(ac.signal);
-  } catch (error) {
-    if (ac.signal.aborted) throw new Error(`${label} timed out after ${ms}ms`);
-    throw error;
+    return await Promise.race([running, timedOut]);
   } finally {
     clearTimeout(timer);
+    void running.catch(() => undefined);
   }
 }
 
