@@ -358,13 +358,10 @@ const patchedTokenSummary = wrap(async (req, res) => {
      select
        $1::int as chain_id,
        $2::text as campaign_address,
-       case when coalesce(agg.trade_count, 0) > 0 then latest.price_bnb else stored.last_price_bnb end as last_price_bnb,
-       case when coalesce(agg.trade_count, 0) > 0 then agg.sold_tokens else stored.sold_tokens end as sold_tokens,
+       coalesce(stored.last_price_bnb, latest.price_bnb) as last_price_bnb,
+       coalesce(stored.sold_tokens, agg.sold_tokens) as sold_tokens,
        stored.reserve_bnb,
-       case
-         when coalesce(agg.trade_count, 0) > 0 and latest.price_bnb is not null then latest.price_bnb * agg.sold_tokens
-         else stored.marketcap_bnb
-       end as marketcap_bnb,
+       stored.marketcap_bnb,
        case when coalesce(agg.trade_count, 0) > 0 then agg.vol_24h_bnb else stored.vol_24h_bnb end as vol_24h_bnb,
        stored.change_5m,
        stored.change_1h,

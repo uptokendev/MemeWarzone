@@ -7,7 +7,8 @@ import { publishTrade, publishCandle, publishStats, publishLeague } from "./ably
 import { createLeagueFeedPublisher } from "./leagueFeed.js";
 import { recordCampaignCreatedActivity, recordTradeActivity } from "./rewards/attribution.js";
 import { upsertRewardEvent } from "./rewards/ingest.js";
-import { createStaticJsonRpcProvider, parseRpcList } from "./rpcProvider.js";
+import { createStaticJsonRpcProvider, createWorkingProvider, parseRpcList } from "./rpcProvider.js";
+import { bnbCurveState } from "./bnbCurvePricing.js";
 import { checkMilestones } from "./milestones.js";
 
 // ---------------------------------------------------------------------------
@@ -751,6 +752,62 @@ async function upsertCandle(
   });
 }
 
+const BNB_CURVE_PARAM_ABI = [
+  "function basePrice() view returns (uint256)",
+  "function priceSlope() view returns (uint256)",
+];
+const BNB_CURVE_PARAM_TTL_MS = 5 * 60 * 1000;
+const bnbCurveParamCache = new Map<string, { base: bigint; slope: bigint; at: number }>();
+
+async function loadBnbCurveParams(chainId: number, campaign: string): Promise<{ base: bigint; slope: bigint } | null> {
+  const key = `${chainId}:${campaign.toLowerCase()}`;
+  const cached = bnbCurveParamCache.get(key);
+  if (cached && Date.now() - cached.at < BNB_CURVE_PARAM_TTL_MS) {
+    return { base: cached.base, slope: cached.slope };
+  }
+  const urls = parseRpcList(chainId === 56 ? ENV.BSC_RPC_HTTP_56 : ENV.BSC_RPC_HTTP_97);
+  if (!urls.length) return null;
+  try {
+    const { provider } = await createWorkingProvider(urls, chainId, {
+      timeoutMs: 8_000,
+      label: `bnb-curve-params-${chainId}`,
+    });
+    const contract = new ethers.Contract(campaign, BNB_CURVE_PARAM_ABI, provider) as any;
+    const [basePriceRaw, priceSlopeRaw] = await Promise.all([
+      contract.basePrice() as Promise<bigint>,
+      contract.priceSlope() as Promise<bigint>,
+    ]);
+    const next = { base: BigInt(basePriceRaw), slope: BigInt(priceSlopeRaw), at: Date.now() };
+    bnbCurveParamCache.set(key, next);
+    return next;
+  } catch (error) {
+    console.warn("[indexer] BNB curve params unavailable", {
+      chainId,
+      campaign,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+function toRawTokenAmount(value: unknown): bigint {
+  const text = String(value ?? "0").trim();
+  if (!text) return 0n;
+  const intish = text.match(/^(-?\d+)(?:\.0+)?$/);
+  if (intish) {
+    try {
+      return BigInt(intish[1]);
+    } catch {
+      return 0n;
+    }
+  }
+  try {
+    return BigInt(text.split(".")[0] || "0");
+  } catch {
+    return 0n;
+  }
+}
+
 async function patchStats(chainId: number, campaign: string) {
   const r = await pool.query(
     `with t as (
@@ -772,20 +829,29 @@ async function patchStats(chainId: number, campaign: string) {
     [chainId, campaign.toLowerCase()]
   );
 
-  const lastPrice: number | null = r.rows[0]?.last_price_bnb ?? null;
+  const fillPrice: number | null = r.rows[0]?.last_price_bnb != null ? Number(r.rows[0].last_price_bnb) : null;
   const vol24h: number = Number(r.rows[0]?.vol24h_bnb ?? 0);
 
   const soldRes = await pool.query(
     `select
-       coalesce(sum(case when side='buy' then token_amount else 0 end),0) -
-       coalesce(sum(case when side='sell' then token_amount else 0 end),0) as sold
+       coalesce(sum(case when side='buy' then token_amount_raw::numeric else 0 end),0) -
+       coalesce(sum(case when side='sell' then token_amount_raw::numeric else 0 end),0) as sold_raw
      from public.curve_trades
      where chain_id=$1 and campaign_address=$2`,
     [chainId, campaign.toLowerCase()]
   );
 
-  const sold: number = Number(soldRes.rows[0]?.sold ?? 0);
-  const marketcap: number | null = lastPrice !== null ? lastPrice * sold : null;
+  const soldRaw = toRawTokenAmount(soldRes.rows[0]?.sold_raw);
+  const params = await loadBnbCurveParams(chainId, campaign);
+  const curve = params ? bnbCurveState(params.base, params.slope, soldRaw) : null;
+  // Current token price is curve marginal spot. Fill VWAP stays on
+  // curve_trades.price_bnb and is never used to derive marketcap_bnb.
+  const lastPrice: number | null =
+    curve && curve.spotNative > 0
+      ? curve.spotNative
+      : (fillPrice != null && Number.isFinite(fillPrice) ? fillPrice : null);
+  const sold: number = curve ? curve.soldWhole : Number(soldRaw) / 1e18;
+  const marketcap: number | null = curve && curve.mcapNative > 0 ? curve.mcapNative : null;
 
   await pool.query(
     `insert into public.token_stats(
@@ -813,6 +879,47 @@ async function patchStats(chainId: number, campaign: string) {
     vol24hBnb: String(vol24h)
   });
 
+}
+
+let bnbCanonicalMcapRefresh: Promise<{ campaigns: number; ok: number; failed: number }> | null = null;
+
+/** Rewrite BNB token_stats to spot × sold without waiting for the next trade. */
+export async function refreshBnbCanonicalMarketcaps() {
+  if (bnbCanonicalMcapRefresh) return bnbCanonicalMcapRefresh;
+  bnbCanonicalMcapRefresh = (async () => {
+    const rows = await pool.query(
+      `select chain_id, campaign_address from public.token_stats where chain_id in (56, 97)
+       union
+       select distinct chain_id, campaign_address from public.curve_trades where chain_id in (56, 97)`,
+    );
+    let ok = 0;
+    let failed = 0;
+    for (const row of rows.rows) {
+      try {
+        await patchStats(Number(row.chain_id), String(row.campaign_address));
+        ok += 1;
+      } catch (error) {
+        failed += 1;
+        console.warn("[indexer] BNB canonical mcap refresh failed", {
+          chainId: row.chain_id,
+          campaign: row.campaign_address,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    console.log("[indexer] BNB canonical mcap refresh", {
+      campaigns: rows.rows.length,
+      ok,
+      failed,
+    });
+    return { campaigns: rows.rows.length, ok, failed };
+  })();
+  try {
+    return await bnbCanonicalMcapRefresh;
+  } catch (error) {
+    bnbCanonicalMcapRefresh = null;
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------

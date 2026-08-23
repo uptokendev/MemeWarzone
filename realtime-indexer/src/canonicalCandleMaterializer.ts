@@ -3,11 +3,12 @@ import { pool } from "./db.js";
 import { ENV } from "./env.js";
 import { createWorkingProvider, parseRpcList } from "./rpcProvider.js";
 import { TIMEFRAMES, bucketStart, type TF } from "./timeframes.js";
+import { BNB_WAD, bnbCurveState } from "./bnbCurvePricing.js";
 
 const LOOP_SYMBOL = Symbol.for("memewarzone.canonicalCandleMaterializerStarted");
 const globalState = globalThis as any;
 const VERSION = 3;
-const WAD = 1_000_000_000_000_000_000n;
+const WAD = BNB_WAD;
 const LAMPORTS_PER_SOL = 1_000_000_000;
 const DEFAULT_SOLANA_RPC = "https://api.mainnet-beta.solana.com";
 const DEFAULT_SOLANA_PROGRAM = "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt";
@@ -126,14 +127,11 @@ async function bnbSpotCalculator(chainId: number, campaign: string): Promise<Spo
   ]);
 
   const calculate: SpotCalculator = (soldRaw: bigint) => {
-    const safeSold = soldRaw > 0n ? soldRaw : 0n;
-    const spotRaw = basePriceRaw + (priceSlopeRaw * safeSold) / WAD;
-    const spotNative = bigintRatio(spotRaw, WAD);
-    const soldWhole = bigintRatio(safeSold, WAD);
+    const state = bnbCurveState(basePriceRaw, priceSlopeRaw, soldRaw);
     return {
-      soldRaw: safeSold,
-      spotNative,
-      mcapNative: spotNative * soldWhole,
+      soldRaw: state.soldRaw,
+      spotNative: state.spotNative,
+      mcapNative: state.mcapNative,
     };
   };
 

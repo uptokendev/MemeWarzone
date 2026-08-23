@@ -135,7 +135,10 @@ async function persistSolanaHistoryMeta(
 }
 
 /** Historical PDA replay writes durable rows only; derived candles/stats rebuild once at the end. */
-let suppressDerivedFanout = false;
+const derivedFanoutSuppressed = new AsyncLocalStorage<boolean>();
+function isDerivedFanoutSuppressed() {
+  return derivedFanoutSuppressed.getStore() === true;
+}
 const campaignBackfillLastRunMs = new Map<string, number>();
 let athColumnReady = false;
 
@@ -829,7 +832,7 @@ async function upsertCampaign(event: CampaignCreatedEvent, slot: number, blockTi
   });
 
   // Fire-and-forget: tip lane must not wait on Ably.
-  if (!suppressDerivedFanout) {
+  if (!isDerivedFanoutSuppressed()) {
     void publishLeague(
       SOLANA_CHAIN_ID,
       "campaign_created",
@@ -1025,7 +1028,7 @@ async function patchStats(campaign: string) {
     );
   }
 
-  if (suppressDerivedFanout) return;
+  if (isDerivedFanoutSuppressed()) return;
 
   void publishStats(SOLANA_CHAIN_ID, campaign, {
     type: "stats_patch",
@@ -1072,6 +1075,24 @@ async function insertTrade(event: TokensBoughtEvent | TokensSoldEvent, signature
 
   let firstFanout = (completedPartial.rowCount ?? 0) > 0;
   if (!firstFanout) {
+    const duplicate = await sql(
+      `select tx_hash
+         from public.curve_trades
+        where chain_id=$1 and tx_hash=$2 and campaign_address=$3 and side=$4
+          and sold_tokens_after_raw=$5
+        limit 1`,
+      [
+        SOLANA_CHAIN_ID,
+        signature,
+        campaign,
+        isBuy ? "buy" : "sell",
+        event.soldTokensAfter.toString(),
+      ],
+    );
+    if ((duplicate.rowCount ?? 0) > 0) {
+      if (!isDerivedFanoutSuppressed()) await patchStats(campaign);
+      return;
+    }
     const inserted = await sql(
       `insert into public.curve_trades(
          chain_id,campaign_address,tx_hash,log_index,block_number,block_time,
@@ -1114,12 +1135,12 @@ async function insertTrade(event: TokensBoughtEvent | TokensSoldEvent, signature
     price_bnb: priceNative,
     sold_tokens_after_raw: event.soldTokensAfter.toString(),
   };
-  if (!suppressDerivedFanout) {
+  if (!isDerivedFanoutSuppressed()) {
     void publishTrade(SOLANA_CHAIN_ID, campaign, realtimeRow).catch(() => undefined);
   }
 
   if (!firstFanout) {
-    if (!suppressDerivedFanout) await patchStats(campaign);
+    if (!isDerivedFanoutSuppressed()) await patchStats(campaign);
     return;
   }
 
@@ -1145,7 +1166,7 @@ async function insertTrade(event: TokensBoughtEvent | TokensSoldEvent, signature
     },
   });
 
-  if (suppressDerivedFanout) return;
+  if (isDerivedFanoutSuppressed()) return;
 
   leagueFeed.queueActivity(SOLANA_CHAIN_ID, campaign, Math.floor(blockTime.getTime() / 1000));
   leagueFeed.queueRaisedDelta(SOLANA_CHAIN_ID, campaign, isBuy ? nativeAmount : -nativeAmount);
@@ -1718,8 +1739,35 @@ async function fetchSignaturesForAccount(
   };
 }
 
+async function dedupeSolanaCurveTrades(campaign?: string): Promise<string[]> {
+  const params: unknown[] = [SOLANA_CHAIN_ID];
+  const campaignFilter = campaign
+    ? (params.push(campaign), "and a.campaign_address=$2 and b.campaign_address=$2")
+    : "";
+  const result = await sql(
+    `delete from public.curve_trades a
+      using public.curve_trades b
+     where a.chain_id=$1 and b.chain_id=$1
+       ${campaignFilter}
+       and a.campaign_address=b.campaign_address
+       and a.tx_hash=b.tx_hash
+       and a.side=b.side
+       and a.sold_tokens_after_raw is not distinct from b.sold_tokens_after_raw
+       and a.log_index < b.log_index
+     returning a.campaign_address`,
+    params,
+  );
+  const campaigns = new Set<string>();
+  for (const row of result.rows as Array<{ campaign_address?: string }>) {
+    const address = String(row.campaign_address || "").trim();
+    if (address) campaigns.add(address);
+  }
+  return [...campaigns];
+}
+
 export async function rebuildSolanaDerivedFromTrades(campaign: string) {
   const normalized = String(campaign || "").trim();
+  await dedupeSolanaCurveTrades(normalized);
   await sql(
     `delete from public.token_candles
       where chain_id=$1 and campaign_address=$2
@@ -1728,13 +1776,7 @@ export async function rebuildSolanaDerivedFromTrades(campaign: string) {
   );
   const { materializeCanonicalCandles } = await import("./canonicalCandleMaterializer.js");
   const candles = await materializeCanonicalCandles(SOLANA_CHAIN_ID, normalized);
-  const previous = suppressDerivedFanout;
-  suppressDerivedFanout = false;
-  try {
-    await patchStats(normalized);
-  } finally {
-    suppressDerivedFanout = previous;
-  }
+  await patchStats(normalized);
   const trades = await sql(
     `select count(*)::int as count
        from public.curve_trades
@@ -1816,18 +1858,14 @@ export async function backfillSolanaCampaign(campaignAddress: string, signal?: A
 
       let ingested = 0;
       let failed = 0;
-      const previous = suppressDerivedFanout;
-      suppressDerivedFanout = true;
-      try {
+      await derivedFanoutSuppressed.run(true, async () => {
         for (const item of window) {
           throwIfAborted(runSignal);
           const ok = await ingestSignature(item, runSignal);
           if (ok) ingested += 1;
           else failed += 1;
         }
-      } finally {
-        suppressDerivedFanout = previous;
-      }
+      });
 
       throwIfAborted(runSignal);
       const rebuilt = await rebuildSolanaDerivedFromTrades(campaign);
@@ -1895,6 +1933,19 @@ export async function repairKnownSolanaCampaignHistory() {
   if (campaignRepairRunning) return [];
   campaignRepairRunning = true;
   try {
+    const duplicated = await dedupeSolanaCurveTrades();
+    for (const campaign of duplicated) {
+      try {
+        const rebuilt = await rebuildSolanaDerivedFromTrades(campaign);
+        console.log("[solana-indexer] duplicate trades removed", { campaign, ...rebuilt });
+      } catch (error) {
+        console.warn(
+          "[solana-indexer] duplicate-trade rebuild failed",
+          campaign,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
     const rows = await sql(
       `select campaign_address
          from public.campaigns

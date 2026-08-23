@@ -4,7 +4,7 @@ import { ENV } from "./env.js";
 import "dotenv/config";
 import { pool } from "./db.js";
 import { ablyRest, tokenChannel, leagueChannel, publishUserRankUpdated } from "./ably.js";
-import { ingestCampaignTransaction, runDiscoveryOnce, runIndexerOnce, runRepairOnce, runTipScanOnce, runTradeRepairOnce } from "./indexer.js";
+import { ingestCampaignTransaction, refreshBnbCanonicalMarketcaps, runDiscoveryOnce, runIndexerOnce, runRepairOnce, runTipScanOnce, runTradeRepairOnce } from "./indexer.js";
 import { startTelemetryReporter, type TelemetrySnapshot } from "./telemetry.js";
 import { applyRecruiterDisputeOverride, captureReferralWindow, createOrUpdateRecruiter, getWalletAttributionState, linkWalletOnConnect, linkWalletToRecruiter, resolveRecruiterByCode, setRecruiterOgStatus, setRecruiterStatus } from "./rewards/attribution.js";
 import { getCurrentWeeklyRewardEpoch, listRewardEpochs, listRewardEvents } from "./rewards/ingest.js";
@@ -380,7 +380,7 @@ app.get("/health", async (_req, res) => {
       ok: true,
       db: r.rows[0].ok,
       // Bump when shipping indexer loop fixes so deploy can be confirmed from /health.
-      indexerBuild: "live-c4c-bnb-pool-2026-08-23",
+      indexerBuild: "live-c4d-bnb-mcap-2026-08-23",
       normalScope: ENV.INDEXER_NORMAL_SCOPE,
       solana: solanaIndexerPublicHealth(),
     });
@@ -2192,15 +2192,10 @@ app.get("/api/token/:campaign/summary", wrap(async (req, res) => {
      select
        $1::int as chain_id,
        $2::text as campaign_address,
-       case when coalesce(agg.trade_count,0) > 0 then latest.price_bnb else stored.last_price_bnb end as last_price_bnb,
-       case when coalesce(agg.trade_count,0) > 0 then agg.sold_tokens else stored.sold_tokens end as sold_tokens,
+       coalesce(stored.last_price_bnb, latest.price_bnb) as last_price_bnb,
+       coalesce(stored.sold_tokens, agg.sold_tokens) as sold_tokens,
        stored.reserve_bnb,
-       coalesce(stored.marketcap_bnb,
-         case
-           when coalesce(agg.trade_count,0) > 0 and latest.price_bnb is not null then latest.price_bnb * agg.sold_tokens
-           else null
-         end
-       ) as marketcap_bnb,
+       stored.marketcap_bnb,
        stored.ath_marketcap_bnb,
        case when coalesce(agg.trade_count,0) > 0 then agg.vol_24h_bnb else stored.vol_24h_bnb end as vol_24h_bnb,
        stored.change_5m,
@@ -2910,3 +2905,11 @@ setTimeout(() => {
       tipRunning = false;
     });
 }, 3_000);
+setTimeout(() => {
+  void refreshBnbCanonicalMarketcaps().catch((error) => {
+    console.warn(
+      "[indexer] BNB canonical mcap boot refresh failed",
+      error instanceof Error ? error.message : String(error),
+    );
+  });
+}, 4_000);
