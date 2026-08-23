@@ -5,6 +5,7 @@ import type { PoolClient } from "pg";
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
 import { createCampaignLeaseRegistry, type CampaignLeaseState } from "./solanaCampaignLease.js";
+import { createIndexerSql } from "./solanaRepairSql.js";
 import { checkMilestones } from "./milestones.js";
 import { publishCandle, publishLeague, publishStats, publishTrade } from "./ably.js";
 import { createLeagueFeedPublisher } from "./leagueFeed.js";
@@ -53,14 +54,7 @@ const REPAIR_PG_STATEMENT_TIMEOUT_MS = Math.max(
 
 const campaignLeases = createCampaignLeaseRegistry();
 const repairSql = new AsyncLocalStorage<PoolClient>();
-
-function sql(text: string, values?: unknown[]) {
-  const client = repairSql.getStore();
-  if (client) {
-    return client.query({ text, values, simple: true } as any);
-  }
-  return sql(text, values);
-}
+const sql = createIndexerSql(pool, repairSql);
 
 let lastSolanaError: string | null = null;
 let lastSolanaRepairAt: string | null = null;
