@@ -1,7 +1,10 @@
+import { AsyncLocalStorage } from "async_hooks";
 import { createHash } from "crypto";
 import { PublicKey } from "@solana/web3.js";
+import type { PoolClient } from "pg";
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
+import { createCampaignLeaseRegistry, type CampaignLeaseState } from "./solanaCampaignLease.js";
 import { checkMilestones } from "./milestones.js";
 import { publishCandle, publishLeague, publishStats, publishTrade } from "./ably.js";
 import { createLeagueFeedPublisher } from "./leagueFeed.js";
@@ -43,6 +46,21 @@ const CAMPAIGN_SIGNATURE_PAGE_CAP = Math.max(
   500,
   Number(process.env.SOLANA_CAMPAIGN_SIGNATURE_PAGE_CAP || 500),
 );
+const REPAIR_PG_STATEMENT_TIMEOUT_MS = Math.max(
+  5_000,
+  Number(process.env.SOLANA_REPAIR_PG_STATEMENT_TIMEOUT_MS || 15_000),
+);
+
+const campaignLeases = createCampaignLeaseRegistry();
+const repairSql = new AsyncLocalStorage<PoolClient>();
+
+function sql(text: string, values?: unknown[]) {
+  const client = repairSql.getStore();
+  if (client) {
+    return client.query({ text, values, simple: true } as any);
+  }
+  return sql(text, values);
+}
 
 let lastSolanaError: string | null = null;
 let lastSolanaRepairAt: string | null = null;
@@ -59,12 +77,12 @@ export function solanaIndexerPublicHealth() {
     lastError: lastSolanaError,
     lastRepairAt: lastSolanaRepairAt,
     lastRepair: lastSolanaRepairSummary,
+    leases: campaignLeases.list(),
   };
 }
 
 /** Historical PDA replay writes durable rows only; derived candles/stats rebuild once at the end. */
 let suppressDerivedFanout = false;
-const campaignBackfillInFlight = new Set<string>();
 const campaignBackfillLastRunMs = new Map<string, number>();
 let athColumnReady = false;
 
@@ -583,7 +601,7 @@ async function rpc<T>(method: string, params: unknown[], signal?: AbortSignal): 
 }
 
 async function getState(): Promise<number> {
-  const result = await pool.query(
+  const result = await sql(
     `select last_indexed_block from public.indexer_state where chain_id=$1 and cursor=$2`,
     [SOLANA_CHAIN_ID, "solana:v4:program"],
   );
@@ -591,7 +609,7 @@ async function getState(): Promise<number> {
 }
 
 async function setState(nextSlot: number) {
-  await pool.query(
+  await sql(
     `insert into public.indexer_state(chain_id,cursor,last_indexed_block)
      values($1,$2,$3)
      on conflict (chain_id,cursor) do update
@@ -602,7 +620,7 @@ async function setState(nextSlot: number) {
 }
 
 async function resetState(nextSlot: number) {
-  await pool.query(
+  await sql(
     `insert into public.indexer_state(chain_id,cursor,last_indexed_block)
      values($1,$2,$3)
      on conflict (chain_id,cursor) do update
@@ -712,7 +730,7 @@ function decodeEvents(logMessages: string[] | null | undefined): AnchorEvent[] {
 }
 
 async function upsertCampaign(event: CampaignCreatedEvent, slot: number, blockTime: Date, signature: string, logIndex: number) {
-  await pool.query(
+  await sql(
     `insert into public.campaigns(
        chain_id,factory_address,campaign_address,token_address,creator_address,name,symbol,created_block,created_at_chain,is_active,meta
      ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,true,$10::jsonb)
@@ -768,15 +786,15 @@ async function upsertCampaign(event: CampaignCreatedEvent, slot: number, blockTi
 }
 
 async function touchCampaignActivity(campaign: string, at: Date) {
-  await pool.query(
+  await sql(
     `insert into public.campaign_activity (chain_id, campaign_address, last_activity_at, updated_at)
      values ($1, $2, $3, now())
      on conflict (chain_id, campaign_address) do update set
        last_activity_at = greatest(excluded.last_activity_at, coalesce(public.campaign_activity.last_activity_at, to_timestamp(0))),
        updated_at = now()`,
     [SOLANA_CHAIN_ID, campaign, at],
-  ).catch((error) => {
-    const msg = String(error?.message || error);
+  ).catch((error: unknown) => {
+    const msg = String((error as any)?.message || error);
     if (!msg.includes("campaign_activity")) console.warn("[solana-indexer] campaign activity touch failed", msg);
   });
 }
@@ -796,7 +814,7 @@ async function insertActivityEvent(row: {
   payoutWei?: bigint | null;
   meta?: Record<string, unknown> | null;
 }) {
-  await pool.query(
+  await sql(
     `insert into public.activity_events(
        chain_id,event_type,tx_hash,log_index,block_number,block_time,
        actor_address,campaign_address,token_address,
@@ -819,15 +837,15 @@ async function insertActivityEvent(row: {
       row.payoutWei ? row.payoutWei.toString() : null,
       row.meta ? JSON.stringify(row.meta) : "{}",
     ],
-  ).catch((error) => {
-    const msg = String(error?.message || error);
+  ).catch((error: unknown) => {
+    const msg = String((error as any)?.message || error);
     if (!msg.includes("activity_events")) console.warn("[solana-indexer] activity insert failed", msg);
   });
 }
 
 async function upsertCandle(campaign: string, tf: TF, bucketSec: number, priceSol: number, volumeSol: number, soldWhole = 0) {
   const mcapSol = Number.isFinite(soldWhole) && soldWhole > 0 ? priceSol * soldWhole : null;
-  const written = await pool.query(
+  const written = await sql(
     `insert into public.token_candles(
        chain_id,campaign_address,timeframe,bucket_start,o,h,l,c,volume_bnb,trades_count,
        mcap_o,mcap_h,mcap_l,mcap_c
@@ -866,14 +884,14 @@ async function upsertCandle(campaign: string, tf: TF, bucketSec: number, priceSo
 
 async function ensureAthColumn() {
   if (athColumnReady) return;
-  await pool.query(
+  await sql(
     `alter table public.token_stats add column if not exists ath_marketcap_bnb double precision`,
   );
   athColumnReady = true;
 }
 
 async function patchStats(campaign: string) {
-  const latest = await pool.query(
+  const latest = await sql(
     `with t as (
        select price_bnb, sold_tokens_after_raw, block_time
        from public.curve_trades
@@ -913,7 +931,7 @@ async function patchStats(campaign: string) {
     curve?.marketcapSol ??
     (lastPrice != null && soldTokens > 0 ? lastPrice * soldTokens : null);
 
-  await pool.query(
+  await sql(
     `insert into public.token_stats(
        chain_id,campaign_address,last_price_bnb,sold_tokens,marketcap_bnb,vol_24h_bnb,updated_at
      ) values($1,$2,$3,$4,$5,$6,now())
@@ -929,7 +947,7 @@ async function patchStats(campaign: string) {
   let athMarketcap = marketcap;
   try {
     await ensureAthColumn();
-    const ath = await pool.query(
+    const ath = await sql(
       `update public.token_stats as s
           set ath_marketcap_bnb = greatest(
             coalesce(s.ath_marketcap_bnb, 0),
@@ -985,7 +1003,7 @@ async function insertTrade(event: TokensBoughtEvent | TokensSoldEvent, signature
 
   // Only complete *partial* rows (missing sold_tokens_after_raw). A match on a
   // fully processed row used to return before publish/candles/stats forever.
-  const completedPartial = await pool.query(
+  const completedPartial = await sql(
     `update public.curve_trades
         set sold_tokens_after_raw=$4
       where chain_id=$1 and tx_hash=$2 and log_index=$3
@@ -1001,7 +1019,7 @@ async function insertTrade(event: TokensBoughtEvent | TokensSoldEvent, signature
 
   let firstFanout = (completedPartial.rowCount ?? 0) > 0;
   if (!firstFanout) {
-    const inserted = await pool.query(
+    const inserted = await sql(
       `insert into public.curve_trades(
          chain_id,campaign_address,tx_hash,log_index,block_number,block_time,
          side,wallet,token_amount_raw,bnb_amount_raw,token_amount,bnb_amount,price_bnb,
@@ -1124,7 +1142,7 @@ async function persistGraduation(
     slot,
   };
 
-  await pool.query(
+  await sql(
     `insert into public.campaigns(
        chain_id,factory_address,campaign_address,token_address,creator_address,name,symbol,
        created_block,created_at_chain,is_active,launched,bonding_active,support_enabled,
@@ -1260,14 +1278,14 @@ async function insertFeeEscrowEvent(db: Queryable, input: {
 
 async function enqueueFeeEscrowInit(campaign: string) {
   const escrow = deriveFeeEscrowAddress(campaign);
-  await pool.query(
+  await sql(
     `insert into public.solana_fee_escrow_accruals(chain_id, campaign_address, escrow_address, init_status)
      values ($1, $2, $3, 'pending')
      on conflict (chain_id, campaign_address) do update set
        escrow_address = excluded.escrow_address,
        updated_at = now()`,
     [SOLANA_CHAIN_ID, campaign, escrow],
-  ).catch((error) => {
+  ).catch((error: unknown) => {
     console.warn("[solana-indexer] fee escrow enqueue failed", error instanceof Error ? error.message : String(error));
   });
 }
@@ -1443,7 +1461,7 @@ async function handleEvent(event: AnchorEvent, signature: string, logIndex: numb
 }
 
 export async function backfillSolanaTradeCurveState(limit = 500) {
-  const rows = await pool.query(
+  const rows = await sql(
     `select campaign_address, tx_hash, log_index
        from public.curve_trades
       where chain_id=$1
@@ -1490,7 +1508,7 @@ export async function backfillSolanaTradeCurveState(limit = 500) {
         continue;
       }
 
-      const result = await pool.query(
+      const result = await sql(
         `update public.curve_trades
             set sold_tokens_after_raw=$4
           where chain_id=$1
@@ -1519,7 +1537,7 @@ export async function backfillSolanaTradeCurveState(limit = 500) {
     }
   }
 
-  const remaining = await pool.query(
+  const remaining = await sql(
     `select count(*)::int as count
        from public.curve_trades
       where chain_id=$1
@@ -1649,7 +1667,7 @@ async function fetchSignaturesForAccount(
 
 export async function rebuildSolanaDerivedFromTrades(campaign: string) {
   const normalized = String(campaign || "").trim();
-  await pool.query(
+  await sql(
     `delete from public.token_candles
       where chain_id=$1 and campaign_address=$2
         and coalesce(dex_trade_count, 0)=0`,
@@ -1664,7 +1682,7 @@ export async function rebuildSolanaDerivedFromTrades(campaign: string) {
   } finally {
     suppressDerivedFanout = previous;
   }
-  const trades = await pool.query(
+  const trades = await sql(
     `select count(*)::int as count
        from public.curve_trades
       where chain_id=$1 and campaign_address=$2`,
@@ -1676,13 +1694,46 @@ export async function rebuildSolanaDerivedFromTrades(campaign: string) {
   };
 }
 
+function combineAbortSignals(parent?: AbortSignal, child?: AbortSignal): AbortSignal | undefined {
+  if (!parent) return child;
+  if (!child) return parent;
+  const ac = new AbortController();
+  const onAbort = () => ac.abort();
+  if (parent.aborted || child.aborted) {
+    ac.abort();
+    return ac.signal;
+  }
+  parent.addEventListener("abort", onAbort, { once: true });
+  child.addEventListener("abort", onAbort, { once: true });
+  return ac.signal;
+}
+
+async function runWithRepairSql<T>(fn: () => Promise<T>): Promise<T> {
+  const client = await pool.connect();
+  try {
+    await client.query({
+      text: `SET statement_timeout = ${REPAIR_PG_STATEMENT_TIMEOUT_MS}`,
+      simple: true,
+    } as any);
+    return await repairSql.run(client, fn);
+  } finally {
+    try {
+      await client.query({ text: "RESET statement_timeout", simple: true } as any);
+    } catch {
+      // Connection may already be cancelled; still release.
+    }
+    client.release();
+  }
+}
+
 export async function backfillSolanaCampaign(campaignAddress: string, signal?: AbortSignal) {
   const campaign = String(campaignAddress || "").trim();
   if (!isSolanaPublicKey(campaign)) {
     throw new Error("solana campaign PDA required");
   }
   throwIfAborted(signal);
-  if (campaignBackfillInFlight.has(campaign)) {
+  const lease = campaignLeases.begin(campaign);
+  if (!lease) {
     return {
       campaign,
       createdSlot: 0,
@@ -1696,61 +1747,76 @@ export async function backfillSolanaCampaign(campaignAddress: string, signal?: A
       incomplete: false,
       pagesScanned: 0,
       skipped: true,
+      runId: campaignLeases.get(campaign)?.runId ?? null,
     };
   }
-  campaignBackfillInFlight.add(campaign);
+
+  const runSignal = combineAbortSignals(signal, lease.abort.signal);
+  let status: CampaignLeaseState = "failed";
   try {
-    await assertMainnetGenesis(signal);
-    throwIfAborted(signal);
-    const head = await getHeadSlot(signal);
-    const created = await pool.query(
-      `select created_block
-         from public.campaigns
-        where chain_id=$1 and campaign_address=$2`,
-      [SOLANA_CHAIN_ID, campaign],
-    );
-    let createdSlot = Number(created.rows[0]?.created_block || 0);
-    const fetched = await fetchSignaturesForAccount(
-      campaign,
-      Number.isFinite(createdSlot) && createdSlot > 0 ? createdSlot : 0,
-      head,
-      signal,
-    );
-    if (!(createdSlot > 0) && fetched.items.length) createdSlot = fetched.items[0].slot;
-    const window = createdSlot > 0 ? fetched.items.filter((item) => item.slot >= createdSlot) : fetched.items;
+    const result = await runWithRepairSql(async () => {
+      await assertMainnetGenesis(runSignal);
+      throwIfAborted(runSignal);
+      const head = await getHeadSlot(runSignal);
+      const created = await sql(
+        `select created_block
+           from public.campaigns
+          where chain_id=$1 and campaign_address=$2`,
+        [SOLANA_CHAIN_ID, campaign],
+      );
+      let createdSlot = Number(created.rows[0]?.created_block || 0);
+      const fetched = await fetchSignaturesForAccount(
+        campaign,
+        Number.isFinite(createdSlot) && createdSlot > 0 ? createdSlot : 0,
+        head,
+        runSignal,
+      );
+      if (!(createdSlot > 0) && fetched.items.length) createdSlot = fetched.items[0].slot;
+      const window = createdSlot > 0 ? fetched.items.filter((item) => item.slot >= createdSlot) : fetched.items;
 
-    let ingested = 0;
-    let failed = 0;
-    const previous = suppressDerivedFanout;
-    suppressDerivedFanout = true;
-    try {
-      for (const item of window) {
-        throwIfAborted(signal);
-        const ok = await ingestSignature(item, signal);
-        if (ok) ingested += 1;
-        else failed += 1;
+      let ingested = 0;
+      let failed = 0;
+      const previous = suppressDerivedFanout;
+      suppressDerivedFanout = true;
+      try {
+        for (const item of window) {
+          throwIfAborted(runSignal);
+          const ok = await ingestSignature(item, runSignal);
+          if (ok) ingested += 1;
+          else failed += 1;
+        }
+      } finally {
+        suppressDerivedFanout = previous;
       }
-    } finally {
-      suppressDerivedFanout = previous;
-    }
 
-    throwIfAborted(signal);
-    const rebuilt = await rebuildSolanaDerivedFromTrades(campaign);
-    return {
-      campaign,
-      createdSlot,
-      head,
-      scanned: window.length,
-      ingested,
-      failed,
-      trades: rebuilt.trades,
-      candles: rebuilt.candles,
-      reachedCreationSlot: fetched.reachedCreationSlot,
-      incomplete: fetched.incomplete,
-      pagesScanned: fetched.pagesScanned,
-    };
+      throwIfAborted(runSignal);
+      const rebuilt = await rebuildSolanaDerivedFromTrades(campaign);
+      return {
+        campaign,
+        createdSlot,
+        head,
+        scanned: window.length,
+        ingested,
+        failed,
+        trades: rebuilt.trades,
+        candles: rebuilt.candles,
+        reachedCreationSlot: fetched.reachedCreationSlot,
+        incomplete: fetched.incomplete,
+        pagesScanned: fetched.pagesScanned,
+        skipped: false,
+        runId: lease.runId,
+      };
+    });
+    status = runSignal?.aborted ? "timeout" : "success";
+    return result;
+  } catch (error) {
+    status = runSignal?.aborted || (error instanceof Error && /timed out/i.test(error.message))
+      ? "timeout"
+      : "failed";
+    throw error;
   } finally {
-    campaignBackfillInFlight.delete(campaign);
+    if (!lease.abort.signal.aborted) lease.abort.abort();
+    campaignLeases.release(campaign, lease.runId, status);
   }
 }
 
@@ -1760,7 +1826,7 @@ export function kickSolanaCampaignHistoryBackfill(campaignAddress: string): void
     console.warn("[solana-indexer] campaign history backfill skipped; invalid PDA", campaign);
     return;
   }
-  if (campaignBackfillInFlight.has(campaign)) return;
+  if (campaignLeases.get(campaign)?.status === "running") return;
   const last = campaignBackfillLastRunMs.get(campaign) || 0;
   if (Date.now() - last < CAMPAIGN_BACKFILL_COOLDOWN_MS) return;
   console.log("[solana-indexer] campaign history backfill start", campaign);
@@ -1788,7 +1854,7 @@ export async function repairKnownSolanaCampaignHistory() {
   if (campaignRepairRunning) return [];
   campaignRepairRunning = true;
   try {
-    const rows = await pool.query(
+    const rows = await sql(
       `select campaign_address
          from public.campaigns
         where chain_id=$1
@@ -1825,6 +1891,7 @@ export async function repairKnownSolanaCampaignHistory() {
     lastSolanaRepairSummary = {
       campaigns: results.length,
       ok: results.filter((row) => !row.error && !row.skipped && !row.incomplete).length,
+      skipped: results.filter((row) => row.skipped).length,
       failed: results.filter((row) => row.error).length,
       incomplete: results.filter((row) => row.incomplete).length,
       trades: results.reduce((sum, row) => sum + Number(row.trades || 0), 0),
@@ -1850,7 +1917,7 @@ async function runTipLane(head: number): Promise<void> {
   if (maxOk > 0) {
     lastTipSlot = Math.max(lastTipSlot, maxOk);
     lastLiveIngestMs = Date.now();
-    await pool.query(
+    await sql(
       `insert into public.indexer_state(chain_id,cursor,last_indexed_block)
        values ($1,$2,$3)
        on conflict (chain_id,cursor) do update
