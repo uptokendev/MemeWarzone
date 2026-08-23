@@ -31,6 +31,8 @@ const PROGRAM_DATA_PREFIX = "Program data: ";
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const CAMPAIGN_BACKFILL_COOLDOWN_MS = 60_000;
+const SOLANA_RPC_TIMEOUT_MS = 12_000;
+const CAMPAIGN_BACKFILL_DEADLINE_MS = 90_000;
 
 /** Historical PDA replay writes durable rows only; derived candles/stats rebuild once at the end. */
 let suppressDerivedFanout = false;
@@ -463,26 +465,46 @@ function timestampFrom(blockTime: number | null | undefined): Date {
   return new Date(Number(blockTime || Math.floor(Date.now() / 1000)) * 1000);
 }
 
+async function withDeadline<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 async function rpc<T>(method: string, params: unknown[]): Promise<T> {
   let lastError: unknown;
   for (const url of solanaRpcUrls()) {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), SOLANA_RPC_TIMEOUT_MS);
     try {
       const response = await fetch(url, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        signal: ac.signal,
       });
       if (!response.ok) throw new Error(`Solana RPC ${method} HTTP ${response.status}`);
       const payload = await response.json() as { result?: T; error?: { message?: string } };
       if (payload.error) throw new Error(payload.error.message || `Solana RPC ${method} failed`);
       return payload.result as T;
     } catch (error) {
-      lastError = error;
+      const aborted = error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
+      lastError = aborted ? new Error(`Solana RPC ${method} timed out after ${SOLANA_RPC_TIMEOUT_MS}ms`) : error;
       console.warn("[solana-indexer] RPC endpoint failed", {
         method,
         url,
-        error: error instanceof Error ? error.message : String(error),
+        error: lastError instanceof Error ? lastError.message : String(lastError),
       });
+    } finally {
+      clearTimeout(timer);
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError || `Solana RPC ${method} failed`));
@@ -1547,6 +1569,21 @@ export async function backfillSolanaCampaign(campaignAddress: string) {
   if (!isSolanaPublicKey(campaign)) {
     throw new Error("solana campaign PDA required");
   }
+  if (campaignBackfillInFlight.has(campaign)) {
+    return {
+      campaign,
+      createdSlot: 0,
+      head: 0,
+      scanned: 0,
+      ingested: 0,
+      failed: 0,
+      trades: 0,
+      candles: 0,
+      skipped: true,
+    };
+  }
+  campaignBackfillInFlight.add(campaign);
+  try {
   await assertMainnetGenesis();
   const head = await getHeadSlot();
   const created = await pool.query(
@@ -1589,17 +1626,28 @@ export async function backfillSolanaCampaign(campaignAddress: string) {
     trades: rebuilt.trades,
     candles: rebuilt.candles,
   };
+  } finally {
+    campaignBackfillInFlight.delete(campaign);
+  }
 }
 
 export function kickSolanaCampaignHistoryBackfill(campaignAddress: string): void {
   const campaign = String(campaignAddress || "").trim();
-  if (!isSolanaPublicKey(campaign)) return;
+  if (!isSolanaPublicKey(campaign)) {
+    console.warn("[solana-indexer] campaign history backfill skipped; invalid PDA", campaign);
+    return;
+  }
   if (campaignBackfillInFlight.has(campaign)) return;
   const last = campaignBackfillLastRunMs.get(campaign) || 0;
   if (Date.now() - last < CAMPAIGN_BACKFILL_COOLDOWN_MS) return;
-  campaignBackfillInFlight.add(campaign);
-  void backfillSolanaCampaign(campaign)
+  console.log("[solana-indexer] campaign history backfill start", campaign);
+  void withDeadline(
+    backfillSolanaCampaign(campaign),
+    CAMPAIGN_BACKFILL_DEADLINE_MS,
+    `solana campaign backfill ${campaign}`,
+  )
     .then((result) => {
+      campaignBackfillLastRunMs.set(campaign, Date.now());
       console.log("[solana-indexer] campaign history backfill", result);
     })
     .catch((error) => {
@@ -1608,11 +1656,50 @@ export function kickSolanaCampaignHistoryBackfill(campaignAddress: string): void
         campaign,
         error instanceof Error ? error.message : String(error),
       );
-    })
-    .finally(() => {
-      campaignBackfillInFlight.delete(campaign);
-      campaignBackfillLastRunMs.set(campaign, Date.now());
     });
+}
+
+let campaignRepairRunning = false;
+
+export async function repairKnownSolanaCampaignHistory() {
+  if (campaignRepairRunning) return [];
+  campaignRepairRunning = true;
+  try {
+    const rows = await pool.query(
+      `select campaign_address
+         from public.campaigns
+        where chain_id=$1
+        order by created_block asc nulls last, campaign_address asc`,
+      [SOLANA_CHAIN_ID],
+    );
+    const results: Array<Record<string, unknown>> = [];
+    for (const row of rows.rows) {
+      const campaign = String(row.campaign_address || "").trim();
+      if (!isSolanaPublicKey(campaign)) continue;
+      try {
+        const result = await withDeadline(
+          backfillSolanaCampaign(campaign),
+          CAMPAIGN_BACKFILL_DEADLINE_MS,
+          `solana campaign backfill ${campaign}`,
+        );
+        results.push(result);
+        console.log("[solana-indexer] campaign history repair", result);
+      } catch (error) {
+        results.push({
+          campaign,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        console.warn(
+          "[solana-indexer] campaign history repair failed",
+          campaign,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+    return results;
+  } finally {
+    campaignRepairRunning = false;
+  }
 }
 
 let lastLiveIngestMs = 0;
@@ -1765,6 +1852,8 @@ export function startSolanaIndexerLoop() {
 
   setTimeout(() => { void tipTick(); }, 1_000);
   setTimeout(() => { void backfillTick(); }, 2_000);
+  setTimeout(() => { void repairKnownSolanaCampaignHistory(); }, 5_000);
   setInterval(() => { void tipTick(); }, tipMs);
   setInterval(() => { void backfillTick(); }, backfillMs);
+  setInterval(() => { void repairKnownSolanaCampaignHistory(); }, 120_000);
 }

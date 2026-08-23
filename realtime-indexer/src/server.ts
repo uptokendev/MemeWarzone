@@ -379,7 +379,7 @@ app.get("/health", async (_req, res) => {
       ok: true,
       db: r.rows[0].ok,
       // Bump when shipping indexer loop fixes so deploy can be confirmed from /health.
-      indexerBuild: "solana-league-airdrop-2026-08-15",
+      indexerBuild: "live-c4-pda-repair-2026-08-23",
       normalScope: ENV.INDEXER_NORMAL_SCOPE,
     });
   } catch (e: any) {
@@ -2260,7 +2260,9 @@ async function handleTokenTrades(req: any, res: any) {
     if (chainId === 101) {
       void import("./solanaIndexer.js")
         .then(({ kickSolanaCampaignHistoryBackfill }) => kickSolanaCampaignHistoryBackfill(campaign))
-        .catch(() => undefined);
+        .catch((error) => {
+          console.warn("[api] solana campaign backfill kick failed", error instanceof Error ? error.message : String(error));
+        });
     } else {
       void import("./emptyTradeCursorRewind.js")
         .then(({ rewindEmptyCampaignTradeCursor }) => rewindEmptyCampaignTradeCursor(chainId, campaign))
@@ -2274,7 +2276,9 @@ async function handleTokenTrades(req: any, res: any) {
     // without blocking Token Details / WTR.
     void import("./solanaIndexer.js")
       .then(({ kickSolanaCampaignHistoryBackfill }) => kickSolanaCampaignHistoryBackfill(campaign))
-      .catch(() => undefined);
+      .catch((error) => {
+        console.warn("[api] solana campaign backfill kick failed", error instanceof Error ? error.message : String(error));
+      });
     return res.json([]);
   }
 
