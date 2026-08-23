@@ -380,7 +380,7 @@ app.get("/health", async (_req, res) => {
       ok: true,
       db: r.rows[0].ok,
       // Bump when shipping indexer loop fixes so deploy can be confirmed from /health.
-      indexerBuild: "live-c4.3-history-complete-2026-08-23",
+      indexerBuild: "live-c4c-bnb-pool-2026-08-23",
       normalScope: ENV.INDEXER_NORMAL_SCOPE,
       solana: solanaIndexerPublicHealth(),
     });
@@ -2195,10 +2195,12 @@ app.get("/api/token/:campaign/summary", wrap(async (req, res) => {
        case when coalesce(agg.trade_count,0) > 0 then latest.price_bnb else stored.last_price_bnb end as last_price_bnb,
        case when coalesce(agg.trade_count,0) > 0 then agg.sold_tokens else stored.sold_tokens end as sold_tokens,
        stored.reserve_bnb,
-       case
-         when coalesce(agg.trade_count,0) > 0 and latest.price_bnb is not null then latest.price_bnb * agg.sold_tokens
-         else stored.marketcap_bnb
-       end as marketcap_bnb,
+       coalesce(stored.marketcap_bnb,
+         case
+           when coalesce(agg.trade_count,0) > 0 and latest.price_bnb is not null then latest.price_bnb * agg.sold_tokens
+           else null
+         end
+       ) as marketcap_bnb,
        stored.ath_marketcap_bnb,
        case when coalesce(agg.trade_count,0) > 0 then agg.vol_24h_bnb else stored.vol_24h_bnb end as vol_24h_bnb,
        stored.change_5m,

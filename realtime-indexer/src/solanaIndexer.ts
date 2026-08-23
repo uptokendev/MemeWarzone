@@ -1,7 +1,6 @@
 import { AsyncLocalStorage } from "async_hooks";
 import { createHash } from "crypto";
 import { PublicKey } from "@solana/web3.js";
-import type { PoolClient } from "pg";
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
 import { createCampaignLeaseRegistry, type CampaignLeaseState } from "./solanaCampaignLease.js";
@@ -54,8 +53,27 @@ const REPAIR_PG_STATEMENT_TIMEOUT_MS = Math.max(
 );
 
 const campaignLeases = createCampaignLeaseRegistry();
-const repairSql = new AsyncLocalStorage<PoolClient>();
-const sql = createIndexerSql(pool, repairSql);
+const repairSql = new AsyncLocalStorage<boolean>();
+
+async function timedRepairQuery(text: string, values?: unknown[]) {
+  const client = await pool.connect();
+  try {
+    await client.query({
+      text: `SET statement_timeout = ${REPAIR_PG_STATEMENT_TIMEOUT_MS}`,
+      simple: true,
+    } as any);
+    return await client.query({ text, values, simple: true } as any);
+  } finally {
+    try {
+      await client.query({ text: "RESET statement_timeout", simple: true } as any);
+    } catch {
+      // Connection may already be cancelled; still release.
+    }
+    client.release();
+  }
+}
+
+const sql = createIndexerSql(pool, () => Boolean(repairSql.getStore()), timedRepairQuery);
 
 let lastSolanaError: string | null = null;
 let lastSolanaRepairAt: string | null = null;
@@ -1744,21 +1762,8 @@ function combineAbortSignals(parent?: AbortSignal, child?: AbortSignal): AbortSi
 }
 
 async function runWithRepairSql<T>(fn: () => Promise<T>): Promise<T> {
-  const client = await pool.connect();
-  try {
-    await client.query({
-      text: `SET statement_timeout = ${REPAIR_PG_STATEMENT_TIMEOUT_MS}`,
-      simple: true,
-    } as any);
-    return await repairSql.run(client, fn);
-  } finally {
-    try {
-      await client.query({ text: "RESET statement_timeout", simple: true } as any);
-    } catch {
-      // Connection may already be cancelled; still release.
-    }
-    client.release();
-  }
+  // Flag only — never hold a pool client across Solana RPC.
+  return repairSql.run(true, fn);
 }
 
 export async function backfillSolanaCampaign(campaignAddress: string, signal?: AbortSignal) {

@@ -1,10 +1,8 @@
-import { AsyncLocalStorage } from "async_hooks";
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { PoolClient } from "pg";
 import { createIndexerSql } from "../solanaRepairSql.js";
 
-test("sql() outside repair AsyncLocalStorage calls pool.query exactly once", async () => {
+test("sql() outside repair calls pool.query exactly once and does not recurse", async () => {
   const calls: Array<{ text: string; values?: unknown[] }> = [];
   const pool = {
     query: async (text: string, values?: unknown[]) => {
@@ -12,8 +10,9 @@ test("sql() outside repair AsyncLocalStorage calls pool.query exactly once", asy
       return { rowCount: 1, rows: [{ ok: 1 }] };
     },
   };
-  const store = new AsyncLocalStorage<PoolClient>();
-  const sql = createIndexerSql(pool as any, store);
+  const sql = createIndexerSql(pool, () => false, () => {
+    throw new Error("repair query must not run");
+  });
   const result = await sql("select 1 as ok", [1]);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].text, "select 1 as ok");
@@ -21,27 +20,22 @@ test("sql() outside repair AsyncLocalStorage calls pool.query exactly once", asy
   assert.equal(result.rows[0].ok, 1);
 });
 
-test("sql() in repair context uses the dedicated client, not pool.query", async () => {
+test("sql() in repair context uses the timeout client, not pool.query", async () => {
   const poolCalls: string[] = [];
-  const clientCalls: Array<{ text: string; simple?: boolean }> = [];
+  const repairCalls: string[] = [];
   const pool = {
     query: async (text: string) => {
       poolCalls.push(text);
       return { rowCount: 0, rows: [] };
     },
   };
-  const client = {
-    query: async (input: { text: string; values?: unknown[]; simple?: boolean }) => {
-      clientCalls.push({ text: input.text, simple: input.simple });
-      return { rowCount: 1, rows: [{ timeout: "15s" }] };
-    },
-  } as unknown as PoolClient;
-  const store = new AsyncLocalStorage<PoolClient>();
-  const sql = createIndexerSql(pool as any, store);
-  const result = await store.run(client, () => sql("select now()", []));
+  const sql = createIndexerSql(pool, () => true, async (text) => {
+    repairCalls.push(text);
+    return { rowCount: 1, rows: [{ timeout: "15s" }] };
+  });
+  const result = await sql("select now()", []);
   assert.equal(poolCalls.length, 0);
-  assert.equal(clientCalls.length, 1);
-  assert.equal(clientCalls[0].text, "select now()");
-  assert.equal(clientCalls[0].simple, true);
+  assert.equal(repairCalls.length, 1);
+  assert.equal(repairCalls[0], "select now()");
   assert.equal(result.rows[0].timeout, "15s");
 });
