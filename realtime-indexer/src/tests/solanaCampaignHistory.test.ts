@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { collectAccountSignatures, sortSignaturesAscending } from "../solanaIndexerCheckpoint.js";
+import { collectAccountSignatures, signatureScanFrontier, sortSignaturesAscending } from "../solanaIndexerCheckpoint.js";
 
 test("campaign PDA pages keep only successful signatures in the create→head window", () => {
   const result = collectAccountSignatures({
@@ -55,6 +55,30 @@ test("empty PDA history is a completed frontier, not a live gap", () => {
   });
   assert.equal(result.reachedHistoricalFrontier, true);
   assert.deepEqual(result.items, []);
+});
+
+test("durable scan is incomplete when the page cap fires before create slot", () => {
+  const capped = signatureScanFrontier({
+    emptyBatch: false,
+    lastSlot: 400,
+    fromSlot: 100,
+    pagesScanned: 500,
+    pageCap: 500,
+  });
+  assert.equal(capped.reachedCreationSlot, false);
+  assert.equal(capped.incomplete, true);
+});
+
+test("durable scan is complete when the last page crosses the create slot", () => {
+  const done = signatureScanFrontier({
+    emptyBatch: false,
+    lastSlot: 90,
+    fromSlot: 100,
+    pagesScanned: 3,
+    pageCap: 500,
+  });
+  assert.equal(done.reachedCreationSlot, true);
+  assert.equal(done.incomplete, false);
 });
 
 test("oldest-first order is slot then signature", () => {

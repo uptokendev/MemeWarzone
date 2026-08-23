@@ -12,6 +12,7 @@ import {
   SOLANA_MAINNET_GENESIS,
   collectAccountSignatures,
   healthStatus,
+  signatureScanFrontier,
   nextBackfillCheckpoint,
   recoverFutureCursor,
   sortSignaturesAscending,
@@ -38,6 +39,10 @@ const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const CAMPAIGN_BACKFILL_COOLDOWN_MS = 60_000;
 const SOLANA_RPC_TIMEOUT_MS = 20_000;
 const CAMPAIGN_BACKFILL_DEADLINE_MS = 90_000;
+const CAMPAIGN_SIGNATURE_PAGE_CAP = Math.max(
+  500,
+  Number(process.env.SOLANA_CAMPAIGN_SIGNATURE_PAGE_CAP || 500),
+);
 
 let lastSolanaError: string | null = null;
 let lastSolanaRepairAt: string | null = null;
@@ -493,37 +498,72 @@ function timestampFrom(blockTime: number | null | undefined): Date {
   return new Date(Number(blockTime || Math.floor(Date.now() / 1000)) * 1000);
 }
 
-async function withDeadline<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
+function throwIfAborted(signal?: AbortSignal) {
+  if (!signal?.aborted) return;
+  const error = new Error("aborted");
+  error.name = "AbortError";
+  throw error;
+}
+
+function mergeAbortSignals(parent: AbortSignal | undefined, timeoutMs: number): {
+  signal: AbortSignal;
+  cleanup: () => void;
+} {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  const onParentAbort = () => ac.abort();
+  if (parent?.aborted) {
+    clearTimeout(timer);
+    ac.abort();
+    return { signal: ac.signal, cleanup: () => undefined };
+  }
+  parent?.addEventListener("abort", onParentAbort, { once: true });
+  return {
+    signal: ac.signal,
+    cleanup: () => {
+      clearTimeout(timer);
+      parent?.removeEventListener("abort", onParentAbort);
+    },
+  };
+}
+
+async function runWithAbortDeadline<T>(
+  work: (signal: AbortSignal) => Promise<T>,
+  ms: number,
+  label: string,
+): Promise<T> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), ms);
   try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
-      }),
-    ]);
+    throwIfAborted(ac.signal);
+    return await work(ac.signal);
+  } catch (error) {
+    if (ac.signal.aborted) throw new Error(`${label} timed out after ${ms}ms`);
+    throw error;
   } finally {
-    if (timer) clearTimeout(timer);
+    clearTimeout(timer);
   }
 }
 
-async function rpc<T>(method: string, params: unknown[]): Promise<T> {
+async function rpc<T>(method: string, params: unknown[], signal?: AbortSignal): Promise<T> {
+  throwIfAborted(signal);
   let lastError: unknown;
   for (const url of solanaRpcUrls()) {
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), SOLANA_RPC_TIMEOUT_MS);
+    throwIfAborted(signal);
+    const merged = mergeAbortSignals(signal, SOLANA_RPC_TIMEOUT_MS);
     try {
       const response = await fetch(url, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-        signal: ac.signal,
+        signal: merged.signal,
       });
       if (!response.ok) throw new Error(`Solana RPC ${method} HTTP ${response.status}`);
       const payload = await response.json() as { result?: T; error?: { message?: string } };
       if (payload.error) throw new Error(payload.error.message || `Solana RPC ${method} failed`);
       return payload.result as T;
     } catch (error) {
+      if (signal?.aborted) throwIfAborted(signal);
       const aborted = error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
       lastError = aborted ? new Error(`Solana RPC ${method} timed out after ${SOLANA_RPC_TIMEOUT_MS}ms`) : error;
       noteSolanaError(lastError instanceof Error ? lastError.message : String(lastError));
@@ -532,7 +572,7 @@ async function rpc<T>(method: string, params: unknown[]): Promise<T> {
         error: lastError instanceof Error ? lastError.message : String(lastError),
       });
     } finally {
-      clearTimeout(timer);
+      merged.cleanup();
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError || `Solana RPC ${method} failed`));
@@ -568,14 +608,17 @@ async function resetState(nextSlot: number) {
   );
 }
 
-async function getHeadSlot(): Promise<number> {
-  return rpc<number>("getSlot", [{ commitment: "confirmed" }]);
+async function getHeadSlot(signal?: AbortSignal): Promise<number> {
+  return rpc<number>("getSlot", [{ commitment: "confirmed" }], signal);
 }
 
 let genesisChecked = false;
-async function assertMainnetGenesis(): Promise<void> {
-  if (genesisChecked) return;
-  const genesis = await rpc<string>("getGenesisHash", []);
+async function assertMainnetGenesis(signal?: AbortSignal): Promise<void> {
+  if (genesisChecked) {
+    throwIfAborted(signal);
+    return;
+  }
+  const genesis = await rpc<string>("getGenesisHash", [], signal);
   if (genesis !== SOLANA_MAINNET_GENESIS) {
     throw new Error(`[solana-indexer] refusing non-mainnet genesis ${genesis}`);
   }
@@ -637,11 +680,11 @@ async function fetchBackfillSignatures(checkpoint: number): Promise<{
   };
 }
 
-async function getTransaction(signature: string): Promise<RpcTransaction> {
+async function getTransaction(signature: string, signal?: AbortSignal): Promise<RpcTransaction> {
   return rpc<RpcTransaction>("getTransaction", [
     signature,
     { commitment: "confirmed", encoding: "jsonParsed", maxSupportedTransactionVersion: 0 },
-  ]);
+  ], signal);
 }
 
 function decodeEvents(logMessages: string[] | null | undefined): AnchorEvent[] {
@@ -1489,14 +1532,17 @@ export async function backfillSolanaTradeCurveState(limit = 500) {
   };
 }
 
-async function ingestSignature(item: IndexedSignature): Promise<boolean> {
+async function ingestSignature(item: IndexedSignature, signal?: AbortSignal): Promise<boolean> {
+  throwIfAborted(signal);
   let tx: RpcTransaction = null;
   let lastError: unknown = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
+    throwIfAborted(signal);
     try {
-      tx = await getTransaction(item.signature);
+      tx = await getTransaction(item.signature, signal);
       if (tx) break;
     } catch (error) {
+      if (signal?.aborted) throwIfAborted(signal);
       lastError = error;
     }
   }
@@ -1539,28 +1585,62 @@ async function fetchSignaturesForAccount(
   address: string,
   fromSlot: number,
   head: number,
-): Promise<IndexedSignature[]> {
+  signal?: AbortSignal,
+): Promise<{
+  items: IndexedSignature[];
+  reachedCreationSlot: boolean;
+  incomplete: boolean;
+  pagesScanned: number;
+}> {
   const pages: RpcSignature[][] = [];
   let before: string | undefined;
   const limit = signatureLimit();
-  const maxPages = Math.max(20, ENV.SOLANA_SIGNATURE_PAGE_LIMIT || 5);
+  const pageCap = CAMPAIGN_SIGNATURE_PAGE_CAP;
+  let reachedCreationSlot = false;
+  let incomplete = false;
 
-  for (let page = 0; page < maxPages; page += 1) {
+  for (let page = 0; page < pageCap; page += 1) {
+    throwIfAborted(signal);
     const batch = await rpc<RpcSignature[]>("getSignaturesForAddress", [
       address,
       { limit, ...(before ? { before } : {}) },
-    ]);
+    ], signal);
     if (!Array.isArray(batch) || !batch.length) {
       pages.push([]);
+      reachedCreationSlot = true;
+      incomplete = false;
       break;
     }
     pages.push(batch);
     const last = batch[batch.length - 1];
-    if (!last || last.slot < fromSlot) break;
+    const frontier = signatureScanFrontier({
+      emptyBatch: false,
+      lastSlot: last?.slot ?? null,
+      fromSlot,
+      pagesScanned: page + 1,
+      pageCap,
+    });
+    if (frontier.reachedCreationSlot) {
+      reachedCreationSlot = true;
+      incomplete = false;
+      break;
+    }
+    if (frontier.incomplete) {
+      incomplete = true;
+      reachedCreationSlot = false;
+      break;
+    }
     before = last.signature;
   }
 
-  return collectAccountSignatures({ pages, fromSlot, head }).items;
+  if (pages.length >= pageCap && !reachedCreationSlot) incomplete = true;
+
+  return {
+    items: collectAccountSignatures({ pages, fromSlot, head }).items,
+    reachedCreationSlot,
+    incomplete,
+    pagesScanned: pages.length,
+  };
 }
 
 export async function rebuildSolanaDerivedFromTrades(campaign: string) {
@@ -1592,11 +1672,12 @@ export async function rebuildSolanaDerivedFromTrades(campaign: string) {
   };
 }
 
-export async function backfillSolanaCampaign(campaignAddress: string) {
+export async function backfillSolanaCampaign(campaignAddress: string, signal?: AbortSignal) {
   const campaign = String(campaignAddress || "").trim();
   if (!isSolanaPublicKey(campaign)) {
     throw new Error("solana campaign PDA required");
   }
+  throwIfAborted(signal);
   if (campaignBackfillInFlight.has(campaign)) {
     return {
       campaign,
@@ -1607,53 +1688,63 @@ export async function backfillSolanaCampaign(campaignAddress: string) {
       failed: 0,
       trades: 0,
       candles: 0,
+      reachedCreationSlot: false,
+      incomplete: false,
+      pagesScanned: 0,
       skipped: true,
     };
   }
   campaignBackfillInFlight.add(campaign);
   try {
-  await assertMainnetGenesis();
-  const head = await getHeadSlot();
-  const created = await pool.query(
-    `select created_block
-       from public.campaigns
-      where chain_id=$1 and campaign_address=$2`,
-    [SOLANA_CHAIN_ID, campaign],
-  );
-  let createdSlot = Number(created.rows[0]?.created_block || 0);
-  const signatures = await fetchSignaturesForAccount(
-    campaign,
-    Number.isFinite(createdSlot) && createdSlot > 0 ? createdSlot : 0,
-    head,
-  );
-  if (!(createdSlot > 0) && signatures.length) createdSlot = signatures[0].slot;
-  const window = createdSlot > 0 ? signatures.filter((item) => item.slot >= createdSlot) : signatures;
+    await assertMainnetGenesis(signal);
+    throwIfAborted(signal);
+    const head = await getHeadSlot(signal);
+    const created = await pool.query(
+      `select created_block
+         from public.campaigns
+        where chain_id=$1 and campaign_address=$2`,
+      [SOLANA_CHAIN_ID, campaign],
+    );
+    let createdSlot = Number(created.rows[0]?.created_block || 0);
+    const fetched = await fetchSignaturesForAccount(
+      campaign,
+      Number.isFinite(createdSlot) && createdSlot > 0 ? createdSlot : 0,
+      head,
+      signal,
+    );
+    if (!(createdSlot > 0) && fetched.items.length) createdSlot = fetched.items[0].slot;
+    const window = createdSlot > 0 ? fetched.items.filter((item) => item.slot >= createdSlot) : fetched.items;
 
-  let ingested = 0;
-  let failed = 0;
-  const previous = suppressDerivedFanout;
-  suppressDerivedFanout = true;
-  try {
-    for (const item of window) {
-      const ok = await ingestSignature(item);
-      if (ok) ingested += 1;
-      else failed += 1;
+    let ingested = 0;
+    let failed = 0;
+    const previous = suppressDerivedFanout;
+    suppressDerivedFanout = true;
+    try {
+      for (const item of window) {
+        throwIfAborted(signal);
+        const ok = await ingestSignature(item, signal);
+        if (ok) ingested += 1;
+        else failed += 1;
+      }
+    } finally {
+      suppressDerivedFanout = previous;
     }
-  } finally {
-    suppressDerivedFanout = previous;
-  }
 
-  const rebuilt = await rebuildSolanaDerivedFromTrades(campaign);
-  return {
-    campaign,
-    createdSlot,
-    head,
-    scanned: window.length,
-    ingested,
-    failed,
-    trades: rebuilt.trades,
-    candles: rebuilt.candles,
-  };
+    throwIfAborted(signal);
+    const rebuilt = await rebuildSolanaDerivedFromTrades(campaign);
+    return {
+      campaign,
+      createdSlot,
+      head,
+      scanned: window.length,
+      ingested,
+      failed,
+      trades: rebuilt.trades,
+      candles: rebuilt.candles,
+      reachedCreationSlot: fetched.reachedCreationSlot,
+      incomplete: fetched.incomplete,
+      pagesScanned: fetched.pagesScanned,
+    };
   } finally {
     campaignBackfillInFlight.delete(campaign);
   }
@@ -1669,8 +1760,8 @@ export function kickSolanaCampaignHistoryBackfill(campaignAddress: string): void
   const last = campaignBackfillLastRunMs.get(campaign) || 0;
   if (Date.now() - last < CAMPAIGN_BACKFILL_COOLDOWN_MS) return;
   console.log("[solana-indexer] campaign history backfill start", campaign);
-  void withDeadline(
-    backfillSolanaCampaign(campaign),
+  void runWithAbortDeadline(
+    (signal) => backfillSolanaCampaign(campaign, signal),
     CAMPAIGN_BACKFILL_DEADLINE_MS,
     `solana campaign backfill ${campaign}`,
   )
@@ -1705,8 +1796,8 @@ export async function repairKnownSolanaCampaignHistory() {
       const campaign = String(row.campaign_address || "").trim();
       if (!isSolanaPublicKey(campaign)) continue;
       try {
-        const result = await withDeadline(
-          backfillSolanaCampaign(campaign),
+        const result = await runWithAbortDeadline(
+          (signal) => backfillSolanaCampaign(campaign, signal),
           CAMPAIGN_BACKFILL_DEADLINE_MS,
           `solana campaign backfill ${campaign}`,
         );
@@ -1729,8 +1820,9 @@ export async function repairKnownSolanaCampaignHistory() {
     lastSolanaRepairAt = new Date().toISOString();
     lastSolanaRepairSummary = {
       campaigns: results.length,
-      ok: results.filter((row) => !row.error && !row.skipped).length,
+      ok: results.filter((row) => !row.error && !row.skipped && !row.incomplete).length,
       failed: results.filter((row) => row.error).length,
+      incomplete: results.filter((row) => row.incomplete).length,
       trades: results.reduce((sum, row) => sum + Number(row.trades || 0), 0),
     };
     if (lastSolanaRepairSummary.failed === 0 && results.length) lastSolanaError = null;

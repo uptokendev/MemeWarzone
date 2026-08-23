@@ -81,6 +81,25 @@ export function collectAccountSignatures(input: {
   };
 }
 
+/** Durable PDA scan is complete only when history is exhausted or create slot is reached. */
+export function signatureScanFrontier(input: {
+  emptyBatch: boolean;
+  lastSlot: number | null;
+  fromSlot: number;
+  pagesScanned: number;
+  pageCap: number;
+}): { reachedCreationSlot: boolean; incomplete: boolean } {
+  const fromSlot = Math.max(0, Math.trunc(Number(input.fromSlot) || 0));
+  const pagesScanned = Math.max(0, Math.trunc(Number(input.pagesScanned) || 0));
+  const pageCap = Math.max(1, Math.trunc(Number(input.pageCap) || 1));
+  if (input.emptyBatch) return { reachedCreationSlot: true, incomplete: false };
+  if (input.lastSlot != null && Number(input.lastSlot) < fromSlot) {
+    return { reachedCreationSlot: true, incomplete: false };
+  }
+  if (pagesScanned >= pageCap) return { reachedCreationSlot: false, incomplete: true };
+  return { reachedCreationSlot: false, incomplete: false };
+}
+
 /**
  * Durable backfill checkpoint may move only through a successful oldest-first
  * prefix, and only when pagination actually reached the previous checkpoint
