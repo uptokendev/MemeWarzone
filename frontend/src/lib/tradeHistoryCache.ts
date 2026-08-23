@@ -96,6 +96,17 @@ function readStoredArray(storage: Storage, storageKey: string, chainId: number):
   }
 }
 
+export function clearCachedTradeHistory(chainId: number, campaign: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(key(chainId, campaign));
+    window.localStorage.removeItem(`${LEGACY_PREFIX}${Number(chainId)}:${normalizeAddress(chainId, campaign)}`);
+    window.sessionStorage.removeItem(`${LEGACY_PREFIX}${Number(chainId)}:${normalizeAddress(chainId, campaign)}`);
+  } catch {
+    // ignore
+  }
+}
+
 export function loadCachedTradeHistory(chainId: number, campaign: string): CurveTradePoint[] {
   if (typeof window === "undefined") return [];
   const currentKey = key(chainId, campaign);

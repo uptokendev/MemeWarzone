@@ -10,7 +10,7 @@ import {
 } from "@/lib/chainConfig";
 import { useAblyTokenChannel } from "@/hooks/useAblyTokenChannel";
 import { getBlockTimestamps, scanContractLogs } from "@/lib/rpcLogScan";
-import { loadCachedTradeHistory, saveCachedTradeHistory } from "@/lib/tradeHistoryCache";
+import { clearCachedTradeHistory, loadCachedTradeHistory, saveCachedTradeHistory } from "@/lib/tradeHistoryCache";
 import { indexerRowToCurvePoint } from "@/lib/chart/normalizeTrade";
 import {
   isValidTradeTxHash,
@@ -333,7 +333,6 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
       )
       .filter((t): t is CurveTradePoint => Boolean(t) && isValidTradeTxHash(t?.txHash) && Number.isFinite(Number(t?.blockNumber)));
 
-    // Empty indexer/REST snapshot must not wipe points Ably already applied.
     if (!next.length) return 0;
 
     setPoints((prev) => {
@@ -341,6 +340,23 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
       if (campaignAddress && merged.length) saveCachedTradeHistory(chainId, campaignAddress, merged);
       return merged;
     });
+    return next.length;
+  }, [campaignAddress, chainId]);
+
+  const applyAuthoritativeSnapshot = useCallback((rows: any[]) => {
+    const tokenDecimals = isSolanaChainId(chainId) ? 6 : 18;
+    const nativeDecimals = isSolanaChainId(chainId) ? 9 : 18;
+    const target = normalizeAddress(chainId, campaignAddress || "");
+    const next: CurveTradePoint[] = (rows || [])
+      .map((r: any) =>
+        indexerRowToCurvePoint(r, chainId, target, { token: tokenDecimals, native: nativeDecimals }),
+      )
+      .filter((t): t is CurveTradePoint => Boolean(t) && isValidTradeTxHash(t?.txHash) && Number.isFinite(Number(t?.blockNumber)));
+    setPoints(next);
+    if (campaignAddress) {
+      if (next.length) saveCachedTradeHistory(chainId, campaignAddress, next);
+      else clearCachedTradeHistory(chainId, campaignAddress);
+    }
     return next.length;
   }, [campaignAddress, chainId]);
 
@@ -370,17 +386,22 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
         const pages = await Promise.all(lookups.map((addr) => fetchIndexerTrades(addr, chainId, limit, signal)));
         apiRows = pages.flat();
         if (signal?.aborted) return;
+        if (mode === "full") {
+          // Indexed REST is authoritative history. Cached fills may not outrank it,
+          // including an empty book (clean Firefox and dirty Chrome must agree).
+          applyAuthoritativeSnapshot(apiRows);
+          setLoading(false);
+          initialLoadedRef.current = true;
+          setError(null);
+          return;
+        }
         if (apiRows.length) {
           applySnapshot(apiRows);
           setLoading(false);
           initialLoadedRef.current = true;
-          
-          // If the indexer API successfully returned data, skip the aggressive 
-          // on-chain fallback entirely.
           setError(null);
           return;
         }
-        // Empty trades snapshot: keep Ably/cached points. Do not setPoints([]).
       } catch (apiError: any) {
         if (isAbortError(apiError)) return;
         console.warn("[useCurveTrades] indexer trade API failed", apiError);
@@ -424,7 +445,7 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
       setLoading(false);
       lock.current = false;
     }
-  }, [canLoadTrades, campaignAddress, applySnapshot, chainId, limit, opts?.tokenAddress]);
+  }, [canLoadTrades, campaignAddress, applySnapshot, applyAuthoritativeSnapshot, chainId, limit, opts?.tokenAddress]);
 
   useEffect(() => {
     const ac = new AbortController();

@@ -57,6 +57,8 @@ function formatCompactUsd(n: number | null | undefined): string {
 type AthBarProps = {
   /** Current market cap label as shown in UI (e.g. "$340.1K"). */
   currentLabel?: string | null;
+  /** Indexed/canonical ATH in USD. Outranks empty or stale localStorage. */
+  canonicalAthUsd?: number | null;
   /** Optional stable key used for localStorage persistence. */
   storageKey: string;
   /** Optional className wrapper. */
@@ -67,8 +69,12 @@ type AthBarProps = {
   barMaxWidth?: string;
 };
 
-export function AthBar({ currentLabel, storageKey, className, barWidthPx, barMaxWidth }: AthBarProps) {
+export function AthBar({ currentLabel, canonicalAthUsd, storageKey, className, barWidthPx, barMaxWidth }: AthBarProps) {
   const current = useMemo(() => parseCompactUsd(currentLabel), [currentLabel]);
+  const canonicalAth = useMemo(() => {
+    const n = Number(canonicalAthUsd);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  }, [canonicalAthUsd]);
 
   // v3: drop ATH values polluted by bad session trades (e.g. 510k BNB rows → fake USD ATH).
   const storageKeyV2 = useMemo(() => `${storageKey}:v3`, [storageKey]);
@@ -83,18 +89,19 @@ export function AthBar({ currentLabel, storageKey, className, barWidthPx, barMax
       const raw = localStorage.getItem(storageKeyV2);
       const n = raw ? Number(raw) : NaN;
       let stored = Number.isFinite(n) ? n : null;
-      // If current mcap is sane and stored ATH is absurdly higher, reset.
       if (stored != null && current != null && current > 0 && stored > current * 50 && stored > 100) {
         stored = current;
-        localStorage.setItem(storageKeyV2, String(current));
       }
-      setAth(stored);
-      prevAthRef.current = stored;
+      const seeded = Math.max(stored ?? 0, canonicalAth ?? 0, current ?? 0);
+      const next = seeded > 0 ? seeded : null;
+      if (next != null) localStorage.setItem(storageKeyV2, String(next));
+      setAth(next);
+      prevAthRef.current = next;
     } catch {
       // ignore
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storageKeyV2, current]);
+  }, [storageKeyV2, current, canonicalAth]);
 
   // Update ATH if we surpass it.
   useEffect(() => {

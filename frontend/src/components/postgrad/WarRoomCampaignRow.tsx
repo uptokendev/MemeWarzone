@@ -5,6 +5,7 @@ import type { CampaignInfo } from "@/lib/launchpadClient";
 import { Button } from "@/components/ui/button";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { ContinuousMarketChartPanel } from "@/components/token/ContinuousMarketChartPanel";
+import { AthBar } from "@/components/token/AthBar";
 import { WarRoomTradePanel } from "@/components/postgrad/WarRoomTradePanel";
 import { getPostGradTokenDetailRoute } from "@/features/postgrad/identityRoutes";
 import { getWarRoomCampaignMetrics } from "@/features/postgrad/warRoomMetrics";
@@ -326,6 +327,14 @@ export function WarRoomCampaignRow({
                 <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-orange-300">
                   {chartSourceLabel}
                 </div>
+              </div>
+              <div className="mb-2 shrink-0 px-0.5">
+                <AthBar
+                  currentLabel={metrics.marketCapLabel}
+                  canonicalAthUsd={metrics.athMarketCapUsd > 0 ? metrics.athMarketCapUsd : null}
+                  storageKey={`ath:${rowChainId}:${String(campaign.campaign || "")}:wtr`}
+                  className="w-full min-w-0 text-[10px] text-white/80"
+                />
               </div>
               <ContinuousMarketChartPanel
                 campaignAddress={campaign.campaign}

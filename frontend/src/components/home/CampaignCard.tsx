@@ -28,6 +28,7 @@ export type CampaignCardVM = {
   createdAt?: number;
   marketCapUsdLabel?: string | null;
   athLabel?: string | null;
+  athUsd?: number | null;
   progressPct?: number | null;
   isDexTrading?: boolean;
   votes24h?: number;
@@ -321,7 +322,8 @@ export function CampaignCard({
 
         <div className="mt-3">
           <AthBar
-            currentLabel={vm.athLabel ?? vm.marketCapUsdLabel ?? null}
+            currentLabel={vm.marketCapUsdLabel ?? vm.athLabel ?? null}
+            canonicalAthUsd={vm.athUsd ?? null}
             storageKey={`ath:${String(chainIdForStorage)}:${addr}:card-v4`}
             className="text-[10px] text-success"
             barMaxWidth="100%"

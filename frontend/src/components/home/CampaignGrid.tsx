@@ -593,7 +593,7 @@ export function CampaignGrid({ className, query }: { className?: string; query: 
 
       const athBnb = Number((it.athMarketcapBnb ?? mcapBnb) ?? NaN);
       const athUsd = Number.isFinite(athBnb) && nativeUsd ? athBnb * nativeUsd : NaN;
-      const athLabel = Number.isFinite(athUsd)
+      const athLabel = Number.isFinite(athUsd) && athUsd > 0
         ? formatCompactUsd(athUsd)
         : marketCapUsdLabel;
 
@@ -605,12 +605,12 @@ export function CampaignGrid({ className, query }: { className?: string; query: 
       let progressPct: number | null = null;
       if (isDex) {
         progressPct = 100;
-      } else if (Number.isFinite(raised) && raised >= 0 && gradTarget > 0) {
-        progressPct = Math.max(0, Math.min(100, (raised / gradTarget) * 100));
-      } else if (onChain?.progressPct != null && Number.isFinite(onChain.progressPct)) {
-        progressPct = Math.max(0, Math.min(100, Number(onChain.progressPct)));
       } else if (it.progressPct != null && Number.isFinite(Number(it.progressPct))) {
         progressPct = Math.max(0, Math.min(100, Number(it.progressPct)));
+      } else if (onChain?.progressPct != null && Number.isFinite(onChain.progressPct)) {
+        progressPct = Math.max(0, Math.min(100, Number(onChain.progressPct)));
+      } else if (Number.isFinite(raised) && raised > 0 && gradTarget > 0) {
+        progressPct = Math.max(0, Math.min(100, (raised / gradTarget) * 100));
       }
 
       const activitySec = (patch?.lastActivityAt != null ? Number(patch.lastActivityAt) : safeUnixSeconds((it as any).lastActivityAt ?? null)) ?? 0;
@@ -632,6 +632,7 @@ export function CampaignGrid({ className, query }: { className?: string; query: 
         lastActivityAtSec: activitySec,
         marketCapUsdLabel,
         athLabel,
+        athUsd: Number.isFinite(athUsd) && athUsd > 0 ? athUsd : Number.isFinite(mcapUsd) ? mcapUsd : null,
         progressPct,
         isDexTrading: isDex,
         votes24h,

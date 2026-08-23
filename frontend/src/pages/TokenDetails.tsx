@@ -4370,6 +4370,11 @@ const toSeconds = (ts: number): number => {
             <div className="flex flex-col gap-2 px-4 py-2 border-b border-border/40 bg-card/20">
               <AthBar
                 currentLabel={marketCapUsdLabel ?? undefined}
+                canonicalAthUsd={
+                  liveMarketCapNative != null && nativeUsd
+                    ? liveMarketCapNative * nativeUsd
+                    : null
+                }
                 storageKey={`ath:${String(chainIdForStorage)}:${isSolanaPage ? String((campaignAddress ?? campaign?.campaign ?? "")) : String((campaignAddress ?? campaign?.campaign ?? "")).toLowerCase()}`}
                 className="w-full min-w-0"
               />

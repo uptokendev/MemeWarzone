@@ -637,21 +637,10 @@ export function UnifiedMarketChart({
     const lastSec = last ? timeToSec(last.time) : 0;
 
     if (last && lastSec === bucketSec) {
-      // Keep the printed trade close. Live spot may only extend the wick so a
-      // buy+sell in the same minute stays one candle instead of a gapped red stub.
+      // Keep the printed trade close. Live spot may only extend the wick.
+      // Never invent a synthetic candle from spot — that hid missing sells.
       last.high = Math.max(last.high, liveValue, last.open, last.close);
       last.low = Math.min(last.low, liveValue, last.open, last.close);
-      return rows;
-    }
-
-    if (!last || bucketSec > lastSec) {
-      rows.push({
-        time: bucketSec as Time,
-        open: liveValue,
-        high: liveValue,
-        low: liveValue,
-        close: liveValue,
-      });
     }
     return rows;
   }, [
