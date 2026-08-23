@@ -440,6 +440,7 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
           fallbackEnabled: ENABLE_SOLANA_ONCHAIN_TRADE_FALLBACK,
           indexerOk,
           historyComplete,
+          indexerRows,
         })
       ) {
         fallbackRan = true;

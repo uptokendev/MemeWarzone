@@ -10,6 +10,16 @@ test("legacy array response is not treated as Solana durable-complete", () => {
     fallbackEnabled: true,
     indexerOk: true,
     historyComplete: parsed.historyComplete,
+    indexerRows: parsed.items.length,
+  }), false);
+});
+
+test("empty incomplete indexer book still uses on-chain fallback", () => {
+  assert.equal(shouldRunSolanaHistoryFallback({
+    fallbackEnabled: true,
+    indexerOk: true,
+    historyComplete: false,
+    indexerRows: 0,
   }), true);
 });
 

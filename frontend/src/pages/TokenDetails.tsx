@@ -884,6 +884,43 @@ const TokenDetails = () => {
             setPageChainId(SOLANA_CHAIN_ID);
           }
 
+          // Paint immediately from the URL. Indexer /trades and /candles resolve mint vs PDA.
+          // Waiting on the 500-row campaign feed (or a chain fallback) was a 2s+ blank chart.
+          setCampaign((prev) =>
+            prev ||
+            ({
+              id: 0,
+              campaign: param,
+              token: param,
+              creator: "",
+              name: "Solana campaign",
+              symbol: "",
+              logoURI: "/placeholder.svg",
+              metadataURI: undefined,
+              xAccount: "",
+              website: "",
+              extraLink: "",
+            } as CampaignInfo),
+          );
+          setOnChainLaunched(false);
+          setOnChainPair("");
+          setMetrics({
+            sold: 0n,
+            curveSupply: 0n,
+            liquiditySupply: 0n,
+            creatorReserve: 0n,
+            basePrice: 0n,
+            priceSlope: 0n,
+            graduationTarget: 0n,
+            graduationNativeTarget: 0n,
+            liquidityBps: 0n,
+            protocolFeeBps: 0n,
+            currentPrice: 0n,
+            launched: false,
+            finalizedAt: 0n,
+          } as CampaignMetrics);
+          setLoading(false);
+
           const res = await apiFetch(
             `/api/campaigns?chainId=${SOLANA_CHAIN_ID}&limit=500&tab=trending&sort=default&status=all`,
             { cache: "no-store" },
