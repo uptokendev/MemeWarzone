@@ -76,7 +76,11 @@ export function createLeagueFeedPublisher(opts: Opts) {
     const addr = leagueCampaignKey(chainId, campaign);
     const m = getPending(chainId);
     const prev = m.get(addr) || ({ campaignAddress: addr } as LeagueCampaignPatch);
-    m.set(addr, { ...prev, ...partial, campaignAddress: addr });
+    const cleaned: Partial<LeagueCampaignPatch> = {};
+    for (const [key, value] of Object.entries(partial)) {
+      if (value != null && value !== "") (cleaned as any)[key] = value;
+    }
+    m.set(addr, { ...prev, ...cleaned, campaignAddress: addr });
   }
 
   async function loadRaisedTotal(chainId: number, campaign: string): Promise<number> {

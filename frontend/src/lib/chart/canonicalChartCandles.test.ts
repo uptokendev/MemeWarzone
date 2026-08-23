@@ -74,9 +74,10 @@ test("market-cap candles ignore trade-series reconstruction and skip live-only c
     intervalSeconds: 60,
     nowSec: Date.parse("2026-08-23T20:07:09Z") / 1000,
   });
-  assert.equal(assembled.length, 1);
+  assert.equal(assembled.length, 2);
   assert.equal(assembled[0]?.open, 0);
   assert.equal(assembled[0]?.close, 0.0011);
+  assert.equal(assembled[1]?.close, 0.001216);
 
   assert.deepEqual(
     assembleMarketCapCandles({
@@ -160,16 +161,22 @@ test("live overlay patches the latest series candle with spot×sold", () => {
   const laterBucket = patchActiveLatestBucket(base, 1.81, 60, 1_260);
   assert.equal(laterBucket[0]?.close, 1.5);
   assert.equal(laterBucket[1]?.close, 1.64);
-  assert.equal(laterBucket.length, 2);
+  assert.equal(laterBucket.length, 3);
+  assert.equal(laterBucket[2]?.open, 1.64);
+  assert.equal(laterBucket[2]?.close, 1.81);
 
   const agrees = patchActiveLatestBucket(base, 1.64, 60, 1_260);
+  assert.equal(agrees.length, 2);
   assert.equal(agrees[1]?.close, 1.64);
 
   const rounding = patchActiveLatestBucket(base, 1.64 + 1e-10, 60, 1_260);
-  assert.equal(rounding[1]?.close, 1.64 + 1e-10);
+  assert.equal(rounding.length, 2);
+  assert.equal(rounding[1]?.close, 1.64);
 
   const twoPercent = patchActiveLatestBucket(base, 1.64 * 1.02, 60, 1_260);
   assert.equal(twoPercent[1]?.close, 1.64);
+  assert.equal(twoPercent.length, 3);
+  assert.equal(twoPercent[2]?.close, 1.64 * 1.02);
 });
 
 test("sell-to-zero bonding candle is kept so the next buy can open at zero", () => {
@@ -227,9 +234,10 @@ test("completed historical last bar is not rewritten to a different live mcap", 
     intervalSeconds: 60,
     nowSec: Date.parse("2026-08-23T21:00:00Z") / 1000,
   });
-  assert.equal(rows.length, 1);
+  assert.equal(rows.length, 2);
   assert.equal(rows[0]?.close, 0.0011 * usd);
   assert.equal(rows[0]?.open, 0);
+  assert.equal(rows[1]?.close, headerNative * usd);
 });
 
 test("ATH is max of canonical highs and current mcap", () => {

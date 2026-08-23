@@ -1408,6 +1408,7 @@ async function scanCampaignRange(
 
         if (inserted) {
           insertedTotal += 1;
+          leagueFeed.queueRaisedDelta(chainId, campaign, bnbAmount);
           // Do not await Ably — a slow realtime fanout must not block trade DB writes.
           void publishTrade(chainId, campaign, {
             type: "trade",
@@ -1670,9 +1671,11 @@ export async function ingestCampaignTransaction(input: {
     });
 
     if (inserted) {
-      if (trade.side === "sell") {
-        leagueFeed.queueRaisedDelta(chain.chainId, campaign, -bnbAmount);
-      }
+      leagueFeed.queueRaisedDelta(
+        chain.chainId,
+        campaign,
+        trade.side === "sell" ? -bnbAmount : bnbAmount,
+      );
 
       await publishTrade(chain.chainId, campaign, {
         type: "trade",

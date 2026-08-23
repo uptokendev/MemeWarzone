@@ -127,6 +127,10 @@ export function useLeagueRealtime(opts: Opts) {
               votes24h: Number.isFinite(votes24h) ? votes24h : cur.votes24h,
               votesAllTime: Number.isFinite(votesAllTime) ? votesAllTime : cur.votesAllTime,
               isDexTrading: Boolean(cur.isDexTrading || it.isDexTrading),
+              marketcapBnb: it.marketcapBnb != null && it.marketcapBnb !== "" ? it.marketcapBnb : cur.marketcapBnb,
+              vol24hBnb: it.vol24hBnb != null && it.vol24hBnb !== "" ? it.vol24hBnb : cur.vol24hBnb,
+              raisedTotalBnb: it.raisedTotalBnb != null && it.raisedTotalBnb !== "" ? it.raisedTotalBnb : cur.raisedTotalBnb,
+              lastPriceBnb: it.lastPriceBnb != null && it.lastPriceBnb !== "" ? it.lastPriceBnb : cur.lastPriceBnb,
             };
           }
           return next;

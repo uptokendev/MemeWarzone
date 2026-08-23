@@ -69,10 +69,21 @@ function liveAgreesWithClose(close: number, liveValue: number): boolean {
   return diff <= 1e-12 || diff / scale <= 1e-6;
 }
 
+function patchLast(rows: CanonicalCandleRow[], liveValue: number): CanonicalCandleRow[] {
+  return rows.map((row, index) => {
+    if (index !== rows.length - 1) return row;
+    return {
+      ...row,
+      high: Math.max(row.high, liveValue, row.open, row.close),
+      low: Math.min(row.low, liveValue, row.open, row.close),
+      close: liveValue,
+    };
+  });
+}
+
 /**
- * Live spot×sold may patch the latest series candle.
- * A completed historical bar is not rewritten to a different mcap definition.
- * Never appends a new bar.
+ * Live spot×sold may patch the current minute, or open a new current-minute
+ * candle after history. Completed historical bars are not rewritten.
  */
 export function patchActiveLatestBucket(
   rows: CanonicalCandleRow[],
@@ -85,23 +96,26 @@ export function patchActiveLatestBucket(
   if (!last) return rows;
   const interval = Number(intervalSeconds);
   const now = Number(nowSec);
-  const liveBucket =
-    Number.isFinite(interval) &&
-    interval > 0 &&
-    Number.isFinite(now) &&
-    last.time === Math.floor(now / interval) * interval;
-  if (!liveBucket && last.close > 0 && !liveAgreesWithClose(last.close, liveValue)) {
-    return rows;
+  const bucketSec =
+    Number.isFinite(interval) && interval > 0 && Number.isFinite(now)
+      ? Math.floor(now / interval) * interval
+      : NaN;
+  const liveBucket = last.time === bucketSec;
+  if (liveBucket) return patchLast(rows, liveValue);
+  if (last.close > 0 && liveAgreesWithClose(last.close, liveValue)) return rows;
+  if (Number.isFinite(bucketSec) && bucketSec > last.time) {
+    return [
+      ...rows,
+      {
+        time: bucketSec,
+        open: last.close,
+        high: Math.max(last.close, liveValue),
+        low: Math.min(last.close, liveValue),
+        close: liveValue,
+      },
+    ];
   }
-  return rows.map((row, index) => {
-    if (index !== rows.length - 1) return row;
-    return {
-      ...row,
-      high: Math.max(row.high, liveValue, row.open, row.close),
-      low: Math.min(row.low, liveValue, row.open, row.close),
-      close: liveValue,
-    };
-  });
+  return rows;
 }
 
 export function assembleMarketCapCandles(input: {
