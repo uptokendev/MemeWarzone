@@ -380,7 +380,7 @@ app.get("/health", async (_req, res) => {
       ok: true,
       db: r.rows[0].ok,
       // Bump when shipping indexer loop fixes so deploy can be confirmed from /health.
-      indexerBuild: "live-c4e2-ingest-retry-2026-08-23",
+      indexerBuild: "live-c4f-bnb-tip-newest-2026-08-23",
       normalScope: ENV.INDEXER_NORMAL_SCOPE,
       solana: solanaIndexerPublicHealth(),
     });
@@ -562,6 +562,24 @@ app.post("/internal/indexer/run", wrap(async (req, res) => {
   });
   const status = result.ok ? 200 : result.skipped ? 409 : 500;
   res.status(status).json(result);
+}));
+
+app.post("/api/token/:campaign/ingest-tx", wrap(async (req, res) => {
+  const chainId = Number(req.query.chainId || req.body?.chainId || ENV.DEFAULT_EVM_CHAIN_ID);
+  const identity = await resolveMarketIdentityOrPassthrough(chainId, String(req.params.campaign || ""));
+  const campaign = identity.campaignAddress;
+  const txHash = String(req.query.txHash || req.query.tx || req.body?.txHash || req.body?.tx || "").trim().toLowerCase();
+  if (!Number.isFinite(chainId) || (chainId !== 56 && chainId !== 97)) {
+    return res.status(400).json({ ok: false, error: "Invalid chainId" });
+  }
+  if (!/^0x[a-f0-9]{40}$/.test(campaign)) {
+    return res.status(400).json({ ok: false, error: "Invalid campaign address" });
+  }
+  if (!/^0x[a-f0-9]{64}$/.test(txHash)) {
+    return res.status(400).json({ ok: false, error: "Invalid tx hash" });
+  }
+  const result = await ingestCampaignTransaction({ chainId, campaignAddress: campaign, txHash });
+  res.json(result);
 }));
 
 app.post("/internal/indexer/ingest-tx", wrap(async (req, res) => {

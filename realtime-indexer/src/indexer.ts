@@ -9,6 +9,7 @@ import { recordCampaignCreatedActivity, recordTradeActivity } from "./rewards/at
 import { upsertRewardEvent } from "./rewards/ingest.js";
 import { createStaticJsonRpcProvider, createWorkingProvider, parseRpcList } from "./rpcProvider.js";
 import { bnbCurveState } from "./bnbCurvePricing.js";
+import { campaignScanChunks } from "./campaignScanChunks.js";
 import { checkMilestones } from "./milestones.js";
 
 // ---------------------------------------------------------------------------
@@ -311,18 +312,12 @@ async function snapStaleCampaignCursor(
 ): Promise<void> {
   const cursor = `campaign:${String(campaign || "").toLowerCase()}`;
   const last = await getState(chainId, cursor);
-  if (last <= 0 || head <= 0) return;
-  if (head - last < 50_000) return;
+  if (head <= 0) return;
+  // New campaign only: start near tip. Never jump an existing cursor over a gap —
+  // that is how live buys between last-indexed and head-20k disappeared.
+  if (last > 0) return;
   const next = Math.max(0, head - Math.max(3_000, tipBlocks));
-  if (next <= last) return;
   await setStateMax(chainId, cursor, next);
-  console.warn("[indexer] snapped stale campaign cursor to tip", {
-    chainId,
-    campaign: campaign.toLowerCase(),
-    from: last,
-    to: next,
-    head,
-  });
 }
 
 async function setStateMax(chainId: number, cursor: string, nextBlock: number) {
@@ -1343,7 +1338,10 @@ async function scanCampaignRange(
     }
   }
 
-  for (let start = fromBlock; start <= toBlock; start += step) {
+  const chunks = campaignScanChunks(fromBlock, toBlock, step, tradesOnly);
+  for (const chunk of chunks) {
+    const start = chunk.start;
+    const end = chunk.end;
     if (opts.deadlineMs && Date.now() >= opts.deadlineMs) {
       console.warn("[indexer] campaign scan hit pass deadline", {
         chainId,
@@ -1351,10 +1349,10 @@ async function scanCampaignRange(
         label: opts.label || "history",
         atBlock: start,
         toBlock,
+        newestFirst: tradesOnly,
       });
       break;
     }
-    const end = Math.min(toBlock, start + step - 1);
 
     // Tip may skip a dead chunk (advanceCursor is false there). History must
     // not: a soft-fail + cursor bump is how WIC lost the 2-day fills.
