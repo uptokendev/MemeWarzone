@@ -80,8 +80,6 @@ import { solanaMarginalSpotSol } from "@/lib/solanaCampaignRead";
 import { fetchPublicCampaignLifecycleDrafts } from "@/lib/scheduledLaunchApi";
 import {
   appendLocalTopazTrade,
-  loadLocalTopazTrades,
-  saveLocalTopazTrades,
 } from "@/lib/localTopazTrades";
 import { fetchTopazTradeReports, reportTopazTrade } from "@/lib/topazTradeReports";
 import { isValidTradeTxHash, mergeTradePoints, normalizeTradeTxHash, SYNTHETIC_LOG_INDEX_MIN, tradeDedupeKey } from "@/lib/tradeDedupe";
@@ -1472,21 +1470,7 @@ const TokenDetails = () => {
     return () => window.removeEventListener("memewarzone:txConfirmed", onConfirmed as EventListener);
   }, [hasValidCampaignAddress, resolvedCampaignAddress, isSolanaPage, chainIdForStorage, tokenDecimals, campaign?.token, campaignAddress]);
 
-  // Prevent chart flicker: keep last non-empty curve points while the live hook briefly refreshes/resets.
-  const lastCurvePointsRef = useRef<CurveTradePoint[]>([]);
-  const lastCurveMarketRef = useRef(`${chainIdForStorage}:${resolvedCampaignAddress}`);
-  useEffect(() => {
-    const market = `${chainIdForStorage}:${resolvedCampaignAddress}`;
-    if (lastCurveMarketRef.current !== market) {
-      lastCurveMarketRef.current = market;
-      lastCurvePointsRef.current = [];
-    }
-    if (combinedCurvePointsSafe.length) lastCurvePointsRef.current = combinedCurvePointsSafe;
-  }, [chainIdForStorage, combinedCurvePointsSafe, resolvedCampaignAddress]);
-
-  const curvePointsForUi: CurveTradePoint[] = useMemo(() => {
-    return combinedCurvePointsSafe.length ? combinedCurvePointsSafe : lastCurvePointsRef.current;
-  }, [combinedCurvePointsSafe]);
+  const curvePointsForUi: CurveTradePoint[] = combinedCurvePointsSafe;
 
   // Restore/persist local Topaz fills + server-reported Topaz trades (wallet receipts).
   useEffect(() => {
@@ -1494,12 +1478,10 @@ const TokenDetails = () => {
       setLocalTopazTrades([]);
       return;
     }
-    const cached = loadLocalTopazTrades(chainIdForStorage, localTradeStorageAddress);
-    setLocalTopazTrades(cached);
+    setLocalTopazTrades([]);
 
     let cancelled = false;
     void (async () => {
-      // Solana persistence is local until S3 indexes Anchor trade events. Never query the Topaz/EVM report route.
       if (isSolanaPage) return;
       try {
         const remote = await fetchTopazTradeReports({
@@ -1508,11 +1490,7 @@ const TokenDetails = () => {
           limit: 100,
         });
         if (cancelled || !remote.length) return;
-        setLocalTopazTrades((prev) => {
-          const merged = mergeTradePoints(prev, remote);
-          saveLocalTopazTrades(chainIdForStorage, localTradeStorageAddress, merged);
-          return merged;
-        });
+        setLocalTopazTrades((prev) => mergeTradePoints(prev, remote));
       } catch {
         // Server reports are optional until Railway frontend has the route + DB.
       }
@@ -1522,11 +1500,6 @@ const TokenDetails = () => {
       cancelled = true;
     };
   }, [localTradeStorageAddress, chainIdForStorage, isSolanaPage]);
-
-  useEffect(() => {
-    if (!localTradeStorageAddress) return;
-    saveLocalTopazTrades(chainIdForStorage, localTradeStorageAddress, localTopazTrades);
-  }, [localTopazTrades, localTradeStorageAddress, chainIdForStorage]);
 
   const unifiedMarket = useUnifiedMarket({
     campaignAddress: hasValidCampaignAddress ? resolvedCampaignAddress : undefined,

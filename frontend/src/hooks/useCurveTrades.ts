@@ -10,7 +10,6 @@ import {
 } from "@/lib/chainConfig";
 import { useAblyTokenChannel } from "@/hooks/useAblyTokenChannel";
 import { getBlockTimestamps, scanContractLogs } from "@/lib/rpcLogScan";
-import { clearCachedTradeHistory, loadCachedTradeHistory, saveCachedTradeHistory } from "@/lib/tradeHistoryCache";
 import { indexerRowToCurvePoint } from "@/lib/chart/normalizeTrade";
 import {
   isValidTradeTxHash,
@@ -318,7 +317,6 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
   const tipInFlightRef = useRef(false);
   const initialLoadedRef = useRef(false);
   const highestBlockScannedRef = useRef(0);
-  const sessionLiveKeysRef = useRef<Set<string>>(new Set());
   const reconcileMs = opts?.reconcileMs ?? 4_000;
   const limit = Math.min(Math.max(Number(opts?.limit ?? 200), 1), 200);
   const canLoadTrades = enabled && isTradeCampaignAddress(campaignAddress, chainId);
@@ -335,17 +333,11 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
       .filter((t): t is CurveTradePoint => Boolean(t) && isValidTradeTxHash(t?.txHash) && Number.isFinite(Number(t?.blockNumber)));
 
     if (!next.length) return 0;
-
-    for (const point of next) sessionLiveKeysRef.current.add(`${point.txHash}:${point.logIndex}`);
-    setPoints((prev) => {
-      const merged = mergeTradePoints(prev, next);
-      if (campaignAddress && merged.length) saveCachedTradeHistory(chainId, campaignAddress, merged);
-      return merged;
-    });
+    setPoints((prev) => mergeTradePoints(prev, next));
     return next.length;
   }, [campaignAddress, chainId]);
 
-  const applyAuthoritativeSnapshot = useCallback((rows: any[]) => {
+  const applyIndexerSnapshot = useCallback((rows: any[]) => {
     const tokenDecimals = isSolanaChainId(chainId) ? 6 : 18;
     const nativeDecimals = isSolanaChainId(chainId) ? 9 : 18;
     const target = normalizeAddress(chainId, campaignAddress || "");
@@ -354,27 +346,8 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
         indexerRowToCurvePoint(r, chainId, target, { token: tokenDecimals, native: nativeDecimals }),
       )
       .filter((t): t is CurveTradePoint => Boolean(t) && isValidTradeTxHash(t?.txHash) && Number.isFinite(Number(t?.blockNumber)));
-    const restCursor = next.reduce((max, point) => Math.max(max, Number(point.blockNumber || 0)), 0);
-    setPoints((prev) => {
-      const liveNewer = prev.filter((point) => {
-        const key = `${point.txHash}:${point.logIndex}`;
-        if (!sessionLiveKeysRef.current.has(key)) return false;
-        if (!next.length) return true;
-        const block = Number(point.blockNumber || 0);
-        if (block > restCursor) return true;
-        if (block === restCursor) {
-          const restLogs = next.filter((row) => Number(row.blockNumber || 0) === restCursor).map((row) => Number(row.logIndex || 0));
-          return Number(point.logIndex || 0) > Math.max(0, ...restLogs);
-        }
-        return false;
-      });
-      const merged = mergeTradePoints(next, liveNewer);
-      if (campaignAddress) {
-        if (merged.length) saveCachedTradeHistory(chainId, campaignAddress, merged, { replace: true });
-        else clearCachedTradeHistory(chainId, campaignAddress);
-      }
-      return merged;
-    });
+    // Indexer history + in-memory Ably/txConfirmed only. Never localStorage.
+    setPoints((prev) => mergeTradePoints(next, prev));
     return next.length;
   }, [campaignAddress, chainId]);
 
@@ -405,9 +378,7 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
         apiRows = pages.flat();
         if (signal?.aborted) return;
         if (mode === "full") {
-          // Indexed REST is authoritative history. Cached fills may not outrank it,
-          // including an empty book (clean Firefox and dirty Chrome must agree).
-          applyAuthoritativeSnapshot(apiRows);
+          applyIndexerSnapshot(apiRows);
           setLoading(false);
           initialLoadedRef.current = true;
           setError(null);
@@ -463,7 +434,7 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
       setLoading(false);
       lock.current = false;
     }
-  }, [canLoadTrades, campaignAddress, applySnapshot, applyAuthoritativeSnapshot, chainId, limit, opts?.tokenAddress]);
+  }, [canLoadTrades, campaignAddress, applySnapshot, applyIndexerSnapshot, chainId, limit, opts?.tokenAddress]);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -471,10 +442,8 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
     const prev = prevCampaignRef.current;
     if (curr !== prev) {
       prevCampaignRef.current = curr;
-      sessionLiveKeysRef.current = new Set();
-      const cached = curr ? loadCachedTradeHistory(chainId, campaignAddress || "") : [];
-      setPoints(cached.filter((point) => point.tokensWei > 0n));
-      setLoading(canLoadTrades && cached.length === 0);
+      setPoints([]);
+      setLoading(canLoadTrades);
       setError(null);
       initialLoadedRef.current = false;
     }

@@ -5,7 +5,6 @@ import {
   canonicalAthUsd,
   canonicalMcapUsd,
   marketValuesAgree,
-  volumeNativeFromTrades,
 } from "./canonicalMarket.ts";
 
 test("canonical mcap is spot × sold × usd", () => {
@@ -13,9 +12,9 @@ test("canonical mcap is spot × sold × usd", () => {
   assert.equal(canonicalMcapUsd(0, 1000, 1), 0);
 });
 
-test("ATH is max of current, indexed, and series", () => {
-  assert.equal(canonicalAthUsd(1.29, 4.75, 4.77), 4.77);
-  assert.equal(canonicalAthUsd(5.45, 5.45, 7.24), 7.24);
+test("ATH is max of current mcap and indexed ATH", () => {
+  assert.equal(canonicalAthUsd(1.29, 4.75), 4.75);
+  assert.equal(canonicalAthUsd(5.45, 5.45), 5.45);
 });
 
 test("chart close and header mcap must agree", () => {
@@ -45,19 +44,6 @@ test("chart close and header mcap must agree", () => {
     }).length,
     0,
   );
-});
-
-test("24h volume ignores older prints", () => {
-  const now = 1_000_000;
-  const native = volumeNativeFromTrades(
-    [
-      { nativeWei: 2_000_000_000n, timestamp: now - 100 },
-      { nativeWei: 9_000_000_000n, timestamp: now - 200_000 },
-    ],
-    9,
-    now,
-  );
-  assert.equal(native, 2);
 });
 
 test("marketValuesAgree allows display rounding", () => {

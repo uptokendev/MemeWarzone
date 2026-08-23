@@ -16,11 +16,11 @@ export function canonicalMcapUsd(spotNative: number, soldWhole: number, nativeUs
   return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
-export function canonicalAthUsd(currentMcapUsd: number, indexedAthUsd = 0, seriesMaxUsd = 0): number {
+/** Indexed ATH, raised by current chain mcap. No browser series contest. */
+export function canonicalAthUsd(currentMcapUsd: number, indexedAthUsd = 0): number {
   const current = Number(currentMcapUsd) > 0 ? Number(currentMcapUsd) : 0;
   const indexed = Number(indexedAthUsd) > 0 ? Number(indexedAthUsd) : 0;
-  const series = Number(seriesMaxUsd) > 0 ? Number(seriesMaxUsd) : 0;
-  return Math.max(current, indexed, series);
+  return Math.max(current, indexed);
 }
 
 export function volumeUsdFromNative(volNative: number, nativeUsd: number): number {
@@ -29,25 +29,6 @@ export function volumeUsdFromNative(volNative: number, nativeUsd: number): numbe
   if (!Number.isFinite(vol) || vol <= 0 || !Number.isFinite(usd) || usd <= 0) return 0;
   const value = vol * usd;
   return Number.isFinite(value) && value > 0 ? value : 0;
-}
-
-export function volumeNativeFromTrades(
-  trades: Array<{ nativeWei?: bigint | number | string; timestamp?: number }>,
-  nativeDecimals: number,
-  nowSec = Math.floor(Date.now() / 1000),
-  windowSec = 86_400,
-): number {
-  const cutoff = nowSec - windowSec;
-  const scale = 10 ** nativeDecimals;
-  let total = 0;
-  for (const trade of trades || []) {
-    const ts = Number(trade.timestamp || 0);
-    if (Number.isFinite(ts) && ts > 0 && ts < cutoff) continue;
-    const raw = trade.nativeWei;
-    const n = typeof raw === "bigint" ? Number(raw) / scale : Number(raw);
-    if (Number.isFinite(n) && n > 0) total += n;
-  }
-  return total;
 }
 
 export type MarketConsistencyInput = {

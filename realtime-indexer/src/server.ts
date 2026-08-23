@@ -78,6 +78,20 @@ app.use((req, res, next) => {
   next();
 });
 
+app.use((req, res, next) => {
+  const path = String(req.path || "");
+  if (
+    path.startsWith("/api/token/") ||
+    path.startsWith("/api/campaigns") ||
+    path.startsWith("/api/featured") ||
+    path.startsWith("/api/war-room") ||
+    path.startsWith("/api/market/")
+  ) {
+    res.setHeader("Cache-Control", "no-store");
+  }
+  next();
+});
+
 const wrap =
   (fn: (req: Request, res: Response, next: NextFunction) => Promise<any>): RequestHandler =>
   (req, res, next) => {

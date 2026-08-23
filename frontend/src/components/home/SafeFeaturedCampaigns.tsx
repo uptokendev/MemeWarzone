@@ -75,24 +75,11 @@ function formatCompactUsd(value: number) {
   }).format(value);
 }
 
-function getAthLabel(chainId: number, campaignAddress: string, currentUsd: number | null) {
-  if (typeof window === "undefined") return currentUsd != null ? formatCompactUsd(currentUsd) : "—";
-
-  try {
-    const key = `ath:${chainId}:${liveCampaignKey(chainId, campaignAddress)}:featured-v1`;
-    const storedRaw = window.localStorage.getItem(key);
-    const stored = storedRaw ? Number(storedRaw) : NaN;
-    const storedValue = Number.isFinite(stored) ? stored : 0;
-    const next = Math.max(storedValue, currentUsd ?? 0);
-
-    if (currentUsd != null && Number.isFinite(currentUsd) && currentUsd > storedValue) {
-      window.localStorage.setItem(key, String(currentUsd));
-    }
-
-    return next > 0 ? formatCompactUsd(next) : "—";
-  } catch {
-    return currentUsd != null ? formatCompactUsd(currentUsd) : "—";
-  }
+function getAthLabel(_chainId: number, _campaignAddress: string, currentUsd: number | null, indexedAthUsd?: number | null) {
+  const live = Number(currentUsd);
+  const indexed = Number(indexedAthUsd);
+  const ath = Math.max(Number.isFinite(live) && live > 0 ? live : 0, Number.isFinite(indexed) && indexed > 0 ? indexed : 0);
+  return ath > 0 ? formatCompactUsd(ath) : "—";
 }
 
 function normalizeItem(raw: any, fallbackChainId: number): FeaturedItem | null {
