@@ -61,9 +61,17 @@ export function marketCandlesForChart(
     .filter((row): row is CanonicalCandleRow => row != null);
 }
 
+function liveAgreesWithClose(close: number, liveValue: number): boolean {
+  if (!Number.isFinite(close) || !Number.isFinite(liveValue) || liveValue <= 0) return false;
+  if (close <= 0) return false;
+  const diff = Math.abs(close - liveValue);
+  return diff <= 1e-12 || diff / Math.max(close, liveValue) <= 0.02;
+}
+
 /**
- * Live spot×sold may patch the latest series candle so the chart live label
- * matches the header. Older candles stay untouched. Never appends a new bar.
+ * Live spot×sold may patch the latest series candle.
+ * A completed historical bar is not rewritten to a different mcap definition.
+ * Never appends a new bar.
  */
 export function patchActiveLatestBucket(
   rows: CanonicalCandleRow[],
@@ -71,11 +79,19 @@ export function patchActiveLatestBucket(
   intervalSeconds?: number,
   nowSec?: number,
 ): CanonicalCandleRow[] {
-  void intervalSeconds;
-  void nowSec;
   if (!rows.length || !Number.isFinite(liveValue) || liveValue <= 0) return rows;
   const last = rows[rows.length - 1];
   if (!last) return rows;
+  const interval = Number(intervalSeconds);
+  const now = Number(nowSec);
+  const liveBucket =
+    Number.isFinite(interval) &&
+    interval > 0 &&
+    Number.isFinite(now) &&
+    last.time === Math.floor(now / interval) * interval;
+  if (!liveBucket && last.close > 0 && !liveAgreesWithClose(last.close, liveValue)) {
+    return rows;
+  }
   return rows.map((row, index) => {
     if (index !== rows.length - 1) return row;
     return {

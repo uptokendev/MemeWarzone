@@ -11,14 +11,12 @@ import {
   type MarketTrade,
 } from "@/lib/marketContinuityApi";
 import { campaignKey, isCampaignAddress, isTradeTxId } from "@/lib/chart/normalizeTrade";
-import { isMarketContinuityApiEnabled } from "@/lib/marketContinuityFlags";
 import { normalizeTradeTxHash } from "@/lib/tradeDedupe";
 
 export type MarketResolution = "1s" | "5s" | "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d";
 
 // Durable server market data is the chart source of truth for Market Cap.
 // UnifiedMarketChart does not reconstruct historical mcap from the trade tape.
-const ENABLE_MARKET_API = isMarketContinuityApiEnabled();
 
 function tradeKey(trade: Pick<MarketTrade, "txHash" | "logIndex">) {
   const tx = normalizeTradeTxHash(trade.txHash) || String(trade.txHash || "").trim();
@@ -199,7 +197,8 @@ export function useUnifiedMarket(input: {
   const resolution = input.resolution ?? "1m";
   // Chart stays available for a valid campaign even if durable market data is unavailable.
   const enabled = (input.enabled ?? true) && isCampaignAddress(input.chainId, campaignAddress);
-  const apiEnabled = enabled && ENABLE_MARKET_API;
+  // Durable indexer candles are chart truth even when the WTR UI flag is off.
+  const apiEnabled = enabled;
 
   const [state, setState] = useState<MarketState | null>(null);
   const [summary, setSummary] = useState<MarketSummary | null>(null);

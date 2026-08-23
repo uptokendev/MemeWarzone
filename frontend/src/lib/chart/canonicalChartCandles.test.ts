@@ -76,7 +76,7 @@ test("market-cap candles ignore trade-series reconstruction and skip live-only c
   });
   assert.equal(assembled.length, 1);
   assert.equal(assembled[0]?.open, 0);
-  assert.equal(assembled[0]?.close, 0.001216);
+  assert.equal(assembled[0]?.close, 0.0011);
 
   assert.deepEqual(
     assembleMarketCapCandles({
@@ -159,8 +159,11 @@ test("live overlay patches the latest series candle with spot×sold", () => {
 
   const laterBucket = patchActiveLatestBucket(base, 1.81, 60, 1_260);
   assert.equal(laterBucket[0]?.close, 1.5);
-  assert.equal(laterBucket[1]?.close, 1.81);
+  assert.equal(laterBucket[1]?.close, 1.64);
   assert.equal(laterBucket.length, 2);
+
+  const agrees = patchActiveLatestBucket(base, 1.64, 60, 1_260);
+  assert.equal(agrees[1]?.close, 1.64);
 });
 
 test("sell-to-zero bonding candle is kept so the next buy can open at zero", () => {
@@ -198,7 +201,7 @@ test("sell-to-zero bonding candle is kept so the next buy can open at zero", () 
   assert.equal(rows[2]?.open, 0);
 });
 
-test("latest chart close equals header spot×sold in USD", () => {
+test("completed historical last bar is not rewritten to a different live mcap", () => {
   const headerNative = 0.001216086475611437;
   const usd = 699.5;
   const rows = assembleMarketCapCandles({
@@ -219,7 +222,7 @@ test("latest chart close equals header spot×sold in USD", () => {
     nowSec: Date.parse("2026-08-23T21:00:00Z") / 1000,
   });
   assert.equal(rows.length, 1);
-  assert.equal(rows[0]?.close, headerNative * usd);
+  assert.equal(rows[0]?.close, 0.0011 * usd);
   assert.equal(rows[0]?.open, 0);
 });
 
