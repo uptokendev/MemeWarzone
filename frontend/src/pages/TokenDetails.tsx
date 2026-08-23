@@ -54,6 +54,7 @@ import {
 import { TokenComments } from "@/components/token/TokenComments";
 import { TokenWarRoom } from "@/components/token/TokenWarRoom";
 import { AthBar } from "@/components/token/AthBar";
+import { canonicalAthUsd } from "@/lib/canonicalMarket";
 import { UpvoteDialog } from "@/components/token/UpvoteDialog";
 import { useWallet } from "@/contexts/WalletContext";
 import { followCampaign, unfollowCampaign, isFollowingCampaign } from "@/lib/followApi";
@@ -4370,11 +4371,9 @@ const toSeconds = (ts: number): number => {
             <div className="flex flex-col gap-2 px-4 py-2 border-b border-border/40 bg-card/20">
               <AthBar
                 currentLabel={marketCapUsdLabel ?? undefined}
-                canonicalAthUsd={
-                  liveMarketCapNative != null && nativeUsd
-                    ? liveMarketCapNative * nativeUsd
-                    : null
-                }
+                canonicalAthUsd={canonicalAthUsd(
+                  liveMarketCapNative != null && nativeUsd ? liveMarketCapNative * nativeUsd : 0,
+                )}
                 storageKey={`ath:${String(chainIdForStorage)}:${isSolanaPage ? String((campaignAddress ?? campaign?.campaign ?? "")) : String((campaignAddress ?? campaign?.campaign ?? "")).toLowerCase()}`}
                 className="w-full min-w-0"
               />

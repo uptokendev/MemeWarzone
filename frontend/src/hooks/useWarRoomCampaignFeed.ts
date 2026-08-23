@@ -132,6 +132,9 @@ function overlayLeaguePatch(campaign: WarRoomCampaign, patchByCampaign: Record<s
     (next as any).priceBnb = lastPriceBnb;
     (next as any).lastPrice = lastPriceBnb;
   }
+  if (marketcapBnb != null && lastPriceBnb != null && lastPriceBnb > 0) {
+    (next as any).soldTokens = marketcapBnb / lastPriceBnb;
+  }
   const raisedTotalBnb = overlayNumber(patch.raisedTotalBnb);
   if (raisedTotalBnb != null) (next as any).raisedTotalBnb = raisedTotalBnb;
   const votes24h = overlayNumber(patch.votes24h);

@@ -717,20 +717,32 @@ async function insertActivityEvent(row: {
   });
 }
 
-async function upsertCandle(campaign: string, tf: TF, bucketSec: number, priceSol: number, volumeSol: number) {
+async function upsertCandle(campaign: string, tf: TF, bucketSec: number, priceSol: number, volumeSol: number, soldWhole = 0) {
+  const mcapSol = Number.isFinite(soldWhole) && soldWhole > 0 ? priceSol * soldWhole : null;
   const written = await pool.query(
     `insert into public.token_candles(
-       chain_id,campaign_address,timeframe,bucket_start,o,h,l,c,volume_bnb,trades_count
-     ) values($1,$2,$3,$4,$5,$5,$5,$5,$6,1)
+       chain_id,campaign_address,timeframe,bucket_start,o,h,l,c,volume_bnb,trades_count,
+       mcap_o,mcap_h,mcap_l,mcap_c
+     ) values($1,$2,$3,$4,$5,$5,$5,$5,$6,1,$7,$7,$7,$7)
      on conflict (chain_id,campaign_address,timeframe,bucket_start) do update set
        h=greatest(public.token_candles.h, excluded.h),
        l=least(public.token_candles.l, excluded.l),
        c=excluded.c,
        volume_bnb=public.token_candles.volume_bnb + excluded.volume_bnb,
        trades_count=public.token_candles.trades_count + 1,
+       mcap_o=coalesce(public.token_candles.mcap_o, excluded.mcap_o),
+       mcap_h=case
+         when excluded.mcap_h is null then public.token_candles.mcap_h
+         else greatest(coalesce(public.token_candles.mcap_h, excluded.mcap_h), excluded.mcap_h)
+       end,
+       mcap_l=case
+         when excluded.mcap_l is null then public.token_candles.mcap_l
+         else least(coalesce(public.token_candles.mcap_l, excluded.mcap_l), excluded.mcap_l)
+       end,
+       mcap_c=coalesce(excluded.mcap_c, public.token_candles.mcap_c),
        updated_at=now()
-     returning o,h,l,c,volume_bnb,trades_count`,
-    [SOLANA_CHAIN_ID, campaign, tf, new Date(bucketSec * 1000), priceSol, volumeSol],
+     returning o,h,l,c,volume_bnb,trades_count,mcap_o,mcap_h,mcap_l,mcap_c`,
+    [SOLANA_CHAIN_ID, campaign, tf, new Date(bucketSec * 1000), priceSol, volumeSol, mcapSol],
   );
 
   const row = written.rows[0] || {
@@ -918,7 +930,14 @@ async function insertTrade(event: TokensBoughtEvent | TokensSoldEvent, signature
   if (priceNative !== null && priceNative > 0) {
     const tsSec = Math.floor(blockTime.getTime() / 1000);
     for (const tf of TIMEFRAMES) {
-      await upsertCandle(campaign, tf, bucketStart(tsSec, tf), priceNative, nativeAmount);
+      await upsertCandle(
+        campaign,
+        tf,
+        bucketStart(tsSec, tf),
+        priceNative,
+        nativeAmount,
+        toTokens(event.soldTokensAfter),
+      );
     }
   }
   await patchStats(campaign);

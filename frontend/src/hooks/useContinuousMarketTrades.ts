@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Contract, ethers } from "ethers";
 import { useCurveTrades, type CurveTradePoint } from "@/hooks/useCurveTrades";
 import { useTopazMarket } from "@/hooks/useTopazMarket";
@@ -41,11 +41,10 @@ export function useContinuousMarketTrades(input: {
 
   const { points: curvePoints, loading: curveLoading, error: curveError } = useCurveTrades(
     enabled ? campaignAddress : undefined,
-    { chainId, enabled },
+    { chainId, enabled, tokenAddress: tokenAddress || undefined },
   );
 
   const [localTopazTrades, setLocalTopazTrades] = useState<CurveTradePoint[]>([]);
-  const lastNonEmptyRef = useRef<CurveTradePoint[]>([]);
 
   // On-chain graduation independent of campaign_market_state (same idea as TokenDetails).
   const [onChainLaunched, setOnChainLaunched] = useState(false);
@@ -213,11 +212,7 @@ export function useContinuousMarketTrades(input: {
     evm,
   ]);
 
-  useEffect(() => {
-    if (tradePoints.length) lastNonEmptyRef.current = tradePoints;
-  }, [tradePoints]);
-
-  const stableTradePoints = tradePoints.length ? tradePoints : lastNonEmptyRef.current;
+  const stableTradePoints = tradePoints;
 
   const loading =
     stableTradePoints.length > 0

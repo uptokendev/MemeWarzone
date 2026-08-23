@@ -206,23 +206,10 @@ function tradeSeriesPoints(
   const sorted = [...(trades || [])].sort(chainOrder);
   const fixedGradSupply = postBurnSupply(marketState, tokenDecimals);
   const marketAlreadyGraduated = isGraduatedStage(marketState) || Boolean(solana && solanaGraduated);
-  const frozenLiveSupply =
-    Number.isFinite(Number(liveSupplyWhole)) && Number(liveSupplyWhole) > 0
-      ? Number(liveSupplyWhole)
-      : formatUnitsNumber(currentBondingSoldRaw, tokenDecimals);
-  const bondingTrades = sorted.filter((trade) => !isSolanaDexPrint(trade, Boolean(solanaGraduated), graduationTimeSec));
-  const liveBondingSupply = !marketAlreadyGraduated ? formatUnitsNumber(currentBondingSoldRaw, tokenDecimals) : 0;
-  const reconstructedFinalSupply =
-    solana && !marketAlreadyGraduated
-      ? bondingTrades.reduce((supply, trade) => {
-          const amount = formatUnitsNumber(trade.tokensWei, tokenDecimals);
-          return Math.max(0, supply + (trade.type === "sell" ? -amount : amount));
-        }, 0)
-      : 0;
-  const historySupplyOffset = liveBondingSupply > 0 ? Math.max(0, liveBondingSupply - reconstructedFinalSupply) : 0;
-
-  let circulating = historySupplyOffset;
-  let peakCirc = circulating;
+  void liveSupplyWhole;
+  void currentBondingSoldRaw;
+  let circulating = 0;
+  let peakCirc = 0;
   const points: ChartPoint[] = [];
 
   for (const trade of sorted) {
@@ -244,21 +231,21 @@ function tradeSeriesPoints(
     }
 
     const soldAfter = trade.soldTokensAfterRaw != null ? formatUnitsNumber(trade.soldTokensAfterRaw, tokenDecimals) : 0;
+    // Never multiply a historical price by *current* live supply — that put
+    // chart mcap at ATH while the headline used live spot × sold.
     const supplyForMcap = solana
       ? !dexPrint && authoritative && authoritative.supplyWhole > 0
         ? authoritative.supplyWhole
-        : frozenLiveSupply > 0
-          ? frozenLiveSupply
+        : soldAfter > 0
+          ? soldAfter
           : Math.max(circulating, 0)
       : soldAfter > 0
         ? soldAfter
         : afterGrad && fixedGradSupply > 0
           ? fixedGradSupply
-          : frozenLiveSupply > 0
-            ? frozenLiveSupply
-            : afterGrad && peakCirc > 0
-              ? peakCirc
-              : Math.max(circulating, 0);
+          : afterGrad && peakCirc > 0
+            ? peakCirc
+            : Math.max(circulating, 0);
 
     const valueNative = metric === "marketcap" ? priceNative * Math.max(supplyForMcap, 1e-18) : priceNative;
     const value = denomination === "USD" ? valueNative * nativeUsd : valueNative;
@@ -319,7 +306,8 @@ function marketCandlesForChart(
   nativeUsd: number,
   tokenDecimals: number,
 ): CandleRow[] {
-  const supply = postBurnSupply(state, tokenDecimals);
+  void state;
+  void tokenDecimals;
   if (denomination === "USD" && nativeUsd <= 0) return [];
   const denomMul = denomination === "USD" ? nativeUsd : 1;
 
@@ -335,10 +323,12 @@ function marketCandlesForChart(
       let values: number[];
       if (hasCanonical) {
         values = canonicalValues.map((value) => Number(value));
+      } else if (metric === "marketcap") {
+        // Bonding o/h/l/c are native *price*. Do not multiply by post-burn or
+        // current supply — that invented $7 chart mcap against a $5 headline.
+        return null;
       } else {
-        const multiplier = metric === "marketcap" ? supply : 1;
-        if (metric === "marketcap" && multiplier <= 0) return null;
-        values = [row.o, row.h, row.l, row.c].map((value) => Number(value) * multiplier);
+        values = [row.o, row.h, row.l, row.c].map((value) => Number(value));
       }
 
       const [open, high, low, close] = values.map((value) => value * denomMul);
@@ -637,10 +627,9 @@ export function UnifiedMarketChart({
     const lastSec = last ? timeToSec(last.time) : 0;
 
     if (last && lastSec === bucketSec) {
-      // Keep the printed trade close. Live spot may only extend the wick.
-      // Never invent a synthetic candle from spot — that hid missing sells.
       last.high = Math.max(last.high, liveValue, last.open, last.close);
       last.low = Math.min(last.low, liveValue, last.open, last.close);
+      last.close = liveValue;
     }
     return rows;
   }, [
