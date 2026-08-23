@@ -129,6 +129,41 @@ test("live overlay patches only the active latest bucket with spot×sold", () =>
   assert.equal(laterBucket.length, 2);
 });
 
+test("sell-to-zero bonding candle is kept so the next buy can open at zero", () => {
+  const rows = marketCandlesForChart(
+    [
+      candle({
+        bucket_start: "2026-08-22T12:16:00.000Z",
+        mcap_o: "0",
+        mcap_h: "0.001216",
+        mcap_l: "0",
+        mcap_c: "0.001216",
+      }),
+      candle({
+        bucket_start: "2026-08-22T12:23:00.000Z",
+        mcap_o: "0.001216",
+        mcap_h: "0.001216",
+        mcap_l: "0",
+        mcap_c: "0",
+      }),
+      candle({
+        bucket_start: "2026-08-23T20:07:00.000Z",
+        mcap_o: "0",
+        mcap_h: "0.001216",
+        mcap_l: "0",
+        mcap_c: "0.001216",
+      }),
+    ],
+    "marketcap",
+    "BNB",
+    0,
+  );
+  assert.equal(rows.length, 3);
+  assert.equal(rows[1]?.close, 0);
+  assert.equal(rows[1]?.low, 0);
+  assert.equal(rows[2]?.open, 0);
+});
+
 test("ATH is max of canonical highs and current mcap", () => {
   const rows = [
     { mcap_h: "4.02" },

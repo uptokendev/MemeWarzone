@@ -53,7 +53,8 @@ export function marketCandlesForChart(
       const [open, high, low, close] = values.map((value) => value * denomMul);
       if (![open, high, low, close].every(Number.isFinite)) return null;
       if (metric === "price" && (open <= 0 || high <= 0 || low <= 0 || close <= 0)) return null;
-      if (metric === "marketcap" && (open < 0 || high <= 0 || low < 0 || close <= 0)) return null;
+      if (metric === "marketcap" && (open < 0 || high < 0 || low < 0 || close < 0)) return null;
+      if (metric === "marketcap" && open === 0 && high === 0 && low === 0 && close === 0) return null;
       if (!Number.isFinite(timestamp) || timestamp <= 0) return null;
       return { time: timestamp, open, high, low, close };
     })
