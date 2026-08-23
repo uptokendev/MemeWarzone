@@ -133,7 +133,7 @@ export function WarRoomCampaignRow({
     ? 101
     : inferredChainId === 56 || inferredChainId === 97
       ? inferredChainId
-      : 97;
+      : 56;
   const chainLabel = getChainLabel(rowChainId) || `Chain ${rowChainId || "unknown"}`;
   const draftFollows = formatCompactNumber(rich.draftFollowCount);
   const draftOptIns = formatCompactNumber(rich.draftOptInCount);

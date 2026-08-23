@@ -130,12 +130,18 @@ export function loadCachedTradeHistory(chainId: number, campaign: string): Curve
     .slice(-MAX);
 }
 
-export function saveCachedTradeHistory(chainId: number, campaign: string, trades: CurveTradePoint[]) {
+export function saveCachedTradeHistory(
+  chainId: number,
+  campaign: string,
+  trades: CurveTradePoint[],
+  opts?: { replace?: boolean },
+) {
   const storage = storageFor(chainId);
   if (!storage) return;
   try {
     const map = new Map<string, Stored>();
-    for (const t of [...loadCachedTradeHistory(chainId, campaign), ...trades]) {
+    const incoming = opts?.replace ? trades : [...loadCachedTradeHistory(chainId, campaign), ...trades];
+    for (const t of incoming) {
       const s = toStored(t, chainId);
       if (!s) continue;
       map.set(`${s.txHash}:${s.logIndex}`, s);

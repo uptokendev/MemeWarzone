@@ -354,7 +354,7 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
       .filter((t): t is CurveTradePoint => Boolean(t) && isValidTradeTxHash(t?.txHash) && Number.isFinite(Number(t?.blockNumber)));
     setPoints(next);
     if (campaignAddress) {
-      if (next.length) saveCachedTradeHistory(chainId, campaignAddress, next);
+      if (next.length) saveCachedTradeHistory(chainId, campaignAddress, next, { replace: true });
       else clearCachedTradeHistory(chainId, campaignAddress);
     }
     return next.length;

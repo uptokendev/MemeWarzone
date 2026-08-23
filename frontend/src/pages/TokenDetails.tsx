@@ -1396,7 +1396,7 @@ const TokenDetails = () => {
     {
       chainId: chainIdForStorage,
       enabled: hasValidCampaignAddress,
-      tokenAddress: isSolanaPage ? undefined : String(campaign?.token || campaignAddress || "").trim() || undefined,
+      tokenAddress: String(campaign?.token || campaignAddress || "").trim() || undefined,
     },
   );
   const liveCurvePointsSafe = useMemo<CurveTradePoint[]>(

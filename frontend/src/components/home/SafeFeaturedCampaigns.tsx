@@ -79,7 +79,7 @@ function getAthLabel(chainId: number, campaignAddress: string, currentUsd: numbe
   if (typeof window === "undefined") return currentUsd != null ? formatCompactUsd(currentUsd) : "—";
 
   try {
-    const key = `ath:${chainId}:${campaignAddress.toLowerCase()}:featured-v1`;
+    const key = `ath:${chainId}:${liveCampaignKey(chainId, campaignAddress)}:featured-v1`;
     const storedRaw = window.localStorage.getItem(key);
     const stored = storedRaw ? Number(storedRaw) : NaN;
     const storedValue = Number.isFinite(stored) ? stored : 0;
