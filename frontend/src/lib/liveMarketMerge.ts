@@ -10,10 +10,20 @@ const PUBLIC_HIDDEN_CAMPAIGNS = new Map<number, Set<string>>([
   ],
 ]);
 
+const PUBLIC_HIDDEN_SYMBOLS = new Map<number, Set<string>>([
+  [56, new Set(["BWT"])],
+]);
+
 function isPublicHiddenCampaign(chainId: number, address: string): boolean {
   const cid = Number(chainId);
   const raw = String(address ?? "").trim();
   return Boolean(raw && PUBLIC_HIDDEN_CAMPAIGNS.get(cid)?.has(raw));
+}
+
+function isPublicHiddenSymbol(chainId: number, symbol: unknown): boolean {
+  const cid = Number(chainId);
+  const normalized = String(symbol ?? "").trim().toUpperCase();
+  return Boolean(normalized && PUBLIC_HIDDEN_SYMBOLS.get(cid)?.has(normalized));
 }
 
 /** Canonical campaign key: EVM lowercase, Solana base58 preserved. */
@@ -46,8 +56,8 @@ export function pickLiveNumeric(live: unknown, fallback: unknown): number {
  * are prepended so Ably stubs survive until the indexer catches up.
  */
 export function mergeFeedWithCreated<
-  T extends { campaignAddress?: string; chainId?: number },
-  C extends { campaignAddress: string },
+  T extends { campaignAddress?: string; chainId?: number; symbol?: unknown },
+  C extends { campaignAddress: string; symbol?: unknown },
 >(
   restItems: T[],
   created: C[],
@@ -57,7 +67,9 @@ export function mergeFeedWithCreated<
   const seen = new Set<string>();
   const rest: T[] = [];
   for (const item of restItems) {
-    const key = liveCampaignKey(Number(item.chainId ?? chainId), String(item.campaignAddress ?? ""));
+    const itemChainId = Number(item.chainId ?? chainId);
+    if (isPublicHiddenSymbol(itemChainId, item.symbol)) continue;
+    const key = liveCampaignKey(itemChainId, String(item.campaignAddress ?? ""));
     if (!key || seen.has(key)) continue;
     seen.add(key);
     rest.push(item);
@@ -65,6 +77,7 @@ export function mergeFeedWithCreated<
 
   const prepended: T[] = [];
   for (const row of created) {
+    if (isPublicHiddenSymbol(chainId, row.symbol)) continue;
     const key = liveCampaignKey(chainId, String(row.campaignAddress ?? ""));
     if (!key || seen.has(key)) continue;
     seen.add(key);
