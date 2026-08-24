@@ -111,12 +111,7 @@ function compileTrade(side) {
       instructions: planAddress(plan, "instructionsSysvar"),
       tokenProgram: planAddress(plan, "tokenProgram"),
       systemProgram: planAddress(plan, "systemProgram"),
-      leagueVault: planAddress(plan, "weeklyLeagueVault"),
-      airdropVault: planAddress(plan, "airdropVault"),
-      monthlyLeagueVault: planAddress(plan, "monthlyLeagueVault"),
-      recruiterVault: planAddress(plan, "recruiterVault"),
-      squadVault: planAddress(plan, "squadVault"),
-      protocolVault: planAddress(plan, "protocolVault"),
+      feeEscrow: Keypair.generate().publicKey.toBase58(),
     },
   });
   return v0.compileAndAssertLaunchpadV0(
@@ -125,7 +120,6 @@ function compileTrade(side) {
       payer: trader,
       recentBlockhash: blockhash,
       instructions: [
-        ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
         ed25519Instruction,
         programInstruction,
       ],

@@ -1,0 +1,63 @@
+name: Release certification (candidate SHA)
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/release-certification.yml
+      - frontend/api/admin/sponsorship.js
+      - frontend/api/sponsorship-applications.js
+      - tests/solana/fee-escrow-lease.pg.test.mjs
+      - tests/solana/fee-escrow-worker-torture.pg.test.mjs
+      - realtime-indexer/src/solanaFeeEscrowWorker.ts
+      - tests/solana/meteora-cp-amm-pin.test.mjs
+      - tests/solana/bsc-certification-factory.test.mjs
+      - scripts/solana/fetch-pinned-meteora-cp-amm.mjs
+      - scripts/resolve-bsc-certification-factory.mjs
+      - config/solana/meteora-cp-amm.certification.json
+      - config/bsc-testnet-certification.json
+      - db/migrations/20260821_000005_sponsorship_admin_rls.sql
+      - test/BnbLifecycleCertification.spec.ts
+      - scripts/run-bnb-lifecycle-certification.ts
+      - contracts/mocks/MockTopazRouter.sol
+      - tests/solana/gate-k-meteora.cjs
+
+jobs:
+  static-and-local:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Candidate SHA
+        run: echo "candidate=$(git rev-parse HEAD)"
+      - name: Certification unit surfaces
+        run: |
+          node --test tests/solana/graduate-operator-accounts.test.mjs
+          node --test tests/solana/fee-escrow-lease.pg.test.mjs
+          node --test tests/solana/fee-escrow-worker-torture.pg.test.mjs
+          node --test tests/solana/meteora-cp-amm-pin.test.mjs
+          node --test tests/solana/bsc-certification-factory.test.mjs
+          node --test frontend/api/admin/sponsorship.test.mjs
+      - name: Pin and verify Meteora DAMM v2 CP-AMM artifact
+        run: node scripts/solana/fetch-pinned-meteora-cp-amm.mjs
+      - name: BNB Topaz / lifecycle slice
+        run: |
+          npm ci
+          npx hardhat test test/LaunchFactoryLifecycle.spec.ts test/LaunchCampaignTopazAdapter.spec.ts test/PermanentLpLockerHarvest.spec.ts test/TreasuryRouterV2.spec.ts
+      - name: BNB Gate D local full lifecycle evidence
+        run: npx hardhat test test/BnbLifecycleCertification.spec.ts
+      - name: Blockers that remain manual
+        run: |
+          echo "LABEL: BNB local Gate D lifecycle (create/bond/grad/Topaz BUY/SELL/harvest/80-20/LP principal) ran in this job."
+          echo "LABEL: bsc-testnet-full-cycle is still secret-gated and must not be called preflight. Use bsc-testnet-preflight for bytecode-only."
+          echo "LABEL: Meteora pin/SHA256 ran in this job."
+          echo "LABEL: Gate K curve-close → graduate → DAMM v2 swap runs on the 1.18 lifecycle validator in solana-final-launch-blockers.yml with the pinned cp_amm.so loaded."
+          echo "ITEM 1: sponsorship API + dashboard PR #7 code complete; deployment/browser acceptance open."
+          echo "ITEM 6 / Gate S: required in frontend-pr-proof.yml (PR base main/devpostgrad). Not re-run here."
+          echo "ITEM 9: isolated in-job SBF rebuild already PASS; two runner-isolated freeze rooms run in solana-release-freeze.yml."
+          echo "PG17 / Gate O: three-worker 100-job crash-replay runs in solana-fee-escrow-db-ci.yml against postgres:17."
+          echo "Phantom CREATE/BUY/SELL is last, after these automated gates."

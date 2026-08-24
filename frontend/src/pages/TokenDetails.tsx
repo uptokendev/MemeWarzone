@@ -54,8 +54,13 @@ import {
 import { TokenComments } from "@/components/token/TokenComments";
 import { TokenWarRoom } from "@/components/token/TokenWarRoom";
 import { AthBar } from "@/components/token/AthBar";
+import { canonicalAthUsd } from "@/lib/canonicalMarket";
+import { canonicalAthNativeFromCandles } from "@/lib/chart/canonicalChartCandles";
 import { UpvoteDialog } from "@/components/token/UpvoteDialog";
 import { useWallet } from "@/contexts/WalletContext";
+import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
+import { campaignWalletMatches } from "@/lib/activeWalletChain";
+import { useActiveWalletKind } from "@/hooks/useActiveWalletKind";
 import { followCampaign, unfollowCampaign, isFollowingCampaign } from "@/lib/followApi";
 import { useCurveTrades, type CurveTradePoint } from "@/hooks/useCurveTrades";
 import { useTokenTransferHolders } from "@/hooks/useTokenTransferHolders";
@@ -79,8 +84,6 @@ import { solanaMarginalSpotSol } from "@/lib/solanaCampaignRead";
 import { fetchPublicCampaignLifecycleDrafts } from "@/lib/scheduledLaunchApi";
 import {
   appendLocalTopazTrade,
-  loadLocalTopazTrades,
-  saveLocalTopazTrades,
 } from "@/lib/localTopazTrades";
 import { fetchTopazTradeReports, reportTopazTrade } from "@/lib/topazTradeReports";
 import { isValidTradeTxHash, mergeTradePoints, normalizeTradeTxHash, SYNTHETIC_LOG_INDEX_MIN, tradeDedupeKey } from "@/lib/tradeDedupe";
@@ -607,6 +610,8 @@ const TokenDetails = () => {
   // Launchpad hooks + state for the on-chain data
   const { fetchCampaigns, fetchCampaignLogoURI, fetchCampaignSummary, fetchCampaignMetrics, fetchCampaignActivity, buyTokens, sellTokens } = useLaunchpad();
   const wallet = useWallet();
+  const { solanaAccount, isSolanaConnected } = useSolanaWallet();
+  const activeWalletKind = useActiveWalletKind();
   const [isFollowing, setIsFollowing] = useState(false);
   const [followBusy, setFollowBusy] = useState(false);
 
@@ -628,6 +633,15 @@ const TokenDetails = () => {
       routeId: campaignAddress,
     }),
   );
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const queryChainId = Number(params.get("chainId") || "");
+    if (queryChainId !== 56 && queryChainId !== 101) return;
+    params.delete("chainId");
+    const next = params.toString();
+    navigate({ pathname: location.pathname, search: next ? `?${next}` : "" }, { replace: true });
+  }, [location.pathname, location.search, navigate]);
   const chainIdForStorage = pageChainId;
 
   useEffect(() => {
@@ -657,6 +671,16 @@ const TokenDetails = () => {
   }, [campaign, campaignAddr, campaignAddress, chainIdForStorage]);
   /** Native unit for bonding quotes/UI: SOL on Solana, BNB on EVM. Never show BNB on Solana pages. */
   const nativeUnit = isSolanaPage ? "SOL" : "BNB";
+  const walletMatchesCampaign = campaignWalletMatches({
+    isSolanaCampaign: isSolanaPage,
+    storedKind: activeWalletKind,
+    solanaConnected: Boolean(isSolanaConnected && solanaAccount),
+    bnbConnected: Boolean(wallet.isConnected && wallet.account),
+  });
+  const connectTradeWalletLabel = isSolanaPage ? "Connect SOL wallet" : "Connect BNB wallet";
+  const openWalletModal = useCallback(() => {
+    try { window.dispatchEvent(new CustomEvent("memewarzone:openWalletModal")); } catch { /* ignore */ }
+  }, []);
   const readProvider = useMemo(
     () => (isSolanaPage ? null : getReadProvider(chainIdForStorage)),
     [chainIdForStorage, isSolanaPage],
@@ -884,6 +908,43 @@ const TokenDetails = () => {
             pinTokenDetailsChainId(SOLANA_CHAIN_ID);
             setPageChainId(SOLANA_CHAIN_ID);
           }
+
+          // Paint immediately from the URL. Indexer /trades and /candles resolve mint vs PDA.
+          // Waiting on the 500-row campaign feed (or a chain fallback) was a 2s+ blank chart.
+          setCampaign((prev) =>
+            prev ||
+            ({
+              id: 0,
+              campaign: param,
+              token: param,
+              creator: "",
+              name: "Solana campaign",
+              symbol: "",
+              logoURI: "/placeholder.svg",
+              metadataURI: undefined,
+              xAccount: "",
+              website: "",
+              extraLink: "",
+            } as CampaignInfo),
+          );
+          setOnChainLaunched(false);
+          setOnChainPair("");
+          setMetrics({
+            sold: 0n,
+            curveSupply: 0n,
+            liquiditySupply: 0n,
+            creatorReserve: 0n,
+            basePrice: 0n,
+            priceSlope: 0n,
+            graduationTarget: 0n,
+            graduationNativeTarget: 0n,
+            liquidityBps: 0n,
+            protocolFeeBps: 0n,
+            currentPrice: 0n,
+            launched: false,
+            finalizedAt: 0n,
+          } as CampaignMetrics);
+          setLoading(false);
 
           const res = await apiFetch(
             `/api/campaigns?chainId=${SOLANA_CHAIN_ID}&limit=500&tab=trending&sort=default&status=all`,
@@ -1374,13 +1435,18 @@ const TokenDetails = () => {
 
   // Read curve trades for transactions + analytics (BNB + Solana).
   const resolvedCampaignAddress = useMemo(() => {
-    const raw = String(campaign?.campaign || campaignAddr || "").trim();
     if (isSolanaPage) {
-      return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(raw) ? raw : "";
+      const pda = String(campaign?.campaign || "").trim();
+      const route = String(campaignAddr || campaignAddress || "").trim();
+      const mint = String(campaign?.token || "").trim();
+      if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(pda)) return pda;
+      if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(route) && route !== mint) return route;
+      return "";
     }
+    const raw = String(campaign?.campaign || campaignAddr || "").trim();
     const value = raw.toLowerCase();
     return /^0x[a-f0-9]{40}$/.test(value) ? value : "";
-  }, [campaign?.campaign, campaignAddr, isSolanaPage]);
+  }, [campaign?.campaign, campaign?.token, campaignAddr, campaignAddress, isSolanaPage]);
 
   const hasValidCampaignAddress = Boolean(resolvedCampaignAddress);
   const localTradeStorageAddress = useMemo(
@@ -1396,7 +1462,7 @@ const TokenDetails = () => {
     {
       chainId: chainIdForStorage,
       enabled: hasValidCampaignAddress,
-      tokenAddress: isSolanaPage ? undefined : String(campaign?.token || campaignAddress || "").trim() || undefined,
+      tokenAddress: String(campaign?.token || campaignAddress || "").trim() || undefined,
     },
   );
   const liveCurvePointsSafe = useMemo<CurveTradePoint[]>(
@@ -1471,21 +1537,7 @@ const TokenDetails = () => {
     return () => window.removeEventListener("memewarzone:txConfirmed", onConfirmed as EventListener);
   }, [hasValidCampaignAddress, resolvedCampaignAddress, isSolanaPage, chainIdForStorage, tokenDecimals, campaign?.token, campaignAddress]);
 
-  // Prevent chart flicker: keep last non-empty curve points while the live hook briefly refreshes/resets.
-  const lastCurvePointsRef = useRef<CurveTradePoint[]>([]);
-  const lastCurveMarketRef = useRef(`${chainIdForStorage}:${resolvedCampaignAddress}`);
-  useEffect(() => {
-    const market = `${chainIdForStorage}:${resolvedCampaignAddress}`;
-    if (lastCurveMarketRef.current !== market) {
-      lastCurveMarketRef.current = market;
-      lastCurvePointsRef.current = [];
-    }
-    if (combinedCurvePointsSafe.length) lastCurvePointsRef.current = combinedCurvePointsSafe;
-  }, [chainIdForStorage, combinedCurvePointsSafe, resolvedCampaignAddress]);
-
-  const curvePointsForUi: CurveTradePoint[] = useMemo(() => {
-    return combinedCurvePointsSafe.length ? combinedCurvePointsSafe : lastCurvePointsRef.current;
-  }, [combinedCurvePointsSafe]);
+  const curvePointsForUi: CurveTradePoint[] = combinedCurvePointsSafe;
 
   // Restore/persist local Topaz fills + server-reported Topaz trades (wallet receipts).
   useEffect(() => {
@@ -1493,12 +1545,10 @@ const TokenDetails = () => {
       setLocalTopazTrades([]);
       return;
     }
-    const cached = loadLocalTopazTrades(chainIdForStorage, localTradeStorageAddress);
-    setLocalTopazTrades(cached);
+    setLocalTopazTrades([]);
 
     let cancelled = false;
     void (async () => {
-      // Solana persistence is local until S3 indexes Anchor trade events. Never query the Topaz/EVM report route.
       if (isSolanaPage) return;
       try {
         const remote = await fetchTopazTradeReports({
@@ -1507,11 +1557,7 @@ const TokenDetails = () => {
           limit: 100,
         });
         if (cancelled || !remote.length) return;
-        setLocalTopazTrades((prev) => {
-          const merged = mergeTradePoints(prev, remote);
-          saveLocalTopazTrades(chainIdForStorage, localTradeStorageAddress, merged);
-          return merged;
-        });
+        setLocalTopazTrades((prev) => mergeTradePoints(prev, remote));
       } catch {
         // Server reports are optional until Railway frontend has the route + DB.
       }
@@ -1521,11 +1567,6 @@ const TokenDetails = () => {
       cancelled = true;
     };
   }, [localTradeStorageAddress, chainIdForStorage, isSolanaPage]);
-
-  useEffect(() => {
-    if (!localTradeStorageAddress) return;
-    saveLocalTopazTrades(chainIdForStorage, localTradeStorageAddress, localTopazTrades);
-  }, [localTopazTrades, localTradeStorageAddress, chainIdForStorage]);
 
   const unifiedMarket = useUnifiedMarket({
     campaignAddress: hasValidCampaignAddress ? resolvedCampaignAddress : undefined,
@@ -2107,17 +2148,40 @@ const toSeconds = (ts: number): number => {
   }, [isSolanaPage, nativeUsdPrice]);
 
   const liveMarketCapNative = useMemo(() => {
-    const fromLabel = parseBnbLabel(tokenData.marketCap);
-    if (fromLabel != null && fromLabel > 0) return fromLabel;
-    if (rtStats?.marketcapBnb != null && Number.isFinite(rtStats.marketcapBnb) && rtStats.marketcapBnb > 0) {
-      return Number(rtStats.marketcapBnb);
+    if (
+      !isSolanaPage &&
+      !contractGraduatedEarly &&
+      metrics?.currentPrice != null &&
+      metrics.currentPrice > 0n &&
+      metrics.sold != null &&
+      metrics.sold > 0n
+    ) {
+      try {
+        const mcWei = (metrics.currentPrice * metrics.sold) / 10n ** 18n;
+        const n = Number(ethers.formatEther(mcWei));
+        if (Number.isFinite(n) && n > 0) return n;
+      } catch {
+        // fall through to the shared spot × sold float path
+      }
     }
     if (pageLivePriceNative != null && pageLiveSupplyWhole != null && pageLiveSupplyWhole > 0) {
       const product = pageLivePriceNative * pageLiveSupplyWhole;
-      return Number.isFinite(product) && product > 0 ? product : null;
+      if (Number.isFinite(product) && product > 0) return product;
     }
-    return fromLabel;
-  }, [pageLivePriceNative, pageLiveSupplyWhole, rtStats?.marketcapBnb, tokenData.marketCap]);
+    if (rtStats?.marketcapBnb != null && Number.isFinite(rtStats.marketcapBnb) && rtStats.marketcapBnb > 0) {
+      return Number(rtStats.marketcapBnb);
+    }
+    return parseBnbLabel(tokenData.marketCap);
+  }, [
+    contractGraduatedEarly,
+    isSolanaPage,
+    metrics?.currentPrice,
+    metrics?.sold,
+    pageLivePriceNative,
+    pageLiveSupplyWhole,
+    rtStats?.marketcapBnb,
+    tokenData.marketCap,
+  ]);
 
   const marketCapDisplay = useMemo(() => {
     if (displayDenom === "BNB") {
@@ -2450,8 +2514,8 @@ const toSeconds = (ts: number): number => {
     };
   }, [isSolanaPage]);
 
-  // Solana: load campaign curve snapshot (slow poll). Metrics are derived locally
-  // so a CoinGecko tick or wallet-balance tick cannot re-hit RPC.
+  // Solana: load campaign curve snapshot (5s poll while Token Details is open).
+  // Metrics are derived locally so a CoinGecko tick or wallet-balance tick cannot re-hit RPC.
   useEffect(() => {
     if (!isSolanaPage || !campaign?.campaign) {
       setSolanaCurve(null);
@@ -2479,8 +2543,19 @@ const toSeconds = (ts: number): number => {
           if (state && (state.curveTokenSupply > 0n || state.graduated)) break;
         }
         if (cancelled) return;
+        if (!state) {
+          // Empty resolve must not blank a previous curve for this campaign.
+          setSolanaCurve((prev) => {
+            if (!prev) return prev;
+            const prevAddr = String(prev.campaignAddress || "").trim();
+            const curr = String(campaign.campaign || "").trim();
+            const token = String(campaign.token || "").trim();
+            if (prevAddr && curr && prevAddr !== curr && prevAddr !== token) return null;
+            return prev;
+          });
+          return;
+        }
         setSolanaCurve(state);
-        if (!state) return;
         setCurveReserveWei(state.netRaisedLamports);
         if (state.mint && (!campaign.token || campaign.token === campaign.campaign)) {
           setCampaign((prev) =>
@@ -2496,11 +2571,11 @@ const toSeconds = (ts: number): number => {
         }
       } catch (e) {
         console.warn("[TokenDetails] Solana curve load failed", e);
-        if (!cancelled) setSolanaCurve(null);
+        // Transient RPC failure: keep the last good curve.
       }
     };
     void loadCurve();
-    const timer = window.setInterval(() => void loadCurve(), 15_000);
+    const timer = window.setInterval(() => void loadCurve(), 5_000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
@@ -2545,6 +2620,13 @@ const toSeconds = (ts: number): number => {
 
     const loadBalances = async () => {
       try {
+        if (!walletMatchesCampaign) {
+          if (!cancelled) {
+            setBnbBalanceWei(null);
+            setTokenBalanceWei(null);
+          }
+          return;
+        }
         // Solana: load SOL + token ATA balances for position + trade panel.
         if (isSolanaPage) {
           try {
@@ -2623,7 +2705,7 @@ const toSeconds = (ts: number): number => {
     return () => {
       cancelled = true;
     };
-  }, [readProvider, wallet.account, campaign?.token, campaign?.campaign, isSolanaPage, solanaBalanceTick]);
+  }, [readProvider, wallet.account, campaign?.token, campaign?.campaign, isSolanaPage, solanaBalanceTick, walletMatchesCampaign]);
 
   // Build transactions table rows from continuous market trade stream.
   useEffect(() => {
@@ -3392,6 +3474,16 @@ const toSeconds = (ts: number): number => {
 
   const handlePlaceTrade = async () => {
     if (!campaign?.campaign) return;
+    if (!walletMatchesCampaign) {
+      toast({
+        title: connectTradeWalletLabel,
+        description: isSolanaPage
+          ? "This campaign is on Solana. Connect Phantom / Solflare to buy or sell."
+          : "This campaign is on BNB. Connect a BNB wallet to buy or sell.",
+      });
+      openWalletModal();
+      return;
+    }
 
     // ── Solana: bonding until close, then same click becomes a Meteora fill ─
     if (isSolanaPage) {
@@ -4359,6 +4451,12 @@ const toSeconds = (ts: number): number => {
             <div className="flex flex-col gap-2 px-4 py-2 border-b border-border/40 bg-card/20">
               <AthBar
                 currentLabel={marketCapUsdLabel ?? undefined}
+                canonicalAthUsd={canonicalAthUsd(
+                  liveMarketCapNative != null && nativeUsd ? liveMarketCapNative * nativeUsd : 0,
+                  nativeUsd
+                    ? canonicalAthNativeFromCandles(unifiedMarket.candles, liveMarketCapNative ?? 0) * nativeUsd
+                    : 0,
+                )}
                 storageKey={`ath:${String(chainIdForStorage)}:${isSolanaPage ? String((campaignAddress ?? campaign?.campaign ?? "")) : String((campaignAddress ?? campaign?.campaign ?? "")).toLowerCase()}`}
                 className="w-full min-w-0"
               />
@@ -4438,7 +4536,7 @@ const toSeconds = (ts: number): number => {
                   marketState={unifiedMarket.state}
                   serverTime={unifiedMarket.serverTime}
                   graduationMarker={unifiedMarket.graduationMarker || solanaGraduationMarker}
-                  creatorAddress={campaign?.creator}
+                  creatorAddress={isSolanaPage ? (solanaCurve?.creator || campaign?.creator) : campaign?.creator}
                   creatorAvatarUrl={creatorProfile?.avatarUrl}
                   creatorDisplayName={creatorProfile?.displayName}
                   chainId={chainIdForStorage}
@@ -4447,6 +4545,7 @@ const toSeconds = (ts: number): number => {
                   solanaGraduated={Boolean(isSolanaPage && solanaCurve?.graduated)}
                   livePriceNative={pageLivePriceNative}
                   liveSupplyWhole={pageLiveSupplyWhole}
+                  liveMcapNative={liveMarketCapNative}
                   nativeUsdPrice={nativeUsd}
                   marketKey={`${chainIdForStorage}:${resolvedCampaignAddress || localTradeStorageAddress || ""}`}
                   expanded={chartExpanded}
@@ -4454,16 +4553,9 @@ const toSeconds = (ts: number): number => {
                   resolution={marketResolution}
                   onResolutionChange={setMarketResolution}
                   denomination={displayDenom}
-                  loading={
-                    (marketTradePoints?.length ?? 0) > 0
-                      ? false
-                      : liveCurveLoading || unifiedMarket.loading || topazMarket.loading
-                  }
-                  error={
-                    (marketTradePoints?.length ?? 0) > 0
-                      ? null
-                      : liveCurveError || unifiedMarket.error || topazMarket.error
-                  }
+                  historyReady={!unifiedMarket.loading}
+                  loading={unifiedMarket.loading || ((marketTradePoints?.length ?? 0) === 0 && liveCurveLoading)}
+                  error={unifiedMarket.error || ((marketTradePoints?.length ?? 0) > 0 ? null : liveCurveError || topazMarket.error)}
                 />
               </div>
             </div>
@@ -4858,6 +4950,13 @@ const toSeconds = (ts: number): number => {
                     <p className="mt-1 font-mono text-foreground break-words">{formatTokenFromWei(tokenBalanceWei)} {tokenData.ticker}</p>
                   </div>
                 </div>
+                {walletMatchesCampaign ? null : (
+                  <p className="mt-2 text-[11px] text-amber-300">
+                    {isSolanaPage
+                      ? "Wrong wallet. Connect a SOL wallet to trade this campaign."
+                      : "Wrong wallet. Connect a BNB wallet to trade this campaign."}
+                  </p>
+                )}
               </div>
 
               <Tabs value={tradeTab} onValueChange={handleTradeTabChange}>
@@ -4954,21 +5053,30 @@ const toSeconds = (ts: number): number => {
                   </div>
 
                   <Button
-                    onClick={handlePlaceTrade}
+                    onClick={walletMatchesCampaign ? handlePlaceTrade : openWalletModal}
                     disabled={
-                      tradePending ||
-                      approvePending ||
-                      quoteLoading ||
-                      (isSolanaPage
-                        ? effectiveBnbWei <= 0n && !solanaCurveClosed && !contractGraduated
-                        : (isDexStage && !isTopazTradingActive) ||
-                          (tradeInputDenom === "BNB"
-                            ? effectiveBnbWei <= 0n || effectiveTokenWei <= 0n
-                            : parseTokenAmountWei(tradeAmount) <= 0n))
+                      walletMatchesCampaign &&
+                      (tradePending ||
+                        approvePending ||
+                        quoteLoading ||
+                        (isSolanaPage
+                          ? effectiveBnbWei <= 0n && !solanaCurveClosed && !contractGraduated
+                          : (isDexStage && !isTopazTradingActive) ||
+                            (tradeInputDenom === "BNB"
+                              ? effectiveBnbWei <= 0n || effectiveTokenWei <= 0n
+                              : parseTokenAmountWei(tradeAmount) <= 0n)))
                     }
                     className={`w-full ${topbarButtonClass} py-5`}
                   >
-                    {tradePending ? "Processing..." : isSolanaPage && (contractGraduated || solanaCurveClosed) ? "Buy on Meteora" : isDexStage ? "Buy on Topaz" : "Buy"}
+                    {!walletMatchesCampaign
+                      ? connectTradeWalletLabel
+                      : tradePending
+                        ? "Processing..."
+                        : isSolanaPage && (contractGraduated || solanaCurveClosed)
+                          ? "Buy on Meteora"
+                          : isDexStage
+                            ? "Buy on Topaz"
+                            : "Buy"}
                   </Button>
                 </TabsContent>
 
@@ -5093,21 +5201,30 @@ const toSeconds = (ts: number): number => {
                   </div>
 
                   <Button
-                    onClick={handlePlaceTrade}
+                    onClick={walletMatchesCampaign ? handlePlaceTrade : openWalletModal}
                     disabled={
-                      tradePending ||
-                      approvePending ||
-                      quoteLoading ||
-                      (isSolanaPage
-                        ? effectiveTokenWei <= 0n && !solanaCurveClosed && !contractGraduated
-                        : (isDexStage && !isTopazTradingActive) ||
-                          (tradeInputDenom === "BNB"
-                            ? effectiveBnbWei <= 0n || effectiveTokenWei <= 0n
-                            : parseTokenAmountWei(tradeAmount) <= 0n))
+                      walletMatchesCampaign &&
+                      (tradePending ||
+                        approvePending ||
+                        quoteLoading ||
+                        (isSolanaPage
+                          ? effectiveTokenWei <= 0n && !solanaCurveClosed && !contractGraduated
+                          : (isDexStage && !isTopazTradingActive) ||
+                            (tradeInputDenom === "BNB"
+                              ? effectiveBnbWei <= 0n || effectiveTokenWei <= 0n
+                              : parseTokenAmountWei(tradeAmount) <= 0n)))
                     }
                     className={`w-full ${topbarButtonClass} py-5`}
                   >
-                    {tradePending ? "Processing..." : isSolanaPage && (contractGraduated || solanaCurveClosed) ? "Sell on Meteora" : isDexStage ? "Sell on Topaz" : "Sell"}
+                    {!walletMatchesCampaign
+                      ? connectTradeWalletLabel
+                      : tradePending
+                        ? "Processing..."
+                        : isSolanaPage && (contractGraduated || solanaCurveClosed)
+                          ? "Sell on Meteora"
+                          : isDexStage
+                            ? "Sell on Topaz"
+                            : "Sell"}
                   </Button>
                 </TabsContent>
               </Tabs>

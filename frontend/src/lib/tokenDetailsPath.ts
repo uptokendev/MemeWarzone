@@ -98,11 +98,11 @@ export function tokenDetailsPath(
         ? chainId
         : 0;
 
-  // Devnet base58 routes are self-identifying and stay clean: /token/<mint>.
-  // Keep an explicit network pin for future Solana mainnet-beta and for EVM chains.
-  if (resolvedChain === 102) {
-    params.set("chainId", String(resolvedChain));
-  } else if (resolvedChain > 0 && resolvedChain !== 101 && (options?.chainId != null || tokenOrCampaign.chainId != null)) {
+  // Shareable TokenDetails URLs stay clean when the address already implies the chain:
+  //   /token/0x…     → BNB mainnet (56)
+  //   /token/<mint>  → Solana (101)
+  // Keep an explicit pin only when it is not the default for that address shape.
+  if (resolvedChain === 97 || resolvedChain === 102) {
     params.set("chainId", String(resolvedChain));
   }
 

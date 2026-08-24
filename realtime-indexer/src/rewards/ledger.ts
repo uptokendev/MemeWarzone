@@ -1440,6 +1440,7 @@ export async function processEndedWeeklyRewardEpochs(chainIds: number[], asOf = 
   for (const chainId of chainIds) {
     await getCurrentWeeklyEpoch(chainId);
 
+    const epochLimit = Math.max(1, Math.min(52, Number(process.env.PROCESS_REWARD_EPOCH_LIMIT || "1") || 1));
     const epochs = await pool.query(
       `select id
          from public.epochs
@@ -1447,8 +1448,9 @@ export async function processEndedWeeklyRewardEpochs(chainIds: number[], asOf = 
           and epoch_type = 'weekly'
           and end_at <= $2
           and status in ('open', 'processing', 'finalized')
-        order by start_at asc`,
-      [chainId, asOf]
+        order by start_at desc
+        limit $3`,
+      [chainId, asOf, epochLimit]
     );
 
     for (const row of epochs.rows) {

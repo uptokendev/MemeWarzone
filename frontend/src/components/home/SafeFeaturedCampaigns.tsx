@@ -22,6 +22,7 @@ import { isTestnetCampaignsEnabled } from "@/features/postgrad/apiClient";
 import { useNativeUsdPrice } from "@/hooks/useNativeUsdPrice";
 import { useLeagueRealtime } from "@/hooks/useLeagueRealtime";
 import { BNB_CHAIN_ID, BNB_TESTNET_CHAIN_ID, getDefaultChainId, type SupportedChainId } from "@/lib/chainConfig";
+import { liveCampaignKey, pickLiveNumeric } from "@/lib/liveMarketMerge";
 import LaunchCampaignArtifact from "@/abi/LaunchCampaign.json";
 import LaunchTokenArtifact from "@/abi/LaunchToken.json";
 
@@ -43,6 +44,7 @@ type FeaturedItem = {
   votes24h?: number | null;
   votesAllTime?: number | null;
   marketcapBnb?: string | null;
+  liveMarketcapBnb?: string | null;
   graduatedAtChain?: string | null;
   isDexTrading?: boolean;
 };
@@ -73,32 +75,20 @@ function formatCompactUsd(value: number) {
   }).format(value);
 }
 
-function getAthLabel(chainId: number, campaignAddress: string, currentUsd: number | null) {
-  if (typeof window === "undefined") return currentUsd != null ? formatCompactUsd(currentUsd) : "—";
-
-  try {
-    const key = `ath:${chainId}:${campaignAddress.toLowerCase()}:featured-v1`;
-    const storedRaw = window.localStorage.getItem(key);
-    const stored = storedRaw ? Number(storedRaw) : NaN;
-    const storedValue = Number.isFinite(stored) ? stored : 0;
-    const next = Math.max(storedValue, currentUsd ?? 0);
-
-    if (currentUsd != null && Number.isFinite(currentUsd) && currentUsd > storedValue) {
-      window.localStorage.setItem(key, String(currentUsd));
-    }
-
-    return next > 0 ? formatCompactUsd(next) : "—";
-  } catch {
-    return currentUsd != null ? formatCompactUsd(currentUsd) : "—";
-  }
+function getAthLabel(_chainId: number, _campaignAddress: string, currentUsd: number | null, indexedAthUsd?: number | null) {
+  const live = Number(currentUsd);
+  const indexed = Number(indexedAthUsd);
+  const ath = Math.max(Number.isFinite(live) && live > 0 ? live : 0, Number.isFinite(indexed) && indexed > 0 ? indexed : 0);
+  return ath > 0 ? formatCompactUsd(ath) : "—";
 }
 
 function normalizeItem(raw: any, fallbackChainId: number): FeaturedItem | null {
   const rawAddress = String(raw?.campaignAddress ?? raw?.campaign_address ?? raw?.campaign ?? "").trim();
-  const campaignAddress = /^0x[a-fA-F0-9]{40}$/i.test(rawAddress) ? rawAddress.toLowerCase() : rawAddress;
+  const chainId = Number(raw?.chainId ?? raw?.chain_id ?? fallbackChainId);
+  const campaignAddress = liveCampaignKey(chainId, rawAddress);
   if (!isAddress(campaignAddress)) return null;
   return {
-    chainId: Number(raw?.chainId ?? raw?.chain_id ?? fallbackChainId),
+    chainId,
     campaignAddress,
     tokenAddress: raw?.tokenAddress ?? raw?.token_address ?? raw?.token ?? null,
     creatorAddress: raw?.creatorAddress ?? raw?.creator_address ?? raw?.creator ?? null,
@@ -123,7 +113,7 @@ async function safeString(read: () => Promise<unknown>, fallback = "") {
 }
 
 function itemKey(item: Pick<FeaturedItem, "chainId" | "campaignAddress">) {
-  return `${Number(item.chainId)}:${String(item.campaignAddress || "").toLowerCase()}`;
+  return `${Number(item.chainId)}:${liveCampaignKey(Number(item.chainId), String(item.campaignAddress || ""))}`;
 }
 
 function isBnbDualFeedChain(chainId: number) {
@@ -164,6 +154,10 @@ function mergeFeaturedItems(prev: FeaturedItem[], incoming: FeaturedItem[], opts
         item.marketcapBnb != null && item.marketcapBnb !== "" && Number(item.marketcapBnb) > 0
           ? item.marketcapBnb
           : old.marketcapBnb,
+      liveMarketcapBnb:
+        item.liveMarketcapBnb != null && item.liveMarketcapBnb !== ""
+          ? item.liveMarketcapBnb
+          : old.liveMarketcapBnb,
       // Keep optimistic local bumps from going backwards when indexer lags a few seconds.
       votes24h: opts?.preferIncomingVotes ? inV24 : Math.max(oldV24, inV24),
       votesAllTime: opts?.preferIncomingVotes ? inVAll : Math.max(oldVAll, inVAll),
@@ -172,15 +166,21 @@ function mergeFeaturedItems(prev: FeaturedItem[], incoming: FeaturedItem[], opts
   return Array.from(map.values());
 }
 
+function campaignAddrsMatch(itemAddr: string, patchAddr: string, itemChainId: number, patchChainId?: number) {
+  const left = liveCampaignKey(Number(itemChainId), itemAddr);
+  const right = liveCampaignKey(Number(patchChainId ?? itemChainId), patchAddr);
+  return Boolean(left && right && left === right);
+}
+
 function applyVotePatch(
   items: FeaturedItem[],
   patch: { chainId?: number; campaignAddress: string; votes24h?: number; votesAllTime?: number; delta?: number },
 ): FeaturedItem[] {
-  const addr = String(patch.campaignAddress || "").toLowerCase();
+  const addr = liveCampaignKey(Number(patch.chainId || 0), String(patch.campaignAddress || ""));
   if (!isAddress(addr)) return items;
   const delta = Number(patch.delta || 0);
   const idx = items.findIndex((item) => {
-    if (String(item.campaignAddress).toLowerCase() !== addr) return false;
+    if (!campaignAddrsMatch(String(item.campaignAddress), addr, Number(item.chainId), patch.chainId)) return false;
     if (patch.chainId == null) return true;
     // BNB dual board: address match is enough when either side is 56/97.
     if (isBnbDualFeedChain(Number(item.chainId)) && isBnbDualFeedChain(Number(patch.chainId))) return true;
@@ -212,6 +212,27 @@ function applyVotePatch(
   if (nextVotes24 === Number(cur.votes24h || 0) && nextVotesAll === Number(cur.votesAllTime || 0)) return items;
   const next = items.slice();
   next[idx] = { ...cur, votes24h: nextVotes24, votesAllTime: nextVotesAll };
+  return next;
+}
+
+function applyLiveMcap(
+  items: FeaturedItem[],
+  patch: { chainId?: number; campaignAddress: string; marketcapBnb: number },
+): FeaturedItem[] {
+  const addr = liveCampaignKey(Number(patch.chainId || 0), String(patch.campaignAddress || ""));
+  if (!isAddress(addr) || !(patch.marketcapBnb > 0)) return items;
+  const idx = items.findIndex((item) => {
+    if (!campaignAddrsMatch(String(item.campaignAddress), addr, Number(item.chainId), patch.chainId)) return false;
+    if (patch.chainId == null) return true;
+    if (isBnbDualFeedChain(Number(item.chainId)) && isBnbDualFeedChain(Number(patch.chainId))) return true;
+    return Number(item.chainId) === Number(patch.chainId);
+  });
+  if (idx < 0) return items;
+  const cur = items[idx];
+  const label = String(patch.marketcapBnb);
+  if (cur.liveMarketcapBnb === label) return items;
+  const next = items.slice();
+  next[idx] = { ...cur, liveMarketcapBnb: label };
   return next;
 }
 
@@ -523,7 +544,7 @@ export function SafeFeaturedCampaigns({ className = "" }: { className?: string }
     onFallbackRefresh: () => softPollRef.current(),
   });
 
-  // Merge Ably vote patches into local board (live rank movement).
+  // Merge Ably vote + mcap patches into local board (live rank movement / live mcap).
   useEffect(() => {
     const keys = Object.keys(patchByCampaign || {});
     if (!keys.length) return;
@@ -533,14 +554,23 @@ export function SafeFeaturedCampaigns({ className = "" }: { className?: string }
         const p = patchByCampaign[addr];
         if (!p) continue;
         next = applyVotePatch(next, {
-          campaignAddress: addr,
+          chainId,
+          campaignAddress: p.campaignAddress || addr,
           votes24h: p.votes24h != null ? Number(p.votes24h) : undefined,
           votesAllTime: p.votesAllTime != null ? Number(p.votesAllTime) : undefined,
         });
+        const liveMcap = pickLiveNumeric(p.marketcapBnb, NaN);
+        if (liveMcap > 0) {
+          next = applyLiveMcap(next, {
+            chainId,
+            campaignAddress: p.campaignAddress || addr,
+            marketcapBnb: liveMcap,
+          });
+        }
       }
       return next === prev ? prev : next;
     });
-  }, [patchByCampaign]);
+  }, [patchByCampaign, chainId]);
 
   // Local upvote: admit + re-rank immediately (absolute counts from vote ingest when present).
   useEffect(() => {
@@ -553,12 +583,12 @@ export function SafeFeaturedCampaigns({ className = "" }: { className?: string }
           votesAllTime?: number;
         }>).detail ?? {};
       if (!featuredEventMatchesChain(chainId, detail.chainId)) return;
-      const addr = String(detail.campaignAddress || "").toLowerCase();
+      const eventChain = Number(detail.chainId ?? chainId);
+      const addr = liveCampaignKey(eventChain, String(detail.campaignAddress || ""));
       if (!isAddress(addr)) {
         softPollRef.current();
         return;
       }
-      const eventChain = Number(detail.chainId ?? chainId);
       const hasAbsolute =
         detail.votes24h != null && Number.isFinite(Number(detail.votes24h)) && Number(detail.votes24h) > 0;
       setItems((prev) =>
@@ -673,7 +703,10 @@ export function SafeFeaturedCampaigns({ className = "" }: { className?: string }
       })
       .slice(0, 20)
       .map((item) => {
-        const mcapBnb = Number(item.marketcapBnb ?? NaN);
+        const patchKey = liveCampaignKey(item.chainId, String(item.campaignAddress || ""));
+        const patch = patchByCampaign[patchKey] || patchByCampaign[String(item.campaignAddress || "")];
+        const liveMcap = pickLiveNumeric(patch?.marketcapBnb, pickLiveNumeric(item.liveMarketcapBnb, NaN));
+        const mcapBnb = liveMcap > 0 ? liveMcap : pickLiveNumeric(item.marketcapBnb, NaN);
         const mcapUsd = Number.isFinite(mcapBnb) && mcapBnb > 0 && Number.isFinite(Number(nativeUsd)) && Number(nativeUsd) > 0
           ? mcapBnb * Number(nativeUsd)
           : null;
@@ -684,7 +717,7 @@ export function SafeFeaturedCampaigns({ className = "" }: { className?: string }
           athUsdLabel: getAthLabel(item.chainId, item.campaignAddress, mcapUsd),
         };
       });
-  }, [items, nativeUsd]);
+  }, [items, nativeUsd, patchByCampaign]);
 
   return (
     <div className={`w-full ${className}`}>
@@ -736,6 +769,7 @@ export function SafeFeaturedCampaigns({ className = "" }: { className?: string }
               return (
                 <div
                   key={item.campaignAddress}
+                  data-live-id={`${item.chainId}:${item.campaignAddress}`}
                   className="mwz-hud-frame group flex h-[150px] w-full cursor-pointer overflow-hidden rounded-none border border-orange-400/30 bg-black/70 transition hover:border-orange-400/80 hover:shadow-[0_0_18px_rgba(240,106,26,0.22)]"
                   role="button"
                   tabIndex={0}

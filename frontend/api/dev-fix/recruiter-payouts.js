@@ -142,10 +142,10 @@ function verifyWalletSignature({ chain, walletAddress, message, signature }) {
 function balanceStatus({ chain, claimableRaw, pendingRaw, payoutWallet }) {
   const claimable = BigInt(claimableRaw || "0");
   const pending = BigInt(pendingRaw || "0");
-  if (!payoutWallet && (claimable > 0n || pending > 0n)) return "missing_payout_wallet";
-  if (claimable > 0n) return "claimable";
-  if (chain === "solana" && pending > 0n) return "pending_batch_publication";
-  if (pending > 0n) return "pending_finality";
+  if (claimable > 0n && payoutWallet) return "claimable";
+  if (chain === "solana" && pending > 0n) return payoutWallet ? "pending_batch_publication" : "missing_payout_wallet";
+  if (pending > 0n) return payoutWallet ? "pending_finality" : "missing_payout_wallet";
+  if (claimable > 0n && !payoutWallet) return "missing_payout_wallet";
   return payoutWallet ? "pending_finality" : "missing_payout_wallet";
 }
 
@@ -225,15 +225,21 @@ async function getBalances(recruiterId) {
          from public.recruiter_payout_wallets
         where recruiter_id = $1
         group by chain
+     ),
+     chains as (
+       select chain from ledger
+       union select chain from batched
+       union select chain from wallets
      )
-     select coalesce(l.chain,b.chain,w.chain) as chain,
-            coalesce(l.token,b.token,case when coalesce(l.chain,b.chain,w.chain)='solana' then 'SOL' else 'BNB' end) as token,
+     select c.chain,
+            coalesce(l.token,b.token,case when c.chain='solana' then 'SOL' else 'BNB' end) as token,
             (coalesce(l.claimable_raw,0)+coalesce(b.claimable_raw,0))::text as claimable_raw,
             (coalesce(l.pending_raw,0)+coalesce(b.pending_raw,0))::text as pending_raw,
             w.payout_wallet
-       from ledger l
-       full join batched b on b.chain = l.chain
-       full join wallets w on w.chain = coalesce(l.chain,b.chain)`,
+       from chains c
+       left join ledger l on l.chain = c.chain
+       left join batched b on b.chain = c.chain
+       left join wallets w on w.chain = c.chain`,
     [recruiterId],
   );
   const byChain = new Map();

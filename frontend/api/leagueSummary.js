@@ -17,6 +17,7 @@ const LEAGUES = [
 const HISTORY_WEEKLY_OFFSETS = [1, 2];
 const HISTORY_MONTHLY_OFFSETS = [1];
 const FINALIZED_WINNER_SOURCE = 'legacy_rankings_inferred';
+const FROZEN_WINNER_SOURCE = 'league_epoch_winners';
 
 function normChain(value) {
   return String(value || 'bnb').toLowerCase() === 'solana' ? 'solana' : 'bnb';
@@ -516,12 +517,19 @@ async function aggregateBnbSummary(req, { chain, chainId, period, epochOffset, l
     season,
     seasonId: season.seasonId,
     epochId: season.epochId,
-    winnerSource: {
-      source: FINALIZED_WINNER_SOURCE,
-      finalized: false,
-      plannedSource: 'league_epoch_winners',
-      note: 'Winners are inferred from legacy ranking rows until finalized league_epoch_winners data is wired.',
-    },
+    winnerSource: epochOffset > 0
+      ? {
+          source: FROZEN_WINNER_SOURCE,
+          finalized: Boolean(results.some((league) => league?.rows?.some((row) => row?.finalized))),
+          plannedSource: FROZEN_WINNER_SOURCE,
+          note: 'Closed epochs persist into league_epoch_winners on first Previous-week load, then Claims reads that table.',
+        }
+      : {
+          source: FINALIZED_WINNER_SOURCE,
+          finalized: false,
+          plannedSource: FROZEN_WINNER_SOURCE,
+          note: 'Live epoch shows estimated standings. Claims stay closed until the epoch is finalized.',
+        },
     current: { epoch, winners: currentLeaders, prize },
     payoutPolicy: policy,
     prize,

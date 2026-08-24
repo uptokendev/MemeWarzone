@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Contract, ethers } from "ethers";
 import type { CampaignInfo, CampaignMetrics } from "@/lib/launchpadClient";
-import { useLaunchpad } from "@/lib/launchpadClient";
+import { isUnsupportedContractMethod } from "@/lib/launchpadClient";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
+import { campaignWalletMatches } from "@/lib/activeWalletChain";
+import { useActiveWalletKind } from "@/hooks/useActiveWalletKind";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { isSolanaChainId, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
+import { isSolanaChainId, SOLANA_CHAIN_ID, type SupportedChainId } from "@/lib/chainConfig";
 import { isSolanaAddress } from "@/lib/address";
 import { getReadProvider } from "@/lib/readProvider";
+import { apiFetch } from "@/lib/apiBase";
 import type { SolanaCampaignCurveState } from "@/lib/solanaCampaignRead";
 import {
   ensureTopazSellAllowance,
@@ -25,11 +28,106 @@ import { recordTopazFill } from "@/lib/recordTopazFill";
 import LaunchCampaignArtifact from "@/abi/LaunchCampaign.json";
 import LaunchTokenArtifact from "@/abi/LaunchToken.json";
 
-const CAMPAIGN_ABI = LaunchCampaignArtifact.abi as ethers.InterfaceAbi;
+const CAMPAIGN_ABI = [
+  ...((LaunchCampaignArtifact.abi as any[]) ?? []),
+  "function buyExactTokens(uint256 amountOut,uint256 maxCost) payable returns (uint256 cost)",
+  "function sellExactTokens(uint256 amountIn,uint256 minPayout) returns (uint256 payout)",
+  "function buyExactTokensAuthorized(uint256 amountOut,uint256 maxCost,uint8 routeProfile,uint64 routeDeadline,bytes routeSignature) payable returns (uint256 cost)",
+  "function sellExactTokensAuthorized(uint256 amountIn,uint256 minPayout,uint8 routeProfile,uint64 routeDeadline,bytes routeSignature) returns (uint256 payout)",
+] as ethers.InterfaceAbi;
 const TOKEN_ABI = LaunchTokenArtifact.abi as ethers.InterfaceAbi;
 const TOKEN_DECIMALS = 18;
 const SLIPPAGE_PCT = 5;
 const MAX_UINT256 = (1n << 256n) - 1n;
+const LEGACY_TRADE_GAS_LIMIT = 650_000n;
+const TRADE_AUTH_BUY_EXACT_TOKENS = 0;
+const TRADE_AUTH_SELL_EXACT_TOKENS = 2;
+
+async function fetchEvmCampaignMetrics(campaignAddress: string, chainId: number): Promise<CampaignMetrics | null> {
+  if (!campaignAddress || isSolanaChainId(chainId)) return null;
+  const provider = getReadProvider(chainId as SupportedChainId);
+  const campaign = new Contract(campaignAddress, CAMPAIGN_ABI, provider) as any;
+  const readBig = async (method: string, fallback = 0n): Promise<bigint> => {
+    try {
+      const fn = campaign?.[method];
+      if (typeof fn !== "function") return fallback;
+      return (await fn()) as bigint;
+    } catch {
+      return fallback;
+    }
+  };
+  const [
+    sold,
+    curveSupply,
+    liquiditySupply,
+    creatorReserve,
+    basePrice,
+    priceSlope,
+    graduationTarget,
+    liquidityBps,
+    protocolFeeBps,
+    currentPrice,
+  ] = await Promise.all([
+    readBig("sold"),
+    readBig("curveSupply"),
+    readBig("liquiditySupply"),
+    readBig("creatorReserve"),
+    readBig("basePrice"),
+    readBig("priceSlope"),
+    readBig("graduationTarget"),
+    readBig("liquidityBps"),
+    readBig("protocolFeeBps"),
+    readBig("currentPrice"),
+  ]);
+  const graduationNativeTarget = await readBig("graduationNativeTarget", graduationTarget);
+  const [launched, finalizedAt] = await Promise.all([
+    campaign.launched().catch(() => false),
+    campaign.finalizedAt().catch(() => 0n),
+  ]);
+  return {
+    sold,
+    curveSupply,
+    liquiditySupply,
+    creatorReserve,
+    basePrice,
+    priceSlope,
+    graduationTarget,
+    graduationNativeTarget,
+    liquidityBps,
+    protocolFeeBps,
+    currentPrice,
+    launched,
+    finalizedAt,
+  };
+}
+
+function authLooksRequired(error: unknown) {
+  return !isUnsupportedContractMethod(error) && !String((error as any)?.message || error || "").includes("trade-authorization HTTP");
+}
+
+async function requestCampaignTradeAuthorization(params: {
+  walletAddress: string;
+  campaignAddress: string;
+  chainId: number;
+  action: number;
+  amount: bigint;
+  limit: bigint;
+}) {
+  const response = await apiFetch("/api/routing/trade-authorization", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      walletAddress: params.walletAddress,
+      campaignAddress: params.campaignAddress,
+      chainId: params.chainId,
+      action: params.action,
+      amount: params.amount.toString(),
+      limit: params.limit.toString(),
+    }),
+  });
+  if (!response.ok) throw new Error(`trade-authorization HTTP ${response.status}`);
+  return response.json();
+}
 
 function formatBnbFromWei(wei?: bigint | null): string {
   if (wei == null) return "—";
@@ -128,7 +226,7 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
   const { toast } = useToast();
   const wallet = useWallet();
   const solanaWallet = useSolanaWallet();
-  const { fetchCampaignMetrics, buyTokens, sellTokens } = useLaunchpad();
+  const activeWalletKind = useActiveWalletKind();
   const [metrics, setMetrics] = useState<CampaignMetrics | null>(null);
   const [solanaCurve, setSolanaCurve] = useState<SolanaCampaignCurveState | null>(null);
   const [tradeAmount, setTradeAmount] = useState("0");
@@ -150,6 +248,16 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
     isSolanaAddress(campaign.token) ||
     Number((campaign as { chainId?: number }).chainId) === SOLANA_CHAIN_ID;
   const nativeUnit = isSolanaCampaign ? "SOL" : "BNB";
+  const walletMatchesCampaign = campaignWalletMatches({
+    isSolanaCampaign,
+    storedKind: activeWalletKind,
+    solanaConnected: Boolean(solanaWallet.isSolanaConnected && solanaWallet.solanaAccount),
+    bnbConnected: Boolean(wallet.isConnected && wallet.account),
+  });
+  const connectTradeWalletLabel = isSolanaCampaign ? "Connect SOL wallet" : "Connect BNB wallet";
+  const openWalletModal = () => {
+    try { window.dispatchEvent(new CustomEvent("memewarzone:openWalletModal")); } catch { /* ignore */ }
+  };
   const tokenDecimals = isSolanaCampaign ? Number(solanaCurve?.tokenDecimals ?? 6) : TOKEN_DECIMALS;
   const solanaDex = Boolean(solanaCurve?.graduated || solanaCurve?.curveClosed);
 
@@ -194,16 +302,21 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
         setMetrics(null);
         return;
       }
-      const next = await fetchCampaignMetrics(campaign.campaign);
+      const next = await fetchEvmCampaignMetrics(campaign.campaign, chainId);
       setMetrics(next);
     } catch (error) {
       console.warn("[WarRoomTradePanel] Failed to load metrics", error);
       setMetrics(null);
     }
-  }, [campaign.campaign, campaign.token, fetchCampaignMetrics, isSolanaCampaign]);
+  }, [campaign.campaign, campaign.token, chainId, isSolanaCampaign]);
 
   const loadBalances = useCallback(async () => {
     try {
+      if (!walletMatchesCampaign) {
+        setBnbBalanceWei(null);
+        setTokenBalanceWei(null);
+        return;
+      }
       if (isSolanaCampaign) {
         const { getSolanaProvider } = await import("@/lib/solanaWallet");
         const { loadSolanaWeb3 } = await import("@/lib/solanaWeb3");
@@ -255,7 +368,7 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
       setBnbBalanceWei(null);
       setTokenBalanceWei(null);
     }
-  }, [campaign.campaign, campaign.token, isSolanaCampaign, solanaWallet.solanaAccount, wallet.account, wallet.provider]);
+  }, [campaign.campaign, campaign.token, isSolanaCampaign, solanaWallet.solanaAccount, wallet.account, wallet.provider, walletMatchesCampaign]);
 
   useEffect(() => {
     loadMetrics();
@@ -667,6 +780,16 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
 
   const handlePlaceTrade = async () => {
     if (!campaign.campaign) return;
+    if (!walletMatchesCampaign) {
+      toast({
+        title: connectTradeWalletLabel,
+        description: isSolanaCampaign
+          ? "This campaign is on Solana. Connect Phantom / Solflare to buy or sell."
+          : "This campaign is on BNB. Connect a BNB wallet to buy or sell.",
+      });
+      openWalletModal();
+      return;
+    }
 
     if (isSolanaCampaign) {
       try {
@@ -950,10 +1073,35 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
           description: `Buying ~${formatTokenFromWei(amountWei)} ${campaign.symbol} for up to ${formatBnbFromWei(maxCostWei)}.`,
         });
 
-        const receipt: any = await buyTokens(campaign.campaign, amountWei, maxCostWei);
+        const campaignWrite = new Contract(campaign.campaign, CAMPAIGN_ABI, wallet.signer) as any;
+        const overrides = { value: maxCostWei, gasLimit: LEGACY_TRADE_GAS_LIMIT };
+        let tx;
+        try {
+          const authResponse = await requestCampaignTradeAuthorization({
+            walletAddress: wallet.account,
+            campaignAddress: campaign.campaign,
+            chainId,
+            action: TRADE_AUTH_BUY_EXACT_TOKENS,
+            amount: amountWei,
+            limit: maxCostWei,
+          });
+          const auth = authResponse.authorization;
+          tx = await campaignWrite.buyExactTokensAuthorized(
+            amountWei,
+            maxCostWei,
+            auth.routeProfileId,
+            Math.floor(new Date(auth.validUntil).getTime() / 1000),
+            auth.signature,
+            overrides,
+          );
+        } catch (error) {
+          if (authLooksRequired(error)) throw error;
+          tx = await campaignWrite.buyExactTokens(amountWei, maxCostWei, overrides);
+        }
+        const receipt: any = await tx.wait();
         toast({
           title: "Buy confirmed",
-          description: receipt?.transactionHash ? `Tx: ${receipt.transactionHash.slice(0, 10)}...` : "Transaction confirmed.",
+          description: receipt?.hash || receipt?.transactionHash ? `Tx: ${String(receipt.hash || receipt.transactionHash).slice(0, 10)}...` : "Transaction confirmed.",
         });
       } else {
         let payoutWei: bigint = tradeInputDenom === "BNB" ? inputBnbWei : (quoteWei ?? 0n);
@@ -983,10 +1131,35 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
           description: `Selling ${ethers.formatUnits(amountWei, TOKEN_DECIMALS)} ${campaign.symbol} (min ${formatBnbFromWei(minPayoutWei)}).`,
         });
 
-        const receipt: any = await sellTokens(campaign.campaign, amountWei, minPayoutWei);
+        const campaignWrite = new Contract(campaign.campaign, CAMPAIGN_ABI, wallet.signer) as any;
+        const overrides = { gasLimit: LEGACY_TRADE_GAS_LIMIT };
+        let tx;
+        try {
+          const authResponse = await requestCampaignTradeAuthorization({
+            walletAddress: wallet.account,
+            campaignAddress: campaign.campaign,
+            chainId,
+            action: TRADE_AUTH_SELL_EXACT_TOKENS,
+            amount: amountWei,
+            limit: minPayoutWei,
+          });
+          const auth = authResponse.authorization;
+          tx = await campaignWrite.sellExactTokensAuthorized(
+            amountWei,
+            minPayoutWei,
+            auth.routeProfileId,
+            Math.floor(new Date(auth.validUntil).getTime() / 1000),
+            auth.signature,
+            overrides,
+          );
+        } catch (error) {
+          if (authLooksRequired(error)) throw error;
+          tx = await campaignWrite.sellExactTokens(amountWei, minPayoutWei, overrides);
+        }
+        const receipt: any = await tx.wait();
         toast({
           title: "Sell confirmed",
-          description: receipt?.transactionHash ? `Tx: ${receipt.transactionHash.slice(0, 10)}...` : "Transaction confirmed.",
+          description: receipt?.hash || receipt?.transactionHash ? `Tx: ${String(receipt.hash || receipt.transactionHash).slice(0, 10)}...` : "Transaction confirmed.",
         });
       }
 
@@ -1069,17 +1242,26 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
             </div>
 
             <Button
-              onClick={handlePlaceTrade}
+              onClick={walletMatchesCampaign ? handlePlaceTrade : openWalletModal}
               disabled={
-                tradePending ||
-                approvePending ||
-                quoteLoading ||
-                (isDexStage && !isSolanaCampaign && !isTopazTradingActive) ||
-                (tradeInputDenom === "BNB" ? effectiveBnbWei <= 0n : parseTokenAmountDecimals(tradeAmount, tokenDecimals) <= 0n)
+                walletMatchesCampaign &&
+                (tradePending ||
+                  approvePending ||
+                  quoteLoading ||
+                  (isDexStage && !isSolanaCampaign && !isTopazTradingActive) ||
+                  (tradeInputDenom === "BNB" ? effectiveBnbWei <= 0n : parseTokenAmountDecimals(tradeAmount, tokenDecimals) <= 0n))
               }
               className={`w-full ${topbarButtonClass}`}
             >
-              {tradePending ? "Processing..." : isSolanaCampaign && isDexStage ? "Buy on Meteora" : isDexStage ? "Buy on Topaz" : "Buy"}
+              {!walletMatchesCampaign
+                ? connectTradeWalletLabel
+                : tradePending
+                  ? "Processing..."
+                  : isSolanaCampaign && isDexStage
+                    ? "Buy on Meteora"
+                    : isDexStage
+                      ? "Buy on Topaz"
+                      : "Buy"}
             </Button>
           </TabsContent>
 
@@ -1173,17 +1355,26 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
             </div>
 
             <Button
-              onClick={handlePlaceTrade}
+              onClick={walletMatchesCampaign ? handlePlaceTrade : openWalletModal}
               disabled={
-                tradePending ||
-                approvePending ||
-                quoteLoading ||
-                (isDexStage && !isSolanaCampaign && !isTopazTradingActive) ||
-                (tradeInputDenom === "BNB" ? effectiveBnbWei <= 0n : parseTokenAmountDecimals(tradeAmount, tokenDecimals) <= 0n)
+                walletMatchesCampaign &&
+                (tradePending ||
+                  approvePending ||
+                  quoteLoading ||
+                  (isDexStage && !isSolanaCampaign && !isTopazTradingActive) ||
+                  (tradeInputDenom === "BNB" ? effectiveBnbWei <= 0n : parseTokenAmountDecimals(tradeAmount, tokenDecimals) <= 0n))
               }
               className={`w-full ${topbarButtonClass}`}
             >
-              {tradePending ? "Processing..." : isSolanaCampaign && isDexStage ? "Sell on Meteora" : isDexStage ? "Sell on Topaz" : "Sell"}
+              {!walletMatchesCampaign
+                ? connectTradeWalletLabel
+                : tradePending
+                  ? "Processing..."
+                  : isSolanaCampaign && isDexStage
+                    ? "Sell on Meteora"
+                    : isDexStage
+                      ? "Sell on Topaz"
+                      : "Sell"}
             </Button>
           </TabsContent>
         </Tabs>

@@ -164,16 +164,10 @@ function makeProductionTradeFixture(side = "buy") {
       instructions: planAddress(plan, "instructionsSysvar").toBase58(),
       tokenProgram: planAddress(plan, "tokenProgram").toBase58(),
       systemProgram: planAddress(plan, "systemProgram").toBase58(),
-      leagueVault: planAddress(plan, "weeklyLeagueVault").toBase58(),
-      airdropVault: planAddress(plan, "airdropVault").toBase58(),
-      monthlyLeagueVault: planAddress(plan, "monthlyLeagueVault").toBase58(),
-      recruiterVault: planAddress(plan, "recruiterVault").toBase58(),
-      squadVault: planAddress(plan, "squadVault").toBase58(),
-      protocolVault: planAddress(plan, "protocolVault").toBase58(),
+      feeEscrow: Keypair.generate().publicKey.toBase58(),
     },
   });
-  const computeInstruction = ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 });
-  return { payer, plan, ed25519Instruction, programInstruction, computeInstruction, lookupTable };
+  return { payer, plan, ed25519Instruction, programInstruction, lookupTable };
 }
 
 function makeTradeFixture(extraSigner = false) {
@@ -238,7 +232,6 @@ test("production BUY and SELL instructions compile to one-signer V0 envelopes un
   for (const side of ["buy", "sell"]) {
     const fixture = makeProductionTradeFixture(side);
     const instructions = [
-      fixture.computeInstruction,
       fixture.ed25519Instruction,
       fixture.programInstruction,
     ];
@@ -259,16 +252,11 @@ test("production BUY and SELL instructions compile to one-signer V0 envelopes un
     );
 
     reportSize(side === "buy" ? "BUY" : "SELL", legacy, stats);
-    assert.equal(fixture.programInstruction.keys.length, 19);
+    assert.equal(fixture.programInstruction.keys.length, 14);
     assert.equal(fixture.programInstruction.data.length, side === "buy" ? 73 : 65);
     assert.equal(stats.requiredSigners, 1);
-    assert.equal(stats.instructionCount, 3);
-    assert.ok(stats.lookupReadonlyCount + stats.lookupWritableCount >= 8);
+    assert.equal(stats.instructionCount, 2);
     assert.ok(stats.serializedBytes <= SOLANA_RELEASE_MAX_BYTES);
-    assert.ok(
-      legacy - stats.serializedBytes >= 150,
-      `expected >=150 bytes saved for ${side}; saved ${legacy - stats.serializedBytes}`,
-    );
   }
 });
 
@@ -455,7 +443,6 @@ test("CREATE and BUY/SELL V0 compile through the same helper used by graduation"
       payer: trade.payer,
       recentBlockhash: BLOCKHASH,
       instructions: [
-        trade.computeInstruction,
         trade.ed25519Instruction,
         trade.programInstruction,
       ],

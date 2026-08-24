@@ -4,15 +4,20 @@ import { emitNotification } from "../notifications.js";
 import { pool } from "../db.js";
 
 function parseChainIds(): number[] {
-  return String(process.env.REWARD_CHAINS || process.env.LEAGUE_CHAINS || "97")
+  const ids = String(process.env.REWARD_CHAINS || process.env.LEAGUE_CHAINS || "56,101")
     .split(",")
     .map((s) => Number(s.trim()))
     .filter((n) => Number.isFinite(n));
+  return [...new Set(ids)];
 }
 
 async function main() {
   if (!ENV.DATABASE_URL) throw new Error("DATABASE_URL missing");
   const chainIds = parseChainIds();
+  const sha = process.env.SOURCE_COMMIT || process.env.COOLIFY_GIT_COMMIT_SHA || process.env.GIT_SHA || "unset";
+  const epochLimit = Math.max(1, Math.min(52, Number(process.env.PROCESS_REWARD_EPOCH_LIMIT || "1") || 1));
+  console.log(`[processRewardEpoch] BUILD_SHA=${sha} chains=${chainIds.join(",")} limit=${epochLimit}`);
+
   const results = await processEndedWeeklyRewardEpochs(chainIds, new Date());
   console.log(`[processRewardEpoch] chains=${chainIds.join(",")} processed=${results.length}`);
   for (const item of results) {
@@ -20,13 +25,13 @@ async function main() {
     if (item.status === "claimable") {
       await emitNotification(pool, {
         eventType: "airdrop.claims_open",
-        chain: (item.chainId === 101 || item.chainId === 102) ? "solana" : "bnb",
+        chain: item.chainId === 101 ? "solana" : "bnb",
         dedupKey: `airdrop-claims-open:${item.chainId}:${item.epochId}`,
         payload: {
-          chain: (item.chainId === 101 || item.chainId === 102) ? "solana" : "bnb",
+          chain: item.chainId === 101 ? "solana" : "bnb",
           epochId: item.epochId,
           claimableCount: item.claimableCount,
-        }
+        },
       });
     }
   }

@@ -1,11 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Contract, ethers } from "ethers";
 import { useCurveTrades, type CurveTradePoint } from "@/hooks/useCurveTrades";
 import { useTopazMarket } from "@/hooks/useTopazMarket";
 import { useUnifiedMarket, type MarketResolution } from "@/hooks/useUnifiedMarket";
 import { campaignKey, isCampaignAddress, marketTradeToCurvePoint } from "@/lib/chart/normalizeTrade";
 import { isEvmChainId, isSolanaChainId, type SupportedChainId } from "@/lib/chainConfig";
-import { loadLocalTopazTrades, saveLocalTopazTrades } from "@/lib/localTopazTrades";
 import { getReadProvider } from "@/lib/readProvider";
 import { TOPAZ_FILL_EVENT, type TopazFillDetail } from "@/lib/recordTopazFill";
 import { fetchTopazTradeReports } from "@/lib/topazTradeReports";
@@ -41,11 +40,10 @@ export function useContinuousMarketTrades(input: {
 
   const { points: curvePoints, loading: curveLoading, error: curveError } = useCurveTrades(
     enabled ? campaignAddress : undefined,
-    { chainId, enabled },
+    { chainId, enabled, tokenAddress: tokenAddress || undefined },
   );
 
   const [localTopazTrades, setLocalTopazTrades] = useState<CurveTradePoint[]>([]);
-  const lastNonEmptyRef = useRef<CurveTradePoint[]>([]);
 
   // On-chain graduation independent of campaign_market_state (same idea as TokenDetails).
   const [onChainLaunched, setOnChainLaunched] = useState(false);
@@ -88,8 +86,7 @@ export function useContinuousMarketTrades(input: {
       setLocalTopazTrades([]);
       return;
     }
-    const cached = loadLocalTopazTrades(chainId, campaignAddress);
-    setLocalTopazTrades(cached);
+    setLocalTopazTrades([]);
 
     let cancelled = false;
     void (async () => {
@@ -101,11 +98,7 @@ export function useContinuousMarketTrades(input: {
           limit: 100,
         });
         if (cancelled || !remote.length) return;
-        setLocalTopazTrades((prev) => {
-          const merged = mergeTradePoints(prev, remote);
-          saveLocalTopazTrades(chainId, campaignAddress, merged);
-          return merged;
-        });
+        setLocalTopazTrades((prev) => mergeTradePoints(prev, remote));
       } catch {
         // optional
       }
@@ -115,11 +108,6 @@ export function useContinuousMarketTrades(input: {
       cancelled = true;
     };
   }, [enabled, campaignAddress, chainId]);
-
-  useEffect(() => {
-    if (!enabled) return;
-    saveLocalTopazTrades(chainId, campaignAddress, localTopazTrades);
-  }, [enabled, campaignAddress, chainId, localTopazTrades]);
 
   const unifiedMarket = useUnifiedMarket({
     campaignAddress: enabled ? campaignAddress : undefined,
@@ -169,11 +157,7 @@ export function useContinuousMarketTrades(input: {
       if (!detail) return;
       if (Number(detail.chainId) !== chainId) return;
       if (campaignKey(chainId, detail.campaignAddress) !== campaignAddress) return;
-      setLocalTopazTrades((prev) => {
-        const next = mergeTradePoints(prev, [detail.point]);
-        saveLocalTopazTrades(chainId, campaignAddress, next);
-        return next;
-      });
+      setLocalTopazTrades((prev) => mergeTradePoints(prev, [detail.point]));
       void topazMarket.refresh?.();
     };
     window.addEventListener(TOPAZ_FILL_EVENT, onFill as EventListener);
@@ -213,11 +197,7 @@ export function useContinuousMarketTrades(input: {
     evm,
   ]);
 
-  useEffect(() => {
-    if (tradePoints.length) lastNonEmptyRef.current = tradePoints;
-  }, [tradePoints]);
-
-  const stableTradePoints = tradePoints.length ? tradePoints : lastNonEmptyRef.current;
+  const stableTradePoints = tradePoints;
 
   const loading =
     stableTradePoints.length > 0

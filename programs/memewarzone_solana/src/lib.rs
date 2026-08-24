@@ -87,6 +87,9 @@ pub mod campaign_view;
 pub mod authorized_trade;
 pub use authorized_trade::*;
 
+pub mod fee_escrow;
+pub use fee_escrow::*;
+
 pub mod graduation;
 pub use graduation::*;
 
@@ -406,6 +409,24 @@ pub mod memewarzone_solana {
     /// Exact tokens in → SOL out from sol vault. Gross refund from curve; fee retained in vault.
     pub fn sell_tokens(ctx: Context<SellTokens>, args: SellTokensArgs) -> Result<()> {
         sell_tokens_handler(ctx, args)
+    }
+
+    /// Permissionless rent-payer init of the per-campaign fee escrow PDA.
+    pub fn initialize_fee_escrow(ctx: Context<InitializeFeeEscrow>) -> Result<()> {
+        initialize_fee_escrow_handler(ctx)
+    }
+
+    /// Permissionless flush of accrued fee slices to canonical rewards vaults.
+    pub fn flush_campaign_fees(ctx: Context<FlushCampaignFees>) -> Result<()> {
+        flush_campaign_fees_handler(ctx)
+    }
+
+    /// Permissionless close of an expired TradeAuthorization PDA. Rent always returns to trader.
+    pub fn close_expired_trade_authorization(
+        ctx: Context<CloseExpiredTradeAuthorization>,
+        args: CloseExpiredTradeAuthorizationArgs,
+    ) -> Result<()> {
+        close_expired_trade_authorization_handler(ctx, args)
     }
 
     /// Starts an atomic graduation transaction and stages only the bounded DAMM v2 liquidity.
@@ -1631,6 +1652,8 @@ pub enum LaunchpadError {
     InvalidTradeAuthorization,
     #[msg("Trade authorization deadline has expired.")]
     TradeAuthorizationExpired,
+    #[msg("Trade authorization deadline has not expired yet.")]
+    TradeAuthorizationNotExpired,
     #[msg("Solana campaign graduation is paused.")]
     GraduationPaused,
     #[msg("Signed graduation authorization is missing, malformed, or does not match this transaction.")]
@@ -1641,7 +1664,9 @@ pub enum LaunchpadError {
     InvalidGraduationTarget,
     #[msg("Campaign has not reached the signed native graduation target or exhausted the bonding curve.")]
     GraduationThresholdNotMet,
-    #[msg("Graduation must create/lock Meteora DAMM v2 and confirm in the same Solana transaction.")]
+    #[msg(
+        "Graduation must create/lock Meteora DAMM v2 and confirm in the same Solana transaction."
+    )]
     GraduationAtomicityRequired,
     #[msg("The deterministic Meteora DAMM v2 customizable pool is invalid.")]
     InvalidMeteoraPool,
@@ -1667,4 +1692,12 @@ pub enum LaunchpadError {
     InvalidRewardsVault,
     #[msg("This campaign is paused.")]
     CampaignPaused,
+    #[msg("Campaign fee escrow is missing or not initialized.")]
+    FeeEscrowNotInitialized,
+    #[msg("Campaign fee escrow PDA or campaign binding is invalid.")]
+    InvalidFeeEscrow,
+    #[msg("Campaign fee escrow still has unflushed pending fees.")]
+    FeeEscrowPendingNonzero,
+    #[msg("Campaign fee escrow cannot cover its pending liabilities.")]
+    FeeEscrowBalanceMismatch,
 }

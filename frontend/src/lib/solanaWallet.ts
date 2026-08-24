@@ -79,6 +79,10 @@ function solanaDisconnected() {
   }
 }
 
+export function isSolanaWalletDisconnected(): boolean {
+  return solanaDisconnected();
+}
+
 function setSolanaDisconnected(value: boolean) {
   if (typeof window === "undefined") return;
   try {

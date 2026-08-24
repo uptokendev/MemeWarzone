@@ -30,7 +30,8 @@ export function getPublicTokenDetailRoute(input?: {
   const base = getPostGradTokenDetailRoute(preferred);
   if (!base) return null;
   const chainId = Number(input.chainId);
-  if (Number.isFinite(chainId) && chainId > 0) {
+  // 0x → BNB mainnet, base58 → Solana. Only pin non-default networks (BNB testnet 97).
+  if (chainId === 97 || chainId === 102) {
     return `${base}${base.includes("?") ? "&" : "?"}chainId=${chainId}`;
   }
   return base;

@@ -88,10 +88,10 @@ function balanceStateCopy(balance: RecruiterPayoutBalance): BalanceStateCopy {
   }
   if (status === "pending_batch_publication") {
     return {
-      badge: "Batch pending",
+      badge: "Batch awaiting publication",
       tone: "pending",
       amountRaw: balance.pendingRaw || balance.claimableRaw || "0",
-      caption: `Earned ${balance.token} awaiting weekly batch`,
+      caption: `Earned ${balance.token} is not claimable until the weekly Merkle root is published on-chain`,
     };
   }
   if (status === "pending_finality") {
@@ -284,7 +284,13 @@ export function RecruiterNativePayoutsPanel() {
               <div className="mt-4 rounded-xl border border-border/40 bg-card/25 p-3 text-xs text-muted-foreground"><div className="flex items-center gap-2 font-retro text-[10px] uppercase tracking-[0.16em] text-muted-foreground">{verified ? <CheckCircle2 className="h-4 w-4 text-emerald-300" /> : <ShieldAlert className="h-4 w-4 text-amber-200" />}{chainLabel(chain)} wallet verification</div><div className="mt-2 font-mono text-sm text-foreground">{shortAddress(balance.payoutWallet)}</div></div>
               <div className="mt-4 space-y-2"><label className="font-retro text-[10px] uppercase tracking-[0.16em] text-muted-foreground">{chainLabel(chain)} wallet</label><input value={inputValue} onChange={(event) => setInputValue(event.target.value)} placeholder={walletPlaceholder(chain)} className="min-h-10 w-full rounded-xl border border-border/50 bg-background/60 px-3 font-mono text-sm text-foreground outline-none transition focus:border-accent/60" /></div>
               <div className="mt-4 flex flex-wrap gap-2">
-                {isBnb ? <Button onClick={linkBnbWallet} disabled={verifyPending} variant="outline" className="font-retro">{verifyPending ? "Waiting..." : verified ? "Update BNB Wallet" : "Verify BNB Wallet"}</Button> : <Button onClick={linkSolanaWallet} disabled={verifyPending || recruiterWallet.connecting} variant="outline" className="font-retro">{verifyPending || recruiterWallet.connecting ? "Waiting..." : verified ? "Update Solana Wallet" : "Verify Solana Wallet"}</Button>}
+                {verified && String(balance.status || "") === "pending_batch_publication" ? (
+                  <p className="w-full text-xs text-sky-100">Wallet verified. {formatNative(stateCopy.amountRaw, balance.token)} {balance.token} is earned. Batch awaiting on-chain publication — you cannot claim until the Merkle root is live.</p>
+                ) : isBnb ? (
+                  <Button onClick={linkBnbWallet} disabled={verifyPending} variant="outline" className="font-retro">{verifyPending ? "Waiting..." : verified ? "Update BNB Wallet" : "Verify BNB Wallet"}</Button>
+                ) : (
+                  <Button onClick={linkSolanaWallet} disabled={verifyPending || recruiterWallet.connecting} variant="outline" className="font-retro">{verifyPending || recruiterWallet.connecting ? "Waiting..." : verified ? "Update Solana Wallet" : "Verify Solana Wallet"}</Button>
+                )}
                 <Button onClick={() => createClaim(chain)} disabled={!canClaim || claimPending} className="font-retro">{claimPending ? "Claiming..." : `Claim ${balance.token}`}</Button>
               </div>
             </div>

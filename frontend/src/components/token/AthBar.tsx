@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
 
 function parseCompactUsd(input?: string | null): number | null {
   if (!input) return null;
@@ -57,6 +57,8 @@ function formatCompactUsd(n: number | null | undefined): string {
 type AthBarProps = {
   /** Current market cap label as shown in UI (e.g. "$340.1K"). */
   currentLabel?: string | null;
+  /** Indexed/canonical ATH in USD. Outranks empty or stale localStorage. */
+  canonicalAthUsd?: number | null;
   /** Optional stable key used for localStorage persistence. */
   storageKey: string;
   /** Optional className wrapper. */
@@ -67,59 +69,16 @@ type AthBarProps = {
   barMaxWidth?: string;
 };
 
-export function AthBar({ currentLabel, storageKey, className, barWidthPx, barMaxWidth }: AthBarProps) {
+export function AthBar({ currentLabel, canonicalAthUsd, storageKey, className, barWidthPx, barMaxWidth }: AthBarProps) {
+  void storageKey;
   const current = useMemo(() => parseCompactUsd(currentLabel), [currentLabel]);
-
-  // v3: drop ATH values polluted by bad session trades (e.g. 510k BNB rows → fake USD ATH).
-  const storageKeyV2 = useMemo(() => `${storageKey}:v3`, [storageKey]);
-
-  const [ath, setAth] = useState<number | null>(null);
-  const [burst, setBurst] = useState(0);
-  const prevAthRef = useRef<number | null>(null);
-
-  // Load persisted ATH (per token) once.
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(storageKeyV2);
-      const n = raw ? Number(raw) : NaN;
-      let stored = Number.isFinite(n) ? n : null;
-      // If current mcap is sane and stored ATH is absurdly higher, reset.
-      if (stored != null && current != null && current > 0 && stored > current * 50 && stored > 100) {
-        stored = current;
-        localStorage.setItem(storageKeyV2, String(current));
-      }
-      setAth(stored);
-      prevAthRef.current = stored;
-    } catch {
-      // ignore
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storageKeyV2, current]);
-
-  // Update ATH if we surpass it.
-  useEffect(() => {
-    if (current == null || !Number.isFinite(current)) return;
-    // Ignore absurd spikes (bad local trade pollution).
-    if (current > 1e12) return;
-
-    setAth((prev) => {
-      const p = prev ?? prevAthRef.current;
-      if (p == null || current > p) {
-        // Spark burst on new ATH.
-        setBurst((b) => b + 1);
-
-        try {
-          localStorage.setItem(storageKeyV2, String(current));
-        } catch {
-          // ignore
-        }
-        prevAthRef.current = current;
-        return current;
-      }
-      prevAthRef.current = p;
-      return prev;
-    });
-  }, [current, storageKeyV2]);
+  const ath = useMemo(() => {
+    const indexed = Number(canonicalAthUsd);
+    const live = current != null && current > 0 && current < 1e12 ? current : 0;
+    const peak = Math.max(Number.isFinite(indexed) && indexed > 0 ? indexed : 0, live);
+    return peak > 0 ? peak : null;
+  }, [canonicalAthUsd, current]);
+  const burst = 0;
 
   const ratio = useMemo(() => {
     if (current == null || ath == null || ath <= 0) return 0;

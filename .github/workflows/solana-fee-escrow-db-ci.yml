@@ -1,0 +1,53 @@
+name: Solana FeeEscrow DB lease CI
+
+on:
+  pull_request:
+    paths:
+      - db/migrations/20260821_000003_solana_worker_leases.sql
+      - db/migrations/20260821_000005_sponsorship_admin_rls.sql
+      - realtime-indexer/src/solanaFeeEscrowWorker.ts
+      - realtime-indexer/src/solanaFeeEscrowClaimSql.ts
+      - tests/solana/fee-escrow-lease.pg.test.mjs
+      - tests/solana/fee-escrow-worker-torture.pg.test.mjs
+      - .github/workflows/solana-fee-escrow-db-ci.yml
+  push:
+    branches:
+      - 'hotfix/solana-*'
+  workflow_dispatch:
+
+jobs:
+  postgres17-lease:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: memewarzone
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/memewarzone
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply FeeEscrow and sponsorship migrations
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y postgresql-client
+          psql "$DATABASE_URL" -f db/migrations/20260821_000001_solana_fee_escrow_queue.sql
+          psql "$DATABASE_URL" -f db/migrations/20260821_000002_solana_fee_escrow_events_and_rls.sql
+          psql "$DATABASE_URL" -f db/migrations/20260821_000003_solana_worker_leases.sql
+          psql "$DATABASE_URL" -f db/migrations/20260821_000004_partner_listings_rls.sql
+          psql "$DATABASE_URL" -f db/migrations/20260821_000005_sponsorship_admin_rls.sql
+      - name: Lease, 3-worker torture, and RLS tests
+        run: npm install pg --no-audit --no-fund && node --test tests/solana/fee-escrow-lease.pg.test.mjs tests/solana/fee-escrow-worker-torture.pg.test.mjs tests/solana/graduate-operator-accounts.test.mjs

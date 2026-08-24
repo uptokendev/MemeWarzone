@@ -11,8 +11,8 @@ use anchor_lang::{
     solana_program::{
         ed25519_program,
         hash::hash,
-        program::{invoke, invoke_signed},
-        system_instruction,
+        program::invoke_signed,
+        system_instruction, system_program,
         sysvar::instructions::{
             load_current_index_checked, load_instruction_at_checked, ID as INSTRUCTIONS_SYSVAR_ID,
         },
@@ -554,6 +554,13 @@ pub struct BuyTokens<'info> {
     pub token_program: UncheckedAccount<'info>,
     /// CHECK: System program.
     pub system_program: UncheckedAccount<'info>,
+    /// CHECK: PDA + owner + campaign match in an isolated frame.
+    #[account(
+        mut,
+        seeds = [crate::FEE_ESCROW_SEED, campaign.key().as_ref()],
+        bump
+    )]
+    pub fee_escrow: UncheckedAccount<'info>,
 }
 
 #[derive(Accounts)]
@@ -597,6 +604,36 @@ pub struct SellTokens<'info> {
     pub token_program: UncheckedAccount<'info>,
     /// CHECK: System program.
     pub system_program: UncheckedAccount<'info>,
+    /// CHECK: PDA + owner + campaign match in an isolated frame.
+    #[account(
+        mut,
+        seeds = [crate::FEE_ESCROW_SEED, campaign.key().as_ref()],
+        bump
+    )]
+    pub fee_escrow: UncheckedAccount<'info>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug)]
+pub struct CloseExpiredTradeAuthorizationArgs {
+    pub nonce: [u8; 32],
+}
+
+#[derive(Accounts)]
+#[instruction(args: CloseExpiredTradeAuthorizationArgs)]
+pub struct CloseExpiredTradeAuthorization<'info> {
+    /// Anyone may pay the cleanup fee. Rent is always refunded to `trader`.
+    #[account(mut)]
+    pub caller: Signer<'info>,
+    /// CHECK: refund destination; must match the stored authorization trader.
+    #[account(mut)]
+    pub trader: UncheckedAccount<'info>,
+    /// CHECK: program-owned trade-auth PDA; closed only after deadline.
+    #[account(
+        mut,
+        seeds = [TRADE_AUTH_SEED, trader.key().as_ref(), args.nonce.as_ref()],
+        bump
+    )]
+    pub trade_authorization: UncheckedAccount<'info>,
 }
 
 // ── Handlers ────────────────────────────────────────────────────────────────
@@ -694,21 +731,26 @@ pub fn buy_tokens_handler(ctx: Context<BuyTokens>, args: BuyTokensArgs) -> Resul
         )?;
     }
 
-    invoke(
-        &system_instruction::transfer(&trader, &sol_vault_key, lamports_spent),
-        &[
-            ctx.accounts.trader.to_account_info(),
-            ctx.accounts.sol_vault.to_account_info(),
-            ctx.accounts.system_program.to_account_info(),
-        ],
+    crate::fee_escrow::require_fee_escrow(
+        &ctx.accounts.fee_escrow.to_account_info(),
+        campaign_key,
+        ctx.bumps.fee_escrow,
     )?;
-    route_fee_slices(
-        ctx.remaining_accounts,
+    crate::fee_escrow::transfer_buy_net_and_fee(
+        &ctx.accounts.trader.to_account_info(),
         &ctx.accounts.sol_vault.to_account_info(),
+        &ctx.accounts.fee_escrow.to_account_info(),
+        &ctx.accounts.system_program.to_account_info(),
+        net,
+        fee,
+        lamports_spent,
+    )?;
+    crate::fee_escrow::accrue_fee_escrow(
+        &ctx.accounts.fee_escrow.to_account_info(),
         campaign_key,
         trader,
         TRADE_SIDE_BUY,
-        net,
+        fee,
         args.route_profile,
     )?;
 
@@ -831,25 +873,25 @@ pub fn sell_tokens_handler(ctx: Context<SellTokens>, args: SellTokensArgs) -> Re
         args.tokens_in,
     )?;
 
-    {
-        let vault_info = ctx.accounts.sol_vault.to_account_info();
-        let trader_info = ctx.accounts.trader.to_account_info();
-        **vault_info.try_borrow_mut_lamports()? = vault_info
-            .lamports()
-            .checked_sub(lamports_out)
-            .ok_or(LaunchpadError::MathOverflow)?;
-        **trader_info.try_borrow_mut_lamports()? = trader_info
-            .lamports()
-            .checked_add(lamports_out)
-            .ok_or(LaunchpadError::MathOverflow)?;
-    }
-    route_fee_slices(
-        ctx.remaining_accounts,
+    crate::fee_escrow::require_fee_escrow(
+        &ctx.accounts.fee_escrow.to_account_info(),
+        campaign_key,
+        ctx.bumps.fee_escrow,
+    )?;
+    crate::fee_escrow::credit_sell_net_and_fee(
         &ctx.accounts.sol_vault.to_account_info(),
+        &ctx.accounts.trader.to_account_info(),
+        &ctx.accounts.fee_escrow.to_account_info(),
+        lamports_out,
+        fee,
+        gross,
+    )?;
+    crate::fee_escrow::accrue_fee_escrow(
+        &ctx.accounts.fee_escrow.to_account_info(),
         campaign_key,
         trader,
         TRADE_SIDE_SELL,
-        gross,
+        fee,
         args.route_profile,
     )?;
 
@@ -1296,12 +1338,12 @@ pub(crate) fn route_fee_slices(
 }
 
 pub(crate) struct BnbRouteAmounts {
-    weekly_league: u64,
-    monthly_league: u64,
-    recruiter: u64,
-    airdrop: u64,
-    squad: u64,
-    protocol: u64,
+    pub(crate) weekly_league: u64,
+    pub(crate) monthly_league: u64,
+    pub(crate) recruiter: u64,
+    pub(crate) airdrop: u64,
+    pub(crate) squad: u64,
+    pub(crate) protocol: u64,
 }
 
 pub(crate) fn preview_bnb_route(kind: u8, profile: u8, fee_amount: u64) -> Result<BnbRouteAmounts> {
@@ -1349,7 +1391,7 @@ pub(crate) fn validate_route_profile_id(profile: u8) -> Result<()> {
     Ok(())
 }
 
-fn expected_reward_vaults() -> [Pubkey; 6] {
+pub(crate) fn expected_reward_vaults() -> [Pubkey; 6] {
     let treasury = crate::rewards_treasury_program_id();
     [
         Pubkey::find_program_address(&[crate::LEAGUE_VAULT_SEED], &treasury).0,
@@ -1666,6 +1708,56 @@ fn read_u16(data: &[u8], offset: usize) -> Result<u16> {
     let end = offset.checked_add(2).ok_or(LaunchpadError::MathOverflow)?;
     require!(end <= data.len(), LaunchpadError::InvalidTradeAuthorization);
     Ok(u16::from_le_bytes([data[offset], data[offset + 1]]))
+}
+
+pub fn close_expired_trade_authorization_handler(
+    ctx: Context<CloseExpiredTradeAuthorization>,
+    args: CloseExpiredTradeAuthorizationArgs,
+) -> Result<()> {
+    let now = Clock::get()?.unix_timestamp;
+    let auth_info = ctx.accounts.trade_authorization.to_account_info();
+    require_keys_eq!(
+        *auth_info.owner,
+        crate::ID,
+        LaunchpadError::InvalidTradeAuthorization
+    );
+    require!(
+        auth_info.data_len() == 8 + TradeAuthorization::INIT_SPACE,
+        LaunchpadError::InvalidTradeAuthorization
+    );
+    let auth = {
+        let data = auth_info.try_borrow_data()?;
+        let mut slice: &[u8] = &data;
+        TradeAuthorization::try_deserialize(&mut slice)?
+    };
+    require_keys_eq!(
+        auth.trader,
+        ctx.accounts.trader.key(),
+        LaunchpadError::InvalidTradeAuthorization
+    );
+    require!(
+        auth.nonce == args.nonce,
+        LaunchpadError::InvalidTradeAuthorization
+    );
+    require!(
+        auth.bump == ctx.bumps.trade_authorization,
+        LaunchpadError::InvalidTradeAuthorization
+    );
+    require!(
+        now > auth.deadline,
+        LaunchpadError::TradeAuthorizationNotExpired
+    );
+
+    let refund = auth_info.lamports();
+    let trader_info = ctx.accounts.trader.to_account_info();
+    let trader_lamports = trader_info.lamports();
+    **trader_info.try_borrow_mut_lamports()? = trader_lamports
+        .checked_add(refund)
+        .ok_or(LaunchpadError::MathOverflow)?;
+    **auth_info.try_borrow_mut_lamports()? = 0;
+    auth_info.assign(&system_program::ID);
+    auth_info.realloc(0, false)?;
+    Ok(())
 }
 
 fn checked_slice(data: &[u8], offset: u16, len: usize) -> Result<&[u8]> {

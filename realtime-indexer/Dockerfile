@@ -1,5 +1,8 @@
 FROM node:20-bookworm-slim
 
+ARG SOURCE_COMMIT=unset
+ENV SOURCE_COMMIT=$SOURCE_COMMIT
+
 # Install CA certificates (critical for TLS trust)
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl \

@@ -22,6 +22,7 @@ import {
   solanaMetaFromRow,
   normalizeCampaignIdHex,
 } from "./campaign-registry.js";
+import { getSolanaChainUnixTime } from "./solana-chain-unix-time.js";
 import {
   SYSVAR_INSTRUCTIONS_ID,
   SYSTEM_PROGRAM_ID,
@@ -62,6 +63,7 @@ const REWARDS_TREASURY_PROGRAM_ID = String(
 ).trim();
 const LEAGUE_VAULT_SEED = Buffer.from("league_vault", "utf8");
 const AIRDROP_VAULT_SEED = Buffer.from("airdrop_vault", "utf8");
+const FEE_ESCROW_SEED = Buffer.from("fee-escrow", "utf8");
 
 function deriveRewardsVaults() {
   if (!REWARDS_TREASURY_PROGRAM_ID) return { leagueVault: null, airdropVault: null, programId: "" };
@@ -169,6 +171,32 @@ async function assertRewardVaultPreflight(rpcUrl, rewardsVaults) {
       httpStatus: 503,
     });
   }
+}
+
+function deriveFeeEscrow(programId, campaignAddress) {
+  return findProgramAddressSync(
+    [FEE_ESCROW_SEED, publicKeyBytes(campaignAddress)],
+    programId,
+  ).publicKey;
+}
+
+async function assertFeeEscrowPreflight(rpcUrl, programId, campaignAddress) {
+  const feeEscrow = deriveFeeEscrow(programId, campaignAddress);
+  const info = await rpcCall(rpcUrl, "getAccountInfo", [
+    feeEscrow,
+    { encoding: "base64", commitment: "confirmed" },
+  ]);
+  const owner = info?.value?.owner ? String(info.value.owner) : "";
+  const dataLen = info?.value?.data?.[0]
+    ? Buffer.from(info.value.data[0], "base64").length
+    : 0;
+  if (!info?.value || owner !== programId || dataLen < 8) {
+    throw new SolanaTradeAuthorizationError("market initializing", {
+      code: "SOLANA_MARKET_INITIALIZING",
+      httpStatus: 409,
+    });
+  }
+  return feeEscrow;
 }
 
 async function resolveTraderClusterProfile(rpcUrl, programId, traderAddress) {
@@ -311,15 +339,15 @@ async function rpcCall(rpcUrl, method, params) {
 }
 
 async function getChainUnixTime(rpcUrl) {
-  const slot = await rpcCall(rpcUrl, "getSlot", [{ commitment: "confirmed" }]);
-  const blockTime = await rpcCall(rpcUrl, "getBlockTime", [slot]);
-  if (!Number.isInteger(blockTime) || blockTime <= 0) {
-    throw new SolanaTradeAuthorizationError("Solana RPC did not return a confirmed block time.", {
+  try {
+    return await getSolanaChainUnixTime(rpcUrl);
+  } catch (error) {
+    throw new SolanaTradeAuthorizationError(error instanceof Error ? error.message : String(error), {
       code: "SOLANA_CHAIN_TIME_UNAVAILABLE",
       httpStatus: 503,
+      cause: error,
     });
   }
-  return blockTime;
 }
 
 function findAssociatedTokenAddress(owner, mint) {
@@ -808,6 +836,7 @@ export async function solanaTradeAuthorizationV1(req, res) {
         { code: "SOLANA_TRADE_VAULTS_UNRESOLVED", httpStatus: 409 },
       );
     }
+    const feeEscrow = await assertFeeEscrowPreflight(rpcUrl, programId, resolvedCampaign);
 
     const tradeAuth = findProgramAddressSync(
       [TRADE_AUTH_SEED, publicKeyBytes(traderAddress), nonce],
@@ -860,6 +889,30 @@ export async function solanaTradeAuthorizationV1(req, res) {
     });
     const signature = signer.sign(digest);
 
+    if (pool) {
+      await pool.query(
+        `insert into public.solana_trade_authorizations (
+           chain_id, campaign_address, trader, nonce_hex, trade_auth_pda, deadline, side, cleanup_status
+         ) values (101, $1, $2, $3, $4, to_timestamp($5), $6, 'pending')
+         on conflict (chain_id, trade_auth_pda) do update set
+           deadline = excluded.deadline,
+           updated_at = now()`,
+        [
+          resolvedCampaign,
+          traderAddress,
+          Buffer.from(nonce).toString("hex"),
+          tradeAuth.publicKey,
+          Number(deadline),
+          sideRaw,
+        ],
+      ).catch((error) => {
+        console.warn(
+          "[solana-trade-v1] trade-auth persist skipped",
+          error instanceof Error ? error.message : String(error),
+        );
+      });
+    }
+
     return json(res, 200, {
       schemaVersion: TRADE_AUTH_SCHEMA_VERSION,
       side: sideRaw,
@@ -897,6 +950,7 @@ export async function solanaTradeAuthorizationV1(req, res) {
         instructions: SYSVAR_INSTRUCTIONS_ID,
         tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SYSTEM_PROGRAM_ID,
+        feeEscrow,
         leagueVault: rewardsVaults.leagueVault,
         airdropVault: rewardsVaults.airdropVault,
         monthlyLeagueVault: rewardsVaults.monthlyLeagueVault,

@@ -92,19 +92,19 @@ export function getWarRoomCampaignMetrics(campaign: CampaignInfo, nativeUsd = 0)
   const rich = campaign as any;
   const usd = Number.isFinite(Number(nativeUsd)) && Number(nativeUsd) > 0 ? Number(nativeUsd) : 0;
 
-  const marketCapBnb = toNumber(rich.rtMarketcapBnb ?? rich.marketCapBnb ?? rich.marketcapBnb ?? rich.marketcap_bnb);
   const volumeBnb = toNumber(rich.rtVol24hBnb ?? rich.volumeBnb ?? rich.vol24hBnb ?? rich.vol_24h_bnb);
   const raisedTotalBnb = toNumber(rich.raisedTotalBnb ?? rich.raised_total_bnb);
   const holdersCount = toNumber(rich.holdersCount ?? rich.holderCount ?? rich.holder_count) || parseCompactNumber(campaign.holders);
   const athMarketCapBnb = toNumber(rich.athMarketCapBnb ?? rich.athMarketcapBnb ?? rich.ath_marketcap_bnb);
-  // When indexer mcap is empty, approximate from spot price × sold tokens if present.
   const priceBnb = toNumber(rich.priceBnb ?? rich.price_bnb ?? rich.lastPriceBnb ?? rich.last_price_bnb);
   const soldTokens = toNumber(rich.soldTokens ?? rich.sold_tokens ?? rich.currentSoldTokens);
+  const indexedMcapBnb = toNumber(rich.rtMarketcapBnb ?? rich.marketCapBnb ?? rich.marketcapBnb ?? rich.marketcap_bnb);
+  // Same definition as Token Details: live spot × circulating sold, then indexer mcap.
   const derivedMcapBnb =
-    marketCapBnb > 0
-      ? marketCapBnb
-      : priceBnb > 0 && soldTokens > 0
-        ? priceBnb * soldTokens
+    priceBnb > 0 && soldTokens > 0
+      ? priceBnb * soldTokens
+      : indexedMcapBnb > 0
+        ? indexedMcapBnb
         : 0;
 
   const marketCapUsd = derivedMcapBnb > 0 && usd > 0 ? derivedMcapBnb * usd : parseCompactNumber(campaign.marketCap);
@@ -112,12 +112,8 @@ export function getWarRoomCampaignMetrics(campaign: CampaignInfo, nativeUsd = 0)
   // all print the same $X.XX for TTA-style single-fill bonding tokens.
   const volumeUsd = volumeBnb > 0 && usd > 0 ? volumeBnb * usd : 0;
   const liquidityUsd = raisedTotalBnb > 0 && usd > 0 ? raisedTotalBnb * usd : 0;
-  const athMarketCapUsd =
-    athMarketCapBnb > 0 && usd > 0
-      ? athMarketCapBnb * usd
-      : marketCapUsd > 0
-        ? marketCapUsd
-        : 0;
+  const indexedAthUsd = athMarketCapBnb > 0 && usd > 0 ? athMarketCapBnb * usd : 0;
+  const athMarketCapUsd = Math.max(indexedAthUsd, marketCapUsd);
   const athProgressPct = athMarketCapUsd > 0 && marketCapUsd > 0 ? Math.min(100, Math.max(1, Math.round((marketCapUsd / athMarketCapUsd) * 100))) : 0;
   const ageSeconds = getAgeSeconds(campaign);
   const recencyBoost = ageSeconds === Number.MAX_SAFE_INTEGER ? 0 : Math.max(0, 1_000_000 - ageSeconds) / 1_000_000;

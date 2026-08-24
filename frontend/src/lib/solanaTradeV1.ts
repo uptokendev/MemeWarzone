@@ -58,6 +58,7 @@ export type SolanaTradeAuthResponse = {
     instructions: string;
     tokenProgram: string;
     systemProgram: string;
+    feeEscrow?: string | null;
     leagueVault?: string | null;
     airdropVault?: string | null;
     monthlyLeagueVault?: string | null;
@@ -281,6 +282,9 @@ export function mapSolanaTradeError(err: unknown): string {
   if (/CampaignPaused|campaign is paused/i.test(msg)) {
     return "This campaign is paused. Trading will reopen after the operator unpauses it.";
   }
+  if (/SOLANA_MARKET_INITIALIZING|FeeEscrowNotInitialized|market initializing/i.test(msg)) {
+    return "market initializing";
+  }
   if (/InvalidRewardsVault|reward vault/i.test(msg)) {
     return "Reward vaults are missing from the trade. Retry after the latest frontend/API deploy.";
   }
@@ -410,7 +414,7 @@ async function submitSolanaTradeV1Untracked(
   }
 
   const web3 = await loadSolanaWeb3();
-  const { Connection, PublicKey, ComputeBudgetProgram } = web3;
+  const { Connection, PublicKey } = web3;
   const rpc =
     String(import.meta.env.VITE_SOLANA_RPC || "").trim() ||
     getPublicRpcUrl(SOLANA_CHAIN_ID) ||
@@ -437,8 +441,8 @@ async function submitSolanaTradeV1Untracked(
   if (!a.tokenVault || !a.solVault) {
     throw new Error("Trade authorization is missing tokenVault/solVault.");
   }
-  if (!a.leagueVault || !a.airdropVault || !a.monthlyLeagueVault || !a.recruiterVault || !a.squadVault || !a.protocolVault) {
-    throw new Error("Trade authorization is missing the six reward vaults.");
+  if (!a.feeEscrow) {
+    throw new Error("market initializing");
   }
   const tradeIx = buildTradeTokensInstruction(web3, {
     programId: auth.programId,
@@ -463,12 +467,7 @@ async function submitSolanaTradeV1Untracked(
       instructions: a.instructions,
       tokenProgram: a.tokenProgram,
       systemProgram: a.systemProgram,
-      leagueVault: a.leagueVault,
-      airdropVault: a.airdropVault,
-      monthlyLeagueVault: a.monthlyLeagueVault,
-      recruiterVault: a.recruiterVault,
-      squadVault: a.squadVault,
-      protocolVault: a.protocolVault,
+      feeEscrow: a.feeEscrow,
     },
   });
   const lookupTable = await fetchAndVerifyLaunchpadLookupTable(web3, connection, {
@@ -478,7 +477,6 @@ async function submitSolanaTradeV1Untracked(
   const v0Input = {
     payer: traderPk,
     instructions: [
-      ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
       ed25519Ix,
       tradeIx,
     ],
@@ -507,7 +505,13 @@ async function submitSolanaTradeV1Untracked(
   const unsigned = await compileLaunchpadV0WithLatestBlockhash(web3, connection, v0Input, v0Expectation);
   await simulateLaunchpadV0OrThrow(connection, unsigned.transaction, "[solanaTradeV1] trade simulation failed");
   const signed = await provider.signTransaction(unsigned.transaction);
-  assertLaunchpadV0Intent(web3, signed, v0Expectation);
+  assertLaunchpadV0Intent(web3, signed, {
+    ...v0Expectation,
+    // Unsigned trades stay under the conservative 1000-byte release gate.
+    // Phantom may append Lighthouse / priority instructions after signing;
+    // enforce the real 1232-byte Solana packet limit on the returned tx.
+    releaseMaxBytes: null,
+  });
   const sig = await connection.sendRawTransaction(signed.serialize(), {
     skipPreflight: false,
     maxRetries: 3,

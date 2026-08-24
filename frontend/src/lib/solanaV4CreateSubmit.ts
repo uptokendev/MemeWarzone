@@ -251,7 +251,15 @@ export async function submitSolanaV4CreatePlan(
     const unsigned = await compileUnsignedCreate();
     await simulateUnsignedCreate(unsigned);
     const signed = await provider.signTransaction(unsigned.transaction);
-    assertLaunchpadV0Intent(web3, signed, v0Expectation);
+    assertLaunchpadV0Intent(web3, signed, {
+      ...v0Expectation,
+      // The unsigned transaction must remain below our conservative 1000-byte
+      // release gate. Wallets such as Phantom may safely append wallet-side
+      // protection / priority instructions after signing. For the returned
+      // transaction enforce the real Solana packet limit instead while still
+      // validating payer, signer count, MWZ intent and Ed25519 adjacency.
+      releaseMaxBytes: null,
+    });
     const raw = typeof signed?.serialize === "function" ? signed.serialize() : signed;
     const signature = await connection.sendRawTransaction(raw, {
       skipPreflight: false,

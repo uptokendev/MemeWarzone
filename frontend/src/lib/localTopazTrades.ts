@@ -29,12 +29,7 @@ function storageKey(chainId: number, campaignAddress: string) {
   return `${STORAGE_PREFIX}${Number(chainId)}:${normalizeAddress(chainId, campaignAddress)}`;
 }
 
-function storageFor(chainId: number): Storage | null {
-  if (typeof window === "undefined") return null;
-  // Keep Solana optimistic history across reloads/tabs until the persistent
-  // indexer catches up. Preserve legacy EVM session behavior unchanged.
-  return isSolanaChainId(chainId) ? window.localStorage : window.sessionStorage;
-}
+const sessionMemory = new Map<string, CurveTradePoint[]>();
 
 function serialize(point: CurveTradePoint, chainId: number): StoredTrade | null {
   const txHash = normalizeTradeTxHash(point.txHash);
@@ -83,36 +78,11 @@ function deserialize(row: StoredTrade, chainId: number): CurveTradePoint | null 
 }
 
 export function loadLocalTopazTrades(chainId: number, campaignAddress: string): CurveTradePoint[] {
-  const storage = storageFor(chainId);
-  if (!storage) return [];
-  try {
-    const raw = storage.getItem(storageKey(chainId, campaignAddress));
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as StoredTrade[];
-    if (!Array.isArray(parsed)) return [];
-    return mergeTradePoints(
-      parsed
-        .map((row) => deserialize(row, chainId))
-        .filter((row): row is CurveTradePoint => Boolean(row) && isPlausibleBondingTrade(row)),
-    ).slice(-MAX_TRADES);
-  } catch {
-    return [];
-  }
+  return sessionMemory.get(storageKey(chainId, campaignAddress)) || [];
 }
 
 export function saveLocalTopazTrades(chainId: number, campaignAddress: string, trades: CurveTradePoint[]) {
-  const storage = storageFor(chainId);
-  if (!storage) return;
-  try {
-    const deduped = mergeTradePoints(trades);
-    const rows = deduped
-      .map((point) => serialize(point, chainId))
-      .filter((row): row is StoredTrade => Boolean(row))
-      .slice(-MAX_TRADES);
-    storage.setItem(storageKey(chainId, campaignAddress), JSON.stringify(rows));
-  } catch {
-    // ignore quota / private mode
-  }
+  sessionMemory.set(storageKey(chainId, campaignAddress), mergeTradePoints(trades).slice(-MAX_TRADES));
 }
 
 export function appendLocalTopazTrade(chainId: number, campaignAddress: string, trade: CurveTradePoint) {

@@ -3,11 +3,13 @@ import { pool } from "./db.js";
 import { ENV } from "./env.js";
 import { createWorkingProvider, parseRpcList } from "./rpcProvider.js";
 import { TIMEFRAMES, bucketStart, type TF } from "./timeframes.js";
+import { BNB_WAD, bnbCurveState } from "./bnbCurvePricing.js";
+import { bondingCandleConflictSetSql } from "./canonicalCandleRebuild.js";
 
 const LOOP_SYMBOL = Symbol.for("memewarzone.canonicalCandleMaterializerStarted");
 const globalState = globalThis as any;
-const VERSION = 3;
-const WAD = 1_000_000_000_000_000_000n;
+const VERSION = 4;
+const WAD = BNB_WAD;
 const LAMPORTS_PER_SOL = 1_000_000_000;
 const DEFAULT_SOLANA_RPC = "https://api.mainnet-beta.solana.com";
 const DEFAULT_SOLANA_PROGRAM = "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt";
@@ -126,14 +128,11 @@ async function bnbSpotCalculator(chainId: number, campaign: string): Promise<Spo
   ]);
 
   const calculate: SpotCalculator = (soldRaw: bigint) => {
-    const safeSold = soldRaw > 0n ? soldRaw : 0n;
-    const spotRaw = basePriceRaw + (priceSlopeRaw * safeSold) / WAD;
-    const spotNative = bigintRatio(spotRaw, WAD);
-    const soldWhole = bigintRatio(safeSold, WAD);
+    const state = bnbCurveState(basePriceRaw, priceSlopeRaw, soldRaw);
     return {
-      soldRaw: safeSold,
-      spotNative,
-      mcapNative: spotNative * soldWhole,
+      soldRaw: state.soldRaw,
+      spotNative: state.spotNative,
+      mcapNative: state.mcapNative,
     };
   };
 
@@ -194,6 +193,7 @@ async function solanaRpc<T>(method: string, params: unknown[]): Promise<T> {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        signal: AbortSignal.timeout(8_000),
       });
       if (!response.ok) throw new Error(`Solana RPC ${method} HTTP ${response.status}`);
       const body = await response.json() as { result?: T; error?: { message?: string } };
@@ -385,16 +385,7 @@ async function writeBucket(chainId: number, campaign: string, candle: CanonicalB
        $17,now(),now()
      )
      on conflict(chain_id,campaign_address,timeframe,bucket_start) do update set
-       price_o=excluded.price_o,
-       price_h=excluded.price_h,
-       price_l=excluded.price_l,
-       price_c=excluded.price_c,
-       mcap_o=excluded.mcap_o,
-       mcap_h=excluded.mcap_h,
-       mcap_l=excluded.mcap_l,
-       mcap_c=excluded.mcap_c,
-       canonical_version=excluded.canonical_version,
-       canonical_updated_at=now()
+       ${bondingCandleConflictSetSql()}
      where coalesce(public.token_candles.dex_trade_count,0)=0`,
     [
       chainId,

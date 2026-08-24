@@ -11,14 +11,12 @@ import {
   type MarketTrade,
 } from "@/lib/marketContinuityApi";
 import { campaignKey, isCampaignAddress, isTradeTxId } from "@/lib/chart/normalizeTrade";
-import { isMarketContinuityApiEnabled } from "@/lib/marketContinuityFlags";
 import { normalizeTradeTxHash } from "@/lib/tradeDedupe";
 
 export type MarketResolution = "1s" | "5s" | "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d";
 
-// Durable server market data is additive to the existing curve/browser fallback.
-// When canonical candles exist, UnifiedMarketChart treats them as the source of truth.
-const ENABLE_MARKET_API = isMarketContinuityApiEnabled();
+// Durable server market data is the chart source of truth for Market Cap.
+// UnifiedMarketChart does not reconstruct historical mcap from the trade tape.
 
 function tradeKey(trade: Pick<MarketTrade, "txHash" | "logIndex">) {
   const tx = normalizeTradeTxHash(trade.txHash) || String(trade.txHash || "").trim();
@@ -68,6 +66,24 @@ function mergeCandles(current: MarketCandle[], incoming: MarketCandle[]) {
   for (const candle of current) map.set(candleKey(candle), candle);
   for (const candle of incoming) map.set(candleKey(candle), candle);
   return Array.from(map.values()).sort((a, b) => candleKey(a) - candleKey(b));
+}
+
+/** REST snapshot merges into live candles; never blank a populated chart or drop a newer last bucket. */
+function applyRestCandles(current: MarketCandle[], incoming: MarketCandle[]): MarketCandle[] {
+  if (!incoming.length) return current.length ? current : incoming;
+  const merged = mergeCandles(current, incoming);
+  const lastLocal = current[current.length - 1];
+  const lastIncoming = incoming[incoming.length - 1];
+  if (!lastLocal || !lastIncoming) return merged;
+  const localKey = candleKey(lastLocal);
+  const incomingKey = candleKey(lastIncoming);
+  if (!Number.isFinite(localKey) || localKey <= incomingKey) return merged;
+  const lastMerged = merged[merged.length - 1];
+  if (!lastMerged || candleKey(lastMerged) < localKey) return [...merged, lastLocal];
+  if (candleKey(lastMerged) === localKey) {
+    merged[merged.length - 1] = lastLocal;
+  }
+  return merged;
 }
 
 function numberOrNull(value: unknown): number | null {
@@ -181,7 +197,8 @@ export function useUnifiedMarket(input: {
   const resolution = input.resolution ?? "1m";
   // Chart stays available for a valid campaign even if durable market data is unavailable.
   const enabled = (input.enabled ?? true) && isCampaignAddress(input.chainId, campaignAddress);
-  const apiEnabled = enabled && ENABLE_MARKET_API;
+  // Durable indexer candles are chart truth even when the WTR UI flag is off.
+  const apiEnabled = enabled;
 
   const [state, setState] = useState<MarketState | null>(null);
   const [summary, setSummary] = useState<MarketSummary | null>(null);
@@ -189,7 +206,7 @@ export function useUnifiedMarket(input: {
   const [candles, setCandles] = useState<MarketCandle[]>([]);
   const [graduationMarker, setGraduationMarker] = useState<any | null>(null);
   const [serverTime, setServerTime] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const requestRef = useRef(0);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -255,8 +272,12 @@ export function useUnifiedMarket(input: {
       if (requestId !== requestRef.current || signal?.aborted) return;
 
       // Missing market-state row is normal for pre-handoff / older campaigns.
-      // Do not surface as an outage — the chart keeps its local trade fallback.
+      // Still keep any candles/trades from the snapshot — do not blank the chart.
       if (!nextState && !nextSummary) {
+        setTrades((current) => mergeTrades(current, nextTrades?.items || [], input.chainId));
+        setCandles((current) => applyRestCandles(current, nextCandles?.items || []));
+        setGraduationMarker(nextCandles?.graduationMarker || null);
+        setServerTime(nextCandles?.serverTime || null);
         setState((prev) =>
           prev || {
             chainId: input.chainId,
@@ -304,9 +325,7 @@ export function useUnifiedMarket(input: {
       if (nextState) setState(nextState);
       if (nextSummary) setSummary(nextSummary);
       setTrades((current) => mergeTrades(current, nextTrades?.items || [], input.chainId));
-      // REST is the authoritative snapshot. Do not merge a stale prior snapshot
-      // into it; realtime patches will build forward from this exact state.
-      setCandles(nextCandles?.items || []);
+      setCandles((current) => applyRestCandles(current, nextCandles?.items || []));
       setGraduationMarker(nextCandles?.graduationMarker || null);
       setServerTime(nextCandles?.serverTime || null);
       setError(null);
@@ -343,6 +362,8 @@ export function useUnifiedMarket(input: {
       return;
     }
     const controller = new AbortController();
+    setTrades([]);
+    setCandles([]);
     setLoading(true);
     void refresh(controller.signal);
     return () => controller.abort();
@@ -353,12 +374,8 @@ export function useUnifiedMarket(input: {
     if (!apiEnabled || !channel) return;
 
     const revealLiveTradeFallback = () => {
-      // A live trade already reaches useCurveTrades immediately. Canonical REST candles
-      // can lag the materializer by a couple seconds, and any non-empty server candle
-      // array otherwise masks that live trade-built chart. Drop only the cached candle
-      // snapshot so UnifiedMarketChart uses the live trade stream, then reconcile back
-      // to a complete authoritative REST snapshot after the materializer catches up.
-      setCandles([]);
+      // Keep historical candles. useCurveTrades / the trade stream drive the last print;
+      // wiping the snapshot blanks the chart for ~2.5s. REST can still catch up.
       scheduleRefresh(2_500);
     };
 
@@ -396,8 +413,7 @@ export function useUnifiedMarket(input: {
 
       setCandles((current) => {
         if (!current.length) {
-          // We intentionally cleared a stale snapshot on a live trade. Do not replace
-          // full history with one isolated realtime bucket; wait for the REST reconcile.
+          // Do not replace empty history with one isolated realtime bucket; wait for REST.
           scheduleRefresh(300);
           return current;
         }

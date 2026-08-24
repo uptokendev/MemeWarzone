@@ -17,6 +17,7 @@ import {
   u8,
   i64,
 } from "./solana-v4-primitives.js";
+import { getSolanaChainUnixTime } from "./solana-chain-unix-time.js";
 
 const GRADUATION_AUTH_DOMAIN = Buffer.from("MEMEWARZONE_SOLANA_GRADUATION_V1", "utf8");
 const GRADUATION_AUTH_SCHEMA_VERSION = 2;
@@ -100,15 +101,15 @@ async function rpcCall(rpcUrl, method, params = []) {
 }
 
 async function getChainUnixTime(rpcUrl) {
-  const slot = await rpcCall(rpcUrl, "getSlot", [{ commitment: "confirmed" }]);
-  const blockTime = await rpcCall(rpcUrl, "getBlockTime", [slot]);
-  if (!Number.isInteger(blockTime) || blockTime <= 0) {
-    throw new SolanaGraduationAuthorizationError("Solana RPC did not return confirmed chain time.", {
+  try {
+    return await getSolanaChainUnixTime(rpcUrl);
+  } catch (error) {
+    throw new SolanaGraduationAuthorizationError(error instanceof Error ? error.message : String(error), {
       code: "SOLANA_GRADUATION_CHAIN_TIME_UNAVAILABLE",
       httpStatus: 503,
+      cause: error,
     });
   }
-  return blockTime;
 }
 
 async function getAccountData(rpcUrl, address, expectedOwner, label) {

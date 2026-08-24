@@ -52,6 +52,83 @@ function impliedSoldTokens(price: number | null, marketCap: number | null): numb
   return Number.isFinite(sold) && sold >= 0 ? sold : null;
 }
 
+function updatedAtMs(value: unknown): number {
+  const raw = String(value ?? "").trim();
+  if (!raw) return 0;
+  if (/^\d+(?:\.\d+)?$/.test(raw)) {
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    return n < 1e12 ? Math.floor(n * 1000) : Math.floor(n);
+  }
+  const ms = Date.parse(raw);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function keepLiveNumber(incoming: number | null, prev: number | null | undefined): number | null {
+  if (incoming == null || !Number.isFinite(incoming) || incoming === 0) {
+    if (prev != null && Number.isFinite(prev) && prev !== 0) return prev;
+    if (incoming == null && prev != null && Number.isFinite(prev)) return prev;
+  }
+  return incoming ?? prev ?? null;
+}
+
+function statsFromSummaryRow(row: any): TokenStatsRealtime {
+  const lastPriceBnb = num(row?.last_price_bnb ?? row?.lastPriceBnb);
+  const marketcapBnb = num(row?.marketcap_bnb ?? row?.marketcapBnb);
+  return {
+    lastPriceBnb,
+    marketcapBnb,
+    vol24hBnb: Number(num(row?.vol_24h_bnb ?? row?.vol24hBnb) ?? 0),
+    soldTokens: num(row?.sold_tokens ?? row?.soldTokens) ?? impliedSoldTokens(lastPriceBnb, marketcapBnb),
+    graduated: row?.graduated === true ? true : false,
+    dex: str(row?.dex),
+    dexPool: str(row?.dexPool ?? row?.dex_pool),
+    dexPosition: str(row?.dexPosition ?? row?.dex_position),
+    graduationLiquidityNative: num(
+      row?.graduationLiquiditySol ?? row?.graduation_liquidity_sol ?? row?.graduationLiquidityNative,
+    ),
+    graduatedAt: str(row?.graduatedAt ?? row?.graduated_at),
+    updatedAt: String(row?.updated_at ?? row?.updatedAt ?? ""),
+  };
+}
+
+function isEmptySummary(row: unknown): boolean {
+  if (row == null || typeof row !== "object") return true;
+  const next = statsFromSummaryRow(row);
+  return (
+    (next.lastPriceBnb == null || next.lastPriceBnb === 0) &&
+    (next.marketcapBnb == null || next.marketcapBnb === 0) &&
+    (next.soldTokens == null || next.soldTokens === 0) &&
+    !next.vol24hBnb &&
+    !next.graduated &&
+    !next.dex &&
+    !String(next.updatedAt || "").trim()
+  );
+}
+
+/** REST may lag Ably. Never replace valid live stats with empty/zero/stale summary. */
+function mergeRestStats(prev: TokenStatsRealtime | null, incoming: TokenStatsRealtime): TokenStatsRealtime {
+  if (!prev) return incoming;
+  const prevMs = updatedAtMs(prev.updatedAt);
+  const incomingMs = updatedAtMs(incoming.updatedAt);
+  if (prevMs > 0 && (incomingMs === 0 || incomingMs < prevMs)) {
+    return prev;
+  }
+  return {
+    lastPriceBnb: keepLiveNumber(incoming.lastPriceBnb, prev.lastPriceBnb),
+    marketcapBnb: keepLiveNumber(incoming.marketcapBnb, prev.marketcapBnb),
+    vol24hBnb: incoming.vol24hBnb || prev.vol24hBnb,
+    soldTokens: keepLiveNumber(incoming.soldTokens, prev.soldTokens) ?? prev.soldTokens ?? null,
+    graduated: incoming.graduated === true ? true : prev.graduated,
+    dex: incoming.dex ?? prev.dex ?? null,
+    dexPool: incoming.dexPool ?? prev.dexPool ?? null,
+    dexPosition: incoming.dexPosition ?? prev.dexPosition ?? null,
+    graduationLiquidityNative: incoming.graduationLiquidityNative ?? prev.graduationLiquidityNative ?? null,
+    graduatedAt: incoming.graduatedAt ?? prev.graduatedAt ?? null,
+    updatedAt: incoming.updatedAt || prev.updatedAt || "",
+  };
+}
+
 export function useTokenStatsRealtime(campaignAddress?: string, chainId?: number, enabled = true) {
   const [stats, setStats] = useState<TokenStatsRealtime | null>(null);
   const [loading, setLoading] = useState(true);
@@ -87,26 +164,14 @@ export function useTokenStatsRealtime(campaignAddress?: string, chainId?: number
     try {
       if (!initialLoadedRef.current) setLoading(true);
       const row = await fetchJson(url, signal);
-      if (!row) {
-        setStats(null);
+      if (!row || isEmptySummary(row)) {
+        // Empty /summary must not wipe Ably or on-chain live stats.
         setError(null);
+        initialLoadedRef.current = true;
         return;
       }
-      const lastPriceBnb = num(row.last_price_bnb);
-      const marketcapBnb = num(row.marketcap_bnb);
-      setStats({
-        lastPriceBnb,
-        marketcapBnb,
-        vol24hBnb: Number(num(row.vol_24h_bnb) ?? 0),
-        soldTokens: num(row.sold_tokens) ?? impliedSoldTokens(lastPriceBnb, marketcapBnb),
-        graduated: row.graduated === true ? true : false,
-        dex: str(row.dex),
-        dexPool: str(row.dexPool ?? row.dex_pool),
-        dexPosition: str(row.dexPosition ?? row.dex_position),
-        graduationLiquidityNative: num(row.graduationLiquiditySol ?? row.graduation_liquidity_sol ?? row.graduationLiquidityNative),
-        graduatedAt: str(row.graduatedAt ?? row.graduated_at),
-        updatedAt: String(row.updated_at ?? ""),
-      });
+      const incoming = statsFromSummaryRow(row);
+      setStats((prev) => mergeRestStats(prev, incoming));
       setError(null);
       initialLoadedRef.current = true;
     } catch (e: any) {
@@ -118,8 +183,10 @@ export function useTokenStatsRealtime(campaignAddress?: string, chainId?: number
 
   useEffect(() => {
     const ac = new AbortController();
+    initialLoadedRef.current = false;
+    setStats(null);
     setError(null);
-    if (!initialLoadedRef.current) setLoading(true);
+    setLoading(true);
     pull(ac.signal);
 
     if (!enabled || !campaignAddress || !ENABLE_TOKEN_POLLING) return () => ac.abort();

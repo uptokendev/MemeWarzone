@@ -3,7 +3,6 @@
 const assert = require("assert");
 const {
   AddressLookupTableProgram,
-  ComputeBudgetProgram,
   Keypair,
   Transaction,
 } = require("@solana/web3.js");
@@ -130,12 +129,7 @@ describe("shared V0/ALT launchpad helper on local validator", function () {
         instructions: planAddress("instructionsSysvar"),
         tokenProgram: planAddress("tokenProgram"),
         systemProgram: planAddress("systemProgram"),
-        leagueVault: planAddress("weeklyLeagueVault"),
-        airdropVault: planAddress("airdropVault"),
-        monthlyLeagueVault: planAddress("monthlyLeagueVault"),
-        recruiterVault: planAddress("recruiterVault"),
-        squadVault: planAddress("squadVault"),
-        protocolVault: planAddress("protocolVault"),
+        feeEscrow: Keypair.generate().publicKey.toBase58(),
       },
     });
 
@@ -156,7 +150,6 @@ describe("shared V0/ALT launchpad helper on local validator", function () {
       {
         payer: payer.publicKey,
         instructions: [
-          ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
           ed25519Instruction,
           tradeInstruction,
         ],
@@ -168,7 +161,7 @@ describe("shared V0/ALT launchpad helper on local validator", function () {
     console.info("[v0-onchain] CREATE", createV0.stats);
     console.info("[v0-onchain] BUY", tradeV0.stats);
     assert.equal(createInstruction.keys.length, 14);
-    assert.equal(tradeInstruction.keys.length, 19);
+    assert.equal(tradeInstruction.keys.length, 14);
     assert.equal(createV0.stats.requiredSigners, 1);
     assert.equal(tradeV0.stats.requiredSigners, 1);
     assert.ok(createV0.stats.serializedBytes <= v0.SOLANA_RELEASE_MAX_BYTES);

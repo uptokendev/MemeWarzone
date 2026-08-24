@@ -1,5 +1,6 @@
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, json, readJson } from "../server/http.js";
+import { requireAdminOrOps } from "./lib/apiAuth.js";
 
 const VALID_STATUSES = new Set(["submitted", "under_review", "approved", "rejected", "paid", "scheduled", "active", "expired", "paused"]);
 
@@ -154,7 +155,7 @@ async function createApplication(req, res) {
     normalizeDate(body.preferredEnd),
     cleanText(body.paymentReference, 160) || null,
     cleanText(body.notes, 1000) || null,
-    normalizeStatus(body.status, "submitted"),
+    "submitted",
     pkg.code,
     pkg.label,
     Number(pkg.durationDays),
@@ -233,7 +234,11 @@ async function createApplication(req, res) {
 
 export default async function handler(req, res) {
   try {
-    if (req.method === "GET") return listApplications(req, res);
+    if (req.method === "GET") {
+      const admin = await requireAdminOrOps(req, res, { routeLabel: "sponsorship-applications-list", allowOps: true });
+      if (!admin) return;
+      return listApplications(req, res);
+    }
     if (req.method === "POST") return createApplication(req, res);
     return badMethod(res);
   } catch (error) {

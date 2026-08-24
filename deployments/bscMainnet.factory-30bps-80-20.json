@@ -1,0 +1,66 @@
+{
+  "network": "bscMainnet",
+  "chainId": 56,
+  "status": "active",
+  "activeGeneration": "factory-30bps-80-20",
+  "activeFactory": "0xc378221E57898106079aE4B818a92978e4cd9559",
+  "activeLocker": "0xFcE77642e22ef04B8398fB6dfEE99614CAb32f69",
+  "deploymentBlock": 117413737,
+  "deployTx": "0x4a554a994a1a9b88a20ea85ac64e7fa423056ae4dec659b6d60024497507a687",
+  "owner": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+  "lockerEconomics": {
+    "REQUIRED_POOL_FEE_BPS": 30,
+    "CREATOR_FEE_BPS": 8000,
+    "PROTOCOL_FEE_BPS": 2000
+  },
+  "live": true,
+  "createPaused": false,
+  "securityDefaultsLocked": true,
+  "requireRouteAuthorization": true,
+  "requireAuthorizedTrading": true,
+  "constructor": {
+    "adapter": "0x5c3135Dfaad519A9114DEa2E546f0Cd051d0D35a",
+    "treasury": "0xe157a6FDf19CAB61f2ECa048966f137A3240a921",
+    "implementation": "0xbe3caF640F77e8436BCAF89730251A00fB01608f",
+    "oracle": "0x9D204406d5ECA0f18e48427fDD983A32FdF57C9B"
+  },
+  "firstCampaign": {
+    "name": "BNBisTHeWay",
+    "symbol": "BTW",
+    "token": "0xa9d9350de50b2b413663b3f0b08352a8d92871d5",
+    "campaign": "0xA2baB12270d724CE70d5462024FE0d067b8B94e5"
+  },
+  "factoryRegistry": {
+    "activeFactory": "0xc378221E57898106079aE4B818a92978e4cd9559",
+    "activeGeneration": "factory-30bps-80-20",
+    "factories": [
+      {
+        "generation": "factory-30bps-80-20",
+        "address": "0xc378221E57898106079aE4B818a92978e4cd9559",
+        "deploymentBlock": 117413737,
+        "permanentLpLocker": "0xFcE77642e22ef04B8398fB6dfEE99614CAb32f69",
+        "creationEnabled": true,
+        "tradingEnabled": true,
+        "supportEnabled": true,
+        "notes": "Corrected Topaz 30 bps / 80-20 locker generation"
+      },
+      {
+        "generation": "previous-production",
+        "address": "0x3068eAE6F8431bFc3c5Faae9c3bBB95F007be59a",
+        "permanentLpLocker": "0x64710A4f87aBa3b5ED5B8B25e8ebA4DaC339C998",
+        "creationEnabled": false,
+        "tradingEnabled": true,
+        "supportEnabled": true,
+        "notes": "Legacy production factory kept for StandbyFolks and existing campaigns; locker 30/6667/3333 remains authorized"
+      }
+    ]
+  },
+  "publicEnv": {
+    "VITE_FACTORY_ADDRESS_56": "0xc378221E57898106079aE4B818a92978e4cd9559",
+    "FACTORY_ADDRESS_56": "0xc378221E57898106079aE4B818a92978e4cd9559",
+    "VITE_PERMANENT_LP_LOCKER_ADDRESS_56": "0xFcE77642e22ef04B8398fB6dfEE99614CAb32f69",
+    "VITE_SUPPORTED_FACTORY_ADDRESSES_56": "0xc378221E57898106079aE4B818a92978e4cd9559,0x3068eAE6F8431bFc3c5Faae9c3bBB95F007be59a",
+    "SUPPORTED_FACTORY_ADDRESSES_56": "0xc378221E57898106079aE4B818a92978e4cd9559,0x3068eAE6F8431bFc3c5Faae9c3bBB95F007be59a",
+    "FACTORY_START_BLOCK_56": "117413737"
+  }
+}

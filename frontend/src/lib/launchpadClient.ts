@@ -20,6 +20,7 @@ import {
 } from "@/lib/recruiterApi";
 import { getReadProvider } from "@/lib/readProvider";
 import { apiFetch } from "@/lib/apiBase";
+import { notifyIndexerFills } from "@/lib/indexerTradeIngest";
 import { resolveImageUri } from "@/lib/media";
 import { assertOnchainLogoUri } from "@/lib/onchainLogoUri";
 import { getBnbLaunchpadSafetyStatus } from "@/lib/launchpad/adapters/bnbLaunchpadAdapter";
@@ -436,6 +437,14 @@ function emitTxConfirmed(detail: any) {
   } catch {
     // non-fatal
   }
+}
+
+function notifyIndexerTrade(detail: { chainId?: number; campaignAddress?: string; txHash?: string }) {
+  notifyIndexerFills({
+    chainId: Number(detail.chainId || 0),
+    campaignAddress: String(detail.campaignAddress || ""),
+    txHashes: [String(detail.txHash || "")],
+  });
 }
 
 async function blockTimestamp(provider: ethers.AbstractProvider, blockNumber?: number | null) {
@@ -953,6 +962,7 @@ export function useLaunchpad(): LaunchpadAdapter {
       }];
     }
     emitTxConfirmed({ kind: "buy", chainId: activeChainId, campaignAddress: normalizedCampaign, txHash: receipt?.hash ?? tx?.hash, trades });
+    notifyIndexerTrade({ chainId: Number(activeChainId), campaignAddress: normalizedCampaign, txHash: receipt?.hash ?? tx?.hash });
     return receipt;
       },
     });
@@ -1019,6 +1029,7 @@ export function useLaunchpad(): LaunchpadAdapter {
       }];
     }
     emitTxConfirmed({ kind: "sell", chainId: activeChainId, campaignAddress: normalizedCampaign, txHash: receipt?.hash ?? tx?.hash, trades });
+    notifyIndexerTrade({ chainId: Number(activeChainId), campaignAddress: normalizedCampaign, txHash: receipt?.hash ?? tx?.hash });
     return receipt;
       },
     });

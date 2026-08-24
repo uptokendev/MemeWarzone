@@ -245,7 +245,9 @@ async function main() {
   const operatorPath = process.env.SOLANA_GRADUATION_OPERATOR_KEYPAIR || DEFAULT_OPERATOR;
   const operator = loadKeypair(operatorPath);
   const connection = new Connection(rpcUrl, "confirmed");
-  const idlPath = path.join(ROOT, "target/idl/memewarzone_solana.json");
+  const idlPath =
+    String(process.env.SOLANA_IDL_PATH || "").trim() ||
+    path.join(ROOT, "target/idl/memewarzone_solana.json");
   if (!fs.existsSync(idlPath)) fail(`generated graduation IDL missing: ${idlPath}`);
   const idl = JSON.parse(fs.readFileSync(idlPath, "utf8"));
   const provider = new AnchorProvider(connection, new Wallet(operator), {
@@ -334,6 +336,10 @@ async function main() {
       mint: campaign.mint,
       tokenVault: campaign.tokenVault,
       solVault: campaign.solVault,
+      feeEscrow: PublicKey.findProgramAddressSync(
+        [Buffer.from("fee-escrow"), campaignPk.toBuffer()],
+        program.programId,
+      )[0],
       authorityTokenAccount: stagingAta.address,
       meteoraPool: asPk(auth.accounts.meteoraPool, "meteoraPool"),
       meteoraPosition: asPk(auth.accounts.meteoraPosition, "meteoraPosition"),
@@ -426,6 +432,20 @@ async function main() {
       tokenProgram: TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })
+    .remainingAccounts(
+      [
+        "leagueVault",
+        "airdropVault",
+        "monthlyLeagueVault",
+        "recruiterVault",
+        "squadVault",
+        "protocolVault",
+      ].map((label) => ({
+        pubkey: asPk(auth.accounts[label], label),
+        isWritable: true,
+        isSigner: false,
+      })),
+    )
     .instruction();
 
   const computeUnits = Number(process.env.SOLANA_GRADUATION_COMPUTE_UNITS || 1_400_000);

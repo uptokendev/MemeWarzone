@@ -703,7 +703,12 @@ const Create = () => {
       const tokenAddress = String(receipt?.tokenAddress || "").trim();
       toast.success("Campaign deployed on BNB.");
       if (tokenAddress || campaignAddress) {
-        navigate(`/token/${tokenAddress || campaignAddress}?chainId=${chainId}`);
+        navigate(
+          tokenDetailsPath(
+            { tokenAddress, campaignAddress, chainId },
+            { chainId },
+          ),
+        );
       }
     } catch (error: any) {
       console.error(error);

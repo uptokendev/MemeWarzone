@@ -5,9 +5,13 @@ import { PublicKey } from "@solana/web3.js";
 import { publishCandle, publishStats, publishTrade } from "./ably.js";
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
+import { createLeagueFeedPublisher } from "./leagueFeed.js";
+import { candleUpsertPayload } from "./candlePublish.js";
 import { TIMEFRAMES, bucketStart, type TF } from "./timeframes.js";
 
 const SOLANA_CHAIN_ID = 101;
+const leagueFeed = createLeagueFeedPublisher({ pool, flushMs: 500 });
+leagueFeed.start();
 const DEFAULT_SOLANA_RPC = "https://api.mainnet-beta.solana.com";
 const METEORA_CP_AMM_PROGRAM_ID = new PublicKey("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG");
 const NATIVE_MINT = "So11111111111111111111111111111111111111112";
@@ -347,7 +351,7 @@ async function upsertCandle(
   const mcapSol = Number.isFinite(fixedSupplyWhole) && fixedSupplyWhole > 0
     ? priceSol * fixedSupplyWhole
     : null;
-  await pool.query(
+  const written = await pool.query(
     `insert into public.token_candles(
        chain_id,campaign_address,timeframe,bucket_start,o,h,l,c,volume_bnb,trades_count,
        source_mask,bonding_trade_count,dex_trade_count,bonding_volume_bnb,dex_volume_bnb,
@@ -390,7 +394,8 @@ async function upsertCandle(
        mcap_c=coalesce(excluded.mcap_c,public.token_candles.mcap_c),
        canonical_version=greatest(coalesce(public.token_candles.canonical_version,0),excluded.canonical_version),
        canonical_updated_at=now(),
-       updated_at=now()`,
+       updated_at=now()
+     returning o,h,l,c,volume_bnb,trades_count`,
     [
       SOLANA_CHAIN_ID,
       campaign,
@@ -403,13 +408,15 @@ async function upsertCandle(
       mcapSol,
     ],
   );
-  await publishCandle(SOLANA_CHAIN_ID, campaign, {
-    type: "candle_upsert",
-    tf,
-    bucket: bucketSec,
-    c: String(priceSol),
-    v: String(volumeSol),
-  });
+  const row = written.rows[0] || {
+    o: priceSol,
+    h: priceSol,
+    l: priceSol,
+    c: priceSol,
+    volume_bnb: volumeSol,
+    trades_count: 1,
+  };
+  void publishCandle(SOLANA_CHAIN_ID, campaign, candleUpsertPayload(tf, bucketSec, row)).catch(() => undefined);
 }
 
 async function patchStats(campaign: string) {
@@ -449,13 +456,19 @@ async function patchStats(campaign: string) {
        updated_at=now()`,
     [SOLANA_CHAIN_ID, campaign, lastPrice, soldTokens, marketcap, vol24h],
   );
-  await publishStats(SOLANA_CHAIN_ID, campaign, {
+  void publishStats(SOLANA_CHAIN_ID, campaign, {
     type: "stats_patch",
     lastPriceBnb: lastPrice !== null ? String(lastPrice) : null,
     marketcapBnb: marketcap !== null ? String(marketcap) : null,
     vol24hBnb: String(vol24h),
     graduated: true,
     dex: "meteora-damm-v2",
+  }).catch(() => undefined);
+
+  leagueFeed.queueStats(SOLANA_CHAIN_ID, campaign, {
+    lastPriceBnb: lastPrice !== null ? String(lastPrice) : null,
+    marketcapBnb: marketcap !== null ? String(marketcap) : null,
+    vol24hBnb: String(vol24h),
   });
 }
 
@@ -553,7 +566,9 @@ async function insertSwap(input: {
     price_bnb: priceNative,
     venue: "meteora-damm-v2",
   };
-  await publishTrade(SOLANA_CHAIN_ID, input.market.campaign, realtimeRow);
+  void publishTrade(SOLANA_CHAIN_ID, input.market.campaign, realtimeRow).catch(() => undefined);
+  // DEX fills update list rank/mcap/vol. Do not treat swap size as bonding raised.
+  leagueFeed.queueActivity(SOLANA_CHAIN_ID, input.market.campaign, Math.floor(input.blockTime.getTime() / 1000));
   if (priceNative !== null && priceNative > 0) {
     const tsSec = Math.floor(input.blockTime.getTime() / 1000);
     for (const tf of TIMEFRAMES) {

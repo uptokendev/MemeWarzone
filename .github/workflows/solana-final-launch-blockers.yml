@@ -14,6 +14,9 @@ on:
       - Cargo.lock
       - programs/memewarzone_solana/**
       - tests/solana/**
+      - tests/solana/gate-k-meteora.cjs
+      - config/solana/meteora-cp-amm.certification.json
+      - scripts/solana/fetch-pinned-meteora-cp-amm.mjs
       - frontend/src/lib/solanaV4CreateSubmit.ts
       - frontend/src/lib/solanaTradeV1.ts
       - frontend/src/lib/solanaLaunchpadInstructions.ts
@@ -24,6 +27,10 @@ on:
       - frontend/scripts/create-launchpad-alt.mjs
       - docs/solana/launchpad-alt.md
       - tools/solana-meteora-graduation/graduate.mjs
+      - scripts/solana/fetch-pinned-meteora-cp-amm.mjs
+      - scripts/resolve-bsc-certification-factory.mjs
+      - config/solana/meteora-cp-amm.certification.json
+      - config/bsc-testnet-certification.json
       - frontend/api/dev-fix/solana-trade-authorization-v1.js
       - frontend/api/dev-fix/solana-trade-preflight-final.test.mjs
       - scripts/solana/upgrade-mainnet-launchpad.cjs
@@ -73,6 +80,12 @@ jobs:
           node --check scripts/solana/upgrade-mainnet-launchpad.cjs
           node --check frontend/api/dev-fix/solana-trade-authorization-v1.js
           node --test frontend/api/dev-fix/solana-trade-preflight-final.test.mjs
+          node --test tests/solana/graduate-operator-accounts.test.mjs
+          node --test tests/solana/fee-escrow-lease.pg.test.mjs
+          node --test tests/solana/fee-escrow-worker-torture.pg.test.mjs
+          node --test tests/solana/meteora-cp-amm-pin.test.mjs
+          node --test tests/solana/bsc-certification-factory.test.mjs
+          node --test frontend/api/admin/sponsorship.test.mjs
           npm install --prefix frontend --no-audit --no-fund
           npm --prefix frontend run build
 
@@ -128,7 +141,10 @@ jobs:
           cargo --version
           node --version
           npm --version
-          rustfmt --edition 2021 --check programs/memewarzone_solana/src/authorized_trade.rs
+          rustfmt --edition 2021 --check \
+            programs/memewarzone_solana/src/authorized_trade.rs \
+            programs/memewarzone_solana/src/fee_escrow.rs \
+            programs/memewarzone_solana/src/graduation.rs
 
       - name: Create ephemeral test payer
         shell: bash
@@ -151,6 +167,30 @@ jobs:
           test -s target/deploy/memewarzone_solana.so
           sha256sum target/deploy/memewarzone_solana.so | tee /tmp/mwz-so-sha256.txt
           wc -c target/deploy/memewarzone_solana.so | tee /tmp/mwz-so-bytes.txt
+          cp target/deploy/memewarzone_solana.so /tmp/mwz-so-build-1.so
+
+      - name: Rebuild SBF independently and require identical SHA256
+        shell: bash
+        run: |
+          set -euo pipefail
+          rebuild_dir="$RUNNER_TEMP/mwz-sbf-rebuild-isolated"
+          rm -rf "$rebuild_dir"
+          mkdir -p "$rebuild_dir"
+          # Isolated cargo target so this cannot be a hit on the first build's target/deploy.
+          CARGO_TARGET_DIR="$rebuild_dir" \
+            anchor build --program-name memewarzone_solana --no-idl \
+            2>&1 | tee /tmp/mwz-anchor-rebuild.log | tail -n 80
+          isolated_so="$rebuild_dir/deploy/memewarzone_solana.so"
+          if [ ! -s "$isolated_so" ]; then
+            isolated_so="$(find "$rebuild_dir" -name memewarzone_solana.so -type f | head -n 1)"
+          fi
+          test -s "$isolated_so"
+          sha256sum /tmp/mwz-so-build-1.so "$isolated_so"
+          cmp -s /tmp/mwz-so-build-1.so "$isolated_so"
+          cp "$isolated_so" target/deploy/memewarzone_solana.so
+          sha256sum -c /tmp/mwz-so-sha256.txt
+          echo 'INDEPENDENT_SBF_REBUILD_MATCH=true'
+          echo 'INDEPENDENT_SBF_REBUILD_ISOLATED=true'
 
       - name: Compare candidate with live mainnet program
         shell: bash
@@ -198,6 +238,18 @@ jobs:
       - name: Install acceptance dependencies
         run: npm install --prefix tests/solana --no-audit --no-fund
 
+      - name: Pin and fetch Meteora DAMM v2 binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/solana/fetch-pinned-meteora-cp-amm.mjs --with-accounts
+          python3 - <<'PY' | sha256sum -c
+          import json
+          from pathlib import Path
+          manifest = json.loads(Path("config/solana/meteora-cp-amm.certification.json").read_text())
+          print(f"{manifest['artifact']['sha256']}  {manifest['artifact']['localPath']}")
+          PY
+
       - name: Run CREATE acceptance against exact .so on frozen 1.18 runtime
         shell: bash
         run: |
@@ -242,6 +294,8 @@ jobs:
             --quiet \
             --ledger /tmp/mwz-lifecycle-ledger \
             --bpf-program "$PROGRAM_ID" target/deploy/memewarzone_solana.so \
+            --bpf-program cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG third_party/meteora/cp_amm.so \
+            --account-dir third_party/meteora/accounts \
             > /tmp/mwz-lifecycle-validator.log 2>&1 &
           validator_pid=$!
           trap 'kill "$validator_pid" 2>/dev/null || true' EXIT
@@ -255,7 +309,8 @@ jobs:
           (
             cd tests/solana
             ANCHOR_PROVIDER_URL="$ANCHOR_PROVIDER_URL" ANCHOR_WALLET="$ANCHOR_WALLET" \
-              npx mocha --timeout 1000000 v4-lifecycle-acceptance.cjs v0-launchpad-onchain.cjs
+            GATE_K_METEORA=1 \
+              npx mocha --timeout 1000000 v4-lifecycle-acceptance.cjs v0-launchpad-onchain.cjs gate-k-meteora.cjs
           ) 2>&1 | tee /tmp/mwz-lifecycle-acceptance.log
           if grep -Eqi 'Access violation|stack frame|Program failed to complete' /tmp/mwz-lifecycle-acceptance.log; then
             echo 'FATAL: lifecycle acceptance contains a BPF crash signature' >&2
@@ -265,6 +320,13 @@ jobs:
           wait "$validator_pid" 2>/dev/null || true
           trap - EXIT
           sha256sum -c /tmp/mwz-so-sha256.txt
+          if grep -q 'Gate K: graduate closed campaign' /tmp/mwz-lifecycle-acceptance.log \
+            && grep -q 'GRADUATED' /tmp/mwz-lifecycle-acceptance.log; then
+            echo 'GATE_K_CURVE_CLOSE_GRADUATE_POOL_TRADE=PASS'
+          else
+            echo 'GATE_K_CURVE_CLOSE_GRADUATE_POOL_TRADE=FAIL' >&2
+            exit 1
+          fi
 
       - name: Run CREATE acceptance on Agave with Mainnet feature set
         shell: bash
@@ -415,6 +477,8 @@ jobs:
             /tmp/mwz-create-acceptance.log
             /tmp/mwz-lifecycle-validator.log
             /tmp/mwz-lifecycle-acceptance.log
+            /tmp/mwz-gate-k-validator.log
+            /tmp/mwz-gate-k.log
             /tmp/mwz-agave-create-validator.log
             /tmp/mwz-agave-create-acceptance.log
             /tmp/mwz-agave-lifecycle-validator.log

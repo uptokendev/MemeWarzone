@@ -1,5 +1,7 @@
 import { pool } from "../../server/db.js";
 import { badMethod, json, normalizeAddress, readJson } from "../../server/http.js";
+import { getExpectedInternalToken, readInternalToken } from "../lib/apiAuth.js";
+import { requireWalletActionAuth } from "../lib/walletActionAuth.js";
 
 function cleanText(value, max = 280) {
   return String(value ?? "").trim().slice(0, max);

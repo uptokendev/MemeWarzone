@@ -41,6 +41,8 @@ const SORT_DEFS: Array<{ value: NonNullable<HomeQuery["sort"]>; label: string }>
   { value: "mcap_desc", label: "Market Cap: High -> Low" },
   { value: "mcap_asc", label: "Market Cap: Low -> High" },
   { value: "votes_desc", label: "Upvotes (24h): High -> Low" },
+  { value: "volume_desc", label: "Volume: High -> Low" },
+  { value: "holders_desc", label: "Holders: High -> Low" },
   { value: "progress_desc", label: "Progress: High -> Low" },
   { value: "created_desc", label: "Created: New -> Old" },
   { value: "created_asc", label: "Created: Old -> New" },

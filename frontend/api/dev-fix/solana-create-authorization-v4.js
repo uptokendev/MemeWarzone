@@ -12,6 +12,7 @@ import {
   withTickerReservationTransaction,
 } from "./ticker-reservation-service.js";
 import { upsertCampaignFromDraft } from "./campaign-registry.js";
+import { getSolanaChainUnixTime } from "./solana-chain-unix-time.js";
 import {
   CREATE_AUTH_SCHEMA_VERSION,
   SYSVAR_INSTRUCTIONS_ID,
@@ -289,15 +290,15 @@ async function rpcCall(rpcUrl, method, params = []) {
 }
 
 async function getChainUnixTime(rpcUrl) {
-  const slot = await rpcCall(rpcUrl, "getSlot", [{ commitment: "confirmed" }]);
-  const blockTime = await rpcCall(rpcUrl, "getBlockTime", [slot]);
-  if (!Number.isInteger(blockTime) || blockTime <= 0) {
-    throw new SolanaCreateAuthorizationError("Solana RPC did not return a confirmed block time.", {
+  try {
+    return await getSolanaChainUnixTime(rpcUrl);
+  } catch (error) {
+    throw new SolanaCreateAuthorizationError(error instanceof Error ? error.message : String(error), {
       code: "SOLANA_CHAIN_TIME_UNAVAILABLE",
       httpStatus: 503,
+      cause: error,
     });
   }
-  return blockTime;
 }
 
 async function getMultipleAccounts(rpcUrl, addresses) {

@@ -1,0 +1,25 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 1755862000000,
+  "meta": {
+    "name": "MemeWarzone BNB factory replacement — enableLive only",
+    "description": "Call enableLive() on replacement factory 0xc378221E57898106079aE4B818a92978e4cd9559. CREATE remains paused. Do not unpause in this batch.",
+    "txBuilderVersion": "1.18.0",
+    "createdFromSafeAddress": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+    "createdFromOwnerAddress": ""
+  },
+  "transactions": [
+    {
+      "to": "0xc378221E57898106079aE4B818a92978e4cd9559",
+      "value": "0",
+      "data": "0x7815b4b4",
+      "contractMethod": {
+        "inputs": [],
+        "name": "enableLive",
+        "payable": false
+      },
+      "contractInputsValues": {}
+    }
+  ]
+}

@@ -6,7 +6,7 @@ import { isEvmAddress } from "@/lib/address";
 import { BNB_CHAIN_ID, BNB_TESTNET_CHAIN_ID, isAllowedChainId, isEvmChainId, SOLANA_CHAIN_ID, type SupportedChainId } from "@/lib/chainConfig";
 import { isTestnetCampaignsEnabled } from "@/features/postgrad/apiClient";
 import { getCampaignFeedChainId } from "@/lib/feedChainConfig";
-import { ACTIVE_WALLET_KIND_KEY, FEED_CHAIN_EVENT, FEED_CHAIN_KEY, getActiveWalletKind, setActiveWalletKind } from "@/lib/activeWalletChain";
+import { FEED_CHAIN_EVENT, FEED_CHAIN_KEY, getActiveWalletKind, setActiveWalletKind } from "@/lib/activeWalletChain";
 
 export function resolveBnbFeedChainId(): SupportedChainId {
   const configured = getCampaignFeedChainId();
@@ -102,7 +102,7 @@ export function setSelectedFeedChainId(chainId: SupportedChainId): SupportedChai
     try {
       window.localStorage.setItem(FEED_CHAIN_KEY, String(next));
       window.localStorage.setItem("mwz:last_featured_chain_id", String(next));
-      window.localStorage.setItem(ACTIVE_WALLET_KIND_KEY, next === SOLANA_CHAIN_ID ? "solana" : "bnb");
+      setActiveWalletKind(next === SOLANA_CHAIN_ID ? "solana" : "bnb");
       window.dispatchEvent(new CustomEvent(FEED_CHAIN_EVENT, { detail: { chainId: next } }));
     } catch {
       // ignore storage failures

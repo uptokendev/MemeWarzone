@@ -31,6 +31,26 @@
     Cross-Origin-Resource-Policy = "same-origin"
 
 [[headers]]
+  for = "/api/campaigns"
+  [headers.values]
+    Cache-Control = "no-store"
+
+[[headers]]
+  for = "/api/featured"
+  [headers.values]
+    Cache-Control = "no-store"
+
+[[headers]]
+  for = "/api/token/*"
+  [headers.values]
+    Cache-Control = "no-store"
+
+[[headers]]
+  for = "/api/war-room*"
+  [headers.values]
+    Cache-Control = "no-store"
+
+[[headers]]
   for = "/assets/*"
   [headers.values]
     Cache-Control = "public, max-age=31536000, immutable"

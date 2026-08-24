@@ -6,6 +6,7 @@
  */
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, isAddress, json, normalizeAddress, readJson } from "../server/http.js";
+import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 
 const PARTNER = "crypticpump";
 
@@ -104,7 +105,7 @@ async function upsertListing(req, res) {
   const campaignAddress = String(body.campaignAddress ?? body.campaign ?? "").trim();
   const tokenAddress = String(body.tokenAddress ?? body.token ?? "").trim() || null;
   const listingUrl = cleanUrl(body.listingUrl ?? body.url);
-  const creatorWalletRaw = String(body.creatorWallet ?? body.walletAddress ?? "").trim();
+  const creatorWalletRaw = String(body.creatorWallet ?? body.walletAddress ?? body.auth?.walletAddress ?? "").trim();
 
   if (!Number.isFinite(chainId) || chainId <= 0 || !campaignAddress) {
     return json(res, 400, { error: "chainId and campaignAddress are required" });
@@ -123,11 +124,28 @@ async function upsertListing(req, res) {
   if (!pool) return json(res, 503, { error: "Database unavailable" });
 
   const expectedCreator = await resolveCreator(chainId, campaignAddress);
-  if (expectedCreator && expectedCreator !== String(creatorWallet).toLowerCase() && expectedCreator !== creatorWallet) {
-    // Case-insensitive compare for EVM
-    if (String(expectedCreator).toLowerCase() !== String(creatorWallet).toLowerCase()) {
-      return json(res, 403, { error: "Only the campaign creator can attach a CrypticPump listing." });
-    }
+  if (!expectedCreator) {
+    return json(res, 404, { error: "Campaign creator could not be resolved.", code: "CREATOR_NOT_FOUND" });
+  }
+
+  const session = await requireWalletActionAuth({
+    res,
+    pool,
+    auth: body.auth || body,
+    expectedWallet: expectedCreator,
+    chainId,
+    action: "crypticpump-listing",
+    routeLabel: "crypticpump-listing",
+  });
+  if (!session) return;
+  if (session.legacy) {
+    return json(res, 401, {
+      error: "CrypticPump listing writes require a signed wallet session.",
+      code: "SIGNATURE_REQUIRED",
+    });
+  }
+  if (String(session.walletAddress).toLowerCase() !== String(expectedCreator).toLowerCase()) {
+    return json(res, 403, { error: "Only the campaign creator can attach a CrypticPump listing." });
   }
 
   try {
@@ -141,7 +159,7 @@ async function upsertListing(req, res) {
          listed_by = excluded.listed_by,
          updated_at = now()
        returning chain_id, campaign_address, token_address, partner, listing_url, listed_by, created_at, updated_at`,
-      [chainId, campaignAddress, tokenAddress || "", PARTNER, listingUrl, creatorWallet],
+      [chainId, campaignAddress, tokenAddress || "", PARTNER, listingUrl, session.walletAddress],
     );
     return json(res, 200, { listing: mapRow(rows[0]), ok: true });
   } catch (error) {
