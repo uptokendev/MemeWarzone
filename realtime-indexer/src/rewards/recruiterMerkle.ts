@@ -69,3 +69,39 @@ export function buildRecruiterMerkle(epochId: string | number, recipients: Array
 export function i64leBytes(value: bigint | number | string): Buffer {
   return i64le(value);
 }
+
+export type RecruiterEntitlement = {
+  walletAddress: string;
+  amountLamports: string;
+  source: "portal" | "phase2";
+  accountId?: string | null;
+  ledgerIds?: string[];
+};
+
+/**
+ * Portal (`recruiter_reward_ledger`) and phase-2 (`reward_ledger_entries` /
+ * `recruiter_claimable_settlements`) can describe the same SOL entitlement.
+ * Never sum them. Portal wins when both wallets match; otherwise keep the
+ * unique wallet. Amounts are not added.
+ */
+export function mergeRecruiterEntitlements(
+  phase2: RecruiterEntitlement[],
+  portal: RecruiterEntitlement[],
+): RecruiterEntitlement[] {
+  const byWallet = new Map<string, RecruiterEntitlement>();
+  for (const row of portal) {
+    if (BigInt(row.amountLamports || "0") <= 0n) continue;
+    byWallet.set(row.walletAddress, { ...row, source: "portal" });
+  }
+  for (const row of phase2) {
+    if (BigInt(row.amountLamports || "0") <= 0n) continue;
+    if (byWallet.has(row.walletAddress)) continue;
+    byWallet.set(row.walletAddress, { ...row, source: "phase2" });
+  }
+  return [...byWallet.values()].sort((a, b) => a.walletAddress.localeCompare(b.walletAddress));
+}
+
+export function canRebuildRecruiterBatch(status: string | null | undefined): boolean {
+  const raw = String(status || "draft").toLowerCase();
+  return raw === "draft" || raw === "ready" || raw === "";
+}

@@ -1,7 +1,7 @@
 import { PublicKey } from "@solana/web3.js";
 import { pool } from "../db.js";
 import { listRecruiterClaimableSettlements } from "./recruiterAdmin.js";
-import { buildRecruiterMerkle, i64leBytes } from "./recruiterMerkle.js";
+import { buildRecruiterMerkle, canRebuildRecruiterBatch, i64leBytes, mergeRecruiterEntitlements } from "./recruiterMerkle.js";
 
 const CONFIG_SEED = Buffer.from("rewards_config");
 const VAULT_SEED = Buffer.from("recruiter_vault");
@@ -108,22 +108,24 @@ export async function publishRecruiterSettlementBatches(): Promise<{
   const epoch = await ensureWeeklyEpoch(chainId);
   const viewRows = await listRecruiterClaimableSettlements({ chainId, limit: 1000 }).catch(() => []);
   const portal = await loadPortalSolanaPayouts().catch(() => [] as PortalPayout[]);
+  const portalByWallet = new Map(portal.map((row) => [row.payoutWallet, row]));
 
-  const byWallet = new Map<string, { walletAddress: string; amountLamports: string; portal?: PortalPayout }>();
-  for (const row of viewRows) {
-    if (Number(row.chainId) !== chainId) continue;
-    if (BigInt(row.claimableAmount || "0") <= 0n) continue;
-    byWallet.set(row.walletAddress, { walletAddress: row.walletAddress, amountLamports: String(row.claimableAmount) });
-  }
-  for (const row of portal) {
-    const prev = byWallet.get(row.payoutWallet);
-    const amount = prev
-      ? (BigInt(prev.amountLamports) + BigInt(row.amountRaw)).toString()
-      : row.amountRaw;
-    byWallet.set(row.payoutWallet, { walletAddress: row.payoutWallet, amountLamports: amount, portal: row });
-  }
-
-  const recipients = [...byWallet.values()].filter((item) => BigInt(item.amountLamports) > 0n);
+  const recipients = mergeRecruiterEntitlements(
+    viewRows
+      .filter((row) => Number(row.chainId) === chainId)
+      .map((row) => ({
+        walletAddress: row.walletAddress,
+        amountLamports: String(row.claimableAmount || "0"),
+        source: "phase2" as const,
+      })),
+    portal.map((row) => ({
+      walletAddress: row.payoutWallet,
+      amountLamports: row.amountRaw,
+      source: "portal" as const,
+      accountId: row.accountId,
+      ledgerIds: row.ledgerIds,
+    })),
+  );
   if (!recipients.length) {
     return { computedAt: new Date().toISOString(), batches: [] };
   }
@@ -134,15 +136,17 @@ export async function publishRecruiterSettlementBatches(): Promise<{
       limit 1`,
     [chainId, epoch.id],
   );
-  if (existing.rows[0]) {
+  const existingStatus = existing.rows[0]?.status ? String(existing.rows[0].status) : null;
+  if (existing.rows[0] && !canRebuildRecruiterBatch(existingStatus)) {
     return {
       computedAt: new Date().toISOString(),
       batches: [{
         chainId,
         epochId: epoch.id,
-        status: existing.rows[0].status,
-        alreadyExisted: true,
+        status: existingStatus,
+        immutable: true,
         recipientCount: recipients.length,
+        note: "Batch is claim_open. Recipients are frozen.",
       }],
     };
   }
@@ -153,28 +157,92 @@ export async function publishRecruiterSettlementBatches(): Promise<{
   const client = await pool.connect();
   try {
     await client.query("begin");
-    const batch = await client.query(
-      `insert into public.solana_reward_lane_batches (
-         chain_id, lane, epoch_id, program_id, vault_address, batch_address,
-         merkle_root, total_lamports, deadline, status, metadata
-       ) values (
-         $1, 'recruiter', $2, $3, $4, $5, $6, $7::numeric, $8, 'ready', $9::jsonb
-       )
-       on conflict (chain_id, lane, epoch_id) do nothing
-       returning id, status`,
-      [
-        chainId,
-        epoch.id,
-        addresses.programId,
-        addresses.vaultAddress,
-        addresses.batchAddress,
-        merkle.root,
-        merkle.totalLamports,
-        deadline,
-        JSON.stringify({ startAt: epoch.startAt, endAt: epoch.endAt }),
-      ],
-    );
-    const batchId = batch.rows[0]?.id;
+    let batchId = existing.rows[0]?.id || null;
+    if (batchId) {
+      await client.query(
+        `update public.recruiter_reward_ledger l
+            set claim_id = null, updated_at = now()
+          from public.recruiter_reward_claims c
+         where c.id = l.claim_id
+           and c.chain = 'solana'
+           and c.status in ('created','retriable')
+           and c.metadata->>'epochId' = $1`,
+        [String(epoch.id)],
+      );
+      await client.query(
+        `delete from public.solana_reward_lane_claims where batch_id = $1`,
+        [batchId],
+      );
+      await client.query(
+        `delete from public.recruiter_reward_claims
+          where chain = 'solana'
+            and status in ('created','retriable')
+            and metadata->>'epochId' = $1`,
+        [String(epoch.id)],
+      );
+      await client.query(
+        `update public.solana_reward_lane_batches
+            set program_id=$2, vault_address=$3, batch_address=$4, merkle_root=$5,
+                total_lamports=$6::numeric, deadline=$7, status='ready',
+                metadata=$8::jsonb, updated_at=now()
+          where id=$1`,
+        [
+          batchId,
+          addresses.programId,
+          addresses.vaultAddress,
+          addresses.batchAddress,
+          merkle.root,
+          merkle.totalLamports,
+          deadline,
+          JSON.stringify({ startAt: epoch.startAt, endAt: epoch.endAt, rebuiltAt: new Date().toISOString() }),
+        ],
+      );
+    } else {
+      const batch = await client.query(
+        `insert into public.solana_reward_lane_batches (
+           chain_id, lane, epoch_id, program_id, vault_address, batch_address,
+           merkle_root, total_lamports, deadline, status, metadata
+         ) values (
+           $1, 'recruiter', $2, $3, $4, $5, $6, $7::numeric, $8, 'draft', $9::jsonb
+         )
+         on conflict (chain_id, lane, epoch_id) do update
+           set merkle_root = excluded.merkle_root,
+               total_lamports = excluded.total_lamports,
+               deadline = excluded.deadline,
+               status = case
+                 when public.solana_reward_lane_batches.status in ('claim_open','published')
+                 then public.solana_reward_lane_batches.status
+                 else 'ready'
+               end,
+               updated_at = now()
+         returning id, status`,
+        [
+          chainId,
+          epoch.id,
+          addresses.programId,
+          addresses.vaultAddress,
+          addresses.batchAddress,
+          merkle.root,
+          merkle.totalLamports,
+          deadline,
+          JSON.stringify({ startAt: epoch.startAt, endAt: epoch.endAt }),
+        ],
+      );
+      batchId = batch.rows[0]?.id;
+      if (batch.rows[0]?.status && !canRebuildRecruiterBatch(String(batch.rows[0].status))) {
+        await client.query("rollback");
+        return {
+          computedAt: new Date().toISOString(),
+          batches: [{ chainId, epochId: epoch.id, status: batch.rows[0].status, immutable: true }],
+        };
+      }
+      if (batchId) {
+        await client.query(
+          `update public.solana_reward_lane_batches set status='ready', updated_at=now() where id=$1 and status='draft'`,
+          [batchId],
+        );
+      }
+    }
     if (!batchId) {
       await client.query("rollback");
       return {
@@ -187,17 +255,18 @@ export async function publishRecruiterSettlementBatches(): Promise<{
       const recipient = recipients[i]!;
       const receipt = laneAddresses(epoch.id, recipient.walletAddress).claimReceiptAddress;
       let recruiterClaimId: string | null = null;
-      if (recipient.portal?.accountId) {
+      const portalRow = portalByWallet.get(recipient.walletAddress);
+      if (portalRow?.accountId) {
         const claim = await client.query(
           `insert into public.recruiter_reward_claims (
              recruiter_id, chain, token, amount_raw, payout_wallet, status, metadata
            ) values ($1, 'solana', 'SOL', $2::numeric, $3, 'created', $4::jsonb)
            returning id`,
           [
-            recipient.portal.accountId,
+            portalRow.accountId,
             recipient.amountLamports,
             recipient.walletAddress,
-            JSON.stringify({ epochId: epoch.id, ledgerIds: recipient.portal.ledgerIds }),
+            JSON.stringify({ epochId: epoch.id, ledgerIds: portalRow.ledgerIds }),
           ],
         );
         recruiterClaimId = String(claim.rows[0].id);
@@ -208,7 +277,7 @@ export async function publishRecruiterSettlementBatches(): Promise<{
               and chain = 'solana'
               and status in ('claimable','retriable')
               and claim_id is null`,
-          [recruiterClaimId, recipient.portal.accountId],
+          [recruiterClaimId, portalRow.accountId],
         );
       }
       await client.query(
@@ -218,7 +287,12 @@ export async function publishRecruiterSettlementBatches(): Promise<{
          ) values (
            $1, 'recruiter', $2, $3, $4, $5::numeric, $6::jsonb, $7, 'pending', $8::jsonb
          )
-         on conflict (lane, source_type, source_ref) do nothing`,
+         on conflict (lane, source_type, source_ref) do update
+           set amount_lamports = excluded.amount_lamports,
+               merkle_proof = excluded.merkle_proof,
+               claim_receipt_address = excluded.claim_receipt_address,
+               status = 'pending',
+               updated_at = now()`,
         [
           batchId,
           recruiterClaimId ? "recruiter_reward_claim" : "recruiter_settlement",
@@ -238,10 +312,11 @@ export async function publishRecruiterSettlementBatches(): Promise<{
         chainId,
         epochId: epoch.id,
         status: "ready",
-        alreadyExisted: false,
+        rebuilt: Boolean(existing.rows[0]),
         recipientCount: recipients.length,
         totalLamports: merkle.totalLamports,
-        note: "DB settlement materialized. On-chain root publish is a separate operator step; claims stay pending until status=claim_open.",
+        wallets: recipients.map((row) => row.walletAddress),
+        note: "DB settlement is ready. Claims stay pending until cron:publish-recruiter-settlement-root marks claim_open.",
       }],
     };
   } catch (error) {

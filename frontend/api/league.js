@@ -970,14 +970,6 @@ export default async function handler(req, res) {
           }
         : undefined;
 
-    const persistPrize = {
-      ...(prizeForCategory || {}),
-      protocolFeeBps: prizeMeta?.protocolFeeBps,
-      leagueFeeBps: prizeMeta?.leagueFeeBps,
-      totalLeagueFeeRaw: prizeMeta?.totalLeagueFeeRaw,
-      leagueCount: prizeMeta?.leagueCount,
-    };
-
     if (!epoch.isLive && epochStartIso) {
       const frozen = await readFinalizedCategory(pool, {
         chainId,
@@ -997,7 +989,15 @@ export default async function handler(req, res) {
     }
 
     const finishStandings = async (items, extra = {}) => {
-      if (!epoch.isLive && epochStartIso) {
+      const allowPageWrite = String(process.env.LEAGUE_PAGE_WRITE_WINNERS || "").trim() === "1";
+      if (!epoch.isLive && epochStartIso && allowPageWrite) {
+        const persistPrize = {
+          ...(prizeForCategory || {}),
+          protocolFeeBps: prizeMeta?.protocolFeeBps,
+          leagueFeeBps: prizeMeta?.leagueFeeBps,
+          totalLeagueFeeRaw: prizeMeta?.totalLeagueFeeRaw,
+          leagueCount: prizeMeta?.leagueCount,
+        };
         await persistFinalizedCategory(pool, {
           chainId,
           period: periodNorm,
@@ -1024,7 +1024,19 @@ export default async function handler(req, res) {
           });
         }
       }
-      return json(res, 200, { items, prize: prizeForCategory, epoch: epochMeta, stats, ...extra });
+      return json(res, 200, {
+        items,
+        prize: prizeForCategory,
+        epoch: epoch.isLive ? epochMeta : { ...epochMeta, status: "pending_finalization", source: "live_estimate" },
+        stats,
+        finalized: false,
+        ...extra,
+        warning:
+          extra.warning ||
+          (!epoch.isLive
+            ? "Previous-week standings are estimates until cron:finalize-epoch-winners writes league_epoch_winners."
+            : undefined),
+      });
     };
 
     // -------------------------------------------------
