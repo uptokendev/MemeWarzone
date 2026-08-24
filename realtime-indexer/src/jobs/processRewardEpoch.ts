@@ -4,7 +4,7 @@ import { emitNotification } from "../notifications.js";
 import { pool } from "../db.js";
 
 function parseChainIds(): number[] {
-  return String(process.env.REWARD_CHAINS || process.env.LEAGUE_CHAINS || "97,101")
+  return String(process.env.REWARD_CHAINS || process.env.LEAGUE_CHAINS || "56,101")
     .split(",")
     .map((s) => Number(s.trim()))
     .filter((n) => Number.isFinite(n));

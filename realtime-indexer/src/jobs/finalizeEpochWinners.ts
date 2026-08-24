@@ -584,10 +584,9 @@ async function main() {
     process.exit(1);
   }
 
-  // LEAGUE_CHAINS is an optional runtime-only knob for cron execution.
-  // It's not part of the strict ENV typing, so read directly from process.env.
-  // Example production value: "56,101"
-  const chains = String(process.env.LEAGUE_CHAINS || "56,97,101")
+  // Production defaults: BNB mainnet + Solana mainnet.
+  // Testnet only when explicitly set, e.g. LEAGUE_CHAINS=97,101
+  const chains = String(process.env.LEAGUE_CHAINS || "56,101")
     .split(",")
     .map((s) => Number(s.trim()))
     .filter((n) => Number.isFinite(n));
