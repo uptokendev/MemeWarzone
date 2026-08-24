@@ -218,17 +218,10 @@ async function getBaseSvg(content, options = {}) {
     </radialGradient>
     <pattern id="grid" width="33" height="33" patternUnits="userSpaceOnUse"><path d="M33 0H0V33" stroke="${primaryGlow}" stroke-opacity="0.055"/></pattern>
     <filter id="textGlow" x="-20%" y="-20%" width="140%" height="140%">
-      <!-- Solid black outline -->
-      <feMorphology in="SourceAlpha" operator="dilate" radius="2" result="outline"/>
-      <feFlood flood-color="#000000" flood-opacity="0.9" result="blackColor"/>
-      <feComposite in="blackColor" in2="outline" operator="in" result="blackOutline"/>
-      <!-- Colored glow behind the outline -->
-      <feDropShadow in="blackOutline" dx="0" dy="0" stdDeviation="3" flood-color="${primaryGlow}" flood-opacity="0.75" result="glow"/>
-      <!-- Merge outline/glow with original text -->
-      <feMerge>
-        <feMergeNode in="glow"/>
-        <feMergeNode in="SourceGraphic"/>
-      </feMerge>
+      <!-- Dense, soft black glow for readability -->
+      <feDropShadow dx="0" dy="2" stdDeviation="5" flood-color="#000000" flood-opacity="0.95"/>
+      <feDropShadow dx="0" dy="0" stdDeviation="3" flood-color="#000000" flood-opacity="0.85"/>
+      <feDropShadow dx="0" dy="0" stdDeviation="1" flood-color="#000000" flood-opacity="0.75"/>
     </filter>
     <clipPath id="circleClip" clipPathUnits="objectBoundingBox">
       <circle cx="0.5" cy="0.5" r="0.5"/>
