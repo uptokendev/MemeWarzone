@@ -265,6 +265,17 @@ async function buildLaunchDigest(payload) {
   `, { primaryGlow: colors.glow, secondaryGlow: colors.glow });
 }
 
+async function buildUserJoined(payload) {
+  const { username = "New User", avatarUrl } = payload;
+  
+  let content = `
+    ${pixelText("NEW RECRUIT", 501, 200, { scale: 8, color: "#10f58a", anchor: "middle" })}
+    ${pixelText(`@${clampText(username, 15)}`, 501, 350, { scale: 5, color: "#dfffee", anchor: "middle" })}
+  `;
+
+  return await getBaseSvg(content, { backdropImage: avatarUrl, primaryGlow: "#10f58a", secondaryGlow: "#10f58a" });
+}
+
 async function buildTrendingDigest(payload) {
   const { sections = [], chain = "BNB" } = payload;
   let content = `
@@ -388,6 +399,9 @@ export default async function handler(req, res) {
         break;
       case "platform.daily_recap_ready":
         svg = await buildDailyRecap(payload);
+        break;
+      case "user.joined":
+        svg = await buildUserJoined(payload);
         break;
       default:
         svg = await getBaseSvg(pixelText("NOTIFICATION", 501, 250, { scale: 7, color: "#ffffff", anchor: "middle" }));
