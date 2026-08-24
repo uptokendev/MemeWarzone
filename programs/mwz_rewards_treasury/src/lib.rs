@@ -17,6 +17,10 @@ pub const RECRUITER_VAULT_SEED: &[u8] = b"recruiter_vault";
 pub const SQUAD_VAULT_SEED: &[u8] = b"squad_vault";
 pub const PROTOCOL_VAULT_SEED: &[u8] = b"protocol_vault";
 pub const ROUTE_STATE_SEED: &[u8] = b"route_state";
+pub const RECRUITER_BATCH_SEED: &[u8] = b"recruiter_batch";
+pub const RECRUITER_CLAIM_SEED: &[u8] = b"recruiter_claim";
+pub const SQUAD_BATCH_SEED: &[u8] = b"squad_batch";
+pub const SQUAD_CLAIM_SEED: &[u8] = b"squad_claim";
 
 pub mod route;
 pub use route::*;
@@ -26,6 +30,8 @@ pub const PERIOD_MONTHLY: u8 = 1;
 
 pub const LEAGUE_LEAF_PREFIX: &[u8] = b"MWZ_LEAGUE_LEAF";
 pub const AIRDROP_LEAF_PREFIX: &[u8] = b"MWZ_AIRDROP_LEAF";
+pub const RECRUITER_LEAF_PREFIX: &[u8] = b"MWZ_RECRUITER_LEAF";
+pub const SQUAD_LEAF_PREFIX: &[u8] = b"MWZ_SQUAD_LEAF";
 
 #[program]
 pub mod mwz_rewards_treasury {
@@ -342,6 +348,114 @@ pub mod mwz_rewards_treasury {
         });
         Ok(())
     }
+
+    pub fn set_recruiter_batch_root(
+        ctx: Context<SetRecruiterBatchRoot>,
+        epoch_id: i64,
+        root: [u8; 32],
+        total_lamports: u64,
+        deadline: i64,
+    ) -> Result<()> {
+        set_reward_lane_batch_root(
+            &ctx.accounts.recruiter_vault.to_account_info(),
+            &mut ctx.accounts.recruiter_batch,
+            epoch_id,
+            root,
+            total_lamports,
+            deadline,
+            ctx.bumps.recruiter_batch,
+        )?;
+        emit!(RecruiterBatchRootSet {
+            epoch_id,
+            root,
+            total_lamports,
+            deadline,
+        });
+        Ok(())
+    }
+
+    pub fn claim_recruiter(
+        ctx: Context<ClaimRecruiter>,
+        epoch_id: i64,
+        amount_lamports: u64,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        require!(ctx.accounts.config.claims_enabled, TreasuryError::ClaimsDisabled);
+        claim_reward_lane(
+            &ctx.accounts.recruiter_vault.to_account_info(),
+            &ctx.accounts.winner.to_account_info(),
+            &mut ctx.accounts.recruiter_batch,
+            epoch_id,
+            amount_lamports,
+            &proof,
+            RECRUITER_LEAF_PREFIX,
+        )?;
+        let receipt = &mut ctx.accounts.claim_receipt;
+        receipt.winner = ctx.accounts.winner.key();
+        receipt.epoch_id = epoch_id;
+        receipt.amount_lamports = amount_lamports;
+        receipt.bump = ctx.bumps.claim_receipt;
+        emit!(RecruiterClaimed {
+            winner: ctx.accounts.winner.key(),
+            epoch_id,
+            amount_lamports,
+        });
+        Ok(())
+    }
+
+    pub fn set_squad_batch_root(
+        ctx: Context<SetSquadBatchRoot>,
+        epoch_id: i64,
+        root: [u8; 32],
+        total_lamports: u64,
+        deadline: i64,
+    ) -> Result<()> {
+        set_reward_lane_batch_root(
+            &ctx.accounts.squad_vault.to_account_info(),
+            &mut ctx.accounts.squad_batch,
+            epoch_id,
+            root,
+            total_lamports,
+            deadline,
+            ctx.bumps.squad_batch,
+        )?;
+        emit!(SquadBatchRootSet {
+            epoch_id,
+            root,
+            total_lamports,
+            deadline,
+        });
+        Ok(())
+    }
+
+    pub fn claim_squad(
+        ctx: Context<ClaimSquad>,
+        epoch_id: i64,
+        amount_lamports: u64,
+        proof: Vec<[u8; 32]>,
+    ) -> Result<()> {
+        require!(ctx.accounts.config.claims_enabled, TreasuryError::ClaimsDisabled);
+        claim_reward_lane(
+            &ctx.accounts.squad_vault.to_account_info(),
+            &ctx.accounts.winner.to_account_info(),
+            &mut ctx.accounts.squad_batch,
+            epoch_id,
+            amount_lamports,
+            &proof,
+            SQUAD_LEAF_PREFIX,
+        )?;
+        let receipt = &mut ctx.accounts.claim_receipt;
+        receipt.winner = ctx.accounts.winner.key();
+        receipt.epoch_id = epoch_id;
+        receipt.amount_lamports = amount_lamports;
+        receipt.bump = ctx.bumps.claim_receipt;
+        emit!(SquadClaimed {
+            winner: ctx.accounts.winner.key(),
+            epoch_id,
+            amount_lamports,
+        });
+        Ok(())
+    }
 }
 
 #[derive(Accounts)]
@@ -585,6 +699,106 @@ pub struct ClaimAirdrop<'info> {
     pub system_program: Program<'info, System>,
 }
 
+#[derive(Accounts)]
+#[instruction(epoch_id: i64)]
+pub struct SetRecruiterBatchRoot<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    #[account(
+        seeds = [REWARDS_CONFIG_SEED],
+        bump = config.bump,
+        has_one = authority
+    )]
+    pub config: Account<'info, RewardsConfig>,
+    #[account(seeds = [RECRUITER_VAULT_SEED], bump)]
+    pub recruiter_vault: Account<'info, VaultState>,
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + RewardLaneBatch::SIZE,
+        seeds = [RECRUITER_BATCH_SEED, &epoch_id.to_le_bytes()],
+        bump
+    )]
+    pub recruiter_batch: Account<'info, RewardLaneBatch>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(epoch_id: i64)]
+pub struct ClaimRecruiter<'info> {
+    #[account(mut)]
+    pub winner: Signer<'info>,
+    #[account(seeds = [REWARDS_CONFIG_SEED], bump = config.bump)]
+    pub config: Account<'info, RewardsConfig>,
+    #[account(mut, seeds = [RECRUITER_VAULT_SEED], bump)]
+    pub recruiter_vault: Account<'info, VaultState>,
+    #[account(
+        mut,
+        seeds = [RECRUITER_BATCH_SEED, &epoch_id.to_le_bytes()],
+        bump = recruiter_batch.bump
+    )]
+    pub recruiter_batch: Account<'info, RewardLaneBatch>,
+    #[account(
+        init,
+        payer = winner,
+        space = 8 + RewardLaneClaimReceipt::SIZE,
+        seeds = [RECRUITER_CLAIM_SEED, &epoch_id.to_le_bytes(), winner.key().as_ref()],
+        bump
+    )]
+    pub claim_receipt: Account<'info, RewardLaneClaimReceipt>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(epoch_id: i64)]
+pub struct SetSquadBatchRoot<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    #[account(
+        seeds = [REWARDS_CONFIG_SEED],
+        bump = config.bump,
+        has_one = authority
+    )]
+    pub config: Account<'info, RewardsConfig>,
+    #[account(seeds = [SQUAD_VAULT_SEED], bump)]
+    pub squad_vault: Account<'info, VaultState>,
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + RewardLaneBatch::SIZE,
+        seeds = [SQUAD_BATCH_SEED, &epoch_id.to_le_bytes()],
+        bump
+    )]
+    pub squad_batch: Account<'info, RewardLaneBatch>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(epoch_id: i64)]
+pub struct ClaimSquad<'info> {
+    #[account(mut)]
+    pub winner: Signer<'info>,
+    #[account(seeds = [REWARDS_CONFIG_SEED], bump = config.bump)]
+    pub config: Account<'info, RewardsConfig>,
+    #[account(mut, seeds = [SQUAD_VAULT_SEED], bump)]
+    pub squad_vault: Account<'info, VaultState>,
+    #[account(
+        mut,
+        seeds = [SQUAD_BATCH_SEED, &epoch_id.to_le_bytes()],
+        bump = squad_batch.bump
+    )]
+    pub squad_batch: Account<'info, RewardLaneBatch>,
+    #[account(
+        init,
+        payer = winner,
+        space = 8 + RewardLaneClaimReceipt::SIZE,
+        seeds = [SQUAD_CLAIM_SEED, &epoch_id.to_le_bytes(), winner.key().as_ref()],
+        bump
+    )]
+    pub claim_receipt: Account<'info, RewardLaneClaimReceipt>,
+    pub system_program: Program<'info, System>,
+}
+
 #[account]
 pub struct RewardsConfig {
     pub authority: Pubkey,
@@ -681,6 +895,33 @@ impl AirdropClaimReceipt {
     pub const SIZE: usize = 32 + 8 + 1 + 8 + 1;
 }
 
+#[account]
+pub struct RewardLaneBatch {
+    pub epoch_id: i64,
+    pub root: [u8; 32],
+    pub total_lamports: u64,
+    pub claimed_lamports: u64,
+    pub deadline: i64,
+    pub bump: u8,
+    pub initialized: bool,
+}
+
+impl RewardLaneBatch {
+    pub const SIZE: usize = 8 + 32 + 8 + 8 + 8 + 1 + 1;
+}
+
+#[account]
+pub struct RewardLaneClaimReceipt {
+    pub winner: Pubkey,
+    pub epoch_id: i64,
+    pub amount_lamports: u64,
+    pub bump: u8,
+}
+
+impl RewardLaneClaimReceipt {
+    pub const SIZE: usize = 32 + 8 + 8 + 1;
+}
+
 #[event]
 pub struct LeagueEpochRootSet {
     pub period: u8,
@@ -715,6 +956,36 @@ pub struct AirdropClaimed {
     pub amount_lamports: u64,
 }
 
+#[event]
+pub struct RecruiterBatchRootSet {
+    pub epoch_id: i64,
+    pub root: [u8; 32],
+    pub total_lamports: u64,
+    pub deadline: i64,
+}
+
+#[event]
+pub struct RecruiterClaimed {
+    pub winner: Pubkey,
+    pub epoch_id: i64,
+    pub amount_lamports: u64,
+}
+
+#[event]
+pub struct SquadBatchRootSet {
+    pub epoch_id: i64,
+    pub root: [u8; 32],
+    pub total_lamports: u64,
+    pub deadline: i64,
+}
+
+#[event]
+pub struct SquadClaimed {
+    pub winner: Pubkey,
+    pub epoch_id: i64,
+    pub amount_lamports: u64,
+}
+
 #[error_code]
 pub enum TreasuryError {
     #[msg("Invalid period.")]
@@ -727,7 +998,7 @@ pub enum TreasuryError {
     InvalidRank,
     #[msg("Claims are not enabled yet.")]
     ClaimsDisabled,
-    #[msg("League/airdrop vault has insufficient SOL.")]
+    #[msg("Reward vault has insufficient SOL.")]
     InsufficientVaultBalance,
     #[msg("Epoch is already sealed with a different root.")]
     EpochAlreadySealed,
@@ -739,7 +1010,7 @@ pub enum TreasuryError {
     InvalidProof,
     #[msg("Claim would exceed the sealed epoch budget.")]
     EpochBudgetExceeded,
-    #[msg("Airdrop claim window has expired.")]
+    #[msg("Reward claim window has expired.")]
     ClaimExpired,
     #[msg("Arithmetic overflow.")]
     MathOverflow,
@@ -774,6 +1045,79 @@ pub fn airdrop_leaf(epoch_id: i64, program_code: u8, winner: &Pubkey, amount_lam
     bytes.extend_from_slice(winner.as_ref());
     bytes.extend_from_slice(&amount_lamports.to_le_bytes());
     keccak::hash(&bytes).0
+}
+
+pub fn reward_lane_leaf(prefix: &[u8], epoch_id: i64, winner: &Pubkey, amount_lamports: u64) -> [u8; 32] {
+    let mut bytes = Vec::with_capacity(prefix.len() + 8 + 32 + 8);
+    bytes.extend_from_slice(prefix);
+    bytes.extend_from_slice(&epoch_id.to_le_bytes());
+    bytes.extend_from_slice(winner.as_ref());
+    bytes.extend_from_slice(&amount_lamports.to_le_bytes());
+    keccak::hash(&bytes).0
+}
+
+fn set_reward_lane_batch_root(
+    vault_info: &AccountInfo,
+    batch: &mut Account<RewardLaneBatch>,
+    epoch_id: i64,
+    root: [u8; 32],
+    total_lamports: u64,
+    deadline: i64,
+    bump: u8,
+) -> Result<()> {
+    require!(root != [0u8; 32], TreasuryError::InvalidRoot);
+    require!(total_lamports > 0, TreasuryError::InvalidAmount);
+    let now = Clock::get()?.unix_timestamp;
+    require!(deadline == 0 || deadline > now, TreasuryError::ClaimExpired);
+    let rent_min = Rent::get()?.minimum_balance(8 + VaultState::SIZE);
+    let available = vault_info.lamports().saturating_sub(rent_min);
+    require!(available >= total_lamports, TreasuryError::InsufficientVaultBalance);
+    require!(!batch.initialized, TreasuryError::EpochAlreadySealed);
+    batch.epoch_id = epoch_id;
+    batch.root = root;
+    batch.total_lamports = total_lamports;
+    batch.claimed_lamports = 0;
+    batch.deadline = deadline;
+    batch.bump = bump;
+    batch.initialized = true;
+    Ok(())
+}
+
+fn claim_reward_lane(
+    vault_info: &AccountInfo,
+    winner_info: &AccountInfo,
+    batch: &mut Account<RewardLaneBatch>,
+    epoch_id: i64,
+    amount_lamports: u64,
+    proof: &[[u8; 32]],
+    prefix: &[u8],
+) -> Result<()> {
+    require!(amount_lamports > 0, TreasuryError::InvalidAmount);
+    let now = Clock::get()?.unix_timestamp;
+    require!(batch.initialized, TreasuryError::EpochNotSealed);
+    require!(batch.epoch_id == epoch_id, TreasuryError::EpochMismatch);
+    require!(batch.deadline == 0 || now <= batch.deadline, TreasuryError::ClaimExpired);
+    require!(
+        batch.claimed_lamports.saturating_add(amount_lamports) <= batch.total_lamports,
+        TreasuryError::EpochBudgetExceeded
+    );
+    let winner = winner_info.key();
+    let leaf = reward_lane_leaf(prefix, epoch_id, &winner, amount_lamports);
+    require!(verify_merkle_proof(leaf, proof, batch.root), TreasuryError::InvalidProof);
+
+    **vault_info.try_borrow_mut_lamports()? = vault_info
+        .lamports()
+        .checked_sub(amount_lamports)
+        .ok_or(TreasuryError::InsufficientVaultBalance)?;
+    **winner_info.try_borrow_mut_lamports()? = winner_info
+        .lamports()
+        .checked_add(amount_lamports)
+        .ok_or(TreasuryError::MathOverflow)?;
+    batch.claimed_lamports = batch
+        .claimed_lamports
+        .checked_add(amount_lamports)
+        .ok_or(TreasuryError::MathOverflow)?;
+    Ok(())
 }
 
 pub fn verify_merkle_proof(leaf: [u8; 32], proof: &[[u8; 32]], root: [u8; 32]) -> bool {
