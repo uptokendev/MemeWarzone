@@ -155,14 +155,16 @@ function pixelText(value, x, y, options = {}) {
 
 function getChainColors(chain) {
   const c = String(chain || "BNB").toUpperCase();
-  if (c === "SOL" || c === "SOLANA") return { text: "#14F195", bg: "#1a0c2b", stroke: "#9945FF" };
+  if (c === "SOL" || c === "SOLANA") {
+    return { text: "#000000", bg: "url(#solGradient)", stroke: "url(#solGradient)", isGradient: true };
+  }
   if (c === "BNB" || c === "BSC") return { text: "#f0b90b", bg: "#292005", stroke: "#f0b90b" };
   return { text: "#10f58a", bg: "#132a1e", stroke: "#10f58a" };
 }
 
 function renderChainPill(chain, x, y, scale = 3) {
   const chainText = String(chain || "BNB").toUpperCase();
-  const { text, bg, stroke } = getChainColors(chainText);
+  const { text, bg, stroke, isGradient } = getChainColors(chainText);
   const textWidth = getPixelTextWidth(chainText, scale);
   const paddingX = 16;
   const paddingY = 8;
@@ -173,7 +175,7 @@ function renderChainPill(chain, x, y, scale = 3) {
   const startY = y - paddingY;
 
   return `
-    <rect x="${startX}" y="${startY}" width="${totalWidth}" height="${totalHeight}" rx="12" fill="${bg}" stroke="${stroke}" stroke-opacity="0.3"/>
+    <rect x="${startX}" y="${startY}" width="${totalWidth}" height="${totalHeight}" rx="12" fill="${bg}" stroke="${stroke}" stroke-opacity="${isGradient ? "1" : "0.3"}"/>
     ${pixelText(chainText, x, y, { scale, color: text, anchor: "middle" })}
   `;
 }
@@ -207,6 +209,9 @@ async function getBaseSvg(content, options = {}) {
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1002" y2="531" gradientUnits="userSpaceOnUse">
       <stop stop-color="#06170d"/><stop offset="0.48" stop-color="#030907"/><stop offset="1" stop-color="#130804"/>
+    </linearGradient>
+    <linearGradient id="solGradient" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#9945FF"/><stop offset="1" stop-color="#14F195"/>
     </linearGradient>
     <radialGradient id="orbGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(501 265) rotate(90) scale(200)">
       <stop stop-color="${secondaryGlow}" stop-opacity="0.35"/><stop offset="1" stop-color="${secondaryGlow}" stop-opacity="0"/>
