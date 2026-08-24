@@ -1,17 +1,42 @@
-import { getQuery, json } from "../server/http.js"; // Adjust import if your frontend server uses a different standard
+import fs from "fs/promises";
+import path from "path";
+import { fileURLToPath } from "url";
+import { getQuery, json } from "../server/http.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+let logoBase64 = "";
+
+async function getLogoBase64() {
+  if (logoBase64) return logoBase64;
+  try {
+    const logoPath = path.join(__dirname, "../public/images/mw.png");
+    const data = await fs.readFile(logoPath);
+    logoBase64 = `data:image/png;base64,${data.toString("base64")}`;
+  } catch (err) {
+    console.error("Failed to load mw.png", err);
+    logoBase64 = ""; // fallback
+  }
+  return logoBase64;
+}
+
+async function fetchImageBase64(url, fallback = "") {
+  if (!url) return fallback;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
+    if (!res.ok) return fallback;
+    const arrayBuffer = await res.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const contentType = res.headers.get("content-type") || "image/png";
+    return `data:${contentType};base64,${buffer.toString("base64")}`;
+  } catch (err) {
+    console.error("Failed to fetch image", url, err);
+    return fallback;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function esc(value) {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&apos;");
-}
 
 function clampText(value, max) {
   const text = String(value || "").trim();
@@ -83,6 +108,13 @@ function normalizePixelText(value) {
   return String(value || "").toUpperCase().replace(/[^A-Z0-9 .,:/\-_@$%#!?'()+>]/g, " ");
 }
 
+function getPixelTextWidth(value, scale = 4, spacing = null) {
+  const text = normalizePixelText(value);
+  const actualSpacing = spacing ?? scale;
+  const charWidth = 5 * scale + actualSpacing;
+  return text.length > 0 ? text.length * charWidth - actualSpacing : 0;
+}
+
 function pixelText(value, x, y, options = {}) {
   const text = normalizePixelText(value);
   const scale = options.scale ?? 4;
@@ -111,13 +143,38 @@ function pixelText(value, x, y, options = {}) {
   return `<g>${rects.join("")}</g>`;
 }
 
+function renderChainPill(chain, x, y, scale = 3) {
+  const chainText = String(chain || "BNB").toUpperCase();
+  const textWidth = getPixelTextWidth(chainText, scale);
+  const paddingX = 16;
+  const paddingY = 8;
+  const charHeight = 7 * scale;
+  const totalWidth = textWidth + paddingX * 2;
+  const totalHeight = charHeight + paddingY * 2;
+  const startX = x - totalWidth / 2;
+  const startY = y - paddingY;
+
+  return `
+    <rect x="${startX}" y="${startY}" width="${totalWidth}" height="${totalHeight}" rx="12" fill="#132a1e" stroke="#10f58a" stroke-opacity="0.3"/>
+    ${pixelText(chainText, x, y, { scale, color: "#10f58a", anchor: "middle" })}
+  `;
+}
+
+function renderCampaignLabel(name, ticker, x, y, scale = 4, anchor = "middle", color = "#ffffff") {
+  const n = String(name || "").trim();
+  const t = String(ticker || "").trim();
+  const display = n && t && n.toLowerCase() !== t.toLowerCase() ? `${n} ($${t})` : `$${t || n}`;
+  return pixelText(display, x, y, { scale, color, anchor });
+}
+
 // ---------------------------------------------------------------------------
 // Layout Designs
 // ---------------------------------------------------------------------------
 
-function getBaseSvg(content, options = {}) {
+async function getBaseSvg(content, options = {}) {
   const primaryGlow = options.primaryGlow || "#10f58a";
   const secondaryGlow = options.secondaryGlow || "#00ff88";
+  const logoDataUri = await getLogoBase64();
   
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="1002" height="531" viewBox="0 0 1002 531" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -130,6 +187,12 @@ function getBaseSvg(content, options = {}) {
     </radialGradient>
     <pattern id="grid" width="33" height="33" patternUnits="userSpaceOnUse"><path d="M33 0H0V33" stroke="${primaryGlow}" stroke-opacity="0.055"/></pattern>
     <filter id="textGlow" x="0" y="0" width="1002" height="531" filterUnits="userSpaceOnUse"><feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="${primaryGlow}" flood-opacity="0.55"/></filter>
+    <clipPath id="circleClip">
+      <circle cx="50" cy="50" r="50"/>
+    </clipPath>
+    <clipPath id="largeCircleClip">
+      <circle cx="90" cy="90" r="90"/>
+    </clipPath>
   </defs>
 
   <rect width="1002" height="531" fill="url(#bg)"/>
@@ -140,79 +203,105 @@ function getBaseSvg(content, options = {}) {
   <rect x="0" y="521" width="1002" height="10" fill="#070707"/>
   ${Array.from({ length: 44 }).map((_, i) => `<path d="M${i * 24} 521H${i * 24 + 12}L${i * 24 + 2} 531H${i * 24 - 10}L${i * 24} 521Z" fill="#7b421c" fill-opacity="0.52"/>`).join("")}
   
+  ${logoDataUri ? `<image x="40" y="40" width="80" height="80" href="${logoDataUri}" />` : ""}
+
   <g filter="url(#textGlow)">
     ${content}
   </g>
 </svg>`;
 }
 
-function buildLaunchDigest(payload) {
+async function buildLaunchDigest(payload) {
   const { launches = [], chain = "BNB" } = payload;
-  const listItems = launches.slice(0, 5).map((l, i) => {
-    return `${pixelText(`> ${clampText(l.name || "Token", 15)}`, 100, 200 + i * 50, { scale: 4, color: "#dfffee" })}
-            ${pixelText(`${Math.round(l.progressPct || 0)}%`, 900, 200 + i * 50, { scale: 4, color: "#10f58a", anchor: "end" })}`;
-  }).join("");
+  
+  let listItems = "";
+  for (let i = 0; i < Math.min(launches.length, 5); i++) {
+    const l = launches[i];
+    const tokenImg = await fetchImageBase64(l.tokenUrl);
+    const yCenter = 220 + i * 55;
+    
+    listItems += tokenImg ? `<image x="120" y="${yCenter - 20}" width="40" height="40" href="${tokenImg}" clip-path="url(#circleClip)" transform="translate(-70, -70) scale(1.4)"/>` : "";
+    listItems += `${pixelText(`> ${clampText(l.name || l.campaign || "Token", 15)}`, 180, yCenter - 10, { scale: 4, color: "#dfffee" })}
+                  ${pixelText(`${Math.round(l.progressPct || 0)}%`, 900, yCenter - 10, { scale: 4, color: "#10f58a", anchor: "end" })}`;
+  }
 
-  return getBaseSvg(`
+  return await getBaseSvg(`
     ${pixelText("LAUNCH DIGEST", 501, 80, { scale: 7, color: "#10f58a", anchor: "middle" })}
-    ${pixelText(`CHAIN: ${String(chain).toUpperCase()}`, 501, 140, { scale: 3, color: "#4d8066", anchor: "middle" })}
+    ${renderChainPill(chain, 501, 140, 3)}
     ${listItems}
   `);
 }
 
-function buildTrendingDigest(payload) {
+async function buildTrendingDigest(payload) {
   const { sections = [], chain = "BNB" } = payload;
   let content = `
     ${pixelText("TRENDING DIGEST", 501, 70, { scale: 7, color: "#00eeff", anchor: "middle" })}
-    ${pixelText(`CHAIN: ${String(chain).toUpperCase()}`, 501, 130, { scale: 3, color: "#4d7a80", anchor: "middle" })}
+    ${renderChainPill(chain, 501, 130, 3)}
   `;
 
   let yOffset = 180;
-  sections.slice(0, 2).forEach((sec) => {
-    content += pixelText(`// ${sec.title}`, 100, yOffset, { scale: 3, color: "#00eeff" });
+  for (const sec of sections.slice(0, 2)) {
+    content += pixelText(`// ${sec.title}`, 120, yOffset, { scale: 3, color: "#00eeff" });
     yOffset += 40;
-    (sec.items || []).slice(0, 3).forEach((l) => {
-      content += `${pixelText(`> ${clampText(l.name || "Token", 15)}`, 120, yOffset, { scale: 3, color: "#dfffee" })}
+    for (const l of (sec.items || []).slice(0, 3)) {
+      const tokenImg = await fetchImageBase64(l.tokenUrl);
+      content += tokenImg ? `<image x="140" y="${yOffset - 15}" width="30" height="30" href="${tokenImg}" clip-path="url(#circleClip)" transform="translate(-35, -35) scale(0.7)"/>` : "";
+      content += `${pixelText(`> ${clampText(l.name || l.campaign || "Token", 15)}`, 190, yOffset, { scale: 3, color: "#dfffee" })}
                   ${pixelText(`${Math.round(l.progressPct || 0)}%`, 900, yOffset, { scale: 3, color: "#00eeff", anchor: "end" })}`;
       yOffset += 40;
-    });
-    yOffset += 20;
-  });
+    }
+    yOffset += 10;
+  }
 
-  return getBaseSvg(content, { primaryGlow: "#00eeff", secondaryGlow: "#0088ff" });
+  return await getBaseSvg(content, { primaryGlow: "#00eeff", secondaryGlow: "#0088ff" });
 }
 
-function buildProgressThresholdAlert(payload) {
-  const { campaign = "", chain = "BNB", threshold = 0 } = payload;
-  return getBaseSvg(`
-    ${pixelText("NEAR GRADUATION", 501, 120, { scale: 7, color: "#ff4400", anchor: "middle" })}
-    ${pixelText(`CAMPAIGN: ${String(campaign).slice(0, 15)}`, 501, 200, { scale: 4, color: "#ffffff", anchor: "middle" })}
-    ${pixelText(`${Math.round(threshold)}% PROGRESS`, 501, 280, { scale: 8, color: "#ff4400", anchor: "middle" })}
-    ${pixelText(`CHAIN: ${chain}`, 501, 380, { scale: 3, color: "#aaaaaa", anchor: "middle" })}
+async function buildProgressThresholdAlert(payload) {
+  const { campaign = "", name = "", chain = "BNB", threshold = 0, tokenUrl } = payload;
+  const tokenImg = await fetchImageBase64(tokenUrl);
+  
+  return await getBaseSvg(`
+    ${pixelText("NEAR GRADUATION", 501, 100, { scale: 7, color: "#ff4400", anchor: "middle" })}
+    ${renderChainPill(chain, 501, 160, 3)}
+    
+    ${tokenImg ? `<image x="411" y="200" width="180" height="180" href="${tokenImg}" clip-path="url(#largeCircleClip)" transform="translate(-180, -180) scale(2)"/>` : ""}
+    
+    ${renderCampaignLabel(name, campaign, 501, 410, 4, "middle", "#ffffff")}
+    ${pixelText(`${Math.round(threshold)}% PROGRESS`, 501, 450, { scale: 5, color: "#ff4400", anchor: "middle" })}
   `, { primaryGlow: "#ff4400", secondaryGlow: "#ff0000" });
 }
 
-function buildCampaignMilestone(payload) {
-  const { campaign = "", chain = "BNB", milestone = 0 } = payload;
-  return getBaseSvg(`
-    ${pixelText("MILESTONE REACHED", 501, 120, { scale: 7, color: "#10f58a", anchor: "middle" })}
-    ${pixelText(`CAMPAIGN: ${String(campaign).slice(0, 15)}`, 501, 200, { scale: 4, color: "#ffffff", anchor: "middle" })}
-    ${pixelText(`${Math.round(milestone)}% PROGRESS`, 501, 280, { scale: 8, color: "#10f58a", anchor: "middle" })}
-    ${pixelText(`CHAIN: ${chain}`, 501, 380, { scale: 3, color: "#aaaaaa", anchor: "middle" })}
+async function buildCampaignMilestone(payload) {
+  const { campaign = "", name = "", chain = "BNB", milestone = 0, tokenUrl } = payload;
+  const tokenImg = await fetchImageBase64(tokenUrl);
+
+  return await getBaseSvg(`
+    ${pixelText("MILESTONE REACHED", 501, 100, { scale: 7, color: "#10f58a", anchor: "middle" })}
+    ${renderChainPill(chain, 501, 160, 3)}
+    
+    ${tokenImg ? `<image x="411" y="200" width="180" height="180" href="${tokenImg}" clip-path="url(#largeCircleClip)" transform="translate(-180, -180) scale(2)"/>` : ""}
+    
+    ${renderCampaignLabel(name, campaign, 501, 410, 4, "middle", "#ffffff")}
+    ${pixelText(`${Math.round(milestone)}% PROGRESS`, 501, 450, { scale: 5, color: "#10f58a", anchor: "middle" })}
   `);
 }
 
-function buildGraduationAlert(payload) {
-  const { campaign = "", chain = "BNB", creatorReward } = payload;
-  return getBaseSvg(`
-    ${pixelText("GRADUATION ALERT", 501, 150, { scale: 8, color: "#f39b3d", anchor: "middle" })}
-    ${pixelText(`CAMPAIGN: ${String(campaign).slice(0, 12)}`, 501, 260, { scale: 4, color: "#ffffff", anchor: "middle" })}
-    ${pixelText(`CHAIN: ${chain}`, 501, 320, { scale: 3, color: "#aaaaaa", anchor: "middle" })}
-    ${creatorReward ? pixelText(`REWARD: ${creatorReward}`, 501, 380, { scale: 4, color: "#10f58a", anchor: "middle" }) : ""}
+async function buildGraduationAlert(payload) {
+  const { campaign = "", name = "", chain = "BNB", creatorReward, tokenUrl } = payload;
+  const tokenImg = await fetchImageBase64(tokenUrl);
+
+  return await getBaseSvg(`
+    ${pixelText("GRADUATION ALERT", 501, 100, { scale: 8, color: "#f39b3d", anchor: "middle" })}
+    ${renderChainPill(chain, 501, 170, 3)}
+    
+    ${tokenImg ? `<image x="411" y="210" width="180" height="180" href="${tokenImg}" clip-path="url(#largeCircleClip)" transform="translate(-180, -180) scale(2)"/>` : ""}
+    
+    ${renderCampaignLabel(name, campaign, 501, 420, 5, "middle", "#ffffff")}
+    ${creatorReward ? pixelText(`REWARD: ${creatorReward}`, 501, 470, { scale: 4, color: "#10f58a", anchor: "middle" }) : ""}
   `);
 }
 
-function buildDailyRecap(payload) {
+async function buildDailyRecap(payload) {
   const { date = "", references = [] } = payload;
   let content = `
     ${pixelText("DAILY RECAP", 501, 80, { scale: 7, color: "#ffffff", anchor: "middle" })}
@@ -225,7 +314,7 @@ function buildDailyRecap(payload) {
     yOffset += 45;
   });
 
-  return getBaseSvg(content, { primaryGlow: "#ffffff", secondaryGlow: "#aaaaaa" });
+  return await getBaseSvg(content, { primaryGlow: "#ffffff", secondaryGlow: "#aaaaaa" });
 }
 
 // ---------------------------------------------------------------------------
@@ -243,7 +332,6 @@ async function renderPng(svg) {
 
 export default async function handler(req, res) {
   if (req.method !== "POST" && req.method !== "GET") {
-    // If your backend handles JSON responses differently, adapt this
     if (typeof json === "function") return json(res, 405, { error: "Method not allowed" });
     res.statusCode = 405;
     return res.end(JSON.stringify({ error: "Method not allowed" }));
@@ -256,25 +344,25 @@ export default async function handler(req, res) {
     let svg = "";
     switch (type) {
       case "campaign.launch_digest_ready":
-        svg = buildLaunchDigest(payload);
+        svg = await buildLaunchDigest(payload);
         break;
       case "campaign.trending_digest_ready":
-        svg = buildTrendingDigest(payload);
+        svg = await buildTrendingDigest(payload);
         break;
       case "campaign.progress_threshold_reached":
-        svg = buildProgressThresholdAlert(payload);
+        svg = await buildProgressThresholdAlert(payload);
         break;
       case "campaign.milestone_reached":
-        svg = buildCampaignMilestone(payload);
+        svg = await buildCampaignMilestone(payload);
         break;
       case "campaign.graduated":
-        svg = buildGraduationAlert(payload);
+        svg = await buildGraduationAlert(payload);
         break;
       case "platform.daily_recap_ready":
-        svg = buildDailyRecap(payload);
+        svg = await buildDailyRecap(payload);
         break;
       default:
-        svg = getBaseSvg(pixelText("NOTIFICATION", 501, 250, { scale: 7, color: "#ffffff", anchor: "middle" }));
+        svg = await getBaseSvg(pixelText("NOTIFICATION", 501, 250, { scale: 7, color: "#ffffff", anchor: "middle" }));
     }
 
     const png = await renderPng(svg);
