@@ -183,7 +183,7 @@ function renderChainPill(chain, x, y, scale = 3) {
 function renderCampaignLabel(name, ticker, x, y, scale = 4, anchor = "middle", color = "#ffffff") {
   const n = String(name || "").trim();
   const t = String(ticker || "").trim();
-  
+
   // Render name and ticker on separate lines
   if (n && t && n.toLowerCase() !== t.toLowerCase()) {
     return `
@@ -204,7 +204,7 @@ async function getBaseSvg(content, options = {}) {
   let backdropImg = options.backdropImage || await getLogoBase64();
   if (options.backdropImage === "none") backdropImg = null;
   const smallLogo = await getLogoBase64();
-  
+
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="1002" height="531" viewBox="0 0 1002 531" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
@@ -248,12 +248,12 @@ async function getBaseSvg(content, options = {}) {
 
 async function buildLaunchDigest(payload) {
   const { launches = [], chain = "BNB" } = payload;
-  
+
   let listItems = "";
   for (let i = 0; i < Math.min(launches.length, 5); i++) {
     const l = launches[i];
     const yCenter = 230 + i * 50;
-    
+
     listItems += `${pixelText(`> ${clampText(l.name || l.campaign || "Token", 15)}`, 200, yCenter - 10, { scale: 4, color: "#dfffee", anchor: "start" })}
                   ${pixelText(`${Math.round(l.progressPct || 0)}%`, 800, yCenter - 10, { scale: 4, color: "#10f58a", anchor: "end" })}`;
   }
@@ -281,16 +281,16 @@ async function buildCampaignCreated(payload) {
 async function buildUserJoined(payload) {
   const { username = "New User", avatarUrl } = payload;
   const avatarImg = await fetchImageBase64(avatarUrl);
-  
+
   const usernameText = `@${clampText(username, 15)}`;
   const textScale = 5;
   const textWidth = getPixelTextWidth(usernameText, textScale);
-  
+
   const avatarSize = 90;
   const gap = 25;
   const totalWidth = avatarSize + gap + textWidth;
   const startX = 501 - (totalWidth / 2);
-  
+
   const avatarX = startX;
   const avatarY = 270;
   const textX = startX + avatarSize + gap;
@@ -332,7 +332,7 @@ async function buildTrendingDigest(payload) {
 async function buildProgressThresholdAlert(payload) {
   const { campaign = "", name = "", chain = "BNB", threshold = 0, tokenUrl } = payload;
   const tokenImg = await fetchImageBase64(tokenUrl);
-  
+
   return await getBaseSvg(`
     ${pixelText("NEAR GRADUATION", 501, 110, { scale: 7, color: "#ff4400", anchor: "middle" })}
     
