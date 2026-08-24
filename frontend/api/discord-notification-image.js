@@ -10,8 +10,10 @@ async function getLogoBase64() {
   if (logoBase64) return logoBase64;
   try {
     const logoPath = path.join(__dirname, "../public/images/mw.png");
+    console.log("[discord-notification-image] Loading local logo from", logoPath);
     const data = await fs.readFile(logoPath);
     logoBase64 = `data:image/png;base64,${data.toString("base64")}`;
+    console.log("[discord-notification-image] Successfully loaded local logo");
   } catch (err) {
     console.error("Failed to load mw.png", err);
     logoBase64 = ""; // fallback
@@ -20,16 +22,24 @@ async function getLogoBase64() {
 }
 
 async function fetchImageBase64(url, fallback = "") {
-  if (!url) return fallback;
+  if (!url) {
+    console.log("[discord-notification-image] No tokenUrl provided, skipping image fetch");
+    return fallback;
+  }
   try {
+    console.log("[discord-notification-image] Fetching external image:", url);
     const res = await fetch(url, { signal: AbortSignal.timeout(3000) });
-    if (!res.ok) return fallback;
+    if (!res.ok) {
+      console.log("[discord-notification-image] Fetch failed with status:", res.status, url);
+      return fallback;
+    }
     const arrayBuffer = await res.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
     const contentType = res.headers.get("content-type") || "image/png";
+    console.log(`[discord-notification-image] Successfully fetched image: ${url} (${buffer.length} bytes, ${contentType})`);
     return `data:${contentType};base64,${buffer.toString("base64")}`;
   } catch (err) {
-    console.error("Failed to fetch image", url, err);
+    console.error("[discord-notification-image] Failed to fetch image", url, err);
     return fallback;
   }
 }
@@ -187,15 +197,13 @@ async function getBaseSvg(content, options = {}) {
     </radialGradient>
     <pattern id="grid" width="33" height="33" patternUnits="userSpaceOnUse"><path d="M33 0H0V33" stroke="${primaryGlow}" stroke-opacity="0.055"/></pattern>
     <filter id="textGlow" x="0" y="0" width="1002" height="531" filterUnits="userSpaceOnUse"><feDropShadow dx="0" dy="0" stdDeviation="2" flood-color="${primaryGlow}" flood-opacity="0.55"/></filter>
-    <clipPath id="circleClip">
-      <circle cx="50" cy="50" r="50"/>
-    </clipPath>
-    <clipPath id="largeCircleClip">
-      <circle cx="90" cy="90" r="90"/>
+    <clipPath id="circleClip" clipPathUnits="objectBoundingBox">
+      <circle cx="0.5" cy="0.5" r="0.5"/>
     </clipPath>
   </defs>
 
   <rect width="1002" height="531" fill="url(#bg)"/>
+  ${logoDataUri ? `<image x="251" y="15" width="500" height="500" href="${logoDataUri}" opacity="0.04" />` : ""}
   <rect width="1002" height="531" fill="url(#grid)"/>
   <rect width="1002" height="531" fill="url(#orbGlow)" opacity="0.65"/>
   <rect x="0" y="0" width="1002" height="10" fill="#070707"/>
@@ -220,7 +228,7 @@ async function buildLaunchDigest(payload) {
     const tokenImg = await fetchImageBase64(l.tokenUrl);
     const yCenter = 220 + i * 55;
     
-    listItems += tokenImg ? `<image x="120" y="${yCenter - 20}" width="40" height="40" href="${tokenImg}" clip-path="url(#circleClip)" transform="translate(-70, -70) scale(1.4)"/>` : "";
+    listItems += tokenImg ? `<image x="120" y="${yCenter - 20}" width="40" height="40" href="${tokenImg}" clip-path="url(#circleClip)" preserveAspectRatio="xMidYMid slice"/>` : "";
     listItems += `${pixelText(`> ${clampText(l.name || l.campaign || "Token", 15)}`, 180, yCenter - 10, { scale: 4, color: "#dfffee" })}
                   ${pixelText(`${Math.round(l.progressPct || 0)}%`, 900, yCenter - 10, { scale: 4, color: "#10f58a", anchor: "end" })}`;
   }
@@ -245,7 +253,7 @@ async function buildTrendingDigest(payload) {
     yOffset += 40;
     for (const l of (sec.items || []).slice(0, 3)) {
       const tokenImg = await fetchImageBase64(l.tokenUrl);
-      content += tokenImg ? `<image x="140" y="${yOffset - 15}" width="30" height="30" href="${tokenImg}" clip-path="url(#circleClip)" transform="translate(-35, -35) scale(0.7)"/>` : "";
+      content += tokenImg ? `<image x="140" y="${yOffset - 15}" width="30" height="30" href="${tokenImg}" clip-path="url(#circleClip)" preserveAspectRatio="xMidYMid slice"/>` : "";
       content += `${pixelText(`> ${clampText(l.name || l.campaign || "Token", 15)}`, 190, yOffset, { scale: 3, color: "#dfffee" })}
                   ${pixelText(`${Math.round(l.progressPct || 0)}%`, 900, yOffset, { scale: 3, color: "#00eeff", anchor: "end" })}`;
       yOffset += 40;
@@ -264,7 +272,7 @@ async function buildProgressThresholdAlert(payload) {
     ${pixelText("NEAR GRADUATION", 501, 100, { scale: 7, color: "#ff4400", anchor: "middle" })}
     ${renderChainPill(chain, 501, 160, 3)}
     
-    ${tokenImg ? `<image x="411" y="200" width="180" height="180" href="${tokenImg}" clip-path="url(#largeCircleClip)" transform="translate(-180, -180) scale(2)"/>` : ""}
+    ${tokenImg ? `<image x="411" y="200" width="180" height="180" href="${tokenImg}" clip-path="url(#circleClip)" preserveAspectRatio="xMidYMid slice"/>` : ""}
     
     ${renderCampaignLabel(name, campaign, 501, 410, 4, "middle", "#ffffff")}
     ${pixelText(`${Math.round(threshold)}% PROGRESS`, 501, 450, { scale: 5, color: "#ff4400", anchor: "middle" })}
@@ -279,7 +287,7 @@ async function buildCampaignMilestone(payload) {
     ${pixelText("MILESTONE REACHED", 501, 100, { scale: 7, color: "#10f58a", anchor: "middle" })}
     ${renderChainPill(chain, 501, 160, 3)}
     
-    ${tokenImg ? `<image x="411" y="200" width="180" height="180" href="${tokenImg}" clip-path="url(#largeCircleClip)" transform="translate(-180, -180) scale(2)"/>` : ""}
+    ${tokenImg ? `<image x="411" y="200" width="180" height="180" href="${tokenImg}" clip-path="url(#circleClip)" preserveAspectRatio="xMidYMid slice"/>` : ""}
     
     ${renderCampaignLabel(name, campaign, 501, 410, 4, "middle", "#ffffff")}
     ${pixelText(`${Math.round(milestone)}% PROGRESS`, 501, 450, { scale: 5, color: "#10f58a", anchor: "middle" })}
@@ -294,7 +302,7 @@ async function buildGraduationAlert(payload) {
     ${pixelText("GRADUATION ALERT", 501, 100, { scale: 8, color: "#f39b3d", anchor: "middle" })}
     ${renderChainPill(chain, 501, 170, 3)}
     
-    ${tokenImg ? `<image x="411" y="210" width="180" height="180" href="${tokenImg}" clip-path="url(#largeCircleClip)" transform="translate(-180, -180) scale(2)"/>` : ""}
+    ${tokenImg ? `<image x="411" y="210" width="180" height="180" href="${tokenImg}" clip-path="url(#circleClip)" preserveAspectRatio="xMidYMid slice"/>` : ""}
     
     ${renderCampaignLabel(name, campaign, 501, 420, 5, "middle", "#ffffff")}
     ${creatorReward ? pixelText(`REWARD: ${creatorReward}`, 501, 470, { scale: 4, color: "#10f58a", anchor: "middle" }) : ""}
@@ -340,6 +348,7 @@ export default async function handler(req, res) {
   try {
     const payload = req.method === "POST" ? req.body : (typeof getQuery === "function" ? getQuery(req) : req.query);
     const type = payload.type || payload.event_type;
+    console.log(`[discord-notification-image] Generating SVG for event type: ${type}`, JSON.stringify(payload));
 
     let svg = "";
     switch (type) {
