@@ -14,9 +14,8 @@ const LEGACY_FACTORY_ABI = [
   "function getCampaignPage(uint256 offset,uint256 limit) view returns ((address campaign,address token,address creator,string name,string symbol,string logoURI,string xAccount,string website,string extraLink,uint64 createdAt)[] page)",
 ] as const;
 
-// Temporary launch hygiene: keep claim-upgrade test campaigns operational/indexed,
+// Temporary launch hygiene: keep claim-upgrade/test campaigns operational/indexed,
 // but never surface them through any public on-chain fallback path.
-// Remove these entries after the Solana claim-upgrade acceptance cycle is complete.
 const PUBLIC_HIDDEN_CAMPAIGNS = new Map<number, Set<string>>([
   [
     101,
@@ -28,10 +27,20 @@ const PUBLIC_HIDDEN_CAMPAIGNS = new Map<number, Set<string>>([
   ],
 ]);
 
+const PUBLIC_HIDDEN_SYMBOLS = new Map<number, Set<string>>([
+  [56, new Set(["BWT"])],
+]);
+
 function isPublicHiddenCampaign(chainId: SupportedChainId, campaignAddress: string): boolean {
   const hidden = PUBLIC_HIDDEN_CAMPAIGNS.get(Number(chainId));
   if (!hidden) return false;
   return hidden.has(String(campaignAddress || "").trim());
+}
+
+function isPublicHiddenSymbol(chainId: SupportedChainId, symbol: string): boolean {
+  const hidden = PUBLIC_HIDDEN_SYMBOLS.get(Number(chainId));
+  if (!hidden) return false;
+  return hidden.has(String(symbol || "").trim().toUpperCase());
 }
 
 export type OnChainCampaignPage = {
@@ -83,22 +92,23 @@ async function fetchFactoryCampaignPage(
     .map((row: any, index): CampaignInfo | null => {
       const campaignRaw = String(row?.campaign ?? "").trim();
       const campaign = campaignRaw.toLowerCase();
+      const symbol = String(row?.symbol ?? "");
       if (!ethers.isAddress(campaign)) return null;
       if (isPublicHiddenCampaign(chainId, campaignRaw)) return null;
+      if (isPublicHiddenSymbol(chainId, symbol)) return null;
       return {
         id: offset + index,
         campaign,
         token: String(row?.token ?? "").toLowerCase(),
         creator: String(row?.creator ?? "").toLowerCase(),
         name: String(row?.name ?? "Unknown"),
-        symbol: String(row?.symbol ?? ""),
+        symbol,
         logoURI: String(row?.logoURI ?? ""),
         metadataURI: String(row?.metadataURI ?? ""),
         xAccount: String(row?.xAccount ?? ""),
         website: String(row?.website ?? ""),
         extraLink: String(row?.extraLink ?? ""),
         createdAt: row?.createdAt ? Number(row.createdAt) : undefined,
-        // Preserve factory origin for multi-generation inventory.
         factoryAddress: factoryAddress.toLowerCase(),
       } as CampaignInfo;
     })
@@ -112,10 +122,6 @@ async function fetchFactoryCampaignPage(
   };
 }
 
-/**
- * Load campaigns from the active factory plus all supported historical factories.
- * Dedupes by campaign address (first occurrence wins — usually the active factory page).
- */
 export async function fetchOnChainCampaignPage(
   chainId: SupportedChainId,
   options: { limit?: number; cursor?: number } = {},
@@ -134,8 +140,6 @@ export async function fetchOnChainCampaignPage(
     return { campaigns: [], nextCursor: null, total: 0 };
   }
 
-  // For multi-factory inventory we always load the latest page from each factory
-  // (cursor applies only when a single factory is configured).
   const pages = await Promise.all(
     factoryList.map((factoryAddress) =>
       fetchFactoryCampaignPage(chainId, factoryAddress, {
@@ -158,7 +162,6 @@ export async function fetchOnChainCampaignPage(
     }
   }
 
-  // Newest first across factories.
   campaigns.sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
 
   return {
