@@ -402,14 +402,13 @@ export async function publishRecruiterSettlementBatches(): Promise<{
       if (portalRow?.accountId) {
         const claim = await client.query(
           `insert into public.recruiter_reward_claims (
-             recruiter_id, chain, token, amount_raw, payout_wallet, status, metadata
-           ) values ($1, 'solana', 'SOL', $2::numeric, $3, 'created', $4::jsonb)
+             recruiter_id, chain, token, amount_raw, payout_wallet, status
+           ) values ($1, 'solana', 'SOL', $2::numeric, $3, 'created')
            returning id`,
           [
             portalRow.accountId,
             recipient.amountLamports,
             recipient.walletAddress,
-            JSON.stringify({ epochId: epoch.id, ledgerIds: portalRow.ledgerIds }),
           ],
         );
         recruiterClaimId = String(claim.rows[0].id);
