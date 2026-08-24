@@ -204,7 +204,7 @@ async function getBaseSvg(content, options = {}) {
   </defs>
 
   <rect width="1002" height="531" fill="url(#bg)"/>
-  ${backdropImg ? `<g opacity="0.20"><image x="251" y="15" width="500" height="500" href="${backdropImg}" clip-path="url(#circleClip)" preserveAspectRatio="xMidYMid slice" /></g>` : ""}
+  ${backdropImg ? `<g opacity="0.40"><image x="251" y="15" width="500" height="500" href="${backdropImg}" clip-path="url(#circleClip)" preserveAspectRatio="xMidYMid slice" /></g>` : ""}
   <rect width="1002" height="531" fill="url(#grid)"/>
   <rect width="1002" height="531" fill="url(#orbGlow)" opacity="0.65"/>
   <rect x="0" y="0" width="1002" height="10" fill="#070707"/>
