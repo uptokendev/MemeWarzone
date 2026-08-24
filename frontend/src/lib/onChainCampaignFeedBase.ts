@@ -14,6 +14,26 @@ const LEGACY_FACTORY_ABI = [
   "function getCampaignPage(uint256 offset,uint256 limit) view returns ((address campaign,address token,address creator,string name,string symbol,string logoURI,string xAccount,string website,string extraLink,uint64 createdAt)[] page)",
 ] as const;
 
+// Temporary launch hygiene: keep claim-upgrade test campaigns operational/indexed,
+// but never surface them through any public on-chain fallback path.
+// Remove these entries after the Solana claim-upgrade acceptance cycle is complete.
+const PUBLIC_HIDDEN_CAMPAIGNS = new Map<number, Set<string>>([
+  [
+    101,
+    new Set([
+      "9t72mNAVpnJCn42Z2quJTqoS8wsBTGR9aG2CvbeumXEF",
+      "Bv2EZEznfuHNHcoC5DXJJtJH8x7mAjCUagsPGeXK3Jms",
+      "EFUF3bPBaN3MzSBpm4MfXMdbXDmesPWcKaoNsLzn45VH",
+    ]),
+  ],
+]);
+
+function isPublicHiddenCampaign(chainId: SupportedChainId, campaignAddress: string): boolean {
+  const hidden = PUBLIC_HIDDEN_CAMPAIGNS.get(Number(chainId));
+  if (!hidden) return false;
+  return hidden.has(String(campaignAddress || "").trim());
+}
+
 export type OnChainCampaignPage = {
   campaigns: CampaignInfo[];
   nextCursor: number | null;
@@ -61,8 +81,10 @@ async function fetchFactoryCampaignPage(
 
   const campaigns = Array.from(page ?? [])
     .map((row: any, index): CampaignInfo | null => {
-      const campaign = String(row?.campaign ?? "").toLowerCase();
+      const campaignRaw = String(row?.campaign ?? "").trim();
+      const campaign = campaignRaw.toLowerCase();
       if (!ethers.isAddress(campaign)) return null;
+      if (isPublicHiddenCampaign(chainId, campaignRaw)) return null;
       return {
         id: offset + index,
         campaign,
