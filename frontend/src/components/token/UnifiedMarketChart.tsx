@@ -29,6 +29,7 @@ import {
   patchActiveLatestBucket,
   shouldEstablishChartRange,
 } from "@/lib/chart/canonicalChartCandles";
+import { layoutCreatorPins } from "@/lib/chart/creatorTradePins";
 
 export type UnifiedChartResolution = "1s" | "5s" | "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d";
 export type UnifiedChartMetric = "marketcap" | "price";
@@ -683,37 +684,19 @@ export function UnifiedMarketChart({
     const chart = chartRef.current;
     const series = seriesRef.current;
     if (!chart || !series) { setPlacedPins([]); return; }
-    const raw: Array<CreatorTradePin & { x: number; y: number }> = [];
+    const overlay = overlayRef.current;
+    const raw: Array<CreatorTradePin & { x: number; y: number | null }> = [];
     for (const pin of creatorPinsRef.current) {
       const x = chart.timeScale().timeToCoordinate(pin.timeSec as Time);
+      if (x == null || !Number.isFinite(x)) continue;
       const y = series.priceToCoordinate(pin.value);
-      if (x == null || y == null || !Number.isFinite(x) || !Number.isFinite(y)) continue;
-      raw.push({ ...pin, x, y });
+      raw.push({ ...pin, x, y: y == null || !Number.isFinite(y) ? null : y });
     }
-    const groups: Array<Array<(typeof raw)[number]>> = [];
-    raw.sort((a, b) => a.x - b.x || a.timestamp - b.timestamp);
-    for (const pin of raw) {
-      const last = groups[groups.length - 1];
-      if (last && Math.abs(last[0].x - pin.x) <= 12) last.push(pin); else groups.push([pin]);
-    }
-    const liftPx = 44;
-    const next: PlacedCreatorPin[] = [];
-    const overlayWidth = overlayRef.current?.clientWidth || 0;
-    for (const group of groups) {
-      group.sort((a, b) => a.timestamp - b.timestamp || a.id.localeCompare(b.id));
-      const stackCount = group.length;
-      const anchorY = Math.min(...group.map((pin) => pin.y));
-      const anchorX = group.reduce((sum, pin) => sum + pin.x, 0) / stackCount;
-      const safeX = overlayWidth > 0 ? Math.min(Math.max(anchorX, 18), overlayWidth - 18) : anchorX;
-      group.forEach((pin, stackIndex) => next.push({
-        ...pin,
-        x: safeX,
-        y: Math.max(30, anchorY - liftPx - stackIndex * 30),
-        stackIndex,
-        stackCount,
-      }));
-    }
-    setPlacedPins(next);
+    const laidOut = layoutCreatorPins(raw, {
+      width: overlay?.clientWidth || 0,
+      height: overlay?.clientHeight || 0,
+    });
+    setPlacedPins(laidOut as PlacedCreatorPin[]);
   }, []);
 
   useEffect(() => {
@@ -729,8 +712,8 @@ export function UnifiedMarketChart({
       rightPriceScale: { visible: true, autoScale: true, borderVisible: true, borderColor: "rgba(255,255,255,0.18)", ticksVisible: true, minimumWidth: 88, scaleMargins: { top: 0.20, bottom: 0.12 } },
       timeScale: { borderVisible: true, borderColor: "rgba(255,255,255,0.12)", timeVisible: true, secondsVisible: intervalSeconds <= 60, rightOffset: 10, barSpacing: desiredBarPx, minBarSpacing: MIN_BAR_SPACING, lockVisibleTimeRangeOnResize: false },
       localization: { locale: typeof navigator !== "undefined" ? navigator.language : undefined, timeFormatter: (time: Time) => formatCrosshairTime(time), tickMarkFormatter: (time: Time) => formatTickLabel(time, intervalSeconds) },
-      handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
-      handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: false } },
+      handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
+      handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true }, axisDoubleClickReset: { time: true, price: true } },
     });
     const series = chart.addSeries(CandlestickSeries, {
       upColor: "#26a69a",
@@ -753,6 +736,38 @@ export function UnifiedMarketChart({
     };
     chart.timeScale().subscribeVisibleLogicalRangeChange(onVisible);
     chart.timeScale().subscribeVisibleTimeRangeChange(onVisible);
+    let pinMoveRaf = 0;
+    const schedulePinMove = () => {
+      if (pinMoveRaf) return;
+      pinMoveRaf = requestAnimationFrame(() => {
+        pinMoveRaf = 0;
+        repositionCreatorPins();
+      });
+    };
+    const PRICE_AXIS_PX = 96;
+    const pointerOnPriceAxis = (event: PointerEvent) => {
+      const bounds = element.getBoundingClientRect();
+      return event.clientX >= bounds.right - PRICE_AXIS_PX;
+    };
+    const onPriceAxisDown = (event: PointerEvent) => {
+      if (!pointerOnPriceAxis(event)) return;
+      userInteractedRef.current = true;
+      try { chart.priceScale("right").applyOptions({ autoScale: false }); } catch { /* ignore */ }
+      setAutoScaleEnabled(false);
+    };
+    const onPriceAxisDblClick = (event: MouseEvent) => {
+      const bounds = element.getBoundingClientRect();
+      if (event.clientX < bounds.right - PRICE_AXIS_PX) return;
+      try { chart.priceScale("right").applyOptions({ autoScale: true, scaleMargins: { top: 0.20, bottom: 0.12 } }); } catch { /* ignore */ }
+      setAutoScaleEnabled(true);
+    };
+    const onPriceAxisMove = (event: PointerEvent) => {
+      if ((event.buttons & 1) === 0) return;
+      schedulePinMove();
+    };
+    element.addEventListener("pointerdown", onPriceAxisDown);
+    element.addEventListener("dblclick", onPriceAxisDblClick);
+    element.addEventListener("pointermove", onPriceAxisMove);
     const observer = new ResizeObserver(() => {
       const target = containerRef.current;
       if (!target || !chartRef.current) return;
@@ -763,6 +778,10 @@ export function UnifiedMarketChart({
     observer.observe(element);
     return () => {
       observer.disconnect();
+      element.removeEventListener("pointerdown", onPriceAxisDown);
+      element.removeEventListener("dblclick", onPriceAxisDblClick);
+      element.removeEventListener("pointermove", onPriceAxisMove);
+      if (pinMoveRaf) cancelAnimationFrame(pinMoveRaf);
       try { chart.timeScale().unsubscribeVisibleLogicalRangeChange(onVisible); chart.timeScale().unsubscribeVisibleTimeRangeChange(onVisible); } catch { /* ignore */ }
       chart.remove();
       chartRef.current = null;
@@ -785,7 +804,8 @@ export function UnifiedMarketChart({
     const chart = chartRef.current;
     if (!chart) return;
     chart.applyOptions({
-      handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: !autoScaleEnabled } },
+      handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: { time: true, price: true }, axisDoubleClickReset: { time: true, price: true } },
+      handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
     });
     try {
       chart.priceScale("right").applyOptions({ autoScale: autoScaleEnabled, scaleMargins: { top: 0.20, bottom: 0.12 } });
@@ -1020,7 +1040,7 @@ export function UnifiedMarketChart({
         <div className="flex items-center gap-2">
           <button type="button" onClick={goLive} className="rounded px-1.5 py-1 font-semibold text-muted-foreground hover:bg-white/5 hover:text-orange-200">LIVE</button>
           <span className="tabular-nums text-foreground/90" title={serverTime ? "Synchronized to MemeWarzone server UTC" : "UTC clock; server sync pending"}>{serverClock} UTC</span>
-          <button type="button" onClick={() => setAutoScaleEnabled((current) => !current)} className={`rounded px-1.5 py-1 font-semibold ${autoScaleEnabled ? "text-emerald-300" : "text-muted-foreground hover:text-foreground"}`}>auto</button>
+          <button type="button" onClick={() => setAutoScaleEnabled((current) => !current)} title={autoScaleEnabled ? "Auto scale on. Drag the price axis to pan; double-click it to reset." : "Auto scale off. Drag the price axis to pan; double-click it to restore auto."} className={`rounded px-1.5 py-1 font-semibold ${autoScaleEnabled ? "text-emerald-300" : "text-muted-foreground hover:text-foreground"}`}>auto</button>
         </div>
       </div>
     </div>

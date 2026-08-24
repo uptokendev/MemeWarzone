@@ -58,6 +58,9 @@ import { canonicalAthUsd } from "@/lib/canonicalMarket";
 import { canonicalAthNativeFromCandles } from "@/lib/chart/canonicalChartCandles";
 import { UpvoteDialog } from "@/components/token/UpvoteDialog";
 import { useWallet } from "@/contexts/WalletContext";
+import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
+import { campaignWalletMatches } from "@/lib/activeWalletChain";
+import { useActiveWalletKind } from "@/hooks/useActiveWalletKind";
 import { followCampaign, unfollowCampaign, isFollowingCampaign } from "@/lib/followApi";
 import { useCurveTrades, type CurveTradePoint } from "@/hooks/useCurveTrades";
 import { useTokenTransferHolders } from "@/hooks/useTokenTransferHolders";
@@ -607,6 +610,8 @@ const TokenDetails = () => {
   // Launchpad hooks + state for the on-chain data
   const { fetchCampaigns, fetchCampaignLogoURI, fetchCampaignSummary, fetchCampaignMetrics, fetchCampaignActivity, buyTokens, sellTokens } = useLaunchpad();
   const wallet = useWallet();
+  const { solanaAccount, isSolanaConnected } = useSolanaWallet();
+  const activeWalletKind = useActiveWalletKind();
   const [isFollowing, setIsFollowing] = useState(false);
   const [followBusy, setFollowBusy] = useState(false);
 
@@ -666,6 +671,16 @@ const TokenDetails = () => {
   }, [campaign, campaignAddr, campaignAddress, chainIdForStorage]);
   /** Native unit for bonding quotes/UI: SOL on Solana, BNB on EVM. Never show BNB on Solana pages. */
   const nativeUnit = isSolanaPage ? "SOL" : "BNB";
+  const walletMatchesCampaign = campaignWalletMatches({
+    isSolanaCampaign: isSolanaPage,
+    storedKind: activeWalletKind,
+    solanaConnected: Boolean(isSolanaConnected && solanaAccount),
+    bnbConnected: Boolean(wallet.isConnected && wallet.account),
+  });
+  const connectTradeWalletLabel = isSolanaPage ? "Connect SOL wallet" : "Connect BNB wallet";
+  const openWalletModal = useCallback(() => {
+    try { window.dispatchEvent(new CustomEvent("memewarzone:openWalletModal")); } catch { /* ignore */ }
+  }, []);
   const readProvider = useMemo(
     () => (isSolanaPage ? null : getReadProvider(chainIdForStorage)),
     [chainIdForStorage, isSolanaPage],
@@ -2605,6 +2620,13 @@ const toSeconds = (ts: number): number => {
 
     const loadBalances = async () => {
       try {
+        if (!walletMatchesCampaign) {
+          if (!cancelled) {
+            setBnbBalanceWei(null);
+            setTokenBalanceWei(null);
+          }
+          return;
+        }
         // Solana: load SOL + token ATA balances for position + trade panel.
         if (isSolanaPage) {
           try {
@@ -2683,7 +2705,7 @@ const toSeconds = (ts: number): number => {
     return () => {
       cancelled = true;
     };
-  }, [readProvider, wallet.account, campaign?.token, campaign?.campaign, isSolanaPage, solanaBalanceTick]);
+  }, [readProvider, wallet.account, campaign?.token, campaign?.campaign, isSolanaPage, solanaBalanceTick, walletMatchesCampaign]);
 
   // Build transactions table rows from continuous market trade stream.
   useEffect(() => {
@@ -3452,6 +3474,16 @@ const toSeconds = (ts: number): number => {
 
   const handlePlaceTrade = async () => {
     if (!campaign?.campaign) return;
+    if (!walletMatchesCampaign) {
+      toast({
+        title: connectTradeWalletLabel,
+        description: isSolanaPage
+          ? "This campaign is on Solana. Connect Phantom / Solflare to buy or sell."
+          : "This campaign is on BNB. Connect a BNB wallet to buy or sell.",
+      });
+      openWalletModal();
+      return;
+    }
 
     // ── Solana: bonding until close, then same click becomes a Meteora fill ─
     if (isSolanaPage) {
@@ -4504,7 +4536,7 @@ const toSeconds = (ts: number): number => {
                   marketState={unifiedMarket.state}
                   serverTime={unifiedMarket.serverTime}
                   graduationMarker={unifiedMarket.graduationMarker || solanaGraduationMarker}
-                  creatorAddress={campaign?.creator}
+                  creatorAddress={isSolanaPage ? (solanaCurve?.creator || campaign?.creator) : campaign?.creator}
                   creatorAvatarUrl={creatorProfile?.avatarUrl}
                   creatorDisplayName={creatorProfile?.displayName}
                   chainId={chainIdForStorage}
@@ -4918,6 +4950,13 @@ const toSeconds = (ts: number): number => {
                     <p className="mt-1 font-mono text-foreground break-words">{formatTokenFromWei(tokenBalanceWei)} {tokenData.ticker}</p>
                   </div>
                 </div>
+                {walletMatchesCampaign ? null : (
+                  <p className="mt-2 text-[11px] text-amber-300">
+                    {isSolanaPage
+                      ? "Wrong theater. Connect a SOL wallet to trade this campaign."
+                      : "Wrong theater. Connect a BNB wallet to trade this campaign."}
+                  </p>
+                )}
               </div>
 
               <Tabs value={tradeTab} onValueChange={handleTradeTabChange}>
@@ -5014,21 +5053,30 @@ const toSeconds = (ts: number): number => {
                   </div>
 
                   <Button
-                    onClick={handlePlaceTrade}
+                    onClick={walletMatchesCampaign ? handlePlaceTrade : openWalletModal}
                     disabled={
-                      tradePending ||
-                      approvePending ||
-                      quoteLoading ||
-                      (isSolanaPage
-                        ? effectiveBnbWei <= 0n && !solanaCurveClosed && !contractGraduated
-                        : (isDexStage && !isTopazTradingActive) ||
-                          (tradeInputDenom === "BNB"
-                            ? effectiveBnbWei <= 0n || effectiveTokenWei <= 0n
-                            : parseTokenAmountWei(tradeAmount) <= 0n))
+                      walletMatchesCampaign &&
+                      (tradePending ||
+                        approvePending ||
+                        quoteLoading ||
+                        (isSolanaPage
+                          ? effectiveBnbWei <= 0n && !solanaCurveClosed && !contractGraduated
+                          : (isDexStage && !isTopazTradingActive) ||
+                            (tradeInputDenom === "BNB"
+                              ? effectiveBnbWei <= 0n || effectiveTokenWei <= 0n
+                              : parseTokenAmountWei(tradeAmount) <= 0n)))
                     }
                     className={`w-full ${topbarButtonClass} py-5`}
                   >
-                    {tradePending ? "Processing..." : isSolanaPage && (contractGraduated || solanaCurveClosed) ? "Buy on Meteora" : isDexStage ? "Buy on Topaz" : "Buy"}
+                    {!walletMatchesCampaign
+                      ? connectTradeWalletLabel
+                      : tradePending
+                        ? "Processing..."
+                        : isSolanaPage && (contractGraduated || solanaCurveClosed)
+                          ? "Buy on Meteora"
+                          : isDexStage
+                            ? "Buy on Topaz"
+                            : "Buy"}
                   </Button>
                 </TabsContent>
 
@@ -5153,21 +5201,30 @@ const toSeconds = (ts: number): number => {
                   </div>
 
                   <Button
-                    onClick={handlePlaceTrade}
+                    onClick={walletMatchesCampaign ? handlePlaceTrade : openWalletModal}
                     disabled={
-                      tradePending ||
-                      approvePending ||
-                      quoteLoading ||
-                      (isSolanaPage
-                        ? effectiveTokenWei <= 0n && !solanaCurveClosed && !contractGraduated
-                        : (isDexStage && !isTopazTradingActive) ||
-                          (tradeInputDenom === "BNB"
-                            ? effectiveBnbWei <= 0n || effectiveTokenWei <= 0n
-                            : parseTokenAmountWei(tradeAmount) <= 0n))
+                      walletMatchesCampaign &&
+                      (tradePending ||
+                        approvePending ||
+                        quoteLoading ||
+                        (isSolanaPage
+                          ? effectiveTokenWei <= 0n && !solanaCurveClosed && !contractGraduated
+                          : (isDexStage && !isTopazTradingActive) ||
+                            (tradeInputDenom === "BNB"
+                              ? effectiveBnbWei <= 0n || effectiveTokenWei <= 0n
+                              : parseTokenAmountWei(tradeAmount) <= 0n)))
                     }
                     className={`w-full ${topbarButtonClass} py-5`}
                   >
-                    {tradePending ? "Processing..." : isSolanaPage && (contractGraduated || solanaCurveClosed) ? "Sell on Meteora" : isDexStage ? "Sell on Topaz" : "Sell"}
+                    {!walletMatchesCampaign
+                      ? connectTradeWalletLabel
+                      : tradePending
+                        ? "Processing..."
+                        : isSolanaPage && (contractGraduated || solanaCurveClosed)
+                          ? "Sell on Meteora"
+                          : isDexStage
+                            ? "Sell on Topaz"
+                            : "Sell"}
                   </Button>
                 </TabsContent>
               </Tabs>

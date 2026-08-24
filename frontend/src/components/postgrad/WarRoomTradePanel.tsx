@@ -4,6 +4,8 @@ import type { CampaignInfo, CampaignMetrics } from "@/lib/launchpadClient";
 import { isUnsupportedContractMethod } from "@/lib/launchpadClient";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
+import { campaignWalletMatches } from "@/lib/activeWalletChain";
+import { useActiveWalletKind } from "@/hooks/useActiveWalletKind";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -224,6 +226,7 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
   const { toast } = useToast();
   const wallet = useWallet();
   const solanaWallet = useSolanaWallet();
+  const activeWalletKind = useActiveWalletKind();
   const [metrics, setMetrics] = useState<CampaignMetrics | null>(null);
   const [solanaCurve, setSolanaCurve] = useState<SolanaCampaignCurveState | null>(null);
   const [tradeAmount, setTradeAmount] = useState("0");
@@ -245,6 +248,16 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
     isSolanaAddress(campaign.token) ||
     Number((campaign as { chainId?: number }).chainId) === SOLANA_CHAIN_ID;
   const nativeUnit = isSolanaCampaign ? "SOL" : "BNB";
+  const walletMatchesCampaign = campaignWalletMatches({
+    isSolanaCampaign,
+    storedKind: activeWalletKind,
+    solanaConnected: Boolean(solanaWallet.isSolanaConnected && solanaWallet.solanaAccount),
+    bnbConnected: Boolean(wallet.isConnected && wallet.account),
+  });
+  const connectTradeWalletLabel = isSolanaCampaign ? "Connect SOL wallet" : "Connect BNB wallet";
+  const openWalletModal = () => {
+    try { window.dispatchEvent(new CustomEvent("memewarzone:openWalletModal")); } catch { /* ignore */ }
+  };
   const tokenDecimals = isSolanaCampaign ? Number(solanaCurve?.tokenDecimals ?? 6) : TOKEN_DECIMALS;
   const solanaDex = Boolean(solanaCurve?.graduated || solanaCurve?.curveClosed);
 
@@ -299,6 +312,11 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
 
   const loadBalances = useCallback(async () => {
     try {
+      if (!walletMatchesCampaign) {
+        setBnbBalanceWei(null);
+        setTokenBalanceWei(null);
+        return;
+      }
       if (isSolanaCampaign) {
         const { getSolanaProvider } = await import("@/lib/solanaWallet");
         const { loadSolanaWeb3 } = await import("@/lib/solanaWeb3");
@@ -350,7 +368,7 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
       setBnbBalanceWei(null);
       setTokenBalanceWei(null);
     }
-  }, [campaign.campaign, campaign.token, isSolanaCampaign, solanaWallet.solanaAccount, wallet.account, wallet.provider]);
+  }, [campaign.campaign, campaign.token, isSolanaCampaign, solanaWallet.solanaAccount, wallet.account, wallet.provider, walletMatchesCampaign]);
 
   useEffect(() => {
     loadMetrics();
@@ -762,6 +780,16 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
 
   const handlePlaceTrade = async () => {
     if (!campaign.campaign) return;
+    if (!walletMatchesCampaign) {
+      toast({
+        title: connectTradeWalletLabel,
+        description: isSolanaCampaign
+          ? "This campaign is on Solana. Connect Phantom / Solflare to buy or sell."
+          : "This campaign is on BNB. Connect a BNB wallet to buy or sell.",
+      });
+      openWalletModal();
+      return;
+    }
 
     if (isSolanaCampaign) {
       try {
@@ -1214,17 +1242,26 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
             </div>
 
             <Button
-              onClick={handlePlaceTrade}
+              onClick={walletMatchesCampaign ? handlePlaceTrade : openWalletModal}
               disabled={
-                tradePending ||
-                approvePending ||
-                quoteLoading ||
-                (isDexStage && !isSolanaCampaign && !isTopazTradingActive) ||
-                (tradeInputDenom === "BNB" ? effectiveBnbWei <= 0n : parseTokenAmountDecimals(tradeAmount, tokenDecimals) <= 0n)
+                walletMatchesCampaign &&
+                (tradePending ||
+                  approvePending ||
+                  quoteLoading ||
+                  (isDexStage && !isSolanaCampaign && !isTopazTradingActive) ||
+                  (tradeInputDenom === "BNB" ? effectiveBnbWei <= 0n : parseTokenAmountDecimals(tradeAmount, tokenDecimals) <= 0n))
               }
               className={`w-full ${topbarButtonClass}`}
             >
-              {tradePending ? "Processing..." : isSolanaCampaign && isDexStage ? "Buy on Meteora" : isDexStage ? "Buy on Topaz" : "Buy"}
+              {!walletMatchesCampaign
+                ? connectTradeWalletLabel
+                : tradePending
+                  ? "Processing..."
+                  : isSolanaCampaign && isDexStage
+                    ? "Buy on Meteora"
+                    : isDexStage
+                      ? "Buy on Topaz"
+                      : "Buy"}
             </Button>
           </TabsContent>
 
@@ -1318,17 +1355,26 @@ export function WarRoomTradePanel({ campaign }: { campaign: CampaignInfo }) {
             </div>
 
             <Button
-              onClick={handlePlaceTrade}
+              onClick={walletMatchesCampaign ? handlePlaceTrade : openWalletModal}
               disabled={
-                tradePending ||
-                approvePending ||
-                quoteLoading ||
-                (isDexStage && !isSolanaCampaign && !isTopazTradingActive) ||
-                (tradeInputDenom === "BNB" ? effectiveBnbWei <= 0n : parseTokenAmountDecimals(tradeAmount, tokenDecimals) <= 0n)
+                walletMatchesCampaign &&
+                (tradePending ||
+                  approvePending ||
+                  quoteLoading ||
+                  (isDexStage && !isSolanaCampaign && !isTopazTradingActive) ||
+                  (tradeInputDenom === "BNB" ? effectiveBnbWei <= 0n : parseTokenAmountDecimals(tradeAmount, tokenDecimals) <= 0n))
               }
               className={`w-full ${topbarButtonClass}`}
             >
-              {tradePending ? "Processing..." : isSolanaCampaign && isDexStage ? "Sell on Meteora" : isDexStage ? "Sell on Topaz" : "Sell"}
+              {!walletMatchesCampaign
+                ? connectTradeWalletLabel
+                : tradePending
+                  ? "Processing..."
+                  : isSolanaCampaign && isDexStage
+                    ? "Sell on Meteora"
+                    : isDexStage
+                      ? "Sell on Topaz"
+                      : "Sell"}
             </Button>
           </TabsContent>
         </Tabs>
