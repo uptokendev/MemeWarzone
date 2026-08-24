@@ -1,8 +1,27 @@
+/** Campaigns kept operational for internal claim/upgrade acceptance but hidden from all public feed merges. */
+const PUBLIC_HIDDEN_CAMPAIGNS = new Map<number, Set<string>>([
+  [
+    101,
+    new Set([
+      "9t72mNAVpnJCn42Z2quJTqoS8wsBTGR9aG2CvbeumXEF",
+      "Bv2EZEznfuHNHcoC5DXJJtJH8x7mAjCUagsPGeXK3Jms",
+      "EFUF3bPBaN3MzSBpm4MfXMdbXDmesPWcKaoNsLzn45VH",
+    ]),
+  ],
+]);
+
+function isPublicHiddenCampaign(chainId: number, address: string): boolean {
+  const cid = Number(chainId);
+  const raw = String(address ?? "").trim();
+  return Boolean(raw && PUBLIC_HIDDEN_CAMPAIGNS.get(cid)?.has(raw));
+}
+
 /** Canonical campaign key: EVM lowercase, Solana base58 preserved. */
 export function liveCampaignKey(chainId: number, address: string): string {
   const raw = String(address ?? "").trim();
   if (!raw) return "";
   const cid = Number(chainId);
+  if (isPublicHiddenCampaign(cid, raw)) return "";
   if (cid === 101 || cid === 102) return raw;
   if (!raw.startsWith("0x") && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(raw)) return raw;
   return raw.toLowerCase();
