@@ -15,32 +15,37 @@ function startOfUtcWeekMonday(d = new Date()) {
 async function main() {
   const thisWeekStart = startOfUtcWeekMonday();
   const lastWeekStart = new Date(thisWeekStart.getTime() - 7 * 86400_000);
-  const { rows: winners } = await pool.query(
+  type AmountRow = { wallet_address?: string; amount_raw?: string };
+  const empty = { rows: [] as AmountRow[] };
+  const winnersResult = await pool.query(
     `select chain_id, category, rank, recipient_address, amount_raw::text as amount_raw
        from public.league_epoch_winners
       where period='weekly' and epoch_start=$1::timestamptz
       order by chain_id, category, rank`,
     [lastWeekStart.toISOString()],
-  ).catch(() => ({ rows: [] }));
+  ).catch(() => ({ rows: [] as Array<Record<string, unknown>> }));
+  const winners = winnersResult.rows;
 
-  const { rows: portal } = await pool.query(
+  const portalResult = await pool.query(
     `select w.wallet_address, coalesce(sum(l.amount_raw),0)::text as amount_raw
        from public.recruiter_reward_ledger l
        join public.recruiter_payout_wallets w
          on w.recruiter_id = l.recruiter_id and w.chain='solana' and w.verified_at is not null
       where l.chain='solana' and l.status in ('claimable','retriable') and l.claim_id is null
       group by w.wallet_address`,
-  ).catch(() => ({ rows: [] }));
+  ).catch(() => empty);
+  const portal = portalResult.rows as AmountRow[];
 
-  const { rows: phase2 } = await pool.query(
+  const phase2Result = await pool.query(
     `select wallet_address, claimable_amount::text as amount_raw
        from public.recruiter_claimable_settlements
       where chain_id=101`,
-  ).catch(() => ({ rows: [] }));
+  ).catch(() => empty);
+  const phase2 = phase2Result.rows as AmountRow[];
 
   const recipients = mergeRecruiterEntitlements(
-    phase2.rows.map((row) => ({ walletAddress: row.wallet_address, amountLamports: String(row.amount_raw || "0"), source: "phase2" })),
-    portal.rows.map((row) => ({ walletAddress: row.wallet_address, amountLamports: String(row.amount_raw || "0"), source: "portal" })),
+    phase2.map((row) => ({ walletAddress: String(row.wallet_address || ""), amountLamports: String(row.amount_raw || "0"), source: "phase2" })),
+    portal.map((row) => ({ walletAddress: String(row.wallet_address || ""), amountLamports: String(row.amount_raw || "0"), source: "portal" })),
   );
   const totalLamports = recipients.reduce((sum, row) => sum + BigInt(row.amountLamports), 0n).toString();
   const duplicateWallets = recipients.filter((row, index, all) => all.findIndex((other) => other.walletAddress === row.walletAddress) !== index);

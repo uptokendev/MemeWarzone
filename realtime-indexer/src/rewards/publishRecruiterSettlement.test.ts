@@ -5,7 +5,7 @@ import {
   canRebuildRecruiterBatch,
   mergeRecruiterEntitlements,
   recruiterLaneLeaf,
-} from "./recruiterMerkle.ts";
+} from "./recruiterMerkle.js";
 
 test("recruiter merkle is deterministic and non-empty for a SOL payout", () => {
   const wallet = "HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9";
