@@ -210,24 +210,26 @@ async function updateLaneBatch(
 
 async function loadPortalSolanaPayouts(): Promise<PortalPayout[]> {
   const { rows } = await pool.query(
-    `select a.recruiter_id as account_id,
+    `select l.recruiter_id::text as account_id,
             r.id as recruiter_id,
-            a.code,
+            coalesce(r.code, a.code) as code,
             w.wallet_address as payout_wallet,
             coalesce(sum(l.amount_raw), 0)::numeric(78,0)::text as amount_raw,
             array_agg(l.id::text) as ledger_ids
        from public.recruiter_reward_ledger l
-       join public.recruiter_accounts a on a.recruiter_id = l.recruiter_id
        join public.recruiter_payout_wallets w
-         on w.recruiter_id = l.recruiter_id and w.chain='solana' and w.verified_at is not null
+         on w.recruiter_id = l.recruiter_id
+        and w.chain = 'solana'
+        and w.verified_at is not null
        left join public.recruiters r
-         on r.code = a.code
-         or r.wallet_address = a.signup_wallet
-         or lower(r.wallet_address) = lower(a.signup_wallet)
-      where l.chain='solana'
+         on r.id::text = l.recruiter_id::text
+       left join public.recruiter_accounts a
+         on a.recruiter_id::text = l.recruiter_id::text
+         or a.code = r.code
+      where l.chain = 'solana'
         and l.status in ('claimable','retriable')
         and l.claim_id is null
-      group by a.recruiter_id, r.id, a.code, w.wallet_address
+      group by l.recruiter_id, r.id, r.code, a.code, w.wallet_address
      having coalesce(sum(l.amount_raw), 0) > 0`,
   );
   return rows.map((row) => ({
@@ -246,8 +248,14 @@ export async function publishRecruiterSettlementBatches(): Promise<{
 }> {
   const chainId = 101;
   const epoch = await ensureWeeklyEpoch(chainId);
-  const viewRows = await listRecruiterClaimableSettlements({ chainId, limit: 1000 }).catch(() => []);
-  const portal = await loadPortalSolanaPayouts().catch(() => [] as PortalPayout[]);
+  let viewRows: Awaited<ReturnType<typeof listRecruiterClaimableSettlements>> = [];
+  try {
+    viewRows = await listRecruiterClaimableSettlements({ chainId, limit: 1000 });
+  } catch (error: any) {
+    console.warn("[exportRecruiterSettlementBatch] phase2 settlements skipped", error?.message || error);
+  }
+  const portal = await loadPortalSolanaPayouts();
+  console.log(`[exportRecruiterSettlementBatch] epoch=${epoch.id} phase2=${viewRows.length} portal=${portal.length}`);
   const portalByWallet = new Map(portal.map((row) => [row.payoutWallet, row]));
 
   const recipients = mergeRecruiterEntitlements(
