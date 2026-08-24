@@ -6,13 +6,14 @@ try {
   dns.setDefaultResultOrder("ipv4first");
 } catch {}
 
-
 import { pool } from "../db.js";
 import { ENV } from "../env.js";
 import { emitNotification } from "../notifications.js";
 
 // Finalizes the most recently completed epoch (weekly/monthly), inserts winners,
-// and rolls the pot forward when there is no clear winner (ties/no rows).
+// and rolls the pot forward only when there is no eligible leaderboard row.
+// Leaderboard SQL already contains deterministic tie-break ordering, so equal
+// primary scores must not be turned into a different financial outcome here.
 //
 // This job is designed to be safe to run repeatedly.
 
@@ -162,6 +163,30 @@ async function alreadyFinalized(chainId: number, period: "weekly" | "monthly", e
   return (rowCount ?? 0) > 0;
 }
 
+async function clearRecoveredNoWinnerRollover(
+  chainId: number,
+  period: "weekly" | "monthly",
+  nextEpochStartIso: string,
+  category: string,
+) {
+  // A previous run may have rolled this epoch's pot forward because the old
+  // code treated equal primary scores as "no winner" even though the UI had a
+  // deterministic tie-break winner. Once a winner is persisted, remove only
+  // the rollover targeted at the immediately following epoch/category.
+  const result = await pool.query(
+    `delete from public.league_rollovers
+      where chain_id=$1
+        and period=$2
+        and epoch_start=$3::timestamptz
+        and category=$4
+      returning amount_raw`,
+    [chainId, period, nextEpochStartIso, category],
+  );
+  if ((result.rowCount ?? 0) > 0) {
+    console.log(`[finalizeEpochWinners] recovered stale rollover chain=${chainId} period=${period} category=${category} next=${nextEpochStartIso}`);
+  }
+}
+
 // Returns top N rows with a numeric score and the winner recipient.
 async function leaderboard(
   chainId: number,
@@ -220,8 +245,6 @@ async function leaderboard(
   }
 
   if (category === "perfect_run") {
-    // Edge-case league: graduated campaigns in the month with 0 sells during bonding.
-    // Winner is the fastest among those.
     const { rows } = await pool.query(
       `
       WITH grads AS (
@@ -268,7 +291,6 @@ async function leaderboard(
   }
 
   if (category === "biggest_hit") {
-    // Same board as /api/league: one biggest buy per campaign, exclude creator/campaign.
     const solana = isSolanaChain(chainId);
     const { rows } = await pool.query(
       `
@@ -331,8 +353,6 @@ async function leaderboard(
   }
 
   if (category === "crowd_favorite") {
-    // Most votes per campaign; winner is the creator.
-    // Strict places with fair ties: votes → unique voters → BNB sum → earliest vote → address.
     const { rows } = await pool.query(
       `
       WITH v AS (
@@ -387,8 +407,6 @@ async function leaderboard(
   }
 
   if (category === "top_earner") {
-    // Simple net-flow based PnL: sells - buys during epoch (across all campaigns).
-    // Winner is the wallet with highest positive net.
     const { rows } = await pool.query(
       `
       WITH flows AS (
@@ -403,7 +421,7 @@ async function leaderboard(
       )
       SELECT wallet as recipient, pnl_raw
       FROM flows
-      ORDER BY pnl_raw DESC
+      ORDER BY pnl_raw DESC, wallet ASC
       LIMIT $4
       `,
       [chainId, epochStartIso, epochEndIso, limit]
@@ -421,11 +439,8 @@ async function leaderboard(
   return [];
 }
 
-function isTieOrNoWinner(rows: Array<{ score: bigint }>): boolean {
-  if (!rows.length) return true;
-  if (rows.length === 1) return false;
-  // No clear winner if top-1 score equals top-2 score.
-  return rows[0].score === rows[1].score;
+function isNoWinner(rows: Array<{ score: bigint }>): boolean {
+  return rows.length === 0;
 }
 
 async function finalizeEpochFor(
@@ -444,7 +459,6 @@ async function finalizeEpochFor(
 
   const totalLeagueFeeRaw = await computeTotalLeagueFeeRawInRange(chainId, epochStartIso, epochEndIso, protocolFeeBps, leagueFeeBps);
 
-  // Split this epoch's League fee inflow into weekly vs monthly prize budgets, then split evenly among eligible categories.
   const weeklyBudgetBps = readBps(process.env.WEEKLY_PRIZE_BUDGET_BPS, DEFAULT_WEEKLY_PRIZE_BUDGET_BPS);
   const monthlyBudgetBps = readBps(process.env.MONTHLY_PRIZE_BUDGET_BPS, DEFAULT_MONTHLY_PRIZE_BUDGET_BPS);
   const budgetBps = period === "weekly" ? weeklyBudgetBps : period === "monthly" ? monthlyBudgetBps : 10_000;
@@ -464,12 +478,10 @@ async function finalizeEpochFor(
     let pot = base + (BigInt(i) < rem ? 1n : 0n);
     pot += await getRolloverRaw(chainId, period, epochStartIso, category);
 
-    // If pot is zero, we still finalize winners (so the UI shows a winner) unless there is a tie.
     const wantRanks = period === "weekly" ? 1 : 5;
     const top = await leaderboard(chainId, period, epochStartIso, epochEndIso, category, Math.max(2, wantRanks));
 
-    if (isTieOrNoWinner(top)) {
-      // Roll the pot into next epoch (idempotent via DB helper)
+    if (isNoWinner(top)) {
       await pool.query(`select public.league_rollover_no_winner($1,$2,$3::timestamptz,$4,$5::numeric)`, [
         chainId,
         period,
@@ -519,6 +531,7 @@ async function finalizeEpochFor(
       console.warn(`[finalizeEpochWinners] league_epoch_meta skipped chain=${chainId} period=${period}`, error);
     }
 
+    let insertedAny = false;
     for (let rank = 1; rank <= wantRanks; rank++) {
       const row = top[rank - 1];
       if (!row) break;
@@ -558,8 +571,9 @@ async function finalizeEpochFor(
           JSON.stringify(payload),
         ]
       );
-      
+
       if ((res.rowCount ?? 0) > 0) {
+        insertedAny = true;
         await emitNotification(pool, {
           eventType: `league.${period}_winners_confirmed`,
           chain: isSolanaChain(chainId) ? "solana" : "bnb",
@@ -575,6 +589,10 @@ async function finalizeEpochFor(
         });
       }
     }
+
+    if (insertedAny) {
+      await clearRecoveredNoWinnerRollover(chainId, period, epochEndIso, category);
+    }
   }
 }
 
@@ -584,8 +602,11 @@ async function main() {
     process.exit(1);
   }
 
+  const sha = process.env.SOURCE_COMMIT || process.env.COOLIFY_GIT_COMMIT_SHA || process.env.GIT_SHA || "unset";
+  console.log(`[finalizeEpochWinners] BUILD_SHA=${sha}`);
+
   // Production defaults: BNB mainnet + Solana mainnet.
-  // Testnet only when explicitly set, e.g. LEAGUE_CHAINS=97,101
+  // Testnet only when explicitly set, e.g. LEAGUE_CHAINS=97,102
   const chains = String(process.env.LEAGUE_CHAINS || "56,101")
     .split(",")
     .map((s) => Number(s.trim()))
@@ -593,9 +614,6 @@ async function main() {
 
   const now = new Date();
 
-  // Finalize the most recently completed epochs:
-  // - weekly: previous Monday 00:00 → this Monday 00:00
-  // - monthly: previous 1st 00:00 → this 1st 00:00
   const thisWeekStart = startOfUtcWeekMonday(now);
   const envWeekStart = Date.parse(String(process.env.FINALIZE_WEEKLY_START || ""));
   const envWeekEnd = Date.parse(String(process.env.FINALIZE_WEEKLY_END || ""));
