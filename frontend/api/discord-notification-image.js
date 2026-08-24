@@ -204,7 +204,7 @@ async function getBaseSvg(content, options = {}) {
   </defs>
 
   <rect width="1002" height="531" fill="url(#bg)"/>
-  ${backdropImg ? `<g opacity="0.75"><image x="251" y="15" width="500" height="500" href="${backdropImg}" clip-path="url(#circleClip)" preserveAspectRatio="xMidYMid slice" /></g>` : ""}
+  ${backdropImg ? `<g opacity="0.65"><image x="251" y="15" width="500" height="500" href="${backdropImg}" clip-path="url(#circleClip)" preserveAspectRatio="xMidYMid slice" /></g>` : ""}
   <rect width="1002" height="531" fill="url(#grid)"/>
   <rect width="1002" height="531" fill="url(#orbGlow)" opacity="0.65"/>
   <rect x="0" y="0" width="1002" height="10" fill="#070707"/>
@@ -235,8 +235,8 @@ async function buildLaunchDigest(payload) {
   }
 
   return await getBaseSvg(`
-    ${pixelText("LAUNCH DIGEST", 501, 80, { scale: 7, color: "#10f58a", anchor: "middle" })}
-    ${renderChainPill(chain, 501, 140, 3)}
+    ${pixelText("LAUNCH DIGEST", 120, 90, { scale: 7, color: "#10f58a", anchor: "start" })}
+    ${renderChainPill(chain, 860, 100, 3)}
     ${listItems}
   `);
 }
@@ -244,8 +244,8 @@ async function buildLaunchDigest(payload) {
 async function buildTrendingDigest(payload) {
   const { sections = [], chain = "BNB" } = payload;
   let content = `
-    ${pixelText("TRENDING DIGEST", 501, 70, { scale: 7, color: "#00eeff", anchor: "middle" })}
-    ${renderChainPill(chain, 501, 130, 3)}
+    ${pixelText("TRENDING DIGEST", 120, 90, { scale: 7, color: "#00eeff", anchor: "start" })}
+    ${renderChainPill(chain, 860, 100, 3)}
   `;
 
   let yOffset = 180;
@@ -270,13 +270,13 @@ async function buildProgressThresholdAlert(payload) {
   const tokenImg = await fetchImageBase64(tokenUrl);
   
   return await getBaseSvg(`
-    ${pixelText("NEAR GRADUATION", 501, 100, { scale: 7, color: "#ff4400", anchor: "middle" })}
-    ${renderChainPill(chain, 501, 160, 3)}
+    ${pixelText("NEAR GRADUATION", 501, 80, { scale: 7, color: "#ff4400", anchor: "middle" })}
     
-    ${tokenImg ? `<image x="411" y="200" width="180" height="180" href="${tokenImg}" clip-path="url(#circleClip)" preserveAspectRatio="xMidYMid slice"/>` : ""}
+    ${tokenImg ? `<image x="150" y="180" width="220" height="220" href="${tokenImg}" clip-path="url(#circleClip)" preserveAspectRatio="xMidYMid slice"/>` : ""}
     
-    ${renderCampaignLabel(name, campaign, 501, 410, 4, "middle", "#ffffff")}
-    ${pixelText(`${Math.round(threshold)}% PROGRESS`, 501, 450, { scale: 5, color: "#ff4400", anchor: "middle" })}
+    ${renderChainPill(chain, 480, 210, 3)}
+    ${renderCampaignLabel(name, campaign, 420, 280, 5, "start", "#ffffff")}
+    ${pixelText(`${Math.round(threshold)}% PROGRESS`, 420, 340, { scale: 6, color: "#ff4400", anchor: "start" })}
   `, { primaryGlow: "#ff4400", secondaryGlow: "#ff0000", backdropImage: tokenImg });
 }
 
@@ -285,13 +285,13 @@ async function buildCampaignMilestone(payload) {
   const tokenImg = await fetchImageBase64(tokenUrl);
 
   return await getBaseSvg(`
-    ${pixelText("MILESTONE REACHED", 501, 100, { scale: 7, color: "#10f58a", anchor: "middle" })}
-    ${renderChainPill(chain, 501, 160, 3)}
+    ${pixelText("MILESTONE REACHED", 501, 80, { scale: 7, color: "#10f58a", anchor: "middle" })}
     
-    ${tokenImg ? `<image x="411" y="200" width="180" height="180" href="${tokenImg}" clip-path="url(#circleClip)" preserveAspectRatio="xMidYMid slice"/>` : ""}
+    ${tokenImg ? `<image x="150" y="180" width="220" height="220" href="${tokenImg}" clip-path="url(#circleClip)" preserveAspectRatio="xMidYMid slice"/>` : ""}
     
-    ${renderCampaignLabel(name, campaign, 501, 410, 4, "middle", "#ffffff")}
-    ${pixelText(`${Math.round(milestone)}% PROGRESS`, 501, 450, { scale: 5, color: "#10f58a", anchor: "middle" })}
+    ${renderChainPill(chain, 480, 210, 3)}
+    ${renderCampaignLabel(name, campaign, 420, 280, 5, "start", "#ffffff")}
+    ${pixelText(`${Math.round(milestone)}% PROGRESS`, 420, 340, { scale: 6, color: "#10f58a", anchor: "start" })}
   `, { backdropImage: tokenImg });
 }
 
@@ -300,13 +300,13 @@ async function buildGraduationAlert(payload) {
   const tokenImg = await fetchImageBase64(tokenUrl);
 
   return await getBaseSvg(`
-    ${pixelText("GRADUATION ALERT", 501, 100, { scale: 8, color: "#f39b3d", anchor: "middle" })}
-    ${renderChainPill(chain, 501, 170, 3)}
+    ${pixelText("GRADUATION ALERT", 501, 80, { scale: 8, color: "#f39b3d", anchor: "middle" })}
     
-    ${tokenImg ? `<image x="411" y="210" width="180" height="180" href="${tokenImg}" clip-path="url(#circleClip)" preserveAspectRatio="xMidYMid slice"/>` : ""}
+    ${tokenImg ? `<image x="150" y="180" width="220" height="220" href="${tokenImg}" clip-path="url(#circleClip)" preserveAspectRatio="xMidYMid slice"/>` : ""}
     
-    ${renderCampaignLabel(name, campaign, 501, 420, 5, "middle", "#ffffff")}
-    ${creatorReward ? pixelText(`REWARD: ${creatorReward}`, 501, 470, { scale: 4, color: "#10f58a", anchor: "middle" }) : ""}
+    ${renderChainPill(chain, 480, 210, 3)}
+    ${renderCampaignLabel(name, campaign, 420, 280, 5, "start", "#ffffff")}
+    ${creatorReward ? pixelText(`REWARD: ${creatorReward}`, 420, 340, { scale: 5, color: "#10f58a", anchor: "start" }) : ""}
   `, { backdropImage: tokenImg });
 }
 
