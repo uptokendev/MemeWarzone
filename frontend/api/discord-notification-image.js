@@ -153,8 +153,16 @@ function pixelText(value, x, y, options = {}) {
   return `<g>${rects.join("")}</g>`;
 }
 
+function getChainColors(chain) {
+  const c = String(chain || "BNB").toUpperCase();
+  if (c === "SOL" || c === "SOLANA") return { text: "#14F195", bg: "#021c10", stroke: "#14F195" };
+  if (c === "BNB" || c === "BSC") return { text: "#F3BA2F", bg: "#292005", stroke: "#F3BA2F" };
+  return { text: "#10f58a", bg: "#132a1e", stroke: "#10f58a" };
+}
+
 function renderChainPill(chain, x, y, scale = 3) {
   const chainText = String(chain || "BNB").toUpperCase();
+  const { text, bg, stroke } = getChainColors(chainText);
   const textWidth = getPixelTextWidth(chainText, scale);
   const paddingX = 16;
   const paddingY = 8;
@@ -165,16 +173,23 @@ function renderChainPill(chain, x, y, scale = 3) {
   const startY = y - paddingY;
 
   return `
-    <rect x="${startX}" y="${startY}" width="${totalWidth}" height="${totalHeight}" rx="12" fill="#132a1e" stroke="#10f58a" stroke-opacity="0.3"/>
-    ${pixelText(chainText, x, y, { scale, color: "#10f58a", anchor: "middle" })}
+    <rect x="${startX}" y="${startY}" width="${totalWidth}" height="${totalHeight}" rx="12" fill="${bg}" stroke="${stroke}" stroke-opacity="0.3"/>
+    ${pixelText(chainText, x, y, { scale, color: text, anchor: "middle" })}
   `;
 }
 
 function renderCampaignLabel(name, ticker, x, y, scale = 4, anchor = "middle", color = "#ffffff") {
   const n = String(name || "").trim();
   const t = String(ticker || "").trim();
-  const display = n && t && n.toLowerCase() !== t.toLowerCase() ? `${n} ($${t})` : `$${t || n}`;
-  return pixelText(display, x, y, { scale, color, anchor });
+  
+  // Render name and ticker on separate lines
+  if (n && t && n.toLowerCase() !== t.toLowerCase()) {
+    return `
+      ${pixelText(n, x, y, { scale, color, anchor })}
+      ${pixelText(`$${t}`, x, y + (7 * scale) + 10, { scale: Math.max(2, scale - 1), color: "#aaaaaa", anchor })}
+    `;
+  }
+  return pixelText(`$${t || n}`, x, y, { scale, color, anchor });
 }
 
 // ---------------------------------------------------------------------------
@@ -226,17 +241,15 @@ async function buildLaunchDigest(payload) {
   let listItems = "";
   for (let i = 0; i < Math.min(launches.length, 5); i++) {
     const l = launches[i];
-    const tokenImg = await fetchImageBase64(l.tokenUrl);
-    const yCenter = 220 + i * 55;
+    const yCenter = 230 + i * 50;
     
-    listItems += tokenImg ? `<image x="120" y="${yCenter - 20}" width="40" height="40" href="${tokenImg}" clip-path="url(#circleClip)" preserveAspectRatio="xMidYMid slice"/>` : "";
-    listItems += `${pixelText(`> ${clampText(l.name || l.campaign || "Token", 15)}`, 180, yCenter - 10, { scale: 4, color: "#dfffee" })}
-                  ${pixelText(`${Math.round(l.progressPct || 0)}%`, 900, yCenter - 10, { scale: 4, color: "#10f58a", anchor: "end" })}`;
+    listItems += `${pixelText(`> ${clampText(l.name || l.campaign || "Token", 15)}`, 200, yCenter - 10, { scale: 4, color: "#dfffee", anchor: "start" })}
+                  ${pixelText(`${Math.round(l.progressPct || 0)}%`, 800, yCenter - 10, { scale: 4, color: "#10f58a", anchor: "end" })}`;
   }
 
   return await getBaseSvg(`
-    ${pixelText("LAUNCH DIGEST", 120, 90, { scale: 7, color: "#10f58a", anchor: "start" })}
-    ${renderChainPill(chain, 860, 100, 3)}
+    ${pixelText("LAUNCH DIGEST", 501, 80, { scale: 7, color: "#10f58a", anchor: "middle" })}
+    ${renderChainPill(chain, 501, 150, 3)}
     ${listItems}
   `);
 }
@@ -244,19 +257,17 @@ async function buildLaunchDigest(payload) {
 async function buildTrendingDigest(payload) {
   const { sections = [], chain = "BNB" } = payload;
   let content = `
-    ${pixelText("TRENDING DIGEST", 120, 90, { scale: 7, color: "#00eeff", anchor: "start" })}
-    ${renderChainPill(chain, 860, 100, 3)}
+    ${pixelText("TRENDING DIGEST", 501, 70, { scale: 7, color: "#00eeff", anchor: "middle" })}
+    ${renderChainPill(chain, 501, 130, 3)}
   `;
 
   let yOffset = 180;
   for (const sec of sections.slice(0, 2)) {
-    content += pixelText(`// ${sec.title}`, 120, yOffset, { scale: 3, color: "#00eeff" });
+    content += pixelText(`// ${sec.title}`, 200, yOffset, { scale: 3, color: "#00eeff", anchor: "start" });
     yOffset += 40;
     for (const l of (sec.items || []).slice(0, 3)) {
-      const tokenImg = await fetchImageBase64(l.tokenUrl);
-      content += tokenImg ? `<image x="140" y="${yOffset - 15}" width="30" height="30" href="${tokenImg}" clip-path="url(#circleClip)" preserveAspectRatio="xMidYMid slice"/>` : "";
-      content += `${pixelText(`> ${clampText(l.name || l.campaign || "Token", 15)}`, 190, yOffset, { scale: 3, color: "#dfffee" })}
-                  ${pixelText(`${Math.round(l.progressPct || 0)}%`, 900, yOffset, { scale: 3, color: "#00eeff", anchor: "end" })}`;
+      content += `${pixelText(`> ${clampText(l.name || l.campaign || "Token", 15)}`, 230, yOffset, { scale: 3, color: "#dfffee", anchor: "start" })}
+                  ${pixelText(`${Math.round(l.progressPct || 0)}%`, 800, yOffset, { scale: 3, color: "#00eeff", anchor: "end" })}`;
       yOffset += 40;
     }
     yOffset += 10;
@@ -270,13 +281,11 @@ async function buildProgressThresholdAlert(payload) {
   const tokenImg = await fetchImageBase64(tokenUrl);
   
   return await getBaseSvg(`
-    ${pixelText("NEAR GRADUATION", 501, 80, { scale: 7, color: "#ff4400", anchor: "middle" })}
+    ${pixelText("NEAR GRADUATION", 501, 110, { scale: 7, color: "#ff4400", anchor: "middle" })}
     
-    ${tokenImg ? `<image x="150" y="180" width="220" height="220" href="${tokenImg}" clip-path="url(#circleClip)" preserveAspectRatio="xMidYMid slice"/>` : ""}
-    
-    ${renderChainPill(chain, 480, 210, 3)}
-    ${renderCampaignLabel(name, campaign, 420, 280, 5, "start", "#ffffff")}
-    ${pixelText(`${Math.round(threshold)}% PROGRESS`, 420, 340, { scale: 6, color: "#ff4400", anchor: "start" })}
+    ${renderChainPill(chain, 501, 190, 3)}
+    ${renderCampaignLabel(name, campaign, 501, 280, 6, "middle", "#ffffff")}
+    ${pixelText(`${Math.round(threshold)}% PROGRESS`, 501, 390, { scale: 5, color: "#ff4400", anchor: "middle" })}
   `, { primaryGlow: "#ff4400", secondaryGlow: "#ff0000", backdropImage: tokenImg });
 }
 
@@ -285,13 +294,11 @@ async function buildCampaignMilestone(payload) {
   const tokenImg = await fetchImageBase64(tokenUrl);
 
   return await getBaseSvg(`
-    ${pixelText("MILESTONE REACHED", 501, 80, { scale: 7, color: "#10f58a", anchor: "middle" })}
+    ${pixelText("MILESTONE REACHED", 501, 110, { scale: 7, color: "#10f58a", anchor: "middle" })}
     
-    ${tokenImg ? `<image x="150" y="180" width="220" height="220" href="${tokenImg}" clip-path="url(#circleClip)" preserveAspectRatio="xMidYMid slice"/>` : ""}
-    
-    ${renderChainPill(chain, 480, 210, 3)}
-    ${renderCampaignLabel(name, campaign, 420, 280, 5, "start", "#ffffff")}
-    ${pixelText(`${Math.round(milestone)}% PROGRESS`, 420, 340, { scale: 6, color: "#10f58a", anchor: "start" })}
+    ${renderChainPill(chain, 501, 190, 3)}
+    ${renderCampaignLabel(name, campaign, 501, 280, 6, "middle", "#ffffff")}
+    ${pixelText(`${Math.round(milestone)}% PROGRESS`, 501, 390, { scale: 5, color: "#10f58a", anchor: "middle" })}
   `, { backdropImage: tokenImg });
 }
 
@@ -300,13 +307,11 @@ async function buildGraduationAlert(payload) {
   const tokenImg = await fetchImageBase64(tokenUrl);
 
   return await getBaseSvg(`
-    ${pixelText("GRADUATION ALERT", 501, 80, { scale: 8, color: "#f39b3d", anchor: "middle" })}
+    ${pixelText("GRADUATION ALERT", 501, 110, { scale: 8, color: "#f39b3d", anchor: "middle" })}
     
-    ${tokenImg ? `<image x="150" y="180" width="220" height="220" href="${tokenImg}" clip-path="url(#circleClip)" preserveAspectRatio="xMidYMid slice"/>` : ""}
-    
-    ${renderChainPill(chain, 480, 210, 3)}
-    ${renderCampaignLabel(name, campaign, 420, 280, 5, "start", "#ffffff")}
-    ${creatorReward ? pixelText(`REWARD: ${creatorReward}`, 420, 340, { scale: 5, color: "#10f58a", anchor: "start" }) : ""}
+    ${renderChainPill(chain, 501, 200, 3)}
+    ${renderCampaignLabel(name, campaign, 501, 290, 6, "middle", "#ffffff")}
+    ${creatorReward ? pixelText(`REWARD: ${creatorReward}`, 501, 400, { scale: 5, color: "#10f58a", anchor: "middle" }) : ""}
   `, { backdropImage: tokenImg });
 }
 
