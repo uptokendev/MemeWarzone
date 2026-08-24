@@ -13,10 +13,10 @@ const CLAIM_STATUS_PREPARED = "prepared";
 const IMMUTABLE_BATCH_STATUSES = new Set(["published", "claim_open", "closed", "failed"]);
 
 const NON_PAYOUT_SOLANA = new Set([
-  "So11111111111111111111111111111111111111112", // wrapped SOL mint, never a user wallet
-  "11111111111111111111111111111111", // system program
-  "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", // token program
-  "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL", // associated token program
+  "So11111111111111111111111111111111111111112",
+  "11111111111111111111111111111111",
+  "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
 ]);
 
 function buildSha(): string {
@@ -40,8 +40,7 @@ function isUserSolanaPayoutWallet(value: string): boolean {
   if (!wallet || NON_PAYOUT_SOLANA.has(wallet)) return false;
   try {
     const key = new PublicKey(wallet);
-    if (key.equals(rewardsProgramId())) return false;
-    return true;
+    return !key.equals(rewardsProgramId());
   } catch {
     return false;
   }
@@ -113,7 +112,10 @@ type PortalPayout = {
   ledgerIds: string[];
 };
 
-async function loadPortalPayouts(): Promise<{ payouts: PortalPayout[]; excluded: Array<{ wallet: string; amountRaw: string }> }> {
+async function loadPortalPayouts(existingBatchId: string | null): Promise<{
+  payouts: PortalPayout[];
+  excluded: Array<{ wallet: string; amountRaw: string }>;
+}> {
   const { rows } = await pool.query(
     `select l.recruiter_id::text as account_id,
             w.wallet_address as payout_wallet,
@@ -126,15 +128,28 @@ async function loadPortalPayouts(): Promise<{ payouts: PortalPayout[]; excluded:
         and w.verified_at is not null
       where l.chain = 'solana'
         and l.status in ('claimable','retriable')
-        and l.claim_id is null
+        and (
+          l.claim_id is null
+          or (
+            $1::uuid is not null
+            and exists (
+              select 1
+                from public.solana_reward_lane_claims lc
+               where lc.batch_id=$1::uuid
+                 and lc.source_type='recruiter_reward_claim'
+                 and lc.source_ref=l.claim_id::text
+            )
+          )
+        )
       group by l.recruiter_id, w.wallet_address
      having coalesce(sum(l.amount_raw), 0) > 0`,
+    [existingBatchId],
   );
 
   const payouts: PortalPayout[] = [];
   const excluded: Array<{ wallet: string; amountRaw: string }> = [];
   for (const row of rows) {
-    const payout = {
+    const payout: PortalPayout = {
       accountId: String(row.account_id),
       payoutWallet: String(row.payout_wallet || ""),
       amountRaw: String(row.amount_raw || "0"),
@@ -169,12 +184,15 @@ async function assertSchemaContract(client: { query: typeof pool.query }) {
   const batchDef = String(batch.rows[0]?.def || "");
   const claimDef = String(claims.rows[0]?.def || "");
   const recruiterColumns = new Set(recruiterClaimsCols.rows.map((row) => String(row.column_name)));
-  if (!batchDef.includes("'prepared'")) throw new Error(`Schema contract: batch status 'prepared' not allowed: ${batchDef}`);
+  if (!batchDef.includes("'prepared'") || !batchDef.includes("'claim_open'")) {
+    throw new Error(`Schema contract: batch statuses prepared/claim_open not allowed: ${batchDef}`);
+  }
   if (!claimDef.includes("'prepared'") || !claimDef.includes("'claimable'")) {
     throw new Error(`Schema contract: claim statuses prepared/claimable not allowed: ${claimDef}`);
   }
-  if (recruiterColumns.has("metadata")) {
-    console.warn("[exportRecruiterSettlementBatch] recruiter_reward_claims.metadata exists but exporter intentionally does not depend on it");
+  const requiredRecruiterClaimColumns = ["id", "recruiter_id", "chain", "token", "amount_raw", "payout_wallet", "status"];
+  for (const name of requiredRecruiterClaimColumns) {
+    if (!recruiterColumns.has(name)) throw new Error(`Schema contract: recruiter_reward_claims.${name} missing`);
   }
 }
 
@@ -216,8 +234,34 @@ export async function publishRecruiterSettlementBatchesV2(): Promise<{
   batches: Array<Record<string, unknown>>;
 }> {
   const epoch = await ensureWeeklyEpoch();
-  const { payouts: portal, excluded } = await loadPortalPayouts();
+  const preExisting = await pool.query(
+    `select id, status
+       from public.solana_reward_lane_batches
+      where lane='recruiter' and chain_id=$1 and epoch_id=$2
+      limit 1`,
+    [CHAIN_ID, epoch.id],
+  );
+  const preRow = preExisting.rows[0];
+  const preStatus = preRow ? String(preRow.status) : null;
+  if (preStatus && IMMUTABLE_BATCH_STATUSES.has(preStatus)) {
+    return {
+      computedAt: new Date().toISOString(),
+      BUILD_SHA: buildSha(),
+      batches: [{
+        chainId: CHAIN_ID,
+        epochId: epoch.id,
+        status: preStatus,
+        immutable: true,
+        note: "Existing batch is already past prepared state; exporter will not mutate it.",
+      }],
+    };
+  }
+  if (preStatus && preStatus !== BATCH_STATUS_PREPARED) {
+    throw new Error(`Unexpected rebuildable recruiter batch status '${preStatus}'. Expected prepared.`);
+  }
 
+  const existingBatchId = preRow ? String(preRow.id) : null;
+  const { payouts: portal, excluded } = await loadPortalPayouts(existingBatchId);
   let phase2: Awaited<ReturnType<typeof listRecruiterClaimableSettlements>> = [];
   try {
     phase2 = await listRecruiterClaimableSettlements({ chainId: CHAIN_ID, limit: 1000 });
@@ -287,14 +331,11 @@ export async function publishRecruiterSettlementBatchesV2(): Promise<{
       return {
         computedAt: new Date().toISOString(),
         BUILD_SHA: buildSha(),
-        batches: [{
-          chainId: CHAIN_ID,
-          epochId: epoch.id,
-          status: String(existingRow.status),
-          immutable: true,
-          note: "Existing batch is already past prepared state; exporter will not mutate it.",
-        }],
+        batches: [{ chainId: CHAIN_ID, epochId: epoch.id, status: String(existingRow.status), immutable: true }],
       };
+    }
+    if (existingRow && String(existingRow.status) !== BATCH_STATUS_PREPARED) {
+      throw new Error(`Batch changed to unexpected status '${existingRow.status}' during export`);
     }
 
     let batchId: string;
@@ -410,7 +451,8 @@ export async function publishRecruiterSettlementBatchesV2(): Promise<{
       `select b.status,
               b.total_lamports::text as total_lamports,
               count(c.id)::int as claim_count,
-              coalesce(sum(c.amount_lamports),0)::numeric(78,0)::text as claims_total
+              coalesce(sum(c.amount_lamports),0)::numeric(78,0)::text as claims_total,
+              count(c.id) filter (where c.status='prepared')::int as prepared_claims
          from public.solana_reward_lane_batches b
          left join public.solana_reward_lane_claims c on c.batch_id=b.id
         where b.id=$1::uuid
@@ -421,6 +463,7 @@ export async function publishRecruiterSettlementBatchesV2(): Promise<{
     if (
       String(row?.status) !== BATCH_STATUS_PREPARED
       || Number(row?.claim_count || 0) !== recipients.length
+      || Number(row?.prepared_claims || 0) !== recipients.length
       || String(row?.total_lamports || "0") !== merkle.totalLamports
       || String(row?.claims_total || "0") !== merkle.totalLamports
     ) {
@@ -442,6 +485,7 @@ export async function publishRecruiterSettlementBatchesV2(): Promise<{
         recipientCount: recipients.length,
         totalLamports: merkle.totalLamports,
         excludedPortalRows: excluded.length,
+        excludedPortalWallets: excluded,
         wallets: recipients.map((row) => row.walletAddress),
         note: "Prepared DB batch is internally reconciled. Root publication is still a separate operator step.",
       }],
