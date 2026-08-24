@@ -82,13 +82,17 @@ function claimDeadlineUnix(epochEnd: Date): number {
   return Math.floor(new Date(epochEnd).getTime() / 1000) + 90 * 86400;
 }
 
-async function liveStatusCheck(client: { query: typeof pool.query }): Promise<{ def: string; allowed: string[] }> {
+async function liveStatusCheck(
+  client: { query: typeof pool.query },
+  table: "solana_reward_lane_batches" | "solana_reward_lane_claims",
+): Promise<{ def: string; allowed: string[] }> {
   const { rows } = await client.query(
     `select pg_get_constraintdef(c.oid) as def
        from pg_constraint c
-      where c.conrelid = 'public.solana_reward_lane_batches'::regclass
+      where c.conrelid = $1::regclass
         and c.contype = 'c'
-        and c.conname = 'solana_reward_lane_batches_status_check'`,
+        and c.conname = $2`,
+    [`public.${table}`, `${table}_status_check`],
   );
   const def = String(rows[0]?.def || "");
   const allowed = [...def.matchAll(/'([^']+)'/g)].map((match) => match[1]);
@@ -97,7 +101,7 @@ async function liveStatusCheck(client: { query: typeof pool.query }): Promise<{ 
 
 function insertableStatus(allowed: string[], def = ""): string {
   const frozen = new Set(["claim_open", "published", "closed", "failed", "claimed", "archived"]);
-  for (const candidate of ["pending", "ready", "draft", "prepared", "queued"]) {
+  for (const candidate of ["pending", "prepared", "created", "ready", "draft", "queued"]) {
     if (allowed.includes(candidate)) return candidate;
   }
   const open = allowed.filter((value) => !frozen.has(value));
@@ -118,7 +122,7 @@ async function upsertLaneBatch(
     metadata: Record<string, unknown>;
   },
 ): Promise<{ id: string; status: string }> {
-  const check = await liveStatusCheck(client);
+  const check = await liveStatusCheck(client, "solana_reward_lane_batches");
   const status = insertableStatus(check.allowed, check.def);
   const claimDeadline = claimDeadlineUnix(new Date(input.epoch.endAt));
   console.log(`[exportRecruiterSettlementBatch] status_check=${check.def || "(missing)"} using=${status} claim_deadline=${claimDeadline}`);
@@ -330,8 +334,11 @@ export async function publishRecruiterSettlementBatches(): Promise<{
   const client = await pool.connect();
   try {
     await client.query("begin");
-    const check = await liveStatusCheck(client);
+    const check = await liveStatusCheck(client, "solana_reward_lane_batches");
     const status = insertableStatus(check.allowed, check.def);
+    const claimCheck = await liveStatusCheck(client, "solana_reward_lane_claims");
+    const claimStatus = insertableStatus(claimCheck.allowed, claimCheck.def);
+    console.log(`[exportRecruiterSettlementBatch] claims_status_check=${claimCheck.def || "(missing)"} using=${claimStatus}`);
     let batchId = existing.rows[0]?.id || null;
     if (batchId) {
       await client.query(
@@ -427,14 +434,14 @@ export async function publishRecruiterSettlementBatches(): Promise<{
            batch_id, lane, source_type, source_ref, wallet_address, amount_lamports,
            merkle_leaf, merkle_proof, claim_receipt_address, status, metadata
          ) values (
-           $1, 'recruiter', $2, $3, $4, $5::numeric, $6, $7::jsonb, $8, 'pending', $9::jsonb
+           $1, 'recruiter', $2, $3, $4, $5::numeric, $6, $7::jsonb, $8, $9, $10::jsonb
          )
          on conflict (lane, source_type, source_ref) do update
            set amount_lamports = excluded.amount_lamports,
                merkle_leaf = excluded.merkle_leaf,
                merkle_proof = excluded.merkle_proof,
                claim_receipt_address = excluded.claim_receipt_address,
-               status = 'pending',
+               status = excluded.status,
                updated_at = now()`,
         [
           batchId,
@@ -445,6 +452,7 @@ export async function publishRecruiterSettlementBatches(): Promise<{
           merkle.leaves[i],
           JSON.stringify(merkle.proofs[i] || []),
           receipt,
+          claimStatus,
           JSON.stringify({ epochId: epoch.id }),
         ],
       );
