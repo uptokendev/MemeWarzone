@@ -68,6 +68,146 @@ type PortalPayout = {
   ledgerIds: string[];
 };
 
+type BatchColumn = {
+  column_name: string;
+  is_nullable: string;
+  column_default: string | null;
+  data_type: string;
+  udt_name: string;
+};
+
+async function listBatchColumns(client: { query: typeof pool.query }): Promise<BatchColumn[]> {
+  const { rows } = await client.query(
+    `select column_name, is_nullable, column_default, data_type, udt_name
+       from information_schema.columns
+      where table_schema = 'public' and table_name = 'solana_reward_lane_batches'`,
+  );
+  return rows as BatchColumn[];
+}
+
+function claimWindowEnd(epochEnd: Date): Date {
+  return new Date(epochEnd.getTime() + 90 * 86400_000);
+}
+
+function batchColumnValues(input: {
+  chainId: number;
+  epoch: { id: number; startAt: Date; endAt: Date };
+  addresses: ReturnType<typeof laneAddresses>;
+  merkleRoot: string;
+  totalLamports: string;
+  status: string;
+  metadata: Record<string, unknown>;
+}): Record<string, unknown> {
+  const endAt = new Date(input.epoch.endAt);
+  const claimAt = claimWindowEnd(endAt);
+  const unix = Math.floor(claimAt.getTime() / 1000);
+  return {
+    chain_id: input.chainId,
+    lane: "recruiter",
+    epoch_id: input.epoch.id,
+    epoch_start: input.epoch.startAt,
+    epoch_end: input.epoch.endAt,
+    program_id: input.addresses.programId,
+    vault_address: input.addresses.vaultAddress,
+    batch_address: input.addresses.batchAddress,
+    merkle_root: input.merkleRoot,
+    total_lamports: input.totalLamports,
+    deadline: unix,
+    claim_deadline: claimAt.toISOString(),
+    claim_deadline_at: claimAt.toISOString(),
+    expires_at: claimAt.toISOString(),
+    status: input.status,
+    metadata: JSON.stringify(input.metadata),
+  };
+}
+
+function typeNameOf(column: BatchColumn): string {
+  return `${column.data_type} ${column.udt_name}`;
+}
+
+function fillRequiredBatchColumns(columns: BatchColumn[], values: Record<string, unknown>) {
+  const claimAt = values.claim_deadline;
+  const unix = values.deadline;
+  for (const column of columns) {
+    const name = column.column_name;
+    const typeName = typeNameOf(column);
+    if (values[name] !== undefined) {
+      if (/(bigint|integer|numeric|double|real)/.test(typeName) && typeof values[name] === "string" && String(values[name]).includes("T")) {
+        values[name] = unix;
+      }
+      continue;
+    }
+    if (column.column_default) continue;
+    if (column.is_nullable === "YES") continue;
+    if (name === "id" || name === "created_at" || name === "updated_at") continue;
+    if (typeName.includes("timestamp")) values[name] = claimAt;
+    else if (typeName.includes("json")) values[name] = "{}";
+    else if (typeName.includes("bool")) values[name] = false;
+    else if (/(bigint|integer|numeric|double|real)/.test(typeName)) values[name] = unix;
+    else values[name] = "";
+  }
+}
+
+async function upsertLaneBatch(
+  client: { query: typeof pool.query },
+  values: Record<string, unknown>,
+): Promise<{ id: string; status: string } | null> {
+  const columns = await listBatchColumns(client);
+  fillRequiredBatchColumns(columns, values);
+  const skip = new Set(["id", "created_at", "updated_at"]);
+  const names = columns.map((column) => column.column_name).filter((name) => !skip.has(name) && values[name] !== undefined);
+  if (!names.length) throw new Error("solana_reward_lane_batches has no writable columns");
+  const params = names.map((name) => values[name]);
+  const placeholders = names.map((_, index) => `$${index + 1}`);
+  const updates = names
+    .filter((name) => name !== "lane" && name !== "chain_id" && name !== "epoch_id")
+    .map((name) => {
+      if (name === "status") {
+        return `status = case when public.solana_reward_lane_batches.status in ('claim_open','published') then public.solana_reward_lane_batches.status else excluded.status end`;
+      }
+      return `${name} = excluded.${name}`;
+    });
+  const hasConflictTarget = columns.some((column) => column.column_name === "epoch_id")
+    && columns.some((column) => column.column_name === "chain_id")
+    && columns.some((column) => column.column_name === "lane");
+  const insertSql = `insert into public.solana_reward_lane_batches (${names.join(", ")})
+       values (${placeholders.join(", ")})
+       returning id, status`;
+  const upsertSql = hasConflictTarget
+    ? `insert into public.solana_reward_lane_batches (${names.join(", ")})
+       values (${placeholders.join(", ")})
+       on conflict (chain_id, lane, epoch_id) do update set ${updates.join(", ")}, updated_at = now()
+       returning id, status`
+    : insertSql;
+  let inserted;
+  try {
+    inserted = await client.query(upsertSql, params);
+  } catch (error: any) {
+    if (String(error?.code) !== "42P10") throw error;
+    inserted = await client.query(insertSql, params);
+  }
+  return inserted.rows[0] ? { id: String(inserted.rows[0].id), status: String(inserted.rows[0].status || "") } : null;
+}
+
+async function updateLaneBatch(
+  client: { query: typeof pool.query },
+  batchId: string,
+  values: Record<string, unknown>,
+): Promise<void> {
+  const columns = await listBatchColumns(client);
+  fillRequiredBatchColumns(columns, values);
+  const skip = new Set(["id", "created_at", "lane", "chain_id", "epoch_id"]);
+  const names = columns.map((column) => column.column_name).filter((name) => !skip.has(name) && values[name] !== undefined);
+  if (!names.length) return;
+  const assignments = names.map((name, index) => `${name} = $${index + 2}`);
+  await client.query(
+    `update public.solana_reward_lane_batches
+        set ${assignments.join(", ")}, updated_at = now()
+      where id = $1`,
+    [batchId, ...names.map((name) => values[name])],
+  );
+}
+
 async function loadPortalSolanaPayouts(): Promise<PortalPayout[]> {
   const { rows } = await pool.query(
     `select a.recruiter_id as account_id,
@@ -154,6 +294,15 @@ export async function publishRecruiterSettlementBatches(): Promise<{
   const merkle = buildRecruiterMerkle(epoch.id, recipients);
   const addresses = laneAddresses(epoch.id);
   const deadline = Math.floor(new Date(epoch.endAt).getTime() / 1000) + 90 * 86400;
+  const batchValues = batchColumnValues({
+    chainId,
+    epoch,
+    addresses,
+    merkleRoot: merkle.root,
+    totalLamports: merkle.totalLamports,
+    status: "ready",
+    metadata: { startAt: epoch.startAt, endAt: epoch.endAt, deadline, rebuiltAt: new Date().toISOString() },
+  });
   const client = await pool.connect();
   try {
     await client.query("begin");
@@ -180,65 +329,15 @@ export async function publishRecruiterSettlementBatches(): Promise<{
             and metadata->>'epochId' = $1`,
         [String(epoch.id)],
       );
-      await client.query(
-        `update public.solana_reward_lane_batches
-            set program_id=$2, vault_address=$3, batch_address=$4, merkle_root=$5,
-                total_lamports=$6::numeric, status='ready',
-                epoch_start=$8::timestamptz, epoch_end=$9::timestamptz,
-                metadata=$7::jsonb, updated_at=now()
-          where id=$1`,
-        [
-          batchId,
-          addresses.programId,
-          addresses.vaultAddress,
-          addresses.batchAddress,
-          merkle.root,
-          merkle.totalLamports,
-          JSON.stringify({ startAt: epoch.startAt, endAt: epoch.endAt, deadline, rebuiltAt: new Date().toISOString() }),
-          epoch.startAt,
-          epoch.endAt,
-        ],
-      );
+      await updateLaneBatch(client, String(batchId), batchValues);
     } else {
-      const batch = await client.query(
-        `insert into public.solana_reward_lane_batches (
-           chain_id, lane, epoch_id, epoch_start, epoch_end, program_id, vault_address, batch_address,
-           merkle_root, total_lamports, status, metadata
-         ) values (
-           $1, 'recruiter', $2, $3::timestamptz, $4::timestamptz, $5, $6, $7, $8, $9::numeric, 'draft', $10::jsonb
-         )
-         on conflict (chain_id, lane, epoch_id) do update
-           set merkle_root = excluded.merkle_root,
-               total_lamports = excluded.total_lamports,
-               metadata = excluded.metadata,
-               epoch_start = excluded.epoch_start,
-               epoch_end = excluded.epoch_end,
-               status = case
-                 when public.solana_reward_lane_batches.status in ('claim_open','published')
-                 then public.solana_reward_lane_batches.status
-                 else 'ready'
-               end,
-               updated_at = now()
-         returning id, status`,
-        [
-          chainId,
-          epoch.id,
-          epoch.startAt,
-          epoch.endAt,
-          addresses.programId,
-          addresses.vaultAddress,
-          addresses.batchAddress,
-          merkle.root,
-          merkle.totalLamports,
-          JSON.stringify({ startAt: epoch.startAt, endAt: epoch.endAt, deadline }),
-        ],
-      );
-      batchId = batch.rows[0]?.id;
-      if (batch.rows[0]?.status && !canRebuildRecruiterBatch(String(batch.rows[0].status))) {
+      const batch = await upsertLaneBatch(client, { ...batchValues, status: "draft" });
+      batchId = batch?.id || null;
+      if (batch?.status && !canRebuildRecruiterBatch(String(batch.status))) {
         await client.query("rollback");
         return {
           computedAt: new Date().toISOString(),
-          batches: [{ chainId, epochId: epoch.id, status: batch.rows[0].status, immutable: true }],
+          batches: [{ chainId, epochId: epoch.id, status: batch.status, immutable: true }],
         };
       }
       if (batchId) {

@@ -53,6 +53,9 @@ ALTER TABLE public.solana_reward_lane_batches
 ALTER TABLE public.solana_reward_lane_batches
   ADD COLUMN IF NOT EXISTS epoch_end timestamptz;
 
+ALTER TABLE public.solana_reward_lane_batches
+  ADD COLUMN IF NOT EXISTS claim_deadline timestamptz;
+
 CREATE TABLE IF NOT EXISTS public.solana_reward_lane_claims (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   batch_id uuid NOT NULL REFERENCES public.solana_reward_lane_batches(id) ON DELETE CASCADE,
