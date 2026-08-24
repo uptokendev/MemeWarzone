@@ -156,10 +156,10 @@ function pixelText(value, x, y, options = {}) {
 function getChainColors(chain) {
   const c = String(chain || "BNB").toUpperCase();
   if (c === "SOL" || c === "SOLANA") {
-    return { text: "#000000", bg: "url(#solGradient)", stroke: "url(#solGradient)", isGradient: true };
+    return { text: "#000000", bg: "url(#solGradient)", stroke: "url(#solGradient)", isGradient: true, glow: "#9945FF" };
   }
-  if (c === "BNB" || c === "BSC") return { text: "#f0b90b", bg: "#292005", stroke: "#f0b90b" };
-  return { text: "#10f58a", bg: "#132a1e", stroke: "#10f58a" };
+  if (c === "BNB" || c === "BSC") return { text: "#f0b90b", bg: "#292005", stroke: "#f0b90b", glow: "#f0b90b" };
+  return { text: "#10f58a", bg: "#132a1e", stroke: "#10f58a", glow: "#10f58a" };
 }
 
 function renderChainPill(chain, x, y, scale = 3) {
@@ -252,11 +252,12 @@ async function buildLaunchDigest(payload) {
                   ${pixelText(`${Math.round(l.progressPct || 0)}%`, 800, yCenter - 10, { scale: 4, color: "#10f58a", anchor: "end" })}`;
   }
 
+  const colors = getChainColors(chain);
   return await getBaseSvg(`
     ${pixelText("LAUNCH DIGEST", 501, 80, { scale: 7, color: "#10f58a", anchor: "middle" })}
     ${renderChainPill(chain, 501, 150, 3)}
     ${listItems}
-  `);
+  `, { primaryGlow: colors.glow, secondaryGlow: colors.glow });
 }
 
 async function buildTrendingDigest(payload) {
@@ -298,26 +299,28 @@ async function buildCampaignMilestone(payload) {
   const { campaign = "", name = "", chain = "BNB", milestone = 0, tokenUrl } = payload;
   const tokenImg = await fetchImageBase64(tokenUrl);
 
+  const colors = getChainColors(chain);
   return await getBaseSvg(`
     ${pixelText("MILESTONE REACHED", 501, 110, { scale: 7, color: "#10f58a", anchor: "middle" })}
     
     ${renderChainPill(chain, 501, 190, 3)}
     ${renderCampaignLabel(name, campaign, 501, 280, 6, "middle", "#ffffff")}
     ${pixelText(`${Math.round(milestone)}% PROGRESS`, 501, 390, { scale: 5, color: "#10f58a", anchor: "middle" })}
-  `, { backdropImage: tokenImg });
+  `, { backdropImage: tokenImg, primaryGlow: colors.glow, secondaryGlow: colors.glow });
 }
 
 async function buildGraduationAlert(payload) {
   const { campaign = "", name = "", chain = "BNB", creatorReward, tokenUrl } = payload;
   const tokenImg = await fetchImageBase64(tokenUrl);
 
+  const colors = getChainColors(chain);
   return await getBaseSvg(`
     ${pixelText("GRADUATION ALERT", 501, 110, { scale: 8, color: "#f39b3d", anchor: "middle" })}
     
     ${renderChainPill(chain, 501, 200, 3)}
     ${renderCampaignLabel(name, campaign, 501, 290, 6, "middle", "#ffffff")}
     ${creatorReward ? pixelText(`REWARD: ${creatorReward}`, 501, 400, { scale: 5, color: "#10f58a", anchor: "middle" }) : ""}
-  `, { backdropImage: tokenImg });
+  `, { backdropImage: tokenImg, primaryGlow: colors.glow, secondaryGlow: colors.glow });
 }
 
 async function buildDailyRecap(payload) {
