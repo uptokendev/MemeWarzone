@@ -155,8 +155,8 @@ function pixelText(value, x, y, options = {}) {
 
 function getChainColors(chain) {
   const c = String(chain || "BNB").toUpperCase();
-  if (c === "SOL" || c === "SOLANA") return { text: "#14F195", bg: "#021c10", stroke: "#14F195" };
-  if (c === "BNB" || c === "BSC") return { text: "#F3BA2F", bg: "#292005", stroke: "#F3BA2F" };
+  if (c === "SOL" || c === "SOLANA") return { text: "#14F195", bg: "#1a0c2b", stroke: "#9945FF" };
+  if (c === "BNB" || c === "BSC") return { text: "#f0b90b", bg: "#292005", stroke: "#f0b90b" };
   return { text: "#10f58a", bg: "#132a1e", stroke: "#10f58a" };
 }
 
