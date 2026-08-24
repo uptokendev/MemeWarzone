@@ -184,6 +184,7 @@ export async function publishRecruiterSettlementBatches(): Promise<{
         `update public.solana_reward_lane_batches
             set program_id=$2, vault_address=$3, batch_address=$4, merkle_root=$5,
                 total_lamports=$6::numeric, status='ready',
+                epoch_start=$8::timestamptz, epoch_end=$9::timestamptz,
                 metadata=$7::jsonb, updated_at=now()
           where id=$1`,
         [
@@ -194,20 +195,24 @@ export async function publishRecruiterSettlementBatches(): Promise<{
           merkle.root,
           merkle.totalLamports,
           JSON.stringify({ startAt: epoch.startAt, endAt: epoch.endAt, deadline, rebuiltAt: new Date().toISOString() }),
+          epoch.startAt,
+          epoch.endAt,
         ],
       );
     } else {
       const batch = await client.query(
         `insert into public.solana_reward_lane_batches (
-           chain_id, lane, epoch_id, program_id, vault_address, batch_address,
+           chain_id, lane, epoch_id, epoch_start, epoch_end, program_id, vault_address, batch_address,
            merkle_root, total_lamports, status, metadata
          ) values (
-           $1, 'recruiter', $2, $3, $4, $5, $6, $7::numeric, 'draft', $8::jsonb
+           $1, 'recruiter', $2, $3::timestamptz, $4::timestamptz, $5, $6, $7, $8, $9::numeric, 'draft', $10::jsonb
          )
          on conflict (chain_id, lane, epoch_id) do update
            set merkle_root = excluded.merkle_root,
                total_lamports = excluded.total_lamports,
                metadata = excluded.metadata,
+               epoch_start = excluded.epoch_start,
+               epoch_end = excluded.epoch_end,
                status = case
                  when public.solana_reward_lane_batches.status in ('claim_open','published')
                  then public.solana_reward_lane_batches.status
@@ -218,6 +223,8 @@ export async function publishRecruiterSettlementBatches(): Promise<{
         [
           chainId,
           epoch.id,
+          epoch.startAt,
+          epoch.endAt,
           addresses.programId,
           addresses.vaultAddress,
           addresses.batchAddress,

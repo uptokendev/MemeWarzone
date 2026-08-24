@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS public.solana_reward_lane_batches (
   chain_id integer NOT NULL,
   lane text NOT NULL,
   epoch_id bigint NOT NULL,
+  epoch_start timestamptz,
+  epoch_end timestamptz,
   program_id text,
   vault_address text,
   batch_address text,
@@ -44,6 +46,12 @@ CREATE TABLE IF NOT EXISTS public.solana_reward_lane_batches (
 
 ALTER TABLE public.solana_reward_lane_batches
   ADD COLUMN IF NOT EXISTS deadline bigint;
+
+ALTER TABLE public.solana_reward_lane_batches
+  ADD COLUMN IF NOT EXISTS epoch_start timestamptz;
+
+ALTER TABLE public.solana_reward_lane_batches
+  ADD COLUMN IF NOT EXISTS epoch_end timestamptz;
 
 CREATE TABLE IF NOT EXISTS public.solana_reward_lane_claims (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
