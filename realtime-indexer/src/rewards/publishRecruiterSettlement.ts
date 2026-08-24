@@ -68,143 +68,152 @@ type PortalPayout = {
   ledgerIds: string[];
 };
 
-type BatchColumn = {
-  column_name: string;
-  is_nullable: string;
-  column_default: string | null;
-  data_type: string;
-  udt_name: string;
-};
+function buildSha(): string {
+  return String(
+    process.env.SOURCE_COMMIT
+    || process.env.COOLIFY_GIT_COMMIT_SHA
+    || process.env.GIT_SHA
+    || process.env.GIT_COMMIT
+    || "unset",
+  ).trim();
+}
 
-async function listBatchColumns(client: { query: typeof pool.query }): Promise<BatchColumn[]> {
+function claimDeadlineUnix(epochEnd: Date): number {
+  return Math.floor(new Date(epochEnd).getTime() / 1000) + 90 * 86400;
+}
+
+async function liveStatusCheck(client: { query: typeof pool.query }): Promise<{ def: string; allowed: string[] }> {
   const { rows } = await client.query(
-    `select column_name, is_nullable, column_default, data_type, udt_name
-       from information_schema.columns
-      where table_schema = 'public' and table_name = 'solana_reward_lane_batches'`,
+    `select pg_get_constraintdef(c.oid) as def
+       from pg_constraint c
+      where c.conrelid = 'public.solana_reward_lane_batches'::regclass
+        and c.contype = 'c'
+        and c.conname = 'solana_reward_lane_batches_status_check'`,
   );
-  return rows as BatchColumn[];
+  const def = String(rows[0]?.def || "");
+  const allowed = [...def.matchAll(/'([^']+)'/g)].map((match) => match[1]);
+  return { def, allowed };
 }
 
-function claimWindowEnd(epochEnd: Date): Date {
-  return new Date(epochEnd.getTime() + 90 * 86400_000);
-}
-
-function batchColumnValues(input: {
-  chainId: number;
-  epoch: { id: number; startAt: Date; endAt: Date };
-  addresses: ReturnType<typeof laneAddresses>;
-  merkleRoot: string;
-  totalLamports: string;
-  status: string;
-  metadata: Record<string, unknown>;
-}): Record<string, unknown> {
-  const endAt = new Date(input.epoch.endAt);
-  const claimAt = claimWindowEnd(endAt);
-  const unix = Math.floor(claimAt.getTime() / 1000);
-  return {
-    chain_id: input.chainId,
-    lane: "recruiter",
-    epoch_id: input.epoch.id,
-    epoch_start: input.epoch.startAt,
-    epoch_end: input.epoch.endAt,
-    program_id: input.addresses.programId,
-    vault_address: input.addresses.vaultAddress,
-    batch_address: input.addresses.batchAddress,
-    merkle_root: input.merkleRoot,
-    total_lamports: input.totalLamports,
-    deadline: unix,
-    claim_deadline: claimAt.toISOString(),
-    claim_deadline_at: claimAt.toISOString(),
-    expires_at: claimAt.toISOString(),
-    status: input.status,
-    metadata: JSON.stringify(input.metadata),
-  };
-}
-
-function typeNameOf(column: BatchColumn): string {
-  return `${column.data_type} ${column.udt_name}`;
-}
-
-function fillRequiredBatchColumns(columns: BatchColumn[], values: Record<string, unknown>) {
-  const claimAt = values.claim_deadline;
-  const unix = values.deadline;
-  for (const column of columns) {
-    const name = column.column_name;
-    const typeName = typeNameOf(column);
-    if (values[name] !== undefined) {
-      if (/(bigint|integer|numeric|double|real)/.test(typeName) && typeof values[name] === "string" && String(values[name]).includes("T")) {
-        values[name] = unix;
-      }
-      continue;
-    }
-    if (column.column_default) continue;
-    if (column.is_nullable === "YES") continue;
-    if (name === "id" || name === "created_at" || name === "updated_at") continue;
-    if (typeName.includes("timestamp")) values[name] = claimAt;
-    else if (typeName.includes("json")) values[name] = "{}";
-    else if (typeName.includes("bool")) values[name] = false;
-    else if (/(bigint|integer|numeric|double|real)/.test(typeName)) values[name] = unix;
-    else values[name] = "";
+function insertableStatus(allowed: string[], def = ""): string {
+  const frozen = new Set(["claim_open", "published", "closed", "failed", "claimed", "archived"]);
+  for (const candidate of ["pending", "ready", "draft", "prepared", "queued"]) {
+    if (allowed.includes(candidate)) return candidate;
   }
+  const open = allowed.filter((value) => !frozen.has(value));
+  if (open[0]) return open[0];
+  throw new Error(`solana_reward_lane_batches_status_check has no insertable value. def=${def} parsed=${allowed.join(",") || "(none)"}`);
 }
 
 async function upsertLaneBatch(
   client: { query: typeof pool.query },
-  values: Record<string, unknown>,
-): Promise<{ id: string; status: string } | null> {
-  const columns = await listBatchColumns(client);
-  fillRequiredBatchColumns(columns, values);
-  const skip = new Set(["id", "created_at", "updated_at"]);
-  const names = columns.map((column) => column.column_name).filter((name) => !skip.has(name) && values[name] !== undefined);
-  if (!names.length) throw new Error("solana_reward_lane_batches has no writable columns");
-  const params = names.map((name) => values[name]);
-  const placeholders = names.map((_, index) => `$${index + 1}`);
-  const updates = names
-    .filter((name) => name !== "lane" && name !== "chain_id" && name !== "epoch_id")
-    .map((name) => {
-      if (name === "status") {
-        return `status = case when public.solana_reward_lane_batches.status in ('claim_open','published') then public.solana_reward_lane_batches.status else excluded.status end`;
-      }
-      return `${name} = excluded.${name}`;
-    });
-  const hasConflictTarget = columns.some((column) => column.column_name === "epoch_id")
-    && columns.some((column) => column.column_name === "chain_id")
-    && columns.some((column) => column.column_name === "lane");
-  const insertSql = `insert into public.solana_reward_lane_batches (${names.join(", ")})
-       values (${placeholders.join(", ")})
-       returning id, status`;
-  const upsertSql = hasConflictTarget
-    ? `insert into public.solana_reward_lane_batches (${names.join(", ")})
-       values (${placeholders.join(", ")})
-       on conflict (chain_id, lane, epoch_id) do update set ${updates.join(", ")}, updated_at = now()
-       returning id, status`
-    : insertSql;
-  let inserted;
+  input: {
+    chainId: number;
+    epoch: { id: number; startAt: Date; endAt: Date };
+    merkleRoot: string;
+    totalLamports: string;
+    programId: string;
+    vaultAddress: string;
+    batchAddress: string;
+    metadata: Record<string, unknown>;
+  },
+): Promise<{ id: string; status: string }> {
+  const check = await liveStatusCheck(client);
+  const status = insertableStatus(check.allowed, check.def);
+  const claimDeadline = claimDeadlineUnix(new Date(input.epoch.endAt));
+  console.log(`[exportRecruiterSettlementBatch] status_check=${check.def || "(missing)"} using=${status} claim_deadline=${claimDeadline}`);
+  const params = [
+    input.chainId,
+    input.epoch.id,
+    input.epoch.startAt,
+    input.epoch.endAt,
+    input.merkleRoot,
+    input.totalLamports,
+    claimDeadline,
+    input.programId,
+    input.vaultAddress,
+    input.batchAddress,
+    status,
+    JSON.stringify(input.metadata),
+  ];
+  const insertSql = `insert into public.solana_reward_lane_batches (
+           lane, chain_id, epoch_id, epoch_start, epoch_end, merkle_root, total_lamports,
+           claim_deadline, program_id, vault_address, batch_address, status, metadata, deadline
+         ) values (
+           'recruiter', $1, $2, $3::timestamptz, $4::timestamptz, $5, $6::numeric,
+           $7::bigint, $8, $9, $10, $11, $12::jsonb, $7::bigint
+         )
+         returning id, status`;
+  const upsertSql = `insert into public.solana_reward_lane_batches (
+           lane, chain_id, epoch_id, epoch_start, epoch_end, merkle_root, total_lamports,
+           claim_deadline, program_id, vault_address, batch_address, status, metadata, deadline
+         ) values (
+           'recruiter', $1, $2, $3::timestamptz, $4::timestamptz, $5, $6::numeric,
+           $7::bigint, $8, $9, $10, $11, $12::jsonb, $7::bigint
+         )
+         on conflict (chain_id, lane, epoch_id) do update
+           set merkle_root = excluded.merkle_root,
+               total_lamports = excluded.total_lamports,
+               claim_deadline = excluded.claim_deadline,
+               deadline = excluded.deadline,
+               program_id = excluded.program_id,
+               vault_address = excluded.vault_address,
+               batch_address = excluded.batch_address,
+               metadata = excluded.metadata,
+               epoch_start = excluded.epoch_start,
+               epoch_end = excluded.epoch_end,
+               status = case
+                 when public.solana_reward_lane_batches.status in ('claim_open','published')
+                 then public.solana_reward_lane_batches.status
+                 else excluded.status
+               end,
+               updated_at = now()
+         returning id, status`;
   try {
-    inserted = await client.query(upsertSql, params);
+    const inserted = await client.query(upsertSql, params);
+    return { id: String(inserted.rows[0].id), status: String(inserted.rows[0].status) };
   } catch (error: any) {
     if (String(error?.code) !== "42P10") throw error;
-    inserted = await client.query(insertSql, params);
+    const inserted = await client.query(insertSql, params);
+    return { id: String(inserted.rows[0].id), status: String(inserted.rows[0].status) };
   }
-  return inserted.rows[0] ? { id: String(inserted.rows[0].id), status: String(inserted.rows[0].status || "") } : null;
 }
 
 async function updateLaneBatch(
   client: { query: typeof pool.query },
   batchId: string,
-  values: Record<string, unknown>,
+  input: {
+    epoch: { startAt: Date; endAt: Date };
+    merkleRoot: string;
+    totalLamports: string;
+    programId: string;
+    vaultAddress: string;
+    batchAddress: string;
+    metadata: Record<string, unknown>;
+    status: string;
+  },
 ): Promise<void> {
-  const columns = await listBatchColumns(client);
-  fillRequiredBatchColumns(columns, values);
-  const skip = new Set(["id", "created_at", "lane", "chain_id", "epoch_id"]);
-  const names = columns.map((column) => column.column_name).filter((name) => !skip.has(name) && values[name] !== undefined);
-  if (!names.length) return;
-  const assignments = names.map((name, index) => `${name} = $${index + 2}`);
+  const claimDeadline = claimDeadlineUnix(new Date(input.epoch.endAt));
   await client.query(
     `update public.solana_reward_lane_batches
-        set ${assignments.join(", ")}, updated_at = now()
-      where id = $1`,
-    [batchId, ...names.map((name) => values[name])],
+        set merkle_root=$2, total_lamports=$3::numeric, claim_deadline=$4::bigint, deadline=$4::bigint,
+            program_id=$5, vault_address=$6, batch_address=$7, epoch_start=$8::timestamptz,
+            epoch_end=$9::timestamptz, metadata=$10::jsonb, status=$11, updated_at=now()
+      where id=$1
+        and status not in ('claim_open','published')`,
+    [
+      batchId,
+      input.merkleRoot,
+      input.totalLamports,
+      claimDeadline,
+      input.programId,
+      input.vaultAddress,
+      input.batchAddress,
+      input.epoch.startAt,
+      input.epoch.endAt,
+      JSON.stringify(input.metadata),
+      input.status,
+    ],
   );
 }
 
@@ -244,6 +253,7 @@ async function loadPortalSolanaPayouts(): Promise<PortalPayout[]> {
 
 export async function publishRecruiterSettlementBatches(): Promise<{
   computedAt: string;
+  BUILD_SHA?: string;
   batches: Array<Record<string, unknown>>;
 }> {
   const chainId = 101;
@@ -252,12 +262,11 @@ export async function publishRecruiterSettlementBatches(): Promise<{
   try {
     viewRows = await listRecruiterClaimableSettlements({ chainId, limit: 1000 });
   } catch (error: any) {
-    console.warn("[exportRecruiterSettlementBatch] phase2 settlements skipped", error?.message || error);
+    if (String(error?.code) !== "42P01") throw error;
+    console.warn("[exportRecruiterSettlementBatch] phase2 view missing", error?.message || error);
   }
   const portal = await loadPortalSolanaPayouts();
-  console.log(`[exportRecruiterSettlementBatch] epoch=${epoch.id} phase2=${viewRows.length} portal=${portal.length}`);
   const portalByWallet = new Map(portal.map((row) => [row.payoutWallet, row]));
-
   const recipients = mergeRecruiterEntitlements(
     viewRows
       .filter((row) => Number(row.chainId) === chainId)
@@ -274,8 +283,24 @@ export async function publishRecruiterSettlementBatches(): Promise<{
       ledgerIds: row.ledgerIds,
     })),
   );
+  const portalTotalLamports = portal.reduce((sum, row) => sum + BigInt(row.amountRaw || "0"), 0n).toString();
+  const mergedTotalLamports = recipients.reduce((sum, row) => sum + BigInt(row.amountLamports || "0"), 0n).toString();
+  const diag = {
+    BUILD_SHA: buildSha(),
+    chainId,
+    epochId: epoch.id,
+    epochStart: new Date(epoch.startAt).toISOString(),
+    epochEnd: new Date(epoch.endAt).toISOString(),
+    phase2Rows: viewRows.length,
+    portalRows: portal.length,
+    portalTotalLamports,
+    mergedRecipients: recipients.length,
+    mergedTotalLamports,
+    rewardsProgramId: programId(),
+  };
+  console.log("[exportRecruiterSettlementBatch] diag", JSON.stringify(diag));
   if (!recipients.length) {
-    return { computedAt: new Date().toISOString(), batches: [] };
+    throw new Error(`No recruiter settlement recipients. ${JSON.stringify(diag)}`);
   }
 
   const existing = await pool.query(
@@ -301,19 +326,12 @@ export async function publishRecruiterSettlementBatches(): Promise<{
 
   const merkle = buildRecruiterMerkle(epoch.id, recipients);
   const addresses = laneAddresses(epoch.id);
-  const deadline = Math.floor(new Date(epoch.endAt).getTime() / 1000) + 90 * 86400;
-  const batchValues = batchColumnValues({
-    chainId,
-    epoch,
-    addresses,
-    merkleRoot: merkle.root,
-    totalLamports: merkle.totalLamports,
-    status: "ready",
-    metadata: { startAt: epoch.startAt, endAt: epoch.endAt, deadline, rebuiltAt: new Date().toISOString() },
-  });
+  const deadline = claimDeadlineUnix(new Date(epoch.endAt));
   const client = await pool.connect();
   try {
     await client.query("begin");
+    const check = await liveStatusCheck(client);
+    const status = insertableStatus(check.allowed, check.def);
     let batchId = existing.rows[0]?.id || null;
     if (batchId) {
       await client.query(
@@ -337,14 +355,33 @@ export async function publishRecruiterSettlementBatches(): Promise<{
             and metadata->>'epochId' = $1`,
         [String(epoch.id)],
       );
-      await updateLaneBatch(client, String(batchId), batchValues);
+      await updateLaneBatch(client, String(batchId), {
+        epoch,
+        merkleRoot: merkle.root,
+        totalLamports: merkle.totalLamports,
+        programId: addresses.programId,
+        vaultAddress: addresses.vaultAddress,
+        batchAddress: addresses.batchAddress,
+        metadata: { startAt: epoch.startAt, endAt: epoch.endAt, deadline, rebuiltAt: new Date().toISOString() },
+        status,
+      });
     } else {
-      const batch = await upsertLaneBatch(client, batchValues);
-      batchId = batch?.id || null;
-      if (batch?.status && !canRebuildRecruiterBatch(String(batch.status))) {
+      const batch = await upsertLaneBatch(client, {
+        chainId,
+        epoch,
+        merkleRoot: merkle.root,
+        totalLamports: merkle.totalLamports,
+        programId: addresses.programId,
+        vaultAddress: addresses.vaultAddress,
+        batchAddress: addresses.batchAddress,
+        metadata: { startAt: epoch.startAt, endAt: epoch.endAt, deadline },
+      });
+      batchId = batch.id;
+      if (batch.status && !canRebuildRecruiterBatch(String(batch.status))) {
         await client.query("rollback");
         return {
           computedAt: new Date().toISOString(),
+          BUILD_SHA: buildSha(),
           batches: [{ chainId, epochId: epoch.id, status: batch.status, immutable: true }],
         };
       }
@@ -414,15 +451,18 @@ export async function publishRecruiterSettlementBatches(): Promise<{
     await client.query("commit");
     return {
       computedAt: new Date().toISOString(),
+      BUILD_SHA: buildSha(),
       batches: [{
         chainId,
         epochId: epoch.id,
-        status: "ready",
+        epochStart: new Date(epoch.startAt).toISOString(),
+        epochEnd: new Date(epoch.endAt).toISOString(),
+        status,
         rebuilt: Boolean(existing.rows[0]),
         recipientCount: recipients.length,
         totalLamports: merkle.totalLamports,
         wallets: recipients.map((row) => row.walletAddress),
-        note: "DB settlement is ready. Claims stay pending until cron:publish-recruiter-settlement-root marks claim_open.",
+        note: "DB settlement is stored. Claims stay pending until cron:publish-recruiter-settlement-root marks claim_open. Do not publish until chainId=101 and recipientCount>=2.",
       }],
     };
   } catch (error) {

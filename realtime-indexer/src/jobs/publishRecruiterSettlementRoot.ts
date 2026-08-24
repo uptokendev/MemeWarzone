@@ -110,7 +110,7 @@ async function main() {
   const { rows } = await pool.query(
     `select id, chain_id, epoch_id, merkle_root, total_lamports, batch_address, status, metadata
        from public.solana_reward_lane_batches
-      where lane='recruiter' and status in ('draft','ready')
+      where lane='recruiter' and status not in ('claim_open','published','closed','failed','claimed','archived')
       order by epoch_id asc`,
   );
   if (!rows.length) {

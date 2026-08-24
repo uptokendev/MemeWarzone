@@ -47,6 +47,7 @@ test("recipient B appearing before claim_open is included without duplicating A"
   const first = mergeRecruiterEntitlements([], [{ walletAddress: a, amountLamports: "10000", source: "portal" }]);
   assert.equal(first.length, 1);
   assert.equal(canRebuildRecruiterBatch("ready"), true);
+  assert.equal(canRebuildRecruiterBatch("pending"), true);
   const second = mergeRecruiterEntitlements(
     [],
     [

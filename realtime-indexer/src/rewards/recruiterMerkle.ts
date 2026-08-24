@@ -102,6 +102,7 @@ export function mergeRecruiterEntitlements(
 }
 
 export function canRebuildRecruiterBatch(status: string | null | undefined): boolean {
-  const raw = String(status || "draft").toLowerCase();
-  return raw === "draft" || raw === "ready" || raw === "";
+  const raw = String(status || "").toLowerCase();
+  if (!raw) return true;
+  return !["claim_open", "published", "closed", "failed", "claimed", "archived"].includes(raw);
 }
