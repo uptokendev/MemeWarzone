@@ -26,6 +26,19 @@ import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
 
 /** Fixed UP Vote price in USD. Same product on BNB and Solana. */
 const UPVOTE_USD_TARGET = 3;
+const UPVOTE_DISPLAY_DECIMALS = 6;
+const UPVOTE_DISPLAY_SCALE_WEI = 10n ** BigInt(18 - UPVOTE_DISPLAY_DECIMALS);
+
+function floorToDisplayPrecision(wei: bigint) {
+  return (wei / UPVOTE_DISPLAY_SCALE_WEI) * UPVOTE_DISPLAY_SCALE_WEI;
+}
+
+function formatDisplayBnb(wei: bigint) {
+  const formatted = ethers.formatEther(floorToDisplayPrecision(wei));
+  const [whole, fraction = ""] = formatted.split(".");
+  const trimmed = fraction.slice(0, UPVOTE_DISPLAY_DECIMALS).replace(/0+$/, "");
+  return trimmed ? `${whole}.${trimmed}` : whole;
+}
 
 const UPVOTE_ABI = [
   "function voteWithBNB(address campaign, bytes32 meta) payable",

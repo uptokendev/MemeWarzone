@@ -512,10 +512,10 @@ export default function DraftPromotionSetup() {
                   </div>
                 </div>
                 <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-                  <div><FieldLabel>Website</FieldLabel><Input value={websiteUrl} onChange={(e) => setWebsiteUrl(e.target.value)} className={inputClass} placeholder="https://memewar.zone" /></div>
-                  <div><FieldLabel>X (formally Twitter)</FieldLabel><Input value={xUrl} onChange={(e) => setXUrl(e.target.value)} className={inputClass} placeholder="@memewarzone or URL" /></div>
-                  <div><FieldLabel>Telegram</FieldLabel><Input value={telegramUrl} onChange={(e) => setTelegramUrl(e.target.value)} className={inputClass} placeholder="@memewarzone or URL" /></div>
-                  <div><FieldLabel>Discord</FieldLabel><Input value={discordUrl} onChange={(e) => setDiscordUrl(e.target.value)} className={inputClass} placeholder="Discord invite URL" /></div>
+                  <div><FieldLabel>Website</FieldLabel><Input value={websiteUrl} onChange={(e) => setWebsiteUrl(e.target.value)} onBlur={() => setWebsiteUrl(normalizeSocialUrl(websiteUrl, "website"))} className={inputClass} placeholder="memewar.zone or full URL" /></div>
+                  <div><FieldLabel>X (formerly Twitter)</FieldLabel><Input value={xUrl} onChange={(e) => setXUrl(e.target.value)} onBlur={() => setXUrl(normalizeSocialUrl(xUrl, "x"))} className={inputClass} placeholder="memewarzone, @memewarzone, or URL" /></div>
+                  <div><FieldLabel>Telegram</FieldLabel><Input value={telegramUrl} onChange={(e) => setTelegramUrl(e.target.value)} onBlur={() => setTelegramUrl(normalizeSocialUrl(telegramUrl, "telegram"))} className={inputClass} placeholder="memewarzone, @memewarzone, or URL" /></div>
+                  <div><FieldLabel>Discord</FieldLabel><Input value={discordUrl} onChange={(e) => setDiscordUrl(e.target.value)} onBlur={() => setDiscordUrl(normalizeSocialUrl(discordUrl, "discord"))} className={inputClass} placeholder="Invite code or full URL" /></div>
                 </div>
               </div>
 

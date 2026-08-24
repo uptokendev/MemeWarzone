@@ -7,6 +7,7 @@ import { getFactoryAddress } from "@/lib/chainConfig";
 import { getTickerFeedChainId } from "@/lib/feedChainConfig";
 import { getReadProvider } from "@/lib/readProvider";
 import { useWallet } from "@/contexts/WalletContext";
+import { apiFetch } from "@/lib/apiBase";
 
 type CampaignTickerItem = {
   campaignAddress: string;
@@ -106,35 +107,72 @@ async function fetchFactoryRows(chainId: number): Promise<FactoryCampaignRow[]> 
   return Array.from(rows ?? []).reverse() as FactoryCampaignRow[];
 }
 
-async function fetchTickerItems(chainId: number): Promise<CampaignTickerItem[]> {
-  const rows = await fetchFactoryRows(chainId);
-  const baseItems = rows
-    .map((row) => {
-      const campaignAddress = normalizeAddress(row?.campaign);
+async function fetchIndexedTickerItems(chainId: number): Promise<CampaignTickerItem[]> {
+  try {
+    const params = new URLSearchParams({
+      chainId: String(chainId),
+      limit: "100",
+      cursor: "0",
+      status: "all",
+      sort: "created_desc",
+      tab: "trending",
+      _r: String(Date.now()),
+    });
+    if (chainId === 97) {
+      params.set("includeTestnet", "true");
+      params.set("testnet", "true");
+    }
+    const response = await apiFetch(`/api/campaigns?${params.toString()}`, { cache: "no-store" });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !Array.isArray(payload?.items)) return [];
+    return payload.items.map((row: any): CampaignTickerItem | null => {
+      const campaignAddress = normalizeAddress(row?.campaignAddress ?? row?.campaign_address);
       if (!isAddress(campaignAddress)) return null;
       return {
         campaignAddress,
-        tokenAddress: isAddress(row?.token) ? normalizeAddress(row?.token) : undefined,
-        symbol: String(row?.symbol ?? "").trim() || "???",
+        tokenAddress: isAddress(row?.tokenAddress ?? row?.token_address)
+          ? normalizeAddress(row?.tokenAddress ?? row?.token_address)
+          : undefined,
+        symbol: String(row?.symbol ?? row?.ticker ?? "").trim() || "???",
         name: String(row?.name ?? "").trim() || "Unknown",
-        marketcapBnb: null,
-        votes24h: 0,
-      } satisfies CampaignTickerItem;
-    })
-    .filter(Boolean) as CampaignTickerItem[];
+        marketcapBnb: asNumber(row?.marketcapBnb ?? row?.marketcap_bnb),
+        votes24h: Number(asNumber(row?.votes24h ?? row?.votes_24h) ?? 0),
+      };
+    }).filter(Boolean) as CampaignTickerItem[];
+  } catch {
+    return [];
+  }
+}
 
-  const enriched = await Promise.all(
-    baseItems.slice(0, 24).map(async (item) => {
+async function fetchTickerItems(chainId: number): Promise<CampaignTickerItem[]> {
+  const [indexed, factoryRows] = await Promise.all([
+    fetchIndexedTickerItems(chainId),
+    fetchFactoryRows(chainId).catch(() => []),
+  ]);
+
+  const merged = new Map<string, CampaignTickerItem>();
+  for (const item of indexed) merged.set(item.campaignAddress, item);
+  for (const row of factoryRows) {
+    const campaignAddress = normalizeAddress(row?.campaign);
+    if (!isAddress(campaignAddress)) continue;
+    const previous = merged.get(campaignAddress);
+    merged.set(campaignAddress, {
+      campaignAddress,
+      tokenAddress: isAddress(row?.token) ? normalizeAddress(row?.token) : previous?.tokenAddress,
+      symbol: String(row?.symbol ?? "").trim() || previous?.symbol || "???",
+      name: String(row?.name ?? "").trim() || previous?.name || "Unknown",
+      marketcapBnb: previous?.marketcapBnb ?? null,
+      votes24h: previous?.votes24h ?? 0,
+    });
+  }
+
+  return Promise.all(
+    Array.from(merged.values()).slice(0, 30).map(async (item) => {
+      if (item.marketcapBnb != null || item.votes24h > 0) return item;
       const summary = await fetchTokenSummary(chainId, item.campaignAddress);
-      return {
-        ...item,
-        marketcapBnb: summary.marketcapBnb,
-        votes24h: summary.votes24h,
-      } satisfies CampaignTickerItem;
-    })
+      return { ...item, ...summary };
+    }),
   );
-
-  return enriched;
 }
 
 function buildRepeatedTickerItems(items: CampaignTickerItem[]) {
