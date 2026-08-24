@@ -266,6 +266,18 @@ async function buildLaunchDigest(payload) {
   `, { primaryGlow: colors.glow, secondaryGlow: colors.glow });
 }
 
+async function buildCampaignCreated(payload) {
+  const { name = "Token", campaign, tokenUrl, chain = "BNB" } = payload;
+  const tokenImg = await fetchImageBase64(tokenUrl);
+  const colors = getChainColors(chain);
+
+  return await getBaseSvg(`
+    ${pixelText("NEW CAMPAIGN", 501, 110, { scale: 8, color: "#10f58a", anchor: "middle" })}
+    ${renderChainPill(chain, 501, 200, 3)}
+    ${renderCampaignLabel(name, campaign, 501, 290, 6, "middle", "#ffffff")}
+  `, { backdropImage: tokenImg, primaryGlow: colors.glow, secondaryGlow: colors.glow });
+}
+
 async function buildUserJoined(payload) {
   const { username = "New User", avatarUrl } = payload;
   const avatarImg = await fetchImageBase64(avatarUrl);
@@ -418,6 +430,9 @@ export default async function handler(req, res) {
         break;
       case "platform.daily_recap_ready":
         svg = await buildDailyRecap(payload);
+        break;
+      case "campaign.created":
+        svg = await buildCampaignCreated(payload);
         break;
       case "user.joined":
         svg = await buildUserJoined(payload);
