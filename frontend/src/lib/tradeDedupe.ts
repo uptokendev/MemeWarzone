@@ -2,7 +2,9 @@ import type { CurveTradePoint } from "@/hooks/useCurveTrades";
 
 /**
  * Wallet reports / optimistic UI use synthetic log indices (>= 1e6).
- * Older reports used 0. On-chain pool/curve logs use real log indices.
+ * On-chain EVM log indices and Solana event indices are zero-based, so 0 is a
+ * valid canonical identity. Older optimistic rows that used 0 are resolved by
+ * quality against the canonical txHash/signature:0 row once it arrives.
  *
  * Bonding must keep multiple REAL logs per tx when they exist (rare, but
  * collapsing all logs to one tx breaks circulating-supply mcap walks).
@@ -26,8 +28,8 @@ export function isValidTradeTxHash(value: unknown): boolean {
 
 export function isSyntheticLogIndex(logIndex: unknown): boolean {
   const n = Number(logIndex);
-  // 0 / missing / huge synthetic marker → not a trusted chain log index.
-  if (!Number.isFinite(n) || n <= 0) return true;
+  // Missing/negative/huge marker = synthetic. Zero is a valid chain event index.
+  if (!Number.isFinite(n) || n < 0) return true;
   if (n >= SYNTHETIC_LOG_INDEX_MIN) return true;
   return false;
 }
@@ -51,9 +53,6 @@ function tradeQuality(point: CurveTradePoint): number {
   }
   if (Number(point.pricePerToken || 0) > 0) score += 2;
 
-  // For Solana bonding history, post-trade sold supply is authoritative
-  // curve state. Prefer rows carrying it over otherwise equivalent cached,
-  // optimistic or secondary API representations of the same transaction.
   if (point.soldTokensAfterRaw != null) {
     try {
       if (point.soldTokensAfterRaw >= 0n) score += 40;
@@ -75,10 +74,9 @@ export function isPlausibleBondingTrade(point: CurveTradePoint): boolean {
     if (point.nativeWei < 0n) return false;
 
     const solanaTx = SOLANA_SIGNATURE_RE.test(String(point.txHash || ""));
-    // 10M SOL / 1.45T tokens are the double-scaled Solana bug, not real fills.
     if (solanaTx) {
-      if (point.nativeWei > 10n ** 12n) return false; // > 1,000 SOL
-      if (point.tokensWei > 10n ** 15n) return false; // > 1B tokens at 6 decimals
+      if (point.nativeWei > 10n ** 12n) return false;
+      if (point.tokensWei > 10n ** 15n) return false;
     } else if (point.nativeWei > 10n ** 21n) {
       return false;
     }
@@ -117,8 +115,6 @@ export function mergeTradePoints(...streams: Array<CurveTradePoint[] | null | un
       const incoming = { ...point, txHash: tx };
       const prevQ = tradeQuality(prev) + (isPlausibleBondingTrade(prev) ? 0 : -1000);
       const nextQ = tradeQuality(incoming) + (isPlausibleBondingTrade(incoming) ? 0 : -1000);
-      // Authoritative copy wins in full — including blockchain block time.
-      // Never keep a later Date.now() over a real block timestamp.
       if (nextQ > prevQ) {
         byKey.set(key, incoming);
         continue;
@@ -136,7 +132,6 @@ export function mergeTradePoints(...streams: Array<CurveTradePoint[] | null | un
   const out: CurveTradePoint[] = [];
   for (const point of byKey.values()) {
     const tx = normalizeTradeTxHash(point.txHash);
-    // Drop optimistic/wallet rows once the real chain log is present.
     if (isSyntheticLogIndex(point.logIndex) && realTx.has(tx)) continue;
     out.push(point);
   }
