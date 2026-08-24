@@ -184,7 +184,8 @@ function renderCampaignLabel(name, ticker, x, y, scale = 4, anchor = "middle", c
 async function getBaseSvg(content, options = {}) {
   const primaryGlow = options.primaryGlow || "#10f58a";
   const secondaryGlow = options.secondaryGlow || "#00ff88";
-  const logoDataUri = await getLogoBase64();
+  const backdropImg = options.backdropImage || await getLogoBase64();
+  const smallLogo = await getLogoBase64();
   
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="1002" height="531" viewBox="0 0 1002 531" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -203,7 +204,7 @@ async function getBaseSvg(content, options = {}) {
   </defs>
 
   <rect width="1002" height="531" fill="url(#bg)"/>
-  ${logoDataUri ? `<image x="251" y="15" width="500" height="500" href="${logoDataUri}" opacity="0.04" />` : ""}
+  ${backdropImg ? `<g opacity="0.12"><image x="251" y="15" width="500" height="500" href="${backdropImg}" clip-path="url(#circleClip)" preserveAspectRatio="xMidYMid slice" /></g>` : ""}
   <rect width="1002" height="531" fill="url(#grid)"/>
   <rect width="1002" height="531" fill="url(#orbGlow)" opacity="0.65"/>
   <rect x="0" y="0" width="1002" height="10" fill="#070707"/>
@@ -211,7 +212,7 @@ async function getBaseSvg(content, options = {}) {
   <rect x="0" y="521" width="1002" height="10" fill="#070707"/>
   ${Array.from({ length: 44 }).map((_, i) => `<path d="M${i * 24} 521H${i * 24 + 12}L${i * 24 + 2} 531H${i * 24 - 10}L${i * 24} 521Z" fill="#7b421c" fill-opacity="0.52"/>`).join("")}
   
-  ${logoDataUri ? `<image x="40" y="40" width="80" height="80" href="${logoDataUri}" />` : ""}
+  ${smallLogo ? `<image x="40" y="40" width="80" height="80" href="${smallLogo}" />` : ""}
 
   <g filter="url(#textGlow)">
     ${content}
@@ -276,7 +277,7 @@ async function buildProgressThresholdAlert(payload) {
     
     ${renderCampaignLabel(name, campaign, 501, 410, 4, "middle", "#ffffff")}
     ${pixelText(`${Math.round(threshold)}% PROGRESS`, 501, 450, { scale: 5, color: "#ff4400", anchor: "middle" })}
-  `, { primaryGlow: "#ff4400", secondaryGlow: "#ff0000" });
+  `, { primaryGlow: "#ff4400", secondaryGlow: "#ff0000", backdropImage: tokenImg });
 }
 
 async function buildCampaignMilestone(payload) {
@@ -291,7 +292,7 @@ async function buildCampaignMilestone(payload) {
     
     ${renderCampaignLabel(name, campaign, 501, 410, 4, "middle", "#ffffff")}
     ${pixelText(`${Math.round(milestone)}% PROGRESS`, 501, 450, { scale: 5, color: "#10f58a", anchor: "middle" })}
-  `);
+  `, { backdropImage: tokenImg });
 }
 
 async function buildGraduationAlert(payload) {
@@ -306,7 +307,7 @@ async function buildGraduationAlert(payload) {
     
     ${renderCampaignLabel(name, campaign, 501, 420, 5, "middle", "#ffffff")}
     ${creatorReward ? pixelText(`REWARD: ${creatorReward}`, 501, 470, { scale: 4, color: "#10f58a", anchor: "middle" }) : ""}
-  `);
+  `, { backdropImage: tokenImg });
 }
 
 async function buildDailyRecap(payload) {
