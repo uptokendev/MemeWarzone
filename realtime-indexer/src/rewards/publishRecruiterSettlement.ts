@@ -425,12 +425,13 @@ export async function publishRecruiterSettlementBatches(): Promise<{
       await client.query(
         `insert into public.solana_reward_lane_claims (
            batch_id, lane, source_type, source_ref, wallet_address, amount_lamports,
-           merkle_proof, claim_receipt_address, status, metadata
+           merkle_leaf, merkle_proof, claim_receipt_address, status, metadata
          ) values (
-           $1, 'recruiter', $2, $3, $4, $5::numeric, $6::jsonb, $7, 'pending', $8::jsonb
+           $1, 'recruiter', $2, $3, $4, $5::numeric, $6, $7::jsonb, $8, 'pending', $9::jsonb
          )
          on conflict (lane, source_type, source_ref) do update
            set amount_lamports = excluded.amount_lamports,
+               merkle_leaf = excluded.merkle_leaf,
                merkle_proof = excluded.merkle_proof,
                claim_receipt_address = excluded.claim_receipt_address,
                status = 'pending',
@@ -441,6 +442,7 @@ export async function publishRecruiterSettlementBatches(): Promise<{
           recruiterClaimId || `${epoch.id}:${recipient.walletAddress}`,
           recipient.walletAddress,
           recipient.amountLamports,
+          merkle.leaves[i],
           JSON.stringify(merkle.proofs[i] || []),
           receipt,
           JSON.stringify({ epochId: epoch.id }),
