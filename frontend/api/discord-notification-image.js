@@ -269,12 +269,29 @@ async function buildUserJoined(payload) {
   const { username = "New User", avatarUrl } = payload;
   const avatarImg = await fetchImageBase64(avatarUrl);
   
+  const usernameText = `@${clampText(username, 15)}`;
+  const textScale = 5;
+  const textWidth = getPixelTextWidth(usernameText, textScale);
+  
+  const avatarSize = 90;
+  const gap = 25;
+  const totalWidth = avatarSize + gap + textWidth;
+  const startX = 501 - (totalWidth / 2);
+  
+  const avatarX = startX;
+  const avatarY = 270;
+  const textX = startX + avatarSize + gap;
+  // Character height is 7 * scale. Align text vertically to the center of the avatar.
+  const textY = avatarY + (avatarSize / 2) - ((7 * textScale) / 2);
+
   let content = `
-    ${pixelText("NEW RECRUIT", 501, 200, { scale: 8, color: "#10f58a", anchor: "middle" })}
-    ${pixelText(`@${clampText(username, 15)}`, 501, 350, { scale: 5, color: "#dfffee", anchor: "middle" })}
+    ${pixelText("NEW RECRUIT", 501, 160, { scale: 8, color: "#10f58a", anchor: "middle" })}
+    
+    ${avatarImg ? `<image x="${avatarX}" y="${avatarY}" width="${avatarSize}" height="${avatarSize}" href="${avatarImg}" clip-path="url(#circleClip)" preserveAspectRatio="xMidYMid slice" />` : ""}
+    ${pixelText(usernameText, textX, textY, { scale: textScale, color: "#dfffee", anchor: "start" })}
   `;
 
-  return await getBaseSvg(content, { backdropImage: avatarImg, primaryGlow: "#10f58a", secondaryGlow: "#10f58a" });
+  return await getBaseSvg(content, { primaryGlow: "#10f58a", secondaryGlow: "#10f58a" });
 }
 
 async function buildTrendingDigest(payload) {
