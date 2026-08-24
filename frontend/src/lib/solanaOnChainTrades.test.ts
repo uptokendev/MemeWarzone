@@ -43,6 +43,26 @@ test("TokensBought after a fee event keeps indexer logIndex=1", () => {
   assert.equal(trades[0].soldTokensAfter, 1_500_000n);
 });
 
+test("mint-route decode still returns the PDA TokensBought event", () => {
+  const buy = Buffer.concat([
+    BUY_DISC,
+    CAMPAIGN,
+    TRADER,
+    u64(10_000_000),
+    u64(30_000),
+    u64(9_970_000),
+    u64(1_500_000),
+    u64(1_500_000),
+    u64(9_970_000),
+  ]);
+  const trades = decodeSolanaTradeEvents(
+    [programLine([buy])],
+    "5h4qpe8Z6SLhVezum7gdkyMBBXHqNa68BbsU9XC2scbo",
+  );
+  assert.equal(trades.length, 1);
+  assert.equal(trades[0].kind, "TokensBought");
+});
+
 test("tip reconcile fetches a later signature the indexer already partially knows", () => {
   const first = "heWs9aJGiKrEgDhQ1pLhabmV7pehtTiz7pP3ZqopaEVxYTCVtpEGpd1pFvr56bjxXCuMBnvocznKwexR4DJqHqP";
   const second = "3oZaXc5EAodXDH6qaZK9Pftds1DjVD8vkizRFU6zJppA272F5hk7xfpZcGpULbZXMySC26C3WdE4tFXiQ939BtXz";

@@ -1420,13 +1420,18 @@ const TokenDetails = () => {
 
   // Read curve trades for transactions + analytics (BNB + Solana).
   const resolvedCampaignAddress = useMemo(() => {
-    const raw = String(campaign?.campaign || campaignAddr || "").trim();
     if (isSolanaPage) {
-      return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(raw) ? raw : "";
+      const pda = String(campaign?.campaign || "").trim();
+      const route = String(campaignAddr || campaignAddress || "").trim();
+      const mint = String(campaign?.token || "").trim();
+      if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(pda)) return pda;
+      if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(route) && route !== mint) return route;
+      return "";
     }
+    const raw = String(campaign?.campaign || campaignAddr || "").trim();
     const value = raw.toLowerCase();
     return /^0x[a-f0-9]{40}$/.test(value) ? value : "";
-  }, [campaign?.campaign, campaignAddr, isSolanaPage]);
+  }, [campaign?.campaign, campaign?.token, campaignAddr, campaignAddress, isSolanaPage]);
 
   const hasValidCampaignAddress = Boolean(resolvedCampaignAddress);
   const localTradeStorageAddress = useMemo(

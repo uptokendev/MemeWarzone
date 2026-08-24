@@ -78,9 +78,8 @@ function toSol(raw: bigint): number {
 
 export function decodeSolanaTradeEvents(
   logMessages: string[] | null | undefined,
-  campaignAddress?: string,
+  _campaignAddress?: string,
 ): DecodedTrade[] {
-  const target = String(campaignAddress || "").trim();
   const trades: DecodedTrade[] = [];
   let eventIndex = 0;
 
@@ -113,17 +112,15 @@ export function decodeSolanaTradeEvents(
       const tokenRaw = isBuy ? readU64LE(data, 8 + 64 + 24) : readU64LE(data, 8 + 64);
       const nativeRaw = isBuy ? readU64LE(data, 8 + 64) : readU64LE(data, 8 + 64 + 24);
       const soldTokensAfter = readU64LE(data, 8 + 64 + 32);
-      if (!target || campaign === target) {
-        trades.push({
-          kind: isBuy ? "TokensBought" : "TokensSold",
-          eventIndex,
-          campaign,
-          trader,
-          tokenRaw,
-          nativeRaw,
-          soldTokensAfter,
-        });
-      }
+      trades.push({
+        kind: isBuy ? "TokensBought" : "TokensSold",
+        eventIndex,
+        campaign,
+        trader,
+        tokenRaw,
+        nativeRaw,
+        soldTokensAfter,
+      });
     }
     eventIndex += 1;
   }

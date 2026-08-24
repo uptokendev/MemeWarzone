@@ -1842,6 +1842,17 @@ async function existingCampaignTradeSignatures(campaign: string, signatures: str
   return new Set(result.rows.map((row: { tx_hash?: string }) => String(row.tx_hash || "")).filter(Boolean));
 }
 
+/** Tip ingest must retry signatures that were marked scanned without a trade row. */
+async function existingCurveTradeSignatures(campaign: string, signatures: string[]): Promise<Set<string>> {
+  if (!signatures.length) return new Set();
+  const result = await sql(
+    `select tx_hash from public.curve_trades
+      where chain_id=$1 and campaign_address=$2 and tx_hash = any($3::text[])`,
+    [SOLANA_CHAIN_ID, campaign, signatures],
+  );
+  return new Set(result.rows.map((row: { tx_hash?: string }) => String(row.tx_hash || "")).filter(Boolean));
+}
+
 async function markPdaSignaturesProcessed(campaign: string, signatures: string[]) {
   if (!signatures.length) return;
   await ensurePdaScanTable();
@@ -1892,7 +1903,7 @@ export async function ingestSolanaCampaignTip(
       signal,
     );
     const signatures = Array.isArray(batch) ? batch : [];
-    const known = await existingCampaignTradeSignatures(
+    const known = await existingCurveTradeSignatures(
       campaign,
       signatures.map((item) => String(item?.signature || "")).filter(Boolean),
     );
@@ -1969,7 +1980,7 @@ export async function ingestSolanaSignatures(
 export function kickSolanaCampaignTipIngest(campaignAddress: string): void {
   const campaign = String(campaignAddress || "").trim();
   if (!isSolanaPublicKey(campaign)) return;
-  void ingestSolanaCampaignTip(campaign).catch((error) => {
+  void ingestSolanaCampaignTip(campaign, undefined, { force: true }).catch((error) => {
     console.warn(
       "[solana-indexer] campaign tip ingest failed",
       campaign,

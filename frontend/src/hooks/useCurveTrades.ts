@@ -458,40 +458,61 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
         indexerOk,
         indexerRows,
       });
-      if (isSolanaChainId(chainId) && (mode === "full" || !indexerOk) && (fullHistoryFallback || tipReconcile || indexerOk)) {
-        fallbackRan = true;
-        try {
-          const known = new Set<string>([
-            ...indexedTxRef.current,
-            ...livePointsRef.current.map((point) => normalizeTradeTxHash(point.txHash)).filter(Boolean),
-          ]);
-          const knownIdentities = new Set<string>([
-            ...indexedKeysRef.current,
-            ...livePointsRef.current.map((point) => tradeDedupeKey(point)).filter(Boolean),
-          ]);
-          const started = Date.now();
-          const chainRows = await fetchSolanaOnChainTrades(campaignAddress, {
-            knownTxHashes: known,
-            knownIdentities,
-            minSlot: lastIndexedSlot,
-            maxFetch: fullHistoryFallback ? 12 : 8,
-            signal,
-            limit: fullHistoryFallback ? limit : 20,
+      const runSolanaCheck =
+        isSolanaChainId(chainId) &&
+        Boolean(campaignAddress) &&
+        (mode === "full" || !indexerOk) &&
+        (fullHistoryFallback || tipReconcile || indexerOk);
+      const verifySolana = async () => {
+        if (!runSolanaCheck || !campaignAddress) return 0;
+        const known = new Set<string>([
+          ...indexedTxRef.current,
+          ...livePointsRef.current.map((point) => normalizeTradeTxHash(point.txHash)).filter(Boolean),
+        ]);
+        const knownIdentities = new Set<string>([
+          ...indexedKeysRef.current,
+          ...livePointsRef.current.map((point) => tradeDedupeKey(point)).filter(Boolean),
+        ]);
+        const chainRows = await fetchSolanaOnChainTrades(campaignAddress, {
+          knownTxHashes: known,
+          knownIdentities,
+          minSlot: lastIndexedSlot,
+          maxFetch: 8,
+          signal,
+          limit: 20,
+        });
+        if (signal?.aborted) return 0;
+        if (chainRows.length) {
+          applyLivePoints(chainRows);
+          notifyIndexerFills({
+            chainId,
+            campaignAddress,
+            txHashes: chainRows.map((row) => row.txHash),
           });
-          fallbackLatencyMs = Date.now() - started;
-          if (signal?.aborted) return;
-          fallbackRows = chainRows.length;
-          if (chainRows.length) {
-            applyLivePoints(chainRows);
-            notifyIndexerFills({
-              chainId,
-              campaignAddress,
-              txHashes: chainRows.map((row) => row.txHash),
+        }
+        return chainRows.length;
+      };
+      if (runSolanaCheck) {
+        fallbackRan = true;
+        if (indexerRows > 0) {
+          void verifySolana()
+            .then((n) => {
+              fallbackRows = n;
+            })
+            .catch((chainError) => {
+              if (!isAbortError(chainError)) {
+                console.warn("[useCurveTrades] Solana on-chain trade fallback failed", chainError);
+              }
             });
-          }
-        } catch (chainError) {
-          if (!isAbortError(chainError)) {
-            console.warn("[useCurveTrades] Solana on-chain trade fallback failed", chainError);
+        } else {
+          try {
+            const started = Date.now();
+            fallbackRows = await verifySolana();
+            fallbackLatencyMs = Date.now() - started;
+          } catch (chainError) {
+            if (!isAbortError(chainError)) {
+              console.warn("[useCurveTrades] Solana on-chain trade fallback failed", chainError);
+            }
           }
         }
       }
