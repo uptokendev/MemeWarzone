@@ -107,10 +107,14 @@ function deadlineUnix(row: { metadata?: unknown; deadline?: unknown }): bigint {
 }
 
 async function main() {
+  const sha = process.env.SOURCE_COMMIT || process.env.COOLIFY_GIT_COMMIT_SHA || process.env.GIT_SHA || "unset";
+  console.log(`[publishRecruiterSettlementRoot] BUILD_SHA=${sha}`);
   const { rows } = await pool.query(
     `select id, chain_id, epoch_id, merkle_root, total_lamports, batch_address, status, metadata
        from public.solana_reward_lane_batches
-      where lane='recruiter' and status not in ('claim_open','published','closed','failed','claimed','archived')
+      where lane='recruiter'
+        and chain_id = 101
+        and status not in ('claim_open','published','closed','failed','claimed','archived')
       order by epoch_id asc`,
   );
   if (!rows.length) {
@@ -185,7 +189,7 @@ async function main() {
     await pool.query(
       `update public.solana_reward_lane_claims
           set status='claimable', updated_at=now()
-        where batch_id=$1 and status='pending'`,
+        where batch_id=$1 and status in ('pending','prepared')`,
       [row.id],
     );
     reports.push({
