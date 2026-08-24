@@ -57,6 +57,19 @@ export function combineReferredUsd({
   };
 }
 
+/** Canonical squad roles. `both` counts as creator AND trader. Never infer from campaigns. */
+export function squadRoleCounts(roles) {
+  let creators = 0;
+  let traders = 0;
+  const list = Array.isArray(roles) ? roles : [];
+  for (const role of list) {
+    const value = String(role || "").trim().toLowerCase();
+    if (value === "creator" || value === "both") creators += 1;
+    if (value === "trader" || value === "both") traders += 1;
+  }
+  return { squad: list.length, creators, traders };
+}
+
 export function scoreUniversalRecruiter(input, weights) {
   const w = weights || {
     linkedWallets: 1,

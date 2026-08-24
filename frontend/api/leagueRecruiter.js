@@ -124,29 +124,21 @@ async function loadEpochRecruiterRows(startIso, endIso, limit, prices) {
       SELECT
         s.recruiter_id,
         s.wallet_address,
-        s.joined_at
+        s.joined_at,
+        lower(coalesce(s.member_role, '')) AS member_role
       FROM public.wallet_squad_memberships s
       WHERE s.is_active = true
         AND s.joined_at <= $2::timestamptz
+    ),
+    volume_wallets AS (
+      SELECT recruiter_id, wallet_address FROM active_links
+      UNION
+      SELECT recruiter_id, wallet_address FROM active_squad
     ),
     link_stats AS (
       SELECT
         el.recruiter_id,
         count(DISTINCT el.wallet_address)::int AS linked_wallet_count,
-        count(DISTINCT el.wallet_address) FILTER (
-          WHERE EXISTS (
-            SELECT 1 FROM public.campaigns c
-             WHERE c.creator_address = el.wallet_address
-                OR lower(c.creator_address) = lower(el.wallet_address)
-          )
-        )::int AS linked_creators_count,
-        count(DISTINCT el.wallet_address) FILTER (
-          WHERE NOT EXISTS (
-            SELECT 1 FROM public.campaigns c
-             WHERE c.creator_address = el.wallet_address
-                OR lower(c.creator_address) = lower(el.wallet_address)
-          )
-        )::int AS linked_traders_count,
         max(el.linked_at) AS latest_linked_activity_at
       FROM active_links el
       GROUP BY el.recruiter_id
@@ -154,29 +146,33 @@ async function loadEpochRecruiterRows(startIso, endIso, limit, prices) {
     squad_stats AS (
       SELECT
         es.recruiter_id,
-        count(DISTINCT es.wallet_address)::int AS active_squad_member_count
+        count(DISTINCT es.wallet_address)::int AS active_squad_member_count,
+        count(DISTINCT es.wallet_address) FILTER (
+          WHERE es.member_role IN ('creator', 'both')
+        )::int AS linked_creators_count,
+        count(DISTINCT es.wallet_address) FILTER (
+          WHERE es.member_role IN ('trader', 'both')
+        )::int AS linked_traders_count
       FROM active_squad es
       GROUP BY es.recruiter_id
     ),
     bnb_matches AS (
       SELECT
-        l.recruiter_id,
+        w.recruiter_id,
         re.raw_amount,
         re.recruiter_amount,
         re.occurred_at
       FROM public.reward_events re
-      JOIN public.wallet_recruiter_links l
+      JOIN volume_wallets w
         ON re.route_kind = 'trade'
        AND re.wallet_address IS NOT NULL
-       AND (l.wallet_address = re.wallet_address OR lower(l.wallet_address) = lower(re.wallet_address))
-       AND l.linked_at <= re.occurred_at
-       AND (l.detached_at IS NULL OR l.detached_at > re.occurred_at)
+       AND (w.wallet_address = re.wallet_address OR lower(w.wallet_address) = lower(re.wallet_address))
       WHERE re.chain_id IN (56, 97)
         AND re.occurred_at >= $1::timestamptz
         AND re.occurred_at < $2::timestamptz
       UNION ALL
       SELECT
-        l.recruiter_id,
+        w.recruiter_id,
         re.raw_amount,
         re.recruiter_amount,
         re.occurred_at
@@ -185,25 +181,21 @@ async function loadEpochRecruiterRows(startIso, endIso, limit, prices) {
         ON re.route_kind = 'finalize'
        AND c.chain_id = re.chain_id
        AND c.campaign_address = re.campaign_address
-      JOIN public.wallet_recruiter_links l
-        ON (l.wallet_address = lower(c.creator_address) OR lower(l.wallet_address) = lower(c.creator_address))
-       AND l.linked_at <= re.occurred_at
-       AND (l.detached_at IS NULL OR l.detached_at > re.occurred_at)
+      JOIN volume_wallets w
+        ON (w.wallet_address = c.creator_address OR lower(w.wallet_address) = lower(c.creator_address))
       WHERE re.chain_id IN (56, 97)
         AND re.occurred_at >= $1::timestamptz
         AND re.occurred_at < $2::timestamptz
     ),
     sol_matches AS (
       SELECT
-        l.recruiter_id,
+        w.recruiter_id,
         t.bnb_amount_raw::numeric AS raw_amount,
         floor((t.bnb_amount_raw::numeric * 20) / 10000) AS recruiter_amount,
         t.block_time AS occurred_at
       FROM public.curve_trades t
-      JOIN public.wallet_recruiter_links l
-        ON (l.wallet_address = t.wallet OR lower(l.wallet_address) = lower(t.wallet))
-       AND l.linked_at <= t.block_time
-       AND (l.detached_at IS NULL OR l.detached_at > t.block_time)
+      JOIN volume_wallets w
+        ON (w.wallet_address = t.wallet OR lower(w.wallet_address) = lower(t.wallet))
       WHERE t.chain_id = 101
         AND t.block_time >= $1::timestamptz
         AND t.block_time < $2::timestamptz
@@ -244,8 +236,8 @@ async function loadEpochRecruiterRows(startIso, endIso, limit, prices) {
       r.status,
       coalesce(ls.linked_wallet_count, 0) AS linked_wallet_count,
       coalesce(ss.active_squad_member_count, 0) AS active_squad_member_count,
-      coalesce(ls.linked_creators_count, 0) AS linked_creators_count,
-      coalesce(ls.linked_traders_count, 0) AS linked_traders_count,
+      coalesce(ss.linked_creators_count, 0) AS linked_creators_count,
+      coalesce(ss.linked_traders_count, 0) AS linked_traders_count,
       coalesce(bt.referred_volume_raw, 0)::text AS referred_volume_bnb_raw,
       coalesce(st.referred_volume_raw, 0)::text AS referred_volume_sol_raw,
       coalesce(bt.epoch_earned_raw, 0)::text AS epoch_earned_bnb_raw,
@@ -342,17 +334,11 @@ async function loadEpochLinksOnly(startIso, endIso, limit) {
       r.status,
       count(DISTINCT l.wallet_address)::int AS linked_wallet_count,
       count(DISTINCT s.wallet_address)::int AS active_squad_member_count,
-      count(DISTINCT l.wallet_address) FILTER (
-        WHERE EXISTS (
-          SELECT 1 FROM public.campaigns c
-           WHERE lower(c.creator_address) = lower(l.wallet_address)
-        )
+      count(DISTINCT s.wallet_address) FILTER (
+        WHERE lower(coalesce(s.member_role, '')) IN ('creator', 'both')
       )::int AS linked_creators_count,
-      count(DISTINCT l.wallet_address) FILTER (
-        WHERE NOT EXISTS (
-          SELECT 1 FROM public.campaigns c
-           WHERE lower(c.creator_address) = lower(l.wallet_address)
-        )
+      count(DISTINCT s.wallet_address) FILTER (
+        WHERE lower(coalesce(s.member_role, '')) IN ('trader', 'both')
       )::int AS linked_traders_count,
       max(l.linked_at) AS latest_linked_activity_at
     FROM public.recruiters r

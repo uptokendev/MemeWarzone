@@ -268,31 +268,65 @@ async function leaderboard(
   }
 
   if (category === "biggest_hit") {
-    // Largest single buy during epoch; winner is the buyer.
+    // Same board as /api/league: one biggest buy per campaign, exclude creator/campaign.
+    const solana = isSolanaChain(chainId);
     const { rows } = await pool.query(
       `
-      SELECT ${sqlWallet("t.wallet", chainId)} as recipient,
-             t.bnb_amount_raw::numeric(78,0) as score_raw,
-             t.tx_hash,
-             t.block_number,
-             t.campaign_address
-      FROM public.curve_trades t
-      WHERE t.chain_id=$1
-        AND t.side='buy'
-        AND t.block_time >= $2::timestamptz
-        AND t.block_time <  $3::timestamptz
-      ORDER BY t.bnb_amount_raw::numeric DESC, t.block_number DESC, t.log_index DESC
+      WITH buys AS (
+        SELECT
+          t.campaign_address,
+          c.name,
+          c.symbol,
+          c.logo_uri,
+          c.creator_address,
+          t.wallet AS buyer_address,
+          t.bnb_amount_raw::numeric(78,0) AS score_raw,
+          t.tx_hash,
+          t.block_number,
+          t.block_time,
+          ROW_NUMBER() OVER (
+            PARTITION BY t.campaign_address
+            ORDER BY t.bnb_amount_raw::numeric DESC NULLS LAST, t.block_number DESC, t.log_index DESC
+          ) AS rn
+        FROM public.curve_trades t
+        JOIN public.campaigns c
+          ON c.chain_id = t.chain_id
+         AND c.campaign_address = t.campaign_address
+        WHERE t.chain_id=$1
+          AND t.side='buy'
+          AND t.block_time >= $2::timestamptz
+          AND t.block_time <  $3::timestamptz
+          AND t.wallet IS DISTINCT FROM c.campaign_address
+          AND (c.creator_address IS NULL OR t.wallet IS DISTINCT FROM c.creator_address)
+          AND (c.fee_recipient_address IS NULL OR t.wallet IS DISTINCT FROM c.fee_recipient_address)
+      )
+      SELECT *
+      FROM buys
+      WHERE rn = 1
+      ORDER BY score_raw DESC NULLS LAST, block_number DESC
       LIMIT $4
       `,
       [chainId, epochStartIso, epochEndIso, limit]
     );
 
     return rows
-      .filter((r: any) => r.recipient)
+      .filter((r: any) => r.buyer_address)
       .map((r: any) => ({
-        recipient: String(r.recipient),
+        recipient: preserveRecipient(r.buyer_address, chainId),
         score: BigInt(String(r.score_raw ?? "0")),
-        meta: { tx_hash: r.tx_hash, campaign_address: r.campaign_address, block_number: Number(r.block_number) }
+        meta: {
+          name: r.name,
+          symbol: r.symbol,
+          logo_uri: r.logo_uri,
+          campaign_address: r.campaign_address,
+          creator_address: r.creator_address,
+          buyer_address: solana ? String(r.buyer_address) : String(r.buyer_address || "").toLowerCase(),
+          wallet: solana ? String(r.buyer_address) : String(r.buyer_address || "").toLowerCase(),
+          bnb_amount_raw: String(r.score_raw ?? "0"),
+          tx_hash: r.tx_hash,
+          block_number: Number(r.block_number),
+          block_time: r.block_time,
+        }
       }));
   }
 
@@ -449,19 +483,63 @@ async function finalizeEpochFor(
     const payouts = period === "weekly" ? [pot] : splitPotRaw(pot);
     const expiresAt = new Date(epochEnd.getTime() + 90 * 86400_000).toISOString();
 
+    try {
+      await pool.query(
+        `insert into public.league_epoch_meta (
+           chain_id, period, epoch_start, epoch_end,
+           protocol_fee_bps, league_fee_bps, total_league_fee_raw,
+           league_count, winners, split_bps
+         ) values (
+           $1, $2, $3::timestamptz, $4::timestamptz,
+           $5, $6, $7::numeric, $8, $9, $10::int[]
+         )
+         on conflict (chain_id, period, epoch_start) do update set
+           epoch_end = excluded.epoch_end,
+           protocol_fee_bps = excluded.protocol_fee_bps,
+           league_fee_bps = excluded.league_fee_bps,
+           total_league_fee_raw = excluded.total_league_fee_raw,
+           league_count = excluded.league_count,
+           winners = excluded.winners,
+           split_bps = excluded.split_bps,
+           computed_at = now()`,
+        [
+          chainId,
+          period,
+          epochStartIso,
+          epochEndIso,
+          protocolFeeBps,
+          leagueFeeBps,
+          totalLeagueFeeRaw.toString(),
+          leagueCount,
+          wantRanks,
+          PRIZE_SPLIT_BPS,
+        ]
+      );
+    } catch (error) {
+      console.warn(`[finalizeEpochWinners] league_epoch_meta skipped chain=${chainId} period=${period}`, error);
+    }
+
     for (let rank = 1; rank <= wantRanks; rank++) {
       const row = top[rank - 1];
       if (!row) break;
 
       const amount = payouts[rank - 1] ?? 0n;
+      const payload = {
+        score: row.score.toString(),
+        amount_raw: amount.toString(),
+        rank,
+        ...row.meta,
+        wallet: row.meta?.wallet || row.recipient,
+        recipient_address: row.recipient,
+      };
       const res = await pool.query(
         `
         insert into public.league_epoch_winners (
           chain_id, period, epoch_start, epoch_end, category, rank,
-          recipient_address, amount_raw, expires_at, meta
+          recipient_address, amount_raw, expires_at, meta, payload
         ) values (
           $1, $2, $3::timestamptz, $4::timestamptz, $5, $6,
-          $7, $8::numeric, $9::timestamptz, $10::jsonb
+          $7, $8::numeric, $9::timestamptz, $10::jsonb, $10::jsonb
         )
         on conflict (chain_id, period, epoch_start, category, rank)
         do nothing
@@ -477,7 +555,7 @@ async function finalizeEpochFor(
           row.recipient,
           amount.toString(),
           expiresAt,
-          JSON.stringify({ score: row.score.toString(), ...row.meta }),
+          JSON.stringify(payload),
         ]
       );
       
@@ -509,7 +587,7 @@ async function main() {
   // LEAGUE_CHAINS is an optional runtime-only knob for cron execution.
   // It's not part of the strict ENV typing, so read directly from process.env.
   // Example production value: "56,101"
-  const chains = String(process.env.LEAGUE_CHAINS || "56,101")
+  const chains = String(process.env.LEAGUE_CHAINS || "56,97,101")
     .split(",")
     .map((s) => Number(s.trim()))
     .filter((n) => Number.isFinite(n));

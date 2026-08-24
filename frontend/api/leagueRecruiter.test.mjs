@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { combineReferredUsd, scoreUniversalRecruiter, weiToNative } from "./leagueRecruiterScore.js";
+import { combineReferredUsd, scoreUniversalRecruiter, squadRoleCounts, weiToNative } from "./leagueRecruiterScore.js";
 
 const WEIGHTS = {
   linkedWallets: 1,
@@ -9,6 +9,21 @@ const WEIGHTS = {
   routedVolumeBnb: 0.05,
   totalEarnedBnb: 1,
 };
+
+test("SolKillers squad roles use member_role, not campaign history", () => {
+  const counts = squadRoleCounts(["trader", "trader", "trader", "trader", "trader", "both"]);
+  assert.equal(counts.squad, 6);
+  assert.equal(counts.creators, 1);
+  assert.equal(counts.traders, 6);
+});
+
+test("previous-week SolKillers 0.203 SOL displays as real USD, not the ranking input", () => {
+  const sol = weiToNative("203335961", 9);
+  assert.ok(sol > 0.203 && sol < 0.204);
+  const money = combineReferredUsd({ referredVolumeSol: sol, bnbUsd: 600, solUsd: 95 });
+  assert.ok(money.referredVolumeUsd > 19 && money.referredVolumeUsd < 20);
+  assert.notEqual(money.referredVolumeUsd, money.normalizedScoreVolume);
+});
 
 test("Solana lamports are not read as 18-decimal BNB", () => {
   const lamports = "203335961";

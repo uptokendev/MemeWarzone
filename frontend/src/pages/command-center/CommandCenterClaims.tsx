@@ -263,7 +263,7 @@ function readLeagueRewardMetadata(item: RewardLedgerItem): LeagueRewardMetadata 
 }
 
 async function fetchLeagueRewardItems(walletAddress?: string | null, chainId?: number | null): Promise<RewardLedgerItem[]> {
-  if (!walletAddress || !isSolanaRewardChainId(chainId)) return [];
+  if (!walletAddress || chainId == null || !Number.isFinite(Number(chainId))) return [];
 
   const query = new URLSearchParams({ address: walletAddress, chainId: String(chainId) });
   const res = await apiFetch(`/api/rewards?${query.toString()}`, { cache: "no-store" });
@@ -284,6 +284,7 @@ async function fetchLeagueRewardItems(walletAddress?: string | null, chainId?: n
       payload: reward.payload && typeof reward.payload === "object" ? reward.payload : {},
     };
 
+    const solana = isSolanaRewardChainId(Number(chainId));
     return {
       id: buildLeagueRewardId(Number(chainId), reward),
       rewardType: "league",
@@ -291,9 +292,9 @@ async function fetchLeagueRewardItems(walletAddress?: string | null, chainId?: n
       sourceLabel: `${metadata.period}:${metadata.category}:${metadata.rank}`,
       walletAddress,
       userId: null,
-      chain: "solana",
+      chain: solana ? "solana" : "bnb",
       chainId: Number(chainId),
-      tokenSymbol: "SOL",
+      tokenSymbol: solana ? "SOL" : "BNB",
       amount: String(reward.amountRaw || "0"),
       amountUsd: null,
       status: "claimable",
@@ -477,8 +478,16 @@ export default function CommandCenterClaims() {
         setMessage("Connect the wallet that owns these league rewards before claiming.");
         return;
       }
-      if (!solanaAccount || solanaAccount !== walletAddress) {
-        setMessage("Connect the same Solana wallet that owns these league rewards before claiming.");
+      const firstChainId = Number(leagueClaimable[0]?.chainId || rewardChainId || 0);
+      const solanaLeague = isSolanaRewardChainId(firstChainId);
+      if (solanaLeague) {
+        if (!solanaAccount || solanaAccount !== walletAddress) {
+          setMessage("Connect the same Solana wallet that owns these league rewards before claiming.");
+          try { window.dispatchEvent(new CustomEvent("memewarzone:openWalletModal")); } catch {}
+          return;
+        }
+      } else if (!wallet?.signer) {
+        setMessage("Connect the BNB wallet that owns these league rewards before claiming.");
         try { window.dispatchEvent(new CustomEvent("memewarzone:openWalletModal")); } catch {}
         return;
       }
@@ -494,14 +503,70 @@ export default function CommandCenterClaims() {
           const claimChainId = Number(item.chainId || rewardChainId || 0);
           const toastId = toast.loading(`Confirm ${formatNativeAmount(item.amount, claimChainId, item.tokenSymbol)} claim in your wallet...`);
           try {
-            const prepared = await prepareLeagueRewardClaim(metadata, walletAddress, claimChainId);
-            const txHash = await submitSolanaLeagueClaim(prepared);
-            toast.dismiss(toastId);
-            const recordToast = toast.loading("Finalizing league claim...");
-            try {
-              await recordLeagueRewardClaim(metadata, walletAddress, claimChainId, txHash);
-            } finally {
-              toast.dismiss(recordToast);
+            if (isSolanaRewardChainId(claimChainId)) {
+              const prepared = await prepareLeagueRewardClaim(metadata, walletAddress, claimChainId);
+              const txHash = await submitSolanaLeagueClaim(prepared);
+              toast.dismiss(toastId);
+              const recordToast = toast.loading("Finalizing league claim...");
+              try {
+                await recordLeagueRewardClaim(metadata, walletAddress, claimChainId, txHash);
+              } finally {
+                toast.dismiss(recordToast);
+              }
+            } else {
+              const { requestNonce } = await import("@/lib/profileApi");
+              const { buildLeagueClaimMessage, recordLeagueClaimTx, submitLeagueClaim } = await import("@/lib/rewardsApi");
+              const nonce = await requestNonce(claimChainId, walletAddress);
+              const message = buildLeagueClaimMessage({
+                chainId: claimChainId,
+                recipient: walletAddress,
+                period: metadata.period,
+                epochStart: metadata.epochStart,
+                category: metadata.category,
+                rank: metadata.rank,
+                nonce,
+              });
+              const signature = await wallet.signer.signMessage(message);
+              const prepared = await submitLeagueClaim({
+                chainId: claimChainId,
+                period: metadata.period,
+                epochStart: metadata.epochStart,
+                category: metadata.category,
+                rank: metadata.rank,
+                recipient: walletAddress,
+                nonce,
+                signature,
+              });
+              let txHash = "txHash" in prepared ? String(prepared.txHash || "") : "";
+              if ("mode" in prepared && prepared.mode === "merkle") {
+                const treasury = new Contract(
+                  prepared.vaultAddress,
+                  ["function claim(uint256 epochId, bytes32 categoryHash, uint8 rank, address recipient, uint256 amount, bytes32[] proof)"],
+                  wallet.signer,
+                );
+                const tx = await treasury.claim(
+                  prepared.epochId,
+                  prepared.categoryHash,
+                  prepared.rank,
+                  prepared.recipient,
+                  prepared.amountRaw,
+                  prepared.proof,
+                );
+                await tx.wait();
+                txHash = tx.hash;
+                await recordLeagueClaimTx({
+                  chainId: claimChainId,
+                  period: metadata.period,
+                  epochStart: metadata.epochStart,
+                  category: metadata.category,
+                  rank: metadata.rank,
+                  recipient: walletAddress,
+                  nonce,
+                  signature,
+                  txHash,
+                });
+              }
+              toast.dismiss(toastId);
             }
             completed.push(item.id);
           } catch (err) {
