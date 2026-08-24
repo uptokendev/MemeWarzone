@@ -201,7 +201,8 @@ function renderCampaignLabel(name, ticker, x, y, scale = 4, anchor = "middle", c
 async function getBaseSvg(content, options = {}) {
   const primaryGlow = options.primaryGlow || "#10f58a";
   const secondaryGlow = options.secondaryGlow || "#00ff88";
-  const backdropImg = options.backdropImage || await getLogoBase64();
+  let backdropImg = options.backdropImage || await getLogoBase64();
+  if (options.backdropImage === "none") backdropImg = null;
   const smallLogo = await getLogoBase64();
   
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -291,7 +292,7 @@ async function buildUserJoined(payload) {
     ${pixelText(usernameText, textX, textY, { scale: textScale, color: "#dfffee", anchor: "start" })}
   `;
 
-  return await getBaseSvg(content, { primaryGlow: "#10f58a", secondaryGlow: "#10f58a" });
+  return await getBaseSvg(content, { backdropImage: "none", primaryGlow: "#10f58a", secondaryGlow: "#10f58a" });
 }
 
 async function buildTrendingDigest(payload) {
