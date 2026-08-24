@@ -598,8 +598,12 @@ async function main() {
   // - weekly: previous Monday 00:00 → this Monday 00:00
   // - monthly: previous 1st 00:00 → this 1st 00:00
   const thisWeekStart = startOfUtcWeekMonday(now);
-  const lastWeekStart = new Date(thisWeekStart.getTime() - 7 * 86400_000);
-  const lastWeekEnd = thisWeekStart;
+  const envWeekStart = Date.parse(String(process.env.FINALIZE_WEEKLY_START || ""));
+  const envWeekEnd = Date.parse(String(process.env.FINALIZE_WEEKLY_END || ""));
+  const lastWeekStart = Number.isFinite(envWeekStart)
+    ? new Date(envWeekStart)
+    : new Date(thisWeekStart.getTime() - 7 * 86400_000);
+  const lastWeekEnd = Number.isFinite(envWeekEnd) ? new Date(envWeekEnd) : thisWeekStart;
 
   const thisMonthStart = startOfUtcMonth(now);
   const lastMonthStart = new Date(Date.UTC(thisMonthStart.getUTCFullYear(), thisMonthStart.getUTCMonth() - 1, 1, 0, 0, 0, 0));
