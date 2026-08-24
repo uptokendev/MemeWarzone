@@ -267,13 +267,14 @@ async function buildLaunchDigest(payload) {
 
 async function buildUserJoined(payload) {
   const { username = "New User", avatarUrl } = payload;
+  const avatarImg = await fetchImageBase64(avatarUrl);
   
   let content = `
     ${pixelText("NEW RECRUIT", 501, 200, { scale: 8, color: "#10f58a", anchor: "middle" })}
     ${pixelText(`@${clampText(username, 15)}`, 501, 350, { scale: 5, color: "#dfffee", anchor: "middle" })}
   `;
 
-  return await getBaseSvg(content, { backdropImage: avatarUrl, primaryGlow: "#10f58a", secondaryGlow: "#10f58a" });
+  return await getBaseSvg(content, { backdropImage: avatarImg, primaryGlow: "#10f58a", secondaryGlow: "#10f58a" });
 }
 
 async function buildTrendingDigest(payload) {
