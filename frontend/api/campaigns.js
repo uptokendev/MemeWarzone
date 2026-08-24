@@ -92,6 +92,20 @@ function itemFromDraft(row) {
   };
 }
 
+async function loadPublicHiddenCampaignKeys(chainId) {
+  const result = await pool.query(
+    `select campaign_address
+       from public.campaigns
+      where chain_id = $1
+        and campaign_address is not null
+        and lower(coalesce(meta->>'publicHidden', 'false')) in ('true', '1', 'yes', 'on')`,
+    [Number(chainId)],
+  );
+  return new Set(
+    (result.rows || []).map((row) => lifecycleKey(chainId, row.campaign_address)),
+  );
+}
+
 async function loadLifecycleRows(chainId, campaignAddresses, { includeUnindexedSolanaDrafts = false } = {}) {
   const chain = Number(chainId);
   const isSolana = chain === 101 || chain === 102;
@@ -158,17 +172,23 @@ export default async function handler(req, res) {
   return runJsonTransform(baseHandler, req, res, async (payload) => {
     if (!payload || !Array.isArray(payload.items)) return payload;
 
+    const publicHidden = await loadPublicHiddenCampaignKeys(chainId);
+    const visiblePayloadItems = payload.items.filter(
+      (item) => !publicHidden.has(lifecycleKey(item.chainId ?? chainId, item.campaignAddress)),
+    );
+
     const { rows, byCampaign } = await loadLifecycleRows(
       chainId,
-      payload.items.map((item) => item?.campaignAddress),
+      visiblePayloadItems.map((item) => item?.campaignAddress),
       { includeUnindexedSolanaDrafts: includeTestnet },
     );
     const now = Date.now();
     const seen = new Set();
     const items = [];
 
-    for (const item of payload.items) {
+    for (const item of visiblePayloadItems) {
       const key = lifecycleKey(item.chainId ?? chainId, item.campaignAddress);
+      if (publicHidden.has(key)) continue;
       const row = byCampaign.get(key);
       const scheduledMs = row?.scheduled_launch_at ? new Date(row.scheduled_launch_at).getTime() : NaN;
       if (Number.isFinite(scheduledMs) && scheduledMs > now) continue;
@@ -180,6 +200,8 @@ export default async function handler(req, res) {
     if (canAddLiveFallback) {
       const solanaFeed = Number(chainId) === 101 || Number(chainId) === 102;
       for (const row of rows) {
+        const key = lifecycleKey(row.chain_id, row.campaign_address);
+        if (publicHidden.has(key)) continue;
         const scheduledMs = row?.scheduled_launch_at ? new Date(row.scheduled_launch_at).getTime() : NaN;
         const isFutureSchedule = Number.isFinite(scheduledMs) && scheduledMs > now;
         if (isFutureSchedule) continue;
@@ -194,7 +216,6 @@ export default async function handler(req, res) {
         const isPastSchedule = Number.isFinite(scheduledMs) && scheduledMs <= now;
         if (!isDeployedLiveSolana && !isPastSchedule) continue;
         if (!matchesSearch(row, query.search)) continue;
-        const key = lifecycleKey(row.chain_id, row.campaign_address);
         if (seen.has(key)) continue;
         seen.add(key);
         items.push(itemFromDraft(row));
@@ -210,6 +231,7 @@ export default async function handler(req, res) {
     return {
       ...payload,
       items,
+      nextCursor: items.length ? payload.nextCursor : null,
       pageSize: items.length,
       updatedAt: new Date().toISOString(),
     };
