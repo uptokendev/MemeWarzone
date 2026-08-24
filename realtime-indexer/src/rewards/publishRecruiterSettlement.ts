@@ -339,7 +339,7 @@ export async function publishRecruiterSettlementBatches(): Promise<{
       );
       await updateLaneBatch(client, String(batchId), batchValues);
     } else {
-      const batch = await upsertLaneBatch(client, { ...batchValues, status: "draft" });
+      const batch = await upsertLaneBatch(client, batchValues);
       batchId = batch?.id || null;
       if (batch?.status && !canRebuildRecruiterBatch(String(batch.status))) {
         await client.query("rollback");
@@ -347,12 +347,6 @@ export async function publishRecruiterSettlementBatches(): Promise<{
           computedAt: new Date().toISOString(),
           batches: [{ chainId, epochId: epoch.id, status: batch.status, immutable: true }],
         };
-      }
-      if (batchId) {
-        await client.query(
-          `update public.solana_reward_lane_batches set status='ready', updated_at=now() where id=$1 and status='draft'`,
-          [batchId],
-        );
       }
     }
     if (!batchId) {
