@@ -346,8 +346,8 @@ async function leaderboard(
           min(block_number) as first_vote_block
         FROM public.votes
         WHERE chain_id=$1
-          AND block_timestamp >= extract(epoch from $2::timestamptz)::bigint
-          AND block_timestamp <  extract(epoch from $3::timestamptz)::bigint
+          AND block_timestamp >= $2::timestamptz
+          AND block_timestamp <  $3::timestamptz
           AND status='confirmed'
         GROUP BY chain_id, campaign_address
       )

@@ -42,6 +42,9 @@ CREATE TABLE IF NOT EXISTS public.solana_reward_lane_batches (
   UNIQUE (chain_id, lane, epoch_id)
 );
 
+ALTER TABLE public.solana_reward_lane_batches
+  ADD COLUMN IF NOT EXISTS deadline bigint;
+
 CREATE TABLE IF NOT EXISTS public.solana_reward_lane_claims (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   batch_id uuid NOT NULL REFERENCES public.solana_reward_lane_batches(id) ON DELETE CASCADE,

@@ -183,8 +183,8 @@ export async function publishRecruiterSettlementBatches(): Promise<{
       await client.query(
         `update public.solana_reward_lane_batches
             set program_id=$2, vault_address=$3, batch_address=$4, merkle_root=$5,
-                total_lamports=$6::numeric, deadline=$7, status='ready',
-                metadata=$8::jsonb, updated_at=now()
+                total_lamports=$6::numeric, status='ready',
+                metadata=$7::jsonb, updated_at=now()
           where id=$1`,
         [
           batchId,
@@ -193,22 +193,21 @@ export async function publishRecruiterSettlementBatches(): Promise<{
           addresses.batchAddress,
           merkle.root,
           merkle.totalLamports,
-          deadline,
-          JSON.stringify({ startAt: epoch.startAt, endAt: epoch.endAt, rebuiltAt: new Date().toISOString() }),
+          JSON.stringify({ startAt: epoch.startAt, endAt: epoch.endAt, deadline, rebuiltAt: new Date().toISOString() }),
         ],
       );
     } else {
       const batch = await client.query(
         `insert into public.solana_reward_lane_batches (
            chain_id, lane, epoch_id, program_id, vault_address, batch_address,
-           merkle_root, total_lamports, deadline, status, metadata
+           merkle_root, total_lamports, status, metadata
          ) values (
-           $1, 'recruiter', $2, $3, $4, $5, $6, $7::numeric, $8, 'draft', $9::jsonb
+           $1, 'recruiter', $2, $3, $4, $5, $6, $7::numeric, 'draft', $8::jsonb
          )
          on conflict (chain_id, lane, epoch_id) do update
            set merkle_root = excluded.merkle_root,
                total_lamports = excluded.total_lamports,
-               deadline = excluded.deadline,
+               metadata = excluded.metadata,
                status = case
                  when public.solana_reward_lane_batches.status in ('claim_open','published')
                  then public.solana_reward_lane_batches.status
@@ -224,8 +223,7 @@ export async function publishRecruiterSettlementBatches(): Promise<{
           addresses.batchAddress,
           merkle.root,
           merkle.totalLamports,
-          deadline,
-          JSON.stringify({ startAt: epoch.startAt, endAt: epoch.endAt }),
+          JSON.stringify({ startAt: epoch.startAt, endAt: epoch.endAt, deadline }),
         ],
       );
       batchId = batch.rows[0]?.id;

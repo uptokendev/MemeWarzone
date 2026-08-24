@@ -95,9 +95,20 @@ async function readOnChainBatch(connection: Connection, batchAddress: string) {
   };
 }
 
+function deadlineUnix(row: { metadata?: unknown; deadline?: unknown }): bigint {
+  const fromCol = Number(row.deadline);
+  if (Number.isFinite(fromCol) && fromCol > 0) return BigInt(Math.trunc(fromCol));
+  const meta = row.metadata && typeof row.metadata === "object" ? (row.metadata as Record<string, unknown>) : {};
+  const fromMeta = Number(meta.deadline);
+  if (Number.isFinite(fromMeta) && fromMeta > 0) return BigInt(Math.trunc(fromMeta));
+  const endAt = Date.parse(String(meta.endAt || ""));
+  if (Number.isFinite(endAt)) return BigInt(Math.floor(endAt / 1000) + 90 * 86400);
+  return BigInt(Math.floor(Date.now() / 1000) + 90 * 86400);
+}
+
 async function main() {
   const { rows } = await pool.query(
-    `select id, chain_id, epoch_id, merkle_root, total_lamports, deadline, batch_address, status
+    `select id, chain_id, epoch_id, merkle_root, total_lamports, batch_address, status, metadata
        from public.solana_reward_lane_batches
       where lane='recruiter' and status in ('draft','ready')
       order by epoch_id asc`,
@@ -122,7 +133,7 @@ async function main() {
     const [batchAddress] = PublicKey.findProgramAddressSync([BATCH_SEED, i64le(epochId)], pid);
     const storedRoot = String(row.merkle_root);
     const totalLamports = BigInt(String(row.total_lamports));
-    const deadline = BigInt(String(row.deadline || 0));
+    const deadline = deadlineUnix(row);
 
     const existing = await readOnChainBatch(connection, batchAddress.toBase58());
     let txHash: string | null = null;
