@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mergeTradePoints, unionIndexedAndLive } from "./tradeDedupe.ts";
+import { mergeIndexerSnapshot, mergeTradePoints, unionIndexedAndLive } from "./tradeDedupe.ts";
 import type { CurveTradePoint } from "../hooks/useCurveTrades.ts";
 
 function point(partial: Partial<CurveTradePoint> & { txHash: string }): CurveTradePoint {
@@ -18,19 +18,23 @@ function point(partial: Partial<CurveTradePoint> & { txHash: string }): CurveTra
   };
 }
 
-test("REST snapshot replaces indexed history and does not keep previous indexed rows", () => {
-  const previousIndexed = [
-    point({ txHash: "HkE3gHdVxbsGw8VsZ2dG235uQcBif1YMtTyrhyzHMxY3y2DAS9EhcCVmWmrWw3WC6pTcwQSSsN4ncwjBBmgZcCg", logIndex: 1 }),
-  ];
-  const snapshot = [
-    point({ txHash: "fSRGHkcP4kQ15kwv3fJBvJyaY5ou8bMQoHx9a1z5ganA6AUNGPQyhnXEHWNosuYbJRJ7S1ZdTSDZ38iqKG49CPv", logIndex: 1 }),
-  ];
-  const mergedWrong = mergeTradePoints(snapshot, previousIndexed);
-  assert.equal(mergedWrong.length, 2);
-
-  const next = unionIndexedAndLive(snapshot, []);
-  assert.equal(next.length, 1);
-  assert.equal(next[0].txHash, snapshot[0].txHash);
+test("later shorter indexer snapshot must not drop a fill the client already has", () => {
+  const first = point({
+    txHash: "HkE3gHdVxbsGw8VsZ2dG235uQcBif1YMtTyrhyzHMxY3y2DAS9EhcCVmWmrWw3WC6pTcwQSSsN4ncwjBBmgZcCg",
+    logIndex: 1,
+    blockNumber: 441223620,
+  });
+  const second = point({
+    txHash: "3oZaXc5EAodXDH6qaZK9Pftds1DjVD8vkizRFU6zJppA272F5hk7xfpZcGpULbZXMySC26C3WdE4tFXiQ939BtXz",
+    logIndex: 1,
+    blockNumber: 441256954,
+  });
+  const afterShortPoll = mergeIndexerSnapshot([first, second], [first]);
+  assert.equal(afterShortPoll.length, 2);
+  const hashes = new Set(afterShortPoll.map((row) => row.txHash));
+  assert.equal(hashes.has(first.txHash), true);
+  assert.equal(hashes.has(second.txHash), true);
+  assert.equal(mergeIndexerSnapshot([first, second], []).length, 2);
 });
 
 test("live unindexed trades remain until the snapshot contains the same tx identity", () => {

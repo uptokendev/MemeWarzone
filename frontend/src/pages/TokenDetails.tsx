@@ -4953,8 +4953,8 @@ const toSeconds = (ts: number): number => {
                 {walletMatchesCampaign ? null : (
                   <p className="mt-2 text-[11px] text-amber-300">
                     {isSolanaPage
-                      ? "Wrong theater. Connect a SOL wallet to trade this campaign."
-                      : "Wrong theater. Connect a BNB wallet to trade this campaign."}
+                      ? "Wrong wallet. Connect a SOL wallet to trade this campaign."
+                      : "Wrong wallet. Connect a BNB wallet to trade this campaign."}
                   </p>
                 )}
               </div>

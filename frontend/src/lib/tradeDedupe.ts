@@ -150,8 +150,23 @@ export function mergeTradePoints(...streams: Array<CurveTradePoint[] | null | un
 }
 
 /**
- * Indexed REST snapshot is authoritative history. Session-live rows (Ably /
- * txConfirmed) only fill identities the snapshot does not yet contain.
+ * Later indexer polls can return a shorter book (mint vs PDA, ingest race).
+ * Never delete a fill this campaign already showed. Empty incoming is a glitch.
+ */
+export function mergeIndexerSnapshot(
+  previous: Array<CurveTradePoint> | null | undefined,
+  incoming: Array<CurveTradePoint> | null | undefined,
+): CurveTradePoint[] {
+  const prev = previous || [];
+  const next = incoming || [];
+  if (!next.length) return prev;
+  return mergeTradePoints(prev, next);
+}
+
+/**
+ * Indexed REST snapshot is durable history for this campaign session.
+ * Session-live rows (Ably / txConfirmed) only fill identities the snapshot
+ * does not yet contain. A later shorter snapshot must not wipe live extras.
  */
 export function unionIndexedAndLive(
   indexed: Array<CurveTradePoint> | null | undefined,

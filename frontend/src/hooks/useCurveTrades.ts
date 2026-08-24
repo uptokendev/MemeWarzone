@@ -20,6 +20,7 @@ import {
 } from "@/lib/indexerTradeSnapshot";
 import {
   isValidTradeTxHash,
+  mergeIndexerSnapshot,
   mergeTradePoints,
   normalizeTradeTxHash,
   tradeDedupeKey,
@@ -362,16 +363,21 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
   }, [campaignAddress, chainId]);
 
   const applyIndexerSnapshot = useCallback((rows: any[]) => {
-    const next = rowsToPoints(rows);
-    const keys = new Set(next.map((point) => tradeDedupeKey(point)).filter(Boolean));
-    indexedKeysRef.current = keys;
-    indexedTxRef.current = new Set(next.map((point) => normalizeTradeTxHash(point.txHash)).filter(Boolean));
-    setIndexedPoints(next);
-    setLivePoints((prev) => prev.filter((point) => {
-      const key = tradeDedupeKey(point);
-      return Boolean(key) && !keys.has(key);
-    }));
-    return next.length;
+    const incoming = rowsToPoints(rows);
+    setIndexedPoints((prev) => {
+      const merged = mergeIndexerSnapshot(prev, incoming);
+      const keys = new Set(merged.map((point) => tradeDedupeKey(point)).filter(Boolean));
+      indexedKeysRef.current = keys;
+      indexedTxRef.current = new Set(merged.map((point) => normalizeTradeTxHash(point.txHash)).filter(Boolean));
+      return merged;
+    });
+    setLivePoints((prev) =>
+      prev.filter((point) => {
+        const key = tradeDedupeKey(point);
+        return Boolean(key) && !indexedKeysRef.current.has(key);
+      }),
+    );
+    return incoming.length;
   }, [rowsToPoints]);
 
   const applyLivePoints = useCallback((incoming: CurveTradePoint[]) => {
@@ -421,9 +427,9 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
       try {
         const lookups = [campaignAddress];
         if (
-          !isSolanaChainId(chainId) &&
           opts?.tokenAddress &&
-          String(opts.tokenAddress).toLowerCase() !== String(campaignAddress).toLowerCase()
+          String(opts.tokenAddress).trim() &&
+          String(opts.tokenAddress).trim() !== String(campaignAddress).trim()
         ) {
           lookups.push(String(opts.tokenAddress).trim());
         }
@@ -431,12 +437,20 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
         const pages = await Promise.all(lookups.map((addr) => fetchIndexerTrades(addr, chainId, limit, signal)));
         indexerLatencyMs = Date.now() - started;
         if (signal?.aborted) return;
-        const snapshot = pages.reduce((best, page) => (page.items.length >= best.items.length ? page : best), pages[0]!);
-        applyIndexerSnapshot(snapshot.items);
-        indexerRows = snapshot.items.length;
-        historyComplete = snapshot.historyComplete;
-        repairState = snapshot.repairState;
-        lastIndexedSlot = snapshot.lastIndexedSlot;
+        const snapshotItems = pages.flatMap((page) => page.items || []);
+        applyIndexerSnapshot(snapshotItems);
+        indexerRows = snapshotItems.length;
+        historyComplete = pages.reduce<boolean | null>((best, page) => {
+          if (page.historyComplete === true) return true;
+          if (best == null) return page.historyComplete;
+          return best;
+        }, null);
+        repairState = pages.map((page) => page.repairState).find(Boolean) || null;
+        lastIndexedSlot = pages.reduce<number | null>((best, page) => {
+          const slot = page.lastIndexedSlot;
+          if (slot == null) return best;
+          return best == null ? slot : Math.max(best, slot);
+        }, null);
         indexerOk = true;
         const maxIndexedBlock = Math.max(0, ...snapshot.items.map((row: any) => Number(row?.block_number ?? row?.blockNumber ?? 0)));
         if (maxIndexedBlock > highestBlockScannedRef.current) highestBlockScannedRef.current = maxIndexedBlock;

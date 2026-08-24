@@ -686,11 +686,12 @@ export function UnifiedMarketChart({
     if (!chart || !series) { setPlacedPins([]); return; }
     const overlay = overlayRef.current;
     const raw: Array<CreatorTradePin & { x: number; y: number | null }> = [];
+    const overlayWidth = overlay?.clientWidth || 0;
     for (const pin of creatorPinsRef.current) {
       const x = chart.timeScale().timeToCoordinate(pin.timeSec as Time);
-      if (x == null || !Number.isFinite(x)) continue;
+      const xPos = x != null && Number.isFinite(x) ? x : overlayWidth > 0 ? 18 : 18;
       const y = series.priceToCoordinate(pin.value);
-      raw.push({ ...pin, x, y: y == null || !Number.isFinite(y) ? null : y });
+      raw.push({ ...pin, x: xPos, y: y == null || !Number.isFinite(y) ? null : y });
     }
     const laidOut = layoutCreatorPins(raw, {
       width: overlay?.clientWidth || 0,
