@@ -12,6 +12,22 @@ function programId(): string {
   return String(process.env.SOLANA_REWARDS_TREASURY_PROGRAM_ID || "").trim();
 }
 
+const NON_PAYOUT_SOLANA = new Set([
+  "So11111111111111111111111111111111111111112",
+  "11111111111111111111111111111111",
+  "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+  "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+]);
+
+function isUserSolanaPayoutWallet(value: string): boolean {
+  const wallet = String(value || "").trim();
+  if (wallet.length < 32) return false;
+  if (NON_PAYOUT_SOLANA.has(wallet)) return false;
+  const pid = programId();
+  if (pid && wallet === pid) return false;
+  return true;
+}
+
 function laneAddresses(epochId: string | number, walletAddress?: string | null) {
   const pid = new PublicKey(programId() || "11111111111111111111111111111111");
   const [configAddress] = PublicKey.findProgramAddressSync([CONFIG_SEED], pid);
@@ -269,11 +285,15 @@ export async function publishRecruiterSettlementBatches(): Promise<{
     if (String(error?.code) !== "42P01") throw error;
     console.warn("[exportRecruiterSettlementBatch] phase2 view missing", error?.message || error);
   }
-  const portal = await loadPortalSolanaPayouts();
+  const portal = (await loadPortalSolanaPayouts()).filter((row) => {
+    if (isUserSolanaPayoutWallet(row.payoutWallet)) return true;
+    console.warn(`[exportRecruiterSettlementBatch] dropping non-user payout wallet ${row.payoutWallet} amount=${row.amountRaw}`);
+    return false;
+  });
   const portalByWallet = new Map(portal.map((row) => [row.payoutWallet, row]));
   const recipients = mergeRecruiterEntitlements(
     viewRows
-      .filter((row) => Number(row.chainId) === chainId)
+      .filter((row) => Number(row.chainId) === chainId && isUserSolanaPayoutWallet(row.walletAddress))
       .map((row) => ({
         walletAddress: row.walletAddress,
         amountLamports: String(row.claimableAmount || "0"),
