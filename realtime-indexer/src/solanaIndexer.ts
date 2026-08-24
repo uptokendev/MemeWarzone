@@ -26,6 +26,7 @@ import {
   nextCampaignPdaCursor,
   nextBackfillCheckpoint,
   recoverFutureCursor,
+  selectUnknownPdaTipSignatures,
   sortSignaturesAscending,
   type IndexedSignature,
   type ProcessedSignature,
@@ -48,6 +49,9 @@ const PROGRAM_DATA_PREFIX = "Program data: ";
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const CAMPAIGN_BACKFILL_COOLDOWN_MS = 60_000;
+const CAMPAIGN_TIP_COOLDOWN_MS = 8_000;
+const CAMPAIGN_TIP_SIG_LIMIT = 40;
+const CAMPAIGN_TIP_INGEST_MAX = 15;
 const SOLANA_RPC_TIMEOUT_MS = 20_000;
 const CAMPAIGN_BACKFILL_DEADLINE_MS = 90_000;
 const CAMPAIGN_SIGNATURE_PAGE_CAP = Math.max(
@@ -64,6 +68,8 @@ const REPAIR_PG_STATEMENT_TIMEOUT_MS = Math.max(
 );
 
 const campaignLeases = createCampaignLeaseRegistry();
+const campaignTipLastRunMs = new Map<string, number>();
+const campaignTipInFlight = new Set<string>();
 const repairSql = new AsyncLocalStorage<boolean>();
 
 async function timedRepairQuery(text: string, values?: unknown[]) {
@@ -1698,11 +1704,12 @@ async function ingestSignature(item: IndexedSignature, signal?: AbortSignal) {
   }
   const events = decodeEvents(tx.meta?.logMessages);
   const blockTime = timestampFrom(tx.blockTime ?? null);
+  const slot = Number(tx.slot || item.slot || 0);
   const persisted = await persistDecodedAnchorEvents({
     events,
     persistEvent: async (event, eventIndex) => {
       try {
-        await handleEvent(events[eventIndex], item.signature, eventIndex, item.slot, blockTime);
+        await handleEvent(events[eventIndex], item.signature, eventIndex, slot, blockTime);
       } catch (error) {
         console.warn("[solana-indexer] event failed", {
           signature: item.signature,
@@ -1846,6 +1853,129 @@ async function markPdaSignaturesProcessed(campaign: string, signatures: string[]
       [SOLANA_CHAIN_ID, campaign, signature],
     );
   }
+}
+
+async function listBondingSolanaCampaigns(limit = 40): Promise<string[]> {
+  const result = await sql(
+    `select campaign_address
+       from public.campaigns
+      where chain_id=$1
+        and is_active=true
+        and graduated_at_chain is null
+      order by updated_at desc nulls last
+      limit $2`,
+    [SOLANA_CHAIN_ID, Math.max(1, Math.min(80, Number(limit || 40)))],
+  );
+  return result.rows
+    .map((row: { campaign_address?: string }) => String(row.campaign_address || "").trim())
+    .filter((address: string) => isSolanaPublicKey(address));
+}
+
+/** Newest-page PDA ingest. History-complete campaigns still receive later buys. */
+export async function ingestSolanaCampaignTip(
+  campaignAddress: string,
+  signal?: AbortSignal,
+  opts?: { force?: boolean },
+): Promise<{ campaign: string; scanned: number; unknown: number; ingested: number; trades: number }> {
+  const campaign = String(campaignAddress || "").trim();
+  const empty = { campaign, scanned: 0, unknown: 0, ingested: 0, trades: 0 };
+  if (!isSolanaPublicKey(campaign)) return empty;
+  throwIfAborted(signal);
+  const last = campaignTipLastRunMs.get(campaign) || 0;
+  if (!opts?.force && Date.now() - last < CAMPAIGN_TIP_COOLDOWN_MS) return empty;
+  if (campaignTipInFlight.has(campaign)) return empty;
+  campaignTipInFlight.add(campaign);
+  try {
+    const batch = await rpc<Array<{ signature: string; slot: number; err?: unknown | null }>>(
+      "getSignaturesForAddress",
+      [campaign, { limit: CAMPAIGN_TIP_SIG_LIMIT }],
+      signal,
+    );
+    const signatures = Array.isArray(batch) ? batch : [];
+    const known = await existingCampaignTradeSignatures(
+      campaign,
+      signatures.map((item) => String(item?.signature || "")).filter(Boolean),
+    );
+    const unknown = selectUnknownPdaTipSignatures({
+      signatures,
+      known,
+      limit: CAMPAIGN_TIP_INGEST_MAX,
+    });
+    let ingested = 0;
+    let trades = 0;
+    const processed: string[] = [];
+    for (const item of unknown) {
+      throwIfAborted(signal);
+      try {
+        const result = await ingestSignature(item, signal);
+        if (result.fetched) ingested += 1;
+        trades += Number(result.persistedTradeEvents || 0);
+        if (shouldMarkPdaSignatureProcessed(result)) processed.push(item.signature);
+      } catch (error) {
+        console.warn(
+          "[solana-indexer] campaign tip signature failed",
+          { campaign, signature: item.signature, error: error instanceof Error ? error.message : String(error) },
+        );
+      }
+    }
+    await markPdaSignaturesProcessed(campaign, processed);
+    campaignTipLastRunMs.set(campaign, Date.now());
+    if (trades > 0) {
+      console.log("[solana-indexer] campaign tip ingested trades", {
+        campaign,
+        scanned: signatures.length,
+        unknown: unknown.length,
+        ingested,
+        trades,
+      });
+    }
+    return { campaign, scanned: signatures.length, unknown: unknown.length, ingested, trades };
+  } finally {
+    campaignTipInFlight.delete(campaign);
+  }
+}
+
+export async function ingestSolanaSignatures(
+  campaignAddress: string,
+  signatures: string[],
+): Promise<{ ok: true; campaign: string; scanned: number; ingested: number; trades: number }> {
+  const campaign = String(campaignAddress || "").trim();
+  const unique = [...new Set(
+    (signatures || [])
+      .map((value) => String(value || "").trim())
+      .filter((value) => /^[1-9A-HJ-NP-Za-km-z]{64,96}$/.test(value)),
+  )].slice(0, 20);
+  let ingested = 0;
+  let trades = 0;
+  const processed: string[] = [];
+  for (const signature of unique) {
+    try {
+      const result = await ingestSignature({ signature, slot: 0, err: null });
+      if (result.fetched) ingested += 1;
+      trades += Number(result.persistedTradeEvents || 0);
+      if (shouldMarkPdaSignatureProcessed(result)) processed.push(signature);
+    } catch (error) {
+      console.warn("[solana-indexer] signature ingest failed", {
+        campaign,
+        signature,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  if (isSolanaPublicKey(campaign)) await markPdaSignaturesProcessed(campaign, processed);
+  return { ok: true, campaign, scanned: unique.length, ingested, trades };
+}
+
+export function kickSolanaCampaignTipIngest(campaignAddress: string): void {
+  const campaign = String(campaignAddress || "").trim();
+  if (!isSolanaPublicKey(campaign)) return;
+  void ingestSolanaCampaignTip(campaign).catch((error) => {
+    console.warn(
+      "[solana-indexer] campaign tip ingest failed",
+      campaign,
+      error instanceof Error ? error.message : String(error),
+    );
+  });
 }
 
 async function dedupeSolanaCurveTrades(campaign?: string): Promise<string[]> {
@@ -2199,6 +2329,7 @@ async function runTipLane(head: number): Promise<void> {
     const result = await ingestSignature(item);
     if (result.fetched && !result.retryableFailure) maxOk = Math.max(maxOk, item.slot);
   }
+  await runCampaignPdaTipLane();
   if (maxOk > 0) {
     lastTipSlot = Math.max(lastTipSlot, maxOk);
     lastLiveIngestMs = Date.now();
@@ -2210,6 +2341,32 @@ async function runTipLane(head: number): Promise<void> {
              updated_at=now()`,
       [SOLANA_CHAIN_ID, "solana:v4:tip", Math.min(maxOk, head + 64)],
     );
+  }
+}
+
+async function runCampaignPdaTipLane(): Promise<void> {
+  const deadline = Date.now() + 12_000;
+  let campaigns: string[] = [];
+  try {
+    campaigns = await listBondingSolanaCampaigns(40);
+  } catch (error) {
+    console.warn(
+      "[solana-indexer] list bonding campaigns for tip failed",
+      error instanceof Error ? error.message : String(error),
+    );
+    return;
+  }
+  for (const campaign of campaigns) {
+    if (Date.now() >= deadline) break;
+    try {
+      await ingestSolanaCampaignTip(campaign);
+    } catch (error) {
+      console.warn(
+        "[solana-indexer] campaign tip failed",
+        campaign,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
   }
 }
 

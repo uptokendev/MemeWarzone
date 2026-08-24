@@ -26,12 +26,19 @@ type RecruiterRow = {
   rank?: number;
   displayName?: string;
   recruiterCode?: string;
+  code?: string;
   wallet?: string;
   linkedWallets?: number;
+  linkedWalletCount?: number;
   linkedCreators?: number;
+  linkedCreatorsCount?: number;
   linkedTraders?: number;
+  linkedTradersCount?: number;
   activeSquadMembers?: number;
+  activeSquadMemberCount?: number;
   referredVolumeUsd?: number;
+  referredVolumeBnb?: number;
+  referredVolumeSol?: number;
   weightedScore?: number;
   estimatedPayoutUsd?: number;
   claimStatus?: string;
@@ -351,12 +358,12 @@ function StandingsTable({
           </thead>
           <tbody>
             {(rows as RecruiterRow[]).map((row, index) => (
-              <tr key={`${row.wallet ?? row.recruiterCode ?? index}`} className="border-b border-border/30 align-top">
+              <tr key={`${row.wallet ?? row.recruiterCode ?? row.code ?? index}`} className="border-b border-border/30 align-top">
                 <td className="py-3 pr-3 font-retro">#{row.rank ?? index + 1}</td>
-                <td className="py-3 pr-3"><div className="font-semibold text-foreground">{row.displayName || "Recruiter"}</div><div className="text-xs text-muted-foreground">{row.recruiterCode || "Code pending"}</div></td>
+                <td className="py-3 pr-3"><div className="font-semibold text-foreground">{row.displayName || "Recruiter"}</div><div className="text-xs text-muted-foreground">{row.recruiterCode || row.code || "Code pending"}</div></td>
                 <td className="py-3 pr-3 text-muted-foreground">{shortAddr(row.wallet)}</td>
-                <td className="py-3 pr-3 text-muted-foreground"><div>{row.linkedWallets ?? 0} wallets</div><div className="text-xs">{row.activeSquadMembers ?? 0} squad / {row.linkedCreators ?? 0} creators / {row.linkedTraders ?? 0} traders</div></td>
-                <td className="py-3 pr-3">{formatUsd(Number(row.referredVolumeUsd ?? 0))}</td>
+                <td className="py-3 pr-3 text-muted-foreground"><div>{row.linkedWallets ?? row.linkedWalletCount ?? 0} wallets</div><div className="text-xs">{row.activeSquadMembers ?? row.activeSquadMemberCount ?? 0} squad / {row.linkedCreators ?? row.linkedCreatorsCount ?? 0} creators / {row.linkedTraders ?? row.linkedTradersCount ?? 0} traders</div></td>
+                <td className="py-3 pr-3"><div>{formatUsd(Number(row.referredVolumeUsd ?? 0))}</div>{Number(row.referredVolumeBnb || 0) > 0 || Number(row.referredVolumeSol || 0) > 0 ? <div className="text-xs text-muted-foreground">{Number(row.referredVolumeBnb || 0) > 0 ? `${Number(row.referredVolumeBnb).toFixed(4)} BNB` : null}{Number(row.referredVolumeBnb || 0) > 0 && Number(row.referredVolumeSol || 0) > 0 ? " · " : ""}{Number(row.referredVolumeSol || 0) > 0 ? `${Number(row.referredVolumeSol).toFixed(4)} SOL` : null}</div> : null}</td>
                 <td className="py-3 pr-3">{Number(row.weightedScore ?? 0).toLocaleString()}</td>
                 <td className="py-3 pr-3">{formatUsd(Number(row.estimatedPayoutUsd ?? 0))}</td>
                 <td className="py-3 pr-3 text-muted-foreground">{row.claimStatus || "Pending"}</td>
@@ -561,16 +568,23 @@ export default function League({ chainId = 56 }: { chainId?: number }) {
               </div>
             </div>
             <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-end">
-              <TacticalSwitch<LeagueChain>
-                label="Chain"
-                value={chain}
-                left={{ value: "bnb", label: "BNB" }}
-                right={{ value: "solana", label: "Solana" }}
-                onChange={(next) => {
-                  setChain(next);
-                  setSelectedFeedChainId(next === "solana" ? SOLANA_CHAIN_ID : resolveBnbFeedChainId());
-                }}
-              />
+              {selectedLeagueKey === "recruiter_league" ? (
+                <div className="rounded-md border border-border/60 bg-background/45 px-3 py-2">
+                  <div className="mb-1 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Chain</div>
+                  <div className="rounded px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-foreground">All chains</div>
+                </div>
+              ) : (
+                <TacticalSwitch<LeagueChain>
+                  label="Chain"
+                  value={chain}
+                  left={{ value: "bnb", label: "BNB" }}
+                  right={{ value: "solana", label: "Solana" }}
+                  onChange={(next) => {
+                    setChain(next);
+                    setSelectedFeedChainId(next === "solana" ? SOLANA_CHAIN_ID : resolveBnbFeedChainId());
+                  }}
+                />
+              )}
               <TacticalSwitch<Period>
                 label="Epoch"
                 value={period}

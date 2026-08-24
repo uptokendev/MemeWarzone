@@ -34,6 +34,33 @@ export function sortSignaturesAscending(items: IndexedSignature[]): IndexedSigna
   return [...items].sort((a, b) => a.slot - b.slot || a.signature.localeCompare(b.signature));
 }
 
+/**
+ * After historyComplete, still ingest PDA signatures the book does not have.
+ * Signature-only "known" is used here because a later ALMOST buy is a new sig;
+ * same-sig missing eventIndex is handled by decode+insert on first ingest.
+ */
+export function selectUnknownPdaTipSignatures(input: {
+  signatures: Array<{ signature?: string | null; slot?: number | null; err?: unknown | null }>;
+  known: Iterable<string>;
+  limit?: number;
+}): IndexedSignature[] {
+  const known = new Set(Array.from(input.known || []).map((value) => String(value || "").trim()).filter(Boolean));
+  const limit = Math.max(1, Math.min(80, Number(input.limit || 20)));
+  const out: IndexedSignature[] = [];
+  for (const item of input.signatures || []) {
+    if (item?.err) continue;
+    const signature = String(item?.signature || "").trim();
+    if (!signature || known.has(signature)) continue;
+    out.push({
+      signature,
+      slot: Number(item.slot || 0),
+      err: null,
+    });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 export type RpcSignatureLike = {
   signature: string;
   slot: number;

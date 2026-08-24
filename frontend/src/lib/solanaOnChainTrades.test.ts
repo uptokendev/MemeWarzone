@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { decodeSolanaTradeEvents, decodedTradeToPoint } from "./solanaOnChainTrades.ts";
+import { decodeSolanaTradeEvents, decodedTradeToPoint, selectSolanaSignaturesToFetch } from "./solanaOnChainTrades.ts";
 
 const BUY_DISC = Buffer.from("9794ade2801ef9be", "hex");
 const SELL_DISC = Buffer.from("d953448986e15e2d", "hex");
@@ -41,6 +41,38 @@ test("TokensBought after a fee event keeps indexer logIndex=1", () => {
   assert.equal(trades[0].tokenRaw, 1_500_000n);
   assert.equal(trades[0].nativeRaw, 10_000_000n);
   assert.equal(trades[0].soldTokensAfter, 1_500_000n);
+});
+
+test("tip reconcile fetches a later signature the indexer already partially knows", () => {
+  const first = "heWs9aJGiKrEgDhQ1pLhabmV7pehtTiz7pP3ZqopaEVxYTCVtpEGpd1pFvr56bjxXCuMBnvocznKwexR4DJqHqP";
+  const second = "3oZaXc5EAodXDH6qaZK9Pftds1DjVD8vkizRFU6zJppA272F5hk7xfpZcGpULbZXMySC26C3WdE4tFXiQ939BtXz";
+  const missing = selectSolanaSignaturesToFetch({
+    signatures: [
+      { signature: second, slot: 441256954, err: null },
+      { signature: first, slot: 441223620, err: null },
+    ],
+    knownTxHashes: [first],
+    minSlot: 441223620,
+  });
+  assert.deepEqual(missing.map((item) => item.signature), [second]);
+});
+
+test("one chain check keeps later ALMOST buy even if a newer fee signature is first", () => {
+  const first = "heWs9aJGiKrEgDhQ1pLhabmV7pehtTiz7pP3ZqopaEVxYTCVtpEGpd1pFvr56bjxXCuMBnvocznKwexR4DJqHqP";
+  const second = "3oZaXc5EAodXDH6qaZK9Pftds1DjVD8vkizRFU6zJppA272F5hk7xfpZcGpULbZXMySC26C3WdE4tFXiQ939BtXz";
+  const fee = "5x4iy7vmQJBeTP6VL7bNPGUMnawdKYaUBR1ShEtRadNFWzHk9gvYEfiNkmixuUHB3tTLed7oRbwNaaVEfcbawwby";
+  const missing = selectSolanaSignaturesToFetch({
+    signatures: [
+      { signature: fee, slot: 441258513, err: null },
+      { signature: second, slot: 441256954, err: null },
+      { signature: first, slot: 441223620, err: null },
+    ],
+    knownTxHashes: [first],
+    minSlot: 441223620,
+    maxFetch: 8,
+  });
+  assert.equal(missing.some((item) => item.signature === second), true);
+  assert.equal(missing.some((item) => item.signature === first), false);
 });
 
 test("TokensSold uses net lamports out and sold_tokens_after", () => {

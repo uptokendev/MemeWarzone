@@ -11,8 +11,13 @@ import {
 import { useAblyTokenChannel } from "@/hooks/useAblyTokenChannel";
 import { getBlockTimestamps, scanContractLogs } from "@/lib/rpcLogScan";
 import { indexerRowToCurvePoint } from "@/lib/chart/normalizeTrade";
+import { notifyIndexerFills } from "@/lib/indexerTradeIngest";
 import { fetchSolanaOnChainTrades } from "@/lib/solanaOnChainTrades";
-import { parseIndexerTradeBody, shouldRunSolanaHistoryFallback } from "@/lib/indexerTradeSnapshot";
+import {
+  parseIndexerTradeBody,
+  shouldRunSolanaHistoryFallback,
+  shouldRunSolanaTipReconcile,
+} from "@/lib/indexerTradeSnapshot";
 import {
   isValidTradeTxHash,
   mergeTradePoints,
@@ -148,6 +153,7 @@ type IndexerTradeSnapshot = {
   historyComplete: boolean | null;
   repairState: string | null;
   campaignAddress: string | null;
+  lastIndexedSlot: number | null;
   source: "relative" | "absolute";
 };
 
@@ -163,6 +169,7 @@ async function fetchIndexerTrades(campaignAddress: string, chainId: number, limi
     historyComplete: false,
     repairState: "unknown",
     campaignAddress: campaign,
+    lastIndexedSlot: null,
     source: "relative",
   };
   try {
@@ -407,6 +414,7 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
       let indexerLatencyMs = 0;
       let historyComplete: boolean | null = null;
       let repairState: string | null = null;
+      let lastIndexedSlot: number | null = null;
       let fallbackRan = false;
       let fallbackRows = 0;
       let fallbackLatencyMs = 0;
@@ -428,37 +436,59 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
         indexerRows = snapshot.items.length;
         historyComplete = snapshot.historyComplete;
         repairState = snapshot.repairState;
+        lastIndexedSlot = snapshot.lastIndexedSlot;
         indexerOk = true;
+        const maxIndexedBlock = Math.max(0, ...snapshot.items.map((row: any) => Number(row?.block_number ?? row?.blockNumber ?? 0)));
+        if (maxIndexedBlock > highestBlockScannedRef.current) highestBlockScannedRef.current = maxIndexedBlock;
       } catch (apiError: any) {
         if (isAbortError(apiError)) return;
         console.warn("[useCurveTrades] indexer trade API failed", apiError);
       }
 
-      if (
-        isSolanaChainId(chainId) &&
-        shouldRunSolanaHistoryFallback({
-          fallbackEnabled: ENABLE_SOLANA_ONCHAIN_TRADE_FALLBACK,
-          indexerOk,
-          historyComplete,
-          indexerRows,
-        })
-      ) {
+      if (indexerRows > 0) setLoading(false);
+
+      const fullHistoryFallback = shouldRunSolanaHistoryFallback({
+        fallbackEnabled: ENABLE_SOLANA_ONCHAIN_TRADE_FALLBACK,
+        indexerOk,
+        historyComplete,
+        indexerRows,
+      });
+      const tipReconcile = shouldRunSolanaTipReconcile({
+        fallbackEnabled: ENABLE_SOLANA_ONCHAIN_TRADE_FALLBACK,
+        indexerOk,
+        indexerRows,
+      });
+      if (isSolanaChainId(chainId) && (mode === "full" || !indexerOk) && (fullHistoryFallback || tipReconcile || indexerOk)) {
         fallbackRan = true;
         try {
           const known = new Set<string>([
             ...indexedTxRef.current,
             ...livePointsRef.current.map((point) => normalizeTradeTxHash(point.txHash)).filter(Boolean),
           ]);
+          const knownIdentities = new Set<string>([
+            ...indexedKeysRef.current,
+            ...livePointsRef.current.map((point) => tradeDedupeKey(point)).filter(Boolean),
+          ]);
           const started = Date.now();
           const chainRows = await fetchSolanaOnChainTrades(campaignAddress, {
             knownTxHashes: known,
+            knownIdentities,
+            minSlot: lastIndexedSlot,
+            maxFetch: fullHistoryFallback ? 12 : 8,
             signal,
-            limit,
+            limit: fullHistoryFallback ? limit : 20,
           });
           fallbackLatencyMs = Date.now() - started;
           if (signal?.aborted) return;
           fallbackRows = chainRows.length;
-          if (chainRows.length) applyLivePoints(chainRows);
+          if (chainRows.length) {
+            applyLivePoints(chainRows);
+            notifyIndexerFills({
+              chainId,
+              campaignAddress,
+              txHashes: chainRows.map((row) => row.txHash),
+            });
+          }
         } catch (chainError) {
           if (!isAbortError(chainError)) {
             console.warn("[useCurveTrades] Solana on-chain trade fallback failed", chainError);
@@ -481,21 +511,33 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
         finalRows: indexedKeysRef.current.size + livePointsRef.current.length,
       });
 
-      if (isEvmChainId(chainId) && ENABLE_ONCHAIN_TRADE_FALLBACK && (mode === "full" || !indexerOk)) {
+      if (isEvmChainId(chainId) && (mode === "full" || !indexerOk)) {
         try {
           const isDelta = highestBlockScannedRef.current > 0;
-          const fallbackRows = await fetchOnChainTradeSnapshot(
+          const deepHistory = ENABLE_ONCHAIN_TRADE_FALLBACK && !indexerOk && mode === "full";
+          const chainRows = await fetchOnChainTradeSnapshot(
             campaignAddress,
             chainId,
             limit,
             signal,
-            mode === "tip" && isDelta ? 10_000 : 200_000,
+            deepHistory ? 200_000 : 4_000,
             isDelta ? highestBlockScannedRef.current + 1 : undefined,
           );
           if (signal?.aborted) return;
-          if (fallbackRows.length) {
-            applyLivePoints(fallbackRows);
-            const maxBlock = Math.max(...fallbackRows.map((row) => row.blockNumber));
+          const extras = chainRows.filter((row) => {
+            const key = tradeDedupeKey(row);
+            return Boolean(key) && !indexedKeysRef.current.has(key);
+          });
+          if (extras.length) {
+            applyLivePoints(extras);
+            notifyIndexerFills({
+              chainId,
+              campaignAddress,
+              txHashes: extras.map((row) => row.txHash),
+            });
+          }
+          if (chainRows.length) {
+            const maxBlock = Math.max(...chainRows.map((row) => row.blockNumber));
             if (maxBlock > highestBlockScannedRef.current) {
               highestBlockScannedRef.current = maxBlock;
             }

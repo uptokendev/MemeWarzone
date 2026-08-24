@@ -180,10 +180,39 @@ async function mapPool<T, R>(
   return out;
 }
 
+export function selectSolanaSignaturesToFetch(input: {
+  signatures: Array<{ signature?: string | null; slot?: number | null; err?: unknown | null }>;
+  knownTxHashes: Iterable<string>;
+  minSlot?: number | null;
+  maxFetch?: number;
+}): Array<{ signature: string; slot: number }> {
+  const known = new Set(
+    Array.from(input.knownTxHashes || [])
+      .map((value) => normalizeTradeTxHash(value))
+      .filter(Boolean),
+  );
+  const minSlot = Number(input.minSlot || 0);
+  const maxFetch = Math.max(1, Math.min(20, Number(input.maxFetch || 8)));
+  const out: Array<{ signature: string; slot: number }> = [];
+  for (const item of input.signatures || []) {
+    if (item?.err || !item?.signature) continue;
+    const signature = String(item.signature);
+    const slot = Number(item.slot || 0);
+    const newerThanBook = minSlot > 0 && slot > minSlot;
+    if (!newerThanBook && known.has(signature)) continue;
+    out.push({ signature, slot });
+    if (out.length >= maxFetch) break;
+  }
+  return out;
+}
+
 export async function fetchSolanaOnChainTrades(
   campaignAddress: string,
   opts?: {
     knownTxHashes?: Iterable<string>;
+    knownIdentities?: Iterable<string>;
+    minSlot?: number | null;
+    maxFetch?: number;
     signal?: AbortSignal;
     limit?: number;
   },
@@ -197,12 +226,21 @@ export async function fetchSolanaOnChainTrades(
       .map((value) => normalizeTradeTxHash(value))
       .filter(Boolean),
   );
+  const knownIdentities = new Set(
+    Array.from(opts?.knownIdentities || []).map((value) => String(value || "").trim()).filter(Boolean),
+  );
+  const minSlot = Number(opts?.minSlot || 0);
   const limit = Math.min(Math.max(Number(opts?.limit ?? 50), 1), 100);
   const web3 = await loadSolanaWeb3();
   const connection = getSolanaReadConnection();
   const pubkey = new web3.PublicKey(campaign);
   const signatures = await connection.getSignaturesForAddress(pubkey, { limit });
-  const missing = signatures.filter((item) => !item.err && item.signature && !known.has(item.signature));
+  const missing = selectSolanaSignaturesToFetch({
+    signatures,
+    knownTxHashes: known,
+    minSlot,
+    maxFetch: opts?.maxFetch ?? 8,
+  });
   if (!missing.length) return [];
 
   const nested = await mapPool(
@@ -229,5 +267,10 @@ export async function fetchSolanaOnChainTrades(
     opts?.signal,
   );
 
-  return nested.flat().filter((point) => point.blockNumber > 0 && point.timestamp > 0);
+  return nested.flat().filter((point) => {
+    if (!(point.blockNumber > 0 && point.timestamp > 0)) return false;
+    if (!knownIdentities.size) return true;
+    const key = `${normalizeTradeTxHash(point.txHash)}:${Number(point.logIndex)}`;
+    return !knownIdentities.has(key);
+  });
 }

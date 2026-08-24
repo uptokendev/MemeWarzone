@@ -380,7 +380,7 @@ app.get("/health", async (_req, res) => {
       ok: true,
       db: r.rows[0].ok,
       // Bump when shipping indexer loop fixes so deploy can be confirmed from /health.
-      indexerBuild: "live-c4f1-bnb-sold-raw-2026-08-23",
+      indexerBuild: "live-c4-almost-chain-ingest-2026-08-24",
       normalScope: ENV.INDEXER_NORMAL_SCOPE,
       solana: solanaIndexerPublicHealth(),
     });
@@ -568,17 +568,34 @@ app.post("/api/token/:campaign/ingest-tx", wrap(async (req, res) => {
   const chainId = Number(req.query.chainId || req.body?.chainId || ENV.DEFAULT_EVM_CHAIN_ID);
   const identity = await resolveMarketIdentityOrPassthrough(chainId, String(req.params.campaign || ""));
   const campaign = identity.campaignAddress;
-  const txHash = String(req.query.txHash || req.query.tx || req.body?.txHash || req.body?.tx || "").trim().toLowerCase();
+  const bodySigs = Array.isArray(req.body?.signatures) ? req.body.signatures : [];
+  const txHash = String(req.query.txHash || req.query.tx || req.body?.txHash || req.body?.tx || "").trim();
+  if (chainId === 101) {
+    if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(campaign)) {
+      return res.status(400).json({ ok: false, error: "Invalid campaign address" });
+    }
+    const signatures = [
+      ...bodySigs.map((value: unknown) => String(value || "").trim()),
+      txHash,
+    ].filter((value) => /^[1-9A-HJ-NP-Za-km-z]{64,96}$/.test(value));
+    if (!signatures.length) {
+      return res.status(400).json({ ok: false, error: "Invalid tx hash" });
+    }
+    const { ingestSolanaSignatures } = await import("./solanaIndexer.js");
+    const result = await ingestSolanaSignatures(campaign, signatures);
+    return res.json(result);
+  }
+  const evmHash = txHash.toLowerCase();
   if (!Number.isFinite(chainId) || (chainId !== 56 && chainId !== 97)) {
     return res.status(400).json({ ok: false, error: "Invalid chainId" });
   }
   if (!/^0x[a-f0-9]{40}$/.test(campaign)) {
     return res.status(400).json({ ok: false, error: "Invalid campaign address" });
   }
-  if (!/^0x[a-f0-9]{64}$/.test(txHash)) {
+  if (!/^0x[a-f0-9]{64}$/.test(evmHash)) {
     return res.status(400).json({ ok: false, error: "Invalid tx hash" });
   }
-  const result = await ingestCampaignTransaction({ chainId, campaignAddress: campaign, txHash });
+  const result = await ingestCampaignTransaction({ chainId, campaignAddress: campaign, txHash: evmHash });
   res.json(result);
 }));
 
@@ -2316,9 +2333,12 @@ async function handleTokenTrades(req: any, res: any) {
     if (chainId === 101) {
       res.json(await solanaHistoryEnvelope(campaign, items));
       void import("./solanaIndexer.js")
-        .then(({ kickSolanaCampaignHistoryBackfill }) => kickSolanaCampaignHistoryBackfill(campaign))
+        .then(({ kickSolanaCampaignTipIngest, kickSolanaCampaignHistoryBackfill }) => {
+          kickSolanaCampaignTipIngest(campaign);
+          kickSolanaCampaignHistoryBackfill(campaign);
+        })
         .catch((error) => {
-          console.warn("[api] solana campaign backfill kick failed", error instanceof Error ? error.message : String(error));
+          console.warn("[api] solana campaign tip/backfill kick failed", error instanceof Error ? error.message : String(error));
         });
     } else {
       res.json(items);
@@ -2331,9 +2351,12 @@ async function handleTokenTrades(req: any, res: any) {
 
   if (chainId === 101) {
     void import("./solanaIndexer.js")
-      .then(({ kickSolanaCampaignHistoryBackfill }) => kickSolanaCampaignHistoryBackfill(campaign))
+      .then(({ kickSolanaCampaignTipIngest, kickSolanaCampaignHistoryBackfill }) => {
+        kickSolanaCampaignTipIngest(campaign);
+        kickSolanaCampaignHistoryBackfill(campaign);
+      })
       .catch((error) => {
-        console.warn("[api] solana campaign backfill kick failed", error instanceof Error ? error.message : String(error));
+        console.warn("[api] solana campaign tip/backfill kick failed", error instanceof Error ? error.message : String(error));
       });
     return res.json(await solanaHistoryEnvelope(campaign, []));
   }

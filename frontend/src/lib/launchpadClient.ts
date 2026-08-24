@@ -20,6 +20,7 @@ import {
 } from "@/lib/recruiterApi";
 import { getReadProvider } from "@/lib/readProvider";
 import { apiFetch } from "@/lib/apiBase";
+import { notifyIndexerFills } from "@/lib/indexerTradeIngest";
 import { resolveImageUri } from "@/lib/media";
 import { assertOnchainLogoUri } from "@/lib/onchainLogoUri";
 import { getBnbLaunchpadSafetyStatus } from "@/lib/launchpad/adapters/bnbLaunchpadAdapter";
@@ -438,17 +439,11 @@ function emitTxConfirmed(detail: any) {
 }
 
 function notifyIndexerTrade(detail: { chainId?: number; campaignAddress?: string; txHash?: string }) {
-  const chainId = Number(detail.chainId || 0);
-  const campaign = String(detail.campaignAddress || "").trim();
-  const txHash = String(detail.txHash || "").trim();
-  if ((chainId !== 56 && chainId !== 97) || !/^0x[a-fA-F0-9]{40}$/.test(campaign) || !/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
-    return;
-  }
-  void apiFetch(`/api/token/${encodeURIComponent(campaign)}/ingest-tx?chainId=${chainId}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ chainId, txHash }),
-  }).catch(() => undefined);
+  notifyIndexerFills({
+    chainId: Number(detail.chainId || 0),
+    campaignAddress: String(detail.campaignAddress || ""),
+    txHashes: [String(detail.txHash || "")],
+  });
 }
 
 async function blockTimestamp(provider: ethers.AbstractProvider, blockNumber?: number | null) {
