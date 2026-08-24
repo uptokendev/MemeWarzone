@@ -220,7 +220,9 @@ export function resolveTokenPageChainId(input?: {
 
   if (/^0x[a-fA-F0-9]{40}$/i.test(routeId) || isEvmTokenPath(pathname)) {
     if (isEvmChainId(queryChainId)) return queryChainId as SupportedChainId;
-    return getEvmReadChainIdForTokenPage();
+    // Query-less 0x URLs are BNB mainnet. Do not inherit last testnet (97) from feed storage,
+    // or a shared /token/0x… link would open the wrong chain.
+    return BNB_CHAIN_ID;
   }
 
   if (isSolanaTokenPath(pathname) || (!routeId.startsWith("0x") && routeId.length >= 32)) {

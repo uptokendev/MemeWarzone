@@ -18,6 +18,7 @@ import {
   syncRecruiterJoinRole,
   type RecruiterJoinRole,
 } from "@/lib/recruiterJoinRole";
+import { analytics } from "@/lib/analytics/ProductAnalytics";
 
 type ReferralState = {
   recruiter: null | {
@@ -53,6 +54,12 @@ export default function RecruiterReferral() {
   const [walletState, setWalletState] = useState<WalletAttributionPublicState | null>(null);
   const [replacementSuggestions, setReplacementSuggestions] = useState<RecruiterSummary[]>([]);
   const lastSyncedKey = useRef("");
+
+  useEffect(() => {
+    const trimmed = String(code || "").trim();
+    if (!trimmed) return;
+    analytics.track("recruiter_link_landed", { code: trimmed });
+  }, [code]);
 
   // Capture the recruiter invite independently from wallet attachment. The referral
   // API only needs the browser session/fingerprint at this stage. Sending a Solana

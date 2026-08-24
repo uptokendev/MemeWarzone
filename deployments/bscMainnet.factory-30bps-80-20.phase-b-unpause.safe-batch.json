@@ -1,0 +1,29 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 1755864000000,
+  "meta": {
+    "name": "MemeWarzone BNB factory replacement — unpause CREATE last",
+    "description": "Call setCreatePaused(false) on replacement factory 0xc378221E57898106079aE4B818a92978e4cd9559. This opens public CREATE. Only after frontend and indexer point at this factory and keep 0x3068 supported.",
+    "txBuilderVersion": "1.18.0",
+    "createdFromSafeAddress": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+    "createdFromOwnerAddress": ""
+  },
+  "transactions": [
+    {
+      "to": "0xc378221E57898106079aE4B818a92978e4cd9559",
+      "value": "0",
+      "data": "0x83bcec850000000000000000000000000000000000000000000000000000000000000000",
+      "contractMethod": {
+        "inputs": [
+          { "internalType": "bool", "name": "paused", "type": "bool" }
+        ],
+        "name": "setCreatePaused",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "paused": "false"
+      }
+    }
+  ]
+}

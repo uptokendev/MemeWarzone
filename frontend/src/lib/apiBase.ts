@@ -119,6 +119,7 @@ const FRONTEND_API_PREFIXES = [
   "/api/launchpad",
   "/api/price",
   "/api/follows",
+  "/api/analytics",
 ];
 
 function isHttpUrl(value: string): boolean {

@@ -75,6 +75,7 @@ import CommandCenterAbuseReports from "@/pages/command-center/CommandCenterAbuse
 import CommandCenterAbuseReportDetail from "@/pages/command-center/CommandCenterAbuseReportDetail";
 import { isPostGradRouteEnabled, postGradFlags, warRoomEnabled } from "@/features/postgrad/config";
 import { DocumentTitleSync } from "@/hooks/useDocumentTitle";
+import { ProductAnalytics } from "@/lib/analytics/ProductAnalytics";
 
 const queryClient = new QueryClient();
 
@@ -145,6 +146,7 @@ function AppShellLayout({
       style={mainStyle}
     >
       <DocumentTitleSync />
+      <ProductAnalytics />
       <OwnWalletRouteSync />
       <div className="hidden lg:block">
         <LeftBattleSidebar collapsed={leftSidebarCollapsed} onToggleCollapse={toggleLeftSidebar} />

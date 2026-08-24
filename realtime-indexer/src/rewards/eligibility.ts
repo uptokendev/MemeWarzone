@@ -1,5 +1,6 @@
 import type { PoolClient, QueryResult } from "pg";
 import { pool } from "../db.js";
+import { parseWalletAddressOrNull } from "../walletAddress.js";
 import { getEpochById, type RewardEpochRecord } from "./epochs.js";
 import { ELIGIBILITY_PROGRAMS, ELIGIBILITY_REASON_CODES, EXCLUSION_FLAG_SEVERITIES, isEligibilityProgram, isEligibilityReasonCode, isExclusionFlagSeverity, type EligibilityProgram, type EligibilityReasonCode, type ExclusionFlagSeverity } from "./reasonCodes.js";
 
@@ -106,11 +107,9 @@ function mustIso(value: unknown, label: string): string {
 }
 
 function normalizeAddress(value: unknown): string {
-  const address = String(value ?? "").trim().toLowerCase();
-  if (!/^0x[a-f0-9]{40}$/.test(address)) {
-    throw new Error(`Invalid wallet address: ${String(value ?? "")}`);
-  }
-  return address;
+  const parsed = parseWalletAddressOrNull(value);
+  if (!parsed) throw new Error(`Invalid wallet address: ${String(value ?? "")}`);
+  return parsed;
 }
 
 function parseNumericBigInt(value: unknown): bigint {
@@ -466,6 +465,8 @@ async function insertAutomaticExclusionFlag(
     metadata?: Record<string, unknown>;
   }
 ): Promise<void> {
+  const walletAddress = parseWalletAddressOrNull(input.walletAddress);
+  if (!walletAddress) return;
   await db.query(
     `insert into public.exclusion_flags(
        wallet_address, epoch_id, program, flag_type, severity, details_json, metadata, created_at, updated_at
@@ -473,7 +474,7 @@ async function insertAutomaticExclusionFlag(
        $1, $2, null, $3, $4, $5::jsonb, $6::jsonb, now(), now()
      )`,
     [
-      normalizeAddress(input.walletAddress),
+      walletAddress,
       input.epochId,
       input.flagType,
       input.severity,
@@ -487,7 +488,7 @@ async function syncAutomaticExclusionFlagsForEpoch(db: DbLike, epoch: RewardEpoc
   await clearAutomaticExclusionFlagsForEpoch(db, epoch.id);
 
   const selfTrading = await db.query(
-    `select lower(t.wallet) as wallet_address,
+    `select (array_agg(t.wallet order by t.block_time desc))[1] as wallet_address,
             count(*)::int as matched_trade_count,
             array_agg(distinct t.campaign_address order by t.campaign_address) as campaign_addresses
        from public.curve_trades t
@@ -497,7 +498,7 @@ async function syncAutomaticExclusionFlagsForEpoch(db: DbLike, epoch: RewardEpoc
       where t.chain_id = $1
         and t.block_time >= $2
         and t.block_time < $3
-        and lower(t.wallet) = lower(c.creator_address)
+        and (t.wallet = c.creator_address or lower(t.wallet) = lower(c.creator_address))
       group by lower(t.wallet)`,
     [epoch.chainId, epoch.startAt, epoch.endAt]
   );
@@ -529,7 +530,7 @@ async function syncAutomaticExclusionFlagsForEpoch(db: DbLike, epoch: RewardEpoc
   }
 
   const commonControl = await db.query(
-    `select lower(t.wallet) as wallet_address,
+    `select (array_agg(t.wallet order by t.block_time desc))[1] as wallet_address,
             count(*)::int as matched_trade_count,
             array_agg(distinct t.campaign_address order by t.campaign_address) as campaign_addresses
        from public.curve_trades t
@@ -540,7 +541,7 @@ async function syncAutomaticExclusionFlagsForEpoch(db: DbLike, epoch: RewardEpoc
         and t.block_time >= $2
         and t.block_time < $3
         and c.fee_recipient_address is not null
-        and lower(t.wallet) = lower(c.fee_recipient_address)
+        and (t.wallet = c.fee_recipient_address or lower(t.wallet) = lower(c.fee_recipient_address))
         and lower(t.wallet) <> lower(c.creator_address)
       group by lower(t.wallet)`,
     [epoch.chainId, epoch.startAt, epoch.endAt]
@@ -561,7 +562,7 @@ async function syncAutomaticExclusionFlagsForEpoch(db: DbLike, epoch: RewardEpoc
   }
 
   const circular = await db.query(
-    `select lower(t.wallet) as wallet_address,
+    `select (array_agg(t.wallet order by t.block_time desc))[1] as wallet_address,
             count(distinct t.campaign_address)::int as campaign_count,
             array_agg(distinct t.campaign_address order by t.campaign_address) as campaign_addresses
        from public.curve_trades t
@@ -644,12 +645,12 @@ async function syncAutomaticExclusionFlagsForEpoch(db: DbLike, epoch: RewardEpoc
   }
 
   const recruiterFarmingLoops = await db.query(
-    `select distinct lower(r.wallet_address) as wallet_address,
+    `select r.wallet_address as wallet_address,
             r.id as recruiter_id,
             array_agg(distinct t.campaign_address order by t.campaign_address) as campaign_addresses
        from public.recruiters r
        join public.curve_trades t
-         on lower(t.wallet) = lower(r.wallet_address)
+         on (t.wallet = r.wallet_address or lower(t.wallet) = lower(r.wallet_address))
         and t.chain_id = $1
         and t.block_time >= $2
         and t.block_time < $3
@@ -658,10 +659,10 @@ async function syncAutomaticExclusionFlagsForEpoch(db: DbLike, epoch: RewardEpoc
         and c.campaign_address = t.campaign_address
        join public.wallet_recruiter_links l
          on l.recruiter_id = r.id
-        and lower(c.creator_address) = l.wallet_address
+        and (lower(c.creator_address) = lower(l.wallet_address) or c.creator_address = l.wallet_address)
         and l.linked_at <= t.block_time
         and (l.detached_at is null or l.detached_at > t.block_time)
-      group by lower(r.wallet_address), r.id`,
+      group by r.wallet_address, r.id`,
     [epoch.chainId, epoch.startAt, epoch.endAt]
   );
 

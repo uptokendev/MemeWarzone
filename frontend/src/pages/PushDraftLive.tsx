@@ -34,6 +34,7 @@ import { getScheduledFactoryAddress } from "@/lib/scheduledFactoryConfig";
 import { requestSolanaCreateAuthorizationV4 } from "@/lib/solanaCreateAuthorizationV4";
 import { submitSolanaV4CreateFromAuthorization } from "@/lib/solanaV4CreateSubmit";
 import { signSolanaDraftAction } from "@/lib/solanaWallet";
+import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 
 const DRAFT_PUSH_LIVE_ENABLED = ["1", "true", "yes", "on"].includes(
   String(import.meta.env.VITE_DRAFT_PUSH_LIVE_ENABLED || import.meta.env.VITE_ENABLE_DRAFT_PUSH_LIVE || "")
@@ -307,7 +308,10 @@ export default function PushDraftLive() {
         const tokenPath =
           (authorization as any).tokenPath ||
           authorization.existingDeployment?.tokenPath ||
-          `/token/${encodeURIComponent(mintAddress || campaignAddress)}?chainId=${chainId}`;
+          tokenDetailsPath(
+            { tokenAddress: mintAddress, campaignAddress, chainId },
+            { chainId },
+          );
         const recoveryVaults = {
           tokenVault: authorization.accounts?.tokenVault || (authorization.existingDeployment as any)?.tokenVault || null,
           solVault: authorization.accounts?.solVault || (authorization.existingDeployment as any)?.solVault || null,
@@ -409,7 +413,14 @@ export default function PushDraftLive() {
         }
       }
 
-      const livePath = `/token/${encodeURIComponent(created.mintAddress || created.campaignAddress)}?chainId=${Number(draft.chainId) || 101}`;
+      const livePath = tokenDetailsPath(
+        {
+          tokenAddress: created.mintAddress,
+          campaignAddress: created.campaignAddress,
+          chainId: Number(draft.chainId) || 101,
+        },
+        { chainId: Number(draft.chainId) || 101 },
+      );
       if (mode === "scheduled") {
         toast.success("Solana campaign deployed. Trading stays closed until the scheduled open time.");
         navigate(`/prepare/${draft.slug}`);

@@ -8,6 +8,7 @@ import {
   getStoredSolanaWallet,
   getStoredSolanaWalletId,
   getStoredSolanaWalletName,
+  isSolanaWalletDisconnected,
   refreshSolanaWalletFromProvider,
   SOLANA_WALLET_EVENT,
   SOLANA_WALLET_STORAGE_KEY,
@@ -57,13 +58,23 @@ export function SolanaWalletProvider({ children }: { children: React.ReactNode }
   const connectSolana = useCallback(async (walletId?: string) => {
     const generation = ++connectGenerationRef.current;
     setConnectingSolana(true);
+    const { analytics, analyticsErrorCode } = await import("@/lib/analytics/ProductAnalytics");
+    analytics.track("wallet_connect_started", { wallet_type: walletId || "solana", chain: "solana" });
 
     try {
       const result = await connectSolanaFn(walletId);
       setSolanaAccount(result.publicKey);
       setSolanaWalletName(result.walletName);
       refreshAvailableWallets();
+      analytics.track("wallet_connect_succeeded", { wallet_type: result.walletName || walletId || "solana", chain: "solana" });
       return result;
+    } catch (error) {
+      analytics.track("wallet_connect_failed", {
+        wallet_type: walletId || "solana",
+        chain: "solana",
+        error_code: analyticsErrorCode(error),
+      });
+      throw error;
     } finally {
       if (connectGenerationRef.current === generation) setConnectingSolana(false);
     }
@@ -86,8 +97,16 @@ export function SolanaWalletProvider({ children }: { children: React.ReactNode }
 
     const restoreTrusted = window.setTimeout(() => {
       const provider = getSolanaProvider();
-      if (!provider?.connect || getStoredSolanaWallet() || connectGenerationRef.current > 0) return;
+      if (
+        !provider?.connect ||
+        isSolanaWalletDisconnected() ||
+        getStoredSolanaWallet() ||
+        connectGenerationRef.current > 0
+      ) {
+        return;
+      }
       void provider.connect({ onlyIfTrusted: true } as { onlyIfTrusted?: boolean }).then((result) => {
+        if (isSolanaWalletDisconnected() || connectGenerationRef.current > 0) return;
         const key = String(result?.publicKey?.toString?.() || provider.publicKey?.toString?.() || "").trim();
         if (key) {
           refreshSolanaWalletFromProvider();
@@ -114,6 +133,7 @@ export function SolanaWalletProvider({ children }: { children: React.ReactNode }
         setSolanaWalletName("");
         return;
       }
+      if (isSolanaWalletDisconnected()) return;
       setSolanaAccount(String(detail.publicKey));
       setSolanaWalletName(String(detail.walletName || ""));
       refreshAvailableWallets();
@@ -134,6 +154,7 @@ export function SolanaWalletProvider({ children }: { children: React.ReactNode }
 
     let pendingTimer = 0;
     const publishAccount = (publicKey: string) => {
+      if (isSolanaWalletDisconnected()) return;
       try {
         if (publicKey) window.localStorage.setItem(SOLANA_WALLET_STORAGE_KEY, publicKey);
         else window.localStorage.removeItem(SOLANA_WALLET_STORAGE_KEY);

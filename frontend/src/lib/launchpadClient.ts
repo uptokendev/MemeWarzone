@@ -20,10 +20,12 @@ import {
 } from "@/lib/recruiterApi";
 import { getReadProvider } from "@/lib/readProvider";
 import { apiFetch } from "@/lib/apiBase";
+import { notifyIndexerFills } from "@/lib/indexerTradeIngest";
 import { resolveImageUri } from "@/lib/media";
 import { assertOnchainLogoUri } from "@/lib/onchainLogoUri";
 import { getBnbLaunchpadSafetyStatus } from "@/lib/launchpad/adapters/bnbLaunchpadAdapter";
 import { createSolanaLaunchpadAdapter } from "@/lib/launchpad/adapters/solanaLaunchpadAdapter";
+import { runCatalogAction } from "@/lib/analytics/actions";
 import type {
   CampaignActivity,
   CampaignCardStats,
@@ -437,6 +439,14 @@ function emitTxConfirmed(detail: any) {
   }
 }
 
+function notifyIndexerTrade(detail: { chainId?: number; campaignAddress?: string; txHash?: string }) {
+  notifyIndexerFills({
+    chainId: Number(detail.chainId || 0),
+    campaignAddress: String(detail.campaignAddress || ""),
+    txHashes: [String(detail.txHash || "")],
+  });
+}
+
 async function blockTimestamp(provider: ethers.AbstractProvider, blockNumber?: number | null) {
   if (!blockNumber) return Math.floor(Date.now() / 1000);
   try {
@@ -791,6 +801,13 @@ export function useLaunchpad(): LaunchpadAdapter {
   }, [fetchCampaignSummary]);
 
   const createCampaign = useCallback(async (params: CreateCampaignParams) => {
+    return runCatalogAction({
+      fn: "token_create",
+      start: "token_create_started",
+      success: "token_create_succeeded",
+      fail: "token_create_failed",
+      properties: { surface: "launchpad", chain: String(activeChainId) },
+      work: async () => {
     const writer = getFactoryWrite();
     if (!writer) throw new Error("Wallet not connected");
     if (!wallet.account) throw new Error("Wallet not connected");
@@ -880,9 +897,18 @@ export function useLaunchpad(): LaunchpadAdapter {
     }
     emitTxConfirmed({ kind: "create", chainId: activeChainId, txHash: receipt?.hash ?? tx?.hash, ...created });
     return Object.assign(receipt ?? {}, created);
+      },
+    });
   }, [getFactoryWrite, wallet.account, activeChainId, evmReadChainId, factoryAddress, signer, readProvider]);
 
   const buyTokens = useCallback(async (campaignAddress: string, amountWei: bigint, maxCostWei: bigint) => {
+    return runCatalogAction({
+      fn: "buy",
+      start: "buy_started",
+      success: "buy_submitted",
+      fail: "buy_failed",
+      properties: { surface: "launchpad", chain: String(activeChainId) },
+      work: async () => {
     const submittedAddress = normalizeAddress(campaignAddress);
     if (!submittedAddress) throw new Error("Invalid campaign or token address");
     if (!signer) throw new Error("Wallet not connected");
@@ -936,10 +962,20 @@ export function useLaunchpad(): LaunchpadAdapter {
       }];
     }
     emitTxConfirmed({ kind: "buy", chainId: activeChainId, campaignAddress: normalizedCampaign, txHash: receipt?.hash ?? tx?.hash, trades });
+    notifyIndexerTrade({ chainId: Number(activeChainId), campaignAddress: normalizedCampaign, txHash: receipt?.hash ?? tx?.hash });
     return receipt;
+      },
+    });
   }, [signer, wallet.account, activeChainId, readProvider]);
 
   const sellTokens = useCallback(async (campaignAddress: string, amountWei: bigint, minAmountWei: bigint) => {
+    return runCatalogAction({
+      fn: "sell",
+      start: "sell_started",
+      success: "sell_submitted",
+      fail: "sell_failed",
+      properties: { surface: "launchpad", chain: String(activeChainId) },
+      work: async () => {
     const submittedAddress = normalizeAddress(campaignAddress);
     if (!submittedAddress) throw new Error("Invalid campaign or token address");
     if (!signer) throw new Error("Wallet not connected");
@@ -993,7 +1029,10 @@ export function useLaunchpad(): LaunchpadAdapter {
       }];
     }
     emitTxConfirmed({ kind: "sell", chainId: activeChainId, campaignAddress: normalizedCampaign, txHash: receipt?.hash ?? tx?.hash, trades });
+    notifyIndexerTrade({ chainId: Number(activeChainId), campaignAddress: normalizedCampaign, txHash: receipt?.hash ?? tx?.hash });
     return receipt;
+      },
+    });
   }, [signer, wallet.account, activeChainId, readProvider]);
 
   const finalizeCampaign = useCallback(async (campaignAddress: string, minTokens: bigint, minBnb: bigint) => {

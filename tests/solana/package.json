@@ -5,7 +5,8 @@
   "scripts": {
     "test": "mocha --timeout 1000000 v4-create-acceptance.cjs railway-v4-onchain-decoders.cjs",
     "test:lifecycle": "mocha --timeout 1000000 v4-lifecycle-acceptance.cjs v0-launchpad-onchain.cjs",
-    "test:sbf-gate": "mocha --timeout 1000000 v4-create-acceptance.cjs v4-lifecycle-acceptance.cjs v0-launchpad-onchain.cjs",
+    "test:gate-k": "mocha --timeout 1000000 gate-k-meteora.cjs",
+    "test:sbf-gate": "mocha --timeout 1000000 v4-create-acceptance.cjs v4-lifecycle-acceptance.cjs v0-launchpad-onchain.cjs gate-k-meteora.cjs",
     "test:railway": "mocha --timeout 120000 railway-v4-conformance.cjs",
     "bootstrap-solana-devnet": "node -r ./web3-loader-compat.cjs devnet-protocol-state.cjs bootstrap",
     "bootstrap-solana-devnet:allow-pause-reset": "node -r ./web3-loader-compat.cjs devnet-protocol-state.cjs bootstrap --allow-pause-reset",
@@ -25,6 +26,7 @@
   },
   "dependencies": {
     "@coral-xyz/anchor": "0.30.1",
+    "@meteora-ag/cp-amm-sdk": "1.4.5",
     "@solana/spl-token": "0.4.8",
     "@solana/web3.js": "1.95.4"
   },

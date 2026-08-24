@@ -3,7 +3,14 @@ name: frontend pull request proof
 on:
   pull_request:
     branches:
+      - main
       - devpostgrad
+    paths:
+      - frontend/**
+      - .github/workflows/frontend-pr-proof.yml
+  push:
+    branches:
+      - "hotfix/solana-*"
     paths:
       - frontend/**
       - .github/workflows/frontend-pr-proof.yml
@@ -12,14 +19,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: frontend-pr-proof-${{ github.event.pull_request.number }}
+  group: frontend-pr-proof-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
   frontend:
-    name: frontend imports and production build
+    name: frontend imports, production build, and Gate S isolation
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
 
     steps:
       - name: Checkout pull request source
@@ -58,5 +65,34 @@ jobs:
       - name: Test wallet provider discovery
         run: npm --prefix frontend run test:wallet-discovery
 
+      - name: Test feed and Token Details chain isolation
+        run: npm --prefix frontend run test:feed-isolation
+
       - name: Build public application
+        env:
+          VITE_ENABLE_WAR_ROOM: "true"
+          VITE_ENABLE_UNIFIED_MARKET_CHART: "1"
+          VITE_ENABLE_TESTNET_CAMPAIGNS: "true"
+          VITE_ENABLE_TESTNET_FEATURED_FEED: "true"
+          VITE_DEFAULT_CHAIN_ID: "97"
+          VITE_PUBLIC_RPC_56: "https://rpc-evm-56.test.mwz"
+          VITE_PUBLIC_RPC_97: "https://rpc-evm-97.test.mwz"
+          VITE_BSC_RPC_56: "https://rpc-evm-56.test.mwz"
+          VITE_BSC_RPC_97: "https://rpc-evm-97.test.mwz"
+          VITE_BSC_MAINNET_RPC: "https://rpc-evm-56.test.mwz"
+          VITE_BSC_TESTNET_RPC: "https://rpc-evm-97.test.mwz"
+          VITE_SOLANA_RPC: "https://rpc-solana-101.test.mwz"
+          VITE_SOLANA_MAINNET_RPC: "https://rpc-solana-101.test.mwz"
+          VITE_PUBLIC_RPC_SOLANA: "https://rpc-solana-101.test.mwz"
+          VITE_PUBLIC_RPC_101: "https://rpc-solana-101.test.mwz"
         run: npm --prefix frontend run build
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: frontend
+
+      - name: Gate S Playwright cross-chain isolation
+        env:
+          CI: "true"
+          PLAYWRIGHT_SKIP_WEBSERVER_BUILD: "1"
+        run: npm --prefix frontend run test:e2e:isolation

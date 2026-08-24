@@ -10,7 +10,7 @@ async function deployToken(name: string, symbol: string, owner: any) {
 }
 
 describe("PermanentLpLocker Topaz fee validation", function () {
-  it("registers only volatile Topaz pools with the required 1% trading fee", async () => {
+  it("registers only volatile Topaz pools with the required 0.30% trading fee", async () => {
     const [owner, creator, feeRecipient, campaign] = await ethers.getSigners();
 
     const Locker = await ethers.getContractFactory("PermanentLpLocker");
@@ -21,7 +21,7 @@ describe("PermanentLpLocker Topaz fee validation", function () {
     const wbnb = await deployToken("Wrapped BNB", "WBNB", owner);
 
     const Factory = await ethers.getContractFactory("MockTopazFeeFactory");
-    const factory = await Factory.deploy(100);
+    const factory = await Factory.deploy(30);
     await factory.waitForDeployment();
 
     const Pool = await ethers.getContractFactory("MockTopazFeePool");
@@ -43,7 +43,7 @@ describe("PermanentLpLocker Topaz fee validation", function () {
     ).to.emit(locker, "GraduationPoolRegistered");
   });
 
-  it("rejects volatile Topaz pools that do not use the required 1% trading fee", async () => {
+  it("rejects volatile Topaz pools that do not use the required 0.30% trading fee", async () => {
     const [owner, creator, feeRecipient, campaign] = await ethers.getSigners();
 
     const Locker = await ethers.getContractFactory("PermanentLpLocker");
@@ -54,7 +54,7 @@ describe("PermanentLpLocker Topaz fee validation", function () {
     const wbnb = await deployToken("Wrapped BNB", "WBNB", owner);
 
     const Factory = await ethers.getContractFactory("MockTopazFeeFactory");
-    const factory = await Factory.deploy(30);
+    const factory = await Factory.deploy(100);
     await factory.waitForDeployment();
 
     const Pool = await ethers.getContractFactory("MockTopazFeePool");

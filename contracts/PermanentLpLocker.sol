@@ -29,7 +29,9 @@ contract PermanentLpLocker is ReentrancyGuard {
 
     uint16 public constant CREATOR_FEE_BPS = 8_000;
     uint16 public constant PROTOCOL_FEE_BPS = 2_000;
-    uint16 public constant REQUIRED_POOL_FEE_BPS = 100;
+    /// @dev Must match the live Topaz volatile v2 factory fee (0.30%). This is a
+    /// pool-fee check, not an extra locker charge. Harvested LP fees still split 80/20.
+    uint16 public constant REQUIRED_POOL_FEE_BPS = 30;
     uint16 internal constant FEE_BPS = 10_000;
 
     struct PoolRegistration {

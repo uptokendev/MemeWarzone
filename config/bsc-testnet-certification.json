@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "chainId": 97,
+  "network": "bscTestnet",
+  "purpose": "Gate D / BSC Testnet certification canary. Resolve the currently accepted dedicated low-threshold test factory from a tracked deployment manifest. Do not paste a factory address in chat, and do not use previous supported-factory fallbacks.",
+  "sourceManifest": "deployments/bscTestnet.clean-slate-factory.json",
+  "topazManifest": "deployments/bscTestnet/minimal-topaz.json",
+  "requireCreationEnabled": true,
+  "requireLive": true,
+  "rejectedFactories": [
+    "0xF7872169265eCE4E4C93ef894F1635E84DC6F681",
+    "0xe0FbBa4533513110Cec7e78aa3e48EC45301B5E6",
+    "0xA2B19f194826b6D930D18F3fBCad662FaDC9459E",
+    "0x8d4937D3BEe8A750411c0a24f888C0088754D3eD"
+  ],
+  "deployIfMissing": "npm run deploy:scheduled-test-factory:bsc-testnet"
+}

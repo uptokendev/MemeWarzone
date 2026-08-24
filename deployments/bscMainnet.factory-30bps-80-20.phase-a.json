@@ -1,0 +1,55 @@
+{
+  "network": "bscMainnet",
+  "chainId": 56,
+  "phase": "A",
+  "deployedAt": "2026-08-22T11:11:10.565Z",
+  "deployer": "0x1A367016f10b230E28Cf1ABda2594C47bf60fe34",
+  "newFactory": "0xc378221E57898106079aE4B818a92978e4cd9559",
+  "newLocker": "0xFcE77642e22ef04B8398fB6dfEE99614CAb32f69",
+  "deployBlock": 117413737,
+  "deployTx": "0x4a554a994a1a9b88a20ea85ac64e7fa423056ae4dec659b6d60024497507a687",
+  "owner": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+  "createPaused": true,
+  "live": false,
+  "securityDefaultsLocked": true,
+  "oldFactory": "0x3068eAE6F8431bFc3c5Faae9c3bBB95F007be59a",
+  "oldLocker": "0x64710A4f87aBa3b5ED5B8B25e8ebA4DaC339C998",
+  "constructor": {
+    "adapter": "0x5c3135Dfaad519A9114DEa2E546f0Cd051d0D35a",
+    "treasury": "0xe157a6FDf19CAB61f2ECa048966f137A3240a921",
+    "implementation": "0xbe3caF640F77e8436BCAF89730251A00fB01608f",
+    "oracle": "0x9D204406d5ECA0f18e48427fDD983A32FdF57C9B"
+  },
+  "safeTxs": [
+    {
+      "to": "0x8194FB3745d027102ce7Da562c7045f28B2f42fD",
+      "data": "0x422b76f5000000000000000000000000c378221e57898106079ae4b818a92978e4cd95590000000000000000000000000000000000000000000000000000000000000001",
+      "description": "CreatorRegistry.setLaunchRecorder(newFactory, true)"
+    },
+    {
+      "to": "0xe157a6FDf19CAB61f2ECa048966f137A3240a921",
+      "data": "0xacb9fef6000000000000000000000000fce77642e22ef04b8398fb6dfee99614cab32f690000000000000000000000000000000000000000000000000000000000000001",
+      "description": "TreasuryRouterV2.setAuthorizedLpLocker(newLocker, true)"
+    },
+    {
+      "to": "0xe157a6FDf19CAB61f2ECa048966f137A3240a921",
+      "data": "0x86afb2f6000000000000000000000000fce77642e22ef04b8398fb6dfee99614cab32f69",
+      "description": "TreasuryRouterV2.setPrimaryLpLocker(newLocker); keep 0x6471 authorized"
+    },
+    {
+      "to": "0xc378221E57898106079aE4B818a92978e4cd9559",
+      "data": "0x7815b4b4",
+      "description": "LaunchFactory.enableLive() — only after verifier PASS with live==false"
+    },
+    {
+      "to": "0xc378221E57898106079aE4B818a92978e4cd9559",
+      "data": "0x83bcec850000000000000000000000000000000000000000000000000000000000000000",
+      "description": "LAST: LaunchFactory.setCreatePaused(false) — only after frontend/API/indexer switch"
+    }
+  ],
+  "notes": [
+    "Phase A only. CREATE remains paused. live remains false.",
+    "Do not update frontend/API/indexer until Safe wiring + enableLive verifier PASS.",
+    "Keep old factory 0x3068 supported."
+  ]
+}

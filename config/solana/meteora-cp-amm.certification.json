@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Gate K — pin the Meteora DAMM v2 CP-AMM binary used in local-validator certification. Never track moving main.",
+  "sdk": {
+    "package": "@meteora-ag/cp-amm-sdk",
+    "version": "1.4.5"
+  },
+  "program": {
+    "id": "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG",
+    "label": "Meteora DAMM v2 CP-AMM"
+  },
+  "source": {
+    "repository": "https://github.com/MeteoraAg/meteora-invent",
+    "commit": "6787734f46c85e9c490d298c9ddfd210e262fe4e",
+    "path": "studio/src/tests/artifacts/cp_amm.so",
+    "accountsPath": "studio/src/tests/artifacts/accounts",
+    "gitBlobSha1": "c42dface0964d1e82e93fbae2cdb35500cc08f5b",
+    "bytes": 1522368
+  },
+  "artifact": {
+    "sha256": "271b1fd4e490ad73fdb4382543ce6f45fb6583fbd523d88a11ce0cce944c160b",
+    "bytes": 1522368,
+    "localPath": "third_party/meteora/cp_amm.so"
+  },
+  "accounts": {
+    "localDir": "third_party/meteora/accounts",
+    "files": [
+      { "name": "2c4cYd4reUYVRAB9kUUkrq55VPyy2FNQ3FDL4o12JXmq.json", "bytes": 735, "gitBlobSha1": "202041eb6ba131952250a949c2272eec2512129a" },
+      { "name": "2nHK1kju6XjphBLbNxpM5XRGFj7p9U8vvNzyZiha1z6k.json", "bytes": 735, "gitBlobSha1": "bf905aceaa0be95e58e9acdc21e33d4f55973f18" },
+      { "name": "3ifhD4Ywaa8aBZAaQSqYgN4Q1kaFArioLU8uumJMaqkE.json", "bytes": 515, "gitBlobSha1": "6c48aab17ba1bea83ac1674dbf174e4184c66d19" },
+      { "name": "7F6dnUcRuyM2TwR8myT1dYypFXpPSxqwKNSFNkxyNESd.json", "bytes": 735, "gitBlobSha1": "1714fdeccab3e4e4df7e3cddebd7787ca9bc6975" },
+      { "name": "7v5vBdUQHTNeqk1HnduiXcgbvCyVEZ612HLmYkQoAkik.json", "bytes": 752, "gitBlobSha1": "2aca3c7563979753805f48a88170e5ca806fd1e3" },
+      { "name": "8cdKo87jZU2R12KY1BUjjRPwyjgdNjLGqSGQyrDshhud.json", "bytes": 752, "gitBlobSha1": "4bf9dc665f9a0a524a139b3094f4f3e4bd944140" },
+      { "name": "8f848CEy8eY6PhJ3VcemtBDzPPSD4Vq7aJczLZ3o8MmX.json", "bytes": 752, "gitBlobSha1": "f1c9a04f871b34126ade624eea4c7a5d30da0a3a" },
+      { "name": "9EZYAJrcqNWNQzP2trzZesP7XKMHA1jEomHzbRsdX8R2.json", "bytes": 752, "gitBlobSha1": "be6d20b380bc69dfc2cb7e2c93b7759d360c13cb" },
+      { "name": "A8gMrEPJkacWkcb3DGwtJwTe16HktSEfvwtuDh2MCtck.json", "bytes": 735, "gitBlobSha1": "d44abde723399bd43fa26610f893e529f7de7949" },
+      { "name": "AkmQWebAwFvWk55wBoCr5D62C6VVDTzi84NJuD9H7cFD.json", "bytes": 735, "gitBlobSha1": "bdac5d21496b1dd747618a97fb456240b3886180" },
+      { "name": "DbCRBj8McvPYHJG1ukj8RE15h2dCNUdTAESG49XpQ44u.json", "bytes": 735, "gitBlobSha1": "dac9a1afa42d1ac9133c70a35b95875fa4dbf247" },
+      { "name": "EkvP7d5yKxovj884d2DwmBQbrHUWRLGK6bympzrkXGja.json", "bytes": 752, "gitBlobSha1": "42b24e3b102b347edb1b9046571719ae9764fd49" },
+      { "name": "HBxB8Lf14Yj8pqeJ8C4qDb5ryHL7xwpuykz31BLNYr7S.json", "bytes": 752, "gitBlobSha1": "93128e3a6fb2cf3b20d0f1bf37ebf6c02f5f103c" },
+      { "name": "Hv8Lmzmnju6m7kcokVKvwqz7QPmdX9XfKjJsXz8RXcjp.json", "bytes": 735, "gitBlobSha1": "0621852bdc208f1d4bffc78b101de84f6003f477" }
+    ]
+  }
+}

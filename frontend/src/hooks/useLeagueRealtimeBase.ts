@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { liveCampaignKey } from "@/lib/liveMarketMerge";
 import { useAblyLeagueChannel } from "./useAblyLeagueChannel";
 
 export type LeaguePatch = {
-  campaignAddress: string; // lowercase
+  campaignAddress: string; // EVM lowercase, Solana preserved
   lastPriceBnb?: string | null;
   marketcapBnb?: string | null;
   vol24hBnb?: string | null;
@@ -12,10 +13,14 @@ export type LeaguePatch = {
   raisedTotalBnb?: string | null;
   lastActivityAt?: number;
   ts?: number;
+  isDexTrading?: boolean;
+  graduatedAt?: string | null;
+  progressPct?: number;
+  holderCount?: number;
 };
 
 export type LeagueCampaignCreated = {
-  campaignAddress: string; // lowercase
+  campaignAddress: string; // EVM lowercase, Solana preserved
   tokenAddress?: string | null;
   creatorAddress?: string | null;
   name?: string | null;
@@ -82,8 +87,9 @@ export function useLeagueRealtime(opts: Opts) {
       if (!data || data.type !== "campaign_patch" || !Array.isArray(data.items)) return;
 
       const buf = pendingPatchRef.current;
+      const cid = Number(data.chainId ?? chainId);
       for (const it of data.items) {
-        const addr = String(it?.campaignAddress ?? "").toLowerCase();
+        const addr = liveCampaignKey(cid, String(it?.campaignAddress ?? ""));
         if (!addr) continue;
         const prev = buf[addr] ?? { campaignAddress: addr };
         buf[addr] = { ...prev, ...it, campaignAddress: addr, ts: data.ts };
@@ -93,7 +99,8 @@ export function useLeagueRealtime(opts: Opts) {
     const onCreated = (msg: any) => {
       const data = (msg?.data ?? null) as CampaignCreatedMsg | null;
       if (!data || data.type !== "campaign_created" || !data.item) return;
-      const addr = String((data.item as any).campaignAddress ?? "").toLowerCase();
+      const cid = Number(data.chainId ?? chainId);
+      const addr = liveCampaignKey(cid, String((data.item as any).campaignAddress ?? ""));
       if (!addr) return;
       pendingCreatedRef.current.push({ ...data.item, campaignAddress: addr });
     };
@@ -110,7 +117,21 @@ export function useLeagueRealtime(opts: Opts) {
           const next = { ...prev };
           for (const k of keys) {
             const it = buf[k];
-            next[k] = { ...(next[k] ?? { campaignAddress: k }), ...it, campaignAddress: k };
+            const cur = next[k] ?? { campaignAddress: k };
+            const votes24h = Math.max(Number(cur.votes24h ?? 0), Number(it.votes24h ?? 0));
+            const votesAllTime = Math.max(Number(cur.votesAllTime ?? 0), Number(it.votesAllTime ?? 0));
+            next[k] = {
+              ...cur,
+              ...it,
+              campaignAddress: k,
+              votes24h: Number.isFinite(votes24h) ? votes24h : cur.votes24h,
+              votesAllTime: Number.isFinite(votesAllTime) ? votesAllTime : cur.votesAllTime,
+              isDexTrading: Boolean(cur.isDexTrading || it.isDexTrading),
+              marketcapBnb: it.marketcapBnb != null && it.marketcapBnb !== "" ? it.marketcapBnb : cur.marketcapBnb,
+              vol24hBnb: it.vol24hBnb != null && it.vol24hBnb !== "" ? it.vol24hBnb : cur.vol24hBnb,
+              raisedTotalBnb: it.raisedTotalBnb != null && it.raisedTotalBnb !== "" ? it.raisedTotalBnb : cur.raisedTotalBnb,
+              lastPriceBnb: it.lastPriceBnb != null && it.lastPriceBnb !== "" ? it.lastPriceBnb : cur.lastPriceBnb,
+            };
           }
           return next;
         });
@@ -138,7 +159,7 @@ export function useLeagueRealtime(opts: Opts) {
         channel.unsubscribe("campaign_created", onCreated);
       } catch {}
     };
-  }, [ready, channel]);
+  }, [ready, channel, chainId]);
 
   // --- list re-rank: soft poll while connected + faster self-heal when disconnected ---
   const timerRef = useRef<any>(null);
@@ -204,12 +225,13 @@ export function useLeagueRealtime(opts: Opts) {
       const d = e?.detail ?? {};
       const cid = Number(d.chainId ?? NaN);
       if (Number.isFinite(cid) && cid !== chainId) return;
-      const addr = String(d.campaignAddress ?? '').toLowerCase();
+      const addr = liveCampaignKey(chainId, String(d.campaignAddress ?? ""));
       if (!addr) return;
       const nowSec = Math.floor(Date.now() / 1000);
 
       setPatchByCampaign((prev) => {
-        const cur = prev[addr] ?? ({ campaignAddress: addr } as LeaguePatch);
+        const alt = String(d.campaignAddress ?? "").trim().toLowerCase();
+        const cur = prev[addr] ?? prev[alt] ?? ({ campaignAddress: addr } as LeaguePatch);
         const v24 = Number(cur.votes24h ?? 0) + 1;
         const vall = Number(cur.votesAllTime ?? 0) + 1;
         return {
@@ -223,11 +245,12 @@ export function useLeagueRealtime(opts: Opts) {
       const d = e?.detail ?? {};
       const cid = Number(d.chainId ?? NaN);
       if (Number.isFinite(cid) && cid !== chainId) return;
-      const addr = String(d.campaignAddress ?? '').toLowerCase();
+      const addr = liveCampaignKey(chainId, String(d.campaignAddress ?? ""));
       if (!addr) return;
       const nowSec = Math.floor(Date.now() / 1000);
       setPatchByCampaign((prev) => {
-        const cur = prev[addr] ?? ({ campaignAddress: addr } as LeaguePatch);
+        const alt = String(d.campaignAddress ?? "").trim().toLowerCase();
+        const cur = prev[addr] ?? prev[alt] ?? ({ campaignAddress: addr } as LeaguePatch);
         return { ...prev, [addr]: { ...cur, campaignAddress: addr, lastActivityAt: nowSec } };
       });
     };

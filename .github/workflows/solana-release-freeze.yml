@@ -1,0 +1,239 @@
+name: Solana release-freeze dual clean-room SBF
+
+# Two independent runners, no cargo cache. Same SHA256 or the freeze fails.
+# This is the Sunday freeze from finalpush.md. It does not replace Gate K/S/O.
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "hotfix/solana-*"
+    paths:
+      - programs/memewarzone_solana/**
+      - Anchor.toml
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/solana-release-freeze.yml
+  pull_request:
+    branches:
+      - main
+    paths:
+      - programs/memewarzone_solana/**
+      - Anchor.toml
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/solana-release-freeze.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: solana-release-freeze-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  ANCHOR_VERSION: 0.30.1
+  SOLANA_VERSION: 1.18.26
+  RUST_TOOLCHAIN: 1.79.0
+  IDL_RUST_TOOLCHAIN: nightly-2024-05-09
+  CARGO_NET_RETRY: 10
+  PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+  CARGO_INCREMENTAL: "0"
+  # Certified SBF from Solana Final Launch Blocker on a41c0342.
+  CERTIFIED_SBF_SHA256: 123469c581ddbd3a616518d7f47dc1248294e8548d239ea948b5699921cd97e8
+  CERTIFIED_SBF_BYTES: "1073272"
+
+jobs:
+  clean-room:
+    name: Freeze room ${{ matrix.room }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        room: [A, B]
+    steps:
+      - name: Checkout exact candidate SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup toolchain install "$IDL_RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+
+      - name: Install frozen Solana build CLI
+        run: |
+          set -euo pipefail
+          release_dir="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
+          mkdir -p "$release_dir"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error \
+            --output /tmp/solana-release.tar.bz2 \
+            "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"
+          ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Install Anchor CLI
+        run: npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+
+      - name: Clean-room SBF + IDL
+        id: hash
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -d target
+          rm -rf "$HOME/.cargo/registry/src" || true
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/mwz-freeze-${{ matrix.room }}"
+          mkdir -p "$CARGO_TARGET_DIR"
+          anchor build --program-name memewarzone_solana --no-idl
+          isolated_so="$CARGO_TARGET_DIR/deploy/memewarzone_solana.so"
+          if [ ! -s "$isolated_so" ]; then
+            echo "FATAL: missing exact deploy artifact $isolated_so" >&2
+            find "$CARGO_TARGET_DIR" -name '*.so' -type f -printf '%p %s\n' >&2 || true
+            exit 1
+          fi
+          echo "SBF_SOURCE=$isolated_so"
+          file "$isolated_so"
+          sha256sum "$isolated_so"
+          wc -c "$isolated_so"
+          so_sha="$(sha256sum "$isolated_so" | awk '{print $1}')"
+          so_bytes="$(wc -c < "$isolated_so" | tr -d ' ')"
+          if [ "$so_sha" != "$CERTIFIED_SBF_SHA256" ] || [ "$so_bytes" != "$CERTIFIED_SBF_BYTES" ]; then
+            echo "FATAL: freeze room ${{ matrix.room }} produced $so_sha / $so_bytes bytes; certified candidate is $CERTIFIED_SBF_SHA256 / $CERTIFIED_SBF_BYTES" >&2
+            exit 1
+          fi
+          mkdir -p target/idl target/deploy
+          cp "$isolated_so" target/deploy/memewarzone_solana.so
+          export SBF_SOURCE="$isolated_so"
+          (
+            cd programs/memewarzone_solana
+            RUSTUP_TOOLCHAIN="$IDL_RUST_TOOLCHAIN" anchor idl build \
+              --out ../../target/idl/memewarzone_solana.json
+          )
+          test -s target/idl/memewarzone_solana.json
+          idl_sha="$(sha256sum target/idl/memewarzone_solana.json | awk '{print $1}')"
+          meteora_sha="$(python -c 'import json; print(json.load(open("config/solana/meteora-cp-amm.certification.json"))["artifact"]["sha256"])')"
+          migrations_sha="$(find db/migrations -type f -name '*.sql' | sort | xargs sha256sum | sha256sum | awk '{print $1}')"
+          python - <<PY
+          import json, os, subprocess
+          from pathlib import Path
+
+          def ver(cmd):
+              return subprocess.check_output(cmd, text=True).strip().splitlines()[0]
+
+          record = {
+              "room": "${{ matrix.room }}",
+              "gitSha": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+              "programId": os.environ["PROGRAM_ID"],
+              "sbfSource": os.environ.get("SBF_SOURCE", ""),
+              "sbfSha256": "$so_sha",
+              "sbfBytes": int("$so_bytes"),
+              "idlSha256": "$idl_sha",
+              "meteoraCpAmmSha256": "$meteora_sha",
+              "migrationsSha256": "$migrations_sha",
+              "rustc": ver(["rustc", "--version"]),
+              "cargo": ver(["cargo", "--version"]),
+              "solana": ver(["solana", "--version"]),
+              "anchor": ver(["anchor", "--version"]),
+              "node": ver(["node", "--version"]),
+              "rustToolchain": os.environ["RUST_TOOLCHAIN"],
+              "idlRustToolchain": os.environ["IDL_RUST_TOOLCHAIN"],
+              "solanaVersion": os.environ["SOLANA_VERSION"],
+              "anchorVersion": os.environ["ANCHOR_VERSION"],
+          }
+          Path("freeze-record.json").write_text(json.dumps(record, indent=2) + "\n")
+          print(json.dumps(record, indent=2))
+          PY
+          echo "SBF_SOURCE=$isolated_so" >> "$GITHUB_ENV"
+          echo "sha256=$so_sha" >> "$GITHUB_OUTPUT"
+          echo "idl=$idl_sha" >> "$GITHUB_OUTPUT"
+          mkdir -p freeze-upload
+          cp freeze-record.json freeze-upload/freeze-record.json
+          cp target/deploy/memewarzone_solana.so freeze-upload/memewarzone_solana.so
+          cp target/idl/memewarzone_solana.json freeze-upload/memewarzone_solana.json
+
+      - name: Upload freeze room ${{ matrix.room }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: freeze-room-${{ matrix.room }}
+          if-no-files-found: error
+          path: freeze-upload/
+
+  compare:
+    name: Identical SHA256 across freeze rooms
+    runs-on: ubuntu-latest
+    needs: [clean-room]
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: freeze-room-A
+          path: room-A
+      - uses: actions/download-artifact@v4
+        with:
+          name: freeze-room-B
+          path: room-B
+      - name: Compare SBF, IDL, and recorded toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '--- freeze room A ---'
+          cat room-A/freeze-record.json
+          echo '--- freeze room B ---'
+          cat room-B/freeze-record.json
+          sha256sum room-A/memewarzone_solana.so room-B/memewarzone_solana.so
+          cmp -s room-A/memewarzone_solana.so room-B/memewarzone_solana.so
+          cmp -s room-A/memewarzone_solana.json room-B/memewarzone_solana.json
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          expected_sha = os.environ["CERTIFIED_SBF_SHA256"]
+          expected_bytes = int(os.environ["CERTIFIED_SBF_BYTES"])
+
+          def file_sha(path):
+              h = hashlib.sha256()
+              data = Path(path).read_bytes()
+              h.update(data)
+              return h.hexdigest(), len(data)
+
+          a_sha, a_bytes = file_sha("room-A/memewarzone_solana.so")
+          b_sha, b_bytes = file_sha("room-B/memewarzone_solana.so")
+          if not (expected_sha == a_sha == b_sha):
+              raise SystemExit(f"three-way SBF SHA mismatch certified={expected_sha} A={a_sha} B={b_sha}")
+          if not (expected_bytes == a_bytes == b_bytes):
+              raise SystemExit(f"three-way SBF size mismatch certified={expected_bytes} A={a_bytes} B={b_bytes}")
+
+          a = json.loads(Path("room-A/freeze-record.json").read_text())
+          b = json.loads(Path("room-B/freeze-record.json").read_text())
+          keys = [
+              "gitSha",
+              "sbfSha256",
+              "sbfBytes",
+              "idlSha256",
+              "meteoraCpAmmSha256",
+              "migrationsSha256",
+              "rustToolchain",
+              "idlRustToolchain",
+              "solanaVersion",
+              "anchorVersion",
+          ]
+          mismatches = [k for k in keys if a.get(k) != b.get(k)]
+          if mismatches:
+              raise SystemExit("freeze mismatch: " + ", ".join(mismatches))
+          if a["sbfSha256"] != expected_sha or a["sbfBytes"] != expected_bytes:
+              raise SystemExit("freeze record does not match certified SBF")
+          print("THREE_WAY_SBF_IDENTITY=true")
+          print("CLEAN_ROOM_SBF_SHA256_MATCH=true")
+          print("gitSha", a["gitSha"])
+          print("sbfSha256", a["sbfSha256"])
+          print("sbfBytes", a["sbfBytes"])
+          print("idlSha256", a["idlSha256"])
+          print("sbfSourceA", a.get("sbfSource"))
+          print("sbfSourceB", b.get("sbfSource"))
+          PY

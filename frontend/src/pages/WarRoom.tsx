@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Search } from "lucide-react";
 import { ChainFeedSwitch, useSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
 import { WarRoomCampaignRow } from "@/components/postgrad/WarRoomCampaignRow";
@@ -14,6 +14,9 @@ import {
 } from "@/hooks/useWarRoomCampaignFeed";
 import { useLaunchpad } from "@/lib/launchpadClient";
 import { resolveImageUri } from "@/lib/media";
+import { compareLiveCampaigns, rankIdentity, type LiveRankRow } from "@/lib/liveCampaignRank";
+import { useLiveListMotion } from "@/hooks/useLiveListMotion";
+import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 
 type SortKey = "marketCap" | "liquidity" | "volume" | "holders" | "ath" | "follows" | "optIns" | "comments";
 type SortDirection = "desc" | "asc";
@@ -51,6 +54,30 @@ function draftMetricValue(campaign: WarRoomCampaign, key: "follows" | "optIns" |
   return Number.isFinite(n) ? n : 0;
 }
 
+function toRankRow(campaign: WarRoomCampaign, chainId: number): LiveRankRow {
+  const rich = campaign as any;
+  const graduatedAtRaw = rich.graduatedAtChain ?? rich.graduatedAt ?? 0;
+  const graduatedAt =
+    typeof graduatedAtRaw === "number"
+      ? graduatedAtRaw
+      : Math.floor(Date.parse(String(graduatedAtRaw || "")) / 1000) || 0;
+  return {
+    chainId: Number(campaign.chainId || chainId),
+    campaignAddress: String(campaign.campaign || ""),
+    createdAt: Number(campaign.createdAt || 0),
+    lastActivityAt: Number(rich.lastActivityAt || 0),
+    vol24hBnb: Number(rich.rtVol24hBnb ?? rich.vol24hBnb ?? rich.volumeBnb ?? 0) || 0,
+    votes24h: Number(rich.votes24h ?? 0) || 0,
+    holderCount: Number(rich.holdersCount ?? rich.holderCount ?? 0) || 0,
+    marketcapBnb: Number(rich.rtMarketcapBnb ?? rich.marketcapBnb ?? rich.marketCapBnb ?? 0) || 0,
+    progressPct: Number(rich.progressPct ?? 0) || 0,
+    etaSec: rich.etaSec == null ? null : Number(rich.etaSec),
+    isDexTrading: Boolean(rich.isDexTrading || rich.status === "graduated"),
+    voteTrendingScore: Number(rich.voteTrendingScore ?? 0) || 0,
+    graduatedAt,
+  };
+}
+
 function getSortValue(campaign: WarRoomCampaign, nativeUsd: number, sortKey: SortKey) {
   const metrics = getWarRoomCampaignMetrics(campaign, nativeUsd);
   switch (sortKey) {
@@ -82,6 +109,10 @@ const WarRoom = () => {
   const [activeMode, setActiveMode] = useState<WarRoomMode>("trending");
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
+  const [expandedCampaign, setExpandedCampaign] = useState<string | null>(null);
+  const [listFrozen, setListFrozen] = useState(false);
+  const collapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reducedMotion = usePrefersReducedMotion();
 
   const { campaigns: rawCampaigns, loading, error, source } = useWarRoomCampaignFeed({
     activeMode,
@@ -141,7 +172,7 @@ const WarRoom = () => {
     });
   }, [rawCampaigns, logoCache, selectedChainId]);
 
-  const filteredCampaigns = useMemo(() => {
+  const liveOrder = useMemo(() => {
     const filtered = campaigns.filter((campaign) => warRoomCampaignMatchesSearch(campaign, search));
 
     return filtered.slice().sort((left, right) => {
@@ -150,28 +181,42 @@ const WarRoom = () => {
         const rightValue = getSortValue(right, nativeUsd ?? 0, sortKey);
         const delta = rightValue - leftValue;
         if (delta !== 0) return sortDirection === "desc" ? delta : -delta;
-      }
-
-      if (activeMode === "new") {
-        return Number(right.createdAt ?? 0) - Number(left.createdAt ?? 0);
+        return compareLiveCampaigns(
+          toRankRow(left, selectedChainId),
+          toRankRow(right, selectedChainId),
+          { tab: activeMode, sort: "created_desc", context: "wtr" },
+        );
       }
 
       if (activeMode === "draft") {
-        return draftMetricValue(right, "follows") - draftMetricValue(left, "follows");
+        const followsDelta = draftMetricValue(right, "follows") - draftMetricValue(left, "follows");
+        if (followsDelta !== 0) return followsDelta;
+        return compareLiveCampaigns(
+          toRankRow(left, selectedChainId),
+          toRankRow(right, selectedChainId),
+          { tab: "new", sort: "created_desc", context: "wtr" },
+        );
       }
 
-      const leftMetrics = getWarRoomCampaignMetrics(left, nativeUsd ?? 0);
-      const rightMetrics = getWarRoomCampaignMetrics(right, nativeUsd ?? 0);
-      if (rightMetrics.trendScore !== leftMetrics.trendScore) {
-        return rightMetrics.trendScore - leftMetrics.trendScore;
-      }
-      if (rightMetrics.volumeUsd !== leftMetrics.volumeUsd) return rightMetrics.volumeUsd - leftMetrics.volumeUsd;
-      if (rightMetrics.marketCapUsd !== leftMetrics.marketCapUsd) return rightMetrics.marketCapUsd - leftMetrics.marketCapUsd;
-      return Number(right.createdAt ?? 0) - Number(left.createdAt ?? 0);
+      return compareLiveCampaigns(
+        toRankRow(left, selectedChainId),
+        toRankRow(right, selectedChainId),
+        { tab: activeMode, sort: "default", context: "wtr" },
+      );
     });
-  }, [activeMode, nativeUsd, campaigns, search, sortDirection, sortKey]);
+  }, [activeMode, nativeUsd, campaigns, search, selectedChainId, sortDirection, sortKey]);
+
+  const { items: filteredCampaigns, containerRef: listRef } = useLiveListMotion({
+    items: liveOrder,
+    identity: (campaign) =>
+      rankIdentity(Number(campaign.chainId || selectedChainId), String(campaign.campaign || "")),
+    frozen: listFrozen,
+    reducedMotion,
+    snapToken: `${selectedChainId}|${activeMode}|${search}|${sortKey || ""}|${sortDirection}`,
+  });
 
   const handleSortClick = (nextKey: SortKey) => {
+    setListFrozen(false);
     if (sortKey === nextKey) {
       setSortDirection((current) => (current === "desc" ? "asc" : "desc"));
       return;
@@ -184,7 +229,33 @@ const WarRoom = () => {
     setActiveMode(nextMode);
     setSortKey(null);
     setSortDirection("desc");
+    setListFrozen(false);
+    setExpandedCampaign(null);
   };
+
+  const handleToggleExpand = (campaignKey: string) => {
+    setExpandedCampaign((current) => {
+      if (current === campaignKey) {
+        if (collapseTimerRef.current) clearTimeout(collapseTimerRef.current);
+        collapseTimerRef.current = setTimeout(() => {
+          setListFrozen(false);
+          collapseTimerRef.current = null;
+        }, reducedMotion ? 0 : 220);
+        return null;
+      }
+      if (collapseTimerRef.current) {
+        clearTimeout(collapseTimerRef.current);
+        collapseTimerRef.current = null;
+      }
+      setListFrozen(true);
+      return campaignKey;
+    });
+  };
+
+  useEffect(() => {
+    setListFrozen(false);
+    setExpandedCampaign(null);
+  }, [selectedChainId]);
 
   return (
     <ContentContainer className="space-y-4 px-3 pb-10 pt-20 md:px-5 md:pt-24 lg:pt-24">
@@ -276,13 +347,28 @@ const WarRoom = () => {
           })}
           {activeMode !== "draft" ? <div /> : null}
         </div>
-        <div>
+        <div ref={listRef}>
           {loading ? (
             <div className="flex min-h-[320px] items-center justify-center bg-black py-14">
               <RadarLoader label="Scanning trade radar…" size="md" />
             </div>
           ) : filteredCampaigns.length ? (
-            filteredCampaigns.map((campaign) => <WarRoomCampaignRow key={campaign.campaign} campaign={campaign} bnbUsd={nativeUsd ?? 0} />)
+            filteredCampaigns.map((campaign) => {
+              const campaignKey = String(campaign.campaign || "");
+              return (
+                <div
+                  key={campaignKey}
+                  data-live-id={rankIdentity(Number(campaign.chainId || selectedChainId), campaignKey)}
+                >
+                <WarRoomCampaignRow
+                  campaign={campaign}
+                  bnbUsd={nativeUsd ?? 0}
+                  expanded={expandedCampaign === campaignKey}
+                  onToggleExpand={() => handleToggleExpand(campaignKey)}
+                />
+                </div>
+              );
+            })
           ) : (
             <div className="py-10 text-center text-sm text-white/55">
               {source === "empty"

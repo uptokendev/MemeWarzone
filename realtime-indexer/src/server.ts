@@ -4,7 +4,7 @@ import { ENV } from "./env.js";
 import "dotenv/config";
 import { pool } from "./db.js";
 import { ablyRest, tokenChannel, leagueChannel, publishUserRankUpdated } from "./ably.js";
-import { ingestCampaignTransaction, runDiscoveryOnce, runIndexerOnce, runRepairOnce, runTipScanOnce, runTradeRepairOnce } from "./indexer.js";
+import { ingestCampaignTransaction, refreshBnbCanonicalMarketcaps, runDiscoveryOnce, runIndexerOnce, runRepairOnce, runTipScanOnce, runTradeRepairOnce } from "./indexer.js";
 import { startTelemetryReporter, type TelemetrySnapshot } from "./telemetry.js";
 import { applyRecruiterDisputeOverride, captureReferralWindow, createOrUpdateRecruiter, getWalletAttributionState, linkWalletOnConnect, linkWalletToRecruiter, resolveRecruiterByCode, setRecruiterOgStatus, setRecruiterStatus } from "./rewards/attribution.js";
 import { getCurrentWeeklyRewardEpoch, listRewardEpochs, listRewardEvents } from "./rewards/ingest.js";
@@ -75,6 +75,20 @@ app.use((req, res, next) => {
   res.on("finish", () => {
     if (res.statusCode >= 500) errCount1m++;
   });
+  next();
+});
+
+app.use((req, res, next) => {
+  const path = String(req.path || "");
+  if (
+    path.startsWith("/api/token/") ||
+    path.startsWith("/api/campaigns") ||
+    path.startsWith("/api/featured") ||
+    path.startsWith("/api/war-room") ||
+    path.startsWith("/api/market/")
+  ) {
+    res.setHeader("Cache-Control", "no-store");
+  }
   next();
 });
 
@@ -361,12 +375,14 @@ app.get("/healthz", (_req, res) => {
 app.get("/health", async (_req, res) => {
   try {
     const r = await pool.query("select 1 as ok");
+    const { solanaIndexerPublicHealth } = await import("./solanaIndexer.js");
     res.json({
       ok: true,
       db: r.rows[0].ok,
       // Bump when shipping indexer loop fixes so deploy can be confirmed from /health.
-      indexerBuild: "solana-league-airdrop-2026-08-15",
+      indexerBuild: "live-c4-almost-retry-trades-2026-08-24",
       normalScope: ENV.INDEXER_NORMAL_SCOPE,
+      solana: solanaIndexerPublicHealth(),
     });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e?.message || String(e) });
@@ -548,6 +564,41 @@ app.post("/internal/indexer/run", wrap(async (req, res) => {
   res.status(status).json(result);
 }));
 
+app.post("/api/token/:campaign/ingest-tx", wrap(async (req, res) => {
+  const chainId = Number(req.query.chainId || req.body?.chainId || ENV.DEFAULT_EVM_CHAIN_ID);
+  const identity = await resolveMarketIdentityOrPassthrough(chainId, String(req.params.campaign || ""));
+  const campaign = identity.campaignAddress;
+  const bodySigs = Array.isArray(req.body?.signatures) ? req.body.signatures : [];
+  const txHash = String(req.query.txHash || req.query.tx || req.body?.txHash || req.body?.tx || "").trim();
+  if (chainId === 101) {
+    if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(campaign)) {
+      return res.status(400).json({ ok: false, error: "Invalid campaign address" });
+    }
+    const signatures = [
+      ...bodySigs.map((value: unknown) => String(value || "").trim()),
+      txHash,
+    ].filter((value) => /^[1-9A-HJ-NP-Za-km-z]{64,96}$/.test(value));
+    if (!signatures.length) {
+      return res.status(400).json({ ok: false, error: "Invalid tx hash" });
+    }
+    const { ingestSolanaSignatures } = await import("./solanaIndexer.js");
+    const result = await ingestSolanaSignatures(campaign, signatures);
+    return res.json(result);
+  }
+  const evmHash = txHash.toLowerCase();
+  if (!Number.isFinite(chainId) || (chainId !== 56 && chainId !== 97)) {
+    return res.status(400).json({ ok: false, error: "Invalid chainId" });
+  }
+  if (!/^0x[a-f0-9]{40}$/.test(campaign)) {
+    return res.status(400).json({ ok: false, error: "Invalid campaign address" });
+  }
+  if (!/^0x[a-f0-9]{64}$/.test(evmHash)) {
+    return res.status(400).json({ ok: false, error: "Invalid tx hash" });
+  }
+  const result = await ingestCampaignTransaction({ chainId, campaignAddress: campaign, txHash: evmHash });
+  res.json(result);
+}));
+
 app.post("/internal/indexer/ingest-tx", wrap(async (req, res) => {
   if (!requireInternalAuth(req, res)) return;
 
@@ -567,6 +618,19 @@ app.post("/internal/indexer/ingest-tx", wrap(async (req, res) => {
 
   const result = await ingestCampaignTransaction({ chainId, campaignAddress: campaign, txHash });
   res.json(result);
+}));
+
+app.post("/internal/indexer/solana-backfill-campaign", wrap(async (req, res) => {
+  if (!requireInternalAuth(req, res)) return;
+  const campaign = String(
+    req.query.campaign || req.query.campaignAddress || req.body?.campaign || req.body?.campaignAddress || "",
+  ).trim();
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(campaign)) {
+    return res.status(400).json({ ok: false, error: "solana campaign PDA required" });
+  }
+  const { backfillSolanaCampaign } = await import("./solanaIndexer.js");
+  const result = await backfillSolanaCampaign(campaign);
+  res.json({ ok: true, ...result });
 }));
 
 /**
@@ -2133,6 +2197,10 @@ app.get("/api/token/:campaign/summary", wrap(async (req, res) => {
   const identity = await resolveMarketIdentityOrPassthrough(chainId, String(req.params.campaign || ""));
   const campaign = identity.campaignAddress;
 
+  await pool.query(
+    `alter table public.token_stats add column if not exists ath_marketcap_bnb double precision`,
+  );
+
   const r = await pool.query(
     `with stored as (
        select *
@@ -2159,13 +2227,11 @@ app.get("/api/token/:campaign/summary", wrap(async (req, res) => {
      select
        $1::int as chain_id,
        $2::text as campaign_address,
-       case when coalesce(agg.trade_count,0) > 0 then latest.price_bnb else stored.last_price_bnb end as last_price_bnb,
-       case when coalesce(agg.trade_count,0) > 0 then agg.sold_tokens else stored.sold_tokens end as sold_tokens,
+       coalesce(stored.last_price_bnb, latest.price_bnb) as last_price_bnb,
+       coalesce(stored.sold_tokens, agg.sold_tokens) as sold_tokens,
        stored.reserve_bnb,
-       case
-         when coalesce(agg.trade_count,0) > 0 and latest.price_bnb is not null then latest.price_bnb * agg.sold_tokens
-         else stored.marketcap_bnb
-       end as marketcap_bnb,
+       stored.marketcap_bnb,
+       stored.ath_marketcap_bnb,
        case when coalesce(agg.trade_count,0) > 0 then agg.vol_24h_bnb else stored.vol_24h_bnb end as vol_24h_bnb,
        stored.change_5m,
        stored.change_1h,
@@ -2199,6 +2265,47 @@ function serializeCurveTradeRow(row: Record<string, unknown>) {
   };
 }
 
+async function solanaHistoryEnvelope(campaign: string, items: unknown[], extra: Record<string, unknown> = {}) {
+  const [stats, campaignRow] = await Promise.all([
+    pool.query(
+      `select coalesce(max(block_number),0)::bigint as last_indexed_slot, count(*)::int as trade_count
+         from public.curve_trades
+        where chain_id=101 and campaign_address=$1`,
+      [campaign],
+    ),
+    pool.query(
+      `select created_block, meta
+         from public.campaigns
+        where chain_id=101 and campaign_address=$1
+        limit 1`,
+      [campaign],
+    ),
+  ]);
+  const stored = (campaignRow.rows[0]?.meta as any)?.solanaHistory || {};
+  let leaseRunning = false;
+  try {
+    const { isSolanaCampaignRepairRunning } = await import("./solanaIndexer.js");
+    leaseRunning = isSolanaCampaignRepairRunning(campaign);
+  } catch {
+    leaseRunning = false;
+  }
+  const { deriveSolanaHistoryComplete } = await import("./solanaHistoryStatus.js");
+  const derived = deriveSolanaHistoryComplete({
+    leaseRunning,
+    storedHistoryComplete: stored.historyComplete === true,
+    storedRepairState: stored.repairState || null,
+  });
+  return {
+    items,
+    historyComplete: derived.historyComplete,
+    lastIndexedSlot: Number(stats.rows[0]?.last_indexed_slot || 0) || null,
+    creationSlot: Number(campaignRow.rows[0]?.created_block || stored.creationSlot || 0) || null,
+    repairState: derived.repairState,
+    campaignAddress: campaign,
+    ...extra,
+  };
+}
+
 async function handleTokenTrades(req: any, res: any) {
   const chainId = Number(req.query.chainId || ENV.DEFAULT_EVM_CHAIN_ID);
   let identity = await resolveMarketIdentityOrPassthrough(chainId, String(req.params.campaign || ""));
@@ -2222,10 +2329,19 @@ async function handleTokenTrades(req: any, res: any) {
   );
 
   if ((r.rowCount ?? 0) > 0) {
-    res.json(r.rows.map((row: Record<string, unknown>) => serializeCurveTradeRow(row)));
-    // EVM history can still repair its cursor in the background. Solana uses the
-    // dedicated program-signature indexer and must never enter eth_getLogs recovery.
-    if (chainId !== 101) {
+    const items = r.rows.map((row: Record<string, unknown>) => serializeCurveTradeRow(row));
+    if (chainId === 101) {
+      res.json(await solanaHistoryEnvelope(campaign, items));
+      void import("./solanaIndexer.js")
+        .then(({ kickSolanaCampaignTipIngest, kickSolanaCampaignHistoryBackfill }) => {
+          kickSolanaCampaignTipIngest(campaign);
+          kickSolanaCampaignHistoryBackfill(campaign);
+        })
+        .catch((error) => {
+          console.warn("[api] solana campaign tip/backfill kick failed", error instanceof Error ? error.message : String(error));
+        });
+    } else {
+      res.json(items);
       void import("./emptyTradeCursorRewind.js")
         .then(({ rewindEmptyCampaignTradeCursor }) => rewindEmptyCampaignTradeCursor(chainId, campaign))
         .catch(() => undefined);
@@ -2234,9 +2350,15 @@ async function handleTokenTrades(req: any, res: any) {
   }
 
   if (chainId === 101) {
-    // Fast empty response while the Solana V4 indexer catches up. The frontend
-    // polls and subscribes to Ably, so this converges without blocking the page.
-    return res.json([]);
+    void import("./solanaIndexer.js")
+      .then(({ kickSolanaCampaignTipIngest, kickSolanaCampaignHistoryBackfill }) => {
+        kickSolanaCampaignTipIngest(campaign);
+        kickSolanaCampaignHistoryBackfill(campaign);
+      })
+      .catch((error) => {
+        console.warn("[api] solana campaign tip/backfill kick failed", error instanceof Error ? error.message : String(error));
+      });
+    return res.json(await solanaHistoryEnvelope(campaign, []));
   }
 
   // Empty history: bounded ensure+backfill (paid RPC). Graduated tokens often need
@@ -2494,11 +2616,13 @@ app.get("/api/token/:campaign/candles", wrap(async (req, res) => {
   const chainId = Number(req.query.chainId || ENV.DEFAULT_EVM_CHAIN_ID);
   const identity = await resolveMarketIdentityOrPassthrough(chainId, String(req.params.campaign || ""));
   const campaign = identity.campaignAddress;
-  const tf = String(req.query.tf || "5s");
+  const tf = String(req.query.tf || req.query.resolution || "5s");
   const limit = Math.min(Number(req.query.limit || 200), 2000);
 
   const r = await pool.query(
-    `select bucket_start, o,h,l,c,volume_bnb,trades_count
+    `select bucket_start, o,h,l,c,volume_bnb,trades_count,
+            price_o,price_h,price_l,price_c,
+            mcap_o,mcap_h,mcap_l,mcap_c
      from public.token_candles
      where chain_id=$1 and campaign_address=$2 and timeframe=$3
      order by bucket_start desc
@@ -2506,7 +2630,16 @@ app.get("/api/token/:campaign/candles", wrap(async (req, res) => {
     [chainId, campaign, tf, limit]
   );
 
-  res.json(r.rows.reverse());
+  const items = r.rows.reverse();
+  if (chainId === 101) {
+    const envelope = await solanaHistoryEnvelope(campaign, items, { timeframe: tf, candleCount: items.length });
+    envelope.historyComplete = envelope.historyComplete && items.length > 0;
+    if (envelope.historyComplete === false && envelope.repairState === "complete" && items.length === 0) {
+      envelope.repairState = "incomplete";
+    }
+    return res.json(envelope);
+  }
+  res.json(items);
 }));
 
 // ---------------------------------------------
@@ -2813,3 +2946,11 @@ setTimeout(() => {
       tipRunning = false;
     });
 }, 3_000);
+setTimeout(() => {
+  void refreshBnbCanonicalMarketcaps().catch((error) => {
+    console.warn(
+      "[indexer] BNB canonical mcap boot refresh failed",
+      error instanceof Error ? error.message : String(error),
+    );
+  });
+}, 4_000);

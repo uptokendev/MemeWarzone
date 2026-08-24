@@ -245,6 +245,21 @@ async function ingestTx({ chainId, txHash }) {
     throw err;
   }
 
+  try {
+    const { publishLeagueCampaignPatch } = await import("./lib/leagueAblyPublish.js");
+    await publishLeagueCampaignPatch(
+      chainId,
+      ingested.map((row) => ({
+        campaignAddress: row.campaignAddress,
+        votes24h: row.votes24h,
+        votesAllTime: row.votesAllTime,
+        lastActivityAt: Math.floor(Date.now() / 1000),
+      })),
+    );
+  } catch {
+    // Ably must never fail a confirmed vote ingest.
+  }
+
   return { ok: true, items: ingested, updatedAt: new Date().toISOString() };
 }
 

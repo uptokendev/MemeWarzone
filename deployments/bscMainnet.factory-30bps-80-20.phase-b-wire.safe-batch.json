@@ -1,0 +1,63 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 1755860000000,
+  "meta": {
+    "name": "MemeWarzone BNB factory replacement — Phase B wiring only",
+    "description": "Authorize new factory 0xc378221E57898106079aE4B818a92978e4cd9559 as CreatorRegistry launch recorder and new locker 0xFcE77642e22ef04B8398fB6dfEE99614CAb32f69 on TreasuryRouterV2. Keep old locker 0x64710A4f87aBa3b5ED5B8B25e8ebA4DaC339C998 authorized. Does NOT enableLive and does NOT unpause CREATE.",
+    "txBuilderVersion": "1.18.0",
+    "createdFromSafeAddress": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+    "createdFromOwnerAddress": ""
+  },
+  "transactions": [
+    {
+      "to": "0x8194FB3745d027102ce7Da562c7045f28B2f42fD",
+      "value": "0",
+      "data": "0x422b76f5000000000000000000000000c378221e57898106079ae4b818a92978e4cd95590000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          { "internalType": "address", "name": "recorder", "type": "address" },
+          { "internalType": "bool", "name": "allowed", "type": "bool" }
+        ],
+        "name": "setLaunchRecorder",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "recorder": "0xc378221E57898106079aE4B818a92978e4cd9559",
+        "allowed": "true"
+      }
+    },
+    {
+      "to": "0xe157a6FDf19CAB61f2ECa048966f137A3240a921",
+      "value": "0",
+      "data": "0xacb9fef6000000000000000000000000fce77642e22ef04b8398fb6dfee99614cab32f690000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          { "internalType": "address", "name": "locker", "type": "address" },
+          { "internalType": "bool", "name": "allowed", "type": "bool" }
+        ],
+        "name": "setAuthorizedLpLocker",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "locker": "0xFcE77642e22ef04B8398fB6dfEE99614CAb32f69",
+        "allowed": "true"
+      }
+    },
+    {
+      "to": "0xe157a6FDf19CAB61f2ECa048966f137A3240a921",
+      "value": "0",
+      "data": "0x86afb2f6000000000000000000000000fce77642e22ef04b8398fb6dfee99614cab32f69",
+      "contractMethod": {
+        "inputs": [
+          { "internalType": "address", "name": "newLocker", "type": "address" }
+        ],
+        "name": "setPrimaryLpLocker",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newLocker": "0xFcE77642e22ef04B8398fB6dfEE99614CAb32f69"
+      }
+    }
+  ]
+}

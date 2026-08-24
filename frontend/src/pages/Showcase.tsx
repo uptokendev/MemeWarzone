@@ -3,7 +3,6 @@ import { ChainFeedSwitch } from "@/components/common/ChainFeedSwitch";
 import { CampaignGrid, HomeQuery } from "@/components/home/CampaignGrid";
 import { DiscoveryControls } from "@/components/home/DiscoveryControls";
 import { DraftCampaignGrid } from "@/components/home/DraftCampaignGrid";
-import { GraduatedCampaignGrid } from "@/components/home/GraduatedCampaignGrid";
 import { SafeFeaturedCampaigns } from "@/components/home/SafeFeaturedCampaigns";
 import { HeaderBand } from "@/components/home/HeaderBand";
 import { CampaignTickerBar } from "@/components/home/CampaignTickerBar";
@@ -59,8 +58,6 @@ const Showcase = () => {
         <DiscoveryControls query={effectiveQuery} onChange={setQuery} />
         {isDraftRow ? (
           <DraftCampaignGrid query={effectiveQuery} />
-        ) : isGraduatedRow ? (
-          <GraduatedCampaignGrid query={effectiveQuery} />
         ) : (
           <CampaignGrid query={effectiveQuery} />
         )}

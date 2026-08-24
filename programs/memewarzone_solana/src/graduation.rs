@@ -34,10 +34,9 @@ use anchor_spl::token::{
 
 use crate::{
     authorized_create::{CAMPAIGN_SEED, SOL_VAULT_SEED, TOKEN_VAULT_SEED},
-    authorized_trade::{
-        route_fee_slices, validate_route_profile_id, TRADE_SIDE_FINALIZE,
-    },
+    authorized_trade::{route_fee_slices, validate_route_profile_id, TRADE_SIDE_FINALIZE},
     campaign_view::{load_campaign_view, mark_campaign_graduated, CampaignView},
+    fee_escrow::{require_fee_escrow_empty, FEE_ESCROW_SEED},
     CreatorProfile, GenerationConfig, GlobalConfig, LaunchpadError, BPS_DENOMINATOR,
     CREATOR_PROFILE_SEED, DEX_ADAPTER_METEORA_DAMM_V2, ECONOMICS_VERSION_V3,
     GENERATION_CONFIG_SEED, GLOBAL_CONFIG_SEED,
@@ -176,6 +175,9 @@ pub struct BeginGraduation<'info> {
     /// CHECK: Program-owned SOL vault is validated against Campaign.
     #[account(mut)]
     pub sol_vault: UncheckedAccount<'info>,
+    /// CHECK: Must be flushed (pending == 0) before graduation begins.
+    #[account(seeds = [FEE_ESCROW_SEED, campaign.key().as_ref()], bump)]
+    pub fee_escrow: UncheckedAccount<'info>,
     /// CHECK: Must be the authority's launch-token account and empty before staging.
     #[account(mut)]
     pub authority_token_account: UncheckedAccount<'info>,
@@ -257,9 +259,18 @@ pub fn begin_graduation_handler(
     args: BeginGraduationArgs,
 ) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
-    require!(args.deadline >= now, LaunchpadError::GraduationAuthorizationExpired);
-    require!(args.native_target_lamports > 0, LaunchpadError::InvalidGraduationTarget);
-    require!(args.oracle_price_usd_micros > 0, LaunchpadError::InvalidGraduationTarget);
+    require!(
+        args.deadline >= now,
+        LaunchpadError::GraduationAuthorizationExpired
+    );
+    require!(
+        args.native_target_lamports > 0,
+        LaunchpadError::InvalidGraduationTarget
+    );
+    require!(
+        args.oracle_price_usd_micros > 0,
+        LaunchpadError::InvalidGraduationTarget
+    );
     validate_route_profile_id(args.finalize_route_profile)?;
     require_keys_eq!(
         args.position_nft_mint,
@@ -286,6 +297,7 @@ pub fn begin_graduation_handler(
     )?;
     require!(!campaign.graduated, LaunchpadError::AlreadyGraduated);
     require!(!campaign.paused, LaunchpadError::CampaignPaused);
+    require_fee_escrow_empty(&ctx.accounts.fee_escrow.to_account_info(), campaign_key)?;
     require!(
         args.native_target_lamports
             == native_target_lamports_from_usd(
@@ -302,10 +314,7 @@ pub fn begin_graduation_handler(
         campaign.dex_adapter == DEX_ADAPTER_METEORA_DAMM_V2,
         LaunchpadError::InvalidDexAdapter
     );
-    validate_generation_binding(
-        &campaign,
-        &ctx.accounts.generation_config.to_account_info(),
-    )?;
+    validate_generation_binding(&campaign, &ctx.accounts.generation_config.to_account_info())?;
 
     let eligible = campaign.sold_tokens >= campaign.curve_token_supply
         || campaign.net_raised_lamports >= args.native_target_lamports;
@@ -341,7 +350,10 @@ pub fn begin_graduation_handler(
         ctx.accounts.authority.key(),
         LaunchpadError::Unauthorized
     );
-    require!(staging.amount == 0, LaunchpadError::GraduationStagingNotEmpty);
+    require!(
+        staging.amount == 0,
+        LaunchpadError::GraduationStagingNotEmpty
+    );
 
     let digest = build_graduation_authorization_digest(
         crate::ID,
@@ -366,15 +378,17 @@ pub fn begin_graduation_handler(
     require_atomic_meteora_then_confirm(&ctx.accounts.instructions.to_account_info())?;
 
     let quote = graduation_quote(&campaign)?;
-    require!(quote.max_liquidity_tokens > 0, LaunchpadError::GraduationLiquidityZero);
-    require!(quote.max_liquidity_lamports > 0, LaunchpadError::GraduationLiquidityZero);
+    require!(
+        quote.max_liquidity_tokens > 0,
+        LaunchpadError::GraduationLiquidityZero
+    );
+    require!(
+        quote.max_liquidity_lamports > 0,
+        LaunchpadError::GraduationLiquidityZero
+    );
 
     let campaign_bump = [campaign.bump];
-    let campaign_seeds: &[&[u8]] = &[
-        CAMPAIGN_SEED,
-        campaign.campaign_id.as_ref(),
-        &campaign_bump,
-    ];
+    let campaign_seeds: &[&[u8]] = &[CAMPAIGN_SEED, campaign.campaign_id.as_ref(), &campaign_bump];
     token::transfer(
         CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
@@ -486,14 +500,24 @@ pub fn confirm_graduation_handler(ctx: Context<ConfirmGraduation>) -> Result<()>
 
     let pool_token = unpack_spl_account(&ctx.accounts.meteora_token_vault.to_account_info())?;
     let pool_native = unpack_spl_account(&ctx.accounts.meteora_native_vault.to_account_info())?;
-    require_keys_eq!(pool_token.mint, campaign.mint, LaunchpadError::InvalidMeteoraPool);
+    require_keys_eq!(
+        pool_token.mint,
+        campaign.mint,
+        LaunchpadError::InvalidMeteoraPool
+    );
     require_keys_eq!(
         pool_native.mint,
         spl_token::native_mint::ID,
         LaunchpadError::InvalidMeteoraPool
     );
-    require!(pool_token.amount > 0, LaunchpadError::GraduationLiquidityZero);
-    require!(pool_native.amount > 0, LaunchpadError::GraduationLiquidityZero);
+    require!(
+        pool_token.amount > 0,
+        LaunchpadError::GraduationLiquidityZero
+    );
+    require!(
+        pool_native.amount > 0,
+        LaunchpadError::GraduationLiquidityZero
+    );
     require!(
         pool_token.amount <= state.max_liquidity_tokens,
         LaunchpadError::GraduationAssetMismatch
@@ -576,11 +600,7 @@ pub fn confirm_graduation_handler(ctx: Context<ConfirmGraduation>) -> Result<()>
     let creator_reserve = campaign.reserve_token_supply;
 
     let campaign_bump = [campaign.bump];
-    let campaign_seeds: &[&[u8]] = &[
-        CAMPAIGN_SEED,
-        campaign.campaign_id.as_ref(),
-        &campaign_bump,
-    ];
+    let campaign_seeds: &[&[u8]] = &[CAMPAIGN_SEED, campaign.campaign_id.as_ref(), &campaign_bump];
 
     let burn_total = burned_unsold
         .checked_add(burned_unused_liquidity)
@@ -601,9 +621,18 @@ pub fn confirm_graduation_handler(ctx: Context<ConfirmGraduation>) -> Result<()>
     }
 
     if creator_reserve > 0 {
-        let creator_token = unpack_spl_account(&ctx.accounts.creator_token_account.to_account_info())?;
-        require_keys_eq!(creator_token.mint, campaign.mint, LaunchpadError::InvalidCampaign);
-        require_keys_eq!(creator_token.owner, campaign.creator, LaunchpadError::InvalidCampaign);
+        let creator_token =
+            unpack_spl_account(&ctx.accounts.creator_token_account.to_account_info())?;
+        require_keys_eq!(
+            creator_token.mint,
+            campaign.mint,
+            LaunchpadError::InvalidCampaign
+        );
+        require_keys_eq!(
+            creator_token.owner,
+            campaign.creator,
+            LaunchpadError::InvalidCampaign
+        );
         token::transfer(
             CpiContext::new_with_signer(
                 ctx.accounts.token_program.to_account_info(),
@@ -684,7 +713,8 @@ pub fn final_spot_nano_lamports(campaign: &CampaignView) -> Result<u128> {
         .ok_or(LaunchpadError::MathOverflow)?
         .checked_div(scale)
         .ok_or(LaunchpadError::MathOverflow)?;
-    base.checked_add(slope).ok_or_else(|| error!(LaunchpadError::MathOverflow))
+    base.checked_add(slope)
+        .ok_or_else(|| error!(LaunchpadError::MathOverflow))
 }
 
 pub fn graduation_quote(campaign: &CampaignView) -> Result<GraduationQuote> {
@@ -697,7 +727,10 @@ pub fn graduation_quote(campaign: &CampaignView) -> Result<GraduationQuote> {
         .checked_sub(finalize_fee)
         .ok_or(LaunchpadError::MathOverflow)?;
     let target_liquidity = bps_amount(remaining, campaign.liquidity_post_finalize_bps)?;
-    require!(target_liquidity > 0, LaunchpadError::GraduationLiquidityZero);
+    require!(
+        target_liquidity > 0,
+        LaunchpadError::GraduationLiquidityZero
+    );
 
     let scale = token_scale(campaign.token_decimals)?;
     let desired_tokens = u128::from(target_liquidity)
@@ -709,7 +742,8 @@ pub fn graduation_quote(campaign: &CampaignView) -> Result<GraduationQuote> {
         .ok_or(LaunchpadError::MathOverflow)?;
     let max_tokens = desired_tokens.min(u128::from(campaign.liquidity_token_supply));
     require!(max_tokens > 0, LaunchpadError::GraduationLiquidityZero);
-    let max_tokens_u64 = u64::try_from(max_tokens).map_err(|_| error!(LaunchpadError::MathOverflow))?;
+    let max_tokens_u64 =
+        u64::try_from(max_tokens).map_err(|_| error!(LaunchpadError::MathOverflow))?;
 
     let liquidity_lamports = if desired_tokens <= u128::from(campaign.liquidity_token_supply) {
         target_liquidity
@@ -725,7 +759,10 @@ pub fn graduation_quote(campaign: &CampaignView) -> Result<GraduationQuote> {
             .ok_or(LaunchpadError::MathOverflow)?;
         u64::try_from(used).map_err(|_| error!(LaunchpadError::MathOverflow))?
     };
-    require!(liquidity_lamports > 0, LaunchpadError::GraduationLiquidityZero);
+    require!(
+        liquidity_lamports > 0,
+        LaunchpadError::GraduationLiquidityZero
+    );
 
     let creator_payout = remaining
         .checked_sub(liquidity_lamports)
@@ -745,7 +782,10 @@ fn validate_price_tolerance(
     token_decimals: u8,
     expected_spot_nano: u128,
 ) -> Result<()> {
-    require!(native_lamports > 0 && token_raw > 0, LaunchpadError::GraduationLiquidityZero);
+    require!(
+        native_lamports > 0 && token_raw > 0,
+        LaunchpadError::GraduationLiquidityZero
+    );
     require!(expected_spot_nano > 0, LaunchpadError::GraduationPriceDrift);
     let scale = token_scale(token_decimals)?;
     let actual = u128::from(native_lamports)
@@ -780,7 +820,10 @@ fn read_graduation_global(info: &AccountInfo) -> Result<(Pubkey, Pubkey)> {
 }
 
 #[inline(never)]
-fn validate_generation_binding(campaign: &CampaignView, generation_info: &AccountInfo) -> Result<()> {
+fn validate_generation_binding(
+    campaign: &CampaignView,
+    generation_info: &AccountInfo,
+) -> Result<()> {
     require_keys_eq!(
         campaign.generation_config,
         *generation_info.key,
@@ -807,7 +850,10 @@ fn validate_generation_binding(campaign: &CampaignView, generation_info: &Accoun
         campaign.generation_id == generation.generation_id,
         LaunchpadError::InvalidGeneration
     );
-    require!(generation.support_enabled, LaunchpadError::InvalidGeneration);
+    require!(
+        generation.support_enabled,
+        LaunchpadError::InvalidGeneration
+    );
     require!(
         generation.dex_adapter == DEX_ADAPTER_METEORA_DAMM_V2,
         LaunchpadError::InvalidDexAdapter
@@ -823,21 +869,39 @@ fn validate_campaign_accounts(
     sol_vault: Pubkey,
 ) -> Result<()> {
     require_keys_eq!(campaign.mint, mint, LaunchpadError::InvalidCampaign);
-    require_keys_eq!(campaign.token_vault, token_vault, LaunchpadError::InvalidCampaign);
-    require_keys_eq!(campaign.sol_vault, sol_vault, LaunchpadError::InvalidCampaign);
+    require_keys_eq!(
+        campaign.token_vault,
+        token_vault,
+        LaunchpadError::InvalidCampaign
+    );
+    require_keys_eq!(
+        campaign.sol_vault,
+        sol_vault,
+        LaunchpadError::InvalidCampaign
+    );
     let (expected_campaign, _) =
         Pubkey::find_program_address(&[CAMPAIGN_SEED, campaign.campaign_id.as_ref()], &crate::ID);
-    require_keys_eq!(campaign_key, expected_campaign, LaunchpadError::InvalidCampaign);
+    require_keys_eq!(
+        campaign_key,
+        expected_campaign,
+        LaunchpadError::InvalidCampaign
+    );
     let (expected_token_vault, _) = Pubkey::find_program_address(
         &[TOKEN_VAULT_SEED, campaign.campaign_id.as_ref()],
         &crate::ID,
     );
-    let (expected_sol_vault, _) = Pubkey::find_program_address(
-        &[SOL_VAULT_SEED, campaign.campaign_id.as_ref()],
-        &crate::ID,
+    let (expected_sol_vault, _) =
+        Pubkey::find_program_address(&[SOL_VAULT_SEED, campaign.campaign_id.as_ref()], &crate::ID);
+    require_keys_eq!(
+        token_vault,
+        expected_token_vault,
+        LaunchpadError::InvalidCampaign
     );
-    require_keys_eq!(token_vault, expected_token_vault, LaunchpadError::InvalidCampaign);
-    require_keys_eq!(sol_vault, expected_sol_vault, LaunchpadError::InvalidCampaign);
+    require_keys_eq!(
+        sol_vault,
+        expected_sol_vault,
+        LaunchpadError::InvalidCampaign
+    );
     Ok(())
 }
 
@@ -853,9 +917,16 @@ fn validate_meteora_pool(
         LaunchpadError::InvalidMeteoraPool
     );
     let expected_pool = derive_meteora_pool(launch_mint);
-    require_keys_eq!(*pool_info.key, expected_pool, LaunchpadError::InvalidMeteoraPool);
+    require_keys_eq!(
+        *pool_info.key,
+        expected_pool,
+        LaunchpadError::InvalidMeteoraPool
+    );
     let data = pool_info.try_borrow_data()?;
-    require!(data.len() >= METEORA_POOL_MIN_LEN, LaunchpadError::InvalidMeteoraPool);
+    require!(
+        data.len() >= METEORA_POOL_MIN_LEN,
+        LaunchpadError::InvalidMeteoraPool
+    );
     let token_a = read_pubkey(&data, METEORA_POOL_TOKEN_A_MINT_OFFSET)?;
     let token_b = read_pubkey(&data, METEORA_POOL_TOKEN_B_MINT_OFFSET)?;
     let vault_a = read_pubkey(&data, METEORA_POOL_TOKEN_A_VAULT_OFFSET)?;
@@ -878,11 +949,27 @@ fn validate_meteora_pool(
         LaunchpadError::InvalidMeteoraPool
     );
     if token_a == launch_mint {
-        require_keys_eq!(vault_a, expected_launch_vault, LaunchpadError::InvalidMeteoraPool);
-        require_keys_eq!(vault_b, expected_native_vault, LaunchpadError::InvalidMeteoraPool);
+        require_keys_eq!(
+            vault_a,
+            expected_launch_vault,
+            LaunchpadError::InvalidMeteoraPool
+        );
+        require_keys_eq!(
+            vault_b,
+            expected_native_vault,
+            LaunchpadError::InvalidMeteoraPool
+        );
     } else {
-        require_keys_eq!(vault_b, expected_launch_vault, LaunchpadError::InvalidMeteoraPool);
-        require_keys_eq!(vault_a, expected_native_vault, LaunchpadError::InvalidMeteoraPool);
+        require_keys_eq!(
+            vault_b,
+            expected_launch_vault,
+            LaunchpadError::InvalidMeteoraPool
+        );
+        require_keys_eq!(
+            vault_a,
+            expected_native_vault,
+            LaunchpadError::InvalidMeteoraPool
+        );
     }
     Ok((token_a, token_b, vault_a, vault_b))
 }
@@ -919,10 +1006,7 @@ fn validate_meteora_position(
         LaunchpadError::InvalidMeteoraPosition
     );
     let unlocked = read_u128(&data, METEORA_POSITION_UNLOCKED_LIQUIDITY_OFFSET)?;
-    let permanent = read_u128(
-        &data,
-        METEORA_POSITION_PERMANENT_LOCKED_LIQUIDITY_OFFSET,
-    )?;
+    let permanent = read_u128(&data, METEORA_POSITION_PERMANENT_LOCKED_LIQUIDITY_OFFSET)?;
     require!(unlocked == 0, LaunchpadError::MeteoraLiquidityNotLocked);
     require!(permanent > 0, LaunchpadError::MeteoraLiquidityNotLocked);
     Ok(())
@@ -1028,7 +1112,10 @@ fn verify_detached_graduation_authorization(
 ) -> Result<()> {
     let current_index = load_current_index_checked(instructions_sysvar)
         .map_err(|_| error!(LaunchpadError::InvalidGraduationAuthorization))?;
-    require!(current_index > 0, LaunchpadError::InvalidGraduationAuthorization);
+    require!(
+        current_index > 0,
+        LaunchpadError::InvalidGraduationAuthorization
+    );
     let ed25519_index = current_index
         .checked_sub(1)
         .ok_or(LaunchpadError::InvalidGraduationAuthorization)?;
@@ -1112,7 +1199,10 @@ fn parse_single_ed25519_instruction(data: &[u8]) -> Result<ParsedEd25519Instruct
     checked_slice(data, signature_offset, ED25519_SIGNATURE_SIZE)?;
     let public_key = checked_slice(data, public_key_offset, ED25519_PUBLIC_KEY_SIZE)?;
     let message = checked_slice(data, message_data_offset, usize::from(message_data_size))?;
-    Ok(ParsedEd25519Instruction { public_key, message })
+    Ok(ParsedEd25519Instruction {
+        public_key,
+        message,
+    })
 }
 
 fn unpack_spl_account(info: &AccountInfo) -> Result<SplTokenAccount> {
@@ -1122,16 +1212,22 @@ fn unpack_spl_account(info: &AccountInfo) -> Result<SplTokenAccount> {
 }
 
 fn update_creator_profile_after_graduation(info: &AccountInfo, creator: Pubkey) -> Result<()> {
-    let (expected, _) = Pubkey::find_program_address(
-        &[CREATOR_PROFILE_SEED, creator.as_ref()],
-        &crate::ID,
-    );
+    let (expected, _) =
+        Pubkey::find_program_address(&[CREATOR_PROFILE_SEED, creator.as_ref()], &crate::ID);
     require_keys_eq!(*info.key, expected, LaunchpadError::InvalidCreatorProfile);
-    require_keys_eq!(*info.owner, crate::ID, LaunchpadError::InvalidCreatorProfile);
+    require_keys_eq!(
+        *info.owner,
+        crate::ID,
+        LaunchpadError::InvalidCreatorProfile
+    );
     let mut data = info.try_borrow_mut_data()?;
     let mut slice: &[u8] = &data;
     let mut profile = CreatorProfile::try_deserialize(&mut slice)?;
-    require_keys_eq!(profile.wallet, creator, LaunchpadError::InvalidCreatorProfile);
+    require_keys_eq!(
+        profile.wallet,
+        creator,
+        LaunchpadError::InvalidCreatorProfile
+    );
     profile.live_bonding_count = profile
         .live_bonding_count
         .checked_sub(1)
@@ -1154,7 +1250,10 @@ fn move_program_owned_lamports(from: &AccountInfo, to: &AccountInfo, amount: u64
         .lamports()
         .checked_sub(amount)
         .ok_or(LaunchpadError::InsufficientVaultBalance)?;
-    require!(remaining >= rent_floor, LaunchpadError::InsufficientVaultBalance);
+    require!(
+        remaining >= rent_floor,
+        LaunchpadError::InsufficientVaultBalance
+    );
     **from.try_borrow_mut_lamports()? = remaining;
     **to.try_borrow_mut_lamports()? = to
         .lamports()
@@ -1196,7 +1295,9 @@ fn read_u128(data: &[u8], offset: usize) -> Result<u128> {
 }
 
 fn checked_bytes(data: &[u8], offset: usize, len: usize) -> Result<&[u8]> {
-    let end = offset.checked_add(len).ok_or(LaunchpadError::MathOverflow)?;
+    let end = offset
+        .checked_add(len)
+        .ok_or(LaunchpadError::MathOverflow)?;
     require!(end <= data.len(), LaunchpadError::InvalidMeteoraPool);
     Ok(&data[offset..end])
 }
@@ -1295,9 +1396,7 @@ mod tests {
         assert!(q.max_liquidity_tokens > 0);
         assert!(q.max_liquidity_lamports > 0);
         assert_eq!(
-            q.finalize_fee_lamports
-                + q.max_liquidity_lamports
-                + q.creator_payout_lamports,
+            q.finalize_fee_lamports + q.max_liquidity_lamports + q.creator_payout_lamports,
             view.net_raised_lamports
         );
     }

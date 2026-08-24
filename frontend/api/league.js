@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { ethers } from "ethers";
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, isAddress, isSolanaAddress, json, readJson } from "../server/http.js";
+import { persistFinalizedCategory, readFinalizedCategory } from "./lib/finalizeLeagueEpoch.js";
 import {
   buildMerkleProof as buildSolanaMerkleProof,
   buildMerkleRoot as buildSolanaMerkleRoot,
@@ -969,6 +970,75 @@ export default async function handler(req, res) {
           }
         : undefined;
 
+    if (!epoch.isLive && epochStartIso) {
+      const frozen = await readFinalizedCategory(pool, {
+        chainId,
+        period: periodNorm,
+        epochStartIso,
+        category,
+      });
+      if (frozen?.items?.length) {
+        return json(res, 200, {
+          items: frozen.items,
+          prize: prizeForCategory,
+          epoch: { ...epochMeta, status: "finalized", source: frozen.source },
+          stats,
+          finalized: true,
+        });
+      }
+    }
+
+    const finishStandings = async (items, extra = {}) => {
+      const allowPageWrite = String(process.env.LEAGUE_PAGE_WRITE_WINNERS || "").trim() === "1";
+      if (!epoch.isLive && epochStartIso && allowPageWrite) {
+        const persistPrize = {
+          ...(prizeForCategory || {}),
+          protocolFeeBps: prizeMeta?.protocolFeeBps,
+          leagueFeeBps: prizeMeta?.leagueFeeBps,
+          totalLeagueFeeRaw: prizeMeta?.totalLeagueFeeRaw,
+          leagueCount: prizeMeta?.leagueCount,
+        };
+        await persistFinalizedCategory(pool, {
+          chainId,
+          period: periodNorm,
+          epochStartIso,
+          epochEndIso,
+          category,
+          rows: items,
+          prize: persistPrize,
+        });
+        const frozen = await readFinalizedCategory(pool, {
+          chainId,
+          period: periodNorm,
+          epochStartIso,
+          category,
+        });
+        if (frozen?.items?.length) {
+          return json(res, 200, {
+            items: frozen.items,
+            prize: prizeForCategory,
+            epoch: { ...epochMeta, status: "finalized", source: frozen.source },
+            stats,
+            finalized: true,
+            ...extra,
+          });
+        }
+      }
+      return json(res, 200, {
+        items,
+        prize: prizeForCategory,
+        epoch: epoch.isLive ? epochMeta : { ...epochMeta, status: "pending_finalization", source: "live_estimate" },
+        stats,
+        finalized: false,
+        ...extra,
+        warning:
+          extra.warning ||
+          (!epoch.isLive
+            ? "Previous-week standings are estimates until cron:finalize-epoch-winners writes league_epoch_winners."
+            : undefined),
+      });
+    };
+
     // -------------------------------------------------
     // Fastest Finish
     // -------------------------------------------------
@@ -1024,7 +1094,7 @@ export default async function handler(req, res) {
         [...params, minUniqueBuyers]
       );
 
-      return json(res, 200, { items: rows, prize: prizeForCategory, epoch: epochMeta, stats });
+      return finishStandings(rows);
     }
 
     // -------------------------------------------------
@@ -1098,12 +1168,8 @@ export default async function handler(req, res) {
         params
       );
 
-      return json(res, 200, {
-        items: rows,
+      return finishStandings(rows, {
         warning: rows.length ? undefined : "No Perfect Run qualifiers found for this monthly epoch.",
-        prize: prizeForCategory,
-        epoch: epochMeta,
-        stats
       });
     }
 
@@ -1173,7 +1239,7 @@ export default async function handler(req, res) {
         params
       );
 
-      return json(res, 200, { items: rows, prize: prizeForCategory, epoch: epochMeta, stats });
+      return finishStandings(rows);
     }
 
     // -------------------------------------------------
@@ -1231,7 +1297,7 @@ export default async function handler(req, res) {
         params
       );
 
-      return json(res, 200, { items: rows, prize: prizeForCategory, epoch: epochMeta, stats });
+      return finishStandings(rows);
     }
 
     // -------------------------------------------------
@@ -1305,11 +1371,7 @@ export default async function handler(req, res) {
         params
       );
 
-      return json(res, 200, {
-        items: rows,
-        prize: prizeForCategory,
-        epoch: epochMeta,
-        stats,
+      return finishStandings(rows, {
         warning: rows.length
           ? undefined
           : "No realized trader profits in this epoch yet (needs non-creator sells on the curve).",

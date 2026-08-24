@@ -5,6 +5,7 @@ import type { CampaignInfo } from "@/lib/launchpadClient";
 import { Button } from "@/components/ui/button";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { ContinuousMarketChartPanel } from "@/components/token/ContinuousMarketChartPanel";
+import { AthBar } from "@/components/token/AthBar";
 import { WarRoomTradePanel } from "@/components/postgrad/WarRoomTradePanel";
 import { getPostGradTokenDetailRoute } from "@/features/postgrad/identityRoutes";
 import { getWarRoomCampaignMetrics } from "@/features/postgrad/warRoomMetrics";
@@ -77,9 +78,26 @@ function DraftTextBlock({ label, value }: { label: string; value: string }) {
   );
 }
 
-export function WarRoomCampaignRow({ campaign, bnbUsd = 0 }: { campaign: CampaignInfo; bnbUsd?: number }) {
-  const [expanded, setExpanded] = useState(false);
+export function WarRoomCampaignRow({
+  campaign,
+  bnbUsd = 0,
+  expanded: expandedProp,
+  onToggleExpand,
+}: {
+  campaign: CampaignInfo;
+  bnbUsd?: number;
+  expanded?: boolean;
+  onToggleExpand?: () => void;
+}) {
+  const [internalExpanded, setInternalExpanded] = useState(false);
+  const isControlled = typeof expandedProp === "boolean";
+  const expanded = isControlled ? expandedProp : internalExpanded;
   const [chartExpanded, setChartExpanded] = useState(false);
+
+  const handleToggleExpand = () => {
+    if (onToggleExpand) onToggleExpand();
+    if (!isControlled) setInternalExpanded((value) => !value);
+  };
 
   const tokenRoute = getPostGradTokenDetailRoute(campaign.token || campaign.campaign);
   const websiteHref = resolveExternalHref(campaign.website);
@@ -115,7 +133,7 @@ export function WarRoomCampaignRow({ campaign, bnbUsd = 0 }: { campaign: Campaig
     ? 101
     : inferredChainId === 56 || inferredChainId === 97
       ? inferredChainId
-      : 97;
+      : 56;
   const chainLabel = getChainLabel(rowChainId) || `Chain ${rowChainId || "unknown"}`;
   const draftFollows = formatCompactNumber(rich.draftFollowCount);
   const draftOptIns = formatCompactNumber(rich.draftOptInCount);
@@ -128,7 +146,7 @@ export function WarRoomCampaignRow({ campaign, bnbUsd = 0 }: { campaign: Campaig
       {/* Entire collapsed bar is the expand/collapse control */}
       <button
         type="button"
-        onClick={() => setExpanded((value) => !value)}
+        onClick={handleToggleExpand}
         className={
           isDraft
             ? "grid w-full grid-cols-1 gap-2 px-2.5 py-2.5 text-left transition-colors hover:bg-white/[0.035] lg:grid-cols-[minmax(320px,1.55fr)_110px_110px_110px] lg:items-center lg:gap-3 lg:px-4 lg:py-2.5"
@@ -309,6 +327,14 @@ export function WarRoomCampaignRow({ campaign, bnbUsd = 0 }: { campaign: Campaig
                 <div className="text-[11px] font-semibold uppercase tracking-[0.2em] text-orange-300">
                   {chartSourceLabel}
                 </div>
+              </div>
+              <div className="mb-2 shrink-0 px-0.5">
+                <AthBar
+                  currentLabel={metrics.marketCapLabel}
+                  canonicalAthUsd={metrics.athMarketCapUsd > 0 ? metrics.athMarketCapUsd : null}
+                  storageKey={`ath:${rowChainId}:${String(campaign.campaign || "")}:wtr`}
+                  className="w-full min-w-0 text-[10px] text-white/80"
+                />
               </div>
               <ContinuousMarketChartPanel
                 campaignAddress={campaign.campaign}

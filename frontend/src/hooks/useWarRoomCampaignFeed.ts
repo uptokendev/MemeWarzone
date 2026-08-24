@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { fetchPostGradWarRoomCampaignFeed, isWarRoomTestnetFeedEnabled } from "@/features/postgrad/apiClient";
+import { useLeagueRealtime, type LeagueCampaignCreated, type LeaguePatch } from "@/hooks/useLeagueRealtime";
 import { apiFetch } from "@/lib/apiBase";
 import { fetchCampaignDraft, fetchPublicCampaignDrafts, type CampaignDraft, type PrepareDraftBundle } from "@/lib/draftApi";
 import type { CampaignInfo } from "@/lib/launchpadClient";
@@ -11,6 +12,8 @@ import {
   isSolanaChainId,
   type SupportedChainId,
 } from "@/lib/chainConfig";
+import { liveCampaignKey } from "@/lib/liveMarketMerge";
+import { maxVoteCount } from "@/lib/liveCampaignRank";
 import { fetchOnChainCampaignStats } from "@/lib/onChainCampaignStats";
 import {
   lifecycleByCampaign,
@@ -103,6 +106,57 @@ function toNumber(value: unknown): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
+function lookupLeaguePatch(campaign: WarRoomCampaign, patchByCampaign: Record<string, LeaguePatch>) {
+  const addr = String(campaign.campaign || "").trim();
+  if (!addr) return undefined;
+  const key = liveCampaignKey(Number(campaign.chainId || 0), addr);
+  return patchByCampaign[key] || patchByCampaign[addr] || patchByCampaign[addr.toLowerCase()];
+}
+
+function overlayNumber(value: unknown): number | undefined {
+  if (value == null || value === "") return undefined;
+  return toNumber(value);
+}
+
+/** Overlay live league patches at read time so later inventory hydrates cannot wipe them. */
+function overlayLeaguePatch(campaign: WarRoomCampaign, patchByCampaign: Record<string, LeaguePatch>): WarRoomCampaign {
+  const patch = lookupLeaguePatch(campaign, patchByCampaign);
+  if (!patch) return campaign;
+
+  const next: WarRoomCampaign = { ...campaign };
+  const marketcapBnb = overlayNumber(patch.marketcapBnb);
+  if (marketcapBnb != null) (next as any).rtMarketcapBnb = marketcapBnb;
+  const vol24hBnb = overlayNumber(patch.vol24hBnb);
+  if (vol24hBnb != null) (next as any).rtVol24hBnb = vol24hBnb;
+  const lastPriceBnb = overlayNumber(patch.lastPriceBnb);
+  if (lastPriceBnb != null) {
+    (next as any).priceBnb = lastPriceBnb;
+    (next as any).lastPrice = lastPriceBnb;
+  }
+  if (marketcapBnb != null && lastPriceBnb != null && lastPriceBnb > 0) {
+    (next as any).soldTokens = marketcapBnb / lastPriceBnb;
+  }
+  const raisedTotalBnb = overlayNumber(patch.raisedTotalBnb);
+  if (raisedTotalBnb != null) (next as any).raisedTotalBnb = raisedTotalBnb;
+  const votes24h = overlayNumber(patch.votes24h);
+  if (votes24h != null) (next as any).votes24h = maxVoteCount(votes24h, (campaign as any).votes24h);
+  const votesAllTime = overlayNumber(patch.votesAllTime);
+  if (votesAllTime != null) (next as any).votesAllTime = maxVoteCount(votesAllTime, (campaign as any).votesAllTime);
+  const lastActivityAt = overlayNumber(patch.lastActivityAt);
+  if (lastActivityAt != null) (next as any).lastActivityAt = lastActivityAt;
+  if (patch.trendingScore != null) (next as any).voteTrendingScore = overlayNumber(patch.trendingScore);
+  if (patch.isDexTrading) {
+    (next as any).isDexTrading = true;
+    (next as any).status = "graduated";
+    (next as any).isActive = false;
+  }
+  if (patch.graduatedAt) (next as any).graduatedAtChain = patch.graduatedAt;
+  if (patch.progressPct != null && Number.isFinite(Number(patch.progressPct))) {
+    (next as any).progressPct = Number(patch.progressPct);
+  }
+  return next;
+}
+
 function toUnixSeconds(value: unknown): number | undefined {
   if (value == null || value === "") return undefined;
   const n = Number(value);
@@ -180,6 +234,24 @@ function normalizeApiCampaign(item: any, index: number): WarRoomCampaign {
   } as WarRoomCampaign;
 }
 
+function stubFromCreatedCampaign(item: LeagueCampaignCreated, index: number, chainId: number): WarRoomCampaign {
+  return normalizeApiCampaign(
+    {
+      chainId,
+      campaignAddress: item.campaignAddress,
+      tokenAddress: item.tokenAddress,
+      creatorAddress: item.creatorAddress,
+      name: item.name ?? "Unknown",
+      symbol: item.symbol ?? "",
+      createdAtChain: item.createdAtChain ?? new Date().toISOString(),
+      status: "live",
+      isActive: true,
+      isDexTrading: false,
+    },
+    300000 + index,
+  );
+}
+
 function mapDraftToWarRoomCampaign(
   draft: CampaignDraftLifecycle | CampaignDraft,
   index: number,
@@ -252,7 +324,8 @@ function isGraduatedCampaign(campaign: WarRoomCampaign) {
       rich.status === "graduated" ||
       rich.status === "ended" ||
       rich.dexPairAddress ||
-      rich.graduatedAt,
+      rich.graduatedAt ||
+      rich.graduatedAtChain,
   );
 }
 
@@ -521,6 +594,15 @@ export function useWarRoomCampaignFeed({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<WarRoomCampaignFeedSource>("empty");
+  const [healNonce, setHealNonce] = useState(0);
+  const chainId = Number(activeChainId || getDefaultChainId());
+  const { patchByCampaign, created } = useLeagueRealtime({
+    enabled: true,
+    chainId,
+    fallbackMs: 25000,
+    softRefreshMs: 0,
+    onFallbackRefresh: () => setHealNonce((n) => n + 1),
+  });
 
   useEffect(() => {
     const controller = new AbortController();
@@ -760,10 +842,29 @@ export function useWarRoomCampaignFeed({
       cancelled = true;
       controller.abort();
     };
-  }, [activeChainId]);
+  }, [activeChainId, healNonce]);
 
   // Mode filter is pure client — switching Trending ↔ Graduated is instant.
-  const campaigns = inventory.filter((campaign) => matchesMode(campaign, activeMode));
+  // Patches overlay at read time so later hydrate setInventory cannot bake over live values.
+  const campaigns = useMemo(() => {
+    const seen = new Set(
+      inventory
+        .map((campaign) => String(campaign.campaign || "").trim().toLowerCase())
+        .filter(Boolean),
+    );
+    const extras: WarRoomCampaign[] = [];
+    for (const item of created) {
+      const rawAddr = String(item?.campaignAddress || "").trim();
+      if (!rawAddr || seen.has(rawAddr.toLowerCase())) continue;
+      seen.add(rawAddr.toLowerCase());
+      extras.push(stubFromCreatedCampaign(item, extras.length, chainId));
+    }
+
+    const merged = extras.length ? [...inventory, ...extras] : inventory;
+    return merged
+      .map((campaign) => overlayLeaguePatch(campaign, patchByCampaign))
+      .filter((campaign) => matchesMode(campaign, activeMode));
+  }, [activeMode, chainId, created, inventory, patchByCampaign]);
 
   return { campaigns, loading, error, source };
 }

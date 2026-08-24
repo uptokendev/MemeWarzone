@@ -43,6 +43,7 @@ output/testnet-cycle-results*.json
 output/security-access-matrix.md
 reports/topaz-graduation-testnet-*.json
 reports/topaz-graduation-testnet-*.md
+reports/bnb-lifecycle-certification-*.json
 
 # Local Netlify folder
 .netlify
@@ -82,6 +83,10 @@ AGENTS.md
 # Accidental shell typo output (e.g. `git tatus --short`)
 /tatus --short
 
+# Downloaded pinned third-party program binaries (SHA256 is recorded in config/)
+third_party/meteora/*.so
+third_party/meteora/accounts/
+
 # Rust / Anchor build output (never commit)
 /target/
 .anchor/
@@ -90,5 +95,5 @@ test-ledger/
 # Incremental TS build info
 *.tsbuildinfo
 
-# Confidential build planning docs (local only)
+# Confidential build planning / co-architect communication (local only, never GitHub)
 docs/build_plans/

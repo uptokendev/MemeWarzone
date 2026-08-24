@@ -11,6 +11,7 @@ import {
 import { requestSolanaGraduationHandoff } from "@/lib/solanaGraduationHandoff";
 import { isSolanaTokenRouteId } from "@/lib/tokenDetailsPath";
 import { recordRecentlyViewed } from "@/lib/searchHistory";
+import { analytics } from "@/lib/analytics/ProductAnalytics";
 
 import TokenDetails from "./TokenDetails";
 
@@ -81,6 +82,11 @@ const TokenDetailsEntry = () => {
   const [curve, setCurve] = useState<SolanaCampaignCurveState | null>(null);
   const [curveResolved, setCurveResolved] = useState<boolean>(!isSolanaRoute);
   const [cachedCampaignAddress, setCachedCampaignAddress] = useState<string>(initialCache?.campaignAddress || "");
+
+  useEffect(() => {
+    if (!routeId) return;
+    analytics.track("token_page_viewed", { chain: isSolanaRoute ? "solana" : "bnb" });
+  }, [routeId, isSolanaRoute]);
 
   useEffect(() => {
     if (!isSolanaRoute) {

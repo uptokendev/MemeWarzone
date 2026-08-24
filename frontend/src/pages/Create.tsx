@@ -58,6 +58,7 @@ import { CreateDraftCardPreview, CreateLiveCardPreview } from "@/components/crea
 import { CreateSplitPane, CreateWizardShell } from "@/components/create/CreateWizardShell";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
+import { analytics, analyticsErrorCode } from "@/lib/analytics/ProductAnalytics";
 
 /** next = slide left (new from right); back = slide right (new from left) */
 type SlideDir = "next" | "back";
@@ -496,6 +497,7 @@ const Create = () => {
         return;
       }
       setIsDeploying(true);
+      analytics.track("token_create_started", { surface: "launchpad", chain: "solana" });
       try {
         const graduationTargetUsdMicros = graduationTargetToUsdMicros(graduationTargetWei);
 
@@ -515,6 +517,7 @@ const Create = () => {
           const errorMessage = cooldownActive
             ? `Creator arm cooldown active until ${new Date(Number(directEligibility.nextAllowedAt || 0) * 1000).toISOString()}. Immediate and timed arms both require 24h between on-chain deploys.`
             : `Live campaign limit reached (${directEligibility.creatorLiveBondingCount}/${directEligibility.creatorMaxLiveBondingCount}).`;
+          analytics.track("token_create_failed", { surface: "launchpad", chain: "solana", error_code: "not_eligible" });
           emitCreatorArmBlocked(
             resolveCreatorArmBlock({
               mode: "now",
@@ -608,6 +611,7 @@ const Create = () => {
           deployTxHash: created.signature,
         });
 
+        analytics.track("token_create_succeeded", { surface: "launchpad", chain: "solana" });
         toast.success("Solana token deployed.");
         navigate(
           finalized.tokenPath ||
@@ -624,6 +628,11 @@ const Create = () => {
         console.error(error);
         const errorCode = String(error?.code || "");
         const errorMessage = String(error?.message || "Solana direct deploy failed");
+        analytics.track("token_create_failed", {
+          surface: "launchpad",
+          chain: "solana",
+          error_code: analyticsErrorCode(error),
+        });
         if (/SOLANA_CREATOR_(?:COOLDOWN|LAUNCH_LIMIT)/i.test(errorCode + " " + errorMessage)) {
           emitCreatorArmBlocked(
             resolveCreatorArmBlock({
@@ -695,7 +704,12 @@ const Create = () => {
       const tokenAddress = String(receipt?.tokenAddress || "").trim();
       toast.success("Campaign deployed on BNB.");
       if (tokenAddress || campaignAddress) {
-        navigate(`/token/${tokenAddress || campaignAddress}?chainId=${chainId}`);
+        navigate(
+          tokenDetailsPath(
+            { tokenAddress, campaignAddress, chainId },
+            { chainId },
+          ),
+        );
       }
     } catch (error: any) {
       console.error(error);

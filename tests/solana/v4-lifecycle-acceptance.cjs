@@ -18,7 +18,9 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const anchor = require("@coral-xyz/anchor");
+const web3 = require("@solana/web3.js");
 const {
+  AddressLookupTableProgram,
   ComputeBudgetProgram,
   Ed25519Program,
   Keypair,
@@ -27,7 +29,7 @@ const {
   SYSVAR_INSTRUCTIONS_PUBKEY,
   SystemProgram,
   Transaction,
-} = require("@solana/web3.js");
+} = web3;
 const {
   TOKEN_PROGRAM_ID,
   getAccount,
@@ -193,6 +195,9 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
   let campaignAccounts;
   let createArgs;
   let buyerClusterId = emptyClusterId;
+  let v0Helpers;
+  let lookupTableAccount;
+  const COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget111111111111111111111111111111";
 
   function assertNoSimCrash(label, err, logs) {
     const source = `${err == null ? "" : JSON.stringify(err)}\n${logs.join("\n")}`;
@@ -240,6 +245,111 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
       throw new Error(`${label} landed with error: ${JSON.stringify(confirmation.value.err)}`);
     }
     return { signature, logs: simulated.logs };
+  }
+
+  async function sendLegacy(payer, ixs, label) {
+    const latest = await connection.getLatestBlockhash("confirmed");
+    const tx = new Transaction({ feePayer: payer.publicKey, recentBlockhash: latest.blockhash }).add(...ixs);
+    tx.sign(payer);
+    const signature = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false });
+    const confirmation = await connection.confirmTransaction({ signature, ...latest }, "confirmed");
+    if (confirmation.value.err) {
+      throw new Error(`${label} failed: ${JSON.stringify(confirmation.value.err)}`);
+    }
+    return signature;
+  }
+
+  async function sendProductionTrade({ label, signer, ed25519, programIx, recoverAccount }) {
+    assert.ok(v0Helpers && lookupTableAccount, "production V0/ALT envelope is not initialized");
+    const compiled = await v0Helpers.compileLaunchpadV0WithLatestBlockhash(
+      web3,
+      connection,
+      {
+        payer: signer.publicKey,
+        instructions: [ed25519, programIx],
+        lookupTableAccounts: [lookupTableAccount],
+      },
+      {
+        payer: signer.publicKey,
+        ed25519Instruction: ed25519,
+        programInstruction: programIx,
+        lookupTableAccounts: [lookupTableAccount],
+      },
+    );
+    const decompiled = web3.TransactionMessage.decompile(compiled.transaction.message, {
+      addressLookupTableAccounts: [lookupTableAccount],
+    });
+    for (const ix of decompiled.instructions) {
+      assert.notEqual(
+        ix.programId.toBase58(),
+        COMPUTE_BUDGET_PROGRAM_ID,
+        `${label} must not include ComputeBudget setComputeUnitLimit`,
+      );
+    }
+    assert.equal(compiled.stats.requiredSigners, 1, `${label} must have one wallet signer`);
+    assert.ok(compiled.stats.serializedBytes <= 1232, `${label} exceeds 1232 bytes`);
+    let simulated;
+    try {
+      simulated = await v0Helpers.simulateLaunchpadV0OrThrow(
+        connection,
+        compiled.transaction,
+        `${label} simulation failed`,
+      );
+    } catch (error) {
+      const extra = error?.source || (Array.isArray(error?.logs) ? error.logs.join("\n") : "");
+      throw new Error(`${error instanceof Error ? error.message : String(error)}\n${extra}`);
+    }
+    console.log(
+      `[sbf-gate] ${label} unitsConsumed=${simulated.unitsConsumed ?? "n/a"} bytes=${compiled.stats.serializedBytes}`,
+    );
+    const unsigned = await v0Helpers.compileLaunchpadV0WithLatestBlockhash(
+      web3,
+      connection,
+      {
+        payer: signer.publicKey,
+        instructions: [ed25519, programIx],
+        lookupTableAccounts: [lookupTableAccount],
+      },
+      {
+        payer: signer.publicKey,
+        ed25519Instruction: ed25519,
+        programInstruction: programIx,
+        lookupTableAccounts: [lookupTableAccount],
+      },
+    );
+    unsigned.transaction.sign([signer]);
+    v0Helpers.assertLaunchpadV0Intent(web3, unsigned.transaction, {
+      payer: signer.publicKey,
+      ed25519Instruction: ed25519,
+      programInstruction: programIx,
+      lookupTableAccounts: [lookupTableAccount],
+      releaseMaxBytes: null,
+    });
+    const signature = await connection.sendTransaction(unsigned.transaction, {
+      // Local validators, especially Agave --clone-feature-set, can spend
+      // a full blockhash window inside RPC preflight. The unsigned V0
+      // simulation above already proved the program. Production still uses
+      // skipPreflight: false against real RPCs.
+      skipPreflight: true,
+      maxRetries: 5,
+      preflightCommitment: "confirmed",
+    });
+    const deadlineMs = Date.now() + 20_000;
+    while (Date.now() < deadlineMs) {
+      const status = await connection.getSignatureStatus(signature, { searchTransactionHistory: true });
+      if (status?.value?.err) {
+        throw new Error(`${label} landed with error: ${JSON.stringify(status.value.err)}`);
+      }
+      if (status?.value?.confirmationStatus === "confirmed" || status?.value?.confirmationStatus === "finalized") {
+        return { signature, logs: simulated.logs || [] };
+      }
+      if (recoverAccount) {
+        const info = await connection.getAccountInfo(recoverAccount, "confirmed");
+        if (info) return { signature, logs: simulated.logs || [] };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 400));
+    }
+    throw new Error(`${label} did not confirm within 20s (${signature})`);
   }
 
   async function fund(pubkey, sol) {
@@ -349,6 +459,39 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
         await fund(vault, 1);
       }
     }
+
+    const { loadSolanaV0Module } = await import("../../frontend/scripts/load-solana-v0-module.mjs");
+    v0Helpers = await loadSolanaV0Module();
+    const payer = provider.wallet.payer;
+    assert.ok(payer?.secretKey, "local validator wallet must be a Keypair");
+    const plan = v0Helpers.buildLaunchpadAltPlan(web3);
+    const slot = await connection.getSlot("confirmed");
+    const [createIx, lookupTable] = AddressLookupTableProgram.createLookupTable({
+      authority: payer.publicKey,
+      payer: payer.publicKey,
+      recentSlot: Math.max(0, slot - 1),
+    });
+    await sendLegacy(payer, [createIx], "createLaunchpadAlt");
+    for (let i = 0; i < plan.length; i += 20) {
+      await sendLegacy(
+        payer,
+        [
+          AddressLookupTableProgram.extendLookupTable({
+            payer: payer.publicKey,
+            authority: payer.publicKey,
+            lookupTable,
+            addresses: plan.slice(i, i + 20).map((entry) => entry.address),
+          }),
+        ],
+        "extendLaunchpadAlt",
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    lookupTableAccount = await v0Helpers.fetchAndVerifyLaunchpadLookupTable(web3, connection, {
+      address: lookupTable.toBase58(),
+      requiredAddresses: plan.map((entry) => entry.address),
+      expectedAuthority: payer.publicKey,
+    });
   });
 
   async function setupWallet(label) {
@@ -420,6 +563,11 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
         Buffer.from(createArgs.nonce),
       ),
     };
+    campaignAccounts.feeEscrow = derivePda(
+      program.programId,
+      "fee-escrow",
+      campaignAccounts.campaign.toBuffer(),
+    );
 
     const generation = await program.account.generationConfig.fetch(generationConfig);
     const profile = await program.account.creatorProfile.fetch(creator.creatorProfile);
@@ -491,8 +639,8 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
     const routeProfile = opts.routeProfile ?? ROUTE_PROFILE_UNLINKED;
     const includeVaults = opts.includeVaults !== false;
     const now = await chainUnixTimestamp(connection);
-    const nonce = hash32(`buy:${Date.now()}:${lamportsIn}:${Math.random()}`);
-    const deadline = now + 3_600;
+    const nonce = opts.nonce || hash32(`buy:${Date.now()}:${lamportsIn}:${Math.random()}`);
+    const deadline = opts.deadline ?? now + 3_600;
     const minOut = 1n;
     const digest = tradeDigest({
       programId: program.programId,
@@ -542,17 +690,17 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
         instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
         tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
+        feeEscrow: campaignAccounts.feeEscrow,
       });
-    if (includeVaults) {
-      builder = builder.remainingAccounts(remainingRewardAccounts());
-    }
     const buyIx = await builder.instruction();
-    const tx = new Transaction().add(
-      ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+    const sent = await sendProductionTrade({
+      label: `buy_tokens ${lamportsIn}`,
+      signer: buyer.keypair,
       ed25519,
-      buyIx,
-    );
-    return simulateThenSend(tx, `buy_tokens ${lamportsIn}`, [buyer.keypair]);
+      programIx: buyIx,
+      recoverAccount: tradeAuth,
+    });
+    return { ...sent, tradeAuthorization: tradeAuth, nonce, deadline };
   }
 
   async function sendSell(tokensIn, opts = {}) {
@@ -561,7 +709,7 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
     const includeVaults = opts.includeVaults !== false;
     const now = await chainUnixTimestamp(connection);
     const nonce = hash32(`sell:${Date.now()}:${tokensIn}:${Math.random()}`);
-    const deadline = now + 3_600;
+    const deadline = opts.deadline ?? now + 3_600;
     const minOut = 1n;
     const digest = tradeDigest({
       programId: program.programId,
@@ -610,17 +758,17 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
         instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
         tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
+        feeEscrow: campaignAccounts.feeEscrow,
       });
-    if (includeVaults) {
-      builder = builder.remainingAccounts(remainingRewardAccounts());
-    }
     const sellIx = await builder.instruction();
-    const tx = new Transaction().add(
-      ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 }),
+    const sent = await sendProductionTrade({
+      label: `sell_tokens ${tokensIn}`,
+      signer: buyer.keypair,
       ed25519,
-      sellIx,
-    );
-    return simulateThenSend(tx, `sell_tokens ${tokensIn}`, [buyer.keypair]);
+      programIx: sellIx,
+      recoverAccount: tradeAuth,
+    });
+    return { ...sent, tradeAuthorization: tradeAuth, nonce, deadline };
   }
 
   it("create → buy → buy → sell → buy → sell → close curve on the compiled SBF", async function () {
@@ -636,6 +784,8 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
     assert.equal(afterCreate.curveClosed, false);
     assert.equal(afterCreate.soldTokens.toString(), "0");
     assert.ok(created.logs.some((line) => /Instruction: CreateCampaign/i.test(line)));
+    const escrowAfterCreate = await connection.getAccountInfo(campaignAccounts.feeEscrow, "confirmed");
+    assert.equal(escrowAfterCreate, null, "CREATE must not initialize FeeEscrow");
 
     async function snapshot() {
       const info = await connection.getAccountInfo(campaignAccounts.campaign, "confirmed");
@@ -644,7 +794,13 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
       const ata = getAssociatedTokenAddressSync(campaignAccounts.mint, buyer.keypair.publicKey);
       const token = await getAccount(connection, ata, "confirmed").catch(() => null);
       const vault = await connection.getBalance(campaignAccounts.solVault, "confirmed");
-      return { campaign, tokenAmount: token ? BigInt(token.amount.toString()) : 0n, vault };
+      const escrow = await connection.getBalance(campaignAccounts.feeEscrow, "confirmed");
+      return {
+        campaign,
+        tokenAmount: token ? BigInt(token.amount.toString()) : 0n,
+        vault,
+        escrow,
+      };
     }
 
     function assertNoStackCrash(label, text) {
@@ -667,6 +823,89 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
       assert.ok(expected.test(text), `${label} failed for the wrong reason:\n${text}`);
     }
 
+    async function rewardVaultSnapshot() {
+      const out = {};
+      for (const [name, pubkey] of Object.entries(rewardVaultKeys())) {
+        out[name] = BigInt(await connection.getBalance(pubkey, "confirmed"));
+      }
+      return out;
+    }
+
+    async function txFeeLamports(signature) {
+      const landed = await connection.getTransaction(signature, {
+        commitment: "confirmed",
+        maxSupportedTransactionVersion: 0,
+      });
+      assert.ok(landed?.meta, `${signature} missing transaction meta`);
+      return BigInt(landed.meta.fee);
+    }
+
+    async function assertSellExactAccounting(tokensIn, label) {
+      const beforeSnap = await snapshot();
+      const sellerBefore = BigInt(
+        await connection.getBalance(buyer.keypair.publicKey, "confirmed"),
+      );
+      const vaultsBefore = await rewardVaultSnapshot();
+      const sold = await sendSell(tokensIn);
+      const afterSnap = await snapshot();
+      const sellerAfter = BigInt(
+        await connection.getBalance(buyer.keypair.publicKey, "confirmed"),
+      );
+      const vaultsAfter = await rewardVaultSnapshot();
+      const feePaid = await txFeeLamports(sold.signature);
+      const actualTradeAuthorizationPdaBalance = BigInt(
+        await connection.getBalance(sold.tradeAuthorization, "confirmed"),
+      );
+
+      const gross =
+        BigInt(beforeSnap.campaign.netRaisedLamports.toString()) -
+        BigInt(afterSnap.campaign.netRaisedLamports.toString());
+      const fee = BigInt(afterSnap.escrow) - BigInt(beforeSnap.escrow);
+      const net = gross - fee;
+      assert.ok(gross > 0n, `${label}: gross must be > 0`);
+      assert.equal(
+        BigInt(beforeSnap.vault) - BigInt(afterSnap.vault),
+        gross,
+        `${label}: solVaultBefore - solVaultAfter must equal gross`,
+      );
+      assert.equal(
+        fee,
+        (gross * BigInt(SELL_FEE_BPS)) / 10000n,
+        `${label}: feeEscrowAfter - feeEscrowBefore must equal fee`,
+      );
+      assert.equal(net + fee, gross, `${label}: net + fee must equal gross`);
+      assert.equal(
+        sellerAfter + feePaid + actualTradeAuthorizationPdaBalance - sellerBefore,
+        net,
+        `${label}: sellerAfter + txFee + tradeAuthPdaBalance - sellerBefore must equal net`,
+      );
+      for (const name of Object.keys(vaultsBefore)) {
+        assert.equal(
+          vaultsAfter[name],
+          vaultsBefore[name],
+          `${label}: ${name} reward vault moved before flush`,
+        );
+      }
+      after = afterSnap;
+      return afterSnap;
+    }
+
+    await expectProgramFail(
+      "buy before fee escrow init",
+      () => sendBuy(BUY_LAMPORTS),
+      /FeeEscrowNotInitialized|AccountNotInitialized|account is not initialized/i,
+    );
+
+    await program.methods
+      .initializeFeeEscrow()
+      .accountsStrict({
+        payer: admin,
+        campaign: campaignAccounts.campaign,
+        feeEscrow: campaignAccounts.feeEscrow,
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc({ commitment: "confirmed", preflightCommitment: "confirmed" });
+
     const rewardsBefore = {};
     for (const [name, pubkey] of Object.entries(rewardVaultKeys())) {
       rewardsBefore[name] = BigInt(await connection.getBalance(pubkey, "confirmed"));
@@ -680,23 +919,16 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
     assert.ok(after.tokenAmount > before.tokenAmount);
     const net1 = BigInt(after.campaign.netRaisedLamports.toString()) - BigInt(before.campaign.netRaisedLamports.toString());
     const spent1 = BigInt(after.vault) - BigInt(before.vault);
-    assert.equal(spent1, net1, "buy fee must leave the campaign vault via mandatory routing");
+    assert.equal(spent1, net1, "buy net must stay in the campaign SOL vault");
     const expectedFee = (net1 * BigInt(BUY_FEE_BPS)) / 10000n;
+    assert.equal(BigInt(after.escrow) - BigInt(before.escrow), expectedFee, "buy fee must land in FeeEscrow");
     let routed = 0n;
     for (const [name, pubkey] of Object.entries(rewardVaultKeys())) {
       const nowBal = BigInt(await connection.getBalance(pubkey, "confirmed"));
       routed += nowBal - rewardsBefore[name];
     }
-    assert.equal(routed, expectedFee, "unlinked trade fee must land in the six reward vaults");
-    const airdropNow = BigInt(await connection.getBalance(rewardVaultKeys().airdrop, "confirmed"));
-    assert.ok(airdropNow > rewardsBefore.airdrop, "unlinked profile must fund the airdrop vault");
+    assert.equal(routed, 0n, "reward vaults must not move until flush");
     assert.equal(after.campaign.paused, false);
-
-    await expectProgramFail(
-      "buy without reward vaults",
-      () => sendBuy(BUY_LAMPORTS, 0n, { includeVaults: false }),
-      /InvalidRewardsVault/,
-    );
 
     await program.methods
       .setCampaignPause(true)
@@ -754,10 +986,13 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
 
     const recruiterBefore = BigInt(await connection.getBalance(rewardVaultKeys().recruiter, "confirmed"));
     const airdropBeforeLinked = BigInt(await connection.getBalance(rewardVaultKeys().airdrop, "confirmed"));
+    const escrowBeforeLinked = BigInt(await connection.getBalance(campaignAccounts.feeEscrow, "confirmed"));
     await sendBuy(BUY_LAMPORTS, 0n, { routeProfile: 0 });
     const recruiterAfter = BigInt(await connection.getBalance(rewardVaultKeys().recruiter, "confirmed"));
     const airdropAfterLinked = BigInt(await connection.getBalance(rewardVaultKeys().airdrop, "confirmed"));
-    assert.ok(recruiterAfter > recruiterBefore, "linked route must fund recruiter vault");
+    const escrowAfterLinked = BigInt(await connection.getBalance(campaignAccounts.feeEscrow, "confirmed"));
+    assert.ok(escrowAfterLinked > escrowBeforeLinked, "linked trade fee must accrue in FeeEscrow");
+    assert.equal(recruiterAfter, recruiterBefore, "linked recruiter slice stays pending until flush");
     assert.equal(airdropAfterLinked, airdropBeforeLinked, "linked route must not fund airdrop");
 
     await sendBuy(BUY_LAMPORTS, 0n, { routeProfile: 2 });
@@ -770,23 +1005,157 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
     const sellAmount = after.tokenAmount / 4n;
     assert.ok(sellAmount > 0n);
     before = after;
-    await sendSell(sellAmount);
-    after = await snapshot();
-    assert.ok(after.tokenAmount < before.tokenAmount);
-    assert.ok(BigInt(after.campaign.soldTokens.toString()) < BigInt(before.campaign.soldTokens.toString()));
-    assert.ok(BigInt(after.campaign.netRaisedLamports.toString()) < BigInt(before.campaign.netRaisedLamports.toString()));
+    await assertSellExactAccounting(sellAmount, "sell #1");
 
-    before = after;
+    before = await snapshot();
     await sendBuy(BUY_LAMPORTS);
     after = await snapshot();
     const sellAmount2 = after.tokenAmount / 5n;
-    await sendSell(sellAmount2);
+    before = after;
+    await assertSellExactAccounting(sellAmount2, "sell #2");
     after = await snapshot();
     assert.equal(after.campaign.curveClosed, false);
+
+    const nowClose = await chainUnixTimestamp(connection);
+    const shortAuth = await sendBuy(BUY_LAMPORTS, 0n, { deadline: nowClose + 3 });
+    await expectProgramFail(
+      "close trade-auth before deadline",
+      () => program.methods
+        .closeExpiredTradeAuthorization({ nonce: Array.from(shortAuth.nonce) })
+        .accountsStrict({
+          caller: admin,
+          trader: buyer.keypair.publicKey,
+          tradeAuthorization: shortAuth.tradeAuthorization,
+        })
+        .rpc({ commitment: "confirmed", preflightCommitment: "confirmed" }),
+      /TradeAuthorizationNotExpired|custom program error/i,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 4_000));
+    const traderBeforeClose = BigInt(await connection.getBalance(buyer.keypair.publicKey, "confirmed"));
+    const pdaBeforeClose = BigInt(await connection.getBalance(shortAuth.tradeAuthorization, "confirmed"));
+    assert.ok(pdaBeforeClose > 0n, "expired trade-auth PDA must still hold rent");
+    await program.methods
+      .closeExpiredTradeAuthorization({ nonce: Array.from(shortAuth.nonce) })
+      .accountsStrict({
+        caller: admin,
+        trader: buyer.keypair.publicKey,
+        tradeAuthorization: shortAuth.tradeAuthorization,
+      })
+      .rpc({ commitment: "confirmed", preflightCommitment: "confirmed" });
+    const traderAfterClose = BigInt(await connection.getBalance(buyer.keypair.publicKey, "confirmed"));
+    assert.equal(
+      traderAfterClose - traderBeforeClose,
+      pdaBeforeClose,
+      "trader must receive exact TradeAuthorization rent",
+    );
+    assert.equal(
+      await connection.getAccountInfo(shortAuth.tradeAuthorization, "confirmed"),
+      null,
+      "closed trade-auth account must be gone",
+    );
+    await expectProgramFail(
+      "second trade-auth close",
+      () => program.methods
+        .closeExpiredTradeAuthorization({ nonce: Array.from(shortAuth.nonce) })
+        .accountsStrict({
+          caller: admin,
+          trader: buyer.keypair.publicKey,
+          tradeAuthorization: shortAuth.tradeAuthorization,
+        })
+        .rpc({ commitment: "confirmed", preflightCommitment: "confirmed" }),
+      /AccountNotInitialized|account is not initialized|InvalidTradeAuthorization|custom program error/i,
+    );
+
+    const nowSellClose = await chainUnixTimestamp(connection);
+    const shortSell = await sendSell(after.tokenAmount / 10n, { deadline: nowSellClose + 3 });
+    await expectProgramFail(
+      "close SELL trade-auth with wrong trader",
+      () => program.methods
+        .closeExpiredTradeAuthorization({ nonce: Array.from(shortSell.nonce) })
+        .accountsStrict({
+          caller: admin,
+          trader: creator.keypair.publicKey,
+          tradeAuthorization: shortSell.tradeAuthorization,
+        })
+        .rpc({ commitment: "confirmed", preflightCommitment: "confirmed" }),
+      /ConstraintSeeds|InvalidTradeAuthorization|custom program error/i,
+    );
+    await expectProgramFail(
+      "close SELL trade-auth with wrong PDA",
+      () => program.methods
+        .closeExpiredTradeAuthorization({ nonce: Array.from(shortSell.nonce) })
+        .accountsStrict({
+          caller: admin,
+          trader: buyer.keypair.publicKey,
+          tradeAuthorization: shortAuth.tradeAuthorization,
+        })
+        .rpc({ commitment: "confirmed", preflightCommitment: "confirmed" }),
+      /ConstraintSeeds|InvalidTradeAuthorization|AccountNotInitialized|custom program error/i,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 4_000));
+    await program.methods
+      .closeExpiredTradeAuthorization({ nonce: Array.from(shortSell.nonce) })
+      .accountsStrict({
+        caller: admin,
+        trader: buyer.keypair.publicKey,
+        tradeAuthorization: shortSell.tradeAuthorization,
+      })
+      .rpc({ commitment: "confirmed", preflightCommitment: "confirmed" });
+    await expectProgramFail(
+      "replay expired BUY authorization",
+      () => sendBuy(BUY_LAMPORTS, 0n, { deadline: shortAuth.deadline, nonce: shortAuth.nonce }),
+      /TradeAuthorizationExpired|expired|simulation failed|custom program error/i,
+    );
 
     await sendBuy(CLOSE_BUY_LAMPORTS, CLOSE_TARGET_LAMPORTS);
     after = await snapshot();
     assert.equal(after.campaign.curveClosed, true);
+
+    const vaults = rewardVaultKeys();
+    assert.ok(
+      BigInt(after.escrow) > 0n,
+      "FeeEscrow must still hold pending fees before flush / graduation",
+    );
+    const vaultBeforeFlush = {};
+    for (const [name, pubkey] of Object.entries(vaults)) {
+      vaultBeforeFlush[name] = BigInt(await connection.getBalance(pubkey, "confirmed"));
+    }
+    const escrowBeforeFlush = BigInt(await connection.getBalance(campaignAccounts.feeEscrow, "confirmed"));
+    await program.methods
+      .flushCampaignFees()
+      .accountsStrict({
+        caller: admin,
+        campaign: campaignAccounts.campaign,
+        feeEscrow: campaignAccounts.feeEscrow,
+        weeklyLeagueVault: vaults.league,
+        airdropVault: vaults.airdrop,
+        monthlyLeagueVault: vaults.monthly,
+        recruiterVault: vaults.recruiter,
+        squadVault: vaults.squad,
+        protocolVault: vaults.protocol,
+      })
+      .rpc({ commitment: "confirmed", preflightCommitment: "confirmed" });
+    let flushed = 0n;
+    for (const [name, pubkey] of Object.entries(vaults)) {
+      flushed += BigInt(await connection.getBalance(pubkey, "confirmed")) - vaultBeforeFlush[name];
+    }
+    const escrowAfterFlush = BigInt(await connection.getBalance(campaignAccounts.feeEscrow, "confirmed"));
+    assert.ok(flushed > 0n, "flush must move pending fees into reward vaults");
+    assert.equal(escrowBeforeFlush - escrowAfterFlush, flushed, "escrow drop must equal vault credits");
+    await program.methods
+      .flushCampaignFees()
+      .accountsStrict({
+        caller: admin,
+        campaign: campaignAccounts.campaign,
+        feeEscrow: campaignAccounts.feeEscrow,
+        weeklyLeagueVault: vaults.league,
+        airdropVault: vaults.airdrop,
+        monthlyLeagueVault: vaults.monthly,
+        recruiterVault: vaults.recruiter,
+        squadVault: vaults.squad,
+        protocolVault: vaults.protocol,
+      })
+      .rpc({ commitment: "confirmed", preflightCommitment: "confirmed" });
 
     const vaultTokens = await getAccount(connection, campaignAccounts.tokenVault, "confirmed");
     const remainingCurve =
@@ -854,6 +1223,7 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
       ? targetLiquidity
       : (maxTokens * spot) / (scale * nano);
     return {
+      spotNano: spot,
       finalizeFeeLamports: finalizeFee,
       maxLiquidityLamports: lpSol,
       maxLiquidityTokens: maxTokens,
@@ -911,6 +1281,18 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
     assert.ok(campaignAccounts, "bonding lifecycle must create+close a campaign first");
     const adminKeypair = provider.wallet.payer;
     assert.ok(adminKeypair?.secretKey, "Anchor wallet must expose a local Keypair payer");
+
+    await sendLegacy(
+      adminKeypair,
+      [
+        SystemProgram.transfer({
+          fromPubkey: adminKeypair.publicKey,
+          toPubkey: campaignAccounts.feeEscrow,
+          lamports: 1_000_000,
+        }),
+      ],
+      "donateExtraEscrowLamports",
+    );
 
     await program.methods
       .setPauseFlags({
@@ -982,6 +1364,7 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
         mint: campaignAccounts.mint,
         tokenVault: campaignAccounts.tokenVault,
         solVault: campaignAccounts.solVault,
+        feeEscrow: campaignAccounts.feeEscrow,
         authorityTokenAccount: authorityAta,
         meteoraPool: pool,
         meteoraPosition: position,
@@ -1030,6 +1413,7 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
         mint: campaignAccounts.mint,
         tokenVault: campaignAccounts.tokenVault,
         solVault: campaignAccounts.solVault,
+        feeEscrow: campaignAccounts.feeEscrow,
         authorityTokenAccount: authorityAta,
         meteoraPool: pool,
         meteoraPosition: position,
@@ -1071,7 +1455,339 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
       atomic.logs.some((line) => /BeginGraduation|GraduationAtomicity|custom program error/i.test(line)),
       `expected our graduation handler, got:\n${atomic.logs.join("\n")}`,
     );
-    // A packed begin+Meteora+confirm tx is >1232 bytes locally. Real LP create
-    // stays on devnet/mainnet with Address Lookup Tables. This sim is our side.
+    // A packed begin+Meteora+confirm tx is >1232 bytes locally without ALT.
+    // Gate K uses the production V0+ALT envelope against the pinned DAMM v2 .so.
+  });
+
+  it("Gate K: graduate closed campaign into pinned DAMM v2 and swap", async function () {
+    assert.ok(campaignAccounts, "bonding lifecycle must create+close a campaign first");
+    const meteoraAccount = await connection.getAccountInfo(METEORA_CP_AMM, "confirmed");
+    if (!meteoraAccount || !meteoraAccount.executable) {
+      this.skip();
+    }
+
+    const adminKeypair = provider.wallet.payer;
+    assert.ok(adminKeypair?.secretKey, "Anchor wallet must expose a local Keypair payer");
+    assert.ok(v0Helpers && lookupTableAccount, "production V0/ALT envelope is not initialized");
+
+    const sdk = await import("@meteora-ag/cp-amm-sdk");
+    const {
+      ActivationType,
+      BaseFeeMode,
+      CollectFeeMode,
+      CpAmm,
+      getBaseFeeParams,
+      getSqrtPriceFromPrice,
+      MAX_SQRT_PRICE,
+      MIN_SQRT_PRICE,
+    } = sdk;
+
+    const campaign = decodeCampaign(
+      (await connection.getAccountInfo(campaignAccounts.campaign, "confirmed")).data,
+    );
+    assert.equal(campaign.curveClosed, true);
+    assert.equal(campaign.graduated, false);
+
+    const authorityAta = getAssociatedTokenAddressSync(campaignAccounts.mint, admin);
+    if (!(await connection.getAccountInfo(authorityAta, "confirmed"))) {
+      const ataTx = new Transaction().add(
+        createAssociatedTokenAccountInstruction(admin, authorityAta, admin, campaignAccounts.mint),
+      );
+      await simulateThenSend(ataTx, "gateKCreateAuthorityAta", [adminKeypair]);
+    }
+    const creatorAta = getAssociatedTokenAddressSync(campaignAccounts.mint, campaign.creator);
+    if (!(await connection.getAccountInfo(creatorAta, "confirmed"))) {
+      const ataTx = new Transaction().add(
+        createAssociatedTokenAccountInstruction(admin, creatorAta, campaign.creator, campaignAccounts.mint),
+      );
+      await simulateThenSend(ataTx, "gateKCreateCreatorAta", [adminKeypair]);
+    }
+
+    const nftMint = Keypair.generate();
+    const pool = deriveMeteoraPool(campaignAccounts.mint);
+    const position = deriveMeteoraPosition(nftMint.publicKey);
+    const graduationState = derivePda(program.programId, "graduation", campaignAccounts.campaign.toBuffer());
+    const now = await chainUnixTimestamp(connection);
+    const deadline = now + 3_600;
+    const nonce = hash32("graduation:gate-k");
+    const oraclePrice = 150_000_000n;
+    const nativeTarget =
+      (campaign.graduationTargetUsdMicros * 1_000_000_000n + oraclePrice - 1n) / oraclePrice;
+    assert.equal(nativeTarget, CLOSE_TARGET_LAMPORTS);
+
+    const digest = graduationDigest({
+      campaign: campaignAccounts.campaign,
+      mint: campaignAccounts.mint,
+      authority: admin,
+      graduationTargetUsdMicros: campaign.graduationTargetUsdMicros,
+      nativeTargetLamports: nativeTarget,
+      oraclePriceUsdMicros: oraclePrice,
+      pool,
+      position,
+      nftMint: nftMint.publicKey,
+      deadline,
+      nonce,
+      finalizeRouteProfile: ROUTE_PROFILE_UNLINKED,
+    });
+    const ed25519 = Ed25519Program.createInstructionWithPrivateKey({
+      privateKey: routeSigner.secretKey,
+      message: digest,
+    });
+    const beginIx = await program.methods
+      .beginGraduation({
+        nativeTargetLamports: new BN(nativeTarget.toString()),
+        oraclePriceUsdMicros: new BN(oraclePrice.toString()),
+        deadline: new BN(deadline),
+        nonce: Array.from(nonce),
+        positionNftMint: nftMint.publicKey,
+        finalizeRouteProfile: ROUTE_PROFILE_UNLINKED,
+      })
+      .accountsStrict({
+        authority: admin,
+        globalConfig,
+        generationConfig,
+        campaign: campaignAccounts.campaign,
+        mint: campaignAccounts.mint,
+        tokenVault: campaignAccounts.tokenVault,
+        solVault: campaignAccounts.solVault,
+        feeEscrow: campaignAccounts.feeEscrow,
+        authorityTokenAccount: authorityAta,
+        meteoraPool: pool,
+        meteoraPosition: position,
+        positionNftMint: nftMint.publicKey,
+        graduationState,
+        instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      })
+      .instruction();
+
+    const quote = graduationQuote(campaign);
+    const cpAmm = new CpAmm(connection);
+    const scale = 10n ** 18n;
+    const whole = quote.spotNano / scale;
+    const fraction = (quote.spotNano % scale).toString().padStart(18, "0").replace(/0+$/, "");
+    const initialPrice = fraction ? `${whole}.${fraction}` : whole.toString();
+    const initSqrtPrice = getSqrtPriceFromPrice(initialPrice, campaign.tokenDecimals, 9);
+    const tokenAAmount = new BN(quote.maxLiquidityTokens.toString());
+    const tokenBAmount = new BN(quote.maxLiquidityLamports.toString());
+    const liquidityDelta = cpAmm.getLiquidityDelta({
+      maxAmountTokenA: tokenAAmount,
+      maxAmountTokenB: tokenBAmount,
+      sqrtPrice: initSqrtPrice,
+      sqrtMinPrice: MIN_SQRT_PRICE,
+      sqrtMaxPrice: MAX_SQRT_PRICE,
+      collectFeeMode: CollectFeeMode.BothToken,
+    });
+    const { tx: meteoraTx, pool: sdkPool, position: sdkPosition } = await cpAmm.createCustomPool({
+      payer: admin,
+      creator: admin,
+      positionNft: nftMint.publicKey,
+      tokenAMint: campaignAccounts.mint,
+      tokenBMint: NATIVE_MINT,
+      tokenAAmount,
+      tokenBAmount,
+      sqrtMinPrice: MIN_SQRT_PRICE,
+      sqrtMaxPrice: MAX_SQRT_PRICE,
+      liquidityDelta,
+      initSqrtPrice,
+      poolFees: {
+        baseFee: getBaseFeeParams(
+          {
+            baseFeeMode: BaseFeeMode.FeeTimeSchedulerLinear,
+            feeTimeSchedulerParam: {
+              startingFeeBps: 25,
+              endingFeeBps: 25,
+              numberOfPeriod: 0,
+              totalDuration: 0,
+            },
+          },
+          9,
+          ActivationType.Timestamp,
+        ),
+        compoundingFeeBps: 0,
+        padding: 0,
+        dynamicFee: null,
+      },
+      hasAlphaVault: false,
+      activationType: ActivationType.Timestamp,
+      collectFeeMode: CollectFeeMode.BothToken,
+      activationPoint: null,
+      tokenAProgram: TOKEN_PROGRAM_ID,
+      tokenBProgram: TOKEN_PROGRAM_ID,
+      isLockLiquidity: true,
+    });
+    assert.equal(sdkPool.toBase58(), pool.toBase58(), "SDK pool PDA must match program derivation");
+    assert.equal(sdkPosition.toBase58(), position.toBase58(), "SDK position PDA must match program derivation");
+
+    const confirmIx = await program.methods
+      .confirmGraduation()
+      .accountsStrict({
+        authority: admin,
+        globalConfig,
+        campaign: campaignAccounts.campaign,
+        mint: campaignAccounts.mint,
+        tokenVault: campaignAccounts.tokenVault,
+        solVault: campaignAccounts.solVault,
+        authorityTokenAccount: authorityAta,
+        creator: campaign.creator,
+        creatorTokenAccount: creatorAta,
+        creatorProfile: derivePda(program.programId, "creator", campaign.creator.toBuffer()),
+        graduationState,
+        meteoraPool: pool,
+        meteoraPosition: position,
+        meteoraTokenVault: PublicKey.findProgramAddressSync(
+          [Buffer.from("token_vault"), campaignAccounts.mint.toBuffer(), pool.toBuffer()],
+          METEORA_CP_AMM,
+        )[0],
+        meteoraNativeVault: PublicKey.findProgramAddressSync(
+          [Buffer.from("token_vault"), NATIVE_MINT.toBuffer(), pool.toBuffer()],
+          METEORA_CP_AMM,
+        )[0],
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      })
+      .remainingAccounts(remainingRewardAccounts())
+      .instruction();
+
+    const instructions = [
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }),
+      ed25519,
+      beginIx,
+      ...meteoraTx.instructions,
+      confirmIx,
+    ];
+
+    const present = new Set(lookupTableAccount.state.addresses.map((item) => item.toBase58()));
+    const missing = [];
+    for (const ix of instructions) {
+      for (const key of [ix.programId, ...(ix.keys || []).map((meta) => meta.pubkey)]) {
+        const encoded = key.toBase58();
+        if (present.has(encoded) || missing.some((item) => item.equals(key))) continue;
+        missing.push(key);
+      }
+    }
+    const payer = adminKeypair;
+    for (let i = 0; i < missing.length; i += 20) {
+      await sendLegacy(
+        payer,
+        [
+          AddressLookupTableProgram.extendLookupTable({
+            payer: payer.publicKey,
+            authority: payer.publicKey,
+            lookupTable: lookupTableAccount.key,
+            addresses: missing.slice(i, i + 20),
+          }),
+        ],
+        "gateKExtendAlt",
+      );
+    }
+    if (missing.length) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      lookupTableAccount = (
+        await connection.getAddressLookupTable(lookupTableAccount.key)
+      ).value;
+      assert.ok(lookupTableAccount, "ALT disappeared after Gate K extend");
+    }
+
+    const latest = await connection.getLatestBlockhash("confirmed");
+    const versioned = v0Helpers.buildLaunchpadV0Transaction(web3, {
+      payer: admin,
+      recentBlockhash: latest.blockhash,
+      instructions,
+      lookupTableAccounts: [lookupTableAccount],
+    });
+    const stats = v0Helpers.inspectLaunchpadV0Envelope(web3, versioned, [lookupTableAccount]);
+    assert.ok(stats.serializedBytes <= 1232, `Gate K graduation is ${stats.serializedBytes} bytes; hard max is 1232`);
+    assert.ok(stats.requiredSigners >= 1 && stats.requiredSigners <= 2, `Gate K signers=${stats.requiredSigners}`);
+    const decompiled = web3.TransactionMessage.decompile(versioned.message, {
+      addressLookupTableAccounts: [lookupTableAccount],
+    });
+    const beginData = Buffer.from(beginIx.data);
+    const beginIndex = decompiled.instructions.findIndex(
+      (ix) => ix.programId.toBase58() === PROGRAM_ID && Buffer.from(ix.data).equals(beginData),
+    );
+    assert.ok(beginIndex > 0, "begin_graduation missing from V0 envelope");
+    assert.equal(
+      decompiled.instructions[beginIndex - 1].programId.toBase58(),
+      Ed25519Program.programId.toBase58(),
+      "Ed25519 must immediately precede begin_graduation",
+    );
+    const confirmIndex = decompiled.instructions.findIndex(
+      (ix, index) => index > beginIndex && ix.programId.toBase58() === PROGRAM_ID,
+    );
+    assert.ok(confirmIndex > beginIndex, "confirm_graduation missing after begin_graduation");
+    const meteoraBetween = decompiled.instructions
+      .slice(beginIndex + 1, confirmIndex)
+      .some((ix) => ix.programId.equals(METEORA_CP_AMM));
+    assert.ok(meteoraBetween, "Meteora createCustomPool must sit between begin_graduation and confirm_graduation");
+    versioned.sign([adminKeypair, nftMint]);
+    const serialized = versioned.serialize();
+    console.log(`[gate-k] graduation bytes=${serialized.length} v0Stats=${JSON.stringify(stats)}`);
+    const simulation = await v0Helpers.simulateLaunchpadV0Transaction(connection, versioned);
+    if (simulation.value.err) {
+      throw new Error(
+        `Gate K graduation simulation failed: ${JSON.stringify(simulation.value.err)}\n${(simulation.value.logs || []).join("\n")}`,
+      );
+    }
+    const signature = await connection.sendRawTransaction(serialized, {
+      skipPreflight: true,
+      maxRetries: 5,
+    });
+    const confirmation = await connection.confirmTransaction(
+      { signature, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight },
+      "confirmed",
+    );
+    if (confirmation.value.err) {
+      throw new Error(`Gate K graduation landed with error: ${JSON.stringify(confirmation.value.err)}`);
+    }
+
+    const poolInfo = await connection.getAccountInfo(pool, "confirmed");
+    assert.ok(poolInfo, "DAMM v2 pool must exist after graduation");
+    assert.equal(poolInfo.owner.toBase58(), METEORA_CP_AMM.toBase58());
+    const graduated = decodeCampaign(
+      (await connection.getAccountInfo(campaignAccounts.campaign, "confirmed")).data,
+    );
+    assert.equal(graduated.graduated, true, "campaign must be graduated");
+
+    const poolState = await cpAmm.fetchPoolState(pool);
+    const buyerAta = getAssociatedTokenAddressSync(campaignAccounts.mint, buyer.keypair.publicKey);
+    const sellAmount = (await getAccount(connection, buyerAta, "confirmed")).amount / 20n;
+    assert.ok(sellAmount > 0n, "buyer must hold launch tokens to swap");
+    const swapTx = await cpAmm.swap({
+      payer: buyer.keypair.publicKey,
+      pool,
+      inputTokenMint: campaignAccounts.mint,
+      outputTokenMint: NATIVE_MINT,
+      amountIn: new BN(sellAmount.toString()),
+      minimumAmountOut: new BN(1),
+      tokenAMint: poolState.tokenAMint,
+      tokenBMint: poolState.tokenBMint,
+      tokenAVault: poolState.tokenAVault,
+      tokenBVault: poolState.tokenBVault,
+      tokenAProgram: TOKEN_PROGRAM_ID,
+      tokenBProgram: TOKEN_PROGRAM_ID,
+      referralTokenAccount: null,
+    });
+    swapTx.feePayer = buyer.keypair.publicKey;
+    const swapLatest = await connection.getLatestBlockhash("confirmed");
+    swapTx.recentBlockhash = swapLatest.blockhash;
+    swapTx.sign(buyer.keypair);
+    const swapSig = await connection.sendRawTransaction(swapTx.serialize(), {
+      skipPreflight: true,
+      maxRetries: 3,
+    });
+    const swapConfirm = await connection.confirmTransaction(
+      { signature: swapSig, ...swapLatest },
+      "confirmed",
+    );
+    if (swapConfirm.value.err) {
+      throw new Error(`Gate K DAMM v2 swap failed: ${JSON.stringify(swapConfirm.value.err)}`);
+    }
+    const stillGraduated = decodeCampaign(
+      (await connection.getAccountInfo(campaignAccounts.campaign, "confirmed")).data,
+    );
+    assert.equal(stillGraduated.graduated, true);
+    console.log(`[gate-k] GRADUATED ${signature} pool=${pool.toBase58()} swap=${swapSig}`);
   });
 });

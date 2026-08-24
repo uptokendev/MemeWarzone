@@ -20,9 +20,13 @@ export type MarketIdentity = {
   inputAddress: string;
 };
 
+function isSolanaChain(chainId: number) {
+  return chainId === 101 || chainId === 102;
+}
+
 function normalizeAddress(chainId: number, value: unknown): string {
   const raw = String(value ?? "").trim();
-  return chainId === 101 ? raw : raw.toLowerCase();
+  return isSolanaChain(chainId) ? raw : raw.toLowerCase();
 }
 
 export function isEvmAddress(value: string): boolean {
@@ -34,7 +38,7 @@ export function isSolanaAddress(value: string): boolean {
 }
 
 function isMarketAddress(chainId: number, value: string): boolean {
-  return chainId === 101 ? isSolanaAddress(value) : isEvmAddress(value);
+  return isSolanaChain(chainId) ? isSolanaAddress(value) : isEvmAddress(value);
 }
 
 /**
@@ -51,6 +55,7 @@ export async function resolveMarketIdentity(
   }
 
   // Prefer exact campaign match, then token match (token/mint is the public URL id).
+  // Solana URLs sometimes lose base58 case; fall back to lower() only after exact match.
   const result = await pool.query(
     `select
        campaign_address,
@@ -60,12 +65,18 @@ export async function resolveMarketIdentity(
        and (
          campaign_address = $2
          or token_address = $2
+         or ($3::boolean and lower(campaign_address) = lower($2))
+         or ($3::boolean and lower(token_address) = lower($2))
        )
      order by
-       case when campaign_address = $2 then 0 else 1 end,
+       case
+         when campaign_address = $2 then 0
+         when token_address = $2 then 1
+         else 2
+       end,
        updated_at desc nulls last
      limit 1`,
-    [chainId, input],
+    [chainId, input, isSolanaChain(chainId)],
   );
 
   const row = result.rows[0];

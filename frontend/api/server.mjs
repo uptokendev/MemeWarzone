@@ -147,6 +147,8 @@ import {
 } from "./dev-fix/reward-batch-ops.js";
 import { rewardClaimConfig, rewardClaimIntent, rewardClaimRecord } from "./dev-fix/reward-claim-intent.js";
 import dashboardLpFees from "./dashboard/lp-fees.js";
+import analyticsIngest from "./analytics/ingest.js";
+import analyticsAdmin from "./analytics/admin.js";
 import prepareOg from "./prepare-og.js";
 import adminAbuseMe from "./admin/abuse/me.js";
 import adminAbuseReports from "./admin/abuse/reports.js";
@@ -241,7 +243,7 @@ app.use((req, res, next) => {
       res.setHeader("Access-Control-Allow-Origin", "*");
     }
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, x-diagnostics-token, x-rank-events-token, x-ops-key");
+    res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, x-diagnostics-token, x-rank-events-token, x-ops-key, x-analytics-key");
   }
   if (req.method === "OPTIONS") return res.status(204).end();
   next();
@@ -384,6 +386,8 @@ router.all("/auth/nonce", wrap(authNonce));
 router.all("/campaigns/upsert", wrap(campaignsUpsert));
 router.all("/campaigns", wrap(campaigns));
 router.all("/dashboard/lp-fees", wrap(dashboardLpFees));
+router.all("/analytics/ingest", wrap(analyticsIngest));
+router.all(/^\/admin\/analytics(?:\/.*)?$/, wrap(analyticsAdmin));
 router.all("/comments", wrap(comments));
 router.all("/crypticpump-listings", wrap(crypticpumpListings));
 router.all("/chat/history", wrap(chatHistory));

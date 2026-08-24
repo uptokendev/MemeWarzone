@@ -598,6 +598,8 @@ export function useWallet(): WalletHook {
 
     setConnecting(true);
     setConnectingWalletId(wallet);
+    const { analytics, analyticsErrorCode } = await import("@/lib/analytics/ProductAnalytics");
+    analytics.track("wallet_connect_started", { wallet_type: wallet, chain: "bnb" });
 
     try {
       requestEip6963Providers();
@@ -620,7 +622,13 @@ export function useWallet(): WalletHook {
       await applyProviderState(selectedWallet.provider, chosen, selectedWallet.id);
       setChainId(cid);
       window.localStorage.removeItem(DISCONNECTED_KEY);
+      analytics.track("wallet_connect_succeeded", { wallet_type: wallet, chain: "bnb" });
     } catch (error) {
+      analytics.track("wallet_connect_failed", {
+        wallet_type: wallet,
+        chain: "bnb",
+        error_code: isRejected(error) ? "rejected" : analyticsErrorCode(error),
+      });
       if (!isRejected(error)) throw new Error(getErrorMessage(error));
     } finally {
       setConnecting(false);

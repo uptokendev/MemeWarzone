@@ -118,9 +118,9 @@ export const LEAGUES: LeagueDef[] = [
     supportedPeriods: ["weekly", "monthly"],
     metricLabel: "Epoch referral score",
     ruleSummary:
-      "Strict weekly/monthly window only: new links, squad joins, and referred volume in this epoch. All-time recruiter size does not carry over.",
+      "Universal All-Chains board. Active recruiter network counts now; BNB and SOL referred volume this epoch are converted to USD separately then combined.",
     emptyStateCopy:
-      "No recruiter activity in this epoch yet. Only links, joins, and volume inside the selected week/month count.",
+      "No active recruiters yet. Existing linked wallets still count this week; only trades and earnings are limited to the current epoch.",
     weeklyLimit: 50,
     monthlyLimit: 100,
   },

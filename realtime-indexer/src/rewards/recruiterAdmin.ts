@@ -1,5 +1,6 @@
 import type { QueryResult } from "pg";
 import { pool } from "../db.js";
+import { normalizeWalletAddress } from "../walletAddress.js";
 
 export const RECRUITER_ADMIN_ACTION_TYPES = [
   "recruiter_upsert",
@@ -67,11 +68,7 @@ function mustIso(value: unknown, label: string): string {
 }
 
 function normalizeAddress(value: unknown): string {
-  const address = String(value ?? "").trim().toLowerCase();
-  if (!/^0x[a-f0-9]{40}$/.test(address)) {
-    throw new Error(`Invalid wallet address: ${String(value ?? "")}`);
-  }
-  return address;
+  return normalizeWalletAddress(value);
 }
 
 function normalizeCode(value: unknown): string {

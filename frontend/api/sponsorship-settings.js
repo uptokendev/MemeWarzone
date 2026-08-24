@@ -18,9 +18,7 @@ async function ensureSettingsTable() {
     )
   `);
 
-  // Best-effort grants for dashboard anon path (may no-op on non-Supabase roles).
-  await pool.query(`grant select, insert, update on table public.sponsorship_settings to anon, authenticated`).catch(() => {});
-  await pool.query(`alter table public.sponsorship_settings disable row level security`).catch(() => {});
+  await pool.query(`alter table public.sponsorship_settings enable row level security`).catch(() => {});
 
   await pool.query(
     `insert into public.sponsorship_settings (key, value)

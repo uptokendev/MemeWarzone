@@ -3,6 +3,31 @@
  * without waiting for an indexer (critical for Solana V4 create).
  */
 import { isSolanaChain } from "../../server/http.js";
+import { findProgramAddressSync, publicKeyBytes } from "./solana-v4-primitives.js";
+
+const FEE_ESCROW_SEED = Buffer.from("fee-escrow", "utf8");
+const DEFAULT_SOLANA_PROGRAM_ID = "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt";
+
+async function enqueueSolanaFeeEscrowInit(db, { chainId, campaignAddress, programId }) {
+  if (!isSolanaChain(chainId) || !campaignAddress) return;
+  try {
+    const program = String(programId || process.env.SOLANA_LAUNCHPAD_PROGRAM_ID || DEFAULT_SOLANA_PROGRAM_ID).trim();
+    const escrow = findProgramAddressSync(
+      [FEE_ESCROW_SEED, publicKeyBytes(campaignAddress)],
+      program,
+    ).publicKey;
+    await db.query(
+      `insert into public.solana_fee_escrow_accruals(chain_id, campaign_address, escrow_address, init_status)
+       values ($1, $2, $3, 'pending')
+       on conflict (chain_id, campaign_address) do update set
+         escrow_address = excluded.escrow_address,
+         updated_at = now()`,
+      [Number(chainId), campaignAddress, escrow],
+    );
+  } catch (error) {
+    console.warn("[campaign-registry] fee escrow enqueue failed", error?.message || error);
+  }
+}
 
 function normalizeRegistryAddress(value, chainId) {
   const raw = String(value || "").trim();
@@ -235,6 +260,14 @@ export async function upsertCampaignFromDraft(db, input) {
       attempts.push(`meta:${merged?.error || "failed"}`);
       console.warn("[campaign-registry] solana meta not stored", merged?.error);
     }
+  }
+
+  if (isSolanaChain(chainId)) {
+    await enqueueSolanaFeeEscrowInit(db, {
+      chainId,
+      campaignAddress,
+      programId: input.programId || factoryAddress,
+    });
   }
 
   return { ok: true, row, attempts, metaMerged };

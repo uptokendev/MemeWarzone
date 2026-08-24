@@ -96,6 +96,17 @@ function readStoredArray(storage: Storage, storageKey: string, chainId: number):
   }
 }
 
+export function clearCachedTradeHistory(chainId: number, campaign: string) {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(key(chainId, campaign));
+    window.localStorage.removeItem(`${LEGACY_PREFIX}${Number(chainId)}:${normalizeAddress(chainId, campaign)}`);
+    window.sessionStorage.removeItem(`${LEGACY_PREFIX}${Number(chainId)}:${normalizeAddress(chainId, campaign)}`);
+  } catch {
+    // ignore
+  }
+}
+
 export function loadCachedTradeHistory(chainId: number, campaign: string): CurveTradePoint[] {
   if (typeof window === "undefined") return [];
   const currentKey = key(chainId, campaign);
@@ -119,12 +130,18 @@ export function loadCachedTradeHistory(chainId: number, campaign: string): Curve
     .slice(-MAX);
 }
 
-export function saveCachedTradeHistory(chainId: number, campaign: string, trades: CurveTradePoint[]) {
+export function saveCachedTradeHistory(
+  chainId: number,
+  campaign: string,
+  trades: CurveTradePoint[],
+  opts?: { replace?: boolean },
+) {
   const storage = storageFor(chainId);
   if (!storage) return;
   try {
     const map = new Map<string, Stored>();
-    for (const t of [...loadCachedTradeHistory(chainId, campaign), ...trades]) {
+    const incoming = opts?.replace ? trades : [...loadCachedTradeHistory(chainId, campaign), ...trades];
+    for (const t of incoming) {
       const s = toStored(t, chainId);
       if (!s) continue;
       map.set(`${s.txHash}:${s.logIndex}`, s);

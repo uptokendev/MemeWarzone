@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { apiFetch } from "@/lib/apiBase";
+import { analytics, analyticsErrorCode } from "@/lib/analytics/ProductAnalytics";
 import {
   FEATURED_SPONSOR_CREATIVE_H,
   FEATURED_SPONSOR_CREATIVE_W,
@@ -158,6 +159,7 @@ const SponsorshipApplication = () => {
     }
 
     setSubmitting(true);
+    analytics.track("sponsorship_apply_started");
     try {
       const response = await apiFetch("/api/sponsorship-applications", {
         method: "POST",
@@ -185,8 +187,10 @@ const SponsorshipApplication = () => {
 
       if (typeof window !== "undefined") window.localStorage.removeItem(STORAGE_KEY);
       setForm({ ...defaultForm, packageCode: packages[0]?.code || "" });
+      analytics.track("sponsorship_apply_submitted");
       toast.success("Application submitted — no payment yet. We review first, then send payment details.");
-    } catch {
+    } catch (error) {
+      analytics.track("sponsorship_apply_failed", { error_code: analyticsErrorCode(error) });
       toast.error("We couldn’t submit your sponsorship application right now. Please try again.");
       toast.message("Your application draft is still saved locally in this browser.");
     } finally {

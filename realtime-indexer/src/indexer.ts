@@ -7,7 +7,9 @@ import { publishTrade, publishCandle, publishStats, publishLeague } from "./ably
 import { createLeagueFeedPublisher } from "./leagueFeed.js";
 import { recordCampaignCreatedActivity, recordTradeActivity } from "./rewards/attribution.js";
 import { upsertRewardEvent } from "./rewards/ingest.js";
-import { createStaticJsonRpcProvider, parseRpcList } from "./rpcProvider.js";
+import { createStaticJsonRpcProvider, createWorkingProvider, parseRpcList } from "./rpcProvider.js";
+import { bnbCurveState, parseRawTokenAmount } from "./bnbCurvePricing.js";
+import { campaignScanChunks } from "./campaignScanChunks.js";
 import { checkMilestones } from "./milestones.js";
 
 // ---------------------------------------------------------------------------
@@ -310,18 +312,12 @@ async function snapStaleCampaignCursor(
 ): Promise<void> {
   const cursor = `campaign:${String(campaign || "").toLowerCase()}`;
   const last = await getState(chainId, cursor);
-  if (last <= 0 || head <= 0) return;
-  if (head - last < 50_000) return;
+  if (head <= 0) return;
+  // New campaign only: start near tip. Never jump an existing cursor over a gap —
+  // that is how live buys between last-indexed and head-20k disappeared.
+  if (last > 0) return;
   const next = Math.max(0, head - Math.max(3_000, tipBlocks));
-  if (next <= last) return;
   await setStateMax(chainId, cursor, next);
-  console.warn("[indexer] snapped stale campaign cursor to tip", {
-    chainId,
-    campaign: campaign.toLowerCase(),
-    from: last,
-    to: next,
-    head,
-  });
 }
 
 async function setStateMax(chainId: number, cursor: string, nextBlock: number) {
@@ -751,6 +747,46 @@ async function upsertCandle(
   });
 }
 
+const BNB_CURVE_PARAM_ABI = [
+  "function basePrice() view returns (uint256)",
+  "function priceSlope() view returns (uint256)",
+];
+const BNB_CURVE_PARAM_TTL_MS = 5 * 60 * 1000;
+const bnbCurveParamCache = new Map<string, { base: bigint; slope: bigint; at: number }>();
+
+async function loadBnbCurveParams(chainId: number, campaign: string): Promise<{ base: bigint; slope: bigint } | null> {
+  const key = `${chainId}:${campaign.toLowerCase()}`;
+  const cached = bnbCurveParamCache.get(key);
+  if (cached && Date.now() - cached.at < BNB_CURVE_PARAM_TTL_MS) {
+    return { base: cached.base, slope: cached.slope };
+  }
+  const urls = parseRpcList(chainId === 56 ? ENV.BSC_RPC_HTTP_56 : ENV.BSC_RPC_HTTP_97);
+  if (!urls.length) return null;
+  try {
+    const { provider } = await createWorkingProvider(urls, chainId, {
+      timeoutMs: 8_000,
+      label: `bnb-curve-params-${chainId}`,
+    });
+    const contract = new ethers.Contract(campaign, BNB_CURVE_PARAM_ABI, provider) as any;
+    const [basePriceRaw, priceSlopeRaw] = await Promise.all([
+      contract.basePrice() as Promise<bigint>,
+      contract.priceSlope() as Promise<bigint>,
+    ]);
+    const next = { base: BigInt(basePriceRaw), slope: BigInt(priceSlopeRaw), at: Date.now() };
+    bnbCurveParamCache.set(key, next);
+    return next;
+  } catch (error) {
+    console.warn("[indexer] BNB curve params unavailable", {
+      chainId,
+      campaign,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
+
+
 async function patchStats(chainId: number, campaign: string) {
   const r = await pool.query(
     `with t as (
@@ -772,20 +808,30 @@ async function patchStats(chainId: number, campaign: string) {
     [chainId, campaign.toLowerCase()]
   );
 
-  const lastPrice: number | null = r.rows[0]?.last_price_bnb ?? null;
+  const fillPrice: number | null = r.rows[0]?.last_price_bnb != null ? Number(r.rows[0].last_price_bnb) : null;
   const vol24h: number = Number(r.rows[0]?.vol24h_bnb ?? 0);
 
   const soldRes = await pool.query(
     `select
-       coalesce(sum(case when side='buy' then token_amount else 0 end),0) -
-       coalesce(sum(case when side='sell' then token_amount else 0 end),0) as sold
+       (coalesce(sum(case when side='buy' then token_amount_raw::numeric else 0 end),0) -
+        coalesce(sum(case when side='sell' then token_amount_raw::numeric else 0 end),0)
+       )::text as sold_raw
      from public.curve_trades
      where chain_id=$1 and campaign_address=$2`,
     [chainId, campaign.toLowerCase()]
   );
 
-  const sold: number = Number(soldRes.rows[0]?.sold ?? 0);
-  const marketcap: number | null = lastPrice !== null ? lastPrice * sold : null;
+  const soldRaw = parseRawTokenAmount(soldRes.rows[0]?.sold_raw);
+  const params = await loadBnbCurveParams(chainId, campaign);
+  const curve = params ? bnbCurveState(params.base, params.slope, soldRaw) : null;
+  // Current token price is curve marginal spot. Fill VWAP stays on
+  // curve_trades.price_bnb and is never used to derive marketcap_bnb.
+  const lastPrice: number | null =
+    curve && curve.spotNative > 0
+      ? curve.spotNative
+      : (fillPrice != null && Number.isFinite(fillPrice) ? fillPrice : null);
+  const sold: number = curve ? curve.soldWhole : Number(soldRaw) / 1e18;
+  const marketcap: number | null = curve && curve.mcapNative > 0 ? curve.mcapNative : null;
 
   await pool.query(
     `insert into public.token_stats(
@@ -813,6 +859,47 @@ async function patchStats(chainId: number, campaign: string) {
     vol24hBnb: String(vol24h)
   });
 
+}
+
+let bnbCanonicalMcapRefresh: Promise<{ campaigns: number; ok: number; failed: number }> | null = null;
+
+/** Rewrite BNB token_stats to spot × sold without waiting for the next trade. */
+export async function refreshBnbCanonicalMarketcaps() {
+  if (bnbCanonicalMcapRefresh) return bnbCanonicalMcapRefresh;
+  bnbCanonicalMcapRefresh = (async () => {
+    const rows = await pool.query(
+      `select chain_id, campaign_address from public.token_stats where chain_id in (56, 97)
+       union
+       select distinct chain_id, campaign_address from public.curve_trades where chain_id in (56, 97)`,
+    );
+    let ok = 0;
+    let failed = 0;
+    for (const row of rows.rows) {
+      try {
+        await patchStats(Number(row.chain_id), String(row.campaign_address));
+        ok += 1;
+      } catch (error) {
+        failed += 1;
+        console.warn("[indexer] BNB canonical mcap refresh failed", {
+          chainId: row.chain_id,
+          campaign: row.campaign_address,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    console.log("[indexer] BNB canonical mcap refresh", {
+      campaigns: rows.rows.length,
+      ok,
+      failed,
+    });
+    return { campaigns: rows.rows.length, ok, failed };
+  })();
+  try {
+    return await bnbCanonicalMcapRefresh;
+  } catch (error) {
+    bnbCanonicalMcapRefresh = null;
+    throw error;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1236,7 +1323,10 @@ async function scanCampaignRange(
     }
   }
 
-  for (let start = fromBlock; start <= toBlock; start += step) {
+  const chunks = campaignScanChunks(fromBlock, toBlock, step, tradesOnly);
+  for (const chunk of chunks) {
+    const start = chunk.start;
+    const end = chunk.end;
     if (opts.deadlineMs && Date.now() >= opts.deadlineMs) {
       console.warn("[indexer] campaign scan hit pass deadline", {
         chainId,
@@ -1244,10 +1334,10 @@ async function scanCampaignRange(
         label: opts.label || "history",
         atBlock: start,
         toBlock,
+        newestFirst: tradesOnly,
       });
       break;
     }
-    const end = Math.min(toBlock, start + step - 1);
 
     // Tip may skip a dead chunk (advanceCursor is false there). History must
     // not: a soft-fail + cursor bump is how WIC lost the 2-day fills.
@@ -1318,6 +1408,7 @@ async function scanCampaignRange(
 
         if (inserted) {
           insertedTotal += 1;
+          leagueFeed.queueRaisedDelta(chainId, campaign, bnbAmount);
           // Do not await Ably — a slow realtime fanout must not block trade DB writes.
           void publishTrade(chainId, campaign, {
             type: "trade",
@@ -1449,6 +1540,7 @@ async function scanCampaignRange(
 
         // Graduation marker for league categories
         await setCampaignGraduated(chainId, campaign, log.blockNumber, new Date(tsSec * 1000), txHash);
+        leagueFeed.queueGraduation(chainId, campaign, new Date(tsSec * 1000).toISOString());
       }
     }
 
@@ -1579,9 +1671,11 @@ export async function ingestCampaignTransaction(input: {
     });
 
     if (inserted) {
-      if (trade.side === "sell") {
-        leagueFeed.queueRaisedDelta(chain.chainId, campaign, -bnbAmount);
-      }
+      leagueFeed.queueRaisedDelta(
+        chain.chainId,
+        campaign,
+        trade.side === "sell" ? -bnbAmount : bnbAmount,
+      );
 
       await publishTrade(chain.chainId, campaign, {
         type: "trade",

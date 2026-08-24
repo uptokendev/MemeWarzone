@@ -63,12 +63,7 @@ export type TradeTokensInstructionAccounts = {
   instructions?: string;
   tokenProgram?: string;
   systemProgram?: string;
-  leagueVault: string;
-  airdropVault: string;
-  monthlyLeagueVault: string;
-  recruiterVault: string;
-  squadVault: string;
-  protocolVault: string;
+  feeEscrow: string;
 };
 
 function u64le(value: string | number | bigint): Uint8Array {
@@ -262,12 +257,7 @@ export function buildTradeTokensInstruction(
       { pubkey: new PublicKey(a.instructions || SOLANA_INSTRUCTIONS_SYSVAR), isSigner: false, isWritable: false },
       { pubkey: new PublicKey(a.tokenProgram || SOLANA_TOKEN_PROGRAM_ID), isSigner: false, isWritable: false },
       { pubkey: new PublicKey(a.systemProgram || SOLANA_SYSTEM_PROGRAM_ID), isSigner: false, isWritable: false },
-      { pubkey: new PublicKey(a.leagueVault), isSigner: false, isWritable: true },
-      { pubkey: new PublicKey(a.airdropVault), isSigner: false, isWritable: true },
-      { pubkey: new PublicKey(a.monthlyLeagueVault), isSigner: false, isWritable: true },
-      { pubkey: new PublicKey(a.recruiterVault), isSigner: false, isWritable: true },
-      { pubkey: new PublicKey(a.squadVault), isSigner: false, isWritable: true },
-      { pubkey: new PublicKey(a.protocolVault), isSigner: false, isWritable: true },
+      { pubkey: new PublicKey(a.feeEscrow), isSigner: false, isWritable: true },
     ],
     data: encodeTradeTokensData(input),
   });
