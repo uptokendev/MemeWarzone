@@ -10,8 +10,8 @@
 
     <!--
       Default site OG/Twitter card (homepage + any SPA route without its own tags).
-      /assets/og.png is the server-hosted 1200x630 social preview image.
-      The version query busts stale X/Discord/Telegram caches after asset changes.
+      Use a versioned image filename so social platforms cannot reuse an older
+      cached /assets/og.png preview after artwork changes.
     -->
     <meta property="og:type" content="website" />
     <meta property="og:locale" content="en_US" />
@@ -19,8 +19,8 @@
     <meta property="og:url" content="https://app.memewar.zone/" />
     <meta property="og:title" content="MemeWarzone — Secure Memecoin Launchpad" />
     <meta property="og:description" content="Launch. Trade. Compete. Earn. Built for creators, traders & communities on BNB + Solana." />
-    <meta property="og:image" content="https://app.memewar.zone/assets/og.png?v=20260825" />
-    <meta property="og:image:secure_url" content="https://app.memewar.zone/assets/og.png?v=20260825" />
+    <meta property="og:image" content="https://app.memewar.zone/assets/og-20260825.png" />
+    <meta property="og:image:secure_url" content="https://app.memewar.zone/assets/og-20260825.png" />
     <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
@@ -31,7 +31,7 @@
     <meta name="twitter:creator" content="@memewarzone" />
     <meta name="twitter:title" content="MemeWarzone — Secure Memecoin Launchpad" />
     <meta name="twitter:description" content="Launch. Trade. Compete. Earn. Built for creators, traders & communities on BNB + Solana." />
-    <meta name="twitter:image" content="https://app.memewar.zone/assets/og.png?v=20260825" />
+    <meta name="twitter:image" content="https://app.memewar.zone/assets/og-20260825.png" />
     <meta name="twitter:image:alt" content="MemeWarzone — Secure Memecoin Launchpad. No BS. Just Rewards. Built for creators, traders and communities on BNB + Solana." />
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
