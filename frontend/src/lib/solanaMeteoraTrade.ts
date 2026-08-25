@@ -7,17 +7,39 @@ import {
   Connection,
   PublicKey,
   type Transaction,
+  type TransactionInstruction,
 } from "@solana/web3.js";
 import { NATIVE_MINT, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 
+import { confirmLaunchpadSignature } from "@/lib/solanaConfirmSignature";
 import { getSolanaReadConnection } from "@/lib/solanaReadConnection";
 import {
   getSolanaProvider,
   getStoredSolanaWallet,
   getStoredSolanaWalletId,
 } from "@/lib/solanaWallet";
+import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
+import {
+  assertSolanaUserV0Intent,
+  compileSolanaUserV0WithLatestBlockhash,
+  simulateSolanaUserV0OrThrow,
+} from "@/lib/solanaUserV0Transaction";
 
 export const METEORA_CP_AMM_PROGRAM_ID = "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG";
+
+const SOLANA_TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpHx";
+const SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+const SOLANA_SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
+const SOLANA_COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget111111111111111111111111111111";
+
+const METEORA_ALLOWED_PROGRAM_IDS = new Set([
+  METEORA_CP_AMM_PROGRAM_ID,
+  TOKEN_PROGRAM_ID.toBase58(),
+  SOLANA_TOKEN_2022_PROGRAM_ID,
+  SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID,
+  SOLANA_SYSTEM_PROGRAM_ID,
+  SOLANA_COMPUTE_BUDGET_PROGRAM_ID,
+]);
 
 export type SolanaMeteoraSide = "buy" | "sell";
 
@@ -229,53 +251,107 @@ export async function quoteSolanaMeteoraForDesiredOutput(input: {
   return highQuote;
 }
 
-async function sendWalletTransaction(connection: Connection, transaction: Transaction, walletAddress: PublicKey): Promise<string> {
+function assertMeteoraInstructionEnvelope(input: {
+  instructions: TransactionInstruction[];
+  wallet: PublicKey;
+  pool: PublicKey;
+  launchMint: PublicKey;
+  inputMint: PublicKey;
+  outputMint: PublicKey;
+}) {
+  if (!input.instructions.length) throw new Error("Meteora SDK returned an empty transaction.");
+
+  let meteoraInstructionCount = 0;
+  let walletSignerSeen = false;
+  const referenced = new Set<string>();
+
+  for (const instruction of input.instructions) {
+    const programId = instruction.programId.toBase58();
+    if (!METEORA_ALLOWED_PROGRAM_IDS.has(programId)) {
+      throw new Error(`Unexpected program in Meteora swap: ${programId}`);
+    }
+    if (programId === METEORA_CP_AMM_PROGRAM_ID) meteoraInstructionCount += 1;
+
+    for (const key of instruction.keys) {
+      const address = key.pubkey.toBase58();
+      referenced.add(address);
+      if (key.isSigner) {
+        if (!key.pubkey.equals(input.wallet)) {
+          throw new Error(`Unexpected signer in Meteora swap: ${address}`);
+        }
+        walletSignerSeen = true;
+      }
+    }
+  }
+
+  if (meteoraInstructionCount < 1) throw new Error("Meteora swap instruction is missing.");
+  if (!walletSignerSeen) throw new Error("Connected wallet is not the signer of the Meteora swap.");
+
+  for (const [label, key] of [
+    ["pool", input.pool],
+    ["launch mint", input.launchMint],
+    ["input mint", input.inputMint],
+    ["output mint", input.outputMint],
+  ] as const) {
+    if (!referenced.has(key.toBase58())) {
+      throw new Error(`Meteora swap does not reference expected ${label} ${key.toBase58()}.`);
+    }
+  }
+}
+
+async function sendWalletV0Transaction(
+  connection: Connection,
+  legacyTransaction: Transaction,
+  walletAddress: PublicKey,
+  validation: {
+    pool: PublicKey;
+    launchMint: PublicKey;
+    inputMint: PublicKey;
+    outputMint: PublicKey;
+  },
+): Promise<string> {
   const walletId = getStoredSolanaWalletId();
   const provider = getSolanaProvider(walletId || null);
-  if (!provider) throw new Error("No Solana wallet provider found.");
+  if (!provider?.publicKey || typeof provider.signTransaction !== "function") {
+    throw new Error("This Solana wallet cannot sign V0 transactions.");
+  }
   const providerAddress = String(provider.publicKey?.toString?.() || "").trim();
   if (!providerAddress || providerAddress !== walletAddress.toBase58()) {
     throw new Error("Connected Solana wallet changed. Reconnect the selected wallet and retry.");
   }
 
-  const latest = await connection.getLatestBlockhash("confirmed");
-  transaction.feePayer = walletAddress;
-  transaction.recentBlockhash = latest.blockhash;
+  const instructions = Array.from(legacyTransaction.instructions || []);
+  assertMeteoraInstructionEnvelope({
+    instructions,
+    wallet: walletAddress,
+    ...validation,
+  });
 
-  const simulation = await connection.simulateTransaction(transaction, { sigVerify: false });
-  if (simulation.value.err) {
-    console.error("Transaction simulation failed with error:", simulation.value.err);
-    if (simulation.value.logs) {
-      console.error("Simulation logs:", simulation.value.logs.join("\n"));
-    }
-    throw new Error(`Transaction simulation failed: ${JSON.stringify(simulation.value.err)}`);
-  }
+  const web3 = await loadSolanaWeb3();
+  const intent = { payer: walletAddress.toBase58(), instructions };
+  const simulated = await compileSolanaUserV0WithLatestBlockhash(web3, connection, intent);
+  await simulateSolanaUserV0OrThrow(connection, simulated.transaction, "Meteora swap");
 
-  if (typeof provider.signTransaction === "function") {
-    const signed = await provider.signTransaction(transaction);
-    const signature = await connection.sendRawTransaction(signed.serialize(), {
-      skipPreflight: false,
-      maxRetries: 5,
-    });
-    const confirmation = await connection.confirmTransaction(
-      { signature, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight },
-      "confirmed",
-    );
-    if (confirmation.value.err) throw new Error(`Meteora swap failed: ${JSON.stringify(confirmation.value.err)}`);
-    return signature;
-  } else if (typeof provider.signAndSendTransaction === "function") {
-    const result = await provider.signAndSendTransaction(transaction);
-    const signature = typeof result === "string" ? result : String(result?.signature || "");
-    if (!signature) throw new Error("Solana wallet did not return a transaction signature.");
-    const confirmation = await connection.confirmTransaction(
-      { signature, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight },
-      "confirmed",
-    );
-    if (confirmation.value.err) throw new Error(`Meteora swap failed: ${JSON.stringify(confirmation.value.err)}`);
-    return signature;
-  } else {
-    throw new Error("This Solana wallet cannot sign transactions.");
-  }
+  // Recompile after simulation so wallet signing always uses a fresh blockhash.
+  const final = await compileSolanaUserV0WithLatestBlockhash(web3, connection, intent);
+  const signed = await provider.signTransaction(final.transaction);
+  assertSolanaUserV0Intent(web3, signed, {
+    ...intent,
+    // Phantom may append wallet safety / priority instructions. The exact Meteora
+    // SDK instruction sequence must remain contiguous and unchanged.
+    allowAdditionalInstructions: true,
+  });
+
+  const signature = await connection.sendRawTransaction(signed.serialize(), {
+    skipPreflight: false,
+    maxRetries: 5,
+  });
+  const confirmation = await confirmLaunchpadSignature(connection, {
+    signature,
+    lastValidBlockHeight: final.latest.lastValidBlockHeight,
+  });
+  if (confirmation.err) throw new Error(`Meteora swap failed: ${JSON.stringify(confirmation.err)}`);
+  return signature;
 }
 
 /** Execute a previously displayed quote against the verified deterministic DAMM v2 pool. */
@@ -292,6 +368,16 @@ export async function executeSolanaMeteoraSwap(input: {
     poolAddress: input.poolAddress || input.quote.pool,
   });
   if (market.pool.toBase58() !== input.quote.pool) throw new Error("Meteora quote pool changed.");
+
+  const expectedInputMint = input.quote.side === "buy" ? NATIVE_MINT : market.mint;
+  const expectedOutputMint = input.quote.side === "buy" ? market.mint : NATIVE_MINT;
+  if (input.quote.inputMint !== expectedInputMint.toBase58()) throw new Error("Meteora quote input mint changed.");
+  if (input.quote.outputMint !== expectedOutputMint.toBase58()) throw new Error("Meteora quote output mint changed.");
+  assertPositiveRaw(input.quote.amountInRaw, "Swap input");
+  assertPositiveRaw(input.quote.minimumAmountOutRaw, "Minimum swap output");
+  if (input.quote.minimumAmountOutRaw > input.quote.amountOutRaw) {
+    throw new Error("Meteora minimum output exceeds quoted output.");
+  }
 
   const storedWallet = String(input.walletAddress || getStoredSolanaWallet() || "").trim();
   if (!storedWallet) throw new Error("Connect a Solana wallet first.");
@@ -324,6 +410,11 @@ export async function executeSolanaMeteoraSwap(input: {
       : typeof builder.build === "function"
         ? await builder.build()
         : (built as Transaction);
-  const signature = await sendWalletTransaction(market.connection, transaction, wallet);
+  const signature = await sendWalletV0Transaction(market.connection, transaction, wallet, {
+    pool: market.pool,
+    launchMint: market.mint,
+    inputMint,
+    outputMint,
+  });
   return { signature, quote: input.quote };
 }
