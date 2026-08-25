@@ -10,6 +10,9 @@ on:
       - frontend/src/lib/solanaLeagueClaim.ts
       - frontend/src/lib/solanaRewardClaim.ts
       - frontend/src/lib/solanaRewardLaneClaim.ts
+      - frontend/src/lib/solanaRewardV0Claim.ts
+      - frontend/src/lib/solanaTradeV1.ts
+      - frontend/src/lib/solanaTradeAtaV0.test.mjs
       - frontend/scripts/load-solana-v0-module.mjs
       - .github/workflows/solana-user-v0-normalization.yml
   workflow_dispatch:
@@ -37,6 +40,9 @@ jobs:
 
       - name: Test generic user V0 envelope
         run: node --test frontend/src/lib/solanaUserV0Transaction.test.mjs
+
+      - name: Test first-buy ATA in one V0 trade
+        run: node --test frontend/src/lib/solanaTradeAtaV0.test.mjs
 
       - name: Re-run proven CREATE / BUY / SELL V0 invariants
         run: npm --prefix frontend run test:solana-v0
