@@ -14,6 +14,12 @@ export type SolanaUserV0Intent = {
   instructions: TransactionInstruction[];
   maxRequiredSigners?: number;
   hardMaxBytes?: number;
+  /**
+   * Wallets such as Phantom may append safety / priority instructions after signing.
+   * When enabled, the exact expected instruction sequence must still exist contiguously
+   * and unchanged, but additional wallet instructions may appear before or after it.
+   */
+  allowAdditionalInstructions?: boolean;
 };
 
 export type SolanaUserV0Stats = {
@@ -47,6 +53,25 @@ function instructionEqual(a: TransactionInstruction, b: TransactionInstruction):
     if (left.isSigner !== right.isSigner || left.isWritable !== right.isWritable) return false;
   }
   return true;
+}
+
+function findContiguousInstructionSequence(
+  actual: TransactionInstruction[],
+  expected: TransactionInstruction[],
+): number {
+  if (expected.length === 0) return 0;
+  if (actual.length < expected.length) return -1;
+  for (let start = 0; start <= actual.length - expected.length; start += 1) {
+    let matches = true;
+    for (let offset = 0; offset < expected.length; offset += 1) {
+      if (!instructionEqual(actual[start + offset], expected[offset])) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) return start;
+  }
+  return -1;
 }
 
 export function buildSolanaUserV0Transaction(
@@ -85,13 +110,17 @@ export function assertSolanaUserV0Intent(
   }
 
   const decompiled = web3.TransactionMessage.decompile(transaction.message);
-  if (decompiled.instructions.length !== expectation.instructions.length) {
-    throw new Error("Solana V0 instruction count changed before signing/submission");
-  }
-  for (let i = 0; i < expectation.instructions.length; i += 1) {
-    if (!instructionEqual(decompiled.instructions[i], expectation.instructions[i])) {
-      throw new Error(`Solana V0 instruction ${i} changed before signing/submission`);
+  if (!expectation.allowAdditionalInstructions) {
+    if (decompiled.instructions.length !== expectation.instructions.length) {
+      throw new Error("Solana V0 instruction count changed before signing/submission");
     }
+    for (let i = 0; i < expectation.instructions.length; i += 1) {
+      if (!instructionEqual(decompiled.instructions[i], expectation.instructions[i])) {
+        throw new Error(`Solana V0 instruction ${i} changed before signing/submission`);
+      }
+    }
+  } else if (findContiguousInstructionSequence(decompiled.instructions, expectation.instructions) < 0) {
+    throw new Error("Solana V0 expected instruction sequence changed before signing/submission");
   }
 
   return {
