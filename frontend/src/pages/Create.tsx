@@ -445,6 +445,7 @@ const Create = () => {
   const handleCreateDraft = async () => {
     if (!validateCoreForm()) return;
     setIsDrafting(true);
+    analytics.track("draft_created_started", { surface: "launchpad", chain: isSolanaCreator ? "solana" : "bnb" });
     try {
       // Logo upload may sign a separate auth nonce. auth_nonces is unique per
       // (chain_id, address), so uploading AFTER create_draft auth would replace
@@ -474,10 +475,16 @@ const Create = () => {
           : {}),
       });
       cacheDraftLogo(draft.id, logoUrl);
+      analytics.track("draft_created_succeeded", { surface: "launchpad", chain: isSolanaCreator ? "solana" : "bnb" });
       toast.success(isSolanaCreator ? "Solana draft signed and saved. No gas spent." : "Draft saved. No gas spent.");
       navigate(`/drafts/${draft.id}/promotion`);
     } catch (error: any) {
       console.error(error);
+      analytics.track("draft_created_failed", {
+        surface: "launchpad",
+        chain: isSolanaCreator ? "solana" : "bnb",
+        error_code: analyticsErrorCode(error),
+      });
       toast.error(error?.message || "Failed to create draft");
     } finally {
       setIsDrafting(false);

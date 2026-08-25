@@ -313,6 +313,111 @@ async function sessions(app, q) {
   };
 }
 
+const FUNNELS = [
+  {
+    id: "connect_to_create",
+    label: "Connect wallet → create token",
+    steps: [
+      { name: "wallet_connect_succeeded", label: "Wallet connected" },
+      { name: "token_create_succeeded", label: "Token created" },
+    ],
+  },
+  {
+    id: "connect_to_buy",
+    label: "Connect wallet → buy",
+    steps: [
+      { name: "wallet_connect_succeeded", label: "Wallet connected" },
+      { name: "buy_submitted", label: "Buy submitted" },
+    ],
+  },
+  {
+    id: "token_to_buy",
+    label: "Token page → buy",
+    steps: [
+      { name: "token_page_viewed", label: "Token page viewed" },
+      { name: "buy_submitted", label: "Buy submitted" },
+    ],
+  },
+  {
+    id: "recruiter_to_connect",
+    label: "Recruiter invite → wallet connect",
+    steps: [
+      { name: "recruiter_link_landed", label: "Landed on invite" },
+      { name: "wallet_connect_succeeded", label: "Wallet connected" },
+    ],
+  },
+  {
+    id: "cta_to_draft",
+    label: "Home create CTA → draft saved",
+    steps: [
+      { name: "page_cta_clicked", label: "Clicked create CTA" },
+      { name: "draft_created_succeeded", label: "Draft saved" },
+    ],
+  },
+];
+
+async function distinctEventUsers(from, to, app, name) {
+  const params = [from, to];
+  const extra = appFilter(app, params);
+  params.push(name);
+  const result = await pool.query(
+    `select count(distinct anonymous_id)::int as n
+       from public.analytics_events
+      where ts >= $1 and ts < $2 ${extra} and name = $${params.length}`,
+    params,
+  );
+  return result.rows[0]?.n || 0;
+}
+
+async function orderedFollowUsers(from, to, app, firstName, secondName) {
+  const params = [from, to];
+  const extra = appFilter(app, params);
+  params.push(firstName);
+  const firstIdx = params.length;
+  params.push(secondName);
+  const secondIdx = params.length;
+  const result = await pool.query(
+    `select count(distinct e.anonymous_id)::int as n
+       from public.analytics_events e
+       join (
+         select anonymous_id, min(ts) as t
+           from public.analytics_events
+          where ts >= $1 and ts < $2 ${extra} and name = $${firstIdx}
+          group by 1
+       ) s on s.anonymous_id = e.anonymous_id
+      where e.ts >= s.t and e.ts < $2 ${extra} and e.name = $${secondIdx}`,
+    params,
+  );
+  return result.rows[0]?.n || 0;
+}
+
+async function funnels(from, to, app) {
+  const rows = [];
+  for (const funnel of FUNNELS) {
+    const first = await distinctEventUsers(from, to, app, funnel.steps[0].name);
+    const second = await orderedFollowUsers(from, to, app, funnel.steps[0].name, funnel.steps[1].name);
+    rows.push({
+      id: funnel.id,
+      label: funnel.label,
+      steps: [
+        {
+          name: funnel.steps[0].name,
+          label: funnel.steps[0].label,
+          count: first,
+          conversionFromPrevious: null,
+        },
+        {
+          name: funnel.steps[1].name,
+          label: funnel.steps[1].label,
+          count: second,
+          conversionFromPrevious: first ? second / first : null,
+        },
+      ],
+    });
+  }
+  return { from, to, app, funnels: rows };
+}
+
 async function sessionDetail(sessionId) {
   const session = await pool.query(
     `select session_id, app, anonymous_id, user_id, started_at, last_seen_at,
@@ -370,6 +475,7 @@ export async function analyticsAdmin(req, res) {
     if (tail === "performance/functions") return res.status(200).json(await functions(from, to, app));
     if (tail === "performance/vitals") return res.status(200).json(await vitals(from, to, app));
     if (tail === "realtime") return res.status(200).json(await realtime(app));
+    if (tail === "funnels") return res.status(200).json(await funnels(from, to, app));
     if (tail === "sessions") return res.status(200).json(await sessions(app, q));
     const sessionMatch = tail.match(/^sessions\/([0-9a-f-]{36})$/i);
     if (sessionMatch) {
@@ -397,6 +503,7 @@ export async function analyticsAdmin(req, res) {
         rows: [],
         pages: [],
         recent: [],
+        funnels: [],
       });
     }
     throw error;

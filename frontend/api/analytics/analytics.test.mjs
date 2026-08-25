@@ -7,6 +7,7 @@ import { templatePath } from "./paths.js";
 test("catalog includes reserved and product events", () => {
   assert.equal(CATALOG_EVENT_NAMES.has("$pageview"), true);
   assert.equal(CATALOG_EVENT_NAMES.has("buy_submitted"), true);
+  assert.equal(CATALOG_EVENT_NAMES.has("draft_created_succeeded"), true);
   assert.equal(CATALOG_EVENT_NAMES.has("admin_signed_in"), true);
 });
 

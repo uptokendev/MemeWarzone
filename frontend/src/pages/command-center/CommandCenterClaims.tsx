@@ -23,6 +23,7 @@ import { submitSolanaLeagueClaim } from "@/lib/solanaLeagueClaim";
 import { submitSolanaAirdropClaim } from "@/lib/solanaRewardClaim";
 import { getConfiguredSolanaRewardChainId, isSolanaRewardChainId } from "@/lib/solanaRewardNetwork";
 import { signSolanaMessage } from "@/lib/solanaWallet";
+import { analytics, analyticsErrorCode } from "@/lib/analytics/ProductAnalytics";
 
 type RewardCardState = "claimable" | "pending" | "failed" | "expired" | "empty";
 
@@ -621,6 +622,11 @@ export default function CommandCenterClaims() {
     const rewardLedgerIds = claimable.map((item) => item.id);
     let claimIntentId: string | null = null;
     const completed: string[] = [];
+    analytics.track("reward_claim_started", {
+      surface: "command_center",
+      chain: isSolana(rewardChainId) ? "solana" : "bnb",
+      reward_type: card.rewardType,
+    });
 
     try {
       const intent = await createRewardClaimIntent({
@@ -680,10 +686,21 @@ export default function CommandCenterClaims() {
       }
 
       const count = completed.length;
+      analytics.track("reward_claim_succeeded", {
+        surface: "command_center",
+        chain: isSolana(rewardChainId) ? "solana" : "bnb",
+        reward_type: card.rewardType,
+      });
       setMessage(count === 1 ? `${card.title} claimed on-chain.` : `${count} ${card.title} claims completed on-chain.`);
       toast.success(count === 1 ? "Reward claimed." : `${count} rewards claimed.`);
       loadClaims();
     } catch (err: any) {
+      analytics.track("reward_claim_failed", {
+        surface: "command_center",
+        chain: isSolana(rewardChainId) ? "solana" : "bnb",
+        reward_type: card.rewardType,
+        error_code: analyticsErrorCode(err),
+      });
       setMessage(String(err?.shortMessage || err?.message || err || "Claim request failed"));
     } finally {
       setClaimingType(null);
