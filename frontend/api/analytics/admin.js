@@ -1,14 +1,17 @@
 import { pool } from "../../server/db.js";
 import { requireDashboardAdmin } from "../dashboard/_auth.js";
 
+const SYSTEM_EVENTS = ["$heartbeat", "$web_vital", "$function", "$pageview", "$pageleave", "$identify"];
+
 function isMissingSchema(error) {
   return error?.code === "42P01" || error?.code === "42703";
 }
 
-function appFilter(app, params) {
+function appFilter(app, params, alias = "") {
   if (app === "public" || app === "admin") {
     params.push(app);
-    return `and app = $${params.length}`;
+    const column = alias ? `${alias}.app` : "app";
+    return `and ${column} = $${params.length}`;
   }
   return "";
 }
@@ -29,6 +32,69 @@ function routeTail(req) {
   return path.replace(/^\/api\/admin\/analytics\/?/, "");
 }
 
+function visiblePathSql(alias = "") {
+  const p = alias ? `${alias}.` : "";
+  return `case when ${p}path_template = '/token/:address' then ${p}path_raw else ${p}path_template end`;
+}
+
+function tokenRouteId(path) {
+  const match = String(path || "").match(/^\/token\/([^/?#]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+async function tokenMetadataForPaths(paths) {
+  const ids = Array.from(new Set((paths || []).map(tokenRouteId).filter(Boolean)));
+  if (!ids.length) return new Map();
+  const evmIds = ids.filter((id) => /^0x[a-f0-9]{40}$/i.test(id)).map((id) => id.toLowerCase());
+  const result = await pool.query(
+    `with candidates as (
+       select campaign_address, token_address, name, symbol, 0 as priority
+         from public.campaigns
+       union all
+       select campaign_address, token_address, name, ticker as symbol, 1 as priority
+         from public.campaign_drafts
+     )
+     select campaign_address, token_address, name, symbol, priority
+       from candidates
+      where campaign_address = any($1::text[])
+         or token_address = any($1::text[])
+         or (cardinality($2::text[]) > 0 and lower(coalesce(campaign_address, '')) = any($2::text[]))
+         or (cardinality($2::text[]) > 0 and lower(coalesce(token_address, '')) = any($2::text[]))
+      order by priority asc`,
+    [ids, evmIds],
+  );
+  const byId = new Map();
+  for (const id of ids) {
+    const evm = /^0x[a-f0-9]{40}$/i.test(id);
+    const row = result.rows.find((candidate) => {
+      const values = [candidate.campaign_address, candidate.token_address].filter(Boolean).map(String);
+      return evm
+        ? values.some((value) => value.toLowerCase() === id.toLowerCase())
+        : values.some((value) => value === id);
+    });
+    if (row) {
+      byId.set(id, {
+        address: id,
+        name: row.name || null,
+        symbol: row.symbol || null,
+        label: row.name
+          ? `${row.name}${row.symbol ? ` (${row.symbol})` : ""}`
+          : row.symbol || null,
+      });
+    }
+  }
+  return byId;
+}
+
+async function enrichPaths(rows) {
+  const metadata = await tokenMetadataForPaths(rows.map((row) => row.path));
+  return rows.map((row) => {
+    const routeId = tokenRouteId(row.path);
+    const token = routeId ? metadata.get(routeId) : null;
+    return token ? { ...row, token } : row;
+  });
+}
+
 async function liveUsers(app) {
   const params = [];
   const extra = appFilter(app, params);
@@ -44,6 +110,7 @@ async function liveUsers(app) {
 async function overview(from, to, app) {
   const params = [from, to];
   const extra = appFilter(app, params);
+  const pathExpr = visiblePathSql();
   const [dau, sessions, pageviews, bounce, live, topPages, topEvents, vitals, series] = await Promise.all([
     pool.query(
       `select count(distinct anonymous_id)::int as n
@@ -64,21 +131,19 @@ async function overview(from, to, app) {
       params,
     ),
     pool.query(
-      `select
-          count(*) filter (where pageview_count <= 1)::int as bounced,
-          count(*)::int as total
+      `select count(*) filter (where pageview_count <= 1)::int as bounced, count(*)::int as total
          from public.analytics_sessions
         where last_seen_at >= $1 and started_at < $2 ${extra}`,
       params,
     ),
     liveUsers(app),
     pool.query(
-      `select path_template as path,
+      `select ${pathExpr} as path,
               count(*)::int as views,
               count(distinct anonymous_id)::int as uniques
          from public.analytics_events
         where name = '$pageview' and ts >= $1 and ts < $2 ${extra}
-        group by path_template
+        group by 1
         order by views desc
         limit 10`,
       params,
@@ -87,11 +152,11 @@ async function overview(from, to, app) {
       `select name, count(*)::int as count
          from public.analytics_events
         where ts >= $1 and ts < $2 ${extra}
-          and name not in ('$heartbeat')
+          and name <> all($${params.length + 1}::text[])
         group by name
         order by count desc
         limit 10`,
-      params,
+      [...params, SYSTEM_EVENTS],
     ),
     pool.query(
       `select properties->>'metric' as metric,
@@ -116,6 +181,7 @@ async function overview(from, to, app) {
 
   const bounced = bounce.rows[0]?.bounced || 0;
   const total = bounce.rows[0]?.total || 0;
+  const enrichedTopPages = await enrichPaths(topPages.rows.map((row) => ({ path: row.path, views: row.views, uniques: row.uniques })));
   return {
     from,
     to,
@@ -125,7 +191,7 @@ async function overview(from, to, app) {
     pageviews: pageviews.rows[0]?.n || 0,
     bounceRate: total ? bounced / total : 0,
     liveUsers: live,
-    topPages: topPages.rows.map((row) => ({ path: row.path, views: row.views, uniques: row.uniques })),
+    topPages: enrichedTopPages,
     topEvents: topEvents.rows.map((row) => ({ name: row.name, count: row.count })),
     vitals: vitals.rows.map((row) => ({ metric: row.metric, p75: row.p75 == null ? null : Number(row.p75) })),
     series: series.rows.map((row) => ({
@@ -139,33 +205,34 @@ async function overview(from, to, app) {
 async function pages(from, to, app) {
   const params = [from, to];
   const extra = appFilter(app, params);
+  const pathExpr = visiblePathSql();
   const views = await pool.query(
-    `select path_template as path,
+    `select ${pathExpr} as path,
             count(*)::int as views,
             count(distinct anonymous_id)::int as uniques
        from public.analytics_events
       where name = '$pageview' and ts >= $1 and ts < $2 ${extra}
-      group by path_template
+      group by 1
       order by views desc
       limit 200`,
     params,
   );
   const durations = await pool.query(
-    `select path_template as path,
+    `select ${pathExpr} as path,
             avg((properties->>'duration_ms')::double precision) as avg_ms
        from public.analytics_events
       where name = '$pageleave' and ts >= $1 and ts < $2 ${extra}
-      group by path_template`,
+      group by 1`,
     params,
   );
   const durationByPath = new Map(durations.rows.map((row) => [row.path, row.avg_ms == null ? null : Number(row.avg_ms)]));
   return {
-    rows: views.rows.map((row) => ({
+    rows: await enrichPaths(views.rows.map((row) => ({
       path: row.path,
       views: row.views,
       uniques: row.uniques,
       avgDurationMs: durationByPath.get(row.path) ?? null,
-    })),
+    }))),
   };
 }
 
@@ -243,22 +310,23 @@ async function vitals(from, to, app) {
 async function realtime(app) {
   const params = [];
   const extra = appFilter(app, params);
+  const pathExpr = visiblePathSql();
   const liveSql = extra
     ? `select count(distinct anonymous_id)::int as n from public.analytics_events where ts >= now() - interval '5 minutes' ${extra}`
     : `select count(distinct anonymous_id)::int as n from public.analytics_events where ts >= now() - interval '5 minutes'`;
   const [live, pagesRes, recent] = await Promise.all([
     pool.query(liveSql, params),
     pool.query(
-      `select path_template as path, count(distinct anonymous_id)::int as users
+      `select ${pathExpr} as path, count(distinct anonymous_id)::int as users
          from public.analytics_events
         where ts >= now() - interval '5 minutes' ${extra}
-        group by path_template
+        group by 1
         order by users desc
         limit 20`,
       params,
     ),
     pool.query(
-      `select ts, name, path_template as path, user_id, app
+      `select ts, name, ${pathExpr} as path, user_id, app
          from public.analytics_events
         where ts >= now() - interval '30 minutes' ${extra}
           and name <> '$heartbeat'
@@ -267,17 +335,17 @@ async function realtime(app) {
       params,
     ),
   ]);
-  return {
-    liveUsers: live.rows[0]?.n || 0,
-    pages: pagesRes.rows.map((row) => ({ path: row.path, users: row.users })),
-    recent: recent.rows.map((row) => ({
-      ts: new Date(row.ts).toISOString(),
-      name: row.name,
-      path: row.path,
-      userId: row.user_id,
-      app: row.app,
-    })),
-  };
+  const pages = await enrichPaths(pagesRes.rows.map((row) => ({ path: row.path, users: row.users })));
+  const recentRows = recent.rows.map((row) => ({
+    ts: new Date(row.ts).toISOString(), name: row.name, path: row.path, userId: row.user_id, app: row.app,
+  }));
+  const recentMetadata = await tokenMetadataForPaths(recentRows.map((row) => row.path));
+  const enrichedRecent = recentRows.map((row) => {
+    const routeId = tokenRouteId(row.path);
+    const token = routeId ? recentMetadata.get(routeId) : null;
+    return token ? { ...row, token } : row;
+  });
+  return { liveUsers: live.rows[0]?.n || 0, pages, recent: enrichedRecent };
 }
 
 async function sessions(app, q) {
@@ -314,46 +382,26 @@ async function sessions(app, q) {
 }
 
 const FUNNELS = [
-  {
-    id: "connect_to_create",
-    label: "Connect wallet → create token",
-    steps: [
-      { name: "wallet_connect_succeeded", label: "Wallet connected" },
-      { name: "token_create_succeeded", label: "Token created" },
-    ],
-  },
-  {
-    id: "connect_to_buy",
-    label: "Connect wallet → buy",
-    steps: [
-      { name: "wallet_connect_succeeded", label: "Wallet connected" },
-      { name: "buy_submitted", label: "Buy submitted" },
-    ],
-  },
-  {
-    id: "token_to_buy",
-    label: "Token page → buy",
-    steps: [
-      { name: "token_page_viewed", label: "Token page viewed" },
-      { name: "buy_submitted", label: "Buy submitted" },
-    ],
-  },
-  {
-    id: "recruiter_to_connect",
-    label: "Recruiter invite → wallet connect",
-    steps: [
-      { name: "recruiter_link_landed", label: "Landed on invite" },
-      { name: "wallet_connect_succeeded", label: "Wallet connected" },
-    ],
-  },
-  {
-    id: "cta_to_draft",
-    label: "Home create CTA → draft saved",
-    steps: [
-      { name: "page_cta_clicked", label: "Clicked create CTA" },
-      { name: "draft_created_succeeded", label: "Draft saved" },
-    ],
-  },
+  { id: "connect_to_create", label: "Connect wallet → create token", steps: [
+    { name: "wallet_connect_succeeded", label: "Wallet connected" },
+    { name: "token_create_succeeded", label: "Token created" },
+  ] },
+  { id: "connect_to_buy", label: "Connect wallet → buy", steps: [
+    { name: "wallet_connect_succeeded", label: "Wallet connected" },
+    { name: "buy_submitted", label: "Buy submitted" },
+  ] },
+  { id: "token_to_buy", label: "Token page → buy", steps: [
+    { name: "token_page_viewed", label: "Token page viewed" },
+    { name: "buy_submitted", label: "Buy submitted" },
+  ] },
+  { id: "recruiter_to_connect", label: "Recruiter invite → wallet connect", steps: [
+    { name: "recruiter_link_landed", label: "Landed on invite" },
+    { name: "wallet_connect_succeeded", label: "Wallet connected" },
+  ] },
+  { id: "cta_to_draft", label: "Home create CTA → draft saved", steps: [
+    { name: "page_cta_clicked", label: "Clicked create CTA" },
+    { name: "draft_created_succeeded", label: "Draft saved" },
+  ] },
 ];
 
 async function distinctEventUsers(from, to, app, name) {
@@ -371,22 +419,27 @@ async function distinctEventUsers(from, to, app, name) {
 
 async function orderedFollowUsers(from, to, app, firstName, secondName) {
   const params = [from, to];
-  const extra = appFilter(app, params);
+  const innerExtra = appFilter(app, params, "first_event");
   params.push(firstName);
   const firstIdx = params.length;
   params.push(secondName);
   const secondIdx = params.length;
+  const outerAppParams = app === "public" || app === "admin" ? [app] : [];
+  const outerExtra = outerAppParams.length ? "and follow_event.app = $5" : "";
+  const queryParams = [...params, ...outerAppParams];
   const result = await pool.query(
-    `select count(distinct e.anonymous_id)::int as n
-       from public.analytics_events e
+    `select count(distinct follow_event.anonymous_id)::int as n
+       from public.analytics_events follow_event
        join (
-         select anonymous_id, min(ts) as t
-           from public.analytics_events
-          where ts >= $1 and ts < $2 ${extra} and name = $${firstIdx}
+         select first_event.anonymous_id, min(first_event.ts) as t
+           from public.analytics_events first_event
+          where first_event.ts >= $1 and first_event.ts < $2 ${innerExtra}
+            and first_event.name = $${firstIdx}
           group by 1
-       ) s on s.anonymous_id = e.anonymous_id
-      where e.ts >= s.t and e.ts < $2 ${extra} and e.name = $${secondIdx}`,
-    params,
+       ) s on s.anonymous_id = follow_event.anonymous_id
+      where follow_event.ts >= s.t and follow_event.ts < $2 ${outerExtra}
+        and follow_event.name = $${secondIdx}`,
+    queryParams,
   );
   return result.rows[0]?.n || 0;
 }
@@ -400,18 +453,8 @@ async function funnels(from, to, app) {
       id: funnel.id,
       label: funnel.label,
       steps: [
-        {
-          name: funnel.steps[0].name,
-          label: funnel.steps[0].label,
-          count: first,
-          conversionFromPrevious: null,
-        },
-        {
-          name: funnel.steps[1].name,
-          label: funnel.steps[1].label,
-          count: second,
-          conversionFromPrevious: first ? second / first : null,
-        },
+        { name: funnel.steps[0].name, label: funnel.steps[0].label, count: first, conversionFromPrevious: null },
+        { name: funnel.steps[1].name, label: funnel.steps[1].label, count: second, conversionFromPrevious: first ? second / first : null },
       ],
     });
   }
@@ -428,7 +471,7 @@ async function sessionDetail(sessionId) {
   );
   if (!session.rowCount) return null;
   const eventsRes = await pool.query(
-    `select event_id, ts, name, path_template, properties
+    `select event_id, ts, name, ${visiblePathSql()} as path, properties
        from public.analytics_events
       where session_id = $1
       order by ts asc
@@ -436,6 +479,14 @@ async function sessionDetail(sessionId) {
     [sessionId],
   );
   const row = session.rows[0];
+  const events = eventsRes.rows.map((event) => ({
+    eventId: event.event_id,
+    ts: new Date(event.ts).toISOString(),
+    name: event.name,
+    path: event.path,
+    properties: event.properties || {},
+  }));
+  const metadata = await tokenMetadataForPaths(events.map((event) => event.path));
   return {
     sessionId: row.session_id,
     app: row.app,
@@ -447,13 +498,11 @@ async function sessionDetail(sessionId) {
     exitPath: row.exit_path,
     pageviewCount: row.pageview_count,
     eventCount: row.event_count,
-    events: eventsRes.rows.map((event) => ({
-      eventId: event.event_id,
-      ts: new Date(event.ts).toISOString(),
-      name: event.name,
-      path: event.path_template,
-      properties: event.properties || {},
-    })),
+    events: events.map((event) => {
+      const routeId = tokenRouteId(event.path);
+      const token = routeId ? metadata.get(routeId) : null;
+      return token ? { ...event, token } : event;
+    }),
   };
 }
 
@@ -467,9 +516,7 @@ export async function analyticsAdmin(req, res) {
   const q = String(req.query?.q || "").trim();
 
   try {
-    if (!tail || tail === "overview") {
-      return res.status(200).json(await overview(from, to, app));
-    }
+    if (!tail || tail === "overview") return res.status(200).json(await overview(from, to, app));
     if (tail === "pages") return res.status(200).json(await pages(from, to, app));
     if (tail === "events") return res.status(200).json(await events(from, to, app));
     if (tail === "performance/functions") return res.status(200).json(await functions(from, to, app));
@@ -487,23 +534,9 @@ export async function analyticsAdmin(req, res) {
   } catch (error) {
     if (isMissingSchema(error)) {
       return res.status(200).json({
-        schemaMissing: true,
-        from,
-        to,
-        app,
-        dau: 0,
-        sessions: 0,
-        pageviews: 0,
-        bounceRate: 0,
-        liveUsers: 0,
-        topPages: [],
-        topEvents: [],
-        vitals: [],
-        series: [],
-        rows: [],
-        pages: [],
-        recent: [],
-        funnels: [],
+        schemaMissing: true, from, to, app,
+        dau: 0, sessions: 0, pageviews: 0, bounceRate: 0, liveUsers: 0,
+        topPages: [], topEvents: [], vitals: [], series: [], rows: [], pages: [], recent: [], funnels: [],
       });
     }
     throw error;
