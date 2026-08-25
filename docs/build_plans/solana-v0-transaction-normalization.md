@@ -127,3 +127,152 @@ Negative tests must reject wrong program, vault, recipient, claim receipt, epoch
 
 ## CI guardrail
 After migration, no new live frontend user-wallet `Transaction()` construction should be allowed. Tests and explicitly quarantined/dead code may be exempted by a narrow allowlist.
+
+# Final test and upgrade runway
+
+The code-normalization phase is not considered releasable merely because the frontend compiles. The final release gate is the complete sequence below.
+
+## Gate A - repository certification
+All of the following checks must be green on the exact branch head that will be tested:
+- Solana User V0 Normalization
+- Solana Backend V0 Normalization
+- Solana V0 Transaction Gate
+- Solana Final Launch Blocker Gate
+- Solana Rewards Treasury Upgrade Candidate
+- Release certification (candidate SHA)
+- Solana FeeEscrow DB lease CI
+- frontend pull request proof
+- Secret Scan
+- Topaz Integration CI
+
+Do not waive an unrelated red check just because the Solana-specific gates are green. Fix or prove the failure before release.
+
+## Gate B - certified rewards treasury artifact
+Use only the artifact emitted by `Solana Rewards Treasury Upgrade Candidate` for the exact accepted commit.
+
+The artifact must contain:
+- `mwz_rewards_treasury.so`
+- `mwz_rewards_treasury.json`
+- `rewards-treasury-sha256.txt`
+- `rewards-treasury-candidate.txt`
+
+The expected rewards treasury program ID is:
+`2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX`
+
+The IDL must include:
+- `set_recruiter_batch_root`
+- `claim_recruiter`
+- `set_squad_batch_root`
+- `claim_squad`
+
+Before any upgrade, run:
+
+```bash
+export SOLANA_RPC_URL="<target RPC>"
+export SOLANA_REWARDS_UPGRADE_AUTHORITY="<expected upgrade authority pubkey>"
+bash scripts/solana/preflight-rewards-treasury-upgrade.sh \
+  target/deploy/mwz_rewards_treasury.so \
+  target/idl/mwz_rewards_treasury.json \
+  rewards-treasury-sha256.txt
+```
+
+The preflight must prove the exact program ID, upgradeability, readable/matching authority, artifact hashes and required IDL instructions. It also dumps the live program and records the deployed/candidate SHA256 values so we know whether an upgrade is actually required.
+
+## Gate C - testnet wallet acceptance
+Run the complete transaction matrix on the test deployment before touching mainnet. Do not use a single warm wallet for the whole matrix.
+
+Use at least:
+- one brand-new wallet with no launch-token ATA
+- one funded repeat-trader wallet
+- one claim-eligible wallet per reward lane where practical
+- Phantom
+- Solflare
+- Backpack
+
+For CREATE and bonding BUY/SELL, this is regression-only. The already accepted transaction semantics must not be modified to make another test pass.
+
+For first BUY, require exactly one wallet transaction prompt containing the idempotent ATA creation plus the authorized BUY path.
+
+For every wallet-signed transaction record:
+- wallet
+- transaction family
+- signature
+- V0 confirmation
+- simulation pass
+- expected signer count
+- expected programs/accounts
+- expected amount/minimum-out where applicable
+- resulting state
+- explorer link
+
+## Gate D - reward claim acceptance
+Prepare test batches for each claim family and prove:
+- weekly league claim succeeds
+- monthly league claim succeeds
+- airdrop claim succeeds
+- recruiter claim succeeds
+- squad claim succeeds
+- duplicate claim is rejected or recovered as already complete without a second payout
+- ambiguous confirmation recovers from receipt/state
+- wrong recipient is rejected client-side
+- wrong vault/PDA is rejected client-side
+- wrong amount/epoch/proof is rejected before broadcast or by the on-chain verifier as appropriate
+
+For recruiter and squad lanes, root publication must be tested independently from the user claim transaction.
+
+## Gate E - Meteora acceptance
+Use the pinned/certified Meteora SDK path. Do not change SDK version during this release test.
+
+Prove on the test deployment:
+- graduated token resolves to the expected Meteora pool
+- post-grad BUY is V0
+- post-grad SELL is V0
+- amount-in and minimum-out match the displayed quote
+- only the allowed program set appears
+- no unexpected recipient appears
+- chart/indexer continuity survives bonding -> graduation -> Meteora trading
+- LP fee harvest does not move LP principal
+- creator/protocol split matches the configured economics
+
+## Gate F - mainnet pre-upgrade dry run
+Before sending any upgrade transaction:
+1. Download the exact certified artifact from the accepted commit.
+2. Verify the artifact digest and embedded SHA256 manifest.
+3. Run `preflight-rewards-treasury-upgrade.sh` against mainnet RPC.
+4. Confirm the live upgrade authority is the expected authority/multisig path.
+5. Save the current deployed program SHA256 and ProgramData address.
+6. Save the candidate SHA256.
+7. Confirm the same program ID will be retained.
+8. Confirm no settlement exporter will be rerun for recruiter epoch 44.
+9. Confirm the exact post-upgrade recovery/rollback owner is available.
+
+If the live hash already equals the candidate hash, do not submit an upgrade merely because one was planned.
+
+## Gate G - same-ID treasury upgrade and immediate verification
+Only after Gates A-F pass:
+1. Upgrade `2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX` using the certified `.so`.
+2. Immediately `solana program dump` the live program again and compare its SHA256 with the candidate.
+3. Verify ProgramData and upgrade authority remain expected.
+4. Verify config and all existing vault PDAs still exist and are owned by the same program.
+5. Verify existing balances were not changed by the program upgrade.
+6. Read-test the recruiter/squad instruction surface against the upgraded program.
+
+Do not publish any production reward root until these checks pass.
+
+## Gate H - recruiter epoch 44 recovery
+After the treasury upgrade is proven:
+1. Publish only the already-prepared recruiter epoch 44 root.
+2. Do not rerun the settlement exporter.
+3. Require database batch state `prepared -> claim_open`.
+4. Require the prepared user claim state to become claimable.
+5. Chain-read root, total lamports, deadline, recipient and claim receipt PDA.
+6. Execute one controlled V0 recruiter claim.
+7. Verify exact payout, claim receipt and final database state.
+8. Attempt duplicate/recovery path and prove no second payout can occur.
+
+Only after this controlled claim passes should recruiter claims be considered production-open.
+
+## Final go/no-go rule
+The release is upgrade-ready only when the exact accepted commit has a fully green Gate A, the certified artifact from that commit passes the mainnet preflight, and the complete testnet wallet/reward/Meteora matrix has evidence attached or recorded.
+
+A green build alone is not an upgrade approval.
