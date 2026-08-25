@@ -9,7 +9,7 @@ import {
   type Transaction,
   type TransactionInstruction,
 } from "@solana/web3.js";
-import { NATIVE_MINT, TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { NATIVE_MINT, TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 
 import { confirmLaunchpadSignature } from "@/lib/solanaConfirmSignature";
 import { getSolanaReadConnection } from "@/lib/solanaReadConnection";
@@ -27,7 +27,6 @@ import {
 
 export const METEORA_CP_AMM_PROGRAM_ID = "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG";
 
-const SOLANA_TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpHx";
 const SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
 const SOLANA_SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
 const SOLANA_COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget111111111111111111111111111111";
@@ -35,7 +34,7 @@ const SOLANA_COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget1111111111111111111111111
 const METEORA_ALLOWED_PROGRAM_IDS = new Set([
   METEORA_CP_AMM_PROGRAM_ID,
   TOKEN_PROGRAM_ID.toBase58(),
-  SOLANA_TOKEN_2022_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID.toBase58(),
   SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID,
   SOLANA_SYSTEM_PROGRAM_ID,
   SOLANA_COMPUTE_BUDGET_PROGRAM_ID,
