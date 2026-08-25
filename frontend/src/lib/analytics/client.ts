@@ -156,11 +156,15 @@ export class AnalyticsClient {
   }
 
   observeWebVitals() {
-    if (typeof PerformanceObserver === 'undefined') return
-    const sent = new Set<string>()
+    if (typeof PerformanceObserver === 'undefined' || typeof window === 'undefined') return
+
+    let lcpValue: number | null = null
+    let clsValue = 0
+    let inpValue: number | null = null
+    let finalized = false
+    const observers: PerformanceObserver[] = []
+
     const send = (metric: string, value: number) => {
-      if (sent.has(metric) && metric !== 'CLS' && metric !== 'INP') return
-      if (metric !== 'CLS' && metric !== 'INP') sent.add(metric)
       this.enqueue('$web_vital', {
         metric,
         value: Math.round(value * (metric === 'CLS' ? 1000 : 1)) / (metric === 'CLS' ? 1000 : 1),
@@ -168,40 +172,57 @@ export class AnalyticsClient {
       })
     }
 
+    const finalize = () => {
+      if (finalized) return
+      finalized = true
+      for (const observer of observers) observer.disconnect()
+      if (lcpValue != null) send('LCP', lcpValue)
+      send('CLS', clsValue)
+      if (inpValue != null) send('INP', inpValue)
+      setTimeout(() => { void this.flush() }, 0)
+    }
+
     try {
       const lcp = new PerformanceObserver((list) => {
         const entry = list.getEntries().at(-1)
-        if (entry) send('LCP', entry.startTime)
+        if (entry) lcpValue = entry.startTime
       })
       lcp.observe({ type: 'largest-contentful-paint', buffered: true })
+      observers.push(lcp)
     } catch { /* unsupported */ }
 
     try {
       const cls = new PerformanceObserver((list) => {
-        let total = 0
         for (const entry of list.getEntries()) {
           const shift = entry as PerformanceEntry & { hadRecentInput?: boolean; value?: number }
-          if (!shift.hadRecentInput) total += Number(shift.value || 0)
+          if (!shift.hadRecentInput) clsValue += Number(shift.value || 0)
         }
-        if (total) send('CLS', total)
       })
       cls.observe({ type: 'layout-shift', buffered: true })
+      observers.push(cls)
     } catch { /* unsupported */ }
 
     try {
       const inp = new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) {
           const ev = entry as PerformanceEntry & { duration?: number }
-          send('INP', Number(ev.duration || 0))
+          const duration = Number(ev.duration || 0)
+          if (duration > 0) inpValue = Math.max(inpValue || 0, duration)
         }
       })
       inp.observe({ type: 'event', buffered: true, durationThreshold: 40 } as PerformanceObserverInit)
+      observers.push(inp)
     } catch { /* unsupported */ }
 
     try {
       const nav = performance.getEntriesByType('navigation')[0] as PerformanceNavigationTiming | undefined
       if (nav) send('TTFB', nav.responseStart)
     } catch { /* unsupported */ }
+
+    window.addEventListener('pagehide', finalize, { once: true })
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') finalize()
+    }, { once: true })
   }
 
   async flush() {
