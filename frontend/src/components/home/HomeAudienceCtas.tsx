@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useWallet } from "@/contexts/WalletContext";
+import { analytics } from "@/lib/analytics/ProductAnalytics";
 import creatorBg from "@/assets/home/cta-creators-bg.png";
 import creatorSoldier from "@/assets/home/cta-creator-soldier.png";
 
@@ -193,6 +194,7 @@ export function HomeAudienceCtas() {
   }, [pendingRecruiterRedirect, wallet.account, navigate]);
 
   const handleRecruiterClick = async () => {
+    analytics.track("page_cta_clicked", { cta_id: "home_join_recruiter" });
     if (wallet.account) {
       navigate(recruiterPath);
       return;
@@ -224,7 +226,10 @@ export function HomeAudienceCtas() {
         footer="Launch • Build • Deploy"
         bg={creatorBg}
         soldier={creatorSoldier}
-        onClick={() => navigate(CREATE_DRAFT_PATH)}
+        onClick={() => {
+          analytics.track("page_cta_clicked", { cta_id: "home_create_draft" });
+          navigate(CREATE_DRAFT_PATH);
+        }}
       />
 
       <AudienceCard

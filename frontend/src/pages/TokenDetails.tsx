@@ -26,6 +26,7 @@ import {
 } from "@/lib/chainConfig";
 import { resolveMarketIdentity, resolveMarketIdentityAcrossEvm } from "@/lib/marketIdentity";
 import { recordRecentlyViewed } from "@/lib/searchHistory";
+import { analytics } from "@/lib/analytics/ProductAnalytics";
 import { getReadProvider } from "@/lib/readProvider";
 
 import { useBnbUsdPrice } from "@/hooks/useBnbUsdPrice";
@@ -1625,6 +1626,11 @@ const TokenDetails = () => {
             : Number((metrics as any)?.finalizedAt ?? 0) > 0)
       : Boolean(metrics && metrics.curveSupply > 0n && metrics.sold >= metrics.curveSupply);
   }, [metrics, onChainLaunched, isSolanaPage, solanaCurve?.graduated]);
+
+  useEffect(() => {
+    if (!contractGraduatedEarly) return;
+    analytics.track("graduation_viewed", { chain: isSolanaPage ? "solana" : "bnb" });
+  }, [contractGraduatedEarly, isSolanaPage]);
 
   // Topaz pair scan only after graduation. Running it on pure bonding campaigns
   // can resolve a wrong/empty route and poison price/mcap/chart streams.
