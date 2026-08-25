@@ -75,9 +75,36 @@ test.describe("Gate S cross-chain isolation", () => {
     await page.goto("/");
     await waitForApp(page, "Explore Coins");
 
-    // Startup may legitimately issue the configured default-chain request before
-    // injected-wallet discovery finishes. Scope isolation to the explicit feed
-    // transition rather than treating that bootstrap request as cross-chain mixing.
+    // Startup can legitimately include the configured default-chain request before
+    // injected-wallet discovery finishes. Exercise real transitions instead of
+    // requiring a same-value Solana click to refetch an already-selected feed.
+    const beforeBnb = ledger.requests.length;
+    await clickFeed(page, "BNB");
+    await expect.poll(() => {
+      const after = ledger.requests.slice(beforeBnb);
+      return unique(
+        after
+          .filter((row) => row.pathname === "/api/campaigns" && row.chainId != null)
+          .map((row) => row.chainId as number),
+      );
+    }).not.toContain(101);
+    await expect.poll(() => {
+      const after = ledger.requests.slice(beforeBnb);
+      return unique(
+        after
+          .filter((row) => row.pathname === "/api/campaigns" && row.chainId != null)
+          .map((row) => row.chainId as number),
+      ).length;
+    }).toBeGreaterThan(0);
+
+    const bnbAfterSwitch = unique(
+      ledger.requests
+        .slice(beforeBnb)
+        .filter((row) => row.pathname === "/api/campaigns" && row.chainId != null)
+        .map((row) => row.chainId as number),
+    );
+    expect(isBnbFamily(bnbAfterSwitch)).toBeTruthy();
+
     const beforeSolana = ledger.requests.length;
     await clickFeed(page, "Solana");
     await expect.poll(() => {
@@ -89,18 +116,18 @@ test.describe("Gate S cross-chain isolation", () => {
       );
     }).toEqual([101]);
 
-    const solanaAfterLatch = ledger.requests.slice(beforeSolana);
+    const solanaAfterSwitch = ledger.requests.slice(beforeSolana);
     const featuredSolana = unique(
-      solanaAfterLatch
+      solanaAfterSwitch
         .filter((row) => row.pathname === "/api/featured" && row.chainId != null)
         .map((row) => row.chainId as number),
     );
     if (featuredSolana.length) expect(featuredSolana).toEqual([101]);
 
-    const beforeSwitch = ledger.requests.length;
+    const beforeReturnToBnb = ledger.requests.length;
     await clickFeed(page, "BNB");
     await expect.poll(() => {
-      const after = ledger.requests.slice(beforeSwitch);
+      const after = ledger.requests.slice(beforeReturnToBnb);
       return unique(
         after
           .filter((row) => row.pathname === "/api/campaigns" && row.chainId != null)
@@ -108,21 +135,13 @@ test.describe("Gate S cross-chain isolation", () => {
       );
     }).not.toContain(101);
     await expect.poll(() => {
-      const after = ledger.requests.slice(beforeSwitch);
+      const after = ledger.requests.slice(beforeReturnToBnb);
       return unique(
         after
           .filter((row) => row.pathname === "/api/campaigns" && row.chainId != null)
           .map((row) => row.chainId as number),
       ).length;
     }).toBeGreaterThan(0);
-
-    const afterSwitchCampaigns = unique(
-      ledger.requests
-        .slice(beforeSwitch)
-        .filter((row) => row.pathname === "/api/campaigns" && row.chainId != null)
-        .map((row) => row.chainId as number),
-    );
-    expect(afterSwitchCampaigns).not.toContain(101);
   });
 
   test("BNB Token Details stay EVM with Phantom and stale chainId=101", async ({ page }) => {
