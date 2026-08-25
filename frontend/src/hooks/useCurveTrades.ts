@@ -27,23 +27,6 @@ import {
   unionIndexedAndLive,
 } from "@/lib/tradeDedupe";
 
-function resolveRealtimeApiBase(): string {
-  const candidates = [
-    import.meta.env.VITE_TOKEN_API_BASE,
-    import.meta.env.VITE_RAILWAY_TOKEN_API_BASE,
-    import.meta.env.RAILWAY_TOKEN_API_BASE_URL,
-    import.meta.env.VITE_REALTIME_API_BASE,
-  ];
-  for (const value of candidates) {
-    const raw = String(value || "").trim().replace(/\/+$/, "");
-    if (!raw || /\{\{/.test(raw) || /%7B%7B/i.test(raw)) continue;
-    if (/^https?:\/\//i.test(raw)) return raw;
-    if (/^\/\//.test(raw)) return `https:${raw}`;
-  }
-  return "";
-}
-
-const API_BASE = resolveRealtimeApiBase();
 const ENABLE_TOKEN_POLLING = String(import.meta.env.VITE_ENABLE_TOKEN_POLLING || "").trim() === "1";
 const ENABLE_TRADE_POLL = String(import.meta.env.VITE_DISABLE_TRADE_POLL || "").trim() !== "1";
 const ENABLE_ONCHAIN_TRADE_FALLBACK =
@@ -52,6 +35,7 @@ const ENABLE_ONCHAIN_TRADE_FALLBACK =
 const ENABLE_SOLANA_ONCHAIN_TRADE_FALLBACK =
   String(import.meta.env.VITE_DISABLE_SOLANA_ONCHAIN_TRADE_FALLBACK || "").trim() !== "1";
 const SOLANA_ADDRESS_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+const MAX_INDEXER_BACKOFF_MS = 60_000;
 
 type RealtimeChannel = any;
 
@@ -155,7 +139,7 @@ type IndexerTradeSnapshot = {
   repairState: string | null;
   campaignAddress: string | null;
   lastIndexedSlot: number | null;
-  source: "relative" | "absolute";
+  source: "relative";
 };
 
 async function fetchIndexerTrades(campaignAddress: string, chainId: number, limit: number, signal?: AbortSignal): Promise<IndexerTradeSnapshot> {
@@ -165,34 +149,17 @@ async function fetchIndexerTrades(campaignAddress: string, chainId: number, limi
   const onParentAbort = () => timeout.abort();
   signal?.addEventListener("abort", onParentAbort, { once: true });
   const timer = setTimeout(() => timeout.abort(), isSolanaChainId(chainId) ? 7_000 : 5_000);
-  const empty: IndexerTradeSnapshot = {
-    items: [],
-    historyComplete: false,
-    repairState: "unknown",
-    campaignAddress: campaign,
-    lastIndexedSlot: null,
-    source: "relative",
-  };
   try {
-    try {
-      const r = await apiFetch(path, { method: "GET", signal: timeout.signal, cache: "no-store" as RequestCache });
-      if (r.ok) {
-        const body = await r.json();
-        return { ...parseIndexerTradeBody(body, chainId), source: "relative" };
-      }
-    } catch {
-      // fall through to absolute indexer URL
-    }
-
-    if (!API_BASE) return empty;
-    const absolute = `${API_BASE}/api/token/${encodeURIComponent(campaign)}/trades?chainId=${chainId}&limit=${limit}`;
-    const r = await fetch(absolute, { method: "GET", signal: timeout.signal, cache: "no-store" });
+    // apiFetch is the canonical router for indexer-only token endpoints. Do not
+    // retry the same configured indexer URL here: when the upstream is 5xx that
+    // doubled every browser request and made a transient outage much noisier.
+    const r = await apiFetch(path, { method: "GET", signal: timeout.signal, cache: "no-store" as RequestCache });
     if (!r.ok) {
       const text = await r.text().catch(() => "");
-      throw new Error(text || `HTTP ${r.status}`);
+      throw new Error(text || `Indexer trades HTTP ${r.status}`);
     }
     const body = await r.json();
-    return { ...parseIndexerTradeBody(body, chainId), source: "absolute" };
+    return { ...parseIndexerTradeBody(body, chainId), source: "relative" };
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener("abort", onParentAbort);
@@ -347,6 +314,8 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
   const tipInFlightRef = useRef(false);
   const initialLoadedRef = useRef(false);
   const highestBlockScannedRef = useRef(0);
+  const indexerFailureCountRef = useRef(0);
+  const indexerBackoffUntilRef = useRef(0);
   const reconcileMs = opts?.reconcileMs ?? 4_000;
   const limit = Math.min(Math.max(Number(opts?.limit ?? 200), 1), 200);
   const canLoadTrades = enabled && isTradeCampaignAddress(campaignAddress, chainId);
@@ -424,39 +393,60 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
       let fallbackRan = false;
       let fallbackRows = 0;
       let fallbackLatencyMs = 0;
-      try {
-        const lookups = [campaignAddress];
-        if (
-          opts?.tokenAddress &&
-          String(opts.tokenAddress).trim() &&
-          String(opts.tokenAddress).trim() !== String(campaignAddress).trim()
-        ) {
-          lookups.push(String(opts.tokenAddress).trim());
+      const indexerBackoffActive = mode === "tip" && Date.now() < indexerBackoffUntilRef.current;
+
+      if (!indexerBackoffActive) {
+        try {
+          const lookups = [campaignAddress];
+          if (
+            opts?.tokenAddress &&
+            String(opts.tokenAddress).trim() &&
+            String(opts.tokenAddress).trim() !== String(campaignAddress).trim()
+          ) {
+            lookups.push(String(opts.tokenAddress).trim());
+          }
+          const started = Date.now();
+          const pages = await Promise.all(lookups.map((addr) => fetchIndexerTrades(addr, chainId, limit, signal)));
+          indexerLatencyMs = Date.now() - started;
+          if (signal?.aborted) return;
+          const snapshotItems = pages.flatMap((page) => page.items || []);
+          applyIndexerSnapshot(snapshotItems);
+          indexerRows = snapshotItems.length;
+          historyComplete = pages.reduce<boolean | null>((best, page) => {
+            if (page.historyComplete === true) return true;
+            if (best == null) return page.historyComplete;
+            return best;
+          }, null);
+          repairState = pages.map((page) => page.repairState).find(Boolean) || null;
+          lastIndexedSlot = pages.reduce<number | null>((best, page) => {
+            const slot = page.lastIndexedSlot;
+            if (slot == null) return best;
+            return best == null ? slot : Math.max(best, slot);
+          }, null);
+          indexerOk = true;
+          indexerFailureCountRef.current = 0;
+          indexerBackoffUntilRef.current = 0;
+          const maxIndexedBlock = Math.max(
+            0,
+            ...snapshotItems.map((row: any) => Number(row?.block_number ?? row?.blockNumber ?? 0)),
+          );
+          if (maxIndexedBlock > highestBlockScannedRef.current) highestBlockScannedRef.current = maxIndexedBlock;
+        } catch (apiError: any) {
+          if (isAbortError(apiError)) return;
+          const failures = Math.min(indexerFailureCountRef.current + 1, 5);
+          indexerFailureCountRef.current = failures;
+          const backoffMs = Math.min(MAX_INDEXER_BACKOFF_MS, reconcileMs * 2 ** failures);
+          indexerBackoffUntilRef.current = Date.now() + backoffMs;
+          if (mode === "full" || failures === 1) {
+            console.warn("[useCurveTrades] indexer trade API failed; backing off", {
+              error: apiError,
+              backoffMs,
+              failures,
+            });
+          }
         }
-        const started = Date.now();
-        const pages = await Promise.all(lookups.map((addr) => fetchIndexerTrades(addr, chainId, limit, signal)));
-        indexerLatencyMs = Date.now() - started;
-        if (signal?.aborted) return;
-        const snapshotItems = pages.flatMap((page) => page.items || []);
-        applyIndexerSnapshot(snapshotItems);
-        indexerRows = snapshotItems.length;
-        historyComplete = pages.reduce<boolean | null>((best, page) => {
-          if (page.historyComplete === true) return true;
-          if (best == null) return page.historyComplete;
-          return best;
-        }, null);
-        repairState = pages.map((page) => page.repairState).find(Boolean) || null;
-        lastIndexedSlot = pages.reduce<number | null>((best, page) => {
-          const slot = page.lastIndexedSlot;
-          if (slot == null) return best;
-          return best == null ? slot : Math.max(best, slot);
-        }, null);
-        indexerOk = true;
-        const maxIndexedBlock = Math.max(0, ...snapshot.items.map((row: any) => Number(row?.block_number ?? row?.blockNumber ?? 0)));
-        if (maxIndexedBlock > highestBlockScannedRef.current) highestBlockScannedRef.current = maxIndexedBlock;
-      } catch (apiError: any) {
-        if (isAbortError(apiError)) return;
-        console.warn("[useCurveTrades] indexer trade API failed", apiError);
+      } else {
+        repairState = "indexer-backoff";
       }
 
       if (indexerRows > 0) setLoading(false);
@@ -473,6 +463,7 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
         indexerRows,
       });
       const runSolanaCheck =
+        !indexerBackoffActive &&
         isSolanaChainId(chainId) &&
         Boolean(campaignAddress) &&
         (mode === "full" || !indexerOk) &&
@@ -531,22 +522,24 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
         }
       }
 
-      console.info("[useCurveTrades] snapshot", {
-        chainId,
-        campaign: campaignAddress,
-        mode,
-        indexerOk,
-        indexerRows,
-        indexerLatencyMs,
-        historyComplete,
-        repairState,
-        fallbackRan,
-        fallbackRows,
-        fallbackLatencyMs,
-        finalRows: indexedKeysRef.current.size + livePointsRef.current.length,
-      });
+      if (mode === "full" || !indexerBackoffActive) {
+        console.info("[useCurveTrades] snapshot", {
+          chainId,
+          campaign: campaignAddress,
+          mode,
+          indexerOk,
+          indexerRows,
+          indexerLatencyMs,
+          historyComplete,
+          repairState,
+          fallbackRan,
+          fallbackRows,
+          fallbackLatencyMs,
+          finalRows: indexedKeysRef.current.size + livePointsRef.current.length,
+        });
+      }
 
-      if (isEvmChainId(chainId) && (mode === "full" || !indexerOk)) {
+      if (isEvmChainId(chainId) && !indexerBackoffActive && (mode === "full" || !indexerOk)) {
         try {
           const isDelta = highestBlockScannedRef.current > 0;
           const deepHistory = ENABLE_ONCHAIN_TRADE_FALLBACK && !indexerOk && mode === "full";
@@ -594,7 +587,7 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
       setLoading(false);
       lock.current = false;
     }
-  }, [canLoadTrades, campaignAddress, applyIndexerSnapshot, applyLivePoints, chainId, limit, opts?.tokenAddress]);
+  }, [canLoadTrades, campaignAddress, applyIndexerSnapshot, applyLivePoints, chainId, limit, opts?.tokenAddress, reconcileMs]);
 
   useEffect(() => {
     livePointsRef.current = livePoints;
@@ -609,6 +602,9 @@ export function useCurveTrades(campaignAddress?: string, opts?: UseCurveTradesOp
       indexedKeysRef.current = new Set();
       indexedTxRef.current = new Set();
       livePointsRef.current = [];
+      highestBlockScannedRef.current = 0;
+      indexerFailureCountRef.current = 0;
+      indexerBackoffUntilRef.current = 0;
       setIndexedPoints([]);
       setLivePoints([]);
       setLoading(canLoadTrades);
