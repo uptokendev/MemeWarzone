@@ -13,6 +13,10 @@ on:
       - frontend/src/lib/solanaRewardV0Claim.ts
       - frontend/src/lib/solanaTradeV1.ts
       - frontend/src/lib/solanaTradeAtaV0.test.mjs
+      - frontend/src/lib/solanaUpvoteV0.ts
+      - frontend/src/lib/solanaMeteoraTrade.ts
+      - frontend/src/components/token/UpvoteDialog.tsx
+      - frontend/scripts/check-solana-user-v0-normalization.mjs
       - frontend/scripts/load-solana-v0-module.mjs
       - .github/workflows/solana-user-v0-normalization.yml
   workflow_dispatch:
@@ -37,6 +41,9 @@ jobs:
 
       - name: Install frontend dependencies
         run: npm install --prefix frontend --no-audit --no-fund
+
+      - name: Gate live user paths against Legacy Solana transactions
+        run: node frontend/scripts/check-solana-user-v0-normalization.mjs
 
       - name: Test generic user V0 envelope
         run: node --test frontend/src/lib/solanaUserV0Transaction.test.mjs
