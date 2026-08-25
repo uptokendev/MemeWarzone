@@ -26,9 +26,7 @@ export type AnalyticsInitOptions = {
 }
 
 function uuid(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID()
-  }
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID()
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (ch) => {
     const n = Math.random() * 16 | 0
     const v = ch === 'x' ? n : (n & 0x3) | 0x8
@@ -41,19 +39,11 @@ function clampString(value: unknown): string {
 }
 
 function readStorage(key: string): string {
-  try {
-    return String(localStorage.getItem(key) || '')
-  } catch {
-    return ''
-  }
+  try { return String(localStorage.getItem(key) || '') } catch { return '' }
 }
 
 function writeStorage(key: string, value: string) {
-  try {
-    localStorage.setItem(key, value)
-  } catch {
-    /* ignore quota / private mode */
-  }
+  try { localStorage.setItem(key, value) } catch { /* ignore quota / private mode */ }
 }
 
 function deviceFromViewport(width: number): 'mobile' | 'tablet' | 'desktop' {
@@ -89,15 +79,11 @@ export class AnalyticsClient {
     this.anonymousId()
     this.sessionId()
     if (this.flushTimer == null && typeof window !== 'undefined') {
-      this.flushTimer = window.setInterval(() => {
-        void this.flush()
-      }, FLUSH_INTERVAL_MS)
+      this.flushTimer = window.setInterval(() => { void this.flush() }, FLUSH_INTERVAL_MS)
       window.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'hidden') void this.flush()
       })
-      window.addEventListener('pagehide', () => {
-        void this.flush()
-      })
+      window.addEventListener('pagehide', () => { void this.flush() })
     }
     this.startHeartbeat()
   }
@@ -127,8 +113,7 @@ export class AnalyticsClient {
 
   identify(userId: string | null | undefined) {
     const id = String(userId || '').trim()
-    if (!id) return
-    if (this.identifiedUser === id) return
+    if (!id || this.identifiedUser === id) return
     this.identifiedUser = id
     writeStorage(UID_KEY, id)
     this.enqueue('$identify', { user_id: id })
@@ -151,20 +136,11 @@ export class AnalyticsClient {
     this.enqueue(name, stripForbiddenProperties(properties))
   }
 
-  async measure<T>(
-    fnName: string,
-    properties: Record<string, unknown>,
-    work: () => Promise<T> | T,
-  ): Promise<T> {
+  async measure<T>(fnName: string, properties: Record<string, unknown>, work: () => Promise<T> | T): Promise<T> {
     const started = Date.now()
     try {
       const result = await work()
-      this.enqueue('$function', {
-        fn: fnName,
-        duration_ms: Date.now() - started,
-        ok: true,
-        ...stripForbiddenProperties(properties),
-      })
+      this.enqueue('$function', { fn: fnName, duration_ms: Date.now() - started, ok: true, ...stripForbiddenProperties(properties) })
       return result
     } catch (error) {
       const err = error as { code?: string; message?: string }
@@ -243,11 +219,7 @@ export class AnalyticsClient {
         if (token) headers.authorization = `Bearer ${token}`
       }
       const response = await fetch(this.options.endpoint, {
-        method: 'POST',
-        headers,
-        body,
-        keepalive: true,
-        cache: 'no-store',
+        method: 'POST', headers, body, keepalive: true, cache: 'no-store',
       })
       if (!response.ok) this.queue.unshift(...batch)
     } catch {
@@ -280,16 +252,16 @@ export class AnalyticsClient {
       session_id: this.sessionId(),
       user_id: storedUser,
       page: {
-        path: templatePath(pagePath),
+        // Preserve the actual route. The API stores this as path_raw and derives
+        // path_template server-side for safe aggregation (for example /token/:address).
+        path: clampString(pagePath),
         title: typeof document !== 'undefined' ? clampString(document.title) : undefined,
         referrer: typeof document !== 'undefined' ? clampString(document.referrer) : undefined,
         search: search ? clampString(search) : undefined,
       },
       context: {
         locale: typeof navigator !== 'undefined' ? navigator.language : undefined,
-        viewport: typeof window !== 'undefined'
-          ? { w: window.innerWidth, h: window.innerHeight }
-          : undefined,
+        viewport: typeof window !== 'undefined' ? { w: window.innerWidth, h: window.innerHeight } : undefined,
         utm: parseUtm(search),
         device: typeof window !== 'undefined' ? deviceFromViewport(window.innerWidth) : undefined,
       },
