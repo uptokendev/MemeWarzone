@@ -24,6 +24,14 @@ function transferFixture() {
   return { payer, recipient, instruction };
 }
 
+function walletSafetyInstruction(payer) {
+  return new TransactionInstruction({
+    programId: Keypair.generate().publicKey,
+    keys: [{ pubkey: payer, isSigner: true, isWritable: false }],
+    data: Buffer.from([9, 9, 9]),
+  });
+}
+
 test("generic user transaction compiles as exact one-signer V0 intent", () => {
   const fixture = transferFixture();
   const transaction = buildSolanaUserV0Transaction(web3, {
@@ -82,6 +90,50 @@ test("generic user intent rejects an additional signer", () => {
     payer: fixture.payer,
     instructions: [instruction],
   }), /exactly 1 signer/i);
+});
+
+test("wallet augmentation may wrap the unchanged expected V0 instruction sequence", () => {
+  const fixture = transferFixture();
+  const before = walletSafetyInstruction(fixture.payer);
+  const after = walletSafetyInstruction(fixture.payer);
+  const transaction = buildSolanaUserV0Transaction(web3, {
+    payer: fixture.payer,
+    recentBlockhash: BLOCKHASH,
+    instructions: [before, fixture.instruction, after],
+  });
+
+  const stats = assertSolanaUserV0Intent(web3, transaction, {
+    payer: fixture.payer,
+    instructions: [fixture.instruction],
+    allowAdditionalInstructions: true,
+  });
+  assert.equal(stats.requiredSigners, 1);
+  assert.equal(stats.instructionCount, 3);
+});
+
+test("wallet augmentation cannot mutate or split the expected V0 instruction sequence", () => {
+  const fixture = transferFixture();
+  const memoLike = new TransactionInstruction({
+    programId: Keypair.generate().publicKey,
+    keys: [{ pubkey: fixture.payer, isSigner: true, isWritable: false }],
+    data: Buffer.from([7]),
+  });
+  const secondExpected = new TransactionInstruction({
+    programId: Keypair.generate().publicKey,
+    keys: [{ pubkey: fixture.payer, isSigner: true, isWritable: false }],
+    data: Buffer.from([8]),
+  });
+  const transaction = buildSolanaUserV0Transaction(web3, {
+    payer: fixture.payer,
+    recentBlockhash: BLOCKHASH,
+    instructions: [fixture.instruction, memoLike, secondExpected],
+  });
+
+  assert.throws(() => assertSolanaUserV0Intent(web3, transaction, {
+    payer: fixture.payer,
+    instructions: [fixture.instruction, secondExpected],
+    allowAdditionalInstructions: true,
+  }), /expected instruction sequence changed/i);
 });
 
 test("fresh blockhash compilation preserves exact intent", async () => {
