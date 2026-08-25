@@ -74,7 +74,6 @@ export async function assertTopazRouter(label: string, address: string) {
       ethers.provider
     );
     const volatileFeeBps = await factory.getFee(ethers.ZeroAddress, false);
-    // MemeWarzone only accepts the production Topaz volatile 0.30% fee tier.
     assertBigIntEq(`${label}.${poolFactory.name}.volatileFeeBps`, volatileFeeBps, 30n);
     console.log(`[verify] ${label} Minimal Topaz interface: ok`);
   } catch (error: any) {
@@ -119,109 +118,147 @@ function isTreasuryRouterV2Deployment(deployment: any, contracts: ReturnType<typ
     deployment.treasuryRouterVersion === "v2" ||
     Boolean(contracts.TreasuryRouterV2) ||
     Boolean(deployment.routing?.monthlyLeagueTreasury) ||
-    Boolean(deployment.routing?.charityTreasury)
+    Boolean(deployment.monthlyLeagueTreasury)
   );
 }
 
-async function assertContractAddress(label: string, address: string) {
-  assertAddress(label, address);
-  await assertCode(label, address);
-}
+export function loadDeployment() {
+  const file = process.env.DEPLOYMENT_FILE
+    ? path.resolve(process.env.DEPLOYMENT_FILE)
+    : path.join(__dirname, "..", "deployments", `${network.name}.json`);
 
-async function assertOptionalContractAddress(label: string, address: string) {
-  if (!address || address === ethers.ZeroAddress) return;
-  await assertContractAddress(label, address);
-}
-
-async function assertAddressGetter(
-  label: string,
-  contractAddress: string,
-  getter: string,
-  expected: string,
-) {
-  const contract = new ethers.Contract(
-    contractAddress,
-    [`function ${getter}() view returns (address)`],
-    ethers.provider,
-  );
-  assertEq(`${label}.${getter}`, await contract[getter](), expected);
-}
-
-async function assertUintGetter(
-  label: string,
-  contractAddress: string,
-  getter: string,
-  expected: bigint,
-) {
-  const contract = new ethers.Contract(
-    contractAddress,
-    [`function ${getter}() view returns (uint256)`],
-    ethers.provider,
-  );
-  assertBigIntEq(`${label}.${getter}`, await contract[getter](), expected);
-}
-
-export async function verifyDeployment(deploymentFile: string) {
-  const resolvedPath = path.resolve(deploymentFile);
-  if (!fs.existsSync(resolvedPath)) throw new Error(`Deployment file not found: ${resolvedPath}`);
-  const deployment = JSON.parse(fs.readFileSync(resolvedPath, "utf8"));
-  const contracts = resolveContracts(deployment);
-
-  await assertContractAddress("TreasuryVaultV2", contracts.TreasuryVaultV2);
-  await assertContractAddress("TreasuryRouter", contracts.TreasuryRouter);
-  if (contracts.TreasuryRouterV2) await assertContractAddress("TreasuryRouterV2", contracts.TreasuryRouterV2);
-  await assertOptionalContractAddress("WeeklyLeagueVault", contracts.WeeklyLeagueVault);
-  await assertOptionalContractAddress("MonthlyLeagueTreasury", contracts.MonthlyLeagueTreasury);
-  await assertOptionalContractAddress("CharityTreasury", contracts.CharityTreasury);
-  await assertOptionalContractAddress("RecruiterRewardsVault", contracts.RecruiterRewardsVault);
-  await assertOptionalContractAddress("CommunityRewardsVault", contracts.CommunityRewardsVault);
-  await assertOptionalContractAddress("ProtocolRevenueVault", contracts.ProtocolRevenueVault);
-  await assertOptionalContractAddress("CreatorRegistry", contracts.CreatorRegistry);
-  await assertOptionalContractAddress("RiskRegistry", contracts.RiskRegistry);
-  await assertOptionalContractAddress("GraduationOracle", contracts.GraduationOracle);
-  await assertOptionalContractAddress("LaunchCampaignImplementation", contracts.LaunchCampaignImplementation);
-  await assertOptionalContractAddress("LaunchFactory", contracts.LaunchFactory);
-  await assertOptionalContractAddress("PermanentLpLocker", contracts.PermanentLpLocker);
-  await assertOptionalContractAddress("UPVoteTreasury", contracts.UPVoteTreasury);
-
-  const topazRouter =
-    pickAddress(deployment, "TopazProductionRouter", ["topazProductionRouter", "topazProductionRouterAddress"]) ||
-    pickAddress(deployment, "TopazRouter", ["topazRouter", "topazRouterAddress"]);
-  if (topazRouter) await assertTopazRouter("TopazRouter", topazRouter);
-
-  if (isTreasuryRouterV2Deployment(deployment, contracts)) {
-    const router = contracts.TreasuryRouterV2 || contracts.TreasuryRouter;
-    if (contracts.WeeklyLeagueVault) await assertAddressGetter("TreasuryRouterV2", router, "weeklyLeagueVault", contracts.WeeklyLeagueVault);
-    if (contracts.MonthlyLeagueTreasury) await assertAddressGetter("TreasuryRouterV2", router, "monthlyLeagueTreasury", contracts.MonthlyLeagueTreasury);
-    if (contracts.RecruiterRewardsVault) await assertAddressGetter("TreasuryRouterV2", router, "recruiterVault", contracts.RecruiterRewardsVault);
-    if (contracts.CommunityRewardsVault) await assertAddressGetter("TreasuryRouterV2", router, "communityVault", contracts.CommunityRewardsVault);
-    if (contracts.ProtocolRevenueVault) await assertAddressGetter("TreasuryRouterV2", router, "protocolVault", contracts.ProtocolRevenueVault);
-    if (contracts.PermanentLpLocker) {
-      const locker = new ethers.Contract(
-        router,
-        ["function authorizedLpLockers(address) view returns (bool)", "function primaryLpLocker() view returns (address)"],
-        ethers.provider,
-      );
-      assertTrue("TreasuryRouterV2.authorizedLpLockers", await locker.authorizedLpLockers(contracts.PermanentLpLocker));
-      assertEq("TreasuryRouterV2.primaryLpLocker", await locker.primaryLpLocker(), contracts.PermanentLpLocker);
-    }
-    if (deployment.routing?.weeklyLeagueBps != null) {
-      await assertUintGetter("TreasuryRouterV2", router, "weeklyLeagueBps", BigInt(deployment.routing.weeklyLeagueBps));
-    }
-    if (deployment.routing?.monthlyLeagueBps != null) {
-      await assertUintGetter("TreasuryRouterV2", router, "monthlyLeagueBps", BigInt(deployment.routing.monthlyLeagueBps));
-    }
+  if (!fs.existsSync(file)) {
+    throw new Error(`Deployment file not found: ${file}. Run scripts/deploy.ts first or set DEPLOYMENT_FILE.`);
   }
 
-  console.log(`[verify] deployment ${resolvedPath}: ok`);
+  const deployment = JSON.parse(fs.readFileSync(file, "utf8"));
+  console.log(`[verify] Loaded deployment: ${file}`);
+  return deployment;
+}
+
+async function verifyMonthlyLeagueTreasury(deployment: any, contracts: ReturnType<typeof resolveContracts>) {
+  const monthlyLeagueTreasury = contracts.MonthlyLeagueTreasury || deployment.routing?.monthlyLeagueTreasury || deployment.monthlyLeagueTreasury;
+  const charityTreasury = contracts.CharityTreasury || deployment.routing?.charityTreasury || deployment.charityTreasury;
+
+  await assertCode("MonthlyLeagueTreasury", monthlyLeagueTreasury);
+  await assertCode("CharityTreasury", charityTreasury);
+
+  const monthly = new ethers.Contract(
+    monthlyLeagueTreasury,
+    [
+      "function multisig() view returns (address)",
+      "function rootPoster() view returns (address)",
+      "function oracle() view returns (address)",
+      "function charityTreasury() view returns (address)",
+      "function monthlyCapUsd() view returns (uint256)",
+    ],
+    ethers.provider
+  );
+
+  assertEq("MonthlyLeagueTreasury.multisig", await monthly.multisig(), deployment.treasurySafe);
+  if (deployment.leagueRootPoster && deployment.leagueRootPoster !== ethers.ZeroAddress) {
+    assertEq("MonthlyLeagueTreasury.rootPoster", await monthly.rootPoster(), deployment.leagueRootPoster);
+  }
+  assertEq("MonthlyLeagueTreasury.oracle", await monthly.oracle(), contracts.GraduationOracle);
+  assertEq("MonthlyLeagueTreasury.charityTreasury", await monthly.charityTreasury(), charityTreasury);
+
+  const configuredCap = BigInt(deployment.monthlyLeagueCapUsd ?? deployment.routing?.monthlyLeagueCapUsd ?? 0);
+  const expectedCap = configuredCap === 0n ? ethers.parseUnits("1500000", 18) : configuredCap;
+  assertBigIntEq("MonthlyLeagueTreasury.monthlyCapUsd", BigInt(await monthly.monthlyCapUsd()), expectedCap);
+
+  const charity = new ethers.Contract(charityTreasury, ["function multisig() view returns (address)"], ethers.provider);
+  assertEq("CharityTreasury.multisig", await charity.multisig(), deployment.treasurySafe);
+}
+
+async function verifyTreasuryRouterV2(deployment: any, contracts: ReturnType<typeof resolveContracts>) {
+  const routerAddress = contracts.TreasuryRouterV2 || contracts.TreasuryRouter;
+  const weeklyLeagueVault = contracts.WeeklyLeagueVault || deployment.routing?.weeklyLeagueVault || contracts.TreasuryVaultV2;
+  const monthlyLeagueTreasury = contracts.MonthlyLeagueTreasury || deployment.routing?.monthlyLeagueTreasury || deployment.monthlyLeagueTreasury;
+  const expectedWeeklyBps = BigInt(deployment.weeklyLeagueBps ?? deployment.routing?.weeklyLeagueBps ?? 3000);
+  const expectedMonthlyBps = BigInt(deployment.monthlyLeagueBps ?? deployment.routing?.monthlyLeagueBps ?? 7000);
+
+  await assertCode("TreasuryRouterV2", routerAddress);
+  await assertCode("WeeklyLeagueVault", weeklyLeagueVault);
+  await assertCode("MonthlyLeagueTreasury", monthlyLeagueTreasury);
+
+  const router = new ethers.Contract(
+    routerAddress,
+    [
+      "function weeklyLeagueVault() view returns (address)",
+      "function monthlyLeagueTreasury() view returns (address)",
+      "function weeklyLeagueBps() view returns (uint16)",
+      "function monthlyLeagueBps() view returns (uint16)",
+      "function recruiterRewardsVault() view returns (address)",
+      "function communityRewardsVault() view returns (address)",
+      "function protocolRevenueVault() view returns (address)",
+      "function permanentLpLocker() view returns (address)",
+      "function authorizedLpLocker(address locker) view returns (bool)",
+    ],
+    ethers.provider
+  );
+
+  assertEq("TreasuryRouterV2.weeklyLeagueVault", await router.weeklyLeagueVault(), weeklyLeagueVault);
+  assertEq("TreasuryRouterV2.monthlyLeagueTreasury", await router.monthlyLeagueTreasury(), monthlyLeagueTreasury);
+  assertBigIntEq("TreasuryRouterV2.weeklyLeagueBps", BigInt(await router.weeklyLeagueBps()), expectedWeeklyBps);
+  assertBigIntEq("TreasuryRouterV2.monthlyLeagueBps", BigInt(await router.monthlyLeagueBps()), expectedMonthlyBps);
+  assertEq("TreasuryRouterV2.recruiterRewardsVault", await router.recruiterRewardsVault(), contracts.RecruiterRewardsVault);
+  assertEq("TreasuryRouterV2.communityRewardsVault", await router.communityRewardsVault(), contracts.CommunityRewardsVault);
+  assertEq("TreasuryRouterV2.protocolRevenueVault", await router.protocolRevenueVault(), contracts.ProtocolRevenueVault);
+
+  if (deployment.routing?.permanentLpLockerAuthorized === true) {
+    assertEq("TreasuryRouterV2.permanentLpLocker", await router.permanentLpLocker(), contracts.PermanentLpLocker);
+    assertTrue("TreasuryRouterV2.authorizedLpLocker", await router.authorizedLpLocker(contracts.PermanentLpLocker));
+  }
+
+  await verifyMonthlyLeagueTreasury(deployment, contracts);
+}
+
+export async function verifyDeployment(deployment: any) {
+  const contracts = resolveContracts(deployment);
+  const v2Deployment = isTreasuryRouterV2Deployment(deployment, contracts);
+  const optionalV2Contracts = new Set(["TreasuryRouterV2", "WeeklyLeagueVault", "MonthlyLeagueTreasury", "CharityTreasury"]);
+
+  for (const [name, address] of Object.entries(contracts)) {
+    if (!v2Deployment && optionalV2Contracts.has(name)) continue;
+    await assertCode(name, address);
+  }
+
+  const router = deployment.productionTopazRouter || deployment.topazInfrastructure?.contracts?.Router || deployment.topazRouter || deployment.router;
+  await assertTopazRouter("TopazRouter", router);
+
+  if (deployment.graduationPriceFeed) {
+    await assertCode("GraduationPriceFeed", deployment.graduationPriceFeed);
+  }
+
+  if (deployment.routing?.factoryFeeRecipient) {
+    assertEq("routing.factoryFeeRecipient", deployment.routing.factoryFeeRecipient, contracts.TreasuryRouter);
+  }
+  if (deployment.routing?.permanentLpLocker) {
+    assertEq("routing.permanentLpLocker", deployment.routing.permanentLpLocker, contracts.PermanentLpLocker);
+  }
+  if (deployment.routing?.campaignImplementation) {
+    assertEq("routing.campaignImplementation", deployment.routing.campaignImplementation, contracts.LaunchCampaignImplementation);
+  }
+  if (deployment.routing?.graduationOracle) {
+    assertEq("routing.graduationOracle", deployment.routing.graduationOracle, contracts.GraduationOracle);
+  }
+  if (deployment.routing?.charityTreasury) {
+    assertEq("routing.charityTreasury", deployment.routing.charityTreasury, contracts.CharityTreasury);
+  }
+
+  if (deployment.routing?.unifiedRouterModeActive !== undefined) {
+    assertTrue("routing.unifiedRouterModeActive", Boolean(deployment.routing.unifiedRouterModeActive));
+  }
+
+  if (v2Deployment) {
+    await verifyTreasuryRouterV2(deployment, contracts);
+  }
+
+  console.log("[verify] deployment wiring OK");
 }
 
 async function main() {
-  const deploymentFile = process.env.DEPLOYMENT_FILE || process.argv[2];
-  if (!deploymentFile) {
-    throw new Error("Usage: hardhat run scripts/verify-deployment.ts --network <network> <deployment-file>");
-  }
-  await verifyDeployment(deploymentFile);
+  await verifyDeployment(loadDeployment());
 }
 
 if (require.main === module) {
