@@ -1,4 +1,10 @@
+import { confirmLaunchpadSignature } from "@/lib/solanaConfirmSignature";
 import { getSolanaRewardRpcUrl, isSolanaRewardChainId } from "@/lib/solanaRewardNetwork";
+import {
+  assertSolanaUserV0Intent,
+  compileSolanaUserV0WithLatestBlockhash,
+  simulateSolanaUserV0OrThrow,
+} from "@/lib/solanaUserV0Transaction";
 import { getSolanaProvider } from "@/lib/solanaWallet";
 import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
 
@@ -71,7 +77,7 @@ export async function submitSolanaLeagueClaim(prepared: {
   }
 
   const web3 = await loadSolanaWeb3();
-  const { Connection, PublicKey, Transaction, TransactionInstruction, SystemProgram } = web3;
+  const { Connection, PublicKey, TransactionInstruction, SystemProgram } = web3;
   const connection = new Connection(getSolanaRewardRpcUrl(chainId), "confirmed");
 
   const categoryHash = hexToBytes(prepared.categoryHash);
@@ -110,13 +116,24 @@ export async function submitSolanaLeagueClaim(prepared: {
     ],
     data,
   });
+  const intent = { payer: winner, instructions: [ix] };
 
-  const tx = new Transaction().add(ix);
-  const latest = await connection.getLatestBlockhash("confirmed");
-  tx.feePayer = new PublicKey(winner);
-  tx.recentBlockhash = latest.blockhash;
-  const signed = await provider.signTransaction(tx);
-  const sig = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false });
-  await connection.confirmTransaction({ signature: sig, ...latest }, "confirmed");
-  return sig;
+  // Simulation gets its own current blockhash. We deliberately rebuild once more
+  // immediately before the wallet prompt so signing never inherits simulation age.
+  const simulated = await compileSolanaUserV0WithLatestBlockhash(web3, connection, intent);
+  await simulateSolanaUserV0OrThrow(connection, simulated.transaction, "Solana league claim");
+
+  const final = await compileSolanaUserV0WithLatestBlockhash(web3, connection, intent);
+  const signed = await provider.signTransaction(final.transaction);
+  assertSolanaUserV0Intent(web3, signed, intent);
+
+  const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false });
+  const confirmation = await confirmLaunchpadSignature(connection, {
+    signature,
+    lastValidBlockHeight: final.latest.lastValidBlockHeight,
+  });
+  if (confirmation.err) {
+    throw new Error(`Solana league claim failed: ${JSON.stringify(confirmation.err)}`);
+  }
+  return signature;
 }
