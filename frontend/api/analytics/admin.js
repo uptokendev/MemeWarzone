@@ -1,5 +1,6 @@
 import { pool } from "../../server/db.js";
 import { requireDashboardAdmin } from "../dashboard/_auth.js";
+import { launchpadKpis } from "./launchpad.js";
 
 const SYSTEM_EVENTS = ["$heartbeat", "$web_vital", "$function", "$pageview", "$pageleave", "$identify"];
 
@@ -307,6 +308,7 @@ export async function analyticsAdmin(req, res) {
     if (tail === "performance/functions") return res.status(200).json(await functions(from, to, app));
     if (tail === "performance/vitals") return res.status(200).json(await vitals(from, to, app));
     if (tail === "realtime") return res.status(200).json(await realtime(app));
+    if (tail === "launchpad") return res.status(200).json(await launchpadKpis({ from, to, chainId: req.query?.chainId }));
     if (tail === "funnels") return res.status(200).json(await funnels(from, to, app));
     if (tail === "sessions") return res.status(200).json(await sessions(app, q));
     const sessionMatch = tail.match(/^sessions\/([0-9a-f-]{36})$/i);
@@ -318,7 +320,7 @@ export async function analyticsAdmin(req, res) {
     return res.status(404).json({ error: "Unknown analytics route." });
   } catch (error) {
     if (isMissingSchema(error)) {
-      return res.status(200).json({ schemaMissing: true, from, to, app, dau: 0, sessions: 0, pageviews: 0, bounceRate: 0, liveUsers: 0, topPages: [], topEvents: [], vitals: [], series: [], rows: [], pages: [], recent: [], funnels: [] });
+      return res.status(200).json({ schemaMissing: true, from, to, app, dau: 0, sessions: 0, pageviews: 0, bounceRate: 0, liveUsers: 0, topPages: [], topEvents: [], vitals: [], series: [], rows: [], pages: [], recent: [], funnels: [], chains: [], topCampaigns: [] });
     }
     throw error;
   }
