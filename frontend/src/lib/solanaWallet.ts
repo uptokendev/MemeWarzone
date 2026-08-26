@@ -331,18 +331,59 @@ function bytesToBase64(bytes: Uint8Array) {
   return btoa(binary);
 }
 
+async function ensureSolanaProviderSession(input: {
+  provider: SolanaProvider;
+  detectedWallet?: DetectedSolanaWallet | null;
+  expectedWalletAddress?: string | null;
+}): Promise<string> {
+  const expected = normalizePublicKey(input.expectedWalletAddress || "");
+  let publicKey = alreadyConnectedKey(input.provider);
+
+  if (!publicKey) {
+    if (!input.provider.connect) throw new Error("Solana wallet not connected.");
+    setSolanaDisconnected(false);
+
+    let result: { publicKey?: { toString: () => string } } | undefined;
+    try {
+      result = await withTimeout(
+        input.provider.connect({ onlyIfTrusted: false }),
+        CONNECT_TIMEOUT_MS,
+        `${input.detectedWallet?.name || "Solana wallet"} did not respond. Unlock it and try again.`,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error || "");
+      if (/user.*reject|denied|cancel/i.test(message)) {
+        throw new Error(`${input.detectedWallet?.name || "Solana wallet"} request was rejected.`);
+      }
+      throw error instanceof Error ? error : new Error(message || "Failed to reconnect Solana wallet.");
+    }
+
+    publicKey = normalizePublicKey(result?.publicKey?.toString() || providerPublicKey(input.provider));
+  }
+
+  if (!publicKey) throw new Error("Solana wallet not connected.");
+  if (expected && publicKey !== expected) {
+    throw new Error(
+      `Connected wallet (${input.detectedWallet?.name || "extension"}) is ${publicKey.slice(0, 4)}…${publicKey.slice(-4)}, ` +
+      `but this action expects ${expected.slice(0, 4)}…${expected.slice(-4)}. Reconnect the correct wallet.`,
+    );
+  }
+
+  notifySolanaWalletChanged(publicKey, input.detectedWallet || null);
+  return publicKey;
+}
+
 export async function signSolanaMessage(message: string, walletAddress?: string): Promise<{ walletAddress: string; signature: string }> {
   const storedId = getStoredSolanaWalletId();
-  const provider = getSolanaProvider(storedId || null);
+  const detectedWallet = detectSolanaWallets().find((wallet) => wallet.id === storedId) || null;
+  const provider = detectedWallet?.provider || getSolanaProvider(storedId || null);
   if (!provider?.signMessage) throw new Error("This Solana wallet does not support message signing.");
 
-  let publicKey = normalizePublicKey(provider.publicKey?.toString?.() || "");
-  if (!publicKey && provider.connect) {
-    const result = await provider.connect({ onlyIfTrusted: false } as any);
-    publicKey = normalizePublicKey(result?.publicKey?.toString?.() || provider.publicKey?.toString?.() || "");
-  }
-  if (!publicKey) throw new Error("Solana wallet not connected.");
-  if (walletAddress && normalizePublicKey(walletAddress) !== publicKey) throw new Error("Connected Solana wallet does not match the selected payout wallet.");
+  const publicKey = await ensureSolanaProviderSession({
+    provider,
+    detectedWallet,
+    expectedWalletAddress: walletAddress,
+  });
 
   const encoded = new TextEncoder().encode(message);
   const signed = await provider.signMessage(encoded);
@@ -355,7 +396,7 @@ export async function signSolanaMessage(message: string, walletAddress?: string)
         : null;
   if (!signature?.length) throw new Error("Solana wallet did not return a signature.");
 
-  notifySolanaWalletChanged(publicKey, detectSolanaWallets().find((wallet) => wallet.id === storedId) || null);
+  notifySolanaWalletChanged(publicKey, detectedWallet);
   return { walletAddress: publicKey, signature: bytesToBase64(signature) };
 }
 
@@ -481,6 +522,12 @@ async function createSignedSolanaDraftAction(input: {
   draftId: string | null;
 }): Promise<DraftActionAuth & { walletType: "solana" }> {
   const { provider, detectedWallet, walletAddress, chainId, draftId } = input;
+
+  await ensureSolanaProviderSession({
+    provider,
+    detectedWallet,
+    expectedWalletAddress: walletAddress,
+  });
 
   // Fetch nonce immediately before signing so nothing else can replace it
   // (auth_nonces is unique on chain_id + address).
