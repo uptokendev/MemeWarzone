@@ -15,6 +15,7 @@ import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { requireAdminOrOps, isAuthEnforceArenaMutations } from "./lib/apiAuth.js";
 import { notifyChallenge } from "./lib/arenaNotify.js";
 import { recordFinishedBattle } from "./lib/arenaLeagueScore.js";
+import { advanceTournamentFromBattle } from "./arenaTournaments.js";
 
 const LIVE_HOURS = 12;
 const CHALLENGE_HOURS = 24;
@@ -496,6 +497,13 @@ async function settleLive(row) {
     await recordFinishedBattle({ ...row, winner_token: winner, participants, state: "live" });
   } catch (error) {
     console.warn("[api/arenaBattles] league score failed", error?.message || error);
+  }
+  try {
+    if (row.tournament_id && winner) {
+      await advanceTournamentFromBattle({ ...row, winner_token: winner, id: row.id });
+    }
+  } catch (error) {
+    console.warn("[api/arenaBattles] tournament advance failed", error?.message || error);
   }
 
   return updateBattle(row.id, {

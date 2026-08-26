@@ -338,6 +338,88 @@ async function handleAdminStart(req, res, id) {
   return json(res, 200, { ok: true, item: mapAdmin({ ...row, status: "live", bracket }, entries.length), bracket });
 }
 
+export async function advanceTournamentFromBattle(row) {
+  const tournamentId = row?.tournament_id;
+  const winner = ident(row?.winner_token);
+  if (!tournamentId || !winner) return null;
+  const result = await pool.query(`select * from public.arena_tournaments where id = $1 limit 1`, [tournamentId]);
+  const tournament = result.rows[0];
+  if (!tournament || tournament.status !== "live") return null;
+  const bracket = tournament.bracket && typeof tournament.bracket === "object" ? tournament.bracket : { rounds: [] };
+  const rounds = Array.isArray(bracket.rounds) ? bracket.rounds : [];
+  let found = false;
+  for (const round of rounds) {
+    for (const match of round.matches || []) {
+      if (String(match.battleId || "") === String(row.id)) {
+        match.winner = winner;
+        found = true;
+      }
+    }
+  }
+  if (!found) return null;
+  const last = rounds[rounds.length - 1];
+  const matches = last?.matches || [];
+  const winners = matches.map((match) => ident(match.winner)).filter(Boolean);
+  if (winners.length === matches.length && matches.length > 0) {
+    if (winners.length === 1) {
+      await pool.query(
+        `update public.arena_tournaments
+            set status = 'finished', ends_at = now(), bracket = $2::jsonb, updated_at = now()
+          where id = $1`,
+        [tournamentId, JSON.stringify({ rounds })],
+      );
+      return { finished: true, winner: winners[0] };
+    }
+    const nextMatches = [];
+    for (let i = 0; i < winners.length; i += 2) {
+      const a = winners[i];
+      const b = winners[i + 1];
+      if (!b) {
+        nextMatches.push({
+          id: `r${(last.round || 1) + 1}-m${nextMatches.length + 1}`,
+          tokenA: a,
+          tokenB: null,
+          battleId: null,
+          winner: a,
+          bye: true,
+        });
+        continue;
+      }
+      const battleId = await insertTournamentBattle({
+        chainId: tournament.chain_id,
+        tournamentId,
+        left: a,
+        right: b,
+        nativeSymbol: tournament.native_symbol || nativeSymbolFor(tournament.chain_id),
+      });
+      nextMatches.push({
+        id: `r${(last.round || 1) + 1}-m${nextMatches.length + 1}`,
+        tokenA: a,
+        tokenB: b,
+        battleId,
+        winner: null,
+        bye: false,
+      });
+    }
+    rounds.push({ round: (last.round || 1) + 1, matches: nextMatches });
+    const nextWinners = nextMatches.map((match) => ident(match.winner)).filter(Boolean);
+    if (nextWinners.length === nextMatches.length && nextWinners.length === 1) {
+      await pool.query(
+        `update public.arena_tournaments
+            set status = 'finished', ends_at = now(), bracket = $2::jsonb, updated_at = now()
+          where id = $1`,
+        [tournamentId, JSON.stringify({ rounds })],
+      );
+      return { finished: true, winner: nextWinners[0] };
+    }
+  }
+  await pool.query(
+    `update public.arena_tournaments set bracket = $2::jsonb, updated_at = now() where id = $1`,
+    [tournamentId, JSON.stringify({ rounds })],
+  );
+  return { finished: false };
+}
+
 export default async function handler(req, res) {
   const method = String(req.method || "GET").toUpperCase();
   const path = String(req.path || new URL(req.url, "http://localhost").pathname);
