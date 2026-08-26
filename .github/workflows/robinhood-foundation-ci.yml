@@ -11,8 +11,11 @@ on:
       - "docs/robinhood-v3-testnet-rehearsal.md"
       - "contracts/mocks/MockUniswapV3*.sol"
       - "contracts/mocks/MockWETH9.sol"
+      - "contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol"
+      - "contracts/PermanentV3PositionLocker.sol"
       - "scripts/deploy-robinhood-v3-mock.ts"
       - "test/RobinhoodV3Mocks.spec.ts"
+      - "test/RobinhoodV3GraduationAdapter.spec.ts"
       - "frontend/src/lib/chainRegistry.ts"
       - "frontend/src/lib/deploymentManifest.ts"
       - "frontend/src/lib/evmChainAdapter.ts"
@@ -32,8 +35,11 @@ on:
       - "docs/robinhood-v3-testnet-rehearsal.md"
       - "contracts/mocks/MockUniswapV3*.sol"
       - "contracts/mocks/MockWETH9.sol"
+      - "contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol"
+      - "contracts/PermanentV3PositionLocker.sol"
       - "scripts/deploy-robinhood-v3-mock.ts"
       - "test/RobinhoodV3Mocks.spec.ts"
+      - "test/RobinhoodV3GraduationAdapter.spec.ts"
       - "frontend/src/lib/chainRegistry.ts"
       - "frontend/src/lib/deploymentManifest.ts"
       - "frontend/src/lib/evmChainAdapter.ts"
@@ -53,7 +59,7 @@ concurrency:
 
 jobs:
   robinhood-v3-mock:
-    name: Robinhood V3 mock DEX compile and flow proof
+    name: Robinhood V3 mock DEX and graduation compatibility proof
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -71,8 +77,8 @@ jobs:
       - name: Compile contracts
         run: npx hardhat compile
 
-      - name: Prove V3 staging pool, NFT position, swap and fee collection
-        run: npx hardhat test test/RobinhoodV3Mocks.spec.ts
+      - name: Prove V3 staging DEX and unchanged LaunchCampaign graduation
+        run: npx hardhat test test/RobinhoodV3Mocks.spec.ts test/RobinhoodV3GraduationAdapter.spec.ts
 
   frontend-foundation:
     name: Frontend EVM parity and production build
