@@ -34,6 +34,21 @@ const adminUrl = new URL(targetUrl.toString());
 adminUrl.pathname = "/postgres";
 const SOLANA_WALLET_CASE_MIGRATION = "20260708_000001_recruiter_solana_wallet_case.sql";
 const WAR_TRADE_ROOM_MIGRATION = "202607290001_war_trade_room_market_continuity_foundation.sql";
+const REQUIRED_POSTGRES_VERSION_NUM = 160000;
+
+// These files belong to historical subsystems whose source tables were created by
+// database streams outside db/migrations (legacy league, waitlist, WM, reward and
+// admin schemas). They are intentionally outside the isolated Robinhood launchpad
+// runtime. Do not invent placeholder production tables merely to make them replay.
+const LOCAL_REPLAY_OPTIONAL_MIGRATIONS = new Set([
+  "20260213_000003_claim_expiry_rollover.sql",
+  "20260512_000021_recruiter_waitlist_to_recruiters_sync.sql",
+  "20260518_000024_wm_telegram_link_challenges.sql",
+  "20260518_000025_wm_discord_link_challenges.sql",
+  "20260710_000002_weekly_airdrop_automation_guards.sql",
+  "20260821_000004_partner_listings_rls.sql",
+  "20260821_000005_sponsorship_admin_rls.sql",
+]);
 
 async function ensureDatabase() {
   const admin = new Client({ connectionString: adminUrl.toString(), ssl: false });
@@ -49,6 +64,23 @@ async function ensureDatabase() {
   } finally {
     await admin.end();
   }
+}
+
+async function ensurePostgresVersion(client) {
+  const result = await client.query(`
+    select
+      current_setting('server_version_num')::int as version_num,
+      current_setting('server_version') as version
+  `);
+  const versionNum = Number(result.rows[0]?.version_num || 0);
+  const version = String(result.rows[0]?.version || "unknown");
+  if (versionNum < REQUIRED_POSTGRES_VERSION_NUM) {
+    throw new Error(
+      `Robinhood local development requires PostgreSQL 16+ to match CI; connected server is ${version}. ` +
+      `Point DATABASE_URL at the PostgreSQL 16 local cluster before bootstrapping.`,
+    );
+  }
+  console.log(`[robinhood-local-db] PostgreSQL ${version} compatibility confirmed`);
 }
 
 async function ensureCompatibilityRoles(client) {
@@ -78,6 +110,43 @@ async function ensureCompatibilityHelpers(client) {
     end;
     $$
   `);
+}
+
+async function ensureLaunchpadCompatibilitySchema(client) {
+  const exists = await client.query("select to_regclass('public.campaigns') as relation");
+  if (!exists.rows[0]?.relation) return false;
+
+  // Production acquired these campaign fields through the canonical indexer schema
+  // repair (realtime-indexer/SUPABASE_SCHEMA_FIX.sql). Later ticker/WTR migrations
+  // legitimately depend on them, but a clean db/migrations-only replay never sees
+  // that repair file. Reproduce only those canonical campaign columns locally.
+  await client.query(`
+    alter table public.campaigns
+      add column if not exists logo_uri text,
+      add column if not exists created_at_chain timestamptz,
+      add column if not exists factory_address text,
+      add column if not exists graduated_at_chain timestamptz,
+      add column if not exists graduated_block bigint,
+      add column if not exists fee_recipient_address text
+  `);
+
+  const createdBlock = await client.query(`
+    select 1
+    from information_schema.columns
+    where table_schema='public' and table_name='campaigns' and column_name='created_block'
+  `);
+  if (createdBlock.rowCount) {
+    await client.query(`
+      create index if not exists campaigns_chain_factory_idx
+        on public.campaigns(chain_id, factory_address);
+      create index if not exists campaigns_chain_created_block_idx
+        on public.campaigns(chain_id, created_block);
+      create index if not exists campaigns_chain_graduated_at_idx
+        on public.campaigns(chain_id, graduated_at_chain desc)
+    `);
+  }
+
+  return true;
 }
 
 const DEFERABLE_DEPENDENCY_CODES = new Set([
@@ -251,8 +320,10 @@ async function applyMigrations() {
   const client = new Client({ connectionString: targetUrl.toString(), ssl: false });
   await client.connect();
   try {
+    await ensurePostgresVersion(client);
     await ensureCompatibilityRoles(client);
     await ensureCompatibilityHelpers(client);
+    await ensureLaunchpadCompatibilitySchema(client);
     await client.query(`
       create table if not exists public._mwz_local_migrations (
         filename text primary key,
@@ -261,10 +332,19 @@ async function applyMigrations() {
     `);
 
     const migrationsDir = path.join(repoRoot, "db", "migrations");
-    const files = fs
+    const allFiles = fs
       .readdirSync(migrationsDir)
       .filter((name) => name.endsWith(".sql"))
       .sort((a, b) => a.localeCompare(b, "en"));
+    const skippedOptional = allFiles.filter((filename) => LOCAL_REPLAY_OPTIONAL_MIGRATIONS.has(filename));
+    const files = allFiles.filter((filename) => !LOCAL_REPLAY_OPTIONAL_MIGRATIONS.has(filename));
+
+    if (skippedOptional.length) {
+      console.log(
+        `[robinhood-local-db] excluding ${skippedOptional.length} unrelated historical migration(s) from isolated launchpad replay: ` +
+        skippedOptional.join(", "),
+      );
+    }
 
     const appliedRows = await client.query("select filename from public._mwz_local_migrations");
     const alreadyApplied = new Set(appliedRows.rows.map((row) => String(row.filename)));
@@ -286,6 +366,9 @@ async function applyMigrations() {
         console.log(`[robinhood-local-db] applying ${filename}`);
         try {
           await runMigrationTransaction(client, filename, sql);
+          if (filename === "003_indexer.sql") {
+            await ensureLaunchpadCompatibilitySchema(client);
+          }
           applied += 1;
           progress += 1;
           lastErrors.delete(filename);
@@ -309,7 +392,7 @@ async function applyMigrations() {
           .map((filename) => `- ${filename}: ${lastErrors.get(filename) || "unresolved dependency"}`)
           .join("\n");
         throw new Error(
-          `Local migration replay is blocked by unresolved dependencies after a full pass:\n${details}`,
+          `Local launchpad migration replay is blocked by unresolved required dependencies after a full pass:\n${details}`,
         );
       }
       pending = deferred;
@@ -324,10 +407,10 @@ async function applyMigrations() {
       ) missing
     `, [files]);
     if (Number(remaining.rows[0]?.count || 0) !== 0) {
-      throw new Error(`Local migration ledger incomplete: ${remaining.rows[0]?.count || 0} migration(s) missing.`);
+      throw new Error(`Local launchpad migration ledger incomplete: ${remaining.rows[0]?.count || 0} required migration(s) missing.`);
     }
 
-    console.log(`[robinhood-local-db] schema ready (${applied} new migration${applied === 1 ? "" : "s"}).`);
+    console.log(`[robinhood-local-db] schema ready (${applied} new migration${applied === 1 ? "" : "s"}; ${skippedOptional.length} unrelated historical migration${skippedOptional.length === 1 ? "" : "s"} excluded).`);
   } finally {
     await client.end();
   }
