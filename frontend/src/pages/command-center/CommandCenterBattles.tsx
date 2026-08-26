@@ -165,7 +165,7 @@ export default function CommandCenterBattles() {
       </div>
 
       {incoming.length ? (
-        <CommandCenterCard title="Incoming challenges" description="Accept to start a live 12-hour fight, or decline.">
+        <CommandCenterCard title="Incoming challenges" description="Accept to start a live 12-hour fight, or decline. Add an email in Settings if you want a copy of challenges.">
           <div className="space-y-3">
             {incoming.map((battle) => {
               const challenger = battle.participants?.[0];

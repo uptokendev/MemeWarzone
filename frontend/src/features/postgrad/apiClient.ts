@@ -184,6 +184,31 @@ export async function fetchPostGradLeagueFeed(signal?: AbortSignal) {
   return fetchJson("/api/arena/league", { cache: "no-store", signal });
 }
 
+export async function fetchArenaFeaturedVotes(signal?: AbortSignal) {
+  return fetchJson("/api/arena/votes/featured", { cache: "no-store", signal });
+}
+
+export async function fetchArenaNotificationEmailStatus(body: JsonObject) {
+  return mutateBattle("/api/arena/notifications/email/status", body);
+}
+
+export async function setArenaNotificationEmail(body: JsonObject) {
+  return mutateBattle("/api/arena/notifications/email", body);
+}
+
+export async function verifyArenaNotificationEmail(token: string) {
+  const response = await apiFetch(`/api/arena/notifications/email/verify?token=${encodeURIComponent(token)}`, { cache: "no-store" });
+  const json = (await readJson(response)) || {};
+  if (!response.ok || json.ok === false) {
+    throw new Error(String(json.error || `Request failed (${response.status})`));
+  }
+  return json;
+}
+
+export async function optInPostGradTournament(tournamentId: string, body: JsonObject) {
+  return mutateBattle(`/api/arena/tournaments/${encodeURIComponent(tournamentId)}/opt-in`, body);
+}
+
 export async function mutatePostGradLeague(action: PostGradLeagueAction) {
   return mutateJson("/api/arena/league/mutate", { action });
 }

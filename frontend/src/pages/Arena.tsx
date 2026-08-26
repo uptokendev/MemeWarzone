@@ -3,14 +3,17 @@ import { ArenaMatchRow } from "@/components/postgrad/ArenaMatchRow";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { Button } from "@/components/ui/button";
 import { ContentContainer } from "@/components/layout/ContentContainer";
+import { getArenaTokenRoute } from "@/features/postgrad/tokenRoutes";
 import { useArenaBattleFeed } from "@/hooks/useArenaBattleFeed";
 import { useArenaEventFeed } from "@/hooks/useArenaEventFeed";
+import { useArenaFeaturedVotes } from "@/hooks/useArenaFeaturedVotes";
 import { useArenaLeagueFeed } from "@/hooks/useArenaLeagueFeed";
 
 const Arena = () => {
   const { liveBattles, source: battleSource } = useArenaBattleFeed();
   const { events, source: eventSource } = useArenaEventFeed();
   const { season, source: leagueSource } = useArenaLeagueFeed();
+  const featured = useArenaFeaturedVotes();
 
   const liveTournaments = events.filter((event) => event.status === "live" && event.type === "tournament");
   const lead = season.entries[0];
@@ -23,9 +26,33 @@ const Arena = () => {
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
           Top 20 from Arena UpVotes (graduated MemeWarzone coins and approved imports). Launchpad UpVotes stay on Showcase.
         </p>
-        <div className="mt-4 rounded-md border border-border/50 bg-background/40 p-4 text-sm text-muted-foreground">
-          Arena UpVotes are not live yet. This rail stays empty until the Arena vote ledger is on.
-        </div>
+        {featured.items.length ? (
+          <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            {featured.items.slice(0, 20).map((item, index) => {
+              const route = getArenaTokenRoute(item.tokenAddress);
+              const card = (
+                <div className="rounded-md border border-border/50 bg-background/40 p-3">
+                  <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">#{index + 1}</div>
+                  <div className="mt-1 font-retro text-sm text-foreground">{item.tokenName} <span className="text-muted-foreground">{item.symbol}</span></div>
+                  <div className="mt-1 text-xs text-muted-foreground">{item.votes24h} Arena UpVotes (24h)</div>
+                </div>
+              );
+              return route ? (
+                <Link key={`${item.chainId}-${item.tokenAddress}`} to={route} className="block transition hover:border-accent/50">
+                  {card}
+                </Link>
+              ) : (
+                <div key={`${item.chainId}-${item.tokenAddress}`}>{card}</div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="mt-4 rounded-md border border-border/50 bg-background/40 p-4 text-sm text-muted-foreground">
+            {featured.loading
+              ? "Loading Arena UpVotes..."
+              : "No Arena UpVotes yet. Ranking uses the Arena ledger, separate from launchpad UpVotes. Paying votes waits on a dedicated Arena treasury."}
+          </div>
+        )}
       </section>
 
       <section className="grid gap-4 xl:grid-cols-3">

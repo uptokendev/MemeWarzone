@@ -13,6 +13,8 @@ import {
 } from "../server/http.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { requireAdminOrOps, isAuthEnforceArenaMutations } from "./lib/apiAuth.js";
+import { notifyChallenge } from "./lib/arenaNotify.js";
+import { recordFinishedBattle } from "./lib/arenaLeagueScore.js";
 
 const LIVE_HOURS = 12;
 const CHALLENGE_HOURS = 24;
@@ -490,6 +492,12 @@ async function settleLive(row) {
     isLeading: winner ? ident(part.tokenId || part.tokenAddress, chainId) === ident(winner, chainId) : false,
   })) : [];
 
+  try {
+    await recordFinishedBattle({ ...row, winner_token: winner, participants, state: "live" });
+  } catch (error) {
+    console.warn("[api/arenaBattles] league score failed", error?.message || error);
+  }
+
   return updateBattle(row.id, {
     state: "finished",
     winner_token: winner,
@@ -634,7 +642,13 @@ async function handleChallenge(req, res) {
     creatorAddress: ident(challenger.creator_address, chainId),
     endsAt: plusHours(CHALLENGE_HOURS),
   });
-  return json(res, 200, { ok: true, battle });
+  void notifyChallenge({
+    defenderWallet: ident(defender.creator_address, chainId) || defender.creator_address,
+    challengerSymbol: challengerStatus.symbol || challenger.name,
+    defenderSymbol: defenderStatus.symbol || defender.name,
+    battleId: battle?.id,
+  });
+  return json(res, 200, { ok: true, battle, notified: true });
 }
 
 async function handleAccept(req, res, battleId) {

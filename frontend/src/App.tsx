@@ -25,6 +25,7 @@ import ArenaTournaments from "./pages/ArenaTournaments";
 import PostGradLeague from "./pages/PostGradLeague";
 import League from "./pages/League";
 import TournamentDetails from "./pages/TournamentDetails";
+import ArenaVerifyEmail from "./pages/ArenaVerifyEmail";
 import Create from "./pages/Create";
 import SponsorshipApplication from "./pages/SponsorshipApplication";
 import ProfilePage from "./pages/ProfilePage";
@@ -179,6 +180,7 @@ function AppShellLayout({
         <Routes>
           <Route path="/" element={<Showcase />} />
           {postGradEnabled && postGradFlags.arena ? <Route path="/arena" element={<Arena />} /> : null}
+          {postGradEnabled && postGradFlags.arena ? <Route path="/arena/verify-email" element={<ArenaVerifyEmail />} /> : null}
           {postGradEnabled && postGradFlags.battle ? <Route path="/arena/battles" element={<ArenaBattles />} /> : null}
           {postGradEnabled && postGradFlags.league ? <Route path="/arena/major-war-league" element={<PostGradLeague />} /> : null}
           {postGradEnabled && postGradFlags.league ? <Route path="/arena/leagues" element={<Navigate to="/arena/major-war-league" replace />} /> : null}

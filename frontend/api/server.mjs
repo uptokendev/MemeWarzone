@@ -424,7 +424,7 @@ router.all("/vote-ingest", wrap(votesIngest));
 router.all("/votes/ingest", wrap(votesIngest));
 router.all("/votes", wrap(votes));
 router.all("/vote_counts", wrap(voteCounts));
-router.all(/^\/(?:arena\/ops\/health|arena\/battles(?:\/.*)?|arena\/imports(?:\/.*)?|arena\/tournaments(?:\/.*)?|arena\/events(?:\/.*)?|arena\/league(?:\/.*)?|arena\/war-pools(?:\/.*)?|sponsored|sponsorship-applications|sponsorship-packages|sponsorship-settings|war-room(?:\/.*)?)$/, wrap(postgrad));
+router.all(/^\/(?:arena\/ops\/health|arena\/battles(?:\/.*)?|arena\/imports(?:\/.*)?|arena\/tournaments(?:\/.*)?|arena\/events(?:\/.*)?|arena\/league(?:\/.*)?|arena\/notifications(?:\/.*)?|arena\/votes(?:\/.*)?|arena\/war-pools(?:\/.*)?|sponsored|sponsorship-applications|sponsorship-packages|sponsorship-settings|war-room(?:\/.*)?)$/, wrap(postgrad));
 router.all(/^\/admin\/arena\/imports(?:\/.*)?$/, wrap(adminArenaImports));
 router.all(/^\/admin\/arena\/tournaments(?:\/.*)?$/, wrap(arenaTournaments));
 router.all("/drafts", wrap(drafts));
