@@ -19,6 +19,7 @@ on:
       - "scripts/check-robinhood-local-isolation.mjs"
       - "test/RobinhoodV3Mocks.spec.ts"
       - "test/RobinhoodV3GraduationAdapter.spec.ts"
+      - "db/migrations/**"
       - "frontend/api/load-local-env.mjs"
       - "frontend/scripts/dev-robinhood-local.mjs"
       - "frontend/scripts/prepare-robinhood-local-db.mjs"
@@ -54,6 +55,7 @@ on:
       - "scripts/check-robinhood-local-isolation.mjs"
       - "test/RobinhoodV3Mocks.spec.ts"
       - "test/RobinhoodV3GraduationAdapter.spec.ts"
+      - "db/migrations/**"
       - "frontend/api/load-local-env.mjs"
       - "frontend/scripts/dev-robinhood-local.mjs"
       - "frontend/scripts/prepare-robinhood-local-db.mjs"
@@ -181,3 +183,92 @@ jobs:
       - name: Prove isolated local runtime boots without production Ably or telemetry
         working-directory: realtime-indexer
         run: npx tsx --test src/tests/localRuntimeIsolation.test.ts
+
+  local-stack-smoke:
+    name: Boot isolated Robinhood local stack with PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      RUNTIME_ENVIRONMENT: local
+      VITE_RUNTIME_ENVIRONMENT: local
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/memewarzone_robinhood_local
+      PG_DISABLE_SSL: "1"
+      ROBINHOOD_TESTNET_RPC_URL: https://rpc.testnet.chain.robinhood.com
+      ROBINHOOD_RPC_HTTP_46630: https://rpc.testnet.chain.robinhood.com
+      DEFAULT_EVM_CHAIN_ID: "46630"
+      EVM_INDEXER_CHAIN_IDS: "46630"
+      VITE_DEFAULT_CHAIN_ID: "46630"
+      VITE_ALLOWED_CHAIN_IDS: "46630"
+      VITE_PUBLIC_RPC_46630: https://rpc.testnet.chain.robinhood.com
+      LOCAL_DISABLE_ABLY: "1"
+      LOCAL_DISABLE_REMOTE_SUPABASE: "1"
+      ENABLE_DATA_URL_UPLOADS: "1"
+      TELEMETRY_INGEST_URL: ""
+      TELEMETRY_TOKEN: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install local frontend API dependencies
+        run: npm install --prefix frontend --package-lock=false --no-audit --no-fund
+
+      - name: Install local indexer dependencies
+        run: npm install --prefix realtime-indexer --package-lock=false --no-audit --no-fund
+
+      - name: Bootstrap dedicated local database from committed migrations
+        run: node frontend/scripts/prepare-robinhood-local-db.mjs
+
+      - name: Start the exact developer local stack command
+        run: |
+          node frontend/scripts/dev-robinhood-local.mjs > /tmp/robinhood-local.log 2>&1 &
+          echo $! > /tmp/robinhood-local.pid
+
+      - name: Wait for local indexer API, frontend API, and Vite
+        run: |
+          set -e
+          for target in \
+            http://127.0.0.1:3002/healthz \
+            http://127.0.0.1:3001/healthz \
+            http://127.0.0.1:5173/; do
+            ok=0
+            for i in $(seq 1 60); do
+              if curl -fsS "$target" >/dev/null; then
+                ok=1
+                break
+              fi
+              sleep 1
+            done
+            if [ "$ok" -ne 1 ]; then
+              echo "Local target failed: $target"
+              cat /tmp/robinhood-local.log || true
+              exit 1
+            fi
+          done
+
+      - name: Prove no live MemeWarzone backend leaked into local process log
+        run: |
+          if grep -E "https://(api|indexer)\.memewar\.zone" /tmp/robinhood-local.log; then
+            echo "Production MemeWarzone backend leaked into local runtime"
+            exit 1
+          fi
+
+      - name: Show local stack log on failure
+        if: failure()
+        run: cat /tmp/robinhood-local.log || true
