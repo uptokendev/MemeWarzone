@@ -17,6 +17,13 @@ const compiled = await build({
 export { resolveTokenPageChainId, isEvmTokenRoutePath } from "./chainConfig.ts";
 export { getBnbCampaignFeedChainIds } from "./feedChainConfig.ts";
 export { isSolanaTokenRouteId } from "./tokenDetailsPath.ts";
+export {
+  ACTIVE_EVM_CHAIN_IDS,
+  KNOWN_EVM_CHAIN_IDS,
+  buildEvmWalletChainParams,
+  isActiveEvmChainId,
+  isKnownEvmChainId,
+} from "./evmChainAdapter.ts";
 `,
     resolveDir: dir,
     sourcefile: "feedIsolationHarness.ts",
@@ -44,6 +51,11 @@ const {
   isEvmTokenRoutePath,
   getBnbCampaignFeedChainIds,
   isSolanaTokenRouteId,
+  ACTIVE_EVM_CHAIN_IDS,
+  KNOWN_EVM_CHAIN_IDS,
+  buildEvmWalletChainParams,
+  isActiveEvmChainId,
+  isKnownEvmChainId,
 } = await import(pathToFileURL(outfile).href);
 
 const BNB_CAMPAIGN = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -83,4 +95,43 @@ test("BNB feeds may merge 56+97 but must never include Solana 101", () => {
     assert.ok(!ids.includes(101));
     assert.ok(ids.every((id) => id === 56 || id === 97));
   }
+});
+
+test("Robinhood is known to the generic EVM layer but remains inactive", () => {
+  assert.deepEqual(KNOWN_EVM_CHAIN_IDS, [56, 97, 4663, 46630]);
+  assert.deepEqual(ACTIVE_EVM_CHAIN_IDS, [56, 97]);
+  assert.equal(isKnownEvmChainId(4663), true);
+  assert.equal(isKnownEvmChainId(46630), true);
+  assert.equal(isActiveEvmChainId(4663), false);
+  assert.equal(isActiveEvmChainId(46630), false);
+});
+
+test("BNB wallet chain parameters remain protocol-compatible", () => {
+  const mainnet = buildEvmWalletChainParams(56, ["https://rpc.example/56"]);
+  assert.equal(mainnet.chainId, "0x38");
+  assert.equal(mainnet.chainName, "BNB Smart Chain");
+  assert.deepEqual(mainnet.nativeCurrency, { name: "BNB", symbol: "BNB", decimals: 18 });
+  assert.deepEqual(mainnet.blockExplorerUrls, ["https://bscscan.com/"]);
+
+  const testnet = buildEvmWalletChainParams(97, ["https://rpc.example/97"]);
+  assert.equal(testnet.chainId, "0x61");
+  assert.equal(testnet.chainName, "BNB Smart Chain Testnet");
+  assert.deepEqual(testnet.nativeCurrency, { name: "tBNB", symbol: "tBNB", decimals: 18 });
+  assert.deepEqual(testnet.blockExplorerUrls, ["https://testnet.bscscan.com/"]);
+});
+
+test("Robinhood wallet parameters are constructible without activating the chain", () => {
+  const mainnet = buildEvmWalletChainParams(4663, ["https://rpc.mainnet.chain.robinhood.com"]);
+  assert.equal(mainnet.chainId, "0x1237");
+  assert.equal(mainnet.chainName, "Robinhood Chain");
+  assert.deepEqual(mainnet.nativeCurrency, { name: "ETH", symbol: "ETH", decimals: 18 });
+  assert.deepEqual(mainnet.blockExplorerUrls, ["https://robinhoodchain.blockscout.com/"]);
+  assert.equal(isActiveEvmChainId(4663), false);
+
+  const testnet = buildEvmWalletChainParams(46630, ["https://rpc.testnet.chain.robinhood.com"]);
+  assert.equal(testnet.chainId, "0xb626");
+  assert.equal(testnet.chainName, "Robinhood Chain Testnet");
+  assert.deepEqual(testnet.nativeCurrency, { name: "ETH", symbol: "ETH", decimals: 18 });
+  assert.deepEqual(testnet.blockExplorerUrls, ["https://explorer.testnet.chain.robinhood.com/"]);
+  assert.equal(isActiveEvmChainId(46630), false);
 });

@@ -1,0 +1,102 @@
+name: Robinhood foundation proof
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "config/robinhood-*.env.example"
+      - "deployments/robinhood/**"
+      - "docs/build_plans/robinhood-*.md"
+      - "frontend/src/lib/chainRegistry.ts"
+      - "frontend/src/lib/deploymentManifest.ts"
+      - "frontend/src/lib/evmChainAdapter.ts"
+      - "frontend/src/lib/feedChainIsolation.test.mjs"
+      - "frontend/src/lib/launchpadReadiness.ts"
+      - "frontend/src/lib/runtimeEnvironment.ts"
+      - "realtime-indexer/src/evmIndexerChains.ts"
+      - "realtime-indexer/src/tests/evmIndexerChains.test.ts"
+      - ".github/workflows/robinhood-foundation-ci.yml"
+  push:
+    branches:
+      - "feat/robinhood-*"
+    paths:
+      - "config/robinhood-*.env.example"
+      - "deployments/robinhood/**"
+      - "docs/build_plans/robinhood-*.md"
+      - "frontend/src/lib/chainRegistry.ts"
+      - "frontend/src/lib/deploymentManifest.ts"
+      - "frontend/src/lib/evmChainAdapter.ts"
+      - "frontend/src/lib/feedChainIsolation.test.mjs"
+      - "frontend/src/lib/launchpadReadiness.ts"
+      - "frontend/src/lib/runtimeEnvironment.ts"
+      - "realtime-indexer/src/evmIndexerChains.ts"
+      - "realtime-indexer/src/tests/evmIndexerChains.test.ts"
+      - ".github/workflows/robinhood-foundation-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: robinhood-foundation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend-foundation:
+    name: Frontend EVM parity and production build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # Main currently has npm-ci/lock drift that fails before any source test runs.
+      # This dedicated proof must exercise the Robinhood code without changing lockfiles.
+      - name: Install frontend dependencies for source proof
+        run: npm install --prefix frontend --package-lock=false --no-audit --no-fund
+
+      - name: Prove BNB/Solana feed isolation and Robinhood non-activation
+        run: npm --prefix frontend run test:feed-isolation
+
+      - name: Build frontend
+        env:
+          VITE_DEFAULT_CHAIN_ID: "97"
+          VITE_PUBLIC_RPC_56: "https://rpc-evm-56.test.mwz"
+          VITE_PUBLIC_RPC_97: "https://rpc-evm-97.test.mwz"
+          VITE_BSC_RPC_56: "https://rpc-evm-56.test.mwz"
+          VITE_BSC_RPC_97: "https://rpc-evm-97.test.mwz"
+          VITE_BSC_MAINNET_RPC: "https://rpc-evm-56.test.mwz"
+          VITE_BSC_TESTNET_RPC: "https://rpc-evm-97.test.mwz"
+          VITE_SOLANA_RPC: "https://rpc-solana-101.test.mwz"
+          VITE_SOLANA_MAINNET_RPC: "https://rpc-solana-101.test.mwz"
+          VITE_PUBLIC_RPC_SOLANA: "https://rpc-solana-101.test.mwz"
+          VITE_PUBLIC_RPC_101: "https://rpc-solana-101.test.mwz"
+        run: npm --prefix frontend run build
+
+  indexer-foundation:
+    name: EVM indexer config compile and activation gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: realtime-indexer/package-lock.json
+
+      - name: Install indexer dependencies for source proof
+        run: npm install --prefix realtime-indexer --package-lock=false --no-audit --no-fund
+
+      - name: Compile realtime indexer
+        run: npm --prefix realtime-indexer run build
+
+      - name: Prove Robinhood indexer remains explicitly inactive
+        working-directory: realtime-indexer
+        run: npx tsx --test src/tests/evmIndexerChains.test.ts
