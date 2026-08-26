@@ -60,6 +60,34 @@ async function ensureCompatibilityRoles(client) {
   }
 }
 
+const DEFERABLE_DEPENDENCY_CODES = new Set([
+  "42P01", // undefined_table / relation
+  "42703", // undefined_column
+  "42883", // undefined_function
+  "42704", // undefined_object / type / role-like dependency
+  "3F000", // invalid_schema_name
+]);
+
+function migrationErrorSummary(error) {
+  const code = String(error?.code || "unknown");
+  const message = String(error?.message || error || "unknown error").replace(/\s+/g, " ").trim();
+  return `${code}: ${message}`;
+}
+
+async function runMigrationTransaction(client, filename, sql) {
+  await client.query("begin");
+  try {
+    await client.query(sql);
+    await client.query("insert into public._mwz_local_migrations(filename) values($1)", [filename]);
+    await client.query("commit");
+  } catch (error) {
+    try {
+      await client.query("rollback");
+    } catch {}
+    throw error;
+  }
+}
+
 async function applyMigrations() {
   const client = new Client({ connectionString: targetUrl.toString(), ssl: false });
   await client.connect();
@@ -78,21 +106,65 @@ async function applyMigrations() {
       .filter((name) => name.endsWith(".sql"))
       .sort((a, b) => a.localeCompare(b, "en"));
 
+    const appliedRows = await client.query("select filename from public._mwz_local_migrations");
+    const alreadyApplied = new Set(appliedRows.rows.map((row) => String(row.filename)));
+    let pending = files.filter((filename) => !alreadyApplied.has(filename));
     let applied = 0;
-    for (const filename of files) {
-      const seen = await client.query("select 1 from public._mwz_local_migrations where filename=$1", [filename]);
-      if (seen.rowCount) continue;
+    const lastErrors = new Map();
 
-      const sql = fs.readFileSync(path.join(migrationsDir, filename), "utf8");
-      console.log(`[robinhood-local-db] applying ${filename}`);
-      try {
-        await client.query(sql);
-        await client.query("insert into public._mwz_local_migrations(filename) values($1)", [filename]);
-        applied += 1;
-      } catch (error) {
-        console.error(`[robinhood-local-db] migration failed: ${filename}`);
-        throw error;
+    // Historical production migrations were accumulated incrementally and a few
+    // early numeric filenames alter objects introduced by later dated migrations.
+    // For a brand-new local DB we therefore replay dependency-aware: missing
+    // object dependencies are deferred, then retried after later migrations have
+    // had a chance to create them. We never rewrite or reorder production files.
+    while (pending.length) {
+      let progress = 0;
+      const deferred = [];
+
+      for (const filename of pending) {
+        const sql = fs.readFileSync(path.join(migrationsDir, filename), "utf8");
+        console.log(`[robinhood-local-db] applying ${filename}`);
+        try {
+          await runMigrationTransaction(client, filename, sql);
+          applied += 1;
+          progress += 1;
+          lastErrors.delete(filename);
+        } catch (error) {
+          const code = String(error?.code || "");
+          if (DEFERABLE_DEPENDENCY_CODES.has(code)) {
+            const summary = migrationErrorSummary(error);
+            lastErrors.set(filename, summary);
+            deferred.push(filename);
+            console.log(`[robinhood-local-db] deferring ${filename} (${summary})`);
+            continue;
+          }
+          console.error(`[robinhood-local-db] migration failed: ${filename}`);
+          throw error;
+        }
       }
+
+      if (!deferred.length) break;
+      if (progress === 0) {
+        const details = deferred
+          .map((filename) => `- ${filename}: ${lastErrors.get(filename) || "unresolved dependency"}`)
+          .join("\n");
+        throw new Error(
+          `Local migration replay is blocked by unresolved dependencies after a full pass:\n${details}`,
+        );
+      }
+      pending = deferred;
+    }
+
+    const remaining = await client.query(`
+      select count(*)::int as count
+      from (
+        select unnest($1::text[]) as filename
+        except
+        select filename from public._mwz_local_migrations
+      ) missing
+    `, [files]);
+    if (Number(remaining.rows[0]?.count || 0) !== 0) {
+      throw new Error(`Local migration ledger incomplete: ${remaining.rows[0]?.count || 0} migration(s) missing.`);
     }
 
     console.log(`[robinhood-local-db] schema ready (${applied} new migration${applied === 1 ? "" : "s"}).`);
