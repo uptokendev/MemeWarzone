@@ -155,6 +155,7 @@ import adminAbuseReports from "./admin/abuse/reports.js";
 import adminAbusePermissions from "./admin/abuse/permissions.js";
 import adminAbuseStaff from "./admin/abuse/staff.js";
 import adminArenaImports from "./admin/arenaImports.js";
+import arenaTournaments from "./arenaTournaments.js";
 import abuseSession from "./abuse/session.js";
 import abuseReports from "./abuse/reports.js";
 
@@ -423,8 +424,9 @@ router.all("/vote-ingest", wrap(votesIngest));
 router.all("/votes/ingest", wrap(votesIngest));
 router.all("/votes", wrap(votes));
 router.all("/vote_counts", wrap(voteCounts));
-router.all(/^\/(?:arena\/ops\/health|arena\/battles(?:\/.*)?|arena\/imports(?:\/.*)?|arena\/events(?:\/.*)?|arena\/league(?:\/.*)?|arena\/war-pools(?:\/.*)?|sponsored|sponsorship-applications|sponsorship-packages|sponsorship-settings|war-room(?:\/.*)?)$/, wrap(postgrad));
+router.all(/^\/(?:arena\/ops\/health|arena\/battles(?:\/.*)?|arena\/imports(?:\/.*)?|arena\/tournaments(?:\/.*)?|arena\/events(?:\/.*)?|arena\/league(?:\/.*)?|arena\/war-pools(?:\/.*)?|sponsored|sponsorship-applications|sponsorship-packages|sponsorship-settings|war-room(?:\/.*)?)$/, wrap(postgrad));
 router.all(/^\/admin\/arena\/imports(?:\/.*)?$/, wrap(adminArenaImports));
+router.all(/^\/admin\/arena\/tournaments(?:\/.*)?$/, wrap(arenaTournaments));
 router.all("/drafts", wrap(drafts));
 router.all("/drafts/followed", wrap(followedDrafts));
 router.all("/drafts/ticker-availability", wrap(tickerAvailability));

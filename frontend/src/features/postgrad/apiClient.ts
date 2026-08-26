@@ -168,8 +168,16 @@ export async function fetchPostGradEventFeed(signal?: AbortSignal) {
   return fetchJson("/api/arena/events", { cache: "no-store", signal });
 }
 
+export async function fetchPostGradTournamentFeed(signal?: AbortSignal) {
+  return fetchJson("/api/arena/tournaments", { cache: "no-store", signal });
+}
+
 export async function fetchPostGradEventDetails(eventId: string, signal?: AbortSignal) {
   return fetchJson(`/api/arena/events/${encodeURIComponent(eventId)}`, { cache: "no-store", signal });
+}
+
+export async function fetchPostGradTournamentDetails(eventId: string, signal?: AbortSignal) {
+  return fetchJson(`/api/arena/tournaments/${encodeURIComponent(eventId)}`, { cache: "no-store", signal });
 }
 
 export async function fetchPostGradLeagueFeed(signal?: AbortSignal) {

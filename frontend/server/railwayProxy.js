@@ -208,6 +208,13 @@ async function dispatchAdminArenaImports(pathname, req, res) {
   return true;
 }
 
+async function dispatchAdminArenaTournaments(pathname, req, res) {
+  if (!/^\/api\/admin\/arena\/tournaments(?:\/|$|\?)/.test(pathname)) return false;
+  const arenaTournaments = (await import("../api/arenaTournaments.js")).default;
+  await arenaTournaments(req, res);
+  return true;
+}
+
 async function dispatchAnalytics(pathname, req, res) {
   if (pathname === "/api/analytics/ingest") {
     const ingest = (await import("../api/analytics/ingest.js")).default;
@@ -276,6 +283,7 @@ export function createRailwayProxyMiddleware(options = {}) {
     if (await dispatchAdminFinance(pathname, req, res)) return;
     if (await dispatchAdminSponsorship(pathname, req, res)) return;
     if (await dispatchAdminArenaImports(pathname, req, res)) return;
+    if (await dispatchAdminArenaTournaments(pathname, req, res)) return;
     if (await dispatchAnalytics(pathname, req, res)) return;
     if (!railwayProxyEnabled()) return next();
 
