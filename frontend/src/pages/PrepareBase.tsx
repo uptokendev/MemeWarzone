@@ -25,6 +25,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { RadarLoader, RadarLoaderOverlay } from "@/components/ui/RadarLoader";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { useWallet } from "@/contexts/WalletContext";
+import { getFrontendApiOrigin } from "@/lib/apiBase";
 import { isSolanaChainId } from "@/lib/chainConfig";
 import { resolveImageUri } from "@/lib/media";
 import warzoneHud from "@/assets/promotion/warzonehud.png";
@@ -196,6 +197,7 @@ function absoluteUrl(value: string | null | undefined) {
 }
 
 const PUBLIC_APP_ORIGIN = "https://app.memewar.zone";
+const PUBLIC_FRONTEND_API_ORIGIN = "https://api.memewar.zone";
 
 function publicAppOrigin() {
   if (typeof window === "undefined") return PUBLIC_APP_ORIGIN;
@@ -205,6 +207,16 @@ function publicAppOrigin() {
     return PUBLIC_APP_ORIGIN;
   }
   return window.location.origin;
+}
+
+function publicFrontendApiOrigin() {
+  const configured = getFrontendApiOrigin();
+  if (configured) return configured;
+  if (typeof window !== "undefined") {
+    const host = window.location.hostname.toLowerCase();
+    if (host === "localhost" || host === "127.0.0.1") return window.location.origin;
+  }
+  return PUBLIC_FRONTEND_API_ORIGIN;
 }
 
 function buildPreparePageUrl(slug: string) {
@@ -222,8 +234,9 @@ function buildShareCardUrl(bundle: PrepareDraftBundle, download = false, version
   if (download) params.set("download", "1");
   if (version) params.set("_v", version);
 
-  // Absolute URL so OG crawlers and "copy PNG link" always hit a public host.
-  return `${publicAppOrigin()}/api/prepare-share-card?${params.toString()}`;
+  // Share-card rendering is a frontend-API concern. On Coolify the frontend and
+  // API are separate services, so never assume /api exists on app.memewar.zone.
+  return `${publicFrontendApiOrigin()}/api/prepare-share-card?${params.toString()}`;
 }
 
 function RadarCard({
@@ -358,7 +371,8 @@ function ShareModal({
   const [downloaded, setDownloaded] = useState(false);
   const [openedX, setOpenedX] = useState(false);
   const [imageStatus, setImageStatus] = useState<"loading" | "ready" | "error">("loading");
-  const pngUrl = buildShareCardUrl(bundle, false, "4");
+  const [imageAttempt, setImageAttempt] = useState(0);
+  const pngUrl = buildShareCardUrl(bundle, false, `5-${imageAttempt}`);
   const pageUrl = buildPreparePageUrl(bundle.draft.slug);
   const fileName = `memewarzone-${bundle.draft.slug || "prepare"}-share-card.png`;
 
@@ -479,7 +493,10 @@ function ShareModal({
                 <Button
                   type="button"
                   className="mwz-button font-retro text-xs"
-                  onClick={() => setImageStatus("loading")}
+                  onClick={() => {
+                    setImageStatus("loading");
+                    setImageAttempt((attempt) => attempt + 1);
+                  }}
                 >
                   Retry
                 </Button>
