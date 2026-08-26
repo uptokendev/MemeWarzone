@@ -9,11 +9,13 @@ on:
       - "deployments/robinhood/**"
       - "docs/build_plans/robinhood-*.md"
       - "docs/robinhood-v3-testnet-rehearsal.md"
+      - "hardhat.config.ts"
       - "contracts/mocks/MockUniswapV3*.sol"
       - "contracts/mocks/MockWETH9.sol"
       - "contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol"
       - "contracts/PermanentV3PositionLocker.sol"
       - "scripts/deploy-robinhood-v3-mock.ts"
+      - "scripts/verify-robinhood-v3-mock.ts"
       - "test/RobinhoodV3Mocks.spec.ts"
       - "test/RobinhoodV3GraduationAdapter.spec.ts"
       - "frontend/src/lib/chainRegistry.ts"
@@ -33,11 +35,13 @@ on:
       - "deployments/robinhood/**"
       - "docs/build_plans/robinhood-*.md"
       - "docs/robinhood-v3-testnet-rehearsal.md"
+      - "hardhat.config.ts"
       - "contracts/mocks/MockUniswapV3*.sol"
       - "contracts/mocks/MockWETH9.sol"
       - "contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol"
       - "contracts/PermanentV3PositionLocker.sol"
       - "scripts/deploy-robinhood-v3-mock.ts"
+      - "scripts/verify-robinhood-v3-mock.ts"
       - "test/RobinhoodV3Mocks.spec.ts"
       - "test/RobinhoodV3GraduationAdapter.spec.ts"
       - "frontend/src/lib/chainRegistry.ts"
@@ -79,6 +83,11 @@ jobs:
 
       - name: Prove V3 staging DEX and unchanged LaunchCampaign graduation
         run: npx hardhat test test/RobinhoodV3Mocks.spec.ts test/RobinhoodV3GraduationAdapter.spec.ts
+
+      - name: Prove staging deployment script and self-verification
+        env:
+          ALLOW_LOCAL_RH_V3_MOCK: "true"
+        run: npx hardhat run scripts/deploy-robinhood-v3-mock.ts
 
   frontend-foundation:
     name: Frontend EVM parity and production build

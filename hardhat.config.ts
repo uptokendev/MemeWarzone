@@ -10,6 +10,7 @@ dotenv.config();
 const bscTestnetRpcUrl = process.env.BSC_TESTNET_RPC || process.env.BSC_TESTNET_RPC_URL || "";
 const bscMainnetRpcUrl =
   process.env.BNB_FORK_RPC || process.env.BSC_MAINNET_RPC || process.env.BSC_MAINNET_RPC_URL || "https://bsc-mainnet.public.blastapi.io";
+const robinhoodTestnetRpcUrl = process.env.ROBINHOOD_TESTNET_RPC_URL || process.env.ROBINHOOD_TESTNET_RPC || "";
 const deployerPrivateKey = process.env.DEPLOYER_PK || process.env.PRIVATE_KEY_DEPLOY || "";
 const explorerApiKey = process.env.ETHERSCAN_API_KEY || "";
 const forkMainnet = ["1", "true", "yes", "on"].includes(String(process.env.BNB_FORK || "").trim().toLowerCase());
@@ -78,6 +79,11 @@ const config: HardhatUserConfig = {
       url: bscMainnetRpcUrl,
       accounts: deployerPrivateKey ? [deployerPrivateKey.startsWith("0x") ? deployerPrivateKey : `0x${deployerPrivateKey}`] : [],
       chainId: 56,
+    },
+    robinhoodTestnet: {
+      url: robinhoodTestnetRpcUrl,
+      accounts: deployerPrivateKey ? [deployerPrivateKey.startsWith("0x") ? deployerPrivateKey : `0x${deployerPrivateKey}`] : [],
+      chainId: 46630,
     },
   },
 
