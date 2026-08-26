@@ -87,7 +87,13 @@ async function resolveShareCardQuery(req) {
       };
     }
 
-    const [promoRes, metricsRes] = await Promise.all([
+    const creator = String(draft.creator_wallet || "").trim();
+    const solanaCreator = creator.length >= 32 && !creator.startsWith("0x");
+    const commentAuthorNeq = solanaCreator
+      ? "(wallet_address <> $2 and lower(wallet_address) <> lower($2))"
+      : "lower(wallet_address) <> lower($2)";
+
+    const [promoRes, metricsRes, followRes, nonCreatorCommentRes, reactionRes] = await Promise.all([
       pool
         .query(
           `select mission_statement, creator_note, share_message from public.campaign_draft_promotion where draft_id = $1 limit 1`,
@@ -97,11 +103,45 @@ async function resolveShareCardQuery(req) {
       pool
         .query(`select * from public.campaign_draft_metrics where draft_id = $1 limit 1`, [draft.id])
         .catch(() => ({ rows: [] })),
+      pool
+        .query(`select count(*)::int as count from public.campaign_draft_follows where draft_id = $1`, [draft.id])
+        .catch(() => ({ rows: [{ count: 0 }] })),
+      pool
+        .query(
+          `select count(*)::int as count
+             from public.campaign_draft_comments
+            where draft_id = $1
+              and moderation_status = 'visible'
+              and ${commentAuthorNeq}`,
+          [draft.id, creator],
+        )
+        .catch(() => ({ rows: [{ count: 0 }] })),
+      pool
+        .query(
+          `select coalesce(sum(reaction_count), 0)::int as count
+             from public.campaign_draft_comments
+            where draft_id = $1
+              and moderation_status = 'visible'`,
+          [draft.id],
+        )
+        .catch(() => ({ rows: [{ count: 0 }] })),
     ]);
     const promotion = promoRes.rows[0] || {};
     const metrics = metricsRes.rows[0] || {};
-    const recruits = Number(metrics?.signed_actions || metrics?.follows || 0) || 0;
-    const heat = Number(metrics?.popularity_percentage || 0);
+    const views = Number(metrics?.views || 0);
+    const follows = Number(followRes.rows[0]?.count || 0);
+    const comments = Number(nonCreatorCommentRes.rows[0]?.count || 0);
+    const reactions = Number(reactionRes.rows[0]?.count || 0);
+    const shares = Number(metrics?.shares || 0);
+    const signedActions = Number(metrics?.signed_actions ?? metrics?.signedActions ?? 0);
+    const rankingScore =
+      follows * 10 +
+      comments * 5 +
+      reactions * 3 +
+      shares * 4 +
+      signedActions * 7 +
+      Math.min(views, 2500) * 0.35;
+    const heat = Math.max(0, Math.min(100, Math.round((rankingScore / 2200) * 100)));
     const chain =
       Number(draft.chain_id) === 101 || Number(draft.chain_id) === 102 ? "SOLANA" : "BNB CHAIN";
     const description =
@@ -115,8 +155,8 @@ async function resolveShareCardQuery(req) {
       ticker: q.ticker || draft.ticker || "TOKEN",
       chain: q.chain || chain,
       status: q.status || String(draft.status || "draft").replace(/_/g, " ").toUpperCase(),
-      recruits: q.recruits || String(recruits),
-      heat: q.heat || `${Math.max(0, Math.min(100, heat))}%`,
+      recruits: q.recruits || String(follows),
+      heat: q.heat || `${heat}%`,
       creator: q.creator || shortWallet(draft.creator_wallet || ""),
       link: q.link || `${appBase.replace(/^https?:\/\//i, "")}/prepare/${draft.slug}`,
       description: q.description || description.slice(0, 280),
@@ -421,7 +461,7 @@ function svgCard(data, logoDataUrl = "", brandLogoDataUrl = "") {
     ${line2 ? pixelText(line2, 235, titleY2, { scale: titleScale, color: "#65ffad", maxChars: 16 }) : ""}
     ${descLines.map((line, index) => pixelText(line, 235, 328 + index * 18, { scale: 2.4, color: "#d9d2ca", maxChars: 56 })).join("")}
 
-    ${pixelText("RECRUITS ARMED", 54, 438, { scale: 1.55, color: "#4d8066" })}
+    ${pixelText("SOLDIERS FOLLOWS", 54, 438, { scale: 1.55, color: "#4d8066" })}
     ${pixelText(recruits, 54, 460, { scale: 2.8, color: "#10f58a", maxChars: 8 })}
     ${pixelText("HEAT", 215, 438, { scale: 1.55, color: "#4d8066" })}
     ${pixelText(heat, 215, 460, { scale: 2.8, color: "#10f58a", maxChars: 8 })}
