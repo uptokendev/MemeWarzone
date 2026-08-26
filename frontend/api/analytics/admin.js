@@ -1,5 +1,6 @@
 import { pool } from "../../server/db.js";
 import { requireDashboardAdmin } from "../dashboard/_auth.js";
+import launchpadKpis from "./launchpad.js";
 
 function isMissingSchema(error) {
   return error?.code === "42P01" || error?.code === "42703";
@@ -370,6 +371,9 @@ export async function analyticsAdmin(req, res) {
     if (tail === "performance/functions") return res.status(200).json(await functions(from, to, app));
     if (tail === "performance/vitals") return res.status(200).json(await vitals(from, to, app));
     if (tail === "realtime") return res.status(200).json(await realtime(app));
+    if (tail === "launchpad") {
+      return res.status(200).json(await launchpadKpis({ from, to, chainId: req.query?.chainId }));
+    }
     if (tail === "sessions") return res.status(200).json(await sessions(app, q));
     const sessionMatch = tail.match(/^sessions\/([0-9a-f-]{36})$/i);
     if (sessionMatch) {
