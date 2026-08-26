@@ -22,6 +22,7 @@ export type CreatorBattleStatus = {
   tokenAddress?: string | null;
   tokenName: string;
   symbol: string;
+  origin?: string;
   eligibility: boolean;
   currentState: CreatorBattleStatusState;
   battleState?: Battle["state"] | null;
@@ -106,6 +107,7 @@ function normalizeCreatorBattleStatuses(value: unknown): CreatorBattleStatus[] {
         tokenAddress: entry?.tokenAddress ? normalizeIdentity(entry.tokenAddress) : null,
         tokenName: String(entry?.tokenName ?? entry?.name ?? entry?.symbol ?? "Unknown token"),
         symbol: String(entry?.symbol ?? ""),
+        origin: entry?.origin ? String(entry.origin) : undefined,
         eligibility: Boolean(entry?.eligibility),
         currentState: currentState as CreatorBattleStatusState,
         battleState: entry?.battleState ? String(entry.battleState) as Battle["state"] : null,

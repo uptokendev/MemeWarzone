@@ -69,6 +69,7 @@ import CommandCenterClaims from "@/pages/command-center/CommandCenterClaims";
 import CommandCenterSettings from "@/pages/command-center/CommandCenterSettings";
 import CommandCenterSocial from "@/pages/command-center/CommandCenterSocial";
 import CommandCenterCoins from "@/pages/command-center/CommandCenterCoins";
+import CommandCenterBattles from "@/pages/command-center/CommandCenterBattles";
 import CommandCenterSupport from "@/pages/command-center/CommandCenterSupport";
 import CommandCenterReportAbuse from "@/pages/command-center/CommandCenterReportAbuse";
 import CommandCenterAbuseReports from "@/pages/command-center/CommandCenterAbuseReports";
@@ -207,6 +208,7 @@ function AppShellLayout({
           <Route path="/command/followers" element={<LegacyCommandCenterRedirect section="followers" />} />
           <Route path="/command/following" element={<LegacyCommandCenterRedirect section="following" />} />
           <Route path="/command/coins" element={<LegacyCommandCenterRedirect section="coins" />} />
+          <Route path="/command/battles" element={<LegacyCommandCenterRedirect section="battles" />} />
           <Route path="/command/support" element={<LegacyCommandCenterRedirect section="support" />} />
           <Route path="/command/support/report" element={<LegacyCommandCenterRedirect section="support/report" />} />
           <Route path="/command/support/reports" element={<LegacyCommandCenterRedirect section="support/reports" />} />
@@ -222,6 +224,7 @@ function AppShellLayout({
           <Route path="/profile/:wallet/command/followers" element={<CommandCenterShell><CommandCenterSocial mode="followers" /></CommandCenterShell>} />
           <Route path="/profile/:wallet/command/following" element={<CommandCenterShell><CommandCenterSocial mode="following" /></CommandCenterShell>} />
           <Route path="/profile/:wallet/command/coins" element={<CommandCenterShell><CommandCenterCoins /></CommandCenterShell>} />
+          <Route path="/profile/:wallet/command/battles" element={<CommandCenterShell><CommandCenterBattles /></CommandCenterShell>} />
           <Route path="/profile/:wallet/command/support" element={<CommandCenterShell><CommandCenterSupport /></CommandCenterShell>} />
           <Route path="/profile/:wallet/command/support/report" element={<CommandCenterShell><CommandCenterReportAbuse /></CommandCenterShell>} />
           <Route path="/profile/:wallet/command/support/reports/:reportId" element={<CommandCenterShell><CommandCenterAbuseReportDetail /></CommandCenterShell>} />

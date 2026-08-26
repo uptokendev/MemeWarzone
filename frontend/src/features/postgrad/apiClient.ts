@@ -102,6 +102,19 @@ async function mutateJson(path: string, body: JsonObject = {}): Promise<boolean>
   return json == null || json.ok !== false;
 }
 
+async function mutateBattle(path: string, body: JsonObject = {}): Promise<JsonObject> {
+  const response = await apiFetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const json = (await readJson(response)) || {};
+  if (!response.ok || json.ok === false) {
+    throw new Error(String(json.error || json.reason || json.warning || `Request failed (${response.status})`));
+  }
+  return json;
+}
+
 export async function fetchPostGradBattleFeed(signal?: AbortSignal) {
   return fetchJson("/api/arena/battles", { cache: "no-store", signal });
 }
@@ -126,25 +139,29 @@ export async function openPostGradBattle(input: OpenPostGradBattleInput) {
   const stake = input.stakeNative ?? input.initialPotBnb;
   if (typeof stake === "number" && stake > 0) payload.stakeNative = stake;
 
-  return mutateJson("/api/arena/battles/open", payload);
+  await mutateBattle("/api/arena/battles/open", payload);
+  return true;
 }
 
 export async function challengePostGradBattle(input: ChallengePostGradBattleInput) {
-  return mutateJson("/api/arena/battles/challenge", {
+  await mutateBattle("/api/arena/battles/challenge", {
     tokenId: input.tokenId,
     targetTokenId: input.targetTokenId,
     chainId: input.chainId || undefined,
     stakeNative: input.stakeNative,
     auth: input.auth,
   });
+  return true;
 }
 
 export async function acceptPostGradBattle(battleId: string, auth?: JsonObject) {
-  return mutateJson(`/api/arena/battles/${encodeURIComponent(battleId)}/accept`, { auth });
+  await mutateBattle(`/api/arena/battles/${encodeURIComponent(battleId)}/accept`, { auth });
+  return true;
 }
 
 export async function declinePostGradBattle(battleId: string, auth?: JsonObject) {
-  return mutateJson(`/api/arena/battles/${encodeURIComponent(battleId)}/decline`, { auth });
+  await mutateBattle(`/api/arena/battles/${encodeURIComponent(battleId)}/decline`, { auth });
+  return true;
 }
 
 export async function fetchPostGradEventFeed(signal?: AbortSignal) {
