@@ -204,12 +204,19 @@ export function SolanaWalletProvider({ children }: { children: React.ReactNode }
     };
   }, [solanaWalletName]);
 
+  // Some Solana providers briefly emit an empty accountChanged event while the
+  // wallet is still connected. Keep the app on the persisted session during that
+  // provider race so Prepare Mode does not incorrectly report "Not connected" and
+  // block signed actions such as Arm Notification. Explicit disconnect clears the
+  // persisted wallet, so this does not restore a session the user disconnected.
+  const activeSolanaAccount = solanaAccount || getStoredSolanaWallet();
+
   return (
     <SolanaWalletContext.Provider
       value={{
-        solanaAccount,
+        solanaAccount: activeSolanaAccount,
         solanaWalletName,
-        isSolanaConnected: Boolean(solanaAccount),
+        isSolanaConnected: Boolean(activeSolanaAccount),
         connectingSolana,
         availableSolanaWallets,
         connectSolana,
