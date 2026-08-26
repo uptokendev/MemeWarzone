@@ -32,6 +32,7 @@ if (!/^[A-Za-z0-9_]+$/.test(dbName)) {
 
 const adminUrl = new URL(targetUrl.toString());
 adminUrl.pathname = "/postgres";
+const SOLANA_WALLET_CASE_MIGRATION = "20260708_000001_recruiter_solana_wallet_case.sql";
 
 async function ensureDatabase() {
   const admin = new Client({ connectionString: adminUrl.toString(), ssl: false });
@@ -74,10 +75,122 @@ function migrationErrorSummary(error) {
   return `${code}: ${message}`;
 }
 
-async function runMigrationTransaction(client, filename, sql) {
+function stripStandaloneTransactionControl(sql) {
+  // A number of historical files carry their own BEGIN/COMMIT lines. The local
+  // replay engine supplies the transaction so a failed/deferred migration can
+  // always roll back cleanly. Only standalone control lines are removed; PL/pgSQL
+  // BEGIN blocks do not match because they are not written as `BEGIN;` lines.
+  return String(sql)
+    .split(/\r?\n/)
+    .filter((line) => !/^\s*(BEGIN|COMMIT)\s*;\s*(?:--.*)?$/i.test(line))
+    .join("\n");
+}
+
+function quoteIdent(value) {
+  return `"${String(value).replace(/"/g, '""')}"`;
+}
+
+async function capturePublicViews(client) {
+  const viewRows = await client.query(`
+    select
+      c.oid::text as oid,
+      n.nspname as schema_name,
+      c.relname as view_name,
+      pg_get_viewdef(c.oid, true) as definition
+    from pg_class c
+    join pg_namespace n on n.oid = c.relnamespace
+    where c.relkind = 'v'
+      and n.nspname = 'public'
+    order by c.relname
+  `);
+
+  const dependencyRows = await client.query(`
+    select distinct
+      v.oid::text as view_oid,
+      dep.oid::text as dependency_oid
+    from pg_class v
+    join pg_namespace vn on vn.oid = v.relnamespace
+    join pg_rewrite r on r.ev_class = v.oid
+    join pg_depend d on d.objid = r.oid
+    join pg_class dep on dep.oid = d.refobjid
+    join pg_namespace dn on dn.oid = dep.relnamespace
+    where v.relkind = 'v'
+      and dep.relkind = 'v'
+      and vn.nspname = 'public'
+      and dn.nspname = 'public'
+      and dep.oid <> v.oid
+  `);
+
+  const views = viewRows.rows.map((row) => ({
+    oid: String(row.oid),
+    schema: String(row.schema_name),
+    name: String(row.view_name),
+    definition: String(row.definition),
+    dependencies: new Set(),
+  }));
+  const byOid = new Map(views.map((view) => [view.oid, view]));
+  for (const row of dependencyRows.rows) {
+    const view = byOid.get(String(row.view_oid));
+    if (view && byOid.has(String(row.dependency_oid))) {
+      view.dependencies.add(String(row.dependency_oid));
+    }
+  }
+  return views;
+}
+
+function topologicalViews(views) {
+  const remaining = new Map(views.map((view) => [view.oid, view]));
+  const ordered = [];
+  while (remaining.size) {
+    const ready = [...remaining.values()].filter((view) =>
+      [...view.dependencies].every((oid) => !remaining.has(oid)),
+    );
+    if (!ready.length) {
+      throw new Error(`Could not resolve public view dependency order: ${[...remaining.values()].map((v) => v.name).join(", ")}`);
+    }
+    ready.sort((a, b) => a.name.localeCompare(b.name, "en"));
+    for (const view of ready) {
+      ordered.push(view);
+      remaining.delete(view.oid);
+    }
+  }
+  return ordered;
+}
+
+async function dropAndRestoreViewsAroundMigration(client, sql) {
+  const views = await capturePublicViews(client);
+  if (!views.length) {
+    await client.query(sql);
+    return;
+  }
+
+  const ordered = topologicalViews(views);
+  console.log(`[robinhood-local-db] preserving ${ordered.length} public view(s) around wallet type migration`);
+
+  // Dependents first, no CASCADE: if a non-view object unexpectedly depends on a
+  // read-model view, the local bootstrap fails instead of silently deleting it.
+  for (const view of [...ordered].reverse()) {
+    await client.query(`drop view ${quoteIdent(view.schema)}.${quoteIdent(view.name)}`);
+  }
+
+  await client.query(sql);
+
+  for (const view of ordered) {
+    await client.query(
+      `create view ${quoteIdent(view.schema)}.${quoteIdent(view.name)} as ${view.definition}`,
+    );
+  }
+}
+
+async function runMigrationTransaction(client, filename, rawSql) {
+  const sql = stripStandaloneTransactionControl(rawSql);
   await client.query("begin");
   try {
-    await client.query(sql);
+    if (filename === SOLANA_WALLET_CASE_MIGRATION) {
+      await dropAndRestoreViewsAroundMigration(client, sql);
+    } else {
+      await client.query(sql);
+    }
     await client.query("insert into public._mwz_local_migrations(filename) values($1)", [filename]);
     await client.query("commit");
   } catch (error) {
