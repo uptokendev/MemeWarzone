@@ -33,6 +33,7 @@ if (!/^[A-Za-z0-9_]+$/.test(dbName)) {
 const adminUrl = new URL(targetUrl.toString());
 adminUrl.pathname = "/postgres";
 const SOLANA_WALLET_CASE_MIGRATION = "20260708_000001_recruiter_solana_wallet_case.sql";
+const WAR_TRADE_ROOM_MIGRATION = "202607290001_war_trade_room_market_continuity_foundation.sql";
 
 async function ensureDatabase() {
   const admin = new Client({ connectionString: adminUrl.toString(), ssl: false });
@@ -61,6 +62,24 @@ async function ensureCompatibilityRoles(client) {
   }
 }
 
+async function ensureCompatibilityHelpers(client) {
+  // The production database acquired this helper through the historical Supabase
+  // migration stream, while db/migrations later assumes it already exists. A clean
+  // local replay only consumes db/migrations, so reproduce the exact canonical
+  // helper locally rather than rewriting production migration history.
+  await client.query(`
+    create or replace function public.set_updated_at()
+    returns trigger
+    language plpgsql
+    as $$
+    begin
+      new.updated_at = now();
+      return new;
+    end;
+    $$
+  `);
+}
+
 const DEFERABLE_DEPENDENCY_CODES = new Set([
   "42P01", // undefined_table / relation
   "42703", // undefined_column
@@ -84,6 +103,32 @@ function stripStandaloneTransactionControl(sql) {
     .split(/\r?\n/)
     .filter((line) => !/^\s*(BEGIN|COMMIT)\s*;\s*(?:--.*)?$/i.test(line))
     .join("\n");
+}
+
+function applyLocalReplayCompatibility(filename, sql) {
+  if (filename !== WAR_TRADE_ROOM_MIGRATION) return sql;
+
+  // 003_indexer.sql historically created bonding raw amounts as NUMERIC while
+  // the later unified market view unions them with DEX raw amounts stored as TEXT.
+  // Existing production databases had evolved schema state when WTR was applied;
+  // a brand-new replay does not. Cast only the bonding side in the local replay so
+  // the view exposes the intended raw-string API without changing historical SQL.
+  const replacements = [
+    ['t.token_amount_raw as "tokenAmountRaw"', 't.token_amount_raw::text as "tokenAmountRaw"'],
+    ['t.bnb_amount_raw as "nativeAmountRaw"', 't.bnb_amount_raw::text as "nativeAmountRaw"'],
+  ];
+  let patched = sql;
+  for (const [from, to] of replacements) {
+    const count = patched.split(from).length - 1;
+    if (count !== 1) {
+      throw new Error(
+        `Local WTR compatibility patch expected exactly one occurrence of ${from}; found ${count}.`,
+      );
+    }
+    patched = patched.replace(from, to);
+  }
+  console.log("[robinhood-local-db] applying clean-replay raw amount compatibility for WTR view");
+  return patched;
 }
 
 function quoteIdent(value) {
@@ -183,7 +228,8 @@ async function dropAndRestoreViewsAroundMigration(client, sql) {
 }
 
 async function runMigrationTransaction(client, filename, rawSql) {
-  const sql = stripStandaloneTransactionControl(rawSql);
+  const strippedSql = stripStandaloneTransactionControl(rawSql);
+  const sql = applyLocalReplayCompatibility(filename, strippedSql);
   await client.query("begin");
   try {
     if (filename === SOLANA_WALLET_CASE_MIGRATION) {
@@ -206,6 +252,7 @@ async function applyMigrations() {
   await client.connect();
   try {
     await ensureCompatibilityRoles(client);
+    await ensureCompatibilityHelpers(client);
     await client.query(`
       create table if not exists public._mwz_local_migrations (
         filename text primary key,
