@@ -65,8 +65,8 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Install contract dependencies for source proof
-        run: npm install --package-lock=false --no-audit --no-fund
+      - name: Install locked contract dependencies
+        run: npm ci --no-audit --no-fund
 
       - name: Compile contracts
         run: npx hardhat compile
