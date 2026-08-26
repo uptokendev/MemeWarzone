@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
-import { SOLANA_CHAIN_ID } from "@/lib/chainConfig";
+import { BNB_CHAIN_ID, BNB_TESTNET_CHAIN_ID, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
 import { apiFetch } from "@/lib/apiBase";
 import { useLaunchpad, type CampaignInfo } from "@/lib/launchpadClient";
 import {
@@ -12,8 +12,10 @@ import { requestSolanaGraduationHandoff } from "@/lib/solanaGraduationHandoff";
 import { isSolanaTokenRouteId } from "@/lib/tokenDetailsPath";
 import { recordRecentlyViewed } from "@/lib/searchHistory";
 import { analytics } from "@/lib/analytics/ProductAnalytics";
+import { lookupArenaImport, type ArenaImportItem } from "@/lib/arenaImports";
 
 import TokenDetails from "./TokenDetails";
+import ImportedTokenDetails from "./ImportedTokenDetails";
 
 const SOLANA_ROUTE_CACHE_PREFIX = "mwz:solana-token-route:v2:";
 const SOLANA_ROUTE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -82,6 +84,7 @@ const TokenDetailsEntry = () => {
   const [curve, setCurve] = useState<SolanaCampaignCurveState | null>(null);
   const [curveResolved, setCurveResolved] = useState<boolean>(!isSolanaRoute);
   const [cachedCampaignAddress, setCachedCampaignAddress] = useState<string>(initialCache?.campaignAddress || "");
+  const [imported, setImported] = useState<ArenaImportItem | null>(null);
 
   useEffect(() => {
     if (!routeId) return;
@@ -235,6 +238,22 @@ const TokenDetailsEntry = () => {
       chainId,
     });
   }, [campaign, isSolanaRoute, resolvedCampaignAddress, routeId]);
+
+  useEffect(() => {
+    if (!routeId) return;
+    let cancelled = false;
+    const chainId = isSolanaRoute ? SOLANA_CHAIN_ID : (forcedChainId === BNB_CHAIN_ID || forcedChainId === BNB_TESTNET_CHAIN_ID ? forcedChainId : BNB_CHAIN_ID);
+    void lookupArenaImport(routeId, chainId).then((item) => {
+      if (!cancelled) setImported(item);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [forcedChainId, isSolanaRoute, routeId]);
+
+  if (imported && !campaign) {
+    return <ImportedTokenDetails item={imported} />;
+  }
 
   return <TokenDetails key={routeId || (isSolanaRoute ? "solana" : "evm")} />;
 };
