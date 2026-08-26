@@ -43,7 +43,17 @@ export type PostGradSponsoredFeedParams = {
 export type OpenPostGradBattleInput = {
   tokenId: string;
   chainId?: number | null;
+  stakeNative?: number;
   initialPotBnb?: number;
+  auth?: JsonObject;
+};
+
+export type ChallengePostGradBattleInput = {
+  tokenId: string;
+  targetTokenId: string;
+  chainId?: number | null;
+  stakeNative: number;
+  auth?: JsonObject;
 };
 
 export type PostGradWarPoolState = "open" | "locked" | "settling" | "paid";
@@ -110,13 +120,31 @@ export async function openPostGradBattle(input: OpenPostGradBattleInput) {
   const payload: JsonObject = {
     tokenId: input.tokenId,
     chainId: input.chainId || undefined,
+    auth: input.auth,
   };
 
-  if (typeof input.initialPotBnb === "number" && input.initialPotBnb > 0) {
-    payload.initialPotBnb = input.initialPotBnb;
-  }
+  const stake = input.stakeNative ?? input.initialPotBnb;
+  if (typeof stake === "number" && stake > 0) payload.stakeNative = stake;
 
   return mutateJson("/api/arena/battles/open", payload);
+}
+
+export async function challengePostGradBattle(input: ChallengePostGradBattleInput) {
+  return mutateJson("/api/arena/battles/challenge", {
+    tokenId: input.tokenId,
+    targetTokenId: input.targetTokenId,
+    chainId: input.chainId || undefined,
+    stakeNative: input.stakeNative,
+    auth: input.auth,
+  });
+}
+
+export async function acceptPostGradBattle(battleId: string, auth?: JsonObject) {
+  return mutateJson(`/api/arena/battles/${encodeURIComponent(battleId)}/accept`, { auth });
+}
+
+export async function declinePostGradBattle(battleId: string, auth?: JsonObject) {
+  return mutateJson(`/api/arena/battles/${encodeURIComponent(battleId)}/decline`, { auth });
 }
 
 export async function fetchPostGradEventFeed(signal?: AbortSignal) {

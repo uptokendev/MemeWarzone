@@ -42,10 +42,14 @@ const SOLANA_CHAIN_ID = 101;
 
 const CREATOR_BATTLE_STATES = new Set([
   "eligible",
+  "waiting",
+  "challenged",
+  "live",
+  "finished",
+  "expired",
   "open_for_battle",
   "pending",
   "accepted",
-  "live",
   "completed",
   "settled",
   "unavailable",
@@ -230,7 +234,7 @@ export function useArenaBattleFeed(creatorAddress?: string | null, chainId?: num
     try {
       const normalized = normalizeIdentity(tokenId);
       if (isSolanaIdentity(normalized) && normalizedChainId !== SOLANA_CHAIN_ID) return false;
-      const opened = await openPostGradBattle({ tokenId, chainId: normalizedChainId, initialPotBnb });
+      const opened = await openPostGradBattle({ tokenId, chainId: normalizedChainId, stakeNative: initialPotBnb, initialPotBnb });
       if (opened) {
         await refreshFeed();
         return true;
