@@ -1,6 +1,3 @@
-import { ethers } from "ethers";
-import { Connection, PublicKey } from "@solana/web3.js";
-
 import { pool } from "../server/db.js";
 import {
   badMethod,
@@ -13,29 +10,12 @@ import {
   readJson,
 } from "../server/http.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
-
-const ERC20_ABI = [
-  "function name() view returns (string)",
-  "function symbol() view returns (string)",
-  "function decimals() view returns (uint8)",
-  "function totalSupply() view returns (uint256)",
-  "function owner() view returns (address)",
-];
+import { scanEvm, scanSolana } from "./lib/arenaImportScan.js";
 
 function ident(value, chainId) {
   const raw = String(value || "").trim();
   if (isSolanaChain(chainId) || isSolanaAddress(raw)) return raw;
   return isAddress(raw) ? raw.toLowerCase() : "";
-}
-
-function rpcUrl(chainId) {
-  if (isSolanaChain(chainId)) {
-    return process.env.SOLANA_RPC_URL || process.env.VITE_SOLANA_RPC_URL || "https://api.mainnet-beta.solana.com";
-  }
-  if (Number(chainId) === 56) {
-    return process.env.BSC_RPC_URL || process.env.VITE_BSC_RPC_URL || "https://bsc-dataseed.binance.org";
-  }
-  return process.env.BSC_TESTNET_RPC_URL || process.env.VITE_BSC_TESTNET_RPC_URL || "https://bsc-testnet-rpc.publicnode.com";
 }
 
 function mapImport(row) {
@@ -66,89 +46,6 @@ async function nativeExists(chainId, token) {
     [chainId, token],
   );
   return Boolean(result.rows[0]);
-}
-
-async function scanEvm(chainId, token) {
-  const warnings = [];
-  try {
-    const provider = new ethers.JsonRpcProvider(rpcUrl(chainId), Number(chainId));
-    const code = await provider.getCode(token);
-    if (!code || code === "0x") {
-      return { status: "declined", name: null, symbol: null, scan: { ok: false, reasons: ["not_a_contract"] } };
-    }
-    const contract = new ethers.Contract(token, ERC20_ABI, provider);
-    let name = null;
-    let symbol = null;
-    let decimals = null;
-    let totalSupply = null;
-    try {
-      name = String(await contract.name());
-    } catch {
-      warnings.push("name_unreadable");
-    }
-    try {
-      symbol = String(await contract.symbol());
-    } catch {
-      warnings.push("symbol_unreadable");
-    }
-    try {
-      decimals = Number(await contract.decimals());
-    } catch {
-      warnings.push("decimals_unreadable");
-    }
-    try {
-      totalSupply = (await contract.totalSupply()).toString();
-    } catch {
-      warnings.push("supply_unreadable");
-    }
-    try {
-      const owner = await contract.owner();
-      if (owner && owner !== ethers.ZeroAddress) warnings.push("owner_present");
-    } catch {
-      // no owner() is fine
-    }
-    if (!symbol && !name) {
-      return { status: "needs_review", name, symbol, scan: { ok: false, reasons: ["erc20_metadata_unreadable"], warnings } };
-    }
-    if (totalSupply === "0") warnings.push("zero_supply");
-    return {
-      status: warnings.includes("decimals_unreadable") ? "needs_review" : "passed",
-      name,
-      symbol,
-      scan: { ok: true, decimals, totalSupply, warnings, reasons: [] },
-    };
-  } catch (error) {
-    return { status: "needs_review", name: null, symbol: null, scan: { ok: false, reasons: ["rpc_failed"], detail: String(error?.message || error) } };
-  }
-}
-
-async function scanSolana(token) {
-  try {
-    const connection = new Connection(rpcUrl(101), "confirmed");
-    const pubkey = new PublicKey(token);
-    const parsed = await connection.getParsedAccountInfo(pubkey);
-    const data = parsed?.value?.data;
-    const info = data && typeof data === "object" && "parsed" in data ? data.parsed?.info || {} : null;
-    if (!info) {
-      return { status: "declined", name: null, symbol: null, scan: { ok: false, reasons: ["not_a_mint"] } };
-    }
-    const warnings = [];
-    if (info.mintAuthority) warnings.push("mint_authority_present");
-    if (info.freezeAuthority) warnings.push("freeze_authority_present");
-    const supply = info.supply != null ? String(info.supply) : null;
-    const decimals = info.decimals != null ? Number(info.decimals) : null;
-    if (decimals == null) {
-      return { status: "needs_review", name: null, symbol: null, scan: { ok: false, reasons: ["mint_decimals_unreadable"], warnings } };
-    }
-    return {
-      status: warnings.length ? "needs_review" : "passed",
-      name: null,
-      symbol: null,
-      scan: { ok: true, decimals, totalSupply: supply, warnings, reasons: [] },
-    };
-  } catch (error) {
-    return { status: "needs_review", name: null, symbol: null, scan: { ok: false, reasons: ["solana_rpc_failed"], detail: String(error?.message || error) } };
-  }
 }
 
 async function scanToken(chainId, token) {

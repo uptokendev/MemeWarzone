@@ -29,7 +29,7 @@ function mapEntry(row) {
     sideTokenId: String(row.side_token_id),
     amountUsd: Number(row.amount_usd || 0),
     enteredAt: row.entered_at ? new Date(row.entered_at).toISOString() : new Date().toISOString(),
-    payoutEligible: Boolean(row.payout_eligible),
+    payoutEligible: false,
   };
 }
 
@@ -91,22 +91,18 @@ async function listPools() {
 }
 
 function settlementSummary(poolRecord) {
-  const grouped = Object.create(null);
-  for (const entry of poolRecord.entries) grouped[entry.sideTokenId] = (grouped[entry.sideTokenId] || 0) + entry.amountUsd;
-  const [winnerTokenId, winnerSideUsd = 0] = Object.entries(grouped).sort((a, b) => b[1] - a[1])[0] || [null, 0];
-  const projectedWinnerPayoutUsd = poolRecord.routingBreakdown.winnersUsd;
   return {
-    winnerTokenId,
-    winnerLabel: winnerTokenId || "No winner yet",
+    winnerTokenId: null,
+    winnerLabel: "Supporters are not paid",
     totalPotUsd: poolRecord.totalPotUsd,
-    winnerSideUsd,
-    loserSideUsd: Math.max(0, poolRecord.totalPotUsd - winnerSideUsd),
-    projectedPayoutMultiple: winnerSideUsd > 0 ? projectedWinnerPayoutUsd / winnerSideUsd : 0,
-    projectedWinnerPayoutUsd,
-    projectedNetProfitUsd: Math.max(0, projectedWinnerPayoutUsd - winnerSideUsd),
-    eligibleWinningEntries: winnerTokenId ? poolRecord.entries.filter((entry) => entry.sideTokenId === winnerTokenId && entry.payoutEligible).length : 0,
+    winnerSideUsd: 0,
+    loserSideUsd: 0,
+    projectedPayoutMultiple: 0,
+    projectedWinnerPayoutUsd: 0,
+    projectedNetProfitUsd: 0,
+    eligibleWinningEntries: 0,
     settlementStateLabel: poolRecord.state,
-    settlementStateBody: "Settlement data is sourced from postgrad storage.",
+    settlementStateBody: "Support is a donation, not betting. Supporters are not paid. 85% winning campaign / 5% protocol / 10% Major War League once escrow is live.",
     routingBreakdown: poolRecord.routingBreakdown,
   };
 }
@@ -137,9 +133,18 @@ async function handleSupport(req, res, battleId) {
   const record = await ensurePool(battleId);
   if (normalizeState(record.state) !== "open") return json(res, 409, { ok: false, error: "War Pool is not open" });
   await pool.query(
-    `insert into public.arena_war_pool_entries (battle_id, side_token_id, amount_usd, supporter_address, payout_eligible) values ($1, $2, $3, $4, true)`,
+    `insert into public.arena_war_pool_entries (battle_id, side_token_id, amount_usd, supporter_address, payout_eligible) values ($1, $2, $3, $4, false)`,
     [battleId, sideTokenId, amountUsd, supporterAddress || null],
   );
+  try {
+    await pool.query(
+      `insert into public.arena_support_entries (battle_id, side_token, supporter_wallet, amount_native, payouts_live)
+       values ($1,$2,$3,$4,false)`,
+      [battleId, sideTokenId, supporterAddress || "unknown", amountUsd],
+    );
+  } catch {
+    // Support ledger is best-effort until escrow exists.
+  }
   await pool.query(`update public.arena_war_pools set updated_at = now() where battle_id = $1`, [battleId]);
   const poolRecord = await findPool(battleId);
   return json(res, 200, { ok: true, pool: poolRecord, settlementSummary: settlementSummary(poolRecord) });
@@ -153,7 +158,7 @@ async function handleTransition(req, res, battleId) {
   if (!(TRANSITIONS[current.state] || []).includes(nextState)) return json(res, 409, { ok: false, error: "Invalid war-pool transition", currentState: current.state });
   const cutoffSql = nextState === "open" ? "now() + interval '30 minutes'" : "cutoff_at";
   await pool.query(`update public.arena_war_pools set state = $2, cutoff_at = ${cutoffSql}, updated_at = now() where battle_id = $1`, [battleId, nextState]);
-  if (nextState === "open") await pool.query(`update public.arena_war_pool_entries set payout_eligible = true where battle_id = $1`, [battleId]);
+  if (nextState === "open") await pool.query(`update public.arena_war_pool_entries set payout_eligible = false where battle_id = $1`, [battleId]);
   const poolRecord = await findPool(battleId);
   return json(res, 200, { ok: true, pool: poolRecord, settlementSummary: settlementSummary(poolRecord) });
 }

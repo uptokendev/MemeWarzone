@@ -104,7 +104,7 @@ export default function CommandCenterBattles() {
       const auth = await signAuth("arena_open_battle", [`Token: ${tokenId}`, `Stake: ${stakeAmount}`]);
       await openPostGradBattle({ tokenId, chainId: Number(chainId), stakeNative: stakeAmount, auth });
       await feed.refreshFeed();
-      toast.success("Coin is waiting for a similar rival.");
+      toast.success("Coin is waiting for a similar rival. Stake is an intent — no native left the wallet.");
     } catch (error) {
       toast.error(String((error as Error)?.message || "Could not open for battle."));
     } finally {
@@ -125,7 +125,7 @@ export default function CommandCenterBattles() {
       ]);
       await challengePostGradBattle({ tokenId, targetTokenId, chainId: Number(chainId), stakeNative: stakeAmount, auth });
       await feed.refreshFeed();
-      toast.success("Challenge sent.");
+      toast.success("Challenge sent. Email goes out if they verified an address and Resend is configured.");
     } catch (error) {
       toast.error(String((error as Error)?.message || "Could not send challenge."));
     } finally {
@@ -197,7 +197,7 @@ export default function CommandCenterBattles() {
         </CommandCenterCard>
       ) : null}
 
-      <CommandCenterCard title="Open for battle" description="Set a chain-native stake. We auto-match a similar waiting coin within 20% of that stake.">
+      <CommandCenterCard title="Open for battle" description="Set a chain-native stake intent. No BNB or SOL leaves the wallet until BattleTreasury escrow is live. We auto-match a similar waiting coin within 20% of that stake.">
         {!eligible.length ? (
           <p className="text-sm text-muted-foreground">
             {feed.loading

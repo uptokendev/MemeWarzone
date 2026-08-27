@@ -650,13 +650,19 @@ async function handleChallenge(req, res) {
     creatorAddress: ident(challenger.creator_address, chainId),
     endsAt: plusHours(CHALLENGE_HOURS),
   });
-  void notifyChallenge({
+  const mailed = await notifyChallenge({
     defenderWallet: ident(defender.creator_address, chainId) || defender.creator_address,
     challengerSymbol: challengerStatus.symbol || challenger.name,
     defenderSymbol: defenderStatus.symbol || defender.name,
     battleId: battle?.id,
   });
-  return json(res, 200, { ok: true, battle, notified: true });
+  return json(res, 200, {
+    ok: true,
+    battle,
+    notified: Boolean(mailed?.ok && !mailed?.skipped),
+    notifySkipped: Boolean(mailed?.skipped),
+    notifyReason: mailed?.reason || null,
+  });
 }
 
 async function handleAccept(req, res, battleId) {

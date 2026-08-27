@@ -78,8 +78,13 @@ const BattleDetails = () => {
         })}
       </section>
 
-      <section className="mwz-hud-frame p-4 text-sm text-muted-foreground">
-        Support (donation, not betting) will sit here once escrow is live. 85% to the winning campaign, 5% protocol, 10% Major War League.
+      <section className="mwz-hud-frame space-y-2 p-4 text-sm text-muted-foreground">
+        <p>
+          Native stake on this fight is an intent only. No BNB or SOL left the wallet. BattleTreasury escrow is not live.
+        </p>
+        <p>
+          Support is a donation, not betting. Supporters are not paid. When escrow exists: 85% winning campaign, 5% protocol, 10% Major War League.
+        </p>
       </section>
 
       <Button asChild size="sm" variant="outline" className="font-retro">

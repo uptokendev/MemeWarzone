@@ -42,6 +42,7 @@ export default async function handler(req, res) {
 
   const checks = await Promise.all(CHECKS.map(checkTable));
   const missingTables = checks.filter((check) => !check.ok).map((check) => check.table);
+  const emailConfigured = Boolean(String(process.env.RESEND_API_KEY || process.env.NOTIFY_RESEND_API_KEY || "").trim());
 
   return json(res, 200, {
     ok: databaseOk && missingTables.length === 0,
@@ -50,6 +51,7 @@ export default async function handler(req, res) {
     checks,
     missingTables,
     importedTables: checks.filter((check) => check.ok).map((check) => check.table),
+    email: { configured: emailConfigured },
     durationMs: Date.now() - startedAt,
     updatedAt: new Date().toISOString(),
   });

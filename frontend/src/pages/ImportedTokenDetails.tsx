@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { CrypticPumpBadge, CrypticPumpListButton, fetchCrypticPumpListing, type CrypticPumpListingData } from "@/components/token/CrypticPumpListing";
+import { ImportedTradePanel } from "@/components/arena/ImportedTradePanel";
 import { ArenaUpvoteDialog } from "@/components/token/UpvoteDialog";
 import { postGradFlags } from "@/features/postgrad/config";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
@@ -56,9 +57,13 @@ export default function ImportedTokenDetails({ item }: { item: ArenaImportItem }
 
       <section className="mwz-hud-frame p-4 space-y-3">
         <div className="font-retro text-sm text-foreground">Trading</div>
-        <p className="text-sm text-muted-foreground">
-          In-app swaps for imported tokens are only enabled when a Topaz, Meteora, or Uniswap V3 pool is resolved. This token is view-only until that pool is found.
-        </p>
+        {item.status === "passed" ? (
+          <ImportedTradePanel item={item} />
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            In-app swaps unlock after this import is passed, and only if a Topaz or Meteora pool is resolved.
+          </p>
+        )}
         {listing?.listingUrl ? (
           <CrypticPumpBadge listingUrl={listing.listingUrl} />
         ) : isOwner ? (
