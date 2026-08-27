@@ -528,8 +528,8 @@ const CHAIN_LABELS: Record<number, string> = {
   97: "BNB Smart Chain Testnet",
   101: "Solana mainnet",
   137: "Polygon",
-  4663: "Robinhood Chain",
-  46630: "Robinhood Chain Testnet",
+  4663: "BNB Smart Chain",
+  46630: "BNB Smart Chain Testnet",
   8453: "Base",
   42161: "Arbitrum One",
   10: "Optimism",
@@ -541,7 +541,7 @@ export function getChainLabel(chainId?: number | null): string {
   if (chainId === 56) return "BNB";
   if (chainId === 97) return "BNB Testnet";
   if (chainId === 101) return "Solana";
-  if (chainId === 4663) return "Robinhood";
-  if (chainId === 46630) return "Robinhood Testnet";
+  if (chainId === 4663) return "BNB";
+  if (chainId === 46630) return "BNB Testnet";
   return CHAIN_LABELS[chainId] ?? `Chain ${chainId}`;
 }
