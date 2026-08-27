@@ -5,7 +5,7 @@ import { ArrowRight, Trophy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
-import { isSolanaChainId } from "@/lib/chainConfig";
+import { isSolanaChainId, ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
 import { fetchAirdropWinners, type AirdropWinner } from "@/lib/rewardProgramsApi";
 
 const LAMPORTS_PER_SOL = 1_000_000_000;
@@ -21,10 +21,16 @@ function formatNative(raw: string, solana: boolean): string {
   }
 }
 
+function nativeSymbol(chainId: number): string {
+  if (isSolanaChainId(chainId)) return "SOL";
+  if (chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID) return "ETH";
+  return "BNB";
+}
+
 export default function AirdropWinners() {
   const [selectedChainId] = useSelectedFeedChainId();
   const solana = isSolanaChainId(Number(selectedChainId));
-  const symbol = solana ? "SOL" : "BNB";
+  const symbol = nativeSymbol(Number(selectedChainId));
   const [winners, setWinners] = useState<AirdropWinner[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
