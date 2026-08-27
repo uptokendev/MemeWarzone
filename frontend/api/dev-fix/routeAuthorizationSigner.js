@@ -16,6 +16,8 @@ function loadEthers() {
 const ethers = loadEthers();
 
 const OBSOLETE_BSC_TESTNET_FACTORY = "0xe0FbBa4533513110Cec7e78aa3e48EC45301B5E6";
+const ROBINHOOD_CHAIN_IDS = new Set([4663n, 46630n]);
+const EXPECTED_CAMPAIGN_GENERATION = 2;
 
 export const CREATE_AUTH_TYPES = ["string", "uint256", "address", "address", "bytes32", "uint8", "uint8", "uint64"];
 export const SCHEDULED_CREATE_AUTH_TYPES = [
@@ -53,6 +55,12 @@ function toBigInt(value, label) {
   }
 }
 
+function positiveGeneration(value, label) {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n <= 0) throw new Error(`${label} must be supplied as a positive integer`);
+  return n;
+}
+
 function assertCreationFactoryAllowed(chainId, factory) {
   const normalizedChainId = toBigInt(chainId, "chainId");
   const normalizedFactory = ethers.getAddress(factory);
@@ -65,6 +73,22 @@ function assertCreationFactoryAllowed(chainId, factory) {
     );
   }
   return { normalizedChainId, normalizedFactory };
+}
+
+function assertScheduledGeneration(chainId, factoryGeneration, campaignGeneration) {
+  const normalizedChainId = toBigInt(chainId, "chainId");
+  const factoryGen = positiveGeneration(factoryGeneration, "factoryGeneration");
+  const campaignGen = positiveGeneration(campaignGeneration, "campaignGeneration");
+
+  if (campaignGen !== EXPECTED_CAMPAIGN_GENERATION) {
+    throw new Error(`Unsupported campaign generation ${campaignGen}; expected ${EXPECTED_CAMPAIGN_GENERATION}`);
+  }
+  if (ROBINHOOD_CHAIN_IDS.has(normalizedChainId)) {
+    if (factoryGen !== 4) throw new Error(`Robinhood scheduled authorization requires factory generation 4; got ${factoryGen}`);
+  } else if (factoryGen !== 3 && factoryGen !== 4) {
+    throw new Error(`Unsupported EVM factory generation ${factoryGen}; expected 3 or 4`);
+  }
+  return { factoryGen, campaignGen };
 }
 
 export function hashCampaignRequest(request) {
@@ -127,8 +151,8 @@ export function buildScheduledCreateAuthorizationDigest({
   metadataHash,
   reservationVersion,
   authorizationNonce,
-  factoryGeneration = 3,
-  campaignGeneration = 2,
+  factoryGeneration,
+  campaignGeneration,
   tradeRouteProfileId,
   tradeRouteProfile = tradeRouteProfileId,
   finalizeRouteProfileId,
@@ -136,6 +160,11 @@ export function buildScheduledCreateAuthorizationDigest({
   deadline,
 }) {
   const { normalizedChainId, normalizedFactory } = assertCreationFactoryAllowed(chainId, factory);
+  const { factoryGen, campaignGen } = assertScheduledGeneration(
+    normalizedChainId,
+    factoryGeneration,
+    campaignGeneration,
+  );
   return ethers.keccak256(
     coder.encode(SCHEDULED_CREATE_AUTH_TYPES, [
       "MWZ_CREATE_SCHEDULED_V2_AUTH",
@@ -149,8 +178,8 @@ export function buildScheduledCreateAuthorizationDigest({
       metadataHash,
       toBigInt(reservationVersion, "reservationVersion"),
       toBigInt(authorizationNonce, "authorizationNonce"),
-      Number(factoryGeneration),
-      Number(campaignGeneration),
+      factoryGen,
+      campaignGen,
       Number(tradeRouteProfile),
       Number(finalizeRouteProfile),
       toBigInt(deadline, "deadline"),
