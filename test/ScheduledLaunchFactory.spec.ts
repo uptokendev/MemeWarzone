@@ -3,7 +3,7 @@ import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 import { ethers, network } from "hardhat";
 import { deployCoreFixture } from "./fixtures/core";
 
-const FACTORY_GENERATION = 3;
+const FACTORY_GENERATION = 4;
 const CAMPAIGN_GENERATION = 2;
 
 const baseCampaign = (overrides: Record<string, unknown> = {}) => ({
