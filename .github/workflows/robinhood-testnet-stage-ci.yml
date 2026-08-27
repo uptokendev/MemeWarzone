@@ -17,12 +17,14 @@ on:
       - "contracts/ProtocolRevenueVault.sol"
       - "contracts/CreatorRegistry.sol"
       - "contracts/RiskRegistry.sol"
+      - "contracts/UPVoteTreasury.sol"
       - "contracts/PermanentV3PositionLocker.sol"
       - "contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol"
       - "contracts/mocks/MockUniswapV3*.sol"
       - "contracts/mocks/MockWETH9.sol"
       - "contracts/mocks/MockUsdPriceFeed.sol"
       - "scripts/deploy-robinhood-testnet-stage.ts"
+      - "scripts/deploy-robinhood-testnet-auxiliary.ts"
       - "scripts/verify-robinhood-testnet-stage.ts"
       - "scripts/test-robinhood-testnet-lifecycle.ts"
       - ".github/workflows/robinhood-testnet-stage-ci.yml"
@@ -42,12 +44,14 @@ on:
       - "contracts/ProtocolRevenueVault.sol"
       - "contracts/CreatorRegistry.sol"
       - "contracts/RiskRegistry.sol"
+      - "contracts/UPVoteTreasury.sol"
       - "contracts/PermanentV3PositionLocker.sol"
       - "contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol"
       - "contracts/mocks/MockUniswapV3*.sol"
       - "contracts/mocks/MockWETH9.sol"
       - "contracts/mocks/MockUsdPriceFeed.sol"
       - "scripts/deploy-robinhood-testnet-stage.ts"
+      - "scripts/deploy-robinhood-testnet-auxiliary.ts"
       - "scripts/verify-robinhood-testnet-stage.ts"
       - "scripts/test-robinhood-testnet-lifecycle.ts"
       - ".github/workflows/robinhood-testnet-stage-ci.yml"
@@ -113,6 +117,12 @@ jobs:
           ROBINHOOD_STAGE_DEPLOYMENT_FILE: /tmp/robinhood-testnet-stage.json
         run: npx hardhat run scripts/verify-robinhood-testnet-stage.ts --network localhost
 
+      - name: Deploy auxiliary parity contracts
+        env:
+          ALLOW_LOCAL_RH_PROTOCOL_STAGE: "true"
+          ROBINHOOD_STAGE_DEPLOYMENT_FILE: /tmp/robinhood-testnet-stage.json
+        run: npx hardhat run scripts/deploy-robinhood-testnet-auxiliary.ts --network localhost
+
       - name: Prove manifest stays staging-only and disabled before acceptance
         run: |
           node - <<'NODE'
@@ -127,6 +137,7 @@ jobs:
             throw new Error('staged deployment unexpectedly enabled');
           }
           if (m.stagingOnly?.productionCompatible !== false) throw new Error('staging-only marker missing');
+          if (!m.contracts?.upVoteTreasury) throw new Error('UPVoteTreasury missing from staged manifest');
           console.log('Robinhood staged manifest activation gate passed');
           NODE
 
