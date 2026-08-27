@@ -14,8 +14,14 @@ on:
       - frontend/src/lib/solanaTradeV1.ts
       - frontend/src/lib/solanaTradeAtaV0.test.mjs
       - frontend/src/lib/solanaUpvoteV0.ts
+      - frontend/src/lib/solanaArenaV0.ts
       - frontend/src/lib/solanaMeteoraTrade.ts
+      - frontend/src/lib/arena/**
+      - frontend/src/components/arena/**
       - frontend/src/components/token/UpvoteDialog.tsx
+      - frontend/src/pages/Arena*.tsx
+      - frontend/src/pages/BattleDetails.tsx
+      - frontend/src/pages/TournamentDetails.tsx
       - frontend/scripts/check-solana-user-v0-normalization.mjs
       - frontend/scripts/load-solana-v0-module.mjs
       - .github/workflows/solana-user-v0-normalization.yml
