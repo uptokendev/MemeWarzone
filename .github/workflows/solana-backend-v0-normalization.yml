@@ -10,6 +10,7 @@ on:
       - realtime-indexer/src/jobs/publishRecruiterSettlementRoot.ts
       - frontend/api/lib/solanaRewardLane.js
       - scripts/solana/send-server-v0.mjs
+      - scripts/solana/arena-operator-v0.mjs
       - scripts/solana/backfill-fee-escrow.mjs
       - scripts/solana/flush-fee-escrow.mjs
       - scripts/solana/init-rewards-lanes.mjs
@@ -39,6 +40,7 @@ jobs:
       - name: Check operator script syntax
         run: |
           node --check scripts/solana/send-server-v0.mjs
+          node --check scripts/solana/arena-operator-v0.mjs
           node --check scripts/solana/backfill-fee-escrow.mjs
           node --check scripts/solana/flush-fee-escrow.mjs
           node --check scripts/solana/init-rewards-lanes.mjs
@@ -54,6 +56,7 @@ jobs:
             realtime-indexer/src/solanaLpFees.ts
             realtime-indexer/src/jobs/publishRecruiterSettlementRoot.ts
             frontend/api/lib/solanaRewardLane.js
+            scripts/solana/arena-operator-v0.mjs
             scripts/solana/backfill-fee-escrow.mjs
             scripts/solana/flush-fee-escrow.mjs
             scripts/solana/init-rewards-lanes.mjs
@@ -68,6 +71,9 @@ jobs:
           grep -F 'VersionedTransaction' realtime-indexer/src/solanaLpFees.ts
           grep -F 'VersionedTransaction' realtime-indexer/src/jobs/publishRecruiterSettlementRoot.ts
           grep -F 'VersionedTransaction' frontend/api/lib/solanaRewardLane.js
+          grep -F 'sendServerV0' scripts/solana/arena-operator-v0.mjs
+          grep -F 'Ed25519Program' scripts/solana/arena-operator-v0.mjs
+          grep -F 'ARENA_PROGRAM_ID' scripts/solana/arena-operator-v0.mjs
 
       - name: Install realtime indexer dependencies
         run: npm ci --prefix realtime-indexer --no-audit --no-fund
