@@ -18,8 +18,8 @@ import { upsertCampaignFromDraft } from "./campaign-registry.js";
 
 const MIN_SCHEDULE_SECONDS = 5 * 60;
 const MAX_SCHEDULE_SECONDS = 30 * 24 * 60 * 60;
-const FACTORY_GENERATION = 3;
-const CAMPAIGN_GENERATION = 2;
+const EXPECTED_CAMPAIGN_GENERATION = 2;
+const ROBINHOOD_CHAIN_IDS = new Set([4663, 46630]);
 const WAD = 10n ** 18n;
 const STANDARD_TARGETS = new Set([
   (15_000n * WAD).toString(),
@@ -52,6 +52,27 @@ function isTruthy(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 }
 
+function isSupportedFactoryGeneration(chainId, generation) {
+  const id = Number(chainId);
+  const gen = Number(generation);
+  if (ROBINHOOD_CHAIN_IDS.has(id)) return gen === 4;
+  return gen === 3 || gen === 4;
+}
+
+function readVerifiedGenerations(chainId, body) {
+  const factoryGeneration = Number(body?.onChainPreflight?.factoryGeneration || 0);
+  const campaignGeneration = Number(body?.onChainPreflight?.campaignGeneration || 0);
+  if (!isSupportedFactoryGeneration(chainId, factoryGeneration) || campaignGeneration !== EXPECTED_CAMPAIGN_GENERATION) {
+    const requiredFactory = ROBINHOOD_CHAIN_IDS.has(Number(chainId)) ? "4" : "3 or 4";
+    throw new Error(
+      `Verified on-chain factory generation is required before scheduled authorization; ` +
+        `chain ${chainId} requires factory ${requiredFactory} / campaign ${EXPECTED_CAMPAIGN_GENERATION}, ` +
+        `got ${factoryGeneration}/${campaignGeneration}.`,
+    );
+  }
+  return { factoryGeneration, campaignGeneration };
+}
+
 function normalizeTarget(chainId, value) {
   let target;
   try {
@@ -64,8 +85,8 @@ function normalizeTarget(chainId, value) {
     process.env.VITE_ENABLE_TEST_GRADUATION_THRESHOLD || process.env.ENABLE_TEST_GRADUATION_THRESHOLD || "true",
   );
   const cid = Number(chainId);
-  // $6 test threshold: BNB testnet + Solana (matches on-chain devnet generation mask bit 0).
-  if (testEnabled && (cid === 97 || cid === 101 || cid === 102) && target === TEST_TARGET) return target;
+  // $6 test threshold: EVM testnets + Solana development generations.
+  if (testEnabled && (cid === 97 || cid === 46630 || cid === 101 || cid === 102) && target === TEST_TARGET) return target;
   throw new Error("Unsupported graduation target");
 }
 
@@ -148,6 +169,14 @@ async function authorizeScheduledLaunch({ body, row, pool, draftId, res }) {
     return json(res, 409, { error: "Publish the promotion page before scheduling launch." });
   }
   if (!String(row.logo_url || "").trim()) return json(res, 409, { error: "Draft requires a saved logo before launch." });
+
+  let generations;
+  try {
+    generations = readVerifiedGenerations(chainId, body);
+  } catch (error) {
+    return json(res, 409, { error: error.message, code: "SCHEDULED_CREATE_GENERATION_NOT_VERIFIED" });
+  }
+  const { factoryGeneration, campaignGeneration } = generations;
 
   let graduationTarget;
   try {
@@ -235,8 +264,8 @@ async function authorizeScheduledLaunch({ body, row, pool, draftId, res }) {
           metadataHash,
           reservationVersion,
           authorizationNonce,
-          factoryGeneration: FACTORY_GENERATION,
-          campaignGeneration: CAMPAIGN_GENERATION,
+          factoryGeneration,
+          campaignGeneration,
           tradeRouteProfileId,
           finalizeRouteProfileId,
           deadline,
@@ -246,8 +275,8 @@ async function authorizeScheduledLaunch({ body, row, pool, draftId, res }) {
           authorization: {
             tradeRouteProfileId,
             finalizeRouteProfileId,
-            factoryGeneration: FACTORY_GENERATION,
-            campaignGeneration: CAMPAIGN_GENERATION,
+            factoryGeneration,
+            campaignGeneration,
             validUntil,
             signature,
           },
@@ -272,8 +301,8 @@ async function authorizeScheduledLaunch({ body, row, pool, draftId, res }) {
         scheduledRequest: canonical.scheduledRequest,
         tickerReservation: canonical.reservation,
         preflight,
-        factoryGeneration: FACTORY_GENERATION,
-        campaignGeneration: CAMPAIGN_GENERATION,
+        factoryGeneration,
+        campaignGeneration,
       },
     });
 
@@ -281,7 +310,7 @@ async function authorizeScheduledLaunch({ body, row, pool, draftId, res }) {
       scheduledRequest: canonical.scheduledRequest,
       authorization: canonical.authorization,
       tickerReservation: canonical.reservation,
-      preflight,
+      preflight: { ...preflight, factoryGeneration, campaignGeneration },
     });
   } catch (error) {
     if (error instanceof TickerReservationError || isTickerReservationConflict(error)) {
