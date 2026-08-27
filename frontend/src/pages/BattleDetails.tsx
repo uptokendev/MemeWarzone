@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { ContentContainer } from "@/components/layout/ContentContainer";
 import { getArenaTokenRoute } from "@/features/postgrad/tokenRoutes";
 import { useArenaBattleDetails } from "@/hooks/useArenaBattleFeed";
+import { ArenaWarPoolClaimButton } from "@/components/arena/ArenaWarPoolClaimButton";
 import { publicBattleLabel, publicBattleLane } from "@/lib/arena/publicBattleState";
 import { resolveImageUri } from "@/lib/media";
 
@@ -83,8 +84,11 @@ const BattleDetails = () => {
           Native stake on this fight is an intent only. No BNB or SOL left the wallet. BattleTreasury escrow is not live.
         </p>
         <p>
-          Support is a donation, not betting. Supporters are not paid. When escrow exists: 85% winning campaign, 5% protocol, 10% Major War League.
+          Support is a donation, not betting. Supporters are not paid. When escrow exists: 85% winning campaign, 5% protocol, 10% Major War League. The winning owner claims — protocol does not send.
         </p>
+        {battle.state === "finished" ? (
+          <ArenaWarPoolClaimButton battleId={battle.id} chainId={(battle as { chainId?: number }).chainId} />
+        ) : null}
       </section>
 
       <Button asChild size="sm" variant="outline" className="font-retro">

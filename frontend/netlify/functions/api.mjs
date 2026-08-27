@@ -221,6 +221,8 @@ app.all("/arena/league/advance-week", wrap(arenaLeague));
 app.all("/arena/league/rebalance-divisions", wrap(arenaLeague));
 app.all("/arena/league/cycle-season-state", wrap(arenaLeague));
 app.all("/arena/league", wrap(arenaLeague));
+app.all("/arena/war-pools/claimable", wrap(arenaWarPools));
+app.all("/arena/war-pools/:battleId/claim-intent", wrap(arenaWarPools));
 app.all("/arena/war-pools/:battleId/support", wrap(arenaWarPools));
 app.all("/arena/war-pools/:battleId/transition", wrap(arenaWarPools));
 app.all("/arena/war-pools/:battleId", wrap(arenaWarPools));

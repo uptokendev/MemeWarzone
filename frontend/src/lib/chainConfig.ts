@@ -453,6 +453,13 @@ export function getArenaVoteTreasuryAddress(chainId: SupportedChainId): string {
   return fallback.trim();
 }
 
+export function getArenaWarPoolTreasuryAddress(chainId: SupportedChainId): string {
+  if (isSolanaChainId(chainId)) return "";
+  const perChain = (import.meta.env[`VITE_ARENA_WAR_POOL_TREASURY_ADDRESS_${chainId}`] as string | undefined) ?? "";
+  if (perChain.trim()) return perChain.trim();
+  return String(import.meta.env.VITE_ARENA_WAR_POOL_TREASURY_ADDRESS || "").trim();
+}
+
 /**
  * TreasuryVault holds the accumulated League Treasury fees (native BNB).
  * This address is chain-specific.
