@@ -3,7 +3,9 @@ export const ACTIVE_WALLET_KIND_KEY = "mwz:active_wallet_kind";
 export const FEED_CHAIN_EVENT = "memewarzone:feedChainChanged";
 export const ACTIVE_WALLET_KIND_EVENT = "memewarzone:activeWalletKindChanged";
 
+// "bnb" is the legacy name for the EVM wallet family. Keep it for storage/backward compatibility.
 export type ActiveWalletKind = "solana" | "bnb";
+export type StoredFeedChainId = 56 | 97 | 101 | 4663 | 46630;
 
 export function getActiveWalletKind(): ActiveWalletKind | null {
   if (typeof window === "undefined") return null;
@@ -53,23 +55,27 @@ export function campaignWalletMatches(params: {
   return kind === "bnb" && Boolean(params.bnbConnected);
 }
 
-export function readStoredFeedChainId(): 56 | 97 | 101 | null {
+function isStoredFeedChainId(value: number): value is StoredFeedChainId {
+  return value === 56 || value === 97 || value === 101 || value === 4663 || value === 46630;
+}
+
+export function readStoredFeedChainId(): StoredFeedChainId | null {
   if (typeof window === "undefined") return null;
   try {
     const feed = Number(window.localStorage.getItem(FEED_CHAIN_KEY) || "");
-    if (feed === 56 || feed === 97 || feed === 101) return feed;
+    if (isStoredFeedChainId(feed)) return feed;
     const featured = Number(window.localStorage.getItem("mwz:last_featured_chain_id") || "");
-    if (featured === 56 || featured === 97 || featured === 101) return featured;
+    if (isStoredFeedChainId(featured)) return featured;
   } catch {
     // ignore
   }
   return null;
 }
 
-export function chainIdForWalletKind(kind: ActiveWalletKind, evmChainId?: number | null): 56 | 97 | 101 {
+export function chainIdForWalletKind(kind: ActiveWalletKind, evmChainId?: number | null): StoredFeedChainId {
   if (kind === "solana") return 101;
-  if (evmChainId === 56 || evmChainId === 97) return evmChainId;
+  if (evmChainId === 56 || evmChainId === 97 || evmChainId === 4663 || evmChainId === 46630) return evmChainId;
   const stored = readStoredFeedChainId();
-  if (stored === 56 || stored === 97) return stored;
+  if (stored === 56 || stored === 97 || stored === 4663 || stored === 46630) return stored;
   return 56;
 }
