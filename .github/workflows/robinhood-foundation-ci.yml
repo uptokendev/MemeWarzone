@@ -10,6 +10,7 @@ on:
       - "docs/build_plans/robinhood-*.md"
       - "docs/robinhood-*.md"
       - "hardhat.config.ts"
+      - "contracts/LaunchFactory.sol"
       - "contracts/mocks/MockUniswapV3*.sol"
       - "contracts/mocks/MockWETH9.sol"
       - "contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol"
@@ -19,6 +20,10 @@ on:
       - "scripts/check-robinhood-local-isolation.mjs"
       - "test/RobinhoodV3Mocks.spec.ts"
       - "test/RobinhoodV3GraduationAdapter.spec.ts"
+      - "test/LaunchFactoryLiquidityKinds.spec.ts"
+      - "test/LaunchFactoryGraduationThresholds.spec.ts"
+      - "test/ScheduledLaunchFactory.spec.ts"
+      - "test/CreatorArmCooldown.spec.ts"
       - "db/migrations/**"
       - "frontend/api/load-local-env.mjs"
       - "frontend/scripts/dev-robinhood-local.mjs"
@@ -31,6 +36,7 @@ on:
       - "frontend/src/lib/feedChainIsolation.test.mjs"
       - "frontend/src/lib/launchpadReadiness.ts"
       - "frontend/src/lib/runtimeEnvironment.ts"
+      - "frontend/src/lib/scheduledLaunchClientV2.ts"
       - "realtime-indexer/src/ably.ts"
       - "realtime-indexer/src/env.ts"
       - "realtime-indexer/src/evmIndexerChains.ts"
@@ -47,6 +53,7 @@ on:
       - "docs/build_plans/robinhood-*.md"
       - "docs/robinhood-*.md"
       - "hardhat.config.ts"
+      - "contracts/LaunchFactory.sol"
       - "contracts/mocks/MockUniswapV3*.sol"
       - "contracts/mocks/MockWETH9.sol"
       - "contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol"
@@ -56,6 +63,10 @@ on:
       - "scripts/check-robinhood-local-isolation.mjs"
       - "test/RobinhoodV3Mocks.spec.ts"
       - "test/RobinhoodV3GraduationAdapter.spec.ts"
+      - "test/LaunchFactoryLiquidityKinds.spec.ts"
+      - "test/LaunchFactoryGraduationThresholds.spec.ts"
+      - "test/ScheduledLaunchFactory.spec.ts"
+      - "test/CreatorArmCooldown.spec.ts"
       - "db/migrations/**"
       - "frontend/api/load-local-env.mjs"
       - "frontend/scripts/dev-robinhood-local.mjs"
@@ -68,6 +79,7 @@ on:
       - "frontend/src/lib/feedChainIsolation.test.mjs"
       - "frontend/src/lib/launchpadReadiness.ts"
       - "frontend/src/lib/runtimeEnvironment.ts"
+      - "frontend/src/lib/scheduledLaunchClientV2.ts"
       - "realtime-indexer/src/ably.ts"
       - "realtime-indexer/src/env.ts"
       - "realtime-indexer/src/evmIndexerChains.ts"
@@ -103,8 +115,15 @@ jobs:
       - name: Compile contracts
         run: npx hardhat compile
 
-      - name: Prove V3 staging DEX and unchanged LaunchCampaign graduation
-        run: npx hardhat test test/RobinhoodV3Mocks.spec.ts test/RobinhoodV3GraduationAdapter.spec.ts
+      - name: Prove V3 staging DEX, factory liquidity seam, and scheduled-generation compatibility
+        run: >-
+          npx hardhat test
+          test/RobinhoodV3Mocks.spec.ts
+          test/RobinhoodV3GraduationAdapter.spec.ts
+          test/LaunchFactoryLiquidityKinds.spec.ts
+          test/LaunchFactoryGraduationThresholds.spec.ts
+          test/ScheduledLaunchFactory.spec.ts
+          test/CreatorArmCooldown.spec.ts
 
       - name: Prove staging deployment script and self-verification
         env:
