@@ -24,6 +24,8 @@ pub const SQUAD_CLAIM_SEED: &[u8] = b"squad_claim";
 
 pub mod route;
 pub use route::*;
+pub mod arena;
+pub use arena::*;
 
 pub const PERIOD_WEEKLY: u8 = 0;
 pub const PERIOD_MONTHLY: u8 = 1;
@@ -455,6 +457,121 @@ pub mod mwz_rewards_treasury {
             amount_lamports,
         });
         Ok(())
+    }
+
+    pub fn initialize_arena(
+        ctx: Context<InitializeArena>,
+        resolver: Pubkey,
+        protocol_receiver: Pubkey,
+        mwl_receiver: Pubkey,
+        charity_receiver: Pubkey,
+    ) -> Result<()> {
+        initialize_arena_handler(ctx, resolver, protocol_receiver, mwl_receiver, charity_receiver)
+    }
+
+    pub fn set_arena_resolver(ctx: Context<SetArenaConfig>, resolver: Pubkey) -> Result<()> {
+        set_arena_resolver_handler(ctx, resolver)
+    }
+
+    pub fn set_arena_receivers(
+        ctx: Context<SetArenaConfig>,
+        protocol_receiver: Pubkey,
+        mwl_receiver: Pubkey,
+        charity_receiver: Pubkey,
+    ) -> Result<()> {
+        set_arena_receivers_handler(ctx, protocol_receiver, mwl_receiver, charity_receiver)
+    }
+
+    pub fn set_arena_pause(ctx: Context<SetArenaConfig>, paused: bool) -> Result<()> {
+        set_arena_pause_handler(ctx, paused)
+    }
+
+    pub fn open_battle_pool(
+        ctx: Context<OpenBattlePool>,
+        pool_id: [u8; 32],
+        owner_a: Pubkey,
+        owner_b: Pubkey,
+        stake_lamports: u64,
+        deposit_deadline: i64,
+        resolve_deadline: i64,
+    ) -> Result<()> {
+        open_battle_pool_handler(
+            ctx,
+            pool_id,
+            owner_a,
+            owner_b,
+            stake_lamports,
+            deposit_deadline,
+            resolve_deadline,
+        )
+    }
+
+    pub fn open_tournament_pool(
+        ctx: Context<OpenTournamentPool>,
+        pool_id: [u8; 32],
+        buy_in_lamports: u64,
+        deposit_deadline: i64,
+        resolve_deadline: i64,
+    ) -> Result<()> {
+        open_tournament_pool_handler(ctx, pool_id, buy_in_lamports, deposit_deadline, resolve_deadline)
+    }
+
+    pub fn deposit_stake(ctx: Context<DepositStake>, pool_id: [u8; 32]) -> Result<()> {
+        deposit_stake_handler(ctx, pool_id)
+    }
+
+    pub fn donate_support(
+        ctx: Context<DonateSupport>,
+        pool_id: [u8; 32],
+        amount_lamports: u64,
+    ) -> Result<()> {
+        donate_support_handler(ctx, pool_id, amount_lamports)
+    }
+
+    pub fn deposit_buy_in(ctx: Context<DepositBuyIn>, pool_id: [u8; 32]) -> Result<()> {
+        deposit_buy_in_handler(ctx, pool_id)
+    }
+
+    pub fn resolve_pool(
+        ctx: Context<ResolveArenaPool>,
+        pool_id: [u8; 32],
+        result_type: u8,
+        winner: Pubkey,
+        deadline: i64,
+        nonce: u64,
+    ) -> Result<()> {
+        resolve_pool_handler(ctx, pool_id, result_type, winner, deadline, nonce)
+    }
+
+    pub fn settle_expired_pool(
+        ctx: Context<SettleExpiredArenaPool>,
+        pool_id: [u8; 32],
+    ) -> Result<()> {
+        settle_expired_pool_handler(ctx, pool_id)
+    }
+
+    pub fn claim_winner(ctx: Context<ClaimArenaWinner>, pool_id: [u8; 32]) -> Result<()> {
+        claim_winner_handler(ctx, pool_id)
+    }
+
+    pub fn claim_protocol(ctx: Context<ClaimArenaProtocol>, pool_id: [u8; 32]) -> Result<()> {
+        claim_protocol_handler(ctx, pool_id)
+    }
+
+    pub fn claim_mwl(ctx: Context<ClaimArenaMwl>, pool_id: [u8; 32]) -> Result<()> {
+        claim_mwl_handler(ctx, pool_id)
+    }
+
+    pub fn claim_charity(ctx: Context<ClaimArenaCharity>, pool_id: [u8; 32]) -> Result<()> {
+        claim_charity_handler(ctx, pool_id)
+    }
+
+    pub fn refund_stake(ctx: Context<RefundArenaStake>, pool_id: [u8; 32]) -> Result<()> {
+        refund_stake_handler(ctx, pool_id)
+    }
+
+    pub fn refund_buy_in(ctx: Context<RefundArenaBuyIn>, pool_id: [u8; 32]) -> Result<()> {
+        refund_buy_in_handler(ctx, pool_id)
     }
 }
 
