@@ -10,6 +10,7 @@ import {
 
 const OBSOLETE_FACTORY = "0xe0FbBa4533513110Cec7e78aa3e48EC45301B5E6";
 const CORRECTED_FACTORY = "0x1111111111111111111111111111111111111111";
+const ROBINHOOD_FACTORY = "0x3333333333333333333333333333333333333333";
 const CREATOR = "0x2222222222222222222222222222222222222222";
 
 const campaign = {
@@ -21,6 +22,27 @@ const campaign = {
   extraLink: "",
   graduationTarget: 6n * 10n ** 18n,
 };
+
+function scheduledInput(overrides = {}) {
+  return {
+    chainId: 97,
+    factoryAddress: CORRECTED_FACTORY,
+    creator: CREATOR,
+    request: { campaign },
+    launchAt: 1_900_000_000,
+    draftReferenceHash: ethers.id("draft"),
+    normalizedTickerHash: ethers.id("FIX"),
+    metadataHash: ethers.id("metadata"),
+    reservationVersion: 1,
+    authorizationNonce: 7,
+    factoryGeneration: 3,
+    campaignGeneration: 2,
+    tradeRouteProfileId: 1,
+    finalizeRouteProfileId: 1,
+    deadline: 2_000_000_000,
+    ...overrides,
+  };
+}
 
 test("refuses immediate creation authorization for the obsolete BSC Testnet factory", () => {
   assert.throws(
@@ -40,40 +62,25 @@ test("refuses immediate creation authorization for the obsolete BSC Testnet fact
 test("refuses scheduled creation authorization for the obsolete BSC Testnet factory", () => {
   assert.throws(
     () => buildScheduledCreateAuthorizationDigest({
-      chainId: 97,
+      ...scheduledInput(),
       factoryAddress: OBSOLETE_FACTORY,
-      creator: CREATOR,
-      request: { campaign },
-      launchAt: 1_900_000_000,
-      draftReferenceHash: ethers.id("draft"),
-      normalizedTickerHash: ethers.id("FIX"),
-      metadataHash: ethers.id("metadata"),
-      reservationVersion: 1,
-      authorizationNonce: 1,
-      tradeRouteProfileId: 1,
-      finalizeRouteProfileId: 1,
-      deadline: 2_000_000_000,
     }),
     /support-only and cannot receive new creation authorizations/,
   );
 });
 
-test("scheduled authorization defaults to factory generation 3 and campaign generation 2", () => {
-  const input = {
-    chainId: 97,
-    factoryAddress: CORRECTED_FACTORY,
-    creator: CREATOR,
-    request: { campaign },
-    launchAt: 1_900_000_000,
-    draftReferenceHash: ethers.id("draft"),
-    normalizedTickerHash: ethers.id("FIX"),
-    metadataHash: ethers.id("metadata"),
-    reservationVersion: 1,
-    authorizationNonce: 7,
-    tradeRouteProfileId: 1,
-    finalizeRouteProfileId: 1,
-    deadline: 2_000_000_000,
-  };
+test("requires factory and campaign generations to be supplied explicitly", () => {
+  const input = scheduledInput();
+  delete input.factoryGeneration;
+  delete input.campaignGeneration;
+  assert.throws(
+    () => buildScheduledCreateAuthorizationDigest(input),
+    /factoryGeneration must be supplied as a positive integer/,
+  );
+});
+
+test("preserves BNB generation 3/2 scheduled authorization digest", () => {
+  const input = scheduledInput();
   const digest = buildScheduledCreateAuthorizationDigest(input);
   const expected = ethers.keccak256(
     ethers.AbiCoder.defaultAbiCoder().encode(
@@ -116,4 +123,34 @@ test("scheduled authorization defaults to factory generation 3 and campaign gene
     ),
   );
   assert.equal(digest, expected);
+});
+
+test("accepts BNB factory generation 4 without changing campaign generation", () => {
+  const digest = buildScheduledCreateAuthorizationDigest(scheduledInput({ factoryGeneration: 4 }));
+  assert.match(digest, /^0x[0-9a-f]{64}$/i);
+});
+
+test("Robinhood refuses generation 3 and requires factory generation 4", () => {
+  assert.throws(
+    () => buildScheduledCreateAuthorizationDigest(scheduledInput({
+      chainId: 46630,
+      factoryAddress: ROBINHOOD_FACTORY,
+      factoryGeneration: 3,
+    })),
+    /Robinhood scheduled authorization requires factory generation 4/,
+  );
+
+  const digest = buildScheduledCreateAuthorizationDigest(scheduledInput({
+    chainId: 46630,
+    factoryAddress: ROBINHOOD_FACTORY,
+    factoryGeneration: 4,
+  }));
+  assert.match(digest, /^0x[0-9a-f]{64}$/i);
+});
+
+test("rejects campaign generations other than generation 2", () => {
+  assert.throws(
+    () => buildScheduledCreateAuthorizationDigest(scheduledInput({ campaignGeneration: 3 })),
+    /Unsupported campaign generation 3/,
+  );
 });
