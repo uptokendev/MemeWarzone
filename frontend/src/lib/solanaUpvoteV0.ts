@@ -10,6 +10,19 @@ import {
 
 const MEMO_PROGRAM_ID = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr";
 
+export type SolanaUpvoteLane = "launchpad" | "arena";
+
+function memoForLane(lane: SolanaUpvoteLane, subjectAddress: string) {
+  return lane === "arena"
+    ? `mwz-arena-upvote:${subjectAddress}`
+    : `mwz-upvote:${subjectAddress}`;
+}
+
+/**
+ * Canonical V0 simple-payment executor shared by Launchpad and Arena UP Votes.
+ * The lane changes only the signed memo domain. Destination and amount are still
+ * independently validated before the wallet sees a transaction.
+ */
 export async function submitSolanaUpvoteV0(input: {
   web3: SolanaWeb3Module;
   connection: InstanceType<SolanaWeb3Module["Connection"]>;
@@ -17,6 +30,7 @@ export async function submitSolanaUpvoteV0(input: {
   treasuryAddress: string;
   campaignAddress: string;
   lamports: number;
+  lane?: SolanaUpvoteLane;
 }): Promise<string> {
   const provider = getSolanaProvider();
   if (!provider?.publicKey || typeof provider.signTransaction !== "function") {
@@ -36,15 +50,16 @@ export async function submitSolanaUpvoteV0(input: {
     throw new Error("Invalid Solana UP Vote lamport amount.");
   }
 
+  const lane: SolanaUpvoteLane = input.lane === "arena" ? "arena" : "launchpad";
   const from = new input.web3.PublicKey(connected);
   const to = new input.web3.PublicKey(canonicalTreasury);
-  const campaign = new input.web3.PublicKey(input.campaignAddress);
-  void campaign; // constructor validation proves this is a canonical Solana address.
+  const subject = new input.web3.PublicKey(input.campaignAddress);
+  void subject; // Constructor validation proves the memo subject is a canonical Solana address.
 
   const memoIx = new input.web3.TransactionInstruction({
     keys: [{ pubkey: from, isSigner: true, isWritable: false }],
     programId: new input.web3.PublicKey(MEMO_PROGRAM_ID),
-    data: new TextEncoder().encode(`mwz-upvote:${input.campaignAddress}`),
+    data: new TextEncoder().encode(memoForLane(lane, input.campaignAddress)),
   });
   const transferIx = input.web3.SystemProgram.transfer({
     fromPubkey: from,
@@ -57,7 +72,11 @@ export async function submitSolanaUpvoteV0(input: {
   };
 
   const simulated = await compileSolanaUserV0WithLatestBlockhash(input.web3, input.connection, intent);
-  await simulateSolanaUserV0OrThrow(input.connection, simulated.transaction, "Solana UP Vote");
+  await simulateSolanaUserV0OrThrow(
+    input.connection,
+    simulated.transaction,
+    lane === "arena" ? "Solana Arena UP Vote" : "Solana UP Vote",
+  );
 
   // Recompile after simulation so the wallet receives a fresh blockhash.
   const final = await compileSolanaUserV0WithLatestBlockhash(input.web3, input.connection, intent);
@@ -73,7 +92,7 @@ export async function submitSolanaUpvoteV0(input: {
     lastValidBlockHeight: final.latest.lastValidBlockHeight,
   });
   if (confirmation.err) {
-    throw new Error(`Solana UP Vote failed: ${JSON.stringify(confirmation.err)}`);
+    throw new Error(`Solana ${lane === "arena" ? "Arena " : ""}UP Vote failed: ${JSON.stringify(confirmation.err)}`);
   }
   return signature;
 }
