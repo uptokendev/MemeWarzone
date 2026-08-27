@@ -105,20 +105,27 @@ console.log("[robinhood-local] isolated topology");
 console.log(`  frontend     ${ROBINHOOD_LOCAL_ENDPOINTS.frontend}`);
 console.log(`  frontend API ${ROBINHOOD_LOCAL_ENDPOINTS.frontendApi}`);
 console.log(`  indexer API  ${ROBINHOOD_LOCAL_ENDPOINTS.indexer}`);
+console.log("  scanner      dedicated Robinhood Testnet scanner");
 console.log("  database     LOCAL PostgreSQL only");
 console.log("  chain        Robinhood Testnet 46630");
 console.log("  Ably         disabled");
 console.log("  Supabase     disabled (logo uploads use local data URLs)");
 console.log("  telemetry    disabled");
-console.log("[robinhood-local] IMPORTANT: the shared production indexer scanner is intentionally not repointed to 46630 by this runner.");
-console.log("[robinhood-local] Until the RH local scanner lands, port 3002 runs the local indexer/API process with BNB/Solana RPCs disabled.");
+console.log("[robinhood-local] Shared production EVM/Solana scanner configuration remains disabled in this profile.");
+console.log("[robinhood-local] The dedicated scanner hard-requires local runtime + chain 46630 + a loopback Robinhood database.");
 
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 
 try {
-  // Start the local realtime-indexer process first. BNB/Solana RPCs are force-cleared.
+  // Start the local realtime-indexer API first. BNB/Solana RPCs are force-cleared,
+  // so the shared production loops have no chain transport to operate on.
   spawnService("realtime-indexer", npm, ["run", "dev"], indexerDir, { PORT: "3002" });
   await waitForHttp("realtime-indexer", `${ROBINHOOD_LOCAL_ENDPOINTS.indexer}/healthz`);
+
+  // Run Robinhood event ingestion as a separate process. This is intentionally not
+  // implemented by repointing the shared BNB scanner: the scanner itself fails closed
+  // unless the runtime is local and EVM_INDEXER_CHAIN_IDS contains only 46630.
+  spawnService("robinhood-scanner", npm, ["exec", "--", "tsx", "src/robinhoodLocalScanner.ts"], indexerDir);
 
   // Then the frontend API. The historical Railway proxy name is retained in code,
   // but every upstream URL is force-pinned to 127.0.0.1:3002 in this profile.
@@ -132,7 +139,7 @@ try {
   });
   await waitForHttp("vite", ROBINHOOD_LOCAL_ENDPOINTS.frontend);
 
-  console.log("\n[robinhood-local] local stack is up. No Coolify API/indexer endpoint is in the runtime route set.");
+  console.log("\n[robinhood-local] local stack + dedicated 46630 scanner are up. No Coolify API/indexer endpoint is in the runtime route set.");
   console.log(`[robinhood-local] open ${ROBINHOOD_LOCAL_ENDPOINTS.frontend}`);
 } catch (error) {
   console.error(`[robinhood-local] startup failed: ${error?.message || error}`);
