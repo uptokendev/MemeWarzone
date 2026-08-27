@@ -11,6 +11,7 @@ const bscTestnetRpcUrl = process.env.BSC_TESTNET_RPC || process.env.BSC_TESTNET_
 const bscMainnetRpcUrl =
   process.env.BNB_FORK_RPC || process.env.BSC_MAINNET_RPC || process.env.BSC_MAINNET_RPC_URL || "https://bsc-mainnet.public.blastapi.io";
 const robinhoodTestnetRpcUrl = process.env.ROBINHOOD_TESTNET_RPC_URL || process.env.ROBINHOOD_TESTNET_RPC || "";
+const robinhoodMainnetRpcUrl = process.env.ROBINHOOD_MAINNET_RPC_URL || process.env.ROBINHOOD_MAINNET_RPC || "";
 const deployerPrivateKey = process.env.DEPLOYER_PK || process.env.PRIVATE_KEY_DEPLOY || "";
 const explorerApiKey = process.env.ETHERSCAN_API_KEY || "";
 const forkMainnet = ["1", "true", "yes", "on"].includes(String(process.env.BNB_FORK || "").trim().toLowerCase());
@@ -69,7 +70,6 @@ const config: HardhatUserConfig = {
       },
     },
 
-    // --- Added for deployments ---
     bscTestnet: {
       url: bscTestnetRpcUrl,
       accounts: deployerPrivateKey ? [deployerPrivateKey.startsWith("0x") ? deployerPrivateKey : `0x${deployerPrivateKey}`] : [],
@@ -85,21 +85,23 @@ const config: HardhatUserConfig = {
       accounts: deployerPrivateKey ? [deployerPrivateKey.startsWith("0x") ? deployerPrivateKey : `0x${deployerPrivateKey}`] : [],
       chainId: 46630,
     },
+    robinhoodMainnet: {
+      url: robinhoodMainnetRpcUrl,
+      accounts: deployerPrivateKey ? [deployerPrivateKey.startsWith("0x") ? deployerPrivateKey : `0x${deployerPrivateKey}`] : [],
+      chainId: 4663,
+    },
   },
 
-  // --- Added for contract verification ---
   etherscan: {
-    // A single string opts @nomicfoundation/hardhat-verify into Etherscan API V2.
-    // The old per-network object selects the retired BscScan V1 endpoint.
     apiKey: explorerApiKey,
   },
 
   solidity: {
     version: "0.8.24",
     settings: {
-      optimizer: { enabled: true, runs: 1 }, // low runs shrinks code size
+      optimizer: { enabled: true, runs: 1 },
       viaIR: true,
-      metadata: { bytecodeHash: "none" }, // removes metadata hash bytes
+      metadata: { bytecodeHash: "none" },
     },
   },
 
