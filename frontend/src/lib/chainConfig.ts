@@ -431,12 +431,19 @@ export function getVoteTreasuryAddress(chainId: SupportedChainId): string {
   return fallback.trim();
 }
 
-/** Arena UpVote sink. Never aliases the launchpad UPVoteTreasury keys. */
+/**
+ * Arena UpVote destination.
+ * BNB: second UPVoteTreasury instance whose feeReceiver is ProtocolRevenueVault.
+ * Solana: protocol treasury wallet (same route as launchpad UP Votes); isolation is memo mwz-arena-upvote:.
+ */
 export function getArenaVoteTreasuryAddress(chainId: SupportedChainId): string {
   if (isSolanaChainId(chainId) || Number(chainId) === 102) {
     const solana =
       (import.meta.env.VITE_SOLANA_ARENA_VOTE_TREASURY_ADDRESS as string | undefined) ||
       (import.meta.env.VITE_ARENA_VOTE_TREASURY_ADDRESS_101 as string | undefined) ||
+      (import.meta.env.VITE_SOLANA_PROTOCOL_TREASURY_ADDRESS as string | undefined) ||
+      (import.meta.env.VITE_SOLANA_VOTE_TREASURY_ADDRESS as string | undefined) ||
+      (import.meta.env.VITE_VOTE_TREASURY_ADDRESS_101 as string | undefined) ||
       "";
     return String(solana || "").trim();
   }

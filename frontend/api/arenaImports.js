@@ -181,13 +181,18 @@ async function handleList(req, res) {
 
 async function handleLookup(req, res) {
   const query = getQuery(req);
-  const chainId = Number(query.chainId || 56);
-  const token = ident(query.token || query.tokenAddress || query.address, chainId);
+  const requestedChain = Number(query.chainId || 0);
+  const tokenHint = String(query.token || query.tokenAddress || query.address || "").trim();
+  const token = ident(tokenHint, requestedChain || (isSolanaAddress(tokenHint) ? 101 : 56));
   if (!token) return json(res, 400, { error: "token is required" });
-  const result = await pool.query(
-    `select * from public.arena_token_imports where chain_id = $1 and lower(token_address) = lower($2) and status = 'passed' limit 1`,
-    [chainId, token],
-  );
+  const params = [token];
+  let sql = `select * from public.arena_token_imports where lower(token_address) = lower($1)`;
+  if (Number.isFinite(requestedChain) && requestedChain > 0) {
+    params.push(requestedChain);
+    sql += ` and chain_id = $2`;
+  }
+  sql += ` order by case when status = 'passed' then 0 else 1 end, created_at desc limit 1`;
+  const result = await pool.query(sql, params);
   const item = mapImport(result.rows[0]);
   return item ? json(res, 200, { item }) : json(res, 404, { error: "Import not found" });
 }

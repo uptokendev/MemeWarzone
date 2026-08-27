@@ -49,11 +49,20 @@ export function arenaEvmTreasury(chainId) {
 export function arenaSolanaTreasuries() {
   const out = [];
   const seen = new Set();
+  // Destination is the protocol treasury (same route as launchpad UP Votes).
+  // Isolation is the memo prefix mwz-arena-upvote:, not a second wallet.
   for (const value of envList(
     "SOLANA_ARENA_VOTE_TREASURY_ADDRESS",
     "VITE_SOLANA_ARENA_VOTE_TREASURY_ADDRESS",
     "ARENA_VOTE_TREASURY_ADDRESS_101",
     "VITE_ARENA_VOTE_TREASURY_ADDRESS_101",
+    "SOLANA_PROTOCOL_TREASURY_ADDRESS",
+    "VITE_SOLANA_PROTOCOL_TREASURY_ADDRESS",
+    "SOLANA_DEVNET_PROTOCOL_TREASURY_ADDRESS",
+    "SOLANA_MAINNET_PROTOCOL_TREASURY_ADDRESS",
+    "SOLANA_VOTE_TREASURY_ADDRESS",
+    "VITE_SOLANA_VOTE_TREASURY_ADDRESS",
+    "VITE_VOTE_TREASURY_ADDRESS_101",
   )) {
     if (!isSolanaAddress(value) || seen.has(value)) continue;
     seen.add(value);
@@ -78,11 +87,7 @@ export function assertArenaEvmTreasury(chainId) {
 export function assertArenaSolanaTreasury() {
   const treasuries = arenaSolanaTreasuries();
   if (!treasuries.length) {
-    return { ok: false, error: "Solana Arena vote treasury is not configured.", code: "ARENA_VOTE_TREASURY_MISSING" };
-  }
-  const launchpad = new Set(launchpadSolanaTreasuries());
-  if (treasuries.some((value) => launchpad.has(value))) {
-    return { ok: false, error: "Arena Solana vote wallet must not reuse the launchpad vote treasury.", code: "ARENA_VOTE_TREASURY_COLLISION" };
+    return { ok: false, error: "Solana protocol treasury is not configured for Arena UpVotes.", code: "ARENA_VOTE_TREASURY_MISSING" };
   }
   return { ok: true, treasuries };
 }

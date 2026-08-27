@@ -1,11 +1,10 @@
-import { getPostGradTokenDetailRoute } from "@/features/postgrad/identityRoutes";
+import { getPostGradTokenDetailRoute, getPublicTokenDetailRoute } from "@/features/postgrad/identityRoutes";
 
 /**
- * Returns the canonical token detail route for Arena surfaces.
- *
- * Mock token ids keep their seeded token detail route. API-backed ids can pass
- * through to /token/:campaignAddress, which is the existing TokenDetails route.
+ * Canonical Arena token page. Includes chainId so imported tokens (especially
+ * BNB testnet 97) resolve to ImportedTokenDetails instead of a native campaign page.
  */
-export function getArenaTokenRoute(tokenId?: string | null) {
+export function getArenaTokenRoute(tokenId?: string | null, chainId?: number | null) {
+  if (chainId) return getPublicTokenDetailRoute({ tokenAddress: tokenId, chainId });
   return getPostGradTokenDetailRoute(tokenId);
 }

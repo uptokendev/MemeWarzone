@@ -85,6 +85,7 @@ const TokenDetailsEntry = () => {
   const [curveResolved, setCurveResolved] = useState<boolean>(!isSolanaRoute);
   const [cachedCampaignAddress, setCachedCampaignAddress] = useState<string>(initialCache?.campaignAddress || "");
   const [imported, setImported] = useState<ArenaImportItem | null>(null);
+  const [importLookupDone, setImportLookupDone] = useState(false);
 
   useEffect(() => {
     if (!routeId) return;
@@ -242,16 +243,34 @@ const TokenDetailsEntry = () => {
   useEffect(() => {
     if (!routeId) return;
     let cancelled = false;
-    const chainId = isSolanaRoute ? SOLANA_CHAIN_ID : (forcedChainId === BNB_CHAIN_ID || forcedChainId === BNB_TESTNET_CHAIN_ID ? forcedChainId : BNB_CHAIN_ID);
-    void lookupArenaImport(routeId, chainId).then((item) => {
-      if (!cancelled) setImported(item);
-    });
+    setImportLookupDone(false);
+    setImported(null);
+    const preferred = isSolanaRoute
+      ? SOLANA_CHAIN_ID
+      : (forcedChainId === BNB_CHAIN_ID || forcedChainId === BNB_TESTNET_CHAIN_ID ? forcedChainId : 0);
+    const chainIds = [...new Set([preferred, BNB_CHAIN_ID, BNB_TESTNET_CHAIN_ID, SOLANA_CHAIN_ID].filter((id) => id > 0))];
+    (async () => {
+      for (const chainId of chainIds) {
+        const item = await lookupArenaImport(routeId, chainId);
+        if (cancelled) return;
+        if (item) {
+          setImported(item);
+          setImportLookupDone(true);
+          return;
+        }
+      }
+      if (!cancelled) {
+        setImported(null);
+        setImportLookupDone(true);
+      }
+    })();
     return () => {
       cancelled = true;
     };
   }, [forcedChainId, isSolanaRoute, routeId]);
 
-  if (imported && !campaign) {
+  if (!importLookupDone) return null;
+  if (imported) {
     return <ImportedTokenDetails item={imported} />;
   }
 

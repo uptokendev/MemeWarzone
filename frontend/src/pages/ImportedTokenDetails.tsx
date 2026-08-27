@@ -38,12 +38,21 @@ export default function ImportedTokenDetails({ item }: { item: ArenaImportItem }
         <p className="mt-2 text-sm text-muted-foreground">{item.name || "Not launched on MemeWarzone"}</p>
         <p className="mt-2 break-all text-xs text-muted-foreground">{item.tokenAddress}</p>
         {warnings.length ? <p className="mt-3 text-xs text-muted-foreground">Scan notes: {warnings.join(", ")}</p> : null}
-        {postGradFlags.arena && item.status === "passed" ? (
-          <div className="mt-4">
-            <ArenaUpvoteDialog tokenAddress={item.tokenAddress} chainId={item.chainId} buttonSize="sm" />
-          </div>
-        ) : null}
       </section>
+
+      {postGradFlags.arena ? (
+        <section className="mwz-hud-frame p-4 space-y-3">
+          <div className="font-retro text-sm text-foreground">Arena UpVote</div>
+          <p className="text-sm text-muted-foreground">
+            Ranks the Arena featured rail. Fees follow the protocol treasury on this chain, same as graduated MemeWarzone coins. Launchpad UP Votes stay on Showcase.
+          </p>
+          {item.status === "passed" ? (
+            <ArenaUpvoteDialog tokenAddress={item.tokenAddress} chainId={item.chainId} buttonSize="sm" />
+          ) : (
+            <p className="text-sm text-muted-foreground">Arena UpVotes unlock after this import is passed.</p>
+          )}
+        </section>
+      ) : null}
 
       <section className="mwz-hud-frame p-4 space-y-3">
         <div className="font-retro text-sm text-foreground">Trading</div>

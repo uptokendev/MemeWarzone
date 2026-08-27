@@ -2,7 +2,8 @@ import { ethers } from "hardhat";
 
 /**
  * Second UPVoteTreasury instance for Arena UpVotes.
- * Same bytecode as launchpad. New address. feeReceiver = ProtocolRevenueVault.
+ * Same bytecode as launchpad. New address. feeReceiver MUST be ProtocolRevenueVault
+ * so Arena UpVotes follow the same protocol-treasury route as launchpad UP Votes.
  *
  *   FEE_RECEIVER=0x... npx hardhat run scripts/deployArenaUPVoteTreasury.ts --network bscTestnet
  */

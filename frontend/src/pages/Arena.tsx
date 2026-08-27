@@ -30,7 +30,7 @@ const Arena = () => {
         {featured.items.length ? (
           <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
             {featured.items.slice(0, 20).map((item, index) => {
-              const route = getArenaTokenRoute(item.tokenAddress);
+              const route = getArenaTokenRoute(item.tokenAddress, item.chainId);
               return (
                 <div key={`${item.chainId}-${item.tokenAddress}`} className="rounded-md border border-border/50 bg-background/40 p-3">
                   <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">#{index + 1}</div>
@@ -42,11 +42,9 @@ const Arena = () => {
                     <div className="mt-1 font-retro text-sm text-foreground">{item.tokenName} <span className="text-muted-foreground">{item.symbol}</span></div>
                   )}
                   <div className="mt-1 text-xs text-muted-foreground">{item.votes24h} Arena UpVotes (24h)</div>
-                  {featured.votingLive ? (
-                    <div className="mt-2">
-                      <ArenaUpvoteDialog tokenAddress={item.tokenAddress} chainId={item.chainId} buttonSize="sm" className="h-8 px-3 text-xs" />
-                    </div>
-                  ) : null}
+                  <div className="mt-2">
+                    <ArenaUpvoteDialog tokenAddress={item.tokenAddress} chainId={item.chainId} buttonSize="sm" className="h-8 px-3 text-xs" />
+                  </div>
                 </div>
               );
             })}
