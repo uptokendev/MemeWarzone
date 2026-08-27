@@ -95,7 +95,7 @@ export const CHAIN_REGISTRY: Readonly<Record<ChainKey, ChainDefinition>> = Objec
   },
   "robinhood-mainnet": {
     key: "robinhood-mainnet",
-    displayName: "BNB Chain",
+    displayName: "Robinhood",
     family: "evm",
     networkClass: "production",
     runtimeEnvironment: "production",
@@ -111,7 +111,7 @@ export const CHAIN_REGISTRY: Readonly<Record<ChainKey, ChainDefinition>> = Objec
   },
   "robinhood-testnet": {
     key: "robinhood-testnet",
-    displayName: "BNB Chain Testnet",
+    displayName: "Robinhood Testnet",
     family: "evm",
     networkClass: "test",
     runtimeEnvironment: "staging",
