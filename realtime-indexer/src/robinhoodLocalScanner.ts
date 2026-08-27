@@ -33,12 +33,17 @@ const CREATED_VARIANTS = [
 });
 const CREATED_BY_TOPIC = new Map(CREATED_VARIANTS.map((entry) => [entry.topicHash.toLowerCase(), entry]));
 
-const PURCHASED_TOPIC = CAMPAIGN_IFACE.getEvent("TokensPurchased")?.topicHash;
-const SOLD_TOPIC = CAMPAIGN_IFACE.getEvent("TokensSold")?.topicHash;
-const FINALIZED_TOPIC = CAMPAIGN_IFACE.getEvent("CampaignFinalized")?.topicHash;
-if (!PURCHASED_TOPIC || !SOLD_TOPIC || !FINALIZED_TOPIC) {
-  throw new Error("Robinhood local scanner could not resolve LaunchCampaign event topics");
+function requireEventTopic(iface: ethers.Interface, eventName: string): string {
+  const fragment = iface.getEvent(eventName);
+  if (!fragment) {
+    throw new Error(`Robinhood local scanner could not resolve ${eventName} event topic`);
+  }
+  return fragment.topicHash;
 }
+
+const PURCHASED_TOPIC = requireEventTopic(CAMPAIGN_IFACE, "TokensPurchased");
+const SOLD_TOPIC = requireEventTopic(CAMPAIGN_IFACE, "TokensSold");
+const FINALIZED_TOPIC = requireEventTopic(CAMPAIGN_IFACE, "CampaignFinalized");
 
 function runtimeIsLocal(): boolean {
   return String(process.env.RUNTIME_ENVIRONMENT || process.env.VITE_RUNTIME_ENVIRONMENT || "")
