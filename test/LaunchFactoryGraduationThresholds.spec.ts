@@ -29,14 +29,16 @@ describe("LaunchFactory graduation threshold policy", function () {
     expect(await factory.isGraduationTargetAllowedForChain(56, arbitrary)).to.eq(false);
   });
 
-  it("also allows the $6 testing threshold on BNB testnet", async () => {
+  it("also allows the $6 testing threshold on BNB and Robinhood testnets", async () => {
     const { factory } = await deployCoreFixture();
 
-    expect(await factory.isGraduationTargetAllowedForChain(97, six)).to.eq(true);
-    expect(await factory.isGraduationTargetAllowedForChain(97, fifteenK)).to.eq(true);
-    expect(await factory.isGraduationTargetAllowedForChain(97, thirtyK)).to.eq(true);
-    expect(await factory.isGraduationTargetAllowedForChain(97, fiftyK)).to.eq(true);
-    expect(await factory.isGraduationTargetAllowedForChain(97, arbitrary)).to.eq(false);
+    for (const chainId of [97, 46630]) {
+      expect(await factory.isGraduationTargetAllowedForChain(chainId, six)).to.eq(true);
+      expect(await factory.isGraduationTargetAllowedForChain(chainId, fifteenK)).to.eq(true);
+      expect(await factory.isGraduationTargetAllowedForChain(chainId, thirtyK)).to.eq(true);
+      expect(await factory.isGraduationTargetAllowedForChain(chainId, fiftyK)).to.eq(true);
+      expect(await factory.isGraduationTargetAllowedForChain(chainId, arbitrary)).to.eq(false);
+    }
   });
 
   it("keeps unsupported targets rejected by the production chain policies", async () => {
@@ -44,7 +46,10 @@ describe("LaunchFactory graduation threshold policy", function () {
 
     expect(await factory.isGraduationTargetAllowedForChain(56, arbitrary)).to.eq(false);
     expect(await factory.isGraduationTargetAllowedForChain(97, arbitrary)).to.eq(false);
+    expect(await factory.isGraduationTargetAllowedForChain(4663, arbitrary)).to.eq(false);
+    expect(await factory.isGraduationTargetAllowedForChain(46630, arbitrary)).to.eq(false);
     expect(await factory.isGraduationTargetAllowedForChain(56, six)).to.eq(false);
+    expect(await factory.isGraduationTargetAllowedForChain(4663, six)).to.eq(false);
   });
 
   it("allows legacy fast-test targets only on the local Hardhat chain", async () => {
