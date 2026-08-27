@@ -84,7 +84,7 @@ const BattleDetails = () => {
           Native stake on this fight is an intent only. No BNB or SOL left the wallet. BattleTreasury escrow is not live.
         </p>
         <p>
-          Support is a donation, not betting. Supporters are not paid. When escrow exists: 85% winning campaign, 5% protocol, 10% Major War League. The winning owner claims — protocol does not send.
+          Support is a donation into the battle treasury for the memecoins in the fight, not betting and not charity. Supporters are not paid. Winner-takes-all: 85% winning campaign owner, 5% protocol, 10% Major War League. The winning owner claims — protocol does not send.
         </p>
         {battle.state === "finished" ? (
           <ArenaWarPoolClaimButton battleId={battle.id} chainId={(battle as { chainId?: number }).chainId} />

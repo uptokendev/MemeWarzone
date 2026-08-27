@@ -745,7 +745,7 @@ export default function CommandCenterClaims() {
       {battleClaims.length ? (
         <CommandCenterCard title="Arena war pool">
           <p className="text-sm text-muted-foreground">
-            Winning campaign owners pull 85% from the holding treasury. Protocol does not send. Supporters are not paid.
+            Winning campaign owners pull 85% of stakes plus Support. Protocol does not send. Supporters are not paid.
           </p>
           <div className="mt-3 space-y-2">
             {battleClaims.map((item) => (

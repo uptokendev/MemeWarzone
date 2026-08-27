@@ -9,7 +9,7 @@ export const WAR_POOL_ABI = [
   "function claimWinner(bytes32 poolId)",
   "function claimProtocol(bytes32 poolId)",
   "function claimMwl(bytes32 poolId)",
-  "function pools(bytes32) view returns (uint8 kind,uint8 state,address ownerA,address ownerB,uint96 stakeAmount,uint96 buyInAmount,uint256 stakeA,uint256 stakeB,uint256 buyInTotal,uint256 supportTotal,address winnerPayout,uint256 pendingWinner,uint256 pendingProtocol,uint256 pendingMwl,uint256 pendingCharity,uint256 depositDeadline,uint256 resolveDeadline,bool claimedWinner,bool claimedProtocol,bool claimedMwl,bool claimedCharity,bool refundedA,bool refundedB)",
+  "function pools(bytes32) view returns (uint8 kind,uint8 state,address ownerA,address ownerB,uint96 stakeAmount,uint96 buyInAmount,uint256 stakeA,uint256 stakeB,uint256 buyInTotal,uint256 supportTotal,address winnerPayout,uint256 pendingWinner,uint256 pendingProtocol,uint256 pendingMwl,uint256 depositDeadline,uint256 resolveDeadline,bool claimedWinner,bool claimedProtocol,bool claimedMwl,bool refundedA,bool refundedB)",
 ];
 
 export function warPoolTreasuryAddress(chainId) {

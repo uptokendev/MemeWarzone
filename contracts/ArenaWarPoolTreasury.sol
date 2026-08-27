@@ -10,9 +10,10 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
  * Holding escrow for Arena battle stakes, tournament buy-ins, and Support donations.
  * Native BNB only. Protocol never pushes user funds — winners / fee receivers pull.
  *
- * Split after resolve: 85% winning campaign owner, 5% protocol, 10% MWL.
- * Support is a donation. Supporters have no claim function.
- * Winner-takes-all: both stakes form one pot. Tie refunds stakes; Support 85% goes to charity.
+ * Split after resolve: 85% winning campaign owner, 5% protocol, 10% MWL
+ * of the full pot (both stakes + Support donations + tournament buy-ins).
+ * Support is a donation to the fighting memecoins. The battle winner claims it.
+ * Supporters have no claim function. Resolve requires a winner (no charity path).
  */
 contract ArenaWarPoolTreasury is ReentrancyGuard, Ownable, EIP712 {
     using ECDSA for bytes32;
@@ -44,13 +45,11 @@ contract ArenaWarPoolTreasury is ReentrancyGuard, Ownable, EIP712 {
         uint256 pendingWinner;
         uint256 pendingProtocol;
         uint256 pendingMwl;
-        uint256 pendingCharity;
         uint256 depositDeadline;
         uint256 resolveDeadline;
         bool claimedWinner;
         bool claimedProtocol;
         bool claimedMwl;
-        bool claimedCharity;
         bool refundedA;
         bool refundedB;
     }
@@ -71,19 +70,18 @@ contract ArenaWarPoolTreasury is ReentrancyGuard, Ownable, EIP712 {
     address public resolver;
     address public protocolReceiver;
     address public mwlReceiver;
-    address public charityReceiver;
     bool public depositsPaused;
 
     event CreatorAuthorized(address indexed creator, bool allowed);
     event ResolverUpdated(address indexed resolver);
-    event ReceiversUpdated(address protocolReceiver, address mwlReceiver, address charityReceiver);
+    event ReceiversUpdated(address protocolReceiver, address mwlReceiver);
     event DepositsPaused(bool paused);
     event PoolOpened(bytes32 indexed poolId, Kind kind, address ownerA, address ownerB, uint256 stakeAmount, uint256 buyInAmount);
     event StakeDeposited(bytes32 indexed poolId, address indexed owner, uint256 amount);
     event BuyInDeposited(bytes32 indexed poolId, address indexed owner, uint256 amount);
     event SupportDonated(bytes32 indexed poolId, address indexed donor, uint256 amount);
     event PoolLive(bytes32 indexed poolId);
-    event PoolResolved(bytes32 indexed poolId, address winnerPayout, uint256 pendingWinner, uint256 pendingProtocol, uint256 pendingMwl, uint256 pendingCharity);
+    event PoolResolved(bytes32 indexed poolId, address winnerPayout, uint256 pendingWinner, uint256 pendingProtocol, uint256 pendingMwl);
     event PoolCancelled(bytes32 indexed poolId);
     event Claimed(bytes32 indexed poolId, bytes32 bucket, address indexed to, uint256 amount);
     event StakeRefunded(bytes32 indexed poolId, address indexed owner, uint256 amount);
@@ -102,6 +100,7 @@ contract ArenaWarPoolTreasury is ReentrancyGuard, Ownable, EIP712 {
     error DepositsArePaused();
     error PoolExists();
     error UnknownPool();
+    error WinnerRequired();
 
     modifier onlyCreator() {
         if (!authorizedCreators[msg.sender] && msg.sender != owner()) revert Unauthorized();
@@ -112,19 +111,17 @@ contract ArenaWarPoolTreasury is ReentrancyGuard, Ownable, EIP712 {
         address initialOwner,
         address resolver_,
         address protocolReceiver_,
-        address mwlReceiver_,
-        address charityReceiver_
+        address mwlReceiver_
     ) Ownable(initialOwner) EIP712("ArenaWarPoolTreasury", "1") {
         if (initialOwner == address(0) || resolver_ == address(0)) revert ZeroAddress();
-        if (protocolReceiver_ == address(0) || mwlReceiver_ == address(0) || charityReceiver_ == address(0)) revert ZeroAddress();
+        if (protocolReceiver_ == address(0) || mwlReceiver_ == address(0)) revert ZeroAddress();
         resolver = resolver_;
         protocolReceiver = protocolReceiver_;
         mwlReceiver = mwlReceiver_;
-        charityReceiver = charityReceiver_;
         authorizedCreators[initialOwner] = true;
         emit CreatorAuthorized(initialOwner, true);
         emit ResolverUpdated(resolver_);
-        emit ReceiversUpdated(protocolReceiver_, mwlReceiver_, charityReceiver_);
+        emit ReceiversUpdated(protocolReceiver_, mwlReceiver_);
     }
 
     receive() external payable {
@@ -143,12 +140,11 @@ contract ArenaWarPoolTreasury is ReentrancyGuard, Ownable, EIP712 {
         emit ResolverUpdated(resolver_);
     }
 
-    function setReceivers(address protocolReceiver_, address mwlReceiver_, address charityReceiver_) external onlyOwner {
-        if (protocolReceiver_ == address(0) || mwlReceiver_ == address(0) || charityReceiver_ == address(0)) revert ZeroAddress();
+    function setReceivers(address protocolReceiver_, address mwlReceiver_) external onlyOwner {
+        if (protocolReceiver_ == address(0) || mwlReceiver_ == address(0)) revert ZeroAddress();
         protocolReceiver = protocolReceiver_;
         mwlReceiver = mwlReceiver_;
-        charityReceiver = charityReceiver_;
-        emit ReceiversUpdated(protocolReceiver_, mwlReceiver_, charityReceiver_);
+        emit ReceiversUpdated(protocolReceiver_, mwlReceiver_);
     }
 
     function setDepositsPaused(bool paused) external onlyOwner {
@@ -278,12 +274,13 @@ contract ArenaWarPoolTreasury is ReentrancyGuard, Ownable, EIP712 {
             )
         );
         if (digest.recover(signature) != resolver) revert BadSignature();
+        if (winnerPayout == address(0)) revert WinnerRequired();
 
         uint256 prize = stakeTotal + pool.supportTotal + pool.buyInTotal;
         pool.state = State.Resolved;
         pool.winnerPayout = winnerPayout;
         if (prize == 0) {
-            emit PoolResolved(poolId, winnerPayout, 0, 0, 0, 0);
+            emit PoolResolved(poolId, winnerPayout, 0, 0, 0);
             return;
         }
         uint256 protocolAmt = (prize * PROTOCOL_BPS) / BPS_DENOM;
@@ -291,12 +288,8 @@ contract ArenaWarPoolTreasury is ReentrancyGuard, Ownable, EIP712 {
         uint256 winnerAmt = prize - protocolAmt - mwlAmt;
         pool.pendingProtocol = protocolAmt;
         pool.pendingMwl = mwlAmt;
-        if (winnerPayout == address(0)) {
-            pool.pendingCharity = winnerAmt;
-        } else {
-            pool.pendingWinner = winnerAmt;
-        }
-        emit PoolResolved(poolId, winnerPayout, pool.pendingWinner, protocolAmt, mwlAmt, pool.pendingCharity);
+        pool.pendingWinner = winnerAmt;
+        emit PoolResolved(poolId, winnerPayout, winnerAmt, protocolAmt, mwlAmt);
     }
 
     function claimWinner(bytes32 poolId) external nonReentrant {
@@ -333,17 +326,6 @@ contract ArenaWarPoolTreasury is ReentrancyGuard, Ownable, EIP712 {
         emit Claimed(poolId, "mwl", mwlReceiver, amount);
     }
 
-    function claimCharity(bytes32 poolId) external nonReentrant {
-        Pool storage pool = pools[poolId];
-        if (pool.state != State.Resolved) revert InvalidState();
-        uint256 amount = pool.pendingCharity;
-        if (amount == 0 || pool.claimedCharity) revert NothingToClaim();
-        pool.claimedCharity = true;
-        pool.pendingCharity = 0;
-        _pay(charityReceiver, amount);
-        emit Claimed(poolId, "charity", charityReceiver, amount);
-    }
-
     function refundStake(bytes32 poolId) external nonReentrant {
         Pool storage pool = pools[poolId];
         if (pool.ownerA == address(0)) revert UnknownPool();
@@ -351,7 +333,7 @@ contract ArenaWarPoolTreasury is ReentrancyGuard, Ownable, EIP712 {
         bool cancelled = pool.state == State.Cancelled;
         bool unresolved = pool.state != State.Resolved && block.timestamp > pool.resolveDeadline;
         if (!timedOut && !cancelled && !unresolved) revert InvalidState();
-        if (pool.state == State.Open || pool.state == State.Live) {
+        if (pool.supportTotal == 0 && (pool.state == State.Open || pool.state == State.Live)) {
             pool.state = State.Cancelled;
             emit PoolCancelled(poolId);
         }

@@ -2,9 +2,10 @@ import { ethers } from "hardhat";
 
 /**
  * Holding escrow for Arena stakes, tournament buy-ins, and Support donations.
- * fee receivers: ProtocolRevenueVault, TreasuryVaultV2, CharityTreasury.
+ * fee receivers: ProtocolRevenueVault (5%), TreasuryVaultV2 (10% MWL).
+ * Winner campaign owner claims 85% of stakes + Support. No charity path.
  *
- *   RESOLVER=<addr> PROTOCOL_REVENUE_VAULT_ADDRESS=... TREASURY_VAULT_ADDRESS=... CHARITY_TREASURY_ADDRESS=... \
+ *   RESOLVER=<addr> PROTOCOL_REVENUE_VAULT_ADDRESS=... TREASURY_VAULT_ADDRESS=... \
  *     npx hardhat run scripts/deployArenaWarPoolTreasury.ts --network bscTestnet
  */
 async function main() {
@@ -13,12 +14,11 @@ async function main() {
   const resolver = String(process.env.RESOLVER || process.env.ARENA_WAR_POOL_RESOLVER || deployer.address).trim();
   const protocol = String(process.env.PROTOCOL_REVENUE_VAULT_ADDRESS || process.env.PROTOCOL_REVENUE_VAULT_ADDRESS_97 || "").trim();
   const mwl = String(process.env.TREASURY_VAULT_ADDRESS || process.env.TREASURY_VAULT_ADDRESS_97 || process.env.VITE_TREASURY_VAULT_ADDRESS_97 || "").trim();
-  const charity = String(process.env.CHARITY_TREASURY_ADDRESS || process.env.CHARITY_TREASURY_ADDRESS_97 || "").trim();
-  if (!protocol || !mwl || !charity) {
-    throw new Error("Need PROTOCOL_REVENUE_VAULT_ADDRESS, TREASURY_VAULT_ADDRESS, CHARITY_TREASURY_ADDRESS");
+  if (!protocol || !mwl) {
+    throw new Error("Need PROTOCOL_REVENUE_VAULT_ADDRESS and TREASURY_VAULT_ADDRESS");
   }
   const Factory = await ethers.getContractFactory("ArenaWarPoolTreasury");
-  const treasury = await Factory.deploy(owner, resolver, protocol, mwl, charity);
+  const treasury = await Factory.deploy(owner, resolver, protocol, mwl);
   await treasury.waitForDeployment();
   const addr = await treasury.getAddress();
   const net = await ethers.provider.getNetwork();
