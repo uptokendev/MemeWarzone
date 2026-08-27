@@ -39,6 +39,7 @@ export {
       DEV: false,
       PROD: true,
       VITE_DEFAULT_CHAIN_ID: "97",
+      VITE_ALLOWED_CHAIN_IDS: "56,97,101,4663,46630",
     }),
   },
 });
@@ -88,16 +89,23 @@ test("Solana feed selection does not merge BNB inventory", () => {
   assert.deepEqual(getBnbCampaignFeedChainIds(101), [101]);
 });
 
-test("BNB feeds may merge 56+97 but must never include Solana 101", () => {
+test("Robinhood feed selection stays isolated from BNB and Solana inventory", () => {
+  assert.deepEqual(getBnbCampaignFeedChainIds(4663), [4663]);
+  assert.deepEqual(getBnbCampaignFeedChainIds(46630), [46630]);
+});
+
+test("BNB feeds may merge 56+97 but must never include Solana or Robinhood", () => {
   for (const selected of [56, 97, null, undefined]) {
     const ids = getBnbCampaignFeedChainIds(selected);
     assert.ok(ids.length >= 1);
     assert.ok(!ids.includes(101));
+    assert.ok(!ids.includes(4663));
+    assert.ok(!ids.includes(46630));
     assert.ok(ids.every((id) => id === 56 || id === 97));
   }
 });
 
-test("Robinhood is known to the generic EVM layer but remains inactive", () => {
+test("Robinhood is known to the generic EVM layer but remains inactive until protocol activation", () => {
   assert.deepEqual(KNOWN_EVM_CHAIN_IDS, [56, 97, 4663, 46630]);
   assert.deepEqual(ACTIVE_EVM_CHAIN_IDS, [56, 97]);
   assert.equal(isKnownEvmChainId(4663), true);
