@@ -24,6 +24,7 @@ on:
       - "contracts/mocks/MockUsdPriceFeed.sol"
       - "scripts/deploy-robinhood-testnet-stage.ts"
       - "scripts/verify-robinhood-testnet-stage.ts"
+      - "scripts/test-robinhood-testnet-lifecycle.ts"
       - ".github/workflows/robinhood-testnet-stage-ci.yml"
   push:
     branches:
@@ -48,6 +49,7 @@ on:
       - "contracts/mocks/MockUsdPriceFeed.sol"
       - "scripts/deploy-robinhood-testnet-stage.ts"
       - "scripts/verify-robinhood-testnet-stage.ts"
+      - "scripts/test-robinhood-testnet-lifecycle.ts"
       - ".github/workflows/robinhood-testnet-stage-ci.yml"
 
 permissions:
@@ -59,7 +61,7 @@ concurrency:
 
 jobs:
   staged-protocol-rehearsal:
-    name: Deploy and independently verify full Robinhood staging protocol
+    name: Deploy, verify and exercise full Robinhood staging protocol
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -111,7 +113,7 @@ jobs:
           ROBINHOOD_STAGE_DEPLOYMENT_FILE: /tmp/robinhood-testnet-stage.json
         run: npx hardhat run scripts/verify-robinhood-testnet-stage.ts --network localhost
 
-      - name: Prove manifest stays staging-only and disabled
+      - name: Prove manifest stays staging-only and disabled before acceptance
         run: |
           node - <<'NODE'
           const fs = require('fs');
@@ -127,6 +129,13 @@ jobs:
           if (m.stagingOnly?.productionCompatible !== false) throw new Error('staging-only marker missing');
           console.log('Robinhood staged manifest activation gate passed');
           NODE
+
+      - name: Exercise authorized create, buy, sell, graduation, V3 swap and 80/20 harvest
+        env:
+          ALLOW_LOCAL_RH_PROTOCOL_STAGE: "true"
+          ROBINHOOD_ACCEPTANCE_ENABLE_LIVE: "true"
+          ROBINHOOD_STAGE_DEPLOYMENT_FILE: /tmp/robinhood-testnet-stage.json
+        run: npx hardhat run scripts/test-robinhood-testnet-lifecycle.ts --network localhost
 
       - name: Show rehearsal node log on failure
         if: failure()
