@@ -23,6 +23,8 @@ const SEEDS = Object.freeze({
 export const ARENA_CLAIM_PROTOCOL = 1;
 export const ARENA_CLAIM_MWL = 2;
 export const ARENA_CLAIM_CHARITY = 3;
+export const ARENA_KIND_BATTLE = "battle";
+export const ARENA_KIND_TOURNAMENT = "tournament";
 
 function assertPoolId(poolId) {
   const bytes = Buffer.from(poolId);
@@ -31,7 +33,7 @@ function assertPoolId(poolId) {
 }
 
 function u64le(value) {
-  let n = BigInt(value);
+  const n = BigInt(value);
   if (n < 0n || n > (1n << 64n) - 1n) throw new Error("u64 overflow");
   const out = Buffer.alloc(8);
   out.writeBigUInt64LE(n);
@@ -214,6 +216,7 @@ export function buildArenaResolutionMessage({
 
 export function buildArenaResolveInstructions({
   resolver,
+  kind,
   poolId,
   version,
   winner,
@@ -226,13 +229,23 @@ export function buildArenaResolveInstructions({
   winnerBuyInReceipt,
 }) {
   if (!resolver?.secretKey || !resolver?.publicKey) throw new Error("Arena resolver keypair is required");
+  if (kind !== ARENA_KIND_BATTLE && kind !== ARENA_KIND_TOURNAMENT) {
+    throw new Error("Arena pool kind must be battle or tournament");
+  }
   const id = assertPoolId(poolId);
   const { config, pool } = deriveArenaOperatorPdas(id);
   const winnerKey = new PublicKey(winner);
-  const expectedTournamentReceipt = winnerKey.equals(PublicKey.default)
-    ? pool
-    : deriveArenaBuyInReceipt(id, winnerKey);
-  const receipt = winnerBuyInReceipt ? new PublicKey(winnerBuyInReceipt) : expectedTournamentReceipt;
+
+  let receipt = pool;
+  if (kind === ARENA_KIND_TOURNAMENT) {
+    const expected = deriveArenaBuyInReceipt(id, winnerKey);
+    if (winnerBuyInReceipt && !new PublicKey(winnerBuyInReceipt).equals(expected)) {
+      throw new Error("Arena tournament winner receipt does not match the canonical PDA");
+    }
+    receipt = expected;
+  } else if (winnerBuyInReceipt && !new PublicKey(winnerBuyInReceipt).equals(pool)) {
+    throw new Error("Arena battle resolution must use the pool PDA as the unused winner receipt placeholder");
+  }
 
   const message = buildArenaResolutionMessage({
     version,
@@ -267,7 +280,7 @@ export function buildArenaResolveInstructions({
       u64le(nonce),
     ]),
   });
-  return { verifyIx, resolveIx, message, pool, config };
+  return { verifyIx, resolveIx, message, pool, config, winnerReceipt: receipt };
 }
 
 function claimBucketInstructionName(bucket) {
