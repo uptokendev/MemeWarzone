@@ -13,7 +13,7 @@ import TreasuryVaultV2Artifact from "@/abi/TreasuryVaultV2.json";
 import UPVoteTreasuryArtifact from "@/abi/UPVoteTreasury.json";
 import PermanentLpLockerArtifact from "@/abi/PermanentLpLocker.json";
 import type { SupportedChainId } from "@/lib/chainConfig";
-import { isEvmChainId } from "@/lib/chainConfig";
+import { BNB_CHAIN_ID, BNB_TESTNET_CHAIN_ID, isEvmChainId } from "@/lib/chainConfig";
 
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 export const OBSOLETE_BSC_TESTNET_FACTORY = "0xe0FbBa4533513110Cec7e78aa3e48EC45301B5E6";
@@ -34,9 +34,17 @@ function normalizeAddress(value: string): string {
   return ADDRESS_RE.test(value) ? ethers.getAddress(value) : "";
 }
 
+function isBnbChain(chainId: SupportedChainId) {
+  return chainId === BNB_CHAIN_ID || chainId === BNB_TESTNET_CHAIN_ID;
+}
+
 function readAddress(chainId: SupportedChainId, perChainName: string, fallbackName?: string) {
   if (!isEvmChainId(chainId)) return "";
-  return normalizeAddress(env(`${perChainName}_${chainId}`) || (fallbackName ? env(fallbackName) : ""));
+  const perChain = env(`${perChainName}_${chainId}`);
+  // Legacy unsuffixed variables belong to BNB only. Never allow them to leak
+  // into Robinhood or any future EVM chain.
+  const fallback = fallbackName && isBnbChain(chainId) ? env(fallbackName) : "";
+  return normalizeAddress(perChain || fallback);
 }
 
 function readCreationFactory(chainId: SupportedChainId) {
@@ -112,14 +120,14 @@ const contractLabels: Record<BnbContractKey, string> = {
   creatorRegistry: "CreatorRegistry",
   riskRegistry: "RiskRegistry",
   graduationOracle: "GraduationOracle",
-  permanentLpLocker: "PermanentLpLocker",
+  permanentLpLocker: "Permanent liquidity locker",
   voteTreasury: "UPVoteTreasury",
   topazRouter: "Topaz router",
   topazFactory: "Topaz pool factory",
   topazWbnb: "Topaz WBNB",
 };
 
-const requiredContracts = new Set<BnbContractKey>([
+const commonRequiredContracts = new Set<BnbContractKey>([
   "launchFactory",
   "launchCampaignImplementation",
   "treasuryRouter",
@@ -132,6 +140,9 @@ const requiredContracts = new Set<BnbContractKey>([
   "graduationOracle",
   "permanentLpLocker",
   "voteTreasury",
+]);
+
+const bnbOnlyRequiredContracts = new Set<BnbContractKey>([
   "topazRouter",
   "topazFactory",
   "topazWbnb",
@@ -151,16 +162,16 @@ export function getBnbContractAddresses(chainId: SupportedChainId): BnbContractA
     graduationOracle: readAddress(chainId, "VITE_GRADUATION_ORACLE_ADDRESS"),
     permanentLpLocker: readAddress(chainId, "VITE_PERMANENT_LP_LOCKER_ADDRESS"),
     voteTreasury: readAddress(chainId, "VITE_VOTE_TREASURY_ADDRESS", "VITE_VOTE_TREASURY_ADDRESS"),
-    topazRouter: readAddress(chainId, "VITE_TOPAZ_ROUTER_ADDRESS"),
-    topazFactory: readAddress(chainId, "VITE_TOPAZ_FACTORY_ADDRESS"),
-    topazWbnb: readAddress(chainId, "VITE_TOPAZ_WBNB_ADDRESS"),
+    topazRouter: isBnbChain(chainId) ? readAddress(chainId, "VITE_TOPAZ_ROUTER_ADDRESS") : "",
+    topazFactory: isBnbChain(chainId) ? readAddress(chainId, "VITE_TOPAZ_FACTORY_ADDRESS") : "",
+    topazWbnb: isBnbChain(chainId) ? readAddress(chainId, "VITE_TOPAZ_WBNB_ADDRESS") : "",
   };
 }
 
 export function getBnbContractReadiness(chainId: SupportedChainId): BnbContractReadiness {
   const addresses = getBnbContractAddresses(chainId);
   const items = (Object.keys(addresses) as BnbContractKey[]).map((key) => {
-    const required = requiredContracts.has(key);
+    const required = commonRequiredContracts.has(key) || (isBnbChain(chainId) && bnbOnlyRequiredContracts.has(key));
     const address = addresses[key];
     return {
       key,
@@ -180,7 +191,7 @@ export function getBnbContractReadiness(chainId: SupportedChainId): BnbContractR
 }
 
 export function summarizeMissingBnbContracts(readiness: BnbContractReadiness): string {
-  if (readiness.ready) return "All required BNB launchpad contracts are configured.";
+  if (readiness.ready) return `All required EVM launchpad contracts are configured for chain ${readiness.chainId}.`;
   const names = readiness.missingRequired.map((item) => item.label).join(", ");
   return `Missing ${readiness.missingRequired.length} required contract${readiness.missingRequired.length === 1 ? "" : "s"}: ${names}.`;
 }
