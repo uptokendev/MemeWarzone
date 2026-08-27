@@ -45,13 +45,39 @@ jobs:
         with:
           node-version: 24
 
-      - name: Verify same program ID and lane source boundary
+      - name: Verify same program ID and one-sweep source boundary
         shell: bash
         run: |
           grep -F "mwz_rewards_treasury = \"$EXPECTED_PROGRAM_ID\"" Anchor.toml
           grep -F "declare_id!(\"$EXPECTED_PROGRAM_ID\")" programs/mwz_rewards_treasury/src/lib.rs
+
+          # Existing deployed rewards config must not be moved into the Arena module.
+          grep -F "pub struct RewardsConfig" programs/mwz_rewards_treasury/src/lib.rs
+
+          # Arena is part of this exact executable, not a dead source file or second program.
+          grep -F "pub mod arena;" programs/mwz_rewards_treasury/src/lib.rs
+          grep -F "pub use arena::*;" programs/mwz_rewards_treasury/src/lib.rs
+
           for instruction in set_recruiter_batch_root claim_recruiter set_squad_batch_root claim_squad; do
             grep -F "pub fn $instruction" programs/mwz_rewards_treasury/src/lib.rs
+          done
+
+          for instruction in \
+            initialize_arena set_arena_resolver set_arena_receivers set_arena_pause \
+            open_battle_pool open_tournament_pool deposit_stake donate_support deposit_buy_in \
+            resolve_pool settle_expired_pool \
+            claim_winner claim_protocol claim_mwl claim_charity refund_stake refund_buy_in; do
+            grep -F "pub fn $instruction" programs/mwz_rewards_treasury/src/lib.rs
+          done
+
+          for state in ArenaConfig ArenaPool ArenaVault ArenaBuyInReceipt ArenaClaimReceipt ArenaRefundReceipt; do
+            grep -F "pub struct $state" programs/mwz_rewards_treasury/src/arena.rs
+          done
+
+          for invariant in \
+            ARENA_PROTOCOL_BPS ARENA_MWL_BPS MWZ_ARENA_RESOLVE_V1 \
+            validate_tournament_winner_receipt settle_expired_pool_handler refund_buy_in_handler; do
+            grep -F "$invariant" programs/mwz_rewards_treasury/src/arena.rs
           done
 
       - name: Install Rust toolchains
@@ -82,7 +108,7 @@ jobs:
 
       - name: Build exact rewards treasury SBF
         shell: bash
-        run: anchor build --program-name mwz_rewards_treasury --no-idl 2>&1 | tail -n 160
+        run: anchor build --program-name mwz_rewards_treasury --no-idl 2>&1 | tail -n 180
 
       - name: Generate rewards treasury IDL
         shell: bash
@@ -93,9 +119,9 @@ jobs:
           mkdir -p ../../target/idl
           anchor idl build \
             --out ../../target/idl/mwz_rewards_treasury.json \
-            2>&1 | tail -n 220
+            2>&1 | tail -n 240
 
-      - name: Verify artifact and required IDL instructions
+      - name: Verify artifact and required one-sweep IDL instructions
         shell: bash
         run: |
           test -s target/deploy/mwz_rewards_treasury.so
@@ -108,15 +134,51 @@ jobs:
             throw new Error(`IDL program ID mismatch: ${address}`);
           }
           const names = new Set((idl.instructions || []).map((ix) => String(ix.name)));
-          const required = ['set_recruiter_batch_root','claim_recruiter','set_squad_batch_root','claim_squad'];
-          const camel = ['setRecruiterBatchRoot','claimRecruiter','setSquadBatchRoot','claimSquad'];
-          for (let i = 0; i < required.length; i += 1) {
-            if (!names.has(required[i]) && !names.has(camel[i])) throw new Error(`IDL missing ${required[i]}`);
+          const groups = [
+            ['set_recruiter_batch_root','setRecruiterBatchRoot'],
+            ['claim_recruiter','claimRecruiter'],
+            ['set_squad_batch_root','setSquadBatchRoot'],
+            ['claim_squad','claimSquad'],
+            ['initialize_arena','initializeArena'],
+            ['set_arena_resolver','setArenaResolver'],
+            ['set_arena_receivers','setArenaReceivers'],
+            ['set_arena_pause','setArenaPause'],
+            ['open_battle_pool','openBattlePool'],
+            ['open_tournament_pool','openTournamentPool'],
+            ['deposit_stake','depositStake'],
+            ['donate_support','donateSupport'],
+            ['deposit_buy_in','depositBuyIn'],
+            ['resolve_pool','resolvePool'],
+            ['settle_expired_pool','settleExpiredPool'],
+            ['claim_winner','claimWinner'],
+            ['claim_protocol','claimProtocol'],
+            ['claim_mwl','claimMwl'],
+            ['claim_charity','claimCharity'],
+            ['refund_stake','refundStake'],
+            ['refund_buy_in','refundBuyIn'],
+          ];
+          for (const alternatives of groups) {
+            if (!alternatives.some((name) => names.has(name))) {
+              throw new Error(`IDL missing ${alternatives[0]}`);
+            }
           }
-          console.log('Rewards treasury IDL contains recruiter/squad publish + claim instructions.');
+          const accounts = new Set((idl.accounts || []).map((account) => String(account.name)));
+          for (const alternatives of [
+            ['ArenaConfig','arenaConfig'],
+            ['ArenaPool','arenaPool'],
+            ['ArenaVault','arenaVault'],
+            ['ArenaBuyInReceipt','arenaBuyInReceipt'],
+            ['ArenaClaimReceipt','arenaClaimReceipt'],
+            ['ArenaRefundReceipt','arenaRefundReceipt'],
+          ]) {
+            if (!alternatives.some((name) => accounts.has(name))) {
+              throw new Error(`IDL missing account ${alternatives[0]}`);
+            }
+          }
+          console.log('Rewards treasury IDL contains recruiter/squad plus full frozen Arena surface.');
           NODE
 
-      - name: Test rewards treasury invariants
+      - name: Test rewards treasury and Arena invariants
         run: cargo test -p mwz_rewards_treasury --lib
 
       - name: Record candidate hashes
