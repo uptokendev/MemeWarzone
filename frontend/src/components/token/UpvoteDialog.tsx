@@ -16,7 +16,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { useBnbUsdPrice } from "@/hooks/useBnbUsdPrice";
-import { getActiveChainId, getVoteTreasuryAddress, isSolanaChainId, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
+import { getActiveChainId, getArenaVoteTreasuryAddress, getVoteTreasuryAddress, isSolanaChainId, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
 import { getBnbContractAddresses } from "@/lib/bnbContracts";
 import { apiFetch } from "@/lib/apiBase";
 import { getPublicRpcUrl } from "@/lib/chainConfig";
@@ -94,7 +94,9 @@ async function fetchSolUsd(): Promise<number | null> {
 }
 
 type Props = {
-  campaignAddress: string;
+  campaignAddress?: string;
+  tokenAddress?: string;
+  lane?: "launchpad" | "arena";
   chainId?: number | null;
   className?: string;
   buttonVariant?: "default" | "secondary" | "outline" | "ghost" | "destructive";
@@ -110,11 +112,16 @@ type Props = {
  */
 export function UpvoteDialog({
   campaignAddress,
+  tokenAddress,
+  lane = "launchpad",
   chainId: chainIdOverride,
   className,
   buttonVariant = "secondary",
   buttonSize = "sm",
 }: Props) {
+  const isArena = lane === "arena";
+  const voteIdentity = String((isArena ? tokenAddress || campaignAddress : campaignAddress || tokenAddress) || "").trim();
+  const voteLabel = isArena ? "Arena UpVote" : "UP Vote";
   const { toast } = useToast();
   const wallet = useWallet();
   const solanaWallet = useSolanaWallet();
@@ -123,17 +130,17 @@ export function UpvoteDialog({
   const isSolanaCampaign =
     isSolanaChainId(Number(chainIdOverride)) ||
     Number(chainIdOverride) === 102 ||
-    isSolanaAddress(campaignAddress);
+    isSolanaAddress(voteIdentity);
 
   const chainId = isSolanaCampaign
     ? SOLANA_CHAIN_ID
     : getActiveChainId(chainIdOverride ?? wallet.chainId);
 
   const treasuryAddress = useMemo(() => {
-    const raw = getVoteTreasuryAddress(chainId as any);
+    const raw = isArena ? getArenaVoteTreasuryAddress(chainId as any) : getVoteTreasuryAddress(chainId as any);
     if (isSolanaCampaign) return String(raw || "").trim();
     return safeLowerHex(raw);
-  }, [chainId, isSolanaCampaign]);
+  }, [chainId, isArena, isSolanaCampaign]);
 
   const nativeUnit = isSolanaCampaign ? "SOL" : "BNB";
   const nativeDecimals = isSolanaCampaign ? 9 : 18;
@@ -351,11 +358,11 @@ export function UpvoteDialog({
           return;
         }
         const c = new ethers.Contract(treasuryAddress, UPVOTE_ABI, wallet.provider);
-        const meta = ethers.keccak256(ethers.toUtf8Bytes("user"));
+        const meta = ethers.keccak256(ethers.toUtf8Bytes(isArena ? "arena" : "user"));
         let gasLimit: bigint;
         try {
           gasLimit = BigInt(
-            await c.voteWithBNB.estimateGas(campaignAddress, meta, { value: voteWei }),
+            await c.voteWithBNB.estimateGas(voteIdentity, meta, { value: voteWei }),
           );
         } catch {
           gasLimit = 150000n;
@@ -384,13 +391,14 @@ export function UpvoteDialog({
     hasContractCode,
     enabled,
     voteWei,
-    campaignAddress,
+    voteIdentity,
+    isArena,
     balanceWei,
   ]);
 
   const canUpvote = Boolean(
     treasuryAddress &&
-      campaignAddress &&
+      voteIdentity &&
       priceReady &&
       !insufficient &&
       (isSolanaCampaign
@@ -405,7 +413,7 @@ export function UpvoteDialog({
       throw new Error(ABORT);
     };
 
-    if (!treasuryAddress) fail("UP Votes are temporarily unavailable", "UP Votes can’t be processed on Solana right now. Please try again later.");
+    if (!treasuryAddress) fail(`${voteLabel}s are temporarily unavailable`, `${voteLabel}s can’t be processed on Solana right now. Please try again later.`);
     if (!solanaWallet.solanaAccount) {
       window.dispatchEvent(new CustomEvent("memewarzone:openWalletModal"));
       return;
@@ -414,8 +422,8 @@ export function UpvoteDialog({
     if (balanceWei != null && balanceWei < (estTotalWei ?? voteWei)) {
       fail("Insufficient SOL", "You don't have enough SOL to cover the vote fee (and fees).");
     }
-    if (!isSolanaAddress(campaignAddress)) {
-      fail("Invalid campaign", "This page is not a valid Solana campaign address.");
+    if (!isSolanaAddress(voteIdentity)) {
+      fail("Invalid token", isArena ? "This page is not a valid Solana token address." : "This page is not a valid Solana campaign address.");
     }
 
     const provider = getSolanaProvider();
@@ -451,7 +459,7 @@ export function UpvoteDialog({
       new web3.TransactionInstruction({
         keys: [{ pubkey: from, isSigner: true, isWritable: false }],
         programId: new web3.PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"),
-        data: Buffer.from(`mwz-upvote:${campaignAddress}`, "utf8"),
+        data: Buffer.from(`${isArena ? "mwz-arena-upvote" : "mwz-upvote"}:${voteIdentity}`, "utf8"),
       }),
     );
     tx.add(
@@ -462,7 +470,7 @@ export function UpvoteDialog({
       }),
     );
 
-    toast({ title: "Confirm UP Vote", description: `Pay ~$${UPVOTE_USD_TARGET} in SOL…` });
+    toast({ title: `Confirm ${voteLabel}`, description: `Pay ~$${UPVOTE_USD_TARGET} in SOL…` });
 
     let signature = "";
     try {
@@ -492,13 +500,14 @@ export function UpvoteDialog({
 
     let ingest: { votes24h?: number; votesAllTime?: number; campaignAddress?: string } | null = null;
     try {
-      const res = await apiFetch("/api/solana/vote-ingest", {
+      const res = await apiFetch(isArena ? "/api/arena/votes/solana-ingest" : "/api/solana/vote-ingest", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           chainId: SOLANA_CHAIN_ID,
           signature,
-          campaignAddress,
+          campaignAddress: voteIdentity,
+          tokenAddress: voteIdentity,
           voterAddress: solanaWallet.solanaAccount,
         }),
       });
@@ -525,10 +534,11 @@ export function UpvoteDialog({
     setOpen(false);
     try {
       window.dispatchEvent(
-        new CustomEvent("memewarzone:upvoteConfirmed", {
+        new CustomEvent(isArena ? "memewarzone:arenaUpvoteConfirmed" : "memewarzone:upvoteConfirmed", {
           detail: {
             chainId: SOLANA_CHAIN_ID,
-            campaignAddress: ingest?.campaignAddress || campaignAddress,
+            campaignAddress: ingest?.campaignAddress || voteIdentity,
+            tokenAddress: voteIdentity,
             txHash: signature,
             votes24h: ingest?.votes24h != null ? Number(ingest.votes24h) : undefined,
             votesAllTime: ingest?.votesAllTime != null ? Number(ingest.votesAllTime) : undefined,
@@ -547,11 +557,11 @@ export function UpvoteDialog({
       throw new Error(ABORT);
     };
 
-    if (!treasuryAddress) fail("UP Votes are temporarily unavailable", "UP Votes can’t be processed on this network right now. Please try again later.");
+    if (!treasuryAddress) fail(`${voteLabel}s are temporarily unavailable`, `${voteLabel}s can’t be processed on this network right now. Please try again later.`);
     if (hasContractCode === false) {
       fail(
-        "UP Votes are temporarily unavailable",
-        "UP Votes can’t be processed on this network right now. Please try again later.",
+        `${voteLabel}s are temporarily unavailable`,
+        `${voteLabel}s can’t be processed on this network right now. Please try again later.`,
       );
     }
     if (!wallet.signer) {
@@ -564,7 +574,7 @@ export function UpvoteDialog({
     }
 
     const c = new ethers.Contract(treasuryAddress, UPVOTE_ABI, wallet.signer);
-    const meta = ethers.keccak256(ethers.toUtf8Bytes("user"));
+    const meta = ethers.keccak256(ethers.toUtf8Bytes(isArena ? "arena" : "user"));
     let gasPrice: bigint | undefined;
     try {
       const gpHex = await wallet.provider!.send("eth_gasPrice", []);
@@ -584,7 +594,7 @@ export function UpvoteDialog({
       overrides.type = 0;
     }
 
-    const tx = await c.voteWithBNB(campaignAddress, meta, overrides);
+    const tx = await c.voteWithBNB(voteIdentity, meta, overrides);
     const txHash = String(tx?.hash || "");
     toast({ title: "Upvote sent", description: "Waiting for confirmation…" });
     await tx.wait();
@@ -592,27 +602,40 @@ export function UpvoteDialog({
     let ingest: { votes24h?: number; votesAllTime?: number; campaignAddress?: string } | null = null;
     if (txHash) {
       try {
-        const res = await apiFetch("/api/vote-ingest", {
+        const res = await apiFetch(isArena ? "/api/arena/votes/ingest" : "/api/vote-ingest", {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ chainId, txHash }),
         });
         const body = await res.json().catch(() => null);
         if (res.ok && Array.isArray(body?.items) && body.items[0]) ingest = body.items[0];
+        else if (isArena) {
+          fail(
+            "Vote paid but not recorded",
+            `Your payment was confirmed, but the Arena vote could not be recorded. Contact support with transaction ${txHash.slice(0, 12)}…`,
+          );
+        }
       } catch (ingestErr) {
         console.warn("[UpvoteDialog] vote ingest error", ingestErr);
+        if (isArena) {
+          fail(
+            "Vote paid but not recorded",
+            `Your payment was confirmed, but the Arena vote could not be recorded. Contact support with transaction ${txHash.slice(0, 12)}…`,
+          );
+        }
       }
     }
 
     toast({ title: "Upvoted", description: "Your vote has been recorded." });
     setOpen(false);
     try {
-      const addr = safeLowerHex(ingest?.campaignAddress || campaignAddress);
+      const addr = safeLowerHex(ingest?.campaignAddress || voteIdentity);
       window.dispatchEvent(
-        new CustomEvent("memewarzone:upvoteConfirmed", {
+        new CustomEvent(isArena ? "memewarzone:arenaUpvoteConfirmed" : "memewarzone:upvoteConfirmed", {
           detail: {
             chainId,
             campaignAddress: addr,
+            tokenAddress: voteIdentity,
             txHash,
             votes24h: ingest?.votes24h != null ? Number(ingest.votes24h) : undefined,
             votesAllTime: ingest?.votesAllTime != null ? Number(ingest.votesAllTime) : undefined,
@@ -653,9 +676,9 @@ export function UpvoteDialog({
           variant={buttonVariant}
           size={buttonSize}
           className={className}
-          title={!treasuryAddress ? "UP Votes are temporarily unavailable" : "Upvote"}
+          title={!treasuryAddress ? `${voteLabel}s are temporarily unavailable` : voteLabel}
         >
-          UP Vote
+          {voteLabel}
         </Button>
       </DialogTrigger>
       <DialogContent
@@ -670,10 +693,11 @@ export function UpvoteDialog({
         }}
       >
         <DialogHeader>
-          <DialogTitle>UP Vote</DialogTitle>
+          <DialogTitle>{voteLabel}</DialogTitle>
           <DialogDescription>
             Fixed price: ${UPVOTE_USD_TARGET} per vote. One transaction = one vote
             {isSolanaCampaign ? " (paid in SOL)." : " (paid in BNB)."}
+            {isArena ? " Ranks the Arena featured rail, not Showcase." : ""}
           </DialogDescription>
         </DialogHeader>
 
@@ -682,11 +706,11 @@ export function UpvoteDialog({
             <div className="text-sm text-muted-foreground">Loading fee…</div>
           ) : !treasuryAddress ? (
             <div className="text-sm text-muted-foreground">
-              UP Votes are temporarily unavailable on this network. Please try again later.
+              {voteLabel}s are temporarily unavailable on this network. Please try again later.
             </div>
           ) : !isSolanaCampaign && (hasContractCode === false || !enabled) ? (
             <div className="text-sm text-muted-foreground">
-              UP Votes are temporarily unavailable on this network. Please try again later.
+              {voteLabel}s are temporarily unavailable on this network. Please try again later.
             </div>
           ) : (
             <div className="rounded-md border border-border/60 bg-muted/30 px-4 py-3">
@@ -726,7 +750,7 @@ export function UpvoteDialog({
           </div>
 
           <div className="text-xs text-muted-foreground">
-            Cooldown and daily limits apply to keep UP Votes fair.
+            {isArena ? "Arena UpVotes are separate from launchpad UP Votes." : "Cooldown and daily limits apply to keep UP Votes fair."}
           </div>
         </div>
 
@@ -735,10 +759,16 @@ export function UpvoteDialog({
             Cancel
           </Button>
           <Button onClick={handleUpvote} disabled={!canUpvote || submitting || loadingCfg}>
-            {submitting ? "Voting…" : `UP Vote (${nativeUnit})`}
+            {submitting ? "Voting…" : `${voteLabel} (${nativeUnit})`}
           </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
+}
+
+export function ArenaUpvoteDialog(
+  props: Omit<Props, "lane" | "campaignAddress"> & { tokenAddress: string; campaignAddress?: string },
+) {
+  return <UpvoteDialog {...props} lane="arena" campaignAddress={props.campaignAddress || props.tokenAddress} />;
 }

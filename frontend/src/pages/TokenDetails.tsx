@@ -56,7 +56,8 @@ import { TokenWarRoom } from "@/components/token/TokenWarRoom";
 import { AthBar } from "@/components/token/AthBar";
 import { canonicalAthUsd } from "@/lib/canonicalMarket";
 import { canonicalAthNativeFromCandles } from "@/lib/chart/canonicalChartCandles";
-import { UpvoteDialog } from "@/components/token/UpvoteDialog";
+import { ArenaUpvoteDialog, UpvoteDialog } from "@/components/token/UpvoteDialog";
+import { postGradFlags } from "@/features/postgrad/config";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { campaignWalletMatches } from "@/lib/activeWalletChain";
@@ -4342,14 +4343,24 @@ const toSeconds = (ts: number): number => {
                       />
                     </Button>
 
-                    {/* UP Vote: same product on BNB (treasury) and Solana (SOL + vote-ingest). */}
-                    <UpvoteDialog
-                      campaignAddress={campaignAddr}
-                      chainId={chainIdForStorage}
-                      buttonVariant="secondary"
-                      buttonSize="sm"
-                      className="h-8 px-3 text-xs flex-shrink-0"
-                    />
+                    {/* Graduated coins rank on Arena, not Showcase. Bonding keeps launchpad UP Vote. */}
+                    {postGradFlags.arena && contractGraduatedEarly ? (
+                      <ArenaUpvoteDialog
+                        tokenAddress={String(campaign?.token || campaignAddr)}
+                        chainId={chainIdForStorage}
+                        buttonVariant="secondary"
+                        buttonSize="sm"
+                        className="h-8 px-3 text-xs flex-shrink-0"
+                      />
+                    ) : (
+                      <UpvoteDialog
+                        campaignAddress={campaignAddr}
+                        chainId={chainIdForStorage}
+                        buttonVariant="secondary"
+                        buttonSize="sm"
+                        className="h-8 px-3 text-xs flex-shrink-0"
+                      />
+                    )}
                     <Button
                       asChild
                       variant="ghost"

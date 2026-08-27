@@ -210,6 +210,8 @@ app.all("/arena/notifications/email/verify", wrap(arenaNotifications));
 app.all("/arena/notifications/email/status", wrap(arenaNotifications));
 app.all("/arena/notifications/email", wrap(arenaNotifications));
 app.all("/arena/votes/featured", wrap(arenaVotes));
+app.all("/arena/votes/solana-ingest", wrap(arenaVotes));
+app.all("/arena/votes/ingest", wrap(arenaVotes));
 app.all("/arena/league/quarter-finals", wrap(arenaLeague));
 app.all("/arena/events/:eventId/advance-bracket", wrap(arenaEvents));
 app.all("/arena/events/:eventId/transition", wrap(arenaEvents));

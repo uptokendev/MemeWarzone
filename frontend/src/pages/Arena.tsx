@@ -3,6 +3,7 @@ import { ArenaMatchRow } from "@/components/postgrad/ArenaMatchRow";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { Button } from "@/components/ui/button";
 import { ContentContainer } from "@/components/layout/ContentContainer";
+import { ArenaUpvoteDialog } from "@/components/token/UpvoteDialog";
 import { getArenaTokenRoute } from "@/features/postgrad/tokenRoutes";
 import { useArenaBattleFeed } from "@/hooks/useArenaBattleFeed";
 import { useArenaEventFeed } from "@/hooks/useArenaEventFeed";
@@ -30,19 +31,23 @@ const Arena = () => {
           <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
             {featured.items.slice(0, 20).map((item, index) => {
               const route = getArenaTokenRoute(item.tokenAddress);
-              const card = (
-                <div className="rounded-md border border-border/50 bg-background/40 p-3">
+              return (
+                <div key={`${item.chainId}-${item.tokenAddress}`} className="rounded-md border border-border/50 bg-background/40 p-3">
                   <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">#{index + 1}</div>
-                  <div className="mt-1 font-retro text-sm text-foreground">{item.tokenName} <span className="text-muted-foreground">{item.symbol}</span></div>
+                  {route ? (
+                    <Link to={route} className="mt-1 block font-retro text-sm text-foreground hover:text-accent">
+                      {item.tokenName} <span className="text-muted-foreground">{item.symbol}</span>
+                    </Link>
+                  ) : (
+                    <div className="mt-1 font-retro text-sm text-foreground">{item.tokenName} <span className="text-muted-foreground">{item.symbol}</span></div>
+                  )}
                   <div className="mt-1 text-xs text-muted-foreground">{item.votes24h} Arena UpVotes (24h)</div>
+                  {featured.votingLive ? (
+                    <div className="mt-2">
+                      <ArenaUpvoteDialog tokenAddress={item.tokenAddress} chainId={item.chainId} buttonSize="sm" className="h-8 px-3 text-xs" />
+                    </div>
+                  ) : null}
                 </div>
-              );
-              return route ? (
-                <Link key={`${item.chainId}-${item.tokenAddress}`} to={route} className="block transition hover:border-accent/50">
-                  {card}
-                </Link>
-              ) : (
-                <div key={`${item.chainId}-${item.tokenAddress}`}>{card}</div>
               );
             })}
           </div>
@@ -50,7 +55,9 @@ const Arena = () => {
           <div className="mt-4 rounded-md border border-border/50 bg-background/40 p-4 text-sm text-muted-foreground">
             {featured.loading
               ? "Loading Arena UpVotes..."
-              : "No Arena UpVotes yet. Ranking uses the Arena ledger, separate from launchpad UpVotes. Paying votes waits on a dedicated Arena treasury."}
+              : featured.votingLive
+                ? "No Arena UpVotes yet. Rank this rail from graduated coins and approved imports."
+                : "No Arena UpVotes yet. Ranking uses the Arena ledger. Paying votes waits on a dedicated Arena treasury address in this environment."}
           </div>
         )}
       </section>

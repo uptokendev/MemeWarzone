@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { CrypticPumpBadge, CrypticPumpListButton, fetchCrypticPumpListing, type CrypticPumpListingData } from "@/components/token/CrypticPumpListing";
+import { ArenaUpvoteDialog } from "@/components/token/UpvoteDialog";
+import { postGradFlags } from "@/features/postgrad/config";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { Button } from "@/components/ui/button";
 import { ContentContainer } from "@/components/layout/ContentContainer";
@@ -36,6 +38,11 @@ export default function ImportedTokenDetails({ item }: { item: ArenaImportItem }
         <p className="mt-2 text-sm text-muted-foreground">{item.name || "Not launched on MemeWarzone"}</p>
         <p className="mt-2 break-all text-xs text-muted-foreground">{item.tokenAddress}</p>
         {warnings.length ? <p className="mt-3 text-xs text-muted-foreground">Scan notes: {warnings.join(", ")}</p> : null}
+        {postGradFlags.arena && item.status === "passed" ? (
+          <div className="mt-4">
+            <ArenaUpvoteDialog tokenAddress={item.tokenAddress} chainId={item.chainId} buttonSize="sm" />
+          </div>
+        ) : null}
       </section>
 
       <section className="mwz-hud-frame p-4 space-y-3">

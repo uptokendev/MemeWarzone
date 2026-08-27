@@ -431,6 +431,21 @@ export function getVoteTreasuryAddress(chainId: SupportedChainId): string {
   return fallback.trim();
 }
 
+/** Arena UpVote sink. Never aliases the launchpad UPVoteTreasury keys. */
+export function getArenaVoteTreasuryAddress(chainId: SupportedChainId): string {
+  if (isSolanaChainId(chainId) || Number(chainId) === 102) {
+    const solana =
+      (import.meta.env.VITE_SOLANA_ARENA_VOTE_TREASURY_ADDRESS as string | undefined) ||
+      (import.meta.env.VITE_ARENA_VOTE_TREASURY_ADDRESS_101 as string | undefined) ||
+      "";
+    return String(solana || "").trim();
+  }
+  const perChain = (import.meta.env[`VITE_ARENA_VOTE_TREASURY_ADDRESS_${chainId}`] as string | undefined) ?? "";
+  if (perChain.trim()) return perChain.trim();
+  const fallback = (import.meta.env.VITE_ARENA_VOTE_TREASURY_ADDRESS as string | undefined) ?? "";
+  return fallback.trim();
+}
+
 /**
  * TreasuryVault holds the accumulated League Treasury fees (native BNB).
  * This address is chain-specific.

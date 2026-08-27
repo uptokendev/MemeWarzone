@@ -4,6 +4,7 @@ import { pool } from "../server/db.js";
 import { badMethod, json, normalizeWalletFlexible, readJson } from "../server/http.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { requireAdminOrOps } from "./lib/apiAuth.js";
+import { tokenEligible as tokenIsEligible } from "./lib/arenaEligibility.js";
 
 function ident(value) {
   return normalizeWalletFlexible(value) || String(value || "").trim();
@@ -78,24 +79,7 @@ async function listInvites(id) {
 }
 
 async function tokenEligible(chainId, token) {
-  const address = ident(token);
-  if (!address) return false;
-  const native = await pool.query(
-    `select 1 from public.campaigns
-      where chain_id = $1
-        and (lower(coalesce(token_address::text, '')) = lower($2) or lower(campaign_address::text) = lower($2))
-        and graduated_at_chain is not null
-      limit 1`,
-    [chainId, address],
-  );
-  if (native.rows[0]) return true;
-  const imported = await pool.query(
-    `select 1 from public.arena_token_imports
-      where chain_id = $1 and lower(token_address) = lower($2) and status = 'passed'
-      limit 1`,
-    [chainId, address],
-  );
-  return Boolean(imported.rows[0]);
+  return tokenIsEligible(pool, chainId, token);
 }
 
 async function coinSnapshot(chainId, token) {
