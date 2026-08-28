@@ -38,9 +38,18 @@ for (const key of [
 
 assert.equal(env.RUNTIME_ENVIRONMENT, "local");
 assert.equal(env.VITE_RUNTIME_ENVIRONMENT, "local");
+
+// Browser remains product-parity capable: BNB | Solana | Robinhood.
+assert.equal(env.VITE_ALLOWED_CHAIN_IDS, "56,101,46630");
+assert.equal(env.VITE_DEFAULT_CHAIN_ID, "46630");
+
+// Backend workers/indexers remain strictly Robinhood-only in this isolated profile.
 assert.equal(env.DEFAULT_EVM_CHAIN_ID, "46630");
 assert.equal(env.EVM_INDEXER_CHAIN_IDS, "46630");
-assert.equal(env.VITE_ALLOWED_CHAIN_IDS, "46630");
+assert.equal(env.BSC_RPC_HTTP_56, "");
+assert.equal(env.BSC_RPC_HTTP_97, "");
+assert.equal(env.SOLANA_RPC_HTTP, "");
+
 assert.equal(env.LOCAL_DISABLE_ABLY, "1");
 assert.equal(env.LOCAL_DISABLE_REMOTE_SUPABASE, "1");
 assert.equal(env.ENABLE_DATA_URL_UPLOADS, "1");
@@ -48,9 +57,6 @@ assert.equal(env.ABLY_API_KEY, undefined);
 assert.equal(env.SUPABASE_URL, undefined);
 assert.equal(env.SUPABASE_SERVICE_ROLE_KEY, undefined);
 assert.equal(env.TELEMETRY_INGEST_URL, "");
-assert.equal(env.BSC_RPC_HTTP_56, "");
-assert.equal(env.BSC_RPC_HTTP_97, "");
-assert.equal(env.SOLANA_RPC_HTTP, "");
 
 assert.throws(
   () =>
