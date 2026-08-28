@@ -17,6 +17,7 @@ const compiled = await build({
 export { resolveTokenPageChainId, isEvmTokenRoutePath } from "./chainConfig.ts";
 export { getBnbCampaignFeedChainIds } from "./feedChainConfig.ts";
 export { isSolanaTokenRouteId } from "./tokenDetailsPath.ts";
+export { getLaunchpadAdapter } from "../features/launchpad/useLaunchpadAdapter.ts";
 export {
   ACTIVE_EVM_CHAIN_IDS,
   KNOWN_EVM_CHAIN_IDS,
@@ -52,6 +53,7 @@ const {
   isEvmTokenRoutePath,
   getBnbCampaignFeedChainIds,
   isSolanaTokenRouteId,
+  getLaunchpadAdapter,
   ACTIVE_EVM_CHAIN_IDS,
   KNOWN_EVM_CHAIN_IDS,
   buildEvmWalletChainParams,
@@ -103,6 +105,14 @@ test("BNB feeds may merge 56+97 but must never include Solana or Robinhood", () 
     assert.ok(!ids.includes(46630));
     assert.ok(ids.every((id) => id === 56 || id === 97));
   }
+});
+
+test("launchpad adapter preserves Robinhood as a first-class product identity", () => {
+  assert.equal(getLaunchpadAdapter({ chainId: 56 }).chain, "bnb");
+  assert.equal(getLaunchpadAdapter({ chainId: 101 }).chain, "solana");
+  assert.equal(getLaunchpadAdapter({ chainId: 4663 }).chain, "robinhood");
+  assert.equal(getLaunchpadAdapter({ chainId: 46630 }).chain, "robinhood");
+  assert.equal(getLaunchpadAdapter({ chain: "robinhood" }).chain, "robinhood");
 });
 
 test("Robinhood is known to the generic EVM layer but remains inactive until protocol activation", () => {
