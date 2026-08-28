@@ -4,7 +4,7 @@ import { useCurveTrades, type CurveTradePoint } from "@/hooks/useCurveTrades";
 import { useTopazMarket } from "@/hooks/useTopazMarket";
 import { useUnifiedMarket, type MarketResolution } from "@/hooks/useUnifiedMarket";
 import { campaignKey, isCampaignAddress, marketTradeToCurvePoint } from "@/lib/chart/normalizeTrade";
-import { isEvmChainId, isSolanaChainId, type SupportedChainId } from "@/lib/chainConfig";
+import { BNB_CHAIN_ID, BNB_TESTNET_CHAIN_ID, isEvmChainId, isSolanaChainId, type SupportedChainId } from "@/lib/chainConfig";
 import { getReadProvider } from "@/lib/readProvider";
 import { TOPAZ_FILL_EVENT, type TopazFillDetail } from "@/lib/recordTopazFill";
 import { fetchTopazTradeReports } from "@/lib/topazTradeReports";
@@ -15,12 +15,14 @@ const CAMPAIGN_GRAD_ABI = [
   "function getGraduationState() view returns (address dexPair,uint256 finalCurvePrice,uint256 initialDexPrice,uint256 graduatedLiquidityTokens,uint256 graduatedLiquidityBnb,uint256 graduatedLiquidityLp,uint256 burnedUnsoldTokens,uint256 burnedUnusedLpTokens,uint256 postBurnTotalSupply,uint256 graduationBalance,uint256 graduationOvershoot)",
 ] as const;
 
+function isBnbChain(chainId: number) {
+  return chainId === BNB_CHAIN_ID || chainId === BNB_TESTNET_CHAIN_ID;
+}
+
 /**
  * Shared continuous trade stream for Token Details + War Room:
- * bonding indexer history + Topaz on-chain scan + wallet reports + unified market API.
- *
- * Topaz scan enablement matches Token Details: use market API stage when available,
- * but also open on-chain launched/pair so CMS lag (stuck BONDING) does not blank War Room.
+ * bonding indexer history + chain-specific post-grad indexers.
+ * BNB keeps the browser Topaz fallback; Robinhood consumes indexed V3 trades only.
  */
 export function useContinuousMarketTrades(input: {
   campaignAddress?: string;
@@ -28,7 +30,7 @@ export function useContinuousMarketTrades(input: {
   chainId: number;
   resolution?: MarketResolution;
   enabled?: boolean;
-  /** When false, never enable browser Topaz pair scan. Default true. */
+  /** When false, never enable browser Topaz pair scan. Default true on BNB only. */
   enableTopazScan?: boolean;
 }) {
   const chainId = Number(input.chainId || 97);
@@ -36,6 +38,7 @@ export function useContinuousMarketTrades(input: {
   const tokenAddress = campaignKey(chainId, input.tokenAddress || "");
   const enabled = (input.enabled ?? true) && isCampaignAddress(chainId, campaignAddress);
   const evm = isEvmChainId(chainId);
+  const bnb = isBnbChain(chainId);
   const resolution = input.resolution ?? "1m";
 
   const { points: curvePoints, loading: curveLoading, error: curveError } = useCurveTrades(
@@ -44,8 +47,6 @@ export function useContinuousMarketTrades(input: {
   );
 
   const [localTopazTrades, setLocalTopazTrades] = useState<CurveTradePoint[]>([]);
-
-  // On-chain graduation independent of campaign_market_state (same idea as TokenDetails).
   const [onChainLaunched, setOnChainLaunched] = useState(false);
   const [onChainPair, setOnChainPair] = useState("");
 
@@ -76,38 +77,27 @@ export function useContinuousMarketTrades(input: {
         }
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [enabled, campaignAddress, chainId, evm]);
 
   useEffect(() => {
-    if (!enabled) {
+    if (!enabled || !bnb) {
       setLocalTopazTrades([]);
       return;
     }
     setLocalTopazTrades([]);
-
     let cancelled = false;
     void (async () => {
-      if (isSolanaChainId(chainId)) return;
       try {
-        const remote = await fetchTopazTradeReports({
-          chainId,
-          campaignAddress,
-          limit: 100,
-        });
+        const remote = await fetchTopazTradeReports({ chainId, campaignAddress, limit: 100 });
         if (cancelled || !remote.length) return;
         setLocalTopazTrades((prev) => mergeTradePoints(prev, remote));
       } catch {
-        // optional
+        // optional BNB-only compatibility source
       }
     })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [enabled, campaignAddress, chainId]);
+    return () => { cancelled = true; };
+  }, [enabled, bnb, campaignAddress, chainId]);
 
   const unifiedMarket = useUnifiedMarket({
     campaignAddress: enabled ? campaignAddress : undefined,
@@ -119,39 +109,35 @@ export function useContinuousMarketTrades(input: {
   const stage = String(unifiedMarket.state?.marketStage || "").toUpperCase();
   const apiPair = String(unifiedMarket.state?.pairAddress || "").toLowerCase();
   const apiPairOk = /^0x[a-f0-9]{40}$/.test(apiPair) && apiPair !== ethers.ZeroAddress.toLowerCase();
-
   const graduatedFromApi =
     stage === "TOPAZ_ACTIVE" ||
     stage === "TOPAZ_DEGRADED" ||
     stage === "TOPAZ_PENDING" ||
+    stage === "DEX_ACTIVE" ||
+    stage === "DEX_DEGRADED" ||
+    stage === "DEX_PENDING" ||
     stage === "GRADUATING";
 
-  // Post-grad if API says so, CMS has a pair, or on-chain launched/pair (CMS lag path).
-  const isPostGrad =
-    graduatedFromApi ||
-    onChainLaunched ||
-    apiPairOk ||
-    Boolean(onChainPair);
+  const isPostGrad = graduatedFromApi || onChainLaunched || apiPairOk || Boolean(onChainPair);
 
-  // Scan Topaz once graduated — including CMS lag (API still BONDING, on-chain launched).
-  // Do not scan pure bonding (no API post-grad, no on-chain launch/pair).
+  // Topaz is a BNB fallback only. Robinhood post-grad is supplied by unified
+  // robinhood_v3 trades/candles, so it must never query Topaz contracts.
   const topazScanEnabledResolved =
     enabled &&
-    evm &&
+    bnb &&
     input.enableTopazScan !== false &&
     (graduatedFromApi || onChainLaunched || apiPairOk || Boolean(onChainPair));
 
   const topazMarket = useTopazMarket({
-    campaignAddress: enabled ? campaignAddress : undefined,
-    tokenAddress: tokenAddress || undefined,
+    campaignAddress: enabled && bnb ? campaignAddress : undefined,
+    tokenAddress: bnb ? tokenAddress || undefined : undefined,
     chainId,
     enabled: topazScanEnabledResolved,
     pollMs: 8_000,
   });
 
-  // War Room / Token Details post-fill: merge optimistic trade without full page reload.
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || !bnb) return;
     const onFill = (event: Event) => {
       const detail = (event as CustomEvent<TopazFillDetail>).detail;
       if (!detail) return;
@@ -162,52 +148,33 @@ export function useContinuousMarketTrades(input: {
     };
     window.addEventListener(TOPAZ_FILL_EVENT, onFill as EventListener);
     return () => window.removeEventListener(TOPAZ_FILL_EVENT, onFill as EventListener);
-  }, [enabled, campaignAddress, chainId, topazMarket]);
+  }, [enabled, bnb, campaignAddress, chainId, topazMarket]);
 
   const tradePoints = useMemo(() => {
     const curve = Array.isArray(curvePoints) ? curvePoints : [];
     const postGrad =
       isPostGrad ||
-      Boolean(topazMarket.pairAddress) ||
-      (Array.isArray(topazMarket.trades) && topazMarket.trades.length > 0) ||
-      localTopazTrades.length > 0;
+      (bnb && Boolean(topazMarket.pairAddress)) ||
+      (bnb && Array.isArray(topazMarket.trades) && topazMarket.trades.length > 0) ||
+      (bnb && localTopazTrades.length > 0);
 
-    // Bonding-only: never mix DEX/unified rows into circulating mcap walks.
-    if (!postGrad) {
-      return mergeTradePoints(curve);
-    }
+    if (!postGrad) return mergeTradePoints(curve);
 
     const unifiedAsPoints: CurveTradePoint[] = (unifiedMarket.trades || [])
       .map((trade) => marketTradeToCurvePoint(trade, chainId))
       .filter((point): point is CurveTradePoint => Boolean(point));
+
     return mergeTradePoints(
       curve,
-      evm ? topazMarket.trades : [],
-      localTopazTrades,
+      bnb ? topazMarket.trades : [],
+      bnb ? localTopazTrades : [],
       unifiedAsPoints,
     );
-  }, [
-    curvePoints,
-    topazMarket.trades,
-    topazMarket.pairAddress,
-    localTopazTrades,
-    unifiedMarket.trades,
-    isPostGrad,
-    chainId,
-    evm,
-  ]);
+  }, [curvePoints, topazMarket.trades, topazMarket.pairAddress, localTopazTrades, unifiedMarket.trades, isPostGrad, chainId, bnb]);
 
   const stableTradePoints = tradePoints;
-
-  const loading =
-    stableTradePoints.length > 0
-      ? false
-      : curveLoading || unifiedMarket.loading || topazMarket.loading;
-
-  const error =
-    stableTradePoints.length > 0
-      ? null
-      : curveError || unifiedMarket.error || topazMarket.error;
+  const loading = stableTradePoints.length > 0 ? false : curveLoading || unifiedMarket.loading || (bnb && topazMarket.loading);
+  const error = stableTradePoints.length > 0 ? null : curveError || unifiedMarket.error || (bnb ? topazMarket.error : null);
 
   return {
     campaignAddress: enabled ? campaignAddress : "",
@@ -223,9 +190,6 @@ export function useContinuousMarketTrades(input: {
     error,
     onChainLaunched,
     onChainPair: onChainPair || null,
-    isDexStage:
-      isPostGrad ||
-      Boolean(topazMarket.pairAddress) ||
-      Boolean(unifiedMarket.state?.pairAddress),
+    isDexStage: isPostGrad || (bnb && Boolean(topazMarket.pairAddress)) || Boolean(unifiedMarket.state?.pairAddress),
   };
 }
