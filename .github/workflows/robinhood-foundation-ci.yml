@@ -41,8 +41,10 @@ on:
       - "realtime-indexer/src/env.ts"
       - "realtime-indexer/src/evmIndexerChains.ts"
       - "realtime-indexer/src/robinhoodLocalScanner.ts"
+      - "realtime-indexer/src/robinhoodV3PoolIndexer.ts"
       - "realtime-indexer/src/tests/evmIndexerChains.test.ts"
       - "realtime-indexer/src/tests/localRuntimeIsolation.test.ts"
+      - "realtime-indexer/src/tests/robinhoodV3PoolIndexer.test.ts"
       - ".github/workflows/robinhood-foundation-ci.yml"
   push:
     branches:
@@ -84,8 +86,10 @@ on:
       - "realtime-indexer/src/env.ts"
       - "realtime-indexer/src/evmIndexerChains.ts"
       - "realtime-indexer/src/robinhoodLocalScanner.ts"
+      - "realtime-indexer/src/robinhoodV3PoolIndexer.ts"
       - "realtime-indexer/src/tests/evmIndexerChains.test.ts"
       - "realtime-indexer/src/tests/localRuntimeIsolation.test.ts"
+      - "realtime-indexer/src/tests/robinhoodV3PoolIndexer.test.ts"
       - ".github/workflows/robinhood-foundation-ci.yml"
 
 permissions:
@@ -204,6 +208,10 @@ jobs:
       - name: Prove isolated local runtime boots without production Ably or telemetry
         working-directory: realtime-indexer
         run: npx tsx --test src/tests/localRuntimeIsolation.test.ts
+
+      - name: Prove Robinhood V3 swap direction normalization
+        working-directory: realtime-indexer
+        run: npx tsx --test src/tests/robinhoodV3PoolIndexer.test.ts
 
   local-stack-smoke:
     name: Boot isolated Robinhood local stack with PostgreSQL
