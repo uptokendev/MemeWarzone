@@ -25,8 +25,8 @@ function viteRealtimeApiBase() {
   const forceDirect = truthy(process.env.VITE_REALTIME_API_DIRECT || process.env.VITE_FORCE_DIRECT_REALTIME_API);
 
   // In hybrid localhost mode, the browser should call the local API gateway.
-  // The gateway then proxies /api/token/* to Railway. This avoids localhost CORS
-  // drift while preserving the same Railway data source underneath.
+  // The gateway then proxies remote-only routes and falls back to local handlers.
+  // This avoids localhost CORS and stale .env base-URL drift.
   if (railwayProxyEnabled && !forceDirect && localGateway) {
     console.log("[dev:vite] using local API gateway as VITE_REALTIME_API_BASE for hybrid parity");
     return localGateway;
@@ -96,7 +96,15 @@ const child = spawn(command, args, {
     VITE_ALLOWED_CHAIN_IDS: allowedChainIds,
     VITE_DEV_API_PORT: apiPort,
     VITE_DEV_API_PROXY_TARGET: apiBase,
-    ...(realtimeApiBase ? { VITE_REALTIME_API_BASE: realtimeApiBase } : {}),
+    ...(realtimeApiBase
+      ? {
+          VITE_REALTIME_API_BASE: realtimeApiBase,
+          // Several older clients prefer VITE_TOKEN_API_BASE over realtime base.
+          // Force both to the hybrid gateway so stale local .env Railway URLs cannot
+          // bypass the local router and produce cross-environment 400/404 responses.
+          VITE_TOKEN_API_BASE: realtimeApiBase,
+        }
+      : {}),
   },
 });
 
