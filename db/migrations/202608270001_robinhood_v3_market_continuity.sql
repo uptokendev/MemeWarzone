@@ -29,37 +29,39 @@ alter table public.dex_trades add constraint dex_trades_origin_valid check (
 );
 
 -- Rebuild the unified trade view so the post-grad source is derived from the
--- indexed execution source rather than hard-coded to Topaz.
+-- indexed execution source rather than hard-coded to Topaz. Explicit casts keep
+-- clean database replays stable because legacy curve raw-amount columns may be
+-- numeric while dex_trades stores raw amounts as text.
 create or replace view public.market_trades_v
 with(security_invoker=true)
 as
 select
-  t.chain_id as "chainId",
-  t.campaign_address as "campaignAddress",
-  c.token_address as "tokenAddress",
+  t.chain_id::integer as "chainId",
+  t.campaign_address::text as "campaignAddress",
+  c.token_address::text as "tokenAddress",
   null::text as "pairAddress",
   'BONDING'::text as "marketStage",
   'bonding'::text as source,
-  t.side,
-  t.wallet,
-  t.wallet as recipient,
-  t.token_amount_raw as "tokenAmountRaw",
-  t.bnb_amount_raw as "nativeAmountRaw",
-  t.price_bnb as "priceBnb",
-  t.tx_hash as "txHash",
-  t.log_index as "logIndex",
-  t.block_number as "blockNumber",
-  t.block_time as "blockTime",
+  t.side::text as side,
+  t.wallet::text as wallet,
+  t.wallet::text as recipient,
+  t.token_amount_raw::text as "tokenAmountRaw",
+  t.bnb_amount_raw::text as "nativeAmountRaw",
+  t.price_bnb::numeric as "priceBnb",
+  t.tx_hash::text as "txHash",
+  t.log_index::integer as "logIndex",
+  t.block_number::bigint as "blockNumber",
+  t.block_time::timestamptz as "blockTime",
   'confirmed'::text as status
 from public.curve_trades t
 left join public.campaigns c
   on c.chain_id=t.chain_id and c.campaign_address=t.campaign_address
 union all
 select
-  t.chain_id as "chainId",
-  t.campaign_address as "campaignAddress",
-  t.token_address as "tokenAddress",
-  t.pair_address as "pairAddress",
+  t.chain_id::integer as "chainId",
+  t.campaign_address::text as "campaignAddress",
+  t.token_address::text as "tokenAddress",
+  t.pair_address::text as "pairAddress",
   case
     when t.execution_source='robinhood_v3' then 'DEX'::text
     else 'TOPAZ'::text
@@ -68,17 +70,17 @@ select
     when t.execution_source='robinhood_v3' then 'robinhood_v3'::text
     else 'topaz'::text
   end as source,
-  t.side,
-  coalesce(t.transaction_from,t.sender_address,t.recipient_address,'') as wallet,
-  t.recipient_address as recipient,
-  t.token_amount_raw as "tokenAmountRaw",
-  t.native_amount_raw as "nativeAmountRaw",
-  t.price_bnb as "priceBnb",
-  t.tx_hash as "txHash",
-  t.log_index as "logIndex",
-  t.block_number as "blockNumber",
-  t.block_time as "blockTime",
-  t.status
+  t.side::text as side,
+  coalesce(t.transaction_from,t.sender_address,t.recipient_address,'')::text as wallet,
+  t.recipient_address::text as recipient,
+  t.token_amount_raw::text as "tokenAmountRaw",
+  t.native_amount_raw::text as "nativeAmountRaw",
+  t.price_bnb::numeric as "priceBnb",
+  t.tx_hash::text as "txHash",
+  t.log_index::integer as "logIndex",
+  t.block_number::bigint as "blockNumber",
+  t.block_time::timestamptz as "blockTime",
+  t.status::text as status
 from public.dex_trades t
 where t.status='confirmed';
 
