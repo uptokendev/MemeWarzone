@@ -19,6 +19,14 @@ function validDeployedAddress(value: unknown): string {
   return ethers.isAddress(address) && address !== ethers.ZeroAddress ? address : "";
 }
 
+function firstDeployedAddress(...values: unknown[]): string {
+  for (const value of values) {
+    const address = validDeployedAddress(value);
+    if (address) return address;
+  }
+  return "";
+}
+
 async function main() {
   const net = await ethers.provider.getNetwork();
   const chainId = Number(net.chainId);
@@ -76,8 +84,21 @@ async function main() {
     console.log(`[robinhood-aux] UPVoteTreasury deployed at ${voteTreasuryAddress}`);
   }
 
-  const swapRouter = validDeployedAddress(manifest.contracts.v3SwapRouter || manifest.contracts.swapRouter);
-  const wrappedNative = validDeployedAddress(manifest.contracts.weth9 || manifest.contracts.wrappedNative);
+  // The staged deployment manifest deliberately uses explicit mock-prefixed keys
+  // so testnet infrastructure cannot be confused with production contracts.
+  // Accept both the canonical production-style names and those staging-only keys.
+  const swapRouter = firstDeployedAddress(
+    manifest.contracts.v3SwapRouter,
+    manifest.contracts.swapRouter,
+    manifest.contracts.mockSwapRouter02,
+    manifest.contracts.MockUniswapV3SwapRouter,
+  );
+  const wrappedNative = firstDeployedAddress(
+    manifest.contracts.weth9,
+    manifest.contracts.wrappedNative,
+    manifest.contracts.mockWeth9,
+    manifest.contracts.MockWETH9,
+  );
   if (!swapRouter || !wrappedNative) {
     throw new Error("Staged manifest is missing Robinhood V3 swap router or wrapped native token.");
   }
