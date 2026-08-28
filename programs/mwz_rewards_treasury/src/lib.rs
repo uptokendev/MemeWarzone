@@ -25,7 +25,8 @@ pub const SQUAD_CLAIM_SEED: &[u8] = b"squad_claim";
 pub mod route;
 pub use route::*;
 pub mod arena;
-pub use arena::*;
+pub mod arena_final;
+pub use arena_final::*;
 
 pub const PERIOD_WEEKLY: u8 = 0;
 pub const PERIOD_MONTHLY: u8 = 1;
@@ -541,6 +542,106 @@ pub mod mwz_rewards_treasury {
         nonce: u64,
     ) -> Result<()> {
         resolve_pool_handler(ctx, pool_id, result_type, winner, deadline, nonce)
+    }
+
+    pub fn open_battle_pool_v2(
+        ctx: Context<OpenBattlePoolV2>,
+        pool_id: [u8; 32],
+        asset_a: Pubkey,
+        asset_b: Pubkey,
+        owner_a: Pubkey,
+        owner_b: Pubkey,
+        required_stake_a: u64,
+        required_stake_b: u64,
+        support_deadline: i64,
+        deposit_deadline: i64,
+        resolve_deadline: i64,
+    ) -> Result<()> {
+        open_battle_pool_v2_handler(ctx, pool_id, asset_a, asset_b, owner_a, owner_b, required_stake_a, required_stake_b, support_deadline, deposit_deadline, resolve_deadline)
+    }
+
+    pub fn open_tournament_pool_v2(
+        ctx: Context<OpenTournamentPoolV2>,
+        pool_id: [u8; 32],
+        buy_in_lamports: u64,
+        support_deadline: i64,
+        deposit_deadline: i64,
+        resolve_deadline: i64,
+    ) -> Result<()> {
+        open_tournament_pool_v2_handler(ctx, pool_id, buy_in_lamports, support_deadline, deposit_deadline, resolve_deadline)
+    }
+
+    pub fn deposit_stake_v2(ctx: Context<DepositStakeV2>, pool_id: [u8; 32]) -> Result<()> {
+        deposit_stake_v2_handler(ctx, pool_id)
+    }
+
+    pub fn donate_support_v2(
+        ctx: Context<DonateSupportV2>,
+        pool_id: [u8; 32],
+        amount_lamports: u64,
+    ) -> Result<()> {
+        donate_support_v2_handler(ctx, pool_id, amount_lamports)
+    }
+
+    pub fn close_support_v2(ctx: Context<CloseSupportV2>, pool_id: [u8; 32]) -> Result<()> {
+        close_support_v2_handler(ctx, pool_id)
+    }
+
+    pub fn deposit_buy_in_v2(
+        ctx: Context<DepositBuyInV2>,
+        pool_id: [u8; 32],
+        entry_asset: Pubkey,
+    ) -> Result<()> {
+        deposit_buy_in_v2_handler(ctx, pool_id, entry_asset)
+    }
+
+    pub fn deposit_prize_boost_v2(
+        ctx: Context<DepositPrizeBoostV2>,
+        pool_id: [u8; 32],
+        funding_id: [u8; 32],
+        amount_lamports: u64,
+    ) -> Result<()> {
+        deposit_prize_boost_v2_handler(ctx, pool_id, funding_id, amount_lamports)
+    }
+
+    pub fn resolve_pool_v2(
+        ctx: Context<ResolveArenaPoolV2>,
+        pool_id: [u8; 32],
+        result_type: u8,
+        winner_side: u8,
+        winner_asset: Pubkey,
+        winner_wallet: Pubkey,
+        outcome_hash: [u8; 32],
+        deadline: i64,
+        nonce: u64,
+    ) -> Result<()> {
+        resolve_pool_v2_handler(ctx, pool_id, result_type, winner_side, winner_asset, winner_wallet, outcome_hash, deadline, nonce)
+    }
+
+    pub fn cancel_pool_v2(
+        ctx: Context<CancelArenaPoolV2>,
+        pool_id: [u8; 32],
+        reason_code: u8,
+        deadline: i64,
+        nonce: u64,
+    ) -> Result<()> {
+        cancel_pool_v2_handler(ctx, pool_id, reason_code, deadline, nonce)
+    }
+
+    pub fn refund_buy_in_v2(
+        ctx: Context<RefundArenaBuyInV2>,
+        pool_id: [u8; 32],
+        entry_asset: Pubkey,
+    ) -> Result<()> {
+        refund_buy_in_v2_handler(ctx, pool_id, entry_asset)
+    }
+
+    pub fn refund_prize_boost_v2(
+        ctx: Context<RefundPrizeBoostV2>,
+        pool_id: [u8; 32],
+        funding_id: [u8; 32],
+    ) -> Result<()> {
+        refund_prize_boost_v2_handler(ctx, pool_id, funding_id)
     }
 
     pub fn settle_expired_pool(
