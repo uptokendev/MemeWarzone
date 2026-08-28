@@ -29,9 +29,10 @@ alter table public.dex_trades add constraint dex_trades_origin_valid check (
 );
 
 -- Rebuild the unified trade view so the post-grad source is derived from the
--- indexed execution source rather than hard-coded to Topaz. Explicit casts keep
--- clean database replays stable because legacy curve raw-amount columns may be
--- numeric while dex_trades stores raw amounts as text.
+-- indexed execution source rather than hard-coded to Topaz. Raw amounts are text
+-- on both sides for clean-replay compatibility. priceBnb intentionally remains
+-- double precision because that is the existing public view contract; changing
+-- its type in CREATE OR REPLACE VIEW would break upgrades and downstream clients.
 create or replace view public.market_trades_v
 with(security_invoker=true)
 as
@@ -47,7 +48,7 @@ select
   t.wallet::text as recipient,
   t.token_amount_raw::text as "tokenAmountRaw",
   t.bnb_amount_raw::text as "nativeAmountRaw",
-  t.price_bnb::numeric as "priceBnb",
+  t.price_bnb::double precision as "priceBnb",
   t.tx_hash::text as "txHash",
   t.log_index::integer as "logIndex",
   t.block_number::bigint as "blockNumber",
@@ -75,7 +76,7 @@ select
   t.recipient_address::text as recipient,
   t.token_amount_raw::text as "tokenAmountRaw",
   t.native_amount_raw::text as "nativeAmountRaw",
-  t.price_bnb::numeric as "priceBnb",
+  t.price_bnb::double precision as "priceBnb",
   t.tx_hash::text as "txHash",
   t.log_index::integer as "logIndex",
   t.block_number::bigint as "blockNumber",
