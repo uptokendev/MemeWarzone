@@ -11,6 +11,7 @@ on:
       - frontend/api/lib/solanaRewardLane.js
       - scripts/solana/send-server-v0.mjs
       - scripts/solana/arena-operator-v0.mjs
+      - scripts/solana/arena-operator-v0.test.mjs
       - scripts/solana/backfill-fee-escrow.mjs
       - scripts/solana/flush-fee-escrow.mjs
       - scripts/solana/init-rewards-lanes.mjs
@@ -41,6 +42,7 @@ jobs:
         run: |
           node --check scripts/solana/send-server-v0.mjs
           node --check scripts/solana/arena-operator-v0.mjs
+          node --check scripts/solana/arena-operator-v0.test.mjs
           node --check scripts/solana/backfill-fee-escrow.mjs
           node --check scripts/solana/flush-fee-escrow.mjs
           node --check scripts/solana/init-rewards-lanes.mjs
@@ -74,6 +76,16 @@ jobs:
           grep -F 'sendServerV0' scripts/solana/arena-operator-v0.mjs
           grep -F 'Ed25519Program' scripts/solana/arena-operator-v0.mjs
           grep -F 'ARENA_PROGRAM_ID' scripts/solana/arena-operator-v0.mjs
+          grep -F 'MWZ_ARENA_RESOLVE_V2' scripts/solana/arena-operator-v0.mjs
+          grep -F 'MWZ_ARENA_CANCEL_V1' scripts/solana/arena-operator-v0.mjs
+          grep -F 'outcomeHash' scripts/solana/arena-operator-v0.mjs
+          grep -F 'prizeBoostTotal' scripts/solana/arena-operator-v0.mjs
+
+      - name: Install Arena operator test dependency
+        run: npm install --no-save --ignore-scripts --no-audit --no-fund @solana/web3.js@1.98.4
+
+      - name: Run Arena operator V2 tests
+        run: node --test scripts/solana/arena-operator-v0.test.mjs
 
       - name: Install realtime indexer dependencies
         run: npm ci --prefix realtime-indexer --no-audit --no-fund
