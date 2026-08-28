@@ -27,9 +27,12 @@ function isRobinhoodAirdrop(chainId?: number | null): boolean {
 }
 
 function nativeSymbol(chainId?: number | null, tokenSymbol?: string | null): "BNB" | "SOL" | "ETH" | string {
-  if (tokenSymbol) return tokenSymbol;
+  // Chain identity is authoritative for native rewards. Older/current reward rows may
+  // still carry a legacy BNB tokenSymbol from the shared EVM reward pipeline; never
+  // let that relabel a Robinhood prize pool after the API response arrives.
   if (isSolanaAirdrop(chainId)) return "SOL";
   if (isRobinhoodAirdrop(chainId)) return "ETH";
+  if (tokenSymbol) return tokenSymbol;
   return "BNB";
 }
 
