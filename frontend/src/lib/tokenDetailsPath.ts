@@ -98,10 +98,11 @@ export function tokenDetailsPath(
         ? chainId
         : 0;
 
-  // BNB mainnet remains the legacy clean 0x URL. Solana mint shape is unique.
-  // BNB testnet and every non-BNB EVM chain must be explicit so browsing a token
-  // never follows the currently connected EVM network by accident.
+  // Every known EVM market is ambiguous by address shape alone. Internal links
+  // therefore pin the chain explicitly, including BNB mainnet, so browsing a
+  // campaign never follows whichever EVM network MetaMask currently has active.
   if (
+    resolvedChain === 56 ||
     resolvedChain === 97 ||
     resolvedChain === 102 ||
     resolvedChain === 4663 ||
