@@ -44,6 +44,7 @@ function buildRobinhoodFrontendEnv(deployment, chainId, sourceLabel) {
     `VITE_ROBINHOOD_V3_FACTORY_ADDRESS_${suffix}=${requireAddress("Robinhood V3 factory", pickAddress(deployment, "MockUniswapV3Factory", ["mockV3Factory", "v3Factory"]), sourceLabel)}`,
     `VITE_ROBINHOOD_V3_POSITION_MANAGER_ADDRESS_${suffix}=${requireAddress("Robinhood V3 position manager", pickAddress(deployment, "MockUniswapV3PositionManager", ["mockNonfungiblePositionManager", "nonfungiblePositionManager"]), sourceLabel)}`,
     `VITE_ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_${suffix}=${requireAddress("Robinhood V3 swap router", pickAddress(deployment, "MockUniswapV3SwapRouter", ["mockSwapRouter02", "swapRouter02"]), sourceLabel)}`,
+    `VITE_ROBINHOOD_V3_NATIVE_SWAP_ADAPTER_ADDRESS_${suffix}=${requireAddress("Robinhood V3 native swap adapter", pickAddress(deployment, "RobinhoodV3NativeSwapAdapter", ["v3NativeSwapAdapter", "nativeSwapAdapter"]), sourceLabel)}`,
     `VITE_WRAPPED_NATIVE_ADDRESS_${suffix}=${requireAddress("Robinhood wrapped native", pickAddress(deployment, "MockWETH9", ["mockWeth9", "weth9", "wrappedNative"]), sourceLabel)}`,
   ];
   const optionalLines = [
