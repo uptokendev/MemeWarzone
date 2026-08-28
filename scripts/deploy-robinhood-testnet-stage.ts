@@ -7,7 +7,7 @@ const LOCAL_CHAIN_ID = 31337;
 const V3_FEE_TIER = 3000;
 const TEST_GRADUATION_TARGET_USD = ethers.parseEther("6");
 const EXPECTED_FACTORY_GENERATION = 4n;
-const EXPECTED_CAMPAIGN_GENERATION = 2n;
+const EXPECTED_CAMPAIGN_GENERATION = 3n;
 const EXPECTED_LIQUIDITY_KIND = 2n;
 const TREASURY_UPGRADE_DELAY = 3600;
 const DEFAULT_TEST_NATIVE_USD_PRICE = "3000";
@@ -31,6 +31,10 @@ async function requireCode(address: string, label: string): Promise<void> {
 
 function sameAddress(a: string, b: string): boolean {
   return String(a).toLowerCase() === String(b).toLowerCase();
+}
+
+function assertEq(label: string, actual: bigint, expected: bigint): void {
+  if (actual !== expected) throw new Error(`${label}: expected ${expected}, got ${actual}`);
 }
 
 async function main() {
@@ -68,10 +72,6 @@ async function main() {
     testNativeUsdPrice,
   });
 
-  // -------------------------------------------------------------------------
-  // Controlled V3 staging DEX. These contracts are testnet-only and must never
-  // be promoted into the Robinhood mainnet manifest.
-  // -------------------------------------------------------------------------
   const WETH = await ethers.getContractFactory("MockWETH9");
   const weth = await WETH.deploy();
   await weth.waitForDeployment();
@@ -98,9 +98,6 @@ async function main() {
   );
   await adapter.waitForDeployment();
 
-  // -------------------------------------------------------------------------
-  // Testnet-only native/USD feed + the real GraduationOracle implementation.
-  // -------------------------------------------------------------------------
   const PriceFeed = await ethers.getContractFactory("MockUsdPriceFeed");
   const priceFeed = await PriceFeed.deploy(8);
   await priceFeed.waitForDeployment();
@@ -112,10 +109,6 @@ async function main() {
   const graduationOracle = await GraduationOracle.deploy(await priceFeed.getAddress(), 30 * 24 * 60 * 60);
   await graduationOracle.waitForDeployment();
 
-  // -------------------------------------------------------------------------
-  // Real treasury/reward contracts. Payout lanes remain paused; this deployment
-  // exists to exercise the exact routing contracts while acceptance is underway.
-  // -------------------------------------------------------------------------
   const WeeklyVault = await ethers.getContractFactory("TreasuryVaultV2");
   const weeklyLeagueVault = await WeeklyVault.deploy(admin, ethers.ZeroAddress, admin);
   await weeklyLeagueVault.waitForDeployment();
@@ -142,7 +135,7 @@ async function main() {
   const protocolRevenueVault = await Protocol.deploy(admin);
   await protocolRevenueVault.waitForDeployment();
 
-  const Treasury = await ethers.getContractFactory("TreasuryRouterV2");
+  const Treasury = await ethers.getContractFactory("TreasuryRouterV3");
   const treasuryRouter = await Treasury.deploy(
     admin,
     await weeklyLeagueVault.getAddress(),
@@ -155,14 +148,15 @@ async function main() {
   const communityRewardsVault = await Community.deploy(admin, await treasuryRouter.getAddress());
   await communityRewardsVault.waitForDeployment();
 
+  const CreatorRewards = await ethers.getContractFactory("CreatorRewardsVault");
+  const creatorRewardsVault = await CreatorRewards.deploy(admin, await treasuryRouter.getAddress());
+  await creatorRewardsVault.waitForDeployment();
+
   await (await treasuryRouter.setRecruiterRewardsVault(await recruiterRewardsVault.getAddress())).wait();
   await (await treasuryRouter.setCommunityRewardsVault(await communityRewardsVault.getAddress())).wait();
   await (await treasuryRouter.setProtocolRevenueVault(await protocolRevenueVault.getAddress())).wait();
+  await (await treasuryRouter.setCreatorRewardsVault(await creatorRewardsVault.getAddress())).wait();
 
-  // -------------------------------------------------------------------------
-  // Real enforcement registries + real LaunchCampaign implementation + gen-4
-  // factory. The factory detects liquidityKind=2 and deploys the V3 NFT locker.
-  // -------------------------------------------------------------------------
   const CreatorRegistry = await ethers.getContractFactory("CreatorRegistry");
   const creatorRegistry = await CreatorRegistry.deploy();
   await creatorRegistry.waitForDeployment();
@@ -209,10 +203,6 @@ async function main() {
   await (await treasuryRouter.setPrimaryLpLocker(lockerAddress)).wait();
   await (await launchFactory.lockSecurityDefaults()).wait();
 
-  // -------------------------------------------------------------------------
-  // Mandatory self-verification before a manifest may be written.
-  // Creation intentionally remains disabled (factory.live() == false).
-  // -------------------------------------------------------------------------
   const contracts = {
     mockWeth9: await weth.getAddress(),
     mockV3Factory: await v3Factory.getAddress(),
@@ -226,8 +216,9 @@ async function main() {
     monthlyLeagueTreasury: await monthlyLeagueTreasury.getAddress(),
     recruiterRewardsVault: await recruiterRewardsVault.getAddress(),
     protocolRevenueVault: await protocolRevenueVault.getAddress(),
-    treasuryRouterV2: await treasuryRouter.getAddress(),
+    treasuryRouterV3: await treasuryRouter.getAddress(),
     communityRewardsVault: await communityRewardsVault.getAddress(),
+    creatorRewardsVault: await creatorRewardsVault.getAddress(),
     creatorRegistry: await creatorRegistry.getAddress(),
     riskRegistry: await riskRegistry.getAddress(),
     launchCampaignImplementation: await campaignImplementation.getAddress(),
@@ -258,10 +249,10 @@ async function main() {
     throw new Error("CreatorRegistry does not authorize the staged LaunchFactory");
   }
   if (!(await treasuryRouter.authorizedLpLocker(lockerAddress))) {
-    throw new Error("TreasuryRouterV2 does not authorize the staged V3 locker");
+    throw new Error("TreasuryRouterV3 does not authorize the staged V3 locker");
   }
   if (!sameAddress(await treasuryRouter.permanentLpLocker(), lockerAddress)) {
-    throw new Error("TreasuryRouterV2 primary locker mismatch");
+    throw new Error("TreasuryRouterV3 primary locker mismatch");
   }
   if (!sameAddress(await v3Locker.integrationSource(), await adapter.getAddress())) {
     throw new Error("V3 locker graduation-adapter wiring mismatch");
@@ -278,18 +269,29 @@ async function main() {
   if (!sameAddress(await communityRewardsVault.router(), await treasuryRouter.getAddress())) {
     throw new Error("CommunityRewardsVault router mismatch");
   }
-  if (!sameAddress(await treasuryRouter.recruiterRewardsVault(), await recruiterRewardsVault.getAddress())) {
-    throw new Error("Recruiter vault routing mismatch");
-  }
-  if (!sameAddress(await treasuryRouter.communityRewardsVault(), await communityRewardsVault.getAddress())) {
-    throw new Error("Community vault routing mismatch");
-  }
-  if (!sameAddress(await treasuryRouter.protocolRevenueVault(), await protocolRevenueVault.getAddress())) {
-    throw new Error("Protocol vault routing mismatch");
+  if (!sameAddress(await creatorRewardsVault.router(), await treasuryRouter.getAddress())) {
+    throw new Error("CreatorRewardsVault router mismatch");
   }
 
+  const standardTrade = await treasuryRouter.previewTrade(10_000n, 0);
+  assertEq("standard trade league", standardTrade.league, 3_750n);
+  assertEq("standard trade creator", standardTrade.creator, 500n);
+  assertEq("standard trade recruiter", standardTrade.recruiter, 1_250n);
+  assertEq("standard trade squad", standardTrade.squad, 250n);
+  assertEq("standard trade protocol", standardTrade.protocol, 4_250n);
+
+  const ogTrade = await treasuryRouter.previewTrade(10_000n, 2);
+  assertEq("og trade creator", ogTrade.creator, 500n);
+  assertEq("og trade recruiter", ogTrade.recruiter, 1_500n);
+  assertEq("og trade protocol", ogTrade.protocol, 4_000n);
+
+  const unlinkedTrade = await treasuryRouter.previewTrade(10_000n, 1);
+  assertEq("unlinked trade creator", unlinkedTrade.creator, 500n);
+  assertEq("unlinked trade airdrop", unlinkedTrade.airdrop, 1_500n);
+  assertEq("unlinked trade protocol", unlinkedTrade.protocol, 4_250n);
+
   const manifest = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     chainKey: "robinhood-testnet",
     targetChainId: ROBINHOOD_TESTNET_CHAIN_ID,
     chainId,
@@ -314,12 +316,15 @@ async function main() {
       controlledV3Dex: true,
       mockNativeUsdPriceFeed: true,
       productionCompatible: false,
+      correctedFeeModel: true,
     },
     activationPrerequisites: [
       "verify all contract bytecode and immutable wiring",
       "fund test wallets with Robinhood testnet ETH",
       "configure frontend/API route-authority signer for generation 4",
+      "prove treasury router v3 Standard, OG and Unlinked parity previews",
       "run create-buy-sell-$6-graduation-V3-NFT-lock lifecycle",
+      "run creator fee claim proof against the corrected fee model",
       "run post-graduation swap and 80/20 LP-fee harvest proof",
       "only then call LaunchFactory.enableLive() for testnet acceptance",
     ],
