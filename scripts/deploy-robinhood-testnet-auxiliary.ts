@@ -14,6 +14,11 @@ async function requireCode(address: string, label: string) {
   if (!code || code === "0x") throw new Error(`${label} has no bytecode at ${address}`);
 }
 
+function validDeployedAddress(value: unknown): string {
+  const address = String(value || "").trim();
+  return ethers.isAddress(address) && address !== ethers.ZeroAddress ? address : "";
+}
+
 async function main() {
   const net = await ethers.provider.getNetwork();
   const chainId = Number(net.chainId);
@@ -37,45 +42,82 @@ async function main() {
   }
 
   manifest.contracts ||= {};
-  const existing = String(manifest.contracts.upVoteTreasury || "").trim();
-  if (existing && ethers.isAddress(existing) && (await ethers.provider.getCode(existing)) !== "0x") {
-    console.log(`[robinhood-aux] UPVoteTreasury already deployed at ${existing}`);
-    return;
-  }
+  manifest.auxiliaryFeatures ||= {};
+  let changed = false;
 
-  const feeReceiver = String(manifest.contracts.protocolRevenueVault || "").trim();
-  if (!ethers.isAddress(feeReceiver) || feeReceiver === ethers.ZeroAddress) {
-    throw new Error("Staged manifest is missing ProtocolRevenueVault for UPVote fee forwarding.");
-  }
+  const feeReceiver = validDeployedAddress(manifest.contracts.protocolRevenueVault);
+  if (!feeReceiver) throw new Error("Staged manifest is missing ProtocolRevenueVault for UPVote fee forwarding.");
   await requireCode(feeReceiver, "ProtocolRevenueVault");
 
-  const UPVoteTreasury = await ethers.getContractFactory("UPVoteTreasury");
-  const voteTreasury = await UPVoteTreasury.deploy(deployerAddress, feeReceiver);
-  await voteTreasury.waitForDeployment();
-  const voteTreasuryAddress = await voteTreasury.getAddress();
-  await requireCode(voteTreasuryAddress, "UPVoteTreasury");
+  let voteTreasuryAddress = validDeployedAddress(manifest.contracts.upVoteTreasury);
+  if (voteTreasuryAddress && (await ethers.provider.getCode(voteTreasuryAddress)) !== "0x") {
+    console.log(`[robinhood-aux] UPVoteTreasury already deployed at ${voteTreasuryAddress}`);
+  } else {
+    const UPVoteTreasury = await ethers.getContractFactory("UPVoteTreasury");
+    const voteTreasury = await UPVoteTreasury.deploy(deployerAddress, feeReceiver);
+    await voteTreasury.waitForDeployment();
+    voteTreasuryAddress = await voteTreasury.getAddress();
+    await requireCode(voteTreasuryAddress, "UPVoteTreasury");
 
-  if ((await voteTreasury.owner()).toLowerCase() !== deployerAddress.toLowerCase()) throw new Error("UPVoteTreasury owner mismatch");
-  if ((await voteTreasury.feeReceiver()).toLowerCase() !== feeReceiver.toLowerCase()) throw new Error("UPVoteTreasury fee receiver mismatch");
-  const nativeConfig = await voteTreasury.assetConfig(ethers.ZeroAddress);
-  if (!nativeConfig.enabled) throw new Error("UPVoteTreasury native voting is not enabled");
+    if ((await voteTreasury.owner()).toLowerCase() !== deployerAddress.toLowerCase()) throw new Error("UPVoteTreasury owner mismatch");
+    if ((await voteTreasury.feeReceiver()).toLowerCase() !== feeReceiver.toLowerCase()) throw new Error("UPVoteTreasury fee receiver mismatch");
+    const nativeConfig = await voteTreasury.assetConfig(ethers.ZeroAddress);
+    if (!nativeConfig.enabled) throw new Error("UPVoteTreasury native voting is not enabled");
 
-  manifest.contracts.upVoteTreasury = voteTreasuryAddress;
-  manifest.auxiliaryFeatures = {
-    ...(manifest.auxiliaryFeatures || {}),
-    upVoteTreasury: {
+    manifest.contracts.upVoteTreasury = voteTreasuryAddress;
+    manifest.auxiliaryFeatures.upVoteTreasury = {
       enabled: true,
       owner: deployerAddress,
       feeReceiver,
       nativeAssetEnabled: true,
       testnetOnly: true,
-    },
-  };
-  fs.writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
+    };
+    changed = true;
+    console.log(`[robinhood-aux] UPVoteTreasury deployed at ${voteTreasuryAddress}`);
+  }
 
-  console.log("[robinhood-aux] UPVoteTreasury deployed and appended to staged manifest", {
-    address: voteTreasuryAddress,
-    feeReceiver,
+  const swapRouter = validDeployedAddress(manifest.contracts.v3SwapRouter || manifest.contracts.swapRouter);
+  const wrappedNative = validDeployedAddress(manifest.contracts.weth9 || manifest.contracts.wrappedNative);
+  if (!swapRouter || !wrappedNative) {
+    throw new Error("Staged manifest is missing Robinhood V3 swap router or wrapped native token.");
+  }
+  await Promise.all([
+    requireCode(swapRouter, "Robinhood V3 swap router"),
+    requireCode(wrappedNative, "Robinhood wrapped native"),
+  ]);
+
+  let nativeSwapAdapter = validDeployedAddress(manifest.contracts.v3NativeSwapAdapter);
+  if (nativeSwapAdapter && (await ethers.provider.getCode(nativeSwapAdapter)) !== "0x") {
+    console.log(`[robinhood-aux] RobinhoodV3NativeSwapAdapter already deployed at ${nativeSwapAdapter}`);
+  } else {
+    const Adapter = await ethers.getContractFactory("RobinhoodV3NativeSwapAdapter");
+    const adapter = await Adapter.deploy(swapRouter, wrappedNative);
+    await adapter.waitForDeployment();
+    nativeSwapAdapter = await adapter.getAddress();
+    await requireCode(nativeSwapAdapter, "RobinhoodV3NativeSwapAdapter");
+
+    if ((await adapter.swapRouter()).toLowerCase() !== swapRouter.toLowerCase()) throw new Error("V3 native adapter router mismatch");
+    if ((await adapter.wrappedNative()).toLowerCase() !== wrappedNative.toLowerCase()) throw new Error("V3 native adapter wrapped native mismatch");
+
+    manifest.contracts.v3NativeSwapAdapter = nativeSwapAdapter;
+    manifest.auxiliaryFeatures.v3NativeSwapAdapter = {
+      enabled: true,
+      swapRouter,
+      wrappedNative,
+      nativeAsset: "ETH",
+      testnetOnly: true,
+    };
+    changed = true;
+    console.log(`[robinhood-aux] RobinhoodV3NativeSwapAdapter deployed at ${nativeSwapAdapter}`);
+  }
+
+  if (changed) {
+    fs.writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
+  }
+
+  console.log("[robinhood-aux] auxiliary Robinhood contracts ready", {
+    upVoteTreasury: voteTreasuryAddress,
+    v3NativeSwapAdapter: nativeSwapAdapter,
     manifest: manifestFile,
   });
 }
