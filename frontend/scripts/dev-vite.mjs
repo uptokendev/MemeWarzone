@@ -75,10 +75,15 @@ if (!realtimeApiBase) {
   );
 }
 
-// Local development should expose the complete current product surface. Production
-// remains fail-closed because this value exists only in the dev launcher and an
-// explicitly configured VITE_ALLOWED_CHAIN_IDS always wins.
-const allowedChainIds = String(process.env.VITE_ALLOWED_CHAIN_IDS || "56,101,46630").trim();
+// Local development must always expose the current three-chain product surface.
+// Merge these required dev chains into any older local VITE_ALLOWED_CHAIN_IDS so a
+// stale .env containing only BNB/Solana cannot silently hide Robinhood. Production
+// never executes this launcher and therefore keeps its explicit fail-closed config.
+const configuredAllowedChainIds = String(process.env.VITE_ALLOWED_CHAIN_IDS || "")
+  .split(",")
+  .map((value) => Number(String(value).trim()))
+  .filter((value) => Number.isInteger(value) && value > 0);
+const allowedChainIds = Array.from(new Set([...configuredAllowedChainIds, 56, 101, 46630])).join(",");
 console.log(`[dev:vite] browser chains: ${allowedChainIds}`);
 
 const command = isWindows ? "cmd.exe" : "vite";
