@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import pg from "pg";
 import {
-  buildRobinhoodLocalEnv,
+  buildRobinhoodLocalDatabaseEnv,
   configPathFromRepoRoot,
   loadSimpleEnvFile,
 } from "./robinhood-local-env.mjs";
@@ -18,7 +18,7 @@ const fileEnv = loadSimpleEnvFile(configPath);
 
 let env;
 try {
-  env = buildRobinhoodLocalEnv(process.env, fileEnv);
+  env = buildRobinhoodLocalDatabaseEnv(process.env, fileEnv);
 } catch (error) {
   console.error(`[robinhood-local-db] preflight failed: ${error?.message || error}`);
   process.exit(1);
