@@ -130,8 +130,12 @@ export function buildRobinhoodLocalEnv(baseEnv = {}, fileEnv = {}) {
   env.DEPLOYMENT_NETWORK = "testnet";
   env.DEFAULT_EVM_CHAIN_ID = "46630";
   env.EVM_INDEXER_CHAIN_IDS = "46630";
+
+  // The backend remains Robinhood-testnet-only, but the browser must expose the
+  // complete product selector so chain switching can be accepted exactly as users
+  // will experience it: BNB | Solana | Robinhood. Mainnet Robinhood stays hidden.
   env.VITE_DEFAULT_CHAIN_ID = "46630";
-  env.VITE_ALLOWED_CHAIN_IDS = "46630";
+  env.VITE_ALLOWED_CHAIN_IDS = "56,101,46630";
   env.PG_SIMPLE_PROTOCOL = "0";
   env.PORT = "3002";
   env.INDEXER_PORT = "3002";
