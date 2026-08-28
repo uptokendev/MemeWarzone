@@ -5,7 +5,7 @@ import { ethers, network } from "hardhat";
 const ROBINHOOD_TESTNET_CHAIN_ID = 46630;
 const LOCAL_CHAIN_ID = 31337;
 const EXPECTED_FACTORY_GENERATION = 4n;
-const EXPECTED_CAMPAIGN_GENERATION = 2n;
+const EXPECTED_CAMPAIGN_GENERATION = 3n;
 const EXPECTED_LIQUIDITY_KIND = 2n;
 const EXPECTED_V3_FEE_TIER = 3000n;
 const TEST_GRADUATION_TARGET_USD = ethers.parseEther("6");
@@ -57,7 +57,7 @@ async function main() {
   assertEq("manifest targetChainId", manifest.targetChainId, ROBINHOOD_TESTNET_CHAIN_ID);
   assertEq("manifest connected chainId", manifest.chainId, chainId);
   assertEq("manifest factoryGeneration", manifest.factoryGeneration, 4);
-  assertEq("manifest campaignGeneration", manifest.campaignGeneration, 2);
+  assertEq("manifest campaignGeneration", manifest.campaignGeneration, 3);
   assertEq("manifest liquidityKind", manifest.liquidityKind, 2);
   if (manifest.creationEnabled !== false || manifest.supportEnabled !== false || manifest.factoryLive !== false) {
     throw new Error("Staged manifest must keep support/creation/factoryLive disabled");
@@ -65,8 +65,8 @@ async function main() {
   if (manifest.stagingOnly?.controlledV3Dex !== true || manifest.stagingOnly?.mockNativeUsdPriceFeed !== true) {
     throw new Error("Staged manifest must explicitly mark controlled V3 and mock price-feed dependencies");
   }
-  if (manifest.stagingOnly?.productionCompatible !== false) {
-    throw new Error("Staged manifest must be marked productionCompatible=false");
+  if (manifest.stagingOnly?.productionCompatible !== false || manifest.stagingOnly?.correctedFeeModel !== true) {
+    throw new Error("Staged manifest must be marked as the corrected non-production fee model");
   }
 
   const c = manifest.contracts || {};
@@ -83,8 +83,9 @@ async function main() {
     monthlyLeagueTreasury: requireAddress(c.monthlyLeagueTreasury, "monthlyLeagueTreasury"),
     recruiterRewardsVault: requireAddress(c.recruiterRewardsVault, "recruiterRewardsVault"),
     protocolRevenueVault: requireAddress(c.protocolRevenueVault, "protocolRevenueVault"),
-    treasuryRouterV2: requireAddress(c.treasuryRouterV2, "treasuryRouterV2"),
+    treasuryRouterV3: requireAddress(c.treasuryRouterV3, "treasuryRouterV3"),
     communityRewardsVault: requireAddress(c.communityRewardsVault, "communityRewardsVault"),
+    creatorRewardsVault: requireAddress(c.creatorRewardsVault, "creatorRewardsVault"),
     creatorRegistry: requireAddress(c.creatorRegistry, "creatorRegistry"),
     riskRegistry: requireAddress(c.riskRegistry, "riskRegistry"),
     launchCampaignImplementation: requireAddress(c.launchCampaignImplementation, "launchCampaignImplementation"),
@@ -101,7 +102,8 @@ async function main() {
   const oracle = await ethers.getContractAt("GraduationOracle", addresses.graduationOracle);
   const factory = await ethers.getContractAt("LaunchFactory", addresses.launchFactory);
   const locker = await ethers.getContractAt("PermanentV3PositionLocker", addresses.permanentV3PositionLocker);
-  const treasury = await ethers.getContractAt("TreasuryRouterV2", addresses.treasuryRouterV2);
+  const treasury = await ethers.getContractAt("TreasuryRouterV3", addresses.treasuryRouterV3);
+  const creatorVault = await ethers.getContractAt("CreatorRewardsVault", addresses.creatorRewardsVault);
   const creatorRegistry = await ethers.getContractAt("CreatorRegistry", addresses.creatorRegistry);
   const riskRegistry = await ethers.getContractAt("RiskRegistry", addresses.riskRegistry);
   const community = await ethers.getContractAt("CommunityRewardsVault", addresses.communityRewardsVault);
@@ -130,8 +132,8 @@ async function main() {
   assertEq("campaign generation", await factory.CAMPAIGN_GENERATION(), EXPECTED_CAMPAIGN_GENERATION);
   assertEq("factory liquidityKind", await factory.liquidityKind(), EXPECTED_LIQUIDITY_KIND);
   assertAddress("factory router", await factory.router(), addresses.graduationAdapter);
-  assertAddress("factory treasury fee recipient", await factory.feeRecipient(), addresses.treasuryRouterV2);
-  assertAddress("factory league receiver", await factory.leagueReceiver(), addresses.treasuryRouterV2);
+  assertAddress("factory treasury fee recipient", await factory.feeRecipient(), addresses.treasuryRouterV3);
+  assertAddress("factory league receiver", await factory.leagueReceiver(), addresses.treasuryRouterV3);
   assertAddress("factory graduation oracle", await factory.graduationOracle(), addresses.graduationOracle);
   assertAddress("factory CreatorRegistry", await factory.creatorRegistry(), addresses.creatorRegistry);
   assertAddress("factory RiskRegistry", await factory.riskRegistry(), addresses.riskRegistry);
@@ -153,7 +155,7 @@ async function main() {
   assertAddress("locker position manager", await locker.positionManager(), addresses.mockNonfungiblePositionManager);
   assertAddress("locker V3 factory", await locker.v3Factory(), addresses.mockV3Factory);
   assertAddress("locker wrapped native", await locker.wrappedNative(), addresses.mockWeth9);
-  assertAddress("locker treasury router", await locker.treasuryRouter(), addresses.treasuryRouterV2);
+  assertAddress("locker treasury router", await locker.treasuryRouter(), addresses.treasuryRouterV3);
   assertEq("locker creator fee bps", await locker.CREATOR_FEE_BPS(), 8000n);
   assertEq("locker protocol fee bps", await locker.PROTOCOL_FEE_BPS(), 2000n);
 
@@ -163,12 +165,15 @@ async function main() {
   assertAddress("treasury recruiter vault", await treasury.recruiterRewardsVault(), addresses.recruiterRewardsVault);
   assertAddress("treasury community vault", await treasury.communityRewardsVault(), addresses.communityRewardsVault);
   assertAddress("treasury protocol vault", await treasury.protocolRevenueVault(), addresses.protocolRevenueVault);
+  assertAddress("treasury creator vault", await treasury.creatorRewardsVault(), addresses.creatorRewardsVault);
   assertAddress("treasury primary LP locker", await treasury.permanentLpLocker(), addresses.permanentV3PositionLocker);
   assertEq("treasury locker authorized", await treasury.authorizedLpLocker(addresses.permanentV3PositionLocker), true);
   assertEq("treasury forwarding paused", await treasury.forwardingPaused(), false);
 
+  assertAddress("creator vault admin", await creatorVault.admin(), manifest.admin);
+  assertAddress("creator vault router", await creatorVault.router(), addresses.treasuryRouterV3);
   assertAddress("community admin", await community.admin(), manifest.admin);
-  assertAddress("community router", await community.router(), addresses.treasuryRouterV2);
+  assertAddress("community router", await community.router(), addresses.treasuryRouterV3);
   assertAddress("weekly multisig", await weekly.multisig(), manifest.admin);
   assertEq("weekly payouts paused", await weekly.payoutsPaused(), true);
   assertEq("weekly claims paused", await weekly.claimsPaused(), true);
@@ -191,12 +196,29 @@ async function main() {
   const nativeForSixUsd = await oracle.nativeTargetForUsd(TEST_GRADUATION_TARGET_USD);
   if (nativeForSixUsd <= 0n) throw new Error("GraduationOracle returned a zero native target for the $6 tier");
 
-  const tradePreview = await treasury.previewRoute(10_000n, 0, 1);
-  const tradeTotal = tradePreview.league + tradePreview.recruiter + tradePreview.airdrop + tradePreview.squad + tradePreview.protocol;
-  assertEq("TreasuryRouterV2 trade preview conserves value", tradeTotal, 10_000n);
-  const finalizePreview = await treasury.previewRoute(10_000n, 1, 1);
-  const finalizeTotal = finalizePreview.league + finalizePreview.recruiter + finalizePreview.airdrop + finalizePreview.squad + finalizePreview.protocol;
-  assertEq("TreasuryRouterV2 finalize preview conserves value", finalizeTotal, 10_000n);
+  const standardTrade = await treasury.previewTrade(10_000n, 0);
+  const standardTotal = standardTrade.league + standardTrade.creator + standardTrade.recruiter + standardTrade.airdrop + standardTrade.squad + standardTrade.protocol;
+  assertEq("TreasuryRouterV3 standard trade conserves value", standardTotal, 10_000n);
+  assertEq("TreasuryRouterV3 standard creator", standardTrade.creator, 500n);
+  assertEq("TreasuryRouterV3 standard recruiter", standardTrade.recruiter, 1_250n);
+
+  const ogTrade = await treasury.previewTrade(10_000n, 2);
+  const ogTotal = ogTrade.league + ogTrade.creator + ogTrade.recruiter + ogTrade.airdrop + ogTrade.squad + ogTrade.protocol;
+  assertEq("TreasuryRouterV3 OG trade conserves value", ogTotal, 10_000n);
+  assertEq("TreasuryRouterV3 OG creator", ogTrade.creator, 500n);
+  assertEq("TreasuryRouterV3 OG recruiter", ogTrade.recruiter, 1_500n);
+  assertEq("TreasuryRouterV3 OG protocol", ogTrade.protocol, 4_000n);
+
+  const unlinkedTrade = await treasury.previewTrade(10_000n, 1);
+  const unlinkedTotal = unlinkedTrade.league + unlinkedTrade.creator + unlinkedTrade.recruiter + unlinkedTrade.airdrop + unlinkedTrade.squad + unlinkedTrade.protocol;
+  assertEq("TreasuryRouterV3 unlinked trade conserves value", unlinkedTotal, 10_000n);
+  assertEq("TreasuryRouterV3 unlinked creator", unlinkedTrade.creator, 500n);
+  assertEq("TreasuryRouterV3 unlinked airdrop", unlinkedTrade.airdrop, 1_500n);
+
+  const finalizePreview = await treasury.previewFinalize(10_000n, 1);
+  const finalizeTotal = finalizePreview.league + finalizePreview.creator + finalizePreview.recruiter + finalizePreview.airdrop + finalizePreview.squad + finalizePreview.protocol;
+  assertEq("TreasuryRouterV3 finalize conserves value", finalizeTotal, 10_000n);
+  assertEq("TreasuryRouterV3 finalize creator", finalizePreview.creator, 0n);
 
   console.log("[robinhood-stage-verify] PASS", {
     manifest: manifestPath,
