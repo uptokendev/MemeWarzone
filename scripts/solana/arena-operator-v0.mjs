@@ -130,6 +130,20 @@ export function buildArenaOpenTournamentInstruction({ authority, poolId, buyInLa
   });
 }
 
+export function buildArenaActivateTournamentInstruction({ authority, poolId }) {
+  const id = assertPoolId(poolId);
+  const { config, pool } = deriveArenaOperatorPdas(id);
+  return new TransactionInstruction({
+    programId: ARENA_PROGRAM_ID,
+    keys: [
+      { pubkey: new PublicKey(authority), isSigner: true, isWritable: false },
+      { pubkey: config, isSigner: false, isWritable: false },
+      { pubkey: pool, isSigner: false, isWritable: true },
+    ],
+    data: Buffer.concat([discriminator("activate_tournament_pool_v2"), id]),
+  });
+}
+
 export function buildArenaCloseSupportInstruction({ caller, poolId }) {
   const id = assertPoolId(poolId);
   const { config, pool } = deriveArenaOperatorPdas(id);

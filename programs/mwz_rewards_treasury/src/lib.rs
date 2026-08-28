@@ -587,6 +587,13 @@ pub mod mwz_rewards_treasury {
         open_tournament_pool_v2_handler(ctx, pool_id, buy_in_lamports, support_deadline, deposit_deadline, resolve_deadline)
     }
 
+    pub fn activate_tournament_pool_v2(
+        ctx: Context<ActivateTournamentPoolV2>,
+        pool_id: [u8; 32],
+    ) -> Result<()> {
+        activate_tournament_pool_v2_handler(ctx, pool_id)
+    }
+
     pub fn deposit_stake_v2(ctx: Context<DepositStakeV2>, pool_id: [u8; 32]) -> Result<()> {
         deposit_stake_v2_handler(ctx, pool_id)
     }

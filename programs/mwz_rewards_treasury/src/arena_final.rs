@@ -184,6 +184,16 @@ pub fn open_tournament_pool_v2_handler(
     Ok(())
 }
 
+pub fn activate_tournament_pool_v2_handler(ctx: Context<ActivateTournamentPoolV2>, pool_id: [u8; 32]) -> Result<()> {
+    let now = Clock::get()?.unix_timestamp;
+    let pool = &mut ctx.accounts.pool;
+    require!(pool.pool_id == pool_id && pool.kind == ARENA_KIND_TOURNAMENT && pool.state == ARENA_STATE_OPEN, ArenaError::InvalidState);
+    require!(now >= pool.deposit_deadline, ArenaError::InvalidDeadline);
+    pool.state = ARENA_STATE_LIVE;
+    emit!(ArenaPoolLive { pool_id });
+    Ok(())
+}
+
 pub fn deposit_stake_v2_handler(ctx: Context<DepositStakeV2>, pool_id: [u8; 32]) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
     require!(!ctx.accounts.arena_config.deposits_paused, ArenaError::DepositsPaused);
@@ -635,6 +645,14 @@ pub struct OpenTournamentPoolV2<'info> {
     #[account(init, payer = authority, space = 8 + ArenaVault::SIZE, seeds = [ARENA_VAULT_SEED, pool_id.as_ref()], bump)] pub vault: Account<'info, ArenaVault>,
     pub system_program: Program<'info, System>,
 }
+#[derive(Accounts)]
+#[instruction(pool_id: [u8; 32])]
+pub struct ActivateTournamentPoolV2<'info> {
+    pub authority: Signer<'info>,
+    #[account(seeds = [ARENA_CONFIG_SEED], bump = arena_config.bump, constraint = arena_config.authority == authority.key() @ ArenaError::Unauthorized)] pub arena_config: Account<'info, ArenaConfig>,
+    #[account(mut, seeds = [ARENA_POOL_SEED, pool_id.as_ref()], bump = pool.bump)] pub pool: Account<'info, ArenaPool>,
+}
+
 #[derive(Accounts)]
 #[instruction(pool_id: [u8; 32])]
 pub struct DepositStakeV2<'info> {
