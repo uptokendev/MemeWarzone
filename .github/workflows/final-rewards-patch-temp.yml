@@ -28,3 +28,5 @@ jobs:
           git diff --cached --check
           git commit -m "fix(solana): finalize stack-safe rewards and Arena edge cases"
           git push origin HEAD:prep/solana-v0-arena-upgrade
+
+# one-shot workflow; delete after the correction commit lands
