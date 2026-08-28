@@ -1,0 +1,72 @@
+name: Robinhood market DB continuity proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "db/migrations/**"
+      - "realtime-indexer/scripts/verify-robinhood-market-db.mjs"
+      - "realtime-indexer/src/robinhoodV3PoolIndexer.ts"
+      - "realtime-indexer/src/robinhoodMarketApi.ts"
+      - ".github/workflows/robinhood-market-db-ci.yml"
+  push:
+    branches:
+      - "feat/robinhood-*"
+    paths:
+      - "db/migrations/**"
+      - "realtime-indexer/scripts/verify-robinhood-market-db.mjs"
+      - "realtime-indexer/src/robinhoodV3PoolIndexer.ts"
+      - "realtime-indexer/src/robinhoodMarketApi.ts"
+      - ".github/workflows/robinhood-market-db-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: robinhood-market-db-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  market-db:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      RUNTIME_ENVIRONMENT: local
+      VITE_RUNTIME_ENVIRONMENT: local
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/memewarzone_robinhood_local
+      PG_DISABLE_SSL: "1"
+      DEFAULT_EVM_CHAIN_ID: "46630"
+      EVM_INDEXER_CHAIN_IDS: "46630"
+      LOCAL_DISABLE_ABLY: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install frontend migration dependencies
+        run: npm install --prefix frontend --package-lock=false --no-audit --no-fund
+
+      - name: Install realtime indexer dependencies
+        run: npm install --prefix realtime-indexer --package-lock=false --no-audit --no-fund
+
+      - name: Replay all committed migrations into a fresh Robinhood database
+        run: node frontend/scripts/prepare-robinhood-local-db.mjs
+
+      - name: Prove bonding plus V3 continuity, duplicate safety, and cursor persistence
+        run: node realtime-indexer/scripts/verify-robinhood-market-db.mjs
