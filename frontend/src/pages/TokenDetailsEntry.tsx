@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
+import { useSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
 import {
+  BNB_CHAIN_ID,
   BNB_TESTNET_CHAIN_ID,
   ROBINHOOD_CHAIN_ID,
   ROBINHOOD_TESTNET_CHAIN_ID,
@@ -39,6 +41,10 @@ function isRobinhoodChainId(chainId: number): boolean {
   return chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID;
 }
 
+function isBnbChainId(chainId: number): boolean {
+  return chainId === BNB_CHAIN_ID || chainId === BNB_TESTNET_CHAIN_ID;
+}
+
 function routeCacheKey(routeId: string): string {
   return `${SOLANA_ROUTE_CACHE_PREFIX}${routeId}`;
 }
@@ -71,11 +77,20 @@ function writeRouteCache(routeId: string, cache: SolanaRouteCache) {
 const TokenDetailsEntry = () => {
   const { campaignAddress } = useParams<{ campaignAddress: string }>();
   const [searchParams] = useSearchParams();
+  const [selectedFeedChainId] = useSelectedFeedChainId();
   const { fetchCampaigns } = useLaunchpad();
 
   const routeId = String(campaignAddress || "").trim();
   const forcedChainId = Number(searchParams.get("chainId") || "");
-  const robinhoodRoute = isRobinhoodChainId(forcedChainId);
+  const selectedEvmChainId = isRobinhoodChainId(Number(selectedFeedChainId)) || isBnbChainId(Number(selectedFeedChainId))
+    ? Number(selectedFeedChainId)
+    : 0;
+  // Explicit URL identity wins. Legacy /token/0x... links inherit the currently
+  // selected EVM product chain instead of silently becoming BNB testnet.
+  const effectiveEvmChainId = isRobinhoodChainId(forcedChainId) || isBnbChainId(forcedChainId)
+    ? forcedChainId
+    : selectedEvmChainId || BNB_TESTNET_CHAIN_ID;
+  const robinhoodRoute = isRobinhoodChainId(effectiveEvmChainId);
   const isSolanaRoute = useMemo(() => {
     // A 0x BNB/Robinhood token is never a Solana route, even if the wallet latch
     // or a stale ?chainId=101 is present. That was collapsing EVM trades/holders.
@@ -97,9 +112,9 @@ const TokenDetailsEntry = () => {
     if (!routeId) return;
     analytics.track("token_page_viewed", {
       chain: isSolanaRoute ? "solana" : robinhoodRoute ? "robinhood" : "bnb",
-      chainId: isSolanaRoute ? SOLANA_CHAIN_ID : forcedChainId || BNB_TESTNET_CHAIN_ID,
+      chainId: isSolanaRoute ? SOLANA_CHAIN_ID : effectiveEvmChainId,
     });
-  }, [forcedChainId, isSolanaRoute, robinhoodRoute, routeId]);
+  }, [effectiveEvmChainId, isSolanaRoute, robinhoodRoute, routeId]);
 
   useEffect(() => {
     if (!isSolanaRoute) {
@@ -242,9 +257,9 @@ const TokenDetailsEntry = () => {
     const campaignChainId = Number((campaign as { chainId?: number } | null)?.chainId || 0);
     const chainId = isSolanaRoute
       ? SOLANA_CHAIN_ID
-      : isRobinhoodChainId(forcedChainId)
+      : isRobinhoodChainId(forcedChainId) || isBnbChainId(forcedChainId)
         ? forcedChainId
-        : campaignChainId || forcedChainId || BNB_TESTNET_CHAIN_ID;
+        : campaignChainId || effectiveEvmChainId;
 
     recordRecentlyViewed({
       name: String(campaign?.name || campaign?.symbol || tokenAddress.slice(0, 6) || "Token"),
@@ -254,9 +269,9 @@ const TokenDetailsEntry = () => {
       campaignAddress,
       chainId,
     });
-  }, [campaign, forcedChainId, isSolanaRoute, resolvedCampaignAddress, routeId]);
+  }, [campaign, effectiveEvmChainId, forcedChainId, isSolanaRoute, resolvedCampaignAddress, routeId]);
 
-  return <TokenDetails key={`${routeId || (isSolanaRoute ? "solana" : "evm")}:${forcedChainId || "auto"}`} />;
+  return <TokenDetails key={`${routeId || (isSolanaRoute ? "solana" : "evm")}:${isSolanaRoute ? SOLANA_CHAIN_ID : effectiveEvmChainId}`} />;
 };
 
 export default TokenDetailsEntry;
