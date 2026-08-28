@@ -120,7 +120,7 @@ export default function AirdropWinners() {
                   </div>
                 </div>
               </div>
-            ))}
+            )))
           )}
         </div>
       </Card>
