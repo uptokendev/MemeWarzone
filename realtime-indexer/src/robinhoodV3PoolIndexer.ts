@@ -72,7 +72,7 @@ const RESOLUTION_MS: Record<CandleResolution, number> = {
 };
 
 function enabled(): boolean {
-  return String(process.env.ENABLE_ROBINHOOD_V3_POOL_INDEXER || "0").trim() === "1";
+  return ENV.ENABLE_ROBINHOOD_V3_POOL_INDEXER;
 }
 
 function chainConfigs(): ChainConfig[] {
@@ -166,9 +166,10 @@ async function discoverPools(provider: ethers.JsonRpcProvider, config: ChainConf
       const routerAddress = config.swapRouterAddress || ethers.ZeroAddress.toLowerCase();
       const feeBps = Math.max(0, Math.round(feePpm / 100));
 
-      await pool.query("begin");
+      const client = await pool.connect();
       try {
-        await pool.query(
+        await client.query("begin");
+        await client.query(
           `insert into public.dex_pools(
              chain_id,pair_address,campaign_address,token_address,wrapped_native_address,
              router_address,factory_address,factory_generation,token0_address,token1_address,
@@ -207,7 +208,7 @@ async function discoverPools(provider: ethers.JsonRpcProvider, config: ChainConf
           ],
         );
 
-        await pool.query(
+        await client.query(
           `update public.campaign_market_state
               set market_stage='DEX_ACTIVE',
                   dex_router_address=$3,
@@ -223,16 +224,18 @@ async function discoverPools(provider: ethers.JsonRpcProvider, config: ChainConf
             where chain_id=$1 and campaign_address=$2`,
           [config.chainId, campaignAddress, routerAddress, factoryAddress, wrappedNativeAddress, feeBps],
         );
-        await pool.query(
+        await client.query(
           `update public.campaigns
               set market_stage='DEX_ACTIVE',bonding_active=false,support_enabled=true,indexing_enabled=true,updated_at=now()
             where chain_id=$1 and campaign_address=$2`,
           [config.chainId, campaignAddress],
         );
-        await pool.query("commit");
+        await client.query("commit");
       } catch (error) {
-        await pool.query("rollback");
+        await client.query("rollback");
         throw error;
+      } finally {
+        client.release();
       }
     } catch (error) {
       const message = String((error as any)?.shortMessage || (error as any)?.message || error);
@@ -253,7 +256,7 @@ async function discoverPools(provider: ethers.JsonRpcProvider, config: ChainConf
 }
 
 async function listPools(chainId: number): Promise<IndexedPool[]> {
-  const maxPools = Math.max(1, Number(process.env.ROBINHOOD_V3_POOL_INDEXER_MAX_POOLS || 100));
+  const maxPools = Math.max(1, ENV.ROBINHOOD_V3_POOL_INDEXER_MAX_POOLS);
   const result = await pool.query(
     `select chain_id,pair_address,campaign_address,token_address,wrapped_native_address,
             router_address,factory_address,token0_address,token1_address,fee_bps,
@@ -397,7 +400,7 @@ async function insertSwap(
   provider: ethers.JsonRpcProvider,
   indexedPool: IndexedPool,
   log: ethers.Log,
-  parsed: ethers.LogDescription,
+  _parsed: ethers.LogDescription,
   normalized: NormalizedSwap,
 ): Promise<boolean> {
   if (normalized.tokenAmountRaw <= 0n || normalized.nativeAmountRaw <= 0n) return false;
@@ -576,7 +579,7 @@ async function runChain(config: ChainConfig): Promise<void> {
 }
 
 async function loop(): Promise<void> {
-  const intervalMs = Math.max(2_000, Number(process.env.ROBINHOOD_V3_POOL_INDEXER_INTERVAL_MS || 5_000));
+  const intervalMs = Math.max(2_000, ENV.ROBINHOOD_V3_POOL_INDEXER_INTERVAL_MS);
   while (true) {
     const configs = chainConfigs();
     for (const config of configs) {
