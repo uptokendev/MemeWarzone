@@ -110,16 +110,27 @@ function forceLocalServiceRoutes(env) {
   });
 }
 
-export function buildRobinhoodLocalEnv(baseEnv = {}, fileEnv = {}) {
+/**
+ * Minimal environment for the isolated Robinhood PostgreSQL bootstrap.
+ * Database replay must not depend on chain RPC availability, while the full
+ * local application runtime below still hard-requires a real 46630 RPC.
+ */
+export function buildRobinhoodLocalDatabaseEnv(baseEnv = {}, fileEnv = {}) {
   const env = { ...baseEnv, ...fileEnv };
   env.RUNTIME_ENVIRONMENT = "local";
   env.VITE_RUNTIME_ENVIRONMENT = "local";
+  env.PG_DISABLE_SSL = "1";
+  assertLocalDatabaseUrl(env.DATABASE_URL);
+  return env;
+}
+
+export function buildRobinhoodLocalEnv(baseEnv = {}, fileEnv = {}) {
+  const env = buildRobinhoodLocalDatabaseEnv(baseEnv, fileEnv);
   env.ROBINHOOD_TESTNET_CHAIN_ID = "46630";
   env.DEFAULT_EVM_CHAIN_ID = "46630";
   env.EVM_INDEXER_CHAIN_IDS = "46630";
   env.VITE_DEFAULT_CHAIN_ID = "46630";
   env.VITE_ALLOWED_CHAIN_IDS = "46630";
-  env.PG_DISABLE_SSL = "1";
   env.PG_SIMPLE_PROTOCOL = "0";
   env.PORT = "3002";
   env.INDEXER_PORT = "3002";
@@ -157,8 +168,6 @@ export function buildRobinhoodLocalEnv(baseEnv = {}, fileEnv = {}) {
   env.ROBINHOOD_TESTNET_RPC_URL = rpc;
   env.ROBINHOOD_RPC_HTTP_46630 = rpc;
   env.VITE_PUBLIC_RPC_46630 = String(env.VITE_PUBLIC_RPC_46630 || rpc);
-
-  assertLocalDatabaseUrl(env.DATABASE_URL);
 
   const backendKeys = [
     "VITE_FRONTEND_API_BASE",
