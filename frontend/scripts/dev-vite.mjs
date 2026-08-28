@@ -75,6 +75,12 @@ if (!realtimeApiBase) {
   );
 }
 
+// Local development should expose the complete current product surface. Production
+// remains fail-closed because this value exists only in the dev launcher and an
+// explicitly configured VITE_ALLOWED_CHAIN_IDS always wins.
+const allowedChainIds = String(process.env.VITE_ALLOWED_CHAIN_IDS || "56,101,46630").trim();
+console.log(`[dev:vite] browser chains: ${allowedChainIds}`);
+
 const command = isWindows ? "cmd.exe" : "vite";
 const args = isWindows ? ["/d", "/s", "/c", "vite"] : [];
 const child = spawn(command, args, {
@@ -82,6 +88,7 @@ const child = spawn(command, args, {
   shell: false,
   env: {
     ...process.env,
+    VITE_ALLOWED_CHAIN_IDS: allowedChainIds,
     VITE_DEV_API_PORT: apiPort,
     VITE_DEV_API_PROXY_TARGET: apiBase,
     ...(realtimeApiBase ? { VITE_REALTIME_API_BASE: realtimeApiBase } : {}),
