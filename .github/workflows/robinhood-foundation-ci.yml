@@ -26,9 +26,12 @@ on:
       - "test/CreatorArmCooldown.spec.ts"
       - "db/migrations/**"
       - "frontend/api/load-local-env.mjs"
+      - "frontend/scripts/dev-vite.mjs"
       - "frontend/scripts/dev-robinhood-local.mjs"
       - "frontend/scripts/prepare-robinhood-local-db.mjs"
       - "frontend/scripts/robinhood-local-env.mjs"
+      - "frontend/scripts/robinhood-local-env.test.mjs"
+      - "frontend/src/components/common/ChainFeedSwitch.tsx"
       - "frontend/src/lib/chainConfig.ts"
       - "frontend/src/lib/chainRegistry.ts"
       - "frontend/src/lib/deploymentManifest.ts"
@@ -71,9 +74,12 @@ on:
       - "test/CreatorArmCooldown.spec.ts"
       - "db/migrations/**"
       - "frontend/api/load-local-env.mjs"
+      - "frontend/scripts/dev-vite.mjs"
       - "frontend/scripts/dev-robinhood-local.mjs"
       - "frontend/scripts/prepare-robinhood-local-db.mjs"
       - "frontend/scripts/robinhood-local-env.mjs"
+      - "frontend/scripts/robinhood-local-env.test.mjs"
+      - "frontend/src/components/common/ChainFeedSwitch.tsx"
       - "frontend/src/lib/chainConfig.ts"
       - "frontend/src/lib/chainRegistry.ts"
       - "frontend/src/lib/deploymentManifest.ts"
@@ -150,13 +156,16 @@ jobs:
       - name: Prove local API/indexer/database isolation
         run: node scripts/check-robinhood-local-isolation.mjs
 
+      - name: Prove localhost browser exposes three chains while workers stay Robinhood-only
+        run: node --test frontend/scripts/robinhood-local-env.test.mjs
+
       - name: Install frontend dependencies for source proof
         run: npm install --prefix frontend --package-lock=false --no-audit --no-fund
 
       - name: Prove BNB/Solana feed isolation and Robinhood default non-activation
         run: npm --prefix frontend run test:feed-isolation
 
-      - name: Build normal frontend without Robinhood activation
+      - name: Build normal frontend without Robinhood production activation
         env:
           VITE_DEFAULT_CHAIN_ID: "97"
           VITE_PUBLIC_RPC_56: "https://rpc-evm-56.test.mwz"
@@ -171,11 +180,11 @@ jobs:
           VITE_PUBLIC_RPC_101: "https://rpc-solana-101.test.mwz"
         run: npm --prefix frontend run build
 
-      - name: Build isolated Robinhood local frontend
+      - name: Build Robinhood localhost browser with BNB Solana Robinhood selector
         env:
           VITE_RUNTIME_ENVIRONMENT: "local"
           VITE_DEFAULT_CHAIN_ID: "46630"
-          VITE_ALLOWED_CHAIN_IDS: "46630"
+          VITE_ALLOWED_CHAIN_IDS: "56,101,46630"
           VITE_PUBLIC_RPC_46630: "https://rpc.testnet.chain.robinhood.com"
           VITE_FRONTEND_API_BASE: "http://127.0.0.1:3001"
           VITE_TOKEN_API_BASE: "http://127.0.0.1:3002"
@@ -241,7 +250,7 @@ jobs:
       DEFAULT_EVM_CHAIN_ID: "46630"
       EVM_INDEXER_CHAIN_IDS: "46630"
       VITE_DEFAULT_CHAIN_ID: "46630"
-      VITE_ALLOWED_CHAIN_IDS: "46630"
+      VITE_ALLOWED_CHAIN_IDS: "56,101,46630"
       VITE_PUBLIC_RPC_46630: https://rpc.testnet.chain.robinhood.com
       LOCAL_DISABLE_ABLY: "1"
       LOCAL_DISABLE_REMOTE_SUPABASE: "1"
@@ -297,6 +306,7 @@ jobs:
             echo "Production MemeWarzone backend leaked into local runtime"
             exit 1
           fi
+          grep -F "browser chains: 56,101,46630" /tmp/robinhood-local.log
 
       - name: Show local stack log on failure
         if: failure()
