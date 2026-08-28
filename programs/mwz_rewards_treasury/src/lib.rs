@@ -56,10 +56,20 @@ pub mod mwz_rewards_treasury {
     }
 
     pub fn initialize_lanes(
-        ctx: Context<InitializeLanes>,
+        _ctx: Context<InitializeLanesDeprecated>,
+        _operator: Pubkey,
+        _native_usd_micros: u64,
+    ) -> Result<()> {
+        err!(TreasuryError::DeprecatedInstruction)
+    }
+
+    pub fn initialize_lanes_v2_primary(
+        ctx: Context<InitializeLanesV2Primary>,
         operator: Pubkey,
         native_usd_micros: u64,
     ) -> Result<()> {
+        require!(operator != Pubkey::default(), TreasuryError::InvalidOperator);
+        require!(native_usd_micros > 0, TreasuryError::InvalidAmount);
         let state = &mut ctx.accounts.route_state;
         state.authority = ctx.accounts.authority.key();
         state.operator = operator;
@@ -68,6 +78,12 @@ pub mod mwz_rewards_treasury {
         state.operator_filled_usd_micros = 0;
         state.native_usd_micros = native_usd_micros;
         state.bump = ctx.bumps.route_state;
+        Ok(())
+    }
+
+    pub fn initialize_lanes_v2_secondary(
+        _ctx: Context<InitializeLanesV2Secondary>,
+    ) -> Result<()> {
         Ok(())
     }
 
@@ -677,12 +693,17 @@ pub mod mwz_rewards_treasury {
 }
 
 #[derive(Accounts)]
-pub struct InitializeLanes<'info> {
+pub struct InitializeLanesDeprecated<'info> {
+    pub authority: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct InitializeLanesV2Primary<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
     #[account(
         seeds = [REWARDS_CONFIG_SEED],
-        bump,
+        bump = config.bump,
         has_one = authority
     )]
     pub config: Box<Account<'info, RewardsConfig>>,
@@ -706,6 +727,33 @@ pub struct InitializeLanes<'info> {
         init,
         payer = authority,
         space = 8 + VaultState::SIZE,
+        seeds = [PROTOCOL_VAULT_SEED],
+        bump
+    )]
+    pub protocol_vault: Box<Account<'info, VaultState>>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct InitializeLanesV2Secondary<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    #[account(
+        seeds = [REWARDS_CONFIG_SEED],
+        bump = config.bump,
+        has_one = authority
+    )]
+    pub config: Box<Account<'info, RewardsConfig>>,
+    #[account(
+        seeds = [ROUTE_STATE_SEED],
+        bump = route_state.bump,
+        constraint = route_state.authority == authority.key() @ TreasuryError::InvalidOperator
+    )]
+    pub route_state: Box<Account<'info, RouteState>>,
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + VaultState::SIZE,
         seeds = [RECRUITER_VAULT_SEED],
         bump
     )]
@@ -718,14 +766,6 @@ pub struct InitializeLanes<'info> {
         bump
     )]
     pub squad_vault: Box<Account<'info, VaultState>>,
-    #[account(
-        init,
-        payer = authority,
-        space = 8 + VaultState::SIZE,
-        seeds = [PROTOCOL_VAULT_SEED],
-        bump
-    )]
-    pub protocol_vault: Box<Account<'info, VaultState>>,
     pub system_program: Program<'info, System>,
 }
 
@@ -1234,6 +1274,8 @@ pub enum TreasuryError {
     MathOverflow,
     #[msg("Operator account does not match route_state.operator.")]
     InvalidOperator,
+    #[msg("Legacy rewards lane initializer is disabled; use initialize_lanes_v2_primary/secondary.")]
+    DeprecatedInstruction,
 }
 
 pub fn league_leaf(

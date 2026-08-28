@@ -41,7 +41,7 @@ function u64le(value) {
 
 async function main() {
   const crypto = await import("node:crypto");
-  const disc = crypto.createHash("sha256").update("global:initialize_lanes").digest().subarray(0, 8);
+  const disc = crypto.createHash("sha256").update("global:initialize_lanes_v2_primary").digest().subarray(0, 8);
   const payer = loadKeypair();
   const connection = new Connection(RPC, "confirmed");
   const operator = new PublicKey(DEFAULT_OPERATOR);
@@ -62,28 +62,49 @@ async function main() {
     protocol: protocol.toBase58(),
   });
 
-  if (await connection.getAccountInfo(routeState)) {
+  const routeInfo = await connection.getAccountInfo(routeState);
+  const recruiterInfo = await connection.getAccountInfo(recruiter);
+  const squadInfo = await connection.getAccountInfo(squad);
+  if (routeInfo && recruiterInfo && squadInfo) {
     console.log("lanes already initialized");
     return;
   }
 
-  const data = Buffer.concat([disc, operator.toBuffer(), u64le(SOL_USD_MICROS)]);
-  const ix = new TransactionInstruction({
-    programId: PROGRAM_ID,
-    keys: [
-      { pubkey: payer.publicKey, isSigner: true, isWritable: true },
-      { pubkey: config, isSigner: false, isWritable: false },
-      { pubkey: routeState, isSigner: false, isWritable: true },
-      { pubkey: monthly, isSigner: false, isWritable: true },
-      { pubkey: recruiter, isSigner: false, isWritable: true },
-      { pubkey: squad, isSigner: false, isWritable: true },
-      { pubkey: protocol, isSigner: false, isWritable: true },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    ],
-    data,
-  });
-  const sig = await sendServerV0(connection, payer, [ix], "Rewards lane initialization");
-  console.log("initialize_lanes", sig);
+  if (!routeInfo) {
+    const data = Buffer.concat([disc, operator.toBuffer(), u64le(SOL_USD_MICROS)]);
+    const primary = new TransactionInstruction({
+      programId: PROGRAM_ID,
+      keys: [
+        { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+        { pubkey: config, isSigner: false, isWritable: false },
+        { pubkey: routeState, isSigner: false, isWritable: true },
+        { pubkey: monthly, isSigner: false, isWritable: true },
+        { pubkey: protocol, isSigner: false, isWritable: true },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      ],
+      data,
+    });
+    const sig = await sendServerV0(connection, payer, [primary], "Rewards lane primary initialization");
+    console.log("initialize_lanes_v2_primary", sig);
+  }
+
+  if (!recruiterInfo || !squadInfo) {
+    const secondaryDisc = crypto.createHash("sha256").update("global:initialize_lanes_v2_secondary").digest().subarray(0, 8);
+    const secondary = new TransactionInstruction({
+      programId: PROGRAM_ID,
+      keys: [
+        { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+        { pubkey: config, isSigner: false, isWritable: false },
+        { pubkey: routeState, isSigner: false, isWritable: false },
+        { pubkey: recruiter, isSigner: false, isWritable: true },
+        { pubkey: squad, isSigner: false, isWritable: true },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      ],
+      data: secondaryDisc,
+    });
+    const sig = await sendServerV0(connection, payer, [secondary], "Rewards lane secondary initialization");
+    console.log("initialize_lanes_v2_secondary", sig);
+  }
 }
 
 main().catch((error) => {

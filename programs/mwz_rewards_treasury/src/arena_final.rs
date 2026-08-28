@@ -164,7 +164,7 @@ pub fn open_tournament_pool_v2_handler(
 ) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
     require!(!ctx.accounts.arena_config.deposits_paused, ArenaError::DepositsPaused);
-    require!(pool_id != [0u8; 32] && buy_in_lamports > 0, ArenaError::InvalidAmount);
+    require!(pool_id != [0u8; 32], ArenaError::InvalidPoolId);
     require!(deposit_deadline > now, ArenaError::InvalidDeadline);
     require!(support_deadline >= deposit_deadline && support_deadline < resolve_deadline, ArenaError::InvalidDeadline);
     ctx.accounts.vault.kind = ARENA_KIND_TOURNAMENT;
@@ -233,7 +233,7 @@ pub fn close_support_v2_handler(ctx: Context<CloseSupportV2>, pool_id: [u8; 32])
     require!(pool.pool_id == pool_id && (pool.state == ARENA_STATE_OPEN || pool.state == ARENA_STATE_LIVE), ArenaError::InvalidState);
     require!(!pool.support_closed, ArenaError::SupportClosed);
     let caller = ctx.accounts.caller.key();
-    require!(now >= pool.support_deadline || caller == ctx.accounts.arena_config.authority, ArenaError::SupportStillOpen);
+    require!(now >= pool.support_deadline, ArenaError::SupportStillOpen);
     pool.support_closed = true;
     emit!(ArenaSupportClosed { pool_id, closed_by: caller });
     Ok(())
@@ -272,7 +272,7 @@ pub fn deposit_prize_boost_v2_handler(
     require!(funding_id != [0u8; 32] && amount_lamports > 0, ArenaError::InvalidAmount);
     let pool = &mut ctx.accounts.pool;
     require!(pool.pool_id == pool_id && (pool.state == ARENA_STATE_OPEN || pool.state == ARENA_STATE_LIVE), ArenaError::InvalidState);
-    require!(now <= pool.resolve_deadline, ArenaError::DeadlinePassed);
+    require!(now <= pool.deposit_deadline, ArenaError::DeadlinePassed);
     transfer_into_vault(
         &ctx.accounts.funder.to_account_info(), &ctx.accounts.vault.to_account_info(),
         &ctx.accounts.system_program.to_account_info(), amount_lamports,
@@ -317,10 +317,12 @@ pub fn resolve_pool_v2_handler(
         }
     } else {
         require!(winner_side == ARENA_SIDE_NONE && winner_asset != Pubkey::default() && winner_wallet != Pubkey::default(), ArenaError::InvalidWinner);
-        validate_tournament_winner_receipt(
-            &ctx.accounts.winner_buy_in_receipt.to_account_info(), pool_id, winner_asset,
-            winner_wallet, pool.buy_in_lamports,
-        )?;
+        if pool.buy_in_lamports > 0 {
+            validate_tournament_winner_receipt(
+                &ctx.accounts.winner_buy_in_receipt.to_account_info(), pool_id, winner_asset,
+                winner_wallet, pool.buy_in_lamports,
+            )?;
+        }
     }
 
     let message = arena_resolution_message_v2(
