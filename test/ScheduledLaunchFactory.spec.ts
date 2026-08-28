@@ -135,7 +135,7 @@ async function scheduledFixture() {
 }
 
 describe("Scheduled LaunchFactory generation", function () {
-  it("persists the bound schedule evidence in the factory event and fixed test graduation target", async () => {
+  it("persists bound schedule evidence, fixed test graduation target, and launch-anchored creator lock", async () => {
     const { factory, creator, request, authorization, launchAt } = await scheduledFixture();
     const creatorAddress = await creator.getAddress();
 
@@ -162,6 +162,9 @@ describe("Scheduled LaunchFactory generation", function () {
 
     expect(await campaign.launchAt()).to.equal(launchAt);
     expect(await campaign.graduationTarget()).to.equal(ethers.parseEther("6"));
+    // The fixture has no CreatorRegistry, so creatorBuyLockSeconds=0. This makes
+    // the exact anchor observable: scheduled deploy time must not be used here.
+    expect(await campaign.creatorBuyLockUntil()).to.equal(launchAt);
     expect(await factory.usedAuthorizationNonces(creatorAddress, 1n)).to.equal(true);
   });
 
