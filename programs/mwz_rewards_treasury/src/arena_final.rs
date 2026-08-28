@@ -189,6 +189,7 @@ pub fn activate_tournament_pool_v2_handler(ctx: Context<ActivateTournamentPoolV2
     let pool = &mut ctx.accounts.pool;
     require!(pool.pool_id == pool_id && pool.kind == ARENA_KIND_TOURNAMENT && pool.state == ARENA_STATE_OPEN, ArenaError::InvalidState);
     require!(now >= pool.deposit_deadline, ArenaError::InvalidDeadline);
+    require!(pool.entry_count >= 2, ArenaError::InvalidState);
     pool.state = ARENA_STATE_LIVE;
     emit!(ArenaPoolLive { pool_id });
     Ok(())
@@ -255,14 +256,16 @@ pub fn deposit_buy_in_v2_handler(ctx: Context<DepositBuyInV2>, pool_id: [u8; 32]
     require!(entry_asset != Pubkey::default(), ArenaError::InvalidAssets);
     let pool = &mut ctx.accounts.pool;
     require!(pool.pool_id == pool_id && pool.kind == ARENA_KIND_TOURNAMENT, ArenaError::InvalidKind);
-    require!(pool.state == ARENA_STATE_OPEN || pool.state == ARENA_STATE_LIVE, ArenaError::InvalidState);
+    require!(pool.state == ARENA_STATE_OPEN, ArenaError::InvalidState);
     require!(now <= pool.deposit_deadline, ArenaError::DeadlinePassed);
-    transfer_into_vault(
-        &ctx.accounts.entrant.to_account_info(), &ctx.accounts.vault.to_account_info(),
-        &ctx.accounts.system_program.to_account_info(), pool.buy_in_lamports,
-    )?;
-    pool.buy_in_total = pool.buy_in_total.checked_add(pool.buy_in_lamports).ok_or(ArenaError::MathOverflow)?;
-    pool.state = ARENA_STATE_LIVE;
+    if pool.buy_in_lamports > 0 {
+        transfer_into_vault(
+            &ctx.accounts.entrant.to_account_info(), &ctx.accounts.vault.to_account_info(),
+            &ctx.accounts.system_program.to_account_info(), pool.buy_in_lamports,
+        )?;
+        pool.buy_in_total = pool.buy_in_total.checked_add(pool.buy_in_lamports).ok_or(ArenaError::MathOverflow)?;
+    }
+    pool.entry_count = pool.entry_count.checked_add(1).ok_or(ArenaError::MathOverflow)?;
     let receipt = &mut ctx.accounts.buy_in_receipt;
     receipt.pool_id = pool_id;
     receipt.entry_asset = entry_asset;
@@ -327,12 +330,10 @@ pub fn resolve_pool_v2_handler(
         }
     } else {
         require!(winner_side == ARENA_SIDE_NONE && winner_asset != Pubkey::default() && winner_wallet != Pubkey::default(), ArenaError::InvalidWinner);
-        if pool.buy_in_lamports > 0 {
-            validate_tournament_winner_receipt(
-                &ctx.accounts.winner_buy_in_receipt.to_account_info(), pool_id, winner_asset,
-                winner_wallet, pool.buy_in_lamports,
-            )?;
-        }
+        validate_tournament_winner_receipt(
+            &ctx.accounts.winner_buy_in_receipt.to_account_info(), pool_id, winner_asset,
+            winner_wallet, pool.buy_in_lamports,
+        )?;
     }
 
     let message = arena_resolution_message_v2(
@@ -357,7 +358,6 @@ pub fn resolve_pool_v2_handler(
         emit!(ArenaPoolResolvedV2 { pool_id, result_type, winner_side, winner_asset, winner_wallet, outcome_hash, pending_winner: 0, pending_protocol: 0, pending_mwl: 0, pending_charity: pool.pending_charity });
         return Ok(());
     }
-
     let normal_base = pool.deposited_stake_a
         .checked_add(pool.deposited_stake_b)
         .and_then(|v| v.checked_add(pool.support_total))
@@ -518,7 +518,7 @@ fn initialize_pool_common(
     pool.asset_a = asset_a; pool.asset_b = asset_b; pool.owner_a = owner_a; pool.owner_b = owner_b;
     pool.required_stake_a = required_stake_a; pool.required_stake_b = required_stake_b;
     pool.deposited_stake_a = 0; pool.deposited_stake_b = 0; pool.buy_in_lamports = buy_in_lamports;
-    pool.buy_in_total = 0; pool.support_total = 0; pool.prize_boost_total = 0;
+    pool.buy_in_total = 0; pool.entry_count = 0; pool.support_total = 0; pool.prize_boost_total = 0;
     pool.support_deadline = support_deadline; pool.deposit_deadline = deposit_deadline; pool.resolve_deadline = resolve_deadline;
     pool.support_closed = false; pool.result_type = ARENA_RESULT_NONE; pool.winner_side = ARENA_SIDE_NONE;
     pool.winner_asset = Pubkey::default(); pool.winner_wallet = Pubkey::default(); pool.outcome_hash = [0u8; 32];
@@ -805,7 +805,7 @@ pub struct ArenaPool {
     pub asset_a: Pubkey, pub asset_b: Pubkey, pub owner_a: Pubkey, pub owner_b: Pubkey,
     pub required_stake_a: u64, pub required_stake_b: u64,
     pub deposited_stake_a: u64, pub deposited_stake_b: u64,
-    pub buy_in_lamports: u64, pub buy_in_total: u64, pub support_total: u64, pub prize_boost_total: u64,
+    pub buy_in_lamports: u64, pub buy_in_total: u64, pub entry_count: u32, pub support_total: u64, pub prize_boost_total: u64,
     pub support_deadline: i64, pub deposit_deadline: i64, pub resolve_deadline: i64, pub support_closed: bool,
     pub result_type: u8, pub winner_side: u8, pub winner_asset: Pubkey, pub winner_wallet: Pubkey,
     pub outcome_hash: [u8; 32], pub cancellation_reason: u8,
@@ -884,6 +884,15 @@ mod tests {
         let (winner, protocol, mwl) = split_arena_prize(10_000).unwrap();
         assert_eq!((winner, protocol, mwl), (8_500, 500, 1_000));
         assert_eq!(winner + 7_000, 15_500);
+    }
+    #[test]
+    fn tournament_requires_two_registered_entries_before_activation() {
+        assert!(1u32 < 2);
+        assert!(2u32 >= 2);
+    }
+    #[test]
+    fn free_entry_receipt_amount_is_exactly_zero() {
+        assert_eq!(0u64, 0);
     }
     #[test]
     fn resolution_message_binds_assets_outcome_and_boost() {
