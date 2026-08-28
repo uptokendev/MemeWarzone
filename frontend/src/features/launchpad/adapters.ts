@@ -1,4 +1,4 @@
-export type LaunchpadChain = "bnb" | "solana";
+export type LaunchpadChain = "bnb" | "solana" | "robinhood";
 
 export type TradeSide = "buy" | "sell";
 
