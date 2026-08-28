@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Initialize FeeEscrow PDAs for existing Solana campaigns.
+ * Initialize FeeEscrow and CreatorFeeVault PDAs for existing Solana campaigns.
  * Permissionless: payer only pays rent. Idempotent if already initialized.
  */
 import { createHash } from "node:crypto";
@@ -23,6 +23,10 @@ function requiredEnv(name) {
 const PROGRAM_ID = new PublicKey(requiredEnv("SOLANA_LAUNCHPAD_PROGRAM_ID"));
 const RPC = requiredEnv("SOLANA_RPC");
 const INIT_DISC = createHash("sha256").update("global:initialize_fee_escrow").digest().subarray(0, 8);
+const INIT_CREATOR_VAULT_DISC = createHash("sha256")
+  .update("global:initialize_creator_fee_vault")
+  .digest()
+  .subarray(0, 8);
 
 function loadKeypair() {
   const file = requiredEnv("SOLANA_FEE_ESCROW_PAYER_KEYPAIR");
@@ -45,23 +49,47 @@ async function main() {
       [Buffer.from("fee-escrow"), campaign.toBuffer()],
       PROGRAM_ID,
     );
-    const existing = await connection.getAccountInfo(escrow, "confirmed");
-    if (existing && existing.owner.equals(PROGRAM_ID) && existing.data.length >= 8) {
-      console.log(`already initialized ${campaign.toBase58()} -> ${escrow.toBase58()}`);
+    const [creatorFeeVault] = PublicKey.findProgramAddressSync(
+      [Buffer.from("creator-fee-vault"), campaign.toBuffer()],
+      PROGRAM_ID,
+    );
+    const [existingEscrow, existingCreatorVault] = await connection.getMultipleAccountsInfo(
+      [escrow, creatorFeeVault],
+      "confirmed",
+    );
+    const instructions = [];
+    if (!(existingEscrow && existingEscrow.owner.equals(PROGRAM_ID) && existingEscrow.data.length >= 8)) {
+      instructions.push(new TransactionInstruction({
+        programId: PROGRAM_ID,
+        keys: [
+          { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+          { pubkey: campaign, isSigner: false, isWritable: false },
+          { pubkey: escrow, isSigner: false, isWritable: true },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        ],
+        data: INIT_DISC,
+      }));
+    }
+    if (!(existingCreatorVault && existingCreatorVault.owner.equals(PROGRAM_ID) && existingCreatorVault.data.length >= 8)) {
+      instructions.push(new TransactionInstruction({
+        programId: PROGRAM_ID,
+        keys: [
+          { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+          { pubkey: campaign, isSigner: false, isWritable: false },
+          { pubkey: creatorFeeVault, isSigner: false, isWritable: true },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        ],
+        data: INIT_CREATOR_VAULT_DISC,
+      }));
+    }
+    if (!instructions.length) {
+      console.log(`already initialized ${campaign.toBase58()} escrow=${escrow.toBase58()} creatorFeeVault=${creatorFeeVault.toBase58()}`);
       continue;
     }
-    const ix = new TransactionInstruction({
-      programId: PROGRAM_ID,
-      keys: [
-        { pubkey: payer.publicKey, isSigner: true, isWritable: true },
-        { pubkey: campaign, isSigner: false, isWritable: false },
-        { pubkey: escrow, isSigner: false, isWritable: true },
-        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      ],
-      data: INIT_DISC,
-    });
-    const sig = await sendServerV0(connection, payer, [ix], `FeeEscrow initialize ${campaign.toBase58()}`);
-    console.log(`initialized ${campaign.toBase58()} escrow=${escrow.toBase58()} sig=${sig}`);
+    const sig = await sendServerV0(connection, payer, instructions, `FeeEscrow initialize ${campaign.toBase58()}`);
+    console.log(
+      `initialized ${campaign.toBase58()} escrow=${escrow.toBase58()} creatorFeeVault=${creatorFeeVault.toBase58()} sig=${sig}`
+    );
   }
 }
 
