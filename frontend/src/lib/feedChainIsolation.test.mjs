@@ -34,6 +34,7 @@ export {
   write: false,
   format: "esm",
   platform: "node",
+  packages: "external",
   alias: { "@": srcRoot },
   define: {
     "import.meta.env": JSON.stringify({
