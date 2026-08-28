@@ -31,7 +31,21 @@ function env(name: string): string {
 }
 
 function normalizeAddress(value: string): string {
-  return ADDRESS_RE.test(value) ? ethers.getAddress(value) : "";
+  if (!ADDRESS_RE.test(value)) return "";
+
+  try {
+    return ethers.getAddress(value);
+  } catch {
+    // A syntactically valid EVM address may arrive with stale or incorrect
+    // mixed-case checksum casing in local/runtime configuration. Treat casing
+    // as non-authoritative and normalize the raw address instead of crashing
+    // the entire frontend during contract-readiness evaluation.
+    try {
+      return ethers.getAddress(value.toLowerCase());
+    } catch {
+      return "";
+    }
+  }
 }
 
 function isBnbChain(chainId: SupportedChainId) {
