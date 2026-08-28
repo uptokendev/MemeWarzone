@@ -32,6 +32,10 @@ let tickRunning = false;
 let tickCount = 0;
 
 const INIT_DISC = createHash("sha256").update("global:initialize_fee_escrow").digest().subarray(0, 8);
+const INIT_CREATOR_VAULT_DISC = createHash("sha256")
+  .update("global:initialize_creator_fee_vault")
+  .digest()
+  .subarray(0, 8);
 const FLUSH_DISC = createHash("sha256").update("global:flush_campaign_fees").digest().subarray(0, 8);
 const CLOSE_TRADE_AUTH_DISC = createHash("sha256")
   .update("global:close_expired_trade_authorization")
@@ -105,6 +109,10 @@ function vaultPda(seed: string): PublicKey {
   return PublicKey.findProgramAddressSync([Buffer.from(seed)], treasuryId())[0];
 }
 
+function creatorFeeVaultPda(campaign: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync([Buffer.from("creator-fee-vault"), campaign.toBuffer()], programId())[0];
+}
+
 function pendingFromEscrowData(data: Buffer): bigint {
   if (data.length < FEE_ESCROW_PENDING_OFFSET + FEE_ESCROW_PENDING_LANES * 8) return 0n;
   let total = 0n;
@@ -171,15 +179,16 @@ async function markFlush(
 async function sendServerV0(
   connection: Connection,
   payer: Keypair,
-  instruction: TransactionInstruction,
+  instructions: TransactionInstruction | TransactionInstruction[],
   label: string,
 ): Promise<string> {
+  const instructionList = Array.isArray(instructions) ? instructions : [instructions];
   const compile = async () => {
     const latest = await connection.getLatestBlockhash("confirmed");
     const message = new TransactionMessage({
       payerKey: payer.publicKey,
       recentBlockhash: latest.blockhash,
-      instructions: [instruction],
+      instructions: instructionList,
     }).compileToV0Message();
     const transaction = new VersionedTransaction(message);
     transaction.sign([payer]);
@@ -216,19 +225,40 @@ async function initializeOne(
   connection: Connection,
   payer: Keypair,
   campaign: PublicKey,
-): Promise<string> {
+): Promise<string | null> {
   const escrow = new PublicKey(deriveFeeEscrowAddress(campaign.toBase58(), programId().toBase58()));
-  const ix = new TransactionInstruction({
-    programId: programId(),
-    keys: [
-      { pubkey: payer.publicKey, isSigner: true, isWritable: true },
-      { pubkey: campaign, isSigner: false, isWritable: false },
-      { pubkey: escrow, isSigner: false, isWritable: true },
-      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    ],
-    data: INIT_DISC,
-  });
-  return sendServerV0(connection, payer, ix, `FeeEscrow initialize ${campaign.toBase58()}`);
+  const creatorFeeVault = creatorFeeVaultPda(campaign);
+  const [escrowInfo, creatorVaultInfo] = await connection.getMultipleAccountsInfo(
+    [escrow, creatorFeeVault],
+    "confirmed",
+  );
+  const instructions: TransactionInstruction[] = [];
+  if (!(escrowInfo && escrowInfo.owner.equals(programId()) && escrowInfo.data.length >= 8)) {
+    instructions.push(new TransactionInstruction({
+      programId: programId(),
+      keys: [
+        { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+        { pubkey: campaign, isSigner: false, isWritable: false },
+        { pubkey: escrow, isSigner: false, isWritable: true },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      ],
+      data: INIT_DISC,
+    }));
+  }
+  if (!(creatorVaultInfo && creatorVaultInfo.owner.equals(programId()) && creatorVaultInfo.data.length >= 8)) {
+    instructions.push(new TransactionInstruction({
+      programId: programId(),
+      keys: [
+        { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+        { pubkey: campaign, isSigner: false, isWritable: false },
+        { pubkey: creatorFeeVault, isSigner: false, isWritable: true },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      ],
+      data: INIT_CREATOR_VAULT_DISC,
+    }));
+  }
+  if (!instructions.length) return null;
+  return sendServerV0(connection, payer, instructions, `FeeEscrow initialize ${campaign.toBase58()}`);
 }
 
 async function flushOne(
@@ -275,16 +305,23 @@ async function processInits(connection: Connection, payer: Keypair) {
     const escrowPk = new PublicKey(
       String(claimedRow.escrow_address || deriveFeeEscrowAddress(campaign.toBase58(), programId().toBase58())),
     );
+    const creatorVaultPk = creatorFeeVaultPda(campaign);
     const nextAttempts = Number(claimedRow.init_attempts || 0);
     try {
-      const existing = await connection.getAccountInfo(escrowPk, "confirmed");
-      if (existing && existing.owner.equals(programId()) && existing.data.length >= 8) {
+      const [existingEscrow, existingCreatorVault] = await connection.getMultipleAccountsInfo(
+        [escrowPk, creatorVaultPk],
+        "confirmed",
+      );
+      if (
+        existingEscrow && existingEscrow.owner.equals(programId()) && existingEscrow.data.length >= 8 &&
+        existingCreatorVault && existingCreatorVault.owner.equals(programId()) && existingCreatorVault.data.length >= 8
+      ) {
         await markInit(campaign.toBase58(), "initialized", undefined, undefined, nextAttempts);
         continue;
       }
       const sig = await initializeOne(connection, payer, campaign);
-      await markInit(campaign.toBase58(), "initialized", sig, undefined, nextAttempts);
-      console.info("[solana-fee-escrow] initialized", campaign.toBase58(), sig);
+      await markInit(campaign.toBase58(), "initialized", sig || undefined, undefined, nextAttempts);
+      if (sig) console.info("[solana-fee-escrow] initialized", campaign.toBase58(), sig);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await markInit(campaign.toBase58(), "failed", undefined, message, nextAttempts);
