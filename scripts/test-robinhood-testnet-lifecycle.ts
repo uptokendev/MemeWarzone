@@ -60,6 +60,8 @@ type StageManifest = {
     launchFactory: string;
     permanentV3PositionLocker: string;
     protocolRevenueVault: string;
+    treasuryRouterV3: string;
+    creatorRewardsVault: string;
   };
 };
 
@@ -81,6 +83,10 @@ function sameAddress(a: string, b: string): boolean {
 function log(label: string, value?: unknown) {
   if (value === undefined) console.log(`[robinhood-acceptance] ${label}`);
   else console.log(`[robinhood-acceptance] ${label}`, value);
+}
+
+function assertEq(label: string, actual: bigint, expected: bigint): void {
+  if (actual !== expected) throw new Error(`${label}: expected ${expected}, got ${actual}`);
 }
 
 async function latestTimestamp(): Promise<bigint> {
@@ -167,8 +173,8 @@ async function main() {
   if (!fs.existsSync(manifestFile)) throw new Error(`Staged deployment manifest not found: ${manifestFile}`);
   const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8")) as StageManifest;
   if (manifest.targetChainId !== ROBINHOOD_TESTNET_CHAIN_ID) throw new Error(`Manifest targetChainId must be ${ROBINHOOD_TESTNET_CHAIN_ID}`);
-  if (manifest.factoryGeneration !== 4 || manifest.campaignGeneration !== 2 || manifest.liquidityKind !== 2) {
-    throw new Error("Manifest is not the expected generation-4 / campaign-generation-2 / V3 deployment.");
+  if (manifest.factoryGeneration !== 4 || manifest.campaignGeneration !== 3 || manifest.liquidityKind !== 2) {
+    throw new Error("Manifest is not the expected generation-4 / campaign-generation-3 / V3 deployment.");
   }
 
   const [deployer] = await ethers.getSigners();
@@ -193,11 +199,25 @@ async function main() {
   ]);
 
   const factory = await ethers.getContractAt("LaunchFactory", manifest.contracts.launchFactory, deployer);
+  const treasury = await ethers.getContractAt("TreasuryRouterV3", manifest.contracts.treasuryRouterV3, deployer);
+  const creatorVault = await ethers.getContractAt("CreatorRewardsVault", manifest.contracts.creatorRewardsVault, deployer);
   const locker = await ethers.getContractAt("PermanentV3PositionLocker", manifest.contracts.permanentV3PositionLocker, deployer);
   const weth = await ethers.getContractAt("MockWETH9", manifest.contracts.mockWeth9, trader);
   const v3Factory = await ethers.getContractAt("MockUniswapV3Factory", manifest.contracts.mockV3Factory, trader);
   const positionManager = await ethers.getContractAt("MockUniswapV3PositionManager", manifest.contracts.mockNonfungiblePositionManager, trader);
   const swapRouter = await ethers.getContractAt("MockUniswapV3SwapRouter", manifest.contracts.mockSwapRouter02, trader);
+
+  const standardPreview = await treasury.previewTrade(10_000n, 0);
+  assertEq("standard preview creator", standardPreview.creator, 500n);
+  assertEq("standard preview recruiter", standardPreview.recruiter, 1_250n);
+  const ogPreview = await treasury.previewTrade(10_000n, 2);
+  assertEq("og preview creator", ogPreview.creator, 500n);
+  assertEq("og preview recruiter", ogPreview.recruiter, 1_500n);
+  const unlinkedPreview = await treasury.previewTrade(10_000n, 1);
+  assertEq("unlinked preview creator", unlinkedPreview.creator, 500n);
+  assertEq("unlinked preview airdrop", unlinkedPreview.airdrop, 1_500n);
+  const finalizePreview = await treasury.previewFinalize(10_000n, 1);
+  assertEq("finalize preview creator", finalizePreview.creator, 0n);
 
   if (!(await factory.live())) {
     if (!truthy(process.env.ROBINHOOD_ACCEPTANCE_ENABLE_LIVE)) {
@@ -226,9 +246,9 @@ async function main() {
   const info = await factory.getCampaign(afterCount - 1n);
   const campaign = await ethers.getContractAt("LaunchCampaign", info.campaign, buyer);
   const token = await ethers.getContractAt("LaunchToken", info.token, buyer);
+  if (!(await campaign.strictFeeRouting())) throw new Error("New Robinhood campaign did not enable strict fee routing.");
   log("campaign created", { campaign: info.campaign, token: info.token });
 
-  // Pre-grad BUY.
   const probeTokens = ethers.parseEther("1");
   const probeCost = await campaign.quoteBuyExactTokens(probeTokens);
   const buyAuth = await buildTradeAuthorization({
@@ -252,7 +272,6 @@ async function main() {
   if ((await token.balanceOf(await buyer.getAddress())) < probeTokens) throw new Error("Authorized pre-grad buy did not deliver tokens.");
   log("authorized pre-grad buy passed", { probeTokens: probeTokens.toString(), probeCost: probeCost.toString() });
 
-  // Pre-grad SELL.
   const sellAmount = probeTokens / 2n;
   const minPayout = await campaign.quoteSellExactTokens(sellAmount);
   await (await token.connect(buyer).approve(await campaign.getAddress(), sellAmount)).wait();
@@ -275,8 +294,6 @@ async function main() {
   ).wait();
   log("authorized pre-grad sell passed", { sellAmount: sellAmount.toString(), minPayout: minPayout.toString() });
 
-  // Cross the $6 test graduation threshold using the native-input route. 2x target
-  // leaves ample room for protocol fees without requiring a full curve purchase.
   const nativeTarget = await campaign.graduationNativeTarget();
   const crossingValue = nativeTarget * 2n;
   const [quotedTokens] = await campaign.quoteBuyExactBnb(crossingValue);
@@ -301,6 +318,15 @@ async function main() {
   ).wait();
   if (!(await campaign.launched())) throw new Error("Campaign did not graduate after crossing the test threshold.");
 
+  const pendingCreatorFees = await creatorVault.pendingCreatorFees(info.campaign);
+  if (pendingCreatorFees <= 0n) throw new Error("Creator vault did not accrue any Robinhood trade fees.");
+  const claimedBefore = await creatorVault.claimedCreatorFees(info.campaign);
+  await (await creatorVault.connect(creator).claimCreatorFees(info.campaign)).wait();
+  const claimedAfter = await creatorVault.claimedCreatorFees(info.campaign);
+  if (claimedAfter <= claimedBefore) throw new Error("Creator fee claim did not advance claimed balance.");
+  if ((await creatorVault.pendingCreatorFees(info.campaign)) !== 0n) throw new Error("Creator fee claim did not clear pending balance.");
+  log("creator claim passed", { claimed: (claimedAfter - claimedBefore).toString() });
+
   const state = await campaign.getGraduationState();
   if (state.dexPair === ethers.ZeroAddress) throw new Error("Graduation did not record a V3 pool.");
   if (state.graduatedLiquidityLp <= 0n) throw new Error("Graduation did not mint V3 liquidity.");
@@ -320,7 +346,6 @@ async function main() {
     lockedLiquidity: state.graduatedLiquidityLp.toString(),
   });
 
-  // Post-grad swap through the mock Uniswap V3-compatible router.
   const swapIn = ethers.parseEther("0.0001");
   await (await weth.connect(trader).deposit({ value: swapIn })).wait();
   await (await weth.connect(trader).approve(await swapRouter.getAddress(), swapIn)).wait();
@@ -339,7 +364,6 @@ async function main() {
   ).wait();
   log("post-grad V3 swap passed", { swapIn: swapIn.toString(), amountOut: amountOut.toString() });
 
-  // Fee harvest must preserve the NFT and split accrued fees 80% creator / 20% protocol.
   const creatorBefore = await weth.balanceOf(await creator.getAddress());
   const protocolBefore = await weth.balanceOf(manifest.contracts.protocolRevenueVault);
   await (await locker.connect(trader).harvest(poolAddress)).wait();
@@ -366,9 +390,11 @@ async function main() {
     token: info.token,
     pool: poolAddress,
     positionTokenId: positionTokenId.toString(),
+    feeModelParity: true,
     create: true,
     preGradBuy: true,
     preGradSell: true,
+    creatorClaim: true,
     graduation: true,
     permanentV3Lock: true,
     postGradSwap: true,
