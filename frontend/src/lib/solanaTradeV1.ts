@@ -59,6 +59,7 @@ export type SolanaTradeAuthResponse = {
     tokenProgram: string;
     systemProgram: string;
     feeEscrow?: string | null;
+    creatorFeeVault?: string | null;
     leagueVault?: string | null;
     airdropVault?: string | null;
     monthlyLeagueVault?: string | null;
@@ -464,7 +465,7 @@ async function submitSolanaTradeV1Untracked(
   if (!a.tokenVault || !a.solVault) {
     throw new Error("Trade authorization is missing tokenVault/solVault.");
   }
-  if (!a.feeEscrow) {
+  if (!a.feeEscrow || !a.creatorFeeVault) {
     throw new Error("market initializing");
   }
 
@@ -504,6 +505,7 @@ async function submitSolanaTradeV1Untracked(
       tokenProgram: a.tokenProgram,
       systemProgram: a.systemProgram,
       feeEscrow: a.feeEscrow,
+      creatorFeeVault: a.creatorFeeVault,
     },
   });
   const lookupTable = await fetchAndVerifyLaunchpadLookupTable(web3, connection, {
