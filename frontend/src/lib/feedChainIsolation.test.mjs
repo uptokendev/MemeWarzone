@@ -33,7 +33,7 @@ export {
   bundle: true,
   write: false,
   format: "esm",
-  platform: "neutral",
+  platform: "node",
   alias: { "@": srcRoot },
   define: {
     "import.meta.env": JSON.stringify({
