@@ -59,9 +59,14 @@ function configuredScheduledFactory(chainId) {
   return address;
 }
 
-function routeSignerAddress() {
+function routeSignerAddress(chainId) {
+  const id = Number(chainId);
   const privateKey = String(
-    process.env.ROUTE_AUTHORITY_PRIVATE_KEY ||
+    (ROBINHOOD_CHAIN_IDS.has(id)
+      ? process.env[`ROBINHOOD_ROUTE_AUTHORITY_PRIVATE_KEY_${id}`] || process.env.ROBINHOOD_ROUTE_AUTHORITY_PRIVATE_KEY
+      : "") ||
+      process.env[`ROUTE_AUTHORITY_PRIVATE_KEY_${id}`] ||
+      process.env.ROUTE_AUTHORITY_PRIVATE_KEY ||
       process.env.MWZ_ROUTE_AUTHORITY_PRIVATE_KEY ||
       process.env.ROUTE_AUTH_PRIVATE_KEY ||
       "",
@@ -90,7 +95,6 @@ async function verifyCurrentScheduledArmEligibility({ chainId, factoryAddress, w
     }
 
     const factory = new ethers.Contract(factoryAddress, CREATION_PREFLIGHT_ABI, provider);
-    // Immediate and timed arms share the same arm-time cooldown + live-cap checks.
     const [live, globalPaused, createPaused, routeAuthority, factoryGenerationRaw, campaignGenerationRaw, eligibility] = await Promise.all([
       factory.live(),
       factory.globalPaused(),
@@ -121,13 +125,13 @@ async function verifyCurrentScheduledArmEligibility({ chainId, factoryAddress, w
       };
     }
 
-    const signerAddress = routeSignerAddress();
+    const signerAddress = routeSignerAddress(chainId);
     if (!signerAddress || signerAddress.toLowerCase() !== String(routeAuthority).toLowerCase()) {
       return {
         ok: false,
         status: 503,
         code: "SCHEDULED_CREATE_ROUTE_AUTHORITY_MISMATCH",
-        error: "Configured route signer does not match the active scheduled factory route authority.",
+        error: `Configured route signer for chain ${chainId} does not match the active scheduled factory route authority.`,
         preflight: { factoryGeneration, campaignGeneration },
       };
     }
