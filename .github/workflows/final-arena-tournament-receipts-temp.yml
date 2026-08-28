@@ -26,38 +26,38 @@ jobs:
           s = p.read_text()
 
           old_activate = '''    require!(pool.pool_id == pool_id && pool.kind == ARENA_KIND_TOURNAMENT && pool.state == ARENA_STATE_OPEN, ArenaError::InvalidState);
-              require!(now >= pool.deposit_deadline, ArenaError::InvalidDeadline);
-              pool.state = ARENA_STATE_LIVE;'''.replace('              ', '    ')
+    require!(now >= pool.deposit_deadline, ArenaError::InvalidDeadline);
+    pool.state = ARENA_STATE_LIVE;'''
           new_activate = '''    require!(pool.pool_id == pool_id && pool.kind == ARENA_KIND_TOURNAMENT && pool.state == ARENA_STATE_OPEN, ArenaError::InvalidState);
-              require!(now >= pool.deposit_deadline, ArenaError::InvalidDeadline);
-              require!(pool.entry_count >= 2, ArenaError::InvalidState);
-              pool.state = ARENA_STATE_LIVE;'''.replace('              ', '    ')
+    require!(now >= pool.deposit_deadline, ArenaError::InvalidDeadline);
+    require!(pool.entry_count >= 2, ArenaError::InvalidState);
+    pool.state = ARENA_STATE_LIVE;'''
           if old_activate not in s:
               raise SystemExit('activation block not found')
           s = s.replace(old_activate, new_activate, 1)
 
           old_deposit = '''    require!(pool.pool_id == pool_id && pool.kind == ARENA_KIND_TOURNAMENT, ArenaError::InvalidKind);
-              require!(pool.state == ARENA_STATE_OPEN || pool.state == ARENA_STATE_LIVE, ArenaError::InvalidState);
-              require!(now <= pool.deposit_deadline, ArenaError::DeadlinePassed);
-              transfer_into_vault(
-                  &ctx.accounts.entrant.to_account_info(), &ctx.accounts.vault.to_account_info(),
-                  &ctx.accounts.system_program.to_account_info(), pool.buy_in_lamports,
-              )?;
-              pool.buy_in_total = pool.buy_in_total.checked_add(pool.buy_in_lamports).ok_or(ArenaError::MathOverflow)?;
-              pool.state = ARENA_STATE_LIVE;
-              let receipt = &mut ctx.accounts.buy_in_receipt;'''.replace('              ', '    ').replace('                  ', '        ')
+    require!(pool.state == ARENA_STATE_OPEN || pool.state == ARENA_STATE_LIVE, ArenaError::InvalidState);
+    require!(now <= pool.deposit_deadline, ArenaError::DeadlinePassed);
+    transfer_into_vault(
+        &ctx.accounts.entrant.to_account_info(), &ctx.accounts.vault.to_account_info(),
+        &ctx.accounts.system_program.to_account_info(), pool.buy_in_lamports,
+    )?;
+    pool.buy_in_total = pool.buy_in_total.checked_add(pool.buy_in_lamports).ok_or(ArenaError::MathOverflow)?;
+    pool.state = ARENA_STATE_LIVE;
+    let receipt = &mut ctx.accounts.buy_in_receipt;'''
           new_deposit = '''    require!(pool.pool_id == pool_id && pool.kind == ARENA_KIND_TOURNAMENT, ArenaError::InvalidKind);
-              require!(pool.state == ARENA_STATE_OPEN, ArenaError::InvalidState);
-              require!(now <= pool.deposit_deadline, ArenaError::DeadlinePassed);
-              if pool.buy_in_lamports > 0 {
-                  transfer_into_vault(
-                      &ctx.accounts.entrant.to_account_info(), &ctx.accounts.vault.to_account_info(),
-                      &ctx.accounts.system_program.to_account_info(), pool.buy_in_lamports,
-                  )?;
-                  pool.buy_in_total = pool.buy_in_total.checked_add(pool.buy_in_lamports).ok_or(ArenaError::MathOverflow)?;
-              }
-              pool.entry_count = pool.entry_count.checked_add(1).ok_or(ArenaError::MathOverflow)?;
-              let receipt = &mut ctx.accounts.buy_in_receipt;'''.replace('              ', '    ').replace('                  ', '        ').replace('                      ', '            ')
+    require!(pool.state == ARENA_STATE_OPEN, ArenaError::InvalidState);
+    require!(now <= pool.deposit_deadline, ArenaError::DeadlinePassed);
+    if pool.buy_in_lamports > 0 {
+        transfer_into_vault(
+            &ctx.accounts.entrant.to_account_info(), &ctx.accounts.vault.to_account_info(),
+            &ctx.accounts.system_program.to_account_info(), pool.buy_in_lamports,
+        )?;
+        pool.buy_in_total = pool.buy_in_total.checked_add(pool.buy_in_lamports).ok_or(ArenaError::MathOverflow)?;
+    }
+    pool.entry_count = pool.entry_count.checked_add(1).ok_or(ArenaError::MathOverflow)?;
+    let receipt = &mut ctx.accounts.buy_in_receipt;'''
           if old_deposit not in s:
               raise SystemExit('deposit buy-in block not found')
           s = s.replace(old_deposit, new_deposit, 1)
@@ -116,3 +116,5 @@ jobs:
           git diff --cached --check
           git commit -m "fix(arena): require canonical receipts before tournament activation"
           git push origin HEAD:prep/solana-v0-arena-upgrade
+
+# one-shot; delete after successful commit
