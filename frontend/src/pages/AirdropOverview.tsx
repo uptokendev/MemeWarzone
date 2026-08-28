@@ -8,7 +8,7 @@ import { ConnectWalletButton } from "@/components/ConnectWalletButton";
 import { useWallet } from "@/contexts/WalletContext";
 import { useActiveFeedWallet } from "@/hooks/useActiveFeedWallet";
 import { isSolanaAddress } from "@/lib/address";
-import { isSolanaChainId, ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
+import { BNB_CHAIN_ID, isSolanaChainId, ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
 import { fetchWalletRewardSummary, type WalletRewardSummary } from "@/lib/recruiterApi";
 import { fetchAirdropWinners, fetchWalletRewardEligibility, type AirdropWinner, type WalletEligibilityItem } from "@/lib/rewardProgramsApi";
 
@@ -101,7 +101,7 @@ export default function AirdropOverview() {
   const feedWallet = useActiveFeedWallet();
   const account = feedWallet.address || wallet.account || "";
   const solana = feedWallet.isSolana || isSolanaAddress(account) || isSolanaChainId(Number(feedWallet.chainId));
-  const chainId = solana ? 101 : Number(feedWallet.chainId || wallet.chainId || 97);
+  const chainId = solana ? 101 : Number(feedWallet.chainId || wallet.chainId || BNB_CHAIN_ID);
   const robinhood = chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID;
   const symbol = solana ? "SOL" : robinhood ? "ETH" : "BNB";
 
