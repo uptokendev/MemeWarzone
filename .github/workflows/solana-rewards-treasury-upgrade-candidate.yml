@@ -45,39 +45,57 @@ jobs:
         with:
           node-version: 24
 
-      - name: Verify same program ID and one-sweep source boundary
+      - name: Verify same program ID and final one-sweep source boundary
         shell: bash
         run: |
           grep -F "mwz_rewards_treasury = \"$EXPECTED_PROGRAM_ID\"" Anchor.toml
           grep -F "declare_id!(\"$EXPECTED_PROGRAM_ID\")" programs/mwz_rewards_treasury/src/lib.rs
 
-          # Existing deployed rewards config must not be moved into the Arena module.
+          # Existing deployed rewards config remains rooted in lib.rs and is not resized into Arena.
           grep -F "pub struct RewardsConfig" programs/mwz_rewards_treasury/src/lib.rs
 
-          # Arena is part of this exact executable, not a dead source file or second program.
-          grep -F "pub mod arena;" programs/mwz_rewards_treasury/src/lib.rs
-          grep -F "pub use arena::*;" programs/mwz_rewards_treasury/src/lib.rs
+          # Final Arena module is the exported executable surface. The earlier module is retained only as source history.
+          grep -F "pub mod arena_final;" programs/mwz_rewards_treasury/src/lib.rs
+          grep -F "pub use arena_final::*;" programs/mwz_rewards_treasury/src/lib.rs
+          if grep -Fq "pub use arena::*;" programs/mwz_rewards_treasury/src/lib.rs; then
+            echo "Legacy Arena module is still exported" >&2
+            exit 1
+          fi
 
           for instruction in set_recruiter_batch_root claim_recruiter set_squad_batch_root claim_squad; do
             grep -F "pub fn $instruction" programs/mwz_rewards_treasury/src/lib.rs
           done
 
+          # Legacy Arena money entrypoints may remain in the IDL only as fail-closed tombstones.
+          grep -F "DeprecatedInstruction" programs/mwz_rewards_treasury/src/arena_final.rs
+          for instruction in open_battle_pool open_tournament_pool deposit_stake donate_support deposit_buy_in resolve_pool refund_buy_in; do
+            grep -F "pub fn ${instruction}_handler" programs/mwz_rewards_treasury/src/arena_final.rs
+          done
+
+          # Final V2 money/custody surface.
           for instruction in \
-            initialize_arena set_arena_resolver set_arena_receivers set_arena_pause \
-            open_battle_pool open_tournament_pool deposit_stake donate_support deposit_buy_in \
-            resolve_pool settle_expired_pool \
-            claim_winner claim_protocol claim_mwl claim_charity refund_stake refund_buy_in; do
+            open_battle_pool_v2 open_tournament_pool_v2 deposit_stake_v2 donate_support_v2 \
+            close_support_v2 deposit_buy_in_v2 deposit_prize_boost_v2 resolve_pool_v2 cancel_pool_v2 \
+            refund_buy_in_v2 refund_prize_boost_v2; do
             grep -F "pub fn $instruction" programs/mwz_rewards_treasury/src/lib.rs
           done
 
-          for state in ArenaConfig ArenaPool ArenaVault ArenaBuyInReceipt ArenaClaimReceipt ArenaRefundReceipt; do
-            grep -F "pub struct $state" programs/mwz_rewards_treasury/src/arena.rs
+          for instruction in \
+            initialize_arena set_arena_resolver set_arena_receivers set_arena_pause \
+            settle_expired_pool claim_winner claim_protocol claim_mwl claim_charity refund_stake; do
+            grep -F "pub fn $instruction" programs/mwz_rewards_treasury/src/lib.rs
+          done
+
+          for state in ArenaConfig ArenaPool ArenaVault ArenaBuyInReceipt ArenaBoostReceipt ArenaClaimReceipt ArenaRefundReceipt; do
+            grep -F "pub struct $state" programs/mwz_rewards_treasury/src/arena_final.rs
           done
 
           for invariant in \
-            ARENA_PROTOCOL_BPS ARENA_MWL_BPS MWZ_ARENA_RESOLVE_V1 \
-            validate_tournament_winner_receipt settle_expired_pool_handler refund_buy_in_handler; do
-            grep -F "$invariant" programs/mwz_rewards_treasury/src/arena.rs
+            ARENA_PROTOCOL_BPS ARENA_MWL_BPS MWZ_ARENA_RESOLVE_V2 MWZ_ARENA_CANCEL_V1 \
+            required_stake_a required_stake_b deposited_stake_a deposited_stake_b \
+            support_deadline support_closed prize_boost_total asset_a asset_b outcome_hash \
+            entry_asset funding_id validate_tournament_winner_receipt arena_cancel_message_v1; do
+            grep -F "$invariant" programs/mwz_rewards_treasury/src/arena_final.rs
           done
 
       - name: Install Rust toolchains
@@ -108,7 +126,15 @@ jobs:
 
       - name: Build exact rewards treasury SBF
         shell: bash
-        run: anchor build --program-name mwz_rewards_treasury --no-idl 2>&1 | tail -n 180
+        run: anchor build --program-name mwz_rewards_treasury --no-idl 2>&1 | tee /tmp/mwz-rewards-build.log | tail -n 220
+
+      - name: Reject hidden SBF stack overflow diagnostics
+        shell: bash
+        run: |
+          if grep -E "Stack offset .* exceeded max offset|stack frame.*exceed" /tmp/mwz-rewards-build.log; then
+            echo "SBF stack diagnostic detected" >&2
+            exit 1
+          fi
 
       - name: Generate rewards treasury IDL
         shell: bash
@@ -119,9 +145,9 @@ jobs:
           mkdir -p ../../target/idl
           anchor idl build \
             --out ../../target/idl/mwz_rewards_treasury.json \
-            2>&1 | tail -n 240
+            2>&1 | tail -n 260
 
-      - name: Verify artifact and required one-sweep IDL instructions
+      - name: Verify artifact and final V2 IDL instructions
         shell: bash
         run: |
           test -s target/deploy/mwz_rewards_treasury.so
@@ -134,7 +160,7 @@ jobs:
             throw new Error(`IDL program ID mismatch: ${address}`);
           }
           const names = new Set((idl.instructions || []).map((ix) => String(ix.name)));
-          const groups = [
+          const required = [
             ['set_recruiter_batch_root','setRecruiterBatchRoot'],
             ['claim_recruiter','claimRecruiter'],
             ['set_squad_batch_root','setSquadBatchRoot'],
@@ -143,24 +169,26 @@ jobs:
             ['set_arena_resolver','setArenaResolver'],
             ['set_arena_receivers','setArenaReceivers'],
             ['set_arena_pause','setArenaPause'],
-            ['open_battle_pool','openBattlePool'],
-            ['open_tournament_pool','openTournamentPool'],
-            ['deposit_stake','depositStake'],
-            ['donate_support','donateSupport'],
-            ['deposit_buy_in','depositBuyIn'],
-            ['resolve_pool','resolvePool'],
+            ['open_battle_pool_v2','openBattlePoolV2'],
+            ['open_tournament_pool_v2','openTournamentPoolV2'],
+            ['deposit_stake_v2','depositStakeV2'],
+            ['donate_support_v2','donateSupportV2'],
+            ['close_support_v2','closeSupportV2'],
+            ['deposit_buy_in_v2','depositBuyInV2'],
+            ['deposit_prize_boost_v2','depositPrizeBoostV2'],
+            ['resolve_pool_v2','resolvePoolV2'],
+            ['cancel_pool_v2','cancelPoolV2'],
             ['settle_expired_pool','settleExpiredPool'],
             ['claim_winner','claimWinner'],
             ['claim_protocol','claimProtocol'],
             ['claim_mwl','claimMwl'],
             ['claim_charity','claimCharity'],
             ['refund_stake','refundStake'],
-            ['refund_buy_in','refundBuyIn'],
+            ['refund_buy_in_v2','refundBuyInV2'],
+            ['refund_prize_boost_v2','refundPrizeBoostV2'],
           ];
-          for (const alternatives of groups) {
-            if (!alternatives.some((name) => names.has(name))) {
-              throw new Error(`IDL missing ${alternatives[0]}`);
-            }
+          for (const alternatives of required) {
+            if (!alternatives.some((name) => names.has(name))) throw new Error(`IDL missing ${alternatives[0]}`);
           }
           const accounts = new Set((idl.accounts || []).map((account) => String(account.name)));
           for (const alternatives of [
@@ -168,17 +196,16 @@ jobs:
             ['ArenaPool','arenaPool'],
             ['ArenaVault','arenaVault'],
             ['ArenaBuyInReceipt','arenaBuyInReceipt'],
+            ['ArenaBoostReceipt','arenaBoostReceipt'],
             ['ArenaClaimReceipt','arenaClaimReceipt'],
             ['ArenaRefundReceipt','arenaRefundReceipt'],
           ]) {
-            if (!alternatives.some((name) => accounts.has(name))) {
-              throw new Error(`IDL missing account ${alternatives[0]}`);
-            }
+            if (!alternatives.some((name) => accounts.has(name))) throw new Error(`IDL missing account ${alternatives[0]}`);
           }
-          console.log('Rewards treasury IDL contains recruiter/squad plus full frozen Arena surface.');
+          console.log('Rewards treasury IDL contains existing rewards plus final Arena V2 custody surface.');
           NODE
 
-      - name: Test rewards treasury and Arena invariants
+      - name: Test rewards treasury and final Arena invariants
         run: cargo test -p mwz_rewards_treasury --lib
 
       - name: Record candidate hashes
