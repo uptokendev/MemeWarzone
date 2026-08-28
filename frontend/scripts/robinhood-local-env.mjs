@@ -127,6 +127,7 @@ export function buildRobinhoodLocalDatabaseEnv(baseEnv = {}, fileEnv = {}) {
 export function buildRobinhoodLocalEnv(baseEnv = {}, fileEnv = {}) {
   const env = buildRobinhoodLocalDatabaseEnv(baseEnv, fileEnv);
   env.ROBINHOOD_TESTNET_CHAIN_ID = "46630";
+  env.DEPLOYMENT_NETWORK = "testnet";
   env.DEFAULT_EVM_CHAIN_ID = "46630";
   env.EVM_INDEXER_CHAIN_IDS = "46630";
   env.VITE_DEFAULT_CHAIN_ID = "46630";
@@ -144,8 +145,17 @@ export function buildRobinhoodLocalEnv(baseEnv = {}, fileEnv = {}) {
   env.SOLANA_LAUNCHPAD_PROGRAM_ID = "";
   env.ENABLE_TOPAZ_POOL_INDEXER = "0";
   env.ENABLE_GRADUATION_HANDOFF_RECONCILER = "0";
+  env.ENABLE_ROBINHOOD_V3_POOL_INDEXER = "1";
   env.ENABLE_UNIFIED_MARKET_API = "1";
   env.ENABLE_UNIFIED_MARKET_CHART = "1";
+
+  // Browser/API authorization on Robinhood uses the same generation-aware route
+  // authority mechanism as the other EVM chains. Keep the Robinhood-specific
+  // secret name convenient for testnet operators, but normalize it for shared API code.
+  const robinhoodRouteKey = String(env.ROBINHOOD_ROUTE_AUTHORITY_PRIVATE_KEY || "").trim();
+  if (!String(env.ROUTE_AUTHORITY_PRIVATE_KEY || "").trim() && robinhoodRouteKey) {
+    env.ROUTE_AUTHORITY_PRIVATE_KEY = robinhoodRouteKey;
+  }
 
   // External production services are disabled in this profile.
   env.LOCAL_DISABLE_ABLY = "1";
