@@ -20,6 +20,7 @@ on:
       - "contracts/UPVoteTreasury.sol"
       - "contracts/PermanentV3PositionLocker.sol"
       - "contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol"
+      - "contracts/integrations/RobinhoodV3NativeSwapAdapter.sol"
       - "contracts/mocks/MockUniswapV3*.sol"
       - "contracts/mocks/MockWETH9.sol"
       - "contracts/mocks/MockUsdPriceFeed.sol"
@@ -27,6 +28,7 @@ on:
       - "scripts/deploy-robinhood-testnet-auxiliary.ts"
       - "scripts/verify-robinhood-testnet-stage.ts"
       - "scripts/test-robinhood-testnet-lifecycle.ts"
+      - "test/RobinhoodV3NativeSwapAdapter.spec.ts"
       - ".github/workflows/robinhood-testnet-stage-ci.yml"
   push:
     branches:
@@ -47,6 +49,7 @@ on:
       - "contracts/UPVoteTreasury.sol"
       - "contracts/PermanentV3PositionLocker.sol"
       - "contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol"
+      - "contracts/integrations/RobinhoodV3NativeSwapAdapter.sol"
       - "contracts/mocks/MockUniswapV3*.sol"
       - "contracts/mocks/MockWETH9.sol"
       - "contracts/mocks/MockUsdPriceFeed.sol"
@@ -54,6 +57,7 @@ on:
       - "scripts/deploy-robinhood-testnet-auxiliary.ts"
       - "scripts/verify-robinhood-testnet-stage.ts"
       - "scripts/test-robinhood-testnet-lifecycle.ts"
+      - "test/RobinhoodV3NativeSwapAdapter.spec.ts"
       - ".github/workflows/robinhood-testnet-stage-ci.yml"
 
 permissions:
@@ -82,6 +86,9 @@ jobs:
 
       - name: Compile contracts
         run: npx hardhat compile
+
+      - name: Unit-test native Robinhood V3 buy/sell adapter
+        run: npx hardhat test test/RobinhoodV3NativeSwapAdapter.spec.ts
 
       - name: Start persistent local EVM chain
         run: |
@@ -138,6 +145,8 @@ jobs:
           }
           if (m.stagingOnly?.productionCompatible !== false) throw new Error('staging-only marker missing');
           if (!m.contracts?.upVoteTreasury) throw new Error('UPVoteTreasury missing from staged manifest');
+          if (!m.contracts?.v3NativeSwapAdapter) throw new Error('Robinhood V3 native swap adapter missing from staged manifest');
+          if (m.auxiliaryFeatures?.v3NativeSwapAdapter?.nativeAsset !== 'ETH') throw new Error('native V3 adapter ETH metadata missing');
           console.log('Robinhood staged manifest activation gate passed');
           NODE
 
