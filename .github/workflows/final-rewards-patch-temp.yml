@@ -30,4 +30,4 @@ jobs:
           git push origin HEAD:prep/solana-v0-arena-upgrade
 
 # one-shot workflow; delete after the correction commit lands
-# trigger 2: free tournament activation
+# trigger 3: idempotent free tournament activation
