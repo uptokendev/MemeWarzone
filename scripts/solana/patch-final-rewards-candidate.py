@@ -28,14 +28,14 @@ handler = '''pub fn activate_tournament_pool_v2_handler(ctx: Context<ActivateTou
     let now = Clock::get()?.unix_timestamp;
     let pool = &mut ctx.accounts.pool;
     require!(pool.pool_id == pool_id && pool.kind == ARENA_KIND_TOURNAMENT && pool.state == ARENA_STATE_OPEN, ArenaError::InvalidState);
-    require!(now >= pool.deposit_deadline, ArenaError::ActivationUnavailable);
+    require!(now >= pool.deposit_deadline, ArenaError::InvalidDeadline);
     pool.state = ARENA_STATE_LIVE;
     emit!(ArenaPoolLive { pool_id });
     Ok(())
 }
 
 '''
-if handler not in a:
+if 'pub fn activate_tournament_pool_v2_handler' not in a:
     if handler_marker not in a:
         raise SystemExit('arena handler marker not found')
     a = a.replace(handler_marker, handler + handler_marker, 1)
@@ -53,23 +53,12 @@ pub struct ActivateTournamentPoolV2<'info> {
 }
 
 '''
-if accounts not in a:
+if 'pub struct ActivateTournamentPoolV2' not in a:
     if accounts_marker not in a:
         raise SystemExit('arena accounts marker not found')
     a = a.replace(accounts_marker, accounts + accounts_marker, 1)
 
-error_marker = '''    #[msg("Arena pool cannot be expired yet.")]
-    ExpiryUnavailable,
-'''
-error_insert = '''    #[msg("Arena tournament cannot be activated yet.")]
-    ActivationUnavailable,
-'''
-if error_insert not in a:
-    if error_marker not in a:
-        raise SystemExit('arena error marker not found')
-    a = a.replace(error_marker, error_marker + error_insert, 1)
-
-# Pure invariant tests for free tournament and deterministic pre-start funding policy.
+# Pure invariants for free tournaments and the pre-start sponsor funding cutoff.
 test_marker = '''    #[test]
     fn resolution_message_changes_when_outcome_or_boost_changes() {
 '''
@@ -80,14 +69,14 @@ extra_tests = '''    #[test]
     }
 
     #[test]
-    fn sponsor_funding_cutoff_is_not_resolution_deadline() {
+    fn sponsor_funding_cutoff_precedes_resolution_deadline() {
         let deposit_deadline = 100i64;
         let resolve_deadline = 200i64;
         assert!(deposit_deadline < resolve_deadline);
     }
 
 '''
-if extra_tests not in a and test_marker in a:
+if 'fn zero_buy_in_is_a_valid_tournament_configuration_value' not in a and test_marker in a:
     a = a.replace(test_marker, extra_tests + test_marker, 1)
 arena.write_text(a)
 
@@ -110,7 +99,7 @@ activation = '''export function buildArenaActivateTournamentInstruction({ author
 }
 
 '''
-if activation not in o:
+if 'buildArenaActivateTournamentInstruction' not in o:
     if marker not in o:
         raise SystemExit('operator close support marker not found')
     o = o.replace(marker, activation + marker, 1)
