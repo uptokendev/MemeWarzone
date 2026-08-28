@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { mkdtemp, writeFile } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -9,6 +8,7 @@ import { build } from "esbuild";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const srcRoot = path.resolve(dir, "..");
+const frontendRoot = path.resolve(srcRoot, "..");
 
 const compiled = await build({
   absWorkingDir: dir,
@@ -46,7 +46,9 @@ export {
   },
 });
 
-const tmpDir = await mkdtemp(path.join(os.tmpdir(), "mwz-feed-isolation-"));
+// Keep the generated ESM harness inside the frontend package tree so Node's
+// normal package resolution can reach frontend/node_modules for external deps.
+const tmpDir = await mkdtemp(path.join(frontendRoot, ".mwz-feed-isolation-"));
 const outfile = path.join(tmpDir, "feedIsolationHarness.mjs");
 await writeFile(outfile, compiled.outputFiles[0].text);
 const {
