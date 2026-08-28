@@ -8,8 +8,14 @@ export type MarketStage =
   | "TOPAZ_PENDING"
   | "TOPAZ_ACTIVE"
   | "TOPAZ_DEGRADED"
+  | "DEX_PENDING"
+  | "DEX_ACTIVE"
+  | "DEX_DEGRADED"
   | "PAUSED"
   | "UNSUPPORTED";
+
+export type MarketTradeSource = "bonding" | "topaz" | "robinhood_v3";
+export type MarketTradeFilter = "all" | MarketTradeSource | "dex";
 
 export type GraduationMarker = {
   txHash: string | null;
@@ -83,7 +89,7 @@ export type MarketTrade = {
   tokenAddress: string;
   pairAddress: string | null;
   marketStage: string;
-  source: "bonding" | "topaz";
+  source: MarketTradeSource;
   side: "buy" | "sell";
   wallet: string;
   recipient: string | null;
@@ -204,7 +210,7 @@ export function fetchMarketRoute(campaignAddress: string, chainId: number, signa
 export function fetchMarketTrades(
   campaignAddress: string,
   chainId: number,
-  options?: { limit?: number; cursor?: string; marketStage?: "all" | "bonding" | "topaz"; signal?: AbortSignal },
+  options?: { limit?: number; cursor?: string; marketStage?: MarketTradeFilter; signal?: AbortSignal },
 ) {
   const params = new URLSearchParams({
     chainId: String(chainId),
