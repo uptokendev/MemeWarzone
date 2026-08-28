@@ -49,13 +49,21 @@ export function useLatchFeedChainToWallet() {
   const { solanaAccount, isSolanaConnected } = useSolanaWallet();
   const prevSolana = useRef<string | null | undefined>(undefined);
   const prevEvm = useRef<string | null | undefined>(undefined);
+  const prevEvmChainId = useRef<number | null | undefined>(undefined);
 
   useEffect(() => {
     const solanaNow = isSolanaConnected && solanaAccount ? String(solanaAccount) : null;
     const evmNow = wallet.isConnected && isEvmAddress(wallet.account) ? String(wallet.account) : null;
+    const evmChainNow = evmNow && isEvmChainId(wallet.chainId) ? Number(wallet.chainId) : null;
     const firstRun = prevSolana.current === undefined && prevEvm.current === undefined;
     const solanaConnected = Boolean(solanaNow && solanaNow !== prevSolana.current);
     const evmConnected = Boolean(evmNow && evmNow !== prevEvm.current);
+    const evmChainChanged = Boolean(
+      evmNow &&
+      evmChainNow &&
+      prevEvmChainId.current !== undefined &&
+      evmChainNow !== prevEvmChainId.current,
+    );
 
     const activateSolana = () => {
       setActiveWalletKind("solana");
@@ -72,6 +80,10 @@ export function useLatchFeedChainToWallet() {
       else if (evmNow) activateEvm();
     } else if (solanaConnected) {
       activateSolana();
+    } else if (evmChainChanged && !solanaNow) {
+      // The same EVM account exists on BNB and Robinhood. Network changes must
+      // still relatch the whole app even though the wallet address is unchanged.
+      activateEvm();
     } else if (evmConnected && !solanaNow) {
       // EVM auto-reconnect must not steal the app from a live Solana session.
       // Explicit EVM connect goes through the wallet modal and selects its actual chain.
@@ -84,6 +96,7 @@ export function useLatchFeedChainToWallet() {
 
     prevSolana.current = solanaNow;
     prevEvm.current = evmNow;
+    prevEvmChainId.current = evmChainNow;
   }, [isSolanaConnected, solanaAccount, wallet.isConnected, wallet.account, wallet.chainId]);
 }
 
