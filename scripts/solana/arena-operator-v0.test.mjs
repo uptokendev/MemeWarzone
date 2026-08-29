@@ -4,7 +4,6 @@ import { Keypair, PublicKey } from "@solana/web3.js";
 
 import {
   ARENA_CANCEL_DOMAIN,
-  ARENA_CLAIM_CHARITY,
   ARENA_CLAIM_MWL,
   ARENA_CLAIM_PROTOCOL,
   ARENA_KIND_BATTLE,
@@ -142,15 +141,17 @@ test("cancellation domain binds custody totals and nonce", () => {
   assert.deepEqual(built.verifyIx.data.subarray(-built.message.length), built.message);
 });
 
-test("claim receipt namespace isolates protocol, MWL and charity", () => {
+test("claim receipt namespace isolates protocol and MWL", () => {
   const protocol = deriveArenaClaimReceipt(poolId, ARENA_CLAIM_PROTOCOL);
   const mwl = deriveArenaClaimReceipt(poolId, ARENA_CLAIM_MWL);
-  const charity = deriveArenaClaimReceipt(poolId, ARENA_CLAIM_CHARITY);
   assert.notEqual(protocol.toBase58(), mwl.toBase58());
-  assert.notEqual(protocol.toBase58(), charity.toBase58());
   const built = buildArenaOperatorClaimInstruction({ caller: Keypair.generate().publicKey, poolId, bucket: ARENA_CLAIM_PROTOCOL, receiver: Keypair.generate().publicKey });
   assert.ok(built.instruction.programId.equals(ARENA_PROGRAM_ID));
   assert.ok(built.claimReceipt.equals(protocol));
+  assert.throws(
+    () => buildArenaOperatorClaimInstruction({ caller: Keypair.generate().publicKey, poolId, bucket: 3, receiver: Keypair.generate().publicKey }),
+    /Unsupported Arena operator claim bucket/,
+  );
 });
 
 test("invalid pool kind is rejected before resolver construction", () => {

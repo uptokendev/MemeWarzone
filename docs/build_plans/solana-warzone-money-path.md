@@ -37,15 +37,14 @@ Instruction set for the next same-ID candidate:
 
 | Piece | State |
 | --- | --- |
-| `programs/mwz_rewards_treasury/src/arena.rs` | Arena module exists, still has **charity**. |
-| `programs/mwz_rewards_treasury/src/arena_final.rs` | Same: `ARENA_CLAIM_CHARITY`, `charity_receiver`. |
+| `programs/mwz_rewards_treasury/src/arena.rs` | Canonical module. Charity removed. Resolve requires a winner. |
 | `frontend/src/lib/solanaArenaV0.ts` | V0 builders for open / deposit / support / buy-in / winner claim / refund. **No charity.** Unused by UI. |
 | `frontend/api/lib/arenaWarPoolEscrow.js` + `arenaWarPoolLive.js` | EVM treasury reads only. |
 | `ArenaStakeButton` / `ArenaSupportButton` / `ArenaWarPoolClaimButton` | Fail closed on Solana with `SOLANA_WARZONE_ESCROW_NOT_LIVE`. Must not call `ethers`. |
 
 ## Wire map (after accepted upgrade)
 
-1. Strip charity from `arena.rs` / `arena_final.rs` so on-chain 85/5/10 matches BNB `ArenaWarPoolTreasury`.
+1. Charity is already stripped from canonical `arena.rs`. Resolve requires a winner. 85/5/10 matches BNB `ArenaWarPoolTreasury`.
 2. Keep `solanaArenaV0.ts` as the only user executor. Gate it with the same V0 check script.
 3. `ArenaStakeButton` / Support / claim: if chain 101/102 **and** the upgraded program is live on that cluster, call `solanaArenaV0`. Otherwise keep fail-closed.
 4. API `escrowRequired(101)` becomes true only when the Solana arena config PDA exists on the canonical program. Never treat unsuffixed BNB treasury env as Solana.

@@ -23,7 +23,6 @@ const SEEDS = Object.freeze({
 
 export const ARENA_CLAIM_PROTOCOL = 1;
 export const ARENA_CLAIM_MWL = 2;
-export const ARENA_CLAIM_CHARITY = 3;
 export const ARENA_KIND_BATTLE = "battle";
 export const ARENA_KIND_TOURNAMENT = "tournament";
 export const ARENA_KIND_BATTLE_CODE = 0;
@@ -61,7 +60,7 @@ export function deriveArenaClaimReceipt(poolId, bucket) {
   return derive(SEEDS.claim, id, Buffer.from([bucket]));
 }
 
-export function buildArenaInitializeInstruction({ authority, rewardsConfig, resolver, protocolReceiver, mwlReceiver, charityReceiver }) {
+export function buildArenaInitializeInstruction({ authority, rewardsConfig, resolver, protocolReceiver, mwlReceiver }) {
   return new TransactionInstruction({
     programId: ARENA_PROGRAM_ID,
     keys: [
@@ -73,7 +72,6 @@ export function buildArenaInitializeInstruction({ authority, rewardsConfig, reso
     data: Buffer.concat([
       discriminator("initialize_arena"), new PublicKey(resolver).toBuffer(),
       new PublicKey(protocolReceiver).toBuffer(), new PublicKey(mwlReceiver).toBuffer(),
-      new PublicKey(charityReceiver).toBuffer(),
     ]),
   });
 }
@@ -90,7 +88,7 @@ export function buildArenaSetResolverInstruction({ authority, rewardsConfig, res
   });
 }
 
-export function buildArenaSetReceiversInstruction({ authority, rewardsConfig, protocolReceiver, mwlReceiver, charityReceiver }) {
+export function buildArenaSetReceiversInstruction({ authority, rewardsConfig, protocolReceiver, mwlReceiver }) {
   return new TransactionInstruction({
     programId: ARENA_PROGRAM_ID,
     keys: [
@@ -98,7 +96,7 @@ export function buildArenaSetReceiversInstruction({ authority, rewardsConfig, pr
       { pubkey: new PublicKey(rewardsConfig), isSigner: false, isWritable: false },
       { pubkey: derive(SEEDS.config), isSigner: false, isWritable: true },
     ],
-    data: Buffer.concat([discriminator("set_arena_receivers"), new PublicKey(protocolReceiver).toBuffer(), new PublicKey(mwlReceiver).toBuffer(), new PublicKey(charityReceiver).toBuffer()]),
+    data: Buffer.concat([discriminator("set_arena_receivers"), new PublicKey(protocolReceiver).toBuffer(), new PublicKey(mwlReceiver).toBuffer()]),
   });
 }
 
@@ -236,7 +234,6 @@ export function buildArenaCancelInstructions(input) {
 function claimBucketInstructionName(bucket) {
   if (bucket === ARENA_CLAIM_PROTOCOL) return "claim_protocol";
   if (bucket === ARENA_CLAIM_MWL) return "claim_mwl";
-  if (bucket === ARENA_CLAIM_CHARITY) return "claim_charity";
   throw new Error("Unsupported Arena operator claim bucket");
 }
 

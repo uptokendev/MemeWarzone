@@ -25,8 +25,7 @@ pub const SQUAD_CLAIM_SEED: &[u8] = b"squad_claim";
 pub mod route;
 pub use route::*;
 pub mod arena;
-pub mod arena_final;
-pub use arena_final::*;
+pub use arena::*;
 
 pub const PERIOD_WEEKLY: u8 = 0;
 pub const PERIOD_MONTHLY: u8 = 1;
@@ -481,9 +480,8 @@ pub mod mwz_rewards_treasury {
         resolver: Pubkey,
         protocol_receiver: Pubkey,
         mwl_receiver: Pubkey,
-        charity_receiver: Pubkey,
     ) -> Result<()> {
-        initialize_arena_handler(ctx, resolver, protocol_receiver, mwl_receiver, charity_receiver)
+        initialize_arena_handler(ctx, resolver, protocol_receiver, mwl_receiver)
     }
 
     pub fn set_arena_resolver(ctx: Context<SetArenaConfig>, resolver: Pubkey) -> Result<()> {
@@ -494,9 +492,8 @@ pub mod mwz_rewards_treasury {
         ctx: Context<SetArenaConfig>,
         protocol_receiver: Pubkey,
         mwl_receiver: Pubkey,
-        charity_receiver: Pubkey,
     ) -> Result<()> {
-        set_arena_receivers_handler(ctx, protocol_receiver, mwl_receiver, charity_receiver)
+        set_arena_receivers_handler(ctx, protocol_receiver, mwl_receiver)
     }
 
     pub fn set_arena_pause(ctx: Context<SetArenaConfig>, paused: bool) -> Result<()> {
@@ -684,10 +681,6 @@ pub mod mwz_rewards_treasury {
 
     pub fn claim_mwl(ctx: Context<ClaimArenaMwl>, pool_id: [u8; 32]) -> Result<()> {
         claim_mwl_handler(ctx, pool_id)
-    }
-
-    pub fn claim_charity(ctx: Context<ClaimArenaCharity>, pool_id: [u8; 32]) -> Result<()> {
-        claim_charity_handler(ctx, pool_id)
     }
 
     pub fn refund_stake(ctx: Context<RefundArenaStake>, pool_id: [u8; 32]) -> Result<()> {
