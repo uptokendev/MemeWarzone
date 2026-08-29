@@ -360,27 +360,50 @@ export async function deployProtocol() {
   console.log("LeagueTreasury (TreasuryVaultV2):", vaultAddress);
 
   if (payoutMaxPerTx !== undefined || payoutDailyCap !== undefined) {
-    const tx = await vault.setCaps(payoutMaxPerTx ?? 0n, payoutDailyCap ?? 0n);
-    await tx.wait();
-    console.log("Configured payout caps");
+    if (canAdminConfigure) {
+      const tx = await vault.setCaps(payoutMaxPerTx ?? 0n, payoutDailyCap ?? 0n);
+      await tx.wait();
+      console.log("Configured payout caps");
+    } else {
+      postDeployActions.push(`TreasuryVaultV2.setCaps(${payoutMaxPerTx ?? 0n}, ${payoutDailyCap ?? 0n})`);
+    }
   }
 
   if (claimMaxPerTx !== undefined || claimMaxEpochTotal !== undefined) {
-    const tx = await vault.setClaimCaps(claimMaxPerTx ?? 0n, claimMaxEpochTotal ?? 0n);
-    await tx.wait();
-    console.log("Configured claim caps");
+    if (canAdminConfigure) {
+      const tx = await vault.setClaimCaps(claimMaxPerTx ?? 0n, claimMaxEpochTotal ?? 0n);
+      await tx.wait();
+      console.log("Configured claim caps");
+    } else {
+      postDeployActions.push(`TreasuryVaultV2.setClaimCaps(${claimMaxPerTx ?? 0n}, ${claimMaxEpochTotal ?? 0n})`);
+    }
   }
 
+  // Non-local deploys keep both payout lanes paused. Safe unpause is a deliberate post-deploy action.
   if (enableLeaguePayouts) {
-    const tx = await vault.setPayoutsPaused(false);
-    await tx.wait();
-    console.log("Unpaused operator payout lane");
+    if (isLocalNetwork() && canAdminConfigure) {
+      const tx = await vault.setPayoutsPaused(false);
+      await tx.wait();
+      console.log("Unpaused operator payout lane");
+    } else {
+      postDeployActions.push("TreasuryVaultV2.setPayoutsPaused(false)");
+      if (!isLocalNetwork()) {
+        console.warn("[deploy] League payout lane stays paused; Safe must unpause after handoff.");
+      }
+    }
   }
 
   if (enableLeagueClaims) {
-    const tx = await vault.setClaimsPaused(false);
-    await tx.wait();
-    console.log("Unpaused Merkle claim lane");
+    if (isLocalNetwork() && canAdminConfigure) {
+      const tx = await vault.setClaimsPaused(false);
+      await tx.wait();
+      console.log("Unpaused Merkle claim lane");
+    } else {
+      postDeployActions.push("TreasuryVaultV2.setClaimsPaused(false)");
+      if (!isLocalNetwork()) {
+        console.warn("[deploy] League claim lane stays paused; Safe must unpause after handoff.");
+      }
+    }
   }
 
   const charityTreasury = useTreasuryRouterV2

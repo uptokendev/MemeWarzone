@@ -45,7 +45,7 @@ jobs:
         with:
           node-version: 24
 
-      - name: Verify same program ID and final one-sweep source boundary
+      - name: Verify same program ID and canonical Arena source boundary
         shell: bash
         run: |
           grep -F "mwz_rewards_treasury = \"$EXPECTED_PROGRAM_ID\"" Anchor.toml
@@ -60,20 +60,24 @@ jobs:
           grep -F "pub struct InitializeLanesV2Primary" programs/mwz_rewards_treasury/src/lib.rs
           grep -F "pub struct InitializeLanesV2Secondary" programs/mwz_rewards_treasury/src/lib.rs
 
-          grep -F "pub mod arena_final;" programs/mwz_rewards_treasury/src/lib.rs
-          grep -F "pub use arena_final::*;" programs/mwz_rewards_treasury/src/lib.rs
-          if grep -Fq "pub use arena::*;" programs/mwz_rewards_treasury/src/lib.rs; then
-            echo "Legacy Arena module is still exported" >&2
+          if [ -e programs/mwz_rewards_treasury/src/arena_final.rs ]; then
+            echo "arena_final.rs must stay deleted; canonical Arena is arena.rs" >&2
             exit 1
           fi
+          if grep -Fq "arena_final" programs/mwz_rewards_treasury/src/lib.rs; then
+            echo "lib.rs still references arena_final" >&2
+            exit 1
+          fi
+          grep -F "pub mod arena;" programs/mwz_rewards_treasury/src/lib.rs
+          grep -F "pub use arena::*;" programs/mwz_rewards_treasury/src/lib.rs
 
           for instruction in set_recruiter_batch_root claim_recruiter set_squad_batch_root claim_squad; do
             grep -F "pub fn $instruction" programs/mwz_rewards_treasury/src/lib.rs
           done
 
-          grep -F "DeprecatedInstruction" programs/mwz_rewards_treasury/src/arena_final.rs
+          grep -F "DeprecatedInstruction" programs/mwz_rewards_treasury/src/arena.rs
           for instruction in open_battle_pool open_tournament_pool deposit_stake donate_support deposit_buy_in resolve_pool refund_buy_in; do
-            grep -F "pub fn ${instruction}_handler" programs/mwz_rewards_treasury/src/arena_final.rs
+            grep -F "pub fn ${instruction}_handler" programs/mwz_rewards_treasury/src/arena.rs
           done
 
           for instruction in \
@@ -85,12 +89,16 @@ jobs:
 
           for instruction in \
             initialize_arena set_arena_resolver set_arena_receivers set_arena_pause \
-            settle_expired_pool claim_winner claim_protocol claim_mwl claim_charity refund_stake; do
+            settle_expired_pool claim_winner claim_protocol claim_mwl refund_stake; do
             grep -F "pub fn $instruction" programs/mwz_rewards_treasury/src/lib.rs
           done
+          if grep -Fq "pub fn claim_charity" programs/mwz_rewards_treasury/src/lib.rs; then
+            echo "claim_charity must stay removed from the canonical 85/5/10 Arena surface" >&2
+            exit 1
+          fi
 
           for state in ArenaConfig ArenaPool ArenaVault ArenaBuyInReceipt ArenaBoostReceipt ArenaClaimReceipt ArenaRefundReceipt; do
-            grep -F "pub struct $state" programs/mwz_rewards_treasury/src/arena_final.rs
+            grep -F "pub struct $state" programs/mwz_rewards_treasury/src/arena.rs
           done
 
           for invariant in \
@@ -98,10 +106,10 @@ jobs:
             required_stake_a required_stake_b deposited_stake_a deposited_stake_b \
             support_deadline support_closed prize_boost_total asset_a asset_b outcome_hash \
             entry_asset entry_count funding_id validate_tournament_winner_receipt arena_cancel_message_v1; do
-            grep -F "$invariant" programs/mwz_rewards_treasury/src/arena_final.rs
+            grep -F "$invariant" programs/mwz_rewards_treasury/src/arena.rs
           done
-          grep -F "require!(pool.entry_count >= 2" programs/mwz_rewards_treasury/src/arena_final.rs
-          grep -F "require!(pool.state == ARENA_STATE_OPEN, ArenaError::InvalidState);" programs/mwz_rewards_treasury/src/arena_final.rs
+          grep -F "require!(pool.entry_count >= 2" programs/mwz_rewards_treasury/src/arena.rs
+          grep -F "require!(pool.state == ARENA_STATE_OPEN, ArenaError::InvalidState);" programs/mwz_rewards_treasury/src/arena.rs
 
       - name: Install Rust toolchains
         shell: bash
@@ -190,13 +198,15 @@ jobs:
             ['claim_winner','claimWinner'],
             ['claim_protocol','claimProtocol'],
             ['claim_mwl','claimMwl'],
-            ['claim_charity','claimCharity'],
             ['refund_stake','refundStake'],
             ['refund_buy_in_v2','refundBuyInV2'],
             ['refund_prize_boost_v2','refundPrizeBoostV2'],
           ];
           for (const alternatives of required) {
             if (!alternatives.some((name) => names.has(name))) throw new Error(`IDL missing ${alternatives[0]}`);
+          }
+          if (names.has('claimCharity') || names.has('claim_charity')) {
+            throw new Error('IDL still contains claim_charity; canonical Arena is 85/5/10 with no charity path');
           }
           const accounts = new Set((idl.accounts || []).map((account) => String(account.name)));
           for (const alternatives of [
