@@ -129,4 +129,37 @@ describe("ArenaWarPoolTreasury", function () {
       alice.sendTransaction({ to: await treasury.getAddress(), value: STAKE }),
     ).to.be.revertedWithCustomError(treasury, "InvalidAmount");
   });
+
+  it("opens a free tournament pool, holds Support, and pays 85/5/10 to the champion", async () => {
+    const { treasury, resolver, protocol, mwl, alice, donor } = await deploy();
+    const poolId = ethers.id("tournament-free");
+    const now = (await ethers.provider.getBlock("latest"))!.timestamp;
+    await treasury.openTournamentPool(poolId, 0, now + 3600, now + 7200);
+    await treasury.connect(donor).donateSupport(poolId, { value: ethers.parseEther("2") });
+    await expect(treasury.connect(alice).depositBuyIn(poolId, { value: 0 })).to.be.revertedWithCustomError(treasury, "InvalidAmount");
+    await expect(treasury.connect(alice).depositBuyIn(poolId, { value: STAKE })).to.be.revertedWithCustomError(treasury, "InvalidAmount");
+
+    const prize = ethers.parseEther("2");
+    const protocolAmt = (prize * 500n) / 10_000n;
+    const mwlAmt = (prize * 1000n) / 10_000n;
+    const winnerAmt = prize - protocolAmt - mwlAmt;
+    const deadline = now + 10_000;
+    const sig = await signResolve(treasury, resolver, poolId, alice.address, 0n, prize, 0n, deadline);
+    await treasury.resolve(poolId, alice.address, deadline, sig);
+
+    const before = await ethers.provider.getBalance(alice.address);
+    const tx = await treasury.connect(alice).claimWinner(poolId);
+    const receipt = await tx.wait();
+    const gas = (receipt?.gasUsed ?? 0n) * (receipt?.gasPrice ?? 0n);
+    expect((await ethers.provider.getBalance(alice.address)) - before + gas).to.eq(winnerAmt);
+
+    const protocolBefore = await ethers.provider.getBalance(protocol.address);
+    await treasury.claimProtocol(poolId);
+    expect((await ethers.provider.getBalance(protocol.address)) - protocolBefore).to.eq(protocolAmt);
+
+    const mwlBefore = await ethers.provider.getBalance(mwl.address);
+    await treasury.claimMwl(poolId);
+    expect((await ethers.provider.getBalance(mwl.address)) - mwlBefore).to.eq(mwlAmt);
+    await expect(treasury.connect(donor).claimWinner(poolId)).to.be.revertedWithCustomError(treasury, "NotOwner");
+  });
 });

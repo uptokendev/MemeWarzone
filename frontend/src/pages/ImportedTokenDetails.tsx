@@ -82,7 +82,7 @@ export default function ImportedTokenDetails({ item }: { item: ArenaImportItem }
 
       <div className="flex flex-wrap gap-2">
         <Button asChild size="sm" variant="outline" className="font-retro">
-          <Link to="/arena">Arena</Link>
+          <Link to="/warzone">Warzone</Link>
         </Button>
       </div>
     </ContentContainer>

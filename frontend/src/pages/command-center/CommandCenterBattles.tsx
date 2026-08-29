@@ -12,19 +12,23 @@ import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import {
   acceptPostGradBattle,
   challengePostGradBattle,
+  counterPostGradBattle,
   declinePostGradBattle,
   openPostGradBattle,
 } from "@/features/postgrad/apiClient";
 import { postGradFlags } from "@/features/postgrad/config";
 import { useArenaBattleFeed, type CreatorBattleStatus } from "@/hooks/useArenaBattleFeed";
 import { isSolanaAddress } from "@/lib/address";
-import { isSolanaChainId } from "@/lib/chainConfig";
+import { getNativeSymbol, isSolanaChainId } from "@/lib/chainConfig";
 import { signWalletAction } from "@/lib/walletActionAuth";
 import { signSolanaMessage } from "@/lib/solanaWallet";
+import { ArenaStakeButton } from "@/components/arena/ArenaStakeButton";
+import { BATTLE_DURATIONS, battleDurationLabel, parseBattleDurationHours } from "@/lib/arena/battleDuration";
 import { publicBattleLabel, publicBattleLane } from "@/lib/arena/publicBattleState";
 
-function nativeLabel(chainId?: number) {
-  return isSolanaChainId(Number(chainId)) ? "SOL" : "BNB";
+function nativeLabel(chainId?: number, fallback?: string) {
+  if (fallback) return fallback;
+  return getNativeSymbol(chainId);
 }
 
 function tokenKey(status: CreatorBattleStatus) {
@@ -39,6 +43,9 @@ export default function CommandCenterBattles() {
   const [selectedToken, setSelectedToken] = useState("");
   const [stake, setStake] = useState("");
   const [challengeTarget, setChallengeTarget] = useState("");
+  const [counterStake, setCounterStake] = useState("");
+  const [durationHours, setDurationHours] = useState(24);
+  const [counterDurationHours, setCounterDurationHours] = useState(24);
   const [busy, setBusy] = useState<string | null>(null);
 
   const qualified = useMemo(
@@ -47,12 +54,14 @@ export default function CommandCenterBattles() {
   );
   const eligible = qualified.filter((item) => item.eligibility);
   const incoming = useMemo(() => {
+    const keys = new Set(qualified.map(tokenKey).map((value) => value.toLowerCase()));
     return feed.openForBattleQueue.filter((battle) => {
       if (String(battle.state) !== "challenged") return false;
-      const defender = battle.participants?.[1];
-      const keys = new Set(qualified.map(tokenKey).map((value) => value.toLowerCase()));
-      const defenderId = String(defender?.tokenAddress || defender?.tokenId || "").toLowerCase();
-      return Boolean(defenderId && keys.has(defenderId));
+      const left = String(battle.participants?.[0]?.tokenAddress || battle.participants?.[0]?.tokenId || "").toLowerCase();
+      const right = String(battle.participants?.[1]?.tokenAddress || battle.participants?.[1]?.tokenId || "").toLowerCase();
+      if (!keys.has(left) && !keys.has(right)) return false;
+      const from = String((battle as { offerFromToken?: string }).offerFromToken || left).toLowerCase();
+      return !keys.has(from);
     });
   }, [feed.openForBattleQueue, qualified]);
   const waitingRivals = useMemo(
@@ -101,10 +110,10 @@ export default function CommandCenterBattles() {
     const tokenId = tokenKey(selected);
     setBusy("open");
     try {
-      const auth = await signAuth("arena_open_battle", [`Token: ${tokenId}`, `Stake: ${stakeAmount}`]);
-      await openPostGradBattle({ tokenId, chainId: Number(chainId), stakeNative: stakeAmount, auth });
+      const auth = await signAuth("arena_open_battle", [`Token: ${tokenId}`, `Stake: ${stakeAmount}`, `Duration: ${durationHours}`]);
+      await openPostGradBattle({ tokenId, chainId: Number(chainId), stakeNative: stakeAmount, durationHours, auth });
       await feed.refreshFeed();
-      toast.success("Coin is waiting for a similar rival. Stake is an intent — no native left the wallet.");
+      toast.success("Coin is waiting for a similar rival. Stake and fight length lock when both sides agree, then both deposit.");
     } catch (error) {
       toast.error(String((error as Error)?.message || "Could not open for battle."));
     } finally {
@@ -122,12 +131,34 @@ export default function CommandCenterBattles() {
         `Challenger: ${tokenId}`,
         `Defender: ${targetTokenId}`,
         `Stake: ${stakeAmount}`,
+        `Duration: ${durationHours}`,
       ]);
-      await challengePostGradBattle({ tokenId, targetTokenId, chainId: Number(chainId), stakeNative: stakeAmount, auth });
+      await challengePostGradBattle({ tokenId, targetTokenId, chainId: Number(chainId), stakeNative: stakeAmount, durationHours, auth });
       await feed.refreshFeed();
       toast.success("Challenge sent. Email goes out if they verified an address and Resend is configured.");
     } catch (error) {
       toast.error(String((error as Error)?.message || "Could not send challenge."));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleCounterOffer(battleId: string) {
+    const amount = Number(counterStake);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.error("Enter a counter-offer stake greater than zero.");
+      return;
+    }
+    setBusy(battleId);
+    try {
+      const hours = parseBattleDurationHours(counterDurationHours, 24);
+      const auth = await signAuth("arena_counter_battle", [`Battle: ${battleId}`, `Stake: ${amount}`, `Duration: ${hours}`]);
+      await counterPostGradBattle(battleId, amount, auth, hours);
+      await feed.refreshFeed();
+      setCounterStake("");
+      toast.success("Counter-offer sent. They get a popup and email if verified.");
+    } catch (error) {
+      toast.error(String((error as Error)?.message || "Could not send counter-offer."));
     } finally {
       setBusy(null);
     }
@@ -138,10 +169,19 @@ export default function CommandCenterBattles() {
     try {
       const action = accept ? "arena_accept_battle" : "arena_decline_battle";
       const auth = await signAuth(action, [`Battle: ${battleId}`]);
-      if (accept) await acceptPostGradBattle(battleId, auth);
-      else await declinePostGradBattle(battleId, auth);
-      await feed.refreshFeed();
-      toast.success(accept ? "Challenge accepted. Fight is live." : "Challenge declined.");
+      if (accept) {
+        const result = await acceptPostGradBattle(battleId, auth);
+        await feed.refreshFeed();
+        toast.success(
+          result?.battle?.state === "matched" || result?.escrowRequired
+            ? "Accepted. Pay your on-chain stake to start the 12-hour fight."
+            : "Challenge accepted. Fight is live.",
+        );
+      } else {
+        await declinePostGradBattle(battleId, auth);
+        await feed.refreshFeed();
+        toast.success("Challenge declined.");
+      }
     } catch (error) {
       toast.error(String((error as Error)?.message || "Could not update challenge."));
     } finally {
@@ -151,7 +191,7 @@ export default function CommandCenterBattles() {
 
   if (!postGradFlags.arena) {
     return (
-      <CommandCenterCard title="Battles" description="Arena fights stay gated until the Arena flags are on.">
+      <CommandCenterCard title="Battles" description="Warzone fights stay gated until the Warzone flags are on.">
         <p className="text-sm text-muted-foreground">This page is reserved for graduated coins and approved imports.</p>
       </CommandCenterCard>
     );
@@ -161,33 +201,73 @@ export default function CommandCenterBattles() {
     <div className="space-y-4">
       <div className="flex items-center gap-2 text-muted-foreground">
         <Swords className="h-4 w-4 text-accent" />
-        <span className="font-retro text-[10px] uppercase tracking-[0.16em]">Arena battles</span>
+        <span className="font-retro text-[10px] uppercase tracking-[0.16em]">Warzone battles</span>
       </div>
 
       {incoming.length ? (
-        <CommandCenterCard title="Incoming challenges" description="Accept to start a live 12-hour fight, or decline. Add an email in Settings if you want a copy of challenges.">
+        <CommandCenterCard title="Incoming offers" description="Accept, decline, or counter-offer a different stake. Add an email in Settings to get challenge and counter-offer mail.">
           <div className="space-y-3">
             {incoming.map((battle) => {
               const challenger = battle.participants?.[0];
               const defender = battle.participants?.[1];
+              const offer = battle as { offeredStakeNative?: number; originalStakeNative?: number; offerCount?: number; nativeSymbol?: string; stakeNative?: number };
+              const offered = offer.offeredStakeNative ?? offer.stakeNative;
+              const isCounter = Number(offer.offerCount || 0) > 0;
               return (
-                <div key={battle.id} className="mwz-hud-frame flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <TacticalTag label="Challenged" tone="hot" />
-                    <div className="mt-2 font-retro text-sm text-foreground">
-                      {challenger?.symbol || "Rival"} challenged {defender?.symbol || "your coin"}
+                <div key={battle.id} className="mwz-hud-frame flex flex-col gap-3 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <TacticalTag label={isCounter ? "Counter-offer" : "Challenged"} tone="hot" />
+                      <div className="mt-2 font-retro text-sm text-foreground">
+                        {isCounter
+                          ? `${challenger?.symbol || "Rival"} / ${defender?.symbol || "your coin"} — ${offered} ${nativeLabel(chainId, offer.nativeSymbol)} on the table`
+                          : `${challenger?.symbol || "Rival"} challenged ${defender?.symbol || "your coin"}`}
+                      </div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        Current offer {offered || "—"} {nativeLabel(chainId, offer.nativeSymbol)} · {battleDurationLabel((battle as { offeredDurationHours?: number; durationHours?: number }).offeredDurationHours || (battle as { durationHours?: number }).durationHours)}
+                        {isCounter && offer.originalStakeNative ? ` · started at ${offer.originalStakeNative}` : ""}
+                      </div>
                     </div>
-                    <div className="mt-1 text-xs text-muted-foreground">Stake {(battle as { stakeNative?: number }).stakeNative || "—"} {nativeLabel(chainId)}</div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" className="font-retro" disabled={busy === battle.id} onClick={() => void handleIncoming(battle.id, true)}>
+                        Accept
+                      </Button>
+                      <Button size="sm" variant="outline" className="font-retro" disabled={busy === battle.id} onClick={() => void handleIncoming(battle.id, false)}>
+                        Decline
+                      </Button>
+                      <Button asChild size="sm" variant="outline" className="font-retro">
+                        <Link to={`/battle/${encodeURIComponent(battle.id)}`}>View</Link>
+                      </Button>
+                    </div>
                   </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Button size="sm" className="font-retro" disabled={busy === battle.id} onClick={() => void handleIncoming(battle.id, true)}>
-                      Accept
-                    </Button>
-                    <Button size="sm" variant="outline" className="font-retro" disabled={busy === battle.id} onClick={() => void handleIncoming(battle.id, false)}>
-                      Decline
-                    </Button>
-                    <Button asChild size="sm" variant="outline" className="font-retro">
-                      <Link to={`/battle/${encodeURIComponent(battle.id)}`}>View</Link>
+                  <div className="flex flex-wrap items-end gap-2">
+                    <label className="min-w-[10rem] flex-1 text-xs uppercase tracking-[0.14em] text-muted-foreground">
+                      Fight length
+                      <select
+                        className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
+                        value={counterDurationHours}
+                        onChange={(event) => setCounterDurationHours(parseBattleDurationHours(event.target.value, 24))}
+                      >
+                        {BATTLE_DURATIONS.map((item) => (
+                          <option key={item.hours} value={item.hours}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="min-w-[10rem] flex-1 text-xs uppercase tracking-[0.14em] text-muted-foreground">
+                      Counter ({nativeLabel(chainId, offer.nativeSymbol)})
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        value={counterStake}
+                        onChange={(event) => setCounterStake(event.target.value)}
+                        className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
+                      />
+                    </label>
+                    <Button size="sm" variant="outline" className="font-retro" disabled={busy === battle.id} onClick={() => void handleCounterOffer(battle.id)}>
+                      Send counter
                     </Button>
                   </div>
                 </div>
@@ -197,7 +277,7 @@ export default function CommandCenterBattles() {
         </CommandCenterCard>
       ) : null}
 
-      <CommandCenterCard title="Open for battle" description="Set a chain-native stake intent. No BNB or SOL leaves the wallet until BattleTreasury escrow is live. We auto-match a similar waiting coin within 20% of that stake.">
+      <CommandCenterCard title="Open for battle" description="Set a chain-native stake. After a match, both owners pay that stake on-chain. The fight goes live only when both deposits are in. Auto-match looks for a similar waiting coin within 20% of that stake.">
         {!eligible.length ? (
           <p className="text-sm text-muted-foreground">
             {feed.loading
@@ -216,6 +296,20 @@ export default function CommandCenterBattles() {
                 {eligible.map((item) => (
                   <option key={tokenKey(item)} value={tokenKey(item)}>
                     {item.symbol || item.tokenName} ({item.origin === "import" ? "imported" : "graduated"})
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block text-xs uppercase tracking-[0.14em] text-muted-foreground">
+              Fight length
+              <select
+                className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
+                value={durationHours}
+                onChange={(event) => setDurationHours(parseBattleDurationHours(event.target.value, 24))}
+              >
+                {BATTLE_DURATIONS.map((item) => (
+                  <option key={item.hours} value={item.hours}>
+                    {item.label}
                   </option>
                 ))}
               </select>
@@ -286,9 +380,19 @@ export default function CommandCenterBattles() {
                   <div className="text-xs text-muted-foreground">{item.unavailableReason || item.currentState}</div>
                 </div>
                 {item.battleId ? (
-                  <Button asChild size="sm" variant="outline" className="font-retro">
-                    <Link to={`/battle/${encodeURIComponent(item.battleId)}`}>Open battle</Link>
-                  </Button>
+                  <div className="flex flex-wrap gap-2">
+                    {item.currentState === "matched" ? (
+                      <ArenaStakeButton
+                        battleId={item.battleId}
+                        chainId={chainId}
+                        walletAddress={walletAddress}
+                        battleState={item.currentState}
+                      />
+                    ) : null}
+                    <Button asChild size="sm" variant="outline" className="font-retro">
+                      <Link to={`/battle/${encodeURIComponent(item.battleId)}`}>Open battle</Link>
+                    </Button>
+                  </div>
                 ) : (
                   <TacticalTag label={item.eligibility ? "Ready" : "Unavailable"} tone={item.eligibility ? "success" : "default"} />
                 )}

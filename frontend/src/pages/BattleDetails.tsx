@@ -5,7 +5,9 @@ import { Button } from "@/components/ui/button";
 import { ContentContainer } from "@/components/layout/ContentContainer";
 import { getArenaTokenRoute } from "@/features/postgrad/tokenRoutes";
 import { useArenaBattleDetails } from "@/hooks/useArenaBattleFeed";
+import { ArenaStakeButton } from "@/components/arena/ArenaStakeButton";
 import { ArenaWarPoolClaimButton } from "@/components/arena/ArenaWarPoolClaimButton";
+import { WarPoolPanel } from "@/components/postgrad/WarPoolPanel";
 import { publicBattleLabel, publicBattleLane } from "@/lib/arena/publicBattleState";
 import { resolveImageUri } from "@/lib/media";
 
@@ -23,7 +25,7 @@ const BattleDetails = () => {
           </p>
           <div className="mt-4">
             <Button asChild size="sm" variant="outline" className="font-retro">
-              <Link to="/arena/battles">Back to battles</Link>
+              <Link to="/warzone/battles">Back to battles</Link>
             </Button>
           </div>
         </section>
@@ -32,6 +34,18 @@ const BattleDetails = () => {
   }
 
   const lane = publicBattleLane(battle.state);
+  const tournamentId = String((battle as { tournamentId?: string }).tournamentId || "");
+  const tournamentMatch = String((battle as { source?: string }).source || "") === "tournament" && Boolean(tournamentId);
+  const sides = battle.participants
+    .filter((participant) => participant.tokenId && !String(participant.tokenId).startsWith("pending-"))
+    .map((participant) => ({
+      tokenId: String(participant.tokenAddress || participant.tokenId),
+      tokenName: participant.tokenName,
+      symbol: participant.symbol,
+      score: participant.score,
+      uniqueTraders: participant.uniqueTraders,
+      eligible: true,
+    }));
 
   return (
     <ContentContainer className="space-y-5 px-1 pb-10 pt-4">
@@ -45,7 +59,7 @@ const BattleDetails = () => {
             </h1>
           </div>
           <div className="flex flex-wrap gap-2">
-            <TacticalTag label={publicBattleLabel(lane)} tone={lane === "live" ? "hot" : "default"} />
+            <TacticalTag label={publicBattleLabel(lane, battle.state)} tone={lane === "live" ? "hot" : battle.state === "matched" ? "hot" : "default"} />
             <TacticalTag label={source === "api" ? "Live data" : "Awaiting data"} tone={source === "api" ? "success" : "default"} />
           </div>
         </div>
@@ -81,18 +95,40 @@ const BattleDetails = () => {
 
       <section className="mwz-hud-frame space-y-2 p-4 text-sm text-muted-foreground">
         <p>
-          Native stake on this fight is an intent only. No BNB or SOL left the wallet. BattleTreasury escrow is not live.
+          {battle.state === "matched"
+            ? "Settlement is agreed. Open the pool, then both owners deposit the same stake. The fight clock starts only when both have paid. If the other owner never deposits, refund after the pay window."
+            : "Agree stake and fight length first (24 hours, 3 days, or 7 days). After that both owners deposit. Live starts when both have paid."}
         </p>
         <p>
           Support is a donation into the battle treasury for the memecoins in the fight, not betting and not charity. Supporters are not paid. Winner-takes-all: 85% winning campaign owner, 5% protocol, 10% Major War League. The winning owner claims — protocol does not send.
         </p>
-        {battle.state === "finished" ? (
+        {battle.state === "matched" ? (
+          <ArenaStakeButton
+            battleId={battle.id}
+            chainId={(battle as { chainId?: number }).chainId}
+            battleState={battle.state}
+          />
+        ) : null}
+        {battle.state === "finished" && !tournamentMatch ? (
           <ArenaWarPoolClaimButton battleId={battle.id} chainId={(battle as { chainId?: number }).chainId} />
         ) : null}
       </section>
 
+      <WarPoolPanel
+        poolSubjectId={tournamentMatch ? tournamentId : battle.id}
+        chainId={(battle as { chainId?: number }).chainId}
+        nativeSymbol={(battle as { nativeSymbol?: string }).nativeSymbol}
+        sides={sides}
+        kind={tournamentMatch ? "tournament" : "battle"}
+        redirectTo={
+          tournamentMatch
+            ? { href: `/warzone/tournament/${encodeURIComponent(tournamentId)}`, label: "Support this coin in the tournament" }
+            : null
+        }
+      />
+
       <Button asChild size="sm" variant="outline" className="font-retro">
-        <Link to="/arena/battles">Back to battles</Link>
+        <Link to="/warzone/battles">Back to battles</Link>
       </Button>
     </ContentContainer>
   );

@@ -5,16 +5,10 @@ import { badMethod, json, normalizeWalletFlexible, readJson } from "../server/ht
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { requireAdminOrOps } from "./lib/apiAuth.js";
 import { tokenEligible as tokenIsEligible } from "./lib/arenaEligibility.js";
+import { nativeSymbolFor } from "./lib/chainNative.js";
 
 function ident(value) {
   return normalizeWalletFlexible(value) || String(value || "").trim();
-}
-
-function nativeSymbolFor(chainId) {
-  const id = Number(chainId);
-  if (id === 101 || id === 102) return "SOL";
-  if (id === 4663 || id === 46630) return "RH";
-  return "BNB";
 }
 
 function mapPublic(row, entryCount = 0) {
@@ -35,6 +29,7 @@ function mapPublic(row, entryCount = 0) {
     origin: String(row.origin || "custom"),
     chainId: Number(row.chain_id),
     bracket: row.bracket || [],
+    winnerToken: row.winner_token || null,
   };
 }
 
@@ -348,10 +343,18 @@ export async function advanceTournamentFromBattle(row) {
     if (winners.length === 1) {
       await pool.query(
         `update public.arena_tournaments
-            set status = 'finished', ends_at = now(), bracket = $2::jsonb, updated_at = now()
+            set status = 'finished', ends_at = now(), winner_token = $3, bracket = $2::jsonb, updated_at = now()
           where id = $1`,
-        [tournamentId, JSON.stringify({ rounds })],
+        [tournamentId, JSON.stringify({ rounds }), winners[0]],
       );
+      try {
+        await pool.query(
+          `update public.arena_war_pools set state = 'locked', updated_at = now() where battle_id = $1 and state = 'open'`,
+          [tournamentId],
+        );
+      } catch (error) {
+        console.warn("[api/arenaTournaments] lock support pool failed", error?.message || error);
+      }
       return { finished: true, winner: winners[0] };
     }
     const nextMatches = [];
@@ -390,10 +393,18 @@ export async function advanceTournamentFromBattle(row) {
     if (nextWinners.length === nextMatches.length && nextWinners.length === 1) {
       await pool.query(
         `update public.arena_tournaments
-            set status = 'finished', ends_at = now(), bracket = $2::jsonb, updated_at = now()
+            set status = 'finished', ends_at = now(), winner_token = $3, bracket = $2::jsonb, updated_at = now()
           where id = $1`,
-        [tournamentId, JSON.stringify({ rounds })],
+        [tournamentId, JSON.stringify({ rounds }), nextWinners[0]],
       );
+      try {
+        await pool.query(
+          `update public.arena_war_pools set state = 'locked', updated_at = now() where battle_id = $1 and state = 'open'`,
+          [tournamentId],
+        );
+      } catch (error) {
+        console.warn("[api/arenaTournaments] lock support pool failed", error?.message || error);
+      }
       return { finished: true, winner: nextWinners[0] };
     }
   }

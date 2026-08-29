@@ -62,6 +62,10 @@ export function isSolanaChainId(chainId?: number | null): boolean {
   return chainId === SOLANA_CHAIN_ID;
 }
 
+export function isRobinhoodChainId(chainId?: number | null): boolean {
+  return chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID;
+}
+
 export function isEvmChainId(chainId?: number | null): boolean {
   return (
     chainId === BNB_CHAIN_ID ||
@@ -69,6 +73,13 @@ export function isEvmChainId(chainId?: number | null): boolean {
     chainId === ROBINHOOD_CHAIN_ID ||
     chainId === ROBINHOOD_TESTNET_CHAIN_ID
   );
+}
+
+/** Native gas token for Warzone stakes, Support, and claims. Robinhood uses ETH, not RH. */
+export function getNativeSymbol(chainId?: number | null): string {
+  if (isSolanaChainId(chainId)) return "SOL";
+  if (isRobinhoodChainId(chainId)) return "ETH";
+  return "BNB";
 }
 
 function isEvmTokenPath(pathname: string): boolean {

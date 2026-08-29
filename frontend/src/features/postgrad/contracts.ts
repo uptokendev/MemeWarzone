@@ -38,6 +38,7 @@ export const mockTokenProfileSchema = graduatedTokenSchema.extend({
 export const battleStateSchema = z.enum([
   "waiting",
   "challenged",
+  "matched",
   "live",
   "finished",
   "expired",
@@ -53,7 +54,8 @@ export const battleStateSchema = z.enum([
 
 export const POST_GRAD_BATTLE_TRANSITIONS = {
   waiting: ["live", "expired"],
-  challenged: ["live", "expired"],
+  challenged: ["live", "matched", "expired"],
+  matched: ["live", "expired"],
   live: ["finished"],
   finished: [],
   expired: [],

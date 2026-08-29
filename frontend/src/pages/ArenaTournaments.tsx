@@ -34,7 +34,7 @@ const ArenaTournaments = () => {
       <section className="mwz-hud-frame p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Arena</div>
+            <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Warzone</div>
             <h1 className="mt-1 font-retro text-2xl text-foreground">Tournaments</h1>
             <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
               Upcoming opt-ins, running events, and previous results. Standings live on the tournament page.
@@ -61,7 +61,7 @@ const ArenaTournaments = () => {
           rows.map((event) => (
             <Link
               key={event.id}
-              to={`/arena/tournament/${encodeURIComponent(event.id)}`}
+              to={`/warzone/tournament/${encodeURIComponent(event.id)}`}
               className="mwz-hud-frame flex flex-col gap-2 p-4 transition hover:border-accent/50 hover:bg-accent/5 sm:flex-row sm:items-center sm:justify-between"
             >
               <div className="min-w-0">

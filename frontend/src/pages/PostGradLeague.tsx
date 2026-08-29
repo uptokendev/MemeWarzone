@@ -18,10 +18,10 @@ const PostGradLeague = () => {
       <section className="mwz-hud-frame p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Arena</div>
+            <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Warzone</div>
             <h1 className="mt-1 font-retro text-2xl text-foreground">Major War League</h1>
             <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-              Weekly table for graduated MemeWarzone coins and approved imports. Prize Leagues stay on /league.
+              Weekly table for graduated MemeWarzone coins and approved imports. Win 3 / loss 1 / draw 0. Prize Leagues stay on /league.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -54,11 +54,11 @@ const PostGradLeague = () => {
             <div className="space-y-3">
               <p>Quarter Finals are a system tournament seeded from this table.</p>
               <Button asChild size="sm" variant="outline" className="font-retro">
-                <Link to={`/arena/tournament/${encodeURIComponent(quarterFinalsId)}`}>Open Quarter Finals</Link>
+                <Link to={`/warzone/tournament/${encodeURIComponent(quarterFinalsId)}`}>Open Quarter Finals</Link>
               </Button>
             </div>
           ) : (
-            "Quarter Finals open at the end of the quarter. The top of this table is seeded automatically."
+            "Quarter Finals open at quarter-end. Ops freeze this table and seed the top 8 coins with at least 3 finished fights."
           )}
         </section>
       ) : (
@@ -74,6 +74,9 @@ const PostGradLeague = () => {
                     </div>
                     <div className="mt-1 text-xs text-muted-foreground">
                       {entry.points} pts · {entry.wins}W / {entry.losses}L
+                      {Number((entry as { finishedFights?: number }).finishedFights || 0)
+                        ? ` · ${(entry as { finishedFights?: number }).finishedFights} fights`
+                        : ""}
                     </div>
                   </div>
                 </div>

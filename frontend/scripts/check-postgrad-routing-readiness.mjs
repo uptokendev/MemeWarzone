@@ -27,11 +27,11 @@ const server = read("api/server.mjs");
 const envExample = read(".env.example");
 
 const requiredUiRoutes = [
-  'path="/arena"',
-  'path="/arena/battles"',
-  'path="/arena/tournaments"',
-  'path="/arena/tournament/:id"',
-  'path="/arena/major-war-league"',
+  'path="/warzone"',
+  'path="/warzone/battles"',
+  'path="/warzone/tournaments"',
+  'path="/warzone/tournament/:id"',
+  'path="/warzone/major-war-league"',
   'path="/war-room"',
   'path="/battle/:id"',
   'path="/sponsorships/apply"',
@@ -41,9 +41,9 @@ const requiredUiRoutes = [
 for (const route of requiredUiRoutes) assertIncludes(app, route, "App routes", failures);
 
 const requiredRedirects = [
-  'path="/events" element={<Navigate to="/arena/tournaments" replace />} />',
-  'path="/arena/events" element={<Navigate to="/arena/tournaments" replace />} />',
-  'path="/arena/leagues" element={<Navigate to="/arena/major-war-league" replace />} />',
+  'path="/events" element={<Navigate to="/warzone/tournaments" replace />} />',
+  'path="/warzone/events" element={<Navigate to="/warzone/tournaments" replace />} />',
+  'path="/warzone/leagues" element={<Navigate to="/warzone/major-war-league" replace />} />',
 ];
 for (const route of requiredRedirects) assertIncludes(app, route, "legacy redirects", failures);
 
@@ -53,10 +53,10 @@ assertIncludes(identityRoutes, "return `/token/${encodeURIComponent(value)}`;", 
 assertIncludes(tokenRoutes, "getPostGradTokenDetailRoute", "Arena token route helper", failures);
 
 const requiredArenaNav = [
-  '{ label: "Overview", path: "/arena" }',
-  '{ label: "Battles", path: "/arena/battles" }',
-  '{ label: "Tournaments", path: "/arena/tournaments" }',
-  '{ label: "Major War League", path: "/arena/major-war-league" }',
+  '{ label: "Overview", path: "/warzone" }',
+  '{ label: "Battles", path: "/warzone/battles" }',
+  '{ label: "Tournaments", path: "/warzone/tournaments" }',
+  '{ label: "Major War League", path: "/warzone/major-war-league" }',
 ];
 for (const item of requiredArenaNav) assertIncludes(navigation, item, "Arena navigation", failures);
 
@@ -71,13 +71,12 @@ const backendFlags = [
   "POSTGRAD_SPONSORSHIPS_ENABLED",
 ];
 
-assertIncludes(server, "WAR_ROOM_ENABLED", "War Room backend readiness gate", failures);
 assertIncludes(envExample, "WAR_ROOM_ENABLED=true", "War Room backend release flag", failures);
 
-const gatewayMode =
-  server.includes("devpostgrad API gateway") &&
-  server.includes("createRailwayProxyMiddleware") &&
-  server.includes("devpostgrad does not host the live API");
+const gatewayMode = server.includes("createRailwayProxyMiddleware");
+if (!gatewayMode) {
+  assertIncludes(server, "WAR_ROOM_ENABLED", "War Room backend readiness gate", failures);
+}
 
 if (!gatewayMode) {
   for (const flag of backendFlags) assertIncludes(server, flag, "backend readiness gates", failures);

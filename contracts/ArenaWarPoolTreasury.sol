@@ -190,10 +190,9 @@ contract ArenaWarPoolTreasury is ReentrancyGuard, Ownable, EIP712 {
         uint256 resolveDeadline
     ) external onlyCreator {
         if (poolId == bytes32(0)) revert ZeroAddress();
-        if (buyInAmount == 0) revert InvalidAmount();
         if (depositDeadline <= block.timestamp || resolveDeadline <= depositDeadline) revert DeadlinePassed();
         Pool storage pool = pools[poolId];
-        if (pool.ownerA != address(0) || pool.buyInAmount != 0) revert PoolExists();
+        if (pool.ownerA != address(0)) revert PoolExists();
         pool.kind = Kind.Tournament;
         pool.state = State.Open;
         pool.ownerA = msg.sender;
@@ -232,7 +231,7 @@ contract ArenaWarPoolTreasury is ReentrancyGuard, Ownable, EIP712 {
         if (pool.ownerA == address(0)) revert UnknownPool();
         if (pool.kind != Kind.Tournament || (pool.state != State.Open && pool.state != State.Live)) revert InvalidState();
         if (block.timestamp > pool.depositDeadline) revert DeadlinePassed();
-        if (msg.value != pool.buyInAmount) revert InvalidAmount();
+        if (pool.buyInAmount == 0 || msg.value != pool.buyInAmount) revert InvalidAmount();
         if (buyIns[poolId][msg.sender] != 0) revert AlreadyDeposited();
         buyIns[poolId][msg.sender] = msg.value;
         pool.buyInTotal += msg.value;

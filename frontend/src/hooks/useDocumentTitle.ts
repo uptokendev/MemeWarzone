@@ -18,12 +18,12 @@ export function titleForPath(pathname: string): string {
   if (path.includes("/push-live")) return "Push Live";
   if (path.startsWith("/token/")) return "Token";
   if (path.startsWith("/battle/")) return "Battle";
-  if (path.startsWith("/arena/battles")) return "Arena Battles";
-  if (path.startsWith("/arena/tournaments")) return "Tournaments";
-  if (path.startsWith("/arena/tournament")) return "Tournament";
-  if (path.startsWith("/arena/major-war-league")) return "Major War League";
-  if (path.startsWith("/arena/events")) return "Tournaments";
-  if (path.startsWith("/arena")) return "Arena";
+  if (path.startsWith("/warzone/battles") || path.startsWith("/arena/battles")) return "Warzone Battles";
+  if (path.startsWith("/warzone/tournaments") || path.startsWith("/arena/tournaments")) return "Tournaments";
+  if (path.startsWith("/warzone/tournament") || path.startsWith("/arena/tournament")) return "Tournament";
+  if (path.startsWith("/warzone/major-war-league") || path.startsWith("/arena/major-war-league")) return "Major War League";
+  if (path.startsWith("/warzone/events") || path.startsWith("/arena/events")) return "Tournaments";
+  if (path.startsWith("/warzone") || path.startsWith("/arena")) return "Warzone";
   if (path.includes("/command")) return "Creator Tools";
   if (path.startsWith("/profile")) return "Profile";
   if (path.startsWith("/recruiters/") || path.startsWith("/recruiter")) return "Recruiters";

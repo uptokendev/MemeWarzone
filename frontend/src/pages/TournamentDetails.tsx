@@ -14,6 +14,9 @@ import {
 import { useArenaEventDetails } from "@/hooks/useArenaEventFeed";
 import { signArenaWalletAction } from "@/lib/arena/signArenaWalletAction";
 import { useActiveFeedWallet } from "@/hooks/useActiveFeedWallet";
+import { getNativeSymbol } from "@/lib/chainConfig";
+import { WarPoolPanel } from "@/components/postgrad/WarPoolPanel";
+import { ArenaWarPoolClaimButton } from "@/components/arena/ArenaWarPoolClaimButton";
 
 type DetailTab = "standings" | "bracket" | "matches";
 
@@ -21,7 +24,7 @@ type TournamentPayload = {
   entries?: Array<{ tokenAddress: string; ownerWallet: string; buyInIntent?: boolean }>;
   invites?: Array<{ tokenAddress: string; status: string }>;
   bracket?: { rounds?: Array<{ round: number; matches?: Array<{ id: string; tokenA: string; tokenB: string | null; battleId?: string | null; winner?: string | null; bye?: boolean }> }> } | unknown[];
-  event?: { buyInNative?: number; nativeSymbol?: string; registrationMode?: string; cap?: number };
+  event?: { buyInNative?: number; nativeSymbol?: string; registrationMode?: string; cap?: number; chainId?: number };
 };
 
 const TournamentDetails = () => {
@@ -72,7 +75,7 @@ const TournamentDetails = () => {
   }, [eligible, entries]);
   const upcoming = tournament?.status === "scheduled" || tournament?.status === "deploying";
   const buyIn = Number(detail?.event?.buyInNative || (tournament as { buyInNative?: number } | null)?.buyInNative || 0);
-  const symbol = String(detail?.event?.nativeSymbol || "BNB");
+  const symbol = String(detail?.event?.nativeSymbol || getNativeSymbol(chainId));
   const bracketRounds = Array.isArray((detail?.bracket as { rounds?: unknown[] })?.rounds)
     ? (detail?.bracket as { rounds: Array<{ round: number; matches?: Array<{ id: string; tokenA: string; tokenB: string | null; battleId?: string | null; winner?: string | null; bye?: boolean }> }> }).rounds
     : [];
@@ -112,7 +115,7 @@ const TournamentDetails = () => {
           </p>
           <div className="mt-4">
             <Button asChild size="sm" variant="outline" className="font-retro">
-              <Link to="/arena/tournaments">Back to tournaments</Link>
+              <Link to="/warzone/tournaments">Back to tournaments</Link>
             </Button>
           </div>
         </section>
@@ -135,10 +138,36 @@ const TournamentDetails = () => {
         {tournament.summary ? <p className="mt-3 text-sm text-muted-foreground">{tournament.summary}</p> : null}
         <div className="mt-4">
           <Button asChild size="sm" variant="outline" className="font-retro">
-            <Link to="/arena/tournaments">Back to tournaments</Link>
+            <Link to="/warzone/tournaments">Back to tournaments</Link>
           </Button>
         </div>
       </section>
+
+      {id && entries.length ? (
+        <WarPoolPanel
+          poolSubjectId={id}
+          chainId={Number(detail?.event?.chainId || (tournament as { chainId?: number }).chainId || chainId)}
+          nativeSymbol={symbol}
+          kind="tournament"
+          sides={entries.map((entry) => {
+            const named = eligible.find((item) => item.tokenId.toLowerCase() === entry.tokenAddress.toLowerCase());
+            return {
+              tokenId: entry.tokenAddress,
+              tokenName: named?.tokenName || named?.symbol || entry.tokenAddress.slice(0, 10),
+              symbol: named?.symbol || "---",
+              eligible: true,
+            };
+          })}
+        />
+      ) : null}
+
+      {String(tournament.status) === "completed" || String(tournament.status) === "finished" ? (
+        <ArenaWarPoolClaimButton
+          battleId={id || ""}
+          chainId={Number(detail?.event?.chainId || (tournament as { chainId?: number }).chainId || chainId)}
+          label="Claim tournament rewards"
+        />
+      ) : null}
 
       {upcoming ? (
         <section className="mwz-hud-frame space-y-3 p-5">

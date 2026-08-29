@@ -30,7 +30,7 @@ const ArenaBattles = () => {
       <section className="mwz-hud-frame p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Arena</div>
+            <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Warzone</div>
             <h1 className="mt-1 font-retro text-2xl text-foreground">Battles</h1>
             <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
               Watch live fights, waiting coins, and recent results. Creators start fights in Command Center.

@@ -50,6 +50,9 @@ function normalizeSeason(value: any): ArenaLeagueSeason | null {
       points: Number(entry.points),
       wins: Number(entry.wins),
       losses: Number(entry.losses),
+      finishedFights: Number.isFinite(Number(entry.finishedFights ?? entry.finished_fights))
+        ? Number(entry.finishedFights ?? entry.finished_fights)
+        : 0,
       streak: Number.isFinite(Number(entry.streak)) ? Number(entry.streak) : 0,
       movement: MOVEMENTS.has(entry.movement) ? entry.movement : "safe",
     })),

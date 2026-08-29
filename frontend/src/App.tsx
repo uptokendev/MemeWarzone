@@ -83,7 +83,13 @@ const queryClient = new QueryClient();
 
 function LegacyTournamentRedirect() {
   const { id } = useParams();
-  return <Navigate to={`/arena/tournament/${encodeURIComponent(String(id || ""))}`} replace />;
+  return <Navigate to={`/warzone/tournament/${encodeURIComponent(String(id || ""))}`} replace />;
+}
+
+function ArenaToWarzoneRedirect() {
+  const location = useLocation();
+  const next = location.pathname.replace(/^\/arena/, "/warzone") || "/warzone";
+  return <Navigate to={`${next}${location.search}${location.hash}`} replace />;
 }
 
 function OwnWalletRouteSync() {
@@ -179,18 +185,20 @@ function AppShellLayout({
       >
         <Routes>
           <Route path="/" element={<Showcase />} />
-          {postGradEnabled && postGradFlags.arena ? <Route path="/arena" element={<Arena />} /> : null}
-          {postGradEnabled && postGradFlags.arena ? <Route path="/arena/verify-email" element={<ArenaVerifyEmail />} /> : null}
-          {postGradEnabled && postGradFlags.battle ? <Route path="/arena/battles" element={<ArenaBattles />} /> : null}
-          {postGradEnabled && postGradFlags.league ? <Route path="/arena/major-war-league" element={<PostGradLeague />} /> : null}
-          {postGradEnabled && postGradFlags.league ? <Route path="/arena/leagues" element={<Navigate to="/arena/major-war-league" replace />} /> : null}
-          {postGradEnabled && postGradFlags.tournament ? <Route path="/arena/tournaments" element={<ArenaTournaments />} /> : null}
-          {postGradEnabled && postGradFlags.tournament ? <Route path="/arena/tournament/:id" element={<TournamentDetails />} /> : null}
-          {postGradEnabled && postGradFlags.events ? <Route path="/arena/events" element={<Navigate to="/arena/tournaments" replace />} /> : null}
+          {postGradEnabled && postGradFlags.arena ? <Route path="/warzone" element={<Arena />} /> : null}
+          {postGradEnabled && postGradFlags.arena ? <Route path="/warzone/verify-email" element={<ArenaVerifyEmail />} /> : null}
+          {postGradEnabled && postGradFlags.battle ? <Route path="/warzone/battles" element={<ArenaBattles />} /> : null}
+          {postGradEnabled && postGradFlags.league ? <Route path="/warzone/major-war-league" element={<PostGradLeague />} /> : null}
+          {postGradEnabled && postGradFlags.league ? <Route path="/warzone/leagues" element={<Navigate to="/warzone/major-war-league" replace />} /> : null}
+          {postGradEnabled && postGradFlags.tournament ? <Route path="/warzone/tournaments" element={<ArenaTournaments />} /> : null}
+          {postGradEnabled && postGradFlags.tournament ? <Route path="/warzone/tournament/:id" element={<TournamentDetails />} /> : null}
+          {postGradEnabled && postGradFlags.events ? <Route path="/warzone/events" element={<Navigate to="/warzone/tournaments" replace />} /> : null}
+          {postGradEnabled && postGradFlags.arena ? <Route path="/arena" element={<Navigate to="/warzone" replace />} /> : null}
+          {postGradEnabled && postGradFlags.arena ? <Route path="/arena/*" element={<ArenaToWarzoneRedirect />} /> : null}
           {warRoomEnabled ? <Route path="/war-room" element={<WarRoom />} /> : null}
           {postGradEnabled && postGradFlags.battle ? <Route path="/battle/:id" element={<BattleDetails />} /> : null}
           <Route path="/sponsorships/apply" element={<SponsorshipApplication />} />
-          {postGradEnabled && postGradFlags.events ? <Route path="/events" element={<Navigate to="/arena/tournaments" replace />} /> : null}
+          {postGradEnabled && postGradFlags.events ? <Route path="/events" element={<Navigate to="/warzone/tournaments" replace />} /> : null}
           <Route path="/league" element={<League />} />
           <Route path="/leagues" element={<Navigate to="/league" replace />} />
           {postGradEnabled && postGradFlags.tournament ? <Route path="/tournament/:id" element={<LegacyTournamentRedirect />} /> : null}

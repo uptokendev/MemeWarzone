@@ -8,7 +8,15 @@ import { apiFetch } from "@/lib/apiBase";
 import { getArenaWarPoolTreasuryAddress } from "@/lib/chainConfig";
 import { isSolanaChainId, type SupportedChainId } from "@/lib/chainConfig";
 
-export function ArenaWarPoolClaimButton({ battleId, chainId }: { battleId: string; chainId?: number }) {
+export function ArenaWarPoolClaimButton({
+  battleId,
+  chainId,
+  label,
+}: {
+  battleId: string;
+  chainId?: number;
+  label?: string;
+}) {
   const wallet = useWallet();
   const [busy, setBusy] = useState(false);
   const id = Number(chainId || wallet.chainId || 56);
@@ -42,7 +50,7 @@ export function ArenaWarPoolClaimButton({ battleId, chainId }: { battleId: strin
 
   return (
     <Button className="font-retro" disabled={busy} onClick={() => void claim()}>
-      {busy ? "Claiming..." : "Claim battle rewards"}
+      {busy ? "Claiming..." : label || "Claim battle rewards"}
     </Button>
   );
 }

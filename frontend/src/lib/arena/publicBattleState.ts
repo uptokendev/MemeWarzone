@@ -10,8 +10,9 @@ export function publicBattleLane(state?: string | null): PublicBattleLane {
   return "waiting";
 }
 
-export function publicBattleLabel(lane: PublicBattleLane): string {
+export function publicBattleLabel(lane: PublicBattleLane, state?: string | null): string {
   if (lane === "live") return "Live";
   if (lane === "finished") return "Finished";
+  if (String(state || "").toLowerCase() === "matched") return "Stakes due";
   return "Waiting";
 }

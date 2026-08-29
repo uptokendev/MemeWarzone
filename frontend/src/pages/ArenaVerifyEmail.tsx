@@ -26,11 +26,11 @@ const ArenaVerifyEmail = () => {
   return (
     <ContentContainer className="space-y-5 px-1 pb-10 pt-4">
       <section className="mwz-hud-frame p-5">
-        <h1 className="font-retro text-2xl text-foreground">Arena email</h1>
+        <h1 className="font-retro text-2xl text-foreground">Warzone email</h1>
         <p className="mt-3 text-sm text-muted-foreground">{message}</p>
         <div className="mt-4">
           <Button asChild size="sm" variant="outline" className="font-retro">
-            <Link to={status === "ok" ? "/command/settings" : "/arena"}>Continue</Link>
+            <Link to={status === "ok" ? "/command/settings" : "/warzone"}>Continue</Link>
           </Button>
         </div>
       </section>

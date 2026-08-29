@@ -23,10 +23,10 @@ export interface ArenaSubNavItem {
 
 export const arenaSubNavItems: ArenaSubNavItem[] = isPostGradNavEnabled()
   ? [
-      { label: "Overview", path: "/arena" },
-      { label: "Battles", path: "/arena/battles" },
-      { label: "Tournaments", path: "/arena/tournaments" },
-      { label: "Major War League", path: "/arena/major-war-league" },
+      { label: "Overview", path: "/warzone" },
+      { label: "Battles", path: "/warzone/battles" },
+      { label: "Tournaments", path: "/warzone/tournaments" },
+      { label: "Major War League", path: "/warzone/major-war-league" },
     ]
   : [];
 

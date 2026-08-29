@@ -45,6 +45,7 @@ export type OpenPostGradBattleInput = {
   chainId?: number | null;
   stakeNative?: number;
   initialPotBnb?: number;
+  durationHours?: number;
   auth?: JsonObject;
 };
 
@@ -53,6 +54,7 @@ export type ChallengePostGradBattleInput = {
   targetTokenId: string;
   chainId?: number | null;
   stakeNative: number;
+  durationHours?: number;
   auth?: JsonObject;
 };
 
@@ -138,6 +140,7 @@ export async function openPostGradBattle(input: OpenPostGradBattleInput) {
 
   const stake = input.stakeNative ?? input.initialPotBnb;
   if (typeof stake === "number" && stake > 0) payload.stakeNative = stake;
+  if (input.durationHours) payload.durationHours = input.durationHours;
 
   await mutateBattle("/api/arena/battles/open", payload);
   return true;
@@ -149,18 +152,34 @@ export async function challengePostGradBattle(input: ChallengePostGradBattleInpu
     targetTokenId: input.targetTokenId,
     chainId: input.chainId || undefined,
     stakeNative: input.stakeNative,
+    durationHours: input.durationHours,
     auth: input.auth,
   });
   return true;
 }
 
 export async function acceptPostGradBattle(battleId: string, auth?: JsonObject) {
-  await mutateBattle(`/api/arena/battles/${encodeURIComponent(battleId)}/accept`, { auth });
-  return true;
+  return mutateBattle(`/api/arena/battles/${encodeURIComponent(battleId)}/accept`, { auth });
+}
+
+export async function fetchArenaStakeStatus(battleId: string, wallet?: string, signal?: AbortSignal) {
+  const params = new URLSearchParams();
+  if (wallet) params.set("wallet", wallet);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return fetchJson(`/api/arena/war-pools/${encodeURIComponent(battleId)}/stake${suffix}`, { cache: "no-store", signal });
+}
+
+export async function postArenaStakeReceipt(battleId: string, body: JsonObject) {
+  return mutateBattle(`/api/arena/war-pools/${encodeURIComponent(battleId)}/stake-receipt`, body);
 }
 
 export async function declinePostGradBattle(battleId: string, auth?: JsonObject) {
   await mutateBattle(`/api/arena/battles/${encodeURIComponent(battleId)}/decline`, { auth });
+  return true;
+}
+
+export async function counterPostGradBattle(battleId: string, stakeNative: number, auth?: JsonObject, durationHours?: number) {
+  await mutateBattle(`/api/arena/battles/${encodeURIComponent(battleId)}/counter`, { stakeNative, durationHours, auth });
   return true;
 }
 
@@ -182,6 +201,20 @@ export async function fetchPostGradTournamentDetails(eventId: string, signal?: A
 
 export async function fetchPostGradLeagueFeed(signal?: AbortSignal) {
   return fetchJson("/api/arena/league", { cache: "no-store", signal });
+}
+
+export async function fetchArenaLeagueCheckin(wallet: string, chainId?: number | null, signal?: AbortSignal) {
+  const params = new URLSearchParams({ wallet });
+  if (chainId) params.set("chainId", String(chainId));
+  return fetchJson(`/api/arena/league/checkin?${params.toString()}`, { cache: "no-store", signal });
+}
+
+export async function postArenaLeagueCheckin(body: JsonObject) {
+  return mutateBattle("/api/arena/league/checkin", body);
+}
+
+export async function postArenaWarDispatch(body: JsonObject) {
+  return mutateBattle("/api/arena/league/dispatch", body);
 }
 
 export async function fetchArenaFeaturedVotes(signal?: AbortSignal) {
@@ -221,8 +254,12 @@ export async function fetchPostGradWarPoolSummary(signal?: AbortSignal) {
   return fetchJson("/api/arena/war-pools", { cache: "no-store", signal });
 }
 
-export async function supportPostGradWarPool(battleId: string, sideTokenId: string, amountUsd: number) {
-  return mutateJson(`/api/arena/war-pools/${encodeURIComponent(battleId)}/support`, { sideTokenId, amountUsd });
+export async function supportPostGradWarPool(battleId: string, sideTokenId: string, amountUsd: number, extra: JsonObject = {}) {
+  return mutateJson(`/api/arena/war-pools/${encodeURIComponent(battleId)}/support`, { sideTokenId, amountUsd, ...extra });
+}
+
+export async function postArenaSupportReceipt(poolSubjectId: string, body: JsonObject) {
+  return mutateBattle(`/api/arena/war-pools/${encodeURIComponent(poolSubjectId)}/support-receipt`, body);
 }
 
 export async function transitionPostGradWarPool(battleId: string, state: PostGradWarPoolState) {

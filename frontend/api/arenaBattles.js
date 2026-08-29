@@ -13,19 +13,25 @@ import {
 } from "../server/http.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { requireAdminOrOps, isAuthEnforceArenaMutations } from "./lib/apiAuth.js";
-import { notifyChallenge } from "./lib/arenaNotify.js";
+import { notifyChallenge, notifyCounterOffer } from "./lib/arenaNotify.js";
 import { recordFinishedBattle } from "./lib/arenaLeagueScore.js";
 import { advanceTournamentFromBattle } from "./arenaTournaments.js";
+import { escrowRequired, readOnchainPool } from "./lib/arenaWarPoolLive.js";
+import { nativeSymbolFor } from "./lib/chainNative.js";
 
-const LIVE_HOURS = 12;
+const LIVE_HOURS = 24;
 const CHALLENGE_HOURS = 24;
+const DEPOSIT_WINDOW_HOURS = 24;
 const STAKE_BAND = 1.2;
-const ACTIVE_STATES = ["waiting", "challenged", "live"];
-const LIST_STATES = ["waiting", "challenged", "live", "finished"];
+const MAX_COUNTERS = 12;
+const DURATION_HOURS = new Set([24, 72, 168]);
+const ACTIVE_STATES = ["waiting", "challenged", "matched", "live"];
+const LIST_STATES = ["waiting", "challenged", "matched", "live", "finished"];
 
 const ADMIN_TRANSITIONS = {
   waiting: ["live", "expired"],
   challenged: ["live", "expired"],
+  matched: ["live", "expired"],
   live: ["finished"],
   finished: [],
   expired: [],
@@ -44,13 +50,6 @@ function toNumber(value, fallback = 0) {
   return Number.isFinite(n) ? n : fallback;
 }
 
-function nativeSymbolFor(chainId) {
-  const id = Number(chainId);
-  if (id === 101 || id === 102) return "SOL";
-  if (id === 4663 || id === 46630) return "RH";
-  return "BNB";
-}
-
 function ident(value, chainId) {
   const flexible = normalizeWalletFlexible(value);
   if (flexible) return isAddress(flexible) ? flexible.toLowerCase() : flexible;
@@ -65,6 +64,21 @@ function parseStake(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return null;
   return n;
+}
+
+function parseDurationHours(value, fallback = 24) {
+  const n = Number(value);
+  if (DURATION_HOURS.has(n)) return n;
+  if (n === 1) return 24;
+  if (n === 3) return 72;
+  if (n === 7) return 168;
+  return DURATION_HOURS.has(fallback) ? fallback : 24;
+}
+
+function durationLabel(hours) {
+  if (Number(hours) === 72) return "3 days";
+  if (Number(hours) === 168) return "7 days";
+  return "24 hours";
 }
 
 function stakeCompatible(a, b) {
@@ -148,8 +162,16 @@ function mapBattle(row) {
     chainId: Number(row.chain_id),
     state,
     source: String(row.source || "queue"),
+    tournamentId: row.tournament_id || null,
     format: "duel",
-    stakeNative: toNumber(row.stake_native),
+    stakeNative: toNumber(row.offered_stake_native ?? row.stake_native),
+    originalStakeNative: toNumber(row.stake_native),
+    offeredStakeNative: toNumber(row.offered_stake_native ?? row.stake_native),
+    offerFromToken: row.offer_from_token ? ident(row.offer_from_token, row.chain_id) : ident(row.challenger_token, row.chain_id),
+    offerCount: Math.max(0, Number(row.offer_count || 0)),
+    durationHours: parseDurationHours(row.offered_duration_hours ?? row.duration_hours, 24),
+    originalDurationHours: parseDurationHours(row.duration_hours, 24),
+    offeredDurationHours: parseDurationHours(row.offered_duration_hours ?? row.duration_hours, 24),
     nativeSymbol: String(row.native_symbol || nativeSymbolFor(row.chain_id)),
     startedAt: row.started_at || row.created_at || nowIso(),
     endsAt: row.ends_at || null,
@@ -170,7 +192,7 @@ function feedFromBattles(battles) {
   );
   return {
     liveBattles: sorted.filter((battle) => battle.state === "live"),
-    openForBattleQueue: sorted.filter((battle) => battle.state === "waiting" || battle.state === "challenged"),
+    openForBattleQueue: sorted.filter((battle) => battle.state === "waiting" || battle.state === "challenged" || battle.state === "matched"),
     archivedBattles: sorted
       .filter((battle) => battle.state === "finished" || battle.state === "expired")
       .slice(0, 24)
@@ -178,7 +200,7 @@ function feedFromBattles(battles) {
   };
 }
 
-const BATTLE_COLUMNS = `id, chain_id, state, source, stake_native, native_symbol, challenger_token, defender_token, tournament_id,
+const BATTLE_COLUMNS = `id, chain_id, state, source, stake_native, offered_stake_native, offer_from_token, offer_count, duration_hours, offered_duration_hours, native_symbol, challenger_token, defender_token, tournament_id,
         participants, challenger_start_mcap_usd, defender_start_mcap_usd, winner_token, started_at, ends_at, finished_at,
         creator_address, featured, created_at, updated_at`;
 
@@ -336,16 +358,21 @@ async function insertBattle(fields) {
   const id = fields.id || `arena-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;
   await pool.query(
     `insert into public.arena_battles (
-        id, chain_id, state, source, stake_native, native_symbol, challenger_token, defender_token, tournament_id,
+        id, chain_id, state, source, stake_native, offered_stake_native, offer_from_token, offer_count, duration_hours, offered_duration_hours, native_symbol, challenger_token, defender_token, tournament_id,
         participants, challenger_start_mcap_usd, defender_start_mcap_usd, winner_token, started_at, ends_at, finished_at,
         creator_address, featured
-      ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11,$12,$13,$14,$15,$16,$17,$18)`,
+      ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
     [
       id,
       fields.chainId,
       fields.state,
       fields.source,
       fields.stakeNative,
+      fields.offeredStakeNative ?? fields.stakeNative,
+      fields.offerFromToken || fields.challengerToken || null,
+      Number(fields.offerCount || 0),
+      parseDurationHours(fields.durationHours ?? fields.duration_hours, 24),
+      parseDurationHours(fields.offeredDurationHours ?? fields.offered_duration_hours ?? fields.durationHours ?? fields.duration_hours, 24),
       fields.nativeSymbol,
       fields.challengerToken || null,
       fields.defenderToken || null,
@@ -370,15 +397,22 @@ async function updateBattle(id, patch) {
   const next = { ...row, ...patch };
   await pool.query(
     `update public.arena_battles set
-        state = $2, source = $3, stake_native = $4, native_symbol = $5, challenger_token = $6, defender_token = $7,
-        participants = $8::jsonb, challenger_start_mcap_usd = $9, defender_start_mcap_usd = $10, winner_token = $11,
-        started_at = $12, ends_at = $13, finished_at = $14, featured = $15, updated_at = now()
+        state = $2, source = $3, stake_native = $4, offered_stake_native = $5, offer_from_token = $6, offer_count = $7,
+        duration_hours = $8, offered_duration_hours = $9,
+        native_symbol = $10, challenger_token = $11, defender_token = $12,
+        participants = $13::jsonb, challenger_start_mcap_usd = $14, defender_start_mcap_usd = $15, winner_token = $16,
+        started_at = $17, ends_at = $18, finished_at = $19, featured = $20, updated_at = now()
       where id = $1`,
     [
       id,
       next.state,
       next.source,
       next.stake_native,
+      next.offered_stake_native ?? next.stake_native,
+      next.offer_from_token || next.challenger_token || null,
+      Math.max(0, Number(next.offer_count || 0)),
+      parseDurationHours(next.duration_hours ?? next.durationHours, 24),
+      parseDurationHours(next.offered_duration_hours ?? next.offeredDurationHours ?? next.duration_hours, 24),
       next.native_symbol,
       next.challenger_token,
       next.defender_token,
@@ -395,7 +429,7 @@ async function updateBattle(id, patch) {
   return refreshBattle(id);
 }
 
-async function waitingCandidates(chainId, excludeId, stakeNative) {
+async function waitingCandidates(chainId, excludeId, stakeNative, durationHours) {
   const result = await pool.query(
     `select ${BATTLE_COLUMNS}
        from public.arena_battles
@@ -404,16 +438,58 @@ async function waitingCandidates(chainId, excludeId, stakeNative) {
       limit 50`,
     [chainId, excludeId],
   );
-  return result.rows.filter((row) => stakeCompatible(stakeNative, row.stake_native));
+  const hours = parseDurationHours(durationHours, 24);
+  return result.rows.filter((row) => stakeCompatible(stakeNative, row.stake_native) && parseDurationHours(row.offered_duration_hours ?? row.duration_hours, 24) === hours);
 }
 
 function coinMcap(coin) {
   return Math.max(0, toNumber(coin.marketcap_usd ?? coin.marketcap_bnb));
 }
 
+async function beginFight(id, patch, chainId) {
+  const requireEscrow = escrowRequired(chainId);
+  const hours = parseDurationHours(patch.duration_hours ?? patch.offered_duration_hours, LIVE_HOURS);
+  return updateBattle(id, {
+    ...patch,
+    duration_hours: hours,
+    offered_duration_hours: hours,
+    state: requireEscrow ? "matched" : "live",
+    started_at: requireEscrow ? null : nowIso(),
+    ends_at: requireEscrow ? plusHours(DEPOSIT_WINDOW_HOURS) : plusHours(hours),
+  });
+}
+
+async function goLiveFromMatched(row) {
+  const chainId = Number(row.chain_id);
+  const leftNow = await currentMcap(chainId, row.challenger_token);
+  const rightNow = await currentMcap(chainId, row.defender_token);
+  const hours = parseDurationHours(row.duration_hours ?? row.offered_duration_hours, LIVE_HOURS);
+  return updateBattle(row.id, {
+    state: "live",
+    duration_hours: hours,
+    started_at: nowIso(),
+    ends_at: plusHours(hours),
+    challenger_start_mcap_usd: row.challenger_start_mcap_usd ?? leftNow,
+    defender_start_mcap_usd: row.defender_start_mcap_usd ?? rightNow,
+  });
+}
+
+export async function promoteMatchedIfFunded(row) {
+  if (!row || row.state !== "matched") return mapBattle(row);
+  const onchain = await readOnchainPool(row.chain_id, row.id);
+  if (onchain.bothPaid) return goLiveFromMatched(row);
+  const deadline = row.ends_at ? Date.parse(row.ends_at) : 0;
+  const depositDeadline = Number(onchain.depositDeadline || 0) * 1000;
+  const timedOut = (deadline && deadline < Date.now()) || (depositDeadline && depositDeadline < Date.now());
+  if (timedOut && !onchain.bothPaid) {
+    return updateBattle(row.id, { state: "expired", finished_at: nowIso() });
+  }
+  return mapBattle(row);
+}
+
 async function tryAutoMatch(openBattle, openerCoin) {
   const chainId = Number(openBattle.chainId);
-  const candidates = await waitingCandidates(chainId, openBattle.id, openBattle.stakeNative);
+  const candidates = await waitingCandidates(chainId, openBattle.id, openBattle.stakeNative, openBattle.durationHours);
   if (!candidates.length) return openBattle;
 
   const openerMetrics = metricsFromCoin(openerCoin);
@@ -445,16 +521,13 @@ async function tryAutoMatch(openBattle, openerCoin) {
     holders_count: best.participants?.[0]?.holderCount,
     creator_address: best.creator_address,
   });
-  const live = await updateBattle(openBattle.id, {
-    state: "live",
+  const live = await beginFight(openBattle.id, {
     source: "queue",
     defender_token: best.challenger_token,
     participants: [openBattle.participants[0], rival],
     challenger_start_mcap_usd: coinMcap(openerCoin),
     defender_start_mcap_usd: toNumber(best.challenger_start_mcap_usd ?? rival.marketCapUsd),
-    started_at: nowIso(),
-    ends_at: plusHours(LIVE_HOURS),
-  });
+  }, chainId);
   await pool.query(`update public.arena_battles set state = 'expired', finished_at = now(), updated_at = now() where id = $1`, [best.id]);
   return live;
 }
@@ -525,6 +598,7 @@ async function hydrateLifecycle(row) {
   if (!row) return null;
   if (row.state === "live") return settleLive(row);
   if (row.state === "challenged") return expireChallenge(row);
+  if (row.state === "matched") return promoteMatchedIfFunded(row);
   return mapBattle(row);
 }
 
@@ -566,6 +640,7 @@ async function handleOpen(req, res) {
   const chainId = Number(body?.chainId) || 56;
   const identity = String(body?.tokenId || body?.campaignAddress || body?.identity || "");
   const stakeNative = parseStake(body?.stakeNative ?? body?.initialPotBnb);
+  const durationHours = parseDurationHours(body?.durationHours ?? body?.duration_hours, 24);
   if (!identity) return json(res, 400, { ok: false, error: "tokenId is required" });
   if (stakeNative == null) return json(res, 400, { ok: false, error: "stakeNative must be a positive number" });
 
@@ -582,7 +657,7 @@ async function handleOpen(req, res) {
     chainId,
     action: "arena_open_battle",
     routeLabel: "arena/battles/open",
-    extraLines: [`Token: ${ident(coin.token_address || coin.campaign_address, chainId)}`, `Stake: ${stakeNative}`],
+    extraLines: [`Token: ${ident(coin.token_address || coin.campaign_address, chainId)}`, `Stake: ${stakeNative}`, `Duration: ${durationHours}`],
   });
   if (!verified) return;
 
@@ -592,6 +667,8 @@ async function handleOpen(req, res) {
     state: "waiting",
     source: "queue",
     stakeNative,
+    durationHours,
+    offeredDurationHours: durationHours,
     nativeSymbol: nativeSymbolFor(chainId),
     challengerToken: opener.tokenId,
     defenderToken: null,
@@ -610,6 +687,7 @@ async function handleChallenge(req, res) {
   const tokenId = String(body?.tokenId || "");
   const targetTokenId = String(body?.targetTokenId || body?.defenderTokenId || "");
   const stakeNative = parseStake(body?.stakeNative ?? body?.initialPotBnb);
+  const durationHours = parseDurationHours(body?.durationHours ?? body?.duration_hours, 24);
   if (!tokenId || !targetTokenId) return json(res, 400, { ok: false, error: "tokenId and targetTokenId are required" });
   if (ident(tokenId, chainId) === ident(targetTokenId, chainId)) {
     return json(res, 400, { ok: false, error: "Cannot challenge the same coin" });
@@ -632,7 +710,7 @@ async function handleChallenge(req, res) {
     chainId,
     action: "arena_challenge_battle",
     routeLabel: "arena/battles/challenge",
-    extraLines: [`Challenger: ${challengerStatus.tokenId}`, `Defender: ${defenderStatus.tokenId}`, `Stake: ${stakeNative}`],
+    extraLines: [`Challenger: ${challengerStatus.tokenId}`, `Defender: ${defenderStatus.tokenId}`, `Stake: ${stakeNative}`, `Duration: ${durationHours}`],
   });
   if (!verified) return;
 
@@ -641,6 +719,11 @@ async function handleChallenge(req, res) {
     state: "challenged",
     source: "challenge",
     stakeNative,
+    offeredStakeNative: stakeNative,
+    offerFromToken: challengerStatus.tokenId,
+    offerCount: 0,
+    durationHours,
+    offeredDurationHours: durationHours,
     nativeSymbol: nativeSymbolFor(chainId),
     challengerToken: challengerStatus.tokenId,
     defenderToken: defenderStatus.tokenId,
@@ -665,6 +748,17 @@ async function handleChallenge(req, res) {
   });
 }
 
+function offerFromToken(row) {
+  return ident(row.offer_from_token || row.challenger_token, row.chain_id);
+}
+
+function responderToken(row) {
+  const from = offerFromToken(row);
+  const challengerTok = ident(row.challenger_token, row.chain_id);
+  const defenderTok = ident(row.defender_token, row.chain_id);
+  return from === challengerTok ? defenderTok : challengerTok;
+}
+
 async function handleAccept(req, res, battleId) {
   const body = await readJson(req);
   const row = await findBattle(battleId);
@@ -673,13 +767,13 @@ async function handleAccept(req, res, battleId) {
   if (!mapped || mapped.state !== "challenged") {
     return json(res, 409, { ok: false, error: "Battle is not an open challenge", currentState: mapped?.state || row.state });
   }
-  const defender = await coinByIdentity(row.chain_id, row.defender_token);
-  if (!defender) return json(res, 404, { ok: false, error: "Defender coin not found" });
+  const responder = await coinByIdentity(row.chain_id, responderToken(row));
+  if (!responder) return json(res, 404, { ok: false, error: "Responding coin not found" });
   const verified = await requireWalletActionAuth({
     res,
     pool,
     auth: body.auth || body,
-    expectedWallet: ident(defender.creator_address, row.chain_id) || defender.creator_address,
+    expectedWallet: ident(responder.creator_address, row.chain_id) || responder.creator_address,
     chainId: Number(row.chain_id),
     action: "arena_accept_battle",
     routeLabel: "arena/battles/accept",
@@ -688,14 +782,18 @@ async function handleAccept(req, res, battleId) {
   if (!verified) return;
 
   const challengerCoin = await coinByIdentity(row.chain_id, row.challenger_token);
-  const live = await updateBattle(battleId, {
-    state: "live",
-    started_at: nowIso(),
-    ends_at: plusHours(LIVE_HOURS),
+  const defenderCoin = await coinByIdentity(row.chain_id, row.defender_token);
+  const agreedStake = toNumber(row.offered_stake_native ?? row.stake_native);
+  const agreedDuration = parseDurationHours(row.offered_duration_hours ?? row.duration_hours, 24);
+  const live = await beginFight(battleId, {
+    stake_native: agreedStake,
+    offered_stake_native: agreedStake,
+    duration_hours: agreedDuration,
+    offered_duration_hours: agreedDuration,
     challenger_start_mcap_usd: row.challenger_start_mcap_usd ?? (challengerCoin ? coinMcap(challengerCoin) : 0),
-    defender_start_mcap_usd: coinMcap(defender),
-  });
-  return json(res, 200, { ok: true, battle: live });
+    defender_start_mcap_usd: row.defender_start_mcap_usd ?? (defenderCoin ? coinMcap(defenderCoin) : 0),
+  }, Number(row.chain_id));
+  return json(res, 200, { ok: true, battle: live, escrowRequired: escrowRequired(row.chain_id) });
 }
 
 async function handleDecline(req, res, battleId) {
@@ -703,13 +801,13 @@ async function handleDecline(req, res, battleId) {
   const row = await findBattle(battleId);
   if (!row) return json(res, 404, { ok: false, error: "Battle not found" });
   if (row.state !== "challenged") return json(res, 409, { ok: false, error: "Battle is not an open challenge", currentState: row.state });
-  const defender = await coinByIdentity(row.chain_id, row.defender_token);
-  if (!defender) return json(res, 404, { ok: false, error: "Defender coin not found" });
+  const responder = await coinByIdentity(row.chain_id, responderToken(row));
+  if (!responder) return json(res, 404, { ok: false, error: "Responding coin not found" });
   const verified = await requireWalletActionAuth({
     res,
     pool,
     auth: body.auth || body,
-    expectedWallet: ident(defender.creator_address, row.chain_id) || defender.creator_address,
+    expectedWallet: ident(responder.creator_address, row.chain_id) || responder.creator_address,
     chainId: Number(row.chain_id),
     action: "arena_decline_battle",
     routeLabel: "arena/battles/decline",
@@ -718,6 +816,67 @@ async function handleDecline(req, res, battleId) {
   if (!verified) return;
   const expired = await updateBattle(battleId, { state: "expired", finished_at: nowIso() });
   return json(res, 200, { ok: true, battle: expired });
+}
+
+async function handleCounter(req, res, battleId) {
+  const body = await readJson(req);
+  const row = await findBattle(battleId);
+  if (!row) return json(res, 404, { ok: false, error: "Battle not found" });
+  if (row.state !== "challenged" || row.source !== "challenge") {
+    return json(res, 409, { ok: false, error: "Only open challenges can take a counter-offer" });
+  }
+  if (Number(row.offer_count || 0) >= MAX_COUNTERS) {
+    return json(res, 409, { ok: false, error: "Counter-offer limit reached. Accept or decline." });
+  }
+  const stakeNative = parseStake(body?.stakeNative ?? body?.offeredStakeNative);
+  if (stakeNative == null) return json(res, 400, { ok: false, error: "stakeNative must be a positive number" });
+  const durationHours = parseDurationHours(body?.durationHours ?? body?.duration_hours, row.offered_duration_hours ?? row.duration_hours);
+  const currentOffer = toNumber(row.offered_stake_native ?? row.stake_native);
+  const currentDuration = parseDurationHours(row.offered_duration_hours ?? row.duration_hours, 24);
+  if (stakeNative === currentOffer && durationHours === currentDuration) {
+    return json(res, 400, { ok: false, error: "Counter-offer must change the stake or the fight length." });
+  }
+  const responder = await coinByIdentity(row.chain_id, responderToken(row));
+  const offerer = await coinByIdentity(row.chain_id, offerFromToken(row));
+  if (!responder || !offerer) return json(res, 404, { ok: false, error: "Challenge coins not found" });
+  const verified = await requireWalletActionAuth({
+    res,
+    pool,
+    auth: body.auth || body,
+    expectedWallet: ident(responder.creator_address, row.chain_id) || responder.creator_address,
+    chainId: Number(row.chain_id),
+    action: "arena_counter_battle",
+    routeLabel: "arena/battles/counter",
+    extraLines: [`Battle: ${battleId}`, `Stake: ${stakeNative}`, `Duration: ${durationHours}`],
+  });
+  if (!verified) return;
+
+  const responderPart = participant(responder);
+  const updated = await updateBattle(battleId, {
+    offered_stake_native: stakeNative,
+    offered_duration_hours: durationHours,
+    offer_from_token: responderPart.tokenId,
+    offer_count: Number(row.offer_count || 0) + 1,
+    ends_at: plusHours(CHALLENGE_HOURS),
+  });
+  const mailed = await notifyCounterOffer({
+    toWallet: ident(offerer.creator_address, row.chain_id) || offerer.creator_address,
+    fromSymbol: responderPart.symbol,
+    toSymbol: offerer.symbol || offerer.name,
+    amount: stakeNative,
+    nativeSymbol: nativeSymbolFor(row.chain_id),
+    previousAmount: currentOffer,
+    durationHours,
+    previousDurationHours: currentDuration,
+    battleId,
+  });
+  return json(res, 200, {
+    ok: true,
+    battle: updated,
+    notified: Boolean(mailed?.ok && !mailed?.skipped),
+    notifySkipped: Boolean(mailed?.skipped),
+    notifyReason: mailed?.reason || null,
+  });
 }
 
 async function handleTransition(req, res, battleId) {
@@ -736,7 +895,7 @@ async function handleTransition(req, res, battleId) {
   const patch = { state: nextState };
   if (nextState === "live") {
     patch.started_at = nowIso();
-    patch.ends_at = plusHours(LIVE_HOURS);
+    patch.ends_at = plusHours(parseDurationHours(row.duration_hours ?? row.offered_duration_hours, LIVE_HOURS));
   }
   if (nextState === "finished" || nextState === "expired") patch.finished_at = nowIso();
   if (nextState === "finished") {
@@ -760,6 +919,8 @@ export default async function handler(req, res) {
     if (accept) return method === "POST" ? handleAccept(req, res, decodeURIComponent(accept[1])) : badMethod(res);
     const decline = path.match(/^\/arena\/battles\/([^/]+)\/decline$/);
     if (decline) return method === "POST" ? handleDecline(req, res, decodeURIComponent(decline[1])) : badMethod(res);
+    const counter = path.match(/^\/arena\/battles\/([^/]+)\/counter$/);
+    if (counter) return method === "POST" ? handleCounter(req, res, decodeURIComponent(counter[1])) : badMethod(res);
     const transition = path.match(/^\/arena\/battles\/([^/]+)\/transition$/);
     if (transition) return method === "POST" ? handleTransition(req, res, decodeURIComponent(transition[1])) : badMethod(res);
 

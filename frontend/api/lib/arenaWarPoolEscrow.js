@@ -2,6 +2,7 @@ import { ethers } from "ethers";
 
 export const WAR_POOL_ABI = [
   "function openBattlePool(bytes32 poolId,address ownerA,address ownerB,uint96 stakeAmount,uint256 depositDeadline,uint256 resolveDeadline) payable",
+  "function openTournamentPool(bytes32 poolId,uint96 buyInAmount,uint256 depositDeadline,uint256 resolveDeadline)",
   "function depositStake(bytes32 poolId) payable",
   "function depositBuyIn(bytes32 poolId) payable",
   "function donateSupport(bytes32 poolId) payable",
@@ -9,18 +10,26 @@ export const WAR_POOL_ABI = [
   "function claimWinner(bytes32 poolId)",
   "function claimProtocol(bytes32 poolId)",
   "function claimMwl(bytes32 poolId)",
+  "function refundStake(bytes32 poolId)",
   "function pools(bytes32) view returns (uint8 kind,uint8 state,address ownerA,address ownerB,uint96 stakeAmount,uint96 buyInAmount,uint256 stakeA,uint256 stakeB,uint256 buyInTotal,uint256 supportTotal,address winnerPayout,uint256 pendingWinner,uint256 pendingProtocol,uint256 pendingMwl,uint256 depositDeadline,uint256 resolveDeadline,bool claimedWinner,bool claimedProtocol,bool claimedMwl,bool refundedA,bool refundedB)",
 ];
 
 export function warPoolTreasuryAddress(chainId) {
   const id = Number(chainId);
-  return String(
+  const perChain = String(
     process.env[`ARENA_WAR_POOL_TREASURY_ADDRESS_${id}`] ||
       process.env[`VITE_ARENA_WAR_POOL_TREASURY_ADDRESS_${id}`] ||
-      process.env.ARENA_WAR_POOL_TREASURY_ADDRESS ||
-      process.env.VITE_ARENA_WAR_POOL_TREASURY_ADDRESS ||
       "",
   ).trim();
+  if (perChain) return perChain;
+  if (id === 56 || id === 97) {
+    return String(
+      process.env.ARENA_WAR_POOL_TREASURY_ADDRESS ||
+        process.env.VITE_ARENA_WAR_POOL_TREASURY_ADDRESS ||
+        "",
+    ).trim();
+  }
+  return "";
 }
 
 export function battlePoolId(battleId) {

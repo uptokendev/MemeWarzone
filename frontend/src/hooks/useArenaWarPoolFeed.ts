@@ -15,9 +15,23 @@ export type ArenaWarPoolFeedSource = "qa-runtime" | "api" | "empty";
 export type ArenaWarPoolState = WarPool["state"];
 type WarPoolSummary = ReturnType<typeof useMockWarPoolSummary>["summary"];
 
+export type ArenaWarPoolMeta = {
+  kind?: "battle" | "tournament";
+  configured?: boolean;
+  treasury?: string;
+  onchainPoolId?: string;
+  onchainOpened?: boolean;
+  supportOpen?: boolean;
+  redirectTournamentId?: string | null;
+  nativeSymbol?: string;
+  chainId?: number;
+  sides?: Array<{ tokenId: string; ownerWallet?: string; eligible?: boolean }>;
+};
+
 type ArenaWarPoolPayload = {
   pool: WarPool;
   settlementSummary: WarPoolSettlementSummary | null;
+  meta: ArenaWarPoolMeta;
 };
 
 type ArenaWarPoolSummaryPayload = WarPoolSummary;
@@ -59,7 +73,7 @@ function normalizeRouting(value: any, totalPotUsd: number): WarPool["routingBrea
 
 function normalizeWarPool(value: any): WarPool | null {
   if (!value || typeof value !== "object") return null;
-  if (!value.battleId || !WAR_POOL_STATES.has(value.state)) return null;
+  if (!value.battleId || !WAR_POOL_STATES.has(String(value.state))) return null;
 
   const entries = Array.isArray(value.entries)
     ? value.entries.filter(isWarPoolEntry).map((entry: any) => ({
@@ -124,6 +138,18 @@ async function loadWarPool(battleId: string, signal?: AbortSignal): Promise<Aren
   return {
     pool,
     settlementSummary: normalizeSettlementSummary(json.settlementSummary),
+    meta: {
+      kind: json.kind === "tournament" ? "tournament" : "battle",
+      configured: Boolean(json.configured),
+      treasury: json.treasury ? String(json.treasury) : "",
+      onchainPoolId: json.onchainPoolId ? String(json.onchainPoolId) : "",
+      onchainOpened: Boolean(json.onchainOpened),
+      supportOpen: json.supportOpen !== false,
+      redirectTournamentId: json.redirectTournamentId ? String(json.redirectTournamentId) : null,
+      nativeSymbol: json.nativeSymbol ? String(json.nativeSymbol) : undefined,
+      chainId: Number(json.chainId || 0) || undefined,
+      sides: Array.isArray(json.sides) ? json.sides : [],
+    },
   };
 }
 
@@ -210,6 +236,7 @@ export function useArenaWarPool(battleId?: string | null) {
     source: apiPayload ? "api" as ArenaWarPoolFeedSource : allowMockFallback ? "qa-runtime" as ArenaWarPoolFeedSource : "empty" as ArenaWarPoolFeedSource,
     loading,
     pool: apiPayload?.pool ?? (allowMockFallback ? runtime.pool : null),
+    meta: apiPayload?.meta ?? {},
     settlementSummary: apiPayload?.settlementSummary ?? (allowMockFallback ? runtime.settlementSummary : null),
     supportSide,
     transitionWarPool,

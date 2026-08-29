@@ -22,10 +22,10 @@ const Arena = () => {
   return (
     <ContentContainer className="space-y-6 px-1 pb-10 pt-4">
       <section className="mwz-hud-frame p-4">
-        <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Arena UpVotes</div>
+        <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Warzone UpVotes</div>
         <h1 className="mt-1 font-retro text-2xl text-foreground">Featured memecoins</h1>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-          Top 20 from Arena UpVotes (graduated MemeWarzone coins and approved imports). Launchpad UpVotes stay on Showcase.
+          Graduate a coin and it enters the full Warzone. Top 20 from Warzone UpVotes (graduated MemeWarzone coins and approved imports). Launchpad UpVotes stay on Showcase.
         </p>
         {featured.items.length ? (
           <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
@@ -41,7 +41,7 @@ const Arena = () => {
                   ) : (
                     <div className="mt-1 font-retro text-sm text-foreground">{item.tokenName} <span className="text-muted-foreground">{item.symbol}</span></div>
                   )}
-                  <div className="mt-1 text-xs text-muted-foreground">{item.votes24h} Arena UpVotes (24h)</div>
+                  <div className="mt-1 text-xs text-muted-foreground">{item.votes24h} Warzone UpVotes (24h)</div>
                   <div className="mt-2">
                     <ArenaUpvoteDialog tokenAddress={item.tokenAddress} chainId={item.chainId} buttonSize="sm" className="h-8 px-3 text-xs" />
                   </div>
@@ -52,10 +52,10 @@ const Arena = () => {
         ) : (
           <div className="mt-4 rounded-md border border-border/50 bg-background/40 p-4 text-sm text-muted-foreground">
             {featured.loading
-              ? "Loading Arena UpVotes..."
+              ? "Loading Warzone UpVotes..."
               : featured.votingLive
-                ? "No Arena UpVotes yet. Rank this rail from graduated coins and approved imports."
-                : "No Arena UpVotes yet. Ranking uses the Arena ledger. Paying votes waits on a dedicated Arena treasury address in this environment."}
+                ? "No Warzone UpVotes yet. Rank this rail from graduated coins and approved imports."
+                : "No Warzone UpVotes yet. Ranking uses the Warzone ledger. Paying votes waits on a dedicated Warzone treasury address in this environment."}
           </div>
         )}
       </section>
@@ -65,7 +65,7 @@ const Arena = () => {
           <div className="flex items-center justify-between gap-2">
             <h2 className="font-retro text-lg text-foreground">Live battles</h2>
             <Button asChild size="sm" variant="outline" className="font-retro">
-              <Link to="/arena/battles">Open battles</Link>
+              <Link to="/warzone/battles">Open battles</Link>
             </Button>
           </div>
           {liveBattles.slice(0, 3).length ? (
@@ -81,12 +81,12 @@ const Arena = () => {
           <div className="flex items-center justify-between gap-2">
             <h2 className="font-retro text-lg text-foreground">Live tournaments</h2>
             <Button asChild size="sm" variant="outline" className="font-retro">
-              <Link to="/arena/tournaments">Open tournaments</Link>
+              <Link to="/warzone/tournaments">Open tournaments</Link>
             </Button>
           </div>
           {liveTournaments.slice(0, 2).length ? (
             liveTournaments.slice(0, 2).map((event) => (
-              <Link key={event.id} to={`/arena/tournament/${encodeURIComponent(event.id)}`} className="mwz-hud-frame block p-4 transition hover:border-accent/50">
+              <Link key={event.id} to={`/warzone/tournament/${encodeURIComponent(event.id)}`} className="mwz-hud-frame block p-4 transition hover:border-accent/50">
                 <TacticalTag label="Live" tone="success" />
                 <div className="mt-2 font-retro text-sm text-foreground">{event.title}</div>
                 <div className="mt-1 text-xs text-muted-foreground">{event.participantCount} coins</div>
@@ -103,11 +103,11 @@ const Arena = () => {
           <div className="flex items-center justify-between gap-2">
             <h2 className="font-retro text-lg text-foreground">Major War League</h2>
             <Button asChild size="sm" variant="outline" className="font-retro">
-              <Link to="/arena/major-war-league">Open table</Link>
+              <Link to="/warzone/major-war-league">Open table</Link>
             </Button>
           </div>
           {lead ? (
-            <Link to="/arena/major-war-league" className="mwz-hud-frame block p-4 transition hover:border-accent/50">
+            <Link to="/warzone/major-war-league" className="mwz-hud-frame block p-4 transition hover:border-accent/50">
               <TacticalTag label={season.label || "Season"} tone="default" />
               <div className="mt-2 font-retro text-sm text-foreground">Leader {lead.tokenName || lead.symbol}</div>
               <div className="mt-1 text-xs text-muted-foreground">{Number(lead.points || 0).toLocaleString()} pts · week {season.week}</div>

@@ -45,6 +45,7 @@ const CREATOR_BATTLE_STATES = new Set([
   "eligible",
   "waiting",
   "challenged",
+  "matched",
   "live",
   "finished",
   "expired",

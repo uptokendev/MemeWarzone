@@ -25,17 +25,17 @@ export async function notifyChallenge({ defenderWallet, challengerSymbol, defend
   const walletPath = walletKey(defenderWallet);
   const battlesUrl = `${origin}/profile/${encodeURIComponent(walletPath)}/command/battles`;
   const battleUrl = `${origin}/battle/${encodeURIComponent(battleId)}`;
-  const subject = `Arena challenge: ${challengerSymbol || "A coin"} challenged ${defenderSymbol || "your coin"}`;
+  const subject = `Warzone challenge: ${challengerSymbol || "A coin"} challenged ${defenderSymbol || "your coin"}`;
   const text = [
-    "You have an incoming Arena challenge.",
+    "You have an incoming Warzone challenge.",
     "",
     `${challengerSymbol || "A rival"} challenged ${defenderSymbol || "your coin"}.`,
-    "Accept or decline in Command Center Battles. Unanswered challenges expire in 24 hours.",
+    "Accept, decline, or counter-offer a different stake in Command Center Battles. Unanswered challenges expire in 24 hours.",
     "",
     `Command Center: ${battlesUrl}`,
     `Battle: ${battleUrl}`,
     "",
-    "MemeWarzone Arena",
+    "MemeWarzone",
   ].join("\n");
   try {
     return await sendEmailNotification({ to, subject, text });
@@ -47,10 +47,10 @@ export async function notifyChallenge({ defenderWallet, challengerSymbol, defend
 
 export async function sendVerifyEmail({ email, token, wallet }) {
   const origin = siteOrigin();
-  const url = `${origin}/arena/verify-email?token=${encodeURIComponent(token)}`;
-  const subject = "Verify your MemeWarzone Arena email";
+  const url = `${origin}/warzone/verify-email?token=${encodeURIComponent(token)}`;
+  const subject = "Verify your MemeWarzone Warzone email";
   const text = [
-    "Confirm this address to receive Arena challenge emails.",
+    "Confirm this address to receive Warzone challenge emails.",
     "",
     `Verify: ${url}`,
     "",
@@ -59,4 +59,32 @@ export async function sendVerifyEmail({ email, token, wallet }) {
     "If you did not request this, ignore the message.",
   ].join("\n");
   return sendEmailNotification({ to: email, subject, text });
+}
+
+export async function notifyCounterOffer({ toWallet, fromSymbol, toSymbol, amount, nativeSymbol, previousAmount, durationHours, previousDurationHours, battleId }) {
+  const to = await verifiedEmailForWallet(toWallet);
+  if (!to) return { ok: true, skipped: true, reason: "no_verified_email" };
+  const origin = siteOrigin();
+  const walletPath = walletKey(toWallet);
+  const battlesUrl = `${origin}/profile/${encodeURIComponent(walletPath)}/command/battles`;
+  const battleUrl = `${origin}/battle/${encodeURIComponent(battleId)}`;
+  const unit = nativeSymbol || "BNB";
+  const subject = `Warzone counter-offer: ${fromSymbol || "A rival"} offered ${amount} ${unit}`;
+  const text = [
+    "A counter-offer was made on your Warzone challenge.",
+    "",
+    `${fromSymbol || "A rival"} offered ${amount} ${unit} / ${Number(durationHours) === 72 ? "3 days" : Number(durationHours) === 168 ? "7 days" : "24 hours"} instead of ${previousAmount} ${unit} / ${Number(previousDurationHours) === 72 ? "3 days" : Number(previousDurationHours) === 168 ? "7 days" : "24 hours"} for ${toSymbol || "your coin"}.`,
+    "Accept, decline, or counter again in Command Center Battles. Unanswered offers expire in 24 hours.",
+    "",
+    `Command Center: ${battlesUrl}`,
+    `Battle: ${battleUrl}`,
+    "",
+    "MemeWarzone",
+  ].join("\n");
+  try {
+    return await sendEmailNotification({ to, subject, text });
+  } catch (error) {
+    console.warn("[arenaNotify] counter-offer email failed", error?.message || error);
+    return { ok: false, skipped: false, error: String(error?.message || error) };
+  }
 }
