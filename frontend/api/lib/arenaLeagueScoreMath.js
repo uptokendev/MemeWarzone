@@ -9,6 +9,7 @@ export const PAIR_WINDOW_DAYS = 7;
 export const QF_MIN_FIGHTS = 3;
 export const QF_SEED_SIZE = 8;
 export const SETTLEMENT_VERSION = 1;
+export const INVALID_MARKET_CAP_SNAPSHOT = "invalid_market_cap_snapshot";
 
 /** left = challenger (A), right = defender (B). Never reuse "winner" for money vs MWL. */
 export const MWL_RESULT = Object.freeze({
@@ -45,7 +46,54 @@ function finiteMcap(value) {
   return Number.isFinite(n) ? n : 0;
 }
 
-/** Ratio, not percent. start<=0 and end>0 is treated as +100%. */
+/** Parse a supplied mcap without turning missing/invalid into 0. */
+export function parseAuthoritativeMcap(value) {
+  if (value === null || value === undefined || typeof value === "boolean") return null;
+  if (typeof value === "string" && value.trim() === "") return null;
+  if (typeof value === "bigint") {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+  const n = typeof value === "number" || typeof value === "string" ? Number(value) : NaN;
+  return Number.isFinite(n) ? n : null;
+}
+
+export function assertAuthoritativeMarketCaps({
+  leftStartMcap,
+  rightStartMcap,
+  leftEndMcap,
+  rightEndMcap,
+} = {}) {
+  const leftStart = parseAuthoritativeMcap(leftStartMcap);
+  const rightStart = parseAuthoritativeMcap(rightStartMcap);
+  const leftEnd = parseAuthoritativeMcap(leftEndMcap);
+  const rightEnd = parseAuthoritativeMcap(rightEndMcap);
+  if (leftStart === null || leftStart <= 0 || rightStart === null || rightStart <= 0) {
+    return { ok: false, reason: INVALID_MARKET_CAP_SNAPSHOT };
+  }
+  if (leftEnd === null || leftEnd < 0 || rightEnd === null || rightEnd < 0) {
+    return { ok: false, reason: INVALID_MARKET_CAP_SNAPSHOT };
+  }
+  return { ok: true, leftStart, rightStart, leftEnd, rightEnd };
+}
+
+function invalidSettlement() {
+  return {
+    ok: false,
+    reason: INVALID_MARKET_CAP_SNAPSHOT,
+    settlementVersion: SETTLEMENT_VERSION,
+    mwlResult: null,
+    mwlDraw: null,
+    mwlWinnerSide: null,
+    mwlWinnerToken: null,
+    moneyWinnerToken: null,
+    moneyWinnerSide: null,
+    moneyTieBreak: null,
+    ledger: null,
+  };
+}
+
+/** Ratio, not percent. Pure helper; canonical settlement must not use the zero-start fallback. */
 export function pctChange(startMcap, endMcap) {
   const start = finiteMcap(startMcap);
   const end = finiteMcap(endMcap);
@@ -153,16 +201,23 @@ export function settleBattleResult({
   isQuarterFinals = false,
   isTournament = false,
 } = {}) {
-  const leftPct = pctChange(leftStartMcap, leftEndMcap);
-  const rightPct = pctChange(rightStartMcap, rightEndMcap);
+  const snapshot = assertAuthoritativeMarketCaps({
+    leftStartMcap,
+    rightStartMcap,
+    leftEndMcap,
+    rightEndMcap,
+  });
+  if (!snapshot.ok) return invalidSettlement();
+  const leftPct = pctChange(snapshot.leftStart, snapshot.leftEnd);
+  const rightPct = pctChange(snapshot.rightStart, snapshot.rightEnd);
   const mwl = mwlOutcome({ leftPct, rightPct });
   const money = moneyWinner({
     leftToken,
     rightToken,
     leftPct,
     rightPct,
-    leftEndMcap,
-    rightEndMcap,
+    leftEndMcap: snapshot.leftEnd,
+    rightEndMcap: snapshot.rightEnd,
   });
   const mwlWinnerToken = mwl.mwlDraw ? null : mwl.mwlWinnerSide === "left" ? leftToken : rightToken;
   const ledger = mwlLedgerPlan({
@@ -176,11 +231,13 @@ export function settleBattleResult({
     isTournament,
   });
   return {
+    ok: true,
+    reason: "ok",
     settlementVersion: SETTLEMENT_VERSION,
-    leftStartMcap: finiteMcap(leftStartMcap),
-    rightStartMcap: finiteMcap(rightStartMcap),
-    leftEndMcap: finiteMcap(leftEndMcap),
-    rightEndMcap: finiteMcap(rightEndMcap),
+    leftStartMcap: snapshot.leftStart,
+    rightStartMcap: snapshot.rightStart,
+    leftEndMcap: snapshot.leftEnd,
+    rightEndMcap: snapshot.rightEnd,
     leftPct,
     rightPct,
     mwlResult: mwl.mwlResult,

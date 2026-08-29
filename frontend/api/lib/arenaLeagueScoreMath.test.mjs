@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   DRAW_POINTS,
+  INVALID_MARKET_CAP_SNAPSHOT,
   LOSS_POINTS,
   MONEY_TIE_BREAK,
   MWL_RESULT,
@@ -52,6 +53,7 @@ test("normal A (left) win: MWL + money follow performance", () => {
     leftEndMcap: 130,
     rightEndMcap: 110,
   });
+  assert.equal(result.ok, true);
   assert.equal(result.mwlResult, MWL_RESULT.LEFT_WIN);
   assert.equal(result.mwlDraw, false);
   assert.equal(result.mwlWinnerToken, TOKEN_A);
@@ -246,6 +248,60 @@ test("non-QF tournament win adds +2 on the battle win only", () => {
   });
   assert.equal(result.ledger.left.points, WIN_POINTS + TOURNAMENT_WIN_BONUS);
   assert.equal(result.ledger.right.points, LOSS_POINTS);
+});
+
+test("equal proportional performance is an MWL draw (300→330 vs 900→990)", () => {
+  const result = settleBattleResult({
+    leftToken: TOKEN_A,
+    rightToken: TOKEN_B,
+    leftStartMcap: 300,
+    rightStartMcap: 900,
+    leftEndMcap: 330,
+    rightEndMcap: 990,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.leftPct, result.rightPct);
+  assert.equal(result.mwlResult, MWL_RESULT.DRAW);
+  assert.equal(result.mwlDraw, true);
+  assert.equal(result.mwlWinnerToken, null);
+  assert.equal(result.ledger.left.points, DRAW_POINTS);
+  assert.equal(result.ledger.right.points, DRAW_POINTS);
+  assert.equal(result.moneyWinnerToken, TOKEN_B);
+  assert.equal(result.moneyTieBreak, MONEY_TIE_BREAK.ENDING_MCAP);
+});
+
+test("invalid or missing market-cap snapshots fail closed with no MWL or money winner", () => {
+  function assertInvalid(result) {
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, INVALID_MARKET_CAP_SNAPSHOT);
+    assert.equal(result.mwlResult, null);
+    assert.equal(result.mwlDraw, null);
+    assert.equal(result.mwlWinnerToken, null);
+    assert.equal(result.moneyWinnerToken, null);
+    assert.equal(result.moneyTieBreak, null);
+    assert.equal(result.ledger, null);
+  }
+  const base = {
+    leftToken: TOKEN_A,
+    rightToken: TOKEN_B,
+    leftStartMcap: 10000,
+    rightStartMcap: 10000,
+    leftEndMcap: 20000,
+    rightEndMcap: 15000,
+  };
+  assertInvalid(settleBattleResult({ ...base, leftStartMcap: undefined }));
+  assertInvalid(settleBattleResult({ ...base, leftStartMcap: 0 }));
+  assertInvalid(settleBattleResult({ ...base, leftStartMcap: NaN }));
+  assertInvalid(settleBattleResult({ ...base, leftStartMcap: "nope" }));
+  assertInvalid(settleBattleResult({ ...base, leftEndMcap: undefined }));
+  assertInvalid(settleBattleResult({ ...base, leftEndMcap: NaN }));
+  assertInvalid(settleBattleResult({ ...base, rightEndMcap: "x" }));
+  assertInvalid(settleBattleResult({ ...base, leftStartMcap: -1 }));
+  assertInvalid(settleBattleResult({ ...base, rightEndMcap: -5 }));
+  const valid = settleBattleResult(base);
+  assert.equal(valid.ok, true);
+  assert.notEqual(valid.mwlResult, null);
+  assert.notEqual(valid.moneyWinnerToken, null);
 });
 
 test("MWL score math cannot mint points from UpVotes", () => {
