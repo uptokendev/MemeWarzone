@@ -4,6 +4,7 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import { deployProtocol } from "../scripts/lib/deployProtocol";
 import { verifyDeployment } from "../scripts/verify-deployment";
+import { verifyDeploymentAuthority } from "../scripts/verify-deployment-authority";
 
 const ENV_KEYS = [
   "DEPLOY_TREASURY_ROUTER_V2",
@@ -101,6 +102,9 @@ describe("deployProtocol TreasuryRouterV2 path", function () {
     expect(deployment.routing.charityTreasury).to.equal(deployment.charityTreasury);
     expect(deployment.routing.permanentLpLockerAuthorized).to.equal(true);
     expect(deployment.postDeployActions).to.deep.equal([]);
+    expect(deployment.authority.status).to.equal("local");
+    expect(deployment.authority.factoryOwner).to.equal(deployment.deployer);
+    expect(deployment.authority.expectedSafe).to.equal(deployment.treasurySafe);
 
     const router = await ethers.getContractAt("TreasuryRouterV2", deployment.contracts.TreasuryRouterV2);
     expect(await router.weeklyLeagueVault()).to.equal(deployment.contracts.WeeklyLeagueVault);
@@ -124,5 +128,11 @@ describe("deployProtocol TreasuryRouterV2 path", function () {
     expect(await charity.multisig()).to.equal(deployment.treasurySafe);
 
     await verifyDeployment(deployment);
+    const authority = await verifyDeploymentAuthority(deployment, { allowLocalDeployerOwner: true });
+    expect(authority.status).to.equal("local");
+    expect(authority.githubMainProtection).to.equal("manual");
+    expect(authority.errors).to.deep.equal([]);
+    expect(authority.matrix.LaunchFactory).to.equal(deployment.deployer);
+    expect(authority.matrix.TreasuryRouterAdmin).to.equal(deployment.treasurySafe);
   });
 });

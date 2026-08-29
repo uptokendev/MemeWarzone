@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { increaseTime } from "./helpers/settlementAuth";
 
 const TRADE = 0;
 const FINALIZE = 1;
@@ -130,5 +131,42 @@ describe("TreasuryRouterV3", function () {
     const campaign = await deployCampaign(await creator.getAddress());
 
     await expect(campaign.connect(alice).routeTrade(await router.getAddress(), STANDARD_LINKED, { value: 1n })).to.be.revertedWith("creatorVault=0");
+  });
+
+  it("delays replacement of V3 money destinations including the creator vault", async () => {
+    const { router, recruiter, community, protocol, creatorVault, alice, lockerA } = await deployConfigured();
+    const replacement = await deployReceiver();
+    const replacementAddress = await replacement.getAddress();
+
+    await expect(router.setRecruiterRewardsVault(replacementAddress)).to.be.revertedWith("use propose");
+    await expect(router.setCommunityRewardsVault(replacementAddress)).to.be.revertedWith("use propose");
+    await expect(router.setProtocolRevenueVault(replacementAddress)).to.be.revertedWith("use propose");
+    await expect(router.setCreatorRewardsVault(replacementAddress)).to.be.revertedWith("use propose");
+    await expect(router.proposeCreatorRewardsVault(await alice.getAddress())).to.be.revertedWith("not contract");
+
+    await router.proposeCreatorRewardsVault(replacementAddress);
+    await expect(router.acceptCreatorRewardsVault()).to.be.revertedWith("delay");
+    await increaseTime(3600);
+    await expect(router.acceptCreatorRewardsVault())
+      .to.emit(router, "CreatorRewardsVaultUpdated")
+      .withArgs(await creatorVault.getAddress(), replacementAddress);
+    expect(await router.creatorRewardsVault()).to.eq(replacementAddress);
+
+    await router.proposeRecruiterRewardsVault(replacementAddress);
+    await router.proposeCommunityRewardsVault(replacementAddress);
+    await router.proposeProtocolRevenueVault(replacementAddress);
+    await increaseTime(3600);
+    await router.acceptRecruiterRewardsVault();
+    await router.acceptCommunityRewardsVault();
+    await router.acceptProtocolRevenueVault();
+    expect(await router.recruiterRewardsVault()).to.eq(replacementAddress);
+    expect(await router.communityRewardsVault()).to.eq(replacementAddress);
+    expect(await router.protocolRevenueVault()).to.eq(replacementAddress);
+
+    await router.setAuthorizedLpLocker(await lockerA.getAddress(), true);
+    await expect(router.setAuthorizedLpLocker(await alice.getAddress(), true)).to.be.revertedWith("use propose");
+    await router.emergencyDisableLpLocker(await lockerA.getAddress());
+    expect(await router.authorizedLpLocker(await lockerA.getAddress())).to.eq(false);
+    expect(await router.anyLpLockerAuthorized()).to.eq(true);
   });
 });

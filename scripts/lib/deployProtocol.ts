@@ -569,6 +569,42 @@ export async function deployProtocol() {
     console.log("ProtocolFeeBps set:", protocolFeeBps.toString());
   }
 
+  if (treasurySafe.toLowerCase() !== deployerAddress.toLowerCase() && (await factory.owner()).toLowerCase() === deployerAddress.toLowerCase()) {
+    const tx = await factory.transferOwnership(treasurySafe);
+    await tx.wait();
+    console.log("LaunchFactory ownership transferred to treasury safe:", treasurySafe);
+  }
+
+  const factoryOwner = await factory.owner();
+  const creatorRegistryOwner = await creatorRegistry.owner();
+  const riskRegistryOwner = await riskRegistry.owner();
+  const ownersOnSafe =
+    factoryOwner.toLowerCase() === treasurySafe.toLowerCase() &&
+    creatorRegistryOwner.toLowerCase() === treasurySafe.toLowerCase() &&
+    riskRegistryOwner.toLowerCase() === treasurySafe.toLowerCase();
+  const distinctSafe = treasurySafe.toLowerCase() !== deployerAddress.toLowerCase();
+  let deployerFactoryHandoffVerified = !distinctSafe;
+  if (distinctSafe) {
+    let stillCallable = false;
+    try {
+      await factory.setProtocolFee(protocolFeeBps);
+      stillCallable = true;
+    } catch {
+      stillCallable = false;
+    }
+    deployerFactoryHandoffVerified = !stillCallable;
+    console.log("Deployer factory handoff verified:", deployerFactoryHandoffVerified);
+  }
+
+  let authorityStatus: "accepted" | "incomplete" | "local" = "incomplete";
+  if (isLocalNetwork()) {
+    authorityStatus = distinctSafe && ownersOnSafe && deployerFactoryHandoffVerified ? "accepted" : "local";
+  } else if (distinctSafe && ownersOnSafe && deployerFactoryHandoffVerified) {
+    authorityStatus = "accepted";
+  } else {
+    authorityStatus = "incomplete";
+  }
+
   const UPVoteTreasury = await ethers.getContractFactory("UPVoteTreasury");
   const voteTreasury = await UPVoteTreasury.deploy(treasurySafe, treasurySafe);
   await voteTreasury.waitForDeployment();
@@ -616,6 +652,15 @@ export async function deployProtocol() {
     recruiterPayoutDailyCap: recruiterPayoutDailyCap?.toString() ?? null,
     enableRecruiterPayouts,
     canAdminConfigure,
+    authority: {
+      status: authorityStatus,
+      expectedSafe: treasurySafe,
+      factoryOwner,
+      creatorRegistryOwner,
+      riskRegistryOwner,
+      deployerFactoryHandoffVerified,
+      githubMainProtection: "manual",
+    },
     contracts: {
       LeagueTreasury: vaultAddress,
       TreasuryVaultV2: vaultAddress,
@@ -672,13 +717,25 @@ export async function deployProtocol() {
       creatorRegistry: creatorRegistryAddress,
       riskRegistry: riskRegistryAddress,
       factoryLaunchRecorderEnabled: true,
-      registryOwner: treasurySafe,
+      registryOwner: creatorRegistryOwner,
+      factoryOwner,
+      riskRegistryOwner,
+      authorityStatus,
     },
     postDeployActions,
   };
 
   const file = writeDeployment(network.name, deployment);
   console.log("\nSaved deployment:", file);
+  console.log("Authority status:", authorityStatus);
+  console.log("LaunchFactory owner:", factoryOwner);
+  console.log("CreatorRegistry owner:", creatorRegistryOwner);
+  console.log("RiskRegistry owner:", riskRegistryOwner);
+  if (!isLocalNetwork() && authorityStatus !== "accepted") {
+    throw new Error(
+      `Non-local deployment is incomplete: LaunchFactory/CreatorRegistry/RiskRegistry must be owned by TREASURY_SAFE (${treasurySafe}). factory.owner=${factoryOwner} creatorRegistry.owner=${creatorRegistryOwner} riskRegistry.owner=${riskRegistryOwner}. Manifest marked incomplete and must not be treated as accepted.`
+    );
+  }
   console.log("\nCanonical deploy path: hardhat run scripts/deploy.ts --network <network>");
   console.log("\nFrontend env:");
   console.log(`VITE_FACTORY_ADDRESS_${deployment.chainId}=${factoryAddress}`);

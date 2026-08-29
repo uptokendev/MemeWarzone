@@ -73,7 +73,7 @@ async function deployV3Stack() {
 
 describe("Robinhood V3 graduation compatibility", function () {
   it("graduates the unchanged LaunchCampaign into a permanently locked V3 NFT and harvests fees 80/20", async () => {
-    const [owner, creator, buyer, trader, weekly, monthly, protocolVault] = await ethers.getSigners();
+    const [owner, creator, buyer, trader, weekly, monthly] = await ethers.getSigners();
     const { weth, factory, positionManager, swapRouter, adapter } = await deployV3Stack();
 
     const Treasury = await ethers.getContractFactory("TreasuryRouterV2");
@@ -84,6 +84,9 @@ describe("Robinhood V3 graduation compatibility", function () {
       3600,
     );
     await treasury.waitForDeployment();
+    const ProtocolVault = await ethers.getContractFactory("ProtocolRevenueVault");
+    const protocolVault = await ProtocolVault.deploy(await owner.getAddress());
+    await protocolVault.waitForDeployment();
     await treasury.setProtocolRevenueVault(await protocolVault.getAddress());
 
     const Locker = await ethers.getContractFactory("PermanentV3PositionLocker");
@@ -123,6 +126,7 @@ describe("Robinhood V3 graduation compatibility", function () {
       requireAuthorizedTrading: false,
       tradeRouteProfile: 1,
       finalizeRouteProfile: 1,
+      strictFeeRouting: false,
     });
 
     const token = await ethers.getContractAt("LaunchToken", await campaign.token());

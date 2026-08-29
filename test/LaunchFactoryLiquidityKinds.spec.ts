@@ -52,8 +52,8 @@ async function deployV3Stack() {
   return { weth, v3Factory, positionManager, swapRouter, adapter };
 }
 
-async function deployTreasury(owner: any, weekly: any, monthly: any, protocolVault: any) {
-  const Treasury = await ethers.getContractFactory("TreasuryRouterV2");
+async function deployTreasury(owner: any, weekly: any, monthly: any) {
+  const Treasury = await ethers.getContractFactory("TreasuryRouterV3");
   const treasury = await Treasury.deploy(
     await owner.getAddress(),
     await weekly.getAddress(),
@@ -61,7 +61,23 @@ async function deployTreasury(owner: any, weekly: any, monthly: any, protocolVau
     3600,
   );
   await treasury.waitForDeployment();
-  await treasury.setProtocolRevenueVault(await protocolVault.getAddress());
+
+  const Receiver = await ethers.getContractFactory("TreasuryRouterV3ReceiverMock");
+  const recruiter = await Receiver.deploy();
+  const protocol = await Receiver.deploy();
+  await recruiter.waitForDeployment();
+  await protocol.waitForDeployment();
+  const Community = await ethers.getContractFactory("CommunityRewardsVaultV3Mock");
+  const community = await Community.deploy();
+  await community.waitForDeployment();
+  const CreatorVault = await ethers.getContractFactory("CreatorRewardsVault");
+  const creatorVault = await CreatorVault.deploy(await owner.getAddress(), await treasury.getAddress());
+  await creatorVault.waitForDeployment();
+
+  await treasury.setRecruiterRewardsVault(await recruiter.getAddress());
+  await treasury.setCommunityRewardsVault(await community.getAddress());
+  await treasury.setProtocolRevenueVault(await protocol.getAddress());
+  await treasury.setCreatorRewardsVault(await creatorVault.getAddress());
   return treasury;
 }
 
@@ -71,7 +87,7 @@ describe("LaunchFactory V2/V3 liquidity-kind seam", function () {
     const { adapter } = await deployV3Stack();
 
     expect(await factory.FACTORY_GENERATION()).to.equal(4n);
-    expect(await factory.CAMPAIGN_GENERATION()).to.equal(2n);
+    expect(await factory.CAMPAIGN_GENERATION()).to.equal(3n);
     expect(await factory.liquidityKind()).to.equal(1n);
     expect(await factory.permanentLpLocker()).to.equal(await permanentLpLocker.getAddress());
     expect(await permanentLpLocker.topazFactory()).to.equal(await v2factory.getAddress());
@@ -82,9 +98,9 @@ describe("LaunchFactory V2/V3 liquidity-kind seam", function () {
   });
 
   it("auto-registers a Robinhood V3 graduation NFT through the factory without touching LaunchCampaign", async () => {
-    const [owner, creator, buyer, weekly, monthly, protocolVault] = await ethers.getSigners();
+    const [owner, creator, buyer, weekly, monthly] = await ethers.getSigners();
     const { weth, v3Factory, positionManager, adapter } = await deployV3Stack();
-    const treasury = await deployTreasury(owner, weekly, monthly, protocolVault);
+    const treasury = await deployTreasury(owner, weekly, monthly);
     const oracle = await deployTestOracle();
 
     const Campaign = await ethers.getContractFactory("LaunchCampaign");
@@ -101,7 +117,7 @@ describe("LaunchFactory V2/V3 liquidity-kind seam", function () {
     await factory.waitForDeployment();
 
     expect(await factory.FACTORY_GENERATION()).to.equal(4n);
-    expect(await factory.CAMPAIGN_GENERATION()).to.equal(2n);
+    expect(await factory.CAMPAIGN_GENERATION()).to.equal(3n);
     expect(await factory.liquidityKind()).to.equal(2n);
 
     const lockerAddress = await factory.permanentLpLocker();
@@ -166,9 +182,9 @@ describe("LaunchFactory V2/V3 liquidity-kind seam", function () {
   });
 
   it("refuses to switch a V3 factory back to a legacy V2 router even before first campaign", async () => {
-    const [owner, , , weekly, monthly, protocolVault] = await ethers.getSigners();
+    const [owner, , , weekly, monthly] = await ethers.getSigners();
     const { adapter } = await deployV3Stack();
-    const treasury = await deployTreasury(owner, weekly, monthly, protocolVault);
+    const treasury = await deployTreasury(owner, weekly, monthly);
     const oracle = await deployTestOracle();
 
     const Campaign = await ethers.getContractFactory("LaunchCampaign");
