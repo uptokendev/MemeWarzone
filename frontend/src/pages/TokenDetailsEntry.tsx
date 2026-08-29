@@ -19,8 +19,10 @@ import { requestSolanaGraduationHandoff } from "@/lib/solanaGraduationHandoff";
 import { isSolanaTokenRouteId } from "@/lib/tokenDetailsPath";
 import { recordRecentlyViewed } from "@/lib/searchHistory";
 import { analytics } from "@/lib/analytics/ProductAnalytics";
+import { lookupArenaImport, type ArenaImportItem } from "@/lib/arenaImports";
 
 import TokenDetails from "./TokenDetails";
+import ImportedTokenDetails from "./ImportedTokenDetails";
 
 const SOLANA_ROUTE_CACHE_PREFIX = "mwz:solana-token-route:v2:";
 const SOLANA_ROUTE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -107,6 +109,8 @@ const TokenDetailsEntry = () => {
   const [curve, setCurve] = useState<SolanaCampaignCurveState | null>(null);
   const [curveResolved, setCurveResolved] = useState<boolean>(!isSolanaRoute);
   const [cachedCampaignAddress, setCachedCampaignAddress] = useState<string>(initialCache?.campaignAddress || "");
+  const [imported, setImported] = useState<ArenaImportItem | null>(null);
+  const [importLookupDone, setImportLookupDone] = useState(false);
 
   useEffect(() => {
     if (!routeId) return;
@@ -250,9 +254,9 @@ const TokenDetailsEntry = () => {
   }, [cachedCampaignAddress, curveLookupAddress, isSolanaRoute, resolvedCampaignAddress, routeId]);
 
   useEffect(() => {
-    const campaignAddress = String(campaign?.campaign || resolvedCampaignAddress || (!isSolanaRoute ? routeId : "") || "").trim();
-    const tokenAddress = String(campaign?.token || (isSolanaRoute ? routeId : campaignAddress) || "").trim();
-    if (!campaignAddress && !tokenAddress) return;
+    const campaignAddressToRecord = String(campaign?.campaign || resolvedCampaignAddress || (!isSolanaRoute ? routeId : "") || "").trim();
+    const tokenAddress = String(campaign?.token || (isSolanaRoute ? routeId : campaignAddressToRecord) || "").trim();
+    if (!campaignAddressToRecord && !tokenAddress) return;
 
     const campaignChainId = Number((campaign as { chainId?: number } | null)?.chainId || 0);
     const chainId = isSolanaRoute
@@ -266,10 +270,61 @@ const TokenDetailsEntry = () => {
       symbol: campaign?.symbol,
       logoURI: (campaign as { logoURI?: string } | null)?.logoURI,
       tokenAddress,
-      campaignAddress,
+      campaignAddress: campaignAddressToRecord,
       chainId,
     });
   }, [campaign, effectiveEvmChainId, forcedChainId, isSolanaRoute, resolvedCampaignAddress, routeId]);
+
+  useEffect(() => {
+    if (!routeId) {
+      setImported(null);
+      setImportLookupDone(true);
+      return;
+    }
+    let cancelled = false;
+    setImportLookupDone(false);
+    setImported(null);
+
+    const preferredChainId = isSolanaRoute
+      ? SOLANA_CHAIN_ID
+      : isRobinhoodChainId(forcedChainId) || isBnbChainId(forcedChainId)
+        ? forcedChainId
+        : effectiveEvmChainId;
+    const chainIds = [
+      preferredChainId,
+      effectiveEvmChainId,
+      BNB_CHAIN_ID,
+      BNB_TESTNET_CHAIN_ID,
+      ROBINHOOD_CHAIN_ID,
+      ROBINHOOD_TESTNET_CHAIN_ID,
+      SOLANA_CHAIN_ID,
+    ].filter((value, index, list) => value > 0 && list.indexOf(value) === index);
+
+    (async () => {
+      for (const chainId of chainIds) {
+        const item = await lookupArenaImport(routeId, chainId);
+        if (cancelled) return;
+        if (item) {
+          setImported(item);
+          setImportLookupDone(true);
+          return;
+        }
+      }
+      if (!cancelled) {
+        setImported(null);
+        setImportLookupDone(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveEvmChainId, forcedChainId, isSolanaRoute, routeId]);
+
+  if (!importLookupDone) return null;
+  if (imported) {
+    return <ImportedTokenDetails item={imported} />;
+  }
 
   return <TokenDetails key={`${routeId || (isSolanaRoute ? "solana" : "evm")}:${isSolanaRoute ? SOLANA_CHAIN_ID : effectiveEvmChainId}`} />;
 };
