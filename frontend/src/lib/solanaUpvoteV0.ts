@@ -1,4 +1,4 @@
-import { getVoteTreasuryAddress, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
+import { getArenaVoteTreasuryAddress, getVoteTreasuryAddress, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
 import { confirmLaunchpadSignature } from "@/lib/solanaConfirmSignature";
 import { getSolanaProvider } from "@/lib/solanaWallet";
 import type { SolanaWeb3Module } from "@/lib/solanaWeb3";
@@ -42,7 +42,12 @@ export async function submitSolanaUpvoteV0(input: {
     throw new Error("Connected Solana wallet changed before UP Vote submission.");
   }
 
-  const canonicalTreasury = String(getVoteTreasuryAddress(SOLANA_CHAIN_ID) || "").trim();
+  const lane: SolanaUpvoteLane = input.lane === "arena" ? "arena" : "launchpad";
+  const canonicalTreasury = String(
+    lane === "arena"
+      ? getArenaVoteTreasuryAddress(SOLANA_CHAIN_ID) || getVoteTreasuryAddress(SOLANA_CHAIN_ID)
+      : getVoteTreasuryAddress(SOLANA_CHAIN_ID) || getArenaVoteTreasuryAddress(SOLANA_CHAIN_ID),
+  ).trim();
   if (!canonicalTreasury || canonicalTreasury !== String(input.treasuryAddress || "").trim()) {
     throw new Error("Solana UP Vote treasury does not match the configured canonical treasury.");
   }
@@ -50,7 +55,6 @@ export async function submitSolanaUpvoteV0(input: {
     throw new Error("Invalid Solana UP Vote lamport amount.");
   }
 
-  const lane: SolanaUpvoteLane = input.lane === "arena" ? "arena" : "launchpad";
   const from = new input.web3.PublicKey(connected);
   const to = new input.web3.PublicKey(canonicalTreasury);
   const subject = new input.web3.PublicKey(input.campaignAddress);
