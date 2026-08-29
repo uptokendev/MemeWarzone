@@ -3,11 +3,16 @@ import { badMethod, json } from "../server/http.js";
 
 const CHECKS = [
   ["battles", "Arena battles", "arena_battles"],
-  ["warPools", "War Pools", "arena_war_pools"],
-  ["warPoolEntries", "War Pool entries", "arena_war_pool_entries"],
-  ["events", "Arena events", "arena_events"],
+  ["imports", "Token imports", "arena_token_imports"],
+  ["tournaments", "Tournaments", "arena_tournaments"],
+  ["tournamentInvites", "Tournament invites", "arena_tournament_invites"],
+  ["tournamentEntries", "Tournament entries", "arena_tournament_entries"],
   ["leagueSeasons", "League seasons", "arena_league_seasons"],
   ["leagueEntries", "League entries", "arena_league_entries"],
+  ["arenaVotes", "Arena votes", "arena_votes"],
+  ["arenaVoteAggregates", "Arena vote aggregates", "arena_vote_aggregates"],
+  ["supportEntries", "Support donations", "arena_support_entries"],
+  ["notificationEmails", "Wallet notification emails", "wallet_notification_emails"],
   ["sponsorshipApplications", "Sponsorship applications", "sponsorship_applications"],
   ["sponsoredPlacements", "Sponsored placements", "sponsored_placements"],
 ];
@@ -37,6 +42,7 @@ export default async function handler(req, res) {
 
   const checks = await Promise.all(CHECKS.map(checkTable));
   const missingTables = checks.filter((check) => !check.ok).map((check) => check.table);
+  const emailConfigured = Boolean(String(process.env.RESEND_API_KEY || process.env.NOTIFY_RESEND_API_KEY || "").trim());
 
   return json(res, 200, {
     ok: databaseOk && missingTables.length === 0,
@@ -45,6 +51,7 @@ export default async function handler(req, res) {
     checks,
     missingTables,
     importedTables: checks.filter((check) => check.ok).map((check) => check.table),
+    email: { configured: emailConfigured },
     durationMs: Date.now() - startedAt,
     updatedAt: new Date().toISOString(),
   });
