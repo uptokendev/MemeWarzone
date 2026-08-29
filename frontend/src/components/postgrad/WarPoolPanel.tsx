@@ -33,9 +33,9 @@ const stateTone: Record<WarPool["state"], "default" | "hot" | "sponsored" | "suc
 
 const nextPoolActions: Record<WarPool["state"], { label: string; state: WarPool["state"] }[]> = {
   open: [{ label: "Close support", state: "locked" }],
-  locked: [{ label: "Start payout", state: "settling" }],
-  settling: [{ label: "Mark payouts complete", state: "paid" }],
-  paid: [{ label: "Reopen support", state: "open" }],
+  locked: [],
+  settling: [],
+  paid: [],
 };
 
 export function WarPoolPanel({ battle }: { battle: Battle }) {
@@ -50,8 +50,10 @@ export function WarPoolPanel({ battle }: { battle: Battle }) {
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div className="text-[10px] uppercase tracking-[0.28em] text-accent/80">Support pool</div>
-          <div className="mt-1 font-retro text-xl text-foreground">Community support and prize split</div>
-          <div className="mt-2 text-sm text-muted-foreground">Support a side and see how the prize pool is shaping up.</div>
+          <div className="mt-1 font-retro text-xl text-foreground">Community support (donation)</div>
+          <div className="mt-2 text-sm text-muted-foreground">
+            Support is a donation, not betting. Supporters are not paid. 85% winning campaign / 5% protocol / 10% Major War League once escrow is live.
+          </div>
         </div>
         <div className="flex flex-wrap gap-2">
           <TacticalTag label={poolStateLabels[pool.state]} tone={stateTone[pool.state]} />
@@ -69,7 +71,7 @@ export function WarPoolPanel({ battle }: { battle: Battle }) {
           <div className="mt-1 text-sm font-semibold text-foreground">{formatWhen(pool.cutoffAt)}</div>
         </div>
         <div className="mwz-hud-frame p-3">
-          <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-muted-foreground"><Trophy className="h-3.5 w-3.5" />Winner payout</div>
+          <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-muted-foreground"><Trophy className="h-3.5 w-3.5" />Campaign share</div>
           <div className="mt-1 text-sm font-semibold text-foreground">{formatUsd(pool.routingBreakdown.winnersUsd)}</div>
         </div>
         <div className="mwz-hud-frame p-3">

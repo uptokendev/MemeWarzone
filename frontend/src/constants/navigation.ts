@@ -25,8 +25,8 @@ export const arenaSubNavItems: ArenaSubNavItem[] = isPostGradNavEnabled()
   ? [
       { label: "Overview", path: "/arena" },
       { label: "Battles", path: "/arena/battles" },
+      { label: "Tournaments", path: "/arena/tournaments" },
       { label: "Major War League", path: "/arena/major-war-league" },
-      { label: "Events", path: "/arena/events" },
     ]
   : [];
 

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { ChallengeInboxDialog } from "@/components/command-center/ChallengeInboxDialog";
 import { CommandCenterDataProvider } from "@/components/command-center/CommandCenterContext";
 import { CommandCenterHero } from "@/components/command-center/CommandCenterHero";
 import { CommandCenterSidebar } from "@/components/command-center/CommandCenterSidebar";
@@ -20,6 +21,7 @@ export function CommandCenterLayout({ walletAddress, basePath, children }: Comma
           <CommandCenterSidebar basePath={basePath} />
           <div className="min-w-0">{children}</div>
         </div>
+        <ChallengeInboxDialog />
       </ContentContainer>
     </CommandCenterDataProvider>
   );
