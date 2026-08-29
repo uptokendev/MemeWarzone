@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { CommandCenterCard } from "@/components/command-center/CommandCenterCard";
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
 import { RecruiterNativePayoutsPanel } from "@/components/command-center/RecruiterNativePayoutsPanel";
+import { ArenaWarPoolClaimButton } from "@/components/arena/ArenaWarPoolClaimButton";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { addressesMatch } from "@/lib/address";
@@ -441,6 +442,7 @@ export default function CommandCenterClaims() {
   const [claimingType, setClaimingType] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [isRecruiterFlag, setIsRecruiterFlag] = useState(false);
+  const [battleClaims, setBattleClaims] = useState<Array<{ battleId: string; chainId: number }>>([]);
   const rewardChainId = isSolana(chainId) ? getConfiguredSolanaRewardChainId() : chainId;
 
   const loadClaims = () => {
@@ -450,6 +452,14 @@ export default function CommandCenterClaims() {
       const ledgerItems = await fetchRewardClaims({ walletAddress, chainId: rewardChainId, limit: 100 });
       const leagueItems = await fetchLeagueRewardItems(walletAddress, rewardChainId).catch(() => []);
       setItems([...(Array.isArray(ledgerItems) ? ledgerItems : []), ...leagueItems]);
+      if (walletAddress) {
+        const war = await apiFetch(`/api/arena/war-pools/claimable?wallet=${encodeURIComponent(walletAddress)}`, { cache: "no-store" })
+          .then((res) => res.json())
+          .catch(() => null);
+        setBattleClaims(Array.isArray(war?.items) ? war.items : []);
+      } else {
+        setBattleClaims([]);
+      }
     })()
       .catch((err: any) => setMessage(String(err?.message || err || "Failed to load rewards")))
       .finally(() => setLoading(false));
@@ -751,6 +761,22 @@ export default function CommandCenterClaims() {
           })}
         </div>
       </CommandCenterCard>
+
+      {battleClaims.length ? (
+        <CommandCenterCard title="Arena war pool">
+          <p className="text-sm text-muted-foreground">
+            Winning campaign owners pull 85% of stakes plus Support. Protocol does not send. Supporters are not paid.
+          </p>
+          <div className="mt-3 space-y-2">
+            {battleClaims.map((item) => (
+              <div key={item.battleId} className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border/50 p-3">
+                <div className="font-mono text-xs text-muted-foreground">{item.battleId}</div>
+                <ArenaWarPoolClaimButton battleId={item.battleId} chainId={item.chainId} />
+              </div>
+            ))}
+          </div>
+        </CommandCenterCard>
+      ) : null}
 
       {showRecruiterRewards ? <RecruiterNativePayoutsPanel /> : null}
     </div>
