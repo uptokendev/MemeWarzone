@@ -29,8 +29,8 @@ import { getBnbContractAddresses } from "@/lib/bnbContracts";
 import { getReadProvider } from "@/lib/readProvider";
 import { apiFetch } from "@/lib/apiBase";
 import { isSolanaAddress } from "@/lib/address";
-import { getSolanaProvider } from "@/lib/solanaWallet";
 import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
+import { submitSolanaUpvoteV0 } from "@/lib/solanaUpvoteV0";
 
 /** Fixed UP Vote price in USD on every supported chain. */
 const UPVOTE_USD_TARGET = 3;
@@ -78,7 +78,7 @@ type Props = {
  * - Fixed $3 per vote
  * - One wallet transaction = one vote
  * - BNB/Robinhood: payable UPVoteTreasury call in the chain-native coin
- * - Solana: native SOL transfer + /api/solana/vote-ingest
+ * - Solana: canonical V0 native SOL transfer + /api/solana/vote-ingest
  */
 export function UpvoteDialog({
   campaignAddress,
@@ -174,7 +174,6 @@ export function UpvoteDialog({
     }
   }, [priceUsd, voteWei, nativeDecimals]);
 
-  // Solana has no EVM treasury config call. The minimum prevents dust votes.
   useEffect(() => {
     if (!open || !isSolanaCampaign) return;
     setHasContractCode(true);
@@ -183,7 +182,6 @@ export function UpvoteDialog({
     setOracleTargetWei(null);
   }, [open, isSolanaCampaign]);
 
-  // Read EVM treasury config on the campaign chain, not the wallet's current chain.
   useEffect(() => {
     if (!open || isSolanaCampaign) return;
     if (!treasuryAddress || !evmReadProvider) {
@@ -220,10 +218,11 @@ export function UpvoteDialog({
         if (!cancelled) setLoadingCfg(false);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [open, treasuryAddress, evmReadProvider, isSolanaCampaign]);
 
-  // Display the account balance on the campaign chain even if MetaMask is currently elsewhere.
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -251,10 +250,11 @@ export function UpvoteDialog({
         if (!cancelled) setBalanceWei(null);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [open, isSolanaCampaign, solanaWallet.solanaAccount, evmReadProvider, wallet.account]);
 
-  // On-chain oracle converts the fixed USD price to the correct chain-native amount.
   useEffect(() => {
     if (!open || isSolanaCampaign) return;
     if (!evmReadProvider || !oracleAddress) {
@@ -276,7 +276,9 @@ export function UpvoteDialog({
         if (!cancelled) setOracleTargetWei(null);
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [open, evmReadProvider, oracleAddress, isSolanaCampaign]);
 
   useEffect(() => {
@@ -331,7 +333,9 @@ export function UpvoteDialog({
         }
       }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [
     open,
     isSolanaCampaign,
@@ -374,41 +378,37 @@ export function UpvoteDialog({
     }
     if (!isSolanaAddress(campaignAddress)) fail("Invalid campaign", "This page is not a valid Solana campaign address.");
 
-    const provider = getSolanaProvider();
-    if (!provider?.publicKey || typeof provider.signTransaction !== "function") {
-      fail("Wallet unavailable", "Connect Phantom / Solflare to vote on Solana.");
-    }
-
     const web3 = await loadSolanaWeb3();
     const rpc = String(import.meta.env.VITE_SOLANA_RPC || "").trim() || getPublicRpcUrl(SOLANA_CHAIN_ID);
     const connection = new web3.Connection(rpc, "confirmed");
-    const from = new web3.PublicKey(solanaWallet.solanaAccount);
-    const to = new web3.PublicKey(treasuryAddress);
-    const latest = await connection.getLatestBlockhash("confirmed");
     const lamports = voteWei > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(voteWei);
     if (!Number.isFinite(lamports) || lamports <= 0) fail("Price unavailable", "Resolved vote amount was invalid.");
 
-    const tx = new web3.Transaction();
-    tx.feePayer = from;
-    tx.recentBlockhash = latest.blockhash;
-    tx.add(new web3.TransactionInstruction({
-      keys: [{ pubkey: from, isSigner: true, isWritable: false }],
-      programId: new web3.PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"),
-      data: Buffer.from(`mwz-upvote:${campaignAddress}`, "utf8"),
-    }));
-    tx.add(web3.SystemProgram.transfer({ fromPubkey: from, toPubkey: to, lamports }));
-
     toast({ title: "Confirm UP Vote", description: `Pay ~$${UPVOTE_USD_TARGET} in SOL…` });
-    const signed = await provider.signTransaction!(tx);
-    const raw = typeof signed?.serialize === "function"
-      ? signed.serialize()
-      : tx.serialize({ requireAllSignatures: false, verifySignatures: false });
-    const signature = await connection.sendRawTransaction(raw, { skipPreflight: false, preflightCommitment: "confirmed" });
+
+    let signature = "";
+    try {
+      signature = await submitSolanaUpvoteV0({
+        web3,
+        connection,
+        voterAddress: solanaWallet.solanaAccount,
+        treasuryAddress,
+        campaignAddress,
+        lamports,
+      });
+    } catch (signErr: unknown) {
+      const msg = String((signErr as { message?: string })?.message || signErr || "");
+      if (/buffer is not defined|Buffer is not defined/i.test(msg)) {
+        fail(
+          "Wallet unavailable",
+          "Your wallet couldn’t prepare this transaction. Refresh the app and try again. If it continues, contact support.",
+        );
+      }
+      throw signErr;
+    }
     if (!signature) fail("Upvote failed", "Wallet did not return a transaction signature.");
 
     toast({ title: "Upvote sent", description: "Waiting for confirmation…" });
-    await connection.confirmTransaction({ signature, ...latest }, "confirmed");
-
     const res = await apiFetch("/api/solana/vote-ingest", {
       method: "POST",
       headers: { "content-type": "application/json" },
