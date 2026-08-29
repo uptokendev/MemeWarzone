@@ -449,6 +449,44 @@ export function getVoteTreasuryAddress(chainId: SupportedChainId): string {
   return "";
 }
 
+/**
+ * Arena UpVote destination.
+ * Solana can explicitly override this, but otherwise falls back to the standard
+ * vote treasury so Arena keeps the same V0 payment rail and only changes memo domain.
+ */
+export function getArenaVoteTreasuryAddress(chainId: SupportedChainId): string {
+  if (isSolanaChainId(chainId) || Number(chainId) === 102) {
+    const solana =
+      (import.meta.env.VITE_SOLANA_ARENA_VOTE_TREASURY_ADDRESS as string | undefined) ||
+      (import.meta.env.VITE_ARENA_VOTE_TREASURY_ADDRESS_101 as string | undefined) ||
+      (import.meta.env.VITE_SOLANA_PROTOCOL_TREASURY_ADDRESS as string | undefined) ||
+      getVoteTreasuryAddress(SOLANA_CHAIN_ID);
+    return String(solana || "").trim();
+  }
+
+  const perChain = (import.meta.env[`VITE_ARENA_VOTE_TREASURY_ADDRESS_${chainId}`] as string | undefined) ?? "";
+  if (perChain.trim()) return perChain.trim();
+
+  if (chainId === BNB_CHAIN_ID || chainId === BNB_TESTNET_CHAIN_ID) {
+    const fallback = (import.meta.env.VITE_ARENA_VOTE_TREASURY_ADDRESS as string | undefined) ?? "";
+    return fallback.trim();
+  }
+  return "";
+}
+
+export function getArenaWarPoolTreasuryAddress(chainId: SupportedChainId): string {
+  if (isSolanaChainId(chainId)) return "";
+
+  const perChain = (import.meta.env[`VITE_ARENA_WAR_POOL_TREASURY_ADDRESS_${chainId}`] as string | undefined) ?? "";
+  if (perChain.trim()) return perChain.trim();
+
+  if (chainId === BNB_CHAIN_ID || chainId === BNB_TESTNET_CHAIN_ID) {
+    const fallback = (import.meta.env.VITE_ARENA_WAR_POOL_TREASURY_ADDRESS as string | undefined) ?? "";
+    return fallback.trim();
+  }
+  return "";
+}
+
 /** TreasuryVault holds accumulated League Treasury fees in the chain's native asset. */
 export function getTreasuryVaultAddress(chainId: SupportedChainId): string {
   if (isSolanaChainId(chainId)) return "";
