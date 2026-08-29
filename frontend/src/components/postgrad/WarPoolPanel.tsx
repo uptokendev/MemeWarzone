@@ -154,6 +154,7 @@ export function WarPoolPanel({
                         poolId={meta.onchainPoolId}
                         opened={meta.onchainOpened}
                         configured={meta.configured}
+                        live={meta.live}
                         onDone={() => void refreshPool(poolSubjectId)}
                       />
                     ) : null}

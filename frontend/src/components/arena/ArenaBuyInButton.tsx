@@ -16,6 +16,7 @@ export function ArenaBuyInButton({
   chainId,
   poolId,
   configured,
+  live: liveFlag,
   opened,
   buyInPaid,
   buyInNative,
@@ -27,6 +28,7 @@ export function ArenaBuyInButton({
   chainId?: number;
   poolId?: string;
   configured?: boolean;
+  live?: boolean;
   opened?: boolean;
   buyInPaid?: boolean;
   buyInNative?: number;
@@ -38,7 +40,7 @@ export function ArenaBuyInButton({
   const [busy, setBusy] = useState(false);
   const id = Number(chainId || wallet.chainId || 56);
   if (!isSolanaWarzoneChain(id)) return null;
-  const live = isSolanaWarzoneMoneyLive({ configured, live: configured });
+  const live = isSolanaWarzoneMoneyLive({ configured, live: liveFlag });
   if (!live) return <p className="text-sm text-muted-foreground">{SOLANA_WARZONE_ESCROW_NOT_LIVE}</p>;
   if (buyInPaid) return <p className="text-sm text-muted-foreground">On-chain registration is recorded.</p>;
   if (!opened || !poolId) {

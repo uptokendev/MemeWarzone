@@ -22,6 +22,7 @@ export function ArenaSupportButton({
   abi,
   opened,
   configured,
+  live: liveFlag,
   disabled,
   onDone,
 }: {
@@ -34,6 +35,7 @@ export function ArenaSupportButton({
   abi?: string[];
   opened?: boolean;
   configured?: boolean;
+  live?: boolean;
   disabled?: boolean;
   onDone?: () => void;
 }) {
@@ -44,7 +46,7 @@ export function ArenaSupportButton({
   const id = Number(chainId || wallet.chainId || 56);
   const symbol = nativeSymbol || getNativeSymbol(id);
   const solanaChain = isSolanaWarzoneChain(id);
-  const live = !solanaChain || isSolanaWarzoneMoneyLive({ configured, live: configured });
+  const live = !solanaChain || isSolanaWarzoneMoneyLive({ configured, live: liveFlag });
 
   async function donate() {
     const n = Number(amount);

@@ -1,4 +1,5 @@
 import { isSolanaChainId } from "@/lib/chainConfig";
+import { isSolanaWarzoneMoneyLive as liveFromProbe } from "@/lib/solanaArenaLayout.mjs";
 
 /** Shown whenever a Warzone money action is attempted on Solana before canonical arena_config validates. */
 export const SOLANA_WARZONE_ESCROW_NOT_LIVE =
@@ -9,9 +10,7 @@ export function isSolanaWarzoneChain(chainId?: number | null): boolean {
   return isSolanaChainId(id) || id === 102;
 }
 
-/** Live only when the API/on-chain probe has proven canonical Arena config. Prize-boost UI stays ops-only. */
+/** Live only when the probe explicitly set both flags true. Missing live is blocked. */
 export function isSolanaWarzoneMoneyLive(status?: { configured?: boolean; live?: boolean } | null): boolean {
-  if (!status) return false;
-  if (status.live === false) return false;
-  return Boolean(status.configured);
+  return liveFromProbe(status);
 }

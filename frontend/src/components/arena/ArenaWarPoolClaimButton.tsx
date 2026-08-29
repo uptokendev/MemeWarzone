@@ -7,7 +7,7 @@ import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { useWallet } from "@/contexts/WalletContext";
 import { apiFetch } from "@/lib/apiBase";
 import { getArenaWarPoolTreasuryAddress, type SupportedChainId } from "@/lib/chainConfig";
-import { isSolanaWarzoneChain, SOLANA_WARZONE_ESCROW_NOT_LIVE } from "@/lib/arena/solanaWarzoneEscrow";
+import { isSolanaWarzoneChain, isSolanaWarzoneMoneyLive, SOLANA_WARZONE_ESCROW_NOT_LIVE } from "@/lib/arena/solanaWarzoneEscrow";
 import { runSolanaArenaUserAction } from "@/lib/solanaArenaClient";
 import { arenaPoolIdFromHex, buildArenaWinnerClaimV0Instruction } from "@/lib/solanaArenaV0";
 
@@ -36,7 +36,9 @@ export function ArenaWarPoolClaimButton({
       if (!res.ok || json?.ok === false) throw new Error(String(json?.error || `Claim intent failed (${res.status})`));
 
       if (solanaChain) {
-        if (!json.live) throw new Error(SOLANA_WARZONE_ESCROW_NOT_LIVE);
+        if (!isSolanaWarzoneMoneyLive({ configured: json.configured, live: json.live })) {
+          throw new Error(SOLANA_WARZONE_ESCROW_NOT_LIVE);
+        }
         if (!json.resolved) throw new Error("Waiting for Warzone resolution. Resolve stays operator-side.");
         const walletAddress = String(solanaAccount || "").trim();
         if (!walletAddress) throw new Error("Connect the winning campaign owner wallet.");

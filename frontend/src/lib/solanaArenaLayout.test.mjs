@@ -3,14 +3,17 @@ import test from "node:test";
 import { createHash } from "node:crypto";
 import { Keypair, PublicKey } from "@solana/web3.js";
 import {
+  ARENA_BUYIN_DISCRIMINATOR,
   ARENA_CONFIG_DISCRIMINATOR,
   ARENA_POOL_DISCRIMINATOR,
   REWARDS_TREASURY_PROGRAM_ID,
   isSolanaWarzoneChainId,
+  isSolanaWarzoneMoneyLive,
   parseArenaConfig,
   poolIdToBytes,
   stakeToLamports,
   validateCanonicalArenaConfig,
+  verifyAuthoritativeBuyInReceipt,
   walletsEqual,
 } from "./solanaArenaLayout.mjs";
 
@@ -84,4 +87,151 @@ test("validateCanonicalArenaConfig requires owner, layout, version, unpaused, ge
   );
 
   assert.equal(parseArenaConfig(data, PublicKey)?.version, 2);
+});
+
+test("isSolanaWarzoneMoneyLive requires configured and live both explicitly true", () => {
+  // configured true + live missing → BLOCK
+  assert.equal(isSolanaWarzoneMoneyLive({ configured: true }), false);
+  assert.equal(isSolanaWarzoneMoneyLive({ configured: true, live: undefined }), false);
+  // configured true + live false → BLOCK
+  assert.equal(isSolanaWarzoneMoneyLive({ configured: true, live: false }), false);
+  // configured false → BLOCK (even if live is true)
+  assert.equal(isSolanaWarzoneMoneyLive({ configured: false }), false);
+  assert.equal(isSolanaWarzoneMoneyLive({ configured: false, live: true }), false);
+  // configured true + live true → ALLOW
+  assert.equal(isSolanaWarzoneMoneyLive({ configured: true, live: true }), true);
+});
+
+test("verifyAuthoritativeBuyInReceipt requires owner, layout, pool, asset, entrant, amount, not refunded", () => {
+  const digest = createHash("sha256").update("account:ArenaBuyInReceipt").digest().subarray(0, 8);
+  assert.deepEqual([...ARENA_BUYIN_DISCRIMINATOR], [...digest]);
+  const poolId = new Uint8Array(32).fill(7);
+  const asset = Keypair.generate().publicKey;
+  const entrant = Keypair.generate().publicKey;
+  const data = new Uint8Array(8 + 32 + 32 + 32 + 8 + 1 + 1);
+  data.set(ARENA_BUYIN_DISCRIMINATOR, 0);
+  data.set(poolId, 8);
+  data.set(asset.toBytes(), 40);
+  data.set(entrant.toBytes(), 72);
+  data[104] = 100;
+  data[112] = 0;
+  const expectedPool = `0x${Buffer.from(poolId).toString("hex")}`;
+  const ok = verifyAuthoritativeBuyInReceipt({
+    account: { data },
+    owner: REWARDS_TREASURY_PROGRAM_ID,
+    expectedPoolId: expectedPool,
+    expectedEntryAsset: asset.toBase58(),
+    expectedEntrant: entrant.toBase58(),
+    expectedAmountLamports: 100,
+    PublicKey,
+  });
+  assert.equal(ok.ok, true);
+
+  assert.equal(
+    verifyAuthoritativeBuyInReceipt({
+      account: { data },
+      owner: Keypair.generate().publicKey.toBase58(),
+      expectedPoolId: expectedPool,
+      expectedEntryAsset: asset.toBase58(),
+      expectedEntrant: entrant.toBase58(),
+      expectedAmountLamports: 100,
+      PublicKey,
+    }).reason,
+    "wrong-owner",
+  );
+
+  const refunded = new Uint8Array(data);
+  refunded[112] = 1;
+  assert.equal(
+    verifyAuthoritativeBuyInReceipt({
+      account: { data: refunded },
+      owner: REWARDS_TREASURY_PROGRAM_ID,
+      expectedPoolId: expectedPool,
+      expectedEntryAsset: asset.toBase58(),
+      expectedEntrant: entrant.toBase58(),
+      expectedAmountLamports: 100,
+      PublicKey,
+    }).reason,
+    "refunded",
+  );
+
+  assert.equal(
+    verifyAuthoritativeBuyInReceipt({
+      account: { data },
+      owner: REWARDS_TREASURY_PROGRAM_ID,
+      expectedPoolId: expectedPool,
+      expectedEntryAsset: asset.toBase58(),
+      expectedEntrant: Keypair.generate().publicKey.toBase58(),
+      expectedAmountLamports: 100,
+      PublicKey,
+    }).reason,
+    "entrant-mismatch",
+  );
+
+  assert.equal(
+    verifyAuthoritativeBuyInReceipt({
+      account: { data },
+      owner: REWARDS_TREASURY_PROGRAM_ID,
+      expectedPoolId: expectedPool,
+      expectedEntryAsset: asset.toBase58(),
+      expectedEntrant: entrant.toBase58(),
+      expectedAmountLamports: 99,
+      PublicKey,
+    }).reason,
+    "amount-mismatch",
+  );
+
+  assert.equal(
+    verifyAuthoritativeBuyInReceipt({
+      account: { data },
+      owner: REWARDS_TREASURY_PROGRAM_ID,
+      expectedPoolId: `0x${"11".repeat(32)}`,
+      expectedEntryAsset: asset.toBase58(),
+      expectedEntrant: entrant.toBase58(),
+      expectedAmountLamports: 100,
+      PublicKey,
+    }).reason,
+    "pool-mismatch",
+  );
+
+  assert.equal(
+    verifyAuthoritativeBuyInReceipt({
+      account: { data },
+      owner: REWARDS_TREASURY_PROGRAM_ID,
+      expectedPoolId: expectedPool,
+      expectedEntryAsset: Keypair.generate().publicKey.toBase58(),
+      expectedEntrant: entrant.toBase58(),
+      expectedAmountLamports: 100,
+      PublicKey,
+    }).reason,
+    "asset-mismatch",
+  );
+
+  assert.equal(
+    verifyAuthoritativeBuyInReceipt({
+      account: null,
+      owner: REWARDS_TREASURY_PROGRAM_ID,
+      expectedPoolId: expectedPool,
+      expectedEntryAsset: asset.toBase58(),
+      expectedEntrant: entrant.toBase58(),
+      expectedAmountLamports: 100,
+      PublicKey,
+    }).reason,
+    "missing-account",
+  );
+
+  const badLayout = new Uint8Array(data);
+  badLayout[0] ^= 1;
+  assert.equal(
+    verifyAuthoritativeBuyInReceipt({
+      account: { data: badLayout },
+      owner: REWARDS_TREASURY_PROGRAM_ID,
+      expectedPoolId: expectedPool,
+      expectedEntryAsset: asset.toBase58(),
+      expectedEntrant: entrant.toBase58(),
+      expectedAmountLamports: 100,
+      PublicKey,
+    }).reason,
+    "bad-layout",
+  );
 });

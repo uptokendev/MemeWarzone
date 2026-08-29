@@ -215,6 +215,7 @@ const TournamentDetails = () => {
                   chainId={chainId}
                   poolId={warPoolMeta.onchainPoolId}
                   configured={warPoolMeta.configured}
+                  live={warPoolMeta.live}
                   opened={warPoolMeta.onchainOpened}
                   buyInPaid={Boolean(entries.find((entry) => entry.tokenAddress === selectedToken)?.buyInPaid)}
                   buyInNative={buyIn}

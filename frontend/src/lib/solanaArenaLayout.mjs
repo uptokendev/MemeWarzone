@@ -13,6 +13,7 @@ export const LAMPORTS_PER_SOL = 1_000_000_000n;
 
 export const ARENA_CONFIG_DISCRIMINATOR = Uint8Array.from([9, 186, 181, 145, 197, 50, 33, 38]);
 export const ARENA_POOL_DISCRIMINATOR = Uint8Array.from([199, 155, 111, 90, 242, 136, 105, 8]);
+export const ARENA_BUYIN_DISCRIMINATOR = Uint8Array.from([78, 69, 75, 93, 134, 44, 139, 226]);
 
 export const SOLANA_GENESIS = Object.freeze({
   101: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKvcnbdEad4t",
@@ -82,6 +83,52 @@ export function walletsEqual(a, b) {
   const left = String(a || "").trim();
   const right = String(b || "").trim();
   return Boolean(left && right && left === right);
+}
+
+export function normalizePoolIdHex(poolId) {
+  return String(poolId || "").trim().replace(/^0x/i, "").toLowerCase();
+}
+
+/** Fail-closed: both flags must be explicitly true. Missing live is blocked. */
+export function isSolanaWarzoneMoneyLive(status) {
+  return status?.configured === true && status?.live === true;
+}
+
+export function parseArenaBuyInReceipt(data, PublicKey) {
+  if (!data || data.length < 8 + 32 + 32 + 32 + 8 + 1 + 1) return null;
+  if (!bytesEqual(data.subarray(0, 8), ARENA_BUYIN_DISCRIMINATOR)) return null;
+  let o = 8;
+  const poolId = bytesToHex(data.subarray(o, o + 32)); o += 32;
+  const entryAsset = readPubkeyBase58(PublicKey, data, o); o += 32;
+  const entrant = readPubkeyBase58(PublicKey, data, o); o += 32;
+  const amountLamports = readU64le(data, o); o += 8;
+  const refunded = readU8(data, o) !== 0;
+  if (!entryAsset || !entrant) return null;
+  return { poolId, entryAsset, entrant, amountLamports, refunded };
+}
+
+export function verifyAuthoritativeBuyInReceipt({
+  account,
+  owner,
+  expectedPoolId,
+  expectedEntryAsset,
+  expectedEntrant,
+  expectedAmountLamports,
+  PublicKey,
+}) {
+  if (!account?.data) return { ok: false, reason: "missing-account" };
+  if (String(owner || "") !== REWARDS_TREASURY_PROGRAM_ID) return { ok: false, reason: "wrong-owner" };
+  const parsed = parseArenaBuyInReceipt(
+    account.data instanceof Uint8Array ? account.data : Uint8Array.from(account.data),
+    PublicKey,
+  );
+  if (!parsed) return { ok: false, reason: "bad-layout" };
+  if (normalizePoolIdHex(parsed.poolId) !== normalizePoolIdHex(expectedPoolId)) return { ok: false, reason: "pool-mismatch" };
+  if (!walletsEqual(parsed.entryAsset, expectedEntryAsset)) return { ok: false, reason: "asset-mismatch" };
+  if (!walletsEqual(parsed.entrant, expectedEntrant)) return { ok: false, reason: "entrant-mismatch" };
+  if (parsed.amountLamports !== BigInt(expectedAmountLamports)) return { ok: false, reason: "amount-mismatch" };
+  if (parsed.refunded) return { ok: false, reason: "refunded" };
+  return { ok: true, receipt: parsed };
 }
 
 export function parseArenaConfig(data, PublicKey) {

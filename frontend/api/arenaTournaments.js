@@ -6,8 +6,7 @@ import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { requireAdminOrOps } from "./lib/apiAuth.js";
 import { tokenEligible as tokenIsEligible } from "./lib/arenaEligibility.js";
 import { isSolanaChainId, nativeSymbolFor } from "./lib/chainNative.js";
-import { deriveArenaBuyInPda, readSolanaArenaPool } from "./lib/solanaArenaPoolRead.js";
-import { Connection, PublicKey } from "@solana/web3.js";
+import { readAuthoritativeBuyInReceipt, readSolanaArenaPool } from "./lib/solanaArenaPoolRead.js";
 
 function ident(value) {
   return normalizeWalletFlexible(value) || String(value || "").trim();
@@ -227,22 +226,31 @@ async function handleBuyInReceipt(req, res, id) {
   });
   if (!verified) return;
   const onchain = await readSolanaArenaPool(chainId, id, "tournament");
-  if (!onchain.configured || !onchain.opened) {
+  if (!onchain.configured || !onchain.live || !onchain.opened) {
     return json(res, 503, { ok: false, error: "Tournament escrow is not open yet.", code: "WAR_POOL_NOT_OPEN" });
   }
-  const receiptPda = deriveArenaBuyInPda(onchain.poolId, token, wallet);
-  const rpc =
-    String(process.env[`SOLANA_RPC_URL_${chainId}`] || process.env.SOLANA_RPC_URL || process.env.SOLANA_RPC_HTTP || "").trim();
-  if (!rpc) return json(res, 503, { ok: false, error: "Solana RPC is not configured." });
-  const info = await new Connection(rpc, "confirmed").getAccountInfo(new PublicKey(receiptPda));
-  if (!info?.data) return json(res, 409, { ok: false, error: "Buy-in receipt PDA is not on-chain yet." });
+  const receipt = await readAuthoritativeBuyInReceipt(
+    chainId,
+    onchain.poolId,
+    token,
+    wallet,
+    onchain.buyInLamports || "0",
+  );
+  if (!receipt.ok) {
+    return json(res, 409, {
+      ok: false,
+      error: "Buy-in receipt PDA is not an authoritative paid registration.",
+      code: "BUY_IN_RECEIPT_INVALID",
+      reason: receipt.reason,
+    });
+  }
   await pool.query(
     `update public.arena_tournament_entries
         set buy_in_paid = true, updated_at = now()
       where tournament_id = $1 and token_address = $2 and owner_wallet = $3`,
     [id, token, wallet],
   );
-  return json(res, 200, { ok: true, buyInPaid: true, receipt: receiptPda.toBase58() });
+  return json(res, 200, { ok: true, buyInPaid: true, receipt: receipt.pda });
 }
 
 async function handleAdminList(_req, res) {

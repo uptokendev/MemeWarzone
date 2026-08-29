@@ -18,6 +18,7 @@ type WarPoolSummary = ReturnType<typeof useMockWarPoolSummary>["summary"];
 export type ArenaWarPoolMeta = {
   kind?: "battle" | "tournament";
   configured?: boolean;
+  live?: boolean;
   treasury?: string;
   onchainPoolId?: string;
   onchainOpened?: boolean;
@@ -141,6 +142,7 @@ async function loadWarPool(battleId: string, signal?: AbortSignal): Promise<Aren
     meta: {
       kind: json.kind === "tournament" ? "tournament" : "battle",
       configured: Boolean(json.configured),
+      live: json.live === true,
       treasury: json.treasury ? String(json.treasury) : "",
       onchainPoolId: json.onchainPoolId ? String(json.onchainPoolId) : "",
       onchainOpened: Boolean(json.onchainOpened),

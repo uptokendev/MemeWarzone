@@ -10,6 +10,7 @@ import {
   poolIdToBytes,
   stakeToLamports,
   validateCanonicalArenaConfig,
+  verifyAuthoritativeBuyInReceipt,
   walletsEqual,
 } from "../../src/lib/solanaArenaLayout.mjs";
 import { battlePoolId, tournamentPoolId } from "./arenaWarPoolEscrow.js";
@@ -192,6 +193,7 @@ export async function readSolanaArenaPool(chainId, subjectId, kind = "battle") {
       pendingWinner: parsed.pendingWinner.toString(),
       claimedWinner: parsed.claimedWinner,
       kind: parsed.kind,
+      buyInLamports: parsed.buyInLamports.toString(),
     };
   } catch (error) {
     return {
@@ -209,4 +211,21 @@ export async function readSolanaArenaPool(chainId, subjectId, kind = "battle") {
   }
 }
 
-export { stakeToLamports, walletsEqual, isSolanaWarzoneChainId, REWARDS_TREASURY_PROGRAM_ID };
+export async function readAuthoritativeBuyInReceipt(chainId, poolIdHex, entryAsset, entrant, expectedAmountLamports) {
+  const connection = connectionFor(chainId);
+  if (!connection) return { ok: false, reason: "rpc-missing" };
+  const pda = deriveArenaBuyInPda(poolIdHex, entryAsset, entrant);
+  const info = await connection.getAccountInfo(pda, "confirmed");
+  const verified = verifyAuthoritativeBuyInReceipt({
+    account: info,
+    owner: info?.owner?.toBase58?.() || "",
+    expectedPoolId: poolIdHex,
+    expectedEntryAsset: entryAsset,
+    expectedEntrant: entrant,
+    expectedAmountLamports,
+    PublicKey,
+  });
+  return { ...verified, pda: pda.toBase58() };
+}
+
+export { stakeToLamports, walletsEqual, isSolanaWarzoneChainId, REWARDS_TREASURY_PROGRAM_ID, verifyAuthoritativeBuyInReceipt };

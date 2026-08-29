@@ -248,6 +248,7 @@ function detailExtras(kind, onchain, chainId, nativeSymbol, sides, extra = {}) {
     chainId,
     nativeSymbol,
     configured: Boolean(onchain?.configured),
+    live: onchain?.live === true,
     treasury: onchain?.treasury || "",
     onchainPoolId: onchain?.poolId || null,
     onchainOpened: Boolean(onchain?.opened),
@@ -560,7 +561,7 @@ async function handleStake(req, res, battleId) {
     myRole,
     nextMethod,
     openWithValue: isSolanaWarzoneChainId(chainId),
-    live: Boolean(onchain.live || (onchain.configured && isSolanaWarzoneChainId(chainId))),
+    live: onchain.live === true,
     programId: onchain.programId || "",
     assetA: onchain.assetA || participantsAsset(row, 0),
     assetB: onchain.assetB || participantsAsset(row, 1),
@@ -635,11 +636,12 @@ async function handleStakeReceipt(req, res, battleId) {
 async function signAndReturnClaim({ res, chainId, subjectId, kind, winnerPayout }) {
   if (isSolanaWarzoneChainId(chainId)) {
     const onchain = await readOnchainPool(chainId, subjectId, kind);
-    if (!onchain.configured) {
+    if (onchain.configured !== true || onchain.live !== true) {
       return json(res, 503, {
         ok: false,
         error: "Solana Warzone escrow is not live yet.",
         code: "WAR_POOL_TREASURY_MISSING",
+        configured: false,
         live: false,
       });
     }
@@ -649,6 +651,7 @@ async function signAndReturnClaim({ res, chainId, subjectId, kind, winnerPayout 
         error: "Waiting for Warzone resolution. Resolve stays operator-side.",
         code: "WAR_POOL_NOT_RESOLVED",
         chain: "solana",
+        configured: true,
         live: true,
         resolved: false,
         programId: onchain.programId,
@@ -659,6 +662,7 @@ async function signAndReturnClaim({ res, chainId, subjectId, kind, winnerPayout 
     return json(res, 200, {
       ok: true,
       chain: "solana",
+      configured: true,
       live: true,
       resolved: true,
       programId: onchain.programId,
