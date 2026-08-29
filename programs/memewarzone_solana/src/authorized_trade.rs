@@ -126,6 +126,7 @@ pub struct FeeSlicesRouted {
     pub fee_lamports: u64,
     pub weekly_league_lamports: u64,
     pub monthly_league_lamports: u64,
+    pub creator_lamports: u64,
     pub recruiter_lamports: u64,
     pub airdrop_lamports: u64,
     pub squad_lamports: u64,
@@ -561,6 +562,13 @@ pub struct BuyTokens<'info> {
         bump
     )]
     pub fee_escrow: UncheckedAccount<'info>,
+    /// CHECK: campaign-bound creator custody PDA required by the fee freeze.
+    #[account(
+        mut,
+        seeds = [crate::fee_escrow::CREATOR_FEE_VAULT_SEED, campaign.key().as_ref()],
+        bump
+    )]
+    pub creator_fee_vault: UncheckedAccount<'info>,
 }
 
 #[derive(Accounts)]
@@ -611,6 +619,13 @@ pub struct SellTokens<'info> {
         bump
     )]
     pub fee_escrow: UncheckedAccount<'info>,
+    /// CHECK: campaign-bound creator custody PDA required by the fee freeze.
+    #[account(
+        mut,
+        seeds = [crate::fee_escrow::CREATOR_FEE_VAULT_SEED, campaign.key().as_ref()],
+        bump
+    )]
+    pub creator_fee_vault: UncheckedAccount<'info>,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug)]
@@ -736,6 +751,10 @@ pub fn buy_tokens_handler(ctx: Context<BuyTokens>, args: BuyTokensArgs) -> Resul
         campaign_key,
         ctx.bumps.fee_escrow,
     )?;
+    crate::fee_escrow::require_creator_fee_vault(
+        &ctx.accounts.creator_fee_vault.to_account_info(),
+        campaign_key,
+    )?;
     crate::fee_escrow::transfer_buy_net_and_fee(
         &ctx.accounts.trader.to_account_info(),
         &ctx.accounts.sol_vault.to_account_info(),
@@ -747,6 +766,7 @@ pub fn buy_tokens_handler(ctx: Context<BuyTokens>, args: BuyTokensArgs) -> Resul
     )?;
     crate::fee_escrow::accrue_fee_escrow(
         &ctx.accounts.fee_escrow.to_account_info(),
+        &ctx.accounts.creator_fee_vault.to_account_info(),
         campaign_key,
         trader,
         TRADE_SIDE_BUY,
@@ -878,6 +898,10 @@ pub fn sell_tokens_handler(ctx: Context<SellTokens>, args: SellTokensArgs) -> Re
         campaign_key,
         ctx.bumps.fee_escrow,
     )?;
+    crate::fee_escrow::require_creator_fee_vault(
+        &ctx.accounts.creator_fee_vault.to_account_info(),
+        campaign_key,
+    )?;
     crate::fee_escrow::credit_sell_net_and_fee(
         &ctx.accounts.sol_vault.to_account_info(),
         &ctx.accounts.trader.to_account_info(),
@@ -888,6 +912,7 @@ pub fn sell_tokens_handler(ctx: Context<SellTokens>, args: SellTokensArgs) -> Re
     )?;
     crate::fee_escrow::accrue_fee_escrow(
         &ctx.accounts.fee_escrow.to_account_info(),
+        &ctx.accounts.creator_fee_vault.to_account_info(),
         campaign_key,
         trader,
         TRADE_SIDE_SELL,
@@ -1254,7 +1279,11 @@ pub(crate) fn route_fee_slices(
     gross_lamports: u64,
     route_profile: u8,
 ) -> Result<()> {
-    require!(remaining.len() >= 6, LaunchpadError::InvalidRewardsVault);
+    if side == TRADE_SIDE_FINALIZE {
+        require!(remaining.len() >= 6, LaunchpadError::InvalidRewardsVault);
+    } else {
+        require!(remaining.len() >= 7, LaunchpadError::InvalidRewardsVault);
+    }
     validate_route_profile_id(route_profile)?;
     let kind = if side == TRADE_SIDE_FINALIZE {
         crate::ROUTE_KIND_FINALIZE
@@ -1269,6 +1298,13 @@ pub(crate) fn route_fee_slices(
         calculate_fee(gross_lamports, crate::LOCKED_BUY_FEE_BPS)?
     };
     let amounts = preview_bnb_route(kind, route_profile, fee_lamports)?;
+    let creator_fee_vault = if side == TRADE_SIDE_FINALIZE {
+        None
+    } else {
+        crate::fee_escrow::require_creator_fee_vault(&remaining[6], campaign)?;
+        require!(remaining[6].is_writable, LaunchpadError::InvalidRewardsVault);
+        Some(&remaining[6])
+    };
     if fee_lamports == 0 {
         validate_reward_vaults(remaining)?;
         return Ok(());
@@ -1282,7 +1318,7 @@ pub(crate) fn route_fee_slices(
         amounts.squad,
         amounts.protocol,
     ];
-    let mut need = 0u64;
+    let mut need = amounts.creator;
     for i in 0..6 {
         require_keys_eq!(
             *remaining[i].key,
@@ -1319,6 +1355,12 @@ pub(crate) fn route_fee_slices(
             .checked_add(slices[i])
             .ok_or(LaunchpadError::MathOverflow)?;
     }
+    if let Some(info) = creator_fee_vault {
+        let mut dest = info.try_borrow_mut_lamports()?;
+        **dest = dest
+            .checked_add(amounts.creator)
+            .ok_or(LaunchpadError::MathOverflow)?;
+    }
 
     emit!(FeeSlicesRouted {
         campaign,
@@ -1329,6 +1371,7 @@ pub(crate) fn route_fee_slices(
         fee_lamports,
         weekly_league_lamports: amounts.weekly_league,
         monthly_league_lamports: amounts.monthly_league,
+        creator_lamports: amounts.creator,
         recruiter_lamports: amounts.recruiter,
         airdrop_lamports: amounts.airdrop,
         squad_lamports: amounts.squad,
@@ -1340,6 +1383,7 @@ pub(crate) fn route_fee_slices(
 pub(crate) struct BnbRouteAmounts {
     pub(crate) weekly_league: u64,
     pub(crate) monthly_league: u64,
+    pub(crate) creator: u64,
     pub(crate) recruiter: u64,
     pub(crate) airdrop: u64,
     pub(crate) squad: u64,
@@ -1347,33 +1391,37 @@ pub(crate) struct BnbRouteAmounts {
 }
 
 pub(crate) fn preview_bnb_route(kind: u8, profile: u8, fee_amount: u64) -> Result<BnbRouteAmounts> {
-    let (league_bps, recruiter_bps, airdrop_bps, squad_bps) = if kind == crate::ROUTE_KIND_TRADE {
-        match profile {
-            0 => (3750u16, 1250u16, 0u16, 250u16),
-            2 => (3750, 1500, 0, 250),
-            _ => (3750, 0, 1500, 0),
-        }
-    } else {
-        match profile {
-            0 => (0u16, 1500u16, 0u16, 250u16),
-            2 => (0, 1750, 0, 250),
-            _ => (0, 0, 1750, 0),
-        }
-    };
+    let (league_bps, creator_bps, recruiter_bps, airdrop_bps, squad_bps) =
+        if kind == crate::ROUTE_KIND_TRADE {
+            match profile {
+                0 => (3750u16, 500u16, 1250u16, 0u16, 250u16),
+                2 => (3750, 500, 1500, 0, 250),
+                _ => (3750, 500, 0, 1500, 0),
+            }
+        } else {
+            match profile {
+                0 => (0u16, 0u16, 1500u16, 0u16, 250u16),
+                2 => (0, 0, 1750, 0, 250),
+                _ => (0, 0, 1750, 0),
+            }
+        };
     let league = calculate_fee(fee_amount, league_bps)?;
     let weekly = calculate_fee(league, 3_000)?;
     let monthly = league.saturating_sub(weekly);
+    let creator = calculate_fee(fee_amount, creator_bps)?;
     let recruiter = calculate_fee(fee_amount, recruiter_bps)?;
     let airdrop = calculate_fee(fee_amount, airdrop_bps)?;
     let squad = calculate_fee(fee_amount, squad_bps)?;
     let used = weekly
         .saturating_add(monthly)
+        .saturating_add(creator)
         .saturating_add(recruiter)
         .saturating_add(airdrop)
         .saturating_add(squad);
     Ok(BnbRouteAmounts {
         weekly_league: weekly,
         monthly_league: monthly,
+        creator,
         recruiter,
         airdrop,
         squad,
@@ -1937,13 +1985,39 @@ mod tests {
         let linked = preview_bnb_route(crate::ROUTE_KIND_TRADE, ROUTE_PROFILE_LINKED, fee).unwrap();
         assert_eq!(unlinked.recruiter, 0);
         assert_eq!(unlinked.squad, 0);
+        assert_eq!(unlinked.creator, 500);
         assert!(unlinked.airdrop > 0);
+        assert_eq!(linked.creator, 500);
         assert!(linked.recruiter > 0);
         assert_eq!(linked.airdrop, 0);
         assert_eq!(
-            unlinked.weekly_league + unlinked.monthly_league + unlinked.airdrop + unlinked.protocol,
+            unlinked.weekly_league
+                + unlinked.monthly_league
+                + unlinked.creator
+                + unlinked.airdrop
+                + unlinked.protocol,
             fee
         );
+    }
+
+    #[test]
+    fn finalize_route_keeps_creator_zero() {
+        let fee = 10_000u64;
+        for profile in [ROUTE_PROFILE_LINKED, ROUTE_PROFILE_UNLINKED, ROUTE_PROFILE_OG] {
+            let finalize = preview_bnb_route(crate::ROUTE_KIND_FINALIZE, profile, fee).unwrap();
+            assert_eq!(finalize.creator, 0, "profile {profile}");
+            assert_eq!(
+                finalize.weekly_league
+                    + finalize.monthly_league
+                    + finalize.creator
+                    + finalize.recruiter
+                    + finalize.airdrop
+                    + finalize.squad
+                    + finalize.protocol,
+                fee,
+                "profile {profile}"
+            );
+        }
     }
 
     #[test]
