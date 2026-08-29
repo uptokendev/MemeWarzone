@@ -3,12 +3,14 @@ import { Contract, parseEther } from "ethers";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
+import { useWallet } from "@/contexts/WalletContext";
 import { postArenaSupportReceipt } from "@/features/postgrad/apiClient";
+import { isSolanaWarzoneChain, isSolanaWarzoneMoneyLive, SOLANA_WARZONE_ESCROW_NOT_LIVE } from "@/lib/arena/solanaWarzoneEscrow";
 import { signArenaWalletAction } from "@/lib/arena/signArenaWalletAction";
 import { getNativeSymbol } from "@/lib/chainConfig";
-import { isSolanaWarzoneChain, SOLANA_WARZONE_ESCROW_NOT_LIVE } from "@/lib/arena/solanaWarzoneEscrow";
+import { runSolanaArenaUserAction } from "@/lib/solanaArenaClient";
+import { arenaPoolIdFromHex, buildArenaSupportV0Instruction, solToLamports } from "@/lib/solanaArenaV0";
 
 export function ArenaSupportButton({
   poolSubjectId,
@@ -41,19 +43,20 @@ export function ArenaSupportButton({
   const [busy, setBusy] = useState(false);
   const id = Number(chainId || wallet.chainId || 56);
   const symbol = nativeSymbol || getNativeSymbol(id);
-  const solanaBlocked = isSolanaWarzoneChain(id);
+  const solanaChain = isSolanaWarzoneChain(id);
+  const live = !solanaChain || isSolanaWarzoneMoneyLive({ configured, live: configured });
 
   async function donate() {
-    if (solanaBlocked) {
-      toast.error(SOLANA_WARZONE_ESCROW_NOT_LIVE);
-      return;
-    }
     const n = Number(amount);
     if (!Number.isFinite(n) || n <= 0) {
       toast.error(`Enter a ${symbol} amount to Support.`);
       return;
     }
-    const walletAddress = String(wallet.account || "").trim();
+    if (solanaChain && !live) {
+      toast.error(SOLANA_WARZONE_ESCROW_NOT_LIVE);
+      return;
+    }
+    const walletAddress = String((solanaChain ? solanaAccount : wallet.account) || "").trim();
     if (!walletAddress) {
       toast.error("Connect a wallet to Support.");
       return;
@@ -62,14 +65,32 @@ export function ArenaSupportButton({
     try {
       let txHash = "";
       if (configured) {
-        if (!opened || !treasury || !poolId || !wallet.signer) {
+        if (!opened || !poolId) {
           toast.error("Tournament/battle escrow is not open yet. Ops opens the treasury pool first.");
           return;
         }
-        const contract = new Contract(treasury, abi || [], wallet.signer);
-        const tx = await contract.donateSupport(poolId, { value: parseEther(String(n)) });
-        await tx.wait();
-        txHash = tx.hash;
+        if (solanaChain) {
+          txHash = await runSolanaArenaUserAction({
+            walletAddress,
+            label: "Support Warzone pool",
+            build: (web3) =>
+              buildArenaSupportV0Instruction({
+                web3,
+                poolId: arenaPoolIdFromHex(poolId),
+                donor: walletAddress,
+                amountLamports: solToLamports(n),
+              }),
+          });
+        } else {
+          if (!treasury || !wallet.signer) {
+            toast.error("Tournament/battle escrow is not open yet. Ops opens the treasury pool first.");
+            return;
+          }
+          const contract = new Contract(treasury, abi || [], wallet.signer);
+          const tx = await contract.donateSupport(poolId, { value: parseEther(String(n)) });
+          await tx.wait();
+          txHash = tx.hash;
+        }
       }
       const auth = await signArenaWalletAction({
         action: "arena_war_pool_support",
@@ -111,10 +132,10 @@ export function ArenaSupportButton({
         onChange={(event) => setAmount(event.target.value)}
         className="w-24 rounded-md border border-border/60 bg-background px-2 py-1.5 text-sm text-foreground"
       />
-      <Button size="sm" className="font-retro" disabled={disabled || busy || solanaBlocked || !sideTokenId} onClick={() => void donate()}>
-        {busy ? "Supporting..." : solanaBlocked ? "SOL escrow not live" : `Support ${symbol}`}
+      <Button size="sm" className="font-retro" disabled={disabled || busy || (solanaChain && !live) || !sideTokenId} onClick={() => void donate()}>
+        {busy ? "Supporting..." : solanaChain && !live ? "SOL escrow not live" : `Support ${symbol}`}
       </Button>
-      {solanaBlocked ? <p className="basis-full text-xs text-muted-foreground">{SOLANA_WARZONE_ESCROW_NOT_LIVE}</p> : null}
+      {solanaChain && !live ? <p className="basis-full text-xs text-muted-foreground">{SOLANA_WARZONE_ESCROW_NOT_LIVE}</p> : null}
     </div>
   );
 }

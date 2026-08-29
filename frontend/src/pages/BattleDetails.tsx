@@ -96,7 +96,9 @@ const BattleDetails = () => {
       <section className="mwz-hud-frame space-y-2 p-4 text-sm text-muted-foreground">
         <p>
           {battle.state === "matched"
-            ? "Settlement is agreed. Open the pool, then both owners deposit the same stake. The fight clock starts only when both have paid. If the other owner never deposits, refund after the pay window."
+            ? Number((battle as { chainId?: number }).chainId) === 101 || Number((battle as { chainId?: number }).chainId) === 102
+              ? "Settlement is agreed. The first owner pays their SOL stake while opening the pool. The rival then deposits the same stake. The fight clock starts only when both have paid."
+              : "Settlement is agreed. Open the pool, then both owners deposit the same stake. The fight clock starts only when both have paid. If the other owner never deposits, refund after the pay window."
             : "Agree stake and fight length first (24 hours, 3 days, or 7 days). After that both owners deposit. Live starts when both have paid."}
         </p>
         <p>

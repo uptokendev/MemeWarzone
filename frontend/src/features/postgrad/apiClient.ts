@@ -262,6 +262,10 @@ export async function postArenaSupportReceipt(poolSubjectId: string, body: JsonO
   return mutateBattle(`/api/arena/war-pools/${encodeURIComponent(poolSubjectId)}/support-receipt`, body);
 }
 
+export async function postArenaBuyInReceipt(tournamentId: string, body: JsonObject) {
+  return mutateBattle(`/api/arena/tournaments/${encodeURIComponent(tournamentId)}/buy-in-receipt`, body);
+}
+
 export async function transitionPostGradWarPool(battleId: string, state: PostGradWarPoolState) {
   return mutateJson(`/api/arena/war-pools/${encodeURIComponent(battleId)}/transition`, { state });
 }

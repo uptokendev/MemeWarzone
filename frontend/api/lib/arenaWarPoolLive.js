@@ -1,8 +1,18 @@
 import { ethers } from "ethers";
 import { getServerReadProvider } from "./getServerReadProvider.js";
 import { WAR_POOL_ABI, battlePoolId, tournamentPoolId, warPoolTreasuryAddress } from "./arenaWarPoolEscrow.js";
+import { isSolanaWarzoneChainId, probeCanonicalArenaLive, readSolanaArenaPool } from "./solanaArenaPoolRead.js";
 
 export function escrowRequired(chainId) {
+  if (isSolanaWarzoneChainId(chainId)) return false;
+  return Boolean(warPoolTreasuryAddress(chainId));
+}
+
+export async function escrowRequiredAsync(chainId) {
+  if (isSolanaWarzoneChainId(chainId)) {
+    const probe = await probeCanonicalArenaLive(chainId);
+    return Boolean(probe.live);
+  }
   return Boolean(warPoolTreasuryAddress(chainId));
 }
 
@@ -13,6 +23,9 @@ export function stakeToWei(amount) {
 }
 
 export async function readOnchainPool(chainId, subjectId, kind = "battle") {
+  if (isSolanaWarzoneChainId(chainId)) {
+    return readSolanaArenaPool(chainId, subjectId, kind);
+  }
   const treasury = warPoolTreasuryAddress(chainId);
   const poolId = kind === "tournament" ? tournamentPoolId(subjectId) : battlePoolId(subjectId);
   if (!treasury) {

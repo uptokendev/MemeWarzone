@@ -5,7 +5,9 @@ import { badMethod, json, normalizeWalletFlexible, readJson } from "../server/ht
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { requireAdminOrOps } from "./lib/apiAuth.js";
 import { tokenEligible as tokenIsEligible } from "./lib/arenaEligibility.js";
-import { nativeSymbolFor } from "./lib/chainNative.js";
+import { isSolanaChainId, nativeSymbolFor } from "./lib/chainNative.js";
+import { deriveArenaBuyInPda, readSolanaArenaPool } from "./lib/solanaArenaPoolRead.js";
+import { Connection, PublicKey } from "@solana/web3.js";
 
 function ident(value) {
   return normalizeWalletFlexible(value) || String(value || "").trim();
@@ -201,6 +203,46 @@ async function handleOptIn(req, res, id) {
     );
   }
   return json(res, 200, { ok: true, event: mapPublic(row, count + 1) });
+}
+
+async function handleBuyInReceipt(req, res, id) {
+  const body = await readJson(req);
+  const row = (await pool.query(`select * from public.arena_tournaments where id = $1 limit 1`, [id])).rows[0];
+  if (!row) return json(res, 404, { ok: false, error: "Tournament not found" });
+  const chainId = Number(row.chain_id);
+  if (!isSolanaChainId(chainId)) return json(res, 400, { ok: false, error: "On-chain buy-in is Solana-only in this cut." });
+  const token = ident(body.tokenAddress || body.tokenId || "", chainId);
+  const wallet = ident(body.walletAddress || body.auth?.walletAddress || "", chainId);
+  const txHash = String(body.txHash || "").trim();
+  if (!token || !wallet || !txHash) return json(res, 400, { ok: false, error: "tokenAddress, walletAddress and txHash are required" });
+  const verified = await requireWalletActionAuth({
+    res,
+    pool,
+    auth: body.auth || body,
+    expectedWallet: wallet,
+    chainId,
+    action: "arena_tournament_buy_in",
+    routeLabel: "arena/tournaments/buy-in-receipt",
+    extraLines: [`Tournament: ${id}`, `Token: ${token}`, `Tx: ${txHash}`],
+  });
+  if (!verified) return;
+  const onchain = await readSolanaArenaPool(chainId, id, "tournament");
+  if (!onchain.configured || !onchain.opened) {
+    return json(res, 503, { ok: false, error: "Tournament escrow is not open yet.", code: "WAR_POOL_NOT_OPEN" });
+  }
+  const receiptPda = deriveArenaBuyInPda(onchain.poolId, token, wallet);
+  const rpc =
+    String(process.env[`SOLANA_RPC_URL_${chainId}`] || process.env.SOLANA_RPC_URL || process.env.SOLANA_RPC_HTTP || "").trim();
+  if (!rpc) return json(res, 503, { ok: false, error: "Solana RPC is not configured." });
+  const info = await new Connection(rpc, "confirmed").getAccountInfo(new PublicKey(receiptPda));
+  if (!info?.data) return json(res, 409, { ok: false, error: "Buy-in receipt PDA is not on-chain yet." });
+  await pool.query(
+    `update public.arena_tournament_entries
+        set buy_in_paid = true, updated_at = now()
+      where tournament_id = $1 and token_address = $2 and owner_wallet = $3`,
+    [id, token, wallet],
+  );
+  return json(res, 200, { ok: true, buyInPaid: true, receipt: receiptPda.toBase58() });
 }
 
 async function handleAdminList(_req, res) {
@@ -429,6 +471,8 @@ export default async function handler(req, res) {
     if (method === "GET" && path === "/arena/tournaments") return handleList(req, res);
     const optIn = path.match(/^\/arena\/tournaments\/([^/]+)\/opt-in$/);
     if (optIn) return method === "POST" ? handleOptIn(req, res, decodeURIComponent(optIn[1])) : badMethod(res);
+    const buyIn = path.match(/^\/arena\/tournaments\/([^/]+)\/buy-in-receipt$/);
+    if (buyIn) return method === "POST" ? handleBuyInReceipt(req, res, decodeURIComponent(buyIn[1])) : badMethod(res);
     const detail = path.match(/^\/arena\/tournaments\/([^/]+)$/);
     if (detail) return method === "GET" ? handleDetail(req, res, decodeURIComponent(detail[1])) : badMethod(res);
     return json(res, 404, { error: `Unknown arena tournaments route: ${path}` });

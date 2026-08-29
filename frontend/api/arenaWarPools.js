@@ -10,6 +10,7 @@ import {
   warPoolTreasuryAddress,
 } from "./lib/arenaWarPoolEscrow.js";
 import { escrowRequired, readOnchainPool, stakeToWei } from "./lib/arenaWarPoolLive.js";
+import { isSolanaWarzoneChainId, stakeToLamports, walletsEqual } from "./lib/solanaArenaPoolRead.js";
 import { promoteMatchedIfFunded } from "./arenaBattles.js";
 import { nativeSymbolFor } from "./lib/chainNative.js";
 import { ethers } from "ethers";
@@ -21,8 +22,17 @@ function futureIso(minutes) {
   return new Date(Date.now() + minutes * 60_000).toISOString();
 }
 
-function ident(value) {
-  return normalizeWalletFlexible(value) || String(value || "").trim().toLowerCase();
+function ident(value, chainId) {
+  const normalized = normalizeWalletFlexible(value);
+  if (normalized) return normalized;
+  const raw = String(value || "").trim();
+  if (isSolanaWarzoneChainId(chainId)) return raw;
+  return raw.toLowerCase();
+}
+
+function sameWallet(a, b, chainId) {
+  if (isSolanaWarzoneChainId(chainId)) return walletsEqual(a, b);
+  return String(a || "").toLowerCase() === String(b || "").toLowerCase();
 }
 
 function normalizeState(value) {
@@ -410,11 +420,10 @@ async function handleSupport(req, res, subjectId) {
     }
     const record = await ensurePool(subject.tournament.id, { kind: "tournament", cutoffAt: tournamentCutoff(subject.tournament) });
     if (normalizeState(record.state) !== "open") return json(res, 409, { ok: false, error: "War Pool is not open" });
-    const treasury = warPoolTreasuryAddress(chainId);
-    if (treasury) {
+    const onchain = await readOnchainPool(chainId, subject.tournament.id, "tournament");
+    if (onchain.configured) {
       const txHash = String(body.txHash || "").trim();
       if (!txHash) return json(res, 400, { ok: false, error: "On-chain donateSupport txHash is required", code: "SUPPORT_TX_REQUIRED" });
-      const onchain = await readOnchainPool(chainId, subject.tournament.id, "tournament");
       if (!onchain.opened) return json(res, 503, { ok: false, error: "Tournament escrow is not open yet.", code: "WAR_POOL_NOT_OPEN" });
       try {
         await pool.query(
@@ -443,11 +452,10 @@ async function handleSupport(req, res, subjectId) {
   const parts = Array.isArray(subject.battle.participants) ? subject.battle.participants : [];
   const onRoster = parts.some((part) => ident(part.tokenAddress || part.tokenId) === sideTokenId);
   if (!onRoster) return json(res, 409, { ok: false, error: "That memecoin is not in this fight" });
-  const treasury = warPoolTreasuryAddress(chainId);
-  if (treasury) {
+  const onchain = await readOnchainPool(chainId, subject.battle.id, "battle");
+  if (onchain.configured) {
     const txHash = String(body.txHash || "").trim();
     if (!txHash) return json(res, 400, { ok: false, error: "On-chain donateSupport txHash is required", code: "SUPPORT_TX_REQUIRED" });
-    const onchain = await readOnchainPool(chainId, subject.battle.id, "battle");
     if (!onchain.opened) return json(res, 503, { ok: false, error: "Battle escrow is not open yet.", code: "WAR_POOL_NOT_OPEN" });
     try {
       await pool.query(
@@ -493,22 +501,22 @@ async function handleStake(req, res, battleId) {
   if (!row) return json(res, 404, { ok: false, error: "Battle not found" });
   const chainId = Number(row.chain_id);
   const query = getQuery(req);
-  const wallet = normalizeWalletFlexible(query.wallet || query.walletAddress || "");
+  const wallet = ident(query.wallet || query.walletAddress || "", chainId);
   const { ownerA, ownerB } = ownerWallets(row);
   const onchain = await readOnchainPool(chainId, battleId);
   const stakeNative = Number(row.offered_stake_native ?? row.stake_native ?? 0);
-  const stakeWei = stakeToWei(stakeNative).toString();
+  const stakeWei = isSolanaWarzoneChainId(chainId)
+    ? (stakeNative > 0 ? stakeToLamports(stakeNative).toString() : "0")
+    : stakeToWei(stakeNative).toString();
   const now = Math.floor(Date.now() / 1000);
   const opened = Boolean(onchain.opened);
   const resolvedOwnerA = opened ? onchain.ownerA : ownerA;
   const resolvedOwnerB = opened ? onchain.ownerB : ownerB;
-  const walletLc = String(wallet || "").toLowerCase();
-  const myRole =
-    walletLc && resolvedOwnerA && walletLc === String(resolvedOwnerA).toLowerCase()
-      ? "a"
-      : walletLc && resolvedOwnerB && walletLc === String(resolvedOwnerB).toLowerCase()
-        ? "b"
-        : null;
+  const myRole = sameWallet(wallet, resolvedOwnerA, chainId)
+    ? "a"
+    : sameWallet(wallet, resolvedOwnerB, chainId)
+      ? "b"
+      : null;
   const durationHours = Number(row.offered_duration_hours ?? row.duration_hours ?? 24);
   const nowSec = now;
   const depositDeadline = Number(onchain.depositDeadline || nowSec + 24 * 3600);
@@ -518,7 +526,7 @@ async function handleStake(req, res, battleId) {
   const canRefund =
     Boolean(onchain.configured && opened && myRole && minePaid && !onchain.bothPaid && !mineRefunded && nowSec > depositDeadline);
   let nextMethod = null;
-  if (onchain.configured && row.state === "matched" && myRole) {
+  if (onchain.configured && row.state === "matched" && myRole && Number(onchain.onchainState || 0) !== 3) {
     if (!opened) nextMethod = "openBattlePool";
     else if (myRole === "a" && !onchain.paidA && !onchain.refundedA) nextMethod = "depositStake";
     else if (myRole === "b" && !onchain.paidB && !onchain.refundedB) nextMethod = "depositStake";
@@ -535,7 +543,7 @@ async function handleStake(req, res, battleId) {
     battleId,
     chainId,
     battleState: row.state,
-    escrowRequired: escrowRequired(chainId),
+    escrowRequired: isSolanaWarzoneChainId(chainId) ? Boolean(onchain.configured) : escrowRequired(chainId),
     configured: Boolean(onchain.configured),
     treasury: onchain.treasury || "",
     poolId: onchain.poolId,
@@ -551,13 +559,26 @@ async function handleStake(req, res, battleId) {
     bothPaid: Boolean(onchain.bothPaid),
     myRole,
     nextMethod,
-    openWithValue: false,
+    openWithValue: isSolanaWarzoneChainId(chainId),
+    live: Boolean(onchain.live || (onchain.configured && isSolanaWarzoneChainId(chainId))),
+    programId: onchain.programId || "",
+    assetA: onchain.assetA || participantsAsset(row, 0),
+    assetB: onchain.assetB || participantsAsset(row, 1),
+    requiredStakeA: onchain.requiredStakeA || stakeWei,
+    requiredStakeB: onchain.requiredStakeB || stakeWei,
+    supportDeadline: Number(onchain.supportDeadline || depositDeadline),
     canRefund,
     durationHours,
     depositDeadline,
     resolveDeadline,
+    onchainState: Number(onchain.onchainState || 0),
     error: onchain.error || null,
   });
+}
+
+function participantsAsset(row, index) {
+  const parts = Array.isArray(row.participants) ? row.participants : [];
+  return String(parts[index]?.tokenAddress || parts[index]?.tokenId || "").trim();
 }
 
 async function handleStakeReceipt(req, res, battleId) {
@@ -566,8 +587,8 @@ async function handleStakeReceipt(req, res, battleId) {
   if (!row) return json(res, 404, { ok: false, error: "Battle not found" });
   const chainId = Number(row.chain_id);
   const { ownerA, ownerB } = ownerWallets(row);
-  const wallet = normalizeWalletFlexible(body.auth?.walletAddress || body.walletAddress || body.wallet || "");
-  const expected = [ownerA, ownerB].find((item) => item && item.toLowerCase() === String(wallet || "").toLowerCase());
+  const wallet = ident(body.auth?.walletAddress || body.walletAddress || body.wallet || "", chainId);
+  const expected = [ownerA, ownerB].find((item) => sameWallet(item, wallet, chainId));
   if (!expected) return json(res, 403, { ok: false, error: "Only the two fighting owners can deposit stake." });
   const verified = await requireWalletActionAuth({
     res,
@@ -612,6 +633,44 @@ async function handleStakeReceipt(req, res, battleId) {
 }
 
 async function signAndReturnClaim({ res, chainId, subjectId, kind, winnerPayout }) {
+  if (isSolanaWarzoneChainId(chainId)) {
+    const onchain = await readOnchainPool(chainId, subjectId, kind);
+    if (!onchain.configured) {
+      return json(res, 503, {
+        ok: false,
+        error: "Solana Warzone escrow is not live yet.",
+        code: "WAR_POOL_TREASURY_MISSING",
+        live: false,
+      });
+    }
+    if (Number(onchain.onchainState) !== 2) {
+      return json(res, 409, {
+        ok: false,
+        error: "Waiting for Warzone resolution. Resolve stays operator-side.",
+        code: "WAR_POOL_NOT_RESOLVED",
+        chain: "solana",
+        live: true,
+        resolved: false,
+        programId: onchain.programId,
+        poolId: onchain.poolId,
+        winnerWallet: onchain.winnerWallet || winnerPayout,
+      });
+    }
+    return json(res, 200, {
+      ok: true,
+      chain: "solana",
+      live: true,
+      resolved: true,
+      programId: onchain.programId,
+      poolId: onchain.poolId,
+      poolPda: onchain.poolPda,
+      vaultPda: onchain.vaultPda,
+      winnerWallet: onchain.winnerWallet || winnerPayout,
+      claimedWinner: Boolean(onchain.claimedWinner),
+      pendingWinner: String(onchain.pendingWinner || "0"),
+      claimMethod: "claimWinner",
+    });
+  }
   const treasury = warPoolTreasuryAddress(chainId);
   if (!treasury) return json(res, 503, { ok: false, error: "Arena war pool treasury is not deployed on this chain.", code: "WAR_POOL_TREASURY_MISSING" });
   if (!winnerPayout) return json(res, 409, { ok: false, error: "Winning campaign owner is unknown" });
@@ -697,7 +756,7 @@ async function handleClaimable(req, res) {
       limit 50`,
   );
   for (const row of battles.rows) {
-    if (ownerOfWinner(row).toLowerCase() !== wallet.toLowerCase()) continue;
+    if (!sameWallet(ownerOfWinner(row), wallet, row.chain_id)) continue;
     items.push({
       battleId: row.id,
       kind: "battle",
@@ -716,7 +775,7 @@ async function handleClaimable(req, res) {
   );
   for (const row of tournaments.rows) {
     const owner = await ownerOfTournamentWinner(row);
-    if (!owner || owner.toLowerCase() !== wallet.toLowerCase()) continue;
+    if (!owner || !sameWallet(owner, wallet, row.chain_id)) continue;
     items.push({
       battleId: row.id,
       kind: "tournament",

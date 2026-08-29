@@ -15,6 +15,12 @@ on:
       - frontend/src/lib/solanaTradeAtaV0.test.mjs
       - frontend/src/lib/solanaUpvoteV0.ts
       - frontend/src/lib/solanaArenaV0.ts
+      - frontend/src/lib/solanaArenaV0.test.mjs
+      - frontend/src/lib/solanaArenaLayout.mjs
+      - frontend/src/lib/solanaArenaLayout.test.mjs
+      - frontend/src/lib/solanaArenaClient.ts
+      - frontend/api/lib/solanaArenaPoolRead.js
+      - frontend/api/lib/arenaWarPoolLive.js
       - frontend/src/lib/solanaMeteoraTrade.ts
       - frontend/src/lib/arena/**
       - frontend/src/components/arena/**
@@ -53,6 +59,9 @@ jobs:
 
       - name: Test generic user V0 envelope
         run: node --test frontend/src/lib/solanaUserV0Transaction.test.mjs
+
+      - name: Test Arena layout probe and V0 executor contract
+        run: node --test frontend/src/lib/solanaArenaLayout.test.mjs frontend/src/lib/solanaArenaV0.test.mjs
 
       - name: Test first-buy ATA in one V0 trade
         run: node --test frontend/src/lib/solanaTradeAtaV0.test.mjs

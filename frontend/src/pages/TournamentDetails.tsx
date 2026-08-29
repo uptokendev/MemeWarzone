@@ -16,12 +16,14 @@ import { signArenaWalletAction } from "@/lib/arena/signArenaWalletAction";
 import { useActiveFeedWallet } from "@/hooks/useActiveFeedWallet";
 import { getNativeSymbol } from "@/lib/chainConfig";
 import { WarPoolPanel } from "@/components/postgrad/WarPoolPanel";
+import { ArenaBuyInButton } from "@/components/arena/ArenaBuyInButton";
 import { ArenaWarPoolClaimButton } from "@/components/arena/ArenaWarPoolClaimButton";
+import { useArenaWarPool } from "@/hooks/useArenaWarPoolFeed";
 
 type DetailTab = "standings" | "bracket" | "matches";
 
 type TournamentPayload = {
-  entries?: Array<{ tokenAddress: string; ownerWallet: string; buyInIntent?: boolean }>;
+  entries?: Array<{ tokenAddress: string; ownerWallet: string; buyInIntent?: boolean; buyInPaid?: boolean }>;
   invites?: Array<{ tokenAddress: string; status: string }>;
   bracket?: { rounds?: Array<{ round: number; matches?: Array<{ id: string; tokenA: string; tokenB: string | null; battleId?: string | null; winner?: string | null; bye?: boolean }> }> } | unknown[];
   event?: { buyInNative?: number; nativeSymbol?: string; registrationMode?: string; cap?: number; chainId?: number };
@@ -40,6 +42,7 @@ const TournamentDetails = () => {
   const feedWallet = useActiveFeedWallet();
   const walletAddress = String(feedWallet.address || "").trim();
   const chainId = Number(feedWallet.chainId || wallet.chainId || 56);
+  const { meta: warPoolMeta, refreshPool } = useArenaWarPool(id || "");
 
   useEffect(() => {
     if (!id) return;
@@ -97,7 +100,11 @@ const TournamentDetails = () => {
       const json = await fetchPostGradTournamentDetails(id);
       setDetail(json || null);
       await refreshEvent?.(id);
-      toast.success("Opt-in recorded. Buy-in stays an intent until escrow is live.");
+      toast.success(
+        warPoolMeta.configured
+          ? "Opt-in recorded. Pay the on-chain buy-in to finish registration."
+          : "Opt-in recorded. Buy-in stays an intent until escrow is live.",
+      );
     } catch (error) {
       toast.error(String((error as Error)?.message || "Could not opt in."));
     } finally {
@@ -133,7 +140,7 @@ const TournamentDetails = () => {
         <h1 className="mt-3 font-retro text-2xl text-foreground">{tournament.title}</h1>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
           {tournament.participantCount} coins · Starts {new Date(tournament.startsAt).toLocaleString()}
-          {buyIn > 0 ? ` · Buy-in ${buyIn} ${symbol} (intent until escrow)` : ""}
+          {buyIn > 0 ? ` · Buy-in ${buyIn} ${symbol}${warPoolMeta.configured ? "" : " (intent until escrow)"}` : ""}
         </p>
         {tournament.summary ? <p className="mt-3 text-sm text-muted-foreground">{tournament.summary}</p> : null}
         <div className="mt-4">
@@ -173,7 +180,10 @@ const TournamentDetails = () => {
         <section className="mwz-hud-frame space-y-3 p-5">
           <h2 className="font-retro text-sm text-foreground">Opt in</h2>
           <p className="text-sm text-muted-foreground">
-            Eligible graduated MemeWarzone coins and approved imports can register here. Buy-in is recorded as intent until escrow exists.
+            Eligible graduated MemeWarzone coins and approved imports can register here.
+            {warPoolMeta.configured
+              ? " After opt-in, pay the on-chain buy-in from the owner wallet."
+              : " Buy-in is recorded as intent until escrow exists."}
           </p>
           {!walletAddress ? (
             <p className="text-sm text-muted-foreground">Connect the owner wallet to opt in.</p>
@@ -198,6 +208,23 @@ const TournamentDetails = () => {
               <Button className="font-retro" disabled={busy || !selectedToken} onClick={() => void handleOptIn()}>
                 {busy ? "Recording..." : alreadyIn.some((item) => item.tokenId === selectedToken) ? "Update opt-in" : "Opt in"}
               </Button>
+              {selectedToken ? (
+                <ArenaBuyInButton
+                  tournamentId={id || ""}
+                  tokenAddress={selectedToken}
+                  chainId={chainId}
+                  poolId={warPoolMeta.onchainPoolId}
+                  configured={warPoolMeta.configured}
+                  opened={warPoolMeta.onchainOpened}
+                  buyInPaid={Boolean(entries.find((entry) => entry.tokenAddress === selectedToken)?.buyInPaid)}
+                  buyInNative={buyIn}
+                  nativeSymbol={symbol}
+                  onDone={() => {
+                    void fetchPostGradTournamentDetails(id || "").then((json) => setDetail(json || null));
+                    void refreshPool(id || "");
+                  }}
+                />
+              ) : null}
             </div>
           )}
           {entries.length ? (

@@ -102,6 +102,8 @@ for (const marker of [
   "compileSolanaUserV0WithLatestBlockhash",
   "simulateSolanaUserV0OrThrow",
   "assertSolanaUserV0Intent",
+  "allowAdditionalInstructions: true",
+  "instructions?: TransactionInstruction[]",
 ]) {
   if (!arenaExecutor.includes(marker)) failures.push(`src/lib/solanaArenaV0.ts: missing ${marker}`);
 }

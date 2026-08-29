@@ -47,6 +47,22 @@ function assertPoolId(poolId: Uint8Array): Uint8Array {
   return assert32(poolId, "Arena pool id");
 }
 
+export function solToLamports(amount: number | string): bigint {
+  const n = Number(amount);
+  if (!Number.isFinite(n) || n <= 0) throw new Error("Amount must be a positive SOL value.");
+  const lamports = BigInt(Math.round(n * 1_000_000_000));
+  if (lamports <= 0n) throw new Error("Amount is below one lamport.");
+  return lamports;
+}
+
+export function arenaPoolIdFromHex(poolId: string): Uint8Array {
+  const hex = String(poolId || "").trim().replace(/^0x/i, "");
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) throw new Error("Arena pool id must be 32 bytes hex.");
+  const out = new Uint8Array(32);
+  for (let i = 0; i < 32; i += 1) out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+
 function concat(...parts: Uint8Array[]): Uint8Array {
   const out = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
   let offset = 0;
@@ -281,6 +297,7 @@ export async function buildArenaBuyInV0Instruction(input: {
   };
 }
 
+/** Prize-boost builders stay available for ops/server. Batch 3 does not expose a user wallet surface for them. */
 export async function buildArenaPrizeBoostV0Instruction(input: {
   web3: SolanaWeb3Module;
   poolId: Uint8Array;
@@ -442,7 +459,8 @@ export async function submitArenaUserV0(input: {
   web3: SolanaWeb3Module;
   connection: Connection;
   walletAddress: string;
-  instruction: TransactionInstruction;
+  instruction?: TransactionInstruction;
+  instructions?: TransactionInstruction[];
   label: string;
   recoveryReceipt?: string;
 }): Promise<string> {
@@ -454,15 +472,22 @@ export async function submitArenaUserV0(input: {
   if (!connected || connected !== String(input.walletAddress || "").trim()) {
     throw new Error(`Connected Solana wallet changed before ${input.label}.`);
   }
+  const instructions = [
+    ...(Array.isArray(input.instructions) ? input.instructions : []),
+    ...(input.instruction ? [input.instruction] : []),
+  ];
+  if (!instructions.length) throw new Error(`${input.label} is missing Arena instructions.`);
   const canonical = canonicalProgramId();
-  if (input.instruction.programId.toBase58() !== canonical) {
-    throw new Error(`${input.label} instruction targets a non-canonical Arena program.`);
+  for (const instruction of instructions) {
+    if (instruction.programId.toBase58() !== canonical) {
+      throw new Error(`${input.label} instruction targets a non-canonical Arena program.`);
+    }
   }
   if (input.recoveryReceipt && await accountExists(input.web3, input.connection, input.recoveryReceipt)) {
     throw new Error(`${input.label} is already recorded on-chain. Refresh before retrying.`);
   }
 
-  const intent = { payer: connected, instructions: [input.instruction] };
+  const intent = { payer: connected, instructions, allowAdditionalInstructions: true };
   const simulated = await compileSolanaUserV0WithLatestBlockhash(input.web3, input.connection, intent);
   await simulateSolanaUserV0OrThrow(input.connection, simulated.transaction, input.label);
   const final = await compileSolanaUserV0WithLatestBlockhash(input.web3, input.connection, intent);
