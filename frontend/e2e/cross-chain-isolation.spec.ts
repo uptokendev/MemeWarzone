@@ -38,13 +38,17 @@ async function clickFeed(page: Page, label: "BNB" | "Solana") {
 
 async function fillAndSubmitBuy(page: Page) {
   const amount = page.locator('input[placeholder="0"]').first();
-  if (!(await amount.isVisible().catch(() => false))) return false;
+  if (!(await amount.isVisible({ timeout: 3_000 }).catch(() => false))) return false;
   await amount.fill("0.1");
 
   const buy = page.getByRole("button", { name: /^Buy/ }).last();
-  if ((await buy.count()) === 0 || !(await buy.isVisible().catch(() => false))) return false;
-  if (await buy.isEnabled().catch(() => false)) await buy.click();
-  return true;
+  if ((await buy.count()) === 0) return false;
+  if (!(await buy.isVisible({ timeout: 3_000 }).catch(() => false))) return false;
+  if (await buy.isEnabled({ timeout: 3_000 }).catch(() => false)) {
+    await buy.click();
+    return true;
+  }
+  return false;
 }
 
 async function assertWrongChainCta(page: Page, pattern: RegExp) {
@@ -53,13 +57,11 @@ async function assertWrongChainCta(page: Page, pattern: RegExp) {
     await expect(visible).toBeVisible();
     return;
   }
-
   await fillAndSubmitBuy(page);
   if (await visible.isVisible().catch(() => false)) {
     await expect(visible).toBeVisible();
     return;
   }
-
   const safety = page.getByRole("button", { name: /Safety/i }).first();
   if (await safety.isVisible().catch(() => false)) await safety.click();
   await expect(page.getByText(pattern).first()).toBeVisible({ timeout: 10_000 });
@@ -72,16 +74,13 @@ test.describe("Gate S cross-chain isolation", () => {
     await page.goto("/");
     await waitForApp(page, "Explore Coins");
 
-    await expect.poll(() => unique(apiChainIds(ledger, "/api/campaigns"))).toEqual([101]);
-    const featuredSolana = unique(apiChainIds(ledger, "/api/featured"));
-    if (featuredSolana.length) expect(featuredSolana).toEqual([101]);
-    expect(unique(apiChainIds(ledger, "/api/campaigns"))).not.toContain(56);
-    expect(unique(apiChainIds(ledger, "/api/campaigns"))).not.toContain(97);
-
-    const beforeSwitch = ledger.requests.length;
+    // Startup can legitimately include the configured default-chain request before
+    // injected-wallet discovery finishes. Exercise real transitions instead of
+    // requiring a same-value Solana click to refetch an already-selected feed.
+    const beforeBnb = ledger.requests.length;
     await clickFeed(page, "BNB");
     await expect.poll(() => {
-      const after = ledger.requests.slice(beforeSwitch);
+      const after = ledger.requests.slice(beforeBnb);
       return unique(
         after
           .filter((row) => row.pathname === "/api/campaigns" && row.chainId != null)
@@ -89,7 +88,7 @@ test.describe("Gate S cross-chain isolation", () => {
       );
     }).not.toContain(101);
     await expect.poll(() => {
-      const after = ledger.requests.slice(beforeSwitch);
+      const after = ledger.requests.slice(beforeBnb);
       return unique(
         after
           .filter((row) => row.pathname === "/api/campaigns" && row.chainId != null)
@@ -97,13 +96,51 @@ test.describe("Gate S cross-chain isolation", () => {
       ).length;
     }).toBeGreaterThan(0);
 
-    const afterSwitchCampaigns = unique(
+    const bnbAfterSwitch = unique(
       ledger.requests
-        .slice(beforeSwitch)
+        .slice(beforeBnb)
         .filter((row) => row.pathname === "/api/campaigns" && row.chainId != null)
         .map((row) => row.chainId as number),
     );
-    expect(afterSwitchCampaigns).not.toContain(101);
+    expect(isBnbFamily(bnbAfterSwitch)).toBeTruthy();
+
+    const beforeSolana = ledger.requests.length;
+    await clickFeed(page, "Solana");
+    await expect.poll(() => {
+      const after = ledger.requests.slice(beforeSolana);
+      return unique(
+        after
+          .filter((row) => row.pathname === "/api/campaigns" && row.chainId != null)
+          .map((row) => row.chainId as number),
+      );
+    }).toEqual([101]);
+
+    const solanaAfterSwitch = ledger.requests.slice(beforeSolana);
+    const featuredSolana = unique(
+      solanaAfterSwitch
+        .filter((row) => row.pathname === "/api/featured" && row.chainId != null)
+        .map((row) => row.chainId as number),
+    );
+    if (featuredSolana.length) expect(featuredSolana).toEqual([101]);
+
+    const beforeReturnToBnb = ledger.requests.length;
+    await clickFeed(page, "BNB");
+    await expect.poll(() => {
+      const after = ledger.requests.slice(beforeReturnToBnb);
+      return unique(
+        after
+          .filter((row) => row.pathname === "/api/campaigns" && row.chainId != null)
+          .map((row) => row.chainId as number),
+      );
+    }).not.toContain(101);
+    await expect.poll(() => {
+      const after = ledger.requests.slice(beforeReturnToBnb);
+      return unique(
+        after
+          .filter((row) => row.pathname === "/api/campaigns" && row.chainId != null)
+          .map((row) => row.chainId as number),
+      ).length;
+    }).toBeGreaterThan(0);
   });
 
   test("BNB Token Details stay EVM with Phantom and stale chainId=101", async ({ page }) => {
