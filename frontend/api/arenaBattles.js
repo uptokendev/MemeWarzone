@@ -15,6 +15,12 @@ import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { requireAdminOrOps, isAuthEnforceArenaMutations } from "./lib/apiAuth.js";
 import { notifyChallenge, notifyCounterOffer } from "./lib/arenaNotify.js";
 import { recordFinishedBattle } from "./lib/arenaLeagueScore.js";
+import {
+  battleSettlementPatch,
+  canSettleBattle,
+  decideBattleSettlement,
+  decorateSettledParticipants,
+} from "./lib/arenaBattleSettle.js";
 import { advanceTournamentFromBattle } from "./arenaTournaments.js";
 import { escrowRequired, readOnchainPool } from "./lib/arenaWarPoolLive.js";
 import { nativeSymbolFor } from "./lib/chainNative.js";
@@ -175,12 +181,22 @@ function mapBattle(row) {
     nativeSymbol: String(row.native_symbol || nativeSymbolFor(row.chain_id)),
     startedAt: row.started_at || row.created_at || nowIso(),
     endsAt: row.ends_at || null,
-    settlementAt: row.finished_at || null,
+    settlementAt: row.settled_at || row.finished_at || null,
     featured: Boolean(row.featured),
     arenaLane: publicLane(state),
     scoreBasis: "mcap_pct_change",
-    leaderSide: row.winner_token ? "left" : null,
-    winnerToken: row.winner_token || null,
+    leaderSide: row.mwl_winner_token
+      ? ident(row.mwl_winner_token, row.chain_id) === ident(row.challenger_token, row.chain_id)
+        ? "left"
+        : "right"
+      : null,
+    winnerToken: row.money_winner_token || row.winner_token || null,
+    moneyWinnerToken: row.money_winner_token || null,
+    mwlDraw: row.mwl_draw === true,
+    mwlResult: row.mwl_result || null,
+    mwlWinnerToken: row.mwl_winner_token || null,
+    moneyTieBreak: row.money_tie_break || null,
+    settlementVersion: row.settlement_version || null,
     updatedAt: row.updated_at || row.created_at || nowIso(),
     participants,
   };
@@ -201,7 +217,9 @@ function feedFromBattles(battles) {
 }
 
 const BATTLE_COLUMNS = `id, chain_id, state, source, stake_native, offered_stake_native, offer_from_token, offer_count, duration_hours, offered_duration_hours, native_symbol, challenger_token, defender_token, tournament_id,
-        participants, challenger_start_mcap_usd, defender_start_mcap_usd, winner_token, started_at, ends_at, finished_at,
+        participants, challenger_start_mcap_usd, defender_start_mcap_usd, challenger_end_mcap_usd, defender_end_mcap_usd,
+        challenger_pct_change, defender_pct_change, winner_token, money_winner_token, money_tie_break, mwl_result, mwl_draw,
+        mwl_winner_token, settlement_version, settled_at, started_at, ends_at, finished_at,
         creator_address, featured, created_at, updated_at`;
 
 async function listBattles() {
@@ -537,54 +555,123 @@ async function currentMcap(chainId, token) {
   return coin ? coinMcap(coin) : 0;
 }
 
-function pctChange(start, end) {
-  const s = toNumber(start);
-  const e = toNumber(end);
-  if (s <= 0) return e > 0 ? 1 : 0;
-  return (e - s) / s;
-}
-
 async function settleLive(row) {
-  if (!row || row.state !== "live") return mapBattle(row);
-  const ends = row.ends_at ? Date.parse(row.ends_at) : 0;
-  if (ends && ends > Date.now()) return mapBattle(row);
+  if (!canSettleBattle(row)) return mapBattle(row);
 
   const chainId = Number(row.chain_id);
-  const leftToken = row.challenger_token;
-  const rightToken = row.defender_token;
-  const leftNow = await currentMcap(chainId, leftToken);
-  const rightNow = await currentMcap(chainId, rightToken);
-  const leftPct = pctChange(row.challenger_start_mcap_usd, leftNow);
-  const rightPct = pctChange(row.defender_start_mcap_usd, rightNow);
-  let winner = null;
-  if (leftPct > rightPct) winner = leftToken;
-  else if (rightPct > leftPct) winner = rightToken;
-
-  const participants = Array.isArray(row.participants) ? row.participants.map((part, index) => ({
-    ...part,
-    priceChangePct: index === 0 ? leftPct * 100 : rightPct * 100,
-    isLeading: winner ? ident(part.tokenId || part.tokenAddress, chainId) === ident(winner, chainId) : false,
-  })) : [];
-
-  try {
-    await recordFinishedBattle({ ...row, winner_token: winner, participants, state: "live" });
-  } catch (error) {
-    console.warn("[api/arenaBattles] league score failed", error?.message || error);
-  }
-  try {
-    if (row.tournament_id && winner) {
-      await advanceTournamentFromBattle({ ...row, winner_token: winner, id: row.id });
-    }
-  } catch (error) {
-    console.warn("[api/arenaBattles] tournament advance failed", error?.message || error);
-  }
-
-  return updateBattle(row.id, {
-    state: "finished",
-    winner_token: winner,
-    finished_at: nowIso(),
-    participants,
+  const leftNow = await currentMcap(chainId, row.challenger_token);
+  const rightNow = await currentMcap(chainId, row.defender_token);
+  const preview = decideBattleSettlement({
+    leftToken: row.challenger_token,
+    rightToken: row.defender_token,
+    leftStartMcap: row.challenger_start_mcap_usd,
+    rightStartMcap: row.defender_start_mcap_usd,
+    leftEndMcap: leftNow,
+    rightEndMcap: rightNow,
   });
+  if (!preview.ok) return mapBattle(row);
+
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const locked = await client.query(
+      `select ${BATTLE_COLUMNS}
+         from public.arena_battles
+        where id = $1 and state = 'live' and ends_at is not null and ends_at <= now()
+        for update`,
+      [row.id],
+    );
+    const current = locked.rows[0];
+    if (!current) {
+      await client.query("commit");
+      return mapBattle(await findBattle(row.id));
+    }
+
+    const decision = decideBattleSettlement({
+      leftToken: current.challenger_token,
+      rightToken: current.defender_token,
+      leftStartMcap: current.challenger_start_mcap_usd,
+      rightStartMcap: current.defender_start_mcap_usd,
+      leftEndMcap: leftNow,
+      rightEndMcap: rightNow,
+    });
+    if (!decision.ok) {
+      await client.query("commit");
+      return mapBattle(current);
+    }
+
+    const participants = decorateSettledParticipants(current.participants, decision);
+    await recordFinishedBattle({
+      ...current,
+      mwlDraw: decision.mwlDraw,
+      mwlWinnerToken: decision.mwlWinnerToken,
+      mwlResult: decision.mwlResult,
+      participants,
+    }, client);
+
+    const write = battleSettlementPatch(decision, { nowIso: nowIso(), participants });
+    const finished = await client.query(
+      `update public.arena_battles set
+          state = 'finished',
+          winner_token = $2,
+          money_winner_token = $3,
+          money_tie_break = $4,
+          mwl_result = $5,
+          mwl_draw = $6,
+          mwl_winner_token = $7,
+          challenger_end_mcap_usd = $8,
+          defender_end_mcap_usd = $9,
+          challenger_pct_change = $10,
+          defender_pct_change = $11,
+          settlement_version = $12,
+          settled_at = $13::timestamptz,
+          finished_at = $13::timestamptz,
+          participants = $14::jsonb,
+          updated_at = now()
+        where id = $1 and state = 'live' and ends_at is not null and ends_at <= now()
+        returning ${BATTLE_COLUMNS}`,
+      [
+        current.id,
+        write.patch.winner_token,
+        write.patch.money_winner_token,
+        write.patch.money_tie_break,
+        write.patch.mwl_result,
+        write.patch.mwl_draw,
+        write.patch.mwl_winner_token,
+        write.patch.challenger_end_mcap_usd,
+        write.patch.defender_end_mcap_usd,
+        write.patch.challenger_pct_change,
+        write.patch.defender_pct_change,
+        write.patch.settlement_version,
+        write.patch.settled_at,
+        JSON.stringify(write.patch.participants || []),
+      ],
+    );
+    if (!finished.rows[0]) {
+      await client.query("rollback");
+      return mapBattle(await findBattle(row.id));
+    }
+    await client.query("commit");
+
+    try {
+      if (finished.rows[0].tournament_id && decision.moneyWinnerToken) {
+        await advanceTournamentFromBattle({
+          ...finished.rows[0],
+          winner_token: decision.moneyWinnerToken,
+          id: finished.rows[0].id,
+        });
+      }
+    } catch (error) {
+      console.warn("[api/arenaBattles] tournament advance failed", error?.message || error);
+    }
+    return mapBattle(finished.rows[0]);
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    console.warn("[api/arenaBattles] settle failed", error?.message || error);
+    return mapBattle(row);
+  } finally {
+    client.release();
+  }
 }
 
 async function expireChallenge(row) {

@@ -310,5 +310,5 @@ test("MWL score math cannot mint points from UpVotes", () => {
   assert.doesNotMatch(math, /upvote/i);
   assert.doesNotMatch(writer, /upvote/i);
   assert.doesNotMatch(writer, /arena_votes/);
-  assert.match(writer, /battlePointPlan/);
+  assert.match(writer, /mwlLedgerPlan/);
 });

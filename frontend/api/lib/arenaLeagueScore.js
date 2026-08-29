@@ -5,8 +5,8 @@ import {
   DISPATCH_POINTS,
   PAIR_WINDOW_DAYS,
   STREAK_BONUS_POINTS,
-  battlePointPlan,
   identToken,
+  mwlLedgerPlan,
   nextCheckinStreak,
   pairKey,
   seasonAcceptsRegularPoints,
@@ -22,9 +22,9 @@ function currentQuarter(date = new Date()) {
   return Math.floor(date.getUTCMonth() / 3) + 1;
 }
 
-export async function ensureActiveSeason(chainId) {
+export async function ensureActiveSeason(chainId, db = pool) {
   const idNum = Number(chainId) || 56;
-  const existing = await pool.query(
+  const existing = await db.query(
     `select * from public.arena_league_seasons where chain_id = $1 and active = true limit 1`,
     [idNum],
   );
@@ -35,7 +35,7 @@ export async function ensureActiveSeason(chainId) {
   const quarter = currentQuarter(now);
   const id = `mwl-${year}-q${quarter}-c${idNum}`;
   const resetAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
-  const inserted = await pool.query(
+  const inserted = await db.query(
     `insert into public.arena_league_seasons (
         id, chain_id, label, state, week, quarter, year, reset_at, active
       ) values ($1,$2,$3,'live',1,$4,$5,$6,true)
@@ -60,18 +60,18 @@ export async function freezeSeason(seasonId) {
   return result.rows[0] || null;
 }
 
-async function tournamentOrigin(tournamentId) {
+async function tournamentOrigin(tournamentId, db = pool) {
   if (!tournamentId) return null;
-  const result = await pool.query(
+  const result = await db.query(
     `select origin from public.arena_tournaments where id = $1 limit 1`,
     [String(tournamentId)],
   );
   return result.rows[0]?.origin || null;
 }
 
-async function pairScoredRecently(seasonId, key) {
+async function pairScoredRecently(seasonId, key, db = pool) {
   if (!key) return false;
-  const result = await pool.query(
+  const result = await db.query(
     `select 1
        from public.arena_league_point_events
       where season_id = $1
@@ -94,10 +94,10 @@ async function hasEntry(seasonId, token) {
   return Boolean(result.rows[0]);
 }
 
-async function bumpEntry(seasonId, token, name, symbol, { points = 0, wins = 0, losses = 0, fights = 0, checkinStreak = null } = {}) {
+async function bumpEntry(seasonId, token, name, symbol, { points = 0, wins = 0, losses = 0, fights = 0, checkinStreak = null } = {}, db = pool) {
   const address = ident(token);
   if (!address) return;
-  await pool.query(
+  await db.query(
     `insert into public.arena_league_entries (
         season_id, token_address, token_name, symbol, points, wins, losses, finished_fights, checkin_streak
       ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)
@@ -125,79 +125,97 @@ async function bumpEntry(seasonId, token, name, symbol, { points = 0, wins = 0, 
   );
 }
 
-async function writeEvent({ seasonId, token, kind, points, wallet = null, battleId = null, pair = null, day = null, metadata = {} }) {
-  if (!kind) return;
-  await pool.query(
+async function writeEvent({ seasonId, token, kind, points, wallet = null, battleId = null, pair = null, day = null, metadata = {} }, db = pool) {
+  if (!kind) return false;
+  const conflict = battleId
+    ? ` on conflict (season_id, battle_id, token_address, kind)
+        where battle_id is not null and kind in ('battle_win', 'battle_loss', 'battle_draw')
+        do nothing`
+    : "";
+  const result = await db.query(
     `insert into public.arena_league_point_events (
         season_id, token_address, kind, points, wallet, battle_id, pair_key, utc_day, metadata
-      ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9)${conflict}
+      returning id`,
     [seasonId, ident(token), kind, points, wallet ? ident(wallet) : null, battleId || null, pair || null, day || null, metadata],
   );
+  return Boolean(result.rows[0]);
 }
 
-export async function recordFinishedBattle(row) {
-  if (!row || row.state === "finished") return;
-  const left = ident(row.challenger_token);
-  const right = ident(row.defender_token);
-  if (!left || !right) return;
+export async function recordFinishedBattle(row, db = pool) {
+  const left = ident(row?.challenger_token);
+  const right = ident(row?.defender_token);
+  if (!left || !right) return { scored: false, reason: "missing-tokens" };
 
-  const season = await ensureActiveSeason(row.chain_id);
-  const origin = await tournamentOrigin(row.tournament_id);
+  const season = await ensureActiveSeason(row.chain_id, db);
+  const origin = await tournamentOrigin(row.tournament_id, db);
   const isQuarterFinals = origin === "quarter_finals";
   const frozen = !seasonAcceptsRegularPoints(season);
   const key = pairKey(left, right);
-  const pairAlreadyScored = await pairScoredRecently(season.id, key);
-  const winner = ident(row.winner_token);
-  const plan = battlePointPlan({
-    winner,
-    left,
-    right,
+  const pairAlreadyScored = await pairScoredRecently(season.id, key, db);
+  const mwlDraw = row.mwlDraw === true || row.mwl_draw === true;
+  const plan = mwlLedgerPlan({
+    mwlDraw,
+    mwlWinnerToken: ident(row.mwlWinnerToken || row.mwl_winner_token),
+    leftToken: left,
+    rightToken: right,
     pairAlreadyScored,
     frozen,
     isQuarterFinals,
     isTournament: Boolean(row.tournament_id) && !isQuarterFinals,
   });
 
-  if (!plan.countFight && plan.skipPoints) return;
+  if (!plan.countFight && plan.skipPoints) return { scored: false, reason: "frozen-or-qf" };
 
   const participants = Array.isArray(row.participants) ? row.participants : [];
   const leftPart = participants[0] || {};
   const rightPart = participants[1] || {};
   const fights = plan.countFight ? 1 : 0;
 
-  await bumpEntry(season.id, left, leftPart.tokenName, leftPart.symbol, {
-    points: plan.left.points,
-    wins: plan.left.wins,
-    losses: plan.left.losses,
-    fights,
-  });
-  await bumpEntry(season.id, right, rightPart.tokenName, rightPart.symbol, {
-    points: plan.right.points,
-    wins: plan.right.wins,
-    losses: plan.right.losses,
-    fights,
-  });
+  if (plan.skipPoints) {
+    await bumpEntry(season.id, left, leftPart.tokenName, leftPart.symbol, { fights }, db);
+    await bumpEntry(season.id, right, rightPart.tokenName, rightPart.symbol, { fights }, db);
+    return { scored: false, reason: "pair-window", countFight: true };
+  }
 
-  if (plan.skipPoints) return;
-
-  await writeEvent({
+  const leftInserted = await writeEvent({
     seasonId: season.id,
     token: left,
     kind: plan.left.kind,
     points: plan.left.points,
     battleId: row.id,
     pair: key,
-    metadata: { side: "left" },
-  });
-  await writeEvent({
+    metadata: { side: "left", mwlResult: row.mwlResult || row.mwl_result || null },
+  }, db);
+  const rightInserted = await writeEvent({
     seasonId: season.id,
     token: right,
     kind: plan.right.kind,
     points: plan.right.points,
     battleId: row.id,
     pair: key,
-    metadata: { side: "right" },
-  });
+    metadata: { side: "right", mwlResult: row.mwlResult || row.mwl_result || null },
+  }, db);
+
+  if (!leftInserted && !rightInserted) return { scored: false, reason: "already-scored" };
+
+  if (leftInserted) {
+    await bumpEntry(season.id, left, leftPart.tokenName, leftPart.symbol, {
+      points: plan.left.points,
+      wins: plan.left.wins,
+      losses: plan.left.losses,
+      fights,
+    }, db);
+  }
+  if (rightInserted) {
+    await bumpEntry(season.id, right, rightPart.tokenName, rightPart.symbol, {
+      points: plan.right.points,
+      wins: plan.right.wins,
+      losses: plan.right.losses,
+      fights,
+    }, db);
+  }
+  return { scored: true, reason: "ok" };
 }
 
 export async function creditCheckin({ chainId, wallet, token, name, symbol }) {
