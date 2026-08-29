@@ -1,46 +1,32 @@
 import { ethers } from "hardhat";
 
-const SUPPORTED_EVM_CHAINS = new Set([56, 97, 4663, 46630]);
-
 /**
- * Deploys the separate Arena UPVoteTreasury instance.
- * Uses the same UPVoteTreasury bytecode as the launchpad, but a distinct address
- * and chain-local ProtocolRevenueVault receiver.
+ * Second UPVoteTreasury instance for Arena UpVotes.
+ * Same bytecode as launchpad. New address. feeReceiver MUST be ProtocolRevenueVault
+ * so Arena UpVotes follow the same protocol-treasury route as launchpad UP Votes.
  *
- * Robinhood testnet example:
- *   DEPLOYER_PK=... PROTOCOL_REVENUE_VAULT_ADDRESS_46630=0x... \
- *     npx hardhat run scripts/deployArenaUPVoteTreasury.ts --network robinhoodTestnet
+ *   FEE_RECEIVER=0x... npx hardhat run scripts/deployArenaUPVoteTreasury.ts --network bscTestnet
  */
 async function main() {
   const [deployer] = await ethers.getSigners();
-  const network = await ethers.provider.getNetwork();
-  const chainId = Number(network.chainId);
-  if (!SUPPORTED_EVM_CHAINS.has(chainId)) throw new Error(`Unsupported Arena EVM chain ${chainId}`);
-
   const feeReceiver = String(
     process.env.FEE_RECEIVER ||
-      process.env[`PROTOCOL_REVENUE_VAULT_ADDRESS_${chainId}`] ||
       process.env.PROTOCOL_REVENUE_VAULT_ADDRESS ||
+      process.env.PROTOCOL_REVENUE_VAULT_ADDRESS_97 ||
+      process.env.PROTOCOL_REVENUE_VAULT_ADDRESS_56 ||
       "",
   ).trim();
-  if (!ethers.isAddress(feeReceiver)) {
-    throw new Error(`Missing/invalid FEE_RECEIVER or PROTOCOL_REVENUE_VAULT_ADDRESS_${chainId}`);
-  }
+  if (!feeReceiver) throw new Error("Missing FEE_RECEIVER / PROTOCOL_REVENUE_VAULT_ADDRESS");
 
   const owner = String(process.env.ARENA_VOTE_OWNER || deployer.address).trim();
-  if (!ethers.isAddress(owner)) throw new Error("Invalid ARENA_VOTE_OWNER");
-
   const UPVoteTreasury = await ethers.getContractFactory("UPVoteTreasury");
   const treasury = await UPVoteTreasury.deploy(owner, feeReceiver);
   await treasury.waitForDeployment();
-  const address = await treasury.getAddress();
-
-  console.log("Arena UPVoteTreasury deployed:", address);
-  console.log("chainId:", chainId);
-  console.log("owner:", owner);
-  console.log("feeReceiver:", feeReceiver);
-  console.log(`ARENA_VOTE_TREASURY_ADDRESS_${chainId}=${address}`);
-  console.log(`VITE_ARENA_VOTE_TREASURY_ADDRESS_${chainId}=${address}`);
+  const addr = await treasury.getAddress();
+  const net = await ethers.provider.getNetwork();
+  console.log("Arena UPVoteTreasury deployed:", addr);
+  console.log(`ARENA_VOTE_TREASURY_ADDRESS_${Number(net.chainId)}=${addr}`);
+  console.log(`VITE_ARENA_VOTE_TREASURY_ADDRESS_${Number(net.chainId)}=${addr}`);
 }
 
 main().catch((error) => {
