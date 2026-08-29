@@ -1,6 +1,10 @@
 import arenaBattles from "./arenaBattles.js";
 import arenaEvents from "./arenaEvents.js";
+import arenaImports from "./arenaImports.js";
+import arenaTournaments from "./arenaTournaments.js";
 import arenaLeague from "./arenaLeague.js";
+import arenaNotifications from "./arenaNotifications.js";
+import arenaVotes from "./arenaVotes.js";
 import arenaOps from "./arenaOps.js";
 import arenaWarPools from "./arenaWarPools.js";
 import sponsored from "./sponsored.js";
@@ -12,8 +16,12 @@ import warRoom from "./warRoom.js";
 const ROUTES = [
   { pattern: /^\/arena\/ops\/health$/, flag: "POSTGRAD_ARENA_OPS_ENABLED", handler: arenaOps },
   { pattern: /^\/arena\/battles(?:\/.*)?$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaBattles },
+  { pattern: /^\/arena\/imports(?:\/.*)?$/, flag: "POSTGRAD_ARENA_IMPORTS_ENABLED", handler: arenaImports },
+  { pattern: /^\/arena\/tournaments(?:\/.*)?$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaTournaments },
   { pattern: /^\/arena\/events(?:\/.*)?$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaEvents },
   { pattern: /^\/arena\/league(?:\/.*)?$/, flag: "POSTGRAD_LEAGUE_ENABLED", handler: arenaLeague },
+  { pattern: /^\/arena\/notifications(?:\/.*)?$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaNotifications },
+  { pattern: /^\/arena\/votes(?:\/.*)?$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaVotes },
   { pattern: /^\/arena\/war-pools(?:\/.*)?$/, flag: "POSTGRAD_WAR_POOLS_ENABLED", handler: arenaWarPools },
   // Sponsored product is independent of battles; keep available without battle flags.
   { pattern: /^\/sponsored$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: sponsored, alwaysOn: true },
@@ -72,7 +80,10 @@ function disabledReadPayload(path, flag) {
   if (path === "/arena/league") return { ...base, season: null, history: [] };
   if (path === "/arena/battles") return { ...base, liveBattles: [], openForBattleQueue: [], archivedBattles: [] };
   if (path === "/arena/battles/creator-status") return { ...base, items: [], statuses: [], updatedAt: new Date().toISOString() };
+  if (path === "/arena/imports") return { ...base, items: [], updatedAt: new Date().toISOString() };
   if (path === "/arena/events") return { ...base, events: [], archivedEvents: [] };
+  if (path === "/arena/tournaments") return { ...base, events: [], archivedEvents: [] };
+  if (path === "/arena/votes/featured") return { ...base, items: [], votingLive: false };
   if (path === "/arena/war-pools") {
     return {
       ...base,
@@ -93,7 +104,10 @@ function isSafeDisabledRead(req, path) {
     path === "/arena/league" ||
     path === "/arena/battles" ||
     path === "/arena/battles/creator-status" ||
+    path === "/arena/imports" ||
     path === "/arena/events" ||
+    path === "/arena/tournaments" ||
+    path === "/arena/votes/featured" ||
     path === "/arena/war-pools" ||
     /^\/arena\/war-pools\/[^/]+$/.test(path) ||
     path === "/sponsored" ||

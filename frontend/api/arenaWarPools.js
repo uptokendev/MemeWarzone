@@ -1,7 +1,14 @@
 import { pool } from "../server/db.js";
-import { badMethod, json, readJson } from "../server/http.js";
+import { badMethod, getQuery, json, normalizeWalletFlexible, readJson } from "../server/http.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
-import { requireAdminOrOps, isAuthEnforceArenaMutations } from "./lib/apiAuth.js";
+import { getServerReadProvider } from "./lib/getServerReadProvider.js";
+import {
+  WAR_POOL_ABI,
+  battlePoolId,
+  signResolvePool,
+  warPoolTreasuryAddress,
+} from "./lib/arenaWarPoolEscrow.js";
+import { ethers } from "ethers";
 
 const STATES = new Set(["open", "locked", "settling", "paid"]);
 const TRANSITIONS = { open: ["locked"], locked: ["settling"], settling: ["paid"], paid: ["open"] };
@@ -29,7 +36,7 @@ function mapEntry(row) {
     sideTokenId: String(row.side_token_id),
     amountUsd: Number(row.amount_usd || 0),
     enteredAt: row.entered_at ? new Date(row.entered_at).toISOString() : new Date().toISOString(),
-    payoutEligible: Boolean(row.payout_eligible),
+    payoutEligible: false,
   };
 }
 
@@ -91,22 +98,18 @@ async function listPools() {
 }
 
 function settlementSummary(poolRecord) {
-  const grouped = Object.create(null);
-  for (const entry of poolRecord.entries) grouped[entry.sideTokenId] = (grouped[entry.sideTokenId] || 0) + entry.amountUsd;
-  const [winnerTokenId, winnerSideUsd = 0] = Object.entries(grouped).sort((a, b) => b[1] - a[1])[0] || [null, 0];
-  const projectedWinnerPayoutUsd = poolRecord.routingBreakdown.winnersUsd;
   return {
-    winnerTokenId,
-    winnerLabel: winnerTokenId || "No winner yet",
+    winnerTokenId: null,
+    winnerLabel: "Supporters are not paid",
     totalPotUsd: poolRecord.totalPotUsd,
-    winnerSideUsd,
-    loserSideUsd: Math.max(0, poolRecord.totalPotUsd - winnerSideUsd),
-    projectedPayoutMultiple: winnerSideUsd > 0 ? projectedWinnerPayoutUsd / winnerSideUsd : 0,
-    projectedWinnerPayoutUsd,
-    projectedNetProfitUsd: Math.max(0, projectedWinnerPayoutUsd - winnerSideUsd),
-    eligibleWinningEntries: winnerTokenId ? poolRecord.entries.filter((entry) => entry.sideTokenId === winnerTokenId && entry.payoutEligible).length : 0,
+    winnerSideUsd: 0,
+    loserSideUsd: 0,
+    projectedPayoutMultiple: 0,
+    projectedWinnerPayoutUsd: 0,
+    projectedNetProfitUsd: 0,
+    eligibleWinningEntries: 0,
     settlementStateLabel: poolRecord.state,
-    settlementStateBody: "Settlement data is sourced from postgrad storage.",
+    settlementStateBody: "Support is a donation, not betting. Supporters are not paid. 85% winning campaign / 5% protocol / 10% Major War League once escrow is live.",
     routingBreakdown: poolRecord.routingBreakdown,
   };
 }
@@ -137,9 +140,18 @@ async function handleSupport(req, res, battleId) {
   const record = await ensurePool(battleId);
   if (normalizeState(record.state) !== "open") return json(res, 409, { ok: false, error: "War Pool is not open" });
   await pool.query(
-    `insert into public.arena_war_pool_entries (battle_id, side_token_id, amount_usd, supporter_address, payout_eligible) values ($1, $2, $3, $4, true)`,
+    `insert into public.arena_war_pool_entries (battle_id, side_token_id, amount_usd, supporter_address, payout_eligible) values ($1, $2, $3, $4, false)`,
     [battleId, sideTokenId, amountUsd, supporterAddress || null],
   );
+  try {
+    await pool.query(
+      `insert into public.arena_support_entries (battle_id, side_token, supporter_wallet, amount_native, payouts_live)
+       values ($1,$2,$3,$4,false)`,
+      [battleId, sideTokenId, supporterAddress || "unknown", amountUsd],
+    );
+  } catch {
+    // Support ledger is best-effort until escrow exists.
+  }
   await pool.query(`update public.arena_war_pools set updated_at = now() where battle_id = $1`, [battleId]);
   const poolRecord = await findPool(battleId);
   return json(res, 200, { ok: true, pool: poolRecord, settlementSummary: settlementSummary(poolRecord) });
@@ -153,9 +165,96 @@ async function handleTransition(req, res, battleId) {
   if (!(TRANSITIONS[current.state] || []).includes(nextState)) return json(res, 409, { ok: false, error: "Invalid war-pool transition", currentState: current.state });
   const cutoffSql = nextState === "open" ? "now() + interval '30 minutes'" : "cutoff_at";
   await pool.query(`update public.arena_war_pools set state = $2, cutoff_at = ${cutoffSql}, updated_at = now() where battle_id = $1`, [battleId, nextState]);
-  if (nextState === "open") await pool.query(`update public.arena_war_pool_entries set payout_eligible = true where battle_id = $1`, [battleId]);
+  if (nextState === "open") await pool.query(`update public.arena_war_pool_entries set payout_eligible = false where battle_id = $1`, [battleId]);
   const poolRecord = await findPool(battleId);
   return json(res, 200, { ok: true, pool: poolRecord, settlementSummary: settlementSummary(poolRecord) });
+}
+
+async function battleRow(id) {
+  const result = await pool.query(`select * from public.arena_battles where id = $1 limit 1`, [id]);
+  return result.rows[0] || null;
+}
+
+function ownerOfWinner(row) {
+  const parts = Array.isArray(row.participants) ? row.participants : [];
+  const winner = String(row.winner_token || "").toLowerCase();
+  const match = parts.find((part) => String(part.tokenAddress || part.tokenId || "").toLowerCase() === winner);
+  return normalizeWalletFlexible(match?.ownerWallet || "") || "";
+}
+
+async function handleClaimIntent(req, res, battleId) {
+  const row = await battleRow(battleId);
+  if (!row) return json(res, 404, { ok: false, error: "Battle not found" });
+  if (row.state !== "finished") return json(res, 409, { ok: false, error: "Battle is not finished" });
+  const chainId = Number(row.chain_id);
+  const treasury = warPoolTreasuryAddress(chainId);
+  if (!treasury) return json(res, 503, { ok: false, error: "Arena war pool treasury is not deployed on this chain.", code: "WAR_POOL_TREASURY_MISSING" });
+  const winnerPayout = ownerOfWinner(row);
+  if (!winnerPayout) return json(res, 409, { ok: false, error: "Winning campaign owner is unknown" });
+  const poolId = battlePoolId(battleId);
+  const provider = await getServerReadProvider(chainId);
+  const contract = new ethers.Contract(treasury, WAR_POOL_ABI, provider);
+  const onchain = await contract.pools(poolId);
+  const stakeTotal = BigInt(onchain.stakeA || 0) + BigInt(onchain.stakeB || 0);
+  const supportTotal = BigInt(onchain.supportTotal || 0);
+  const buyInTotal = BigInt(onchain.buyInTotal || 0);
+  const deadline = Math.floor(Date.now() / 1000) + 3600;
+  const signed = await signResolvePool({
+    treasuryAddress: treasury,
+    chainId,
+    poolId,
+    winnerPayout,
+    stakeTotal,
+    supportTotal,
+    buyInTotal,
+    deadline,
+  });
+  if (!signed) {
+    return json(res, 503, { ok: false, error: "Resolver key is not configured (ARENA_WAR_POOL_RESOLVER_KEY).", code: "WAR_POOL_RESOLVER_MISSING" });
+  }
+  return json(res, 200, {
+    ok: true,
+    treasury,
+    chainId,
+    poolId,
+    abi: WAR_POOL_ABI,
+    winnerPayout,
+    pendingWinner: String(onchain.pendingWinner || 0),
+    resolve: {
+      winnerPayout,
+      deadline,
+      signature: signed.signature,
+      stakeTotal: stakeTotal.toString(),
+      supportTotal: supportTotal.toString(),
+      buyInTotal: buyInTotal.toString(),
+    },
+    claimMethod: "claimWinner",
+  });
+}
+
+async function handleClaimable(req, res) {
+  const query = getQuery(req);
+  const wallet = normalizeWalletFlexible(query.wallet || query.walletAddress || "");
+  if (!wallet) return json(res, 400, { ok: false, error: "wallet is required" });
+  const result = await pool.query(
+    `select id, chain_id, winner_token, participants, stake_native, native_symbol
+       from public.arena_battles
+      where state = 'finished' and winner_token is not null
+      order by finished_at desc nulls last
+      limit 50`,
+  );
+  const items = [];
+  for (const row of result.rows) {
+    if (ownerOfWinner(row).toLowerCase() !== wallet.toLowerCase()) continue;
+    items.push({
+      battleId: row.id,
+      chainId: Number(row.chain_id),
+      poolId: battlePoolId(row.id),
+      nativeSymbol: row.native_symbol || "BNB",
+      treasury: warPoolTreasuryAddress(row.chain_id) || null,
+    });
+  }
+  return json(res, 200, { ok: true, items });
 }
 
 export default async function handler(req, res) {
@@ -163,6 +262,9 @@ export default async function handler(req, res) {
   const path = String(req.path || new URL(req.url, "http://localhost").pathname);
   try {
     if (method === "GET" && path === "/arena/war-pools") return handleSummary(req, res);
+    if (method === "GET" && path === "/arena/war-pools/claimable") return handleClaimable(req, res);
+    const claimIntent = path.match(/^\/arena\/war-pools\/([^/]+)\/claim-intent$/);
+    if (claimIntent) return method === "GET" ? handleClaimIntent(req, res, decodeURIComponent(claimIntent[1])) : badMethod(res);
     const support = path.match(/^\/arena\/war-pools\/([^/]+)\/support$/);
     if (support) return method === "POST" ? handleSupport(req, res, decodeURIComponent(support[1])) : badMethod(res);
     const transition = path.match(/^\/arena\/war-pools\/([^/]+)\/transition$/);
