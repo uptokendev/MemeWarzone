@@ -165,6 +165,7 @@ function makeProductionTradeFixture(side = "buy") {
       tokenProgram: planAddress(plan, "tokenProgram").toBase58(),
       systemProgram: planAddress(plan, "systemProgram").toBase58(),
       feeEscrow: Keypair.generate().publicKey.toBase58(),
+      creatorFeeVault: Keypair.generate().publicKey.toBase58(),
     },
   });
   return { payer, plan, ed25519Instruction, programInstruction, lookupTable };
@@ -252,7 +253,7 @@ test("production BUY and SELL instructions compile to one-signer V0 envelopes un
     );
 
     reportSize(side === "buy" ? "BUY" : "SELL", legacy, stats);
-    assert.equal(fixture.programInstruction.keys.length, 14);
+    assert.equal(fixture.programInstruction.keys.length, 15);
     assert.equal(fixture.programInstruction.data.length, side === "buy" ? 73 : 65);
     assert.equal(stats.requiredSigners, 1);
     assert.equal(stats.instructionCount, 2);

@@ -1,6 +1,6 @@
 # Solana V0 vs leftover Legacy inventory
 
-Date: 2026-08-29  
+Date: 2026-08-29
 Branch: `build/cross-chain-stabilization-rh-base` (PR 158)
 
 This is an inventory only. Do **not** rewrite the working Create / BUY / SELL V0 path unless a failing Phantom simulation proves a necessary correction.

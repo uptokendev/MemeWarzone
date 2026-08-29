@@ -1,7 +1,7 @@
 # Solana Warzone money path (source spec)
 
-Date: 2026-08-29  
-Branch: `build/cross-chain-stabilization-rh-base` (PR 158)  
+Date: 2026-08-29
+Branch: `build/cross-chain-stabilization-rh-base` (PR 158)
 Status: **spec only**. Do not upgrade `mwz_rewards_treasury` and do not deploy until this is accepted.
 
 Locked product: `docs/build_plans/arena-mwl-and-solana-war-pool.md`. This file is the Solana custody slice of that spec, updated against current source.
