@@ -107,6 +107,7 @@ const FRONTEND_API_PREFIXES = [
   // Vote receipt → vote_aggregates (must not hit indexer /api/votes proxy).
   "/api/vote-ingest",
   "/api/votes/ingest",
+  "/api/arena",
   // Solana V4 create/trade/vote — must hit frontend-api, never indexer.
   "/api/solana",
   "/api/drafts",
