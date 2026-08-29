@@ -8,6 +8,7 @@ import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { postArenaSupportReceipt } from "@/features/postgrad/apiClient";
 import { signArenaWalletAction } from "@/lib/arena/signArenaWalletAction";
 import { getNativeSymbol } from "@/lib/chainConfig";
+import { isSolanaWarzoneChain, SOLANA_WARZONE_ESCROW_NOT_LIVE } from "@/lib/arena/solanaWarzoneEscrow";
 
 export function ArenaSupportButton({
   poolSubjectId,
@@ -40,8 +41,13 @@ export function ArenaSupportButton({
   const [busy, setBusy] = useState(false);
   const id = Number(chainId || wallet.chainId || 56);
   const symbol = nativeSymbol || getNativeSymbol(id);
+  const solanaBlocked = isSolanaWarzoneChain(id);
 
   async function donate() {
+    if (solanaBlocked) {
+      toast.error(SOLANA_WARZONE_ESCROW_NOT_LIVE);
+      return;
+    }
     const n = Number(amount);
     if (!Number.isFinite(n) || n <= 0) {
       toast.error(`Enter a ${symbol} amount to Support.`);
@@ -105,9 +111,10 @@ export function ArenaSupportButton({
         onChange={(event) => setAmount(event.target.value)}
         className="w-24 rounded-md border border-border/60 bg-background px-2 py-1.5 text-sm text-foreground"
       />
-      <Button size="sm" className="font-retro" disabled={disabled || busy || !sideTokenId} onClick={() => void donate()}>
-        {busy ? "Supporting..." : `Support ${symbol}`}
+      <Button size="sm" className="font-retro" disabled={disabled || busy || solanaBlocked || !sideTokenId} onClick={() => void donate()}>
+        {busy ? "Supporting..." : solanaBlocked ? "SOL escrow not live" : `Support ${symbol}`}
       </Button>
+      {solanaBlocked ? <p className="basis-full text-xs text-muted-foreground">{SOLANA_WARZONE_ESCROW_NOT_LIVE}</p> : null}
     </div>
   );
 }

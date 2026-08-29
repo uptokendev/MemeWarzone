@@ -8,6 +8,7 @@ import { fetchArenaStakeStatus, postArenaStakeReceipt } from "@/features/postgra
 import { battleDurationLabel } from "@/lib/arena/battleDuration";
 import { signWalletAction } from "@/lib/walletActionAuth";
 import { getNativeSymbol } from "@/lib/chainConfig";
+import { isSolanaWarzoneChain, SOLANA_WARZONE_ESCROW_NOT_LIVE } from "@/lib/arena/solanaWarzoneEscrow";
 
 type StakeStatus = {
   configured?: boolean;
@@ -47,6 +48,7 @@ export function ArenaStakeButton({
   const [status, setStatus] = useState<StakeStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const id = Number(chainId || wallet.chainId || 56);
+  const solanaBlocked = isSolanaWarzoneChain(id);
 
   async function refresh() {
     const json = await fetchArenaStakeStatus(battleId, walletAddress || wallet.account || "");
@@ -55,8 +57,13 @@ export function ArenaStakeButton({
   }
 
   useEffect(() => {
+    if (solanaBlocked) return;
     void refresh().catch(() => setStatus(null));
-  }, [battleId, walletAddress, battleState]);
+  }, [battleId, walletAddress, battleState, solanaBlocked]);
+
+  if (solanaBlocked) {
+    return <p className="text-sm text-muted-foreground">{SOLANA_WARZONE_ESCROW_NOT_LIVE}</p>;
+  }
 
   if (!status?.configured || status.bothPaid || battleState === "live" || battleState === "finished") return null;
   if (battleState && battleState !== "matched") return null;

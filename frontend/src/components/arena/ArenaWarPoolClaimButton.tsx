@@ -5,8 +5,8 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/contexts/WalletContext";
 import { apiFetch } from "@/lib/apiBase";
-import { getArenaWarPoolTreasuryAddress } from "@/lib/chainConfig";
-import { isSolanaChainId, type SupportedChainId } from "@/lib/chainConfig";
+import { getArenaWarPoolTreasuryAddress, type SupportedChainId } from "@/lib/chainConfig";
+import { isSolanaWarzoneChain, SOLANA_WARZONE_ESCROW_NOT_LIVE } from "@/lib/arena/solanaWarzoneEscrow";
 
 export function ArenaWarPoolClaimButton({
   battleId,
@@ -20,7 +20,12 @@ export function ArenaWarPoolClaimButton({
   const wallet = useWallet();
   const [busy, setBusy] = useState(false);
   const id = Number(chainId || wallet.chainId || 56);
-  if (isSolanaChainId(id) || !getArenaWarPoolTreasuryAddress(id as SupportedChainId)) return null;
+  const solanaBlocked = isSolanaWarzoneChain(id);
+
+  if (solanaBlocked) {
+    return <p className="text-sm text-muted-foreground">{SOLANA_WARZONE_ESCROW_NOT_LIVE}</p>;
+  }
+  if (!getArenaWarPoolTreasuryAddress(id as SupportedChainId)) return null;
 
   async function claim() {
     if (!wallet.signer) {
