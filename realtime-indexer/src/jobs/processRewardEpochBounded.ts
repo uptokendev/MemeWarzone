@@ -6,6 +6,7 @@ import { processRewardEligibilityForEpoch } from "../rewards/eligibility.js";
 import { getCurrentWeeklyEpoch } from "../rewards/epochs.js";
 import { materializeRewardLedgerForEpoch, publishRewardLedgerForEpoch } from "../rewards/ledger.js";
 import { ensurePublishedZeroAirdropDrawForEpoch, hasZeroAirdropWork } from "./zeroAirdropDraw.js";
+import { finalizeStrictZeroRewardEpoch } from "./finalizeZeroRewardEpoch.js";
 
 const REQUIRED_PROGRAMS = ["recruiter", "airdrop_trader", "airdrop_creator", "squad"] as const;
 
@@ -88,6 +89,14 @@ export async function runRewardEpochChain(chainId: number) {
     console.log(`[processRewardEpochBounded] chainId=${chainId} epochId=${epochId} stage=creator_draw_done drawId=${creatorDraw.draw.id} winners=${creatorDraw.winners.length} durationMs=${elapsedMs(stageStartedAt)}`);
 
     stageStartedAt = Date.now();
+    const zeroFinalized = await finalizeStrictZeroRewardEpoch(epochId);
+    if (zeroFinalized) {
+      console.log(`[processRewardEpochBounded] chainId=${chainId} epochId=${epochId} stage=zero_epoch_finalized status=${zeroFinalized.status} durationMs=${elapsedMs(stageStartedAt)}`);
+      console.log(`[processRewardEpochBounded] chainId=${chainId} epochId=${epochId} stage=done durationMs=${elapsedMs(epochStartedAt)}`);
+      continue;
+    }
+
+    stageStartedAt = Date.now();
     const materialized = await materializeRewardLedgerForEpoch(epochId);
     console.log(`[processRewardEpochBounded] chainId=${chainId} epochId=${epochId} stage=materialize_done rows=${materialized.materializedCount} durationMs=${elapsedMs(stageStartedAt)}`);
 
@@ -95,7 +104,7 @@ export async function runRewardEpochChain(chainId: number) {
     const published = await publishRewardLedgerForEpoch(epochId, new Date());
     console.log(`[processRewardEpochBounded] chainId=${chainId} epochId=${epochId} stage=publish_done status=${published.epoch.status} claimable=${published.updatedCount} durationMs=${elapsedMs(stageStartedAt)}`);
 
-    if (published.epoch.status === "published") {
+    if (published.epoch.status === "published" && published.updatedCount > 0) {
       await emitNotification(pool, {
         eventType: "airdrop.claims_open",
         chain: chainId === 101 ? "solana" : "bnb",
