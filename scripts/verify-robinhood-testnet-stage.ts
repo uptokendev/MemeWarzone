@@ -140,6 +140,16 @@ async function main() {
   assertAddress("factory campaign implementation", await factory.campaignImplementation(), addresses.launchCampaignImplementation);
   assertAddress("factory V3 locker", await factory.permanentLpLocker(), addresses.permanentV3PositionLocker);
   assertAddress("factory route authority", await factory.routeAuthority(), manifest.routeAuthority);
+  if (
+    chainId === ROBINHOOD_TESTNET_CHAIN_ID &&
+    sameAddress(manifest.routeAuthority, manifest.admin) &&
+    !truthy(process.env.ROBINHOOD_ALLOW_DEPLOYER_ROUTE_AUTHORITY)
+  ) {
+    throw new Error(
+      `Robinhood testnet route authority must not be the deployer/admin (${manifest.admin}). ` +
+        `Retarget with scripts/set-robinhood-testnet-route-authority.ts`,
+    );
+  }
   assertEq("factory live", await factory.live(), false);
   assertEq("factory createPaused", await factory.createPaused(), true);
   assertEq("factory security defaults locked", await factory.securityDefaultsLocked(), true);

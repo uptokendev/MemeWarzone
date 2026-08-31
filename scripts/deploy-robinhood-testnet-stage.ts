@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { ethers, network } from "hardhat";
+import { resolveRobinhoodRouteAuthority } from "./robinhoodRouteAuthority";
 
 const ROBINHOOD_TESTNET_CHAIN_ID = 46630;
 const LOCAL_CHAIN_ID = 31337;
@@ -51,11 +52,17 @@ async function main() {
   const [deployer] = await ethers.getSigners();
   const deployerAddress = await deployer.getAddress();
   const admin = envAddress("ROBINHOOD_TESTNET_ADMIN", deployerAddress);
-  const routeAuthority = envAddress("ROBINHOOD_ROUTE_AUTHORITY_ADDRESS", deployerAddress);
+  const routeAuthority = resolveRobinhoodRouteAuthority({ chainId, deployerAddress }).address;
   if (!sameAddress(admin, deployerAddress)) {
     throw new Error(
       `Staged deployer must control ROBINHOOD_TESTNET_ADMIN so the stack can be wired atomically. ` +
         `deployer=${deployerAddress} admin=${admin}`,
+    );
+  }
+  if (chainId === ROBINHOOD_TESTNET_CHAIN_ID && sameAddress(routeAuthority, deployerAddress)) {
+    throw new Error(
+      `Robinhood testnet route authority must not be the deployer (${deployerAddress}). ` +
+        `Set ROBINHOOD_ROUTE_AUTHORITY_PRIVATE_KEY or ROBINHOOD_ROUTE_AUTHORITY_ADDRESS.`,
     );
   }
 

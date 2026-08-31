@@ -64,6 +64,13 @@ ROBINHOOD_ACCEPTANCE_ENABLE_LIVE=false
 ROBINHOOD_STAGE_DEPLOYMENT_FILE=deployments/robinhood/testnet.staged.json
 ```
 
+Hardhat derives the factory route authority from `ROBINHOOD_ROUTE_AUTHORITY_PRIVATE_KEY` (or `ROBINHOOD_ROUTE_AUTHORITY_ADDRESS`). On chain 46630 it must not silently fall back to the deployer. If a staged factory was already bound to the deployer, retarget without redeploying:
+
+```bash
+npx hardhat run scripts/set-robinhood-testnet-route-authority.ts --network robinhoodTestnet
+npx hardhat run scripts/verify-robinhood-testnet-stage.ts --network robinhoodTestnet
+```
+
 Keep `ROBINHOOD_ACCEPTANCE_ENABLE_LIVE=false` in the file. Enable it only for the lifecycle command:
 
 ```bash
