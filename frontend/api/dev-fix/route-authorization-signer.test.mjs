@@ -5,6 +5,8 @@ import { ethers } from "ethers";
 import {
   buildCreateAuthorizationDigest,
   buildScheduledCreateAuthorizationDigest,
+  expectedCampaignGeneration,
+  generationRule,
   hashCampaignRequest,
 } from "./routeAuthorizationSigner.js";
 
@@ -130,27 +132,101 @@ test("accepts BNB factory generation 4 without changing campaign generation", ()
   assert.match(digest, /^0x[0-9a-f]{64}$/i);
 });
 
-test("Robinhood refuses generation 3 and requires factory generation 4", () => {
+test("Robinhood testnet refuses factory generation 3 and requires 4/3", () => {
+  assert.equal(expectedCampaignGeneration(46630), 3);
+  assert.equal(generationRule(46630), "4/3");
   assert.throws(
     () => buildScheduledCreateAuthorizationDigest(scheduledInput({
       chainId: 46630,
       factoryAddress: ROBINHOOD_FACTORY,
       factoryGeneration: 3,
+      campaignGeneration: 3,
     })),
     /Robinhood scheduled authorization requires factory generation 4/,
   );
 
-  const digest = buildScheduledCreateAuthorizationDigest(scheduledInput({
+  assert.throws(
+    () => buildScheduledCreateAuthorizationDigest(scheduledInput({
+      chainId: 46630,
+      factoryAddress: ROBINHOOD_FACTORY,
+      factoryGeneration: 4,
+      campaignGeneration: 2,
+    })),
+    /chain 46630 requires 4\/3/,
+  );
+
+  const input = scheduledInput({
     chainId: 46630,
     factoryAddress: ROBINHOOD_FACTORY,
     factoryGeneration: 4,
-  }));
-  assert.match(digest, /^0x[0-9a-f]{64}$/i);
+    campaignGeneration: 3,
+  });
+  const digest = buildScheduledCreateAuthorizationDigest(input);
+  const expected = ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(
+      [
+        "string",
+        "uint256",
+        "address",
+        "address",
+        "bytes32",
+        "uint64",
+        "bytes32",
+        "bytes32",
+        "bytes32",
+        "uint64",
+        "uint256",
+        "uint32",
+        "uint32",
+        "uint8",
+        "uint8",
+        "uint64",
+      ],
+      [
+        "MWZ_CREATE_SCHEDULED_V2_AUTH",
+        46630,
+        ROBINHOOD_FACTORY,
+        CREATOR,
+        hashCampaignRequest(campaign),
+        input.launchAt,
+        input.draftReferenceHash,
+        input.normalizedTickerHash,
+        input.metadataHash,
+        input.reservationVersion,
+        input.authorizationNonce,
+        4,
+        3,
+        input.tradeRouteProfileId,
+        input.finalizeRouteProfileId,
+        input.deadline,
+      ],
+    ),
+  );
+  assert.equal(digest, expected);
 });
 
-test("rejects campaign generations other than generation 2", () => {
+test("BNB and Robinhood production still reject campaign generation 3", () => {
+  assert.equal(expectedCampaignGeneration(97), 2);
+  assert.equal(expectedCampaignGeneration(4663), 2);
+  assert.equal(generationRule(4663), "4/2");
   assert.throws(
     () => buildScheduledCreateAuthorizationDigest(scheduledInput({ campaignGeneration: 3 })),
-    /Unsupported campaign generation 3/,
+    /chain 97 requires 3-or-4\/2/,
   );
+  assert.throws(
+    () => buildScheduledCreateAuthorizationDigest(scheduledInput({
+      chainId: 4663,
+      factoryAddress: ROBINHOOD_FACTORY,
+      factoryGeneration: 4,
+      campaignGeneration: 3,
+    })),
+    /chain 4663 requires 4\/2/,
+  );
+  const productionDigest = buildScheduledCreateAuthorizationDigest(scheduledInput({
+    chainId: 4663,
+    factoryAddress: ROBINHOOD_FACTORY,
+    factoryGeneration: 4,
+    campaignGeneration: 2,
+  }));
+  assert.match(productionDigest, /^0x[0-9a-f]{64}$/i);
 });

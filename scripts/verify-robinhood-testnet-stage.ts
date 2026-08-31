@@ -141,6 +141,7 @@ async function main() {
   assertAddress("factory V3 locker", await factory.permanentLpLocker(), addresses.permanentV3PositionLocker);
   assertAddress("factory route authority", await factory.routeAuthority(), manifest.routeAuthority);
   assertEq("factory live", await factory.live(), false);
+  assertEq("factory createPaused", await factory.createPaused(), true);
   assertEq("factory security defaults locked", await factory.securityDefaultsLocked(), true);
   assertEq("factory route auth required", await factory.requireRouteAuthorization(), true);
   assertEq("factory trade auth required", await factory.requireAuthorizedTrading(), true);

@@ -5,7 +5,11 @@ import { notifyDraftOwner, notifyDraftSubscribers } from "./prepare-notify.js";
 import { evaluateCreatePreflight } from "./security-current-time.js";
 import { getRouteDecision } from "./route-decision.js";
 import { logRouteAuthorization } from "./route-auth-log.js";
-import { signScheduledCreateAuthorization } from "./routeAuthorizationSigner.js";
+import {
+  assertSupportedGenerations,
+  generationRule,
+  signScheduledCreateAuthorization,
+} from "./routeAuthorizationSigner.js";
 import {
   TickerReservationError,
   authorizeScheduledTickerReservation,
@@ -18,8 +22,6 @@ import { upsertCampaignFromDraft } from "./campaign-registry.js";
 
 const MIN_SCHEDULE_SECONDS = 5 * 60;
 const MAX_SCHEDULE_SECONDS = 30 * 24 * 60 * 60;
-const EXPECTED_CAMPAIGN_GENERATION = 2;
-const ROBINHOOD_CHAIN_IDS = new Set([4663, 46630]);
 const WAD = 10n ** 18n;
 const STANDARD_TARGETS = new Set([
   (15_000n * WAD).toString(),
@@ -52,25 +54,19 @@ function isTruthy(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 }
 
-function isSupportedFactoryGeneration(chainId, generation) {
-  const id = Number(chainId);
-  const gen = Number(generation);
-  if (ROBINHOOD_CHAIN_IDS.has(id)) return gen === 4;
-  return gen === 3 || gen === 4;
-}
-
 function readVerifiedGenerations(chainId, body) {
   const factoryGeneration = Number(body?.onChainPreflight?.factoryGeneration || 0);
   const campaignGeneration = Number(body?.onChainPreflight?.campaignGeneration || 0);
-  if (!isSupportedFactoryGeneration(chainId, factoryGeneration) || campaignGeneration !== EXPECTED_CAMPAIGN_GENERATION) {
-    const requiredFactory = ROBINHOOD_CHAIN_IDS.has(Number(chainId)) ? "4" : "3 or 4";
+  try {
+    const { factoryGen, campaignGen } = assertSupportedGenerations(chainId, factoryGeneration, campaignGeneration);
+    return { factoryGeneration: factoryGen, campaignGeneration: campaignGen };
+  } catch (error) {
     throw new Error(
       `Verified on-chain factory generation is required before scheduled authorization; ` +
-        `chain ${chainId} requires factory ${requiredFactory} / campaign ${EXPECTED_CAMPAIGN_GENERATION}, ` +
+        `chain ${chainId} requires ${generationRule(chainId)}, ` +
         `got ${factoryGeneration}/${campaignGeneration}.`,
     );
   }
-  return { factoryGeneration, campaignGeneration };
 }
 
 function normalizeTarget(chainId, value) {

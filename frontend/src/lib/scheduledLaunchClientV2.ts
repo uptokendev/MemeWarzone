@@ -39,8 +39,17 @@ const CREATOR_REGISTRY_ABI = [
 ] as const;
 
 const FACTORY_INTERFACE = new ethers.Interface(SCHEDULED_FACTORY_ABI);
-const EXPECTED_CAMPAIGN_GENERATION = 2;
-const ROBINHOOD_CHAIN_IDS = new Set([4663, 46630]);
+const ROBINHOOD_TESTNET_CHAIN_ID = 46630;
+const ROBINHOOD_MAINNET_CHAIN_ID = 4663;
+const LOCAL_HARDHAT_CHAIN_ID = 31337;
+const ROBINHOOD_CHAIN_IDS = new Set([ROBINHOOD_MAINNET_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID]);
+
+/** Mirror of frontend/api/dev-fix/routeAuthorizationSigner.js expectedCampaignGeneration(). */
+function expectedCampaignGeneration(chainId: number): number {
+  const id = Number(chainId);
+  if (id === ROBINHOOD_TESTNET_CHAIN_ID || id === LOCAL_HARDHAT_CHAIN_ID) return 3;
+  return 2;
+}
 
 function isSupportedFactoryGeneration(chainId: number, generation: number): boolean {
   if (ROBINHOOD_CHAIN_IDS.has(Number(chainId))) return generation === 4;
@@ -49,12 +58,18 @@ function isSupportedFactoryGeneration(chainId: number, generation: number): bool
   return generation === 3 || generation === 4;
 }
 
+function generationRule(chainId: number): string {
+  const id = Number(chainId);
+  if (id === ROBINHOOD_TESTNET_CHAIN_ID || id === LOCAL_HARDHAT_CHAIN_ID) return "4/3";
+  if (ROBINHOOD_CHAIN_IDS.has(id)) return "4/2";
+  return "3-or-4/2";
+}
+
 function assertSupportedGeneration(chainId: number, factoryGeneration: number, campaignGeneration: number) {
-  if (!isSupportedFactoryGeneration(chainId, factoryGeneration) || campaignGeneration !== EXPECTED_CAMPAIGN_GENERATION) {
-    const factoryRule = ROBINHOOD_CHAIN_IDS.has(Number(chainId)) ? "4" : "3 or 4";
+  if (!isSupportedFactoryGeneration(chainId, factoryGeneration) || campaignGeneration !== expectedCampaignGeneration(chainId)) {
     throw new Error(
       `The configured factory is generation ${factoryGeneration}/${campaignGeneration}; ` +
-        `chain ${chainId} requires factory generation ${factoryRule} and campaign generation ${EXPECTED_CAMPAIGN_GENERATION}.`,
+        `chain ${chainId} requires ${generationRule(chainId)}.`,
     );
   }
 }

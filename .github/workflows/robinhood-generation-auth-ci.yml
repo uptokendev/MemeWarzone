@@ -17,6 +17,7 @@ on:
   push:
     branches:
       - "feat/robinhood-*"
+      - "build/cross-chain-stabilization-rh-base"
     paths:
       - "frontend/api/dev-fix/draft-deploy-base.js"
       - "frontend/api/dev-fix/draft-deploy.js"
@@ -37,7 +38,7 @@ concurrency:
 
 jobs:
   generation-auth:
-    name: Preserve BNB gen3 and require Robinhood gen4
+    name: Preserve BNB gen 3/2 and require Robinhood testnet 4/3
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:

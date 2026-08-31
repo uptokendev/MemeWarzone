@@ -9,6 +9,7 @@ const TRADE_AUTH_BUY_EXACT_TOKENS = 0;
 const TRADE_AUTH_BUY_EXACT_NATIVE = 1;
 const TRADE_AUTH_SELL_EXACT_TOKENS = 2;
 const V3_FEE_TIER = 3000;
+const MIN_SCHEDULE_DELAY = 5 * 60;
 
 interface CampaignRequest {
   name: string;
@@ -21,6 +22,9 @@ interface CampaignRequest {
 }
 
 type RouteAuthorizationSigner = {
+  SCHEDULED_CREATE_AUTH_TYPES: string[];
+  hashCampaignRequest(request: CampaignRequest): string;
+  expectedCampaignGeneration(chainId: bigint | number | string): number;
   signCreateAuthorization(options: {
     signer: { signMessage(message: Uint8Array): Promise<string> };
     chainId: bigint | number | string;
@@ -31,6 +35,8 @@ type RouteAuthorizationSigner = {
     finalizeRouteProfileId: number;
     deadline: bigint | number | string;
   }): Promise<string>;
+  signScheduledCreateAuthorization(options: Record<string, unknown>): Promise<string>;
+  buildScheduledCreateAuthorizationDigest(options: Record<string, unknown>): string;
   signTradeAuthorization(options: {
     signer: { signMessage(message: Uint8Array): Promise<string> };
     chainId: bigint | number | string;
@@ -62,6 +68,9 @@ type StageManifest = {
     protocolRevenueVault: string;
     treasuryRouterV3: string;
     creatorRewardsVault: string;
+    v3NativeSwapAdapter?: string;
+    weeklyLeagueVault?: string;
+    monthlyLeagueTreasury?: string;
   };
 };
 
@@ -94,6 +103,22 @@ async function latestTimestamp(): Promise<bigint> {
   return BigInt(block!.timestamp);
 }
 
+function errorText(error: unknown): string {
+  const err = error as { shortMessage?: string; message?: string; data?: string };
+  return `${err?.shortMessage || ""} ${err?.message || ""} ${err?.data || ""} ${String(error)}`;
+}
+
+async function expectCustomError(txPromise: Promise<unknown>, name: string) {
+  try {
+    const tx = await txPromise;
+    if (tx && typeof tx === "object" && "wait" in tx) await (tx as { wait(): Promise<unknown> }).wait();
+  } catch (error) {
+    if (errorText(error).includes(name)) return;
+    throw error;
+  }
+  throw new Error(`expected custom error ${name} but the transaction succeeded`);
+}
+
 async function walletFromEnvOrSigner(envName: string, fallbackIndex: number) {
   const privateKey = String(process.env[envName] || "").trim();
   if (privateKey) return new ethers.Wallet(privateKey, ethers.provider);
@@ -110,6 +135,27 @@ async function requireBalance(signer: any, label: string, minimum: bigint) {
   const balance = await ethers.provider.getBalance(address);
   if (balance < minimum) {
     throw new Error(`${label} ${address} needs at least ${ethers.formatEther(minimum)} native ETH; balance=${ethers.formatEther(balance)}`);
+  }
+}
+
+async function waitUntilLaunchAt(launchAt: bigint, chainId: number) {
+  const now = await latestTimestamp();
+  if (now >= launchAt) return;
+  if (chainId === LOCAL_CHAIN_ID) {
+    await network.provider.send("evm_setNextBlockTimestamp", [Number(launchAt)]);
+    await network.provider.send("evm_mine");
+    return;
+  }
+  if (chainId !== ROBINHOOD_TESTNET_CHAIN_ID) {
+    throw new Error(`Cannot wait for launchAt on chain ${chainId}; real-clock wait is restricted to 46630`);
+  }
+  log("waiting for real-clock launchAt; no local time warp", {
+    seconds: Number(launchAt - now),
+  });
+  for (;;) {
+    const ts = await latestTimestamp();
+    if (ts >= launchAt) return;
+    await new Promise((resolve) => setTimeout(resolve, 3000));
   }
 }
 
@@ -130,6 +176,86 @@ async function buildCreateAuthorization(factory: any, creator: any, routeAuthori
     deadline,
   });
   return { tradeRouteProfile, finalizeRouteProfile, deadline, signature };
+}
+
+async function buildScheduledAuthorization(
+  factory: any,
+  creator: any,
+  routeAuthority: any,
+  request: any,
+  overrides: Record<string, unknown> = {},
+) {
+  const signer = await routeSignerPromise;
+  const { chainId } = await ethers.provider.getNetwork();
+  const tradeRouteProfile = Number(await factory.tradeRouteProfile());
+  const finalizeRouteProfile = Number(await factory.finalizeRouteProfile());
+  const deadline = (await latestTimestamp()) + 3600n;
+  const options = {
+    signer: routeAuthority,
+    chainId,
+    factoryAddress: await factory.getAddress(),
+    creator: await creator.getAddress(),
+    request,
+    launchAt: request.launchAt,
+    draftReferenceHash: request.draftReferenceHash,
+    normalizedTickerHash: request.normalizedTickerHash,
+    metadataHash: request.metadataHash,
+    reservationVersion: request.reservationVersion,
+    authorizationNonce: request.authorizationNonce,
+    factoryGeneration: Number(await factory.FACTORY_GENERATION()),
+    campaignGeneration: Number(await factory.CAMPAIGN_GENERATION()),
+    tradeRouteProfileId: tradeRouteProfile,
+    finalizeRouteProfileId: finalizeRouteProfile,
+    deadline,
+    ...overrides,
+  };
+  const signature = await signer.signScheduledCreateAuthorization(options);
+  return {
+    tradeRouteProfile: Number(options.tradeRouteProfileId),
+    finalizeRouteProfile: Number(options.finalizeRouteProfileId),
+    deadline: BigInt(options.deadline as bigint | number | string),
+    signature,
+  };
+}
+
+async function signBypassedScheduledDigest(
+  factory: any,
+  creator: any,
+  routeAuthority: any,
+  request: any,
+  digestOverrides: { chainId?: bigint; factoryGeneration?: number; campaignGeneration?: number },
+) {
+  const signer = await routeSignerPromise;
+  const net = await ethers.provider.getNetwork();
+  const tradeRouteProfile = Number(await factory.tradeRouteProfile());
+  const finalizeRouteProfile = Number(await factory.finalizeRouteProfile());
+  const deadline = (await latestTimestamp()) + 3600n;
+  const digest = ethers.keccak256(
+    ethers.AbiCoder.defaultAbiCoder().encode(signer.SCHEDULED_CREATE_AUTH_TYPES, [
+      "MWZ_CREATE_SCHEDULED_V2_AUTH",
+      digestOverrides.chainId ?? net.chainId,
+      await factory.getAddress(),
+      await creator.getAddress(),
+      signer.hashCampaignRequest(request.campaign),
+      request.launchAt,
+      request.draftReferenceHash,
+      request.normalizedTickerHash,
+      request.metadataHash,
+      request.reservationVersion,
+      request.authorizationNonce,
+      digestOverrides.factoryGeneration ?? Number(await factory.FACTORY_GENERATION()),
+      digestOverrides.campaignGeneration ?? Number(await factory.CAMPAIGN_GENERATION()),
+      tradeRouteProfile,
+      finalizeRouteProfile,
+      deadline,
+    ]),
+  );
+  return {
+    tradeRouteProfile,
+    finalizeRouteProfile,
+    deadline,
+    signature: await routeAuthority.signMessage(ethers.getBytes(digest)),
+  };
 }
 
 async function buildTradeAuthorization(params: {
@@ -158,6 +284,40 @@ async function buildTradeAuthorization(params: {
   return { routeProfileId, deadline, signature };
 }
 
+async function proveContinuity(chainId: number, campaignAddress: string) {
+  const databaseUrl = String(process.env.DATABASE_URL || "").trim();
+  if (!databaseUrl) {
+    return { ran: false, ok: false, reason: "DATABASE_URL missing" };
+  }
+  try {
+    const { proveRobinhoodIndexerContinuity } = await Function(
+      "specifier",
+      "return import(specifier)",
+    )(pathToFileURL(path.join(__dirname, "prove-robinhood-testnet-indexer-continuity.mjs")).href);
+    const { createRequire } = await import("node:module");
+    const nodeRequire = createRequire(path.join(__dirname, "..", "frontend", "package.json"));
+    const pg = nodeRequire("pg");
+    const client = new pg.Client({ connectionString: databaseUrl, ssl: false });
+    await client.connect();
+    try {
+      const result = await client.query(
+        `select chain_id, campaign_address from public.campaigns where lower(campaign_address) = lower($1)`,
+        [campaignAddress],
+      );
+      proveRobinhoodIndexerContinuity({ rows: result.rows, campaignAddress });
+      return { ran: true, ok: true, reason: "chain_id=46630 with no 56 alias" };
+    } finally {
+      await client.end();
+    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    if (chainId === ROBINHOOD_TESTNET_CHAIN_ID) {
+      return { ran: true, ok: false, reason };
+    }
+    return { ran: true, ok: false, reason: `rehearsal continuity not proven: ${reason}` };
+  }
+}
+
 async function main() {
   const net = await ethers.provider.getNetwork();
   const chainId = Number(net.chainId);
@@ -176,9 +336,21 @@ async function main() {
   if (manifest.factoryGeneration !== 4 || manifest.campaignGeneration !== 3 || manifest.liquidityKind !== 2) {
     throw new Error("Manifest is not the expected generation-4 / campaign-generation-3 / V3 deployment.");
   }
+  if (!manifest.contracts.v3NativeSwapAdapter) {
+    throw new Error("Staged manifest is missing RobinhoodV3NativeSwapAdapter; deploy auxiliary contracts first.");
+  }
+
+  const signerMod = await routeSignerPromise;
+  if (signerMod.expectedCampaignGeneration(ROBINHOOD_TESTNET_CHAIN_ID) !== 3) {
+    throw new Error("API signer is not bound to campaign generation 3 for Robinhood testnet 46630");
+  }
+  if (signerMod.expectedCampaignGeneration(56) !== 2 || signerMod.expectedCampaignGeneration(4663) !== 2) {
+    throw new Error("API signer must keep BNB and Robinhood production on campaign generation 2");
+  }
 
   const [deployer] = await ethers.getSigners();
   const creator = await walletFromEnvOrSigner("ROBINHOOD_TEST_CREATOR_PRIVATE_KEY", 1);
+  const scheduledCreator = await walletFromEnvOrSigner("ROBINHOOD_TEST_SCHEDULED_CREATOR_PRIVATE_KEY", 4);
   const buyer = await walletFromEnvOrSigner("ROBINHOOD_TEST_BUYER_PRIVATE_KEY", 2);
   const trader = await walletFromEnvOrSigner("ROBINHOOD_TEST_TRADER_PRIVATE_KEY", 3);
   const configuredRouteKey = String(process.env.ROBINHOOD_ROUTE_AUTHORITY_PRIVATE_KEY || "").trim();
@@ -194,6 +366,7 @@ async function main() {
   await Promise.all([
     requireBalance(deployer, "admin", ethers.parseEther("0.001")),
     requireBalance(creator, "creator", ethers.parseEther("0.001")),
+    requireBalance(scheduledCreator, "scheduled creator", ethers.parseEther("0.001")),
     requireBalance(buyer, "buyer", ethers.parseEther("0.02")),
     requireBalance(trader, "post-grad trader", ethers.parseEther("0.002")),
   ]);
@@ -206,6 +379,7 @@ async function main() {
   const v3Factory = await ethers.getContractAt("MockUniswapV3Factory", manifest.contracts.mockV3Factory, trader);
   const positionManager = await ethers.getContractAt("MockUniswapV3PositionManager", manifest.contracts.mockNonfungiblePositionManager, trader);
   const swapRouter = await ethers.getContractAt("MockUniswapV3SwapRouter", manifest.contracts.mockSwapRouter02, trader);
+  const nativeAdapter = await ethers.getContractAt("RobinhoodV3NativeSwapAdapter", manifest.contracts.v3NativeSwapAdapter, trader);
 
   const standardPreview = await treasury.previewTrade(10_000n, 0);
   assertEq("standard preview creator", standardPreview.creator, 500n);
@@ -218,16 +392,29 @@ async function main() {
   assertEq("unlinked preview airdrop", unlinkedPreview.airdrop, 1_500n);
   const finalizePreview = await treasury.previewFinalize(10_000n, 1);
   assertEq("finalize preview creator", finalizePreview.creator, 0n);
+  if (standardPreview.league <= 0n) throw new Error("TreasuryRouterV3 league split is zero; MWL/league identity is missing");
+  if (manifest.contracts.weeklyLeagueVault && !sameAddress(await treasury.weeklyLeagueVault(), manifest.contracts.weeklyLeagueVault)) {
+    throw new Error("Weekly league vault is not the staged Robinhood treasury");
+  }
+  if (manifest.contracts.monthlyLeagueTreasury && !sameAddress(await treasury.monthlyLeagueTreasury(), manifest.contracts.monthlyLeagueTreasury)) {
+    throw new Error("Monthly league treasury is not the staged Robinhood treasury");
+  }
 
-  if (!(await factory.live())) {
+  if (!(await factory.live()) || (await factory.createPaused())) {
     if (!truthy(process.env.ROBINHOOD_ACCEPTANCE_ENABLE_LIVE)) {
       throw new Error("Staged factory is disabled. Set ROBINHOOD_ACCEPTANCE_ENABLE_LIVE=true only for an intentional testnet/local acceptance run.");
     }
-    log("enabling staged LaunchFactory for acceptance testing");
-    await (await factory.enableLive()).wait();
+    if (!(await factory.live())) {
+      log("enabling staged LaunchFactory for acceptance testing");
+      await (await factory.enableLive()).wait();
+    }
+    if (await factory.createPaused()) {
+      log("unpausing create for acceptance testing");
+      await (await factory.setCreatePaused(false)).wait();
+    }
   }
 
-  const request: CampaignRequest = {
+  const campaignRequest: CampaignRequest = {
     name: `Robinhood Acceptance ${Date.now()}`,
     symbol: `RHA${String(Date.now()).slice(-5)}`,
     logoURI: "ipfs://memewarzone-robinhood-testnet-acceptance",
@@ -236,10 +423,112 @@ async function main() {
     extraLink: "",
     graduationTarget: ethers.parseEther("6"),
   };
+  const now = await latestTimestamp();
+  const launchAt = now + BigInt(MIN_SCHEDULE_DELAY) + 15n;
+  const scheduledRequest = {
+    campaign: { ...campaignRequest, name: `${campaignRequest.name} Scheduled`, symbol: `RHS${String(Date.now()).slice(-4)}` },
+    launchAt,
+    draftReferenceHash: ethers.id(`draft:${launchAt}`),
+    normalizedTickerHash: ethers.id("RHS"),
+    metadataHash: ethers.id("metadata-scheduled"),
+    reservationVersion: 1n,
+    authorizationNonce: 11n,
+  };
+
+  try {
+    signerMod.buildScheduledCreateAuthorizationDigest({
+      chainId: ROBINHOOD_TESTNET_CHAIN_ID,
+      factoryAddress: await factory.getAddress(),
+      creator: await creator.getAddress(),
+      request: scheduledRequest,
+      launchAt,
+      draftReferenceHash: scheduledRequest.draftReferenceHash,
+      normalizedTickerHash: scheduledRequest.normalizedTickerHash,
+      metadataHash: scheduledRequest.metadataHash,
+      reservationVersion: 1,
+      authorizationNonce: 11,
+      factoryGeneration: 4,
+      campaignGeneration: 2,
+      tradeRouteProfileId: 1,
+      finalizeRouteProfileId: 1,
+      deadline: Number(now + 3600n),
+    });
+    throw new Error("API signer accepted campaign generation 2 on 46630");
+  } catch (error) {
+    if (!errorText(error).includes("4/3")) throw error;
+  }
+  log("API signer rejected campaign generation 2 on 46630");
+
+  const wrongGenAuth = await signBypassedScheduledDigest(factory, scheduledCreator, routeAuthority, scheduledRequest, { campaignGeneration: 2 });
+  await expectCustomError(
+    factory.connect(scheduledCreator).createScheduledCampaignAuthorized(scheduledRequest, wrongGenAuth),
+    "InvalidRouteAuthorization",
+  );
+  const wrongChainAuth = await signBypassedScheduledDigest(factory, scheduledCreator, routeAuthority, scheduledRequest, { chainId: 56n });
+  await expectCustomError(
+    factory.connect(scheduledCreator).createScheduledCampaignAuthorized(scheduledRequest, wrongChainAuth),
+    "InvalidRouteAuthorization",
+  );
+  log("factory rejected wrong campaign generation and wrong chain scheduled auth");
+
+  const scheduledAuth = await buildScheduledAuthorization(factory, scheduledCreator, routeAuthority, scheduledRequest);
+  const beforeScheduled = await factory.campaignsCount();
+  await (await factory.connect(scheduledCreator).createScheduledCampaignAuthorized(scheduledRequest, scheduledAuth)).wait();
+  await expectCustomError(
+    factory.connect(scheduledCreator).createScheduledCampaignAuthorized(scheduledRequest, scheduledAuth),
+    "RouteAuthorizationReplayed",
+  );
+  const scheduledInfo = await factory.getCampaign(beforeScheduled);
+  const scheduledCampaign = await ethers.getContractAt("LaunchCampaign", scheduledInfo.campaign, buyer);
+  const scheduledToken = await ethers.getContractAt("LaunchToken", scheduledInfo.token, buyer);
+  if ((await scheduledCampaign.launchAt()) !== launchAt) throw new Error("Scheduled campaign did not persist launchAt");
+  log("scheduled campaign created before launchAt", { campaign: scheduledInfo.campaign, launchAt: launchAt.toString() });
+
+  const scheduledProbe = ethers.parseEther("1");
+  const scheduledQuote = await scheduledCampaign.quoteBuyExactTokens(scheduledProbe);
+  const blockedBuy = await buildTradeAuthorization({
+    campaign: scheduledCampaign,
+    actor: buyer,
+    routeAuthority,
+    action: TRADE_AUTH_BUY_EXACT_TOKENS,
+    amount: scheduledProbe,
+    limit: scheduledQuote,
+  });
+  await expectCustomError(
+    scheduledCampaign.connect(buyer).buyExactTokensAuthorized(
+      scheduledProbe,
+      scheduledQuote,
+      blockedBuy.routeProfileId,
+      blockedBuy.deadline,
+      blockedBuy.signature,
+      { value: scheduledQuote },
+    ),
+    "TradingNotOpen",
+  );
+  const blockedSell = await buildTradeAuthorization({
+    campaign: scheduledCampaign,
+    actor: buyer,
+    routeAuthority,
+    action: TRADE_AUTH_SELL_EXACT_TOKENS,
+    amount: scheduledProbe,
+    limit: 0n,
+  });
+  await expectCustomError(
+    scheduledCampaign.connect(buyer).sellExactTokensAuthorized(
+      scheduledProbe,
+      0,
+      blockedSell.routeProfileId,
+      blockedSell.deadline,
+      blockedSell.signature,
+    ),
+    "TradingNotOpen",
+  );
+  log("pre-launchAt buy and sell rejected with TradingNotOpen");
+
   const beforeCount = await factory.campaignsCount();
-  const createAuth = await buildCreateAuthorization(factory, creator, routeAuthority, request);
+  const createAuth = await buildCreateAuthorization(factory, creator, routeAuthority, campaignRequest);
   log("creating signed generation-4 campaign", { creator: await creator.getAddress(), beforeCount: beforeCount.toString() });
-  await (await factory.connect(creator).createCampaignAuthorized(request, createAuth)).wait();
+  await (await factory.connect(creator).createCampaignAuthorized(campaignRequest, createAuth)).wait();
   const afterCount = await factory.campaignsCount();
   if (afterCount !== beforeCount + 1n) throw new Error("Campaign count did not increment after authorized create.");
 
@@ -346,23 +635,34 @@ async function main() {
     lockedLiquidity: state.graduatedLiquidityLp.toString(),
   });
 
-  const swapIn = ethers.parseEther("0.0001");
-  await (await weth.connect(trader).deposit({ value: swapIn })).wait();
-  await (await weth.connect(trader).approve(await swapRouter.getAddress(), swapIn)).wait();
-  const amountOut = await swapRouter.quoteExactInputSingle(manifest.contracts.mockWeth9, info.token, V3_FEE_TIER, swapIn);
-  if (amountOut <= 0n) throw new Error("Post-grad V3 quote returned zero output.");
+  const nativeBuyIn = ethers.parseEther("0.0001");
+  const quotedBuy = await swapRouter.quoteExactInputSingle(manifest.contracts.mockWeth9, info.token, V3_FEE_TIER, nativeBuyIn);
+  if (quotedBuy <= 0n) throw new Error("Post-grad native buy quote returned zero output.");
+  const traderTokenBefore = await token.balanceOf(await trader.getAddress());
   await (
-    await swapRouter.connect(trader).exactInputSingle({
-      tokenIn: manifest.contracts.mockWeth9,
-      tokenOut: info.token,
-      fee: V3_FEE_TIER,
-      recipient: await trader.getAddress(),
-      amountIn: swapIn,
-      amountOutMinimum: amountOut,
-      sqrtPriceLimitX96: 0,
-    })
+    await nativeAdapter.connect(trader).buyExactNativeIn(info.token, V3_FEE_TIER, quotedBuy, await trader.getAddress(), { value: nativeBuyIn })
   ).wait();
-  log("post-grad V3 swap passed", { swapIn: swapIn.toString(), amountOut: amountOut.toString() });
+  const traderTokenAfterBuy = await token.balanceOf(await trader.getAddress());
+  const nativeBought = traderTokenAfterBuy - traderTokenBefore;
+  if (nativeBought <= 0n) throw new Error("Native V3 buy did not deliver tokens.");
+
+  const nativeSellIn = nativeBought / 2n;
+  const quotedSell = await swapRouter.quoteExactInputSingle(info.token, manifest.contracts.mockWeth9, V3_FEE_TIER, nativeSellIn);
+  if (quotedSell <= 0n) throw new Error("Post-grad native sell quote returned zero output.");
+  await (await token.connect(trader).approve(await nativeAdapter.getAddress(), nativeSellIn)).wait();
+  const nativeBeforeSell = await ethers.provider.getBalance(await trader.getAddress());
+  const sellTx = await nativeAdapter.connect(trader).sellExactTokenIn(
+    info.token,
+    V3_FEE_TIER,
+    nativeSellIn,
+    quotedSell,
+    await trader.getAddress(),
+  );
+  const sellRc = await sellTx.wait();
+  const gasUsed = (sellRc?.gasUsed || 0n) * (sellRc?.gasPrice || sellTx.gasPrice || 0n);
+  const nativeAfterSell = await ethers.provider.getBalance(await trader.getAddress());
+  if (nativeAfterSell + gasUsed <= nativeBeforeSell) throw new Error("Native V3 sell did not return ETH.");
+  log("post-grad native V3 buy and sell passed", { nativeBuyIn: nativeBuyIn.toString(), nativeSellIn: nativeSellIn.toString() });
 
   const creatorBefore = await weth.balanceOf(await creator.getAddress());
   const protocolBefore = await weth.balanceOf(manifest.contracts.protocolRevenueVault);
@@ -382,25 +682,99 @@ async function main() {
   }
   log("80/20 fee harvest passed", { creatorDelta: creatorDelta.toString(), protocolDelta: protocolDelta.toString() });
 
+  await waitUntilLaunchAt(launchAt, chainId);
+  const openQuote = await scheduledCampaign.quoteBuyExactTokens(scheduledProbe);
+  const openBuy = await buildTradeAuthorization({
+    campaign: scheduledCampaign,
+    actor: buyer,
+    routeAuthority,
+    action: TRADE_AUTH_BUY_EXACT_TOKENS,
+    amount: scheduledProbe,
+    limit: openQuote,
+  });
+  await (
+    await scheduledCampaign.connect(buyer).buyExactTokensAuthorized(
+      scheduledProbe,
+      openQuote,
+      openBuy.routeProfileId,
+      openBuy.deadline,
+      openBuy.signature,
+      { value: openQuote },
+    )
+  ).wait();
+  const scheduledSellAmount = scheduledProbe / 2n;
+  const scheduledMinPayout = await scheduledCampaign.quoteSellExactTokens(scheduledSellAmount);
+  await (await scheduledToken.connect(buyer).approve(await scheduledCampaign.getAddress(), scheduledSellAmount)).wait();
+  const openSell = await buildTradeAuthorization({
+    campaign: scheduledCampaign,
+    actor: buyer,
+    routeAuthority,
+    action: TRADE_AUTH_SELL_EXACT_TOKENS,
+    amount: scheduledSellAmount,
+    limit: scheduledMinPayout,
+  });
+  await (
+    await scheduledCampaign.connect(buyer).sellExactTokensAuthorized(
+      scheduledSellAmount,
+      scheduledMinPayout,
+      openSell.routeProfileId,
+      openSell.deadline,
+      openSell.signature,
+    )
+  ).wait();
+  log("post-launchAt scheduled buy and sell passed");
+
+  await (await factory.setCreatePaused(true)).wait();
+  if (!(await factory.createPaused())) throw new Error("Creation was not paused after acceptance");
+  if (!(await factory.live())) throw new Error("Factory live latch was lost after pausing create");
+  log("creation paused after acceptance; live latch remains true");
+
+  const continuity = await proveContinuity(chainId, info.campaign);
+  const rehearsalPassed = chainId === LOCAL_CHAIN_ID;
+  const accepted = chainId === ROBINHOOD_TESTNET_CHAIN_ID && continuity.ok === true;
+  if (chainId !== ROBINHOOD_TESTNET_CHAIN_ID && accepted) {
+    throw new Error("accepted=true is forbidden unless provider.chainId is 46630");
+  }
+  if (rehearsalPassed && accepted) {
+    throw new Error("local Hardhat rehearsal must not set accepted=true");
+  }
+
   const result = {
     network: network.name,
     chainId,
     factory: manifest.contracts.launchFactory,
     campaign: info.campaign,
+    scheduledCampaign: scheduledInfo.campaign,
     token: info.token,
     pool: poolAddress,
     positionTokenId: positionTokenId.toString(),
     feeModelParity: true,
+    signerPolicy46630: "4/3",
     create: true,
+    scheduledCreate: true,
+    preLaunchRejected: true,
+    postLaunchScheduledTrade: true,
     preGradBuy: true,
     preGradSell: true,
     creatorClaim: true,
     graduation: true,
     permanentV3Lock: true,
-    postGradSwap: true,
+    nativePostGradBuySell: true,
     feeHarvest80_20: true,
+    createPausedAfter: true,
+    factoryLiveAfter: true,
+    continuity,
+    rehearsalPassed,
+    accepted,
   };
   console.log(JSON.stringify(result, null, 2));
+  const resultFile = String(process.env.ROBINHOOD_ACCEPTANCE_RESULT_FILE || "").trim();
+  if (resultFile) {
+    fs.writeFileSync(path.resolve(resultFile), `${JSON.stringify(result, null, 2)}\n`);
+  }
+  if (chainId === ROBINHOOD_TESTNET_CHAIN_ID && !accepted) {
+    throw new Error(`Robinhood testnet lifecycle did not reach accepted=true: ${continuity.reason || "continuity unproven"}`);
+  }
 }
 
 main().catch((error) => {

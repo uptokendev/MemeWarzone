@@ -16,8 +16,10 @@ function loadEthers() {
 const ethers = loadEthers();
 
 const OBSOLETE_BSC_TESTNET_FACTORY = "0xe0FbBa4533513110Cec7e78aa3e48EC45301B5E6";
-const ROBINHOOD_CHAIN_IDS = new Set([4663n, 46630n]);
-const EXPECTED_CAMPAIGN_GENERATION = 2;
+export const ROBINHOOD_TESTNET_CHAIN_ID = 46630n;
+export const ROBINHOOD_MAINNET_CHAIN_ID = 4663n;
+export const LOCAL_HARDHAT_CHAIN_ID = 31337n;
+const ROBINHOOD_CHAIN_IDS = new Set([ROBINHOOD_MAINNET_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID]);
 
 export const CREATE_AUTH_TYPES = ["string", "uint256", "address", "address", "bytes32", "uint8", "uint8", "uint64"];
 export const SCHEDULED_CREATE_AUTH_TYPES = [
@@ -75,20 +77,49 @@ function assertCreationFactoryAllowed(chainId, factory) {
   return { normalizedChainId, normalizedFactory };
 }
 
-function assertScheduledGeneration(chainId, factoryGeneration, campaignGeneration) {
-  const normalizedChainId = toBigInt(chainId, "chainId");
+/** Campaign generation 3 is enabled only for Robinhood testnet 46630 (and local Hardhat rehearsal of that factory). */
+export function expectedCampaignGeneration(chainId) {
+  const id = toBigInt(chainId, "chainId");
+  if (id === ROBINHOOD_TESTNET_CHAIN_ID || id === LOCAL_HARDHAT_CHAIN_ID) return 3;
+  return 2;
+}
+
+export function isSupportedFactoryGeneration(chainId, factoryGeneration) {
+  try {
+    const id = toBigInt(chainId, "chainId");
+    const factoryGen = positiveGeneration(factoryGeneration, "factoryGeneration");
+    if (ROBINHOOD_CHAIN_IDS.has(id)) return factoryGen === 4;
+    return factoryGen === 3 || factoryGen === 4;
+  } catch {
+    return false;
+  }
+}
+
+export function generationRule(chainId) {
+  const id = toBigInt(chainId, "chainId");
+  if (id === ROBINHOOD_TESTNET_CHAIN_ID || id === LOCAL_HARDHAT_CHAIN_ID) return "4/3";
+  if (ROBINHOOD_CHAIN_IDS.has(id)) return "4/2";
+  return "3-or-4/2";
+}
+
+export function assertSupportedGenerations(chainId, factoryGeneration, campaignGeneration) {
   const factoryGen = positiveGeneration(factoryGeneration, "factoryGeneration");
   const campaignGen = positiveGeneration(campaignGeneration, "campaignGeneration");
-
-  if (campaignGen !== EXPECTED_CAMPAIGN_GENERATION) {
-    throw new Error(`Unsupported campaign generation ${campaignGen}; expected ${EXPECTED_CAMPAIGN_GENERATION}`);
-  }
-  if (ROBINHOOD_CHAIN_IDS.has(normalizedChainId)) {
-    if (factoryGen !== 4) throw new Error(`Robinhood scheduled authorization requires factory generation 4; got ${factoryGen}`);
-  } else if (factoryGen !== 3 && factoryGen !== 4) {
-    throw new Error(`Unsupported EVM factory generation ${factoryGen}; expected 3 or 4`);
+  const expectedCampaign = expectedCampaignGeneration(chainId);
+  if (!isSupportedFactoryGeneration(chainId, factoryGen) || campaignGen !== expectedCampaign) {
+    const id = toBigInt(chainId, "chainId");
+    if (ROBINHOOD_CHAIN_IDS.has(id) && factoryGen !== 4) {
+      throw new Error(`Robinhood scheduled authorization requires factory generation 4; got ${factoryGen}`);
+    }
+    throw new Error(
+      `Unsupported factory/campaign generation ${factoryGen}/${campaignGen}; chain ${chainId} requires ${generationRule(chainId)}`,
+    );
   }
   return { factoryGen, campaignGen };
+}
+
+function assertScheduledGeneration(chainId, factoryGeneration, campaignGeneration) {
+  return assertSupportedGenerations(chainId, factoryGeneration, campaignGeneration);
 }
 
 export function hashCampaignRequest(request) {

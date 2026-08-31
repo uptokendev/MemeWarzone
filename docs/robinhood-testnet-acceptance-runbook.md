@@ -11,10 +11,13 @@ Robinhood is a separate MemeWarzone chain. Never reuse BNB contract addresses, c
 - Testnet chain ID: `46630`.
 - Production chain ID: `4663`.
 - Mock V3 and mock USD price-feed contracts are testnet-only and must never be promoted to production.
-- `deploy-robinhood-testnet-stage.ts` deploys the core protocol with `LaunchFactory.live() == false`.
+- `deploy-robinhood-testnet-stage.ts` deploys the core protocol with `LaunchFactory.live() == false` and `createPaused() == true`.
 - Independent verification happens before the acceptance runner is allowed to call `enableLive()`.
-- Enabling the staged factory requires the explicit `ROBINHOOD_ACCEPTANCE_ENABLE_LIVE=true` guard.
-- Staging service activation remains separate from on-chain factory acceptance. Keep `ENABLE_ROBINHOOD_CREATION=false` until the complete acceptance checklist passes.
+- Enabling the staged factory requires the explicit `ROBINHOOD_ACCEPTANCE_ENABLE_LIVE=true` guard. That run may `enableLive()` and `setCreatePaused(false)`, then must `setCreatePaused(true)` again.
+- `enableLive()` is one-way. Post-acceptance safety is `setCreatePaused(true)`, not pretending the factory can become un-live.
+- Local Hardhat rehearsal may set `rehearsalPassed=true` and **must** set `accepted=false`. Only `provider.chainId == 46630` can set `accepted=true`.
+- Staging service activation remains separate from on-chain factory acceptance. Keep `ENABLE_ROBINHOOD_CREATION=false` and `VITE_ENABLE_DIRECT_ROBINHOOD_DEPLOY=false`.
+- Robinhood testnet signing is factory generation **4** / campaign generation **3**. BNB stays campaign generation **2**. Robinhood production `4663` stays fail-closed on campaign generation **2**.
 
 ## Deployed stack
 
@@ -37,12 +40,13 @@ Core staged deployment:
 - CreatorRegistry
 - RiskRegistry
 - LaunchCampaign implementation
-- LaunchFactory generation 4
+- LaunchFactory generation 4 / campaign generation 3
 - PermanentV3PositionLocker created by LaunchFactory
 
 Auxiliary parity deployment:
 
 - UPVoteTreasury, forwarding testnet vote revenue into ProtocolRevenueVault
+- RobinhoodV3NativeSwapAdapter for native ETH post-grad buy/sell
 
 ## Required local environment
 
@@ -53,6 +57,7 @@ export ROBINHOOD_TESTNET_RPC_URL='https://rpc.testnet.chain.robinhood.com'
 export PRIVATE_KEY_DEPLOY='<staging deployer key>'
 export ROBINHOOD_ROUTE_AUTHORITY_PRIVATE_KEY='<staging route authority key>'
 export ROBINHOOD_TEST_CREATOR_PRIVATE_KEY='<funded test creator wallet key>'
+export ROBINHOOD_TEST_SCHEDULED_CREATOR_PRIVATE_KEY='<funded test scheduled-creator wallet key>'
 export ROBINHOOD_TEST_BUYER_PRIVATE_KEY='<funded test buyer wallet key>'
 export ROBINHOOD_TEST_TRADER_PRIVATE_KEY='<funded test post-grad trader wallet key>'
 ```
@@ -81,7 +86,7 @@ The deploy script must finish with self-verification and write the staged manife
 
 - `targetChainId = 46630`
 - `factoryGeneration = 4`
-- `campaignGeneration = 2`
+- `campaignGeneration = 3`
 - `liquidityKind = 2`
 - `supportEnabled = false`
 - `creationEnabled = false`
@@ -144,18 +149,29 @@ npx hardhat run scripts/test-robinhood-testnet-lifecycle.ts --network robinhoodT
 
 The runner must prove, on the same staged deployment:
 
-1. Generation-4 signed campaign creation.
-2. Authorized pre-graduation buy.
-3. Authorized pre-graduation sell.
-4. Graduation using the Robinhood `$6` test threshold.
-5. V3 pool creation through the controlled mock factory.
-6. V3 position NFT permanently owned by PermanentV3PositionLocker.
-7. Post-graduation swap through the mock V3 swap router.
-8. V3 fees accrue and harvest successfully.
-9. Harvest splits exactly 80% creator / 20% protocol.
-10. Position NFT remains permanently locked after harvest.
+1. Testnet signer/API resolves factory 4 / campaign 3. BNB and production `4663` stay campaign generation 2.
+2. Immediate authorized create.
+3. Scheduled create through the same `MWZ_CREATE_SCHEDULED_V2_AUTH` model the API uses.
+4. Wrong campaign generation rejected by the signer and by the factory.
+5. Wrong chain rejected.
+6. Replayed scheduled authorization rejected.
+7. Scheduled campaign exists on-chain before `launchAt`.
+8. Pre-`launchAt` buy and sell revert with `TradingNotOpen`.
+9. Real chain 46630 uses actual clock progression. Local Hardhat may warp; that is rehearsal, not acceptance.
+10. Post-`launchAt` buy and sell work on the scheduled campaign.
+11. Bonding buy/sell remains correct on the immediate campaign.
+12. Graduation enters V3 at the `$6` test threshold.
+13. V3 LP position/NFT is permanently locked.
+14. Native post-grad buy and native sell use `RobinhoodV3NativeSwapAdapter`.
+15. Fee accrual occurs and 80/20 harvest reconciles.
+16. DB/indexer records `chain_id=46630` and never aliases to 56.
+17. MWL/league identity uses Robinhood as its own chain.
+18. Creation is paused again with `setCreatePaused(true)` after the run.
+19. Production RH flags remain off. Local rehearsal writes `rehearsalPassed=true`, `accepted=false`. Only `provider.chainId == 46630` may set `accepted=true`.
 
-A failed item blocks staging activation.
+A failed on-chain item fails the run. Missing DB/indexer continuity on 46630 leaves Batch 5B **OPEN**. Local CI/rehearsal never closes 5B.
+
+After the run, keep `ENABLE_ROBINHOOD_CREATION=false` and `VITE_ENABLE_DIRECT_ROBINHOOD_DEPLOY=false`. The factory `live` latch may remain true; creation stays paused.
 
 ## Phase 7 — infrastructure wiring
 

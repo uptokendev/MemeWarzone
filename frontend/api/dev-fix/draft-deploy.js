@@ -3,6 +3,11 @@ import { json, readJson } from "../../server/http.js";
 import { getRpcUrls, getServerReadProvider } from "../lib/getServerReadProvider.js";
 import { draftDeploy as baseDraftDeploy } from "./draft-deploy-base.js";
 import { solanaCreateAuthorizationV4 } from "./solana-create-authorization-v4.js";
+import {
+  expectedCampaignGeneration,
+  generationRule,
+  isSupportedFactoryGeneration,
+} from "./routeAuthorizationSigner.js";
 
 import { isCreatorArmCooldownActive, normalizeCreatorArmCooldownEndsAt } from "../lib/creatorArmCooldown.js";
 import { runJsonTransform } from "./json-transform.js";
@@ -13,7 +18,6 @@ import {
 } from "./scheduled-lifecycle.js";
 
 const OBSOLETE_BSC_TESTNET_SCHEDULED_FACTORY = "0xe0FbBa4533513110Cec7e78aa3e48EC45301B5E6";
-const EXPECTED_CAMPAIGN_GENERATION = 2;
 const ROBINHOOD_CHAIN_IDS = new Set([4663, 46630]);
 const CREATION_PREFLIGHT_ABI = [
   "function live() view returns (bool)",
@@ -30,15 +34,8 @@ const CREATOR_REGISTRY_PREFLIGHT_ABI = [
   "function getCreatorRules(address) view returns (uint256 maxLiveBonding,uint256 cooldownSeconds,uint256 creatorBuyLockSeconds,uint256 creatorBuyCapWei,uint256 maxClusterWallets)",
 ];
 
-function isSupportedFactoryGeneration(chainId, generation) {
-  const id = Number(chainId);
-  const gen = Number(generation);
-  if (ROBINHOOD_CHAIN_IDS.has(id)) return gen === 4;
-  return gen === 3 || gen === 4;
-}
-
 function factoryGenerationRule(chainId) {
-  return ROBINHOOD_CHAIN_IDS.has(Number(chainId)) ? "4/2" : "3-or-4/2";
+  return generationRule(chainId);
 }
 
 function configuredScheduledFactory(chainId) {
@@ -107,7 +104,7 @@ async function verifyCurrentScheduledArmEligibility({ chainId, factoryAddress, w
 
     const factoryGeneration = Number(factoryGenerationRaw);
     const campaignGeneration = Number(campaignGenerationRaw);
-    if (!isSupportedFactoryGeneration(chainId, factoryGeneration) || campaignGeneration !== EXPECTED_CAMPAIGN_GENERATION) {
+    if (!isSupportedFactoryGeneration(chainId, factoryGeneration) || campaignGeneration !== expectedCampaignGeneration(chainId)) {
       return {
         ok: false,
         status: 409,

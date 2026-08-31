@@ -76,7 +76,7 @@ export ROBINHOOD_ACCEPTANCE_ENABLE_LIVE='true'
 npx hardhat run scripts/test-robinhood-testnet-lifecycle.ts --network robinhoodTestnet
 ```
 
-This is the explicit action that may enable the staged testnet factory for acceptance. It must prove create -> buy -> sell -> `$6` graduation -> V3 pool -> permanent position lock -> post-grad swap -> fee harvest -> 80/20 creator/protocol split.
+This is the explicit action that may enable the staged testnet factory for acceptance. It must prove factory 4 / campaign 3 signing, immediate create, scheduled create, pre-`launchAt` rejection, post-`launchAt` buy/sell, bonding buy/sell, `$6` graduation, locked V3 NFT, native adapter buy/sell, 80/20 harvest, then `setCreatePaused(true)`. Local Hardhat rehearsal of this script is **not** Robinhood testnet acceptance; `accepted` may become true only when `provider.chainId == 46630`.
 
 ## 4. Start Robinhood testnet through localhost
 

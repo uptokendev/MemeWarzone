@@ -202,6 +202,7 @@ async function main() {
   await (await treasuryRouter.setAuthorizedLpLocker(lockerAddress, true)).wait();
   await (await treasuryRouter.setPrimaryLpLocker(lockerAddress)).wait();
   await (await launchFactory.lockSecurityDefaults()).wait();
+  await (await launchFactory.setCreatePaused(true)).wait();
 
   const contracts = {
     mockWeth9: await weth.getAddress(),
@@ -228,18 +229,20 @@ async function main() {
 
   await Promise.all(Object.entries(contracts).map(([label, address]) => requireCode(address, label)));
 
-  const [factoryGeneration, campaignGeneration, liquidityKind, factoryLive, securityLocked] = await Promise.all([
+  const [factoryGeneration, campaignGeneration, liquidityKind, factoryLive, securityLocked, createPaused] = await Promise.all([
     launchFactory.FACTORY_GENERATION(),
     launchFactory.CAMPAIGN_GENERATION(),
     launchFactory.liquidityKind(),
     launchFactory.live(),
     launchFactory.securityDefaultsLocked(),
+    launchFactory.createPaused(),
   ]);
   if (factoryGeneration !== EXPECTED_FACTORY_GENERATION) throw new Error(`Factory generation mismatch: ${factoryGeneration}`);
   if (campaignGeneration !== EXPECTED_CAMPAIGN_GENERATION) throw new Error(`Campaign generation mismatch: ${campaignGeneration}`);
   if (liquidityKind !== EXPECTED_LIQUIDITY_KIND) throw new Error(`Liquidity kind mismatch: ${liquidityKind}`);
   if (factoryLive) throw new Error("Staged LaunchFactory unexpectedly became live");
   if (!securityLocked) throw new Error("LaunchFactory security defaults are not locked");
+  if (!createPaused) throw new Error("Staged LaunchFactory must keep createPaused=true until explicit acceptance");
   if (!(await launchFactory.requireRouteAuthorization())) throw new Error("Route authorization must remain required");
   if (!(await launchFactory.requireAuthorizedTrading())) throw new Error("Authorized trading must remain required");
   if ((await launchFactory.config()).graduationTarget !== TEST_GRADUATION_TARGET_USD) {
@@ -321,12 +324,12 @@ async function main() {
     activationPrerequisites: [
       "verify all contract bytecode and immutable wiring",
       "fund test wallets with Robinhood testnet ETH",
-      "configure frontend/API route-authority signer for generation 4",
+      "configure frontend/API route-authority signer for factory 4 / campaign 3 on chain 46630",
       "prove treasury router v3 Standard, OG and Unlinked parity previews",
-      "run create-buy-sell-$6-graduation-V3-NFT-lock lifecycle",
+      "run scheduled-create, launchAt, native V3 buy/sell, $6 graduation, locked NFT, 80/20 harvest",
       "run creator fee claim proof against the corrected fee model",
-      "run post-graduation swap and 80/20 LP-fee harvest proof",
-      "only then call LaunchFactory.enableLive() for testnet acceptance",
+      "only then call LaunchFactory.enableLive() and setCreatePaused(false) for testnet acceptance",
+      "pause creation again with setCreatePaused(true) after the acceptance run",
     ],
     note: "Robinhood testnet staging only. Mock V3 and price-feed addresses must never be promoted to mainnet.",
   };

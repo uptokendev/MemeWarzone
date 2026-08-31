@@ -57,6 +57,7 @@ on:
   push:
     branches:
       - "feat/robinhood-*"
+      - "build/cross-chain-stabilization-rh-base"
     paths:
       - "config/robinhood-*.env.example"
       - "deployments/robinhood/**"

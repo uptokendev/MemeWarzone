@@ -14,7 +14,13 @@ import {
   ROUTE_PROFILE_STANDARD_UNLINKED,
   ROUTE_PROFILE_OG_LINKED,
 } from "./route-decision.js";
-import { signCreateAuthorization, signTradeAuthorization } from "./routeAuthorizationSigner.js";
+import {
+  expectedCampaignGeneration,
+  generationRule,
+  isSupportedFactoryGeneration,
+  signCreateAuthorization,
+  signTradeAuthorization,
+} from "./routeAuthorizationSigner.js";
 import { defaultEvmChainId } from "../lib/defaultEvmChain.js";
 import { isCreatorArmCooldownActive, normalizeCreatorArmCooldownEndsAt } from "../lib/creatorArmCooldown.js";
 
@@ -24,8 +30,6 @@ const VALID_PROFILES = new Set([
   ROUTE_PROFILE_OG_LINKED,
 ]);
 
-const EXPECTED_CAMPAIGN_GENERATION = 2;
-const ROBINHOOD_CHAIN_IDS = new Set([4663, 46630]);
 const FACTORY_ROUTE_AUTHORITY_ABI = ["function routeAuthority() view returns (address)"];
 const FACTORY_CREATION_PREFLIGHT_ABI = [
   "function routeAuthority() view returns (address)",
@@ -51,17 +55,6 @@ function methodAllowed(req, res, allowed) {
 function normalizeAddress(value) {
   const raw = String(value || "").trim();
   return isAddress(raw) ? ethers.getAddress(raw) : "";
-}
-
-function isSupportedFactoryGeneration(chainId, generation) {
-  const id = Number(chainId);
-  const gen = Number(generation);
-  if (ROBINHOOD_CHAIN_IDS.has(id)) return gen === 4;
-  return gen === 3 || gen === 4;
-}
-
-function generationRule(chainId) {
-  return ROBINHOOD_CHAIN_IDS.has(Number(chainId)) ? "4/2" : "3-or-4/2";
 }
 
 function parsePositiveInt(value, fallback) {
@@ -256,7 +249,7 @@ async function readOnchainCreationPreflight({ chainId, factoryAddress, walletAdd
 
     const factoryGeneration = Number(factoryGenerationRaw);
     const campaignGeneration = Number(campaignGenerationRaw);
-    if (!isSupportedFactoryGeneration(chainId, factoryGeneration) || campaignGeneration !== EXPECTED_CAMPAIGN_GENERATION) {
+    if (!isSupportedFactoryGeneration(chainId, factoryGeneration) || campaignGeneration !== expectedCampaignGeneration(chainId)) {
       return {
         ok: false,
         status: 409,
