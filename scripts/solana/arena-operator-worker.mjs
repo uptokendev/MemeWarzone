@@ -72,6 +72,13 @@ export async function runOperatorJob({
   if (!pool) return fail("pool-unreadable");
 
   if (command === "resolve") {
+    const config = typeof loadConfig === "function" ? await loadConfig() : null;
+    if (!config) return fail("config-unreadable");
+    const expectedResolver = ident(config.resolver);
+    if (!expectedResolver) return fail("config-unreadable");
+    const actualResolver = ident(resolver?.publicKey?.toBase58?.() || resolver?.publicKey);
+    if (!actualResolver) return fail("missing-resolver");
+    if (actualResolver !== expectedResolver) return fail("resolver-config-mismatch");
     const plan = planBattleResolve({ settlement, pool });
     if (!plan.ok) return plan;
     if (plan.action === "skip") return { ...plan, sent: false };

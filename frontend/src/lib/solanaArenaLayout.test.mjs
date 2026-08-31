@@ -5,8 +5,10 @@ import { Keypair, PublicKey } from "@solana/web3.js";
 import {
   ARENA_BUYIN_DISCRIMINATOR,
   ARENA_CONFIG_DISCRIMINATOR,
+  ARENA_POOL_ACCOUNT_SIZE,
   ARENA_POOL_DISCRIMINATOR,
   REWARDS_TREASURY_PROGRAM_ID,
+  parseArenaPool,
   isSolanaWarzoneChainId,
   isSolanaWarzoneMoneyLive,
   parseArenaConfig,
@@ -29,6 +31,26 @@ test("walletsEqual is case-sensitive", () => {
 
 test("poolIdToBytes rejects short ids", () => {
   assert.throws(() => poolIdToBytes("0x1234"));
+});
+
+function writeU64le(data, offset, value) {
+  let n = BigInt(value);
+  for (let i = 0; i < 8; i += 1) {
+    data[offset + i] = Number(n & 0xffn);
+    n >>= 8n;
+  }
+}
+
+test("parseArenaPool requires the full V2 tail and never defaults actionNonce to 0", () => {
+  const data = new Uint8Array(ARENA_POOL_ACCOUNT_SIZE);
+  data.set(ARENA_POOL_DISCRIMINATOR, 0);
+  writeU64le(data, 393, 7n);
+  const parsed = parseArenaPool(data, PublicKey);
+  assert.equal(parsed.actionNonce, 7n);
+
+  assert.equal(parseArenaPool(data.subarray(0, 393), PublicKey), null);
+  assert.equal(parseArenaPool(data.subarray(0, 400), PublicKey), null);
+  assert.equal(parseArenaPool(data.subarray(0, 8 + 385), PublicKey), null);
 });
 
 test("canonical ArenaConfig discriminator matches Anchor account:ArenaConfig", () => {

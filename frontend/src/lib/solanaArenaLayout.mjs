@@ -13,6 +13,8 @@ export const LAMPORTS_PER_SOL = 1_000_000_000n;
 
 export const ARENA_CONFIG_DISCRIMINATOR = Uint8Array.from([9, 186, 181, 145, 197, 50, 33, 38]);
 export const ARENA_POOL_DISCRIMINATOR = Uint8Array.from([199, 155, 111, 90, 242, 136, 105, 8]);
+/** Anchor 8-byte disc + ArenaPool::SIZE. */
+export const ARENA_POOL_ACCOUNT_SIZE = 8 + 535;
 export const ARENA_BUYIN_DISCRIMINATOR = Uint8Array.from([78, 69, 75, 93, 134, 44, 139, 226]);
 
 export const SOLANA_GENESIS = Object.freeze({
@@ -148,7 +150,7 @@ export function parseArenaConfig(data, PublicKey) {
 }
 
 export function parseArenaPool(data, PublicKey) {
-  if (!data || data.length < 8 + 385) return null;
+  if (!data || data.length < ARENA_POOL_ACCOUNT_SIZE) return null;
   if (!bytesEqual(data.subarray(0, 8), ARENA_POOL_DISCRIMINATOR)) return null;
   let o = 8;
   const poolId = bytesToHex(data.subarray(o, o + 32)); o += 32;
@@ -185,9 +187,10 @@ export function parseArenaPool(data, PublicKey) {
   const claimedMwl = readU8(data, o) !== 0; o += 1;
   const refundedA = readU8(data, o) !== 0; o += 1;
   const refundedB = readU8(data, o) !== 0; o += 1;
-  const bump = data.length > o ? readU8(data, o) : 0; o += 1;
-  const vaultBump = data.length > o ? readU8(data, o) : 0; o += 1;
-  const actionNonce = data.length >= o + 8 ? readU64le(data, o) : 0n;
+  if (data.length < o + 1 + 1 + 8) return null;
+  const bump = readU8(data, o); o += 1;
+  const vaultBump = readU8(data, o); o += 1;
+  const actionNonce = readU64le(data, o); o += 8;
   return {
     poolId,
     kind,

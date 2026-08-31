@@ -19,6 +19,7 @@ const ownerA = Keypair.generate().publicKey;
 const ownerB = Keypair.generate().publicKey;
 const protocolReceiver = Keypair.generate().publicKey;
 const mwlReceiver = Keypair.generate().publicKey;
+const resolver = Keypair.generate();
 const battleId = "arena-battle-1";
 const poolId = canonicalBattlePoolIdBytes(battleId);
 
@@ -62,10 +63,12 @@ function pool(overrides = {}) {
   };
 }
 
-function config() {
+function config(overrides = {}) {
   return {
+    resolver: resolver.publicKey.toBase58(),
     protocolReceiver: protocolReceiver.toBase58(),
     mwlReceiver: mwlReceiver.toBase58(),
+    ...overrides,
   };
 }
 
@@ -82,6 +85,7 @@ test("worker never sends when planner skips or blocks", async () => {
     command: "resolve",
     battleId,
     send: true,
+    resolver,
     loadSettlement: async () => row(),
     loadPool: async () =>
       pool({
@@ -89,6 +93,7 @@ test("worker never sends when planner skips or blocks", async () => {
         winnerAsset: assetA.toBase58(),
         winnerWallet: ownerA.toBase58(),
       }),
+    loadConfig: async () => config(),
     sendResolve: async () => {
       sent += 1;
       return "sig";
@@ -120,8 +125,10 @@ test("actionable resolve dry-run does not send; --send re-reads until skip", asy
     command: "resolve",
     battleId,
     send: false,
+    resolver,
     loadSettlement: async () => row(),
     loadPool: async () => pool(),
+    loadConfig: async () => config(),
     sendResolve: async () => {
       sent += 1;
       return "sig";
@@ -137,7 +144,9 @@ test("actionable resolve dry-run does not send; --send re-reads until skip", asy
     command: "resolve",
     battleId,
     send: true,
+    resolver,
     loadSettlement: async () => row(),
+    loadConfig: async () => config(),
     loadPool: async () => {
       reads += 1;
       if (reads === 1) return pool();
@@ -160,6 +169,51 @@ test("actionable resolve dry-run does not send; --send re-reads until skip", asy
   assert.equal(sentResult.after.action, "skip");
   assert.equal(sent, 1);
   assert.equal(reads, 2);
+});
+
+test("resolve blocks when canonical Arena config is missing or resolver mismatches", async () => {
+  let sent = 0;
+  const unread = await runOperatorJob({
+    command: "resolve",
+    battleId,
+    send: true,
+    resolver,
+    loadSettlement: async () => row(),
+    loadPool: async () => pool(),
+    loadConfig: async () => null,
+    sendResolve: async () => {
+      sent += 1;
+      return "sig";
+    },
+  });
+  assert.equal(unread.reason, "config-unreadable");
+  assert.equal(sent, 0);
+
+  const mismatch = await runOperatorJob({
+    command: "resolve",
+    battleId,
+    send: true,
+    resolver,
+    loadSettlement: async () => row(),
+    loadPool: async () => pool(),
+    loadConfig: async () => config({ resolver: Keypair.generate().publicKey.toBase58() }),
+    sendResolve: async () => {
+      sent += 1;
+      return "sig";
+    },
+  });
+  assert.equal(mismatch.reason, "resolver-config-mismatch");
+  assert.equal(sent, 0);
+
+  const missingKey = await runOperatorJob({
+    command: "resolve",
+    battleId,
+    send: false,
+    loadSettlement: async () => row(),
+    loadPool: async () => pool(),
+    loadConfig: async () => config(),
+  });
+  assert.equal(missingKey.reason, "missing-resolver");
 });
 
 test("claim worker uses Arena config receiver and skips after confirmation", async () => {
