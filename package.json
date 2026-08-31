@@ -5,6 +5,7 @@
   "scripts": {
     "compile": "hardhat compile",
     "prove:robinhood-5c-freeze": "node --test scripts/prove-robinhood-testnet-acceptance-freeze.test.mjs && node scripts/prove-robinhood-testnet-acceptance-freeze.mjs",
+    "prove:bnb-6a-census": "node --test scripts/prove-bnb-current-generation.test.mjs && node scripts/prove-bnb-current-generation.mjs",
     "verify:robinhood-5c-freeze": "hardhat run scripts/verify-robinhood-testnet-acceptance-freeze.ts --network robinhoodTestnet",
     "report:robinhood-5c": "node scripts/report-robinhood-testnet-acceptance-5c.mjs",
     "sync:frontend-abis": "node scripts/sync-frontend-abis.cjs",

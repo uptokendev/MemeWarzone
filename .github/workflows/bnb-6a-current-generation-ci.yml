@@ -1,0 +1,77 @@
+name: BNB 6A current generation census
+
+on:
+  pull_request:
+    paths:
+      - "contracts/LaunchFactory.sol"
+      - "contracts/LaunchCampaign.sol"
+      - "contracts/PermanentLpLocker.sol"
+      - "contracts/TreasuryRouterV3.sol"
+      - "contracts/CreatorRewardsVault.sol"
+      - "deployments/bnb/**"
+      - "deployments/bscMainnet.factory-30bps-80-20.json"
+      - "deployments/bscMainnet.json"
+      - "deployments/bscTestnet.clean-slate-factory.json"
+      - "deployments/bscTestnet.treasury-v2-staged.json"
+      - "deployments/robinhood/testnet.accepted.json"
+      - "frontend/api/dev-fix/routeAuthorizationSigner.js"
+      - "frontend/src/lib/scheduledLaunchClientV2.ts"
+      - "scripts/bnbCurrentGeneration.mjs"
+      - "scripts/prove-bnb-current-generation.mjs"
+      - "scripts/prove-bnb-current-generation.test.mjs"
+      - "scripts/lib/bnbLiveGenerationGuard.ts"
+      - "scripts/deploy-clean-slate-factory.ts"
+      - "scripts/deploy-dual-test-factory.ts"
+      - "scripts/deploy-creator-arm-cooldown-factory.ts"
+      - "scripts/deploy-bnb-factory-replacement-phase-a.ts"
+      - "scripts/deploy-factory-only.ts"
+      - "scripts/run-bnb-lifecycle-certification.ts"
+      - "test/BnbLifecycleCertification.spec.ts"
+      - "test/PermanentLpLockerTopazFee.spec.ts"
+      - ".github/workflows/bnb-6a-current-generation-ci.yml"
+      - ".github/workflows/topaz-ci.yml"
+  push:
+    branches:
+      - "build/cross-chain-stabilization-rh-base"
+      - "feat/bnb-*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bnb-6a-current-generation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  census-and-lifecycle:
+    name: Freeze live BNB 3/2 and prove source-head Topaz V2 Gate D
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked contract dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Prove live 56/97 census and source-head 4/3 is not live BNB
+        run: npm run prove:bnb-6a-census
+
+      - name: Prove BNB signer stays on campaign generation 2
+        working-directory: frontend
+        run: node --test api/dev-fix/route-authorization-signer.test.mjs
+
+      - name: Compile
+        run: npm run compile
+
+      - name: Gate D source-head Topaz V2 lifecycle and 30 bps fail-closed
+        run: >-
+          npx hardhat test
+          test/BnbLifecycleCertification.spec.ts
+          test/PermanentLpLockerTopazFee.spec.ts
+          test/LaunchFactoryLiquidityKinds.spec.ts

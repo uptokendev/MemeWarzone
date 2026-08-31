@@ -102,7 +102,11 @@ contract MockTopazRouter is ITopazRouter02 {
 
         address pool = MockTopazFactory(_poolFactory).getPool(token, _wrapped, false);
         if (pool == address(0)) pool = MockTopazFactory(_poolFactory).createPool(token, _wrapped, false);
-        MockTopazPool(pool).setReserves(uint112(amountTokenDesired), uint112(msg.value));
+        if (token < _wrapped) {
+            MockTopazPool(pool).setReserves(uint112(amountTokenDesired), uint112(msg.value));
+        } else {
+            MockTopazPool(pool).setReserves(uint112(msg.value), uint112(amountTokenDesired));
+        }
         MockTopazPool(pool).mint(to, liquidity);
     }
 

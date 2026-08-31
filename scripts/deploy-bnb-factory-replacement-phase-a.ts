@@ -11,6 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { ethers, network } from "hardhat";
+import { refuseBnbFactoryBroadcastIfSourceHeadIsNotLive } from "./lib/bnbLiveGenerationGuard";
 
 const CONFIRM = "I_UNDERSTAND_MAINNET";
 const CHAIN_ID = 56n;
@@ -62,6 +63,7 @@ function eq(label: string, actual: unknown, expected: unknown) {
 }
 
 async function main() {
+  refuseBnbFactoryBroadcastIfSourceHeadIsNotLive();
   requireConfirm();
 
   if (network.name !== "bscMainnet") {

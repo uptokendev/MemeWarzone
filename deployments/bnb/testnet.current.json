@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "kind": "bnb-current-generation-census",
+  "chainId": 97,
+  "chainKey": "bnb-testnet",
+  "network": "bscTestnet",
+  "live": true,
+  "factoryGeneration": 3,
+  "campaignGeneration": 2,
+  "liquidityKind": 1,
+  "liquidityKindName": "topaz-v2-erc20",
+  "treasuryGeneration": "v2",
+  "requiredPoolFeeBps": 30,
+  "lockerCreatorFeeBps": 8000,
+  "lockerProtocolFeeBps": 2000,
+  "creationEnabled": true,
+  "createPaused": false,
+  "supportEnabled": true,
+  "creationFactory": "0x77Af7634837643d4f93d1086b492571268b30B5F",
+  "factoryStartBlock": 123128434,
+  "routeAuthority": "0xb989A99823eA96552c3E3198A40CdBF682EDf1aA",
+  "sourceHead": {
+    "factoryGeneration": 4,
+    "campaignGeneration": 3,
+    "isCurrentLiveBnb": false,
+    "reason": "source factory generation 4 / campaign 3 != accepted live BNB generation 3 / campaign 2"
+  },
+  "uniswapV3Rejected": true,
+  "contracts": {
+    "launchFactory": "0x77Af7634837643d4f93d1086b492571268b30B5F",
+    "permanentLpLocker": "0xb083929D2bbabdE7fc580090D5B18bbD918Fda9a",
+    "treasuryRouterV2": "0x0b0b3412bebaf92ABf1b3c977ee1664344e2d35d",
+    "topazRouterAdapter": "0xC49895Ee36Ad19aa5Cb1405761f6272aD7be6357",
+    "launchCampaignImplementation": "0x43A65f33F29cB1A2558255064D1F8C55D2C45827",
+    "graduationOracle": "0xc9Ee6b5bAA4c7b6C5fA0995FE29D358C59bC52Cb"
+  },
+  "pausedPreviousFactories": [
+    "0xA2B19f194826b6D930D18F3fBCad662FaDC9459E",
+    "0x8d4937D3BEe8A750411c0a24f888C0088754D3eD"
+  ],
+  "supportOnlyFactories": [
+    {
+      "address": "0xe0FbBa4533513110Cec7e78aa3e48EC45301B5E6",
+      "creationEnabled": false,
+      "createPaused": true,
+      "supportEnabled": true,
+      "notes": "Obsolete scheduled-slot factory; creation authorizations forbidden"
+    }
+  ],
+  "sourceArtifacts": [
+    "deployments/bscTestnet.clean-slate-factory.json",
+    "deployments/bscTestnet.treasury-v2-staged.json",
+    "deployments/bscTestnet.obsolete-scheduled-factory-containment.json"
+  ]
+}

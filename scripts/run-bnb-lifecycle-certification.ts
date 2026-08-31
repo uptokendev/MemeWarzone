@@ -6,9 +6,10 @@ import { network } from "hardhat";
 /**
  * Gate D driver.
  *
- * Local Hardhat: the executable evidence pack lives in
- * test/BnbLifecycleCertification.spec.ts (create → bond → graduate →
- * Topaz BUY/SELL → harvest 80/20 → LP principal). This script delegates to it.
+ * Local Hardhat: source-head Gate D evidence in
+ * test/BnbLifecycleCertification.spec.ts (LaunchFactory 4 / Campaign 3 +
+ * Topaz V2 + TreasuryRouterV3 + CreatorRewardsVault + liquidityKind 1 +
+ * 30 bps locker). This is not a claim that generation 4/3 is live BNB.
  *
  * bscTestnet: refuses to masquerade as a preflight. It requires a funded
  * dedicated test EOA plus route-authority signing, then must produce the

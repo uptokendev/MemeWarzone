@@ -206,9 +206,16 @@ test("Robinhood testnet refuses factory generation 3 and requires 4/3", () => {
 });
 
 test("BNB and Robinhood production still reject campaign generation 3", () => {
+  assert.equal(expectedCampaignGeneration(56), 2);
   assert.equal(expectedCampaignGeneration(97), 2);
+  assert.equal(generationRule(56), "3-or-4/2");
+  assert.equal(generationRule(97), "3-or-4/2");
   assert.equal(expectedCampaignGeneration(4663), 2);
   assert.equal(generationRule(4663), "4/2");
+  assert.throws(
+    () => buildScheduledCreateAuthorizationDigest(scheduledInput({ chainId: 56, campaignGeneration: 3, factoryGeneration: 4 })),
+    /chain 56 requires 3-or-4\/2/,
+  );
   assert.throws(
     () => buildScheduledCreateAuthorizationDigest(scheduledInput({ campaignGeneration: 3 })),
     /chain 97 requires 3-or-4\/2/,
