@@ -215,13 +215,8 @@ test("settlement is bound to the canonical battle pool id", () => {
   assert.equal(other.reason, "pool-id-mismatch");
 });
 
-test("tournaments stay out of 4b", () => {
+test("tournaments stay out of 4b battle resolve", () => {
   assert.equal(planBattleResolve({ settlement: settlement(), pool: pool({ kind: 1 }) }).reason, "tournament-deferred-to-4c");
-  assert.equal(planOperatorClaim({
-    pool: pool({ kind: 1, state: ARENA_STATE_RESOLVED }),
-    config: config(),
-    bucket: ARENA_CLAIM_PROTOCOL,
-  }).reason, "tournament-deferred-to-4c");
 });
 
 test("planned resolve is Ed25519 then resolve_pool_v2, never Phantom", () => {

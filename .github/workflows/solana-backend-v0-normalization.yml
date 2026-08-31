@@ -14,6 +14,7 @@ on:
       - scripts/solana/arena-operator-v0.test.mjs
       - scripts/solana/arena-operator-resolve.mjs
       - scripts/solana/arena-operator-resolve.test.mjs
+      - scripts/solana/arena-operator-tournament.test.mjs
       - scripts/solana/arena-operator-worker.mjs
       - scripts/solana/arena-operator-worker.test.mjs
       - scripts/solana/backfill-fee-escrow.mjs
@@ -49,6 +50,7 @@ jobs:
           node --check scripts/solana/arena-operator-v0.test.mjs
           node --check scripts/solana/arena-operator-resolve.mjs
           node --check scripts/solana/arena-operator-resolve.test.mjs
+          node --check scripts/solana/arena-operator-tournament.test.mjs
           node --check scripts/solana/arena-operator-worker.mjs
           node --check scripts/solana/arena-operator-worker.test.mjs
           node --check scripts/solana/backfill-fee-escrow.mjs
@@ -86,6 +88,10 @@ jobs:
           grep -F 'sendServerV0' scripts/solana/arena-operator-v0.mjs
           grep -F 'sendArenaOperatorV0' scripts/solana/arena-operator-resolve.mjs
           grep -F 'money_winner_token' scripts/solana/arena-operator-resolve.mjs
+          grep -F 'planTournamentResolve' scripts/solana/arena-operator-resolve.mjs
+          grep -F 'verifyAuthoritativeBuyInReceipt' scripts/solana/arena-operator-resolve.mjs
+          grep -F 'winnerBuyInReceipt' scripts/solana/arena-operator-resolve.mjs
+          grep -F 'canonicalTournamentPoolIdBytes' scripts/solana/arena-operator-resolve.mjs
           grep -F 'runOperatorJob' scripts/solana/arena-operator-worker.mjs
           grep -F 'planBattleResolve' scripts/solana/arena-operator-worker.mjs
           grep -F 'sendPlannedResolve' scripts/solana/arena-operator-worker.mjs
@@ -100,7 +106,7 @@ jobs:
         run: npm install --no-save --ignore-scripts --no-audit --no-fund @solana/web3.js@1.98.4 ethers @noble/hashes
 
       - name: Run Arena operator V2 tests
-        run: node --test scripts/solana/arena-operator-v0.test.mjs scripts/solana/arena-operator-resolve.test.mjs scripts/solana/arena-operator-worker.test.mjs
+        run: node --test scripts/solana/arena-operator-v0.test.mjs scripts/solana/arena-operator-resolve.test.mjs scripts/solana/arena-operator-tournament.test.mjs scripts/solana/arena-operator-worker.test.mjs
 
       - name: Install realtime indexer dependencies
         run: npm ci --prefix realtime-indexer --no-audit --no-fund

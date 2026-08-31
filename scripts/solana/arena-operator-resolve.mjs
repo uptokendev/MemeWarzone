@@ -3,25 +3,36 @@ import { createRequire } from "node:module";
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
+import { PublicKey } from "@solana/web3.js";
 import {
   ARENA_CLAIM_MWL,
   ARENA_CLAIM_PROTOCOL,
   ARENA_KIND_BATTLE,
+  ARENA_KIND_TOURNAMENT,
   ARENA_PROGRAM_ID,
   buildArenaOperatorClaimInstruction,
   buildArenaResolveInstructions,
+  deriveArenaBuyInReceipt,
   sendArenaOperatorV0,
 } from "./arena-operator-v0.mjs";
+import {
+  REWARDS_TREASURY_PROGRAM_ID,
+  verifyAuthoritativeBuyInReceipt,
+} from "../../frontend/src/lib/solanaArenaLayout.mjs";
 
 const require = createRequire(import.meta.url);
 const ED25519_PROGRAM_ID = "Ed25519SigVerify111111111111111111111111111";
 
 export const ARENA_STATE_LIVE = 1;
 export const ARENA_STATE_RESOLVED = 2;
+export const ARENA_SIDE_NONE = 0;
 export const ARENA_SIDE_A = 1;
 export const ARENA_SIDE_B = 2;
 export const ARENA_RESULT_WINNER = 1;
 export const ARENA_KIND_BATTLE_CODE = 0;
+export const ARENA_KIND_TOURNAMENT_CODE = 1;
+/** On-chain tournament pools store Pubkey::default() for unused asset/owner slots. */
+export const SOLANA_DEFAULT_PUBKEY = new PublicKey(new Uint8Array(32)).toBase58();
 export const OUTCOME_HASH_DOMAIN = "MWZ_ARENA_OUTCOME_V1";
 export const RESOLVE_POOL_V2_DISCRIMINATOR = createHash("sha256")
   .update("global:resolve_pool_v2", "utf8")
@@ -51,6 +62,13 @@ export function canonicalBattlePoolIdBytes(battleId) {
   return keccak256Utf8(`arena-battle:${id}`);
 }
 
+/** Same as frontend tournamentPoolId / ethers.id(`arena-tournament:${id}`). */
+export function canonicalTournamentPoolIdBytes(tournamentId) {
+  const id = ident(tournamentId);
+  if (!id) throw new Error("tournament id is required");
+  return keccak256Utf8(`arena-tournament:${id}`);
+}
+
 function poolIdBytes(value) {
   if (!value && value !== 0) return null;
   if (Buffer.isBuffer(value) || value instanceof Uint8Array) {
@@ -72,6 +90,15 @@ function walletsEqual(left, right) {
   return Boolean(a && b && a === b);
 }
 
+function pubkeyOrDefault(value) {
+  return ident(value) || SOLANA_DEFAULT_PUBKEY;
+}
+
+function isDefaultPubkey(value) {
+  const v = ident(value);
+  return !v || v === SOLANA_DEFAULT_PUBKEY;
+}
+
 function fail(reason, extra = {}) {
   return { ok: false, action: "block", reason, ...extra };
 }
@@ -85,6 +112,16 @@ export function battleOutcomeHash(settlement) {
     .update(String(settlement.challenger_end_mcap_usd ?? settlement.leftEndMcap ?? ""))
     .update(String(settlement.defender_end_mcap_usd ?? settlement.rightEndMcap ?? ""))
     .update(String(settlement.settlement_version ?? settlement.settlementVersion ?? 1))
+    .digest();
+}
+
+export function tournamentOutcomeHash(tournament) {
+  return createHash("sha256")
+    .update(OUTCOME_HASH_DOMAIN)
+    .update(ident(tournament.id || tournament.tournamentId))
+    .update(ident(tournament.winner_token || tournament.money_winner_token || tournament.moneyWinnerToken))
+    .update(ident(tournament.winner_wallet || tournament.winnerWallet))
+    .update(String(tournament.settlement_version ?? tournament.settlementVersion ?? 1))
     .digest();
 }
 
@@ -196,6 +233,99 @@ export function planBattleResolve({ settlement, pool, nowSec = Math.floor(Date.n
   };
 }
 
+export function planTournamentResolve({ tournament, pool, receiptAccount, nowSec = Math.floor(Date.now() / 1000) } = {}) {
+  if (Number(pool?.kind) !== ARENA_KIND_TOURNAMENT_CODE) return fail("not-tournament");
+  const tournamentId = ident(tournament?.id || tournament?.tournamentId);
+  if (!tournamentId) return fail("missing-tournament-id");
+  const expectedPoolId = canonicalTournamentPoolIdBytes(tournamentId);
+  const actualPoolId = poolIdBytes(pool?.poolId || pool?.pool_id);
+  if (!actualPoolId) return fail("missing-pool-id");
+  if (!actualPoolId.equals(expectedPoolId)) return fail("pool-id-mismatch");
+
+  const winnerAsset = ident(tournament?.winner_token || tournament?.money_winner_token || tournament?.moneyWinnerToken);
+  const winnerWallet = ident(tournament?.winner_wallet || tournament?.winnerWallet);
+  if (!winnerAsset) return fail("missing-money-winner");
+  if (!winnerWallet) return fail("missing-winner-wallet");
+  if (isDefaultPubkey(winnerAsset)) return fail("default-winner-asset");
+  if (isDefaultPubkey(winnerWallet)) return fail("default-winner-wallet");
+
+  let expectedPda;
+  try {
+    expectedPda = deriveArenaBuyInReceipt(expectedPoolId, winnerAsset, winnerWallet);
+  } catch {
+    return fail("invalid-winner-pubkey");
+  }
+
+  const state = Number(pool.state);
+  if (state === ARENA_STATE_RESOLVED) {
+    const onchainAsset = ident(pool.winnerAsset || pool.winner_asset);
+    const onchainWallet = ident(pool.winnerWallet || pool.winner_wallet);
+    if (!onchainAsset) return fail("resolved-winner-missing");
+    if (!walletsEqual(onchainAsset, winnerAsset)) return fail("resolved-winner-mismatch");
+    if (!onchainWallet) return fail("resolved-wallet-missing");
+    if (!walletsEqual(onchainWallet, winnerWallet)) return fail("resolved-wallet-mismatch");
+    return {
+      ok: true,
+      action: "skip",
+      reason: "already-resolved",
+      moneyWinnerToken: winnerAsset,
+      winnerAsset,
+      winnerWallet,
+      winnerBuyInReceipt: expectedPda,
+    };
+  }
+  if (state !== ARENA_STATE_LIVE) return fail("pool-not-live");
+
+  const resolveDeadline = Number(pool.resolveDeadline ?? pool.resolve_deadline ?? 0);
+  if (!Number.isFinite(resolveDeadline) || resolveDeadline <= nowSec) return fail("resolve-deadline-passed");
+
+  const buyInLamports = BigInt(pool.buyInLamports ?? pool.buy_in_lamports ?? 0);
+  const verified = verifyAuthoritativeBuyInReceipt({
+    account: receiptAccount,
+    owner: receiptAccount?.owner?.toBase58?.() || String(receiptAccount?.owner || ""),
+    expectedPoolId: expectedPoolId.toString("hex"),
+    expectedEntryAsset: winnerAsset,
+    expectedEntrant: winnerWallet,
+    expectedAmountLamports: buyInLamports,
+    PublicKey,
+  });
+  if (!verified.ok) return fail(`buy-in-receipt-${verified.reason || "invalid"}`);
+  const suppliedPda = ident(receiptAccount?.pubkey?.toBase58?.() || receiptAccount?.pubkey || receiptAccount?.address);
+  if (suppliedPda !== expectedPda.toBase58()) return fail("buy-in-receipt-pda-mismatch");
+
+  return {
+    ok: true,
+    action: "resolve",
+    reason: "ok",
+    moneyWinnerToken: winnerAsset,
+    winnerSide: ARENA_SIDE_NONE,
+    winnerAsset,
+    winnerWallet,
+    winnerBuyInReceipt: expectedPda,
+    resultType: ARENA_RESULT_WINNER,
+    kind: ARENA_KIND_TOURNAMENT,
+    poolId: expectedPoolId,
+    version: 2,
+    assetA: pubkeyOrDefault(pool.assetA || pool.asset_a),
+    assetB: pubkeyOrDefault(pool.assetB || pool.asset_b),
+    ownerA: pubkeyOrDefault(pool.ownerA || pool.owner_a),
+    ownerB: pubkeyOrDefault(pool.ownerB || pool.owner_b),
+    stakeA: BigInt(pool.depositedStakeA ?? pool.deposited_stake_a ?? 0),
+    stakeB: BigInt(pool.depositedStakeB ?? pool.deposited_stake_b ?? 0),
+    supportTotal: BigInt(pool.supportTotal ?? pool.support_total ?? 0),
+    prizeBoostTotal: BigInt(pool.prizeBoostTotal ?? pool.prize_boost_total ?? 0),
+    buyInTotal: BigInt(pool.buyInTotal ?? pool.buy_in_total ?? 0),
+    outcomeHash: tournamentOutcomeHash({
+      id: tournamentId,
+      winner_token: winnerAsset,
+      winner_wallet: winnerWallet,
+      settlement_version: tournament?.settlement_version ?? tournament?.settlementVersion ?? 1,
+    }),
+    deadline: BigInt(resolveDeadline),
+    nonce: BigInt(pool.actionNonce ?? pool.action_nonce ?? 0),
+  };
+}
+
 function instructionData(ix) {
   const data = ix?.data;
   if (Buffer.isBuffer(data)) return data;
@@ -241,7 +371,8 @@ function configReceiver(config, bucket) {
 
 export function planOperatorClaim({ pool, config, bucket, receiver } = {}) {
   if (bucket !== ARENA_CLAIM_PROTOCOL && bucket !== ARENA_CLAIM_MWL) return fail("unsupported-claim-bucket");
-  if (Number(pool?.kind) !== ARENA_KIND_BATTLE_CODE) return fail("tournament-deferred-to-4c");
+  const kind = Number(pool?.kind);
+  if (kind !== ARENA_KIND_BATTLE_CODE && kind !== ARENA_KIND_TOURNAMENT_CODE) return fail("unsupported-pool-kind");
   if (Number(pool?.state) !== ARENA_STATE_RESOLVED) return fail("pool-not-resolved");
   const expected = configReceiver(config, bucket);
   if (!expected) return fail("missing-config-receiver");
@@ -287,6 +418,7 @@ export function publicPlan(plan) {
   const out = { ...plan };
   for (const [key, value] of Object.entries(out)) {
     if (typeof value === "bigint") out[key] = value.toString();
+    else if (typeof value?.toBase58 === "function") out[key] = value.toBase58();
     else if (value instanceof Uint8Array) out[key] = Buffer.from(value).toString("hex");
   }
   return out;
