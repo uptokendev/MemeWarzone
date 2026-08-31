@@ -8,6 +8,7 @@ import * as dotenv from "dotenv";
 
 dotenv.config({ path: path.resolve(__dirname, ".env") });
 dotenv.config({ path: path.resolve(__dirname, "config/robinhood.local") });
+dotenv.config({ path: path.resolve(__dirname, "config/bnb.local") });
 
 function argvSelectsNetwork(name: string): boolean {
   return process.argv.some((arg, index, args) => arg === name || (arg === "--network" && args[index + 1] === name));
@@ -98,6 +99,10 @@ const config: HardhatUserConfig = {
       },
     },
 
+    localhost: {
+      url: "http://127.0.0.1:8545",
+      chainId: 31337,
+    },
     bscTestnet: {
       url: bscTestnetRpcUrl,
       accounts: deployerPrivateKey ? [deployerPrivateKey.startsWith("0x") ? deployerPrivateKey : `0x${deployerPrivateKey}`] : [],
