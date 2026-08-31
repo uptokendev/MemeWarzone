@@ -24,6 +24,10 @@ on:
       - "test/LaunchFactoryGraduationThresholds.spec.ts"
       - "test/ScheduledLaunchFactory.spec.ts"
       - "test/CreatorArmCooldown.spec.ts"
+      - "test/helpers/scheduledCreateAuth.ts"
+      - "contracts/test/TreasuryRouterV3Mocks.sol"
+      - "scripts/prove-robinhood-staged-manifest.mjs"
+      - "scripts/prove-robinhood-staged-manifest.test.mjs"
       - "db/migrations/**"
       - "frontend/api/load-local-env.mjs"
       - "frontend/scripts/dev-vite.mjs"
@@ -73,6 +77,10 @@ on:
       - "test/LaunchFactoryGraduationThresholds.spec.ts"
       - "test/ScheduledLaunchFactory.spec.ts"
       - "test/CreatorArmCooldown.spec.ts"
+      - "test/helpers/scheduledCreateAuth.ts"
+      - "contracts/test/TreasuryRouterV3Mocks.sol"
+      - "scripts/prove-robinhood-staged-manifest.mjs"
+      - "scripts/prove-robinhood-staged-manifest.test.mjs"
       - "db/migrations/**"
       - "frontend/api/load-local-env.mjs"
       - "frontend/scripts/dev-vite.mjs"
@@ -126,6 +134,9 @@ jobs:
 
       - name: Compile contracts
         run: npx hardhat compile
+
+      - name: Prove staged-manifest invariant source
+        run: node --test scripts/prove-robinhood-staged-manifest.test.mjs
 
       - name: Prove V3 staging DEX, factory liquidity seam, and scheduled-generation compatibility
         run: >-

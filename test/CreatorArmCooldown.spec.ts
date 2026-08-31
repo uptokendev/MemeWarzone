@@ -1,9 +1,6 @@
 import { expect } from "chai";
 import { ethers, network } from "hardhat";
-import { deployCoreFixture } from "./fixtures/core";
-
-const FACTORY_GENERATION = 4;
-const CAMPAIGN_GENERATION = 2;
+import { deployScheduledCreateFixture, signScheduledCreateAuthorization } from "./helpers/scheduledCreateAuth";
 
 function campaignRequest(name: string, symbol: string) {
   return {
@@ -15,23 +12,6 @@ function campaignRequest(name: string, symbol: string) {
     extraLink: "",
     graduationTarget: 0n,
   };
-}
-
-function hashCampaignRequest(req: ReturnType<typeof campaignRequest>) {
-  return ethers.keccak256(
-    ethers.AbiCoder.defaultAbiCoder().encode(
-      ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256"],
-      [
-        ethers.keccak256(ethers.toUtf8Bytes(req.name)),
-        ethers.keccak256(ethers.toUtf8Bytes(req.symbol)),
-        ethers.keccak256(ethers.toUtf8Bytes(req.logoURI)),
-        ethers.keccak256(ethers.toUtf8Bytes(req.xAccount)),
-        ethers.keccak256(ethers.toUtf8Bytes(req.website)),
-        ethers.keccak256(ethers.toUtf8Bytes(req.extraLink)),
-        req.graduationTarget,
-      ],
-    ),
-  );
 }
 
 async function latestTimestamp() {
@@ -52,56 +32,23 @@ function scheduledRequest(name: string, symbol: string, launchAt: bigint, nonce:
 
 async function signScheduled(factory: any, creator: any, authority: any, request: any) {
   const deadline = (await latestTimestamp()) + 600n;
-  const chainId = (await ethers.provider.getNetwork()).chainId;
-  const digest = ethers.keccak256(
-    ethers.AbiCoder.defaultAbiCoder().encode(
-      [
-        "string",
-        "uint256",
-        "address",
-        "address",
-        "bytes32",
-        "uint64",
-        "bytes32",
-        "bytes32",
-        "bytes32",
-        "uint64",
-        "uint256",
-        "uint32",
-        "uint32",
-        "uint8",
-        "uint8",
-        "uint64",
-      ],
-      [
-        "MWZ_CREATE_SCHEDULED_V2_AUTH",
-        chainId,
-        await factory.getAddress(),
-        await creator.getAddress(),
-        hashCampaignRequest(request.campaign),
-        request.launchAt,
-        request.draftReferenceHash,
-        request.normalizedTickerHash,
-        request.metadataHash,
-        request.reservationVersion,
-        request.authorizationNonce,
-        FACTORY_GENERATION,
-        CAMPAIGN_GENERATION,
-        1,
-        1,
-        deadline,
-      ],
-    ),
-  );
   return {
     tradeRouteProfile: 1,
     finalizeRouteProfile: 1,
     deadline,
-    signature: await authority.signMessage(ethers.getBytes(digest)),
+    signature: await signScheduledCreateAuthorization(
+      factory,
+      await creator.getAddress(),
+      authority,
+      request,
+      1,
+      1,
+      deadline,
+    ),
   };
 }
 
-async function configureRegistry(fixture: Awaited<ReturnType<typeof deployCoreFixture>>) {
+async function configureRegistry(fixture: Awaited<ReturnType<typeof deployScheduledCreateFixture>>) {
   const { factory, owner } = fixture;
   const Registry = await ethers.getContractFactory("CreatorRegistry");
   const registry = await Registry.deploy();
@@ -120,7 +67,7 @@ async function notifyGraduatedFromCampaign(factory: any, campaignAddress: string
 
 describe("Creator arm cooldown correction", function () {
   it("uses one live-count ledger for immediate and scheduled campaigns and cannot decrement twice", async () => {
-    const fixture = await deployCoreFixture();
+    const fixture = await deployScheduledCreateFixture();
     const { factory, owner, creator, alice } = fixture;
     const registry = await configureRegistry(fixture);
 
@@ -153,7 +100,7 @@ describe("Creator arm cooldown correction", function () {
   });
 
   it("opens several same-timestamp campaigns at the same block boundary", async () => {
-    const fixture = await deployCoreFixture();
+    const fixture = await deployScheduledCreateFixture();
     const { factory, owner, creator, alice, bob } = fixture;
     await configureRegistry(fixture);
 

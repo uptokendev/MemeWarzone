@@ -27,6 +27,8 @@ on:
       - "scripts/deploy-robinhood-testnet-stage.ts"
       - "scripts/deploy-robinhood-testnet-auxiliary.ts"
       - "scripts/verify-robinhood-testnet-stage.ts"
+      - "scripts/prove-robinhood-staged-manifest.mjs"
+      - "scripts/prove-robinhood-staged-manifest.test.mjs"
       - "scripts/test-robinhood-testnet-lifecycle.ts"
       - "test/RobinhoodV3NativeSwapAdapter.spec.ts"
       - ".github/workflows/robinhood-testnet-stage-ci.yml"
@@ -56,6 +58,8 @@ on:
       - "scripts/deploy-robinhood-testnet-stage.ts"
       - "scripts/deploy-robinhood-testnet-auxiliary.ts"
       - "scripts/verify-robinhood-testnet-stage.ts"
+      - "scripts/prove-robinhood-staged-manifest.mjs"
+      - "scripts/prove-robinhood-staged-manifest.test.mjs"
       - "scripts/test-robinhood-testnet-lifecycle.ts"
       - "test/RobinhoodV3NativeSwapAdapter.spec.ts"
       - ".github/workflows/robinhood-testnet-stage-ci.yml"
@@ -130,25 +134,13 @@ jobs:
           ROBINHOOD_STAGE_DEPLOYMENT_FILE: /tmp/robinhood-testnet-stage.json
         run: npx hardhat run scripts/deploy-robinhood-testnet-auxiliary.ts --network localhost
 
+      - name: Prove staged-manifest invariant source
+        run: node --test scripts/prove-robinhood-staged-manifest.test.mjs
+
       - name: Prove manifest stays staging-only and disabled before acceptance
-        run: |
-          node - <<'NODE'
-          const fs = require('fs');
-          const p = '/tmp/robinhood-testnet-stage.json';
-          const m = JSON.parse(fs.readFileSync(p, 'utf8'));
-          if (m.targetChainId !== 46630) throw new Error('wrong targetChainId');
-          if (m.factoryGeneration !== 4 || m.campaignGeneration !== 2 || m.liquidityKind !== 2) {
-            throw new Error('wrong generation/liquidity metadata');
-          }
-          if (m.creationEnabled !== false || m.supportEnabled !== false || m.factoryLive !== false) {
-            throw new Error('staged deployment unexpectedly enabled');
-          }
-          if (m.stagingOnly?.productionCompatible !== false) throw new Error('staging-only marker missing');
-          if (!m.contracts?.upVoteTreasury) throw new Error('UPVoteTreasury missing from staged manifest');
-          if (!m.contracts?.v3NativeSwapAdapter) throw new Error('Robinhood V3 native swap adapter missing from staged manifest');
-          if (m.auxiliaryFeatures?.v3NativeSwapAdapter?.nativeAsset !== 'ETH') throw new Error('native V3 adapter ETH metadata missing');
-          console.log('Robinhood staged manifest activation gate passed');
-          NODE
+        env:
+          ROBINHOOD_STAGE_DEPLOYMENT_FILE: /tmp/robinhood-testnet-stage.json
+        run: node scripts/prove-robinhood-staged-manifest.mjs /tmp/robinhood-testnet-stage.json
 
       - name: Exercise authorized create, buy, sell, graduation, V3 swap and 80/20 harvest
         env:

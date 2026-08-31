@@ -16,6 +16,14 @@ contract TreasuryRouterV3ReceiverMock {
     }
 }
 
+/// Minimal Phase1 V3 fee-router surface for schedule-gating tests that still use the shared V2 DEX fixture.
+contract MockPhase1TreasuryRouter {
+    receive() external payable {}
+    function routeTrade(uint8) external payable {}
+    function routeFinalize(uint8) external payable {}
+    function route(uint8, uint8) external payable {}
+}
+
 contract CommunityRewardsVaultV3Mock {
     uint256 public airdropReceived;
     uint256 public squadReceived;
