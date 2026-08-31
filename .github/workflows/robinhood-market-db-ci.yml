@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - "db/migrations/**"
+      - "frontend/scripts/prepare-robinhood-local-db.mjs"
+      - "frontend/scripts/prepare-robinhood-local-db.test.mjs"
       - "realtime-indexer/scripts/verify-robinhood-market-db.mjs"
       - "realtime-indexer/src/robinhoodV3PoolIndexer.ts"
       - "realtime-indexer/src/robinhoodMarketApi.ts"
@@ -14,6 +16,8 @@ on:
       - "feat/robinhood-*"
     paths:
       - "db/migrations/**"
+      - "frontend/scripts/prepare-robinhood-local-db.mjs"
+      - "frontend/scripts/prepare-robinhood-local-db.test.mjs"
       - "realtime-indexer/scripts/verify-robinhood-market-db.mjs"
       - "realtime-indexer/src/robinhoodV3PoolIndexer.ts"
       - "realtime-indexer/src/robinhoodMarketApi.ts"
@@ -65,7 +69,13 @@ jobs:
       - name: Install realtime indexer dependencies
         run: npm install --prefix realtime-indexer --package-lock=false --no-audit --no-fund
 
+      - name: Prove tournament support migration is empty-DB replay safe
+        run: node --test frontend/scripts/prepare-robinhood-local-db.test.mjs
+
       - name: Replay all committed migrations into a fresh Robinhood database
+        run: node frontend/scripts/prepare-robinhood-local-db.mjs
+
+      - name: Replay a second time to prove the ledger is idempotent
         run: node frontend/scripts/prepare-robinhood-local-db.mjs
 
       - name: Prove bonding plus V3 continuity, duplicate safety, and cursor persistence

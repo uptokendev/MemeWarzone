@@ -29,6 +29,7 @@ on:
       - "frontend/scripts/dev-vite.mjs"
       - "frontend/scripts/dev-robinhood-local.mjs"
       - "frontend/scripts/prepare-robinhood-local-db.mjs"
+      - "frontend/scripts/prepare-robinhood-local-db.test.mjs"
       - "frontend/scripts/robinhood-local-env.mjs"
       - "frontend/scripts/robinhood-local-env.test.mjs"
       - "frontend/src/components/common/ChainFeedSwitch.tsx"
@@ -77,6 +78,7 @@ on:
       - "frontend/scripts/dev-vite.mjs"
       - "frontend/scripts/dev-robinhood-local.mjs"
       - "frontend/scripts/prepare-robinhood-local-db.mjs"
+      - "frontend/scripts/prepare-robinhood-local-db.test.mjs"
       - "frontend/scripts/robinhood-local-env.mjs"
       - "frontend/scripts/robinhood-local-env.test.mjs"
       - "frontend/src/components/common/ChainFeedSwitch.tsx"
@@ -157,7 +159,7 @@ jobs:
         run: node scripts/check-robinhood-local-isolation.mjs
 
       - name: Prove localhost browser exposes three chains while workers stay Robinhood-only
-        run: node --test frontend/scripts/robinhood-local-env.test.mjs
+        run: node --test frontend/scripts/robinhood-local-env.test.mjs frontend/scripts/prepare-robinhood-local-db.test.mjs
 
       - name: Install frontend dependencies for source proof
         run: npm install --prefix frontend --package-lock=false --no-audit --no-fund
@@ -271,6 +273,9 @@ jobs:
         run: npm install --prefix realtime-indexer --package-lock=false --no-audit --no-fund
 
       - name: Bootstrap dedicated local database from committed migrations
+        run: node frontend/scripts/prepare-robinhood-local-db.mjs
+
+      - name: Replay migrations a second time to prove idempotency
         run: node frontend/scripts/prepare-robinhood-local-db.mjs
 
       - name: Start the exact developer local stack command

@@ -7,6 +7,26 @@ BEGIN;
 ALTER TABLE public.arena_tournaments
   ADD COLUMN IF NOT EXISTS winner_token text;
 
+-- Production acquired this table via database/arena_war_pools_import.sql, which
+-- is outside db/migrations. CREATE IF NOT EXISTS makes empty-DB replay succeed
+-- without changing existing Supabase history.
+CREATE TABLE IF NOT EXISTS public.arena_war_pools (
+  battle_id text PRIMARY KEY,
+  state text NOT NULL DEFAULT 'open',
+  cutoff_at timestamptz NOT NULL DEFAULT (NOW() + interval '30 minutes'),
+  created_at timestamptz NOT NULL DEFAULT NOW(),
+  updated_at timestamptz NOT NULL DEFAULT NOW(),
+  CONSTRAINT arena_war_pools_state_check CHECK (state IN ('open', 'locked', 'settling', 'paid'))
+);
+
+DROP TRIGGER IF EXISTS set_arena_war_pools_updated_at ON public.arena_war_pools;
+CREATE TRIGGER set_arena_war_pools_updated_at
+BEFORE UPDATE ON public.arena_war_pools
+FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+CREATE INDEX IF NOT EXISTS arena_war_pools_state_idx
+  ON public.arena_war_pools (state, updated_at DESC);
+
 ALTER TABLE public.arena_war_pools
   ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'battle';
 
