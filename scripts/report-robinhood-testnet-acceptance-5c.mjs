@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
-import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
   proveProductionRobinhoodDisabled,
@@ -14,19 +13,11 @@ function readJson(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
-function certificationSha() {
-  try {
-    return execSync("git rev-parse HEAD", { cwd: root, encoding: "utf8" }).trim();
-  } catch {
-    return "unknown";
-  }
-}
-
 function renderMarkdown(report) {
   const rows = [
     ["result", report.result],
-    ["certificationSha", report.certificationSha],
     ["accepted5BSha", report.accepted5BSha],
+    ["freezeSchemaVersion", report.freezeSchemaVersion],
     ["verifiedAt", report.verifiedAt],
     ["chainId", report.chainId],
     ["currentBlock", report.currentBlock],
@@ -80,8 +71,8 @@ if (continuity.ok !== true || continuity.no56Alias !== true) {
 const report = {
   kind: "robinhood-testnet-acceptance-5c-report",
   result: "PASS",
-  certificationSha: certificationSha(),
   accepted5BSha: freeze.accepted5BSha,
+  freezeSchemaVersion: Number(freeze.schemaVersion || 1),
   verifiedAt: verify.verifiedAt,
   chainId: verify.chainId,
   currentBlock: verify.currentBlock,
