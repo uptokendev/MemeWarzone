@@ -374,6 +374,10 @@ async function proveContinuity(
 async function main() {
   const net = await ethers.provider.getNetwork();
   const chainId = Number(net.chainId);
+  const freezeMod = await Function("specifier", "return import(specifier)")(
+    pathToFileURL(path.join(__dirname, "robinhoodTestnetFreeze.mjs")).href,
+  );
+  freezeMod.assertRobinhoodTestnetMutationForbidden(chainId);
   const allowLocal = truthy(process.env.ALLOW_LOCAL_RH_PROTOCOL_STAGE);
   if (chainId !== ROBINHOOD_TESTNET_CHAIN_ID && !(allowLocal && chainId === LOCAL_CHAIN_ID)) {
     throw new Error(`Robinhood lifecycle acceptance is restricted to chain ${ROBINHOOD_TESTNET_CHAIN_ID}${allowLocal ? ` or local ${LOCAL_CHAIN_ID}` : ""}; got ${chainId}.`);

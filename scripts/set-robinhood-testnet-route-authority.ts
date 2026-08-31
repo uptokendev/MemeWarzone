@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { ethers, network } from "hardhat";
 import { resolveRobinhoodRouteAuthority, sameAddress } from "./robinhoodRouteAuthority";
 
@@ -8,6 +9,10 @@ const ROBINHOOD_TESTNET_CHAIN_ID = 46630;
 async function main() {
   const net = await ethers.provider.getNetwork();
   const chainId = Number(net.chainId);
+  const freezeMod = await Function("specifier", "return import(specifier)")(
+    pathToFileURL(path.join(__dirname, "robinhoodTestnetFreeze.mjs")).href,
+  );
+  freezeMod.assertRobinhoodTestnetMutationForbidden(chainId);
   if (chainId !== ROBINHOOD_TESTNET_CHAIN_ID) {
     throw new Error(`Route-authority retarget is restricted to chain ${ROBINHOOD_TESTNET_CHAIN_ID}; connected ${chainId}`);
   }

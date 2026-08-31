@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { ethers } from "ethers";
 import { proveRobinhoodIndexerContinuity } from "./prove-robinhood-testnet-indexer-continuity.mjs";
+import { loadRobinhoodTestnetFreeze } from "./robinhoodTestnetFreeze.mjs";
 
 export const ROBINHOOD_TESTNET_CHAIN_ID = 46630;
 const FACTORY_ABI = [
@@ -166,27 +167,48 @@ if (runningAsCli()) {
   loadDotenv({ path: path.join(root, ".env") });
   loadDotenv({ path: path.join(root, "config/robinhood.local") });
 
-  const manifestPath = path.resolve(
-    String(process.env.ROBINHOOD_STAGE_DEPLOYMENT_FILE || "deployments/robinhood/testnet.staged.json"),
-  );
-  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  const freeze = loadRobinhoodTestnetFreeze();
+  let factoryAddress = freeze?.factory;
+  let startBlock = freeze?.factoryStartBlock;
+  if (!factoryAddress) {
+    const manifestPath = path.resolve(
+      String(process.env.ROBINHOOD_STAGE_DEPLOYMENT_FILE || "deployments/robinhood/testnet.staged.json"),
+    );
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    factoryAddress = manifest.contracts.launchFactory;
+    startBlock = Number(manifest.deploymentBlock || 0);
+  }
   const campaignAddress = process.argv[2] || process.env.ROBINHOOD_CONTINUITY_CAMPAIGN || "";
   const databaseUrl = resolveRobinhoodAcceptanceDatabaseUrl(process.env);
   indexRobinhoodTestnetAcceptance({
     databaseUrl,
     rpcUrl: String(process.env.ROBINHOOD_TESTNET_RPC_URL || process.env.ROBINHOOD_RPC_HTTP_46630 || "").trim(),
-    factoryAddress: manifest.contracts.launchFactory,
-    startBlock: Number(manifest.deploymentBlock || 0),
+    factoryAddress,
+    startBlock: Number(startBlock || 0),
   })
     .then(async (result) => {
       console.log("[robinhood-index] indexed 46630 factory campaigns", result);
-      if (campaignAddress) {
-        await proveIndexedRobinhoodCampaign({
-          databaseUrl,
-          campaignAddress,
-        });
-        console.log("Robinhood indexer continuity passed: chain_id=46630 with no 56 alias");
+      const targets = campaignAddress ? [campaignAddress] : result.indexed;
+      for (const campaign of targets) {
+        await proveIndexedRobinhoodCampaign({ databaseUrl, campaignAddress: campaign });
       }
+      const continuity = {
+        ok: true,
+        no56Alias: true,
+        chainId: 46630,
+        factory: factoryAddress,
+        factoryStartBlock: Number(startBlock || 0),
+        indexed: result.indexed,
+        reason: "indexed from chain 46630 with no 56 alias",
+      };
+      const continuityOut = String(
+        process.env.ROBINHOOD_5C_CONTINUITY_RESULT_FILE || path.join(root, "reports/robinhood-testnet-acceptance-5c.continuity.json"),
+      ).trim();
+      if (freeze) {
+        fs.mkdirSync(path.dirname(continuityOut), { recursive: true });
+        fs.writeFileSync(continuityOut, `${JSON.stringify(continuity, null, 2)}\n`);
+      }
+      console.log("Robinhood indexer continuity passed: chain_id=46630 with no 56 alias");
     })
     .catch((error) => {
       console.error(error);

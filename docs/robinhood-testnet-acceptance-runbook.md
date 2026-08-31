@@ -240,3 +240,17 @@ ENABLE_ROBINHOOD_CREATION=true
 ```
 
 Production chain `4663` remains disabled until a separate mainnet deployment and acceptance process uses production DEX/oracle infrastructure. Mock V3 and mock price-feed addresses are forbidden in the mainnet manifest.
+
+## Phase 9 — Batch 5C freeze
+
+The committed freeze is `deployments/robinhood/testnet.accepted.json`. It is the 46630 source of truth. `testnet.staged.json` is operational only. Do not redeploy, unpause create, or retarget route authority on chain 46630 while that freeze exists.
+
+```bash
+node --test scripts/prove-robinhood-testnet-acceptance-freeze.test.mjs
+node scripts/prove-robinhood-testnet-acceptance-freeze.mjs
+npx hardhat run scripts/verify-robinhood-testnet-acceptance-freeze.ts --network robinhoodTestnet
+node scripts/index-robinhood-testnet-acceptance.mjs
+node scripts/report-robinhood-testnet-acceptance-5c.mjs
+```
+
+The freeze verifier requires `live=true` and `createPaused=true`. The 5A staged verifier still requires `live=false` before acceptance and must not be reused here. If any frozen on-chain value differs, stop. Do not auto-repair.
