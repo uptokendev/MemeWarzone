@@ -205,6 +205,7 @@ app.all("/admin/arena/imports", wrap(adminArenaImports));
 app.all("/arena/tournaments/:id/opt-in", wrap(arenaTournaments));
 app.all("/arena/tournaments/:id", wrap(arenaTournaments));
 app.all("/arena/tournaments", wrap(arenaTournaments));
+app.all("/admin/arena/tournaments/:id/reconcile-bracket", wrap(arenaTournaments));
 app.all("/admin/arena/tournaments/:id/start", wrap(arenaTournaments));
 app.all("/admin/arena/tournaments", wrap(arenaTournaments));
 app.all("/arena/notifications/email/verify", wrap(arenaNotifications));

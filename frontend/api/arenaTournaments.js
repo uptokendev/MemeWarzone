@@ -8,6 +8,10 @@ import { tokenEligible as tokenIsEligible } from "./lib/arenaEligibility.js";
 import { isSolanaChainId, nativeSymbolFor } from "./lib/chainNative.js";
 import { readAuthoritativeBuyInReceipt, readSolanaArenaPool } from "./lib/solanaArenaPoolRead.js";
 import { tournamentStartRoster } from "./lib/arenaTournamentRoster.js";
+import {
+  attachInsertedBattleId,
+  planTournamentBracketReconcile,
+} from "./lib/arenaTournamentBracketReconcile.js";
 
 function ident(value) {
   return normalizeWalletFlexible(value) || String(value || "").trim();
@@ -306,7 +310,7 @@ async function handleAdminCreate(req, res) {
   return json(res, 200, { ok: true, item: inserted.rows[0] });
 }
 
-async function insertTournamentBattle({ chainId, tournamentId, left, right, nativeSymbol }) {
+async function insertTournamentBattle({ chainId, tournamentId, left, right, nativeSymbol, db = pool }) {
   const id = `arena-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;
   const leftSnap = await coinSnapshot(chainId, left);
   const rightSnap = await coinSnapshot(chainId, right);
@@ -314,7 +318,7 @@ async function insertTournamentBattle({ chainId, tournamentId, left, right, nati
     { ...leftSnap, score: leftSnap.marketCapUsd, priceChangePct: 0, volumeUsd: 0, uniqueTraders: 0, holderCount: 0, holdersDelta: 0 },
     { ...rightSnap, score: rightSnap.marketCapUsd, priceChangePct: 0, volumeUsd: 0, uniqueTraders: 0, holderCount: 0, holdersDelta: 0 },
   ];
-  await pool.query(
+  await db.query(
     `insert into public.arena_battles (
         id, chain_id, state, source, stake_native, native_symbol, challenger_token, defender_token, tournament_id,
         participants, challenger_start_mcap_usd, defender_start_mcap_usd, started_at, ends_at, creator_address
@@ -474,11 +478,119 @@ export async function advanceTournamentFromBattle(row) {
   return { finished: false };
 }
 
+export async function reconcileTournamentBracket({ tournamentId, battleId }) {
+  const id = ident(tournamentId);
+  const battleIdent = String(battleId || "").trim();
+  if (!id) return { ok: false, action: "block", reason: "missing-tournament-id", http: 400 };
+  if (!battleIdent) return { ok: false, action: "block", reason: "missing-battle-id", http: 400 };
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const locked = await client.query(`select * from public.arena_tournaments where id = $1 limit 1 for update`, [id]);
+    const tournament = locked.rows[0];
+    if (!tournament) {
+      await client.query("rollback");
+      return { ok: false, action: "block", reason: "tournament-not-found", http: 404, error: "Tournament not found" };
+    }
+    const battleRow = await client.query(`select * from public.arena_battles where id = $1 limit 1`, [battleIdent]);
+    const battle = battleRow.rows[0];
+    if (!battle) {
+      await client.query("rollback");
+      return { ok: false, action: "block", reason: "battle-not-found", http: 404, error: "Battle not found" };
+    }
+    if (ident(battle.tournament_id) !== id) {
+      await client.query("rollback");
+      return { ok: false, action: "block", reason: "battle-tournament-mismatch", http: 409, error: "Battle does not belong to this tournament" };
+    }
+    const existing = await client.query(
+      `select id, tournament_id, chain_id, source, state, challenger_token, defender_token, created_at
+         from public.arena_battles
+        where tournament_id = $1 and coalesce(source, '') = 'tournament'
+        order by created_at asc, id asc`,
+      [id],
+    );
+    const planned = planTournamentBracketReconcile({
+      tournament,
+      battle: {
+        ...battle,
+        money_winner_token: ident(battle.money_winner_token),
+        challenger_token: ident(battle.challenger_token),
+        defender_token: ident(battle.defender_token),
+      },
+      existingBattles: existing.rows,
+    });
+    if (!planned.ok || planned.action !== "apply") {
+      await client.query("rollback");
+      return { ...planned, http: planned.ok ? 200 : 409 };
+    }
+    const nextBracket = JSON.parse(JSON.stringify(planned.nextBracket));
+    for (const spec of planned.battlesToInsert) {
+      const insertedId = await insertTournamentBattle({
+        chainId: tournament.chain_id,
+        tournamentId: id,
+        left: spec.tokenA,
+        right: spec.tokenB,
+        nativeSymbol: tournament.native_symbol || nativeSymbolFor(tournament.chain_id),
+        db: client,
+      });
+      attachInsertedBattleId(nextBracket, spec.tokenA, spec.tokenB, insertedId);
+    }
+    if (planned.finished) {
+      await client.query(
+        `update public.arena_tournaments
+            set status = 'finished', ends_at = now(), winner_token = $3, bracket = $2::jsonb, updated_at = now()
+          where id = $1`,
+        [id, JSON.stringify(nextBracket), planned.winner],
+      );
+      try {
+        await client.query(
+          `update public.arena_war_pools set state = 'locked', updated_at = now() where battle_id = $1 and state = 'open'`,
+          [id],
+        );
+      } catch (error) {
+        console.warn("[api/arenaTournaments] lock support pool failed", error?.message || error);
+      }
+    } else {
+      await client.query(
+        `update public.arena_tournaments set bracket = $2::jsonb, updated_at = now() where id = $1`,
+        [id, JSON.stringify(nextBracket)],
+      );
+    }
+    await client.query("commit");
+    return { ...planned, nextBracket, http: 200 };
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function handleAdminReconcileBracket(req, res, id) {
+  const admin = await requireAdminOrOps(req, res, { routeLabel: "admin/arena/tournaments/reconcile-bracket", allowOps: true });
+  if (!admin) return;
+  const body = await readJson(req);
+  const battleId = String(body.battleId || body.battle_id || "").trim();
+  if (!battleId) return json(res, 400, { ok: false, error: "battleId is required", reason: "missing-battle-id" });
+  const result = await reconcileTournamentBracket({ tournamentId: id, battleId });
+  const status = Number(result.http || (result.ok ? 200 : 409));
+  return json(res, status, {
+    ok: Boolean(result.ok),
+    action: result.action,
+    reason: result.reason,
+    finished: Boolean(result.finished),
+    winner: result.winner || null,
+    error: result.error || undefined,
+  });
+}
+
 export default async function handler(req, res) {
   const method = String(req.method || "GET").toUpperCase();
   const path = String(req.path || new URL(req.url, "http://localhost").pathname);
   try {
     if (path.startsWith("/admin/arena/tournaments") || path.startsWith("/api/admin/arena/tournaments")) {
+      const reconcile = path.match(/\/admin\/arena\/tournaments\/([^/]+)\/reconcile-bracket$/);
+      if (reconcile) return method === "POST" ? handleAdminReconcileBracket(req, res, decodeURIComponent(reconcile[1])) : badMethod(res);
       const start = path.match(/\/admin\/arena\/tournaments\/([^/]+)\/start$/);
       if (start) return method === "POST" ? handleAdminStart(req, res, decodeURIComponent(start[1])) : badMethod(res);
       if (method === "POST" && /\/admin\/arena\/tournaments$/.test(path)) return handleAdminCreate(req, res);

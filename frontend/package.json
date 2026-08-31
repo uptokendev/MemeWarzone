@@ -44,7 +44,7 @@
     "test:solana-v0": "node --test src/lib/solanaV0Transaction.test.mjs",
     "test:solana-arena": "node --test src/lib/solanaArenaLayout.test.mjs src/lib/solanaArenaV0.test.mjs",
     "test:arena-mwl": "node --test api/lib/arenaLeagueScoreMath.test.mjs api/lib/arenaBattleSettle.test.mjs api/lib/arenaBattleLive.test.mjs api/lib/arena4aCertification.test.mjs",
-    "test:arena-tournament": "node --test api/lib/arenaTournamentRoster.test.mjs",
+    "test:arena-tournament": "node --test api/lib/arenaTournamentRoster.test.mjs api/lib/arenaTournamentBracketReconcile.test.mjs",
     "test:solana-confirm": "node --test src/lib/solanaConfirmSignature.test.mjs",
     "check:solana-launchpad-alt": "node scripts/solana-launchpad-alt-plan.mjs --json",
     "check:solana-launchpad-alt:live": "node scripts/verify-live-launchpad-alt.mjs",

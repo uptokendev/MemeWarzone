@@ -62,6 +62,9 @@ jobs:
       - name: Check API imports
         run: npm --prefix frontend run check:api-imports
 
+      - name: Test Warzone tournament start roster and bracket reconcile
+        run: npm --prefix frontend run test:arena-tournament
+
       - name: Test wallet provider discovery
         run: npm --prefix frontend run test:wallet-discovery
 
