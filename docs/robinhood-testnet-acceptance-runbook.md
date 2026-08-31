@@ -50,16 +50,24 @@ Auxiliary parity deployment:
 
 ## Required local environment
 
-Never commit real private keys. Configure them in the shell/secret manager:
+Never commit real private keys. Hardhat loads `.env` then `config/robinhood.local` (gitignored). Put the 46630 acceptance keys in `config/robinhood.local`:
+
+```text
+ROBINHOOD_TESTNET_RPC_URL=https://rpc.testnet.chain.robinhood.com
+PRIVATE_KEY_DEPLOY=<staging deployer key>
+ROBINHOOD_ROUTE_AUTHORITY_PRIVATE_KEY=<staging route authority key>
+ROBINHOOD_TEST_CREATOR_PRIVATE_KEY=<funded test creator wallet key>
+ROBINHOOD_TEST_SCHEDULED_CREATOR_PRIVATE_KEY=<funded test scheduled-creator wallet key>
+ROBINHOOD_TEST_BUYER_PRIVATE_KEY=<funded test buyer wallet key>
+ROBINHOOD_TEST_TRADER_PRIVATE_KEY=<funded test post-grad trader wallet key>
+ROBINHOOD_ACCEPTANCE_ENABLE_LIVE=false
+ROBINHOOD_STAGE_DEPLOYMENT_FILE=deployments/robinhood/testnet.staged.json
+```
+
+Keep `ROBINHOOD_ACCEPTANCE_ENABLE_LIVE=false` in the file. Enable it only for the lifecycle command:
 
 ```bash
-export ROBINHOOD_TESTNET_RPC_URL='https://rpc.testnet.chain.robinhood.com'
-export PRIVATE_KEY_DEPLOY='<staging deployer key>'
-export ROBINHOOD_ROUTE_AUTHORITY_PRIVATE_KEY='<staging route authority key>'
-export ROBINHOOD_TEST_CREATOR_PRIVATE_KEY='<funded test creator wallet key>'
-export ROBINHOOD_TEST_SCHEDULED_CREATOR_PRIVATE_KEY='<funded test scheduled-creator wallet key>'
-export ROBINHOOD_TEST_BUYER_PRIVATE_KEY='<funded test buyer wallet key>'
-export ROBINHOOD_TEST_TRADER_PRIVATE_KEY='<funded test post-grad trader wallet key>'
+ROBINHOOD_ACCEPTANCE_ENABLE_LIVE=true npx hardhat run scripts/test-robinhood-testnet-lifecycle.ts --network robinhoodTestnet
 ```
 
 The deployer/admin, creator, buyer, and trader wallets must hold Robinhood testnet ETH. Keep these wallets testnet-only.

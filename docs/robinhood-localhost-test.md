@@ -43,7 +43,7 @@ The localhost launcher intentionally refuses full transaction acceptance until t
 deployments/robinhood/testnet.staged.json
 ```
 
-Configure testnet-only secrets in the shell, never in git:
+Hardhat loads `.env` then `config/robinhood.local`. Put 46630 RPC and testnet-only deployer/route-authority/acceptance wallet keys in `config/robinhood.local`. Keep `ROBINHOOD_ACCEPTANCE_ENABLE_LIVE=false` there and enable it only on the lifecycle command. Never commit those keys.
 
 ```bash
 export ROBINHOOD_TESTNET_RPC_URL='https://rpc.testnet.chain.robinhood.com'
