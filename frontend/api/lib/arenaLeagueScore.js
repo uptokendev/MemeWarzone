@@ -9,6 +9,7 @@ import {
   mwlLedgerPlan,
   nextCheckinStreak,
   pairKey,
+  pairScoringLockKey,
   seasonAcceptsRegularPoints,
   streakBonusDue,
   utcDay,
@@ -67,6 +68,11 @@ async function tournamentOrigin(tournamentId, db = pool) {
     [String(tournamentId)],
   );
   return result.rows[0]?.origin || null;
+}
+
+async function lockPairScoring(seasonId, key, db = pool) {
+  if (!seasonId || !key) return;
+  await db.query(`select pg_advisory_xact_lock(hashtextextended($1, 0))`, [pairScoringLockKey(seasonId, key)]);
 }
 
 async function pairScoredRecently(seasonId, key, db = pool) {
@@ -152,6 +158,7 @@ export async function recordFinishedBattle(row, db = pool) {
   const isQuarterFinals = origin === "quarter_finals";
   const frozen = !seasonAcceptsRegularPoints(season);
   const key = pairKey(left, right);
+  await lockPairScoring(season.id, key, db);
   const pairAlreadyScored = await pairScoredRecently(season.id, key, db);
   const mwlDraw = row.mwlDraw === true || row.mwl_draw === true;
   const plan = mwlLedgerPlan({

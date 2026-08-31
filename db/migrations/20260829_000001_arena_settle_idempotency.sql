@@ -28,6 +28,21 @@ ALTER TABLE public.arena_battles
     money_tie_break IS NULL OR money_tie_break IN ('performance', 'ending_mcap', 'token_address')
   );
 
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+      FROM public.arena_league_point_events
+     WHERE battle_id IS NOT NULL
+       AND kind IN ('battle_win', 'battle_loss', 'battle_draw')
+     GROUP BY season_id, battle_id, token_address, kind
+    HAVING count(*) > 1
+  ) THEN
+    RAISE EXCEPTION
+      'arena settle migration blocked: duplicate battle MWL events require review';
+  END IF;
+END $$;
+
 CREATE UNIQUE INDEX IF NOT EXISTS arena_league_point_events_battle_token_kind_idx
   ON public.arena_league_point_events (season_id, battle_id, token_address, kind)
   WHERE battle_id IS NOT NULL AND kind IN ('battle_win', 'battle_loss', 'battle_draw');

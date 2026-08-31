@@ -41,6 +41,10 @@ export function pairKey(left, right) {
   return [a, b].sort().join(":");
 }
 
+export function pairScoringLockKey(seasonId, key) {
+  return `${String(seasonId || "").trim()}:${String(key || "").trim()}`;
+}
+
 function finiteMcap(value) {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;

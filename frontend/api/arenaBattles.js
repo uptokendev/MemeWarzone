@@ -654,6 +654,7 @@ async function settleLive(row) {
     await client.query("commit");
 
     try {
+      // 4c: this post-commit advance can lag; reconcile finished battles whose money winner exists.
       if (finished.rows[0].tournament_id && decision.moneyWinnerToken) {
         await advanceTournamentFromBattle({
           ...finished.rows[0],

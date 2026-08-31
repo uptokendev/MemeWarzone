@@ -128,6 +128,15 @@ test("league writer scores MWL outcome and treats ledger conflicts as already sc
   assert.match(writer, /on conflict \(season_id, battle_id, token_address, kind\)/);
 });
 
+test("pair scoring lock is taken before the 7-day pair-window read", () => {
+  const writer = fs.readFileSync(path.join(here, "arenaLeagueScore.js"), "utf8");
+  assert.match(writer, /pg_advisory_xact_lock\(hashtextextended\(\$1, 0\)\)/);
+  const fn = writer.split("export async function recordFinishedBattle")[1]?.split("export async function creditCheckin")[0] || "";
+  const lockAt = fn.indexOf("lockPairScoring");
+  const readAt = fn.indexOf("pairScoredRecently");
+  assert.ok(lockAt >= 0 && readAt > lockAt, "pair lock must precede pairScoredRecently");
+});
+
 test("migration persists snapshot columns and unique battle ledger rows", () => {
   const sql = fs.readFileSync(
     path.join(root, "db/migrations/20260829_000001_arena_settle_idempotency.sql"),
@@ -142,4 +151,8 @@ test("migration persists snapshot columns and unique battle ledger rows", () => 
   assert.match(sql, /settled_at/);
   assert.match(sql, /arena_league_point_events_battle_token_kind_idx/);
   assert.match(sql, /UNIQUE INDEX/);
+  assert.match(sql, /duplicate battle MWL events require review/);
+  const preflightAt = sql.indexOf("RAISE EXCEPTION");
+  const indexAt = sql.indexOf("CREATE UNIQUE INDEX");
+  assert.ok(preflightAt >= 0 && indexAt > preflightAt, "duplicate preflight must precede unique index");
 });

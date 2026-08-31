@@ -19,7 +19,9 @@ import {
   moneyWinner,
   mwlLedgerPlan,
   mwlOutcome,
+  pairKey,
   pairPointsEligible,
+  pairScoringLockKey,
   pctChange,
   settleBattleResult,
 } from "./arenaLeagueScoreMath.js";
@@ -176,6 +178,11 @@ test("mwlLedgerPlan never awards MWL points from a money winner on a draw", () =
   assert.equal(honest.left.points, DRAW_POINTS);
   assert.equal(honest.right.points, DRAW_POINTS);
   assert.equal(honest.left.kind, "battle_draw");
+});
+
+test("pair scoring lock key is season plus canonical pair key", () => {
+  const key = pairKey(TOKEN_A, TOKEN_B);
+  assert.equal(pairScoringLockKey("mwl-2026-q3-c101", key), `mwl-2026-q3-c101:${key}`);
 });
 
 test("7-day rematch adds no second MWL points but still counts the fight", () => {
