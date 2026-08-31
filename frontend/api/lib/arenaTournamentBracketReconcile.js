@@ -146,8 +146,25 @@ function takeOrphanForPair(orphans, tokenA, tokenB) {
   return orphans.splice(index, 1)[0];
 }
 
-function lastRoundWinners(matches) {
-  return (Array.isArray(matches) ? matches : []).map((match) => ident(match?.winner)).filter(Boolean);
+function matchWinnerIsParticipant(match, winner) {
+  const a = ident(match?.tokenA || match?.token_a);
+  const b = ident(match?.tokenB || match?.token_b);
+  if (b) return tokensEqual(winner, a) || tokensEqual(winner, b);
+  return tokensEqual(winner, a);
+}
+
+function validatedRoundWinners(matches) {
+  const list = Array.isArray(matches) ? matches : [];
+  const winners = [];
+  for (const match of list) {
+    const winner = ident(match?.winner);
+    if (!winner) return { complete: false, invalid: false, winners: [] };
+    if (!matchWinnerIsParticipant(match, winner)) {
+      return { complete: false, invalid: true, reason: "round-winner-not-in-match", winners: [] };
+    }
+    winners.push(winner);
+  }
+  return { complete: list.length > 0, invalid: false, winners };
 }
 
 export function attachInsertedBattleId(bracket, tokenA, tokenB, battleId) {
@@ -204,13 +221,7 @@ export function planTournamentBracketReconcile({ tournament, battle, existingBat
   const location = findMatchLocation(rounds, battle?.id);
   if (!location) return fail("battle-not-in-bracket");
 
-  const tokenA = ident(location.match.tokenA || location.match.token_a);
-  const tokenB = ident(location.match.tokenB || location.match.token_b);
-  if (tokenB) {
-    if (!tokensEqual(moneyWinner, tokenA) && !tokensEqual(moneyWinner, tokenB)) return fail("winner-not-in-match");
-  } else if (!tokensEqual(moneyWinner, tokenA)) {
-    return fail("winner-not-in-match");
-  }
+  if (!matchWinnerIsParticipant(location.match, moneyWinner)) return fail("winner-not-in-match");
 
   const recorded = ident(location.match.winner);
   if (recorded && !tokensEqual(recorded, moneyWinner)) return fail("match-winner-mismatch");
@@ -242,8 +253,10 @@ export function planTournamentBracketReconcile({ tournament, battle, existingBat
 
   const last = nextBracket.rounds[nextBracket.rounds.length - 1];
   const lastMatches = Array.isArray(last?.matches) ? last.matches : [];
-  const winners = lastRoundWinners(lastMatches);
-  const lastComplete = lastMatches.length > 0 && winners.length === lastMatches.length;
+  const validated = validatedRoundWinners(lastMatches);
+  if (validated.invalid) return fail(validated.reason || "round-winner-not-in-match");
+  const winners = validated.winners;
+  const lastComplete = Boolean(validated.complete);
 
   if (!lastComplete) {
     if (alreadyRecorded) return skip("match-already-recorded", { matchWinner: moneyWinner });
@@ -319,7 +332,7 @@ export function planTournamentBracketReconcile({ tournament, battle, existingBat
   }
   nextBracket.rounds.push({ round: nextRoundNumber, matches: nextMatches });
 
-  const nextWinners = lastRoundWinners(nextMatches);
+  const nextWinners = validatedRoundWinners(nextMatches).winners;
   const byeFinish = nextMatches.length === 1 && nextWinners.length === 1;
   return {
     ok: true,

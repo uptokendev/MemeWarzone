@@ -15,6 +15,7 @@ const TOKEN_A = "0x1111111111111111111111111111111111111111";
 const TOKEN_B = "0x2222222222222222222222222222222222222222";
 const TOKEN_C = "0x3333333333333333333333333333333333333333";
 const TOKEN_D = "0x4444444444444444444444444444444444444444";
+const ATTACKER = "0x9999999999999999999999999999999999999999";
 const SOL_A = "So11111111111111111111111111111111111111112";
 const SOL_B = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const TOURNAMENT_ID = "tourney-1";
@@ -291,6 +292,72 @@ test("odd leftover from a completed last round creates a bye and does not finish
   assert.deepEqual(planned.battlesToInsert, [{ tokenA: TOKEN_A, tokenB: TOKEN_C }]);
 });
 
+test("another completed match with a winner not in its pair cannot advance", () => {
+  const blocked = planTournamentBracketReconcile({
+    tournament: tournament({
+      bracket: bracket([{
+        round: 1,
+        matches: [
+          match({ winner: null }),
+          match({ id: "m2", tokenA: TOKEN_C, tokenB: TOKEN_D, battleId: "arena-other", winner: ATTACKER }),
+        ],
+      }]),
+    }),
+    battle: battle(),
+    existingBattles: [orphan({ challenger_token: TOKEN_A, defender_token: ATTACKER })],
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.action, "block");
+  assert.equal(blocked.reason, "round-winner-not-in-match");
+  assert.equal(blocked.battlesToInsert.length, 0);
+  assert.equal(blocked.nextBracket, null);
+});
+
+test("malformed bye winner that differs from tokenA is blocked", () => {
+  const blocked = planTournamentBracketReconcile({
+    tournament: tournament({
+      bracket: bracket([{
+        round: 1,
+        matches: [
+          match({ winner: TOKEN_A }),
+          match({ id: "m2", tokenA: TOKEN_C, tokenB: null, battleId: null, winner: ATTACKER, bye: true }),
+        ],
+      }]),
+    }),
+    battle: battle(),
+  });
+  assert.equal(blocked.reason, "round-winner-not-in-match");
+  assert.equal(blocked.battlesToInsert.length, 0);
+});
+
+test("valid previous winners still reuse or insert, and a repaired bracket replays as skip", () => {
+  const first = planTournamentBracketReconcile({
+    tournament: tournament({
+      bracket: bracket([{
+        round: 1,
+        matches: [
+          match({ winner: null }),
+          match({ id: "m2", tokenA: TOKEN_C, tokenB: TOKEN_D, battleId: "arena-other", winner: TOKEN_C }),
+        ],
+      }]),
+    }),
+    battle: battle(),
+    existingBattles: [orphan({ id: "arena-older", created_at: "2026-08-01T00:00:00.000Z", challenger_token: TOKEN_C, defender_token: TOKEN_A })],
+  });
+  assert.equal(first.action, "apply");
+  assert.deepEqual(first.battlesToAttach, [{ tokenA: TOKEN_A, tokenB: TOKEN_C, battleId: "arena-older" }]);
+  assert.equal(first.battlesToInsert.length, 0);
+
+  const replay = planTournamentBracketReconcile({
+    tournament: tournament({ bracket: first.nextBracket }),
+    battle: battle(),
+    existingBattles: [orphan({ id: "arena-older", created_at: "2026-08-01T00:00:00.000Z", challenger_token: TOKEN_C, defender_token: TOKEN_A })],
+  });
+  assert.equal(replay.action, "skip");
+  assert.equal(replay.reason, "already-advanced");
+  assert.equal(replay.battlesToInsert.length, 0);
+});
+
 test("foreign-tournament or already-attached rows are not reusable", () => {
   const planned = planTournamentBracketReconcile({
     tournament: tournament({
@@ -325,6 +392,8 @@ test("planner and apply sources never rescore MWL, resettle, or send the pot", (
     assert.doesNotMatch(source, /hydrateLifecycle/);
   }
   assert.match(helper, /money_winner_token/);
+  assert.match(helper, /round-winner-not-in-match/);
+  assert.match(helper, /validatedRoundWinners/);
   assert.doesNotMatch(helper, /battle\?\.winner_token/);
   assert.doesNotMatch(helper, /mwl_winner_token/);
   const settle = battles.split("async function settleLive")[1]?.split("async function expireChallenge")[0] || "";
