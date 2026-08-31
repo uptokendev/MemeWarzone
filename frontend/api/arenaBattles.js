@@ -22,7 +22,9 @@ import {
   decorateSettledParticipants,
 } from "./lib/arenaBattleSettle.js";
 import { advanceTournamentFromBattle } from "./arenaTournaments.js";
+import { solanaLiveTransition, solanaMayGoLive } from "./lib/arenaBattleLive.js";
 import { escrowRequired, readOnchainPool } from "./lib/arenaWarPoolLive.js";
+import { isSolanaWarzoneChainId } from "./lib/solanaArenaPoolRead.js";
 import { nativeSymbolFor } from "./lib/chainNative.js";
 
 const LIVE_HOURS = 24;
@@ -465,8 +467,27 @@ function coinMcap(coin) {
 }
 
 async function beginFight(id, patch, chainId) {
-  const requireEscrow = escrowRequired(chainId);
   const hours = parseDurationHours(patch.duration_hours ?? patch.offered_duration_hours, LIVE_HOURS);
+  if (isSolanaWarzoneChainId(chainId)) {
+    const onchain = await readOnchainPool(chainId, id);
+    const transition = solanaLiveTransition({
+      arenaLive: onchain.live === true,
+      bothPaid: onchain.bothPaid === true,
+    });
+    return updateBattle(id, {
+      ...patch,
+      duration_hours: hours,
+      offered_duration_hours: hours,
+      state: transition.state,
+      started_at: transition.startFightClock ? nowIso() : null,
+      ends_at: transition.startFightClock
+        ? plusHours(hours)
+        : transition.startDepositWindow
+          ? plusHours(DEPOSIT_WINDOW_HOURS)
+          : null,
+    });
+  }
+  const requireEscrow = escrowRequired(chainId);
   return updateBattle(id, {
     ...patch,
     duration_hours: hours,
@@ -479,6 +500,10 @@ async function beginFight(id, patch, chainId) {
 
 async function goLiveFromMatched(row) {
   const chainId = Number(row.chain_id);
+  if (isSolanaWarzoneChainId(chainId)) {
+    const onchain = await readOnchainPool(chainId, row.id);
+    if (!solanaMayGoLive(onchain)) return mapBattle(row);
+  }
   const leftNow = await currentMcap(chainId, row.challenger_token);
   const rightNow = await currentMcap(chainId, row.defender_token);
   const hours = parseDurationHours(row.duration_hours ?? row.offered_duration_hours, LIVE_HOURS);
@@ -495,11 +520,23 @@ async function goLiveFromMatched(row) {
 export async function promoteMatchedIfFunded(row) {
   if (!row || row.state !== "matched") return mapBattle(row);
   const onchain = await readOnchainPool(row.chain_id, row.id);
-  if (onchain.bothPaid) return goLiveFromMatched(row);
+  if (isSolanaWarzoneChainId(row.chain_id)) {
+    const transition = solanaLiveTransition({
+      arenaLive: onchain.live === true,
+      bothPaid: onchain.bothPaid === true,
+    });
+    if (transition.state === "live") return goLiveFromMatched(row);
+    if (!transition.startDepositWindow) return mapBattle(row);
+    if (!row.ends_at && transition.startDepositWindow) {
+      return updateBattle(row.id, { ends_at: plusHours(DEPOSIT_WINDOW_HOURS) });
+    }
+  } else if (onchain.bothPaid) {
+    return goLiveFromMatched(row);
+  }
   const deadline = row.ends_at ? Date.parse(row.ends_at) : 0;
   const depositDeadline = Number(onchain.depositDeadline || 0) * 1000;
   const timedOut = (deadline && deadline < Date.now()) || (depositDeadline && depositDeadline < Date.now());
-  if (timedOut && !onchain.bothPaid) {
+  if (timedOut && !onchain.bothPaid && (!isSolanaWarzoneChainId(row.chain_id) || onchain.live === true)) {
     return updateBattle(row.id, { state: "expired", finished_at: nowIso() });
   }
   return mapBattle(row);
@@ -881,7 +918,7 @@ async function handleAccept(req, res, battleId) {
     challenger_start_mcap_usd: row.challenger_start_mcap_usd ?? (challengerCoin ? coinMcap(challengerCoin) : 0),
     defender_start_mcap_usd: row.defender_start_mcap_usd ?? (defenderCoin ? coinMcap(defenderCoin) : 0),
   }, Number(row.chain_id));
-  return json(res, 200, { ok: true, battle: live, escrowRequired: escrowRequired(row.chain_id) });
+  return json(res, 200, { ok: true, battle: live, escrowRequired: live?.state === "matched" });
 }
 
 async function handleDecline(req, res, battleId) {
@@ -982,6 +1019,18 @@ async function handleTransition(req, res, battleId) {
   }
   const patch = { state: nextState };
   if (nextState === "live") {
+    if (isSolanaWarzoneChainId(row.chain_id)) {
+      const onchain = await readOnchainPool(row.chain_id, row.id);
+      if (!solanaLiveTransition({ arenaLive: onchain.live === true, bothPaid: onchain.bothPaid === true }).startFightClock) {
+        return json(res, 409, {
+          ok: false,
+          error: "Solana fights go live only when canonical Arena is live and both on-chain stakes are paid.",
+          code: "SOLANA_BATTLE_NOT_FUNDED",
+          arenaLive: onchain.live === true,
+          bothPaid: Boolean(onchain.bothPaid),
+        });
+      }
+    }
     patch.started_at = nowIso();
     patch.ends_at = plusHours(parseDurationHours(row.duration_hours ?? row.offered_duration_hours, LIVE_HOURS));
   }
