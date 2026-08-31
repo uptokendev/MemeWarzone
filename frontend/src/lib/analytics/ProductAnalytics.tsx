@@ -34,4 +34,4 @@ export function ProductAnalytics() {
 }
 
 export { analytics };
-export { runCatalogAction, analyticsErrorCode } from "./actions";
+export { runCatalogAction, analyticsErrorCode, analyticsErrorMessage } from "./actions";
