@@ -184,7 +184,14 @@ The runner must prove, on the same staged deployment:
 18. Creation is paused again with `setCreatePaused(true)` after the run.
 19. Production RH flags remain off. Local rehearsal writes `rehearsalPassed=true`, `accepted=false`. Only `provider.chainId == 46630` may set `accepted=true`.
 
-A failed on-chain item fails the run. Missing DB/indexer continuity on 46630 leaves Batch 5B **OPEN**. Local CI/rehearsal never closes 5B.
+A failed on-chain item fails the run. Continuity must index the staged factory from chain 46630 into the isolated Robinhood local database (`config/robinhood.local` `DATABASE_URL`), never production Supabase. After a green on-chain run:
+
+```bash
+node scripts/index-robinhood-testnet-acceptance.mjs
+npx hardhat run scripts/prove-robinhood-testnet-acceptance-closeout.ts --network robinhoodTestnet
+```
+
+Missing DB/indexer continuity on 46630 leaves Batch 5B **OPEN**. Local CI/rehearsal never closes 5B.
 
 After the run, keep `ENABLE_ROBINHOOD_CREATION=false` and `VITE_ENABLE_DIRECT_ROBINHOOD_DEPLOY=false`. The factory `live` latch may remain true; creation stays paused.
 

@@ -55,6 +55,7 @@ type StageManifest = {
   factoryGeneration: number;
   campaignGeneration: number;
   liquidityKind: number;
+  deploymentBlock?: number;
   routeAuthority: string;
   admin: string;
   contracts: {
@@ -317,12 +318,31 @@ async function buildTradeAuthorization(params: {
   return { routeProfileId, deadline, signature };
 }
 
-async function proveContinuity(chainId: number, campaignAddress: string) {
-  const databaseUrl = String(process.env.DATABASE_URL || "").trim();
-  if (!databaseUrl) {
-    return { ran: false, ok: false, reason: "DATABASE_URL missing" };
-  }
+async function proveContinuity(
+  chainId: number,
+  campaignAddress: string,
+  factoryAddress: string,
+  startBlock: number,
+) {
   try {
+    const indexer = await Function(
+      "specifier",
+      "return import(specifier)",
+    )(pathToFileURL(path.join(__dirname, "index-robinhood-testnet-acceptance.mjs")).href);
+    const databaseUrl = String(indexer.resolveRobinhoodAcceptanceDatabaseUrl(process.env) || "").trim();
+    if (!databaseUrl) {
+      return { ran: false, ok: false, reason: "isolated Robinhood DATABASE_URL missing from config/robinhood.local" };
+    }
+    if (chainId === ROBINHOOD_TESTNET_CHAIN_ID) {
+      await indexer.indexRobinhoodTestnetAcceptance({
+        databaseUrl,
+        rpcUrl: String(process.env.ROBINHOOD_TESTNET_RPC_URL || process.env.ROBINHOOD_RPC_HTTP_46630 || "").trim(),
+        factoryAddress,
+        startBlock,
+      });
+      await indexer.proveIndexedRobinhoodCampaign({ databaseUrl, campaignAddress });
+      return { ran: true, ok: true, reason: "indexed from chain 46630 with no 56 alias" };
+    }
     const { proveRobinhoodIndexerContinuity } = await Function(
       "specifier",
       "return import(specifier)",
@@ -757,7 +777,12 @@ async function main() {
   if (!(await factory.live())) throw new Error("Factory live latch was lost after pausing create");
   log("creation paused after acceptance; live latch remains true");
 
-  const continuity = await proveContinuity(chainId, info.campaign);
+  const continuity = await proveContinuity(
+    chainId,
+    info.campaign,
+    manifest.contracts.launchFactory,
+    Number(manifest.deploymentBlock || 0),
+  );
   const rehearsalPassed = chainId === LOCAL_CHAIN_ID;
   const accepted = chainId === ROBINHOOD_TESTNET_CHAIN_ID && continuity.ok === true;
   if (chainId !== ROBINHOOD_TESTNET_CHAIN_ID && accepted) {
