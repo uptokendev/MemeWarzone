@@ -185,6 +185,9 @@ export function parseArenaPool(data, PublicKey) {
   const claimedMwl = readU8(data, o) !== 0; o += 1;
   const refundedA = readU8(data, o) !== 0; o += 1;
   const refundedB = readU8(data, o) !== 0; o += 1;
+  const bump = data.length > o ? readU8(data, o) : 0; o += 1;
+  const vaultBump = data.length > o ? readU8(data, o) : 0; o += 1;
+  const actionNonce = data.length >= o + 8 ? readU64le(data, o) : 0n;
   return {
     poolId,
     kind,
@@ -219,6 +222,9 @@ export function parseArenaPool(data, PublicKey) {
     claimedMwl,
     refundedA,
     refundedB,
+    bump,
+    vaultBump,
+    actionNonce,
   };
 }
 
