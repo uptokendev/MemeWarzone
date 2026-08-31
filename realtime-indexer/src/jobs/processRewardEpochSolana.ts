@@ -1,4 +1,8 @@
-export {};
+import { runRewardEpochChain } from "./processRewardEpochBounded.js";
 
-process.env.REWARD_CHAIN_ID = "101";
-await import("./processRewardEpoch.js");
+runRewardEpochChain(101)
+  .then(() => process.exit(0))
+  .catch((error) => {
+    console.error("processRewardEpochSolana failed", error);
+    process.exit(1);
+  });
