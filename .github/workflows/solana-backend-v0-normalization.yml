@@ -89,7 +89,7 @@ jobs:
           grep -F 'prizeBoostTotal' scripts/solana/arena-operator-v0.mjs
 
       - name: Install Arena operator test dependency
-        run: npm install --no-save --ignore-scripts --no-audit --no-fund @solana/web3.js@1.98.4
+        run: npm install --no-save --ignore-scripts --no-audit --no-fund @solana/web3.js@1.98.4 ethers @noble/hashes
 
       - name: Run Arena operator V2 tests
         run: node --test scripts/solana/arena-operator-v0.test.mjs scripts/solana/arena-operator-resolve.test.mjs
