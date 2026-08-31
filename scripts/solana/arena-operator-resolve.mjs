@@ -23,6 +23,10 @@ export const ARENA_SIDE_B = 2;
 export const ARENA_RESULT_WINNER = 1;
 export const ARENA_KIND_BATTLE_CODE = 0;
 export const OUTCOME_HASH_DOMAIN = "MWZ_ARENA_OUTCOME_V1";
+export const RESOLVE_POOL_V2_DISCRIMINATOR = createHash("sha256")
+  .update("global:resolve_pool_v2", "utf8")
+  .digest()
+  .subarray(0, 8);
 export const MWL_RESULT = Object.freeze({
   LEFT_WIN: "left_win",
   RIGHT_WIN: "right_win",
@@ -109,7 +113,8 @@ function settlementConsistency(settlement) {
   if (result !== MWL_RESULT.LEFT_WIN && result !== MWL_RESULT.RIGHT_WIN && result !== MWL_RESULT.DRAW) {
     return fail("invalid-mwl-result");
   }
-  const drawFlag = settlement?.mwl_draw ?? settlement?.mwlDraw;
+  const drawFlag = Object.hasOwn(settlement || {}, "mwl_draw") ? settlement.mwl_draw : settlement?.mwlDraw;
+  if (typeof drawFlag !== "boolean") return fail("missing-mwl-draw");
   if (drawFlag === true && result !== MWL_RESULT.DRAW) return fail("mwl-draw-flag-mismatch");
   if (drawFlag === false && result === MWL_RESULT.DRAW) return fail("mwl-draw-flag-mismatch");
   const mwlWinner = ident(settlement?.mwl_winner_token || settlement?.mwlWinnerToken);
@@ -191,6 +196,13 @@ export function planBattleResolve({ settlement, pool, nowSec = Math.floor(Date.n
   };
 }
 
+function instructionData(ix) {
+  const data = ix?.data;
+  if (Buffer.isBuffer(data)) return data;
+  if (data instanceof Uint8Array) return Buffer.from(data);
+  return Buffer.from(data || []);
+}
+
 export function assertEd25519Adjacency(instructions) {
   if (!Array.isArray(instructions) || instructions.length < 2) {
     throw new Error("resolve requires Ed25519 immediately followed by resolve_pool_v2");
@@ -200,6 +212,10 @@ export function assertEd25519Adjacency(instructions) {
   }
   if (!instructions[1].programId.equals(ARENA_PROGRAM_ID)) {
     throw new Error("resolve_pool_v2 must immediately follow Ed25519");
+  }
+  const disc = instructionData(instructions[1]).subarray(0, 8);
+  if (!disc.equals(Buffer.from(RESOLVE_POOL_V2_DISCRIMINATOR))) {
+    throw new Error("instruction 1 must be resolve_pool_v2");
   }
 }
 

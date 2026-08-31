@@ -10,6 +10,7 @@ import {
   ARENA_CLAIM_PROTOCOL,
   ARENA_KIND_BATTLE,
   ARENA_PROGRAM_ID,
+  buildArenaCancelInstructions,
 } from "./arena-operator-v0.mjs";
 import {
   ARENA_RESULT_WINNER,
@@ -17,6 +18,8 @@ import {
   ARENA_SIDE_B,
   ARENA_STATE_LIVE,
   ARENA_STATE_RESOLVED,
+  RESOLVE_POOL_V2_DISCRIMINATOR,
+  assertEd25519Adjacency,
   battleOutcomeHash,
   buildPlannedResolveInstructions,
   canonicalBattlePoolIdBytes,
@@ -228,8 +231,11 @@ test("planned resolve is Ed25519 then resolve_pool_v2, never Phantom", () => {
   assert.equal(built.instructions.length, 2);
   assert.equal(built.instructions[0].programId.toBase58(), "Ed25519SigVerify111111111111111111111111111");
   assert.ok(built.instructions[1].programId.equals(ARENA_PROGRAM_ID));
-  assert.equal(built.instructions[0], built.verifyIx);
-  assert.equal(built.instructions[1], built.resolveIx);
+  assert.deepEqual(
+    Buffer.from(built.instructions[1].data).subarray(0, 8),
+    Buffer.from(RESOLVE_POOL_V2_DISCRIMINATOR),
+  );
+  assert.doesNotThrow(() => assertEd25519Adjacency(built.instructions));
   const source = fs.readFileSync(path.join(here, "arena-operator-resolve.mjs"), "utf8");
   assert.doesNotMatch(source, /window\.phantom/i);
   assert.doesNotMatch(source, /solanaUserV0Transaction/);
@@ -237,6 +243,48 @@ test("planned resolve is Ed25519 then resolve_pool_v2, never Phantom", () => {
   assert.match(source, /Never route this through Phantom/);
   assert.match(source, /sendArenaOperatorV0/);
   assert.match(source, /money_winner_token/);
+  assert.match(source, /instruction 1 must be resolve_pool_v2/);
+});
+
+test("adjacency rejects anything other than Ed25519 immediately followed by resolve_pool_v2", () => {
+  const resolver = Keypair.generate();
+  const planned = planBattleResolve({ settlement: settlement(), pool: pool() });
+  const resolveBuilt = buildPlannedResolveInstructions(planned, resolver);
+  const cancelBuilt = buildArenaCancelInstructions({
+    resolver,
+    poolId,
+    version: 2,
+    reasonCode: 2,
+    stakeA: 1n,
+    stakeB: 0n,
+    supportTotal: 0n,
+    buyInTotal: 0n,
+    prizeBoostTotal: 0n,
+    deadline: 1_800_000_000n,
+    nonce: 1n,
+  });
+  assert.doesNotThrow(() => assertEd25519Adjacency(resolveBuilt.instructions));
+  assert.throws(
+    () => assertEd25519Adjacency([resolveBuilt.verifyIx, cancelBuilt.cancelIx]),
+    /resolve_pool_v2/,
+  );
+  assert.throws(
+    () => assertEd25519Adjacency([cancelBuilt.cancelIx, resolveBuilt.resolveIx]),
+    /Ed25519/,
+  );
+  assert.throws(
+    () => assertEd25519Adjacency([resolveBuilt.verifyIx, cancelBuilt.cancelIx, resolveBuilt.resolveIx]),
+    /resolve_pool_v2/,
+  );
+});
+
+test("planner requires a persisted boolean mwl_draw", () => {
+  const { mwl_draw: _ignored, ...rest } = settlement();
+  assert.equal(planBattleResolve({ settlement: rest, pool: pool() }).reason, "missing-mwl-draw");
+  assert.equal(
+    planBattleResolve({ settlement: settlement({ mwl_draw: "true" }), pool: pool() }).reason,
+    "missing-mwl-draw",
+  );
 });
 
 test("outcome hash is deterministic for the same settlement snapshot", () => {
