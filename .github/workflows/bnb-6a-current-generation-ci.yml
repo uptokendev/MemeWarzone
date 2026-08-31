@@ -19,6 +19,9 @@ on:
       - "scripts/bnbCurrentGeneration.mjs"
       - "scripts/prove-bnb-current-generation.mjs"
       - "scripts/prove-bnb-current-generation.test.mjs"
+      - "scripts/bnbCreatorFeeGeneration.mjs"
+      - "scripts/prove-bnb-creator-fee-generation.test.mjs"
+      - "test/BnbCreatorFeeGeneration.spec.ts"
       - "scripts/lib/bnbLiveGenerationGuard.ts"
       - "scripts/deploy-clean-slate-factory.ts"
       - "scripts/deploy-dual-test-factory.ts"
@@ -62,6 +65,9 @@ jobs:
       - name: Prove live 56/97 census and source-head 4/3 is not live BNB
         run: npm run prove:bnb-6a-census
 
+      - name: Prove 6B creator royalty math without flipping live BNB
+        run: npm run prove:bnb-6b-fees
+
       - name: Prove BNB signer stays on campaign generation 2
         working-directory: frontend
         run: node --test api/dev-fix/route-authorization-signer.test.mjs
@@ -73,5 +79,6 @@ jobs:
         run: >-
           npx hardhat test
           test/BnbLifecycleCertification.spec.ts
+          test/BnbCreatorFeeGeneration.spec.ts
           test/PermanentLpLockerTopazFee.spec.ts
           test/LaunchFactoryLiquidityKinds.spec.ts
