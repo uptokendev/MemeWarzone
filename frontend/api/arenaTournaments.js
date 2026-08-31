@@ -7,6 +7,7 @@ import { requireAdminOrOps } from "./lib/apiAuth.js";
 import { tokenEligible as tokenIsEligible } from "./lib/arenaEligibility.js";
 import { isSolanaChainId, nativeSymbolFor } from "./lib/chainNative.js";
 import { readAuthoritativeBuyInReceipt, readSolanaArenaPool } from "./lib/solanaArenaPoolRead.js";
+import { tournamentStartRoster } from "./lib/arenaTournamentRoster.js";
 
 function ident(value) {
   return normalizeWalletFlexible(value) || String(value || "").trim();
@@ -341,11 +342,19 @@ async function handleAdminStart(req, res, id) {
   if (!row) return json(res, 404, { error: "Tournament not found" });
   if (row.status !== "upcoming") return json(res, 409, { error: "Tournament is not upcoming" });
   const entries = await listEntries(id);
-  if (entries.length < 2) return json(res, 409, { error: "Need at least 2 opted-in coins to start" });
+  const start = tournamentStartRoster(entries, { buyInNative: row.buy_in_native });
+  if (!start.ok) {
+    return json(res, 409, {
+      error: "All opted-in coins must have an authoritative paid buy-in before the tournament starts.",
+      code: "UNPAID_TOURNAMENT_ROSTER",
+      unpaid: start.unpaid.map((entry) => entry.tokenAddress),
+    });
+  }
+  if (start.roster.length < 2) return json(res, 409, { error: "Need at least 2 opted-in coins to start" });
   const matches = [];
-  for (let i = 0; i < entries.length; i += 2) {
-    const a = entries[i];
-    const b = entries[i + 1];
+  for (let i = 0; i < start.roster.length; i += 2) {
+    const a = start.roster[i];
+    const b = start.roster[i + 1];
     if (!b) {
       matches.push({ id: `m${i / 2 + 1}`, tokenA: a.tokenAddress, tokenB: null, battleId: null, winner: a.tokenAddress, bye: true });
       continue;
@@ -364,7 +373,7 @@ async function handleAdminStart(req, res, id) {
     `update public.arena_tournaments set status = 'live', bracket = $2::jsonb, updated_at = now() where id = $1`,
     [id, JSON.stringify(bracket)],
   );
-  return json(res, 200, { ok: true, item: mapAdmin({ ...row, status: "live", bracket }, entries.length), bracket });
+  return json(res, 200, { ok: true, item: mapAdmin({ ...row, status: "live", bracket }, start.roster.length), bracket });
 }
 
 export async function advanceTournamentFromBattle(row) {
