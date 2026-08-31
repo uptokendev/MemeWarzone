@@ -48,8 +48,6 @@
     }
   ],
   "sourceArtifacts": [
-    "deployments/bscTestnet.clean-slate-factory.json",
-    "deployments/bscTestnet.treasury-v2-staged.json",
-    "deployments/bscTestnet.obsolete-scheduled-factory-containment.json"
+    "deployments/bscTestnet.clean-slate-factory.json"
   ]
 }

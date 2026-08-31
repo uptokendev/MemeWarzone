@@ -9,7 +9,10 @@ import {
   assertSourceHeadIsNotLiveBnb,
   loadBnbCurrentCensus,
   parseBnbCurrentCensus,
+  MAINNET_CREATION_FACTORY,
+  TESTNET_CREATION_FACTORY,
   proveBnbBroadcastScriptsRefuseSourceHead,
+  proveBnbCensusMatchesArtifacts,
   proveBnbSignerStaysOnCampaignGeneration2,
   proveRobinhoodFreezeUntouched,
 } from "./bnbCurrentGeneration.mjs";
@@ -80,4 +83,12 @@ test("BNB factory broadcast scripts refuse current source-head 4/3", () => {
   const guarded = proveBnbBroadcastScriptsRefuseSourceHead();
   assert.ok(guarded.guarded.includes("scripts/deploy-clean-slate-factory.ts"));
   assert.ok(guarded.guarded.includes("scripts/deploy-bnb-factory-replacement-phase-a.ts"));
+});
+
+test("census matches committed live factory artifacts that exist in git", () => {
+  const artifacts = proveBnbCensusMatchesArtifacts();
+  assert.equal(artifacts.mainnet.creationFactory, MAINNET_CREATION_FACTORY);
+  assert.equal(artifacts.testnet.creationFactory, TESTNET_CREATION_FACTORY);
+  assert.deepEqual(artifacts.mainnet.sourceArtifacts, ["deployments/bscMainnet.factory-30bps-80-20.json"]);
+  assert.deepEqual(artifacts.testnet.sourceArtifacts, ["deployments/bscTestnet.clean-slate-factory.json"]);
 });

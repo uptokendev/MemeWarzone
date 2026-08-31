@@ -40,6 +40,7 @@ deployments/*.activation.json
 deployments/*.retired.json
 deployments/robinhood/testnet.staged.json
 !deployments/robinhood/testnet.accepted.json
+!deployments/bnb/*.json
 output/*.json
 output/testnet-cycle-results*.json
 output/security-access-matrix.md

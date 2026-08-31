@@ -46,7 +46,6 @@
     }
   ],
   "sourceArtifacts": [
-    "deployments/bscMainnet.factory-30bps-80-20.json",
-    "deployments/bscMainnet.json"
+    "deployments/bscMainnet.factory-30bps-80-20.json"
   ]
 }

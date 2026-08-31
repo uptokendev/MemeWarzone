@@ -176,21 +176,22 @@ export function proveBnbCensusMatchesArtifacts() {
   const mainnet = loadBnbCurrentCensus(BNB_MAINNET_CHAIN_ID);
   const testnet = loadBnbCurrentCensus(BNB_TESTNET_CHAIN_ID);
   const mainnetArtifact = JSON.parse(readRepoFile("deployments/bscMainnet.factory-30bps-80-20.json"));
-  const mainnetTreasury = JSON.parse(readRepoFile("deployments/bscMainnet.json"));
   const testnetArtifact = JSON.parse(readRepoFile("deployments/bscTestnet.clean-slate-factory.json"));
-  const testnetTreasury = JSON.parse(readRepoFile("deployments/bscTestnet.treasury-v2-staged.json"));
 
-  if (!sameAddress(mainnet.creationFactory, mainnetArtifact.activeFactory)) {
+  for (const relativePath of [...(mainnet.sourceArtifacts || []), ...(testnet.sourceArtifacts || [])]) {
+    if (!fs.existsSync(path.join(repoRoot(), relativePath))) {
+      throw new Error(`BNB census source artifact is missing from git: ${relativePath}`);
+    }
+  }
+
+  if (!sameAddress(mainnet.creationFactory, mainnetArtifact.activeFactory) || !sameAddress(mainnet.creationFactory, MAINNET_CREATION_FACTORY)) {
     throw new Error("BNB mainnet census creation factory drifted from factory-30bps-80-20 artifact");
   }
-  if (!sameAddress(mainnet.contracts.permanentLpLocker, mainnetArtifact.activeLocker)) {
+  if (!sameAddress(mainnet.contracts.permanentLpLocker, mainnetArtifact.activeLocker) || !sameAddress(mainnet.contracts.permanentLpLocker, MAINNET_LOCKER)) {
     throw new Error("BNB mainnet census locker drifted from factory-30bps-80-20 artifact");
   }
-  if (!sameAddress(mainnet.contracts.treasuryRouterV2, mainnetTreasury.contracts.TreasuryRouterV2)) {
-    throw new Error("BNB mainnet census treasury V2 drifted from bscMainnet.json");
-  }
-  if (mainnetTreasury.treasuryRouterVersion !== "v2") {
-    throw new Error("BNB mainnet treasury artifact must remain v2");
+  if (!sameAddress(mainnet.contracts.treasuryRouterV2, mainnetArtifact.constructor?.treasury) || !sameAddress(mainnet.contracts.treasuryRouterV2, MAINNET_TREASURY_V2)) {
+    throw new Error("BNB mainnet census treasury V2 drifted from committed factory-30bps constructor.treasury");
   }
   if (Number(mainnetArtifact.lockerEconomics?.REQUIRED_POOL_FEE_BPS) !== REQUIRED_POOL_FEE_BPS) {
     throw new Error("BNB mainnet locker economics must remain 30 bps");
@@ -203,20 +204,24 @@ export function proveBnbCensusMatchesArtifacts() {
     throw new Error("BNB mainnet support factory address drifted");
   }
 
-  if (!sameAddress(testnet.creationFactory, testnetArtifact.newFactory.address)) {
+  if (!sameAddress(testnet.creationFactory, testnetArtifact.newFactory.address) || !sameAddress(testnet.creationFactory, TESTNET_CREATION_FACTORY)) {
     throw new Error("BNB testnet census creation factory drifted from clean-slate artifact");
   }
   if (Number(testnetArtifact.factoryGeneration) !== LIVE_FACTORY_GENERATION || Number(testnetArtifact.campaignGeneration) !== LIVE_CAMPAIGN_GENERATION) {
     throw new Error("BNB testnet clean-slate artifact must remain factory 3 / campaign 2");
   }
-  if (!sameAddress(testnet.contracts.treasuryRouterV2, testnetTreasury.contracts.TreasuryRouter)) {
-    throw new Error("BNB testnet census treasury V2 drifted from treasury-v2-staged artifact");
-  }
-  if (testnetTreasury.treasuryRouterVersion !== "v2") {
-    throw new Error("BNB testnet treasury artifact must remain v2");
+  if (
+    !sameAddress(testnet.contracts.treasuryRouterV2, testnetArtifact.reused?.treasuryRouter) ||
+    !sameAddress(testnet.contracts.treasuryRouterV2, testnetArtifact.contracts?.TreasuryRouter) ||
+    !sameAddress(testnet.contracts.treasuryRouterV2, TESTNET_TREASURY_V2)
+  ) {
+    throw new Error("BNB testnet census treasury V2 drifted from committed clean-slate treasuryRouter");
   }
   if (testnet.createPaused !== false || testnet.creationEnabled !== true) {
     throw new Error("BNB testnet current creation factory must stay live and creation-enabled");
+  }
+  if (!sameAddress(testnet.contracts.permanentLpLocker, testnetArtifact.newFactory.locker) || !sameAddress(testnet.contracts.permanentLpLocker, TESTNET_LOCKER)) {
+    throw new Error("BNB testnet census locker drifted from clean-slate artifact");
   }
 
   return { mainnet, testnet };
