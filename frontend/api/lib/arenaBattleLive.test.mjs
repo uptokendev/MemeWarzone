@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { solanaLiveTransition, solanaMayGoLive } from "./arenaBattleLive.js";
+import { solanaLiveTransition, solanaMatchedLifecyclePatch, solanaMayGoLive } from "./arenaBattleLive.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 
@@ -13,6 +13,7 @@ test("Solana not-live never starts a fight clock, even if bothPaid is claimed", 
   assert.equal(result.reason, "arena-not-live");
   assert.equal(result.startFightClock, false);
   assert.equal(result.startDepositWindow, false);
+  assert.equal(result.clearTiming, true);
   assert.equal(solanaMayGoLive({ live: false, bothPaid: true }), false);
   assert.equal(solanaLiveTransition({ arenaLive: undefined, bothPaid: true }).state, "matched");
 });
@@ -34,6 +35,36 @@ test("Solana both-paid and Arena live may become live", () => {
   assert.equal(solanaMayGoLive({ live: true, bothPaid: true }), true);
 });
 
+test("Arena unavailable while a deposit deadline exists clears timing and does not expire", () => {
+  const transition = solanaLiveTransition({ arenaLive: false, bothPaid: false });
+  const lifecycle = solanaMatchedLifecyclePatch(
+    transition,
+    { state: "matched", started_at: null, ends_at: "2026-08-31T15:00:00.000Z" },
+    { nowMs: Date.parse("2026-08-31T14:00:00.000Z") },
+  );
+  assert.equal(lifecycle.expire, false);
+  assert.equal(lifecycle.action, "clear-timing");
+  assert.equal(lifecycle.patch.state, "matched");
+  assert.equal(lifecycle.patch.started_at, null);
+  assert.equal(lifecycle.patch.ends_at, null);
+});
+
+test("Arena recovery after a stale deadline gets a fresh deposit window", () => {
+  const nowMs = Date.parse("2026-08-31T17:00:00.000Z");
+  const freshEnds = "2026-09-01T17:00:00.000Z";
+  const lifecycle = solanaMatchedLifecyclePatch(
+    solanaLiveTransition({ arenaLive: true, bothPaid: false }),
+    { state: "matched", started_at: null, ends_at: "2026-08-31T15:00:00.000Z" },
+    { nowMs, depositEndsAt: freshEnds },
+  );
+  assert.equal(lifecycle.expire, false);
+  assert.equal(lifecycle.action, "refresh-deposit");
+  assert.equal(lifecycle.patch.state, "matched");
+  assert.equal(lifecycle.patch.started_at, null);
+  assert.equal(lifecycle.patch.ends_at, freshEnds);
+  assert.notEqual(lifecycle.patch.ends_at, "2026-08-31T15:00:00.000Z");
+});
+
 test("beginFight and matched promotion use on-chain bothPaid, not off-chain receipts", () => {
   const battles = fs.readFileSync(path.join(here, "../arenaBattles.js"), "utf8");
   const begin = battles.split("async function beginFight")[1]?.split("async function goLiveFromMatched")[0] || "";
@@ -48,8 +79,7 @@ test("beginFight and matched promotion use on-chain bothPaid, not off-chain rece
   assert.doesNotMatch(begin, /arena_war_pool_deposits/);
   assert.match(begin, /escrowRequired\(chainId\)/);
   assert.match(promote, /solanaLiveTransition/);
-  assert.match(promote, /startDepositWindow/);
-  assert.match(promote, /onchain\.live === true/);
+  assert.match(promote, /solanaMatchedLifecyclePatch/);
   assert.doesNotMatch(promote, /arena_war_pool_deposits/);
   assert.match(transition, /SOLANA_BATTLE_NOT_FUNDED/);
   assert.match(transition, /solanaLiveTransition/);

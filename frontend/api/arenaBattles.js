@@ -22,7 +22,7 @@ import {
   decorateSettledParticipants,
 } from "./lib/arenaBattleSettle.js";
 import { advanceTournamentFromBattle } from "./arenaTournaments.js";
-import { solanaLiveTransition, solanaMayGoLive } from "./lib/arenaBattleLive.js";
+import { solanaLiveTransition, solanaMatchedLifecyclePatch, solanaMayGoLive } from "./lib/arenaBattleLive.js";
 import { escrowRequired, readOnchainPool } from "./lib/arenaWarPoolLive.js";
 import { isSolanaWarzoneChainId } from "./lib/solanaArenaPoolRead.js";
 import { nativeSymbolFor } from "./lib/chainNative.js";
@@ -525,18 +525,19 @@ export async function promoteMatchedIfFunded(row) {
       arenaLive: onchain.live === true,
       bothPaid: onchain.bothPaid === true,
     });
-    if (transition.state === "live") return goLiveFromMatched(row);
-    if (!transition.startDepositWindow) return mapBattle(row);
-    if (!row.ends_at && transition.startDepositWindow) {
-      return updateBattle(row.id, { ends_at: plusHours(DEPOSIT_WINDOW_HOURS) });
-    }
-  } else if (onchain.bothPaid) {
-    return goLiveFromMatched(row);
+    const lifecycle = solanaMatchedLifecyclePatch(transition, row, {
+      nowMs: Date.now(),
+      depositEndsAt: plusHours(DEPOSIT_WINDOW_HOURS),
+    });
+    if (lifecycle.action === "go-live") return goLiveFromMatched(row);
+    if (lifecycle.patch) return updateBattle(row.id, lifecycle.patch);
+    return mapBattle(row);
   }
+  if (onchain.bothPaid) return goLiveFromMatched(row);
   const deadline = row.ends_at ? Date.parse(row.ends_at) : 0;
   const depositDeadline = Number(onchain.depositDeadline || 0) * 1000;
   const timedOut = (deadline && deadline < Date.now()) || (depositDeadline && depositDeadline < Date.now());
-  if (timedOut && !onchain.bothPaid && (!isSolanaWarzoneChainId(row.chain_id) || onchain.live === true)) {
+  if (timedOut && !onchain.bothPaid) {
     return updateBattle(row.id, { state: "expired", finished_at: nowIso() });
   }
   return mapBattle(row);
