@@ -85,7 +85,7 @@ export async function runRewardEpochChain(chainId: number) {
     const published = await publishRewardLedgerForEpoch(epochId, new Date());
     console.log(`[processRewardEpochBounded] chainId=${chainId} epochId=${epochId} stage=publish_done status=${published.epoch.status} claimable=${published.updatedCount} durationMs=${elapsedMs(stageStartedAt)}`);
 
-    if (published.epoch.status === "claimable" || published.epoch.status === "published") {
+    if (published.epoch.status === "published") {
       await emitNotification(pool, {
         eventType: "airdrop.claims_open",
         chain: chainId === 101 ? "solana" : "bnb",
