@@ -137,31 +137,27 @@ export function applyCappedRedistribution(
   };
 }
 
-export function computeAirdropWeightTier(
-  score: bigint,
-  step: bigint = AIRDROP_WEIGHT_TIER_STEP,
-  maxTier = 5,
-): number {
+export function computeAirdropWeightTier(score: bigint, tierStep = AIRDROP_WEIGHT_TIER_STEP, maxTier = 25): number {
   if (score <= 0n) return 0;
-  const normalizedStep = step > 0n ? step : AIRDROP_WEIGHT_TIER_STEP;
-  const normalizedMaxTier = Math.max(1, Math.trunc(maxTier));
-  const tier = Number((score - 1n) / normalizedStep) + 1;
-  return Math.min(normalizedMaxTier, Math.max(1, tier));
+  const step = tierStep > 0n ? tierStep : AIRDROP_WEIGHT_TIER_STEP;
+  const rawTier = Number((score + step - 1n) / step);
+  if (!Number.isFinite(rawTier) || rawTier <= 0) return 1;
+  return Math.max(1, Math.min(maxTier, rawTier));
 }
 
-export function computeSquadDiminishingWeight(
-  volume: bigint,
-  firstThreshold: bigint = SQUAD_DIMINISHING_FIRST_THRESHOLD,
-  secondThreshold: bigint = SQUAD_DIMINISHING_SECOND_THRESHOLD,
-): bigint {
-  if (volume <= 0n) return 0n;
-  const first = firstThreshold > 0n ? firstThreshold : SQUAD_DIMINISHING_FIRST_THRESHOLD;
-  const second = secondThreshold > first ? secondThreshold : first * 2n;
-  const firstSlice = volume > first ? first : volume;
-  const remainingAfterFirst = volume > first ? volume - first : 0n;
-  const secondBandSize = second - first;
-  const secondSlice = remainingAfterFirst > secondBandSize ? secondBandSize : remainingAfterFirst;
-  const thirdSlice = remainingAfterFirst > secondBandSize ? remainingAfterFirst - secondBandSize : 0n;
+export function computeSquadEffectiveScore(rawScore: bigint): bigint {
+  if (rawScore <= 0n) return 0n;
+  if (rawScore <= SQUAD_DIMINISHING_FIRST_THRESHOLD) return rawScore;
+  if (rawScore <= SQUAD_DIMINISHING_SECOND_THRESHOLD) {
+    const remainder = rawScore - SQUAD_DIMINISHING_FIRST_THRESHOLD;
+    return SQUAD_DIMINISHING_FIRST_THRESHOLD + (remainder / 2n);
+  }
+  const middle = SQUAD_DIMINISHING_SECOND_THRESHOLD - SQUAD_DIMINISHING_FIRST_THRESHOLD;
+  const tail = rawScore - SQUAD_DIMINISHING_SECOND_THRESHOLD;
+  return SQUAD_DIMINISHING_FIRST_THRESHOLD + (middle / 2n) + (tail / 4n);
+}
 
-  return firstSlice + (secondSlice / 2n) + (thirdSlice / 4n);
+export function computeBpsCap(totalAmount: bigint, bps: number): bigint {
+  if (totalAmount <= 0n || bps <= 0) return 0n;
+  return (totalAmount * BigInt(Math.trunc(bps))) / 10000n;
 }
