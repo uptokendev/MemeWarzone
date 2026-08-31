@@ -104,19 +104,52 @@ async function latestTimestamp(): Promise<bigint> {
 }
 
 function errorText(error: unknown): string {
-  const err = error as { shortMessage?: string; message?: string; data?: string };
-  return `${err?.shortMessage || ""} ${err?.message || ""} ${err?.data || ""} ${String(error)}`;
+  const err = error as { shortMessage?: string; message?: string; data?: unknown; info?: { error?: { message?: string; data?: unknown } } };
+  return `${err?.shortMessage || ""} ${err?.message || ""} ${err?.info?.error?.message || ""} ${String(err?.data || "")} ${String(error)}`;
 }
 
-async function expectCustomError(txPromise: Promise<unknown>, name: string) {
+function collectRevertPayload(error: unknown): string {
+  const found: string[] = [];
+  const visit = (value: unknown, depth: number) => {
+    if (value == null || depth > 6) return;
+    if (typeof value === "string" && /^0x[0-9a-fA-F]{8,}$/.test(value)) {
+      found.push(value);
+      return;
+    }
+    if (typeof value === "object") Object.values(value as Record<string, unknown>).forEach((item) => visit(item, depth + 1));
+  };
+  visit(error, 0);
+  return found.find((item) => item.length >= 10) || "";
+}
+
+function matchesCustomError(error: unknown, contract: { interface: ethers.Interface }, name: string): boolean {
+  if (errorText(error).includes(name)) return true;
+  const payload = collectRevertPayload(error);
+  if (!payload) return false;
   try {
-    const tx = await txPromise;
-    if (tx && typeof tx === "object" && "wait" in tx) await (tx as { wait(): Promise<unknown> }).wait();
+    if (contract.interface.parseError(payload)?.name === name) return true;
+  } catch {}
+  try {
+    const fragment = contract.interface.getError(name);
+    if (fragment?.selector && payload.toLowerCase().startsWith(String(fragment.selector).toLowerCase())) return true;
+  } catch {}
+  return false;
+}
+
+/** Use staticCall/eth_call. Public 46630 RPCs often strip custom-error names from estimateGas. */
+async function expectCustomError(
+  contract: { interface: ethers.Interface },
+  name: string,
+  call: () => Promise<unknown>,
+) {
+  try {
+    const result = await call();
+    if (result && typeof result === "object" && "wait" in result) await (result as { wait(): Promise<unknown> }).wait();
   } catch (error) {
-    if (errorText(error).includes(name)) return;
-    throw error;
+    if (matchesCustomError(error, contract, name)) return;
+    throw new Error(`expected ${name}, got: ${errorText(error)}`);
   }
-  throw new Error(`expected custom error ${name} but the transaction succeeded`);
+  throw new Error(`expected custom error ${name} but the call succeeded`);
 }
 
 async function walletFromEnvOrSigner(envName: string, fallbackIndex: number) {
@@ -460,23 +493,20 @@ async function main() {
   log("API signer rejected campaign generation 2 on 46630");
 
   const wrongGenAuth = await signBypassedScheduledDigest(factory, scheduledCreator, routeAuthority, scheduledRequest, { campaignGeneration: 2 });
-  await expectCustomError(
-    factory.connect(scheduledCreator).createScheduledCampaignAuthorized(scheduledRequest, wrongGenAuth),
-    "InvalidRouteAuthorization",
+  await expectCustomError(factory, "InvalidRouteAuthorization", () =>
+    factory.connect(scheduledCreator).createScheduledCampaignAuthorized.staticCall(scheduledRequest, wrongGenAuth),
   );
   const wrongChainAuth = await signBypassedScheduledDigest(factory, scheduledCreator, routeAuthority, scheduledRequest, { chainId: 56n });
-  await expectCustomError(
-    factory.connect(scheduledCreator).createScheduledCampaignAuthorized(scheduledRequest, wrongChainAuth),
-    "InvalidRouteAuthorization",
+  await expectCustomError(factory, "InvalidRouteAuthorization", () =>
+    factory.connect(scheduledCreator).createScheduledCampaignAuthorized.staticCall(scheduledRequest, wrongChainAuth),
   );
   log("factory rejected wrong campaign generation and wrong chain scheduled auth");
 
   const scheduledAuth = await buildScheduledAuthorization(factory, scheduledCreator, routeAuthority, scheduledRequest);
   const beforeScheduled = await factory.campaignsCount();
   await (await factory.connect(scheduledCreator).createScheduledCampaignAuthorized(scheduledRequest, scheduledAuth)).wait();
-  await expectCustomError(
-    factory.connect(scheduledCreator).createScheduledCampaignAuthorized(scheduledRequest, scheduledAuth),
-    "RouteAuthorizationReplayed",
+  await expectCustomError(factory, "RouteAuthorizationReplayed", () =>
+    factory.connect(scheduledCreator).createScheduledCampaignAuthorized.staticCall(scheduledRequest, scheduledAuth),
   );
   const scheduledInfo = await factory.getCampaign(beforeScheduled);
   const scheduledCampaign = await ethers.getContractAt("LaunchCampaign", scheduledInfo.campaign, buyer);
@@ -494,8 +524,8 @@ async function main() {
     amount: scheduledProbe,
     limit: scheduledQuote,
   });
-  await expectCustomError(
-    scheduledCampaign.connect(buyer).buyExactTokensAuthorized(
+  await expectCustomError(scheduledCampaign, "TradingNotOpen", () =>
+    scheduledCampaign.connect(buyer).buyExactTokensAuthorized.staticCall(
       scheduledProbe,
       scheduledQuote,
       blockedBuy.routeProfileId,
@@ -503,7 +533,6 @@ async function main() {
       blockedBuy.signature,
       { value: scheduledQuote },
     ),
-    "TradingNotOpen",
   );
   const blockedSell = await buildTradeAuthorization({
     campaign: scheduledCampaign,
@@ -513,15 +542,14 @@ async function main() {
     amount: scheduledProbe,
     limit: 0n,
   });
-  await expectCustomError(
-    scheduledCampaign.connect(buyer).sellExactTokensAuthorized(
+  await expectCustomError(scheduledCampaign, "TradingNotOpen", () =>
+    scheduledCampaign.connect(buyer).sellExactTokensAuthorized.staticCall(
       scheduledProbe,
       0,
       blockedSell.routeProfileId,
       blockedSell.deadline,
       blockedSell.signature,
     ),
-    "TradingNotOpen",
   );
   log("pre-launchAt buy and sell rejected with TradingNotOpen");
 
