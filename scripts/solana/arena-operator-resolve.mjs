@@ -125,6 +125,34 @@ export function tournamentOutcomeHash(tournament) {
     .digest();
 }
 
+/** Terminal finished bracket: last round is a single match whose winner is tokenA or tokenB. */
+export function finalTournamentBracketWinner(bracket) {
+  let value = bracket;
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return "";
+    }
+  }
+  const rounds = Array.isArray(value?.rounds) ? value.rounds : Array.isArray(value) ? value : [];
+  if (!rounds.length) return "";
+  const last = rounds[rounds.length - 1];
+  const matches = Array.isArray(last?.matches) ? last.matches : [];
+  if (matches.length !== 1) return "";
+  const match = last.matches[0] || {};
+  const winner = ident(match.winner);
+  if (!winner) return "";
+  const tokenA = ident(match.tokenA || match.token_a);
+  const tokenB = ident(match.tokenB || match.token_b);
+  if (tokenB) {
+    if (!walletsEqual(winner, tokenA) && !walletsEqual(winner, tokenB)) return "";
+  } else if (!walletsEqual(winner, tokenA)) {
+    return "";
+  }
+  return winner;
+}
+
 function moneyWinnerSide(pool, moneyWinnerToken) {
   if (walletsEqual(moneyWinnerToken, pool.assetA || pool.asset_a)) {
     return {
@@ -233,7 +261,7 @@ export function planBattleResolve({ settlement, pool, nowSec = Math.floor(Date.n
   };
 }
 
-export function planTournamentResolve({ tournament, pool, receiptAccount, nowSec = Math.floor(Date.now() / 1000) } = {}) {
+export function planTournamentResolve({ tournament, pool, winnerEntry, receiptAccount, nowSec = Math.floor(Date.now() / 1000) } = {}) {
   if (Number(pool?.kind) !== ARENA_KIND_TOURNAMENT_CODE) return fail("not-tournament");
   const tournamentId = ident(tournament?.id || tournament?.tournamentId);
   if (!tournamentId) return fail("missing-tournament-id");
@@ -242,12 +270,27 @@ export function planTournamentResolve({ tournament, pool, receiptAccount, nowSec
   if (!actualPoolId) return fail("missing-pool-id");
   if (!actualPoolId.equals(expectedPoolId)) return fail("pool-id-mismatch");
 
-  const winnerAsset = ident(tournament?.winner_token || tournament?.money_winner_token || tournament?.moneyWinnerToken);
-  const winnerWallet = ident(tournament?.winner_wallet || tournament?.winnerWallet);
-  if (!winnerAsset) return fail("missing-money-winner");
-  if (!winnerWallet) return fail("missing-winner-wallet");
-  if (isDefaultPubkey(winnerAsset)) return fail("default-winner-asset");
-  if (isDefaultPubkey(winnerWallet)) return fail("default-winner-wallet");
+  if (ident(tournament?.status) !== "finished") return fail("tournament-not-finished");
+
+  const persistedWinner = ident(tournament?.winner_token || tournament?.money_winner_token || tournament?.moneyWinnerToken);
+  if (!persistedWinner) return fail("missing-money-winner");
+  if (isDefaultPubkey(persistedWinner)) return fail("default-winner-asset");
+
+  const bracketWinner = finalTournamentBracketWinner(tournament?.bracket);
+  if (!bracketWinner) return fail("missing-bracket-winner");
+  if (!walletsEqual(bracketWinner, persistedWinner)) return fail("winner-bracket-mismatch");
+
+  if (!winnerEntry || typeof winnerEntry !== "object") return fail("missing-winner-entry");
+  const entryToken = ident(winnerEntry.token_address || winnerEntry.tokenAddress);
+  const entryWallet = ident(winnerEntry.owner_wallet || winnerEntry.ownerWallet);
+  if (!entryToken || !walletsEqual(entryToken, persistedWinner)) return fail("winner-entry-mismatch");
+  if (!entryWallet) return fail("missing-winner-wallet");
+  if (isDefaultPubkey(entryWallet)) return fail("default-winner-wallet");
+  const suppliedWallet = ident(tournament?.winner_wallet || tournament?.winnerWallet);
+  if (suppliedWallet && !walletsEqual(suppliedWallet, entryWallet)) return fail("winner-wallet-mismatch");
+
+  const winnerAsset = persistedWinner;
+  const winnerWallet = entryWallet;
 
   let expectedPda;
   try {

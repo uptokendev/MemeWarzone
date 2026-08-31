@@ -36,6 +36,8 @@ const tournamentId = "tourney-1";
 const poolId = canonicalTournamentPoolIdBytes(tournamentId);
 const winnerAsset = Keypair.generate().publicKey;
 const winnerWallet = Keypair.generate().publicKey;
+const otherAsset = Keypair.generate().publicKey;
+const otherWallet = Keypair.generate().publicKey;
 const protocolReceiver = Keypair.generate().publicKey;
 
 function writeU64le(data, offset, value) {
@@ -61,11 +63,48 @@ function receiptAccount({ amount = 100n, refunded = false, asset = winnerAsset, 
   };
 }
 
+function finishedBracket(winner = winnerAsset.toBase58(), opponent = otherAsset.toBase58()) {
+  return {
+    rounds: [{
+      round: 1,
+      matches: [{
+        id: "m1",
+        tokenA: winner,
+        tokenB: opponent,
+        battleId: "arena-final",
+        winner,
+        bye: false,
+      }],
+    }],
+  };
+}
+
 function tournament(overrides = {}) {
   return {
     id: tournamentId,
+    status: "finished",
     winner_token: winnerAsset.toBase58(),
-    winner_wallet: winnerWallet.toBase58(),
+    bracket: finishedBracket(),
+    settlement_version: 1,
+    ...overrides,
+  };
+}
+
+function winnerEntry(overrides = {}) {
+  return {
+    token_address: winnerAsset.toBase58(),
+    owner_wallet: winnerWallet.toBase58(),
+    buy_in_paid: true,
+    ...overrides,
+  };
+}
+
+function planArgs(overrides = {}) {
+  return {
+    tournament: tournament(),
+    pool: pool(),
+    winnerEntry: winnerEntry(),
+    receiptAccount: receiptAccount(),
     ...overrides,
   };
 }
@@ -102,66 +141,115 @@ test("canonical tournament pool id matches ethers.id arena-tournament prefix", (
   );
 });
 
-test("tournament resolve requires winner token, wallet, and canonical buy-in receipt", () => {
+test("live tournament with a valid paid entrant cannot resolve", () => {
   assert.equal(
-    planTournamentResolve({ tournament: tournament({ winner_token: "" }), pool: pool(), receiptAccount: receiptAccount() }).reason,
+    planTournamentResolve(planArgs({ tournament: tournament({ status: "live" }) })).reason,
+    "tournament-not-finished",
+  );
+  assert.equal(
+    planTournamentResolve(planArgs({ tournament: tournament({ status: "upcoming" }) })).reason,
+    "tournament-not-finished",
+  );
+});
+
+test("finished tournament requires persisted winner to match the terminal bracket winner", () => {
+  assert.equal(
+    planTournamentResolve(planArgs({
+      tournament: tournament({
+        winner_token: winnerAsset.toBase58(),
+        bracket: finishedBracket(otherAsset.toBase58(), winnerAsset.toBase58()),
+      }),
+    })).reason,
+    "winner-bracket-mismatch",
+  );
+  assert.equal(
+    planTournamentResolve(planArgs({
+      tournament: tournament({
+        winner_token: winnerAsset.toBase58(),
+        bracket: { rounds: [{ round: 1, matches: [{ tokenA: winnerAsset.toBase58(), tokenB: otherAsset.toBase58(), winner: null }] }] },
+      }),
+    })).reason,
+    "missing-bracket-winner",
+  );
+});
+
+test("finished tournament + correct winner token but supplied/entry wallet mismatch is blocked", () => {
+  assert.equal(
+    planTournamentResolve(planArgs({
+      tournament: tournament({ winner_wallet: otherWallet.toBase58() }),
+    })).reason,
+    "winner-wallet-mismatch",
+  );
+  assert.equal(
+    planTournamentResolve(planArgs({
+      winnerEntry: winnerEntry({ owner_wallet: "" }),
+    })).reason,
+    "missing-winner-wallet",
+  );
+});
+
+test("a non-winning paid entrant with a valid receipt cannot be substituted as winner", () => {
+  assert.equal(
+    planTournamentResolve(planArgs({
+      winnerEntry: {
+        token_address: otherAsset.toBase58(),
+        owner_wallet: otherWallet.toBase58(),
+        buy_in_paid: true,
+      },
+      receiptAccount: receiptAccount({ asset: otherAsset, wallet: otherWallet }),
+    })).reason,
+    "winner-entry-mismatch",
+  );
+});
+
+test("tournament resolve requires winner token, entry owner, and canonical buy-in receipt", () => {
+  assert.equal(
+    planTournamentResolve(planArgs({ tournament: tournament({ winner_token: "" }) })).reason,
     "missing-money-winner",
   );
   assert.equal(
-    planTournamentResolve({ tournament: tournament({ winner_wallet: "" }), pool: pool(), receiptAccount: receiptAccount() }).reason,
-    "missing-winner-wallet",
+    planTournamentResolve(planArgs({ winnerEntry: null })).reason,
+    "missing-winner-entry",
   );
   assert.equal(
-    planTournamentResolve({
-      tournament: tournament({ winner_token: SOLANA_DEFAULT_PUBKEY }),
-      pool: pool(),
-      receiptAccount: receiptAccount(),
-    }).reason,
+    planTournamentResolve(planArgs({
+      tournament: tournament({
+        winner_token: SOLANA_DEFAULT_PUBKEY,
+        bracket: finishedBracket(SOLANA_DEFAULT_PUBKEY, otherAsset.toBase58()),
+      }),
+    })).reason,
     "default-winner-asset",
   );
   assert.equal(
-    planTournamentResolve({
-      tournament: tournament({ winner_wallet: SOLANA_DEFAULT_PUBKEY }),
-      pool: pool(),
-      receiptAccount: receiptAccount(),
-    }).reason,
+    planTournamentResolve(planArgs({
+      winnerEntry: winnerEntry({ owner_wallet: SOLANA_DEFAULT_PUBKEY }),
+    })).reason,
     "default-winner-wallet",
   );
   assert.equal(
-    planTournamentResolve({ tournament: tournament(), pool: pool(), receiptAccount: null }).reason,
+    planTournamentResolve(planArgs({ receiptAccount: null })).reason,
     "buy-in-receipt-missing-account",
   );
-  const refunded = planTournamentResolve({
-    tournament: tournament(),
-    pool: pool(),
+  const refunded = planTournamentResolve(planArgs({
     receiptAccount: receiptAccount({ refunded: true }),
-  });
+  }));
   assert.equal(refunded.reason, "buy-in-receipt-refunded");
   assert.equal(
-    planTournamentResolve({
-      tournament: tournament(),
-      pool: pool(),
-      receiptAccount: receiptAccount({ amount: 99n }),
-    }).reason,
+    planTournamentResolve(planArgs({ receiptAccount: receiptAccount({ amount: 99n }) })).reason,
     "buy-in-receipt-amount-mismatch",
   );
   assert.equal(
-    planTournamentResolve({
-      tournament: tournament(),
-      pool: pool(),
+    planTournamentResolve(planArgs({
       receiptAccount: { ...receiptAccount(), owner: Keypair.generate().publicKey.toBase58() },
-    }).reason,
+    })).reason,
     "buy-in-receipt-wrong-owner",
   );
 });
 
-test("tournament resolve binds the derived buy-in PDA and uses SIDE_NONE", () => {
-  const planned = planTournamentResolve({
-    tournament: tournament(),
-    pool: pool(),
-    receiptAccount: receiptAccount(),
-  });
+test("correct finished winner + matching entry + canonical receipt resolves with SIDE_NONE", () => {
+  const planned = planTournamentResolve(planArgs());
   assert.equal(planned.ok, true);
+  assert.equal(planned.action, "resolve");
   assert.equal(planned.kind, ARENA_KIND_TOURNAMENT);
   assert.equal(planned.winnerSide, ARENA_SIDE_NONE);
   assert.equal(planned.winnerAsset, winnerAsset.toBase58());
@@ -171,54 +259,46 @@ test("tournament resolve binds the derived buy-in PDA and uses SIDE_NONE", () =>
   assert.equal(planned.ownerB, SOLANA_DEFAULT_PUBKEY);
   const expectedPda = deriveArenaBuyInReceipt(poolId, winnerAsset.toBase58(), winnerWallet.toBase58());
   assert.equal(planned.winnerBuyInReceipt.toBase58(), expectedPda.toBase58());
-  assert.deepEqual(planned.outcomeHash, tournamentOutcomeHash(tournament()));
+  assert.deepEqual(
+    planned.outcomeHash,
+    tournamentOutcomeHash({
+      id: tournamentId,
+      winner_token: winnerAsset.toBase58(),
+      winner_wallet: winnerWallet.toBase58(),
+      settlement_version: 1,
+    }),
+  );
 });
 
 test("wrong pool id or wrong receipt PDA is blocked", () => {
-  assert.equal(planTournamentResolve({ tournament: tournament(), pool: pool({ kind: 0 }), receiptAccount: receiptAccount() }).reason, "not-tournament");
+  assert.equal(planTournamentResolve(planArgs({ pool: pool({ kind: 0 }) })).reason, "not-tournament");
   assert.equal(
-    planTournamentResolve({
-      tournament: tournament(),
-      pool: pool({ poolId: Buffer.alloc(32, 9) }),
-      receiptAccount: receiptAccount(),
-    }).reason,
+    planTournamentResolve(planArgs({ pool: pool({ poolId: Buffer.alloc(32, 9) }) })).reason,
     "pool-id-mismatch",
   );
   const otherPda = Keypair.generate().publicKey;
   assert.equal(
-    planTournamentResolve({
-      tournament: tournament(),
-      pool: pool(),
+    planTournamentResolve(planArgs({
       receiptAccount: { ...receiptAccount(), pubkey: otherPda },
-    }).reason,
+    })).reason,
     "buy-in-receipt-pda-mismatch",
   );
   const { pubkey: _ignored, ...withoutPubkey } = receiptAccount();
   assert.equal(
-    planTournamentResolve({
-      tournament: tournament(),
-      pool: pool(),
-      receiptAccount: withoutPubkey,
-    }).reason,
+    planTournamentResolve(planArgs({ receiptAccount: withoutPubkey })).reason,
     "buy-in-receipt-pda-mismatch",
   );
   assert.equal(
-    planTournamentResolve({
-      tournament: tournament(),
-      pool: pool(),
+    planTournamentResolve(planArgs({
       receiptAccount: receiptAccount({ pool: Buffer.alloc(32, 3) }),
-    }).reason,
+    })).reason,
     "buy-in-receipt-pool-mismatch",
   );
 });
 
 test("tournament resolve reuses Ed25519 immediately before resolve_pool_v2 and the buy-in receipt account", () => {
   const resolver = Keypair.generate();
-  const planned = planTournamentResolve({
-    tournament: tournament(),
-    pool: pool(),
-    receiptAccount: receiptAccount(),
-  });
+  const planned = planTournamentResolve(planArgs());
   const built = buildPlannedResolveInstructions(planned, resolver);
   assert.doesNotThrow(() => assertEd25519Adjacency(built.instructions));
   assert.ok(built.instructions[1].programId.equals(ARENA_PROGRAM_ID));
@@ -234,33 +314,34 @@ test("tournament resolve reuses Ed25519 immediately before resolve_pool_v2 and t
   assert.notEqual(receiptKey.toBase58(), built.pool.toBase58());
 });
 
-test("already-resolved tournament skip requires exact winner asset and wallet", () => {
-  const skip = planTournamentResolve({
-    tournament: tournament(),
+test("already-resolved exact winner still skips without a receipt fetch", () => {
+  const skip = planTournamentResolve(planArgs({
     pool: pool({
       state: ARENA_STATE_RESOLVED,
       winnerAsset: winnerAsset.toBase58(),
       winnerWallet: winnerWallet.toBase58(),
     }),
-  });
+    receiptAccount: null,
+  }));
+  assert.equal(skip.ok, true);
   assert.equal(skip.action, "skip");
   assert.equal(skip.reason, "already-resolved");
   assert.equal(
-    planTournamentResolve({
-      tournament: tournament(),
+    planTournamentResolve(planArgs({
       pool: pool({ state: ARENA_STATE_RESOLVED, winnerAsset: "", winnerWallet: winnerWallet.toBase58() }),
-    }).reason,
+      receiptAccount: null,
+    })).reason,
     "resolved-winner-missing",
   );
   assert.equal(
-    planTournamentResolve({
-      tournament: tournament(),
+    planTournamentResolve(planArgs({
       pool: pool({
         state: ARENA_STATE_RESOLVED,
         winnerAsset: winnerAsset.toBase58(),
         winnerWallet: Keypair.generate().publicKey.toBase58(),
       }),
-    }).reason,
+      receiptAccount: null,
+    })).reason,
     "resolved-wallet-mismatch",
   );
 });
@@ -282,6 +363,10 @@ test("protocol claims are allowed for resolved tournament pots using config rece
 test("tournament planner stays operator-only and off Phantom", () => {
   const source = fs.readFileSync(path.join(here, "arena-operator-resolve.mjs"), "utf8");
   assert.match(source, /planTournamentResolve/);
+  assert.match(source, /finalTournamentBracketWinner/);
+  assert.match(source, /tournament-not-finished/);
+  assert.match(source, /winner-bracket-mismatch/);
+  assert.match(source, /winner-entry-mismatch/);
   assert.match(source, /verifyAuthoritativeBuyInReceipt/);
   assert.match(source, /winnerBuyInReceipt/);
   assert.match(source, /canonicalTournamentPoolIdBytes/);

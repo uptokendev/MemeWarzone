@@ -89,6 +89,10 @@ jobs:
           grep -F 'sendArenaOperatorV0' scripts/solana/arena-operator-resolve.mjs
           grep -F 'money_winner_token' scripts/solana/arena-operator-resolve.mjs
           grep -F 'planTournamentResolve' scripts/solana/arena-operator-resolve.mjs
+          grep -F 'finalTournamentBracketWinner' scripts/solana/arena-operator-resolve.mjs
+          grep -F 'tournament-not-finished' scripts/solana/arena-operator-resolve.mjs
+          grep -F 'winner-bracket-mismatch' scripts/solana/arena-operator-resolve.mjs
+          grep -F 'winner-entry-mismatch' scripts/solana/arena-operator-resolve.mjs
           grep -F 'verifyAuthoritativeBuyInReceipt' scripts/solana/arena-operator-resolve.mjs
           grep -F 'winnerBuyInReceipt' scripts/solana/arena-operator-resolve.mjs
           grep -F 'canonicalTournamentPoolIdBytes' scripts/solana/arena-operator-resolve.mjs
