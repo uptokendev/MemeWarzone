@@ -10,6 +10,7 @@ import {
   nextCheckinStreak,
   pairKey,
   pairScoringLockKey,
+  requireBattleChainId,
   seasonAcceptsRegularPoints,
   streakBonusDue,
   utcDay,
@@ -149,11 +150,14 @@ async function writeEvent({ seasonId, token, kind, points, wallet = null, battle
 }
 
 export async function recordFinishedBattle(row, db = pool) {
+  const chain = requireBattleChainId(row);
+  if (!chain.ok) return { scored: false, reason: chain.reason };
+
   const left = ident(row?.challenger_token);
   const right = ident(row?.defender_token);
   if (!left || !right) return { scored: false, reason: "missing-tokens" };
 
-  const season = await ensureActiveSeason(row.chain_id, db);
+  const season = await ensureActiveSeason(chain.chainId, db);
   const origin = await tournamentOrigin(row.tournament_id, db);
   const isQuarterFinals = origin === "quarter_finals";
   const frozen = !seasonAcceptsRegularPoints(season);

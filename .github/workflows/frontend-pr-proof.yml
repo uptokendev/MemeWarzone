@@ -65,6 +65,9 @@ jobs:
       - name: Test Warzone tournament start roster and bracket reconcile
         run: npm --prefix frontend run test:arena-tournament
 
+      - name: Test Warzone MWL isolation and pair identity
+        run: npm --prefix frontend run test:arena-mwl
+
       - name: Test wallet provider discovery
         run: npm --prefix frontend run test:wallet-discovery
 

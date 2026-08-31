@@ -30,15 +30,31 @@ export const MONEY_TIE_BREAK = Object.freeze({
  */
 export const REMATCH_FIGHT_POLICY = "count_fight_skip_points";
 
+export const MISSING_BATTLE_CHAIN_ID = "MISSING_BATTLE_CHAIN_ID";
+
 export function identToken(value) {
   return String(value || "").trim();
 }
 
+export function canonicalTokenKey(value) {
+  const raw = identToken(value);
+  if (/^0x[0-9a-fA-F]{40}$/.test(raw)) return raw.toLowerCase();
+  return raw;
+}
+
 export function pairKey(left, right) {
-  const a = identToken(left).toLowerCase();
-  const b = identToken(right).toLowerCase();
+  const a = canonicalTokenKey(left);
+  const b = canonicalTokenKey(right);
   if (!a || !b) return "";
   return [a, b].sort().join(":");
+}
+
+export function requireBattleChainId(row) {
+  const chainId = Number(row?.chain_id ?? row?.chainId);
+  if (!Number.isFinite(chainId) || chainId <= 0) {
+    return { ok: false, reason: MISSING_BATTLE_CHAIN_ID, chainId: null };
+  }
+  return { ok: true, reason: "ok", chainId };
 }
 
 export function pairScoringLockKey(seasonId, key) {
@@ -103,12 +119,6 @@ export function pctChange(startMcap, endMcap) {
   const end = finiteMcap(endMcap);
   if (start <= 0) return end > 0 ? 1 : 0;
   return (end - start) / start;
-}
-
-export function canonicalTokenKey(value) {
-  const raw = identToken(value);
-  if (/^0x[0-9a-fA-F]{40}$/.test(raw)) return raw.toLowerCase();
-  return raw;
 }
 
 export function compareTokenIdentity(left, right) {

@@ -7,6 +7,7 @@ import {
   DRAW_POINTS,
   INVALID_MARKET_CAP_SNAPSHOT,
   LOSS_POINTS,
+  MISSING_BATTLE_CHAIN_ID,
   MONEY_TIE_BREAK,
   MWL_RESULT,
   PAIR_WINDOW_DAYS,
@@ -23,6 +24,7 @@ import {
   pairPointsEligible,
   pairScoringLockKey,
   pctChange,
+  requireBattleChainId,
   settleBattleResult,
 } from "./arenaLeagueScoreMath.js";
 
@@ -183,6 +185,25 @@ test("mwlLedgerPlan never awards MWL points from a money winner on a draw", () =
 test("pair scoring lock key is season plus canonical pair key", () => {
   const key = pairKey(TOKEN_A, TOKEN_B);
   assert.equal(pairScoringLockKey("mwl-2026-q3-c101", key), `mwl-2026-q3-c101:${key}`);
+});
+
+test("EVM pair keys ignore 0x casing; Solana pair keys preserve base58 case", () => {
+  const evmA = "0xAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAa";
+  const evmB = "0xBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBb";
+  assert.equal(pairKey(evmA, evmB), pairKey(evmA.toLowerCase(), `0x${evmB.slice(2).toUpperCase()}`));
+  assert.equal(pairKey(evmA, evmB), pairKey(evmB, evmA));
+
+  const solA = "So11111111111111111111111111111111111111112";
+  const solB = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+  assert.equal(pairKey(solA, solB), pairKey(solB, solA));
+  assert.notEqual(pairKey(solA, solB), pairKey(solA.toLowerCase(), solB));
+});
+
+test("missing battle chain_id is an explicit fail-closed reason", () => {
+  assert.equal(requireBattleChainId({}).reason, MISSING_BATTLE_CHAIN_ID);
+  assert.equal(requireBattleChainId({ chain_id: 0 }).ok, false);
+  assert.equal(requireBattleChainId({ chainId: 56 }).ok, true);
+  assert.equal(requireBattleChainId({ chain_id: "101" }).chainId, 101);
 });
 
 test("7-day rematch adds no second MWL points but still counts the fight", () => {
