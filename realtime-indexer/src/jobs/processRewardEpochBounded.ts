@@ -1,10 +1,11 @@
 import { pool } from "../db.js";
 import { ENV } from "../env.js";
 import { emitNotification } from "../notifications.js";
-import { ensurePublishedAirdropDrawForEpoch } from "../rewards/airdrops.js";
+import { ensurePublishedAirdropDrawForEpoch, type AirdropDrawProgram } from "../rewards/airdrops.js";
 import { processRewardEligibilityForEpoch } from "../rewards/eligibility.js";
 import { getCurrentWeeklyEpoch } from "../rewards/epochs.js";
 import { materializeRewardLedgerForEpoch, publishRewardLedgerForEpoch } from "../rewards/ledger.js";
+import { ensurePublishedZeroAirdropDrawForEpoch, hasZeroAirdropWork } from "./zeroAirdropDraw.js";
 
 const REQUIRED_PROGRAMS = ["recruiter", "airdrop_trader", "airdrop_creator", "squad"] as const;
 
@@ -32,6 +33,15 @@ async function hasCompleteEligibilitySnapshot(epochId: number): Promise<boolean>
   const wallets = Number(result.rows[0]?.wallets || 0);
   const completeWallets = Number(result.rows[0]?.complete_wallets || 0);
   return wallets > 0 && wallets === completeWallets;
+}
+
+async function ensureDraw(epochId: number, program: AirdropDrawProgram) {
+  const zeroWork = await hasZeroAirdropWork(epochId, program);
+  if (zeroWork) {
+    console.log(`[processRewardEpochBounded] epochId=${epochId} program=${program} stage=zero_draw_fast_path`);
+    return ensurePublishedZeroAirdropDrawForEpoch(epochId, program);
+  }
+  return ensurePublishedAirdropDrawForEpoch(epochId, program);
 }
 
 export async function runRewardEpochChain(chainId: number) {
@@ -70,11 +80,11 @@ export async function runRewardEpochChain(chainId: number) {
     }
 
     let stageStartedAt = Date.now();
-    const traderDraw = await ensurePublishedAirdropDrawForEpoch(epochId, "airdrop_trader");
+    const traderDraw = await ensureDraw(epochId, "airdrop_trader");
     console.log(`[processRewardEpochBounded] chainId=${chainId} epochId=${epochId} stage=trader_draw_done drawId=${traderDraw.draw.id} winners=${traderDraw.winners.length} durationMs=${elapsedMs(stageStartedAt)}`);
 
     stageStartedAt = Date.now();
-    const creatorDraw = await ensurePublishedAirdropDrawForEpoch(epochId, "airdrop_creator");
+    const creatorDraw = await ensureDraw(epochId, "airdrop_creator");
     console.log(`[processRewardEpochBounded] chainId=${chainId} epochId=${epochId} stage=creator_draw_done drawId=${creatorDraw.draw.id} winners=${creatorDraw.winners.length} durationMs=${elapsedMs(stageStartedAt)}`);
 
     stageStartedAt = Date.now();
