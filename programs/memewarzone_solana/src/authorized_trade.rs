@@ -1302,7 +1302,10 @@ pub(crate) fn route_fee_slices(
         None
     } else {
         crate::fee_escrow::require_creator_fee_vault(&remaining[6], campaign)?;
-        require!(remaining[6].is_writable, LaunchpadError::InvalidRewardsVault);
+        require!(
+            remaining[6].is_writable,
+            LaunchpadError::InvalidRewardsVault
+        );
         Some(&remaining[6])
     };
     if fee_lamports == 0 {
@@ -1402,7 +1405,7 @@ pub(crate) fn preview_bnb_route(kind: u8, profile: u8, fee_amount: u64) -> Resul
             match profile {
                 0 => (0u16, 0u16, 1500u16, 0u16, 250u16),
                 2 => (0, 0, 1750, 0, 250),
-                _ => (0, 0, 1750, 0),
+                _ => (0, 0, 0, 1750, 0),
             }
         };
     let league = calculate_fee(fee_amount, league_bps)?;
@@ -2003,7 +2006,11 @@ mod tests {
     #[test]
     fn finalize_route_keeps_creator_zero() {
         let fee = 10_000u64;
-        for profile in [ROUTE_PROFILE_LINKED, ROUTE_PROFILE_UNLINKED, ROUTE_PROFILE_OG] {
+        for profile in [
+            ROUTE_PROFILE_LINKED,
+            ROUTE_PROFILE_UNLINKED,
+            ROUTE_PROFILE_OG,
+        ] {
             let finalize = preview_bnb_route(crate::ROUTE_KIND_FINALIZE, profile, fee).unwrap();
             assert_eq!(finalize.creator, 0, "profile {profile}");
             assert_eq!(
