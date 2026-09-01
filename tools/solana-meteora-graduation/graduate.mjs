@@ -228,12 +228,34 @@ async function sendLegacy(connection, payer, ixs) {
   if (confirmation.value.err) fail(`lookup table update failed: ${JSON.stringify(confirmation.value.err)}`);
 }
 
+function resolveGraduationAltAddress() {
+  const configured = String(process.env.SOLANA_GRADUATION_ALT_ADDRESS || "").trim();
+  if (configured) return configured.split(",")[0].trim();
+
+  const fixturePath = String(process.env.SOLANA_GRADUATION_FIXTURE_OUTPUT || "").trim();
+  if (!fixturePath || !fs.existsSync(fixturePath)) return "";
+  let fixture;
+  try {
+    fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
+  } catch (error) {
+    fail(`failed to read graduation fixture ALT from ${fixturePath}: ${error instanceof Error ? error.message : error}`);
+  }
+  const temporaryAlt = String(fixture?.temporaryLaunchpadAlt || "").trim();
+  if (!temporaryAlt) return "";
+  console.log("graduation ALT source=auto-fixture", temporaryAlt);
+  return temporaryAlt;
+}
+
 async function loadLookupTables(connection, operator, instructions) {
-  const raw = String(process.env.SOLANA_GRADUATION_ALT_ADDRESS || "").trim();
+  const raw = resolveGraduationAltAddress();
   if (!raw) return [];
-  const address = asPk(raw.split(",")[0], "SOLANA_GRADUATION_ALT_ADDRESS");
+  const address = asPk(raw, "SOLANA_GRADUATION_ALT_ADDRESS");
   let result = await connection.getAddressLookupTable(address);
   if (!result.value) fail(`address lookup table not found: ${address.toBase58()}`);
+  const authority = result.value.state.authority;
+  if (!authority || !authority.equals(operator.publicKey)) {
+    fail(`graduation ALT authority mismatch: expected=${operator.publicKey.toBase58()} actual=${authority?.toBase58?.() || "none"}`);
+  }
   const present = new Set(result.value.state.addresses.map((item) => item.toBase58()));
   const missing = collectInstructionKeys(instructions).filter((key) => !present.has(key.toBase58()));
   for (let i = 0; i < missing.length; i += 20) {
@@ -249,9 +271,18 @@ async function loadLookupTables(connection, operator, instructions) {
     ]);
   }
   if (missing.length) {
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    result = await connection.getAddressLookupTable(address);
-    if (!result.value) fail(`address lookup table disappeared: ${address.toBase58()}`);
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      result = await connection.getAddressLookupTable(address);
+      if (!result.value) fail(`address lookup table disappeared: ${address.toBase58()}`);
+      const currentSlot = await connection.getSlot("confirmed");
+      const lastExtendedSlot = Number(result.value.state.lastExtendedSlot || 0);
+      const updated = new Set(result.value.state.addresses.map((item) => item.toBase58()));
+      if (currentSlot > lastExtendedSlot && missing.every((key) => updated.has(key.toBase58()))) break;
+      if (attempt === 19) {
+        fail(`graduation ALT ${address.toBase58()} did not become active with all required accounts`);
+      }
+    }
   }
   return [result.value];
 }
