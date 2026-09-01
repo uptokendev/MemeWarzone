@@ -176,7 +176,7 @@ async function main() {
     execute,
     cluster: "devnet",
     genesis,
-    rpc,
+    rpc: "redacted-devnet-rpc",
     programId: EXPECTED_PROGRAM,
     programdataAddress: liveBefore.programdataAddress,
     onChainUpgradeAuthority: liveBefore.authority,
