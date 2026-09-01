@@ -63,7 +63,6 @@ async function main() {
   // tBNB deployer; none of these keys are production or persisted.
   ephemeralKey(env, "BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY");
   ephemeralKey(env, "BNB_6C_TEST_CREATOR_PRIVATE_KEY");
-  ephemeralKey(env, "BNB_6C_TEST_SCHEDULED_CREATOR_PRIVATE_KEY");
   ephemeralKey(env, "BNB_6C_TEST_BUYER_PRIVATE_KEY");
   ephemeralKey(env, "BNB_6C_TEST_TRADER_PRIVATE_KEY");
 
@@ -72,7 +71,7 @@ async function main() {
 
   run("npx", ["hardhat", "run", "scripts/deploy-bnb-testnet-stage.ts", "--network", "bscTestnet"], env);
   run("npx", ["hardhat", "run", "scripts/verify-bnb-testnet-stage.ts", "--network", "bscTestnet"], env);
-  run("npx", ["hardhat", "run", "scripts/test-bnb-testnet-lifecycle.ts", "--network", "bscTestnet"], env);
+  run("npx", ["hardhat", "run", "scripts/test-bnb-6c-testnet-lifecycle.ts", "--network", "bscTestnet"], env);
 
   if (!fs.existsSync(evidence)) throw new Error(`BNB 6C lifecycle did not write ${evidence}`);
   const result = JSON.parse(fs.readFileSync(evidence, "utf8"));
