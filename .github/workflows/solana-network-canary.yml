@@ -50,6 +50,9 @@ jobs:
       SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
       SOLANA_LAUNCHPAD_PROGRAM_ID: ${{ vars.SOLANA_DEVNET_LAUNCHPAD_PROGRAM_ID || '3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt' }}
       SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
+      # Disposable fixture target is $6 and its route-signed close target is 0.04 SOL.
+      # Pin only this isolated canary to $150/SOL so auth + on-chain target derivation are deterministic.
+      SOLANA_GRADUATION_SOL_USD_MICROS: "150000000"
       SOLANA_DEVNET_CANDIDATE_SHA256: e97c8f70a4bd0c6349d7f2f51d91be7e89f23b03187e18dc7f1a6363ac908c27
       SOLANA_DEVNET_CANDIDATE_BYTES: "1124416"
       SOLANA_DEVNET_UPGRADE_EVIDENCE: /tmp/mwz-solana-devnet-upgrade.json
