@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       solana_campaign:
-        description: Curve-closed Economics V3 devnet Campaign PDA (optional; falls back to env variable)
+        description: Optional existing curve-closed Economics V3 devnet Campaign PDA. Leave blank to auto-create a disposable fixture.
         required: false
         type: string
         default: ""
@@ -35,9 +35,10 @@ jobs:
       SOLANA_RPC_URL: ${{ vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
       SOLANA_GRADUATION_AUTH_URL: http://127.0.0.1:43101/api/solana/graduation-authorize
       SOLANA_GRADUATION_ALT_ADDRESS: ${{ vars.SOLANA_GRADUATION_ALT_ADDRESS }}
-      SOLANA_GRADUATION_CAMPAIGN: ${{ inputs.solana_campaign || vars.SOLANA_GRADUATION_CAMPAIGN }}
+      SOLANA_GRADUATION_CAMPAIGN: ${{ inputs.solana_campaign }}
       SOLANA_GRADUATION_SEND: ${{ inputs.send_solana_graduation && 'true' || 'false' }}
       SOLANA_GRADUATION_PAUSE_SNAPSHOT: /tmp/mwz-solana-devnet-pause-snapshot.json
+      SOLANA_GRADUATION_FIXTURE_OUTPUT: /tmp/mwz-solana-devnet-graduation-fixture.json
 
     steps:
       - uses: actions/checkout@v4
@@ -48,7 +49,7 @@ jobs:
         with:
           node-version: 22
 
-      - name: Candidate and required devnet inputs
+      - name: Candidate and required devnet credentials
         shell: bash
         run: |
           set -euo pipefail
@@ -61,10 +62,12 @@ jobs:
             echo "BLOCKER: set testnet-certification secret SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY to the devnet-only route signer JSON keypair."
             exit 1
           }
-          test -n "${SOLANA_GRADUATION_CAMPAIGN:-}" || {
-            echo "BLOCKER: provide workflow input solana_campaign or environment variable SOLANA_GRADUATION_CAMPAIGN with a curve-closed Economics V3 devnet campaign PDA."
-            exit 1
-          }
+          if [ -n "${SOLANA_GRADUATION_CAMPAIGN:-}" ]; then
+            echo "campaign_source=workflow-input"
+            echo "campaign=$SOLANA_GRADUATION_CAMPAIGN"
+          else
+            echo "campaign_source=auto-disposable-v3-fixture"
+          fi
 
       - name: Pin and verify Meteora DAMM v2 CP-AMM artifact
         shell: bash
@@ -142,6 +145,27 @@ jobs:
           set -euo pipefail
           npm --prefix tests/solana run devnet:rotate-route-signer
 
+      - name: Create disposable curve-closed V3 campaign when none was supplied
+        if: ${{ inputs.solana_campaign == '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix tests/solana run devnet:create-graduation-fixture
+          test -s "$SOLANA_GRADUATION_FIXTURE_OUTPUT"
+          campaign="$(node -e 'const f=require("fs");const j=JSON.parse(f.readFileSync(process.env.SOLANA_GRADUATION_FIXTURE_OUTPUT,"utf8"));if(!j.campaign||j.curveClosed!==true||j.graduated!==false)process.exit(2);process.stdout.write(j.campaign)')"
+          echo "SOLANA_GRADUATION_CAMPAIGN=$campaign" >> "$GITHUB_ENV"
+          echo "auto_fixture_campaign=$campaign"
+
+      - name: Verify graduation campaign is available
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SOLANA_GRADUATION_CAMPAIGN:-}" || {
+            echo "BLOCKER: no Solana graduation campaign is available after fixture setup."
+            exit 1
+          }
+          echo "graduation_campaign=$SOLANA_GRADUATION_CAMPAIGN"
+
       - name: Open isolated devnet graduation window
         shell: bash
         run: |
@@ -192,6 +216,7 @@ jobs:
         with:
           name: solana-devnet-meteora-acceptance-${{ github.sha }}
           path: |
+            /tmp/mwz-solana-devnet-graduation-fixture.json
             /tmp/mwz-solana-devnet-graduation-auth.log
             /tmp/mwz-solana-devnet-graduation-auth-health.json
             /tmp/mwz-solana-devnet-pause-snapshot.json
