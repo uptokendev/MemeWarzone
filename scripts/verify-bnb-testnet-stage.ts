@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { ethers, network } from "hardhat";
+import { ethers } from "hardhat";
 import { LIVE_97_FACTORY, LIVE_97_ROUTE_AUTHORITY, LIVE_97_TREASURY_V2 } from "./lib/bnbLiveFactorySnapshot";
 
 const BNB_TESTNET_CHAIN_ID = 97;
@@ -45,8 +45,8 @@ async function main() {
   if (chainId !== BNB_TESTNET_CHAIN_ID && !(allowLocal && chainId === LOCAL_CHAIN_ID)) {
     throw new Error(`BNB 6C stage verifier refuses chain ${chainId}`);
   }
-  if (chainId === BNB_TESTNET_CHAIN_ID) {
-    throw new Error("6C first cut is local rehearsal only. Refusing chain-97 verify until the rehearsal SHA is audited.");
+  if (chainId === BNB_TESTNET_CHAIN_ID && !truthy(process.env.BNB_6C_ALLOW_SOURCE_HEAD_BROADCAST)) {
+    throw new Error("BNB 6C chain-97 verification requires BNB_6C_ALLOW_SOURCE_HEAD_BROADCAST=true");
   }
 
   const explicit = String(process.env.BNB_6C_STAGE_DEPLOYMENT_FILE || "").trim();
