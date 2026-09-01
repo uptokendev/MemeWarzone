@@ -229,9 +229,7 @@ pub fn initialize_fee_escrow_handler(ctx: Context<InitializeFeeEscrow>) -> Resul
     Ok(())
 }
 
-pub fn initialize_creator_fee_vault_handler(
-    ctx: Context<InitializeCreatorFeeVault>,
-) -> Result<()> {
+pub fn initialize_creator_fee_vault_handler(ctx: Context<InitializeCreatorFeeVault>) -> Result<()> {
     require_keys_eq!(
         *ctx.accounts.campaign.owner,
         crate::ID,
@@ -286,7 +284,11 @@ pub fn claim_creator_fees_handler(ctx: Context<ClaimCreatorFees>) -> Result<()> 
         let data = ctx.accounts.creator_fee_vault.try_borrow_data()?;
         let mut slice: &[u8] = &data;
         let vault = Box::new(CreatorFeeVault::try_deserialize(&mut slice)?);
-        require_keys_eq!(vault.creator, ctx.accounts.creator.key(), LaunchpadError::Unauthorized);
+        require_keys_eq!(
+            vault.creator,
+            ctx.accounts.creator.key(),
+            LaunchpadError::Unauthorized
+        );
         vault.pending_lamports
     };
     if amount == 0 {
@@ -300,7 +302,10 @@ pub fn claim_creator_fees_handler(ctx: Context<ClaimCreatorFees>) -> Result<()> 
         .to_account_info()
         .lamports()
         .saturating_sub(rent_min);
-    require!(spendable >= amount, LaunchpadError::FeeEscrowBalanceMismatch);
+    require!(
+        spendable >= amount,
+        LaunchpadError::FeeEscrowBalanceMismatch
+    );
 
     {
         let vault_info = ctx.accounts.creator_fee_vault.to_account_info();
@@ -439,7 +444,10 @@ pub fn require_fee_escrow(info: &AccountInfo, campaign: Pubkey, bump: u8) -> Res
         crate::ID,
         LaunchpadError::FeeEscrowNotInitialized
     );
-    let expected = Pubkey::find_program_address(&[FEE_ESCROW_SEED, campaign.as_ref()], &crate::ID);
+    let expected = Pubkey::find_program_address(
+        &[FEE_ESCROW_SEED, campaign.as_ref()],
+        &crate::ID,
+    );
     require_keys_eq!(*info.key, expected.0, LaunchpadError::InvalidFeeEscrow);
     require!(expected.1 == bump, LaunchpadError::InvalidFeeEscrow);
     require!(
