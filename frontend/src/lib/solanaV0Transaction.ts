@@ -57,6 +57,7 @@ export type LaunchpadV0IntentExpectation = {
   releaseMaxBytes?: number | null;
   maxRequiredSigners?: number;
   allowAdditionalProgramInstructions?: boolean;
+  allowInstructionPrivilegePromotion?: boolean;
 };
 
 export function configuredLaunchpadAltAddress(): string {
@@ -131,15 +132,28 @@ function dataEqual(a: Uint8Array, b: Uint8Array): boolean {
   return true;
 }
 
-function instructionEqual(a: TransactionInstruction, b: TransactionInstruction): boolean {
-  if (keyString(a.programId) !== keyString(b.programId)) return false;
-  if (!dataEqual(a.data, b.data)) return false;
-  if (a.keys.length !== b.keys.length) return false;
-  for (let i = 0; i < a.keys.length; i += 1) {
-    const left = a.keys[i];
-    const right = b.keys[i];
+function instructionEqual(
+  actual: TransactionInstruction,
+  expected: TransactionInstruction,
+  allowPrivilegePromotion = false,
+): boolean {
+  if (keyString(actual.programId) !== keyString(expected.programId)) return false;
+  if (!dataEqual(actual.data, expected.data)) return false;
+  if (actual.keys.length !== expected.keys.length) return false;
+  for (let i = 0; i < actual.keys.length; i += 1) {
+    const left = actual.keys[i];
+    const right = expected.keys[i];
     if (keyString(left.pubkey) !== keyString(right.pubkey)) return false;
-    if (left.isSigner !== right.isSigner || left.isWritable !== right.isWritable) return false;
+    if (allowPrivilegePromotion) {
+      // V0 compilation merges account privileges across the whole transaction.
+      // A key that is read-only/non-signer in this instruction can therefore
+      // decompile as writable/signer when another instruction legitimately
+      // needs stronger access. Never allow a required privilege to disappear.
+      if (right.isSigner && !left.isSigner) return false;
+      if (right.isWritable && !left.isWritable) return false;
+    } else if (left.isSigner !== right.isSigner || left.isWritable !== right.isWritable) {
+      return false;
+    }
   }
   return true;
 }
@@ -274,7 +288,11 @@ export function assertLaunchpadV0Intent(
     throw new Error(`Expected exactly one MemeWarzone instruction; found ${programIndices.length}`);
   }
   const programIndex = decompiled.instructions.findIndex((instruction) => (
-    instructionEqual(instruction, expectation.programInstruction)
+    instructionEqual(
+      instruction,
+      expectation.programInstruction,
+      expectation.allowInstructionPrivilegePromotion === true,
+    )
   ));
   if (programIndex < 0) {
     throw new Error("MemeWarzone instruction intent changed before signing/submission");
