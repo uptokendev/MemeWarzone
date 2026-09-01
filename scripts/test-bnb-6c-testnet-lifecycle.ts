@@ -42,6 +42,29 @@ function errorText(error: unknown): string {
   return `${err?.shortMessage || ""} ${err?.message || ""} ${String(error)}`;
 }
 
+async function waitForRpcState<T>(
+  label: string,
+  read: () => Promise<T>,
+  accepted: (value: T) => boolean,
+  attempts = 20,
+  delayMs = 1_000,
+): Promise<T> {
+  let lastValue: T | undefined;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      lastValue = await read();
+      if (accepted(lastValue)) return lastValue;
+      lastError = undefined;
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  const suffix = lastError ? ` lastError=${errorText(lastError)}` : ` lastValue=${String(lastValue)}`;
+  throw new Error(`${label} did not become visible through the BSC RPC after ${attempts} reads.${suffix}`);
+}
+
 function matchesCustomError(error: unknown, contract: { interface: ethers.Interface }, name: string): boolean {
   if (errorText(error).includes(name)) return true;
   try {
@@ -229,8 +252,18 @@ async function main() {
 
   const pendingBeforeClaim = await creatorVault.pendingCreatorFees(info.campaign);
   if (pendingBeforeClaim <= 0n) throw new Error("CreatorRewardsVault did not accrue creator fees");
-  await (await creatorVault.connect(creator).claimCreatorFees(info.campaign)).wait();
-  if ((await creatorVault.pendingCreatorFees(info.campaign)) !== 0n) throw new Error("Creator claim did not clear pending fees");
+  const claimReceipt = await (await creatorVault.connect(creator).claimCreatorFees(info.campaign)).wait();
+  if (!claimReceipt) throw new Error("Creator claim transaction did not return a receipt");
+  const pendingAfterClaim = await waitForRpcState(
+    "Creator claim pending=0",
+    () => creatorVault.pendingCreatorFees(info.campaign),
+    (value) => value === 0n,
+  );
+  console.log("[bnb-6c-creator-claim]", {
+    blockNumber: claimReceipt.blockNumber,
+    pendingBeforeClaim: pendingBeforeClaim.toString(),
+    pendingAfterClaim: pendingAfterClaim.toString(),
+  });
   await expectCustomError(creatorVault, "not creator", () => creatorVault.connect(buyer).claimCreatorFees(info.campaign));
 
   const nativeTarget = await campaign.graduationNativeTarget();
@@ -242,7 +275,7 @@ async function main() {
   const [quotedTokens] = await campaign.quoteBuyExactBnb(crossingValue);
   const minTokensOut = (quotedTokens * 99n) / 100n;
   const crossingAuth = await buildTradeAuthorization(signerMod, campaign, buyer, routeAuthority, TRADE_AUTH_BUY_EXACT_NATIVE, crossingValue, minTokensOut);
-  await (
+  const graduationReceipt = await (
     await campaign.connect(buyer).buyExactBnbAuthorized(
       minTokensOut,
       crossingAuth.routeProfileId,
@@ -251,15 +284,28 @@ async function main() {
       { value: crossingValue },
     )
   ).wait();
-  if (!(await campaign.launched())) throw new Error("Campaign did not graduate on chain 97");
+  if (!graduationReceipt) throw new Error("Graduation crossing transaction did not return a receipt");
+  await waitForRpcState("Campaign launched=true", () => campaign.launched(), (value) => value === true);
 
-  const state = await campaign.getGraduationState();
-  if (state.dexPair === ethers.ZeroAddress) throw new Error("Graduation did not create a controlled Topaz pool");
-  if ((await topazFactory.getFee(state.dexPair, false)) !== 30n) throw new Error("Graduated controlled Topaz pool is not 30 bps");
+  const state = await waitForRpcState(
+    "Graduation state dexPair",
+    () => campaign.getGraduationState(),
+    (value) => value.dexPair !== ethers.ZeroAddress,
+  );
+  console.log("[bnb-6c-graduation]", { blockNumber: graduationReceipt.blockNumber, dexPair: state.dexPair });
+  const controlledPoolFee = await waitForRpcState(
+    "Graduated controlled Topaz 30 bps fee",
+    () => topazFactory.getFee(state.dexPair, false),
+    (value) => value === 30n,
+  );
+  if (controlledPoolFee !== 30n) throw new Error("Graduated controlled Topaz pool is not 30 bps");
   const pool = await ethers.getContractAt("MockTopazPool", state.dexPair);
   const lockerAddress = await locker.getAddress();
-  const lpBefore = await pool.balanceOf(lockerAddress);
-  if (lpBefore <= 0n || lpBefore !== state.graduatedLiquidityLp) throw new Error("Graduated LP was not permanently locked");
+  const lpBefore = await waitForRpcState(
+    "Graduated LP lock balance",
+    () => pool.balanceOf(lockerAddress),
+    (value) => value > 0n && value === state.graduatedLiquidityLp,
+  );
 
   const tokenAddress = await token.getAddress();
   const wbnbAddress = await wbnb.getAddress();
@@ -345,8 +391,14 @@ async function main() {
   }
   if ((await pool.balanceOf(lockerAddress)) !== lpBefore) throw new Error("LP principal changed during harvest");
 
-  await (await factory.setCreatePaused(true)).wait();
-  if (!(await factory.live()) || !(await factory.createPaused())) throw new Error("Accepted 6C factory must finish live=true/createPaused=true");
+  const pauseReceipt = await (await factory.setCreatePaused(true)).wait();
+  if (!pauseReceipt) throw new Error("Final CREATE pause transaction did not return a receipt");
+  const finalFactoryState = await waitForRpcState(
+    "Accepted 6C factory live=true/createPaused=true",
+    async () => ({ live: await factory.live(), createPaused: await factory.createPaused() }),
+    (value) => value.live === true && value.createPaused === true,
+  );
+  console.log("[bnb-6c-final-state]", { blockNumber: pauseReceipt.blockNumber, ...finalFactoryState });
   const liveAfter = await snapshotLiveBnbTestnetFactory(ethers.provider);
   assertLiveFactorySnapshotUnchanged(liveBefore, liveAfter);
 
