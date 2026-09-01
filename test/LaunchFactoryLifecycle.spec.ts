@@ -206,10 +206,14 @@ describe("LaunchFactory lifecycle integration", function () {
   });
 
   it("graduation notification decrements creator live count and registers the LP token", async () => {
-    const { factory, owner, creator, alice, permanentLpLocker } = await deployCoreFixture();
+    const { factory, owner, creator, alice, permanentLpLocker, router } = await deployCoreFixture();
     const { creatorRegistry, riskRegistry } = await deployRegistries();
     const creatorAddress = await creator.getAddress();
+    const MockPhase1TreasuryRouter = await ethers.getContractFactory("MockPhase1TreasuryRouter");
+    const strictFeeRouter = await MockPhase1TreasuryRouter.deploy();
+    await strictFeeRouter.waitForDeployment();
 
+    await factory.connect(owner).setCoreRouting(await router.getAddress(), await strictFeeRouter.getAddress());
     await creatorRegistry.setLaunchRecorder(await factory.getAddress(), true);
     await factory.connect(owner).setRegistries(await creatorRegistry.getAddress(), await riskRegistry.getAddress());
     await factory.connect(owner).setConfig({
