@@ -348,6 +348,57 @@ test("wallet assertions may be appended but cannot break Ed25519 -> MemeWarzone 
   }), /immediately before MemeWarzone/i);
 });
 
+test("graduation-style V0 bundles tolerate compiler privilege promotion only when explicitly allowed", () => {
+  const fixture = makeTradeFixture();
+  const promotedKey = fixture.programInstruction.keys.find((meta) => !meta.isSigner && !meta.isWritable)?.pubkey;
+  assert.ok(promotedKey, "fixture needs a read-only non-signer account to promote");
+  const siblingInstruction = new TransactionInstruction({
+    programId: Keypair.generate().publicKey,
+    keys: [{ pubkey: promotedKey, isSigner: false, isWritable: true }],
+    data: Buffer.from([9, 9, 9]),
+  });
+  const transaction = buildLaunchpadV0Transaction(web3, {
+    payer: fixture.payer,
+    recentBlockhash: BLOCKHASH,
+    instructions: [
+      fixture.computeInstruction,
+      siblingInstruction,
+      fixture.ed25519Instruction,
+      fixture.programInstruction,
+    ],
+    lookupTableAccounts: [fixture.lookupTable],
+  });
+  const expectation = {
+    payer: fixture.payer,
+    ed25519Instruction: fixture.ed25519Instruction,
+    programInstruction: fixture.programInstruction,
+    lookupTableAccounts: [fixture.lookupTable],
+    releaseMaxBytes: null,
+  };
+
+  assert.throws(
+    () => assertLaunchpadV0Intent(web3, transaction, expectation),
+    /instruction intent changed/i,
+  );
+  assert.doesNotThrow(() => assertLaunchpadV0Intent(web3, transaction, {
+    ...expectation,
+    allowInstructionPrivilegePromotion: true,
+  }));
+
+  const tamperedProgram = new TransactionInstruction({
+    programId: fixture.programInstruction.programId,
+    keys: fixture.programInstruction.keys.map((meta, index) => (
+      index === 1 ? { ...meta, pubkey: Keypair.generate().publicKey } : meta
+    )),
+    data: fixture.programInstruction.data,
+  });
+  assert.throws(() => assertLaunchpadV0Intent(web3, transaction, {
+    ...expectation,
+    programInstruction: tamperedProgram,
+    allowInstructionPrivilegePromotion: true,
+  }), /instruction intent changed/i);
+});
+
 test("V0 gate rejects a transaction that gains a second required signer", () => {
   const fixture = makeTradeFixture(true);
   const transaction = buildLaunchpadV0Transaction(web3, {
