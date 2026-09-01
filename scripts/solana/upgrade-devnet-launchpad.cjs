@@ -35,7 +35,6 @@ const DEVNET_GENESIS = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
 const UPGRADEABLE_LOADER = "BPFLoaderUpgradeab1e11111111111111111111111";
 const DEFAULT_RPC = "https://api.devnet.solana.com";
 const DEFAULT_EVIDENCE = "/tmp/mwz-solana-devnet-upgrade.json";
-const BUFFER_METADATA_BYTES = 37;
 const PROGRAMDATA_METADATA_BYTES = 45;
 const TX_RESERVE_LAMPORTS = 200_000_000;
 
@@ -134,6 +133,9 @@ async function main() {
   if (!liveBefore.programdataAddress) {
     throw new Error("Program-show did not return a ProgramData address");
   }
+  if (!Number.isSafeInteger(Number(liveBefore.dataLen)) || Number(liveBefore.dataLen) <= 0) {
+    throw new Error(`Program-show returned invalid dataLen=${liveBefore.dataLen}`);
+  }
 
   const candidate = fs.readFileSync(SO_PATH);
   const candidateSha = sha256(candidate);
@@ -166,6 +168,8 @@ async function main() {
     }
   }
 
+  const allocatedProgramBytesBefore = Number(liveBefore.dataLen);
+  const extensionBytes = Math.max(0, candidate.length - allocatedProgramBytesBefore);
   const beforeRecord = {
     schemaVersion: 1,
     checkedAt: new Date().toISOString(),
@@ -178,24 +182,25 @@ async function main() {
     onChainUpgradeAuthority: liveBefore.authority,
     suppliedAuthority: operator?.publicKey.toBase58() || null,
     lastDeployedInSlotBefore: liveBefore.lastDeployedInSlot,
-    deployedDataLenBefore: liveBefore.dataLen,
+    allocatedProgramBytesBefore,
     candidateSha256: candidateSha,
     candidateBytes: candidate.length,
     liveSha256Before: liveSha,
     liveBytesBefore: liveBytes.length,
+    extensionBytesRequired: extensionBytes,
     alreadyCurrent,
   };
 
   console.log(JSON.stringify(beforeRecord, null, 2));
 
   if (alreadyCurrent) {
-    writeEvidence({ ...beforeRecord, upgraded: false, verified: true, reason: "already-current" });
+    writeEvidence({ ...beforeRecord, upgraded: false, extended: false, verified: true, reason: "already-current" });
     console.log("OK — devnet already runs the certified candidate; no transaction sent.");
     return;
   }
 
   if (!execute) {
-    writeEvidence({ ...beforeRecord, upgraded: false, verified: false, reason: "dry-run-different" });
+    writeEvidence({ ...beforeRecord, upgraded: false, extended: false, verified: false, reason: "dry-run-different" });
     console.log("Dry-run only: devnet differs from the certified candidate.");
     return;
   }
@@ -204,20 +209,25 @@ async function main() {
   const programdataAccount = await connection.getAccountInfo(programdataKey, "confirmed");
   if (!programdataAccount) throw new Error("ProgramData account is missing");
 
-  const bufferRent = await connection.getMinimumBalanceForRentExemption(candidate.length + BUFFER_METADATA_BYTES);
-  const requiredProgramdataLen = Math.max(
-    programdataAccount.data.length,
+  // Solana CLI 1.18.26 creates its temporary upgrade buffer using the rent
+  // amount for ProgramData(candidate length), then sends a separate loader
+  // Upgrade instruction. ProgramData growth is NOT part of that Upgrade path,
+  // so we explicitly run `solana program extend` first when needed.
+  const cliBufferFunding = await connection.getMinimumBalanceForRentExemption(
     candidate.length + PROGRAMDATA_METADATA_BYTES,
   );
-  const targetProgramdataRent = await connection.getMinimumBalanceForRentExemption(requiredProgramdataLen);
+  const requiredProgramdataAccountLen = candidate.length + PROGRAMDATA_METADATA_BYTES;
+  const targetProgramdataRent = await connection.getMinimumBalanceForRentExemption(
+    Math.max(programdataAccount.data.length, requiredProgramdataAccountLen),
+  );
   const extensionTopup = Math.max(0, targetProgramdataRent - programdataAccount.lamports);
-  const requiredLiquidLamports = bufferRent + extensionTopup + TX_RESERVE_LAMPORTS;
+  const requiredLiquidLamports = cliBufferFunding + extensionTopup + TX_RESERVE_LAMPORTS;
   const operatorBalance = await connection.getBalance(operator.publicKey, "confirmed");
 
   console.log(JSON.stringify({
     operatorBalanceLamports: operatorBalance,
     operatorBalanceSol: operatorBalance / LAMPORTS_PER_SOL,
-    estimatedBufferRentLamports: bufferRent,
+    estimatedCliBufferFundingLamports: cliBufferFunding,
     estimatedProgramdataExtensionTopupLamports: extensionTopup,
     transactionReserveLamports: TX_RESERVE_LAMPORTS,
     requiredLiquidLamports,
@@ -228,6 +238,40 @@ async function main() {
     throw new Error(
       `Devnet upgrade authority needs about ${(requiredLiquidLamports / LAMPORTS_PER_SOL).toFixed(4)} SOL liquid ` +
       `for the temporary deploy buffer/extension; current balance is ${(operatorBalance / LAMPORTS_PER_SOL).toFixed(4)} SOL.`,
+    );
+  }
+
+  let extendOutput = null;
+  let liveAfterExtend = liveBefore;
+  if (extensionBytes > 0) {
+    extendOutput = execFileSync(
+      "solana",
+      [
+        "program",
+        "extend",
+        EXPECTED_PROGRAM,
+        String(extensionBytes),
+        "--url",
+        rpc,
+        "--keypair",
+        operatorPath,
+      ],
+      { encoding: "utf8" },
+    );
+    process.stdout.write(extendOutput);
+    liveAfterExtend = showProgram(rpc);
+    if (liveAfterExtend.authority !== liveBefore.authority) {
+      throw new Error(
+        `Upgrade authority changed unexpectedly during extend: ${liveBefore.authority} -> ${liveAfterExtend.authority}`,
+      );
+    }
+    if (Number(liveAfterExtend.dataLen) < candidate.length) {
+      throw new Error(
+        `ProgramData extension verification failed: allocated=${liveAfterExtend.dataLen}, candidate=${candidate.length}`,
+      );
+    }
+    console.log(
+      `OK — devnet ProgramData extended by ${extensionBytes} bytes; allocated=${liveAfterExtend.dataLen}.`,
     );
   }
 
@@ -272,14 +316,21 @@ async function main() {
   if (liveAfter.authority !== liveBefore.authority) {
     throw new Error(`Upgrade authority changed unexpectedly: ${liveBefore.authority} -> ${liveAfter.authority}`);
   }
+  if (Number(liveAfter.dataLen) < candidate.length) {
+    throw new Error(`Post-upgrade ProgramData allocation is too small: ${liveAfter.dataLen}`);
+  }
 
   const evidence = {
     ...beforeRecord,
     upgraded: true,
+    extended: extensionBytes > 0,
+    extensionBytesApplied: extensionBytes,
+    extendOutput: extendOutput ? extendOutput.trim() : null,
+    allocatedProgramBytesAfterExtend: Number(liveAfterExtend.dataLen),
     verified: true,
     deploymentSignature,
     lastDeployedInSlotAfter: liveAfter.lastDeployedInSlot,
-    deployedDataLenAfter: liveAfter.dataLen,
+    allocatedProgramBytesAfter: Number(liveAfter.dataLen),
     deployedSha256: deployedSha,
     deployedBytes: deployed.length,
     byteIdentical: true,
