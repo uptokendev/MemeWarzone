@@ -10,12 +10,18 @@ function read(rel) {
   return fs.readFileSync(path.join(root, rel), "utf8");
 }
 
-test("6C deploy refuses chain 97 in the rehearsal cut and never unlocks 56", () => {
+test("6C deploy permits only explicitly guarded chain 97 and never unlocks 56", () => {
   const deploy = read("scripts/deploy-bnb-testnet-stage.ts");
+  const verify = read("scripts/verify-bnb-testnet-stage.ts");
+  const lifecycle = read("scripts/test-bnb-6c-testnet-lifecycle.ts");
   const guard = read("scripts/lib/bnbLiveGenerationGuard.ts");
   assert.match(deploy, /allowBnb6cTestnetSourceHeadBroadcast/);
-  assert.match(deploy, /Refusing chain-97 broadcast until the rehearsal SHA is audited/);
+  assert.doesNotMatch(deploy, /Refusing chain-97 broadcast until the rehearsal SHA is audited/);
+  assert.match(guard, /BNB_6C_ALLOW_SOURCE_HEAD_BROADCAST=true/);
   assert.match(guard, /6C forbids every factory\/treasury broadcast on chain 56/);
+  assert.match(verify, /BNB_6C_ALLOW_SOURCE_HEAD_BROADCAST=true/);
+  assert.match(lifecycle, /BNB 6C testnet acceptance requires chain 97/);
+  assert.match(lifecycle, /acceptance refuses the live 3\/2 factory/);
   assert.match(read("scripts/deploy-clean-slate-factory.ts"), /refuseBnbFactoryBroadcastIfSourceHeadIsNotLive/);
 });
 
