@@ -231,7 +231,7 @@ async function main() {
   if (pendingBeforeClaim <= 0n) throw new Error("CreatorRewardsVault did not accrue creator fees");
   await (await creatorVault.connect(creator).claimCreatorFees(info.campaign)).wait();
   if ((await creatorVault.pendingCreatorFees(info.campaign)) !== 0n) throw new Error("Creator claim did not clear pending fees");
-  await expectCustomError(creatorVault, "NotCampaignCreator", () => creatorVault.connect(buyer).claimCreatorFees(info.campaign));
+  await expectCustomError(creatorVault, "not creator", () => creatorVault.connect(buyer).claimCreatorFees(info.campaign));
 
   const nativeTarget = await campaign.graduationNativeTarget();
   const crossingValue = nativeTarget * 2n;
