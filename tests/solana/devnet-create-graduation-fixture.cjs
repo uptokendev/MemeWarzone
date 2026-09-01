@@ -407,7 +407,7 @@ async function main() {
     const evidence = {
       schemaVersion: 1,
       createdAt: new Date().toISOString(),
-      rpcUrl,
+      rpcUrl: "redacted-devnet-rpc",
       programId: PROGRAM_ID.toBase58(),
       operator: operator.publicKey.toBase58(),
       routeSigner: routeSigner.publicKey.toBase58(),
