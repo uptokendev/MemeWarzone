@@ -19,6 +19,7 @@ on:
       - "scripts/lib/bnbLiveFactorySnapshot.ts"
       - "scripts/bnb6cRouteAuthority.ts"
       - "scripts/prove-bnb-6c-rehearsal.test.mjs"
+      - "test/BnbSourceHeadMainnetForkTopazV3.spec.ts"
       - ".github/workflows/bnb-6c-rehearsal-ci.yml"
       - ".github/workflows/solana-network-canary.yml"
   push:
@@ -49,5 +50,7 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Prove 6A census still 3/2 and 6C source gates
         run: npm run prove:bnb-6a-census && npm run prove:bnb-6c-rehearsal
+      - name: Load source-head real-Topaz fork harness without a fork RPC
+        run: npx hardhat test test/BnbSourceHeadMainnetForkTopazV3.spec.ts
       - name: Full local 6C deploy, verify, and lifecycle rehearsal
         run: npm run rehearse:bnb-6c
