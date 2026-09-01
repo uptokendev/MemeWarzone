@@ -36,7 +36,7 @@ concurrency:
 jobs:
   canary:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     environment: testnet-certification
     env:
       BSC_TESTNET_PRIVATE_KEY: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
@@ -50,6 +50,9 @@ jobs:
       SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
       SOLANA_LAUNCHPAD_PROGRAM_ID: ${{ vars.SOLANA_DEVNET_LAUNCHPAD_PROGRAM_ID || '3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt' }}
       SOLANA_RPC_URL: ${{ vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
+      SOLANA_DEVNET_CANDIDATE_SHA256: e97c8f70a4bd0c6349d7f2f51d91be7e89f23b03187e18dc7f1a6363ac908c27
+      SOLANA_DEVNET_CANDIDATE_BYTES: "1124416"
+      SOLANA_DEVNET_UPGRADE_EVIDENCE: /tmp/mwz-solana-devnet-upgrade.json
       SOLANA_GRADUATION_AUTH_URL: http://127.0.0.1:43101/api/solana/graduation-authorize
       SOLANA_GRADUATION_ALT_ADDRESS: ${{ vars.SOLANA_GRADUATION_ALT_ADDRESS }}
       SOLANA_GRADUATION_CAMPAIGN: ${{ inputs.solana_campaign }}
@@ -325,23 +328,65 @@ jobs:
           echo "SOLANA_ROUTE_SIGNER_PUBLIC_KEY=$route_pub" >> "$GITHUB_ENV"
           echo "derived_devnet_route_signer=$route_pub"
 
-      - name: Generate frozen launchpad IDL
+      - name: Build and verify certified launchpad SBF + IDL
         if: ${{ inputs.network == 'solana-devnet-meteora' }}
         env:
           ANCHOR_VERSION: 0.30.1
+          SOLANA_VERSION: 1.18.26
+          RUST_TOOLCHAIN: 1.79.0
           IDL_RUST_TOOLCHAIN: nightly-2024-05-09
         shell: bash
         run: |
           set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
           rustup toolchain install "$IDL_RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+
+          release_dir="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
+          mkdir -p "$release_dir"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error \
+            --output /tmp/solana-release.tar.bz2 \
+            "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"
+          ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+
           npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
-          mkdir -p target/idl
+
+          isolated_target="$RUNNER_TEMP/mwz-devnet-certified-sbf"
+          mkdir -p "$isolated_target"
+          CARGO_TARGET_DIR="$isolated_target" anchor build --program-name memewarzone_solana --no-idl
+          isolated_so="$isolated_target/deploy/memewarzone_solana.so"
+          test -s "$isolated_so"
+          actual_sha="$(sha256sum "$isolated_so" | awk '{print $1}')"
+          actual_bytes="$(wc -c < "$isolated_so" | tr -d ' ')"
+          echo "built_sbf_sha256=$actual_sha"
+          echo "built_sbf_bytes=$actual_bytes"
+          if [ "$actual_sha" != "$SOLANA_DEVNET_CANDIDATE_SHA256" ] || [ "$actual_bytes" != "$SOLANA_DEVNET_CANDIDATE_BYTES" ]; then
+            echo "BLOCKER: source-head SBF differs from the already-certified candidate. Refusing devnet upgrade."
+            exit 1
+          fi
+          mkdir -p target/deploy target/idl
+          cp "$isolated_so" target/deploy/memewarzone_solana.so
+
           (
             cd programs/memewarzone_solana
             RUSTUP_TOOLCHAIN="$IDL_RUST_TOOLCHAIN" anchor idl build \
               --out ../../target/idl/memewarzone_solana.json
           )
           test -s target/idl/memewarzone_solana.json
+          sha256sum target/deploy/memewarzone_solana.so
+          solana --version
+          anchor --version
+
+      - name: Align live Solana devnet with certified candidate
+        if: ${{ inputs.network == 'solana-devnet-meteora' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/solana/upgrade-devnet-launchpad.cjs --execute
 
       - name: Rotate devnet route signer to GitHub-held key
         if: ${{ inputs.network == 'solana-devnet-meteora' }}
@@ -426,6 +471,7 @@ jobs:
         with:
           name: solana-devnet-meteora-acceptance-${{ github.sha }}
           path: |
+            /tmp/mwz-solana-devnet-upgrade.json
             /tmp/mwz-solana-devnet-graduation-fixture.json
             /tmp/mwz-solana-devnet-graduation-auth.log
             /tmp/mwz-solana-devnet-graduation-auth-health.json
