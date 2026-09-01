@@ -11,6 +11,8 @@ on:
       - "scripts/deploy-bnb-testnet-stage.ts"
       - "scripts/verify-bnb-testnet-stage.ts"
       - "scripts/test-bnb-testnet-lifecycle.ts"
+      - "scripts/test-bnb-6c-testnet-lifecycle.ts"
+      - "scripts/run-bnb-lifecycle-certification.ts"
       - "scripts/rehearse-bnb-6c.mjs"
       - "scripts/lib/bnbLiveGenerationGuard.ts"
       - "scripts/lib/bnb6cAcceptanceSigner.ts"
@@ -18,6 +20,7 @@ on:
       - "scripts/bnb6cRouteAuthority.ts"
       - "scripts/prove-bnb-6c-rehearsal.test.mjs"
       - ".github/workflows/bnb-6c-rehearsal-ci.yml"
+      - ".github/workflows/solana-network-canary.yml"
   push:
     branches:
       - "build/cross-chain-stabilization-rh-base"
