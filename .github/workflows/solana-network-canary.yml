@@ -45,6 +45,7 @@ jobs:
       BSC_TESTNET_RPC: ${{ vars.BSC_TESTNET_RPC || secrets.BSC_TESTNET_RPC }}
       BSC_TESTNET_RPC_URL: ${{ vars.BSC_TESTNET_RPC || secrets.BSC_TESTNET_RPC }}
       BSC_MAINNET_FORK_RPC: ${{ vars.BSC_MAINNET_RPC || secrets.BSC_MAINNET_RPC }}
+      BSC_MAINNET_FALLBACK_RPC: https://bsc-rpc.publicnode.com
       SOLANA_FEE_ESCROW_PAYER_KEYPAIR: ${{ secrets.SOLANA_FEE_ESCROW_PAYER_KEYPAIR }}
       SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER || secrets.SOLANA_FEE_ESCROW_PAYER_KEYPAIR }}
       SOLANA_RPC_URL: ${{ vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
@@ -84,11 +85,8 @@ jobs:
               }
               ;;
             bsc-mainnet-fork-source-head)
-              test -n "${BSC_MAINNET_FORK_RPC:-}" || {
-                echo "BLOCKER: set GitHub Environment variable or secret BSC_MAINNET_RPC to an archive-capable BNB Mainnet RPC."
-                exit 1
-              }
               echo "Mainnet fork only: no production transaction can be broadcast by this canary."
+              echo "The upstream RPC is independently verified as BNB chain 56 before Anvil starts."
               ;;
             solana-devnet-meteora)
               test -n "${SOLANA_FEE_ESCROW_PAYER_KEYPAIR:-}${SOLANA_DEVNET_PAYER:-}" || {
@@ -107,6 +105,56 @@ jobs:
               exit 1
               ;;
           esac
+
+      - name: Resolve and verify BNB mainnet fork RPC
+        if: ${{ inputs.network == 'bsc-mainnet-fork-source-head' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOPAZ_FACTORY="0x65E6cD0eF5D3467030103cf3d433034E570b5784"
+
+          rpc_result() {
+            node -e 'let s=""; process.stdin.on("data", d => s += d); process.stdin.on("end", () => { const j = JSON.parse(s); if (j.error || !j.result) process.exit(2); process.stdout.write(String(j.result)); });'
+          }
+
+          chain_id() {
+            curl -fsS --max-time 12 -X POST -H 'content-type: application/json' \
+              --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
+              "$1" | rpc_result
+          }
+
+          topaz_code() {
+            curl -fsS --max-time 12 -X POST -H 'content-type: application/json' \
+              --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getCode\",\"params\":[\"${TOPAZ_FACTORY}\",\"latest\"]}" \
+              "$1" | rpc_result
+          }
+
+          rpc="${BSC_MAINNET_FORK_RPC:-}"
+          cid=""
+          if [ -n "$rpc" ]; then
+            cid="$(chain_id "$rpc" 2>/dev/null || true)"
+          fi
+
+          if [ "$cid" != "0x38" ]; then
+            echo "Configured BSC_MAINNET_RPC is not a usable BNB mainnet chain-56 endpoint (reported ${cid:-unreachable}); using the public mainnet fallback."
+            rpc="$BSC_MAINNET_FALLBACK_RPC"
+            cid="$(chain_id "$rpc")"
+          fi
+
+          test "$cid" = "0x38" || {
+            echo "BLOCKER: BNB mainnet fork RPC must report chainId 0x38/56; got ${cid:-unreachable}."
+            exit 1
+          }
+
+          code="$(topaz_code "$rpc")"
+          test -n "$code" && test "$code" != "0x" || {
+            echo "BLOCKER: BNB mainnet RPC does not expose production Topaz factory bytecode at $TOPAZ_FACTORY."
+            exit 1
+          }
+
+          echo "BSC_MAINNET_FORK_RPC=$rpc" >> "$GITHUB_ENV"
+          echo "mainnet_rpc_chain_id=$cid"
+          echo "production_topaz_factory_bytecode=present"
 
       - name: Install Foundry for BNB mainnet fork
         if: ${{ inputs.network == 'bsc-mainnet-fork-source-head' }}
