@@ -172,7 +172,9 @@ contract MockTopazRouter is ITopazRouter02 {
         bool fromIs0 = route.from == MockTopazPool(pool).token0();
         uint256 reserveIn = fromIs0 ? uint256(r0) : uint256(r1);
         uint256 reserveOut = fromIs0 ? uint256(r1) : uint256(r0);
-        uint256 amountInAfterFee = amountIn - ((amountIn * 100) / 10_000);
+        uint256 feeBps = MockTopazFactory(_poolFactory).getFee(pool, route.stable);
+        require(feeBps < 10_000, "bad fee");
+        uint256 amountInAfterFee = amountIn - ((amountIn * feeBps) / 10_000);
         return (reserveOut * amountInAfterFee) / (reserveIn + amountInAfterFee);
     }
 
@@ -181,7 +183,9 @@ contract MockTopazRouter is ITopazRouter02 {
         MockTopazPool mockPool = MockTopazPool(pool);
         (uint112 r0, uint112 r1, ) = mockPool.getReserves();
         bool fromIs0 = route.from == mockPool.token0();
-        uint256 fee = (amountIn * 100) / 10_000;
+        uint256 feeBps = MockTopazFactory(_poolFactory).getFee(pool, route.stable);
+        require(feeBps < 10_000, "bad fee");
+        uint256 fee = (amountIn * feeBps) / 10_000;
         if (fromIs0) mockPool.setReserves(uint112(uint256(r0) + amountIn), uint112(uint256(r1) - amountOut));
         else mockPool.setReserves(uint112(uint256(r0) - amountOut), uint112(uint256(r1) + amountIn));
         IERC20(route.to).transfer(to, amountOut);
