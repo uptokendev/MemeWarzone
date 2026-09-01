@@ -41,6 +41,7 @@ const DEFAULT_OPERATOR = path.join(
   ".config/memewarzone/solana-devnet/deployer.json",
 );
 const EXPECTED_PROGRAM_ID = "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt";
+const REWARDS_TREASURY_PROGRAM_ID = new PublicKey("2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX");
 const METEORA_CP_AMM_PROGRAM_ID = new PublicKey("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG");
 const INSTRUCTIONS_SYSVAR = new PublicKey("Sysvar1nstructions1111111111111111111111111");
 const MAX_TRANSACTION_BYTES = 1232;
@@ -135,6 +136,24 @@ function solPerWholeTokenFromSpotNano(spotNano) {
   return fixed(spotNano, 18);
 }
 
+function deriveRewardVault(seed) {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from(seed)],
+    REWARDS_TREASURY_PROGRAM_ID,
+  )[0];
+}
+
+function rewardVaultAccounts() {
+  return {
+    leagueVault: deriveRewardVault("league_vault"),
+    airdropVault: deriveRewardVault("airdrop_vault"),
+    monthlyLeagueVault: deriveRewardVault("monthly_league_vault"),
+    recruiterVault: deriveRewardVault("recruiter_vault"),
+    squadVault: deriveRewardVault("squad_vault"),
+    protocolVault: deriveRewardVault("protocol_vault"),
+  };
+}
+
 async function fetchCampaign(connection, campaign) {
   const info = await connection.getAccountInfo(campaign, "confirmed");
   if (!info) fail(`campaign not found: ${campaign.toBase58()}`);
@@ -148,7 +167,7 @@ async function fetchGraduationAuthorization({ campaign, authority, positionNftMi
   const url = String(process.env.SOLANA_GRADUATION_AUTH_URL || "").trim();
   if (!url) {
     fail(
-      "SOLANA_GRADUATION_AUTH_URL is required, e.g. https://<railway>/api/solana/graduation-authorize",
+      "SOLANA_GRADUATION_AUTH_URL is required, e.g. https://<frontend-api>/api/solana/graduation-authorize",
     );
   }
   const response = await fetch(url, {
@@ -268,6 +287,30 @@ async function main() {
   console.log("maxLiquidityTokens", quote.maxTokens.toString());
   console.log("maxLiquidityLamports", quote.maxLamports.toString());
 
+  // Graduation must not race the async FeeEscrow worker. Flush pending fee slices
+  // permissionlessly inside the SAME transaction before the signed graduation.
+  // This keeps simulate-only mode non-mutating while begin_graduation still sees
+  // pending == 0. Ed25519 remains immediately adjacent to begin_graduation.
+  const feeEscrow = PublicKey.findProgramAddressSync(
+    [Buffer.from("fee-escrow"), campaignPk.toBuffer()],
+    program.programId,
+  )[0];
+  const rewardVaults = rewardVaultAccounts();
+  const flushFeesIx = await program.methods
+    .flushCampaignFees()
+    .accountsStrict({
+      caller: operator.publicKey,
+      campaign: campaignPk,
+      feeEscrow,
+      weeklyLeagueVault: rewardVaults.leagueVault,
+      airdropVault: rewardVaults.airdropVault,
+      monthlyLeagueVault: rewardVaults.monthlyLeagueVault,
+      recruiterVault: rewardVaults.recruiterVault,
+      squadVault: rewardVaults.squadVault,
+      protocolVault: rewardVaults.protocolVault,
+    })
+    .instruction();
+
   // Create the two ordinary ATAs before the graduation transaction. The launch-token
   // staging ATA must be empty when begin_graduation executes.
   const stagingAta = await getOrCreateAssociatedTokenAccount(
@@ -307,6 +350,9 @@ async function main() {
   assertPk(auth.accounts.mint, campaign.mint, "authorization mint");
   assertPk(auth.accounts.authorityTokenAccount, stagingAta.address, "staging ATA");
   assertPk(auth.accounts.creatorTokenAccount, creatorAta.address, "creator ATA");
+  for (const [label, expected] of Object.entries(rewardVaults)) {
+    assertPk(auth.accounts[label], expected, `authorization ${label}`);
+  }
 
   const expectedMaxNative = quote.maxLamports.toString();
   if (auth.oracle.nativeTargetLamports == null) fail("authorization missing native target");
@@ -336,10 +382,7 @@ async function main() {
       mint: campaign.mint,
       tokenVault: campaign.tokenVault,
       solVault: campaign.solVault,
-      feeEscrow: PublicKey.findProgramAddressSync(
-        [Buffer.from("fee-escrow"), campaignPk.toBuffer()],
-        program.programId,
-      )[0],
+      feeEscrow,
       authorityTokenAccount: stagingAta.address,
       meteoraPool: asPk(auth.accounts.meteoraPool, "meteoraPool"),
       meteoraPosition: asPk(auth.accounts.meteoraPosition, "meteoraPosition"),
@@ -451,6 +494,7 @@ async function main() {
   const computeUnits = Number(process.env.SOLANA_GRADUATION_COMPUTE_UNITS || 1_400_000);
   const instructions = [
     ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnits }),
+    flushFeesIx,
     ed25519Ix, // MUST immediately precede begin_graduation.
     beginIx,
     ...meteoraTx.instructions,
