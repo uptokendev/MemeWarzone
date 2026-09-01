@@ -2,6 +2,7 @@
 import http from "node:http";
 
 import { solanaGraduationAuthorizationV1 } from "../../frontend/api/dev-fix/solana-graduation-authorization-v1.js";
+import { createEd25519Signer } from "../../frontend/api/dev-fix/solana-v4-primitives.js";
 
 const host = "127.0.0.1";
 const port = Number(process.env.SOLANA_DEVNET_GRADUATION_AUTH_PORT || 43101);
@@ -14,8 +15,14 @@ function required(name) {
 
 required("SOLANA_RPC_URL");
 required("SOLANA_LAUNCHPAD_PROGRAM_ID");
-required("SOLANA_ROUTE_SIGNER_PUBLIC_KEY");
-required("SOLANA_ROUTE_SIGNER_SECRET_KEY");
+const routeSignerPublicKey = required("SOLANA_ROUTE_SIGNER_PUBLIC_KEY");
+const routeSignerSecret = required("SOLANA_ROUTE_SIGNER_SECRET_KEY");
+const signer = createEd25519Signer(routeSignerSecret);
+if (signer.publicKeyBase58 !== routeSignerPublicKey) {
+  throw new Error(
+    `SOLANA_ROUTE_SIGNER_SECRET_KEY derives ${signer.publicKeyBase58}, expected ${routeSignerPublicKey}`,
+  );
+}
 process.env.SOLANA_GRADUATION_AUTH_ENABLED = "true";
 
 const server = http.createServer(async (req, res) => {
@@ -23,7 +30,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && req.url === "/health") {
       res.statusCode = 200;
       res.setHeader("content-type", "application/json");
-      res.end(JSON.stringify({ ok: true, network: "solana-devnet" }));
+      res.end(JSON.stringify({ ok: true, network: "solana-devnet", routeSigner: routeSignerPublicKey }));
       return;
     }
     if (req.url === "/api/solana/graduation-authorize") {
