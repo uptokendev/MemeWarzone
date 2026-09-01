@@ -16,6 +16,8 @@
     "cron:report-previous-epoch": "node --enable-source-maps dist/jobs/reportPreviousEpoch.js",
     "cron:reconcile-attribution": "node --enable-source-maps dist/jobs/reconcileAttribution.js",
     "cron:process-reward-epoch": "node --enable-source-maps dist/jobs/processRewardEpoch.js",
+    "cron:process-reward-epoch-bnb": "REWARD_CHAIN_ID=56 node --enable-source-maps dist/jobs/processRewardEpoch.js",
+    "cron:process-reward-epoch-solana": "REWARD_CHAIN_ID=101 node --enable-source-maps dist/jobs/processRewardEpoch.js",
     "cron:process-reward-expiries": "node --enable-source-maps dist/jobs/processRewardExpiries.js",
     "cron:process-reward-eligibility": "node --enable-source-maps dist/jobs/processRewardEligibility.js",
     "cron:process-reward-reminders": "node --enable-source-maps dist/jobs/processRewardReminders.js",

@@ -186,6 +186,40 @@ async function events(from, to, app) {
   return { rows: result.rows.map((row) => ({ name: row.name, count: row.count })) };
 }
 
+async function eventDetails(from, to, app, name) {
+  const params = [from, to];
+  const extra = appFilter(app, params);
+  let nameFilter = "";
+  if (name) {
+    params.push(name);
+    nameFilter = `and name = $${params.length}`;
+  }
+  const result = await pool.query(
+    `select event_id, ts, name, app, anonymous_id, session_id, user_id,
+            path_raw, path_template, properties, context
+       from public.analytics_events
+      where ts >= $1 and ts < $2 ${extra} ${nameFilter}
+      order by ts desc
+      limit 500`,
+    params,
+  );
+  return {
+    rows: result.rows.map((row) => ({
+      eventId: row.event_id,
+      ts: new Date(row.ts).toISOString(),
+      name: row.name,
+      app: row.app,
+      anonymousId: row.anonymous_id,
+      sessionId: row.session_id,
+      userId: row.user_id,
+      path: row.path_template || row.path_raw || null,
+      pathRaw: row.path_raw || null,
+      properties: row.properties || {},
+      context: row.context || {},
+    })),
+  };
+}
+
 async function functions(from, to, app) {
   const params = [from, to];
   const extra = appFilter(app, params);
@@ -362,6 +396,7 @@ export async function analyticsAdmin(req, res) {
   const { from, to, app } = parseWindow(req);
   const tail = routeTail(req);
   const q = String(req.query?.q || "").trim();
+  const name = String(req.query?.name || "").trim();
 
   try {
     if (!tail || tail === "overview") {
@@ -369,6 +404,7 @@ export async function analyticsAdmin(req, res) {
     }
     if (tail === "pages") return res.status(200).json(await pages(from, to, app));
     if (tail === "events") return res.status(200).json(await events(from, to, app));
+    if (tail === "events/details") return res.status(200).json(await eventDetails(from, to, app, name));
     if (tail === "performance/functions") return res.status(200).json(await functions(from, to, app));
     if (tail === "performance/vitals") return res.status(200).json(await vitals(from, to, app));
     if (tail === "realtime") return res.status(200).json(await realtime(app));

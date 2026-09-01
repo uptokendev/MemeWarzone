@@ -25,8 +25,24 @@ export function bigintToString(value: bigint): string {
 
 export function parseNumericBigInt(value: unknown): bigint {
   if (typeof value === "bigint") return value;
+
   const s = String(value ?? "0").trim();
-  return s ? BigInt(s) : 0n;
+  if (!s) return 0n;
+
+  if (/^[+-]?\d+$/.test(s)) {
+    return BigInt(s);
+  }
+
+  const decimalMatch = /^([+-]?\d+)\.(\d+)$/.exec(s);
+  if (decimalMatch) {
+    const [, integerPart, fractionalPart] = decimalMatch;
+    if (/^0+$/.test(fractionalPart)) {
+      return BigInt(integerPart);
+    }
+    throw new RangeError(`Expected integer-valued numeric, received fractional value: ${s}`);
+  }
+
+  throw new SyntaxError(`Invalid integer-valued numeric: ${s}`);
 }
 
 export function allocateProRata(
