@@ -285,19 +285,64 @@ async function main() {
   const tokenIs0 = (await pool.token0()).toLowerCase() === tokenAddress.toLowerCase();
   const claimedToken = tokenIs0 ? claimable0 : claimable1;
   const claimedWbnb = tokenIs0 ? claimable1 : claimable0;
+  const payoutRecipient = await locker.creatorPayoutRecipient(creator.address);
+  if (!sameAddress(payoutRecipient, creator.address)) {
+    throw new Error(`LP creator payout recipient mismatch: expected=${creator.address} actual=${payoutRecipient}`);
+  }
   const creatorTokenBefore = await token.balanceOf(creator.address);
   const protocolTokenBefore = await token.balanceOf(manifest.contracts.protocolRevenueVault);
   const creatorWbnbBefore = await wbnb.balanceOf(creator.address);
   const protocolWbnbBefore = await wbnb.balanceOf(manifest.contracts.protocolRevenueVault);
-  await (await locker.harvest(state.dexPair)).wait();
-  const creatorTokenDelta = (await token.balanceOf(creator.address)) - creatorTokenBefore;
-  const protocolTokenDelta = (await token.balanceOf(manifest.contracts.protocolRevenueVault)) - protocolTokenBefore;
-  const creatorWbnbDelta = (await wbnb.balanceOf(creator.address)) - creatorWbnbBefore;
-  const protocolWbnbDelta = (await wbnb.balanceOf(manifest.contracts.protocolRevenueVault)) - protocolWbnbBefore;
-  if (creatorTokenDelta !== (claimedToken * 8_000n) / 10_000n) throw new Error("Token LP fees are not 80/20");
-  if (protocolTokenDelta !== claimedToken - creatorTokenDelta) throw new Error("Protocol token LP fee share mismatch");
-  if (creatorWbnbDelta !== (claimedWbnb * 8_000n) / 10_000n) throw new Error("WBNB LP fees are not 80/20");
-  if (protocolWbnbDelta !== claimedWbnb - creatorWbnbDelta) throw new Error("Protocol WBNB LP fee share mismatch");
+  const harvestReceipt = await (await locker.harvest(state.dexPair)).wait();
+  if (!harvestReceipt) throw new Error("LP harvest transaction did not return a receipt");
+
+  const expectedCreatorToken = (claimedToken * 8_000n) / 10_000n;
+  const expectedProtocolToken = claimedToken - expectedCreatorToken;
+  const expectedCreatorWbnb = (claimedWbnb * 8_000n) / 10_000n;
+  const expectedProtocolWbnb = claimedWbnb - expectedCreatorWbnb;
+  let creatorTokenDelta = 0n;
+  let protocolTokenDelta = 0n;
+  let creatorWbnbDelta = 0n;
+  let protocolWbnbDelta = 0n;
+  for (let attempt = 0; attempt < 15; attempt += 1) {
+    creatorTokenDelta = (await token.balanceOf(creator.address)) - creatorTokenBefore;
+    protocolTokenDelta = (await token.balanceOf(manifest.contracts.protocolRevenueVault)) - protocolTokenBefore;
+    creatorWbnbDelta = (await wbnb.balanceOf(creator.address)) - creatorWbnbBefore;
+    protocolWbnbDelta = (await wbnb.balanceOf(manifest.contracts.protocolRevenueVault)) - protocolWbnbBefore;
+    if (
+      creatorTokenDelta === expectedCreatorToken &&
+      protocolTokenDelta === expectedProtocolToken &&
+      creatorWbnbDelta === expectedCreatorWbnb &&
+      protocolWbnbDelta === expectedProtocolWbnb
+    ) break;
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  console.log("[bnb-6c-harvest]", {
+    blockNumber: harvestReceipt.blockNumber,
+    payoutRecipient,
+    claimedToken: claimedToken.toString(),
+    expectedCreatorToken: expectedCreatorToken.toString(),
+    creatorTokenDelta: creatorTokenDelta.toString(),
+    expectedProtocolToken: expectedProtocolToken.toString(),
+    protocolTokenDelta: protocolTokenDelta.toString(),
+    claimedWbnb: claimedWbnb.toString(),
+    expectedCreatorWbnb: expectedCreatorWbnb.toString(),
+    creatorWbnbDelta: creatorWbnbDelta.toString(),
+    expectedProtocolWbnb: expectedProtocolWbnb.toString(),
+    protocolWbnbDelta: protocolWbnbDelta.toString(),
+  });
+  if (creatorTokenDelta !== expectedCreatorToken) {
+    throw new Error(`Token LP creator split mismatch: claimed=${claimedToken} expected=${expectedCreatorToken} actual=${creatorTokenDelta}`);
+  }
+  if (protocolTokenDelta !== expectedProtocolToken) {
+    throw new Error(`Token LP protocol split mismatch: claimed=${claimedToken} expected=${expectedProtocolToken} actual=${protocolTokenDelta}`);
+  }
+  if (creatorWbnbDelta !== expectedCreatorWbnb) {
+    throw new Error(`WBNB LP creator split mismatch: claimed=${claimedWbnb} expected=${expectedCreatorWbnb} actual=${creatorWbnbDelta}`);
+  }
+  if (protocolWbnbDelta !== expectedProtocolWbnb) {
+    throw new Error(`WBNB LP protocol split mismatch: claimed=${claimedWbnb} expected=${expectedProtocolWbnb} actual=${protocolWbnbDelta}`);
+  }
   if ((await pool.balanceOf(lockerAddress)) !== lpBefore) throw new Error("LP principal changed during harvest");
 
   await (await factory.setCreatePaused(true)).wait();
