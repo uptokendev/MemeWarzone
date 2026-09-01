@@ -1,6 +1,6 @@
 name: Solana / BNB real-network canaries
 
-# Manual only. Consumes dedicated testnet resources. Never production funds.
+# Manual only. Consumes dedicated testnet resources or a read-only mainnet fork.
 # Secrets live in the GitHub Environment `testnet-certification`.
 on:
   workflow_dispatch:
@@ -12,6 +12,7 @@ on:
         options:
           - bsc-testnet-preflight
           - bsc-testnet-full-cycle
+          - bsc-mainnet-fork-source-head
           - solana-devnet-meteora
           - phantom-manual-checklist
       send_solana_graduation:
@@ -43,6 +44,7 @@ jobs:
       PRIVATE_KEY_DEPLOY: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
       BSC_TESTNET_RPC: ${{ vars.BSC_TESTNET_RPC || secrets.BSC_TESTNET_RPC }}
       BSC_TESTNET_RPC_URL: ${{ vars.BSC_TESTNET_RPC || secrets.BSC_TESTNET_RPC }}
+      BSC_MAINNET_FORK_RPC: ${{ vars.BSC_MAINNET_RPC || secrets.BSC_MAINNET_RPC }}
       SOLANA_FEE_ESCROW_PAYER_KEYPAIR: ${{ secrets.SOLANA_FEE_ESCROW_PAYER_KEYPAIR }}
       SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER || secrets.SOLANA_FEE_ESCROW_PAYER_KEYPAIR }}
       SOLANA_RPC_URL: ${{ vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
@@ -81,6 +83,13 @@ jobs:
                 exit 1
               }
               ;;
+            bsc-mainnet-fork-source-head)
+              test -n "${BSC_MAINNET_FORK_RPC:-}" || {
+                echo "BLOCKER: set GitHub Environment variable or secret BSC_MAINNET_RPC to an archive-capable BNB Mainnet RPC."
+                exit 1
+              }
+              echo "Mainnet fork only: no production transaction can be broadcast by this canary."
+              ;;
             solana-devnet-meteora)
               test -n "${SOLANA_FEE_ESCROW_PAYER_KEYPAIR:-}${SOLANA_DEVNET_PAYER:-}" || {
                 echo "BLOCKER: GitHub Environment secret SOLANA_FEE_ESCROW_PAYER_KEYPAIR or SOLANA_DEVNET_PAYER is not mapped. Dedicated devnet-only payer."
@@ -98,6 +107,12 @@ jobs:
               exit 1
               ;;
           esac
+
+      - name: Install Foundry for BNB mainnet fork
+        if: ${{ inputs.network == 'bsc-mainnet-fork-source-head' }}
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
 
       - name: Pin and verify Meteora DAMM v2 CP-AMM artifact
         if: ${{ inputs.network == 'solana-devnet-meteora' }}
@@ -160,6 +175,40 @@ jobs:
             reports/bnb-6c-testnet-acceptance.json
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Run BNB 4/3 + V3 source head against real Topaz on a mainnet fork
+        if: ${{ inputs.network == 'bsc-mainnet-fork-source-head' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          anvil --fork-url "$BSC_MAINNET_FORK_RPC" --chain-id 56 --host 127.0.0.1 --port 8545 >/tmp/mwz-bnb-anvil.log 2>&1 &
+          ANVIL_PID=$!
+          trap 'kill "$ANVIL_PID" 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS -X POST -H 'content-type: application/json' \
+              --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
+              http://127.0.0.1:8545 >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS -X POST -H 'content-type: application/json' \
+            --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
+            http://127.0.0.1:8545 | tee /tmp/mwz-bnb-fork-chain.json
+          BNB_FORK=1 BNB_FORK_ANVIL_URL=http://127.0.0.1:8545 \
+            npx hardhat test test/BnbSourceHeadMainnetForkTopazV3.spec.ts --network bscMainnetFork
+
+      - name: Upload BNB fork diagnostics on failure
+        if: ${{ inputs.network == 'bsc-mainnet-fork-source-head' && failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: bnb-source-head-mainnet-fork-${{ github.sha }}
+          path: |
+            /tmp/mwz-bnb-anvil.log
+            /tmp/mwz-bnb-fork-chain.json
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Materialize dedicated Solana devnet payer
         if: ${{ inputs.network == 'solana-devnet-meteora' }}
