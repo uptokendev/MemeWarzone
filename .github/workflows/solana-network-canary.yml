@@ -293,6 +293,22 @@ jobs:
         shell: bash
         run: npm install --prefix tests/solana --no-audit --no-fund
 
+      - name: Validate Solana graduation runtime before devnet mutation
+        if: ${{ inputs.network == 'solana-devnet-meteora' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --prefix tools/solana-meteora-graduation --no-audit --no-fund
+          npm --prefix tools/solana-meteora-graduation run check
+          node --input-type=module - <<'NODE'
+          import { loadSolanaV0Module } from './frontend/scripts/load-solana-v0-module.mjs';
+          const v0 = await loadSolanaV0Module();
+          if (typeof v0.buildLaunchpadV0Transaction !== 'function' || typeof v0.assertLaunchpadV0Intent !== 'function') {
+            throw new Error('shared Solana V0 runtime failed to load');
+          }
+          console.log('shared_solana_v0_runtime=ok');
+          NODE
+
       - name: Materialize Solana devnet operator and route signer
         if: ${{ inputs.network == 'solana-devnet-meteora' }}
         shell: bash
@@ -453,7 +469,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm install --prefix tools/solana-meteora-graduation --no-audit --no-fund
           test -s target/idl/memewarzone_solana.json
           node tools/solana-meteora-graduation/graduate.mjs "$SOLANA_GRADUATION_CAMPAIGN"
 
