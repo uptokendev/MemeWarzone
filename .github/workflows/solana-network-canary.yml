@@ -46,10 +46,12 @@ jobs:
       BSC_TESTNET_RPC_URL: ${{ vars.BSC_TESTNET_RPC || secrets.BSC_TESTNET_RPC }}
       BSC_MAINNET_FORK_RPC: ${{ vars.BSC_MAINNET_RPC || secrets.BSC_MAINNET_RPC }}
       BSC_MAINNET_FALLBACK_RPC: https://bsc-mainnet.public.blastapi.io
-      SOLANA_FEE_ESCROW_PAYER_KEYPAIR: ${{ secrets.SOLANA_FEE_ESCROW_PAYER_KEYPAIR }}
-      SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER || secrets.SOLANA_FEE_ESCROW_PAYER_KEYPAIR }}
+      SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER }}
+      SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
+      SOLANA_DEVNET_ROUTE_SIGNER_PUBLIC_KEY: ${{ vars.SOLANA_DEVNET_ROUTE_SIGNER_PUBLIC_KEY || '7hKQd798Z1ERmRUhm7shmstB1V13FQNnDLqtYjZBuJUz' }}
+      SOLANA_LAUNCHPAD_PROGRAM_ID: ${{ vars.SOLANA_DEVNET_LAUNCHPAD_PROGRAM_ID || '3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt' }}
       SOLANA_RPC_URL: ${{ vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
-      SOLANA_GRADUATION_AUTH_URL: ${{ vars.SOLANA_GRADUATION_AUTH_URL }}
+      SOLANA_GRADUATION_AUTH_URL: http://127.0.0.1:43101/api/solana/graduation-authorize
       SOLANA_GRADUATION_ALT_ADDRESS: ${{ vars.SOLANA_GRADUATION_ALT_ADDRESS }}
       SOLANA_GRADUATION_CAMPAIGN: ${{ inputs.solana_campaign || vars.SOLANA_GRADUATION_CAMPAIGN }}
       SOLANA_GRADUATION_SEND: ${{ inputs.send_solana_graduation && 'true' || 'false' }}
@@ -89,8 +91,12 @@ jobs:
               echo "The upstream RPC is independently verified as BNB chain 56 and historical-state capable before Anvil starts."
               ;;
             solana-devnet-meteora)
-              test -n "${SOLANA_FEE_ESCROW_PAYER_KEYPAIR:-}${SOLANA_DEVNET_PAYER:-}" || {
-                echo "BLOCKER: GitHub Environment secret SOLANA_FEE_ESCROW_PAYER_KEYPAIR or SOLANA_DEVNET_PAYER is not mapped. Dedicated devnet-only payer."
+              test -n "${SOLANA_DEVNET_PAYER:-}" || {
+                echo "BLOCKER: GitHub Environment secret SOLANA_DEVNET_PAYER is not mapped. It must be the dedicated devnet treasury/graduation operator."
+                exit 1
+              }
+              test -n "${SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY:-}" || {
+                echo "BLOCKER: GitHub Environment secret SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY is not mapped. Use the devnet-only route signer; never the production signer."
                 exit 1
               }
               ;;
@@ -269,7 +275,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Materialize dedicated Solana devnet payer
+      - name: Materialize dedicated Solana devnet graduation operator
         if: ${{ inputs.network == 'solana-devnet-meteora' }}
         shell: bash
         run: |
@@ -277,6 +283,27 @@ jobs:
           export SOLANA_GRADUATION_OPERATOR_KEYPAIR="${RUNNER_TEMP}/mwz-solana-devnet-payer.json"
           node scripts/solana/materialize-devnet-payer.mjs
           echo "SOLANA_GRADUATION_OPERATOR_KEYPAIR=$SOLANA_GRADUATION_OPERATOR_KEYPAIR" >> "$GITHUB_ENV"
+
+      - name: Start isolated Solana devnet graduation authorization
+        if: ${{ inputs.network == 'solana-devnet-meteora' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export SOLANA_GRADUATION_AUTH_ENABLED=true
+          export SOLANA_ROUTE_SIGNER_SECRET_KEY="$SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY"
+          export SOLANA_ROUTE_SIGNER_PUBLIC_KEY="$SOLANA_DEVNET_ROUTE_SIGNER_PUBLIC_KEY"
+          nohup node scripts/solana/devnet-graduation-auth-server.mjs >/tmp/mwz-solana-devnet-graduation-auth.log 2>&1 &
+          echo $! > /tmp/mwz-solana-devnet-graduation-auth.pid
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:43101/health >/tmp/mwz-solana-devnet-graduation-auth-health.json; then
+              cat /tmp/mwz-solana-devnet-graduation-auth-health.json
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/mwz-solana-devnet-graduation-auth.log || true
+          echo "BLOCKER: isolated Solana devnet graduation authorization failed to start."
+          exit 1
 
       - name: Generate frozen launchpad IDL for graduate.mjs
         if: ${{ inputs.network == 'solana-devnet-meteora' }}
@@ -288,11 +315,7 @@ jobs:
           set -euo pipefail
           test -n "${SOLANA_GRADUATION_CAMPAIGN:-}" || {
             echo "BLOCKER: set workflow input solana_campaign or GitHub Environment variable SOLANA_GRADUATION_CAMPAIGN."
-            echo "Meteora CP-AMM pin verified. graduate.mjs still needs a curve-closed campaign PDA."
-            exit 1
-          }
-          test -n "${SOLANA_GRADUATION_AUTH_URL:-}" || {
-            echo "BLOCKER: set GitHub Environment variable SOLANA_GRADUATION_AUTH_URL (Railway graduation-authorize URL). Not a secret."
+            echo "Meteora CP-AMM pin verified. graduate.mjs still needs a curve-closed Economics V3 devnet campaign PDA."
             exit 1
           }
           rustup toolchain install "$IDL_RUST_TOOLCHAIN" --profile minimal
@@ -313,3 +336,14 @@ jobs:
           npm install --prefix tools/solana-meteora-graduation --no-audit --no-fund
           test -s target/idl/memewarzone_solana.json
           node tools/solana-meteora-graduation/graduate.mjs "$SOLANA_GRADUATION_CAMPAIGN"
+
+      - name: Upload Solana devnet auth diagnostics on failure
+        if: ${{ inputs.network == 'solana-devnet-meteora' && failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: solana-devnet-graduation-auth-${{ github.sha }}
+          path: |
+            /tmp/mwz-solana-devnet-graduation-auth.log
+            /tmp/mwz-solana-devnet-graduation-auth-health.json
+          if-no-files-found: warn
+          retention-days: 7
