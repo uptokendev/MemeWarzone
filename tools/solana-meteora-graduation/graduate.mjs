@@ -131,8 +131,6 @@ function fixed(value, decimals) {
 }
 
 function solPerWholeTokenFromSpotNano(spotNano) {
-  // spotNano is nano-lamports / whole token. 1 SOL = 1e9 lamports,
-  // therefore SOL/token = spotNano / 1e18.
   return fixed(spotNano, 18);
 }
 
@@ -318,10 +316,6 @@ async function main() {
   console.log("maxLiquidityTokens", quote.maxTokens.toString());
   console.log("maxLiquidityLamports", quote.maxLamports.toString());
 
-  // Graduation must not race the async FeeEscrow worker. Flush pending fee slices
-  // permissionlessly inside the SAME transaction before the signed graduation.
-  // This keeps simulate-only mode non-mutating while begin_graduation still sees
-  // pending == 0. Ed25519 remains immediately adjacent to begin_graduation.
   const feeEscrow = PublicKey.findProgramAddressSync(
     [Buffer.from("fee-escrow"), campaignPk.toBuffer()],
     program.programId,
@@ -342,8 +336,6 @@ async function main() {
     })
     .instruction();
 
-  // Create the two ordinary ATAs before the graduation transaction. The launch-token
-  // staging ATA must be empty when begin_graduation executes.
   const stagingAta = await getOrCreateAssociatedTokenAccount(
     connection,
     operator,
@@ -526,7 +518,7 @@ async function main() {
   const instructions = [
     ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnits }),
     flushFeesIx,
-    ed25519Ix, // MUST immediately precede begin_graduation.
+    ed25519Ix,
     beginIx,
     ...meteoraTx.instructions,
     confirmIx,
@@ -549,6 +541,7 @@ async function main() {
     releaseMaxBytes: null,
     maxRequiredSigners: 2,
     allowAdditionalProgramInstructions: true,
+    allowInstructionPrivilegePromotion: true,
   });
   tx.sign([operator, positionNft]);
   const serialized = tx.serialize();
