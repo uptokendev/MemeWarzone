@@ -7,6 +7,7 @@ const anchor = require("@coral-xyz/anchor");
 const web3 = require("@solana/web3.js");
 const {
   AddressLookupTableProgram,
+  ComputeBudgetProgram,
   Ed25519Program,
   Keypair,
   LAMPORTS_PER_SOL,
@@ -126,7 +127,7 @@ function altPlan(globalConfig) {
     PROGRAM_ID,
     globalConfig,
     Ed25519Program.programId,
-    new PublicKey("ComputeBudget111111111111111111111111111111"),
+    ComputeBudgetProgram.programId,
     SYSVAR_INSTRUCTIONS_PUBKEY,
     TOKEN_PROGRAM_ID,
     ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -170,14 +171,20 @@ async function createTempAlt(connection, operator, globalConfig) {
       }),
     ]);
   }
-  for (let i = 0; i < 12; i += 1) {
+  for (let i = 0; i < 20; i += 1) {
     const table = (await connection.getAddressLookupTable(address)).value;
-    if (table && addresses.every((key) => table.state.addresses.some((entry) => entry.equals(key)))) {
+    const currentSlot = await connection.getSlot("confirmed");
+    const lastExtendedSlot = table ? Number(table.state.lastExtendedSlot || 0) : Number.MAX_SAFE_INTEGER;
+    if (
+      table &&
+      currentSlot > lastExtendedSlot &&
+      addresses.every((key) => table.state.addresses.some((entry) => entry.equals(key)))
+    ) {
       return table;
     }
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-  fail(`temporary ALT ${address.toBase58()} did not become readable in time`);
+  fail(`temporary ALT ${address.toBase58()} did not become active/readable in time`);
 }
 function pauseSnapshot(global) {
   return {
@@ -321,7 +328,11 @@ async function main() {
         systemProgram: SystemProgram.programId,
       })
       .instruction();
-    const createSig = await sendLegacy(connection, creator, [createEd25519, createIx]);
+    const createSig = await sendLegacy(connection, creator, [
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }),
+      createEd25519,
+      createIx,
+    ]);
 
     await program.methods.initializeFeeEscrow().accountsStrict({ payer: operator.publicKey, campaign, feeEscrow, systemProgram: SystemProgram.programId }).rpc({ commitment: "confirmed" });
     await program.methods.initializeCreatorFeeVault().accountsStrict({ payer: operator.publicKey, campaign, creatorFeeVault, systemProgram: SystemProgram.programId }).rpc({ commitment: "confirmed" });
