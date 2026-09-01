@@ -95,7 +95,7 @@ const config: HardhatUserConfig = {
       timeout: 600_000,
       accounts: {
         mnemonic: "test test test test test test test test test test test junk",
-        count: 2,
+        count: 3,
       },
     },
 
