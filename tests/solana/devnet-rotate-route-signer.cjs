@@ -26,7 +26,7 @@ const { AnchorProvider, Program, Wallet } = anchor;
 const ROOT = path.resolve(__dirname, "../..");
 const IDL_PATH = path.join(ROOT, "target/idl/memewarzone_solana.json");
 const EXPECTED_PROGRAM_ID = "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt";
-const EXPECTED_DEVNET_GENESIS = "GH7ome3EiwEr7tu9JuTh2dpYWBJK3z69Xm1ZE3MEE6JC";
+const EXPECTED_DEVNET_GENESIS = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
 const DEFAULT_RPC = "https://api.devnet.solana.com";
 
 function fail(message) {
