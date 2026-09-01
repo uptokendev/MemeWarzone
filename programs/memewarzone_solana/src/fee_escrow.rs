@@ -444,10 +444,7 @@ pub fn require_fee_escrow(info: &AccountInfo, campaign: Pubkey, bump: u8) -> Res
         crate::ID,
         LaunchpadError::FeeEscrowNotInitialized
     );
-    let expected = Pubkey::find_program_address(
-        &[FEE_ESCROW_SEED, campaign.as_ref()],
-        &crate::ID,
-    );
+    let expected = Pubkey::find_program_address(&[FEE_ESCROW_SEED, campaign.as_ref()], &crate::ID);
     require_keys_eq!(*info.key, expected.0, LaunchpadError::InvalidFeeEscrow);
     require!(expected.1 == bump, LaunchpadError::InvalidFeeEscrow);
     require!(
@@ -472,10 +469,8 @@ pub fn require_creator_fee_vault(info: &AccountInfo, campaign: Pubkey) -> Result
         crate::ID,
         LaunchpadError::FeeEscrowNotInitialized
     );
-    let expected = Pubkey::find_program_address(
-        &[CREATOR_FEE_VAULT_SEED, campaign.as_ref()],
-        &crate::ID,
-    );
+    let expected =
+        Pubkey::find_program_address(&[CREATOR_FEE_VAULT_SEED, campaign.as_ref()], &crate::ID);
     require_keys_eq!(*info.key, expected.0, LaunchpadError::InvalidFeeEscrow);
     require!(
         info.data_len() == 8 + CreatorFeeVault::INIT_SPACE,
