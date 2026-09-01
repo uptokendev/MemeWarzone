@@ -27,6 +27,7 @@ const {
 const {
   createAuthorizationDigest,
 } = require("./authorization-v4.cjs");
+const { decodeCampaign } = require("./decode-campaign.cjs");
 
 const { AnchorProvider, BN, Program, Wallet } = anchor;
 const ROOT = path.resolve(__dirname, "../..");
@@ -394,7 +395,12 @@ async function main() {
     const buyConfirmation = await connection.confirmTransaction({ signature: buySig, ...latest }, "confirmed");
     if (buyConfirmation.value.err) fail(`fixture BUY landed with error: ${JSON.stringify(buyConfirmation.value.err)}`);
 
-    const campaignState = await program.account.campaign.fetch(campaign);
+    const campaignAccount = await connection.getAccountInfo(campaign, "confirmed");
+    if (!campaignAccount) fail(`fixture campaign account ${campaign.toBase58()} is missing after BUY`);
+    if (!campaignAccount.owner.equals(PROGRAM_ID)) {
+      fail(`fixture campaign owner mismatch: expected=${PROGRAM_ID.toBase58()} actual=${campaignAccount.owner.toBase58()}`);
+    }
+    const campaignState = decodeCampaign(campaignAccount.data);
     if (!campaignState.curveClosed) fail("fixture campaign did not close its bonding curve");
     if (campaignState.graduated) fail("fixture campaign unexpectedly graduated during setup");
 
