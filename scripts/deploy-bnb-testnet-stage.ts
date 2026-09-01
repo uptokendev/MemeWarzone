@@ -53,9 +53,6 @@ async function main() {
   const net = await ethers.provider.getNetwork();
   const chainId = Number(net.chainId);
   allowBnb6cTestnetSourceHeadBroadcast(chainId);
-  if (chainId === BNB_TESTNET_CHAIN_ID) {
-    throw new Error("6C first cut is local rehearsal only. Refusing chain-97 broadcast until the rehearsal SHA is audited.");
-  }
 
   const [deployer, localAuthority] = await ethers.getSigners();
   const deployerAddress = await deployer.getAddress();
