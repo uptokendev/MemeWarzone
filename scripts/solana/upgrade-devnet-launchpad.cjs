@@ -5,6 +5,7 @@
  *
  * Dry-run comparison:
  *   SOLANA_RPC_URL=https://api.devnet.solana.com \
+ *   SOLANA_OPERATOR_KEYPAIR=/secure/devnet/deployer.json \
  *   SOLANA_DEVNET_CANDIDATE_SHA256=<certified sha256> \
  *   node scripts/solana/upgrade-devnet-launchpad.cjs
  *
@@ -57,10 +58,14 @@ function loadKeypair(filePath) {
   return Keypair.fromSecretKey(Uint8Array.from(bytes));
 }
 
-function showProgram(rpc) {
+function solanaArgs(keypairPath, args) {
+  return keypairPath ? ["--keypair", keypairPath, ...args] : args;
+}
+
+function showProgram(rpc, keypairPath) {
   const stdout = execFileSync(
     "solana",
-    ["program", "show", EXPECTED_PROGRAM, "--url", rpc, "--output", "json"],
+    solanaArgs(keypairPath, ["program", "show", EXPECTED_PROGRAM, "--url", rpc, "--output", "json"]),
     { encoding: "utf8" },
   );
   let parsed;
@@ -82,10 +87,10 @@ function showProgram(rpc) {
   };
 }
 
-function dumpProgram(rpc, destination) {
+function dumpProgram(rpc, destination, keypairPath) {
   execFileSync(
     "solana",
-    ["program", "dump", EXPECTED_PROGRAM, destination, "--url", rpc],
+    solanaArgs(keypairPath, ["program", "dump", EXPECTED_PROGRAM, destination, "--url", rpc]),
     { stdio: "inherit" },
   );
   if (!fs.existsSync(destination) || fs.statSync(destination).size === 0) {
@@ -106,6 +111,8 @@ async function main() {
   const pinnedSha = required("SOLANA_DEVNET_CANDIDATE_SHA256").toLowerCase();
   const pinnedBytesRaw = String(process.env.SOLANA_DEVNET_CANDIDATE_BYTES || "").trim();
   const pinnedBytes = pinnedBytesRaw ? Number(pinnedBytesRaw) : null;
+  const operatorPath = required("SOLANA_OPERATOR_KEYPAIR");
+  const operator = loadKeypair(operatorPath);
 
   if (!fs.existsSync(SO_PATH)) {
     throw new Error(`Missing ${SO_PATH}. Build the certified candidate before running this upgrader.`);
@@ -126,7 +133,7 @@ async function main() {
     throw new Error(`Devnet launchpad is not upgradeable; owner=${programAccount.owner.toBase58()}`);
   }
 
-  const liveBefore = showProgram(rpc);
+  const liveBefore = showProgram(rpc, operatorPath);
   if (liveBefore.programId !== EXPECTED_PROGRAM) {
     throw new Error(`Program-show returned unexpected program ${liveBefore.programId}`);
   }
@@ -135,6 +142,11 @@ async function main() {
   }
   if (!Number.isSafeInteger(Number(liveBefore.dataLen)) || Number(liveBefore.dataLen) <= 0) {
     throw new Error(`Program-show returned invalid dataLen=${liveBefore.dataLen}`);
+  }
+  if (operator.publicKey.toBase58() !== liveBefore.authority) {
+    throw new Error(
+      `Refusing upgrade key ${operator.publicKey.toBase58()}; on-chain upgrade authority is ${liveBefore.authority}`,
+    );
   }
 
   const candidate = fs.readFileSync(SO_PATH);
@@ -149,24 +161,12 @@ async function main() {
   const liveDumpPath = path.join(os.tmpdir(), `mwz-devnet-live-${process.pid}.so`);
   let liveBytes;
   try {
-    liveBytes = dumpProgram(rpc, liveDumpPath);
+    liveBytes = dumpProgram(rpc, liveDumpPath, operatorPath);
   } finally {
     try { fs.unlinkSync(liveDumpPath); } catch { /* ignore cleanup */ }
   }
   const liveSha = sha256(liveBytes);
   const alreadyCurrent = liveBytes.equals(candidate);
-
-  let operator = null;
-  let operatorPath = null;
-  if (execute) {
-    operatorPath = required("SOLANA_OPERATOR_KEYPAIR");
-    operator = loadKeypair(operatorPath);
-    if (operator.publicKey.toBase58() !== liveBefore.authority) {
-      throw new Error(
-        `Refusing upgrade key ${operator.publicKey.toBase58()}; on-chain upgrade authority is ${liveBefore.authority}`,
-      );
-    }
-  }
 
   const allocatedProgramBytesBefore = Number(liveBefore.dataLen);
   const extensionBytes = Math.max(0, candidate.length - allocatedProgramBytesBefore);
@@ -180,7 +180,7 @@ async function main() {
     programId: EXPECTED_PROGRAM,
     programdataAddress: liveBefore.programdataAddress,
     onChainUpgradeAuthority: liveBefore.authority,
-    suppliedAuthority: operator?.publicKey.toBase58() || null,
+    suppliedAuthority: operator.publicKey.toBase58(),
     lastDeployedInSlotBefore: liveBefore.lastDeployedInSlot,
     allocatedProgramBytesBefore,
     candidateSha256: candidateSha,
@@ -246,20 +246,18 @@ async function main() {
   if (extensionBytes > 0) {
     extendOutput = execFileSync(
       "solana",
-      [
+      solanaArgs(operatorPath, [
         "program",
         "extend",
         EXPECTED_PROGRAM,
         String(extensionBytes),
         "--url",
         rpc,
-        "--keypair",
-        operatorPath,
-      ],
+      ]),
       { encoding: "utf8" },
     );
     process.stdout.write(extendOutput);
-    liveAfterExtend = showProgram(rpc);
+    liveAfterExtend = showProgram(rpc, operatorPath);
     if (liveAfterExtend.authority !== liveBefore.authority) {
       throw new Error(
         `Upgrade authority changed unexpectedly during extend: ${liveBefore.authority} -> ${liveAfterExtend.authority}`,
@@ -277,7 +275,7 @@ async function main() {
 
   const deployOutput = execFileSync(
     "solana",
-    [
+    solanaArgs(operatorPath, [
       "program",
       "deploy",
       SO_PATH,
@@ -287,9 +285,7 @@ async function main() {
       operatorPath,
       "--url",
       rpc,
-      "--keypair",
-      operatorPath,
-    ],
+    ]),
     { encoding: "utf8" },
   );
   process.stdout.write(deployOutput);
@@ -299,13 +295,13 @@ async function main() {
   const deployedDumpPath = path.join(os.tmpdir(), `mwz-devnet-deployed-${process.pid}.so`);
   let deployed;
   try {
-    deployed = dumpProgram(rpc, deployedDumpPath);
+    deployed = dumpProgram(rpc, deployedDumpPath, operatorPath);
   } finally {
     try { fs.unlinkSync(deployedDumpPath); } catch { /* ignore cleanup */ }
   }
   const deployedSha = sha256(deployed);
   const byteIdentical = deployed.equals(candidate);
-  const liveAfter = showProgram(rpc);
+  const liveAfter = showProgram(rpc, operatorPath);
 
   if (!byteIdentical || deployedSha !== candidateSha) {
     throw new Error(
