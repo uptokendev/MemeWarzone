@@ -69,11 +69,15 @@ jobs:
           set -euo pipefail
           case "${{ inputs.network }}" in
             bsc-testnet-preflight)
-              echo "BNB canary preflight: bytecode/wiring only. Not Gate D full lifecycle."
+              echo "BNB canary preflight: accepted 3/2 bytecode/wiring only. Not the 6C source-head lifecycle."
               ;;
             bsc-testnet-full-cycle)
               test -n "${BSC_TESTNET_PRIVATE_KEY:-}" || {
                 echo "BLOCKER: GitHub Environment secret BSC_TESTNET_PRIVATE_KEY is not mapped. Dedicated tBNB-only EOA, no production funds."
+                exit 1
+              }
+              test -n "${BSC_TESTNET_RPC:-}" || {
+                echo "BLOCKER: set GitHub Environment variable BSC_TESTNET_RPC."
                 exit 1
               }
               ;;
@@ -108,13 +112,13 @@ jobs:
           print(f"{manifest['artifact']['sha256']}  {manifest['artifact']['localPath']}")
           PY
 
-      - name: Resolve BSC certification factory from the accepted test manifest
-        if: ${{ inputs.network == 'bsc-testnet-preflight' || inputs.network == 'bsc-testnet-full-cycle' }}
+      - name: Resolve accepted BSC factory for bytecode preflight
+        if: ${{ inputs.network == 'bsc-testnet-preflight' }}
         id: factory
         shell: bash
         run: node scripts/resolve-bsc-certification-factory.mjs --github-output
 
-      - name: Run BSC Testnet Topaz preflight (not full lifecycle)
+      - name: Run BSC Testnet Topaz preflight (accepted 3/2 only)
         if: ${{ inputs.network == 'bsc-testnet-preflight' }}
         env:
           DEPLOYMENT_FILE: ${{ steps.factory.outputs.deployment_file }}
@@ -126,7 +130,7 @@ jobs:
           set -euo pipefail
           test -n "${FACTORY_ADDRESS:-}"
           test -n "${BSC_TESTNET_RPC:-}" || {
-            echo "BLOCKER: set GitHub Environment variable BSC_TESTNET_RPC (public testnet RPC is configuration, not a secret)."
+            echo "BLOCKER: set GitHub Environment variable BSC_TESTNET_RPC."
             exit 1
           }
           echo "certification_factory=$FACTORY_ADDRESS"
@@ -134,29 +138,28 @@ jobs:
           npm ci
           npx hardhat run scripts/test-topaz-graduation-flow.ts --network bscTestnet
 
-      - name: Run BSC Testnet full lifecycle + evidence verifier
+      - name: Run BNB 6C source-head full lifecycle on chain 97
         if: ${{ inputs.network == 'bsc-testnet-full-cycle' }}
-        env:
-          DEPLOYMENT_FILE: ${{ steps.factory.outputs.deployment_file }}
-          TOPAZ_MANIFEST: ${{ steps.factory.outputs.topaz_manifest }}
-          FACTORY_ADDRESS: ${{ steps.factory.outputs.factory }}
-          LAUNCH_FACTORY: ${{ steps.factory.outputs.factory }}
-          TOPAZ_ACCEPTANCE_REQUIRE_EVIDENCE: "true"
         shell: bash
         run: |
           set -euo pipefail
-          test -n "${FACTORY_ADDRESS:-}"
-          test -n "${BSC_TESTNET_RPC:-}" || {
-            echo "BLOCKER: set GitHub Environment variable BSC_TESTNET_RPC (public testnet RPC is configuration, not a secret)."
-            exit 1
-          }
-          echo "certification_factory=$FACTORY_ADDRESS"
-          echo "mode=full-cycle"
+          echo "mode=6c-source-head-full-cycle"
+          echo "safety=isolated 4/3 stack; live 3/2 factory must remain unchanged"
           npm ci
           npx hardhat run scripts/run-bnb-lifecycle-certification.ts --network bscTestnet
-          test -s "${TOPAZ_ACCEPTANCE_INPUT:-reports/bnb-lifecycle-certification-testnet.json}"
-          TOPAZ_ACCEPTANCE_INPUT="${TOPAZ_ACCEPTANCE_INPUT:-reports/bnb-lifecycle-certification-testnet.json}" \
-            npx hardhat run scripts/test-topaz-graduation-flow.ts --network bscTestnet
+          test -s reports/bnb-6c-testnet-acceptance.json
+          node -e 'const r=require("./reports/bnb-6c-testnet-acceptance.json"); if(r.chainId!==97||r.accepted!==true||r.factoryLiveAfter!==true||r.createPausedAfter!==true) process.exit(1); console.log({accepted:r.accepted,factory:r.factory,campaign:r.campaign,pool:r.pool,realTopazCompatibility:r.realTopazCompatibility});'
+
+      - name: Upload BNB 6C chain-97 evidence
+        if: ${{ inputs.network == 'bsc-testnet-full-cycle' && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: bnb-6c-testnet-acceptance-${{ github.sha }}
+          path: |
+            deployments/bnb/testnet.staged.json
+            reports/bnb-6c-testnet-acceptance.json
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Materialize dedicated Solana devnet payer
         if: ${{ inputs.network == 'solana-devnet-meteora' }}
