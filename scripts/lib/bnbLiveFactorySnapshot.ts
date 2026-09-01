@@ -41,6 +41,14 @@ function same(a: unknown, b: unknown): boolean {
   return String(a ?? "").toLowerCase() === String(b ?? "").toLowerCase();
 }
 
+async function optionalLegacyRead<T>(read: () => Promise<T>): Promise<T | null> {
+  try {
+    return await read();
+  } catch {
+    return null;
+  }
+}
+
 export async function snapshotLiveBnbTestnetFactory(provider: typeof ethers.provider, address = LIVE_97_FACTORY): Promise<LiveFactorySnapshot> {
   const code = await provider.getCode(address);
   const exists = Boolean(code && code !== "0x");
@@ -81,6 +89,12 @@ export async function snapshotLiveBnbTestnetFactory(provider: typeof ethers.prov
     ],
     provider,
   );
+
+  // The protected live BSC testnet factory is generation 3/2. Keep its core
+  // safety fields strict, but tolerate getters that only exist on the 4/3
+  // source head. A missing optional getter is represented as null and is still
+  // compared before/after, so the canary cannot mutate the legacy factory
+  // unnoticed while probing newer-generation metadata.
   const [
     factoryGeneration,
     campaignGeneration,
@@ -92,8 +106,6 @@ export async function snapshotLiveBnbTestnetFactory(provider: typeof ethers.prov
     feeRecipient,
     router,
     permanentLpLocker,
-    liquidityKind,
-    protocolFeeBps,
   ] = await Promise.all([
     factory.FACTORY_GENERATION(),
     factory.CAMPAIGN_GENERATION(),
@@ -105,9 +117,12 @@ export async function snapshotLiveBnbTestnetFactory(provider: typeof ethers.prov
     factory.feeRecipient(),
     factory.router(),
     factory.permanentLpLocker(),
-    factory.liquidityKind(),
-    factory.protocolFeeBps(),
   ]);
+  const [liquidityKind, protocolFeeBps] = await Promise.all([
+    optionalLegacyRead(() => factory.liquidityKind()),
+    optionalLegacyRead(() => factory.protocolFeeBps()),
+  ]);
+
   return {
     ...empty,
     factoryGeneration: factoryGeneration.toString(),
@@ -120,8 +135,8 @@ export async function snapshotLiveBnbTestnetFactory(provider: typeof ethers.prov
     feeRecipient,
     router,
     permanentLpLocker,
-    liquidityKind: liquidityKind.toString(),
-    protocolFeeBps: protocolFeeBps.toString(),
+    liquidityKind: liquidityKind == null ? null : liquidityKind.toString(),
+    protocolFeeBps: protocolFeeBps == null ? null : protocolFeeBps.toString(),
   };
 }
 
