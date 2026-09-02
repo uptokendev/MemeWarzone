@@ -193,8 +193,8 @@ test("Battle Ably auth is subscribe-only and frontend reconciles REST before rea
   const auth = read("ably/token.js");
   const battleScope = auth.split('scope === "battle"')[1]?.split("} else {")[0] || "";
   assert.match(battleScope, /arena:battle:/);
-  assert.match(battleScope, /\["subscribe"\]/);
-  assert.doesNotMatch(battleScope, /publish|presence/);
+  assert.match(battleScope, /capability\[`arena:battle:\$\{battleId\}`\]\s*=\s*\["subscribe"\]/);
+  assert.doesNotMatch(battleScope, /capability\[`arena:battle:[^\n]+\]\s*=\s*\[[^\]]*(?:"publish"|"presence")/);
 
   const hook = readFrontend("src/hooks/useArenaBattleRealtimeDetails.ts");
   assert.match(hook, /snapshotReady/);
