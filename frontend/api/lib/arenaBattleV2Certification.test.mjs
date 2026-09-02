@@ -11,42 +11,53 @@ function read(rel) {
   return fs.readFileSync(path.join(apiRoot, rel), "utf8");
 }
 
-test("live baseline capture is hooked on actual live transitions only", () => {
+test("DB-controlled live transition captures both baselines inside updateBattle transaction", () => {
   const battles = read("arenaBattles.js");
-  const tournaments = read("arenaTournaments.js");
+  const update = battles.split("async function updateBattle")[1]?.split("async function waitingCandidates")[0] || "";
   const begin = battles.split("async function beginFight")[1]?.split("async function goLiveFromMatched")[0] || "";
   const goLive = battles.split("async function goLiveFromMatched")[1]?.split("export async function promoteMatchedIfFunded")[0] || "";
-  const promote = battles.split("export async function promoteMatchedIfFunded")[1]?.split("async function tryAutoMatch")[0] || "";
-  const open = battles.split("async function handleOpen")[1]?.split("async function handleChallenge")[0] || "";
-  const challenge = battles.split("async function handleChallenge")[1]?.split("function offerFromToken")[0] || "";
   const transition = battles.split("async function handleTransition")[1]?.split("export default async function handler")[0] || "";
-  const insert = tournaments.split("async function insertTournamentBattle")[1]?.split("async function handleAdminStart")[0] || "";
 
-  assert.match(begin, /captureLiveBaselines/);
-  assert.match(goLive, /captureLiveBaselines/);
-  assert.match(transition, /captureLiveBaselines/);
-  assert.match(insert, /captureLiveBaselines/);
-  assert.doesNotMatch(promote, /captureLiveBaselines/);
-  assert.doesNotMatch(open, /captureLiveBaselines/);
-  assert.doesNotMatch(challenge, /captureLiveBaselines/);
+  assert.match(update, /patch\.state === ["']live["']/);
+  assert.match(update, /pool\.connect\(\)/);
+  assert.match(update, /for update/i);
+  assert.match(update, /captureLiveBaselines\(updated, \{ query:/);
+  assert.match(update, /await client\.query\(["']commit["']\)/);
+  assert.match(update, /await client\.query\(["']rollback["']\)/);
+  assert.doesNotMatch(begin, /captureLiveBaselines/);
+  assert.doesNotMatch(goLive, /captureLiveBaselines/);
+  assert.doesNotMatch(transition, /captureLiveBaselines/);
 });
 
-test("arenaBattles still has a single state:\"live\" object write and frozen function order", () => {
-  const battles = read("arenaBattles.js");
-  const liveAssignments = [...battles.matchAll(/state:\s*["']live["']/g)];
-  assert.equal(liveAssignments.length, 1, "arenaBattles should have a single state:'live' object write (goLiveFromMatched)");
+test("baseline helper uses battle started_at and writes both combatants in one INSERT", () => {
+  const metrics = read("lib/arenaBattleMetrics.js");
+  assert.match(metrics, /row\.started_at \|\| row\.startedAt/);
+  assert.match(metrics, /prepared\.flatMap/);
+  assert.match(metrics, /values \(\$\{first\}\),\(\$\{second\}\)/);
+  assert.doesNotMatch(metrics, /baselineTimestamp = nowIso/);
+});
 
-  const beginAt = battles.indexOf("async function beginFight");
-  const goLiveAt = battles.indexOf("async function goLiveFromMatched");
-  const promoteAt = battles.indexOf("export async function promoteMatchedIfFunded");
-  const matchAt = battles.indexOf("async function tryAutoMatch");
-  const settleAt = battles.indexOf("async function settleLive");
-  const expireAt = battles.indexOf("async function expireChallenge");
-  assert.ok(beginAt >= 0 && goLiveAt > beginAt);
-  assert.ok(promoteAt > goLiveAt);
-  assert.ok(matchAt > promoteAt);
-  assert.ok(settleAt > matchAt);
-  assert.ok(expireAt > settleAt);
+test("Match Quality active routes hydrate through normalized market snapshot", () => {
+  const battles = read("arenaBattles.js");
+  const matches = battles.split("async function handleMatches")[1]?.split("async function handleOpen")[0] || "";
+  const open = battles.split("async function handleOpen")[1]?.split("async function handleChallenge")[0] || "";
+  const challenge = battles.split("async function handleChallenge")[1]?.split("function offerFromToken")[0] || "";
+  const autoMatch = battles.split("async function tryAutoMatch")[1]?.split("async function currentMcap")[0] || "";
+
+  assert.match(battles, /getArenaMarketSnapshot/);
+  assert.match(matches, /hydrateMatchCoin/);
+  assert.match(open, /hydrateMatchCoin/);
+  assert.match(challenge, /hydrateMatchCoin/);
+  assert.match(autoMatch, /hydrateMatchCoin/);
+  assert.doesNotMatch(battles, /votes_24h/);
+});
+
+test("imported candidates do not fabricate zero native market metrics", () => {
+  const battles = read("arenaBattles.js");
+  assert.doesNotMatch(battles, /market_cap_bnb:\s*0/);
+  assert.doesNotMatch(battles, /liquidity_bnb:\s*0/);
+  assert.doesNotMatch(battles, /volume_24h_bnb:\s*0/);
+  assert.match(battles, /marketDataHealthy:\s*false/);
 });
 
 test("settleLive still uses V1 settlement and does not import calculateBattlePoints", () => {
@@ -67,8 +78,10 @@ test("canonical calculator source has no chain branches", () => {
   assert.match(source, /export function calculateBattlePoints/);
 });
 
-test("snapshot adapter never maps votes_24h to holders", () => {
-  const source = read("lib/arenaMarketSnapshot.js");
-  assert.doesNotMatch(source, /votes_24h/);
-  assert.match(source, /token_holder_balances/);
+test("snapshot and match adapters never map votes_24h to holders", () => {
+  const snapshot = read("lib/arenaMarketSnapshot.js");
+  const match = read("lib/arenaMatchQuality.js");
+  assert.doesNotMatch(snapshot, /votes_24h/);
+  assert.doesNotMatch(match, /votes_24h/);
+  assert.match(snapshot, /token_holder_balances/);
 });
