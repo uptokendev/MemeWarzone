@@ -30,6 +30,7 @@ import {
 import { advanceTournamentFromBattle } from "./arenaTournaments.js";
 import { solanaLiveTransition, solanaMatchedLifecyclePatch, solanaMayGoLive } from "./lib/arenaBattleLive.js";
 import { captureLiveBaselines } from "./lib/arenaBattleMetrics.js";
+import { getArenaMarketSnapshot } from "./lib/arenaMarketSnapshot.js";
 import { escrowRequired, readOnchainPool } from "./lib/arenaWarPoolLive.js";
 import { isSolanaWarzoneChainId } from "./lib/solanaArenaPoolRead.js";
 import { nativeSymbolFor } from "./lib/chainNative.js";
@@ -54,13 +55,13 @@ const ADMIN_TRANSITIONS = {
 
 const NATIVE_COIN_SELECT = `c.chain_id, c.campaign_address, c.token_address, c.creator_address, c.name, c.symbol,
         c.is_active, c.support_enabled, c.graduated_at_chain, c.created_at,
-        ms.market_stage, ms.market_cap_bnb, ms.liquidity_bnb, ms.volume_24h_bnb, ms.holders,
+        ms.market_stage, ms.market_cap_usd, ms.liquidity_usd, ms.volume_24h_usd,
+        ms.market_cap_bnb, ms.liquidity_bnb, ms.volume_24h_bnb, ms.holders,
         ms.last_trade_at, ms.updated_at as market_updated_at, ms.data_lag_seconds,
-        ts.marketcap_bnb, ts.vol_24h_bnb, coalesce(ms.holders, va.votes_24h, 0) as holders_count`;
+        ts.marketcap_bnb, ts.vol_24h_bnb, ms.holders as holders_count`;
 const NATIVE_COIN_FROM = `from public.campaigns c
        left join public.market_stats ms on ms.chain_id = c.chain_id and ms.campaign_address = c.campaign_address
-       left join public.token_stats ts on ts.chain_id = c.chain_id and ts.campaign_address = c.campaign_address
-       left join public.vote_aggregates va on va.chain_id = c.chain_id and va.campaign_address = c.campaign_address`;
+       left join public.token_stats ts on ts.chain_id = c.chain_id and ts.campaign_address = c.campaign_address`;
 const IMPORT_COIN_SELECT = `chain_id, token_address, owner_wallet as creator_address, name, symbol, status, scan_json, created_at`;
 
 function nowIso() {
@@ -118,6 +119,24 @@ function coinMatchProfile(coin) {
   return arenaMatchProfileFromCoin(coin);
 }
 
+async function hydrateMatchCoin(coin) {
+  if (!coin) return null;
+  const chainId = Number(coin.chain_id ?? coin.chainId ?? 0);
+  const identity = ident(coin.token_address || coin.tokenAddress || coin.campaign_address || coin.campaignAddress, chainId);
+  if (!chainId || !identity) return { ...coin, marketDataHealthy: false };
+  const snapshot = await getArenaMarketSnapshot(chainId, identity);
+  return {
+    ...coin,
+    marketCapUsd: snapshot.marketCapUsd,
+    holderCount: snapshot.holders,
+    liquidityUsd: snapshot.liquidityUsd,
+    volumeUsd: snapshot.volume24hUsd,
+    marketDataUpdatedAt: snapshot.updatedAt,
+    marketDataHealthy: snapshot.healthy,
+    marketDataReasons: snapshot.reasons,
+  };
+}
+
 function participant(coin) {
   const chainId = Number(coin?.chain_id ?? coin?.chainId ?? 0);
   const tokenAddress = ident(coin.token_address || coin.tokenAddress, chainId);
@@ -138,6 +157,8 @@ function participant(coin) {
     holdersDelta: 0,
     marketCapUsd: mcap,
     liquidityUsd: Math.max(0, toNumber(profile.liquidityUsd)),
+    marketDataUpdatedAt: profile.marketDataUpdatedAt || null,
+    marketDataHealthy: profile.marketDataHealthy,
     launchedAt: profile.launchedAt || null,
     ownerWallet: profile.ownerWallet,
   };
@@ -158,6 +179,7 @@ function placeholder() {
     holdersDelta: 0,
     marketCapUsd: 0,
     liquidityUsd: 0,
+    marketDataHealthy: false,
     launchedAt: null,
     ownerWallet: null,
   };
@@ -314,10 +336,11 @@ async function importedCoin(chainId, identity) {
     is_active: true,
     support_enabled: true,
     market_stage: "EXTERNAL_IMPORT",
-    market_cap_bnb: 0,
-    liquidity_bnb: 0,
-    volume_24h_bnb: 0,
-    holders_count: 0,
+    marketCapUsd: null,
+    liquidityUsd: null,
+    volumeUsd: null,
+    holderCount: null,
+    marketDataHealthy: false,
   };
 }
 
@@ -374,10 +397,11 @@ async function creatorCoins(chainId, creatorAddress, limit) {
       is_active: true,
       support_enabled: true,
       market_stage: "EXTERNAL_IMPORT",
-      market_cap_bnb: 0,
-      liquidity_bnb: 0,
-      volume_24h_bnb: 0,
-      holders_count: 0,
+      marketCapUsd: null,
+      liquidityUsd: null,
+      volumeUsd: null,
+      holderCount: null,
+      marketDataHealthy: false,
     })),
   ];
 }
@@ -458,42 +482,83 @@ async function insertBattle(fields) {
   return refreshBattle(id);
 }
 
-async function updateBattle(id, patch) {
-  const row = await findBattle(id);
-  if (!row) return null;
-  const next = { ...row, ...patch };
-  await pool.query(
+function battleUpdateValues(id, next) {
+  return [
+    id,
+    next.state,
+    next.source,
+    next.stake_native,
+    next.offered_stake_native ?? next.stake_native,
+    next.offer_from_token || next.challenger_token || null,
+    Math.max(0, Number(next.offer_count || 0)),
+    parseDurationHours(next.duration_hours ?? next.durationHours, 24),
+    parseDurationHours(next.offered_duration_hours ?? next.offeredDurationHours ?? next.duration_hours, 24),
+    next.native_symbol,
+    next.challenger_token,
+    next.defender_token,
+    JSON.stringify(next.participants || []),
+    next.challenger_start_mcap_usd,
+    next.defender_start_mcap_usd,
+    next.winner_token,
+    next.started_at,
+    next.ends_at,
+    next.finished_at,
+    Boolean(next.featured),
+  ];
+}
+
+async function writeBattle(query, id, next) {
+  const result = await query(
     `update public.arena_battles set
         state = $2, source = $3, stake_native = $4, offered_stake_native = $5, offer_from_token = $6, offer_count = $7,
         duration_hours = $8, offered_duration_hours = $9,
         native_symbol = $10, challenger_token = $11, defender_token = $12,
         participants = $13::jsonb, challenger_start_mcap_usd = $14, defender_start_mcap_usd = $15, winner_token = $16,
         started_at = $17, ends_at = $18, finished_at = $19, featured = $20, updated_at = now()
-      where id = $1`,
-    [
-      id,
-      next.state,
-      next.source,
-      next.stake_native,
-      next.offered_stake_native ?? next.stake_native,
-      next.offer_from_token || next.challenger_token || null,
-      Math.max(0, Number(next.offer_count || 0)),
-      parseDurationHours(next.duration_hours ?? next.durationHours, 24),
-      parseDurationHours(next.offered_duration_hours ?? next.offeredDurationHours ?? next.duration_hours, 24),
-      next.native_symbol,
-      next.challenger_token,
-      next.defender_token,
-      JSON.stringify(next.participants || []),
-      next.challenger_start_mcap_usd,
-      next.defender_start_mcap_usd,
-      next.winner_token,
-      next.started_at,
-      next.ends_at,
-      next.finished_at,
-      Boolean(next.featured),
-    ],
+      where id = $1
+      returning ${BATTLE_COLUMNS}`,
+    battleUpdateValues(id, next),
   );
-  return refreshBattle(id);
+  return result.rows[0] || null;
+}
+
+async function updateBattle(id, patch) {
+  const row = await findBattle(id);
+  if (!row) return null;
+  const enteringLive = row.state !== "live" && patch.state === "live";
+  if (!enteringLive) {
+    const updated = await writeBattle((text, params) => pool.query(text, params), id, { ...row, ...patch });
+    return mapBattle(updated);
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const locked = await client.query(
+      `select ${BATTLE_COLUMNS} from public.arena_battles where id = $1 for update`,
+      [id],
+    );
+    const current = locked.rows[0];
+    if (!current) {
+      await client.query("rollback");
+      return null;
+    }
+    if (current.state === "live") {
+      await client.query("commit");
+      return mapBattle(current);
+    }
+    const next = { ...current, ...patch };
+    const updated = await writeBattle((text, params) => client.query(text, params), id, next);
+    if (!updated || updated.state !== "live") throw new Error(`Battle ${id} failed live transition write`);
+    await captureLiveBaselines(updated, { query: (text, params) => client.query(text, params) });
+    await client.query("commit");
+    return mapBattle(updated);
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 async function waitingCandidates(chainId, excludeId, stakeNative, durationHours) {
@@ -515,14 +580,13 @@ function coinMcap(coin) {
 
 async function beginFight(id, patch, chainId) {
   const hours = parseDurationHours(patch.duration_hours ?? patch.offered_duration_hours, LIVE_HOURS);
-  let updated;
   if (isSolanaWarzoneChainId(chainId)) {
     const onchain = await readOnchainPool(chainId, id);
     const transition = solanaLiveTransition({
       arenaLive: onchain.live === true,
       bothPaid: onchain.bothPaid === true,
     });
-    updated = await updateBattle(id, {
+    return updateBattle(id, {
       ...patch,
       duration_hours: hours,
       offered_duration_hours: hours,
@@ -534,25 +598,16 @@ async function beginFight(id, patch, chainId) {
           ? plusHours(DEPOSIT_WINDOW_HOURS)
           : null,
     });
-  } else {
-    const requireEscrow = escrowRequired(chainId);
-    updated = await updateBattle(id, {
-      ...patch,
-      duration_hours: hours,
-      offered_duration_hours: hours,
-      state: requireEscrow ? "matched" : "live",
-      started_at: requireEscrow ? null : nowIso(),
-      ends_at: requireEscrow ? plusHours(DEPOSIT_WINDOW_HOURS) : plusHours(hours),
-    });
   }
-  if (updated?.state === "live") {
-    try {
-      await captureLiveBaselines(await findBattle(id));
-    } catch (error) {
-      console.warn("[api/arenaBattles] baseline capture failed", error?.message || error);
-    }
-  }
-  return updated;
+  const requireEscrow = escrowRequired(chainId);
+  return updateBattle(id, {
+    ...patch,
+    duration_hours: hours,
+    offered_duration_hours: hours,
+    state: requireEscrow ? "matched" : "live",
+    started_at: requireEscrow ? null : nowIso(),
+    ends_at: requireEscrow ? plusHours(DEPOSIT_WINDOW_HOURS) : plusHours(hours),
+  });
 }
 
 async function goLiveFromMatched(row) {
@@ -564,7 +619,7 @@ async function goLiveFromMatched(row) {
   const leftNow = await currentMcap(chainId, row.challenger_token);
   const rightNow = await currentMcap(chainId, row.defender_token);
   const hours = parseDurationHours(row.duration_hours ?? row.offered_duration_hours, LIVE_HOURS);
-  const updated = await updateBattle(row.id, {
+  return updateBattle(row.id, {
     state: "live",
     duration_hours: hours,
     started_at: nowIso(),
@@ -572,12 +627,6 @@ async function goLiveFromMatched(row) {
     challenger_start_mcap_usd: row.challenger_start_mcap_usd ?? leftNow,
     defender_start_mcap_usd: row.defender_start_mcap_usd ?? rightNow,
   });
-  try {
-    await captureLiveBaselines(await findBattle(row.id));
-  } catch (error) {
-    console.warn("[api/arenaBattles] baseline capture failed", error?.message || error);
-  }
-  return updated;
 }
 
 export async function promoteMatchedIfFunded(row) {
@@ -636,7 +685,7 @@ async function eligibleRecommendationCoins(chainId, limit = 120) {
         and c.graduated_at_chain is not null
         and coalesce(c.is_active, true) = true
         and coalesce(c.support_enabled, true) = true
-      order by coalesce(ms.market_cap_bnb, ts.marketcap_bnb, 0) desc, c.created_block desc nulls last
+      order by coalesce(ms.market_cap_usd, 0) desc, c.created_block desc nulls last
       limit $2`,
     [chainId, nativeLimit],
   );
@@ -665,10 +714,11 @@ async function eligibleRecommendationCoins(chainId, limit = 120) {
       is_active: true,
       support_enabled: true,
       market_stage: "EXTERNAL_IMPORT",
-      market_cap_bnb: 0,
-      liquidity_bnb: 0,
-      volume_24h_bnb: 0,
-      holders_count: 0,
+      marketCapUsd: null,
+      liquidityUsd: null,
+      volumeUsd: null,
+      holderCount: null,
+      marketDataHealthy: false,
     });
   }
   return [...deduped.values()];
@@ -679,13 +729,17 @@ async function tryAutoMatch(openBattle, openerCoin) {
   const candidates = await waitingCandidates(chainId, openBattle.id, openBattle.stakeNative, openBattle.durationHours);
   if (!candidates.length) return openBattle;
 
-  const openerProfile = coinMatchProfile(openerCoin);
+  const hydratedOpener = await hydrateMatchCoin(openerCoin);
+  const openerProfile = coinMatchProfile(hydratedOpener);
   const scored = [];
   for (const row of candidates) {
     const rivalCoin = await coinByIdentity(chainId, row.challenger_token);
-    const rivalProfile = rivalCoin ? coinMatchProfile(rivalCoin) : arenaMatchProfileFromParticipant(Array.isArray(row.participants) ? row.participants[0] : null);
+    const hydratedRival = rivalCoin ? await hydrateMatchCoin(rivalCoin) : null;
+    const rivalProfile = hydratedRival
+      ? coinMatchProfile(hydratedRival)
+      : arenaMatchProfileFromParticipant(Array.isArray(row.participants) ? row.participants[0] : null);
     if (!rivalProfile.tokenId) continue;
-    scored.push({ row, rivalCoin, rivalProfile });
+    scored.push({ row, rivalCoin: hydratedRival, rivalProfile });
   }
   const best = recommendMatchCandidates(openerProfile, scored, {
     limit: 1,
@@ -705,8 +759,8 @@ async function tryAutoMatch(openBattle, openerCoin) {
   const live = await beginFight(openBattle.id, {
     source: "queue",
     defender_token: rivalRow.challenger_token,
-    participants: [openBattle.participants[0], rival],
-    challenger_start_mcap_usd: coinMcap(openerCoin),
+    participants: [participant(hydratedOpener), rival],
+    challenger_start_mcap_usd: coinMcap(hydratedOpener),
     defender_start_mcap_usd: toNumber(rivalRow.challenger_start_mcap_usd ?? rival.marketCapUsd),
   }, chainId);
   await pool.query(`update public.arena_battles set state = 'expired', finished_at = now(), updated_at = now() where id = $1`, [rivalRow.id]);
@@ -817,7 +871,6 @@ async function settleLive(row) {
     await client.query("commit");
 
     try {
-      // 4c: this post-commit advance can lag; reconcile finished battles whose money winner exists.
       if (finished.rows[0].tournament_id && decision.moneyWinnerToken) {
         await advanceTournamentFromBattle({
           ...finished.rows[0],
@@ -897,6 +950,7 @@ async function handleMatches(req, res) {
   if (!coin) return json(res, 404, { ok: false, error: "Coin not found", reason: "coin_not_found" });
   const creatorStatus = await statusFor(coin);
   if (!creatorStatus.eligibility) return json(res, 409, { ok: false, reason: creatorStatus.unavailableReason || "unavailable", status: creatorStatus });
+  const hydratedCoin = await hydrateMatchCoin(coin);
 
   const activeTokens = await activeBattleTokenSet(chainId);
   activeTokens.delete(creatorStatus.tokenId);
@@ -904,7 +958,8 @@ async function handleMatches(req, res) {
     const tokenId = ident(candidate.token_address || candidate.campaign_address, chainId);
     return Boolean(tokenId) && tokenId !== creatorStatus.tokenId && !activeTokens.has(tokenId);
   });
-  const recommendations = recommendMatchCandidates(coinMatchProfile(coin), candidates, {
+  const hydratedCandidates = await Promise.all(candidates.map(hydrateMatchCoin));
+  const recommendations = recommendMatchCandidates(coinMatchProfile(hydratedCoin), hydratedCandidates.filter(Boolean), {
     limit,
     getProfile: (candidate) => coinMatchProfile(candidate),
   });
@@ -948,7 +1003,8 @@ async function handleOpen(req, res) {
   });
   if (!verified) return;
 
-  const opener = participant(coin);
+  const hydratedCoin = await hydrateMatchCoin(coin);
+  const opener = participant(hydratedCoin);
   const opened = await insertBattle({
     chainId,
     state: "waiting",
@@ -960,11 +1016,11 @@ async function handleOpen(req, res) {
     challengerToken: opener.tokenId,
     defenderToken: null,
     participants: [opener, placeholder()],
-    challengerStartMcap: coinMcap(coin),
+    challengerStartMcap: coinMcap(hydratedCoin),
     creatorAddress: ident(coin.creator_address, chainId),
     featured: false,
   });
-  const matched = await tryAutoMatch(opened, coin);
+  const matched = await tryAutoMatch(opened, hydratedCoin);
   return json(res, 200, { ok: true, battle: matched, creatorStatus: await statusFor(coin) });
 }
 
@@ -1001,6 +1057,8 @@ async function handleChallenge(req, res) {
   });
   if (!verified) return;
 
+  const hydratedChallenger = await hydrateMatchCoin(challenger);
+  const hydratedDefender = await hydrateMatchCoin(defender);
   const battle = await insertBattle({
     chainId,
     state: "challenged",
@@ -1014,9 +1072,9 @@ async function handleChallenge(req, res) {
     nativeSymbol: nativeSymbolFor(chainId),
     challengerToken: challengerStatus.tokenId,
     defenderToken: defenderStatus.tokenId,
-    participants: [participant(challenger), participant(defender)],
-    challengerStartMcap: coinMcap(challenger),
-    defenderStartMcap: coinMcap(defender),
+    participants: [participant(hydratedChallenger), participant(hydratedDefender)],
+    challengerStartMcap: coinMcap(hydratedChallenger),
+    defenderStartMcap: coinMcap(hydratedDefender),
     creatorAddress: ident(challenger.creator_address, chainId),
     endsAt: plusHours(CHALLENGE_HOURS),
   });
@@ -1070,6 +1128,8 @@ async function handleAccept(req, res, battleId) {
 
   const challengerCoin = await coinByIdentity(row.chain_id, row.challenger_token);
   const defenderCoin = await coinByIdentity(row.chain_id, row.defender_token);
+  const hydratedChallenger = challengerCoin ? await hydrateMatchCoin(challengerCoin) : null;
+  const hydratedDefender = defenderCoin ? await hydrateMatchCoin(defenderCoin) : null;
   const agreedStake = toNumber(row.offered_stake_native ?? row.stake_native);
   const agreedDuration = parseDurationHours(row.offered_duration_hours ?? row.duration_hours, 24);
   const live = await beginFight(battleId, {
@@ -1077,8 +1137,8 @@ async function handleAccept(req, res, battleId) {
     offered_stake_native: agreedStake,
     duration_hours: agreedDuration,
     offered_duration_hours: agreedDuration,
-    challenger_start_mcap_usd: row.challenger_start_mcap_usd ?? (challengerCoin ? coinMcap(challengerCoin) : 0),
-    defender_start_mcap_usd: row.defender_start_mcap_usd ?? (defenderCoin ? coinMcap(defenderCoin) : 0),
+    challenger_start_mcap_usd: row.challenger_start_mcap_usd ?? (hydratedChallenger ? coinMcap(hydratedChallenger) : 0),
+    defender_start_mcap_usd: row.defender_start_mcap_usd ?? (hydratedDefender ? coinMcap(hydratedDefender) : 0),
   }, Number(row.chain_id));
   return json(res, 200, { ok: true, battle: live, escrowRequired: live?.state === "matched" });
 }
@@ -1201,15 +1261,7 @@ async function handleTransition(req, res, battleId) {
     const settled = await settleLive({ ...row, ends_at: nowIso() });
     return json(res, 200, { ok: true, battle: settled });
   }
-  const updated = await updateBattle(battleId, patch);
-  if (nextState === "live") {
-    try {
-      await captureLiveBaselines(await findBattle(battleId));
-    } catch (error) {
-      console.warn("[api/arenaBattles] baseline capture failed", error?.message || error);
-    }
-  }
-  return json(res, 200, { ok: true, battle: updated });
+  return json(res, 200, { ok: true, battle: await updateBattle(battleId, patch) });
 }
 
 export default async function handler(req, res) {
