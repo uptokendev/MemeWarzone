@@ -67,6 +67,28 @@ test("mock V3 stock->meme is a buy denominated in quote units", () => {
   });
 });
 
+test("execution formatting preserves bigint precision beyond Number.MAX_SAFE_INTEGER", () => {
+  const descriptor = normalizePairDescriptor({
+    campaignTokenAddress: meme,
+    token0Address: meme,
+    token1Address: nvda,
+    wrappedNativeAddress: weth,
+    stockTokenAddresses: [nvda],
+    baseDecimals: 18,
+    quoteDecimals: 8,
+  });
+  const swap = {
+    side: "sell" as const,
+    baseAmountRaw: 123_456_789_012_345_678_901_234_567_890n,
+    quoteAmountRaw: 98_765_432_109_876_543_210n,
+  };
+  assert.deepEqual(formatPairExecution({ descriptor, swap }), {
+    baseAmount: "123456789012.34567890123456789",
+    quoteAmount: "987654321098.7654321",
+    priceQuote: "8.0000000729",
+  });
+});
+
 test("canonical V3 deltas work for stock-token quote assets", () => {
   const descriptor = normalizePairDescriptor({
     campaignTokenAddress: meme,
