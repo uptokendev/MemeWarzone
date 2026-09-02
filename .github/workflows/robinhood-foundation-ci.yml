@@ -13,13 +13,16 @@ on:
       - "contracts/LaunchFactory.sol"
       - "contracts/mocks/MockUniswapV3*.sol"
       - "contracts/mocks/MockWETH9.sol"
+      - "contracts/mocks/MockRobinhoodStockCampaignHarness.sol"
       - "contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol"
+      - "contracts/integrations/RobinhoodStockTokenGraduationAdapter.sol"
       - "contracts/PermanentV3PositionLocker.sol"
       - "scripts/deploy-robinhood-v3-mock.ts"
       - "scripts/verify-robinhood-v3-mock.ts"
       - "scripts/check-robinhood-local-isolation.mjs"
       - "test/RobinhoodV3Mocks.spec.ts"
       - "test/RobinhoodV3GraduationAdapter.spec.ts"
+      - "test/RobinhoodStockGraduationAdapter.spec.ts"
       - "test/LaunchFactoryLiquidityKinds.spec.ts"
       - "test/LaunchFactoryGraduationThresholds.spec.ts"
       - "test/ScheduledLaunchFactory.spec.ts"
@@ -71,13 +74,16 @@ on:
       - "contracts/LaunchFactory.sol"
       - "contracts/mocks/MockUniswapV3*.sol"
       - "contracts/mocks/MockWETH9.sol"
+      - "contracts/mocks/MockRobinhoodStockCampaignHarness.sol"
       - "contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol"
+      - "contracts/integrations/RobinhoodStockTokenGraduationAdapter.sol"
       - "contracts/PermanentV3PositionLocker.sol"
       - "scripts/deploy-robinhood-v3-mock.ts"
       - "scripts/verify-robinhood-v3-mock.ts"
       - "scripts/check-robinhood-local-isolation.mjs"
       - "test/RobinhoodV3Mocks.spec.ts"
       - "test/RobinhoodV3GraduationAdapter.spec.ts"
+      - "test/RobinhoodStockGraduationAdapter.spec.ts"
       - "test/LaunchFactoryLiquidityKinds.spec.ts"
       - "test/LaunchFactoryGraduationThresholds.spec.ts"
       - "test/ScheduledLaunchFactory.spec.ts"
@@ -150,11 +156,12 @@ jobs:
       - name: Prove Robinhood 5C freeze schema, production-off defaults, and 46630 mutation guard
         run: node --test scripts/prove-robinhood-testnet-acceptance-freeze.test.mjs && node scripts/prove-robinhood-testnet-acceptance-freeze.mjs
 
-      - name: Prove V3 staging DEX, factory liquidity seam, and scheduled-generation compatibility
+      - name: Prove V3 staging DEX, native graduation, Stock graduation boundary, and factory compatibility
         run: >-
           npx hardhat test
           test/RobinhoodV3Mocks.spec.ts
           test/RobinhoodV3GraduationAdapter.spec.ts
+          test/RobinhoodStockGraduationAdapter.spec.ts
           test/LaunchFactoryLiquidityKinds.spec.ts
           test/LaunchFactoryGraduationThresholds.spec.ts
           test/ScheduledLaunchFactory.spec.ts
