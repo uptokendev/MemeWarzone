@@ -92,6 +92,7 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
     // Compatibility naming for LaunchFactory/tooling that currently asks whether an LP asset is registered.
     mapping(address => bool) public registeredLpToken;
     mapping(address => bool) public registeredFeeAsset;
+    mapping(address => bool) public authorizedIntegrationSource;
     mapping(address => uint256) public lockedBalance;
     mapping(address => PoolRegistration) public poolInfo;
     mapping(address => address) public creatorPayoutRecipient;
@@ -110,6 +111,7 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
         address wrappedNative,
         uint24 feeTier
     );
+    event IntegrationSourceAuthorizationUpdated(address indexed source, bool authorized);
     event V3PositionReceived(address indexed pool, uint256 indexed tokenId, uint128 liquidity);
     event GraduationPoolRegistered(
         address indexed pool,
@@ -173,14 +175,38 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
         if (factory_.code.length == 0 || manager_.code.length == 0 || wrapped_.code.length == 0) revert InvalidIntegration();
         if (fee_ == 0) revert InvalidFeeTier();
 
+        if (integrationSource != address(0) && integrationSource != integrationSource_) {
+            authorizedIntegrationSource[integrationSource] = false;
+            emit IntegrationSourceAuthorizationUpdated(integrationSource, false);
+        }
         treasuryRouter = treasuryRouter_;
         integrationSource = integrationSource_;
         v3Factory = factory_;
         positionManager = manager_;
         wrappedNative = wrapped_;
         configuredFeeTier = fee_;
+        authorizedIntegrationSource[integrationSource_] = true;
 
+        emit IntegrationSourceAuthorizationUpdated(integrationSource_, true);
         emit RevenueConfigUpdated(treasuryRouter_, integrationSource_, manager_, factory_, wrapped_, fee_);
+    }
+
+    function setIntegrationSourceAuthorized(address sourceAddress, bool authorized) external onlyAdmin {
+        if (sourceAddress == address(0)) revert ZeroAddress();
+        if (!authorized && sourceAddress == integrationSource) revert InvalidIntegration();
+        if (authorized) {
+            if (sourceAddress.code.length == 0) revert InvalidIntegration();
+            IRobinhoodV3LockerIntegration source = IRobinhoodV3LockerIntegration(sourceAddress);
+            if (
+                source.liquidityKind() != REQUIRED_LIQUIDITY_KIND ||
+                source.v3Factory() != v3Factory ||
+                source.positionManager() != positionManager ||
+                source.WETH() != wrappedNative ||
+                source.feeTier() != configuredFeeTier
+            ) revert InvalidIntegration();
+        }
+        authorizedIntegrationSource[sourceAddress] = authorized;
+        emit IntegrationSourceAuthorizationUpdated(sourceAddress, authorized);
     }
 
     function onERC721Received(address operator, address from, uint256 tokenId, bytes calldata)
@@ -190,7 +216,7 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
     {
         address manager_ = positionManager;
         if (manager_ == address(0) || msg.sender != manager_) revert InvalidPositionManager();
-        if (operator != integrationSource || from != address(0)) revert InvalidPositionSender();
+        if (!authorizedIntegrationSource[operator] || from != address(0)) revert InvalidPositionSender();
 
         (address token0_, address token1_, uint24 fee_, uint128 liquidity_) = _positionCore(tokenId);
         if (fee_ != configuredFeeTier) revert InvalidFeeTier();
