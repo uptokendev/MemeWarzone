@@ -11,6 +11,7 @@ on:
       - "docs/robinhood-*.md"
       - "hardhat.config.ts"
       - "contracts/LaunchCampaign.sol"
+      - "contracts/RobinhoodStockLaunchCampaign.sol"
       - "contracts/LaunchFactory.sol"
       - "contracts/mocks/MockUniswapV3*.sol"
       - "contracts/mocks/MockWETH9.sol"
@@ -26,6 +27,7 @@ on:
       - "test/RobinhoodStockGraduationAdapter.spec.ts"
       - "test/RobinhoodStockPendingGraduation.spec.ts"
       - "test/RobinhoodStockFactoryBinding.spec.ts"
+      - "test/RobinhoodStockGraduationCompletion.spec.ts"
       - "test/LaunchFactoryLiquidityKinds.spec.ts"
       - "test/LaunchFactoryGraduationThresholds.spec.ts"
       - "test/ScheduledLaunchFactory.spec.ts"
@@ -75,6 +77,7 @@ on:
       - "docs/robinhood-*.md"
       - "hardhat.config.ts"
       - "contracts/LaunchCampaign.sol"
+      - "contracts/RobinhoodStockLaunchCampaign.sol"
       - "contracts/LaunchFactory.sol"
       - "contracts/mocks/MockUniswapV3*.sol"
       - "contracts/mocks/MockWETH9.sol"
@@ -90,6 +93,7 @@ on:
       - "test/RobinhoodStockGraduationAdapter.spec.ts"
       - "test/RobinhoodStockPendingGraduation.spec.ts"
       - "test/RobinhoodStockFactoryBinding.spec.ts"
+      - "test/RobinhoodStockGraduationCompletion.spec.ts"
       - "test/LaunchFactoryLiquidityKinds.spec.ts"
       - "test/LaunchFactoryGraduationThresholds.spec.ts"
       - "test/ScheduledLaunchFactory.spec.ts"
@@ -98,9 +102,6 @@ on:
       - "contracts/test/TreasuryRouterV3Mocks.sol"
       - "scripts/prove-robinhood-staged-manifest.mjs"
       - "scripts/prove-robinhood-staged-manifest.test.mjs"
-      - "scripts/robinhoodTestnetFreeze.mjs"
-      - "scripts/prove-robinhood-testnet-acceptance-freeze.mjs"
-      - "scripts/prove-robinhood-testnet-acceptance-freeze.test.mjs"
       - "deployments/robinhood/testnet.accepted.json"
       - "db/migrations/**"
       - "frontend/api/load-local-env.mjs"
@@ -162,7 +163,7 @@ jobs:
       - name: Prove Robinhood 5C freeze schema, production-off defaults, and 46630 mutation guard
         run: node --test scripts/prove-robinhood-testnet-acceptance-freeze.test.mjs && node scripts/prove-robinhood-testnet-acceptance-freeze.mjs
 
-      - name: Prove V3 staging DEX, native graduation, Stock pending lifecycle, Stock execution boundary, signed Stock factory binding, and factory compatibility
+      - name: Prove V3 staging DEX, native graduation, Stock pending lifecycle, Stock execution boundary, signed Stock factory binding, Stock completion recovery, and factory compatibility
         run: >-
           npx hardhat test
           test/RobinhoodV3Mocks.spec.ts
@@ -170,6 +171,7 @@ jobs:
           test/RobinhoodStockGraduationAdapter.spec.ts
           test/RobinhoodStockPendingGraduation.spec.ts
           test/RobinhoodStockFactoryBinding.spec.ts
+          test/RobinhoodStockGraduationCompletion.spec.ts
           test/LaunchFactoryLiquidityKinds.spec.ts
           test/LaunchFactoryGraduationThresholds.spec.ts
           test/ScheduledLaunchFactory.spec.ts
