@@ -3,12 +3,21 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import {
+  arenaBattleChannelName,
+  buildPublicBattleMetricsSnapshot,
+} from "./arenaBattleRealtime.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const apiRoot = path.join(here, "..");
+const frontendRoot = path.join(apiRoot, "..");
 
 function read(rel) {
   return fs.readFileSync(path.join(apiRoot, rel), "utf8");
+}
+
+function readFrontend(rel) {
+  return fs.readFileSync(path.join(frontendRoot, rel), "utf8");
 }
 
 test("DB-controlled live transition captures both baselines inside updateBattle transaction", () => {
@@ -101,4 +110,106 @@ test("snapshot and match adapters never map votes_24h to holders", () => {
   assert.doesNotMatch(snapshot, /votes_24h/);
   assert.doesNotMatch(match, /votes_24h/);
   assert.match(snapshot, /token_holder_balances/);
+});
+
+test("Phase 6 public Battle metrics snapshot is sanitized and keeps settlement V1", () => {
+  const battle = {
+    id: "arena-test-1",
+    chain_id: 56,
+    state: "live",
+  };
+  const metric = (side, points, healthy = true) => ({
+    battle_id: battle.id,
+    token_id: side === "left" ? "0x1111111111111111111111111111111111111111" : "0x2222222222222222222222222222222222222222",
+    side,
+    scoring_version: "battle_points_v2",
+    start_mcap_usd: 100000,
+    start_holders: 1000,
+    start_liquidity_usd: 25000,
+    baseline_timestamp: "2026-09-02T20:00:00.000Z",
+    baseline_market_data_updated_at: "2026-09-02T20:00:00.000Z",
+    baseline_healthy: true,
+    baseline_data_source: "normalized_market_stats",
+    current_mcap_usd: 120000,
+    current_holders: 1100,
+    current_liquidity_usd: 28000,
+    market_data_updated_at: "2026-09-02T20:01:00.000Z",
+    data_lag_seconds: 3,
+    data_healthy: healthy,
+    data_source: "normalized_market_stats",
+    eligible_battle_volume_usd: 5000,
+    mcap_points: points / 2,
+    holder_points: points / 3,
+    volume_points: points / 6,
+    battle_points: points,
+    metrics_updated_at: "2026-09-02T20:01:05.000Z",
+    wallet: "0xshould-never-leak",
+    cluster_id: "internal-cluster",
+  });
+  const snapshot = buildPublicBattleMetricsSnapshot(battle, [metric("left", 60), metric("right", 45)]);
+  assert.equal(snapshot.leaderSide, "left");
+  assert.equal(snapshot.pointDifference, 15);
+  assert.equal(snapshot.settlementMode, "v1_mcap_pct_change");
+  assert.equal(snapshot.scoringVersion, "battle_points_v2");
+  assert.equal(snapshot.dataHealth.healthy, true);
+  const serialized = JSON.stringify(snapshot);
+  assert.doesNotMatch(serialized, /should-never-leak/);
+  assert.doesNotMatch(serialized, /internal-cluster/);
+  assert.doesNotMatch(serialized, /cluster_id|wallet/i);
+  assert.equal(arenaBattleChannelName(battle.id), `arena:battle:${battle.id}`);
+});
+
+test("Phase 6 marks public Battle telemetry DATA DELAY when a side is unhealthy", () => {
+  const snapshot = buildPublicBattleMetricsSnapshot(
+    { id: "arena-delay", chain_id: 46630, state: "live" },
+    [
+      {
+        side: "left", token_id: "left", scoring_version: "battle_points_v2",
+        current_mcap_usd: 1, current_holders: 1, current_liquidity_usd: 1,
+        data_healthy: false, battle_points: 10,
+      },
+      {
+        side: "right", token_id: "right", scoring_version: "battle_points_v2",
+        current_mcap_usd: 1, current_holders: 1, current_liquidity_usd: 1,
+        data_healthy: true, battle_points: 10,
+      },
+    ],
+  );
+  assert.equal(snapshot.dataHealth.healthy, false);
+  assert.equal(snapshot.dataHealth.status, "data_delay");
+  assert.ok(snapshot.dataHealth.reasons.includes("left_market_data_unhealthy"));
+});
+
+test("Phase 6 worker serializes refreshes but never row-locks or mutates arena_battles", () => {
+  const source = read("lib/arenaBattleRealtime.js");
+  assert.match(source, /pg_try_advisory_xact_lock/);
+  assert.doesNotMatch(source, /for update/i);
+  assert.doesNotMatch(source, /update public\.arena_battles/i);
+  assert.match(source, /settlementMode:\s*["']v1_mcap_pct_change["']/);
+  assert.match(source, /ARENA_BATTLE_REALTIME_ENABLED/);
+});
+
+test("Battle Ably auth is subscribe-only and frontend reconciles REST before realtime", () => {
+  const auth = read("ably/token.js");
+  const battleScope = auth.split('scope === "battle"')[1]?.split("} else {")[0] || "";
+  assert.match(battleScope, /arena:battle:/);
+  assert.match(battleScope, /\["subscribe"\]/);
+  assert.doesNotMatch(battleScope, /publish|presence/);
+
+  const hook = readFrontend("src/hooks/useArenaBattleRealtimeDetails.ts");
+  assert.match(hook, /snapshotReady/);
+  assert.match(hook, /fetchPostGradBattleDetails/);
+  assert.match(hook, /fetchArenaBattleMetrics/);
+  assert.match(hook, /enabled:\s*Boolean\(battleId && snapshotReady\)/);
+  assert.match(hook, /client\.connection\.on\(["']connected["']/);
+  assert.match(hook, /reconnect reconciliation/);
+  assert.match(hook, /incomingMetricTs < currentMetricTs/);
+  assert.match(hook, /arena_battle_finished|shouldRefetch/);
+});
+
+test("Railway Battle realtime worker is isolated from API liveness", () => {
+  const start = readFrontend("scripts/run-railway-api-start.mjs");
+  assert.match(start, /ARENA_BATTLE_REALTIME_ENABLED/);
+  assert.match(start, /run-arena-battle-realtime-worker\.mjs/);
+  assert.match(start, /API remains live/);
 });
