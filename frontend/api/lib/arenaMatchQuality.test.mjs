@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import {
+  arenaMatchProfileFromCoin,
   calculateMatchQuality,
   optimizeMatchPairings,
   recommendMatchCandidates,
@@ -19,11 +20,12 @@ function profile(overrides = {}) {
     holderCount: overrides.holderCount ?? 1_200,
     liquidityUsd: overrides.liquidityUsd ?? 30_000,
     volumeUsd: overrides.volumeUsd ?? 12_000,
+    marketDataHealthy: overrides.marketDataHealthy ?? true,
     launchedAt: overrides.launchedAt ?? "2026-08-01T00:00:00.000Z",
   };
 }
 
-test("calculateMatchQuality returns a ranked score for comparable opponents", () => {
+test("calculateMatchQuality returns a ranked score for comparable normalized opponents", () => {
   const left = profile({ tokenId: "0x1111111111111111111111111111111111111111", ownerWallet: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" });
   const right = profile({
     tokenId: "0x2222222222222222222222222222222222222222",
@@ -37,19 +39,65 @@ test("calculateMatchQuality returns a ranked score for comparable opponents", ()
   const result = calculateMatchQuality(left, right, { nowMs: Date.parse("2026-09-02T12:00:00.000Z") });
   assert.equal(result.rankedEligible, true);
   assert.equal(result.classification, "perfect");
+  assert.equal(result.left.dataBasis, "normalized_usd");
   assert.ok(result.matchScore >= 90, `expected strong score, got ${result.matchScore}`);
   assert.ok(result.components.marketCap >= 85);
   assert.ok(result.components.liquidity >= 85);
 });
 
+test("legacy native-unit profiles fail safe to Open War instead of ranked matching", () => {
+  const left = {
+    token_address: "0x1111111111111111111111111111111111111111",
+    creator_address: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    market_cap_bnb: 100,
+    liquidity_bnb: 25,
+    volume_24h_bnb: 10,
+    holders: 1_000,
+    graduated_at_chain: "2026-08-01T00:00:00.000Z",
+  };
+  const right = {
+    token_address: "0x2222222222222222222222222222222222222222",
+    creator_address: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    market_cap_bnb: 105,
+    liquidity_bnb: 24,
+    volume_24h_bnb: 11,
+    holders: 1_050,
+    graduated_at_chain: "2026-08-02T00:00:00.000Z",
+  };
+  const result = calculateMatchQuality(left, right, { nowMs: Date.parse("2026-09-02T12:00:00.000Z") });
+  assert.equal(result.rankedEligible, false);
+  assert.equal(result.classification, "open_war");
+  assert.ok(result.reasons.includes("non_normalized_market_data"));
+});
+
+test("votes_24h is never accepted as a holder count", () => {
+  const parsed = arenaMatchProfileFromCoin({
+    tokenId: "0x3333333333333333333333333333333333333333",
+    marketCapUsd: 100_000,
+    liquidityUsd: 30_000,
+    volumeUsd: 12_000,
+    votes_24h: 9_999,
+  });
+  assert.equal(parsed.holderCount, 0);
+  assert.equal(parsed.dataBasis, "legacy_compat", "missing real holder field must prevent normalized ranked input");
+});
+
+test("unhealthy normalized market snapshot is Open War even when values are present", () => {
+  const left = profile({ tokenId: "0x4444444444444444444444444444444444444444", marketDataHealthy: false });
+  const right = profile({ tokenId: "0x5555555555555555555555555555555555555555" });
+  const result = calculateMatchQuality(left, right, { nowMs: Date.parse("2026-09-02T12:00:00.000Z") });
+  assert.equal(result.rankedEligible, false);
+  assert.ok(result.reasons.includes("unhealthy_market_data"));
+});
+
 test("same-owner or badly mismatched coins fall back to open war", () => {
-  const left = profile({ tokenId: "0x3333333333333333333333333333333333333333", ownerWallet: "0xcccccccccccccccccccccccccccccccccccccccc" });
+  const left = profile({ tokenId: "0x6666666666666666666666666666666666666666", ownerWallet: "0xcccccccccccccccccccccccccccccccccccccccc" });
   const sameOwner = profile({
-    tokenId: "0x4444444444444444444444444444444444444444",
+    tokenId: "0x7777777777777777777777777777777777777777",
     ownerWallet: "0xcccccccccccccccccccccccccccccccccccccccc",
   });
   const mismatch = profile({
-    tokenId: "0x5555555555555555555555555555555555555555",
+    tokenId: "0x8888888888888888888888888888888888888888",
     ownerWallet: "0xdddddddddddddddddddddddddddddddddddddddd",
     marketCapUsd: 3_200_000,
     holderCount: 20_000,
@@ -70,9 +118,9 @@ test("same-owner or badly mismatched coins fall back to open war", () => {
 });
 
 test("recommendMatchCandidates orders competitive rivals and drops weak candidates", () => {
-  const reference = profile({ tokenId: "0x6666666666666666666666666666666666666666", ownerWallet: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" });
+  const reference = profile({ tokenId: "0x9999999999999999999999999999999999999999", ownerWallet: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" });
   const close = profile({
-    tokenId: "0x7777777777777777777777777777777777777777",
+    tokenId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     ownerWallet: "0xffffffffffffffffffffffffffffffffffffffff",
     marketCapUsd: 105_000,
     holderCount: 1_260,
@@ -80,16 +128,16 @@ test("recommendMatchCandidates orders competitive rivals and drops weak candidat
     volumeUsd: 11_500,
   });
   const competitive = profile({
-    tokenId: "0x8888888888888888888888888888888888888888",
-    ownerWallet: "0x9999999999999999999999999999999999999999",
+    tokenId: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    ownerWallet: "0x9999999999999999999999999999999999999998",
     marketCapUsd: 175_000,
     holderCount: 1_950,
     liquidityUsd: 42_000,
     volumeUsd: 18_500,
   });
   const weak = profile({
-    tokenId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    ownerWallet: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    tokenId: "0xcccccccccccccccccccccccccccccccccccccccc",
+    ownerWallet: "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbba",
     marketCapUsd: 9_500_000,
     holderCount: 75_000,
     liquidityUsd: 1_500_000,
