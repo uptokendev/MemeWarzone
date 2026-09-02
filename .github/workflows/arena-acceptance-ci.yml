@@ -9,6 +9,8 @@ on:
       - "db/migrations/*arena*.sql"
       - "frontend/api/arena*.js"
       - "frontend/api/lib/arena*.js"
+      - "frontend/api/lib/arena*.mjs"
+      - "frontend/package.json"
       - "frontend/src/components/arena/**"
       - "frontend/src/components/command-center/Arena*.tsx"
       - "frontend/src/components/command-center/ChallengeInboxDialog.tsx"
@@ -38,6 +40,8 @@ on:
       - "db/migrations/*arena*.sql"
       - "frontend/api/arena*.js"
       - "frontend/api/lib/arena*.js"
+      - "frontend/api/lib/arena*.mjs"
+      - "frontend/package.json"
       - "frontend/src/components/arena/**"
       - "frontend/src/components/command-center/Arena*.tsx"
       - "frontend/src/components/command-center/ChallengeInboxDialog.tsx"
@@ -149,7 +153,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for file in frontend/api/arena*.js frontend/api/lib/arena*.js; do
+          for file in frontend/api/arena*.js frontend/api/lib/arena*.js frontend/api/lib/arena*.mjs; do
             node --check "$file"
           done
 
@@ -161,6 +165,9 @@ jobs:
 
       - name: Test tournament roster and bracket reconciliation
         run: npm --prefix frontend run test:arena-tournament
+
+      - name: Test Arena runtime acceptance scenarios
+        run: npm --prefix frontend run test:arena-runtime-acceptance
 
       - name: Test Solana Arena client encoding
         run: npm --prefix frontend run test:solana-arena
