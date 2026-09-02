@@ -125,6 +125,12 @@ function lowerAddress(value: unknown): string {
   return ethers.isAddress(raw) ? ethers.getAddress(raw).toLowerCase() : "";
 }
 
+function storedDecimals(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const decimals = Number(value);
+  return Number.isInteger(decimals) && decimals >= 0 && decimals <= 36 ? decimals : null;
+}
+
 async function tryCall<T>(call: () => Promise<T>): Promise<T | null> {
   try {
     return await call();
@@ -234,14 +240,13 @@ async function discoverPools(provider: ethers.JsonRpcProvider, config: ChainConf
       const registeredBase = lowerAddress(row.registered_base_token_address);
       if (registeredBase && registeredBase !== tokenAddress) throw new Error("Registered market base token does not match campaign token");
 
-      const baseDecimals = Number.isInteger(Number(row.registered_base_decimals))
-        ? Number(row.registered_base_decimals)
-        : await tokenDecimals(provider, tokenAddress);
-      const quoteDecimals = Number.isInteger(Number(row.registered_quote_decimals))
-        ? Number(row.registered_quote_decimals)
-        : quoteDescriptor.stockToken?.decimals != null
+      const registeredBaseDecimals = storedDecimals(row.registered_base_decimals);
+      const registeredQuoteDecimals = storedDecimals(row.registered_quote_decimals);
+      const baseDecimals = registeredBaseDecimals ?? await tokenDecimals(provider, tokenAddress);
+      const quoteDecimals = registeredQuoteDecimals
+        ?? (quoteDescriptor.stockToken?.decimals != null
           ? Number(quoteDescriptor.stockToken.decimals)
-          : await tokenDecimals(provider, quoteTokenAddress);
+          : await tokenDecimals(provider, quoteTokenAddress));
       const descriptor = normalizePairDescriptor({
         campaignTokenAddress: tokenAddress,
         token0Address,
@@ -420,8 +425,8 @@ async function listPools(chainId: number): Promise<IndexedPool[]> {
       baseTokenAddress: lowerAddress(row.base_token_address) || tokenAddress,
       quoteTokenAddress,
       quoteAssetType,
-      baseDecimals: Number(row.base_decimals ?? 18),
-      quoteDecimals: Number(row.quote_decimals ?? 18),
+      baseDecimals: storedDecimals(row.base_decimals) ?? 18,
+      quoteDecimals: storedDecimals(row.quote_decimals) ?? 18,
       oracleFeedAddress: lowerAddress(row.oracle_feed_address) || null,
       marketRole: String(row.market_role || (quoteAssetType === "STOCK_TOKEN" ? "CANONICAL_STOCK" : "CANONICAL_NATIVE")),
       routerAddress: lowerAddress(row.router_address),
@@ -685,4 +690,4 @@ export function startRobinhoodV3PoolIndexerLoop(): void {
   void loop();
 }
 
-export const robinhoodV3Internals = { normalizeMockSwap, normalizeCanonicalSwap, MOCK_SWAP_TOPIC, CANONICAL_SWAP_TOPIC };
+export const robinhoodV3Internals = { normalizeMockSwap, normalizeCanonicalSwap, MOCK_SWAP_TOPIC, CANONICAL_SWAP_TOPIC, storedDecimals };
