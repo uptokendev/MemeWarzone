@@ -6,6 +6,7 @@ export type BattleRealtimeSide = {
   side: "left" | "right";
   tokenId: string;
   scoringVersion: string;
+  pointsReady: boolean;
   baseline: {
     marketCapUsd: number | null;
     holders: number | null;
@@ -62,6 +63,7 @@ export const ARENA_BATTLE_REALTIME_EVENTS = new Set([
 ]);
 
 function finite(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }
@@ -76,6 +78,7 @@ function normalizeSide(value: any, expected: "left" | "right"): BattleRealtimeSi
     side: expected,
     tokenId: String(value.tokenId),
     scoringVersion: String(value.scoringVersion || "battle_points_v2"),
+    pointsReady: value.pointsReady === true,
     baseline: {
       marketCapUsd: finite(value.baseline?.marketCapUsd),
       holders: finite(value.baseline?.holders),
@@ -142,6 +145,7 @@ export function decorateBattleWithRealtimeMetrics(battle: Battle, metrics: Battl
     if (!side) return participant;
     return {
       ...participant,
+      battlePointsReady: side.pointsReady,
       battlePoints: side.points.total,
       mcapPoints: side.points.marketCap,
       holderPoints: side.points.holders,
