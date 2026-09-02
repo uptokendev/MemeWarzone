@@ -13,12 +13,20 @@ const { robinhoodV3Internals } = await import("../robinhoodV3PoolIndexer.js");
 
 const token = "0x0000000000000000000000000000000000000011";
 const weth = "0x0000000000000000000000000000000000000022";
-const pool = {
+const stock = "0x0000000000000000000000000000000000000099";
+const basePool = {
   chainId: 46630,
   pairAddress: "0x0000000000000000000000000000000000000033",
   campaignAddress: "0x0000000000000000000000000000000000000044",
   tokenAddress: token,
   wrappedNativeAddress: weth,
+  baseTokenAddress: token,
+  quoteTokenAddress: weth,
+  quoteAssetType: "WRAPPED_NATIVE",
+  baseDecimals: 18,
+  quoteDecimals: 18,
+  oracleFeedAddress: null,
+  marketRole: "CANONICAL_NATIVE",
   routerAddress: "0x0000000000000000000000000000000000000055",
   factoryAddress: "0x0000000000000000000000000000000000000066",
   token0Address: token,
@@ -42,9 +50,11 @@ test("normalizes Robinhood mock-V3 native->token as buy", () => {
     "0x0000000000000000000000000000000000000088",
   ]);
   const parsed = iface.parseLog({ topics: encoded.topics, data: encoded.data })!;
-  const normalized = robinhoodV3Internals.normalizeMockSwap(pool as any, parsed);
+  const normalized = robinhoodV3Internals.normalizeMockSwap(basePool as any, parsed);
   assert.ok(normalized);
   assert.equal(normalized.side, "buy");
+  assert.equal(normalized.quoteAmountRaw, 1_000_000_000_000_000_000n);
+  assert.equal(normalized.baseAmountRaw, 2_000_000_000_000_000_000n);
   assert.equal(normalized.nativeAmountRaw, 1_000_000_000_000_000_000n);
   assert.equal(normalized.tokenAmountRaw, 2_000_000_000_000_000_000n);
 });
@@ -63,10 +73,11 @@ test("normalizes Robinhood mock-V3 token->native as sell", () => {
     "0x0000000000000000000000000000000000000088",
   ]);
   const parsed = iface.parseLog({ topics: encoded.topics, data: encoded.data })!;
-  const normalized = robinhoodV3Internals.normalizeMockSwap(pool as any, parsed);
+  const normalized = robinhoodV3Internals.normalizeMockSwap(basePool as any, parsed);
   assert.ok(normalized);
   assert.equal(normalized.side, "sell");
-  assert.equal(normalized.tokenAmountRaw, 2_000_000_000_000_000_000n);
+  assert.equal(normalized.baseAmountRaw, 2_000_000_000_000_000_000n);
+  assert.equal(normalized.quoteAmountRaw, 900_000_000_000_000_000n);
   assert.equal(normalized.nativeAmountRaw, 900_000_000_000_000_000n);
 });
 
@@ -84,9 +95,41 @@ test("normalizes canonical Uniswap V3 deltas without BNB assumptions", () => {
     0,
   ]);
   const parsed = iface.parseLog({ topics: encoded.topics, data: encoded.data })!;
-  const normalized = robinhoodV3Internals.normalizeCanonicalSwap(pool as any, parsed);
+  const normalized = robinhoodV3Internals.normalizeCanonicalSwap(basePool as any, parsed);
   assert.ok(normalized);
   assert.equal(normalized.side, "buy");
-  assert.equal(normalized.tokenAmountRaw, 2_000_000_000_000_000_000n);
+  assert.equal(normalized.baseAmountRaw, 2_000_000_000_000_000_000n);
+  assert.equal(normalized.quoteAmountRaw, 1_000_000_000_000_000_000n);
   assert.equal(normalized.nativeAmountRaw, 1_000_000_000_000_000_000n);
+});
+
+test("stock-token quote swaps never populate native compatibility amount", () => {
+  const iface = new ethers.Interface([
+    "event Swap(address indexed sender,address indexed tokenIn,address indexed tokenOut,uint256 amountIn,uint256 amountOut,uint256 feeAmount,address recipient)",
+  ]);
+  const stockPool = {
+    ...basePool,
+    quoteTokenAddress: stock,
+    quoteAssetType: "STOCK_TOKEN",
+    quoteDecimals: 8,
+    marketRole: "CANONICAL_STOCK",
+    token0Address: stock,
+    token1Address: token,
+  };
+  const encoded = iface.encodeEventLog(iface.getEvent("Swap")!, [
+    "0x0000000000000000000000000000000000000077",
+    stock,
+    token,
+    250_000_000n,
+    10_000_000_000_000_000_000n,
+    1_000_000n,
+    "0x0000000000000000000000000000000000000088",
+  ]);
+  const parsed = iface.parseLog({ topics: encoded.topics, data: encoded.data })!;
+  const normalized = robinhoodV3Internals.normalizeMockSwap(stockPool as any, parsed);
+  assert.ok(normalized);
+  assert.equal(normalized.side, "buy");
+  assert.equal(normalized.baseAmountRaw, 10_000_000_000_000_000_000n);
+  assert.equal(normalized.quoteAmountRaw, 250_000_000n);
+  assert.equal(normalized.nativeAmountRaw, null);
 });
