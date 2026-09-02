@@ -5,7 +5,7 @@ import { BattleCombatantCard } from "@/components/arena/BattleCombatantCard";
 import { Button } from "@/components/ui/button";
 import { ContentContainer } from "@/components/layout/ContentContainer";
 import { getArenaTokenRoute } from "@/features/postgrad/tokenRoutes";
-import { useArenaBattleDetails } from "@/hooks/useArenaBattleFeed";
+import { useArenaBattleRealtimeDetails } from "@/hooks/useArenaBattleRealtimeDetails";
 import { ArenaStakeButton } from "@/components/arena/ArenaStakeButton";
 import { ArenaWarPoolClaimButton } from "@/components/arena/ArenaWarPoolClaimButton";
 import { WarPoolPanel } from "@/components/postgrad/WarPoolPanel";
@@ -35,7 +35,7 @@ function formatMoment(value?: string | null) {
 
 const BattleDetails = () => {
   const { id } = useParams();
-  const { battle, source } = useArenaBattleDetails(id);
+  const { battle, source, realtimeState, metrics } = useArenaBattleRealtimeDetails(id);
 
   if (!battle) {
     return (
@@ -86,6 +86,18 @@ const BattleDetails = () => {
       uniqueTraders: participant.uniqueTraders,
       eligible: true,
     }));
+  const metricHealthLabel = !metrics
+    ? "Battle telemetry pending"
+    : metrics.dataHealth.healthy
+      ? "Battle data healthy"
+      : "DATA DELAY";
+  const realtimeLabel = realtimeState === "connected"
+    ? "Realtime linked"
+    : realtimeState === "unavailable"
+      ? "Realtime unavailable"
+      : realtimeState === "disconnected"
+        ? "Realtime reconnecting"
+        : "Realtime connecting";
 
   return (
     <ContentContainer className="space-y-5 px-1 pb-10 pt-4">
@@ -107,6 +119,8 @@ const BattleDetails = () => {
               <TacticalTag label={battleChainLabel((battle as { chainId?: number }).chainId)} tone="default" />
               <TacticalTag label={matchType} tone={tournamentMatch ? "sponsored" : "default"} />
               <TacticalTag label={source === "api" ? "Live data" : "Awaiting data"} tone={source === "api" ? "success" : "default"} />
+              <TacticalTag label={metricHealthLabel} tone={metrics?.dataHealth.healthy ? "success" : "default"} />
+              <TacticalTag label={realtimeLabel} tone={realtimeState === "connected" ? "success" : "default"} />
             </div>
           </div>
 
