@@ -27,6 +27,13 @@ function mapImport(row) {
     ownerWallet: String(row.owner_wallet),
     name: row.name || null,
     symbol: row.symbol || null,
+    imageUrl: row.image_url || null,
+    description: row.description || null,
+    website: row.website || null,
+    xUrl: row.x_url || null,
+    telegramUrl: row.telegram_url || null,
+    verifiedAt: row.verified_at || null,
+    metadataUpdatedAt: row.metadata_updated_at || null,
     status: String(row.status),
     scan: row.scan_json && typeof row.scan_json === "object" ? row.scan_json : {},
     reviewRequestedAt: row.review_requested_at || null,
@@ -57,6 +64,39 @@ async function findById(id) {
   return result.rows[0] || null;
 }
 
+async function loadTrustedProfile(chainId, token) {
+  try {
+    const tokenPredicate = isSolanaChain(chainId)
+      ? `token_address = $2`
+      : `lower(token_address) = lower($2)`;
+    const result = await pool.query(
+      `select logo_uri, description, website, external_url, x_account, telegram, updated_at
+         from public.token_metadata_registry
+        where chain_id = $1
+          and token_address is not null
+          and ${tokenPredicate}
+        order by updated_at desc
+        limit 1`,
+      [chainId, token],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    const imageUrl = String(row.logo_uri || "").trim();
+    return {
+      imageUrl: imageUrl && !/^data:/i.test(imageUrl) ? imageUrl : null,
+      description: String(row.description || "").trim() || null,
+      website: String(row.website || row.external_url || "").trim() || null,
+      xUrl: String(row.x_account || "").trim() || null,
+      telegramUrl: String(row.telegram || "").trim() || null,
+      metadataUpdatedAt: row.updated_at || null,
+    };
+  } catch (error) {
+    // Registry prefill is helpful but must never make token import unavailable.
+    console.warn("[api/arenaImports] trusted metadata prefill unavailable", error?.message || error);
+    return null;
+  }
+}
+
 async function handleList(req, res) {
   const query = getQuery(req);
   const wallet = normalizeWalletFlexible(query.wallet || query.owner || "");
@@ -83,7 +123,8 @@ async function handleLookup(req, res) {
   const token = ident(tokenHint, requestedChain || (isSolanaAddress(tokenHint) ? 101 : 56));
   if (!token) return json(res, 400, { error: "token is required" });
   const params = [token];
-  let sql = `select * from public.arena_token_imports where lower(token_address) = lower($1)`;
+  const solanaLookup = isSolanaChain(requestedChain || (isSolanaAddress(token) ? 101 : 56));
+  let sql = `select * from public.arena_token_imports where ${solanaLookup ? "token_address = $1" : "lower(token_address) = lower($1)"}`;
   if (Number.isFinite(requestedChain) && requestedChain > 0) {
     params.push(requestedChain);
     sql += ` and chain_id = $2`;
@@ -118,20 +159,40 @@ async function handleCreate(req, res) {
     return json(res, 409, { ok: false, error: "This token already launched on MemeWarzone.", reason: "already_native" });
   }
 
+  const existingPredicate = isSolanaChain(chainId) ? `token_address = $2` : `lower(token_address) = lower($2)`;
   const existing = await pool.query(
-    `select * from public.arena_token_imports where chain_id = $1 and lower(token_address) = lower($2) limit 1`,
+    `select * from public.arena_token_imports where chain_id = $1 and ${existingPredicate} limit 1`,
     [chainId, token],
   );
   if (existing.rows[0]) {
     return json(res, 200, { ok: true, item: mapImport(existing.rows[0]), existing: true });
   }
 
-  const scan = await scanToken(chainId, token);
+  const [scan, trusted] = await Promise.all([
+    scanToken(chainId, token),
+    loadTrustedProfile(chainId, token),
+  ]);
   const inserted = await pool.query(
-    `insert into public.arena_token_imports (chain_id, token_address, owner_wallet, name, symbol, status, scan_json)
-     values ($1,$2,$3,$4,$5,$6,$7::jsonb)
+    `insert into public.arena_token_imports (
+       chain_id, token_address, owner_wallet, name, symbol, status, scan_json,
+       image_url, description, website, x_url, telegram_url, metadata_updated_at
+     ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,coalesce($13::timestamptz, now()))
      returning *`,
-    [chainId, token, owner, scan.name, scan.symbol, scan.status, JSON.stringify(scan.scan || {})],
+    [
+      chainId,
+      token,
+      owner,
+      scan.name,
+      scan.symbol,
+      scan.status,
+      JSON.stringify(scan.scan || {}),
+      trusted?.imageUrl || null,
+      trusted?.description || null,
+      trusted?.website || null,
+      trusted?.xUrl || null,
+      trusted?.telegramUrl || null,
+      trusted?.metadataUpdatedAt || null,
+    ],
   );
   return json(res, 200, { ok: true, item: mapImport(inserted.rows[0]) });
 }
