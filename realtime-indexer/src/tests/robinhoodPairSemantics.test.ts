@@ -85,7 +85,7 @@ test("execution formatting preserves bigint precision beyond Number.MAX_SAFE_INT
   assert.deepEqual(formatPairExecution({ descriptor, swap }), {
     baseAmount: "123456789012.34567890123456789",
     quoteAmount: "987654321098.7654321",
-    priceQuote: "8.0000000729",
+    priceQuote: "8.000000072900000663",
   });
 });
 
