@@ -24,7 +24,7 @@ interface IRouteAuthoritySource {
 }
 
 interface IRiskRegistryView {
-    function assertWalletCanTrade(address wallet) external view returns (bool);
+    function assertWalletCanTrade(address wallet) external view;
 }
 
 interface ILaunchFactoryGraduationNotify {
