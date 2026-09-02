@@ -22,6 +22,35 @@ function abs(value: bigint): bigint {
   return value < 0n ? -value : value;
 }
 
+function power10(decimals: number): bigint {
+  return 10n ** BigInt(decimals);
+}
+
+function formatUnitsExact(value: bigint, decimals: number): string {
+  const scale = power10(decimals);
+  const whole = value / scale;
+  const remainder = value % scale;
+  if (remainder === 0n) return whole.toString();
+  const fraction = remainder.toString().padStart(decimals, "0").replace(/0+$/, "");
+  return `${whole.toString()}.${fraction}`;
+}
+
+function formatPriceQuote(input: {
+  baseAmountRaw: bigint;
+  quoteAmountRaw: bigint;
+  baseDecimals: number;
+  quoteDecimals: number;
+  precision?: number;
+}): string {
+  const precision = input.precision ?? 18;
+  const numerator = input.quoteAmountRaw * power10(input.baseDecimals) * power10(precision);
+  const denominator = input.baseAmountRaw * power10(input.quoteDecimals);
+  if (denominator <= 0n) throw new Error("Pair swap base amount must be positive");
+  const scaled = numerator / denominator;
+  if (scaled <= 0n) throw new Error("Pair swap price must be positive");
+  return formatUnitsExact(scaled, precision);
+}
+
 export function normalizePairDescriptor(input: {
   campaignTokenAddress: string;
   token0Address: string;
@@ -106,14 +135,17 @@ export function formatPairExecution(input: {
   quoteAmount: string;
   priceQuote: string;
 } {
-  const baseScale = 10 ** input.descriptor.baseDecimals;
-  const quoteScale = 10 ** input.descriptor.quoteDecimals;
-  const baseAmount = Number(input.swap.baseAmountRaw) / baseScale;
-  const quoteAmount = Number(input.swap.quoteAmountRaw) / quoteScale;
-  if (!(baseAmount > 0) || !(quoteAmount > 0)) throw new Error("Pair swap amounts must be positive");
+  if (input.swap.baseAmountRaw <= 0n || input.swap.quoteAmountRaw <= 0n) {
+    throw new Error("Pair swap amounts must be positive");
+  }
   return {
-    baseAmount: baseAmount.toString(),
-    quoteAmount: quoteAmount.toString(),
-    priceQuote: (quoteAmount / baseAmount).toString(),
+    baseAmount: formatUnitsExact(input.swap.baseAmountRaw, input.descriptor.baseDecimals),
+    quoteAmount: formatUnitsExact(input.swap.quoteAmountRaw, input.descriptor.quoteDecimals),
+    priceQuote: formatPriceQuote({
+      baseAmountRaw: input.swap.baseAmountRaw,
+      quoteAmountRaw: input.swap.quoteAmountRaw,
+      baseDecimals: input.descriptor.baseDecimals,
+      quoteDecimals: input.descriptor.quoteDecimals,
+    }),
   };
 }
