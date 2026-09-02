@@ -2,6 +2,7 @@ import type { Express, NextFunction, Request, Response } from "express";
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
 import { isEvmAddress, resolveMarketIdentityOrPassthrough } from "./marketIdentity.js";
+import { readCanonicalRobinhoodMarketRoute, type RobinhoodTradeSide } from "./robinhoodMarketRoutes.js";
 import {
   describeRobinhoodQuoteAsset,
   getRobinhoodQuoteAssetPrice,
@@ -56,6 +57,11 @@ function deriveQuoteTokenAddress(input: {
   }
 
   return normalizeAddress(input.wrappedNativeAddress) || null;
+}
+
+function parseTradeSide(value: unknown): RobinhoodTradeSide | null {
+  const side = String(value ?? "").trim().toLowerCase();
+  return side === "buy" || side === "sell" ? side : null;
 }
 
 async function campaignFromParam(chainId: number, raw: string): Promise<string | null> {
@@ -329,23 +335,51 @@ export function registerRobinhoodMarketContinuityRoutes(app: Express): void {
       const state = await readRobinhoodMarketState(chainId, campaign);
       if (!state) return res.status(404).json({ error: "Market state not found" });
       const includeQuotePrice = truthyQuery(req.query.includeQuotePrice, false);
+      const side = parseTradeSide(req.query.side);
+      const canonicalRoute = await readCanonicalRobinhoodMarketRoute({
+        chainId,
+        campaignAddress: campaign,
+        wrappedNativeAddress: state.wrappedNativeAddress,
+        side,
+      });
+      const metadata = await buildRobinhoodMarketMetadata(
+        canonicalRoute
+          ? {
+              chainId: state.chainId,
+              campaignAddress: state.campaignAddress,
+              tokenAddress: canonicalRoute.baseToken,
+              quoteTokenAddress: canonicalRoute.quoteToken,
+              wrappedNativeAddress: state.wrappedNativeAddress,
+            }
+          : state,
+        includeQuotePrice,
+      );
       return res.json({
         chainId: state.chainId,
         marketStage: state.marketStage,
         campaignAddress: state.campaignAddress,
-        token: state.tokenAddress,
-        pair: state.pairAddress,
-        router: state.routerAddress,
-        factory: state.dexFactoryAddress,
+        token: canonicalRoute?.baseToken ?? state.tokenAddress,
+        pair: canonicalRoute?.poolAddress ?? state.pairAddress,
+        router: canonicalRoute?.routerAddress ?? state.routerAddress,
+        factory: canonicalRoute?.factoryAddress ?? state.dexFactoryAddress,
         wrappedNative: state.wrappedNativeAddress,
         stable: state.stable,
         feeBps: state.feeBps,
-        verified: state.poolVerified,
-        quotesEnabled: state.quotesEnabled,
-        tradingEnabled: state.tradingEnabled,
+        verified: canonicalRoute?.verified ?? state.poolVerified,
+        quotesEnabled: state.quotesEnabled && (canonicalRoute?.tradingEnabled ?? true),
+        tradingEnabled: state.tradingEnabled && (canonicalRoute?.tradingEnabled ?? true),
         verifiedAt: state.lastVerifiedAt,
         lastError: state.lastError,
-        ...(await buildRobinhoodMarketMetadata(state, includeQuotePrice)),
+        ...metadata,
+        baseDecimals: canonicalRoute?.baseDecimals ?? null,
+        quoteDecimals: canonicalRoute?.quoteDecimals ?? null,
+        marketRole: canonicalRoute?.marketRole ?? null,
+        marketPolicyVersion: canonicalRoute?.marketPolicyVersion ?? null,
+        canonical: canonicalRoute?.canonical ?? Boolean(state.poolVerified),
+        inputAsset: canonicalRoute?.inputAsset ?? null,
+        outputAsset: canonicalRoute?.outputAsset ?? null,
+        legs: canonicalRoute?.legs ?? [],
+        canonicalRoute,
       });
     } catch (error: any) {
       console.error("[robinhood-market] trade-route", error?.message || String(error));
@@ -430,4 +464,5 @@ export const robinhoodMarketApiInternals = {
   deriveQuoteTokenAddress,
   buildRobinhoodMarketMetadata,
   provisionalRobinhoodMarketState,
+  parseTradeSide,
 };
