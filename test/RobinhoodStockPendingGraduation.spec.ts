@@ -18,7 +18,13 @@ async function deployTestOracle(price = "1") {
   return oracle;
 }
 
-async function deployDirectCampaign(factoryAddress: string, routerAddress: string, oracleAddress: string, creator: string) {
+async function deployDirectCampaign(
+  factoryAddress: string,
+  routerAddress: string,
+  oracleAddress: string,
+  creator: string,
+  graduationTarget = 1n,
+) {
   const Campaign = await ethers.getContractFactory("LaunchCampaign");
   const impl = await Campaign.deploy();
   await impl.waitForDeployment();
@@ -38,7 +44,7 @@ async function deployDirectCampaign(factoryAddress: string, routerAddress: strin
     liquidityTokenBps: 4000,
     basePrice: 10n ** 12n,
     priceSlope: 10n ** 9n,
-    graduationTarget: 1n,
+    graduationTarget,
     graduationOracle: oracleAddress,
     liquidityBps: 8000,
     protocolFeeBps: 0,
@@ -136,7 +142,13 @@ describe("Robinhood Stock pending graduation lifecycle", function () {
     const nativeAdapter = await NativeAdapter.deploy(await v3Factory.getAddress(), await positionManager.getAddress(), await weth.getAddress(), 3000);
     await nativeAdapter.waitForDeployment();
     const oracle = await deployTestOracle();
-    const campaign = await deployDirectCampaign(await factorySigner.getAddress(), await nativeAdapter.getAddress(), await oracle.getAddress(), await creator.getAddress());
+    const campaign = await deployDirectCampaign(
+      await factorySigner.getAddress(),
+      await nativeAdapter.getAddress(),
+      await oracle.getAddress(),
+      await creator.getAddress(),
+      ethers.parseEther("1000000"),
+    );
 
     const buyAmount = ethers.parseEther("1");
     const buyCost = await campaign.quoteBuyExactTokens(buyAmount);
