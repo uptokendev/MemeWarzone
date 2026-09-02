@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { useWallet } from "@/contexts/WalletContext";
+import { postGradFlags } from "@/features/postgrad/config";
 import { isSolanaChainId } from "@/lib/chainConfig";
 import { type ArenaImportItem, uploadArenaImportImage } from "@/lib/arenaImports";
 import { signSolanaMessage } from "@/lib/solanaWallet";
@@ -12,9 +13,6 @@ import { signWalletAction } from "@/lib/walletActionAuth";
 
 const MAX_BYTES = 5 * 1024 * 1024;
 const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp"]);
-const ENABLED = ["1", "true", "yes", "on"].includes(
-  String(import.meta.env.VITE_ARENA_IMPORT_IMAGE_UPLOAD || "").trim().toLowerCase(),
-);
 
 function sameWallet(left: string | null | undefined, right: string | null | undefined, solana: boolean) {
   const a = String(left || "").trim();
@@ -39,7 +37,7 @@ export function ArenaImportImageUpload({
   const connectedOwner = solana ? solanaWallet.solanaAccount : wallet.account;
   const isOwner = sameWallet(connectedOwner, item.ownerWallet, solana);
 
-  if (!ENABLED || !isOwner) return null;
+  if (!postGradFlags.importImageUpload || !isOwner) return null;
 
   const handleFile = async (file: File) => {
     if (file.size > MAX_BYTES) {
