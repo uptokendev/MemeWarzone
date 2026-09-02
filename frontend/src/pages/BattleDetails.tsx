@@ -1,22 +1,18 @@
-import { Clock3, Coins, Crown, Shield, Swords } from "lucide-react";
 import { Link, useParams } from "react-router-dom";
-import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { BattleCombatantCard } from "@/components/arena/BattleCombatantCard";
-import { Button } from "@/components/ui/button";
-import { ContentContainer } from "@/components/layout/ContentContainer";
-import { getArenaTokenRoute } from "@/features/postgrad/tokenRoutes";
-import { useArenaBattleRealtimeDetails } from "@/hooks/useArenaBattleRealtimeDetails";
+import { BattleScoreHud } from "@/components/arena/BattleScoreHud";
 import { ArenaStakeButton } from "@/components/arena/ArenaStakeButton";
 import { ArenaWarPoolClaimButton } from "@/components/arena/ArenaWarPoolClaimButton";
+import { ContentContainer } from "@/components/layout/ContentContainer";
+import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { WarPoolPanel } from "@/components/postgrad/WarPoolPanel";
+import { Button } from "@/components/ui/button";
+import { getArenaTokenRoute } from "@/features/postgrad/tokenRoutes";
+import { useArenaBattleRealtimeDetails } from "@/hooks/useArenaBattleRealtimeDetails";
 import {
   battleChainLabel,
-  battleClockLabel,
   battleDurationLabel,
   battleLeaderIndex,
-  battlePointGap,
-  battleScoreLabel,
-  battleScoreShare,
   formatCompactUsd,
 } from "@/lib/arena/battlePresentation";
 import { publicBattleLabel, publicBattleLane } from "@/lib/arena/publicBattleState";
@@ -62,20 +58,29 @@ const BattleDetails = () => {
   const right = battle.participants[1];
   const leftRoute = getArenaTokenRoute(left?.tokenAddress ?? left?.tokenId ?? left?.campaignAddress ?? null);
   const rightRoute = getArenaTokenRoute(right?.tokenAddress ?? right?.tokenId ?? right?.campaignAddress ?? null);
-  const leaderIndex = battleLeaderIndex(battle);
-  const scoreLabel = battleScoreLabel(battle);
-  const scoreGap = battlePointGap(battle);
-  const leftShare = battleScoreShare(left, battle);
-  const rightShare = Math.max(0, 100 - leftShare);
-  const matchType = tournamentMatch ? "Tournament duel" : String((battle as { source?: string }).source || "queue") === "challenge" ? "Challenge duel" : "Queue duel";
-  const winnerToken = String((battle as { winnerToken?: string; moneyWinnerToken?: string }).winnerToken || (battle as { moneyWinnerToken?: string }).moneyWinnerToken || "");
+  const legacyLeaderIndex = battleLeaderIndex(battle);
+  const battlePointsLeaderIndex = metrics?.leaderSide === "left" ? 0 : metrics?.leaderSide === "right" ? 1 : null;
+  const cardLeaderIndex = battle.state === "live" && metrics ? battlePointsLeaderIndex : legacyLeaderIndex;
+  const matchType = tournamentMatch
+    ? "Tournament duel"
+    : String((battle as { source?: string }).source || "queue") === "challenge"
+      ? "Challenge duel"
+      : "Queue duel";
+  const winnerToken = String(
+    (battle as { winnerToken?: string; moneyWinnerToken?: string }).winnerToken ||
+      (battle as { moneyWinnerToken?: string }).moneyWinnerToken ||
+      "",
+  );
   const winnerLabel = winnerToken
-    ? battle.participants.find((participant) => [participant.tokenId, participant.tokenAddress, participant.campaignAddress].map((value) => String(value || "").toLowerCase()).includes(winnerToken.toLowerCase()))?.symbol || "Winner declared"
-    : leaderIndex === 0
+    ? battle.participants.find((participant) =>
+        [participant.tokenId, participant.tokenAddress, participant.campaignAddress]
+          .map((value) => String(value || "").toLowerCase())
+          .includes(winnerToken.toLowerCase()))?.symbol || "Winner declared"
+    : battle.state === "finished" && legacyLeaderIndex === 0
       ? left?.symbol || left?.tokenName || "Left"
-      : leaderIndex === 1
+      : battle.state === "finished" && legacyLeaderIndex === 1
         ? right?.symbol || right?.tokenName || "Right"
-        : "No winner yet";
+        : "Pending settlement";
   const sides = battle.participants
     .filter((participant) => participant.tokenId && !String(participant.tokenId).startsWith("pending-"))
     .map((participant) => ({
@@ -98,6 +103,8 @@ const BattleDetails = () => {
       : realtimeState === "disconnected"
         ? "Realtime reconnecting"
         : "Realtime connecting";
+  const leftLabel = left?.symbol || left?.tokenName || "Left";
+  const rightLabel = right?.symbol || right?.tokenName || "Right";
 
   return (
     <ContentContainer className="space-y-5 px-1 pb-10 pt-4">
@@ -108,86 +115,50 @@ const BattleDetails = () => {
             <div>
               <div className="text-[10px] uppercase tracking-[0.26em] text-accent/80">Battle theater</div>
               <h1 className="mt-2 font-retro text-3xl text-foreground md:text-4xl">
-                {left?.symbol || left?.tokenName || "Coin"} vs {right?.symbol || right?.tokenName || "Awaiting rival"}
+                {leftLabel} vs {rightLabel}
               </h1>
               <p className="mt-2 max-w-3xl text-sm text-white/62">
-                The detail screen now tracks momentum, control, and battle readiness from the same Arena feed that powers Command Center and WarPool.
+                Live Battle Points combine MCAP performance, holder growth, and manipulation-protected battle-period volume from the authoritative Arena market snapshot.
               </p>
             </div>
             <div className="flex flex-wrap justify-end gap-2">
               <TacticalTag label={publicBattleLabel(lane, battle.state)} tone={lane === "live" ? "hot" : battle.state === "matched" ? "hot" : "default"} />
               <TacticalTag label={battleChainLabel((battle as { chainId?: number }).chainId)} tone="default" />
               <TacticalTag label={matchType} tone={tournamentMatch ? "sponsored" : "default"} />
-              <TacticalTag label={source === "api" ? "Live data" : "Awaiting data"} tone={source === "api" ? "success" : "default"} />
+              <TacticalTag label={source === "api" ? "REST synced" : "Awaiting REST"} tone={source === "api" ? "success" : "default"} />
               <TacticalTag label={metricHealthLabel} tone={metrics?.dataHealth.healthy ? "success" : "default"} />
               <TacticalTag label={realtimeLabel} tone={realtimeState === "connected" ? "success" : "default"} />
             </div>
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-[1.15fr_340px_1.15fr]">
-            <BattleCombatantCard battle={battle} participant={left} sideLabel="Left flank" href={leftRoute} isLeader={leaderIndex === 0} accent="ember" />
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px_minmax(0,1fr)]">
+            <BattleCombatantCard
+              battle={battle}
+              participant={left}
+              metricsSide={metrics?.sides.left}
+              sideLabel="Left flank"
+              href={leftRoute}
+              isLeader={cardLeaderIndex === 0}
+              accent="ember"
+            />
 
-            <section className="mwz-hud-frame flex flex-col justify-between gap-4 p-4 md:p-5">
-              <div>
-                <div className="text-[10px] uppercase tracking-[0.24em] text-white/45">Central HUD</div>
-                <div className="mt-2 flex items-center justify-center gap-3 font-retro text-3xl text-foreground md:text-4xl">
-                  <span>{left?.score.toFixed(1)}</span>
-                  <Swords className="h-5 w-5 text-white/35" />
-                  <span>{right?.score.toFixed(1)}</span>
-                </div>
-                <div className="mt-2 text-center text-xs uppercase tracking-[0.22em] text-white/55">{scoreLabel}</div>
-              </div>
+            <BattleScoreHud
+              battle={battle}
+              metrics={metrics}
+              leftLabel={leftLabel}
+              rightLabel={rightLabel}
+              realtimeState={realtimeState}
+            />
 
-              <div className="space-y-3">
-                <div className="flex items-center justify-between text-xs text-white/60">
-                  <span>{left?.symbol || "Left"}</span>
-                  <span>{right?.symbol || "Right"}</span>
-                </div>
-                <div className="h-2 overflow-hidden rounded-full bg-white/10">
-                  <div className="flex h-full w-full">
-                    <div className="bg-orange-400/80" style={{ width: `${leftShare}%` }} />
-                    <div className="bg-cyan-400/80" style={{ width: `${rightShare}%` }} />
-                  </div>
-                </div>
-                <div className="flex items-center justify-between text-xs text-white/55">
-                  <span>{leaderIndex === null ? "Dead even" : `${leaderIndex === 0 ? left?.symbol : right?.symbol} controlling`}</span>
-                  <span>{scoreGap > 0 ? `Gap ${scoreGap.toFixed(1)}` : "Gap 0.0"}</span>
-                </div>
-              </div>
-
-              <div className="grid gap-3 text-sm text-white/76">
-                <div className="flex items-center gap-2 border-b border-white/10 pb-3">
-                  <Clock3 className="h-4 w-4 text-white/50" />
-                  <div>
-                    <div className="text-[10px] uppercase tracking-[0.22em] text-white/40">Clock</div>
-                    <div>{battleClockLabel(battle)}</div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 border-b border-white/10 pb-3">
-                  <Coins className="h-4 w-4 text-white/50" />
-                  <div>
-                    <div className="text-[10px] uppercase tracking-[0.22em] text-white/40">Stake</div>
-                    <div>{Number((battle as { stakeNative?: number }).stakeNative || 0).toFixed(2)} {(battle as { nativeSymbol?: string }).nativeSymbol || "BNB"}</div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 border-b border-white/10 pb-3">
-                  <Shield className="h-4 w-4 text-white/50" />
-                  <div>
-                    <div className="text-[10px] uppercase tracking-[0.22em] text-white/40">Duration</div>
-                    <div>{battleDurationLabel((battle as { durationHours?: number }).durationHours)}</div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Crown className="h-4 w-4 text-white/50" />
-                  <div>
-                    <div className="text-[10px] uppercase tracking-[0.22em] text-white/40">Advantage</div>
-                    <div>{winnerLabel}</div>
-                  </div>
-                </div>
-              </div>
-            </section>
-
-            <BattleCombatantCard battle={battle} participant={right} sideLabel="Right flank" href={rightRoute} isLeader={leaderIndex === 1} accent="cyan" />
+            <BattleCombatantCard
+              battle={battle}
+              participant={right}
+              metricsSide={metrics?.sides.right}
+              sideLabel="Right flank"
+              href={rightRoute}
+              isLeader={cardLeaderIndex === 1}
+              accent="cyan"
+            />
           </div>
         </div>
       </section>
@@ -218,6 +189,16 @@ const BattleDetails = () => {
           <p>
             Support is a donation into the battle treasury for the memecoins in the fight, not betting and not charity. Supporters are not paid. Winner-takes-all: 85% winning campaign owner, 5% protocol, 10% Major War League.
           </p>
+          <div className="grid gap-2 border-t border-white/10 pt-3 text-xs text-white/58 sm:grid-cols-2">
+            <div>
+              <span className="text-white/38">Stake:</span>{" "}
+              {Number((battle as { stakeNative?: number }).stakeNative || 0).toFixed(2)} {(battle as { nativeSymbol?: string }).nativeSymbol || "BNB"}
+            </div>
+            <div>
+              <span className="text-white/38">Fight length:</span>{" "}
+              {battleDurationLabel((battle as { durationHours?: number }).durationHours)}
+            </div>
+          </div>
           <div className="flex flex-wrap gap-2 pt-2">
             {battle.state === "matched" ? (
               <ArenaStakeButton
@@ -236,12 +217,16 @@ const BattleDetails = () => {
           <div className="text-[10px] uppercase tracking-[0.24em] text-white/45">Result log</div>
           <div className="space-y-3 text-sm text-white/78">
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
-              <span className="text-white/48">Winner</span>
+              <span className="text-white/48">Settlement winner</span>
               <span className="font-medium text-white">{winnerLabel}</span>
             </div>
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
-              <span className="text-white/48">Match source</span>
-              <span className="font-medium text-white">{matchType}</span>
+              <span className="text-white/48">Settlement engine</span>
+              <span className="font-medium text-white">V1 MCAP % change</span>
+            </div>
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <span className="text-white/48">Live telemetry</span>
+              <span className="font-medium text-white">Battle Points V2</span>
             </div>
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
               <span className="text-white/48">Started</span>
@@ -252,7 +237,7 @@ const BattleDetails = () => {
               <span className="font-medium text-white">{formatMoment(battle.endsAt)}</span>
             </div>
             <div className="flex items-center justify-between pb-1">
-              <span className="text-white/48">Current MCAP</span>
+              <span className="text-white/48">Combined current MCAP</span>
               <span className="font-medium text-white">{formatCompactUsd((left?.marketCapUsd || 0) + (right?.marketCapUsd || 0))}</span>
             </div>
           </div>
