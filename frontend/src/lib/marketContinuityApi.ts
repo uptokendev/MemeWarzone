@@ -16,6 +16,8 @@ export type MarketStage =
 
 export type MarketTradeSource = "bonding" | "topaz" | "robinhood_v3";
 export type MarketTradeFilter = "all" | MarketTradeSource | "dex";
+export type RobinhoodQuoteAssetType = "WRAPPED_NATIVE" | "STOCK_TOKEN" | "UNKNOWN";
+export type RobinhoodRouteKind = "DIRECT_NATIVE" | "STOCK_TWO_HOP" | "UNKNOWN";
 
 export type GraduationMarker = {
   txHash: string | null;
@@ -31,6 +33,37 @@ export type GraduationMarker = {
   postBurnTotalSupplyRaw: string | null;
 };
 
+export type RobinhoodQuoteAssetPrice = {
+  priceUsd: string | null;
+  updatedAt: string | null;
+  roundId: string | null;
+  source: string | null;
+  healthy: boolean;
+  error: string | null;
+};
+
+export type RobinhoodStockToken = {
+  chainId: number;
+  contractAddress: string;
+  symbol: string;
+  displayName: string;
+  underlyingSymbol: string;
+  decimals: number | null;
+  uiMultiplierSupported: boolean;
+  oracleFeedAddress: string | null;
+  oracleType: string;
+  canonical: boolean;
+  enabledForDiscovery: boolean;
+  enabledForGraduation: boolean;
+  enabledForTrading: boolean;
+  minimumQuoteLiquidityUsd: number | null;
+  maximumGraduationSwapImpactBps: number | null;
+  marketStatus: string;
+  lastVerifiedAt: string | null;
+  metadataSource: string;
+  price?: RobinhoodQuoteAssetPrice | null;
+};
+
 export type MarketState = {
   chainId: number;
   campaignAddress: string;
@@ -43,12 +76,19 @@ export type MarketState = {
   routerAddress: string | null;
   dexFactoryAddress: string | null;
   wrappedNativeAddress: string | null;
+  quoteTokenAddress?: string | null;
   stable: boolean | null;
   feeBps: number | null;
   poolVerified: boolean;
   supportEnabled: boolean;
   bondingActive: boolean;
+  quotesEnabled?: boolean;
   tradingEnabled: boolean;
+  quoteToken?: string | null;
+  quoteAssetType?: RobinhoodQuoteAssetType;
+  routeKind?: RobinhoodRouteKind;
+  referenceOracle?: string | null;
+  stockToken?: RobinhoodStockToken | null;
   indexingStatus: {
     enabled: boolean;
     poolEnabled: boolean;
@@ -75,9 +115,15 @@ export type MarketRoute = {
   router: string | null;
   factory: string | null;
   wrappedNative: string | null;
+  quoteToken?: string | null;
+  quoteAssetType?: RobinhoodQuoteAssetType;
+  routeKind?: RobinhoodRouteKind;
+  referenceOracle?: string | null;
+  stockToken?: RobinhoodStockToken | null;
   stable: boolean | null;
   feeBps: number | null;
   verified: boolean;
+  quotesEnabled?: boolean;
   tradingEnabled: boolean;
   verifiedAt: string | null;
   lastError: string | null;
@@ -171,8 +217,11 @@ export type MarketSummary = {
   last_trade_block?: number | null;
   last_trade_at?: string | null;
   poolVerified: boolean;
+  quotesEnabled?: boolean;
   tradingEnabled: boolean;
   dataLagSeconds: number | null;
+  degraded?: boolean;
+  lastError?: string | null;
 };
 
 async function readJson<T>(path: string, signal?: AbortSignal): Promise<T> {

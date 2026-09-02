@@ -1,5 +1,10 @@
 import { Contract, ethers } from "ethers";
-import { fetchMarketRoute, type MarketRoute } from "@/lib/marketContinuityApi";
+import {
+  fetchMarketRoute,
+  type MarketRoute,
+  type RobinhoodQuoteAssetType,
+  type RobinhoodRouteKind,
+} from "@/lib/marketContinuityApi";
 import { ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
 
 const V3_ROUTER_ABI = [
@@ -21,13 +26,6 @@ const ERC20_ABI = [
 ] as const;
 
 const MAX_UINT256 = (1n << 256n) - 1n;
-
-type ExtendedMarketRoute = MarketRoute & {
-  quoteToken?: string | null;
-  quoteAssetType?: "WRAPPED_NATIVE" | "STOCK_TOKEN" | "UNKNOWN" | null;
-  routeKind?: "DIRECT_NATIVE" | "STOCK_TWO_HOP" | "UNKNOWN" | null;
-  referenceOracle?: string | null;
-};
 
 export type RobinhoodV3ResolvedRoute = {
   market: MarketRoute;
@@ -51,6 +49,13 @@ export type RobinhoodV3Quote = {
   minimumOutRaw: bigint;
   slippageBps: number;
   route: RobinhoodV3ResolvedRoute;
+};
+
+type RobinhoodRouteDescriptor = {
+  quoteTokenAddress: string;
+  quoteAssetType: RobinhoodQuoteAssetType;
+  routeKind: RobinhoodRouteKind;
+  referenceOracleAddress: string | null;
 };
 
 function isRobinhoodChainId(chainId: number): boolean {
@@ -80,6 +85,31 @@ function sameAddress(a: unknown, b: unknown): boolean {
 function envAddress(name: string, chainId: number): string {
   const viteEnv = import.meta.env as Record<string, unknown>;
   return String(viteEnv[`${name}_${chainId}`] || "").trim();
+}
+
+function normalizeQuoteAssetType(value: unknown): RobinhoodQuoteAssetType {
+  const normalized = String(value || "WRAPPED_NATIVE").trim().toUpperCase();
+  if (normalized === "WRAPPED_NATIVE" || normalized === "STOCK_TOKEN" || normalized === "UNKNOWN") {
+    return normalized;
+  }
+  return "UNKNOWN";
+}
+
+function normalizeRouteKind(value: unknown): RobinhoodRouteKind {
+  const normalized = String(value || "DIRECT_NATIVE").trim().toUpperCase();
+  if (normalized === "DIRECT_NATIVE" || normalized === "STOCK_TWO_HOP" || normalized === "UNKNOWN") {
+    return normalized;
+  }
+  return "UNKNOWN";
+}
+
+export function describeRobinhoodV3Route(market: MarketRoute): RobinhoodRouteDescriptor {
+  return {
+    quoteTokenAddress: normalizeAddress(market.quoteToken || market.wrappedNative, "Robinhood quote token"),
+    quoteAssetType: normalizeQuoteAssetType(market.quoteAssetType),
+    routeKind: normalizeRouteKind(market.routeKind),
+    referenceOracleAddress: normalizeOptionalAddress(market.referenceOracle),
+  };
 }
 
 function validateSlippageBps(value: number): number {
@@ -133,14 +163,8 @@ export async function resolveRobinhoodV3Route(input: {
     throw new Error("Robinhood V3 market token mismatch.");
   }
 
-  const extendedMarket = market as ExtendedMarketRoute;
-  const routeKind = String(extendedMarket.routeKind || "DIRECT_NATIVE").trim().toUpperCase();
-  const quoteAssetType = String(extendedMarket.quoteAssetType || "WRAPPED_NATIVE").trim().toUpperCase();
-  const quoteTokenAddress = normalizeAddress(
-    extendedMarket.quoteToken || market.wrappedNative,
-    "Robinhood quote token",
-  );
-  if (routeKind !== "DIRECT_NATIVE" || quoteAssetType !== "WRAPPED_NATIVE") {
+  const routeDescriptor = describeRobinhoodV3Route(market);
+  if (routeDescriptor.routeKind !== "DIRECT_NATIVE" || routeDescriptor.quoteAssetType !== "WRAPPED_NATIVE") {
     throw new Error("This trade panel does not support Robinhood Stock Battlefield routes yet.");
   }
 
@@ -157,7 +181,7 @@ export async function resolveRobinhoodV3Route(input: {
     market.wrappedNative || envAddress("VITE_WRAPPED_NATIVE_ADDRESS", input.chainId),
     "Robinhood wrapped native",
   );
-  if (!sameAddress(quoteTokenAddress, wrappedNativeAddress)) {
+  if (!sameAddress(routeDescriptor.quoteTokenAddress, wrappedNativeAddress)) {
     throw new Error("Robinhood direct-native route quote asset mismatch.");
   }
   const nativeSwapAdapterAddress = normalizeAddress(
@@ -195,10 +219,10 @@ export async function resolveRobinhoodV3Route(input: {
     routerAddress,
     factoryAddress,
     wrappedNativeAddress,
-    quoteTokenAddress,
+    quoteTokenAddress: routeDescriptor.quoteTokenAddress,
     quoteAssetType: "WRAPPED_NATIVE",
     routeKind: "DIRECT_NATIVE",
-    referenceOracleAddress: normalizeOptionalAddress(extendedMarket.referenceOracle),
+    referenceOracleAddress: routeDescriptor.referenceOracleAddress,
     nativeSwapAdapterAddress,
     fee: normalizeV3Fee(market),
   };
@@ -288,3 +312,9 @@ export async function executeRobinhoodV3Sell(input: {
     recipient,
   );
 }
+
+export const robinhoodV3TradeInternals = {
+  describeRobinhoodV3Route,
+  normalizeQuoteAssetType,
+  normalizeRouteKind,
+};
