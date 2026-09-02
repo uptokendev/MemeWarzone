@@ -1,6 +1,5 @@
 import Ably from "ably";
 
-import { pool } from "../../server/db.js";
 import { loadBattleMetrics, loadBattleWindowTrades, loadVolumeContext, refreshCombatantVolumeAndPoints } from "./arenaBattleMetrics.js";
 import { getArenaMarketSnapshot } from "./arenaMarketSnapshot.js";
 
@@ -11,6 +10,7 @@ const MAX_LIVE_BATTLES_PER_TICK = 50;
 let workerTimer = null;
 let workerRunning = false;
 let ablyRest = null;
+let dbPoolPromise = null;
 
 function truthy(value) {
   return /^(1|true|yes|on)$/i.test(String(value ?? "").trim());
@@ -36,6 +36,13 @@ function resolveAblyApiKey() {
   if (raw && keySecret) return `${raw}:${keySecret}`;
   if (keyName && keySecret) return `${keyName}:${keySecret}`;
   return "";
+}
+
+async function getDbPool() {
+  if (!dbPoolPromise) {
+    dbPoolPromise = import("../../server/db.js").then((module) => module.pool);
+  }
+  return dbPoolPromise;
 }
 
 function getAblyRest() {
@@ -182,7 +189,11 @@ export function decorateBattleWithMetrics(battle, metrics) {
 
 export async function readPublicBattleMetricsSnapshot(battleRow, deps = {}) {
   if (!battleRow?.id) return null;
-  const query = deps.query || ((text, params) => pool.query(text, params));
+  let query = deps.query;
+  if (!query) {
+    const db = await getDbPool();
+    query = (text, params) => db.query(text, params);
+  }
   const metrics = await loadBattleMetrics(String(battleRow.id), { query });
   if (!metrics.length) return null;
   return buildPublicBattleMetricsSnapshot(battleRow, metrics);
@@ -328,7 +339,8 @@ async function refreshBattleWithClient(client, battleId, now = new Date()) {
 export async function refreshLiveBattleMetrics(battleId, options = {}) {
   const id = safeBattleId(battleId);
   if (!id) return { refreshed: false, reason: "invalid_battle_id" };
-  const client = await pool.connect();
+  const db = await getDbPool();
+  const client = await db.connect();
   try {
     const result = await refreshBattleWithClient(client, id, options.now || new Date());
     if (result.refreshed && options.publish !== false) {
@@ -342,8 +354,18 @@ export async function refreshLiveBattleMetrics(battleId, options = {}) {
 
 export async function refreshAllLiveBattleMetrics(options = {}) {
   const limit = Math.max(1, Math.min(MAX_LIVE_BATTLES_PER_TICK, Number(options.limit) || MAX_LIVE_BATTLES_PER_TICK));
-  const rows = await pool.query(
-    `select id from public.arena_battles where state = 'live' order by coalesce(updated_at, created_at) asc limit $1`,
+  const db = await getDbPool();
+  const rows = await db.query(
+    `select b.id
+       from public.arena_battles b
+       left join lateral (
+         select min(m.metrics_updated_at) as oldest_metrics_updated_at
+           from public.arena_battle_metrics m
+          where m.battle_id = b.id
+       ) refreshed on true
+      where b.state = 'live'
+      order by coalesce(refreshed.oldest_metrics_updated_at, b.started_at, b.created_at) asc
+      limit $1`,
     [limit],
   );
   const results = [];
