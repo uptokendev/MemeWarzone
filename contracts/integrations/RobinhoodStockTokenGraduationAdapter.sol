@@ -469,10 +469,10 @@ contract RobinhoodStockTokenGraduationAdapter is ReentrancyGuard {
         return Math.mulDiv(expectedAtProbeRate - amountOut, BPS, expectedAtProbeRate);
     }
 
-    function _deviationBps(uint256 observed, uint256 reference) private pure returns (uint256) {
-        if (reference == 0) revert OracleUnhealthy();
-        uint256 delta = observed > reference ? observed - reference : reference - observed;
-        return Math.mulDiv(delta, BPS, reference);
+    function _deviationBps(uint256 observed, uint256 referenceValue) private pure returns (uint256) {
+        if (referenceValue == 0) revert OracleUnhealthy();
+        uint256 delta = observed > referenceValue ? observed - referenceValue : referenceValue - observed;
+        return Math.mulDiv(delta, BPS, referenceValue);
     }
 
     function _sqrtPriceX96(uint256 amount0, uint256 amount1) private pure returns (uint160) {
