@@ -196,10 +196,13 @@ test("runtime acceptance: paid tournament rosters seed the closest markets toget
   });
   assert.equal(seeded.pairings.length, 2);
   assert.equal(seeded.bye, null);
-  assert.deepEqual(pairingsAsKeys(seeded.pairings), [
-    unorderedPairKey(TOKEN_A, TOKEN_B),
-    unorderedPairKey(TOKEN_C, TOKEN_D),
-  ]);
+  assert.deepEqual(
+    pairingsAsKeys(seeded.pairings),
+    [
+      unorderedPairKey(TOKEN_A, TOKEN_B),
+      unorderedPairKey(TOKEN_C, TOKEN_D),
+    ].sort(),
+  );
   assert.ok(seeded.totalMatchQuality > 140);
   for (const pairing of seeded.pairings) {
     assert.equal(pairing.ranked, true);
