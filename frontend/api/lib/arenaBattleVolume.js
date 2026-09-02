@@ -1,5 +1,4 @@
 import { canonicalTokenKey } from "./arenaLeagueScoreMath.js";
-import { BATTLE_POINTS_CONFIG } from "./arenaBattlePointsConfig.js";
 
 export const VOLUME_EXCLUDE = Object.freeze({
   SELF_TRADE: "SELF_TRADE",
@@ -8,7 +7,7 @@ export const VOLUME_EXCLUDE = Object.freeze({
   CIRCULAR_TRADE: "CIRCULAR_TRADE",
   FAILED_TRADE: "FAILED_TRADE",
   OUTSIDE_WINDOW: "OUTSIDE_WINDOW",
-  CLUSTER_CAP: "CLUSTER_CAP",
+  UNPRICED_QUOTE: "UNPRICED_QUOTE",
 });
 
 function asTime(value) {
@@ -23,8 +22,10 @@ function identWallet(value) {
 }
 
 function usdOf(trade) {
-  const n = Number(trade?.usdAmount ?? trade?.usd_amount ?? 0);
-  return Number.isFinite(n) && n > 0 ? n : 0;
+  const raw = trade?.usdAmount ?? trade?.usd_amount;
+  if (raw === null || raw === undefined || raw === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 function tradeTime(trade) {
@@ -68,12 +69,6 @@ function isConfirmed(trade) {
   return status === "confirmed";
 }
 
-function sameWallet(a, b) {
-  const left = identWallet(a);
-  const right = identWallet(b);
-  return Boolean(left) && left === right;
-}
-
 function setHasWallet(set, wallet) {
   if (!set) return false;
   const key = identWallet(wallet);
@@ -86,8 +81,15 @@ function setHasCluster(set, clusterId) {
 }
 
 /**
- * Eligible battle-period volume. Pure: trades must already be native-converted to USD.
- * Cluster cap is 20% of raw eligible USD. Circular clusters (buy and sell) are fully excluded.
+ * Battle-period volume eligibility filter.
+ *
+ * Important boundaries:
+ * - recipient === wallet is NOT a self-trade signal. Bonding and router executions
+ *   routinely deliver bought tokens to the initiating wallet.
+ * - a cluster buying and selling during a battle is NOT automatically wash volume.
+ *   Circular/wash exclusion must come from explicit risk evidence.
+ * - concentration is a scoring-influence control and is applied by the Battle
+ *   Points engine, not by deleting otherwise legitimate USD volume here.
  */
 export function computeEligibleBattleVolume({
   trades = [],
@@ -99,24 +101,33 @@ export function computeEligibleBattleVolume({
   fundedWallets = new Set(),
   restrictedWallets = new Set(),
   restrictedClusters = new Set(),
-  capRatio = BATTLE_POINTS_CONFIG.volume.singleClusterCap,
+  washWallets = new Set(),
+  washClusters = new Set(),
 } = {}) {
   const legs = [];
+
   for (const trade of trades) {
     const wallet = identWallet(trade.wallet);
-    const counterparty = identWallet(trade.counterparty ?? trade.recipient);
     const usd = usdOf(trade);
     const clusterId = clusterIdFor(wallet, clusterByWallet);
+    const rawNative = trade.nativeAmount ?? trade.native_amount;
+    const nativeNumber = rawNative === null || rawNative === undefined || rawNative === ""
+      ? null
+      : Number(rawNative);
     const base = {
       wallet,
       clusterId,
       txHash: trade.txHash || trade.tx_hash || null,
       logIndex: trade.logIndex ?? trade.log_index ?? 0,
       blockTime: trade.blockTime || trade.block_time || null,
-      nativeAmount: Number(trade.nativeAmount ?? trade.native_amount ?? 0) || 0,
+      nativeAmount: Number.isFinite(nativeNumber) ? nativeNumber : null,
       usdAmount: usd,
+      usdCounted: 0,
       sideKind: String(trade.side || trade.sideKind || "").toLowerCase() === "sell" ? "sell" : "buy",
       source: trade.source || null,
+      quoteAssetType: trade.quoteAssetType || trade.quote_asset_type || null,
+      quoteTokenAddress: trade.quoteTokenAddress || trade.quote_token_address || null,
+      valuationSource: trade.valuationSource || trade.valuation_source || null,
       included: false,
       excludeReason: null,
       rawClusterUsd: 0,
@@ -131,8 +142,19 @@ export function computeEligibleBattleVolume({
       legs.push({ ...base, excludeReason: VOLUME_EXCLUDE.FAILED_TRADE });
       continue;
     }
-    if (counterparty && sameWallet(wallet, counterparty)) {
+    if (usd === null || trade.valuationHealthy === false) {
+      legs.push({ ...base, excludeReason: VOLUME_EXCLUDE.UNPRICED_QUOTE });
+      continue;
+    }
+    if (trade.selfTrade === true) {
       legs.push({ ...base, excludeReason: VOLUME_EXCLUDE.SELF_TRADE });
+      continue;
+    }
+    if (
+      trade.circularTrade === true || trade.washTrade === true
+      || setHasWallet(washWallets, wallet) || setHasCluster(washClusters, clusterId)
+    ) {
+      legs.push({ ...base, excludeReason: VOLUME_EXCLUDE.CIRCULAR_TRADE });
       continue;
     }
     if (setHasWallet(restrictedWallets, wallet) || setHasCluster(restrictedClusters, clusterId)) {
@@ -151,73 +173,41 @@ export function computeEligibleBattleVolume({
       legs.push({ ...base, excludeReason: VOLUME_EXCLUDE.CREATOR_FUNDED_FAKE_DEMAND });
       continue;
     }
-    legs.push(base);
+
+    legs.push({ ...base, included: true, usdCounted: usd });
   }
 
-  const candidates = legs.filter((leg) => !leg.excludeReason);
-  const clusterSides = new Map();
-  for (const leg of candidates) {
-    const current = clusterSides.get(leg.clusterId) || { buy: 0, sell: 0 };
-    if (leg.sideKind === "sell") current.sell += 1;
-    else current.buy += 1;
-    clusterSides.set(leg.clusterId, current);
-  }
-  const circularClusters = new Set(
-    [...clusterSides.entries()].filter(([, sides]) => sides.buy > 0 && sides.sell > 0).map(([id]) => id),
-  );
-  for (const leg of candidates) {
-    if (circularClusters.has(leg.clusterId)) {
-      leg.excludeReason = VOLUME_EXCLUDE.CIRCULAR_TRADE;
-    }
-  }
-
-  const eligibleLegs = legs.filter((leg) => !leg.excludeReason);
+  const eligibleLegs = legs.filter((leg) => leg.included && !leg.excludeReason);
   const perClusterRaw = new Map();
   for (const leg of eligibleLegs) {
-    perClusterRaw.set(leg.clusterId, (perClusterRaw.get(leg.clusterId) || 0) + leg.usdAmount);
+    perClusterRaw.set(leg.clusterId, (perClusterRaw.get(leg.clusterId) || 0) + (leg.usdAmount || 0));
   }
-  const rawEligibleUsd = [...perClusterRaw.values()].reduce((sum, n) => sum + n, 0);
-  const capUsd = rawEligibleUsd > 0 ? capRatio * rawEligibleUsd : 0;
+
   const sortedClusters = [...perClusterRaw.keys()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
-  const countedByCluster = new Map();
-  let eligibleUsd = 0;
-  for (const clusterId of sortedClusters) {
-    const raw = perClusterRaw.get(clusterId) || 0;
-    const counted = Math.min(raw, capUsd);
-    countedByCluster.set(clusterId, counted);
-    eligibleUsd += counted;
-  }
+  const eligibleUsd = [...perClusterRaw.values()].reduce((sum, n) => sum + n, 0);
 
   for (const leg of eligibleLegs) {
     const rawClusterUsd = perClusterRaw.get(leg.clusterId) || 0;
-    const countedClusterUsd = countedByCluster.get(leg.clusterId) || 0;
-    const share = rawClusterUsd > 0 ? leg.usdAmount / rawClusterUsd : 0;
     leg.rawClusterUsd = rawClusterUsd;
-    leg.countedClusterUsd = countedClusterUsd;
-    leg.included = true;
-    if (countedClusterUsd + 1e-12 < rawClusterUsd) {
-      leg.excludeReason = VOLUME_EXCLUDE.CLUSTER_CAP;
-      leg.usdCounted = share * countedClusterUsd;
-    } else {
-      leg.usdCounted = leg.usdAmount;
-    }
+    leg.countedClusterUsd = rawClusterUsd;
   }
 
   const excludedUsd = legs
-    .filter((leg) => leg.excludeReason && leg.excludeReason !== VOLUME_EXCLUDE.CLUSTER_CAP)
-    .reduce((sum, leg) => sum + leg.usdAmount, 0);
+    .filter((leg) => leg.excludeReason && leg.usdAmount !== null)
+    .reduce((sum, leg) => sum + (leg.usdAmount || 0), 0);
 
   return {
-    rawUsd: rawEligibleUsd,
+    rawUsd: eligibleUsd,
     excludedUsd,
+    // Compatibility: no legitimate USD is removed here. The 20% concentration
+    // policy is enforced on points in calculateBattlePoints().
     cappedUsd: eligibleUsd,
     eligibleUsd,
-    capUsd,
     legs,
     clusters: sortedClusters.map((clusterId) => ({
       clusterId,
       rawUsd: perClusterRaw.get(clusterId) || 0,
-      countedUsd: countedByCluster.get(clusterId) || 0,
+      countedUsd: perClusterRaw.get(clusterId) || 0,
     })),
   };
 }
@@ -234,9 +224,13 @@ export function volumeAuditRows({ battleId, tokenId, side, result }) {
     block_time: leg.blockTime,
     native_amount: leg.nativeAmount,
     usd_amount: leg.usdAmount,
+    usd_counted: leg.usdCounted,
     side_kind: leg.sideKind,
     source: leg.source,
-    included: Boolean(leg.included),
+    quote_asset_type: leg.quoteAssetType,
+    quote_token_address: leg.quoteTokenAddress,
+    valuation_source: leg.valuationSource,
+    included: Boolean(leg.included && !leg.excludeReason),
     exclude_reason: leg.excludeReason,
     raw_cluster_usd: leg.rawClusterUsd,
     counted_cluster_usd: leg.countedClusterUsd,
