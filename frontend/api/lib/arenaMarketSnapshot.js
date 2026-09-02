@@ -29,6 +29,12 @@ function nativeDecimals(chainId) {
   return isSolanaChainId(chainId) ? 9 : 18;
 }
 
+function identityEquals(chainId, expression, parameter) {
+  return isSolanaChainId(chainId)
+    ? `${expression} = ${parameter}`
+    : `lower(${expression}) = lower(${parameter})`;
+}
+
 export async function resolveNativeUsdPrice(chainId, resolveNativeUsd) {
   if (typeof resolveNativeUsd === "function") return resolveNativeUsd(chainId);
   if (isSolanaChainId(chainId)) return resolveSolUsdPrice();
@@ -91,12 +97,14 @@ function lagFrom(updatedAt, nowMs) {
 async function lookupIdentity(query, chainId, tokenIdentity) {
   const normalized = ident(tokenIdentity);
   if (!normalized) return null;
+  const campaignMatch = identityEquals(chainId, "c.campaign_address::text", "$2");
+  const tokenMatch = identityEquals(chainId, "coalesce(c.token_address::text, '')", "$2");
   const native = await query(
     `select c.chain_id, c.campaign_address, c.token_address, c.creator_address, c.name, c.symbol,
             c.fee_recipient_address
        from public.campaigns c
       where c.chain_id = $1
-        and (lower(c.campaign_address::text) = lower($2) or lower(coalesce(c.token_address::text, '')) = lower($2))
+        and (${campaignMatch} or ${tokenMatch})
       order by c.created_block desc nulls last
       limit 1`,
     [chainId, normalized],
@@ -113,10 +121,11 @@ async function lookupIdentity(query, chainId, tokenIdentity) {
       importScan: null,
     };
   }
+  const importMatch = identityEquals(chainId, "token_address", "$2");
   const imported = await query(
     `select chain_id, token_address, owner_wallet, scan_json
        from public.arena_token_imports
-      where chain_id = $1 and lower(token_address) = lower($2)
+      where chain_id = $1 and ${importMatch}
       limit 1`,
     [chainId, normalized],
   );
@@ -162,6 +171,7 @@ async function readMarketStats(query, chainId, campaignAddress, tokenAddress) {
   // address rather than campaign address. Imported tokens deliberately do not
   // masquerade as campaigns here.
   if (tokenAddress) {
+    const tokenMatch = identityEquals(chainId, "coalesce(c.token_address::text, '')", "$2");
     const byToken = await query(
       `select ms.market_cap_usd, ms.liquidity_usd, ms.volume_24h_usd,
               ms.market_cap_bnb, ms.liquidity_bnb, ms.holders, ms.volume_24h_bnb,
@@ -171,7 +181,7 @@ async function readMarketStats(query, chainId, campaignAddress, tokenAddress) {
          join public.campaigns c
            on c.chain_id = ms.chain_id and c.campaign_address = ms.campaign_address
         where ms.chain_id = $1
-          and lower(coalesce(c.token_address::text, '')) = lower($2)
+          and ${tokenMatch}
         limit 1`,
       [chainId, tokenAddress],
     );
@@ -195,14 +205,19 @@ async function readTokenStats(query, chainId, campaignAddress) {
 async function readHolderCount(query, chainId, tokenAddress, campaignAddress) {
   if (!tokenAddress) return null;
   try {
+    const tokenMatch = identityEquals(chainId, "token_address", "$2");
+    const walletNotToken = isSolanaChainId(chainId) ? `wallet <> $2` : `lower(wallet) <> lower($2)`;
+    const walletNotCampaign = isSolanaChainId(chainId)
+      ? `($3::text is null or $3 = '' or wallet <> $3)`
+      : `($3::text is null or $3 = '' or lower(wallet) <> lower($3))`;
     const result = await query(
       `select count(*)::int as n
          from public.token_holder_balances
         where chain_id = $1
-          and lower(token_address) = lower($2)
+          and ${tokenMatch}
           and balance_raw > 0
-          and lower(wallet) <> lower($2)
-          and ($3::text is null or $3 = '' or lower(wallet) <> lower($3))`,
+          and ${walletNotToken}
+          and ${walletNotCampaign}`,
       [chainId, tokenAddress, campaignAddress || ""],
     );
     const n = finiteNumber(result.rows[0]?.n);
