@@ -11,6 +11,7 @@ import {
 } from "../server/http.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { scanEvm, scanSolana } from "./lib/arenaImportScan.js";
+import { getArenaTokenProfile } from "./lib/arenaTokenProfile.js";
 
 function ident(value, chainId) {
   const raw = String(value || "").trim();
@@ -135,6 +136,19 @@ async function handleLookup(req, res) {
   return item ? json(res, 200, { item }) : json(res, 404, { error: "Import not found" });
 }
 
+async function handleProfile(req, res) {
+  const query = getQuery(req);
+  const requestedChain = Number(query.chainId || 0);
+  const tokenHint = String(query.token || query.tokenAddress || query.address || "").trim();
+  const chainId = requestedChain || (isSolanaAddress(tokenHint) ? 101 : 56);
+  const token = ident(tokenHint, chainId);
+  if (!token || !chainId) return json(res, 400, { error: "chainId and token are required" });
+  const profile = await getArenaTokenProfile(chainId, token);
+  return profile
+    ? json(res, 200, { profile, updatedAt: new Date().toISOString() })
+    : json(res, 404, { error: "Arena token profile not found" });
+}
+
 async function handleCreate(req, res) {
   const body = await readJson(req);
   const chainId = Number(body.chainId || 56);
@@ -232,6 +246,7 @@ export default async function handler(req, res) {
   try {
     if (method === "GET" && path === "/arena/imports") return handleList(req, res);
     if (method === "GET" && path === "/arena/imports/lookup") return handleLookup(req, res);
+    if (method === "GET" && path === "/arena/imports/profile") return handleProfile(req, res);
     if (method === "POST" && path === "/arena/imports") return handleCreate(req, res);
     const review = path.match(/^\/arena\/imports\/([^/]+)\/request-review$/);
     if (review) return method === "POST" ? handleRequestReview(req, res, decodeURIComponent(review[1])) : badMethod(res);
