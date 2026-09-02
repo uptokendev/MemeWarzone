@@ -41,12 +41,13 @@ async function signStockAuthorization(
   req: any,
   stockToken: string,
   adapter: string,
+  implementation: string,
   deadline: bigint,
 ) {
   const chainId = (await ethers.provider.getNetwork()).chainId;
   const digest = ethers.keccak256(
     ethers.AbiCoder.defaultAbiCoder().encode(
-      ["string", "uint256", "address", "address", "bytes32", "address", "address", "uint8", "uint8", "uint64"],
+      ["string", "uint256", "address", "address", "bytes32", "address", "address", "address", "uint8", "uint8", "uint64"],
       [
         "MWZ_CREATE_STOCK_ROUTE_AUTH",
         chainId,
@@ -55,6 +56,7 @@ async function signStockAuthorization(
         hashCampaignRequest(req),
         stockToken,
         adapter,
+        implementation,
         1,
         1,
         deadline,
@@ -97,6 +99,10 @@ async function fixture() {
   const campaignImplementation = await Campaign.deploy();
   await campaignImplementation.waitForDeployment();
 
+  const StockCampaign = await ethers.getContractFactory("RobinhoodStockLaunchCampaign");
+  const stockCampaignImplementation = await StockCampaign.deploy();
+  await stockCampaignImplementation.waitForDeployment();
+
   const Treasury = await ethers.getContractFactory("MockPhase1TreasuryRouter");
   const treasury = await Treasury.deploy();
   await treasury.waitForDeployment();
@@ -115,6 +121,7 @@ async function fixture() {
   );
   await factory.waitForDeployment();
   await factory.setRouteAuthority(await routeSigner.getAddress());
+  await factory.setStockCampaignImplementation(await stockCampaignImplementation.getAddress());
 
   const locker = await factory.permanentLpLocker();
   const StockAdapter = await ethers.getContractFactory("RobinhoodStockTokenGraduationAdapter");
@@ -175,12 +182,24 @@ async function fixture() {
     graduationTarget: 1n,
   };
 
-  return { owner, creator, routeSigner, factory, stockAdapter, stock1, stock2, unapproved, request, locker };
+  return {
+    owner,
+    creator,
+    routeSigner,
+    factory,
+    stockAdapter,
+    stockCampaignImplementation,
+    stock1,
+    stock2,
+    unapproved,
+    request,
+    locker,
+  };
 }
 
 describe("Robinhood Stock campaign factory binding", function () {
   it("rejects Stock Tokens that do not have an enabled approved graduation route", async () => {
-    const { creator, routeSigner, factory, stockAdapter, unapproved, request } = await fixture();
+    const { creator, routeSigner, factory, stockAdapter, stockCampaignImplementation, unapproved, request } = await fixture();
     const deadline = (await nowTs()) + 3600n;
     const signature = await signStockAuthorization(
       factory,
@@ -189,6 +208,7 @@ describe("Robinhood Stock campaign factory binding", function () {
       request,
       await unapproved.getAddress(),
       await stockAdapter.getAddress(),
+      await stockCampaignImplementation.getAddress(),
       deadline,
     );
 
@@ -202,8 +222,18 @@ describe("Robinhood Stock campaign factory binding", function () {
     ).to.be.revertedWithCustomError(factory, "UnsupportedStockToken");
   });
 
-  it("cryptographically binds the Stock Token and rejects replay", async () => {
-    const { creator, routeSigner, factory, stockAdapter, stock1, stock2, request, locker } = await fixture();
+  it("cryptographically binds the Stock Token and dedicated implementation and rejects replay", async () => {
+    const {
+      creator,
+      routeSigner,
+      factory,
+      stockAdapter,
+      stockCampaignImplementation,
+      stock1,
+      stock2,
+      request,
+      locker,
+    } = await fixture();
     const deadline = (await nowTs()) + 3600n;
     const signature = await signStockAuthorization(
       factory,
@@ -212,6 +242,7 @@ describe("Robinhood Stock campaign factory binding", function () {
       request,
       await stock1.getAddress(),
       await stockAdapter.getAddress(),
+      await stockCampaignImplementation.getAddress(),
       deadline,
     );
     const routeAuth = { tradeRouteProfile: 1, finalizeRouteProfile: 1, deadline, signature };
@@ -225,8 +256,9 @@ describe("Robinhood Stock campaign factory binding", function () {
     ).to.emit(factory, "StockCampaignConfigured");
 
     const info = await factory.getCampaign(0);
-    const campaign = await ethers.getContractAt("LaunchCampaign", info.campaign);
+    const campaign = await ethers.getContractAt("RobinhoodStockLaunchCampaign", info.campaign);
     expect(await factory.campaignGraduationQuoteToken(info.campaign)).to.equal(await stock1.getAddress());
+    expect(await campaign.isStockCampaignImplementation()).to.equal(true);
     expect(await campaign.stockGraduationEnabled()).to.equal(true);
     expect(await campaign.graduationQuoteToken()).to.equal(await stock1.getAddress());
     expect(await campaign.stockGraduationAdapter()).to.equal(await stockAdapter.getAddress());
