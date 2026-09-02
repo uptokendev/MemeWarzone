@@ -2,12 +2,23 @@ import type { Express, NextFunction, Request, Response } from "express";
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
 import { isEvmAddress, resolveMarketIdentityOrPassthrough } from "./marketIdentity.js";
+import {
+  describeRobinhoodQuoteAsset,
+  getRobinhoodQuoteAssetPrice,
+  listRobinhoodStockTokens,
+} from "./robinhoodStockTokenRegistry.js";
 
 const ROBINHOOD_CHAIN_IDS = new Set([4663, 46630]);
 
 function asNumber(value: unknown, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function truthyQuery(value: unknown, fallback = false): boolean {
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (!raw) return fallback;
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
 }
 
 function isRobinhood(chainId: number): boolean {
@@ -142,6 +153,84 @@ async function readRobinhoodMarketState(chainId: number, campaign: string) {
   };
 }
 
+async function buildRobinhoodMarketMetadata(
+  state: NonNullable<Awaited<ReturnType<typeof readRobinhoodMarketState>>>,
+  includeQuotePrice = false,
+) {
+  const quoteToken = (state as { quoteTokenAddress?: string | null }).quoteTokenAddress || state.wrappedNativeAddress;
+  const descriptor = describeRobinhoodQuoteAsset({
+    chainId: state.chainId,
+    quoteToken,
+    wrappedNativeAddress: state.wrappedNativeAddress,
+  });
+  const stockToken = descriptor.stockToken
+    ? {
+        ...descriptor.stockToken,
+        price: includeQuotePrice
+          ? await getRobinhoodQuoteAssetPrice({
+              chainId: state.chainId,
+              quoteToken: descriptor.stockToken.contractAddress,
+            })
+          : null,
+      }
+    : null;
+
+  return {
+    marketId: `robinhood:${state.chainId}:${String(state.campaignAddress || "").toLowerCase()}`,
+    baseToken: state.tokenAddress || state.campaignAddress,
+    quoteToken: descriptor.quoteTokenAddress,
+    quoteAssetType: descriptor.quoteAssetType,
+    routeKind: descriptor.routeKind,
+    referenceOracle: descriptor.referenceOracle,
+    stockToken,
+  };
+}
+
+function provisionalRobinhoodMarketState(chainId: number, campaign: string) {
+  return {
+    chainId,
+    campaignAddress: campaign,
+    tokenAddress: campaign,
+    factoryAddress: null,
+    campaignGeneration: null,
+    marketStage: "BONDING",
+    graduation: null,
+    pairAddress: null,
+    routerAddress: null,
+    dexFactoryAddress: null,
+    wrappedNativeAddress: null,
+    stable: null,
+    feeBps: null,
+    poolVerified: false,
+    supportEnabled: true,
+    bondingActive: true,
+    quotesEnabled: true,
+    tradingEnabled: true,
+    indexingStatus: {
+      enabled: true,
+      poolEnabled: false,
+      lastIndexedBlock: null,
+      lastFinalizedBlock: null,
+      lastSwapAt: null,
+      lastSyncAt: null,
+      dataLagSeconds: null,
+    },
+    reserves: { tokenRaw: null, nativeRaw: null },
+    lastVerifiedAt: null,
+    lastError: null,
+    provisional: true,
+    poolIndexerEnvEnabled: ENV.ENABLE_ROBINHOOD_V3_POOL_INDEXER,
+    unifiedMarketApiEnvEnabled: ENV.ENABLE_UNIFIED_MARKET_API,
+    marketId: `robinhood:${chainId}:${campaign}`,
+    baseToken: campaign,
+    quoteToken: null,
+    quoteAssetType: "UNKNOWN",
+    routeKind: "UNKNOWN",
+    referenceOracle: null,
+    stockToken: null,
+  };
+}
+
 function robinhoodOnly(req: Request, _res: Response, next: NextFunction): boolean {
   const chainId = asNumber(req.query.chainId ?? (req.body as any)?.chainId, 0);
   if (!isRobinhood(chainId)) {
@@ -152,6 +241,28 @@ function robinhoodOnly(req: Request, _res: Response, next: NextFunction): boolea
 }
 
 export function registerRobinhoodMarketContinuityRoutes(app: Express): void {
+  app.get("/api/robinhood/stock-tokens", async (req, res) => {
+    try {
+      const chainId = asNumber(req.query.chainId, 46630);
+      if (!isRobinhood(chainId)) return res.status(400).json({ error: "Robinhood chainId required" });
+      const includePrices = truthyQuery(req.query.includePrices, false);
+      const includeDisabled = truthyQuery(req.query.includeDisabled, false);
+      const items = listRobinhoodStockTokens(chainId, { includeDisabled });
+      const payload = includePrices
+        ? await Promise.all(
+            items.map(async (item) => ({
+              ...item,
+              price: await getRobinhoodQuoteAssetPrice({ chainId, quoteToken: item.contractAddress }),
+            })),
+          )
+        : items.map((item) => ({ ...item, price: null }));
+      return res.json({ chainId, items: payload });
+    } catch (error: any) {
+      console.error("[robinhood-market] stock-tokens", error?.message || String(error));
+      return res.status(500).json({ error: "Robinhood stock token registry temporarily unavailable." });
+    }
+  });
+
   app.get("/api/token/:campaign/market-state", async (req, res, next) => {
     if (!robinhoodOnly(req, res, next)) return;
     try {
@@ -160,18 +271,13 @@ export function registerRobinhoodMarketContinuityRoutes(app: Express): void {
       if (!campaign) return res.status(400).json({ error: "Invalid Robinhood campaign or chainId" });
       const state = await readRobinhoodMarketState(chainId, campaign);
       if (!state) {
-        return res.status(200).json({
-          chainId,campaignAddress:campaign,tokenAddress:campaign,factoryAddress:null,campaignGeneration:null,
-          marketStage:"BONDING",graduation:null,pairAddress:null,routerAddress:null,dexFactoryAddress:null,
-          wrappedNativeAddress:null,stable:null,feeBps:null,poolVerified:false,supportEnabled:true,bondingActive:true,
-          quotesEnabled:true,tradingEnabled:true,
-          indexingStatus:{enabled:true,poolEnabled:false,lastIndexedBlock:null,lastFinalizedBlock:null,lastSwapAt:null,lastSyncAt:null,dataLagSeconds:null},
-          reserves:{tokenRaw:null,nativeRaw:null},lastVerifiedAt:null,lastError:null,provisional:true,
-          poolIndexerEnvEnabled:ENV.ENABLE_ROBINHOOD_V3_POOL_INDEXER,
-          unifiedMarketApiEnvEnabled:ENV.ENABLE_UNIFIED_MARKET_API,
-        });
+        return res.status(200).json(provisionalRobinhoodMarketState(chainId, campaign));
       }
-      return res.json(state);
+      const includeQuotePrice = truthyQuery(req.query.includeQuotePrice, false);
+      return res.json({
+        ...state,
+        ...(await buildRobinhoodMarketMetadata(state, includeQuotePrice)),
+      });
     } catch (error: any) {
       console.error("[robinhood-market] market-state", error?.message || String(error));
       return res.status(500).json({ error: "Robinhood market state temporarily unavailable." });
@@ -186,11 +292,24 @@ export function registerRobinhoodMarketContinuityRoutes(app: Express): void {
       if (!campaign) return res.status(400).json({ error: "Invalid Robinhood campaign or chainId" });
       const state = await readRobinhoodMarketState(chainId, campaign);
       if (!state) return res.status(404).json({ error: "Market state not found" });
+      const includeQuotePrice = truthyQuery(req.query.includeQuotePrice, false);
       return res.json({
-        chainId:state.chainId,marketStage:state.marketStage,campaignAddress:state.campaignAddress,
-        token:state.tokenAddress,pair:state.pairAddress,router:state.routerAddress,factory:state.dexFactoryAddress,
-        wrappedNative:state.wrappedNativeAddress,stable:state.stable,feeBps:state.feeBps,verified:state.poolVerified,
-        quotesEnabled:state.quotesEnabled,tradingEnabled:state.tradingEnabled,verifiedAt:state.lastVerifiedAt,lastError:state.lastError,
+        chainId: state.chainId,
+        marketStage: state.marketStage,
+        campaignAddress: state.campaignAddress,
+        token: state.tokenAddress,
+        pair: state.pairAddress,
+        router: state.routerAddress,
+        factory: state.dexFactoryAddress,
+        wrappedNative: state.wrappedNativeAddress,
+        stable: state.stable,
+        feeBps: state.feeBps,
+        verified: state.poolVerified,
+        quotesEnabled: state.quotesEnabled,
+        tradingEnabled: state.tradingEnabled,
+        verifiedAt: state.lastVerifiedAt,
+        lastError: state.lastError,
+        ...(await buildRobinhoodMarketMetadata(state, includeQuotePrice)),
       });
     } catch (error: any) {
       console.error("[robinhood-market] trade-route", error?.message || String(error));
@@ -232,7 +351,7 @@ export function registerRobinhoodMarketContinuityRoutes(app: Express): void {
       const campaign = await campaignFromParam(chainId, req.params.campaign);
       const limit = Math.max(1, Math.min(asNumber(req.query.limit, 100), 500));
       const filter = String(req.query.marketStage || "all").trim().toLowerCase();
-      const allowed = new Set(["all","bonding","dex","robinhood_v3"]);
+      const allowed = new Set(["all", "bonding", "dex", "robinhood_v3"]);
       if (!campaign) return res.status(400).json({ error: "Invalid Robinhood campaign or chainId" });
       if (!allowed.has(filter)) return res.status(400).json({ error: "marketStage must be all, bonding, dex, or robinhood_v3" });
 
@@ -243,7 +362,10 @@ export function registerRobinhoodMarketContinuityRoutes(app: Express): void {
         const [blockRaw, logRaw] = cursor.split(":");
         const block = Number(blockRaw);
         const log = Number(logRaw);
-        if (Number.isInteger(block) && Number.isInteger(log)) { cursorBlock = block; cursorLog = log; }
+        if (Number.isInteger(block) && Number.isInteger(log)) {
+          cursorBlock = block;
+          cursorLog = log;
+        }
       }
 
       const result = await pool.query(
@@ -256,7 +378,7 @@ export function registerRobinhoodMarketContinuityRoutes(app: Express): void {
             and ($4::bigint is null or "blockNumber"<$4 or ("blockNumber"=$4 and "logIndex"<$5))
           order by "blockNumber" desc,"logIndex" desc
           limit $6`,
-        [chainId,campaign,filter,cursorBlock,cursorLog,limit],
+        [chainId, campaign, filter, cursorBlock, cursorLog, limit],
       );
       const items = result.rows;
       const last = items[items.length - 1];

@@ -22,6 +22,13 @@ const ERC20_ABI = [
 
 const MAX_UINT256 = (1n << 256n) - 1n;
 
+type ExtendedMarketRoute = MarketRoute & {
+  quoteToken?: string | null;
+  quoteAssetType?: "WRAPPED_NATIVE" | "STOCK_TOKEN" | "UNKNOWN" | null;
+  routeKind?: "DIRECT_NATIVE" | "STOCK_TWO_HOP" | "UNKNOWN" | null;
+  referenceOracle?: string | null;
+};
+
 export type RobinhoodV3ResolvedRoute = {
   market: MarketRoute;
   chainId: number;
@@ -30,6 +37,10 @@ export type RobinhoodV3ResolvedRoute = {
   routerAddress: string;
   factoryAddress: string;
   wrappedNativeAddress: string;
+  quoteTokenAddress: string;
+  quoteAssetType: "WRAPPED_NATIVE";
+  routeKind: "DIRECT_NATIVE";
+  referenceOracleAddress: string | null;
   nativeSwapAdapterAddress: string;
   fee: number;
 };
@@ -49,6 +60,12 @@ function isRobinhoodChainId(chainId: number): boolean {
 function normalizeAddress(value: unknown, label: string): string {
   const raw = String(value || "").trim();
   if (!ethers.isAddress(raw) || raw === ethers.ZeroAddress) throw new Error(`Invalid ${label}.`);
+  return ethers.getAddress(raw);
+}
+
+function normalizeOptionalAddress(value: unknown): string | null {
+  const raw = String(value || "").trim();
+  if (!raw || !ethers.isAddress(raw) || raw === ethers.ZeroAddress) return null;
   return ethers.getAddress(raw);
 }
 
@@ -85,8 +102,6 @@ async function requireCode(provider: ethers.Provider, address: string, label: st
 
 function normalizeV3Fee(route: MarketRoute): number {
   const raw = Number(route.feeBps);
-  // Robinhood V3 market continuity stores the canonical V3 fee tier when it is
-  // available. Older rows can expose the human bps value (30); normalize both.
   if (Number.isInteger(raw) && raw > 0) {
     if (raw >= 100 && raw <= 1_000_000) return raw;
     if (raw <= 100) return raw * 100;
@@ -118,6 +133,17 @@ export async function resolveRobinhoodV3Route(input: {
     throw new Error("Robinhood V3 market token mismatch.");
   }
 
+  const extendedMarket = market as ExtendedMarketRoute;
+  const routeKind = String(extendedMarket.routeKind || "DIRECT_NATIVE").trim().toUpperCase();
+  const quoteAssetType = String(extendedMarket.quoteAssetType || "WRAPPED_NATIVE").trim().toUpperCase();
+  const quoteTokenAddress = normalizeAddress(
+    extendedMarket.quoteToken || market.wrappedNative,
+    "Robinhood quote token",
+  );
+  if (routeKind !== "DIRECT_NATIVE" || quoteAssetType !== "WRAPPED_NATIVE") {
+    throw new Error("This trade panel does not support Robinhood Stock Battlefield routes yet.");
+  }
+
   const poolAddress = normalizeAddress(market.pair, "Robinhood V3 pool");
   const routerAddress = normalizeAddress(
     market.router || envAddress("VITE_ROBINHOOD_V3_SWAP_ROUTER_ADDRESS", input.chainId),
@@ -131,6 +157,9 @@ export async function resolveRobinhoodV3Route(input: {
     market.wrappedNative || envAddress("VITE_WRAPPED_NATIVE_ADDRESS", input.chainId),
     "Robinhood wrapped native",
   );
+  if (!sameAddress(quoteTokenAddress, wrappedNativeAddress)) {
+    throw new Error("Robinhood direct-native route quote asset mismatch.");
+  }
   const nativeSwapAdapterAddress = normalizeAddress(
     envAddress("VITE_ROBINHOOD_V3_NATIVE_SWAP_ADAPTER_ADDRESS", input.chainId),
     "Robinhood V3 native swap adapter",
@@ -166,6 +195,10 @@ export async function resolveRobinhoodV3Route(input: {
     routerAddress,
     factoryAddress,
     wrappedNativeAddress,
+    quoteTokenAddress,
+    quoteAssetType: "WRAPPED_NATIVE",
+    routeKind: "DIRECT_NATIVE",
+    referenceOracleAddress: normalizeOptionalAddress(extendedMarket.referenceOracle),
     nativeSwapAdapterAddress,
     fee: normalizeV3Fee(market),
   };
