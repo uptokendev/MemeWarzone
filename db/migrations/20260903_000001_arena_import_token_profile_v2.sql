@@ -29,7 +29,8 @@ BEGIN
 END $$;
 
 -- Existing MemeWarzone metadata registry is a trusted prefill source when it already
--- knows this exact chain/token identity. Owner uploads may replace image_url later.
+-- knows this exact chain/token identity. Solana Base58 identities are case-sensitive;
+-- EVM token addresses remain case-insensitive.
 UPDATE public.arena_token_imports AS i
    SET image_url = COALESCE(i.image_url, NULLIF(m.logo_uri, '')),
        description = COALESCE(i.description, NULLIF(m.description, '')),
@@ -40,10 +41,36 @@ UPDATE public.arena_token_imports AS i
   FROM public.token_metadata_registry AS m
  WHERE m.chain_id = i.chain_id
    AND m.token_address IS NOT NULL
-   AND lower(m.token_address) = lower(i.token_address);
+   AND (
+     (i.chain_id IN (101, 102) AND m.token_address = i.token_address)
+     OR
+     (i.chain_id NOT IN (101, 102) AND lower(m.token_address) = lower(i.token_address))
+   );
+
+-- Backfill only ownership evidence that was already captured by the import scanner.
+-- A wallet merely submitting/importing a token is not enough to mark it verified.
+UPDATE public.arena_token_imports
+   SET verified_at = COALESCE(verified_at, NOW())
+ WHERE verified_at IS NULL
+   AND owner_wallet IS NOT NULL
+   AND (
+     (
+       chain_id IN (101, 102)
+       AND NULLIF(scan_json->>'mintAuthority', '') IS NOT NULL
+       AND scan_json->>'mintAuthority' = owner_wallet
+     )
+     OR
+     (
+       chain_id NOT IN (101, 102)
+       AND NULLIF(scan_json->>'owner', '') IS NOT NULL
+       AND lower(scan_json->>'owner') = lower(owner_wallet)
+     )
+   );
 
 CREATE INDEX IF NOT EXISTS arena_token_imports_owner_profile_idx
   ON public.arena_token_imports (chain_id, lower(owner_wallet), metadata_updated_at DESC);
+CREATE INDEX IF NOT EXISTS arena_token_imports_owner_exact_profile_idx
+  ON public.arena_token_imports (chain_id, owner_wallet, metadata_updated_at DESC);
 
 -- Existing RLS/write boundaries remain authoritative: clients can read imports, while
 -- profile mutation continues through the service-role API after wallet-action auth.
