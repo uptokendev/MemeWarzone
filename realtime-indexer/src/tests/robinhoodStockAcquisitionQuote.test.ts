@@ -37,6 +37,7 @@ process.env.ROBINHOOD_STOCK_TOKEN_REGISTRY_46630 = JSON.stringify([
 const {
   buildRobinhoodStockAcquisitionPlan,
   calculateAcquisitionPriceImpactBps,
+  calculateAcquisitionUsdMetrics,
   minimumOutForSlippage,
 } = await import("../robinhoodStockAcquisitionQuote.js");
 
@@ -88,4 +89,31 @@ test("does not report negative price impact when the full quote improves", () =>
 test("derives an exact minimum quote output from slippage policy", () => {
   assert.equal(minimumOutForSlippage(10_000n, 300), 9700n);
   assert.equal(minimumOutForSlippage(10_000n, 10_001), null);
+});
+
+test("derives quote-side route liquidity and implied native USD from Stock oracle", () => {
+  const metrics = calculateAcquisitionUsdMetrics({
+    amountInRaw: 1_000_000_000_000_000_000n,
+    stockOutRaw: 10_000_000_000n,
+    stockDecimals: 8,
+    stockPriceUsd: 25,
+    stockPoolBalanceRaw: 2_000_000_000_000n,
+    nativeOraclePriceUsd: 2500,
+  });
+  assert.equal(metrics.routeQuoteLiquidityUsd, 500_000);
+  assert.equal(metrics.impliedNativeUsd, 2500);
+  assert.equal(metrics.oracleDeviationBps, 0);
+});
+
+test("computes oracle deviation without mixing raw token units", () => {
+  const metrics = calculateAcquisitionUsdMetrics({
+    amountInRaw: 2_000_000_000_000_000_000n,
+    stockOutRaw: 19_000_000_000n,
+    stockDecimals: 8,
+    stockPriceUsd: 25,
+    stockPoolBalanceRaw: 2_000_000_000_000n,
+    nativeOraclePriceUsd: 250,
+  });
+  assert.equal(metrics.impliedNativeUsd, 2375);
+  assert.equal(metrics.oracleDeviationBps, 85_000);
 });
