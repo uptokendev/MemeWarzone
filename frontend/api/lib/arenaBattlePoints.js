@@ -33,38 +33,95 @@ function lagSeconds(updatedAt, nowMs) {
   return Math.max(0, (nowMs - ts) / 1000);
 }
 
-function dataHealthFrom({ baseline, current, mcapInvalid, missingCurrent, nowMs, staleSeconds }) {
+function dataHealthFrom({ baseline, current, startMcap, startHolders, currentMcap, currentHolders, nowMs, staleSeconds }) {
   const reasons = [];
   const currentLag = finiteNumber(current?.dataLagSeconds) ?? lagSeconds(current?.updatedAt || current?.marketDataUpdatedAt, nowMs);
   const marketDataUpdatedAt = current?.updatedAt || current?.marketDataUpdatedAt || null;
-  if (mcapInvalid) reasons.push("invalid_baseline");
-  if (missingCurrent) reasons.push("missing_current");
-  const markedUnhealthy = current?.healthy === false;
+
+  if (!(startMcap > 0)) reasons.push("invalid_baseline_mcap");
+  if (startHolders === null) reasons.push("invalid_baseline_holders");
+  if (currentMcap === null) reasons.push("missing_current_mcap");
+  if (currentHolders === null) reasons.push("missing_current_holders");
+
   const stale = currentLag !== null && currentLag > staleSeconds;
-  if (markedUnhealthy && !reasons.includes("missing_current")) {
-    if (stale || String(current?.reason || "") === "stale") reasons.push("stale");
-    else if (!reasons.length) reasons.push(String(current?.reason || "unhealthy"));
-  } else if (stale) {
-    reasons.push("stale");
+  if (stale) reasons.push("stale");
+
+  const upstreamReasons = Array.isArray(current?.reasons)
+    ? current.reasons
+    : current?.reason
+      ? [current.reason]
+      : [];
+  if (current?.healthy === false) {
+    for (const reason of upstreamReasons) {
+      const normalized = String(reason || "unhealthy").trim();
+      if (normalized) reasons.push(normalized);
+    }
+    if (!upstreamReasons.length) reasons.push("unhealthy");
   }
+
   const unique = [...new Set(reasons)];
-  const status = unique.includes("missing_current") || unique.includes("invalid_baseline")
-    ? "missing"
-    : unique.includes("stale") || unique.length
-      ? unique.includes("stale") && unique.length === 1
-        ? "stale"
-        : unique.includes("stale")
-          ? "stale"
-          : "missing"
-      : "healthy";
+  const status = unique.includes("stale") ? "stale" : unique.length ? "missing" : "healthy";
   return {
-    status: unique.length ? status : "healthy",
+    status,
     healthy: unique.length === 0,
     reasons: unique,
     reason: unique[0] || null,
     dataLagSeconds: currentLag,
     marketDataUpdatedAt,
     baselineTimestamp: baseline?.baselineTimestamp || baseline?.baseline_timestamp || null,
+  };
+}
+
+function normalizedClusters(clusters, eligibleUsd) {
+  const rows = Array.isArray(clusters) ? clusters : [];
+  const normalized = rows
+    .map((row, index) => ({
+      clusterId: String(row?.clusterId ?? row?.cluster_id ?? `cluster:${index}`),
+      usd: Math.max(0, finiteNumber(row?.countedUsd ?? row?.counted_usd ?? row?.rawUsd ?? row?.raw_usd) || 0),
+    }))
+    .filter((row) => row.usd > 0);
+  if (normalized.length || !(eligibleUsd > 0)) return normalized;
+  // Missing cluster evidence must not accidentally bypass the concentration rule.
+  return [{ clusterId: "unclustered", usd: eligibleUsd }];
+}
+
+function applyVolumeConcentrationCap({ rawPoints, eligibleUsd, clusters, weight, capRatio }) {
+  const maxComponentPoints = Math.max(0, finiteNumber(weight) || 0);
+  const ratio = Math.min(1, Math.max(0, finiteNumber(capRatio) ?? 0.2));
+  const clusterPointCap = maxComponentPoints * ratio;
+  const normalized = normalizedClusters(clusters, eligibleUsd);
+  if (!(rawPoints > 0) || !(eligibleUsd > 0) || !normalized.length) {
+    return {
+      points: 0,
+      rawPoints: Math.max(0, rawPoints || 0),
+      clusterPointCap,
+      concentrationDiscountPoints: Math.max(0, rawPoints || 0),
+      clusterContributions: [],
+    };
+  }
+
+  const representedUsd = normalized.reduce((sum, row) => sum + row.usd, 0);
+  const denominator = representedUsd > 0 ? representedUsd : eligibleUsd;
+  const clusterContributions = normalized.map((row) => {
+    const share = denominator > 0 ? row.usd / denominator : 0;
+    const uncappedPoints = rawPoints * share;
+    const countedPoints = Math.min(uncappedPoints, clusterPointCap);
+    return {
+      clusterId: row.clusterId,
+      usd: row.usd,
+      share,
+      uncappedPoints: roundPoints(uncappedPoints),
+      countedPoints: roundPoints(countedPoints),
+      capped: countedPoints + 1e-12 < uncappedPoints,
+    };
+  });
+  const points = Math.min(maxComponentPoints, clusterContributions.reduce((sum, row) => sum + row.countedPoints, 0));
+  return {
+    points,
+    rawPoints,
+    clusterPointCap,
+    concentrationDiscountPoints: Math.max(0, rawPoints - points),
+    clusterContributions,
   };
 }
 
@@ -86,14 +143,11 @@ export function calculateBattlePoints({
   const currentHolders = finiteNumber(current.holders ?? current.currentHolders ?? current.current_holders);
   const eligibleUsd = Math.max(0, finiteNumber(eligibleVolume.usd ?? eligibleVolume.eligibleUsd ?? eligibleVolume.eligible_battle_volume_usd) || 0);
   const rawUsd = Math.max(0, finiteNumber(eligibleVolume.rawUsd ?? eligibleVolume.volume_raw_usd) || 0);
-  const cappedUsd = Math.max(0, finiteNumber(eligibleVolume.cappedUsd ?? eligibleVolume.volume_capped_usd) || eligibleUsd);
-
-  const mcapInvalid = !(startMcap > 0);
-  const missingCurrent = currentMcap === null && currentHolders === null;
+  const cappedUsd = Math.max(0, finiteNumber(eligibleVolume.cappedUsd ?? eligibleVolume.volume_capped_usd) ?? eligibleUsd);
 
   let mcapChangePct = null;
   let mcapPoints = 0;
-  if (!mcapInvalid && currentMcap !== null) {
+  if (startMcap > 0 && currentMcap !== null) {
     mcapChangePct = (currentMcap - startMcap) / startMcap;
     mcapPoints = saturatingPoints(cfg.mcap.weight, cfg.mcap.k, Math.max(0, mcapChangePct));
   }
@@ -103,9 +157,9 @@ export function calculateBattlePoints({
   const holderCurrent = currentHolders === null ? 0 : currentHolders;
   const confidence = holderStart > 0 ? holderStart / (holderStart + holderFloor) : 0;
   let holderChangePct = null;
-  if (holderStart > 0) {
+  if (holderStart > 0 && currentHolders !== null) {
     holderChangePct = (holderCurrent - holderStart) / holderStart;
-  } else {
+  } else if (currentHolders !== null) {
     holderChangePct = Math.log1p(Math.max(holderCurrent, 0)) - Math.log1p(Math.max(holderStart, 0));
   }
   const holderGain = Math.max(0, holderChangePct || 0);
@@ -114,7 +168,14 @@ export function calculateBattlePoints({
   const avgMcap = meanPositive([startMcap, currentMcap], cfg.volume.minMcapDenom);
   const denom = Math.max(avgMcap, cfg.volume.minMcapDenom);
   const turnoverPct = denom > 0 ? eligibleUsd / denom : 0;
-  const volumePoints = saturatingPoints(cfg.volume.weight, cfg.volume.k, Math.max(0, turnoverPct));
+  const rawVolumePoints = saturatingPoints(cfg.volume.weight, cfg.volume.k, Math.max(0, turnoverPct));
+  const concentration = applyVolumeConcentrationCap({
+    rawPoints: rawVolumePoints,
+    eligibleUsd,
+    clusters: eligibleVolume.clusters,
+    weight: cfg.volume.weight,
+    capRatio: cfg.volume.singleClusterCap,
+  });
 
   const mcap = {
     start: startMcap,
@@ -132,16 +193,22 @@ export function calculateBattlePoints({
     eligibleUsd,
     rawUsd,
     cappedUsd,
-    points: roundPoints(Math.min(cfg.volume.weight, Math.max(0, volumePoints))),
+    points: roundPoints(Math.min(cfg.volume.weight, Math.max(0, concentration.points))),
+    rawPoints: roundPoints(Math.min(cfg.volume.weight, Math.max(0, concentration.rawPoints))),
     turnoverPct,
+    clusterPointCap: roundPoints(concentration.clusterPointCap),
+    concentrationDiscountPoints: roundPoints(concentration.concentrationDiscountPoints),
+    clusterContributions: concentration.clusterContributions,
   };
 
   const totalPoints = roundPoints(Math.min(100, mcap.points + holders.points + volume.points));
   const health = dataHealthFrom({
     baseline,
     current,
-    mcapInvalid,
-    missingCurrent,
+    startMcap,
+    startHolders,
+    currentMcap,
+    currentHolders,
     nowMs,
     staleSeconds: cfg.staleSeconds,
   });
