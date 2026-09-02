@@ -3,6 +3,7 @@ import { ethers } from "hardhat";
 
 const FEE = 3000;
 const BPS = 10_000n;
+const CREATOR_FEE_BPS = 8_000n;
 
 async function nowTs() {
   const block = await ethers.provider.getBlock("latest");
@@ -361,5 +362,76 @@ describe("Robinhood Stock pending graduation completion", function () {
     expect(finalState.graduatedLiquidityBnb).to.equal(bounds.liquidityValue);
     expect(finalState.graduatedLiquidityTokens).to.equal(bounds.memeDesired);
     expect(finalState.initialDexPrice).to.equal(0n);
+
+    // RH-S8: generate fees in both pool assets, harvest only fees, and prove the NFT
+    // principal / V3 liquidity are unchanged. The creator gets 80%; protocol gets 20%.
+    const memeSwapIn = finalState.graduatedLiquidityTokens / 10n;
+    expect(memeSwapIn).to.be.greaterThan(0n);
+    await fx.token.connect(fx.buyer).approve(await fx.swapRouter.getAddress(), memeSwapIn);
+    const stockBeforeSwap = await fx.stock.balanceOf(await fx.buyer.getAddress());
+    await fx.swapRouter.connect(fx.buyer).exactInputSingle({
+      tokenIn: await fx.token.getAddress(),
+      tokenOut: await fx.stock.getAddress(),
+      fee: FEE,
+      recipient: await fx.buyer.getAddress(),
+      amountIn: memeSwapIn,
+      amountOutMinimum: 0n,
+      sqrtPriceLimitX96: 0n,
+    });
+    const stockReceived = (await fx.stock.balanceOf(await fx.buyer.getAddress())) - stockBeforeSwap;
+    expect(stockReceived).to.be.greaterThan(1n);
+
+    const stockSwapIn = stockReceived / 2n;
+    await fx.stock.connect(fx.buyer).approve(await fx.swapRouter.getAddress(), stockSwapIn);
+    await fx.swapRouter.connect(fx.buyer).exactInputSingle({
+      tokenIn: await fx.stock.getAddress(),
+      tokenOut: await fx.token.getAddress(),
+      fee: FEE,
+      recipient: await fx.buyer.getAddress(),
+      amountIn: stockSwapIn,
+      amountOutMinimum: 0n,
+      sqrtPriceLimitX96: 0n,
+    });
+
+    const graduatedPool = await ethers.getContractAt("MockUniswapV3Pool", pool);
+    const claimable0 = await graduatedPool.claimable0();
+    const claimable1 = await graduatedPool.claimable1();
+    expect(claimable0).to.be.greaterThan(0n);
+    expect(claimable1).to.be.greaterThan(0n);
+
+    const tokenAddress = (await fx.token.getAddress()).toLowerCase();
+    const token0Contract = poolInfo.token0.toLowerCase() === tokenAddress ? fx.token : fx.stock;
+    const token1Contract = poolInfo.token1.toLowerCase() === tokenAddress ? fx.token : fx.stock;
+    const creatorAddress = await fx.creator.getAddress();
+    const treasuryAddress = await fx.treasury.getAddress();
+
+    const creator0Before = await token0Contract.balanceOf(creatorAddress);
+    const creator1Before = await token1Contract.balanceOf(creatorAddress);
+    const treasury0Before = await token0Contract.balanceOf(treasuryAddress);
+    const treasury1Before = await token1Contract.balanceOf(treasuryAddress);
+    const positionBefore = await fx.positionManager.positions(tokenId);
+    const lockedBefore = await fx.locker.lockedBalance(pool);
+
+    await expect(fx.locker.connect(fx.outsider).harvest(pool)).to.emit(fx.locker, "FeesHarvested");
+
+    const expectedCreator0 = (claimable0 * CREATOR_FEE_BPS) / BPS;
+    const expectedCreator1 = (claimable1 * CREATOR_FEE_BPS) / BPS;
+    const expectedProtocol0 = claimable0 - expectedCreator0;
+    const expectedProtocol1 = claimable1 - expectedCreator1;
+
+    expect((await token0Contract.balanceOf(creatorAddress)) - creator0Before).to.equal(expectedCreator0);
+    expect((await token1Contract.balanceOf(creatorAddress)) - creator1Before).to.equal(expectedCreator1);
+    expect((await token0Contract.balanceOf(treasuryAddress)) - treasury0Before).to.equal(expectedProtocol0);
+    expect((await token1Contract.balanceOf(treasuryAddress)) - treasury1Before).to.equal(expectedProtocol1);
+    expect(await fx.treasury.lpTokenReceived(poolInfo.token0)).to.equal(expectedProtocol0);
+    expect(await fx.treasury.lpTokenReceived(poolInfo.token1)).to.equal(expectedProtocol1);
+
+    expect(await graduatedPool.claimable0()).to.equal(0n);
+    expect(await graduatedPool.claimable1()).to.equal(0n);
+    expect(await fx.positionManager.ownerOf(tokenId)).to.equal(await fx.locker.getAddress());
+    const positionAfter = await fx.positionManager.positions(tokenId);
+    expect(positionAfter.liquidity).to.equal(positionBefore.liquidity);
+    expect(await fx.locker.lockedBalance(pool)).to.equal(lockedBefore);
+    expect(lockedBefore).to.equal(poolInfo.lockedLiquidity);
   });
 });
