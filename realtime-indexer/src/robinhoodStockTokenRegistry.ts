@@ -13,6 +13,7 @@ const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
 
 export type RobinhoodQuoteAssetType = "WRAPPED_NATIVE" | "STOCK_TOKEN" | "UNKNOWN";
 export type RobinhoodRouteKind = "DIRECT_NATIVE" | "STOCK_TWO_HOP" | "UNKNOWN";
+export type RobinhoodStockAcquisitionQuoteKind = "SIMPLE_EXACT_INPUT_SINGLE" | "UNKNOWN";
 
 export type RobinhoodStockTokenRegistryEntry = {
   chainId: number;
@@ -30,6 +31,11 @@ export type RobinhoodStockTokenRegistryEntry = {
   enabledForTrading: boolean;
   minimumQuoteLiquidityUsd: number | null;
   maximumGraduationSwapImpactBps: number | null;
+  acquisitionPoolAddress: string | null;
+  acquisitionQuoterAddress: string | null;
+  acquisitionRouterAddress: string | null;
+  acquisitionFeeTier: number | null;
+  acquisitionQuoteKind: RobinhoodStockAcquisitionQuoteKind;
   marketStatus: string;
   lastVerifiedAt: string | null;
   metadataSource: string;
@@ -94,6 +100,11 @@ function parseOptionalInteger(value: unknown): number | null {
   return parsed != null && Number.isInteger(parsed) ? parsed : null;
 }
 
+function parseAcquisitionQuoteKind(value: unknown): RobinhoodStockAcquisitionQuoteKind {
+  const raw = String(value || "").trim().toUpperCase();
+  return raw === "SIMPLE_EXACT_INPUT_SINGLE" ? "SIMPLE_EXACT_INPUT_SINGLE" : "UNKNOWN";
+}
+
 function registryEnvKey(chainId: number): string {
   if (chainId === 46630) return "ROBINHOOD_STOCK_TOKEN_REGISTRY_46630";
   if (chainId === 4663) return "ROBINHOOD_STOCK_TOKEN_REGISTRY_4663";
@@ -129,6 +140,10 @@ function normalizeRegistryEntry(chainId: number, input: RegistryInput, metadataS
   const underlyingSymbol = String(input.underlyingSymbol || symbol).trim().toUpperCase() || symbol;
   const oracleFeedAddress = normalizeAddress(input.oracleFeedAddress || input.oracleAddress || input.priceFeedAddress);
   const oracleType = String(input.oracleType || "chainlink").trim().toLowerCase() || "chainlink";
+  const acquisitionFeeTier = parseOptionalInteger(input.acquisitionFeeTier ?? input.acquisitionFeePpm);
+  if (acquisitionFeeTier != null && (acquisitionFeeTier <= 0 || acquisitionFeeTier > 1_000_000)) {
+    throw new Error(`${metadataSource}: acquisitionFeeTier is invalid`);
+  }
 
   return {
     chainId,
@@ -146,6 +161,11 @@ function normalizeRegistryEntry(chainId: number, input: RegistryInput, metadataS
     enabledForTrading: parseBoolean(input.enabledForTrading, false),
     minimumQuoteLiquidityUsd: parseOptionalNumber(input.minimumQuoteLiquidityUsd),
     maximumGraduationSwapImpactBps: parseOptionalNumber(input.maximumGraduationSwapImpactBps),
+    acquisitionPoolAddress: normalizeAddress(input.acquisitionPoolAddress),
+    acquisitionQuoterAddress: normalizeAddress(input.acquisitionQuoterAddress),
+    acquisitionRouterAddress: normalizeAddress(input.acquisitionRouterAddress),
+    acquisitionFeeTier,
+    acquisitionQuoteKind: parseAcquisitionQuoteKind(input.acquisitionQuoteKind),
     marketStatus: String(input.marketStatus || "active").trim().toLowerCase() || "active",
     lastVerifiedAt: String(input.lastVerifiedAt || "").trim() || null,
     metadataSource: String(input.metadataSource || metadataSource).trim() || metadataSource,
@@ -315,4 +335,5 @@ export const robinhoodStockRegistryInternals = {
   sameAddress,
   parseRegistryEntries,
   normalizeRegistryEntry,
+  parseAcquisitionQuoteKind,
 };
