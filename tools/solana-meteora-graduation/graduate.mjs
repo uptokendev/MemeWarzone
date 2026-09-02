@@ -382,6 +382,10 @@ async function main() {
   if (BigInt(auth.createArgs.nativeTargetLamports) !== BigInt(auth.oracle.nativeTargetLamports)) {
     fail("authorization target fields disagree");
   }
+  const finalizeRouteProfile = Number(auth.createArgs.finalizeRouteProfile);
+  if (!Number.isInteger(finalizeRouteProfile) || finalizeRouteProfile < 0 || finalizeRouteProfile > 255) {
+    fail("authorization finalizeRouteProfile must be a u8");
+  }
 
   const ed25519Ix = Ed25519Program.createInstructionWithPublicKey({
     publicKey: asPk(auth.authorization.routeSigner, "route signer").toBytes(),
@@ -396,6 +400,7 @@ async function main() {
       deadline: new BN(auth.createArgs.deadline),
       nonce: auth.createArgs.nonce,
       positionNftMint: positionNft.publicKey,
+      finalizeRouteProfile,
     })
     .accountsStrict({
       authority: operator.publicKey,
