@@ -2,6 +2,8 @@
 pragma solidity ^0.8.24;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 interface ITreasuryRouterV3Mock {
     function routeTrade(uint8 profile) external payable;
@@ -16,12 +18,22 @@ contract TreasuryRouterV3ReceiverMock {
     }
 }
 
-/// Minimal Phase1 V3 fee-router surface for schedule-gating tests that still use the shared V2 DEX fixture.
+/// Minimal Phase1 V3 fee-router surface for schedule-gating and Robinhood locker tests.
 contract MockPhase1TreasuryRouter {
+    using SafeERC20 for IERC20;
+
+    mapping(address => uint256) public lpTokenReceived;
+
     receive() external payable {}
     function routeTrade(uint8) external payable {}
     function routeFinalize(uint8) external payable {}
     function route(uint8, uint8) external payable {}
+
+    function routeLpToken(address token, uint256 amount) external {
+        if (amount == 0) return;
+        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        lpTokenReceived[token] += amount;
+    }
 }
 
 contract CommunityRewardsVaultV3Mock {
