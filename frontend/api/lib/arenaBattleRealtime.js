@@ -78,10 +78,12 @@ export function arenaBattleChannelName(battleId) {
 
 function sidePublic(row) {
   if (!row) return null;
+  const pointsReady = finiteNumber(row.battle_points) !== null;
   return {
     side: String(row.side || ""),
     tokenId: String(row.token_id || ""),
     scoringVersion: String(row.scoring_version || "battle_points_v2"),
+    pointsReady,
     baseline: {
       marketCapUsd: finiteNumber(row.start_mcap_usd),
       holders: finiteNumber(row.start_holders),
@@ -112,6 +114,7 @@ function sidePublic(row) {
 }
 
 function leaderFromSides(left, right) {
+  if (left?.pointsReady !== true || right?.pointsReady !== true) return null;
   const leftPoints = finiteNumber(left?.points?.total);
   const rightPoints = finiteNumber(right?.points?.total);
   if (leftPoints === null || rightPoints === null) return null;
@@ -129,7 +132,10 @@ export function buildPublicBattleMetricsSnapshot(battleRow, metricRows = []) {
   if (!right) healthReasons.push("right_metrics_missing");
   if (left && left.current.healthy !== true) healthReasons.push("left_market_data_unhealthy");
   if (right && right.current.healthy !== true) healthReasons.push("right_market_data_unhealthy");
+  if (left && left.pointsReady !== true) healthReasons.push("left_points_pending");
+  if (right && right.pointsReady !== true) healthReasons.push("right_points_pending");
   const healthy = healthReasons.length === 0;
+  const pointsReady = left?.pointsReady === true && right?.pointsReady === true;
   const leftPoints = finiteNumber(left?.points?.total);
   const rightPoints = finiteNumber(right?.points?.total);
   const metricsUpdatedAt = [left?.metricsUpdatedAt, right?.metricsUpdatedAt]
@@ -144,7 +150,7 @@ export function buildPublicBattleMetricsSnapshot(battleRow, metricRows = []) {
     scoringVersion: left?.scoringVersion || right?.scoringVersion || "battle_points_v2",
     settlementMode: "v1_mcap_pct_change",
     leaderSide: leaderFromSides(left, right),
-    pointDifference: leftPoints === null || rightPoints === null ? null : Math.abs(leftPoints - rightPoints),
+    pointDifference: pointsReady && leftPoints !== null && rightPoints !== null ? Math.abs(leftPoints - rightPoints) : null,
     metricsUpdatedAt,
     dataHealth: {
       healthy,
