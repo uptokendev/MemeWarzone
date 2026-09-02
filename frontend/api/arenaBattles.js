@@ -29,6 +29,7 @@ import {
 } from "./lib/arenaMatchQuality.js";
 import { advanceTournamentFromBattle } from "./arenaTournaments.js";
 import { solanaLiveTransition, solanaMatchedLifecyclePatch, solanaMayGoLive } from "./lib/arenaBattleLive.js";
+import { captureLiveBaselines } from "./lib/arenaBattleMetrics.js";
 import { escrowRequired, readOnchainPool } from "./lib/arenaWarPoolLive.js";
 import { isSolanaWarzoneChainId } from "./lib/solanaArenaPoolRead.js";
 import { nativeSymbolFor } from "./lib/chainNative.js";
@@ -514,13 +515,14 @@ function coinMcap(coin) {
 
 async function beginFight(id, patch, chainId) {
   const hours = parseDurationHours(patch.duration_hours ?? patch.offered_duration_hours, LIVE_HOURS);
+  let updated;
   if (isSolanaWarzoneChainId(chainId)) {
     const onchain = await readOnchainPool(chainId, id);
     const transition = solanaLiveTransition({
       arenaLive: onchain.live === true,
       bothPaid: onchain.bothPaid === true,
     });
-    return updateBattle(id, {
+    updated = await updateBattle(id, {
       ...patch,
       duration_hours: hours,
       offered_duration_hours: hours,
@@ -532,16 +534,25 @@ async function beginFight(id, patch, chainId) {
           ? plusHours(DEPOSIT_WINDOW_HOURS)
           : null,
     });
+  } else {
+    const requireEscrow = escrowRequired(chainId);
+    updated = await updateBattle(id, {
+      ...patch,
+      duration_hours: hours,
+      offered_duration_hours: hours,
+      state: requireEscrow ? "matched" : "live",
+      started_at: requireEscrow ? null : nowIso(),
+      ends_at: requireEscrow ? plusHours(DEPOSIT_WINDOW_HOURS) : plusHours(hours),
+    });
   }
-  const requireEscrow = escrowRequired(chainId);
-  return updateBattle(id, {
-    ...patch,
-    duration_hours: hours,
-    offered_duration_hours: hours,
-    state: requireEscrow ? "matched" : "live",
-    started_at: requireEscrow ? null : nowIso(),
-    ends_at: requireEscrow ? plusHours(DEPOSIT_WINDOW_HOURS) : plusHours(hours),
-  });
+  if (updated?.state === "live") {
+    try {
+      await captureLiveBaselines(await findBattle(id));
+    } catch (error) {
+      console.warn("[api/arenaBattles] baseline capture failed", error?.message || error);
+    }
+  }
+  return updated;
 }
 
 async function goLiveFromMatched(row) {
@@ -553,7 +564,7 @@ async function goLiveFromMatched(row) {
   const leftNow = await currentMcap(chainId, row.challenger_token);
   const rightNow = await currentMcap(chainId, row.defender_token);
   const hours = parseDurationHours(row.duration_hours ?? row.offered_duration_hours, LIVE_HOURS);
-  return updateBattle(row.id, {
+  const updated = await updateBattle(row.id, {
     state: "live",
     duration_hours: hours,
     started_at: nowIso(),
@@ -561,6 +572,12 @@ async function goLiveFromMatched(row) {
     challenger_start_mcap_usd: row.challenger_start_mcap_usd ?? leftNow,
     defender_start_mcap_usd: row.defender_start_mcap_usd ?? rightNow,
   });
+  try {
+    await captureLiveBaselines(await findBattle(row.id));
+  } catch (error) {
+    console.warn("[api/arenaBattles] baseline capture failed", error?.message || error);
+  }
+  return updated;
 }
 
 export async function promoteMatchedIfFunded(row) {
@@ -1184,7 +1201,15 @@ async function handleTransition(req, res, battleId) {
     const settled = await settleLive({ ...row, ends_at: nowIso() });
     return json(res, 200, { ok: true, battle: settled });
   }
-  return json(res, 200, { ok: true, battle: await updateBattle(battleId, patch) });
+  const updated = await updateBattle(battleId, patch);
+  if (nextState === "live") {
+    try {
+      await captureLiveBaselines(await findBattle(battleId));
+    } catch (error) {
+      console.warn("[api/arenaBattles] baseline capture failed", error?.message || error);
+    }
+  }
+  return json(res, 200, { ok: true, battle: updated });
 }
 
 export default async function handler(req, res) {

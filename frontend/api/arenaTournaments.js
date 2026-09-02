@@ -13,6 +13,7 @@ import {
   attachInsertedBattleId,
   planTournamentBracketReconcile,
 } from "./lib/arenaTournamentBracketReconcile.js";
+import { captureLiveBaselines } from "./lib/arenaBattleMetrics.js";
 
 const NATIVE_COIN_SELECT = `c.name, c.symbol, c.token_address, c.campaign_address, c.creator_address,
        c.created_at, c.graduated_at_chain,
@@ -379,6 +380,18 @@ async function insertTournamentBattle({ chainId, tournamentId, left, right, nati
       leftSnap.ownerWallet || null,
     ],
   );
+  try {
+    await captureLiveBaselines({
+      id,
+      chain_id: chainId,
+      state: "live",
+      challenger_token: leftSnap.tokenAddress,
+      defender_token: rightSnap.tokenAddress,
+      started_at: new Date().toISOString(),
+    }, { query: (text, params) => db.query(text, params) });
+  } catch (error) {
+    console.warn("[api/arenaTournaments] baseline capture failed", error?.message || error);
+  }
   return id;
 }
 
