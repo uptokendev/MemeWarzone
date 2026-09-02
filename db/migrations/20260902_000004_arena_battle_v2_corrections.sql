@@ -23,7 +23,9 @@ DROP POLICY IF EXISTS arena_battle_volume_audit_public_read ON public.arena_batt
 
 -- Preserve every existing market_trades_v column in its original order and append
 -- normalized quote/valuation evidence. Stock Token quote amounts are never copied
--- into nativeAmountRaw.
+-- into nativeAmountRaw. Raw quote amounts use text because dex_trades.quote_amount_raw
+-- is the canonical precision-preserving representation while curve_trades historically
+-- stores bnb_amount_raw as numeric on clean replay.
 CREATE OR REPLACE VIEW public.market_trades_v
 WITH (security_invoker=true)
 AS
@@ -45,7 +47,7 @@ SELECT
   t.block_number AS "blockNumber",
   t.block_time AS "blockTime",
   'confirmed'::text AS status,
-  t.bnb_amount_raw AS "quoteAmountRaw",
+  t.bnb_amount_raw::text AS "quoteAmountRaw",
   'WRAPPED_NATIVE'::text AS "quoteAssetType",
   NULL::text AS "quoteTokenAddress",
   NULL::numeric AS "volumeUsd",
@@ -80,7 +82,7 @@ SELECT
   t.block_number,
   t.block_time,
   t.status,
-  COALESCE(t.quote_amount_raw,t.native_amount_raw),
+  COALESCE(t.quote_amount_raw,t.native_amount_raw)::text,
   COALESCE(t.quote_asset_type,'WRAPPED_NATIVE')::text,
   t.quote_token_address,
   t.volume_usd,
