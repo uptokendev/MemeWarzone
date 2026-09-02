@@ -11,11 +11,13 @@ on:
       - "realtime-indexer/src/robinhoodPairSemantics.ts"
       - "realtime-indexer/src/robinhoodMarketRoutes.ts"
       - "realtime-indexer/src/robinhoodGraduationQuote.ts"
+      - "realtime-indexer/src/robinhoodNativeUsdOracle.ts"
       - "realtime-indexer/src/robinhoodStockTokenRegistry.ts"
       - "realtime-indexer/src/robinhoodStockAcquisitionQuote.ts"
       - "realtime-indexer/src/tests/robinhoodPairSemantics.test.ts"
       - "realtime-indexer/src/tests/robinhoodMarketRoutes.test.ts"
       - "realtime-indexer/src/tests/robinhoodGraduationQuote.test.ts"
+      - "realtime-indexer/src/tests/robinhoodNativeUsdOracle.test.ts"
       - "realtime-indexer/src/tests/robinhoodStockTokenRegistry.test.ts"
       - "realtime-indexer/src/tests/robinhoodStockAcquisitionQuote.test.ts"
       - "realtime-indexer/src/tests/robinhoodV3PoolIndexer.test.ts"
@@ -33,11 +35,13 @@ on:
       - "realtime-indexer/src/robinhoodPairSemantics.ts"
       - "realtime-indexer/src/robinhoodMarketRoutes.ts"
       - "realtime-indexer/src/robinhoodGraduationQuote.ts"
+      - "realtime-indexer/src/robinhoodNativeUsdOracle.ts"
       - "realtime-indexer/src/robinhoodStockTokenRegistry.ts"
       - "realtime-indexer/src/robinhoodStockAcquisitionQuote.ts"
       - "realtime-indexer/src/tests/robinhoodPairSemantics.test.ts"
       - "realtime-indexer/src/tests/robinhoodMarketRoutes.test.ts"
       - "realtime-indexer/src/tests/robinhoodGraduationQuote.test.ts"
+      - "realtime-indexer/src/tests/robinhoodNativeUsdOracle.test.ts"
       - "realtime-indexer/src/tests/robinhoodStockTokenRegistry.test.ts"
       - "realtime-indexer/src/tests/robinhoodStockAcquisitionQuote.test.ts"
       - "realtime-indexer/src/tests/robinhoodV3PoolIndexer.test.ts"
@@ -97,8 +101,8 @@ jobs:
       - name: Prove tournament support migration is empty-DB replay safe
         run: node --test frontend/scripts/prepare-robinhood-local-db.test.mjs
 
-      - name: Prove Robinhood pair, route, graduation, registry, and acquisition-quote semantics
-        run: npx --prefix realtime-indexer tsx --test realtime-indexer/src/tests/robinhoodPairSemantics.test.ts realtime-indexer/src/tests/robinhoodMarketRoutes.test.ts realtime-indexer/src/tests/robinhoodGraduationQuote.test.ts realtime-indexer/src/tests/robinhoodStockTokenRegistry.test.ts realtime-indexer/src/tests/robinhoodStockAcquisitionQuote.test.ts realtime-indexer/src/tests/robinhoodV3PoolIndexer.test.ts
+      - name: Prove Robinhood pair, route, graduation, oracle, registry, and acquisition-quote semantics
+        run: npx --prefix realtime-indexer tsx --test realtime-indexer/src/tests/robinhoodPairSemantics.test.ts realtime-indexer/src/tests/robinhoodMarketRoutes.test.ts realtime-indexer/src/tests/robinhoodGraduationQuote.test.ts realtime-indexer/src/tests/robinhoodNativeUsdOracle.test.ts realtime-indexer/src/tests/robinhoodStockTokenRegistry.test.ts realtime-indexer/src/tests/robinhoodStockAcquisitionQuote.test.ts realtime-indexer/src/tests/robinhoodV3PoolIndexer.test.ts
 
       - name: Replay all committed migrations into a fresh Robinhood database
         run: node frontend/scripts/prepare-robinhood-local-db.mjs
