@@ -29,6 +29,7 @@ interface IRiskRegistryView {
 
 interface ILaunchFactoryGraduationNotify {
     function notifyCampaignGraduated(address creator, address lpToken) external;
+    function notifyCampaignGraduatedQuote(address creator, address lpToken, address quoteToken) external;
 }
 
 interface IGraduationOracle {
@@ -37,6 +38,37 @@ interface IGraduationOracle {
 
 interface ILaunchProtectionConfigSource {
     function launchProtectionConfig() external view returns (uint256 blocks_, uint256 maxBuyWei, uint256 maxWalletWei);
+}
+
+interface IRobinhoodStockGraduationAdapter {
+    struct GraduationRequest {
+        address campaignToken;
+        address stockToken;
+        uint256 memeAmountDesired;
+        uint256 minimumMemeUsed;
+        uint256 minimumStockOut;
+        uint256 finalCurvePriceNativeWad;
+        uint256 deadline;
+    }
+
+    struct GraduationResult {
+        address canonicalPool;
+        uint256 positionTokenId;
+        uint256 nativeLiquidityUsed;
+        uint256 stockTokenAcquired;
+        uint256 stockTokenUsed;
+        uint256 stockTokenResidual;
+        uint256 memeTokenUsed;
+        uint256 memeTokenResidual;
+        uint256 finalCurveMemeUsdWad;
+        uint256 initialDexMemeUsdWad;
+        uint256 priceDeviationBps;
+    }
+
+    function graduateStockLiquidity(GraduationRequest calldata request)
+        external
+        payable
+        returns (GraduationResult memory result);
 }
 
 contract LaunchCampaign is ReentrancyGuard, Ownable {
@@ -100,6 +132,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     uint256 private constant WAD = 1e18;
     uint256 private constant MAX_BPS = 10_000;
     uint256 private constant GRADUATION_PRICE_TOLERANCE_BPS = 50;
+    uint256 private constant STOCK_MIN_MEME_USAGE_BPS = 9_700;
     uint8 private constant ROUTE_KIND_TRADE = 0;
     uint8 private constant ROUTE_KIND_FINALIZE = 1;
     uint8 private constant ROUTE_PROFILE_STANDARD_LINKED = 0;
@@ -139,6 +172,18 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     uint256 public finalizedAt;
     GraduationState private graduation;
 
+    bool public stockGraduationEnabled;
+    bool public graduationPending;
+    address public graduationQuoteToken;
+    address public stockGraduationAdapter;
+    uint256 public pendingGraduationNativeTarget;
+    uint256 public stockPositionTokenId;
+    uint256 public stockTokenAcquired;
+    uint256 public stockTokenUsed;
+    uint256 public finalCurveMemeUsdWad;
+    uint256 public initialDexMemeUsdWad;
+    uint256 public stockPriceDeviationBps;
+
     address public creator;
     address public riskRegistry;
     uint256 public creatorBuyLockUntil;
@@ -175,6 +220,25 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     event NativeClaimed(address indexed beneficiary, uint256 amount);
     event CampaignPauseStateUpdated(bool paused, bool buyPaused, bool sellPaused, bool graduationPaused);
     event RequireAuthorizedTradingUpdated(bool required);
+    event StockGraduationConfigured(address indexed quoteToken, address indexed adapter);
+    event StockGraduationPending(
+        address indexed caller,
+        address indexed quoteToken,
+        uint256 graduationBalance,
+        uint256 nativeTarget,
+        uint256 finalCurvePrice
+    );
+    event StockGraduationCompleted(
+        address indexed caller,
+        address indexed quoteToken,
+        address indexed pool,
+        uint256 positionTokenId,
+        uint256 stockTokenAcquired,
+        uint256 stockTokenUsed,
+        uint256 finalCurveMemeUsdWad,
+        uint256 initialDexMemeUsdWad,
+        uint256 priceDeviationBps
+    );
     event CampaignFinalized(
         address indexed caller,
         address indexed pair,
@@ -247,6 +311,11 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     error Slippage();
     error InsufficientValue();
     error FeeRoutingFailed();
+    error GraduationPending();
+    error StockGraduationNotPending();
+    error StockGraduationConfigLocked();
+    error StockGraduationConfigInvalid();
+    error StockResidualUnsupported();
 
     bool private _initialized;
 
@@ -336,7 +405,20 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         emit RequireAuthorizedTradingUpdated(required);
     }
 
+    function configureStockGraduation(address quoteToken, address adapter) external onlyFactory {
+        if (sold != 0 || netRaisedWei != 0 || launched || graduationPending || stockGraduationEnabled) revert StockGraduationConfigLocked();
+        if (
+            quoteToken == address(0) || adapter == address(0) || quoteToken == address(token) ||
+            quoteToken.code.length == 0 || adapter.code.length == 0
+        ) revert StockGraduationConfigInvalid();
+        stockGraduationEnabled = true;
+        graduationQuoteToken = quoteToken;
+        stockGraduationAdapter = adapter;
+        emit StockGraduationConfigured(quoteToken, adapter);
+    }
+
     function quoteBuyExactTokens(uint256 amountOut) public view returns (uint256) {
+        if (graduationPending) revert GraduationPending();
         if (amountOut == 0) revert ZeroAmount();
         if (sold + amountOut > curveSupply) revert SoldOut();
         uint256 cost = _quoteBuyNoFee(amountOut);
@@ -344,7 +426,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     }
 
     function quoteBuyExactBnb(uint256 totalInWei) public view returns (uint256 tokensOut, uint256 totalCostWei, uint256 feeWei) {
-        if (totalInWei == 0 || launched) return (0, 0, 0);
+        if (totalInWei == 0 || launched || graduationPending) return (0, 0, 0);
         uint256 remaining = curveSupply - sold;
         if (remaining == 0) return (0, 0, 0);
 
@@ -367,6 +449,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     }
 
     function quoteSellExactTokens(uint256 amountIn) public view returns (uint256) {
+        if (graduationPending) revert GraduationPending();
         if (amountIn == 0) revert ZeroAmount();
         if (amountIn > sold) revert ExceedsSold();
         uint256 payout = _quoteSellNoFee(amountIn);
@@ -491,11 +574,138 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
 
     function graduateIfEligible(uint256 minTokens, uint256 minBnb) external nonReentrant returns (uint256 usedTokens, uint256 usedBnb) {
         uint256 nativeTarget = graduationNativeTarget();
+        if (stockGraduationEnabled) {
+            if (graduationPending) revert GraduationPending();
+            if (netRaisedWei < nativeTarget) revert ThresholdNotMet();
+            _markStockGraduationPending(msg.sender, nativeTarget);
+            return (0, 0);
+        }
         return _finalizeWithTarget(minTokens, minBnb, msg.sender, nativeTarget);
+    }
+
+    function executePendingStockGraduation(uint256 minimumMemeUsed, uint256 minimumStockOut)
+        external
+        nonReentrant
+        returns (uint256 usedTokens, uint256 usedNative)
+    {
+        if (!stockGraduationEnabled || !graduationPending) revert StockGraduationNotPending();
+        if (paused) revert CampaignPaused();
+        if (graduationPaused) revert GraduationPaused();
+        if (launched) revert Finalized();
+        if (minimumStockOut == 0) revert Slippage();
+
+        GraduationState storage g = graduation;
+        uint256 protocolFee = (g.graduationBalance * protocolFeeBps) / MAX_BPS;
+        if (protocolFee > 0 && feeRecipient != address(0)) {
+            _routeFeeOrSendLegacy(protocolFee, ROUTE_KIND_FINALIZE, g.graduationBalance);
+        }
+
+        uint256 remainingAfterFee = g.graduationBalance - protocolFee;
+        uint256 liquidityValue = (remainingAfterFee * liquidityBps) / MAX_BPS;
+        uint256 lpTokensDesired = Math.mulDiv(liquidityValue, WAD, g.finalCurvePrice);
+        if (lpTokensDesired == 0) revert LpTokensZero();
+        if (lpTokensDesired > liquiditySupply) {
+            uint256 desiredLiquidityTokens = lpTokensDesired;
+            uint256 desiredLiquidityValue = liquidityValue;
+            lpTokensDesired = liquiditySupply;
+            liquidityValue = Math.mulDiv(lpTokensDesired, g.finalCurvePrice, WAD);
+            if (liquidityValue == 0) revert LiquidityZero();
+            emit GraduationLiquidityCapped(desiredLiquidityTokens, lpTokensDesired, desiredLiquidityValue, liquidityValue);
+        }
+
+        uint256 protocolMinimumMemeUsed = Math.mulDiv(lpTokensDesired, STOCK_MIN_MEME_USAGE_BPS, MAX_BPS);
+        uint256 effectiveMinimumMemeUsed = minimumMemeUsed > protocolMinimumMemeUsed
+            ? minimumMemeUsed
+            : protocolMinimumMemeUsed;
+        if (effectiveMinimumMemeUsed > lpTokensDesired) revert Slippage();
+
+        token.enableTrading();
+        address adapter = stockGraduationAdapter;
+        tokenInterface.forceApprove(adapter, lpTokensDesired);
+        IRobinhoodStockGraduationAdapter.GraduationResult memory result =
+            IRobinhoodStockGraduationAdapter(adapter).graduateStockLiquidity{value: liquidityValue}(
+                IRobinhoodStockGraduationAdapter.GraduationRequest({
+                    campaignToken: address(token),
+                    stockToken: graduationQuoteToken,
+                    memeAmountDesired: lpTokensDesired,
+                    minimumMemeUsed: effectiveMinimumMemeUsed,
+                    minimumStockOut: minimumStockOut,
+                    finalCurvePriceNativeWad: g.finalCurvePrice,
+                    deadline: block.timestamp + 30 minutes
+                })
+            );
+        tokenInterface.forceApprove(adapter, 0);
+
+        if (
+            result.canonicalPool == address(0) || result.positionTokenId == 0 ||
+            result.memeTokenUsed == 0 || result.nativeLiquidityUsed != liquidityValue
+        ) revert LiquidityZero();
+        if (result.stockTokenResidual != 0) revert StockResidualUnsupported();
+        if (result.memeTokenUsed < effectiveMinimumMemeUsed || result.memeTokenUsed > lpTokensDesired) revert Slippage();
+
+        usedTokens = result.memeTokenUsed;
+        usedNative = result.nativeLiquidityUsed;
+        g.dexPair = result.canonicalPool;
+        g.graduatedLiquidityTokens = usedTokens;
+        g.graduatedLiquidityBnb = usedNative;
+        g.graduatedLiquidityLp = 0;
+        g.initialDexPrice = 0;
+
+        stockPositionTokenId = result.positionTokenId;
+        stockTokenAcquired = result.stockTokenAcquired;
+        stockTokenUsed = result.stockTokenUsed;
+        finalCurveMemeUsdWad = result.finalCurveMemeUsdWad;
+        initialDexMemeUsdWad = result.initialDexMemeUsdWad;
+        stockPriceDeviationBps = result.priceDeviationBps;
+
+        g.burnedUnusedLpTokens = liquiditySupply - usedTokens;
+        if (g.burnedUnusedLpTokens > 0) token.burn(address(this), g.burnedUnusedLpTokens);
+        g.burnedUnsoldTokens = curveSupply - sold;
+        if (g.burnedUnsoldTokens > 0) token.burn(address(this), g.burnedUnsoldTokens);
+        if (creatorReserve > 0) tokenInterface.safeTransfer(owner(), creatorReserve);
+        uint256 creatorPayout = remainingAfterFee > usedNative ? remainingAfterFee - usedNative : 0;
+        if (creatorPayout > 0) _sendNative(owner(), creatorPayout);
+        g.postBurnTotalSupply = token.totalSupply();
+
+        launched = true;
+        graduationPending = false;
+        finalizedAt = block.timestamp;
+
+        if (factory != address(0)) {
+            ILaunchFactoryGraduationNotify(factory).notifyCampaignGraduatedQuote(creator, g.dexPair, graduationQuoteToken);
+        }
+        emit CampaignFinalized(
+            msg.sender,
+            g.dexPair,
+            g.graduationBalance,
+            g.graduationOvershoot,
+            usedTokens,
+            usedNative,
+            0,
+            protocolFee,
+            creatorPayout,
+            g.burnedUnsoldTokens,
+            g.burnedUnusedLpTokens,
+            g.finalCurvePrice,
+            0,
+            g.postBurnTotalSupply
+        );
+        emit StockGraduationCompleted(
+            msg.sender,
+            graduationQuoteToken,
+            g.dexPair,
+            result.positionTokenId,
+            result.stockTokenAcquired,
+            result.stockTokenUsed,
+            result.finalCurveMemeUsdWad,
+            result.initialDexMemeUsdWad,
+            result.priceDeviationBps
+        );
     }
 
     function _buyExactTokens(address buyer, uint256 amountOut, uint256 maxCost, bool useAuthorizedRoute, uint8 routeProfile) internal returns (uint256 cost) {
         if (launched) revert Finalized();
+        if (graduationPending) revert GraduationPending();
         if (amountOut == 0) revert ZeroAmount();
         if (sold + amountOut > curveSupply) revert SoldOut();
         uint256 costNoFee = _quoteBuyNoFee(amountOut);
@@ -517,6 +727,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
 
     function _buyExactBnb(address buyer, uint256 minTokensOut, bool useAuthorizedRoute, uint8 routeProfile) internal returns (uint256 tokensOut, uint256 totalSpent) {
         if (launched) revert Finalized();
+        if (graduationPending) revert GraduationPending();
         (tokensOut, totalSpent, ) = quoteBuyExactBnb(msg.value);
         if (tokensOut == 0) revert ZeroAmount();
         if (tokensOut < minTokensOut) revert Slippage();
@@ -539,6 +750,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
 
     function _sellExactTokens(address seller, uint256 amountIn, uint256 minPayout, bool useAuthorizedRoute, uint8 routeProfile) internal returns (uint256 payout) {
         if (launched) revert Finalized();
+        if (graduationPending) revert GraduationPending();
         _beforeSell(seller);
         if (amountIn == 0) revert ZeroAmount();
         if (amountIn > sold) revert ExceedsSold();
@@ -574,6 +786,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     function _beforeBuy(address buyer, uint256 costNoFee) internal {
         if (paused) revert CampaignPaused();
         if (buyPaused) revert BuysPaused();
+        if (graduationPending) revert GraduationPending();
         _requireTradingOpen();
         _activateLaunchProtectionIfNeeded();
         _assertWalletCanTrade(buyer);
@@ -595,6 +808,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     function _beforeSell(address seller) internal view {
         if (paused) revert CampaignPaused();
         if (sellPaused) revert SellsPaused();
+        if (graduationPending) revert GraduationPending();
         _requireTradingOpen();
         _assertWalletCanTrade(seller);
     }
@@ -640,14 +854,31 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
 
     function _autoFinalizeIfEligible(address caller) internal {
         try graduationOracle.nativeTargetForUsd(graduationTarget) returns (uint256 nativeTarget) {
-            if (netRaisedWei >= nativeTarget) _finalizeWithTarget(0, 0, caller, nativeTarget);
+            if (netRaisedWei >= nativeTarget) {
+                if (stockGraduationEnabled) _markStockGraduationPending(caller, nativeTarget);
+                else _finalizeWithTarget(0, 0, caller, nativeTarget);
+            }
         } catch {}
+    }
+
+    function _markStockGraduationPending(address caller, uint256 nativeTarget) internal {
+        if (graduationPending) return;
+        if (!stockGraduationEnabled) revert StockGraduationConfigInvalid();
+        if (netRaisedWei < nativeTarget) revert ThresholdNotMet();
+        GraduationState storage g = graduation;
+        g.graduationBalance = netRaisedWei;
+        g.graduationOvershoot = g.graduationBalance > nativeTarget ? g.graduationBalance - nativeTarget : 0;
+        g.finalCurvePrice = _currentPrice();
+        pendingGraduationNativeTarget = nativeTarget;
+        graduationPending = true;
+        emit StockGraduationPending(caller, graduationQuoteToken, g.graduationBalance, nativeTarget, g.finalCurvePrice);
     }
 
     function _finalizeWithTarget(uint256 minTokens, uint256 minBnb, address caller, uint256 nativeTarget) internal returns (uint256 usedTokens, uint256 usedBnb) {
         if (paused) revert CampaignPaused();
         if (graduationPaused) revert GraduationPaused();
         if (launched) revert Finalized();
+        if (graduationPending) revert GraduationPending();
         if (netRaisedWei < nativeTarget) revert ThresholdNotMet();
         launched = true;
         finalizedAt = block.timestamp;
