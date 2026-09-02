@@ -20,6 +20,11 @@ function finiteNumber(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function positiveNumber(value) {
+  const n = finiteNumber(value);
+  return n !== null && n > 0 ? n : null;
+}
+
 function nativeDecimals(chainId) {
   return isSolanaChainId(chainId) ? 9 : 18;
 }
@@ -39,18 +44,21 @@ export function nativeAmountToUsd(chainId, nativeAmount, nativeUsd) {
 }
 
 export function nativeRawToUsd(chainId, raw, nativeUsd) {
-  const rawN = finiteNumber(raw);
+  if (raw === null || raw === undefined || raw === "") return null;
+  const rawN = Number(String(raw));
   const px = finiteNumber(nativeUsd?.price ?? nativeUsd);
-  if (rawN === null || !(px > 0)) return null;
+  if (!Number.isFinite(rawN) || !(px > 0)) return null;
   return (rawN / 10 ** nativeDecimals(chainId)) * px;
 }
 
-function emptySnapshot(chainId, tokenAddress, reason) {
+function emptySnapshot(chainId, tokenAddress, reason, identity = null) {
   return {
     chainId: Number(chainId),
     tokenAddress: tokenAddress || null,
-    campaignAddress: null,
-    origin: "none",
+    campaignAddress: identity?.campaignAddress || null,
+    origin: identity?.origin || "none",
+    creatorAddress: identity?.creatorAddress || null,
+    feeRecipientAddress: identity?.feeRecipientAddress || null,
     marketCapUsd: null,
     holders: null,
     liquidityUsd: null,
@@ -60,6 +68,16 @@ function emptySnapshot(chainId, tokenAddress, reason) {
     healthy: false,
     dataLagSeconds: null,
     reason,
+    reasons: [reason],
+    quoteAssetType: null,
+    quoteTokenAddress: null,
+    nativeUsdPrice: null,
+    fxSource: "none",
+    componentHealth: {
+      marketCap: false,
+      holders: false,
+      liquidity: false,
+    },
   };
 }
 
@@ -92,10 +110,11 @@ async function lookupIdentity(query, chainId, tokenIdentity) {
       tokenAddress: ident(row.token_address || row.campaign_address),
       creatorAddress: ident(row.creator_address),
       feeRecipientAddress: ident(row.fee_recipient_address),
+      importScan: null,
     };
   }
   const imported = await query(
-    `select chain_id, token_address, owner_wallet
+    `select chain_id, token_address, owner_wallet, scan_json
        from public.arena_token_imports
       where chain_id = $1 and lower(token_address) = lower($2)
       limit 1`,
@@ -110,6 +129,7 @@ async function lookupIdentity(query, chainId, tokenIdentity) {
       tokenAddress: ident(row.token_address),
       creatorAddress: ident(row.owner_wallet),
       feeRecipientAddress: null,
+      importScan: row.scan_json && typeof row.scan_json === "object" ? row.scan_json : null,
     };
   }
   return {
@@ -119,13 +139,17 @@ async function lookupIdentity(query, chainId, tokenIdentity) {
     tokenAddress: normalized,
     creatorAddress: null,
     feeRecipientAddress: null,
+    importScan: null,
   };
 }
 
 async function readMarketStats(query, chainId, campaignAddress, tokenAddress) {
   if (campaignAddress) {
     const byCampaign = await query(
-      `select market_cap_bnb, liquidity_bnb, holders, volume_24h_bnb, updated_at, data_lag_seconds
+      `select market_cap_usd, liquidity_usd, volume_24h_usd,
+              market_cap_bnb, liquidity_bnb, holders, volume_24h_bnb,
+              quote_asset_type, quote_token_address,
+              updated_at, data_lag_seconds
          from public.market_stats
         where chain_id = $1 and campaign_address = $2
         limit 1`,
@@ -133,9 +157,16 @@ async function readMarketStats(query, chainId, campaignAddress, tokenAddress) {
     );
     if (byCampaign.rows[0]) return byCampaign.rows[0];
   }
+
+  // Compatibility for MemeWarzone-native tokens whose caller supplies token
+  // address rather than campaign address. Imported tokens deliberately do not
+  // masquerade as campaigns here.
   if (tokenAddress) {
     const byToken = await query(
-      `select ms.market_cap_bnb, ms.liquidity_bnb, ms.holders, ms.volume_24h_bnb, ms.updated_at, ms.data_lag_seconds
+      `select ms.market_cap_usd, ms.liquidity_usd, ms.volume_24h_usd,
+              ms.market_cap_bnb, ms.liquidity_bnb, ms.holders, ms.volume_24h_bnb,
+              ms.quote_asset_type, ms.quote_token_address,
+              ms.updated_at, ms.data_lag_seconds
          from public.market_stats ms
          join public.campaigns c
            on c.chain_id = ms.chain_id and c.campaign_address = ms.campaign_address
@@ -181,24 +212,28 @@ async function readHolderCount(query, chainId, tokenAddress, campaignAddress) {
   }
 }
 
-async function readPoolLiquidity(query, chainId, campaignAddress, nativeUsd) {
+async function readNativePoolLiquidity(query, chainId, campaignAddress, nativeUsd) {
   if (!campaignAddress) return null;
   try {
     const result = await query(
       `select reserve_native_raw
          from public.dex_pools
         where chain_id = $1 and campaign_address = $2
+          and coalesce(quote_asset_type,'WRAPPED_NATIVE') = 'WRAPPED_NATIVE'
         order by updated_at desc nulls last
         limit 1`,
       [chainId, campaignAddress],
     );
-    const raw = result.rows[0]?.reserve_native_raw;
-    return nativeRawToUsd(chainId, raw, nativeUsd);
+    return nativeRawToUsd(chainId, result.rows[0]?.reserve_native_raw, nativeUsd);
   } catch {
     return null;
   }
 }
 
+/**
+ * Chain adapters normalize into this contract. Scoring code must never infer
+ * that a Stock Token quote is native ETH/BNB/SOL.
+ */
 export async function getArenaMarketSnapshot(chainId, tokenIdentity, deps = {}) {
   const query = deps.query || defaultQuery;
   const nowMs = deps.nowMs || Date.now();
@@ -206,34 +241,51 @@ export async function getArenaMarketSnapshot(chainId, tokenIdentity, deps = {}) 
   const idNum = Number(chainId);
   const identity = await lookupIdentity(query, idNum, tokenIdentity);
   if (!identity?.tokenAddress && !identity?.campaignAddress) {
-    return emptySnapshot(idNum, ident(tokenIdentity), "missing");
+    return emptySnapshot(idNum, ident(tokenIdentity), "market_identity_missing", identity);
   }
 
-  const nativeUsd = await resolveNativeUsdPrice(idNum, deps.resolveNativeUsd);
-  const px = finiteNumber(nativeUsd?.price ?? nativeUsd) || 0;
-  const stats = await readMarketStats(query, idNum, identity.campaignAddress, identity.tokenAddress);
-  const tokenStats = stats ? null : await readTokenStats(query, idNum, identity.campaignAddress);
+  const stats = await readMarketStats(query, idNum, identity.campaignAddress, identity.origin === "native" ? identity.tokenAddress : null);
+  if (!stats && identity.origin === "import") {
+    // Import scanning proves token identity/safety metadata only; it is not an
+    // authoritative market-data oracle. External/import market adapters can feed
+    // normalized stats later without a second scoring implementation.
+    return emptySnapshot(idNum, identity.tokenAddress, "import_market_data_missing", identity);
+  }
 
+  const quoteAssetType = String(stats?.quote_asset_type || "WRAPPED_NATIVE").toUpperCase();
+  const quoteTokenAddress = ident(stats?.quote_token_address) || null;
+  const stockQuoted = quoteAssetType === "STOCK_TOKEN";
+
+  let nativeUsd = null;
+  let px = 0;
+  if (!stockQuoted) {
+    nativeUsd = await resolveNativeUsdPrice(idNum, deps.resolveNativeUsd);
+    px = finiteNumber(nativeUsd?.price ?? nativeUsd) || 0;
+  }
+
+  const tokenStats = stats || stockQuoted ? null : await readTokenStats(query, idNum, identity.campaignAddress);
   let dataSource = "none";
-  let marketCapUsd = null;
-  let liquidityUsd = null;
-  let volume24hUsd = null;
+  let marketCapUsd = positiveNumber(stats?.market_cap_usd);
+  let liquidityUsd = positiveNumber(stats?.liquidity_usd);
+  let volume24hUsd = finiteNumber(stats?.volume_24h_usd);
   let holders = stats ? finiteNumber(stats.holders) : null;
   let updatedAt = stats?.updated_at || tokenStats?.updated_at || null;
   let dataLagSeconds = finiteNumber(stats?.data_lag_seconds);
 
-  if (stats) {
-    dataSource = "market_stats";
-    if (px > 0) {
-      marketCapUsd = nativeAmountToUsd(idNum, stats.market_cap_bnb, nativeUsd);
-      liquidityUsd = nativeAmountToUsd(idNum, stats.liquidity_bnb, nativeUsd);
-      volume24hUsd = nativeAmountToUsd(idNum, stats.volume_24h_bnb, nativeUsd);
-    }
-  } else if (tokenStats) {
-    dataSource = "token_stats+fx";
-    if (px > 0) {
+  if (marketCapUsd !== null || liquidityUsd !== null || volume24hUsd !== null) {
+    dataSource = stockQuoted ? "normalized_stock_market_stats" : "normalized_market_stats";
+  }
+
+  if (!stockQuoted && px > 0) {
+    if (marketCapUsd === null && stats) marketCapUsd = nativeAmountToUsd(idNum, stats.market_cap_bnb, nativeUsd);
+    if (liquidityUsd === null && stats) liquidityUsd = nativeAmountToUsd(idNum, stats.liquidity_bnb, nativeUsd);
+    if (volume24hUsd === null && stats) volume24hUsd = nativeAmountToUsd(idNum, stats.volume_24h_bnb, nativeUsd);
+    if (stats && dataSource === "none") dataSource = "legacy_native_market_stats+fx";
+
+    if (!stats && tokenStats) {
       marketCapUsd = nativeAmountToUsd(idNum, tokenStats.marketcap_bnb, nativeUsd);
       volume24hUsd = nativeAmountToUsd(idNum, tokenStats.vol_24h_bnb, nativeUsd);
+      dataSource = "legacy_token_stats+fx";
     }
   }
 
@@ -244,20 +296,24 @@ export async function getArenaMarketSnapshot(chainId, tokenIdentity, deps = {}) 
       if (dataSource === "none") dataSource = "token_holder_balances";
     }
   }
-  if (liquidityUsd === null) {
-    liquidityUsd = await readPoolLiquidity(query, idNum, identity.campaignAddress, nativeUsd);
-    if (liquidityUsd !== null && dataSource === "none") dataSource = "dex_pools";
+
+  if (liquidityUsd === null && !stockQuoted) {
+    liquidityUsd = await readNativePoolLiquidity(query, idNum, identity.campaignAddress, nativeUsd);
+    if (liquidityUsd !== null && dataSource === "none") dataSource = "native_dex_pool+fx";
   }
 
   if (dataLagSeconds === null) dataLagSeconds = lagFrom(updatedAt, nowMs);
 
   const reasons = [];
-  if (marketCapUsd === null) {
-    reasons.push(px > 0 ? "missing" : "native_units_unpriced");
-  }
+  if (!(marketCapUsd > 0)) reasons.push(stockQuoted ? "stock_market_cap_usd_missing" : "market_cap_usd_missing");
+  if (holders === null) reasons.push("holders_missing");
+  if (!(liquidityUsd > 0)) reasons.push(stockQuoted ? "stock_liquidity_usd_missing" : "liquidity_usd_missing");
+  if (stockQuoted && volume24hUsd === null) reasons.push("stock_volume_usd_missing");
+  if (!stockQuoted && marketCapUsd === null && !(px > 0)) reasons.push("native_usd_price_missing");
   if (dataLagSeconds !== null && dataLagSeconds > staleSeconds) reasons.push("stale");
-  const reason = reasons[0] || null;
-  const healthy = reasons.length === 0 && marketCapUsd !== null && marketCapUsd > 0;
+
+  const uniqueReasons = [...new Set(reasons)];
+  const healthy = uniqueReasons.length === 0;
 
   return {
     chainId: idNum,
@@ -274,8 +330,16 @@ export async function getArenaMarketSnapshot(chainId, tokenIdentity, deps = {}) 
     dataSource,
     healthy,
     dataLagSeconds,
-    reason,
-    nativeUsdPrice: px > 0 ? px : null,
-    fxSource: nativeUsd?.source || (px > 0 ? "injected" : "none"),
+    reason: uniqueReasons[0] || null,
+    reasons: uniqueReasons,
+    quoteAssetType,
+    quoteTokenAddress,
+    nativeUsdPrice: !stockQuoted && px > 0 ? px : null,
+    fxSource: stockQuoted ? "not_applicable_stock_quote" : nativeUsd?.source || (px > 0 ? "injected" : "none"),
+    componentHealth: {
+      marketCap: marketCapUsd !== null && marketCapUsd > 0,
+      holders: holders !== null,
+      liquidity: liquidityUsd !== null && liquidityUsd > 0,
+    },
   };
 }
