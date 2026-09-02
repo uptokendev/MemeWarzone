@@ -24,7 +24,7 @@ interface IRouteAuthoritySource {
 }
 
 interface IRiskRegistryView {
-    function assertWalletCanTrade(address wallet) external view;
+    function assertWalletCanTrade(address wallet) external view returns (bool);
 }
 
 interface ILaunchFactoryGraduationNotify {
@@ -137,7 +137,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     uint256 public netRaisedWei;
     bool public launched;
     uint256 public finalizedAt;
-    GraduationState private graduation;
+    GraduationState internal graduation;
 
     bool public stockGraduationEnabled;
     bool public graduationPending;
@@ -518,7 +518,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         emit ExcessNativeRescued(recipient, amount);
     }
 
-    function graduateIfEligible(uint256 minTokens, uint256 minBnb) external nonReentrant returns (uint256 usedTokens, uint256 usedBnb) {
+    function graduateIfEligible(uint256 minTokens, uint256 minBnb) external virtual nonReentrant returns (uint256 usedTokens, uint256 usedBnb) {
         uint256 nativeTarget = graduationNativeTarget();
         if (stockGraduationEnabled) {
             if (graduationPending) revert GraduationPending();
@@ -678,7 +678,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         } catch {}
     }
 
-    function _autoFinalizeIfEligible(address caller) internal {
+    function _autoFinalizeIfEligible(address caller) internal virtual {
         try graduationOracle.nativeTargetForUsd(graduationTarget) returns (uint256 nativeTarget) {
             if (netRaisedWei >= nativeTarget) {
                 if (stockGraduationEnabled) _markStockGraduationPending(caller, nativeTarget);
