@@ -38,10 +38,14 @@ interface IRobinhoodStockGraduationExecutor {
         returns (GraduationResult memory result);
 }
 
+interface IRobinhoodStockFactoryOwner {
+    function owner() external view returns (address);
+}
+
 /// @notice Robinhood Stock Battlefield campaign implementation.
 /// @dev Bonding behavior is inherited from LaunchCampaign, but graduation can never silently
 /// fall back to the native MEME/WETH finalizer. Threshold crossing commits a pending state;
-/// an explicit factory-authorized completion attempt executes the approved Stock route.
+/// an explicit factory/multisig-authorized completion attempt executes the approved Stock route.
 contract RobinhoodStockLaunchCampaign is LaunchCampaign {
     using SafeERC20 for IERC20;
 
@@ -70,6 +74,7 @@ contract RobinhoodStockLaunchCampaign is LaunchCampaign {
     error StockGraduationDeadlineExpired();
     error StockGraduationResidual();
     error StockGraduationResultInvalid();
+    error OnlyStockGraduationExecutor();
 
     function isStockCampaignImplementation() external pure returns (bool) {
         return true;
@@ -91,10 +96,12 @@ contract RobinhoodStockLaunchCampaign is LaunchCampaign {
 
     function completeStockGraduation(uint256 minimumMemeUsed, uint256 minimumStockOut, uint256 deadline)
         external
-        onlyFactory
         nonReentrant
         returns (address pool, uint256 positionTokenId)
     {
+        if (msg.sender != factory && msg.sender != IRobinhoodStockFactoryOwner(factory).owner()) {
+            revert OnlyStockGraduationExecutor();
+        }
         if (!stockGraduationEnabled || stockGraduationAdapter == address(0) || graduationQuoteToken == address(0)) {
             revert StockCampaignNotConfigured();
         }
