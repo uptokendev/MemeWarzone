@@ -61,7 +61,10 @@ export function BattleCombatantCard({
   const pointsClass = accent === "cyan" ? "text-cyan-200" : "text-orange-200";
 
   const body = (
-    <div className={cn("mwz-hud-frame relative h-full overflow-hidden p-4 md:p-5", accentClass)}>
+    <div
+      data-battle-combat-side={metricsSide?.side}
+      className={cn("mwz-hud-frame relative h-full overflow-hidden p-4 md:p-5", accentClass)}
+    >
       <div className={cn("pointer-events-none absolute inset-0", glow)} />
       <div className={cn("absolute inset-x-0 top-0 h-px bg-gradient-to-r", topStripe)} />
       <div className="relative flex h-full flex-col gap-4">
