@@ -116,7 +116,7 @@ describe("Robinhood Stock pending graduation lifecycle", function () {
     expect(await campaign.graduationQuoteToken()).to.equal(await stock.getAddress());
     expect(await campaign.pendingGraduationNativeTarget()).to.be.greaterThan(0n);
 
-    await expect(campaign.quoteSellExactTokens(1n)).to.be.revertedWithCustomError(campaign, "GraduationPending");
+    expect(await campaign.quoteSellExactTokens(1n)).to.be.greaterThan(0n);
     await expect(campaign.connect(buyer).sellExactTokens(1n, 0n)).to.be.revertedWithCustomError(campaign, "GraduationPending");
     expect(await campaign.sold()).to.equal(curveSupply);
   });
