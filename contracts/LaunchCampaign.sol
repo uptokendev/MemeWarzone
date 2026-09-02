@@ -366,7 +366,6 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     }
 
     function quoteBuyExactTokens(uint256 amountOut) public view returns (uint256) {
-        if (graduationPending) revert GraduationPending();
         if (amountOut == 0) revert ZeroAmount();
         if (sold + amountOut > curveSupply) revert SoldOut();
         uint256 cost = _quoteBuyNoFee(amountOut);
@@ -374,7 +373,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     }
 
     function quoteBuyExactBnb(uint256 totalInWei) public view returns (uint256 tokensOut, uint256 totalCostWei, uint256 feeWei) {
-        if (totalInWei == 0 || launched || graduationPending) return (0, 0, 0);
+        if (totalInWei == 0 || launched) return (0, 0, 0);
         uint256 remaining = curveSupply - sold;
         if (remaining == 0) return (0, 0, 0);
 
@@ -397,7 +396,6 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     }
 
     function quoteSellExactTokens(uint256 amountIn) public view returns (uint256) {
-        if (graduationPending) revert GraduationPending();
         if (amountIn == 0) revert ZeroAmount();
         if (amountIn > sold) revert ExceedsSold();
         uint256 payout = _quoteSellNoFee(amountIn);
