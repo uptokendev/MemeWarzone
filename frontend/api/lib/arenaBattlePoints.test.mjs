@@ -5,6 +5,13 @@ import { calculateBattlePoints, interpretHistoricalBattle } from "./arenaBattleP
 
 const NOW = Date.parse("2026-09-02T12:00:00.000Z");
 
+function clusters(total, count = 5) {
+  return Array.from({ length: count }, (_, index) => ({
+    clusterId: `cluster-${index + 1}`,
+    countedUsd: total / count,
+  }));
+}
+
 function score(overrides = {}) {
   return calculateBattlePoints({
     baseline: {
@@ -23,7 +30,7 @@ function score(overrides = {}) {
       healthy: true,
       ...(overrides.current || {}),
     },
-    eligibleVolume: { usd: 0, rawUsd: 0, cappedUsd: 0, ...(overrides.eligibleVolume || {}) },
+    eligibleVolume: { usd: 0, rawUsd: 0, cappedUsd: 0, clusters: [], ...(overrides.eligibleVolume || {}) },
     now: NOW,
     ...overrides.rest,
   });
@@ -77,19 +84,54 @@ test("tiny holder base 2→10 cannot crush 1000→1350", () => {
   assert.ok(tiny.holders.points < mature.holders.points);
 });
 
-test("eligible volume approaches 20 and never exceeds it; zero volume is 0", () => {
+test("diverse legitimate volume approaches 20 and never exceeds it", () => {
   const none = score();
   assert.equal(none.volume.points, 0);
-  const high = score({ eligibleVolume: { usd: 100_000, rawUsd: 100_000, cappedUsd: 100_000 } });
+  const total = 100_000;
+  const high = score({ eligibleVolume: { usd: total, rawUsd: total, cappedUsd: total, clusters: clusters(total, 10) } });
   assert.ok(high.volume.points > 19);
   assert.ok(high.volume.points <= 20);
 });
 
+test("single cluster can contribute at most 20% of the 20-point volume component", () => {
+  const whale = score({
+    eligibleVolume: {
+      usd: 1_000_000,
+      rawUsd: 1_000_000,
+      cappedUsd: 1_000_000,
+      clusters: [{ clusterId: "whale", countedUsd: 1_000_000 }],
+    },
+  });
+  assert.ok(whale.volume.rawPoints > 4);
+  assert.equal(whale.volume.clusterPointCap, 4);
+  assert.ok(whale.volume.points <= 4);
+  assert.equal(whale.volume.clusterContributions.length, 1);
+  assert.equal(whale.volume.clusterContributions[0].capped, true);
+});
+
+test("wallet splitting within one cluster does not bypass the four-point influence cap", () => {
+  const split = score({
+    eligibleVolume: {
+      usd: 50_000,
+      rawUsd: 50_000,
+      clusters: [{ clusterId: "same-beneficial-owner", countedUsd: 50_000 }],
+    },
+  });
+  assert.ok(split.volume.points <= 4);
+});
+
+test("missing cluster evidence is conservative and cannot bypass concentration control", () => {
+  const unclustered = score({ eligibleVolume: { usd: 100_000, rawUsd: 100_000, clusters: [] } });
+  assert.ok(unclustered.volume.points <= 4);
+  assert.equal(unclustered.volume.clusterContributions[0].clusterId, "unclustered");
+});
+
 test("50/30/20 maxima and total cannot exceed 100", () => {
+  const totalVolume = 1_000_000_000;
   const maxed = calculateBattlePoints({
     baseline: { startMcapUsd: 1_000, startHolders: 10_000 },
     current: { marketCapUsd: 1_000_000_000, holders: 10_000_000, updatedAt: "2026-09-02T11:59:00.000Z", healthy: true },
-    eligibleVolume: { usd: 1_000_000_000 },
+    eligibleVolume: { usd: totalVolume, clusters: clusters(totalVolume, 10) },
     now: NOW,
   });
   assert.ok(maxed.mcap.points <= 50);
@@ -103,7 +145,7 @@ test("repeated calculation is deterministic", () => {
   const input = {
     baseline: { startMcapUsd: 8_000, startHolders: 400 },
     current: { marketCapUsd: 9_200, holders: 440, updatedAt: "2026-09-02T11:59:00.000Z", healthy: true },
-    eligibleVolume: { usd: 1_500, rawUsd: 1_500, cappedUsd: 1_500 },
+    eligibleVolume: { usd: 1_500, rawUsd: 1_500, cappedUsd: 1_500, clusters: clusters(1_500) },
     now: NOW,
   };
   assert.deepEqual(calculateBattlePoints(input), calculateBattlePoints(input));
@@ -113,12 +155,12 @@ test("identical normalized inputs produce the same score regardless of extra cha
   const shared = {
     baseline: { startMcapUsd: 20_000, startHolders: 800 },
     current: { marketCapUsd: 24_000, holders: 860, updatedAt: "2026-09-02T11:59:00.000Z", healthy: true },
-    eligibleVolume: { usd: 3_000 },
+    eligibleVolume: { usd: 3_000, clusters: clusters(3_000) },
     now: NOW,
   };
   const a = calculateBattlePoints({ ...shared, chainId: 56, venue: "native-a" });
   const b = calculateBattlePoints({ ...shared, chainId: 101, venue: "native-b" });
-  const c = calculateBattlePoints({ ...shared, chainId: 4663, venue: "native-c" });
+  const c = calculateBattlePoints({ ...shared, chainId: 4663, venue: "stock-c" });
   assert.equal(a.totalPoints, b.totalPoints);
   assert.equal(b.totalPoints, c.totalPoints);
   assert.deepEqual(a.components, c.components);
@@ -135,13 +177,24 @@ test("stale current still returns numbers and marks dataHealth unhealthy", () =>
       reason: "stale",
       dataLagSeconds: 3600,
     },
-    eligibleVolume: { usd: 500 },
+    eligibleVolume: { usd: 500, clusters: clusters(500) },
     now: NOW,
   });
   assert.ok(stale.totalPoints > 0);
   assert.equal(stale.dataHealth.healthy, false);
   assert.equal(stale.dataHealth.status, "stale");
   assert.ok(stale.dataHealth.reasons.includes("stale"));
+});
+
+test("missing current holder data is explicitly unhealthy even when MCAP exists", () => {
+  const missing = calculateBattlePoints({
+    baseline: { startMcapUsd: 10_000, startHolders: 1_000 },
+    current: { marketCapUsd: 11_000, holders: null, updatedAt: "2026-09-02T11:59:00.000Z", healthy: false, reasons: ["holders_missing"] },
+    eligibleVolume: { usd: 0 },
+    now: NOW,
+  });
+  assert.equal(missing.dataHealth.healthy, false);
+  assert.ok(missing.dataHealth.reasons.includes("missing_current_holders"));
 });
 
 test("invalid or zero start MCAP yields 0 mcap points and missing health", () => {
@@ -154,7 +207,7 @@ test("invalid or zero start MCAP yields 0 mcap points and missing health", () =>
   assert.equal(zero.mcap.points, 0);
   assert.equal(zero.mcap.changePct, null);
   assert.equal(zero.dataHealth.healthy, false);
-  assert.ok(zero.dataHealth.reasons.includes("invalid_baseline"));
+  assert.ok(zero.dataHealth.reasons.includes("invalid_baseline_mcap"));
 });
 
 test("historical V1 battle remains interpretable as mcap_pct_change", () => {
