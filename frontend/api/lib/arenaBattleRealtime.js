@@ -241,11 +241,11 @@ export async function publishBattleMetricsSnapshot(snapshot, previousSnapshot = 
     metricsUpdatedAt: snapshot.metricsUpdatedAt,
     dataHealth: snapshot.dataHealth,
   };
-  await publishEvent(snapshot.battleId, "arena_battle_metrics_patch", {
+  const metricsResult = await publishEvent(snapshot.battleId, "arena_battle_metrics_patch", {
     ...common,
     sides: snapshot.sides,
   });
-  await publishEvent(snapshot.battleId, "arena_battle_points_patch", {
+  const pointsResult = await publishEvent(snapshot.battleId, "arena_battle_points_patch", {
     ...common,
     leaderSide: snapshot.leaderSide,
     pointDifference: snapshot.pointDifference,
@@ -261,7 +261,10 @@ export async function publishBattleMetricsSnapshot(snapshot, previousSnapshot = 
       pointDifference: snapshot.pointDifference,
     });
   }
-  return { published: true };
+  return {
+    published: metricsResult.published === true || pointsResult.published === true,
+    reason: metricsResult.published === true || pointsResult.published === true ? null : metricsResult.reason || pointsResult.reason || "publish_failed",
+  };
 }
 
 export async function publishBattleFinished(battleRow, battle, metrics = null) {
@@ -295,8 +298,7 @@ async function refreshBattleWithClient(client, battleId, now = new Date()) {
               money_winner_token, winner_token, settled_at, finished_at
          from public.arena_battles
         where id = $1
-        limit 1
-        for update`,
+        limit 1`,
       [battleId],
     );
     const battleRow = battleResult.rows[0];
