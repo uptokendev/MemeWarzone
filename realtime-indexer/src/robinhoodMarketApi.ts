@@ -10,6 +10,14 @@ import {
 
 const ROBINHOOD_CHAIN_IDS = new Set([4663, 46630]);
 
+type RobinhoodMarketMetadataInput = {
+  chainId: number;
+  campaignAddress: string;
+  tokenAddress: string | null;
+  quoteTokenAddress?: string | null;
+  wrappedNativeAddress?: string | null;
+};
+
 function asNumber(value: unknown, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -27,6 +35,27 @@ function isRobinhood(chainId: number): boolean {
 
 function normalizeAddress(value: unknown): string {
   return String(value ?? "").trim().toLowerCase();
+}
+
+function deriveQuoteTokenAddress(input: {
+  tokenAddress?: unknown;
+  quoteTokenAddress?: unknown;
+  token0Address?: unknown;
+  token1Address?: unknown;
+  wrappedNativeAddress?: unknown;
+}): string | null {
+  const explicit = normalizeAddress(input.quoteTokenAddress);
+  if (explicit) return explicit;
+
+  const tokenAddress = normalizeAddress(input.tokenAddress);
+  const token0Address = normalizeAddress(input.token0Address);
+  const token1Address = normalizeAddress(input.token1Address);
+  if (tokenAddress && token0Address && token1Address) {
+    if (token0Address === tokenAddress && token1Address !== tokenAddress) return token1Address;
+    if (token1Address === tokenAddress && token0Address !== tokenAddress) return token0Address;
+  }
+
+  return normalizeAddress(input.wrappedNativeAddress) || null;
 }
 
 async function campaignFromParam(chainId: number, raw: string): Promise<string | null> {
@@ -69,7 +98,7 @@ async function readRobinhoodMarketState(chainId: number, campaign: string) {
        cms.last_verified_at,cms.last_error,
        c.bonding_active,c.support_enabled,c.indexing_enabled as campaign_indexing_enabled,
        dp.last_indexed_block,dp.last_finalized_block,dp.last_swap_at,dp.last_sync_at,
-       dp.reserve_token_raw,dp.reserve_native_raw,
+       dp.reserve_token_raw,dp.reserve_native_raw,dp.token0_address,dp.token1_address,
        dp.support_enabled as pool_support_enabled,dp.indexing_enabled as pool_indexing_enabled
      from public.campaign_market_state cms
      left join public.campaigns c
@@ -129,6 +158,12 @@ async function readRobinhoodMarketState(chainId: number, campaign: string) {
     routerAddress: row.dex_router_address,
     dexFactoryAddress: row.dex_factory_address,
     wrappedNativeAddress: row.wrapped_native_address,
+    quoteTokenAddress: deriveQuoteTokenAddress({
+      tokenAddress: row.token_address,
+      token0Address: row.token0_address,
+      token1Address: row.token1_address,
+      wrappedNativeAddress: row.wrapped_native_address,
+    }),
     stable: row.pool_stable,
     feeBps: row.pool_fee_bps == null ? null : Number(row.pool_fee_bps),
     poolVerified,
@@ -154,10 +189,10 @@ async function readRobinhoodMarketState(chainId: number, campaign: string) {
 }
 
 async function buildRobinhoodMarketMetadata(
-  state: NonNullable<Awaited<ReturnType<typeof readRobinhoodMarketState>>>,
+  state: RobinhoodMarketMetadataInput,
   includeQuotePrice = false,
 ) {
-  const quoteToken = (state as { quoteTokenAddress?: string | null }).quoteTokenAddress || state.wrappedNativeAddress;
+  const quoteToken = state.quoteTokenAddress || state.wrappedNativeAddress || null;
   const descriptor = describeRobinhoodQuoteAsset({
     chainId: state.chainId,
     quoteToken,
@@ -199,6 +234,7 @@ function provisionalRobinhoodMarketState(chainId: number, campaign: string) {
     routerAddress: null,
     dexFactoryAddress: null,
     wrappedNativeAddress: null,
+    quoteTokenAddress: null,
     stable: null,
     feeBps: null,
     poolVerified: false,
@@ -389,3 +425,9 @@ export function registerRobinhoodMarketContinuityRoutes(app: Express): void {
     }
   });
 }
+
+export const robinhoodMarketApiInternals = {
+  deriveQuoteTokenAddress,
+  buildRobinhoodMarketMetadata,
+  provisionalRobinhoodMarketState,
+};
