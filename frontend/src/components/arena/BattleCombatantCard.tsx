@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { BattleMetricBreakdown } from "@/components/arena/BattleMetricBreakdown";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import type { Battle, BattleParticipant } from "@/features/postgrad/contracts";
+import { useArenaTokenProfile } from "@/hooks/useArenaTokenProfile";
 import type { BattleRealtimeSide } from "@/lib/arena/battleRealtime";
 import { battleChainLabel, formatCompactUsd } from "@/lib/arena/battlePresentation";
 import { resolveImageUri } from "@/lib/media";
@@ -34,21 +35,27 @@ export function BattleCombatantCard({
   isLeader = false,
   accent = "ember",
 }: BattleCombatantCardProps) {
-  const image = resolveImageUri(participant.imageUrl || participant.logoUri) || "/placeholder.svg";
   const extended = participant as BattleParticipant & {
     ownerWallet?: string | null;
     liquidityUsd?: number | null;
     battleVolumeUsd?: number | null;
     battlePoints?: number | null;
   };
+  const chainId = Number((battle as Battle & { chainId?: number }).chainId || 0);
+  const tokenIdentity = participant.tokenAddress || participant.tokenId || participant.campaignAddress || "";
+  const profile = useArenaTokenProfile(chainId, tokenIdentity);
+  const image = resolveImageUri(profile?.imageUrl || participant.imageUrl || participant.logoUri) || "/placeholder.svg";
+  const displayName = profile?.name || participant.tokenName;
+  const displaySymbol = profile?.symbol || participant.symbol;
   const pointsReady = metricsSide?.pointsReady === true;
   const battlePoints = pointsReady ? metricsSide?.points.total ?? 0 : null;
-  const currentMcap = metricsSide?.current.marketCapUsd ?? participant.marketCapUsd ?? participant.marketCap ?? 0;
-  const currentHolders = metricsSide?.current.holders ?? participant.holderCount ?? participant.holders ?? 0;
-  const liquidity = metricsSide?.current.liquidityUsd ?? extended.liquidityUsd ?? 0;
+  const currentMcap = metricsSide?.current.marketCapUsd ?? profile?.marketCapUsd ?? participant.marketCapUsd ?? participant.marketCap ?? 0;
+  const currentHolders = metricsSide?.current.holders ?? profile?.holders ?? participant.holderCount ?? participant.holders ?? 0;
+  const liquidity = metricsSide?.current.liquidityUsd ?? profile?.liquidityUsd ?? extended.liquidityUsd ?? 0;
   const battleVolume = metricsSide?.eligibleBattleVolumeUsd ?? extended.battleVolumeUsd ?? 0;
-  const nativeOrigin = Boolean(participant.campaignAddress);
-  const chainId = Number((battle as Battle & { chainId?: number }).chainId || 0);
+  const nativeOrigin = profile ? profile.origin === "native" : Boolean(participant.campaignAddress);
+  const ownerWallet = profile?.creatorWallet || extended.ownerWallet;
+  const marketHealthy = metricsSide ? metricsSide.current.healthy : profile?.marketDataHealthy === true;
   const accentClass = accent === "cyan"
     ? "border-cyan-400/25 bg-cyan-500/[0.06]"
     : "border-orange-400/25 bg-orange-500/[0.06]";
@@ -71,13 +78,13 @@ export function BattleCombatantCard({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="text-[10px] uppercase tracking-[0.24em] text-white/45">{sideLabel}</div>
-            <div className="mt-1 truncate font-retro text-2xl text-foreground">{participant.tokenName}</div>
-            <div className="text-xs uppercase tracking-[0.18em] text-white/55">{participant.symbol}</div>
+            <div className="mt-1 truncate font-retro text-2xl text-foreground">{displayName}</div>
+            <div className="text-xs uppercase tracking-[0.18em] text-white/55">{displaySymbol}</div>
           </div>
           <div className="flex flex-wrap justify-end gap-2">
             <TacticalTag label={nativeOrigin ? "MWZ Native" : "Imported"} tone={nativeOrigin ? "success" : "default"} />
             <TacticalTag label={battleChainLabel(chainId)} tone="default" />
-            {metricsSide && !metricsSide.current.healthy ? <TacticalTag label="Data delay" tone="default" /> : null}
+            {!marketHealthy ? <TacticalTag label="Data delay" tone="default" /> : null}
           </div>
         </div>
 
@@ -85,11 +92,11 @@ export function BattleCombatantCard({
           <div className="space-y-2">
             <img
               src={image}
-              alt=""
+              alt={`${displaySymbol || displayName || "Token"} token`}
               className={cn("h-24 w-24 border object-cover", isLeader ? "border-white/35" : "border-white/10")}
             />
             <div className="text-[10px] uppercase tracking-[0.18em] text-white/38">Commander</div>
-            <div className="truncate text-xs text-white/64">{shortWallet(extended.ownerWallet)}</div>
+            <div className="truncate text-xs text-white/64">{shortWallet(ownerWallet)}</div>
           </div>
 
           <div className="min-w-0">
@@ -138,7 +145,7 @@ export function BattleCombatantCard({
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             <span className="inline-flex items-center gap-1.5">
               <ShieldCheck className="h-3.5 w-3.5" />
-              {metricsSide?.current.healthy ? "Market feed verified" : "Awaiting market feed"}
+              {marketHealthy ? "Market feed verified" : "Awaiting market feed"}
             </span>
             <span className="inline-flex items-center gap-1.5">
               <Users className="h-3.5 w-3.5" />
