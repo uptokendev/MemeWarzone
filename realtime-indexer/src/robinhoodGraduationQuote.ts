@@ -1,3 +1,6 @@
+import { quoteRobinhoodStockAcquisition, type RobinhoodStockAcquisitionQuote } from "./robinhoodStockAcquisitionQuote.js";
+import { getRobinhoodStockToken } from "./robinhoodStockTokenRegistry.js";
+
 export type RobinhoodGraduationQuotePolicy = {
   version: string;
   maxOracleAgeSeconds: number;
@@ -32,6 +35,11 @@ export type RobinhoodGraduationQuoteDecision = {
   failures: string[];
   oracleAgeSeconds: number | null;
   slippageBps: number | null;
+};
+
+export type RobinhoodStockGraduationSimulation = {
+  quote: RobinhoodStockAcquisitionQuote;
+  decision: RobinhoodGraduationQuoteDecision;
 };
 
 function finiteNonNegative(value: number): boolean {
@@ -96,5 +104,64 @@ export function evaluateRobinhoodGraduationQuote(
     failures,
     oracleAgeSeconds,
     slippageBps,
+  };
+}
+
+export async function simulateRobinhoodStockGraduationQuote(input: {
+  chainId: number;
+  stockTokenAddress: string;
+  nativeLiquidityRaw: bigint;
+  nativeLiquidityUsd: number;
+  nativeOraclePriceUsd: number | null;
+  campaignEligible: boolean;
+  slippageBps?: number;
+  probeBps?: number;
+  policy?: RobinhoodGraduationQuotePolicy;
+}): Promise<RobinhoodStockGraduationSimulation> {
+  const policy = input.policy || defaultRobinhoodGraduationQuotePolicy();
+  validateRobinhoodGraduationQuotePolicy(policy);
+  const quote = await quoteRobinhoodStockAcquisition({
+    chainId: input.chainId,
+    stockTokenAddress: input.stockTokenAddress,
+    amountInRaw: input.nativeLiquidityRaw,
+    slippageBps: Number(input.slippageBps ?? policy.maxSwapSlippageBps),
+    probeBps: input.probeBps,
+    deadlineSeconds: policy.quoteDeadlineSeconds,
+    nativeOraclePriceUsd: input.nativeOraclePriceUsd,
+  });
+  const stockToken = getRobinhoodStockToken(input.chainId, input.stockTokenAddress);
+  const quoteTimestampMs = Date.parse(quote.quotedAt);
+  const deadlineMs = Date.parse(quote.deadline);
+  const oracleUpdatedAtMs = quote.oracle?.updatedAt ? Date.parse(quote.oracle.updatedAt) : null;
+  const routeVerified = Boolean(quote.plan) && !quote.failures.includes("ACQUISITION_POOL_UNVERIFIED") && !quote.failures.includes("ACQUISITION_QUOTER_UNAVAILABLE");
+  const decision = evaluateRobinhoodGraduationQuote({
+    nowMs: Date.now(),
+    quoteTimestampMs: Number.isFinite(quoteTimestampMs) ? quoteTimestampMs : Date.now(),
+    deadlineMs: Number.isFinite(deadlineMs) ? deadlineMs : 0,
+    nativeLiquidityUsd: input.nativeLiquidityUsd,
+    expectedQuoteOutRaw: BigInt(quote.expectedQuoteOutRaw || 0),
+    minimumQuoteOutRaw: BigInt(quote.minimumQuoteOutRaw || 0),
+    routeLiquidityUsd: Number(quote.routeQuoteLiquidityUsd ?? Number.NaN),
+    priceImpactBps: Number(quote.priceImpactBps ?? Number.NaN),
+    oracleDeviationBps: Number(quote.oracleDeviationBps ?? Number.NaN),
+    oracleHealthy: Boolean(quote.oracle?.healthy),
+    oracleUpdatedAtMs: oracleUpdatedAtMs != null && Number.isFinite(oracleUpdatedAtMs) ? oracleUpdatedAtMs : null,
+    canonicalToken: Boolean(stockToken?.canonical),
+    graduationEnabled: Boolean(stockToken?.enabledForGraduation),
+    routeVerified,
+    campaignEligible: input.campaignEligible,
+  }, policy);
+  const failures = Array.from(new Set([
+    ...quote.failures,
+    ...(input.nativeOraclePriceUsd && input.nativeOraclePriceUsd > 0 ? [] : ["NATIVE_ORACLE_REFERENCE_MISSING"]),
+    ...decision.failures,
+  ]));
+  return {
+    quote,
+    decision: {
+      ...decision,
+      accepted: quote.ok && failures.length === 0,
+      failures,
+    },
   };
 }
