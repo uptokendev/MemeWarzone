@@ -14,17 +14,11 @@ import {
   planTournamentBracketReconcile,
 } from "./lib/arenaTournamentBracketReconcile.js";
 import { captureLiveBaselines } from "./lib/arenaBattleMetrics.js";
+import { getArenaMarketSnapshot } from "./lib/arenaMarketSnapshot.js";
 
 const NATIVE_COIN_SELECT = `c.name, c.symbol, c.token_address, c.campaign_address, c.creator_address,
-       c.created_at, c.graduated_at_chain,
-       coalesce(ms.market_cap_bnb, ts.marketcap_bnb, 0) as market_cap_bnb,
-       coalesce(ms.holders, va.votes_24h, 0) as holders_count,
-       coalesce(ms.liquidity_bnb, 0) as liquidity_bnb,
-       coalesce(ms.volume_24h_bnb, ts.vol_24h_bnb, 0) as volume_24h_bnb`;
-const NATIVE_COIN_FROM = `from public.campaigns c
-       left join public.market_stats ms on ms.chain_id = c.chain_id and ms.campaign_address = c.campaign_address
-       left join public.token_stats ts on ts.chain_id = c.chain_id and ts.campaign_address = c.campaign_address
-       left join public.vote_aggregates va on va.chain_id = c.chain_id and va.campaign_address = c.campaign_address`;
+       c.created_at, c.graduated_at_chain`;
+const NATIVE_COIN_FROM = `from public.campaigns c`;
 
 function ident(value) {
   return normalizeWalletFlexible(value) || String(value || "").trim();
@@ -96,6 +90,30 @@ async function tokenEligible(chainId, token) {
   return tokenIsEligible(pool, chainId, token);
 }
 
+function normalizedCoinSnapshot(metadata, snapshot, fallbackAddress) {
+  const tokenAddress = ident(metadata?.token_address || metadata?.campaign_address || fallbackAddress);
+  return {
+    tokenId: tokenAddress,
+    tokenAddress,
+    campaignAddress: ident(metadata?.campaign_address) || "",
+    tokenName: String(metadata?.name || metadata?.symbol || tokenAddress?.slice(0, 8) || "Unknown"),
+    symbol: String(metadata?.symbol || "TBD"),
+    ownerWallet: ident(metadata?.creator_address || metadata?.owner_wallet),
+    marketCapUsd: snapshot?.marketCapUsd ?? null,
+    holderCount: snapshot?.holders ?? null,
+    liquidityUsd: snapshot?.liquidityUsd ?? null,
+    volumeUsd: snapshot?.volume24hUsd ?? null,
+    marketDataUpdatedAt: snapshot?.updatedAt || null,
+    marketDataHealthy: snapshot?.healthy === true,
+    healthy: snapshot?.healthy === true,
+    updatedAt: snapshot?.updatedAt || null,
+    dataSource: snapshot?.dataSource || "none",
+    dataLagSeconds: snapshot?.dataLagSeconds ?? null,
+    reasons: snapshot?.reasons || (snapshot?.reason ? [snapshot.reason] : []),
+    launchedAt: metadata?.graduated_at_chain || metadata?.created_at || null,
+  };
+}
+
 async function coinSnapshot(chainId, token) {
   const address = ident(token);
   const native = await pool.query(
@@ -108,20 +126,11 @@ async function coinSnapshot(chainId, token) {
   );
   if (native.rows[0]) {
     const row = native.rows[0];
-    return {
-      tokenId: ident(row.token_address || row.campaign_address),
-      tokenAddress: ident(row.token_address || row.campaign_address),
-      campaignAddress: ident(row.campaign_address) || "",
-      tokenName: String(row.name || row.symbol || "Unknown"),
-      symbol: String(row.symbol || "---"),
-      ownerWallet: ident(row.creator_address),
-      marketCapUsd: Number(row.market_cap_bnb || 0),
-      holderCount: Number(row.holders_count || 0),
-      liquidityUsd: Number(row.liquidity_bnb || 0),
-      volumeUsd: Number(row.volume_24h_bnb || 0),
-      launchedAt: row.graduated_at_chain || row.created_at || null,
-    };
+    const tokenAddress = ident(row.token_address || row.campaign_address);
+    const market = await getArenaMarketSnapshot(chainId, tokenAddress);
+    return normalizedCoinSnapshot(row, market, tokenAddress);
   }
+
   const imported = await pool.query(
     `select name, symbol, token_address, owner_wallet, created_at from public.arena_token_imports
       where chain_id = $1 and lower(token_address) = lower($2) limit 1`,
@@ -129,33 +138,14 @@ async function coinSnapshot(chainId, token) {
   );
   const row = imported.rows[0];
   if (!row) {
-    return {
-      tokenId: address,
-      tokenAddress: address,
-      campaignAddress: "",
-      tokenName: address.slice(0, 8),
-      symbol: "TBD",
-      ownerWallet: "",
-      marketCapUsd: 0,
-      holderCount: 0,
-      liquidityUsd: 0,
-      volumeUsd: 0,
-      launchedAt: null,
-    };
+    return normalizedCoinSnapshot(
+      { token_address: address, name: address.slice(0, 8), symbol: "TBD" },
+      { healthy: false, reason: "market_identity_missing", reasons: ["market_identity_missing"] },
+      address,
+    );
   }
-  return {
-    tokenId: ident(row.token_address),
-    tokenAddress: ident(row.token_address),
-    campaignAddress: "",
-    tokenName: String(row.name || row.symbol || "Unknown"),
-    symbol: String(row.symbol || "---"),
-    ownerWallet: ident(row.owner_wallet),
-    marketCapUsd: 0,
-    holderCount: 0,
-    liquidityUsd: 0,
-    volumeUsd: 0,
-    launchedAt: row.created_at || null,
-  };
+  const market = await getArenaMarketSnapshot(chainId, row.token_address);
+  return normalizedCoinSnapshot(row, market, row.token_address);
 }
 
 async function handleList(_req, res) {
@@ -338,61 +328,66 @@ async function insertTournamentBattle({ chainId, tournamentId, left, right, nati
   const id = `arena-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;
   const leftSnap = await coinSnapshot(chainId, left);
   const rightSnap = await coinSnapshot(chainId, right);
+  const startedAt = new Date().toISOString();
   const participants = [
     {
       ...leftSnap,
-      score: leftSnap.marketCapUsd,
+      score: Number(leftSnap.marketCapUsd || 0),
       priceChangePct: 0,
-      volumeUsd: leftSnap.volumeUsd,
       uniqueTraders: 0,
-      holderCount: leftSnap.holderCount,
       holdersDelta: 0,
-      liquidityUsd: leftSnap.liquidityUsd,
-      launchedAt: leftSnap.launchedAt,
     },
     {
       ...rightSnap,
-      score: rightSnap.marketCapUsd,
+      score: Number(rightSnap.marketCapUsd || 0),
       priceChangePct: 0,
-      volumeUsd: rightSnap.volumeUsd,
       uniqueTraders: 0,
-      holderCount: rightSnap.holderCount,
       holdersDelta: 0,
-      liquidityUsd: rightSnap.liquidityUsd,
-      launchedAt: rightSnap.launchedAt,
     },
   ];
-  await db.query(
-    `insert into public.arena_battles (
-        id, chain_id, state, source, stake_native, native_symbol, challenger_token, defender_token, tournament_id,
-        participants, challenger_start_mcap_usd, defender_start_mcap_usd, started_at, ends_at, creator_address
-      ) values ($1,$2,'live','tournament',0,$3,$4,$5,$6,$7::jsonb,$8,$9,now(), now() + interval '12 hours', $10)`,
-    [
-      id,
-      chainId,
-      nativeSymbol,
-      leftSnap.tokenAddress,
-      rightSnap.tokenAddress,
-      tournamentId,
-      JSON.stringify(participants),
-      leftSnap.marketCapUsd,
-      rightSnap.marketCapUsd,
-      leftSnap.ownerWallet || null,
-    ],
-  );
+
+  const ownsTransaction = typeof db.connect === "function";
+  const client = ownsTransaction ? await db.connect() : db;
   try {
+    if (ownsTransaction) await client.query("begin");
+    await client.query(
+      `insert into public.arena_battles (
+          id, chain_id, state, source, stake_native, native_symbol, challenger_token, defender_token, tournament_id,
+          participants, challenger_start_mcap_usd, defender_start_mcap_usd, started_at, ends_at, creator_address
+        ) values ($1,$2,'live','tournament',0,$3,$4,$5,$6,$7::jsonb,$8,$9,$10::timestamptz,$10::timestamptz + interval '12 hours',$11)`,
+      [
+        id,
+        chainId,
+        nativeSymbol,
+        leftSnap.tokenAddress,
+        rightSnap.tokenAddress,
+        tournamentId,
+        JSON.stringify(participants),
+        leftSnap.marketCapUsd,
+        rightSnap.marketCapUsd,
+        startedAt,
+        leftSnap.ownerWallet || null,
+      ],
+    );
     await captureLiveBaselines({
       id,
       chain_id: chainId,
       state: "live",
       challenger_token: leftSnap.tokenAddress,
       defender_token: rightSnap.tokenAddress,
-      started_at: new Date().toISOString(),
-    }, { query: (text, params) => db.query(text, params) });
+      started_at: startedAt,
+    }, {
+      query: (text, params) => client.query(text, params),
+      snapshots: { left: leftSnap, right: rightSnap },
+    });
+    if (ownsTransaction) await client.query("commit");
+    return id;
   } catch (error) {
-    console.warn("[api/arenaTournaments] baseline capture failed", error?.message || error);
+    if (ownsTransaction) await client.query("rollback").catch(() => {});
+    throw error;
+  } finally {
+    if (ownsTransaction) client.release();
   }
-  return id;
 }
 
 async function handleAdminStart(req, res, id) {
