@@ -52,6 +52,23 @@ test("Match Quality active routes hydrate through normalized market snapshot", (
   assert.doesNotMatch(battles, /votes_24h/);
 });
 
+test("tournament seeding uses normalized snapshot and live insert shares a transaction with baselines", () => {
+  const tournaments = read("arenaTournaments.js");
+  const snapshot = tournaments.split("async function coinSnapshot")[1]?.split("async function handleList")[0] || "";
+  const insert = tournaments.split("async function insertTournamentBattle")[1]?.split("async function handleAdminStart")[0] || "";
+
+  assert.match(tournaments, /getArenaMarketSnapshot/);
+  assert.doesNotMatch(tournaments, /votes_24h/);
+  assert.doesNotMatch(snapshot, /market_cap_bnb/);
+  assert.match(insert, /ownsTransaction/);
+  assert.match(insert, /client\.query\(["']begin["']\)/);
+  assert.match(insert, /startedAt/);
+  assert.match(insert, /captureLiveBaselines/);
+  assert.match(insert, /snapshots:\s*\{\s*left:\s*leftSnap,\s*right:\s*rightSnap\s*\}/);
+  assert.match(insert, /client\.query\(["']commit["']\)/);
+  assert.match(insert, /client\.query\(["']rollback["']\)/);
+});
+
 test("imported candidates do not fabricate zero native market metrics", () => {
   const battles = read("arenaBattles.js");
   assert.doesNotMatch(battles, /market_cap_bnb:\s*0/);
