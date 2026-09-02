@@ -45,6 +45,10 @@ interface IRobinhoodStockGraduationRouteRegistry {
         );
 }
 
+interface IRobinhoodStockCampaignImplementation {
+    function isStockCampaignImplementation() external view returns (bool);
+}
+
 contract LaunchFactory is Ownable {
     using ECDSA for bytes32;
 
@@ -97,6 +101,7 @@ contract LaunchFactory is Ownable {
     error InvalidReservationVersion();
     error InvalidAuthorizationNonce();
     error StockGraduationAdapterUnavailable();
+    error StockCampaignImplementationUnavailable();
     error UnsupportedStockToken();
 
     struct LaunchConfig {
@@ -198,6 +203,7 @@ contract LaunchFactory is Ownable {
     address public router;
     address public graduationOracle;
     address public stockGraduationAdapter;
+    address public stockCampaignImplementation;
     CreatorRegistry public creatorRegistry;
     RiskRegistry public riskRegistry;
 
@@ -233,6 +239,7 @@ contract LaunchFactory is Ownable {
         uint32 campaignGeneration
     );
     event StockGraduationAdapterUpdated(address indexed adapter);
+    event StockCampaignImplementationUpdated(address indexed implementation);
     event StockCampaignConfigured(address indexed campaign, address indexed token, address indexed stockToken, address adapter);
     event ConfigUpdated(LaunchConfig newConfig);
     event FeeRecipientUpdated(address indexed newRecipient);
@@ -335,7 +342,7 @@ contract LaunchFactory is Ownable {
 
     function createCampaign(CampaignRequest calldata req) external returns (address campaignAddr, address tokenAddr) {
         if (requireRouteAuthorization) revert RouteAuthorizationRequired();
-        return _createCampaign(req, tradeRouteProfile, finalizeRouteProfile, _immediateSchedule(msg.sender));
+        return _createCampaign(req, tradeRouteProfile, finalizeRouteProfile, _immediateSchedule(msg.sender), campaignImplementation);
     }
 
     function createCampaignAuthorized(CampaignRequest calldata req, RouteAuthorization calldata routeAuth)
@@ -343,7 +350,13 @@ contract LaunchFactory is Ownable {
         returns (address campaignAddr, address tokenAddr)
     {
         _verifyRouteAuthorization(msg.sender, req, routeAuth);
-        return _createCampaign(req, routeAuth.tradeRouteProfile, routeAuth.finalizeRouteProfile, _immediateSchedule(msg.sender));
+        return _createCampaign(
+            req,
+            routeAuth.tradeRouteProfile,
+            routeAuth.finalizeRouteProfile,
+            _immediateSchedule(msg.sender),
+            campaignImplementation
+        );
     }
 
     function createStockCampaignAuthorized(
@@ -352,14 +365,17 @@ contract LaunchFactory is Ownable {
         RouteAuthorization calldata routeAuth
     ) external returns (address campaignAddr, address tokenAddr) {
         address adapter = stockGraduationAdapter;
+        address implementation = stockCampaignImplementation;
         if (liquidityKind != LIQUIDITY_KIND_V3_NFT || adapter == address(0)) revert StockGraduationAdapterUnavailable();
+        if (implementation == address(0)) revert StockCampaignImplementationUnavailable();
         _requireStockRouteEnabled(adapter, stockToken);
-        _verifyStockRouteAuthorization(msg.sender, req, stockToken, adapter, routeAuth);
+        _verifyStockRouteAuthorization(msg.sender, req, stockToken, adapter, implementation, routeAuth);
         (campaignAddr, tokenAddr) = _createCampaign(
             req,
             routeAuth.tradeRouteProfile,
             routeAuth.finalizeRouteProfile,
-            _immediateSchedule(msg.sender)
+            _immediateSchedule(msg.sender),
+            implementation
         );
         campaignGraduationQuoteToken[campaignAddr] = stockToken;
         LaunchCampaign(payable(campaignAddr)).configureStockGraduation(stockToken, adapter);
@@ -386,7 +402,13 @@ contract LaunchFactory is Ownable {
             campaignGeneration: CAMPAIGN_GENERATION
         });
 
-        return _createCampaign(req.campaign, routeAuth.tradeRouteProfile, routeAuth.finalizeRouteProfile, schedule);
+        return _createCampaign(
+            req.campaign,
+            routeAuth.tradeRouteProfile,
+            routeAuth.finalizeRouteProfile,
+            schedule,
+            campaignImplementation
+        );
     }
 
     function _immediateSchedule(address creator) internal view returns (LaunchCampaign.ScheduleParams memory schedule) {
@@ -406,11 +428,13 @@ contract LaunchFactory is Ownable {
         CampaignRequest calldata req,
         uint8 campaignTradeRouteProfile,
         uint8 campaignFinalizeRouteProfile,
-        LaunchCampaign.ScheduleParams memory schedule
+        LaunchCampaign.ScheduleParams memory schedule,
+        address implementation
     ) internal returns (address campaignAddr, address tokenAddr) {
         if (!live) revert NotLive();
         if (globalPaused) revert Paused();
         if (createPaused) revert CreatePaused();
+        if (implementation == address(0) || implementation.code.length == 0) revert ImplementationZero();
         if (bytes(req.name).length == 0) revert NameEmpty();
         if (bytes(req.symbol).length == 0) revert SymbolEmpty();
         if (bytes(req.logoURI).length == 0) revert LogoEmpty();
@@ -453,7 +477,7 @@ contract LaunchFactory is Ownable {
             strictFeeRouting: true
         });
 
-        address clone = Clones.clone(campaignImplementation);
+        address clone = Clones.clone(implementation);
         LaunchCampaign(payable(clone)).initializeScheduled(params, schedule.launchAt);
         campaignAddr = clone;
         tokenAddr = address(LaunchCampaign(payable(clone)).token());
@@ -562,6 +586,20 @@ contract LaunchFactory is Ownable {
         }
         stockGraduationAdapter = newAdapter;
         emit StockGraduationAdapterUpdated(newAdapter);
+    }
+
+    function setStockCampaignImplementation(address newImplementation) external onlyOwner whenMutable {
+        if (liquidityKind != LIQUIDITY_KIND_V3_NFT) revert UnsupportedLiquidityKind();
+        if (newImplementation != address(0)) {
+            if (newImplementation.code.length == 0) revert ContractCodeMissing();
+            try IRobinhoodStockCampaignImplementation(newImplementation).isStockCampaignImplementation() returns (bool supported) {
+                if (!supported) revert StockCampaignImplementationUnavailable();
+            } catch {
+                revert StockCampaignImplementationUnavailable();
+            }
+        }
+        stockCampaignImplementation = newImplementation;
+        emit StockCampaignImplementationUpdated(newImplementation);
     }
 
     function setGraduationOracle(address newOracle) external onlyOwner whenMutable {
@@ -722,6 +760,7 @@ contract LaunchFactory is Ownable {
         CampaignRequest calldata req,
         address stockToken,
         address adapter,
+        address implementation,
         RouteAuthorization calldata routeAuth
     ) internal {
         address authority = routeAuthority;
@@ -738,6 +777,7 @@ contract LaunchFactory is Ownable {
                     _hashCampaignRequest(req),
                     stockToken,
                     adapter,
+                    implementation,
                     routeAuth.tradeRouteProfile,
                     routeAuth.finalizeRouteProfile,
                     routeAuth.deadline
