@@ -66,6 +66,21 @@ function logRatioScore(left, right, options = {}) {
   return clamp(100 / (1 + Math.abs(Math.log(a / b)) * factor), 0, 100);
 }
 
+function hasOwn(input, key) {
+  return Boolean(input) && Object.prototype.hasOwnProperty.call(input, key);
+}
+
+function hasAnyOwn(input, keys) {
+  return keys.some((key) => hasOwn(input, key));
+}
+
+function firstValue(input, keys) {
+  for (const key of keys) {
+    if (hasOwn(input, key)) return input[key];
+  }
+  return undefined;
+}
+
 function defaultConfig() {
   return {
     marketCapWeight: envNumber("ARENA_MATCH_V2_MARKETCAP_WEIGHT", 35),
@@ -89,16 +104,39 @@ export function arenaMatchConfig(overrides = {}) {
 
 export function arenaMatchProfileFromCoin(input, nowMs = Date.now()) {
   const launchedAt = input?.launchedAt ?? input?.launched_at ?? input?.graduated_at_chain ?? input?.created_at ?? input?.createdAt ?? null;
+  const mcapKeys = ["marketCapUsd", "market_cap_usd", "marketcap_usd"];
+  const holderKeys = ["holderCount", "holders", "holders_count"];
+  const liquidityKeys = ["liquidityUsd", "liquidity_usd"];
+  const volumeKeys = ["volumeUsd", "volume_24h_usd", "vol_24h_usd"];
+  const normalizedInput =
+    hasAnyOwn(input, mcapKeys) &&
+    hasAnyOwn(input, holderKeys) &&
+    hasAnyOwn(input, liquidityKeys) &&
+    hasAnyOwn(input, volumeKeys);
+
+  const marketCapValue = normalizedInput
+    ? firstValue(input, mcapKeys)
+    : input?.market_cap_bnb ?? input?.marketcap_bnb;
+  const holderValue = firstValue(input, holderKeys);
+  const liquidityValue = normalizedInput
+    ? firstValue(input, liquidityKeys)
+    : input?.liquidity_bnb;
+  const volumeValue = normalizedInput
+    ? firstValue(input, volumeKeys)
+    : input?.volume_24h_bnb ?? input?.vol_24h_bnb;
+
   return {
     tokenId: normalizeId(input?.tokenId ?? input?.tokenAddress ?? input?.token_address ?? input?.campaignAddress ?? input?.campaign_address ?? ""),
     chainId: Number(input?.chainId ?? input?.chain_id ?? 0) || 0,
     ownerWallet: normalizeId(input?.ownerWallet ?? input?.owner_wallet ?? input?.creator_address ?? input?.creatorAddress ?? ""),
-    marketCapUsd: Math.max(0, toNumber(input?.marketCapUsd ?? input?.market_cap_usd ?? input?.market_cap_bnb ?? input?.marketcap_usd ?? input?.marketcap_bnb)),
-    holderCount: Math.max(0, Math.floor(toNumber(input?.holderCount ?? input?.holders ?? input?.holders_count ?? input?.votes_24h))),
-    liquidityUsd: Math.max(0, toNumber(input?.liquidityUsd ?? input?.liquidity_usd ?? input?.liquidity_bnb)),
-    volumeUsd: Math.max(0, toNumber(input?.volumeUsd ?? input?.volume_24h_usd ?? input?.volume_24h_bnb ?? input?.vol_24h_usd ?? input?.vol_24h_bnb)),
+    marketCapUsd: Math.max(0, toNumber(marketCapValue)),
+    holderCount: Math.max(0, Math.floor(toNumber(holderValue))),
+    liquidityUsd: Math.max(0, toNumber(liquidityValue)),
+    volumeUsd: Math.max(0, toNumber(volumeValue)),
     launchedAt,
     marketDataUpdatedAt: input?.marketDataUpdatedAt ?? input?.market_updated_at ?? input?.last_trade_at ?? input?.updated_at ?? input?.updatedAt ?? null,
+    marketDataHealthy: input?.marketDataHealthy ?? input?.market_data_healthy ?? input?.healthy ?? null,
+    dataBasis: normalizedInput ? "normalized_usd" : "legacy_compat",
     maturityDays: ageDays(launchedAt, nowMs),
   };
 }
@@ -145,7 +183,10 @@ export function calculateMatchQuality(leftInput, rightInput, options = {}) {
 
   if (!left.tokenId || !right.tokenId) reasons.add("missing_token");
   if (left.tokenId && right.tokenId && left.tokenId === right.tokenId) reasons.add("same_token");
+  if (left.dataBasis !== "normalized_usd" || right.dataBasis !== "normalized_usd") reasons.add("non_normalized_market_data");
+  if (left.marketDataHealthy === false || right.marketDataHealthy === false) reasons.add("unhealthy_market_data");
   if (left.marketCapUsd <= 0 || right.marketCapUsd <= 0) reasons.add("missing_market_cap");
+  if (left.holderCount <= 0 || right.holderCount <= 0) reasons.add("missing_holders");
   if (left.liquidityUsd <= 0 || right.liquidityUsd <= 0) reasons.add("invalid_liquidity");
   if (config.excludeSameOwnerRanked && left.ownerWallet && right.ownerWallet && left.ownerWallet === right.ownerWallet) {
     reasons.add("same_owner");
