@@ -36,6 +36,18 @@ const basePool = {
   lastIndexedBlock: null,
 };
 
+test("stored decimals treat SQL null as missing instead of zero decimals", () => {
+  assert.equal(robinhoodV3Internals.storedDecimals(null), null);
+  assert.equal(robinhoodV3Internals.storedDecimals(undefined), null);
+  assert.equal(robinhoodV3Internals.storedDecimals(""), null);
+  assert.equal(robinhoodV3Internals.storedDecimals("0"), 0);
+  assert.equal(robinhoodV3Internals.storedDecimals("18"), 18);
+  assert.equal(robinhoodV3Internals.storedDecimals(36), 36);
+  assert.equal(robinhoodV3Internals.storedDecimals(37), null);
+  assert.equal(robinhoodV3Internals.storedDecimals(-1), null);
+  assert.equal(robinhoodV3Internals.storedDecimals("not-a-number"), null);
+});
+
 test("normalizes Robinhood mock-V3 native->token as buy", () => {
   const iface = new ethers.Interface([
     "event Swap(address indexed sender,address indexed tokenIn,address indexed tokenOut,uint256 amountIn,uint256 amountOut,uint256 feeAmount,address recipient)",
