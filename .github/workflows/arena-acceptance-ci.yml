@@ -8,8 +8,11 @@ on:
       - "contracts/ArenaWarPoolTreasury.sol"
       - "db/migrations/*arena*.sql"
       - "frontend/api/arena*.js"
+      - "frontend/api/upload.js"
       - "frontend/api/lib/arena*.js"
       - "frontend/api/lib/arena*.mjs"
+      - "frontend/api/lib/imageFileValidation.js"
+      - "frontend/api/lib/imageFileValidation.test.mjs"
       - "frontend/package.json"
       - "frontend/src/components/arena/**"
       - "frontend/src/components/command-center/Arena*.tsx"
@@ -19,10 +22,12 @@ on:
       - "frontend/src/features/postgrad/**"
       - "frontend/src/hooks/useArena*.ts"
       - "frontend/src/lib/arena/**"
+      - "frontend/src/lib/arenaImports.ts"
       - "frontend/src/lib/solanaArena*.ts"
       - "frontend/src/lib/solanaArena*.mjs"
       - "frontend/src/pages/Arena*.tsx"
       - "frontend/src/pages/BattleDetails.tsx"
+      - "frontend/src/pages/ImportedTokenDetails.tsx"
       - "frontend/src/pages/TournamentDetails.tsx"
       - "frontend/src/pages/command-center/CommandCenterBattles.tsx"
       - "programs/mwz_rewards_treasury/src/arena.rs"
@@ -39,8 +44,11 @@ on:
       - "contracts/ArenaWarPoolTreasury.sol"
       - "db/migrations/*arena*.sql"
       - "frontend/api/arena*.js"
+      - "frontend/api/upload.js"
       - "frontend/api/lib/arena*.js"
       - "frontend/api/lib/arena*.mjs"
+      - "frontend/api/lib/imageFileValidation.js"
+      - "frontend/api/lib/imageFileValidation.test.mjs"
       - "frontend/package.json"
       - "frontend/src/components/arena/**"
       - "frontend/src/components/command-center/Arena*.tsx"
@@ -50,10 +58,12 @@ on:
       - "frontend/src/features/postgrad/**"
       - "frontend/src/hooks/useArena*.ts"
       - "frontend/src/lib/arena/**"
+      - "frontend/src/lib/arenaImports.ts"
       - "frontend/src/lib/solanaArena*.ts"
       - "frontend/src/lib/solanaArena*.mjs"
       - "frontend/src/pages/Arena*.tsx"
       - "frontend/src/pages/BattleDetails.tsx"
+      - "frontend/src/pages/ImportedTokenDetails.tsx"
       - "frontend/src/pages/TournamentDetails.tsx"
       - "frontend/src/pages/command-center/CommandCenterBattles.tsx"
       - "programs/mwz_rewards_treasury/src/arena.rs"
@@ -117,6 +127,7 @@ jobs:
             'db/migrations/20260829_000001_arena_settle_idempotency.sql',
             'db/migrations/20260902_000003_arena_battle_metrics.sql',
             'db/migrations/20260902_000004_arena_battle_v2_corrections.sql',
+            'db/migrations/20260903_000001_arena_import_token_profile_v2.sql',
           ];
           for (const file of required) {
             if (!fs.existsSync(file) || !fs.readFileSync(file, 'utf8').trim()) {
@@ -130,6 +141,13 @@ jobs:
           const corrections = fs.readFileSync('db/migrations/20260902_000004_arena_battle_v2_corrections.sql', 'utf8');
           if (!/REVOKE SELECT ON TABLE public\.arena_battle_volume_audit FROM anon, authenticated/i.test(corrections)) {
             throw new Error('Battle volume audit privacy correction is missing');
+          }
+          const importProfile = fs.readFileSync('db/migrations/20260903_000001_arena_import_token_profile_v2.sql', 'utf8');
+          if (!/arena_token_imports_image_url_not_data/i.test(importProfile)) {
+            throw new Error('Imported token image URL storage guard is missing');
+          }
+          if (!/REVOKE INSERT, UPDATE, DELETE ON TABLE public\.arena_token_imports FROM anon, authenticated/i.test(importProfile)) {
+            throw new Error('Imported token profile write boundary is missing');
           }
           console.log(`arena_migrations=${required.length}`);
           console.log('arena_schema_chain=ok');
@@ -159,15 +177,23 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for file in frontend/api/arena*.js frontend/api/lib/arena*.js frontend/api/lib/arena*.mjs; do
+          for file in frontend/api/arena*.js frontend/api/lib/arena*.js frontend/api/lib/arena*.mjs frontend/api/lib/imageFileValidation.js; do
             node --check "$file"
           done
+          node --check frontend/api/upload.js
 
       - name: Check API import graph
         run: npm --prefix frontend run check:api-imports
 
       - name: Test Battle Points V2 baselines, volume and calculator
         run: npm --prefix frontend run test:arena-battle-v2
+
+      - name: Test imported token profile and image security
+        run: |
+          node --test \
+            frontend/api/lib/imageFileValidation.test.mjs \
+            frontend/api/lib/arenaTokenProfile.test.mjs \
+            frontend/api/lib/arenaImportProfileCertification.test.mjs
 
       - name: Test battle, MWL and settlement certification
         run: npm --prefix frontend run test:arena-mwl
@@ -181,9 +207,13 @@ jobs:
       - name: Test Solana Arena client encoding
         run: npm --prefix frontend run test:solana-arena
 
-      - name: Build public application with Arena enabled
+      - name: Build public application with Arena and import image rollout enabled
         env:
           VITE_ENABLE_WAR_ROOM: "true"
+          VITE_ENABLE_POSTGRAD: "true"
+          VITE_ENABLE_POSTGRAD_ARENA: "true"
+          VITE_ENABLE_POSTGRAD_BATTLE: "true"
+          VITE_ARENA_IMPORT_IMAGE_UPLOAD: "true"
           VITE_ENABLE_UNIFIED_MARKET_CHART: "1"
           VITE_ENABLE_TESTNET_CAMPAIGNS: "true"
           VITE_ENABLE_TESTNET_FEATURED_FEED: "true"
