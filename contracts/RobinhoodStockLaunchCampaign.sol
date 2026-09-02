@@ -132,6 +132,12 @@ contract RobinhoodStockLaunchCampaign is LaunchCampaign {
         }
         if (minimumMemeUsed > memeAmountDesired) revert Slippage();
 
+        // LaunchToken allows the campaign to move tokens while trading is disabled, but the
+        // approved adapter/position manager also need to move MEME during the same transaction.
+        // Enabling here is safe because any later adapter/oracle/mint failure reverts this state
+        // change together with the rest of the completion attempt, preserving PENDING.
+        token.enableTrading();
+
         IERC20 meme = IERC20(address(token));
         address adapter = stockGraduationAdapter;
         meme.forceApprove(adapter, memeAmountDesired);
@@ -178,7 +184,6 @@ contract RobinhoodStockLaunchCampaign is LaunchCampaign {
         if (creatorPayout > 0) _sendStockNative(owner(), creatorPayout);
 
         g.postBurnTotalSupply = token.totalSupply();
-        token.enableTrading();
         launched = true;
         graduationPending = false;
         finalizedAt = block.timestamp;
