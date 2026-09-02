@@ -59,6 +59,10 @@ function numOrNull(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+function snapshotHolders(snapshot) {
+  return snapshot?.holders ?? snapshot?.holderCount ?? snapshot?.currentHolders ?? null;
+}
+
 export function combatantSides(row) {
   return [
     { side: "left", tokenId: ident(row.challenger_token || row.challengerToken) },
@@ -68,20 +72,21 @@ export function combatantSides(row) {
 
 function baselineParams({ battleId, tokenId, side, snapshot, baselineTimestamp }) {
   const updatedAt = asIso(snapshot?.updatedAt || snapshot?.marketDataUpdatedAt, null);
+  const holders = snapshotHolders(snapshot);
   return [
     battleId,
     tokenId,
     side,
     snapshot?.scoringVersion || BATTLE_POINTS_V2,
     numOrNull(snapshot?.marketCapUsd),
-    intOrNull(snapshot?.holders),
+    intOrNull(holders),
     numOrNull(snapshot?.liquidityUsd),
     baselineTimestamp,
     updatedAt,
     snapshot?.dataSource || "none",
     snapshot?.healthy === true,
     numOrNull(snapshot?.marketCapUsd),
-    intOrNull(snapshot?.holders),
+    intOrNull(holders),
     numOrNull(snapshot?.liquidityUsd),
     updatedAt,
     numOrNull(snapshot?.dataLagSeconds),
@@ -106,8 +111,6 @@ export async function captureLiveBaselines(row, deps = {}) {
   const sides = combatantSides(row);
   if (sides.length !== 2) throw new Error(`Live battle ${battleId} must have exactly two combatants`);
 
-  // Fetch both snapshots before any baseline write. If either adapter fails, no
-  // partial baseline row is persisted.
   const prepared = [];
   for (const { side, tokenId } of sides) {
     const snapshot = deps.snapshots?.[side]
@@ -369,7 +372,6 @@ function normalizeTradeUsd(row, chainId, nativeUsd) {
 
 export async function loadBattleWindowTrades({ chainId, campaignAddress, tokenAddress, liveAt, finishAt }, deps = {}) {
   const query = deps.query || defaultQuery;
-  const nativeUsd = deps.nativeUsd || await resolveNativeUsdPrice(chainId, deps.resolveNativeUsd);
   const result = await query(
     `select "campaignAddress", "tokenAddress", "pairAddress", source, side, wallet, recipient,
             "nativeAmountRaw", "quoteAmountRaw", "quoteAssetType", "quoteTokenAddress",
@@ -386,7 +388,16 @@ export async function loadBattleWindowTrades({ chainId, campaignAddress, tokenAd
         )`,
     [chainId, liveAt, finishAt, campaignAddress || null, tokenAddress || null],
   );
-  return (result.rows || []).map((row) => {
+
+  const rows = result.rows || [];
+  const needsNativeFx = rows.some((row) => {
+    const explicitUsd = numOrNull(row.volumeUsd ?? row.volume_usd);
+    const quoteAssetType = String(row.quoteAssetType || row.quote_asset_type || "WRAPPED_NATIVE").toUpperCase();
+    return !(explicitUsd > 0) && quoteAssetType !== "STOCK_TOKEN";
+  });
+  const nativeUsd = deps.nativeUsd || (needsNativeFx ? await resolveNativeUsdPrice(chainId, deps.resolveNativeUsd) : null);
+
+  return rows.map((row) => {
     const valuation = normalizeTradeUsd(row, chainId, nativeUsd);
     return {
       wallet: row.wallet,
@@ -423,6 +434,7 @@ export async function refreshCombatantVolumeAndPoints({
     finishAt: window.finishAt,
     ...volumeContext,
   });
+  const currentHolders = snapshotHolders(snapshot);
   const scored = calculateBattlePoints({
     baseline: {
       startMcapUsd: metricsRow.start_mcap_usd,
@@ -433,7 +445,7 @@ export async function refreshCombatantVolumeAndPoints({
     },
     current: {
       marketCapUsd: snapshot?.marketCapUsd,
-      holders: snapshot?.holders,
+      holders: currentHolders,
       liquidityUsd: snapshot?.liquidityUsd,
       updatedAt: snapshot?.updatedAt,
       healthy: snapshot?.healthy,
@@ -462,7 +474,7 @@ export async function refreshCombatantVolumeAndPoints({
   }, { query });
   await updateBattleMetricScores(metricsRow.battle_id, metricsRow.side, {
     currentMcapUsd: snapshot?.marketCapUsd ?? null,
-    currentHolders: intOrNull(snapshot?.holders),
+    currentHolders: intOrNull(currentHolders),
     currentLiquidityUsd: snapshot?.liquidityUsd ?? null,
     marketDataUpdatedAt: snapshot?.updatedAt || null,
     dataLagSeconds: snapshot?.dataLagSeconds ?? scored.dataHealth.dataLagSeconds,
