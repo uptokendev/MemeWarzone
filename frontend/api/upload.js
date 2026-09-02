@@ -4,6 +4,7 @@ import fs from "fs";
 import crypto from "crypto";
 import { pool } from "../server/db.js";
 import { isSolanaAddress, normalizeAddress } from "../server/http.js";
+import { ARENA_IMPORT_IMAGE_LIMITS, inspectImageFile } from "./lib/imageFileValidation.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { verifySolanaDirectSessionToken } from "./dev-fix/solana-direct-create.js";
 
@@ -89,24 +90,77 @@ async function persistDraftLogo({ draftId, chainId, address, publicUrl }) {
   }
 }
 
+async function loadArenaImport(importId) {
+  const id = String(importId || "").trim();
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
+  const result = await pool.query(
+    `select id, chain_id, token_address, owner_wallet
+       from public.arena_token_imports
+      where id = $1::uuid
+      limit 1`,
+    [id],
+  );
+  return result.rows[0] || null;
+}
+
+async function persistArenaImportImage({ importId, chainId, ownerWallet, publicUrl }) {
+  const ownerPredicate = isSolanaUploadChain(chainId)
+    ? `owner_wallet = $4`
+    : `lower(owner_wallet) = lower($4)`;
+  const result = await pool.query(
+    `update public.arena_token_imports
+        set image_url = $1,
+            verified_at = coalesce(verified_at, now()),
+            metadata_updated_at = now(),
+            updated_at = now()
+      where id = $2::uuid
+        and chain_id = $3
+        and ${ownerPredicate}
+      returning id, image_url, metadata_updated_at, verified_at`,
+    [publicUrl, importId, Number(chainId), ownerWallet],
+  );
+  if (!result.rows[0]) throw new Error("Import image owner changed before persistence");
+  return result.rows[0];
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") return bad(res, 405, "Method not allowed");
 
   const q = req.query || {};
   const kind = String(q.kind || "avatar");
-  const chainId = Number(q.chainId || 56);
-  const address = normalizeUploadAddress(q.address, chainId);
+  let chainId = Number(q.chainId || 56);
+  let address = normalizeUploadAddress(q.address, chainId);
   const draftId = String(q.draftId || "").trim();
+  const importId = String(q.importId || "").trim();
 
-  const maxBytes = 5 * 1024 * 1024;
+  const maxBytes = kind === "arena_import" ? ARENA_IMPORT_IMAGE_LIMITS.maxBytes : 5 * 1024 * 1024;
   const form = formidable({ multiples: false, maxFileSize: maxBytes, maxTotalFileSize: maxBytes });
 
   try {
     const [fields, files] = await form.parse(req);
 
+    let arenaImport = null;
+    if (kind === "arena_import") {
+      if (!importId) return bad(res, 400, "importId is required for imported token images");
+      arenaImport = await loadArenaImport(importId);
+      if (!arenaImport) return bad(res, 404, "Imported token was not found");
+      const requestedChain = Number(q.chainId || 0);
+      if (requestedChain && requestedChain !== Number(arenaImport.chain_id)) {
+        return bad(res, 409, "Imported token chain does not match upload request");
+      }
+      chainId = Number(arenaImport.chain_id);
+      address = normalizeUploadAddress(arenaImport.owner_wallet, chainId);
+      if (!address) return bad(res, 409, "Imported token owner wallet is invalid");
+    }
+
     // Prefer form fields for auth when present; query params are the proven Create/logo path
     // (multiline message in multipart is frequently mangled by proxies → MESSAGE_MISMATCH).
-    const authAction = firstField(fields, "action") || String(q.action || (kind === "logo" ? "upload_logo" : "upload_avatar"));
+    const defaultAction = kind === "logo"
+      ? "upload_logo"
+      : kind === "arena_import"
+        ? "arena_import_image"
+        : "upload_avatar";
+    const authAction = firstField(fields, "action") || String(q.action || defaultAction);
     const authNonce = firstField(fields, "nonce") || String(q.nonce || "").trim();
     const authMessageRaw = firstField(fields, "message") || String(q.message || "");
     const authMessage = String(authMessageRaw || "").replace(/\r\n/g, "\n");
@@ -133,16 +187,14 @@ export default async function handler(req, res) {
     }
 
     // Public sponsorship creatives may omit wallet (kind=sponsor|sponsorship).
-    // Avatar/logo/squad still require address + wallet action auth when enforce is on.
+    // Avatar/logo/squad/imported-token images require address + wallet action auth when enforce is on.
     const isPublicSponsorKind = kind === "sponsor" || kind === "sponsorship";
     if (address && !isPublicSponsorKind && !directSession) {
-      // logo → upload_logo; everything else (avatar, squad, …) → upload_avatar
-      const action = kind === "logo" ? "upload_logo" : "upload_avatar";
       const verified = await requireWalletActionAuth({
         res,
         pool,
         auth: {
-          action: authAction || action,
+          action: authAction || defaultAction,
           walletAddress: authWallet,
           chainId,
           nonce: authNonce,
@@ -152,9 +204,13 @@ export default async function handler(req, res) {
         },
         expectedWallet: address,
         chainId,
-        action,
-        routeLabel: "upload",
-        extraLines: draftId ? [`Draft ID: ${draftId}`] : [],
+        action: defaultAction,
+        routeLabel: kind === "arena_import" ? "arena/imports/image" : "upload",
+        extraLines: kind === "arena_import"
+          ? [`Import: ${importId}`]
+          : draftId
+            ? [`Draft ID: ${draftId}`]
+            : [],
       });
       if (!verified) return;
     }
@@ -171,17 +227,36 @@ export default async function handler(req, res) {
     const mimetype = String(f.mimetype || "");
     if (!/^image\/(png|jpeg|jpg|webp)$/.test(mimetype)) return bad(res, 400, "Unsupported image type. Use png/jpg/webp.");
 
-    const ext = pickExt(mimetype);
-    if (!ext) return bad(res, 400, "Unsupported image type.");
-
     const buf = fs.readFileSync(filepath);
     try {
       fs.unlinkSync(filepath);
     } catch {}
 
+    let ext = pickExt(mimetype);
+    let contentType = mimetype === "image/jpg" ? "image/jpeg" : mimetype;
+    let imageInfo = null;
+    if (kind === "arena_import") {
+      try {
+        imageInfo = inspectImageFile(buf, {
+          declaredMime: mimetype,
+          maxBytes: ARENA_IMPORT_IMAGE_LIMITS.maxBytes,
+          maxDimension: ARENA_IMPORT_IMAGE_LIMITS.maxDimension,
+          maxPixels: ARENA_IMPORT_IMAGE_LIMITS.maxPixels,
+        });
+      } catch (error) {
+        return bad(res, 400, String(error?.message || "Imported token image is invalid"));
+      }
+      ext = imageInfo.ext;
+      contentType = imageInfo.mime;
+    }
+    if (!ext) return bad(res, 400, "Unsupported image type.");
+
     const supabaseUrl = String(process.env.SUPABASE_URL || "").trim();
     const supabaseKey = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
     if (!supabaseUrl || !supabaseKey) {
+      if (kind === "arena_import") {
+        return bad(res, 503, "Imported token image storage is not configured");
+      }
       const allowDataUrl = ["1", "true", "yes", "on"].includes(
         String(process.env.ENABLE_DATA_URL_UPLOADS || "").trim().toLowerCase(),
       );
@@ -193,7 +268,7 @@ export default async function handler(req, res) {
         );
       }
       console.warn("[api/upload] ENABLE_DATA_URL_UPLOADS is on — returning an in-memory data URL. Do not use this in production.");
-      const dataUrl = `data:${mimetype};base64,${buf.toString("base64")}`;
+      const dataUrl = `data:${contentType};base64,${buf.toString("base64")}`;
       return res.status(200).json({ url: dataUrl, persistedDraftLogo: false });
     }
 
@@ -212,13 +287,15 @@ export default async function handler(req, res) {
       name = `sponsors/${uuid}.${ext}`;
     } else if (kind === "avatar" && address) {
       name = `avatars/${chainId}/${address}/${uuid}.${ext}`;
+    } else if (kind === "arena_import") {
+      name = `arena-imports/${chainId}/${importId}/${uuid}.${ext}`;
     } else {
       name = `logos/${chainId}/${uuid}.${ext}`;
     }
 
     const { error: upErr } = await supabase.storage.from(bucket).upload(name, buf, {
-      contentType: mimetype,
-      upsert: true,
+      contentType,
+      upsert: kind === "arena_import" ? false : true,
       cacheControl: kind === "avatar" ? "60" : isPublicSponsorKind ? "3600" : "3600",
     });
     if (upErr) {
@@ -233,7 +310,32 @@ export default async function handler(req, res) {
       ? await persistDraftLogo({ draftId, chainId, address, publicUrl: data.publicUrl })
       : false;
 
-    return res.status(200).json({ url: data.publicUrl, persistedDraftLogo });
+    let persistedArenaImportImage = false;
+    let arenaImportProfile = null;
+    if (kind === "arena_import") {
+      try {
+        arenaImportProfile = await persistArenaImportImage({
+          importId,
+          chainId,
+          ownerWallet: address,
+          publicUrl: data.publicUrl,
+        });
+        persistedArenaImportImage = true;
+      } catch (error) {
+        await supabase.storage.from(bucket).remove([name]).catch(() => {});
+        console.error("[api/upload] failed to persist imported token image", error);
+        return bad(res, 409, "Imported token image could not be attached to this owner profile");
+      }
+    }
+
+    return res.status(200).json({
+      url: data.publicUrl,
+      persistedDraftLogo,
+      persistedArenaImportImage,
+      image: imageInfo ? { width: imageInfo.width, height: imageInfo.height, mime: imageInfo.mime } : undefined,
+      metadataUpdatedAt: arenaImportProfile?.metadata_updated_at || null,
+      verifiedAt: arenaImportProfile?.verified_at || null,
+    });
   } catch (e) {
     console.error("[api/upload]", e);
     return bad(res, 500, String(e?.message || e || "Server error"));
