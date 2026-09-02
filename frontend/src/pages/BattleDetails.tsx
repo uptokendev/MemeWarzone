@@ -1,4 +1,5 @@
 import { Link, useParams } from "react-router-dom";
+import { BattleCombatEffects } from "@/components/arena/BattleCombatEffects";
 import { BattleCombatantCard } from "@/components/arena/BattleCombatantCard";
 import { BattleScoreHud } from "@/components/arena/BattleScoreHud";
 import { ArenaStakeButton } from "@/components/arena/ArenaStakeButton";
@@ -131,34 +132,39 @@ const BattleDetails = () => {
             </div>
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px_minmax(0,1fr)]">
-            <BattleCombatantCard
-              battle={battle}
-              participant={left}
-              metricsSide={metrics?.sides.left}
-              sideLabel="Left flank"
-              href={leftRoute}
-              isLeader={cardLeaderIndex === 0}
-              accent="ember"
-            />
+          <div className="relative">
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px_minmax(0,1fr)]">
+              <BattleCombatantCard
+                battle={battle}
+                participant={left}
+                metricsSide={metrics?.sides.left}
+                sideLabel="Left flank"
+                href={leftRoute}
+                isLeader={cardLeaderIndex === 0}
+                accent="ember"
+              />
 
-            <BattleScoreHud
-              battle={battle}
-              metrics={metrics}
-              leftLabel={leftLabel}
-              rightLabel={rightLabel}
-              realtimeState={realtimeState}
-            />
+              <BattleScoreHud
+                battle={battle}
+                metrics={metrics}
+                leftLabel={leftLabel}
+                rightLabel={rightLabel}
+                realtimeState={realtimeState}
+              />
 
-            <BattleCombatantCard
-              battle={battle}
-              participant={right}
-              metricsSide={metrics?.sides.right}
-              sideLabel="Right flank"
-              href={rightRoute}
-              isLeader={cardLeaderIndex === 1}
-              accent="cyan"
-            />
+              <BattleCombatantCard
+                battle={battle}
+                participant={right}
+                metricsSide={metrics?.sides.right}
+                sideLabel="Right flank"
+                href={rightRoute}
+                isLeader={cardLeaderIndex === 1}
+                accent="cyan"
+              />
+            </div>
+            <div className="hidden xl:block">
+              <BattleCombatEffects metrics={battle.state === "live" ? metrics : null} />
+            </div>
           </div>
         </div>
       </section>
