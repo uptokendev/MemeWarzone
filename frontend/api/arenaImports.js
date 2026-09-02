@@ -47,9 +47,12 @@ function mapImport(row) {
 }
 
 async function nativeExists(chainId, token) {
+  const tokenPredicate = isSolanaChain(chainId)
+    ? `(token_address::text = $2 or campaign_address::text = $2)`
+    : `(lower(token_address::text) = lower($2) or lower(campaign_address::text) = lower($2))`;
   const result = await pool.query(
     `select campaign_address from public.campaigns
-      where chain_id = $1 and (lower(token_address::text) = lower($2) or lower(campaign_address::text) = lower($2))
+      where chain_id = $1 and ${tokenPredicate}
       limit 1`,
     [chainId, token],
   );
@@ -106,7 +109,8 @@ async function handleList(req, res) {
   const where = [];
   if (wallet) {
     values.push(wallet);
-    where.push(`lower(owner_wallet) = lower($${values.length})`);
+    const exactOwner = isSolanaAddress(wallet) || isSolanaChain(chainId);
+    where.push(exactOwner ? `owner_wallet = $${values.length}` : `lower(owner_wallet) = lower($${values.length})`);
   }
   if (Number.isFinite(chainId) && chainId > 0) {
     values.push(chainId);
