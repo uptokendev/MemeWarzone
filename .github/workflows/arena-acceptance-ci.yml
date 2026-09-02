@@ -115,22 +115,28 @@ jobs:
             'db/migrations/20260827_000006_arena_battle_duration.sql',
             'db/migrations/20260828_000007_arena_tournament_support.sql',
             'db/migrations/20260829_000001_arena_settle_idempotency.sql',
+            'db/migrations/20260902_000003_arena_battle_metrics.sql',
+            'db/migrations/20260902_000004_arena_battle_v2_corrections.sql',
           ];
           for (const file of required) {
             if (!fs.existsSync(file) || !fs.readFileSync(file, 'utf8').trim()) {
               throw new Error(`missing or empty Arena migration: ${file}`);
             }
           }
-          const settle = fs.readFileSync(required.at(-1), 'utf8');
+          const settle = fs.readFileSync('db/migrations/20260829_000001_arena_settle_idempotency.sql', 'utf8');
           if (!/arena_league_point_events_battle_token_kind_idx/.test(settle)) {
             throw new Error('Arena settlement idempotency index is missing');
+          }
+          const corrections = fs.readFileSync('db/migrations/20260902_000004_arena_battle_v2_corrections.sql', 'utf8');
+          if (!/REVOKE SELECT ON TABLE public\.arena_battle_volume_audit FROM anon, authenticated/i.test(corrections)) {
+            throw new Error('Battle volume audit privacy correction is missing');
           }
           console.log(`arena_migrations=${required.length}`);
           console.log('arena_schema_chain=ok');
           NODE
 
   api-and-ui:
-    name: Arena API, tournament, MWL and frontend gate
+    name: Arena API, Battle V2, tournament, MWL and frontend gate
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -159,6 +165,9 @@ jobs:
 
       - name: Check API import graph
         run: npm --prefix frontend run check:api-imports
+
+      - name: Test Battle Points V2 baselines, volume and calculator
+        run: npm --prefix frontend run test:arena-battle-v2
 
       - name: Test battle, MWL and settlement certification
         run: npm --prefix frontend run test:arena-mwl
