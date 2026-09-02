@@ -21,6 +21,12 @@ import {
   decideBattleSettlement,
   decorateSettledParticipants,
 } from "./lib/arenaBattleSettle.js";
+import {
+  arenaMatchProfileFromCoin,
+  arenaMatchProfileFromParticipant,
+  calculateMatchQuality,
+  recommendMatchCandidates,
+} from "./lib/arenaMatchQuality.js";
 import { advanceTournamentFromBattle } from "./arenaTournaments.js";
 import { solanaLiveTransition, solanaMatchedLifecyclePatch, solanaMayGoLive } from "./lib/arenaBattleLive.js";
 import { escrowRequired, readOnchainPool } from "./lib/arenaWarPoolLive.js";
@@ -44,6 +50,17 @@ const ADMIN_TRANSITIONS = {
   finished: [],
   expired: [],
 };
+
+const NATIVE_COIN_SELECT = `c.chain_id, c.campaign_address, c.token_address, c.creator_address, c.name, c.symbol,
+        c.is_active, c.support_enabled, c.graduated_at_chain, c.created_at,
+        ms.market_stage, ms.market_cap_bnb, ms.liquidity_bnb, ms.volume_24h_bnb, ms.holders,
+        ms.last_trade_at, ms.updated_at as market_updated_at, ms.data_lag_seconds,
+        ts.marketcap_bnb, ts.vol_24h_bnb, coalesce(ms.holders, va.votes_24h, 0) as holders_count`;
+const NATIVE_COIN_FROM = `from public.campaigns c
+       left join public.market_stats ms on ms.chain_id = c.chain_id and ms.campaign_address = c.campaign_address
+       left join public.token_stats ts on ts.chain_id = c.chain_id and ts.campaign_address = c.campaign_address
+       left join public.vote_aggregates va on va.chain_id = c.chain_id and va.campaign_address = c.campaign_address`;
+const IMPORT_COIN_SELECT = `chain_id, token_address, owner_wallet as creator_address, name, symbol, status, scan_json, created_at`;
 
 function nowIso() {
   return new Date().toISOString();
@@ -96,30 +113,16 @@ function stakeCompatible(a, b) {
   return Math.max(left, right) / Math.min(left, right) <= STAKE_BAND;
 }
 
-function metricsFromCoin(coin) {
-  return {
-    marketCapUsd: Math.max(0, toNumber(coin.marketcap_usd ?? coin.marketcap_bnb)),
-    holderCount: Math.max(0, Math.floor(toNumber(coin.holders_count ?? coin.votes_24h))),
-    volumeUsd: Math.max(0, toNumber(coin.vol_24h_usd ?? coin.vol_24h_bnb)),
-  };
-}
-
-function similarity(a, b) {
-  const safeLogRatio = (x, y) => {
-    if (!x || !y || x <= 0 || y <= 0) return 3;
-    return Math.abs(Math.log(x / y));
-  };
-  const mcScore = 1 / (1 + safeLogRatio(a.marketCapUsd, b.marketCapUsd) * 0.65);
-  const volScore = 1 / (1 + safeLogRatio(a.volumeUsd, b.volumeUsd) * 0.65);
-  const hSum = a.holderCount + b.holderCount || 1;
-  const hScore = 1 / (1 + (Math.abs(a.holderCount - b.holderCount) / hSum) * 0.9);
-  return Math.max(0, Math.min(1, mcScore * 0.42 + volScore * 0.38 + hScore * 0.2));
+function coinMatchProfile(coin) {
+  return arenaMatchProfileFromCoin(coin);
 }
 
 function participant(coin) {
-  const tokenAddress = ident(coin.token_address || coin.tokenAddress, coin.chain_id);
-  const campaignAddress = ident(coin.campaign_address || coin.campaignAddress, coin.chain_id);
-  const mcap = Math.max(0, toNumber(coin.marketcap_usd ?? coin.marketcap_bnb));
+  const chainId = Number(coin?.chain_id ?? coin?.chainId ?? 0);
+  const tokenAddress = ident(coin.token_address || coin.tokenAddress, chainId);
+  const campaignAddress = ident(coin.campaign_address || coin.campaignAddress, chainId);
+  const profile = coinMatchProfile(coin);
+  const mcap = Math.max(0, toNumber(profile.marketCapUsd));
   return {
     tokenId: tokenAddress || campaignAddress,
     campaignAddress: campaignAddress || "",
@@ -128,12 +131,14 @@ function participant(coin) {
     symbol: String(coin.symbol || "TBD"),
     score: Math.round(mcap * 100) / 100,
     priceChangePct: 0,
-    volumeUsd: Math.max(0, toNumber(coin.vol_24h_usd ?? coin.vol_24h_bnb)),
+    volumeUsd: Math.max(0, toNumber(profile.volumeUsd)),
     uniqueTraders: 0,
-    holderCount: Math.max(0, Math.floor(toNumber(coin.holders_count))),
+    holderCount: Math.max(0, Math.floor(toNumber(profile.holderCount))),
     holdersDelta: 0,
     marketCapUsd: mcap,
-    ownerWallet: ident(coin.creator_address || coin.owner_wallet, coin.chain_id),
+    liquidityUsd: Math.max(0, toNumber(profile.liquidityUsd)),
+    launchedAt: profile.launchedAt || null,
+    ownerWallet: profile.ownerWallet,
   };
 }
 
@@ -151,6 +156,9 @@ function placeholder() {
     holderCount: 0,
     holdersDelta: 0,
     marketCapUsd: 0,
+    liquidityUsd: 0,
+    launchedAt: null,
+    ownerWallet: null,
   };
 }
 
@@ -160,11 +168,29 @@ function publicLane(state) {
   return "open_for_battle";
 }
 
+function hasMatchSnapshot(participantRow) {
+  return Boolean(
+    participantRow &&
+      Object.prototype.hasOwnProperty.call(participantRow, "liquidityUsd") &&
+      Object.prototype.hasOwnProperty.call(participantRow, "launchedAt"),
+  );
+}
+
+function matchSummaryFromParticipants(participants) {
+  if (!Array.isArray(participants) || participants.length < 2) return null;
+  const [left, right] = participants;
+  if (!left || !right) return null;
+  if (String(left.tokenId || "").startsWith("pending-") || String(right.tokenId || "").startsWith("pending-")) return null;
+  if (!hasMatchSnapshot(left) || !hasMatchSnapshot(right)) return null;
+  return calculateMatchQuality(arenaMatchProfileFromParticipant(left), arenaMatchProfileFromParticipant(right));
+}
+
 function mapBattle(row) {
   if (!row) return null;
   const state = String(row.state || "waiting");
-  const participants = Array.isArray(row.participants) ? row.participants : [];
+  const participants = Array.isArray(row.participants) ? [...row.participants] : [];
   while (participants.length < 2) participants.push(placeholder());
+  const match = matchSummaryFromParticipants(participants);
   return {
     id: String(row.id),
     chainId: Number(row.chain_id),
@@ -199,6 +225,11 @@ function mapBattle(row) {
     mwlWinnerToken: row.mwl_winner_token || null,
     moneyTieBreak: row.money_tie_break || null,
     settlementVersion: row.settlement_version || null,
+    matchQuality: match?.matchScore ?? null,
+    matchClassification: match?.classification || null,
+    rankedMode: match ? (match.rankedEligible ? "competitive" : "open_war") : null,
+    matchComponents: match?.components || null,
+    matchReasons: match?.reasons || [],
     updatedAt: row.updated_at || row.created_at || nowIso(),
     participants,
   };
@@ -249,11 +280,8 @@ async function nativeCoin(chainId, identity) {
   const normalized = ident(identity, chainId);
   if (!normalized) return null;
   const result = await pool.query(
-    `select c.chain_id, c.campaign_address, c.token_address, c.creator_address, c.name, c.symbol, c.is_active, c.graduated_at_chain,
-            ts.marketcap_bnb, ts.vol_24h_bnb, coalesce(va.votes_24h, 0) as votes_24h
-       from public.campaigns c
-       left join public.token_stats ts on ts.chain_id = c.chain_id and ts.campaign_address = c.campaign_address
-       left join public.vote_aggregates va on va.chain_id = c.chain_id and va.campaign_address = c.campaign_address
+    `select ${NATIVE_COIN_SELECT}
+       ${NATIVE_COIN_FROM}
       where c.chain_id = $1
         and (lower(c.campaign_address::text) = lower($2) or lower(coalesce(c.token_address::text, '')) = lower($2))
       order by c.created_block desc nulls last
@@ -269,7 +297,7 @@ async function importedCoin(chainId, identity) {
   const normalized = ident(identity, chainId);
   if (!normalized) return null;
   const result = await pool.query(
-    `select chain_id, token_address, owner_wallet as creator_address, name, symbol, status, scan_json
+    `select ${IMPORT_COIN_SELECT}
        from public.arena_token_imports
       where chain_id = $1 and lower(token_address) = lower($2)
       limit 1`,
@@ -277,7 +305,19 @@ async function importedCoin(chainId, identity) {
   );
   const row = result.rows[0];
   if (!row) return null;
-  return { ...row, origin: "import", campaign_address: null, graduated_at_chain: row.status === "passed" ? 1 : null, is_active: true };
+  return {
+    ...row,
+    origin: "import",
+    campaign_address: null,
+    graduated_at_chain: row.status === "passed" ? row.created_at : null,
+    is_active: true,
+    support_enabled: true,
+    market_stage: "EXTERNAL_IMPORT",
+    market_cap_bnb: 0,
+    liquidity_bnb: 0,
+    volume_24h_bnb: 0,
+    holders_count: 0,
+  };
 }
 
 async function coinByIdentity(chainId, identity) {
@@ -308,18 +348,15 @@ async function creatorCoins(chainId, creatorAddress, limit) {
   const creator = ident(creatorAddress, chainId) || normalizeWalletFlexible(creatorAddress);
   if (!isWallet(creator)) return [];
   const natives = await pool.query(
-    `select c.chain_id, c.campaign_address, c.token_address, c.creator_address, c.name, c.symbol, c.is_active, c.graduated_at_chain,
-            ts.marketcap_bnb, ts.vol_24h_bnb, coalesce(va.votes_24h, 0) as votes_24h
-       from public.campaigns c
-       left join public.token_stats ts on ts.chain_id = c.chain_id and ts.campaign_address = c.campaign_address
-       left join public.vote_aggregates va on va.chain_id = c.chain_id and va.campaign_address = c.campaign_address
+    `select ${NATIVE_COIN_SELECT}
+       ${NATIVE_COIN_FROM}
       where c.chain_id = $1 and lower(c.creator_address::text) = lower($2) and c.campaign_address is not null
       order by c.created_block desc nulls last
       limit $3`,
     [chainId, creator, limit],
   );
   const imports = await pool.query(
-    `select chain_id, token_address, owner_wallet as creator_address, name, symbol, status, scan_json
+    `select ${IMPORT_COIN_SELECT}
        from public.arena_token_imports
       where chain_id = $1 and lower(owner_wallet) = lower($2)
       order by created_at desc
@@ -332,8 +369,14 @@ async function creatorCoins(chainId, creatorAddress, limit) {
       ...row,
       origin: "import",
       campaign_address: null,
-      graduated_at_chain: row.status === "passed" ? 1 : null,
+      graduated_at_chain: row.status === "passed" ? row.created_at : null,
       is_active: true,
+      support_enabled: true,
+      market_stage: "EXTERNAL_IMPORT",
+      market_cap_bnb: 0,
+      liquidity_bnb: 0,
+      volume_24h_bnb: 0,
+      holders_count: 0,
     })),
   ];
 }
@@ -370,6 +413,9 @@ async function statusFor(coin) {
   }
   if (coin.origin !== "import" && coin.is_active === false) {
     return { ...base, eligibility: false, currentState: "unavailable", battleState: null, battleId: null, openForBattleState: "not_open", unavailableReason: "campaign_inactive" };
+  }
+  if (coin.origin !== "import" && coin.support_enabled === false) {
+    return { ...base, eligibility: false, currentState: "unavailable", battleState: null, battleId: null, openForBattleState: "not_open", unavailableReason: "campaign_unsupported" };
   }
   return { ...base, eligibility: true, currentState: "eligible", battleState: null, battleId: null, openForBattleState: "not_open", unavailableReason: null };
 }
@@ -463,7 +509,7 @@ async function waitingCandidates(chainId, excludeId, stakeNative, durationHours)
 }
 
 function coinMcap(coin) {
-  return Math.max(0, toNumber(coin.marketcap_usd ?? coin.marketcap_bnb));
+  return Math.max(0, toNumber(coinMatchProfile(coin).marketCapUsd));
 }
 
 async function beginFight(id, patch, chainId) {
@@ -543,48 +589,110 @@ export async function promoteMatchedIfFunded(row) {
   return mapBattle(row);
 }
 
+async function activeBattleTokenSet(chainId) {
+  const tokens = new Set();
+  const result = await pool.query(
+    `select challenger_token, defender_token, participants
+       from public.arena_battles
+      where chain_id = $1 and state = any($2)`,
+    [chainId, ACTIVE_STATES],
+  );
+  for (const row of result.rows) {
+    if (row.challenger_token) tokens.add(ident(row.challenger_token, chainId));
+    if (row.defender_token) tokens.add(ident(row.defender_token, chainId));
+    const participants = Array.isArray(row.participants) ? row.participants : [];
+    for (const entry of participants) {
+      const tokenId = ident(entry?.tokenId || entry?.tokenAddress || entry?.campaignAddress, chainId);
+      if (tokenId) tokens.add(tokenId);
+    }
+  }
+  return tokens;
+}
+
+async function eligibleRecommendationCoins(chainId, limit = 120) {
+  const nativeLimit = Math.max(limit, 60);
+  const nativeRows = await pool.query(
+    `select ${NATIVE_COIN_SELECT}
+       ${NATIVE_COIN_FROM}
+      where c.chain_id = $1
+        and c.campaign_address is not null
+        and c.graduated_at_chain is not null
+        and coalesce(c.is_active, true) = true
+        and coalesce(c.support_enabled, true) = true
+      order by coalesce(ms.market_cap_bnb, ts.marketcap_bnb, 0) desc, c.created_block desc nulls last
+      limit $2`,
+    [chainId, nativeLimit],
+  );
+  const importRows = await pool.query(
+    `select ${IMPORT_COIN_SELECT}
+       from public.arena_token_imports
+      where chain_id = $1 and status = 'passed'
+      order by created_at desc
+      limit $2`,
+    [chainId, nativeLimit],
+  );
+  const deduped = new Map();
+  for (const row of nativeRows.rows) {
+    const tokenId = ident(row.token_address || row.campaign_address, chainId);
+    if (!tokenId || deduped.has(tokenId)) continue;
+    deduped.set(tokenId, { ...row, origin: "native" });
+  }
+  for (const row of importRows.rows) {
+    const tokenId = ident(row.token_address, chainId);
+    if (!tokenId || deduped.has(tokenId)) continue;
+    deduped.set(tokenId, {
+      ...row,
+      origin: "import",
+      campaign_address: null,
+      graduated_at_chain: row.created_at,
+      is_active: true,
+      support_enabled: true,
+      market_stage: "EXTERNAL_IMPORT",
+      market_cap_bnb: 0,
+      liquidity_bnb: 0,
+      volume_24h_bnb: 0,
+      holders_count: 0,
+    });
+  }
+  return [...deduped.values()];
+}
+
 async function tryAutoMatch(openBattle, openerCoin) {
   const chainId = Number(openBattle.chainId);
   const candidates = await waitingCandidates(chainId, openBattle.id, openBattle.stakeNative, openBattle.durationHours);
   if (!candidates.length) return openBattle;
 
-  const openerMetrics = metricsFromCoin(openerCoin);
-  let best = null;
-  let bestScore = 0;
+  const openerProfile = coinMatchProfile(openerCoin);
+  const scored = [];
   for (const row of candidates) {
-    const rivalPart = Array.isArray(row.participants) ? row.participants[0] : null;
-    if (!rivalPart) continue;
-    const score = similarity(openerMetrics, {
-      marketCapUsd: toNumber(rivalPart.marketCapUsd ?? rivalPart.score),
-      holderCount: toNumber(rivalPart.holderCount),
-      volumeUsd: toNumber(rivalPart.volumeUsd),
-    });
-    if (score > bestScore) {
-      bestScore = score;
-      best = row;
-    }
+    const rivalCoin = await coinByIdentity(chainId, row.challenger_token);
+    const rivalProfile = rivalCoin ? coinMatchProfile(rivalCoin) : arenaMatchProfileFromParticipant(Array.isArray(row.participants) ? row.participants[0] : null);
+    if (!rivalProfile.tokenId) continue;
+    scored.push({ row, rivalCoin, rivalProfile });
   }
-  if (!best || bestScore < 0.15) return openBattle;
+  const best = recommendMatchCandidates(openerProfile, scored, {
+    limit: 1,
+    getProfile: (entry) => entry.rivalProfile,
+  })[0];
+  if (!best) return openBattle;
 
-  const rival = participant({
-    chain_id: chainId,
-    token_address: best.challenger_token,
-    campaign_address: best.participants?.[0]?.campaignAddress,
-    name: best.participants?.[0]?.tokenName,
-    symbol: best.participants?.[0]?.symbol,
-    marketcap_bnb: best.participants?.[0]?.marketCapUsd,
-    vol_24h_bnb: best.participants?.[0]?.volumeUsd,
-    holders_count: best.participants?.[0]?.holderCount,
-    creator_address: best.creator_address,
-  });
+  const rivalRow = best.candidate.row;
+  const rival = best.candidate.rivalCoin
+    ? participant(best.candidate.rivalCoin)
+    : {
+        ...(Array.isArray(rivalRow.participants) ? rivalRow.participants[0] : null),
+        tokenId: ident(rivalRow.challenger_token, chainId),
+      };
+  if (!rival?.tokenId) return openBattle;
+
   const live = await beginFight(openBattle.id, {
     source: "queue",
-    defender_token: best.challenger_token,
+    defender_token: rivalRow.challenger_token,
     participants: [openBattle.participants[0], rival],
     challenger_start_mcap_usd: coinMcap(openerCoin),
-    defender_start_mcap_usd: toNumber(best.challenger_start_mcap_usd ?? rival.marketCapUsd),
+    defender_start_mcap_usd: toNumber(rivalRow.challenger_start_mcap_usd ?? rival.marketCapUsd),
   }, chainId);
-  await pool.query(`update public.arena_battles set state = 'expired', finished_at = now(), updated_at = now() where id = $1`, [best.id]);
+  await pool.query(`update public.arena_battles set state = 'expired', finished_at = now(), updated_at = now() where id = $1`, [rivalRow.id]);
   return live;
 }
 
@@ -759,6 +867,42 @@ async function handleCreatorStatus(req, res) {
     console.error("[api/arenaBattles] creator status failed", error);
     return json(res, 200, { items: [], updatedAt: nowIso(), warning: "Creator battle status is unavailable." });
   }
+}
+
+async function handleMatches(req, res) {
+  const query = getQuery(req);
+  const chainId = Number(query.chainId) || 56;
+  const identity = String(query.tokenId || query.campaignAddress || query.identity || "");
+  const limit = Math.max(1, Math.min(10, Number(query.limit) || 5));
+  if (!identity) return json(res, 400, { ok: false, error: "tokenId is required" });
+
+  const coin = await coinByIdentity(chainId, identity);
+  if (!coin) return json(res, 404, { ok: false, error: "Coin not found", reason: "coin_not_found" });
+  const creatorStatus = await statusFor(coin);
+  if (!creatorStatus.eligibility) return json(res, 409, { ok: false, reason: creatorStatus.unavailableReason || "unavailable", status: creatorStatus });
+
+  const activeTokens = await activeBattleTokenSet(chainId);
+  activeTokens.delete(creatorStatus.tokenId);
+  const candidates = (await eligibleRecommendationCoins(chainId, Math.max(60, limit * 20))).filter((candidate) => {
+    const tokenId = ident(candidate.token_address || candidate.campaign_address, chainId);
+    return Boolean(tokenId) && tokenId !== creatorStatus.tokenId && !activeTokens.has(tokenId);
+  });
+  const recommendations = recommendMatchCandidates(coinMatchProfile(coin), candidates, {
+    limit,
+    getProfile: (candidate) => coinMatchProfile(candidate),
+  });
+
+  return json(res, 200, {
+    tokenId: creatorStatus.tokenId,
+    candidates: recommendations.map((entry) => ({
+      token: participant(entry.candidate),
+      matchQuality: entry.matchScore,
+      classification: entry.classification,
+      components: entry.components,
+      ranked: entry.rankedEligible,
+    })),
+    updatedAt: nowIso(),
+  });
 }
 
 async function handleOpen(req, res) {
@@ -1050,6 +1194,7 @@ export default async function handler(req, res) {
   try {
     if (method === "GET" && path === "/arena/battles") return handleList(req, res);
     if (method === "GET" && path === "/arena/battles/creator-status") return handleCreatorStatus(req, res);
+    if (method === "GET" && path === "/arena/battles/matches") return handleMatches(req, res);
     if (method === "POST" && path === "/arena/battles/open") return handleOpen(req, res);
     if (method === "POST" && path === "/arena/battles/challenge") return handleChallenge(req, res);
 

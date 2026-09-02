@@ -5,6 +5,7 @@ import { badMethod, json, normalizeWalletFlexible, readJson } from "../server/ht
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { requireAdminOrOps } from "./lib/apiAuth.js";
 import { tokenEligible as tokenIsEligible } from "./lib/arenaEligibility.js";
+import { optimizeMatchPairings } from "./lib/arenaMatchQuality.js";
 import { isSolanaChainId, nativeSymbolFor } from "./lib/chainNative.js";
 import { readAuthoritativeBuyInReceipt, readSolanaArenaPool } from "./lib/solanaArenaPoolRead.js";
 import { tournamentStartRoster } from "./lib/arenaTournamentRoster.js";
@@ -12,6 +13,17 @@ import {
   attachInsertedBattleId,
   planTournamentBracketReconcile,
 } from "./lib/arenaTournamentBracketReconcile.js";
+
+const NATIVE_COIN_SELECT = `c.name, c.symbol, c.token_address, c.campaign_address, c.creator_address,
+       c.created_at, c.graduated_at_chain,
+       coalesce(ms.market_cap_bnb, ts.marketcap_bnb, 0) as market_cap_bnb,
+       coalesce(ms.holders, va.votes_24h, 0) as holders_count,
+       coalesce(ms.liquidity_bnb, 0) as liquidity_bnb,
+       coalesce(ms.volume_24h_bnb, ts.vol_24h_bnb, 0) as volume_24h_bnb`;
+const NATIVE_COIN_FROM = `from public.campaigns c
+       left join public.market_stats ms on ms.chain_id = c.chain_id and ms.campaign_address = c.campaign_address
+       left join public.token_stats ts on ts.chain_id = c.chain_id and ts.campaign_address = c.campaign_address
+       left join public.vote_aggregates va on va.chain_id = c.chain_id and va.campaign_address = c.campaign_address`;
 
 function ident(value) {
   return normalizeWalletFlexible(value) || String(value || "").trim();
@@ -86,9 +98,8 @@ async function tokenEligible(chainId, token) {
 async function coinSnapshot(chainId, token) {
   const address = ident(token);
   const native = await pool.query(
-    `select name, symbol, token_address, campaign_address, creator_address, ts.marketcap_bnb
-       from public.campaigns c
-       left join public.token_stats ts on ts.chain_id = c.chain_id and ts.campaign_address = c.campaign_address
+    `select ${NATIVE_COIN_SELECT}
+       ${NATIVE_COIN_FROM}
       where c.chain_id = $1
         and (lower(coalesce(c.token_address::text, '')) = lower($2) or lower(c.campaign_address::text) = lower($2))
       limit 1`,
@@ -103,11 +114,15 @@ async function coinSnapshot(chainId, token) {
       tokenName: String(row.name || row.symbol || "Unknown"),
       symbol: String(row.symbol || "---"),
       ownerWallet: ident(row.creator_address),
-      marketCapUsd: Number(row.marketcap_bnb || 0),
+      marketCapUsd: Number(row.market_cap_bnb || 0),
+      holderCount: Number(row.holders_count || 0),
+      liquidityUsd: Number(row.liquidity_bnb || 0),
+      volumeUsd: Number(row.volume_24h_bnb || 0),
+      launchedAt: row.graduated_at_chain || row.created_at || null,
     };
   }
   const imported = await pool.query(
-    `select name, symbol, token_address, owner_wallet from public.arena_token_imports
+    `select name, symbol, token_address, owner_wallet, created_at from public.arena_token_imports
       where chain_id = $1 and lower(token_address) = lower($2) limit 1`,
     [chainId, address],
   );
@@ -121,6 +136,10 @@ async function coinSnapshot(chainId, token) {
       symbol: "TBD",
       ownerWallet: "",
       marketCapUsd: 0,
+      holderCount: 0,
+      liquidityUsd: 0,
+      volumeUsd: 0,
+      launchedAt: null,
     };
   }
   return {
@@ -131,6 +150,10 @@ async function coinSnapshot(chainId, token) {
     symbol: String(row.symbol || "---"),
     ownerWallet: ident(row.owner_wallet),
     marketCapUsd: 0,
+    holderCount: 0,
+    liquidityUsd: 0,
+    volumeUsd: 0,
+    launchedAt: row.created_at || null,
   };
 }
 
@@ -315,8 +338,28 @@ async function insertTournamentBattle({ chainId, tournamentId, left, right, nati
   const leftSnap = await coinSnapshot(chainId, left);
   const rightSnap = await coinSnapshot(chainId, right);
   const participants = [
-    { ...leftSnap, score: leftSnap.marketCapUsd, priceChangePct: 0, volumeUsd: 0, uniqueTraders: 0, holderCount: 0, holdersDelta: 0 },
-    { ...rightSnap, score: rightSnap.marketCapUsd, priceChangePct: 0, volumeUsd: 0, uniqueTraders: 0, holderCount: 0, holdersDelta: 0 },
+    {
+      ...leftSnap,
+      score: leftSnap.marketCapUsd,
+      priceChangePct: 0,
+      volumeUsd: leftSnap.volumeUsd,
+      uniqueTraders: 0,
+      holderCount: leftSnap.holderCount,
+      holdersDelta: 0,
+      liquidityUsd: leftSnap.liquidityUsd,
+      launchedAt: leftSnap.launchedAt,
+    },
+    {
+      ...rightSnap,
+      score: rightSnap.marketCapUsd,
+      priceChangePct: 0,
+      volumeUsd: rightSnap.volumeUsd,
+      uniqueTraders: 0,
+      holderCount: rightSnap.holderCount,
+      holdersDelta: 0,
+      liquidityUsd: rightSnap.liquidityUsd,
+      launchedAt: rightSnap.launchedAt,
+    },
   ];
   await db.query(
     `insert into public.arena_battles (
@@ -355,29 +398,63 @@ async function handleAdminStart(req, res, id) {
     });
   }
   if (start.roster.length < 2) return json(res, 409, { error: "Need at least 2 opted-in coins to start" });
+
+  const snapshots = new Map();
+  for (const entry of start.roster) {
+    snapshots.set(ident(entry.tokenAddress), await coinSnapshot(row.chain_id, entry.tokenAddress));
+  }
+  const seeded = optimizeMatchPairings(start.roster, {
+    getProfile: (entry) => snapshots.get(ident(entry.tokenAddress)),
+  });
+
   const matches = [];
-  for (let i = 0; i < start.roster.length; i += 2) {
-    const a = start.roster[i];
-    const b = start.roster[i + 1];
-    if (!b) {
-      matches.push({ id: `m${i / 2 + 1}`, tokenA: a.tokenAddress, tokenB: null, battleId: null, winner: a.tokenAddress, bye: true });
-      continue;
-    }
+  let ordinal = 1;
+  for (const pairing of seeded.pairings) {
     const battleId = await insertTournamentBattle({
       chainId: row.chain_id,
       tournamentId: id,
-      left: a.tokenAddress,
-      right: b.tokenAddress,
+      left: pairing.left.tokenAddress,
+      right: pairing.right.tokenAddress,
       nativeSymbol: row.native_symbol || nativeSymbolFor(row.chain_id),
     });
-    matches.push({ id: `m${i / 2 + 1}`, tokenA: a.tokenAddress, tokenB: b.tokenAddress, battleId, winner: null, bye: false });
+    matches.push({
+      id: `m${ordinal}`,
+      tokenA: pairing.left.tokenAddress,
+      tokenB: pairing.right.tokenAddress,
+      battleId,
+      winner: null,
+      bye: false,
+      matchQuality: pairing.matchQuality,
+      classification: pairing.classification,
+      ranked: pairing.ranked,
+    });
+    ordinal += 1;
   }
+  if (seeded.bye) {
+    matches.push({
+      id: `m${ordinal}`,
+      tokenA: seeded.bye.tokenAddress,
+      tokenB: null,
+      battleId: null,
+      winner: seeded.bye.tokenAddress,
+      bye: true,
+      matchQuality: null,
+      classification: "bye",
+      ranked: false,
+    });
+  }
+
   const bracket = { rounds: [{ round: 1, matches }] };
   await pool.query(
     `update public.arena_tournaments set status = 'live', bracket = $2::jsonb, updated_at = now() where id = $1`,
     [id, JSON.stringify(bracket)],
   );
-  return json(res, 200, { ok: true, item: mapAdmin({ ...row, status: "live", bracket }, start.roster.length), bracket });
+  return json(res, 200, {
+    ok: true,
+    item: mapAdmin({ ...row, status: "live", bracket }, start.roster.length),
+    bracket,
+    seeding: { totalMatchQuality: seeded.totalMatchQuality },
+  });
 }
 
 export async function advanceTournamentFromBattle(row) {
