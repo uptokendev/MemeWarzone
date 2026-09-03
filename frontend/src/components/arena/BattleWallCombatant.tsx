@@ -3,6 +3,7 @@ import type { Battle, BattleParticipant } from "@/features/postgrad/contracts";
 import { useArenaTokenProfile } from "@/hooks/useArenaTokenProfile";
 import type { BattleRealtimeSide } from "@/lib/arena/battleRealtime";
 import { formatCompactUsd } from "@/lib/arena/battlePresentation";
+import { firstFiniteBattleMetric } from "@/lib/arena/battleWallPresentation.mjs";
 import { resolveImageUri } from "@/lib/media";
 import { cn } from "@/lib/utils";
 
@@ -64,9 +65,19 @@ export function BattleWallCombatant({
   const image = resolveImageUri(profile?.imageUrl || participant?.imageUrl || participant?.logoUri) || "/placeholder.svg";
   const displayName = profile?.name || participant?.tokenName || "Awaiting rival";
   const displaySymbol = String(profile?.symbol || participant?.symbol || "TBD").replace(/^\$/, "");
-  const currentMcap = metricsSide?.current.marketCapUsd ?? profile?.marketCapUsd ?? participant?.marketCapUsd ?? participant?.marketCap ?? 0;
-  const currentHolders = metricsSide?.current.holders ?? profile?.holders ?? participant?.holderCount ?? participant?.holders ?? 0;
-  const battleVolume = metricsSide?.eligibleBattleVolumeUsd ?? 0;
+  const currentMcap = firstFiniteBattleMetric(
+    metricsSide?.current?.marketCapUsd,
+    profile?.marketCapUsd,
+    participant?.marketCapUsd,
+    participant?.marketCap,
+  );
+  const currentHolders = firstFiniteBattleMetric(
+    metricsSide?.current?.holders,
+    profile?.holders,
+    participant?.holderCount,
+    participant?.holders,
+  );
+  const battleVolume = firstFiniteBattleMetric(metricsSide?.eligibleBattleVolumeUsd, participant?.battleVolumeUsd);
   const nativeOrigin = profile ? profile.origin === "native" : Boolean(participant?.campaignAddress);
   const mirrored = combatSide === "right";
   const pointsReady = Boolean(pointsLabel);
@@ -122,9 +133,24 @@ export function BattleWallCombatant({
         </div>
 
         <div className="grid w-full grid-cols-2 gap-2" data-battle-metric-grid="true">
-          <MetricBox label="MCAP" value={formatCompactUsd(Number(currentMcap) || 0)} accent={accent} />
-          <MetricBox label="Holders" value={Number(currentHolders || 0).toLocaleString()} accent={accent} />
-          <MetricBox label="Vol" value={formatCompactUsd(Number(battleVolume) || 0)} accent={accent} />
+          <MetricBox
+            label="MCAP"
+            value={currentMcap === null ? "—" : formatCompactUsd(currentMcap)}
+            ready={currentMcap !== null}
+            accent={accent}
+          />
+          <MetricBox
+            label="Holders"
+            value={currentHolders === null ? "—" : Number(currentHolders).toLocaleString()}
+            ready={currentHolders !== null}
+            accent={accent}
+          />
+          <MetricBox
+            label="Vol"
+            value={battleVolume === null ? "—" : formatCompactUsd(battleVolume)}
+            ready={battleVolume !== null}
+            accent={accent}
+          />
           <MetricBox
             label={pointsBoxLabel}
             value={pointsLabel || "—"}

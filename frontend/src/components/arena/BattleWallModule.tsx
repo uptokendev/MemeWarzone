@@ -128,59 +128,52 @@ export function BattleWallModule({
         </div>
       </div>
 
-      {upcoming ? (
-        <div className="space-y-4 py-6 text-center">
-          <div className="font-retro text-xs uppercase tracking-[0.28em] text-white/45">Deployment pending</div>
-          <div className="font-retro text-3xl text-foreground md:text-4xl">
-            {presented.leftTicker} <span className="text-white/35">VS</span> {presented.rightTicker}
-          </div>
-          <div className="text-sm uppercase tracking-[0.16em] text-white/60">
-            {presented.stakeNative || "—"} {presented.nativeSymbol || getNativeSymbol(chainId)}
-          </div>
-          <div className="text-sm uppercase tracking-[0.16em] text-white/60">{battleDurationLabel(presented.durationHours)}</div>
-          <TacticalTag label="AWAITING FUNDING" tone="hot" />
+      <div className="relative isolate overflow-hidden">
+        <div className="relative z-10 grid min-w-0 grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_minmax(10.5rem,14.5rem)_minmax(0,1fr)] md:items-stretch md:gap-4">
+          <BattleWallCombatant
+            battle={displayBattle}
+            participant={left}
+            metricsSide={displayMetrics?.sides?.left}
+            pointsLabel={upcoming ? null : presented.leftPointsLabel}
+            scoreCaption={upcoming ? null : presented.scoreCaption}
+            isLeader={!upcoming && presented.leaderIndex === 0}
+            accent="ember"
+            combatSide="left"
+          />
+          <BattleWallVs
+            leftLabel={presented.leftTicker}
+            rightLabel={presented.rightTicker}
+            leftPoints={upcoming ? null : presented.leftPointsLabel}
+            rightPoints={upcoming ? null : presented.rightPointsLabel}
+            leaderIndex={upcoming ? null : presented.leaderIndex}
+            gapLabel={upcoming ? null : presented.gapLabel}
+            clockLabel={upcoming ? null : battleClockLabel(displayBattle)}
+            remaining={presented.tab === "live"}
+            statusLabel={upcoming ? null : presented.statusLabel}
+            scoreKind={upcoming ? null : presented.scoreKind}
+            deploymentPending={upcoming}
+            stakeLabel={
+              upcoming
+                ? `${presented.stakeNative} ${presented.nativeSymbol || getNativeSymbol(chainId)}`.trim()
+                : null
+            }
+            durationLabel={upcoming ? battleDurationLabel(presented.durationHours) : null}
+          />
+          <BattleWallCombatant
+            battle={displayBattle}
+            participant={right}
+            metricsSide={displayMetrics?.sides?.right}
+            pointsLabel={upcoming ? null : presented.rightPointsLabel}
+            scoreCaption={upcoming ? null : presented.scoreCaption}
+            isLeader={!upcoming && presented.leaderIndex === 1}
+            accent="cyan"
+            combatSide="right"
+          />
         </div>
-      ) : (
-        <div className="relative isolate overflow-hidden">
-          <div className="relative z-10 grid min-w-0 grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_minmax(10.5rem,14.5rem)_minmax(0,1fr)] md:items-stretch md:gap-4">
-            <BattleWallCombatant
-              battle={displayBattle}
-              participant={left}
-              metricsSide={displayMetrics?.sides?.left}
-              pointsLabel={presented.leftPointsLabel}
-              scoreCaption={presented.scoreCaption}
-              isLeader={presented.leaderIndex === 0}
-              accent="ember"
-              combatSide="left"
-            />
-            <BattleWallVs
-              leftLabel={presented.leftTicker}
-              rightLabel={presented.rightTicker}
-              leftPoints={presented.leftPointsLabel}
-              rightPoints={presented.rightPointsLabel}
-              leaderIndex={presented.leaderIndex}
-              gapLabel={presented.gapLabel}
-              clockLabel={battleClockLabel(displayBattle)}
-              remaining={presented.tab === "live"}
-              statusLabel={presented.statusLabel}
-              scoreKind={presented.scoreKind}
-            />
-            <BattleWallCombatant
-              battle={displayBattle}
-              participant={right}
-              metricsSide={displayMetrics?.sides?.right}
-              pointsLabel={presented.rightPointsLabel}
-              scoreCaption={presented.scoreCaption}
-              isLeader={presented.leaderIndex === 1}
-              accent="cyan"
-              combatSide="right"
-            />
-          </div>
-          {mountEffects ? (
-            <BattleCombatEffects metrics={displayMetrics} rootRef={moduleRef} battleId={battle.id} />
-          ) : null}
-        </div>
-      )}
+        {mountEffects ? (
+          <BattleCombatEffects metrics={displayMetrics} rootRef={moduleRef} battleId={battle.id} />
+        ) : null}
+      </div>
 
       <div
         data-battle-wall-actions="true"

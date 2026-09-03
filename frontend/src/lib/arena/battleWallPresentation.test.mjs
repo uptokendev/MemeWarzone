@@ -19,6 +19,8 @@ import {
   isPublicWallBattle,
   mergeFocusedBattleForRoute,
   mergeFocusedBattleIntoRows,
+  finiteBattleMetric,
+  firstFiniteBattleMetric,
   formatBattleWallGapText,
   presentBattleWallModule,
   publicWallRejectReason,
@@ -125,6 +127,58 @@ test("Upcoming matched battles show no fake Battle Points or timer scores", () =
   assert.equal(presented.scoreKind, "none");
   assert.equal(presented.leftPointsLabel, null);
   assert.equal(presented.leaderIndex, null);
+});
+
+test("Upcoming wall modules keep card-vs-card combatants and a deployment HUD", () => {
+  const moduleSrc = readSrc("../../components/arena/BattleWallModule.tsx");
+  const vs = readSrc("../../components/arena/BattleWallVs.tsx");
+  const combatant = readSrc("../../components/arena/BattleWallCombatant.tsx");
+  const upcoming = presentBattleWallModule(battle({ id: "up-1", state: "matched", source: "queue" }), null, {
+    requested: false,
+    loaded: false,
+  });
+
+  assert.equal(upcoming.tab, "upcoming");
+  assert.equal(upcoming.leftPointsLabel, null);
+  assert.equal(upcoming.rightPointsLabel, null);
+  assert.equal(upcoming.leaderIndex, null);
+  assert.equal(upcoming.gapLabel, null);
+  assert.equal((moduleSrc.match(/<BattleWallCombatant/g) || []).length, 2);
+  assert.match(moduleSrc, /grid-cols-1/);
+  assert.match(moduleSrc, /deploymentPending=\{upcoming\}/);
+  assert.match(moduleSrc, /pointsLabel=\{upcoming \? null : presented\.leftPointsLabel\}/);
+  assert.match(moduleSrc, /leaderIndex=\{upcoming \? null : presented\.leaderIndex\}/);
+  assert.match(moduleSrc, /clockLabel=\{upcoming \? null : battleClockLabel\(displayBattle\)\}/);
+  assert.match(moduleSrc, /shouldMountWallCombatEffects/);
+  assert.match(moduleSrc, /mountEffects \?/);
+  assert.doesNotMatch(moduleSrc, /space-y-4 py-6 text-center/);
+  assert.match(vs, /data-battle-deployment-hud/);
+  assert.match(vs, /Deployment pending/);
+  assert.match(vs, /Fight length/);
+  assert.match(vs, /stakeLabel/);
+  assert.match(vs, /deploymentPending \? null : formatBattleWallGapText/);
+  assert.match(combatant, /firstFiniteBattleMetric/);
+  assert.doesNotMatch(moduleSrc, /Battle Boost|ArenaSupportButton/);
+});
+
+test("Missing combat metrics render em dash and explicit zeros stay zero", () => {
+  assert.equal(finiteBattleMetric(null), null);
+  assert.equal(finiteBattleMetric(undefined), null);
+  assert.equal(finiteBattleMetric(""), null);
+  assert.equal(finiteBattleMetric(0), 0);
+  assert.equal(finiteBattleMetric("0"), 0);
+  assert.equal(firstFiniteBattleMetric(null, undefined, 0), 0);
+  assert.equal(firstFiniteBattleMetric(undefined, null), null);
+  assert.equal(firstFiniteBattleMetric(842000, 0), 842000);
+
+  const combatant = readSrc("../../components/arena/BattleWallCombatant.tsx");
+  assert.match(combatant, /firstFiniteBattleMetric/);
+  assert.match(combatant, /ready=\{currentMcap !== null\}/);
+  assert.match(combatant, /ready=\{currentHolders !== null\}/);
+  assert.match(combatant, /ready=\{battleVolume !== null\}/);
+  assert.match(combatant, /ready=\{pointsReady\}/);
+  assert.doesNotMatch(combatant, /Number\([^)]+\) \|\| 0/);
+  assert.doesNotMatch(combatant, /\?\? 0/);
 });
 
 test("unresolved challenged proposals are not public wall battles", () => {
@@ -593,4 +647,6 @@ test("Battle Wall visual parity uses large combat art, 2x2 metrics, and no fake 
   assert.doesNotMatch(moduleSrc, /Battle Boost|ArenaSupportButton|WarPoolPanel|BattleMetricBreakdown/);
   assert.doesNotMatch(page, /Battle Boost|Final Salvo|Vote Tournament/);
   assert.doesNotMatch(combatant, /BOOST|Vote Tournament|Final Salvo|sponsorship/i);
+  assert.match(moduleSrc, /<BattleWallCombatant/);
+  assert.match(moduleSrc, /deploymentPending=\{upcoming\}/);
 });

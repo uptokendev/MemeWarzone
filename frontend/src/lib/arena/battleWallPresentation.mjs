@@ -10,6 +10,20 @@ import {
 export const POINTS_PENDING_LABEL = "BATTLE POINTS PENDING";
 export { DATA_DELAY_LABEL, POINTS_UNAVAILABLE_LABEL };
 
+export function finiteBattleMetric(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const amount = Number(value);
+  return Number.isFinite(amount) ? amount : null;
+}
+
+export function firstFiniteBattleMetric(...values) {
+  for (const value of values) {
+    const amount = finiteBattleMetric(value);
+    if (amount !== null) return amount;
+  }
+  return null;
+}
+
 export function wallTabForBattle(battle) {
   const state = String(battle?.state || "").toLowerCase();
   if (state === "live") return "live";

@@ -12,6 +12,9 @@ type Props = {
   remaining?: boolean;
   statusLabel?: string | null;
   scoreKind?: string | null;
+  deploymentPending?: boolean;
+  stakeLabel?: string | null;
+  durationLabel?: string | null;
 };
 
 export function BattleWallVs({
@@ -25,19 +28,31 @@ export function BattleWallVs({
   remaining = false,
   statusLabel,
   scoreKind,
+  deploymentPending = false,
+  stakeLabel,
+  durationLabel,
 }: Props) {
-  const delay = statusLabel === DATA_DELAY_LABEL || scoreKind === "delay";
-  const leaderText = leaderIndex === 0 ? `${leftLabel} LEADS` : leaderIndex === 1 ? `${rightLabel} LEADS` : null;
-  const gapText = formatBattleWallGapText(gapLabel, scoreKind);
-  const spoken = delay
-    ? `${DATA_DELAY_LABEL}. Score updates temporarily paused.`
-    : [leftPoints && rightPoints ? `${leftLabel} ${leftPoints} versus ${rightLabel} ${rightPoints}` : null, leaderText, gapText, clockLabel]
+  const delay = !deploymentPending && (statusLabel === DATA_DELAY_LABEL || scoreKind === "delay");
+  const leaderText = !deploymentPending && leaderIndex === 0
+    ? `${leftLabel} LEADS`
+    : !deploymentPending && leaderIndex === 1
+      ? `${rightLabel} LEADS`
+      : null;
+  const gapText = deploymentPending ? null : formatBattleWallGapText(gapLabel, scoreKind);
+  const spoken = deploymentPending
+    ? [`${leftLabel} versus ${rightLabel}`, "Deployment pending", stakeLabel ? `Stake ${stakeLabel}` : null, durationLabel ? `Fight length ${durationLabel}` : null]
         .filter(Boolean)
-        .join(". ");
+        .join(". ")
+    : delay
+      ? `${DATA_DELAY_LABEL}. Score updates temporarily paused.`
+      : [leftPoints && rightPoints ? `${leftLabel} ${leftPoints} versus ${rightLabel} ${rightPoints}` : null, leaderText, gapText, clockLabel]
+          .filter(Boolean)
+          .join(". ");
 
   return (
     <div
       data-battle-wall-vs
+      data-battle-wall-vs-mode={deploymentPending ? "upcoming" : delay ? "delay" : "combat"}
       className="relative z-20 flex min-w-0 max-w-full flex-col items-center justify-center gap-2 px-2 py-5 text-center md:min-w-[10.5rem] md:px-3 md:py-8"
     >
       <p className="sr-only">{spoken || "Versus"}</p>
@@ -47,7 +62,23 @@ export function BattleWallVs({
       >
         VS
       </div>
-      {delay ? (
+      {deploymentPending ? (
+        <div className="space-y-3" data-battle-deployment-hud="true">
+          <div className="font-retro text-sm uppercase tracking-[0.22em] text-white/70 md:text-base">Deployment pending</div>
+          {stakeLabel ? (
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.2em] text-white/42">Stake</div>
+              <div className="mt-1 font-retro text-lg uppercase tracking-[0.12em] text-white/88">{stakeLabel}</div>
+            </div>
+          ) : null}
+          {durationLabel ? (
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.2em] text-white/42">Fight length</div>
+              <div className="mt-1 font-retro text-lg uppercase tracking-[0.12em] text-white/88">{durationLabel}</div>
+            </div>
+          ) : null}
+        </div>
+      ) : delay ? (
         <div className="space-y-2" role="status">
           <div className="font-retro text-lg uppercase tracking-[0.22em] text-orange-200 md:text-xl">{DATA_DELAY_LABEL}</div>
           <div className="max-w-[12rem] text-[11px] uppercase leading-4 tracking-[0.18em] text-orange-200/80">
