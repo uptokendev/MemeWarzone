@@ -4,6 +4,7 @@ import { registerCanonicalCandleRoutes } from "./canonicalCandleApi.js";
 import { startGraduationReconcilerLoop } from "./graduationReconciler.js";
 import { registerMarketContinuityRoutes } from "./marketApi.js";
 import { registerRobinhoodMarketContinuityRoutes } from "./robinhoodMarketApi.js";
+import { registerRobinhoodBeatTheMarketRoutes } from "./robinhoodBeatTheMarketApi.js";
 import { startTopazPoolIndexerLoop } from "./topazPoolIndexer.js";
 import { startRobinhoodV3PoolIndexerLoop } from "./robinhoodV3PoolIndexer.js";
 
@@ -19,6 +20,7 @@ express.application.listen = function wtrPatchedListen(this: any, ...args: any[]
     // Robinhood V3 routes must register before legacy Topaz handlers so chain
     // 4663/46630 never enter BNB-specific graduation repair or route logic.
     registerRobinhoodMarketContinuityRoutes(this);
+    registerRobinhoodBeatTheMarketRoutes(this);
     registerMarketContinuityRoutes(this);
     registerCanonicalCandleRoutes(this);
     console.log("[wtr] market continuity routes registered", {
@@ -26,6 +28,7 @@ express.application.listen = function wtrPatchedListen(this: any, ...args: any[]
       ENABLE_TOPAZ_POOL_INDEXER: ENV.ENABLE_TOPAZ_POOL_INDEXER,
       ENABLE_ROBINHOOD_V3_POOL_INDEXER: ENV.ENABLE_ROBINHOOD_V3_POOL_INDEXER,
       ENABLE_GRADUATION_HANDOFF_RECONCILER: ENV.ENABLE_GRADUATION_HANDOFF_RECONCILER,
+      ROBINHOOD_BEAT_THE_MARKET: /^(1|true|yes|on)$/i.test(String(process.env.ROBINHOOD_BEAT_THE_MARKET || "").trim()),
     });
   }
   return originalListen.apply(this, args);
@@ -36,6 +39,7 @@ console.log("[wtr] preload boot flags", {
   ENABLE_TOPAZ_POOL_INDEXER: ENV.ENABLE_TOPAZ_POOL_INDEXER,
   ENABLE_ROBINHOOD_V3_POOL_INDEXER: ENV.ENABLE_ROBINHOOD_V3_POOL_INDEXER,
   ENABLE_GRADUATION_HANDOFF_RECONCILER: ENV.ENABLE_GRADUATION_HANDOFF_RECONCILER,
+  ROBINHOOD_BEAT_THE_MARKET: /^(1|true|yes|on)$/i.test(String(process.env.ROBINHOOD_BEAT_THE_MARKET || "").trim()),
 });
 
 startGraduationReconcilerLoop();
