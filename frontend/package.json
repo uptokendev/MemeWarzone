@@ -43,7 +43,7 @@
     "test:e2e:isolation": "playwright test -c playwright.config.ts",
     "test:solana-v0": "node --test src/lib/solanaV0Transaction.test.mjs",
     "test:solana-arena": "node --test src/lib/solanaArenaLayout.test.mjs src/lib/solanaArenaV0.test.mjs",
-    "test:arena-mwl": "node --test api/lib/arenaLeagueScoreMath.test.mjs api/lib/arenaBattleSettle.test.mjs api/lib/arenaBattleLive.test.mjs api/lib/arena4aCertification.test.mjs api/lib/arena4dCertification.test.mjs",
+    "test:arena-mwl": "node --test api/lib/arenaLeagueScoreMath.test.mjs api/lib/arenaBattleSettle.test.mjs api/lib/arenaBattleLive.test.mjs api/lib/arena4aCertification.test.mjs api/lib/arena4dCertification.test.mjs api/lib/arenaLeagueIntegrationV2Certification.test.mjs",
     "test:arena-battle-v2": "node --test api/lib/arenaBattleMetrics.test.mjs api/lib/arenaBattleVolume.test.mjs api/lib/arenaBattlePoints.test.mjs api/lib/arenaBattleV2Certification.test.mjs",
     "test:arena-tournament": "node --test api/lib/arenaTournamentRoster.test.mjs api/lib/arenaTournamentBracketReconcile.test.mjs api/lib/arenaTournamentV2Certification.test.mjs api/lib/arenaSqlIdentity.test.mjs",
     "test:arena-runtime-acceptance": "node --test api/lib/arenaRuntimeAcceptance.test.mjs",
