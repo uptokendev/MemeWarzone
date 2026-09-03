@@ -1,0 +1,56 @@
+{
+  "sourceSha": "<40-character-accepted-candidate-sha>",
+  "deploymentBlock": 0,
+  "admin": "0x<production-admin-or-multisig>",
+  "routeAuthority": "0x<separate-production-route-authority>",
+  "contracts": {
+    "launchFactory": "0x<launch-factory>",
+    "launchCampaignImplementation": "0x<launch-campaign-implementation>",
+    "stockCampaignImplementation": "0x<stock-campaign-implementation>",
+    "permanentV3PositionLocker": "0x<permanent-v3-position-locker>",
+    "treasuryRouterV3": "0x<treasury-router-v3>",
+    "graduationAdapter": "0x<native-v3-graduation-adapter>",
+    "v3NativeSwapAdapter": "0x<native-v3-swap-adapter>",
+    "stockGraduationAdapter": "0x<stock-graduation-adapter>",
+    "v3MultiHopSwapAdapter": "0x<stock-multihop-swap-adapter>",
+    "graduationOracle": "0x<graduation-oracle>",
+    "creatorRegistry": "0x<creator-registry>",
+    "riskRegistry": "0x<risk-registry>",
+    "weeklyLeagueVault": "0x<weekly-league-vault>",
+    "recruiterRewardsVault": "0x<recruiter-rewards-vault>",
+    "communityRewardsVault": "0x<community-rewards-vault>",
+    "protocolRevenueVault": "0x<protocol-revenue-vault>",
+    "upVoteTreasury": "0x<upvote-treasury>",
+    "v3Factory": "0x<approved-production-v3-factory>",
+    "nonfungiblePositionManager": "0x<approved-production-position-manager>",
+    "v3SwapRouter": "0x<approved-production-swap-router>",
+    "weth9": "0x<production-weth>"
+  },
+  "oracles": {
+    "nativeUsdFeed": "0x<approved-production-eth-usd-feed>"
+  },
+  "stock": {
+    "registry": [
+      {
+        "symbol": "NVDA",
+        "displayName": "NVIDIA Stock Token",
+        "underlyingSymbol": "NVDA",
+        "decimals": 18,
+        "contractAddress": "0x<canonical-stock-token>",
+        "oracleFeedAddress": "0x<approved-stock-usd-feed>",
+        "oracleType": "chainlink",
+        "canonical": true,
+        "enabledForDiscovery": true,
+        "enabledForGraduation": false,
+        "enabledForTrading": false,
+        "minimumQuoteLiquidityUsd": 25000,
+        "maximumGraduationSwapImpactBps": 500,
+        "acquisitionPoolAddress": "0x<approved-weth-stock-v3-pool>",
+        "acquisitionQuoterAddress": "0x<approved-read-only-quoter>",
+        "acquisitionRouterAddress": "0x<approved-execution-router>",
+        "acquisitionFeeTier": 3000,
+        "acquisitionQuoteKind": "SIMPLE_EXACT_INPUT_SINGLE"
+      }
+    ]
+  }
+}
