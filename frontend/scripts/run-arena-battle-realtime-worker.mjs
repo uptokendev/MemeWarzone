@@ -6,27 +6,82 @@ import {
   startArenaBattleRealtimeWorker,
   stopArenaBattleRealtimeWorker,
 } from "../api/lib/arenaBattleRealtime.js";
+import {
+  battlePointsV2SettlementEnabled,
+  settleBattlePointsV2ById,
+} from "../api/lib/arenaBattleSettlementV2Service.js";
 
+const settlementEnabled = battlePointsV2SettlementEnabled();
 const started = startArenaBattleRealtimeWorker();
-if (!started.started) {
+if (!started.started && !settlementEnabled) {
   console.log(`[arena-battle-realtime-worker] not started: ${started.reason || "unknown"}`);
   process.exit(0);
 }
 
-console.log(`[arena-battle-realtime-worker] active intervalMs=${started.intervalMs}`);
+if (started.started) {
+  console.log(`[arena-battle-realtime-worker] realtime active intervalMs=${started.intervalMs}`);
+} else {
+  console.log(`[arena-battle-realtime-worker] realtime disabled: ${started.reason || "unknown"}`);
+}
+if (settlementEnabled) {
+  console.log("[arena-battle-realtime-worker] Battle Points V2 settlement active");
+}
 
 const finishedScanMs = Math.max(5_000, Number(process.env.ARENA_BATTLE_FINISHED_SCAN_MS || 5_000));
+const settlementScanMs = Math.max(5_000, Number(process.env.ARENA_BATTLE_SETTLEMENT_SCAN_MS || 5_000));
 const finishedPublished = new Map();
 let finishedScanRunning = false;
+let settlementScanRunning = false;
+
+async function settleDueBattlePointsV2() {
+  if (!settlementEnabled || settlementScanRunning) return;
+  settlementScanRunning = true;
+  try {
+    const due = await pool.query(
+      `select id
+         from public.arena_battles
+        where state = 'live'
+          and ends_at is not null
+          and ends_at <= now()
+        order by ends_at asc
+        limit 50`,
+    );
+    for (const row of due.rows || []) {
+      try {
+        const settled = await settleBattlePointsV2ById(row.id);
+        if (!settled?.settled) {
+          if (settled?.dataDelay) {
+            console.warn("[arena-battle-realtime-worker] V2 settlement DATA DELAY", row.id, settled.reason, settled.side || "");
+          }
+          continue;
+        }
+        const published = await publishBattleFinished(settled.battle, null).catch((error) => {
+          console.warn("[arena-battle-realtime-worker] V2 finished publish failed", row.id, error?.message || error);
+          return { published: false };
+        });
+        if (published?.published) {
+          const settledAt = String(settled.battle?.settled_at || settled.battle?.finished_at || "");
+          finishedPublished.set(`${row.id}:${settledAt}`, Date.now());
+        }
+      } catch (error) {
+        console.warn("[arena-battle-realtime-worker] V2 settlement failed", row.id, error?.message || error);
+      }
+    }
+  } catch (error) {
+    console.warn("[arena-battle-realtime-worker] V2 settlement scan failed", error?.message || error);
+  } finally {
+    settlementScanRunning = false;
+  }
+}
 
 async function publishRecentlyFinishedBattles() {
   if (finishedScanRunning) return;
   finishedScanRunning = true;
   try {
-    // Settlement owns the state transition. This worker only observes rows that
-    // are already committed as finished, then emits a reconnect-safe hint.
     const result = await pool.query(
       `select id, chain_id, state, money_winner_token, winner_token, settlement_version,
+              settlement_scoring_version, challenger_battle_points, defender_battle_points,
+              money_tie_break, settlement_tie_break_used,
               settled_at, finished_at, updated_at
          from public.arena_battles
         where state = 'finished'
@@ -59,6 +114,10 @@ const finishedTimer = setInterval(() => void publishRecentlyFinishedBattles(), f
 finishedTimer.unref?.();
 void publishRecentlyFinishedBattles();
 
+const settlementTimer = setInterval(() => void settleDueBattlePointsV2(), settlementScanMs);
+settlementTimer.unref?.();
+void settleDueBattlePointsV2();
+
 // The coordinator timers are unref'd when embedded in another process. This
 // standalone Railway worker keeps one lightweight ref alive explicitly.
 const keepAlive = setInterval(() => {}, 60_000);
@@ -67,6 +126,7 @@ async function shutdown(signal) {
   console.log(`[arena-battle-realtime-worker] shutting down on ${signal}`);
   clearInterval(keepAlive);
   clearInterval(finishedTimer);
+  clearInterval(settlementTimer);
   stopArenaBattleRealtimeWorker();
   try {
     await pool.end();
