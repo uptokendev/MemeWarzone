@@ -20,6 +20,8 @@ interface IPostGradLeagueTreasuryV2 {
  * Paid Boost settlement:
  * 90% competition prize / 10% protocol / 0% League.
  *
+ * Boosts are founder-locked to $1 units. Native-chain payment amounts therefore
+ * require a short-lived signed quote binding the unit count to a native raw price.
  * Historical ArenaWarPoolTreasury V1 is intentionally left untouched.
  */
 contract ArenaWarPoolTreasuryV2 is ReentrancyGuard, Ownable, EIP712 {
@@ -64,6 +66,9 @@ contract ArenaWarPoolTreasuryV2 is ReentrancyGuard, Ownable, EIP712 {
     bytes32 public constant RESOLVE_TYPEHASH = keccak256(
         "ResolvePoolV2(bytes32 poolId,address winnerPayout,uint256 stakeTotal,uint256 buyInTotal,uint256 boostTotal,uint256 deadline)"
     );
+    bytes32 public constant BOOST_QUOTE_TYPEHASH = keccak256(
+        "BoostQuote(bytes32 poolId,bytes32 matchId,uint256 roundNumber,address booster,address sideToken,uint256 boostUnits,uint256 unitPriceNativeRaw,uint256 grossNativeRaw,uint256 pricingVersion,uint256 oracleTimestamp,uint256 nonce,uint256 deadline)"
+    );
 
     uint256 public constant GENERATION = 2;
     uint256 public constant ENTRY_LEAGUE_BPS = 2_000;
@@ -75,28 +80,46 @@ contract ArenaWarPoolTreasuryV2 is ReentrancyGuard, Ownable, EIP712 {
     mapping(bytes32 => mapping(address => uint256)) public buyIns;
     mapping(bytes32 => mapping(address => uint256)) public tournamentRefunds;
     mapping(address => bool) public authorizedCreators;
+    mapping(address => mapping(uint256 => bool)) public usedBoostNonces;
 
     address public resolver;
+    address public boostQuoteSigner;
     address public protocolReceiver;
     IPostGradLeagueTreasuryV2 public postGradLeagueTreasury;
     bool public depositsPaused;
 
     event CreatorAuthorized(address indexed creator, bool allowed);
     event ResolverUpdated(address indexed resolver);
+    event BoostQuoteSignerUpdated(address indexed signer);
     event ReceiversUpdated(address indexed protocolReceiver, address indexed postGradLeagueTreasury);
     event DepositsPaused(bool paused);
     event PoolOpened(bytes32 indexed poolId, Kind kind, address ownerA, address ownerB, uint256 stakeAmount, uint256 buyInAmount);
     event StakeDeposited(bytes32 indexed poolId, address indexed owner, uint256 amount);
     event BuyInDeposited(bytes32 indexed poolId, address indexed owner, uint256 amount);
     event PoolLive(bytes32 indexed poolId);
-    event BattleBoosted(bytes32 indexed poolId, address indexed booster, address indexed sideToken, uint256 grossNativeRaw);
+    event BattleBoosted(
+        bytes32 indexed poolId,
+        address indexed booster,
+        address indexed sideToken,
+        uint256 boostUnits,
+        uint256 unitPriceNativeRaw,
+        uint256 grossNativeRaw,
+        uint256 pricingVersion,
+        uint256 oracleTimestamp,
+        uint256 nonce
+    );
     event TournamentBoosted(
         bytes32 indexed poolId,
         bytes32 indexed matchId,
         uint256 indexed roundNumber,
         address booster,
         address sideToken,
-        uint256 grossNativeRaw
+        uint256 boostUnits,
+        uint256 unitPriceNativeRaw,
+        uint256 grossNativeRaw,
+        uint256 pricingVersion,
+        uint256 oracleTimestamp,
+        uint256 nonce
     );
     event PoolResolved(
         bytes32 indexed poolId,
@@ -128,6 +151,8 @@ contract ArenaWarPoolTreasuryV2 is ReentrancyGuard, Ownable, EIP712 {
     error UnknownPool();
     error WinnerRequired();
     error InvalidReference();
+    error Replay();
+    error InvalidBoostQuote();
 
     modifier onlyCreator() {
         if (!authorizedCreators[msg.sender] && msg.sender != owner()) revert Unauthorized();
@@ -137,21 +162,25 @@ contract ArenaWarPoolTreasuryV2 is ReentrancyGuard, Ownable, EIP712 {
     constructor(
         address initialOwner,
         address resolver_,
+        address boostQuoteSigner_,
         address protocolReceiver_,
         address postGradLeagueTreasury_
     ) Ownable(initialOwner) EIP712("ArenaWarPoolTreasury", "2") {
         if (
             initialOwner == address(0) ||
             resolver_ == address(0) ||
+            boostQuoteSigner_ == address(0) ||
             protocolReceiver_ == address(0) ||
             postGradLeagueTreasury_ == address(0)
         ) revert ZeroAddress();
         resolver = resolver_;
+        boostQuoteSigner = boostQuoteSigner_;
         protocolReceiver = protocolReceiver_;
         postGradLeagueTreasury = IPostGradLeagueTreasuryV2(postGradLeagueTreasury_);
         authorizedCreators[initialOwner] = true;
         emit CreatorAuthorized(initialOwner, true);
         emit ResolverUpdated(resolver_);
+        emit BoostQuoteSignerUpdated(boostQuoteSigner_);
         emit ReceiversUpdated(protocolReceiver_, postGradLeagueTreasury_);
     }
 
@@ -169,6 +198,12 @@ contract ArenaWarPoolTreasuryV2 is ReentrancyGuard, Ownable, EIP712 {
         if (resolver_ == address(0)) revert ZeroAddress();
         resolver = resolver_;
         emit ResolverUpdated(resolver_);
+    }
+
+    function setBoostQuoteSigner(address signer) external onlyOwner {
+        if (signer == address(0)) revert ZeroAddress();
+        boostQuoteSigner = signer;
+        emit BoostQuoteSignerUpdated(signer);
     }
 
     function setReceivers(address protocolReceiver_, address postGradLeagueTreasury_) external onlyOwner {
@@ -284,29 +319,96 @@ contract ArenaWarPoolTreasuryV2 is ReentrancyGuard, Ownable, EIP712 {
         emit PoolLive(poolId);
     }
 
-    function boostBattle(bytes32 poolId, address sideToken) external payable nonReentrant {
+    function boostBattle(
+        bytes32 poolId,
+        address sideToken,
+        uint256 boostUnits,
+        uint256 unitPriceNativeRaw,
+        uint256 pricingVersion,
+        uint256 oracleTimestamp,
+        uint256 nonce,
+        uint256 deadline,
+        bytes calldata signature
+    ) external payable nonReentrant {
         if (depositsPaused) revert DepositsArePaused();
         Pool storage pool = pools[poolId];
         if (pool.ownerA == address(0)) revert UnknownPool();
         if (pool.kind != Kind.Battle || pool.state != State.Live) revert InvalidState();
-        if (sideToken == address(0) || msg.value == 0) revert InvalidAmount();
-        pool.boostTotal += msg.value;
-        emit BattleBoosted(poolId, msg.sender, sideToken, msg.value);
+        if (sideToken == address(0)) revert InvalidReference();
+
+        uint256 grossNativeRaw = _consumeBoostQuote(
+            poolId,
+            bytes32(0),
+            0,
+            sideToken,
+            boostUnits,
+            unitPriceNativeRaw,
+            pricingVersion,
+            oracleTimestamp,
+            nonce,
+            deadline,
+            signature
+        );
+        pool.boostTotal += grossNativeRaw;
+        emit BattleBoosted(
+            poolId,
+            msg.sender,
+            sideToken,
+            boostUnits,
+            unitPriceNativeRaw,
+            grossNativeRaw,
+            pricingVersion,
+            oracleTimestamp,
+            nonce
+        );
     }
 
     function boostTournament(
         bytes32 poolId,
         bytes32 matchId,
         uint256 roundNumber,
-        address sideToken
+        address sideToken,
+        uint256 boostUnits,
+        uint256 unitPriceNativeRaw,
+        uint256 pricingVersion,
+        uint256 oracleTimestamp,
+        uint256 nonce,
+        uint256 deadline,
+        bytes calldata signature
     ) external payable nonReentrant {
         if (depositsPaused) revert DepositsArePaused();
         Pool storage pool = pools[poolId];
         if (pool.ownerA == address(0)) revert UnknownPool();
         if (pool.kind != Kind.Tournament || pool.state != State.Live) revert InvalidState();
-        if (matchId == bytes32(0) || roundNumber == 0 || sideToken == address(0) || msg.value == 0) revert InvalidReference();
-        pool.boostTotal += msg.value;
-        emit TournamentBoosted(poolId, matchId, roundNumber, msg.sender, sideToken, msg.value);
+        if (matchId == bytes32(0) || roundNumber == 0 || sideToken == address(0)) revert InvalidReference();
+
+        uint256 grossNativeRaw = _consumeBoostQuote(
+            poolId,
+            matchId,
+            roundNumber,
+            sideToken,
+            boostUnits,
+            unitPriceNativeRaw,
+            pricingVersion,
+            oracleTimestamp,
+            nonce,
+            deadline,
+            signature
+        );
+        pool.boostTotal += grossNativeRaw;
+        emit TournamentBoosted(
+            poolId,
+            matchId,
+            roundNumber,
+            msg.sender,
+            sideToken,
+            boostUnits,
+            unitPriceNativeRaw,
+            grossNativeRaw,
+            pricingVersion,
+            oracleTimestamp,
+            nonce
+        );
     }
 
     function cancelOpenPool(bytes32 poolId) external {
@@ -438,6 +540,50 @@ contract ArenaWarPoolTreasuryV2 is ReentrancyGuard, Ownable, EIP712 {
         pool.buyInTotal -= amount;
         _pay(msg.sender, amount);
         emit BuyInRefunded(poolId, msg.sender, amount);
+    }
+
+    function _consumeBoostQuote(
+        bytes32 poolId,
+        bytes32 matchId,
+        uint256 roundNumber,
+        address sideToken,
+        uint256 boostUnits,
+        uint256 unitPriceNativeRaw,
+        uint256 pricingVersion,
+        uint256 oracleTimestamp,
+        uint256 nonce,
+        uint256 deadline,
+        bytes calldata signature
+    ) internal returns (uint256 grossNativeRaw) {
+        if (boostUnits == 0 || unitPriceNativeRaw == 0 || pricingVersion == 0) revert InvalidBoostQuote();
+        if (deadline < block.timestamp) revert SignatureExpired();
+        if (oracleTimestamp == 0 || oracleTimestamp > block.timestamp || oracleTimestamp > deadline) revert InvalidBoostQuote();
+        if (usedBoostNonces[msg.sender][nonce]) revert Replay();
+
+        grossNativeRaw = unitPriceNativeRaw * boostUnits;
+        if (grossNativeRaw == 0 || msg.value != grossNativeRaw) revert InvalidAmount();
+
+        bytes32 digest = _hashTypedDataV4(
+            keccak256(
+                abi.encode(
+                    BOOST_QUOTE_TYPEHASH,
+                    poolId,
+                    matchId,
+                    roundNumber,
+                    msg.sender,
+                    sideToken,
+                    boostUnits,
+                    unitPriceNativeRaw,
+                    grossNativeRaw,
+                    pricingVersion,
+                    oracleTimestamp,
+                    nonce,
+                    deadline
+                )
+            )
+        );
+        if (digest.recover(signature) != boostQuoteSigner) revert BadSignature();
+        usedBoostNonces[msg.sender][nonce] = true;
     }
 
     function _pay(address to, uint256 amount) internal {
