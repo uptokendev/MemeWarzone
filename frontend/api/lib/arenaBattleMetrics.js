@@ -1,6 +1,8 @@
 import { canonicalTokenKey } from "./arenaLeagueScoreMath.js";
-import { BATTLE_POINTS_V2 } from "./arenaBattlePointsConfig.js";
+import { BATTLE_POINTS_V2, battlePointsV3Enabled } from "./arenaBattlePointsConfig.js";
 import { calculateBattlePoints } from "./arenaBattlePoints.js";
+import { calculateBattlePointsV3Market } from "./arenaBattlePointsV3.js";
+import { persistBattlePointsV3MarketProjection } from "./arenaBattlePointsV3Persistence.js";
 import { getArenaMarketSnapshot, nativeRawToUsd, resolveNativeUsdPrice } from "./arenaMarketSnapshot.js";
 import {
   arenaSqlIdentityAny,
@@ -499,6 +501,42 @@ export async function refreshCombatantVolumeAndPoints({
     volumePoints: scored.volume.points,
     battlePoints: scored.totalPoints,
   }, { query });
+
+  if (battlePointsV3Enabled(deps.env || process.env)) {
+    const v3MarketScore = calculateBattlePointsV3Market({
+      baseline: {
+        startMcapUsd: metricsRow.start_mcap_usd,
+        startHolders: metricsRow.start_holders,
+        startLiquidityUsd: metricsRow.start_liquidity_usd,
+        baselineTimestamp: metricsRow.baseline_timestamp,
+        marketDataUpdatedAt: metricsRow.baseline_market_data_updated_at,
+      },
+      current: {
+        marketCapUsd: snapshot?.marketCapUsd,
+        holders: currentHolders,
+        liquidityUsd: snapshot?.liquidityUsd,
+        updatedAt: snapshot?.updatedAt,
+        healthy: snapshot?.healthy,
+        dataLagSeconds: snapshot?.dataLagSeconds,
+        reason: snapshot?.reason,
+        reasons: snapshot?.reasons,
+      },
+      eligibleVolume: {
+        usd: result.eligibleUsd,
+        rawUsd: result.rawUsd,
+        cappedUsd: result.cappedUsd,
+        clusters: result.clusters,
+      },
+      now,
+    });
+    await persistBattlePointsV3MarketProjection({
+      battleId: metricsRow.battle_id,
+      tokenId: metricsRow.token_id,
+      side: metricsRow.side,
+      score: v3MarketScore,
+    }, { query });
+  }
+
   return { result, scored, window };
 }
 
