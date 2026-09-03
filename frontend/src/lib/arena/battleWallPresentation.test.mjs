@@ -4,8 +4,9 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { DATA_DELAY_LABEL, presentArenaMatchRow } from "./arenaMatchRowPresentation.mjs";
+import { DATA_DELAY_LABEL, FEED_METRICS_LIMIT, presentArenaMatchRow, selectFeedMetricBattleIds } from "./arenaMatchRowPresentation.mjs";
 import {
+  POINTS_PENDING_LABEL,
   battleWallType,
   collectWallBattles,
   filterWallBattles,
@@ -140,6 +141,59 @@ test("Historical V1 stays legacy Score", () => {
   assert.equal(presented.scoreKind, "legacy");
   assert.equal(presented.scoreCaption, "Score");
   assert.notEqual(presented.scoreCaption, "Battle points");
+});
+
+test("explicit live V1 can still use legacy Score", () => {
+  const liveV1 = battle({
+    id: "live-v1",
+    settlementVersion: 1,
+    settlementScoringVersion: "mcap_pct_change",
+  });
+  const presented = presentBattleWallModule(liveV1, null, { requested: false, loaded: true });
+  assert.equal(presented.scoreKind, "legacy");
+  assert.equal(presented.scoreCaption, "Score");
+  assert.equal(presented.leftPointsLabel, "842000.0");
+});
+
+test("live rows outside the 12-metric batch do not display list MCAP as Score", () => {
+  const lives = Array.from({ length: 13 }, (_, index) =>
+    battle({
+      id: `live-${index + 1}`,
+      settlementVersion: null,
+      settlementScoringVersion: undefined,
+      participants: [
+        { tokenId: `0x${String(index + 1).padStart(40, "a")}`, tokenName: "Alpha", symbol: "ALPHA", score: 842000 + index },
+        { tokenId: `0x${String(index + 1).padStart(40, "b")}`, tokenName: "Bravo", symbol: "BRAVO", score: 100000 },
+      ],
+    }),
+  );
+  const requested = selectFeedMetricBattleIds(lives);
+  assert.equal(requested.length, FEED_METRICS_LIMIT);
+  assert.equal(FEED_METRICS_LIMIT, 12);
+  assert.ok(requested.includes("live-1"));
+  assert.ok(!requested.includes("live-13"));
+
+  const first = presentBattleWallModule(lives[0], metrics(), { requested: true, loaded: true });
+  assert.equal(first.scoreKind, "battle_points");
+  assert.equal(first.leftPointsLabel, "58.4");
+
+  const thirteenth = presentBattleWallModule(lives[12], null, { requested: false, loaded: true });
+  assert.equal(thirteenth.scoreKind, "pending");
+  assert.equal(thirteenth.statusLabel, POINTS_PENDING_LABEL);
+  assert.equal(thirteenth.leftPointsLabel, null);
+  assert.equal(thirteenth.rightPointsLabel, null);
+  assert.equal(thirteenth.leaderIndex, null);
+  assert.equal(thirteenth.pointGap, null);
+  assert.notEqual(thirteenth.leftPointsLabel, "842012.0");
+  assert.notEqual(thirteenth.scoreKind, "legacy");
+
+  const presentations = new Map([
+    [lives[0].id, first],
+    [lives[12].id, thirteenth],
+  ]);
+  const closest = sortWallBattles([lives[12], lives[0]], "closest_fight", presentations);
+  assert.equal(closest[0].id, "live-1");
+  assert.equal(closest[1].id, "live-13");
 });
 
 test("chain, type, and token search filters work", () => {

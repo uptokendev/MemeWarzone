@@ -1,10 +1,13 @@
 import {
   DATA_DELAY_LABEL,
+  LEGACY_SETTLEMENT_MODE,
   POINTS_UNAVAILABLE_LABEL,
+  listHintsLegacyV1,
   presentArenaMatchRow,
   tickerFor,
 } from "./arenaMatchRowPresentation.mjs";
 
+export const POINTS_PENDING_LABEL = "BATTLE POINTS PENDING";
 export { DATA_DELAY_LABEL, POINTS_UNAVAILABLE_LABEL };
 
 export function wallTabForBattle(battle) {
@@ -74,9 +77,27 @@ export function validBattlePointGap(presented) {
   return Math.abs(left - right);
 }
 
+function wallSafeLivePresentation(battle, metrics, presented, options = {}) {
+  if (wallTabForBattle(battle) !== "live") return presented;
+  if (presented.scoreKind !== "legacy") return presented;
+  if (String(metrics?.settlementMode || "") === LEGACY_SETTLEMENT_MODE) return presented;
+  if (listHintsLegacyV1(battle)) return presented;
+  const requested = options.requested === true;
+  return {
+    ...presented,
+    scoreKind: requested ? "unavailable" : "pending",
+    scoreCaption: "Battle points",
+    leftPointsLabel: null,
+    rightPointsLabel: null,
+    leaderIndex: null,
+    gapLabel: null,
+    statusLabel: requested ? POINTS_UNAVAILABLE_LABEL : POINTS_PENDING_LABEL,
+  };
+}
+
 export function presentBattleWallModule(battle, metrics, options = {}) {
   const tab = wallTabForBattle(battle);
-  const presented = presentArenaMatchRow(battle, metrics, options);
+  const presented = wallSafeLivePresentation(battle, metrics, presentArenaMatchRow(battle, metrics, options), options);
   const type = battleWallType(battle);
   return {
     ...presented,
