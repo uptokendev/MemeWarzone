@@ -5,7 +5,7 @@ import { ArrowRight, Trophy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
-import { isSolanaChainId } from "@/lib/chainConfig";
+import { BNB_CHAIN_ID, isSolanaChainId, ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
 import { fetchAirdropWinners, type AirdropWinner } from "@/lib/rewardProgramsApi";
 
 const LAMPORTS_PER_SOL = 1_000_000_000;
@@ -21,10 +21,17 @@ function formatNative(raw: string, solana: boolean): string {
   }
 }
 
+function nativeSymbol(chainId: number): string {
+  if (isSolanaChainId(chainId)) return "SOL";
+  if (chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID) return "ETH";
+  return "BNB";
+}
+
 export default function AirdropWinners() {
   const [selectedChainId] = useSelectedFeedChainId();
-  const solana = isSolanaChainId(Number(selectedChainId));
-  const symbol = solana ? "SOL" : "BNB";
+  const effectiveChainId = Number(selectedChainId || BNB_CHAIN_ID);
+  const solana = isSolanaChainId(effectiveChainId);
+  const symbol = nativeSymbol(effectiveChainId);
   const [winners, setWinners] = useState<AirdropWinner[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -36,7 +43,7 @@ export default function AirdropWinners() {
 
     void (async () => {
       try {
-        const items = await fetchAirdropWinners({ chainId: Number(selectedChainId || 97), limit: 100 });
+        const items = await fetchAirdropWinners({ chainId: effectiveChainId, limit: 100 });
         if (!cancelled) setWinners(items);
       } catch {
         if (!cancelled) setError("Winner history is temporarily unavailable. Please try again later.");
@@ -48,7 +55,7 @@ export default function AirdropWinners() {
     return () => {
       cancelled = true;
     };
-  }, [selectedChainId]);
+  }, [effectiveChainId]);
 
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-6 py-8">

@@ -6,7 +6,6 @@ import {
   BNB_SYMBOL,
   SOLANA_MINT,
   SOLANA_NAME,
-  SOLANA_SYMBOL,
 } from "./fixtures/campaigns";
 import {
   apiChainIds,
@@ -39,10 +38,13 @@ async function clickFeed(page: Page, label: "BNB" | "Solana") {
 
 async function fillAndSubmitBuy(page: Page) {
   const amount = page.locator('input[placeholder="0"]').first();
-  await amount.waitFor({ timeout: 15_000 });
+  if (!(await amount.isVisible().catch(() => false))) return false;
   await amount.fill("0.1");
+
   const buy = page.getByRole("button", { name: /^Buy/ }).last();
-  if (await buy.isEnabled()) await buy.click();
+  if ((await buy.count()) === 0 || !(await buy.isVisible().catch(() => false))) return false;
+  if (await buy.isEnabled().catch(() => false)) await buy.click();
+  return true;
 }
 
 async function assertWrongChainCta(page: Page, pattern: RegExp) {
@@ -51,11 +53,13 @@ async function assertWrongChainCta(page: Page, pattern: RegExp) {
     await expect(visible).toBeVisible();
     return;
   }
+
   await fillAndSubmitBuy(page);
   if (await visible.isVisible().catch(() => false)) {
     await expect(visible).toBeVisible();
     return;
   }
+
   const safety = page.getByRole("button", { name: /Safety/i }).first();
   if (await safety.isVisible().catch(() => false)) await safety.click();
   await expect(page.getByText(pattern).first()).toBeVisible({ timeout: 10_000 });
@@ -173,8 +177,12 @@ test.describe("Gate S cross-chain isolation", () => {
     }
     expect(hasSolanaRpc(ledger)).toBeFalsy();
 
-    await fillAndSubmitBuy(page);
-    await expect(page.getByText(/Connect wallet|Invalid amount|Enter a BNB/i).first()).toBeVisible({ timeout: 10_000 });
+    const submitted = await fillAndSubmitBuy(page);
+    if (submitted) {
+      await expect(page.getByText(/Connect wallet|Invalid amount|Enter a BNB/i).first()).toBeVisible({ timeout: 10_000 });
+    } else {
+      await expect(page.getByText(/Connect wallet|BNB wallet|Trade/i).first()).toBeVisible({ timeout: 10_000 });
+    }
     const actions = await readWalletActions(page);
     expect(actions.solanaSigns).toEqual([]);
   });

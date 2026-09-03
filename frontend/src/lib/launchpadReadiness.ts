@@ -1,4 +1,13 @@
-import { getAllowedChainIds, getChainParams, getDefaultChainId, getFactoryAddress, isAllowedChainId, type SupportedChainId } from "@/lib/chainConfig";
+import {
+  getAllowedChainIds,
+  getChainParams,
+  getDefaultChainId,
+  getFactoryAddress,
+  getPublicRpcUrls,
+  isAllowedChainId,
+  type SupportedChainId,
+} from "@/lib/chainConfig";
+import { buildEvmWalletChainParams, isActiveEvmChainId } from "@/lib/evmChainAdapter";
 
 export type LaunchpadWriteReadiness = {
   ready: boolean;
@@ -96,9 +105,16 @@ export function getLaunchpadWriteReadiness({
   };
 }
 
+export function getWalletChainSwitchParams(chainId: SupportedChainId) {
+  if (isActiveEvmChainId(chainId)) {
+    return buildEvmWalletChainParams(chainId, getPublicRpcUrls(chainId));
+  }
+  return getChainParams(chainId);
+}
+
 export async function requestWalletChainSwitch(provider: { send?: (method: string, params?: unknown[]) => Promise<unknown> } | null | undefined, chainId: SupportedChainId) {
   if (!provider?.send) throw new Error("Wallet provider is not available.");
-  const params = getChainParams(chainId);
+  const params = getWalletChainSwitchParams(chainId);
 
   try {
     await provider.send("wallet_switchEthereumChain", [{ chainId: params.chainId }]);

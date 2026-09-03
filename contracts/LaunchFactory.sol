@@ -5,13 +5,28 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 
 import {LaunchCampaign} from "./LaunchCampaign.sol";
 import {CreatorRegistry} from "./CreatorRegistry.sol";
 import {RiskRegistry} from "./RiskRegistry.sol";
 import {PermanentLpLocker} from "./PermanentLpLocker.sol";
+import {PermanentV3PositionLocker} from "./PermanentV3PositionLocker.sol";
 import {ITopazRouter02} from "./interfaces/ITopazRouter02.sol";
-import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
+
+interface IPermanentLiquidityLocker {
+    function configureRevenue(address treasuryRouter_, address integrationSource_) external;
+    function registeredLpToken(address lpAsset) external view returns (bool);
+    function registerGraduatedPool(
+        address campaign,
+        address creator,
+        address creatorFeeRecipient,
+        address pool,
+        address expectedTokenA,
+        address expectedTokenB,
+        uint256 lockedLpAmount
+    ) external;
+}
 
 contract LaunchFactory is Ownable {
     using ECDSA for bytes32;
@@ -28,6 +43,8 @@ contract LaunchFactory is Ownable {
     error FeeTooLowForLeague();
     error ParamTooHigh();
     error UnsupportedGraduationTarget();
+    error UnsupportedLiquidityKind();
+    error LiquidityKindMismatch();
     error OutOfBounds();
     error Offset();
     error SupplyZero();
@@ -118,10 +135,25 @@ contract LaunchFactory is Ownable {
     uint8 public constant ROUTE_PROFILE_STANDARD_LINKED = 0;
     uint8 public constant ROUTE_PROFILE_STANDARD_UNLINKED = 1;
     uint8 public constant ROUTE_PROFILE_OG_LINKED = 2;
-    uint32 public constant FACTORY_GENERATION = 3;
-    uint32 public constant CAMPAIGN_GENERATION = 2;
+    uint8 public constant LIQUIDITY_KIND_V2_ERC20 = 1;
+    uint8 public constant LIQUIDITY_KIND_V3_NFT = 2;
+    uint32 public constant FACTORY_GENERATION = 4;
+    uint32 public constant CAMPAIGN_GENERATION = 3;
     uint256 public constant MIN_SCHEDULE_DELAY = 5 minutes;
     uint256 public constant MAX_SCHEDULE_WINDOW = 30 days;
+
+    uint256 public constant LEAGUE_FEE_BPS = 75;
+    uint256 public constant TEST_GRADUATION_USD_THRESHOLD = 6 ether;
+    uint256 public constant FAST_GRADUATION_USD_THRESHOLD = 15_000 ether;
+    uint256 public constant DEFAULT_GRADUATION_USD_THRESHOLD = 30_000 ether;
+    uint256 public constant DEEP_GRADUATION_USD_THRESHOLD = 50_000 ether;
+    uint256 public constant MAX_TOTAL_SUPPLY = 1_000_000_000 ether;
+    uint256 public constant MAX_BASE_PRICE = 1_000 ether;
+    uint256 public constant MAX_PRICE_SLOPE = 1e36;
+    uint256 public constant MAX_GRADUATION_TARGET = 1_000_000 ether;
+    uint256 public constant MAX_LAUNCH_PROTECTION_BLOCKS = 28_800;
+    uint256 public constant MAX_LAUNCH_PROTECTION_BUY_WEI = 1_000 ether;
+    uint256 public constant MAX_LAUNCH_PROTECTION_WALLET_WEI = 1_000 ether;
 
     LaunchConfig public config;
     address public feeRecipient;
@@ -140,21 +172,10 @@ contract LaunchFactory is Ownable {
     uint256 public launchProtectionMaxBuyWei;
     uint256 public launchProtectionMaxWalletWei;
 
-    uint256 public constant LEAGUE_FEE_BPS = 75;
-    uint256 public constant TEST_GRADUATION_USD_THRESHOLD = 6 ether;
-    uint256 public constant FAST_GRADUATION_USD_THRESHOLD = 15_000 ether;
-    uint256 public constant DEFAULT_GRADUATION_USD_THRESHOLD = 30_000 ether;
-    uint256 public constant DEEP_GRADUATION_USD_THRESHOLD = 50_000 ether;
-    uint256 public constant MAX_TOTAL_SUPPLY = 1_000_000_000 ether;
-    uint256 public constant MAX_BASE_PRICE = 1_000 ether;
-    uint256 public constant MAX_PRICE_SLOPE = 1e36;
-    uint256 public constant MAX_GRADUATION_TARGET = 1_000_000 ether;
-    uint256 public constant MAX_LAUNCH_PROTECTION_BLOCKS = 28_800;
-    uint256 public constant MAX_LAUNCH_PROTECTION_BUY_WEI = 1_000 ether;
-    uint256 public constant MAX_LAUNCH_PROTECTION_WALLET_WEI = 1_000 ether;
     address public immutable leagueReceiver;
     address public immutable campaignImplementation;
-    PermanentLpLocker public immutable permanentLpLocker;
+    IPermanentLiquidityLocker public immutable permanentLpLocker;
+    uint8 public immutable liquidityKind;
     address public router;
     address public graduationOracle;
     CreatorRegistry public creatorRegistry;
@@ -230,8 +251,20 @@ contract LaunchFactory is Ownable {
         feeRecipient = treasuryRouter_;
         campaignImplementation = campaignImplementation_;
         graduationOracle = graduationOracle_;
-        permanentLpLocker = new PermanentLpLocker(address(this));
-        permanentLpLocker.configureRevenue(treasuryRouter_, ITopazRouter02(topazRouter_).poolFactory());
+
+        uint8 detectedLiquidityKind = _readLiquidityKind(topazRouter_);
+        liquidityKind = detectedLiquidityKind;
+        if (detectedLiquidityKind == LIQUIDITY_KIND_V3_NFT) {
+            PermanentV3PositionLocker locker = new PermanentV3PositionLocker(address(this));
+            permanentLpLocker = IPermanentLiquidityLocker(address(locker));
+            locker.configureRevenue(treasuryRouter_, topazRouter_);
+        } else {
+            address poolFactory = _v2PoolFactory(topazRouter_);
+            PermanentLpLocker locker = new PermanentLpLocker(address(this));
+            permanentLpLocker = IPermanentLiquidityLocker(address(locker));
+            locker.configureRevenue(treasuryRouter_, poolFactory);
+        }
+
         config = LaunchConfig({
             totalSupply: MAX_TOTAL_SUPPLY,
             curveBps: 8400,
@@ -269,7 +302,7 @@ contract LaunchFactory is Ownable {
             target == DEFAULT_GRADUATION_USD_THRESHOLD ||
             target == DEEP_GRADUATION_USD_THRESHOLD
         ) return true;
-        return chainId == 97 && target == TEST_GRADUATION_USD_THRESHOLD;
+        return (chainId == 97 || chainId == 46630) && target == TEST_GRADUATION_USD_THRESHOLD;
     }
 
     function isGraduationTargetAllowed(uint256 target) public view returns (bool) {
@@ -373,7 +406,8 @@ contract LaunchFactory is Ownable {
             creatorBuyCapWei: creatorBuyCapWei,
             requireAuthorizedTrading: requireAuthorizedTrading,
             tradeRouteProfile: campaignTradeRouteProfile,
-            finalizeRouteProfile: campaignFinalizeRouteProfile
+            finalizeRouteProfile: campaignFinalizeRouteProfile,
+            strictFeeRouting: true
         });
 
         address clone = Clones.clone(campaignImplementation);
@@ -384,9 +418,6 @@ contract LaunchFactory is Ownable {
         string memory metadataURI = "";
 
         if (address(creatorRegistry) != address(0)) {
-            // Immediate and scheduled deployments are both irreversible creator
-            // launch actions. The registry records the current block timestamp,
-            // never the future trading-open timestamp.
             creatorRegistry.recordLaunch(msg.sender);
         }
 
@@ -432,7 +463,9 @@ contract LaunchFactory is Ownable {
         if (lpToken != address(0) && !permanentLpLocker.registeredLpToken(lpToken)) {
             address tokenAddr = address(LaunchCampaign(payable(msg.sender)).token());
             address wrappedNative = ITopazRouter02(router).WETH();
-            uint256 lockedLpAmount = IERC20(lpToken).balanceOf(address(permanentLpLocker));
+            uint256 lockedLpAmount = liquidityKind == LIQUIDITY_KIND_V2_ERC20
+                ? IERC20(lpToken).balanceOf(address(permanentLpLocker))
+                : 0;
             permanentLpLocker.registerGraduatedPool(
                 msg.sender,
                 campaignCreator,
@@ -460,12 +493,13 @@ contract LaunchFactory is Ownable {
         if (newTreasuryRouter == address(0)) revert RecipientZero();
         if (newRouter.code.length == 0 || newTreasuryRouter.code.length == 0) revert ContractCodeMissing();
 
-        address newPoolFactory = ITopazRouter02(newRouter).poolFactory();
-        if (newPoolFactory == address(0) || newPoolFactory.code.length == 0) revert ContractCodeMissing();
+        uint8 newLiquidityKind = _readLiquidityKind(newRouter);
+        if (newLiquidityKind != liquidityKind) revert LiquidityKindMismatch();
+        address lockerIntegrationSource = newLiquidityKind == LIQUIDITY_KIND_V3_NFT ? newRouter : _v2PoolFactory(newRouter);
 
         router = newRouter;
         feeRecipient = newTreasuryRouter;
-        permanentLpLocker.configureRevenue(newTreasuryRouter, newPoolFactory);
+        permanentLpLocker.configureRevenue(newTreasuryRouter, lockerIntegrationSource);
 
         emit RouterUpdated(newRouter);
         emit FeeRecipientUpdated(newTreasuryRouter);
@@ -549,18 +583,13 @@ contract LaunchFactory is Ownable {
         LaunchCampaign(payable(campaign)).setRequireAuthorizedTrading(required);
     }
 
-    /// @notice Returns whether the creator may perform an irreversible deploy/arm
-    /// action in the current block. launchAt is intentionally not an input.
     function creatorLaunchEligibility(address creator)
         public
         view
         returns (bool allowed, uint256 cooldownEndsAt, uint256 currentLiveCount, uint256 maxLiveBonding)
     {
         cooldownEndsAt = block.timestamp;
-
-        if (address(creatorRegistry) == address(0)) {
-            return (true, cooldownEndsAt, 0, type(uint256).max);
-        }
+        if (address(creatorRegistry) == address(0)) return (true, cooldownEndsAt, 0, type(uint256).max);
 
         CreatorRegistry.CreatorProfile memory profile = creatorRegistry.getCreatorProfile(creator);
         CreatorRegistry.CreatorRules memory rules = creatorRegistry.getCreatorRules(creator);
@@ -702,6 +731,21 @@ contract LaunchFactory is Ownable {
         uint256 size = end > offset ? end - offset : 0;
         page = new CampaignInfo[](size);
         for (uint256 i = 0; i < size; i++) page[i] = _campaigns[offset + i];
+    }
+
+    function _readLiquidityKind(address candidateRouter) internal view returns (uint8) {
+        (bool ok, bytes memory data) = candidateRouter.staticcall(abi.encodeWithSignature("liquidityKind()"));
+        if (!ok || data.length < 32) return LIQUIDITY_KIND_V2_ERC20;
+        uint256 reportedKind = abi.decode(data, (uint256));
+        if (reportedKind == LIQUIDITY_KIND_V2_ERC20 || reportedKind == LIQUIDITY_KIND_V3_NFT) {
+            return uint8(reportedKind);
+        }
+        revert UnsupportedLiquidityKind();
+    }
+
+    function _v2PoolFactory(address candidateRouter) internal view returns (address poolFactory) {
+        poolFactory = ITopazRouter02(candidateRouter).poolFactory();
+        if (poolFactory == address(0) || poolFactory.code.length == 0) revert ContractCodeMissing();
     }
 
     function _isValidRouteProfile(uint8 profile) internal pure returns (bool) {

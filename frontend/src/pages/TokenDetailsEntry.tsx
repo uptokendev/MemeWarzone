@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
-import { SOLANA_CHAIN_ID } from "@/lib/chainConfig";
+import { useSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
+import {
+  BNB_CHAIN_ID,
+  BNB_TESTNET_CHAIN_ID,
+  ROBINHOOD_CHAIN_ID,
+  ROBINHOOD_TESTNET_CHAIN_ID,
+  SOLANA_CHAIN_ID,
+} from "@/lib/chainConfig";
 import { apiFetch } from "@/lib/apiBase";
 import { useLaunchpad, type CampaignInfo } from "@/lib/launchpadClient";
 import {
@@ -28,6 +35,14 @@ function tokenIdMatches(candidate?: string | null, routeId?: string | null): boo
   const right = String(routeId || "").trim();
   if (!left || !right) return false;
   return left === right || left.toLowerCase() === right.toLowerCase();
+}
+
+function isRobinhoodChainId(chainId: number): boolean {
+  return chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID;
+}
+
+function isBnbChainId(chainId: number): boolean {
+  return chainId === BNB_CHAIN_ID || chainId === BNB_TESTNET_CHAIN_ID;
 }
 
 function routeCacheKey(routeId: string): string {
@@ -62,13 +77,23 @@ function writeRouteCache(routeId: string, cache: SolanaRouteCache) {
 const TokenDetailsEntry = () => {
   const { campaignAddress } = useParams<{ campaignAddress: string }>();
   const [searchParams] = useSearchParams();
+  const [selectedFeedChainId] = useSelectedFeedChainId();
   const { fetchCampaigns } = useLaunchpad();
 
   const routeId = String(campaignAddress || "").trim();
   const forcedChainId = Number(searchParams.get("chainId") || "");
+  const selectedEvmChainId = isRobinhoodChainId(Number(selectedFeedChainId)) || isBnbChainId(Number(selectedFeedChainId))
+    ? Number(selectedFeedChainId)
+    : 0;
+  // Explicit URL identity wins. Legacy /token/0x... links inherit the currently
+  // selected EVM product chain instead of silently becoming BNB testnet.
+  const effectiveEvmChainId = isRobinhoodChainId(forcedChainId) || isBnbChainId(forcedChainId)
+    ? forcedChainId
+    : selectedEvmChainId || BNB_TESTNET_CHAIN_ID;
+  const robinhoodRoute = isRobinhoodChainId(effectiveEvmChainId);
   const isSolanaRoute = useMemo(() => {
-    // A 0x BNB/ETH token is never a Solana route, even if the wallet latch
-    // or a stale ?chainId=101 is present. That was collapsing WIC trades/holders.
+    // A 0x BNB/Robinhood token is never a Solana route, even if the wallet latch
+    // or a stale ?chainId=101 is present. That was collapsing EVM trades/holders.
     if (/^0x[a-fA-F0-9]{40}$/i.test(routeId)) return false;
     return forcedChainId === SOLANA_CHAIN_ID || isSolanaTokenRouteId(routeId);
   }, [forcedChainId, routeId]);
@@ -85,8 +110,11 @@ const TokenDetailsEntry = () => {
 
   useEffect(() => {
     if (!routeId) return;
-    analytics.track("token_page_viewed", { chain: isSolanaRoute ? "solana" : "bnb" });
-  }, [routeId, isSolanaRoute]);
+    analytics.track("token_page_viewed", {
+      chain: isSolanaRoute ? "solana" : robinhoodRoute ? "robinhood" : "bnb",
+      chainId: isSolanaRoute ? SOLANA_CHAIN_ID : effectiveEvmChainId,
+    });
+  }, [effectiveEvmChainId, isSolanaRoute, robinhoodRoute, routeId]);
 
   useEffect(() => {
     if (!isSolanaRoute) {
@@ -225,7 +253,14 @@ const TokenDetailsEntry = () => {
     const campaignAddress = String(campaign?.campaign || resolvedCampaignAddress || (!isSolanaRoute ? routeId : "") || "").trim();
     const tokenAddress = String(campaign?.token || (isSolanaRoute ? routeId : campaignAddress) || "").trim();
     if (!campaignAddress && !tokenAddress) return;
-    const chainId = isSolanaRoute ? SOLANA_CHAIN_ID : Number((campaign as { chainId?: number } | null)?.chainId || 97);
+
+    const campaignChainId = Number((campaign as { chainId?: number } | null)?.chainId || 0);
+    const chainId = isSolanaRoute
+      ? SOLANA_CHAIN_ID
+      : isRobinhoodChainId(forcedChainId) || isBnbChainId(forcedChainId)
+        ? forcedChainId
+        : campaignChainId || effectiveEvmChainId;
+
     recordRecentlyViewed({
       name: String(campaign?.name || campaign?.symbol || tokenAddress.slice(0, 6) || "Token"),
       symbol: campaign?.symbol,
@@ -234,9 +269,9 @@ const TokenDetailsEntry = () => {
       campaignAddress,
       chainId,
     });
-  }, [campaign, isSolanaRoute, resolvedCampaignAddress, routeId]);
+  }, [campaign, effectiveEvmChainId, forcedChainId, isSolanaRoute, resolvedCampaignAddress, routeId]);
 
-  return <TokenDetails key={routeId || (isSolanaRoute ? "solana" : "evm")} />;
+  return <TokenDetails key={`${routeId || (isSolanaRoute ? "solana" : "evm")}:${isSolanaRoute ? SOLANA_CHAIN_ID : effectiveEvmChainId}`} />;
 };
 
 export default TokenDetailsEntry;

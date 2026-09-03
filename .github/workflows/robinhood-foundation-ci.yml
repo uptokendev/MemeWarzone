@@ -1,0 +1,313 @@
+name: Robinhood foundation proof
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "config/robinhood-*.env.example"
+      - "deployments/robinhood/**"
+      - "docs/build_plans/robinhood-*.md"
+      - "docs/robinhood-*.md"
+      - "hardhat.config.ts"
+      - "contracts/LaunchFactory.sol"
+      - "contracts/mocks/MockUniswapV3*.sol"
+      - "contracts/mocks/MockWETH9.sol"
+      - "contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol"
+      - "contracts/PermanentV3PositionLocker.sol"
+      - "scripts/deploy-robinhood-v3-mock.ts"
+      - "scripts/verify-robinhood-v3-mock.ts"
+      - "scripts/check-robinhood-local-isolation.mjs"
+      - "test/RobinhoodV3Mocks.spec.ts"
+      - "test/RobinhoodV3GraduationAdapter.spec.ts"
+      - "test/LaunchFactoryLiquidityKinds.spec.ts"
+      - "test/LaunchFactoryGraduationThresholds.spec.ts"
+      - "test/ScheduledLaunchFactory.spec.ts"
+      - "test/CreatorArmCooldown.spec.ts"
+      - "db/migrations/**"
+      - "frontend/api/load-local-env.mjs"
+      - "frontend/scripts/dev-vite.mjs"
+      - "frontend/scripts/dev-robinhood-local.mjs"
+      - "frontend/scripts/prepare-robinhood-local-db.mjs"
+      - "frontend/scripts/robinhood-local-env.mjs"
+      - "frontend/scripts/robinhood-local-env.test.mjs"
+      - "frontend/src/components/common/ChainFeedSwitch.tsx"
+      - "frontend/src/lib/chainConfig.ts"
+      - "frontend/src/lib/chainRegistry.ts"
+      - "frontend/src/lib/deploymentManifest.ts"
+      - "frontend/src/lib/evmChainAdapter.ts"
+      - "frontend/src/lib/feedChainIsolation.test.mjs"
+      - "frontend/src/lib/launchpadReadiness.ts"
+      - "frontend/src/lib/runtimeEnvironment.ts"
+      - "frontend/src/lib/scheduledLaunchClientV2.ts"
+      - "realtime-indexer/src/ably.ts"
+      - "realtime-indexer/src/env.ts"
+      - "realtime-indexer/src/evmIndexerChains.ts"
+      - "realtime-indexer/src/robinhoodLocalScanner.ts"
+      - "realtime-indexer/src/robinhoodV3PoolIndexer.ts"
+      - "realtime-indexer/src/tests/evmIndexerChains.test.ts"
+      - "realtime-indexer/src/tests/localRuntimeIsolation.test.ts"
+      - "realtime-indexer/src/tests/robinhoodV3PoolIndexer.test.ts"
+      - ".github/workflows/robinhood-foundation-ci.yml"
+  push:
+    branches:
+      - "feat/robinhood-*"
+    paths:
+      - "config/robinhood-*.env.example"
+      - "deployments/robinhood/**"
+      - "docs/build_plans/robinhood-*.md"
+      - "docs/robinhood-*.md"
+      - "hardhat.config.ts"
+      - "contracts/LaunchFactory.sol"
+      - "contracts/mocks/MockUniswapV3*.sol"
+      - "contracts/mocks/MockWETH9.sol"
+      - "contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol"
+      - "contracts/PermanentV3PositionLocker.sol"
+      - "scripts/deploy-robinhood-v3-mock.ts"
+      - "scripts/verify-robinhood-v3-mock.ts"
+      - "scripts/check-robinhood-local-isolation.mjs"
+      - "test/RobinhoodV3Mocks.spec.ts"
+      - "test/RobinhoodV3GraduationAdapter.spec.ts"
+      - "test/LaunchFactoryLiquidityKinds.spec.ts"
+      - "test/LaunchFactoryGraduationThresholds.spec.ts"
+      - "test/ScheduledLaunchFactory.spec.ts"
+      - "test/CreatorArmCooldown.spec.ts"
+      - "db/migrations/**"
+      - "frontend/api/load-local-env.mjs"
+      - "frontend/scripts/dev-vite.mjs"
+      - "frontend/scripts/dev-robinhood-local.mjs"
+      - "frontend/scripts/prepare-robinhood-local-db.mjs"
+      - "frontend/scripts/robinhood-local-env.mjs"
+      - "frontend/scripts/robinhood-local-env.test.mjs"
+      - "frontend/src/components/common/ChainFeedSwitch.tsx"
+      - "frontend/src/lib/chainConfig.ts"
+      - "frontend/src/lib/chainRegistry.ts"
+      - "frontend/src/lib/deploymentManifest.ts"
+      - "frontend/src/lib/evmChainAdapter.ts"
+      - "frontend/src/lib/feedChainIsolation.test.mjs"
+      - "frontend/src/lib/launchpadReadiness.ts"
+      - "frontend/src/lib/runtimeEnvironment.ts"
+      - "frontend/src/lib/scheduledLaunchClientV2.ts"
+      - "realtime-indexer/src/ably.ts"
+      - "realtime-indexer/src/env.ts"
+      - "realtime-indexer/src/evmIndexerChains.ts"
+      - "realtime-indexer/src/robinhoodLocalScanner.ts"
+      - "realtime-indexer/src/robinhoodV3PoolIndexer.ts"
+      - "realtime-indexer/src/tests/evmIndexerChains.test.ts"
+      - "realtime-indexer/src/tests/localRuntimeIsolation.test.ts"
+      - "realtime-indexer/src/tests/robinhoodV3PoolIndexer.test.ts"
+      - ".github/workflows/robinhood-foundation-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: robinhood-foundation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  robinhood-v3-mock:
+    name: Robinhood V3 mock DEX and graduation compatibility proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked contract dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Compile contracts
+        run: npx hardhat compile
+
+      - name: Prove V3 staging DEX, factory liquidity seam, and scheduled-generation compatibility
+        run: >-
+          npx hardhat test
+          test/RobinhoodV3Mocks.spec.ts
+          test/RobinhoodV3GraduationAdapter.spec.ts
+          test/LaunchFactoryLiquidityKinds.spec.ts
+          test/LaunchFactoryGraduationThresholds.spec.ts
+          test/ScheduledLaunchFactory.spec.ts
+          test/CreatorArmCooldown.spec.ts
+
+      - name: Prove staging deployment script and self-verification
+        env:
+          ALLOW_LOCAL_RH_V3_MOCK: "true"
+        run: npx hardhat run scripts/deploy-robinhood-v3-mock.ts
+
+  frontend-foundation:
+    name: Frontend EVM parity and local isolation proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Prove local API/indexer/database isolation
+        run: node scripts/check-robinhood-local-isolation.mjs
+
+      - name: Prove localhost browser exposes three chains while workers stay Robinhood-only
+        run: node --test frontend/scripts/robinhood-local-env.test.mjs
+
+      - name: Install frontend dependencies for source proof
+        run: npm install --prefix frontend --package-lock=false --no-audit --no-fund
+
+      - name: Prove BNB/Solana feed isolation and Robinhood default non-activation
+        run: npm --prefix frontend run test:feed-isolation
+
+      - name: Build normal frontend without Robinhood production activation
+        env:
+          VITE_DEFAULT_CHAIN_ID: "97"
+          VITE_PUBLIC_RPC_56: "https://rpc-evm-56.test.mwz"
+          VITE_PUBLIC_RPC_97: "https://rpc-evm-97.test.mwz"
+          VITE_BSC_RPC_56: "https://rpc-evm-56.test.mwz"
+          VITE_BSC_RPC_97: "https://rpc-evm-97.test.mwz"
+          VITE_BSC_MAINNET_RPC: "https://rpc-evm-56.test.mwz"
+          VITE_BSC_TESTNET_RPC: "https://rpc-evm-97.test.mwz"
+          VITE_SOLANA_RPC: "https://rpc-solana-101.test.mwz"
+          VITE_SOLANA_MAINNET_RPC: "https://rpc-solana-101.test.mwz"
+          VITE_PUBLIC_RPC_SOLANA: "https://rpc-solana-101.test.mwz"
+          VITE_PUBLIC_RPC_101: "https://rpc-solana-101.test.mwz"
+        run: npm --prefix frontend run build
+
+      - name: Build Robinhood localhost browser with BNB Solana Robinhood selector
+        env:
+          VITE_RUNTIME_ENVIRONMENT: "local"
+          VITE_DEFAULT_CHAIN_ID: "46630"
+          VITE_ALLOWED_CHAIN_IDS: "56,101,46630"
+          VITE_PUBLIC_RPC_46630: "https://rpc.testnet.chain.robinhood.com"
+          VITE_FRONTEND_API_BASE: "http://127.0.0.1:3001"
+          VITE_TOKEN_API_BASE: "http://127.0.0.1:3002"
+          VITE_REALTIME_API_BASE: "http://127.0.0.1:3002"
+        run: npm --prefix frontend run build
+
+  indexer-foundation:
+    name: EVM indexer config compile and activation gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: realtime-indexer/package-lock.json
+
+      - name: Install indexer dependencies for source proof
+        run: npm install --prefix realtime-indexer --package-lock=false --no-audit --no-fund
+
+      - name: Compile realtime indexer
+        run: npm --prefix realtime-indexer run build
+
+      - name: Prove Robinhood production indexer remains explicitly inactive by default
+        working-directory: realtime-indexer
+        run: npx tsx --test src/tests/evmIndexerChains.test.ts
+
+      - name: Prove isolated local runtime boots without production Ably or telemetry
+        working-directory: realtime-indexer
+        run: npx tsx --test src/tests/localRuntimeIsolation.test.ts
+
+      - name: Prove Robinhood V3 swap direction normalization
+        working-directory: realtime-indexer
+        run: npx tsx --test src/tests/robinhoodV3PoolIndexer.test.ts
+
+  local-stack-smoke:
+    name: Boot isolated Robinhood local stack with PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      RUNTIME_ENVIRONMENT: local
+      VITE_RUNTIME_ENVIRONMENT: local
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/memewarzone_robinhood_local
+      PG_DISABLE_SSL: "1"
+      ROBINHOOD_TESTNET_RPC_URL: https://rpc.testnet.chain.robinhood.com
+      ROBINHOOD_RPC_HTTP_46630: https://rpc.testnet.chain.robinhood.com
+      DEFAULT_EVM_CHAIN_ID: "46630"
+      EVM_INDEXER_CHAIN_IDS: "46630"
+      VITE_DEFAULT_CHAIN_ID: "46630"
+      VITE_ALLOWED_CHAIN_IDS: "56,101,46630"
+      VITE_PUBLIC_RPC_46630: https://rpc.testnet.chain.robinhood.com
+      LOCAL_DISABLE_ABLY: "1"
+      LOCAL_DISABLE_REMOTE_SUPABASE: "1"
+      ENABLE_DATA_URL_UPLOADS: "1"
+      TELEMETRY_INGEST_URL: ""
+      TELEMETRY_TOKEN: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install local frontend API dependencies
+        run: npm install --prefix frontend --package-lock=false --no-audit --no-fund
+
+      - name: Install local indexer dependencies
+        run: npm install --prefix realtime-indexer --package-lock=false --no-audit --no-fund
+
+      - name: Bootstrap dedicated local database from committed migrations
+        run: node frontend/scripts/prepare-robinhood-local-db.mjs
+
+      - name: Start the exact developer local stack command
+        run: |
+          node frontend/scripts/dev-robinhood-local.mjs > /tmp/robinhood-local.log 2>&1 &
+          echo $! > /tmp/robinhood-local.pid
+
+      - name: Wait for local indexer API, frontend API, and Vite
+        run: |
+          set -e
+          for target in \
+            http://127.0.0.1:3002/healthz \
+            http://127.0.0.1:3001/healthz \
+            http://127.0.0.1:5173/; do
+            ok=0
+            for i in $(seq 1 60); do
+              if curl -fsS "$target" >/dev/null; then
+                ok=1
+                break
+              fi
+              sleep 1
+            done
+            if [ "$ok" -ne 1 ]; then
+              echo "Local target failed: $target"
+              cat /tmp/robinhood-local.log || true
+              exit 1
+            fi
+          done
+
+      - name: Prove no live MemeWarzone backend leaked into local process log
+        run: |
+          if grep -E "https://(api|indexer)\.memewar\.zone" /tmp/robinhood-local.log; then
+            echo "Production MemeWarzone backend leaked into local runtime"
+            exit 1
+          fi
+          grep -F "browser chains: 56,101,46630" /tmp/robinhood-local.log
+
+      - name: Show local stack log on failure
+        if: failure()
+        run: cat /tmp/robinhood-local.log || true

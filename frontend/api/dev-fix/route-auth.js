@@ -24,8 +24,8 @@ const VALID_PROFILES = new Set([
   ROUTE_PROFILE_OG_LINKED,
 ]);
 
-const EXPECTED_FACTORY_GENERATION = 3;
 const EXPECTED_CAMPAIGN_GENERATION = 2;
+const ROBINHOOD_CHAIN_IDS = new Set([4663, 46630]);
 const FACTORY_ROUTE_AUTHORITY_ABI = ["function routeAuthority() view returns (address)"];
 const FACTORY_CREATION_PREFLIGHT_ABI = [
   "function routeAuthority() view returns (address)",
@@ -51,6 +51,17 @@ function methodAllowed(req, res, allowed) {
 function normalizeAddress(value) {
   const raw = String(value || "").trim();
   return isAddress(raw) ? ethers.getAddress(raw) : "";
+}
+
+function isSupportedFactoryGeneration(chainId, generation) {
+  const id = Number(chainId);
+  const gen = Number(generation);
+  if (ROBINHOOD_CHAIN_IDS.has(id)) return gen === 4;
+  return gen === 3 || gen === 4;
+}
+
+function generationRule(chainId) {
+  return ROBINHOOD_CHAIN_IDS.has(Number(chainId)) ? "4/2" : "3-or-4/2";
 }
 
 function parsePositiveInt(value, fallback) {
@@ -162,7 +173,11 @@ function validateGraduationTarget(chainId, graduationTarget) {
     process.env.VITE_ENABLE_TEST_GRADUATION_THRESHOLD || process.env.ENABLE_TEST_GRADUATION_THRESHOLD || "false",
   );
   const cid = Number(chainId);
-  if (testThresholdEnabled && (cid === 97 || cid === 101 || cid === 102) && graduationTarget === TEST_GRADUATION_TARGET) {
+  if (
+    testThresholdEnabled &&
+    (cid === 97 || cid === 46630 || cid === 101 || cid === 102) &&
+    graduationTarget === TEST_GRADUATION_TARGET
+  ) {
     return;
   }
   throw new Error("Unsupported graduation target");
@@ -241,12 +256,13 @@ async function readOnchainCreationPreflight({ chainId, factoryAddress, walletAdd
 
     const factoryGeneration = Number(factoryGenerationRaw);
     const campaignGeneration = Number(campaignGenerationRaw);
-    if (factoryGeneration !== EXPECTED_FACTORY_GENERATION || campaignGeneration !== EXPECTED_CAMPAIGN_GENERATION) {
+    if (!isSupportedFactoryGeneration(chainId, factoryGeneration) || campaignGeneration !== EXPECTED_CAMPAIGN_GENERATION) {
       return {
         ok: false,
         status: 409,
         code: "CREATE_FACTORY_GENERATION_MISMATCH",
-        error: `Creation requires factory/campaign generation ${EXPECTED_FACTORY_GENERATION}/${EXPECTED_CAMPAIGN_GENERATION}; configured factory reports ${factoryGeneration}/${campaignGeneration}.`,
+        error: `Creation on chain ${chainId} requires factory/campaign generation ${generationRule(chainId)}; configured factory reports ${factoryGeneration}/${campaignGeneration}.`,
+        onChain: { factoryGeneration, campaignGeneration },
       };
     }
     if (!live || globalPaused || createPaused) {
@@ -254,7 +270,8 @@ async function readOnchainCreationPreflight({ chainId, factoryAddress, walletAdd
         ok: false,
         status: 503,
         code: "CREATE_FACTORY_NOT_READY",
-        error: !live ? "The corrected creation factory is not live." : globalPaused ? "The creation factory is globally paused." : "New campaign creation is paused.",
+        error: !live ? "The configured creation factory is not live." : globalPaused ? "The creation factory is globally paused." : "New campaign creation is paused.",
+        onChain: { factoryGeneration, campaignGeneration },
       };
     }
 

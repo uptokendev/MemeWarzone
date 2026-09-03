@@ -1,0 +1,162 @@
+name: Robinhood testnet staged deployment proof
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "contracts/LaunchFactory.sol"
+      - "contracts/LaunchCampaign.sol"
+      - "contracts/GraduationOracle.sol"
+      - "contracts/TreasuryRouterV2.sol"
+      - "contracts/TreasuryVaultV2.sol"
+      - "contracts/MonthlyLeagueTreasury.sol"
+      - "contracts/CharityTreasury.sol"
+      - "contracts/RecruiterRewardsVault.sol"
+      - "contracts/CommunityRewardsVault.sol"
+      - "contracts/ProtocolRevenueVault.sol"
+      - "contracts/CreatorRegistry.sol"
+      - "contracts/RiskRegistry.sol"
+      - "contracts/UPVoteTreasury.sol"
+      - "contracts/PermanentV3PositionLocker.sol"
+      - "contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol"
+      - "contracts/integrations/RobinhoodV3NativeSwapAdapter.sol"
+      - "contracts/mocks/MockUniswapV3*.sol"
+      - "contracts/mocks/MockWETH9.sol"
+      - "contracts/mocks/MockUsdPriceFeed.sol"
+      - "scripts/deploy-robinhood-testnet-stage.ts"
+      - "scripts/deploy-robinhood-testnet-auxiliary.ts"
+      - "scripts/verify-robinhood-testnet-stage.ts"
+      - "scripts/test-robinhood-testnet-lifecycle.ts"
+      - "test/RobinhoodV3NativeSwapAdapter.spec.ts"
+      - ".github/workflows/robinhood-testnet-stage-ci.yml"
+  push:
+    branches:
+      - "feat/robinhood-*"
+    paths:
+      - "contracts/LaunchFactory.sol"
+      - "contracts/LaunchCampaign.sol"
+      - "contracts/GraduationOracle.sol"
+      - "contracts/TreasuryRouterV2.sol"
+      - "contracts/TreasuryVaultV2.sol"
+      - "contracts/MonthlyLeagueTreasury.sol"
+      - "contracts/CharityTreasury.sol"
+      - "contracts/RecruiterRewardsVault.sol"
+      - "contracts/CommunityRewardsVault.sol"
+      - "contracts/ProtocolRevenueVault.sol"
+      - "contracts/CreatorRegistry.sol"
+      - "contracts/RiskRegistry.sol"
+      - "contracts/UPVoteTreasury.sol"
+      - "contracts/PermanentV3PositionLocker.sol"
+      - "contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol"
+      - "contracts/integrations/RobinhoodV3NativeSwapAdapter.sol"
+      - "contracts/mocks/MockUniswapV3*.sol"
+      - "contracts/mocks/MockWETH9.sol"
+      - "contracts/mocks/MockUsdPriceFeed.sol"
+      - "scripts/deploy-robinhood-testnet-stage.ts"
+      - "scripts/deploy-robinhood-testnet-auxiliary.ts"
+      - "scripts/verify-robinhood-testnet-stage.ts"
+      - "scripts/test-robinhood-testnet-lifecycle.ts"
+      - "test/RobinhoodV3NativeSwapAdapter.spec.ts"
+      - ".github/workflows/robinhood-testnet-stage-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: robinhood-testnet-stage-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  staged-protocol-rehearsal:
+    name: Deploy, verify and exercise full Robinhood staging protocol
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked contract dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Compile contracts
+        run: npx hardhat compile
+
+      - name: Unit-test native Robinhood V3 buy/sell adapter
+        run: npx hardhat test test/RobinhoodV3NativeSwapAdapter.spec.ts
+
+      - name: Start persistent local EVM chain
+        run: |
+          set -e
+          npx hardhat node > /tmp/robinhood-hardhat-node.log 2>&1 &
+          echo $! > /tmp/robinhood-hardhat-node.pid
+          ok=0
+          for i in $(seq 1 60); do
+            if curl -fsS -X POST http://127.0.0.1:8545 \
+              -H 'content-type: application/json' \
+              --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
+              | grep -q '0x7a69'; then
+              ok=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ok" -ne 1 ]; then
+            cat /tmp/robinhood-hardhat-node.log || true
+            exit 1
+          fi
+
+      - name: Deploy complete Robinhood staged protocol onto persistent rehearsal chain
+        env:
+          ALLOW_LOCAL_RH_PROTOCOL_STAGE: "true"
+          ROBINHOOD_STAGE_DEPLOYMENT_FILE: /tmp/robinhood-testnet-stage.json
+          ROBINHOOD_TEST_NATIVE_USD_PRICE: "3000"
+        run: npx hardhat run scripts/deploy-robinhood-testnet-stage.ts --network localhost
+
+      - name: Independently verify staged deployment and disabled activation state
+        env:
+          ALLOW_LOCAL_RH_PROTOCOL_STAGE: "true"
+          ROBINHOOD_STAGE_DEPLOYMENT_FILE: /tmp/robinhood-testnet-stage.json
+        run: npx hardhat run scripts/verify-robinhood-testnet-stage.ts --network localhost
+
+      - name: Deploy auxiliary parity contracts
+        env:
+          ALLOW_LOCAL_RH_PROTOCOL_STAGE: "true"
+          ROBINHOOD_STAGE_DEPLOYMENT_FILE: /tmp/robinhood-testnet-stage.json
+        run: npx hardhat run scripts/deploy-robinhood-testnet-auxiliary.ts --network localhost
+
+      - name: Prove manifest stays staging-only and disabled before acceptance
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const p = '/tmp/robinhood-testnet-stage.json';
+          const m = JSON.parse(fs.readFileSync(p, 'utf8'));
+          if (m.targetChainId !== 46630) throw new Error('wrong targetChainId');
+          if (m.factoryGeneration !== 4 || m.campaignGeneration !== 2 || m.liquidityKind !== 2) {
+            throw new Error('wrong generation/liquidity metadata');
+          }
+          if (m.creationEnabled !== false || m.supportEnabled !== false || m.factoryLive !== false) {
+            throw new Error('staged deployment unexpectedly enabled');
+          }
+          if (m.stagingOnly?.productionCompatible !== false) throw new Error('staging-only marker missing');
+          if (!m.contracts?.upVoteTreasury) throw new Error('UPVoteTreasury missing from staged manifest');
+          if (!m.contracts?.v3NativeSwapAdapter) throw new Error('Robinhood V3 native swap adapter missing from staged manifest');
+          if (m.auxiliaryFeatures?.v3NativeSwapAdapter?.nativeAsset !== 'ETH') throw new Error('native V3 adapter ETH metadata missing');
+          console.log('Robinhood staged manifest activation gate passed');
+          NODE
+
+      - name: Exercise authorized create, buy, sell, graduation, V3 swap and 80/20 harvest
+        env:
+          ALLOW_LOCAL_RH_PROTOCOL_STAGE: "true"
+          ROBINHOOD_ACCEPTANCE_ENABLE_LIVE: "true"
+          ROBINHOOD_STAGE_DEPLOYMENT_FILE: /tmp/robinhood-testnet-stage.json
+        run: npx hardhat run scripts/test-robinhood-testnet-lifecycle.ts --network localhost
+
+      - name: Show rehearsal node log on failure
+        if: failure()
+        run: cat /tmp/robinhood-hardhat-node.log || true
