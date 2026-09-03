@@ -13,8 +13,8 @@ interface IEventPrizeVaultV1 {
 /**
  * @title WarzoneSponsorshipRouterV1
  * @notice Native-chain event sponsorship router. A trusted quote signer binds the
- *         event, sponsor wallet, pricing version, minimum, requested native amount,
- *         nonce and expiry. Payments split 70/20/10 to event/marketing/protocol.
+ *         event, sponsor, tier/version, USD reference snapshot, native quote,
+ *         oracle timestamp, nonce and expiry. Payments split 70/20/10.
  */
 contract WarzoneSponsorshipRouterV1 is Ownable, ReentrancyGuard, EIP712 {
     using ECDSA for bytes32;
@@ -25,7 +25,7 @@ contract WarzoneSponsorshipRouterV1 is Ownable, ReentrancyGuard, EIP712 {
     uint256 public constant BPS_DENOM = 10_000;
 
     bytes32 public constant SPONSORSHIP_QUOTE_TYPEHASH = keccak256(
-        "SponsorshipQuote(bytes32 eventId,address sponsor,uint256 pricingVersion,uint256 minimumNativeRaw,uint256 requestedNativeRaw,uint256 nonce,uint256 deadline)"
+        "SponsorshipQuote(bytes32 eventId,address sponsor,bytes32 pricingTier,uint256 pricingVersion,uint256 minimumUsdMicros,uint256 requestedUsdMicros,uint256 minimumNativeRaw,uint256 requestedNativeRaw,uint256 nativeUsdReferenceMicros,uint256 oracleTimestamp,uint256 nonce,uint256 deadline)"
     );
 
     address public quoteSigner;
@@ -46,7 +46,12 @@ contract WarzoneSponsorshipRouterV1 is Ownable, ReentrancyGuard, EIP712 {
         bytes32 indexed eventId,
         address indexed sponsor,
         uint256 indexed nonce,
+        bytes32 pricingTier,
         uint256 pricingVersion,
+        uint256 minimumUsdMicros,
+        uint256 requestedUsdMicros,
+        uint256 nativeUsdReferenceMicros,
+        uint256 oracleTimestamp,
         uint256 grossNativeRaw,
         uint256 eventNativeRaw,
         uint256 marketingNativeRaw,
@@ -56,6 +61,7 @@ contract WarzoneSponsorshipRouterV1 is Ownable, ReentrancyGuard, EIP712 {
     error ZeroAddress();
     error InvalidEvent();
     error InvalidAmount();
+    error InvalidQuote();
     error QuoteExpired();
     error BadSignature();
     error Replay();
@@ -121,9 +127,14 @@ contract WarzoneSponsorshipRouterV1 is Ownable, ReentrancyGuard, EIP712 {
 
     function paySponsorship(
         bytes32 eventId,
+        bytes32 pricingTier,
         uint256 pricingVersion,
+        uint256 minimumUsdMicros,
+        uint256 requestedUsdMicros,
         uint256 minimumNativeRaw,
         uint256 requestedNativeRaw,
+        uint256 nativeUsdReferenceMicros,
+        uint256 oracleTimestamp,
         uint256 nonce,
         uint256 deadline,
         bytes calldata signature
@@ -131,7 +142,15 @@ contract WarzoneSponsorshipRouterV1 is Ownable, ReentrancyGuard, EIP712 {
         if (paymentsPaused) revert PaymentsArePaused();
         if (!enabledEvents[eventId]) revert InvalidEvent();
         if (deadline < block.timestamp) revert QuoteExpired();
-        if (requestedNativeRaw < minimumNativeRaw || requestedNativeRaw == 0 || msg.value != requestedNativeRaw) {
+        if (
+            pricingTier == bytes32(0) ||
+            pricingVersion == 0 ||
+            minimumUsdMicros == 0 ||
+            requestedUsdMicros < minimumUsdMicros ||
+            nativeUsdReferenceMicros == 0 ||
+            oracleTimestamp == 0
+        ) revert InvalidQuote();
+        if (requestedNativeRaw < minimumNativeRaw || minimumNativeRaw == 0 || msg.value != requestedNativeRaw) {
             revert InvalidAmount();
         }
         if (usedNonces[msg.sender][nonce]) revert Replay();
@@ -142,9 +161,14 @@ contract WarzoneSponsorshipRouterV1 is Ownable, ReentrancyGuard, EIP712 {
                     SPONSORSHIP_QUOTE_TYPEHASH,
                     eventId,
                     msg.sender,
+                    pricingTier,
                     pricingVersion,
+                    minimumUsdMicros,
+                    requestedUsdMicros,
                     minimumNativeRaw,
                     requestedNativeRaw,
+                    nativeUsdReferenceMicros,
+                    oracleTimestamp,
                     nonce,
                     deadline
                 )
@@ -166,7 +190,12 @@ contract WarzoneSponsorshipRouterV1 is Ownable, ReentrancyGuard, EIP712 {
             eventId,
             msg.sender,
             nonce,
+            pricingTier,
             pricingVersion,
+            minimumUsdMicros,
+            requestedUsdMicros,
+            nativeUsdReferenceMicros,
+            oracleTimestamp,
             msg.value,
             eventAmount,
             marketingAmount,
