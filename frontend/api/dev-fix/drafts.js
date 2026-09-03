@@ -218,9 +218,38 @@ export async function drafts(req, res) {
 
   const pool = await getLifecyclePool();
   await reconcileScheduledDraftLifecycle(pool);
+  const body = requestBody(req);
+  const wantsGraduationPolicy = req.method === "POST" && Boolean(
+    String(body.graduationMarketKind || body.graduation_market_kind || "").trim(),
+  );
 
-  return runJsonTransform(base.drafts, req, res, async (payload) => {
-    const enriched = await enrichPayload(payload, pool);
+  return runJsonTransform(base.drafts, req, res, async (payload, meta) => {
+    let enriched = await enrichPayload(payload, pool);
+
+    if (
+      wantsGraduationPolicy &&
+      meta.statusCode >= 200 &&
+      meta.statusCode < 300 &&
+      enriched?.draft?.id
+    ) {
+      try {
+        const policyRow = await persistDraftGraduationPolicy(pool, enriched.draft.id, body);
+        if (policyRow) {
+          enriched = {
+            ...enriched,
+            graduationMarketPolicyPersisted: true,
+            draft: attachDraftPolicy(enriched.draft, policyRow),
+          };
+        }
+      } catch (error) {
+        enriched = {
+          ...enriched,
+          graduationMarketPolicyPersisted: false,
+          graduationMarketPolicyError: String(error?.message || error || "Graduation Market policy could not be saved."),
+        };
+      }
+    }
+
     if (!Array.isArray(enriched?.items)) return enriched;
 
     const nowMs = Date.now();
