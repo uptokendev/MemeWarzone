@@ -11,6 +11,7 @@ on:
       - "contracts/mocks/MockWETH9.sol"
       - "contracts/mocks/MockERC20.sol"
       - "test/RobinhoodV3MultiHopSwapAdapter.spec.ts"
+      - "test/RobinhoodV3MultiHopRouteIdentity.spec.ts"
       - "test/RobinhoodV3NativeSwapAdapter.spec.ts"
       - "hardhat.config.ts"
       - ".github/workflows/robinhood-stock-routing-ci.yml"
@@ -25,6 +26,7 @@ on:
       - "contracts/mocks/MockWETH9.sol"
       - "contracts/mocks/MockERC20.sol"
       - "test/RobinhoodV3MultiHopSwapAdapter.spec.ts"
+      - "test/RobinhoodV3MultiHopRouteIdentity.spec.ts"
       - "test/RobinhoodV3NativeSwapAdapter.spec.ts"
       - "hardhat.config.ts"
       - ".github/workflows/robinhood-stock-routing-ci.yml"
@@ -56,8 +58,9 @@ jobs:
       - name: Compile contracts
         run: npx hardhat compile
 
-      - name: Prove Stock two-hop ETH routing and preserve direct-native execution
+      - name: Prove Stock two-hop ETH routing, locked route identity, and direct-native compatibility
         run: >-
           npx hardhat test
           test/RobinhoodV3MultiHopSwapAdapter.spec.ts
+          test/RobinhoodV3MultiHopRouteIdentity.spec.ts
           test/RobinhoodV3NativeSwapAdapter.spec.ts
