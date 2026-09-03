@@ -7,6 +7,7 @@ on:
       - "db/migrations/**"
       - "frontend/scripts/prepare-robinhood-local-db.mjs"
       - "frontend/scripts/prepare-robinhood-local-db.test.mjs"
+      - "frontend/api/lib/robinhoodStockArenaSnapshotCompatibility.test.mjs"
       - "realtime-indexer/scripts/verify-robinhood-market-db.mjs"
       - "realtime-indexer/src/robinhoodPairSemantics.ts"
       - "realtime-indexer/src/robinhoodMarketRoutes.ts"
@@ -34,6 +35,7 @@ on:
       - "db/migrations/**"
       - "frontend/scripts/prepare-robinhood-local-db.mjs"
       - "frontend/scripts/prepare-robinhood-local-db.test.mjs"
+      - "frontend/api/lib/robinhoodStockArenaSnapshotCompatibility.test.mjs"
       - "realtime-indexer/scripts/verify-robinhood-market-db.mjs"
       - "realtime-indexer/src/robinhoodPairSemantics.ts"
       - "realtime-indexer/src/robinhoodMarketRoutes.ts"
@@ -106,6 +108,10 @@ jobs:
       - name: Prove tournament support migration is empty-DB replay safe
         run: node --test frontend/scripts/prepare-robinhood-local-db.test.mjs
 
+      - name: Prove Battle V2 consumes normalized Robinhood Stock USD without native fallback
+        working-directory: frontend
+        run: node --test api/lib/robinhoodStockArenaSnapshotCompatibility.test.mjs
+
       - name: Prove Robinhood pair, route, graduation, oracle, registry, valuation, and acquisition-quote semantics
         run: npx --prefix realtime-indexer tsx --test realtime-indexer/src/tests/robinhoodPairSemantics.test.ts realtime-indexer/src/tests/robinhoodMarketRoutes.test.ts realtime-indexer/src/tests/robinhoodGraduationQuote.test.ts realtime-indexer/src/tests/robinhoodNativeUsdOracle.test.ts realtime-indexer/src/tests/robinhoodStockTokenRegistry.test.ts realtime-indexer/src/tests/robinhoodStockAcquisitionQuote.test.ts realtime-indexer/src/tests/robinhoodMarketValuation.test.ts realtime-indexer/src/tests/robinhoodV3PoolIndexer.test.ts
 
@@ -115,5 +121,5 @@ jobs:
       - name: Replay a second time to prove the ledger is idempotent
         run: node frontend/scripts/prepare-robinhood-local-db.mjs
 
-      - name: Prove bonding plus V3 continuity, duplicate safety, and cursor persistence
+      - name: Prove bonding plus V3 continuity, duplicate safety, cursor persistence, and Stock USD evidence
         run: node realtime-indexer/scripts/verify-robinhood-market-db.mjs
