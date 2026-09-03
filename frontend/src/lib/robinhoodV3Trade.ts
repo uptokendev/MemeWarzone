@@ -241,7 +241,7 @@ export async function resolveRobinhoodV3Route(input: {
     throw new Error(`Wrong network. Connect Robinhood chain ${input.chainId}.`);
   }
 
-  const market = await fetchMarketRoute(input.campaignAddress, input.chainId, input.signal);
+  const market = await fetchMarketRoute(input.campaignAddress, input.chainId, input.signal, { includeQuotePrice: true });
   if (market.marketStage !== "DEX_ACTIVE" || market.tradingEnabled === false || market.verified === false) {
     throw new Error("Robinhood V3 market is not active and verified yet.");
   }
