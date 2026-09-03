@@ -13,21 +13,18 @@ type ArenaLeagueFeedPayload = {
   history: ArenaLeagueHistoryEntry[];
 };
 
-const SEASON_STATES = new Set(["preseason", "live", "playoffs", "completed"]);
+const SEASON_STATES = new Set(["preseason", "live", "playoffs", "quarter_finals", "completed"]);
 const DIVISIONS = new Set(["bronze", "silver", "gold", "apex"]);
 const MOVEMENTS = new Set(["promoted", "safe", "relegated"]);
 
 function isLeagueEntry(value: any): boolean {
   return Boolean(
-    value?.tokenId &&
+    (value?.tokenId || value?.tokenAddress) &&
       typeof value?.tokenName === "string" &&
       typeof value?.symbol === "string" &&
-      DIVISIONS.has(value?.division) &&
-      MOVEMENTS.has(value?.movement) &&
       Number.isFinite(Number(value?.points)) &&
       Number.isFinite(Number(value?.wins)) &&
-      Number.isFinite(Number(value?.losses)) &&
-      Number.isFinite(Number(value?.streak)),
+      Number.isFinite(Number(value?.losses)),
   );
 }
 
@@ -35,7 +32,6 @@ function normalizeSeason(value: any): ArenaLeagueSeason | null {
   if (!value || typeof value !== "object") return null;
   if (!value.id || !value.label || !SEASON_STATES.has(value.state)) return null;
   const entries = Array.isArray(value.entries) ? value.entries.filter(isLeagueEntry) : [];
-  if (!entries.length) return null;
 
   return {
     id: String(value.id),
@@ -44,19 +40,20 @@ function normalizeSeason(value: any): ArenaLeagueSeason | null {
     week: Number.isFinite(Number(value.week)) && Number(value.week) > 0 ? Number(value.week) : 1,
     rewardPoolUsd: Number.isFinite(Number(value.rewardPoolUsd)) ? Number(value.rewardPoolUsd) : 0,
     resetAt: String(value.resetAt || new Date().toISOString()),
-    divisions: Array.isArray(value.divisions) ? value.divisions.filter((division: unknown) => DIVISIONS.has(String(division))) : ["bronze", "silver", "gold", "apex"],
+    divisions: Array.isArray(value.divisions) ? value.divisions.filter((division: unknown) => DIVISIONS.has(String(division))) : [],
+    quarterFinalsTournamentId: value.quarterFinalsTournamentId ? String(value.quarterFinalsTournamentId) : undefined,
     entries: entries.map((entry: any) => ({
-      tokenId: String(entry.tokenId),
+      tokenId: String(entry.tokenId || entry.tokenAddress),
       tokenName: String(entry.tokenName),
       symbol: String(entry.symbol),
-      division: entry.division,
+      division: DIVISIONS.has(entry.division) ? entry.division : "apex",
       points: Number(entry.points),
       wins: Number(entry.wins),
       losses: Number(entry.losses),
-      streak: Number(entry.streak),
-      movement: entry.movement,
+      streak: Number.isFinite(Number(entry.streak)) ? Number(entry.streak) : 0,
+      movement: MOVEMENTS.has(entry.movement) ? entry.movement : "safe",
     })),
-  };
+  } as ArenaLeagueSeason;
 }
 
 function normalizeHistory(value: unknown): ArenaLeagueHistoryEntry[] {
@@ -93,12 +90,12 @@ async function mutateLeague(action: PostGradLeagueAction): Promise<boolean> {
 
 const EMPTY_SEASON: ArenaLeagueSeason = {
   id: "arena-league-empty",
-  label: "Arena league",
-  state: "preseason",
+  label: "Major War League",
+  state: "live",
   week: 1,
   rewardPoolUsd: 0,
   resetAt: new Date(0).toISOString(),
-  divisions: ["bronze", "silver", "gold", "apex"],
+  divisions: [],
   entries: [],
 };
 

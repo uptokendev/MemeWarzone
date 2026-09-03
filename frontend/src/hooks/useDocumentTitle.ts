@@ -19,8 +19,10 @@ export function titleForPath(pathname: string): string {
   if (path.startsWith("/token/")) return "Token";
   if (path.startsWith("/battle/")) return "Battle";
   if (path.startsWith("/arena/battles")) return "Arena Battles";
+  if (path.startsWith("/arena/tournaments")) return "Tournaments";
+  if (path.startsWith("/arena/tournament")) return "Tournament";
   if (path.startsWith("/arena/major-war-league")) return "Major War League";
-  if (path.startsWith("/arena/events")) return "Arena Events";
+  if (path.startsWith("/arena/events")) return "Tournaments";
   if (path.startsWith("/arena")) return "Arena";
   if (path.includes("/command")) return "Creator Tools";
   if (path.startsWith("/profile")) return "Profile";

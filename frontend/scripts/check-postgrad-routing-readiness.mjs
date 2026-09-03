@@ -29,21 +29,21 @@ const envExample = read(".env.example");
 const requiredUiRoutes = [
   'path="/arena"',
   'path="/arena/battles"',
-  'path="/arena/leagues"',
-  'path="/arena/events"',
+  'path="/arena/tournaments"',
+  'path="/arena/tournament/:id"',
+  'path="/arena/major-war-league"',
   'path="/war-room"',
   'path="/battle/:id"',
-  'path="/tournament/:id"',
   'path="/sponsorships/apply"',
-  'path="/profile/:wallet/command/arena-ops"',
   'path="/token/:campaignAddress"',
 ];
 
 for (const route of requiredUiRoutes) assertIncludes(app, route, "App routes", failures);
 
 const requiredRedirects = [
-  'path="/events" element={<Navigate to="/arena/events" replace />} />',
-  'path="/league" element={<Navigate to="/arena/leagues" replace />} />',
+  'path="/events" element={<Navigate to="/arena/tournaments" replace />} />',
+  'path="/arena/events" element={<Navigate to="/arena/tournaments" replace />} />',
+  'path="/arena/leagues" element={<Navigate to="/arena/major-war-league" replace />} />',
 ];
 for (const route of requiredRedirects) assertIncludes(app, route, "legacy redirects", failures);
 
@@ -55,8 +55,8 @@ assertIncludes(tokenRoutes, "getPostGradTokenDetailRoute", "Arena token route he
 const requiredArenaNav = [
   '{ label: "Overview", path: "/arena" }',
   '{ label: "Battles", path: "/arena/battles" }',
-  '{ label: "Leagues", path: "/arena/leagues" }',
-  '{ label: "Events", path: "/arena/events" }',
+  '{ label: "Tournaments", path: "/arena/tournaments" }',
+  '{ label: "Major War League", path: "/arena/major-war-league" }',
 ];
 for (const item of requiredArenaNav) assertIncludes(navigation, item, "Arena navigation", failures);
 
