@@ -95,7 +95,10 @@ test("Battle combat cards hydrate metadata through normalized Arena token profil
   assert.match(card, /useArenaTokenProfile/);
   assert.match(card, /profile\?\.imageUrl/);
   assert.match(card, /profile\?\.creatorWallet/);
-  assert.match(card, /profile\?\.origin === ["']native["']/);
+  assert.match(
+    card,
+    /const nativeOrigin = profile\s*\?\s*profile\.origin === ["']native["']\s*:\s*Boolean\(participant\.campaignAddress\)/,
+  );
   assert.match(card, /metricsSide\?\.points\.total/);
 });
 
