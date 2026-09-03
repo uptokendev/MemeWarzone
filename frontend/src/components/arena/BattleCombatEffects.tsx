@@ -168,7 +168,7 @@ export function BattleCombatEffects({
 
   return (
     <div
-      className="pointer-events-none absolute inset-0 z-[5] overflow-hidden mix-blend-screen opacity-80"
+      className="pointer-events-none absolute inset-0 z-[12] overflow-hidden mix-blend-screen opacity-75"
       aria-hidden="true"
       data-battle-combat-effects="on"
       data-battle-effects-for={battleId || undefined}

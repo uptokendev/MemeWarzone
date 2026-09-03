@@ -147,8 +147,10 @@ export function CreatorChallengeCarousel({
           if (event.key === "ArrowRight") go(1);
         }}
       >
-        <div className="font-retro text-2xl text-foreground">
-          {presented.leftTicker} <span className="text-white/40">VS</span> {presented.rightTicker}
+        <div className="flex min-w-0 flex-wrap items-center justify-center gap-3 py-1 text-center">
+          <span className="truncate font-retro text-2xl text-orange-100 md:text-3xl">{presented.leftTicker}</span>
+          <span className="font-retro text-lg uppercase tracking-[0.32em] text-white/40 md:text-xl">VS</span>
+          <span className="truncate font-retro text-2xl text-cyan-100 md:text-3xl">{presented.rightTicker}</span>
         </div>
         <div className="text-sm uppercase tracking-[0.16em] text-white/70">
           {presented.stakeNative || "—"} {native}

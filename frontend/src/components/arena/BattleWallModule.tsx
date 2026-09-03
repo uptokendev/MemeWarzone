@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { BattleCombatEffects } from "@/components/arena/BattleCombatEffects";
 import { BattleWallCombatant } from "@/components/arena/BattleWallCombatant";
+import { BattleWallMore } from "@/components/arena/BattleWallMore";
 import { BattleWallVs } from "@/components/arena/BattleWallVs";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import type { Battle } from "@/features/postgrad/contracts";
@@ -9,6 +10,7 @@ import type { BattleRealtimeMetrics } from "@/lib/arena/battleRealtime";
 import { useBattleWallRealtime } from "@/hooks/useBattleWallRealtime";
 import { useBattleWallViewport, type BattleWallViewportReport } from "@/hooks/useBattleWallViewport";
 import { battleChainLabel, battleClockLabel, battleDurationLabel } from "@/lib/arena/battlePresentation";
+import { battleMorePanelId, battleMoreToggle } from "@/lib/arena/battleWallMorePresentation.mjs";
 import { battleDomId, presentBattleWallModule } from "@/lib/arena/battleWallPresentation.mjs";
 import {
   isWallRealtimeEligible,
@@ -43,7 +45,14 @@ export function BattleWallModule({
   const live = isWallRealtimeEligible(battle);
   const realtime = useBattleWallRealtime(battle.id, realtimeActive && live);
   const [retained, setRetained] = useState<{ value: BattleRealtimeMetrics | null } | null>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
   const report = onViewportReport || noopViewportReport;
+  const moreToggle = battleMoreToggle(moreOpen);
+  const morePanelId = battleMorePanelId(battle.id);
+
+  useEffect(() => {
+    setMoreOpen(false);
+  }, [battle.id]);
 
   useBattleWallViewport(moduleRef, {
     battleId: battle.id,
@@ -89,7 +98,7 @@ export function BattleWallModule({
   const stateLabel = presented.tab === "live" ? "LIVE" : presented.tab === "upcoming" ? "DEPLOYMENT PENDING" : "FINISHED";
   const moduleTone =
     presented.tab === "live"
-      ? "border-orange-400/20"
+      ? "border-orange-400/25"
       : presented.tab === "upcoming"
         ? "border-white/10 opacity-95"
         : "border-white/10 bg-black/20";
@@ -103,9 +112,9 @@ export function BattleWallModule({
       data-battle-realtime={realtimeActive && live ? selected.source : "off"}
       tabIndex={0}
       aria-label={`${presented.leftTicker} versus ${presented.rightTicker}, ${stateLabel}`}
-      className={`mwz-hud-frame relative isolate min-w-0 max-w-full space-y-3 overflow-hidden p-3 outline-none transition-[box-shadow,border-color] duration-500 md:space-y-4 md:p-5 data-[battle-focused=true]:ring-2 data-[battle-focused=true]:ring-accent/80 data-[battle-focused=true]:shadow-[0_0_28px_rgba(240,106,26,0.28)] motion-reduce:transition-none motion-reduce:shadow-none focus-visible:ring-2 focus-visible:ring-accent ${moduleTone}`}
+      className={`mwz-hud-frame relative isolate min-w-0 max-w-full overflow-hidden p-3 outline-none transition-[box-shadow,border-color] duration-500 md:p-5 data-[battle-focused=true]:ring-2 data-[battle-focused=true]:ring-accent/80 data-[battle-focused=true]:shadow-[0_0_28px_rgba(240,106,26,0.28)] motion-reduce:transition-none motion-reduce:shadow-none focus-visible:ring-2 focus-visible:ring-accent ${moduleTone}`}
     >
-      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+      <div className="relative z-20 mb-3 flex min-w-0 flex-wrap items-center justify-between gap-2 md:mb-4">
         <TacticalTag
           label={stateLabel}
           tone={presented.tab === "live" ? "hot" : presented.tab === "upcoming" ? "sponsored" : "default"}
@@ -120,10 +129,10 @@ export function BattleWallModule({
       </div>
 
       {upcoming ? (
-        <div className="space-y-3 py-4 text-center">
+        <div className="space-y-4 py-6 text-center">
           <div className="font-retro text-xs uppercase tracking-[0.28em] text-white/45">Deployment pending</div>
-          <div className="font-retro text-2xl text-foreground md:text-3xl">
-            {presented.leftTicker} VS {presented.rightTicker}
+          <div className="font-retro text-3xl text-foreground md:text-4xl">
+            {presented.leftTicker} <span className="text-white/35">VS</span> {presented.rightTicker}
           </div>
           <div className="text-sm uppercase tracking-[0.16em] text-white/60">
             {presented.stakeNative || "—"} {presented.nativeSymbol || getNativeSymbol(chainId)}
@@ -133,7 +142,7 @@ export function BattleWallModule({
         </div>
       ) : (
         <div className="relative isolate overflow-hidden">
-          <div className="relative z-10 grid min-w-0 grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-center md:gap-3">
+          <div className="relative z-10 grid min-w-0 grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_minmax(10.5rem,14.5rem)_minmax(0,1fr)] md:items-stretch md:gap-4">
             <BattleWallCombatant
               battle={displayBattle}
               participant={left}
@@ -173,13 +182,48 @@ export function BattleWallModule({
         </div>
       )}
 
-      <div className="relative z-20 flex justify-end">
-        <Link
-          to={presented.href}
-          className="text-xs uppercase tracking-[0.16em] text-white/55 underline-offset-4 hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-        >
-          Open fight
-        </Link>
+      <div
+        data-battle-wall-actions="true"
+        className="relative z-20 mt-4 flex min-w-0 flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3"
+      >
+        <div className="flex min-h-11 min-w-0 flex-1 flex-wrap items-center gap-2" data-battle-wall-actions-reserved="true" />
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <button
+            type="button"
+            aria-expanded={moreToggle.expanded}
+            aria-controls={morePanelId}
+            data-battle-more-toggle={battle.id}
+            onClick={() => setMoreOpen((open) => !open)}
+            className="text-xs uppercase tracking-[0.16em] text-white/55 underline-offset-4 hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          >
+            {moreToggle.label}
+          </button>
+          <Link
+            to={presented.href}
+            className="text-xs uppercase tracking-[0.16em] text-white/55 underline-offset-4 hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+          >
+            Open fight
+          </Link>
+        </div>
+      </div>
+
+      <div
+        id={morePanelId}
+        hidden={!moreToggle.expanded}
+        data-battle-more={battle.id}
+        data-battle-more-open={moreToggle.expanded ? "true" : "false"}
+        className="relative z-20"
+      >
+        {moreToggle.expanded ? (
+          <div className="mt-3 border-t border-white/10 pt-4">
+            <BattleWallMore
+              battle={displayBattle}
+              metrics={displayMetrics}
+              realtimeState={realtime.realtimeState}
+              dataSource={selected.source}
+            />
+          </div>
+        ) : null}
       </div>
     </article>
   );

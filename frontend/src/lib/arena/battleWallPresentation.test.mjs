@@ -504,12 +504,12 @@ test("Battle Wall polish keeps stacked mobile combat layout and DATA DELAY copy"
   const effects = readSrc("../../components/arena/BattleCombatEffects.tsx");
 
   assert.match(moduleSrc, /grid-cols-1/);
-  assert.match(moduleSrc, /md:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
+  assert.match(moduleSrc, /md:grid-cols-\[minmax\(0,1fr\)_minmax\(10\.5rem,14\.5rem\)_minmax\(0,1fr\)\]/);
   assert.match(moduleSrc, /remaining=\{presented\.tab === "live"\}/);
   assert.match(moduleSrc, /motion-reduce:shadow-none/);
   assert.match(vs, /Score updates temporarily paused/);
   assert.match(vs, /sr-only/);
-  assert.match(combatant, /md:flex-row-reverse/);
+  assert.match(combatant, /data-battle-combatant-art/);
   assert.match(page, /role="tablist"/);
   assert.match(page, /data-battle-wall-skeleton/);
   assert.match(page, /wallEmptyCopy/);
@@ -560,4 +560,37 @@ test("Battle Wall VS gap labels Battle Points as BP and historical V1 as Score g
   if (liveV2.gapLabel) {
     assert.equal(formatBattleWallGapText(liveV2.gapLabel, liveV2.scoreKind), "+7.2 BP");
   }
+});
+
+test("Battle Wall visual parity uses large combat art, 2x2 metrics, and no fake Boost", () => {
+  const moduleSrc = readSrc("../../components/arena/BattleWallModule.tsx");
+  const combatant = readSrc("../../components/arena/BattleWallCombatant.tsx");
+  const vs = readSrc("../../components/arena/BattleWallVs.tsx");
+  const effects = readSrc("../../components/arena/BattleCombatEffects.tsx");
+  const page = readSrc("../../pages/ArenaBattles.tsx");
+
+  assert.match(combatant, /data-battle-combatant-art/);
+  assert.match(combatant, /object-cover/);
+  assert.match(combatant, /h-44 sm:h-52 md:h-64 lg:h-72/);
+  assert.match(combatant, /data-battle-metric-grid/);
+  assert.match(combatant, /grid-cols-2/);
+  assert.match(combatant, /pointsLabel \|\| "—"/);
+  assert.match(combatant, /ready=\{pointsReady\}/);
+  assert.match(combatant, /data-battle-combatant-actions/);
+  assert.doesNotMatch(combatant, /pointsLabel \|\| "0"|fake 0|Battle Boost|Final Salvo/);
+  assert.match(vs, /formatBattleWallGapText\(gapLabel, scoreKind\)/);
+  assert.match(vs, /text-4xl uppercase tracking-\[0\.38em\]/);
+  assert.match(vs, /DATA_DELAY_LABEL/);
+  assert.match(moduleSrc, /data-battle-wall-actions/);
+  assert.match(moduleSrc, /data-battle-wall-actions-reserved/);
+  assert.match(moduleSrc, /grid-cols-1/);
+  assert.match(moduleSrc, /md:items-stretch/);
+  assert.match(moduleSrc, /useBattleWallRealtime\(battle\.id, realtimeActive && live\)/);
+  assert.equal(moduleSrc.split("useBattleWallRealtime(").length - 1, 1);
+  assert.match(effects, /pointer-events-none/);
+  assert.match(effects, /overflow-hidden/);
+  assert.match(effects, /z-\[12\]/);
+  assert.doesNotMatch(moduleSrc, /Battle Boost|ArenaSupportButton|WarPoolPanel|BattleMetricBreakdown/);
+  assert.doesNotMatch(page, /Battle Boost|Final Salvo|Vote Tournament/);
+  assert.doesNotMatch(combatant, /BOOST|Vote Tournament|Final Salvo|sponsorship/i);
 });
