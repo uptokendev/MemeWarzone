@@ -628,6 +628,8 @@ test("Battle Wall visual parity uses bounded combatant cards, 2x2 metrics, and n
   assert.match(combatant, /data-battle-combatant-art/);
   assert.match(combatant, /object-cover/);
   assert.match(combatant, /data-battle-combatant-layout="split"/);
+  assert.match(combatant, /mwz-flat-card/);
+  assert.match(combatant, /data-battle-combatant-bleed/);
   assert.match(combatant, /data-battle-combatant-split="true"/);
   assert.match(combatant, /grid-cols-\[minmax\(5\.5rem,38%\)_minmax\(0,1fr\)\]/);
   assert.match(combatant, /md:grid-cols-\[minmax\(6\.75rem,42%\)_minmax\(0,1fr\)\]/);
@@ -640,8 +642,10 @@ test("Battle Wall visual parity uses bounded combatant cards, 2x2 metrics, and n
   assert.match(combatant, /data-battle-combatant-actions/);
   assert.doesNotMatch(combatant, /pointsLabel \|\| "0"|fake 0|Battle Boost|Final Salvo/);
   assert.match(vs, /formatBattleWallGapText\(gapLabel, scoreKind\)/);
-  assert.match(vs, /text-2xl uppercase tracking-\[0\.18em\] text-orange-400/);
+  assert.match(vs, /data-battle-vs-reticle="true"/);
   assert.match(vs, /DATA_DELAY_LABEL/);
+  assert.match(moduleSrc, /data-battle-wall-open="true"/);
+  assert.doesNotMatch(moduleSrc, /mwz-hud-frame/);
   assert.match(moduleSrc, /data-battle-wall-actions/);
   assert.match(moduleSrc, /data-battle-wall-actions-reserved/);
   assert.match(moduleSrc, /grid-cols-1/);
@@ -672,6 +676,8 @@ test("Battle Wall mockup parity keeps split combatant cards, SHARE/MORE, and gen
   assert.match(moduleSrc, /grid-cols-1/);
   assert.match(moduleSrc, /md:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
   assert.match(combatant, /data-battle-combatant-layout="split"/);
+  assert.match(combatant, /mwz-flat-card/);
+  assert.match(combatant, /data-battle-combatant-bleed/);
   assert.match(combatant, /data-battle-combatant-split="true"/);
   assert.match(combatant, /grid-cols-\[minmax\(5\.5rem,38%\)_minmax\(0,1fr\)\]/);
   assert.match(combatant, /md:grid-cols-\[minmax\(6\.75rem,42%\)_minmax\(0,1fr\)\]/);
@@ -767,7 +773,7 @@ test("Battle Wall combatant keeps art-left split on mobile instead of stacking i
   assert.match(moduleSrc, /grid-cols-1/);
   assert.match(moduleSrc, /md:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
   assert.match(vs, /py-1/);
-  assert.match(vs, /text-2xl uppercase tracking-\[0\.18em\] text-orange-400/);
+  assert.match(vs, /data-battle-vs-reticle="true"/);
   assert.match(effects, /max-width: 767px/);
   assert.match(effects, /randomBetween\(6, 34\)/);
 });

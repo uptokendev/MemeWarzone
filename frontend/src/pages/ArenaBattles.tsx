@@ -232,8 +232,8 @@ export default function ArenaBattles() {
 
   return (
     <WarzoneContent className="space-y-4">
-      <section className="mwz-hud-frame space-y-3 p-3 md:p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
+      <section className="space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-3" style={{ borderColor: "var(--mwz-flat-card-border)" }}>
           <div>
             <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Warzone</div>
             <h1 className="font-retro text-xl text-foreground md:text-2xl">Battles</h1>
@@ -331,7 +331,7 @@ export default function ArenaBattles() {
             <div className="text-sm text-muted-foreground">{empty.title}</div>
             <div className="space-y-3" data-battle-wall-skeleton="true" aria-hidden="true">
               {[0, 1].map((slot) => (
-                <div key={slot} className="mwz-hud-frame animate-pulse p-4">
+                <div key={slot} className="mwz-flat-card animate-pulse p-4">
                   <div className="h-3 w-16 rounded bg-white/10" />
                   <div className="mt-4 grid gap-3 md:grid-cols-3">
                     <div className="h-24 rounded bg-white/5" />
@@ -343,7 +343,7 @@ export default function ArenaBattles() {
             </div>
           </div>
         ) : (
-          <div className="mwz-hud-frame p-5" data-battle-wall-empty={empty.kind} role="status">
+          <div className="py-5" data-battle-wall-empty={empty.kind} role="status">
             <div className="font-retro text-base text-foreground">{empty.title}</div>
             <p className="mt-1 text-sm text-muted-foreground">{empty.body}</p>
           </div>

@@ -36,7 +36,7 @@ export function WarzoneBattlePreview({
     <Link
       to={presented.href}
       data-warzone-battle-preview={battle.id}
-      className="mwz-hud-frame block min-w-0 p-3 transition hover:border-accent/45"
+      className="mwz-flat-card block min-w-0 p-3"
     >
       <div className="flex items-center justify-between gap-2 text-[10px] uppercase tracking-[0.16em] text-white/50">
         <span className={presented.tab === "live" ? "text-orange-200" : "text-white/70"}>{stateLabel}</span>

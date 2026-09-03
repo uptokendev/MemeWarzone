@@ -31,8 +31,8 @@ const ArenaTournaments = () => {
 
   return (
     <WarzoneContent className="space-y-5">
-      <section className="mwz-hud-frame p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <section>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3" style={{ borderColor: "var(--mwz-flat-card-border)" }}>
           <div>
             <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Warzone</div>
             <h1 className="mt-1 font-retro text-2xl text-foreground">Tournaments</h1>
@@ -42,13 +42,14 @@ const ArenaTournaments = () => {
           </div>
           <TacticalTag label={source === "api" ? "Live data" : source === "empty" ? "Feed unavailable" : "Awaiting data"} tone={source === "api" ? "success" : "default"} />
         </div>
-        <div className="mt-4 inline-flex flex-wrap gap-1 rounded-md border border-border/60 bg-background/45 p-1">
+        <div className="mt-4 flex flex-wrap gap-3 text-xs font-semibold uppercase tracking-[0.14em]">
           {TABS.map((item) => (
             <button
               key={item.key}
               type="button"
               onClick={() => setTab(item.key)}
-              className={`rounded px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] transition ${tab === item.key ? "bg-card text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              data-selected={tab === item.key ? "true" : undefined}
+              className={`px-1 py-1 ${tab === item.key ? "text-accent" : "text-muted-foreground hover:text-foreground"}`}
             >
               {item.label}
             </button>
@@ -62,7 +63,7 @@ const ArenaTournaments = () => {
             <Link
               key={event.id}
               to={`/warzone/tournament/${encodeURIComponent(event.id)}`}
-              className="mwz-hud-frame flex flex-col gap-2 p-4 transition hover:border-accent/50 hover:bg-accent/5 sm:flex-row sm:items-center sm:justify-between"
+              className="mwz-flat-card flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between"
             >
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
@@ -79,7 +80,7 @@ const ArenaTournaments = () => {
             </Link>
           ))
         ) : (
-          <div className="mwz-hud-frame p-5 text-sm text-muted-foreground">
+          <div className="py-5 text-sm text-muted-foreground">
             {source === "empty"
               ? "Tournament data is not available right now."
               : tab === "upcoming"

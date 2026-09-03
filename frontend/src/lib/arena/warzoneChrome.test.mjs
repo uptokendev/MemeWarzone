@@ -86,6 +86,28 @@ test("MWL standings, token links, and Quarter Finals route stay authoritative", 
   assert.match(league, /data-warzone-mwl-table/);
 });
 
+test("Warzone composition keeps cards floating without outer frames", () => {
+  const overview = readSrc("../../pages/Arena.tsx");
+  const league = readSrc("../../pages/PostGradLeague.tsx");
+  const header = readSrc("../../components/warzone/WarzonePageHeader.tsx");
+  const moduleSrc = readSrc("../../components/arena/BattleWallModule.tsx");
+  const combatant = readSrc("../../components/arena/BattleWallCombatant.tsx");
+  const vs = readSrc("../../components/arena/BattleWallVs.tsx");
+  const battles = readSrc("../../pages/ArenaBattles.tsx");
+
+  assert.doesNotMatch(header, /mwz-hud-frame/);
+  assert.doesNotMatch(moduleSrc, /mwz-hud-frame/);
+  assert.match(moduleSrc, /data-battle-wall-open="true"/);
+  assert.match(combatant, /mwz-flat-card/);
+  assert.match(vs, /data-battle-vs-reticle="true"/);
+  assert.match(vs, /bg-transparent/);
+  assert.doesNotMatch(overview, /mwz-hud-frame/);
+  assert.match(overview, /mwz-flat-card/);
+  assert.doesNotMatch(league, /mwz-hud-frame/);
+  assert.match(league, /data-warzone-mwl-table/);
+  assert.doesNotMatch(battles, /section className="mwz-hud-frame/);
+});
+
 test("Slice A does not invent money, Vote Tournament, or Battle formulas", () => {
   const files = [
     readSrc("./warzoneChrome.mjs"),

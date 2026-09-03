@@ -102,12 +102,6 @@ export function BattleWallModule({
     clockLabel: upcoming ? null : battleClockLabel(displayBattle),
   });
   const stateLabel = band.stateLabel;
-  const moduleTone =
-    presented.tab === "live"
-      ? "border-orange-400/25"
-      : presented.tab === "upcoming"
-        ? "border-white/10 opacity-95"
-        : "border-white/10 bg-black/20";
 
   return (
     <article
@@ -116,13 +110,15 @@ export function BattleWallModule({
       data-battle-id={battle.id}
       data-battle-wall-module={presented.tab}
       data-battle-realtime={realtimeActive && live ? selected.source : "off"}
+      data-battle-wall-open="true"
       tabIndex={0}
       aria-label={`${presented.leftTicker} versus ${presented.rightTicker}, ${stateLabel}`}
-      className={`mwz-hud-frame relative isolate min-w-0 max-w-full overflow-hidden p-3 outline-none transition-[box-shadow,border-color] duration-500 md:p-4 data-[battle-focused=true]:ring-2 data-[battle-focused=true]:ring-accent/80 data-[battle-focused=true]:shadow-[0_0_28px_rgba(240,106,26,0.28)] motion-reduce:transition-none motion-reduce:shadow-none focus-visible:ring-2 focus-visible:ring-accent ${moduleTone}`}
+      className="relative isolate min-w-0 max-w-full bg-transparent py-4 outline-none motion-reduce:transition-none motion-reduce:shadow-none focus-visible:ring-2 focus-visible:ring-accent data-[battle-focused=true]:ring-2 data-[battle-focused=true]:ring-accent/80"
     >
       <div
         data-battle-wall-status-band="true"
-        className="relative z-20 mb-3 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 border-b border-white/10 pb-2.5 text-[10px] uppercase tracking-[0.16em] text-white/55"
+        className="relative z-20 mb-3 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 border-b pb-2.5 text-[10px] uppercase tracking-[0.16em] text-white/55"
+        style={{ borderColor: "var(--mwz-flat-card-border)" }}
       >
         <span className={presented.tab === "live" ? "font-retro text-xs text-orange-200" : "font-retro text-xs text-white/80"}>
           {band.stateLabel}
@@ -204,7 +200,8 @@ export function BattleWallModule({
 
       <div
         data-battle-wall-actions="true"
-        className="relative z-20 mt-3 flex min-w-0 flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-2.5"
+        className="relative z-20 mt-3 flex min-w-0 flex-wrap items-center justify-between gap-2 border-t pt-2.5"
+        style={{ borderColor: "var(--mwz-flat-card-border)" }}
       >
         <div className="flex min-h-11 min-w-0 flex-1 flex-wrap items-center gap-2" data-battle-wall-actions-reserved="true">
           <BattleShareMenu

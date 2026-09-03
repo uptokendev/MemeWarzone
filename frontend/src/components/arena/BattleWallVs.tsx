@@ -53,14 +53,21 @@ export function BattleWallVs({
     <div
       data-battle-wall-vs
       data-battle-wall-vs-mode={deploymentPending ? "upcoming" : delay ? "delay" : "combat"}
-      className="relative z-20 flex min-w-0 max-w-full flex-col items-center justify-center gap-0.5 px-1 py-1 text-center md:min-w-[5.25rem] md:max-w-[6.75rem] md:gap-1 md:px-0 md:py-1"
+      className="relative z-20 flex min-w-0 max-w-full flex-col items-center justify-center gap-0.5 bg-transparent px-1 py-1 text-center md:min-w-[5.25rem] md:max-w-[6.75rem] md:gap-1 md:px-0 md:py-1"
     >
       <p className="sr-only">{spoken || "Versus"}</p>
-      <div
-        className="font-retro text-2xl uppercase tracking-[0.18em] text-orange-400 md:text-4xl"
-        aria-hidden="true"
-      >
-        VS
+      <div className="relative h-14 w-16 md:h-[4.75rem] md:w-[4.75rem]" aria-hidden="true" data-battle-vs-reticle="true">
+        <svg viewBox="0 0 64 64" className="absolute inset-0 text-orange-500/40" fill="none">
+          <circle cx="32" cy="32" r="29" stroke="currentColor" strokeWidth="0.8" />
+          <circle cx="32" cy="32" r="17" stroke="currentColor" strokeWidth="0.7" />
+          <path d="M32 1.5 v9 M32 53.5 v9 M1.5 32 h9 M53.5 32 h9" stroke="currentColor" strokeWidth="0.8" />
+        </svg>
+        <span className="absolute left-0.5 top-0 font-retro text-3xl leading-none text-orange-400 drop-shadow-[0_0_10px_rgba(240,106,26,0.45)] md:text-5xl">
+          V
+        </span>
+        <span className="absolute bottom-0 right-0.5 font-retro text-3xl leading-none text-orange-400 drop-shadow-[0_0_10px_rgba(240,106,26,0.45)] md:text-5xl">
+          S
+        </span>
       </div>
       {deploymentPending ? (
         <div className="space-y-1 md:space-y-2" data-battle-deployment-hud="true">

@@ -35,13 +35,14 @@ function MetricBox({
   return (
     <div
       data-battle-metric={label}
-      className="min-w-0 border border-white/12 bg-black/50 px-1.5 py-1 md:px-2.5 md:py-1.5"
+      className="min-w-0 border px-1.5 py-1 md:px-2.5 md:py-1.5"
+      style={{ borderColor: "var(--mwz-flat-card-border)" }}
     >
       <div className="text-[7px] uppercase tracking-[0.14em] text-white/42 md:text-[8px] md:tracking-[0.16em]">{label}</div>
       <div
         className={cn(
           "mt-0.5 truncate font-retro text-xs leading-none tabular-nums md:text-base",
-          ready ? (accent === "cyan" ? "text-cyan-100" : "text-orange-100") : "text-white/34",
+          ready ? (accent === "cyan" ? "text-cyan-100" : "text-foreground") : "text-white/34",
         )}
       >
         {ready ? value : "—"}
@@ -79,7 +80,7 @@ function CombatantArtwork({
     <div
       data-battle-combatant-art-fallback="true"
       className={cn(
-        "flex h-full w-full items-center justify-center bg-[linear-gradient(160deg,rgba(18,16,14,0.96),rgba(6,7,8,0.98))]",
+        "flex h-full w-full items-center justify-center bg-black/40",
         accent === "cyan" ? "text-cyan-200/70" : "text-orange-200/70",
       )}
     >
@@ -118,6 +119,8 @@ export function BattleWallCombatant({
   const tokenIdentity = participant?.tokenAddress || participant?.tokenId || participant?.campaignAddress || "";
   const profile = useArenaTokenProfile(chainId, tokenIdentity);
   const imageUrl = profile?.imageUrl || participant?.imageUrl || participant?.logoUri || null;
+  const bleedSrc = resolveImageUri(imageUrl);
+  const bleed = bleedSrc && bleedSrc !== "/placeholder.svg" ? bleedSrc : null;
   const displayName = profile?.name || participant?.tokenName || "Awaiting rival";
   const displaySymbol = String(profile?.symbol || participant?.symbol || "TBD").replace(/^\$/, "");
   const description = String(profile?.description || "").trim();
@@ -136,12 +139,6 @@ export function BattleWallCombatant({
   const battleVolume = firstFiniteBattleMetric(metricsSide?.eligibleBattleVolumeUsd, participant?.battleVolumeUsd);
   const pointsReady = Boolean(pointsLabel);
   const pointsBoxLabel = String(scoreCaption || "").toLowerCase().includes("score") ? "SCORE" : "POINTS";
-  const accentClass = accent === "cyan"
-    ? "border-cyan-300/40 bg-cyan-500/[0.06]"
-    : "border-orange-400/45 bg-orange-500/[0.07]";
-  const artWash = accent === "cyan"
-    ? "bg-[linear-gradient(to_right,rgba(2,8,12,0.08)_0%,rgba(8,24,32,0.18)_100%)]"
-    : "bg-[linear-gradient(to_right,rgba(8,4,2,0.08)_0%,rgba(32,14,6,0.18)_100%)]";
   const sideIndex = combatSide === "right" ? "2" : "1";
   const trailerLive = isTrailer && !finished;
   const trailerDone = isTrailer && finished;
@@ -151,14 +148,22 @@ export function BattleWallCombatant({
       data-battle-wall-combatant={accent}
       data-battle-combat-side={combatSide || undefined}
       data-battle-combatant-layout="split"
+      data-selected={isLeader ? "true" : undefined}
       className={cn(
-        "mwz-hud-frame relative flex h-full min-w-0 flex-col overflow-hidden",
-        accentClass,
-        isLeader && "ring-1 ring-orange-300/55 shadow-[0_0_22px_rgba(249,115,22,0.18)]",
+        "mwz-flat-card relative flex h-full min-w-0 flex-col overflow-hidden",
         trailerLive && "opacity-95",
         trailerDone && "opacity-90 saturate-[0.85]",
       )}
     >
+      {bleed ? (
+        <img
+          src={bleed}
+          alt=""
+          aria-hidden="true"
+          data-battle-combatant-bleed="true"
+          className="pointer-events-none absolute inset-0 h-full w-full scale-125 object-cover opacity-[0.22] blur-[14px]"
+        />
+      ) : null}
       <div
         data-battle-combatant-split="true"
         className={cn(
@@ -171,11 +176,10 @@ export function BattleWallCombatant({
       >
         <div
           data-battle-combatant-art="true"
-          className="relative h-full min-h-[6.5rem] min-w-0 max-h-[7.75rem] overflow-hidden border border-white/10 sm:max-h-[8.5rem] md:min-h-[9.75rem] md:max-h-[12.75rem]"
+          className="relative h-full min-h-[6.5rem] min-w-0 max-h-[7.75rem] overflow-hidden sm:max-h-[8.5rem] md:min-h-[9.75rem] md:max-h-[12.75rem]"
         >
           <CombatantArtwork imageUrl={imageUrl} ticker={displaySymbol} name={displayName} accent={accent} />
-          <div className={cn("pointer-events-none absolute inset-0", artWash)} />
-          <div className="absolute left-1 top-1 border border-white/20 bg-black/65 px-1 py-0.5 font-retro text-[8px] uppercase tracking-[0.14em] text-white/80 md:left-1.5 md:top-1.5 md:px-1.5 md:text-[9px] md:tracking-[0.16em]">
+          <div className="absolute left-1 top-1 bg-black/65 px-1 py-0.5 font-retro text-[8px] uppercase tracking-[0.14em] text-white/80 md:left-1.5 md:top-1.5 md:px-1.5 md:text-[9px] md:tracking-[0.16em]">
             #{sideIndex}
           </div>
         </div>
@@ -222,7 +226,8 @@ export function BattleWallCombatant({
 
       <div
         data-battle-combatant-actions="true"
-        className="relative z-10 mx-2 mb-2 min-h-11 border border-dashed border-orange-400/20 bg-orange-500/[0.04] sm:mx-3 sm:mb-3"
+        className="relative z-10 min-h-11 border-t px-2 sm:px-3"
+        style={{ borderColor: "var(--mwz-flat-card-border)" }}
         aria-hidden="true"
       />
     </div>
