@@ -56,6 +56,9 @@ jobs:
       - name: Prove fail-closed production manifest builder
         run: node --test scripts/prepare-robinhood-production-manifest.test.mjs
 
+      - name: Syntax-check production live verifier and admin custody proof
+        run: node --check scripts/verify-robinhood-production-live.mjs
+
       - name: Verify committed production manifest cannot masquerade as deployed while placeholder is dark
         run: |
           node - <<'NODE'
