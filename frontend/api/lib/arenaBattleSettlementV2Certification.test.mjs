@@ -20,9 +20,9 @@ function readFrontend(rel) {
 test("V2 settlement locks the due battle before final reconciliation and rolls back unsafe scores", () => {
   const service = readApi("lib/arenaBattleSettlementV2Service.js");
   const lockAt = service.indexOf("for update");
-  const reconcileAt = service.indexOf("reconcileBattlePointsAtClose(current");
-  const decisionAt = service.indexOf("decideBattlePointsSettlement");
-  const leagueAt = service.indexOf("recordFinishedBattle");
+  const reconcileAt = service.indexOf("finalScore = await reconcileBattlePointsAtClose(current");
+  const decisionAt = service.indexOf("decision = decideBattlePointsSettlement({");
+  const leagueAt = service.indexOf("await recordFinishedBattle({");
   const battleWriteAt = service.indexOf("update public.arena_battles set");
 
   assert.ok(lockAt >= 0 && reconcileAt > lockAt, "final score must be reconciled after the battle row lock");
@@ -31,7 +31,7 @@ test("V2 settlement locks the due battle before final reconciliation and rolls b
   assert.ok(battleWriteAt > leagueAt, "battle finish write must remain after the MWL write in the same transaction");
   assert.match(service, /if \(!finalScore\.ok\)[\s\S]{0,300}client\.query\(["']rollback["']\)/);
   assert.match(service, /if \(!decision\.ok\)[\s\S]{0,220}client\.query\(["']rollback["']\)/);
-  assert.equal((service.match(/recordFinishedBattle\s*\(/g) || []).length, 1);
+  assert.equal((service.match(/await recordFinishedBattle\s*\(/g) || []).length, 1);
 });
 
 test("V2 settlement reuses canonical competition policy and never duplicates scoring math", () => {
@@ -120,7 +120,7 @@ test("V2 worker scans due live battles, keeps API liveness isolated, and publish
 test("tournament advancement remains post-commit and WarPool accounting is untouched", () => {
   const service = readApi("lib/arenaBattleSettlementV2Service.js");
   const commitAt = service.lastIndexOf('await client.query("commit")');
-  const advanceAt = service.indexOf("advanceTournamentFromBattle");
+  const advanceAt = service.indexOf("await advanceTournamentFromBattle({");
   assert.ok(commitAt >= 0 && advanceAt > commitAt, "tournament advancement must remain after settlement commit");
   assert.doesNotMatch(service, /WarPool|arena_war_pool|pool_deposit|claim/i);
 });
