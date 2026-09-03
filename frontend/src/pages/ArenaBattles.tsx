@@ -306,7 +306,7 @@ export default function ArenaBattles() {
       />
 
       {focusedId && focusStatus === "unavailable" ? (
-        <div className="mwz-hud-frame p-4 text-sm text-muted-foreground" data-battle-unavailable="true" role="status">
+        <div className="py-4 text-sm text-muted-foreground" data-battle-unavailable="true" role="status">
           <div className="font-retro text-base text-foreground">Battle unavailable.</div>
           <p className="mt-1">This fight is private, missing, or not a public Battle Wall battle.</p>
         </div>

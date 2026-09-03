@@ -195,7 +195,7 @@ const BattleDetails = () => {
         kind={tournamentMatch ? "tournament" : "battle"}
         redirectTo={
           tournamentMatch
-            ? { href: `/warzone/tournament/${encodeURIComponent(tournamentId)}`, label: "Support this coin in the tournament" }
+            ? { href: `/warzone/tournaments/${encodeURIComponent(tournamentId)}`, label: "Support this coin in the tournament" }
             : null
         }
       />

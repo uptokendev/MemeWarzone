@@ -153,11 +153,13 @@ test("Upcoming wall modules keep card-vs-card combatants and a deployment HUD", 
   assert.match(moduleSrc, /shouldMountWallCombatEffects/);
   assert.match(moduleSrc, /mountEffects \?/);
   assert.doesNotMatch(moduleSrc, /space-y-4 py-6 text-center/);
-  assert.match(vs, /data-battle-deployment-hud/);
+  assert.doesNotMatch(vs, /data-battle-deployment-hud/);
   assert.match(vs, /Deployment pending/);
   assert.match(vs, /Fight length/);
   assert.match(vs, /stakeLabel/);
   assert.match(vs, /deploymentPending \? null : formatBattleWallGapText/);
+  assert.match(vs, /sr-only/);
+  assert.match(vs, /data-battle-vs-reticle="true"/);
   assert.match(combatant, /firstFiniteBattleMetric/);
   assert.doesNotMatch(moduleSrc, /Battle Boost|ArenaSupportButton/);
 });

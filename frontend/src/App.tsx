@@ -24,7 +24,6 @@ import BattleDetails from "./pages/BattleDetails";
 import ArenaTournaments from "./pages/ArenaTournaments";
 import PostGradLeague from "./pages/PostGradLeague";
 import League from "./pages/League";
-import TournamentDetails from "./pages/TournamentDetails";
 import ArenaVerifyEmail from "./pages/ArenaVerifyEmail";
 import Create from "./pages/Create";
 import SponsorshipApplication from "./pages/SponsorshipApplication";
@@ -83,7 +82,7 @@ const queryClient = new QueryClient();
 
 function LegacyTournamentRedirect() {
   const { id } = useParams();
-  return <Navigate to={`/warzone/tournament/${encodeURIComponent(String(id || ""))}`} replace />;
+  return <Navigate to={`/warzone/tournaments/${encodeURIComponent(String(id || ""))}`} replace />;
 }
 
 function ArenaToWarzoneRedirect() {
@@ -192,7 +191,8 @@ function AppShellLayout({
           {postGradEnabled && postGradFlags.league ? <Route path="/warzone/major-war-league" element={<PostGradLeague />} /> : null}
           {postGradEnabled && postGradFlags.league ? <Route path="/warzone/leagues" element={<Navigate to="/warzone/major-war-league" replace />} /> : null}
           {postGradEnabled && postGradFlags.tournament ? <Route path="/warzone/tournaments" element={<ArenaTournaments />} /> : null}
-          {postGradEnabled && postGradFlags.tournament ? <Route path="/warzone/tournament/:id" element={<TournamentDetails />} /> : null}
+          {postGradEnabled && postGradFlags.tournament ? <Route path="/warzone/tournaments/:tournamentId" element={<ArenaTournaments />} /> : null}
+          {postGradEnabled && postGradFlags.tournament ? <Route path="/warzone/tournament/:id" element={<LegacyTournamentRedirect />} /> : null}
           {postGradEnabled && postGradFlags.events ? <Route path="/warzone/events" element={<Navigate to="/warzone/tournaments" replace />} /> : null}
           {postGradEnabled && postGradFlags.arena ? <Route path="/arena" element={<Navigate to="/warzone" replace />} /> : null}
           {postGradEnabled && postGradFlags.arena ? <Route path="/arena/*" element={<ArenaToWarzoneRedirect />} /> : null}

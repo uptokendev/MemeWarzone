@@ -294,7 +294,7 @@ export function presentBattleWallMore(battle, metrics, options = {}) {
       matchQualityLabel,
       fundingCopy: BATTLE_MORE_FUNDING_COPY,
       tournamentId,
-      tournamentHref: tournamentId ? `/warzone/tournament/${encodeURIComponent(tournamentId)}` : null,
+      tournamentHref: tournamentId ? `/warzone/tournaments/${encodeURIComponent(tournamentId)}` : null,
     },
     showScoreBreakdown,
     scoreMaxes: showScoreBreakdown ? BATTLE_POINTS_V2_COMPONENT_MAX : null,
@@ -307,7 +307,7 @@ export function presentBattleWallMore(battle, metrics, options = {}) {
       }),
       redirectTo:
         kind === "tournament" && tournamentId
-          ? { href: `/warzone/tournament/${encodeURIComponent(tournamentId)}`, label: "Support this coin in the tournament" }
+          ? { href: `/warzone/tournaments/${encodeURIComponent(tournamentId)}`, label: "Support this coin in the tournament" }
           : null,
       sides: presentWarPoolSides(battle),
     },

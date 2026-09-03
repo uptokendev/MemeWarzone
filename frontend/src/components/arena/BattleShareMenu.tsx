@@ -49,6 +49,12 @@ export function BattleShareMenu({
     setOpen(false);
   }
 
+  function downloadShareImage() {
+    if (!share.battleId) return;
+    window.open(`/api/battle-share-card?battleId=${encodeURIComponent(share.battleId)}`, "_blank", "noopener,noreferrer");
+    setOpen(false);
+  }
+
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
@@ -68,6 +74,9 @@ export function BattleShareMenu({
         </DropdownMenuItem>
         <DropdownMenuItem className="min-h-11 cursor-pointer font-retro text-xs uppercase tracking-[0.14em]" onSelect={() => shareOnX()}>
           Share on X
+        </DropdownMenuItem>
+        <DropdownMenuItem className="min-h-11 cursor-pointer font-retro text-xs uppercase tracking-[0.14em]" onSelect={() => downloadShareImage()}>
+          Download share image
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

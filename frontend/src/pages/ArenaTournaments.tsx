@@ -1,8 +1,13 @@
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useParams } from "react-router-dom";
+import { TournamentCommand } from "@/components/arena/TournamentCommand";
+import { TournamentEventCard } from "@/components/arena/TournamentEventCard";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { WarzoneContent } from "@/components/warzone/WarzoneContent";
+import { WarzonePageHeader } from "@/components/warzone/WarzonePageHeader";
 import { useArenaEventFeed, type ArenaEventSummary } from "@/hooks/useArenaEventFeed";
+import { presentWarzoneFeedTone } from "@/lib/arena/warzoneChrome.mjs";
+import { presentTournamentEmpty } from "@/lib/arena/tournamentCommandPresentation.mjs";
 
 type TournamentTab = "upcoming" | "live" | "results";
 
@@ -17,8 +22,11 @@ function isTournament(event: ArenaEventSummary) {
 }
 
 const ArenaTournaments = () => {
+  const { tournamentId } = useParams();
+  const focusedId = String(tournamentId || "").trim();
   const { events, archivedEvents, source } = useArenaEventFeed();
   const [tab, setTab] = useState<TournamentTab>("upcoming");
+  const tone = presentWarzoneFeedTone(source);
 
   const rows = useMemo(() => {
     const live = events.filter((event) => isTournament(event) && event.status === "live");
@@ -29,24 +37,22 @@ const ArenaTournaments = () => {
     return upcoming;
   }, [archivedEvents, events, tab]);
 
+  const empty = presentTournamentEmpty(tab, source);
+
   return (
     <WarzoneContent className="space-y-5">
-      <section>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3" style={{ borderColor: "var(--mwz-flat-card-border)" }}>
-          <div>
-            <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Warzone</div>
-            <h1 className="mt-1 font-retro text-2xl text-foreground">Tournaments</h1>
-            <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-              Upcoming opt-ins, running events, and previous results. Standings live on the tournament page.
-            </p>
-          </div>
-          <TacticalTag label={source === "api" ? "Live data" : source === "empty" ? "Feed unavailable" : "Awaiting data"} tone={source === "api" ? "success" : "default"} />
-        </div>
-        <div className="mt-4 flex flex-wrap gap-3 text-xs font-semibold uppercase tracking-[0.14em]">
+      <div data-warzone-tournaments="true">
+        <WarzonePageHeader title="Tournaments" copy="Upcoming opt-ins, running events, and previous results. Expanding an event keeps you on this command surface.">
+          <TacticalTag label={tone.label} tone={tone.tone as "success" | "default"} />
+        </WarzonePageHeader>
+
+        <div className="flex flex-wrap gap-3 text-xs font-semibold uppercase tracking-[0.14em]" role="tablist" aria-label="Tournament status">
           {TABS.map((item) => (
             <button
               key={item.key}
               type="button"
+              role="tab"
+              aria-selected={tab === item.key}
               onClick={() => setTab(item.key)}
               data-selected={tab === item.key ? "true" : undefined}
               className={`px-1 py-1 ${tab === item.key ? "text-accent" : "text-muted-foreground hover:text-foreground"}`}
@@ -55,42 +61,22 @@ const ArenaTournaments = () => {
             </button>
           ))}
         </div>
-      </section>
 
-      <section className="space-y-3">
-        {rows.length ? (
-          rows.map((event) => (
-            <Link
-              key={event.id}
-              to={`/warzone/tournament/${encodeURIComponent(event.id)}`}
-              className="mwz-flat-card flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between"
-            >
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <TacticalTag label={tab === "live" ? "Live" : tab === "results" ? "Finished" : "Upcoming"} tone={tab === "live" ? "success" : "default"} />
-                </div>
-                <div className="mt-2 font-retro text-sm text-foreground">{event.title}</div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {event.participantCount} coins · {tab === "upcoming" ? `Starts ${new Date(event.startsAt).toLocaleString()}` : `Ends ${new Date(event.endsAt).toLocaleString()}`}
-                </div>
-              </div>
-              <div className="text-xs font-semibold uppercase tracking-[0.14em] text-accent">
-                {tab === "upcoming" ? "View / opt in" : "Open"}
-              </div>
-            </Link>
-          ))
-        ) : (
-          <div className="py-5 text-sm text-muted-foreground">
-            {source === "empty"
-              ? "Tournament data is not available right now."
-              : tab === "upcoming"
-                ? "No upcoming tournaments. Ops create them in the web dashboard."
-                : tab === "live"
-                  ? "No tournaments are running."
-                  : "Finished tournaments will appear here."}
-          </div>
-        )}
-      </section>
+        {focusedId ? <TournamentCommand tournamentId={focusedId} embedded /> : null}
+
+        <section className="space-y-3" data-tournament-list={tab}>
+          {rows.length ? (
+            rows.map((event) => (
+              <TournamentEventCard key={event.id} event={event} tab={tab} focused={focusedId === event.id} />
+            ))
+          ) : focusedId ? null : (
+            <div className="py-4 text-sm text-muted-foreground" data-tournament-empty={empty.kind}>
+              <div className="font-retro text-foreground">{empty.title}</div>
+              <p className="mt-1">{empty.body}</p>
+            </div>
+          )}
+        </section>
+      </div>
     </WarzoneContent>
   );
 };

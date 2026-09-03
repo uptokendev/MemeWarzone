@@ -48,7 +48,7 @@ test("every tournament-created fight captures Battle V2 baselines without a tour
 });
 
 test("Tournament Details consumes normalized profiles and canonical Battle metrics", () => {
-  const details = readFrontend("src/pages/TournamentDetails.tsx");
+  const details = readFrontend("src/components/arena/TournamentCommand.tsx");
   const matchCard = readFrontend("src/components/arena/TournamentMatchCard.tsx");
   const identity = readFrontend("src/components/arena/TournamentTokenIdentity.tsx");
 
@@ -61,12 +61,13 @@ test("Tournament Details consumes normalized profiles and canonical Battle metri
   assert.match(matchCard, /Latest Battle Points/);
   assert.match(matchCard, /Live Battle Points/);
   assert.match(matchCard, /Official tournament advancement is recorded from the settled battle result/);
-  assert.match(matchCard, /to=\{`\/battle\/\$\{encodeURIComponent\(match\.battleId\)\}`\}/);
+  assert.match(matchCard, /battleFightHref\(match\.battleId\)/);
+  assert.doesNotMatch(matchCard, /to=\{`\/battle\//);
   assert.match(identity, /useArenaTokenProfile/);
 });
 
 test("Tournament presentation does not duplicate Battle Points math or bypass canonical settlement selection", () => {
-  const details = readFrontend("src/pages/TournamentDetails.tsx");
+  const details = readFrontend("src/components/arena/TournamentCommand.tsx");
   const matchCard = readFrontend("src/components/arena/TournamentMatchCard.tsx");
   const metricsApi = readApi("arenaBattleMetrics.js");
   const combined = `${details}\n${matchCard}`;

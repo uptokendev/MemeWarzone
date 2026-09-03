@@ -25,7 +25,7 @@ test("Warzone pages share the same centered content width", () => {
   const battles = readSrc("../../pages/ArenaBattles.tsx");
   const league = readSrc("../../pages/PostGradLeague.tsx");
   const tournaments = readSrc("../../pages/ArenaTournaments.tsx");
-  const details = readSrc("../../pages/TournamentDetails.tsx");
+  const details = readSrc("../../components/arena/TournamentCommand.tsx");
   const combatant = readSrc("../../components/arena/BattleWallCombatant.tsx");
 
   assert.equal(WARZONE_CONTENT_MAX_WIDTH_PX, 1320);
@@ -34,10 +34,12 @@ test("Warzone pages share the same centered content width", () => {
   assert.match(frame, /WARZONE_CONTENT_MAX_CLASS/);
   assert.match(frame, /px-3/);
   assert.match(frame, /md:px-4/);
-  for (const src of [overview, battles, league, tournaments, details]) {
+  for (const src of [overview, battles, league, tournaments]) {
     assert.match(src, /WarzoneContent/);
     assert.doesNotMatch(src, /ContentContainer/);
   }
+  assert.doesNotMatch(details, /ContentContainer/);
+  assert.match(details, /data-tournament-command/);
   assert.doesNotMatch(battles, /max-w-full space-y-4/);
   assert.match(combatant, /data-battle-combatant-split="true"/);
   assert.match(combatant, /grid-cols-\[minmax\(5\.5rem,38%\)_minmax\(0,1fr\)\]/);
@@ -78,7 +80,7 @@ test("MWL standings, token links, and Quarter Finals route stay authoritative", 
   assert.equal(presentWarzoneLeagueStatus(board.podium[1]), null);
   assert.equal(presentWarzoneLeagueStatus(board.table[0]), "RELEGATED");
   assert.match(league, /getArenaTokenRoute/);
-  assert.match(league, /\/warzone\/tournament\/\$\{encodeURIComponent\(quarterFinalsId\)\}/);
+  assert.match(league, /\/warzone\/tournaments\/\$\{encodeURIComponent\(quarterFinalsId\)\}/);
   assert.match(league, /Enter Quarter Finals/);
   assert.equal(presentWarzoneLeagueEmpty("empty").kind, "unavailable");
   assert.equal(presentWarzoneLeagueEmpty("api").kind, "initializing");
@@ -101,6 +103,7 @@ test("Warzone composition keeps cards floating without outer frames", () => {
   assert.match(combatant, /mwz-flat-card/);
   assert.match(vs, /data-battle-vs-reticle="true"/);
   assert.match(vs, /bg-transparent/);
+  assert.doesNotMatch(vs, /data-battle-deployment-hud/);
   assert.doesNotMatch(overview, /mwz-hud-frame/);
   assert.match(overview, /mwz-flat-card/);
   assert.doesNotMatch(league, /mwz-hud-frame/);

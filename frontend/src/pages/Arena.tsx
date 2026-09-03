@@ -146,7 +146,7 @@ const Arena = () => {
             liveTournaments.slice(0, 2).map((event) => (
               <Link
                 key={event.id}
-                to={`/warzone/tournament/${encodeURIComponent(event.id)}`}
+                to={`/warzone/tournaments/${encodeURIComponent(event.id)}`}
                 className="mwz-flat-card mb-3 block p-4"
               >
                 <TacticalTag label="Live" tone="success" />

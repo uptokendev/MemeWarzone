@@ -30,6 +30,7 @@ const requiredUiRoutes = [
   'path="/warzone"',
   'path="/warzone/battles"',
   'path="/warzone/tournaments"',
+  'path="/warzone/tournaments/:tournamentId"',
   'path="/warzone/tournament/:id"',
   'path="/warzone/major-war-league"',
   'path="/war-room"',

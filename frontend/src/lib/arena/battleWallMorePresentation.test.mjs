@@ -163,7 +163,7 @@ test("VIEW TOURNAMENT appears only when an authoritative tournament id exists", 
   );
   assert.equal(tournament.originKind, "tournament");
   assert.equal(tournament.terms.tournamentId, "tour-9");
-  assert.equal(tournament.terms.tournamentHref, "/warzone/tournament/tour-9");
+  assert.equal(tournament.terms.tournamentHref, "/warzone/tournaments/tour-9");
 });
 
 test("Scoring generation is omitted unless an explicit identifier is present", () => {
@@ -247,7 +247,7 @@ test("Unknown WarPool generation does not expose historical 85/5/10 economics on
   assert.equal(fromRouting, false);
   assert.equal(knownV1, false);
   assert.equal(knownV2, false);
-  assert.equal(tournament.warPool.redirectTo.href, "/warzone/tournament/tour-9");
+  assert.equal(tournament.warPool.redirectTo.href, "/warzone/tournaments/tour-9");
   assert.match(moreSrc, /data-battle-war-pool="tournament-redirect"/);
   assert.doesNotMatch(moreSrc, /WarPoolPanel|useArenaWarPool|85%|75%|0\.85|0\.75/);
   assert.doesNotMatch(helper, /winnersUsd:\s*Math\.round|totalPotUsd \* 0\.|75\s*\/\s*20\s*\/\s*5/);

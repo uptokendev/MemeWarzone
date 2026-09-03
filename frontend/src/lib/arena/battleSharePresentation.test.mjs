@@ -154,6 +154,8 @@ test("Share helpers stay generation-neutral and do not invent money or formulas"
   assert.doesNotMatch(menu, /WarPoolPanel|ArenaStakeButton|\/battle\//);
   assert.match(menu, /Copy battle link/);
   assert.match(menu, /Share on X/);
+  assert.match(menu, /Download share image/);
+  assert.match(menu, /\/api\/battle-share-card/);
   assert.match(moduleSrc, /BattleShareMenu/);
   assert.match(moduleSrc, /data-battle-wall-actions-reserved/);
   assert.match(moreSrc, /BattleFunding/);

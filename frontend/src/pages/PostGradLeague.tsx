@@ -82,7 +82,7 @@ const PostGradLeague = () => {
             <div className="mt-3 space-y-3 text-sm text-muted-foreground">
               <p>Quarter Finals are a system tournament seeded from this table.</p>
               <Link
-                to={`/warzone/tournament/${encodeURIComponent(quarterFinalsId)}`}
+                to={`/warzone/tournaments/${encodeURIComponent(quarterFinalsId)}`}
                 className="mwz-button inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em]"
               >
                 Enter Quarter Finals
