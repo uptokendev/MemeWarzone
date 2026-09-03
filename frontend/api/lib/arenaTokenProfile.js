@@ -25,6 +25,8 @@ function identityPredicate(chainId, column, param) {
 async function loadNativeProfile(query, chainId, identity) {
   const campaignMatch = identityPredicate(chainId, "c.campaign_address::text", "$2");
   const tokenMatch = identityPredicate(chainId, "c.token_address::text", "$2");
+  const metadataTokenMatch = identityPredicate(chainId, "m.token_address", "coalesce(c.token_address::text, '')");
+  const metadataCampaignMatch = identityPredicate(chainId, "m.campaign_address", "c.campaign_address::text");
   const result = await query(
     `select c.chain_id, c.campaign_address, c.token_address, c.creator_address, c.name, c.symbol,
             meta.logo_uri, meta.description, meta.website, meta.external_url,
@@ -35,8 +37,8 @@ async function loadNativeProfile(query, chainId, identity) {
            from public.token_metadata_registry m
           where m.chain_id = c.chain_id
             and (
-              (m.token_address is not null and lower(m.token_address) = lower(coalesce(c.token_address::text, '')))
-              or (m.campaign_address is not null and lower(m.campaign_address) = lower(c.campaign_address::text))
+              (m.token_address is not null and ${metadataTokenMatch})
+              or (m.campaign_address is not null and ${metadataCampaignMatch})
             )
           order by m.updated_at desc
           limit 1
