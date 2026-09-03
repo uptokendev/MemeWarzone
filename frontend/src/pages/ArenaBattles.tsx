@@ -3,6 +3,7 @@ import { ArenaMatchRow } from "@/components/postgrad/ArenaMatchRow";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { ContentContainer } from "@/components/layout/ContentContainer";
 import { useArenaBattleFeed } from "@/hooks/useArenaBattleFeed";
+import { useArenaFeedBattleMetrics } from "@/hooks/useArenaFeedBattleMetrics";
 import type { Battle } from "@/features/postgrad/contracts";
 import { publicBattleLane, type PublicBattleLane } from "@/lib/arena/publicBattleState";
 
@@ -24,6 +25,7 @@ const ArenaBattles = () => {
     if (tab === "finished") return finished;
     return live;
   }, [archivedBattles, liveBattles, openForBattleQueue, tab]);
+  const feedMetrics = useArenaFeedBattleMetrics(rows);
 
   return (
     <ContentContainer className="space-y-5 px-1 pb-10 pt-4">
@@ -54,7 +56,15 @@ const ArenaBattles = () => {
 
       <section className="space-y-3">
         {rows.length ? (
-          rows.map((battle: Battle) => <ArenaMatchRow key={battle.id} battle={battle} />)
+          rows.map((battle: Battle) => (
+            <ArenaMatchRow
+              key={battle.id}
+              battle={battle}
+              metrics={feedMetrics.metricsById[battle.id]}
+              metricsRequested={feedMetrics.requestedIds.includes(battle.id)}
+              metricsLoaded={feedMetrics.loaded}
+            />
+          ))
         ) : (
           <div className="mwz-hud-frame p-5 text-sm text-muted-foreground">
             {source === "empty"

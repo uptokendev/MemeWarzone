@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { ArenaMatchRow } from "@/components/postgrad/ArenaMatchRow";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
@@ -6,12 +7,15 @@ import { ContentContainer } from "@/components/layout/ContentContainer";
 import { ArenaUpvoteDialog } from "@/components/token/UpvoteDialog";
 import { getArenaTokenRoute } from "@/features/postgrad/tokenRoutes";
 import { useArenaBattleFeed } from "@/hooks/useArenaBattleFeed";
+import { useArenaFeedBattleMetrics } from "@/hooks/useArenaFeedBattleMetrics";
 import { useArenaEventFeed } from "@/hooks/useArenaEventFeed";
 import { useArenaFeaturedVotes } from "@/hooks/useArenaFeaturedVotes";
 import { useArenaLeagueFeed } from "@/hooks/useArenaLeagueFeed";
 
 const Arena = () => {
   const { liveBattles, source: battleSource } = useArenaBattleFeed();
+  const livePreview = useMemo(() => liveBattles.slice(0, 3), [liveBattles]);
+  const feedMetrics = useArenaFeedBattleMetrics(livePreview);
   const { events, source: eventSource } = useArenaEventFeed();
   const { season, source: leagueSource } = useArenaLeagueFeed();
   const featured = useArenaFeaturedVotes();
@@ -68,8 +72,16 @@ const Arena = () => {
               <Link to="/warzone/battles">Open battles</Link>
             </Button>
           </div>
-          {liveBattles.slice(0, 3).length ? (
-            liveBattles.slice(0, 3).map((battle) => <ArenaMatchRow key={battle.id} battle={battle} />)
+          {livePreview.length ? (
+            livePreview.map((battle) => (
+              <ArenaMatchRow
+                key={battle.id}
+                battle={battle}
+                metrics={feedMetrics.metricsById[battle.id]}
+                metricsRequested={feedMetrics.requestedIds.includes(battle.id)}
+                metricsLoaded={feedMetrics.loaded}
+              />
+            ))
           ) : (
             <div className="mwz-hud-frame p-4 text-sm text-muted-foreground">
               {battleSource === "empty" ? "Battle feed is unavailable." : "No live battles right now."}
