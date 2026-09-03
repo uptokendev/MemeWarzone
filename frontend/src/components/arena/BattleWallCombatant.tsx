@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Battle, BattleParticipant } from "@/features/postgrad/contracts";
+import { WarzoneDecorativeLayer } from "@/components/warzone/WarzoneDecorativeLayer";
 import { useArenaTokenProfile } from "@/hooks/useArenaTokenProfile";
 import type { BattleRealtimeSide } from "@/lib/arena/battleRealtime";
 import { formatCompactUsd } from "@/lib/arena/battlePresentation";
@@ -158,19 +159,19 @@ export function BattleWallCombatant({
       )}
     >
       {bleed ? (
-        <>
+        <WarzoneDecorativeLayer data-battle-combatant-bleed-host="true">
           <img
             src={bleed}
             alt=""
             aria-hidden="true"
             data-battle-combatant-bleed="true"
-            className="pointer-events-none absolute inset-0 z-0 h-full w-full scale-110 object-cover object-left opacity-[0.16] blur-[12px]"
+            className="absolute inset-0 z-0 h-full w-full scale-110 object-cover object-left opacity-[0.16] blur-[12px]"
           />
           <div
             data-battle-combatant-readability="true"
-            className="pointer-events-none absolute inset-0 z-0 bg-[linear-gradient(90deg,rgba(5,5,5,0.28)_0%,rgba(5,5,5,0.72)_48%,rgba(5,5,5,0.92)_100%)]"
+            className="absolute inset-0 z-0 bg-[linear-gradient(90deg,rgba(5,5,5,0.28)_0%,rgba(5,5,5,0.72)_48%,rgba(5,5,5,0.92)_100%)]"
           />
-        </>
+        </WarzoneDecorativeLayer>
       ) : null}
       <div
         data-battle-combatant-split="true"

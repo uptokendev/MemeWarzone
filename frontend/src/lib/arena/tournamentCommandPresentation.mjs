@@ -68,6 +68,13 @@ export function presentTournamentMoment(value) {
   });
 }
 
+export function presentTournamentDateLabel(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" }).toUpperCase();
+}
+
 export function presentTournamentCard(event, options = {}) {
   const tab = options.tab || null;
   const status = presentTournamentStatus(event?.status, tab);
@@ -75,8 +82,11 @@ export function presentTournamentCard(event, options = {}) {
   const chain = presentTournamentChain(event);
   const registration = presentTournamentRegistration(event);
   const buyIn = presentTournamentBuyIn(event);
-  const startsLabel = presentTournamentMoment(event?.startsAt || event?.starts_at);
-  const endsLabel = presentTournamentMoment(event?.endsAt || event?.ends_at);
+  const startsAt = event?.startsAt || event?.starts_at;
+  const endsAt = event?.endsAt || event?.ends_at;
+  const startsLabel = presentTournamentMoment(startsAt);
+  const endsLabel = presentTournamentMoment(endsAt);
+  const dateLabel = presentTournamentDateLabel(startsAt || endsAt);
   const participantCount = Number(event?.participantCount ?? event?.participant_count);
   const stage = String(event?.bracketStage || event?.bracket_stage || "").trim();
   const id = String(event?.id || "").trim();
@@ -95,6 +105,7 @@ export function presentTournamentCard(event, options = {}) {
     participantLabel: Number.isFinite(participantCount) ? `${participantCount} COINS` : null,
     startsLabel,
     endsLabel,
+    dateLabel,
     scheduleLabel: status.key === "upcoming" ? (startsLabel ? `STARTS ${startsLabel}` : null) : endsLabel ? `ENDS ${endsLabel}` : null,
     bracketStage: stage || null,
     focused: Boolean(options.focused),

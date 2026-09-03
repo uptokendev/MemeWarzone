@@ -1,5 +1,5 @@
-export const WARZONE_CONTENT_MAX_WIDTH_PX = 1320;
-export const WARZONE_CONTENT_MAX_CLASS = "max-w-[1320px]";
+export const WARZONE_CONTENT_MAX_WIDTH_PX = 1280;
+export const WARZONE_CONTENT_MAX_CLASS = "max-w-[1280px]";
 
 export function presentWarzoneFeedTone(source) {
   const value = String(source || "");

@@ -2,8 +2,9 @@ import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { WarzoneContent } from "@/components/warzone/WarzoneContent";
+import { WarzoneLeagueHowItWorks } from "@/components/warzone/WarzoneLeagueHowItWorks";
 import { WarzonePageHeader } from "@/components/warzone/WarzonePageHeader";
-import { WarzoneTokenMark } from "@/components/warzone/WarzoneTokenMark";
+import { WarzoneRankCard } from "@/components/warzone/WarzoneRankCard";
 import { getArenaTokenRoute } from "@/features/postgrad/tokenRoutes";
 import { useArenaLeagueFeed } from "@/hooks/useArenaLeagueFeed";
 import {
@@ -47,6 +48,7 @@ const PostGradLeague = () => {
       <WarzonePageHeader title="Major War League" copy="The monthly fight for Warzone supremacy">
         {season.label ? <TacticalTag label={season.label} tone="default" /> : null}
         <TacticalTag label={`Week ${season.week || 1}`} tone="default" />
+        <WarzoneLeagueHowItWorks />
       </WarzonePageHeader>
 
       <div className="flex flex-wrap gap-3 text-xs font-semibold uppercase tracking-[0.14em]">
@@ -94,65 +96,42 @@ const PostGradLeague = () => {
             <div className="mb-3 text-[10px] uppercase tracking-[0.22em] text-white/45">Top command</div>
             <div className="grid gap-3 md:grid-cols-3">
               {first ? (
-                <TokenLink tokenId={first.tokenId} className="md:col-start-2 md:row-start-1">
-                  <div
-                    className="mwz-flat-card relative overflow-hidden p-4 text-center"
-                    data-warzone-mwl-champion="true"
-                    style={{ boxShadow: "inset 0 2px 0 rgba(240,106,26,0.7)" }}
-                  >
-                    {(first as { imageUrl?: string }).imageUrl ? (
-                      <img
-                        src={(first as { imageUrl?: string }).imageUrl}
-                        alt=""
-                        aria-hidden="true"
-                        className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-[0.14] blur-[12px]"
-                      />
-                    ) : null}
-                    <div className="relative z-10">
-                      <div className="text-[10px] uppercase tracking-[0.22em] text-orange-200">#1</div>
-                      <div className="mt-3 flex justify-center">
-                        <WarzoneTokenMark imageUrl={(first as { imageUrl?: string }).imageUrl} symbol={first.symbol} name={first.tokenName} size="lg" />
-                      </div>
-                      <div className="mt-3 font-retro text-lg text-foreground">${String(first.symbol || "").replace(/^\$/, "")}</div>
-                      <div className="text-[11px] uppercase tracking-[0.14em] text-white/50">{first.tokenName}</div>
-                      <div className="mt-2 font-retro text-2xl text-foreground">{Number(first.points).toLocaleString()} PTS</div>
-                      <div className="text-xs text-white/55">
-                        {first.wins}W / {first.losses}L
-                      </div>
-                    </div>
-                  </div>
+                <TokenLink tokenId={first.tokenId}>
+                  <WarzoneRankCard
+                    rank={1}
+                    imageUrl={(first as { imageUrl?: string }).imageUrl}
+                    symbol={first.symbol}
+                    name={first.tokenName}
+                    points={first.points}
+                    wins={first.wins}
+                    losses={first.losses}
+                  />
                 </TokenLink>
               ) : null}
               {second ? (
-                <TokenLink tokenId={second.tokenId} className="md:col-start-1 md:row-start-1">
-                  <div className="mwz-flat-card flex items-center gap-3 p-4 md:flex-col md:text-center">
-                    <div className="text-[10px] uppercase tracking-[0.18em] text-white/55">#2</div>
-                    <WarzoneTokenMark imageUrl={(second as { imageUrl?: string }).imageUrl} symbol={second.symbol} name={second.tokenName} />
-                    <div className="min-w-0">
-                      <div className="font-retro text-foreground">${String(second.symbol || "").replace(/^\$/, "")}</div>
-                      <div className="truncate text-[11px] uppercase tracking-[0.12em] text-white/50">{second.tokenName}</div>
-                      <div className="mt-1 text-sm text-white/80">{Number(second.points).toLocaleString()} PTS</div>
-                      <div className="text-xs text-white/50">
-                        {second.wins}W / {second.losses}L
-                      </div>
-                    </div>
-                  </div>
+                <TokenLink tokenId={second.tokenId}>
+                  <WarzoneRankCard
+                    rank={2}
+                    imageUrl={(second as { imageUrl?: string }).imageUrl}
+                    symbol={second.symbol}
+                    name={second.tokenName}
+                    points={second.points}
+                    wins={second.wins}
+                    losses={second.losses}
+                  />
                 </TokenLink>
               ) : null}
               {third ? (
-                <TokenLink tokenId={third.tokenId} className="md:col-start-3 md:row-start-1">
-                  <div className="mwz-flat-card flex items-center gap-3 p-4 md:flex-col md:text-center">
-                    <div className="text-[10px] uppercase tracking-[0.18em] text-white/55">#3</div>
-                    <WarzoneTokenMark imageUrl={(third as { imageUrl?: string }).imageUrl} symbol={third.symbol} name={third.tokenName} />
-                    <div className="min-w-0">
-                      <div className="font-retro text-foreground">${String(third.symbol || "").replace(/^\$/, "")}</div>
-                      <div className="truncate text-[11px] uppercase tracking-[0.12em] text-white/50">{third.tokenName}</div>
-                      <div className="mt-1 text-sm text-white/80">{Number(third.points).toLocaleString()} PTS</div>
-                      <div className="text-xs text-white/50">
-                        {third.wins}W / {third.losses}L
-                      </div>
-                    </div>
-                  </div>
+                <TokenLink tokenId={third.tokenId}>
+                  <WarzoneRankCard
+                    rank={3}
+                    imageUrl={(third as { imageUrl?: string }).imageUrl}
+                    symbol={third.symbol}
+                    name={third.tokenName}
+                    points={third.points}
+                    wins={third.wins}
+                    losses={third.losses}
+                  />
                 </TokenLink>
               ) : null}
             </div>

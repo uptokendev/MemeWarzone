@@ -22,18 +22,38 @@ test("production artwork never ticker-matches mock portraits", () => {
   assert.match(preview, /participant\?\.imageUrl \|\| participant\?\.logoUri/);
 });
 
-test("Battle combatant height is content-bounded and bleed is decorative", () => {
+test("Battle combatant bleed is an absolute decorative layer outside card flow", () => {
   const combatant = readSrc("../../components/arena/BattleWallCombatant.tsx");
+  const layer = readSrc("../../components/warzone/WarzoneDecorativeLayer.tsx");
+  const css = readSrc("../../styles/card-cleanup.css");
   const moduleSrc = readSrc("../../components/arena/BattleWallModule.tsx");
+  assert.match(layer, /data-mwz-decorative-layer="true"/);
+  assert.match(layer, /position: "absolute"/);
+  assert.match(layer, /inset: 0/);
+  assert.match(layer, /zIndex: 0/);
+  assert.match(css, /\.mwz-app-shell \.mwz-flat-card > \[data-mwz-decorative-layer\]/);
+  assert.match(css, /position: absolute !important/);
+  assert.match(css, /z-index: 0 !important/);
+  assert.match(combatant, /WarzoneDecorativeLayer/);
   assert.match(combatant, /data-battle-combatant-bounded="true"/);
   assert.match(combatant, /h-auto max-h-\[22rem\]/);
   assert.match(combatant, /h-\[6\.75rem\]/);
   assert.match(combatant, /md:h-\[8\.5rem\]/);
   assert.match(combatant, /data-battle-combatant-bleed="true"/);
   assert.match(combatant, /absolute inset-0 z-0/);
+  assert.match(combatant, /<WarzoneDecorativeLayer[\s\S]*data-battle-combatant-bleed="true"/);
   assert.doesNotMatch(combatant, /100vh|min-h-screen|h-screen/);
   assert.doesNotMatch(combatant, /data-selected=\{isLeader/);
   assert.match(moduleSrc, /md:items-start/);
+});
+
+test("WarzoneContent emits a static 1280px max width Tailwind can scan", () => {
+  const frame = readSrc("../../components/warzone/WarzoneContent.tsx");
+  const css = readSrc("../../styles/card-cleanup.css");
+  assert.match(frame, /max-w-\[1280px\]/);
+  assert.match(frame, /maxWidth:\s*1280/);
+  assert.doesNotMatch(frame, /WARZONE_CONTENT_MAX_CLASS/);
+  assert.match(css, /data-mwz-decorative-layer/);
 });
 
 test("canonical Warzone routes remain unchanged", () => {
@@ -46,6 +66,24 @@ test("canonical Warzone routes remain unchanged", () => {
   assert.match(app, /path="\/warzone\/tournament\/:id"/);
   assert.match(app, /path="\/warzone\/major-war-league"/);
   assert.match(app, /path="\/battle\/:id"/);
+});
+
+test("Overview puts Featured first and three balanced pillar modules below", () => {
+  const overview = readSrc("../../pages/Arena.tsx");
+  const preview = readSrc("../../components/warzone/WarzoneBattlePreview.tsx");
+  const featured = overview.indexOf('data-warzone-featured="true"');
+  const pillars = overview.indexOf('data-warzone-overview-pillars="true"');
+  const battles = overview.indexOf('data-warzone-active-battles="true"');
+  const tournaments = overview.indexOf("data-warzone-tournament-preview");
+  const mwl = overview.indexOf('data-warzone-mwl-preview="true"');
+  assert.ok(featured >= 0 && pillars > featured);
+  assert.ok(battles > pillars && tournaments > pillars && mwl > pillars);
+  assert.match(overview, /lg:grid-cols-3/);
+  assert.match(overview, /lg:items-stretch/);
+  assert.doesNotMatch(preview, /scale-110 object-cover opacity-\[0\.12\] blur/);
+  assert.doesNotMatch(preview, /mwz-flat-card/);
+  assert.match(preview, /participant\?\.tokenName/);
+  assert.match(preview, /BattleVsMark/);
 });
 
 test("public copy no longer explains implementation internals", () => {
@@ -67,19 +105,62 @@ test("public copy no longer explains implementation internals", () => {
   }
 });
 
-test("MWL champion is not a selected-state control", () => {
+test("MWL top 3 share WarzoneRankCard and #1 is not a giant bleed card", () => {
   const league = readSrc("../../pages/PostGradLeague.tsx");
-  assert.match(league, /data-warzone-mwl-champion="true"/);
+  const rankCard = readSrc("../../components/warzone/WarzoneRankCard.tsx");
+  assert.match(league, /WarzoneRankCard/);
+  assert.match(league, /rank=\{1\}/);
+  assert.match(league, /rank=\{2\}/);
+  assert.match(league, /rank=\{3\}/);
+  assert.match(rankCard, /data-warzone-rank-card=\{rank\}/);
+  assert.match(rankCard, /data-warzone-mwl-champion=\{champion \? "true"/);
+  assert.doesNotMatch(rankCard, /blur-\[12px\]|object-cover opacity-\[0\.14\]/);
   assert.doesNotMatch(league, /data-selected="true"/);
+  assert.doesNotMatch(league, /md:col-start-2 md:row-start-1/);
   assert.match(league, /The monthly fight for Warzone supremacy/);
 });
 
-test("bracket modal uses current rounds and does not invent a champion", () => {
+test("Battle VS mark is a close overlapping pair, not opposite-corner Pixeboy", () => {
+  const vs = readSrc("../../components/arena/BattleWallVs.tsx");
+  assert.match(vs, /data-battle-vs-reticle="true"/);
+  assert.match(vs, /data-battle-vs-mark="true"/);
+  assert.match(vs, /font-black/);
+  assert.match(vs, /font-sans/);
+  assert.match(vs, /md:text-\[3\.75rem\]/);
+  assert.doesNotMatch(vs, /font-retro/);
+  assert.doesNotMatch(vs, /left-0\.5 top-0/);
+  assert.doesNotMatch(vs, /bottom-0 right-0\.5/);
+  assert.match(vs, /translate\(-72%, -62%\)/);
+  assert.match(vs, /translate\(-28%, -38%\)/);
+});
+
+test("Tournament enter opens a details modal and View Bracket never page-hops", () => {
+  const page = readSrc("../../pages/ArenaTournaments.tsx");
+  const card = readSrc("../../components/arena/TournamentEventCard.tsx");
+  const modal = readSrc("../../components/arena/TournamentDetailsModal.tsx");
+  const identity = readSrc("../../components/arena/TournamentTokenIdentity.tsx");
+  assert.match(page, /TournamentDetailsModal/);
+  assert.match(page, /open=\{Boolean\(focusedId\)\}/);
+  assert.match(page, /navigate\("\/warzone\/tournaments", \{ replace: true \}\)/);
+  assert.doesNotMatch(page, /\{focusedId \? <TournamentCommand/);
+  assert.match(modal, /data-tournament-details-modal="true"/);
+  assert.match(card, /fetchPostGradTournamentDetails/);
+  assert.match(card, /data-tournament-view-bracket/);
+  assert.doesNotMatch(card, /canOpenBracket \?/);
+  assert.doesNotMatch(card, />View bracket<\/Link>/);
+  assert.match(identity, /LOADING TOKEN/);
+  assert.match(identity, /profile\?\.symbol \|\| symbol/);
+  assert.doesNotMatch(identity, /Loading token profile/);
+});
+
+test("bracket modal uses current rounds, fight links, and does not invent a champion", () => {
   const modal = readSrc("../../components/arena/TournamentBracketModal.tsx");
   const command = readSrc("../../components/arena/TournamentCommand.tsx");
   assert.match(command, /TournamentBracketModal/);
   assert.match(modal, /presentSymmetricBracket/);
   assert.match(modal, /champion \?/);
+  assert.match(modal, /battleFightHref\(match\.battleId\)/);
+  assert.doesNotMatch(modal, /to=\{`\/battle\//);
   assert.doesNotMatch(modal, /inferred|guess|leaderSide/);
 
   const live = getMockTournamentDetails("event-tournament-live-04");

@@ -203,6 +203,13 @@ test("4a.4: UpVotes remain isolated from MWL scoring and the league table", () =
   const writer = read("lib/arenaLeagueScore.js");
   const votes = read("arenaVotes.js");
   const leagueUi = fs.readFileSync(path.join(apiRoot, "../src/pages/PostGradLeague.tsx"), "utf8");
+  const howItWorks = fs.readFileSync(path.join(apiRoot, "../src/components/warzone/WarzoneLeagueHowItWorks.tsx"), "utf8");
+  assert.equal(WIN_POINTS, 3);
+  assert.equal(LOSS_POINTS, 1);
+  assert.equal(DRAW_POINTS, 0);
+  assert.match(math, /export const WIN_POINTS = 3/);
+  assert.match(math, /export const LOSS_POINTS = 1/);
+  assert.match(math, /export const DRAW_POINTS = 0/);
   assert.doesNotMatch(math, /upvote/i);
   assert.doesNotMatch(writer, /upvote/i);
   assert.doesNotMatch(writer, /arena_votes/);
@@ -211,7 +218,8 @@ test("4a.4: UpVotes remain isolated from MWL scoring and the league table", () =
   assert.doesNotMatch(votes, /settleBattleResult/);
   assert.doesNotMatch(leagueUi, /upvote/i);
   assert.doesNotMatch(leagueUi, /volume/i);
-  assert.match(leagueUi, /Win 3 \/ loss 1 \/ draw 0/);
+  assert.match(leagueUi, /WarzoneLeagueHowItWorks/);
+  assert.match(howItWorks, /Win 3 \/ loss 1 \/ draw 0/);
   assert.match(writer, /kind: "checkin"/);
   assert.match(writer, /kind: "dispatch"/);
 });

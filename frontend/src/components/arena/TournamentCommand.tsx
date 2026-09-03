@@ -54,8 +54,19 @@ type TournamentRound = {
   matches?: TournamentMatch[];
 };
 
+type TournamentEntry = {
+  tokenAddress: string;
+  ownerWallet: string;
+  buyInIntent?: boolean;
+  buyInPaid?: boolean;
+  symbol?: string;
+  tokenName?: string;
+  imageUrl?: string;
+  logoUri?: string;
+};
+
 type TournamentPayload = {
-  entries?: Array<{ tokenAddress: string; ownerWallet: string; buyInIntent?: boolean; buyInPaid?: boolean }>;
+  entries?: TournamentEntry[];
   invites?: Array<{ tokenAddress: string; status: string }>;
   bracket?: { rounds?: TournamentRound[] } | unknown[];
   event?: {
@@ -153,6 +164,13 @@ export function TournamentCommand({
   }, [walletAddress, tournamentChainId]);
 
   const entries = detail?.entries || [];
+  const identityByToken = useMemo(() => {
+    const map = new Map<string, TournamentEntry>();
+    for (const entry of entries) {
+      map.set(tokenKey(entry.tokenAddress, tournamentChainId), entry);
+    }
+    return map;
+  }, [entries, tournamentChainId]);
   const upcoming = tournament?.status === "scheduled" || tournament?.status === "deploying";
   const finished = String(tournament?.status) === "completed" || String(tournament?.status) === "finished";
   const buyIn = Number(detail?.event?.buyInNative || (tournament as { buyInNative?: number } | null)?.buyInNative || 0);
@@ -339,15 +357,14 @@ export function TournamentCommand({
           {buyInMeta ? <span>Buy-in {buyInMeta.label}</span> : null}
         </div>
         {tournament.summary ? <p className="mt-3 text-sm text-muted-foreground">{tournament.summary}</p> : null}
-        {bracketRounds.length ? (
-          <button
-            type="button"
-            onClick={() => setBracketOpen(true)}
-            className="mwz-button mt-4 inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em]"
-          >
-            View bracket
-          </button>
-        ) : null}
+        <button
+          type="button"
+          data-tournament-view-bracket={id}
+          onClick={() => setBracketOpen(true)}
+          className="mwz-button mt-4 inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em]"
+        >
+          View bracket
+        </button>
         {embedded ? (
           <Link to="/warzone/tournaments" className="mt-3 inline-block text-xs uppercase tracking-[0.16em] text-accent hover:underline">
             All tournaments
@@ -383,8 +400,8 @@ export function TournamentCommand({
                   ))}
                 </select>
               </label>
-              <Button className="font-retro" disabled={busy || !selectedToken} onClick={() => void handleOptIn()}>
-                {busy ? "Recording..." : alreadyIn.some((item) => tokenKey(item.tokenId, tournamentChainId) === tokenKey(selectedToken, tournamentChainId)) ? "Update opt-in" : "Opt in"}
+              <Button className="font-black uppercase tracking-[0.14em]" disabled={busy || !selectedToken} onClick={() => void handleOptIn()}>
+                {busy ? "Recording..." : alreadyIn.some((item) => tokenKey(item.tokenId, tournamentChainId) === tokenKey(selectedToken, tournamentChainId)) ? "Update opt-in" : "Enter tournament"}
               </Button>
               {selectedToken ? (
                 <ArenaBuyInButton
@@ -407,16 +424,28 @@ export function TournamentCommand({
             </div>
           )}
           {entries.length ? (
-            <div className="grid gap-2 pt-2 sm:grid-cols-2 xl:grid-cols-3">
-              {entries.map((entry) => (
-                <div key={entry.tokenAddress} className="mwz-flat-card p-2.5">
-                  <TournamentTokenIdentity chainId={tournamentChainId} tokenAddress={entry.tokenAddress} compact />
-                  <div className="mt-2 text-[10px] uppercase tracking-[0.14em] text-white/38">
-                    {entry.buyInPaid ? "Buy-in confirmed" : entry.buyInIntent ? "Buy-in pending" : "Registered"}
+            <details className="pt-2" data-tournament-contender-list="true">
+              <summary className="cursor-pointer text-[10px] uppercase tracking-[0.16em] text-white/50">
+                {entries.length} CONTENDERS
+              </summary>
+              <div className="mt-2 grid gap-1.5">
+                {entries.map((entry) => (
+                  <div key={entry.tokenAddress} className="flex items-center justify-between gap-2 border-b py-1.5" style={{ borderColor: "var(--mwz-flat-card-border)" }}>
+                    <TournamentTokenIdentity
+                      chainId={tournamentChainId}
+                      tokenAddress={entry.tokenAddress}
+                      symbol={entry.symbol}
+                      tokenName={entry.tokenName}
+                      imageUrl={entry.imageUrl || entry.logoUri}
+                      compact
+                    />
+                    <div className="shrink-0 text-[10px] uppercase tracking-[0.14em] text-white/38">
+                      {entry.buyInPaid ? "Buy-in confirmed" : entry.buyInIntent ? "Buy-in pending" : "Registered"}
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            </details>
           ) : null}
         </section>
       ) : null}
@@ -434,11 +463,12 @@ export function TournamentCommand({
       ) : null}
 
       <section data-tournament-standings="true">
-        <div className="mb-3">
+        <details>
+        <summary className="cursor-pointer">
           <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Standings</div>
           <h3 className="mt-1 font-retro text-lg text-foreground">Field</h3>
           <p className="mt-1 text-xs text-white/42">Wins and losses from settled fights.</p>
-        </div>
+        </summary>
         {standings.length ? (
           <div className="overflow-x-auto">
             <div
@@ -455,6 +485,7 @@ export function TournamentCommand({
               const fightHref = battleFightHref(row.latestBattleId);
               const pointsLabel = row.pointsReady && row.latestBattlePoints != null ? row.latestBattlePoints.toFixed(1) : "—";
               const stateLabel = row.live ? "LIVE" : row.latestRound ? `ROUND ${row.latestRound}` : "NO FIGHT YET";
+              const identity = identityByToken.get(tokenKey(row.tokenAddress, tournamentChainId));
               return (
                 <div
                   key={row.tokenAddress}
@@ -465,7 +496,14 @@ export function TournamentCommand({
                   <div className="font-retro text-sm text-white/60">
                     {index === 0 && row.wins > 0 ? <Crown className="h-4 w-4 text-orange-300" /> : `#${index + 1}`}
                   </div>
-                  <TournamentTokenIdentity chainId={tournamentChainId} tokenAddress={row.tokenAddress} compact />
+                  <TournamentTokenIdentity
+                    chainId={tournamentChainId}
+                    tokenAddress={row.tokenAddress}
+                    symbol={identity?.symbol}
+                    tokenName={identity?.tokenName}
+                    imageUrl={identity?.imageUrl || identity?.logoUri}
+                    compact
+                  />
                   <div className="hidden font-retro text-foreground md:block">{row.wins}</div>
                   <div className="hidden font-retro text-foreground md:block">{row.losses}</div>
                   <div className="text-right text-[11px] uppercase tracking-[0.12em] text-white/50 md:text-left">
@@ -488,6 +526,7 @@ export function TournamentCommand({
             <p className="mt-1">{standingsEmpty.body}</p>
           </div>
         )}
+        </details>
       </section>
 
       <section data-tournament-bracket="true">
@@ -517,11 +556,12 @@ export function TournamentCommand({
       </section>
 
       <section data-tournament-matches="true">
-        <div className="mb-3">
+        <details>
+        <summary className="cursor-pointer">
           <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Matches</div>
           <h3 className="mt-1 font-retro text-lg text-foreground">{liveMatches.length ? "Active fights" : "Round fights"}</h3>
           <p className="mt-1 text-xs text-white/42">Current and recent tournament fights.</p>
-        </div>
+        </summary>
         {matchList.length ? (
           <div className="grid gap-3 xl:grid-cols-2">
             {[...matchList]
@@ -542,6 +582,7 @@ export function TournamentCommand({
             <p className="mt-1">{matchesEmpty.body}</p>
           </div>
         )}
+        </details>
       </section>
       <TournamentBracketModal
         open={bracketOpen}

@@ -28,10 +28,12 @@ test("Warzone pages share the same centered content width", () => {
   const details = readSrc("../../components/arena/TournamentCommand.tsx");
   const combatant = readSrc("../../components/arena/BattleWallCombatant.tsx");
 
-  assert.equal(WARZONE_CONTENT_MAX_WIDTH_PX, 1320);
-  assert.equal(WARZONE_CONTENT_MAX_CLASS, "max-w-[1320px]");
+  assert.equal(WARZONE_CONTENT_MAX_WIDTH_PX, 1280);
+  assert.equal(WARZONE_CONTENT_MAX_CLASS, "max-w-[1280px]");
   assert.match(frame, /data-warzone-content="true"/);
-  assert.match(frame, /WARZONE_CONTENT_MAX_CLASS/);
+  assert.match(frame, /max-w-\[1280px\]/);
+  assert.match(frame, /maxWidth:\s*1280/);
+  assert.doesNotMatch(frame, /WARZONE_CONTENT_MAX_CLASS/);
   assert.match(frame, /px-3/);
   assert.match(frame, /md:px-4/);
   for (const src of [overview, battles, league, tournaments]) {
@@ -55,8 +57,11 @@ test("Overview still reads existing feeds and does not add battle realtime", () 
   assert.match(overview, /useArenaFeaturedVotes/);
   assert.match(overview, /ArenaUpvoteDialog/);
   assert.match(overview, /WarzoneBattlePreview/);
+  assert.match(overview, /data-warzone-featured="true"/);
   assert.match(overview, /data-warzone-active-battles/);
+  assert.match(overview, /data-warzone-overview-pillars/);
   assert.match(overview, /data-warzone-mwl-preview/);
+  assert.ok(overview.indexOf("data-warzone-featured") < overview.indexOf("data-warzone-active-battles"));
   assert.doesNotMatch(overview, /Post-grad command|treasury address/);
   assert.doesNotMatch(overview, /useBattleWallRealtime|useAblyBattleChannel|BattleCombatEffects/);
   assert.match(preview, /presentBattleWallModule/);

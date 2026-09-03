@@ -36,8 +36,11 @@ test("canonical tournament routes use the focused command surface", () => {
   assert.match(app, /path="\/tournament\/:id"/);
   assert.match(app, /Navigate to=\{`\/warzone\/tournaments\/\$\{encodeURIComponent\(String\(id \|\| ""\)\)\}`\}/);
   assert.match(page, /useParams/);
-  assert.match(page, /TournamentCommand/);
+  assert.match(page, /useNavigate/);
+  assert.match(page, /TournamentDetailsModal/);
+  assert.match(page, /navigate\("\/warzone\/tournaments"/);
   assert.match(page, /data-warzone-tournaments/);
+  assert.doesNotMatch(page, /\{focusedId \? <TournamentCommand/);
   assert.match(command, /optInPostGradTournament/);
   assert.match(command, /ArenaBuyInButton/);
   assert.match(command, /CLAIM TOURNAMENT REWARDS/);
@@ -47,6 +50,9 @@ test("canonical tournament routes use the focused command surface", () => {
   assert.match(command, /data-tournament-matches/);
   assert.match(command, /data-tournament-opt-in/);
   assert.match(details, /TournamentCommand/);
+  const modal = readSrc("../../components/arena/TournamentDetailsModal.tsx");
+  assert.match(modal, /data-tournament-details-modal/);
+  assert.match(modal, /TournamentCommand/);
   assert.match(overview, /TournamentEventCard/);
   assert.match(overview, /\/warzone\/tournaments/);
   assert.match(league, /\/warzone\/tournaments\/\$\{encodeURIComponent\(quarterFinalsId\)\}/);

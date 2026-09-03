@@ -80,6 +80,21 @@
   z-index: 1;
 }
 
+/* Explicit decorative layers stay out of card flow. Do not weaken the rule above. */
+.mwz-app-shell .mwz-hud-frame > [data-mwz-decorative-layer],
+.mwz-app-shell .mwz-panel > [data-mwz-decorative-layer],
+.mwz-app-shell .mwz-card > [data-mwz-decorative-layer],
+.mwz-app-shell .mwz-flat-card > [data-mwz-decorative-layer],
+.mwz-app-shell .mwz-command-card > [data-mwz-decorative-layer],
+.mwz-app-shell .mwz-command-header > [data-mwz-decorative-layer],
+.mwz-app-shell .mwz-command-metric > [data-mwz-decorative-layer],
+.mwz-app-shell .holo-card > [data-mwz-decorative-layer] {
+  position: absolute !important;
+  inset: 0;
+  z-index: 0 !important;
+  pointer-events: none;
+}
+
 /* Explicit freeze for non-control frames — higher specificity than utility hovers */
 .mwz-app-shell main .mwz-hud-frame:not(a):not(button):not([role="button"]):not(.cursor-pointer):not(.mwz-button):hover,
 .mwz-app-shell main .mwz-panel:not(a):not(button):not([role="button"]):not(.cursor-pointer):not(.mwz-button):hover,

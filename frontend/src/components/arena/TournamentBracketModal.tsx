@@ -1,6 +1,8 @@
+import { Link } from "react-router-dom";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { WarzoneTokenMark } from "@/components/warzone/WarzoneTokenMark";
 import { identitiesFromEntries, presentSymmetricBracket } from "@/lib/arena/tournamentBracketPresentation.mjs";
+import { battleFightHref } from "@/lib/arena/tournamentCommandPresentation.mjs";
 import { cn } from "@/lib/utils";
 
 type BracketMatch = {
@@ -43,7 +45,8 @@ function NodeCard({
 }
 
 function MatchPair({ match }: { match: ReturnType<typeof presentSymmetricBracket>["left"][number]["matches"][number] }) {
-  return (
+  const href = battleFightHref(match.battleId);
+  const body = (
     <div className="space-y-1" data-tournament-bracket-match={match.id}>
       <NodeCard node={match.left} active={match.live} />
       {match.bye ? (
@@ -52,6 +55,12 @@ function MatchPair({ match }: { match: ReturnType<typeof presentSymmetricBracket
         <NodeCard node={match.right} active={match.live} />
       )}
     </div>
+  );
+  if (!href) return body;
+  return (
+    <Link to={href} className="block hover:opacity-90">
+      {body}
+    </Link>
   );
 }
 

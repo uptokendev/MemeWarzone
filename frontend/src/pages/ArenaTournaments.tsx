@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { useParams } from "react-router-dom";
-import { TournamentCommand } from "@/components/arena/TournamentCommand";
+import { useNavigate, useParams } from "react-router-dom";
+import { TournamentDetailsModal } from "@/components/arena/TournamentDetailsModal";
 import { TournamentEventCard } from "@/components/arena/TournamentEventCard";
 import { WarzoneContent } from "@/components/warzone/WarzoneContent";
 import { WarzonePageHeader } from "@/components/warzone/WarzonePageHeader";
@@ -21,6 +21,7 @@ function isTournament(event: ArenaEventSummary) {
 
 const ArenaTournaments = () => {
   const { tournamentId } = useParams();
+  const navigate = useNavigate();
   const focusedId = String(tournamentId || "").trim();
   const { events, archivedEvents, source } = useArenaEventFeed();
   const [tab, setTab] = useState<TournamentTab>("upcoming");
@@ -57,21 +58,26 @@ const ArenaTournaments = () => {
           ))}
         </div>
 
-        {focusedId ? <TournamentCommand tournamentId={focusedId} embedded /> : null}
-
         <section className="space-y-3" data-tournament-list={tab}>
           {rows.length ? (
             rows.map((event) => (
               <TournamentEventCard key={event.id} event={event} tab={tab} focused={focusedId === event.id} />
             ))
-          ) : focusedId ? null : (
+          ) : (
             <div className="py-4 text-sm text-muted-foreground" data-tournament-empty={empty.kind}>
-              <div className="font-retro text-foreground">{empty.title}</div>
+              <div className="font-black text-foreground">{empty.title}</div>
               <p className="mt-1">{empty.body}</p>
             </div>
           )}
         </section>
       </div>
+      <TournamentDetailsModal
+        tournamentId={focusedId}
+        open={Boolean(focusedId)}
+        onOpenChange={(open) => {
+          if (!open) navigate("/warzone/tournaments", { replace: true });
+        }}
+      />
     </WarzoneContent>
   );
 };
