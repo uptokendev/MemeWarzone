@@ -93,3 +93,29 @@ test("uses exact Solana token identity in imported-profile SQL", async () => {
   assert.match(calls[1], /token_address = \$2/);
   assert.doesNotMatch(calls[1], /lower\(coalesce\(token_address/);
 });
+
+test("uses exact Solana identity for native metadata registry joins", async () => {
+  const calls = [];
+  const query = async (sql) => {
+    calls.push(sql);
+    return { rows: [{
+      chain_id: 101,
+      campaign_address: "CampAbCdEfGhijkLmnoPqrstUvwxYZ123456789AB",
+      token_address: "TokAbCdEfGhijkLmnoPqrstUvwxYZ123456789ABC",
+      creator_address: "OwnAbCdEfGhijkLmnoPqrstUvwxYZ123456789ABC",
+      name: "Native Sol",
+      symbol: "NSOL",
+      logo_uri: "https://cdn.example/nsol.png",
+    }] };
+  };
+  const profile = await getArenaTokenProfile(101, "TokAbCdEfGhijkLmnoPqrstUvwxYZ123456789ABC", {
+    query,
+    getMarketSnapshot: async () => market,
+  });
+  assert.equal(profile.origin, "native");
+  assert.equal(profile.imageUrl, "https://cdn.example/nsol.png");
+  assert.match(calls[0], /m\.token_address = coalesce\(c\.token_address::text, ''\)/);
+  assert.match(calls[0], /m\.campaign_address = c\.campaign_address::text/);
+  assert.doesNotMatch(calls[0], /lower\(m\.token_address\)/);
+  assert.doesNotMatch(calls[0], /lower\(m\.campaign_address\)/);
+});
