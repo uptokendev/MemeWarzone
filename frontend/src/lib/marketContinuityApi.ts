@@ -157,8 +157,8 @@ export type MarketCandle = {
   c: string;
   price_o?: string | null;
   price_h?: string | null;
-  price_l?: string | null;
   price_c?: string | null;
+  price_l?: string | null;
   mcap_o?: string | null;
   mcap_h?: string | null;
   mcap_l?: string | null;
@@ -198,13 +198,17 @@ export type MarketSummary = {
   campaign_address?: string;
   marketStage: MarketStage;
   last_price_bnb?: string | null;
+  last_price_usd?: string | null;
   market_cap_bnb?: string | null;
+  market_cap_usd?: string | null;
   liquidity_bnb?: string | null;
+  liquidity_usd?: string | null;
   bonding_reserve_bnb?: string | null;
   volume_5m_bnb?: string | null;
   volume_1h_bnb?: string | null;
   volume_4h_bnb?: string | null;
   volume_24h_bnb?: string | null;
+  volume_24h_usd?: string | null;
   buy_volume_24h_bnb?: string | null;
   sell_volume_24h_bnb?: string | null;
   bonding_volume_24h_bnb?: string | null;
@@ -214,6 +218,12 @@ export type MarketSummary = {
   sells_24h?: number;
   holders?: number | null;
   post_burn_total_supply_raw?: string | null;
+  quote_token_address?: string | null;
+  quote_asset_type?: string | null;
+  quote_reference_price_usd?: string | null;
+  quote_reference_price_updated_at?: string | null;
+  valuation_source?: string | null;
+  valuation_healthy?: boolean | null;
   last_trade_block?: number | null;
   last_trade_at?: string | null;
   poolVerified: boolean;
@@ -249,9 +259,17 @@ export function fetchMarketState(campaignAddress: string, chainId: number, signa
   );
 }
 
-export function fetchMarketRoute(campaignAddress: string, chainId: number, signal?: AbortSignal) {
+export function fetchMarketRoute(
+  campaignAddress: string,
+  chainId: number,
+  signal?: AbortSignal,
+  options?: { includeQuotePrice?: boolean; side?: "buy" | "sell" | null },
+) {
+  const params = new URLSearchParams({ chainId: String(chainId) });
+  if (options?.includeQuotePrice) params.set("includeQuotePrice", "true");
+  if (options?.side) params.set("side", options.side);
   return readJson<MarketRoute>(
-    `/api/token/${campaignPath(campaignAddress, chainId)}/trade-route?chainId=${chainId}`,
+    `/api/token/${campaignPath(campaignAddress, chainId)}/trade-route?${params.toString()}`,
     signal,
   );
 }
