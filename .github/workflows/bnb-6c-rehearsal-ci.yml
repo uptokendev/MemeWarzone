@@ -9,6 +9,7 @@ on:
       - "contracts/TreasuryRouterV3.sol"
       - "contracts/CreatorRewardsVault.sol"
       - "scripts/deploy-bnb-testnet-stage.ts"
+      - "scripts/deploy-bnb-mainnet-v3-cutover.ts"
       - "scripts/verify-bnb-testnet-stage.ts"
       - "scripts/test-bnb-testnet-lifecycle.ts"
       - "scripts/test-bnb-6c-testnet-lifecycle.ts"
@@ -19,6 +20,7 @@ on:
       - "scripts/lib/bnbLiveFactorySnapshot.ts"
       - "scripts/bnb6cRouteAuthority.ts"
       - "scripts/prove-bnb-6c-rehearsal.test.mjs"
+      - "scripts/prove-bnb-mainnet-v3-cutover.test.mjs"
       - "test/BnbSourceHeadMainnetForkTopazV3.spec.ts"
       - ".github/workflows/bnb-6c-rehearsal-ci.yml"
       - ".github/workflows/solana-network-canary.yml"
@@ -50,6 +52,8 @@ jobs:
         run: npm ci --no-audit --no-fund
       - name: Prove 6A census still 3/2 and 6C source gates
         run: npm run prove:bnb-6a-census && npm run prove:bnb-6c-rehearsal
+      - name: Prove clean BNB V3 mainnet cutover stays fail-closed
+        run: node --test scripts/prove-bnb-mainnet-v3-cutover.test.mjs
       - name: Load source-head real-Topaz fork harness without a fork RPC
         run: npx hardhat test test/BnbSourceHeadMainnetForkTopazV3.spec.ts
       - name: Full local 6C deploy, verify, and lifecycle rehearsal
