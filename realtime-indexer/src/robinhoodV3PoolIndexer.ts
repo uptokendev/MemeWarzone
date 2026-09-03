@@ -3,6 +3,11 @@ import { ablyRest, tokenChannel } from "./ably.js";
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
 import {
+  deriveRobinhoodUsdValuation,
+  resolveRobinhoodQuoteUsdReference,
+  type RobinhoodQuoteUsdReference,
+} from "./robinhoodMarketValuation.js";
+import {
   formatPairExecution,
   normalizeCanonicalPairSwap,
   normalizeMockPairSwap,
@@ -26,7 +31,10 @@ const CANONICAL_V3_SWAP_ABI = [
   "event Swap(address indexed sender,address indexed recipient,int256 amount0,int256 amount1,uint160 sqrtPriceX96,uint128 liquidity,int24 tick)",
 ] as const;
 
-const ERC20_METADATA_ABI = ["function decimals() view returns (uint8)"] as const;
+const ERC20_METADATA_ABI = [
+  "function decimals() view returns (uint8)",
+  "function balanceOf(address account) view returns (uint256)",
+] as const;
 const V3_FACTORY_ABI = ["function getPool(address tokenA,address tokenB,uint24 fee) view returns (address)"] as const;
 
 const mockIface = new ethers.Interface(MOCK_POOL_ABI);
@@ -62,6 +70,11 @@ type IndexedPool = {
   feePpm: number;
   graduationBlock: number;
   lastIndexedBlock: number | null;
+};
+
+type PairBalances = {
+  reserveBaseRaw: bigint;
+  reserveQuoteRaw: bigint;
 };
 
 type NormalizedSwap = {
@@ -131,6 +144,11 @@ function storedDecimals(value: unknown): number | null {
   return Number.isInteger(decimals) && decimals >= 0 && decimals <= 36 ? decimals : null;
 }
 
+function rawBigInt(value: unknown): bigint | null {
+  const raw = String(value ?? "").trim();
+  return /^\d+$/.test(raw) ? BigInt(raw) : null;
+}
+
 async function tryCall<T>(call: () => Promise<T>): Promise<T | null> {
   try {
     return await call();
@@ -147,6 +165,55 @@ async function tokenDecimals(provider: ethers.Provider, tokenAddress: string): P
   } catch {
     return 18;
   }
+}
+
+async function tokenBalanceAt(
+  provider: ethers.Provider,
+  tokenAddress: string,
+  account: string,
+  blockTag?: number,
+): Promise<bigint | null> {
+  try {
+    const token = new ethers.Contract(tokenAddress, ERC20_METADATA_ABI, provider) as any;
+    const value = blockTag == null
+      ? await token.balanceOf(account)
+      : await token.balanceOf(account, { blockTag });
+    return BigInt(value);
+  } catch {
+    if (blockTag == null) return null;
+    try {
+      const token = new ethers.Contract(tokenAddress, ERC20_METADATA_ABI, provider) as any;
+      return BigInt(await token.balanceOf(account));
+    } catch {
+      return null;
+    }
+  }
+}
+
+async function readPairBalances(input: {
+  provider: ethers.Provider;
+  pairAddress: string;
+  token0Address: string;
+  token1Address: string;
+  baseTokenAddress: string;
+  quoteTokenAddress: string;
+  blockTag?: number;
+}): Promise<PairBalances> {
+  const [token0Balance, token1Balance] = await Promise.all([
+    tokenBalanceAt(input.provider, input.token0Address, input.pairAddress, input.blockTag),
+    tokenBalanceAt(input.provider, input.token1Address, input.pairAddress, input.blockTag),
+  ]);
+
+  const pair = new ethers.Contract(input.pairAddress, MOCK_POOL_ABI, input.provider) as any;
+  const [mock0, mock1] = await Promise.all([
+    tryCall(() => pair.reserve0()),
+    tryCall(() => pair.reserve1()),
+  ]);
+  const reserve0 = token0Balance != null && token0Balance > 0n ? token0Balance : BigInt(mock0 ?? 0n);
+  const reserve1 = token1Balance != null && token1Balance > 0n ? token1Balance : BigInt(mock1 ?? 0n);
+  const reserveBaseRaw = input.token0Address === input.baseTokenAddress ? reserve0 : reserve1;
+  const reserveQuoteRaw = input.token0Address === input.quoteTokenAddress ? reserve0 : reserve1;
+  return { reserveBaseRaw, reserveQuoteRaw };
 }
 
 function buildDescriptor(indexedPool: IndexedPool): RobinhoodPairDescriptor {
@@ -262,10 +329,16 @@ async function discoverPools(provider: ethers.JsonRpcProvider, config: ChainConf
       const factoryPair = lowerAddress(await tryCall(() => factory.getPool(tokenAddress, quoteTokenAddress, feePpm)));
       if (factoryPair && factoryPair !== pairAddress) throw new Error("V3 factory pool mismatch");
 
-      const reserve0 = BigInt(String((await tryCall(() => pair.reserve0())) ?? 0n));
-      const reserve1 = BigInt(String((await tryCall(() => pair.reserve1())) ?? 0n));
-      const reserveBaseRaw = token0Address === tokenAddress ? reserve0 : reserve1;
-      const reserveQuoteRaw = token0Address === quoteTokenAddress ? reserve0 : reserve1;
+      const balances = await readPairBalances({
+        provider,
+        pairAddress,
+        token0Address,
+        token1Address,
+        baseTokenAddress: tokenAddress,
+        quoteTokenAddress,
+      });
+      const reserveBaseRaw = balances.reserveBaseRaw;
+      const reserveQuoteRaw = balances.reserveQuoteRaw;
       const reserveNativeRaw = quoteAssetType === "WRAPPED_NATIVE" ? reserveQuoteRaw : null;
       const graduationBlock = Math.max(0, Number(row.graduation_block || 0));
       const routerAddress = config.swapRouterAddress || ethers.ZeroAddress.toLowerCase();
@@ -479,7 +552,25 @@ function normalizeCanonicalSwap(indexedPool: IndexedPool, parsed: ethers.LogDesc
   return normalized ? withCompatibility(indexedPool, normalized, sender, recipient) : null;
 }
 
-async function upsertCandle(input: { indexedPool: IndexedPool; blockTime: Date; blockNumber: number; logIndex: number; priceQuote: string; quoteAmountRaw: bigint }): Promise<void> {
+function valuationError(reference: RobinhoodQuoteUsdReference, valuation: { priceUsd: string | null; marketCapUsd: string | null; liquidityUsd: string | null }): string | null {
+  if (!reference.healthy) return reference.error || "Quote USD reference is unhealthy.";
+  if (!valuation.priceUsd) return "Normalized MEME/USD price could not be derived.";
+  if (!valuation.marketCapUsd) return "Post-burn total supply is unavailable for market-cap valuation.";
+  if (!valuation.liquidityUsd) return "Registered quote-side pool balance is unavailable for liquidity valuation.";
+  return null;
+}
+
+async function upsertCandle(input: {
+  indexedPool: IndexedPool;
+  blockTime: Date;
+  blockNumber: number;
+  logIndex: number;
+  priceQuote: string;
+  quoteAmountRaw: bigint;
+  priceUsd: string | null;
+  volumeUsd: string | null;
+  reference: RobinhoodQuoteUsdReference;
+}): Promise<void> {
   const quoteVolume = ethers.formatUnits(input.quoteAmountRaw, input.indexedPool.quoteDecimals);
   const nativeVolume = input.indexedPool.quoteAssetType === "WRAPPED_NATIVE" ? quoteVolume : "0";
   for (const resolution of Object.keys(RESOLUTION_MS) as CandleResolution[]) {
@@ -487,8 +578,10 @@ async function upsertCandle(input: { indexedPool: IndexedPool; blockTime: Date; 
       `insert into public.token_candles(
          chain_id,campaign_address,timeframe,bucket_start,o,h,l,c,volume_bnb,trades_count,
          source_mask,bonding_trade_count,dex_trade_count,bonding_volume_bnb,dex_volume_bnb,
-         last_block_number,last_log_index,quote_token_address,quote_asset_type,volume_quote,dex_volume_quote,updated_at
-       ) values($1,$2,$3,$4,$5,$5,$5,$5,$6,1,2,0,1,0,$6,$7,$8,$9,$10,$11,$11,now())
+         last_block_number,last_log_index,quote_token_address,quote_asset_type,volume_quote,dex_volume_quote,
+         o_usd,h_usd,l_usd,c_usd,volume_usd,reference_price_usd,reference_price_updated_at,valuation_source,valuation_healthy,updated_at
+       ) values($1,$2,$3,$4,$5,$5,$5,$5,$6,1,2,0,1,0,$6,$7,$8,$9,$10,$11,$11,
+                $12,$12,$12,$12,coalesce($13::numeric,0),$14,$15,$16,$17,now())
        on conflict(chain_id,campaign_address,timeframe,bucket_start) do update set
          h=greatest(public.token_candles.h,excluded.h),l=least(public.token_candles.l,excluded.l),
          c=case when coalesce(public.token_candles.last_block_number,-1) < excluded.last_block_number then excluded.c
@@ -500,11 +593,41 @@ async function upsertCandle(input: { indexedPool: IndexedPool; blockTime: Date; 
          quote_token_address=excluded.quote_token_address,quote_asset_type=excluded.quote_asset_type,
          volume_quote=public.token_candles.volume_quote+excluded.volume_quote,
          dex_volume_quote=public.token_candles.dex_volume_quote+excluded.dex_volume_quote,
+         h_usd=case when excluded.h_usd is null then public.token_candles.h_usd when public.token_candles.h_usd is null then excluded.h_usd else greatest(public.token_candles.h_usd,excluded.h_usd) end,
+         l_usd=case when excluded.l_usd is null then public.token_candles.l_usd when public.token_candles.l_usd is null then excluded.l_usd else least(public.token_candles.l_usd,excluded.l_usd) end,
+         c_usd=case when excluded.c_usd is null then public.token_candles.c_usd
+                    when coalesce(public.token_candles.last_block_number,-1) < excluded.last_block_number then excluded.c_usd
+                    when public.token_candles.last_block_number = excluded.last_block_number and coalesce(public.token_candles.last_log_index,-1) <= excluded.last_log_index then excluded.c_usd
+                    else public.token_candles.c_usd end,
+         o_usd=coalesce(public.token_candles.o_usd,excluded.o_usd),
+         volume_usd=public.token_candles.volume_usd+excluded.volume_usd,
+         reference_price_usd=coalesce(excluded.reference_price_usd,public.token_candles.reference_price_usd),
+         reference_price_updated_at=coalesce(excluded.reference_price_updated_at,public.token_candles.reference_price_updated_at),
+         valuation_source=coalesce(excluded.valuation_source,public.token_candles.valuation_source),
+         valuation_healthy=coalesce(public.token_candles.valuation_healthy,true) and coalesce(excluded.valuation_healthy,false),
          last_block_number=greatest(coalesce(public.token_candles.last_block_number,-1),excluded.last_block_number),
          last_log_index=case when coalesce(public.token_candles.last_block_number,-1) < excluded.last_block_number then excluded.last_log_index
                              when public.token_candles.last_block_number = excluded.last_block_number then greatest(coalesce(public.token_candles.last_log_index,-1),excluded.last_log_index)
                              else public.token_candles.last_log_index end,updated_at=now()`,
-      [input.indexedPool.chainId,input.indexedPool.campaignAddress,resolution,bucketStart(input.blockTime, resolution),input.priceQuote,nativeVolume,input.blockNumber,input.logIndex,input.indexedPool.quoteTokenAddress,input.indexedPool.quoteAssetType,quoteVolume],
+      [
+        input.indexedPool.chainId,
+        input.indexedPool.campaignAddress,
+        resolution,
+        bucketStart(input.blockTime, resolution),
+        input.priceQuote,
+        nativeVolume,
+        input.blockNumber,
+        input.logIndex,
+        input.indexedPool.quoteTokenAddress,
+        input.indexedPool.quoteAssetType,
+        quoteVolume,
+        input.priceUsd,
+        input.volumeUsd,
+        input.reference.priceUsd,
+        input.reference.updatedAt,
+        input.reference.source,
+        input.reference.healthy && Boolean(input.priceUsd && input.volumeUsd),
+      ],
     );
   }
 }
@@ -547,6 +670,140 @@ async function updateMarketStats(indexedPool: IndexedPool, priceQuote: string, q
   );
 }
 
+async function refreshNormalizedMarketValuation(provider: ethers.Provider, indexedPool: IndexedPool, blockTag?: number): Promise<void> {
+  const [stats, state, balances, reference, volume] = await Promise.all([
+    pool.query(
+      `select last_price_quote,last_trade_at
+         from public.market_stats
+        where chain_id=$1 and campaign_address=$2
+        limit 1`,
+      [indexedPool.chainId, indexedPool.campaignAddress],
+    ),
+    pool.query(
+      `select post_burn_total_supply_raw
+         from public.campaign_market_state
+        where chain_id=$1 and campaign_address=$2
+        limit 1`,
+      [indexedPool.chainId, indexedPool.campaignAddress],
+    ),
+    readPairBalances({
+      provider,
+      pairAddress: indexedPool.pairAddress,
+      token0Address: indexedPool.token0Address,
+      token1Address: indexedPool.token1Address,
+      baseTokenAddress: indexedPool.baseTokenAddress,
+      quoteTokenAddress: indexedPool.quoteTokenAddress,
+      blockTag,
+    }),
+    resolveRobinhoodQuoteUsdReference({
+      chainId: indexedPool.chainId,
+      quoteTokenAddress: indexedPool.quoteTokenAddress,
+      quoteAssetType: indexedPool.quoteAssetType,
+    }),
+    pool.query(
+      `select coalesce(sum(volume_usd),0) as volume_24h_usd
+         from public.dex_trades
+        where chain_id=$1 and campaign_address=$2 and status='confirmed'
+          and block_time>=now()-interval '24 hours'`,
+      [indexedPool.chainId, indexedPool.campaignAddress],
+    ),
+  ]);
+
+  const priceQuote = stats.rows[0]?.last_price_quote ?? null;
+  const supplyRaw = state.rows[0]?.post_burn_total_supply_raw ?? null;
+  const derived = reference.healthy && reference.priceUsd && priceQuote
+    ? deriveRobinhoodUsdValuation({
+        priceQuote,
+        quotePriceUsd: reference.priceUsd,
+        postBurnTotalSupplyRaw: supplyRaw,
+        baseDecimals: indexedPool.baseDecimals,
+        reserveQuoteRaw: balances.reserveQuoteRaw.toString(),
+        quoteDecimals: indexedPool.quoteDecimals,
+      })
+    : { priceUsd: null, volumeUsd: null, marketCapUsd: null, liquidityUsd: null };
+  const error = valuationError(reference, derived);
+  const healthy = !error;
+  const lastTradeAt = stats.rows[0]?.last_trade_at ?? null;
+  const dataLagSeconds = lastTradeAt
+    ? Math.max(0, Math.floor((Date.now() - new Date(lastTradeAt).getTime()) / 1000))
+    : null;
+  const volume24hUsd = volume.rows[0]?.volume_24h_usd ?? null;
+
+  await pool.query(
+    `update public.dex_pools
+        set reserve_token_raw=$3,
+            reserve_native_raw=case when $5='WRAPPED_NATIVE' then $4 else null end,
+            reserve_base_raw=$3,
+            reserve_quote_raw=$4,
+            price_usd=$6,
+            liquidity_usd=$7,
+            volume_usd_24h=$8,
+            reference_price_usd=$9,
+            reference_price_updated_at=$10,
+            valuation_source=$11,
+            valuation_healthy=$12,
+            valuation_error=$13,
+            updated_at=now()
+      where chain_id=$1 and pair_address=$2`,
+    [
+      indexedPool.chainId,
+      indexedPool.pairAddress,
+      balances.reserveBaseRaw.toString(),
+      balances.reserveQuoteRaw.toString(),
+      indexedPool.quoteAssetType,
+      healthy ? derived.priceUsd : null,
+      healthy ? derived.liquidityUsd : null,
+      volume24hUsd,
+      reference.priceUsd,
+      reference.updatedAt,
+      reference.source,
+      healthy,
+      error,
+    ],
+  );
+
+  await pool.query(
+    `update public.market_pairs
+        set reserve_base_raw=$3,reserve_quote_raw=$4,updated_at=now()
+      where chain_id=$1 and lower(pool_address)=lower($2)`,
+    [indexedPool.chainId,indexedPool.pairAddress,balances.reserveBaseRaw.toString(),balances.reserveQuoteRaw.toString()],
+  );
+
+  await pool.query(
+    `insert into public.market_stats(
+       chain_id,campaign_address,market_stage,quote_token_address,quote_asset_type,
+       last_price_usd,market_cap_usd,liquidity_usd,volume_24h_usd,
+       reference_price_usd,reference_price_updated_at,valuation_source,valuation_healthy,valuation_error,
+       post_burn_total_supply_raw,supply_basis,data_lag_seconds,updated_at
+     ) values($1,$2,'DEX_ACTIVE',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'post_burn_total_supply',$15,now())
+     on conflict(chain_id,campaign_address) do update set
+       market_stage='DEX_ACTIVE',quote_token_address=excluded.quote_token_address,quote_asset_type=excluded.quote_asset_type,
+       last_price_usd=excluded.last_price_usd,market_cap_usd=excluded.market_cap_usd,liquidity_usd=excluded.liquidity_usd,
+       volume_24h_usd=excluded.volume_24h_usd,reference_price_usd=excluded.reference_price_usd,
+       reference_price_updated_at=excluded.reference_price_updated_at,valuation_source=excluded.valuation_source,
+       valuation_healthy=excluded.valuation_healthy,valuation_error=excluded.valuation_error,
+       post_burn_total_supply_raw=excluded.post_burn_total_supply_raw,supply_basis=excluded.supply_basis,
+       data_lag_seconds=excluded.data_lag_seconds,updated_at=now()`,
+    [
+      indexedPool.chainId,
+      indexedPool.campaignAddress,
+      indexedPool.quoteTokenAddress,
+      indexedPool.quoteAssetType,
+      healthy ? derived.priceUsd : null,
+      healthy ? derived.marketCapUsd : null,
+      healthy ? derived.liquidityUsd : null,
+      volume24hUsd,
+      reference.priceUsd,
+      reference.updatedAt,
+      reference.source,
+      healthy,
+      error,
+      supplyRaw,
+      dataLagSeconds,
+    ],
+  );
+}
+
 async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedPool,log: ethers.Log,_parsed: ethers.LogDescription,normalized: NormalizedSwap): Promise<boolean> {
   if (normalized.baseAmountRaw <= 0n || normalized.quoteAmountRaw <= 0n) return false;
   const descriptor = buildDescriptor(indexedPool);
@@ -568,19 +825,56 @@ async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedP
   const nativeAmountRaw = isNativeQuote ? normalized.quoteAmountRaw.toString() : null;
   const nativeAmount = isNativeQuote ? execution.quoteAmount : null;
   const priceBnb = isNativeQuote ? execution.priceQuote : null;
+  const reference = await resolveRobinhoodQuoteUsdReference({
+    chainId: indexedPool.chainId,
+    quoteTokenAddress: indexedPool.quoteTokenAddress,
+    quoteAssetType: indexedPool.quoteAssetType,
+  });
+  const tradeValuation = reference.healthy && reference.priceUsd
+    ? deriveRobinhoodUsdValuation({
+        priceQuote: execution.priceQuote,
+        quotePriceUsd: reference.priceUsd,
+        quoteTradeAmount: execution.quoteAmount,
+      })
+    : { priceUsd: null, volumeUsd: null, marketCapUsd: null, liquidityUsd: null };
+  const tradeValuationHealthy = reference.healthy && Boolean(tradeValuation.priceUsd && tradeValuation.volumeUsd);
+  const tradeValuationError = tradeValuationHealthy
+    ? null
+    : reference.error || "Trade USD valuation could not be derived.";
+
   const inserted = await pool.query(
     `insert into public.dex_trades(
        chain_id,campaign_address,token_address,pair_address,tx_hash,log_index,block_number,block_hash,block_time,status,side,
        sender_address,recipient_address,transaction_from,token_amount_raw,native_amount_raw,token_amount,native_amount,price_bnb,
        base_amount_raw,quote_amount_raw,base_amount,quote_amount,price_quote,quote_asset_type,quote_token_address,
+       volume_usd,reference_price_usd,reference_price_updated_at,valuation_source,valuation_healthy,valuation_error,
        execution_source,origin,trade_intent_id,created_at,updated_at
-     ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,'confirmed',$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,'robinhood_v3',$26,$27,now(),now())
+     ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,'confirmed',$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,
+              $28,$29,$30,$31,$32,$33,'robinhood_v3',$26,$27,now(),now())
      on conflict(chain_id,tx_hash,log_index) do nothing returning tx_hash`,
-    [indexedPool.chainId,indexedPool.campaignAddress,indexedPool.tokenAddress,indexedPool.pairAddress,txHash,logIndex,log.blockNumber,block.hash,blockTime,normalized.side,normalized.sender,normalized.recipient,transactionFrom,normalized.baseAmountRaw.toString(),nativeAmountRaw,execution.baseAmount,nativeAmount,priceBnb,normalized.baseAmountRaw.toString(),normalized.quoteAmountRaw.toString(),execution.baseAmount,execution.quoteAmount,execution.priceQuote,indexedPool.quoteAssetType,indexedPool.quoteTokenAddress,origin,tradeIntentId],
+    [
+      indexedPool.chainId,indexedPool.campaignAddress,indexedPool.tokenAddress,indexedPool.pairAddress,
+      txHash,logIndex,log.blockNumber,block.hash,blockTime,normalized.side,normalized.sender,normalized.recipient,transactionFrom,
+      normalized.baseAmountRaw.toString(),nativeAmountRaw,execution.baseAmount,nativeAmount,priceBnb,
+      normalized.baseAmountRaw.toString(),normalized.quoteAmountRaw.toString(),execution.baseAmount,execution.quoteAmount,
+      execution.priceQuote,indexedPool.quoteAssetType,indexedPool.quoteTokenAddress,origin,tradeIntentId,
+      tradeValuationHealthy ? tradeValuation.volumeUsd : null,
+      reference.priceUsd,reference.updatedAt,reference.source,tradeValuationHealthy,tradeValuationError,
+    ],
   );
   if (!inserted.rowCount) return false;
 
-  await upsertCandle({ indexedPool, blockTime, blockNumber: log.blockNumber, logIndex, priceQuote: execution.priceQuote, quoteAmountRaw: normalized.quoteAmountRaw });
+  await upsertCandle({
+    indexedPool,
+    blockTime,
+    blockNumber: log.blockNumber,
+    logIndex,
+    priceQuote: execution.priceQuote,
+    quoteAmountRaw: normalized.quoteAmountRaw,
+    priceUsd: tradeValuationHealthy ? tradeValuation.priceUsd : null,
+    volumeUsd: tradeValuationHealthy ? tradeValuation.volumeUsd : null,
+    reference,
+  });
   await updateMarketStats(indexedPool, execution.priceQuote, execution.quoteAmount, normalized.side, log.blockNumber, blockTime);
   await pool.query(
     `update public.dex_pools
@@ -589,14 +883,6 @@ async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedP
             updated_at=now()
       where chain_id=$1 and pair_address=$2`,
     [indexedPool.chainId,indexedPool.pairAddress,execution.priceQuote],
-  );
-  await pool.query(
-    `update public.market_pairs
-        set reserve_base_raw=coalesce((select reserve_base_raw from public.dex_pools where chain_id=$1 and pair_address=$2),reserve_base_raw),
-            reserve_quote_raw=coalesce((select reserve_quote_raw from public.dex_pools where chain_id=$1 and pair_address=$2),reserve_quote_raw),
-            updated_at=now()
-      where chain_id=$1 and lower(pool_address)=lower($2)`,
-    [indexedPool.chainId,indexedPool.pairAddress],
   );
 
   await publishMarketEvent(indexedPool, "market_trade", {
@@ -615,6 +901,12 @@ async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedP
     nativeAmountRaw:isNativeQuote ? normalized.quoteAmountRaw.toString() : null,
     priceQuote:execution.priceQuote,
     priceBnb:isNativeQuote ? execution.priceQuote : null,
+    priceUsd:tradeValuationHealthy ? tradeValuation.priceUsd : null,
+    volumeUsd:tradeValuationHealthy ? tradeValuation.volumeUsd : null,
+    referencePriceUsd:reference.priceUsd,
+    referencePriceUpdatedAt:reference.updatedAt,
+    valuationSource:reference.source,
+    valuationHealthy:tradeValuationHealthy,
     txHash,logIndex,blockNumber:log.blockNumber,blockTime:blockTime.toISOString(),status:"confirmed",
   });
   return true;
@@ -622,7 +914,10 @@ async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedP
 
 async function scanPool(provider: ethers.JsonRpcProvider, indexedPool: IndexedPool, head: number): Promise<number> {
   const from = Math.max(indexedPool.graduationBlock, indexedPool.lastIndexedBlock ?? indexedPool.graduationBlock);
-  if (from > head) return 0;
+  if (from > head) {
+    await refreshNormalizedMarketValuation(provider, indexedPool, head);
+    return 0;
+  }
   let inserted = 0;
   const chunk = Math.max(50, Number(ENV.LOG_CHUNK_SIZE || 500));
   let cursor = from;
@@ -647,6 +942,7 @@ async function scanPool(provider: ethers.JsonRpcProvider, indexedPool: IndexedPo
     cursor = to + 1;
     if (ENV.INDEXER_LOG_CALL_DELAY_MS > 0) await new Promise((resolve) => setTimeout(resolve, ENV.INDEXER_LOG_CALL_DELAY_MS));
   }
+  await refreshNormalizedMarketValuation(provider, indexedPool, head);
   return inserted;
 }
 
@@ -690,4 +986,13 @@ export function startRobinhoodV3PoolIndexerLoop(): void {
   void loop();
 }
 
-export const robinhoodV3Internals = { normalizeMockSwap, normalizeCanonicalSwap, MOCK_SWAP_TOPIC, CANONICAL_SWAP_TOPIC, storedDecimals };
+export const robinhoodV3Internals = {
+  normalizeMockSwap,
+  normalizeCanonicalSwap,
+  MOCK_SWAP_TOPIC,
+  CANONICAL_SWAP_TOPIC,
+  storedDecimals,
+  rawBigInt,
+  readPairBalances,
+  valuationError,
+};
