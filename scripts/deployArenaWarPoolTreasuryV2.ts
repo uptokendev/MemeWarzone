@@ -8,8 +8,9 @@ import { ethers } from "hardhat";
  *   Battle/Tournament Boost: 90% prize / 10% protocol
  *   Post-Grad League V2: 60% Monthly MWL / 40% Quarterly reserve
  *
- * Supported in this deployment pass: BSC mainnet (56) and BSC testnet (97).
+ * Supported production/test deployment pass: BSC mainnet (56) and BSC testnet (97).
  * Solana and Robinhood money paths are explicitly out of scope here.
+ * Chain 31337 is accepted only when ARENA_V2_ALLOW_LOCAL=1 for isolated CI/local rehearsal.
  *
  * Required:
  *   ARENA_V2_RESOLVER=<address>
@@ -48,6 +49,10 @@ function envAddress(names: string[], required = true): string {
   return "";
 }
 
+function truthy(value: unknown) {
+  return /^(1|true|yes|on)$/i.test(String(value ?? "").trim());
+}
+
 async function requireContract(address: string, label: string) {
   const code = await ethers.provider.getCode(address);
   if (!code || code === "0x") throw new Error(`${label} has no deployed bytecode: ${address}`);
@@ -57,7 +62,8 @@ async function main() {
   const [deployer] = await ethers.getSigners();
   const network = await ethers.provider.getNetwork();
   const chainId = Number(network.chainId);
-  if (![56, 97].includes(chainId)) {
+  const localRehearsal = chainId === 31337 && truthy(process.env.ARENA_V2_ALLOW_LOCAL);
+  if (![56, 97].includes(chainId) && !localRehearsal) {
     throw new Error(`Arena EVM V2 deployment is restricted to BSC 56/97 in this phase; got chain ${chainId}`);
   }
 
