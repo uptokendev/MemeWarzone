@@ -6,6 +6,11 @@ on:
       - main
     paths:
       - "contracts/ArenaWarPoolTreasury.sol"
+      - "contracts/ArenaWarPoolTreasuryV2.sol"
+      - "contracts/PostGradLeagueTreasuryV2.sol"
+      - "contracts/WarzoneSponsorshipRouterV1.sol"
+      - "contracts/EventPrizeVaultV1.sol"
+      - "contracts/test/ArenaMoneyV2TestReceivers.sol"
       - "db/migrations/*arena*.sql"
       - "frontend/api/arena*.js"
       - "frontend/api/upload.js"
@@ -36,12 +41,18 @@ on:
       - "scripts/deployArenaWarPoolTreasury.ts"
       - "scripts/solana/arena-operator-*.mjs"
       - "test/ArenaWarPoolTreasury.spec.ts"
+      - "test/ArenaMoneyV2.spec.ts"
       - ".github/workflows/arena-acceptance-ci.yml"
   push:
     branches:
       - "build/cross-chain-stabilization-rh-base"
     paths:
       - "contracts/ArenaWarPoolTreasury.sol"
+      - "contracts/ArenaWarPoolTreasuryV2.sol"
+      - "contracts/PostGradLeagueTreasuryV2.sol"
+      - "contracts/WarzoneSponsorshipRouterV1.sol"
+      - "contracts/EventPrizeVaultV1.sol"
+      - "contracts/test/ArenaMoneyV2TestReceivers.sol"
       - "db/migrations/*arena*.sql"
       - "frontend/api/arena*.js"
       - "frontend/api/upload.js"
@@ -72,6 +83,7 @@ on:
       - "scripts/deployArenaWarPoolTreasury.ts"
       - "scripts/solana/arena-operator-*.mjs"
       - "test/ArenaWarPoolTreasury.spec.ts"
+      - "test/ArenaMoneyV2.spec.ts"
       - ".github/workflows/arena-acceptance-ci.yml"
   workflow_dispatch:
 
@@ -106,8 +118,8 @@ jobs:
       - name: Compile EVM contracts
         run: npx hardhat compile
 
-      - name: Test Arena War Pool treasury
-        run: npx hardhat test test/ArenaWarPoolTreasury.spec.ts
+      - name: Test Arena War Pool treasury generations
+        run: npx hardhat test test/ArenaWarPoolTreasury.spec.ts test/ArenaMoneyV2.spec.ts
 
       - name: Verify Arena migration chain is complete and ordered
         shell: bash
