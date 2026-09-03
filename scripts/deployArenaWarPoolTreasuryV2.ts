@@ -27,6 +27,10 @@ import { ethers } from "hardhat";
  *   ARENA_V2_OWNER=<address>                 defaults to deployer
  *   ARENA_LEAGUE_V2_OWNER=<address>          defaults to ARENA_V2_OWNER
  *
+ * A fresh League V2 is bootstrapped under the deployer only long enough to
+ * authorize the new WarPool source, then ownership is transferred to the
+ * configured final League owner before the script exits.
+ *
  * Example:
  *   npx hardhat run scripts/deployArenaWarPoolTreasuryV2.ts --network bscTestnet
  */
@@ -81,6 +85,7 @@ async function main() {
 
   let leagueAddress: string;
   let league: any;
+  let deployedLeague = false;
   if (existingLeague) {
     await requireContract(existingLeague, "PostGradLeagueTreasuryV2");
     leagueAddress = existingLeague;
@@ -98,9 +103,10 @@ async function main() {
       "ARENA_QUARTERLY_RESERVE_RECEIVER",
     ]);
     const League = await ethers.getContractFactory("PostGradLeagueTreasuryV2");
-    league = await League.deploy(leagueOwner, monthlyReceiver, quarterlyReceiver);
+    league = await League.deploy(deployer.address, monthlyReceiver, quarterlyReceiver);
     await league.waitForDeployment();
     leagueAddress = await league.getAddress();
+    deployedLeague = true;
     console.log("PostGradLeagueTreasuryV2: deployed", leagueAddress);
   }
 
@@ -120,11 +126,11 @@ async function main() {
     throw new Error("Arena V2 League treasury invariant failed");
   }
 
-  const leagueContractOwner = String(await league.owner()).toLowerCase();
-  if (leagueContractOwner !== deployer.address.toLowerCase()) {
+  const currentLeagueOwner = ethers.getAddress(await league.owner());
+  if (currentLeagueOwner.toLowerCase() !== deployer.address.toLowerCase()) {
     throw new Error(
-      `PostGradLeagueTreasuryV2 owner ${await league.owner()} must authorize ${warPoolAddress} as a source. ` +
-        `This script refuses to pretend source authorization succeeded; rerun with the league owner signer or call setSource explicitly.`,
+      `Existing PostGradLeagueTreasuryV2 owner ${currentLeagueOwner} must authorize ${warPoolAddress} as a source. ` +
+        `Rerun this script with the League owner signer or authorize the source explicitly before activation.`,
     );
   }
 
@@ -134,10 +140,19 @@ async function main() {
     throw new Error("PostGradLeagueTreasuryV2 source authorization invariant failed");
   }
 
+  if (deployedLeague && leagueOwner.toLowerCase() !== deployer.address.toLowerCase()) {
+    const transferTx = await league.transferOwnership(leagueOwner);
+    await transferTx.wait();
+  }
+  if ((await league.owner()).toLowerCase() !== leagueOwner.toLowerCase()) {
+    throw new Error("PostGradLeagueTreasuryV2 final ownership invariant failed");
+  }
+
   console.log("ArenaWarPoolTreasuryV2:", warPoolAddress);
   console.log("Boost quote signer:", boostQuoteSigner);
   console.log("Protocol receiver:", protocolReceiver);
   console.log("Post-Grad League V2:", leagueAddress);
+  console.log("Post-Grad League V2 owner:", await league.owner());
   console.log("");
   console.log(`# Persist these server/runtime addresses for chain ${chainId}:`);
   console.log(`ARENA_WAR_POOL_TREASURY_V2_ADDRESS_${chainId}=${warPoolAddress}`);
