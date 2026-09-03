@@ -35,12 +35,12 @@ function MetricBox({
   return (
     <div
       data-battle-metric={label}
-      className="min-w-0 border border-white/12 bg-black/50 px-2 py-1.5 md:px-2.5 md:py-1.5"
+      className="min-w-0 border border-white/12 bg-black/50 px-1.5 py-1 md:px-2.5 md:py-1.5"
     >
-      <div className="text-[8px] uppercase tracking-[0.16em] text-white/42">{label}</div>
+      <div className="text-[7px] uppercase tracking-[0.14em] text-white/42 md:text-[8px] md:tracking-[0.16em]">{label}</div>
       <div
         className={cn(
-          "mt-0.5 truncate font-retro text-sm leading-none tabular-nums md:text-base",
+          "mt-0.5 truncate font-retro text-xs leading-none tabular-nums md:text-base",
           ready ? (accent === "cyan" ? "text-cyan-100" : "text-orange-100") : "text-white/34",
         )}
       >
@@ -160,39 +160,38 @@ export function BattleWallCombatant({
       )}
     >
       <div
+        data-battle-combatant-split="true"
         className={cn(
-          "relative z-10 grid min-h-0 flex-1 grid-cols-1 gap-2.5 p-2.5 sm:p-3",
-          compact ? "md:grid-cols-[minmax(5.5rem,38%)_minmax(0,1fr)]" : "md:grid-cols-[minmax(6.75rem,42%)_minmax(0,1fr)]",
-          "md:items-stretch md:gap-3",
+          "relative z-10 grid min-h-0 min-w-0 flex-1 items-stretch gap-2 p-2",
+          compact
+            ? "grid-cols-[minmax(5.25rem,36%)_minmax(0,1fr)]"
+            : "grid-cols-[minmax(5.5rem,38%)_minmax(0,1fr)] sm:grid-cols-[minmax(6rem,38%)_minmax(0,1fr)] md:grid-cols-[minmax(6.75rem,42%)_minmax(0,1fr)]",
+          "md:gap-3 md:p-3",
         )}
       >
         <div
           data-battle-combatant-art="true"
-          className={cn(
-            "relative overflow-hidden border border-white/10",
-            compact ? "h-32 sm:h-36" : "h-36 sm:h-40",
-            "md:h-full md:min-h-[9.75rem] md:max-h-[12.75rem]",
-          )}
+          className="relative h-full min-h-[6.5rem] min-w-0 max-h-[7.75rem] overflow-hidden border border-white/10 sm:max-h-[8.5rem] md:min-h-[9.75rem] md:max-h-[12.75rem]"
         >
           <CombatantArtwork imageUrl={imageUrl} ticker={displaySymbol} name={displayName} accent={accent} />
           <div className={cn("pointer-events-none absolute inset-0", artWash)} />
-          <div className="absolute left-1.5 top-1.5 border border-white/20 bg-black/65 px-1.5 py-0.5 font-retro text-[9px] uppercase tracking-[0.16em] text-white/80">
+          <div className="absolute left-1 top-1 border border-white/20 bg-black/65 px-1 py-0.5 font-retro text-[8px] uppercase tracking-[0.14em] text-white/80 md:left-1.5 md:top-1.5 md:px-1.5 md:text-[9px] md:tracking-[0.16em]">
             #{sideIndex}
           </div>
         </div>
 
-        <div className="relative z-10 flex min-w-0 flex-col gap-2">
+        <div className="relative z-10 flex min-w-0 flex-col gap-1.5 md:gap-2">
           <div className="min-w-0">
-            <div className="truncate font-retro text-xl leading-none text-foreground md:text-2xl lg:text-[1.65rem]">
+            <div className="truncate font-retro text-base leading-none text-foreground sm:text-xl md:text-2xl lg:text-[1.65rem]">
               ${displaySymbol}
             </div>
-            <div className="mt-1 truncate text-[11px] uppercase tracking-[0.16em] text-white/58">{displayName}</div>
+            <div className="mt-0.5 truncate text-[10px] uppercase tracking-[0.14em] text-white/58 md:mt-1 md:text-[11px] md:tracking-[0.16em]">{displayName}</div>
             {description ? (
-              <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-white/48">{description}</p>
+              <p className="mt-1 hidden line-clamp-2 text-[11px] leading-4 text-white/48 md:block">{description}</p>
             ) : null}
           </div>
 
-          <div className="grid w-full grid-cols-2 gap-1.5" data-battle-metric-grid="true">
+          <div className="grid w-full grid-cols-2 gap-1 sm:gap-1.5" data-battle-metric-grid="true">
             <MetricBox
               label="MCAP"
               value={currentMcap === null ? "—" : formatCompactUsd(currentMcap)}
@@ -223,7 +222,7 @@ export function BattleWallCombatant({
 
       <div
         data-battle-combatant-actions="true"
-        className="relative z-10 mx-2.5 mb-2.5 min-h-11 border border-dashed border-orange-400/20 bg-orange-500/[0.04] sm:mx-3 sm:mb-3"
+        className="relative z-10 mx-2 mb-2 min-h-11 border border-dashed border-orange-400/20 bg-orange-500/[0.04] sm:mx-3 sm:mb-3"
         aria-hidden="true"
       />
     </div>

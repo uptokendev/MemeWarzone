@@ -92,6 +92,7 @@ export function BattleCombatEffects({
   const enabled = effectsEnabled();
   const reducedMotion = useMediaFlag("(prefers-reduced-motion: reduce)");
   const compact = useMediaFlag("(max-width: 1279px)");
+  const stacked = useMediaFlag("(max-width: 767px)");
   const previous = useRef<ReturnType<typeof snapshotCombatScore>>(null);
   const sequence = useRef(0);
   const [holes, setHoles] = useState<BulletHole[]>([]);
@@ -124,10 +125,16 @@ export function BattleCombatEffects({
       for (let index = 0; index < count; index += 1) {
         sequence.current += 1;
         const id = `${now}-${sequence.current}`;
-        const x = compact
-          ? (target === "left" ? randomBetween(8, 42) : randomBetween(58, 92))
-          : (target === "left" ? randomBetween(4, 38) : randomBetween(62, 96));
-        const y = compact ? randomBetween(14, 78) : randomBetween(16, 72);
+        const x = stacked
+          ? randomBetween(6, 34)
+          : compact
+            ? (target === "left" ? randomBetween(8, 42) : randomBetween(58, 92))
+            : (target === "left" ? randomBetween(4, 38) : randomBetween(62, 96));
+        const y = stacked
+          ? (target === "left" ? randomBetween(8, 30) : randomBetween(62, 86))
+          : compact
+            ? randomBetween(14, 78)
+            : randomBetween(16, 72);
         newHoles.push({
           id: `hole-${id}`,
           side: target,
@@ -152,7 +159,7 @@ export function BattleCombatEffects({
     }
     if (newHoles.length) setHoles((current) => capHoles([...current, ...newHoles]) as BulletHole[]);
     if (newTracers.length) setTracers((current) => [...current, ...newTracers].slice(-MAX_TRACERS));
-  }, [enabled, metrics, reducedMotion, compact]);
+  }, [enabled, metrics, reducedMotion, compact, stacked]);
 
   useEffect(() => {
     if (!enabled || (!holes.length && !tracers.length)) return;

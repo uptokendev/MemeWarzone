@@ -53,17 +53,17 @@ export function BattleWallVs({
     <div
       data-battle-wall-vs
       data-battle-wall-vs-mode={deploymentPending ? "upcoming" : delay ? "delay" : "combat"}
-      className="relative z-20 flex min-w-0 max-w-full flex-col items-center justify-center gap-1 px-1 py-3 text-center md:min-w-[5.25rem] md:max-w-[6.75rem] md:px-0 md:py-1"
+      className="relative z-20 flex min-w-0 max-w-full flex-col items-center justify-center gap-0.5 px-1 py-1 text-center md:min-w-[5.25rem] md:max-w-[6.75rem] md:gap-1 md:px-0 md:py-1"
     >
       <p className="sr-only">{spoken || "Versus"}</p>
       <div
-        className="font-retro text-3xl uppercase tracking-[0.18em] text-orange-400 md:text-4xl"
+        className="font-retro text-2xl uppercase tracking-[0.18em] text-orange-400 md:text-4xl"
         aria-hidden="true"
       >
         VS
       </div>
       {deploymentPending ? (
-        <div className="space-y-2" data-battle-deployment-hud="true">
+        <div className="space-y-1 md:space-y-2" data-battle-deployment-hud="true">
           <div className="font-retro text-[11px] uppercase tracking-[0.18em] text-white/70">Deployment pending</div>
           {stakeLabel ? (
             <div>
@@ -87,7 +87,7 @@ export function BattleWallVs({
         </div>
       ) : leftPoints && rightPoints ? (
         <div
-          className="flex items-end justify-center gap-2 font-retro text-lg leading-none text-foreground md:text-xl"
+          className="flex items-end justify-center gap-2 font-retro text-sm leading-none text-foreground md:text-xl"
           aria-hidden="true"
         >
           <span className={cn("tabular-nums", leaderIndex === 0 && "text-orange-200")}>{leftPoints}</span>
@@ -113,8 +113,8 @@ export function BattleWallVs({
         </div>
       ) : null}
       {clockLabel ? (
-        <div className="mt-1 space-y-0.5" aria-hidden="true">
-          <div className="font-retro text-xs uppercase tracking-[0.1em] text-white/82 md:text-sm">{clockLabel}</div>
+        <div className="space-y-0.5 md:mt-1" aria-hidden="true">
+          <div className="font-retro text-[11px] uppercase tracking-[0.1em] text-white/82 md:text-sm">{clockLabel}</div>
           {remaining ? <div className="text-[9px] uppercase tracking-[0.22em] text-white/42">Remaining</div> : null}
         </div>
       ) : null}
