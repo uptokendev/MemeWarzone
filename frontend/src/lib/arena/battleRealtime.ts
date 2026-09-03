@@ -1,6 +1,7 @@
 import type { Battle } from "@/features/postgrad/contracts";
 
 export type BattleRealtimeLeader = "left" | "right" | "tied" | null;
+export type BattleSettlementMode = "v1_mcap_pct_change" | "battle_points_v2";
 
 export type BattleRealtimeSide = {
   side: "left" | "right";
@@ -40,7 +41,13 @@ export type BattleRealtimeMetrics = {
   chainId: number;
   state: string;
   scoringVersion: string;
-  settlementMode: "v1_mcap_pct_change";
+  settlementMode: BattleSettlementMode;
+  settlementVersion: number | null;
+  settlementScoringVersion: string | null;
+  moneyTieBreak: string | null;
+  tieBreakUsed: boolean;
+  finalBattlePoints: { left: number | null; right: number | null } | null;
+  settlementMetricsUpdatedAt: string | null;
   leaderSide: BattleRealtimeLeader;
   pointDifference: number | null;
   metricsUpdatedAt: string | null;
@@ -70,6 +77,10 @@ function finite(value: unknown): number | null {
 
 function nonNegative(value: unknown): number {
   return Math.max(0, finite(value) ?? 0);
+}
+
+function settlementMode(value: unknown): BattleSettlementMode {
+  return String(value || "") === "battle_points_v2" ? "battle_points_v2" : "v1_mcap_pct_change";
 }
 
 function normalizeSide(value: any, expected: "left" | "right"): BattleRealtimeSide | null {
@@ -117,12 +128,20 @@ export function normalizeBattleRealtimeMetrics(value: any): BattleRealtimeMetric
     ? value.dataHealth.reasons.map((reason: unknown) => String(reason)).filter(Boolean)
     : [];
   const healthy = value.dataHealth?.healthy === true;
+  const finalLeft = finite(value.finalBattlePoints?.left);
+  const finalRight = finite(value.finalBattlePoints?.right);
   return {
     battleId: String(value.battleId),
     chainId: Number(value.chainId) || 0,
     state: String(value.state || ""),
     scoringVersion: String(value.scoringVersion || "battle_points_v2"),
-    settlementMode: "v1_mcap_pct_change",
+    settlementMode: settlementMode(value.settlementMode),
+    settlementVersion: finite(value.settlementVersion),
+    settlementScoringVersion: value.settlementScoringVersion ? String(value.settlementScoringVersion) : null,
+    moneyTieBreak: value.moneyTieBreak ? String(value.moneyTieBreak) : null,
+    tieBreakUsed: value.tieBreakUsed === true,
+    finalBattlePoints: finalLeft !== null || finalRight !== null ? { left: finalLeft, right: finalRight } : null,
+    settlementMetricsUpdatedAt: value.settlementMetricsUpdatedAt ? String(value.settlementMetricsUpdatedAt) : null,
     leaderSide: leader,
     pointDifference: finite(value.pointDifference),
     metricsUpdatedAt: value.metricsUpdatedAt ? String(value.metricsUpdatedAt) : null,
@@ -166,6 +185,10 @@ export function decorateBattleWithRealtimeMetrics(battle: Battle, metrics: Battl
     battlePointsDifference: metrics.pointDifference,
     battlePointsDataHealth: metrics.dataHealth,
     battlePointsUpdatedAt: metrics.metricsUpdatedAt,
+    settlementMode: metrics.settlementMode,
+    settlementScoringVersion: metrics.settlementScoringVersion,
+    settlementTieBreak: metrics.moneyTieBreak,
+    settlementTieBreakUsed: metrics.tieBreakUsed,
   } as Battle;
 }
 
@@ -173,7 +196,6 @@ function mergeMetricsPatch(current: BattleRealtimeMetrics | null, data: any): Ba
   if (!current && data?.battleId) {
     return normalizeBattleRealtimeMetrics({
       ...data,
-      settlementMode: "v1_mcap_pct_change",
       leaderSide: data.leaderSide ?? null,
       pointDifference: data.pointDifference ?? null,
       sides: data.sides || { left: null, right: null },
@@ -184,6 +206,13 @@ function mergeMetricsPatch(current: BattleRealtimeMetrics | null, data: any): Ba
   const next: any = {
     ...current,
     scoringVersion: data?.scoringVersion || current.scoringVersion,
+    settlementMode: data?.settlementMode || current.settlementMode,
+    settlementVersion: data?.settlementVersion ?? current.settlementVersion,
+    settlementScoringVersion: data?.settlementScoringVersion ?? current.settlementScoringVersion,
+    moneyTieBreak: data?.moneyTieBreak ?? current.moneyTieBreak,
+    tieBreakUsed: data?.tieBreakUsed ?? current.tieBreakUsed,
+    finalBattlePoints: data?.finalBattlePoints ?? current.finalBattlePoints,
+    settlementMetricsUpdatedAt: data?.settlementMetricsUpdatedAt ?? current.settlementMetricsUpdatedAt,
     metricsUpdatedAt: data?.metricsUpdatedAt || current.metricsUpdatedAt,
     dataHealth: data?.dataHealth || current.dataHealth,
     sides: data?.sides ? { ...current.sides, ...data.sides } : current.sides,
