@@ -64,6 +64,7 @@ const REWARDS_TREASURY_PROGRAM_ID = String(
 const LEAGUE_VAULT_SEED = Buffer.from("league_vault", "utf8");
 const AIRDROP_VAULT_SEED = Buffer.from("airdrop_vault", "utf8");
 const FEE_ESCROW_SEED = Buffer.from("fee-escrow", "utf8");
+const CREATOR_FEE_VAULT_SEED = Buffer.from("creator-fee-vault", "utf8");
 
 function deriveRewardsVaults() {
   if (!REWARDS_TREASURY_PROGRAM_ID) return { leagueVault: null, airdropVault: null, programId: "" };
@@ -180,6 +181,13 @@ function deriveFeeEscrow(programId, campaignAddress) {
   ).publicKey;
 }
 
+function deriveCreatorFeeVault(programId, campaignAddress) {
+  return findProgramAddressSync(
+    [CREATOR_FEE_VAULT_SEED, publicKeyBytes(campaignAddress)],
+    programId,
+  ).publicKey;
+}
+
 async function assertFeeEscrowPreflight(rpcUrl, programId, campaignAddress) {
   const feeEscrow = deriveFeeEscrow(programId, campaignAddress);
   const info = await rpcCall(rpcUrl, "getAccountInfo", [
@@ -197,6 +205,25 @@ async function assertFeeEscrowPreflight(rpcUrl, programId, campaignAddress) {
     });
   }
   return feeEscrow;
+}
+
+async function assertCreatorFeeVaultPreflight(rpcUrl, programId, campaignAddress) {
+  const creatorFeeVault = deriveCreatorFeeVault(programId, campaignAddress);
+  const info = await rpcCall(rpcUrl, "getAccountInfo", [
+    creatorFeeVault,
+    { encoding: "base64", commitment: "confirmed" },
+  ]);
+  const owner = info?.value?.owner ? String(info.value.owner) : "";
+  const dataLen = info?.value?.data?.[0]
+    ? Buffer.from(info.value.data[0], "base64").length
+    : 0;
+  if (!info?.value || owner !== programId || dataLen < 8) {
+    throw new SolanaTradeAuthorizationError("market initializing", {
+      code: "SOLANA_MARKET_INITIALIZING",
+      httpStatus: 409,
+    });
+  }
+  return creatorFeeVault;
 }
 
 async function resolveTraderClusterProfile(rpcUrl, programId, traderAddress) {
@@ -837,6 +864,7 @@ export async function solanaTradeAuthorizationV1(req, res) {
       );
     }
     const feeEscrow = await assertFeeEscrowPreflight(rpcUrl, programId, resolvedCampaign);
+    const creatorFeeVault = await assertCreatorFeeVaultPreflight(rpcUrl, programId, resolvedCampaign);
 
     const tradeAuth = findProgramAddressSync(
       [TRADE_AUTH_SEED, publicKeyBytes(traderAddress), nonce],
@@ -951,6 +979,7 @@ export async function solanaTradeAuthorizationV1(req, res) {
         tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SYSTEM_PROGRAM_ID,
         feeEscrow,
+        creatorFeeVault,
         leagueVault: rewardsVaults.leagueVault,
         airdropVault: rewardsVaults.airdropVault,
         monthlyLeagueVault: rewardsVaults.monthlyLeagueVault,

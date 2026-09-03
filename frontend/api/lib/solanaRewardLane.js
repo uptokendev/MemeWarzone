@@ -5,8 +5,9 @@ import {
   Keypair,
   PublicKey,
   SystemProgram,
-  Transaction,
   TransactionInstruction,
+  TransactionMessage,
+  VersionedTransaction,
 } from "@solana/web3.js";
 
 const CONFIG_SEED = Buffer.from("rewards_config");
@@ -168,11 +169,33 @@ function authorityKeypair() {
   throw new Error(`Solana rewards authority must decode to 32 or 64 bytes, got ${bytes.length}`);
 }
 async function send(connection, signer, ix) {
-  const latest = await connection.getLatestBlockhash("confirmed");
-  const tx = new Transaction({ feePayer: signer.publicKey, recentBlockhash: latest.blockhash }).add(ix);
-  tx.sign(signer);
-  const signature = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false, maxRetries: 3 });
-  await connection.confirmTransaction({ signature, ...latest }, "confirmed");
+  const compile = async () => {
+    const latest = await connection.getLatestBlockhash("confirmed");
+    const message = new TransactionMessage({
+      payerKey: signer.publicKey,
+      recentBlockhash: latest.blockhash,
+      instructions: [ix],
+    }).compileToV0Message();
+    const transaction = new VersionedTransaction(message);
+    transaction.sign([signer]);
+    return { transaction, latest };
+  };
+
+  const simulated = await compile();
+  const simulation = await connection.simulateTransaction(simulated.transaction, {
+    commitment: "confirmed",
+    sigVerify: true,
+    replaceRecentBlockhash: false,
+  });
+  if (simulation.value.err) {
+    const logs = simulation.value.logs?.slice(-12).join("\n") || "";
+    throw new Error(`Solana reward lane simulation failed: ${JSON.stringify(simulation.value.err)}${logs ? `\n${logs}` : ""}`);
+  }
+
+  const final = await compile();
+  const signature = await connection.sendRawTransaction(final.transaction.serialize(), { skipPreflight: false, maxRetries: 3 });
+  const confirmation = await connection.confirmTransaction({ signature, ...final.latest }, "confirmed");
+  if (confirmation.value.err) throw new Error(`Solana reward lane transaction failed: ${JSON.stringify(confirmation.value.err)}`);
   return signature;
 }
 async function assertConfig(connection, configAddress, signer) {
