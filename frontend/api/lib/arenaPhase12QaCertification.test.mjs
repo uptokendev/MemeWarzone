@@ -286,15 +286,23 @@ test("Phase 12 Battle Details preserves Solana case for settlement-winner displa
   assert.doesNotMatch(winnerBlock, /toLowerCase\(\)/);
 });
 
-test("Phase 12 explicitly keeps final-leader settlement parity blocked while Settlement V1 is staged", () => {
-  const metrics = readApi("arenaBattleMetrics.js");
-  const battles = readApi("arenaBattles.js");
+test("Phase 12 settlement UI now preserves V1 history while exposing V2 authority and tie-breaks", () => {
+  const metricsApi = readApi("arenaBattleMetrics.js");
+  const legacyBattles = readApi("arenaBattles.js");
+  const mode = readApi("lib/arenaSettlementMode.js");
   const hud = readFrontend("src/components/arena/BattleScoreHud.tsx");
-  const settle = battles.split("async function settleLive")[1]?.split("async function expireChallenge")[0] || "";
+  const details = readFrontend("src/pages/BattleDetails.tsx");
+  const legacySettle = legacyBattles.split("async function settleLive")[1]?.split("async function expireChallenge")[0] || "";
 
-  assert.match(metrics, /settlementMode:\s*["']v1_mcap_pct_change["']/);
-  assert.match(hud, /Settlement V1/);
-  assert.match(hud, /Existing V1 settlement remains authoritative/);
-  assert.match(settle, /decideBattleSettlement/);
-  assert.doesNotMatch(settle, /calculateBattlePoints/);
+  assert.match(metricsApi, /arenaSettlementMode\(battle\)/);
+  assert.match(mode, /state === "finished"/);
+  assert.match(mode, /settlement_version/);
+  assert.match(mode, /battlePointsV2PersistenceEnabled\(\)/);
+  assert.match(hud, /settlementV2 \? "Settlement V2" : "Settlement V1"/);
+  assert.match(hud, /TIE-BREAK/);
+  assert.match(details, /V2 Battle Points 50\/30\/20/);
+  assert.match(details, /V1 MCAP % change/);
+  assert.match(details, /tieBreakLabel\(metrics\.moneyTieBreak\)/);
+  assert.match(legacySettle, /decideBattleSettlement/);
+  assert.doesNotMatch(legacySettle, /calculateBattlePoints/);
 });
