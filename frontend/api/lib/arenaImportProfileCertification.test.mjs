@@ -34,12 +34,16 @@ test("Phase 9 migration is additive, URL-only, and keeps import writes service-r
   assert.match(migration, /image_url\s+IS\s+NULL\s+OR\s+image_url\s+!~\*\s+'\^data:'/i);
   assert.match(migration, /REVOKE INSERT, UPDATE, DELETE ON TABLE public\.arena_token_imports FROM anon, authenticated/i);
   assert.match(migration, /token_metadata_registry/i);
+  assert.match(migration, /scan_json->>'owner'/);
+  assert.match(migration, /scan_json->>'mintAuthority'/);
 });
 
-test("import image upload authorizes against stored owner and validates actual bytes", () => {
+test("import image upload requires verified stored owner and validates actual bytes", () => {
   const upload = readApi("upload.js");
   assert.match(upload, /kind === ["']arena_import["']/);
   assert.match(upload, /loadArenaImport\(importId\)/);
+  assert.match(upload, /select id, chain_id, token_address, owner_wallet, verified_at/);
+  assert.match(upload, /if \(!arenaImport\.verified_at\)/);
   assert.match(upload, /address = normalizeUploadAddress\(arenaImport\.owner_wallet, chainId\)/);
   assert.match(upload, /action:\s*defaultAction/);
   assert.match(upload, /arena_import_image/);
@@ -47,7 +51,20 @@ test("import image upload authorizes against stored owner and validates actual b
   assert.match(upload, /arena-imports\/\$\{chainId\}\/\$\{importId\}\/\$\{uuid\}/);
   assert.match(upload, /persistArenaImportImage/);
   assert.match(upload, /set image_url = \$1/i);
+  assert.match(upload, /and verified_at is not null/i);
+  assert.doesNotMatch(upload, /set image_url = \$1,[\s\S]{0,120}verified_at = coalesce/i);
   assert.match(upload, /if \(kind === ["']arena_import["']\) \{\s*return bad\(res, 503, ["']Imported token image storage is not configured["']\)/s);
+});
+
+test("new import ownership verification uses on-chain evidence rather than importer signature alone", () => {
+  const imports = readApi("arenaImports.js");
+  const scan = readApi("lib/arenaImportScan.js");
+  assert.match(imports, /scanProvesOwnership/);
+  assert.match(imports, /scan\?\.scan\?\.mintAuthority/);
+  assert.match(imports, /scan\?\.scan\?\.owner/);
+  assert.match(imports, /ownershipVerified \? new Date\(\)\.toISOString\(\) : null/);
+  assert.match(scan, /mintAuthority/);
+  assert.match(scan, /freezeAuthority/);
 });
 
 test("normalized Arena token profile enriches UI without inventing price parity", () => {
@@ -60,12 +77,14 @@ test("normalized Arena token profile enriches UI without inventing price parity"
   assert.doesNotMatch(profile, /data:image/i);
 });
 
-test("Phase 9 rollout is centralized, owner-only, and uses explicit upload labels", () => {
+test("Phase 9 rollout is centralized, verified-owner-only, and uses explicit upload labels", () => {
   const config = readFrontend("src/features/postgrad/config.ts");
   const component = readFrontend("src/components/arena/ArenaImportImageUpload.tsx");
   assert.match(config, /importImageUpload:\s*arenaEnabled\s*&&\s*readFlag\(import\.meta\.env\.VITE_ARENA_IMPORT_IMAGE_UPLOAD, false\)/);
   assert.match(component, /postGradFlags\.importImageUpload/);
-  assert.match(component, /isOwner/);
+  assert.match(component, /isImportManager/);
+  assert.match(component, /ownershipVerified/);
+  assert.match(component, /Token image locked/);
   assert.match(component, /UPLOAD TOKEN IMAGE/);
   assert.match(component, /REPLACE TOKEN IMAGE/);
   assert.match(component, /arena_import_image/);
@@ -80,9 +99,12 @@ test("Battle combat cards hydrate metadata through normalized Arena token profil
   assert.match(card, /metricsSide\?\.points\.total/);
 });
 
-test("touched import lookup paths preserve Solana Base58 case", () => {
+test("Solana identities remain case-sensitive across import and market adapters", () => {
   const imports = readApi("arenaImports.js");
+  const market = readApi("lib/arenaMarketSnapshot.js");
   assert.match(imports, /isSolanaChain\(chainId\)[\s\S]*token_address::text = \$2/);
   assert.match(imports, /solanaLookup \? ["']token_address = \$1["']/);
   assert.match(imports, /exactOwner \? `owner_wallet = \$\$\{values\.length\}`/);
+  assert.match(market, /function identityEquals/);
+  assert.match(market, /isSolanaChainId\(chainId\)[\s\S]*\? `\$\{expression\} = \$\{parameter\}`/);
 });
