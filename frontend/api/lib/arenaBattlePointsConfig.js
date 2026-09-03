@@ -33,7 +33,7 @@ export function battlePointsV2PersistenceEnabled() {
   return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
 }
 
-export function battlePointsV3Enabled() {
-  const raw = String(process.env.ARENA_BATTLE_POINTS_V3 || "").trim().toLowerCase();
+export function battlePointsV3Enabled(env = process.env) {
+  const raw = String(env.ARENA_BATTLE_POINTS_V3 || "").trim().toLowerCase();
   return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
 }
