@@ -6,6 +6,8 @@ import {
 } from "./robinhoodBeatTheMarket.js";
 
 export type RobinhoodBeatWindow = "1h" | "24h" | "7d" | "30d";
+type QueryResult = { rows: any[] };
+type QueryFn = (text: string, params?: unknown[]) => Promise<QueryResult>;
 
 const WINDOW_MS: Record<RobinhoodBeatWindow, number> = {
   "1h": 60 * 60 * 1000,
@@ -53,7 +55,8 @@ export async function computeRobinhoodBeatTheMarket(input: {
   window?: RobinhoodBeatWindow | string;
   nowMs?: number;
   persist?: boolean;
-}) {
+}, deps: { query?: QueryFn } = {}) {
+  const query: QueryFn = deps.query || ((text, params) => pool.query(text, params as any[]));
   const chainId = Number(input.chainId);
   if (chainId !== 4663 && chainId !== 46630) {
     return { window: normalizeWindow(input.window), metric: unhealthy("Beat the Market is Robinhood-only.") };
@@ -68,7 +71,7 @@ export async function computeRobinhoodBeatTheMarket(input: {
   const nowMs = input.nowMs ?? Date.now();
   const timeframe = WINDOW_TIMEFRAME[window];
 
-  const currentResult = await pool.query(
+  const currentResult = await query(
     `select ms.last_price_usd,ms.reference_price_usd,ms.reference_price_updated_at,
             ms.valuation_source,ms.valuation_healthy,ms.updated_at,ms.quote_asset_type,ms.quote_token_address
        from public.market_stats ms
@@ -97,7 +100,7 @@ export async function computeRobinhoodBeatTheMarket(input: {
 
   const endAt = new Date(Math.min(currentUpdatedMs, nowMs));
   const targetStartMs = endAt.getTime() - WINDOW_MS[window];
-  const startResult = await pool.query(
+  const startResult = await query(
     `select bucket_start,c_usd,reference_price_usd,reference_price_updated_at,valuation_source,valuation_healthy
        from public.token_candles
       where chain_id=$1 and lower(campaign_address)=lower($2)
@@ -131,7 +134,7 @@ export async function computeRobinhoodBeatTheMarket(input: {
   const valuationSource = String(current.valuation_source || start.valuation_source || "").trim() || null;
 
   if (input.persist !== false) {
-    await pool.query(
+    await query(
       `insert into public.robinhood_beat_market_metrics(
          chain_id,campaign_address,quote_token_address,window_key,window_start_at,window_end_at,
          start_meme_usd,end_meme_usd,start_quote_usd,end_quote_usd,
