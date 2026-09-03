@@ -37,10 +37,17 @@ const robinhoodTestnetRpcUrl = requiredNetworkUrl(
   "robinhoodTestnet",
   ["ROBINHOOD_TESTNET_RPC_URL", "ROBINHOOD_TESTNET_RPC"],
 );
-const robinhoodMainnetRpcUrl = process.env.ROBINHOOD_MAINNET_RPC_URL || process.env.ROBINHOOD_MAINNET_RPC || "";
+const robinhoodMainnetRpcUrl = requiredNetworkUrl(
+  process.env.ROBINHOOD_MAINNET_RPC_URL || process.env.ROBINHOOD_MAINNET_RPC || "",
+  "robinhoodMainnet",
+  ["ROBINHOOD_MAINNET_RPC_URL", "ROBINHOOD_MAINNET_RPC"],
+);
 const deployerPrivateKey = process.env.DEPLOYER_PK || process.env.PRIVATE_KEY_DEPLOY || "";
 const robinhoodTestnetPrivateKey = normalizePrivateKey(
-  process.env.PRIVATE_KEY_DEPLOY || process.env.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY || process.env.DEPLOYER_PK || "",
+  process.env.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY || process.env.PRIVATE_KEY_DEPLOY || process.env.DEPLOYER_PK || "",
+);
+const robinhoodMainnetPrivateKey = normalizePrivateKey(
+  process.env.ROBINHOOD_MAINNET_DEPLOYER_PRIVATE_KEY || process.env.PRIVATE_KEY_DEPLOY || process.env.DEPLOYER_PK || "",
 );
 const explorerApiKey = process.env.ETHERSCAN_API_KEY || "";
 const forkMainnet = ["1", "true", "yes", "on"].includes(String(process.env.BNB_FORK || "").trim().toLowerCase());
@@ -120,7 +127,7 @@ const config: HardhatUserConfig = {
     },
     robinhoodMainnet: {
       url: robinhoodMainnetRpcUrl,
-      accounts: deployerPrivateKey ? [deployerPrivateKey.startsWith("0x") ? deployerPrivateKey : `0x${deployerPrivateKey}`] : [],
+      accounts: robinhoodMainnetPrivateKey ? [robinhoodMainnetPrivateKey] : [],
       chainId: 4663,
     },
   },
