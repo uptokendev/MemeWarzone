@@ -194,6 +194,9 @@ jobs:
           done
           node --check frontend/api/upload.js
 
+      - name: Test Battle Boost runtime invariants
+        run: node --test frontend/api/lib/arenaBoostRuntime.test.mjs
+
       - name: Check API import graph
         run: npm --prefix frontend run check:api-imports
 
