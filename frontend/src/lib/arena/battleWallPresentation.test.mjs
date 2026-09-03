@@ -11,13 +11,18 @@ import {
   battleWallHref,
   battleWallType,
   collectWallBattles,
+  commitFocusedFetch,
   filterWallBattles,
   findBattleInFeed,
+  focusedRouteStatus,
   focusedWallFilterReset,
   isPublicWallBattle,
+  mergeFocusedBattleForRoute,
   mergeFocusedBattleIntoRows,
   presentBattleWallModule,
   publicWallRejectReason,
+  resolveFocusedWallBattle,
+  shouldApplyFocusedWallReset,
   sortWallBattles,
   validBattlePointGap,
   wallTabForBattle,
@@ -245,6 +250,57 @@ test("tournament fights use the same wall module type path as native/imported", 
   assert.equal(presented.typeLabel, "Tournament");
 });
 
+function emptyFeed() {
+  return { liveBattles: [], openForBattleQueue: [], archivedBattles: [] };
+}
+
+function simulateFocusedRoute() {
+  let focusedId = "";
+  let fetched = null;
+  let appliedId = "";
+  let tab = "live";
+  let seq = 0;
+  let feed = emptyFeed();
+
+  const inFeed = () => findBattleInFeed(feed, focusedId);
+
+  const view = () => {
+    const focusedBattle = resolveFocusedWallBattle(focusedId, inFeed(), fetched);
+    const status = focusedRouteStatus(focusedId, inFeed(), fetched);
+    if (shouldApplyFocusedWallReset(appliedId, focusedId, focusedBattle)) {
+      appliedId = focusedId;
+      tab = focusedWallFilterReset(focusedBattle).tab;
+    }
+    const rows = mergeFocusedBattleForRoute(collectWallBattles(feed, tab), focusedBattle, tab, focusedId);
+    return {
+      focusedBattleId: focusedBattle?.id || null,
+      status,
+      tab,
+      appliedId,
+      rowIds: rows.map((row) => row.id),
+    };
+  };
+
+  return {
+    view,
+    seq: () => seq,
+    setRoute(id, nextFeed = emptyFeed()) {
+      focusedId = String(id || "").trim();
+      seq += 1;
+      feed = nextFeed;
+      return view();
+    },
+    receive(requestSeq, routeId, nextBattle) {
+      if (requestSeq !== seq) return view();
+      if (String(routeId) !== focusedId) return view();
+      const committed = commitFocusedFetch(focusedId, nextBattle);
+      if (!committed) return view();
+      fetched = committed;
+      return view();
+    },
+  };
+}
+
 test("focused routing helpers select public wall tabs and reject private proposals", () => {
   assert.equal(wallTabForBattle(battle({ state: "live" })), "live");
   assert.equal(wallTabForBattle(battle({ state: "matched" })), "upcoming");
@@ -267,6 +323,128 @@ test("focused routing helpers select public wall tabs and reject private proposa
   assert.equal(mergeFocusedBattleIntoRows([], battle({ id: "ch", state: "challenged" }), "live").length, 0);
 });
 
+test("stale fetched live A is never treated as finished B while B loads", () => {
+  const sim = simulateFocusedRoute();
+  const liveA = battle({ id: "A", state: "live" });
+  const finishedB = battle({ id: "B", state: "finished" });
+  sim.setRoute("A");
+  const resolvedA = sim.receive(sim.seq(), "A", liveA);
+  assert.equal(resolvedA.focusedBattleId, "A");
+  assert.equal(resolvedA.tab, "live");
+  assert.equal(resolvedA.appliedId, "A");
+
+  const loadingB = sim.setRoute("B");
+  assert.equal(loadingB.focusedBattleId, null);
+  assert.equal(loadingB.status, "loading");
+  assert.equal(loadingB.tab, "live");
+  assert.equal(loadingB.appliedId, "A");
+  assert.equal(loadingB.rowIds.includes("A"), false);
+  assert.equal(shouldApplyFocusedWallReset("A", "B", liveA), false);
+
+  const resolvedB = sim.receive(sim.seq(), "B", finishedB);
+  assert.equal(resolvedB.focusedBattleId, "B");
+  assert.equal(resolvedB.status, "ready");
+  assert.equal(resolvedB.tab, "finished");
+  assert.equal(resolvedB.appliedId, "B");
+  assert.deepEqual(resolvedB.rowIds, ["B"]);
+});
+
+test("matched A then live B switches UPCOMING to LIVE", () => {
+  const sim = simulateFocusedRoute();
+  sim.setRoute("A");
+  const upcomingA = sim.receive(sim.seq(), "A", battle({ id: "A", state: "matched" }));
+  assert.equal(upcomingA.tab, "upcoming");
+  assert.equal(upcomingA.appliedId, "A");
+
+  sim.setRoute("B");
+  const liveB = sim.receive(sim.seq(), "B", battle({ id: "B", state: "live" }));
+  assert.equal(liveB.focusedBattleId, "B");
+  assert.equal(liveB.tab, "live");
+  assert.equal(liveB.appliedId, "B");
+});
+
+test("rapid A then B then C ignores late A and B results", () => {
+  const sim = simulateFocusedRoute();
+  sim.setRoute("A");
+  const seqA = sim.seq();
+  sim.setRoute("B");
+  const seqB = sim.seq();
+  const onC = sim.setRoute("C");
+  const seqC = sim.seq();
+  assert.equal(onC.focusedBattleId, null);
+  assert.equal(onC.status, "loading");
+  assert.equal(onC.appliedId, "");
+
+  const lateA = sim.receive(seqA, "A", battle({ id: "A", state: "live" }));
+  assert.equal(lateA.focusedBattleId, null);
+  assert.equal(lateA.rowIds.includes("A"), false);
+
+  const lateB = sim.receive(seqB, "B", battle({ id: "B", state: "finished" }));
+  assert.equal(lateB.focusedBattleId, null);
+  assert.equal(lateB.tab, "live");
+  assert.equal(lateB.rowIds.includes("B"), false);
+
+  const resolvedC = sim.receive(seqC, "C", battle({ id: "C", state: "live" }));
+  assert.equal(resolvedC.focusedBattleId, "C");
+  assert.equal(resolvedC.tab, "live");
+  assert.equal(resolvedC.appliedId, "C");
+  assert.deepEqual(resolvedC.rowIds, ["C"]);
+});
+
+test("returning A then B then A reapplies A's tab and focus", () => {
+  const sim = simulateFocusedRoute();
+  sim.setRoute("A");
+  assert.equal(sim.receive(sim.seq(), "A", battle({ id: "A", state: "live" })).tab, "live");
+  sim.setRoute("B");
+  assert.equal(sim.receive(sim.seq(), "B", battle({ id: "B", state: "finished" })).tab, "finished");
+  const backToA = sim.setRoute("A");
+  assert.equal(backToA.focusedBattleId, null);
+  assert.equal(backToA.tab, "finished");
+  assert.equal(backToA.appliedId, "B");
+  const restoredA = sim.receive(sim.seq(), "A", battle({ id: "A", state: "live" }));
+  assert.equal(restoredA.focusedBattleId, "A");
+  assert.equal(restoredA.tab, "live");
+  assert.equal(restoredA.appliedId, "A");
+});
+
+test("stale fetched battle is never injected under a mismatched route ID", () => {
+  const liveA = battle({ id: "A", state: "live" });
+  const fetchedA = commitFocusedFetch("A", liveA);
+  assert.equal(resolveFocusedWallBattle("B", null, fetchedA), null);
+  assert.equal(focusedRouteStatus("B", null, fetchedA), "loading");
+  assert.equal(commitFocusedFetch("B", liveA), null);
+  const injected = mergeFocusedBattleForRoute([], liveA, "live", "B");
+  assert.equal(injected.length, 0);
+  const resolvedThenMerged = mergeFocusedBattleForRoute(
+    [],
+    resolveFocusedWallBattle("B", null, fetchedA),
+    "live",
+    "B",
+  );
+  assert.equal(resolvedThenMerged.length, 0);
+});
+
+test("challenged and waiting fetched battles remain rejected for focused routing", () => {
+  const challenged = commitFocusedFetch("ch", battle({ id: "ch", state: "challenged", source: "challenge" }));
+  const waiting = commitFocusedFetch("wait", battle({ id: "wait", state: "waiting", source: "queue" }));
+  assert.equal(resolveFocusedWallBattle("ch", null, challenged), null);
+  assert.equal(focusedRouteStatus("ch", null, challenged), "unavailable");
+  assert.equal(resolveFocusedWallBattle("wait", null, waiting), null);
+  assert.equal(focusedRouteStatus("wait", null, waiting), "unavailable");
+  assert.equal(mergeFocusedBattleForRoute([], challenged.battle, "live", "ch").length, 0);
+  assert.equal(mergeFocusedBattleForRoute([], waiting.battle, "upcoming", "wait").length, 0);
+  assert.equal(shouldApplyFocusedWallReset("", "ch", challenged.battle), false);
+});
+
+test("route-keyed merge still avoids duplicating an in-feed focused battle", () => {
+  const live = battle({ id: "in-feed" });
+  const merged = mergeFocusedBattleForRoute([live], live, "live", "in-feed");
+  assert.equal(merged.length, 1);
+  const injected = mergeFocusedBattleForRoute([], battle({ id: "missing-live" }), "live", "missing-live");
+  assert.equal(injected.length, 1);
+  assert.equal(injected[0].id, "missing-live");
+});
+
 test("Battle Wall wiring keeps ArenaMatchRow, skips effects/realtime, and leaves challenge flows alone", () => {
   const page = readSrc("../../pages/ArenaBattles.tsx");
   const app = readSrc("../../App.tsx");
@@ -283,6 +461,10 @@ test("Battle Wall wiring keeps ArenaMatchRow, skips effects/realtime, and leaves
   assert.match(page, /Upcoming/);
   assert.match(page, /useParams/);
   assert.match(page, /fetchPostGradBattleDetails/);
+  assert.match(page, /resolveFocusedWallBattle/);
+  assert.match(page, /commitFocusedFetch/);
+  assert.match(page, /shouldApplyFocusedWallReset/);
+  assert.match(page, /focusRequestSeq/);
   assert.match(page, /Battle unavailable/);
   assert.match(page, /useArenaFeedBattleMetrics/);
   assert.doesNotMatch(page, /useAblyBattleChannel/);

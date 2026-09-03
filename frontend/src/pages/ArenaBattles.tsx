@@ -10,12 +10,15 @@ import { useArenaFeedBattleMetrics } from "@/hooks/useArenaFeedBattleMetrics";
 import { useBattleWallFocus } from "@/hooks/useBattleWallFocus";
 import {
   collectWallBattles,
+  commitFocusedFetch,
   filterWallBattles,
   findBattleInFeed,
+  focusedRouteStatus,
   focusedWallFilterReset,
-  isPublicWallBattle,
-  mergeFocusedBattleIntoRows,
+  mergeFocusedBattleForRoute,
   presentBattleWallModule,
+  resolveFocusedWallBattle,
+  shouldApplyFocusedWallReset,
   sortWallBattles,
   wallTabForBattle,
 } from "@/lib/arena/battleWallPresentation.mjs";
@@ -56,57 +59,43 @@ export default function ArenaBattles() {
   const [type, setType] = useState("all");
   const [sort, setSort] = useState("default");
   const [search, setSearch] = useState("");
-  const [fetched, setFetched] = useState<Battle | null>(null);
-  const [focusStatus, setFocusStatus] = useState<"idle" | "loading" | "ready" | "unavailable">("idle");
+  const [fetched, setFetched] = useState<{ battleId: string; battle: Battle | null } | null>(null);
   const appliedFocus = useRef("");
+  const focusRequestSeq = useRef(0);
   const robinhood = getAllowedChainIds().some((id) => isRobinhoodChainId(id));
   const inFeed = useMemo(() => findBattleInFeed(feed, focusedId), [feed, focusedId]);
+  const focusedBattle = resolveFocusedWallBattle(focusedId, inFeed, fetched);
+  const focusStatus = focusedRouteStatus(focusedId, inFeed, fetched);
 
   useEffect(() => {
+    const seq = ++focusRequestSeq.current;
     if (!focusedId) {
       setFetched(null);
-      setFocusStatus("idle");
       appliedFocus.current = "";
       return;
     }
-    if (inFeed) {
-      setFetched(null);
-      setFocusStatus("ready");
-      return;
-    }
-    if (feed.loading) {
-      setFocusStatus("loading");
-      return;
-    }
+    setFetched((prev) => (prev && String(prev.battleId) === focusedId ? prev : null));
+    if (inFeed) return;
+    if (feed.loading) return;
     const controller = new AbortController();
-    setFocusStatus("loading");
     void fetchPostGradBattleDetails(focusedId, controller.signal)
       .then((json) => {
-        const battle = asBattle(json?.battle ?? json);
-        if (!battle) {
-          setFetched(null);
-          setFocusStatus("unavailable");
-          return;
-        }
-        setFetched(battle);
-        setFocusStatus(isPublicWallBattle(battle) ? "ready" : "unavailable");
+        if (seq !== focusRequestSeq.current) return;
+        const committed = commitFocusedFetch(focusedId, asBattle(json?.battle ?? json));
+        if (!committed) return;
+        setFetched(committed);
       })
       .catch(() => {
-        if (!controller.signal.aborted) {
-          setFetched(null);
-          setFocusStatus("unavailable");
-        }
+        if (seq !== focusRequestSeq.current) return;
+        if (controller.signal.aborted) return;
+        setFetched(commitFocusedFetch(focusedId, null));
       });
     return () => controller.abort();
   }, [focusedId, inFeed, feed.loading]);
 
-  const focusedBattle = inFeed || (isPublicWallBattle(fetched) ? fetched : null);
-
   useEffect(() => {
-    if (!focusedId || !focusedBattle) return;
-    if (appliedFocus.current === focusedId) return;
+    if (!shouldApplyFocusedWallReset(appliedFocus.current, focusedId, focusedBattle)) return;
     const reset = focusedWallFilterReset(focusedBattle);
-    if (!reset.tab) return;
     appliedFocus.current = focusedId;
     setTab(reset.tab);
     setChain(reset.chain);
@@ -116,8 +105,8 @@ export default function ArenaBattles() {
 
   const tabRows = useMemo(() => {
     const collected = collectWallBattles(feed, tab);
-    return mergeFocusedBattleIntoRows(collected, focusedBattle, tab);
-  }, [feed, tab, focusedBattle]);
+    return mergeFocusedBattleForRoute(collected, focusedBattle, tab, focusedId);
+  }, [feed, tab, focusedBattle, focusedId]);
   const filtered = useMemo(
     () => filterWallBattles(tabRows, { chain, type, search }),
     [tabRows, chain, type, search],
@@ -138,7 +127,11 @@ export default function ArenaBattles() {
   }, [filtered, feedMetrics]);
   const rows = useMemo(() => sortWallBattles(filtered, sort, presentations), [filtered, sort, presentations]);
   const focusedReady = Boolean(
-    focusedBattle && wallTabForBattle(focusedBattle) === tab && rows.some((row) => row.id === focusedBattle.id),
+    focusedId &&
+      focusedBattle &&
+      String(focusedBattle.id) === focusedId &&
+      wallTabForBattle(focusedBattle) === tab &&
+      rows.some((row) => row.id === focusedBattle.id),
   );
   useBattleWallFocus(focusedReady ? focusedId : "", focusedReady);
 

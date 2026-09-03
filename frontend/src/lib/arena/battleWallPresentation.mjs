@@ -62,6 +62,49 @@ export function mergeFocusedBattleIntoRows(rows, focused, tab) {
   return [focused, ...list];
 }
 
+export function commitFocusedFetch(routeId, battle) {
+  const id = String(routeId || "").trim();
+  if (!id) return null;
+  if (!battle?.id) return { battleId: id, battle: null };
+  if (String(battle.id) !== id) return null;
+  return { battleId: id, battle };
+}
+
+export function resolveFocusedWallBattle(focusedId, inFeed, fetched) {
+  const id = String(focusedId || "").trim();
+  if (!id) return null;
+  if (inFeed && String(inFeed.id) === id && isPublicWallBattle(inFeed)) return inFeed;
+  if (!fetched || String(fetched.battleId) !== id) return null;
+  const battle = fetched.battle;
+  if (!battle || String(battle.id) !== id || !isPublicWallBattle(battle)) return null;
+  return battle;
+}
+
+export function focusedRouteStatus(focusedId, inFeed, fetched) {
+  const id = String(focusedId || "").trim();
+  if (!id) return "idle";
+  if (resolveFocusedWallBattle(id, inFeed, fetched)) return "ready";
+  if (fetched && String(fetched.battleId) === id) {
+    if (!fetched.battle || !isPublicWallBattle(fetched.battle)) return "unavailable";
+  }
+  return "loading";
+}
+
+export function shouldApplyFocusedWallReset(appliedId, focusedId, focusedBattle) {
+  const id = String(focusedId || "").trim();
+  if (!id || !focusedBattle) return false;
+  if (String(focusedBattle.id) !== id) return false;
+  if (String(appliedId || "") === id) return false;
+  return wallTabForBattle(focusedBattle) != null;
+}
+
+export function mergeFocusedBattleForRoute(rows, focused, tab, focusedId) {
+  const list = Array.isArray(rows) ? rows : [];
+  const id = String(focusedId || "").trim();
+  if (id && String(focused?.id) !== id) return list;
+  return mergeFocusedBattleIntoRows(list, focused, tab);
+}
+
 export function focusedWallFilterReset(battle) {
   return {
     tab: wallTabForBattle(battle),
