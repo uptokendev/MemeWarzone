@@ -1,5 +1,6 @@
 import arenaBattles from "./arenaBattles.js";
 import arenaBattleMetrics from "./arenaBattleMetrics.js";
+import arenaBoosts from "./arenaBoosts.js";
 import arenaEvents from "./arenaEvents.js";
 import arenaImports from "./arenaImports.js";
 import arenaTournaments from "./arenaTournaments.js";
@@ -17,6 +18,7 @@ import warRoom from "./warRoom.js";
 const ROUTES = [
   { pattern: /^\/arena\/ops\/health$/, flag: "POSTGRAD_ARENA_OPS_ENABLED", handler: arenaOps },
   { pattern: /^\/arena\/battle-metrics\/[^/]+$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaBattleMetrics },
+  { pattern: /^\/arena\/boosts(?:\/.*)?$/, flag: "ARENA_BATTLE_BOOSTS", handler: arenaBoosts },
   { pattern: /^\/arena\/battles(?:\/.*)?$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaBattles },
   { pattern: /^\/arena\/imports(?:\/.*)?$/, flag: "POSTGRAD_ARENA_IMPORTS_ENABLED", handler: arenaImports },
   { pattern: /^\/arena\/tournaments(?:\/.*)?$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaTournaments },
@@ -83,6 +85,18 @@ function disabledReadPayload(path, flag) {
   if (path === "/arena/battles") return { ...base, liveBattles: [], openForBattleQueue: [], archivedBattles: [] };
   if (path === "/arena/battles/creator-status") return { ...base, items: [], statuses: [], updatedAt: new Date().toISOString() };
   if (/^\/arena\/battle-metrics\/[^/]+$/.test(path)) return { ...base, metrics: null, updatedAt: new Date().toISOString() };
+  if (/^\/arena\/boosts\/[^/]+$/.test(path)) {
+    return {
+      ...base,
+      summary: {
+        left: { boostUnits: "0", grossNativeRaw: "0", poolNativeRaw: "0", protocolNativeRaw: "0" },
+        right: { boostUnits: "0", grossNativeRaw: "0", poolNativeRaw: "0", protocolNativeRaw: "0" },
+        total: { boostUnits: "0", grossNativeRaw: "0", poolNativeRaw: "0", protocolNativeRaw: "0" },
+      },
+      battlePointsV3: [],
+      scoringActive: false,
+    };
+  }
   if (path === "/arena/imports") return { ...base, items: [], updatedAt: new Date().toISOString() };
   if (path === "/arena/events") return { ...base, events: [], archivedEvents: [] };
   if (path === "/arena/tournaments") return { ...base, events: [], archivedEvents: [] };
@@ -108,6 +122,7 @@ function isSafeDisabledRead(req, path) {
     path === "/arena/battles" ||
     path === "/arena/battles/creator-status" ||
     /^\/arena\/battle-metrics\/[^/]+$/.test(path) ||
+    /^\/arena\/boosts\/[^/]+$/.test(path) ||
     path === "/arena/imports" ||
     path === "/arena/events" ||
     path === "/arena/tournaments" ||
