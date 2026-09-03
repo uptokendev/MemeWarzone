@@ -1,0 +1,19 @@
+title = "MemeWarzone gitleaks configuration"
+
+[extend]
+useDefault = true
+
+# Gitleaks v8.24's generic-api-key rule can span adjacent empty KEY-style
+# assignments in *.env.example files and extract the next variable name as a
+# high-entropy "secret". Ignore only an empty assignment line, and only inside
+# config/*.env.example. Non-empty example values and all other secret rules
+# remain fully scanned.
+[[rules]]
+id = "generic-api-key"
+
+  [[rules.allowlists]]
+  description = "Empty secret placeholders in config env examples"
+  condition = "AND"
+  regexTarget = "line"
+  paths = [ '''^config/.*\.env\.example$''' ]
+  regexes = [ '''^\s*[A-Z0-9_]*(?:PRIVATE_KEY|_PK|KEY|TOKEN|SECRET|PASSWORD|DATABASE_URL|RPC)\s*=\s*$''' ]
