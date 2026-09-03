@@ -190,8 +190,10 @@ export async function scanSolana(token) {
     }
     const warnings = [];
     const reasons = [];
-    if (info.mintAuthority) warnings.push("mint_authority_present");
-    if (info.freezeAuthority) warnings.push("freeze_authority_present");
+    const mintAuthority = info.mintAuthority ? String(info.mintAuthority) : null;
+    const freezeAuthority = info.freezeAuthority ? String(info.freezeAuthority) : null;
+    if (mintAuthority) warnings.push("mint_authority_present");
+    if (freezeAuthority) warnings.push("freeze_authority_present");
     const extensions = Array.isArray(info.extensions) ? info.extensions : [];
     for (const ext of extensions) {
       const extType = String(ext?.extension || ext?.type || "").toLowerCase();
@@ -214,7 +216,15 @@ export async function scanSolana(token) {
       status,
       name: null,
       symbol: null,
-      scan: { ok: status === "passed", decimals, totalSupply: supply, warnings, reasons },
+      scan: {
+        ok: status === "passed",
+        decimals,
+        totalSupply: supply,
+        mintAuthority,
+        freezeAuthority,
+        warnings,
+        reasons,
+      },
     };
   } catch (error) {
     return { status: "needs_review", name: null, symbol: null, scan: { ok: false, reasons: ["solana_rpc_failed"], detail: String(error?.message || error) } };
