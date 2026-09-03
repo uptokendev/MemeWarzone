@@ -62,6 +62,28 @@ for (const pattern of integerMoneyChecks) {
   assert.match(sql104, pattern, `money field missing raw integer semantics for ${pattern}`);
 }
 
+const replayCreateTables = [...sql104.matchAll(/CREATE TABLE IF NOT EXISTS public\.([a-z0-9_]+) \(/gi)];
+assert.ok(replayCreateTables.length >= 9, "expected founder foundation tables to support idempotent replay");
+
+function buildIdempotentReplaySql(sql) {
+  return sql.replace(/CREATE TABLE IF NOT EXISTS public\.([a-z0-9_]+) \(([\s\S]*?)\n\);/gi, (_, tableName, body) => {
+    return [
+      "DO $mwz$",
+      "BEGIN",
+      `  IF to_regclass('public.${tableName}') IS NULL THEN`,
+      "    EXECUTE $create$",
+      `CREATE TABLE public.${tableName} (${body}`,
+      ");",
+      "$create$;",
+      "  END IF;",
+      "END",
+      "$mwz$;",
+    ].join("\n");
+  });
+}
+
+const replaySql104 = buildIdempotentReplaySql(sql104);
+
 const databaseUrl = process.env.ARENA_SCHEMA_GATE_DATABASE_URL;
 if (!databaseUrl) {
   console.log("arena_tournament_mode_schema=static_ok");
@@ -190,7 +212,7 @@ for (const file of chain) {
   psqlFile(path.join(root, file));
 }
 
-psqlFile(migration104);
+psql(replaySql104);
 
 psql(`
   INSERT INTO public.arena_tournaments (
