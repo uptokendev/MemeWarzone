@@ -94,7 +94,7 @@ async function loadArenaImport(importId) {
   const id = String(importId || "").trim();
   if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
   const result = await pool.query(
-    `select id, chain_id, token_address, owner_wallet
+    `select id, chain_id, token_address, owner_wallet, verified_at
        from public.arena_token_imports
       where id = $1::uuid
       limit 1`,
@@ -110,16 +110,16 @@ async function persistArenaImportImage({ importId, chainId, ownerWallet, publicU
   const result = await pool.query(
     `update public.arena_token_imports
         set image_url = $1,
-            verified_at = coalesce(verified_at, now()),
             metadata_updated_at = now(),
             updated_at = now()
       where id = $2::uuid
         and chain_id = $3
         and ${ownerPredicate}
+        and verified_at is not null
       returning id, image_url, metadata_updated_at, verified_at`,
     [publicUrl, importId, Number(chainId), ownerWallet],
   );
-  if (!result.rows[0]) throw new Error("Import image owner changed before persistence");
+  if (!result.rows[0]) throw new Error("Import owner verification changed before image persistence");
   return result.rows[0];
 }
 
@@ -147,6 +147,9 @@ export default async function handler(req, res) {
       const requestedChain = Number(q.chainId || 0);
       if (requestedChain && requestedChain !== Number(arenaImport.chain_id)) {
         return bad(res, 409, "Imported token chain does not match upload request");
+      }
+      if (!arenaImport.verified_at) {
+        return bad(res, 403, "Token ownership must be verified before replacing its imported profile image");
       }
       chainId = Number(arenaImport.chain_id);
       address = normalizeUploadAddress(arenaImport.owner_wallet, chainId);
@@ -324,7 +327,7 @@ export default async function handler(req, res) {
       } catch (error) {
         await supabase.storage.from(bucket).remove([name]).catch(() => {});
         console.error("[api/upload] failed to persist imported token image", error);
-        return bad(res, 409, "Imported token image could not be attached to this owner profile");
+        return bad(res, 409, "Imported token image could not be attached to this verified owner profile");
       }
     }
 
@@ -334,7 +337,7 @@ export default async function handler(req, res) {
       persistedArenaImportImage,
       image: imageInfo ? { width: imageInfo.width, height: imageInfo.height, mime: imageInfo.mime } : undefined,
       metadataUpdatedAt: arenaImportProfile?.metadata_updated_at || null,
-      verifiedAt: arenaImportProfile?.verified_at || null,
+      verifiedAt: arenaImportProfile?.verified_at || arenaImport?.verified_at || null,
     });
   } catch (e) {
     console.error("[api/upload]", e);
