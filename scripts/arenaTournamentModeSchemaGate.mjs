@@ -108,6 +108,54 @@ psql(`
   $$;
 `);
 
+psql(`
+  CREATE TABLE IF NOT EXISTS public.campaigns (
+    chain_id bigint,
+    campaign_address text,
+    token_address text
+  );
+
+  CREATE TABLE IF NOT EXISTS public.curve_trades (
+    chain_id bigint,
+    campaign_address text,
+    side text,
+    wallet text,
+    token_amount_raw numeric,
+    bnb_amount_raw numeric,
+    price_bnb numeric,
+    tx_hash text,
+    log_index integer,
+    block_number bigint,
+    block_time timestamptz
+  );
+
+  CREATE TABLE IF NOT EXISTS public.dex_trades (
+    chain_id bigint,
+    campaign_address text,
+    token_address text,
+    pair_address text,
+    quote_asset_type text,
+    execution_source text,
+    side text,
+    transaction_from text,
+    sender_address text,
+    recipient_address text,
+    token_amount_raw numeric,
+    native_amount_raw numeric,
+    price_bnb numeric,
+    tx_hash text,
+    log_index integer,
+    block_number bigint,
+    block_time timestamptz,
+    status text,
+    quote_amount_raw numeric,
+    quote_token_address text,
+    volume_usd numeric,
+    reference_price_usd numeric,
+    reference_price_updated_at timestamptz
+  );
+`);
+
 const chain = [
   "db/migrations/20260826_000001_arena_identity_schema.sql",
   "db/migrations/20260827_000001_arena_vote_ingest.sql",
