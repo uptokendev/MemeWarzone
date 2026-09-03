@@ -16,6 +16,7 @@ function address(index) {
 const REQUIRED_KEYS = [
   "launchFactory",
   "launchCampaignImplementation",
+  "stockCampaignImplementation",
   "permanentV3PositionLocker",
   "treasuryRouterV3",
   "graduationAdapter",
@@ -61,12 +62,30 @@ function validManifest() {
     securityDefaultsLocked: true,
     requireRouteAuthorization: true,
     requireAuthorizedTrading: true,
+    admin: address(50),
+    routeAuthority: address(51),
     contracts: Object.fromEntries(REQUIRED_KEYS.map((key, index) => [key, address(100 + index)])),
+    oracles: {
+      nativeUsdFeed: address(200),
+    },
     stock: {
       canonicalRegistryConfigured: true,
       nativeUsdOracleConfigured: true,
       approvedAcquisitionRoutesConfigured: true,
       stockRoutesEnabled: false,
+      registry: [
+        {
+          symbol: "NVDA",
+          contractAddress: address(210),
+          oracleFeedAddress: address(211),
+          canonical: true,
+          enabledForGraduation: false,
+          enabledForTrading: false,
+          acquisitionPoolAddress: address(212),
+          acquisitionRouterAddress: address(213),
+          acquisitionFeeTier: 3000,
+        },
+      ],
     },
     activationPrerequisites: [
       "verify production oracle freshness and feed identity",
@@ -78,8 +97,7 @@ function validManifest() {
 }
 
 function acceptedTestnet() {
-  const committed = JSON.parse(fs.readFileSync("deployments/robinhood/testnet.accepted.json", "utf8"));
-  return committed;
+  return JSON.parse(fs.readFileSync("deployments/robinhood/testnet.accepted.json", "utf8"));
 }
 
 test("accepts a complete dark 4663 preflight isolated from accepted testnet", () => {
@@ -90,6 +108,7 @@ test("accepts a complete dark 4663 preflight isolated from accepted testnet", ()
   assert.equal(result.chainId, 4663);
   assert.equal(result.sourceSha, CANDIDATE_SHA);
   assert.equal(result.contractCount, REQUIRED_KEYS.length);
+  assert.equal(result.stockRouteCount, 1);
   assert.equal(result.dark, true);
 });
 
@@ -101,11 +120,11 @@ test("current committed mainnet placeholder cannot masquerade as a deployed prod
   );
 });
 
-test("rejects a production manifest that reuses an accepted 46630 contract address", () => {
+test("rejects a production manifest that reuses an accepted 46630 address", () => {
   const manifest = validManifest();
   const testnet = acceptedTestnet();
   const testnetAddress = Object.values(testnet.contracts || {}).find((value) => /^0x[0-9a-fA-F]{40}$/.test(String(value)));
-  assert.ok(testnetAddress, "accepted testnet fixture should contain a contract address");
+  assert.ok(testnetAddress);
   manifest.contracts.launchFactory = String(testnetAddress);
   assert.throws(
     () => proveRobinhoodProductionManifest(manifest, { acceptedTestnet: testnet, candidateSha: CANDIDATE_SHA }),
@@ -120,6 +139,7 @@ test("rejects wrong chain, generation, source SHA, duplicate contracts, or missi
     (manifest) => { manifest.sourceSha = "abcdefabcdefabcdefabcdefabcdefabcdefabcd"; },
     (manifest) => { manifest.contracts.v3SwapRouter = manifest.contracts.v3Factory; },
     (manifest) => { delete manifest.contracts.stockGraduationAdapter; },
+    (manifest) => { delete manifest.contracts.stockCampaignImplementation; },
   ]) {
     const manifest = validManifest();
     mutate(manifest);
@@ -128,6 +148,15 @@ test("rejects wrong chain, generation, source SHA, duplicate contracts, or missi
       candidateSha: CANDIDATE_SHA,
     }));
   }
+});
+
+test("requires production route authority separation", () => {
+  const manifest = validManifest();
+  manifest.routeAuthority = manifest.admin;
+  assert.throws(
+    () => proveRobinhoodProductionManifest(manifest, { acceptedTestnet: acceptedTestnet(), candidateSha: CANDIDATE_SHA }),
+    /distinct from admin/i,
+  );
 });
 
 test("rejects any attempt to enable creation or Stock product surfaces before canary", () => {
@@ -149,17 +178,34 @@ test("rejects any attempt to enable creation or Stock product surfaces before ca
   }
 });
 
-test("rejects incomplete production oracle, route, canary, or rollback evidence", () => {
+test("rejects missing concrete production oracle or Stock route evidence", () => {
   for (const mutate of [
+    (manifest) => { manifest.oracles.nativeUsdFeed = ""; },
     (manifest) => { manifest.stock.canonicalRegistryConfigured = false; },
     (manifest) => { manifest.stock.nativeUsdOracleConfigured = false; },
     (manifest) => { manifest.stock.approvedAcquisitionRoutesConfigured = false; },
     (manifest) => { manifest.stock.stockRoutesEnabled = true; },
-    (manifest) => { manifest.activationPrerequisites = ["oracle", "route", "canary"]; },
-    (manifest) => { manifest.activationPrerequisites = ["oracle", "route", "rollback", "manual review"]; },
+    (manifest) => { manifest.stock.registry = []; },
+    (manifest) => { manifest.stock.registry[0].canonical = false; },
+    (manifest) => { manifest.stock.registry[0].enabledForGraduation = true; },
+    (manifest) => { manifest.stock.registry[0].acquisitionPoolAddress = ""; },
   ]) {
     const manifest = validManifest();
     mutate(manifest);
+    assert.throws(() => proveRobinhoodProductionManifest(manifest, {
+      acceptedTestnet: acceptedTestnet(),
+      candidateSha: CANDIDATE_SHA,
+    }));
+  }
+});
+
+test("rejects incomplete oracle, route, canary, or rollback activation prerequisites", () => {
+  for (const prerequisites of [
+    ["oracle", "route", "canary"],
+    ["oracle", "route", "rollback", "manual review"],
+  ]) {
+    const manifest = validManifest();
+    manifest.activationPrerequisites = prerequisites;
     assert.throws(() => proveRobinhoodProductionManifest(manifest, {
       acceptedTestnet: acceptedTestnet(),
       candidateSha: CANDIDATE_SHA,
