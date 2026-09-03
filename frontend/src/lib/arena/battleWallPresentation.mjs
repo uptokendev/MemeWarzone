@@ -149,6 +149,21 @@ export function battleWallTypeLabel(type) {
   return "AUTO DEPLOY / Queue";
 }
 
+export function presentBattleWallFightBand(presented, options = {}) {
+  const tab = String(presented?.tab || "");
+  const stateLabel = tab === "live" ? "LIVE BATTLE" : tab === "upcoming" ? "DEPLOYMENT" : tab === "finished" ? "FINISHED" : "BATTLE";
+  const typeLabel =
+    presented?.type === "tournament" ? "TOURNAMENT" : presented?.type === "manual" ? "MANUAL" : "AUTO DEPLOY";
+  return {
+    stateLabel,
+    matchup: `${presented?.leftTicker || "TBD"} vs ${presented?.rightTicker || "TBD"}`,
+    typeLabel,
+    classification: presented?.classification || null,
+    chainLabel: options.chainLabel ? String(options.chainLabel) : null,
+    clockLabel: tab === "upcoming" ? null : options.clockLabel ? String(options.clockLabel) : null,
+  };
+}
+
 export function battleWallChainGroup(chainId) {
   const id = Number(chainId);
   if (id === 101 || id === 102) return "solana";

@@ -5,14 +5,13 @@ import { BattleShareMenu } from "@/components/arena/BattleShareMenu";
 import { BattleWallCombatant } from "@/components/arena/BattleWallCombatant";
 import { BattleWallMore } from "@/components/arena/BattleWallMore";
 import { BattleWallVs } from "@/components/arena/BattleWallVs";
-import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import type { Battle } from "@/features/postgrad/contracts";
 import type { BattleRealtimeMetrics } from "@/lib/arena/battleRealtime";
 import { useBattleWallRealtime } from "@/hooks/useBattleWallRealtime";
 import { useBattleWallViewport, type BattleWallViewportReport } from "@/hooks/useBattleWallViewport";
 import { battleChainLabel, battleClockLabel, battleDurationLabel } from "@/lib/arena/battlePresentation";
 import { battleMorePanelId, battleMoreToggle } from "@/lib/arena/battleWallMorePresentation.mjs";
-import { battleDomId, presentBattleWallModule } from "@/lib/arena/battleWallPresentation.mjs";
+import { DATA_DELAY_LABEL, battleDomId, presentBattleWallFightBand, presentBattleWallModule } from "@/lib/arena/battleWallPresentation.mjs";
 import {
   isWallRealtimeEligible,
   retainWallRealtimeMetrics,
@@ -96,7 +95,13 @@ export function BattleWallModule({
     snapshotReady: realtime.snapshotReady,
   });
 
-  const stateLabel = presented.tab === "live" ? "LIVE" : presented.tab === "upcoming" ? "DEPLOYMENT PENDING" : "FINISHED";
+  const delay = presented.scoreKind === "delay" || presented.statusLabel === DATA_DELAY_LABEL;
+  const leaderReady = !upcoming && !delay && (presented.leaderIndex === 0 || presented.leaderIndex === 1);
+  const band = presentBattleWallFightBand(presented, {
+    chainLabel: battleChainLabel(chainId),
+    clockLabel: upcoming ? null : battleClockLabel(displayBattle),
+  });
+  const stateLabel = band.stateLabel;
   const moduleTone =
     presented.tab === "live"
       ? "border-orange-400/25"
@@ -113,31 +118,50 @@ export function BattleWallModule({
       data-battle-realtime={realtimeActive && live ? selected.source : "off"}
       tabIndex={0}
       aria-label={`${presented.leftTicker} versus ${presented.rightTicker}, ${stateLabel}`}
-      className={`mwz-hud-frame relative isolate min-w-0 max-w-full overflow-hidden p-3 outline-none transition-[box-shadow,border-color] duration-500 md:p-5 data-[battle-focused=true]:ring-2 data-[battle-focused=true]:ring-accent/80 data-[battle-focused=true]:shadow-[0_0_28px_rgba(240,106,26,0.28)] motion-reduce:transition-none motion-reduce:shadow-none focus-visible:ring-2 focus-visible:ring-accent ${moduleTone}`}
+      className={`mwz-hud-frame relative isolate min-w-0 max-w-full overflow-hidden p-3 outline-none transition-[box-shadow,border-color] duration-500 md:p-4 data-[battle-focused=true]:ring-2 data-[battle-focused=true]:ring-accent/80 data-[battle-focused=true]:shadow-[0_0_28px_rgba(240,106,26,0.28)] motion-reduce:transition-none motion-reduce:shadow-none focus-visible:ring-2 focus-visible:ring-accent ${moduleTone}`}
     >
-      <div className="relative z-20 mb-3 flex min-w-0 flex-wrap items-center justify-between gap-2 md:mb-4">
-        <TacticalTag
-          label={stateLabel}
-          tone={presented.tab === "live" ? "hot" : presented.tab === "upcoming" ? "sponsored" : "default"}
-        />
-        <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
-          {presented.classification ? (
-            <TacticalTag label={presented.classification} tone={presented.classification === "RANKED" ? "success" : "hot"} />
-          ) : null}
-          <TacticalTag label={presented.typeLabel} tone="default" />
-          <TacticalTag label={battleChainLabel(chainId)} tone="default" />
-        </div>
+      <div
+        data-battle-wall-status-band="true"
+        className="relative z-20 mb-3 flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1 border-b border-white/10 pb-2.5 text-[10px] uppercase tracking-[0.16em] text-white/55"
+      >
+        <span className={presented.tab === "live" ? "font-retro text-xs text-orange-200" : "font-retro text-xs text-white/80"}>
+          {band.stateLabel}
+        </span>
+        <span className="text-white/20" aria-hidden="true">|</span>
+        <span className="font-retro text-[11px] text-white/88">{band.matchup}</span>
+        {band.classification ? (
+          <>
+            <span className="text-white/20" aria-hidden="true">|</span>
+            <span>{band.classification}</span>
+          </>
+        ) : null}
+        <span className="text-white/20" aria-hidden="true">|</span>
+        <span>{band.typeLabel}</span>
+        {band.chainLabel ? (
+          <>
+            <span className="text-white/20" aria-hidden="true">|</span>
+            <span>{band.chainLabel}</span>
+          </>
+        ) : null}
+        {band.clockLabel ? (
+          <>
+            <span className="text-white/20" aria-hidden="true">|</span>
+            <span className="text-white/75">{band.clockLabel}</span>
+          </>
+        ) : null}
       </div>
 
-      <div className="relative isolate overflow-hidden">
-        <div className="relative z-10 grid min-w-0 grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_minmax(10.5rem,14.5rem)_minmax(0,1fr)] md:items-stretch md:gap-4">
+      <div className="relative isolate overflow-hidden" data-battle-wall-combat-stage="true">
+        <div className="relative z-10 grid min-w-0 grid-cols-1 gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-stretch md:gap-2">
           <BattleWallCombatant
             battle={displayBattle}
             participant={left}
             metricsSide={displayMetrics?.sides?.left}
             pointsLabel={upcoming ? null : presented.leftPointsLabel}
             scoreCaption={upcoming ? null : presented.scoreCaption}
-            isLeader={!upcoming && presented.leaderIndex === 0}
+            isLeader={leaderReady && presented.leaderIndex === 0}
+            isTrailer={leaderReady && presented.leaderIndex === 1}
+            finished={presented.tab === "finished"}
             accent="ember"
             combatSide="left"
           />
@@ -166,7 +190,9 @@ export function BattleWallModule({
             metricsSide={displayMetrics?.sides?.right}
             pointsLabel={upcoming ? null : presented.rightPointsLabel}
             scoreCaption={upcoming ? null : presented.scoreCaption}
-            isLeader={!upcoming && presented.leaderIndex === 1}
+            isLeader={leaderReady && presented.leaderIndex === 1}
+            isTrailer={leaderReady && presented.leaderIndex === 0}
+            finished={presented.tab === "finished"}
             accent="cyan"
             combatSide="right"
           />
@@ -178,7 +204,7 @@ export function BattleWallModule({
 
       <div
         data-battle-wall-actions="true"
-        className="relative z-20 mt-4 flex min-w-0 flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3"
+        className="relative z-20 mt-3 flex min-w-0 flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-2.5"
       >
         <div className="flex min-h-11 min-w-0 flex-1 flex-wrap items-center gap-2" data-battle-wall-actions-reserved="true">
           <BattleShareMenu
@@ -195,13 +221,13 @@ export function BattleWallModule({
             aria-controls={morePanelId}
             data-battle-more-toggle={battle.id}
             onClick={() => setMoreOpen((open) => !open)}
-            className="text-xs uppercase tracking-[0.16em] text-white/55 underline-offset-4 hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            className="min-h-11 text-xs uppercase tracking-[0.16em] text-white/55 underline-offset-4 hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
             {moreToggle.label}
           </button>
           <Link
             to={presented.href}
-            className="text-xs uppercase tracking-[0.16em] text-white/55 underline-offset-4 hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+            className="min-h-11 inline-flex items-center text-xs uppercase tracking-[0.16em] text-white/40 underline-offset-4 hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
           >
             Open fight
           </Link>

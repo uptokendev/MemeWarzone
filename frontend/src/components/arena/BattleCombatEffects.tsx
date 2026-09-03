@@ -125,9 +125,9 @@ export function BattleCombatEffects({
         sequence.current += 1;
         const id = `${now}-${sequence.current}`;
         const x = compact
-          ? (target === "left" ? randomBetween(12, 44) : randomBetween(56, 88))
-          : (target === "left" ? randomBetween(8, 31) : randomBetween(69, 92));
-        const y = compact ? randomBetween(18, 88) : randomBetween(30, 82);
+          ? (target === "left" ? randomBetween(8, 42) : randomBetween(58, 92))
+          : (target === "left" ? randomBetween(4, 38) : randomBetween(62, 96));
+        const y = compact ? randomBetween(14, 78) : randomBetween(16, 72);
         newHoles.push({
           id: `hole-${id}`,
           side: target,

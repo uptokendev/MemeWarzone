@@ -22,6 +22,7 @@ import {
   finiteBattleMetric,
   firstFiniteBattleMetric,
   formatBattleWallGapText,
+  presentBattleWallFightBand,
   presentBattleWallModule,
   publicWallRejectReason,
   resolveFocusedWallBattle,
@@ -558,7 +559,7 @@ test("Battle Wall polish keeps stacked mobile combat layout and DATA DELAY copy"
   const effects = readSrc("../../components/arena/BattleCombatEffects.tsx");
 
   assert.match(moduleSrc, /grid-cols-1/);
-  assert.match(moduleSrc, /md:grid-cols-\[minmax\(0,1fr\)_minmax\(10\.5rem,14\.5rem\)_minmax\(0,1fr\)\]/);
+  assert.match(moduleSrc, /md:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
   assert.match(moduleSrc, /remaining=\{presented\.tab === "live"\}/);
   assert.match(moduleSrc, /motion-reduce:shadow-none/);
   assert.match(vs, /Score updates temporarily paused/);
@@ -616,7 +617,7 @@ test("Battle Wall VS gap labels Battle Points as BP and historical V1 as Score g
   }
 });
 
-test("Battle Wall visual parity uses large combat art, 2x2 metrics, and no fake Boost", () => {
+test("Battle Wall visual parity uses bounded combatant cards, 2x2 metrics, and no fake Boost", () => {
   const moduleSrc = readSrc("../../components/arena/BattleWallModule.tsx");
   const combatant = readSrc("../../components/arena/BattleWallCombatant.tsx");
   const vs = readSrc("../../components/arena/BattleWallVs.tsx");
@@ -625,7 +626,9 @@ test("Battle Wall visual parity uses large combat art, 2x2 metrics, and no fake 
 
   assert.match(combatant, /data-battle-combatant-art/);
   assert.match(combatant, /object-cover/);
-  assert.match(combatant, /h-44 sm:h-52 md:h-64 lg:h-72/);
+  assert.match(combatant, /data-battle-combatant-layout="split"/);
+  assert.match(combatant, /md:grid-cols-\[minmax\(6\.75rem,42%\)_minmax\(0,1fr\)\]/);
+  assert.doesNotMatch(combatant, /h-44 sm:h-52 md:h-64 lg:h-72/);
   assert.match(combatant, /data-battle-metric-grid/);
   assert.match(combatant, /grid-cols-2/);
   assert.match(combatant, /pointsLabel \|\| "—"/);
@@ -633,12 +636,13 @@ test("Battle Wall visual parity uses large combat art, 2x2 metrics, and no fake 
   assert.match(combatant, /data-battle-combatant-actions/);
   assert.doesNotMatch(combatant, /pointsLabel \|\| "0"|fake 0|Battle Boost|Final Salvo/);
   assert.match(vs, /formatBattleWallGapText\(gapLabel, scoreKind\)/);
-  assert.match(vs, /text-4xl uppercase tracking-\[0\.38em\]/);
+  assert.match(vs, /text-3xl uppercase tracking-\[0\.18em\] text-orange-400/);
   assert.match(vs, /DATA_DELAY_LABEL/);
   assert.match(moduleSrc, /data-battle-wall-actions/);
   assert.match(moduleSrc, /data-battle-wall-actions-reserved/);
   assert.match(moduleSrc, /grid-cols-1/);
   assert.match(moduleSrc, /md:items-stretch/);
+  assert.match(moduleSrc, /md:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
   assert.match(moduleSrc, /useBattleWallRealtime\(battle\.id, realtimeActive && live\)/);
   assert.equal(moduleSrc.split("useBattleWallRealtime(").length - 1, 1);
   assert.match(effects, /pointer-events-none/);
@@ -649,4 +653,89 @@ test("Battle Wall visual parity uses large combat art, 2x2 metrics, and no fake 
   assert.doesNotMatch(combatant, /BOOST|Vote Tournament|Final Salvo|sponsorship/i);
   assert.match(moduleSrc, /<BattleWallCombatant/);
   assert.match(moduleSrc, /deploymentPending=\{upcoming\}/);
+});
+
+test("Battle Wall mockup parity keeps split combatant cards, SHARE/MORE, and generation-neutral HUD", () => {
+  const moduleSrc = readSrc("../../components/arena/BattleWallModule.tsx");
+  const combatant = readSrc("../../components/arena/BattleWallCombatant.tsx");
+  const vs = readSrc("../../components/arena/BattleWallVs.tsx");
+  const effects = readSrc("../../components/arena/BattleCombatEffects.tsx");
+  const carousel = readSrc("../../components/arena/CreatorChallengeCarousel.tsx");
+  const share = readSrc("../../components/arena/BattleShareMenu.tsx");
+  const moreSrc = readSrc("../../components/arena/BattleWallMore.tsx");
+
+  assert.equal((moduleSrc.match(/<BattleWallCombatant/g) || []).length, 2);
+  assert.match(moduleSrc, /grid-cols-1/);
+  assert.match(moduleSrc, /md:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
+  assert.match(combatant, /data-battle-combatant-layout="split"/);
+  assert.match(combatant, /md:grid-cols-\[minmax\(6\.75rem,42%\)_minmax\(0,1fr\)\]/);
+  assert.match(combatant, /firstFiniteBattleMetric/);
+  assert.match(combatant, /currentMcap === null \? "—" : formatCompactUsd\(currentMcap\)/);
+  assert.match(combatant, /currentHolders === null \? "—" : Number\(currentHolders\)\.toLocaleString\(\)/);
+  assert.match(combatant, /battleVolume === null \? "—" : formatCompactUsd\(battleVolume\)/);
+  assert.match(combatant, /pointsLabel \|\| "—"/);
+  assert.doesNotMatch(combatant, /\?\? 0/);
+  assert.match(combatant, /\? "SCORE" : "POINTS"/);
+  assert.match(combatant, /data-battle-combatant-art-fallback/);
+  assert.match(combatant, /onError=\{\(\) => setFailed\(true\)\}/);
+  assert.doesNotMatch(combatant, /\|\| "\/placeholder\.svg"/);
+  assert.match(combatant, /data-battle-combatant-actions/);
+  assert.doesNotMatch(combatant, /BOOST|Battle Boost|onClick=\{.*boost/i);
+  assert.match(moduleSrc, /BattleShareMenu/);
+  assert.match(share, /Copy battle link/);
+  assert.match(share, /Share on X/);
+  assert.match(moduleSrc, /data-battle-more-toggle/);
+  assert.match(moduleSrc, /moreToggle\.label/);
+  assert.match(moreSrc, /BattleFunding/);
+  assert.match(moduleSrc, /data-battle-wall-status-band/);
+  assert.match(moduleSrc, /presentBattleWallFightBand/);
+  assert.match(moduleSrc, /leaderReady && presented\.leaderIndex === 0/);
+  assert.match(moduleSrc, /pointsLabel=\{upcoming \? null : presented\.leftPointsLabel\}/);
+  assert.match(moduleSrc, /shouldMountWallCombatEffects/);
+  assert.match(effects, /data-battle-combat-side/);
+  assert.match(effects, /data-battle-effects-for/);
+  assert.match(carousel, /beginChallengePending/);
+  assert.doesNotMatch(moduleSrc, /CreatorChallengeCarousel/);
+  assert.doesNotMatch(combatant, /calculateBattlePoints|50\/30\/20|45\/27\/18|war_pool_v/);
+  assert.doesNotMatch(vs, /COMMUNITY VS COMMUNITY/);
+  assert.doesNotMatch(moduleSrc, /COMMUNITY VS COMMUNITY/);
+
+  const liveBand = presentBattleWallFightBand(
+    presentBattleWallModule(battle(), metrics(), { requested: true, loaded: true }),
+    { chainLabel: "BNB Chain", clockLabel: "2h 17m left" },
+  );
+  assert.equal(liveBand.stateLabel, "LIVE BATTLE");
+  assert.equal(liveBand.matchup, "$ALPHA vs $BRAVO");
+  assert.equal(liveBand.typeLabel, "AUTO DEPLOY");
+  assert.equal(liveBand.classification, "RANKED");
+  assert.equal(liveBand.clockLabel, "2h 17m left");
+  assert.doesNotMatch(liveBand.stateLabel, /COMMUNITY/);
+
+  const upcomingBand = presentBattleWallFightBand(
+    presentBattleWallModule(battle({ id: "up-1", state: "matched" }), null),
+    { chainLabel: "BNB Chain", clockLabel: "Stakes due" },
+  );
+  assert.equal(upcomingBand.stateLabel, "DEPLOYMENT");
+  assert.equal(upcomingBand.clockLabel, null);
+
+  const delayed = presentBattleWallModule(
+    battle(),
+    metrics({ dataHealth: { healthy: false, status: "data_delay", reasons: ["stale"] } }),
+    { requested: true, loaded: true },
+  );
+  assert.equal(delayed.scoreKind, "delay");
+  assert.equal(delayed.leftPointsLabel, null);
+  assert.equal(delayed.leaderIndex, null);
+
+  const historical = presentBattleWallModule(
+    battle({ id: "fin-v1", state: "finished", settlementVersion: 1, scoreBasis: "mcap_pct_change" }),
+    null,
+    { requested: false, loaded: true },
+  );
+  assert.equal(historical.scoreKind, "legacy");
+  assert.equal(historical.scoreCaption, "Score");
+
+  const zero = firstFiniteBattleMetric(null, undefined, 0);
+  assert.equal(zero, 0);
+  assert.equal(firstFiniteBattleMetric(undefined, null), null);
 });
