@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import "./arenaBattlePointsV3Persistence.test.mjs";
+import "./arenaBattlePointsV3Refresh.test.mjs";
 
 import { BATTLE_POINTS_V3, BATTLE_POINTS_V3_CONFIG } from "./arenaBattlePointsConfig.js";
 import {
