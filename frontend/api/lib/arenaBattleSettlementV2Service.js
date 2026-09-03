@@ -1,5 +1,6 @@
 import { pool } from "../../server/db.js";
 import { advanceTournamentFromBattle } from "../arenaTournaments.js";
+import { battleLeagueEligibility } from "./arenaBattleCompetition.js";
 import { battlePointsV2PersistenceEnabled } from "./arenaBattlePointsConfig.js";
 import { reconcileBattlePointsAtClose } from "./arenaBattleFinalScore.js";
 import {
@@ -8,34 +9,12 @@ import {
 } from "./arenaBattleSettle.js";
 import { decideBattlePointsSettlement } from "./arenaBattleSettleV2.js";
 import { recordFinishedBattle } from "./arenaLeagueScore.js";
-import {
-  arenaMatchProfileFromParticipant,
-  calculateMatchQuality,
-} from "./arenaMatchQuality.js";
 
 const SETTLE_COLUMNS = `id, chain_id, state, source, challenger_token, defender_token, tournament_id,
   participants, started_at, ends_at, created_at, updated_at`;
 
 function nowIso() {
   return new Date().toISOString();
-}
-
-function battleLeagueEligibility(row) {
-  if (row?.tournament_id) return { eligible: true, reason: "tournament" };
-  if (String(row?.source || "") === "queue") return { eligible: true, reason: "ranked_queue" };
-  if (String(row?.source || "") !== "challenge") return { eligible: true, reason: "legacy_source" };
-
-  const participants = Array.isArray(row?.participants) ? row.participants : [];
-  if (participants.length < 2) return { eligible: false, reason: "match_profile_missing" };
-  const left = arenaMatchProfileFromParticipant(participants[0]);
-  const right = arenaMatchProfileFromParticipant(participants[1]);
-  const match = calculateMatchQuality(left, right);
-  return {
-    eligible: match.rankedEligible === true,
-    reason: match.rankedEligible ? "competitive_challenge" : "open_war",
-    matchQuality: match.matchScore,
-    classification: match.classification,
-  };
 }
 
 export function battlePointsV2SettlementEnabled() {
@@ -232,5 +211,3 @@ export async function settleBattlePointsV2ById(battleId, deps = {}) {
     league,
   };
 }
-
-export { battleLeagueEligibility };
