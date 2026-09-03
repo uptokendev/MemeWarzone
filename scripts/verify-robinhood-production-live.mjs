@@ -7,6 +7,7 @@ const CHAIN_ID = 4663;
 const EXPECTED_FEE_TIER = 3000n;
 
 const FACTORY_ABI = [
+  "function owner() view returns (address)",
   "function FACTORY_GENERATION() view returns (uint32)",
   "function CAMPAIGN_GENERATION() view returns (uint32)",
   "function liquidityKind() view returns (uint8)",
@@ -35,6 +36,7 @@ const GRADUATION_ADAPTER_ABI = [
   "function feeTier() view returns (uint24)",
 ];
 const STOCK_GRADUATION_ADAPTER_ABI = [
+  "function admin() view returns (address)",
   "function v3Factory() view returns (address)",
   "function positionManager() view returns (address)",
   "function swapRouter() view returns (address)",
@@ -51,9 +53,15 @@ const NATIVE_SWAP_ABI = [
   "function wrappedNative() view returns (address)",
 ];
 const MULTI_HOP_ABI = [
+  "function admin() view returns (address)",
   "function v3Factory() view returns (address)",
   "function swapRouter() view returns (address)",
   "function wrappedNative() view returns (address)",
+];
+const TREASURY_ROUTER_ABI = ["function admin() view returns (address)"];
+const UPVOTE_TREASURY_ABI = [
+  "function owner() view returns (address)",
+  "function feeReceiver() view returns (address)",
 ];
 const LOCKER_ABI = [
   "function integrationSource() view returns (address)",
@@ -123,9 +131,10 @@ export async function verifyRobinhoodProductionLive({ manifest, acceptedTestnet,
     await Promise.all(allAddresses.map(([label, address]) => requireCode(provider, address, label)));
 
     const factory = new ethers.Contract(c.launchFactory, FACTORY_ABI, provider);
-    const [factoryGen,campaignGen,liquidityKind,live,createPaused,securityLocked,routeAuth,tradeAuth,routeAuthority,campaignImpl,stockCampaignImpl,stockAdapter,lockerAddress,router,graduationOracle,creatorRegistry,riskRegistry,feeRecipient,leagueReceiver] = await Promise.all([
-      factory.FACTORY_GENERATION(),factory.CAMPAIGN_GENERATION(),factory.liquidityKind(),factory.live(),factory.createPaused(),factory.securityDefaultsLocked(),factory.requireRouteAuthorization(),factory.requireAuthorizedTrading(),factory.routeAuthority(),factory.campaignImplementation(),factory.stockCampaignImplementation(),factory.stockGraduationAdapter(),factory.permanentLpLocker(),factory.router(),factory.graduationOracle(),factory.creatorRegistry(),factory.riskRegistry(),factory.feeRecipient(),factory.leagueReceiver(),
+    const [factoryOwner,factoryGen,campaignGen,liquidityKind,live,createPaused,securityLocked,routeAuth,tradeAuth,routeAuthority,campaignImpl,stockCampaignImpl,stockAdapter,lockerAddress,router,graduationOracle,creatorRegistry,riskRegistry,feeRecipient,leagueReceiver] = await Promise.all([
+      factory.owner(),factory.FACTORY_GENERATION(),factory.CAMPAIGN_GENERATION(),factory.liquidityKind(),factory.live(),factory.createPaused(),factory.securityDefaultsLocked(),factory.requireRouteAuthorization(),factory.requireAuthorizedTrading(),factory.routeAuthority(),factory.campaignImplementation(),factory.stockCampaignImplementation(),factory.stockGraduationAdapter(),factory.permanentLpLocker(),factory.router(),factory.graduationOracle(),factory.creatorRegistry(),factory.riskRegistry(),factory.feeRecipient(),factory.leagueReceiver(),
     ]);
+    addressEq("factory owner", factoryOwner, manifest.admin);
     eq("factory generation", factoryGen, 4n);
     eq("campaign generation", campaignGen, 3n);
     eq("factory liquidity kind", liquidityKind, 2n);
@@ -146,6 +155,14 @@ export async function verifyRobinhoodProductionLive({ manifest, acceptedTestnet,
     addressEq("factory fee recipient", feeRecipient, c.treasuryRouterV3);
     addressEq("factory league receiver", leagueReceiver, c.treasuryRouterV3);
 
+    const treasuryRouter = new ethers.Contract(c.treasuryRouterV3, TREASURY_ROUTER_ABI, provider);
+    addressEq("treasury router admin", await treasuryRouter.admin(), manifest.admin);
+
+    const upVoteTreasury = new ethers.Contract(c.upVoteTreasury, UPVOTE_TREASURY_ABI, provider);
+    const [upVoteOwner, upVoteFeeReceiver] = await Promise.all([upVoteTreasury.owner(), upVoteTreasury.feeReceiver()]);
+    addressEq("UPVote treasury owner", upVoteOwner, manifest.admin);
+    addressEq("UPVote treasury fee receiver", upVoteFeeReceiver, c.protocolRevenueVault);
+
     const graduation = new ethers.Contract(c.graduationAdapter, GRADUATION_ADAPTER_ABI, provider);
     const [gradKind,gradFactory,gradManager,gradWeth,gradFee] = await Promise.all([graduation.liquidityKind(),graduation.v3Factory(),graduation.positionManager(),graduation.WETH(),graduation.feeTier()]);
     eq("native graduation liquidity kind", gradKind, 2n);
@@ -160,15 +177,17 @@ export async function verifyRobinhoodProductionLive({ manifest, acceptedTestnet,
     addressEq("native swap WETH", nativeWrapped, c.weth9);
 
     const multiHop = new ethers.Contract(c.v3MultiHopSwapAdapter, MULTI_HOP_ABI, provider);
-    const [hopFactory,hopRouter,hopWrapped] = await Promise.all([multiHop.v3Factory(),multiHop.swapRouter(),multiHop.wrappedNative()]);
+    const [hopAdmin,hopFactory,hopRouter,hopWrapped] = await Promise.all([multiHop.admin(),multiHop.v3Factory(),multiHop.swapRouter(),multiHop.wrappedNative()]);
+    addressEq("multi-hop admin", hopAdmin, manifest.admin);
     addressEq("multi-hop V3 factory", hopFactory, c.v3Factory);
     addressEq("multi-hop router", hopRouter, c.v3SwapRouter);
     addressEq("multi-hop WETH", hopWrapped, c.weth9);
 
     const stockGraduation = new ethers.Contract(c.stockGraduationAdapter, STOCK_GRADUATION_ADAPTER_ABI, provider);
-    const [stockFactory,stockManager,stockRouter,stockWeth,stockLocker,nativeOracle,stockFee,campaignFactory,campaignFactoryLocked] = await Promise.all([
-      stockGraduation.v3Factory(),stockGraduation.positionManager(),stockGraduation.swapRouter(),stockGraduation.WETH(),stockGraduation.permanentPositionLocker(),stockGraduation.nativeUsdOracle(),stockGraduation.feeTier(),stockGraduation.campaignFactory(),stockGraduation.campaignFactoryLocked(),
+    const [stockAdmin,stockFactory,stockManager,stockRouter,stockWeth,stockLocker,nativeOracle,stockFee,campaignFactory,campaignFactoryLocked] = await Promise.all([
+      stockGraduation.admin(),stockGraduation.v3Factory(),stockGraduation.positionManager(),stockGraduation.swapRouter(),stockGraduation.WETH(),stockGraduation.permanentPositionLocker(),stockGraduation.nativeUsdOracle(),stockGraduation.feeTier(),stockGraduation.campaignFactory(),stockGraduation.campaignFactoryLocked(),
     ]);
+    addressEq("Stock graduation admin", stockAdmin, manifest.admin);
     addressEq("Stock graduation V3 factory", stockFactory, c.v3Factory);
     addressEq("Stock graduation position manager", stockManager, c.nonfungiblePositionManager);
     addressEq("Stock graduation router", stockRouter, c.v3SwapRouter);
@@ -208,7 +227,7 @@ export async function verifyRobinhoodProductionLive({ manifest, acceptedTestnet,
       eq(`${entry.symbol} Stock graduation route enabled`, route.enabled, true);
     }
 
-    return { chainId: CHAIN_ID, sourceSha: manifest.sourceSha, contractsVerified: Object.keys(c).length, stockRoutesVerified: manifest.stock.registry.length, dark: true };
+    return { chainId: CHAIN_ID, sourceSha: manifest.sourceSha, contractsVerified: Object.keys(c).length, stockRoutesVerified: manifest.stock.registry.length, adminCustodyVerified: true, dark: true };
   } finally {
     provider.destroy();
   }
