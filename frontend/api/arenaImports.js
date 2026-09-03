@@ -19,6 +19,18 @@ function ident(value, chainId) {
   return isAddress(raw) ? raw.toLowerCase() : "";
 }
 
+function sameWallet(left, right, chainId) {
+  const a = String(left || "").trim();
+  const b = String(right || "").trim();
+  if (!a || !b) return false;
+  return isSolanaChain(chainId) ? a === b : a.toLowerCase() === b.toLowerCase();
+}
+
+function scanProvesOwnership(chainId, ownerWallet, scan) {
+  const evidence = isSolanaChain(chainId) ? scan?.scan?.mintAuthority : scan?.scan?.owner;
+  return sameWallet(ownerWallet, evidence, chainId);
+}
+
 function mapImport(row) {
   if (!row) return null;
   return {
@@ -190,11 +202,12 @@ async function handleCreate(req, res) {
     scanToken(chainId, token),
     loadTrustedProfile(chainId, token),
   ]);
+  const ownershipVerified = scanProvesOwnership(chainId, owner, scan);
   const inserted = await pool.query(
     `insert into public.arena_token_imports (
        chain_id, token_address, owner_wallet, name, symbol, status, scan_json,
-       image_url, description, website, x_url, telegram_url, metadata_updated_at
-     ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,coalesce($13::timestamptz, now()))
+       image_url, description, website, x_url, telegram_url, verified_at, metadata_updated_at
+     ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,$13::timestamptz,coalesce($14::timestamptz, now()))
      returning *`,
     [
       chainId,
@@ -209,10 +222,15 @@ async function handleCreate(req, res) {
       trusted?.website || null,
       trusted?.xUrl || null,
       trusted?.telegramUrl || null,
+      ownershipVerified ? new Date().toISOString() : null,
       trusted?.metadataUpdatedAt || null,
     ],
   );
-  return json(res, 200, { ok: true, item: mapImport(inserted.rows[0]) });
+  return json(res, 200, {
+    ok: true,
+    item: mapImport(inserted.rows[0]),
+    ownershipVerified,
+  });
 }
 
 async function handleRequestReview(req, res, id) {
