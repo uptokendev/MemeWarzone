@@ -21,6 +21,7 @@ on:
       - "contracts/PermanentV3PositionLocker.sol"
       - "contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol"
       - "contracts/integrations/RobinhoodV3NativeSwapAdapter.sol"
+      - "contracts/integrations/RobinhoodV3MultiHopSwapAdapter.sol"
       - "contracts/mocks/MockUniswapV3*.sol"
       - "contracts/mocks/MockWETH9.sol"
       - "contracts/mocks/MockUsdPriceFeed.sol"
@@ -38,6 +39,8 @@ on:
       - "deployments/robinhood/testnet.accepted.json"
       - "scripts/test-robinhood-testnet-lifecycle.ts"
       - "test/RobinhoodV3NativeSwapAdapter.spec.ts"
+      - "test/RobinhoodV3MultiHopSwapAdapter.spec.ts"
+      - "test/RobinhoodV3MultiHopRouteIdentity.spec.ts"
       - ".github/workflows/robinhood-testnet-stage-ci.yml"
   push:
     branches:
@@ -60,6 +63,7 @@ on:
       - "contracts/PermanentV3PositionLocker.sol"
       - "contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol"
       - "contracts/integrations/RobinhoodV3NativeSwapAdapter.sol"
+      - "contracts/integrations/RobinhoodV3MultiHopSwapAdapter.sol"
       - "contracts/mocks/MockUniswapV3*.sol"
       - "contracts/mocks/MockWETH9.sol"
       - "contracts/mocks/MockUsdPriceFeed.sol"
@@ -77,6 +81,8 @@ on:
       - "deployments/robinhood/testnet.accepted.json"
       - "scripts/test-robinhood-testnet-lifecycle.ts"
       - "test/RobinhoodV3NativeSwapAdapter.spec.ts"
+      - "test/RobinhoodV3MultiHopSwapAdapter.spec.ts"
+      - "test/RobinhoodV3MultiHopRouteIdentity.spec.ts"
       - ".github/workflows/robinhood-testnet-stage-ci.yml"
 
 permissions:
@@ -106,8 +112,12 @@ jobs:
       - name: Compile contracts
         run: npx hardhat compile
 
-      - name: Unit-test native Robinhood V3 buy/sell adapter
-        run: npx hardhat test test/RobinhoodV3NativeSwapAdapter.spec.ts
+      - name: Unit-test direct-native and Stock two-hop Robinhood V3 execution
+        run: >-
+          npx hardhat test
+          test/RobinhoodV3NativeSwapAdapter.spec.ts
+          test/RobinhoodV3MultiHopSwapAdapter.spec.ts
+          test/RobinhoodV3MultiHopRouteIdentity.spec.ts
 
       - name: Start persistent local EVM chain
         run: |
