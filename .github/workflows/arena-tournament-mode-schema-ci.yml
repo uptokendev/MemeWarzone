@@ -6,12 +6,16 @@ on:
       - main
     paths:
       - "db/migrations/20260903_000103_arena_tournament_battle_modes.sql"
+      - "db/migrations/20260903_000104_arena_vote_boost_sponsorship_v1_foundation.sql"
+      - "scripts/arenaTournamentModeSchemaGate.mjs"
       - ".github/workflows/arena-tournament-mode-schema-ci.yml"
   push:
     branches:
       - "build/cross-chain-stabilization-rh-base"
     paths:
       - "db/migrations/20260903_000103_arena_tournament_battle_modes.sql"
+      - "db/migrations/20260903_000104_arena_vote_boost_sponsorship_v1_foundation.sql"
+      - "scripts/arenaTournamentModeSchemaGate.mjs"
       - ".github/workflows/arena-tournament-mode-schema-ci.yml"
   workflow_dispatch:
 
@@ -24,35 +28,30 @@ concurrency:
 
 jobs:
   schema:
-    name: Tournament mode and 24h round invariants
+    name: Tournament mode, replay, and foundation invariants
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: arena_schema_gate
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d arena_schema_gate"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - name: Checkout exact source SHA
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Verify tournament battle-mode migration
-        shell: bash
-        run: |
-          set -euo pipefail
-          node <<'NODE'
-          const fs = require('fs');
-          const file = 'db/migrations/20260903_000103_arena_tournament_battle_modes.sql';
-          if (!fs.existsSync(file)) throw new Error(`missing migration: ${file}`);
-          const sql = fs.readFileSync(file, 'utf8');
-          const checks = [
-            [/ADD COLUMN IF NOT EXISTS battle_mode text NOT NULL DEFAULT 'normal'/i, 'tournament battle_mode column/default'],
-            [/ADD COLUMN IF NOT EXISTS round_duration_hours integer NOT NULL DEFAULT 24/i, '24h round duration default'],
-            [/battle_mode IN \('normal', 'boost'\)/i, 'normal/boost tournament mode constraint'],
-            [/battle_mode = 'normal'.*round_duration_hours = 24/is, 'normal tournaments locked to 24h'],
-            [/NEW\.ends_at := NEW\.started_at \+ interval '24 hours'/i, 'normal battle end forced to 24h'],
-            [/BOOST_RULES_NOT_CONFIGURED/i, 'boost mode fail-closed boundary'],
-            [/CREATE TRIGGER.*enforce_arena_tournament_battle_mode/is, 'tournament battle-mode trigger'],
-          ];
-          for (const [pattern, label] of checks) {
-            if (!pattern.test(sql)) throw new Error(`missing Arena tournament invariant: ${label}`);
-          }
-          console.log('arena_tournament_mode_schema=ok');
-          NODE
+      - name: Verify tournament mode and Phase 1 schema foundations
+        env:
+          ARENA_SCHEMA_GATE_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/arena_schema_gate
+        run: node scripts/arenaTournamentModeSchemaGate.mjs
