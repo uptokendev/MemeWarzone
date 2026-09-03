@@ -149,6 +149,92 @@ function dataSourceLabel(source) {
   return null;
 }
 
+export const BATTLE_POINTS_V2_COMPONENT_MAX = Object.freeze({
+  marketCap: 50,
+  holders: 30,
+  volume: 20,
+});
+
+export function shouldPresentScoreBreakdown(metrics, battle) {
+  const state = String(battle?.state || "").toLowerCase();
+  if (state === "matched" || state === "waiting" || state === "challenged") return false;
+  const version = String(metrics?.settlementScoringVersion || metrics?.scoringVersion || "").trim();
+  const mode = String(metrics?.settlementMode || "").trim();
+  if (version === "battle_points_v3" || mode === "battle_points_v3") return false;
+  return version === "battle_points_v2" || mode === "battle_points_v2";
+}
+
+export function battleMoreTieBreakLabel(value) {
+  if (value === "mcap_component") return "MCAP component";
+  if (value === "holder_component") return "Holder component";
+  if (value === "volume_component") return "Eligible volume component";
+  if (value === "token_address") return "Deterministic token identity";
+  if (value === "battle_points") return "Battle Points";
+  return value ? String(value).replaceAll("_", " ") : null;
+}
+
+function identityKey(value, chainId) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return Number(chainId) === 101 || Number(chainId) === 102 ? raw : raw.toLowerCase();
+}
+
+export function presentBattleResult(battle, metrics) {
+  const state = String(battle?.state || "").toLowerCase();
+  const chainId = Number(battle?.chainId ?? battle?.chain_id ?? 0);
+  const winnerToken = String(battle?.winnerToken || battle?.moneyWinnerToken || "").trim();
+  const winnerKey = identityKey(winnerToken, chainId);
+  const winnerParticipant = winnerKey
+    ? (Array.isArray(battle?.participants) ? battle.participants : []).find((participant) =>
+        [participant?.tokenId, participant?.tokenAddress, participant?.campaignAddress].some(
+          (value) => identityKey(value, chainId) === winnerKey,
+        ),
+      )
+    : null;
+  const leftFinal = finiteNumber(metrics?.finalBattlePoints?.left);
+  const rightFinal = finiteNumber(metrics?.finalBattlePoints?.right);
+  const settlementVersion = finiteNumber(battle?.settlementVersion ?? metrics?.settlementVersion);
+  const tieBreak = metrics?.tieBreakUsed === true ? battleMoreTieBreakLabel(metrics?.moneyTieBreak || battle?.moneyTieBreak) : null;
+  const winnerLabel = winnerParticipant?.symbol || winnerParticipant?.tokenName || (winnerToken ? "Winner declared" : null);
+  const show = state === "finished" || Boolean(winnerLabel) || Boolean(tieBreak) || leftFinal !== null || rightFinal !== null;
+  return {
+    show,
+    winnerLabel: winnerLabel || (state === "finished" ? "Pending settlement" : null),
+    settlementVersion: settlementVersion === null ? null : String(settlementVersion),
+    scoringGeneration: scoringGeneration(metrics),
+    finalPointsLabel: leftFinal !== null && rightFinal !== null ? `${leftFinal.toFixed(1)} — ${rightFinal.toFixed(1)}` : null,
+    tieBreakLabel: tieBreak,
+  };
+}
+
+export function presentWarPoolSides(battle) {
+  return (Array.isArray(battle?.participants) ? battle.participants : [])
+    .filter((participant) => participant?.tokenId && !String(participant.tokenId).startsWith("pending-"))
+    .map((participant) => ({
+      tokenId: String(participant.tokenAddress || participant.tokenId),
+      tokenName: participant.tokenName,
+      symbol: participant.symbol,
+      score: participant.score,
+      uniqueTraders: participant.uniqueTraders,
+      eligible: true,
+    }));
+}
+
+export function presentBattleFundingStatus(status) {
+  if (!status || typeof status !== "object") return null;
+  const paidA = status.paidA === true;
+  const paidB = status.paidB === true;
+  const deployed = (paidA ? 1 : 0) + (paidB ? 1 : 0);
+  if (status.bothPaid === true) {
+    return { label: "FUNDED", deployed: 2, required: 2 };
+  }
+  return {
+    label: `AWAITING FUNDING ${deployed} / 2 DEPLOYED`,
+    deployed,
+    required: 2,
+  };
+}
+
 export function presentBattleWallMore(battle, metrics, options = {}) {
   const chainId = Number(battle?.chainId ?? battle?.chain_id ?? 0);
   const left = presentSide(battle, battle?.participants?.[0], metrics?.sides?.left, 0);
@@ -165,6 +251,9 @@ export function presentBattleWallMore(battle, metrics, options = {}) {
   const endsAt = battle?.endsAt || battle?.ends_at || null;
   const combinedMcap =
     left.marketCapUsd !== null && right.marketCapUsd !== null ? left.marketCapUsd + right.marketCapUsd : null;
+  const state = String(battle?.state || "").toLowerCase();
+  const showScoreBreakdown = shouldPresentScoreBreakdown(metrics, battle);
+  const result = presentBattleResult(battle, metrics);
 
   return {
     battleId: String(battle?.id || "").trim(),
@@ -200,5 +289,19 @@ export function presentBattleWallMore(battle, metrics, options = {}) {
       tournamentId,
       tournamentHref: tournamentId ? `/warzone/tournament/${encodeURIComponent(tournamentId)}` : null,
     },
+    showScoreBreakdown,
+    scoreMaxes: showScoreBreakdown ? BATTLE_POINTS_V2_COMPONENT_MAX : null,
+    warPool: {
+      poolSubjectId: kind === "tournament" && tournamentId ? tournamentId : String(battle?.id || "").trim(),
+      kind: kind === "tournament" ? "tournament" : "battle",
+      redirectTo:
+        kind === "tournament" && tournamentId
+          ? { href: `/warzone/tournament/${encodeURIComponent(tournamentId)}`, label: "Support this coin in the tournament" }
+          : null,
+      sides: presentWarPoolSides(battle),
+    },
+    showFunding: state === "matched",
+    showClaim: state === "finished" && kind !== "tournament",
+    result,
   };
 }

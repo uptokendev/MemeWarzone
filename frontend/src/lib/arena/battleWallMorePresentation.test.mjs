@@ -12,7 +12,10 @@ import {
   battleMoreToggle,
   compactWalletLabel,
   formatBattleWallMatchQuality,
+  presentBattleFundingStatus,
+  presentBattleResult,
   presentBattleWallMore,
+  shouldPresentScoreBreakdown,
 } from "./battleWallMorePresentation.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -171,10 +174,8 @@ test("Scoring generation is omitted unless an explicit identifier is present", (
   assert.equal(persisted.scoringGeneration, "mcap_pct_change");
 });
 
-test("Phase 4A MORE shell stays generation-neutral and outside the money lane", () => {
+test("Phase 4A intel/terms stay generation-neutral on the collapsed wall", () => {
   const files = [
-    readSrc("./battleWallMorePresentation.mjs"),
-    readSrc("../../components/arena/BattleWallMore.tsx"),
     readSrc("../../components/arena/BattleIntel.tsx"),
     readSrc("../../components/arena/BattleTerms.tsx"),
     readSrc("../../components/arena/BattleWallModule.tsx"),
@@ -183,10 +184,49 @@ test("Phase 4A MORE shell stays generation-neutral and outside the money lane", 
     assert.doesNotMatch(src, /85\s*%|75\s*%/);
     assert.doesNotMatch(src, /5%\s*protocol|10%\s*Major|75%\s*->|20%\s*->/);
     assert.doesNotMatch(src, /Battle Boost|Final Salvo|Vote Tournament|sponsorship/i);
-    assert.doesNotMatch(src, /50\s*\/\s*30\s*\/\s*20|45\s*\/\s*27\s*\/\s*18/);
-    assert.doesNotMatch(src, /BattleMetricBreakdown|WarPoolPanel|ArenaStakeButton|ArenaWarPoolClaimButton|ArenaSupportButton/);
-    assert.doesNotMatch(src, /tie-break|settlement engine|claimWinner|depositStake/i);
+    assert.doesNotMatch(src, /45\s*\/\s*27\s*\/\s*18/);
+    assert.doesNotMatch(src, /WarPoolPanel|ArenaStakeButton|ArenaWarPoolClaimButton|ArenaSupportButton|BattleMetricBreakdown/);
   }
+});
+
+test("Phase 4B MORE reuses existing score, WarPool, funding, claim, and result surfaces", () => {
+  const moreSrc = readSrc("../../components/arena/BattleWallMore.tsx");
+  const moduleSrc = readSrc("../../components/arena/BattleWallModule.tsx");
+  const fundingSrc = readSrc("../../components/arena/BattleFunding.tsx");
+  const resultSrc = readSrc("../../components/arena/BattleResultLog.tsx");
+  const breakdownSrc = readSrc("../../components/arena/BattleScoreBreakdown.tsx");
+  const v2 = presentBattleWallMore(battle({ state: "live" }), metrics({ settlementMode: "battle_points_v2", scoringVersion: "battle_points_v2" }));
+  const upcoming = presentBattleWallMore(battle({ state: "matched" }), metrics({ settlementMode: "battle_points_v2" }));
+  const historical = presentBattleWallMore(
+    battle({ id: "fin-v1", state: "finished", settlementVersion: 1, winnerToken: "0xaaa" }),
+    { settlementScoringVersion: "mcap_pct_change" },
+  );
+  const v3 = shouldPresentScoreBreakdown({ scoringVersion: "battle_points_v3" }, battle({ state: "live" }));
+
+  assert.equal(v2.showScoreBreakdown, true);
+  assert.equal(upcoming.showScoreBreakdown, false);
+  assert.equal(historical.showScoreBreakdown, false);
+  assert.equal(v3, false);
+  assert.equal(historical.showClaim, true);
+  assert.equal(upcoming.showFunding, true);
+  assert.equal(upcoming.showClaim, false);
+  assert.equal(presentBattleFundingStatus({ paidA: true, paidB: false }).label, "AWAITING FUNDING 1 / 2 DEPLOYED");
+  assert.equal(presentBattleFundingStatus({ bothPaid: true, paidA: true, paidB: true }).label, "FUNDED");
+  assert.equal(presentBattleResult(battle({ state: "finished", winnerToken: "0xaaa" }), { finalBattlePoints: { left: 61, right: 44.5 } }).finalPointsLabel, "61.0 — 44.5");
+  assert.equal(presentBattleResult(battle({ state: "live" }), {}).finalPointsLabel, null);
+
+  assert.match(moreSrc, /BattleScoreBreakdown/);
+  assert.match(moreSrc, /WarPoolPanel/);
+  assert.match(moreSrc, /BattleFunding/);
+  assert.match(moreSrc, /BattleResultLog/);
+  assert.match(fundingSrc, /ArenaStakeButton/);
+  assert.match(fundingSrc, /ArenaWarPoolClaimButton/);
+  assert.match(fundingSrc, /fetchArenaStakeStatus/);
+  assert.match(breakdownSrc, /BattleMetricBreakdown/);
+  assert.doesNotMatch(resultSrc, /Live telemetry V2/);
+  assert.doesNotMatch(moreSrc, /Battle Boost|Final Salvo|Live telemetry V2/);
+  assert.doesNotMatch(moduleSrc, /WarPoolPanel|ArenaStakeButton|ArenaWarPoolClaimButton|BattleMetricBreakdown/);
+  assert.doesNotMatch(moreSrc, /useBattleWallRealtime|useArenaBattleRealtimeDetails/);
 });
 
 test("MORE wiring is inline, accessible, and does not add a realtime or profile fetch", () => {

@@ -6,6 +6,11 @@ import { cn } from "@/lib/utils";
 type Props = {
   side?: BattleRealtimeSide | null;
   accent?: "ember" | "cyan";
+  maxes?: {
+    marketCap?: number;
+    holders?: number;
+    volume?: number;
+  };
 };
 
 function changePct(start: number | null, current: number | null) {
@@ -17,7 +22,7 @@ function metricPointLabel(value: number, max: number, ready: boolean) {
   return ready ? `${value.toFixed(1)} / ${max}` : `— / ${max}`;
 }
 
-export function BattleMetricBreakdown({ side, accent = "ember" }: Props) {
+export function BattleMetricBreakdown({ side, accent = "ember", maxes }: Props) {
   const ready = side?.pointsReady === true;
   const mcapChange = side ? changePct(side.baseline.marketCapUsd, side.current.marketCapUsd) : null;
   const holderChange = side ? changePct(side.baseline.holders, side.current.holders) : null;
@@ -29,7 +34,7 @@ export function BattleMetricBreakdown({ side, accent = "ember" }: Props) {
       icon: Activity,
       context: mcapChange === null ? "Awaiting baseline" : formatSignedPct(mcapChange),
       points: side?.points.marketCap ?? 0,
-      max: 50,
+      max: maxes?.marketCap ?? 50,
     },
     {
       key: "holders",
@@ -37,7 +42,7 @@ export function BattleMetricBreakdown({ side, accent = "ember" }: Props) {
       icon: Users,
       context: holderChange === null ? "Awaiting baseline" : formatSignedPct(holderChange),
       points: side?.points.holders ?? 0,
-      max: 30,
+      max: maxes?.holders ?? 30,
     },
     {
       key: "volume",
@@ -45,7 +50,7 @@ export function BattleMetricBreakdown({ side, accent = "ember" }: Props) {
       icon: BarChart3,
       context: formatCompactUsd(side?.eligibleBattleVolumeUsd ?? 0),
       points: side?.points.volume ?? 0,
-      max: 20,
+      max: maxes?.volume ?? 20,
     },
   ];
 
