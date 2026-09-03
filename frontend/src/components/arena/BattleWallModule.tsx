@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { BattleCombatEffects } from "@/components/arena/BattleCombatEffects";
+import { BattleShareMenu } from "@/components/arena/BattleShareMenu";
 import { BattleWallCombatant } from "@/components/arena/BattleWallCombatant";
 import { BattleWallMore } from "@/components/arena/BattleWallMore";
 import { BattleWallVs } from "@/components/arena/BattleWallVs";
@@ -179,7 +180,14 @@ export function BattleWallModule({
         data-battle-wall-actions="true"
         className="relative z-20 mt-4 flex min-w-0 flex-wrap items-center justify-between gap-2 border-t border-white/10 pt-3"
       >
-        <div className="flex min-h-11 min-w-0 flex-1 flex-wrap items-center gap-2" data-battle-wall-actions-reserved="true" />
+        <div className="flex min-h-11 min-w-0 flex-1 flex-wrap items-center gap-2" data-battle-wall-actions-reserved="true">
+          <BattleShareMenu
+            battle={displayBattle}
+            metrics={displayMetrics}
+            metricsRequested={selected.requested}
+            metricsLoaded={selected.loaded}
+          />
+        </div>
         <div className="flex flex-wrap items-center justify-end gap-3">
           <button
             type="button"
