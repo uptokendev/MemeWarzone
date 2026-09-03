@@ -37,6 +37,16 @@ export function listHintsBattlePoints(battle) {
   return Number.isFinite(version) && version >= 2;
 }
 
+export function listHintsLegacyV1(battle) {
+  if (listHintsBattlePoints(battle)) return false;
+  const scoring = String(battle?.settlementScoringVersion || "").toLowerCase();
+  if (scoring === "mcap_pct_change" || scoring === "v1_mcap_pct_change") return true;
+  const mode = String(battle?.settlementMode || "").toLowerCase();
+  if (mode === LEGACY_SETTLEMENT_MODE) return true;
+  const version = Number(battle?.settlementVersion ?? battle?.settlement_version);
+  return Number.isFinite(version) && version >= 1 && version < 2;
+}
+
 export function battleNeedsFeedMetrics(battle) {
   const lane = feedLane(battle?.state);
   if (lane === "waiting") return false;
@@ -180,6 +190,23 @@ export function presentArenaMatchRow(battle, metrics, options = {}) {
   }
 
   if (listHintsBattlePoints(battle)) {
+    return {
+      ...base,
+      scoreKind: "unavailable",
+      scoreCaption: "Battle points",
+      leftPointsLabel: null,
+      rightPointsLabel: null,
+      leaderIndex: null,
+      gapLabel: null,
+      statusLabel: POINTS_UNAVAILABLE_LABEL,
+    };
+  }
+
+  if (listHintsLegacyV1(battle)) {
+    return legacyPresentation(battle, base);
+  }
+
+  if (lane === "live" && requested && loaded) {
     return {
       ...base,
       scoreKind: "unavailable",

@@ -158,6 +158,31 @@ test("historical V1/MCAP finished battle is not relabeled Battle Points", () => 
   assert.equal(presented.leftPointsLabel, "428000.0");
 });
 
+test("live row with completed null metrics and no V1 proof is unavailable, not list MCAP", () => {
+  const live = battle({ state: "live", settlementVersion: null, settlementScoringVersion: undefined, scoreBasis: "mcap_pct_change" });
+  const presented = presentArenaMatchRow(live, null, { requested: true, loaded: true });
+  assert.equal(presented.scoreKind, "unavailable");
+  assert.equal(presented.statusLabel, POINTS_UNAVAILABLE_LABEL);
+  assert.equal(presented.leftPointsLabel, null);
+  assert.equal(presented.rightPointsLabel, null);
+  assert.equal(presented.leaderIndex, null);
+  assert.notEqual(presented.leftPointsLabel, "428000.0");
+});
+
+test("explicitly identified live V1 row may retain legacy Score when metrics are unavailable", () => {
+  const liveV1 = battle({
+    state: "live",
+    settlementVersion: 1,
+    settlementScoringVersion: "mcap_pct_change",
+    leaderSide: "left",
+  });
+  const presented = presentArenaMatchRow(liveV1, null, { requested: true, loaded: true });
+  assert.equal(presented.scoreKind, "legacy");
+  assert.equal(presented.scoreCaption, "Score");
+  assert.equal(presented.leftPointsLabel, "428000.0");
+  assert.notEqual(presented.scoreCaption, "Battle points");
+});
+
 test("finished Battle V2 battle can display its authoritative result", () => {
   const finished = battle({ state: "finished", settlementVersion: 2, leaderSide: "right" });
   assert.equal(battleNeedsFeedMetrics(finished), true);
