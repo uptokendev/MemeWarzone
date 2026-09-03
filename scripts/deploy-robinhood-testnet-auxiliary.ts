@@ -87,6 +87,12 @@ async function main() {
   // The staged deployment manifest deliberately uses explicit mock-prefixed keys
   // so testnet infrastructure cannot be confused with production contracts.
   // Accept both the canonical production-style names and those staging-only keys.
+  const v3Factory = firstDeployedAddress(
+    manifest.contracts.v3Factory,
+    manifest.contracts.factory,
+    manifest.contracts.mockV3Factory,
+    manifest.contracts.MockUniswapV3Factory,
+  );
   const swapRouter = firstDeployedAddress(
     manifest.contracts.v3SwapRouter,
     manifest.contracts.swapRouter,
@@ -99,10 +105,11 @@ async function main() {
     manifest.contracts.mockWeth9,
     manifest.contracts.MockWETH9,
   );
-  if (!swapRouter || !wrappedNative) {
-    throw new Error("Staged manifest is missing Robinhood V3 swap router or wrapped native token.");
+  if (!v3Factory || !swapRouter || !wrappedNative) {
+    throw new Error("Staged manifest is missing Robinhood V3 factory, swap router or wrapped native token.");
   }
   await Promise.all([
+    requireCode(v3Factory, "Robinhood V3 factory"),
     requireCode(swapRouter, "Robinhood V3 swap router"),
     requireCode(wrappedNative, "Robinhood wrapped native"),
   ]);
@@ -132,6 +139,40 @@ async function main() {
     console.log(`[robinhood-aux] RobinhoodV3NativeSwapAdapter deployed at ${nativeSwapAdapter}`);
   }
 
+  // RH-S9: deploy the Stock Battlefield ETH execution boundary, but do not configure
+  // a MEME -> Stock route here. Route identity must only be frozen after the actual
+  // approved Stock/MEME market exists and has passed route/liquidity acceptance.
+  let multiHopSwapAdapter = validDeployedAddress(manifest.contracts.v3MultiHopSwapAdapter);
+  if (multiHopSwapAdapter && (await ethers.provider.getCode(multiHopSwapAdapter)) !== "0x") {
+    console.log(`[robinhood-aux] RobinhoodV3MultiHopSwapAdapter already deployed at ${multiHopSwapAdapter}`);
+  } else {
+    const MultiHopAdapter = await ethers.getContractFactory("RobinhoodV3MultiHopSwapAdapter");
+    const adapter = await MultiHopAdapter.deploy(v3Factory, swapRouter, wrappedNative);
+    await adapter.waitForDeployment();
+    multiHopSwapAdapter = await adapter.getAddress();
+    await requireCode(multiHopSwapAdapter, "RobinhoodV3MultiHopSwapAdapter");
+
+    if ((await adapter.admin()).toLowerCase() !== deployerAddress.toLowerCase()) throw new Error("V3 multi-hop adapter admin mismatch");
+    if ((await adapter.v3Factory()).toLowerCase() !== v3Factory.toLowerCase()) throw new Error("V3 multi-hop adapter factory mismatch");
+    if ((await adapter.swapRouter()).toLowerCase() !== swapRouter.toLowerCase()) throw new Error("V3 multi-hop adapter router mismatch");
+    if ((await adapter.wrappedNative()).toLowerCase() !== wrappedNative.toLowerCase()) throw new Error("V3 multi-hop adapter wrapped native mismatch");
+
+    manifest.contracts.v3MultiHopSwapAdapter = multiHopSwapAdapter;
+    manifest.auxiliaryFeatures.v3MultiHopSwapAdapter = {
+      enabled: true,
+      admin: deployerAddress,
+      v3Factory,
+      swapRouter,
+      wrappedNative,
+      nativeAsset: "ETH",
+      routeKind: "STOCK_TWO_HOP",
+      routeConfigured: false,
+      testnetOnly: true,
+    };
+    changed = true;
+    console.log(`[robinhood-aux] RobinhoodV3MultiHopSwapAdapter deployed at ${multiHopSwapAdapter}`);
+  }
+
   if (changed) {
     fs.writeFileSync(manifestFile, `${JSON.stringify(manifest, null, 2)}\n`);
   }
@@ -139,6 +180,7 @@ async function main() {
   console.log("[robinhood-aux] auxiliary Robinhood contracts ready", {
     upVoteTreasury: voteTreasuryAddress,
     v3NativeSwapAdapter: nativeSwapAdapter,
+    v3MultiHopSwapAdapter: multiHopSwapAdapter,
     manifest: manifestFile,
   });
 }
