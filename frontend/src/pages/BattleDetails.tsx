@@ -16,6 +16,7 @@ import {
   battleLeaderIndex,
   formatCompactUsd,
 } from "@/lib/arena/battlePresentation";
+import { isSolanaChainId } from "@/lib/chainConfig";
 import { publicBattleLabel, publicBattleLane } from "@/lib/arena/publicBattleState";
 
 function formatMoment(value?: string | null) {
@@ -28,6 +29,11 @@ function formatMoment(value?: string | null) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function tokenKey(value: unknown, chainId: number) {
+  const raw = String(value || "").trim();
+  return isSolanaChainId(chainId) ? raw : raw.toLowerCase();
 }
 
 const BattleDetails = () => {
@@ -52,6 +58,7 @@ const BattleDetails = () => {
     );
   }
 
+  const battleChainId = Number((battle as { chainId?: number }).chainId || 0);
   const lane = publicBattleLane(battle.state);
   const tournamentId = String((battle as { tournamentId?: string }).tournamentId || "");
   const tournamentMatch = String((battle as { source?: string }).source || "") === "tournament" && Boolean(tournamentId);
@@ -72,11 +79,11 @@ const BattleDetails = () => {
       (battle as { moneyWinnerToken?: string }).moneyWinnerToken ||
       "",
   );
+  const winnerKey = tokenKey(winnerToken, battleChainId);
   const winnerLabel = winnerToken
     ? battle.participants.find((participant) =>
         [participant.tokenId, participant.tokenAddress, participant.campaignAddress]
-          .map((value) => String(value || "").toLowerCase())
-          .includes(winnerToken.toLowerCase()))?.symbol || "Winner declared"
+          .some((value) => tokenKey(value, battleChainId) === winnerKey))?.symbol || "Winner declared"
     : battle.state === "finished" && legacyLeaderIndex === 0
       ? left?.symbol || left?.tokenName || "Left"
       : battle.state === "finished" && legacyLeaderIndex === 1
@@ -124,7 +131,7 @@ const BattleDetails = () => {
             </div>
             <div className="flex flex-wrap justify-end gap-2">
               <TacticalTag label={publicBattleLabel(lane, battle.state)} tone={lane === "live" ? "hot" : battle.state === "matched" ? "hot" : "default"} />
-              <TacticalTag label={battleChainLabel((battle as { chainId?: number }).chainId)} tone="default" />
+              <TacticalTag label={battleChainLabel(battleChainId)} tone="default" />
               <TacticalTag label={matchType} tone={tournamentMatch ? "sponsored" : "default"} />
               <TacticalTag label={source === "api" ? "REST synced" : "Awaiting REST"} tone={source === "api" ? "success" : "default"} />
               <TacticalTag label={metricHealthLabel} tone={metrics?.dataHealth.healthy ? "success" : "default"} />
@@ -169,7 +176,7 @@ const BattleDetails = () => {
 
       <WarPoolPanel
         poolSubjectId={tournamentMatch ? tournamentId : battle.id}
-        chainId={(battle as { chainId?: number }).chainId}
+        chainId={battleChainId}
         nativeSymbol={(battle as { nativeSymbol?: string }).nativeSymbol}
         sides={sides}
         kind={tournamentMatch ? "tournament" : "battle"}
@@ -185,7 +192,7 @@ const BattleDetails = () => {
           <div className="text-[10px] uppercase tracking-[0.24em] text-white/45">Battle terms</div>
           <p>
             {battle.state === "matched"
-              ? Number((battle as { chainId?: number }).chainId) === 101 || Number((battle as { chainId?: number }).chainId) === 102
+              ? isSolanaChainId(battleChainId)
                 ? "Settlement is agreed. The first owner pays their SOL stake while opening the pool. The rival then deposits the same stake. The fight clock starts only when both have paid."
                 : "Settlement is agreed. Open the pool, then both owners deposit the same stake. The fight clock starts only when both have paid. If the other owner never deposits, refund after the pay window."
               : "Agree stake and fight length first. The clock starts only once the fight is fully funded and marked live."}
@@ -207,12 +214,12 @@ const BattleDetails = () => {
             {battle.state === "matched" ? (
               <ArenaStakeButton
                 battleId={battle.id}
-                chainId={(battle as { chainId?: number }).chainId}
+                chainId={battleChainId}
                 battleState={battle.state}
               />
             ) : null}
             {battle.state === "finished" && !tournamentMatch ? (
-              <ArenaWarPoolClaimButton battleId={battle.id} chainId={(battle as { chainId?: number }).chainId} />
+              <ArenaWarPoolClaimButton battleId={battle.id} chainId={battleChainId} />
             ) : null}
           </div>
         </div>
