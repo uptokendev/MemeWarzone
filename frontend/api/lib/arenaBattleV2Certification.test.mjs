@@ -20,6 +20,18 @@ function readFrontend(rel) {
   return fs.readFileSync(path.join(frontendRoot, rel), "utf8");
 }
 
+function withBattlePointsFlag(value, fn) {
+  const previous = process.env.ARENA_BATTLE_POINTS_V2;
+  if (value == null) delete process.env.ARENA_BATTLE_POINTS_V2;
+  else process.env.ARENA_BATTLE_POINTS_V2 = value;
+  try {
+    return fn();
+  } finally {
+    if (previous == null) delete process.env.ARENA_BATTLE_POINTS_V2;
+    else process.env.ARENA_BATTLE_POINTS_V2 = previous;
+  }
+}
+
 test("DB-controlled live transition captures both baselines inside updateBattle transaction", () => {
   const battles = read("arenaBattles.js");
   const update = battles.split("async function updateBattle")[1]?.split("async function waitingCandidates")[0] || "";
@@ -86,7 +98,7 @@ test("imported candidates do not fabricate zero native market metrics", () => {
   assert.match(battles, /marketDataHealthy:\s*false/);
 });
 
-test("settleLive still uses V1 settlement and does not import calculateBattlePoints", () => {
+test("legacy settleLive remains the V1 fallback and does not duplicate Battle Points math", () => {
   const battles = read("arenaBattles.js");
   const settle = battles.split("async function settleLive")[1]?.split("async function expireChallenge")[0] || "";
   assert.match(settle, /decideBattleSettlement/);
@@ -112,7 +124,7 @@ test("snapshot and match adapters never map votes_24h to holders", () => {
   assert.match(snapshot, /token_holder_balances/);
 });
 
-test("Phase 6 public Battle metrics snapshot is sanitized and keeps settlement V1", () => {
+test("public Battle metrics snapshot is sanitized and settlement mode follows the rollout without relabeling history", () => {
   const battle = {
     id: "arena-test-1",
     chain_id: 56,
@@ -146,16 +158,30 @@ test("Phase 6 public Battle metrics snapshot is sanitized and keeps settlement V
     wallet: "0xshould-never-leak",
     cluster_id: "internal-cluster",
   });
-  const snapshot = buildPublicBattleMetricsSnapshot(battle, [metric("left", 60), metric("right", 45)]);
-  assert.equal(snapshot.leaderSide, "left");
-  assert.equal(snapshot.pointDifference, 15);
-  assert.equal(snapshot.settlementMode, "v1_mcap_pct_change");
-  assert.equal(snapshot.scoringVersion, "battle_points_v2");
-  assert.equal(snapshot.dataHealth.healthy, true);
-  const serialized = JSON.stringify(snapshot);
-  assert.doesNotMatch(serialized, /should-never-leak/);
-  assert.doesNotMatch(serialized, /internal-cluster/);
-  assert.doesNotMatch(serialized, /cluster_id|wallet/i);
+
+  withBattlePointsFlag("0", () => {
+    const snapshot = buildPublicBattleMetricsSnapshot(battle, [metric("left", 60), metric("right", 45)]);
+    assert.equal(snapshot.settlementMode, "v1_mcap_pct_change");
+  });
+  withBattlePointsFlag("1", () => {
+    const snapshot = buildPublicBattleMetricsSnapshot(battle, [metric("left", 60), metric("right", 45)]);
+    assert.equal(snapshot.leaderSide, "left");
+    assert.equal(snapshot.pointDifference, 15);
+    assert.equal(snapshot.settlementMode, "battle_points_v2");
+    assert.equal(snapshot.scoringVersion, "battle_points_v2");
+    assert.equal(snapshot.dataHealth.healthy, true);
+    const serialized = JSON.stringify(snapshot);
+    assert.doesNotMatch(serialized, /should-never-leak/);
+    assert.doesNotMatch(serialized, /internal-cluster/);
+    assert.doesNotMatch(serialized, /cluster_id|wallet/i);
+  });
+  withBattlePointsFlag("1", () => {
+    const historical = buildPublicBattleMetricsSnapshot(
+      { ...battle, state: "finished", settlement_version: 1 },
+      [metric("left", 60), metric("right", 45)],
+    );
+    assert.equal(historical.settlementMode, "v1_mcap_pct_change");
+  });
   assert.equal(arenaBattleChannelName(battle.id), `arena:battle:${battle.id}`);
 });
 
@@ -185,7 +211,7 @@ test("Phase 6 worker serializes refreshes but never row-locks or mutates arena_b
   assert.match(source, /pg_try_advisory_xact_lock/);
   assert.doesNotMatch(source, /for update/i);
   assert.doesNotMatch(source, /update public\.arena_battles/i);
-  assert.match(source, /settlementMode:\s*["']v1_mcap_pct_change["']/);
+  assert.match(source, /settlementMode:\s*arenaSettlementMode\(battleRow\)/);
   assert.match(source, /ARENA_BATTLE_REALTIME_ENABLED/);
 });
 
@@ -207,9 +233,10 @@ test("Battle Ably auth is subscribe-only and frontend reconciles REST before rea
   assert.match(hook, /arena_battle_finished|shouldRefetch/);
 });
 
-test("Railway Battle realtime worker is isolated from API liveness", () => {
+test("Railway Battle worker is isolated from API liveness for realtime and V2 settlement", () => {
   const start = readFrontend("scripts/run-railway-api-start.mjs");
   assert.match(start, /ARENA_BATTLE_REALTIME_ENABLED/);
+  assert.match(start, /ARENA_BATTLE_POINTS_V2/);
   assert.match(start, /run-arena-battle-realtime-worker\.mjs/);
   assert.match(start, /API remains live/);
 });
