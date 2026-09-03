@@ -4,6 +4,7 @@ import { Wallet } from "ethers";
 export const BOOST_USD_MICROS = 1_000_000n;
 export const EVM_NATIVE_DECIMALS = 18;
 export const DEFAULT_QUOTE_TTL_SECONDS = 300;
+export const DEFAULT_PRICE_MAX_AGE_SECONDS = 300;
 
 function positiveBigInt(value, label) {
   try {
@@ -31,27 +32,36 @@ export function unitPriceNativeRawFromUsdMicros({ usdMicros = BOOST_USD_MICROS, 
   return ceilDiv(usd * scale, nativeUsd);
 }
 
-export function readBoostPricingConfig(chainId, env = process.env) {
+export function readBoostPricingConfig(chainId, env = process.env, nowSeconds = Math.floor(Date.now() / 1000)) {
   const chain = Number(chainId);
   if (!Number.isInteger(chain) || chain <= 0) throw new Error("chainId is invalid");
   const nativeUsdRaw = env[`ARENA_BOOST_NATIVE_USD_MICROS_${chain}`] || env.ARENA_BOOST_NATIVE_USD_MICROS;
   const pricingVersionRaw = env[`ARENA_BOOST_PRICING_VERSION_${chain}`] || env.ARENA_BOOST_PRICING_VERSION;
+  const priceUpdatedAtRaw =
+    env[`ARENA_BOOST_NATIVE_USD_UPDATED_AT_${chain}`] || env.ARENA_BOOST_NATIVE_USD_UPDATED_AT;
+  const maxAgeRaw = env[`ARENA_BOOST_PRICE_MAX_AGE_SECONDS_${chain}`] || env.ARENA_BOOST_PRICE_MAX_AGE_SECONDS || DEFAULT_PRICE_MAX_AGE_SECONDS;
   const treasuryAddress = String(
     env[`ARENA_WAR_POOL_TREASURY_V2_ADDRESS_${chain}`] || env[`ARENA_WAR_POOL_TREASURY_ADDRESS_${chain}`] || "",
   ).trim();
   const signerKey = String(env.ARENA_BOOST_QUOTE_SIGNER_PRIVATE_KEY || "").trim();
-  if (!nativeUsdRaw || !pricingVersionRaw || !treasuryAddress || !signerKey) {
+  if (!nativeUsdRaw || !pricingVersionRaw || !priceUpdatedAtRaw || !treasuryAddress || !signerKey) {
     throw new Error("Battle Boost pricing/signing is not configured for this chain");
   }
   const nativeUsdMicros = positiveBigInt(nativeUsdRaw, "nativeUsdMicros");
   const pricingVersion = positiveBigInt(pricingVersionRaw, "pricingVersion");
+  const priceUpdatedAt = positiveBigInt(priceUpdatedAtRaw, "priceUpdatedAt");
+  const maxAgeSeconds = positiveBigInt(maxAgeRaw, "maxAgeSeconds");
+  const now = BigInt(nowSeconds);
+  if (priceUpdatedAt > now || now - priceUpdatedAt > maxAgeSeconds) {
+    throw new Error("Battle Boost native/USD price is stale");
+  }
   if (!/^0x[a-fA-F0-9]{40}$/.test(treasuryAddress)) throw new Error("Arena War Pool V2 address is invalid");
   const signer = new Wallet(signerKey);
   const configuredSigner = String(env[`ARENA_BOOST_QUOTE_SIGNER_ADDRESS_${chain}`] || env.ARENA_BOOST_QUOTE_SIGNER_ADDRESS || "").trim();
   if (configuredSigner && signer.address.toLowerCase() !== configuredSigner.toLowerCase()) {
     throw new Error("Battle Boost quote signer key/address mismatch");
   }
-  return { chainId: chain, nativeUsdMicros, pricingVersion, treasuryAddress, signer };
+  return { chainId: chain, nativeUsdMicros, pricingVersion, priceUpdatedAt, maxAgeSeconds, treasuryAddress, signer };
 }
 
 export function buildBoostQuote({
@@ -119,6 +129,7 @@ export async function signBoostQuote(config, quoteInput) {
     treasuryAddress: config.treasuryAddress,
     nativeUsdMicros: config.nativeUsdMicros,
     pricingVersion: config.pricingVersion,
+    oracleTimestamp: config.priceUpdatedAt,
     ...quoteInput,
   });
   const signature = await config.signer.signTypedData(quote.domain, quote.types, quote.value);
