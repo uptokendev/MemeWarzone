@@ -16,6 +16,22 @@ This phase does **not** deploy from CI and does **not** activate production. Pro
 - Route authority must be distinct from the production admin/deployer.
 - BNB and Solana deployment state remains untouched.
 
+## Production admin custody is a deployment invariant
+
+The production `admin` field is not descriptive metadata. It is the custody address that must actually control the deployed production stack.
+
+Before any deployment transaction is signed, lock the final production admin/multisig and deployment method. The following surfaces must resolve to the same `manifest.admin` during read-only 4663 verification:
+
+- `LaunchFactory.owner()`;
+- `TreasuryRouterV3.admin()`;
+- `RobinhoodStockTokenGraduationAdapter.admin()`;
+- `RobinhoodV3MultiHopSwapAdapter.admin()`;
+- `UPVoteTreasury.owner()`.
+
+`TreasuryRouterV3.admin`, `RobinhoodStockTokenGraduationAdapter.admin`, and `RobinhoodV3MultiHopSwapAdapter.admin` are deployment-time custody values; do not deploy them from a temporary hot wallet with the assumption that all authority can be transferred later. If the final admin is a multisig, use a deployment path that causes those contracts to be created/configured under that intended custody topology.
+
+The route authority remains a separate signer and must never equal the production admin.
+
 ## Required state before manifest preparation
 
 Real production deployment inventory must provide:
@@ -75,6 +91,7 @@ Run both proof suites:
 ```bash
 node --test scripts/prove-robinhood-production-manifest.test.mjs
 node --test scripts/prepare-robinhood-production-manifest.test.mjs
+node --check scripts/verify-robinhood-production-live.mjs
 ```
 
 Then verify the generated candidate against the accepted testnet freeze:
@@ -98,7 +115,7 @@ node scripts/verify-robinhood-production-live.mjs \
   "$ROBINHOOD_PRODUCTION_CANDIDATE_SHA"
 ```
 
-The verifier is read-only. It checks deployed code, factory generations, adapter and locker wiring, route/trading authorization, V3 fee support, Stock routes and fresh positive oracle evidence. It requires the factory to remain dark and create-paused.
+The verifier is read-only. It checks deployed code, factory generations, production admin custody, adapter and locker wiring, route/trading authorization, V3 fee support, UPVote fee destination, Stock routes and fresh positive oracle evidence. It requires the factory to remain dark and create-paused.
 
 ## Canary boundary
 
