@@ -44,9 +44,15 @@ function randomBetween(min: number, max: number) {
   return min + Math.random() * (max - min);
 }
 
-function recoilTarget(side: CombatSide, severity: Severity, reducedMotion: boolean) {
+function recoilTarget(
+  side: CombatSide,
+  severity: Severity,
+  reducedMotion: boolean,
+  root?: ParentNode | Document | null,
+) {
   if (reducedMotion || typeof document === "undefined") return;
-  const element = document.querySelector<HTMLElement>(`[data-battle-combat-side="${side}"]`);
+  const scope: ParentNode = root || document;
+  const element = scope.querySelector<HTMLElement>(`[data-battle-combat-side="${side}"]`);
   if (!element?.animate) return;
   const distance = severity === 3 ? 7 : severity === 2 ? 4 : 2;
   const duration = severity === 3 ? 360 : severity === 2 ? 260 : 180;
@@ -74,7 +80,15 @@ function useMediaFlag(query: string) {
   return matches;
 }
 
-export function BattleCombatEffects({ metrics }: { metrics?: BattleRealtimeMetrics | null }) {
+export function BattleCombatEffects({
+  metrics,
+  rootRef,
+  battleId,
+}: {
+  metrics?: BattleRealtimeMetrics | null;
+  rootRef?: { current: ParentNode | null };
+  battleId?: string;
+}) {
   const enabled = effectsEnabled();
   const reducedMotion = useMediaFlag("(prefers-reduced-motion: reduce)");
   const compact = useMediaFlag("(max-width: 1279px)");
@@ -106,7 +120,7 @@ export function BattleCombatEffects({ metrics }: { metrics?: BattleRealtimeMetri
       const severity = severityFor(attack.delta, attack.leadChange) as Severity;
       const count = burstCount(attack.delta, attack.leadChange, { reducedMotion, compact });
       if (!count) continue;
-      recoilTarget(target, severity, reducedMotion);
+      recoilTarget(target, severity, reducedMotion, rootRef?.current);
       for (let index = 0; index < count; index += 1) {
         sequence.current += 1;
         const id = `${now}-${sequence.current}`;
@@ -153,7 +167,12 @@ export function BattleCombatEffects({ metrics }: { metrics?: BattleRealtimeMetri
   if (!enabled || (!holes.length && !tracers.length)) return null;
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-30 overflow-hidden" aria-hidden="true" data-battle-combat-effects="on">
+    <div
+      className="pointer-events-none absolute inset-0 z-30 overflow-hidden"
+      aria-hidden="true"
+      data-battle-combat-effects="on"
+      data-battle-effects-for={battleId || undefined}
+    >
       <style>{`
         @keyframes mwz-battle-tracer-ltr {
           0% { opacity: 0; transform: scaleX(0.02) translateX(-12%); }

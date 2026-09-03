@@ -15,6 +15,7 @@ type Props = {
   isLeader?: boolean;
   accent?: "ember" | "cyan";
   compact?: boolean;
+  combatSide?: "left" | "right";
 };
 
 export function BattleWallCombatant({
@@ -26,6 +27,7 @@ export function BattleWallCombatant({
   isLeader = false,
   accent = "ember",
   compact = false,
+  combatSide,
 }: Props) {
   const chainId = Number((battle as Battle & { chainId?: number }).chainId || 0);
   const tokenIdentity = participant?.tokenAddress || participant?.tokenId || participant?.campaignAddress || "";
@@ -43,6 +45,7 @@ export function BattleWallCombatant({
   return (
     <div
       data-battle-wall-combatant={accent}
+      data-battle-combat-side={combatSide || undefined}
       className={cn("mwz-hud-frame relative overflow-hidden p-4", accentClass, isLeader && "ring-1 ring-white/25")}
     >
       <div className="flex items-start gap-3">

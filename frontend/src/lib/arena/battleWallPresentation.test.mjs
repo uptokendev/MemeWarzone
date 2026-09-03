@@ -445,7 +445,7 @@ test("route-keyed merge still avoids duplicating an in-feed focused battle", () 
   assert.equal(injected[0].id, "missing-live");
 });
 
-test("Battle Wall wiring keeps ArenaMatchRow, skips effects/realtime, and leaves challenge flows alone", () => {
+test("Battle Wall wiring keeps ArenaMatchRow, reuses wall realtime/effects, and leaves challenge flows alone", () => {
   const page = readSrc("../../pages/ArenaBattles.tsx");
   const app = readSrc("../../App.tsx");
   const details = readSrc("../../pages/BattleDetails.tsx");
@@ -467,6 +467,7 @@ test("Battle Wall wiring keeps ArenaMatchRow, skips effects/realtime, and leaves
   assert.match(page, /focusRequestSeq/);
   assert.match(page, /Battle unavailable/);
   assert.match(page, /useArenaFeedBattleMetrics/);
+  assert.match(page, /selectActiveWallRealtimeIds/);
   assert.doesNotMatch(page, /useAblyBattleChannel/);
   assert.doesNotMatch(page, /BattleCombatEffects/);
   assert.match(app, /path="\/warzone\/battles\/:battleId"/);
@@ -477,6 +478,8 @@ test("Battle Wall wiring keeps ArenaMatchRow, skips effects/realtime, and leaves
   assert.match(moduleSrc, /data-battle-id/);
   assert.match(moduleSrc, /motion-reduce:transition-none/);
   assert.match(moduleSrc, /to=\{presented\.href\}/);
+  assert.match(moduleSrc, /BattleCombatEffects/);
+  assert.match(moduleSrc, /useBattleWallRealtime/);
   assert.match(focus, /prefers-reduced-motion/);
   assert.match(vs, /DATA_DELAY_LABEL/);
   assert.match(row, /export function ArenaMatchRow/);

@@ -172,6 +172,8 @@ test("BattleDetails mounts BattleCombatEffects at every breakpoint", () => {
   const component = fs.readFileSync(path.join(here, "../../components/arena/BattleCombatEffects.tsx"), "utf8");
   assert.match(component, /shouldClearCombatBaseline/);
   assert.match(component, /compact/);
+  assert.match(component, /scope\.querySelector/);
+  assert.match(component, /data-battle-effects-for/);
 });
 
 test("spawned heavy desktop burst is larger than compact mobile burst and both are bounded", () => {

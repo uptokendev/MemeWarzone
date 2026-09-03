@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { BattleWallModule } from "@/components/arena/BattleWallModule";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
@@ -8,6 +8,7 @@ import type { Battle } from "@/features/postgrad/contracts";
 import { useArenaBattleFeed } from "@/hooks/useArenaBattleFeed";
 import { useArenaFeedBattleMetrics } from "@/hooks/useArenaFeedBattleMetrics";
 import { useBattleWallFocus } from "@/hooks/useBattleWallFocus";
+import type { BattleWallViewportReport } from "@/hooks/useBattleWallViewport";
 import {
   collectWallBattles,
   commitFocusedFetch,
@@ -22,6 +23,11 @@ import {
   sortWallBattles,
   wallTabForBattle,
 } from "@/lib/arena/battleWallPresentation.mjs";
+import {
+  sameIdList,
+  selectActiveWallRealtimeIds,
+  upsertWallViewportReport,
+} from "@/lib/arena/battleWallRealtime.mjs";
 import { getAllowedChainIds, isRobinhoodChainId } from "@/lib/chainConfig";
 
 const TABS = [
@@ -62,7 +68,24 @@ export default function ArenaBattles() {
   const [fetched, setFetched] = useState<{ battleId: string; battle: Battle | null } | null>(null);
   const appliedFocus = useRef("");
   const focusRequestSeq = useRef(0);
+  const focusedIdRef = useRef(focusedId);
+  const viewportReports = useRef(new Map());
+  const [activeRealtimeIds, setActiveRealtimeIds] = useState<string[]>([]);
   const robinhood = getAllowedChainIds().some((id) => isRobinhoodChainId(id));
+  focusedIdRef.current = focusedId;
+
+  const reportViewport = useCallback((report: BattleWallViewportReport) => {
+    viewportReports.current = upsertWallViewportReport(viewportReports.current, report);
+    const next = selectActiveWallRealtimeIds([...viewportReports.current.values()], {
+      focusedId: focusedIdRef.current,
+    });
+    setActiveRealtimeIds((current) => (sameIdList(current, next) ? current : next));
+  }, []);
+
+  useEffect(() => {
+    const next = selectActiveWallRealtimeIds([...viewportReports.current.values()], { focusedId });
+    setActiveRealtimeIds((current) => (sameIdList(current, next) ? current : next));
+  }, [focusedId]);
   const inFeed = useMemo(() => findBattleInFeed(feed, focusedId), [feed, focusedId]);
   const focusedBattle = resolveFocusedWallBattle(focusedId, inFeed, fetched);
   const focusStatus = focusedRouteStatus(focusedId, inFeed, fetched);
@@ -210,13 +233,16 @@ export default function ArenaBattles() {
 
       <section className="space-y-4" data-battle-wall>
         {rows.length ? (
-          rows.map((battle) => (
+          rows.map((battle, index) => (
             <BattleWallModule
               key={battle.id}
               battle={battle}
               metrics={feedMetrics.metricsById[battle.id]}
               metricsRequested={feedMetrics.requestedIds.includes(battle.id)}
               metricsLoaded={feedMetrics.loaded}
+              realtimeActive={activeRealtimeIds.includes(battle.id)}
+              viewportIndex={index}
+              onViewportReport={reportViewport}
             />
           ))
         ) : (
