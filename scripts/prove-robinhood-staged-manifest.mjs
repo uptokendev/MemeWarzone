@@ -7,6 +7,10 @@ export const EXPECTED_FACTORY_GENERATION = 4;
 export const EXPECTED_CAMPAIGN_GENERATION = 3;
 export const EXPECTED_LIQUIDITY_KIND = 2;
 
+function sameAddress(a, b) {
+  return Boolean(a && b) && String(a).toLowerCase() === String(b).toLowerCase();
+}
+
 export function proveRobinhoodStagedManifest(manifest) {
   if (!manifest || typeof manifest !== "object") throw new Error("staged manifest is missing");
   if (manifest.targetChainId !== ROBINHOOD_TESTNET_CHAIN_ID) {
@@ -40,6 +44,27 @@ export function proveRobinhoodStagedManifest(manifest) {
   if (manifest.auxiliaryFeatures?.v3NativeSwapAdapter?.nativeAsset !== "ETH") {
     throw new Error("native V3 adapter ETH metadata missing");
   }
+
+  const contracts = manifest.contracts || {};
+  const multiHop = manifest.auxiliaryFeatures?.v3MultiHopSwapAdapter;
+  if (!contracts.v3MultiHopSwapAdapter) throw new Error("Robinhood V3 Stock multi-hop swap adapter missing from staged manifest");
+  if (!multiHop || multiHop.enabled !== true || multiHop.routeKind !== "STOCK_TWO_HOP") {
+    throw new Error("Stock multi-hop adapter metadata missing");
+  }
+  if (multiHop.nativeAsset !== "ETH" || multiHop.testnetOnly !== true) {
+    throw new Error("Stock multi-hop adapter testnet ETH metadata missing");
+  }
+  if (multiHop.routeConfigured !== false) {
+    throw new Error("staged Stock multi-hop adapter must not preconfigure a market route");
+  }
+
+  const stagedFactory = contracts.v3Factory || contracts.mockV3Factory || contracts.MockUniswapV3Factory;
+  const stagedRouter = contracts.v3SwapRouter || contracts.swapRouter || contracts.mockSwapRouter02 || contracts.MockUniswapV3SwapRouter;
+  const stagedWrapped = contracts.weth9 || contracts.wrappedNative || contracts.mockWeth9 || contracts.MockWETH9;
+  if (!sameAddress(multiHop.v3Factory, stagedFactory)) throw new Error("Stock multi-hop adapter V3 factory metadata mismatch");
+  if (!sameAddress(multiHop.swapRouter, stagedRouter)) throw new Error("Stock multi-hop adapter router metadata mismatch");
+  if (!sameAddress(multiHop.wrappedNative, stagedWrapped)) throw new Error("Stock multi-hop adapter wrapped-native metadata mismatch");
+
   return true;
 }
 
