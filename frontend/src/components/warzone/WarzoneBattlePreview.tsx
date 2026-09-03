@@ -3,11 +3,12 @@ import type { Battle } from "@/features/postgrad/contracts";
 import type { BattleRealtimeMetrics } from "@/lib/arena/battleRealtime";
 import { battleClockLabel } from "@/lib/arena/battlePresentation";
 import { DATA_DELAY_LABEL, presentBattleWallModule } from "@/lib/arena/battleWallPresentation.mjs";
+import { mockTokenArtForTicker } from "@/lib/arena/mockTokenArt.mjs";
 import { WarzoneTokenMark } from "@/components/warzone/WarzoneTokenMark";
 
 function participantArt(battle: Battle, index: number) {
-  const participant = battle.participants?.[index] as { imageUrl?: string; logoUri?: string } | undefined;
-  return participant?.imageUrl || participant?.logoUri || null;
+  const participant = battle.participants?.[index] as { imageUrl?: string; logoUri?: string; symbol?: string } | undefined;
+  return participant?.imageUrl || participant?.logoUri || mockTokenArtForTicker(participant?.symbol) || null;
 }
 
 export function WarzoneBattlePreview({

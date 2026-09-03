@@ -632,6 +632,8 @@ test("Battle Wall visual parity uses bounded combatant cards, 2x2 metrics, and n
   assert.match(combatant, /data-battle-combatant-layout="split"/);
   assert.match(combatant, /mwz-flat-card/);
   assert.match(combatant, /data-battle-combatant-bleed/);
+  assert.match(combatant, /data-battle-combatant-readability/);
+  assert.match(combatant, /mockTokenArtForTicker/);
   assert.match(combatant, /data-battle-combatant-split="true"/);
   assert.match(combatant, /grid-cols-\[minmax\(5\.5rem,38%\)_minmax\(0,1fr\)\]/);
   assert.match(combatant, /md:grid-cols-\[minmax\(6\.75rem,42%\)_minmax\(0,1fr\)\]/);
@@ -680,6 +682,8 @@ test("Battle Wall mockup parity keeps split combatant cards, SHARE/MORE, and gen
   assert.match(combatant, /data-battle-combatant-layout="split"/);
   assert.match(combatant, /mwz-flat-card/);
   assert.match(combatant, /data-battle-combatant-bleed/);
+  assert.match(combatant, /data-battle-combatant-readability/);
+  assert.match(combatant, /mockTokenArtForTicker/);
   assert.match(combatant, /data-battle-combatant-split="true"/);
   assert.match(combatant, /grid-cols-\[minmax\(5\.5rem,38%\)_minmax\(0,1fr\)\]/);
   assert.match(combatant, /md:grid-cols-\[minmax\(6\.75rem,42%\)_minmax\(0,1fr\)\]/);

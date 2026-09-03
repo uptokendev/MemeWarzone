@@ -4,6 +4,7 @@ import { useArenaTokenProfile } from "@/hooks/useArenaTokenProfile";
 import type { BattleRealtimeSide } from "@/lib/arena/battleRealtime";
 import { formatCompactUsd } from "@/lib/arena/battlePresentation";
 import { firstFiniteBattleMetric } from "@/lib/arena/battleWallPresentation.mjs";
+import { mockTokenArtForTicker } from "@/lib/arena/mockTokenArt.mjs";
 import { resolveImageUri } from "@/lib/media";
 import { cn } from "@/lib/utils";
 
@@ -118,11 +119,17 @@ export function BattleWallCombatant({
   const chainId = Number((battle as Battle & { chainId?: number }).chainId || 0);
   const tokenIdentity = participant?.tokenAddress || participant?.tokenId || participant?.campaignAddress || "";
   const profile = useArenaTokenProfile(chainId, tokenIdentity);
-  const imageUrl = profile?.imageUrl || participant?.imageUrl || participant?.logoUri || null;
-  const bleedSrc = resolveImageUri(imageUrl);
-  const bleed = bleedSrc && bleedSrc !== "/placeholder.svg" ? bleedSrc : null;
   const displayName = profile?.name || participant?.tokenName || "Awaiting rival";
   const displaySymbol = String(profile?.symbol || participant?.symbol || "TBD").replace(/^\$/, "");
+  const imageUrl =
+    profile?.imageUrl ||
+    participant?.imageUrl ||
+    participant?.logoUri ||
+    mockTokenArtForTicker(displaySymbol) ||
+    mockTokenArtForTicker(participant?.symbol) ||
+    null;
+  const bleedSrc = resolveImageUri(imageUrl);
+  const bleed = bleedSrc && bleedSrc !== "/placeholder.svg" ? bleedSrc : null;
   const description = String(profile?.description || "").trim();
   const currentMcap = firstFiniteBattleMetric(
     metricsSide?.current?.marketCapUsd,
@@ -156,13 +163,19 @@ export function BattleWallCombatant({
       )}
     >
       {bleed ? (
-        <img
-          src={bleed}
-          alt=""
-          aria-hidden="true"
-          data-battle-combatant-bleed="true"
-          className="pointer-events-none absolute inset-0 h-full w-full scale-125 object-cover opacity-[0.22] blur-[14px]"
-        />
+        <>
+          <img
+            src={bleed}
+            alt=""
+            aria-hidden="true"
+            data-battle-combatant-bleed="true"
+            className="pointer-events-none absolute inset-0 h-full w-full scale-125 object-cover object-left opacity-[0.34] blur-[18px]"
+          />
+          <div
+            data-battle-combatant-readability="true"
+            className="pointer-events-none absolute inset-0 bg-[linear-gradient(90deg,rgba(5,5,5,0.18)_0%,rgba(5,5,5,0.62)_42%,rgba(5,5,5,0.88)_100%)]"
+          />
+        </>
       ) : null}
       <div
         data-battle-combatant-split="true"

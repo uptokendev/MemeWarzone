@@ -51,7 +51,7 @@
     "test:arena-auto-deploy": "node --test api/lib/arenaAutoDeployCancel.test.mjs",
     "test:arena-battle-wall": "node --test src/lib/arena/battleWallPresentation.test.mjs src/lib/arena/battleWallRealtime.test.mjs src/lib/arena/battleWallMorePresentation.test.mjs src/lib/arena/battleSharePresentation.test.mjs src/lib/arena/battleShareCardPresentation.test.mjs",
     "test:arena-creator-challenge": "node --test src/lib/arena/creatorChallengePresentation.test.mjs",
-    "test:arena-warzone-chrome": "node --test src/lib/arena/warzoneChrome.test.mjs src/lib/arena/tournamentCommandPresentation.test.mjs",
+    "test:arena-warzone-chrome": "node --test src/lib/arena/warzoneChrome.test.mjs src/lib/arena/tournamentCommandPresentation.test.mjs src/lib/arena/mockTokenArt.test.mjs",
     "test:arena-phase12": "node --test api/lib/arenaPhase12QaCertification.test.mjs",
     "test:arena-settlement-v2": "node --test api/lib/arenaBattleSettleV2.test.mjs api/lib/arenaBattleFinalScore.test.mjs api/lib/arenaBattleCompetition.test.mjs api/lib/arenaSettlementMode.test.mjs api/lib/arenaBattleSettlementV2Certification.test.mjs",
     "test:arena-tournament": "node --test api/lib/arenaTournamentRoster.test.mjs api/lib/arenaTournamentBracketReconcile.test.mjs api/lib/arenaTournamentV2Certification.test.mjs api/lib/arenaSqlIdentity.test.mjs",

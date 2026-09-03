@@ -101,6 +101,8 @@ test("Warzone composition keeps cards floating without outer frames", () => {
   assert.doesNotMatch(moduleSrc, /mwz-hud-frame/);
   assert.match(moduleSrc, /data-battle-wall-open="true"/);
   assert.match(combatant, /mwz-flat-card/);
+  assert.match(combatant, /data-battle-combatant-bleed/);
+  assert.match(combatant, /data-battle-combatant-readability/);
   assert.match(vs, /data-battle-vs-reticle="true"/);
   assert.match(vs, /bg-transparent/);
   assert.doesNotMatch(vs, /data-battle-deployment-hud/);
