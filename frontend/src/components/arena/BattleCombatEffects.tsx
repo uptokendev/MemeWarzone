@@ -1,10 +1,17 @@
 import { useEffect, useRef, useState } from "react";
-import type { BattleRealtimeLeader, BattleRealtimeMetrics } from "@/lib/arena/battleRealtime";
-
-const MAX_HOLES_PER_SIDE = 40;
-const MAX_TRACERS = 18;
-const HOLE_TTL_MS = 60_000;
-const TRACER_TTL_MS = 950;
+import type { BattleRealtimeMetrics } from "@/lib/arena/battleRealtime";
+import {
+  HOLE_TTL_MS,
+  MAX_TRACERS,
+  TRACER_TTL_MS,
+  burstCount,
+  capHoles,
+  planCombatAttacks,
+  severityFor,
+  shouldClearCombatBaseline,
+  snapshotCombatScore,
+  targetFor,
+} from "@/lib/arena/battleCombatEffects.mjs";
 
 type CombatSide = "left" | "right";
 type Severity = 1 | 2 | 3;
@@ -29,44 +36,12 @@ type Tracer = {
   createdAt: number;
 };
 
-type PreviousScore = {
-  left: number;
-  right: number;
-  leader: BattleRealtimeLeader;
-  updatedAt: string | null;
-};
-
 function effectsEnabled() {
   return /^(1|true|yes|on)$/i.test(String(import.meta.env.VITE_ARENA_COMBAT_EFFECTS || "").trim());
 }
 
 function randomBetween(min: number, max: number) {
   return min + Math.random() * (max - min);
-}
-
-function severityFor(delta: number, leadChange: boolean): Severity {
-  if (leadChange || delta >= 1.5) return 3;
-  if (delta >= 0.5) return 2;
-  return 1;
-}
-
-function burstCount(delta: number, leadChange: boolean, reducedMotion: boolean) {
-  if (reducedMotion) return 1;
-  if (leadChange) return 8;
-  if (delta >= 1.5) return 6;
-  if (delta >= 0.5) return 3;
-  if (delta >= 0.1) return 1;
-  return 0;
-}
-
-function targetFor(attacker: CombatSide): CombatSide {
-  return attacker === "left" ? "right" : "left";
-}
-
-function capHoles(rows: BulletHole[]) {
-  const left = rows.filter((row) => row.side === "left").slice(-MAX_HOLES_PER_SIDE);
-  const right = rows.filter((row) => row.side === "right").slice(-MAX_HOLES_PER_SIDE);
-  return [...left, ...right].sort((a, b) => a.createdAt - b.createdAt);
 }
 
 function recoilTarget(side: CombatSide, severity: Severity, reducedMotion: boolean) {
@@ -86,77 +61,59 @@ function recoilTarget(side: CombatSide, severity: Severity, reducedMotion: boole
   );
 }
 
-function useReducedMotion() {
-  const [reduced, setReduced] = useState(false);
+function useMediaFlag(query: string) {
+  const [matches, setMatches] = useState(false);
   useEffect(() => {
     if (typeof window === "undefined" || !window.matchMedia) return;
-    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const update = () => setReduced(media.matches);
+    const media = window.matchMedia(query);
+    const update = () => setMatches(media.matches);
     update();
     media.addEventListener?.("change", update);
     return () => media.removeEventListener?.("change", update);
-  }, []);
-  return reduced;
+  }, [query]);
+  return matches;
 }
 
 export function BattleCombatEffects({ metrics }: { metrics?: BattleRealtimeMetrics | null }) {
   const enabled = effectsEnabled();
-  const reducedMotion = useReducedMotion();
-  const previous = useRef<PreviousScore | null>(null);
+  const reducedMotion = useMediaFlag("(prefers-reduced-motion: reduce)");
+  const compact = useMediaFlag("(max-width: 1279px)");
+  const previous = useRef<ReturnType<typeof snapshotCombatScore>>(null);
   const sequence = useRef(0);
   const [holes, setHoles] = useState<BulletHole[]>([]);
   const [tracers, setTracers] = useState<Tracer[]>([]);
 
   useEffect(() => {
-    if (!enabled || !metrics?.dataHealth.healthy) {
-      if (metrics?.metricsUpdatedAt) {
-        previous.current = null;
-      }
+    if (shouldClearCombatBaseline(enabled, metrics)) {
+      previous.current = null;
       return;
     }
-    const left = metrics.sides.left;
-    const right = metrics.sides.right;
-    if (!left?.pointsReady || !right?.pointsReady) return;
-    const next: PreviousScore = {
-      left: left.points.total,
-      right: right.points.total,
-      leader: metrics.leaderSide,
-      updatedAt: metrics.metricsUpdatedAt,
-    };
+    const next = snapshotCombatScore(metrics);
+    if (!next) {
+      previous.current = null;
+      return;
+    }
     const prior = previous.current;
     previous.current = next;
-    if (!prior || prior.updatedAt === next.updatedAt) return;
-
-    const attacks: Array<{ attacker: CombatSide; delta: number; leadChange: boolean }> = [];
-    const leftDelta = Math.max(0, next.left - prior.left);
-    const rightDelta = Math.max(0, next.right - prior.right);
-    if (leftDelta >= 0.1) attacks.push({ attacker: "left", delta: leftDelta, leadChange: false });
-    if (rightDelta >= 0.1) attacks.push({ attacker: "right", delta: rightDelta, leadChange: false });
-    const directLeadChange = (prior.leader === "left" || prior.leader === "right")
-      && (next.leader === "left" || next.leader === "right")
-      && prior.leader !== next.leader;
-    if (directLeadChange) {
-      const winner = next.leader as CombatSide;
-      const existing = attacks.find((attack) => attack.attacker === winner);
-      if (existing) existing.leadChange = true;
-      else attacks.push({ attacker: winner, delta: 0, leadChange: true });
-    }
+    const attacks = planCombatAttacks(prior, next);
     if (!attacks.length) return;
 
     const now = Date.now();
     const newHoles: BulletHole[] = [];
     const newTracers: Tracer[] = [];
     for (const attack of attacks) {
-      const target = targetFor(attack.attacker);
-      const severity = severityFor(attack.delta, attack.leadChange);
-      const count = burstCount(attack.delta, attack.leadChange, reducedMotion);
+      const target = targetFor(attack.attacker) as CombatSide;
+      const severity = severityFor(attack.delta, attack.leadChange) as Severity;
+      const count = burstCount(attack.delta, attack.leadChange, { reducedMotion, compact });
       if (!count) continue;
       recoilTarget(target, severity, reducedMotion);
       for (let index = 0; index < count; index += 1) {
         sequence.current += 1;
         const id = `${now}-${sequence.current}`;
-        const x = target === "left" ? randomBetween(8, 31) : randomBetween(69, 92);
-        const y = randomBetween(30, 82);
+        const x = compact
+          ? (target === "left" ? randomBetween(12, 44) : randomBetween(56, 88))
+          : (target === "left" ? randomBetween(8, 31) : randomBetween(69, 92));
+        const y = compact ? randomBetween(18, 88) : randomBetween(30, 82);
         newHoles.push({
           id: `hole-${id}`,
           side: target,
@@ -167,10 +124,10 @@ export function BattleCombatEffects({ metrics }: { metrics?: BattleRealtimeMetri
           severity,
           createdAt: now + index,
         });
-        if (!reducedMotion) {
+        if (!reducedMotion && !compact) {
           newTracers.push({
             id: `tracer-${id}`,
-            from: attack.attacker,
+            from: attack.attacker as CombatSide,
             y: Math.max(18, Math.min(86, y + randomBetween(-8, 8))),
             offset: randomBetween(-4, 4),
             severity,
@@ -179,9 +136,9 @@ export function BattleCombatEffects({ metrics }: { metrics?: BattleRealtimeMetri
         }
       }
     }
-    if (newHoles.length) setHoles((current) => capHoles([...current, ...newHoles]));
+    if (newHoles.length) setHoles((current) => capHoles([...current, ...newHoles]) as BulletHole[]);
     if (newTracers.length) setTracers((current) => [...current, ...newTracers].slice(-MAX_TRACERS));
-  }, [enabled, metrics, reducedMotion]);
+  }, [enabled, metrics, reducedMotion, compact]);
 
   useEffect(() => {
     if (!enabled || (!holes.length && !tracers.length)) return;
@@ -196,7 +153,7 @@ export function BattleCombatEffects({ metrics }: { metrics?: BattleRealtimeMetri
   if (!enabled || (!holes.length && !tracers.length)) return null;
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-30 overflow-hidden" aria-hidden="true">
+    <div className="pointer-events-none absolute inset-0 z-30 overflow-hidden" aria-hidden="true" data-battle-combat-effects="on">
       <style>{`
         @keyframes mwz-battle-tracer-ltr {
           0% { opacity: 0; transform: scaleX(0.02) translateX(-12%); }

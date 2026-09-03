@@ -188,6 +188,9 @@ jobs:
       - name: Test Battle Points V2 baselines, volume and calculator
         run: npm --prefix frontend run test:arena-battle-v2
 
+      - name: Test enabled Battle combat-effects path
+        run: npm --prefix frontend run test:arena-combat-effects
+
       - name: Test imported token profile and image security
         run: |
           node --test \

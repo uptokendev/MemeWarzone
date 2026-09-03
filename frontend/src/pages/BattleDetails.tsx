@@ -162,9 +162,7 @@ const BattleDetails = () => {
                 accent="cyan"
               />
             </div>
-            <div className="hidden xl:block">
-              <BattleCombatEffects metrics={battle.state === "live" ? metrics : null} />
-            </div>
+            <BattleCombatEffects metrics={battle.state === "live" ? metrics : null} />
           </div>
         </div>
       </section>
