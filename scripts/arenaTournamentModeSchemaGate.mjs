@@ -92,6 +92,22 @@ function expectPsqlFailure(sql, pattern, label) {
   }
 }
 
+psql(`
+  DO $$
+  BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+      CREATE ROLE anon NOLOGIN;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+      CREATE ROLE authenticated NOLOGIN;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+      CREATE ROLE service_role NOLOGIN;
+    END IF;
+  END
+  $$;
+`);
+
 const chain = [
   "db/migrations/20260826_000001_arena_identity_schema.sql",
   "db/migrations/20260827_000001_arena_vote_ingest.sql",
