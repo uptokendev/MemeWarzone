@@ -50,7 +50,7 @@ test("handles quote tokens with non-18 decimals exactly", () => {
 test("decimal multiplication remains bigint-based for values above JS safe integer range", () => {
   assert.equal(
     multiplyDecimalStrings("12345678901234567890.123456789012345678", "98765.43210987654321"),
-    "1219326311370217952249703.702204126352812698",
+    "1219326311370217952249657.064224965706333485",
   );
 });
 
