@@ -13,5 +13,15 @@ export async function fetchArenaBattleMetrics(
   });
   if (!response.ok) return null;
   const json = await response.json().catch(() => null);
-  return normalizeBattleRealtimeMetrics(json?.metrics);
+  if (!json?.metrics) return null;
+  return normalizeBattleRealtimeMetrics({
+    ...json.metrics,
+    settlementMode: json.settlementMode ?? json.metrics.settlementMode,
+    settlementVersion: json.settlementVersion ?? null,
+    settlementScoringVersion: json.settlementScoringVersion ?? null,
+    moneyTieBreak: json.moneyTieBreak ?? null,
+    tieBreakUsed: json.tieBreakUsed === true,
+    finalBattlePoints: json.finalBattlePoints ?? null,
+    settlementMetricsUpdatedAt: json.settlementMetricsUpdatedAt ?? null,
+  });
 }
