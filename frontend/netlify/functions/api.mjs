@@ -194,6 +194,7 @@ app.all("/arena/battles/creator-status", wrap(arenaBattles));
 app.all("/arena/battles/:battleId/accept", wrap(arenaBattles));
 app.all("/arena/battles/:battleId/decline", wrap(arenaBattles));
 app.all("/arena/battles/:battleId/counter", wrap(arenaBattles));
+app.all("/arena/battles/:battleId/cancel-open", wrap(arenaBattles));
 app.all("/arena/battles/:battleId/transition", wrap(arenaBattles));
 app.all("/arena/battles/:battleId", wrap(arenaBattles));
 app.all("/arena/battles", wrap(arenaBattles));

@@ -13,6 +13,7 @@ import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import {
   acceptPostGradBattle,
+  cancelPostGradBattleOpen,
   challengePostGradBattle,
   counterPostGradBattle,
   declinePostGradBattle,
@@ -26,6 +27,7 @@ import { signWalletAction } from "@/lib/walletActionAuth";
 import { signSolanaMessage } from "@/lib/solanaWallet";
 import { ArenaStakeButton } from "@/components/arena/ArenaStakeButton";
 import { BATTLE_DURATIONS, battleDurationLabel, parseBattleDurationHours } from "@/lib/arena/battleDuration";
+import { presentAutoDeployStatus } from "@/lib/arena/autoDeployPresentation.mjs";
 import { presentManualOpponentPreview, presentMatchCandidates } from "@/lib/arena/findMatchPresentation.mjs";
 import { publicBattleLabel, publicBattleLane } from "@/lib/arena/publicBattleState";
 
@@ -82,9 +84,12 @@ export default function CommandCenterBattles() {
     [feed.openForBattleQueue, qualified],
   );
 
-  const selected = eligible.find((item) => tokenKey(item) === selectedToken) || eligible[0];
+  const selected = qualified.find((item) => tokenKey(item) === selectedToken) || qualified[0] || eligible[0];
+  const selectedBattle =
+    [...feed.openForBattleQueue, ...feed.liveBattles].find((battle) => battle.id && battle.id === selected?.battleId) || null;
+  const autoDeployMode = presentAutoDeployStatus(selected, selectedBattle);
   const stakeAmount = Number(stake);
-  const canAct = Boolean(selected && Number.isFinite(stakeAmount) && stakeAmount > 0 && !busy);
+  const canAct = Boolean(selected?.eligibility && Number.isFinite(stakeAmount) && stakeAmount > 0 && !busy);
   const matchPreview = presentManualOpponentPreview(challengeTarget, matchCandidates);
 
   async function signAuth(action: string, extraLines: string[]) {
@@ -118,9 +123,24 @@ export default function CommandCenterBattles() {
       const auth = await signAuth("arena_open_battle", [`Token: ${tokenId}`, `Stake: ${stakeAmount}`, `Duration: ${durationHours}`]);
       await openPostGradBattle({ tokenId, chainId: Number(chainId), stakeNative: stakeAmount, durationHours, auth });
       await feed.refreshFeed();
-      toast.success("Coin is waiting for a similar rival. Stake and fight length lock when both sides agree, then both deposit.");
+      toast.success("AUTO DEPLOY is on. Compatible opponents can be paired automatically. If escrow is required, both owners still fund on-chain.");
     } catch (error) {
-      toast.error(String((error as Error)?.message || "Could not open for battle."));
+      toast.error(String((error as Error)?.message || "Could not enable AUTO DEPLOY."));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function handleDisableAutoDeploy() {
+    if (!selected?.battleId || autoDeployMode !== "searching") return;
+    setBusy("cancel-open");
+    try {
+      const auth = await signAuth("arena_cancel_open_battle", [`Battle: ${selected.battleId}`, `Token: ${tokenKey(selected)}`]);
+      await cancelPostGradBattleOpen(selected.battleId, auth);
+      await feed.refreshFeed();
+      toast.success("AUTO DEPLOY disabled. This coin left the matchmaking queue.");
+    } catch (error) {
+      toast.error(String((error as Error)?.message || "Could not disable AUTO DEPLOY."));
     } finally {
       setBusy(null);
     }
@@ -282,8 +302,11 @@ export default function CommandCenterBattles() {
         </CommandCenterCard>
       ) : null}
 
-      <CommandCenterCard title="Open for battle" description="Set a chain-native stake. After a match, both owners pay that stake on-chain. The fight goes live only when both deposits are in. Auto-match looks for a similar waiting coin within 20% of that stake.">
-        {!eligible.length ? (
+      <CommandCenterCard
+        title="AUTO DEPLOY"
+        description="Opt this coin into automatic matchmaking. Compatible AUTO DEPLOY opponents can be paired without ACCEPT. If escrow is required, each owner still funds on-chain. The backend never signs wallet transactions. Stake and duration stay under your control."
+      >
+        {!qualified.length ? (
           <p className="text-sm text-muted-foreground">
             {feed.loading
               ? "Loading your graduated and imported coins..."
@@ -302,47 +325,83 @@ export default function CommandCenterBattles() {
                   setMatchCandidates([]);
                 }}
               >
-                {eligible.map((item) => (
+                {qualified.map((item) => (
                   <option key={tokenKey(item)} value={tokenKey(item)}>
                     {item.symbol || item.tokenName} ({item.origin === "import" ? "imported" : "graduated"})
                   </option>
                 ))}
               </select>
             </label>
-            <label className="block text-xs uppercase tracking-[0.14em] text-muted-foreground">
-              Fight length
-              <select
-                className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
-                value={durationHours}
-                onChange={(event) => setDurationHours(parseBattleDurationHours(event.target.value, 24))}
-              >
-                {BATTLE_DURATIONS.map((item) => (
-                  <option key={item.hours} value={item.hours}>
-                    {item.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="block text-xs uppercase tracking-[0.14em] text-muted-foreground">
-              Stake ({nativeLabel(chainId)})
-              <input
-                type="number"
-                min="0"
-                step="any"
-                value={stake}
-                onChange={(event) => setStake(event.target.value)}
-                className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
-                placeholder={`Amount in ${nativeLabel(chainId)}`}
-              />
-            </label>
-            <Button className="font-retro" disabled={!canAct} onClick={() => void handleOpen()}>
-              {busy === "open" ? "Opening..." : "Open for battle"}
-            </Button>
+            {autoDeployMode === "searching" ? (
+              <>
+                <TacticalTag label="AUTO DEPLOY: SEARCHING" tone="sponsored" />
+                <p className="text-sm text-muted-foreground">
+                  Stake {selectedBattle?.stakeNative ?? "—"} {nativeLabel(chainId, selectedBattle?.nativeSymbol)} ·{" "}
+                  {battleDurationLabel((selectedBattle as { durationHours?: number } | null)?.durationHours || durationHours)}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Looking for a ranked compatible opponent. No ACCEPT step after an automatic pair.
+                </p>
+                <Button className="font-retro" variant="outline" disabled={busy === "cancel-open"} onClick={() => void handleDisableAutoDeploy()}>
+                  {busy === "cancel-open" ? "Disabling..." : "DISABLE AUTO DEPLOY"}
+                </Button>
+              </>
+            ) : autoDeployMode === "funding" ? (
+              <>
+                <TacticalTag label="OPPONENT FOUND / FUNDING REQUIRED" tone="hot" />
+                <p className="text-sm text-muted-foreground">AUTO DEPLOY cannot be disabled after a pair. Both owners fund the on-chain stake.</p>
+                {selected?.battleId ? (
+                  <ArenaStakeButton
+                    battleId={selected.battleId}
+                    chainId={chainId}
+                    walletAddress={walletAddress}
+                    battleState={selected.currentState}
+                  />
+                ) : null}
+              </>
+            ) : autoDeployMode === "live" ? (
+              <>
+                <TacticalTag label="LIVE" tone="hot" />
+                <p className="text-sm text-muted-foreground">This coin is already in a live fight.</p>
+              </>
+            ) : (
+              <>
+                <label className="block text-xs uppercase tracking-[0.14em] text-muted-foreground">
+                  Fight length
+                  <select
+                    className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
+                    value={durationHours}
+                    onChange={(event) => setDurationHours(parseBattleDurationHours(event.target.value, 24))}
+                  >
+                    {BATTLE_DURATIONS.map((item) => (
+                      <option key={item.hours} value={item.hours}>
+                        {item.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block text-xs uppercase tracking-[0.14em] text-muted-foreground">
+                  Stake ({nativeLabel(chainId)})
+                  <input
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={stake}
+                    onChange={(event) => setStake(event.target.value)}
+                    className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
+                    placeholder={`Amount in ${nativeLabel(chainId)}`}
+                  />
+                </label>
+                <Button className="font-retro" disabled={!canAct} onClick={() => void handleOpen()}>
+                  {busy === "open" ? "Enabling..." : "ENABLE AUTO DEPLOY"}
+                </Button>
+              </>
+            )}
           </div>
         )}
       </CommandCenterCard>
 
-      {selected ? (
+      {selected?.eligibility ? (
         <FindMatchPanel
           tokenId={tokenKey(selected)}
           chainId={Number(chainId) || undefined}

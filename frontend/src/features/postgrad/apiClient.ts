@@ -156,6 +156,11 @@ export async function fetchPostGradBattleDetails(battleId: string, signal?: Abor
   return fetchJson(`/api/arena/battles/${encodeURIComponent(battleId)}`, { cache: "no-store", signal });
 }
 
+export async function cancelPostGradBattleOpen(battleId: string, auth?: JsonObject) {
+  await mutateBattle(`/api/arena/battles/${encodeURIComponent(battleId)}/cancel-open`, { auth });
+  return true;
+}
+
 export async function openPostGradBattle(input: OpenPostGradBattleInput) {
   const payload: JsonObject = {
     tokenId: input.tokenId,

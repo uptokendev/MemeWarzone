@@ -34,6 +34,7 @@ import { getArenaMarketSnapshot } from "./lib/arenaMarketSnapshot.js";
 import { escrowRequired, readOnchainPool } from "./lib/arenaWarPoolLive.js";
 import { isSolanaWarzoneChainId } from "./lib/solanaArenaPoolRead.js";
 import { nativeSymbolFor } from "./lib/chainNative.js";
+import { handleCancelOpen } from "./lib/arenaAutoDeployCancel.js";
 
 const LIVE_HOURS = 24;
 const CHALLENGE_HOURS = 24;
@@ -1281,6 +1282,8 @@ export default async function handler(req, res) {
     if (decline) return method === "POST" ? handleDecline(req, res, decodeURIComponent(decline[1])) : badMethod(res);
     const counter = path.match(/^\/arena\/battles\/([^/]+)\/counter$/);
     if (counter) return method === "POST" ? handleCounter(req, res, decodeURIComponent(counter[1])) : badMethod(res);
+    const cancelOpen = path.match(/^\/arena\/battles\/([^/]+)\/cancel-open$/);
+    if (cancelOpen) return method === "POST" ? handleCancelOpen(req, res, decodeURIComponent(cancelOpen[1])) : badMethod(res);
     const transition = path.match(/^\/arena\/battles\/([^/]+)\/transition$/);
     if (transition) return method === "POST" ? handleTransition(req, res, decodeURIComponent(transition[1])) : badMethod(res);
 
