@@ -195,7 +195,7 @@ CREATE TABLE IF NOT EXISTS public.arena_contest_actions (
     (action_type = 'boost' AND phase = 'regulation')
     OR action_type = 'free_vote'
   ),
-  CONSTRAINT arena_contest_actions_points_check CHECK (
+  CONSTRAINT arena_contest_actions_free_vote_amounts_check CHECK (
     (action_type = 'free_vote' AND boost_units = 0 AND pool_native_raw = 0 AND protocol_native_raw = 0)
     OR action_type = 'boost'
   )
