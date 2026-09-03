@@ -16,6 +16,7 @@ import {
   presentBattleResult,
   presentBattleWallMore,
   shouldPresentScoreBreakdown,
+  shouldPresentWarPoolEconomics,
 } from "./battleWallMorePresentation.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -216,7 +217,6 @@ test("Phase 4B MORE reuses existing score, WarPool, funding, claim, and result s
   assert.equal(presentBattleResult(battle({ state: "live" }), {}).finalPointsLabel, null);
 
   assert.match(moreSrc, /BattleScoreBreakdown/);
-  assert.match(moreSrc, /WarPoolPanel/);
   assert.match(moreSrc, /BattleFunding/);
   assert.match(moreSrc, /BattleResultLog/);
   assert.match(fundingSrc, /ArenaStakeButton/);
@@ -227,6 +227,32 @@ test("Phase 4B MORE reuses existing score, WarPool, funding, claim, and result s
   assert.doesNotMatch(moreSrc, /Battle Boost|Final Salvo|Live telemetry V2/);
   assert.doesNotMatch(moduleSrc, /WarPoolPanel|ArenaStakeButton|ArenaWarPoolClaimButton|BattleMetricBreakdown/);
   assert.doesNotMatch(moreSrc, /useBattleWallRealtime|useArenaBattleRealtimeDetails/);
+});
+
+test("Unknown WarPool generation does not expose historical 85/5/10 economics on the Wall", () => {
+  const moreSrc = readSrc("../../components/arena/BattleWallMore.tsx");
+  const helper = readSrc("./battleWallMorePresentation.mjs");
+  const moduleSrc = readSrc("../../components/arena/BattleWallModule.tsx");
+  const unknown = presentBattleWallMore(battle({ state: "live" }), metrics({ settlementMode: "battle_points_v2", scoringVersion: "battle_points_v2" }));
+  const fromPoints = shouldPresentWarPoolEconomics({ scoringVersion: "battle_points_v2", settlementMode: "battle_points_v2" });
+  const fromSettlement = shouldPresentWarPoolEconomics({ settlementVersion: 2, battleState: "finished" });
+  const fromRouting = shouldPresentWarPoolEconomics({ routingBreakdown: { winnersUsd: 85, protocolUsd: 5, featuredUsd: 10 } });
+  const knownV1 = shouldPresentWarPoolEconomics({ poolGeneration: "war_pool_v1" });
+  const knownV2 = shouldPresentWarPoolEconomics({ poolGeneration: "war_pool_v2" });
+  const tournament = presentBattleWallMore(battle({ id: "tour-fight", source: "tournament", tournamentId: "tour-9" }), metrics());
+
+  assert.equal(unknown.warPool.showEconomics, false);
+  assert.equal(fromPoints, false);
+  assert.equal(fromSettlement, false);
+  assert.equal(fromRouting, false);
+  assert.equal(knownV1, false);
+  assert.equal(knownV2, false);
+  assert.equal(tournament.warPool.redirectTo.href, "/warzone/tournament/tour-9");
+  assert.match(moreSrc, /data-battle-war-pool="tournament-redirect"/);
+  assert.doesNotMatch(moreSrc, /WarPoolPanel|useArenaWarPool|85%|75%|0\.85|0\.75/);
+  assert.doesNotMatch(helper, /winnersUsd:\s*Math\.round|totalPotUsd \* 0\.|75\s*\/\s*20\s*\/\s*5/);
+  assert.doesNotMatch(moduleSrc, /WarPoolPanel|85%|75%/);
+  assert.match(readSrc("../../App.tsx"), /path="\/battle\/:id"/);
 });
 
 test("MORE wiring is inline, accessible, and does not add a realtime or profile fetch", () => {

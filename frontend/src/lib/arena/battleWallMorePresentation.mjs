@@ -220,6 +220,13 @@ export function presentWarPoolSides(battle) {
     }));
 }
 
+export function shouldPresentWarPoolEconomics(source = {}) {
+  const generation = String(source?.poolGeneration || source?.pool_generation || "").trim();
+  if (generation !== "war_pool_v1" && generation !== "war_pool_v2") return false;
+  // Shared WarPoolPanel is not a generation-aware Wall interface yet.
+  return false;
+}
+
 export function presentBattleFundingStatus(status) {
   if (!status || typeof status !== "object") return null;
   const paidA = status.paidA === true;
@@ -294,6 +301,10 @@ export function presentBattleWallMore(battle, metrics, options = {}) {
     warPool: {
       poolSubjectId: kind === "tournament" && tournamentId ? tournamentId : String(battle?.id || "").trim(),
       kind: kind === "tournament" ? "tournament" : "battle",
+      poolGeneration: String(battle?.poolGeneration || battle?.pool_generation || "").trim() || null,
+      showEconomics: shouldPresentWarPoolEconomics({
+        poolGeneration: battle?.poolGeneration || battle?.pool_generation,
+      }),
       redirectTo:
         kind === "tournament" && tournamentId
           ? { href: `/warzone/tournament/${encodeURIComponent(tournamentId)}`, label: "Support this coin in the tournament" }
