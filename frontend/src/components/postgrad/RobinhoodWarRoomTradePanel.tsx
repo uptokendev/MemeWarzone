@@ -3,6 +3,7 @@ import { Contract, ethers } from "ethers";
 import type { CampaignInfo } from "@/lib/launchpadClient";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { RobinhoodBeatTheMarketCard } from "@/components/postgrad/RobinhoodBeatTheMarketCard";
 import { useToast } from "@/hooks/use-toast";
 import { useWallet } from "@/contexts/WalletContext";
 import {
@@ -293,6 +294,17 @@ export function RobinhoodWarRoomTradePanel({ campaign }: { campaign: CampaignInf
               </div>
             </>
           ) : null}
+        </div>
+      ) : null}
+
+      {isStockRoute ? (
+        <div className="mb-3">
+          <RobinhoodBeatTheMarketCard
+            chainId={chainId}
+            campaignAddress={campaign.campaign}
+            memeSymbol={campaign.symbol || "MEME"}
+            quoteSymbol={stockSymbol}
+          />
         </div>
       ) : null}
 
