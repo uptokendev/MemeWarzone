@@ -541,7 +541,8 @@ test("Battle Wall wiring keeps ArenaMatchRow, reuses wall realtime/effects, and 
   assert.match(focus, /prefers-reduced-motion/);
   assert.match(vs, /DATA_DELAY_LABEL/);
   assert.match(row, /export function ArenaMatchRow/);
-  assert.match(home, /ArenaMatchRow/);
+  assert.match(home, /WarzoneBattlePreview/);
+  assert.doesNotMatch(home, /ArenaMatchRow/);
   assert.match(command, /FindMatchPanel/);
   assert.match(command, /ENABLE AUTO DEPLOY/);
   assert.match(command, /challengePostGradBattle/);

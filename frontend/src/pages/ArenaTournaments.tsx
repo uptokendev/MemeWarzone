@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
-import { ContentContainer } from "@/components/layout/ContentContainer";
+import { WarzoneContent } from "@/components/warzone/WarzoneContent";
 import { useArenaEventFeed, type ArenaEventSummary } from "@/hooks/useArenaEventFeed";
 
 type TournamentTab = "upcoming" | "live" | "results";
@@ -30,7 +30,7 @@ const ArenaTournaments = () => {
   }, [archivedEvents, events, tab]);
 
   return (
-    <ContentContainer className="space-y-5 px-1 pb-10 pt-4">
+    <WarzoneContent className="space-y-5">
       <section className="mwz-hud-frame p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
@@ -90,7 +90,7 @@ const ArenaTournaments = () => {
           </div>
         )}
       </section>
-    </ContentContainer>
+    </WarzoneContent>
   );
 };
 

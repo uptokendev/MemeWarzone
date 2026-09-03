@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { BattleWallModule } from "@/components/arena/BattleWallModule";
 import { CreatorChallengeCarousel } from "@/components/arena/CreatorChallengeCarousel";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
-import { ContentContainer } from "@/components/layout/ContentContainer";
+import { WarzoneContent } from "@/components/warzone/WarzoneContent";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import {
@@ -231,7 +231,7 @@ export default function ArenaBattles() {
     "mt-1 w-full min-w-0 rounded-md border border-border/60 bg-background px-2 py-1.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
 
   return (
-    <ContentContainer className="min-w-0 max-w-full space-y-4 overflow-x-hidden px-1 pb-10 pt-4">
+    <WarzoneContent className="space-y-4">
       <section className="mwz-hud-frame space-y-3 p-3 md:p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
@@ -349,6 +349,6 @@ export default function ArenaBattles() {
           </div>
         )}
       </section>
-    </ContentContainer>
+    </WarzoneContent>
   );
 }

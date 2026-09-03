@@ -7,7 +7,7 @@ import { ArenaBuyInButton } from "@/components/arena/ArenaBuyInButton";
 import { ArenaWarPoolClaimButton } from "@/components/arena/ArenaWarPoolClaimButton";
 import { TournamentMatchCard } from "@/components/arena/TournamentMatchCard";
 import { TournamentTokenIdentity } from "@/components/arena/TournamentTokenIdentity";
-import { ContentContainer } from "@/components/layout/ContentContainer";
+import { WarzoneContent } from "@/components/warzone/WarzoneContent";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { WarPoolPanel } from "@/components/postgrad/WarPoolPanel";
 import { Button } from "@/components/ui/button";
@@ -264,7 +264,7 @@ const TournamentDetails = () => {
 
   if (!tournament) {
     return (
-      <ContentContainer className="space-y-5 px-1 pb-10 pt-4">
+      <WarzoneContent className="space-y-5">
         <section className="mwz-hud-frame p-5">
           <h1 className="font-retro text-2xl text-foreground">Tournament unavailable</h1>
           <p className="mt-2 text-sm text-muted-foreground">
@@ -276,12 +276,12 @@ const TournamentDetails = () => {
             </Button>
           </div>
         </section>
-      </ContentContainer>
+      </WarzoneContent>
     );
   }
 
   return (
-    <ContentContainer className="space-y-5 px-1 pb-10 pt-4">
+    <WarzoneContent className="space-y-5">
       <section className="mwz-hud-frame p-4">
         <div className="flex flex-wrap items-center gap-2">
           <TacticalTag label={tournament.status} tone={tournament.status === "live" ? "success" : "default"} />
@@ -516,7 +516,7 @@ const TournamentDetails = () => {
           ) : null}
         </>
       )}
-    </ContentContainer>
+    </WarzoneContent>
   );
 };
 
