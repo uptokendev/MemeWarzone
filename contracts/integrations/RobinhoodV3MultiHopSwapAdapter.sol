@@ -103,6 +103,7 @@ contract RobinhoodV3MultiHopSwapAdapter is ReentrancyGuard {
     error ZeroAddress();
     error ContractCodeMissing();
     error InvalidRoute();
+    error RouteIdentityLocked();
     error RouteDisabled();
     error RoutePoolUnavailable();
     error DeadlineExpired();
@@ -137,7 +138,9 @@ contract RobinhoodV3MultiHopSwapAdapter is ReentrancyGuard {
     }
 
     /// @notice Configure the one canonical Stock Battlefield execution route for a MEME token.
-    /// @dev The caller cannot provide an execution router or Stock Token at trade time.
+    /// @dev Route identity (Stock Token and both fee tiers) locks on first configuration. The
+    /// admin may later disable/re-enable the route or tighten/relax its price-impact policy,
+    /// but cannot silently retarget the MEME token to another graduation quote market.
     function configureMarketRoute(
         address memeToken,
         address stockToken,
@@ -152,6 +155,16 @@ contract RobinhoodV3MultiHopSwapAdapter is ReentrancyGuard {
             nativeStockFee == 0 || stockMemeFee == 0 || maxPriceImpactBps > BPS
         ) revert InvalidRoute();
         if (memeToken.code.length == 0 || stockToken.code.length == 0) revert ContractCodeMissing();
+
+        MarketRoute memory existing = marketRoutes[memeToken];
+        if (
+            existing.stockToken != address(0) &&
+            (
+                existing.stockToken != stockToken ||
+                existing.nativeStockFee != nativeStockFee ||
+                existing.stockMemeFee != stockMemeFee
+            )
+        ) revert RouteIdentityLocked();
 
         if (enabled) _requireCanonicalPools(memeToken, stockToken, nativeStockFee, stockMemeFee);
 
