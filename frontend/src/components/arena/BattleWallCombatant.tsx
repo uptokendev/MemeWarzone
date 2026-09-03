@@ -4,7 +4,6 @@ import { useArenaTokenProfile } from "@/hooks/useArenaTokenProfile";
 import type { BattleRealtimeSide } from "@/lib/arena/battleRealtime";
 import { formatCompactUsd } from "@/lib/arena/battlePresentation";
 import { firstFiniteBattleMetric } from "@/lib/arena/battleWallPresentation.mjs";
-import { mockTokenArtForTicker } from "@/lib/arena/mockTokenArt.mjs";
 import { resolveImageUri } from "@/lib/media";
 import { cn } from "@/lib/utils";
 
@@ -121,13 +120,7 @@ export function BattleWallCombatant({
   const profile = useArenaTokenProfile(chainId, tokenIdentity);
   const displayName = profile?.name || participant?.tokenName || "Awaiting rival";
   const displaySymbol = String(profile?.symbol || participant?.symbol || "TBD").replace(/^\$/, "");
-  const imageUrl =
-    profile?.imageUrl ||
-    participant?.imageUrl ||
-    participant?.logoUri ||
-    mockTokenArtForTicker(displaySymbol) ||
-    mockTokenArtForTicker(participant?.symbol) ||
-    null;
+  const imageUrl = profile?.imageUrl || participant?.imageUrl || participant?.logoUri || null;
   const bleedSrc = resolveImageUri(imageUrl);
   const bleed = bleedSrc && bleedSrc !== "/placeholder.svg" ? bleedSrc : null;
   const description = String(profile?.description || "").trim();
@@ -155,9 +148,11 @@ export function BattleWallCombatant({
       data-battle-wall-combatant={accent}
       data-battle-combat-side={combatSide || undefined}
       data-battle-combatant-layout="split"
-      data-selected={isLeader ? "true" : undefined}
+      data-battle-combatant-bounded="true"
+      data-battle-leader={isLeader ? "true" : undefined}
       className={cn(
-        "mwz-flat-card relative flex h-full min-w-0 flex-col overflow-hidden",
+        "mwz-flat-card relative flex h-auto max-h-[22rem] min-w-0 flex-col overflow-hidden",
+        isLeader && "border-orange-400/45",
         trailerLive && "opacity-95",
         trailerDone && "opacity-90 saturate-[0.85]",
       )}
@@ -169,18 +164,18 @@ export function BattleWallCombatant({
             alt=""
             aria-hidden="true"
             data-battle-combatant-bleed="true"
-            className="pointer-events-none absolute inset-0 h-full w-full scale-125 object-cover object-left opacity-[0.34] blur-[18px]"
+            className="pointer-events-none absolute inset-0 z-0 h-full w-full scale-110 object-cover object-left opacity-[0.16] blur-[12px]"
           />
           <div
             data-battle-combatant-readability="true"
-            className="pointer-events-none absolute inset-0 bg-[linear-gradient(90deg,rgba(5,5,5,0.18)_0%,rgba(5,5,5,0.62)_42%,rgba(5,5,5,0.88)_100%)]"
+            className="pointer-events-none absolute inset-0 z-0 bg-[linear-gradient(90deg,rgba(5,5,5,0.28)_0%,rgba(5,5,5,0.72)_48%,rgba(5,5,5,0.92)_100%)]"
           />
         </>
       ) : null}
       <div
         data-battle-combatant-split="true"
         className={cn(
-          "relative z-10 grid min-h-0 min-w-0 flex-1 items-stretch gap-2 p-2",
+          "relative z-10 grid min-w-0 items-start gap-2 p-2",
           compact
             ? "grid-cols-[minmax(5.25rem,36%)_minmax(0,1fr)]"
             : "grid-cols-[minmax(5.5rem,38%)_minmax(0,1fr)] sm:grid-cols-[minmax(6rem,38%)_minmax(0,1fr)] md:grid-cols-[minmax(6.75rem,42%)_minmax(0,1fr)]",
@@ -189,7 +184,7 @@ export function BattleWallCombatant({
       >
         <div
           data-battle-combatant-art="true"
-          className="relative h-full min-h-[6.5rem] min-w-0 max-h-[7.75rem] overflow-hidden sm:max-h-[8.5rem] md:min-h-[9.75rem] md:max-h-[12.75rem]"
+          className="relative h-[6.75rem] w-full min-w-0 overflow-hidden sm:h-[7.25rem] md:h-[8.5rem]"
         >
           <CombatantArtwork imageUrl={imageUrl} ticker={displaySymbol} name={displayName} accent={accent} />
           <div className="absolute left-1 top-1 bg-black/65 px-1 py-0.5 font-retro text-[8px] uppercase tracking-[0.14em] text-white/80 md:left-1.5 md:top-1.5 md:px-1.5 md:text-[9px] md:tracking-[0.16em]">

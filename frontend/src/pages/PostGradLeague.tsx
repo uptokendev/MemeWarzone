@@ -7,7 +7,6 @@ import { WarzoneTokenMark } from "@/components/warzone/WarzoneTokenMark";
 import { getArenaTokenRoute } from "@/features/postgrad/tokenRoutes";
 import { useArenaLeagueFeed } from "@/hooks/useArenaLeagueFeed";
 import {
-  presentWarzoneFeedTone,
   presentWarzoneLeagueBoard,
   presentWarzoneLeagueEmpty,
   presentWarzoneLeagueStatus,
@@ -39,20 +38,15 @@ const PostGradLeague = () => {
   const quarterFinalsId = (season as { quarterFinalsTournamentId?: string }).quarterFinalsTournamentId;
   const board = presentWarzoneLeagueBoard(season.entries);
   const empty = presentWarzoneLeagueEmpty(source);
-  const tone = presentWarzoneFeedTone(source);
   const first = board.podium[0];
   const second = board.podium[1];
   const third = board.podium[2];
 
   return (
     <WarzoneContent className="space-y-6">
-      <WarzonePageHeader
-        title="Major War League"
-        copy="Weekly table for graduated MemeWarzone coins and approved imports. Win 3 / loss 1 / draw 0. Prize Leagues stay on /league."
-      >
+      <WarzonePageHeader title="Major War League" copy="The monthly fight for Warzone supremacy">
         {season.label ? <TacticalTag label={season.label} tone="default" /> : null}
         <TacticalTag label={`Week ${season.week || 1}`} tone="default" />
-        <TacticalTag label={tone.label} tone={tone.tone as "success" | "default"} />
       </WarzonePageHeader>
 
       <div className="flex flex-wrap gap-3 text-xs font-semibold uppercase tracking-[0.14em]">
@@ -80,7 +74,7 @@ const PostGradLeague = () => {
           <h2 className="mt-1 font-retro text-lg text-foreground">Top 8 qualify</h2>
           {quarterFinalsId ? (
             <div className="mt-3 space-y-3 text-sm text-muted-foreground">
-              <p>Quarter Finals are a system tournament seeded from this table.</p>
+              <p>Top 8 from this table enter the Quarter Finals.</p>
               <Link
                 to={`/warzone/tournaments/${encodeURIComponent(quarterFinalsId)}`}
                 className="mwz-button inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em]"
@@ -90,7 +84,7 @@ const PostGradLeague = () => {
             </div>
           ) : (
             <p className="mt-3 text-sm text-muted-foreground">
-              Quarter Finals open when the table is frozen. Ops freeze this table and seed the top 8 coins with at least 3 finished fights.
+              Quarter Finals open when the season table is frozen.
             </p>
           )}
         </section>
@@ -101,16 +95,30 @@ const PostGradLeague = () => {
             <div className="grid gap-3 md:grid-cols-3">
               {first ? (
                 <TokenLink tokenId={first.tokenId} className="md:col-start-2 md:row-start-1">
-                  <div className="mwz-flat-card flex flex-col items-center p-4 text-center" data-selected="true">
-                    <div className="text-[10px] uppercase tracking-[0.22em] text-orange-200">#1</div>
-                    <div className="mt-3">
-                      <WarzoneTokenMark symbol={first.symbol} name={first.tokenName} size="lg" />
-                    </div>
-                    <div className="mt-3 font-retro text-lg text-foreground">${String(first.symbol || "").replace(/^\$/, "")}</div>
-                    <div className="text-[11px] uppercase tracking-[0.14em] text-white/50">{first.tokenName}</div>
-                    <div className="mt-2 font-retro text-xl text-foreground">{Number(first.points).toLocaleString()} PTS</div>
-                    <div className="text-xs text-white/55">
-                      {first.wins}W / {first.losses}L
+                  <div
+                    className="mwz-flat-card relative overflow-hidden p-4 text-center"
+                    data-warzone-mwl-champion="true"
+                    style={{ boxShadow: "inset 0 2px 0 rgba(240,106,26,0.7)" }}
+                  >
+                    {(first as { imageUrl?: string }).imageUrl ? (
+                      <img
+                        src={(first as { imageUrl?: string }).imageUrl}
+                        alt=""
+                        aria-hidden="true"
+                        className="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-[0.14] blur-[12px]"
+                      />
+                    ) : null}
+                    <div className="relative z-10">
+                      <div className="text-[10px] uppercase tracking-[0.22em] text-orange-200">#1</div>
+                      <div className="mt-3 flex justify-center">
+                        <WarzoneTokenMark imageUrl={(first as { imageUrl?: string }).imageUrl} symbol={first.symbol} name={first.tokenName} size="lg" />
+                      </div>
+                      <div className="mt-3 font-retro text-lg text-foreground">${String(first.symbol || "").replace(/^\$/, "")}</div>
+                      <div className="text-[11px] uppercase tracking-[0.14em] text-white/50">{first.tokenName}</div>
+                      <div className="mt-2 font-retro text-2xl text-foreground">{Number(first.points).toLocaleString()} PTS</div>
+                      <div className="text-xs text-white/55">
+                        {first.wins}W / {first.losses}L
+                      </div>
                     </div>
                   </div>
                 </TokenLink>
@@ -119,7 +127,7 @@ const PostGradLeague = () => {
                 <TokenLink tokenId={second.tokenId} className="md:col-start-1 md:row-start-1">
                   <div className="mwz-flat-card flex items-center gap-3 p-4 md:flex-col md:text-center">
                     <div className="text-[10px] uppercase tracking-[0.18em] text-white/55">#2</div>
-                    <WarzoneTokenMark symbol={second.symbol} name={second.tokenName} />
+                    <WarzoneTokenMark imageUrl={(second as { imageUrl?: string }).imageUrl} symbol={second.symbol} name={second.tokenName} />
                     <div className="min-w-0">
                       <div className="font-retro text-foreground">${String(second.symbol || "").replace(/^\$/, "")}</div>
                       <div className="truncate text-[11px] uppercase tracking-[0.12em] text-white/50">{second.tokenName}</div>
@@ -135,7 +143,7 @@ const PostGradLeague = () => {
                 <TokenLink tokenId={third.tokenId} className="md:col-start-3 md:row-start-1">
                   <div className="mwz-flat-card flex items-center gap-3 p-4 md:flex-col md:text-center">
                     <div className="text-[10px] uppercase tracking-[0.18em] text-white/55">#3</div>
-                    <WarzoneTokenMark symbol={third.symbol} name={third.tokenName} />
+                    <WarzoneTokenMark imageUrl={(third as { imageUrl?: string }).imageUrl} symbol={third.symbol} name={third.tokenName} />
                     <div className="min-w-0">
                       <div className="font-retro text-foreground">${String(third.symbol || "").replace(/^\$/, "")}</div>
                       <div className="truncate text-[11px] uppercase tracking-[0.12em] text-white/50">{third.tokenName}</div>

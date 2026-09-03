@@ -43,10 +43,12 @@ test("canonical tournament routes use the focused command surface", () => {
   assert.match(command, /CLAIM TOURNAMENT REWARDS/);
   assert.match(command, /data-tournament-standings/);
   assert.match(command, /data-tournament-bracket/);
+  assert.match(command, /TournamentBracketModal/);
   assert.match(command, /data-tournament-matches/);
   assert.match(command, /data-tournament-opt-in/);
   assert.match(details, /TournamentCommand/);
-  assert.match(overview, /\/warzone\/tournaments\/\$\{encodeURIComponent\(event\.id\)\}/);
+  assert.match(overview, /TournamentEventCard/);
+  assert.match(overview, /\/warzone\/tournaments/);
   assert.match(league, /\/warzone\/tournaments\/\$\{encodeURIComponent\(quarterFinalsId\)\}/);
 });
 

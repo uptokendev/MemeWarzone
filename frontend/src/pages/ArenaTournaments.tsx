@@ -2,11 +2,9 @@ import { useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { TournamentCommand } from "@/components/arena/TournamentCommand";
 import { TournamentEventCard } from "@/components/arena/TournamentEventCard";
-import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { WarzoneContent } from "@/components/warzone/WarzoneContent";
 import { WarzonePageHeader } from "@/components/warzone/WarzonePageHeader";
 import { useArenaEventFeed, type ArenaEventSummary } from "@/hooks/useArenaEventFeed";
-import { presentWarzoneFeedTone } from "@/lib/arena/warzoneChrome.mjs";
 import { presentTournamentEmpty } from "@/lib/arena/tournamentCommandPresentation.mjs";
 
 type TournamentTab = "upcoming" | "live" | "results";
@@ -26,7 +24,6 @@ const ArenaTournaments = () => {
   const focusedId = String(tournamentId || "").trim();
   const { events, archivedEvents, source } = useArenaEventFeed();
   const [tab, setTab] = useState<TournamentTab>("upcoming");
-  const tone = presentWarzoneFeedTone(source);
 
   const rows = useMemo(() => {
     const live = events.filter((event) => isTournament(event) && event.status === "live");
@@ -42,9 +39,7 @@ const ArenaTournaments = () => {
   return (
     <WarzoneContent className="space-y-5">
       <div data-warzone-tournaments="true">
-        <WarzonePageHeader title="Tournaments" copy="Upcoming opt-ins, running events, and previous results. Expanding an event keeps you on this command surface.">
-          <TacticalTag label={tone.label} tone={tone.tone as "success" | "default"} />
-        </WarzonePageHeader>
+        <WarzonePageHeader title="Tournaments" />
 
         <div className="flex flex-wrap gap-3 text-xs font-semibold uppercase tracking-[0.14em]" role="tablist" aria-label="Tournament status">
           {TABS.map((item) => (

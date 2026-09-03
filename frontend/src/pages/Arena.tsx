@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { Link } from "react-router-dom";
-import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { ArenaUpvoteDialog } from "@/components/token/UpvoteDialog";
+import { TournamentEventCard } from "@/components/arena/TournamentEventCard";
 import { WarzoneBattlePreview } from "@/components/warzone/WarzoneBattlePreview";
 import { WarzoneContent } from "@/components/warzone/WarzoneContent";
 import { WarzonePageHeader } from "@/components/warzone/WarzonePageHeader";
@@ -13,62 +13,110 @@ import { useArenaFeaturedVotes } from "@/hooks/useArenaFeaturedVotes";
 import { useArenaFeedBattleMetrics } from "@/hooks/useArenaFeedBattleMetrics";
 import { useArenaLeagueFeed } from "@/hooks/useArenaLeagueFeed";
 import { battleChainLabel } from "@/lib/arena/battlePresentation";
-import { presentWarzoneCommandStrip, presentWarzoneFeedTone } from "@/lib/arena/warzoneChrome.mjs";
+import { presentWarzoneLeagueBoard } from "@/lib/arena/warzoneChrome.mjs";
+
+function isTournament(event: { type?: string; status?: string }) {
+  return event.type === "tournament" || event.type === "seasonal_league";
+}
 
 const Arena = () => {
   const { liveBattles, source: battleSource } = useArenaBattleFeed();
-  const livePreview = useMemo(() => liveBattles.slice(0, 3), [liveBattles]);
+  const livePreview = useMemo(() => liveBattles.slice(0, 2), [liveBattles]);
   const feedMetrics = useArenaFeedBattleMetrics(livePreview);
   const { events, source: eventSource } = useArenaEventFeed();
   const { season, source: leagueSource } = useArenaLeagueFeed();
   const featured = useArenaFeaturedVotes();
-  const liveTournaments = events.filter((event) => event.status === "live" && event.type === "tournament");
-  const lead = season.entries[0];
-  const strip = presentWarzoneCommandStrip({
-    liveBattleCount: liveBattles.length,
-    liveTournamentCount: liveTournaments.length,
-    season,
-  });
-  const battleTone = presentWarzoneFeedTone(battleSource);
+  const liveTournaments = events.filter((event) => event.status === "live" && isTournament(event));
+  const upcomingTournaments = events.filter((event) => isTournament(event) && (event.status === "scheduled" || event.status === "deploying"));
+  const tournamentPreview = (liveTournaments[0] || upcomingTournaments[0]) ?? null;
+  const board = presentWarzoneLeagueBoard(season.entries);
+  const podium = board.podium.slice(0, 3);
 
   return (
-    <WarzoneContent className="space-y-6">
-      <WarzonePageHeader
-        title="Post-grad command"
-        copy="Featured coins, active battles, tournaments, and Major War League from the same Warzone feed."
-      >
-        <TacticalTag label={battleTone.label} tone={battleTone.tone as "success" | "default"} />
-      </WarzonePageHeader>
+    <WarzoneContent className="space-y-8">
+      <WarzonePageHeader title="Warzone" copy="The post-grad battlefield" />
 
-      <div
-        data-warzone-status-strip="true"
-        className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[10px] uppercase tracking-[0.16em] text-white/55"
-      >
-        <span>{strip.liveBattleCount} live battles</span>
-        <span className="text-white/20" aria-hidden="true">|</span>
-        <span>{strip.liveTournamentCount} live tournaments</span>
-        {strip.week ? (
-          <>
-            <span className="text-white/20" aria-hidden="true">|</span>
-            <span>MWL week {strip.week}</span>
-          </>
-        ) : null}
-      </div>
+      <section data-warzone-active-battles="true">
+        <div className="mb-3 flex items-center justify-between gap-2">
+          <h2 className="font-retro text-lg text-foreground">Active battles</h2>
+          <Link to="/warzone/battles" className="text-[10px] uppercase tracking-[0.16em] text-accent hover:underline">
+            Open battles
+          </Link>
+        </div>
+        {livePreview.length ? (
+          <div className="grid gap-3 md:grid-cols-2">
+            {livePreview.map((battle) => (
+              <WarzoneBattlePreview
+                key={battle.id}
+                battle={battle}
+                metrics={feedMetrics.metricsById[battle.id]}
+                metricsRequested={feedMetrics.requestedIds.includes(battle.id)}
+                metricsLoaded={feedMetrics.loaded}
+              />
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            {battleSource === "empty" ? "No live battles right now." : "No live battles right now."}
+          </p>
+        )}
+      </section>
+
+      <section className="grid gap-6 lg:grid-cols-2">
+        <div>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2 className="font-retro text-lg text-foreground">Tournaments</h2>
+            <Link to="/warzone/tournaments" className="text-[10px] uppercase tracking-[0.16em] text-accent hover:underline">
+              Open tournaments
+            </Link>
+          </div>
+          {tournamentPreview ? (
+            <TournamentEventCard event={tournamentPreview} tab={tournamentPreview.status === "live" ? "live" : "upcoming"} />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {eventSource === "empty" ? "No live tournaments right now." : "No live tournaments right now."}
+            </p>
+          )}
+        </div>
+
+        <div>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2 className="font-retro text-lg text-foreground">Major War League</h2>
+            <Link to="/warzone/major-war-league" className="text-[10px] uppercase tracking-[0.16em] text-accent hover:underline">
+              Open standings
+            </Link>
+          </div>
+          {podium.length ? (
+            <Link to="/warzone/major-war-league" className="mwz-flat-card block space-y-3 p-4" data-warzone-mwl-preview="true">
+              {podium.map((entry, index) => (
+                <div key={entry.tokenId} className="flex items-center gap-3">
+                  <WarzoneTokenMark imageUrl={(entry as { imageUrl?: string }).imageUrl} symbol={entry.symbol} name={entry.tokenName} size="sm" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[10px] uppercase tracking-[0.16em] text-white/45">#{index + 1}</div>
+                    <div className="truncate font-retro text-sm text-foreground">${String(entry.symbol || "").replace(/^\$/, "")}</div>
+                  </div>
+                  <div className="font-retro text-sm text-white/80">{Number(entry.points).toLocaleString()} PTS</div>
+                </div>
+              ))}
+            </Link>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {leagueSource === "empty" ? "Standings appear once the season has results." : "Standings appear once the season has results."}
+            </p>
+          )}
+        </div>
+      </section>
 
       <section data-warzone-featured="true">
-        <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Featured memecoins</div>
-        <h2 className="mt-1 font-retro text-lg text-foreground">Warzone UpVotes</h2>
-        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-          Top 20 from graduated MemeWarzone coins and approved imports. Launchpad UpVotes stay on Showcase.
-        </p>
+        <h2 className="font-retro text-lg text-foreground">Featured memecoins</h2>
         {featured.items.length ? (
           <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            {featured.items.slice(0, 20).map((item, index) => {
+            {featured.items.slice(0, 8).map((item, index) => {
               const route = getArenaTokenRoute(item.tokenAddress, item.chainId);
               const body = (
                 <>
                   <div className="flex items-center gap-3">
-                    <WarzoneTokenMark symbol={item.symbol} name={item.tokenName} />
+                    <WarzoneTokenMark imageUrl={item.imageUrl} symbol={item.symbol} name={item.tokenName} />
                     <div className="min-w-0">
                       <div className="text-[10px] uppercase tracking-[0.16em] text-white/42">#{index + 1}</div>
                       <div className="truncate font-retro text-sm text-foreground">${String(item.symbol || "").replace(/^\$/, "")}</div>
@@ -99,92 +147,9 @@ const Arena = () => {
           </div>
         ) : (
           <p className="mt-4 text-sm text-muted-foreground" data-warzone-featured-empty="true">
-            {featured.loading
-              ? "Loading Warzone UpVotes..."
-              : featured.votingLive
-                ? "No Warzone UpVotes yet. Rank this rail from graduated coins and approved imports."
-                : "No Warzone UpVotes yet. Ranking uses the Warzone ledger. Paying votes waits on a dedicated Warzone treasury address in this environment."}
+            {featured.loading ? "Loading featured coins..." : "No featured memecoins yet."}
           </p>
         )}
-      </section>
-
-      <section>
-        <div className="mb-3 flex items-center justify-between gap-2">
-          <h2 className="font-retro text-lg text-foreground">Active battles</h2>
-          <Link to="/warzone/battles" className="text-[10px] uppercase tracking-[0.16em] text-accent hover:underline">
-            Open battles
-          </Link>
-        </div>
-        {livePreview.length ? (
-          <div className="grid gap-3 md:grid-cols-1 xl:grid-cols-3">
-            {livePreview.map((battle) => (
-              <WarzoneBattlePreview
-                key={battle.id}
-                battle={battle}
-                metrics={feedMetrics.metricsById[battle.id]}
-                metricsRequested={feedMetrics.requestedIds.includes(battle.id)}
-                metricsLoaded={feedMetrics.loaded}
-              />
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">
-            {battleSource === "empty" ? "Battle feed is unavailable." : "No live battles right now."}
-          </p>
-        )}
-      </section>
-
-      <section className="grid gap-6 lg:grid-cols-2">
-        <div>
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <h2 className="font-retro text-lg text-foreground">Tournaments</h2>
-            <Link to="/warzone/tournaments" className="text-[10px] uppercase tracking-[0.16em] text-accent hover:underline">
-              Open tournaments
-            </Link>
-          </div>
-          {liveTournaments.slice(0, 2).length ? (
-            liveTournaments.slice(0, 2).map((event) => (
-              <Link
-                key={event.id}
-                to={`/warzone/tournaments/${encodeURIComponent(event.id)}`}
-                className="mwz-flat-card mb-3 block p-4"
-              >
-                <TacticalTag label="Live" tone="success" />
-                <div className="mt-2 font-retro text-sm text-foreground">{event.title}</div>
-                <div className="mt-1 text-xs text-muted-foreground">{event.participantCount} coins</div>
-              </Link>
-            ))
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              {eventSource === "empty" ? "Tournament feed is unavailable." : "No live tournaments right now."}
-            </p>
-          )}
-        </div>
-
-        <div>
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <h2 className="font-retro text-lg text-foreground">Major War League</h2>
-            <Link to="/warzone/major-war-league" className="text-[10px] uppercase tracking-[0.16em] text-accent hover:underline">
-              Open table
-            </Link>
-          </div>
-          {lead ? (
-            <Link to="/warzone/major-war-league" className="mwz-flat-card flex items-center gap-3 p-4">
-              <WarzoneTokenMark symbol={lead.symbol} name={lead.tokenName} size="lg" />
-              <div className="min-w-0">
-                <TacticalTag label={season.label || "Season"} tone="default" />
-                <div className="mt-2 truncate font-retro text-sm text-foreground">${String(lead.symbol || "").replace(/^\$/, "")}</div>
-                <div className="text-xs text-muted-foreground">
-                  {Number(lead.points || 0).toLocaleString()} pts · week {season.week}
-                </div>
-              </div>
-            </Link>
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              {leagueSource === "empty" ? "League feed is unavailable." : "Standings appear once the season has results."}
-            </p>
-          )}
-        </div>
       </section>
     </WarzoneContent>
   );

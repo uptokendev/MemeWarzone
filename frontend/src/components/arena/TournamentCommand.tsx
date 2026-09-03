@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Crown, Trophy } from "lucide-react";
+import { Crown } from "lucide-react";
 import { toast } from "sonner";
 
 import { ArenaBuyInButton } from "@/components/arena/ArenaBuyInButton";
 import { ArenaWarPoolClaimButton } from "@/components/arena/ArenaWarPoolClaimButton";
+import { TournamentBracketModal } from "@/components/arena/TournamentBracketModal";
 import { TournamentMatchCard } from "@/components/arena/TournamentMatchCard";
 import { TournamentTokenIdentity } from "@/components/arena/TournamentTokenIdentity";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
@@ -16,6 +17,8 @@ import {
   fetchPostGradTournamentDetails,
   optInPostGradTournament,
 } from "@/features/postgrad/apiClient";
+import { postGradFlags } from "@/features/postgrad/config";
+import { getMockTournamentDetails } from "@/features/postgrad/mockTournamentFixtures.mjs";
 import { useActiveFeedWallet } from "@/hooks/useActiveFeedWallet";
 import { useArenaEventDetails } from "@/hooks/useArenaEventFeed";
 import { useArenaWarPool } from "@/hooks/useArenaWarPoolFeed";
@@ -112,6 +115,7 @@ export function TournamentCommand({
   const [selectedToken, setSelectedToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [metricsByBattleId, setMetricsByBattleId] = useState<Record<string, BattleRealtimeMetrics | null>>({});
+  const [bracketOpen, setBracketOpen] = useState(false);
   const wallet = useWallet();
   const { solanaAccount } = useSolanaWallet();
   const feedWallet = useActiveFeedWallet();
@@ -123,8 +127,8 @@ export function TournamentCommand({
     if (!id) return;
     const controller = new AbortController();
     fetchPostGradTournamentDetails(id, controller.signal)
-      .then((json) => setDetail(json || null))
-      .catch(() => setDetail(null));
+      .then((json) => setDetail(json || (postGradFlags.mocks ? getMockTournamentDetails(id) : null)))
+      .catch(() => setDetail(postGradFlags.mocks ? getMockTournamentDetails(id) : null));
     return () => controller.abort();
   }, [id]);
 
@@ -267,8 +271,8 @@ export function TournamentCommand({
       await refreshEvent?.(id);
       toast.success(
         warPoolMeta.configured
-          ? "Opt-in recorded. Pay the on-chain buy-in to finish registration."
-          : "Opt-in recorded. Buy-in stays an intent until escrow is live.",
+          ? "Opt-in recorded. Pay the buy-in to finish registration."
+          : "Opt-in recorded.",
       );
     } catch (error) {
       toast.error(String((error as Error)?.message || "Could not opt in."));
@@ -327,19 +331,22 @@ export function TournamentCommand({
           {card.registration ? (
             <TacticalTag label={card.registration.label} tone={card.registration.key === "open" ? "success" : "default"} />
           ) : null}
-          <TacticalTag label={source === "api" ? "Live data" : "Awaiting data"} tone={source === "api" ? "success" : "default"} />
         </div>
         <h2 className="mt-3 font-retro text-2xl text-foreground">{card.title}</h2>
         <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
-          {card.participantLabel ? <span>{card.participantLabel}</span> : null}
+          {card.participantLabel ? <span>{card.participantCount} CONTENDERS</span> : null}
           {card.scheduleLabel ? <span>{card.scheduleLabel}</span> : null}
-          {buyInMeta ? <span>Buy-in {buyInMeta.label}{warPoolMeta.configured ? "" : " (intent until escrow)"}</span> : null}
+          {buyInMeta ? <span>Buy-in {buyInMeta.label}</span> : null}
         </div>
         {tournament.summary ? <p className="mt-3 text-sm text-muted-foreground">{tournament.summary}</p> : null}
-        {battleIds.length ? (
-          <p className="mt-3 text-xs text-white/45">
-            Tournament fights use the shared Battle telemetry engine. Official advancement remains tied to each settled battle result.
-          </p>
+        {bracketRounds.length ? (
+          <button
+            type="button"
+            onClick={() => setBracketOpen(true)}
+            className="mwz-button mt-4 inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em]"
+          >
+            View bracket
+          </button>
         ) : null}
         {embedded ? (
           <Link to="/warzone/tournaments" className="mt-3 inline-block text-xs uppercase tracking-[0.16em] text-accent hover:underline">
@@ -353,10 +360,8 @@ export function TournamentCommand({
           <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Registration</div>
           <h3 className="font-retro text-lg text-foreground">Opt in</h3>
           <p className="text-sm text-muted-foreground">
-            Eligible graduated MemeWarzone coins and approved imports can register here.
-            {warPoolMeta.configured
-              ? " After opt-in, pay the on-chain buy-in from the owner wallet."
-              : " Buy-in is recorded as intent until escrow exists."}
+            Eligible coins can register here.
+            {warPoolMeta.configured ? " After opt-in, pay the buy-in from the owner wallet." : ""}
           </p>
           {!walletAddress ? (
             <p className="text-sm text-muted-foreground">Connect the owner wallet to opt in.</p>
@@ -432,7 +437,7 @@ export function TournamentCommand({
         <div className="mb-3">
           <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Standings</div>
           <h3 className="mt-1 font-retro text-lg text-foreground">Field</h3>
-          <p className="mt-1 text-xs text-white/42">Wins/losses reflect settled bracket fights; Battle Points show the latest telemetry snapshot.</p>
+          <p className="mt-1 text-xs text-white/42">Wins and losses from settled fights.</p>
         </div>
         {standings.length ? (
           <div className="overflow-x-auto">
@@ -486,33 +491,23 @@ export function TournamentCommand({
       </section>
 
       <section data-tournament-bracket="true">
-        <div className="mb-3">
-          <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Bracket</div>
-          <h3 className="mt-1 font-retro text-lg text-foreground">Progression</h3>
-          <p className="mt-1 text-xs text-white/42">Round 1 is similarity-seeded. Later rounds remain winner-advances bracket competition.</p>
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Bracket</div>
+            <h3 className="mt-1 font-retro text-lg text-foreground">Progression</h3>
+          </div>
+          {bracketRounds.length ? (
+            <button
+              type="button"
+              onClick={() => setBracketOpen(true)}
+              className="inline-flex min-h-11 items-center text-xs uppercase tracking-[0.16em] text-accent hover:underline"
+            >
+              View bracket
+            </button>
+          ) : null}
         </div>
         {bracketRounds.length ? (
-          <div className="overflow-x-auto" data-tournament-bracket-scroll="true">
-            <div className="flex min-w-max gap-4 pb-2">
-              {bracketRounds.map((round) => (
-                <div key={round.round} className="w-[min(100vw-2rem,22rem)] shrink-0 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Trophy className="h-4 w-4 text-accent" />
-                    <div className="font-retro text-sm text-foreground">Round {round.round}</div>
-                  </div>
-                  {(round.matches || []).map((match) => (
-                    <TournamentMatchCard
-                      key={match.id}
-                      chainId={tournamentChainId}
-                      round={round.round}
-                      match={match}
-                      metrics={match.battleId ? metricsByBattleId[match.battleId] : null}
-                    />
-                  ))}
-                </div>
-              ))}
-            </div>
-          </div>
+          <p className="text-sm text-muted-foreground">Open the bracket to follow the path to the Championship.</p>
         ) : (
           <div className="py-3 text-sm text-muted-foreground">
             <div className="font-retro text-foreground">{bracketEmpty.title}</div>
@@ -525,7 +520,7 @@ export function TournamentCommand({
         <div className="mb-3">
           <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Matches</div>
           <h3 className="mt-1 font-retro text-lg text-foreground">{liveMatches.length ? "Active fights" : "Round fights"}</h3>
-          <p className="mt-1 text-xs text-white/42">Every fight opens the same Battle Wall used by normal Warzone battles.</p>
+          <p className="mt-1 text-xs text-white/42">Current and recent tournament fights.</p>
         </div>
         {matchList.length ? (
           <div className="grid gap-3 xl:grid-cols-2">
@@ -548,6 +543,16 @@ export function TournamentCommand({
           </div>
         )}
       </section>
+      <TournamentBracketModal
+        open={bracketOpen}
+        onOpenChange={setBracketOpen}
+        title={card.title}
+        statusLabel={card.status.label}
+        stageLabel={card.bracketStage}
+        rounds={bracketRounds}
+        entries={entries}
+        chainId={tournamentChainId}
+      />
     </div>
   );
 }

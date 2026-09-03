@@ -55,6 +55,9 @@ test("Overview still reads existing feeds and does not add battle realtime", () 
   assert.match(overview, /useArenaFeaturedVotes/);
   assert.match(overview, /ArenaUpvoteDialog/);
   assert.match(overview, /WarzoneBattlePreview/);
+  assert.match(overview, /data-warzone-active-battles/);
+  assert.match(overview, /data-warzone-mwl-preview/);
+  assert.doesNotMatch(overview, /Post-grad command|treasury address/);
   assert.doesNotMatch(overview, /useBattleWallRealtime|useAblyBattleChannel|BattleCombatEffects/);
   assert.match(preview, /presentBattleWallModule/);
   assert.match(preview, /presented\.href/);

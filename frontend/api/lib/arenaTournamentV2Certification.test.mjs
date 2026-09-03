@@ -56,7 +56,7 @@ test("Tournament Details consumes normalized profiles and canonical Battle metri
   assert.match(details, /TournamentTokenIdentity/);
   assert.match(details, /TournamentMatchCard/);
   assert.match(details, /setInterval\(\(\) => void load\(\), 15_000\)/);
-  assert.match(details, /Wins\/losses reflect settled bracket fights; Battle Points show the latest telemetry snapshot/);
+  assert.match(details, /Wins and losses from settled fights/);
   assert.match(matchCard, /metrics\?\.sides\.left/);
   assert.match(matchCard, /Latest Battle Points/);
   assert.match(matchCard, /Live Battle Points/);

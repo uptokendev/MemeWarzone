@@ -46,6 +46,7 @@ function normalizeSeason(value: any): ArenaLeagueSeason | null {
       tokenId: String(entry.tokenId || entry.tokenAddress),
       tokenName: String(entry.tokenName),
       symbol: String(entry.symbol),
+      imageUrl: entry.imageUrl || entry.logoUri || entry.logo_uri || undefined,
       division: DIVISIONS.has(entry.division) ? entry.division : "apex",
       points: Number(entry.points),
       wins: Number(entry.wins),

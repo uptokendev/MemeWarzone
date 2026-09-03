@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { fetchArenaFeaturedVotes } from "@/features/postgrad/apiClient";
+import { postGradFlags } from "@/features/postgrad/config";
+import { mockTokenProfiles } from "@/features/postgrad/mockRegistry";
 
 export type ArenaFeaturedVoteItem = {
   chainId: number;
@@ -8,6 +10,7 @@ export type ArenaFeaturedVoteItem = {
   symbol: string;
   votes24h: number;
   votesAllTime: number;
+  imageUrl?: string | null;
 };
 
 export function useArenaFeaturedVotes() {
@@ -34,6 +37,7 @@ export function useArenaFeaturedVotes() {
                 symbol: String(row.symbol || "---"),
                 votes24h: Number(row.votes24h || 0),
                 votesAllTime: Number(row.votesAllTime || 0),
+                imageUrl: row.imageUrl || row.logoUri || null,
               })),
           );
           setVotingLive(Boolean(json?.votingLive));
@@ -57,5 +61,17 @@ export function useArenaFeaturedVotes() {
     };
   }, []);
 
-  return { items, loading, votingLive };
+  const mockItems = postGradFlags.mocks
+    ? mockTokenProfiles.slice(0, 4).map((token, index) => ({
+        chainId: 56,
+        tokenAddress: String(token.campaignAddress),
+        tokenName: token.name,
+        symbol: token.symbol,
+        votes24h: [412, 389, 256, 279][index] || 0,
+        votesAllTime: 0,
+        imageUrl: token.logoUri || null,
+      }))
+    : [];
+
+  return { items: items.length ? items : mockItems, loading, votingLive };
 }

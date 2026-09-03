@@ -633,7 +633,8 @@ test("Battle Wall visual parity uses bounded combatant cards, 2x2 metrics, and n
   assert.match(combatant, /mwz-flat-card/);
   assert.match(combatant, /data-battle-combatant-bleed/);
   assert.match(combatant, /data-battle-combatant-readability/);
-  assert.match(combatant, /mockTokenArtForTicker/);
+  assert.match(combatant, /data-battle-combatant-bounded="true"/);
+  assert.doesNotMatch(combatant, /mockTokenArtForTicker/);
   assert.match(combatant, /data-battle-combatant-split="true"/);
   assert.match(combatant, /grid-cols-\[minmax\(5\.5rem,38%\)_minmax\(0,1fr\)\]/);
   assert.match(combatant, /md:grid-cols-\[minmax\(6\.75rem,42%\)_minmax\(0,1fr\)\]/);
@@ -653,7 +654,7 @@ test("Battle Wall visual parity uses bounded combatant cards, 2x2 metrics, and n
   assert.match(moduleSrc, /data-battle-wall-actions/);
   assert.match(moduleSrc, /data-battle-wall-actions-reserved/);
   assert.match(moduleSrc, /grid-cols-1/);
-  assert.match(moduleSrc, /md:items-stretch/);
+  assert.match(moduleSrc, /md:items-start/);
   assert.match(moduleSrc, /md:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
   assert.match(moduleSrc, /useBattleWallRealtime\(battle\.id, realtimeActive && live\)/);
   assert.equal(moduleSrc.split("useBattleWallRealtime(").length - 1, 1);
@@ -683,7 +684,8 @@ test("Battle Wall mockup parity keeps split combatant cards, SHARE/MORE, and gen
   assert.match(combatant, /mwz-flat-card/);
   assert.match(combatant, /data-battle-combatant-bleed/);
   assert.match(combatant, /data-battle-combatant-readability/);
-  assert.match(combatant, /mockTokenArtForTicker/);
+  assert.match(combatant, /data-battle-combatant-bounded="true"/);
+  assert.doesNotMatch(combatant, /mockTokenArtForTicker/);
   assert.match(combatant, /data-battle-combatant-split="true"/);
   assert.match(combatant, /grid-cols-\[minmax\(5\.5rem,38%\)_minmax\(0,1fr\)\]/);
   assert.match(combatant, /md:grid-cols-\[minmax\(6\.75rem,42%\)_minmax\(0,1fr\)\]/);
@@ -771,8 +773,11 @@ test("Battle Wall combatant keeps art-left split on mobile instead of stacking i
   assert.match(combatant, /grid-cols-\[minmax\(5\.5rem,38%\)_minmax\(0,1fr\)\]/);
   assert.match(combatant, /sm:grid-cols-\[minmax\(6rem,38%\)_minmax\(0,1fr\)\]/);
   assert.match(combatant, /md:grid-cols-\[minmax\(6\.75rem,42%\)_minmax\(0,1fr\)\]/);
-  assert.match(combatant, /min-h-\[6\.5rem\]/);
-  assert.match(combatant, /max-h-\[7\.75rem\]/);
+  assert.match(combatant, /h-\[6\.75rem\]/);
+  assert.match(combatant, /md:h-\[8\.5rem\]/);
+  assert.match(combatant, /data-battle-combatant-bounded="true"/);
+  assert.match(combatant, /h-auto max-h-\[22rem\]/);
+  assert.doesNotMatch(combatant, /100vh|min-h-screen/);
   assert.match(combatant, /hidden line-clamp-2[\s\S]*md:block/);
   assert.match(combatant, /grid-cols-2/);
   assert.match(combatant, /data-battle-combatant-actions/);
