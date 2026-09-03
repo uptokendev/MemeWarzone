@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import "./arenaBattlePointsV3.test.mjs";
 import { BATTLE_POINTS_CONFIG, BATTLE_POINTS_V1, BATTLE_POINTS_V2 } from "./arenaBattlePointsConfig.js";
 import { calculateBattlePoints, interpretHistoricalBattle } from "./arenaBattlePoints.js";
 
