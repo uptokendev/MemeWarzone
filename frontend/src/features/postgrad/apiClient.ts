@@ -117,6 +117,31 @@ async function mutateBattle(path: string, body: JsonObject = {}): Promise<JsonOb
   return json;
 }
 
+export type ArenaMatchCandidate = {
+  token?: JsonObject | null;
+  matchQuality?: number | null;
+  classification?: string | null;
+  ranked?: boolean | null;
+};
+
+export type ArenaMatchRecommendations = {
+  tokenId?: string;
+  candidates?: ArenaMatchCandidate[];
+  updatedAt?: string;
+};
+
+export async function fetchArenaBattleMatches(
+  tokenId: string,
+  chainId?: number | null,
+  limit = 5,
+  signal?: AbortSignal,
+): Promise<ArenaMatchRecommendations | null> {
+  const params = new URLSearchParams({ tokenId });
+  if (chainId) params.set("chainId", String(chainId));
+  if (limit) params.set("limit", String(limit));
+  return fetchJson(`/api/arena/battles/matches?${params.toString()}`, { cache: "no-store", signal });
+}
+
 export async function fetchPostGradBattleFeed(signal?: AbortSignal) {
   return fetchJson("/api/arena/battles", { cache: "no-store", signal });
 }

@@ -5,6 +5,8 @@ import { toast } from "sonner";
 
 import { CommandCenterCard } from "@/components/command-center/CommandCenterCard";
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
+import { FindMatchPanel } from "@/components/command-center/FindMatchPanel";
+import { MatchQualityPreview } from "@/components/command-center/MatchQualityPreview";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/contexts/WalletContext";
@@ -24,6 +26,7 @@ import { signWalletAction } from "@/lib/walletActionAuth";
 import { signSolanaMessage } from "@/lib/solanaWallet";
 import { ArenaStakeButton } from "@/components/arena/ArenaStakeButton";
 import { BATTLE_DURATIONS, battleDurationLabel, parseBattleDurationHours } from "@/lib/arena/battleDuration";
+import { presentManualOpponentPreview, presentMatchCandidates } from "@/lib/arena/findMatchPresentation.mjs";
 import { publicBattleLabel, publicBattleLane } from "@/lib/arena/publicBattleState";
 
 function nativeLabel(chainId?: number, fallback?: string) {
@@ -47,6 +50,7 @@ export default function CommandCenterBattles() {
   const [durationHours, setDurationHours] = useState(24);
   const [counterDurationHours, setCounterDurationHours] = useState(24);
   const [busy, setBusy] = useState<string | null>(null);
+  const [matchCandidates, setMatchCandidates] = useState<ReturnType<typeof presentMatchCandidates>>([]);
 
   const qualified = useMemo(
     () => feed.creatorStatuses.filter((item) => item.eligibility || Boolean(item.battleId)),
@@ -81,6 +85,7 @@ export default function CommandCenterBattles() {
   const selected = eligible.find((item) => tokenKey(item) === selectedToken) || eligible[0];
   const stakeAmount = Number(stake);
   const canAct = Boolean(selected && Number.isFinite(stakeAmount) && stakeAmount > 0 && !busy);
+  const matchPreview = presentManualOpponentPreview(challengeTarget, matchCandidates);
 
   async function signAuth(action: string, extraLines: string[]) {
     const solana = isSolanaChainId(Number(chainId)) || isSolanaAddress(walletAddress);
@@ -291,7 +296,11 @@ export default function CommandCenterBattles() {
               <select
                 className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
                 value={tokenKey(selected)}
-                onChange={(event) => setSelectedToken(event.target.value)}
+                onChange={(event) => {
+                  setSelectedToken(event.target.value);
+                  setChallengeTarget("");
+                  setMatchCandidates([]);
+                }}
               >
                 {eligible.map((item) => (
                   <option key={tokenKey(item)} value={tokenKey(item)}>
@@ -333,8 +342,22 @@ export default function CommandCenterBattles() {
         )}
       </CommandCenterCard>
 
+      {selected ? (
+        <FindMatchPanel
+          tokenId={tokenKey(selected)}
+          chainId={Number(chainId) || undefined}
+          selectedTargetId={challengeTarget}
+          onCandidatesChange={setMatchCandidates}
+          onSelectTarget={(tokenId) => {
+            setChallengeTarget(tokenId);
+            document.getElementById("command-center-challenge")?.scrollIntoView({ behavior: "smooth", block: "start" });
+            toast.message("Rival selected. Set stake and duration, then send the challenge.");
+          }}
+        />
+      ) : null}
+
       <CommandCenterCard title="Challenge a coin" description="Pick a waiting rival or paste a token address. They must accept before the fight goes live.">
-        <div className="space-y-3">
+        <div className="space-y-3" id="command-center-challenge">
           <label className="block text-xs uppercase tracking-[0.14em] text-muted-foreground">
             Target token
             <input
@@ -344,6 +367,12 @@ export default function CommandCenterBattles() {
               placeholder="Token address"
             />
           </label>
+          <MatchQualityPreview
+            preview={matchPreview}
+            onChallengeAnyway={() => {
+              toast.message("Open War can still proceed. Set stake and duration, then send the challenge.");
+            }}
+          />
           {waitingRivals.length ? (
             <div className="space-y-2">
               <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Waiting now</div>
