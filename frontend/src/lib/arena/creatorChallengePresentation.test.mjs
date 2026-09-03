@@ -7,9 +7,12 @@ import { fileURLToPath } from "node:url";
 import { FEED_METRICS_LIMIT } from "./arenaMatchRowPresentation.mjs";
 import { WALL_REALTIME_CAP } from "./battleWallRealtime.mjs";
 import {
+  beginChallengePending,
   collectIncomingCreatorChallenges,
   creatorOwnedIdentityKeys,
+  endChallengePending,
   initialChallengeDraft,
+  isChallengeBusy,
   isIncomingCreatorChallenge,
   patchChallengeDraft,
   presentCreatorChallenge,
@@ -93,6 +96,50 @@ test("multiple challenges produce a carousel and index changes correctly", () =>
   assert.match(carousel, /showControls = challenges\.length > 1/);
   assert.match(carousel, /ArrowLeft/);
   assert.match(carousel, /onTouchEnd/);
+});
+
+test("overlapping A and B actions keep battle-keyed busy and error state", () => {
+  let pending = new Set();
+  const startA = beginChallengePending(pending, "A");
+  assert.equal(startA.started, true);
+  pending = startA.pending;
+  assert.equal(isChallengeBusy(pending, "A"), true);
+  assert.equal(isChallengeBusy(pending, "B"), false);
+
+  const startB = beginChallengePending(pending, "B");
+  assert.equal(startB.started, true);
+  pending = startB.pending;
+  assert.equal(isChallengeBusy(pending, "A"), true);
+  assert.equal(isChallengeBusy(pending, "B"), true);
+
+  const duplicateA = beginChallengePending(pending, "A");
+  assert.equal(duplicateA.started, false);
+  assert.equal(isChallengeBusy(duplicateA.pending, "A"), true);
+  assert.equal(isChallengeBusy(duplicateA.pending, "B"), true);
+
+  pending = endChallengePending(pending, "A");
+  assert.equal(isChallengeBusy(pending, "A"), false);
+  assert.equal(isChallengeBusy(pending, "B"), true);
+
+  pending = endChallengePending(pending, "B");
+  assert.equal(isChallengeBusy(pending, "B"), false);
+
+  const blockedByExternal = beginChallengePending(new Set(), "A", "A");
+  assert.equal(blockedByExternal.started, false);
+  assert.equal(isChallengeBusy(new Set(), "A", "A"), true);
+  assert.equal(isChallengeBusy(new Set(["B"]), "A", "B"), false);
+
+  let drafts = syncChallengeDrafts({}, [challenge({ id: "A" }), challenge({ id: "B" })]);
+  drafts = patchChallengeDraft(drafts, "A", { error: "A failed" });
+  assert.equal(drafts.A.error, "A failed");
+  assert.equal(drafts.B.error, null);
+
+  const carousel = readSrc("../../components/arena/CreatorChallengeCarousel.tsx");
+  assert.match(carousel, /beginChallengePending/);
+  assert.match(carousel, /endChallengePending/);
+  assert.match(carousel, /pendingIdsRef/);
+  assert.doesNotMatch(carousel, /setLocalBusy\(null\)/);
+  assert.doesNotMatch(carousel, /useState<string \| null>\(null\)/);
 });
 
 test("challenge-specific counter stake and duration are preserved across slides", () => {

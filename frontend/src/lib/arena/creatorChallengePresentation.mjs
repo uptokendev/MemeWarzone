@@ -132,3 +132,37 @@ export function retainCarouselIndex(currentIndex, previousIds, nextIds) {
   if (kept >= 0) return kept;
   return Math.min(visibleCarouselIndex(currentIndex, previous.length), next.length - 1);
 }
+
+function pendingSet(pending) {
+  if (pending instanceof Set) return new Set(pending);
+  if (Array.isArray(pending)) return new Set(pending.map(String).filter(Boolean));
+  if (pending && typeof pending === "object") {
+    return new Set(Object.keys(pending).filter((key) => pending[key]));
+  }
+  return new Set();
+}
+
+export function beginChallengePending(pending, battleId, externalBusyId) {
+  const id = String(battleId || "").trim();
+  const next = pendingSet(pending);
+  if (!id) return { pending: next, started: false };
+  if (next.has(id) || String(externalBusyId || "") === id) {
+    return { pending: next, started: false };
+  }
+  next.add(id);
+  return { pending: next, started: true };
+}
+
+export function endChallengePending(pending, battleId) {
+  const id = String(battleId || "").trim();
+  const next = pendingSet(pending);
+  if (id) next.delete(id);
+  return next;
+}
+
+export function isChallengeBusy(pending, battleId, externalBusyId) {
+  const id = String(battleId || "").trim();
+  if (!id) return false;
+  if (String(externalBusyId || "") === id) return true;
+  return pendingSet(pending).has(id);
+}

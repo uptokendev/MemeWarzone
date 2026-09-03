@@ -4,6 +4,9 @@ import { Button } from "@/components/ui/button";
 import type { Battle } from "@/features/postgrad/contracts";
 import { BATTLE_DURATIONS, parseBattleDurationHours } from "@/lib/arena/battleDuration";
 import {
+  beginChallengePending,
+  endChallengePending,
+  isChallengeBusy,
   patchChallengeDraft,
   presentCreatorChallenge,
   retainCarouselIndex,
@@ -40,7 +43,8 @@ export function CreatorChallengeCarousel({
   const idsKey = ids.join("|");
   const [index, setIndex] = useState(0);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
-  const [localBusy, setLocalBusy] = useState<string | null>(null);
+  const [pendingIds, setPendingIds] = useState<Set<string>>(() => new Set());
+  const pendingIdsRef = useRef<Set<string>>(new Set());
   const previousIds = useRef<string[]>([]);
   const touchStartX = useRef<number | null>(null);
 
@@ -66,22 +70,29 @@ export function CreatorChallengeCarousel({
     error: null,
   };
   const native = presented.nativeSymbol || getNativeSymbol(Number(chainId || 0));
-  const busy = Boolean((busyId || localBusy) && (busyId === battle.id || localBusy === battle.id));
+  const busy = isChallengeBusy(pendingIds, battle.id, busyId);
   const showControls = challenges.length > 1;
 
   function patch(battleId: string, next: Partial<Draft>) {
     setDrafts((current) => patchChallengeDraft(current, battleId, next));
   }
 
+  function setPending(next: Set<string>) {
+    pendingIdsRef.current = next;
+    setPendingIds(new Set(next));
+  }
+
   async function run(battleId: string, action: () => Promise<void> | void) {
-    setLocalBusy(battleId);
+    const attempt = beginChallengePending(pendingIdsRef.current, battleId, busyId);
+    if (!attempt.started) return;
+    setPending(attempt.pending);
     patch(battleId, { error: null });
     try {
       await action();
     } catch (error) {
       patch(battleId, { error: String((error as Error)?.message || "Could not update challenge.") });
     } finally {
-      setLocalBusy(null);
+      setPending(endChallengePending(pendingIdsRef.current, battleId));
     }
   }
 
