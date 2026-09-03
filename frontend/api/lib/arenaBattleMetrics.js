@@ -3,6 +3,11 @@ import { BATTLE_POINTS_V2 } from "./arenaBattlePointsConfig.js";
 import { calculateBattlePoints } from "./arenaBattlePoints.js";
 import { getArenaMarketSnapshot, nativeRawToUsd, resolveNativeUsdPrice } from "./arenaMarketSnapshot.js";
 import {
+  arenaSqlIdentityAny,
+  arenaSqlIdentityEquals,
+  arenaSqlIdentityValues,
+} from "./arenaSqlIdentity.js";
+import {
   battleVolumeWindow,
   computeEligibleBattleVolume,
   clusterIdFor,
@@ -247,13 +252,15 @@ export async function loadVolumeContext(chainId, identity, wallets, deps = {}) {
   if (identity?.feeRecipientAddress) creatorWallets.add(ident(identity.feeRecipientAddress));
 
   const uniqueWallets = [...new Set((wallets || []).map(ident).filter(Boolean))];
+  const walletAny = arenaSqlIdentityAny(chainId, "wallet_address", "$1");
+  const creatorWalletAny = arenaSqlIdentityAny(chainId, "creator_wallet", "$2");
   if (uniqueWallets.length) {
     try {
       const risk = await query(
         `select wallet_address, cluster_id, restricted
            from public.wallet_risk_profiles
-          where lower(wallet_address) = any($1::text[])`,
-        [uniqueWallets.map((w) => w.toLowerCase())],
+          where ${walletAny}`,
+        [arenaSqlIdentityValues(chainId, uniqueWallets)],
       );
       for (const row of risk.rows || []) {
         const wallet = ident(row.wallet_address);
@@ -267,8 +274,8 @@ export async function loadVolumeContext(chainId, identity, wallets, deps = {}) {
       const members = await query(
         `select cluster_id, wallet_address
            from public.cluster_members
-          where lower(wallet_address) = any($1::text[])`,
-        [uniqueWallets.map((w) => w.toLowerCase())],
+          where ${walletAny}`,
+        [arenaSqlIdentityValues(chainId, uniqueWallets)],
       );
       for (const row of members.rows || []) {
         const wallet = ident(row.wallet_address);
@@ -281,12 +288,13 @@ export async function loadVolumeContext(chainId, identity, wallets, deps = {}) {
 
   const creatorList = [...creatorWallets];
   if (creatorList.length) {
+    const creatorValues = arenaSqlIdentityValues(chainId, creatorList);
     try {
       const creatorRisk = await query(
         `select wallet_address, cluster_id, restricted
            from public.wallet_risk_profiles
-          where lower(wallet_address) = any($1::text[])`,
-        [creatorList.map((w) => w.toLowerCase())],
+          where ${walletAny}`,
+        [creatorValues],
       );
       for (const row of creatorRisk.rows || []) {
         if (row.cluster_id) creatorClusterIds.add(String(row.cluster_id));
@@ -299,9 +307,9 @@ export async function loadVolumeContext(chainId, identity, wallets, deps = {}) {
       const creatorMembers = await query(
         `select cluster_id, wallet_address
            from public.cluster_members
-          where lower(wallet_address) = any($1::text[])
+          where ${walletAny}
              or cluster_id = any($2::text[])`,
-        [creatorList.map((w) => w.toLowerCase()), [...creatorClusterIds]],
+        [creatorValues, [...creatorClusterIds]],
       );
       for (const row of creatorMembers.rows || []) {
         if (row.cluster_id) creatorClusterIds.add(String(row.cluster_id));
@@ -315,8 +323,8 @@ export async function loadVolumeContext(chainId, identity, wallets, deps = {}) {
         `select funded_wallet
            from public.creator_funding_edges
           where chain_id = $1
-            and lower(creator_wallet) = any($2::text[])`,
-        [chainId, creatorList.map((w) => w.toLowerCase())],
+            and ${creatorWalletAny}`,
+        [chainId, creatorValues],
       );
       for (const row of funded.rows || []) fundedWallets.add(ident(row.funded_wallet));
     } catch {
@@ -372,6 +380,8 @@ function normalizeTradeUsd(row, chainId, nativeUsd) {
 
 export async function loadBattleWindowTrades({ chainId, campaignAddress, tokenAddress, liveAt, finishAt }, deps = {}) {
   const query = deps.query || defaultQuery;
+  const campaignMatch = arenaSqlIdentityEquals(chainId, '"campaignAddress"', "$4");
+  const tokenMatch = arenaSqlIdentityEquals(chainId, '"tokenAddress"', "$5");
   const result = await query(
     `select "campaignAddress", "tokenAddress", "pairAddress", source, side, wallet, recipient,
             "nativeAmountRaw", "quoteAmountRaw", "quoteAssetType", "quoteTokenAddress",
@@ -383,8 +393,8 @@ export async function loadBattleWindowTrades({ chainId, campaignAddress, tokenAd
         and "blockTime" < $3
         and status = 'confirmed'
         and (
-          ($4::text is not null and lower("campaignAddress") = lower($4))
-          or ($5::text is not null and lower(coalesce("tokenAddress", '')) = lower($5))
+          ($4::text is not null and ${campaignMatch})
+          or ($5::text is not null and ${tokenMatch})
         )`,
     [chainId, liveAt, finishAt, campaignAddress || null, tokenAddress || null],
   );
