@@ -1,4 +1,5 @@
 import { normalizeWalletFlexible } from "../../server/http.js";
+import { arenaSqlIdentityEquals } from "./arenaSqlIdentity.js";
 
 function ident(value) {
   return normalizeWalletFlexible(value) || String(value || "").trim();
@@ -8,11 +9,13 @@ export async function resolveArenaVoteToken(pool, chainId, identity) {
   const address = ident(identity);
   if (!address) return null;
 
+  const nativeTokenMatch = arenaSqlIdentityEquals(chainId, "token_address::text", "$2");
+  const nativeCampaignMatch = arenaSqlIdentityEquals(chainId, "campaign_address::text", "$2");
   const native = await pool.query(
     `select token_address, campaign_address, name, symbol
        from public.campaigns
       where chain_id = $1
-        and (lower(coalesce(token_address::text, '')) = lower($2) or lower(campaign_address::text) = lower($2))
+        and (${nativeTokenMatch} or ${nativeCampaignMatch})
         and graduated_at_chain is not null
       order by created_block desc nulls last
       limit 1`,
@@ -29,10 +32,11 @@ export async function resolveArenaVoteToken(pool, chainId, identity) {
     };
   }
 
+  const importedTokenMatch = arenaSqlIdentityEquals(chainId, "token_address", "$2");
   const imported = await pool.query(
     `select token_address, name, symbol
        from public.arena_token_imports
-      where chain_id = $1 and lower(token_address) = lower($2) and status = 'passed'
+      where chain_id = $1 and ${importedTokenMatch} and status = 'passed'
       limit 1`,
     [chainId, address],
   );
