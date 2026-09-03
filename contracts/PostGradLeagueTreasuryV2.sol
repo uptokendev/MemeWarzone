@@ -8,7 +8,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
  * @title PostGradLeagueTreasuryV2
  * @notice Chain-native receiver for Arena V2 competition league allocations.
  *         Every accepted source pool is credited once and split 60/40 between
- *         the configured current Monthly MWL receiver and Quarterly reserve.
+ *         its bound Monthly MWL epoch and Quarterly reserve epoch.
  *         Historical V1 league routing is intentionally untouched.
  */
 contract PostGradLeagueTreasuryV2 is Ownable, ReentrancyGuard {
@@ -23,6 +23,8 @@ contract PostGradLeagueTreasuryV2 is Ownable, ReentrancyGuard {
     uint256 public pendingMonthly;
     uint256 public pendingQuarterly;
 
+    mapping(bytes32 => uint256) public pendingMonthlyByEpoch;
+    mapping(bytes32 => uint256) public pendingQuarterlyByEpoch;
     mapping(address => bool) public authorizedSources;
     mapping(bytes32 => bool) public creditedSourcePools;
 
@@ -38,8 +40,8 @@ contract PostGradLeagueTreasuryV2 is Ownable, ReentrancyGuard {
         uint256 quarterlyNativeRaw,
         address source
     );
-    event MonthlyClaimed(address indexed receiver, uint256 amount);
-    event QuarterlyClaimed(address indexed receiver, uint256 amount);
+    event MonthlyClaimed(bytes32 indexed epoch, address indexed receiver, uint256 amount);
+    event QuarterlyClaimed(bytes32 indexed epoch, address indexed receiver, uint256 amount);
 
     error ZeroAddress();
     error Unauthorized();
@@ -101,6 +103,8 @@ contract PostGradLeagueTreasuryV2 is Ownable, ReentrancyGuard {
 
         pendingMonthly += monthlyAmount;
         pendingQuarterly += quarterlyAmount;
+        pendingMonthlyByEpoch[monthlyEpoch] += monthlyAmount;
+        pendingQuarterlyByEpoch[quarterlyEpoch] += quarterlyAmount;
 
         emit CompetitionShareCredited(
             sourcePool,
@@ -113,20 +117,24 @@ contract PostGradLeagueTreasuryV2 is Ownable, ReentrancyGuard {
         );
     }
 
-    function claimMonthly() external nonReentrant {
-        uint256 amount = pendingMonthly;
+    function claimMonthly(bytes32 epoch) external nonReentrant {
+        if (epoch == bytes32(0)) revert InvalidReference();
+        uint256 amount = pendingMonthlyByEpoch[epoch];
         if (amount == 0) revert NothingToClaim();
-        pendingMonthly = 0;
+        pendingMonthlyByEpoch[epoch] = 0;
+        pendingMonthly -= amount;
         _pay(monthlyReceiver, amount);
-        emit MonthlyClaimed(monthlyReceiver, amount);
+        emit MonthlyClaimed(epoch, monthlyReceiver, amount);
     }
 
-    function claimQuarterly() external nonReentrant {
-        uint256 amount = pendingQuarterly;
+    function claimQuarterly(bytes32 epoch) external nonReentrant {
+        if (epoch == bytes32(0)) revert InvalidReference();
+        uint256 amount = pendingQuarterlyByEpoch[epoch];
         if (amount == 0) revert NothingToClaim();
-        pendingQuarterly = 0;
+        pendingQuarterlyByEpoch[epoch] = 0;
+        pendingQuarterly -= amount;
         _pay(quarterlyReceiver, amount);
-        emit QuarterlyClaimed(quarterlyReceiver, amount);
+        emit QuarterlyClaimed(epoch, quarterlyReceiver, amount);
     }
 
     function _pay(address to, uint256 amount) internal {
