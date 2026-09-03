@@ -1,0 +1,65 @@
+name: Robinhood production preflight
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "deployments/robinhood/mainnet.json"
+      - "deployments/robinhood/testnet.accepted.json"
+      - "config/robinhood-production.env.example"
+      - "scripts/prepare-robinhood-production-manifest.mjs"
+      - "scripts/prepare-robinhood-production-manifest.test.mjs"
+      - "scripts/prove-robinhood-production-manifest.mjs"
+      - "scripts/prove-robinhood-production-manifest.test.mjs"
+      - "scripts/verify-robinhood-production-live.mjs"
+      - ".github/workflows/robinhood-production-preflight-ci.yml"
+  push:
+    branches:
+      - "feat/robinhood-*"
+      - "build/cross-chain-stabilization-rh-base"
+    paths:
+      - "deployments/robinhood/mainnet.json"
+      - "deployments/robinhood/testnet.accepted.json"
+      - "config/robinhood-production.env.example"
+      - "scripts/prepare-robinhood-production-manifest.mjs"
+      - "scripts/prepare-robinhood-production-manifest.test.mjs"
+      - "scripts/prove-robinhood-production-manifest.mjs"
+      - "scripts/prove-robinhood-production-manifest.test.mjs"
+      - "scripts/verify-robinhood-production-live.mjs"
+      - ".github/workflows/robinhood-production-preflight-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: robinhood-production-preflight-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  production-preflight:
+    name: Dark 4663 manifest and testnet isolation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Prove production manifest verifier
+        run: node --test scripts/prove-robinhood-production-manifest.test.mjs
+
+      - name: Prove fail-closed production manifest builder
+        run: node --test scripts/prepare-robinhood-production-manifest.test.mjs
+
+      - name: Verify committed production manifest cannot masquerade as deployed while placeholder is dark
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const manifest = JSON.parse(fs.readFileSync('deployments/robinhood/mainnet.json', 'utf8'));
+          if (Number(manifest.chainId) !== 4663) throw new Error('Robinhood mainnet placeholder must remain chain 4663');
+          if (manifest.supportEnabled !== false || manifest.creationEnabled !== false) throw new Error('Robinhood mainnet placeholder must remain dark');
+          if (manifest.deploymentBlock != null && Object.keys(manifest.contracts || {}).length === 0) throw new Error('deploymentBlock cannot be populated without contracts');
+          NODE
