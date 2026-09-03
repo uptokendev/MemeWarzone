@@ -225,6 +225,14 @@ export function filterWallBattles(battles, filters = {}) {
   });
 }
 
+export function formatBattleWallGapText(gapLabel, scoreKind) {
+  const raw = String(gapLabel || "").trim();
+  if (!raw) return null;
+  if (scoreKind === "battle_points") return `${raw.replace(/^Gap\s+/i, "+")} BP`;
+  if (scoreKind === "legacy") return /^Gap\s+/i.test(raw) ? raw : `Gap ${raw.replace(/^\+/, "")}`;
+  return raw;
+}
+
 export function wallEmptyCopy({
   source = "",
   tab = "live",

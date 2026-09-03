@@ -19,6 +19,7 @@ import {
   isPublicWallBattle,
   mergeFocusedBattleForRoute,
   mergeFocusedBattleIntoRows,
+  formatBattleWallGapText,
   presentBattleWallModule,
   publicWallRejectReason,
   resolveFocusedWallBattle,
@@ -521,4 +522,42 @@ test("Battle Wall polish keeps stacked mobile combat layout and DATA DELAY copy"
   assert.equal(wallEmptyCopy({ tab: "live", tabCount: 0, filteredCount: 0 }).title, "No live battles right now.");
   assert.equal(wallEmptyCopy({ tab: "live", tabCount: 4, filteredCount: 0 }).kind, "filters");
   assert.equal(wallEmptyCopy({ loading: true, filteredCount: 0 }).kind, "loading");
+});
+
+test("Battle Wall VS gap labels Battle Points as BP and historical V1 as Score gap", () => {
+  const vs = readSrc("../../components/arena/BattleWallVs.tsx");
+  const delaySpoken = vs.split("const spoken")[1]?.split("return (")[0] || "";
+
+  assert.equal(formatBattleWallGapText("Gap 7.2", "battle_points"), "+7.2 BP");
+  assert.equal(formatBattleWallGapText("Gap 7.2", "legacy"), "Gap 7.2");
+  assert.doesNotMatch(formatBattleWallGapText("Gap 7.2", "legacy") || "", /BP/);
+  assert.equal(formatBattleWallGapText(null, "battle_points"), null);
+
+  const spokenLegacy = ["$ALPHA 8.4 versus $BRAVO 1.2", "$ALPHA LEADS", formatBattleWallGapText("Gap 7.2", "legacy")].join(". ");
+  assert.doesNotMatch(spokenLegacy, /BP/);
+  assert.match(spokenLegacy, /Gap 7\.2/);
+
+  assert.match(vs, /formatBattleWallGapText\(gapLabel, scoreKind\)/);
+  assert.match(delaySpoken, /DATA_DELAY_LABEL/);
+  assert.match(delaySpoken, /Score updates temporarily paused/);
+  assert.doesNotMatch(delaySpoken.split("?")[1]?.split(":")[0] || "", /BP/);
+  assert.match(vs, /DATA_DELAY_LABEL/);
+
+  const historical = presentBattleWallModule(
+    battle({ id: "fin-v1", state: "finished", settlementVersion: 1, scoreBasis: "mcap_pct_change" }),
+    null,
+    { requested: false, loaded: true },
+  );
+  assert.equal(historical.scoreKind, "legacy");
+  assert.equal(historical.scoreCaption, "Score");
+  if (historical.gapLabel) {
+    assert.equal(formatBattleWallGapText(historical.gapLabel, historical.scoreKind), historical.gapLabel);
+    assert.doesNotMatch(formatBattleWallGapText(historical.gapLabel, historical.scoreKind) || "", /BP/);
+  }
+
+  const liveV2 = presentBattleWallModule(battle(), metrics(), { requested: true, loaded: true });
+  assert.equal(liveV2.scoreKind, "battle_points");
+  if (liveV2.gapLabel) {
+    assert.equal(formatBattleWallGapText(liveV2.gapLabel, liveV2.scoreKind), "+7.2 BP");
+  }
 });

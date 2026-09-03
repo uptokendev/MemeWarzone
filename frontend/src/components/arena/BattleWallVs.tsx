@@ -1,4 +1,4 @@
-import { DATA_DELAY_LABEL } from "@/lib/arena/battleWallPresentation.mjs";
+import { DATA_DELAY_LABEL, formatBattleWallGapText } from "@/lib/arena/battleWallPresentation.mjs";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -28,7 +28,7 @@ export function BattleWallVs({
 }: Props) {
   const delay = statusLabel === DATA_DELAY_LABEL || scoreKind === "delay";
   const leaderText = leaderIndex === 0 ? `${leftLabel} LEADS` : leaderIndex === 1 ? `${rightLabel} LEADS` : null;
-  const gapText = gapLabel ? `${String(gapLabel).replace(/^Gap\s+/i, "+")} BP` : null;
+  const gapText = formatBattleWallGapText(gapLabel, scoreKind);
   const spoken = delay
     ? `${DATA_DELAY_LABEL}. Score updates temporarily paused.`
     : [leftPoints && rightPoints ? `${leftLabel} ${leftPoints} versus ${rightLabel} ${rightPoints}` : null, leaderText, gapText, clockLabel]
