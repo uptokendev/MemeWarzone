@@ -18,6 +18,59 @@ export function wallTabForBattle(battle) {
   return null;
 }
 
+export function isPublicWallBattle(battle) {
+  return Boolean(battle?.id) && wallTabForBattle(battle) != null;
+}
+
+export function publicWallRejectReason(battle) {
+  const state = String(battle?.state || "").toLowerCase();
+  if (state === "challenged") return "challenged";
+  if (state === "waiting") return "waiting";
+  if (!battle) return "missing";
+  return "not_public";
+}
+
+export function battleWallHref(battleId) {
+  const id = String(battleId || "").trim();
+  return id ? `/warzone/battles/${encodeURIComponent(id)}` : "/warzone/battles";
+}
+
+export function battleDomId(battleId) {
+  const safe = String(battleId || "").trim().replace(/[^A-Za-z0-9._:-]/g, "-");
+  return safe ? `battle-${safe}` : "battle-unknown";
+}
+
+export function collectAllPublicWallBattles(feed) {
+  const live = Array.isArray(feed?.liveBattles) ? feed.liveBattles : [];
+  const queue = Array.isArray(feed?.openForBattleQueue) ? feed.openForBattleQueue : [];
+  const archived = Array.isArray(feed?.archivedBattles)
+    ? feed.archivedBattles.map((entry) => entry?.battle).filter(Boolean)
+    : [];
+  return [...live, ...queue, ...archived].filter((battle) => isPublicWallBattle(battle));
+}
+
+export function findBattleInFeed(feed, battleId) {
+  const id = String(battleId || "").trim();
+  if (!id) return null;
+  return collectAllPublicWallBattles(feed).find((battle) => String(battle?.id) === id) || null;
+}
+
+export function mergeFocusedBattleIntoRows(rows, focused, tab) {
+  const list = Array.isArray(rows) ? rows : [];
+  if (!focused?.id || wallTabForBattle(focused) !== tab) return list;
+  if (list.some((row) => String(row?.id) === String(focused.id))) return list;
+  return [focused, ...list];
+}
+
+export function focusedWallFilterReset(battle) {
+  return {
+    tab: wallTabForBattle(battle),
+    chain: "all",
+    type: "all",
+    search: "",
+  };
+}
+
 export function collectWallBattles(feed, tab) {
   const live = Array.isArray(feed?.liveBattles) ? feed.liveBattles : [];
   const queue = Array.isArray(feed?.openForBattleQueue) ? feed.openForBattleQueue : [];
@@ -113,6 +166,7 @@ export function presentBattleWallModule(battle, metrics, options = {}) {
     durationHours: Number(battle?.durationHours ?? battle?.duration_hours) || 0,
     nativeSymbol: String(battle?.nativeSymbol || ""),
     tournamentId: battle?.tournamentId || battle?.tournament_id || null,
+    href: battleWallHref(presented.battleId || battle?.id),
   };
 }
 

@@ -188,6 +188,7 @@ function AppShellLayout({
           {postGradEnabled && postGradFlags.arena ? <Route path="/warzone" element={<Arena />} /> : null}
           {postGradEnabled && postGradFlags.arena ? <Route path="/warzone/verify-email" element={<ArenaVerifyEmail />} /> : null}
           {postGradEnabled && postGradFlags.battle ? <Route path="/warzone/battles" element={<ArenaBattles />} /> : null}
+          {postGradEnabled && postGradFlags.battle ? <Route path="/warzone/battles/:battleId" element={<ArenaBattles />} /> : null}
           {postGradEnabled && postGradFlags.league ? <Route path="/warzone/major-war-league" element={<PostGradLeague />} /> : null}
           {postGradEnabled && postGradFlags.league ? <Route path="/warzone/leagues" element={<Navigate to="/warzone/major-war-league" replace />} /> : null}
           {postGradEnabled && postGradFlags.tournament ? <Route path="/warzone/tournaments" element={<ArenaTournaments />} /> : null}

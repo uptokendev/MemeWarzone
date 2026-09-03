@@ -7,10 +7,17 @@ import { fileURLToPath } from "node:url";
 import { DATA_DELAY_LABEL, FEED_METRICS_LIMIT, presentArenaMatchRow, selectFeedMetricBattleIds } from "./arenaMatchRowPresentation.mjs";
 import {
   POINTS_PENDING_LABEL,
+  battleDomId,
+  battleWallHref,
   battleWallType,
   collectWallBattles,
   filterWallBattles,
+  findBattleInFeed,
+  focusedWallFilterReset,
+  isPublicWallBattle,
+  mergeFocusedBattleIntoRows,
   presentBattleWallModule,
+  publicWallRejectReason,
   sortWallBattles,
   validBattlePointGap,
   wallTabForBattle,
@@ -238,20 +245,57 @@ test("tournament fights use the same wall module type path as native/imported", 
   assert.equal(presented.typeLabel, "Tournament");
 });
 
+test("focused routing helpers select public wall tabs and reject private proposals", () => {
+  assert.equal(wallTabForBattle(battle({ state: "live" })), "live");
+  assert.equal(wallTabForBattle(battle({ state: "matched" })), "upcoming");
+  assert.equal(wallTabForBattle(battle({ state: "finished" })), "finished");
+  assert.equal(isPublicWallBattle(battle({ state: "challenged", source: "challenge" })), false);
+  assert.equal(publicWallRejectReason(battle({ state: "challenged" })), "challenged");
+  assert.equal(publicWallRejectReason(battle({ state: "waiting" })), "waiting");
+  assert.equal(focusedWallFilterReset(battle({ state: "matched" })).tab, "upcoming");
+  assert.equal(focusedWallFilterReset(battle({ state: "live" })).chain, "all");
+  assert.equal(battleWallHref("abc123"), "/warzone/battles/abc123");
+  assert.equal(battleDomId("abc123"), "battle-abc123");
+  const live = battle({ id: "in-feed" });
+  const feed = { liveBattles: [live], openForBattleQueue: [], archivedBattles: [] };
+  assert.equal(findBattleInFeed(feed, "in-feed")?.id, "in-feed");
+  const merged = mergeFocusedBattleIntoRows([live], live, "live");
+  assert.equal(merged.length, 1);
+  const injected = mergeFocusedBattleIntoRows([], battle({ id: "missing-live" }), "live");
+  assert.equal(injected.length, 1);
+  assert.equal(injected[0].id, "missing-live");
+  assert.equal(mergeFocusedBattleIntoRows([], battle({ id: "ch", state: "challenged" }), "live").length, 0);
+});
+
 test("Battle Wall wiring keeps ArenaMatchRow, skips effects/realtime, and leaves challenge flows alone", () => {
   const page = readSrc("../../pages/ArenaBattles.tsx");
+  const app = readSrc("../../App.tsx");
+  const details = readSrc("../../pages/BattleDetails.tsx");
   const moduleSrc = readSrc("../../components/arena/BattleWallModule.tsx");
   const vs = readSrc("../../components/arena/BattleWallVs.tsx");
   const row = readSrc("../../components/postgrad/ArenaMatchRow.tsx");
   const home = readSrc("../../pages/Arena.tsx");
   const command = readSrc("../../pages/command-center/CommandCenterBattles.tsx");
   const wall = readSrc("./battleWallPresentation.mjs");
+  const focus = readSrc("../../hooks/useBattleWallFocus.ts");
 
   assert.match(page, /BattleWallModule/);
   assert.match(page, /Upcoming/);
+  assert.match(page, /useParams/);
+  assert.match(page, /fetchPostGradBattleDetails/);
+  assert.match(page, /Battle unavailable/);
+  assert.match(page, /useArenaFeedBattleMetrics/);
   assert.doesNotMatch(page, /useAblyBattleChannel/);
   assert.doesNotMatch(page, /BattleCombatEffects/);
-  assert.match(moduleSrc, /presentBattleWallModule/);
+  assert.match(app, /path="\/warzone\/battles\/:battleId"/);
+  assert.match(app, /path="\/warzone\/battles"/);
+  assert.match(app, /path="\/battle\/:id"/);
+  assert.match(app, /element=\{<BattleDetails \/>\}/);
+  assert.match(details, /export default function BattleDetails|function BattleDetails|export default BattleDetails/);
+  assert.match(moduleSrc, /data-battle-id/);
+  assert.match(moduleSrc, /motion-reduce:transition-none/);
+  assert.match(moduleSrc, /to=\{presented\.href\}/);
+  assert.match(focus, /prefers-reduced-motion/);
   assert.match(vs, /DATA_DELAY_LABEL/);
   assert.match(row, /export function ArenaMatchRow/);
   assert.match(home, /ArenaMatchRow/);
@@ -260,4 +304,5 @@ test("Battle Wall wiring keeps ArenaMatchRow, skips effects/realtime, and leaves
   assert.match(command, /challengePostGradBattle/);
   assert.doesNotMatch(wall, /calculateBattlePoints|marketCapWeight|50\/30\/20/);
   assert.equal(typeof presentArenaMatchRow, "function");
+  assert.match(presentBattleWallModule(battle(), metrics(), { requested: true, loaded: true }).href, /\/warzone\/battles\/wall-1/);
 });

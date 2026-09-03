@@ -5,7 +5,7 @@ import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import type { Battle } from "@/features/postgrad/contracts";
 import type { BattleRealtimeMetrics } from "@/lib/arena/battleRealtime";
 import { battleChainLabel, battleClockLabel, battleDurationLabel } from "@/lib/arena/battlePresentation";
-import { presentBattleWallModule } from "@/lib/arena/battleWallPresentation.mjs";
+import { battleDomId, presentBattleWallModule } from "@/lib/arena/battleWallPresentation.mjs";
 import { getNativeSymbol } from "@/lib/chainConfig";
 
 type Props = {
@@ -26,7 +26,13 @@ export function BattleWallModule({ battle, metrics, metricsRequested = false, me
   const right = battle.participants?.[1];
 
   return (
-    <article data-battle-wall-module={presented.tab} className="mwz-hud-frame space-y-4 p-4 md:p-5">
+    <article
+      id={battleDomId(battle.id)}
+      data-battle-id={battle.id}
+      data-battle-wall-module={presented.tab}
+      tabIndex={0}
+      className="mwz-hud-frame space-y-4 p-4 outline-none transition-[box-shadow] duration-500 md:p-5 data-[battle-focused=true]:ring-2 data-[battle-focused=true]:ring-accent motion-reduce:transition-none"
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <TacticalTag

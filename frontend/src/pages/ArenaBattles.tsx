@@ -1,14 +1,23 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams } from "react-router-dom";
 import { BattleWallModule } from "@/components/arena/BattleWallModule";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { ContentContainer } from "@/components/layout/ContentContainer";
+import { fetchPostGradBattleDetails } from "@/features/postgrad/apiClient";
+import type { Battle } from "@/features/postgrad/contracts";
 import { useArenaBattleFeed } from "@/hooks/useArenaBattleFeed";
 import { useArenaFeedBattleMetrics } from "@/hooks/useArenaFeedBattleMetrics";
+import { useBattleWallFocus } from "@/hooks/useBattleWallFocus";
 import {
   collectWallBattles,
   filterWallBattles,
+  findBattleInFeed,
+  focusedWallFilterReset,
+  isPublicWallBattle,
+  mergeFocusedBattleIntoRows,
   presentBattleWallModule,
   sortWallBattles,
+  wallTabForBattle,
 } from "@/lib/arena/battleWallPresentation.mjs";
 import { getAllowedChainIds, isRobinhoodChainId } from "@/lib/chainConfig";
 
@@ -32,16 +41,83 @@ const SORTS = [
   { key: "newest", label: "Newest" },
 ] as const;
 
+function asBattle(value: unknown): Battle | null {
+  const battle = value as Battle | null;
+  if (!battle?.id || !battle?.state || !Array.isArray(battle.participants)) return null;
+  return battle;
+}
+
 export default function ArenaBattles() {
+  const { battleId } = useParams();
+  const focusedId = String(battleId || "").trim();
   const feed = useArenaBattleFeed();
   const [tab, setTab] = useState<(typeof TABS)[number]["key"]>("live");
   const [chain, setChain] = useState("all");
   const [type, setType] = useState("all");
   const [sort, setSort] = useState("default");
   const [search, setSearch] = useState("");
+  const [fetched, setFetched] = useState<Battle | null>(null);
+  const [focusStatus, setFocusStatus] = useState<"idle" | "loading" | "ready" | "unavailable">("idle");
+  const appliedFocus = useRef("");
   const robinhood = getAllowedChainIds().some((id) => isRobinhoodChainId(id));
+  const inFeed = useMemo(() => findBattleInFeed(feed, focusedId), [feed, focusedId]);
 
-  const tabRows = useMemo(() => collectWallBattles(feed, tab), [feed, tab]);
+  useEffect(() => {
+    if (!focusedId) {
+      setFetched(null);
+      setFocusStatus("idle");
+      appliedFocus.current = "";
+      return;
+    }
+    if (inFeed) {
+      setFetched(null);
+      setFocusStatus("ready");
+      return;
+    }
+    if (feed.loading) {
+      setFocusStatus("loading");
+      return;
+    }
+    const controller = new AbortController();
+    setFocusStatus("loading");
+    void fetchPostGradBattleDetails(focusedId, controller.signal)
+      .then((json) => {
+        const battle = asBattle(json?.battle ?? json);
+        if (!battle) {
+          setFetched(null);
+          setFocusStatus("unavailable");
+          return;
+        }
+        setFetched(battle);
+        setFocusStatus(isPublicWallBattle(battle) ? "ready" : "unavailable");
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setFetched(null);
+          setFocusStatus("unavailable");
+        }
+      });
+    return () => controller.abort();
+  }, [focusedId, inFeed, feed.loading]);
+
+  const focusedBattle = inFeed || (isPublicWallBattle(fetched) ? fetched : null);
+
+  useEffect(() => {
+    if (!focusedId || !focusedBattle) return;
+    if (appliedFocus.current === focusedId) return;
+    const reset = focusedWallFilterReset(focusedBattle);
+    if (!reset.tab) return;
+    appliedFocus.current = focusedId;
+    setTab(reset.tab);
+    setChain(reset.chain);
+    setType(reset.type);
+    setSearch(reset.search);
+  }, [focusedId, focusedBattle]);
+
+  const tabRows = useMemo(() => {
+    const collected = collectWallBattles(feed, tab);
+    return mergeFocusedBattleIntoRows(collected, focusedBattle, tab);
+  }, [feed, tab, focusedBattle]);
   const filtered = useMemo(
     () => filterWallBattles(tabRows, { chain, type, search }),
     [tabRows, chain, type, search],
@@ -61,6 +137,10 @@ export default function ArenaBattles() {
     return map;
   }, [filtered, feedMetrics]);
   const rows = useMemo(() => sortWallBattles(filtered, sort, presentations), [filtered, sort, presentations]);
+  const focusedReady = Boolean(
+    focusedBattle && wallTabForBattle(focusedBattle) === tab && rows.some((row) => row.id === focusedBattle.id),
+  );
+  useBattleWallFocus(focusedReady ? focusedId : "", focusedReady);
 
   return (
     <ContentContainer className="space-y-5 px-1 pb-10 pt-4">
@@ -129,6 +209,12 @@ export default function ArenaBattles() {
         </div>
       </section>
 
+      {focusedId && focusStatus === "unavailable" ? (
+        <div className="mwz-hud-frame p-5 text-sm text-muted-foreground" data-battle-unavailable="true">
+          Battle unavailable.
+        </div>
+      ) : null}
+
       <section className="space-y-4" data-battle-wall>
         {rows.length ? (
           rows.map((battle) => (
@@ -144,11 +230,13 @@ export default function ArenaBattles() {
           <div className="mwz-hud-frame p-5 text-sm text-muted-foreground">
             {feed.source === "empty"
               ? "Battle data is not available right now."
-              : tab === "live"
-                ? "No live battles right now."
-                : tab === "upcoming"
-                  ? "No upcoming deployments."
-                  : "Finished battles will appear here."}
+              : focusedId && focusStatus === "loading"
+                ? "Loading battle..."
+                : tab === "live"
+                  ? "No live battles right now."
+                  : tab === "upcoming"
+                    ? "No upcoming deployments."
+                    : "Finished battles will appear here."}
           </div>
         )}
       </section>
