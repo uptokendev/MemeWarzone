@@ -1,0 +1,63 @@
+name: Robinhood Stock ETH routing proof
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "contracts/integrations/RobinhoodV3MultiHopSwapAdapter.sol"
+      - "contracts/integrations/RobinhoodV3NativeSwapAdapter.sol"
+      - "contracts/mocks/MockUniswapV3*.sol"
+      - "contracts/mocks/MockWETH9.sol"
+      - "contracts/mocks/MockERC20.sol"
+      - "test/RobinhoodV3MultiHopSwapAdapter.spec.ts"
+      - "test/RobinhoodV3NativeSwapAdapter.spec.ts"
+      - "hardhat.config.ts"
+      - ".github/workflows/robinhood-stock-routing-ci.yml"
+  push:
+    branches:
+      - "feat/robinhood-*"
+      - "build/cross-chain-stabilization-rh-base"
+    paths:
+      - "contracts/integrations/RobinhoodV3MultiHopSwapAdapter.sol"
+      - "contracts/integrations/RobinhoodV3NativeSwapAdapter.sol"
+      - "contracts/mocks/MockUniswapV3*.sol"
+      - "contracts/mocks/MockWETH9.sol"
+      - "contracts/mocks/MockERC20.sol"
+      - "test/RobinhoodV3MultiHopSwapAdapter.spec.ts"
+      - "test/RobinhoodV3NativeSwapAdapter.spec.ts"
+      - "hardhat.config.ts"
+      - ".github/workflows/robinhood-stock-routing-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: robinhood-stock-routing-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stock-eth-routing:
+    name: Atomic Stock two-hop and direct-native compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked contract dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Compile contracts
+        run: npx hardhat compile
+
+      - name: Prove Stock two-hop ETH routing and preserve direct-native execution
+        run: >-
+          npx hardhat test
+          test/RobinhoodV3MultiHopSwapAdapter.spec.ts
+          test/RobinhoodV3NativeSwapAdapter.spec.ts
