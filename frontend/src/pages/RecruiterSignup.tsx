@@ -193,7 +193,7 @@ export default function RecruiterSignup() {
       });
 
       toast.success("Recruiter signup submitted.");
-      navigate("/profile?tab=recruiter");
+      navigate("/command/recruiter", { replace: true });
     } catch {
       toast.error("Recruiter signup couldn’t be completed. Please try again.");
     } finally {
@@ -243,7 +243,7 @@ export default function RecruiterSignup() {
           </p>
           <div className="mt-6 flex flex-wrap gap-3">
             <Button asChild className="font-retro">
-              <Link to="/profile?tab=recruiter">Open recruiter dashboard</Link>
+              <Link to="/command/recruiter">Open recruiter dashboard</Link>
             </Button>
             <Button asChild variant="outline" className="font-retro">
               <Link to={`/recruiters/${encodeURIComponent(signupStatus.recruiter.code)}`}>Public recruiter profile</Link>
