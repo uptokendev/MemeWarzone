@@ -1,6 +1,17 @@
+import { ZeroHash } from "ethers";
+
 import { pool } from "../server/db.js";
 import { badMethod, isAddress, json, readJson } from "../server/http.js";
 import { requireInternalAuth } from "./lib/apiAuth.js";
+import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
+import { battlePoolId } from "./lib/arenaWarPoolEscrow.js";
+import {
+  DEFAULT_QUOTE_TTL_SECONDS,
+  randomBoostNonce,
+  readBoostPricingConfig,
+  serializeSignedBoostQuote,
+  signBoostQuote,
+} from "./lib/arenaBoostQuote.mjs";
 import {
   boostSummary,
   resolveBattleSide,
@@ -15,6 +26,7 @@ function safeBattleId(value) {
 
 function routeInfo(req) {
   const path = String(req.path || new URL(req.url, "http://localhost").pathname);
+  if (path === "/arena/boosts/quote") return { action: "quote", battleId: "" };
   if (path === "/arena/boosts/confirm") return { action: "confirm", battleId: "" };
   const match = path.match(/^\/arena\/boosts\/([^/]+)$/);
   return match ? { action: "read", battleId: safeBattleId(decodeURIComponent(match[1])) } : { action: "unknown", battleId: "" };
@@ -33,6 +45,20 @@ function safeLogIndex(value) {
 function safeConfirmedAt(value) {
   const date = value ? new Date(value) : new Date();
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+function safeBoostUnits(value) {
+  try {
+    const units = BigInt(String(value));
+    return units > 0n && units <= 1_000_000n ? units : null;
+  } catch {
+    return null;
+  }
+}
+
+function quoteTtlSeconds() {
+  const raw = Number(process.env.ARENA_BOOST_QUOTE_TTL_SECONDS || DEFAULT_QUOTE_TTL_SECONDS);
+  return Number.isInteger(raw) && raw >= 30 && raw <= 600 ? raw : DEFAULT_QUOTE_TTL_SECONDS;
 }
 
 function actionShape(row) {
@@ -58,16 +84,35 @@ function actionShape(row) {
   };
 }
 
-async function readBattleBoosts(res, battleId) {
-  if (!battleId) return json(res, 400, { ok: false, error: "Invalid battle id" });
-  const battleResult = await pool.query(
-    `select id, chain_id, state, battle_mode, source, competition_generation, contest_scoring_version, participants
+async function battleForBoost(battleId) {
+  const result = await pool.query(
+    `select id, chain_id, state, battle_mode, source, tournament_id, competition_generation, contest_scoring_version, participants
        from public.arena_battles
       where id = $1
       limit 1`,
     [battleId],
   );
-  const battle = battleResult.rows[0];
+  return result.rows[0] || null;
+}
+
+function validateNormalV2Battle(battle, chainId, targetToken) {
+  if (!battle) return { status: 404, error: "Battle not found" };
+  if (Number(battle.chain_id) !== chainId) return { status: 409, error: "Boost chain does not match battle chain" };
+  if (String(battle.state) !== "live") return { status: 409, error: "Boost is only available for a live Battle" };
+  if (String(battle.battle_mode || "normal") !== "normal" || String(battle.source || "") === "tournament") {
+    return { status: 409, error: "This endpoint only supports Normal Battle Boosts" };
+  }
+  if (String(battle.competition_generation || "") !== "arena_competition_v2") {
+    return { status: 409, error: "Battle is not using Arena competition V2 money rails" };
+  }
+  const side = resolveBattleSide(battle.participants, targetToken);
+  if (!side) return { status: 409, error: "Boost target is not a Battle combatant" };
+  return { side };
+}
+
+async function readBattleBoosts(res, battleId) {
+  if (!battleId) return json(res, 400, { ok: false, error: "Invalid battle id" });
+  const battle = await battleForBoost(battleId);
   if (!battle) return json(res, 404, { ok: false, error: "Battle not found" });
 
   const [actionsResult, scoringResult] = await Promise.all([
@@ -134,6 +179,80 @@ async function readBattleBoosts(res, battleId) {
   });
 }
 
+async function createBattleBoostQuote(req, res) {
+  const body = await readJson(req);
+  const chainId = Number(body.chainId);
+  const battleId = safeBattleId(body.battleId);
+  const wallet = String(body.wallet || body.auth?.walletAddress || "").trim().toLowerCase();
+  const targetToken = String(body.targetToken || "").trim().toLowerCase();
+  const boostUnits = safeBoostUnits(body.boostUnits);
+
+  if (!Number.isInteger(chainId) || chainId <= 0 || chainId === 101 || chainId === 102) {
+    return json(res, 400, { ok: false, error: "Battle Boost quotes currently require an active EVM money path" });
+  }
+  if (!battleId || !isAddress(wallet) || !isAddress(targetToken) || !boostUnits) {
+    return json(res, 400, { ok: false, error: "Invalid Battle Boost quote request" });
+  }
+
+  const battle = await battleForBoost(battleId);
+  const battleCheck = validateNormalV2Battle(battle, chainId, targetToken);
+  if (battleCheck.error) return json(res, battleCheck.status, { ok: false, error: battleCheck.error });
+
+  const auth = await requireWalletActionAuth({
+    res,
+    pool,
+    auth: body.auth,
+    expectedWallet: wallet,
+    chainId,
+    action: "arena_battle_boost_quote",
+    extraLines: [`Battle: ${battleId}`, `Target: ${targetToken}`, `Boost Units: ${boostUnits.toString()}`],
+    routeLabel: "arena_battle_boost_quote",
+  });
+  if (!auth) return;
+  if (auth.legacy) {
+    return json(res, 401, {
+      ok: false,
+      error: "Battle Boost quotes require signed wallet authentication",
+      code: "BOOST_QUOTE_SIGNATURE_REQUIRED",
+    });
+  }
+
+  let config;
+  try {
+    config = readBoostPricingConfig(chainId);
+  } catch (error) {
+    console.error("[api/arenaBoosts] quote pricing unavailable", error?.message || error);
+    return json(res, 503, { ok: false, error: "Battle Boost pricing is unavailable" });
+  }
+
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const deadline = now + quoteTtlSeconds();
+    const signed = await signBoostQuote(config, {
+      poolId: battlePoolId(battleId),
+      matchId: ZeroHash,
+      roundNumber: 0,
+      booster: wallet,
+      sideToken: targetToken,
+      boostUnits,
+      nonce: randomBoostNonce(),
+      deadline,
+    });
+    res.setHeader("cache-control", "no-store");
+    return json(res, 200, {
+      ok: true,
+      battleId,
+      side: battleCheck.side,
+      usdPerBoostMicros: "1000000",
+      quote: serializeSignedBoostQuote(signed),
+      expiresAt: new Date(deadline * 1000).toISOString(),
+    });
+  } catch (error) {
+    console.error("[api/arenaBoosts] quote signing failed", error);
+    return json(res, 503, { ok: false, error: "Battle Boost quote could not be created" });
+  }
+}
+
 async function confirmBattleBoost(req, res) {
   if (!requireInternalAuth(req, res, { routeLabel: "arena_boost_confirm" })) return;
   const body = await readJson(req);
@@ -175,31 +294,10 @@ async function confirmBattleBoost(req, res) {
       [battleId],
     );
     const battle = battleResult.rows[0];
-    if (!battle) {
+    const battleCheck = validateNormalV2Battle(battle, chainId, targetToken);
+    if (battleCheck.error) {
       await client.query("ROLLBACK");
-      return json(res, 404, { ok: false, error: "Battle not found" });
-    }
-    if (Number(battle.chain_id) !== chainId) {
-      await client.query("ROLLBACK");
-      return json(res, 409, { ok: false, error: "Boost chain does not match battle chain" });
-    }
-    if (String(battle.state) !== "live") {
-      await client.query("ROLLBACK");
-      return json(res, 409, { ok: false, error: "Boost can only be confirmed for a live Battle" });
-    }
-    if (String(battle.battle_mode || "normal") !== "normal" || String(battle.source || "") === "tournament") {
-      await client.query("ROLLBACK");
-      return json(res, 409, { ok: false, error: "Vote Tournament Boost ingestion is not active in this phase" });
-    }
-    if (String(battle.competition_generation || "") !== "arena_competition_v2") {
-      await client.query("ROLLBACK");
-      return json(res, 409, { ok: false, error: "Battle is not using Arena competition V2 money rails" });
-    }
-
-    const side = resolveBattleSide(battle.participants, targetToken);
-    if (!side) {
-      await client.query("ROLLBACK");
-      return json(res, 409, { ok: false, error: "Boost target is not a Battle combatant" });
+      return json(res, battleCheck.status, { ok: false, error: battleCheck.error });
     }
 
     const insertResult = await client.query(
@@ -214,7 +312,7 @@ async function confirmBattleBoost(req, res) {
       [
         chainId,
         battleId,
-        side,
+        battleCheck.side,
         wallet,
         split.boostUnits.toString(),
         split.gross.toString(),
@@ -235,7 +333,7 @@ async function confirmBattleBoost(req, res) {
       const sameEvent =
         existing &&
         String(existing.battle_id) === battleId &&
-        String(existing.side) === side &&
+        String(existing.side) === battleCheck.side &&
         String(existing.wallet).toLowerCase() === wallet &&
         String(existing.boost_units) === split.boostUnits.toString() &&
         String(existing.gross_native_raw) === split.gross.toString() &&
@@ -248,7 +346,7 @@ async function confirmBattleBoost(req, res) {
 
     const currentScore = await client.query(
       `select token_id from public.arena_battle_points_v3 where battle_id = $1 and side = $2 for update`,
-      [battleId, side],
+      [battleId, battleCheck.side],
     );
     if (currentScore.rows[0] && String(currentScore.rows[0].token_id).toLowerCase() !== targetToken) {
       throw new Error("Battle Points V3 side token changed after Boost confirmation");
@@ -268,7 +366,7 @@ async function confirmBattleBoost(req, res) {
       [
         battleId,
         targetToken,
-        side,
+        battleCheck.side,
         split.boostUnits.toString(),
         split.gross.toString(),
         split.pool.toString(),
@@ -313,6 +411,10 @@ export default async function handler(req, res) {
   if (route.action === "read") {
     if (method !== "GET") return badMethod(res);
     return readBattleBoosts(res, route.battleId);
+  }
+  if (route.action === "quote") {
+    if (method !== "POST") return badMethod(res);
+    return createBattleBoostQuote(req, res);
   }
   if (route.action === "confirm") {
     if (method !== "POST") return badMethod(res);
