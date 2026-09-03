@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { Swords } from "lucide-react";
 import { toast } from "sonner";
 
+import { CreatorChallengeCarousel } from "@/components/arena/CreatorChallengeCarousel";
 import { CommandCenterCard } from "@/components/command-center/CommandCenterCard";
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
 import { FindMatchPanel } from "@/components/command-center/FindMatchPanel";
@@ -28,6 +29,7 @@ import { signSolanaMessage } from "@/lib/solanaWallet";
 import { ArenaStakeButton } from "@/components/arena/ArenaStakeButton";
 import { BATTLE_DURATIONS, battleDurationLabel, parseBattleDurationHours } from "@/lib/arena/battleDuration";
 import { presentAutoDeployStatus } from "@/lib/arena/autoDeployPresentation.mjs";
+import { collectIncomingCreatorChallenges } from "@/lib/arena/creatorChallengePresentation.mjs";
 import { presentManualOpponentPreview, presentMatchCandidates } from "@/lib/arena/findMatchPresentation.mjs";
 import { publicBattleLabel, publicBattleLane } from "@/lib/arena/publicBattleState";
 
@@ -48,9 +50,7 @@ export default function CommandCenterBattles() {
   const [selectedToken, setSelectedToken] = useState("");
   const [stake, setStake] = useState("");
   const [challengeTarget, setChallengeTarget] = useState("");
-  const [counterStake, setCounterStake] = useState("");
   const [durationHours, setDurationHours] = useState(24);
-  const [counterDurationHours, setCounterDurationHours] = useState(24);
   const [busy, setBusy] = useState<string | null>(null);
   const [matchCandidates, setMatchCandidates] = useState<ReturnType<typeof presentMatchCandidates>>([]);
 
@@ -59,17 +59,10 @@ export default function CommandCenterBattles() {
     [feed.creatorStatuses],
   );
   const eligible = qualified.filter((item) => item.eligibility);
-  const incoming = useMemo(() => {
-    const keys = new Set(qualified.map(tokenKey).map((value) => value.toLowerCase()));
-    return feed.openForBattleQueue.filter((battle) => {
-      if (String(battle.state) !== "challenged") return false;
-      const left = String(battle.participants?.[0]?.tokenAddress || battle.participants?.[0]?.tokenId || "").toLowerCase();
-      const right = String(battle.participants?.[1]?.tokenAddress || battle.participants?.[1]?.tokenId || "").toLowerCase();
-      if (!keys.has(left) && !keys.has(right)) return false;
-      const from = String((battle as { offerFromToken?: string }).offerFromToken || left).toLowerCase();
-      return !keys.has(from);
-    });
-  }, [feed.openForBattleQueue, qualified]);
+  const incoming = useMemo(
+    () => collectIncomingCreatorChallenges(feed.openForBattleQueue, feed.creatorStatuses, walletAddress),
+    [feed.creatorStatuses, feed.openForBattleQueue, walletAddress],
+  );
   const waitingRivals = useMemo(
     () =>
       feed.openForBattleQueue.filter((battle) => {
@@ -168,11 +161,11 @@ export default function CommandCenterBattles() {
     }
   }
 
-  async function handleCounterOffer(battleId: string) {
+  async function handleCounterOffer(battleId: string, counterStake: string, counterDurationHours: number) {
     const amount = Number(counterStake);
     if (!Number.isFinite(amount) || amount <= 0) {
       toast.error("Enter a counter-offer stake greater than zero.");
-      return;
+      throw new Error("Enter a counter-offer stake greater than zero.");
     }
     setBusy(battleId);
     try {
@@ -180,10 +173,10 @@ export default function CommandCenterBattles() {
       const auth = await signAuth("arena_counter_battle", [`Battle: ${battleId}`, `Stake: ${amount}`, `Duration: ${hours}`]);
       await counterPostGradBattle(battleId, amount, auth, hours);
       await feed.refreshFeed();
-      setCounterStake("");
       toast.success("Counter-offer sent. They get a popup and email if verified.");
     } catch (error) {
       toast.error(String((error as Error)?.message || "Could not send counter-offer."));
+      throw error;
     } finally {
       setBusy(null);
     }
@@ -209,6 +202,7 @@ export default function CommandCenterBattles() {
       }
     } catch (error) {
       toast.error(String((error as Error)?.message || "Could not update challenge."));
+      throw error;
     } finally {
       setBusy(null);
     }
@@ -231,74 +225,14 @@ export default function CommandCenterBattles() {
 
       {incoming.length ? (
         <CommandCenterCard title="Incoming offers" description="Accept, decline, or counter-offer a different stake. Add an email in Settings to get challenge and counter-offer mail.">
-          <div className="space-y-3">
-            {incoming.map((battle) => {
-              const challenger = battle.participants?.[0];
-              const defender = battle.participants?.[1];
-              const offer = battle as { offeredStakeNative?: number; originalStakeNative?: number; offerCount?: number; nativeSymbol?: string; stakeNative?: number };
-              const offered = offer.offeredStakeNative ?? offer.stakeNative;
-              const isCounter = Number(offer.offerCount || 0) > 0;
-              return (
-                <div key={battle.id} className="mwz-hud-frame flex flex-col gap-3 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <TacticalTag label={isCounter ? "Counter-offer" : "Challenged"} tone="hot" />
-                      <div className="mt-2 font-retro text-sm text-foreground">
-                        {isCounter
-                          ? `${challenger?.symbol || "Rival"} / ${defender?.symbol || "your coin"} — ${offered} ${nativeLabel(chainId, offer.nativeSymbol)} on the table`
-                          : `${challenger?.symbol || "Rival"} challenged ${defender?.symbol || "your coin"}`}
-                      </div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        Current offer {offered || "—"} {nativeLabel(chainId, offer.nativeSymbol)} · {battleDurationLabel((battle as { offeredDurationHours?: number; durationHours?: number }).offeredDurationHours || (battle as { durationHours?: number }).durationHours)}
-                        {isCounter && offer.originalStakeNative ? ` · started at ${offer.originalStakeNative}` : ""}
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button size="sm" className="font-retro" disabled={busy === battle.id} onClick={() => void handleIncoming(battle.id, true)}>
-                        Accept
-                      </Button>
-                      <Button size="sm" variant="outline" className="font-retro" disabled={busy === battle.id} onClick={() => void handleIncoming(battle.id, false)}>
-                        Decline
-                      </Button>
-                      <Button asChild size="sm" variant="outline" className="font-retro">
-                        <Link to={`/battle/${encodeURIComponent(battle.id)}`}>View</Link>
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-end gap-2">
-                    <label className="min-w-[10rem] flex-1 text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                      Fight length
-                      <select
-                        className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
-                        value={counterDurationHours}
-                        onChange={(event) => setCounterDurationHours(parseBattleDurationHours(event.target.value, 24))}
-                      >
-                        {BATTLE_DURATIONS.map((item) => (
-                          <option key={item.hours} value={item.hours}>
-                            {item.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="min-w-[10rem] flex-1 text-xs uppercase tracking-[0.14em] text-muted-foreground">
-                      Counter ({nativeLabel(chainId, offer.nativeSymbol)})
-                      <input
-                        type="number"
-                        min="0"
-                        step="any"
-                        value={counterStake}
-                        onChange={(event) => setCounterStake(event.target.value)}
-                        className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
-                      />
-                    </label>
-                    <Button size="sm" variant="outline" className="font-retro" disabled={busy === battle.id} onClick={() => void handleCounterOffer(battle.id)}>
-                      Send counter
-                    </Button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+          <CreatorChallengeCarousel
+            challenges={incoming}
+            chainId={chainId}
+            busyId={busy}
+            onAccept={(battleId) => handleIncoming(battleId, true)}
+            onDecline={(battleId) => handleIncoming(battleId, false)}
+            onCounter={handleCounterOffer}
+          />
         </CommandCenterCard>
       ) : null}
 

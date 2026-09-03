@@ -213,12 +213,14 @@ test("Find Match wiring only prefills the existing challenge and leaves stake/du
 
 test("accept/counter/decline behavior stays on the existing handlers", () => {
   const battles = readSrc("../../pages/command-center/CommandCenterBattles.tsx");
+  const carousel = readSrc("../../components/arena/CreatorChallengeCarousel.tsx");
   assert.match(battles, /await acceptPostGradBattle\(battleId, auth\)/);
   assert.match(battles, /await declinePostGradBattle\(battleId, auth\)/);
   assert.match(battles, /await counterPostGradBattle\(battleId, amount, auth, hours\)/);
-  assert.match(battles, />\s*Accept\s*</);
-  assert.match(battles, />\s*Decline\s*</);
-  assert.match(battles, />\s*Send counter\s*</);
+  assert.match(battles, /CreatorChallengeCarousel/);
+  assert.match(carousel, />\s*ACCEPT\s*</);
+  assert.match(carousel, />\s*DECLINE\s*</);
+  assert.match(carousel, />\s*COUNTER\s*</);
 });
 
 test("imported and native eligible tokens share the same Find Match panel", () => {

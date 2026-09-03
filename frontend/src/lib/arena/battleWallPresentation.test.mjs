@@ -468,6 +468,7 @@ test("Battle Wall wiring keeps ArenaMatchRow, reuses wall realtime/effects, and 
   assert.match(page, /Battle unavailable/);
   assert.match(page, /useArenaFeedBattleMetrics/);
   assert.match(page, /selectActiveWallRealtimeIds/);
+  assert.match(page, /CreatorChallengeCarousel/);
   assert.doesNotMatch(page, /useAblyBattleChannel/);
   assert.doesNotMatch(page, /BattleCombatEffects/);
   assert.match(app, /path="\/warzone\/battles\/:battleId"/);

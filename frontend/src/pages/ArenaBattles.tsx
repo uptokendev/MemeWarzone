@@ -1,14 +1,27 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
+import { toast } from "sonner";
 import { BattleWallModule } from "@/components/arena/BattleWallModule";
+import { CreatorChallengeCarousel } from "@/components/arena/CreatorChallengeCarousel";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { ContentContainer } from "@/components/layout/ContentContainer";
-import { fetchPostGradBattleDetails } from "@/features/postgrad/apiClient";
+import { useWallet } from "@/contexts/WalletContext";
+import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
+import {
+  acceptPostGradBattle,
+  counterPostGradBattle,
+  declinePostGradBattle,
+  fetchPostGradBattleDetails,
+} from "@/features/postgrad/apiClient";
 import type { Battle } from "@/features/postgrad/contracts";
+import { useActiveFeedWallet } from "@/hooks/useActiveFeedWallet";
 import { useArenaBattleFeed } from "@/hooks/useArenaBattleFeed";
 import { useArenaFeedBattleMetrics } from "@/hooks/useArenaFeedBattleMetrics";
 import { useBattleWallFocus } from "@/hooks/useBattleWallFocus";
 import type { BattleWallViewportReport } from "@/hooks/useBattleWallViewport";
+import { parseBattleDurationHours } from "@/lib/arena/battleDuration";
+import { collectIncomingCreatorChallenges } from "@/lib/arena/creatorChallengePresentation.mjs";
+import { signArenaWalletAction } from "@/lib/arena/signArenaWalletAction";
 import {
   collectWallBattles,
   commitFocusedFetch,
@@ -59,7 +72,10 @@ function asBattle(value: unknown): Battle | null {
 export default function ArenaBattles() {
   const { battleId } = useParams();
   const focusedId = String(battleId || "").trim();
-  const feed = useArenaBattleFeed();
+  const wallet = useWallet();
+  const { solanaAccount } = useSolanaWallet();
+  const feedWallet = useActiveFeedWallet();
+  const feed = useArenaBattleFeed(feedWallet.address, feedWallet.chainId);
   const [tab, setTab] = useState<(typeof TABS)[number]["key"]>("live");
   const [chain, setChain] = useState("all");
   const [type, setType] = useState("all");
@@ -149,6 +165,51 @@ export default function ArenaBattles() {
     return map;
   }, [filtered, feedMetrics]);
   const rows = useMemo(() => sortWallBattles(filtered, sort, presentations), [filtered, sort, presentations]);
+  const incomingChallenges = useMemo(
+    () => collectIncomingCreatorChallenges(feed.openForBattleQueue, feed.creatorStatuses, feedWallet.address),
+    [feed.creatorStatuses, feed.openForBattleQueue, feedWallet.address],
+  );
+
+  async function signChallenge(action: string, extraLines: string[]) {
+    return signArenaWalletAction({
+      action,
+      extraLines,
+      walletAddress: String(feedWallet.address || ""),
+      chainId: feedWallet.chainId,
+      evmWallet: wallet,
+      solanaAccount,
+    });
+  }
+
+  async function handleAcceptChallenge(battleId: string) {
+    const auth = await signChallenge("arena_accept_battle", [`Battle: ${battleId}`]);
+    const result = await acceptPostGradBattle(battleId, auth);
+    await feed.refreshFeed();
+    toast.success(
+      result?.battle?.state === "matched" || result?.escrowRequired
+        ? "Accepted. Pay your on-chain stake to start the fight."
+        : "Challenge accepted.",
+    );
+  }
+
+  async function handleDeclineChallenge(battleId: string) {
+    const auth = await signChallenge("arena_decline_battle", [`Battle: ${battleId}`]);
+    await declinePostGradBattle(battleId, auth);
+    await feed.refreshFeed();
+    toast.success("Challenge declined.");
+  }
+
+  async function handleCounterChallenge(battleId: string, stake: string, durationHours: number) {
+    const amount = Number(stake);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new Error("Enter a counter-offer stake greater than zero.");
+    }
+    const hours = parseBattleDurationHours(durationHours, 24);
+    const auth = await signChallenge("arena_counter_battle", [`Battle: ${battleId}`, `Stake: ${amount}`, `Duration: ${hours}`]);
+    await counterPostGradBattle(battleId, amount, auth, hours);
+    await feed.refreshFeed();
+    toast.success("Counter-offer sent.");
+  }
   const focusedReady = Boolean(
     focusedId &&
       focusedBattle &&
@@ -224,6 +285,14 @@ export default function ArenaBattles() {
           </label>
         </div>
       </section>
+
+      <CreatorChallengeCarousel
+        challenges={incomingChallenges}
+        chainId={feedWallet.chainId}
+        onAccept={handleAcceptChallenge}
+        onDecline={handleDeclineChallenge}
+        onCounter={handleCounterChallenge}
+      />
 
       {focusedId && focusStatus === "unavailable" ? (
         <div className="mwz-hud-frame p-5 text-sm text-muted-foreground" data-battle-unavailable="true">
