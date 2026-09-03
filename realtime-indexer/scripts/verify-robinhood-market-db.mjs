@@ -37,11 +37,64 @@ try {
     `select table_name from information_schema.tables
       where table_schema='public'
         and table_name = any($1::text[])`,
-    [["campaigns", "curve_trades", "dex_trades", "market_pairs", "market_trades_v", "indexer_state"]],
+    [["campaigns", "curve_trades", "dex_trades", "market_pairs", "market_stats", "token_candles", "market_trades_v", "indexer_state"]],
   );
   const names = new Set(required.rows.map((row) => row.table_name));
-  for (const name of ["campaigns", "curve_trades", "dex_trades", "market_pairs", "market_trades_v", "indexer_state"]) {
+  for (const name of ["campaigns", "curve_trades", "dex_trades", "market_pairs", "market_stats", "token_candles", "market_trades_v", "indexer_state"]) {
     assert(names.has(name), `Missing required market-continuity object: ${name}`);
+  }
+
+  const valuationColumns = await client.query(
+    `select table_name,column_name
+       from information_schema.columns
+      where table_schema='public'
+        and table_name = any($1::text[])
+        and column_name = any($2::text[])`,
+    [
+      ["dex_trades", "market_stats", "dex_pools", "token_candles"],
+      [
+        "volume_usd",
+        "reference_price_usd",
+        "reference_price_updated_at",
+        "valuation_source",
+        "valuation_healthy",
+        "last_price_usd",
+        "market_cap_usd",
+        "liquidity_usd",
+        "volume_24h_usd",
+        "price_usd",
+        "volume_usd_24h",
+        "o_usd",
+        "h_usd",
+        "l_usd",
+        "c_usd",
+      ],
+    ],
+  );
+  const columnSet = new Set(valuationColumns.rows.map((row) => `${row.table_name}.${row.column_name}`));
+  for (const requiredColumn of [
+    "dex_trades.volume_usd",
+    "dex_trades.reference_price_usd",
+    "dex_trades.reference_price_updated_at",
+    "dex_trades.valuation_source",
+    "dex_trades.valuation_healthy",
+    "market_stats.last_price_usd",
+    "market_stats.market_cap_usd",
+    "market_stats.liquidity_usd",
+    "market_stats.volume_24h_usd",
+    "market_stats.reference_price_usd",
+    "market_stats.valuation_source",
+    "market_stats.valuation_healthy",
+    "dex_pools.price_usd",
+    "dex_pools.liquidity_usd",
+    "dex_pools.volume_usd_24h",
+    "token_candles.o_usd",
+    "token_candles.h_usd",
+    "token_candles.l_usd",
+    "token_candles.c_usd",
+    "token_candles.volume_usd",
+  ]) {
+    assert(columnSet.has(requiredColumn), `Missing RH-S12 valuation column: ${requiredColumn}`);
   }
 
   await client.query(
@@ -93,13 +146,16 @@ try {
        block_number,block_hash,block_time,status,side,sender_address,recipient_address,
        transaction_from,token_amount_raw,native_amount_raw,token_amount,native_amount,
        price_bnb,base_amount_raw,quote_amount_raw,base_amount,quote_amount,price_quote,
-       quote_asset_type,quote_token_address,execution_source,origin,created_at,updated_at
+       quote_asset_type,quote_token_address,volume_usd,reference_price_usd,reference_price_updated_at,
+       valuation_source,valuation_healthy,execution_source,origin,created_at,updated_at
      ) values(
        $1,$2,$3,$4,$5,3,203,$6,now()-interval '15 seconds','confirmed','buy',$7,$7,$7,
        '10000000000000000000',null,10,null,null,
        '10000000000000000000','250000000',10,2.5,0.25,
-       'STOCK_TOKEN',$8,'robinhood_v3','robinhood_v3',now(),now()
-     ) returning tx_hash,native_amount_raw,quote_amount_raw,quote_asset_type,quote_token_address`,
+       'STOCK_TOKEN',$8,301.25,120.5,now()-interval '20 seconds',
+       'stock_oracle:chainlink',true,'robinhood_v3','robinhood_v3',now(),now()
+     ) returning tx_hash,native_amount_raw,quote_amount_raw,quote_asset_type,quote_token_address,
+                 volume_usd,reference_price_usd,valuation_source,valuation_healthy`,
     [chainId, campaign, token, stockPair, stockDexTx, blockHash, trader, stock],
   );
   assert(stockInsert.rowCount === 1, "Robinhood Stock Token trade did not persist");
@@ -107,9 +163,14 @@ try {
   assert(String(stockInsert.rows[0].quote_amount_raw) === "250000000", "Stock Token quote raw amount changed");
   assert(stockInsert.rows[0].quote_asset_type === "STOCK_TOKEN", "Stock Token quote classification changed");
   assert(String(stockInsert.rows[0].quote_token_address).toLowerCase() === stock.toLowerCase(), "Stock Token quote identity changed");
+  assert(Number(stockInsert.rows[0].volume_usd) === 301.25, "Stock Token USD volume evidence changed");
+  assert(Number(stockInsert.rows[0].reference_price_usd) === 120.5, "Stock Token reference USD price changed");
+  assert(stockInsert.rows[0].valuation_source === "stock_oracle:chainlink", "Stock Token valuation source changed");
+  assert(stockInsert.rows[0].valuation_healthy === true, "Stock Token valuation health changed");
 
   const stream = await client.query(
-    `select source,"txHash","blockNumber","nativeAmountRaw","priceBnb"
+    `select source,"txHash","blockNumber","nativeAmountRaw","priceBnb",
+            "quoteAmountRaw","quoteAssetType","quoteTokenAddress","volumeUsd","referencePriceUsd","referencePriceUpdatedAt"
        from public.market_trades_v
       where "chainId"=$1 and lower("campaignAddress")=lower($2)
       order by "blockNumber" asc,"logIndex" asc`,
@@ -123,6 +184,12 @@ try {
   assert(String(stream.rows[1].nativeAmountRaw) === "600000000000000000", "V3 native raw amount changed in unified view");
   assert(stream.rows[2].nativeAmountRaw === null, "Unified trade view relabeled Stock Token quote as native");
   assert(stream.rows[2].priceBnb === null, "Unified trade view relabeled Stock Token price as BNB");
+  assert(String(stream.rows[2].quoteAmountRaw) === "250000000", "Unified trade view lost Stock quote amount");
+  assert(stream.rows[2].quoteAssetType === "STOCK_TOKEN", "Unified trade view lost Stock quote type");
+  assert(String(stream.rows[2].quoteTokenAddress).toLowerCase() === stock.toLowerCase(), "Unified trade view lost Stock quote token");
+  assert(Number(stream.rows[2].volumeUsd) === 301.25, "Unified trade view lost normalized Stock USD volume");
+  assert(Number(stream.rows[2].referencePriceUsd) === 120.5, "Unified trade view lost Stock reference price evidence");
+  assert(stream.rows[2].referencePriceUpdatedAt, "Unified trade view lost Stock reference timestamp evidence");
 
   await client.query(
     `insert into public.indexer_state(chain_id,cursor,last_indexed_block)
@@ -142,6 +209,7 @@ try {
     sources: stream.rows.map((row) => row.source),
     duplicateDexInsert: replay.rowCount,
     stockNativeAmountRaw: stream.rows[2].nativeAmountRaw,
+    stockVolumeUsd: stream.rows[2].volumeUsd,
     cursor: 204,
   });
 } finally {
