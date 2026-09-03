@@ -167,6 +167,7 @@ test("Phase 12 manual mismatch remains available as Open War while auto-match is
 
 test("Phase 12 challenge lifecycle keeps challenge, accept, counter, decline, expiry and escrow gates", () => {
   const battles = readApi("arenaBattles.js");
+  const beginFight = battles.split("async function beginFight")[1]?.split("async function goLiveFromMatched")[0] || "";
   for (const handler of ["handleChallenge", "handleAccept", "handleCounter", "handleDecline", "expireChallenge"]) {
     assert.match(battles, new RegExp(`(?:async function|function) ${handler}\\b`));
   }
@@ -175,7 +176,8 @@ test("Phase 12 challenge lifecycle keeps challenge, accept, counter, decline, ex
   assert.match(battles, /offered_stake_native/);
   assert.match(battles, /offered_duration_hours/);
   assert.match(battles, /state:\s*["']challenged["']/);
-  assert.match(battles, /state:\s*["']matched["']/);
+  assert.match(beginFight, /const requireEscrow = escrowRequired\(chainId\)/);
+  assert.match(beginFight, /state:\s*requireEscrow \? ["']matched["'] : ["']live["']/);
   assert.match(battles, /state:\s*["']expired["']/);
   assert.match(battles, /readOnchainPool/);
   assert.match(battles, /escrowRequired/);
