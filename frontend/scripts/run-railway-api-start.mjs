@@ -3,7 +3,7 @@
  * Railway frontend API start:
  * - Best-effort closeout patches (must NEVER block listen / healthcheck)
  * - Then boot the Express gateway
- * - Optionally boot the isolated Arena Battle realtime worker
+ * - Optionally boot the isolated Arena Battle worker for realtime and/or V2 settlement
  */
 import { spawn } from "node:child_process";
 import path from "node:path";
@@ -61,7 +61,10 @@ const server = spawn(
 );
 
 let arenaRealtimeWorker = null;
-if (truthy(process.env.ARENA_BATTLE_REALTIME_ENABLED)) {
+const arenaWorkerEnabled =
+  truthy(process.env.ARENA_BATTLE_REALTIME_ENABLED) ||
+  truthy(process.env.ARENA_BATTLE_POINTS_V2);
+if (arenaWorkerEnabled) {
   arenaRealtimeWorker = spawn(
     process.execPath,
     ["--import", "./api/load-local-env.mjs", "scripts/run-arena-battle-realtime-worker.mjs"],
@@ -73,14 +76,14 @@ if (truthy(process.env.ARENA_BATTLE_REALTIME_ENABLED)) {
   );
   arenaRealtimeWorker.on("exit", (code, signal) => {
     if (signal) {
-      console.warn(`[railway-api-start] Arena realtime worker stopped by ${signal}; API remains live`);
+      console.warn(`[railway-api-start] Arena worker stopped by ${signal}; API remains live`);
     } else if (code && code !== 0) {
-      console.warn(`[railway-api-start] Arena realtime worker exited ${code}; API remains live`);
+      console.warn(`[railway-api-start] Arena worker exited ${code}; API remains live`);
     }
     arenaRealtimeWorker = null;
   });
   arenaRealtimeWorker.on("error", (err) => {
-    console.warn("[railway-api-start] Arena realtime worker failed to start; API remains live", err?.message || err);
+    console.warn("[railway-api-start] Arena worker failed to start; API remains live", err?.message || err);
   });
 }
 
