@@ -180,7 +180,7 @@ test("Phase 12 Battle Points remain deterministic and chain-neutral for the same
   const base = pointInput();
   const bnb = calculateBattlePoints({ ...base, chainId: 56 });
   const solana = calculateBattlePoints({ ...base, chainId: 101 });
-  const robinhood = calculateBattlePoints({ ...base, chainId: 4663 });
+  const robinhood = calculateBattlePoints({ ...base, chainId: 46630 });
   assert.equal(bnb.totalPoints, solana.totalPoints);
   assert.equal(solana.totalPoints, robinhood.totalPoints);
   assert.deepEqual(bnb.components, robinhood.components);
@@ -235,19 +235,27 @@ test("Phase 12 realtime reconciles authoritative REST after gaps and rejects sta
   assert.match(realtime, /shouldRefetch:\s*true/);
 });
 
-test("Phase 12 combat effects are bounded, expire, and respect reduced motion", () => {
-  const effects = readFrontend("src/components/arena/BattleCombatEffects.tsx");
-  assert.match(effects, /MAX_HOLES_PER_SIDE = 40/);
-  assert.match(effects, /MAX_TRACERS = 18/);
-  assert.match(effects, /HOLE_TTL_MS = 60_000/);
-  assert.match(effects, /TRACER_TTL_MS = 950/);
-  assert.match(effects, /prefers-reduced-motion: reduce/);
-  assert.match(effects, /if \(reducedMotion\) return 1/);
-  assert.match(effects, /if \(!reducedMotion\)/);
-  assert.match(effects, /slice\(-MAX_TRACERS\)/);
-  assert.match(effects, /capHoles/);
-  assert.match(effects, /current\.filter\(\(row\) => now - row\.createdAt < HOLE_TTL_MS\)/);
-  assert.match(effects, /window\.clearInterval\(timer\)/);
+test("Phase 12 combat effects are bounded, recover safely, and respect compact/reduced-motion modes", () => {
+  const component = readFrontend("src/components/arena/BattleCombatEffects.tsx");
+  const helper = readFrontend("src/lib/arena/battleCombatEffects.mjs");
+  const helperTests = readFrontend("src/lib/arena/battleCombatEffects.test.mjs");
+
+  assert.match(helper, /MAX_HOLES_PER_SIDE = 40/);
+  assert.match(helper, /MAX_TRACERS = 18/);
+  assert.match(helper, /HOLE_TTL_MS = 60_000/);
+  assert.match(helper, /TRACER_TTL_MS = 950/);
+  assert.match(helper, /if \(reducedMotion\) return 1/);
+  assert.match(helper, /return rows\.slice\(-MAX_TRACERS\)/);
+  assert.match(helper, /shouldClearCombatBaseline/);
+  assert.match(helper, /planCombatAttacks/);
+  assert.match(component, /prefers-reduced-motion: reduce/);
+  assert.match(component, /max-width: 1279px/);
+  assert.match(component, /if \(!reducedMotion && !compact\)/);
+  assert.match(component, /current\.filter\(\(row\) => now - row\.createdAt < HOLE_TTL_MS\)/);
+  assert.match(component, /window\.clearInterval\(timer\)/);
+  assert.match(helperTests, /repeated enabled updates keep DOM counts bounded/);
+  assert.match(helperTests, /mobile compact density still fires bounded combat feedback/);
+  assert.match(helperTests, /unhealthy snapshot with null timestamp clears baseline and fires no catch-up/);
 });
 
 test("Phase 12 tournament QA preserves Round-1 similarity, later winner advancement and no duplicate scoring engine", () => {
