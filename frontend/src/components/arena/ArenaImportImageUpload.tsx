@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { ImagePlus, Loader2 } from "lucide-react";
+import { ImagePlus, Loader2, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -35,9 +35,25 @@ export function ArenaImportImageUpload({
   const [imageUrl, setImageUrl] = useState(item.imageUrl || "");
   const solana = isSolanaChainId(item.chainId);
   const connectedOwner = solana ? solanaWallet.solanaAccount : wallet.account;
-  const isOwner = sameWallet(connectedOwner, item.ownerWallet, solana);
+  const isImportManager = sameWallet(connectedOwner, item.ownerWallet, solana);
+  const ownershipVerified = Boolean(item.verifiedAt);
 
-  if (!postGradFlags.importImageUpload || !isOwner) return null;
+  if (!postGradFlags.importImageUpload || !isImportManager) return null;
+  if (!ownershipVerified) {
+    return (
+      <div className="rounded-md border border-amber-400/15 bg-amber-500/[0.05] p-3 text-xs text-amber-100/80">
+        <div className="flex items-start gap-2">
+          <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <div className="font-retro uppercase tracking-[0.14em]">Token image locked</div>
+            <p className="mt-1 text-amber-100/65">
+              Image replacement unlocks after token ownership is verified. Signing the import request alone does not prove project ownership.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   const handleFile = async (file: File) => {
     if (file.size > MAX_BYTES) {
@@ -101,7 +117,7 @@ export function ArenaImportImageUpload({
         <div className="min-w-0 flex-1">
           <div className="font-retro text-xs uppercase tracking-[0.16em] text-foreground">Token image</div>
           <p className="mt-1 text-xs text-muted-foreground">
-            Verified import owner only. PNG, JPEG or WEBP, up to 5 MB. The API verifies the actual file signature and dimensions before Storage accepts it.
+            Verified token owner only. PNG, JPEG or WEBP, up to 5 MB. The API verifies the actual file signature and dimensions before Storage accepts it.
           </p>
           <input
             ref={inputRef}
