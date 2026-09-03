@@ -65,7 +65,7 @@ test("Tournament Details consumes normalized profiles and canonical Battle metri
   assert.match(identity, /useArenaTokenProfile/);
 });
 
-test("Tournament presentation does not duplicate Battle Points math or switch settlement", () => {
+test("Tournament presentation does not duplicate Battle Points math or bypass canonical settlement selection", () => {
   const details = readFrontend("src/pages/TournamentDetails.tsx");
   const matchCard = readFrontend("src/components/arena/TournamentMatchCard.tsx");
   const metricsApi = readApi("arenaBattleMetrics.js");
@@ -73,5 +73,7 @@ test("Tournament presentation does not duplicate Battle Points math or switch se
 
   assert.doesNotMatch(combined, /calculateBattlePoints/);
   assert.doesNotMatch(combined, /marketCapWeight|holderWeight|volumeWeight/);
-  assert.match(metricsApi, /settlementMode:\s*["']v1_mcap_pct_change["']/);
+  assert.match(metricsApi, /import\s*\{\s*arenaSettlementMode\s*\}\s*from\s*["']\.\/lib\/arenaSettlementMode\.js["']/);
+  assert.match(metricsApi, /const settlementMode = arenaSettlementMode\(battle\);/);
+  assert.doesNotMatch(metricsApi, /settlementMode:\s*["']v1_mcap_pct_change["']/);
 });
