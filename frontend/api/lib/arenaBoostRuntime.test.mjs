@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import "./arenaBoostQuote.test.mjs";
 import {
   boostSummary,
   expectedBoostSplit,
