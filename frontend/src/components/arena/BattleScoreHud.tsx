@@ -17,6 +17,15 @@ function score(value: number | undefined, ready: boolean) {
   return ready ? Number(value || 0).toFixed(1) : "—";
 }
 
+function tieBreakLabel(value: string | null | undefined) {
+  if (value === "mcap_component") return "MCAP component";
+  if (value === "holder_component") return "holder component";
+  if (value === "volume_component") return "volume component";
+  if (value === "token_address") return "token identity";
+  if (value === "battle_points") return "Battle Points";
+  return "deterministic rule";
+}
+
 export function BattleScoreHud({ battle, metrics, leftLabel, rightLabel, realtimeState = "idle" }: Props) {
   const left = metrics?.sides.left;
   const right = metrics?.sides.right;
@@ -35,6 +44,7 @@ export function BattleScoreHud({ battle, metrics, leftLabel, rightLabel, realtim
     ? metrics.pointDifference.toFixed(1)
     : null;
   const live = battle.state === "live";
+  const settlementV2 = metrics?.settlementMode === "battle_points_v2";
 
   return (
     <section className="mwz-hud-frame relative flex min-h-[420px] flex-col justify-between overflow-hidden p-4 md:p-5">
@@ -42,7 +52,8 @@ export function BattleScoreHud({ battle, metrics, leftLabel, rightLabel, realtim
       <div className="relative space-y-5">
         <div className="flex flex-wrap items-center justify-center gap-2">
           <TacticalTag label="Battle Points V2" tone="hot" />
-          <TacticalTag label="Settlement V1" tone="default" />
+          <TacticalTag label={settlementV2 ? "Settlement V2" : "Settlement V1"} tone={settlementV2 ? "success" : "default"} />
+          {metrics?.tieBreakUsed ? <TacticalTag label="TIE-BREAK" tone="sponsored" /> : null}
         </div>
 
         <div className="text-center">
@@ -100,9 +111,16 @@ export function BattleScoreHud({ battle, metrics, leftLabel, rightLabel, realtim
             DATA DELAY — Battle Points are not treated as current until both combatants have healthy persisted metrics.
           </div>
         ) : null}
+        {metrics?.tieBreakUsed ? (
+          <div className="border border-fuchsia-300/20 bg-fuchsia-300/[0.04] px-3 py-2 text-xs text-fuchsia-100/80">
+            TIE-BREAK — the ranked result was functionally tied; the money recipient was selected by {tieBreakLabel(metrics.moneyTieBreak)}.
+          </div>
+        ) : null}
         {live ? (
           <div className="text-[10px] leading-4 text-white/36">
-            Battle Points are live telemetry on this rollout. Existing V1 settlement remains authoritative until the settlement migration is enabled and certified.
+            {settlementV2
+              ? "Battle Points V2 are authoritative for this fight. Final settlement re-runs the same server scoring path at battle close and fails closed on delayed data."
+              : "Battle Points are live telemetry on this rollout. Existing V1 settlement remains authoritative until the settlement migration is enabled and certified."}
           </div>
         ) : null}
       </div>
