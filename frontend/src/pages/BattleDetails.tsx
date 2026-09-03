@@ -36,6 +36,15 @@ function tokenKey(value: unknown, chainId: number) {
   return isSolanaChainId(chainId) ? raw : raw.toLowerCase();
 }
 
+function tieBreakLabel(value?: string | null) {
+  if (value === "mcap_component") return "MCAP component";
+  if (value === "holder_component") return "Holder component";
+  if (value === "volume_component") return "Eligible volume component";
+  if (value === "token_address") return "Deterministic token identity";
+  if (value === "battle_points") return "Battle Points";
+  return value ? String(value).replaceAll("_", " ") : "None";
+}
+
 const BattleDetails = () => {
   const { id } = useParams();
   const { battle, source, realtimeState, metrics } = useArenaBattleRealtimeDetails(id);
@@ -113,6 +122,10 @@ const BattleDetails = () => {
         : "Realtime connecting";
   const leftLabel = left?.symbol || left?.tokenName || "Left";
   const rightLabel = right?.symbol || right?.tokenName || "Right";
+  const settlementV2 = metrics?.settlementMode === "battle_points_v2";
+  const settlementEngine = settlementV2 ? "V2 Battle Points 50/30/20" : "V1 MCAP % change";
+  const finalLeftPoints = metrics?.finalBattlePoints?.left;
+  const finalRightPoints = metrics?.finalBattlePoints?.right;
 
   return (
     <ContentContainer className="space-y-5 px-1 pb-10 pt-4">
@@ -233,12 +246,22 @@ const BattleDetails = () => {
             </div>
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
               <span className="text-white/48">Settlement engine</span>
-              <span className="font-medium text-white">V1 MCAP % change</span>
+              <span className="font-medium text-white">{settlementEngine}</span>
             </div>
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
-              <span className="text-white/48">Live telemetry</span>
-              <span className="font-medium text-white">Battle Points V2</span>
+              <span className="text-white/48">Battle Points</span>
+              <span className="font-medium text-white">
+                {settlementV2 && finalLeftPoints !== null && finalLeftPoints !== undefined && finalRightPoints !== null && finalRightPoints !== undefined
+                  ? `${Number(finalLeftPoints).toFixed(1)} — ${Number(finalRightPoints).toFixed(1)}`
+                  : "Live telemetry V2"}
+              </span>
             </div>
+            {metrics?.tieBreakUsed ? (
+              <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                <span className="text-fuchsia-100/65">TIE-BREAK</span>
+                <span className="font-medium text-fuchsia-100">{tieBreakLabel(metrics.moneyTieBreak)}</span>
+              </div>
+            ) : null}
             <div className="flex items-center justify-between border-b border-white/10 pb-2">
               <span className="text-white/48">Started</span>
               <span className="font-medium text-white">{formatMoment(battle.startedAt)}</span>
