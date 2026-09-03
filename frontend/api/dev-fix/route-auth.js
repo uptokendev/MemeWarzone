@@ -21,6 +21,7 @@ import {
   signCreateAuthorization,
   signTradeAuthorization,
 } from "./routeAuthorizationSigner.js";
+import { prepareRobinhoodStockCreateAuthorization } from "./robinhoodStockCreatePolicy.js";
 import { defaultEvmChainId } from "../lib/defaultEvmChain.js";
 import { isCreatorArmCooldownActive, normalizeCreatorArmCooldownEndsAt } from "../lib/creatorArmCooldown.js";
 
@@ -417,10 +418,13 @@ export async function routingCreateAuthorization(req, res) {
   const walletAddress = normalizeAddress(body.walletAddress);
   const factoryAddress = normalizeAddress(body.factoryAddress);
   const chainId = parsePositiveInt(body.chainId, 0);
+  const requestedStockToken = String(body.stockToken || body.graduationQuoteAsset || "").trim();
+  const stockToken = requestedStockToken ? normalizeAddress(requestedStockToken) : "";
 
   if (!walletAddress) return json(res, 400, { error: "Invalid or missing walletAddress" });
   if (!factoryAddress) return json(res, 400, { error: "Invalid or missing factoryAddress" });
   if (!chainId) return json(res, 400, { error: "Invalid or missing chainId" });
+  if (requestedStockToken && !stockToken) return json(res, 400, { error: "Invalid stockToken" });
 
   let campaignRequest;
   try {
@@ -457,22 +461,59 @@ export async function routingCreateAuthorization(req, res) {
   const { tradeRouteProfileId, finalizeRouteProfileId, decision } = await getRouteDecision(walletAddress);
   const deadline = getAuthDeadline();
   const validUntil = validUntilFromDeadline(deadline);
-  const signature = await signCreateAuthorization({
-    signer,
-    chainId,
-    factoryAddress,
-    creator: walletAddress,
-    request: campaignRequest,
-    tradeRouteProfileId,
-    finalizeRouteProfileId,
-    deadline,
-  });
+  let signature;
+  let graduationMarket = {
+    kind: "NATIVE",
+    quoteAsset: null,
+    marketPolicyVersion: "robinhood_market_v1",
+  };
+
+  if (stockToken) {
+    try {
+      const stockAuthorization = await prepareRobinhoodStockCreateAuthorization({
+        signer,
+        chainId,
+        factoryAddress,
+        creator: walletAddress,
+        request: campaignRequest,
+        stockToken,
+        tradeRouteProfileId,
+        finalizeRouteProfileId,
+        deadline,
+      });
+      signature = stockAuthorization.signature;
+      graduationMarket = {
+        kind: "STOCK_TOKEN",
+        quoteAsset: stockAuthorization.stockToken,
+        marketPolicyVersion: stockAuthorization.marketPolicyVersion,
+        stockGraduationAdapter: stockAuthorization.stockGraduationAdapter,
+        stockCampaignImplementation: stockAuthorization.stockCampaignImplementation,
+        asset: stockAuthorization.asset,
+      };
+    } catch (error) {
+      return json(res, 409, {
+        error: String(error?.message || error || "Stock Battlefield authorization failed"),
+        code: "STOCK_CREATE_POLICY_BLOCKED",
+      });
+    }
+  } else {
+    signature = await signCreateAuthorization({
+      signer,
+      chainId,
+      factoryAddress,
+      creator: walletAddress,
+      request: campaignRequest,
+      tradeRouteProfileId,
+      finalizeRouteProfileId,
+      deadline,
+    });
+  }
 
   const combinedPreflight = { ...createPreflight, ...onChainPreflight.onChain };
   await logRouteAuthorization({
     chainId,
     walletAddress,
-    routeKind: "create",
+    routeKind: stockToken ? "create_stock" : "create",
     routeProfileId: tradeRouteProfileId,
     finalizeRouteProfileId,
     factoryAddress,
@@ -480,11 +521,17 @@ export async function routingCreateAuthorization(req, res) {
     routeAuthority: signer.address,
     authorizationDeadline: deadline,
     validUntil,
-    metadata: { endpoint: "/api/routing/create-authorization", campaignRequest, preflight: combinedPreflight },
+    metadata: {
+      endpoint: "/api/routing/create-authorization",
+      campaignRequest,
+      graduationMarket,
+      preflight: combinedPreflight,
+    },
   });
 
   return json(res, 200, {
     authorization: { tradeRouteProfileId, finalizeRouteProfileId, validUntil, signature },
+    graduationMarket,
     routeAuthority: signer.address,
     decision,
     preflight: combinedPreflight,
