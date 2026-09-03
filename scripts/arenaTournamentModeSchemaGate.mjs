@@ -154,6 +154,18 @@ psql(`
     reference_price_usd numeric,
     reference_price_updated_at timestamptz
   );
+
+  CREATE TABLE IF NOT EXISTS public.token_metadata_registry (
+    chain_id bigint,
+    token_address text,
+    logo_uri text,
+    description text,
+    website text,
+    external_url text,
+    x_account text,
+    telegram text,
+    updated_at timestamptz
+  );
 `);
 
 const chain = [
