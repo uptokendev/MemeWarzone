@@ -1,6 +1,7 @@
 import { pool } from "../server/db.js";
 import { badMethod, json } from "../server/http.js";
 import { buildPublicBattleMetricsSnapshot, readPublicBattleMetricsSnapshot } from "./lib/arenaBattleRealtime.js";
+import { arenaSettlementMode } from "./lib/arenaSettlementMode.js";
 
 function safeBattleId(value) {
   const id = String(value || "").trim();
@@ -20,7 +21,10 @@ export default async function handler(req, res) {
 
   const result = await pool.query(
     `select id, chain_id, state, challenger_token, defender_token, started_at, ends_at,
-            money_winner_token, winner_token, settlement_version, settled_at, finished_at, updated_at
+            money_winner_token, winner_token, money_tie_break, settlement_tie_break_used,
+            settlement_version, settlement_scoring_version,
+            challenger_battle_points, defender_battle_points,
+            settlement_metrics_updated_at, settled_at, finished_at, updated_at
        from public.arena_battles
       where id = $1
       limit 1`,
@@ -42,13 +46,22 @@ export default async function handler(req, res) {
     };
   }
 
+  const settlementMode = arenaSettlementMode(battle);
   res.setHeader("cache-control", "no-store");
   return json(res, 200, {
     ok: true,
     battleId,
     state: String(battle.state || ""),
-    settlementMode: "v1_mcap_pct_change",
+    settlementMode,
     settlementVersion: battle.settlement_version ?? null,
+    settlementScoringVersion: battle.settlement_scoring_version || null,
+    moneyTieBreak: battle.money_tie_break || null,
+    tieBreakUsed: battle.settlement_tie_break_used === true,
+    finalBattlePoints: {
+      left: battle.challenger_battle_points == null ? null : Number(battle.challenger_battle_points),
+      right: battle.defender_battle_points == null ? null : Number(battle.defender_battle_points),
+    },
+    settlementMetricsUpdatedAt: battle.settlement_metrics_updated_at || null,
     metrics,
     updatedAt: battle.updated_at || metrics.metricsUpdatedAt || new Date().toISOString(),
   });
