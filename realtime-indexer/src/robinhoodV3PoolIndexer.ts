@@ -206,8 +206,8 @@ async function readPairBalances(input: {
 
   const pair = new ethers.Contract(input.pairAddress, MOCK_POOL_ABI, input.provider) as any;
   const [mock0, mock1] = await Promise.all([
-    tryCall(() => pair.reserve0()),
-    tryCall(() => pair.reserve1()),
+    tryCall<bigint>(() => pair.reserve0() as Promise<bigint>),
+    tryCall<bigint>(() => pair.reserve1() as Promise<bigint>),
   ]);
   const reserve0 = token0Balance != null && token0Balance > 0n ? token0Balance : BigInt(mock0 ?? 0n);
   const reserve1 = token1Balance != null && token1Balance > 0n ? token1Balance : BigInt(mock1 ?? 0n);
