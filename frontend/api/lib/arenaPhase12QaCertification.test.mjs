@@ -152,11 +152,17 @@ test("Phase 12 ranked recommendations never return Open War and cleanly return n
 
 test("Phase 12 manual mismatch remains available as Open War while auto-match is ranked-only", () => {
   const battles = readApi("arenaBattles.js");
-  const challenge = battles.split("async function handleChallenge")[1]?.split("async function handleAccept")[0] || "";
+  const challenge = battles.split("async function handleChallenge")[1]?.split("function offerFromToken")[0] || "";
   const autoMatch = battles.split("async function tryAutoMatch")[1]?.split("async function currentMcap")[0] || "";
-  assert.match(challenge, /calculateMatchQuality|matchQuality/i);
-  assert.doesNotMatch(challenge, /below_ranked_minimum[\s\S]{0,160}return json\(res, 4\d\d/i);
+  const mapBattle = battles.split("function mapBattle")[1]?.split("function feedFromBattles")[0] || "";
+
+  assert.match(challenge, /state:\s*["']challenged["']/);
+  assert.match(challenge, /participants:\s*\[participant\(hydratedChallenger\), participant\(hydratedDefender\)\]/);
+  assert.doesNotMatch(challenge, /recommendMatchCandidates/);
+  assert.doesNotMatch(challenge, /rankedEligible[\s\S]{0,160}return json\(res, 4\d\d/i);
   assert.match(autoMatch, /recommendMatchCandidates/);
+  assert.match(mapBattle, /matchClassification:\s*match\?\.classification/);
+  assert.match(mapBattle, /rankedMode:\s*match \? \(match\.rankedEligible \? ["']competitive["'] : ["']open_war["']\)/);
 });
 
 test("Phase 12 challenge lifecycle keeps challenge, accept, counter, decline, expiry and escrow gates", () => {
@@ -267,6 +273,15 @@ test("Phase 12 tournament QA preserves Round-1 similarity, later winner advancem
   assert.doesNotMatch(tournaments, /calculateBattlePoints\s*\(/);
   assert.match(tournamentCert, /later tournament rounds remain winner-advances/);
   assert.match(tournamentCert, /Tournament Details consumes normalized profiles and canonical Battle metrics/);
+});
+
+test("Phase 12 Battle Details preserves Solana case for settlement-winner display", () => {
+  const details = readFrontend("src/pages/BattleDetails.tsx");
+  assert.match(details, /function tokenKey\(value: unknown, chainId: number\)/);
+  assert.match(details, /return isSolanaChainId\(chainId\) \? raw : raw\.toLowerCase\(\)/);
+  assert.match(details, /some\(\(value\) => tokenKey\(value, battleChainId\) === winnerKey\)/);
+  const winnerBlock = details.split("const winnerKey")[1]?.split("const sides")[0] || "";
+  assert.doesNotMatch(winnerBlock, /toLowerCase\(\)/);
 });
 
 test("Phase 12 explicitly keeps final-leader settlement parity blocked while Settlement V1 is staged", () => {
