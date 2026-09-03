@@ -34,6 +34,7 @@ import {
   resolveFocusedWallBattle,
   shouldApplyFocusedWallReset,
   sortWallBattles,
+  wallEmptyCopy,
   wallTabForBattle,
 } from "@/lib/arena/battleWallPresentation.mjs";
 import {
@@ -218,45 +219,54 @@ export default function ArenaBattles() {
       rows.some((row) => row.id === focusedBattle.id),
   );
   useBattleWallFocus(focusedReady ? focusedId : "", focusedReady);
+  const empty = wallEmptyCopy({
+    source: feed.source,
+    tab,
+    loading: feed.loading,
+    focusedLoading: Boolean(focusedId && focusStatus === "loading"),
+    tabCount: tabRows.length,
+    filteredCount: rows.length,
+  });
+  const controlClass =
+    "mt-1 w-full min-w-0 rounded-md border border-border/60 bg-background px-2 py-1.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent";
 
   return (
-    <ContentContainer className="space-y-5 px-1 pb-10 pt-4">
-      <section className="mwz-hud-frame p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+    <ContentContainer className="min-w-0 max-w-full space-y-4 overflow-x-hidden px-1 pb-10 pt-4">
+      <section className="mwz-hud-frame space-y-3 p-3 md:p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Warzone</div>
-            <h1 className="mt-1 font-retro text-2xl text-foreground">Battles</h1>
-            <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-              The wars happening across MemeWarzone right now.
-            </p>
+            <h1 className="font-retro text-xl text-foreground md:text-2xl">Battles</h1>
           </div>
           <TacticalTag label={feed.source === "api" ? "Live data" : feed.source === "empty" ? "Feed unavailable" : "Awaiting data"} tone={feed.source === "api" ? "success" : "default"} />
         </div>
-        <div className="mt-4 inline-flex flex-wrap gap-1 rounded-md border border-border/60 bg-background/45 p-1">
+        <div className="inline-flex max-w-full flex-wrap gap-1 rounded-md border border-border/60 bg-background/45 p-1" role="tablist" aria-label="Battle state">
           {TABS.map((item) => (
             <button
               key={item.key}
               type="button"
+              role="tab"
+              aria-selected={tab === item.key}
               onClick={() => setTab(item.key)}
-              className={`rounded px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] transition ${tab === item.key ? "bg-card text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+              className={`rounded px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.14em] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent ${tab === item.key ? "bg-card text-foreground" : "text-muted-foreground hover:text-foreground"}`}
             >
               {item.label}
             </button>
           ))}
         </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <label className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-            Chain
-            <select className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground" value={chain} onChange={(event) => setChain(event.target.value)}>
+        <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
+          <label className="min-w-0 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+            All chains
+            <select className={controlClass} value={chain} onChange={(event) => setChain(event.target.value)} aria-label="Filter by chain">
               <option value="all">All</option>
               <option value="bnb">BNB</option>
               <option value="solana">Solana</option>
               {robinhood ? <option value="robinhood">Robinhood</option> : null}
             </select>
           </label>
-          <label className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-            Battle type
-            <select className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground" value={type} onChange={(event) => setType(event.target.value)}>
+          <label className="min-w-0 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+            All types
+            <select className={controlClass} value={type} onChange={(event) => setType(event.target.value)} aria-label="Filter by battle type">
               {TYPES.map((item) => (
                 <option key={item.key} value={item.key}>
                   {item.label}
@@ -264,9 +274,9 @@ export default function ArenaBattles() {
               ))}
             </select>
           </label>
-          <label className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+          <label className="min-w-0 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
             Sort
-            <select className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground" value={sort} onChange={(event) => setSort(event.target.value)}>
+            <select className={controlClass} value={sort} onChange={(event) => setSort(event.target.value)} aria-label="Sort battles">
               {SORTS.map((item) => (
                 <option key={item.key} value={item.key}>
                   {item.label}
@@ -274,13 +284,14 @@ export default function ArenaBattles() {
               ))}
             </select>
           </label>
-          <label className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
-            Search token
+          <label className="min-w-0 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+            Search
             <input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
+              className={controlClass}
               placeholder="$TICKER / name"
+              aria-label="Search token"
             />
           </label>
         </div>
@@ -295,12 +306,13 @@ export default function ArenaBattles() {
       />
 
       {focusedId && focusStatus === "unavailable" ? (
-        <div className="mwz-hud-frame p-5 text-sm text-muted-foreground" data-battle-unavailable="true">
-          Battle unavailable.
+        <div className="mwz-hud-frame p-4 text-sm text-muted-foreground" data-battle-unavailable="true" role="status">
+          <div className="font-retro text-base text-foreground">Battle unavailable.</div>
+          <p className="mt-1">This fight is private, missing, or not a public Battle Wall battle.</p>
         </div>
       ) : null}
 
-      <section className="space-y-4" data-battle-wall>
+      <section className="min-w-0 space-y-4" data-battle-wall>
         {rows.length ? (
           rows.map((battle, index) => (
             <BattleWallModule
@@ -314,17 +326,26 @@ export default function ArenaBattles() {
               onViewportReport={reportViewport}
             />
           ))
+        ) : empty.kind === "loading" || empty.kind === "loading-focus" ? (
+          <div className="space-y-3" data-battle-wall-empty={empty.kind} role="status">
+            <div className="text-sm text-muted-foreground">{empty.title}</div>
+            <div className="space-y-3" data-battle-wall-skeleton="true" aria-hidden="true">
+              {[0, 1].map((slot) => (
+                <div key={slot} className="mwz-hud-frame animate-pulse p-4">
+                  <div className="h-3 w-16 rounded bg-white/10" />
+                  <div className="mt-4 grid gap-3 md:grid-cols-3">
+                    <div className="h-24 rounded bg-white/5" />
+                    <div className="h-16 rounded bg-white/5" />
+                    <div className="h-24 rounded bg-white/5" />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         ) : (
-          <div className="mwz-hud-frame p-5 text-sm text-muted-foreground">
-            {feed.source === "empty"
-              ? "Battle data is not available right now."
-              : focusedId && focusStatus === "loading"
-                ? "Loading battle..."
-                : tab === "live"
-                  ? "No live battles right now."
-                  : tab === "upcoming"
-                    ? "No upcoming deployments."
-                    : "Finished battles will appear here."}
+          <div className="mwz-hud-frame p-5" data-battle-wall-empty={empty.kind} role="status">
+            <div className="font-retro text-base text-foreground">{empty.title}</div>
+            <p className="mt-1 text-sm text-muted-foreground">{empty.body}</p>
           </div>
         )}
       </section>

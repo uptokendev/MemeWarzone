@@ -25,6 +25,7 @@ import {
   shouldApplyFocusedWallReset,
   sortWallBattles,
   validBattlePointGap,
+  wallEmptyCopy,
   wallTabForBattle,
 } from "./battleWallPresentation.mjs";
 
@@ -491,4 +492,33 @@ test("Battle Wall wiring keeps ArenaMatchRow, reuses wall realtime/effects, and 
   assert.doesNotMatch(wall, /calculateBattlePoints|marketCapWeight|50\/30\/20/);
   assert.equal(typeof presentArenaMatchRow, "function");
   assert.match(presentBattleWallModule(battle(), metrics(), { requested: true, loaded: true }).href, /\/warzone\/battles\/wall-1/);
+});
+
+test("Battle Wall polish keeps stacked mobile combat layout and DATA DELAY copy", () => {
+  const page = readSrc("../../pages/ArenaBattles.tsx");
+  const moduleSrc = readSrc("../../components/arena/BattleWallModule.tsx");
+  const vs = readSrc("../../components/arena/BattleWallVs.tsx");
+  const combatant = readSrc("../../components/arena/BattleWallCombatant.tsx");
+  const carousel = readSrc("../../components/arena/CreatorChallengeCarousel.tsx");
+  const effects = readSrc("../../components/arena/BattleCombatEffects.tsx");
+
+  assert.match(moduleSrc, /grid-cols-1/);
+  assert.match(moduleSrc, /md:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
+  assert.match(moduleSrc, /remaining=\{presented\.tab === "live"\}/);
+  assert.match(moduleSrc, /motion-reduce:shadow-none/);
+  assert.match(vs, /Score updates temporarily paused/);
+  assert.match(vs, /sr-only/);
+  assert.match(combatant, /md:flex-row-reverse/);
+  assert.match(page, /role="tablist"/);
+  assert.match(page, /data-battle-wall-skeleton/);
+  assert.match(page, /wallEmptyCopy/);
+  assert.match(carousel, /overflow-hidden/);
+  assert.match(carousel, /beginChallengePending/);
+  assert.match(effects, /pointer-events-none/);
+  assert.doesNotMatch(page, /BOOST|Final Salvo|Vote Tournament/);
+  assert.doesNotMatch(moduleSrc, /Battle Boost|Final Salvo/);
+  assert.equal(wallEmptyCopy({ source: "empty" }).kind, "unavailable");
+  assert.equal(wallEmptyCopy({ tab: "live", tabCount: 0, filteredCount: 0 }).title, "No live battles right now.");
+  assert.equal(wallEmptyCopy({ tab: "live", tabCount: 4, filteredCount: 0 }).kind, "filters");
+  assert.equal(wallEmptyCopy({ loading: true, filteredCount: 0 }).kind, "loading");
 });

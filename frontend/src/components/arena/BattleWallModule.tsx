@@ -86,6 +86,14 @@ export function BattleWallModule({
     snapshotReady: realtime.snapshotReady,
   });
 
+  const stateLabel = presented.tab === "live" ? "LIVE" : presented.tab === "upcoming" ? "DEPLOYMENT PENDING" : "FINISHED";
+  const moduleTone =
+    presented.tab === "live"
+      ? "border-orange-400/20"
+      : presented.tab === "upcoming"
+        ? "border-white/10 opacity-95"
+        : "border-white/10 bg-black/20";
+
   return (
     <article
       ref={moduleRef}
@@ -94,28 +102,27 @@ export function BattleWallModule({
       data-battle-wall-module={presented.tab}
       data-battle-realtime={realtimeActive && live ? selected.source : "off"}
       tabIndex={0}
-      className="mwz-hud-frame relative space-y-4 overflow-hidden p-4 outline-none transition-[box-shadow] duration-500 md:p-5 data-[battle-focused=true]:ring-2 data-[battle-focused=true]:ring-accent motion-reduce:transition-none"
+      aria-label={`${presented.leftTicker} versus ${presented.rightTicker}, ${stateLabel}`}
+      className={`mwz-hud-frame relative isolate min-w-0 max-w-full space-y-3 overflow-hidden p-3 outline-none transition-[box-shadow,border-color] duration-500 md:space-y-4 md:p-5 data-[battle-focused=true]:ring-2 data-[battle-focused=true]:ring-accent/80 data-[battle-focused=true]:shadow-[0_0_28px_rgba(240,106,26,0.28)] motion-reduce:transition-none motion-reduce:shadow-none focus-visible:ring-2 focus-visible:ring-accent ${moduleTone}`}
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <TacticalTag
-            label={presented.tab === "live" ? "LIVE" : presented.tab === "upcoming" ? "DEPLOYMENT PENDING" : "FINISHED"}
-            tone={presented.tab === "live" ? "hot" : presented.tab === "upcoming" ? "sponsored" : "default"}
-          />
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+        <TacticalTag
+          label={stateLabel}
+          tone={presented.tab === "live" ? "hot" : presented.tab === "upcoming" ? "sponsored" : "default"}
+        />
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
           {presented.classification ? (
             <TacticalTag label={presented.classification} tone={presented.classification === "RANKED" ? "success" : "hot"} />
           ) : null}
           <TacticalTag label={presented.typeLabel} tone="default" />
           <TacticalTag label={battleChainLabel(chainId)} tone="default" />
         </div>
-        {presented.tab === "live" ? (
-          <div className="text-[11px] uppercase tracking-[0.16em] text-white/50">{battleClockLabel(displayBattle)}</div>
-        ) : null}
       </div>
 
       {upcoming ? (
-        <div className="space-y-3 text-center">
-          <div className="font-retro text-2xl text-foreground">
+        <div className="space-y-3 py-4 text-center">
+          <div className="font-retro text-xs uppercase tracking-[0.28em] text-white/45">Deployment pending</div>
+          <div className="font-retro text-2xl text-foreground md:text-3xl">
             {presented.leftTicker} VS {presented.rightTicker}
           </div>
           <div className="text-sm uppercase tracking-[0.16em] text-white/60">
@@ -125,8 +132,8 @@ export function BattleWallModule({
           <TacticalTag label="AWAITING FUNDING" tone="hot" />
         </div>
       ) : (
-        <div className="relative">
-          <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-center">
+        <div className="relative isolate overflow-hidden">
+          <div className="relative z-10 grid min-w-0 grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-center md:gap-3">
             <BattleWallCombatant
               battle={displayBattle}
               participant={left}
@@ -144,7 +151,8 @@ export function BattleWallModule({
               rightPoints={presented.rightPointsLabel}
               leaderIndex={presented.leaderIndex}
               gapLabel={presented.gapLabel}
-              clockLabel={presented.tab === "live" ? `${battleClockLabel(displayBattle)} remaining` : battleClockLabel(displayBattle)}
+              clockLabel={battleClockLabel(displayBattle)}
+              remaining={presented.tab === "live"}
               statusLabel={presented.statusLabel}
               scoreKind={presented.scoreKind}
             />
@@ -165,8 +173,11 @@ export function BattleWallModule({
         </div>
       )}
 
-      <div className="flex justify-end">
-        <Link to={presented.href} className="text-xs uppercase tracking-[0.16em] text-white/55 hover:text-accent">
+      <div className="relative z-20 flex justify-end">
+        <Link
+          to={presented.href}
+          className="text-xs uppercase tracking-[0.16em] text-white/55 underline-offset-4 hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+        >
           Open fight
         </Link>
       </div>

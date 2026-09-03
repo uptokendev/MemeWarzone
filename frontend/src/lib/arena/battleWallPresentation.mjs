@@ -225,6 +225,63 @@ export function filterWallBattles(battles, filters = {}) {
   });
 }
 
+export function wallEmptyCopy({
+  source = "",
+  tab = "live",
+  loading = false,
+  focusedLoading = false,
+  tabCount = 0,
+  filteredCount = 0,
+} = {}) {
+  if (source === "empty") {
+    return {
+      kind: "unavailable",
+      title: "Battle data is not available right now.",
+      body: "The public Battle Wall could not load. Try again in a moment.",
+    };
+  }
+  if (focusedLoading && !filteredCount) {
+    return {
+      kind: "loading-focus",
+      title: "Loading battle...",
+      body: "Resolving the requested fight inside the Battle Wall.",
+    };
+  }
+  if (loading && !filteredCount) {
+    return {
+      kind: "loading",
+      title: "Loading battles...",
+      body: "Pulling the wars happening across MemeWarzone right now.",
+    };
+  }
+  if (tabCount > 0 && !filteredCount) {
+    return {
+      kind: "filters",
+      title: "No battles match these filters.",
+      body: "Clear chain, type, or search to see more fights on this tab.",
+    };
+  }
+  if (tab === "upcoming") {
+    return {
+      kind: "empty-upcoming",
+      title: "No upcoming deployments.",
+      body: "Matched fights waiting to go live will appear here.",
+    };
+  }
+  if (tab === "finished") {
+    return {
+      kind: "empty-finished",
+      title: "Finished battles will appear here.",
+      body: "Completed fights stay on this tab after settlement.",
+    };
+  }
+  return {
+    kind: "empty-live",
+    title: "No live battles right now.",
+    body: "When a fight goes live, it will appear on this wall.",
+  };
+}
+
 export function sortWallBattles(battles, sort, presentations = new Map()) {
   const mode = String(sort || "default").toLowerCase();
   const rows = [...(Array.isArray(battles) ? battles : [])];

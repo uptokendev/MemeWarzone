@@ -102,8 +102,9 @@ export function CreatorChallengeCarousel({
 
   return (
     <section
-      className="mwz-hud-frame space-y-4 p-4"
+      className="mwz-hud-frame max-w-full space-y-4 overflow-hidden border-orange-400/35 p-3 md:p-4"
       data-creator-challenge-carousel={challenges.length}
+      aria-label="Incoming creator challenges"
       onTouchStart={(event) => {
         touchStartX.current = event.changedTouches[0]?.clientX ?? null;
       }}
@@ -115,20 +116,20 @@ export function CreatorChallengeCarousel({
         go(dx < 0 ? 1 : -1);
       }}
     >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Creator alert</div>
-          <h2 className="mt-1 font-retro text-xl text-foreground">You've been challenged</h2>
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[10px] uppercase tracking-[0.22em] text-orange-200/80">Creator alert</div>
+          <h2 className="mt-1 font-retro text-xl text-orange-100">You've been challenged</h2>
         </div>
         {showControls ? (
           <div className="flex items-center gap-2">
-            <Button type="button" size="sm" variant="outline" className="font-retro" aria-label="Previous challenge" onClick={() => go(-1)}>
+            <Button type="button" size="sm" variant="outline" className="h-11 min-w-11 font-retro" aria-label="Previous challenge" onClick={() => go(-1)}>
               ‹
             </Button>
-            <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground" data-challenge-carousel-index>
+            <div className="text-xs uppercase tracking-[0.16em] text-muted-foreground" data-challenge-carousel-index aria-live="polite">
               {safeIndex + 1} / {challenges.length}
             </div>
-            <Button type="button" size="sm" variant="outline" className="font-retro" aria-label="Next challenge" onClick={() => go(1)}>
+            <Button type="button" size="sm" variant="outline" className="h-11 min-w-11 font-retro" aria-label="Next challenge" onClick={() => go(1)}>
               ›
             </Button>
           </div>
@@ -137,7 +138,7 @@ export function CreatorChallengeCarousel({
 
       <div
         key={battle.id}
-        className="space-y-3"
+        className="min-w-0 space-y-3"
         data-challenge-id={battle.id}
         tabIndex={0}
         onKeyDown={(event) => {
@@ -147,10 +148,12 @@ export function CreatorChallengeCarousel({
         }}
       >
         <div className="font-retro text-2xl text-foreground">
-          {presented.leftTicker} VS {presented.rightTicker}
+          {presented.leftTicker} <span className="text-white/40">VS</span> {presented.rightTicker}
         </div>
-        <div className="text-sm uppercase tracking-[0.16em] text-white/60">
-          {presented.stakeNative || "—"} {native} · {presented.durationLabel}
+        <div className="text-sm uppercase tracking-[0.16em] text-white/70">
+          {presented.stakeNative || "—"} {native}
+          <span className="mx-2 text-white/30">·</span>
+          {presented.durationLabel}
         </div>
         {presented.quality ? (
           <div className="flex flex-wrap items-center gap-2" data-challenge-match-quality={presented.quality.kind}>
@@ -161,8 +164,8 @@ export function CreatorChallengeCarousel({
           </div>
         ) : null}
 
-        <div className="grid gap-3 md:grid-cols-2">
-          <label className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+        <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+          <label className="min-w-0 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
             Counter stake ({native})
             <input
               type="number"
@@ -170,13 +173,13 @@ export function CreatorChallengeCarousel({
               step="any"
               value={draft.counterStake}
               onChange={(event) => patch(battle.id, { counterStake: event.target.value })}
-              className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
+              className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
             />
           </label>
-          <label className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+          <label className="min-w-0 text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
             Counter duration
             <select
-              className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
+              className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
               value={draft.counterDurationHours}
               onChange={(event) => patch(battle.id, { counterDurationHours: parseBattleDurationHours(event.target.value, 24) })}
             >
@@ -191,20 +194,20 @@ export function CreatorChallengeCarousel({
 
         {draft.error ? <p className="text-sm text-destructive">{draft.error}</p> : null}
 
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" className="font-retro" disabled={busy} onClick={() => void run(battle.id, () => onAccept(battle.id))}>
+        <div className="flex min-w-0 flex-wrap gap-2">
+          <Button size="sm" className="min-h-11 flex-1 font-retro sm:flex-none" disabled={busy} onClick={() => void run(battle.id, () => onAccept(battle.id))}>
             ACCEPT
           </Button>
           <Button
             size="sm"
             variant="outline"
-            className="font-retro"
+            className="min-h-11 flex-1 font-retro sm:flex-none"
             disabled={busy}
             onClick={() => void run(battle.id, () => onCounter(battle.id, draft.counterStake, draft.counterDurationHours))}
           >
             COUNTER
           </Button>
-          <Button size="sm" variant="outline" className="font-retro" disabled={busy} onClick={() => void run(battle.id, () => onDecline(battle.id))}>
+          <Button size="sm" variant="outline" className="min-h-11 flex-1 font-retro sm:flex-none" disabled={busy} onClick={() => void run(battle.id, () => onDecline(battle.id))}>
             DECLINE
           </Button>
         </div>
