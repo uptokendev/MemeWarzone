@@ -20,12 +20,25 @@ const NATIVE_SWAP_ADAPTER_ABI = [
   "function sellExactTokenIn(address tokenIn,uint24 fee,uint256 amountIn,uint256 amountOutMinimum,address recipient) returns (uint256 amountOut)",
 ] as const;
 
+const MULTI_HOP_SWAP_ADAPTER_ABI = [
+  "function v3Factory() view returns (address)",
+  "function swapRouter() view returns (address)",
+  "function wrappedNative() view returns (address)",
+  "function marketRoutes(address memeToken) view returns (address stockToken,uint24 nativeStockFee,uint24 stockMemeFee,uint16 maxPriceImpactBps,bool enabled)",
+  "function routeHealth(address memeToken) view returns (bool configured,bool enabled,address stockToken,address nativeStockPool,address stockMemePool,bool poolsValid)",
+  "function quoteBuyWithNative(address memeToken,uint256 nativeIn) view returns ((address stockToken,uint256 intermediateOut,uint256 finalOut,uint256 firstLegPriceImpactBps,uint256 secondLegPriceImpactBps,uint64 quotedAt) quote)",
+  "function quoteSellForNative(address memeToken,uint256 memeIn) view returns ((address stockToken,uint256 intermediateOut,uint256 finalOut,uint256 firstLegPriceImpactBps,uint256 secondLegPriceImpactBps,uint64 quotedAt) quote)",
+  "function buyWithNative(address memeToken,uint256 minimumStockOut,uint256 minimumMemeOut,uint256 deadline,address recipient) payable returns (uint256 memeOut)",
+  "function sellForNative(address memeToken,uint256 memeIn,uint256 minimumStockOut,uint256 minimumNativeOut,uint256 deadline,address recipient) returns (uint256 nativeOut)",
+] as const;
+
 const ERC20_ABI = [
   "function allowance(address owner,address spender) view returns (uint256)",
   "function approve(address spender,uint256 amount) returns (bool)",
 ] as const;
 
 const MAX_UINT256 = (1n << 256n) - 1n;
+const TRADE_DEADLINE_SECONDS = 5 * 60;
 
 export type RobinhoodV3ResolvedRoute = {
   market: MarketRoute;
@@ -36,17 +49,33 @@ export type RobinhoodV3ResolvedRoute = {
   factoryAddress: string;
   wrappedNativeAddress: string;
   quoteTokenAddress: string;
-  quoteAssetType: "WRAPPED_NATIVE";
-  routeKind: "DIRECT_NATIVE";
+  quoteAssetType: "WRAPPED_NATIVE" | "STOCK_TOKEN";
+  routeKind: "DIRECT_NATIVE" | "STOCK_TWO_HOP";
   referenceOracleAddress: string | null;
+  /** Backward-compatible alias for the contract that receives sell allowance/execution. */
   nativeSwapAdapterAddress: string;
+  executionAdapterAddress: string;
+  multiHopSwapAdapterAddress: string | null;
   fee: number;
+  stockRoute: {
+    stockTokenAddress: string;
+    nativeStockPoolAddress: string;
+    stockMemePoolAddress: string;
+    nativeStockFee: number;
+    stockMemeFee: number;
+    maxPriceImpactBps: number;
+  } | null;
 };
 
 export type RobinhoodV3Quote = {
   amountInRaw: bigint;
   amountOutRaw: bigint;
   minimumOutRaw: bigint;
+  intermediateAmountOutRaw: bigint | null;
+  minimumIntermediateOutRaw: bigint | null;
+  firstLegPriceImpactBps: bigint | null;
+  secondLegPriceImpactBps: bigint | null;
+  quotedAt: bigint | null;
   slippageBps: number;
   route: RobinhoodV3ResolvedRoute;
 };
@@ -82,9 +111,23 @@ function sameAddress(a: unknown, b: unknown): boolean {
   }
 }
 
-function envAddress(name: string, chainId: number): string {
+function envValue(name: string, chainId: number): string {
   const viteEnv = import.meta.env as Record<string, unknown>;
-  return String(viteEnv[`${name}_${chainId}`] || "").trim();
+  return String(viteEnv[`${name}_${chainId}`] ?? viteEnv[name] ?? "").trim();
+}
+
+function envAddress(name: string, chainId: number): string {
+  return envValue(name, chainId);
+}
+
+function envFlag(name: string, chainId: number): boolean {
+  const normalized = envValue(name, chainId).toLowerCase();
+  return normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on";
+}
+
+function stockEthRoutingEnabled(chainId: number): boolean {
+  if (chainId === ROBINHOOD_TESTNET_CHAIN_ID) return true;
+  return envFlag("VITE_ROBINHOOD_STOCK_ETH_ROUTING", chainId);
 }
 
 function normalizeQuoteAssetType(value: unknown): RobinhoodQuoteAssetType {
@@ -139,6 +182,51 @@ function normalizeV3Fee(route: MarketRoute): number {
   return 3000;
 }
 
+function resultValue(result: any, name: string, index: number): any {
+  return result?.[name] ?? result?.[index];
+}
+
+function resultBigInt(result: any, name: string, index: number): bigint {
+  return BigInt(resultValue(result, name, index) ?? 0);
+}
+
+async function resolveCommonRoute(input: {
+  provider: ethers.Provider;
+  market: MarketRoute;
+  chainId: number;
+  tokenAddress: string;
+  routeDescriptor: RobinhoodRouteDescriptor;
+}) {
+  const poolAddress = normalizeAddress(input.market.pair, "Robinhood V3 pool");
+  const routerAddress = normalizeAddress(
+    input.market.router || envAddress("VITE_ROBINHOOD_V3_SWAP_ROUTER_ADDRESS", input.chainId),
+    "Robinhood V3 router",
+  );
+  const factoryAddress = normalizeAddress(
+    input.market.factory || envAddress("VITE_ROBINHOOD_V3_FACTORY_ADDRESS", input.chainId),
+    "Robinhood V3 factory",
+  );
+  const wrappedNativeAddress = normalizeAddress(
+    input.market.wrappedNative || envAddress("VITE_WRAPPED_NATIVE_ADDRESS", input.chainId),
+    "Robinhood wrapped native",
+  );
+
+  await Promise.all([
+    requireCode(input.provider, input.tokenAddress, "Robinhood token"),
+    requireCode(input.provider, poolAddress, "Robinhood V3 pool"),
+    requireCode(input.provider, routerAddress, "Robinhood V3 router"),
+    requireCode(input.provider, factoryAddress, "Robinhood V3 factory"),
+    requireCode(input.provider, wrappedNativeAddress, "Robinhood wrapped native"),
+  ]);
+
+  const router = new Contract(routerAddress, V3_ROUTER_ABI, input.provider) as any;
+  const [routerFactory, routerWrapped] = await Promise.all([router.factory(), router.WETH9()]);
+  if (!sameAddress(routerFactory, factoryAddress)) throw new Error("Robinhood V3 router factory mismatch.");
+  if (!sameAddress(routerWrapped, wrappedNativeAddress)) throw new Error("Robinhood V3 router wrapped-native mismatch.");
+
+  return { poolAddress, routerAddress, factoryAddress, wrappedNativeAddress };
+}
+
 export async function resolveRobinhoodV3Route(input: {
   provider: ethers.Provider;
   campaignAddress: string;
@@ -164,71 +252,137 @@ export async function resolveRobinhoodV3Route(input: {
   }
 
   const routeDescriptor = describeRobinhoodV3Route(market);
-  if (routeDescriptor.routeKind !== "DIRECT_NATIVE" || routeDescriptor.quoteAssetType !== "WRAPPED_NATIVE") {
-    throw new Error("This trade panel does not support Robinhood Stock Battlefield routes yet.");
+  const common = await resolveCommonRoute({
+    provider: input.provider,
+    market,
+    chainId: input.chainId,
+    tokenAddress,
+    routeDescriptor,
+  });
+
+  if (routeDescriptor.routeKind === "DIRECT_NATIVE" && routeDescriptor.quoteAssetType === "WRAPPED_NATIVE") {
+    if (!sameAddress(routeDescriptor.quoteTokenAddress, common.wrappedNativeAddress)) {
+      throw new Error("Robinhood direct-native route quote asset mismatch.");
+    }
+    const nativeSwapAdapterAddress = normalizeAddress(
+      envAddress("VITE_ROBINHOOD_V3_NATIVE_SWAP_ADAPTER_ADDRESS", input.chainId),
+      "Robinhood V3 native swap adapter",
+    );
+    await requireCode(input.provider, nativeSwapAdapterAddress, "Robinhood V3 native swap adapter");
+
+    const adapter = new Contract(nativeSwapAdapterAddress, NATIVE_SWAP_ADAPTER_ABI, input.provider) as any;
+    const [adapterRouter, adapterWrapped] = await Promise.all([adapter.swapRouter(), adapter.wrappedNative()]);
+    if (!sameAddress(adapterRouter, common.routerAddress)) throw new Error("Robinhood V3 native adapter router mismatch.");
+    if (!sameAddress(adapterWrapped, common.wrappedNativeAddress)) throw new Error("Robinhood V3 native adapter wrapped-native mismatch.");
+
+    return {
+      market,
+      chainId: input.chainId,
+      tokenAddress,
+      poolAddress: common.poolAddress,
+      routerAddress: common.routerAddress,
+      factoryAddress: common.factoryAddress,
+      wrappedNativeAddress: common.wrappedNativeAddress,
+      quoteTokenAddress: routeDescriptor.quoteTokenAddress,
+      quoteAssetType: "WRAPPED_NATIVE",
+      routeKind: "DIRECT_NATIVE",
+      referenceOracleAddress: routeDescriptor.referenceOracleAddress,
+      nativeSwapAdapterAddress,
+      executionAdapterAddress: nativeSwapAdapterAddress,
+      multiHopSwapAdapterAddress: null,
+      fee: normalizeV3Fee(market),
+      stockRoute: null,
+    };
   }
 
-  const poolAddress = normalizeAddress(market.pair, "Robinhood V3 pool");
-  const routerAddress = normalizeAddress(
-    market.router || envAddress("VITE_ROBINHOOD_V3_SWAP_ROUTER_ADDRESS", input.chainId),
-    "Robinhood V3 router",
-  );
-  const factoryAddress = normalizeAddress(
-    market.factory || envAddress("VITE_ROBINHOOD_V3_FACTORY_ADDRESS", input.chainId),
-    "Robinhood V3 factory",
-  );
-  const wrappedNativeAddress = normalizeAddress(
-    market.wrappedNative || envAddress("VITE_WRAPPED_NATIVE_ADDRESS", input.chainId),
-    "Robinhood wrapped native",
-  );
-  if (!sameAddress(routeDescriptor.quoteTokenAddress, wrappedNativeAddress)) {
-    throw new Error("Robinhood direct-native route quote asset mismatch.");
+  if (routeDescriptor.routeKind !== "STOCK_TWO_HOP" || routeDescriptor.quoteAssetType !== "STOCK_TOKEN") {
+    throw new Error("Robinhood market route kind is unsupported.");
   }
-  const nativeSwapAdapterAddress = normalizeAddress(
-    envAddress("VITE_ROBINHOOD_V3_NATIVE_SWAP_ADAPTER_ADDRESS", input.chainId),
-    "Robinhood V3 native swap adapter",
-  );
+  if (!stockEthRoutingEnabled(input.chainId)) {
+    throw new Error("Robinhood Stock ETH routing is not enabled on mainnet yet.");
+  }
+  if (sameAddress(routeDescriptor.quoteTokenAddress, common.wrappedNativeAddress)) {
+    throw new Error("Robinhood Stock route cannot use wrapped native as its quote asset.");
+  }
+  if (market.stockToken?.contractAddress && !sameAddress(market.stockToken.contractAddress, routeDescriptor.quoteTokenAddress)) {
+    throw new Error("Robinhood Stock route registry token mismatch.");
+  }
+  if (market.stockToken && market.stockToken.enabledForTrading === false) {
+    throw new Error("Robinhood Stock Token is not enabled for trading.");
+  }
 
+  const multiHopSwapAdapterAddress = normalizeAddress(
+    envAddress("VITE_ROBINHOOD_V3_MULTI_HOP_SWAP_ADAPTER_ADDRESS", input.chainId),
+    "Robinhood V3 Stock multi-hop swap adapter",
+  );
   await Promise.all([
-    requireCode(input.provider, tokenAddress, "Robinhood token"),
-    requireCode(input.provider, poolAddress, "Robinhood V3 pool"),
-    requireCode(input.provider, routerAddress, "Robinhood V3 router"),
-    requireCode(input.provider, factoryAddress, "Robinhood V3 factory"),
-    requireCode(input.provider, wrappedNativeAddress, "Robinhood wrapped native"),
-    requireCode(input.provider, nativeSwapAdapterAddress, "Robinhood V3 native swap adapter"),
+    requireCode(input.provider, routeDescriptor.quoteTokenAddress, "Robinhood Stock Token"),
+    requireCode(input.provider, multiHopSwapAdapterAddress, "Robinhood V3 Stock multi-hop swap adapter"),
   ]);
 
-  const router = new Contract(routerAddress, V3_ROUTER_ABI, input.provider) as any;
-  const adapter = new Contract(nativeSwapAdapterAddress, NATIVE_SWAP_ADAPTER_ABI, input.provider) as any;
-  const [routerFactory, routerWrapped, adapterRouter, adapterWrapped] = await Promise.all([
-    router.factory(),
-    router.WETH9(),
+  const adapter = new Contract(multiHopSwapAdapterAddress, MULTI_HOP_SWAP_ADAPTER_ABI, input.provider) as any;
+  const [adapterFactory, adapterRouter, adapterWrapped, configuredRoute, health] = await Promise.all([
+    adapter.v3Factory(),
     adapter.swapRouter(),
     adapter.wrappedNative(),
+    adapter.marketRoutes(tokenAddress),
+    adapter.routeHealth(tokenAddress),
   ]);
-  if (!sameAddress(routerFactory, factoryAddress)) throw new Error("Robinhood V3 router factory mismatch.");
-  if (!sameAddress(routerWrapped, wrappedNativeAddress)) throw new Error("Robinhood V3 router wrapped-native mismatch.");
-  if (!sameAddress(adapterRouter, routerAddress)) throw new Error("Robinhood V3 native adapter router mismatch.");
-  if (!sameAddress(adapterWrapped, wrappedNativeAddress)) throw new Error("Robinhood V3 native adapter wrapped-native mismatch.");
+  if (!sameAddress(adapterFactory, common.factoryAddress)) throw new Error("Robinhood Stock adapter factory mismatch.");
+  if (!sameAddress(adapterRouter, common.routerAddress)) throw new Error("Robinhood Stock adapter router mismatch.");
+  if (!sameAddress(adapterWrapped, common.wrappedNativeAddress)) throw new Error("Robinhood Stock adapter wrapped-native mismatch.");
+
+  const configuredStock = normalizeAddress(resultValue(configuredRoute, "stockToken", 0), "configured Robinhood Stock Token");
+  const nativeStockFee = Number(resultValue(configuredRoute, "nativeStockFee", 1));
+  const stockMemeFee = Number(resultValue(configuredRoute, "stockMemeFee", 2));
+  const maxPriceImpactBps = Number(resultValue(configuredRoute, "maxPriceImpactBps", 3));
+  const configuredEnabled = Boolean(resultValue(configuredRoute, "enabled", 4));
+  if (!configuredEnabled) throw new Error("Robinhood Stock execution route is disabled.");
+  if (!sameAddress(configuredStock, routeDescriptor.quoteTokenAddress)) {
+    throw new Error("Robinhood Stock adapter quote asset mismatch.");
+  }
+  if (stockMemeFee !== normalizeV3Fee(market)) {
+    throw new Error("Robinhood Stock adapter market fee tier mismatch.");
+  }
+
+  const healthConfigured = Boolean(resultValue(health, "configured", 0));
+  const healthEnabled = Boolean(resultValue(health, "enabled", 1));
+  const healthStock = normalizeAddress(resultValue(health, "stockToken", 2), "healthy Robinhood Stock Token");
+  const nativeStockPoolAddress = normalizeAddress(resultValue(health, "nativeStockPool", 3), "Robinhood native/Stock pool");
+  const stockMemePoolAddress = normalizeAddress(resultValue(health, "stockMemePool", 4), "Robinhood Stock/MEME pool");
+  const poolsValid = Boolean(resultValue(health, "poolsValid", 5));
+  if (!healthConfigured || !healthEnabled || !poolsValid) throw new Error("Robinhood Stock execution route is unhealthy.");
+  if (!sameAddress(healthStock, routeDescriptor.quoteTokenAddress)) throw new Error("Robinhood Stock route health token mismatch.");
+  if (!sameAddress(stockMemePoolAddress, common.poolAddress)) throw new Error("Robinhood Stock canonical market pool mismatch.");
 
   return {
     market,
     chainId: input.chainId,
     tokenAddress,
-    poolAddress,
-    routerAddress,
-    factoryAddress,
-    wrappedNativeAddress,
+    poolAddress: common.poolAddress,
+    routerAddress: common.routerAddress,
+    factoryAddress: common.factoryAddress,
+    wrappedNativeAddress: common.wrappedNativeAddress,
     quoteTokenAddress: routeDescriptor.quoteTokenAddress,
-    quoteAssetType: "WRAPPED_NATIVE",
-    routeKind: "DIRECT_NATIVE",
+    quoteAssetType: "STOCK_TOKEN",
+    routeKind: "STOCK_TWO_HOP",
     referenceOracleAddress: routeDescriptor.referenceOracleAddress,
-    nativeSwapAdapterAddress,
-    fee: normalizeV3Fee(market),
+    nativeSwapAdapterAddress: multiHopSwapAdapterAddress,
+    executionAdapterAddress: multiHopSwapAdapterAddress,
+    multiHopSwapAdapterAddress,
+    fee: stockMemeFee,
+    stockRoute: {
+      stockTokenAddress: configuredStock,
+      nativeStockPoolAddress,
+      stockMemePoolAddress,
+      nativeStockFee,
+      stockMemeFee,
+      maxPriceImpactBps,
+    },
   };
 }
 
-async function quoteExactInput(
+async function quoteDirectExactInput(
   provider: ethers.Provider,
   route: RobinhoodV3ResolvedRoute,
   tokenIn: string,
@@ -244,6 +398,48 @@ async function quoteExactInput(
     amountInRaw,
     amountOutRaw,
     minimumOutRaw: minimumOut(amountOutRaw, slippageBps),
+    intermediateAmountOutRaw: null,
+    minimumIntermediateOutRaw: null,
+    firstLegPriceImpactBps: null,
+    secondLegPriceImpactBps: null,
+    quotedAt: null,
+    slippageBps: validateSlippageBps(slippageBps),
+    route,
+  };
+}
+
+async function quoteStockTwoHop(
+  provider: ethers.Provider,
+  route: RobinhoodV3ResolvedRoute,
+  amountInRaw: bigint,
+  slippageBps: number,
+  side: "buy" | "sell",
+): Promise<RobinhoodV3Quote> {
+  if (amountInRaw <= 0n) throw new Error("Enter an amount greater than zero.");
+  if (!route.multiHopSwapAdapterAddress || !route.stockRoute) throw new Error("Robinhood Stock execution route is incomplete.");
+
+  const adapter = new Contract(route.multiHopSwapAdapterAddress, MULTI_HOP_SWAP_ADAPTER_ABI, provider) as any;
+  const quote = side === "buy"
+    ? await adapter.quoteBuyWithNative(route.tokenAddress, amountInRaw)
+    : await adapter.quoteSellForNative(route.tokenAddress, amountInRaw);
+  const stockToken = normalizeAddress(resultValue(quote, "stockToken", 0), "quoted Robinhood Stock Token");
+  const intermediateAmountOutRaw = resultBigInt(quote, "intermediateOut", 1);
+  const amountOutRaw = resultBigInt(quote, "finalOut", 2);
+  const firstLegPriceImpactBps = resultBigInt(quote, "firstLegPriceImpactBps", 3);
+  const secondLegPriceImpactBps = resultBigInt(quote, "secondLegPriceImpactBps", 4);
+  const quotedAt = resultBigInt(quote, "quotedAt", 5);
+  if (!sameAddress(stockToken, route.quoteTokenAddress)) throw new Error("Robinhood Stock quote token mismatch.");
+  if (intermediateAmountOutRaw <= 0n || amountOutRaw <= 0n) throw new Error("Robinhood Stock quote returned zero output.");
+
+  return {
+    amountInRaw,
+    amountOutRaw,
+    minimumOutRaw: minimumOut(amountOutRaw, slippageBps),
+    intermediateAmountOutRaw,
+    minimumIntermediateOutRaw: minimumOut(intermediateAmountOutRaw, slippageBps),
+    firstLegPriceImpactBps,
+    secondLegPriceImpactBps,
+    quotedAt,
     slippageBps: validateSlippageBps(slippageBps),
     route,
   };
@@ -255,7 +451,9 @@ export function quoteRobinhoodV3Buy(
   nativeInRaw: bigint,
   slippageBps: number,
 ) {
-  return quoteExactInput(provider, route, route.wrappedNativeAddress, route.tokenAddress, nativeInRaw, slippageBps);
+  return route.routeKind === "STOCK_TWO_HOP"
+    ? quoteStockTwoHop(provider, route, nativeInRaw, slippageBps, "buy")
+    : quoteDirectExactInput(provider, route, route.wrappedNativeAddress, route.tokenAddress, nativeInRaw, slippageBps);
 }
 
 export function quoteRobinhoodV3Sell(
@@ -264,7 +462,9 @@ export function quoteRobinhoodV3Sell(
   tokenInRaw: bigint,
   slippageBps: number,
 ) {
-  return quoteExactInput(provider, route, route.tokenAddress, route.wrappedNativeAddress, tokenInRaw, slippageBps);
+  return route.routeKind === "STOCK_TWO_HOP"
+    ? quoteStockTwoHop(provider, route, tokenInRaw, slippageBps, "sell")
+    : quoteDirectExactInput(provider, route, route.tokenAddress, route.wrappedNativeAddress, tokenInRaw, slippageBps);
 }
 
 export async function ensureRobinhoodV3SellAllowance(input: {
@@ -274,11 +474,17 @@ export async function ensureRobinhoodV3SellAllowance(input: {
 }) {
   const owner = await input.signer.getAddress();
   const token = new Contract(input.route.tokenAddress, ERC20_ABI, input.signer) as any;
-  const allowance = BigInt(await token.allowance(owner, input.route.nativeSwapAdapterAddress));
+  const allowance = BigInt(await token.allowance(owner, input.route.executionAdapterAddress));
   if (allowance >= input.amountInRaw) return null;
-  const tx = await token.approve(input.route.nativeSwapAdapterAddress, MAX_UINT256);
+  const tx = await token.approve(input.route.executionAdapterAddress, MAX_UINT256);
   await tx.wait();
   return tx;
+}
+
+async function executionDeadline(signer: ethers.Signer): Promise<bigint> {
+  const block = await signer.provider?.getBlock("latest");
+  const base = Number(block?.timestamp ?? Math.floor(Date.now() / 1000));
+  return BigInt(base + TRADE_DEADLINE_SECONDS);
 }
 
 export async function executeRobinhoodV3Buy(input: {
@@ -287,6 +493,25 @@ export async function executeRobinhoodV3Buy(input: {
   recipient?: string;
 }) {
   const recipient = input.recipient || await input.signer.getAddress();
+  if (input.quote.route.routeKind === "STOCK_TWO_HOP") {
+    if (!input.quote.route.multiHopSwapAdapterAddress || input.quote.minimumIntermediateOutRaw == null) {
+      throw new Error("Robinhood Stock buy route is incomplete.");
+    }
+    const adapter = new Contract(
+      input.quote.route.multiHopSwapAdapterAddress,
+      MULTI_HOP_SWAP_ADAPTER_ABI,
+      input.signer,
+    ) as any;
+    return adapter.buyWithNative(
+      input.quote.route.tokenAddress,
+      input.quote.minimumIntermediateOutRaw,
+      input.quote.minimumOutRaw,
+      await executionDeadline(input.signer),
+      recipient,
+      { value: input.quote.amountInRaw },
+    );
+  }
+
   const adapter = new Contract(input.quote.route.nativeSwapAdapterAddress, NATIVE_SWAP_ADAPTER_ABI, input.signer) as any;
   return adapter.buyExactNativeIn(
     input.quote.route.tokenAddress,
@@ -303,6 +528,25 @@ export async function executeRobinhoodV3Sell(input: {
   recipient?: string;
 }) {
   const recipient = input.recipient || await input.signer.getAddress();
+  if (input.quote.route.routeKind === "STOCK_TWO_HOP") {
+    if (!input.quote.route.multiHopSwapAdapterAddress || input.quote.minimumIntermediateOutRaw == null) {
+      throw new Error("Robinhood Stock sell route is incomplete.");
+    }
+    const adapter = new Contract(
+      input.quote.route.multiHopSwapAdapterAddress,
+      MULTI_HOP_SWAP_ADAPTER_ABI,
+      input.signer,
+    ) as any;
+    return adapter.sellForNative(
+      input.quote.route.tokenAddress,
+      input.quote.amountInRaw,
+      input.quote.minimumIntermediateOutRaw,
+      input.quote.minimumOutRaw,
+      await executionDeadline(input.signer),
+      recipient,
+    );
+  }
+
   const adapter = new Contract(input.quote.route.nativeSwapAdapterAddress, NATIVE_SWAP_ADAPTER_ABI, input.signer) as any;
   return adapter.sellExactTokenIn(
     input.quote.route.tokenAddress,
@@ -317,4 +561,5 @@ export const robinhoodV3TradeInternals = {
   describeRobinhoodV3Route,
   normalizeQuoteAssetType,
   normalizeRouteKind,
+  stockEthRoutingEnabled,
 };
