@@ -2,6 +2,7 @@ import Ably from "ably";
 
 import { loadBattleMetrics, loadBattleWindowTrades, loadVolumeContext, refreshCombatantVolumeAndPoints } from "./arenaBattleMetrics.js";
 import { getArenaMarketSnapshot } from "./arenaMarketSnapshot.js";
+import { arenaSettlementMode } from "./arenaSettlementMode.js";
 
 const DEFAULT_REFRESH_MS = 15_000;
 const MIN_REFRESH_MS = 5_000;
@@ -148,7 +149,7 @@ export function buildPublicBattleMetricsSnapshot(battleRow, metricRows = []) {
     chainId: Number(battleRow?.chain_id ?? battleRow?.chainId ?? 0) || 0,
     state: String(battleRow?.state || ""),
     scoringVersion: left?.scoringVersion || right?.scoringVersion || "battle_points_v2",
-    settlementMode: "v1_mcap_pct_change",
+    settlementMode: arenaSettlementMode(battleRow),
     leaderSide: leaderFromSides(left, right),
     pointDifference: pointsReady && leftPoints !== null && rightPoints !== null ? Math.abs(leftPoints - rightPoints) : null,
     metricsUpdatedAt,
@@ -255,6 +256,7 @@ export async function publishBattleMetricsSnapshot(snapshot, previousSnapshot = 
     battleId: snapshot.battleId,
     chainId: snapshot.chainId,
     scoringVersion: snapshot.scoringVersion,
+    settlementMode: snapshot.settlementMode,
     metricsUpdatedAt: snapshot.metricsUpdatedAt,
     dataHealth: snapshot.dataHealth,
   };
@@ -291,8 +293,14 @@ export async function publishBattleFinished(battleRow, battle, metrics = null) {
     battleId: String(battleRow.id),
     chainId: Number(battleRow.chain_id),
     state: "finished",
-    settlementMode: "v1_mcap_pct_change",
+    settlementMode: arenaSettlementMode(battleRow),
     winnerToken: battle?.moneyWinnerToken || battle?.winnerToken || battleRow.money_winner_token || battleRow.winner_token || null,
+    moneyTieBreak: battleRow.money_tie_break || null,
+    tieBreakUsed: battleRow.settlement_tie_break_used === true,
+    finalBattlePoints: {
+      left: finiteNumber(battleRow.challenger_battle_points),
+      right: finiteNumber(battleRow.defender_battle_points),
+    },
     settledAt: battle?.settlementAt || battleRow.settled_at || battleRow.finished_at || new Date().toISOString(),
     battlePointsPreview: publicMetrics,
   });
@@ -312,7 +320,8 @@ async function refreshBattleWithClient(client, battleId, now = new Date()) {
     }
     const battleResult = await client.query(
       `select id, chain_id, state, challenger_token, defender_token, started_at, ends_at,
-              money_winner_token, winner_token, settled_at, finished_at
+              money_winner_token, winner_token, settlement_version, settlement_scoring_version,
+              settled_at, finished_at
          from public.arena_battles
         where id = $1
         limit 1`,
