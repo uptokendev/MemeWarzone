@@ -191,6 +191,9 @@ jobs:
       - name: Test enabled Battle combat-effects path
         run: npm --prefix frontend run test:arena-combat-effects
 
+      - name: Test Phase 12 Battle V2 QA matrix
+        run: npm --prefix frontend run test:arena-phase12
+
       - name: Test imported token profile and image security
         run: |
           node --test \
