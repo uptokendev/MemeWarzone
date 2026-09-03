@@ -79,7 +79,7 @@ export function FindMatchPanel({
       {warning ? <p className="text-sm text-muted-foreground">{warning}</p> : null}
       {!busy && !warning && !candidates.length ? (
         <p className="text-sm text-muted-foreground">
-          No ranked rivals returned. Search a token below and challenge anyway as Open War.
+          No recommended rivals returned. Search a token below — you can still issue a challenge.
         </p>
       ) : null}
       {candidates.length ? (

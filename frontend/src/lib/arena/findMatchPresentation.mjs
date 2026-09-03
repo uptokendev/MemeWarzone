@@ -21,6 +21,9 @@ const CLASSIFICATION_LABELS = Object.freeze({
 export const OPEN_WAR_LABEL = "OPEN WAR — UNRANKED";
 export const OPEN_WAR_EXPLANATION =
   "This battle can still happen, but it does not qualify as a competitive/ranked match.";
+export const NOT_PREVIEWED_LABEL = "MATCH QUALITY NOT PREVIEWED";
+export const NOT_PREVIEWED_EXPLANATION =
+  "This opponent is not in the current recommended matches. You can still issue the challenge. Ranked/Open War status is determined by the server.";
 export const FIND_MATCH_LIMIT = 5;
 
 export function normalizeMatchIdentity(value) {
@@ -80,7 +83,9 @@ export function presentMatchCandidate(entry) {
     classificationLabel: classificationLabel(entry?.classification, ranked),
     ranked,
     rankedLabel: rankedStateLabel(ranked),
+    previewKind: ranked ? "ranked" : "open_war",
     challengeAnyway: !ranked,
+    continueWithChallenge: false,
     ...tokenMetrics(token),
   };
 }
@@ -101,20 +106,26 @@ export function presentManualOpponentPreview(targetTokenId, candidates) {
   });
   if (match) {
     const presented = match.tokenId && match.classificationLabel ? match : presentMatchCandidate(match);
-    return { ...presented, source: "recommendation" };
+    return {
+      ...presented,
+      source: "recommendation",
+      explanation: presented.ranked === false ? presented.explanation || OPEN_WAR_EXPLANATION : presented.explanation,
+    };
   }
   return {
     tokenId: target,
     token: { tokenId: target, tokenAddress: target },
     matchQuality: null,
     matchQualityLabel: null,
-    classification: "open_war",
-    classificationLabel: OPEN_WAR_LABEL,
-    ranked: false,
-    rankedLabel: OPEN_WAR_LABEL,
-    challengeAnyway: true,
+    classification: "not_previewed",
+    classificationLabel: NOT_PREVIEWED_LABEL,
+    ranked: null,
+    rankedLabel: NOT_PREVIEWED_LABEL,
+    previewKind: "not_previewed",
+    challengeAnyway: false,
+    continueWithChallenge: true,
     source: "manual",
-    explanation: OPEN_WAR_EXPLANATION,
+    explanation: NOT_PREVIEWED_EXPLANATION,
     tokenName: "Selected opponent",
     symbol: "",
     marketCapLabel: "—",

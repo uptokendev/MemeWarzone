@@ -372,6 +372,9 @@ export default function CommandCenterBattles() {
             onChallengeAnyway={() => {
               toast.message("Open War can still proceed. Set stake and duration, then send the challenge.");
             }}
+            onContinueWithChallenge={() => {
+              toast.message("You can still send this challenge. Set stake and duration, then send it.");
+            }}
           />
           {waitingRivals.length ? (
             <div className="space-y-2">

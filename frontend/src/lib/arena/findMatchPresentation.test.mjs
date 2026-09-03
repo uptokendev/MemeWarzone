@@ -5,6 +5,8 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  NOT_PREVIEWED_EXPLANATION,
+  NOT_PREVIEWED_LABEL,
   OPEN_WAR_EXPLANATION,
   OPEN_WAR_LABEL,
   presentManualOpponentPreview,
@@ -70,48 +72,62 @@ test("backend recommendation renders Match Quality and classification from the p
   assert.equal("components" in presented, false);
 });
 
-test("ranked candidate displays as ranked competitive when the backend says so", () => {
+test("server-ranked recommendation displays as ranked competitive when the backend says so", () => {
   const presented = presentMatchCandidate(
     candidate({ matchQuality: 76.4, classification: "competitive", ranked: true }),
   );
   assert.equal(presented.ranked, true);
+  assert.equal(presented.previewKind, "ranked");
   assert.equal(presented.rankedLabel, "Ranked");
   assert.equal(presented.classificationLabel, "Competitive");
   assert.equal(presented.matchQualityLabel, "76.4%");
   assert.equal(presented.challengeAnyway, false);
+  assert.equal(presented.continueWithChallenge, false);
 });
 
-test("Open War candidate displays as unranked without inventing a score", () => {
+test("server-declared Open War displays as unranked without inventing a score", () => {
   const presented = presentMatchCandidate(
     candidate({ matchQuality: 43, classification: "open_war", ranked: false }),
   );
   assert.equal(presented.ranked, false);
+  assert.equal(presented.previewKind, "open_war");
   assert.equal(presented.classificationLabel, OPEN_WAR_LABEL);
   assert.equal(presented.rankedLabel, OPEN_WAR_LABEL);
   assert.equal(presented.challengeAnyway, true);
+  assert.equal(presented.continueWithChallenge, false);
   assert.equal(presented.matchQuality, 43);
+  const preview = presentManualOpponentPreview("0x1111111111111111111111111111111111111111", [presented]);
+  assert.equal(preview.previewKind, "open_war");
+  assert.equal(preview.challengeAnyway, true);
+  assert.equal(preview.explanation, OPEN_WAR_EXPLANATION);
 });
 
-test("manual mismatch still permits Challenge anyway and does not fabricate Match Quality", () => {
+test("arbitrary manual target missing from recommendations is not previewed, not Open War", () => {
   const preview = presentManualOpponentPreview("0x3333333333333333333333333333333333333333", [
     presentMatchCandidate(candidate()),
   ]);
-  assert.equal(preview.ranked, false);
-  assert.equal(preview.classificationLabel, OPEN_WAR_LABEL);
-  assert.equal(preview.challengeAnyway, true);
+  assert.equal(preview.previewKind, "not_previewed");
+  assert.equal(preview.ranked, null);
+  assert.equal(preview.classification, "not_previewed");
+  assert.equal(preview.classificationLabel, NOT_PREVIEWED_LABEL);
+  assert.equal(preview.challengeAnyway, false);
+  assert.equal(preview.continueWithChallenge, true);
   assert.equal(preview.matchQuality, null);
   assert.equal(preview.matchQualityLabel, null);
-  assert.equal(preview.explanation, OPEN_WAR_EXPLANATION);
+  assert.equal(preview.explanation, NOT_PREVIEWED_EXPLANATION);
   assert.equal(preview.source, "manual");
+  assert.notEqual(preview.classificationLabel, OPEN_WAR_LABEL);
 });
 
-test("manual target that is in the recommendation list shows the server-provided quality", () => {
+test("manual target that is in the ranked recommendation list shows the server-provided quality", () => {
   const ranked = presentMatchCandidates({ candidates: [candidate()] });
   const preview = presentManualOpponentPreview("0x1111111111111111111111111111111111111111", ranked);
   assert.equal(preview.source, "recommendation");
+  assert.equal(preview.previewKind, "ranked");
   assert.equal(preview.matchQuality, 94);
   assert.equal(preview.classificationLabel, "Perfect match");
   assert.equal(preview.ranked, true);
+  assert.equal(preview.challengeAnyway, false);
 });
 
 test("Match Quality is copied from the backend and not recomputed from market stats", () => {
@@ -177,11 +193,22 @@ test("Find Match wiring only prefills the existing challenge and leaves stake/du
   );
 
   assert.match(preview, /Challenge anyway/);
+  assert.match(preview, /Continue with challenge/);
   assert.match(preview, /OPEN_WAR_LABEL/);
+  assert.match(preview, /NOT_PREVIEWED_LABEL/);
   assert.match(preview, /data-match-quality="open-war"/);
+  assert.match(preview, /data-match-quality="not-previewed"/);
+  assert.match(battles, /onContinueWithChallenge/);
   assert.doesNotMatch(preview, /challengePostGradBattle/);
   assert.match(client, /\/api\/arena\/battles\/matches/);
   assert.equal(OPEN_WAR_LABEL, "OPEN WAR — UNRANKED");
+  assert.equal(NOT_PREVIEWED_LABEL, "MATCH QUALITY NOT PREVIEWED");
+  const openWarBlock = preview.split('data-match-quality="open-war"')[1]?.split('data-match-quality="ranked"')[0] || "";
+  const unknownBlock = preview.split('data-match-quality="not-previewed"')[1]?.split('data-match-quality="open-war"')[0] || "";
+  assert.match(openWarBlock, /Challenge anyway/);
+  assert.doesNotMatch(openWarBlock, /Continue with challenge/);
+  assert.match(unknownBlock, /Continue with challenge/);
+  assert.doesNotMatch(unknownBlock, /Challenge anyway/);
 });
 
 test("accept/counter/decline behavior stays on the existing handlers", () => {
