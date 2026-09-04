@@ -32,6 +32,14 @@ type FinalSalvoSource = {
   suddenDeath?: boolean;
 };
 
+function tokenIdentityEqual(left: string, right: string) {
+  const a = String(left || "").trim();
+  const b = String(right || "").trim();
+  if (!a || !b) return false;
+  if (a.startsWith("0x") && b.startsWith("0x")) return a.toLowerCase() === b.toLowerCase();
+  return a === b;
+}
+
 export function FinalSalvoPanel({
   state,
   leftLabel = "LEFT",
@@ -48,9 +56,9 @@ export function FinalSalvoPanel({
   const model = presentFinalSalvoState(state || {});
   if (!model) return null;
 
-  const walletVote = String(model.walletVote || "").toLowerCase();
-  const leftSelected = walletVote === "left" || walletVote === String(leftLabel || "").toLowerCase();
-  const rightSelected = walletVote === "right" || walletVote === String(rightLabel || "").toLowerCase();
+  const walletVote = String(model.walletVote || "");
+  const leftSelected = walletVote === "left" || tokenIdentityEqual(walletVote, leftLabel);
+  const rightSelected = walletVote === "right" || tokenIdentityEqual(walletVote, rightLabel);
 
   return (
     <section aria-label={model.title} data-final-salvo={model.phase} className="space-y-3 border-t border-white/10 pt-3">
@@ -102,7 +110,7 @@ export function FinalSalvoPanel({
 
       {model.shotClosed ? (
         <p className="text-xs text-white/48">
-          {model.winner ? `Shot result: ${model.winner}` : "Shot closed. Awaiting authoritative shot result."}
+          {model.winner ? `Final Salvo winner: ${model.winner}` : "Shot closed. Awaiting authoritative shot result."}
         </p>
       ) : model.walletVote ? (
         <p className="text-xs text-white/48">This wallet already used its Free Vote for the current shot.</p>
