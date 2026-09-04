@@ -4,6 +4,7 @@ import { requireInternalAuth } from "./lib/apiAuth.js";
 import { getServerReadProvider } from "./lib/getServerReadProvider.js";
 import { isSolanaChainId } from "./lib/chainNative.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
+import { verifySponsorshipDeployment } from "./lib/arenaSponsorshipDeploymentVerification.mjs";
 import {
   readSponsorshipPricingConfig,
   serializeSponsorshipQuote,
@@ -82,7 +83,11 @@ async function activeTier() {
   )).rows[0];
   if (snapshot?.active_tier_id) {
     const row = (await pool.query(
-      `select * from public.sponsorship_price_tiers where id = $1 and active = true limit 1`,
+      `select * from public.sponsorship_price_tiers
+        where id = $1 and active = true
+          and effective_from <= now()
+          and (effective_until is null or effective_until > now())
+        limit 1`,
       [snapshot.active_tier_id],
     )).rows[0];
     if (row) return row;
@@ -133,14 +138,18 @@ async function handleQuote(req, res) {
   const chainId = Number(body.chainId || body.chain_id || 0);
   const event = await loadEvent(body.eventId || body.eventReferenceId, chainId || null);
   if (!event) return json(res, 404, { ok: false, error: "Sponsorship event not found", code: "SPONSORSHIP_EVENT_NOT_FOUND" });
-  if (!event.sponsorship_open) return json(res, 409, { ok: false, error: "Sponsorship is closed for this event", code: "SPONSORSHIP_CLOSED" });
+  if (!event.sponsorship_open || (event.ends_at && new Date(event.ends_at).getTime() <= Date.now())) {
+    return json(res, 409, { ok: false, error: "Sponsorship is closed for this event", code: "SPONSORSHIP_CLOSED" });
+  }
   if (isSolanaChainId(event.chain_id)) {
     return json(res, 409, { ok: false, error: "A Solana sponsorship router/vault is not active yet", code: "SPONSORSHIP_CHAIN_NOT_SUPPORTED" });
   }
   const wallet = normalizeAddress(body.walletAddress || body.auth?.walletAddress || "", Number(event.chain_id));
   if (!wallet) return json(res, 400, { ok: false, error: "walletAddress is required", code: "SPONSORSHIP_WALLET_REQUIRED" });
   const sponsor = await loadApprovedSponsor(wallet, event.chain_id);
-  if (!sponsor) return json(res, 403, { ok: false, error: "An approved profile with a verified sponsor wallet is required", code: "SPONSOR_PROFILE_NOT_APPROVED" });
+  if (!sponsor) {
+    return json(res, 403, { ok: false, error: "An approved profile with a verified sponsor wallet is required", code: "SPONSOR_PROFILE_NOT_APPROVED" });
+  }
 
   const tier = await activeTier();
   const minimumCents = await authoritativeMinimumCents(event, tier);
@@ -170,9 +179,17 @@ async function handleQuote(req, res) {
   if (!verified) return;
 
   let config;
+  let deployment;
   let signed;
   try {
     config = readSponsorshipPricingConfig(event.chain_id);
+    const provider = getServerReadProvider(Number(event.chain_id));
+    deployment = await verifySponsorshipDeployment({
+      provider,
+      chainId: Number(event.chain_id),
+      eventUuid: event.id,
+      expectedQuoteSigner: config.signer.address,
+    });
     signed = await signSponsorshipQuote({
       config,
       eventUuid: event.id,
@@ -182,7 +199,12 @@ async function handleQuote(req, res) {
       requestedUsdMicros: centsToMicros(requestedCents),
     });
   } catch (error) {
-    return json(res, 503, { ok: false, error: "Sponsorship quote signing is unavailable", code: "SPONSORSHIP_QUOTE_UNAVAILABLE", detail: String(error?.message || error) });
+    return json(res, 503, {
+      ok: false,
+      error: "Sponsorship event deployment/quote signing is unavailable",
+      code: "SPONSORSHIP_QUOTE_UNAVAILABLE",
+      detail: String(error?.message || error),
+    });
   }
 
   const quote = serializeSponsorshipQuote(signed);
@@ -231,6 +253,12 @@ async function handleQuote(req, res) {
       minimumUsdCents: minimumCents.toString(),
       requestedUsdCents: requestedCents.toString(),
       allocation: { prizeBps: 7000, marketingOpsBps: 2000, protocolBps: 1000 },
+      deployment: {
+        routerAddress: deployment.routerAddress,
+        vaultAddress: deployment.vaultAddress,
+        eventId: deployment.eventId,
+        eventReceiver: deployment.receiver,
+      },
       quote,
     });
   } catch (error) {
@@ -280,28 +308,42 @@ async function handleConfirm(req, res) {
         minimumUsdMicros: centsToMicros(quote.minimum_usd_cents),
         requestedUsdMicros: centsToMicros(quote.requested_usd_cents),
         requestedNativeRaw: quote.requested_native_raw,
+        nativeUsdReferenceMicros: quote.native_usd_reference_micro_cents,
+        oracleTimestamp: Math.floor(new Date(quote.oracle_timestamp).getTime() / 1000),
       },
     });
   } catch (error) {
-    return json(res, 409, { ok: false, error: "Sponsorship payment could not be verified on-chain", code: "SPONSORSHIP_PAYMENT_UNVERIFIED", reason: String(error?.message || error) });
+    return json(res, 409, {
+      ok: false,
+      error: "Sponsorship payment could not be verified on-chain",
+      code: "SPONSORSHIP_PAYMENT_UNVERIFIED",
+      reason: String(error?.message || error),
+    });
   }
 
   const split = sponsorshipSplit(proof.grossNativeRaw);
   const confirmedAt = proof.confirmedAt || new Date().toISOString();
+  const receiptKey = `${txHash}:${logIndex}`;
   const client = await pool.connect();
   try {
     await client.query("begin");
-    await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [`arena-sponsorship-tx:${txHash}:${logIndex}`]);
+    await client.query(`select pg_advisory_xact_lock(hashtext($1))`, [`arena-sponsorship-tx:${receiptKey}`]);
     const existing = (await client.query(
       `select p.id, p.event_sponsorship_id, p.status, p.confirmed_at
          from public.sponsorship_payments p
-        where p.chain_id = $1 and lower(coalesce(p.tx_hash, '')) = $2
+        where p.chain_id = $1 and p.signature_reference = $2
         limit 1`,
-      [Number(quote.chain_id), txHash],
+      [Number(quote.chain_id), receiptKey],
     )).rows[0];
     if (existing) {
       await client.query("rollback");
-      return json(res, 200, { ok: true, idempotent: true, paymentId: existing.id, sponsorshipId: existing.event_sponsorship_id, proof: { txHash: proof.txHash, logIndex: proof.logIndex, blockNumber: proof.blockNumber } });
+      return json(res, 200, {
+        ok: true,
+        idempotent: true,
+        paymentId: existing.id,
+        sponsorshipId: existing.event_sponsorship_id,
+        proof: { txHash: proof.txHash, logIndex: proof.logIndex, blockNumber: proof.blockNumber },
+      });
     }
 
     const sponsorship = (await client.query(
@@ -327,7 +369,7 @@ async function handleConfirm(req, res) {
         split.marketing.toString(),
         split.protocol.toString(),
         txHash,
-        `${txHash}:${logIndex}`,
+        receiptKey,
         confirmedAt,
       ],
     )).rows[0];
@@ -361,7 +403,13 @@ async function handleConfirm(req, res) {
         marketingOpsBps: 2000,
         protocolBps: 1000,
       },
-      proof: { routerAddress: proof.routerAddress, txHash: proof.txHash, logIndex: proof.logIndex, blockNumber: proof.blockNumber, confirmedAt },
+      proof: {
+        routerAddress: proof.routerAddress,
+        txHash: proof.txHash,
+        logIndex: proof.logIndex,
+        blockNumber: proof.blockNumber,
+        confirmedAt,
+      },
     });
   } catch (error) {
     await client.query("rollback").catch(() => {});
