@@ -82,9 +82,6 @@ export function presentBattleGeneration(battle = {}, metrics = {}) {
     pool,
     showScoreBreakdown: scoring?.id === "battle_points_v2" || scoring?.id === "battle_points_v3",
     scoreMaxes: scoring?.maxes || null,
-    boostPending:
-      scoring?.id === "battle_points_v3"
-        ? "Battle Boost reserves 10 points. Score-curve activation is pending founder approval."
-        : null,
+    boostPending: null,
   };
 }
