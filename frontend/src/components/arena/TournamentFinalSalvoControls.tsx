@@ -34,7 +34,7 @@ export function TournamentFinalSalvoControls({
   const [loading, setLoading] = useState(true);
   const [busySide, setBusySide] = useState<"left" | "right" | null>(null);
   const [unavailable, setUnavailable] = useState(false);
-  const [, setClockTick] = useState(0);
+  const [clockTick, setClockTick] = useState(0);
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     if (!tournamentId || !matchRef) return null;
@@ -66,7 +66,7 @@ export function TournamentFinalSalvoControls({
   }, [refresh]);
 
   const state = payload?.finalSalvo || null;
-  const model = useMemo(() => presentFinalSalvoState(state || {}), [state]);
+  const model = useMemo(() => presentFinalSalvoState(state || {}), [state, clockTick]);
   const active = Boolean(model && state?.active);
   const tokenA = String(match.tokenA || "").trim();
   const tokenB = String(match.tokenB || "").trim();
