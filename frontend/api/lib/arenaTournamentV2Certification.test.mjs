@@ -140,7 +140,7 @@ test("Vote Tournament finalizer is lease-protected and never dispatches Vote bat
   assert.match(finalizer, /arena-vote-finalize:/);
   assert.match(finalizer, /phase = 'regulation'/);
   assert.match(finalizer, /insert into public\.arena_vote_tiebreaks/);
-  assert.match(worker, /coalesce\(battle_mode, 'normal'\) <> 'vote'/);
+  assert.match(worker, /coalesce\(b\.battle_mode\s*,\s*'normal'\)\s*<>\s*'vote'/);
   assert.match(worker, /finalizeDueVoteTournamentBattle/);
   assert.match(worker, /advanceDueFinalSalvo/);
 });
