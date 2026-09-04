@@ -47,7 +47,7 @@ test("V3 projection upsert writes founder weights and immutable curve identity",
   assert.ok(!/total_points\s*=\s*excluded/i.test(captured.sql));
   assert.ok(!/boost_curve_version\s*=\s*excluded/i.test(captured.sql));
   assert.ok(!/boost_curve_parameters\s*=\s*excluded/i.test(captured.sql));
-  assert.deepEqual(captured.params.slice(3, 9), [50, 25, 15, 10, CURVE, JSON.stringify(PARAMS)]);
+  assert.deepEqual(captured.params.slice(3, 9), [45, 27, 18, 10, CURVE, JSON.stringify(PARAMS)]);
 });
 
 test("V3 projection rejects an incompatible pre-existing curve", async () => {
