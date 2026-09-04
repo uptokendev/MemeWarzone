@@ -66,10 +66,10 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: frontend/package.json
+          cache-dependency-path: frontend/package-lock.json
 
-      - name: Install frontend dependencies
-        run: npm install --prefix frontend --package-lock=false --no-audit --no-fund
+      - name: Install frontend dependencies from committed lockfile
+        run: npm ci --prefix frontend --no-audit --no-fund
 
       - name: Test injected provider wake discovery
         run: node --test frontend/src/lib/injectedProviderDiscovery.test.mjs
