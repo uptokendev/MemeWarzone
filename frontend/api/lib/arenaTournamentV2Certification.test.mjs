@@ -4,6 +4,9 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { resolveTournamentVoteMatch, tournamentVoteSummary } from "./arenaTournamentVoteRuntime.mjs";
+import { beginFinalSalvo, closeFinalSalvoShot } from "./arenaFinalSalvoRuntime.mjs";
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const apiRoot = path.join(here, "..");
 const frontendRoot = path.join(apiRoot, "..");
@@ -76,4 +79,55 @@ test("Tournament presentation does not duplicate Battle Points math or bypass ca
   assert.match(metricsApi, /import\s*\{\s*arenaSettlementMode\s*\}\s*from\s*["']\.\/lib\/arenaSettlementMode\.js["']/);
   assert.match(metricsApi, /const settlementMode = arenaSettlementMode\(battle\);/);
   assert.doesNotMatch(metricsApi, /settlementMode:\s*["']v1_mcap_pct_change["']/);
+});
+
+test("Vote Tournament runtime binds free votes to the active 24-hour vote matchup", () => {
+  const tokenA = "0x1111111111111111111111111111111111111111";
+  const tokenB = "0x2222222222222222222222222222222222222222";
+  const tournament = {
+    status: "live",
+    battle_mode: "vote",
+    round_duration_hours: 24,
+    bracket: {
+      rounds: [{ round: 1, matches: [{ id: "m1", tokenA, tokenB, battleId: "battle-1", winner: null, bye: false }] }],
+    },
+  };
+  const match = resolveTournamentVoteMatch({ tournament, matchRef: "m1", selectedToken: tokenA });
+  assert.equal(match.ok, true);
+  assert.equal(match.battleId, "battle-1");
+  assert.equal(match.roundNumber, 1);
+  assert.deepEqual(tournamentVoteSummary([{ side: "left" }, { side: "right" }, { side: "left" }], match), {
+    tokenA,
+    tokenB,
+    leftVotes: 2,
+    rightVotes: 1,
+    totalVotes: 3,
+    leftPoints: 2,
+    rightPoints: 1,
+  });
+});
+
+test("Final Salvo certifies exact-tie entry, 60-second shots, early win and Sudden Death", () => {
+  const start = new Date("2026-09-04T12:00:00.000Z");
+  let state = beginFinalSalvo({ regulationLeftPoints: 9, regulationRightPoints: 9, now: start });
+  assert.equal(state.ok, true);
+  assert.equal(state.shotEndsAt, "2026-09-04T12:01:00.000Z");
+
+  state = closeFinalSalvoShot({ tiebreak: state, leftUnique: 4, rightUnique: 1, now: new Date("2026-09-04T12:01:00.000Z") });
+  state = closeFinalSalvoShot({ tiebreak: state, leftUnique: 3, rightUnique: 1, now: new Date("2026-09-04T12:02:00.000Z") });
+  state = closeFinalSalvoShot({ tiebreak: state, leftUnique: 5, rightUnique: 2, now: new Date("2026-09-04T12:03:00.000Z") });
+  assert.equal(state.state, "resolved");
+  assert.equal(state.winnerSide, "left");
+
+  let tied = beginFinalSalvo({ regulationLeftPoints: 4, regulationRightPoints: 4, now: start });
+  for (let index = 0; index < 5; index += 1) {
+    tied = closeFinalSalvoShot({
+      tiebreak: tied,
+      leftUnique: 2,
+      rightUnique: 2,
+      now: new Date(start.getTime() + (index + 1) * 60_000),
+    });
+  }
+  assert.equal(tied.state, "sudden_death");
+  assert.equal(tied.suddenDeathRound, 1);
 });
