@@ -1,4 +1,5 @@
 import { BattleWallModule } from "@/components/arena/BattleWallModule";
+import { TournamentBoostControls } from "@/components/arena/TournamentBoostControls";
 import { TournamentFinalSalvoControls } from "@/components/arena/TournamentFinalSalvoControls";
 import { TournamentVoteControls } from "@/components/arena/TournamentVoteControls";
 import { postGradFlags } from "@/features/postgrad/config";
@@ -68,7 +69,7 @@ export function TournamentLiveRoundBattles({
             match &&
             shouldShowTournamentVoteControls({ mode: tournamentMode, match }),
           );
-          const showFinalSalvo = Boolean(tournamentId && tournamentChainId && match && voteMode(tournamentMode));
+          const showVoteModeActions = Boolean(tournamentId && tournamentChainId && match && voteMode(tournamentMode));
           return (
             <div key={battle.id} className="space-y-3">
               <BattleWallModule
@@ -86,7 +87,14 @@ export function TournamentLiveRoundBattles({
                   match={match}
                 />
               ) : null}
-              {showFinalSalvo && match ? (
+              {showVoteModeActions && match ? (
+                <TournamentBoostControls
+                  tournamentId={String(tournamentId)}
+                  chainId={Number(tournamentChainId)}
+                  match={match}
+                />
+              ) : null}
+              {showVoteModeActions && match ? (
                 <TournamentFinalSalvoControls
                   tournamentId={String(tournamentId)}
                   chainId={Number(tournamentChainId)}
