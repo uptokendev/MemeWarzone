@@ -26,10 +26,14 @@ const arenaEnabled = postGradEnabled && readFlag(import.meta.env.VITE_ENABLE_POS
 export const postGradFlags = {
   enabled: postGradEnabled,
   arena: arenaEnabled,
-  battle: arenaEnabled && readFlag(import.meta.env.VITE_ENABLE_POSTGRAD_BATTLE, arenaEnabled),
-  events: arenaEnabled && readFlag(import.meta.env.VITE_ENABLE_POSTGRAD_EVENTS, arenaEnabled),
-  league: arenaEnabled && readFlag(import.meta.env.VITE_ENABLE_POSTGRAD_LEAGUE, arenaEnabled),
-  tournament: arenaEnabled && readFlag(import.meta.env.VITE_ENABLE_POSTGRAD_TOURNAMENT, arenaEnabled),
+  // Per-surface flags default ON once Arena is enabled. Set an explicit false to hide one product.
+  battle: arenaEnabled && readFlag(import.meta.env.VITE_ENABLE_POSTGRAD_BATTLE, true),
+  events: arenaEnabled && readFlag(import.meta.env.VITE_ENABLE_POSTGRAD_EVENTS, true),
+  league: arenaEnabled && readFlag(import.meta.env.VITE_ENABLE_POSTGRAD_LEAGUE, true),
+  tournament: arenaEnabled && readFlag(import.meta.env.VITE_ENABLE_POSTGRAD_TOURNAMENT, true),
+  // Imported-token owner imagery is a separately staged Phase-9 write surface.
+  // Keep default-off until Storage env + arena import migrations are deployed.
+  importImageUpload: arenaEnabled && readFlag(import.meta.env.VITE_ARENA_IMPORT_IMAGE_UPLOAD, false),
   // Mock-only UX should be explicit opt-in so the branch defaults to the real
   // post-grad route structure, API adapters, and honest empty states.
   mocks: postGradEnabled && readFlag(import.meta.env.VITE_ENABLE_POSTGRAD_MOCKS, false),

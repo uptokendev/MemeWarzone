@@ -1,0 +1,90 @@
+import { BattleWallModule } from "@/components/arena/BattleWallModule";
+import { postGradFlags } from "@/features/postgrad/config";
+import { getMockBattleById } from "@/features/postgrad/mockRegistry";
+import { getMockTournamentBattleMetrics } from "@/features/postgrad/mockTournamentFixtures.mjs";
+import type { Battle } from "@/features/postgrad/contracts";
+import { useArenaBattleFeed } from "@/hooks/useArenaBattleFeed";
+import { useTournamentCommandState } from "@/hooks/useTournamentCommandState";
+import { presentCurrentRoundMatches } from "@/lib/arena/tournamentFightPresentation.mjs";
+
+type Round = {
+  round: number;
+  matches?: Array<{ battleId?: string | null; winner?: string | null; bye?: boolean }>;
+};
+
+export function TournamentLiveRoundBattles({
+  rounds,
+  liveBattleIds,
+}: {
+  rounds: Round[];
+  liveBattleIds: string[];
+}) {
+  const feed = useArenaBattleFeed();
+  const current = presentCurrentRoundMatches(rounds);
+  const allowed = new Set(liveBattleIds.map((id) => String(id)));
+  const ids = current
+    .map((match) => String(match.battleId || "").trim())
+    .filter((id) => id && allowed.has(id));
+
+  const battles = ids
+    .map((id) => {
+      const fromFeed = [...(feed.liveBattles || [])].find((battle) => String(battle.id) === id) as Battle | undefined;
+      if (fromFeed) return fromFeed;
+      return postGradFlags.mocks ? (getMockBattleById(id) as Battle | null) : null;
+    })
+    .filter(Boolean) as Battle[];
+
+  return (
+    <div className="space-y-6" data-tournament-live-round-count={battles.length}>
+      {battles.length ? (
+        battles.map((battle, index) => {
+          const mockMetrics = postGradFlags.mocks ? getMockTournamentBattleMetrics(battle.id) : null;
+          return (
+            <BattleWallModule
+              key={battle.id}
+              battle={battle}
+              metrics={mockMetrics}
+              metricsRequested={Boolean(mockMetrics)}
+              metricsLoaded={Boolean(mockMetrics)}
+              realtimeActive={false}
+              viewportIndex={index}
+            />
+          );
+        })
+      ) : (
+        <p className="py-6 text-sm text-muted-foreground">No confirmed live battles in this round.</p>
+      )}
+    </div>
+  );
+}
+
+export function TournamentLiveRoundPanel({
+  tournamentId,
+  statusLabel,
+  stageLabel,
+}: {
+  tournamentId: string;
+  statusLabel?: string | null;
+  stageLabel?: string | null;
+}) {
+  const state = useTournamentCommandState(tournamentId, { loadMetrics: true });
+  const liveBattleIds = state.liveMatches.map((match) => String(match.battleId || "")).filter(Boolean);
+  const stage = stageLabel || (state.card?.bracketStage ? String(state.card.bracketStage).replaceAll("_", " ") : null);
+
+  return (
+    <section
+      data-tournament-live-round-panel="true"
+      className="mt-4 border-t pt-4"
+      style={{ borderColor: "var(--mwz-flat-card-border)" }}
+    >
+      <div className="mb-3 text-[11px] uppercase tracking-[0.16em] text-white/50">
+        {["WATCH LIVE ROUND", statusLabel || state.card?.status.label, stage].filter(Boolean).join(" · ")}
+      </div>
+      {!state.detail && !liveBattleIds.length ? (
+        <p className="py-6 text-sm text-muted-foreground">Loading live round.</p>
+      ) : (
+        <TournamentLiveRoundBattles rounds={state.bracketRounds} liveBattleIds={liveBattleIds} />
+      )}
+    </section>
+  );
+}

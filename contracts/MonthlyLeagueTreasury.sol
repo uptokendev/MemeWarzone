@@ -26,6 +26,15 @@ contract MonthlyLeagueTreasury is ReentrancyGuard {
         uint256 sealedAt;
     }
 
+    struct MonthAuthorization {
+        uint256 maxWinnerPool;
+        uint64 sealAfter;
+        uint64 sealDeadline;
+        bool authorized;
+        bool consumed;
+        bool exceptional;
+    }
+
     address public immutable multisig;
     address public rootPoster;
     IMonthlyCapOracle public immutable oracle;
@@ -33,12 +42,16 @@ contract MonthlyLeagueTreasury is ReentrancyGuard {
     uint256 public immutable monthlyCapUsd;
 
     mapping(uint256 => MonthSeal) public monthSeal;
+    mapping(uint256 => MonthAuthorization) public monthAuthorization;
     mapping(uint256 => uint256) public monthClaimedTotal;
     mapping(uint256 => uint256) public monthOutstandingClaims;
     mapping(uint256 => mapping(bytes32 => bool)) public monthLeafClaimed;
     uint256 public totalOutstandingClaims;
+    uint256 public lastAuthorizedMonthId;
 
     event RootPosterUpdated(address indexed oldRootPoster, address indexed newRootPoster);
+    event MonthAuthorized(uint256 indexed monthId, uint256 maxWinnerPool, uint64 sealAfter, uint64 sealDeadline, bool exceptional);
+    event MonthAuthorizationRevoked(uint256 indexed monthId);
     event MonthSealed(
         uint256 indexed monthId,
         bytes32 indexed winnersRoot,
@@ -67,6 +80,15 @@ contract MonthlyLeagueTreasury is ReentrancyGuard {
     error InsufficientBalance();
     error ReservedBalanceInvariant();
     error NativeTransferFailed();
+    error InvalidMonthId();
+    error MonthNotNextCanonical();
+    error MonthNotAuthorized();
+    error MonthAuthConsumed();
+    error MonthAuthRevoked();
+    error SealTooEarly();
+    error SealAuthExpired();
+    error WinnerTotalAboveAuthorizedMax();
+    error BadSealWindow();
 
     modifier onlyMultisig() {
         if (msg.sender != multisig) revert NotMultisig();
@@ -95,6 +117,55 @@ contract MonthlyLeagueTreasury is ReentrancyGuard {
         rootPoster = newRootPoster;
     }
 
+    function nextCanonicalMonth(uint256 monthId) public pure returns (uint256) {
+        uint256 year = monthId / 100;
+        uint256 month = monthId % 100;
+        if (year < 2020 || month < 1 || month > 12) revert InvalidMonthId();
+        if (month == 12) return (year + 1) * 100 + 1;
+        return monthId + 1;
+    }
+
+    /// @notice Safe-only: approve a canonical month (or an exceptional recovery month).
+    function authorizeMonth(
+        uint256 monthId,
+        uint256 maxWinnerPool,
+        uint64 sealAfter,
+        uint64 sealDeadline,
+        bool exceptional
+    ) external onlyMultisig {
+        if (maxWinnerPool == 0) revert AmountZero();
+        if (sealDeadline <= sealAfter) revert BadSealWindow();
+        uint256 year = monthId / 100;
+        uint256 month = monthId % 100;
+        if (year < 2020 || month < 1 || month > 12) revert InvalidMonthId();
+        if (!exceptional) {
+            if (lastAuthorizedMonthId == 0 || monthId == lastAuthorizedMonthId) {
+                // First month, or re-authorization of the current unsealed month after revoke.
+            } else {
+                if (!monthSeal[lastAuthorizedMonthId].isSealed) revert MonthNotNextCanonical();
+                if (monthId != nextCanonicalMonth(lastAuthorizedMonthId)) revert MonthNotNextCanonical();
+            }
+        }
+        MonthAuthorization storage auth = monthAuthorization[monthId];
+        if (auth.consumed) revert MonthAuthConsumed();
+        if (monthSeal[monthId].isSealed) revert MonthAlreadySealed();
+        auth.maxWinnerPool = maxWinnerPool;
+        auth.sealAfter = sealAfter;
+        auth.sealDeadline = sealDeadline;
+        auth.authorized = true;
+        auth.consumed = false;
+        auth.exceptional = exceptional;
+        if (!exceptional) lastAuthorizedMonthId = monthId;
+        emit MonthAuthorized(monthId, maxWinnerPool, sealAfter, sealDeadline, exceptional);
+    }
+
+    function revokeMonth(uint256 monthId) external onlyMultisig {
+        MonthAuthorization storage auth = monthAuthorization[monthId];
+        if (!auth.authorized || auth.consumed) revert MonthAuthRevoked();
+        auth.authorized = false;
+        emit MonthAuthorizationRevoked(monthId);
+    }
+
     /// @notice Native balance that is not reserved for already sealed, unclaimed winner roots.
     function unallocatedBalance() public view returns (uint256) {
         uint256 balance = address(this).balance;
@@ -105,6 +176,12 @@ contract MonthlyLeagueTreasury is ReentrancyGuard {
     function sealMonth(uint256 monthId, bytes32 winnersRoot, uint256 winnerTotal) external onlyRootPosterOrMultisig nonReentrant {
         if (winnersRoot == bytes32(0)) revert RootZero();
         if (monthSeal[monthId].isSealed) revert MonthAlreadySealed();
+        MonthAuthorization storage auth = monthAuthorization[monthId];
+        if (!auth.authorized || auth.consumed) revert MonthNotAuthorized();
+        if (block.timestamp < auth.sealAfter) revert SealTooEarly();
+        if (block.timestamp > auth.sealDeadline) revert SealAuthExpired();
+        if (winnerTotal > auth.maxWinnerPool) revert WinnerTotalAboveAuthorizedMax();
+        auth.consumed = true;
 
         uint256 oraclePrice = oracle.nativeUsdPrice();
         uint256 capNative = Math.mulDiv(monthlyCapUsd, WAD, oraclePrice, Math.Rounding.Ceil);

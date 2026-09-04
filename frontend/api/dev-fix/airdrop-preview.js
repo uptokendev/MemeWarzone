@@ -15,6 +15,10 @@ function isSolana(chainId) {
   return Number(chainId) === 101 || Number(chainId) === 102;
 }
 
+function isRobinhood(chainId) {
+  return Number(chainId) === 4663 || Number(chainId) === 46630;
+}
+
 function splitByWeight(poolRaw, items) {
   const pool = BigInt(poolRaw || "0");
   if (pool <= 0n || !items.length) {
@@ -40,13 +44,14 @@ function splitByWeight(poolRaw, items) {
 export async function airdropPreview(req, res) {
   if (req.method !== "GET") return badMethod(res);
   const q = getQuery(req);
-  const chainId = Number(q.chainId || 97);
+  const chainId = Number(q.chainId || 56);
   if (!Number.isFinite(chainId) || chainId <= 0) {
     return json(res, 400, { error: "Invalid chainId" });
   }
 
   const solana = isSolana(chainId);
-  const tokenSymbol = solana ? "SOL" : "BNB";
+  const robinhood = isRobinhood(chainId);
+  const tokenSymbol = solana ? "SOL" : robinhood ? "ETH" : "BNB";
   const window = epochWindow();
   const empty = {
     ok: true,

@@ -209,7 +209,7 @@ const SponsorshipApplication = () => {
           </div>
           <div className="flex flex-wrap gap-2">
             <Button asChild size="sm" variant="outline" className="font-retro">
-              <Link to="/arena">Back to Arena</Link>
+              <Link to="/warzone">Back to Warzone</Link>
             </Button>
           </div>
         </div>

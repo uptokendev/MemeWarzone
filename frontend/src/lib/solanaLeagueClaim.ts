@@ -1,5 +1,5 @@
-import { getSolanaRewardRpcUrl, isSolanaRewardChainId } from "@/lib/solanaRewardNetwork";
-import { getSolanaProvider } from "@/lib/solanaWallet";
+import { isSolanaRewardChainId } from "@/lib/solanaRewardNetwork";
+import { submitSolanaRewardV0Claim } from "@/lib/solanaRewardV0Claim";
 import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
 
 const SYSTEM_PROGRAM = "11111111111111111111111111111111";
@@ -39,7 +39,6 @@ function i64le(value: string | number | bigint): Uint8Array {
 
 /** Anchor sha256("global:claim_league")[0..8] */
 function claimLeagueDiscriminator(): Uint8Array {
-  // Precomputed to avoid pulling crypto-js in the client bundle.
   return new Uint8Array([0x88, 0xcc, 0x21, 0xf3, 0xeb, 0x4f, 0xcb, 0xa6]);
 }
 
@@ -60,19 +59,6 @@ export async function submitSolanaLeagueClaim(prepared: {
 }): Promise<string> {
   const chainId = Number(prepared.chainId || 101);
   if (!isSolanaRewardChainId(chainId)) throw new Error("Wrong Solana reward chain for league claim.");
-
-  const provider = getSolanaProvider();
-  if (!provider?.publicKey || typeof provider.signTransaction !== "function") {
-    throw new Error("Connect a Solana wallet that can sign the league claim.");
-  }
-  const winner = String(provider.publicKey.toString?.() || provider.publicKey);
-  if (winner !== prepared.recipient) {
-    throw new Error("Connected wallet is not the league winner.");
-  }
-
-  const web3 = await loadSolanaWeb3();
-  const { Connection, PublicKey, Transaction, TransactionInstruction, SystemProgram } = web3;
-  const connection = new Connection(getSolanaRewardRpcUrl(chainId), "confirmed");
 
   const categoryHash = hexToBytes(prepared.categoryHash);
   if (categoryHash.length !== 32) throw new Error("Invalid category hash");
@@ -98,10 +84,12 @@ export async function submitSolanaLeagueClaim(prepared: {
     offset += part.length;
   }
 
+  const web3 = await loadSolanaWeb3();
+  const { PublicKey, TransactionInstruction, SystemProgram } = web3;
   const ix = new TransactionInstruction({
     programId: new PublicKey(prepared.programId),
     keys: [
-      { pubkey: new PublicKey(winner), isSigner: true, isWritable: true },
+      { pubkey: new PublicKey(prepared.recipient), isSigner: true, isWritable: true },
       { pubkey: new PublicKey(prepared.configAddress), isSigner: false, isWritable: false },
       { pubkey: new PublicKey(prepared.vaultAddress), isSigner: false, isWritable: true },
       { pubkey: new PublicKey(prepared.epochAddress), isSigner: false, isWritable: true },
@@ -111,12 +99,25 @@ export async function submitSolanaLeagueClaim(prepared: {
     data,
   });
 
-  const tx = new Transaction().add(ix);
-  const latest = await connection.getLatestBlockhash("confirmed");
-  tx.feePayer = new PublicKey(winner);
-  tx.recentBlockhash = latest.blockhash;
-  const signed = await provider.signTransaction(tx);
-  const sig = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false });
-  await connection.confirmTransaction({ signature: sig, ...latest }, "confirmed");
-  return sig;
+  return submitSolanaRewardV0Claim({
+    web3,
+    chainId,
+    addresses: {
+      programId: prepared.programId,
+      configAddress: prepared.configAddress,
+      vaultAddress: prepared.vaultAddress,
+      batchAddress: prepared.epochAddress,
+      claimReceiptAddress: prepared.claimReceiptAddress,
+      recipient: prepared.recipient,
+    },
+    canonical: {
+      kind: "league",
+      periodCode: prepared.periodCode,
+      epochStartSec: prepared.epochStartSec,
+      categoryHash,
+      rank: prepared.rank,
+    },
+    instruction: ix,
+    label: "Solana league claim",
+  });
 }

@@ -1,4 +1,5 @@
 import type { Battle, EventCardContract, LeagueSeason, MockTokenProfile, RankingPayload, TradeRoomFilter, WarPool } from "@/features/postgrad/contracts";
+import { getMockTournamentBattles, getMockTournamentEvents } from "@/features/postgrad/mockTournamentFixtures.mjs";
 
 const now = new Date("2026-05-21T00:00:00.000Z");
 
@@ -12,7 +13,7 @@ export const mockTokenProfiles: MockTokenProfile[] = [
     campaignAddress: "0xA1b2c3d4e5f60718293aBcD4Ef5061728394Aa11",
     name: "Storm Doge",
     symbol: "SDOGE",
-    logoUri: "/assets/logo.png",
+    logoUri: "/assets/tokens/sdo.jpg",
     graduatedAt: atMinutes(-640),
     marketCapUsd: 1920000,
     liquidityUsd: 415000,
@@ -44,7 +45,7 @@ export const mockTokenProfiles: MockTokenProfile[] = [
     campaignAddress: "0xB2c3d4e5f60718293aBcD4Ef5061728394Aa1122",
     name: "Moon Ops",
     symbol: "MOPS",
-    logoUri: "/assets/logo.png",
+    logoUri: "/assets/tokens/mop.jpg",
     graduatedAt: atMinutes(-980),
     marketCapUsd: 1345000,
     liquidityUsd: 286000,
@@ -75,7 +76,7 @@ export const mockTokenProfiles: MockTokenProfile[] = [
     campaignAddress: "0xC3d4e5f60718293aBcD4Ef5061728394Aa112233",
     name: "Glitch Ape",
     symbol: "GAPE",
-    logoUri: "/assets/logo.png",
+    logoUri: "/assets/tokens/gap.jpg",
     graduatedAt: atMinutes(-1280),
     marketCapUsd: 980000,
     liquidityUsd: 223000,
@@ -106,7 +107,7 @@ export const mockTokenProfiles: MockTokenProfile[] = [
     campaignAddress: "0xD4e5f60718293aBcD4Ef5061728394Aa11223344",
     name: "Redline Rats",
     symbol: "RATS",
-    logoUri: "/assets/logo.png",
+    logoUri: "/assets/tokens/rat.jpg",
     graduatedAt: atMinutes(-520),
     marketCapUsd: 2110000,
     liquidityUsd: 462000,
@@ -261,6 +262,7 @@ export const mockTokenProfiles: MockTokenProfile[] = [
 export const featuredTokens = mockTokenProfiles.slice(0, 3);
 
 export const liveBattles: Battle[] = [
+  ...(getMockTournamentBattles() as Battle[]),
   {
     id: "battle-redline-vs-sdoge",
     state: "live",
@@ -275,6 +277,8 @@ export const liveBattles: Battle[] = [
         tokenId: "redline-rats",
         tokenName: "Redline Rats",
         symbol: "RATS",
+        imageUrl: "/assets/tokens/rat.jpg",
+        logoUri: "/assets/tokens/rat.jpg",
         score: 71.3,
         priceChangePct: 8.2,
         volumeUsd: 193000,
@@ -285,6 +289,8 @@ export const liveBattles: Battle[] = [
         tokenId: "storm-doge",
         tokenName: "Storm Doge",
         symbol: "SDOGE",
+        imageUrl: "/assets/tokens/sdo.jpg",
+        logoUri: "/assets/tokens/sdo.jpg",
         score: 68.8,
         priceChangePct: 6.5,
         volumeUsd: 177000,
@@ -307,6 +313,8 @@ export const liveBattles: Battle[] = [
         tokenId: "moon-ops",
         tokenName: "Moon Ops",
         symbol: "MOPS",
+        imageUrl: "/assets/tokens/mop.jpg",
+        logoUri: "/assets/tokens/mop.jpg",
         score: 55.1,
         priceChangePct: 5.4,
         volumeUsd: 141000,
@@ -317,6 +325,8 @@ export const liveBattles: Battle[] = [
         tokenId: "glitch-ape",
         tokenName: "Glitch Ape",
         symbol: "GAPE",
+        imageUrl: "/assets/tokens/gap.jpg",
+        logoUri: "/assets/tokens/gap.jpg",
         score: 57.7,
         priceChangePct: 7.1,
         volumeUsd: 149500,
@@ -411,16 +421,7 @@ export const scheduledEvents: EventCardContract[] = [
     participantCount: 24,
     summary: "Open deployment weekend with pooled scoring, featured rivalries, and live lane coverage.",
   },
-  {
-    id: "event-tournament-03",
-    type: "tournament",
-    title: "Rookie Crown Qualifier",
-    status: "scheduled",
-    startsAt: atMinutes(1440),
-    endsAt: atMinutes(1800),
-    participantCount: 16,
-    summary: "Single-elimination tournament seeded from battle activity and holder growth.",
-  },
+  ...(getMockTournamentEvents() as EventCardContract[]),
 ];
 
 export const arenaRankings: RankingPayload[] = [
@@ -453,6 +454,62 @@ export const arenaRankings: RankingPayload[] = [
   },
 ];
 
+const MWL_ART = {
+  RATS: "/assets/tokens/rat.jpg",
+  SDOGE: "/assets/tokens/sdo.jpg",
+  MOPS: "/assets/tokens/mop.jpg",
+  GAPE: "/assets/tokens/gap.jpg",
+};
+
+function mwlEntry(partial: Record<string, unknown>) {
+  return {
+    division: "apex",
+    streak: 0,
+    movement: "safe",
+    finishedFights: 8,
+    ...partial,
+  };
+}
+
+export const MOCK_LEAGUE_OWNED_TOKEN_IDS = ["mwl-mycoin", "mwl-second"];
+
+export function getMockLeagueEntries() {
+  const named = [
+    mwlEntry({ tokenId: "redline-rats", tokenName: "Redline Rats", symbol: "RATS", imageUrl: MWL_ART.RATS, points: 144, wins: 12, losses: 2, finishedFights: 14, streak: 4, movement: "promoted" }),
+    mwlEntry({ tokenId: "storm-doge", tokenName: "Storm Doge", symbol: "SDOGE", imageUrl: MWL_ART.SDOGE, points: 131, wins: 11, losses: 3, finishedFights: 14, streak: 3, movement: "promoted" }),
+    mwlEntry({ tokenId: "moon-ops", tokenName: "Moon Ops", symbol: "MOPS", imageUrl: MWL_ART.MOPS, points: 118, wins: 9, losses: 4, finishedFights: 13, streak: 1 }),
+    mwlEntry({ tokenId: "glitch-ape", tokenName: "Glitch Ape", symbol: "GAPE", imageUrl: MWL_ART.GAPE, points: 104, wins: 8, losses: 4, finishedFights: 12 }),
+    mwlEntry({ tokenId: "astro-frogs", tokenName: "Astro Frogs", symbol: "AFRG", points: 98, wins: 7, losses: 4, finishedFights: 11 }),
+    mwlEntry({ tokenId: "neon-shib", tokenName: "Neon Shib", symbol: "NSHB", points: 94, wins: 7, losses: 5, finishedFights: 12 }),
+    mwlEntry({ tokenId: "volt-pepe", tokenName: "Volt Pepe", symbol: "VPEP", points: 88, wins: 6, losses: 5, finishedFights: 11 }),
+    mwlEntry({ tokenId: "iron-doge", tokenName: "Iron Doge", symbol: "IDOG", points: 76, wins: 6, losses: 6, finishedFights: 12 }),
+    mwlEntry({ tokenId: "solar-cat", tokenName: "Solar Cat", symbol: "SCAT", points: 73, wins: 5, losses: 6, finishedFights: 11 }),
+    mwlEntry({ tokenId: "pixel-fox", tokenName: "Pixel Fox", symbol: "PFOX", points: 71, wins: 5, losses: 6, finishedFights: 11 }),
+  ];
+  const rest = [];
+  for (let rank = 11; rank <= 110; rank += 1) {
+    if (rank === 37) {
+      rest.push(mwlEntry({ tokenId: "mwl-mycoin", tokenName: "My Coin", symbol: "MYCOIN", imageUrl: MWL_ART.RATS, points: 64, wins: 4, losses: 5, finishedFights: 9 }));
+      continue;
+    }
+    if (rank === 100) {
+      rest.push(mwlEntry({ tokenId: "mwl-second", tokenName: "Second Coin", symbol: "SECOND", imageUrl: MWL_ART.SDOGE, points: 21, wins: 1, losses: 7, finishedFights: 8 }));
+      continue;
+    }
+    const points = rank < 37 ? 70 - Math.floor((rank - 11) / 5) : rank < 100 ? Math.max(22, 63 - (rank - 38)) : Math.max(1, 20 - (rank - 101));
+    rest.push(mwlEntry({
+      tokenId: `mwl-filler-${rank}`,
+      tokenName: `Filler ${rank}`,
+      symbol: `F${rank}`,
+      points,
+      wins: Math.max(0, 8 - Math.floor(rank / 20)),
+      losses: Math.min(12, 3 + Math.floor(rank / 15)),
+      finishedFights: rank <= 20 ? 10 : 8,
+    }));
+  }
+  return [...named, ...rest];
+}
+
 export const mockLeagueSeason: LeagueSeason = {
   id: "season-01",
   label: "Season One",
@@ -461,14 +518,7 @@ export const mockLeagueSeason: LeagueSeason = {
   rewardPoolUsd: 150000,
   resetAt: atMinutes(60 * 24 * 6),
   divisions: ["bronze", "silver", "gold", "apex"],
-  entries: [
-    { tokenId: "redline-rats", tokenName: "Redline Rats", symbol: "RATS", division: "apex", points: 144, wins: 12, losses: 2, streak: 4, movement: "promoted" },
-    { tokenId: "storm-doge", tokenName: "Storm Doge", symbol: "SDOGE", division: "gold", points: 131, wins: 11, losses: 3, streak: 3, movement: "promoted" },
-    { tokenId: "moon-ops", tokenName: "Moon Ops", symbol: "MOPS", division: "gold", points: 118, wins: 9, losses: 4, streak: 1, movement: "safe" },
-    { tokenId: "glitch-ape", tokenName: "Glitch Ape", symbol: "GAPE", division: "silver", points: 94, wins: 7, losses: 6, streak: -1, movement: "safe" },
-    { tokenId: "astro-frogs", tokenName: "Astro Frogs", symbol: "AFRG", division: "silver", points: 81, wins: 6, losses: 7, streak: 2, movement: "safe" },
-    { tokenId: "neon-shib", tokenName: "Neon Shib", symbol: "NSHB", division: "bronze", points: 63, wins: 4, losses: 8, streak: -2, movement: "relegated" },
-  ],
+  entries: getMockLeagueEntries() as LeagueSeason["entries"],
 };
 
 export const battleWarPool: WarPool = {

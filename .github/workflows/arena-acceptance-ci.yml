@@ -1,0 +1,278 @@
+name: Arena Acceptance Gate
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "contracts/ArenaWarPoolTreasury.sol"
+      - "contracts/ArenaWarPoolTreasuryV2.sol"
+      - "contracts/PostGradLeagueTreasuryV2.sol"
+      - "contracts/WarzoneSponsorshipRouterV1.sol"
+      - "contracts/EventPrizeVaultV1.sol"
+      - "contracts/test/ArenaMoneyV2TestReceivers.sol"
+      - "db/migrations/*arena*.sql"
+      - "frontend/api/arena*.js"
+      - "frontend/api/upload.js"
+      - "frontend/api/lib/arena*.js"
+      - "frontend/api/lib/arena*.mjs"
+      - "frontend/api/lib/imageFileValidation.js"
+      - "frontend/api/lib/imageFileValidation.test.mjs"
+      - "frontend/package.json"
+      - "frontend/src/components/arena/**"
+      - "frontend/src/components/command-center/Arena*.tsx"
+      - "frontend/src/components/command-center/ChallengeInboxDialog.tsx"
+      - "frontend/src/components/postgrad/Arena*.tsx"
+      - "frontend/src/components/postgrad/WarPoolPanel.tsx"
+      - "frontend/src/features/postgrad/**"
+      - "frontend/src/hooks/useArena*.ts"
+      - "frontend/src/lib/arena/**"
+      - "frontend/src/lib/arenaImports.ts"
+      - "frontend/src/lib/solanaArena*.ts"
+      - "frontend/src/lib/solanaArena*.mjs"
+      - "frontend/src/pages/Arena*.tsx"
+      - "frontend/src/pages/BattleDetails.tsx"
+      - "frontend/src/pages/ImportedTokenDetails.tsx"
+      - "frontend/src/pages/TournamentDetails.tsx"
+      - "frontend/src/pages/command-center/CommandCenterBattles.tsx"
+      - "programs/mwz_rewards_treasury/src/arena.rs"
+      - "programs/mwz_rewards_treasury/src/lib.rs"
+      - "programs/mwz_rewards_treasury/src/route.rs"
+      - "scripts/deployArenaWarPoolTreasury.ts"
+      - "scripts/solana/arena-operator-*.mjs"
+      - "test/ArenaWarPoolTreasury.spec.ts"
+      - "test/ArenaMoneyV2.spec.ts"
+      - ".github/workflows/arena-acceptance-ci.yml"
+  push:
+    branches:
+      - "build/cross-chain-stabilization-rh-base"
+    paths:
+      - "contracts/ArenaWarPoolTreasury.sol"
+      - "contracts/ArenaWarPoolTreasuryV2.sol"
+      - "contracts/PostGradLeagueTreasuryV2.sol"
+      - "contracts/WarzoneSponsorshipRouterV1.sol"
+      - "contracts/EventPrizeVaultV1.sol"
+      - "contracts/test/ArenaMoneyV2TestReceivers.sol"
+      - "db/migrations/*arena*.sql"
+      - "frontend/api/arena*.js"
+      - "frontend/api/upload.js"
+      - "frontend/api/lib/arena*.js"
+      - "frontend/api/lib/arena*.mjs"
+      - "frontend/api/lib/imageFileValidation.js"
+      - "frontend/api/lib/imageFileValidation.test.mjs"
+      - "frontend/package.json"
+      - "frontend/src/components/arena/**"
+      - "frontend/src/components/command-center/Arena*.tsx"
+      - "frontend/src/components/command-center/ChallengeInboxDialog.tsx"
+      - "frontend/src/components/postgrad/Arena*.tsx"
+      - "frontend/src/components/postgrad/WarPoolPanel.tsx"
+      - "frontend/src/features/postgrad/**"
+      - "frontend/src/hooks/useArena*.ts"
+      - "frontend/src/lib/arena/**"
+      - "frontend/src/lib/arenaImports.ts"
+      - "frontend/src/lib/solanaArena*.ts"
+      - "frontend/src/lib/solanaArena*.mjs"
+      - "frontend/src/pages/Arena*.tsx"
+      - "frontend/src/pages/BattleDetails.tsx"
+      - "frontend/src/pages/ImportedTokenDetails.tsx"
+      - "frontend/src/pages/TournamentDetails.tsx"
+      - "frontend/src/pages/command-center/CommandCenterBattles.tsx"
+      - "programs/mwz_rewards_treasury/src/arena.rs"
+      - "programs/mwz_rewards_treasury/src/lib.rs"
+      - "programs/mwz_rewards_treasury/src/route.rs"
+      - "scripts/deployArenaWarPoolTreasury.ts"
+      - "scripts/solana/arena-operator-*.mjs"
+      - "test/ArenaWarPoolTreasury.spec.ts"
+      - "test/ArenaMoneyV2.spec.ts"
+      - ".github/workflows/arena-acceptance-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arena-acceptance-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  evm-and-schema:
+    name: Arena EVM treasury and schema invariants
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact source SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked contract dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Compile EVM contracts
+        run: npx hardhat compile
+
+      - name: Test Arena War Pool treasury generations
+        run: npx hardhat test test/ArenaWarPoolTreasury.spec.ts test/ArenaMoneyV2.spec.ts
+
+      - name: Verify Arena migration chain is complete and ordered
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('fs');
+          const required = [
+            'db/migrations/20260826_000001_arena_identity_schema.sql',
+            'db/migrations/20260827_000001_arena_vote_ingest.sql',
+            'db/migrations/20260827_000002_arena_war_pool_escrow.sql',
+            'db/migrations/20260827_000003_arena_league_scorecard.sql',
+            'db/migrations/20260827_000004_arena_battle_counter_offers.sql',
+            'db/migrations/20260827_000005_arena_battle_matched.sql',
+            'db/migrations/20260827_000006_arena_battle_duration.sql',
+            'db/migrations/20260828_000007_arena_tournament_support.sql',
+            'db/migrations/20260829_000001_arena_settle_idempotency.sql',
+            'db/migrations/20260902_000003_arena_battle_metrics.sql',
+            'db/migrations/20260902_000004_arena_battle_v2_corrections.sql',
+            'db/migrations/20260903_000001_arena_import_token_profile_v2.sql',
+          ];
+          for (const file of required) {
+            if (!fs.existsSync(file) || !fs.readFileSync(file, 'utf8').trim()) {
+              throw new Error(`missing or empty Arena migration: ${file}`);
+            }
+          }
+          const settle = fs.readFileSync('db/migrations/20260829_000001_arena_settle_idempotency.sql', 'utf8');
+          if (!/arena_league_point_events_battle_token_kind_idx/.test(settle)) {
+            throw new Error('Arena settlement idempotency index is missing');
+          }
+          const corrections = fs.readFileSync('db/migrations/20260902_000004_arena_battle_v2_corrections.sql', 'utf8');
+          if (!/REVOKE SELECT ON TABLE public\.arena_battle_volume_audit FROM anon, authenticated/i.test(corrections)) {
+            throw new Error('Battle volume audit privacy correction is missing');
+          }
+          const importProfile = fs.readFileSync('db/migrations/20260903_000001_arena_import_token_profile_v2.sql', 'utf8');
+          if (!/arena_token_imports_image_url_not_data/i.test(importProfile)) {
+            throw new Error('Imported token image URL storage guard is missing');
+          }
+          if (!/REVOKE INSERT, UPDATE, DELETE ON TABLE public\.arena_token_imports FROM anon, authenticated/i.test(importProfile)) {
+            throw new Error('Imported token profile write boundary is missing');
+          }
+          console.log(`arena_migrations=${required.length}`);
+          console.log('arena_schema_chain=ok');
+          NODE
+
+  api-and-ui:
+    name: Arena API, Battle V2, tournament, MWL and frontend gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact source SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install locked frontend dependencies
+        run: npm ci --prefix frontend --no-audit --no-fund
+
+      - name: Syntax-check Arena API surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in frontend/api/arena*.js frontend/api/lib/arena*.js frontend/api/lib/arena*.mjs frontend/api/lib/imageFileValidation.js; do
+            node --check "$file"
+          done
+          node --check frontend/api/upload.js
+
+      - name: Test Battle Boost runtime invariants
+        run: node --test frontend/api/lib/arenaBoostRuntime.test.mjs
+
+      - name: Check API import graph
+        run: npm --prefix frontend run check:api-imports
+
+      - name: Test Battle Points V2 baselines, volume and calculator
+        run: npm --prefix frontend run test:arena-battle-v2
+
+      - name: Test enabled Battle combat-effects path
+        run: npm --prefix frontend run test:arena-combat-effects
+
+      - name: Test Phase 12 Battle V2 QA matrix
+        run: npm --prefix frontend run test:arena-phase12
+
+      - name: Test imported token profile and image security
+        run: |
+          node --test \
+            frontend/api/lib/imageFileValidation.test.mjs \
+            frontend/api/lib/arenaTokenProfile.test.mjs \
+            frontend/api/lib/arenaImportProfileCertification.test.mjs
+
+      - name: Test battle, MWL and settlement certification
+        run: npm --prefix frontend run test:arena-mwl
+
+      - name: Test tournament roster and bracket reconciliation
+        run: npm --prefix frontend run test:arena-tournament
+
+      - name: Test Arena runtime acceptance scenarios
+        run: npm --prefix frontend run test:arena-runtime-acceptance
+
+      - name: Test Solana Arena client encoding
+        run: npm --prefix frontend run test:solana-arena
+
+      - name: Build public application with Arena and import image rollout enabled
+        env:
+          VITE_ENABLE_WAR_ROOM: "true"
+          VITE_ENABLE_POSTGRAD: "true"
+          VITE_ENABLE_POSTGRAD_ARENA: "true"
+          VITE_ENABLE_POSTGRAD_BATTLE: "true"
+          VITE_ARENA_IMPORT_IMAGE_UPLOAD: "true"
+          VITE_ENABLE_UNIFIED_MARKET_CHART: "1"
+          VITE_ENABLE_TESTNET_CAMPAIGNS: "true"
+          VITE_ENABLE_TESTNET_FEATURED_FEED: "true"
+          VITE_DEFAULT_CHAIN_ID: "97"
+          VITE_PUBLIC_RPC_56: "https://rpc-evm-56.test.mwz"
+          VITE_PUBLIC_RPC_97: "https://rpc-evm-97.test.mwz"
+          VITE_BSC_RPC_56: "https://rpc-evm-56.test.mwz"
+          VITE_BSC_RPC_97: "https://rpc-evm-97.test.mwz"
+          VITE_BSC_MAINNET_RPC: "https://rpc-evm-56.test.mwz"
+          VITE_BSC_TESTNET_RPC: "https://rpc-evm-97.test.mwz"
+          VITE_SOLANA_RPC: "https://rpc-solana-101.test.mwz"
+          VITE_SOLANA_MAINNET_RPC: "https://rpc-solana-101.test.mwz"
+          VITE_PUBLIC_RPC_SOLANA: "https://rpc-solana-101.test.mwz"
+          VITE_PUBLIC_RPC_101: "https://rpc-solana-101.test.mwz"
+        run: npm --prefix frontend run build
+
+  solana-operator:
+    name: Arena Solana operator signing and reconciliation
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact source SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install pinned Solana operator dependency
+        run: npm install --no-save --package-lock=false --no-audit --no-fund @solana/web3.js@1.95.4
+
+      - name: Test Arena operator resolution, tournament, V0 and worker logic
+        run: |
+          node --test \
+            scripts/solana/arena-operator-resolve.test.mjs \
+            scripts/solana/arena-operator-tournament.test.mjs \
+            scripts/solana/arena-operator-v0.test.mjs \
+            scripts/solana/arena-operator-worker.test.mjs

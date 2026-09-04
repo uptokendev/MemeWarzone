@@ -25,9 +25,41 @@ function optionalAddressLine(name, value) {
   return /^0x[a-fA-F0-9]{40}$/.test(value || "") ? `${name}=${value}` : null;
 }
 
+function buildRobinhoodFrontendEnv(deployment, chainId, sourceLabel) {
+  const suffix = String(chainId);
+  const treasuryRouter = pickTreasuryRouterAddress(deployment);
+  const lines = [
+    `VITE_FACTORY_ADDRESS_${suffix}=${requireAddress("LaunchFactory", pickAddress(deployment, "LaunchFactory", ["launchFactory", "factory", "factoryAddress"]), sourceLabel)}`,
+    `VITE_VOTE_TREASURY_ADDRESS_${suffix}=${requireAddress("UPVoteTreasury", pickAddress(deployment, "UPVoteTreasury", ["upVoteTreasury", "voteTreasury", "voteTreasuryAddress"]), sourceLabel)}`,
+    `VITE_TREASURY_ROUTER_ADDRESS_${suffix}=${requireAddress("TreasuryRouterV2", treasuryRouter, sourceLabel)}`,
+    `VITE_COMMUNITY_REWARDS_VAULT_ADDRESS_${suffix}=${requireAddress("CommunityRewardsVault", pickAddress(deployment, "CommunityRewardsVault", ["communityRewardsVault", "communityVault"]), sourceLabel)}`,
+    `VITE_RECRUITER_REWARDS_VAULT_ADDRESS_${suffix}=${requireAddress("RecruiterRewardsVault", pickAddress(deployment, "RecruiterRewardsVault", ["recruiterRewardsVault", "recruiterVault"]), sourceLabel)}`,
+    `VITE_PROTOCOL_REVENUE_VAULT_ADDRESS_${suffix}=${requireAddress("ProtocolRevenueVault", pickAddress(deployment, "ProtocolRevenueVault", ["protocolRevenueVault", "protocolVault"]), sourceLabel)}`,
+    `VITE_CREATOR_REGISTRY_ADDRESS_${suffix}=${requireAddress("CreatorRegistry", pickAddress(deployment, "CreatorRegistry", ["creatorRegistry"]), sourceLabel)}`,
+    `VITE_RISK_REGISTRY_ADDRESS_${suffix}=${requireAddress("RiskRegistry", pickAddress(deployment, "RiskRegistry", ["riskRegistry"]), sourceLabel)}`,
+    `VITE_GRADUATION_ORACLE_ADDRESS_${suffix}=${requireAddress("GraduationOracle", pickAddress(deployment, "GraduationOracle", ["graduationOracle"]), sourceLabel)}`,
+    `VITE_PERMANENT_LP_LOCKER_ADDRESS_${suffix}=${requireAddress("PermanentV3PositionLocker", pickAddress(deployment, "PermanentV3PositionLocker", ["permanentV3PositionLocker", "permanentLpLocker"]), sourceLabel)}`,
+    `VITE_CAMPAIGN_IMPLEMENTATION_ADDRESS_${suffix}=${requireAddress("LaunchCampaignImplementation", pickAddress(deployment, "LaunchCampaignImplementation", ["launchCampaignImplementation", "campaignImplementation"]), sourceLabel)}`,
+    `VITE_LAUNCH_ROUTER_ADDRESS_${suffix}=${requireAddress("Robinhood graduation adapter", pickAddress(deployment, "RobinhoodUniswapV3GraduationAdapter", ["graduationAdapter"]), sourceLabel)}`,
+    `VITE_ROBINHOOD_V3_FACTORY_ADDRESS_${suffix}=${requireAddress("Robinhood V3 factory", pickAddress(deployment, "MockUniswapV3Factory", ["mockV3Factory", "v3Factory"]), sourceLabel)}`,
+    `VITE_ROBINHOOD_V3_POSITION_MANAGER_ADDRESS_${suffix}=${requireAddress("Robinhood V3 position manager", pickAddress(deployment, "MockUniswapV3PositionManager", ["mockNonfungiblePositionManager", "nonfungiblePositionManager"]), sourceLabel)}`,
+    `VITE_ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_${suffix}=${requireAddress("Robinhood V3 swap router", pickAddress(deployment, "MockUniswapV3SwapRouter", ["mockSwapRouter02", "swapRouter02"]), sourceLabel)}`,
+    `VITE_ROBINHOOD_V3_NATIVE_SWAP_ADAPTER_ADDRESS_${suffix}=${requireAddress("Robinhood V3 native swap adapter", pickAddress(deployment, "RobinhoodV3NativeSwapAdapter", ["v3NativeSwapAdapter", "nativeSwapAdapter"]), sourceLabel)}`,
+    `VITE_WRAPPED_NATIVE_ADDRESS_${suffix}=${requireAddress("Robinhood wrapped native", pickAddress(deployment, "MockWETH9", ["mockWeth9", "weth9", "wrappedNative"]), sourceLabel)}`,
+  ];
+  const optionalLines = [
+    optionalAddressLine(`VITE_TREASURY_VAULT_ADDRESS_${suffix}`, pickAddress(deployment, "TreasuryVaultV2", ["weeklyLeagueVault", "LeagueTreasury", "leagueTreasury", "treasuryVault", "vault"])),
+  ].filter(Boolean);
+  return `${[...lines, ...optionalLines].join("\n")}\n`;
+}
+
 function buildFrontendEnv(deployment, sourceLabel = "deployment") {
-  const chainId = deployment.chainId;
+  const chainId = deployment.targetChainId || deployment.chainId;
   if (!chainId) throw new Error(`chainId missing in ${sourceLabel}`);
+
+  if (Number(chainId) === 4663 || Number(chainId) === 46630) {
+    return buildRobinhoodFrontendEnv(deployment, Number(chainId), sourceLabel);
+  }
 
   const suffix = String(chainId);
   const topazContracts = deployment.topazInfrastructure?.contracts || {};

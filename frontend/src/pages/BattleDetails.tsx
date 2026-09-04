@@ -1,264 +1,287 @@
 import { Link, useParams } from "react-router-dom";
-import { useState, useEffect, useMemo, useRef } from "react";
-import { RichBattleCardOrange } from "@/components/postgrad/RichBattleCardOrange";
+import { BattleCombatEffects } from "@/components/arena/BattleCombatEffects";
+import { BattleCombatantCard } from "@/components/arena/BattleCombatantCard";
+import { BattleScoreHud } from "@/components/arena/BattleScoreHud";
+import { ArenaStakeButton } from "@/components/arena/ArenaStakeButton";
+import { ArenaWarPoolClaimButton } from "@/components/arena/ArenaWarPoolClaimButton";
+import { ContentContainer } from "@/components/layout/ContentContainer";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { WarPoolPanel } from "@/components/postgrad/WarPoolPanel";
 import { Button } from "@/components/ui/button";
-import { formatCompactCount, formatCompactUsd } from "@/features/postgrad/warRoomMetrics";
 import { getArenaTokenRoute } from "@/features/postgrad/tokenRoutes";
-import { useArenaBattleDetails } from "@/hooks/useArenaBattleFeed";
-import { useArenaEventFeed } from "@/hooks/useArenaEventFeed";
-import { ContentContainer } from "@/components/layout/ContentContainer";
-import { useLaunchpad } from "@/lib/launchpadClient";
-import { resolveImageUri } from "@/lib/media";
+import { useArenaBattleRealtimeDetails } from "@/hooks/useArenaBattleRealtimeDetails";
+import {
+  battleChainLabel,
+  battleDurationLabel,
+  battleLeaderIndex,
+  formatCompactUsd,
+} from "@/lib/arena/battlePresentation";
+import { isSolanaChainId } from "@/lib/chainConfig";
+import { publicBattleLabel, publicBattleLane } from "@/lib/arena/publicBattleState";
 
-const AWAITING_RIVAL_IMAGE = "/images/awaiting-rival.png";
-
-function getParticipantImage(participant: any) {
-  const isAwaiting = 
-    participant?.tokenId?.startsWith("pending-") ||
-    participant?.tokenName === "Awaiting Rival" ||
-    participant?.symbol === "TBD";
-
-  if (isAwaiting) {
-    return AWAITING_RIVAL_IMAGE;
-  }
-
-  return participant?.imageUrl || participant?.image || participant?.logoURI || participant?.logoUrl || "/placeholder.svg";
+function formatMoment(value?: string | null) {
+  if (!value) return "Unscheduled";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unscheduled";
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
-function getParticipantRoute(participant: any) {
-  return getArenaTokenRoute(participant?.tokenAddress ?? participant?.tokenId ?? participant?.campaignAddress ?? null);
+function tokenKey(value: unknown, chainId: number) {
+  const raw = String(value || "").trim();
+  return isSolanaChainId(chainId) ? raw : raw.toLowerCase();
 }
 
-function getParticipantMarketCap(participant: any) {
-  const value = Number(participant?.marketCapUsd ?? participant?.marketCap ?? 0);
-  return Number.isFinite(value) && value > 0 ? value : 0;
-}
-
-function getParticipantAudience(participant: any) {
-  const holders = Number(participant?.holderCount ?? participant?.holders ?? 0);
-  if (Number.isFinite(holders) && holders > 0) {
-    return { label: "Holders", value: holders };
-  }
-
-  const traders = Number(participant?.traderCount ?? participant?.uniqueTraders ?? 0);
-  return {
-    label: "Traders",
-    value: Number.isFinite(traders) && traders > 0 ? traders : 0,
-  };
+function tieBreakLabel(value?: string | null) {
+  if (value === "mcap_component") return "MCAP component";
+  if (value === "holder_component") return "Holder component";
+  if (value === "volume_component") return "Eligible volume component";
+  if (value === "token_address") return "Deterministic token identity";
+  if (value === "battle_points") return "Battle Points";
+  return value ? String(value).replaceAll("_", " ") : "None";
 }
 
 const BattleDetails = () => {
   const { id } = useParams();
-  const { battle, source } = useArenaBattleDetails(id);
-  const { events, source: eventSource } = useArenaEventFeed();
-
-  // Lightweight, stabilized logo hydration for this single battle's participants.
-  // Uses ref for cache checks so filling the cache doesn't retrigger effects (prevents the previous freeze).
-  // Safe here because it's one battle (max 2 addresses) vs list pages.
-  const [logoCache, setLogoCache] = useState<Record<string, string>>({});
-  const logoCacheRef = useRef<Record<string, string>>({});
-  const { fetchCampaignLogoURI } = useLaunchpad();
-
-  useEffect(() => {
-    logoCacheRef.current = logoCache;
-  }, [logoCache]);
-
-  useEffect(() => {
-    if (!battle) return;
-    let cancelled = false;
-
-    const addresses = new Set<string>();
-    (battle.participants || []).forEach((p: any) => {
-      const addr = (p.campaignAddress || p.campaign || p.tokenId || "").toLowerCase();
-      const cache = logoCacheRef.current;
-      if (addr && !cache[addr]) addresses.add(addr);
-    });
-
-    const missing = Array.from(addresses);
-    if (!missing.length) return;
-
-    (async () => {
-      try {
-        const pairs = await Promise.all(
-          missing.map(async (addr) => [addr, await fetchCampaignLogoURI(addr).catch(() => null)] as const)
-        );
-        if (cancelled) return;
-        setLogoCache((prev) => {
-          const next = { ...prev };
-          for (const [addr, uri] of pairs) {
-            if (uri) next[addr] = uri;
-          }
-          return next;
-        });
-      } catch {}
-    })();
-
-    return () => { cancelled = true; };
-  }, [battle, fetchCampaignLogoURI]);
-
-  const hydrateParticipants = (participants: any[] = []) => {
-    return participants.map((p: any) => {
-      const addr = (p.campaignAddress || p.campaign || p.tokenId || "").toLowerCase();
-      const hydrated = addr && logoCache[addr] ? logoCache[addr] : (p.imageUrl || p.image || p.logoURI || p.logoUrl);
-      const resolved = resolveImageUri(hydrated) || p.imageUrl || p.image || "/placeholder.svg";
-      return {
-        ...p,
-        imageUrl: resolved,
-        image: resolved,
-      };
-    });
-  };
-
-  const hydratedBattle = useMemo(() => {
-    if (!battle) return null;
-    return {
-      ...battle,
-      participants: hydrateParticipants(battle.participants),
-    };
-  }, [battle, logoCache]);
-
-  const battleForRender = hydratedBattle || battle;
+  const { battle, source, realtimeState, metrics } = useArenaBattleRealtimeDetails(id);
 
   if (!battle) {
     return (
-      <div className="space-y-6 px-1 pb-10">
-        <section className="mwz-hud-frame p-5 md:p-7">
-          <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Battle</div>
-          <h1 className="mt-2 font-retro text-3xl tracking-tight text-foreground md:text-5xl">This battle isn’t available right now.</h1>
-          <p className="mt-3 max-w-2xl text-sm text-muted-foreground md:text-base">
-            {source === "empty"
-              ? "Battle detail data isn’t available right now."
-              : "We couldn’t load this battle right now."}
+      <ContentContainer className="space-y-5 px-1 pb-10 pt-4">
+        <section className="mwz-hud-frame p-5">
+          <h1 className="font-retro text-2xl text-foreground">Battle unavailable</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {source === "empty" ? "Battle data is not available right now." : "This battle could not be loaded."}
           </p>
           <div className="mt-4">
             <Button asChild size="sm" variant="outline" className="font-retro">
-              <Link to="/arena/battles">Back to battles</Link>
+              <Link to="/warzone/battles">Back to battles</Link>
             </Button>
           </div>
         </section>
-      </div>
+      </ContentContainer>
     );
   }
 
-  const participantTokens = (battleForRender?.participants || [])
-    .filter((participant: any) => !participant.tokenId.startsWith("pending-"))
-    .map((participant: any) => ({
-      tokenId: participant.tokenId,
+  const battleChainId = Number((battle as { chainId?: number }).chainId || 0);
+  const lane = publicBattleLane(battle.state);
+  const tournamentId = String((battle as { tournamentId?: string }).tournamentId || "");
+  const tournamentMatch = String((battle as { source?: string }).source || "") === "tournament" && Boolean(tournamentId);
+  const left = battle.participants[0];
+  const right = battle.participants[1];
+  const leftRoute = getArenaTokenRoute(left?.tokenAddress ?? left?.tokenId ?? left?.campaignAddress ?? null);
+  const rightRoute = getArenaTokenRoute(right?.tokenAddress ?? right?.tokenId ?? right?.campaignAddress ?? null);
+  const legacyLeaderIndex = battleLeaderIndex(battle);
+  const battlePointsLeaderIndex = metrics?.leaderSide === "left" ? 0 : metrics?.leaderSide === "right" ? 1 : null;
+  const cardLeaderIndex = battle.state === "live" && metrics ? battlePointsLeaderIndex : legacyLeaderIndex;
+  const matchType = tournamentMatch
+    ? "Tournament duel"
+    : String((battle as { source?: string }).source || "queue") === "challenge"
+      ? "Challenge duel"
+      : "Queue duel";
+  const winnerToken = String(
+    (battle as { winnerToken?: string; moneyWinnerToken?: string }).winnerToken ||
+      (battle as { moneyWinnerToken?: string }).moneyWinnerToken ||
+      "",
+  );
+  const winnerKey = tokenKey(winnerToken, battleChainId);
+  const winnerLabel = winnerToken
+    ? battle.participants.find((participant) =>
+        [participant.tokenId, participant.tokenAddress, participant.campaignAddress]
+          .some((value) => tokenKey(value, battleChainId) === winnerKey))?.symbol || "Winner declared"
+    : battle.state === "finished" && legacyLeaderIndex === 0
+      ? left?.symbol || left?.tokenName || "Left"
+      : battle.state === "finished" && legacyLeaderIndex === 1
+        ? right?.symbol || right?.tokenName || "Right"
+        : "Pending settlement";
+  const sides = battle.participants
+    .filter((participant) => participant.tokenId && !String(participant.tokenId).startsWith("pending-"))
+    .map((participant) => ({
+      tokenId: String(participant.tokenAddress || participant.tokenId),
       tokenName: participant.tokenName,
       symbol: participant.symbol,
-      route: getParticipantRoute(participant as any),
       score: participant.score,
-      volumeUsd: participant.volumeUsd,
       uniqueTraders: participant.uniqueTraders,
-      marketCapUsd: getParticipantMarketCap(participant as any),
-      audience: getParticipantAudience(participant as any),
-      imageUrl: participant.imageUrl || getParticipantImage(participant as any),
-      isLeading: Boolean((participant as any)?.isLeading),
+      eligible: true,
     }));
-
-  const bridgeEvent = events.find((event) => event.status === "live") ?? events.find((event) => event.status === "scheduled" || event.status === "deploying") ?? null;
-  const sourceLabel = source === "api" ? "Live data" : source === "qa-runtime" ? "Backup data" : "Feed unavailable";
-  const sourceTone = source === "api" ? "success" : source === "qa-runtime" ? "hot" : "default";
+  const metricHealthLabel = !metrics
+    ? "Battle telemetry pending"
+    : metrics.dataHealth.healthy
+      ? "Battle data healthy"
+      : "DATA DELAY";
+  const realtimeLabel = realtimeState === "connected"
+    ? "Realtime linked"
+    : realtimeState === "unavailable"
+      ? "Realtime unavailable"
+      : realtimeState === "disconnected"
+        ? "Realtime reconnecting"
+        : "Realtime connecting";
+  const leftLabel = left?.symbol || left?.tokenName || "Left";
+  const rightLabel = right?.symbol || right?.tokenName || "Right";
+  const settlementV2 = metrics?.settlementMode === "battle_points_v2";
+  const settlementEngine = settlementV2 ? "V2 Battle Points 50/30/20" : "V1 MCAP % change";
+  const finalLeftPoints = metrics?.finalBattlePoints?.left;
+  const finalRightPoints = metrics?.finalBattlePoints?.right;
 
   return (
-    <>
-      {/* Top intro section (Battle progress and results header) - dropped under the buttons
-          with the same full-width treatment as Sponsored on Arena and top sections on other pages */}
-      <div className="mt-14 space-y-4 pl-1 pr-8 pb-10">
-        <section className="mwz-hud-frame p-5 md:p-7">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+    <ContentContainer className="space-y-5 px-1 pb-10 pt-4">
+      <section className="relative overflow-hidden border border-white/10 bg-black/30 p-4 md:p-6">
+        <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(249,115,22,0.09),transparent_38%,rgba(34,211,238,0.07))]" />
+        <div className="relative space-y-5">
+          <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Battle</div>
-              <h1 className="mt-2 font-retro text-3xl tracking-tight text-foreground md:text-5xl">Battle progress and results</h1>
-              <p className="mt-3 max-w-2xl text-sm text-muted-foreground md:text-base">Follow the score, supporters, and final results from one focused battle page.</p>
+              <div className="text-[10px] uppercase tracking-[0.26em] text-accent/80">Battle theater</div>
+              <h1 className="mt-2 font-retro text-3xl text-foreground md:text-4xl">
+                {leftLabel} vs {rightLabel}
+              </h1>
+              <p className="mt-2 max-w-3xl text-sm text-white/62">
+                Live Battle Points combine MCAP performance, holder growth, and manipulation-protected battle-period volume from the authoritative Arena market snapshot.
+              </p>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <TacticalTag label={String((battle as any)?.state ?? "").replace(/_/g, " ")} tone="hot" />
-              <TacticalTag label={battle.featured ? "Featured matchup" : "Battle"} tone={battle.featured ? "hot" : "default"} />
-              <TacticalTag label={sourceLabel} tone={sourceTone} />
-            </div>
-          </div>
-        </section>
-      </div>
-
-      {/* All content below the top intro uses the same constrained width as Launchpad, Command Center,
-          War Room, and other pages. Pulled up tight with -mt-8 for consistent gap. */}
-      <ContentContainer className="-mt-8 space-y-6 px-1 pb-10">
-        <RichBattleCardOrange battle={battleForRender} ctaLabel="View battle" />
-
-        <WarPoolPanel battle={battle} />
-
-        {participantTokens.length ? (
-          <section className="mwz-hud-frame p-5">
-            <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Matchup</div>
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
-              {participantTokens.map((token) => {
-                const content = (
-                  <div className="mwz-hud-frame p-4 transition-colors">
-                    <div className="flex items-start gap-3">
-                      <img src={token.imageUrl} alt={token.tokenName} className="h-14 w-14 shrink-0 border border-accent/30 object-cover" onError={(e) => { (e.currentTarget as HTMLImageElement).src = "/placeholder.svg"; }} />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <div className="font-retro text-sm text-foreground">{token.tokenName}</div>
-                          <div className="font-retro text-xs uppercase tracking-[0.18em] text-muted-foreground">{token.symbol}</div>
-                          {token.isLeading ? <TacticalTag label="In the lead" tone="hot" /> : null}
-                          <TacticalTag label={`Score: ${token.score.toFixed(1)}`} tone="hot" />
-                        </div>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-3">
-                          <div>
-                            <div className="font-retro text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Market cap</div>
-                            <div className="mt-1 font-retro text-sm text-foreground">{formatCompactUsd(token.marketCapUsd)}</div>
-                          </div>
-                          <div>
-                            <div className="font-retro text-[10px] uppercase tracking-[0.18em] text-muted-foreground">24h volume</div>
-                            <div className="mt-1 font-retro text-sm text-foreground">{formatCompactUsd(token.volumeUsd)}</div>
-                          </div>
-                          <div>
-                            <div className="font-retro text-[10px] uppercase tracking-[0.18em] text-muted-foreground">{token.audience.label}</div>
-                            <div className="mt-1 font-retro text-sm text-foreground">{formatCompactCount(token.audience.value)}</div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-
-                return token.route ? (
-                  <Link key={token.tokenId} to={token.route}>
-                    {content}
-                  </Link>
-                ) : (
-                  <div key={token.tokenId}>{content}</div>
-                );
-              })}
-            </div>
-          </section>
-        ) : null}
-
-        <section className="grid gap-4 lg:grid-cols-3">
-          <div className="mwz-hud-frame p-4">
-            <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Match stages</div>
-            <div className="mt-2 text-sm text-muted-foreground">Waiting → Ready → Matched → Live → Finished</div>
-          </div>
-          <div className="mwz-hud-frame p-4">
-            <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Payout protection</div>
-            <div className="mt-2 text-sm text-muted-foreground">Support closes before results are finalized to keep payouts fair.</div>
-          </div>
-          <div className="mwz-hud-frame p-4">
-            <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Related event</div>
-            <div className="mt-2 text-sm text-muted-foreground">
-              {bridgeEvent
-                ? `This battle may be featured in ${bridgeEvent.title}.`
-                : eventSource === "empty"
-                  ? "Event bridge data isn’t available right now."
-                  : "Event-linked promotion will appear here when a connected Arena event is available."}
+            <div className="flex flex-wrap justify-end gap-2">
+              <TacticalTag label={publicBattleLabel(lane, battle.state)} tone={lane === "live" ? "hot" : battle.state === "matched" ? "hot" : "default"} />
+              <TacticalTag label={battleChainLabel(battleChainId)} tone="default" />
+              <TacticalTag label={matchType} tone={tournamentMatch ? "sponsored" : "default"} />
+              <TacticalTag label={source === "api" ? "REST synced" : "Awaiting REST"} tone={source === "api" ? "success" : "default"} />
+              <TacticalTag label={metricHealthLabel} tone={metrics?.dataHealth.healthy ? "success" : "default"} />
+              <TacticalTag label={realtimeLabel} tone={realtimeState === "connected" ? "success" : "default"} />
             </div>
           </div>
-        </section>
-      </ContentContainer>
-    </>
+
+          <div className="relative">
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px_minmax(0,1fr)]">
+              <BattleCombatantCard
+                battle={battle}
+                participant={left}
+                metricsSide={metrics?.sides.left}
+                sideLabel="Left flank"
+                href={leftRoute}
+                isLeader={cardLeaderIndex === 0}
+                accent="ember"
+              />
+
+              <BattleScoreHud
+                battle={battle}
+                metrics={metrics}
+                leftLabel={leftLabel}
+                rightLabel={rightLabel}
+                realtimeState={realtimeState}
+              />
+
+              <BattleCombatantCard
+                battle={battle}
+                participant={right}
+                metricsSide={metrics?.sides.right}
+                sideLabel="Right flank"
+                href={rightRoute}
+                isLeader={cardLeaderIndex === 1}
+                accent="cyan"
+              />
+            </div>
+            <BattleCombatEffects metrics={battle.state === "live" ? metrics : null} />
+          </div>
+        </div>
+      </section>
+
+      <WarPoolPanel
+        poolSubjectId={tournamentMatch ? tournamentId : battle.id}
+        chainId={battleChainId}
+        nativeSymbol={(battle as { nativeSymbol?: string }).nativeSymbol}
+        sides={sides}
+        kind={tournamentMatch ? "tournament" : "battle"}
+        redirectTo={
+          tournamentMatch
+            ? { href: `/warzone/tournaments/${encodeURIComponent(tournamentId)}`, label: "Support this coin in the tournament" }
+            : null
+        }
+      />
+
+      <section className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+        <div className="mwz-hud-frame space-y-3 p-4 text-sm text-muted-foreground">
+          <div className="text-[10px] uppercase tracking-[0.24em] text-white/45">Battle terms</div>
+          <p>
+            {battle.state === "matched"
+              ? isSolanaChainId(battleChainId)
+                ? "Settlement is agreed. The first owner pays their SOL stake while opening the pool. The rival then deposits the same stake. The fight clock starts only when both have paid."
+                : "Settlement is agreed. Open the pool, then both owners deposit the same stake. The fight clock starts only when both have paid. If the other owner never deposits, refund after the pay window."
+              : "Agree stake and fight length first. The clock starts only once the fight is fully funded and marked live."}
+          </p>
+          <p>
+            Support is a donation into the battle treasury for the memecoins in the fight, not betting and not charity. Supporters are not paid. Winner-takes-all: 85% winning campaign owner, 5% protocol, 10% Major War League.
+          </p>
+          <div className="grid gap-2 border-t border-white/10 pt-3 text-xs text-white/58 sm:grid-cols-2">
+            <div>
+              <span className="text-white/38">Stake:</span>{" "}
+              {Number((battle as { stakeNative?: number }).stakeNative || 0).toFixed(2)} {(battle as { nativeSymbol?: string }).nativeSymbol || "BNB"}
+            </div>
+            <div>
+              <span className="text-white/38">Fight length:</span>{" "}
+              {battleDurationLabel((battle as { durationHours?: number }).durationHours)}
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 pt-2">
+            {battle.state === "matched" ? (
+              <ArenaStakeButton
+                battleId={battle.id}
+                chainId={battleChainId}
+                battleState={battle.state}
+              />
+            ) : null}
+            {battle.state === "finished" && !tournamentMatch ? (
+              <ArenaWarPoolClaimButton battleId={battle.id} chainId={battleChainId} />
+            ) : null}
+          </div>
+        </div>
+
+        <div className="mwz-hud-frame space-y-4 p-4">
+          <div className="text-[10px] uppercase tracking-[0.24em] text-white/45">Result log</div>
+          <div className="space-y-3 text-sm text-white/78">
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <span className="text-white/48">Settlement winner</span>
+              <span className="font-medium text-white">{winnerLabel}</span>
+            </div>
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <span className="text-white/48">Settlement engine</span>
+              <span className="font-medium text-white">{settlementEngine}</span>
+            </div>
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <span className="text-white/48">Battle Points</span>
+              <span className="font-medium text-white">
+                {settlementV2 && finalLeftPoints !== null && finalLeftPoints !== undefined && finalRightPoints !== null && finalRightPoints !== undefined
+                  ? `${Number(finalLeftPoints).toFixed(1)} — ${Number(finalRightPoints).toFixed(1)}`
+                  : "Live telemetry V2"}
+              </span>
+            </div>
+            {metrics?.tieBreakUsed ? (
+              <div className="flex items-center justify-between border-b border-white/10 pb-2">
+                <span className="text-fuchsia-100/65">TIE-BREAK</span>
+                <span className="font-medium text-fuchsia-100">{tieBreakLabel(metrics.moneyTieBreak)}</span>
+              </div>
+            ) : null}
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <span className="text-white/48">Started</span>
+              <span className="font-medium text-white">{formatMoment(battle.startedAt)}</span>
+            </div>
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <span className="text-white/48">Ends</span>
+              <span className="font-medium text-white">{formatMoment(battle.endsAt)}</span>
+            </div>
+            <div className="flex items-center justify-between pb-1">
+              <span className="text-white/48">Combined current MCAP</span>
+              <span className="font-medium text-white">{formatCompactUsd((left?.marketCapUsd || 0) + (right?.marketCapUsd || 0))}</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <Button asChild size="sm" variant="outline" className="font-retro">
+        <Link to="/warzone/battles">Back to battles</Link>
+      </Button>
+    </ContentContainer>
   );
 };
 

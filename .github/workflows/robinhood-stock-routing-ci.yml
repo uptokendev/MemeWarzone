@@ -1,0 +1,103 @@
+name: Robinhood Stock ETH routing proof
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "contracts/integrations/RobinhoodV3MultiHopSwapAdapter.sol"
+      - "contracts/integrations/RobinhoodV3NativeSwapAdapter.sol"
+      - "contracts/mocks/MockUniswapV3*.sol"
+      - "contracts/mocks/MockWETH9.sol"
+      - "contracts/mocks/MockERC20.sol"
+      - "test/RobinhoodV3MultiHopSwapAdapter.spec.ts"
+      - "test/RobinhoodV3MultiHopRouteIdentity.spec.ts"
+      - "test/RobinhoodV3NativeSwapAdapter.spec.ts"
+      - "frontend/src/lib/robinhoodV3Trade.ts"
+      - "frontend/src/lib/marketContinuityApi.ts"
+      - "frontend/src/hooks/useRobinhoodBeatTheMarket.ts"
+      - "frontend/src/components/postgrad/RobinhoodBeatTheMarketCard.tsx"
+      - "frontend/src/components/postgrad/RobinhoodWarRoomTradePanel.tsx"
+      - "frontend/package.json"
+      - "frontend/package-lock.json"
+      - "config/robinhood-staging.env.example"
+      - "config/robinhood-production.env.example"
+      - "hardhat.config.ts"
+      - ".github/workflows/robinhood-stock-routing-ci.yml"
+  push:
+    branches:
+      - "feat/robinhood-*"
+      - "build/cross-chain-stabilization-rh-base"
+    paths:
+      - "contracts/integrations/RobinhoodV3MultiHopSwapAdapter.sol"
+      - "contracts/integrations/RobinhoodV3NativeSwapAdapter.sol"
+      - "contracts/mocks/MockUniswapV3*.sol"
+      - "contracts/mocks/MockWETH9.sol"
+      - "contracts/mocks/MockERC20.sol"
+      - "test/RobinhoodV3MultiHopSwapAdapter.spec.ts"
+      - "test/RobinhoodV3MultiHopRouteIdentity.spec.ts"
+      - "test/RobinhoodV3NativeSwapAdapter.spec.ts"
+      - "frontend/src/lib/robinhoodV3Trade.ts"
+      - "frontend/src/lib/marketContinuityApi.ts"
+      - "frontend/src/hooks/useRobinhoodBeatTheMarket.ts"
+      - "frontend/src/components/postgrad/RobinhoodBeatTheMarketCard.tsx"
+      - "frontend/src/components/postgrad/RobinhoodWarRoomTradePanel.tsx"
+      - "frontend/package.json"
+      - "frontend/package-lock.json"
+      - "config/robinhood-staging.env.example"
+      - "config/robinhood-production.env.example"
+      - "hardhat.config.ts"
+      - ".github/workflows/robinhood-stock-routing-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: robinhood-stock-routing-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  stock-eth-routing:
+    name: Atomic Stock two-hop and War Trade Room compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+
+      - name: Install locked contract dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Compile contracts
+        run: npx hardhat compile
+
+      - name: Prove Stock two-hop ETH routing, locked route identity, and direct-native compatibility
+        run: >-
+          npx hardhat test
+          test/RobinhoodV3MultiHopSwapAdapter.spec.ts
+          test/RobinhoodV3MultiHopRouteIdentity.spec.ts
+          test/RobinhoodV3NativeSwapAdapter.spec.ts
+
+      - name: Install frontend dependencies
+        run: npm install --prefix frontend --package-lock=false --no-audit --no-fund
+
+      - name: Build Stock Battlefield War Trade Room without enabling production
+        env:
+          VITE_RUNTIME_ENVIRONMENT: "local"
+          VITE_DEFAULT_CHAIN_ID: "46630"
+          VITE_ALLOWED_CHAIN_IDS: "46630"
+          VITE_PUBLIC_RPC_46630: "https://rpc.testnet.chain.robinhood.com"
+          VITE_FRONTEND_API_BASE: "http://127.0.0.1:3001"
+          VITE_TOKEN_API_BASE: "http://127.0.0.1:3002"
+          VITE_REALTIME_API_BASE: "http://127.0.0.1:3002"
+          VITE_ROBINHOOD_STOCK_ETH_ROUTING: "true"
+          VITE_ROBINHOOD_STOCK_MARKET_UI: "true"
+          VITE_ROBINHOOD_V3_MULTI_HOP_SWAP_ADAPTER_ADDRESS_46630: "0x1111111111111111111111111111111111111111"
+        run: npm --prefix frontend run build

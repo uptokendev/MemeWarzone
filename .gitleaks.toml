@@ -1,0 +1,31 @@
+title = "MemeWarzone gitleaks configuration"
+
+[extend]
+useDefault = true
+
+# Gitleaks 8.24.3's generic-api-key rule can span adjacent empty assignments in
+# this historical env-example patch and extract the next variable name as the
+# "secret". The referenced commit was inspected: the private-key assignment is
+# empty. Scope the exception to this one rule + one commit + one file only.
+[[rules]]
+id = "generic-api-key"
+
+  [[rules.allowlists]]
+  description = "Known false positive: empty BNB 6C test buyer key placeholder"
+  condition = "AND"
+  commits = [ "da4ea528bc60ffdfc7f9e8824ec564c2183dab00" ]
+  paths = [ '''^config/bnb-testnet\.env\.example$''' ]
+
+  # These historical Arena test commits contain deterministic public token
+  # address fixtures. They are not credentials, but the default generic-api-key
+  # heuristic classifies the high-entropy token_address values as secrets.
+  # Keep the exception scoped to this rule, these exact commits, and this test
+  # file so real generic API keys remain fully covered everywhere else.
+  [[rules.allowlists]]
+  description = "Known false positive: Arena token-address test fixtures"
+  condition = "AND"
+  commits = [
+    "5c6fc05a277f811a8ee8f4de7b52c2ee94d2537e",
+    "3dd137936d8d12f0a7275fd2500a90c6573fc2eb",
+  ]
+  paths = [ '''^frontend/api/lib/arenaTokenProfile\.test\.mjs$''' ]

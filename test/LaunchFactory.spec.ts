@@ -67,6 +67,8 @@ async function signScheduledCreateRoute(
   deadline: bigint,
 ) {
   const chainId = (await ethers.provider.getNetwork()).chainId;
+  const factoryGeneration = await factory.FACTORY_GENERATION();
+  const campaignGeneration = await factory.CAMPAIGN_GENERATION();
   const digest = ethers.keccak256(
     ethers.AbiCoder.defaultAbiCoder().encode(
       ["string", "uint256", "address", "address", "bytes32", "uint64", "bytes32", "bytes32", "bytes32", "uint64", "uint256", "uint32", "uint32", "uint8", "uint8", "uint64"],
@@ -82,8 +84,8 @@ async function signScheduledCreateRoute(
         req.metadataHash,
         req.reservationVersion,
         req.authorizationNonce,
-        3,
-        2,
+        factoryGeneration,
+        campaignGeneration,
         tradeProfile,
         finalizeProfile,
         deadline,
@@ -201,6 +203,7 @@ function validInitParams(addresses: {
     requireAuthorizedTrading: false,
     tradeRouteProfile: 1,
     finalizeRouteProfile: 1,
+    strictFeeRouting: true,
   };
 }
 
@@ -257,8 +260,8 @@ describe("LaunchFactory", function () {
     expect(await factory.protocolFeeBps()).to.eq(200n);
     expect(await factory.requireAuthorizedTrading()).to.eq(true);
     expect(await factory.requireRouteAuthorization()).to.eq(true);
-    expect(await factory.FACTORY_GENERATION()).to.eq(3n);
-    expect(await factory.CAMPAIGN_GENERATION()).to.eq(2n);
+    expect(await factory.FACTORY_GENERATION()).to.eq(4n);
+    expect(await factory.CAMPAIGN_GENERATION()).to.eq(3n);
     expect(await factory.live()).to.eq(false);
   });
 

@@ -70,6 +70,18 @@
     Cross-Origin-Resource-Policy = "cross-origin"
     Cache-Control = "public, max-age=60, s-maxage=120"
 
+[[headers]]
+  for = "/api/battle-share-card"
+  [headers.values]
+    Cross-Origin-Resource-Policy = "cross-origin"
+    Cache-Control = "public, max-age=60, s-maxage=120"
+
+[[headers]]
+  for = "/api/battle-og/*"
+  [headers.values]
+    Cross-Origin-Resource-Policy = "cross-origin"
+    Cache-Control = "public, max-age=60, s-maxage=120"
+
 # Proxy /api/* to the Coolify frontend API. Netlify stays static-only.
 [[redirects]]
   from = "/api/*"
@@ -82,6 +94,10 @@
 [[edge_functions]]
   function = "prepare-og"
   path = "/prepare/*"
+
+[[edge_functions]]
+  function = "battle-og"
+  path = "/warzone/battles/*"
 
 # Never SPA-fallback hashed Vite assets. After a redeploy, old tabs request
 # deleted chunk names; returning index.html as text/html breaks dynamic import

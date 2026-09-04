@@ -200,11 +200,14 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
   const COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget111111111111111111111111111111";
 
   function assertNoSimCrash(label, err, logs) {
-    const source = `${err == null ? "" : JSON.stringify(err)}\n${logs.join("\n")}`;
+    const source = `${err == null ? "" : JSON.stringify(err)}\
+${logs.join("\
+")}`;
     assert.equal(
       /Access violation|stack frame|Program failed to complete/i.test(source),
       false,
-      `${label} hit BPF stack overflow:\n${source}`,
+      `${label} hit BPF stack overflow:\
+${source}`,
     );
     return source;
   }
@@ -296,8 +299,10 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
         `${label} simulation failed`,
       );
     } catch (error) {
-      const extra = error?.source || (Array.isArray(error?.logs) ? error.logs.join("\n") : "");
-      throw new Error(`${error instanceof Error ? error.message : String(error)}\n${extra}`);
+      const extra = error?.source || (Array.isArray(error?.logs) ? error.logs.join("\
+") : "");
+      throw new Error(`${error instanceof Error ? error.message : String(error)}\
+${extra}`);
     }
     console.log(
       `[sbf-gate] ${label} unitsConsumed=${simulated.unitsConsumed ?? "n/a"} bytes=${compiled.stats.serializedBytes}`,
@@ -568,6 +573,11 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
       "fee-escrow",
       campaignAccounts.campaign.toBuffer(),
     );
+    campaignAccounts.creatorFeeVault = derivePda(
+      program.programId,
+      "creator-fee-vault",
+      campaignAccounts.campaign.toBuffer(),
+    );
 
     const generation = await program.account.generationConfig.fetch(generationConfig);
     const profile = await program.account.creatorProfile.fetch(creator.creatorProfile);
@@ -691,6 +701,7 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
         tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
         feeEscrow: campaignAccounts.feeEscrow,
+        creatorFeeVault: campaignAccounts.creatorFeeVault,
       });
     const buyIx = await builder.instruction();
     const sent = await sendProductionTrade({
@@ -759,6 +770,7 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
         tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
         feeEscrow: campaignAccounts.feeEscrow,
+        creatorFeeVault: campaignAccounts.creatorFeeVault,
       });
     const sellIx = await builder.instruction();
     const sent = await sendProductionTrade({
@@ -795,11 +807,13 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
       const token = await getAccount(connection, ata, "confirmed").catch(() => null);
       const vault = await connection.getBalance(campaignAccounts.solVault, "confirmed");
       const escrow = await connection.getBalance(campaignAccounts.feeEscrow, "confirmed");
+      const creatorFeeVault = await connection.getBalance(campaignAccounts.creatorFeeVault, "confirmed");
       return {
         campaign,
         tokenAmount: token ? BigInt(token.amount.toString()) : 0n,
         vault,
         escrow,
+        creatorFeeVault,
       };
     }
 
@@ -807,7 +821,8 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
       assert.equal(
         /Access violation|stack frame|Program failed to complete/i.test(text),
         false,
-        `${label} crashed the BPF stack:\n${text}`,
+        `${label} crashed the BPF stack:\
+${text}`,
       );
     }
 
@@ -820,7 +835,8 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
       }
       assert.notEqual(text, "", `${label}: expected a program failure`);
       assertNoStackCrash(label, text);
-      assert.ok(expected.test(text), `${label} failed for the wrong reason:\n${text}`);
+      assert.ok(expected.test(text), `${label} failed for the wrong reason:\
+${text}`);
     }
 
     async function rewardVaultSnapshot() {
@@ -860,7 +876,9 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
       const gross =
         BigInt(beforeSnap.campaign.netRaisedLamports.toString()) -
         BigInt(afterSnap.campaign.netRaisedLamports.toString());
-      const fee = BigInt(afterSnap.escrow) - BigInt(beforeSnap.escrow);
+      const escrowFee = BigInt(afterSnap.escrow) - BigInt(beforeSnap.escrow);
+      const creatorFee = BigInt(afterSnap.creatorFeeVault) - BigInt(beforeSnap.creatorFeeVault);
+      const fee = escrowFee + creatorFee;
       const net = gross - fee;
       assert.ok(gross > 0n, `${label}: gross must be > 0`);
       assert.equal(
@@ -871,7 +889,7 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
       assert.equal(
         fee,
         (gross * BigInt(SELL_FEE_BPS)) / 10000n,
-        `${label}: feeEscrowAfter - feeEscrowBefore must equal fee`,
+        `${label}: FeeEscrow + CreatorFeeVault deltas must equal fee`,
       );
       assert.equal(net + fee, gross, `${label}: net + fee must equal gross`);
       assert.equal(
@@ -906,6 +924,16 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
       })
       .rpc({ commitment: "confirmed", preflightCommitment: "confirmed" });
 
+    await program.methods
+      .initializeCreatorFeeVault()
+      .accountsStrict({
+        payer: admin,
+        campaign: campaignAccounts.campaign,
+        creatorFeeVault: campaignAccounts.creatorFeeVault,
+        systemProgram: SystemProgram.programId,
+      })
+      .rpc({ commitment: "confirmed", preflightCommitment: "confirmed" });
+
     const rewardsBefore = {};
     for (const [name, pubkey] of Object.entries(rewardVaultKeys())) {
       rewardsBefore[name] = BigInt(await connection.getBalance(pubkey, "confirmed"));
@@ -921,7 +949,14 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
     const spent1 = BigInt(after.vault) - BigInt(before.vault);
     assert.equal(spent1, net1, "buy net must stay in the campaign SOL vault");
     const expectedFee = (net1 * BigInt(BUY_FEE_BPS)) / 10000n;
-    assert.equal(BigInt(after.escrow) - BigInt(before.escrow), expectedFee, "buy fee must land in FeeEscrow");
+    const escrowFee1 = BigInt(after.escrow) - BigInt(before.escrow);
+    const creatorFee1 = BigInt(after.creatorFeeVault) - BigInt(before.creatorFeeVault);
+    assert.equal(
+      escrowFee1 + creatorFee1,
+      expectedFee,
+      "buy fee must split between FeeEscrow and CreatorFeeVault",
+    );
+    assert.ok(creatorFee1 > 0n, "buy creator fee must accrue in CreatorFeeVault");
     let routed = 0n;
     for (const [name, pubkey] of Object.entries(rewardVaultKeys())) {
       const nowBal = BigInt(await connection.getBalance(pubkey, "confirmed"));
@@ -1437,7 +1472,9 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
     assert.ok(badSim.err, "mismatched native_target × SOL/USD must fail");
     assert.ok(
       badSim.logs.some((line) => /InvalidGraduationTarget|custom program error/i.test(line)),
-      `expected USD threshold rejection, got:\n${badSim.logs.join("\n")}`,
+      `expected USD threshold rejection, got:\
+${badSim.logs.join("\
+")}`,
     );
 
     const beginOnly = new Transaction().add(
@@ -1453,7 +1490,9 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
     assert.ok(atomic.err, "begin_graduation must refuse to run without atomic Meteora+confirm");
     assert.ok(
       atomic.logs.some((line) => /BeginGraduation|GraduationAtomicity|custom program error/i.test(line)),
-      `expected our graduation handler, got:\n${atomic.logs.join("\n")}`,
+      `expected our graduation handler, got:\
+${atomic.logs.join("\
+")}`,
     );
     // A packed begin+Meteora+confirm tx is >1232 bytes locally without ALT.
     // Gate K uses the production V0+ALT envelope against the pinned DAMM v2 .so.
@@ -1727,7 +1766,9 @@ describe("MemeWarzone Solana V4 local-validator bonding lifecycle", function () 
     const simulation = await v0Helpers.simulateLaunchpadV0Transaction(connection, versioned);
     if (simulation.value.err) {
       throw new Error(
-        `Gate K graduation simulation failed: ${JSON.stringify(simulation.value.err)}\n${(simulation.value.logs || []).join("\n")}`,
+        `Gate K graduation simulation failed: ${JSON.stringify(simulation.value.err)}\
+${(simulation.value.logs || []).join("\
+")}`,
       );
     }
     const signature = await connection.sendRawTransaction(serialized, {

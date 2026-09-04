@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { authorizeBatch, createAuthorizedBatch, latestTs } from "./helpers/settlementAuth";
 
 function hexToBigInt(h: string) {
   return BigInt(h);
@@ -59,7 +60,7 @@ describe("RewardDistributor", function () {
     const batchId = ethers.id("airdrop-week-1");
     const root = leafFor(await user.getAddress(), amount);
 
-    await distributor.connect(owner).createBatch(batchId, root, 0, { value: amount });
+    await createAuthorizedBatch(distributor, owner, batchId, root, 0, amount);
 
     await expect(() => distributor.connect(user).claim(batchId, amount, [])).to.changeEtherBalances(
       [distributor, user],
@@ -83,6 +84,7 @@ describe("RewardDistributor", function () {
       .to.emit(distributor, "BatchOperatorUpdated")
       .withArgs(ethers.ZeroAddress, await operator.getAddress());
 
+    await authorizeBatch(distributor, owner, batchId, amount);
     await expect(distributor.connect(operator).createBatch(batchId, root, 0, { value: amount }))
       .to.emit(distributor, "BatchCreated")
       .withArgs(batchId, root, amount, 0);
@@ -140,8 +142,12 @@ describe("RewardDistributor", function () {
       distributor,
       "AmountZero"
     );
+    await expect(distributor.connect(owner).createBatch(batchId, root, 0, { value: amount })).to.be.revertedWithCustomError(
+      distributor,
+      "BatchNotAuthorized"
+    );
 
-    await distributor.connect(owner).createBatch(batchId, root, 0, { value: amount });
+    await createAuthorizedBatch(distributor, owner, batchId, root, 0, amount);
     await expect(distributor.connect(owner).createBatch(batchId, root, 0, { value: amount })).to.be.revertedWithCustomError(
       distributor,
       "BatchExists"
@@ -154,7 +160,7 @@ describe("RewardDistributor", function () {
     const batchId = ethers.id("airdrop-week-2");
     const root = leafFor(await user.getAddress(), amount);
 
-    await distributor.connect(owner).createBatch(batchId, root, 0, { value: amount });
+    await createAuthorizedBatch(distributor, owner, batchId, root, 0, amount);
 
     await expect(distributor.connect(other).claim(batchId, amount, [])).to.be.revertedWithCustomError(
       distributor,
@@ -168,7 +174,7 @@ describe("RewardDistributor", function () {
     const batchId = ethers.id("global-pause-airdrop");
     const root = leafFor(await user.getAddress(), amount);
 
-    await distributor.connect(owner).createBatch(batchId, root, 0, { value: amount });
+    await createAuthorizedBatch(distributor, owner, batchId, root, 0, amount);
     await distributor.connect(owner).pause();
 
     await expect(distributor.connect(user).claim(batchId, amount, [])).to.be.revertedWithCustomError(
@@ -189,7 +195,7 @@ describe("RewardDistributor", function () {
     const batchId = ethers.id("airdrop-week-3");
     const root = leafFor(await user.getAddress(), amount);
 
-    await distributor.connect(owner).createBatch(batchId, root, 0, { value: amount });
+    await createAuthorizedBatch(distributor, owner, batchId, root, 0, amount);
     await expect(distributor.connect(owner).setBatchPaused(batchId, true))
       .to.emit(distributor, "BatchPauseUpdated")
       .withArgs(batchId, true);
@@ -212,7 +218,7 @@ describe("RewardDistributor", function () {
     const root = leafFor(await user.getAddress(), amount);
     const now = (await ethers.provider.getBlock("latest"))!.timestamp;
 
-    await distributor.connect(owner).createBatch(batchId, root, now + 30, { value: amount });
+    await createAuthorizedBatch(distributor, owner, batchId, root, now + 30, amount);
     await increaseTime(31);
 
     await expect(distributor.connect(user).claim(batchId, amount, [])).to.be.revertedWithCustomError(
@@ -232,7 +238,7 @@ describe("RewardDistributor", function () {
       "BatchMissing"
     );
 
-    await distributor.connect(owner).createBatch(batchId, root, 0, { value: amount });
+    await createAuthorizedBatch(distributor, owner, batchId, root, 0, amount);
     await expect(distributor.connect(user).claim(batchId, 0n, [])).to.be.revertedWithCustomError(
       distributor,
       "AmountZero"
@@ -249,7 +255,7 @@ describe("RewardDistributor", function () {
     const { root, proof: proofUser } = buildMerkleRootAndProof([leafUser, leafOther], 0);
     const { proof: proofOther } = buildMerkleRootAndProof([leafUser, leafOther], 1);
 
-    await distributor.connect(owner).createBatch(batchId, root, 0, { value: ethers.parseEther("0.15") });
+    await createAuthorizedBatch(distributor, owner, batchId, root, 0, ethers.parseEther("0.15"));
     await distributor.connect(user).claim(batchId, amountUser, proofUser);
 
     await expect(distributor.connect(other).claim(batchId, amountOther, proofOther)).to.be.revertedWithCustomError(
@@ -267,7 +273,7 @@ describe("RewardDistributor", function () {
     const recoveryAddress = await recovery.getAddress();
     const now = (await ethers.provider.getBlock("latest"))!.timestamp;
 
-    await distributor.connect(owner).createBatch(batchId, root, now + 60, { value: amount });
+    await createAuthorizedBatch(distributor, owner, batchId, root, now + 60, amount);
 
     await expect(distributor.connect(owner).recoverUnclaimed(batchId, recoveryAddress)).to.be.revertedWithCustomError(
       distributor,
@@ -294,7 +300,7 @@ describe("RewardDistributor", function () {
     const root = leafFor(await user.getAddress(), amount);
     const now = (await ethers.provider.getBlock("latest"))!.timestamp;
 
-    await distributor.connect(owner).createBatch(batchId, root, now + 10, { value: amount });
+    await createAuthorizedBatch(distributor, owner, batchId, root, now + 10, amount);
     await increaseTime(11);
 
     await expect(distributor.connect(owner).recoverUnclaimed(batchId, await rejectingReceiver.getAddress())).to.be.revertedWithCustomError(
@@ -318,19 +324,68 @@ describe("RewardDistributor", function () {
       "BatchMissing"
     );
 
-    await distributor.connect(owner).createBatch(ethers.id("open-ended"), root, 0, { value: amount });
+    await createAuthorizedBatch(distributor, owner, ethers.id("open-ended"), root, 0, amount);
     await expect(distributor.connect(owner).recoverUnclaimed(ethers.id("open-ended"), recoveryAddress)).to.be.revertedWithCustomError(
       distributor,
       "BatchStillOpen"
     );
 
-    await distributor.connect(owner).createBatch(batchId, root, now + 20, { value: amount });
+    await createAuthorizedBatch(distributor, owner, batchId, root, now + 20, amount);
     await distributor.connect(user).claim(batchId, amount, []);
     await increaseTime(21);
 
     await expect(distributor.connect(owner).recoverUnclaimed(batchId, recoveryAddress)).to.be.revertedWithCustomError(
       distributor,
       "AmountZero"
+    );
+  });
+
+  it("requires Safe-authorized batches before the operator can publish a settlement", async () => {
+    const { distributor, owner, operator, user } = await deployFixture();
+    const batchId = ethers.id("auth-required");
+    const amount = ethers.parseEther("0.4");
+    const root = leafFor(await user.getAddress(), amount);
+    const now = await latestTs();
+
+    await distributor.connect(owner).setBatchOperator(await operator.getAddress());
+    await expect(distributor.connect(operator).createBatch(batchId, root, 0, { value: amount })).to.be.revertedWithCustomError(
+      distributor,
+      "BatchNotAuthorized"
+    );
+    await expect(distributor.connect(operator).authorizeBatch(batchId, amount, now, now + 3600)).to.be.revertedWithCustomError(
+      distributor,
+      "OwnableUnauthorizedAccount"
+    );
+
+    await distributor.connect(owner).authorizeBatch(batchId, amount, now + 10_000, now + 20_000);
+    await expect(distributor.connect(operator).createBatch(batchId, root, 0, { value: amount })).to.be.revertedWithCustomError(
+      distributor,
+      "BatchTooEarly"
+    );
+
+    await distributor.connect(owner).authorizeBatch(batchId, amount, now - 20, now - 1);
+    await expect(distributor.connect(operator).createBatch(batchId, root, 0, { value: amount })).to.be.revertedWithCustomError(
+      distributor,
+      "BatchAuthExpired"
+    );
+
+    await distributor.connect(owner).authorizeBatch(batchId, amount, now, now + 3600);
+    await distributor.connect(owner).revokeBatch(batchId);
+    await expect(distributor.connect(operator).createBatch(batchId, root, 0, { value: amount })).to.be.revertedWithCustomError(
+      distributor,
+      "BatchNotAuthorized"
+    );
+
+    await authorizeBatch(distributor, owner, batchId, ethers.parseEther("0.1"));
+    await expect(
+      distributor.connect(operator).createBatch(batchId, root, 0, { value: amount })
+    ).to.be.revertedWithCustomError(distributor, "BatchAboveAuthorizedMax");
+
+    await authorizeBatch(distributor, owner, batchId, amount);
+    await distributor.connect(operator).createBatch(batchId, root, 0, { value: amount });
+    await expect(distributor.connect(owner).authorizeBatch(batchId, amount, now, now + 3600)).to.be.revertedWithCustomError(
+      distributor,
+      "BatchAuthConsumed"
     );
   });
 });

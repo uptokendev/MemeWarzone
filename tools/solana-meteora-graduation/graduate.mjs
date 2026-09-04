@@ -41,6 +41,7 @@ const DEFAULT_OPERATOR = path.join(
   ".config/memewarzone/solana-devnet/deployer.json",
 );
 const EXPECTED_PROGRAM_ID = "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt";
+const REWARDS_TREASURY_PROGRAM_ID = new PublicKey("2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX");
 const METEORA_CP_AMM_PROGRAM_ID = new PublicKey("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG");
 const INSTRUCTIONS_SYSVAR = new PublicKey("Sysvar1nstructions1111111111111111111111111");
 const MAX_TRANSACTION_BYTES = 1232;
@@ -130,9 +131,25 @@ function fixed(value, decimals) {
 }
 
 function solPerWholeTokenFromSpotNano(spotNano) {
-  // spotNano is nano-lamports / whole token. 1 SOL = 1e9 lamports,
-  // therefore SOL/token = spotNano / 1e18.
   return fixed(spotNano, 18);
+}
+
+function deriveRewardVault(seed) {
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from(seed)],
+    REWARDS_TREASURY_PROGRAM_ID,
+  )[0];
+}
+
+function rewardVaultAccounts() {
+  return {
+    leagueVault: deriveRewardVault("league_vault"),
+    airdropVault: deriveRewardVault("airdrop_vault"),
+    monthlyLeagueVault: deriveRewardVault("monthly_league_vault"),
+    recruiterVault: deriveRewardVault("recruiter_vault"),
+    squadVault: deriveRewardVault("squad_vault"),
+    protocolVault: deriveRewardVault("protocol_vault"),
+  };
 }
 
 async function fetchCampaign(connection, campaign) {
@@ -148,7 +165,7 @@ async function fetchGraduationAuthorization({ campaign, authority, positionNftMi
   const url = String(process.env.SOLANA_GRADUATION_AUTH_URL || "").trim();
   if (!url) {
     fail(
-      "SOLANA_GRADUATION_AUTH_URL is required, e.g. https://<railway>/api/solana/graduation-authorize",
+      "SOLANA_GRADUATION_AUTH_URL is required, e.g. https://<frontend-api>/api/solana/graduation-authorize",
     );
   }
   const response = await fetch(url, {
@@ -209,12 +226,34 @@ async function sendLegacy(connection, payer, ixs) {
   if (confirmation.value.err) fail(`lookup table update failed: ${JSON.stringify(confirmation.value.err)}`);
 }
 
+function resolveGraduationAltAddress() {
+  const configured = String(process.env.SOLANA_GRADUATION_ALT_ADDRESS || "").trim();
+  if (configured) return configured.split(",")[0].trim();
+
+  const fixturePath = String(process.env.SOLANA_GRADUATION_FIXTURE_OUTPUT || "").trim();
+  if (!fixturePath || !fs.existsSync(fixturePath)) return "";
+  let fixture;
+  try {
+    fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
+  } catch (error) {
+    fail(`failed to read graduation fixture ALT from ${fixturePath}: ${error instanceof Error ? error.message : error}`);
+  }
+  const temporaryAlt = String(fixture?.temporaryLaunchpadAlt || "").trim();
+  if (!temporaryAlt) return "";
+  console.log("graduation ALT source=auto-fixture", temporaryAlt);
+  return temporaryAlt;
+}
+
 async function loadLookupTables(connection, operator, instructions) {
-  const raw = String(process.env.SOLANA_GRADUATION_ALT_ADDRESS || "").trim();
+  const raw = resolveGraduationAltAddress();
   if (!raw) return [];
-  const address = asPk(raw.split(",")[0], "SOLANA_GRADUATION_ALT_ADDRESS");
+  const address = asPk(raw, "SOLANA_GRADUATION_ALT_ADDRESS");
   let result = await connection.getAddressLookupTable(address);
   if (!result.value) fail(`address lookup table not found: ${address.toBase58()}`);
+  const authority = result.value.state.authority;
+  if (!authority || !authority.equals(operator.publicKey)) {
+    fail(`graduation ALT authority mismatch: expected=${operator.publicKey.toBase58()} actual=${authority?.toBase58?.() || "none"}`);
+  }
   const present = new Set(result.value.state.addresses.map((item) => item.toBase58()));
   const missing = collectInstructionKeys(instructions).filter((key) => !present.has(key.toBase58()));
   for (let i = 0; i < missing.length; i += 20) {
@@ -230,9 +269,18 @@ async function loadLookupTables(connection, operator, instructions) {
     ]);
   }
   if (missing.length) {
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-    result = await connection.getAddressLookupTable(address);
-    if (!result.value) fail(`address lookup table disappeared: ${address.toBase58()}`);
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      result = await connection.getAddressLookupTable(address);
+      if (!result.value) fail(`address lookup table disappeared: ${address.toBase58()}`);
+      const currentSlot = await connection.getSlot("confirmed");
+      const lastExtendedSlot = Number(result.value.state.lastExtendedSlot || 0);
+      const updated = new Set(result.value.state.addresses.map((item) => item.toBase58()));
+      if (currentSlot > lastExtendedSlot && missing.every((key) => updated.has(key.toBase58()))) break;
+      if (attempt === 19) {
+        fail(`graduation ALT ${address.toBase58()} did not become active with all required accounts`);
+      }
+    }
   }
   return [result.value];
 }
@@ -268,8 +316,26 @@ async function main() {
   console.log("maxLiquidityTokens", quote.maxTokens.toString());
   console.log("maxLiquidityLamports", quote.maxLamports.toString());
 
-  // Create the two ordinary ATAs before the graduation transaction. The launch-token
-  // staging ATA must be empty when begin_graduation executes.
+  const feeEscrow = PublicKey.findProgramAddressSync(
+    [Buffer.from("fee-escrow"), campaignPk.toBuffer()],
+    program.programId,
+  )[0];
+  const rewardVaults = rewardVaultAccounts();
+  const flushFeesIx = await program.methods
+    .flushCampaignFees()
+    .accountsStrict({
+      caller: operator.publicKey,
+      campaign: campaignPk,
+      feeEscrow,
+      weeklyLeagueVault: rewardVaults.leagueVault,
+      airdropVault: rewardVaults.airdropVault,
+      monthlyLeagueVault: rewardVaults.monthlyLeagueVault,
+      recruiterVault: rewardVaults.recruiterVault,
+      squadVault: rewardVaults.squadVault,
+      protocolVault: rewardVaults.protocolVault,
+    })
+    .instruction();
+
   const stagingAta = await getOrCreateAssociatedTokenAccount(
     connection,
     operator,
@@ -307,11 +373,18 @@ async function main() {
   assertPk(auth.accounts.mint, campaign.mint, "authorization mint");
   assertPk(auth.accounts.authorityTokenAccount, stagingAta.address, "staging ATA");
   assertPk(auth.accounts.creatorTokenAccount, creatorAta.address, "creator ATA");
+  for (const [label, expected] of Object.entries(rewardVaults)) {
+    assertPk(auth.accounts[label], expected, `authorization ${label}`);
+  }
 
   const expectedMaxNative = quote.maxLamports.toString();
   if (auth.oracle.nativeTargetLamports == null) fail("authorization missing native target");
   if (BigInt(auth.createArgs.nativeTargetLamports) !== BigInt(auth.oracle.nativeTargetLamports)) {
     fail("authorization target fields disagree");
+  }
+  const finalizeRouteProfile = Number(auth.createArgs.finalizeRouteProfile);
+  if (!Number.isInteger(finalizeRouteProfile) || finalizeRouteProfile < 0 || finalizeRouteProfile > 255) {
+    fail("authorization finalizeRouteProfile must be a u8");
   }
 
   const ed25519Ix = Ed25519Program.createInstructionWithPublicKey({
@@ -327,6 +400,7 @@ async function main() {
       deadline: new BN(auth.createArgs.deadline),
       nonce: auth.createArgs.nonce,
       positionNftMint: positionNft.publicKey,
+      finalizeRouteProfile,
     })
     .accountsStrict({
       authority: operator.publicKey,
@@ -336,10 +410,7 @@ async function main() {
       mint: campaign.mint,
       tokenVault: campaign.tokenVault,
       solVault: campaign.solVault,
-      feeEscrow: PublicKey.findProgramAddressSync(
-        [Buffer.from("fee-escrow"), campaignPk.toBuffer()],
-        program.programId,
-      )[0],
+      feeEscrow,
       authorityTokenAccount: stagingAta.address,
       meteoraPool: asPk(auth.accounts.meteoraPool, "meteoraPool"),
       meteoraPosition: asPk(auth.accounts.meteoraPosition, "meteoraPosition"),
@@ -451,7 +522,8 @@ async function main() {
   const computeUnits = Number(process.env.SOLANA_GRADUATION_COMPUTE_UNITS || 1_400_000);
   const instructions = [
     ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnits }),
-    ed25519Ix, // MUST immediately precede begin_graduation.
+    flushFeesIx,
+    ed25519Ix,
     beginIx,
     ...meteoraTx.instructions,
     confirmIx,
@@ -474,6 +546,7 @@ async function main() {
     releaseMaxBytes: null,
     maxRequiredSigners: 2,
     allowAdditionalProgramInstructions: true,
+    allowInstructionPrivilegePromotion: true,
   });
   tx.sign([operator, positionNft]);
   const serialized = tx.serialize();

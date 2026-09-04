@@ -1,6 +1,6 @@
 import { Interface, JsonRpcProvider, Network, getAddress } from "ethers";
 
-const EVM_REWARD_CHAINS = new Set([56, 97]);
+const EVM_REWARD_CHAINS = new Set([56, 97, 4663, 46630]);
 const REWARD_DISTRIBUTOR_INTERFACE = new Interface([
   "function claim(bytes32 batchId, uint256 amount, bytes32[] proof)",
   "event RewardClaimed(bytes32 indexed batchId, address indexed account, uint256 amount)",
@@ -17,13 +17,21 @@ export class RewardClaimVerificationError extends Error {
 
 function rpcUrlForChain(chainId) {
   const chain = Number(chainId);
-  const perChain = String(process.env[`BSC_RPC_HTTP_${chain}`] || "").trim();
-  if (perChain) return perChain;
-  const fallback = String(process.env.BSC_RPC_HTTP || "").trim();
-  if (fallback) return fallback;
+  const perChainCandidates = chain === 4663 || chain === 46630
+    ? [
+        process.env[`ROBINHOOD_RPC_HTTP_${chain}`],
+        chain === 46630 ? process.env.ROBINHOOD_TESTNET_RPC_URL : process.env.ROBINHOOD_MAINNET_RPC_URL,
+      ]
+    : [process.env[`BSC_RPC_HTTP_${chain}`]];
+  const perChain = String(perChainCandidates.find(Boolean) || "").trim();
+  if (perChain) return perChain.split(",").map((value) => value.trim()).find(Boolean) || "";
+  if (chain === 56 || chain === 97) {
+    const fallback = String(process.env.BSC_RPC_HTTP || "").trim();
+    if (fallback) return fallback.split(",").map((value) => value.trim()).find(Boolean) || "";
+  }
   throw new RewardClaimVerificationError(
     "CLAIM_RPC_UNAVAILABLE",
-    `Missing RPC env (BSC_RPC_HTTP_${chain}) required to verify reward claims.`,
+    `Missing chain-specific RPC env required to verify reward claims on chain ${chain}.`,
     503,
   );
 }
