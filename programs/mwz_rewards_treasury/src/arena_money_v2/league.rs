@@ -3,6 +3,7 @@ use anchor_lang::prelude::*;
 use super::competition::{CompetitionPoolV2, COMPETITION_POOL_SEED_V2, COMPETITION_STATE_RESOLVED};
 use super::config::{ArenaMoneyConfigV2, ARENA_MONEY_CONFIG_SEED_V2, ARENA_MONEY_GENERATION_V2};
 use super::errors::ArenaMoneyV2Error;
+use super::math::mul_bps_u64;
 use super::receipts::{debit_program_vault, LeagueSourceReceiptV2, LEAGUE_SOURCE_RECEIPT_SEED_V2};
 
 pub const POSTGRAD_LEAGUE_TREASURY_SEED_V2: &[u8] = b"postgrad_league_v2";
@@ -20,10 +21,7 @@ pub struct LeagueSplitV2 {
 
 pub fn split_postgrad_league_v2(gross: u64) -> Result<LeagueSplitV2> {
     require!(gross > 0, ArenaMoneyV2Error::InvalidAmount);
-    let quarterly = gross
-        .checked_mul(LEAGUE_QUARTERLY_BPS)
-        .ok_or(ArenaMoneyV2Error::MathOverflow)?
-        / LEAGUE_BPS_DENOMINATOR;
+    let quarterly = mul_bps_u64(gross, LEAGUE_QUARTERLY_BPS)?;
     let monthly = gross.checked_sub(quarterly).ok_or(ArenaMoneyV2Error::MathOverflow)?;
     require!(monthly.checked_add(quarterly) == Some(gross), ArenaMoneyV2Error::InvalidSplit);
     Ok(LeagueSplitV2 { gross, monthly, quarterly })
