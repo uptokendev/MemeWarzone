@@ -155,7 +155,7 @@ export function BattleWallCombatant({
       data-battle-combatant-bounded="true"
       data-battle-leader={isLeader ? "true" : undefined}
       className={cn(
-        "mwz-flat-card relative flex h-auto max-h-[22rem] min-w-0 flex-col overflow-hidden",
+        "mwz-flat-card relative flex h-auto max-h-[22rem] min-w-0 overflow-hidden",
         isLeader && "border-orange-400/45",
         trailerLive && "opacity-95",
         trailerDone && "opacity-90 saturate-[0.85]",
@@ -178,14 +178,11 @@ export function BattleWallCombatant({
       ) : null}
       <div
         data-battle-combatant-split="true"
-        className="relative z-10 grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-2 p-2 md:gap-3 md:p-3"
+        className="relative z-10 grid min-h-0 min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)] items-stretch"
       >
         <div
           data-battle-combatant-art="true"
-          className={cn(
-            "relative aspect-square shrink-0 overflow-hidden",
-            compact ? "w-[5.25rem]" : "w-[6.75rem] sm:w-[7.25rem] md:w-[8.5rem]",
-          )}
+          className="relative aspect-square h-0 min-h-full w-auto shrink-0 self-stretch overflow-hidden"
         >
           <CombatantArtwork imageUrl={imageUrl} ticker={displaySymbol} name={displayName} accent={accent} />
           <div className="absolute left-1 top-1 bg-black/65 px-1 py-0.5 font-retro text-[8px] uppercase tracking-[0.14em] text-white/80 md:left-1.5 md:top-1.5 md:px-1.5 md:text-[9px] md:tracking-[0.16em]">
@@ -193,53 +190,55 @@ export function BattleWallCombatant({
           </div>
         </div>
 
-        <div className="relative z-10 flex min-w-0 flex-col gap-1.5 md:gap-2">
-          <div className="min-w-0">
-            <div className="truncate font-retro text-base leading-none text-foreground sm:text-xl md:text-2xl lg:text-[1.65rem]">
-              ${displaySymbol}
+        <div className="relative z-10 flex min-w-0 flex-col">
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5 p-2 md:gap-2 md:p-3">
+            <div className="min-w-0">
+              <div className="truncate font-retro text-base leading-none text-foreground sm:text-xl md:text-2xl lg:text-[1.65rem]">
+                ${displaySymbol}
+              </div>
+              <div className="mt-0.5 truncate text-[10px] uppercase tracking-[0.14em] text-white/58 md:mt-1 md:text-[11px] md:tracking-[0.16em]">{displayName}</div>
+              {description ? (
+                <p className="mt-1 hidden line-clamp-2 text-[11px] leading-4 text-white/48 md:block">{description}</p>
+              ) : null}
             </div>
-            <div className="mt-0.5 truncate text-[10px] uppercase tracking-[0.14em] text-white/58 md:mt-1 md:text-[11px] md:tracking-[0.16em]">{displayName}</div>
-            {description ? (
-              <p className="mt-1 hidden line-clamp-2 text-[11px] leading-4 text-white/48 md:block">{description}</p>
-            ) : null}
+
+            <div className="grid w-full grid-cols-2 gap-1 sm:gap-1.5" data-battle-metric-grid="true">
+              <MetricBox
+                label="MCAP"
+                value={currentMcap === null ? "—" : formatCompactUsd(currentMcap)}
+                ready={currentMcap !== null}
+                accent={accent}
+              />
+              <MetricBox
+                label="HOLDERS"
+                value={currentHolders === null ? "—" : Number(currentHolders).toLocaleString()}
+                ready={currentHolders !== null}
+                accent={accent}
+              />
+              <MetricBox
+                label="VOL"
+                value={battleVolume === null ? "—" : formatCompactUsd(battleVolume)}
+                ready={battleVolume !== null}
+                accent={accent}
+              />
+              <MetricBox
+                label={pointsBoxLabel}
+                value={pointsLabel || "—"}
+                ready={pointsReady}
+                accent={accent}
+              />
+            </div>
           </div>
 
-          <div className="grid w-full grid-cols-2 gap-1 sm:gap-1.5" data-battle-metric-grid="true">
-            <MetricBox
-              label="MCAP"
-              value={currentMcap === null ? "—" : formatCompactUsd(currentMcap)}
-              ready={currentMcap !== null}
-              accent={accent}
-            />
-            <MetricBox
-              label="HOLDERS"
-              value={currentHolders === null ? "—" : Number(currentHolders).toLocaleString()}
-              ready={currentHolders !== null}
-              accent={accent}
-            />
-            <MetricBox
-              label="VOL"
-              value={battleVolume === null ? "—" : formatCompactUsd(battleVolume)}
-              ready={battleVolume !== null}
-              accent={accent}
-            />
-            <MetricBox
-              label={pointsBoxLabel}
-              value={pointsLabel || "—"}
-              ready={pointsReady}
-              accent={accent}
-            />
+          <div
+            data-battle-combatant-actions="true"
+            className="relative z-10 min-h-11 border-t px-2 sm:px-3"
+            style={{ borderColor: "var(--mwz-flat-card-border)" }}
+            aria-hidden={!actions}
+          >
+            {actions}
           </div>
         </div>
-      </div>
-
-      <div
-        data-battle-combatant-actions="true"
-        className="relative z-10 min-h-11 border-t px-2 sm:px-3"
-        style={{ borderColor: "var(--mwz-flat-card-border)" }}
-        aria-hidden={!actions}
-      >
-        {actions}
       </div>
     </div>
   );

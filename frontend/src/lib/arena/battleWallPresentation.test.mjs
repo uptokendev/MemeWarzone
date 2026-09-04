@@ -637,7 +637,7 @@ test("Battle Wall visual parity uses bounded combatant cards, 2x2 metrics, and n
   assert.doesNotMatch(combatant, /mockTokenArtForTicker/);
   assert.match(combatant, /data-battle-combatant-split="true"/);
   assert.match(combatant, /grid-cols-\[auto_minmax\(0,1fr\)\]/);
-  assert.match(combatant, /md:w-\[8\.5rem\]/);
+  assert.match(combatant, /h-0 min-h-full w-auto shrink-0 self-stretch/);
   assert.doesNotMatch(combatant, /grid-cols-1/);
   assert.match(combatant, /aspect-square/);
   assert.doesNotMatch(combatant, /h-44 sm:h-52 md:h-64 lg:h-72/);
@@ -690,7 +690,7 @@ test("Battle Wall mockup parity keeps split combatant cards, SHARE/MORE, and gen
   assert.doesNotMatch(combatant, /mockTokenArtForTicker/);
   assert.match(combatant, /data-battle-combatant-split="true"/);
   assert.match(combatant, /grid-cols-\[auto_minmax\(0,1fr\)\]/);
-  assert.match(combatant, /md:w-\[8\.5rem\]/);
+  assert.match(combatant, /h-0 min-h-full w-auto shrink-0 self-stretch/);
   assert.doesNotMatch(combatant, /grid-cols-1/);
   assert.match(combatant, /hidden line-clamp-2[\s\S]*md:block/);
   assert.match(combatant, /firstFiniteBattleMetric/);
@@ -774,9 +774,7 @@ test("Battle Wall combatant keeps art-left split on mobile instead of stacking i
   assert.match(combatant, /data-battle-combatant-split="true"/);
   assert.match(combatant, /grid-cols-\[auto_minmax\(0,1fr\)\]/);
   assert.match(combatant, /aspect-square/);
-  assert.match(combatant, /w-\[6\.75rem\]/);
-  assert.match(combatant, /sm:w-\[7\.25rem\]/);
-  assert.match(combatant, /md:w-\[8\.5rem\]/);
+  assert.match(combatant, /h-0 min-h-full w-auto shrink-0 self-stretch/);
   assert.match(combatant, /data-battle-combatant-bounded="true"/);
   assert.match(combatant, /h-auto max-h-\[22rem\]/);
   assert.doesNotMatch(combatant, /100vh|min-h-screen/);

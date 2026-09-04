@@ -38,8 +38,7 @@ test("Battle combatant bleed is an absolute decorative layer outside card flow",
   assert.match(combatant, /data-battle-combatant-bounded="true"/);
   assert.match(combatant, /h-auto max-h-\[22rem\]/);
   assert.match(combatant, /aspect-square/);
-  assert.match(combatant, /w-\[6\.75rem\]/);
-  assert.match(combatant, /md:w-\[8\.5rem\]/);
+  assert.match(combatant, /h-0 min-h-full w-auto shrink-0 self-stretch/);
   assert.match(combatant, /data-battle-combatant-bleed="true"/);
   assert.match(combatant, /absolute inset-0 z-0/);
   assert.match(combatant, /<WarzoneDecorativeLayer[\s\S]*data-battle-combatant-bleed="true"/);
