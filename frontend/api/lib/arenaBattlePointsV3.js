@@ -70,19 +70,22 @@ export function battlePointsV3ActivationStatus({ env = process.env, config = BAT
  * Founder-locked Boost curve for Battle Points V3.
  * U is the count of confirmed $1 Boost units for one Battle side.
  * Points = 10 * U / (U + 100), asymptotically capped at 10.
+ * No curve-level rounding is applied; presentation/persistence rounds only at
+ * the existing Battle Points precision boundary.
  */
 export function calculateBattlePointsV3Boost(boostUnits) {
   const units = confirmedBoostUnits(boostUnits);
   if (units === 0n) return 0;
   const u = Number(units);
-  return roundPoints((10 * u) / (u + 100));
+  return (10 * u) / (u + 100);
 }
 
 /**
  * Computes the founder-locked market side of Battle Points V3.
  * Existing V2 saturation, holder-confidence and anti-concentration mechanics are
- * reused; only component weights change to 45/27/18. Boost remains a separately
- * confirmed contest-action input so market refreshes cannot invent paid points.
+ * reused; component weights are 50/25/15 with 10 reserved for Boost. Boost
+ * remains a separately confirmed contest-action input so market refreshes cannot
+ * invent paid points.
  */
 export function calculateBattlePointsV3Market({ boost = {}, ...input } = {}) {
   const config = BATTLE_POINTS_V3_CONFIG;
@@ -149,19 +152,20 @@ export function combineBattlePointsV3({
   }
 
   const marketSubtotal = roundPoints(marketScore.marketSubtotal);
-  const totalPoints = roundPoints(Math.min(100, marketSubtotal + points));
+  const persistedBoostPoints = roundPoints(points);
+  const totalPoints = roundPoints(Math.min(100, marketSubtotal + persistedBoostPoints));
   return {
     ...marketScore,
     totalPoints,
     boost: {
       ...marketScore.boost,
-      points: roundPoints(points),
+      points: persistedBoostPoints,
       curveVersion: BATTLE_POINTS_V3_BOOST_CURVE,
       curveParameters: BATTLE_POINTS_V3_CONFIG.boost.curveParameters,
     },
     components: {
       ...marketScore.components,
-      boostPoints: roundPoints(points),
+      boostPoints: persistedBoostPoints,
     },
     settleable: true,
     settlementReason: "ok",
