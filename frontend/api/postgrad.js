@@ -1,5 +1,6 @@
 import arenaBattles from "./arenaBattles.js";
 import arenaBattleMetrics from "./arenaBattleMetrics.js";
+import arenaBattlePointsV3Admin from "./arenaBattlePointsV3Admin.js";
 import arenaBoosts from "./arenaBoosts.js";
 import arenaSolanaBoosts from "./arenaSolanaBoosts.js";
 import arenaEvents from "./arenaEvents.js";
@@ -27,6 +28,7 @@ const ROUTES = [
   { pattern: /^\/arena\/battle-metrics\/[^/]+$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaBattleMetrics },
   { pattern: /^\/arena\/boosts\/[^/]+\/(?:solana-quote|solana-payment)$/, flag: "ARENA_BATTLE_BOOSTS", handler: arenaSolanaBoosts },
   { pattern: /^\/arena\/boosts(?:\/.*)?$/, flag: "ARENA_BATTLE_BOOSTS", handler: arenaBoosts },
+  { pattern: /^\/arena\/battles\/[^/]+\/v3-scoring-lock$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaBattlePointsV3Admin },
   { pattern: /^\/arena\/battles(?:\/.*)?$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaBattles },
   { pattern: /^\/arena\/imports(?:\/.*)?$/, flag: "POSTGRAD_ARENA_IMPORTS_ENABLED", handler: arenaImports },
   { pattern: /^\/arena\/sponsorships\/(?:options|solana-quote|solana-payment)$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: arenaSponsorshipPublic },
