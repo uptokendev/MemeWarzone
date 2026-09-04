@@ -2,10 +2,21 @@ import { Button } from "@/components/ui/button";
 import { presentFinalSalvoState } from "@/lib/arena/finalSalvoPresentation.mjs";
 
 type FinalSalvoSource = {
+  state?: string | null;
+  active?: boolean;
   phase?: string | null;
   shotIndex?: number | null;
   salvoIndex?: number | null;
+  shotStartedAt?: string | null;
+  shotEndsAt?: string | null;
   secondsRemaining?: number | null;
+  series?: { leftWins?: number | null; rightWins?: number | null; maxShots?: number | null };
+  currentShot?: {
+    leftUniqueVotes?: number | null;
+    rightUniqueVotes?: number | null;
+    walletVote?: string | null;
+    walletEligible?: boolean;
+  };
   leftSeriesWins?: number | null;
   rightSeriesWins?: number | null;
   leftWins?: number | null;
@@ -16,6 +27,7 @@ type FinalSalvoSource = {
   votingLive?: boolean;
   shotClosed?: boolean;
   winner?: string | null;
+  winnerSide?: string | null;
   shotWinner?: string | null;
   suddenDeath?: boolean;
 };
@@ -36,12 +48,16 @@ export function FinalSalvoPanel({
   const model = presentFinalSalvoState(state || {});
   if (!model) return null;
 
+  const walletVote = String(model.walletVote || "").toLowerCase();
+  const leftSelected = walletVote === "left" || walletVote === String(leftLabel || "").toLowerCase();
+  const rightSelected = walletVote === "right" || walletVote === String(rightLabel || "").toLowerCase();
+
   return (
-    <section data-final-salvo={model.phase} className="space-y-3 border-t border-white/10 pt-3">
+    <section aria-label={model.title} data-final-salvo={model.phase} className="space-y-3 border-t border-white/10 pt-3">
       <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] uppercase tracking-[0.16em] text-white/52">
         <span className="font-retro text-orange-200">{model.title}</span>
         <span>{model.shotLabel}</span>
-        <span>{model.clockLabel}</span>
+        <span aria-live="polite">{model.clockLabel}</span>
       </div>
 
       <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 border border-white/10 bg-black/20 p-3">
@@ -64,22 +80,22 @@ export function FinalSalvoPanel({
           <Button
             type="button"
             size="sm"
-            variant="outline"
+            variant={leftSelected ? "secondary" : "outline"}
             className="font-retro"
             disabled={busy || !model.walletEligible || !onVote}
             onClick={() => onVote?.("left")}
           >
-            {model.walletVote === "left" ? "Vote confirmed" : `Free Vote ${leftLabel}`}
+            {leftSelected ? "Vote confirmed" : `Free Vote ${leftLabel}`}
           </Button>
           <Button
             type="button"
             size="sm"
-            variant="outline"
+            variant={rightSelected ? "secondary" : "outline"}
             className="font-retro"
             disabled={busy || !model.walletEligible || !onVote}
             onClick={() => onVote?.("right")}
           >
-            {model.walletVote === "right" ? "Vote confirmed" : `Free Vote ${rightLabel}`}
+            {rightSelected ? "Vote confirmed" : `Free Vote ${rightLabel}`}
           </Button>
         </div>
       ) : null}
