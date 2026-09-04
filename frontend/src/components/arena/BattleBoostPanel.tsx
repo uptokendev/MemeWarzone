@@ -23,16 +23,16 @@ function unitsFor(summary: BattleBoostSummary | null, side: "left" | "right") {
   catch { return 0; }
 }
 
-export function BattleBoostPanel({ battleId, chainId, left, right, onV3State }: {
+export function BattleBoostPanel({ battleId, chainId, left, right }: {
   battleId: string;
   chainId: number;
   left: Side;
   right: Side;
-  onV3State?: (rows: BattlePointsV3BoostState[]) => void;
 }) {
   const wallet = useWallet();
   const [summary, setSummary] = useState<BattleBoostSummary | null>(null);
   const [v3Rows, setV3Rows] = useState<BattlePointsV3BoostState[]>([]);
+  const [v3TotalAuthoritative, setV3TotalAuthoritative] = useState(false);
   const [runtimeReady, setRuntimeReady] = useState<boolean | null>(null);
   const [busySide, setBusySide] = useState<"left" | "right" | null>(null);
   const [quantity, setQuantity] = useState(1);
@@ -41,17 +41,16 @@ export function BattleBoostPanel({ battleId, chainId, left, right, onV3State }: 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     try {
       const json = await fetchBattleBoostState(battleId, signal);
-      const rows = Array.isArray(json.battlePointsV3) ? json.battlePointsV3 : [];
       setSummary(json.summary || null);
-      setV3Rows(rows);
-      onV3State?.(rows);
+      setV3Rows(Array.isArray(json.battlePointsV3) ? json.battlePointsV3 : []);
+      setV3TotalAuthoritative(json.scoringActive === true);
       setRuntimeReady(true);
       return json;
     } catch {
-      if (!signal?.aborted) { setSummary(null); setV3Rows([]); setRuntimeReady(false); }
+      if (!signal?.aborted) { setSummary(null); setV3Rows([]); setV3TotalAuthoritative(false); setRuntimeReady(false); }
       return null;
     }
-  }, [battleId, onV3State]);
+  }, [battleId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -107,7 +106,8 @@ export function BattleBoostPanel({ battleId, chainId, left, right, onV3State }: 
       </div>
       {approvedRows.length ? (
         <div data-battle-v3-authoritative-boost="true" className="grid gap-1 text-[10px] uppercase tracking-[0.14em] text-white/48">
-          {approvedRows.map((row) => <div key={row.side}>{row.side}: {row.boostPoints == null ? "—" : row.boostPoints.toFixed(2)} / 10 Boost pts · {row.boostUnits} confirmed units{row.totalPoints == null ? "" : ` · ${row.totalPoints.toFixed(2)} / 100 total`}</div>)}
+          {approvedRows.map((row) => <div key={row.side}>{row.side}: {row.boostPoints == null ? "—" : row.boostPoints.toFixed(2)} / 10 Boost pts · {row.boostUnits} confirmed units{v3TotalAuthoritative && row.totalPoints != null ? ` · ${row.totalPoints.toFixed(2)} / 100 total` : ""}</div>)}
+          {!v3TotalAuthoritative ? <div>Final V3 total awaiting backend authoritative-total status.</div> : null}
         </div>
       ) : null}
       {summary?.total?.grossNativeRaw ? <div className="text-[10px] uppercase tracking-[0.16em] text-white/42">Confirmed Boost support: {formatBoostNative(summary.total.grossNativeRaw, nativeSymbol)}</div> : null}
