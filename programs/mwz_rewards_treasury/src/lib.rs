@@ -1043,7 +1043,7 @@ pub struct SetLeagueEpochRoot<'info> {
         bump = config.bump,
         has_one = authority
     )]
-    pub config: Box<Account<'info, RewardsConfig>>,
+    pub config: Account<'info, RewardsConfig>,
     #[account(seeds = [LEAGUE_VAULT_SEED], bump = config.league_vault_bump)]
     pub league_vault: Account<'info, VaultState>,
     #[account(
@@ -1143,7 +1143,7 @@ pub struct SetRecruiterBatchRoot<'info> {
         bump = config.bump,
         has_one = authority
     )]
-    pub config: Box<Account<'info, RewardsConfig>>,
+    pub config: Account<'info, RewardsConfig>,
     #[account(seeds = [RECRUITER_VAULT_SEED], bump)]
     pub recruiter_vault: Account<'info, VaultState>,
     #[account(
@@ -1193,7 +1193,7 @@ pub struct SetSquadBatchRoot<'info> {
         bump = config.bump,
         has_one = authority
     )]
-    pub config: Box<Account<'info, RewardsConfig>>,
+    pub config: Account<'info, RewardsConfig>,
     #[account(seeds = [SQUAD_VAULT_SEED], bump)]
     pub squad_vault: Account<'info, VaultState>,
     #[account(
