@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  findTournamentVoteMatch,
   resolveTournamentVoteMatch,
   tournamentVoteSummary,
   tournamentVoteTokensEqual,
@@ -48,6 +49,17 @@ test("resolves the active bracket match by battle id", () => {
   const result = resolveTournamentVoteMatch({ tournament: tournament(), matchRef: "battle-1", selectedToken: tokenB });
   assert.equal(result.ok, true);
   assert.equal(result.matchId, "m1");
+});
+
+test("historical lookup keeps a resolved Final Salvo match addressable", () => {
+  const resolved = tournament({
+    status: "finished",
+    bracket: { rounds: [{ round: 1, matches: [{ id: "m1", tokenA, tokenB, battleId: "battle-1", winner: tokenA, bye: false }] }] },
+  });
+  const found = findTournamentVoteMatch({ tournament: resolved, matchRef: "battle-1" });
+  assert.equal(found.ok, true);
+  assert.equal(found.winnerToken, tokenA);
+  assert.equal(found.battleId, "battle-1");
 });
 
 test("rejects a token that is not a participant", () => {
