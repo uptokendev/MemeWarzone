@@ -14,6 +14,7 @@ import {
 } from "@/lib/arena/tournamentBoostClient";
 import { fetchTournamentVoteState, type TournamentVotePayload } from "@/lib/arena/tournamentVoteClient";
 import { presentTournamentVoteSummary, tournamentVoteMatchRef } from "@/lib/arena/tournamentVotePresentation.mjs";
+import { initialSolanaTournamentBoostState, presentSolanaTournamentBoostState } from "@/lib/arena/solanaTournamentBoostAdapter.mjs";
 
 type Match = {
   id?: string | null;
@@ -58,6 +59,10 @@ export function TournamentBoostControls({
   const [busySide, setBusySide] = useState<"left" | "right" | null>(null);
   const nativeSymbol = getNativeSymbol(chainId);
   const evmSupported = !isSolanaChainId(chainId);
+  const solanaPrepared = useMemo(
+    () => presentSolanaTournamentBoostState(initialSolanaTournamentBoostState()),
+    [],
+  );
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     if (!tournamentId || !matchRef || !evmSupported) {
@@ -160,8 +165,13 @@ export function TournamentBoostControls({
 
   if (!evmSupported) {
     return (
-      <div role="status" data-tournament-boost-runtime="evm-only" className="text-[10px] uppercase tracking-[0.14em] text-white/38">
-        Paid Tournament Boost is waiting on the Solana money path. Free Vote remains available.
+      <div
+        role="status"
+        data-tournament-boost-runtime="solana-prepared-disabled"
+        data-tournament-boost-phase={solanaPrepared.phase}
+        className="text-[10px] uppercase tracking-[0.14em] text-white/38"
+      >
+        {solanaPrepared.label}. Transaction contract is not frozen yet; Free Vote remains available.
       </div>
     );
   }
