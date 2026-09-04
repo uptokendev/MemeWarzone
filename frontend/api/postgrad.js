@@ -4,6 +4,7 @@ import arenaBoosts from "./arenaBoosts.js";
 import arenaEvents from "./arenaEvents.js";
 import arenaImports from "./arenaImports.js";
 import arenaTournaments from "./arenaTournaments.js";
+import arenaTournamentVotes from "./arenaTournamentVotes.js";
 import arenaLeague from "./arenaLeague.js";
 import arenaNotifications from "./arenaNotifications.js";
 import arenaVotes from "./arenaVotes.js";
@@ -21,6 +22,7 @@ const ROUTES = [
   { pattern: /^\/arena\/boosts(?:\/.*)?$/, flag: "ARENA_BATTLE_BOOSTS", handler: arenaBoosts },
   { pattern: /^\/arena\/battles(?:\/.*)?$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaBattles },
   { pattern: /^\/arena\/imports(?:\/.*)?$/, flag: "POSTGRAD_ARENA_IMPORTS_ENABLED", handler: arenaImports },
+  { pattern: /^\/arena\/tournaments\/[^/]+\/matches\/[^/]+\/votes$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaTournamentVotes },
   { pattern: /^\/arena\/tournaments(?:\/.*)?$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaTournaments },
   { pattern: /^\/arena\/events(?:\/.*)?$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaEvents },
   { pattern: /^\/arena\/league(?:\/.*)?$/, flag: "POSTGRAD_LEAGUE_ENABLED", handler: arenaLeague },
