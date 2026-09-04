@@ -7,23 +7,40 @@ function integer(value, fallback = 0) {
   return Number.isInteger(number) && number >= 0 ? number : fallback;
 }
 
+function phaseKey(source = {}) {
+  const raw = String(source?.phase || "").trim().toLowerCase();
+  if (raw === "salvo" || raw === "final_salvo") return "final_salvo";
+  if (raw === "sudden_death") return "sudden_death";
+  return raw;
+}
+
+function secondsFromAuthoritativeDeadline(source = {}) {
+  if (source?.secondsRemaining !== undefined && source?.secondsRemaining !== null) {
+    return Math.min(FINAL_SALVO_SHOT_SECONDS, Math.max(0, integer(source.secondsRemaining, FINAL_SALVO_SHOT_SECONDS)));
+  }
+  const endsAt = String(source?.shotEndsAt || source?.shot_ends_at || "").trim();
+  if (!endsAt) return FINAL_SALVO_SHOT_SECONDS;
+  const endsMs = new Date(endsAt).getTime();
+  if (!Number.isFinite(endsMs)) return FINAL_SALVO_SHOT_SECONDS;
+  return Math.min(FINAL_SALVO_SHOT_SECONDS, Math.max(0, Math.ceil((endsMs - Date.now()) / 1000)));
+}
+
 export function presentFinalSalvoState(source = {}) {
-  const phase = String(source?.phase || "").trim().toLowerCase();
+  const phase = phaseKey(source);
   if (phase !== "final_salvo" && phase !== "sudden_death") return null;
   const suddenDeath = phase === "sudden_death" || source?.suddenDeath === true;
   const shotIndex = Math.max(1, integer(source?.shotIndex ?? source?.salvoIndex, 1));
-  const leftSeries = integer(source?.leftSeriesWins ?? source?.leftWins, 0);
-  const rightSeries = integer(source?.rightSeriesWins ?? source?.rightWins, 0);
-  const secondsRemaining = Math.min(
-    FINAL_SALVO_SHOT_SECONDS,
-    Math.max(0, integer(source?.secondsRemaining, FINAL_SALVO_SHOT_SECONDS)),
-  );
-  const leftVotes = integer(source?.leftVotes, 0);
-  const rightVotes = integer(source?.rightVotes, 0);
-  const walletVote = String(source?.walletVote || "").trim() || null;
-  const shotClosed = source?.shotClosed === true;
-  const votingLive = source?.votingLive === true && !shotClosed;
-  const winner = String(source?.winner || source?.shotWinner || "").trim() || null;
+  const leftSeries = integer(source?.series?.leftWins ?? source?.leftSeriesWins ?? source?.leftWins, 0);
+  const rightSeries = integer(source?.series?.rightWins ?? source?.rightSeriesWins ?? source?.rightWins, 0);
+  const secondsRemaining = secondsFromAuthoritativeDeadline(source);
+  const leftVotes = integer(source?.currentShot?.leftUniqueVotes ?? source?.leftVotes, 0);
+  const rightVotes = integer(source?.currentShot?.rightUniqueVotes ?? source?.rightVotes, 0);
+  const walletVote = String(source?.currentShot?.walletVote ?? source?.walletVote ?? "").trim() || null;
+  const shotClosed = source?.shotClosed === true || secondsRemaining === 0 || source?.active === false;
+  const backendEligible = source?.currentShot?.walletEligible;
+  const votingLive = source?.votingLive === true || (source?.active === true && !shotClosed);
+  const walletEligible = backendEligible === undefined ? votingLive && !walletVote : Boolean(backendEligible) && votingLive && !shotClosed;
+  const winner = String(source?.winner || source?.shotWinner || source?.winnerSide || "").trim() || null;
   return {
     phase,
     suddenDeath,
@@ -37,7 +54,7 @@ export function presentFinalSalvoState(source = {}) {
     rightSeries,
     seriesLabel: `${leftSeries} — ${rightSeries}`,
     walletVote,
-    walletEligible: votingLive && !walletVote,
+    walletEligible,
     votingLive,
     shotClosed,
     winner,
