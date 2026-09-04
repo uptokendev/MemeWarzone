@@ -57,6 +57,18 @@ export type EvmWalletCapabilities = {
   providerEvents: boolean;
 };
 
+export type EvmAddChainParams = {
+  chainId: `0x${string}`;
+  chainName: string;
+  nativeCurrency: {
+    name: string;
+    symbol: string;
+    decimals: number;
+  };
+  rpcUrls: string[];
+  blockExplorerUrls?: string[];
+};
+
 type WindowLike = EventTarget & {
   ethereum?: Eip1193Provider;
   setTimeout?: typeof globalThis.setTimeout;
@@ -118,6 +130,18 @@ function normalizeIdentityPart(value: string): string {
     .replace(/[^a-z0-9.-]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 96);
+}
+
+function errorCode(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const record = error as Record<string, unknown>;
+  if (typeof record.code === "number") return record.code;
+  const data = record.data;
+  if (!data || typeof data !== "object") return undefined;
+  const originalError = (data as Record<string, unknown>).originalError;
+  if (!originalError || typeof originalError !== "object") return undefined;
+  const code = (originalError as Record<string, unknown>).code;
+  return typeof code === "number" ? code : undefined;
 }
 
 export function createDetectedEvmWallet(
@@ -260,4 +284,71 @@ export function getEvmWalletCapabilities(
     providerEvents:
       typeof provider.on === "function" && typeof provider.removeListener === "function",
   };
+}
+
+export async function requestEvmAccounts(
+  provider: Eip1193Provider
+): Promise<string[]> {
+  const result = await provider.request({ method: "eth_requestAccounts" });
+  if (!Array.isArray(result)) return [];
+  return result.filter((value): value is string => typeof value === "string");
+}
+
+export async function signEvmMessage(
+  provider: Eip1193Provider,
+  account: string,
+  messageHex: string
+): Promise<string> {
+  const signature = await provider.request({
+    method: "personal_sign",
+    params: [messageHex, account],
+  });
+  if (typeof signature !== "string" || !signature) {
+    throw new Error("Wallet did not return a message signature.");
+  }
+  return signature;
+}
+
+export async function sendEvmTransaction(
+  provider: Eip1193Provider,
+  transaction: Record<string, unknown>
+): Promise<string> {
+  const hash = await provider.request({
+    method: "eth_sendTransaction",
+    params: [transaction],
+  });
+  if (typeof hash !== "string" || !hash) {
+    throw new Error("Wallet did not return a transaction hash.");
+  }
+  return hash;
+}
+
+export async function switchEvmWalletChain(
+  provider: Eip1193Provider,
+  chainId: number,
+  addChainParams?: EvmAddChainParams
+): Promise<void> {
+  if (!Number.isInteger(chainId) || chainId <= 0) {
+    throw new Error(`Invalid EVM chain id: ${chainId}`);
+  }
+
+  const hexChainId = `0x${chainId.toString(16)}`;
+  try {
+    await provider.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: hexChainId }],
+    });
+    return;
+  } catch (error) {
+    if (errorCode(error) !== 4902 || !addChainParams) throw error;
+  }
+
+  await provider.request({
+    method: "wallet_addEthereumChain",
+    params: [addChainParams],
+  });
+  await provider.request({
+    method: "wallet_switchEthereumChain",
+    params: [{ chainId: hexChainId }],
+  });
 }
