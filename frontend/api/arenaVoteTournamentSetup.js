@@ -3,6 +3,7 @@ import { parseUnits } from "ethers";
 
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, json, normalizeAddress, readJson } from "../server/http.js";
+import arenaTournamentsLegacy from "./arenaTournaments.js";
 import { requireAdminOrOps } from "./lib/apiAuth.js";
 import { getServerReadProvider } from "./lib/getServerReadProvider.js";
 import { isSolanaChainId, nativeSymbolFor } from "./lib/chainNative.js";
@@ -77,12 +78,14 @@ async function handleCreate(req, res) {
   }
 
   let pricing;
+  let treasuryAddress = null;
   try {
     pricing = readTournamentBuyInPricing(chainId);
+    if (!isSolanaChainId(chainId)) treasuryAddress = arenaWarPoolTreasuryV2Address(chainId);
   } catch (error) {
     return json(res, 503, {
       ok: false,
-      error: "Founder-locked $0.25 buy-in pricing is unavailable",
+      error: "Founder-locked $0.25 buy-in pricing/treasury is unavailable",
       code: "VOTE_TOURNAMENT_QUOTE_UNAVAILABLE",
       detail: String(error?.message || error),
     });
@@ -92,39 +95,51 @@ async function handleCreate(req, res) {
   const registrationMode = ["invite_only", "open", "invite_plus_open"].includes(body.registrationMode)
     ? body.registrationMode
     : "open";
-  const inserted = await pool.query(
-    `insert into public.arena_tournaments (
-       id, chain_id, name, status, origin, registration_mode, buy_in_native, native_symbol, terms,
-       starts_at, ends_at, cap, created_by, battle_mode, round_duration_hours,
-       contest_scoring_version, competition_generation
-     ) values ($1,$2,$3,'upcoming',$4,$5,$6,$7,$8,$9,$10,$11,$12,'vote',24,'vote_tournament_v1','arena_competition_v2')
-     returning *`,
-    [
-      id,
-      chainId,
-      name,
-      body.origin === "quarter_finals" ? "quarter_finals" : "custom",
-      registrationMode,
-      pricing.buyInNative,
-      String(body.nativeSymbol || nativeSymbolFor(chainId)),
-      String(body.terms || ""),
-      new Date(startsAt).toISOString(),
-      body.endsAt ? new Date(body.endsAt).toISOString() : null,
-      Math.max(2, Number(body.cap || 16)),
-      String(admin.mode || "ops"),
-    ],
-  );
-
-  const invites = Array.isArray(body.invites) ? body.invites : [];
-  for (const invite of invites) {
-    const token = ident(invite?.tokenAddress || invite);
-    if (!token) continue;
-    await pool.query(
-      `insert into public.arena_tournament_invites (tournament_id, token_address, owner_wallet)
-       values ($1,$2,$3)
-       on conflict (tournament_id, token_address) do nothing`,
-      [id, token, ident(invite?.ownerWallet) || null],
+  const client = await pool.connect();
+  let tournament;
+  try {
+    await client.query("begin");
+    const inserted = await client.query(
+      `insert into public.arena_tournaments (
+         id, chain_id, name, status, origin, registration_mode, buy_in_native, native_symbol, terms,
+         starts_at, ends_at, cap, created_by, battle_mode, round_duration_hours,
+         contest_scoring_version, competition_generation
+       ) values ($1,$2,$3,'upcoming',$4,$5,$6,$7,$8,$9,$10,$11,$12,'vote',24,'vote_tournament_v1','arena_competition_v2')
+       returning *`,
+      [
+        id,
+        chainId,
+        name,
+        body.origin === "quarter_finals" ? "quarter_finals" : "custom",
+        registrationMode,
+        pricing.buyInNative,
+        String(body.nativeSymbol || nativeSymbolFor(chainId)),
+        String(body.terms || ""),
+        new Date(startsAt).toISOString(),
+        body.endsAt ? new Date(body.endsAt).toISOString() : null,
+        Math.max(2, Number(body.cap || 16)),
+        String(admin.mode || "ops"),
+      ],
     );
+    tournament = inserted.rows[0];
+
+    const invites = Array.isArray(body.invites) ? body.invites : [];
+    for (const invite of invites) {
+      const token = ident(invite?.tokenAddress || invite);
+      if (!token) continue;
+      await client.query(
+        `insert into public.arena_tournament_invites (tournament_id, token_address, owner_wallet)
+         values ($1,$2,$3)
+         on conflict (tournament_id, token_address) do nothing`,
+        [id, token, ident(invite?.ownerWallet) || null],
+      );
+    }
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
   }
 
   const quote = publicQuote(pricing, chainId, id);
@@ -137,7 +152,7 @@ async function handleCreate(req, res) {
       }
     : {
         execution: "ArenaWarPoolTreasuryV2.openTournamentPool",
-        treasuryAddress: arenaWarPoolTreasuryV2Address(chainId),
+        treasuryAddress,
         poolId: quote.poolId,
         buyInAmountRaw: pricing.buyInNativeRaw.toString(),
         note: "Pool opening is an explicit authorized ops/wallet transaction; the API does not hold the creator signing key.",
@@ -145,7 +160,7 @@ async function handleCreate(req, res) {
 
   return json(res, 201, {
     ok: true,
-    tournament: inserted.rows[0],
+    tournament,
     generation: "arena_competition_v2",
     scoringVersion: "vote_tournament_v1",
     battleMode: "vote",
@@ -281,6 +296,22 @@ async function handleBuyInReceipt(req, res, tournamentId) {
   });
 }
 
+async function handleGenerationAwareLegacyReceipt(req, res, tournamentId) {
+  const generation = (await pool.query(
+    `select battle_mode, contest_scoring_version, competition_generation
+       from public.arena_tournaments where id = $1 limit 1`,
+    [tournamentId],
+  )).rows[0];
+  if (
+    generation?.battle_mode === "vote" &&
+    generation?.contest_scoring_version === "vote_tournament_v1" &&
+    generation?.competition_generation === "arena_competition_v2"
+  ) {
+    return handleBuyInReceipt(req, res, tournamentId);
+  }
+  return arenaTournamentsLegacy(req, res);
+}
+
 export default async function handler(req, res) {
   const path = routePath(req);
   const method = String(req.method || "GET").toUpperCase();
@@ -289,6 +320,12 @@ export default async function handler(req, res) {
     if (path === "/arena/tournaments/v2/create") return method === "POST" ? handleCreate(req, res) : badMethod(res);
     const receipt = path.match(/^\/arena\/tournaments\/([^/]+)\/v2-buy-in-receipt$/);
     if (receipt) return method === "POST" ? handleBuyInReceipt(req, res, decodeURIComponent(receipt[1])) : badMethod(res);
+    const legacyReceipt = path.match(/^\/arena\/tournaments\/([^/]+)\/buy-in-receipt$/);
+    if (legacyReceipt) {
+      return method === "POST"
+        ? handleGenerationAwareLegacyReceipt(req, res, decodeURIComponent(legacyReceipt[1]))
+        : badMethod(res);
+    }
     return json(res, 404, { ok: false, error: "Unknown V2 Vote Tournament setup route" });
   } catch (error) {
     console.error("[api/arenaVoteTournamentSetup]", error);
