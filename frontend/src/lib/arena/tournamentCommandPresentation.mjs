@@ -316,6 +316,7 @@ export function presentTournamentCard(event, options = {}) {
   const remaining = presentAuthoritativeRemaining(event);
   const progression = presentTournamentProgression({ ...event, cap: Number.isFinite(cap) ? cap : 16 });
   const primaryCta = status.key === "live" ? "View tournament" : status.key === "finished" ? "View results" : "Enter tournament";
+  const liveRoundCta = status.key === "live" ? "Watch live round" : null;
   const bracketCta = status.key === "finished" ? "Final bracket" : "View bracket";
 
   return {
@@ -344,6 +345,7 @@ export function presentTournamentCard(event, options = {}) {
     remaining,
     progression,
     primaryCta,
+    liveRoundCta,
     bracketCta,
     focused: Boolean(options.focused),
   };

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { TournamentBracketModal } from "@/components/arena/TournamentBracketModal";
+import { TournamentLiveRoundPanel } from "@/components/arena/TournamentLiveRoundBattles";
 import { TournamentProgressionBar } from "@/components/arena/TournamentProgressionBar";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { WarzoneTokenMark } from "@/components/warzone/WarzoneTokenMark";
@@ -48,6 +49,7 @@ export function TournamentEventCard({
   const extra = Number(card.extraEntrants || 0);
   const [bracketOpen, setBracketOpen] = useState(false);
   const [bracketBusy, setBracketBusy] = useState(false);
+  const [roundOpen, setRoundOpen] = useState(false);
   const [bracketRounds, setBracketRounds] = useState(() => readBracketRounds(event));
   const [bracketEntries, setBracketEntries] = useState<Entrant[]>(Array.isArray(event.entrants) ? (event.entrants as Entrant[]) : []);
 
@@ -106,6 +108,7 @@ export function TournamentEventCard({
   const champion = presentTournamentChampion(source, bracketEntries);
   const live = card.status.key === "live";
   const finished = card.status.key === "finished";
+  const showLiveRound = live && !embedded;
 
   function handlePrimary() {
     if (live) onViewTournament?.(card.id);
@@ -186,7 +189,19 @@ export function TournamentEventCard({
       {card.progression?.nodes ? <TournamentProgressionBar nodes={card.progression.nodes} /> : null}
 
       <div className="mt-4 flex flex-wrap gap-3">
-        {embedded ? (
+        {showLiveRound ? (
+          <button
+            type="button"
+            data-tournament-watch-live-round={card.id}
+            aria-expanded={roundOpen}
+            aria-controls={`tournament-live-round-${card.id}`}
+            onClick={() => setRoundOpen((open) => !open)}
+            className="mwz-button inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em]"
+          >
+            {card.liveRoundCta || "Watch live round"}
+            <span className="ml-2 text-[10px]" aria-hidden="true">{roundOpen ? "↑" : "↓"}</span>
+          </button>
+        ) : embedded ? (
           <Link
             to={card.href}
             data-tournament-enter={card.id}
@@ -206,7 +221,26 @@ export function TournamentEventCard({
         >
           {bracketBusy ? "Loading bracket" : card.bracketCta}
         </button>
+        {showLiveRound ? (
+          <button
+            type="button"
+            data-tournament-enter={card.id}
+            onClick={handlePrimary}
+            className="inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em] text-white/55 underline-offset-4 hover:text-accent hover:underline"
+          >
+            {card.primaryCta}
+          </button>
+        ) : null}
       </div>
+      {showLiveRound && roundOpen ? (
+        <div id={`tournament-live-round-${card.id}`} data-tournament-live-round-dropdown={card.id}>
+          <TournamentLiveRoundPanel
+            tournamentId={card.id}
+            statusLabel={card.status.label}
+            stageLabel={card.bracketStage}
+          />
+        </div>
+      ) : null}
       <TournamentBracketModal
         open={bracketOpen}
         onOpenChange={setBracketOpen}

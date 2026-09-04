@@ -195,15 +195,19 @@ test("Live Tournament modal uses telemetry-confirmed live Battles only", () => {
   const results = readSrc("../../components/arena/TournamentResultsModal.tsx");
   const hook = readSrc("../../hooks/useTournamentCommandState.ts");
   const drawer = readSrc("../../components/arena/TournamentLiveRoundDrawer.tsx");
+  const card = readSrc("../../components/arena/TournamentEventCard.tsx");
   assert.match(liveModal, /loadMetrics: true/);
   assert.match(liveModal, /open \? tournamentId : ""/);
   assert.match(liveModal, /data-tournament-watch-live-round/);
   assert.match(liveModal, /TournamentLiveRoundDrawer/);
   assert.doesNotMatch(liveModal, /View live battles/);
+  assert.match(card, /data-tournament-watch-live-round=\{card\.id\}/);
+  assert.match(card, /TournamentLiveRoundPanel/);
+  assert.match(card, /data-tournament-live-round-dropdown/);
   assert.match(registration, /loadMetrics: false/);
   assert.match(results, /loadMetrics: false/);
   assert.match(hook, /presentConfirmedLiveBattles/);
-  assert.match(drawer, /BattleWallModule/);
+  assert.match(drawer, /TournamentLiveRoundBattles/);
   assert.match(drawer, /data-tournament-live-round-drawer/);
 });
 

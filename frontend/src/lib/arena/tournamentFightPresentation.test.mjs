@@ -108,11 +108,18 @@ test("mock live Tournaments exist only in fixtures and expose four current-round
   assert.match(feed, /allowMockFallback = postGradFlags.mocks/);
 });
 
-test("Watch Live Round drawer renders the same Battle Wall modules", () => {
+test("Watch Live Round is a card dropdown of the same Battle Wall modules", () => {
+  const card = readSrc("../../components/arena/TournamentEventCard.tsx");
+  const panel = readSrc("../../components/arena/TournamentLiveRoundBattles.tsx");
   const drawer = readSrc("../../components/arena/TournamentLiveRoundDrawer.tsx");
   const liveModal = readSrc("../../components/arena/TournamentLiveOverviewModal.tsx");
-  assert.match(drawer, /<BattleWallModule/);
-  assert.match(drawer, /postGradFlags.mocks/);
+  assert.match(card, /data-tournament-watch-live-round/);
+  assert.match(card, /data-tournament-live-round-dropdown/);
+  assert.match(card, /TournamentLiveRoundPanel/);
+  assert.match(card, /Watch live round/);
+  assert.match(panel, /<BattleWallModule/);
+  assert.match(panel, /postGradFlags.mocks/);
+  assert.match(drawer, /TournamentLiveRoundBattles/);
   assert.match(liveModal, /Watch live round/);
   assert.match(liveModal, /liveBattleIds.length/);
 });

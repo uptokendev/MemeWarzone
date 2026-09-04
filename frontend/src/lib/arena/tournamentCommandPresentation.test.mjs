@@ -148,7 +148,17 @@ test("progression and champion stay authoritative", () => {
     cap: 16,
   });
   assert.equal(card.primaryCta, "Enter tournament");
+  assert.equal(card.liveRoundCta, null);
   assert.equal(card.bracketCta, "View bracket");
+  const liveCard = presentTournamentCard({
+    id: "event-tournament-live-04",
+    title: "Rookie Crown Qualifier",
+    status: "live",
+    bracketStage: "quarterfinals",
+    cap: 16,
+  }, { tab: "live" });
+  assert.equal(liveCard.liveRoundCta, "Watch live round");
+  assert.equal(liveCard.primaryCta, "View tournament");
 });
 
 test("confirmed live Battles require telemetry state live, not merely an unsettled match", () => {
