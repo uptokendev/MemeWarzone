@@ -75,12 +75,12 @@ export function EventSponsorshipFlow({
   }
 
   if (loading) {
-    return <div className="text-xs text-white/45">Loading sponsorable events…</div>;
+    return <div role="status" aria-live="polite" className="text-xs text-white/45">Loading sponsorable events…</div>;
   }
 
   if (unavailable || !transport) {
     return (
-      <section data-event-sponsorship-runtime="unavailable" className="space-y-2 border border-white/10 bg-black/20 p-4">
+      <section data-event-sponsorship-runtime="unavailable" role="status" aria-live="polite" className="space-y-2 border border-white/10 bg-black/20 p-4">
         <div className="font-retro text-sm text-white/85">Sponsor an event</div>
         <div className="text-xs text-white/45">Event sponsorship runtime is not available yet. The existing advertising sponsorship product is unchanged.</div>
       </section>
@@ -88,14 +88,14 @@ export function EventSponsorshipFlow({
   }
 
   if (!events.length) {
-    return <div className="text-xs text-white/45">No sponsorable MemeWarzone events are open right now.</div>;
+    return <div role="status" aria-live="polite" className="text-xs text-white/45">No sponsorable MemeWarzone events are open right now.</div>;
   }
 
   return (
-    <section data-event-sponsorship-flow="true" className="space-y-4 border border-white/10 bg-black/20 p-4">
+    <section data-event-sponsorship-flow="true" aria-labelledby="event-sponsorship-title" className="space-y-4 border border-white/10 bg-black/20 p-4">
       <div>
         <div className="text-[10px] uppercase tracking-[0.2em] text-white/40">Sponsor an event</div>
-        <div className="mt-1 font-retro text-lg text-white/90">Fund the prize pool. Never the outcome.</div>
+        <div id="event-sponsorship-title" className="mt-1 font-retro text-lg text-white/90">Fund the prize pool. Never the outcome.</div>
       </div>
 
       <label className="block space-y-2">
@@ -116,7 +116,7 @@ export function EventSponsorshipFlow({
       </label>
 
       {eventModel ? (
-        <div className="grid gap-2 sm:grid-cols-3">
+        <div className="grid gap-2 sm:grid-cols-3" aria-live="polite">
           <FlowMetric label="Minimum" value={eventModel.minimumUsd != null ? `$${eventModel.minimumUsd}` : "Server quote"} />
           <FlowMetric label="Payment asset" value={eventModel.symbol || "Native"} />
           <FlowMetric label="Status" value={eventModel.status.label} />
@@ -149,7 +149,7 @@ export function EventSponsorshipFlow({
       )}
 
       {quoteModel.valid ? (
-        <div className="space-y-3 border border-white/10 bg-black/30 p-3" data-event-sponsorship-quote="true">
+        <div className="space-y-3 border border-white/10 bg-black/30 p-3" data-event-sponsorship-quote="true" role="status" aria-live="polite">
           <div className="flex items-center justify-between gap-3">
             <span className="text-[10px] uppercase tracking-[0.14em] text-white/40">You pay</span>
             <span className="font-retro text-lg text-white/90">{quoteModel.grossNative} {quoteModel.symbol}</span>
