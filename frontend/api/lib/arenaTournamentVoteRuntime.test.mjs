@@ -15,6 +15,8 @@ function tournament(overrides = {}) {
   return {
     id: "t-1",
     status: "live",
+    battle_mode: "vote",
+    round_duration_hours: 24,
     bracket: {
       rounds: [
         {
@@ -53,6 +55,11 @@ test("rejects a token that is not a participant", () => {
   assert.deepEqual(result, { ok: false, reason: "selected-token-not-in-match" });
 });
 
+test("rejects non-vote tournaments and non-24h vote rounds", () => {
+  assert.equal(resolveTournamentVoteMatch({ tournament: tournament({ battle_mode: "normal" }), matchRef: "m1" }).reason, "tournament-not-vote-mode");
+  assert.equal(resolveTournamentVoteMatch({ tournament: tournament({ round_duration_hours: 12 }), matchRef: "m1" }).reason, "invalid-round-duration");
+});
+
 test("only the latest unresolved round is vote-active", () => {
   const row = tournament({
     bracket: {
@@ -68,12 +75,12 @@ test("only the latest unresolved round is vote-active", () => {
 
 test("rejects finished and bye matchups", () => {
   const finished = tournament({
-    bracket: { rounds: [{ round: 1, matches: [{ id: "m1", tokenA, tokenB, winner: tokenA, bye: false }] }] },
+    bracket: { rounds: [{ round: 1, matches: [{ id: "m1", tokenA, tokenB, battleId: "battle-1", winner: tokenA, bye: false }] }] },
   });
   assert.equal(resolveTournamentVoteMatch({ tournament: finished, matchRef: "m1", selectedToken: tokenA }).reason, "no-active-round");
 
   const bye = tournament({
-    bracket: { rounds: [{ round: 1, matches: [{ id: "m1", tokenA, tokenB: null, winner: null, bye: true }] }] },
+    bracket: { rounds: [{ round: 1, matches: [{ id: "m1", tokenA, tokenB: null, battleId: null, winner: null, bye: true }] }] },
   });
   assert.equal(resolveTournamentVoteMatch({ tournament: bye, matchRef: "m1", selectedToken: tokenA }).reason, "no-active-round");
 });
@@ -83,12 +90,20 @@ test("rejects voting when the tournament is not live", () => {
   assert.deepEqual(result, { ok: false, reason: "tournament-not-live" });
 });
 
-test("summarizes only votes for the authoritative participants", () => {
+test("summarizes authoritative side votes", () => {
   const summary = tournamentVoteSummary([
-    { selected_token: tokenA },
-    { selected_token: tokenA.toUpperCase().replace("0X", "0x") },
-    { selected_token: tokenB },
-    { selected_token: tokenC },
+    { side: "left" },
+    { side: "left" },
+    { side: "right" },
+    { side: "invalid" },
   ], { tokenA, tokenB });
-  assert.deepEqual(summary, { tokenA, tokenB, leftVotes: 2, rightVotes: 1, totalVotes: 3 });
+  assert.deepEqual(summary, {
+    tokenA,
+    tokenB,
+    leftVotes: 2,
+    rightVotes: 1,
+    totalVotes: 3,
+    leftPoints: 2,
+    rightPoints: 1,
+  });
 });
