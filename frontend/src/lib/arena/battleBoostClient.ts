@@ -30,6 +30,8 @@ export type BattlePointsV3BoostState = {
   scoringVersion: "battle_points_v3" | string;
   weights: { mcap: number; holders: number; volume: number; boost: number };
   boostCurveVersion: string;
+  /** Agent 2 normalized name. Agent 3 currently serializes this confirmed aggregate as boostUnits. */
+  confirmedBoostUnits: string;
   boostUnits: string;
   boostPoints: number | null;
   mcapPoints: number | null;
@@ -45,6 +47,7 @@ export type BattleBoostState = {
   chainId: number;
   summary: BattleBoostSummary;
   battlePointsV3?: BattlePointsV3BoostState[];
+  /** Backend-owned authoritative-total status. */
   scoringActive?: boolean;
   scoringReason?: string | null;
   updatedAt?: string;
@@ -59,11 +62,23 @@ function parseQuote(value: unknown): BattleBoostQuote {
   return quote;
 }
 
+function normalizeV3Rows(rows: unknown): BattlePointsV3BoostState[] {
+  if (!Array.isArray(rows)) return [];
+  return rows.filter(Boolean).map((row: any) => ({
+    ...row,
+    boostUnits: String(row.boostUnits ?? row.confirmedBoostUnits ?? "0"),
+    confirmedBoostUnits: String(row.confirmedBoostUnits ?? row.boostUnits ?? "0"),
+    boostCurveVersion: String(row.boostCurveVersion || ""),
+    boostPoints: row.boostPoints == null ? null : Number(row.boostPoints),
+    totalPoints: row.totalPoints == null ? null : Number(row.totalPoints),
+  })) as BattlePointsV3BoostState[];
+}
+
 export async function fetchBattleBoostState(battleId: string, signal?: AbortSignal): Promise<BattleBoostState> {
   const res = await apiFetch(`/api/arena/boosts/${encodeURIComponent(battleId)}`, { cache: "no-store", signal });
   const json = await res.json().catch(() => ({}));
   if (!res.ok || json?.ok === false) throw new Error(String(json?.error || `Battle Boost state failed (${res.status})`));
-  return json as BattleBoostState;
+  return { ...json, battlePointsV3: normalizeV3Rows(json.battlePointsV3) } as BattleBoostState;
 }
 
 export async function createBattleBoostQuote(input: {
