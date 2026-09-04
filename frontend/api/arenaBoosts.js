@@ -4,6 +4,8 @@ import { pool } from "../server/db.js";
 import { badMethod, isAddress, json, readJson } from "../server/http.js";
 import { requireInternalAuth } from "./lib/apiAuth.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
+import { getServerReadProvider } from "./lib/getServerReadProvider.js";
+import { verifyBattleBoostPayment } from "./lib/arenaBoostChainVerification.mjs";
 import { battlePoolId } from "./lib/arenaWarPoolEscrow.js";
 import {
   DEFAULT_QUOTE_TTL_SECONDS,
@@ -81,6 +83,19 @@ function actionShape(row) {
     txHash: row.tx_hash || null,
     logIndex: row.log_index == null ? null : Number(row.log_index),
     confirmedAt: row.confirmed_at || null,
+  };
+}
+
+function chainProofShape(proof) {
+  if (!proof) return null;
+  return {
+    treasuryAddress: proof.treasuryAddress,
+    txHash: proof.txHash,
+    logIndex: proof.logIndex,
+    blockNumber: proof.blockNumber,
+    pricingVersion: String(proof.pricingVersion),
+    oracleTimestamp: String(proof.oracleTimestamp),
+    nonce: String(proof.nonce),
   };
 }
 
@@ -262,12 +277,11 @@ async function confirmBattleBoost(req, res) {
   const logIndex = safeLogIndex(body.logIndex);
   const targetToken = String(body.targetToken || "").trim().toLowerCase();
   const wallet = String(body.wallet || "").trim().toLowerCase();
-  const confirmedAt = safeConfirmedAt(body.confirmedAt);
 
   if (!Number.isInteger(chainId) || chainId <= 0 || chainId === 101 || chainId === 102) {
     return json(res, 400, { ok: false, error: "Confirmed Battle Boost ingestion currently requires an active EVM money path" });
   }
-  if (!battleId || !txHash || logIndex == null || !isAddress(targetToken) || !isAddress(wallet) || !confirmedAt) {
+  if (!battleId || !txHash || logIndex == null || !isAddress(targetToken) || !isAddress(wallet)) {
     return json(res, 400, { ok: false, error: "Invalid confirmed Boost event identity" });
   }
 
@@ -281,6 +295,38 @@ async function confirmBattleBoost(req, res) {
     });
   } catch (error) {
     return json(res, 400, { ok: false, error: error?.message || "Invalid Boost split" });
+  }
+
+  let chainProof;
+  try {
+    const provider = await getServerReadProvider(chainId);
+    chainProof = await verifyBattleBoostPayment({
+      provider,
+      chainId,
+      txHash,
+      logIndex,
+      battleId,
+      wallet,
+      targetToken,
+      boostUnits: split.boostUnits,
+      grossNativeRaw: split.gross,
+    });
+  } catch (error) {
+    console.error("[api/arenaBoosts] on-chain payment verification failed", error?.message || error);
+    return json(res, 409, {
+      ok: false,
+      error: "Battle Boost payment could not be verified on-chain",
+      code: "BOOST_PAYMENT_UNVERIFIED",
+    });
+  }
+
+  const confirmedAt = chainProof.confirmedAt || safeConfirmedAt(body.confirmedAt);
+  if (!confirmedAt) {
+    return json(res, 409, {
+      ok: false,
+      error: "Battle Boost confirmation time could not be verified",
+      code: "BOOST_CONFIRMATION_TIME_UNVERIFIED",
+    });
   }
 
   const client = await pool.connect();
@@ -341,7 +387,13 @@ async function confirmBattleBoost(req, res) {
         String(existing.protocol_native_raw) === split.protocol.toString();
       await client.query("ROLLBACK");
       if (!sameEvent) return json(res, 409, { ok: false, error: "Transaction log is already bound to another contest action" });
-      return json(res, 200, { ok: true, confirmed: true, idempotent: true, action: actionShape(existing) });
+      return json(res, 200, {
+        ok: true,
+        confirmed: true,
+        idempotent: true,
+        action: actionShape(existing),
+        chainProof: chainProofShape(chainProof),
+      });
     }
 
     const currentScore = await client.query(
@@ -386,6 +438,7 @@ async function confirmBattleBoost(req, res) {
       confirmed: true,
       idempotent: false,
       action: actionShape(insertResult.rows[0]),
+      chainProof: chainProofShape(chainProof),
       summary: serializeBoostSummary(boostSummary(summaryResult.rows)),
       battlePointsV3: {
         scoringVersion: "battle_points_v3",
