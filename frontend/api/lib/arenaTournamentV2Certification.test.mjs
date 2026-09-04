@@ -171,3 +171,44 @@ test("Vote Tournament Boost binds V2 event identity, 2 points per unit and 90/10
   assert.match(boosts, /arena_tournament_boost_quote/);
   assert.match(boosts, /requireInternalAuth\(req, res, \{ routeLabel: "arena_tournament_boost_confirm" \}\)/);
 });
+
+test("V2 Vote Tournament settlement advances winner and next round in the same transaction", () => {
+  const finalizer = readApi("lib/arenaVoteTournamentFinalizationService.js");
+  const bracket = readApi("lib/arenaVoteTournamentBracketService.js");
+  assert.match(finalizer, /import \{ advanceVoteTournamentBracket \}/);
+  assert.match(finalizer, /competition_generation === "arena_competition_v2"/);
+  assert.match(finalizer, /contest_scoring_version === "vote_tournament_v1"/);
+  assert.match(finalizer, /const finished = await finishVoteBattle[\s\S]*await advanceVoteTournamentBracket[\s\S]*await client\.query\("commit"\)/);
+  assert.match(finalizer, /persistTiebreakState[\s\S]*finishVoteBattle[\s\S]*advanceVoteTournamentBracket[\s\S]*client\.query\("commit"\)/);
+  assert.match(bracket, /from public\.arena_tournaments[\s\S]*for update/);
+  assert.match(bracket, /competition_generation !== "arena_competition_v2"/);
+  assert.match(bracket, /contest_scoring_version !== "vote_tournament_v1"/);
+  assert.match(bracket, /insert into public\.arena_battles/);
+  assert.match(bracket, /captureLiveBaselines\(/);
+  assert.match(bracket, /isSolanaChainId/);
+  assert.match(bracket, /token_address = \$2/);
+  assert.match(bracket, /lower\(token_address\) = lower\(\$2\)/);
+});
+
+test("V2 Vote Tournament setup locks $0.25 entry and generation-routes historical receipt URLs", () => {
+  const setup = readApi("arenaVoteTournamentSetup.js");
+  const buyIn = readApi("lib/arenaTournamentBuyInV2.mjs");
+  const routing = readApi("postgrad.js");
+  assert.match(buyIn, /TOURNAMENT_BUY_IN_USD_MICROS = 250_000n/);
+  assert.match(buyIn, /usdMicros:\s*TOURNAMENT_BUY_IN_USD_MICROS/);
+  assert.match(buyIn, /function buyIns\(bytes32 poolId,address wallet\)/);
+  assert.match(buyIn, /function pools\(bytes32 poolId\)/);
+  assert.match(buyIn, /buyInAmount !== expected/);
+  assert.match(buyIn, /paid !== expected/);
+  assert.match(setup, /'vote',24,'vote_tournament_v1','arena_competition_v2'/);
+  assert.match(setup, /action:\s*"arena_tournament_buy_in_v2"/);
+  assert.match(setup, /readAuthoritativeBuyInReceipt/);
+  assert.match(setup, /BigInt\(String\(onchain\.buyInLamports \|\| 0\)\) !== expectedRaw/);
+  assert.match(setup, /verifyEvmTournamentBuyInV2/);
+  assert.match(setup, /await client\.query\("begin"\)/);
+  assert.match(setup, /await client\.query\("commit"\)/);
+  assert.match(setup, /handleGenerationAwareLegacyReceipt/);
+  assert.match(setup, /isSolanaChainId\(chainId\)[\s\S]*token_address = \$2/);
+  assert.doesNotMatch(setup, /PRIVATE_KEY|new Wallet\(/);
+  assert.match(routing, /\/arena\\\/tournaments\\\/\[\^\/\]\+\\\/(?:v2-buy-in-receipt\|buy-in-receipt)/);
+});
