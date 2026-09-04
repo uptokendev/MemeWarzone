@@ -30,6 +30,12 @@ export function BattleWallMore({ battle, metrics, realtimeState, dataSource }: P
   const more = presentBattleWallMore(battle, metrics, { realtimeState, dataSource });
   const generation = presentBattleGeneration(battle, metrics || {});
   const chainId = Number((battle as Battle & { chainId?: number }).chainId || 0);
+  const explicitClaimGeneration = Boolean(generation.pool);
+  const showClaim = more.showClaim && explicitClaimGeneration;
+  const claimBlockedReason =
+    more.showClaim && !explicitClaimGeneration
+      ? "Winner claim is unavailable until this battle's pool generation is resolved. Historical economics will not be inferred."
+      : null;
 
   return (
     <div data-battle-more-panel="true" className="space-y-5 border border-white/10 bg-black/25 p-3 md:p-4">
@@ -69,7 +75,8 @@ export function BattleWallMore({ battle, metrics, realtimeState, dataSource }: P
         chainId={chainId}
         battleState={String((battle as Battle & { state?: string }).state || "")}
         showFunding={more.showFunding}
-        showClaim={more.showClaim}
+        showClaim={showClaim}
+        claimBlockedReason={claimBlockedReason}
       />
       <BattleResultLog result={more.result} />
     </div>
