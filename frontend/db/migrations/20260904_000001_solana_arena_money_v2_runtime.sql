@@ -57,4 +57,8 @@ create unique index if not exists sponsorship_payment_quotes_solana_payment_uidx
   on public.sponsorship_payment_quotes(chain_id, solana_payment_id, sponsor_wallet)
   where solana_payment_id is not null;
 
+create unique index if not exists sponsorship_payments_signature_reference_uidx
+  on public.sponsorship_payments(chain_id, signature_reference)
+  where signature_reference is not null;
+
 commit;
