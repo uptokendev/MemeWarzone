@@ -63,30 +63,74 @@ function sha(value) {
   return /^[0-9a-f]{40}$/.test(raw) ? raw : null;
 }
 
-function proveStockRegistry(stock, forbidden) {
+function positiveNumber(value, label) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) throw new Error(`${label} must be a positive number`);
+  return number;
+}
+
+function proveStockRegistry(stock, forbidden, contracts) {
   if (!Array.isArray(stock.registry) || stock.registry.length === 0) {
     throw new Error("production Stock registry must contain at least one canonical route entry");
   }
-  const seen = new Set();
+  const seenTokens = new Set();
+  const seenSymbols = new Set();
+  const approvedRouter = requireAddress(contracts.v3SwapRouter, "contracts.v3SwapRouter");
+
   for (const [index, entry] of stock.registry.entries()) {
     const prefix = `stock.registry[${index}]`;
     const token = requireAddress(entry.contractAddress, `${prefix}.contractAddress`);
     const oracle = requireAddress(entry.oracleFeedAddress, `${prefix}.oracleFeedAddress`);
     const acquisitionPool = requireAddress(entry.acquisitionPoolAddress, `${prefix}.acquisitionPoolAddress`);
+    const acquisitionQuoter = requireAddress(entry.acquisitionQuoterAddress, `${prefix}.acquisitionQuoterAddress`);
     const acquisitionRouter = requireAddress(entry.acquisitionRouterAddress, `${prefix}.acquisitionRouterAddress`);
+
+    const symbol = String(entry.symbol || "").trim().toUpperCase();
+    const underlyingSymbol = String(entry.underlyingSymbol || "").trim().toUpperCase();
+    const displayName = String(entry.displayName || "").trim();
+    if (!symbol) throw new Error(`${prefix}.symbol is required`);
+    if (!underlyingSymbol) throw new Error(`${prefix}.underlyingSymbol is required`);
+    if (!displayName) throw new Error(`${prefix}.displayName is required`);
+    if (seenSymbols.has(symbol)) throw new Error(`production Stock registry duplicates symbol ${symbol}`);
+    if (seenTokens.has(token)) throw new Error(`production Stock registry duplicates token ${token}`);
+    seenSymbols.add(symbol);
+    seenTokens.add(token);
+
+    const decimals = Number(entry.decimals);
+    if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) throw new Error(`${prefix}.decimals is invalid`);
+    if (String(entry.oracleType || "").trim().toLowerCase() !== "chainlink") {
+      throw new Error(`${prefix}.oracleType must be chainlink for production acceptance`);
+    }
     if (entry.canonical !== true) throw new Error(`${prefix} must be canonical`);
+    if (entry.enabledForDiscovery !== true) throw new Error(`${prefix} must be enabled for discovery`);
     if (entry.enabledForGraduation !== false || entry.enabledForTrading !== false) {
       throw new Error(`${prefix} must keep graduation/trading disabled during production preflight`);
     }
+
+    positiveNumber(entry.minimumQuoteLiquidityUsd, `${prefix}.minimumQuoteLiquidityUsd`);
+    const maxImpactBps = Number(entry.maximumGraduationSwapImpactBps);
+    if (!Number.isInteger(maxImpactBps) || maxImpactBps <= 0 || maxImpactBps > 10_000) {
+      throw new Error(`${prefix}.maximumGraduationSwapImpactBps is invalid`);
+    }
+
     const feeTier = Number(entry.acquisitionFeeTier);
     if (!Number.isInteger(feeTier) || feeTier <= 0 || feeTier > 1_000_000) {
       throw new Error(`${prefix}.acquisitionFeeTier is invalid`);
     }
-    const symbol = String(entry.symbol || "").trim().toUpperCase();
-    if (!symbol) throw new Error(`${prefix}.symbol is required`);
-    if (seen.has(token)) throw new Error(`production Stock registry duplicates token ${token}`);
-    seen.add(token);
-    for (const [label, address] of [["token", token], ["oracle", oracle], ["acquisition pool", acquisitionPool], ["acquisition router", acquisitionRouter]]) {
+    if (String(entry.acquisitionQuoteKind || "").trim() !== "SIMPLE_EXACT_INPUT_SINGLE") {
+      throw new Error(`${prefix}.acquisitionQuoteKind must be SIMPLE_EXACT_INPUT_SINGLE`);
+    }
+    if (acquisitionRouter !== approvedRouter) {
+      throw new Error(`${prefix}.acquisitionRouterAddress must equal contracts.v3SwapRouter`);
+    }
+
+    for (const [label, address] of [
+      ["token", token],
+      ["oracle", oracle],
+      ["acquisition pool", acquisitionPool],
+      ["acquisition quoter", acquisitionQuoter],
+      ["acquisition router", acquisitionRouter],
+    ]) {
       if (forbidden?.has(address)) throw new Error(`${prefix} ${label} reuses accepted Robinhood testnet address ${address}`);
     }
   }
@@ -146,7 +190,7 @@ export function proveRobinhoodProductionManifest(manifest, options = {}) {
   if (stock.nativeUsdOracleConfigured !== true) throw new Error("production native/USD oracle must be explicitly configured before preflight can pass");
   if (stock.approvedAcquisitionRoutesConfigured !== true) throw new Error("production approved Stock acquisition routes must be explicitly configured before preflight can pass");
   if (stock.stockRoutesEnabled === true) throw new Error("production Stock routes must remain disabled during preflight");
-  proveStockRegistry(stock, forbidden);
+  proveStockRegistry(stock, forbidden, contracts);
 
   if (!Array.isArray(manifest.activationPrerequisites) || manifest.activationPrerequisites.length < 4) throw new Error("production activationPrerequisites must document oracle, route, canary, and rollback gates");
   const prerequisites = manifest.activationPrerequisites.map((value) => String(value || "").trim().toLowerCase());
