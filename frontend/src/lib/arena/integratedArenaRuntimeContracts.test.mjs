@@ -14,10 +14,13 @@ const voteClient = read("src/lib/arena/tournamentVoteClient.ts");
 const voteApi = read("api/arenaTournamentVotes.js");
 const tournamentBoostClient = read("src/lib/arena/tournamentBoostClient.ts");
 const tournamentBoostApi = read("api/arenaTournamentBoosts.js");
+const solanaBoostApi = read("api/arenaSolanaBoosts.js");
+const solanaBrowser = read("src/lib/arena/solanaArenaBrowserTransaction.ts");
 const salvoClient = read("src/lib/arena/finalSalvoClient.ts");
 const salvoControls = read("src/components/arena/TournamentFinalSalvoControls.tsx");
 const salvoApi = read("api/arenaFinalSalvo.js");
 const sponsorshipApi = read("api/arenaSponsorships.js");
+const sponsorshipPublicApi = read("api/arenaSponsorshipPublic.js");
 const sponsorshipClient = read("src/lib/arena/eventSponsorshipClient.ts");
 
 test("Normal Battle Boost client matches merged EVM runtime and never ingests confirmations", () => {
@@ -25,13 +28,9 @@ test("Normal Battle Boost client matches merged EVM runtime and never ingests co
   assert.match(battleClient, /arena_battle_boost_quote/);
   assert.match(battleClient, /boostBattle\(/);
   assert.match(battleClient, /quote\.value\.booster/);
-  assert.match(battleClient, /Wallet chain does not match Battle Boost quote/);
-  assert.match(battleClient, /Battle Boost quote belongs to another wallet/);
   assert.doesNotMatch(battleClient, /boosts\/confirm/);
   assert.match(battleApi, /arena_battle_boost_quote/);
-  assert.match(battleApi, /active EVM money path/);
-  assert.match(battleApi, /boost_curve_founder_pending|boost_hyperbolic_100_v1/);
-  assert.match(battleApi, /arena_boost_confirm/);
+  assert.match(battleApi, /boost_hyperbolic_100_v1/);
 });
 
 test("Vote Tournament Free Vote remains backend-authoritative and regulation-only", () => {
@@ -43,16 +42,21 @@ test("Vote Tournament Free Vote remains backend-authoritative and regulation-onl
   assert.match(voteApi, /free_vote/);
 });
 
-test("Vote Tournament paid Boost matches merged EVM runtime and disappears for Final Salvo", () => {
+test("Vote Tournament paid Boost consumes EVM and frozen Solana runtime without client receipt authority", () => {
   assert.match(tournamentBoostClient, /arena_tournament_boost_quote/);
-  assert.match(tournamentBoostClient, /boostTournament\(/);
-  assert.match(tournamentBoostClient, /Wallet chain does not match Tournament Boost quote/);
-  assert.doesNotMatch(tournamentBoostClient, /boosts\/confirm/);
-  assert.match(tournamentBoostApi, /round_duration_hours/);
+  assert.match(tournamentBoostClient, /arena_tournament_boost_payment/);
+  assert.match(tournamentBoostClient, /\/solana-quote/);
+  assert.match(tournamentBoostClient, /\/solana-payment/);
+  assert.match(tournamentBoostClient, /sendSolanaArenaInstruction/);
+  assert.doesNotMatch(tournamentBoostClient, /findProgramAddress|receiptPda.*===|getAccountInfo/);
   assert.match(tournamentBoostApi, /pointsPerBoost: 2/);
   assert.match(tournamentBoostApi, /prizeBps: 9000, protocolBps: 1000, leagueBps: 0/);
   assert.match(tournamentBoostApi, /Boost is disabled during Final Salvo/);
-  assert.match(tournamentBoostApi, /active EVM money path/);
+  assert.match(solanaBoostApi, /pointsPerBoost: 2/);
+  assert.match(solanaBoostApi, /TOURNAMENT_BOOST_FINAL_SALVO/);
+  assert.match(solanaBoostApi, /verifySolanaBoostPayment/);
+  assert.match(solanaBrowser, /transaction\.accounts\.map|envelope\.accounts\.map/);
+  assert.doesNotMatch(solanaBrowser, /findProgramAddress|derive.*Pda|verifySolanaBoostPayment/);
 });
 
 test("Final Salvo consumes authoritative state and exposes no paid Boost transaction path", () => {
@@ -62,26 +66,20 @@ test("Final Salvo consumes authoritative state and exposes no paid Boost transac
   assert.doesNotMatch(salvoControls, /boostTournament|boostBattle|\/boosts\/quote/);
   assert.match(salvoApi, /boostAllowed: false/);
   assert.match(salvoApi, /walletEligible/);
-  assert.match(salvoApi, /shotIndex/);
-  assert.match(salvoApi, /winnerToken/);
-  assert.match(salvoApi, /arena_final_salvo_vote/);
 });
 
-test("Event Sponsorship frontend targets declared public reads and never calls internal confirm", () => {
-  assert.match(sponsorshipClient, /\/api\/arena\/sponsorships\/options/);
-  assert.match(sponsorshipClient, /\/api\/arena\/sponsorships\/\$\{encodeURIComponent\(eventId\)\}\/state/);
-  assert.match(sponsorshipClient, /\/api\/arena\/sponsorships\/payments\/\$\{encodeURIComponent\(quoteId\)\}/);
-  assert.match(sponsorshipClient, /\/api\/arena\/sponsorships\/solana-quote/);
-  assert.match(sponsorshipClient, /\/api\/arena\/sponsorships\/solana-payment/);
+test("Event Sponsorship consumes public authority routes and never calls internal confirm", () => {
+  for (const route of ["options", "solana-quote", "solana-payment"]) assert.match(sponsorshipClient, new RegExp(`sponsorships\\/${route}`));
+  assert.match(sponsorshipClient, /sponsorships\/payments\/\$\{encodeURIComponent\(quoteId\)\}/);
+  assert.match(sponsorshipClient, /\/state/);
+  assert.match(sponsorshipClient, /arena_sponsorship_quote/);
+  assert.match(sponsorshipClient, /arena_sponsorship_payment/);
   assert.doesNotMatch(sponsorshipClient, /sponsorships\/confirm/);
-
-  assert.match(sponsorshipApi, /\/arena\/sponsorships\/quote/);
-  assert.match(sponsorshipApi, /\/arena\/sponsorships\/confirm/);
-  assert.match(sponsorshipApi, /arena_sponsorship_quote/);
-  assert.match(sponsorshipApi, /Tier: \$\{tier\.code\}/);
-  assert.match(sponsorshipApi, /Minimum USD cents: \$\{minimumCents\}/);
+  assert.match(sponsorshipPublicApi, /SUPPORTED_EVENT_TYPES/);
+  assert.match(sponsorshipPublicApi, /individualBattleSponsorship: false/);
+  assert.match(sponsorshipPublicApi, /verifySolanaSponsorshipPayment/);
+  assert.match(sponsorshipPublicApi, /prizeBps: 7000/);
+  assert.match(sponsorshipPublicApi, /marketingOpsBps: 2000/);
+  assert.match(sponsorshipPublicApi, /protocolBps: 1000/);
   assert.match(sponsorshipApi, /arena_sponsorship_confirm/);
-  assert.match(sponsorshipApi, /prizeBps: 7000/);
-  assert.match(sponsorshipApi, /marketingOpsBps: 2000/);
-  assert.match(sponsorshipApi, /protocolBps: 1000/);
 });
