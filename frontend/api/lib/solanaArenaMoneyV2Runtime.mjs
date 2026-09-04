@@ -11,6 +11,7 @@ import {
   deriveSponsorshipEventV1Pda,
   deriveSponsorshipReceiptV1Pda,
   readBoostReceiptV2,
+  readEventPrizeVaultV1,
   readSponsorshipReceiptV1,
 } from "./solanaArenaMoneyV2Read.js";
 import { ARENA_MONEY_V2_PROGRAM_ID } from "../../src/lib/solanaArenaMoneyV2Layout.mjs";
@@ -30,6 +31,17 @@ function positiveBigInt(value, label) {
   } catch (error) {
     if (String(error?.message || "").includes("must be positive")) throw error;
     throw new Error(`${label} must be a positive integer`);
+  }
+}
+
+function nonNegativeBigInt(value, label) {
+  try {
+    const n = BigInt(String(value));
+    if (n < 0n) throw new Error(`${label} must be non-negative`);
+    return n;
+  } catch (error) {
+    if (String(error?.message || "").includes("must be non-negative")) throw error;
+    throw new Error(`${label} must be a non-negative integer`);
   }
 }
 
@@ -74,6 +86,48 @@ export function splitSolanaSponsorship(grossLamports) {
   const marketing = (gross * SPONSORSHIP_MARKETING_BPS) / BPS;
   const protocol = (gross * SPONSORSHIP_PROTOCOL_BPS) / BPS;
   return { gross, prize: gross - marketing - protocol, marketing, protocol };
+}
+
+export function sponsorshipVaultLifetimeTotals(vault) {
+  if (!vault) throw new Error("EventPrizeVaultV1 state is required");
+  return {
+    prize: nonNegativeBigInt(vault.prizeLamports, "vault.prizeLamports") + nonNegativeBigInt(vault.prizeClaimedLamports, "vault.prizeClaimedLamports"),
+    marketing: nonNegativeBigInt(vault.marketingLamports, "vault.marketingLamports") + nonNegativeBigInt(vault.marketingClaimedLamports, "vault.marketingClaimedLamports"),
+    protocol: nonNegativeBigInt(vault.protocolLamports, "vault.protocolLamports") + nonNegativeBigInt(vault.protocolClaimedLamports, "vault.protocolClaimedLamports"),
+  };
+}
+
+export function verifySolanaSponsorshipVaultDelta({ eventId, receipt, vault, vaultBefore, expectedSplit }) {
+  const normalizedEventId = exactId32(eventId, "eventId");
+  if (!receipt || exactId32(receipt.eventId, "receipt.eventId") !== normalizedEventId) throw new Error("Sponsorship receipt event identity mismatch");
+  if (!vault || exactId32(vault.eventId, "vault.eventId") !== normalizedEventId) throw new Error("EventPrizeVaultV1 event identity mismatch");
+
+  const gross = positiveBigInt(expectedSplit?.gross, "expected gross");
+  const prize = nonNegativeBigInt(expectedSplit?.prize, "expected prize");
+  const marketing = nonNegativeBigInt(expectedSplit?.marketing, "expected marketing");
+  const protocol = nonNegativeBigInt(expectedSplit?.protocol, "expected protocol");
+  if (prize + marketing + protocol !== gross) throw new Error("Sponsorship 70/20/10 split does not conserve gross payment");
+  if (receipt.grossLamports !== gross || receipt.prizeLamports !== prize || receipt.marketingLamports !== marketing || receipt.protocolLamports !== protocol) {
+    throw new Error("Sponsorship receipt split does not match expected 70/20/10 allocation");
+  }
+
+  const before = {
+    prize: nonNegativeBigInt(vaultBefore?.prize, "vaultBefore.prize"),
+    marketing: nonNegativeBigInt(vaultBefore?.marketing, "vaultBefore.marketing"),
+    protocol: nonNegativeBigInt(vaultBefore?.protocol, "vaultBefore.protocol"),
+  };
+  const after = sponsorshipVaultLifetimeTotals(vault);
+  if (after.prize - before.prize !== prize) throw new Error("EventPrizeVaultV1 prize contribution delta mismatch");
+  if (after.marketing - before.marketing !== marketing) throw new Error("EventPrizeVaultV1 marketing contribution delta mismatch");
+  if (after.protocol - before.protocol !== protocol) throw new Error("EventPrizeVaultV1 protocol contribution delta mismatch");
+
+  return {
+    eventId: normalizedEventId,
+    before,
+    after,
+    delta: { prize, marketing, protocol },
+    gross,
+  };
 }
 
 export function readSolanaNativeUsdPricing(chainId, product = "BOOST", env = process.env, nowSeconds = Math.floor(Date.now() / 1000)) {
@@ -173,11 +227,44 @@ export async function verifySolanaBoostPayment({ chainId, signature, competition
   return { ...tx, receiptPda: receipt.pda, receipt: receipt.receipt };
 }
 
-export async function verifySolanaSponsorshipPayment({ chainId, signature, eventId, paymentId, sponsor, grossLamports, prizeLamports, marketingLamports, protocolLamports }) {
+export async function verifySolanaSponsorshipPayment({
+  chainId,
+  signature,
+  eventId,
+  paymentId,
+  sponsor,
+  grossLamports,
+  prizeLamports,
+  marketingLamports,
+  protocolLamports,
+  vaultBefore,
+}) {
   const tx = await verifyConfirmedSolanaSignature(chainId, signature);
   const receipt = await readSponsorshipReceiptV1(chainId, { eventId, paymentId, sponsor, grossLamports, prizeLamports, marketingLamports, protocolLamports });
   if (!receipt.ok) throw new Error(`SponsorshipReceiptV1 verification failed: ${receipt.reason}`);
-  return { ...tx, receiptPda: receipt.pda, receipt: receipt.receipt };
+  const vault = await readEventPrizeVaultV1(chainId, eventId);
+  if (!vault.ok) throw new Error(`EventPrizeVaultV1 verification failed: ${vault.reason}`);
+  const split = {
+    gross: positiveBigInt(grossLamports, "grossLamports"),
+    prize: nonNegativeBigInt(prizeLamports, "prizeLamports"),
+    marketing: nonNegativeBigInt(marketingLamports, "marketingLamports"),
+    protocol: nonNegativeBigInt(protocolLamports, "protocolLamports"),
+  };
+  const vaultVerification = verifySolanaSponsorshipVaultDelta({
+    eventId,
+    receipt: receipt.receipt,
+    vault: vault.vault,
+    vaultBefore,
+    expectedSplit: split,
+  });
+  return {
+    ...tx,
+    receiptPda: receipt.pda,
+    receipt: receipt.receipt,
+    vaultPda: vault.pda,
+    vault: vault.vault,
+    vaultVerification,
+  };
 }
 
 export function assertSolanaPubkey(value, label = "public key") {
