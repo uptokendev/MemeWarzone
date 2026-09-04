@@ -1,4 +1,5 @@
 import { BattleWallModule } from "@/components/arena/BattleWallModule";
+import { TournamentVoteControls } from "@/components/arena/TournamentVoteControls";
 import { postGradFlags } from "@/features/postgrad/config";
 import { getMockBattleById } from "@/features/postgrad/mockRegistry";
 import { getMockTournamentBattleMetrics } from "@/features/postgrad/mockTournamentFixtures.mjs";
@@ -6,21 +7,37 @@ import type { Battle } from "@/features/postgrad/contracts";
 import { useArenaBattleFeed } from "@/hooks/useArenaBattleFeed";
 import { useTournamentCommandState } from "@/hooks/useTournamentCommandState";
 import { presentCurrentRoundMatches } from "@/lib/arena/tournamentFightPresentation.mjs";
+import { shouldShowTournamentVoteControls } from "@/lib/arena/tournamentVotePresentation.mjs";
+
+type Match = {
+  id?: string | null;
+  battleId?: string | null;
+  tokenA?: string | null;
+  tokenB?: string | null;
+  winner?: string | null;
+  bye?: boolean;
+};
 
 type Round = {
   round: number;
-  matches?: Array<{ battleId?: string | null; winner?: string | null; bye?: boolean }>;
+  matches?: Match[];
 };
 
 export function TournamentLiveRoundBattles({
   rounds,
   liveBattleIds,
+  tournamentId,
+  tournamentMode,
+  tournamentChainId,
 }: {
   rounds: Round[];
   liveBattleIds: string[];
+  tournamentId?: string | null;
+  tournamentMode?: { key?: string | null } | string | null;
+  tournamentChainId?: number | null;
 }) {
   const feed = useArenaBattleFeed();
-  const current = presentCurrentRoundMatches(rounds);
+  const current = presentCurrentRoundMatches(rounds) as Match[];
   const allowed = new Set(liveBattleIds.map((id) => String(id)));
   const ids = current
     .map((match) => String(match.battleId || "").trim())
@@ -39,16 +56,31 @@ export function TournamentLiveRoundBattles({
       {battles.length ? (
         battles.map((battle, index) => {
           const mockMetrics = postGradFlags.mocks ? getMockTournamentBattleMetrics(battle.id) : null;
+          const match = current.find((candidate) => String(candidate.battleId || "") === String(battle.id));
+          const showVote = Boolean(
+            tournamentId &&
+            tournamentChainId &&
+            match &&
+            shouldShowTournamentVoteControls({ mode: tournamentMode, match }),
+          );
           return (
-            <BattleWallModule
-              key={battle.id}
-              battle={battle}
-              metrics={mockMetrics}
-              metricsRequested={Boolean(mockMetrics)}
-              metricsLoaded={Boolean(mockMetrics)}
-              realtimeActive={false}
-              viewportIndex={index}
-            />
+            <div key={battle.id} className="space-y-3">
+              <BattleWallModule
+                battle={battle}
+                metrics={mockMetrics}
+                metricsRequested={Boolean(mockMetrics)}
+                metricsLoaded={Boolean(mockMetrics)}
+                realtimeActive={false}
+                viewportIndex={index}
+              />
+              {showVote && match ? (
+                <TournamentVoteControls
+                  tournamentId={String(tournamentId)}
+                  chainId={Number(tournamentChainId)}
+                  match={match}
+                />
+              ) : null}
+            </div>
           );
         })
       ) : (
@@ -83,7 +115,13 @@ export function TournamentLiveRoundPanel({
       {!state.detail && !liveBattleIds.length ? (
         <p className="py-6 text-sm text-muted-foreground">Loading live round.</p>
       ) : (
-        <TournamentLiveRoundBattles rounds={state.bracketRounds} liveBattleIds={liveBattleIds} />
+        <TournamentLiveRoundBattles
+          rounds={state.bracketRounds}
+          liveBattleIds={liveBattleIds}
+          tournamentId={tournamentId}
+          tournamentMode={state.mode}
+          tournamentChainId={state.tournamentChainId}
+        />
       )}
     </section>
   );
