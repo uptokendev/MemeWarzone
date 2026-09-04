@@ -158,7 +158,7 @@ export function BattleWallModule({
       </div>
 
       <div className="relative isolate overflow-hidden" data-battle-wall-combat-stage="true">
-        <div className="relative z-10 grid min-w-0 grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-start md:gap-2">
+        <div className="relative z-10 grid min-w-0 grid-cols-1 items-center gap-2 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-center md:gap-2">
           <BattleWallCombatant
             battle={displayBattle}
             participant={left}

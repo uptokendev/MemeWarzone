@@ -44,7 +44,8 @@ test("Warzone pages share the same centered content width", () => {
   assert.match(details, /data-tournament-command/);
   assert.doesNotMatch(battles, /max-w-full space-y-4/);
   assert.match(combatant, /data-battle-combatant-split="true"/);
-  assert.match(combatant, /grid-cols-\[minmax\(5\.5rem,38%\)_minmax\(0,1fr\)\]/);
+  assert.match(combatant, /grid-cols-\[auto_minmax\(0,1fr\)\]/);
+  assert.match(combatant, /aspect-square/);
 });
 
 test("Overview still reads existing feeds and does not add battle realtime", () => {

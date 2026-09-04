@@ -42,7 +42,7 @@ export function WarzoneRankCard({
         </div>
       </div>
       <div className="flex min-w-0 items-start gap-3">
-        <WarzoneTokenMark imageUrl={imageUrl} symbol={symbol} name={name} />
+        <WarzoneTokenMark imageUrl={imageUrl} symbol={symbol} name={name} size="lg" />
         <div className="min-w-0 flex-1">
           <div className={cn("truncate font-black leading-none text-foreground", champion ? "text-lg" : "text-base")}>
             ${ticker}

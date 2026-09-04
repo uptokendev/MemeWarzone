@@ -5,6 +5,7 @@ import { WarzoneContent } from "@/components/warzone/WarzoneContent";
 import { WarzoneLeagueHowItWorks } from "@/components/warzone/WarzoneLeagueHowItWorks";
 import { WarzonePageHeader } from "@/components/warzone/WarzonePageHeader";
 import { WarzoneRankCard } from "@/components/warzone/WarzoneRankCard";
+import { WarzoneTokenMark } from "@/components/warzone/WarzoneTokenMark";
 import { getArenaTokenRoute } from "@/features/postgrad/tokenRoutes";
 import { useArenaLeagueFeed } from "@/hooks/useArenaLeagueFeed";
 import {
@@ -162,9 +163,12 @@ const PostGradLeague = () => {
                         style={{ borderColor: "var(--mwz-flat-card-border)" }}
                       >
                         <span className="font-retro text-white/60">#{entry.rank}</span>
-                        <span className="min-w-0 truncate">
-                          <span className="font-retro text-foreground">${String(entry.symbol || "").replace(/^\$/, "")}</span>
-                          <span className="ml-2 text-xs text-white/45">{entry.tokenName}</span>
+                        <span className="flex min-w-0 items-center gap-2">
+                          <WarzoneTokenMark imageUrl={(entry as { imageUrl?: string }).imageUrl} symbol={entry.symbol} name={entry.tokenName} size="sm" />
+                          <span className="min-w-0 truncate">
+                            <span className="font-retro text-foreground">${String(entry.symbol || "").replace(/^\$/, "")}</span>
+                            <span className="ml-2 text-xs text-white/45">{entry.tokenName}</span>
+                          </span>
                         </span>
                         <span>{Number(entry.points).toLocaleString()}</span>
                         <span>{entry.wins}</span>
@@ -183,10 +187,13 @@ const PostGradLeague = () => {
                       className="flex items-center justify-between gap-2 border-b py-3"
                       style={{ borderColor: "var(--mwz-flat-card-border)" }}
                     >
-                      <div className="min-w-0">
-                        <div className="text-[10px] uppercase tracking-[0.16em] text-white/42">#{entry.rank}</div>
-                        <div className="truncate font-retro text-foreground">${String(entry.symbol || "").replace(/^\$/, "")}</div>
-                        <div className="truncate text-[11px] uppercase tracking-[0.12em] text-white/50">{entry.tokenName}</div>
+                      <div className="flex min-w-0 items-center gap-2">
+                        <WarzoneTokenMark imageUrl={(entry as { imageUrl?: string }).imageUrl} symbol={entry.symbol} name={entry.tokenName} size="sm" />
+                        <div className="min-w-0">
+                          <div className="text-[10px] uppercase tracking-[0.16em] text-white/42">#{entry.rank}</div>
+                          <div className="truncate font-retro text-foreground">${String(entry.symbol || "").replace(/^\$/, "")}</div>
+                          <div className="truncate text-[11px] uppercase tracking-[0.12em] text-white/50">{entry.tokenName}</div>
+                        </div>
                       </div>
                       <div className="text-right">
                         <div className="font-retro text-sm">{Number(entry.points).toLocaleString()} PTS</div>

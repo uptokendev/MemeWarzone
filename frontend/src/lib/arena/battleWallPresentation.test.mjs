@@ -636,9 +636,10 @@ test("Battle Wall visual parity uses bounded combatant cards, 2x2 metrics, and n
   assert.match(combatant, /data-battle-combatant-bounded="true"/);
   assert.doesNotMatch(combatant, /mockTokenArtForTicker/);
   assert.match(combatant, /data-battle-combatant-split="true"/);
-  assert.match(combatant, /grid-cols-\[minmax\(5\.5rem,38%\)_minmax\(0,1fr\)\]/);
-  assert.match(combatant, /md:grid-cols-\[minmax\(6\.75rem,42%\)_minmax\(0,1fr\)\]/);
+  assert.match(combatant, /grid-cols-\[auto_minmax\(0,1fr\)\]/);
+  assert.match(combatant, /md:w-\[8\.5rem\]/);
   assert.doesNotMatch(combatant, /grid-cols-1/);
+  assert.match(combatant, /aspect-square/);
   assert.doesNotMatch(combatant, /h-44 sm:h-52 md:h-64 lg:h-72/);
   assert.match(combatant, /data-battle-metric-grid/);
   assert.match(combatant, /grid-cols-2/);
@@ -654,7 +655,7 @@ test("Battle Wall visual parity uses bounded combatant cards, 2x2 metrics, and n
   assert.match(moduleSrc, /data-battle-wall-actions/);
   assert.match(moduleSrc, /data-battle-wall-actions-reserved/);
   assert.match(moduleSrc, /grid-cols-1/);
-  assert.match(moduleSrc, /md:items-start/);
+  assert.match(moduleSrc, /md:items-center/);
   assert.match(moduleSrc, /md:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
   assert.match(moduleSrc, /useBattleWallRealtime\(battle\.id, realtimeActive && live\)/);
   assert.equal(moduleSrc.split("useBattleWallRealtime(").length - 1, 1);
@@ -688,8 +689,8 @@ test("Battle Wall mockup parity keeps split combatant cards, SHARE/MORE, and gen
   assert.match(combatant, /data-battle-combatant-bounded="true"/);
   assert.doesNotMatch(combatant, /mockTokenArtForTicker/);
   assert.match(combatant, /data-battle-combatant-split="true"/);
-  assert.match(combatant, /grid-cols-\[minmax\(5\.5rem,38%\)_minmax\(0,1fr\)\]/);
-  assert.match(combatant, /md:grid-cols-\[minmax\(6\.75rem,42%\)_minmax\(0,1fr\)\]/);
+  assert.match(combatant, /grid-cols-\[auto_minmax\(0,1fr\)\]/);
+  assert.match(combatant, /md:w-\[8\.5rem\]/);
   assert.doesNotMatch(combatant, /grid-cols-1/);
   assert.match(combatant, /hidden line-clamp-2[\s\S]*md:block/);
   assert.match(combatant, /firstFiniteBattleMetric/);
@@ -771,11 +772,11 @@ test("Battle Wall combatant keeps art-left split on mobile instead of stacking i
 
   assert.doesNotMatch(combatant, /grid-cols-1/);
   assert.match(combatant, /data-battle-combatant-split="true"/);
-  assert.match(combatant, /grid-cols-\[minmax\(5\.5rem,38%\)_minmax\(0,1fr\)\]/);
-  assert.match(combatant, /sm:grid-cols-\[minmax\(6rem,38%\)_minmax\(0,1fr\)\]/);
-  assert.match(combatant, /md:grid-cols-\[minmax\(6\.75rem,42%\)_minmax\(0,1fr\)\]/);
-  assert.match(combatant, /h-\[6\.75rem\]/);
-  assert.match(combatant, /md:h-\[8\.5rem\]/);
+  assert.match(combatant, /grid-cols-\[auto_minmax\(0,1fr\)\]/);
+  assert.match(combatant, /aspect-square/);
+  assert.match(combatant, /w-\[6\.75rem\]/);
+  assert.match(combatant, /sm:w-\[7\.25rem\]/);
+  assert.match(combatant, /md:w-\[8\.5rem\]/);
   assert.match(combatant, /data-battle-combatant-bounded="true"/);
   assert.match(combatant, /h-auto max-h-\[22rem\]/);
   assert.doesNotMatch(combatant, /100vh|min-h-screen/);

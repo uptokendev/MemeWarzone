@@ -75,14 +75,14 @@ export default function ImportedTokenDetails({ item }: { item: ArenaImportItem }
 
       {postGradFlags.arena ? (
         <section className="mwz-hud-frame p-4 space-y-3">
-          <div className="font-retro text-sm text-foreground">Arena UpVote</div>
+          <div className="font-retro text-sm text-foreground">UpVotes</div>
           <p className="text-sm text-muted-foreground">
-            Ranks the Arena featured rail. Fees follow the protocol treasury on this chain, same as graduated MemeWarzone coins. Launchpad UP Votes stay on Showcase.
+            Ranks the Warzone featured rail. Fees follow the protocol treasury on this chain, same as graduated MemeWarzone coins. Launchpad votes stay on Showcase.
           </p>
           {currentItem.status === "passed" ? (
             <ArenaUpvoteDialog tokenAddress={currentItem.tokenAddress} chainId={currentItem.chainId} buttonSize="sm" />
           ) : (
-            <p className="text-sm text-muted-foreground">Arena UpVotes unlock after this import is passed.</p>
+            <p className="text-sm text-muted-foreground">UpVotes unlock after this import is passed.</p>
           )}
         </section>
       ) : null}

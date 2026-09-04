@@ -37,14 +37,15 @@ test("Battle combatant bleed is an absolute decorative layer outside card flow",
   assert.match(combatant, /WarzoneDecorativeLayer/);
   assert.match(combatant, /data-battle-combatant-bounded="true"/);
   assert.match(combatant, /h-auto max-h-\[22rem\]/);
-  assert.match(combatant, /h-\[6\.75rem\]/);
-  assert.match(combatant, /md:h-\[8\.5rem\]/);
+  assert.match(combatant, /aspect-square/);
+  assert.match(combatant, /w-\[6\.75rem\]/);
+  assert.match(combatant, /md:w-\[8\.5rem\]/);
   assert.match(combatant, /data-battle-combatant-bleed="true"/);
   assert.match(combatant, /absolute inset-0 z-0/);
   assert.match(combatant, /<WarzoneDecorativeLayer[\s\S]*data-battle-combatant-bleed="true"/);
   assert.doesNotMatch(combatant, /100vh|min-h-screen|h-screen/);
   assert.doesNotMatch(combatant, /data-selected=\{isLeader/);
-  assert.match(moduleSrc, /md:items-start/);
+  assert.match(moduleSrc, /md:items-center/);
 });
 
 test("WarzoneContent emits a static 1280px max width Tailwind can scan", () => {
@@ -107,8 +108,10 @@ test("public copy no longer explains implementation internals", () => {
 
 test("MWL top 3 share WarzoneRankCard and #1 is not a giant bleed card", () => {
   const league = readSrc("../../pages/PostGradLeague.tsx");
+  const overview = readSrc("../../pages/Arena.tsx");
   const rankCard = readSrc("../../components/warzone/WarzoneRankCard.tsx");
   assert.match(league, /WarzoneRankCard/);
+  assert.match(overview, /WarzoneRankCard/);
   assert.match(league, /rank=\{1\}/);
   assert.match(league, /rank=\{2\}/);
   assert.match(league, /rank=\{3\}/);

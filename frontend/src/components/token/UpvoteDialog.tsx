@@ -94,7 +94,7 @@ export function UpvoteDialog({
 }: Props) {
   const isArena = lane === "arena";
   const voteIdentity = String((isArena ? tokenAddress || campaignAddress : campaignAddress || tokenAddress) || "").trim();
-  const voteLabel = isArena ? "Arena UpVote" : "UP Vote";
+  const voteLabel = "UpVote";
   const { toast } = useToast();
   const wallet = useWallet();
   const solanaWallet = useSolanaWallet();
@@ -386,7 +386,7 @@ export function UpvoteDialog({
       return;
     }
     if (voteWei <= 0n) {
-      fail("Price unavailable", "We couldn’t calculate the current SOL amount for the $3 UP Vote. Please try again.");
+      fail("Price unavailable", "We couldn’t calculate the current SOL amount for the $3 UpVote. Please try again.");
     }
     if (balanceWei != null && balanceWei < (estTotalWei ?? voteWei)) {
       fail("Insufficient SOL", "You don't have enough SOL to cover the vote fee and network fees.");
@@ -480,7 +480,7 @@ export function UpvoteDialog({
       fail(`Switch to ${robinhood ? "Robinhood" : "BNB"}`, `This campaign uses ${nativeUnit}. Connect the wallet on the campaign network before voting.`);
     }
     if (voteWei <= 0n) {
-      fail("Price unavailable", `We couldn’t calculate the current ${nativeUnit} amount for the $3 UP Vote. Please try again.`);
+      fail("Price unavailable", `We couldn’t calculate the current ${nativeUnit} amount for the $3 UpVote. Please try again.`);
     }
     if (balanceWei != null && balanceWei < (estTotalWei ?? voteWei)) {
       fail(`Insufficient ${nativeUnit}`, `You don't have enough ${nativeUnit} to cover the vote fee and gas.`);
@@ -592,7 +592,7 @@ export function UpvoteDialog({
           <DialogTitle>{voteLabel}</DialogTitle>
           <DialogDescription>
             Fixed price: ${UPVOTE_USD_TARGET} per vote. One transaction = one vote (paid in {nativeUnit}).
-            {isArena ? " Ranks the Arena featured rail, not Showcase." : ""}
+            {isArena ? " Ranks the Warzone featured rail, not Showcase." : ""}
           </DialogDescription>
         </DialogHeader>
 
@@ -631,7 +631,7 @@ export function UpvoteDialog({
             {insufficient ? <span className="ml-2 text-destructive">Insufficient for this vote{isSolanaCampaign ? " + fees." : " + gas."}</span> : null}
           </div>
           <div className="text-xs text-muted-foreground">
-            {isArena ? "Arena UpVotes are separate from launchpad UP Votes." : "Cooldown and daily limits apply to keep UP Votes fair."}
+            {isArena ? "UpVotes are separate from launchpad votes." : "Cooldown and daily limits apply to keep UpVotes fair."}
           </div>
         </div>
 

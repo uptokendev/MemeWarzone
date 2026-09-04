@@ -178,17 +178,14 @@ export function BattleWallCombatant({
       ) : null}
       <div
         data-battle-combatant-split="true"
-        className={cn(
-          "relative z-10 grid min-w-0 items-start gap-2 p-2",
-          compact
-            ? "grid-cols-[minmax(5.25rem,36%)_minmax(0,1fr)]"
-            : "grid-cols-[minmax(5.5rem,38%)_minmax(0,1fr)] sm:grid-cols-[minmax(6rem,38%)_minmax(0,1fr)] md:grid-cols-[minmax(6.75rem,42%)_minmax(0,1fr)]",
-          "md:gap-3 md:p-3",
-        )}
+        className="relative z-10 grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-start gap-2 p-2 md:gap-3 md:p-3"
       >
         <div
           data-battle-combatant-art="true"
-          className="relative h-[6.75rem] w-full min-w-0 overflow-hidden sm:h-[7.25rem] md:h-[8.5rem]"
+          className={cn(
+            "relative aspect-square shrink-0 overflow-hidden",
+            compact ? "w-[5.25rem]" : "w-[6.75rem] sm:w-[7.25rem] md:w-[8.5rem]",
+          )}
         >
           <CombatantArtwork imageUrl={imageUrl} ticker={displaySymbol} name={displayName} accent={accent} />
           <div className="absolute left-1 top-1 bg-black/65 px-1 py-0.5 font-retro text-[8px] uppercase tracking-[0.14em] text-white/80 md:left-1.5 md:top-1.5 md:px-1.5 md:text-[9px] md:tracking-[0.16em]">

@@ -6,7 +6,7 @@ import { TournamentEventCard } from "@/components/arena/TournamentEventCard";
 import { WarzoneBattlePreview } from "@/components/warzone/WarzoneBattlePreview";
 import { WarzoneContent } from "@/components/warzone/WarzoneContent";
 import { WarzonePageHeader } from "@/components/warzone/WarzonePageHeader";
-import { WarzoneTokenMark } from "@/components/warzone/WarzoneTokenMark";
+import { WarzoneRankCard } from "@/components/warzone/WarzoneRankCard";
 import { getArenaTokenRoute } from "@/features/postgrad/tokenRoutes";
 import { useArenaBattleFeed } from "@/hooks/useArenaBattleFeed";
 import { useArenaEventFeed } from "@/hooks/useArenaEventFeed";
@@ -134,15 +134,16 @@ const Arena = () => {
           {podium.length ? (
             <Link to="/warzone/major-war-league" className="block space-y-3">
               {podium.map((entry, index) => (
-                <div key={entry.tokenId} className="flex items-center gap-3">
-                  <div className="w-6 shrink-0 text-[10px] uppercase tracking-[0.16em] text-white/45">#{index + 1}</div>
-                  <WarzoneTokenMark imageUrl={(entry as { imageUrl?: string }).imageUrl} symbol={entry.symbol} name={entry.tokenName} size="sm" />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate font-black text-sm text-foreground">${String(entry.symbol || "").replace(/^\$/, "")}</div>
-                    <div className="truncate text-[11px] uppercase tracking-[0.12em] text-white/50">{entry.tokenName}</div>
-                  </div>
-                  <div className="shrink-0 font-black text-sm tabular-nums text-white/80">{Number(entry.points).toLocaleString()} PTS</div>
-                </div>
+                <WarzoneRankCard
+                  key={entry.tokenId}
+                  rank={index + 1}
+                  imageUrl={(entry as { imageUrl?: string }).imageUrl}
+                  symbol={entry.symbol}
+                  name={entry.tokenName}
+                  points={entry.points}
+                  wins={entry.wins}
+                  losses={entry.losses}
+                />
               ))}
             </Link>
           ) : (
