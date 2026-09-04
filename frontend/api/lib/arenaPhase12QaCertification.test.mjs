@@ -277,21 +277,22 @@ test("Phase 12 tournament QA preserves Round-1 similarity, later winner advancem
   assert.match(tournamentCert, /Tournament Details consumes normalized profiles and canonical Battle metrics/);
 });
 
-test("Phase 12 Battle Details preserves Solana case for settlement-winner display", () => {
-  const details = readFrontend("src/pages/BattleDetails.tsx");
-  assert.match(details, /function tokenKey\(value: unknown, chainId: number\)/);
-  assert.match(details, /return isSolanaChainId\(chainId\) \? raw : raw\.toLowerCase\(\)/);
-  assert.match(details, /some\(\(value\) => tokenKey\(value, battleChainId\) === winnerKey\)/);
-  const winnerBlock = details.split("const winnerKey")[1]?.split("const sides")[0] || "";
+test("Phase 12 canonical Battle Wall preserves Solana case for settlement-winner display", () => {
+  const presentation = readFrontend("src/lib/arena/battleWallMorePresentation.mjs");
+  assert.match(presentation, /function identityKey\(value, chainId\)/);
+  assert.match(presentation, /Number\(chainId\) === 101 \|\| Number\(chainId\) === 102 \? raw : raw\.toLowerCase\(\)/);
+  assert.match(presentation, /identityKey\(value, chainId\) === winnerKey/);
+  const winnerBlock = presentation.split("const winnerKey")[1]?.split("const leftFinal")[0] || "";
   assert.doesNotMatch(winnerBlock, /toLowerCase\(\)/);
 });
 
-test("Phase 12 settlement UI now preserves V1 history while exposing V2 authority and tie-breaks", () => {
+test("Phase 12 settlement UI preserves V1 history while exposing V2/V3 generation authority and tie-breaks", () => {
   const metricsApi = readApi("arenaBattleMetrics.js");
   const legacyBattles = readApi("arenaBattles.js");
   const mode = readApi("lib/arenaSettlementMode.js");
   const hud = readFrontend("src/components/arena/BattleScoreHud.tsx");
-  const details = readFrontend("src/pages/BattleDetails.tsx");
+  const generation = readFrontend("src/lib/arena/battleGenerationPresentation.mjs");
+  const more = readFrontend("src/lib/arena/battleWallMorePresentation.mjs");
   const legacySettle = legacyBattles.split("async function settleLive")[1]?.split("async function expireChallenge")[0] || "";
 
   assert.match(metricsApi, /arenaSettlementMode\(battle\)/);
@@ -300,9 +301,10 @@ test("Phase 12 settlement UI now preserves V1 history while exposing V2 authorit
   assert.match(mode, /battlePointsV2PersistenceEnabled\(\)/);
   assert.match(hud, /settlementV2 \? "Settlement V2" : "Settlement V1"/);
   assert.match(hud, /TIE-BREAK/);
-  assert.match(details, /V2 Battle Points 50\/30\/20/);
-  assert.match(details, /V1 MCAP % change/);
-  assert.match(details, /tieBreakLabel\(metrics\.moneyTieBreak\)/);
+  assert.match(generation, /detail: "50 MCAP \/ 30 Holders \/ 20 Eligible Volume"/);
+  assert.match(generation, /detail: "45 MCAP \/ 27 Holders \/ 18 Eligible Volume \/ 10 Battle Boost"/);
+  assert.match(generation, /detail: "MCAP percentage-change score"/);
+  assert.match(more, /battleMoreTieBreakLabel\(metrics\?\.moneyTieBreak \|\| battle\?\.moneyTieBreak\)/);
   assert.match(legacySettle, /decideBattleSettlement/);
   assert.doesNotMatch(legacySettle, /calculateBattlePoints/);
 });
