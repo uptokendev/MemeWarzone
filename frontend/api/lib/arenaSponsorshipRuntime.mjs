@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { Interface, Wallet, getAddress, id } from "ethers";
+import { Contract, Interface, Wallet, getAddress, id } from "ethers";
 
 const EVENT_BPS = 7_000n;
 const MARKETING_BPS = 2_000n;
@@ -11,6 +11,12 @@ const DEFAULT_PRICE_MAX_AGE_SECONDS = 300n;
 const sponsorshipInterface = new Interface([
   "event SponsorshipPaid(bytes32 indexed eventId,address indexed sponsor,uint256 indexed nonce,bytes32 pricingTier,uint256 pricingVersion,uint256 minimumUsdMicros,uint256 requestedUsdMicros,uint256 nativeUsdReferenceMicros,uint256 oracleTimestamp,uint256 grossNativeRaw,uint256 eventNativeRaw,uint256 marketingNativeRaw,uint256 protocolNativeRaw)",
 ]);
+
+const ROUTER_READ_ABI = [
+  "function enabledEvents(bytes32 eventId) view returns (bool)",
+  "function eventPrizeVault() view returns (address)",
+];
+const VAULT_READ_ABI = ["function eventReceivers(bytes32 eventId) view returns (address)"];
 
 function positiveBigInt(value, label) {
   try {
@@ -47,6 +53,15 @@ export function sponsorshipSplit(grossRaw) {
   return { gross, prize, marketing, protocol, eventBps: 7000, marketingBps: 2000, protocolBps: 1000 };
 }
 
+export function sponsorshipRouterAddress(chainId, env = process.env) {
+  const chain = Number(chainId);
+  const raw = String(
+    env[`WARZONE_SPONSORSHIP_ROUTER_V1_ADDRESS_${chain}`] || env.WARZONE_SPONSORSHIP_ROUTER_V1_ADDRESS || "",
+  ).trim();
+  if (!/^0x[a-fA-F0-9]{40}$/.test(raw)) throw new Error(`Sponsorship router address is not configured for chain ${chain}`);
+  return getAddress(raw);
+}
+
 export function readSponsorshipPricingConfig(chainId, env = process.env, nowSeconds = Math.floor(Date.now() / 1000)) {
   const chain = Number(chainId);
   if (!Number.isInteger(chain) || chain <= 0) throw new Error("chainId is invalid");
@@ -63,14 +78,11 @@ export function readSponsorshipPricingConfig(chainId, env = process.env, nowSeco
     env[`ARENA_SPONSORSHIP_PRICE_MAX_AGE_SECONDS_${chain}`] || env.ARENA_SPONSORSHIP_PRICE_MAX_AGE_SECONDS ||
     env[`ARENA_BOOST_PRICE_MAX_AGE_SECONDS_${chain}`] || env.ARENA_BOOST_PRICE_MAX_AGE_SECONDS ||
     DEFAULT_PRICE_MAX_AGE_SECONDS;
-  const routerAddress = String(
-    env[`WARZONE_SPONSORSHIP_ROUTER_V1_ADDRESS_${chain}`] || env.WARZONE_SPONSORSHIP_ROUTER_V1_ADDRESS || "",
-  ).trim();
   const signerKey = String(env.ARENA_SPONSORSHIP_QUOTE_SIGNER_PRIVATE_KEY || "").trim();
-  if (!nativeUsdRaw || !pricingVersionRaw || !updatedAtRaw || !routerAddress || !signerKey) {
+  if (!nativeUsdRaw || !pricingVersionRaw || !updatedAtRaw || !signerKey) {
     throw new Error("Arena sponsorship pricing/signing is not configured for this chain");
   }
-  if (!/^0x[a-fA-F0-9]{40}$/.test(routerAddress)) throw new Error("Sponsorship router address is invalid");
+  const routerAddress = sponsorshipRouterAddress(chain, env);
   const nativeUsdMicros = positiveBigInt(nativeUsdRaw, "nativeUsdMicros");
   const pricingVersion = positiveBigInt(pricingVersionRaw, "pricingVersion");
   const oracleTimestamp = positiveBigInt(updatedAtRaw, "oracleTimestamp");
@@ -78,9 +90,24 @@ export function readSponsorshipPricingConfig(chainId, env = process.env, nowSeco
   const now = BigInt(nowSeconds);
   if (oracleTimestamp > now || now - oracleTimestamp > maxAgeSeconds) throw new Error("Arena sponsorship native/USD price is stale");
   const signer = new Wallet(signerKey.startsWith("0x") ? signerKey : `0x${signerKey}`);
-  const configuredSigner = String(env.ARENA_SPONSORSHIP_QUOTE_SIGNER_ADDRESS || "").trim();
+  const configuredSigner = String(
+    env[`ARENA_SPONSORSHIP_QUOTE_SIGNER_ADDRESS_${chain}`] || env.ARENA_SPONSORSHIP_QUOTE_SIGNER_ADDRESS || "",
+  ).trim();
   if (configuredSigner && getAddress(configuredSigner) !== signer.address) throw new Error("Sponsorship quote signer key/address mismatch");
-  return { chainId: chain, nativeUsdMicros, pricingVersion, oracleTimestamp, routerAddress: getAddress(routerAddress), signer };
+  return { chainId: chain, nativeUsdMicros, pricingVersion, oracleTimestamp, routerAddress, signer };
+}
+
+export async function verifySponsorshipEventConfiguration({ provider, chainId, eventUuid, env = process.env }) {
+  if (!provider) throw new Error("Sponsorship RPC provider is unavailable");
+  const routerAddress = sponsorshipRouterAddress(chainId, env);
+  const eventId = sponsorshipEventId(eventUuid);
+  const router = new Contract(routerAddress, ROUTER_READ_ABI, provider);
+  if ((await router.enabledEvents(eventId)) !== true) throw new Error("Sponsorship event is not enabled on-chain");
+  const vaultAddress = getAddress(String(await router.eventPrizeVault()));
+  const vault = new Contract(vaultAddress, VAULT_READ_ABI, provider);
+  const receiver = getAddress(String(await vault.eventReceivers(eventId)));
+  if (receiver === "0x0000000000000000000000000000000000000000") throw new Error("Sponsorship event prize receiver is not configured");
+  return { routerAddress, vaultAddress, eventId, receiver };
 }
 
 export function usdMicrosToNativeRaw(usdMicros, nativeUsdMicros, nativeDecimals = 18) {
@@ -193,6 +220,8 @@ export function assertSponsorshipPaidMatches(event, expected) {
   if (event.pricingVersion !== BigInt(String(expected.pricingVersion))) throw new Error("Sponsorship pricing version mismatch");
   if (event.minimumUsdMicros !== BigInt(String(expected.minimumUsdMicros))) throw new Error("Sponsorship minimum USD mismatch");
   if (event.requestedUsdMicros !== BigInt(String(expected.requestedUsdMicros))) throw new Error("Sponsorship requested USD mismatch");
+  if (event.nativeUsdReferenceMicros !== BigInt(String(expected.nativeUsdReferenceMicros))) throw new Error("Sponsorship native/USD reference mismatch");
+  if (event.oracleTimestamp !== BigInt(String(expected.oracleTimestamp))) throw new Error("Sponsorship oracle timestamp mismatch");
   if (event.grossNativeRaw !== BigInt(String(expected.requestedNativeRaw))) throw new Error("Sponsorship gross native mismatch");
   const split = sponsorshipSplit(event.grossNativeRaw);
   if (event.eventNativeRaw !== split.prize || event.marketingNativeRaw !== split.marketing || event.protocolNativeRaw !== split.protocol) {
@@ -205,7 +234,7 @@ export async function verifySponsorshipPayment({ provider, chainId, txHash, logI
   if (!provider || typeof provider.getTransactionReceipt !== "function") throw new Error("Sponsorship RPC provider is unavailable");
   const index = Number(logIndex);
   if (!Number.isInteger(index) || index < 0) throw new Error("Sponsorship log index is invalid");
-  const routerAddress = readSponsorshipPricingConfig(chainId, env).routerAddress;
+  const routerAddress = sponsorshipRouterAddress(chainId, env);
   const receipt = await provider.getTransactionReceipt(txHash);
   if (!receipt) throw new Error("Sponsorship transaction receipt is not available yet");
   if (Number(receipt.status) !== 1) throw new Error("Sponsorship transaction failed");
