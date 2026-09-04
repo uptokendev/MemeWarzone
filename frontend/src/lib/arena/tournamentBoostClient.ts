@@ -1,6 +1,8 @@
 import { Contract, formatEther, type JsonRpcSigner } from "ethers";
 
 import { apiFetch } from "@/lib/apiBase";
+import { sendSolanaArenaInstruction, type SolanaArenaInstructionEnvelope } from "@/lib/arena/solanaArenaBrowserTransaction";
+import { signSolanaMessage } from "@/lib/solanaWallet";
 import { signWalletAction } from "@/lib/walletActionAuth";
 
 const TOURNAMENT_BOOST_ABI = [
@@ -48,6 +50,39 @@ export type TournamentBoostQuote = {
   signature: string;
 };
 
+export type SolanaTournamentBoostQuote = {
+  ok: true;
+  quoteId: string;
+  chainId: number;
+  battleId: string;
+  tournamentId: string;
+  matchId: string;
+  roundNumber: number;
+  side: "left" | "right";
+  targetToken: string;
+  boostUnits: string;
+  pointsPerBoost: number;
+  usdPerBoostMicros: string;
+  grossLamports: string;
+  prizeLamports: string;
+  protocolLamports: string;
+  split: { prizeBps: number; protocolBps: number; leagueBps: number };
+  competitionId: string;
+  fundingId: string;
+  transaction: SolanaArenaInstructionEnvelope;
+  expiresAt: string;
+};
+
+export type SolanaTournamentBoostPayment = {
+  ok: true;
+  confirmed: boolean;
+  idempotent: boolean;
+  signature: string;
+  receiptPda?: string | null;
+  pointsPerBoost: number;
+  summary?: TournamentBoostState["summary"];
+};
+
 function route(tournamentId: string, matchRef: string, suffix = "") {
   return `/api/arena/tournaments/${encodeURIComponent(tournamentId)}/matches/${encodeURIComponent(matchRef)}/boosts${suffix}`;
 }
@@ -66,34 +101,33 @@ function parseQuote(value: unknown): TournamentBoostQuote {
     throw new Error("Tournament Boost quote is incomplete.");
   }
   for (const key of ["roundNumber", "boostUnits", "unitPriceNativeRaw", "grossNativeRaw", "pricingVersion", "oracleTimestamp", "nonce", "deadline"] as const) {
-    try {
-      BigInt(String(quote.value[key]));
-    } catch {
-      throw new Error(`Tournament Boost quote field ${key} is invalid.`);
-    }
+    try { BigInt(String(quote.value[key])); } catch { throw new Error(`Tournament Boost quote field ${key} is invalid.`); }
   }
   return quote;
 }
 
-export async function fetchTournamentBoostState(
-  tournamentId: string,
-  matchRef: string,
-  signal?: AbortSignal,
-): Promise<TournamentBoostState> {
+function parseSolanaQuote(value: unknown): SolanaTournamentBoostQuote {
+  const quote = value as SolanaTournamentBoostQuote | null;
+  if (!quote?.quoteId || !quote?.transaction?.programId || !quote.transaction.dataBase64 || !Array.isArray(quote.transaction.accounts)) {
+    throw new Error("Solana Tournament Boost quote is incomplete.");
+  }
+  if (Number(quote.pointsPerBoost) !== 2 || Number(quote.split?.prizeBps) !== 9000 || Number(quote.split?.protocolBps) !== 1000 || Number(quote.split?.leagueBps) !== 0) {
+    throw new Error("Solana Tournament Boost quote has unexpected economics.");
+  }
+  for (const field of ["boostUnits", "grossLamports", "prizeLamports", "protocolLamports"] as const) {
+    try { BigInt(String(quote[field])); } catch { throw new Error(`Solana Tournament Boost ${field} is invalid.`); }
+  }
+  return quote;
+}
+
+export async function fetchTournamentBoostState(tournamentId: string, matchRef: string, signal?: AbortSignal): Promise<TournamentBoostState> {
   const response = await apiFetch(route(tournamentId, matchRef), { cache: "no-store", signal });
   return readJson<TournamentBoostState>(response);
 }
 
 export async function createTournamentBoostQuote(input: {
-  tournamentId: string;
-  matchRef: string;
-  chainId: number;
-  wallet: string;
-  targetToken: string;
-  boostUnits: number;
-  roundNumber: number;
-  matchId: string;
-  signer: JsonRpcSigner;
+  tournamentId: string; matchRef: string; chainId: number; wallet: string; targetToken: string;
+  boostUnits: number; roundNumber: number; matchId: string; signer: JsonRpcSigner;
 }) {
   const auth = await signWalletAction({
     action: "arena_tournament_boost_quote",
@@ -109,17 +143,36 @@ export async function createTournamentBoostQuote(input: {
     ],
   });
   const response = await apiFetch(route(input.tournamentId, input.matchRef, "/quote"), {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      wallet: input.wallet,
-      targetToken: input.targetToken,
-      boostUnits: input.boostUnits,
-      auth,
-    }),
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ wallet: input.wallet, targetToken: input.targetToken, boostUnits: input.boostUnits, auth }),
   });
   const json = await readJson<any>(response);
   return { ...json, quote: parseQuote(json.quote) };
+}
+
+export async function createSolanaTournamentBoostQuote(input: {
+  tournamentId: string; matchRef: string; chainId: number; wallet: string; targetToken: string;
+  boostUnits: number; roundNumber: number; matchId: string;
+}): Promise<SolanaTournamentBoostQuote> {
+  const auth = await signWalletAction({
+    action: "arena_tournament_boost_quote",
+    walletAddress: input.wallet,
+    chainId: input.chainId,
+    walletType: "solana",
+    signMessage: async (message) => (await signSolanaMessage(message, input.wallet)).signature,
+    extraLines: [
+      `Tournament: ${input.tournamentId}`,
+      `Round: ${input.roundNumber}`,
+      `Match: ${input.matchId}`,
+      `Target: ${input.targetToken}`,
+      `Boost Units: ${input.boostUnits}`,
+    ],
+  });
+  const response = await apiFetch(route(input.tournamentId, input.matchRef, "/solana-quote"), {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ wallet: input.wallet, targetToken: input.targetToken, boostUnits: input.boostUnits, auth }),
+  });
+  return parseSolanaQuote(await readJson<unknown>(response));
 }
 
 export async function submitTournamentBoost(input: { signer: JsonRpcSigner; quote: TournamentBoostQuote }) {
@@ -128,20 +181,11 @@ export async function submitTournamentBoost(input: { signer: JsonRpcSigner; quot
   if (signerChain !== Number(quote.domain.chainId)) throw new Error("Wallet chain does not match Tournament Boost quote.");
   const signerAddress = String(await input.signer.getAddress()).toLowerCase();
   if (signerAddress !== String(quote.value.booster || "").toLowerCase()) throw new Error("Tournament Boost quote belongs to another wallet.");
-
   const contract = new Contract(quote.domain.verifyingContract, TOURNAMENT_BOOST_ABI, input.signer);
   const tx = await contract.boostTournament(
-    quote.value.poolId,
-    quote.value.matchId,
-    BigInt(quote.value.roundNumber),
-    quote.value.sideToken,
-    BigInt(quote.value.boostUnits),
-    BigInt(quote.value.unitPriceNativeRaw),
-    BigInt(quote.value.pricingVersion),
-    BigInt(quote.value.oracleTimestamp),
-    BigInt(quote.value.nonce),
-    BigInt(quote.value.deadline),
-    quote.signature,
+    quote.value.poolId, quote.value.matchId, BigInt(quote.value.roundNumber), quote.value.sideToken,
+    BigInt(quote.value.boostUnits), BigInt(quote.value.unitPriceNativeRaw), BigInt(quote.value.pricingVersion),
+    BigInt(quote.value.oracleTimestamp), BigInt(quote.value.nonce), BigInt(quote.value.deadline), quote.signature,
     { value: BigInt(quote.value.grossNativeRaw) },
   );
   const receipt = await tx.wait();
@@ -149,11 +193,38 @@ export async function submitTournamentBoost(input: { signer: JsonRpcSigner; quot
   return { txHash: String(tx.hash || receipt?.hash || ""), receipt };
 }
 
+export async function submitSolanaTournamentBoost(input: {
+  tournamentId: string; matchRef: string; wallet: string; quote: SolanaTournamentBoostQuote;
+}): Promise<SolanaTournamentBoostPayment> {
+  const quote = parseSolanaQuote(input.quote);
+  if (String(quote.tournamentId) !== String(input.tournamentId)) throw new Error("Solana Tournament Boost quote tournament mismatch.");
+  const signature = await sendSolanaArenaInstruction({
+    chainId: quote.chainId, wallet: input.wallet, transaction: quote.transaction, label: "Tournament Boost",
+  });
+  const auth = await signWalletAction({
+    action: "arena_tournament_boost_payment",
+    walletAddress: input.wallet,
+    chainId: quote.chainId,
+    walletType: "solana",
+    signMessage: async (message) => (await signSolanaMessage(message, input.wallet)).signature,
+    extraLines: [`Quote: ${quote.quoteId}`, `Signature: ${signature}`],
+  });
+  const response = await apiFetch(route(input.tournamentId, input.matchRef, "/solana-payment"), {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ quoteId: quote.quoteId, signature, auth }),
+  });
+  const result = await readJson<SolanaTournamentBoostPayment>(response);
+  if (result.confirmed !== true) throw new Error("Solana Tournament Boost was not confirmed by the backend.");
+  return result;
+}
+
 export function formatTournamentBoostNative(raw?: string | null, symbol = "BNB") {
   if (!raw) return `0 ${symbol}`;
-  try {
-    return `${Number(formatEther(BigInt(raw))).toLocaleString(undefined, { maximumFractionDigits: 6 })} ${symbol}`;
-  } catch {
-    return `0 ${symbol}`;
-  }
+  try { return `${Number(formatEther(BigInt(raw))).toLocaleString(undefined, { maximumFractionDigits: 6 })} ${symbol}`; }
+  catch { return `0 ${symbol}`; }
+}
+
+export function formatSolanaBoostLamports(raw?: string | null) {
+  try { return `${(Number(BigInt(String(raw || "0"))) / 1_000_000_000).toLocaleString(undefined, { maximumFractionDigits: 6 })} SOL`; }
+  catch { return "0 SOL"; }
 }

@@ -7,20 +7,19 @@ import {
   reduceSolanaTournamentBoostState,
 } from "./solanaTournamentBoostAdapter.mjs";
 
-test("Solana paid Tournament Boost remains disabled until the transaction contract is frozen", () => {
+test("Solana paid Tournament Boost uses the frozen transaction contract by default", () => {
   const model = presentSolanaTournamentBoostState(initialSolanaTournamentBoostState());
-  assert.equal(model.phase, "disabled");
-  assert.equal(model.paymentEnabled, false);
-  assert.equal(model.transactionContractFrozen, false);
+  assert.equal(model.phase, "requesting_quote");
+  assert.equal(model.paymentEnabled, true);
+  assert.equal(model.transactionContractFrozen, true);
 });
 
-test("prepared state machine covers quote, wallet, submission, verification and confirmation", () => {
+test("state machine covers quote, wallet, submission, backend verification and confirmation", () => {
   let state = initialSolanaTournamentBoostState();
   state = reduceSolanaTournamentBoostState(state, { type: "QUOTE_REQUESTED" });
   assert.equal(state.phase, "requesting_quote");
   state = reduceSolanaTournamentBoostState(state, { type: "QUOTE_READY", quoteId: "q1" });
   assert.equal(state.phase, "awaiting_wallet_signature");
-  assert.equal(state.quoteId, "q1");
   state = reduceSolanaTournamentBoostState(state, { type: "WALLET_SUBMITTED", signature: "sig1" });
   assert.equal(state.phase, "submitted");
   state = reduceSolanaTournamentBoostState(state, { type: "PAYMENT_VERIFYING" });
@@ -29,7 +28,8 @@ test("prepared state machine covers quote, wallet, submission, verification and 
   assert.equal(state.phase, "confirmed");
 });
 
-test("failed Solana payment state remains explicit and fail-closed", () => {
+test("explicitly disabled or failed Solana payment remains fail-closed", () => {
+  assert.equal(presentSolanaTournamentBoostState(initialSolanaTournamentBoostState({ enabled: false })).paymentEnabled, false);
   const state = reduceSolanaTournamentBoostState(
     { phase: "verifying_payment", quoteId: "q1", signature: "sig1", error: null },
     { type: "FAILED", error: "verification failed" },

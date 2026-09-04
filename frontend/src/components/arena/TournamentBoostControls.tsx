@@ -2,19 +2,22 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { useWallet } from "@/contexts/WalletContext";
 import { getNativeSymbol, isSolanaChainId } from "@/lib/chainConfig";
 import { fetchFinalSalvoState } from "@/lib/arena/finalSalvoClient";
 import {
+  createSolanaTournamentBoostQuote,
   createTournamentBoostQuote,
   fetchTournamentBoostState,
+  formatSolanaBoostLamports,
   formatTournamentBoostNative,
+  submitSolanaTournamentBoost,
   submitTournamentBoost,
   type TournamentBoostState,
 } from "@/lib/arena/tournamentBoostClient";
 import { fetchTournamentVoteState, type TournamentVotePayload } from "@/lib/arena/tournamentVoteClient";
 import { presentTournamentVoteSummary, tournamentVoteMatchRef } from "@/lib/arena/tournamentVotePresentation.mjs";
-import { initialSolanaTournamentBoostState, presentSolanaTournamentBoostState } from "@/lib/arena/solanaTournamentBoostAdapter.mjs";
 
 type Match = {
   id?: string | null;
@@ -27,9 +30,7 @@ function bigintNumber(value?: string | null) {
   try {
     const number = Number(BigInt(String(value || "0")));
     return Number.isSafeInteger(number) && number >= 0 ? number : 0;
-  } catch {
-    return 0;
-  }
+  } catch { return 0; }
 }
 
 function shortToken(value?: string | null) {
@@ -39,16 +40,13 @@ function shortToken(value?: string | null) {
   return `${token.slice(0, 6)}…${token.slice(-4)}`;
 }
 
-export function TournamentBoostControls({
-  tournamentId,
-  chainId,
-  match,
-}: {
+export function TournamentBoostControls({ tournamentId, chainId, match }: {
   tournamentId: string;
   chainId: number;
   match: Match;
 }) {
   const wallet = useWallet();
+  const solanaWallet = useSolanaWallet();
   const matchRef = tournamentVoteMatchRef(match);
   const [boostState, setBoostState] = useState<TournamentBoostState | null>(null);
   const [voteState, setVoteState] = useState<TournamentVotePayload | null>(null);
@@ -58,14 +56,10 @@ export function TournamentBoostControls({
   const [quantity, setQuantity] = useState(1);
   const [busySide, setBusySide] = useState<"left" | "right" | null>(null);
   const nativeSymbol = getNativeSymbol(chainId);
-  const evmSupported = !isSolanaChainId(chainId);
-  const solanaPrepared = useMemo(
-    () => presentSolanaTournamentBoostState(initialSolanaTournamentBoostState()),
-    [],
-  );
+  const solana = isSolanaChainId(chainId);
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
-    if (!tournamentId || !matchRef || !evmSupported) {
+    if (!tournamentId || !matchRef) {
       setLoading(false);
       return null;
     }
@@ -87,17 +81,14 @@ export function TournamentBoostControls({
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
-  }, [evmSupported, matchRef, tournamentId]);
+  }, [matchRef, tournamentId]);
 
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
     void refresh(controller.signal);
     const timer = window.setInterval(() => void refresh(), 10_000);
-    return () => {
-      controller.abort();
-      window.clearInterval(timer);
-    };
+    return () => { controller.abort(); window.clearInterval(timer); };
   }, [refresh]);
 
   const voteModel = useMemo(() => presentTournamentVoteSummary(voteState || {}), [voteState]);
@@ -112,41 +103,38 @@ export function TournamentBoostControls({
 
   async function boost(side: "left" | "right") {
     if (!boostState || salvoActive) return;
-    if (!wallet.account || !wallet.signer) {
-      toast.error("Connect an EVM wallet to Boost this Vote Tournament.");
-      return;
-    }
-    if (Number(wallet.chainId) !== Number(chainId)) {
-      toast.error("Switch your wallet to the tournament chain before Boosting.");
-      return;
-    }
     const targetToken = side === "left" ? tokenA : tokenB;
-    if (!/^0x[a-fA-F0-9]{40}$/.test(targetToken)) {
-      toast.error("Tournament combatant address is unavailable for the EVM Boost path.");
-      return;
-    }
-
     setBusySide(side);
     try {
-      const quoted = await createTournamentBoostQuote({
-        tournamentId,
-        matchRef,
-        chainId,
-        wallet: wallet.account,
-        targetToken,
-        boostUnits: quantity,
-        roundNumber: Number(boostState.roundNumber),
-        matchId: boostState.matchId,
-        signer: wallet.signer,
-      });
-      const cost = formatTournamentBoostNative(quoted.quote.value.grossNativeRaw, nativeSymbol);
-      const confirmed = window.confirm(
-        `Boost ${shortToken(targetToken)} with ${quantity} Boost${quantity === 1 ? "" : "s"}?\n\nCost: ${cost}\nEach confirmed Boost adds 2 regulation points.`,
-      );
-      if (!confirmed) return;
-
-      const submitted = await submitTournamentBoost({ signer: wallet.signer, quote: quoted.quote });
-      toast.success(`Tournament Boost submitted${submitted.txHash ? `: ${submitted.txHash.slice(0, 10)}…` : "."}`);
+      if (solana) {
+        const account = String(solanaWallet.solanaAccount || "").trim();
+        if (!account) throw new Error("Connect a Solana wallet to Boost this Vote Tournament.");
+        if (!targetToken) throw new Error("Tournament combatant address is unavailable for the Solana Boost path.");
+        const quoted = await createSolanaTournamentBoostQuote({
+          tournamentId, matchRef, chainId, wallet: account, targetToken, boostUnits: quantity,
+          roundNumber: Number(boostState.roundNumber), matchId: boostState.matchId,
+        });
+        const confirmed = window.confirm(
+          `Boost ${shortToken(targetToken)} with ${quantity} Boost${quantity === 1 ? "" : "s"}?\n\nCost: ${formatSolanaBoostLamports(quoted.grossLamports)}\nEach backend-confirmed Boost adds 2 regulation points.`,
+        );
+        if (!confirmed) return;
+        const payment = await submitSolanaTournamentBoost({ tournamentId, matchRef, wallet: account, quote: quoted });
+        toast.success(`Tournament Boost confirmed${payment.signature ? `: ${payment.signature.slice(0, 10)}…` : "."}`);
+      } else {
+        if (!wallet.account || !wallet.signer) throw new Error("Connect an EVM wallet to Boost this Vote Tournament.");
+        if (Number(wallet.chainId) !== Number(chainId)) throw new Error("Switch your wallet to the tournament chain before Boosting.");
+        if (!/^0x[a-fA-F0-9]{40}$/.test(targetToken)) throw new Error("Tournament combatant address is unavailable for the EVM Boost path.");
+        const quoted = await createTournamentBoostQuote({
+          tournamentId, matchRef, chainId, wallet: wallet.account, targetToken, boostUnits: quantity,
+          roundNumber: Number(boostState.roundNumber), matchId: boostState.matchId, signer: wallet.signer,
+        });
+        const confirmed = window.confirm(
+          `Boost ${shortToken(targetToken)} with ${quantity} Boost${quantity === 1 ? "" : "s"}?\n\nCost: ${formatTournamentBoostNative(quoted.quote.value.grossNativeRaw, nativeSymbol)}\nEach confirmed Boost adds 2 regulation points.`,
+        );
+        if (!confirmed) return;
+        const submitted = await submitTournamentBoost({ signer: wallet.signer, quote: quoted.quote });
+        toast.success(`Tournament Boost submitted${submitted.txHash ? `: ${submitted.txHash.slice(0, 10)}…` : "."}`);
+      }
 
       for (let attempt = 0; attempt < 4; attempt += 1) {
         await new Promise((resolve) => window.setTimeout(resolve, attempt === 0 ? 1_000 : 1_500));
@@ -158,122 +146,47 @@ export function TournamentBoostControls({
     } catch (error) {
       toast.error(String((error as Error)?.message || "Tournament Boost failed."));
       await refresh();
-    } finally {
-      setBusySide(null);
-    }
+    } finally { setBusySide(null); }
   }
 
-  if (!evmSupported) {
-    return (
-      <div
-        role="status"
-        data-tournament-boost-runtime="solana-prepared-disabled"
-        data-tournament-boost-phase={solanaPrepared.phase}
-        className="text-[10px] uppercase tracking-[0.14em] text-white/38"
-      >
-        {solanaPrepared.label}. Transaction contract is not frozen yet; Free Vote remains available.
-      </div>
-    );
-  }
   if (loading && !boostState) {
     return <div role="status" aria-live="polite" className="text-[10px] uppercase tracking-[0.14em] text-white/38">Loading Tournament Boost score…</div>;
   }
   if (unavailable || !boostState || !voteState) {
-    return (
-      <div role="status" aria-live="polite" data-tournament-boost-runtime="unavailable" className="text-[10px] uppercase tracking-[0.14em] text-white/38">
-        Tournament Boost runtime unavailable
-      </div>
-    );
+    return <div role="status" aria-live="polite" data-tournament-boost-runtime="unavailable" className="text-[10px] uppercase tracking-[0.14em] text-white/38">Tournament Boost runtime unavailable</div>;
   }
   if (salvoActive) return null;
 
   return (
-    <section aria-label="Vote Tournament Boost" data-tournament-boost-controls="true" className="space-y-3 border-t border-white/10 pt-3">
+    <section aria-label="Vote Tournament Boost" data-tournament-boost-controls="true" data-tournament-boost-chain={solana ? "solana" : "evm"} className="space-y-3 border-t border-white/10 pt-3">
       <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] uppercase tracking-[0.14em] text-white/48">
-        <span>TOURNAMENT BOOST · $1 = 2 PTS</span>
-        <span>90% PRIZE · 10% PROTOCOL</span>
+        <span>TOURNAMENT BOOST · $1 = 2 PTS</span><span>90% PRIZE · 10% PROTOCOL</span>
       </div>
-
       <div className="flex flex-wrap gap-2" aria-label="Tournament Boost quantity">
         {[1, 5, 10].map((value) => (
-          <Button
-            key={value}
-            type="button"
-            size="sm"
-            variant={quantity === value ? "default" : "outline"}
-            className="font-retro"
-            onClick={() => setQuantity(value)}
-          >
-            {value}x
-          </Button>
+          <Button key={value} type="button" size="sm" variant={quantity === value ? "default" : "outline"} className="font-retro" onClick={() => setQuantity(value)}>{value}x</Button>
         ))}
       </div>
-
       <div className="grid gap-2 sm:grid-cols-2">
-        <RegulationSide
-          token={tokenA}
-          freePoints={voteModel.leftPoints}
-          boostPoints={leftBoostPoints}
-          boostUnits={leftBoostUnits}
-          combined={leftCombined}
-          busy={busySide === "left"}
-          disabled={Boolean(busySide)}
-          onBoost={() => void boost("left")}
-        />
-        <RegulationSide
-          token={tokenB}
-          freePoints={voteModel.rightPoints}
-          boostPoints={rightBoostPoints}
-          boostUnits={rightBoostUnits}
-          combined={rightCombined}
-          busy={busySide === "right"}
-          disabled={Boolean(busySide)}
-          onBoost={() => void boost("right")}
-        />
+        <RegulationSide token={tokenA} freePoints={voteModel.leftPoints} boostPoints={leftBoostPoints} boostUnits={leftBoostUnits} combined={leftCombined} busy={busySide === "left"} disabled={Boolean(busySide)} onBoost={() => void boost("left")} />
+        <RegulationSide token={tokenB} freePoints={voteModel.rightPoints} boostPoints={rightBoostPoints} boostUnits={rightBoostUnits} combined={rightCombined} busy={busySide === "right"} disabled={Boolean(busySide)} onBoost={() => void boost("right")} />
       </div>
-
-      <p className="text-[10px] uppercase tracking-[0.13em] text-white/35">
-        Combined regulation score = authoritative Free Vote points + confirmed Boost points. Winner and bracket advancement remain server-authoritative.
-      </p>
+      <p className="text-[10px] uppercase tracking-[0.13em] text-white/35">Combined regulation score = authoritative Free Vote points + backend-confirmed Boost points. Winner and bracket advancement remain server-authoritative.</p>
     </section>
   );
 }
 
-function RegulationSide({
-  token,
-  freePoints,
-  boostPoints,
-  boostUnits,
-  combined,
-  busy,
-  disabled,
-  onBoost,
-}: {
-  token: string;
-  freePoints: number;
-  boostPoints: number;
-  boostUnits: number;
-  combined: number;
-  busy: boolean;
-  disabled: boolean;
-  onBoost: () => void;
+function RegulationSide({ token, freePoints, boostPoints, boostUnits, combined, busy, disabled, onBoost }: {
+  token: string; freePoints: number; boostPoints: number; boostUnits: number; combined: number;
+  busy: boolean; disabled: boolean; onBoost: () => void;
 }) {
   return (
     <div className="border border-white/10 bg-black/20 p-3">
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <div className="text-[9px] uppercase tracking-[0.16em] text-white/38">{shortToken(token)}</div>
-          <div className="mt-1 font-retro text-xl text-white/90">{combined} PTS</div>
-        </div>
-        <div className="text-right text-[9px] uppercase tracking-[0.12em] text-white/42">
-          <div>{freePoints} vote</div>
-          <div>{boostPoints} boost</div>
-          <div>{boostUnits} units</div>
-        </div>
+        <div><div className="text-[9px] uppercase tracking-[0.16em] text-white/38">{shortToken(token)}</div><div className="mt-1 font-retro text-xl text-white/90">{combined} PTS</div></div>
+        <div className="text-right text-[9px] uppercase tracking-[0.12em] text-white/42"><div>{freePoints} vote</div><div>{boostPoints} boost</div><div>{boostUnits} units</div></div>
       </div>
-      <Button type="button" size="sm" variant="outline" className="mt-3 w-full font-retro" disabled={disabled || !token} onClick={onBoost}>
-        {busy ? "Confirming…" : "Boost"}
-      </Button>
+      <Button type="button" size="sm" variant="outline" className="mt-3 w-full font-retro" disabled={disabled || !token} onClick={onBoost}>{busy ? "Confirming…" : "Boost"}</Button>
     </div>
   );
 }
