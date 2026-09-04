@@ -13,11 +13,13 @@ on:
       - "scripts/prepare-robinhood-production-manifest.test.mjs"
       - "scripts/prove-robinhood-production-manifest.mjs"
       - "scripts/prove-robinhood-production-manifest.test.mjs"
+      - "scripts/prove-robinhood-production-policy.test.mjs"
       - "scripts/verify-robinhood-production-live.mjs"
       - ".github/workflows/robinhood-production-preflight-ci.yml"
   push:
     branches:
       - "feat/robinhood-*"
+      - "agent1/wallet-chain-infra"
       - "build/cross-chain-stabilization-rh-base"
     paths:
       - "deployments/robinhood/mainnet.json"
@@ -28,6 +30,7 @@ on:
       - "scripts/prepare-robinhood-production-manifest.test.mjs"
       - "scripts/prove-robinhood-production-manifest.mjs"
       - "scripts/prove-robinhood-production-manifest.test.mjs"
+      - "scripts/prove-robinhood-production-policy.test.mjs"
       - "scripts/verify-robinhood-production-live.mjs"
       - ".github/workflows/robinhood-production-preflight-ci.yml"
 
@@ -50,8 +53,8 @@ jobs:
         with:
           node-version: 20
 
-      - name: Prove production manifest verifier
-        run: node --test scripts/prove-robinhood-production-manifest.test.mjs
+      - name: Prove production manifest verifier and explicit Stock safety policy
+        run: node --test scripts/prove-robinhood-production-manifest.test.mjs scripts/prove-robinhood-production-policy.test.mjs
 
       - name: Prove fail-closed production manifest builder
         run: node --test scripts/prepare-robinhood-production-manifest.test.mjs
