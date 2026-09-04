@@ -1,6 +1,6 @@
 name: Solana / BNB real-network canaries
 
-# Manual only. Consumes dedicated testnet resources. Never production funds.
+# Manual only. Consumes dedicated testnet resources or a read-only mainnet fork.
 # Secrets live in the GitHub Environment `testnet-certification`.
 on:
   workflow_dispatch:
@@ -12,6 +12,7 @@ on:
         options:
           - bsc-testnet-preflight
           - bsc-testnet-full-cycle
+          - bsc-mainnet-fork-source-head
           - solana-devnet-meteora
           - phantom-manual-checklist
       send_solana_graduation:
@@ -20,7 +21,7 @@ on:
         type: boolean
         default: false
       solana_campaign:
-        description: Solana campaign PDA for graduate.mjs (optional; falls back to vars.SOLANA_GRADUATION_CAMPAIGN)
+        description: Optional existing curve-closed Economics V3 devnet Campaign PDA. Leave blank to auto-create a disposable fixture.
         required: false
         type: string
         default: ""
@@ -35,7 +36,7 @@ concurrency:
 jobs:
   canary:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     environment: testnet-certification
     env:
       BSC_TESTNET_PRIVATE_KEY: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
@@ -43,13 +44,24 @@ jobs:
       PRIVATE_KEY_DEPLOY: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
       BSC_TESTNET_RPC: ${{ vars.BSC_TESTNET_RPC || secrets.BSC_TESTNET_RPC }}
       BSC_TESTNET_RPC_URL: ${{ vars.BSC_TESTNET_RPC || secrets.BSC_TESTNET_RPC }}
-      SOLANA_FEE_ESCROW_PAYER_KEYPAIR: ${{ secrets.SOLANA_FEE_ESCROW_PAYER_KEYPAIR }}
-      SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER || secrets.SOLANA_FEE_ESCROW_PAYER_KEYPAIR }}
-      SOLANA_RPC_URL: ${{ vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
-      SOLANA_GRADUATION_AUTH_URL: ${{ vars.SOLANA_GRADUATION_AUTH_URL }}
+      BSC_MAINNET_FORK_RPC: ${{ vars.BSC_MAINNET_RPC || secrets.BSC_MAINNET_RPC }}
+      BSC_MAINNET_FALLBACK_RPC: https://bsc-mainnet.public.blastapi.io
+      SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER }}
+      SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
+      SOLANA_LAUNCHPAD_PROGRAM_ID: ${{ vars.SOLANA_DEVNET_LAUNCHPAD_PROGRAM_ID || '3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt' }}
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
+      # Disposable fixture target is $6 and its route-signed close target is 0.04 SOL.
+      # Pin only this isolated canary to $150/SOL so auth + on-chain target derivation are deterministic.
+      SOLANA_GRADUATION_SOL_USD_MICROS: "150000000"
+      SOLANA_DEVNET_CANDIDATE_SHA256: e97c8f70a4bd0c6349d7f2f51d91be7e89f23b03187e18dc7f1a6363ac908c27
+      SOLANA_DEVNET_CANDIDATE_BYTES: "1124416"
+      SOLANA_DEVNET_UPGRADE_EVIDENCE: /tmp/mwz-solana-devnet-upgrade.json
+      SOLANA_GRADUATION_AUTH_URL: http://127.0.0.1:43101/api/solana/graduation-authorize
       SOLANA_GRADUATION_ALT_ADDRESS: ${{ vars.SOLANA_GRADUATION_ALT_ADDRESS }}
-      SOLANA_GRADUATION_CAMPAIGN: ${{ inputs.solana_campaign || vars.SOLANA_GRADUATION_CAMPAIGN }}
+      SOLANA_GRADUATION_CAMPAIGN: ${{ inputs.solana_campaign }}
       SOLANA_GRADUATION_SEND: ${{ inputs.send_solana_graduation && 'true' || 'false' }}
+      SOLANA_GRADUATION_PAUSE_SNAPSHOT: /tmp/mwz-solana-devnet-pause-snapshot.json
+      SOLANA_GRADUATION_FIXTURE_OUTPUT: /tmp/mwz-solana-devnet-graduation-fixture.json
     steps:
       - uses: actions/checkout@v4
         with:
@@ -69,19 +81,37 @@ jobs:
           set -euo pipefail
           case "${{ inputs.network }}" in
             bsc-testnet-preflight)
-              echo "BNB canary preflight: bytecode/wiring only. Not Gate D full lifecycle."
+              echo "BNB canary preflight: accepted 3/2 bytecode/wiring only. Not the 6C source-head lifecycle."
               ;;
             bsc-testnet-full-cycle)
               test -n "${BSC_TESTNET_PRIVATE_KEY:-}" || {
                 echo "BLOCKER: GitHub Environment secret BSC_TESTNET_PRIVATE_KEY is not mapped. Dedicated tBNB-only EOA, no production funds."
                 exit 1
               }
-              ;;
-            solana-devnet-meteora)
-              test -n "${SOLANA_FEE_ESCROW_PAYER_KEYPAIR:-}${SOLANA_DEVNET_PAYER:-}" || {
-                echo "BLOCKER: GitHub Environment secret SOLANA_FEE_ESCROW_PAYER_KEYPAIR or SOLANA_DEVNET_PAYER is not mapped. Dedicated devnet-only payer."
+              test -n "${BSC_TESTNET_RPC:-}" || {
+                echo "BLOCKER: set GitHub Environment variable BSC_TESTNET_RPC."
                 exit 1
               }
+              ;;
+            bsc-mainnet-fork-source-head)
+              echo "Mainnet fork only: no production transaction can be broadcast by this canary."
+              echo "The upstream RPC is independently verified as BNB chain 56 and historical-state capable before Anvil starts."
+              ;;
+            solana-devnet-meteora)
+              test -n "${SOLANA_DEVNET_PAYER:-}" || {
+                echo "BLOCKER: GitHub Environment secret SOLANA_DEVNET_PAYER is not mapped. It must be the dedicated devnet treasury/graduation operator."
+                exit 1
+              }
+              test -n "${SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY:-}" || {
+                echo "BLOCKER: GitHub Environment secret SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY is not mapped. Use the devnet-only route signer; never the production signer."
+                exit 1
+              }
+              if [ -n "${SOLANA_GRADUATION_CAMPAIGN:-}" ]; then
+                echo "campaign_source=workflow-input"
+                echo "campaign=$SOLANA_GRADUATION_CAMPAIGN"
+              else
+                echo "campaign_source=auto-disposable-v3-fixture"
+              fi
               ;;
             phantom-manual-checklist)
               echo "BLOCKER: Phantom CREATE/BUY/SELL warning check requires a human wallet session."
@@ -94,6 +124,73 @@ jobs:
               exit 1
               ;;
           esac
+
+      - name: Resolve and verify BNB mainnet fork RPC
+        if: ${{ inputs.network == 'bsc-mainnet-fork-source-head' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOPAZ_FACTORY="0x65E6cD0eF5D3467030103cf3d433034E570b5784"
+
+          rpc_result() {
+            node -e 'let s=""; process.stdin.on("data", d => s += d); process.stdin.on("end", () => { const j = JSON.parse(s); if (j.error || !j.result) process.exit(2); process.stdout.write(String(j.result)); });'
+          }
+
+          chain_id() {
+            curl -fsS --max-time 12 -X POST -H 'content-type: application/json' \
+              --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
+              "$1" | rpc_result
+          }
+
+          block_number() {
+            curl -fsS --max-time 12 -X POST -H 'content-type: application/json' \
+              --data '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}' \
+              "$1" | rpc_result
+          }
+
+          topaz_code_at() {
+            curl -fsS --max-time 12 -X POST -H 'content-type: application/json' \
+              --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getCode\",\"params\":[\"${TOPAZ_FACTORY}\",\"$2\"]}" \
+              "$1" | rpc_result
+          }
+
+          probe_archive_rpc() {
+            local candidate="$1"
+            local cid head probe_block code
+            [ -n "$candidate" ] || return 1
+            cid="$(chain_id "$candidate" 2>/dev/null || true)"
+            [ "$cid" = "0x38" ] || return 1
+            head="$(block_number "$candidate" 2>/dev/null || true)"
+            [[ "$head" =~ ^0x[0-9a-fA-F]+$ ]] || return 1
+            probe_block="$(node -e 'const h=BigInt(process.argv[1]); if(h<=64n) process.exit(2); process.stdout.write("0x"+(h-64n).toString(16));' "$head" 2>/dev/null || true)"
+            [ -n "$probe_block" ] || return 1
+            code="$(topaz_code_at "$candidate" "$probe_block" 2>/dev/null || true)"
+            [ -n "$code" ] && [ "$code" != "0x" ] || return 1
+            RPC_PROBE_CHAIN_ID="$cid"
+            RPC_PROBE_BLOCK="$probe_block"
+            return 0
+          }
+
+          rpc="${BSC_MAINNET_FORK_RPC:-}"
+          if ! probe_archive_rpc "$rpc"; then
+            echo "Configured BSC_MAINNET_RPC is not a usable archive-capable BNB mainnet endpoint; trying the public Blast archive fallback."
+            rpc="$BSC_MAINNET_FALLBACK_RPC"
+            if ! probe_archive_rpc "$rpc"; then
+              echo "BLOCKER: no archive-capable BNB mainnet RPC is available. Set GitHub Environment variable or secret BSC_MAINNET_RPC to a chain-56 endpoint that supports historical eth_getCode/state reads."
+              exit 1
+            fi
+          fi
+
+          echo "BSC_MAINNET_FORK_RPC=$rpc" >> "$GITHUB_ENV"
+          echo "mainnet_rpc_chain_id=$RPC_PROBE_CHAIN_ID"
+          echo "historical_probe_block=$RPC_PROBE_BLOCK"
+          echo "production_topaz_historical_bytecode=present"
+
+      - name: Install Foundry for BNB mainnet fork
+        if: ${{ inputs.network == 'bsc-mainnet-fork-source-head' }}
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: stable
 
       - name: Pin and verify Meteora DAMM v2 CP-AMM artifact
         if: ${{ inputs.network == 'solana-devnet-meteora' }}
@@ -108,13 +205,13 @@ jobs:
           print(f"{manifest['artifact']['sha256']}  {manifest['artifact']['localPath']}")
           PY
 
-      - name: Resolve BSC certification factory from the accepted test manifest
-        if: ${{ inputs.network == 'bsc-testnet-preflight' || inputs.network == 'bsc-testnet-full-cycle' }}
+      - name: Resolve accepted BSC factory for bytecode preflight
+        if: ${{ inputs.network == 'bsc-testnet-preflight' }}
         id: factory
         shell: bash
         run: node scripts/resolve-bsc-certification-factory.mjs --github-output
 
-      - name: Run BSC Testnet Topaz preflight (not full lifecycle)
+      - name: Run BSC Testnet Topaz preflight (accepted 3/2 only)
         if: ${{ inputs.network == 'bsc-testnet-preflight' }}
         env:
           DEPLOYMENT_FILE: ${{ steps.factory.outputs.deployment_file }}
@@ -126,7 +223,7 @@ jobs:
           set -euo pipefail
           test -n "${FACTORY_ADDRESS:-}"
           test -n "${BSC_TESTNET_RPC:-}" || {
-            echo "BLOCKER: set GitHub Environment variable BSC_TESTNET_RPC (public testnet RPC is configuration, not a secret)."
+            echo "BLOCKER: set GitHub Environment variable BSC_TESTNET_RPC."
             exit 1
           }
           echo "certification_factory=$FACTORY_ADDRESS"
@@ -134,71 +231,269 @@ jobs:
           npm ci
           npx hardhat run scripts/test-topaz-graduation-flow.ts --network bscTestnet
 
-      - name: Run BSC Testnet full lifecycle + evidence verifier
+      - name: Run BNB 6C source-head full lifecycle on chain 97
         if: ${{ inputs.network == 'bsc-testnet-full-cycle' }}
-        env:
-          DEPLOYMENT_FILE: ${{ steps.factory.outputs.deployment_file }}
-          TOPAZ_MANIFEST: ${{ steps.factory.outputs.topaz_manifest }}
-          FACTORY_ADDRESS: ${{ steps.factory.outputs.factory }}
-          LAUNCH_FACTORY: ${{ steps.factory.outputs.factory }}
-          TOPAZ_ACCEPTANCE_REQUIRE_EVIDENCE: "true"
         shell: bash
         run: |
           set -euo pipefail
-          test -n "${FACTORY_ADDRESS:-}"
-          test -n "${BSC_TESTNET_RPC:-}" || {
-            echo "BLOCKER: set GitHub Environment variable BSC_TESTNET_RPC (public testnet RPC is configuration, not a secret)."
-            exit 1
-          }
-          echo "certification_factory=$FACTORY_ADDRESS"
-          echo "mode=full-cycle"
+          echo "mode=6c-source-head-full-cycle"
+          echo "safety=isolated 4/3 stack; live 3/2 factory must remain unchanged"
           npm ci
           npx hardhat run scripts/run-bnb-lifecycle-certification.ts --network bscTestnet
-          test -s "${TOPAZ_ACCEPTANCE_INPUT:-reports/bnb-lifecycle-certification-testnet.json}"
-          TOPAZ_ACCEPTANCE_INPUT="${TOPAZ_ACCEPTANCE_INPUT:-reports/bnb-lifecycle-certification-testnet.json}" \
-            npx hardhat run scripts/test-topaz-graduation-flow.ts --network bscTestnet
+          test -s reports/bnb-6c-testnet-acceptance.json
+          node -e 'const r=require("./reports/bnb-6c-testnet-acceptance.json"); if(r.chainId!==97||r.accepted!==true||r.factoryLiveAfter!==true||r.createPausedAfter!==true) process.exit(1); console.log({accepted:r.accepted,factory:r.factory,campaign:r.campaign,pool:r.pool,realTopazCompatibility:r.realTopazCompatibility});'
 
-      - name: Materialize dedicated Solana devnet payer
+      - name: Upload BNB 6C chain-97 evidence
+        if: ${{ inputs.network == 'bsc-testnet-full-cycle' && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: bnb-6c-testnet-acceptance-${{ github.sha }}
+          path: |
+            deployments/bnb/testnet.staged.json
+            reports/bnb-6c-testnet-acceptance.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Run BNB 4/3 + V3 source head against real Topaz on a mainnet fork
+        if: ${{ inputs.network == 'bsc-mainnet-fork-source-head' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          anvil --fork-url "$BSC_MAINNET_FORK_RPC" --chain-id 56 --host 127.0.0.1 --port 8545 >/tmp/mwz-bnb-anvil.log 2>&1 &
+          ANVIL_PID=$!
+          trap 'kill "$ANVIL_PID" 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS -X POST -H 'content-type: application/json' \
+              --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
+              http://127.0.0.1:8545 >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl -fsS -X POST -H 'content-type: application/json' \
+            --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
+            http://127.0.0.1:8545 | tee /tmp/mwz-bnb-fork-chain.json
+          BNB_FORK=1 BNB_FORK_ANVIL_URL=http://127.0.0.1:8545 \
+            npx hardhat test test/BnbSourceHeadMainnetForkTopazV3.spec.ts --network bscMainnetFork
+
+      - name: Upload BNB fork diagnostics on failure
+        if: ${{ inputs.network == 'bsc-mainnet-fork-source-head' && failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: bnb-source-head-mainnet-fork-${{ github.sha }}
+          path: |
+            /tmp/mwz-bnb-anvil.log
+            /tmp/mwz-bnb-fork-chain.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Install Solana operator dependencies
+        if: ${{ inputs.network == 'solana-devnet-meteora' }}
+        shell: bash
+        run: npm install --prefix tests/solana --no-audit --no-fund
+
+      - name: Validate Solana graduation runtime before devnet mutation
         if: ${{ inputs.network == 'solana-devnet-meteora' }}
         shell: bash
         run: |
           set -euo pipefail
-          export SOLANA_GRADUATION_OPERATOR_KEYPAIR="${RUNNER_TEMP}/mwz-solana-devnet-payer.json"
-          node scripts/solana/materialize-devnet-payer.mjs
-          echo "SOLANA_GRADUATION_OPERATOR_KEYPAIR=$SOLANA_GRADUATION_OPERATOR_KEYPAIR" >> "$GITHUB_ENV"
+          npm ci --prefix tools/solana-meteora-graduation --no-audit --no-fund
+          npm --prefix tools/solana-meteora-graduation run check
+          node --input-type=module - <<'NODE'
+          import { loadSolanaV0Module } from './frontend/scripts/load-solana-v0-module.mjs';
+          const v0 = await loadSolanaV0Module();
+          if (typeof v0.buildLaunchpadV0Transaction !== 'function' || typeof v0.assertLaunchpadV0Intent !== 'function') {
+            throw new Error('shared Solana V0 runtime failed to load');
+          }
+          console.log('shared_solana_v0_runtime=ok');
+          NODE
 
-      - name: Generate frozen launchpad IDL for graduate.mjs
+      - name: Materialize Solana devnet operator and route signer
+        if: ${{ inputs.network == 'solana-devnet-meteora' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          operator_file="${RUNNER_TEMP}/mwz-solana-devnet-operator.json"
+          route_file="${RUNNER_TEMP}/mwz-solana-devnet-route-signer.json"
+
+          SOLANA_GRADUATION_OPERATOR_KEYPAIR="$operator_file" node scripts/solana/materialize-devnet-payer.mjs
+
+          ROUTE_FILE="$route_file" python3 - <<'PY'
+          import json, os
+          raw = os.environ.get("SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY", "").strip()
+          try:
+              value = json.loads(raw)
+          except Exception as exc:
+              raise SystemExit(f"SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY must be the JSON array created by solana-keygen: {exc}")
+          if not isinstance(value, list) or len(value) != 64 or any(not isinstance(x, int) or x < 0 or x > 255 for x in value):
+              raise SystemExit("SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY must contain exactly 64 byte values")
+          with open(os.environ["ROUTE_FILE"], "w", encoding="utf-8") as handle:
+              json.dump(value, handle)
+          os.chmod(os.environ["ROUTE_FILE"], 0o600)
+          PY
+
+          route_pub="$(ROUTE_FILE="$route_file" node - <<'NODE'
+          const fs = require('fs');
+          const { Keypair } = require('./tests/solana/node_modules/@solana/web3.js');
+          const bytes = JSON.parse(fs.readFileSync(process.env.ROUTE_FILE, 'utf8'));
+          process.stdout.write(Keypair.fromSecretKey(Uint8Array.from(bytes)).publicKey.toBase58());
+          NODE
+          )"
+
+          echo "SOLANA_GRADUATION_OPERATOR_KEYPAIR=$operator_file" >> "$GITHUB_ENV"
+          echo "SOLANA_OPERATOR_KEYPAIR=$operator_file" >> "$GITHUB_ENV"
+          echo "SOLANA_NEW_ROUTE_SIGNER_KEYPAIR=$route_file" >> "$GITHUB_ENV"
+          echo "SOLANA_ROUTE_SIGNER_PUBLIC_KEY=$route_pub" >> "$GITHUB_ENV"
+          echo "derived_devnet_route_signer=$route_pub"
+
+      - name: Build and verify certified launchpad SBF + IDL
         if: ${{ inputs.network == 'solana-devnet-meteora' }}
         env:
           ANCHOR_VERSION: 0.30.1
+          SOLANA_VERSION: 1.18.26
+          RUST_TOOLCHAIN: 1.79.0
           IDL_RUST_TOOLCHAIN: nightly-2024-05-09
         shell: bash
         run: |
           set -euo pipefail
-          test -n "${SOLANA_GRADUATION_CAMPAIGN:-}" || {
-            echo "BLOCKER: set workflow input solana_campaign or GitHub Environment variable SOLANA_GRADUATION_CAMPAIGN."
-            echo "Meteora CP-AMM pin verified. graduate.mjs still needs a curve-closed campaign PDA."
-            exit 1
-          }
-          test -n "${SOLANA_GRADUATION_AUTH_URL:-}" || {
-            echo "BLOCKER: set GitHub Environment variable SOLANA_GRADUATION_AUTH_URL (Railway graduation-authorize URL). Not a secret."
-            exit 1
-          }
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
           rustup toolchain install "$IDL_RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+
+          release_dir="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
+          mkdir -p "$release_dir"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error \
+            --output /tmp/solana-release.tar.bz2 \
+            "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"
+          ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+
           npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
-          mkdir -p target/idl
+
+          isolated_target="$RUNNER_TEMP/mwz-devnet-certified-sbf"
+          mkdir -p "$isolated_target"
+          CARGO_TARGET_DIR="$isolated_target" anchor build --program-name memewarzone_solana --no-idl
+          isolated_so="$isolated_target/deploy/memewarzone_solana.so"
+          test -s "$isolated_so"
+          actual_sha="$(sha256sum "$isolated_so" | awk '{print $1}')"
+          actual_bytes="$(wc -c < "$isolated_so" | tr -d ' ')"
+          echo "built_sbf_sha256=$actual_sha"
+          echo "built_sbf_bytes=$actual_bytes"
+          if [ "$actual_sha" != "$SOLANA_DEVNET_CANDIDATE_SHA256" ] || [ "$actual_bytes" != "$SOLANA_DEVNET_CANDIDATE_BYTES" ]; then
+            echo "BLOCKER: source-head SBF differs from the already-certified candidate. Refusing devnet upgrade."
+            exit 1
+          fi
+          mkdir -p target/deploy target/idl
+          cp "$isolated_so" target/deploy/memewarzone_solana.so
+
           (
             cd programs/memewarzone_solana
             RUSTUP_TOOLCHAIN="$IDL_RUST_TOOLCHAIN" anchor idl build \
               --out ../../target/idl/memewarzone_solana.json
           )
           test -s target/idl/memewarzone_solana.json
+          sha256sum target/deploy/memewarzone_solana.so
+          solana --version
+          anchor --version
 
-      - name: Run Solana graduate.mjs against devnet
+      - name: Align live Solana devnet with certified candidate
         if: ${{ inputs.network == 'solana-devnet-meteora' }}
         shell: bash
         run: |
           set -euo pipefail
-          npm install --prefix tools/solana-meteora-graduation --no-audit --no-fund
+          node scripts/solana/upgrade-devnet-launchpad.cjs --execute
+
+      - name: Rotate devnet route signer to GitHub-held key
+        if: ${{ inputs.network == 'solana-devnet-meteora' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix tests/solana run devnet:rotate-route-signer
+
+      - name: Create disposable curve-closed V3 campaign when none was supplied
+        if: ${{ inputs.network == 'solana-devnet-meteora' && inputs.solana_campaign == '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix tests/solana run devnet:create-graduation-fixture
+          test -s "$SOLANA_GRADUATION_FIXTURE_OUTPUT"
+          campaign="$(node -e 'const f=require("fs");const j=JSON.parse(f.readFileSync(process.env.SOLANA_GRADUATION_FIXTURE_OUTPUT,"utf8"));if(!j.campaign||j.curveClosed!==true||j.graduated!==false)process.exit(2);process.stdout.write(j.campaign)')"
+          echo "SOLANA_GRADUATION_CAMPAIGN=$campaign" >> "$GITHUB_ENV"
+          echo "auto_fixture_campaign=$campaign"
+
+      - name: Verify Solana graduation campaign is available
+        if: ${{ inputs.network == 'solana-devnet-meteora' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SOLANA_GRADUATION_CAMPAIGN:-}" || {
+            echo "BLOCKER: no Solana graduation campaign is available after fixture setup."
+            exit 1
+          }
+          echo "graduation_campaign=$SOLANA_GRADUATION_CAMPAIGN"
+
+      - name: Open isolated Solana devnet graduation window
+        if: ${{ inputs.network == 'solana-devnet-meteora' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix tests/solana run devnet:graduation-window -- open
+
+      - name: Start isolated Solana devnet graduation authorization
+        if: ${{ inputs.network == 'solana-devnet-meteora' }}
+        shell: bash
+        env:
+          SOLANA_GRADUATION_AUTH_ENABLED: "true"
+          SOLANA_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          nohup node scripts/solana/devnet-graduation-auth-server.mjs >/tmp/mwz-solana-devnet-graduation-auth.log 2>&1 &
+          echo $! > /tmp/mwz-solana-devnet-graduation-auth.pid
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:43101/health >/tmp/mwz-solana-devnet-graduation-auth-health.json; then
+              cat /tmp/mwz-solana-devnet-graduation-auth-health.json
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/mwz-solana-devnet-graduation-auth.log || true
+          echo "BLOCKER: isolated Solana devnet graduation authorization failed to start."
+          exit 1
+
+      - name: Run Solana Meteora graduation acceptance against devnet
+        if: ${{ inputs.network == 'solana-devnet-meteora' }}
+        shell: bash
+        run: |
+          set -euo pipefail
           test -s target/idl/memewarzone_solana.json
           node tools/solana-meteora-graduation/graduate.mjs "$SOLANA_GRADUATION_CAMPAIGN"
+
+      - name: Restore original Solana devnet graduation pause state
+        if: ${{ inputs.network == 'solana-devnet-meteora' && always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${SOLANA_OPERATOR_KEYPAIR:-}" ] && [ -s target/idl/memewarzone_solana.json ] && [ -s "$SOLANA_GRADUATION_PAUSE_SNAPSHOT" ]; then
+            npm --prefix tests/solana run devnet:graduation-window -- restore
+          else
+            echo "No graduation pause snapshot exists; nothing to restore."
+          fi
+
+      - name: Upload Solana devnet diagnostics
+        if: ${{ inputs.network == 'solana-devnet-meteora' && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: solana-devnet-meteora-acceptance-${{ github.sha }}
+          path: |
+            /tmp/mwz-solana-devnet-upgrade.json
+            /tmp/mwz-solana-devnet-graduation-fixture.json
+            /tmp/mwz-solana-devnet-graduation-auth.log
+            /tmp/mwz-solana-devnet-graduation-auth-health.json
+            /tmp/mwz-solana-devnet-pause-snapshot.json
+            /tmp/mwz-meteora-sha256.txt
+          if-no-files-found: warn
+          retention-days: 14

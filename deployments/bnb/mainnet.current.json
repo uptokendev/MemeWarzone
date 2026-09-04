@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "kind": "bnb-current-generation-census",
+  "chainId": 56,
+  "chainKey": "bnb-mainnet",
+  "network": "bscMainnet",
+  "live": true,
+  "factoryGeneration": 3,
+  "campaignGeneration": 2,
+  "liquidityKind": 1,
+  "liquidityKindName": "topaz-v2-erc20",
+  "treasuryGeneration": "v2",
+  "requiredPoolFeeBps": 30,
+  "lockerCreatorFeeBps": 8000,
+  "lockerProtocolFeeBps": 2000,
+  "creationEnabled": true,
+  "createPaused": false,
+  "supportEnabled": true,
+  "creationFactory": "0xc378221E57898106079aE4B818a92978e4cd9559",
+  "factoryStartBlock": 117413737,
+  "admin": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+  "routeAuthority": "0xb989A99823eA96552c3E3198A40CdBF682EDf1aA",
+  "sourceHead": {
+    "factoryGeneration": 4,
+    "campaignGeneration": 3,
+    "isCurrentLiveBnb": false,
+    "reason": "source factory generation 4 / campaign 3 != accepted live BNB generation 3 / campaign 2"
+  },
+  "uniswapV3Rejected": true,
+  "contracts": {
+    "launchFactory": "0xc378221E57898106079aE4B818a92978e4cd9559",
+    "permanentLpLocker": "0xFcE77642e22ef04B8398fB6dfEE99614CAb32f69",
+    "treasuryRouterV2": "0xe157a6FDf19CAB61f2ECa048966f137A3240a921",
+    "topazRouterAdapter": "0x5c3135Dfaad519A9114DEa2E546f0Cd051d0D35a",
+    "productionTopazRouter": "0x1E98c8226e7d452e1888e3d3d2F929346321c6c3",
+    "launchCampaignImplementation": "0xbe3caF640F77e8436BCAF89730251A00fB01608f",
+    "graduationOracle": "0x9D204406d5ECA0f18e48427fDD983A32FdF57C9B"
+  },
+  "supportFactories": [
+    {
+      "address": "0x3068eAE6F8431bFc3c5Faae9c3bBB95F007be59a",
+      "creationEnabled": false,
+      "supportEnabled": true,
+      "permanentLpLocker": "0x64710A4f87aBa3b5ED5B8B25e8ebA4DaC339C998",
+      "notes": "Legacy production factory kept for existing campaigns"
+    }
+  ],
+  "sourceArtifacts": [
+    "deployments/bscMainnet.factory-30bps-80-20.json"
+  ]
+}

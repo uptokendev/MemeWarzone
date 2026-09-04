@@ -282,19 +282,36 @@ async function consumeNonceWithClient(client, chainId, address, nonce) {
 }
 
 function getRpcUrl(chainId) {
-  const perChain = String(process.env[`BSC_RPC_HTTP_${chainId}`] || "").trim();
-  if (perChain) return perChain;
+  const id = Number(chainId);
+  const perChain = String(
+    process.env[`ROBINHOOD_RPC_HTTP_${id}`] ||
+      process.env[`BSC_RPC_HTTP_${id}`] ||
+      process.env[`VITE_PUBLIC_RPC_${id}`] ||
+      "",
+  ).trim();
+  if (perChain) return perChain.split(",")[0].trim();
+  if (id === 4663) {
+    const rh = String(process.env.ROBINHOOD_MAINNET_RPC_URL || process.env.ROBINHOOD_MAINNET_RPC || "https://rpc.mainnet.chain.robinhood.com").trim();
+    if (rh) return rh;
+  }
+  if (id === 46630) {
+    const rh = String(process.env.ROBINHOOD_TESTNET_RPC_URL || process.env.ROBINHOOD_TESTNET_RPC || "https://rpc.testnet.chain.robinhood.com").trim();
+    if (rh) return rh;
+  }
   const fallback = String(process.env.BSC_RPC_HTTP || "").trim();
-  if (fallback) return fallback;
-  throw new Error(`Missing RPC env (BSC_RPC_HTTP_${chainId})`);
+  if (fallback && (id === 56 || id === 97)) return fallback;
+  throw new Error(`Missing RPC env (BSC_RPC_HTTP_${id} or ROBINHOOD_RPC_HTTP_${id})`);
 }
 
 function getTreasuryVaultV2Address(chainId) {
-  const perChain = String(process.env[`TREASURY_VAULT_V2_ADDRESS_${chainId}`] || "").trim();
+  const id = Number(chainId);
+  const perChain = String(process.env[`TREASURY_VAULT_V2_ADDRESS_${id}`] || "").trim();
   if (perChain) return perChain;
-  const fallback = String(process.env.TREASURY_VAULT_V2_ADDRESS || "").trim();
-  if (fallback) return fallback;
-  throw new Error(`Missing TreasuryVaultV2 env (TREASURY_VAULT_V2_ADDRESS_${chainId})`);
+  if (id === 56 || id === 97) {
+    const fallback = String(process.env.TREASURY_VAULT_V2_ADDRESS || "").trim();
+    if (fallback) return fallback;
+  }
+  throw new Error(`Missing TreasuryVaultV2 env (TREASURY_VAULT_V2_ADDRESS_${id})`);
 }
 
 function getOperatorPk() {

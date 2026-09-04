@@ -131,9 +131,9 @@ describe("TreasuryRouterV2", function () {
     await expect(router.connect(alice).setProtocolRevenueVault(receiverAddress)).to.be.revertedWith("not admin");
     await expect(router.connect(alice).setLeagueSplit(3000, 7000)).to.be.revertedWith("not admin");
 
-    await expect(router.setRecruiterRewardsVault(ethers.ZeroAddress)).to.be.revertedWith("vault=0");
-    await expect(router.setCommunityRewardsVault(ethers.ZeroAddress)).to.be.revertedWith("vault=0");
-    await expect(router.setProtocolRevenueVault(ethers.ZeroAddress)).to.be.revertedWith("vault=0");
+    await expect(router.setRecruiterRewardsVault(ethers.ZeroAddress)).to.be.revertedWith("target=0");
+    await expect(router.setCommunityRewardsVault(ethers.ZeroAddress)).to.be.revertedWith("target=0");
+    await expect(router.setProtocolRevenueVault(ethers.ZeroAddress)).to.be.revertedWith("target=0");
     await expect(router.setLeagueSplit(3000, 6999)).to.be.revertedWith("bad split");
 
     await expect(router.setRecruiterRewardsVault(receiverAddress))
@@ -196,7 +196,9 @@ describe("TreasuryRouterV2", function () {
     const Reverting = await ethers.getContractFactory("RevertingTreasuryReceiverMock");
     const rejecting = await Reverting.deploy();
     await rejecting.waitForDeployment();
-    await configured.router.setProtocolRevenueVault(await rejecting.getAddress());
+    await configured.router.proposeProtocolRevenueVault(await rejecting.getAddress());
+    await increaseTime(3600);
+    await configured.router.acceptProtocolRevenueVault();
 
     await expect(configured.router.route(TRADE, STANDARD_UNLINKED, { value: 10_000n })).to.be.revertedWith("route failed");
   });
@@ -254,7 +256,11 @@ describe("TreasuryRouterV2", function () {
     await expect(router.setAuthorizedLpLocker(lockerAAddress, true))
       .to.emit(router, "AuthorizedLpLockerUpdated")
       .withArgs(lockerAAddress, true);
-    await expect(router.setAuthorizedLpLocker(lockerBAddress, true))
+    await expect(router.setAuthorizedLpLocker(lockerBAddress, true)).to.be.revertedWith("use propose");
+    await expect(router.proposeAuthorizedLpLocker(lockerBAddress)).to.emit(router, "LpLockerAuthorizationProposed");
+    await expect(router.acceptAuthorizedLpLocker()).to.be.revertedWith("delay");
+    await increaseTime(3600);
+    await expect(router.acceptAuthorizedLpLocker())
       .to.emit(router, "AuthorizedLpLockerUpdated")
       .withArgs(lockerBAddress, true);
 
@@ -331,5 +337,28 @@ describe("TreasuryRouterV2", function () {
     await router.connect(lockerA).routeLpToken(await token.getAddress(), 1n);
     expect(await protocol.received()).to.eq(1n);
     expect(await token.balanceOf(await protocol.getAddress())).to.eq(1n);
+  });
+
+  it("delays replacement of money destinations and only emergency-disables lockers", async () => {
+    const { router, recruiter, alice, lockerA } = await deployConfigured();
+    const replacement = await deployReceiver();
+    const replacementAddress = await replacement.getAddress();
+
+    await expect(router.setRecruiterRewardsVault(replacementAddress)).to.be.revertedWith("use propose");
+    await expect(router.proposeRecruiterRewardsVault(await alice.getAddress())).to.be.revertedWith("not contract");
+    await expect(router.proposeRecruiterRewardsVault(replacementAddress)).to.emit(router, "RecruiterRewardsVaultProposed");
+    await expect(router.acceptRecruiterRewardsVault()).to.be.revertedWith("delay");
+    await increaseTime(3600);
+    await expect(router.acceptRecruiterRewardsVault())
+      .to.emit(router, "RecruiterRewardsVaultUpdated")
+      .withArgs(await recruiter.getAddress(), replacementAddress);
+    expect(await router.recruiterRewardsVault()).to.eq(replacementAddress);
+
+    await router.setAuthorizedLpLocker(await lockerA.getAddress(), true);
+    const lockerC = (await ethers.getSigners())[5];
+    await expect(router.setAuthorizedLpLocker(await lockerC.getAddress(), true)).to.be.revertedWith("use propose");
+    await router.emergencyDisableLpLocker(await lockerA.getAddress());
+    expect(await router.authorizedLpLocker(await lockerA.getAddress())).to.eq(false);
+    await expect(router.setAuthorizedLpLocker(await lockerC.getAddress(), true)).to.be.revertedWith("use propose");
   });
 });

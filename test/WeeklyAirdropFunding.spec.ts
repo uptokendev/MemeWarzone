@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { authorizeBatch } from "./helpers/settlementAuth";
 
 function leafFor(account: string, amount: bigint) {
   const encoded = ethers.AbiCoder.defaultAbiCoder().encode(["address", "uint256"], [account, amount]);
@@ -26,7 +27,7 @@ describe("Weekly airdrop atomic funding", function () {
   }
 
   it("atomically funds a Merkle batch from the tracked airdrop pool", async () => {
-    const { router, operator, user, distributor, vault } = await deployFixture();
+    const { admin, router, operator, user, distributor, vault } = await deployFixture();
     const deposit = ethers.parseEther("1");
     const reward = ethers.parseEther("0.25");
     const batchId = ethers.id("weekly-airdrop-1");
@@ -34,6 +35,7 @@ describe("Weekly airdrop atomic funding", function () {
     const deadline = BigInt((await ethers.provider.getBlock("latest"))!.timestamp + 3600);
 
     await vault.connect(router).depositAirdrop({ value: deposit });
+    await authorizeBatch(distributor, admin, batchId, reward);
 
     await expect(vault.connect(operator).fundAirdropBatch(batchId, root, deadline, reward))
       .to.emit(vault, "AirdropBatchFunded")
@@ -64,14 +66,29 @@ describe("Weekly airdrop atomic funding", function () {
     );
   });
 
+  it("rejects operator funding without Safe batch authorization", async () => {
+    const { router, operator, user, distributor, vault } = await deployFixture();
+    const reward = ethers.parseEther("0.1");
+    const batchId = ethers.id("weekly-airdrop-unauth-batch");
+    const root = leafFor(await user.getAddress(), reward);
+
+    await vault.connect(router).depositAirdrop({ value: reward });
+    await expect(vault.connect(operator).fundAirdropBatch(batchId, root, 0, reward)).to.be.revertedWithCustomError(
+      distributor,
+      "BatchNotAuthorized"
+    );
+    expect(await vault.warzoneAirdropBalance()).to.eq(reward);
+  });
+
   it("reverts the vault balance change when the distributor rejects a duplicate batch", async () => {
-    const { router, operator, user, vault } = await deployFixture();
+    const { admin, router, operator, user, distributor, vault } = await deployFixture();
     const deposit = ethers.parseEther("0.5");
     const reward = ethers.parseEther("0.1");
     const batchId = ethers.id("weekly-airdrop-duplicate");
     const root = leafFor(await user.getAddress(), reward);
 
     await vault.connect(router).depositAirdrop({ value: deposit });
+    await authorizeBatch(distributor, admin, batchId, reward);
     await vault.connect(operator).fundAirdropBatch(batchId, root, 0, reward);
     const balanceAfterFirst = await vault.warzoneAirdropBalance();
 

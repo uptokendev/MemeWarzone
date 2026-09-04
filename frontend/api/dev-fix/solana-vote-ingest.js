@@ -587,4 +587,11 @@ export async function solanaVoteIngest(req, res) {
   }
 }
 
+export {
+  describeVoterTransfers,
+  extractSolTransfer,
+  fetchSolUsdMicros,
+  fetchVoteTransaction,
+};
+
 export default solanaVoteIngest;

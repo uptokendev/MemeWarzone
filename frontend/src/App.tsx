@@ -8,7 +8,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Navigate, Routes, Route, useLocation, useNavigate } from "react-router-dom";
+import { BrowserRouter, Navigate, Routes, Route, useLocation, useNavigate, useParams } from "react-router-dom";
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { LoadingScreen } from "@/components/LoadingScreen";
 import { WalletProvider } from "@/contexts/WalletContext";
@@ -21,10 +21,10 @@ import Arena from "./pages/Arena";
 import ArenaBattles from "./pages/ArenaBattles";
 import WarRoom from "./pages/WarRoom";
 import BattleDetails from "./pages/BattleDetails";
-import PostGradEvents from "./pages/PostGradEvents";
+import ArenaTournaments from "./pages/ArenaTournaments";
 import PostGradLeague from "./pages/PostGradLeague";
 import League from "./pages/League";
-import TournamentDetails from "./pages/TournamentDetails";
+import ArenaVerifyEmail from "./pages/ArenaVerifyEmail";
 import Create from "./pages/Create";
 import SponsorshipApplication from "./pages/SponsorshipApplication";
 import ProfilePage from "./pages/ProfilePage";
@@ -69,6 +69,7 @@ import CommandCenterClaims from "@/pages/command-center/CommandCenterClaims";
 import CommandCenterSettings from "@/pages/command-center/CommandCenterSettings";
 import CommandCenterSocial from "@/pages/command-center/CommandCenterSocial";
 import CommandCenterCoins from "@/pages/command-center/CommandCenterCoins";
+import CommandCenterBattles from "@/pages/command-center/CommandCenterBattles";
 import CommandCenterSupport from "@/pages/command-center/CommandCenterSupport";
 import CommandCenterReportAbuse from "@/pages/command-center/CommandCenterReportAbuse";
 import CommandCenterAbuseReports from "@/pages/command-center/CommandCenterAbuseReports";
@@ -78,6 +79,17 @@ import { DocumentTitleSync } from "@/hooks/useDocumentTitle";
 import { ProductAnalytics } from "@/lib/analytics/ProductAnalytics";
 
 const queryClient = new QueryClient();
+
+function LegacyTournamentRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/warzone/tournaments/${encodeURIComponent(String(id || ""))}`} replace />;
+}
+
+function ArenaToWarzoneRedirect() {
+  const location = useLocation();
+  const next = location.pathname.replace(/^\/arena/, "/warzone") || "/warzone";
+  return <Navigate to={`${next}${location.search}${location.hash}`} replace />;
+}
 
 function OwnWalletRouteSync() {
   const navigate = useNavigate();
@@ -172,18 +184,25 @@ function AppShellLayout({
       >
         <Routes>
           <Route path="/" element={<Showcase />} />
-          {postGradEnabled && postGradFlags.arena ? <Route path="/arena" element={<Arena />} /> : null}
-          {postGradEnabled && postGradFlags.battle ? <Route path="/arena/battles" element={<ArenaBattles />} /> : null}
-          {postGradEnabled && postGradFlags.league ? <Route path="/arena/major-war-league" element={<PostGradLeague />} /> : null}
-          {postGradEnabled && postGradFlags.league ? <Route path="/arena/leagues" element={<Navigate to="/arena/major-war-league" replace />} /> : null}
-          {postGradEnabled && postGradFlags.events ? <Route path="/arena/events" element={<PostGradEvents />} /> : null}
+          {postGradEnabled && postGradFlags.arena ? <Route path="/warzone" element={<Arena />} /> : null}
+          {postGradEnabled && postGradFlags.arena ? <Route path="/warzone/verify-email" element={<ArenaVerifyEmail />} /> : null}
+          {postGradEnabled && postGradFlags.battle ? <Route path="/warzone/battles" element={<ArenaBattles />} /> : null}
+          {postGradEnabled && postGradFlags.battle ? <Route path="/warzone/battles/:battleId" element={<ArenaBattles />} /> : null}
+          {postGradEnabled && postGradFlags.league ? <Route path="/warzone/major-war-league" element={<PostGradLeague />} /> : null}
+          {postGradEnabled && postGradFlags.league ? <Route path="/warzone/leagues" element={<Navigate to="/warzone/major-war-league" replace />} /> : null}
+          {postGradEnabled && postGradFlags.tournament ? <Route path="/warzone/tournaments" element={<ArenaTournaments />} /> : null}
+          {postGradEnabled && postGradFlags.tournament ? <Route path="/warzone/tournaments/:tournamentId" element={<ArenaTournaments />} /> : null}
+          {postGradEnabled && postGradFlags.tournament ? <Route path="/warzone/tournament/:id" element={<LegacyTournamentRedirect />} /> : null}
+          {postGradEnabled && postGradFlags.events ? <Route path="/warzone/events" element={<Navigate to="/warzone/tournaments" replace />} /> : null}
+          {postGradEnabled && postGradFlags.arena ? <Route path="/arena" element={<Navigate to="/warzone" replace />} /> : null}
+          {postGradEnabled && postGradFlags.arena ? <Route path="/arena/*" element={<ArenaToWarzoneRedirect />} /> : null}
           {warRoomEnabled ? <Route path="/war-room" element={<WarRoom />} /> : null}
           {postGradEnabled && postGradFlags.battle ? <Route path="/battle/:id" element={<BattleDetails />} /> : null}
           <Route path="/sponsorships/apply" element={<SponsorshipApplication />} />
-          {postGradEnabled && postGradFlags.events ? <Route path="/events" element={<Navigate to="/arena/events" replace />} /> : null}
+          {postGradEnabled && postGradFlags.events ? <Route path="/events" element={<Navigate to="/warzone/tournaments" replace />} /> : null}
           <Route path="/league" element={<League />} />
           <Route path="/leagues" element={<Navigate to="/league" replace />} />
-          {postGradEnabled && postGradFlags.tournament ? <Route path="/tournament/:id" element={<TournamentDetails />} /> : null}
+          {postGradEnabled && postGradFlags.tournament ? <Route path="/tournament/:id" element={<LegacyTournamentRedirect />} /> : null}
           <Route path="/create" element={<Create />} />
           <Route path="/drafts/:draftId/promotion" element={<DraftOwnerRoute><DraftPromotionSetup /></DraftOwnerRoute>} />
           <Route path="/drafts/:draftId/push-live" element={<DraftOwnerRoute><PushDraftLive /></DraftOwnerRoute>} />
@@ -200,6 +219,7 @@ function AppShellLayout({
           <Route path="/command/followers" element={<LegacyCommandCenterRedirect section="followers" />} />
           <Route path="/command/following" element={<LegacyCommandCenterRedirect section="following" />} />
           <Route path="/command/coins" element={<LegacyCommandCenterRedirect section="coins" />} />
+          <Route path="/command/battles" element={<LegacyCommandCenterRedirect section="battles" />} />
           <Route path="/command/support" element={<LegacyCommandCenterRedirect section="support" />} />
           <Route path="/command/support/report" element={<LegacyCommandCenterRedirect section="support/report" />} />
           <Route path="/command/support/reports" element={<LegacyCommandCenterRedirect section="support/reports" />} />
@@ -215,6 +235,7 @@ function AppShellLayout({
           <Route path="/profile/:wallet/command/followers" element={<CommandCenterShell><CommandCenterSocial mode="followers" /></CommandCenterShell>} />
           <Route path="/profile/:wallet/command/following" element={<CommandCenterShell><CommandCenterSocial mode="following" /></CommandCenterShell>} />
           <Route path="/profile/:wallet/command/coins" element={<CommandCenterShell><CommandCenterCoins /></CommandCenterShell>} />
+          <Route path="/profile/:wallet/command/battles" element={<CommandCenterShell><CommandCenterBattles /></CommandCenterShell>} />
           <Route path="/profile/:wallet/command/support" element={<CommandCenterShell><CommandCenterSupport /></CommandCenterShell>} />
           <Route path="/profile/:wallet/command/support/report" element={<CommandCenterShell><CommandCenterReportAbuse /></CommandCenterShell>} />
           <Route path="/profile/:wallet/command/support/reports/:reportId" element={<CommandCenterShell><CommandCenterAbuseReportDetail /></CommandCenterShell>} />

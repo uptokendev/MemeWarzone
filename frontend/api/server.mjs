@@ -35,6 +35,7 @@ import upload from "./upload.js";
 import rewards from "./rewards.js";
 import shareCard from "./shareCard.js";
 import prepareShareCard from "./prepare-share-card.js";
+import battleShareCard from "./battle-share-card.js";
 import status from "./status.js";
 import newsletter from "./newsletter.js";
 import discordNotificationImage from "./discord-notification-image.js";
@@ -150,10 +151,13 @@ import dashboardLpFees from "./dashboard/lp-fees.js";
 import analyticsIngest from "./analytics/ingest.js";
 import analyticsAdmin from "./analytics/admin.js";
 import prepareOg from "./prepare-og.js";
+import battleOg from "./battle-og.js";
 import adminAbuseMe from "./admin/abuse/me.js";
 import adminAbuseReports from "./admin/abuse/reports.js";
 import adminAbusePermissions from "./admin/abuse/permissions.js";
 import adminAbuseStaff from "./admin/abuse/staff.js";
+import adminArenaImports from "./admin/arenaImports.js";
+import arenaTournaments from "./arenaTournaments.js";
 import abuseSession from "./abuse/session.js";
 import abuseReports from "./abuse/reports.js";
 
@@ -195,9 +199,7 @@ console.log(`[api/server] DEV_ALLOWED_IPS for full dev access: ${Array.from(DEV_
 console.log(`[api/server] CORS_RELAXED=${CORS_RELAXED} extraOrigins=${Array.from(allowedOrigins).filter((o) => !DEFAULT_ALLOWED_ORIGINS.includes(o)).join(",") || "(none)"}`);
 
 function isCoolifyOrSelfHostPreview(host) {
-  // Coolify / Traefik temporary public hostnames (sslip/nip map DNS → server IP).
   if (host.endsWith(".sslip.io") || host.endsWith(".nip.io")) return true;
-  // Optional Coolify app FQDN suffix, e.g. ".apps.example.com"
   const coolifySuffix = String(process.env.CORS_COOLIFY_HOST_SUFFIX || "").trim().toLowerCase();
   if (coolifySuffix) {
     const suffix = coolifySuffix.startsWith(".") ? coolifySuffix : `.${coolifySuffix}`;
@@ -225,7 +227,7 @@ function isDevAllowedIP(req) {
   if (DEV_ALLOWED_IPS.size === 0) return false;
   const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
   const ip = forwarded || req.ip || req.socket?.remoteAddress || "";
-  const clean = ip.replace(/^::ffff:/, ""); // IPv4-mapped
+  const clean = ip.replace(/^::ffff:/, "");
   return DEV_ALLOWED_IPS.has(ip) || DEV_ALLOWED_IPS.has(clean);
 }
 
@@ -239,7 +241,6 @@ app.use((req, res, next) => {
       res.setHeader("Vary", "Origin");
       res.setHeader("Access-Control-Allow-Credentials", "true");
     } else if (devIp) {
-      // For direct IP access from allowed dev IP (no origin or cross-origin tools), be permissive
       res.setHeader("Access-Control-Allow-Origin", "*");
     }
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
@@ -269,108 +270,50 @@ function recruiterCodeAvailabilityPayload({ code, available, reason }) {
     reason === "schema_unavailable" ? "Canonical reward attribution schema has not been applied yet." :
     available ? "This recruiter code is available." : "This recruiter code is not available.";
 
-  return {
-    ok: true,
-    code,
-    available,
-    reason,
-    isAvailable: available,
-    checkedVia: "signup-endpoint",
-    message,
-  };
+  return { ok: true, code, available, reason, isAvailable: available, checkedVia: "signup-endpoint", message };
 }
 
 async function recruiterSignupCodeAvailabilityAlias(req, res) {
-  if (req.method !== "GET") {
-    return res.status(405).json({ error: "Method not allowed" });
-  }
-
+  if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
   const params = new URL(req.url, "http://localhost").searchParams;
   const rawCode = String(params.get("code") || "").trim();
   const code = rawCode.toLowerCase();
   let reason = null;
-
   if (!code) reason = "missing";
   else if (!/^[a-z0-9_-]+$/.test(code)) reason = "invalid_characters";
   else if (code.length < 3) reason = "too_short";
   else if (code.length > 24) reason = "too_long";
-
-  if (reason) {
-    return res.status(200).json(recruiterCodeAvailabilityPayload({ code, available: false, reason }));
-  }
-
+  if (reason) return res.status(200).json(recruiterCodeAvailabilityPayload({ code, available: false, reason }));
   try {
-    const { rows } = await pool.query(
-      `select 1
-         from public.recruiters
-        where lower(code) = lower($1)
-        limit 1`,
-      [code]
-    );
+    const { rows } = await pool.query(`select 1 from public.recruiters where lower(code) = lower($1) limit 1`, [code]);
     const available = rows.length === 0;
-    return res.status(200).json(recruiterCodeAvailabilityPayload({
-      code,
-      available,
-      reason: available ? null : "taken",
-    }));
+    return res.status(200).json(recruiterCodeAvailabilityPayload({ code, available, reason: available ? null : "taken" }));
   } catch (error) {
     console.error("[api/recruiters signup code availability]", error);
-    if (error?.code === "42P01" || error?.code === "42703") {
-      return res.status(200).json(recruiterCodeAvailabilityPayload({
-        code,
-        available: false,
-        reason: "schema_unavailable",
-      }));
-    }
+    if (error?.code === "42P01" || error?.code === "42703") return res.status(200).json(recruiterCodeAvailabilityPayload({ code, available: false, reason: "schema_unavailable" }));
     return res.status(500).json({ error: "Server error" });
   }
 }
 
-// Upload route MUST be mounted BEFORE express.json, express.urlencoded, and
-// the railwayProxyMiddleware. This guarantees that formidable receives the
-// raw multipart/form-data request stream. Any body parser or proxy that
-// touches the stream first commonly causes ERR_CONNECTION_RESET or
-// "request aborted" on /api/upload (especially for logo uploads during
-// draft creation, and when the railway proxy is enabled in local dev).
 app.use("/api/upload", wrap(upload));
-
 app.get("/", (_req, res) => res.json({ ok: true, service: "MemeWarzone API", healthz: "/healthz", api: "/api" }));
-// Railway healthcheck: no DB, no RPC — must answer immediately after listen().
 app.get("/healthz", (_req, res) => res.status(200).json({ ok: true, service: "frontend-api" }));
 app.get("/health", async (_req, res) => {
-  // Prefer 200 for liveness; report DB separately so a slow pooler cannot fail deploys
-  // if Railway is pointed at /health instead of /healthz.
   try {
     const r = await pool.query("select 1 as ok");
     res.status(200).json({ ok: true, service: "frontend-api", db: r.rows?.[0]?.ok ?? 1 });
   } catch (err) {
     console.error("[api/server] health db check failed", err);
-    res.status(200).json({
-      ok: true,
-      service: "frontend-api",
-      db: 0,
-      warning: "DB health check failed",
-      error: String(err?.message || err),
-    });
+    res.status(200).json({ ok: true, service: "frontend-api", db: 0, warning: "DB health check failed", error: String(err?.message || err) });
   }
 });
 
 app.use(express.json({ limit: process.env.API_JSON_LIMIT || "10mb" }));
 app.use(express.urlencoded({ extended: false, limit: process.env.API_FORM_LIMIT || "10mb" }));
-
-// Handle payload too large errors from body-parser early (e.g. if a draft payload or other JSON
-// exceeds the limit). This turns the raw PayloadTooLargeError into a clean 413 response instead
-// of an unhandled error that becomes a generic 500.
 app.use((err, req, res, next) => {
   if (err.type === 'entity.too.large') {
     console.error(`[api/server] Payload too large for ${req.path}: ${err.length} bytes > ${err.limit} limit`);
-    if (!res.headersSent) {
-      return res.status(413).json({
-        error: "Payload too large",
-        limit: err.limit,
-        length: err.length
-      });
-    }
+    if (!res.headersSent) return res.status(413).json({ error: "Payload too large", limit: err.limit, length: err.length });
   }
   next(err);
 });
@@ -417,12 +360,13 @@ router.all("/token-metadata/:chainId/:address", wrap(tokenMetadata));
 router.all("/topaz-trades", wrap(topazTrades));
 router.all("/token/:campaign/topaz-trades", wrap(topazTrades));
 router.all("/token-metadata", wrap(tokenMetadata));
-// Alias outside /votes/* so Railway proxy prefixes cannot steal this path.
 router.all("/vote-ingest", wrap(votesIngest));
 router.all("/votes/ingest", wrap(votesIngest));
 router.all("/votes", wrap(votes));
 router.all("/vote_counts", wrap(voteCounts));
-router.all(/^\/(?:arena\/ops\/health|arena\/battles(?:\/.*)?|arena\/events(?:\/.*)?|arena\/league(?:\/.*)?|arena\/war-pools(?:\/.*)?|sponsored|sponsorship-applications|sponsorship-packages|sponsorship-settings|war-room(?:\/.*)?)$/, wrap(postgrad));
+router.all(/^\/(?:arena\/ops\/health|arena\/battles(?:\/.*)?|arena\/boosts(?:\/.*)?|arena\/sponsorships(?:\/.*)?|arena\/imports(?:\/.*)?|arena\/tournaments(?:\/.*)?|arena\/events(?:\/.*)?|arena\/league(?:\/.*)?|arena\/notifications(?:\/.*)?|arena\/votes(?:\/.*)?|arena\/war-pools(?:\/.*)?|sponsored|sponsorship-applications|sponsorship-packages|sponsorship-settings|war-room(?:\/.*)?)$/, wrap(postgrad));
+router.all(/^\/admin\/arena\/imports(?:\/.*)?$/, wrap(adminArenaImports));
+router.all(/^\/admin\/arena\/tournaments(?:\/.*)?$/, wrap(arenaTournaments));
 router.all("/drafts", wrap(drafts));
 router.all("/drafts/followed", wrap(followedDrafts));
 router.all("/drafts/ticker-availability", wrap(tickerAvailability));
@@ -444,6 +388,8 @@ router.all("/drafts/:draftId", wrap(signedDraftById));
 router.all("/prepare/:slug", wrap(signedPrepareBySlug));
 router.get("/prepare-og/:slug", wrap(prepareOg));
 router.get("/prepare-share-card", wrap(prepareShareCard));
+router.get("/battle-og/:battleId", wrap(battleOg));
+router.get("/battle-share-card", wrap(battleShareCard));
 router.all("/prepare-notifications", wrap(prepareNotifications));
 router.all("/rewards/me", wrap(rewardsMe));
 router.all("/rewards/me/history", wrap(rewardsHistory));
@@ -549,13 +495,8 @@ app.use((req, res) => res.status(404).json({ error: `Unknown route: ${req.path}`
 app.use((err, _req, res, _next) => {
   console.error("[api/server] unhandled", err);
   if (res.headersSent) return;
-  // Surface a short message so Solana draft/create failures are debuggable in the browser Network tab.
   const message = String(err?.message || err || "Server error").slice(0, 300);
-  res.status(500).json({
-    error: "Server error",
-    message,
-    code: err?.code || undefined,
-  });
+  res.status(500).json({ error: "Server error", message, code: err?.code || undefined });
 });
 
 const port = Number(process.env.PORT || process.env.API_PORT || 3001);

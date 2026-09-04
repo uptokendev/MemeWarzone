@@ -50,8 +50,19 @@ contract TreasuryRouterV2 {
     uint64 public pendingMonthlyLeagueTreasurySince;
 
     address public recruiterRewardsVault;
+    address public pendingRecruiterRewardsVault;
+    uint64 public pendingRecruiterRewardsVaultSince;
+
     address public communityRewardsVault;
+    address public pendingCommunityRewardsVault;
+    uint64 public pendingCommunityRewardsVaultSince;
+
     address public protocolRevenueVault;
+    address public pendingProtocolRevenueVault;
+    uint64 public pendingProtocolRevenueVaultSince;
+
+    address public pendingAuthorizedLpLocker;
+    uint64 public pendingAuthorizedLpLockerSince;
 
     uint16 public weeklyLeagueBps = 3_000;
     uint16 public monthlyLeagueBps = 7_000;
@@ -59,6 +70,8 @@ contract TreasuryRouterV2 {
     // Compatibility pointer for tooling that expects a primary locker address.
     address public permanentLpLocker;
     mapping(address => bool) public authorizedLpLocker;
+    // After the first locker is authorized, additional lockers must use the delayed propose/accept path.
+    bool public anyLpLockerAuthorized;
 
     bool public forwardingPaused;
 
@@ -71,9 +84,14 @@ contract TreasuryRouterV2 {
     event MonthlyLeagueTreasuryProposed(address indexed newTreasury, uint64 executeAfter);
     event MonthlyLeagueTreasuryActivated(address indexed oldTreasury, address indexed newTreasury);
 
+    event RecruiterRewardsVaultProposed(address indexed newVault, uint64 executeAfter);
     event RecruiterRewardsVaultUpdated(address indexed oldVault, address indexed newVault);
+    event CommunityRewardsVaultProposed(address indexed newVault, uint64 executeAfter);
     event CommunityRewardsVaultUpdated(address indexed oldVault, address indexed newVault);
+    event ProtocolRevenueVaultProposed(address indexed newVault, uint64 executeAfter);
     event ProtocolRevenueVaultUpdated(address indexed oldVault, address indexed newVault);
+    event LpLockerAuthorizationProposed(address indexed locker, uint64 executeAfter);
+    event LpLockerEmergencyDisabled(address indexed locker);
     event LeagueSplitUpdated(uint16 weeklyBps, uint16 monthlyBps);
     event AuthorizedLpLockerUpdated(address indexed locker, bool allowed);
     event PrimaryLpLockerUpdated(address indexed oldLocker, address indexed newLocker);
@@ -235,21 +253,72 @@ contract TreasuryRouterV2 {
     }
 
     function setRecruiterRewardsVault(address newVault) external onlyAdmin {
-        require(newVault != address(0), "vault=0");
-        emit RecruiterRewardsVaultUpdated(recruiterRewardsVault, newVault);
+        require(recruiterRewardsVault == address(0), "use propose");
+        requireContract(newVault);
+        emit RecruiterRewardsVaultUpdated(address(0), newVault);
         recruiterRewardsVault = newVault;
     }
 
+    function proposeRecruiterRewardsVault(address newVault) external onlyAdmin {
+        requireContract(newVault);
+        pendingRecruiterRewardsVault = newVault;
+        pendingRecruiterRewardsVaultSince = uint64(block.timestamp);
+        emit RecruiterRewardsVaultProposed(newVault, uint64(block.timestamp) + upgradeDelay);
+    }
+
+    function acceptRecruiterRewardsVault() external onlyAdmin {
+        address newVault = _acceptPending(pendingRecruiterRewardsVault, pendingRecruiterRewardsVaultSince);
+        address old = recruiterRewardsVault;
+        recruiterRewardsVault = newVault;
+        pendingRecruiterRewardsVault = address(0);
+        pendingRecruiterRewardsVaultSince = 0;
+        emit RecruiterRewardsVaultUpdated(old, newVault);
+    }
+
     function setCommunityRewardsVault(address newVault) external onlyAdmin {
-        require(newVault != address(0), "vault=0");
-        emit CommunityRewardsVaultUpdated(communityRewardsVault, newVault);
+        require(communityRewardsVault == address(0), "use propose");
+        requireContract(newVault);
+        emit CommunityRewardsVaultUpdated(address(0), newVault);
         communityRewardsVault = newVault;
     }
 
+    function proposeCommunityRewardsVault(address newVault) external onlyAdmin {
+        requireContract(newVault);
+        pendingCommunityRewardsVault = newVault;
+        pendingCommunityRewardsVaultSince = uint64(block.timestamp);
+        emit CommunityRewardsVaultProposed(newVault, uint64(block.timestamp) + upgradeDelay);
+    }
+
+    function acceptCommunityRewardsVault() external onlyAdmin {
+        address newVault = _acceptPending(pendingCommunityRewardsVault, pendingCommunityRewardsVaultSince);
+        address old = communityRewardsVault;
+        communityRewardsVault = newVault;
+        pendingCommunityRewardsVault = address(0);
+        pendingCommunityRewardsVaultSince = 0;
+        emit CommunityRewardsVaultUpdated(old, newVault);
+    }
+
     function setProtocolRevenueVault(address newVault) external onlyAdmin {
-        require(newVault != address(0), "vault=0");
-        emit ProtocolRevenueVaultUpdated(protocolRevenueVault, newVault);
+        require(protocolRevenueVault == address(0), "use propose");
+        requireContract(newVault);
+        emit ProtocolRevenueVaultUpdated(address(0), newVault);
         protocolRevenueVault = newVault;
+    }
+
+    function proposeProtocolRevenueVault(address newVault) external onlyAdmin {
+        requireContract(newVault);
+        pendingProtocolRevenueVault = newVault;
+        pendingProtocolRevenueVaultSince = uint64(block.timestamp);
+        emit ProtocolRevenueVaultProposed(newVault, uint64(block.timestamp) + upgradeDelay);
+    }
+
+    function acceptProtocolRevenueVault() external onlyAdmin {
+        address newVault = _acceptPending(pendingProtocolRevenueVault, pendingProtocolRevenueVaultSince);
+        address old = protocolRevenueVault;
+        protocolRevenueVault = newVault;
+        pendingProtocolRevenueVault = address(0);
+        pendingProtocolRevenueVaultSince = 0;
+        emit ProtocolRevenueVaultUpdated(old, newVault);
     }
 
     function setLeagueSplit(uint16 newWeeklyBps, uint16 newMonthlyBps) external onlyAdmin {
@@ -260,13 +329,35 @@ contract TreasuryRouterV2 {
     }
 
     function setAuthorizedLpLocker(address locker, bool allowed) external onlyAdmin {
-        require(locker != address(0), "locker=0");
-        authorizedLpLocker[locker] = allowed;
-        if (!allowed && permanentLpLocker == locker) {
-            emit PrimaryLpLockerUpdated(permanentLpLocker, address(0));
-            permanentLpLocker = address(0);
+        if (!allowed) {
+            _emergencyDisableLpLocker(locker);
+            return;
         }
-        emit AuthorizedLpLockerUpdated(locker, allowed);
+        require(locker != address(0), "locker=0");
+        require(!anyLpLockerAuthorized || authorizedLpLocker[locker], "use propose");
+        authorizedLpLocker[locker] = true;
+        anyLpLockerAuthorized = true;
+        emit AuthorizedLpLockerUpdated(locker, true);
+    }
+
+    function proposeAuthorizedLpLocker(address locker) external onlyAdmin {
+        require(locker != address(0), "locker=0");
+        pendingAuthorizedLpLocker = locker;
+        pendingAuthorizedLpLockerSince = uint64(block.timestamp);
+        emit LpLockerAuthorizationProposed(locker, uint64(block.timestamp) + upgradeDelay);
+    }
+
+    function acceptAuthorizedLpLocker() external onlyAdmin {
+        address locker = _acceptPending(pendingAuthorizedLpLocker, pendingAuthorizedLpLockerSince);
+        pendingAuthorizedLpLocker = address(0);
+        pendingAuthorizedLpLockerSince = 0;
+        authorizedLpLocker[locker] = true;
+        anyLpLockerAuthorized = true;
+        emit AuthorizedLpLockerUpdated(locker, true);
+    }
+
+    function emergencyDisableLpLocker(address locker) external onlyAdmin {
+        _emergencyDisableLpLocker(locker);
     }
 
     function setPrimaryLpLocker(address newLocker) external onlyAdmin {
@@ -356,5 +447,22 @@ contract TreasuryRouterV2 {
             size := extcodesize(target)
         }
         require(size > 0, "not contract");
+    }
+
+    function _acceptPending(address pending, uint64 since) internal view returns (address) {
+        require(pending != address(0) && since != 0, "no pending");
+        require(block.timestamp >= since + upgradeDelay, "delay");
+        return pending;
+    }
+
+    function _emergencyDisableLpLocker(address locker) internal {
+        require(locker != address(0), "locker=0");
+        authorizedLpLocker[locker] = false;
+        if (permanentLpLocker == locker) {
+            emit PrimaryLpLockerUpdated(permanentLpLocker, address(0));
+            permanentLpLocker = address(0);
+        }
+        emit AuthorizedLpLockerUpdated(locker, false);
+        emit LpLockerEmergencyDisabled(locker);
     }
 }

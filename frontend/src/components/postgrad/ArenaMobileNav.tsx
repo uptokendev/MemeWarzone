@@ -5,12 +5,12 @@ import { arenaSubNavItems } from "@/constants/navigation";
 import { cn } from "@/lib/utils";
 
 function matchesPath(pathname: string, target: string) {
-  return pathname === target || (target !== "/arena" && pathname.startsWith(`${target}/`));
+  return pathname === target || (target !== "/warzone" && pathname.startsWith(`${target}/`));
 }
 
 export function ArenaMobileNav({ onNavigate }: { onNavigate: () => void }) {
   const location = useLocation();
-  const arenaActive = location.pathname === "/arena" || location.pathname.startsWith("/arena/");
+  const arenaActive = location.pathname === "/warzone" || location.pathname.startsWith("/warzone/") || location.pathname === "/arena" || location.pathname.startsWith("/arena/");
   const [open, setOpen] = useState(arenaActive);
 
   useEffect(() => {
@@ -32,7 +32,7 @@ export function ArenaMobileNav({ onNavigate }: { onNavigate: () => void }) {
       >
         <span className="inline-flex items-center gap-2">
           <Crosshair className="h-4 w-4" />
-          Arena
+          Warzone
         </span>
         <ChevronDown className={cn("h-4 w-4 transition-transform", open && "rotate-180")} />
       </button>

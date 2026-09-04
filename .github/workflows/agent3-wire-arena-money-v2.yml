@@ -1,0 +1,208 @@
+name: Agent3 Wire Arena Money V2
+
+on:
+  push:
+    branches:
+      - agent3/arena-runtime-money
+
+permissions:
+  contents: write
+
+jobs:
+  wire-test-commit:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: agent3/arena-runtime-money
+
+      - name: Wire modular Arena Money V2 into Anchor program
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path('programs/mwz_rewards_treasury/src/lib.rs')
+          source = path.read_text()
+          module_marker = 'pub mod arena_money_v2;'
+          if module_marker not in source:
+              anchor = 'pub mod arena;\npub use arena::*;\n'
+              replacement = anchor + 'pub mod arena_money_v2;\npub use arena_money_v2::*;\n'
+              if source.count(anchor) != 1:
+                  raise SystemExit('expected exactly one arena module export anchor')
+              source = source.replace(anchor, replacement, 1)
+
+          entry_marker = 'pub fn initialize_arena_money_v2('
+          if entry_marker not in source:
+              anchor = '#[program]\npub mod mwz_rewards_treasury {\n    use super::*;\n'
+              entrypoints = r'''
+
+    pub fn initialize_arena_money_v2(
+        ctx: Context<InitializeArenaMoneyV2>,
+        resolver: Pubkey,
+        protocol_receiver: Pubkey,
+        marketing_receiver: Pubkey,
+    ) -> Result<()> {
+        initialize_arena_money_v2_handler(ctx, resolver, protocol_receiver, marketing_receiver)
+    }
+
+    pub fn set_arena_money_v2_pause(ctx: Context<SetArenaMoneyV2Config>, paused: bool) -> Result<()> {
+        set_arena_money_v2_pause_handler(ctx, paused)
+    }
+
+    pub fn set_arena_money_v2_receivers(
+        ctx: Context<SetArenaMoneyV2Config>,
+        resolver: Pubkey,
+        protocol_receiver: Pubkey,
+        marketing_receiver: Pubkey,
+    ) -> Result<()> {
+        set_arena_money_v2_receivers_handler(ctx, resolver, protocol_receiver, marketing_receiver)
+    }
+
+    pub fn open_competition_pool_v2(
+        ctx: Context<OpenCompetitionPoolV2>,
+        competition_id: [u8; 32],
+        kind: u8,
+        asset_a: Pubkey,
+        asset_b: Pubkey,
+        owner_a: Pubkey,
+        owner_b: Pubkey,
+        required_entry_lamports: u64,
+        opens_at: i64,
+        closes_at: i64,
+    ) -> Result<()> {
+        open_competition_pool_v2_handler(
+            ctx, competition_id, kind, asset_a, asset_b, owner_a, owner_b,
+            required_entry_lamports, opens_at, closes_at,
+        )
+    }
+
+    pub fn deposit_competition_entry_v2(
+        ctx: Context<DepositCompetitionEntryV2>,
+        competition_id: [u8; 32],
+        entry_asset: Pubkey,
+    ) -> Result<()> {
+        deposit_competition_entry_v2_handler(ctx, competition_id, entry_asset)
+    }
+
+    pub fn deposit_competition_boost_v2(
+        ctx: Context<DepositCompetitionBoostV2>,
+        competition_id: [u8; 32],
+        funding_id: [u8; 32],
+        gross_lamports: u64,
+    ) -> Result<()> {
+        deposit_competition_boost_v2_handler(ctx, competition_id, funding_id, gross_lamports)
+    }
+
+    pub fn resolve_competition_pool_v2(
+        ctx: Context<ResolveCompetitionPoolV2>,
+        competition_id: [u8; 32],
+        winner_asset: Pubkey,
+        winner_wallet: Pubkey,
+    ) -> Result<()> {
+        resolve_competition_pool_v2_handler(ctx, competition_id, winner_asset, winner_wallet)
+    }
+
+    pub fn claim_competition_winner_v2(
+        ctx: Context<ClaimCompetitionWinnerV2>,
+        competition_id: [u8; 32],
+    ) -> Result<()> {
+        claim_competition_winner_v2_handler(ctx, competition_id)
+    }
+
+    pub fn claim_competition_protocol_v2(
+        ctx: Context<ClaimCompetitionProtocolV2>,
+        competition_id: [u8; 32],
+    ) -> Result<()> {
+        claim_competition_protocol_v2_handler(ctx, competition_id)
+    }
+
+    pub fn initialize_postgrad_league_treasury_v2(
+        ctx: Context<InitializePostGradLeagueTreasuryV2>,
+        monthly_receiver: Pubkey,
+        quarterly_receiver: Pubkey,
+    ) -> Result<()> {
+        initialize_postgrad_league_treasury_v2_handler(ctx, monthly_receiver, quarterly_receiver)
+    }
+
+    pub fn route_competition_league_v2(
+        ctx: Context<RouteCompetitionLeagueV2>,
+        competition_id: [u8; 32],
+    ) -> Result<()> {
+        route_competition_league_v2_handler(ctx, competition_id)
+    }
+
+    pub fn claim_monthly_league_v2(ctx: Context<ClaimMonthlyLeagueV2>) -> Result<()> {
+        claim_monthly_league_v2_handler(ctx)
+    }
+
+    pub fn claim_quarterly_league_v2(ctx: Context<ClaimQuarterlyLeagueV2>) -> Result<()> {
+        claim_quarterly_league_v2_handler(ctx)
+    }
+
+    pub fn initialize_sponsorship_event_v1(
+        ctx: Context<InitializeSponsorshipEventV1>,
+        event_id: [u8; 32],
+        event_receiver: Pubkey,
+        minimum_lamports: u64,
+    ) -> Result<()> {
+        initialize_sponsorship_event_v1_handler(ctx, event_id, event_receiver, minimum_lamports)
+    }
+
+    pub fn pay_sponsorship_v1(
+        ctx: Context<PaySponsorshipV1>,
+        event_id: [u8; 32],
+        payment_id: [u8; 32],
+        gross_lamports: u64,
+    ) -> Result<()> {
+        pay_sponsorship_v1_handler(ctx, event_id, payment_id, gross_lamports)
+    }
+
+    pub fn claim_event_prize_v1(
+        ctx: Context<ClaimEventPrizeV1>,
+        event_id: [u8; 32],
+    ) -> Result<()> {
+        claim_event_prize_v1_handler(ctx, event_id)
+    }
+
+    pub fn claim_sponsorship_marketing_v1(
+        ctx: Context<ClaimSponsorshipMarketingV1>,
+        event_id: [u8; 32],
+    ) -> Result<()> {
+        claim_sponsorship_marketing_v1_handler(ctx, event_id)
+    }
+
+    pub fn claim_sponsorship_protocol_v1(
+        ctx: Context<ClaimSponsorshipProtocolV1>,
+        event_id: [u8; 32],
+    ) -> Result<()> {
+        claim_sponsorship_protocol_v1_handler(ctx, event_id)
+    }
+'''
+              if source.count(anchor) != 1:
+                  raise SystemExit('expected exactly one #[program] module anchor')
+              source = source.replace(anchor, anchor + entrypoints, 1)
+
+          path.write_text(source)
+
+      - name: Verify historical Arena file is untouched
+        run: git diff --exit-code HEAD -- programs/mwz_rewards_treasury/src/arena.rs
+
+      - name: Test rewards treasury including Arena Money V2 economics
+        run: cargo test -p mwz_rewards_treasury
+
+      - name: Commit only the surgical lib.rs wiring
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- programs/mwz_rewards_treasury/src/lib.rs; then
+            echo "lib.rs already wired"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add programs/mwz_rewards_treasury/src/lib.rs
+          git commit -m "feat(solana-arena): expose modular Arena Money V2 entrypoints"
+          git push origin HEAD:agent3/arena-runtime-money

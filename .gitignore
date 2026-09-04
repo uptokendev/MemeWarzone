@@ -38,12 +38,20 @@ config/*.secret
 deployments/*.json
 deployments/*.activation.json
 deployments/*.retired.json
+deployments/robinhood/testnet.staged.json
+!deployments/robinhood/testnet.accepted.json
+!deployments/bnb/*.json
+deployments/bnb/testnet.staged.json
 output/*.json
 output/testnet-cycle-results*.json
 output/security-access-matrix.md
 reports/topaz-graduation-testnet-*.json
 reports/topaz-graduation-testnet-*.md
 reports/bnb-lifecycle-certification-*.json
+reports/robinhood-testnet-acceptance-5c.verify.json
+reports/robinhood-testnet-acceptance-5c.continuity.json
+
+.tmp/
 
 # Local Netlify folder
 .netlify

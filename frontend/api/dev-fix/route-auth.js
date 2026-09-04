@@ -14,7 +14,14 @@ import {
   ROUTE_PROFILE_STANDARD_UNLINKED,
   ROUTE_PROFILE_OG_LINKED,
 } from "./route-decision.js";
-import { signCreateAuthorization, signTradeAuthorization } from "./routeAuthorizationSigner.js";
+import {
+  expectedCampaignGeneration,
+  generationRule,
+  isSupportedFactoryGeneration,
+  signCreateAuthorization,
+  signTradeAuthorization,
+} from "./routeAuthorizationSigner.js";
+import { prepareRobinhoodStockCreateAuthorization } from "./robinhoodStockCreatePolicy.js";
 import { defaultEvmChainId } from "../lib/defaultEvmChain.js";
 import { isCreatorArmCooldownActive, normalizeCreatorArmCooldownEndsAt } from "../lib/creatorArmCooldown.js";
 
@@ -24,8 +31,6 @@ const VALID_PROFILES = new Set([
   ROUTE_PROFILE_OG_LINKED,
 ]);
 
-const EXPECTED_FACTORY_GENERATION = 3;
-const EXPECTED_CAMPAIGN_GENERATION = 2;
 const FACTORY_ROUTE_AUTHORITY_ABI = ["function routeAuthority() view returns (address)"];
 const FACTORY_CREATION_PREFLIGHT_ABI = [
   "function routeAuthority() view returns (address)",
@@ -162,7 +167,11 @@ function validateGraduationTarget(chainId, graduationTarget) {
     process.env.VITE_ENABLE_TEST_GRADUATION_THRESHOLD || process.env.ENABLE_TEST_GRADUATION_THRESHOLD || "false",
   );
   const cid = Number(chainId);
-  if (testThresholdEnabled && (cid === 97 || cid === 101 || cid === 102) && graduationTarget === TEST_GRADUATION_TARGET) {
+  if (
+    testThresholdEnabled &&
+    (cid === 97 || cid === 46630 || cid === 101 || cid === 102) &&
+    graduationTarget === TEST_GRADUATION_TARGET
+  ) {
     return;
   }
   throw new Error("Unsupported graduation target");
@@ -241,12 +250,13 @@ async function readOnchainCreationPreflight({ chainId, factoryAddress, walletAdd
 
     const factoryGeneration = Number(factoryGenerationRaw);
     const campaignGeneration = Number(campaignGenerationRaw);
-    if (factoryGeneration !== EXPECTED_FACTORY_GENERATION || campaignGeneration !== EXPECTED_CAMPAIGN_GENERATION) {
+    if (!isSupportedFactoryGeneration(chainId, factoryGeneration) || campaignGeneration !== expectedCampaignGeneration(chainId)) {
       return {
         ok: false,
         status: 409,
         code: "CREATE_FACTORY_GENERATION_MISMATCH",
-        error: `Creation requires factory/campaign generation ${EXPECTED_FACTORY_GENERATION}/${EXPECTED_CAMPAIGN_GENERATION}; configured factory reports ${factoryGeneration}/${campaignGeneration}.`,
+        error: `Creation on chain ${chainId} requires factory/campaign generation ${generationRule(chainId)}; configured factory reports ${factoryGeneration}/${campaignGeneration}.`,
+        onChain: { factoryGeneration, campaignGeneration },
       };
     }
     if (!live || globalPaused || createPaused) {
@@ -254,7 +264,8 @@ async function readOnchainCreationPreflight({ chainId, factoryAddress, walletAdd
         ok: false,
         status: 503,
         code: "CREATE_FACTORY_NOT_READY",
-        error: !live ? "The corrected creation factory is not live." : globalPaused ? "The creation factory is globally paused." : "New campaign creation is paused.",
+        error: !live ? "The configured creation factory is not live." : globalPaused ? "The creation factory is globally paused." : "New campaign creation is paused.",
+        onChain: { factoryGeneration, campaignGeneration },
       };
     }
 
@@ -407,10 +418,13 @@ export async function routingCreateAuthorization(req, res) {
   const walletAddress = normalizeAddress(body.walletAddress);
   const factoryAddress = normalizeAddress(body.factoryAddress);
   const chainId = parsePositiveInt(body.chainId, 0);
+  const requestedStockToken = String(body.stockToken || body.graduationQuoteAsset || "").trim();
+  const stockToken = requestedStockToken ? normalizeAddress(requestedStockToken) : "";
 
   if (!walletAddress) return json(res, 400, { error: "Invalid or missing walletAddress" });
   if (!factoryAddress) return json(res, 400, { error: "Invalid or missing factoryAddress" });
   if (!chainId) return json(res, 400, { error: "Invalid or missing chainId" });
+  if (requestedStockToken && !stockToken) return json(res, 400, { error: "Invalid stockToken" });
 
   let campaignRequest;
   try {
@@ -447,22 +461,59 @@ export async function routingCreateAuthorization(req, res) {
   const { tradeRouteProfileId, finalizeRouteProfileId, decision } = await getRouteDecision(walletAddress);
   const deadline = getAuthDeadline();
   const validUntil = validUntilFromDeadline(deadline);
-  const signature = await signCreateAuthorization({
-    signer,
-    chainId,
-    factoryAddress,
-    creator: walletAddress,
-    request: campaignRequest,
-    tradeRouteProfileId,
-    finalizeRouteProfileId,
-    deadline,
-  });
+  let signature;
+  let graduationMarket = {
+    kind: "NATIVE",
+    quoteAsset: null,
+    marketPolicyVersion: "robinhood_market_v1",
+  };
+
+  if (stockToken) {
+    try {
+      const stockAuthorization = await prepareRobinhoodStockCreateAuthorization({
+        signer,
+        chainId,
+        factoryAddress,
+        creator: walletAddress,
+        request: campaignRequest,
+        stockToken,
+        tradeRouteProfileId,
+        finalizeRouteProfileId,
+        deadline,
+      });
+      signature = stockAuthorization.signature;
+      graduationMarket = {
+        kind: "STOCK_TOKEN",
+        quoteAsset: stockAuthorization.stockToken,
+        marketPolicyVersion: stockAuthorization.marketPolicyVersion,
+        stockGraduationAdapter: stockAuthorization.stockGraduationAdapter,
+        stockCampaignImplementation: stockAuthorization.stockCampaignImplementation,
+        asset: stockAuthorization.asset,
+      };
+    } catch (error) {
+      return json(res, 409, {
+        error: String(error?.message || error || "Stock Battlefield authorization failed"),
+        code: "STOCK_CREATE_POLICY_BLOCKED",
+      });
+    }
+  } else {
+    signature = await signCreateAuthorization({
+      signer,
+      chainId,
+      factoryAddress,
+      creator: walletAddress,
+      request: campaignRequest,
+      tradeRouteProfileId,
+      finalizeRouteProfileId,
+      deadline,
+    });
+  }
 
   const combinedPreflight = { ...createPreflight, ...onChainPreflight.onChain };
   await logRouteAuthorization({
     chainId,
     walletAddress,
-    routeKind: "create",
+    routeKind: stockToken ? "create_stock" : "create",
     routeProfileId: tradeRouteProfileId,
     finalizeRouteProfileId,
     factoryAddress,
@@ -470,11 +521,17 @@ export async function routingCreateAuthorization(req, res) {
     routeAuthority: signer.address,
     authorizationDeadline: deadline,
     validUntil,
-    metadata: { endpoint: "/api/routing/create-authorization", campaignRequest, preflight: combinedPreflight },
+    metadata: {
+      endpoint: "/api/routing/create-authorization",
+      campaignRequest,
+      graduationMarket,
+      preflight: combinedPreflight,
+    },
   });
 
   return json(res, 200, {
     authorization: { tradeRouteProfileId, finalizeRouteProfileId, validUntil, signature },
+    graduationMarket,
     routeAuthority: signer.address,
     decision,
     preflight: combinedPreflight,

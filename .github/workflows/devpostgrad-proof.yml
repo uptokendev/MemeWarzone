@@ -68,10 +68,10 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: frontend/package.json
 
       - name: Install frontend dependencies
-        run: npm ci --prefix frontend
+        run: npm install --prefix frontend --package-lock=false --no-audit --no-fund
 
       - name: Check API imports
         run: npm --prefix frontend run check:api-imports

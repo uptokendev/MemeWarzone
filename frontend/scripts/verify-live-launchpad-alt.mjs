@@ -112,6 +112,7 @@ function compileTrade(side) {
       tokenProgram: planAddress(plan, "tokenProgram"),
       systemProgram: planAddress(plan, "systemProgram"),
       feeEscrow: Keypair.generate().publicKey.toBase58(),
+      creatorFeeVault: Keypair.generate().publicKey.toBase58(),
     },
   });
   return v0.compileAndAssertLaunchpadV0(

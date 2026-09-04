@@ -165,6 +165,7 @@ function makeProductionTradeFixture(side = "buy") {
       tokenProgram: planAddress(plan, "tokenProgram").toBase58(),
       systemProgram: planAddress(plan, "systemProgram").toBase58(),
       feeEscrow: Keypair.generate().publicKey.toBase58(),
+      creatorFeeVault: Keypair.generate().publicKey.toBase58(),
     },
   });
   return { payer, plan, ed25519Instruction, programInstruction, lookupTable };
@@ -252,7 +253,7 @@ test("production BUY and SELL instructions compile to one-signer V0 envelopes un
     );
 
     reportSize(side === "buy" ? "BUY" : "SELL", legacy, stats);
-    assert.equal(fixture.programInstruction.keys.length, 14);
+    assert.equal(fixture.programInstruction.keys.length, 15);
     assert.equal(fixture.programInstruction.data.length, side === "buy" ? 73 : 65);
     assert.equal(stats.requiredSigners, 1);
     assert.equal(stats.instructionCount, 2);
@@ -345,6 +346,57 @@ test("wallet assertions may be appended but cannot break Ed25519 -> MemeWarzone 
     programInstruction: fixture.programInstruction,
     lookupTableAccounts: [fixture.lookupTable],
   }), /immediately before MemeWarzone/i);
+});
+
+test("graduation-style V0 bundles tolerate compiler privilege promotion only when explicitly allowed", () => {
+  const fixture = makeTradeFixture();
+  const promotedKey = fixture.programInstruction.keys.find((meta) => !meta.isSigner && !meta.isWritable)?.pubkey;
+  assert.ok(promotedKey, "fixture needs a read-only non-signer account to promote");
+  const siblingInstruction = new TransactionInstruction({
+    programId: Keypair.generate().publicKey,
+    keys: [{ pubkey: promotedKey, isSigner: false, isWritable: true }],
+    data: Buffer.from([9, 9, 9]),
+  });
+  const transaction = buildLaunchpadV0Transaction(web3, {
+    payer: fixture.payer,
+    recentBlockhash: BLOCKHASH,
+    instructions: [
+      fixture.computeInstruction,
+      siblingInstruction,
+      fixture.ed25519Instruction,
+      fixture.programInstruction,
+    ],
+    lookupTableAccounts: [fixture.lookupTable],
+  });
+  const expectation = {
+    payer: fixture.payer,
+    ed25519Instruction: fixture.ed25519Instruction,
+    programInstruction: fixture.programInstruction,
+    lookupTableAccounts: [fixture.lookupTable],
+    releaseMaxBytes: null,
+  };
+
+  assert.throws(
+    () => assertLaunchpadV0Intent(web3, transaction, expectation),
+    /instruction intent changed/i,
+  );
+  assert.doesNotThrow(() => assertLaunchpadV0Intent(web3, transaction, {
+    ...expectation,
+    allowInstructionPrivilegePromotion: true,
+  }));
+
+  const tamperedProgram = new TransactionInstruction({
+    programId: fixture.programInstruction.programId,
+    keys: fixture.programInstruction.keys.map((meta, index) => (
+      index === 1 ? { ...meta, pubkey: Keypair.generate().publicKey } : meta
+    )),
+    data: fixture.programInstruction.data,
+  });
+  assert.throws(() => assertLaunchpadV0Intent(web3, transaction, {
+    ...expectation,
+    programInstruction: tamperedProgram,
+    allowInstructionPrivilegePromotion: true,
+  }), /instruction intent changed/i);
 });
 
 test("V0 gate rejects a transaction that gains a second required signer", () => {

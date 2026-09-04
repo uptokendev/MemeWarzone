@@ -33,10 +33,19 @@ contract TreasuryVaultV2 {
     bool public claimsPaused;
 
     // Merkle roots per epochId
+    struct EpochAuthorization {
+        uint256 maxAmount;
+        uint64 publishAfter;
+        uint64 publishDeadline;
+        bool authorized;
+        bool consumed;
+    }
+
     mapping(uint256 => bytes32) public epochRoot;
     mapping(uint256 => uint256) public epochTotal;
     mapping(uint256 => uint256) public epochClaimedTotal;
     mapping(uint256 => mapping(bytes32 => bool)) public epochLeafClaimed;
+    mapping(uint256 => EpochAuthorization) public epochAuthorization;
 
     // Daily accounting
     uint256 public lastDay;
@@ -50,6 +59,8 @@ contract TreasuryVaultV2 {
 
     event ClaimCapsUpdated(uint256 maxClaimPerTx, uint256 maxEpochTotal);
     event ClaimsPaused(bool paused);
+    event EpochAuthorized(uint256 indexed epochId, uint256 maxAmount, uint64 publishAfter, uint64 publishDeadline);
+    event EpochAuthorizationRevoked(uint256 indexed epochId);
     event EpochRootSet(uint256 indexed epochId, bytes32 indexed root, uint256 totalAmount);
     event Claimed(uint256 indexed epochId, address indexed recipient, uint256 amount, bytes32 indexed leaf);
     event Withdraw(address indexed to, uint256 amount);
@@ -130,14 +141,41 @@ contract TreasuryVaultV2 {
         emit ClaimsPaused(paused);
     }
 
-    /// @notice Publish the Merkle root for an epoch.
+    /// @notice Safe-only: approve a payout epoch the rootPoster may later publish.
+    function authorizeEpoch(uint256 epochId, uint256 maxAmount, uint64 publishAfter, uint64 publishDeadline) external onlyMultisig {
+        require(maxAmount > 0, "maxAmount=0");
+        require(publishDeadline > publishAfter, "bad window");
+        EpochAuthorization storage auth = epochAuthorization[epochId];
+        require(!auth.consumed, "auth consumed");
+        require(epochRoot[epochId] == bytes32(0), "root already set");
+        auth.maxAmount = maxAmount;
+        auth.publishAfter = publishAfter;
+        auth.publishDeadline = publishDeadline;
+        auth.authorized = true;
+        emit EpochAuthorized(epochId, maxAmount, publishAfter, publishDeadline);
+    }
+
+    function revokeEpoch(uint256 epochId) external onlyMultisig {
+        EpochAuthorization storage auth = epochAuthorization[epochId];
+        require(auth.authorized && !auth.consumed, "not revocable");
+        auth.authorized = false;
+        emit EpochAuthorizationRevoked(epochId);
+    }
+
+    /// @notice Publish the Merkle root for a Safe-authorized epoch.
     /// @dev rootPoster or multisig can publish. Root is immutable once set.
     function setEpochRoot(uint256 epochId, bytes32 root, uint256 totalAmount) external onlyRootPosterOrMultisig {
         require(root != bytes32(0), "root=0");
         require(epochRoot[epochId] == bytes32(0), "root already set");
+        EpochAuthorization storage auth = epochAuthorization[epochId];
+        require(auth.authorized && !auth.consumed, "epoch not authorized");
+        require(block.timestamp >= auth.publishAfter, "too early");
+        require(block.timestamp <= auth.publishDeadline, "auth expired");
+        require(totalAmount <= auth.maxAmount, "above authorized max");
         if (maxEpochTotal != 0) {
             require(totalAmount <= maxEpochTotal, "maxEpochTotal");
         }
+        auth.consumed = true;
         epochRoot[epochId] = root;
         epochTotal[epochId] = totalAmount;
         emit EpochRootSet(epochId, root, totalAmount);

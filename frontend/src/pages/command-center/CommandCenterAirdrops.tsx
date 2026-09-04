@@ -5,7 +5,7 @@ import { Gift, Trophy } from "lucide-react";
 import { CommandCenterCard } from "@/components/command-center/CommandCenterCard";
 import { CommandCenterPageHeader } from "@/components/command-center/CommandCenterPageHeader";
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
-import { SOLANA_CHAIN_ID } from "@/lib/chainConfig";
+import { ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
 import {
   fetchAirdropCurrent,
   fetchAirdropPreview,
@@ -22,13 +22,24 @@ function isSolanaAirdrop(chainId?: number | null): boolean {
   return chainId === SOLANA_CHAIN_ID;
 }
 
-function nativeSymbol(chainId?: number | null, tokenSymbol?: string | null): "BNB" | "SOL" | string {
+function isRobinhoodAirdrop(chainId?: number | null): boolean {
+  return chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID;
+}
+
+function nativeSymbol(chainId?: number | null, tokenSymbol?: string | null): "BNB" | "SOL" | "ETH" | string {
+  // Chain identity is authoritative for native rewards. Older/current reward rows may
+  // still carry a legacy BNB tokenSymbol from the shared EVM reward pipeline; never
+  // let that relabel a Robinhood prize pool after the API response arrives.
+  if (isSolanaAirdrop(chainId)) return "SOL";
+  if (isRobinhoodAirdrop(chainId)) return "ETH";
   if (tokenSymbol) return tokenSymbol;
-  return isSolanaAirdrop(chainId) ? "SOL" : "BNB";
+  return "BNB";
 }
 
 function pageTitle(chainId?: number | null): string {
-  return isSolanaAirdrop(chainId) ? "SOL Airdrops" : "BNB Airdrops";
+  if (isSolanaAirdrop(chainId)) return "SOL Airdrops";
+  if (isRobinhoodAirdrop(chainId)) return "ETH Airdrops";
+  return "BNB Airdrops";
 }
 
 function formatNativeAmount(raw: string, chainId?: number | null): string {
@@ -179,7 +190,9 @@ export default function CommandCenterAirdrops() {
             <div className="rounded-2xl border border-border/60 bg-background/30 p-4 text-sm text-muted-foreground">
               {isSolanaAirdrop(chainId)
                 ? "No published Solana winners yet. Estimates can appear from bonding volume; claims stay closed."
-                : "No previous winners yet."}
+                : isRobinhoodAirdrop(chainId)
+                  ? "No published Robinhood winners yet. Estimates can appear from Robinhood bonding volume; claims stay closed."
+                  : "No previous winners yet."}
             </div>
           ) : (
             <div className="space-y-3">

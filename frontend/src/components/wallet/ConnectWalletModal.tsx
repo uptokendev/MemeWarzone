@@ -14,8 +14,19 @@ import { createPortal } from "react-dom";
 import { toast } from "sonner";
 
 import { useWallet } from "@/contexts/WalletContext";
-import { resolveBnbFeedChainId, setSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
-import { SOLANA_CHAIN_ID } from "@/lib/chainConfig";
+import {
+  resolveBnbFeedChainId,
+  resolveRobinhoodFeedChainId,
+  setSelectedFeedChainId,
+} from "@/components/common/ChainFeedSwitch";
+import {
+  BNB_CHAIN_ID,
+  BNB_TESTNET_CHAIN_ID,
+  ROBINHOOD_CHAIN_ID,
+  ROBINHOOD_TESTNET_CHAIN_ID,
+  SOLANA_CHAIN_ID,
+  type SupportedChainId,
+} from "@/lib/chainConfig";
 import { WAKE_PROVIDER_DISCOVERY_DELAYS_MS } from "@/lib/injectedProviderDiscovery";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 
@@ -26,6 +37,8 @@ type ConnectWalletModalProps = {
   onOpenChange: (open: boolean) => void;
   filter?: "evm" | "solana" | null;
 };
+
+type WalletChainChoice = "bnb" | "solana" | "robinhood";
 
 type UnifiedWalletOption =
   | {
@@ -90,6 +103,55 @@ function walletPriority(option: UnifiedWalletOption) {
   if (id.includes("okx") || name.includes("okx")) return 920;
   if (option.kind === "evm") return 800 + option.sortScore;
   return 700 + option.sortScore;
+}
+
+function evmChainParams(chainId: SupportedChainId) {
+  if (chainId === ROBINHOOD_TESTNET_CHAIN_ID) {
+    return {
+      chainId: `0x${chainId.toString(16)}`,
+      chainName: "Robinhood Chain Testnet",
+      nativeCurrency: { name: "Ethereum", symbol: "ETH", decimals: 18 },
+      rpcUrls: ["https://rpc.testnet.chain.robinhood.com"],
+      blockExplorerUrls: ["https://explorer.testnet.chain.robinhood.com"],
+    };
+  }
+  if (chainId === ROBINHOOD_CHAIN_ID) {
+    return {
+      chainId: `0x${chainId.toString(16)}`,
+      chainName: "Robinhood Chain",
+      nativeCurrency: { name: "Ethereum", symbol: "ETH", decimals: 18 },
+      rpcUrls: ["https://rpc.mainnet.chain.robinhood.com"],
+      blockExplorerUrls: ["https://explorer.chain.robinhood.com"],
+    };
+  }
+  if (chainId === BNB_TESTNET_CHAIN_ID) {
+    return {
+      chainId: `0x${chainId.toString(16)}`,
+      chainName: "BNB Smart Chain Testnet",
+      nativeCurrency: { name: "tBNB", symbol: "tBNB", decimals: 18 },
+      rpcUrls: ["https://data-seed-prebsc-1-s1.binance.org:8545/"],
+      blockExplorerUrls: ["https://testnet.bscscan.com"],
+    };
+  }
+  return {
+    chainId: `0x${BNB_CHAIN_ID.toString(16)}`,
+    chainName: "BNB Smart Chain",
+    nativeCurrency: { name: "BNB", symbol: "BNB", decimals: 18 },
+    rpcUrls: ["https://bsc-dataseed.binance.org/"],
+    blockExplorerUrls: ["https://bscscan.com"],
+  };
+}
+
+async function switchDetectedWalletChain(wallet: DetectedWallet, chainId: SupportedChainId) {
+  const hexChainId = `0x${chainId.toString(16)}`;
+  try {
+    await wallet.provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: hexChainId }] });
+  } catch (error: any) {
+    const code = Number(error?.code ?? error?.data?.originalError?.code ?? 0);
+    if (code !== 4902) throw error;
+    await wallet.provider.request({ method: "wallet_addEthereumChain", params: [evmChainParams(chainId)] });
+    await wallet.provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: hexChainId }] });
+  }
 }
 
 function WalletIcon({ option }: { option: UnifiedWalletOption }) {
@@ -184,17 +246,35 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
     connectSolana,
     disconnectSolana,
   } = useSolanaWallet();
+  const [selectedChain, setSelectedChain] = useState<WalletChainChoice | null>(null);
   const [selectedWalletId, setSelectedWalletId] = useState<WalletType | null>(null);
   const [selectedSolanaWalletId, setSelectedSolanaWalletId] = useState<string | null>(null);
   const [moreWalletsOpen, setMoreWalletsOpen] = useState(false);
 
+  const robinhoodChainId = resolveRobinhoodFeedChainId();
+  const bnbChainId = resolveBnbFeedChainId();
   const isBusy = connecting || Boolean(selectedWalletId) || Boolean(selectedSolanaWalletId) || connectingSolana;
   const rowsLocked = Boolean(selectedWalletId) || Boolean(selectedSolanaWalletId);
   const connectingSolanaName =
     availableSolanaWallets.find((wallet) => wallet.id === selectedSolanaWalletId)?.name || "Phantom";
 
+  const chainChoices = useMemo(() => {
+    const choices: Array<{ id: WalletChainChoice; label: string; detail: string }> = [];
+    if (!filter || filter === "evm") {
+      choices.push({ id: "bnb", label: "BNB", detail: "BNB Smart Chain" });
+    }
+    if (!filter || filter === "solana") {
+      choices.push({ id: "solana", label: "Solana", detail: "Solana mainnet" });
+    }
+    if ((!filter || filter === "evm") && robinhoodChainId) {
+      choices.push({ id: "robinhood", label: "Robinhood", detail: robinhoodChainId === ROBINHOOD_TESTNET_CHAIN_ID ? "Robinhood testnet" : "Robinhood Chain" });
+    }
+    return choices;
+  }, [filter, robinhoodChainId]);
+
   const walletOptions = useMemo<UnifiedWalletOption[]>(() => {
-    const evmOptions: UnifiedWalletOption[] = (!filter || filter === "evm")
+    if (!selectedChain) return [];
+    const evmOptions: UnifiedWalletOption[] = selectedChain !== "solana"
       ? detectedWallets.map((wallet) => ({
         kind: "evm" as const,
         key: `evm:${wallet.id}:${wallet.rdns || wallet.name}`,
@@ -208,7 +288,7 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
       }))
       : [];
 
-    const solanaOptions: UnifiedWalletOption[] = (!filter || filter === "solana")
+    const solanaOptions: UnifiedWalletOption[] = selectedChain === "solana"
       ? availableSolanaWallets.map((wallet, index) => ({
         kind: "solana" as const,
         key: `solana:${wallet.id}:${wallet.name}`,
@@ -230,7 +310,7 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
         return true;
       })
       .sort((a, b) => walletPriority(b) - walletPriority(a) || b.sortScore - a.sortScore || a.name.localeCompare(b.name));
-  }, [availableSolanaWallets, detectedWallets, filter]);
+  }, [availableSolanaWallets, detectedWallets, selectedChain]);
 
   const visibleWallets = moreWalletsOpen ? walletOptions : walletOptions.slice(0, INITIAL_VISIBLE_WALLETS);
   const hiddenWalletCount = Math.max(0, walletOptions.length - visibleWallets.length);
@@ -239,6 +319,7 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
     if (isBusy) return;
     setSelectedWalletId(null);
     setSelectedSolanaWalletId(null);
+    setSelectedChain(null);
     onOpenChange(false);
   }, [isBusy, onOpenChange]);
 
@@ -249,12 +330,19 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
 
   const handleConnect = useCallback(
     async (detectedWallet: DetectedWallet) => {
+      if (!selectedChain || selectedChain === "solana") return;
+      const targetChainId = selectedChain === "robinhood" ? robinhoodChainId : bnbChainId;
+      if (!targetChainId) {
+        toast.error("The selected chain is not enabled in this MemeWarzone environment.");
+        return;
+      }
       setSelectedWalletId(detectedWallet.id);
 
       try {
+        await switchDetectedWalletChain(detectedWallet, targetChainId);
         await connect(detectedWallet.id);
-        setSelectedFeedChainId(resolveBnbFeedChainId());
-        toast.success(`Connected ${detectedWallet.name}`);
+        setSelectedFeedChainId(targetChainId);
+        toast.success(`Connected ${detectedWallet.name} on ${selectedChain === "robinhood" ? "Robinhood" : "BNB"}`);
         onOpenChange(false);
       } catch (error) {
         toast.error(getWalletError(error));
@@ -262,7 +350,7 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
         setSelectedWalletId(null);
       }
     },
-    [connect, onOpenChange],
+    [bnbChainId, connect, onOpenChange, robinhoodChainId, selectedChain],
   );
 
   const handleUnifiedConnect = useCallback(
@@ -276,7 +364,7 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
       try {
         await connectSolana(option.id);
         setSelectedFeedChainId(SOLANA_CHAIN_ID);
-        toast.success(`Connected ${option.name}`);
+        toast.success(`Connected ${option.name} on Solana`);
         onOpenChange(false);
       } catch (error: any) {
         toast.error(error?.message || "Failed to connect Solana wallet");
@@ -309,7 +397,12 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
 
   const connectedSummary = useMemo(() => {
     if (isSolanaConnected && solanaAccount) return { label: "Solana wallet connected", detail: `${solanaWalletName ? `${solanaWalletName} · ` : ""}${shortAddress(solanaAccount)}`, accent: "solana" as const };
-    if (isConnected && account) return { label: "BNB wallet connected", detail: `${chainId ? `Chain ${chainId} · ` : ""}${shortAddress(account)}`, accent: "accent" as const };
+    if (isConnected && account) {
+      const label = chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID
+        ? "Robinhood wallet connected"
+        : "BNB wallet connected";
+      return { label, detail: `${chainId ? `Chain ${chainId} · ` : ""}${shortAddress(account)}`, accent: "accent" as const };
+    }
     return null;
   }, [account, chainId, isConnected, isSolanaConnected, solanaAccount, solanaWalletName]);
 
@@ -317,6 +410,7 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
     if (!open) return;
 
     setMoreWalletsOpen(false);
+    setSelectedChain(filter === "solana" ? "solana" : null);
     detectWallets();
 
     const timers = WAKE_PROVIDER_DISCOVERY_DELAYS_MS.map((delay) =>
@@ -336,7 +430,7 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
       document.body.style.overflow = originalOverflow;
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [detectWallets, handleClose, open]);
+  }, [detectWallets, filter, handleClose, open]);
 
   if (typeof document === "undefined") return null;
 
@@ -415,6 +509,27 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
                 </div>
               )}
 
+              <div className="mb-4">
+                <p className="font-retro text-sm text-foreground">1. Choose chain</p>
+                <div className="mt-2 grid grid-cols-3 gap-2">
+                  {chainChoices.map((choice) => (
+                    <button
+                      key={choice.id}
+                      type="button"
+                      disabled={isBusy}
+                      onClick={() => {
+                        setSelectedChain(choice.id);
+                        setMoreWalletsOpen(false);
+                      }}
+                      className={`${selectedChain === choice.id ? "border-accent/60 bg-accent/10 text-accent" : "border-border/70 bg-background/45 text-muted-foreground hover:border-accent/35 hover:text-foreground"} min-w-0 border px-2 py-3 text-center transition disabled:cursor-not-allowed disabled:opacity-60`}
+                    >
+                      <span className="block font-retro text-xs">{choice.label}</span>
+                      <span className="mt-1 block truncate text-[9px] opacity-70">{choice.detail}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {connectingSolana && (
                 <div className="mb-4 rounded-2xl border border-purple-400/25 bg-purple-500/10 px-3 py-2 text-xs leading-relaxed text-purple-200">
                   Approve the request in {connectingSolanaName}. If nothing pops up, click the extension icon, unlock the wallet, then try again.
@@ -422,11 +537,11 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
               )}
 
               <div className="flex items-center justify-between gap-3">
-                <p className="font-retro text-sm text-foreground">Detected wallets</p>
+                <p className="font-retro text-sm text-foreground">2. Select wallet</p>
                 <button
                   type="button"
                   onClick={handleRefresh}
-                  disabled={isBusy}
+                  disabled={isBusy || !selectedChain}
                   className="inline-flex items-center gap-1.5 rounded-xl border border-border/70 bg-background/50 px-2.5 py-1.5 text-xs text-muted-foreground transition hover:border-accent/40 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <RefreshCcw className="h-3.5 w-3.5" />
@@ -435,7 +550,11 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
               </div>
 
               <div className="mt-3 space-y-2">
-                {visibleWallets.length > 0 ? (
+                {!selectedChain ? (
+                  <div className="rounded-2xl border border-dashed border-border/80 bg-background/35 p-5 text-center text-sm text-muted-foreground">
+                    Choose BNB, Solana, or Robinhood first. MemeWarzone will connect the detected wallet to that exact network.
+                  </div>
+                ) : visibleWallets.length > 0 ? (
                   visibleWallets.map((option) => (
                     <WalletRow
                       key={option.key}
@@ -461,7 +580,7 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
                   </div>
                 )}
 
-                {walletOptions.length > INITIAL_VISIBLE_WALLETS && (
+                {selectedChain && walletOptions.length > INITIAL_VISIBLE_WALLETS && (
                   <button
                     type="button"
                     onClick={() => setMoreWalletsOpen((value) => !value)}

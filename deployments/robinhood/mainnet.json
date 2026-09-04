@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "chainKey": "robinhood-mainnet",
+  "chainId": 4663,
+  "environment": "production",
+  "generation": 1,
+  "deploymentBlock": null,
+  "supportEnabled": false,
+  "creationEnabled": false,
+  "contracts": {}
+}

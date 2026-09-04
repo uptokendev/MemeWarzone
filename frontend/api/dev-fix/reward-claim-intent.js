@@ -11,7 +11,8 @@ import {
   verifySolanaRewardClaim,
 } from "../lib/solanaRewardClaim.js";
 
-const EVM_CHAINS = new Set([56, 97]);
+const EVM_CHAINS = new Set([56, 97, 4663, 46630]);
+const ROBINHOOD_CHAINS = new Set([4663, 46630]);
 const SOLANA_CHAINS = new Set([101, 102]);
 const BYTES32_RE = /^0x[a-fA-F0-9]{64}$/;
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
@@ -70,6 +71,7 @@ function rowChainId(row) {
   const metadata = readMeta(row);
   const rawChain = String(row?.chain ?? "").trim().toLowerCase();
   if (rawChain === "solana" || rawChain === "sol") return Number(metadata.chainId) || 101;
+  if (rawChain === "robinhood" || rawChain === "rh") return Number(metadata.chainId) || 46630;
   const numeric = Number(row?.chain);
   if (Number.isFinite(numeric) && numeric > 0) return numeric;
   const metadataChain = Number(metadata.chainId);
@@ -107,13 +109,22 @@ function chainClaimConfig(chainId) {
   const distributorAddress = EVM_CHAINS.has(chain) ? envDistributorAddress(chain) : "";
   return {
     chainId: chain,
-    tokenSymbol: "BNB",
+    tokenSymbol: ROBINHOOD_CHAINS.has(chain) ? "ETH" : "BNB",
     enabled: Boolean(distributorAddress),
     mode: distributorAddress ? "reward_distributor_merkle" : "disabled",
     reason: distributorAddress ? null : "MISSING_DISTRIBUTOR_ADDRESS",
     distributorAddress,
     supportedRewardTypes: ["league", "airdrop", "recruiter", "squad", "manual", "future"],
   };
+}
+
+function explorerTxBase(chainId) {
+  const chain = Number(chainId);
+  if (chain === 97) return "https://testnet.bscscan.com/tx/";
+  if (chain === 56) return "https://bscscan.com/tx/";
+  if (chain === 46630) return "https://explorer.testnet.chain.robinhood.com/tx/";
+  if (chain === 4663) return "https://robinhoodchain.blockscout.com/tx/";
+  return "";
 }
 
 function readProof(metadata) {
@@ -187,7 +198,7 @@ function claimCallForRow(row) {
     amount,
     proof,
     args: contractBatchId ? [contractBatchId, amount, proof] : [],
-    explorerTxBase: chainId === 97 ? "https://testnet.bscscan.com/tx/" : "https://bscscan.com/tx/",
+    explorerTxBase: explorerTxBase(chainId),
   };
 }
 
@@ -342,7 +353,7 @@ export async function rewardClaimConfig(req, res) {
   const config = chainClaimConfig(chainId);
   return json(res, 200, {
     config,
-    supportedChains: [56, 97, 101, 102],
+    supportedChains: [56, 97, 4663, 46630, 101, 102],
     disabledChains: [],
     contract: SOLANA_CHAINS.has(chainId)
       ? {

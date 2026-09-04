@@ -32,6 +32,9 @@ describe("package scripts", function () {
     expect(pkg.scripts["activate:scheduled-test-factory:bsc-testnet"]).to.eq(
       "hardhat run scripts/activate-scheduled-test-factory.ts --network bscTestnet",
     );
+    expect(pkg.scripts["verify:authority"]).to.eq("hardhat run scripts/verify-deployment-authority.ts");
+    expect(pkg.scripts["verify:authority:localhost"]).to.eq("hardhat run scripts/verify-deployment-authority.ts --network localhost");
+    expect(pkg.scripts["verify:authority:bsc-testnet"]).to.eq("hardhat run scripts/verify-deployment-authority.ts --network bscTestnet");
     expect(pkg.scripts["verify:deployment"]).to.eq("hardhat run scripts/verify-deployment.ts");
     expect(pkg.scripts["verify:deployment:localhost"]).to.eq("hardhat run scripts/verify-deployment.ts --network localhost");
     expect(pkg.scripts["verify:deployment:bsc-testnet"]).to.eq("hardhat run scripts/verify-deployment.ts --network bscTestnet");
