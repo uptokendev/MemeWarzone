@@ -28,13 +28,46 @@ function exactCurveLock(lock) {
   );
 }
 
+async function seedProjectionRows(client, battle) {
+  const config = BATTLE_POINTS_V3_CONFIG;
+  const parameters = JSON.stringify(config.boost.curveParameters);
+  for (const [side, tokenId] of [["left", battle.challenger_token], ["right", battle.defender_token]]) {
+    if (!tokenId) throw new Error(`Cannot lock V3 without ${side} token identity`);
+    const row = (await client.query(
+      `insert into public.arena_battle_points_v3 (
+         battle_id, token_id, side,
+         mcap_weight, holder_weight, volume_weight, boost_weight,
+         boost_curve_version, boost_curve_parameters,
+         boost_units, boost_gross_native_raw, boost_pool_native_raw, boost_protocol_native_raw,
+         boost_points, total_points
+       ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,0,0,0,0,null,null)
+       on conflict (battle_id, side) do nothing
+       returning battle_id, side, boost_curve_version, boost_curve_parameters`,
+      [
+        String(battle.id), String(tokenId), side,
+        config.mcap.weight, config.holders.weight, config.volume.weight, config.boost.weight,
+        BATTLE_POINTS_V3_BOOST_CURVE, parameters,
+      ],
+    )).rows[0] || (await client.query(
+      `select battle_id, side, boost_curve_version, boost_curve_parameters
+         from public.arena_battle_points_v3 where battle_id=$1 and side=$2`,
+      [String(battle.id), side],
+    )).rows[0];
+    if (!exactCurveLock({
+      scoring_version: BATTLE_POINTS_V3,
+      boost_curve_version: row?.boost_curve_version,
+      boost_curve_parameters: row?.boost_curve_parameters,
+    })) throw new Error(`Existing ${side} V3 projection uses an incompatible Boost curve`);
+  }
+}
+
 export async function lockBattlePointsV3(battleId, deps = {}) {
   const db = deps.pool || pool;
   const client = await db.connect();
   try {
     await client.query("begin");
     const battle = (await client.query(
-      `select id, state, source, battle_mode, competition_generation
+      `select id, state, source, battle_mode, competition_generation, challenger_token, defender_token
          from public.arena_battles
         where id = $1
         for update`,
@@ -56,6 +89,10 @@ export async function lockBattlePointsV3(battleId, deps = {}) {
       await client.query("rollback");
       return { ok: false, status: 409, reason: "v3_lock_requires_current_competition_generation" };
     }
+    if (!battle.challenger_token || !battle.defender_token) {
+      await client.query("rollback");
+      return { ok: false, status: 409, reason: "v3_lock_requires_both_combatants" };
+    }
 
     const parameters = JSON.stringify(BATTLE_POINTS_V3_CONFIG.boost.curveParameters);
     const inserted = (await client.query(
@@ -75,6 +112,8 @@ export async function lockBattlePointsV3(battleId, deps = {}) {
       await client.query("rollback");
       return { ok: false, status: 409, reason: "battle_has_incompatible_scoring_lock" };
     }
+
+    await seedProjectionRows(client, battle);
     await client.query("commit");
     return { ok: true, status: inserted ? 201 : 200, idempotent: !inserted, battle, lock };
   } catch (error) {
