@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import { resolveTournamentVoteMatch, tournamentVoteSummary } from "./arenaTournamentVoteRuntime.mjs";
 import { beginFinalSalvo, closeFinalSalvoShot } from "./arenaFinalSalvoRuntime.mjs";
+import { tournamentBoostMatchId, tournamentBoostPoolId } from "./arenaTournamentBoostVerification.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const apiRoot = path.join(here, "..");
@@ -152,4 +153,21 @@ test("Final Salvo API is free-vote-only, shot-bound and exposes no Boost path", 
   assert.match(salvo, /select now\(\) as now/);
   assert.match(salvo, /boostAllowed:\s*false/);
   assert.doesNotMatch(salvo, /arena_battle_boost_quote|BattleBoosted|boostUnits:\s*[1-9]/);
+});
+
+test("Vote Tournament Boost binds V2 event identity, 2 points per unit and 90/10 economics", () => {
+  const boosts = readApi("arenaTournamentBoosts.js");
+  const verifier = readApi("lib/arenaTournamentBoostVerification.mjs");
+  const poolId = tournamentBoostPoolId("t-1");
+  const matchId = tournamentBoostMatchId({ tournamentId: "t-1", roundNumber: 2, matchId: "r2-m1" });
+  assert.match(poolId, /^0x[0-9a-f]{64}$/i);
+  assert.match(matchId, /^0x[0-9a-f]{64}$/i);
+  assert.match(verifier, /event TournamentBoosted/);
+  assert.match(verifier, /event\.unitPriceNativeRaw \* event\.boostUnits !== event\.grossNativeRaw/);
+  assert.match(boosts, /points = split\.boostUnits \* 2n/);
+  assert.match(boosts, /prizeBps:\s*9000, protocolBps:\s*1000, leagueBps:\s*0/);
+  assert.match(boosts, /competition_generation \|\| ""\) !== "arena_competition_v2"/);
+  assert.match(boosts, /TOURNAMENT_BOOST_OUTSIDE_REGULATION/);
+  assert.match(boosts, /arena_tournament_boost_quote/);
+  assert.match(boosts, /requireInternalAuth\(req, res, \{ routeLabel: "arena_tournament_boost_confirm" \}\)/);
 });
