@@ -54,30 +54,16 @@ function metricFallbackSnapshot(identitySnapshot, metricsRow, closeMs) {
   };
 }
 
-/**
- * Select a market state that was actually accepted by the server no later than
- * battle close. Latest shared-market state is preferred only when its source
- * timestamp is at/before close; otherwise the last healthy persisted Battle
- * metric may be used if it is still inside the normal freshness window.
- */
 export function selectPreCloseMarketSnapshot(identitySnapshot, metricsRow, closeAt) {
   const closeMs = timestampMs(closeAt);
   if (closeMs === null) return null;
-
   const liveUpdatedMs = timestampMs(identitySnapshot?.updatedAt);
   if (identitySnapshot?.healthy === true && liveUpdatedMs !== null && liveUpdatedMs <= closeMs) {
     const lagSeconds = Math.max(0, (closeMs - liveUpdatedMs) / 1000);
     if (lagSeconds <= BATTLE_POINTS_CONFIG.staleSeconds) {
-      return {
-        ...identitySnapshot,
-        dataLagSeconds: lagSeconds,
-        healthy: true,
-        reason: null,
-        reasons: [],
-      };
+      return { ...identitySnapshot, dataLagSeconds: lagSeconds, healthy: true, reason: null, reasons: [] };
     }
   }
-
   return metricFallbackSnapshot(identitySnapshot, metricsRow, closeMs);
 }
 
@@ -108,29 +94,15 @@ export async function reconcileBattlePointsAtClose(battleRow, deps = {}) {
   const chainId = Number(battleRow.chain_id ?? battleRow.chainId);
   const metricsRows = await loadBattleMetrics(String(battleRow.id), { query });
   const bySide = sideMap(metricsRows);
-  if (!bySide.get("left") || !bySide.get("right") || metricsRows.length !== 2) {
-    return { ok: false, reason: FINAL_SCORE_REASON.BASELINE_INCOMPLETE };
-  }
-  if (metricsRows.some((row) => String(row.scoring_version || "") !== BATTLE_POINTS_V2)) {
-    return { ok: false, reason: FINAL_SCORE_REASON.SCORING_VERSION_MISMATCH };
-  }
+  if (!bySide.get("left") || !bySide.get("right") || metricsRows.length !== 2) return { ok: false, reason: FINAL_SCORE_REASON.BASELINE_INCOMPLETE };
+  if (metricsRows.some((row) => String(row.scoring_version || "") !== BATTLE_POINTS_V2)) return { ok: false, reason: FINAL_SCORE_REASON.SCORING_VERSION_MISMATCH };
 
   const finalSides = {};
   for (const side of ["left", "right"]) {
     const metricsRow = bySide.get(side);
-    const identitySnapshot = await (deps.getSnapshot || getArenaMarketSnapshot)(
-      chainId,
-      metricsRow.token_id,
-      { query, nowMs: closeMs },
-    );
+    const identitySnapshot = await (deps.getSnapshot || getArenaMarketSnapshot)(chainId, metricsRow.token_id, { query, nowMs: closeMs });
     const snapshot = selectPreCloseMarketSnapshot(identitySnapshot, metricsRow, closeAt);
-    if (!snapshot) {
-      return {
-        ok: false,
-        reason: FINAL_SCORE_REASON.PRE_CLOSE_MARKET_DATA_MISSING,
-        side,
-      };
-    }
+    if (!snapshot) return { ok: false, reason: FINAL_SCORE_REASON.PRE_CLOSE_MARKET_DATA_MISSING, side };
 
     const liveAt = metricsRow.baseline_timestamp || battleRow.started_at;
     const trades = await loadBattleWindowTrades({
@@ -140,27 +112,10 @@ export async function reconcileBattlePointsAtClose(battleRow, deps = {}) {
       liveAt,
       finishAt: closeAt,
     }, { query, nativeUsd: deps.nativeUsd, resolveNativeUsd: deps.resolveNativeUsd });
-    const volumeContext = await loadVolumeContext(
-      chainId,
-      identitySnapshot || snapshot,
-      trades.map((trade) => trade.wallet),
-      { query },
-    );
-    const refreshed = await refreshCombatantVolumeAndPoints({
-      row: battleRow,
-      metricsRow,
-      snapshot,
-      trades,
-      volumeContext,
-      now: new Date(closeMs),
-    }, { query });
+    const volumeContext = await loadVolumeContext(chainId, identitySnapshot || snapshot, trades.map((trade) => trade.wallet), { query });
+    const refreshed = await refreshCombatantVolumeAndPoints({ row: battleRow, metricsRow, snapshot, trades, volumeContext, now: new Date(closeMs) }, { query, env: deps.env || process.env });
     if (refreshed.scored?.dataHealth?.healthy !== true) {
-      return {
-        ok: false,
-        reason: FINAL_SCORE_REASON.FINAL_SCORE_UNHEALTHY,
-        side,
-        dataHealth: refreshed.scored?.dataHealth || null,
-      };
+      return { ok: false, reason: FINAL_SCORE_REASON.FINAL_SCORE_UNHEALTHY, side, dataHealth: refreshed.scored?.dataHealth || null };
     }
     finalSides[side] = publicSide(metricsRow, refreshed.scored);
   }
