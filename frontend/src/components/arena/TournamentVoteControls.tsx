@@ -4,8 +4,8 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { useWallet } from "@/contexts/WalletContext";
-import { useActiveFeedWallet } from "@/hooks/useActiveFeedWallet";
 import { signArenaWalletAction } from "@/lib/arena/signArenaWalletAction";
+import { isSolanaChainId } from "@/lib/chainConfig";
 import {
   fetchTournamentVoteState,
   submitTournamentFreeVote,
@@ -43,8 +43,7 @@ export function TournamentVoteControls({
 }) {
   const wallet = useWallet();
   const { solanaAccount } = useSolanaWallet();
-  const feedWallet = useActiveFeedWallet();
-  const walletAddress = String(feedWallet.address || "").trim();
+  const walletAddress = String(isSolanaChainId(chainId) ? solanaAccount || "" : wallet.account || "").trim();
   const matchRef = tournamentVoteMatchRef(match);
   const [payload, setPayload] = useState<TournamentVotePayload | null>(null);
   const [loading, setLoading] = useState(true);
@@ -165,7 +164,7 @@ export function TournamentVoteControls({
         })}
       </div>
       {!walletAddress ? (
-        <p className="text-xs text-white/48">Connect a wallet to use one Free Vote for this matchup and round.</p>
+        <p className="text-xs text-white/48">Connect a wallet on this tournament's chain to use one Free Vote.</p>
       ) : model.walletVote ? (
         <p className="text-xs text-white/48">This wallet already used its Free Vote for this matchup.</p>
       ) : (
