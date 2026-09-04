@@ -95,7 +95,25 @@ test("Sudden Death is represented without inventing Boost or weighted scoring", 
   assert.equal(finalSalvoNeedsAnotherShot(model), true);
 });
 
-test("presentation ignores non-salvo phases and stops at three shot wins", () => {
+test("resolved Final Salvo remains readable but cannot accept votes or Boost", () => {
+  const model = presentFinalSalvoState({
+    state: "resolved",
+    active: false,
+    series: { leftWins: 3, rightWins: 2, maxShots: 5 },
+    winnerSide: "left",
+    resolvedAt: "2026-09-04T16:00:00.000Z",
+    boostAllowed: false,
+  });
+  assert.equal(model.phase, "resolved");
+  assert.equal(model.title, "FINAL SALVO RESOLVED");
+  assert.equal(model.seriesLabel, "3 — 2");
+  assert.equal(model.walletEligible, false);
+  assert.equal(model.votingLive, false);
+  assert.equal(model.boostAllowed, false);
+  assert.equal(finalSalvoNeedsAnotherShot(model), false);
+});
+
+test("presentation ignores regulation and stops at three shot wins", () => {
   assert.equal(presentFinalSalvoState({ phase: "regulation" }), null);
   const done = presentFinalSalvoState({ phase: "final_salvo", leftSeriesWins: 3, rightSeriesWins: 1, shotClosed: true });
   assert.equal(finalSalvoNeedsAnotherShot(done), false);
@@ -105,6 +123,7 @@ test("Final Salvo client uses only the dedicated API and signed action contract"
   const client = fs.readFileSync(path.join(here, "./finalSalvoClient.ts"), "utf8");
   const controls = fs.readFileSync(path.join(here, "../../components/arena/TournamentFinalSalvoControls.tsx"), "utf8");
   const panel = fs.readFileSync(path.join(here, "../../components/arena/FinalSalvoPanel.tsx"), "utf8");
+  const liveRound = fs.readFileSync(path.join(here, "../../components/arena/TournamentLiveRoundBattles.tsx"), "utf8");
 
   assert.match(client, /\/final-salvo/);
   assert.match(controls, /arena_final_salvo_vote/);
@@ -112,4 +131,6 @@ test("Final Salvo client uses only the dedicated API and signed action contract"
   assert.match(controls, /`Shot: \$\{shotIndex\}`/);
   assert.doesNotMatch(client, /boost/i);
   assert.match(panel, /Boost disabled during Final Salvo/);
+  assert.match(liveRound, /TournamentFinalSalvoControls/);
+  assert.match(liveRound, /voteMode\(tournamentMode\)/);
 });
