@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { BattleBoostPanel } from "@/components/arena/BattleBoostPanel";
 import { BattleFunding } from "@/components/arena/BattleFunding";
 import { BattleIntel } from "@/components/arena/BattleIntel";
 import { BattleResultLog } from "@/components/arena/BattleResultLog";
@@ -6,6 +7,7 @@ import { BattleScoreBreakdown } from "@/components/arena/BattleScoreBreakdown";
 import { BattleTerms } from "@/components/arena/BattleTerms";
 import type { Battle } from "@/features/postgrad/contracts";
 import type { BattleRealtimeMetrics } from "@/lib/arena/battleRealtime";
+import { battleBoostAvailability } from "@/lib/arena/battleBoostPresentation.mjs";
 import { presentBattleGeneration } from "@/lib/arena/battleGenerationPresentation.mjs";
 import { presentBattleWallMore } from "@/lib/arena/battleWallMorePresentation.mjs";
 
@@ -29,6 +31,7 @@ function GenerationRow({ label, value }: { label: string; value?: string | null 
 export function BattleWallMore({ battle, metrics, realtimeState, dataSource }: Props) {
   const more = presentBattleWallMore(battle, metrics, { realtimeState, dataSource });
   const generation = presentBattleGeneration(battle, metrics || {});
+  const boost = battleBoostAvailability(battle);
   const chainId = Number((battle as Battle & { chainId?: number }).chainId || 0);
   const explicitClaimGeneration = Boolean(generation.pool);
   const showClaim = more.showClaim && explicitClaimGeneration;
@@ -57,6 +60,9 @@ export function BattleWallMore({ battle, metrics, realtimeState, dataSource }: P
             <GenerationRow label="Pool split" value={generation.pool?.detail} />
           </div>
         </section>
+      ) : null}
+      {boost.available ? (
+        <BattleBoostPanel battleId={more.battleId} chainId={chainId} left={more.left} right={more.right} />
       ) : null}
       {more.warPool.redirectTo ? (
         <section data-battle-war-pool="tournament-redirect" className="space-y-2">
