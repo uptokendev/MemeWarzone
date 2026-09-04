@@ -1,7 +1,11 @@
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, json, normalizeAddress, readJson } from "../server/http.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
-import { resolveTournamentVoteMatch, tournamentVoteSummary } from "./lib/arenaTournamentVoteRuntime.mjs";
+import {
+  resolveTournamentVoteMatch,
+  tournamentVoteSummary,
+  tournamentVoteTokensEqual,
+} from "./lib/arenaTournamentVoteRuntime.mjs";
 
 function ident(value) {
   return String(value || "").trim();
@@ -25,8 +29,12 @@ async function loadTournament(id) {
 async function listMatchVotes({ tournamentId, roundNumber, matchId }) {
   const result = await pool.query(
     `select selected_token, wallet_address, created_at
-       from public.arena_tournament_votes
-      where tournament_id = $1 and round_number = $2 and match_id = $3
+       from public.arena_contest_actions
+      where tournament_id = $1
+        and round_number = $2
+        and match_id = $3
+        and phase = 'regulation'
+        and action_type = 'free_vote'
       order by created_at asc`,
     [tournamentId, roundNumber, matchId],
   );
@@ -59,7 +67,10 @@ async function handleGet(req, res, route, tournament) {
     roundNumber: resolved.roundNumber,
     matchId: resolved.matchId,
     battleId: resolved.battleId,
+    phase: "regulation",
     votingLive: true,
+    freeVotePoints: 1,
+    boostPointsPerUsd: 2,
     summary,
     walletVote,
     updatedAt: new Date().toISOString(),
@@ -92,6 +103,7 @@ async function handlePost(req, res, route, tournament) {
       `Tournament: ${route.tournamentId}`,
       `Round: ${resolved.roundNumber}`,
       `Match: ${resolved.matchId}`,
+      "Phase: regulation",
       `Token: ${selectedToken}`,
     ],
   });
@@ -116,42 +128,55 @@ async function handlePost(req, res, route, tournament) {
       return json(res, 409, { ok: false, error: "Tournament matchup closed before the vote was recorded.", code: "VOTE_MATCH_NOT_ACTIVE", reason: currentMatch.reason });
     }
 
+    const side = tournamentVoteTokensEqual(selectedToken, currentMatch.tokenA) ? "left" : "right";
     const inserted = await client.query(
-      `insert into public.arena_tournament_votes (
-         tournament_id, chain_id, round_number, match_id, battle_id, wallet_address, selected_token
-       ) values ($1,$2,$3,$4,$5,$6,$7)
-       on conflict (tournament_id, round_number, match_id, wallet_address) do nothing
+      `insert into public.arena_contest_actions (
+         chain_id, tournament_id, match_id, battle_id, round_number, phase, salvo_index,
+         side, selected_token, wallet_address, action_type, boost_units, points,
+         gross_native_raw, pool_native_raw, protocol_native_raw, confirmed_at
+       ) values ($1,$2,$3,$4,$5,'regulation',0,$6,$7,$8,'free_vote',0,1,0,0,0,now())
+       on conflict do nothing
        returning id, selected_token, created_at`,
       [
-        route.tournamentId,
         Number(current.chain_id),
-        currentMatch.roundNumber,
+        route.tournamentId,
         currentMatch.matchId,
         currentMatch.battleId,
-        wallet,
+        currentMatch.roundNumber,
+        side,
         selectedToken,
+        wallet,
       ],
     );
 
     if (!inserted.rows[0]) {
       const existing = await client.query(
-        `select selected_token from public.arena_tournament_votes
-          where tournament_id = $1 and round_number = $2 and match_id = $3 and wallet_address = $4
+        `select selected_token from public.arena_contest_actions
+          where tournament_id = $1
+            and round_number = $2
+            and match_id = $3
+            and phase = 'regulation'
+            and action_type = 'free_vote'
+            and wallet_address = $4
           limit 1`,
         [route.tournamentId, currentMatch.roundNumber, currentMatch.matchId, wallet],
       );
       await client.query("rollback");
       return json(res, 409, {
         ok: false,
-        error: "This wallet already used its free vote for this matchup.",
+        error: "This wallet already used its free vote for this matchup and round.",
         code: "TOURNAMENT_VOTE_ALREADY_USED",
         existingToken: existing.rows[0]?.selected_token || null,
       });
     }
 
     const rows = await client.query(
-      `select selected_token from public.arena_tournament_votes
-        where tournament_id = $1 and round_number = $2 and match_id = $3`,
+      `select selected_token from public.arena_contest_actions
+        where tournament_id = $1
+          and round_number = $2
+          and match_id = $3
+          and phase = 'regulation'
+          and action_type = 'free_vote'`,
       [route.tournamentId, currentMatch.roundNumber, currentMatch.matchId],
     );
     await client.query("commit");
@@ -162,8 +187,10 @@ async function handlePost(req, res, route, tournament) {
       roundNumber: currentMatch.roundNumber,
       matchId: currentMatch.matchId,
       battleId: currentMatch.battleId,
+      phase: "regulation",
       selectedToken,
       walletVote: selectedToken,
+      pointsAdded: 1,
       summary: tournamentVoteSummary(rows.rows, currentMatch),
     });
   } catch (error) {
@@ -188,7 +215,7 @@ export default async function handler(req, res) {
   } catch (error) {
     console.error("[api/arenaTournamentVotes]", error);
     if (error?.code === "42P01") {
-      return json(res, 503, { ok: false, error: "Tournament vote schema is not installed.", code: "TOURNAMENT_VOTE_SCHEMA_MISSING" });
+      return json(res, 503, { ok: false, error: "Tournament contest-action schema is not installed.", code: "TOURNAMENT_VOTE_SCHEMA_MISSING" });
     }
     return json(res, 503, { ok: false, error: "Tournament vote runtime is unavailable", detail: String(error?.message || error) });
   }
