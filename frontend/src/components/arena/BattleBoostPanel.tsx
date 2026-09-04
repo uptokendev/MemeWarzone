@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -21,7 +21,8 @@ type Side = {
 function unitsFor(summary: BattleBoostSummary | null, side: "left" | "right") {
   const raw = summary?.[side]?.boostUnits;
   try {
-    return Number(BigInt(String(raw || "0")));
+    const number = Number(BigInt(String(raw || "0")));
+    return Number.isSafeInteger(number) && number >= 0 ? number : 0;
   } catch {
     return 0;
   }
@@ -40,17 +41,32 @@ export function BattleBoostPanel({
 }) {
   const wallet = useWallet();
   const [summary, setSummary] = useState<BattleBoostSummary | null>(null);
+  const [runtimeReady, setRuntimeReady] = useState<boolean | null>(null);
   const [busySide, setBusySide] = useState<"left" | "right" | null>(null);
   const [quantity, setQuantity] = useState(1);
   const nativeSymbol = getNativeSymbol(chainId);
 
+  const refresh = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const json = await fetchBattleBoostState(battleId, signal);
+      setSummary(json?.summary || null);
+      setRuntimeReady(true);
+      return json;
+    } catch {
+      if (!signal?.aborted) {
+        setSummary(null);
+        setRuntimeReady(false);
+      }
+      return null;
+    }
+  }, [battleId]);
+
   useEffect(() => {
     const controller = new AbortController();
-    void fetchBattleBoostState(battleId, controller.signal)
-      .then((json) => setSummary(json?.summary || null))
-      .catch(() => setSummary(null));
+    setRuntimeReady(null);
+    void refresh(controller.signal);
     return () => controller.abort();
-  }, [battleId]);
+  }, [refresh]);
 
   const totals = useMemo(
     () => ({ left: unitsFor(summary, "left"), right: unitsFor(summary, "right") }),
@@ -58,12 +74,14 @@ export function BattleBoostPanel({
   );
 
   async function boost(side: "left" | "right", tokenId?: string | null) {
+    if (runtimeReady !== true) return toast.error("Battle Boost runtime is unavailable.");
     if (!tokenId) return toast.error("Battle combatant address is unavailable.");
     if (!wallet.signer || !wallet.account) return toast.error("Connect an EVM wallet to Boost this battle.");
     if (Number(wallet.chainId) !== Number(chainId)) {
-      return toast.error(`Switch your wallet to the battle chain before Boosting.`);
+      return toast.error("Switch your wallet to the battle chain before Boosting.");
     }
 
+    const previousUnits = side === "left" ? totals.left : totals.right;
     setBusySide(side);
     try {
       const quoted = await createBattleBoostQuote({
@@ -84,14 +102,21 @@ export function BattleBoostPanel({
       const submitted = await submitBattleBoost({ signer: wallet.signer, quote: quoted.quote });
       toast.success(`Battle Boost submitted${submitted.txHash ? `: ${submitted.txHash.slice(0, 10)}…` : "."}`);
 
-      const refreshed = await fetchBattleBoostState(battleId).catch(() => null);
-      if (refreshed?.summary) setSummary(refreshed.summary);
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, attempt === 0 ? 1_000 : 1_500));
+        const fresh = await refresh();
+        const nextUnits = unitsFor(fresh?.summary || null, side);
+        if (nextUnits > previousUnits) break;
+      }
     } catch (error) {
       toast.error(String((error as Error)?.message || "Battle Boost failed."));
+      await refresh();
     } finally {
       setBusySide(null);
     }
   }
+
+  const disabled = Boolean(busySide) || runtimeReady !== true;
 
   return (
     <section data-battle-boost-panel="true" className="space-y-3">
@@ -102,6 +127,14 @@ export function BattleBoostPanel({
         </p>
       </div>
 
+      {runtimeReady === null ? (
+        <div role="status" aria-live="polite" className="text-[10px] uppercase tracking-[0.14em] text-white/38">Checking Battle Boost runtime…</div>
+      ) : runtimeReady === false ? (
+        <div role="status" aria-live="polite" data-battle-boost-runtime="unavailable" className="text-[10px] uppercase tracking-[0.14em] text-white/38">
+          Battle Boost unavailable
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap gap-2" aria-label="Battle Boost quantity">
         {[1, 5, 10].map((value) => (
           <Button
@@ -110,6 +143,7 @@ export function BattleBoostPanel({
             size="sm"
             variant={quantity === value ? "default" : "outline"}
             className="font-retro"
+            disabled={runtimeReady !== true}
             onClick={() => setQuantity(value)}
           >
             {value}x
@@ -117,26 +151,26 @@ export function BattleBoostPanel({
         ))}
       </div>
 
-      <div className="grid gap-2 md:grid-cols-2">
+      <div className="grid min-w-0 gap-2 md:grid-cols-2">
         <Button
           type="button"
           variant="outline"
-          className="justify-between font-retro"
-          disabled={Boolean(busySide) || !left.tokenId}
+          className="min-w-0 justify-between gap-2 font-retro"
+          disabled={disabled || !left.tokenId}
           onClick={() => void boost("left", left.tokenId)}
         >
-          <span>Boost {left.ticker || left.name || "left"}</span>
-          <span className="text-xs opacity-70">{totals.left}</span>
+          <span className="truncate">Boost {left.ticker || left.name || "left"}</span>
+          <span className="shrink-0 text-xs opacity-70">{totals.left}</span>
         </Button>
         <Button
           type="button"
           variant="outline"
-          className="justify-between font-retro"
-          disabled={Boolean(busySide) || !right.tokenId}
+          className="min-w-0 justify-between gap-2 font-retro"
+          disabled={disabled || !right.tokenId}
           onClick={() => void boost("right", right.tokenId)}
         >
-          <span>Boost {right.ticker || right.name || "right"}</span>
-          <span className="text-xs opacity-70">{totals.right}</span>
+          <span className="truncate">Boost {right.ticker || right.name || "right"}</span>
+          <span className="shrink-0 text-xs opacity-70">{totals.right}</span>
         </Button>
       </div>
 
