@@ -210,5 +210,5 @@ test("V2 Vote Tournament setup locks $0.25 entry and generation-routes historica
   assert.match(setup, /handleGenerationAwareLegacyReceipt/);
   assert.match(setup, /isSolanaChainId\(chainId\)[\s\S]*token_address = \$2/);
   assert.doesNotMatch(setup, /PRIVATE_KEY|new Wallet\(/);
-  assert.match(routing, /\/arena\\\/tournaments\\\/\[\^\/\]\+\\\/(?:v2-buy-in-receipt\|buy-in-receipt)/);
+  assert.match(routing, /pattern:\s*\/\^\\\/arena\\\/tournaments\\\/\[\^\/\]\+\\\/(?:\(\?:)?v2-buy-in-receipt\|buy-in-receipt/);
 });
