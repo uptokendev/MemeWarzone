@@ -32,6 +32,14 @@ function shortToken(value?: string | null) {
   return `${token.slice(0, 6)}…${token.slice(-4)}`;
 }
 
+function tokenIdentityEqual(left?: string | null, right?: string | null) {
+  const a = String(left || "").trim();
+  const b = String(right || "").trim();
+  if (!a || !b) return false;
+  if (a.startsWith("0x") && b.startsWith("0x")) return a.toLowerCase() === b.toLowerCase();
+  return a === b;
+}
+
 export function TournamentVoteControls({
   tournamentId,
   chainId,
@@ -121,18 +129,18 @@ export function TournamentVoteControls({
   }
 
   if (loading && !payload) {
-    return <div className="text-[10px] uppercase tracking-[0.16em] text-white/45">Loading Vote Tournament score…</div>;
+    return <div role="status" aria-live="polite" className="text-[10px] uppercase tracking-[0.16em] text-white/45">Loading Vote Tournament score…</div>;
   }
   if (unavailable || !payload) {
     return (
-      <div data-vote-tournament-runtime="unavailable" className="text-[10px] uppercase tracking-[0.16em] text-white/45">
+      <div role="status" aria-live="polite" data-vote-tournament-runtime="unavailable" className="text-[10px] uppercase tracking-[0.16em] text-white/45">
         Vote Tournament runtime unavailable
       </div>
     );
   }
 
   return (
-    <section data-vote-tournament-controls="true" className="space-y-3 border-t border-white/10 pt-3">
+    <section aria-label="Vote Tournament regulation" data-vote-tournament-controls="true" className="space-y-3 border-t border-white/10 pt-3">
       <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] uppercase tracking-[0.16em] text-white/50">
         <span>{model.regulationLabel}</span>
         <span>{model.scoringLabel}</span>
@@ -140,7 +148,7 @@ export function TournamentVoteControls({
       <div className="grid gap-2 sm:grid-cols-2">
         {tokens.map((tokenAddress, index) => {
           const points = index === 0 ? model.leftPoints : model.rightPoints;
-          const selected = model.walletVote && model.walletVote.toLowerCase() === tokenAddress.toLowerCase();
+          const selected = tokenIdentityEqual(model.walletVote, tokenAddress);
           return (
             <div key={tokenAddress} className="border border-white/10 bg-black/20 p-3">
               <div className="flex items-center justify-between gap-3">
