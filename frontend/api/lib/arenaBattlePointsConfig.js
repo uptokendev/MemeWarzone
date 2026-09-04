@@ -19,9 +19,9 @@ export const BATTLE_POINTS_CONFIG = Object.freeze({
 export const BATTLE_POINTS_V3_CONFIG = Object.freeze({
   version: BATTLE_POINTS_V3,
   staleSeconds: 120,
-  mcap: Object.freeze({ weight: 50 }),
-  holders: Object.freeze({ weight: 25 }),
-  volume: Object.freeze({ weight: 15 }),
+  mcap: Object.freeze({ weight: 45 }),
+  holders: Object.freeze({ weight: 27 }),
+  volume: Object.freeze({ weight: 18 }),
   boost: Object.freeze({
     weight: 10,
     curveVersion: BATTLE_POINTS_V3_BOOST_CURVE,
