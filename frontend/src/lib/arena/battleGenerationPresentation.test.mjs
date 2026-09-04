@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   BATTLE_POINTS_V2_MAXES,
+  BATTLE_POINTS_V3_BOOST_CURVE_VERSION,
   BATTLE_POINTS_V3_MAXES,
   presentBattleGeneration,
 } from "./battleGenerationPresentation.mjs";
@@ -27,16 +28,20 @@ test("Battle Points V2 keeps the 50/30/20 component allocation", () => {
   assert.equal(model.scoring?.label, "Battle Points V2");
   assert.deepEqual(model.scoreMaxes, BATTLE_POINTS_V2_MAXES);
   assert.equal(model.showScoreBreakdown, true);
-  assert.equal(model.boostPending, null);
+  assert.equal(model.boostCurveVersion, null);
+  assert.equal(model.boostAuthorityLabel, null);
 });
 
-test("Battle Points V3 presents 45/27/18 plus the reserved 10-point Boost component without inventing a curve", () => {
+test("Battle Points V3 locks the approved curve identifier while keeping Boost points backend-authoritative", () => {
   const model = presentBattleGeneration({}, { scoringVersion: "battle_points_v3" });
   assert.equal(model.scoring?.label, "Battle Points V3");
   assert.equal(model.scoring?.detail, "45 MCAP / 27 Holders / 18 Eligible Volume / 10 Battle Boost");
   assert.deepEqual(model.scoreMaxes, BATTLE_POINTS_V3_MAXES);
+  assert.equal(model.scoreMaxes.boost, 10);
   assert.equal(model.showScoreBreakdown, true);
-  assert.match(model.boostPending, /pending founder approval/i);
+  assert.equal(BATTLE_POINTS_V3_BOOST_CURVE_VERSION, "boost_hyperbolic_100_v1");
+  assert.equal(model.boostCurveVersion, "boost_hyperbolic_100_v1");
+  assert.match(model.boostAuthorityLabel, /backend-authoritative/i);
 });
 
 test("persisted settlement scoring generation wins over a live scoring version", () => {
@@ -46,7 +51,7 @@ test("persisted settlement scoring generation wins over a live scoring version",
   });
   assert.equal(model.scoring?.label, "Battle scoring V1");
   assert.equal(model.showScoreBreakdown, false);
-  assert.equal(model.boostPending, null);
+  assert.equal(model.boostCurveVersion, null);
 });
 
 test("unknown generations never inherit V1 or V2 economics", () => {
