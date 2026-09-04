@@ -1,4 +1,5 @@
 import { beginFinalSalvo, closeFinalSalvoShot } from "./arenaFinalSalvoRuntime.mjs";
+import { advanceVoteTournamentBracket } from "./arenaVoteTournamentBracketService.js";
 import { resolveTournamentVoteMatch } from "./arenaTournamentVoteRuntime.mjs";
 
 function asNumber(value) {
@@ -40,7 +41,8 @@ async function acquireBattleLease(client, battleId) {
 async function loadLockedVoteBattle(client, battleId) {
   const result = await client.query(
     `select id, chain_id, state, source, tournament_id, battle_mode, ends_at,
-            challenger_token, defender_token, participants, winner_token
+            challenger_token, defender_token, participants, winner_token,
+            contest_scoring_version, competition_generation
        from public.arena_battles
       where id = $1
       for update`,
@@ -51,7 +53,8 @@ async function loadLockedVoteBattle(client, battleId) {
 
 async function loadTournament(client, tournamentId) {
   const result = await client.query(
-    `select id, chain_id, status, bracket, battle_mode, round_duration_hours
+    `select id, chain_id, status, bracket, battle_mode, round_duration_hours,
+            contest_scoring_version, competition_generation, native_symbol
        from public.arena_tournaments
       where id = $1
       limit 1`,
@@ -108,7 +111,8 @@ async function finishVoteBattle(client, battle, winnerToken, finishedAt) {
         set state = 'finished',
             winner_token = $2,
             finished_at = coalesce(finished_at, $3::timestamptz),
-            contest_scoring_version = 'vote_tournament_v1'
+            contest_scoring_version = 'vote_tournament_v1',
+            competition_generation = 'arena_competition_v2'
       where id = $1
       returning *`,
     [battle.id, winnerToken, finishedAt],
@@ -152,6 +156,14 @@ async function persistTiebreakState(client, battleId, next, uniqueVotes = { left
   return result.rows[0] || null;
 }
 
+function authoritativeVoteGeneration(row) {
+  return (
+    row?.battle_mode === "vote" &&
+    row?.contest_scoring_version === "vote_tournament_v1" &&
+    row?.competition_generation === "arena_competition_v2"
+  );
+}
+
 export function voteTournamentRuntimeEnabled(env = process.env) {
   return /^(1|true|yes|on)$/i.test(String(env.ARENA_VOTE_TOURNAMENT_RUNTIME || ""));
 }
@@ -174,9 +186,9 @@ export async function finalizeDueVoteTournamentBattle(pool, battleId, now = new 
       await client.query("rollback");
       return { settled: true, idempotent: true, battle };
     }
-    if (battle.state !== "live" || battle.source !== "tournament" || battle.battle_mode !== "vote") {
+    if (battle.state !== "live" || battle.source !== "tournament" || !authoritativeVoteGeneration(battle)) {
       await client.query("rollback");
-      return { settled: false, reason: "not-live-vote-tournament-battle" };
+      return { settled: false, reason: "not-live-v2-vote-tournament-battle" };
     }
     const nowIso = asIso(now);
     if (!battle.ends_at || new Date(battle.ends_at).getTime() > new Date(nowIso).getTime()) {
@@ -194,7 +206,12 @@ export async function finalizeDueVoteTournamentBattle(pool, battleId, now = new 
     }
 
     const tournament = await loadTournament(client, battle.tournament_id);
-    if (!tournament || tournament.status !== "live" || tournament.battle_mode !== "vote" || Number(tournament.round_duration_hours) !== 24) {
+    if (
+      !tournament ||
+      tournament.status !== "live" ||
+      Number(tournament.round_duration_hours) !== 24 ||
+      !authoritativeVoteGeneration(tournament)
+    ) {
       await client.query("rollback");
       return { settled: false, reason: "tournament-not-authoritative" };
     }
@@ -210,6 +227,12 @@ export async function finalizeDueVoteTournamentBattle(pool, battleId, now = new 
       const winnerSide = score.left > score.right ? "left" : "right";
       const winnerToken = winnerSide === "left" ? matchup.tokenA : matchup.tokenB;
       const finished = await finishVoteBattle(client, battle, winnerToken, nowIso);
+      const bracketAdvance = await advanceVoteTournamentBracket({
+        client,
+        tournamentId: battle.tournament_id,
+        battleId,
+        winnerToken,
+      });
       await client.query("commit");
       return {
         settled: true,
@@ -217,6 +240,7 @@ export async function finalizeDueVoteTournamentBattle(pool, battleId, now = new 
         winnerSide,
         winnerToken,
         regulation: score,
+        bracketAdvance,
         battle: finished,
       };
     }
@@ -291,6 +315,10 @@ export async function advanceDueFinalSalvo(pool, battleId, now = new Date()) {
       await client.query("rollback");
       return { advanced: false, reason: "battle-not-found" };
     }
+    if (!authoritativeVoteGeneration(battle)) {
+      await client.query("rollback");
+      return { advanced: false, reason: "not-v2-vote-tournament-battle" };
+    }
 
     const tiebreakResult = await client.query(
       `select * from public.arena_vote_tiebreaks where battle_id = $1 for update`,
@@ -336,14 +364,24 @@ export async function advanceDueFinalSalvo(pool, battleId, now = new Date()) {
 
     let finishedBattle = null;
     let winnerToken = null;
+    let bracketAdvance = null;
     if (next.state === "resolved") {
       const tournament = await loadTournament(client, battle.tournament_id);
-      const matchup = tournament ? resolveTournamentVoteMatch({ tournament, matchRef: battleId }) : null;
+      if (!tournament || !authoritativeVoteGeneration(tournament)) {
+        throw new Error("final-salvo-tournament-generation-unavailable-at-resolution");
+      }
+      const matchup = resolveTournamentVoteMatch({ tournament, matchRef: battleId });
       if (!matchup?.ok || matchup.battleId !== battleId) {
         throw new Error("final-salvo-matchup-unavailable-at-resolution");
       }
       winnerToken = next.winnerSide === "left" ? matchup.tokenA : matchup.tokenB;
       finishedBattle = await finishVoteBattle(client, battle, winnerToken, next.resolvedAt || nowIso);
+      bracketAdvance = await advanceVoteTournamentBracket({
+        client,
+        tournamentId: battle.tournament_id,
+        battleId,
+        winnerToken,
+      });
     }
 
     await client.query("commit");
@@ -356,6 +394,7 @@ export async function advanceDueFinalSalvo(pool, battleId, now = new Date()) {
       resolved: next.state === "resolved",
       winnerSide: next.winnerSide || null,
       winnerToken,
+      bracketAdvance,
       battle: finishedBattle || battle,
     };
   } catch (error) {
