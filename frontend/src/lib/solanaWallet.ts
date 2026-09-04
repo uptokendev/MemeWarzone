@@ -1,5 +1,6 @@
 import type { DraftActionAuth, DraftAuthAction } from "@/lib/draftAuth";
 import { apiFetch } from "@/lib/apiBase";
+import { detectWalletStandardSolanaWallets } from "@/lib/solanaWalletStandard";
 
 export const SOLANA_WALLET_STORAGE_KEY = "mwz:solana_wallet";
 export const SOLANA_WALLET_NAME_STORAGE_KEY = "mwz:solana_wallet_name";
@@ -25,7 +26,7 @@ const CONNECT_TIMEOUT_MS = 25_000;
 const OTHER_WALLET_DISCONNECT_MS = 200;
 
 function debugLog(step: string, data?: any) {
-  console.log(`[Phantom Debug] ${step}`, data ? data : "");
+  console.log(`[Solana Wallet Debug] ${step}`, data ? data : "");
 }
 
 async function withTimeout<T>(promise: Promise<T> | undefined | null, ms: number, message: string): Promise<T> {
@@ -106,13 +107,19 @@ export function detectSolanaWallets(): DetectedSolanaWallet[] {
   const wallets: DetectedSolanaWallet[] = [];
   const seen = new Set<SolanaProvider>();
 
-  // Reverted: using window.solana first as window.phantom.solana appears to silently hang on connect() in some server environments.
-  addWallet(wallets, seen, w.solana?.isPhantom ? { id: "phantom", name: "Phantom", icon: "👻", provider: w.solana } : null);
-  addWallet(wallets, seen, w.phantom?.solana ? { id: "phantom", name: "Phantom", icon: "👻", provider: w.phantom.solana } : null);
-  addWallet(wallets, seen, w.solflare ? { id: "solflare", name: "Solflare", icon: "☀️", provider: w.solflare } : null);
-  addWallet(wallets, seen, w.solana?.isSolflare ? { id: "solflare", name: "Solflare", icon: "SOL", provider: w.solana } : null);
-  addWallet(wallets, seen, w.backpack?.solana ? { id: "backpack", name: "Backpack", icon: "🎒", provider: w.backpack.solana } : null);
-  addWallet(wallets, seen, w.glowSolana ? { id: "glow", name: "Glow", icon: "✨", provider: w.glowSolana } : null);
+  // Wallet Standard is authoritative for standards-compliant wallets. Legacy
+  // globals remain only as a compatibility fallback for wallets that have not
+  // adopted the standard yet.
+  for (const wallet of detectWalletStandardSolanaWallets()) {
+    addWallet(wallets, seen, wallet as DetectedSolanaWallet);
+  }
+
+  addWallet(wallets, seen, w.solana?.isPhantom ? { id: "legacy:phantom", name: "Phantom", icon: "👻", provider: w.solana } : null);
+  addWallet(wallets, seen, w.phantom?.solana ? { id: "legacy:phantom", name: "Phantom", icon: "👻", provider: w.phantom.solana } : null);
+  addWallet(wallets, seen, w.solflare ? { id: "legacy:solflare", name: "Solflare", icon: "☀️", provider: w.solflare } : null);
+  addWallet(wallets, seen, w.solana?.isSolflare ? { id: "legacy:solflare", name: "Solflare", icon: "SOL", provider: w.solana } : null);
+  addWallet(wallets, seen, w.backpack?.solana ? { id: "legacy:backpack", name: "Backpack", icon: "🎒", provider: w.backpack.solana } : null);
+  addWallet(wallets, seen, w.glowSolana ? { id: "legacy:glow", name: "Glow", icon: "✨", provider: w.glowSolana } : null);
 
   return wallets;
 }
@@ -213,8 +220,6 @@ export function ensureSolanaListeners(options: { readExistingAccount?: boolean }
 
     const sync = (clearIfEmpty = false) => {
       if (solanaDisconnected()) return;
-      // Only the currently selected wallet may update app state. Otherwise
-      // Backpack/Phantom/Solflare all fire connect/accountChanged and steal focus.
       const storedId = getStoredSolanaWalletId();
       if (storedId && storedId !== wallet.id) return;
       const key = providerPublicKey(provider);
@@ -245,22 +250,18 @@ export async function connectSolanaWallet(walletId?: string): Promise<{ publicKe
 
   if (!wallet?.provider?.connect) {
     debugLog("Error: No supported Solana wallet detected");
-    throw new Error("No supported Solana wallet detected. Install Phantom, Solflare, Backpack, or Glow.");
+    throw new Error("No standards-compatible or legacy Solana wallet detected.");
   }
 
   const previousId = getStoredSolanaWalletId();
   debugLog("previousId from storage", { previousId });
 
-  // Persist the chosen provider before connect so its accountChanged is not ignored.
   try {
     window.localStorage.setItem(SOLANA_WALLET_ID_STORAGE_KEY, wallet.id);
     window.localStorage.setItem(SOLANA_WALLET_NAME_STORAGE_KEY, wallet.name);
   } catch {
     // ignore
   }
-
-  // We must always call connect() to ensure the wallet is unlocked and active.
-  // Bypassing connect() with cached keys leads to silently failing connections.
 
   if (previousId && previousId !== wallet.id) {
     debugLog("Disconnecting previous wallet", { previousId });
@@ -273,13 +274,9 @@ export async function connectSolanaWallet(walletId?: string): Promise<{ publicKe
       debugLog("Previous wallet disconnected successfully");
     } catch (e) {
       debugLog("Previous wallet disconnect failed or timed out", e);
-      // previous wallet may already be disconnected or unresponsive
     }
   }
 
-  // Do not disconnect the selected provider before connect. A late disconnect
-  // event can wipe the just-connected public key. connect({ onlyIfTrusted: false })
-  // is enough to unlock/re-prompt the same wallet.
   let result: { publicKey?: { toString: () => string } } | undefined;
   try {
     debugLog("Calling wallet.provider.connect() ...");
@@ -287,7 +284,7 @@ export async function connectSolanaWallet(walletId?: string): Promise<{ publicKe
     result = await withTimeout(
       wallet.provider.connect({ onlyIfTrusted: false }),
       CONNECT_TIMEOUT_MS,
-      `${wallet.name} did not respond. Unlock it, click the extension icon to approve the popup, then try again.`,
+      `${wallet.name} did not respond. Unlock it, approve the wallet request, then try again.`,
     );
     debugLog(`wallet.provider.connect() resolved in ${Math.round(performance.now() - connectStart)}ms`, { publicKey: result?.publicKey?.toString() });
   } catch (error) {
@@ -416,7 +413,6 @@ function resolveSolanaProviderForAddress(walletAddress?: string): { provider: So
   const wallets = detectSolanaWallets();
   const wanted = normalizePublicKey(walletAddress || "");
 
-  // Prefer the wallet that already exposes this public key (avoids signing with Backpack while UI shows Phantom).
   if (wanted) {
     const byKey = wallets.find((w) => normalizePublicKey(w.provider?.publicKey?.toString?.() || "") === wanted);
     if (byKey?.provider) return { provider: byKey.provider, wallet: byKey };
@@ -446,7 +442,6 @@ const SOLANA_OWNER_SESSION_SAFETY_WINDOW_MS = 15 * 1000;
 const SOLANA_OWNER_SESSION_IN_FLIGHT = new Map<string, Promise<DraftActionAuth & { walletType: "solana" }>>();
 
 function solanaOwnerSessionCacheKey(input: { walletAddress: string; chainId: number; draftId: string }) {
-  // Solana addresses are case-sensitive — never lowercase the cache key.
   return `${SOLANA_OWNER_SESSION_CACHE_PREFIX}${Number(input.chainId)}:${normalizePublicKey(input.walletAddress)}:${input.draftId}`;
 }
 
@@ -529,8 +524,6 @@ async function createSignedSolanaDraftAction(input: {
     expectedWalletAddress: walletAddress,
   });
 
-  // Fetch nonce immediately before signing so nothing else can replace it
-  // (auth_nonces is unique on chain_id + address).
   const nonce = await fetchNonce(chainId, walletAddress);
   const lines = [
     "MemeWarzone Prepare Mode",
@@ -543,7 +536,6 @@ async function createSignedSolanaDraftAction(input: {
 
   const message = lines.join("\n");
   const encoded = new TextEncoder().encode(message);
-  // Phantom: signMessage(Uint8Array) only — a second "utf8" arg can break some extension versions.
   const signed = await provider.signMessage(encoded);
   const rawSig = signed instanceof Uint8Array ? signed : signed?.signature;
   const signature =
@@ -568,7 +560,6 @@ async function createSignedSolanaDraftAction(input: {
   };
 
   if (input.action === SOLANA_OWNER_SESSION_ACTION && draftId) {
-    // expiresAt is not returned from fetchNonce here; session server TTL still applies on first use.
     cacheSolanaOwnerSession({
       auth,
       walletAddress,
@@ -581,14 +572,6 @@ async function createSignedSolanaDraftAction(input: {
   return auth;
 }
 
-/**
- * Sign a Solana draft action.
- *
- * For draft-scoped actions (including deploy_draft), reuses a cached
- * `draft_owner_session` signature so authorize + mark-deploy can share one
- * wallet popup. auth_nonces is unique per (chain_id, address) — consuming the
- * same one-shot deploy_draft nonce twice always 401s.
- */
 export async function signSolanaDraftAction(input: {
   walletAddress: string;
   chainId: number;
