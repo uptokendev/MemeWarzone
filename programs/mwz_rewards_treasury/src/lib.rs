@@ -106,6 +106,29 @@ pub mod mwz_rewards_treasury {
         deposit_competition_boost_v2_handler(ctx, competition_id, funding_id, gross_lamports)
     }
 
+    pub fn cancel_competition_pool_v2(
+        ctx: Context<CancelCompetitionPoolV2>,
+        competition_id: [u8; 32],
+    ) -> Result<()> {
+        cancel_competition_pool_v2_handler(ctx, competition_id)
+    }
+
+    pub fn refund_competition_entry_v2(
+        ctx: Context<RefundCompetitionEntryV2>,
+        competition_id: [u8; 32],
+        entry_asset: Pubkey,
+    ) -> Result<()> {
+        refund_competition_entry_v2_handler(ctx, competition_id, entry_asset)
+    }
+
+    pub fn refund_competition_boost_v2(
+        ctx: Context<RefundCompetitionBoostV2>,
+        competition_id: [u8; 32],
+        funding_id: [u8; 32],
+    ) -> Result<()> {
+        refund_competition_boost_v2_handler(ctx, competition_id, funding_id)
+    }
+
     pub fn resolve_competition_pool_v2(
         ctx: Context<ResolveCompetitionPoolV2>,
         competition_id: [u8; 32],
@@ -1020,7 +1043,7 @@ pub struct SetLeagueEpochRoot<'info> {
         bump = config.bump,
         has_one = authority
     )]
-    pub config: Account<'info, RewardsConfig>,
+    pub config: Box<Account<'info, RewardsConfig>>,
     #[account(seeds = [LEAGUE_VAULT_SEED], bump = config.league_vault_bump)]
     pub league_vault: Account<'info, VaultState>,
     #[account(
@@ -1120,7 +1143,7 @@ pub struct SetRecruiterBatchRoot<'info> {
         bump = config.bump,
         has_one = authority
     )]
-    pub config: Account<'info, RewardsConfig>,
+    pub config: Box<Account<'info, RewardsConfig>>,
     #[account(seeds = [RECRUITER_VAULT_SEED], bump)]
     pub recruiter_vault: Account<'info, VaultState>,
     #[account(
@@ -1170,7 +1193,7 @@ pub struct SetSquadBatchRoot<'info> {
         bump = config.bump,
         has_one = authority
     )]
-    pub config: Account<'info, RewardsConfig>,
+    pub config: Box<Account<'info, RewardsConfig>>,
     #[account(seeds = [SQUAD_VAULT_SEED], bump)]
     pub squad_vault: Account<'info, VaultState>,
     #[account(
