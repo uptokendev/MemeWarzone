@@ -58,8 +58,19 @@ export type EventSponsorshipQuote = {
 };
 
 /**
- * Agent 3 owns the implementation behind this transport.
- * Agent 2 consumes it and must not recreate quote/payment verification logic.
+ * Browser-facing Event Sponsorship transport expected by Agent 2.
+ *
+ * The merged Agent 3 runtime currently exposes only:
+ *   POST /api/arena/sponsorships/quote
+ *   POST /api/arena/sponsorships/confirm   (internal-auth only)
+ *
+ * A safe browser flow still requires authoritative public preflight/options/state
+ * endpoints so the client can learn the server-owned tier/minimum before signing
+ * arena_sponsorship_quote, and can observe payment confirmation without calling
+ * the internal confirmation endpoint.
+ *
+ * Agent 2 must not synthesize these values from unrelated advertising APIs or
+ * duplicate receipt/payment verification in the browser.
  */
 export type EventSponsorshipTransport = {
   getOptions(signal?: AbortSignal): Promise<EventSponsorshipState[]>;
