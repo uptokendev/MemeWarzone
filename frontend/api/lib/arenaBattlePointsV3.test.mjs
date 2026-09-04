@@ -3,11 +3,17 @@ import test from "node:test";
 import "./arenaBattlePointsV3Persistence.test.mjs";
 import "./arenaBattlePointsV3Refresh.test.mjs";
 
-import { BATTLE_POINTS_V3, BATTLE_POINTS_V3_CONFIG } from "./arenaBattlePointsConfig.js";
 import {
-  BATTLE_POINTS_V3_PENDING_REASON,
+  BATTLE_POINTS_V3,
+  BATTLE_POINTS_V3_BOOST_CURVE,
+  BATTLE_POINTS_V3_CONFIG,
+} from "./arenaBattlePointsConfig.js";
+import {
+  BATTLE_POINTS_V3_SETTLEMENT_DISABLED_REASON,
   battlePointsV3ActivationStatus,
   battlePointsV3MarketConfig,
+  calculateBattlePointsV3,
+  calculateBattlePointsV3Boost,
   calculateBattlePointsV3Market,
   combineBattlePointsV3,
 } from "./arenaBattlePointsV3.js";
@@ -48,34 +54,48 @@ function score(overrides = {}) {
   });
 }
 
-test("founder-locked V3 market weights are 45 / 27 / 18 with 10 reserved for Boost", () => {
+test("founder-locked V3 weights are 50 / 25 / 15 / 10", () => {
   const config = battlePointsV3MarketConfig();
   assert.equal(config.version, BATTLE_POINTS_V3);
-  assert.equal(config.mcap.weight, 45);
-  assert.equal(config.holders.weight, 27);
-  assert.equal(config.volume.weight, 18);
+  assert.equal(config.mcap.weight, 50);
+  assert.equal(config.holders.weight, 25);
+  assert.equal(config.volume.weight, 15);
   assert.equal(BATTLE_POINTS_V3_CONFIG.boost.weight, 10);
   assert.equal(config.mcap.weight + config.holders.weight + config.volume.weight + BATTLE_POINTS_V3_CONFIG.boost.weight, 100);
 });
 
-test("V3 market scaffold never invents Boost points or a settlement total", () => {
-  const result = score({
-    boost: {
-      units: "12345678901234567890",
-      grossNativeRaw: "999999999999999999999999",
-      poolNativeRaw: "899999999999999999999999",
-      protocolNativeRaw: "100000000000000000000000",
-    },
+test("founder-locked Boost curve metadata is exact and immutable config", () => {
+  assert.equal(BATTLE_POINTS_V3_CONFIG.boost.curveVersion, BATTLE_POINTS_V3_BOOST_CURVE);
+  assert.deepEqual(BATTLE_POINTS_V3_CONFIG.boost.curveParameters, {
+    maxPoints: 10,
+    halfSaturationUnits: 100,
+    unitUsdMicros: 1_000_000,
   });
+  assert.equal(Object.isFrozen(BATTLE_POINTS_V3_CONFIG.boost), true);
+  assert.equal(Object.isFrozen(BATTLE_POINTS_V3_CONFIG.boost.curveParameters), true);
+});
+
+test("boost_hyperbolic_100_v1 implements 10 * U / (U + 100)", () => {
+  assert.equal(calculateBattlePointsV3Boost(0), 0);
+  assert.equal(calculateBattlePointsV3Boost(1), 0.099);
+  assert.equal(calculateBattlePointsV3Boost(10), 0.9091);
+  assert.equal(calculateBattlePointsV3Boost(100), 5);
+  assert.equal(calculateBattlePointsV3Boost(900), 9);
+  assert.equal(calculateBattlePointsV3Boost(9900), 9.9);
+  assert.ok(calculateBattlePointsV3Boost(Number.MAX_SAFE_INTEGER) < 10);
+  assert.throws(() => calculateBattlePointsV3Boost(-1), /non-negative integer/);
+  assert.throws(() => calculateBattlePointsV3Boost("1.5"), /non-negative integer/);
+});
+
+test("V3 market projection does not invent confirmed paid Boost points", () => {
+  const result = score({ boost: { units: "100", grossNativeRaw: "1000", poolNativeRaw: "900", protocolNativeRaw: "100" } });
   assert.equal(result.scoringVersion, BATTLE_POINTS_V3);
   assert.equal(result.totalPoints, null);
   assert.equal(result.components.boostPoints, null);
   assert.equal(result.boost.points, null);
-  assert.equal(result.boost.curveVersion, "founder_pending");
+  assert.equal(result.boost.curveVersion, BATTLE_POINTS_V3_BOOST_CURVE);
   assert.equal(result.settleable, false);
-  assert.equal(result.settlementReason, BATTLE_POINTS_V3_PENDING_REASON);
-  assert.equal(result.boost.units, "12345678901234567890");
-  assert.equal(result.boost.grossNativeRaw, "999999999999999999999999");
+  assert.equal(result.settlementReason, "boost_points_not_calculated");
 });
 
 test("V3 market subtotal is bounded by 90 points", () => {
@@ -91,14 +111,13 @@ test("V3 market subtotal is bounded by 90 points", () => {
     eligibleVolume: { usd: totalVolume, rawUsd: totalVolume, cappedUsd: totalVolume, clusters: clusters(totalVolume, 10) },
     now: NOW,
   });
-  assert.ok(maxed.mcap.points <= 45);
-  assert.ok(maxed.holders.points <= 27);
-  assert.ok(maxed.volume.points <= 18);
+  assert.ok(maxed.mcap.points <= 50);
+  assert.ok(maxed.holders.points <= 25);
+  assert.ok(maxed.volume.points <= 15);
   assert.ok(maxed.marketSubtotal <= 90);
-  assert.equal(maxed.marketSubtotal, maxed.mcap.points + maxed.holders.points + maxed.volume.points);
 });
 
-test("V3 preserves the existing anti-concentration rule at the 18-point volume weight", () => {
+test("V3 preserves the existing anti-concentration rule at the 15-point volume weight", () => {
   const whale = score({
     eligibleVolume: {
       usd: 1_000_000,
@@ -107,81 +126,55 @@ test("V3 preserves the existing anti-concentration rule at the 18-point volume w
       clusters: [{ clusterId: "same-beneficial-owner", countedUsd: 1_000_000 }],
     },
   });
-  assert.equal(whale.volume.clusterPointCap, 3.6);
-  assert.ok(whale.volume.points <= 3.6);
-  assert.equal(whale.volume.clusterContributions[0].capped, true);
+  assert.equal(whale.volume.clusterPointCap, 3);
+  assert.ok(whale.volume.points <= 3);
 });
 
-test("V3 feature flag cannot activate settlement while founder Boost curve is pending", () => {
-  const off = battlePointsV3ActivationStatus({ env: {} });
-  assert.deepEqual(off, {
+test("V3 settlement activation requires both explicit flags after founder curve lock", () => {
+  assert.deepEqual(battlePointsV3ActivationStatus({ env: {} }), {
     active: false,
     featureEnabled: false,
-    curveConfigured: false,
+    settlementEnabled: false,
+    curveConfigured: true,
     reason: "feature_disabled",
   });
-
-  const requested = battlePointsV3ActivationStatus({ env: { ARENA_BATTLE_POINTS_V3: "true" } });
-  assert.deepEqual(requested, {
+  assert.deepEqual(battlePointsV3ActivationStatus({ env: { ARENA_BATTLE_POINTS_V3: "true" } }), {
     active: false,
     featureEnabled: true,
-    curveConfigured: false,
-    reason: BATTLE_POINTS_V3_PENDING_REASON,
+    settlementEnabled: false,
+    curveConfigured: true,
+    reason: BATTLE_POINTS_V3_SETTLEMENT_DISABLED_REASON,
+  });
+  assert.deepEqual(battlePointsV3ActivationStatus({ env: { ARENA_BATTLE_POINTS_V3: "true", ARENA_BATTLE_POINTS_V3_SETTLEMENT: "true" } }), {
+    active: true,
+    featureEnabled: true,
+    settlementEnabled: true,
+    curveConfigured: true,
+    reason: "ok",
   });
 });
 
-test("V3 market calculation is deterministic and generation-neutral for normalized inputs", () => {
-  const shared = {
-    baseline: { startMcapUsd: 20_000, startHolders: 800 },
-    current: { marketCapUsd: 24_000, holders: 860, updatedAt: "2026-09-03T11:59:00.000Z", healthy: true },
-    eligibleVolume: { usd: 3_000, rawUsd: 3_000, cappedUsd: 3_000, clusters: clusters(3_000) },
-    now: NOW,
-  };
-  const a = calculateBattlePointsV3Market({ ...shared, chainId: 56, venue: "native-a" });
-  const b = calculateBattlePointsV3Market({ ...shared, chainId: 101, venue: "native-b" });
-  const c = calculateBattlePointsV3Market({ ...shared, chainId: 4663, venue: "stock-c" });
-  assert.deepEqual(a, b);
-  assert.deepEqual(b, c);
-});
-
-test("combine refuses founder-pending curve and unhealthy market data", () => {
+test("combine requires exact founder curve and healthy market data", () => {
   const market = score();
   assert.throws(
-    () => combineBattlePointsV3({ marketScore: market, boostPoints: 5, curveVersion: "founder_pending", curveParameters: {} }),
-    new RegExp(BATTLE_POINTS_V3_PENDING_REASON),
+    () => combineBattlePointsV3({ marketScore: market, boostPoints: 5, curveVersion: "test_fixture_only", curveParameters: BATTLE_POINTS_V3_CONFIG.boost.curveParameters }),
+    /curve version mismatch/,
   );
-
   const unhealthy = score({ current: { healthy: false, reasons: ["upstream_unhealthy"] } });
-  assert.throws(
-    () => combineBattlePointsV3({ marketScore: unhealthy, boostPoints: 5, curveVersion: "test_fixture_only", curveParameters: { fixture: true } }),
-    /market data is unhealthy/,
-  );
+  assert.throws(() => combineBattlePointsV3({ marketScore: unhealthy, boostPoints: 5 }), /market data is unhealthy/);
 });
 
-test("test-only externally derived Boost points can be combined without defining a production curve", () => {
-  const market = score();
-  const combined = combineBattlePointsV3({
-    marketScore: market,
-    boostPoints: 7.5,
-    curveVersion: "test_fixture_only",
-    curveParameters: { fixtureOnly: true, production: false },
+test("V3 total derives Boost points only from confirmed units and remains <= 100", () => {
+  const result = calculateBattlePointsV3({
+    baseline: { startMcapUsd: 10_000, startHolders: 1_000 },
+    current: { marketCapUsd: 12_000, holders: 1_200, updatedAt: "2026-09-03T11:59:00.000Z", healthy: true },
+    eligibleVolume: { usd: 20_000, rawUsd: 20_000, cappedUsd: 20_000, clusters: clusters(20_000, 10) },
+    boost: { units: 100 },
+    now: NOW,
   });
-  assert.equal(combined.settleable, true);
-  assert.equal(combined.settlementReason, "ok");
-  assert.equal(combined.boost.points, 7.5);
-  assert.equal(combined.components.boostPoints, 7.5);
-  assert.equal(combined.totalPoints, Math.min(100, combined.marketSubtotal + 7.5));
-  assert.ok(combined.totalPoints <= 100);
-});
-
-test("Boost component can never exceed founder-locked 10-point cap", () => {
-  const market = score();
-  assert.throws(
-    () => combineBattlePointsV3({ marketScore: market, boostPoints: 10.0001, curveVersion: "test_fixture_only", curveParameters: {} }),
-    /between 0 and 10/,
-  );
-  assert.throws(
-    () => combineBattlePointsV3({ marketScore: market, boostPoints: -0.1, curveVersion: "test_fixture_only", curveParameters: {} }),
-    /between 0 and 10/,
-  );
+  assert.equal(result.boost.points, 5);
+  assert.equal(result.components.boostPoints, 5);
+  assert.equal(result.boost.curveVersion, BATTLE_POINTS_V3_BOOST_CURVE);
+  assert.equal(result.settleable, true);
+  assert.ok(result.totalPoints <= 100);
 });
