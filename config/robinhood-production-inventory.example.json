@@ -3,6 +3,7 @@
   "deploymentBlock": 0,
   "admin": "0x<production-admin-or-multisig>",
   "routeAuthority": "0x<separate-production-route-authority>",
+  "oracleMaxAgeSeconds": 900,
   "contracts": {
     "launchFactory": "0x<launch-factory>",
     "launchCampaignImplementation": "0x<launch-campaign-implementation>",
@@ -30,6 +31,13 @@
     "nativeUsdFeed": "0x<approved-production-eth-usd-feed>"
   },
   "stock": {
+    "graduationPolicy": {
+      "maxOracleAgeSeconds": 900,
+      "maxSwapSlippageBps": 300,
+      "maxOracleDeviationBps": 300,
+      "maxPriceImpactBps": 500,
+      "minimumRouteLiquidityUsd": 25000
+    },
     "registry": [
       {
         "symbol": "NVDA",

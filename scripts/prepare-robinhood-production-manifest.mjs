@@ -76,10 +76,21 @@ function normalizeStockRegistry(registry) {
   }));
 }
 
+function normalizeGraduationPolicy(policy = {}, oracleMaxAgeSeconds) {
+  return {
+    maxOracleAgeSeconds: positiveInteger(policy.maxOracleAgeSeconds ?? oracleMaxAgeSeconds, "stock.graduationPolicy.maxOracleAgeSeconds"),
+    maxSwapSlippageBps: positiveInteger(policy.maxSwapSlippageBps, "stock.graduationPolicy.maxSwapSlippageBps"),
+    maxOracleDeviationBps: positiveInteger(policy.maxOracleDeviationBps, "stock.graduationPolicy.maxOracleDeviationBps"),
+    maxPriceImpactBps: positiveInteger(policy.maxPriceImpactBps, "stock.graduationPolicy.maxPriceImpactBps"),
+    minimumRouteLiquidityUsd: positiveInteger(policy.minimumRouteLiquidityUsd, "stock.graduationPolicy.minimumRouteLiquidityUsd"),
+  };
+}
+
 export function buildRobinhoodProductionManifest(inventory, options = {}) {
   if (!inventory || typeof inventory !== "object") throw new Error("production inventory is missing");
   const sourceSha = fullSha(options.candidateSha || inventory.sourceSha || inventory.candidateSha);
   const deploymentBlock = positiveInteger(inventory.deploymentBlock, "deploymentBlock");
+  const oracleMaxAgeSeconds = positiveInteger(inventory.oracleMaxAgeSeconds, "oracleMaxAgeSeconds");
 
   const manifest = {
     schemaVersion: 2,
@@ -95,6 +106,7 @@ export function buildRobinhoodProductionManifest(inventory, options = {}) {
     liquidityKind: EXPECTED_LIQUIDITY_KIND,
     productionCompatible: true,
     testnetOnly: false,
+    oracleMaxAgeSeconds,
 
     // RH-S14 preflight is intentionally dark. Activation is a separate operation.
     supportEnabled: false,
@@ -121,6 +133,7 @@ export function buildRobinhoodProductionManifest(inventory, options = {}) {
       nativeUsdOracleConfigured: true,
       approvedAcquisitionRoutesConfigured: true,
       stockRoutesEnabled: false,
+      graduationPolicy: normalizeGraduationPolicy(inventory.stock?.graduationPolicy, oracleMaxAgeSeconds),
       registry: normalizeStockRegistry(inventory.stock?.registry),
     },
     activationPrerequisites: [
