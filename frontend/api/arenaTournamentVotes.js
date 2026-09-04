@@ -22,21 +22,26 @@ function parseRoute(req) {
 }
 
 async function loadTournament(id) {
-  const result = await pool.query(`select id, chain_id, status, bracket from public.arena_tournaments where id = $1 limit 1`, [id]);
+  const result = await pool.query(
+    `select id, chain_id, status, bracket, battle_mode, round_duration_hours
+       from public.arena_tournaments where id = $1 limit 1`,
+    [id],
+  );
   return result.rows[0] || null;
 }
 
-async function listMatchVotes({ tournamentId, roundNumber, matchId }) {
+async function listMatchVotes({ tournamentId, roundNumber, matchId, battleId }) {
   const result = await pool.query(
-    `select selected_token, wallet_address, created_at
+    `select side, wallet, created_at
        from public.arena_contest_actions
       where tournament_id = $1
-        and round_number = $2
-        and match_id = $3
+        and battle_id = $2
+        and round_number = $3
+        and coalesce(match_id, battle_id) = $4
         and phase = 'regulation'
         and action_type = 'free_vote'
       order by created_at asc`,
-    [tournamentId, roundNumber, matchId],
+    [tournamentId, battleId, roundNumber, matchId],
   );
   return result.rows;
 }
@@ -51,14 +56,15 @@ async function handleGet(req, res, route, tournament) {
     tournamentId: route.tournamentId,
     roundNumber: resolved.roundNumber,
     matchId: resolved.matchId,
+    battleId: resolved.battleId,
   });
   const summary = tournamentVoteSummary(rows, resolved);
   const query = getQuery(req);
   const wallet = normalizeAddress(query.walletAddress || query.wallet || "", Number(tournament.chain_id));
   let walletVote = null;
   if (wallet) {
-    const found = rows.find((row) => String(row.wallet_address || "") === wallet);
-    walletVote = found?.selected_token || null;
+    const found = rows.find((row) => normalizeAddress(row.wallet || "", Number(tournament.chain_id)) === wallet);
+    walletVote = found?.side === "left" ? resolved.tokenA : found?.side === "right" ? resolved.tokenB : null;
   }
 
   return json(res, 200, {
@@ -113,7 +119,8 @@ async function handlePost(req, res, route, tournament) {
   try {
     await client.query("begin");
     const locked = await client.query(
-      `select id, chain_id, status, bracket from public.arena_tournaments where id = $1 limit 1 for update`,
+      `select id, chain_id, status, bracket, battle_mode, round_duration_hours
+         from public.arena_tournaments where id = $1 limit 1 for update`,
       [route.tournamentId],
     );
     const current = locked.rows[0];
@@ -132,11 +139,11 @@ async function handlePost(req, res, route, tournament) {
     const inserted = await client.query(
       `insert into public.arena_contest_actions (
          chain_id, tournament_id, match_id, battle_id, round_number, phase, salvo_index,
-         side, selected_token, wallet_address, action_type, boost_units, points,
+         side, wallet, action_type, boost_units, points,
          gross_native_raw, pool_native_raw, protocol_native_raw, confirmed_at
-       ) values ($1,$2,$3,$4,$5,'regulation',0,$6,$7,$8,'free_vote',0,1,0,0,0,now())
+       ) values ($1,$2,$3,$4,$5,'regulation',null,$6,$7,'free_vote',0,1,0,0,0,now())
        on conflict do nothing
-       returning id, selected_token, created_at`,
+       returning id, side, created_at`,
       [
         Number(current.chain_id),
         route.tournamentId,
@@ -144,40 +151,42 @@ async function handlePost(req, res, route, tournament) {
         currentMatch.battleId,
         currentMatch.roundNumber,
         side,
-        selectedToken,
         wallet,
       ],
     );
 
     if (!inserted.rows[0]) {
       const existing = await client.query(
-        `select selected_token from public.arena_contest_actions
+        `select side from public.arena_contest_actions
           where tournament_id = $1
-            and round_number = $2
-            and match_id = $3
+            and battle_id = $2
+            and round_number = $3
+            and coalesce(match_id, battle_id) = $4
             and phase = 'regulation'
             and action_type = 'free_vote'
-            and wallet_address = $4
+            and wallet = $5
           limit 1`,
-        [route.tournamentId, currentMatch.roundNumber, currentMatch.matchId, wallet],
+        [route.tournamentId, currentMatch.battleId, currentMatch.roundNumber, currentMatch.matchId, wallet],
       );
       await client.query("rollback");
+      const existingSide = existing.rows[0]?.side;
       return json(res, 409, {
         ok: false,
         error: "This wallet already used its free vote for this matchup and round.",
         code: "TOURNAMENT_VOTE_ALREADY_USED",
-        existingToken: existing.rows[0]?.selected_token || null,
+        existingToken: existingSide === "left" ? currentMatch.tokenA : existingSide === "right" ? currentMatch.tokenB : null,
       });
     }
 
     const rows = await client.query(
-      `select selected_token from public.arena_contest_actions
+      `select side from public.arena_contest_actions
         where tournament_id = $1
-          and round_number = $2
-          and match_id = $3
+          and battle_id = $2
+          and round_number = $3
+          and coalesce(match_id, battle_id) = $4
           and phase = 'regulation'
           and action_type = 'free_vote'`,
-      [route.tournamentId, currentMatch.roundNumber, currentMatch.matchId],
+      [route.tournamentId, currentMatch.battleId, currentMatch.roundNumber, currentMatch.matchId],
     );
     await client.query("commit");
 
