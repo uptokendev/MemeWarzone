@@ -12,27 +12,7 @@ function address(index) {
 }
 
 const CONTRACT_KEYS = [
-  "launchFactory",
-  "launchCampaignImplementation",
-  "stockCampaignImplementation",
-  "permanentV3PositionLocker",
-  "treasuryRouterV3",
-  "graduationAdapter",
-  "v3NativeSwapAdapter",
-  "stockGraduationAdapter",
-  "v3MultiHopSwapAdapter",
-  "graduationOracle",
-  "creatorRegistry",
-  "riskRegistry",
-  "weeklyLeagueVault",
-  "recruiterRewardsVault",
-  "communityRewardsVault",
-  "protocolRevenueVault",
-  "upVoteTreasury",
-  "v3Factory",
-  "nonfungiblePositionManager",
-  "v3SwapRouter",
-  "weth9",
+  "launchFactory","launchCampaignImplementation","stockCampaignImplementation","permanentV3PositionLocker","treasuryRouterV3","graduationAdapter","v3NativeSwapAdapter","stockGraduationAdapter","v3MultiHopSwapAdapter","graduationOracle","creatorRegistry","riskRegistry","weeklyLeagueVault","recruiterRewardsVault","communityRewardsVault","protocolRevenueVault","upVoteTreasury","v3Factory","nonfungiblePositionManager","v3SwapRouter","weth9",
 ];
 
 function acceptedTestnet() {
@@ -40,36 +20,43 @@ function acceptedTestnet() {
 }
 
 function validInventory() {
+  const contracts = Object.fromEntries(CONTRACT_KEYS.map((key, index) => [key, address(100 + index)]));
   return {
     sourceSha: CANDIDATE_SHA,
     deploymentBlock: 987654,
     admin: address(50),
     routeAuthority: address(51),
-    contracts: Object.fromEntries(CONTRACT_KEYS.map((key, index) => [key, address(100 + index)])),
+    oracleMaxAgeSeconds: 900,
+    contracts,
     oracles: { nativeUsdFeed: address(200) },
     stock: {
-      registry: [
-        {
-          symbol: "NVDA",
-          displayName: "NVIDIA Stock Token",
-          underlyingSymbol: "NVDA",
-          decimals: 18,
-          contractAddress: address(210),
-          oracleFeedAddress: address(211),
-          oracleType: "chainlink",
-          canonical: true,
-          enabledForDiscovery: true,
-          enabledForGraduation: true,
-          enabledForTrading: true,
-          minimumQuoteLiquidityUsd: 25000,
-          maximumGraduationSwapImpactBps: 500,
-          acquisitionPoolAddress: address(212),
-          acquisitionQuoterAddress: address(213),
-          acquisitionRouterAddress: address(214),
-          acquisitionFeeTier: 3000,
-          acquisitionQuoteKind: "SIMPLE_EXACT_INPUT_SINGLE",
-        },
-      ],
+      graduationPolicy: {
+        maxOracleAgeSeconds: 900,
+        maxSwapSlippageBps: 300,
+        maxOracleDeviationBps: 300,
+        maxPriceImpactBps: 500,
+        minimumRouteLiquidityUsd: 25000,
+      },
+      registry: [{
+        symbol: "NVDA",
+        displayName: "NVIDIA Stock Token",
+        underlyingSymbol: "NVDA",
+        decimals: 18,
+        contractAddress: address(210),
+        oracleFeedAddress: address(211),
+        oracleType: "chainlink",
+        canonical: true,
+        enabledForDiscovery: true,
+        enabledForGraduation: true,
+        enabledForTrading: true,
+        minimumQuoteLiquidityUsd: 25000,
+        maximumGraduationSwapImpactBps: 500,
+        acquisitionPoolAddress: address(212),
+        acquisitionQuoterAddress: address(213),
+        acquisitionRouterAddress: contracts.v3SwapRouter,
+        acquisitionFeeTier: 3000,
+        acquisitionQuoteKind: "SIMPLE_EXACT_INPUT_SINGLE",
+      }],
     },
   };
 }
@@ -93,6 +80,10 @@ test("builder emits a complete dark 4663 preflight candidate", () => {
   assert.equal(manifest.stockEthRoutingEnabled, false);
   assert.equal(manifest.stockMarketUiEnabled, false);
   assert.equal(manifest.beatTheMarketEnabled, false);
+  assert.equal(manifest.oracleMaxAgeSeconds, 900);
+  assert.equal(manifest.stock.graduationPolicy.maxSwapSlippageBps, 300);
+  assert.equal(manifest.stock.graduationPolicy.maxOracleDeviationBps, 300);
+  assert.equal(manifest.stock.graduationPolicy.minimumRouteLiquidityUsd, 25000);
   assert.equal(manifest.stock.registry[0].enabledForGraduation, false);
   assert.equal(manifest.stock.registry[0].enabledForTrading, false);
   assert.equal(manifest.generatedAt, "2026-09-03T12:00:00.000Z");
@@ -116,15 +107,9 @@ test("builder ignores inventory attempts to pre-enable production surfaces", () 
     candidateSha: CANDIDATE_SHA,
   });
 
-  for (const key of [
-    "creationEnabled",
-    "stockMarketsEnabled",
-    "stockGraduationEnabled",
-    "stockEthRoutingEnabled",
-    "stockMarketUiEnabled",
-    "beatTheMarketEnabled",
-    "factoryLive",
-  ]) assert.equal(manifest[key], false, `${key} must remain dark`);
+  for (const key of ["creationEnabled","stockMarketsEnabled","stockGraduationEnabled","stockEthRoutingEnabled","stockMarketUiEnabled","beatTheMarketEnabled","factoryLive"]) {
+    assert.equal(manifest[key], false, `${key} must remain dark`);
+  }
   assert.equal(manifest.createPaused, true);
 });
 
@@ -132,26 +117,30 @@ test("builder rejects accepted testnet contract reuse", () => {
   const testnet = acceptedTestnet();
   const inventory = validInventory();
   inventory.contracts.launchFactory = testnet.contracts.launchFactory;
-  assert.throws(
-    () => buildRobinhoodProductionManifest(inventory, { acceptedTestnet: testnet, candidateSha: CANDIDATE_SHA }),
-    /reuses accepted Robinhood testnet address/i,
-  );
+  assert.throws(() => buildRobinhoodProductionManifest(inventory, { acceptedTestnet: testnet, candidateSha: CANDIDATE_SHA }), /reuses accepted Robinhood testnet address/i);
 });
 
 test("builder rejects route authority reuse with admin and missing deployment evidence", () => {
   const testnet = acceptedTestnet();
-
   const sameAuthority = validInventory();
   sameAuthority.routeAuthority = sameAuthority.admin;
-  assert.throws(
-    () => buildRobinhoodProductionManifest(sameAuthority, { acceptedTestnet: testnet, candidateSha: CANDIDATE_SHA }),
-    /distinct from admin/i,
-  );
+  assert.throws(() => buildRobinhoodProductionManifest(sameAuthority, { acceptedTestnet: testnet, candidateSha: CANDIDATE_SHA }), /distinct from admin/i);
 
   const noBlock = validInventory();
   noBlock.deploymentBlock = null;
-  assert.throws(
-    () => buildRobinhoodProductionManifest(noBlock, { acceptedTestnet: testnet, candidateSha: CANDIDATE_SHA }),
-    /deploymentBlock/i,
-  );
+  assert.throws(() => buildRobinhoodProductionManifest(noBlock, { acceptedTestnet: testnet, candidateSha: CANDIDATE_SHA }), /deploymentBlock/i);
+});
+
+test("builder rejects missing or unsafe Stock safety policy input", () => {
+  for (const mutate of [
+    (inventory) => { delete inventory.oracleMaxAgeSeconds; },
+    (inventory) => { delete inventory.stock.graduationPolicy; },
+    (inventory) => { inventory.stock.graduationPolicy.maxSwapSlippageBps = 0; },
+    (inventory) => { inventory.stock.graduationPolicy.maxOracleDeviationBps = 10001; },
+    (inventory) => { inventory.stock.graduationPolicy.minimumRouteLiquidityUsd = 0; },
+  ]) {
+    const inventory = validInventory();
+    mutate(inventory);
+    assert.throws(() => buildRobinhoodProductionManifest(inventory, { acceptedTestnet: acceptedTestnet(), candidateSha: CANDIDATE_SHA }));
+  }
 });

@@ -17,6 +17,7 @@ on:
       - "frontend/src/lib/injectedWallets.test.mjs"
       - "frontend/src/lib/solanaWallet.ts"
       - "frontend/src/lib/solanaWalletStandard.ts"
+      - "frontend/src/lib/solanaWalletStandard.test.mjs"
       - "frontend/src/lib/walletConnect.ts"
       - "frontend/src/lib/walletConnect.contract.test.mjs"
       - "frontend/src/lib/chainConfig.ts"
@@ -39,6 +40,7 @@ on:
       - "frontend/src/lib/injectedWallets.test.mjs"
       - "frontend/src/lib/solanaWallet.ts"
       - "frontend/src/lib/solanaWalletStandard.ts"
+      - "frontend/src/lib/solanaWalletStandard.test.mjs"
       - "frontend/src/lib/walletConnect.ts"
       - "frontend/src/lib/walletConnect.contract.test.mjs"
       - "frontend/src/lib/chainConfig.ts"
@@ -76,6 +78,9 @@ jobs:
 
       - name: Test generic and unknown EVM wallet acceptance
         run: node --test frontend/src/lib/injectedWallets.test.mjs
+
+      - name: Test Solana Wallet Standard compatibility
+        run: node --test frontend/src/lib/solanaWalletStandard.test.mjs
 
       - name: Test recruiter EVM authentication compatibility
         run: node --test frontend/src/hooks/useRecruiterWallet.compatibility.test.mjs

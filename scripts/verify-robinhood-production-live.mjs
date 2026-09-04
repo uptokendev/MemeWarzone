@@ -44,6 +44,7 @@ const STOCK_GRADUATION_ADAPTER_ABI = [
   "function permanentPositionLocker() view returns (address)",
   "function nativeUsdOracle() view returns (address)",
   "function feeTier() view returns (uint24)",
+  "function maxOracleAgeSeconds() view returns (uint32)",
   "function campaignFactory() view returns (address)",
   "function campaignFactoryLocked() view returns (bool)",
   "function stockRoutes(address) view returns (address oracleFeed,address acquisitionPool,uint24 acquisitionFeeTier,uint256 minimumRouteLiquidityUsdWad,uint16 maxSwapSlippageBps,uint16 maxOracleDeviationBps,uint16 maxPriceImpactBps,bool enabled)",
@@ -78,7 +79,14 @@ const ORACLE_ABI = [
   "function latestRoundData() view returns (uint80 roundId,int256 answer,uint256 startedAt,uint256 updatedAt,uint80 answeredInRound)",
   "function decimals() view returns (uint8)",
 ];
-const V3_FACTORY_ABI = ["function feeAmountTickSpacing(uint24) view returns (int24)"];
+const V3_FACTORY_ABI = [
+  "function feeAmountTickSpacing(uint24) view returns (int24)",
+  "function getPool(address,address,uint24) view returns (address)",
+];
+const ERC20_ABI = [
+  "function decimals() view returns (uint8)",
+  "function balanceOf(address) view returns (uint256)",
+];
 
 function same(a, b) {
   return String(a || "").toLowerCase() === String(b || "").toLowerCase();
@@ -97,6 +105,15 @@ async function requireCode(provider, address, label) {
   if (!code || code === "0x") throw new Error(`${label} has no bytecode at ${address}`);
 }
 
+function normalizeOraclePriceWad(answer, decimals) {
+  const value = BigInt(answer);
+  const digits = Number(decimals);
+  if (value <= 0n || !Number.isInteger(digits) || digits < 0 || digits > 36) throw new Error("oracle price cannot be normalized");
+  if (digits === 18) return value;
+  if (digits < 18) return value * (10n ** BigInt(18 - digits));
+  return value / (10n ** BigInt(digits - 18));
+}
+
 async function verifyOracle(provider, address, label, maxAgeSeconds) {
   await requireCode(provider, address, label);
   const oracle = new ethers.Contract(address, ORACLE_ABI, provider);
@@ -108,6 +125,7 @@ async function verifyOracle(provider, address, label, maxAgeSeconds) {
   if (BigInt(latest.roundId) <= 0n || BigInt(latest.answeredInRound) < BigInt(latest.roundId)) throw new Error(`${label} round is stale`);
   if (!Number.isInteger(Number(decimals)) || Number(decimals) < 0 || Number(decimals) > 36) throw new Error(`${label} decimals invalid`);
   if (updatedAt <= 0 || age < 0 || age > maxAgeSeconds) throw new Error(`${label} price is stale (${age}s)`);
+  return { priceWad: normalizeOraclePriceWad(latest.answer, decimals), updatedAt, age, decimals: Number(decimals) };
 }
 
 export async function verifyRobinhoodProductionLive({ manifest, acceptedTestnet, candidateSha, rpcUrl }) {
@@ -125,6 +143,7 @@ export async function verifyRobinhoodProductionLive({ manifest, acceptedTestnet,
         [`stock:${entry.symbol}:token`, entry.contractAddress],
         [`stock:${entry.symbol}:oracle`, entry.oracleFeedAddress],
         [`stock:${entry.symbol}:pool`, entry.acquisitionPoolAddress],
+        [`stock:${entry.symbol}:quoter`, entry.acquisitionQuoterAddress],
         [`stock:${entry.symbol}:router`, entry.acquisitionRouterAddress],
       ]),
     ];
@@ -184,8 +203,8 @@ export async function verifyRobinhoodProductionLive({ manifest, acceptedTestnet,
     addressEq("multi-hop WETH", hopWrapped, c.weth9);
 
     const stockGraduation = new ethers.Contract(c.stockGraduationAdapter, STOCK_GRADUATION_ADAPTER_ABI, provider);
-    const [stockAdmin,stockFactory,stockManager,stockRouter,stockWeth,stockLocker,nativeOracle,stockFee,campaignFactory,campaignFactoryLocked] = await Promise.all([
-      stockGraduation.admin(),stockGraduation.v3Factory(),stockGraduation.positionManager(),stockGraduation.swapRouter(),stockGraduation.WETH(),stockGraduation.permanentPositionLocker(),stockGraduation.nativeUsdOracle(),stockGraduation.feeTier(),stockGraduation.campaignFactory(),stockGraduation.campaignFactoryLocked(),
+    const [stockAdmin,stockFactory,stockManager,stockRouter,stockWeth,stockLocker,nativeOracle,stockFee,adapterMaxOracleAge,campaignFactory,campaignFactoryLocked] = await Promise.all([
+      stockGraduation.admin(),stockGraduation.v3Factory(),stockGraduation.positionManager(),stockGraduation.swapRouter(),stockGraduation.WETH(),stockGraduation.permanentPositionLocker(),stockGraduation.nativeUsdOracle(),stockGraduation.feeTier(),stockGraduation.maxOracleAgeSeconds(),stockGraduation.campaignFactory(),stockGraduation.campaignFactoryLocked(),
     ]);
     addressEq("Stock graduation admin", stockAdmin, manifest.admin);
     addressEq("Stock graduation V3 factory", stockFactory, c.v3Factory);
@@ -197,6 +216,9 @@ export async function verifyRobinhoodProductionLive({ manifest, acceptedTestnet,
     eq("Stock graduation fee tier", stockFee, EXPECTED_FEE_TIER);
     addressEq("Stock graduation campaign factory", campaignFactory, c.launchFactory);
     eq("Stock graduation campaign factory locked", campaignFactoryLocked, true);
+
+    const maxAge = Math.max(60, Number(manifest.oracleMaxAgeSeconds || 900));
+    eq("Stock graduation max oracle age", adapterMaxOracleAge, BigInt(maxAge));
 
     const locker = new ethers.Contract(c.permanentV3PositionLocker, LOCKER_ABI, provider);
     const [primarySource,stockSourceAuthorized,lockerFactory,lockerManager,lockerWeth,lockerTreasury,lockerFee,creatorFee,protocolFee] = await Promise.all([
@@ -216,15 +238,31 @@ export async function verifyRobinhoodProductionLive({ manifest, acceptedTestnet,
     const spacing = await v3Factory.feeAmountTickSpacing(EXPECTED_FEE_TIER);
     if (Number(spacing) <= 0) throw new Error("production V3 factory does not support fee tier 3000");
 
-    const maxAge = Math.max(60, Number(manifest.oracleMaxAgeSeconds || 900));
     await verifyOracle(provider, manifest.oracles.nativeUsdFeed, "native/USD oracle", maxAge);
     for (const entry of manifest.stock.registry) {
-      await verifyOracle(provider, entry.oracleFeedAddress, `${entry.symbol} oracle`, maxAge);
+      const oracleEvidence = await verifyOracle(provider, entry.oracleFeedAddress, `${entry.symbol} oracle`, maxAge);
       const route = await stockGraduation.stockRoutes(entry.contractAddress);
       addressEq(`${entry.symbol} Stock graduation oracle`, route.oracleFeed, entry.oracleFeedAddress);
       addressEq(`${entry.symbol} acquisition pool`, route.acquisitionPool, entry.acquisitionPoolAddress);
       eq(`${entry.symbol} acquisition fee tier`, route.acquisitionFeeTier, BigInt(entry.acquisitionFeeTier));
+      eq(`${entry.symbol} minimum route liquidity`, route.minimumRouteLiquidityUsdWad, ethers.parseUnits(String(entry.minimumQuoteLiquidityUsd), 18));
+      eq(`${entry.symbol} max price impact`, route.maxPriceImpactBps, BigInt(entry.maximumGraduationSwapImpactBps));
       eq(`${entry.symbol} Stock graduation route enabled`, route.enabled, true);
+
+      const canonicalPool = await v3Factory.getPool(c.weth9, entry.contractAddress, entry.acquisitionFeeTier);
+      addressEq(`${entry.symbol} canonical WETH/Stock V3 pool`, canonicalPool, entry.acquisitionPoolAddress);
+
+      const stockToken = new ethers.Contract(entry.contractAddress, ERC20_ABI, provider);
+      const [tokenDecimals, poolStockBalance] = await Promise.all([
+        stockToken.decimals(),
+        stockToken.balanceOf(entry.acquisitionPoolAddress),
+      ]);
+      eq(`${entry.symbol} token decimals`, tokenDecimals, BigInt(entry.decimals));
+      const poolStockUsdWad = (BigInt(poolStockBalance) * oracleEvidence.priceWad) / (10n ** BigInt(entry.decimals));
+      const minimumLiquidityWad = ethers.parseUnits(String(entry.minimumQuoteLiquidityUsd), 18);
+      if (poolStockUsdWad < minimumLiquidityWad) {
+        throw new Error(`${entry.symbol} acquisition pool liquidity below production threshold: ${poolStockUsdWad} < ${minimumLiquidityWad}`);
+      }
     }
 
     return { chainId: CHAIN_ID, sourceSha: manifest.sourceSha, contractsVerified: Object.keys(c).length, stockRoutesVerified: manifest.stock.registry.length, adminCustodyVerified: true, dark: true };
