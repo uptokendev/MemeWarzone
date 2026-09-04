@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import "./arenaSponsorshipRuntime.test.mjs";
 import { solanaLiveTransition, solanaMatchedLifecyclePatch, solanaMayGoLive } from "./arenaBattleLive.js";
 import {
   battleSettlementPatch,

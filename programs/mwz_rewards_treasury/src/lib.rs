@@ -26,6 +26,8 @@ pub mod route;
 pub use route::*;
 pub mod arena;
 pub use arena::*;
+pub mod arena_money_v2;
+pub use arena_money_v2::*;
 
 pub const PERIOD_WEEKLY: u8 = 0;
 pub const PERIOD_MONTHLY: u8 = 1;
@@ -38,6 +40,156 @@ pub const SQUAD_LEAF_PREFIX: &[u8] = b"MWZ_SQUAD_LEAF";
 #[program]
 pub mod mwz_rewards_treasury {
     use super::*;
+
+    pub fn initialize_arena_money_v2(
+        ctx: Context<InitializeArenaMoneyV2>,
+        resolver: Pubkey,
+        protocol_receiver: Pubkey,
+        marketing_receiver: Pubkey,
+    ) -> Result<()> {
+        initialize_arena_money_v2_handler(ctx, resolver, protocol_receiver, marketing_receiver)
+    }
+
+    pub fn set_arena_money_v2_pause(ctx: Context<SetArenaMoneyV2Config>, paused: bool) -> Result<()> {
+        set_arena_money_v2_pause_handler(ctx, paused)
+    }
+
+    pub fn set_arena_money_v2_receivers(
+        ctx: Context<SetArenaMoneyV2Config>,
+        resolver: Pubkey,
+        protocol_receiver: Pubkey,
+        marketing_receiver: Pubkey,
+    ) -> Result<()> {
+        set_arena_money_v2_receivers_handler(ctx, resolver, protocol_receiver, marketing_receiver)
+    }
+
+    pub fn open_competition_pool_v2(
+        ctx: Context<OpenCompetitionPoolV2>,
+        competition_id: [u8; 32],
+        kind: u8,
+        asset_a: Pubkey,
+        asset_b: Pubkey,
+        owner_a: Pubkey,
+        owner_b: Pubkey,
+        required_entry_lamports: u64,
+        opens_at: i64,
+        closes_at: i64,
+    ) -> Result<()> {
+        open_competition_pool_v2_handler(
+            ctx,
+            competition_id,
+            kind,
+            asset_a,
+            asset_b,
+            owner_a,
+            owner_b,
+            required_entry_lamports,
+            opens_at,
+            closes_at,
+        )
+    }
+
+    pub fn deposit_competition_entry_v2(
+        ctx: Context<DepositCompetitionEntryV2>,
+        competition_id: [u8; 32],
+        entry_asset: Pubkey,
+    ) -> Result<()> {
+        deposit_competition_entry_v2_handler(ctx, competition_id, entry_asset)
+    }
+
+    pub fn deposit_competition_boost_v2(
+        ctx: Context<DepositCompetitionBoostV2>,
+        competition_id: [u8; 32],
+        funding_id: [u8; 32],
+        gross_lamports: u64,
+    ) -> Result<()> {
+        deposit_competition_boost_v2_handler(ctx, competition_id, funding_id, gross_lamports)
+    }
+
+    pub fn resolve_competition_pool_v2(
+        ctx: Context<ResolveCompetitionPoolV2>,
+        competition_id: [u8; 32],
+        winner_asset: Pubkey,
+        winner_wallet: Pubkey,
+    ) -> Result<()> {
+        resolve_competition_pool_v2_handler(ctx, competition_id, winner_asset, winner_wallet)
+    }
+
+    pub fn claim_competition_winner_v2(
+        ctx: Context<ClaimCompetitionWinnerV2>,
+        competition_id: [u8; 32],
+    ) -> Result<()> {
+        claim_competition_winner_v2_handler(ctx, competition_id)
+    }
+
+    pub fn claim_competition_protocol_v2(
+        ctx: Context<ClaimCompetitionProtocolV2>,
+        competition_id: [u8; 32],
+    ) -> Result<()> {
+        claim_competition_protocol_v2_handler(ctx, competition_id)
+    }
+
+    pub fn initialize_postgrad_league_treasury_v2(
+        ctx: Context<InitializePostGradLeagueTreasuryV2>,
+        monthly_receiver: Pubkey,
+        quarterly_receiver: Pubkey,
+    ) -> Result<()> {
+        initialize_postgrad_league_treasury_v2_handler(ctx, monthly_receiver, quarterly_receiver)
+    }
+
+    pub fn route_competition_league_v2(
+        ctx: Context<RouteCompetitionLeagueV2>,
+        competition_id: [u8; 32],
+    ) -> Result<()> {
+        route_competition_league_v2_handler(ctx, competition_id)
+    }
+
+    pub fn claim_monthly_league_v2(ctx: Context<ClaimMonthlyLeagueV2>) -> Result<()> {
+        claim_monthly_league_v2_handler(ctx)
+    }
+
+    pub fn claim_quarterly_league_v2(ctx: Context<ClaimQuarterlyLeagueV2>) -> Result<()> {
+        claim_quarterly_league_v2_handler(ctx)
+    }
+
+    pub fn initialize_sponsorship_event_v1(
+        ctx: Context<InitializeSponsorshipEventV1>,
+        event_id: [u8; 32],
+        event_receiver: Pubkey,
+        minimum_lamports: u64,
+    ) -> Result<()> {
+        initialize_sponsorship_event_v1_handler(ctx, event_id, event_receiver, minimum_lamports)
+    }
+
+    pub fn pay_sponsorship_v1(
+        ctx: Context<PaySponsorshipV1>,
+        event_id: [u8; 32],
+        payment_id: [u8; 32],
+        gross_lamports: u64,
+    ) -> Result<()> {
+        pay_sponsorship_v1_handler(ctx, event_id, payment_id, gross_lamports)
+    }
+
+    pub fn claim_event_prize_v1(
+        ctx: Context<ClaimEventPrizeV1>,
+        event_id: [u8; 32],
+    ) -> Result<()> {
+        claim_event_prize_v1_handler(ctx, event_id)
+    }
+
+    pub fn claim_sponsorship_marketing_v1(
+        ctx: Context<ClaimSponsorshipMarketingV1>,
+        event_id: [u8; 32],
+    ) -> Result<()> {
+        claim_sponsorship_marketing_v1_handler(ctx, event_id)
+    }
+
+    pub fn claim_sponsorship_protocol_v1(
+        ctx: Context<ClaimSponsorshipProtocolV1>,
+        event_id: [u8; 32],
+    ) -> Result<()> {
+        claim_sponsorship_protocol_v1_handler(ctx, event_id)
+    }
 
     pub fn initialize(ctx: Context<Initialize>) -> Result<()> {
         let config = &mut ctx.accounts.config;
@@ -188,10 +340,11 @@ pub mod mwz_rewards_treasury {
             TreasuryError::InsufficientVaultBalance
         );
 
-        let epoch = &mut ctx.accounts.league_epoch;
+        let epoch = &ctx.accounts.league_epoch;
         if epoch.initialized {
             require!(!epoch.sealed || epoch.root == root, TreasuryError::EpochAlreadySealed);
         }
+        let epoch = &mut ctx.accounts.league_epoch;
         epoch.period = period;
         epoch.epoch_start = epoch_start;
         epoch.root = root;
