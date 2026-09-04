@@ -26,7 +26,7 @@ const ROUTES = [
   { pattern: /^\/arena\/battles(?:\/.*)?$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaBattles },
   { pattern: /^\/arena\/imports(?:\/.*)?$/, flag: "POSTGRAD_ARENA_IMPORTS_ENABLED", handler: arenaImports },
   { pattern: /^\/arena\/tournaments\/v2\/(?:buy-in-quote|create)$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaVoteTournamentSetup },
-  { pattern: /^\/arena\/tournaments\/[^/]+\/v2-buy-in-receipt$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaVoteTournamentSetup },
+  { pattern: /^\/arena\/tournaments\/[^/]+\/(?:v2-buy-in-receipt|buy-in-receipt)$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaVoteTournamentSetup },
   { pattern: /^\/arena\/tournaments\/[^/]+\/matches\/[^/]+\/final-salvo$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaFinalSalvo },
   { pattern: /^\/arena\/tournaments\/[^/]+\/matches\/[^/]+\/boosts(?:\/.*)?$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaTournamentBoosts },
   { pattern: /^\/arena\/tournaments\/[^/]+\/matches\/[^/]+\/votes$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaTournamentVotes },
