@@ -45,6 +45,12 @@ export function resolveTournamentVoteMatch({ tournament, matchRef, selectedToken
   if (text(tournament?.status) !== "live") {
     return { ok: false, reason: "tournament-not-live" };
   }
+  if (text(tournament?.battle_mode || tournament?.battleMode) !== "vote") {
+    return { ok: false, reason: "tournament-not-vote-mode" };
+  }
+  if (Number(tournament?.round_duration_hours ?? tournament?.roundDurationHours ?? 24) !== 24) {
+    return { ok: false, reason: "invalid-round-duration" };
+  }
 
   const rounds = parseTournamentVoteBracket(tournament?.bracket);
   if (!rounds) return { ok: false, reason: "invalid-bracket" };
@@ -64,7 +70,8 @@ export function resolveTournamentVoteMatch({ tournament, matchRef, selectedToken
 
   const tokenA = text(match?.tokenA || match?.token_a);
   const tokenB = text(match?.tokenB || match?.token_b);
-  if (!tokenA || !tokenB) return { ok: false, reason: "invalid-match-participants" };
+  const battleId = text(match?.battleId || match?.battle_id);
+  if (!tokenA || !tokenB || !battleId) return { ok: false, reason: "invalid-match-participants" };
 
   const selected = text(selectedToken);
   if (selected && !tournamentVoteTokensEqual(selected, tokenA) && !tournamentVoteTokensEqual(selected, tokenB)) {
@@ -76,8 +83,8 @@ export function resolveTournamentVoteMatch({ tournament, matchRef, selectedToken
     ok: true,
     reason: "ok",
     roundNumber: Number.isFinite(roundNumber) ? roundNumber : active.index + 1,
-    matchId: text(match?.id) || `r${active.index + 1}-match`,
-    battleId: text(match?.battleId || match?.battle_id) || null,
+    matchId: text(match?.id) || battleId,
+    battleId,
     tokenA,
     tokenB,
     selectedToken: selected || null,
@@ -85,23 +92,20 @@ export function resolveTournamentVoteMatch({ tournament, matchRef, selectedToken
 }
 
 export function tournamentVoteSummary(rows, match) {
-  const counts = new Map([
-    [identity(match?.tokenA), 0],
-    [identity(match?.tokenB), 0],
-  ]);
-
+  let leftVotes = 0;
+  let rightVotes = 0;
   for (const row of Array.isArray(rows) ? rows : []) {
-    const key = identity(row?.selected_token || row?.selectedToken);
-    if (counts.has(key)) counts.set(key, Number(counts.get(key) || 0) + 1);
+    const side = text(row?.side).toLowerCase();
+    if (side === "left") leftVotes += 1;
+    else if (side === "right") rightVotes += 1;
   }
-
-  const leftVotes = Number(counts.get(identity(match?.tokenA)) || 0);
-  const rightVotes = Number(counts.get(identity(match?.tokenB)) || 0);
   return {
     tokenA: match?.tokenA || "",
     tokenB: match?.tokenB || "",
     leftVotes,
     rightVotes,
     totalVotes: leftVotes + rightVotes,
+    leftPoints: leftVotes,
+    rightPoints: rightVotes,
   };
 }
