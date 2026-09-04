@@ -18,6 +18,7 @@ import {
   calculateBattlePointsV3Market,
   combineBattlePointsV3,
 } from "./arenaBattlePointsV3.js";
+import { decideBattlePointsV3Settlement } from "./arenaBattleSettleV3.js";
 
 const NOW = Date.parse("2026-09-03T12:00:00.000Z");
 
@@ -36,6 +37,21 @@ function score(overrides = {}) {
     boost: overrides.boost || {},
     now: NOW,
   });
+}
+
+function settleableFixture({ mcapPoints = 45, holderPoints = 27, volumePoints = 18, boostPoints = 10 } = {}) {
+  return {
+    scoringVersion: BATTLE_POINTS_V3,
+    totalPoints: mcapPoints + holderPoints + volumePoints + boostPoints,
+    settleable: true,
+    dataHealth: { healthy: true },
+    mcap: { points: mcapPoints, start: 10_000, current: 12_000, changePct: 0.2 },
+    holders: { points: holderPoints },
+    volume: { points: volumePoints },
+    boost: { points: boostPoints },
+    components: { mcapPoints, holderPoints, volumePoints, boostPoints },
+    performance: { mcapPct: 0.2 },
+  };
 }
 
 test("founder-locked V3 weights are 45 / 27 / 18 / 10", () => {
@@ -99,6 +115,22 @@ test("V3 preserves the existing anti-concentration rule at the 18-point volume w
   const whale = score({ eligibleVolume: { usd: 1_000_000, rawUsd: 1_000_000, cappedUsd: 1_000_000, clusters: [{ clusterId: "same-beneficial-owner", countedUsd: 1_000_000 }] } });
   assert.equal(whale.volume.clusterPointCap, 3.6);
   assert.ok(whale.volume.points <= 3.6);
+});
+
+test("V3 settlement rejects component values above 45 / 27 / 18 / 10", () => {
+  const right = settleableFixture({ mcapPoints: 40, holderPoints: 20, volumePoints: 10, boostPoints: 5 });
+  const exact = decideBattlePointsV3Settlement({ leftToken: "0x1111111111111111111111111111111111111111", rightToken: "0x2222222222222222222222222222222222222222", leftScored: settleableFixture(), rightScored: right });
+  assert.equal(exact.ok, true);
+  for (const invalid of [
+    { mcapPoints: 45.0001, holderPoints: 27, volumePoints: 18, boostPoints: 10 },
+    { mcapPoints: 45, holderPoints: 27.0001, volumePoints: 18, boostPoints: 10 },
+    { mcapPoints: 45, holderPoints: 27, volumePoints: 18.0001, boostPoints: 10 },
+    { mcapPoints: 45, holderPoints: 27, volumePoints: 18, boostPoints: 10.0001 },
+  ]) {
+    const decision = decideBattlePointsV3Settlement({ leftToken: "0x1111111111111111111111111111111111111111", rightToken: "0x2222222222222222222222222222222222222222", leftScored: settleableFixture(invalid), rightScored: right });
+    assert.equal(decision.ok, false);
+    assert.equal(decision.reason, "invalid_battle_points_v3_snapshot");
+  }
 });
 
 test("V3 settlement activation requires both explicit flags after founder curve lock", () => {
