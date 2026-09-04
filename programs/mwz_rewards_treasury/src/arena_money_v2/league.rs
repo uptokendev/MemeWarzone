@@ -70,6 +70,7 @@ pub struct InitializePostGradLeagueTreasuryV2<'info> {
 #[derive(Accounts)]
 #[instruction(competition_id: [u8; 32])]
 pub struct RouteCompetitionLeagueV2<'info> {
+    #[account(mut)]
     pub caller: Signer<'info>,
     #[account(
         mut,
