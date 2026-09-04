@@ -12,6 +12,7 @@ export type BattleBoostQuote = {
   domain: { verifyingContract: string; chainId: number };
   value: {
     poolId: string;
+    booster: string;
     sideToken: string;
     boostUnits: string;
     unitPriceNativeRaw: string;
@@ -32,7 +33,7 @@ export type BattleBoostSummary = {
 
 function parseQuote(value: unknown): BattleBoostQuote {
   const quote = value as BattleBoostQuote | null;
-  if (!quote?.domain?.verifyingContract || !quote?.value?.poolId || !quote?.value?.sideToken || !quote?.signature) {
+  if (!quote?.domain?.verifyingContract || !quote?.value?.poolId || !quote?.value?.booster || !quote?.value?.sideToken || !quote?.signature) {
     throw new Error("Battle Boost quote is incomplete.");
   }
   for (const key of ["boostUnits", "unitPriceNativeRaw", "grossNativeRaw", "pricingVersion", "oracleTimestamp", "nonce", "deadline"] as const) {
@@ -90,6 +91,11 @@ export async function createBattleBoostQuote(input: {
 
 export async function submitBattleBoost(input: { signer: JsonRpcSigner; quote: BattleBoostQuote }) {
   const quote = parseQuote(input.quote);
+  const signerChain = Number((await input.signer.provider.getNetwork()).chainId);
+  if (signerChain !== Number(quote.domain.chainId)) throw new Error("Wallet chain does not match Battle Boost quote.");
+  const signerAddress = String(await input.signer.getAddress()).toLowerCase();
+  if (signerAddress !== String(quote.value.booster || "").toLowerCase()) throw new Error("Battle Boost quote belongs to another wallet.");
+
   const contract = new Contract(quote.domain.verifyingContract, BOOST_BATTLE_ABI, input.signer);
   const tx = await contract.boostBattle(
     quote.value.poolId,
@@ -104,6 +110,7 @@ export async function submitBattleBoost(input: { signer: JsonRpcSigner; quote: B
     { value: BigInt(quote.value.grossNativeRaw) },
   );
   const receipt = await tx.wait();
+  if (receipt && Number(receipt.status) !== 1) throw new Error("Battle Boost transaction did not succeed.");
   return { txHash: String(tx.hash || receipt?.hash || ""), receipt };
 }
 
