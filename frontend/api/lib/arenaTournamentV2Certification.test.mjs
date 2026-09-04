@@ -131,3 +131,25 @@ test("Final Salvo certifies exact-tie entry, 60-second shots, early win and Sudd
   assert.equal(tied.state, "sudden_death");
   assert.equal(tied.suddenDeathRound, 1);
 });
+
+test("Vote Tournament finalizer is lease-protected and never dispatches Vote battles into Battle V2 settlement", () => {
+  const finalizer = readApi("lib/arenaVoteTournamentFinalizationService.js");
+  const worker = readFrontend("scripts/run-arena-battle-realtime-worker.mjs");
+  assert.match(finalizer, /pg_try_advisory_xact_lock/);
+  assert.match(finalizer, /arena-vote-finalize:/);
+  assert.match(finalizer, /phase = 'regulation'/);
+  assert.match(finalizer, /insert into public\.arena_vote_tiebreaks/);
+  assert.match(worker, /coalesce\(battle_mode, 'normal'\) <> 'vote'/);
+  assert.match(worker, /finalizeDueVoteTournamentBattle/);
+  assert.match(worker, /advanceDueFinalSalvo/);
+});
+
+test("Final Salvo API is free-vote-only, shot-bound and exposes no Boost path", () => {
+  const salvo = readApi("arenaFinalSalvo.js");
+  assert.match(salvo, /action:\s*"arena_final_salvo_vote"/);
+  assert.match(salvo, /action_type, boost_units, points/);
+  assert.match(salvo, /'free_vote',0,1/);
+  assert.match(salvo, /select now\(\) as now/);
+  assert.match(salvo, /boostAllowed:\s*false/);
+  assert.doesNotMatch(salvo, /arena_battle_boost_quote|BattleBoosted|boostUnits:\s*[1-9]/);
+});
