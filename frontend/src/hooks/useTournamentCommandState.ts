@@ -17,8 +17,8 @@ import type { BattleRealtimeMetrics } from "@/lib/arena/battleRealtime";
 import { fetchArenaBattleMetrics } from "@/lib/arena/battleRealtimeApi";
 import { signArenaWalletAction } from "@/lib/arena/signArenaWalletAction";
 import {
-  presentAuthoritativeLiveBattleCount,
   presentAuthoritativeRemaining,
+  presentConfirmedLiveBattles,
   presentTournamentBuyIn,
   presentTournamentCard,
   presentTournamentChain,
@@ -236,9 +236,9 @@ export function useTournamentCommandState(
   const buyInMeta = presentTournamentBuyIn({ buyInNative: buyIn, nativeSymbol: symbol });
   const champion = presentTournamentChampion(mergedEvent, entries);
   const progression = presentTournamentProgression(mergedEvent);
-  const liveBattleCount = presentAuthoritativeLiveBattleCount(mergedEvent);
   const remaining = presentAuthoritativeRemaining(mergedEvent);
-  const liveMatches = matches.filter((match) => match.battleId && !match.winner && match.bye !== true);
+  const liveMatches = presentConfirmedLiveBattles(matches, metricsByBattleId);
+  const liveBattleCount = loadMetrics ? liveMatches.length : null;
 
   return {
     id,

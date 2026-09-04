@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   battleFightHref,
+  presentConfirmedLiveBattles,
   presentTournamentCard,
   presentTournamentChampion,
   presentTournamentEmpty,
@@ -148,4 +149,24 @@ test("progression and champion stay authoritative", () => {
   });
   assert.equal(card.primaryCta, "Enter tournament");
   assert.equal(card.bracketCta, "View bracket");
+});
+
+test("confirmed live Battles require telemetry state live, not merely an unsettled match", () => {
+  const unsettled = [
+    { id: "m1", tokenA: "a", tokenB: "b", battleId: "fight-scheduled", winner: null, bye: false },
+    { id: "m2", tokenA: "c", tokenB: "d", battleId: "fight-live", winner: null, bye: false },
+    { id: "m3", tokenA: "e", tokenB: "f", battleId: "fight-won", winner: "e", bye: false },
+    { id: "m4", tokenA: "g", tokenB: null, battleId: "fight-bye", winner: null, bye: true },
+  ];
+  assert.deepEqual(presentConfirmedLiveBattles(unsettled, {}), []);
+  assert.deepEqual(presentConfirmedLiveBattles(unsettled, { "fight-scheduled": { state: "upcoming" } }), []);
+  assert.equal(presentConfirmedLiveBattles(unsettled, { "fight-live": { state: "matched" } }).length, 0);
+  const live = presentConfirmedLiveBattles(unsettled, {
+    "fight-scheduled": { state: "upcoming" },
+    "fight-live": { state: "live" },
+    "fight-won": { state: "live" },
+  });
+  assert.equal(live.length, 1);
+  assert.equal(live[0].battleId, "fight-live");
+  assert.equal(battleFightHref(live[0].battleId), "/warzone/battles/fight-live");
 });

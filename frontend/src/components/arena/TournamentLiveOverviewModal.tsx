@@ -18,9 +18,10 @@ export function TournamentLiveOverviewModal({
   onViewBracket?: () => void;
 }) {
   const [bracketOpen, setBracketOpen] = useState(false);
-  const state = useTournamentCommandState(open ? tournamentId : "", { loadMetrics: false });
+  const state = useTournamentCommandState(open ? tournamentId : "", { loadMetrics: true });
   const card = state.card;
-  const liveBattles = state.liveMatches.filter((match) => match.battleId);
+  const liveBattles = state.liveMatches;
+  const liveHref = liveBattles[0]?.battleId ? battleFightHref(liveBattles[0].battleId) : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -48,7 +49,9 @@ export function TournamentLiveOverviewModal({
               {card?.participantCount != null ? <div>{card.participantCount} started</div> : null}
               {state.remaining != null ? <div>{state.remaining} remaining</div> : null}
               {card?.bracketStage ? <div>{String(card.bracketStage).replaceAll("_", " ")}</div> : null}
-              {state.liveBattleCount != null ? <div>{state.liveBattleCount} battles live</div> : null}
+              {liveBattles.length ? (
+                <div data-tournament-live-battle-count={liveBattles.length}>{liveBattles.length} battles live</div>
+              ) : null}
             </div>
             <div className="flex flex-wrap gap-3">
               <button
@@ -61,9 +64,10 @@ export function TournamentLiveOverviewModal({
               >
                 View bracket
               </button>
-              {liveBattles[0]?.battleId ? (
+              {liveHref ? (
                 <Link
-                  to={battleFightHref(liveBattles[0].battleId) || "/warzone/battles"}
+                  to={liveHref}
+                  data-tournament-view-live-battles="true"
                   className="inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em] text-accent hover:underline"
                 >
                   View live battles

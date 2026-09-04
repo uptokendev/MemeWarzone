@@ -189,6 +189,23 @@ test("bracket modal uses current rounds, fight links, and does not invent a cham
   assert.equal(presentChampionship({ tokenA: "a", tokenB: "b", winner: "a" }).champion.tokenAddress, "a");
 });
 
+test("Live Tournament modal uses telemetry-confirmed live Battles only", () => {
+  const liveModal = readSrc("../../components/arena/TournamentLiveOverviewModal.tsx");
+  const registration = readSrc("../../components/arena/TournamentRegistrationModal.tsx");
+  const results = readSrc("../../components/arena/TournamentResultsModal.tsx");
+  const hook = readSrc("../../hooks/useTournamentCommandState.ts");
+  assert.match(liveModal, /loadMetrics: true/);
+  assert.match(liveModal, /open \? tournamentId : ""/);
+  assert.match(liveModal, /data-tournament-view-live-battles/);
+  assert.match(liveModal, /liveHref/);
+  assert.match(liveModal, /battleFightHref/);
+  assert.doesNotMatch(liveModal, /\/warzone\/battles"\)/);
+  assert.match(registration, /loadMetrics: false/);
+  assert.match(results, /loadMetrics: false/);
+  assert.match(hook, /presentConfirmedLiveBattles/);
+  assert.match(hook, /loadMetrics \? liveMatches\.length : null/);
+});
+
 test("mock tournament fixture supplies 16-entrant live bracket without injecting into API mode", () => {
   const hook = readSrc("../../hooks/useTournamentCommandState.ts");
   const details = getMockTournamentDetails("event-tournament-live-04");

@@ -177,6 +177,16 @@ export function presentAuthoritativeLiveBattleCount(event) {
   return count;
 }
 
+export function presentConfirmedLiveBattles(matches, metricsByBattleId = {}) {
+  const list = Array.isArray(matches) ? matches : [];
+  const metrics = metricsByBattleId && typeof metricsByBattleId === "object" ? metricsByBattleId : {};
+  return list.filter((match) => {
+    const battleId = String(match?.battleId || "").trim();
+    if (!battleId || match?.winner || match?.bye === true) return false;
+    return metrics[battleId]?.state === "live";
+  });
+}
+
 export function presentAuthoritativeRemaining(event) {
   const rounds = readBracketRounds(event);
   if (!rounds.length) return null;
