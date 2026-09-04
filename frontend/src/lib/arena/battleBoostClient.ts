@@ -11,16 +11,8 @@ const BOOST_BATTLE_ABI = [
 export type BattleBoostQuote = {
   domain: { verifyingContract: string; chainId: number };
   value: {
-    poolId: string;
-    booster: string;
-    sideToken: string;
-    boostUnits: string;
-    unitPriceNativeRaw: string;
-    grossNativeRaw: string;
-    pricingVersion: string;
-    oracleTimestamp: string;
-    nonce: string;
-    deadline: string;
+    poolId: string; booster: string; sideToken: string; boostUnits: string; unitPriceNativeRaw: string;
+    grossNativeRaw: string; pricingVersion: string; oracleTimestamp: string; nonce: string; deadline: string;
   };
   signature: string;
 };
@@ -31,58 +23,59 @@ export type BattleBoostSummary = {
   total?: { boostUnits?: string; grossNativeRaw?: string; poolNativeRaw?: string; protocolNativeRaw?: string };
 };
 
+export type BattlePointsV3BoostState = {
+  battleId: string;
+  tokenId: string;
+  side: "left" | "right";
+  scoringVersion: "battle_points_v3" | string;
+  weights: { mcap: number; holders: number; volume: number; boost: number };
+  boostCurveVersion: string;
+  boostUnits: string;
+  boostPoints: number | null;
+  mcapPoints: number | null;
+  holderPoints: number | null;
+  volumePoints: number | null;
+  totalPoints: number | null;
+  metricsUpdatedAt?: string | null;
+};
+
+export type BattleBoostState = {
+  ok: boolean;
+  battleId: string;
+  chainId: number;
+  summary: BattleBoostSummary;
+  battlePointsV3?: BattlePointsV3BoostState[];
+  scoringActive?: boolean;
+  scoringReason?: string | null;
+  updatedAt?: string;
+};
+
 function parseQuote(value: unknown): BattleBoostQuote {
   const quote = value as BattleBoostQuote | null;
-  if (!quote?.domain?.verifyingContract || !quote?.value?.poolId || !quote?.value?.booster || !quote?.value?.sideToken || !quote?.signature) {
-    throw new Error("Battle Boost quote is incomplete.");
-  }
+  if (!quote?.domain?.verifyingContract || !quote?.value?.poolId || !quote?.value?.booster || !quote?.value?.sideToken || !quote?.signature) throw new Error("Battle Boost quote is incomplete.");
   for (const key of ["boostUnits", "unitPriceNativeRaw", "grossNativeRaw", "pricingVersion", "oracleTimestamp", "nonce", "deadline"] as const) {
-    try {
-      BigInt(String(quote.value[key]));
-    } catch {
-      throw new Error(`Battle Boost quote field ${key} is invalid.`);
-    }
+    try { BigInt(String(quote.value[key])); } catch { throw new Error(`Battle Boost quote field ${key} is invalid.`); }
   }
   return quote;
 }
 
-export async function fetchBattleBoostState(battleId: string, signal?: AbortSignal) {
+export async function fetchBattleBoostState(battleId: string, signal?: AbortSignal): Promise<BattleBoostState> {
   const res = await apiFetch(`/api/arena/boosts/${encodeURIComponent(battleId)}`, { cache: "no-store", signal });
   const json = await res.json().catch(() => ({}));
   if (!res.ok || json?.ok === false) throw new Error(String(json?.error || `Battle Boost state failed (${res.status})`));
-  return json;
+  return json as BattleBoostState;
 }
 
 export async function createBattleBoostQuote(input: {
-  battleId: string;
-  chainId: number;
-  wallet: string;
-  targetToken: string;
-  boostUnits: number;
-  signer: JsonRpcSigner;
+  battleId: string; chainId: number; wallet: string; targetToken: string; boostUnits: number; signer: JsonRpcSigner;
 }) {
   const auth = await signWalletAction({
-    action: "arena_battle_boost_quote",
-    walletAddress: input.wallet,
-    chainId: input.chainId,
-    signer: input.signer,
-    extraLines: [
-      `Battle: ${input.battleId}`,
-      `Target: ${input.targetToken}`,
-      `Boost Units: ${input.boostUnits}`,
-    ],
+    action: "arena_battle_boost_quote", walletAddress: input.wallet, chainId: input.chainId, signer: input.signer,
+    extraLines: [`Battle: ${input.battleId}`, `Target: ${input.targetToken}`, `Boost Units: ${input.boostUnits}`],
   });
   const res = await apiFetch("/api/arena/boosts/quote", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      battleId: input.battleId,
-      chainId: input.chainId,
-      wallet: input.wallet,
-      targetToken: input.targetToken,
-      boostUnits: input.boostUnits,
-      auth,
-    }),
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ battleId: input.battleId, chainId: input.chainId, wallet: input.wallet, targetToken: input.targetToken, boostUnits: input.boostUnits, auth }),
   });
   const json = await res.json().catch(() => ({}));
   if (!res.ok || json?.ok === false) throw new Error(String(json?.error || `Battle Boost quote failed (${res.status})`));
@@ -95,18 +88,10 @@ export async function submitBattleBoost(input: { signer: JsonRpcSigner; quote: B
   if (signerChain !== Number(quote.domain.chainId)) throw new Error("Wallet chain does not match Battle Boost quote.");
   const signerAddress = String(await input.signer.getAddress()).toLowerCase();
   if (signerAddress !== String(quote.value.booster || "").toLowerCase()) throw new Error("Battle Boost quote belongs to another wallet.");
-
   const contract = new Contract(quote.domain.verifyingContract, BOOST_BATTLE_ABI, input.signer);
   const tx = await contract.boostBattle(
-    quote.value.poolId,
-    quote.value.sideToken,
-    BigInt(quote.value.boostUnits),
-    BigInt(quote.value.unitPriceNativeRaw),
-    BigInt(quote.value.pricingVersion),
-    BigInt(quote.value.oracleTimestamp),
-    BigInt(quote.value.nonce),
-    BigInt(quote.value.deadline),
-    quote.signature,
+    quote.value.poolId, quote.value.sideToken, BigInt(quote.value.boostUnits), BigInt(quote.value.unitPriceNativeRaw),
+    BigInt(quote.value.pricingVersion), BigInt(quote.value.oracleTimestamp), BigInt(quote.value.nonce), BigInt(quote.value.deadline), quote.signature,
     { value: BigInt(quote.value.grossNativeRaw) },
   );
   const receipt = await tx.wait();
@@ -116,9 +101,6 @@ export async function submitBattleBoost(input: { signer: JsonRpcSigner; quote: B
 
 export function formatBoostNative(raw?: string | null, nativeSymbol = "BNB") {
   if (!raw) return `0 ${nativeSymbol}`;
-  try {
-    return `${Number(formatEther(BigInt(raw))).toLocaleString(undefined, { maximumFractionDigits: 6 })} ${nativeSymbol}`;
-  } catch {
-    return `0 ${nativeSymbol}`;
-  }
+  try { return `${Number(formatEther(BigInt(raw))).toLocaleString(undefined, { maximumFractionDigits: 6 })} ${nativeSymbol}`; }
+  catch { return `0 ${nativeSymbol}`; }
 }
