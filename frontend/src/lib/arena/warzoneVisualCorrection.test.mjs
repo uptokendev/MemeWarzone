@@ -138,14 +138,19 @@ test("Tournament enter opens a details modal and View Bracket never page-hops", 
   const page = readSrc("../../pages/ArenaTournaments.tsx");
   const card = readSrc("../../components/arena/TournamentEventCard.tsx");
   const modal = readSrc("../../components/arena/TournamentDetailsModal.tsx");
+  const registration = readSrc("../../components/arena/TournamentRegistrationModal.tsx");
   const identity = readSrc("../../components/arena/TournamentTokenIdentity.tsx");
-  assert.match(page, /TournamentDetailsModal/);
-  assert.match(page, /open=\{Boolean\(focusedId\)\}/);
+  assert.match(page, /TournamentRegistrationModal/);
+  assert.match(page, /setLocalModal\(\{ kind: "registration", id \}\)/);
   assert.match(page, /navigate\("\/warzone\/tournaments", \{ replace: true \}\)/);
   assert.doesNotMatch(page, /\{focusedId \? <TournamentCommand/);
-  assert.match(modal, /data-tournament-details-modal="true"/);
+  assert.doesNotMatch(page, /data-tournament-standings/);
+  assert.match(modal, /TournamentRegistrationModal/);
+  assert.match(registration, /data-tournament-registration-modal="true"/);
+  assert.match(registration, /signArenaWalletAction|handleOptIn/);
   assert.match(card, /fetchPostGradTournamentDetails/);
   assert.match(card, /data-tournament-view-bracket/);
+  assert.match(card, /TournamentProgressionBar/);
   assert.doesNotMatch(card, /canOpenBracket \?/);
   assert.doesNotMatch(card, />View bracket<\/Link>/);
   assert.match(identity, /LOADING TOKEN/);
@@ -153,10 +158,23 @@ test("Tournament enter opens a details modal and View Bracket never page-hops", 
   assert.doesNotMatch(identity, /Loading token profile/);
 });
 
+test("Warzone Featured reuses the exact Pre-Grad FeaturedCampaignCard", () => {
+  const overview = readSrc("../../pages/Arena.tsx");
+  const showcase = readSrc("../../components/home/SafeFeaturedCampaigns.tsx");
+  const card = readSrc("../../components/home/FeaturedCampaignCard.tsx");
+  assert.match(overview, /FeaturedCampaignCard/);
+  assert.match(overview, /ArenaUpvoteDialog/);
+  assert.match(showcase, /FeaturedCampaignCard/);
+  assert.match(card, /h-\[150px\]/);
+  assert.match(card, /w-\[150px\]/);
+  assert.match(card, /data-featured-campaign-card="true"/);
+  assert.doesNotMatch(overview, /WarzoneTokenMark imageUrl=\{item\.imageUrl\}/);
+});
+
 test("bracket modal uses current rounds, fight links, and does not invent a champion", () => {
   const modal = readSrc("../../components/arena/TournamentBracketModal.tsx");
-  const command = readSrc("../../components/arena/TournamentCommand.tsx");
-  assert.match(command, /TournamentBracketModal/);
+  const card = readSrc("../../components/arena/TournamentEventCard.tsx");
+  assert.match(card, /TournamentBracketModal/);
   assert.match(modal, /presentSymmetricBracket/);
   assert.match(modal, /champion \?/);
   assert.match(modal, /battleFightHref\(match\.battleId\)/);
@@ -172,11 +190,11 @@ test("bracket modal uses current rounds, fight links, and does not invent a cham
 });
 
 test("mock tournament fixture supplies 16-entrant live bracket without injecting into API mode", () => {
-  const command = readSrc("../../components/arena/TournamentCommand.tsx");
+  const hook = readSrc("../../hooks/useTournamentCommandState.ts");
   const details = getMockTournamentDetails("event-tournament-live-04");
   assert.equal(details.entries.length, 16);
   assert.equal(details.bracket.rounds[0].matches.length, 8);
   assert.equal(details.bracket.rounds[3].matches.length, 1);
   assert.equal(details.bracket.rounds[3].matches[0].winner, null);
-  assert.match(command, /postGradFlags\.mocks \? getMockTournamentDetails/);
+  assert.match(hook, /postGradFlags\.mocks \? getMockTournamentDetails/);
 });

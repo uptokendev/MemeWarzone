@@ -37,8 +37,10 @@ function NodeCard({
     >
       <WarzoneTokenMark imageUrl={node.imageUrl} symbol={node.symbol} name={node.name} size="sm" />
       <div className="min-w-0">
-        <div className="truncate font-retro text-xs text-foreground">${node.symbol || "----"}</div>
+        <div className="truncate font-black text-xs text-foreground">{node.symbol ? `$${node.symbol}` : "TOKEN"}</div>
+        {node.name ? <div className="truncate text-[9px] uppercase tracking-[0.10em] text-white/50">{node.name}</div> : null}
         {node.won ? <div className="text-[9px] uppercase tracking-[0.14em] text-orange-200">Win</div> : null}
+        {active && !node.won ? <div className="text-[9px] uppercase tracking-[0.14em] text-orange-200">Live</div> : null}
       </div>
     </div>
   );
@@ -120,13 +122,20 @@ export function TournamentBracketModal({
                   <div className="mwz-flat-card flex flex-col items-center p-4 text-center">
                     <WarzoneTokenMark imageUrl={champion.imageUrl} symbol={champion.symbol} name={champion.name} size="lg" />
                     <div className="mt-2 text-[10px] uppercase tracking-[0.16em] text-orange-200">Champion</div>
-                    <div className="font-retro text-lg text-foreground">${champion.symbol}</div>
+                    <div className="font-black text-lg text-foreground">${champion.symbol}</div>
+                    {champion.name ? <div className="text-[11px] uppercase tracking-[0.12em] text-white/50">{champion.name}</div> : null}
                   </div>
                 ) : bracket.championship ? (
                   <div className="mwz-flat-card space-y-2 p-3 text-center">
-                    <div className="font-retro text-sm">${bracket.championship.left?.symbol || "----"}</div>
-                    <div className="font-retro text-orange-400">VS</div>
-                    <div className="font-retro text-sm">${bracket.championship.right?.symbol || "----"}</div>
+                    <div className="flex flex-col items-center gap-1">
+                      <WarzoneTokenMark imageUrl={bracket.championship.left?.imageUrl} symbol={bracket.championship.left?.symbol} name={bracket.championship.left?.name} size="sm" />
+                      <div className="font-black text-sm">${bracket.championship.left?.symbol || "----"}</div>
+                    </div>
+                    <div className="font-black text-orange-400">VS</div>
+                    <div className="flex flex-col items-center gap-1">
+                      <WarzoneTokenMark imageUrl={bracket.championship.right?.imageUrl} symbol={bracket.championship.right?.symbol} name={bracket.championship.right?.name} size="sm" />
+                      <div className="font-black text-sm">${bracket.championship.right?.symbol || "----"}</div>
+                    </div>
                   </div>
                 ) : (
                   <div className="text-xs uppercase tracking-[0.14em] text-white/40">Pending</div>

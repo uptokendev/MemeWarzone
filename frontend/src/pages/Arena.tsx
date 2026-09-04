@@ -1,6 +1,7 @@
 import { useMemo } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { ArenaUpvoteDialog } from "@/components/token/UpvoteDialog";
+import { FeaturedCampaignCard } from "@/components/home/FeaturedCampaignCard";
 import { TournamentEventCard } from "@/components/arena/TournamentEventCard";
 import { WarzoneBattlePreview } from "@/components/warzone/WarzoneBattlePreview";
 import { WarzoneContent } from "@/components/warzone/WarzoneContent";
@@ -12,14 +13,15 @@ import { useArenaEventFeed } from "@/hooks/useArenaEventFeed";
 import { useArenaFeaturedVotes } from "@/hooks/useArenaFeaturedVotes";
 import { useArenaFeedBattleMetrics } from "@/hooks/useArenaFeedBattleMetrics";
 import { useArenaLeagueFeed } from "@/hooks/useArenaLeagueFeed";
-import { battleChainLabel } from "@/lib/arena/battlePresentation";
 import { presentWarzoneLeagueBoard } from "@/lib/arena/warzoneChrome.mjs";
+import { resolveImageUri } from "@/lib/media";
 
 function isTournament(event: { type?: string; status?: string }) {
   return event.type === "tournament" || event.type === "seasonal_league";
 }
 
 const Arena = () => {
+  const navigate = useNavigate();
   const { liveBattles, source: battleSource } = useArenaBattleFeed();
   const livePreview = useMemo(() => liveBattles.slice(0, 2), [liveBattles]);
   const feedMetrics = useArenaFeedBattleMetrics(livePreview);
@@ -42,35 +44,29 @@ const Arena = () => {
           <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             {featured.items.slice(0, 8).map((item, index) => {
               const route = getArenaTokenRoute(item.tokenAddress, item.chainId);
-              const body = (
-                <>
-                  <div className="flex items-center gap-3">
-                    <WarzoneTokenMark imageUrl={item.imageUrl} symbol={item.symbol} name={item.tokenName} />
-                    <div className="min-w-0">
-                      <div className="text-[10px] uppercase tracking-[0.16em] text-white/42">#{index + 1}</div>
-                      <div className="truncate font-black text-sm text-foreground">${String(item.symbol || "").replace(/^\$/, "")}</div>
-                      <div className="truncate text-[11px] uppercase tracking-[0.12em] text-white/50">{item.tokenName}</div>
-                    </div>
-                  </div>
-                  <div className="mt-2 flex items-center justify-between gap-2 text-[10px] uppercase tracking-[0.14em] text-white/50">
-                    <span>{battleChainLabel(item.chainId)}</span>
-                    <span>{item.votes24h} UpVotes</span>
-                  </div>
-                </>
-              );
+              const image = resolveImageUri(item.imageUrl) || null;
               return (
-                <div key={`${item.chainId}-${item.tokenAddress}`} className="mwz-flat-card p-3">
-                  {route ? (
-                    <Link to={route} className="block hover:text-accent">
-                      {body}
-                    </Link>
-                  ) : (
-                    body
-                  )}
-                  <div className="mt-3">
-                    <ArenaUpvoteDialog tokenAddress={item.tokenAddress} chainId={item.chainId} buttonSize="sm" className="h-8 px-3 text-xs" />
-                  </div>
-                </div>
+                <FeaturedCampaignCard
+                  key={`${item.chainId}-${item.tokenAddress}`}
+                  liveId={`${item.chainId}:${item.tokenAddress}`}
+                  rank={index + 1}
+                  name={item.tokenName}
+                  symbol={item.symbol}
+                  imageUrl={image}
+                  votes24h={item.votes24h}
+                  mcapUsdLabel={null}
+                  athUsdLabel="—"
+                  onOpen={route ? () => navigate(route) : undefined}
+                  actions={
+                    <ArenaUpvoteDialog
+                      tokenAddress={item.tokenAddress}
+                      chainId={item.chainId}
+                      className="mwz-button mwz-button-active h-9 w-full text-[11px]"
+                      buttonVariant="ghost"
+                      buttonSize="sm"
+                    />
+                  }
+                />
               );
             })}
           </div>

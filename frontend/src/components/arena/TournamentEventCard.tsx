@@ -1,12 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { TournamentBracketModal } from "@/components/arena/TournamentBracketModal";
+import { TournamentProgressionBar } from "@/components/arena/TournamentProgressionBar";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { WarzoneTokenMark } from "@/components/warzone/WarzoneTokenMark";
 import { fetchPostGradTournamentDetails } from "@/features/postgrad/apiClient";
 import { postGradFlags } from "@/features/postgrad/config";
 import { getMockTournamentDetails } from "@/features/postgrad/mockTournamentFixtures.mjs";
-import { presentTournamentCard } from "@/lib/arena/tournamentCommandPresentation.mjs";
+import { presentTournamentCard, presentTournamentChampion, readBracketRounds } from "@/lib/arena/tournamentCommandPresentation.mjs";
 import { cn } from "@/lib/utils";
 
 type Entrant = {
@@ -23,30 +24,62 @@ function stageLabel(value?: string | null) {
   return raw.replaceAll("_", " ").toUpperCase();
 }
 
-function readRounds(source: unknown): Array<{ round: number; matches?: never[] }> {
-  const rounds = (source as { bracket?: { rounds?: unknown[] } } | null)?.bracket?.rounds;
-  return Array.isArray(rounds) ? (rounds as Array<{ round: number; matches?: never[] }>) : [];
-}
-
 export function TournamentEventCard({
   event,
   tab,
   focused = false,
   embedded = false,
+  onEnter,
+  onViewTournament,
+  onViewResults,
 }: {
   event: { id: string; title?: string; status?: string; [key: string]: unknown };
   tab?: "upcoming" | "live" | "results";
   focused?: boolean;
   embedded?: boolean;
+  onEnter?: (id: string) => void;
+  onViewTournament?: (id: string) => void;
+  onViewResults?: (id: string) => void;
 }) {
-  const card = presentTournamentCard(event, { tab, focused });
-  const entrants = Array.isArray(event.entrants) ? (event.entrants as Entrant[]) : [];
-  const preview = entrants.slice(0, 4);
-  const extra = Math.max(0, (card.participantCount || entrants.length) - preview.length);
+  const [hydrated, setHydrated] = useState<Record<string, unknown> | null>(null);
+  const source = hydrated ? { ...event, ...hydrated } : event;
+  const card = presentTournamentCard(source, { tab, focused });
+  const preview = (card.preview || []) as Entrant[];
+  const extra = Number(card.extraEntrants || 0);
   const [bracketOpen, setBracketOpen] = useState(false);
   const [bracketBusy, setBracketBusy] = useState(false);
-  const [bracketRounds, setBracketRounds] = useState(() => readRounds(event));
-  const [bracketEntries, setBracketEntries] = useState<Entrant[]>(entrants);
+  const [bracketRounds, setBracketRounds] = useState(() => readBracketRounds(event));
+  const [bracketEntries, setBracketEntries] = useState<Entrant[]>(Array.isArray(event.entrants) ? (event.entrants as Entrant[]) : []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const hasPreview = Array.isArray(event.entrants) && event.entrants.length > 0;
+    const hasRounds = readBracketRounds(event).length > 0;
+    if (hasPreview && hasRounds) return;
+    void fetchPostGradTournamentDetails(event.id)
+      .then((json) => json || (postGradFlags.mocks ? getMockTournamentDetails(event.id) : null))
+      .catch(() => (postGradFlags.mocks ? getMockTournamentDetails(event.id) : null))
+      .then((payload) => {
+        if (cancelled || !payload) return;
+        setHydrated({
+          ...((payload as { event?: Record<string, unknown> }).event || {}),
+          bracket: (payload as { bracket?: unknown }).bracket,
+          entrants: (payload as { entries?: unknown }).entries || (payload as { event?: { entrants?: unknown } }).event?.entrants,
+          entries: (payload as { entries?: unknown }).entries,
+          winnerToken: (payload as { event?: { winnerToken?: string } }).event?.winnerToken,
+        });
+        setBracketRounds(readBracketRounds(payload));
+        const nextEntries = Array.isArray((payload as { entries?: Entrant[] }).entries)
+          ? (payload as { entries: Entrant[] }).entries
+          : Array.isArray((payload as { event?: { entrants?: Entrant[] } }).event?.entrants)
+            ? (payload as { event: { entrants: Entrant[] } }).event.entrants
+            : [];
+        if (nextEntries.length) setBracketEntries(nextEntries);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [event.id]);
 
   async function handleViewBracket() {
     if (bracketRounds.length) {
@@ -57,18 +90,39 @@ export function TournamentEventCard({
     try {
       const json = await fetchPostGradTournamentDetails(card.id);
       const payload = json || (postGradFlags.mocks ? getMockTournamentDetails(card.id) : null);
-      setBracketRounds(readRounds(payload));
-      const nextEntries = Array.isArray(payload?.entries) ? payload.entries : Array.isArray(payload?.event?.entrants) ? payload.event.entrants : entrants;
+      setBracketRounds(readBracketRounds(payload));
+      const nextEntries = Array.isArray(payload?.entries) ? payload.entries : Array.isArray(payload?.event?.entrants) ? payload.event.entrants : bracketEntries;
       setBracketEntries(nextEntries as Entrant[]);
       setBracketOpen(true);
     } catch {
       const fallback = postGradFlags.mocks ? getMockTournamentDetails(card.id) : null;
-      setBracketRounds(readRounds(fallback));
+      setBracketRounds(readBracketRounds(fallback));
       setBracketOpen(true);
     } finally {
       setBracketBusy(false);
     }
   }
+
+  const champion = presentTournamentChampion(source, bracketEntries);
+  const live = card.status.key === "live";
+  const finished = card.status.key === "finished";
+
+  function handlePrimary() {
+    if (live) onViewTournament?.(card.id);
+    else if (finished) onViewResults?.(card.id);
+    else onEnter?.(card.id);
+  }
+
+  const primary = (
+    <button
+      type="button"
+      data-tournament-enter={card.id}
+      onClick={handlePrimary}
+      className="mwz-button inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em]"
+    >
+      {card.primaryCta}
+    </button>
+  );
 
   return (
     <article
@@ -78,14 +132,24 @@ export function TournamentEventCard({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">
           <TacticalTag label={card.status.label} tone={card.status.key === "live" ? "success" : "default"} />
-          {card.registration ? (
+          {card.registration && !live && !finished ? (
             <TacticalTag label={card.registration.label} tone={card.registration.key === "open" ? "success" : "default"} />
           ) : null}
         </div>
         {card.chain ? <TacticalTag label={card.chain.label} tone="default" /> : null}
       </div>
       <h2 className="mt-3 font-black text-xl leading-tight text-foreground md:text-2xl">{card.title}</h2>
-      {preview.length ? (
+
+      {finished && champion ? (
+        <div className="mt-3 flex items-center gap-3" data-tournament-champion="true">
+          <WarzoneTokenMark imageUrl={champion.imageUrl} symbol={champion.symbol} name={champion.tokenName} />
+          <div className="min-w-0">
+            <div className="text-[10px] uppercase tracking-[0.16em] text-orange-200">Champion</div>
+            <div className="font-black text-foreground">{champion.symbol ? `$${champion.symbol}` : "TOKEN"}</div>
+            {champion.tokenName ? <div className="truncate text-[11px] uppercase tracking-[0.12em] text-white/50">{champion.tokenName}</div> : null}
+          </div>
+        </div>
+      ) : preview.length ? (
         <div className="mt-3 flex flex-wrap items-start gap-3" data-tournament-entrant-rail="true">
           {preview.map((entrant, index) => {
             const ticker = String(entrant.symbol || "").replace(/^\$/, "");
@@ -108,19 +172,31 @@ export function TournamentEventCard({
           {extra > 0 ? <span className="self-center text-xs uppercase tracking-[0.14em] text-white/50">+{extra}</span> : null}
         </div>
       ) : null}
+
       <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-[11px] uppercase tracking-[0.14em] text-white/55">
-        {card.participantCount != null ? <span>{card.participantCount} CONTENDERS</span> : null}
-        {card.dateLabel ? <span>{card.dateLabel}</span> : null}
+        {live && card.participantCount != null ? <span>{card.participantCount} STARTED</span> : null}
+        {live && card.remaining != null ? <span>{card.remaining} REMAINING</span> : null}
+        {!live && card.participantCount != null ? <span>{card.participantCount} CONTENDERS</span> : null}
+        {card.dateTimeLabel || card.dateLabel ? <span>{card.dateTimeLabel || card.dateLabel}</span> : null}
+        {card.buyIn ? <span>{card.buyIn.label} ENTRY</span> : null}
         {stageLabel(card.bracketStage) ? <span>{stageLabel(card.bracketStage)}</span> : null}
+        {live && card.liveBattleCount != null ? <span>{card.liveBattleCount} BATTLES LIVE</span> : null}
       </div>
+
+      {card.progression?.nodes ? <TournamentProgressionBar nodes={card.progression.nodes} /> : null}
+
       <div className="mt-4 flex flex-wrap gap-3">
-        <Link
-          to={card.href}
-          data-tournament-enter={card.id}
-          className="mwz-button inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em]"
-        >
-          {tab === "upcoming" ? "Enter tournament" : "Open tournament"}
-        </Link>
+        {embedded ? (
+          <Link
+            to={card.href}
+            data-tournament-enter={card.id}
+            className="mwz-button inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em]"
+          >
+            {card.primaryCta}
+          </Link>
+        ) : (
+          primary
+        )}
         <button
           type="button"
           data-tournament-view-bracket={card.id}
@@ -128,7 +204,7 @@ export function TournamentEventCard({
           disabled={bracketBusy}
           className="inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em] text-accent hover:underline disabled:opacity-60"
         >
-          {bracketBusy ? "Loading bracket" : "View bracket"}
+          {bracketBusy ? "Loading bracket" : card.bracketCta}
         </button>
       </div>
       <TournamentBracketModal

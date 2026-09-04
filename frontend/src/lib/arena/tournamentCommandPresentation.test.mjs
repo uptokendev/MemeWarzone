@@ -7,8 +7,10 @@ import { fileURLToPath } from "node:url";
 import {
   battleFightHref,
   presentTournamentCard,
+  presentTournamentChampion,
   presentTournamentEmpty,
   presentTournamentMode,
+  presentTournamentProgression,
   presentTournamentRegistration,
   presentTournamentStandingsEmpty,
   tournamentHref,
@@ -37,22 +39,25 @@ test("canonical tournament routes use the focused command surface", () => {
   assert.match(app, /Navigate to=\{`\/warzone\/tournaments\/\$\{encodeURIComponent\(String\(id \|\| ""\)\)\}`\}/);
   assert.match(page, /useParams/);
   assert.match(page, /useNavigate/);
-  assert.match(page, /TournamentDetailsModal/);
+  assert.match(page, /TournamentRegistrationModal/);
   assert.match(page, /navigate\("\/warzone\/tournaments"/);
   assert.match(page, /data-warzone-tournaments/);
   assert.doesNotMatch(page, /\{focusedId \? <TournamentCommand/);
-  assert.match(command, /optInPostGradTournament/);
-  assert.match(command, /ArenaBuyInButton/);
-  assert.match(command, /CLAIM TOURNAMENT REWARDS/);
-  assert.match(command, /data-tournament-standings/);
-  assert.match(command, /data-tournament-bracket/);
-  assert.match(command, /TournamentBracketModal/);
-  assert.match(command, /data-tournament-matches/);
-  assert.match(command, /data-tournament-opt-in/);
+  assert.doesNotMatch(page, /data-tournament-standings/);
+  assert.doesNotMatch(page, /data-tournament-opt-in/);
+  const hook = readSrc("../../hooks/useTournamentCommandState.ts");
+  assert.match(hook, /optInPostGradTournament/);
+  assert.match(hook, /signArenaWalletAction/);
+  assert.match(hook, /action: "arena_tournament_opt_in"/);
+  const registration = readSrc("../../components/arena/TournamentRegistrationModal.tsx");
+  const resultsModal = readSrc("../../components/arena/TournamentResultsModal.tsx");
+  assert.match(registration, /ArenaBuyInButton/);
+  assert.match(registration, /data-tournament-opt-in/);
+  assert.match(resultsModal, /CLAIM TOURNAMENT REWARDS/);
   assert.match(details, /TournamentCommand/);
   const modal = readSrc("../../components/arena/TournamentDetailsModal.tsx");
-  assert.match(modal, /data-tournament-details-modal/);
-  assert.match(modal, /TournamentCommand/);
+  assert.match(modal, /TournamentRegistrationModal/);
+  assert.doesNotMatch(modal, /TournamentCommand/);
   assert.match(overview, /TournamentEventCard/);
   assert.match(overview, /\/warzone\/tournaments/);
   assert.match(league, /\/warzone\/tournaments\/\$\{encodeURIComponent\(quarterFinalsId\)\}/);
@@ -99,20 +104,19 @@ test("tournament cards only present authoritative fields and never fabricate boo
 });
 
 test("tournament command preserves opt-in, buy-in, claims, standings, bracket, and matches without extra realtime", () => {
-  const command = readSrc("../../components/arena/TournamentCommand.tsx");
+  const hook = readSrc("../../hooks/useTournamentCommandState.ts");
   const matchCard = readSrc("../../components/arena/TournamentMatchCard.tsx");
   const page = readSrc("../../pages/ArenaTournaments.tsx");
+  const registration = readSrc("../../components/arena/TournamentRegistrationModal.tsx");
 
-  assert.match(command, /signArenaWalletAction/);
-  assert.match(command, /action: "arena_tournament_opt_in"/);
-  assert.match(command, /ArenaBuyInButton/);
-  assert.match(command, /ArenaWarPoolClaimButton/);
-  assert.match(command, /fetchArenaBattleMetrics/);
-  assert.match(command, /setInterval\(\(\) => void load\(\), 15_000\)/);
-  assert.match(command, /TournamentMatchCard/);
-  assert.match(command, /battleFightHref/);
-  assert.doesNotMatch(command, /useAblyBattleChannel|useBattleWallRealtime/);
-  assert.doesNotMatch(command, /mwz-hud-frame/);
+  assert.match(hook, /signArenaWalletAction/);
+  assert.match(hook, /action: "arena_tournament_opt_in"/);
+  assert.match(registration, /ArenaBuyInButton/);
+  assert.match(hook, /fetchArenaBattleMetrics/);
+  assert.match(hook, /setInterval\(\(\) => void load\(\), 15_000\)/);
+  assert.match(hook, /loadMetrics/);
+  assert.doesNotMatch(page, /useAblyBattleChannel|useBattleWallRealtime/);
+  assert.doesNotMatch(page, /mwz-hud-frame/);
   assert.match(matchCard, /mwz-flat-card/);
   assert.match(matchCard, /battleFightHref/);
   assert.doesNotMatch(matchCard, /\/battle\//);
@@ -120,4 +124,28 @@ test("tournament command preserves opt-in, buy-in, claims, standings, bracket, a
   assert.match(page, /Upcoming/);
   assert.match(page, /Live/);
   assert.match(page, /Results/);
+});
+
+test("progression and champion stay authoritative", () => {
+  const upcoming = presentTournamentProgression({ cap: 16, bracketStage: "registration" });
+  assert.equal(upcoming.nodes.map((node) => node.size).join(","), "16,8,4,2,1");
+  assert.equal(upcoming.nodes[0].current, true);
+  assert.equal(upcoming.nodes.every((node) => !node.complete), true);
+  assert.equal(presentTournamentChampion({ status: "completed" }), null);
+  const eight = presentTournamentProgression({ cap: 8, bracketStage: "semifinals" });
+  assert.equal(eight.nodes[0].size, 8);
+  const card = presentTournamentCard({
+    id: "t1",
+    title: "Rookie Crown Qualifier",
+    status: "scheduled",
+    startsAt: "2026-05-23T20:00:00.000Z",
+    participantCount: 16,
+    chainId: 56,
+    bracketStage: "registration",
+    buyInNative: 0.1,
+    nativeSymbol: "BNB",
+    cap: 16,
+  });
+  assert.equal(card.primaryCta, "Enter tournament");
+  assert.equal(card.bracketCta, "View bracket");
 });
