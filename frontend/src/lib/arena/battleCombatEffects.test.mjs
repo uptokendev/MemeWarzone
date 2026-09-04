@@ -164,11 +164,25 @@ test("repeated enabled updates keep DOM counts bounded", () => {
   console.log(`combat_profile holes=${state.holes.length} tracers=${state.tracers.length} cap_holes=${MAX_HOLES_PER_SIDE} cap_tracers=${MAX_TRACERS}`);
 });
 
-test("BattleDetails mounts BattleCombatEffects at every breakpoint", () => {
+test("legacy route redirects to canonical Battle Wall and combat effects mount there", () => {
   const details = fs.readFileSync(path.join(here, "../../pages/BattleDetails.tsx"), "utf8");
-  const mount = details.split("<BattleCombatEffects")[0]?.slice(-180) || "";
-  assert.match(details, /<BattleCombatEffects/);
+  assert.match(details, /<Navigate/);
+  assert.match(details, /\/warzone\/battles\/\$\{battleId\}/);
+  assert.match(details, /location\.search/);
+  assert.match(details, /location\.hash/);
+  assert.match(details, /encodeURIComponent/);
+  assert.doesNotMatch(details, /<BattleCombatEffects/);
+
+  const battlesPage = fs.readFileSync(path.join(here, "../../pages/ArenaBattles.tsx"), "utf8");
+  assert.match(battlesPage, /useParams\(\)/);
+  assert.match(battlesPage, /fetchPostGradBattleDetails\(focusedId/);
+  assert.match(battlesPage, /<BattleWallModule/);
+
+  const wall = fs.readFileSync(path.join(here, "../../components/arena/BattleWallModule.tsx"), "utf8");
+  const mount = wall.split("<BattleCombatEffects")[0]?.slice(-220) || "";
+  assert.match(wall, /<BattleCombatEffects/);
   assert.doesNotMatch(mount, /hidden xl:block/);
+
   const component = fs.readFileSync(path.join(here, "../../components/arena/BattleCombatEffects.tsx"), "utf8");
   assert.match(component, /shouldClearCombatBaseline/);
   assert.match(component, /compact/);
