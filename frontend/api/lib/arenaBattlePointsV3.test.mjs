@@ -4,6 +4,7 @@ import "./arenaBattlePointsV3Persistence.test.mjs";
 import "./arenaBattlePointsV3Refresh.test.mjs";
 
 import {
+  BATTLE_POINTS_CONFIG,
   BATTLE_POINTS_V3,
   BATTLE_POINTS_V3_BOOST_CURVE,
   BATTLE_POINTS_V3_CONFIG,
@@ -37,14 +38,20 @@ function score(overrides = {}) {
   });
 }
 
-test("founder-locked V3 weights are 50 / 25 / 15 / 10", () => {
+test("founder-locked V3 weights are 45 / 27 / 18 / 10", () => {
   const config = battlePointsV3MarketConfig();
   assert.equal(config.version, BATTLE_POINTS_V3);
-  assert.equal(config.mcap.weight, 50);
-  assert.equal(config.holders.weight, 25);
-  assert.equal(config.volume.weight, 15);
+  assert.equal(config.mcap.weight, 45);
+  assert.equal(config.holders.weight, 27);
+  assert.equal(config.volume.weight, 18);
   assert.equal(BATTLE_POINTS_V3_CONFIG.boost.weight, 10);
   assert.equal(config.mcap.weight + config.holders.weight + config.volume.weight + BATTLE_POINTS_V3_CONFIG.boost.weight, 100);
+});
+
+test("historical V2 weights remain 50 / 30 / 20", () => {
+  assert.equal(BATTLE_POINTS_CONFIG.mcap.weight, 50);
+  assert.equal(BATTLE_POINTS_CONFIG.holders.weight, 30);
+  assert.equal(BATTLE_POINTS_CONFIG.volume.weight, 20);
 });
 
 test("founder-locked Boost curve metadata is exact and immutable config", () => {
@@ -82,16 +89,16 @@ test("V3 market subtotal is bounded by 90 points", () => {
     eligibleVolume: { usd: totalVolume, rawUsd: totalVolume, cappedUsd: totalVolume, clusters: clusters(totalVolume, 10) },
     now: NOW,
   });
-  assert.ok(maxed.mcap.points <= 50);
-  assert.ok(maxed.holders.points <= 25);
-  assert.ok(maxed.volume.points <= 15);
+  assert.ok(maxed.mcap.points <= 45);
+  assert.ok(maxed.holders.points <= 27);
+  assert.ok(maxed.volume.points <= 18);
   assert.ok(maxed.marketSubtotal <= 90);
 });
 
-test("V3 preserves the existing anti-concentration rule at the 15-point volume weight", () => {
+test("V3 preserves the existing anti-concentration rule at the 18-point volume weight", () => {
   const whale = score({ eligibleVolume: { usd: 1_000_000, rawUsd: 1_000_000, cappedUsd: 1_000_000, clusters: [{ clusterId: "same-beneficial-owner", countedUsd: 1_000_000 }] } });
-  assert.equal(whale.volume.clusterPointCap, 3);
-  assert.ok(whale.volume.points <= 3);
+  assert.equal(whale.volume.clusterPointCap, 3.6);
+  assert.ok(whale.volume.points <= 3.6);
 });
 
 test("V3 settlement activation requires both explicit flags after founder curve lock", () => {
