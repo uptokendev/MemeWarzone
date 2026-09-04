@@ -1,5 +1,6 @@
 export const FEED_METRICS_LIMIT = 12;
 export const BATTLE_POINTS_MODE = "battle_points_v2";
+export const BATTLE_POINTS_V3_MODE = "battle_points_v3";
 export const LEGACY_SETTLEMENT_MODE = "v1_mcap_pct_change";
 export const DATA_DELAY_LABEL = "DATA DELAY";
 export const POINTS_UNAVAILABLE_LABEL = "BATTLE POINTS UNAVAILABLE";
@@ -68,10 +69,12 @@ export function selectFeedMetricBattleIds(battles, limit = FEED_METRICS_LIMIT) {
   return ids;
 }
 
-function pickSidePoints(metrics, side) {
+function pickSidePoints(metrics, side, mode) {
   const final = finiteNumber(metrics?.finalBattlePoints?.[side]);
   if (final != null) return final;
-  return finiteNumber(metrics?.sides?.[side]?.points?.total);
+  const source = metrics?.sides?.[side]?.points;
+  if (mode === BATTLE_POINTS_V3_MODE && source?.totalAuthoritative !== true) return null;
+  return finiteNumber(source?.total);
 }
 
 function legacyPresentation(battle, base) {
@@ -140,7 +143,7 @@ export function presentArenaMatchRow(battle, metrics, options = {}) {
   }
 
   const settlementMode = String(metrics?.settlementMode || "");
-  if (settlementMode === BATTLE_POINTS_MODE) {
+  if (settlementMode === BATTLE_POINTS_MODE || settlementMode === BATTLE_POINTS_V3_MODE) {
     const healthy = metrics?.dataHealth?.healthy === true;
     const leftReady = metrics?.sides?.left?.pointsReady === true;
     const rightReady = metrics?.sides?.right?.pointsReady === true;
@@ -168,8 +171,20 @@ export function presentArenaMatchRow(battle, metrics, options = {}) {
         statusLabel: POINTS_UNAVAILABLE_LABEL,
       };
     }
-    const left = pickSidePoints(metrics, "left") ?? 0;
-    const right = pickSidePoints(metrics, "right") ?? 0;
+    const left = pickSidePoints(metrics, "left", settlementMode);
+    const right = pickSidePoints(metrics, "right", settlementMode);
+    if (left == null || right == null) {
+      return {
+        ...base,
+        scoreKind: "unavailable",
+        scoreCaption: "Battle points",
+        leftPointsLabel: null,
+        rightPointsLabel: null,
+        leaderIndex: null,
+        gapLabel: null,
+        statusLabel: POINTS_UNAVAILABLE_LABEL,
+      };
+    }
     const leaderIndex = metrics?.leaderSide === "left" ? 0 : metrics?.leaderSide === "right" ? 1 : null;
     const gap = finiteNumber(metrics?.pointDifference);
     const pointGap = gap != null ? Math.abs(gap) : Math.abs(left - right);

@@ -7,7 +7,7 @@ export function BattleScoreBreakdown({
   maxes,
 }: {
   metrics?: BattleRealtimeMetrics | null;
-  maxes?: { marketCap?: number; holders?: number; volume?: number } | null;
+  maxes?: { marketCap?: number; holders?: number; volume?: number; boost?: number } | null;
 }) {
   const resolved = maxes || BATTLE_POINTS_V2_COMPONENT_MAX;
   return (

@@ -6,6 +6,7 @@ import {
   isEventSponsorable,
   presentEventSponsor,
   presentEventSponsorship,
+  presentEventSponsorshipPayment,
   presentEventSponsorshipQuote,
 } from "./eventSponsorshipPresentation.mjs";
 
@@ -36,6 +37,20 @@ test("event chain determines payment asset", () => {
   assert.equal(presentEventSponsorship({ eventType: "monthly_mwl", chainId: 4663 }).symbol, "ETH");
 });
 
+test("public options/state can present authoritative tier, minimum and approval", () => {
+  const model = presentEventSponsorship({
+    eventId: "evt1",
+    eventType: "normal_tournament",
+    chainId: 56,
+    pricingTier: "tier_2",
+    minimumUsdCents: "12500",
+    sponsorApprovalStatus: "approved",
+  });
+  assert.equal(model.pricingTier, "tier_2");
+  assert.equal(model.minimumUsd, 125);
+  assert.equal(model.approvalStatus.key, "approved");
+});
+
 test("public sponsor contribution represents event-prize share", () => {
   const sponsor = presentEventSponsor({
     projectName: "ALPHA",
@@ -53,4 +68,18 @@ test("quote is invalid until authoritative native quote identity exists", () => 
     presentEventSponsorshipQuote({ quoteId: "q1", chainId: 56, grossNative: 1, minimumUsd: 49 }).valid,
     true,
   );
+});
+
+test("payment state is display-only and can surface confirmed Event Prize contribution", () => {
+  const payment = presentEventSponsorshipPayment({
+    quoteId: "q1",
+    status: "confirmed",
+    chainId: 56,
+    eventPrizeNative: 0.7,
+    txHash: "0xabc",
+  });
+  assert.equal(payment.status.key, "confirmed");
+  assert.equal(payment.eventPrizeNative, 0.7);
+  assert.equal(payment.symbol, "BNB");
+  assert.equal(payment.txHash, "0xabc");
 });
