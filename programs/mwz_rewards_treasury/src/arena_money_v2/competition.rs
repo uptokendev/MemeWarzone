@@ -3,7 +3,8 @@ use anchor_lang::prelude::*;
 use super::config::{ArenaMoneyConfigV2, ARENA_MONEY_CONFIG_SEED_V2, ARENA_MONEY_GENERATION_V2};
 use super::errors::ArenaMoneyV2Error;
 use super::receipts::{
-    debit_program_vault, transfer_sol, CompetitionEntryReceiptV2, COMPETITION_ENTRY_RECEIPT_SEED_V2,
+    debit_program_vault, transfer_sol, validate_competition_entry_receipt_v2,
+    CompetitionEntryReceiptV2, COMPETITION_ENTRY_RECEIPT_SEED_V2,
 };
 
 pub const COMPETITION_POOL_SEED_V2: &[u8] = b"arena_competition_v2";
@@ -79,6 +80,7 @@ pub struct CompetitionPoolV2 {
     pub bump: u8,
 }
 impl CompetitionPoolV2 {
+    // Intentionally over-allocates a small compatibility margin; no historical account uses this namespace.
     pub const SIZE: usize = 1 + 32 + 2 + 32 * 5 + 8 * 9 + 4 + 32 * 2 + 3 + 8 * 3 + 1;
 }
 
@@ -161,6 +163,59 @@ pub struct ResolveCompetitionPoolV2<'info> {
         constraint = pool.competition_id == competition_id @ ArenaMoneyV2Error::InvalidId
     )]
     pub pool: Account<'info, CompetitionPoolV2>,
+    /// CHECK: ignored for battles; tournaments validate PDA, owner and serialized paid-entry fields in the handler.
+    pub winner_entry_receipt: UncheckedAccount<'info>,
+}
+
+#[derive(Accounts)]
+#[instruction(competition_id: [u8; 32])]
+pub struct CancelCompetitionPoolV2<'info> {
+    pub resolver: Signer<'info>,
+    #[account(
+        seeds = [ARENA_MONEY_CONFIG_SEED_V2],
+        bump = config.bump,
+        constraint = config.generation == ARENA_MONEY_GENERATION_V2 @ ArenaMoneyV2Error::GenerationMismatch,
+        constraint = config.resolver == resolver.key() @ ArenaMoneyV2Error::Unauthorized
+    )]
+    pub config: Account<'info, ArenaMoneyConfigV2>,
+    #[account(
+        mut,
+        seeds = [COMPETITION_POOL_SEED_V2, competition_id.as_ref()],
+        bump = pool.bump,
+        constraint = pool.generation == ARENA_MONEY_GENERATION_V2 @ ArenaMoneyV2Error::GenerationMismatch,
+        constraint = pool.competition_id == competition_id @ ArenaMoneyV2Error::InvalidId
+    )]
+    pub pool: Account<'info, CompetitionPoolV2>,
+}
+
+#[derive(Accounts)]
+#[instruction(competition_id: [u8; 32], entry_asset: Pubkey)]
+pub struct RefundCompetitionEntryV2<'info> {
+    #[account(mut)]
+    pub entrant: Signer<'info>,
+    #[account(
+        mut,
+        seeds = [COMPETITION_POOL_SEED_V2, competition_id.as_ref()],
+        bump = pool.bump,
+        constraint = pool.generation == ARENA_MONEY_GENERATION_V2 @ ArenaMoneyV2Error::GenerationMismatch,
+        constraint = pool.competition_id == competition_id @ ArenaMoneyV2Error::InvalidId
+    )]
+    pub pool: Account<'info, CompetitionPoolV2>,
+    #[account(
+        mut,
+        seeds = [
+            COMPETITION_ENTRY_RECEIPT_SEED_V2,
+            competition_id.as_ref(),
+            entry_asset.as_ref(),
+            entrant.key().as_ref()
+        ],
+        bump = receipt.bump,
+        constraint = receipt.generation == ARENA_MONEY_GENERATION_V2 @ ArenaMoneyV2Error::GenerationMismatch,
+        constraint = receipt.competition_id == competition_id @ ArenaMoneyV2Error::ReceiptMismatch,
+        constraint = receipt.entry_asset == entry_asset @ ArenaMoneyV2Error::ReceiptMismatch,
+        constraint = receipt.entrant == entrant.key() @ ArenaMoneyV2Error::ReceiptMismatch
+    )]
+    pub receipt: Account<'info, CompetitionEntryReceiptV2>,
 }
 
 #[derive(Accounts)]
@@ -213,6 +268,7 @@ pub fn open_competition_pool_v2_handler(
 ) -> Result<()> {
     require!(competition_id != [0u8; 32], ArenaMoneyV2Error::InvalidId);
     require!(kind == COMPETITION_KIND_BATTLE || kind == COMPETITION_KIND_TOURNAMENT, ArenaMoneyV2Error::InvalidState);
+    require!(required_entry_lamports > 0, ArenaMoneyV2Error::InvalidAmount);
     require!(closes_at > opens_at, ArenaMoneyV2Error::DeadlinePassed);
     if kind == COMPETITION_KIND_BATTLE {
         require!(asset_a != Pubkey::default() && asset_b != Pubkey::default() && asset_a != asset_b, ArenaMoneyV2Error::InvalidParticipant);
@@ -259,8 +315,13 @@ pub fn deposit_competition_entry_v2_handler(
     require!(pool.state == COMPETITION_STATE_OPEN, ArenaMoneyV2Error::InvalidState);
     require!(now >= pool.opens_at && now <= pool.closes_at, ArenaMoneyV2Error::DeadlinePassed);
     require!(entry_asset != Pubkey::default(), ArenaMoneyV2Error::InvalidParticipant);
+    if pool.kind == COMPETITION_KIND_BATTLE {
+        let entrant = ctx.accounts.entrant.key();
+        let is_a = entry_asset == pool.asset_a && entrant == pool.owner_a;
+        let is_b = entry_asset == pool.asset_b && entrant == pool.owner_b;
+        require!(is_a || is_b, ArenaMoneyV2Error::InvalidParticipant);
+    }
     let amount = pool.required_entry_lamports;
-    require!(amount > 0, ArenaMoneyV2Error::InvalidAmount);
     transfer_sol(
         &ctx.accounts.entrant.to_account_info(),
         &pool.to_account_info(),
@@ -286,13 +347,26 @@ pub fn deposit_competition_entry_v2_handler(
 
 pub fn resolve_competition_pool_v2_handler(
     ctx: Context<ResolveCompetitionPoolV2>,
-    _competition_id: [u8; 32],
+    competition_id: [u8; 32],
     winner_asset: Pubkey,
     winner_wallet: Pubkey,
 ) -> Result<()> {
     let pool = &mut ctx.accounts.pool;
     require!(pool.state == COMPETITION_STATE_LIVE || (pool.kind == COMPETITION_KIND_TOURNAMENT && pool.state == COMPETITION_STATE_OPEN), ArenaMoneyV2Error::InvalidState);
     require!(winner_asset != Pubkey::default() && winner_wallet != Pubkey::default(), ArenaMoneyV2Error::InvalidWinner);
+    if pool.kind == COMPETITION_KIND_BATTLE {
+        let is_a = winner_asset == pool.asset_a && winner_wallet == pool.owner_a;
+        let is_b = winner_asset == pool.asset_b && winner_wallet == pool.owner_b;
+        require!(is_a || is_b, ArenaMoneyV2Error::InvalidWinner);
+    } else {
+        validate_competition_entry_receipt_v2(
+            &ctx.accounts.winner_entry_receipt.to_account_info(),
+            competition_id,
+            winner_asset,
+            winner_wallet,
+            pool.required_entry_lamports,
+        )?;
+    }
     let entry = split_competition_v2(pool.entry_total_lamports)?;
     pool.pending_winner_lamports = entry.prize.checked_add(pool.boost_prize_lamports).ok_or(ArenaMoneyV2Error::MathOverflow)?;
     pool.pending_league_lamports = entry.league;
@@ -309,6 +383,39 @@ pub fn resolve_competition_pool_v2_handler(
     pool.state = COMPETITION_STATE_RESOLVED;
     pool.resolved_at = Clock::get()?.unix_timestamp;
     Ok(())
+}
+
+pub fn cancel_competition_pool_v2_handler(
+    ctx: Context<CancelCompetitionPoolV2>,
+    _competition_id: [u8; 32],
+) -> Result<()> {
+    let pool = &mut ctx.accounts.pool;
+    require!(pool.state == COMPETITION_STATE_OPEN || pool.state == COMPETITION_STATE_LIVE, ArenaMoneyV2Error::InvalidState);
+    pool.state = COMPETITION_STATE_CANCELLED;
+    pool.resolved_at = Clock::get()?.unix_timestamp;
+    Ok(())
+}
+
+pub fn refund_competition_entry_v2_handler(
+    ctx: Context<RefundCompetitionEntryV2>,
+    _competition_id: [u8; 32],
+    _entry_asset: Pubkey,
+) -> Result<()> {
+    let pool = &mut ctx.accounts.pool;
+    require!(pool.state == COMPETITION_STATE_CANCELLED, ArenaMoneyV2Error::InvalidState);
+    let receipt = &mut ctx.accounts.receipt;
+    require!(!receipt.refunded, ArenaMoneyV2Error::Replay);
+    let amount = receipt.amount_lamports;
+    require!(amount > 0, ArenaMoneyV2Error::NothingToClaim);
+    pool.entry_total_lamports = pool.entry_total_lamports.checked_sub(amount).ok_or(ArenaMoneyV2Error::MathOverflow)?;
+    pool.entry_count = pool.entry_count.checked_sub(1).ok_or(ArenaMoneyV2Error::MathOverflow)?;
+    receipt.refunded = true;
+    debit_program_vault(
+        &pool.to_account_info(),
+        &ctx.accounts.entrant.to_account_info(),
+        amount,
+        CompetitionPoolV2::SIZE,
+    )
 }
 
 pub fn claim_competition_winner_v2_handler(ctx: Context<ClaimCompetitionWinnerV2>, _competition_id: [u8; 32]) -> Result<()> {
