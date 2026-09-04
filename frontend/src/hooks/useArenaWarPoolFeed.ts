@@ -9,6 +9,7 @@ import {
   transitionPostGradWarPool,
 } from "@/features/postgrad/apiClient";
 import { useMockWarPool, useMockWarPoolSummary } from "@/hooks/useMockWarPoolRuntime";
+import { presentWarPoolRouting } from "@/lib/arena/warPoolGenerationRouting.mjs";
 
 export type ArenaWarPoolFeedSource = "qa-runtime" | "api" | "empty";
 
@@ -26,6 +27,7 @@ export type ArenaWarPoolMeta = {
   redirectTournamentId?: string | null;
   nativeSymbol?: string;
   chainId?: number;
+  poolGeneration?: string | null;
   sides?: Array<{ tokenId: string; ownerWallet?: string; eligible?: boolean }>;
 };
 
@@ -57,22 +59,21 @@ function isWarPoolEntry(value: any): boolean {
   );
 }
 
-function normalizeRouting(value: any, totalPotUsd: number): WarPool["routingBreakdown"] {
-  const winnersUsd = Number(value?.winnersUsd);
-  const protocolUsd = Number(value?.protocolUsd);
-  const featuredUsd = Number(value?.featuredUsd);
-  if (Number.isFinite(winnersUsd) && Number.isFinite(protocolUsd) && Number.isFinite(featuredUsd)) {
-    return { winnersUsd, protocolUsd, featuredUsd };
-  }
-
+function normalizeRouting(
+  value: any,
+  totalPotUsd: number,
+  poolGeneration?: string | null,
+): WarPool["routingBreakdown"] | null {
+  const routing = presentWarPoolRouting(value, totalPotUsd, poolGeneration);
+  if (!routing) return null;
   return {
-    winnersUsd: Math.round(totalPotUsd * 0.85),
-    protocolUsd: Math.round(totalPotUsd * 0.05),
-    featuredUsd: Math.round(totalPotUsd * 0.1),
+    winnersUsd: routing.winnersUsd,
+    protocolUsd: routing.protocolUsd,
+    featuredUsd: routing.featuredUsd,
   };
 }
 
-function normalizeWarPool(value: any): WarPool | null {
+function normalizeWarPool(value: any, generationValue?: string | null): WarPool | null {
   if (!value || typeof value !== "object") return null;
   if (!value.battleId || !WAR_POOL_STATES.has(String(value.state))) return null;
 
@@ -89,20 +90,33 @@ function normalizeWarPool(value: any): WarPool | null {
   const totalPotUsd = Number.isFinite(Number(value.totalPotUsd))
     ? Number(value.totalPotUsd)
     : entries.reduce((total: number, entry: WarPool["entries"][number]) => total + entry.amountUsd, 0);
+  const poolGeneration = String(
+    value.poolGeneration || value.pool_generation || generationValue || "",
+  ).trim() || null;
+  const routingBreakdown = normalizeRouting(value.routingBreakdown, totalPotUsd, poolGeneration);
+  if (!routingBreakdown) return null;
 
   return {
     battleId: String(value.battleId),
     state: value.state,
     totalPotUsd,
     cutoffAt: String(value.cutoffAt || new Date().toISOString()),
-    routingBreakdown: normalizeRouting(value.routingBreakdown, totalPotUsd),
+    routingBreakdown,
     entries,
   };
 }
 
-function normalizeSettlementSummary(value: any): WarPoolSettlementSummary | null {
+function normalizeSettlementSummary(
+  value: any,
+  poolGeneration?: string | null,
+): WarPoolSettlementSummary | null {
   if (!value || typeof value !== "object") return null;
-  const routingBreakdown = normalizeRouting(value.routingBreakdown, Number(value.totalPotUsd ?? 0));
+  const routingBreakdown = normalizeRouting(
+    value.routingBreakdown,
+    Number(value.totalPotUsd ?? 0),
+    String(value.poolGeneration || value.pool_generation || poolGeneration || "").trim() || null,
+  );
+  if (!routingBreakdown) return null;
   return {
     winnerTokenId: value.winnerTokenId ? String(value.winnerTokenId) : null,
     winnerLabel: String(value.winnerLabel ?? "No winner yet"),
@@ -121,7 +135,12 @@ function normalizeSettlementSummary(value: any): WarPoolSettlementSummary | null
 
 function normalizeWarPoolSummary(value: any): WarPoolSummary | null {
   if (!value || typeof value !== "object") return null;
-  const pools = Array.isArray(value.pools) ? value.pools.map(normalizeWarPool).filter(Boolean) as WarPool[] : [];
+  const pools = Array.isArray(value.pools)
+    ? value.pools.map((pool: any) => normalizeWarPool(
+        pool,
+        String(pool?.poolGeneration || pool?.pool_generation || value.poolGeneration || value.pool_generation || "").trim() || null,
+      )).filter(Boolean) as WarPool[]
+    : [];
   return {
     pools,
     totalPotUsd: Number.isFinite(Number(value.totalPotUsd)) ? Number(value.totalPotUsd) : pools.reduce((total, pool) => total + pool.totalPotUsd, 0),
@@ -134,11 +153,14 @@ function normalizeWarPoolSummary(value: any): WarPoolSummary | null {
 async function loadWarPool(battleId: string, signal?: AbortSignal): Promise<ArenaWarPoolPayload | null> {
   const json = await fetchPostGradWarPool(battleId, signal);
   if (!json) return null;
-  const pool = normalizeWarPool(json.pool ?? json);
+  const poolGeneration = String(
+    json.poolGeneration || json.pool_generation || json.pool?.poolGeneration || json.pool?.pool_generation || "",
+  ).trim() || null;
+  const pool = normalizeWarPool(json.pool ?? json, poolGeneration);
   if (!pool) return null;
   return {
     pool,
-    settlementSummary: normalizeSettlementSummary(json.settlementSummary),
+    settlementSummary: normalizeSettlementSummary(json.settlementSummary, poolGeneration),
     meta: {
       kind: json.kind === "tournament" ? "tournament" : "battle",
       configured: Boolean(json.configured),
@@ -150,6 +172,7 @@ async function loadWarPool(battleId: string, signal?: AbortSignal): Promise<Aren
       redirectTournamentId: json.redirectTournamentId ? String(json.redirectTournamentId) : null,
       nativeSymbol: json.nativeSymbol ? String(json.nativeSymbol) : undefined,
       chainId: Number(json.chainId || 0) || undefined,
+      poolGeneration,
       sides: Array.isArray(json.sides) ? json.sides : [],
     },
   };
@@ -165,7 +188,8 @@ async function loadWarPoolSummary(signal?: AbortSignal): Promise<ArenaWarPoolSum
  * Adapter boundary for War Pool surfaces.
  *
  * It attempts API-shaped War Pool endpoints first and only falls back to the QA
- * runtime when mock mode is explicitly enabled.
+ * runtime when mock mode is explicitly enabled. Historical routing is never
+ * inferred unless the payload explicitly identifies a supported pool generation.
  */
 export function useArenaWarPool(battleId?: string | null) {
   const runtime = useMockWarPool(battleId);
