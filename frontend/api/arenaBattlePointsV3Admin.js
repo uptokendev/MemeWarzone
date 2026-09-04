@@ -16,6 +16,18 @@ function routeBattleId(req) {
   return match ? decodeURIComponent(match[1]) : null;
 }
 
+function exactCurveLock(lock) {
+  const params = lock?.boost_curve_parameters || {};
+  return Boolean(
+    lock
+    && lock.scoring_version === BATTLE_POINTS_V3
+    && lock.boost_curve_version === BATTLE_POINTS_V3_BOOST_CURVE
+    && Number(params.maxPoints) === 10
+    && Number(params.halfSaturationUnits) === 100
+    && Number(params.unitUsdMicros) === 1_000_000
+  );
+}
+
 export async function lockBattlePointsV3(battleId, deps = {}) {
   const db = deps.pool || pool;
   const client = await db.connect();
@@ -59,12 +71,7 @@ export async function lockBattlePointsV3(battleId, deps = {}) {
          from public.arena_battle_scoring_locks where battle_id = $1`,
       [String(battleId)],
     )).rows[0];
-    if (
-      !lock
-      || lock.scoring_version !== BATTLE_POINTS_V3
-      || lock.boost_curve_version !== BATTLE_POINTS_V3_BOOST_CURVE
-      || JSON.stringify(lock.boost_curve_parameters || {}) !== parameters
-    ) {
+    if (!exactCurveLock(lock)) {
       await client.query("rollback");
       return { ok: false, status: 409, reason: "battle_has_incompatible_scoring_lock" };
     }
