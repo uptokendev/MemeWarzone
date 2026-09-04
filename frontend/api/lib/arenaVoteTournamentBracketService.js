@@ -2,6 +2,7 @@ import { randomBytes } from "crypto";
 
 import { captureLiveBaselines } from "./arenaBattleMetrics.js";
 import { getArenaMarketSnapshot } from "./arenaMarketSnapshot.js";
+import { isSolanaChainId } from "./chainNative.js";
 
 function ident(value) {
   return String(value || "").trim();
@@ -61,20 +62,24 @@ function validatedRoundWinners(matches) {
 
 async function loadTokenMetadata(client, chainId, tokenAddress) {
   const token = ident(tokenAddress);
+  const solana = isSolanaChainId(Number(chainId));
+  const nativeIdentity = solana
+    ? `(coalesce(token_address::text, '') = $2 or coalesce(campaign_address::text, '') = $2)`
+    : `(lower(coalesce(token_address::text, '')) = lower($2) or lower(coalesce(campaign_address::text, '')) = lower($2))`;
   const native = await client.query(
     `select name, symbol, token_address, campaign_address, creator_address, created_at, graduated_at_chain
        from public.campaigns
-      where chain_id = $1
-        and (lower(coalesce(token_address::text, '')) = lower($2) or lower(coalesce(campaign_address::text, '')) = lower($2))
+      where chain_id = $1 and ${nativeIdentity}
       limit 1`,
     [chainId, token],
   );
   if (native.rows[0]) return { ...native.rows[0], owner_wallet: native.rows[0].creator_address };
 
+  const importIdentity = solana ? `token_address = $2` : `lower(token_address) = lower($2)`;
   const imported = await client.query(
     `select name, symbol, token_address, owner_wallet, created_at
        from public.arena_token_imports
-      where chain_id = $1 and lower(token_address) = lower($2)
+      where chain_id = $1 and ${importIdentity}
       limit 1`,
     [chainId, token],
   );
