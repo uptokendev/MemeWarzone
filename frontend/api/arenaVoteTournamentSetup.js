@@ -36,11 +36,7 @@ function publicQuote(pricing, chainId, tournamentId = null) {
     oracleTimestamp: pricing.oracleTimestamp.toString(),
   };
   if (!tournamentId) return base;
-  return {
-    ...base,
-    tournamentId,
-    poolId: tournamentPoolIdV2(tournamentId),
-  };
+  return { ...base, tournamentId, poolId: tournamentPoolIdV2(tournamentId) };
 }
 
 async function handleQuote(req, res) {
@@ -51,9 +47,21 @@ async function handleQuote(req, res) {
     const payload = publicQuote(pricing, chainId);
     if (!isSolanaChainId(chainId)) payload.treasuryAddress = arenaWarPoolTreasuryV2Address(chainId);
     res.setHeader("cache-control", "no-store");
-    return json(res, 200, { ok: true, generation: "arena_competition_v2", scoringVersion: "vote_tournament_v1", battleMode: "vote", roundDurationHours: 24, quote: payload });
+    return json(res, 200, {
+      ok: true,
+      generation: "arena_competition_v2",
+      scoringVersion: "vote_tournament_v1",
+      battleMode: "vote",
+      roundDurationHours: 24,
+      quote: payload,
+    });
   } catch (error) {
-    return json(res, 503, { ok: false, error: "Vote Tournament buy-in quote is unavailable", code: "VOTE_TOURNAMENT_QUOTE_UNAVAILABLE", detail: String(error?.message || error) });
+    return json(res, 503, {
+      ok: false,
+      error: "Vote Tournament buy-in quote is unavailable",
+      code: "VOTE_TOURNAMENT_QUOTE_UNAVAILABLE",
+      detail: String(error?.message || error),
+    });
   }
 }
 
@@ -64,13 +72,20 @@ async function handleCreate(req, res) {
   const name = ident(body.name);
   const chainId = Number(body.chainId || body.chain_id || 56);
   const startsAt = body.startsAt || body.starts_at;
-  if (!name || !startsAt) return json(res, 400, { ok: false, error: "name and startsAt are required", code: "VOTE_TOURNAMENT_CREATE_INPUT_REQUIRED" });
+  if (!name || !startsAt) {
+    return json(res, 400, { ok: false, error: "name and startsAt are required", code: "VOTE_TOURNAMENT_CREATE_INPUT_REQUIRED" });
+  }
 
   let pricing;
   try {
     pricing = readTournamentBuyInPricing(chainId);
   } catch (error) {
-    return json(res, 503, { ok: false, error: "Founder-locked $0.25 buy-in pricing is unavailable", code: "VOTE_TOURNAMENT_QUOTE_UNAVAILABLE", detail: String(error?.message || error) });
+    return json(res, 503, {
+      ok: false,
+      error: "Founder-locked $0.25 buy-in pricing is unavailable",
+      code: "VOTE_TOURNAMENT_QUOTE_UNAVAILABLE",
+      detail: String(error?.message || error),
+    });
   }
 
   const id = `vote-tourney-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;
@@ -140,6 +155,12 @@ async function handleCreate(req, res) {
   });
 }
 
+function entryIdentitySql(chainId) {
+  return isSolanaChainId(chainId)
+    ? { token: "token_address = $2", wallet: "owner_wallet = $3" }
+    : { token: "lower(token_address) = lower($2)", wallet: "lower(owner_wallet) = lower($3)" };
+}
+
 async function handleBuyInReceipt(req, res, tournamentId) {
   const body = await readJson(req);
   const tournament = (await pool.query(
@@ -157,12 +178,16 @@ async function handleBuyInReceipt(req, res, tournamentId) {
   ) {
     return json(res, 409, { ok: false, error: "This receipt route only accepts V2 Vote Tournaments", code: "VOTE_TOURNAMENT_V2_REQUIRED" });
   }
-  if (tournament.status !== "upcoming") return json(res, 409, { ok: false, error: "Tournament registration is closed", code: "VOTE_TOURNAMENT_REGISTRATION_CLOSED" });
+  if (tournament.status !== "upcoming") {
+    return json(res, 409, { ok: false, error: "Tournament registration is closed", code: "VOTE_TOURNAMENT_REGISTRATION_CLOSED" });
+  }
 
   const chainId = Number(tournament.chain_id);
   const token = ident(body.tokenAddress || body.tokenId);
   const wallet = normalizeAddress(body.walletAddress || body.auth?.walletAddress || "", chainId);
-  if (!token || !wallet) return json(res, 400, { ok: false, error: "tokenAddress and walletAddress are required", code: "VOTE_TOURNAMENT_BUY_IN_INPUT_REQUIRED" });
+  if (!token || !wallet) {
+    return json(res, 400, { ok: false, error: "tokenAddress and walletAddress are required", code: "VOTE_TOURNAMENT_BUY_IN_INPUT_REQUIRED" });
+  }
 
   const verified = await requireWalletActionAuth({
     res,
@@ -176,14 +201,17 @@ async function handleBuyInReceipt(req, res, tournamentId) {
   });
   if (!verified) return;
 
+  const identity = entryIdentitySql(chainId);
   const entry = (await pool.query(
     `select token_address, owner_wallet, buy_in_intent, buy_in_paid
        from public.arena_tournament_entries
-      where tournament_id = $1 and lower(token_address) = lower($2) and lower(owner_wallet) = lower($3)
+      where tournament_id = $1 and ${identity.token} and ${identity.wallet}
       limit 1`,
     [tournamentId, token, wallet],
   )).rows[0];
-  if (!entry || !entry.buy_in_intent) return json(res, 409, { ok: false, error: "Token is not opted into this tournament for this wallet", code: "VOTE_TOURNAMENT_ENTRY_NOT_FOUND" });
+  if (!entry || !entry.buy_in_intent) {
+    return json(res, 409, { ok: false, error: "Token is not opted into this tournament for this wallet", code: "VOTE_TOURNAMENT_ENTRY_NOT_FOUND" });
+  }
   if (entry.buy_in_paid) return json(res, 200, { ok: true, idempotent: true, buyInPaid: true });
 
   const decimals = tournamentNativeDecimals(chainId);
@@ -195,11 +223,20 @@ async function handleBuyInReceipt(req, res, tournamentId) {
       return json(res, 503, { ok: false, error: "Tournament escrow is not open yet", code: "WAR_POOL_NOT_OPEN" });
     }
     if (BigInt(String(onchain.buyInLamports || 0)) !== expectedRaw) {
-      return json(res, 409, { ok: false, error: "On-chain buy-in does not match the founder-locked tournament amount", code: "VOTE_TOURNAMENT_BUY_IN_AMOUNT_MISMATCH" });
+      return json(res, 409, {
+        ok: false,
+        error: "On-chain buy-in does not match the founder-locked tournament amount",
+        code: "VOTE_TOURNAMENT_BUY_IN_AMOUNT_MISMATCH",
+      });
     }
     const receipt = await readAuthoritativeBuyInReceipt(chainId, onchain.poolId, token, wallet, expectedRaw.toString());
     if (!receipt.ok) {
-      return json(res, 409, { ok: false, error: "Buy-in receipt PDA is not an authoritative paid registration", code: "BUY_IN_RECEIPT_INVALID", reason: receipt.reason });
+      return json(res, 409, {
+        ok: false,
+        error: "Buy-in receipt PDA is not an authoritative paid registration",
+        code: "BUY_IN_RECEIPT_INVALID",
+        reason: receipt.reason,
+      });
     }
     proof = { kind: "solana_receipt_pda", poolId: onchain.poolId, receipt: receipt.pda, amountRaw: expectedRaw.toString() };
   } else {
@@ -212,7 +249,12 @@ async function handleBuyInReceipt(req, res, tournamentId) {
         expectedBuyInRaw: expectedRaw,
       });
     } catch (error) {
-      return json(res, 409, { ok: false, error: "On-chain V2 tournament buy-in is not authoritative", code: "BUY_IN_RECEIPT_INVALID", reason: String(error?.message || error) });
+      return json(res, 409, {
+        ok: false,
+        error: "On-chain V2 tournament buy-in is not authoritative",
+        code: "BUY_IN_RECEIPT_INVALID",
+        reason: String(error?.message || error),
+      });
     }
   }
 
@@ -220,13 +262,15 @@ async function handleBuyInReceipt(req, res, tournamentId) {
     `update public.arena_tournament_entries
         set buy_in_paid = true, updated_at = now()
       where tournament_id = $1
-        and lower(token_address) = lower($2)
-        and lower(owner_wallet) = lower($3)
+        and ${identity.token}
+        and ${identity.wallet}
         and buy_in_intent = true
       returning token_address, owner_wallet, buy_in_paid`,
     [tournamentId, token, wallet],
   );
-  if (!updated.rows[0]) return json(res, 409, { ok: false, error: "Tournament entry changed before receipt confirmation", code: "VOTE_TOURNAMENT_ENTRY_RACE" });
+  if (!updated.rows[0]) {
+    return json(res, 409, { ok: false, error: "Tournament entry changed before receipt confirmation", code: "VOTE_TOURNAMENT_ENTRY_RACE" });
+  }
   return json(res, 200, {
     ok: true,
     buyInPaid: true,
