@@ -1,0 +1,111 @@
+name: Agent3 thin Anchor wrapper patch
+
+on:
+  push:
+    branches:
+      - agent3/solana-arena-money-v2-runtime
+    paths:
+      - .github/workflows/agent3-thin-anchor-wrapper-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-lib-rs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent3/solana-arena-money-v2-runtime
+          fetch-depth: 0
+
+      - name: Insert thin Competition V2 cancel/refund entrypoints
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('programs/mwz_rewards_treasury/src/lib.rs')
+          text = path.read_text()
+          marker = '''    pub fn resolve_pool_v2(
+          ctx: Context<ResolveArenaPoolV2>,
+          pool_id: [u8; 32],
+          result_type: u8,
+          winner_side: u8,
+          winner_asset: Pubkey,
+          winner_wallet: Pubkey,
+          outcome_hash: [u8; 32],
+          deadline: i64,
+          nonce: u64,
+      ) -> Result<()> {'''
+          wrappers = '''    pub fn cancel_competition_pool_v2(
+          ctx: Context<CancelCompetitionPoolV2>,
+          competition_id: [u8; 32],
+      ) -> Result<()> {
+          cancel_competition_pool_v2_handler(ctx, competition_id)
+      }
+
+      pub fn refund_competition_entry_v2(
+          ctx: Context<RefundCompetitionEntryV2>,
+          competition_id: [u8; 32],
+          entry_asset: Pubkey,
+      ) -> Result<()> {
+          refund_competition_entry_v2_handler(ctx, competition_id, entry_asset)
+      }
+
+      pub fn refund_competition_boost_v2(
+          ctx: Context<RefundCompetitionBoostV2>,
+          competition_id: [u8; 32],
+          funding_id: [u8; 32],
+      ) -> Result<()> {
+          refund_competition_boost_v2_handler(ctx, competition_id, funding_id)
+      }
+
+'''
+          names = (
+              'pub fn cancel_competition_pool_v2(',
+              'pub fn refund_competition_entry_v2(',
+              'pub fn refund_competition_boost_v2(',
+          )
+          present = [name in text for name in names]
+          if all(present):
+              print('Thin wrappers already present; no source insertion needed.')
+          elif any(present):
+              raise SystemExit('Refusing partial wrapper state')
+          else:
+              if text.count(marker) != 1:
+                  raise SystemExit(f'Expected exactly one resolve_pool_v2 marker, found {text.count(marker)}')
+              text = text.replace(marker, wrappers + marker, 1)
+              path.write_text(text)
+
+          final = path.read_text()
+          required = {
+              'cancel_competition_pool_v2_handler(ctx, competition_id)': 1,
+              'refund_competition_entry_v2_handler(ctx, competition_id, entry_asset)': 1,
+              'refund_competition_boost_v2_handler(ctx, competition_id, funding_id)': 1,
+          }
+          for needle, count in required.items():
+              actual = final.count(needle)
+              if actual != count:
+                  raise SystemExit(f'{needle}: expected {count}, got {actual}')
+
+          historical = Path('programs/mwz_rewards_treasury/src/arena.rs')
+          if not historical.exists():
+              raise SystemExit('historical arena.rs missing')
+          PY
+
+      - name: Remove one-shot workflow
+        run: rm .github/workflows/agent3-thin-anchor-wrapper-patch.yml
+
+      - name: Commit surgical wrapper patch
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo 'No changes required.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add programs/mwz_rewards_treasury/src/lib.rs .github/workflows/agent3-thin-anchor-wrapper-patch.yml
+          git commit -m 'feat(arena): expose competition v2 cancel refund entrypoints'
+          git push origin HEAD:agent3/solana-arena-money-v2-runtime
