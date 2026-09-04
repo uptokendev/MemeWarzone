@@ -12,12 +12,14 @@ export function BattleFunding({
   battleState,
   showFunding,
   showClaim,
+  claimBlockedReason,
 }: {
   battleId: string;
   chainId?: number;
   battleState?: string;
   showFunding?: boolean;
   showClaim?: boolean;
+  claimBlockedReason?: string | null;
 }) {
   const wallet = useWallet();
   const { solanaAccount } = useSolanaWallet();
@@ -36,7 +38,7 @@ export function BattleFunding({
   }, [battleId, showFunding, solanaAccount, wallet.account]);
 
   const funding = showFunding ? presentBattleFundingStatus(status) : null;
-  if (!showFunding && !showClaim) return null;
+  if (!showFunding && !showClaim && !claimBlockedReason) return null;
 
   return (
     <section data-battle-funding="true" className="space-y-3">
@@ -50,6 +52,11 @@ export function BattleFunding({
         <ArenaStakeButton battleId={battleId} chainId={chainId} battleState={battleState} />
       ) : null}
       {showClaim ? <ArenaWarPoolClaimButton battleId={battleId} chainId={chainId} /> : null}
+      {claimBlockedReason ? (
+        <div data-battle-claim-generation-pending="true" className="text-xs text-white/55">
+          {claimBlockedReason}
+        </div>
+      ) : null}
     </section>
   );
 }
