@@ -90,5 +90,5 @@ export type EventSponsorshipTransport = {
   getState(eventId: string, signal?: AbortSignal): Promise<EventSponsorshipState>;
   getPaymentState(quoteId: string, signal?: AbortSignal): Promise<EventSponsorshipPaymentState>;
   getQuote(input: { eventId: string; sponsorWallet: string; requestedUsd?: number | string | null }): Promise<EventSponsorshipQuote>;
-  submitPayment?: (input: { quoteId: string; eventId: string; sponsorWallet: string; txHash?: string | null; signature?: string | null }) => Promise<EventSponsorshipState>;
+  submitPayment?: (input: { quoteId: string; eventId: string; sponsorWallet: string }) => Promise<EventSponsorshipPaymentState>;
 };
