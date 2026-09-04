@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   ARENA_SETTLEMENT_MODE_V1,
   ARENA_SETTLEMENT_MODE_V2,
+  ARENA_SETTLEMENT_MODE_V3,
   arenaSettlementMode,
 } from "./arenaSettlementMode.js";
 
@@ -11,37 +12,29 @@ function withEnv(value, fn) {
   const previous = process.env.ARENA_BATTLE_POINTS_V2;
   if (value == null) delete process.env.ARENA_BATTLE_POINTS_V2;
   else process.env.ARENA_BATTLE_POINTS_V2 = value;
-  try {
-    return fn();
-  } finally {
+  try { return fn(); }
+  finally {
     if (previous == null) delete process.env.ARENA_BATTLE_POINTS_V2;
     else process.env.ARENA_BATTLE_POINTS_V2 = previous;
   }
 }
 
-test("live battles follow the V2 rollout flag", () => {
+test("live battles follow only the legacy V2 rollout flag in this compatibility helper", () => {
   withEnv("1", () => assert.equal(arenaSettlementMode({ state: "live" }), ARENA_SETTLEMENT_MODE_V2));
   withEnv("0", () => assert.equal(arenaSettlementMode({ state: "live" }), ARENA_SETTLEMENT_MODE_V1));
 });
 
 test("historical V1 finished battles are never relabeled by a later V2 rollout", () => {
-  withEnv("1", () => {
-    assert.equal(
-      arenaSettlementMode({ state: "finished", settlement_version: 1 }),
-      ARENA_SETTLEMENT_MODE_V1,
-    );
-  });
+  withEnv("1", () => assert.equal(arenaSettlementMode({ state: "finished", settlement_version: 1 }), ARENA_SETTLEMENT_MODE_V1));
 });
 
-test("persisted V2 evidence labels finished battles as Battle Points settlement", () => {
+test("persisted V2 evidence labels finished battles as Battle Points V2", () => {
+  withEnv("0", () => assert.equal(arenaSettlementMode({ state: "finished", settlement_version: 2, settlement_scoring_version: "battle_points_v2" }), ARENA_SETTLEMENT_MODE_V2));
+});
+
+test("persisted V3 evidence remains V3 regardless of rollout flags", () => {
   withEnv("0", () => {
-    assert.equal(
-      arenaSettlementMode({
-        state: "finished",
-        settlement_version: 2,
-        settlement_scoring_version: "battle_points_v2",
-      }),
-      ARENA_SETTLEMENT_MODE_V2,
-    );
+    assert.equal(arenaSettlementMode({ state: "finished", settlement_version: 3, settlement_scoring_version: "battle_points_v3" }), ARENA_SETTLEMENT_MODE_V3);
+    assert.equal(arenaSettlementMode({ state: "finished", settlement_version: 3 }), ARENA_SETTLEMENT_MODE_V3);
   });
 });
