@@ -109,12 +109,12 @@ test("unknown Solana Wallet Standard wallet works without a brand allowlist", as
     },
   };
 
+  const registry = getWalletStandardRegistry();
   let unregister = null;
   window.dispatchEvent(new DetailEvent("wallet-standard:register-wallet", (api) => {
     unregister = api.register(wallet);
   }));
 
-  const registry = getWalletStandardRegistry();
   assert.equal(registry.get().length, 1);
 
   const detected = detectWalletStandardSolanaWallets();
