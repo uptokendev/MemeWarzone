@@ -44,9 +44,9 @@ export function BattleWallMore({ battle, metrics, realtimeState, dataSource }: P
     <div data-battle-more-panel="true" className="space-y-5 border border-white/10 bg-black/25 p-3 md:p-4">
       <BattleIntel intel={more} chainId={chainId} />
       {generation.showScoreBreakdown ? <BattleScoreBreakdown metrics={metrics} maxes={generation.scoreMaxes} /> : null}
-      {generation.boostPending ? (
-        <div data-battle-v3-boost-pending="true" className="text-[10px] uppercase tracking-[0.16em] text-white/52">
-          {generation.boostPending}
+      {generation.boostAuthorityLabel ? (
+        <div data-battle-v3-boost-authority="true" className="text-[10px] uppercase tracking-[0.16em] text-white/52">
+          {generation.boostAuthorityLabel}
         </div>
       ) : null}
       <BattleTerms terms={more.terms} />
@@ -56,6 +56,7 @@ export function BattleWallMore({ battle, metrics, realtimeState, dataSource }: P
           <div className="grid gap-1 text-[10px] uppercase tracking-[0.16em] text-white/70">
             <GenerationRow label="Scoring" value={generation.scoring?.label} />
             <GenerationRow label="Scoring model" value={generation.scoring?.detail} />
+            <GenerationRow label="Boost curve" value={generation.boostCurveVersion} />
             <GenerationRow label="Pool generation" value={generation.pool?.label} />
             <GenerationRow label="Pool split" value={generation.pool?.detail} />
           </div>
