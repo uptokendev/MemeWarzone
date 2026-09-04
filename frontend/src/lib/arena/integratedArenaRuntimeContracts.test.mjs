@@ -15,6 +15,7 @@ const voteApi = read("api/arenaTournamentVotes.js");
 const tournamentBoostClient = read("src/lib/arena/tournamentBoostClient.ts");
 const tournamentBoostApi = read("api/arenaTournamentBoosts.js");
 const salvoClient = read("src/lib/arena/finalSalvoClient.ts");
+const salvoPresentation = read("src/lib/arena/finalSalvoPresentation.mjs");
 const salvoControls = read("src/components/arena/TournamentFinalSalvoControls.tsx");
 const salvoApi = read("api/arenaFinalSalvo.js");
 const sponsorshipApi = read("api/arenaSponsorships.js");
@@ -56,8 +57,10 @@ test("Vote Tournament paid Boost matches merged EVM runtime and disappears for F
 
 test("Final Salvo consumes authoritative state and exposes no paid Boost transaction path", () => {
   assert.match(salvoClient, /\/final-salvo/);
+  assert.match(salvoClient, /shotEndsAt/);
+  assert.match(salvoPresentation, /shotEndsAt/);
+  assert.match(salvoPresentation, /Date\.now\(\)/);
   assert.match(salvoControls, /arena_final_salvo_vote/);
-  assert.match(salvoControls, /shotEndsAt/);
   assert.doesNotMatch(salvoControls, /boostTournament|boostBattle|\/boosts\/quote/);
   assert.match(salvoApi, /boostAllowed: false/);
   assert.match(salvoApi, /walletEligible/);
