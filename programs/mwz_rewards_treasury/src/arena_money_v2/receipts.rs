@@ -1,6 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::{program::invoke, system_instruction};
 
+use super::config::ARENA_MONEY_GENERATION_V2;
 use super::errors::ArenaMoneyV2Error;
 
 pub const COMPETITION_ENTRY_RECEIPT_SEED_V2: &[u8] = b"arena_money_entry_v2";
@@ -70,6 +71,40 @@ pub struct SponsorshipReceiptV1 {
 }
 impl SponsorshipReceiptV1 {
     pub const SIZE: usize = 1 + 32 + 32 + 32 + 8 * 5 + 1;
+}
+
+pub fn validate_competition_entry_receipt_v2(
+    receipt_info: &AccountInfo,
+    competition_id: [u8; 32],
+    entry_asset: Pubkey,
+    entrant: Pubkey,
+    expected_amount_lamports: u64,
+) -> Result<()> {
+    let (expected_pda, _) = Pubkey::find_program_address(
+        &[
+            COMPETITION_ENTRY_RECEIPT_SEED_V2,
+            competition_id.as_ref(),
+            entry_asset.as_ref(),
+            entrant.as_ref(),
+        ],
+        &crate::ID,
+    );
+    require_keys_eq!(expected_pda, receipt_info.key(), ArenaMoneyV2Error::ReceiptMismatch);
+    require_keys_eq!(*receipt_info.owner, crate::ID, ArenaMoneyV2Error::ReceiptMismatch);
+    let data = receipt_info.try_borrow_data()?;
+    let mut slice: &[u8] = &data;
+    let receipt = CompetitionEntryReceiptV2::try_deserialize(&mut slice)
+        .map_err(|_| error!(ArenaMoneyV2Error::ReceiptMismatch))?;
+    require!(receipt.generation == ARENA_MONEY_GENERATION_V2, ArenaMoneyV2Error::GenerationMismatch);
+    require!(
+        receipt.competition_id == competition_id
+            && receipt.entry_asset == entry_asset
+            && receipt.entrant == entrant
+            && receipt.amount_lamports == expected_amount_lamports
+            && !receipt.refunded,
+        ArenaMoneyV2Error::ReceiptMismatch
+    );
+    Ok(())
 }
 
 pub fn transfer_sol<'info>(
