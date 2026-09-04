@@ -19,8 +19,11 @@ import {
 import {
   buildSolanaBoostInstructionRequirements,
   buildSolanaSponsorshipInstructionRequirements,
+  sponsorshipVaultLifetimeTotals,
   splitSolanaBoost,
   splitSolanaSponsorship,
+  verifyExactVaultLamportDelta,
+  verifySolanaSponsorshipVaultState,
 } from "./solanaArenaMoneyV2Runtime.mjs";
 import {
   deriveBoostReceiptV2Pda,
@@ -107,11 +110,44 @@ function account(data) { return { data: Uint8Array.from(data) }; }
 
   const vaultPda = deriveEventPrizeVaultV1Pda(EVENT).toBase58();
   const vault = Buffer.concat([Buffer.from(EVENT_PRIZE_VAULT_V1_DISCRIMINATOR), Buffer.from([1]), id32(EVENT), u64(70), u64(20), u64(10), u64(0), u64(0), u64(0), Buffer.from([5])]);
-  assert.equal(verifyEventPrizeVaultV1({ account: account(vault), owner: ARENA_MONEY_V2_PROGRAM_ID, accountAddress: vaultPda, expectedPda: vaultPda, expectedEventId: EVENT }).ok, true);
+  const vaultVerified = verifyEventPrizeVaultV1({ account: account(vault), owner: ARENA_MONEY_V2_PROGRAM_ID, accountAddress: vaultPda, expectedPda: vaultPda, expectedEventId: EVENT });
+  assert.equal(vaultVerified.ok, true);
 
   const receiptPda = deriveSponsorshipReceiptV1Pda(EVENT, PAYMENT, PK_B).toBase58();
   const receipt = Buffer.concat([Buffer.from(SPONSORSHIP_RECEIPT_V1_DISCRIMINATOR), Buffer.from([1]), id32(EVENT), id32(PAYMENT), pk(PK_B), u64(101), u64(71), u64(20), u64(10), i64(123), Buffer.from([6])]);
-  assert.equal(verifySponsorshipReceiptV1({ account: account(receipt), owner: ARENA_MONEY_V2_PROGRAM_ID, accountAddress: receiptPda, expectedPda: receiptPda, expectedEventId: EVENT, expectedPaymentId: PAYMENT, expectedSponsor: PK_B.toBase58(), expectedGrossLamports: 101, expectedPrizeLamports: 71, expectedMarketingLamports: 20, expectedProtocolLamports: 10, PublicKey }).ok, true);
+  const receiptVerified = verifySponsorshipReceiptV1({ account: account(receipt), owner: ARENA_MONEY_V2_PROGRAM_ID, accountAddress: receiptPda, expectedPda: receiptPda, expectedEventId: EVENT, expectedPaymentId: PAYMENT, expectedSponsor: PK_B.toBase58(), expectedGrossLamports: 101, expectedPrizeLamports: 71, expectedMarketingLamports: 20, expectedProtocolLamports: 10, PublicKey });
+  assert.equal(receiptVerified.ok, true);
+
+  const state = verifySolanaSponsorshipVaultState({
+    eventId: EVENT,
+    receipt: receiptVerified.receipt,
+    vault: vaultVerified.vault,
+    expectedSplit: { gross: 101n, prize: 71n, marketing: 20n, protocol: 10n },
+  });
+  assert.equal(state.gross, 101n);
+  assert.deepEqual(sponsorshipVaultLifetimeTotals(vaultVerified.vault), { prize: 70n, marketing: 20n, protocol: 10n });
+  assert.throws(
+    () => verifySolanaSponsorshipVaultState({ eventId: FUND, receipt: receiptVerified.receipt, vault: vaultVerified.vault, expectedSplit: { gross: 101n, prize: 71n, marketing: 20n, protocol: 10n } }),
+    /event identity mismatch/,
+  );
+}
+
+{
+  const vaultPda = deriveEventPrizeVaultV1Pda(EVENT).toBase58();
+  const connection = {
+    async getTransaction() {
+      return {
+        transaction: { message: { accountKeys: [PK_A, new PublicKey(vaultPda)] } },
+        meta: { err: null, preBalances: [10, 1_000], postBalances: [10, 1_101] },
+      };
+    },
+  };
+  const exact = await verifyExactVaultLamportDelta({ connection, signature: "fixture-signature", vaultPda, grossLamports: 101n });
+  assert.equal(exact.deltaLamports, "101");
+  await assert.rejects(
+    () => verifyExactVaultLamportDelta({ connection, signature: "fixture-signature", vaultPda, grossLamports: 100n }),
+    /does not equal gross sponsorship payment/,
+  );
 }
 
 console.log("Solana Arena Money V2 runtime certification tests passed");
