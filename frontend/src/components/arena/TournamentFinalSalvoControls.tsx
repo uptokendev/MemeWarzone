@@ -17,6 +17,13 @@ type Match = {
   tokenB?: string | null;
 };
 
+function shortToken(value?: string | null) {
+  const token = String(value || "").trim();
+  if (!token) return "TOKEN";
+  if (token.length <= 12) return token;
+  return `${token.slice(0, 6)}…${token.slice(-4)}`;
+}
+
 export function TournamentFinalSalvoControls({
   tournamentId,
   chainId,
@@ -133,8 +140,10 @@ export function TournamentFinalSalvoControls({
   return (
     <FinalSalvoPanel
       state={state}
-      leftLabel={tokenA || "LEFT"}
-      rightLabel={tokenB || "RIGHT"}
+      leftLabel={shortToken(tokenA)}
+      rightLabel={shortToken(tokenB)}
+      leftToken={tokenA}
+      rightToken={tokenB}
       busy={Boolean(busySide)}
       onVote={active ? (side) => void vote(side) : undefined}
     />
