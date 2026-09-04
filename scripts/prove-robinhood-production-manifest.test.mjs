@@ -38,6 +38,7 @@ const REQUIRED_KEYS = [
 ];
 
 function validManifest() {
+  const contracts = Object.fromEntries(REQUIRED_KEYS.map((key, index) => [key, address(100 + index)]));
   return {
     schemaVersion: 2,
     chainKey: "robinhood-mainnet",
@@ -64,7 +65,7 @@ function validManifest() {
     requireAuthorizedTrading: true,
     admin: address(50),
     routeAuthority: address(51),
-    contracts: Object.fromEntries(REQUIRED_KEYS.map((key, index) => [key, address(100 + index)])),
+    contracts,
     oracles: {
       nativeUsdFeed: address(200),
     },
@@ -76,14 +77,23 @@ function validManifest() {
       registry: [
         {
           symbol: "NVDA",
+          displayName: "NVIDIA Stock Token",
+          underlyingSymbol: "NVDA",
+          decimals: 18,
           contractAddress: address(210),
           oracleFeedAddress: address(211),
+          oracleType: "chainlink",
           canonical: true,
+          enabledForDiscovery: true,
           enabledForGraduation: false,
           enabledForTrading: false,
+          minimumQuoteLiquidityUsd: 25000,
+          maximumGraduationSwapImpactBps: 500,
           acquisitionPoolAddress: address(212),
-          acquisitionRouterAddress: address(213),
+          acquisitionQuoterAddress: address(214),
+          acquisitionRouterAddress: contracts.v3SwapRouter,
           acquisitionFeeTier: 3000,
+          acquisitionQuoteKind: "SIMPLE_EXACT_INPUT_SINGLE",
         },
       ],
     },
@@ -196,6 +206,42 @@ test("rejects missing concrete production oracle or Stock route evidence", () =>
       acceptedTestnet: acceptedTestnet(),
       candidateSha: CANDIDATE_SHA,
     }));
+  }
+});
+
+test("rejects non-canonical Stock policy fields before production acceptance", () => {
+  for (const mutate of [
+    (manifest) => { manifest.stock.registry[0].displayName = ""; },
+    (manifest) => { manifest.stock.registry[0].underlyingSymbol = ""; },
+    (manifest) => { manifest.stock.registry[0].decimals = 37; },
+    (manifest) => { manifest.stock.registry[0].oracleType = "custom"; },
+    (manifest) => { manifest.stock.registry[0].enabledForDiscovery = false; },
+    (manifest) => { manifest.stock.registry[0].minimumQuoteLiquidityUsd = 0; },
+    (manifest) => { manifest.stock.registry[0].maximumGraduationSwapImpactBps = 0; },
+    (manifest) => { manifest.stock.registry[0].maximumGraduationSwapImpactBps = 10001; },
+    (manifest) => { manifest.stock.registry[0].acquisitionQuoterAddress = ""; },
+    (manifest) => { manifest.stock.registry[0].acquisitionRouterAddress = address(999); },
+    (manifest) => { manifest.stock.registry[0].acquisitionQuoteKind = "UNSUPPORTED"; },
+  ]) {
+    const manifest = validManifest();
+    mutate(manifest);
+    assert.throws(() => proveRobinhoodProductionManifest(manifest, {
+      acceptedTestnet: acceptedTestnet(),
+      candidateSha: CANDIDATE_SHA,
+    }));
+  }
+});
+
+test("rejects duplicate canonical Stock symbols or token identities", () => {
+  for (const duplicateField of ["symbol", "contractAddress"]) {
+    const manifest = validManifest();
+    const duplicate = { ...manifest.stock.registry[0], contractAddress: address(310), symbol: "AAPL", underlyingSymbol: "AAPL", displayName: "Apple Stock Token", oracleFeedAddress: address(311), acquisitionPoolAddress: address(312), acquisitionQuoterAddress: address(314) };
+    duplicate[duplicateField] = manifest.stock.registry[0][duplicateField];
+    manifest.stock.registry.push(duplicate);
+    assert.throws(() => proveRobinhoodProductionManifest(manifest, {
+      acceptedTestnet: acceptedTestnet(),
+      candidateSha: CANDIDATE_SHA,
+    }), /duplicates/i);
   }
 });
 
