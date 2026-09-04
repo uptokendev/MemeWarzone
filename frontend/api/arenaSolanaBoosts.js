@@ -172,7 +172,7 @@ async function createQuote(req, res, route) {
     fundingId,
     transaction: requirements,
     expiresAt,
-    battlePointsV3: { boostCurveVersion: "founder_pending", scoringActive: false, boostPoints: null },
+    battlePointsV3: { boostCurveVersion: "boost_hyperbolic_100_v1", scoringActive: false, boostPoints: null },
   });
 }
 
@@ -263,7 +263,7 @@ async function confirmPayment(req, res, route) {
     return json(res, 201, {
       ok: true, confirmed: true, idempotent: false, signature, receiptPda: proof.receiptPda,
       action: inserted, summary: serializeBoostSummary(boostSummary(rows)), pointsPerBoost: Number(quote.points_per_boost),
-      battlePointsV3: { boostCurveVersion: "founder_pending", scoringActive: false, boostPoints: null },
+      battlePointsV3: { boostCurveVersion: "boost_hyperbolic_100_v1", scoringActive: false, boostPoints: null },
     });
   } catch (error) {
     await client.query("rollback").catch(() => {});
