@@ -45,13 +45,19 @@ create unique index if not exists arena_solana_boost_quotes_signature_uidx
 create index if not exists arena_solana_boost_quotes_battle_idx
   on public.arena_solana_boost_quotes(battle_id, created_at desc);
 
+alter table if exists public.arena_contest_actions
+  add column if not exists signature_reference text;
+
 create unique index if not exists arena_contest_actions_signature_reference_uidx
   on public.arena_contest_actions(chain_id, signature_reference)
   where signature_reference is not null;
 
 alter table if exists public.sponsorship_payment_quotes
   add column if not exists solana_payment_id text,
-  add column if not exists solana_receipt_pda text;
+  add column if not exists solana_receipt_pda text,
+  add column if not exists solana_vault_prize_total_before numeric(30,0),
+  add column if not exists solana_vault_marketing_total_before numeric(30,0),
+  add column if not exists solana_vault_protocol_total_before numeric(30,0);
 
 create unique index if not exists sponsorship_payment_quotes_solana_payment_uidx
   on public.sponsorship_payment_quotes(chain_id, solana_payment_id, sponsor_wallet)
