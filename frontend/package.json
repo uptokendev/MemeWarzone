@@ -69,6 +69,7 @@
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
+    "@walletconnect/ethereum-provider": "2.24.0",
     "@meteora-ag/cp-amm-sdk": "1.4.5",
     "@mux/mux-player-react": "^3.13.0",
     "@radix-ui/react-accordion": "^1.2.11",
