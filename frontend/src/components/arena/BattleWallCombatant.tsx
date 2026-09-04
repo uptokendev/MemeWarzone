@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { Battle, BattleParticipant } from "@/features/postgrad/contracts";
 import { WarzoneDecorativeLayer } from "@/components/warzone/WarzoneDecorativeLayer";
 import { useArenaTokenProfile } from "@/hooks/useArenaTokenProfile";
@@ -20,6 +20,7 @@ type Props = {
   accent?: "ember" | "cyan";
   compact?: boolean;
   combatSide?: "left" | "right";
+  actions?: ReactNode;
 };
 
 function MetricBox({
@@ -115,6 +116,7 @@ export function BattleWallCombatant({
   accent = "ember",
   compact = false,
   combatSide,
+  actions,
 }: Props) {
   const chainId = Number((battle as Battle & { chainId?: number }).chainId || 0);
   const tokenIdentity = participant?.tokenAddress || participant?.tokenId || participant?.campaignAddress || "";
@@ -139,7 +141,8 @@ export function BattleWallCombatant({
   );
   const battleVolume = firstFiniteBattleMetric(metricsSide?.eligibleBattleVolumeUsd, participant?.battleVolumeUsd);
   const pointsReady = Boolean(pointsLabel);
-  const pointsBoxLabel = String(scoreCaption || "").toLowerCase().includes("score") ? "SCORE" : "POINTS";
+  const caption = String(scoreCaption || "").toLowerCase();
+  const pointsBoxLabel = caption.includes("vote") ? "VOTES" : caption.includes("score") ? "SCORE" : "POINTS";
   const sideIndex = combatSide === "right" ? "2" : "1";
   const trailerLive = isTrailer && !finished;
   const trailerDone = isTrailer && finished;
@@ -237,8 +240,10 @@ export function BattleWallCombatant({
         data-battle-combatant-actions="true"
         className="relative z-10 min-h-11 border-t px-2 sm:px-3"
         style={{ borderColor: "var(--mwz-flat-card-border)" }}
-        aria-hidden="true"
-      />
+        aria-hidden={!actions}
+      >
+        {actions}
+      </div>
     </div>
   );
 }

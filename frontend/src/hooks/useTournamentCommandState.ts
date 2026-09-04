@@ -9,6 +9,7 @@ import {
   optInPostGradTournament,
 } from "@/features/postgrad/apiClient";
 import { postGradFlags } from "@/features/postgrad/config";
+import { getMockBattleById } from "@/features/postgrad/mockRegistry";
 import { getMockTournamentDetails } from "@/features/postgrad/mockTournamentFixtures.mjs";
 import { useActiveFeedWallet } from "@/hooks/useActiveFeedWallet";
 import { useArenaEventDetails } from "@/hooks/useArenaEventFeed";
@@ -237,8 +238,16 @@ export function useTournamentCommandState(
   const champion = presentTournamentChampion(mergedEvent, entries);
   const progression = presentTournamentProgression(mergedEvent);
   const remaining = presentAuthoritativeRemaining(mergedEvent);
-  const liveMatches = presentConfirmedLiveBattles(matches, metricsByBattleId);
-  const liveBattleCount = loadMetrics ? liveMatches.length : null;
+  const liveMatches = postGradFlags.mocks
+    ? matches.filter((match) => {
+        const battleId = String(match.battleId || "").trim();
+        if (!battleId || match.winner || match.bye === true) return false;
+        const mock = getMockBattleById(battleId);
+        if (mock) return String(mock.state) === "live";
+        return presentConfirmedLiveBattles([match], metricsByBattleId).length > 0;
+      })
+    : presentConfirmedLiveBattles(matches, metricsByBattleId);
+  const liveBattleCount = liveMatches.length;
 
   return {
     id,

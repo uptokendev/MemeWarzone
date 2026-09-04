@@ -161,7 +161,7 @@ test("Upcoming wall modules keep card-vs-card combatants and a deployment HUD", 
   assert.match(vs, /sr-only/);
   assert.match(vs, /data-battle-vs-reticle="true"/);
   assert.match(combatant, /firstFiniteBattleMetric/);
-  assert.doesNotMatch(moduleSrc, /Battle Boost|ArenaSupportButton/);
+  assert.doesNotMatch(moduleSrc, /ArenaSupportButton/);
 });
 
 test("Missing combat metrics render em dash and explicit zeros stay zero", () => {
@@ -661,7 +661,8 @@ test("Battle Wall visual parity uses bounded combatant cards, 2x2 metrics, and n
   assert.match(effects, /pointer-events-none/);
   assert.match(effects, /overflow-hidden/);
   assert.match(effects, /z-\[12\]/);
-  assert.doesNotMatch(moduleSrc, /Battle Boost|ArenaSupportButton|WarPoolPanel|BattleMetricBreakdown/);
+  assert.doesNotMatch(moduleSrc, /ArenaSupportButton|WarPoolPanel|BattleMetricBreakdown/);
+  assert.match(moduleSrc, /BattleFightActions/);
   assert.doesNotMatch(page, /Battle Boost|Final Salvo|Vote Tournament/);
   assert.doesNotMatch(combatant, /BOOST|Vote Tournament|Final Salvo|sponsorship/i);
   assert.match(moduleSrc, /<BattleWallCombatant/);
@@ -697,7 +698,7 @@ test("Battle Wall mockup parity keeps split combatant cards, SHARE/MORE, and gen
   assert.match(combatant, /battleVolume === null \? "—" : formatCompactUsd\(battleVolume\)/);
   assert.match(combatant, /pointsLabel \|\| "—"/);
   assert.doesNotMatch(combatant, /\?\? 0/);
-  assert.match(combatant, /\? "SCORE" : "POINTS"/);
+  assert.match(combatant, /caption.includes\("vote"\) \? "VOTES" : caption.includes\("score"\) \? "SCORE" : "POINTS"/);
   assert.match(combatant, /data-battle-combatant-art-fallback/);
   assert.match(combatant, /onError=\{\(\) => setFailed\(true\)\}/);
   assert.doesNotMatch(combatant, /\|\| "\/placeholder\.svg"/);

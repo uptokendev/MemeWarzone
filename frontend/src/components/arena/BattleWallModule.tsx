@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { BattleCombatEffects } from "@/components/arena/BattleCombatEffects";
+import { BattleFightActions } from "@/components/arena/BattleFightActions";
 import { BattleShareMenu } from "@/components/arena/BattleShareMenu";
 import { BattleWallCombatant } from "@/components/arena/BattleWallCombatant";
 import { BattleWallMore } from "@/components/arena/BattleWallMore";
 import { BattleWallVs } from "@/components/arena/BattleWallVs";
 import type { Battle } from "@/features/postgrad/contracts";
+import { postGradFlags } from "@/features/postgrad/config";
 import type { BattleRealtimeMetrics } from "@/lib/arena/battleRealtime";
 import { useBattleWallRealtime } from "@/hooks/useBattleWallRealtime";
 import { useBattleWallViewport, type BattleWallViewportReport } from "@/hooks/useBattleWallViewport";
@@ -100,8 +102,10 @@ export function BattleWallModule({
   const band = presentBattleWallFightBand(presented, {
     chainLabel: battleChainLabel(chainId),
     clockLabel: upcoming ? null : battleClockLabel(displayBattle),
+    battle: displayBattle,
   });
   const stateLabel = band.stateLabel;
+  const fightMode = presented.fightMode?.key || null;
 
   return (
     <article
@@ -145,6 +149,12 @@ export function BattleWallModule({
             <span className="text-white/75">{band.clockLabel}</span>
           </>
         ) : null}
+        {band.modeLabel ? (
+          <>
+            <span className="text-white/20" aria-hidden="true">|</span>
+            <span data-battle-mode-label={presented.fightMode?.key}>{band.modeLabel}</span>
+          </>
+        ) : null}
       </div>
 
       <div className="relative isolate overflow-hidden" data-battle-wall-combat-stage="true">
@@ -160,6 +170,12 @@ export function BattleWallModule({
             finished={presented.tab === "finished"}
             accent="ember"
             combatSide="left"
+            actions={
+              <BattleFightActions
+                mode={fightMode}
+                mocksEnabled={postGradFlags.mocks}
+              />
+            }
           />
           <BattleWallVs
             leftLabel={presented.leftTicker}
@@ -191,6 +207,12 @@ export function BattleWallModule({
             finished={presented.tab === "finished"}
             accent="cyan"
             combatSide="right"
+            actions={
+              <BattleFightActions
+                mode={fightMode}
+                mocksEnabled={postGradFlags.mocks}
+              />
+            }
           />
         </div>
         {mountEffects ? (

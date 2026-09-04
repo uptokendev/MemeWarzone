@@ -1,10 +1,9 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
 import { TournamentBracketModal } from "@/components/arena/TournamentBracketModal";
+import { TournamentLiveRoundDrawer } from "@/components/arena/TournamentLiveRoundDrawer";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useTournamentCommandState } from "@/hooks/useTournamentCommandState";
-import { battleFightHref } from "@/lib/arena/tournamentCommandPresentation.mjs";
 
 export function TournamentLiveOverviewModal({
   tournamentId,
@@ -18,10 +17,11 @@ export function TournamentLiveOverviewModal({
   onViewBracket?: () => void;
 }) {
   const [bracketOpen, setBracketOpen] = useState(false);
+  const [roundOpen, setRoundOpen] = useState(false);
   const state = useTournamentCommandState(open ? tournamentId : "", { loadMetrics: true });
   const card = state.card;
   const liveBattles = state.liveMatches;
-  const liveHref = liveBattles[0]?.battleId ? battleFightHref(liveBattles[0].battleId) : null;
+  const liveBattleIds = liveBattles.map((match) => String(match.battleId || "")).filter(Boolean);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -64,14 +64,15 @@ export function TournamentLiveOverviewModal({
               >
                 View bracket
               </button>
-              {liveHref ? (
-                <Link
-                  to={liveHref}
-                  data-tournament-view-live-battles="true"
+              {liveBattleIds.length ? (
+                <button
+                  type="button"
+                  data-tournament-watch-live-round="true"
+                  onClick={() => setRoundOpen(true)}
                   className="inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em] text-accent hover:underline"
                 >
-                  View live battles
-                </Link>
+                  Watch live round
+                </button>
               ) : null}
             </div>
             <TournamentBracketModal
@@ -83,6 +84,15 @@ export function TournamentLiveOverviewModal({
               rounds={state.bracketRounds}
               entries={state.entries}
               chainId={state.tournamentChainId}
+            />
+            <TournamentLiveRoundDrawer
+              open={roundOpen}
+              onOpenChange={setRoundOpen}
+              title={card?.title || "Tournament"}
+              statusLabel={card?.status.label}
+              stageLabel={card?.bracketStage}
+              rounds={state.bracketRounds}
+              liveBattleIds={liveBattleIds}
             />
           </div>
         )}

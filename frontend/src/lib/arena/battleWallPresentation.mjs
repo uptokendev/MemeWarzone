@@ -6,6 +6,7 @@ import {
   presentArenaMatchRow,
   tickerFor,
 } from "./arenaMatchRowPresentation.mjs";
+import { presentTournamentFightMode, presentVoteTournamentFight } from "./tournamentFightPresentation.mjs";
 
 export const POINTS_PENDING_LABEL = "BATTLE POINTS PENDING";
 export { DATA_DELAY_LABEL, POINTS_UNAVAILABLE_LABEL };
@@ -154,10 +155,12 @@ export function presentBattleWallFightBand(presented, options = {}) {
   const stateLabel = tab === "live" ? "LIVE BATTLE" : tab === "upcoming" ? "DEPLOYMENT" : tab === "finished" ? "FINISHED" : "BATTLE";
   const typeLabel =
     presented?.type === "tournament" ? "TOURNAMENT" : presented?.type === "manual" ? "MANUAL" : "AUTO DEPLOY";
+  const fightMode = presented?.fightMode || presentTournamentFightMode(options.battle || presented);
   return {
     stateLabel,
     matchup: `${presented?.leftTicker || "TBD"} vs ${presented?.rightTicker || "TBD"}`,
     typeLabel,
+    modeLabel: fightMode?.bandLabel || null,
     classification: presented?.classification || null,
     chainLabel: options.chainLabel ? String(options.chainLabel) : null,
     clockLabel: tab === "upcoming" ? null : options.clockLabel ? String(options.clockLabel) : null,
@@ -222,23 +225,29 @@ function wallSafeLivePresentation(battle, metrics, presented, options = {}) {
 
 export function presentBattleWallModule(battle, metrics, options = {}) {
   const tab = wallTabForBattle(battle);
-  const presented = wallSafeLivePresentation(battle, metrics, presentArenaMatchRow(battle, metrics, options), options);
+  const fightMode = presentTournamentFightMode(battle);
+  const row = presentArenaMatchRow(battle, metrics, options);
+  const scored = fightMode?.key === "vote"
+    ? { ...row, ...presentVoteTournamentFight(battle) }
+    : wallSafeLivePresentation(battle, metrics, row, options);
   const type = battleWallType(battle);
+  const durationHours = Number(battle?.durationHours ?? battle?.duration_hours) || fightMode?.durationHours || 0;
   return {
-    ...presented,
+    ...scored,
     tab,
     type,
     typeLabel: battleWallTypeLabel(type),
+    fightMode,
     classification: battleWallClassification(battle),
     chainGroup: battleWallChainGroup(battle?.chainId ?? battle?.chain_id),
-    pointGap: validBattlePointGap(presented),
+    pointGap: validBattlePointGap(scored),
     leftTicker: tickerFor(battle, 0),
     rightTicker: tickerFor(battle, 1),
     stakeNative: Number(battle?.stakeNative ?? battle?.stake_native) || 0,
-    durationHours: Number(battle?.durationHours ?? battle?.duration_hours) || 0,
+    durationHours,
     nativeSymbol: String(battle?.nativeSymbol || ""),
     tournamentId: battle?.tournamentId || battle?.tournament_id || null,
-    href: battleWallHref(presented.battleId || battle?.id),
+    href: battleWallHref(scored.battleId || battle?.id),
   };
 }
 

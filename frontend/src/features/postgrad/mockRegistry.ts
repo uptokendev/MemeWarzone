@@ -1,5 +1,5 @@
 import type { Battle, EventCardContract, LeagueSeason, MockTokenProfile, RankingPayload, TradeRoomFilter, WarPool } from "@/features/postgrad/contracts";
-import { getMockTournamentEvents } from "@/features/postgrad/mockTournamentFixtures.mjs";
+import { getMockTournamentBattles, getMockTournamentEvents } from "@/features/postgrad/mockTournamentFixtures.mjs";
 
 const now = new Date("2026-05-21T00:00:00.000Z");
 
@@ -262,6 +262,7 @@ export const mockTokenProfiles: MockTokenProfile[] = [
 export const featuredTokens = mockTokenProfiles.slice(0, 3);
 
 export const liveBattles: Battle[] = [
+  ...(getMockTournamentBattles() as Battle[]),
   {
     id: "battle-redline-vs-sdoge",
     state: "live",
