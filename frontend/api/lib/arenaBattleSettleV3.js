@@ -1,4 +1,4 @@
-import { BATTLE_POINTS_V3 } from "./arenaBattlePointsConfig.js";
+import { BATTLE_POINTS_V3, BATTLE_POINTS_V3_CONFIG } from "./arenaBattlePointsConfig.js";
 import { canonicalTokenKey, MWL_RESULT } from "./arenaLeagueScoreMath.js";
 
 export const BATTLE_POINTS_V3_SETTLEMENT_VERSION = 3;
@@ -41,10 +41,10 @@ function normalizedSide(scored) {
   const mcapPct = finite(scored.performance?.mcapPct ?? scored.mcap?.changePct);
   if (
     total === null || total < 0 || total > 100 ||
-    mcapPoints === null || mcapPoints < 0 || mcapPoints > 50 ||
-    holderPoints === null || holderPoints < 0 || holderPoints > 25 ||
-    volumePoints === null || volumePoints < 0 || volumePoints > 15 ||
-    boostPoints === null || boostPoints < 0 || boostPoints > 10 ||
+    mcapPoints === null || mcapPoints < 0 || mcapPoints > BATTLE_POINTS_V3_CONFIG.mcap.weight ||
+    holderPoints === null || holderPoints < 0 || holderPoints > BATTLE_POINTS_V3_CONFIG.holders.weight ||
+    volumePoints === null || volumePoints < 0 || volumePoints > BATTLE_POINTS_V3_CONFIG.volume.weight ||
+    boostPoints === null || boostPoints < 0 || boostPoints > BATTLE_POINTS_V3_CONFIG.boost.weight ||
     startMcap === null || startMcap <= 0 || endMcap === null || endMcap < 0 || mcapPct === null
   ) return null;
   return { total, mcapPoints, holderPoints, volumePoints, boostPoints, startMcap, endMcap, mcapPct };
