@@ -1,6 +1,15 @@
 import { TournamentLiveRoundBattles } from "@/components/arena/TournamentLiveRoundBattles";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
+type Match = {
+  id?: string | null;
+  battleId?: string | null;
+  tokenA?: string | null;
+  tokenB?: string | null;
+  winner?: string | null;
+  bye?: boolean;
+};
+
 export function TournamentLiveRoundDrawer({
   open,
   onOpenChange,
@@ -9,14 +18,20 @@ export function TournamentLiveRoundDrawer({
   stageLabel,
   rounds,
   liveBattleIds,
+  tournamentId,
+  tournamentMode,
+  tournamentChainId,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
   statusLabel?: string | null;
   stageLabel?: string | null;
-  rounds: Array<{ round: number; matches?: Array<{ battleId?: string | null; winner?: string | null; bye?: boolean }> }>;
+  rounds: Array<{ round: number; matches?: Match[] }>;
   liveBattleIds: string[];
+  tournamentId?: string | null;
+  tournamentMode?: { key?: string | null } | string | null;
+  tournamentChainId?: number | null;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -31,7 +46,13 @@ export function TournamentLiveRoundDrawer({
             {["WATCH LIVE ROUND", statusLabel, stageLabel].filter(Boolean).join(" · ")}
           </DialogDescription>
         </DialogHeader>
-        <TournamentLiveRoundBattles rounds={rounds} liveBattleIds={liveBattleIds} />
+        <TournamentLiveRoundBattles
+          rounds={rounds}
+          liveBattleIds={liveBattleIds}
+          tournamentId={tournamentId}
+          tournamentMode={tournamentMode}
+          tournamentChainId={tournamentChainId}
+        />
       </DialogContent>
     </Dialog>
   );
