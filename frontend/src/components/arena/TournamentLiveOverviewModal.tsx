@@ -44,6 +44,7 @@ export function TournamentLiveOverviewModal({
             <div className="flex flex-wrap gap-2">
               <TacticalTag label="LIVE" tone="success" />
               {card?.chain ? <TacticalTag label={card.chain.label} tone="default" /> : null}
+              {state.mode ? <TacticalTag label={state.mode.label} tone="sponsored" /> : null}
             </div>
             <div className="space-y-1 text-[11px] uppercase tracking-[0.14em] text-white/60">
               {card?.participantCount != null ? <div>{card.participantCount} started</div> : null}
@@ -93,6 +94,9 @@ export function TournamentLiveOverviewModal({
               stageLabel={card?.bracketStage}
               rounds={state.bracketRounds}
               liveBattleIds={liveBattleIds}
+              tournamentId={tournamentId}
+              tournamentMode={state.mode}
+              tournamentChainId={state.tournamentChainId}
             />
           </div>
         )}
