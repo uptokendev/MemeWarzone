@@ -1,16 +1,17 @@
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, json, normalizeAddress, readJson } from "../server/http.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
-import { resolveTournamentVoteMatch, tournamentVoteTokensEqual } from "./lib/arenaTournamentVoteRuntime.mjs";
+import {
+  findTournamentVoteMatch,
+  resolveTournamentVoteMatch,
+  tournamentVoteTokensEqual,
+} from "./lib/arenaTournamentVoteRuntime.mjs";
 
 function parseRoute(req) {
   const path = String(req.path || new URL(req.url, "http://localhost").pathname);
   const match = path.match(/^\/arena\/tournaments\/([^/]+)\/matches\/([^/]+)\/final-salvo$/);
   if (!match) return null;
-  return {
-    tournamentId: decodeURIComponent(match[1]),
-    matchRef: decodeURIComponent(match[2]),
-  };
+  return { tournamentId: decodeURIComponent(match[1]), matchRef: decodeURIComponent(match[2]) };
 }
 
 async function loadTournament(id) {
@@ -23,10 +24,7 @@ async function loadTournament(id) {
 }
 
 async function loadTiebreak(battleId) {
-  const result = await pool.query(
-    `select * from public.arena_vote_tiebreaks where battle_id = $1 limit 1`,
-    [battleId],
-  );
+  const result = await pool.query(`select * from public.arena_vote_tiebreaks where battle_id = $1 limit 1`, [battleId]);
   return result.rows[0] || null;
 }
 
@@ -56,13 +54,17 @@ async function currentVoteRows({ battleId, roundNumber, phase, salvoIndex }) {
 
 function statePayload(tiebreak, matchup, rows = [], wallet = "") {
   const phase = currentPhaseIndex(tiebreak);
+  const wallets = new Set();
   let leftUniqueVotes = 0;
   let rightUniqueVotes = 0;
   let walletVote = null;
   for (const row of rows) {
+    const rowWallet = String(row.wallet || "");
+    if (wallets.has(rowWallet)) continue;
+    wallets.add(rowWallet);
     if (row.side === "left") leftUniqueVotes += 1;
     if (row.side === "right") rightUniqueVotes += 1;
-    if (wallet && String(row.wallet) === wallet) {
+    if (wallet && rowWallet === wallet) {
       walletVote = row.side === "left" ? matchup.tokenA : row.side === "right" ? matchup.tokenB : null;
     }
   }
@@ -148,10 +150,6 @@ async function handlePost(req, res, route, tournament, matchup) {
   if (!preview || !["salvo", "sudden_death"].includes(preview.state) || !previewPhase.salvoIndex) {
     return json(res, 409, { ok: false, error: "Final Salvo is not accepting votes", code: "FINAL_SALVO_NOT_ACTIVE" });
   }
-  const now = Date.now();
-  if (!preview.shot_started_at || !preview.shot_ends_at || now < new Date(preview.shot_started_at).getTime() || now >= new Date(preview.shot_ends_at).getTime()) {
-    return json(res, 409, { ok: false, error: "This Final Salvo shot is closed", code: "FINAL_SALVO_SHOT_CLOSED" });
-  }
 
   const verified = await requireWalletActionAuth({
     res,
@@ -176,18 +174,16 @@ async function handlePost(req, res, route, tournament, matchup) {
   const client = await pool.connect();
   try {
     await client.query("begin");
-    const locked = await client.query(
-      `select * from public.arena_vote_tiebreaks where battle_id = $1 for update`,
-      [matchup.battleId],
-    );
+    const locked = await client.query(`select * from public.arena_vote_tiebreaks where battle_id = $1 for update`, [matchup.battleId]);
     const current = locked.rows[0];
     const phase = currentPhaseIndex(current);
-    const lockedNow = Date.now();
     if (!current || !["salvo", "sudden_death"].includes(current.state) || !phase.salvoIndex) {
       await client.query("rollback");
       return json(res, 409, { ok: false, error: "Final Salvo is not accepting votes", code: "FINAL_SALVO_NOT_ACTIVE" });
     }
-    if (!current.shot_started_at || !current.shot_ends_at || lockedNow < new Date(current.shot_started_at).getTime() || lockedNow >= new Date(current.shot_ends_at).getTime()) {
+    const clock = await client.query(`select now() as now`);
+    const dbNow = new Date(clock.rows[0]?.now).getTime();
+    if (!current.shot_started_at || !current.shot_ends_at || dbNow < new Date(current.shot_started_at).getTime() || dbNow >= new Date(current.shot_ends_at).getTime()) {
       await client.query("rollback");
       return json(res, 409, { ok: false, error: "This Final Salvo shot closed before the vote was recorded", code: "FINAL_SALVO_SHOT_CLOSED" });
     }
@@ -200,17 +196,7 @@ async function handlePost(req, res, route, tournament, matchup) {
        ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,'free_vote',0,1,0,0,0,now())
        on conflict do nothing
        returning id, side, created_at`,
-      [
-        chainId,
-        route.tournamentId,
-        matchup.matchId,
-        matchup.battleId,
-        Number(current.round_number),
-        phase.phase,
-        phase.salvoIndex,
-        side,
-        wallet,
-      ],
+      [chainId, route.tournamentId, matchup.matchId, matchup.battleId, Number(current.round_number), phase.phase, phase.salvoIndex, side, wallet],
     );
     if (!inserted.rows[0]) {
       await client.query("rollback");
@@ -224,17 +210,12 @@ async function handlePost(req, res, route, tournament, matchup) {
     const rows = await client.query(
       `select side, wallet, created_at
          from public.arena_contest_actions
-        where battle_id = $1
-          and round_number = $2
-          and phase = $3
-          and salvo_index = $4
-          and action_type = 'free_vote'
-          and confirmed_at is not null
+        where battle_id = $1 and round_number = $2 and phase = $3 and salvo_index = $4
+          and action_type = 'free_vote' and confirmed_at is not null
         order by created_at asc`,
       [matchup.battleId, Number(current.round_number), phase.phase, phase.salvoIndex],
     );
     await client.query("commit");
-
     return json(res, 201, {
       ok: true,
       tournamentId: route.tournamentId,
@@ -262,14 +243,25 @@ export default async function handler(req, res) {
   try {
     const tournament = await loadTournament(route.tournamentId);
     if (!tournament) return json(res, 404, { ok: false, error: "Tournament not found", code: "TOURNAMENT_NOT_FOUND" });
-    if (tournament.status !== "live" || tournament.battle_mode !== "vote" || Number(tournament.round_duration_hours) !== 24) {
-      return json(res, 409, { ok: false, error: "Final Salvo requires a live Vote Tournament", code: "FINAL_SALVO_TOURNAMENT_INACTIVE" });
+    if (tournament.battle_mode !== "vote" || Number(tournament.round_duration_hours) !== 24) {
+      return json(res, 409, { ok: false, error: "Final Salvo requires a Vote Tournament", code: "FINAL_SALVO_TOURNAMENT_INACTIVE" });
+    }
+
+    if (method === "GET") {
+      const historical = findTournamentVoteMatch({ tournament, matchRef: route.matchRef });
+      if (!historical.ok || !historical.battleId) {
+        return json(res, 404, { ok: false, error: "Tournament matchup not found", code: "FINAL_SALVO_MATCH_NOT_FOUND", reason: historical.reason });
+      }
+      return handleGet(req, res, route, tournament, historical);
+    }
+
+    if (tournament.status !== "live") {
+      return json(res, 409, { ok: false, error: "Final Salvo voting is closed", code: "FINAL_SALVO_TOURNAMENT_INACTIVE" });
     }
     const matchup = resolveTournamentVoteMatch({ tournament, matchRef: route.matchRef });
     if (!matchup.ok || !matchup.battleId) {
       return json(res, 409, { ok: false, error: "Tournament matchup is not active", code: "FINAL_SALVO_MATCH_INACTIVE", reason: matchup.reason });
     }
-    if (method === "GET") return handleGet(req, res, route, tournament, matchup);
     return handlePost(req, res, route, tournament, matchup);
   } catch (error) {
     console.error("[api/arenaFinalSalvo]", error);
