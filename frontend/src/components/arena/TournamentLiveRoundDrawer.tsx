@@ -37,22 +37,24 @@ export function TournamentLiveRoundDrawer({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-tournament-live-round-drawer="true"
-        className="max-h-[90vh] w-[95vw] max-w-[95vw] overflow-y-auto border bg-[#050505] p-4 md:p-6"
+        className="max-h-[90vh] w-[95vw] max-w-[95vw] overflow-x-hidden overflow-y-auto overscroll-contain border bg-[#050505] p-4 md:p-6"
         style={{ borderColor: "var(--mwz-flat-card-border)" }}
       >
-        <DialogHeader className="pr-8 text-left">
-          <DialogTitle className="font-black text-xl text-foreground">{title}</DialogTitle>
-          <DialogDescription className="text-[11px] uppercase tracking-[0.16em] text-white/50">
+        <DialogHeader className="min-w-0 pr-8 text-left">
+          <DialogTitle className="break-words font-black text-xl text-foreground">{title}</DialogTitle>
+          <DialogDescription className="break-words text-[11px] uppercase tracking-[0.16em] text-white/50">
             {["WATCH LIVE ROUND", statusLabel, stageLabel].filter(Boolean).join(" · ")}
           </DialogDescription>
         </DialogHeader>
-        <TournamentLiveRoundBattles
-          rounds={rounds}
-          liveBattleIds={liveBattleIds}
-          tournamentId={tournamentId}
-          tournamentMode={tournamentMode}
-          tournamentChainId={tournamentChainId}
-        />
+        <div className="min-w-0 max-w-full">
+          <TournamentLiveRoundBattles
+            rounds={rounds}
+            liveBattleIds={liveBattleIds}
+            tournamentId={tournamentId}
+            tournamentMode={tournamentMode}
+            tournamentChainId={tournamentChainId}
+          />
+        </div>
       </DialogContent>
     </Dialog>
   );
