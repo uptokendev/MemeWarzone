@@ -61,7 +61,7 @@ test("canonical tournament routes use the focused command surface", () => {
   assert.doesNotMatch(modal, /TournamentCommand/);
   assert.match(overview, /TournamentEventCard/);
   assert.match(overview, /\/warzone\/tournaments/);
-  assert.match(league, /\/warzone\/tournaments\/\$\{encodeURIComponent\(quarterFinalsId\)\}/);
+  assert.match(league, /tournamentHref\(quarterFinalsId\)/);
 });
 
 test("tournament cards only present authoritative fields and never fabricate boost or vote UI", () => {

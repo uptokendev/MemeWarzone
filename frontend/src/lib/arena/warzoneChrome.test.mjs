@@ -7,6 +7,10 @@ import { fileURLToPath } from "node:url";
 import {
   WARZONE_CONTENT_MAX_CLASS,
   WARZONE_CONTENT_MAX_WIDTH_PX,
+  presentLeaguePhase,
+  presentOwnedLeagueTokens,
+  presentQuarterFinalField,
+  presentRankedLeagueEntries,
   presentWarzoneCommandStrip,
   presentWarzoneLeagueBoard,
   presentWarzoneLeagueEmpty,
@@ -90,12 +94,78 @@ test("MWL standings, token links, and Quarter Finals route stay authoritative", 
   assert.equal(presentWarzoneLeagueStatus(board.podium[1]), null);
   assert.equal(presentWarzoneLeagueStatus(board.table[0]), "RELEGATED");
   assert.match(league, /getArenaTokenRoute/);
-  assert.match(league, /\/warzone\/tournaments\/\$\{encodeURIComponent\(quarterFinalsId\)\}/);
-  assert.match(league, /Enter Quarter Finals/);
+  assert.match(league, /tournamentHref\(quarterFinalsId\)/);
+  assert.match(league, /View Quarter Finals/);
   assert.equal(presentWarzoneLeagueEmpty("empty").kind, "unavailable");
   assert.equal(presentWarzoneLeagueEmpty("api").kind, "initializing");
   assert.match(league, /data-warzone-mwl-podium/);
   assert.match(league, /data-warzone-mwl-table/);
+  assert.match(league, /data-warzone-mwl-your-tokens/);
+  assert.match(league, /data-mwl-qualification-cut/);
+  assert.doesNotMatch(league, /Quarterly Championship/);
+  assert.doesNotMatch(league, /Enter Quarter Finals/);
+  assert.doesNotMatch(league, /Quarter Finals open when the season table is frozen/);
+});
+
+test("MWL public table is Top 10, Your Tokens keep real off-table ranks, and QF projection stays labeled", () => {
+  const ranked = presentRankedLeagueEntries([
+    { tokenId: "a", tokenName: "Alpha", symbol: "AAA", points: 144, wins: 12, losses: 2, finishedFights: 14 },
+    { tokenId: "b", tokenName: "Bravo", symbol: "BBB", points: 131, wins: 11, losses: 3, finishedFights: 14 },
+    { tokenId: "c", tokenName: "Charlie", symbol: "CCC", points: 118, wins: 9, losses: 4, finishedFights: 13 },
+    { tokenId: "d", tokenName: "Delta", symbol: "DDD", points: 104, wins: 8, losses: 4, finishedFights: 12 },
+    { tokenId: "e", tokenName: "Echo", symbol: "EEE", points: 98, wins: 7, losses: 4, finishedFights: 11 },
+    { tokenId: "f", tokenName: "Foxtrot", symbol: "FFF", points: 94, wins: 7, losses: 5, finishedFights: 12 },
+    { tokenId: "g", tokenName: "Golf", symbol: "GGG", points: 88, wins: 6, losses: 5, finishedFights: 11 },
+    { tokenId: "h", tokenName: "Hotel", symbol: "HHH", points: 76, wins: 6, losses: 6, finishedFights: 12 },
+    { tokenId: "i", tokenName: "India", symbol: "III", points: 73, wins: 5, losses: 6, finishedFights: 11 },
+    { tokenId: "j", tokenName: "Juliet", symbol: "JJJ", points: 71, wins: 5, losses: 6, finishedFights: 11 },
+    { tokenId: "k", tokenName: "Kilo", symbol: "KKK", points: 70, wins: 4, losses: 6, finishedFights: 10 },
+    { tokenId: "mwl-mycoin", tokenName: "My Coin", symbol: "MYCOIN", points: 64, wins: 4, losses: 5, finishedFights: 9 },
+    { tokenId: "mwl-second", tokenName: "Second Coin", symbol: "SECOND", points: 21, wins: 1, losses: 7, finishedFights: 8 },
+  ]);
+  const board = presentWarzoneLeagueBoard(ranked);
+  assert.equal(board.podium.length, 3);
+  assert.equal(board.podium[0].rank, 1);
+  assert.equal(board.table.length, 7);
+  assert.equal(board.table[0].rank, 4);
+  assert.equal(board.table[board.table.length - 1].rank, 10);
+  assert.equal(board.table.some((entry) => entry.rank === 11), false);
+  assert.equal(board.ranked.find((entry) => entry.tokenId === "mwl-mycoin").rank, 12);
+  const yours = presentOwnedLeagueTokens(board.ranked, ["mwl-mycoin", "mwl-second", "a"]);
+  assert.equal(yours.length, 3);
+  assert.equal(yours.some((entry) => entry.rank === 1), true);
+  assert.equal(yours.find((entry) => entry.tokenId === "mwl-mycoin").rank, 12);
+  assert.equal(yours.find((entry) => entry.tokenId === "mwl-second").rank, 13);
+  const projected = presentQuarterFinalField({ state: "live" }, ranked);
+  assert.equal(projected.phase.projected, true);
+  assert.equal(projected.label, "PROJECTED QUALIFIERS · LIVE");
+  assert.equal(projected.field.length, 8);
+  assert.equal(projected.cut.inside.rank, 8);
+  assert.equal(projected.cut.outside.rank, 9);
+  const official = presentQuarterFinalField({ state: "quarter_finals", quarterFinalsTournamentId: "qf-1", frozenAt: "2026-05-01T00:00:00.000Z" }, ranked);
+  assert.equal(official.phase.projected, false);
+  assert.equal(official.label, "QUARTER FINALISTS");
+  assert.equal(official.tournamentId, "qf-1");
+  assert.equal(presentLeaguePhase({ state: "live" }).label, "LIVE");
+  const truncated = presentOwnedLeagueTokens(presentRankedLeagueEntries(ranked.slice(0, 10)), ["mwl-mycoin"]);
+  assert.equal(truncated.length, 0);
+  const mockReg = readSrc("../../features/postgrad/mockRegistry.ts");
+  const apiClient = readSrc("../../features/postgrad/apiClient.ts");
+  const feed = readSrc("../../hooks/useArenaLeagueFeed.ts");
+  assert.match(mockReg, /mwl-mycoin/);
+  assert.match(mockReg, /mwl-second/);
+  assert.match(mockReg, /MOCK_LEAGUE_OWNED_TOKEN_IDS/);
+  assert.doesNotMatch(apiClient, /mwl-mycoin|MOCK_LEAGUE_OWNED_TOKEN_IDS/);
+  assert.match(feed, /MOCK_LEAGUE_OWNED_TOKEN_IDS/);
+  assert.match(feed, /source === "qa-runtime"/);
+  assert.match(feed, /fetchPostGradLeagueFeed\(signal, options\)/);
+  const page = readSrc("../../pages/PostGradLeague.tsx");
+  assert.match(page, /WarzoneRankCard/);
+  assert.match(page, /data-warzone-mwl-your-tokens/);
+  assert.match(page, /quarterFinals\.label/);
+  assert.match(readSrc("./warzoneChrome.mjs"), /PROJECTED QUALIFIERS · LIVE/);
+  assert.match(page, /tournamentHref/);
+  assert.doesNotMatch(page, /Quarterly Championship/);
 });
 
 test("Warzone composition keeps cards floating without outer frames", () => {

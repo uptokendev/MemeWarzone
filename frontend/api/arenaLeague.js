@@ -42,6 +42,7 @@ function mapEntry(row) {
 
 function mapSeason(row, entries) {
   const sorted = [...entries].sort((a, b) => b.points - a.points || b.wins - a.wins);
+  const ranked = sorted.map((entry, index) => ({ ...entry, rank: index + 1 }));
   return {
     id: String(row.id),
     label: String(row.label || "Major War League"),
@@ -55,7 +56,7 @@ function mapSeason(row, entries) {
     regularSeasonClosed: Boolean(row.regular_season_closed),
     quarterFinalsTournamentId: row.quarter_finals_tournament_id || null,
     divisions: [],
-    entries: sorted,
+    entries: ranked,
   };
 }
 
@@ -80,8 +81,18 @@ async function activeSeason(chainId) {
   return mapSeason(row, entries.rows.map(mapEntry));
 }
 
-async function feed(chainId) {
-  return { season: await activeSeason(chainId), history: [] };
+function ownedFromSeason(season, ownedRows) {
+  if (!season || !Array.isArray(ownedRows) || !ownedRows.length) return [];
+  const byId = new Map((season.entries || []).map((entry) => [ident(entry.tokenId || entry.tokenAddress), entry]));
+  return ownedRows
+    .map((row) => byId.get(ident(row.tokenId || row.tokenAddress)))
+    .filter((entry) => entry && Number.isFinite(Number(entry.rank)) && Number(entry.rank) > 0);
+}
+
+async function feed(chainId, wallet) {
+  const season = await activeSeason(chainId);
+  const owned = season && wallet ? ownedFromSeason(season, await ownedLeagueCoins(chainId, wallet, season.id)) : [];
+  return { season, history: [], owned };
 }
 
 async function ownedCoin(chainId, wallet, token) {
@@ -161,7 +172,8 @@ async function handleFeed(req, res) {
   try {
     const url = new URL(req.url, "http://localhost");
     const chainId = Number(url.searchParams.get("chainId") || 0) || null;
-    return json(res, 200, await feed(chainId));
+    const wallet = ident(url.searchParams.get("wallet") || url.searchParams.get("address"));
+    return json(res, 200, await feed(chainId, wallet));
   } catch (error) {
     console.error("[api/arenaLeague] feed failed", error);
     return json(res, 200, { season: null, history: [], warning: "Arena league data is unavailable." });

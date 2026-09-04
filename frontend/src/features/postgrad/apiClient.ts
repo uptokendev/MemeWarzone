@@ -229,8 +229,15 @@ export async function fetchPostGradTournamentDetails(eventId: string, signal?: A
   return fetchJson(`/api/arena/tournaments/${encodeURIComponent(eventId)}`, { cache: "no-store", signal });
 }
 
-export async function fetchPostGradLeagueFeed(signal?: AbortSignal) {
-  return fetchJson("/api/arena/league", { cache: "no-store", signal });
+export async function fetchPostGradLeagueFeed(
+  signal?: AbortSignal,
+  options?: { wallet?: string | null; chainId?: number | null },
+) {
+  const params = new URLSearchParams();
+  if (options?.wallet) params.set("wallet", String(options.wallet));
+  if (options?.chainId) params.set("chainId", String(options.chainId));
+  const query = params.toString();
+  return fetchJson(`/api/arena/league${query ? `?${query}` : ""}`, { cache: "no-store", signal });
 }
 
 export async function fetchArenaLeagueCheckin(wallet: string, chainId?: number | null, signal?: AbortSignal) {
