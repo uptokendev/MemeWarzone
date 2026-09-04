@@ -50,8 +50,19 @@ test("Battle Wall Boost uses the signed quote route and V2 treasury call without
   assert.match(client, /\/api\/arena\/boosts\/quote/);
   assert.match(client, /boostBattle/);
   assert.doesNotMatch(client, /\/api\/arena\/boosts\/confirm/);
+  assert.doesNotMatch(panel, /\/api\/arena\/boosts\/confirm/);
   assert.match(panel, /90% goes to the prize pool and 10% to protocol/);
   assert.match(panel, /scoring curve is not active yet/);
   assert.match(wall, /battleBoostAvailability/);
   assert.match(wall, /BattleBoostPanel/);
+});
+
+test("Battle Boost fails closed when aggregate runtime is unavailable and polls authoritative totals after payment", () => {
+  const panel = fs.readFileSync(path.join(here, "../../components/arena/BattleBoostPanel.tsx"), "utf8");
+
+  assert.match(panel, /runtimeReady !== true/);
+  assert.match(panel, /data-battle-boost-runtime="unavailable"/);
+  assert.match(panel, /Battle Boost unavailable/);
+  assert.match(panel, /for \(let attempt = 0; attempt < 4; attempt \+= 1\)/);
+  assert.match(panel, /nextUnits > previousUnits/);
 });
