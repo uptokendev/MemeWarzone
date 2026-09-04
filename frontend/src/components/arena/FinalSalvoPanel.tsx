@@ -44,12 +44,16 @@ export function FinalSalvoPanel({
   state,
   leftLabel = "LEFT",
   rightLabel = "RIGHT",
+  leftToken,
+  rightToken,
   busy = false,
   onVote,
 }: {
   state?: FinalSalvoSource | null;
   leftLabel?: string;
   rightLabel?: string;
+  leftToken?: string | null;
+  rightToken?: string | null;
   busy?: boolean;
   onVote?: (side: "left" | "right") => void;
 }) {
@@ -57,8 +61,8 @@ export function FinalSalvoPanel({
   if (!model) return null;
 
   const walletVote = String(model.walletVote || "");
-  const leftSelected = walletVote === "left" || tokenIdentityEqual(walletVote, leftLabel);
-  const rightSelected = walletVote === "right" || tokenIdentityEqual(walletVote, rightLabel);
+  const leftSelected = walletVote === "left" || tokenIdentityEqual(walletVote, String(leftToken || leftLabel));
+  const rightSelected = walletVote === "right" || tokenIdentityEqual(walletVote, String(rightToken || rightLabel));
 
   return (
     <section aria-label={model.title} data-final-salvo={model.phase} className="space-y-3 border-t border-white/10 pt-3">
@@ -68,17 +72,17 @@ export function FinalSalvoPanel({
         <span aria-live="polite">{model.clockLabel}</span>
       </div>
 
-      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 border border-white/10 bg-black/20 p-3">
-        <div>
-          <div className="text-[9px] uppercase tracking-[0.18em] text-white/42">{leftLabel}</div>
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border border-white/10 bg-black/20 p-3 sm:gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-[9px] uppercase tracking-[0.18em] text-white/42" title={leftToken || leftLabel}>{leftLabel}</div>
           <div className="mt-1 font-retro text-xl text-white/90">{model.leftVotes}</div>
         </div>
         <div className="text-center">
           <div className="text-[9px] uppercase tracking-[0.18em] text-white/42">Series</div>
           <div className="mt-1 font-retro text-lg text-white/80">{model.seriesLabel}</div>
         </div>
-        <div className="text-right">
-          <div className="text-[9px] uppercase tracking-[0.18em] text-white/42">{rightLabel}</div>
+        <div className="min-w-0 text-right">
+          <div className="truncate text-[9px] uppercase tracking-[0.18em] text-white/42" title={rightToken || rightLabel}>{rightLabel}</div>
           <div className="mt-1 font-retro text-xl text-white/90">{model.rightVotes}</div>
         </div>
       </div>
@@ -89,21 +93,21 @@ export function FinalSalvoPanel({
             type="button"
             size="sm"
             variant={leftSelected ? "secondary" : "outline"}
-            className="font-retro"
+            className="min-w-0 font-retro"
             disabled={busy || !model.walletEligible || !onVote}
             onClick={() => onVote?.("left")}
           >
-            {leftSelected ? "Vote confirmed" : `Free Vote ${leftLabel}`}
+            <span className="truncate">{leftSelected ? "Vote confirmed" : `Free Vote ${leftLabel}`}</span>
           </Button>
           <Button
             type="button"
             size="sm"
             variant={rightSelected ? "secondary" : "outline"}
-            className="font-retro"
+            className="min-w-0 font-retro"
             disabled={busy || !model.walletEligible || !onVote}
             onClick={() => onVote?.("right")}
           >
-            {rightSelected ? "Vote confirmed" : `Free Vote ${rightLabel}`}
+            <span className="truncate">{rightSelected ? "Vote confirmed" : `Free Vote ${rightLabel}`}</span>
           </Button>
         </div>
       ) : null}
