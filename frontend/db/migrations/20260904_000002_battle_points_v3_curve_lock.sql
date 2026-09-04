@@ -38,4 +38,37 @@ for each row execute function public.prevent_arena_battle_scoring_lock_mutation(
 create index if not exists arena_battle_scoring_locks_version_idx
   on public.arena_battle_scoring_locks(scoring_version, boost_curve_version, locked_at);
 
+-- Final founder-approved Battle Points V3 generation. Historical V2 remains
+-- 50/30/20 in application config and is not rewritten by this migration.
+alter table if exists public.arena_battle_points_v3
+  alter column mcap_weight set default 45,
+  alter column holder_weight set default 27,
+  alter column volume_weight set default 18,
+  alter column boost_weight set default 10,
+  alter column boost_curve_version set default 'boost_hyperbolic_100_v1',
+  alter column boost_curve_parameters set default '{"maxPoints":10,"halfSaturationUnits":100,"unitUsdMicros":1000000}'::jsonb;
+
+-- The prior V3 scaffold was never founder-activated. Normalize only that exact
+-- stale scaffold tuple; do not reinterpret historical V2 rows.
+update public.arena_battle_points_v3
+   set mcap_weight = 45,
+       holder_weight = 27,
+       volume_weight = 18,
+       boost_weight = 10
+ where scoring_version = 'battle_points_v3'
+   and mcap_weight = 50
+   and holder_weight = 25
+   and volume_weight = 15
+   and boost_weight = 10;
+
+-- Curve identity becomes authoritative only where an immutable per-Battle V3
+-- lock already exists. Unlocked historical scaffold rows remain non-authoritative.
+update public.arena_battle_points_v3 p
+   set boost_curve_version = l.boost_curve_version,
+       boost_curve_parameters = l.boost_curve_parameters
+  from public.arena_battle_scoring_locks l
+ where p.battle_id = l.battle_id
+   and p.scoring_version = 'battle_points_v3'
+   and p.boost_curve_version = 'founder_pending';
+
 commit;
