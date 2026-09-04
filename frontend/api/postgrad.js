@@ -4,6 +4,7 @@ import arenaBoosts from "./arenaBoosts.js";
 import arenaEvents from "./arenaEvents.js";
 import arenaFinalSalvo from "./arenaFinalSalvo.js";
 import arenaImports from "./arenaImports.js";
+import arenaSponsorships from "./arenaSponsorships.js";
 import arenaTournaments from "./arenaTournaments.js";
 import arenaTournamentBoosts from "./arenaTournamentBoosts.js";
 import arenaTournamentVotes from "./arenaTournamentVotes.js";
@@ -25,6 +26,7 @@ const ROUTES = [
   { pattern: /^\/arena\/boosts(?:\/.*)?$/, flag: "ARENA_BATTLE_BOOSTS", handler: arenaBoosts },
   { pattern: /^\/arena\/battles(?:\/.*)?$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaBattles },
   { pattern: /^\/arena\/imports(?:\/.*)?$/, flag: "POSTGRAD_ARENA_IMPORTS_ENABLED", handler: arenaImports },
+  { pattern: /^\/arena\/sponsorships\/(?:quote|confirm)$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: arenaSponsorships },
   { pattern: /^\/arena\/tournaments\/v2\/(?:buy-in-quote|create)$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaVoteTournamentSetup },
   { pattern: /^\/arena\/tournaments\/[^/]+\/(?:v2-buy-in-receipt|buy-in-receipt)$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaVoteTournamentSetup },
   { pattern: /^\/arena\/tournaments\/[^/]+\/matches\/[^/]+\/final-salvo$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaFinalSalvo },
