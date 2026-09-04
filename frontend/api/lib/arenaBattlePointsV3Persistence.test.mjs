@@ -5,6 +5,8 @@ import { calculateBattlePointsV3Market } from "./arenaBattlePointsV3.js";
 import { persistBattlePointsV3MarketProjection } from "./arenaBattlePointsV3Persistence.js";
 
 const NOW = Date.parse("2026-09-03T12:00:00.000Z");
+const CURVE = "boost_hyperbolic_100_v1";
+const PARAMS = { maxPoints: 10, halfSaturationUnits: 100, unitUsdMicros: 1_000_000 };
 
 function score() {
   return calculateBattlePointsV3Market({
@@ -23,9 +25,9 @@ function score() {
   });
 }
 
-test("V3 projection upsert writes founder weights and market points only", async () => {
+test("V3 projection upsert writes founder weights and immutable curve identity", async () => {
   let captured = null;
-  const fakeRow = { battle_id: "battle-1", side: "left", boost_units: "77", total_points: null };
+  const fakeRow = { battle_id: "battle-1", side: "left", boost_units: "77", total_points: null, boost_curve_version: CURVE, boost_curve_parameters: PARAMS };
   const query = async (sql, params) => {
     captured = { sql, params };
     return { rows: [fakeRow] };
@@ -41,12 +43,21 @@ test("V3 projection upsert writes founder weights and market points only", async
   assert.ok(captured.sql.includes("holder_points = excluded.holder_points"));
   assert.ok(captured.sql.includes("volume_points = excluded.volume_points"));
   assert.ok(!/boost_units\s*=\s*excluded/i.test(captured.sql));
-  assert.ok(!/boost_gross_native_raw\s*=\s*excluded/i.test(captured.sql));
-  assert.ok(!/boost_pool_native_raw\s*=\s*excluded/i.test(captured.sql));
-  assert.ok(!/boost_protocol_native_raw\s*=\s*excluded/i.test(captured.sql));
   assert.ok(!/boost_points\s*=\s*excluded/i.test(captured.sql));
   assert.ok(!/total_points\s*=\s*excluded/i.test(captured.sql));
-  assert.deepEqual(captured.params.slice(3, 9), [45, 27, 18, 10, "founder_pending", "{}"]);
+  assert.ok(!/boost_curve_version\s*=\s*excluded/i.test(captured.sql));
+  assert.ok(!/boost_curve_parameters\s*=\s*excluded/i.test(captured.sql));
+  assert.deepEqual(captured.params.slice(3, 9), [50, 25, 15, 10, CURVE, JSON.stringify(PARAMS)]);
+});
+
+test("V3 projection rejects an incompatible pre-existing curve", async () => {
+  await assert.rejects(
+    persistBattlePointsV3MarketProjection(
+      { battleId: "battle-1", tokenId: "0xabc", side: "left", score: score() },
+      { query: async () => ({ rows: [{ boost_curve_version: "old_curve", boost_curve_parameters: {} }] }) },
+    ),
+    /incompatible immutable Boost curve/,
+  );
 });
 
 test("V3 projection rejects non-V3 scores and malformed identity", async () => {
