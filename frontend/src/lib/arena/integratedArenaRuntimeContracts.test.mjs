@@ -18,6 +18,7 @@ const salvoClient = read("src/lib/arena/finalSalvoClient.ts");
 const salvoControls = read("src/components/arena/TournamentFinalSalvoControls.tsx");
 const salvoApi = read("api/arenaFinalSalvo.js");
 const sponsorshipApi = read("api/arenaSponsorships.js");
+const sponsorshipClient = read("src/lib/arena/eventSponsorshipClient.ts");
 
 test("Normal Battle Boost client matches merged EVM runtime and never ingests confirmations", () => {
   assert.match(battleClient, /\/api\/arena\/boosts\/quote/);
@@ -29,7 +30,7 @@ test("Normal Battle Boost client matches merged EVM runtime and never ingests co
   assert.doesNotMatch(battleClient, /boosts\/confirm/);
   assert.match(battleApi, /arena_battle_boost_quote/);
   assert.match(battleApi, /active EVM money path/);
-  assert.match(battleApi, /boost_curve_founder_pending/);
+  assert.match(battleApi, /boost_curve_founder_pending|boost_hyperbolic_100_v1/);
   assert.match(battleApi, /arena_boost_confirm/);
 });
 
@@ -66,7 +67,14 @@ test("Final Salvo consumes authoritative state and exposes no paid Boost transac
   assert.match(salvoApi, /arena_final_salvo_vote/);
 });
 
-test("merged Event Sponsorship route remains authority-safe but lacks browser preflight/state APIs", () => {
+test("Event Sponsorship frontend targets declared public reads and never calls internal confirm", () => {
+  assert.match(sponsorshipClient, /\/api\/arena\/sponsorships\/options/);
+  assert.match(sponsorshipClient, /\/api\/arena\/sponsorships\/\$\{encodeURIComponent\(eventId\)\}\/state/);
+  assert.match(sponsorshipClient, /\/api\/arena\/sponsorships\/payments\/\$\{encodeURIComponent\(quoteId\)\}/);
+  assert.match(sponsorshipClient, /\/api\/arena\/sponsorships\/solana-quote/);
+  assert.match(sponsorshipClient, /\/api\/arena\/sponsorships\/solana-payment/);
+  assert.doesNotMatch(sponsorshipClient, /sponsorships\/confirm/);
+
   assert.match(sponsorshipApi, /\/arena\/sponsorships\/quote/);
   assert.match(sponsorshipApi, /\/arena\/sponsorships\/confirm/);
   assert.match(sponsorshipApi, /arena_sponsorship_quote/);
@@ -76,7 +84,4 @@ test("merged Event Sponsorship route remains authority-safe but lacks browser pr
   assert.match(sponsorshipApi, /prizeBps: 7000/);
   assert.match(sponsorshipApi, /marketingOpsBps: 2000/);
   assert.match(sponsorshipApi, /protocolBps: 1000/);
-  assert.doesNotMatch(sponsorshipApi, /sponsorships\/options/);
-  assert.doesNotMatch(sponsorshipApi, /sponsorships\/state/);
-  assert.doesNotMatch(sponsorshipApi, /sponsorships\/preflight/);
 });
