@@ -94,6 +94,7 @@ export function TournamentVoteControls({
           `Tournament: ${tournamentId}`,
           `Round: ${model.roundNumber}`,
           `Match: ${model.matchId}`,
+          "Phase: regulation",
           `Token: ${tokenAddress}`,
         ],
         walletAddress,
