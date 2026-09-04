@@ -2,6 +2,7 @@ use anchor_lang::prelude::*;
 
 use super::config::{ArenaMoneyConfigV2, ARENA_MONEY_CONFIG_SEED_V2, ARENA_MONEY_GENERATION_V2};
 use super::errors::ArenaMoneyV2Error;
+use super::math::mul_bps_u64;
 use super::receipts::{
     debit_program_vault, transfer_sol, validate_competition_entry_receipt_v2,
     CompetitionEntryReceiptV2, COMPETITION_ENTRY_RECEIPT_SEED_V2,
@@ -30,14 +31,8 @@ pub struct CompetitionSplitV2 {
 
 pub fn split_competition_v2(gross: u64) -> Result<CompetitionSplitV2> {
     require!(gross > 0, ArenaMoneyV2Error::InvalidAmount);
-    let league = gross
-        .checked_mul(COMPETITION_LEAGUE_BPS)
-        .ok_or(ArenaMoneyV2Error::MathOverflow)?
-        / BPS_DENOMINATOR;
-    let protocol = gross
-        .checked_mul(COMPETITION_PROTOCOL_BPS)
-        .ok_or(ArenaMoneyV2Error::MathOverflow)?
-        / BPS_DENOMINATOR;
+    let league = mul_bps_u64(gross, COMPETITION_LEAGUE_BPS)?;
+    let protocol = mul_bps_u64(gross, COMPETITION_PROTOCOL_BPS)?;
     let prize = gross
         .checked_sub(league)
         .and_then(|v| v.checked_sub(protocol))
