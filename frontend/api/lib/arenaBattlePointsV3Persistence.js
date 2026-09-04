@@ -6,10 +6,11 @@ async function defaultQuery(text, params) {
 }
 
 /**
- * Persists only the market-performance projection for Battle Points V3.
- * Boost units/raw money remain owned by confirmed contest-action ingestion.
- * boost_points and total_points remain untouched until the founder locks a
- * versioned Boost conversion curve and V3 settlement is separately enabled.
+ * Persists the market-performance projection for Battle Points V3 while leaving
+ * confirmed Boost money/units under contest-action ingestion ownership. The
+ * curve identity is written on first insert and deliberately never overwritten
+ * by refreshes; production settlement additionally requires the immutable
+ * per-Battle scoring lock.
  */
 export async function persistBattlePointsV3MarketProjection({
   battleId,
@@ -55,8 +56,6 @@ export async function persistBattlePointsV3MarketProjection({
        holder_weight = excluded.holder_weight,
        volume_weight = excluded.volume_weight,
        boost_weight = excluded.boost_weight,
-       boost_curve_version = excluded.boost_curve_version,
-       boost_curve_parameters = excluded.boost_curve_parameters,
        mcap_points = excluded.mcap_points,
        holder_points = excluded.holder_points,
        volume_points = excluded.volume_points,
@@ -71,5 +70,14 @@ export async function persistBattlePointsV3MarketProjection({
     params,
   );
 
-  return result?.rows?.[0] || null;
+  const row = result?.rows?.[0] || null;
+  if (row && (
+    String(row.boost_curve_version || "") !== String(config.boost.curveVersion)
+    || Number(row.boost_curve_parameters?.maxPoints) !== 10
+    || Number(row.boost_curve_parameters?.halfSaturationUnits) !== 100
+    || Number(row.boost_curve_parameters?.unitUsdMicros) !== 1_000_000
+  )) {
+    throw new Error("Battle Points V3 projection has an incompatible immutable Boost curve");
+  }
+  return row;
 }

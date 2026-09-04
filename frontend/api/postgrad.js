@@ -1,10 +1,13 @@
 import arenaBattles from "./arenaBattles.js";
 import arenaBattleMetrics from "./arenaBattleMetrics.js";
+import arenaBattlePointsV3Admin from "./arenaBattlePointsV3Admin.js";
 import arenaBoosts from "./arenaBoosts.js";
+import arenaSolanaBoosts from "./arenaSolanaBoosts.js";
 import arenaEvents from "./arenaEvents.js";
 import arenaFinalSalvo from "./arenaFinalSalvo.js";
 import arenaImports from "./arenaImports.js";
 import arenaSponsorships from "./arenaSponsorships.js";
+import arenaSponsorshipPublic from "./arenaSponsorshipPublic.js";
 import arenaTournaments from "./arenaTournaments.js";
 import arenaTournamentBoosts from "./arenaTournamentBoosts.js";
 import arenaTournamentVotes from "./arenaTournamentVotes.js";
@@ -23,13 +26,19 @@ import warRoom from "./warRoom.js";
 const ROUTES = [
   { pattern: /^\/arena\/ops\/health$/, flag: "POSTGRAD_ARENA_OPS_ENABLED", handler: arenaOps },
   { pattern: /^\/arena\/battle-metrics\/[^/]+$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaBattleMetrics },
+  { pattern: /^\/arena\/boosts\/[^/]+\/(?:solana-quote|solana-payment)$/, flag: "ARENA_BATTLE_BOOSTS", handler: arenaSolanaBoosts },
   { pattern: /^\/arena\/boosts(?:\/.*)?$/, flag: "ARENA_BATTLE_BOOSTS", handler: arenaBoosts },
+  { pattern: /^\/arena\/battles\/[^/]+\/v3-scoring-lock$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaBattlePointsV3Admin },
   { pattern: /^\/arena\/battles(?:\/.*)?$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaBattles },
   { pattern: /^\/arena\/imports(?:\/.*)?$/, flag: "POSTGRAD_ARENA_IMPORTS_ENABLED", handler: arenaImports },
+  { pattern: /^\/arena\/sponsorships\/(?:options|solana-quote|solana-payment)$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: arenaSponsorshipPublic },
+  { pattern: /^\/arena\/sponsorships\/payments\/[^/]+$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: arenaSponsorshipPublic },
+  { pattern: /^\/arena\/sponsorships\/[^/]+\/state$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: arenaSponsorshipPublic },
   { pattern: /^\/arena\/sponsorships\/(?:quote|confirm)$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: arenaSponsorships },
   { pattern: /^\/arena\/tournaments\/v2\/(?:buy-in-quote|create)$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaVoteTournamentSetup },
   { pattern: /^\/arena\/tournaments\/[^/]+\/(?:v2-buy-in-receipt|buy-in-receipt)$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaVoteTournamentSetup },
   { pattern: /^\/arena\/tournaments\/[^/]+\/matches\/[^/]+\/final-salvo$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaFinalSalvo },
+  { pattern: /^\/arena\/tournaments\/[^/]+\/matches\/[^/]+\/boosts\/(?:solana-quote|solana-payment)$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaSolanaBoosts },
   { pattern: /^\/arena\/tournaments\/[^/]+\/matches\/[^/]+\/boosts(?:\/.*)?$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaTournamentBoosts },
   { pattern: /^\/arena\/tournaments\/[^/]+\/matches\/[^/]+\/votes$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaTournamentVotes },
   { pattern: /^\/arena\/tournaments(?:\/.*)?$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaTournaments },

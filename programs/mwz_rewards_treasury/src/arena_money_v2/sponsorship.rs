@@ -2,6 +2,7 @@ use anchor_lang::prelude::*;
 
 use super::config::{ArenaMoneyConfigV2, ARENA_MONEY_CONFIG_SEED_V2, ARENA_MONEY_GENERATION_V2};
 use super::errors::ArenaMoneyV2Error;
+use super::math::mul_bps_u64;
 use super::receipts::{debit_program_vault, transfer_sol, SponsorshipReceiptV1, SPONSORSHIP_RECEIPT_SEED_V1};
 
 pub const SPONSORSHIP_EVENT_SEED_V1: &[u8] = b"arena_sponsor_event_v1";
@@ -22,14 +23,8 @@ pub struct SponsorshipSplitV1 {
 
 pub fn split_sponsorship_v1(gross: u64) -> Result<SponsorshipSplitV1> {
     require!(gross > 0, ArenaMoneyV2Error::InvalidAmount);
-    let marketing = gross
-        .checked_mul(SPONSORSHIP_MARKETING_BPS)
-        .ok_or(ArenaMoneyV2Error::MathOverflow)?
-        / SPONSORSHIP_BPS_DENOMINATOR;
-    let protocol = gross
-        .checked_mul(SPONSORSHIP_PROTOCOL_BPS)
-        .ok_or(ArenaMoneyV2Error::MathOverflow)?
-        / SPONSORSHIP_BPS_DENOMINATOR;
+    let marketing = mul_bps_u64(gross, SPONSORSHIP_MARKETING_BPS)?;
+    let protocol = mul_bps_u64(gross, SPONSORSHIP_PROTOCOL_BPS)?;
     let prize = gross
         .checked_sub(marketing)
         .and_then(|v| v.checked_sub(protocol))

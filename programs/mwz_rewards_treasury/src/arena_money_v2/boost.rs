@@ -6,6 +6,7 @@ use super::competition::{
 };
 use super::config::{ArenaMoneyConfigV2, ARENA_MONEY_CONFIG_SEED_V2, ARENA_MONEY_GENERATION_V2};
 use super::errors::ArenaMoneyV2Error;
+use super::math::mul_bps_u64;
 use super::receipts::{debit_program_vault, transfer_sol, BoostReceiptV2, BOOST_RECEIPT_SEED_V2};
 
 pub const BOOST_PRIZE_BPS: u64 = 9_000;
@@ -22,10 +23,7 @@ pub struct BoostSplitV2 {
 
 pub fn split_boost_v2(gross: u64) -> Result<BoostSplitV2> {
     require!(gross > 0, ArenaMoneyV2Error::InvalidAmount);
-    let protocol = gross
-        .checked_mul(BOOST_PROTOCOL_BPS)
-        .ok_or(ArenaMoneyV2Error::MathOverflow)?
-        / BOOST_BPS_DENOMINATOR;
+    let protocol = mul_bps_u64(gross, BOOST_PROTOCOL_BPS)?;
     let prize = gross.checked_sub(protocol).ok_or(ArenaMoneyV2Error::MathOverflow)?;
     require!(prize.checked_add(protocol) == Some(gross), ArenaMoneyV2Error::InvalidSplit);
     Ok(BoostSplitV2 { gross, prize, protocol })

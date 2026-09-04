@@ -45,7 +45,15 @@ function querySpy() {
     const text = String(sql);
     calls.push({ sql: text, params });
     if (text.includes("insert into public.arena_battle_points_v3")) {
-      return { rows: [{ battle_id: "battle-v3-refresh", side: "left", total_points: null }] };
+      return {
+        rows: [{
+          battle_id: "battle-v3-refresh",
+          side: "left",
+          total_points: null,
+          boost_curve_version: "boost_hyperbolic_100_v1",
+          boost_curve_parameters: { maxPoints: 10, halfSaturationUnits: 100, unitUsdMicros: 1_000_000 },
+        }],
+      };
     }
     return { rows: [], rowCount: 1 };
   };
