@@ -41,6 +41,40 @@ function findActiveRound(rounds) {
   return null;
 }
 
+export function findTournamentVoteMatch({ tournament, matchRef } = {}) {
+  const rounds = parseTournamentVoteBracket(tournament?.bracket);
+  if (!rounds) return { ok: false, reason: "invalid-bracket" };
+  const ref = text(matchRef);
+  if (!ref) return { ok: false, reason: "missing-match-ref" };
+
+  for (let roundIndex = 0; roundIndex < rounds.length; roundIndex += 1) {
+    const round = rounds[roundIndex] || {};
+    const matches = Array.isArray(round.matches) ? round.matches : [];
+    const match = matches.find((candidate) =>
+      text(candidate?.id) === ref || text(candidate?.battleId || candidate?.battle_id) === ref
+    );
+    if (!match) continue;
+    const tokenA = text(match?.tokenA || match?.token_a);
+    const tokenB = text(match?.tokenB || match?.token_b);
+    const battleId = text(match?.battleId || match?.battle_id);
+    if (!tokenA || !tokenB || !battleId) return { ok: false, reason: "invalid-match-participants" };
+    const roundNumber = Number(round?.round ?? roundIndex + 1);
+    return {
+      ok: true,
+      reason: "ok",
+      roundNumber: Number.isFinite(roundNumber) ? roundNumber : roundIndex + 1,
+      matchId: text(match?.id) || battleId,
+      battleId,
+      tokenA,
+      tokenB,
+      winnerToken: text(match?.winner) || null,
+      bye: Boolean(match?.bye),
+      roundIndex,
+    };
+  }
+  return { ok: false, reason: "match-not-found" };
+}
+
 export function resolveTournamentVoteMatch({ tournament, matchRef, selectedToken } = {}) {
   if (text(tournament?.status) !== "live") {
     return { ok: false, reason: "tournament-not-live" };
@@ -58,35 +92,25 @@ export function resolveTournamentVoteMatch({ tournament, matchRef, selectedToken
   const active = findActiveRound(rounds);
   if (!active) return { ok: false, reason: "no-active-round" };
 
-  const ref = text(matchRef);
-  if (!ref) return { ok: false, reason: "missing-match-ref" };
-
-  const match = active.matches.find((candidate) =>
-    text(candidate?.id) === ref || text(candidate?.battleId || candidate?.battle_id) === ref
-  );
-  if (!match) return { ok: false, reason: "match-not-active" };
-  if (match?.bye) return { ok: false, reason: "bye-match" };
-  if (text(match?.winner)) return { ok: false, reason: "match-finished" };
-
-  const tokenA = text(match?.tokenA || match?.token_a);
-  const tokenB = text(match?.tokenB || match?.token_b);
-  const battleId = text(match?.battleId || match?.battle_id);
-  if (!tokenA || !tokenB || !battleId) return { ok: false, reason: "invalid-match-participants" };
+  const found = findTournamentVoteMatch({ tournament, matchRef });
+  if (!found.ok) return { ok: false, reason: found.reason };
+  if (found.roundIndex !== active.index) return { ok: false, reason: "match-not-active" };
+  if (found.bye) return { ok: false, reason: "bye-match" };
+  if (found.winnerToken) return { ok: false, reason: "match-finished" };
 
   const selected = text(selectedToken);
-  if (selected && !tournamentVoteTokensEqual(selected, tokenA) && !tournamentVoteTokensEqual(selected, tokenB)) {
+  if (selected && !tournamentVoteTokensEqual(selected, found.tokenA) && !tournamentVoteTokensEqual(selected, found.tokenB)) {
     return { ok: false, reason: "selected-token-not-in-match" };
   }
 
-  const roundNumber = Number(active.round?.round ?? active.index + 1);
   return {
     ok: true,
     reason: "ok",
-    roundNumber: Number.isFinite(roundNumber) ? roundNumber : active.index + 1,
-    matchId: text(match?.id) || battleId,
-    battleId,
-    tokenA,
-    tokenB,
+    roundNumber: found.roundNumber,
+    matchId: found.matchId,
+    battleId: found.battleId,
+    tokenA: found.tokenA,
+    tokenB: found.tokenB,
     selectedToken: selected || null,
   };
 }
