@@ -34,7 +34,7 @@ import {
   deriveSponsorshipReceiptV1Pda,
 } from "./solanaArenaMoneyV2Read.js";
 
-const PK_A = new PublicKey("11111111111111111111111111111111");
+const PK_A = new PublicKey("ComputeBudget111111111111111111111111111111");
 const PK_B = new PublicKey("SysvarRent111111111111111111111111111111111");
 const COMP = `0x${"11".repeat(32)}`;
 const FUND = `0x${"22".repeat(32)}`;
