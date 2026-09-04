@@ -126,10 +126,12 @@ test("Final Salvo client uses only the dedicated API and signed action contract"
   const liveRound = fs.readFileSync(path.join(here, "../../components/arena/TournamentLiveRoundBattles.tsx"), "utf8");
 
   assert.match(client, /\/final-salvo/);
+  assert.match(client, /boostAllowed\?: boolean/);
   assert.match(controls, /arena_final_salvo_vote/);
   assert.match(controls, /`Phase: \$\{apiPhase\}`/);
   assert.match(controls, /`Shot: \$\{shotIndex\}`/);
-  assert.doesNotMatch(client, /boost/i);
+  assert.doesNotMatch(client, /arena_tournament_boost_quote|boostTournament|\/boosts\/quote|\/boosts\/confirm/);
+  assert.doesNotMatch(controls, /arena_tournament_boost_quote|boostTournament|\/boosts\/quote|\/boosts\/confirm/);
   assert.match(panel, /Boost disabled during Final Salvo/);
   assert.match(liveRound, /TournamentFinalSalvoControls/);
   assert.match(liveRound, /voteMode\(tournamentMode\)/);
