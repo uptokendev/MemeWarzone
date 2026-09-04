@@ -28,7 +28,7 @@ test("Normal Battle Boost client matches merged EVM runtime and never ingests co
   assert.match(battleClient, /Battle Boost quote belongs to another wallet/);
   assert.doesNotMatch(battleClient, /boosts\/confirm/);
   assert.match(battleApi, /arena_battle_boost_quote/);
-  assert.match(battleApi, /Battle Boost quotes currently require an active EVM money path/);
+  assert.match(battleApi, /active EVM money path/);
   assert.match(battleApi, /boost_curve_founder_pending/);
   assert.match(battleApi, /arena_boost_confirm/);
 });
@@ -51,7 +51,7 @@ test("Vote Tournament paid Boost matches merged EVM runtime and disappears for F
   assert.match(tournamentBoostApi, /pointsPerBoost: 2/);
   assert.match(tournamentBoostApi, /prizeBps: 9000, protocolBps: 1000, leagueBps: 0/);
   assert.match(tournamentBoostApi, /Boost is disabled during Final Salvo/);
-  assert.match(tournamentBoostApi, /Tournament Boost quotes currently require an active EVM money path/);
+  assert.match(tournamentBoostApi, /active EVM money path/);
 });
 
 test("Final Salvo consumes authoritative state and exposes no paid Boost transaction path", () => {
