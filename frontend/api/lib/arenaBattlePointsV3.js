@@ -83,7 +83,7 @@ export function calculateBattlePointsV3Boost(boostUnits) {
 /**
  * Computes the founder-locked market side of Battle Points V3.
  * Existing V2 saturation, holder-confidence and anti-concentration mechanics are
- * reused; component weights are 50/25/15 with 10 reserved for Boost. Boost
+ * reused; component weights are 45/27/18 with 10 reserved for Boost. Boost
  * remains a separately confirmed contest-action input so market refreshes cannot
  * invent paid points.
  */
