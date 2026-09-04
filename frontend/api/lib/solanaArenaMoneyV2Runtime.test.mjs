@@ -109,7 +109,7 @@ function account(data) { return { data: Uint8Array.from(data) }; }
   assert.equal(verifySponsorshipEventV1({ account: account(event), owner: ARENA_MONEY_V2_PROGRAM_ID, accountAddress: eventPda, expectedPda: eventPda, expectedEventId: EVENT, PublicKey }).ok, true);
 
   const vaultPda = deriveEventPrizeVaultV1Pda(EVENT).toBase58();
-  const vault = Buffer.concat([Buffer.from(EVENT_PRIZE_VAULT_V1_DISCRIMINATOR), Buffer.from([1]), id32(EVENT), u64(70), u64(20), u64(10), u64(0), u64(0), u64(0), Buffer.from([5])]);
+  const vault = Buffer.concat([Buffer.from(EVENT_PRIZE_VAULT_V1_DISCRIMINATOR), Buffer.from([1]), id32(EVENT), u64(71), u64(20), u64(10), u64(0), u64(0), u64(0), Buffer.from([5])]);
   const vaultVerified = verifyEventPrizeVaultV1({ account: account(vault), owner: ARENA_MONEY_V2_PROGRAM_ID, accountAddress: vaultPda, expectedPda: vaultPda, expectedEventId: EVENT });
   assert.equal(vaultVerified.ok, true);
 
@@ -125,7 +125,7 @@ function account(data) { return { data: Uint8Array.from(data) }; }
     expectedSplit: { gross: 101n, prize: 71n, marketing: 20n, protocol: 10n },
   });
   assert.equal(state.gross, 101n);
-  assert.deepEqual(sponsorshipVaultLifetimeTotals(vaultVerified.vault), { prize: 70n, marketing: 20n, protocol: 10n });
+  assert.deepEqual(sponsorshipVaultLifetimeTotals(vaultVerified.vault), { prize: 71n, marketing: 20n, protocol: 10n });
   assert.throws(
     () => verifySolanaSponsorshipVaultState({ eventId: FUND, receipt: receiptVerified.receipt, vault: vaultVerified.vault, expectedSplit: { gross: 101n, prize: 71n, marketing: 20n, protocol: 10n } }),
     /event identity mismatch/,
