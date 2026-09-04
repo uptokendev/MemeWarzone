@@ -33,6 +33,10 @@ export function presentEventSponsorshipStatus(value) {
     scheduled: "SCHEDULED",
     active: "ACTIVE",
     completed: "COMPLETED",
+    pending: "PAYMENT PENDING",
+    verifying: "VERIFYING PAYMENT",
+    confirmed: "PAYMENT CONFIRMED",
+    failed: "PAYMENT FAILED",
   };
   return { key: raw || "unavailable", label: labels[raw] || "UNAVAILABLE" };
 }
@@ -64,8 +68,24 @@ export function presentEventSponsorshipQuote(source = {}) {
     eventPrizeNative,
     marketingNative,
     protocolNative,
+    pricingTier: text(source.pricingTier || source.pricing_tier) || null,
+    pricingVersion: text(source.pricingVersion || source.pricing_version) || null,
     expiresAt: source.expiresAt || source.expires_at || null,
     valid: Boolean(text(source.quoteId || source.quote_id) && symbol && grossNative != null && grossNative > 0),
+  };
+}
+
+export function presentEventSponsorshipPayment(source = {}) {
+  const status = presentEventSponsorshipStatus(source.status);
+  const eventPrizeNative = finite(source.eventPrizeNative ?? source.event_prize_native);
+  return {
+    quoteId: text(source.quoteId || source.quote_id) || null,
+    status,
+    txHash: text(source.txHash || source.tx_hash) || null,
+    signature: text(source.signature) || null,
+    eventPrizeNative,
+    symbol: presentEventNativeSymbol(source),
+    error: text(source.error) || null,
   };
 }
 
@@ -90,7 +110,10 @@ export function presentEventSponsor(source = {}) {
 export function presentEventSponsorship(source = {}) {
   const sponsorable = isEventSponsorable(source);
   const status = presentEventSponsorshipStatus(source.status);
-  const minimumUsd = finite(source.minimumUsd ?? source.minimum_usd);
+  const approvalStatus = presentEventSponsorshipStatus(source.sponsorApprovalStatus ?? source.sponsor_approval_status);
+  const minimumUsdDirect = finite(source.minimumUsd ?? source.minimum_usd);
+  const minimumUsdCents = finite(source.minimumUsdCents ?? source.minimum_usd_cents);
+  const minimumUsd = minimumUsdDirect ?? (minimumUsdCents == null ? null : minimumUsdCents / 100);
   const sponsorCount = finite(source.sponsorCount ?? source.sponsor_count);
   const eventPrizeNative = finite(source.sponsorshipPrizeNative ?? source.sponsorship_prize_native);
   const symbol = presentEventNativeSymbol(source);
@@ -102,6 +125,8 @@ export function presentEventSponsorship(source = {}) {
     sponsorable,
     sponsorshipOpen: sponsorable && Boolean(source.sponsorshipOpen ?? source.sponsorship_open),
     status,
+    approvalStatus,
+    pricingTier: text(source.pricingTier || source.pricing_tier || source.tierCode || source.tier_code) || null,
     minimumUsd,
     symbol,
     sponsorCount: sponsorCount == null ? sponsors.length : sponsorCount,
