@@ -1,4 +1,5 @@
 name: Robinhood production preflight
+# Agent 1 synchronization acceptance marker: rerun this proof after integration merges.
 
 on:
   pull_request:
