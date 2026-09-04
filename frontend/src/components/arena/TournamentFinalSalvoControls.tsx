@@ -68,11 +68,12 @@ export function TournamentFinalSalvoControls({
   const state = payload?.finalSalvo || null;
   const model = useMemo(() => presentFinalSalvoState(state || {}), [state, clockTick]);
   const active = Boolean(model && state?.active);
+  const renderable = Boolean(model && (active || model.resolved));
   const tokenA = String(match.tokenA || "").trim();
   const tokenB = String(match.tokenB || "").trim();
 
   async function vote(side: "left" | "right") {
-    if (!state || !model || !active || !model.walletEligible) return;
+    if (!state || !model || !active || model.resolved || !model.walletEligible) return;
     if (!walletAddress) {
       toast.error("Connect a wallet to vote in Final Salvo.");
       return;
@@ -127,7 +128,7 @@ export function TournamentFinalSalvoControls({
       </div>
     );
   }
-  if (!model || !active) return null;
+  if (!renderable) return null;
 
   return (
     <FinalSalvoPanel
@@ -135,7 +136,7 @@ export function TournamentFinalSalvoControls({
       leftLabel={tokenA || "LEFT"}
       rightLabel={tokenB || "RIGHT"}
       busy={Boolean(busySide)}
-      onVote={(side) => void vote(side)}
+      onVote={active ? (side) => void vote(side) : undefined}
     />
   );
 }
