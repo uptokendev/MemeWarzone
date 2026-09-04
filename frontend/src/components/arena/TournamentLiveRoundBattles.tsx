@@ -1,4 +1,5 @@
 import { BattleWallModule } from "@/components/arena/BattleWallModule";
+import { TournamentFinalSalvoControls } from "@/components/arena/TournamentFinalSalvoControls";
 import { TournamentVoteControls } from "@/components/arena/TournamentVoteControls";
 import { postGradFlags } from "@/features/postgrad/config";
 import { getMockBattleById } from "@/features/postgrad/mockRegistry";
@@ -22,6 +23,10 @@ type Round = {
   round: number;
   matches?: Match[];
 };
+
+function voteMode(mode?: { key?: string | null } | string | null) {
+  return String(typeof mode === "string" ? mode : mode?.key || "").trim().toLowerCase() === "vote";
+}
 
 export function TournamentLiveRoundBattles({
   rounds,
@@ -63,6 +68,7 @@ export function TournamentLiveRoundBattles({
             match &&
             shouldShowTournamentVoteControls({ mode: tournamentMode, match }),
           );
+          const showFinalSalvo = Boolean(tournamentId && tournamentChainId && match && voteMode(tournamentMode));
           return (
             <div key={battle.id} className="space-y-3">
               <BattleWallModule
@@ -75,6 +81,13 @@ export function TournamentLiveRoundBattles({
               />
               {showVote && match ? (
                 <TournamentVoteControls
+                  tournamentId={String(tournamentId)}
+                  chainId={Number(tournamentChainId)}
+                  match={match}
+                />
+              ) : null}
+              {showFinalSalvo && match ? (
+                <TournamentFinalSalvoControls
                   tournamentId={String(tournamentId)}
                   chainId={Number(tournamentChainId)}
                   match={match}
