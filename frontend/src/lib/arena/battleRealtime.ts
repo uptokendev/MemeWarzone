@@ -1,7 +1,7 @@
 import type { Battle } from "@/features/postgrad/contracts";
 
 export type BattleRealtimeLeader = "left" | "right" | "tied" | null;
-export type BattleSettlementMode = "v1_mcap_pct_change" | "battle_points_v2";
+export type BattleSettlementMode = "v1_mcap_pct_change" | "battle_points_v2" | "battle_points_v3";
 
 export type BattleRealtimeSide = {
   side: "left" | "right";
@@ -31,7 +31,11 @@ export type BattleRealtimeSide = {
     marketCap: number;
     holders: number;
     volume: number;
+    boost: number | null;
     total: number;
+    totalAuthoritative: boolean;
+    boostCurveVersion: string | null;
+    confirmedBoostUnits: string | null;
   };
   metricsUpdatedAt: string | null;
 };
@@ -79,12 +83,40 @@ function nonNegative(value: unknown): number {
   return Math.max(0, finite(value) ?? 0);
 }
 
+function optionalNonNegative(value: unknown): number | null {
+  const parsed = finite(value);
+  return parsed == null ? null : Math.max(0, parsed);
+}
+
+function nonNegativeIntegerString(value: unknown): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  try {
+    const parsed = BigInt(String(value));
+    return parsed >= 0n ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 function settlementMode(value: unknown): BattleSettlementMode {
-  return String(value || "") === "battle_points_v2" ? "battle_points_v2" : "v1_mcap_pct_change";
+  const mode = String(value || "");
+  if (mode === "battle_points_v3") return "battle_points_v3";
+  if (mode === "battle_points_v2") return "battle_points_v2";
+  return "v1_mcap_pct_change";
 }
 
 function normalizeSide(value: any, expected: "left" | "right"): BattleRealtimeSide | null {
   if (!value || String(value.side || expected) !== expected || !value.tokenId) return null;
+  const boostCurveVersion = String(
+    value.points?.boostCurveVersion ?? value.boostCurveVersion ?? value.boost_curve_version ?? "",
+  ).trim() || null;
+  const confirmedBoostUnits = nonNegativeIntegerString(
+    value.points?.confirmedBoostUnits ?? value.confirmedBoostUnits ?? value.confirmed_boost_units,
+  );
+  const totalAuthoritative =
+    value.points?.totalAuthoritative === true ||
+    value.totalAuthoritative === true ||
+    value.total_authoritative === true;
   return {
     side: expected,
     tokenId: String(value.tokenId),
@@ -113,7 +145,11 @@ function normalizeSide(value: any, expected: "left" | "right"): BattleRealtimeSi
       marketCap: nonNegative(value.points?.marketCap),
       holders: nonNegative(value.points?.holders),
       volume: nonNegative(value.points?.volume),
+      boost: optionalNonNegative(value.points?.boost ?? value.boostPoints ?? value.boost_points),
       total: nonNegative(value.points?.total),
+      totalAuthoritative,
+      boostCurveVersion,
+      confirmedBoostUnits,
     },
     metricsUpdatedAt: value.metricsUpdatedAt ? String(value.metricsUpdatedAt) : null,
   };
@@ -162,13 +198,21 @@ export function decorateBattleWithRealtimeMetrics(battle: Battle, metrics: Battl
   const participants = battle.participants.map((participant: any, index) => {
     const side = index === 0 ? metrics.sides.left : index === 1 ? metrics.sides.right : null;
     if (!side) return participant;
+    const v3 = side.scoringVersion === "battle_points_v3" || metrics.settlementMode === "battle_points_v3";
+    const authoritativeBattlePoints = v3
+      ? side.points.totalAuthoritative ? side.points.total : null
+      : side.points.total;
     return {
       ...participant,
-      battlePointsReady: side.pointsReady,
-      battlePoints: side.points.total,
+      battlePointsReady: v3 ? side.pointsReady && side.points.totalAuthoritative : side.pointsReady,
+      battlePoints: authoritativeBattlePoints,
       mcapPoints: side.points.marketCap,
       holderPoints: side.points.holders,
       volumePoints: side.points.volume,
+      boostPoints: side.points.boost,
+      confirmedBoostUnits: side.points.confirmedBoostUnits,
+      boostCurveVersion: side.points.boostCurveVersion,
+      battlePointsAuthoritative: v3 ? side.points.totalAuthoritative : side.pointsReady,
       battleVolumeUsd: side.eligibleBattleVolumeUsd,
       marketCapUsd: side.current.marketCapUsd ?? participant.marketCapUsd,
       holderCount: side.current.holders ?? participant.holderCount,
