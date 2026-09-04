@@ -71,6 +71,21 @@ function account(pubkey, isSigner, isWritable) {
   return { pubkey: String(pubkey), isSigner: Boolean(isSigner), isWritable: Boolean(isWritable) };
 }
 
+function transactionAccountKeys(tx) {
+  const message = tx?.transaction?.message;
+  const base = Array.isArray(message?.staticAccountKeys)
+    ? message.staticAccountKeys
+    : Array.isArray(message?.accountKeys)
+      ? message.accountKeys
+      : [];
+  const loaded = tx?.meta?.loadedAddresses;
+  return [
+    ...base,
+    ...(loaded?.writable || []),
+    ...(loaded?.readonly || []),
+  ].map((key) => key?.toBase58?.() || String(key || ""));
+}
+
 export function randomMoneyId32() {
   return `0x${crypto.randomBytes(32).toString("hex")}`;
 }
@@ -97,7 +112,7 @@ export function sponsorshipVaultLifetimeTotals(vault) {
   };
 }
 
-export function verifySolanaSponsorshipVaultDelta({ eventId, receipt, vault, vaultBefore, expectedSplit }) {
+export function verifySolanaSponsorshipVaultState({ eventId, receipt, vault, expectedSplit }) {
   const normalizedEventId = exactId32(eventId, "eventId");
   if (!receipt || exactId32(receipt.eventId, "receipt.eventId") !== normalizedEventId) throw new Error("Sponsorship receipt event identity mismatch");
   if (!vault || exactId32(vault.eventId, "vault.eventId") !== normalizedEventId) throw new Error("EventPrizeVaultV1 event identity mismatch");
@@ -111,23 +126,33 @@ export function verifySolanaSponsorshipVaultDelta({ eventId, receipt, vault, vau
     throw new Error("Sponsorship receipt split does not match expected 70/20/10 allocation");
   }
 
-  const before = {
-    prize: nonNegativeBigInt(vaultBefore?.prize, "vaultBefore.prize"),
-    marketing: nonNegativeBigInt(vaultBefore?.marketing, "vaultBefore.marketing"),
-    protocol: nonNegativeBigInt(vaultBefore?.protocol, "vaultBefore.protocol"),
-  };
-  const after = sponsorshipVaultLifetimeTotals(vault);
-  if (after.prize - before.prize !== prize) throw new Error("EventPrizeVaultV1 prize contribution delta mismatch");
-  if (after.marketing - before.marketing !== marketing) throw new Error("EventPrizeVaultV1 marketing contribution delta mismatch");
-  if (after.protocol - before.protocol !== protocol) throw new Error("EventPrizeVaultV1 protocol contribution delta mismatch");
+  const lifetime = sponsorshipVaultLifetimeTotals(vault);
+  if (lifetime.prize < prize || lifetime.marketing < marketing || lifetime.protocol < protocol) {
+    throw new Error("EventPrizeVaultV1 post-state does not contain the verified sponsorship contribution");
+  }
+  if (lifetime.prize + lifetime.marketing + lifetime.protocol < gross) {
+    throw new Error("EventPrizeVaultV1 post-state does not conserve verified sponsorship value");
+  }
 
-  return {
-    eventId: normalizedEventId,
-    before,
-    after,
-    delta: { prize, marketing, protocol },
-    gross,
-  };
+  return { eventId: normalizedEventId, lifetime, contribution: { prize, marketing, protocol }, gross };
+}
+
+export async function verifyExactVaultLamportDelta({ connection, signature, vaultPda, grossLamports }) {
+  const tx = await connection.getTransaction(String(signature), {
+    commitment: "confirmed",
+    maxSupportedTransactionVersion: 0,
+  });
+  if (!tx?.meta || tx.meta.err) throw new Error("Solana sponsorship transaction details are unavailable or failed");
+  const keys = transactionAccountKeys(tx);
+  const index = keys.indexOf(String(vaultPda));
+  if (index < 0) throw new Error("EventPrizeVaultV1 PDA is absent from sponsorship transaction");
+  const pre = tx.meta.preBalances?.[index];
+  const post = tx.meta.postBalances?.[index];
+  if (!Number.isSafeInteger(pre) || !Number.isSafeInteger(post) || post < pre) throw new Error("EventPrizeVaultV1 transaction balances are invalid");
+  const delta = BigInt(post) - BigInt(pre);
+  const expected = positiveBigInt(grossLamports, "grossLamports");
+  if (delta !== expected) throw new Error("EventPrizeVaultV1 transaction lamport delta does not equal gross sponsorship payment");
+  return { preLamports: String(pre), postLamports: String(post), deltaLamports: delta.toString() };
 }
 
 export function readSolanaNativeUsdPricing(chainId, product = "BOOST", env = process.env, nowSeconds = Math.floor(Date.now() / 1000)) {
@@ -237,7 +262,6 @@ export async function verifySolanaSponsorshipPayment({
   prizeLamports,
   marketingLamports,
   protocolLamports,
-  vaultBefore,
 }) {
   const tx = await verifyConfirmedSolanaSignature(chainId, signature);
   const receipt = await readSponsorshipReceiptV1(chainId, { eventId, paymentId, sponsor, grossLamports, prizeLamports, marketingLamports, protocolLamports });
@@ -250,12 +274,14 @@ export async function verifySolanaSponsorshipPayment({
     marketing: nonNegativeBigInt(marketingLamports, "marketingLamports"),
     protocol: nonNegativeBigInt(protocolLamports, "protocolLamports"),
   };
-  const vaultVerification = verifySolanaSponsorshipVaultDelta({
-    eventId,
-    receipt: receipt.receipt,
-    vault: vault.vault,
-    vaultBefore,
-    expectedSplit: split,
+  const vaultState = verifySolanaSponsorshipVaultState({ eventId, receipt: receipt.receipt, vault: vault.vault, expectedSplit: split });
+  const connection = connectionForArenaMoneyV2(chainId);
+  if (!connection) throw new Error("Solana Arena Money V2 RPC is unavailable");
+  const vaultTransaction = await verifyExactVaultLamportDelta({
+    connection,
+    signature,
+    vaultPda: vault.pda,
+    grossLamports: split.gross,
   });
   return {
     ...tx,
@@ -263,7 +289,8 @@ export async function verifySolanaSponsorshipPayment({
     receipt: receipt.receipt,
     vaultPda: vault.pda,
     vault: vault.vault,
-    vaultVerification,
+    vaultState,
+    vaultTransaction,
   };
 }
 
