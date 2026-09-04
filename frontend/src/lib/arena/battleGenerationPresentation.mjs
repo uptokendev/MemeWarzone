@@ -8,7 +8,10 @@ export const BATTLE_POINTS_V3_MAXES = Object.freeze({
   marketCap: 45,
   holders: 27,
   volume: 18,
+  boost: 10,
 });
+
+export const BATTLE_POINTS_V3_BOOST_CURVE_VERSION = "boost_hyperbolic_100_v1";
 
 const SCORE_GENERATIONS = Object.freeze({
   mcap_pct_change: {
@@ -17,6 +20,7 @@ const SCORE_GENERATIONS = Object.freeze({
     detail: "MCAP percentage-change score",
     maxes: null,
     boostMax: 0,
+    boostCurveVersion: null,
   },
   v1_mcap_pct_change: {
     id: "mcap_pct_change",
@@ -24,6 +28,7 @@ const SCORE_GENERATIONS = Object.freeze({
     detail: "MCAP percentage-change score",
     maxes: null,
     boostMax: 0,
+    boostCurveVersion: null,
   },
   battle_points_v2: {
     id: "battle_points_v2",
@@ -31,6 +36,7 @@ const SCORE_GENERATIONS = Object.freeze({
     detail: "50 MCAP / 30 Holders / 20 Eligible Volume",
     maxes: BATTLE_POINTS_V2_MAXES,
     boostMax: 0,
+    boostCurveVersion: null,
   },
   battle_points_v3: {
     id: "battle_points_v3",
@@ -38,6 +44,7 @@ const SCORE_GENERATIONS = Object.freeze({
     detail: "45 MCAP / 27 Holders / 18 Eligible Volume / 10 Battle Boost",
     maxes: BATTLE_POINTS_V3_MAXES,
     boostMax: 10,
+    boostCurveVersion: BATTLE_POINTS_V3_BOOST_CURVE_VERSION,
   },
 });
 
@@ -82,9 +89,10 @@ export function presentBattleGeneration(battle = {}, metrics = {}) {
     pool,
     showScoreBreakdown: scoring?.id === "battle_points_v2" || scoring?.id === "battle_points_v3",
     scoreMaxes: scoring?.maxes || null,
-    boostPending:
+    boostCurveVersion: scoring?.boostCurveVersion || null,
+    boostAuthorityLabel:
       scoring?.id === "battle_points_v3"
-        ? "Battle Boost reserves 10 points. Score-curve activation is pending founder approval."
+        ? `Battle Boost points are backend-authoritative · ${BATTLE_POINTS_V3_BOOST_CURVE_VERSION}`
         : null,
   };
 }
