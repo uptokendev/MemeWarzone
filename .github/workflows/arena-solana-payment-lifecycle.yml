@@ -54,6 +54,8 @@ jobs:
         run: node frontend/scripts/check-solana-user-v0-normalization.mjs
 
       - name: Certify Arena Solana payment lifecycle
+        env:
+          DATABASE_URL: postgres://127.0.0.1/mwz_test
         run: node --test frontend/src/lib/arena/solanaArenaPaymentLifecycle.test.mjs
 
       - name: Test proven Solana signature recovery helper
