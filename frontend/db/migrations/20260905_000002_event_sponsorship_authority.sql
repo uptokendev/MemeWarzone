@@ -39,7 +39,9 @@ create unique index if not exists sponsorship_payments_one_confirmed_quote_uidx
   on public.sponsorship_payments(quote_id)
   where status = 'confirmed';
 
--- Conservation and exact founder-locked 70/20/10 split. Remainder belongs to prize.
+-- Conservation and exact founder-locked 70/20/10 split. Runtime uses integer
+-- native units, so the 20% and 10% legs floor and the deterministic remainder
+-- belongs to the Event Prize leg.
 do $$
 begin
   if not exists (select 1 from pg_constraint where conname = 'sponsorship_payments_conserves_native') then
@@ -55,9 +57,9 @@ begin
   if not exists (select 1 from pg_constraint where conname = 'sponsorship_payments_exact_70_20_10') then
     alter table public.sponsorship_payments add constraint sponsorship_payments_exact_70_20_10
       check (
-        marketing_native_raw = (gross_native_raw * 2000) / 10000
-        and protocol_native_raw = (gross_native_raw * 1000) / 10000
-        and prize_native_raw = gross_native_raw - ((gross_native_raw * 2000) / 10000) - ((gross_native_raw * 1000) / 10000)
+        marketing_native_raw = floor((gross_native_raw * 2000) / 10000)
+        and protocol_native_raw = floor((gross_native_raw * 1000) / 10000)
+        and prize_native_raw = gross_native_raw - floor((gross_native_raw * 2000) / 10000) - floor((gross_native_raw * 1000) / 10000)
       ) not valid;
   end if;
 end $$;
