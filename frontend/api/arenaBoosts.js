@@ -6,6 +6,8 @@ import { requireInternalAuth } from "./lib/apiAuth.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { getServerReadProvider } from "./lib/getServerReadProvider.js";
 import { verifyBattleBoostPayment } from "./lib/arenaBoostChainVerification.mjs";
+import { BATTLE_POINTS_V3_CONFIG } from "./lib/arenaBattlePointsConfig.js";
+import { calculateBattlePointsV3Boost } from "./lib/arenaBattlePointsV3.js";
 import { battlePoolId } from "./lib/arenaWarPoolEscrow.js";
 import {
   DEFAULT_QUOTE_TTL_SECONDS,
@@ -16,6 +18,10 @@ import {
 } from "./lib/arenaBoostQuote.mjs";
 import {
   boostSummary,
+  exactBattlePointsV3Lock,
+  projectBattlePointsV3Row,
+  resolveBattlePointsV3Authority,
+  resolveBattlePointsV3BoostSaleStatus,
   resolveBattleSide,
   serializeBoostSummary,
   validateConfirmedBoost,
@@ -125,12 +131,111 @@ function validateNormalV2Battle(battle, chainId, targetToken) {
   return { side };
 }
 
+function weightsShape() {
+  return {
+    mcap: BATTLE_POINTS_V3_CONFIG.mcap.weight,
+    holders: BATTLE_POINTS_V3_CONFIG.holders.weight,
+    volume: BATTLE_POINTS_V3_CONFIG.volume.weight,
+    boost: BATTLE_POINTS_V3_CONFIG.boost.weight,
+  };
+}
+
+function projectionShape(row, projected) {
+  return {
+    battleId: String(row.battle_id),
+    tokenId: String(row.token_id),
+    side: String(row.side),
+    scoringVersion: String(row.scoring_version),
+    weights: {
+      mcap: Number(row.mcap_weight),
+      holders: Number(row.holder_weight),
+      volume: Number(row.volume_weight),
+      boost: Number(row.boost_weight),
+    },
+    boostCurveVersion: String(row.boost_curve_version),
+    boostCurveParameters: row.boost_curve_parameters || {},
+    boostUnits: String(row.boost_units ?? 0),
+    boostGrossNativeRaw: String(row.boost_gross_native_raw ?? 0),
+    boostPoolNativeRaw: String(row.boost_pool_native_raw ?? 0),
+    boostProtocolNativeRaw: String(row.boost_protocol_native_raw ?? 0),
+    boostPoints: projected?.boostPoints == null ? null : Number(projected.boostPoints),
+    mcapPoints: row.mcap_points == null ? null : Number(row.mcap_points),
+    holderPoints: row.holder_points == null ? null : Number(row.holder_points),
+    volumePoints: row.volume_points == null ? null : Number(row.volume_points),
+    totalPoints: projected?.totalPoints == null ? null : Number(projected.totalPoints),
+    dataHealth: projected?.dataHealth || null,
+    scoringReady: projected?.scoringReady === true,
+    projectionReason: projected?.reason || null,
+    metricsUpdatedAt: row.metrics_updated_at || null,
+    updatedAt: row.updated_at || null,
+  };
+}
+
+async function loadBattlePointsV3Runtime(battle, db = pool) {
+  if (!battle?.id) {
+    return {
+      exactLock: false,
+      lock: null,
+      rows: [],
+      projections: [],
+      saleStatus: { active: false, reason: "historical_scoring_generation" },
+      authority: { active: false, reason: "historical_scoring_generation" },
+    };
+  }
+
+  const [lockResult, scoringResult, metricsResult] = await Promise.all([
+    db.query(
+      `select battle_id, scoring_version, boost_curve_version, boost_curve_parameters, locked_at
+         from public.arena_battle_scoring_locks
+        where battle_id = $1
+        limit 1`,
+      [String(battle.id)],
+    ),
+    db.query(
+      `select battle_id, token_id, side, scoring_version, mcap_weight, holder_weight, volume_weight, boost_weight,
+              boost_curve_version, boost_curve_parameters, boost_units, boost_gross_native_raw,
+              boost_pool_native_raw, boost_protocol_native_raw, boost_points, mcap_points, holder_points,
+              volume_points, total_points, metrics_updated_at, updated_at
+         from public.arena_battle_points_v3
+        where battle_id = $1
+        order by case side when 'left' then 0 else 1 end`,
+      [String(battle.id)],
+    ),
+    db.query(
+      `select battle_id, side, data_healthy, data_lag_seconds, market_data_updated_at, metrics_updated_at
+         from public.arena_battle_metrics
+        where battle_id = $1`,
+      [String(battle.id)],
+    ),
+  ]);
+
+  const lock = lockResult.rows[0] || null;
+  const exactLock = exactBattlePointsV3Lock(lock);
+  const metricsBySide = new Map((metricsResult.rows || []).map((row) => [String(row.side), row]));
+  const projectedEntries = exactLock
+    ? (scoringResult.rows || []).map((row) => {
+        const projected = projectBattlePointsV3Row(row, metricsBySide.get(String(row.side)) || null);
+        return { side: String(row.side), row, ...projected };
+      })
+    : [];
+  const saleStatus = resolveBattlePointsV3BoostSaleStatus({ battle, lock, projections: projectedEntries, env: process.env });
+  const authority = resolveBattlePointsV3Authority({ battle, lock, projections: projectedEntries, env: process.env });
+  return {
+    exactLock,
+    lock,
+    rows: exactLock ? projectedEntries.map((entry) => projectionShape(entry.row, entry)) : [],
+    projections: projectedEntries,
+    saleStatus,
+    authority,
+  };
+}
+
 async function readBattleBoosts(res, battleId) {
   if (!battleId) return json(res, 400, { ok: false, error: "Invalid battle id" });
   const battle = await battleForBoost(battleId);
   if (!battle) return json(res, 404, { ok: false, error: "Battle not found" });
 
-  const [actionsResult, scoringResult] = await Promise.all([
+  const [actionsResult, runtime] = await Promise.all([
     pool.query(
       `select side, boost_units, gross_native_raw, pool_native_raw, protocol_native_raw
          from public.arena_contest_actions
@@ -141,16 +246,7 @@ async function readBattleBoosts(res, battleId) {
         order by id asc`,
       [battleId],
     ),
-    pool.query(
-      `select battle_id, token_id, side, scoring_version, mcap_weight, holder_weight, volume_weight, boost_weight,
-              boost_curve_version, boost_curve_parameters, boost_units, boost_gross_native_raw,
-              boost_pool_native_raw, boost_protocol_native_raw, boost_points, mcap_points, holder_points,
-              volume_points, total_points, metrics_updated_at, updated_at
-         from public.arena_battle_points_v3
-        where battle_id = $1
-        order by case side when 'left' then 0 else 1 end`,
-      [battleId],
-    ),
+    loadBattlePointsV3Runtime(battle),
   ]);
 
   res.setHeader("cache-control", "no-store");
@@ -162,34 +258,14 @@ async function readBattleBoosts(res, battleId) {
     battleMode: String(battle.battle_mode || "normal"),
     competitionGeneration: battle.competition_generation || null,
     contestScoringVersion: battle.contest_scoring_version || null,
+    scoringVersion: runtime.exactLock ? runtime.lock.scoring_version : battle.contest_scoring_version || null,
+    weights: runtime.exactLock ? weightsShape() : null,
+    boostCurveVersion: runtime.exactLock ? runtime.lock.boost_curve_version : null,
+    boostCurveParameters: runtime.exactLock ? runtime.lock.boost_curve_parameters : null,
     summary: serializeBoostSummary(boostSummary(actionsResult.rows)),
-    battlePointsV3: scoringResult.rows.map((row) => ({
-      battleId: String(row.battle_id),
-      tokenId: String(row.token_id),
-      side: String(row.side),
-      scoringVersion: String(row.scoring_version),
-      weights: {
-        mcap: Number(row.mcap_weight),
-        holders: Number(row.holder_weight),
-        volume: Number(row.volume_weight),
-        boost: Number(row.boost_weight),
-      },
-      boostCurveVersion: String(row.boost_curve_version),
-      boostCurveParameters: row.boost_curve_parameters || {},
-      boostUnits: String(row.boost_units ?? 0),
-      boostGrossNativeRaw: String(row.boost_gross_native_raw ?? 0),
-      boostPoolNativeRaw: String(row.boost_pool_native_raw ?? 0),
-      boostProtocolNativeRaw: String(row.boost_protocol_native_raw ?? 0),
-      boostPoints: row.boost_points == null ? null : Number(row.boost_points),
-      mcapPoints: row.mcap_points == null ? null : Number(row.mcap_points),
-      holderPoints: row.holder_points == null ? null : Number(row.holder_points),
-      volumePoints: row.volume_points == null ? null : Number(row.volume_points),
-      totalPoints: row.total_points == null ? null : Number(row.total_points),
-      metricsUpdatedAt: row.metrics_updated_at || null,
-      updatedAt: row.updated_at || null,
-    })),
-    scoringActive: false,
-    scoringReason: "boost_curve_founder_pending",
+    battlePointsV3: runtime.rows,
+    scoringActive: runtime.authority.active === true,
+    scoringReason: runtime.authority.reason,
     updatedAt: new Date().toISOString(),
   });
 }
@@ -212,6 +288,16 @@ async function createBattleBoostQuote(req, res) {
   const battle = await battleForBoost(battleId);
   const battleCheck = validateNormalV2Battle(battle, chainId, targetToken);
   if (battleCheck.error) return json(res, battleCheck.status, { ok: false, error: battleCheck.error });
+
+  const runtime = await loadBattlePointsV3Runtime(battle);
+  if (!runtime.saleStatus.active) {
+    return json(res, 409, {
+      ok: false,
+      error: "Battle Boost scoring is not active for this Battle generation",
+      code: "BATTLE_BOOST_V3_INACTIVE",
+      scoringReason: runtime.saleStatus.reason,
+    });
+  }
 
   const auth = await requireWalletActionAuth({
     res,
@@ -259,6 +345,8 @@ async function createBattleBoostQuote(req, res) {
       battleId,
       side: battleCheck.side,
       usdPerBoostMicros: "1000000",
+      scoringVersion: runtime.lock.scoring_version,
+      boostCurveVersion: runtime.lock.boost_curve_version,
       quote: serializeSignedBoostQuote(signed),
       expiresAt: new Date(deadline * 1000).toISOString(),
     });
@@ -330,6 +418,7 @@ async function confirmBattleBoost(req, res) {
   }
 
   const client = await pool.connect();
+  let battle = null;
   try {
     await client.query("BEGIN");
     const battleResult = await client.query(
@@ -339,7 +428,7 @@ async function confirmBattleBoost(req, res) {
         for update`,
       [battleId],
     );
-    const battle = battleResult.rows[0];
+    battle = battleResult.rows[0];
     const battleCheck = validateNormalV2Battle(battle, chainId, targetToken);
     if (battleCheck.error) {
       await client.query("ROLLBACK");
@@ -387,52 +476,77 @@ async function confirmBattleBoost(req, res) {
         String(existing.protocol_native_raw) === split.protocol.toString();
       await client.query("ROLLBACK");
       if (!sameEvent) return json(res, 409, { ok: false, error: "Transaction log is already bound to another contest action" });
+      const runtime = await loadBattlePointsV3Runtime(battle);
       return json(res, 200, {
         ok: true,
         confirmed: true,
         idempotent: true,
         action: actionShape(existing),
         chainProof: chainProofShape(chainProof),
+        scoringActive: runtime.authority.active === true,
+        scoringReason: runtime.authority.reason,
       });
     }
 
-    const currentScore = await client.query(
-      `select token_id from public.arena_battle_points_v3 where battle_id = $1 and side = $2 for update`,
-      [battleId, battleCheck.side],
-    );
-    if (currentScore.rows[0] && String(currentScore.rows[0].token_id).toLowerCase() !== targetToken) {
-      throw new Error("Battle Points V3 side token changed after Boost confirmation");
+    const lock = (await client.query(
+      `select battle_id, scoring_version, boost_curve_version, boost_curve_parameters, locked_at
+         from public.arena_battle_scoring_locks
+        where battle_id = $1`,
+      [battleId],
+    )).rows[0] || null;
+
+    if (exactBattlePointsV3Lock(lock)) {
+      const currentScore = (await client.query(
+        `select battle_id, token_id, side, scoring_version, mcap_weight, holder_weight, volume_weight, boost_weight,
+                boost_curve_version, boost_curve_parameters, boost_units, boost_gross_native_raw,
+                boost_pool_native_raw, boost_protocol_native_raw, boost_points, mcap_points, holder_points,
+                volume_points, total_points, metrics_updated_at, updated_at
+           from public.arena_battle_points_v3
+          where battle_id = $1 and side = $2
+          for update`,
+        [battleId, battleCheck.side],
+      )).rows[0] || null;
+      if (!currentScore) throw new Error("Battle Points V3 projection is missing for locked Battle");
+      if (String(currentScore.token_id).toLowerCase() !== targetToken) {
+        throw new Error("Battle Points V3 side token changed after Boost confirmation");
+      }
+      const projectionCheck = projectBattlePointsV3Row(currentScore, null);
+      if (!projectionCheck.projectionValid) throw new Error("Battle Points V3 projection is incompatible with immutable scoring lock");
+
+      const nextBoostUnits = BigInt(String(currentScore.boost_units ?? 0)) + split.boostUnits;
+      const nextBoostPoints = calculateBattlePointsV3Boost(nextBoostUnits);
+      await client.query(
+        `update public.arena_battle_points_v3 set
+           boost_units = $3,
+           boost_gross_native_raw = boost_gross_native_raw + $4,
+           boost_pool_native_raw = boost_pool_native_raw + $5,
+           boost_protocol_native_raw = boost_protocol_native_raw + $6,
+           boost_points = $7,
+           total_points = null,
+           updated_at = now()
+         where battle_id = $1 and side = $2`,
+        [
+          battleId,
+          battleCheck.side,
+          nextBoostUnits.toString(),
+          split.gross.toString(),
+          split.pool.toString(),
+          split.protocol.toString(),
+          nextBoostPoints,
+        ],
+      );
     }
 
-    await client.query(
-      `insert into public.arena_battle_points_v3 (
-         battle_id, token_id, side, boost_units, boost_gross_native_raw, boost_pool_native_raw, boost_protocol_native_raw
-       ) values ($1, $2, $3, $4, $5, $6, $7)
-       on conflict (battle_id, side) do update set
-         boost_units = public.arena_battle_points_v3.boost_units + excluded.boost_units,
-         boost_gross_native_raw = public.arena_battle_points_v3.boost_gross_native_raw + excluded.boost_gross_native_raw,
-         boost_pool_native_raw = public.arena_battle_points_v3.boost_pool_native_raw + excluded.boost_pool_native_raw,
-         boost_protocol_native_raw = public.arena_battle_points_v3.boost_protocol_native_raw + excluded.boost_protocol_native_raw,
-         metrics_updated_at = now(),
-         updated_at = now()`,
-      [
-        battleId,
-        targetToken,
-        battleCheck.side,
-        split.boostUnits.toString(),
-        split.gross.toString(),
-        split.pool.toString(),
-        split.protocol.toString(),
-      ],
-    );
-
     await client.query("COMMIT");
-    const summaryResult = await pool.query(
-      `select side, boost_units, gross_native_raw, pool_native_raw, protocol_native_raw
-         from public.arena_contest_actions
-        where battle_id = $1 and action_type = 'boost' and phase = 'regulation' and confirmed_at is not null`,
-      [battleId],
-    );
+    const [summaryResult, runtime] = await Promise.all([
+      pool.query(
+        `select side, boost_units, gross_native_raw, pool_native_raw, protocol_native_raw
+           from public.arena_contest_actions
+          where battle_id = $1 and action_type = 'boost' and phase = 'regulation' and confirmed_at is not null`,
+        [battleId],
+      ),
+      loadBattlePointsV3Runtime(battle),
+    ]);
     return json(res, 201, {
       ok: true,
       confirmed: true,
@@ -440,12 +554,12 @@ async function confirmBattleBoost(req, res) {
       action: actionShape(insertResult.rows[0]),
       chainProof: chainProofShape(chainProof),
       summary: serializeBoostSummary(boostSummary(summaryResult.rows)),
-      battlePointsV3: {
-        scoringVersion: "battle_points_v3",
-        boostCurveVersion: "founder_pending",
-        boostPoints: null,
-        scoringActive: false,
-      },
+      scoringVersion: runtime.exactLock ? runtime.lock.scoring_version : battle.contest_scoring_version || null,
+      boostCurveVersion: runtime.exactLock ? runtime.lock.boost_curve_version : null,
+      boostCurveParameters: runtime.exactLock ? runtime.lock.boost_curve_parameters : null,
+      battlePointsV3: runtime.rows,
+      scoringActive: runtime.authority.active === true,
+      scoringReason: runtime.authority.reason,
     });
   } catch (error) {
     try {
