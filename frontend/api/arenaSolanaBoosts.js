@@ -5,6 +5,12 @@ import { battlePoolId } from "./lib/arenaWarPoolEscrow.js";
 import { tournamentPoolIdV2 } from "./lib/arenaTournamentBuyInV2.mjs";
 import { findTournamentVoteMatch, resolveTournamentVoteMatch, tournamentVoteTokensEqual } from "./lib/arenaTournamentVoteRuntime.mjs";
 import { boostSummary, serializeBoostSummary } from "./lib/arenaBoostRuntime.mjs";
+import {
+  applyConfirmedNormalBattleBoostV3,
+  loadNormalBattleV3SaleAuthority,
+  normalBattleRegulationOpen,
+  validateHistoricalNormalPaymentIdentity,
+} from "./lib/arenaSolanaNormalBoostAuthority.mjs";
 import { connectionForArenaMoneyV2, readCompetitionPoolV2 } from "./lib/solanaArenaMoneyV2Read.js";
 import {
   assertSolanaPubkey,
@@ -51,15 +57,18 @@ async function normalContext(route, targetToken) {
   if (!validateSolanaChain(chainId)) return { error: "Battle is not on a Solana Arena chain", status: 409 };
   if (battle.state !== "live" || String(battle.battle_mode || "normal") !== "normal" || battle.source === "tournament") return { error: "Normal Battle Boost is not live", status: 409 };
   if (battle.competition_generation !== "arena_competition_v2") return { error: "Battle is not Arena competition V2", status: 409 };
+  if (!normalBattleRegulationOpen(battle)) return { error: "Normal Battle regulation has ended", status: 409, code: "NORMAL_BATTLE_BOOST_REGULATION_ENDED" };
   let token;
   try { token = assertSolanaPubkey(targetToken, "targetToken"); } catch (error) { return { error: error.message, status: 400 }; }
   const side = exactSolanaSide(battle.participants, token);
   if (!side) return { error: "Boost target is not a Battle combatant", status: 409 };
+  const v3 = await loadNormalBattleV3SaleAuthority({ battle, db: pool });
+  if (!v3.active) return { error: "Battle Boost scoring is not active for this Battle generation", status: 409, code: "BATTLE_BOOST_V3_INACTIVE", scoringReason: v3.reason };
   const competitionId = battlePoolId(route.battleId);
   const onchain = await readCompetitionPoolV2(chainId, competitionId);
   if (!onchain.live || !onchain.opened || ![0, 1].includes(Number(onchain.pool?.state)) || Number(onchain.pool?.kind) !== 0) return { error: "Solana CompetitionPoolV2 is not active", status: 503, code: "SOLANA_COMPETITION_POOL_NOT_ACTIVE" };
   if (onchain.pool.assetA !== token && onchain.pool.assetB !== token) return { error: "On-chain competition does not contain the selected combatant", status: 409 };
-  return { battle, chainId, targetToken: token, side, competitionId, onchain, pointsPerBoost: 1 };
+  return { battle, chainId, targetToken: token, side, competitionId, onchain, pointsPerBoost: 1, v3 };
 }
 
 async function tournamentContext(route, targetToken) {
@@ -98,18 +107,9 @@ export async function tournamentOperationIdentity(route, targetToken, db = pool)
   try { token = assertSolanaPubkey(targetToken, "targetToken"); } catch (error) { return { error: error.message, status: 400 }; }
   const match = findTournamentVoteMatch({ tournament, matchRef: route.matchRef });
   if (!match.ok) return { error: `Tournament matchup cannot be resolved: ${match.reason}`, status: 409, code: "SOLANA_BOOST_MATCH_NOT_FOUND" };
-  if (!tournamentVoteTokensEqual(token, match.tokenA) && !tournamentVoteTokensEqual(token, match.tokenB)) {
-    return { error: "Boost target is not in this matchup", status: 409, code: "SOLANA_BOOST_TARGET_NOT_IN_MATCH" };
-  }
+  if (!tournamentVoteTokensEqual(token, match.tokenA) && !tournamentVoteTokensEqual(token, match.tokenB)) return { error: "Boost target is not in this matchup", status: 409, code: "SOLANA_BOOST_TARGET_NOT_IN_MATCH" };
   const side = tournamentVoteTokensEqual(token, match.tokenA) ? "left" : "right";
-  return {
-    tournament,
-    chainId,
-    targetToken: token,
-    side,
-    match,
-    competitionId: tournamentPoolIdV2(route.tournamentId),
-  };
+  return { tournament, chainId, targetToken: token, side, match, competitionId: tournamentPoolIdV2(route.tournamentId) };
 }
 
 async function tournamentPaymentContext(route, quote) {
@@ -122,7 +122,22 @@ async function tournamentPaymentContext(route, quote) {
   if (side !== quote.side || competitionId.toLowerCase() !== String(quote.competition_id).toLowerCase()) return { error: "Stored Tournament Boost authority changed", status: 409, code: "SOLANA_BOOST_STATE_CHANGED" };
   return { tournament, battle, match, chainId, targetToken: token, side, competitionId, pointsPerBoost: 2 };
 }
-async function paymentContext(route, quote) { return route.product === "vote_tournament" ? tournamentPaymentContext(route, quote) : normalContext(route, quote.target_token); }
+
+async function normalPaymentContext(route, quote) {
+  const battle = await loadBattle(route.battleId);
+  if (!battle) return { error: "Stored Normal Battle no longer exists", status: 409, code: "SOLANA_BOOST_STATE_CHANGED" };
+  const chainId = Number(battle.chain_id);
+  if (!validateSolanaChain(chainId)) return { error: "Stored Normal Battle is not on a Solana Arena chain", status: 409, code: "SOLANA_BOOST_STATE_CHANGED" };
+  let token;
+  try { token = assertSolanaPubkey(quote.target_token, "targetToken"); } catch (error) { return { error: error.message, status: 409, code: "SOLANA_BOOST_STATE_CHANGED" }; }
+  const side = exactSolanaSide(battle.participants, token);
+  const competitionId = battlePoolId(route.battleId);
+  const identity = validateHistoricalNormalPaymentIdentity({ route, quote, battle, targetToken: token, side, competitionId });
+  if (!identity.ok) return { error: `Stored Normal Battle Boost identity changed: ${identity.reason}`, status: 409, code: "SOLANA_BOOST_STATE_CHANGED" };
+  return { battle, chainId, targetToken: token, side, competitionId, pointsPerBoost: 1, historicalRecovery: true };
+}
+
+async function paymentContext(route, quote) { return route.product === "vote_tournament" ? tournamentPaymentContext(route, quote) : normalPaymentContext(route, quote); }
 
 function sameQuote(row, route) {
   if (!row || row.product_kind !== route.product) return false;
@@ -139,41 +154,11 @@ function publicBoostState(row) {
   const unresolved = UNRESOLVED.has(status);
   const retryable = retryableBoostState(row, status);
   return {
-    exists: true,
-    unresolved,
-    status,
-    newPaymentAllowed: status === "confirmed" || retryable,
-    confirmed: status === "confirmed",
-    retryable,
-    quoteId: String(row.id),
-    paymentId: String(row.funding_id),
-    signature: row.signature_reference || null,
-    receiptPda: row.receipt_pda || null,
-    submittedAt: row.submitted_at || null,
-    expiresAt: row.expires_at || null,
-    reason: row.status_reason || null,
-    operation: {
-      product: row.product_kind,
-      tournamentId: row.tournament_id || null,
-      battleId: row.battle_id,
-      matchId: row.match_id || null,
-      roundNumber: Number(row.round_number || 0),
-      wallet: row.wallet,
-      targetToken: row.target_token,
-      side: row.side,
-      boostUnits: String(row.boost_units),
-      pointsPerBoost: Number(row.points_per_boost),
-      chainId: Number(row.chain_id),
-    },
-    recovery: row.signature_reference ? {
-      signature: row.signature_reference,
-      blockhash: row.signature_blockhash,
-      lastValidBlockHeight: Number(row.signature_last_valid_block_height),
-      chainId: Number(row.chain_id),
-      wallet: row.wallet,
-      metadata: { quoteId: String(row.id), tournamentId: row.tournament_id || "", matchRef: row.match_id || "", targetToken: row.target_token },
-      createdAt: row.submitted_at || row.created_at,
-    } : null,
+    exists: true, unresolved, status, newPaymentAllowed: status === "confirmed" || retryable, confirmed: status === "confirmed", retryable,
+    quoteId: String(row.id), paymentId: String(row.funding_id), signature: row.signature_reference || null, receiptPda: row.receipt_pda || null,
+    submittedAt: row.submitted_at || null, expiresAt: row.expires_at || null, reason: row.status_reason || null,
+    operation: { product: row.product_kind, tournamentId: row.tournament_id || null, battleId: row.battle_id, matchId: row.match_id || null, roundNumber: Number(row.round_number || 0), wallet: row.wallet, targetToken: row.target_token, side: row.side, boostUnits: String(row.boost_units), pointsPerBoost: Number(row.points_per_boost), chainId: Number(row.chain_id) },
+    recovery: row.signature_reference ? { signature: row.signature_reference, blockhash: row.signature_blockhash, lastValidBlockHeight: Number(row.signature_last_valid_block_height), chainId: Number(row.chain_id), wallet: row.wallet, metadata: { quoteId: String(row.id), tournamentId: row.tournament_id || "", matchRef: row.match_id || "", targetToken: row.target_token }, createdAt: row.submitted_at || row.created_at } : null,
   };
 }
 
@@ -184,10 +169,7 @@ export async function latestOperationQuote(route, wallet, targetToken, db = pool
   }
   const operation = await tournamentOperationIdentity(route, targetToken, db);
   if (operation.error) return { row: null, operation, error: operation };
-  const row = (await db.query(
-    `select * from public.arena_solana_boost_quotes where product_kind=$1 and chain_id=$2 and tournament_id=$3 and battle_id=$4 and match_id=$5 and round_number=$6 and wallet=$7 and target_token=$8 order by created_at desc limit 1`,
-    [route.product, operation.chainId, route.tournamentId, operation.match.battleId, operation.match.matchId, operation.match.roundNumber, wallet, operation.targetToken],
-  )).rows[0] || null;
+  const row = (await db.query(`select * from public.arena_solana_boost_quotes where product_kind=$1 and chain_id=$2 and tournament_id=$3 and battle_id=$4 and match_id=$5 and round_number=$6 and wallet=$7 and target_token=$8 order by created_at desc limit 1`, [route.product, operation.chainId, route.tournamentId, operation.match.battleId, operation.match.matchId, operation.match.roundNumber, wallet, operation.targetToken])).rows[0] || null;
   return { row, operation };
 }
 
@@ -195,10 +177,7 @@ async function markFromChainIfTerminal(row) {
   if (!row?.signature_reference || !UNRESOLVED.has(String(row.payment_status))) return row;
   const connection = connectionForArenaMoneyV2(Number(row.chain_id));
   try {
-    const [statusResult, height] = await Promise.all([
-      connection.getSignatureStatuses([row.signature_reference], { searchTransactionHistory: true }),
-      connection.getBlockHeight("confirmed"),
-    ]);
+    const [statusResult, height] = await Promise.all([connection.getSignatureStatuses([row.signature_reference], { searchTransactionHistory: true }), connection.getBlockHeight("confirmed")]);
     const status = statusResult?.value?.[0] || null;
     if (status?.err) return (await pool.query(`update public.arena_solana_boost_quotes set payment_status='failed',status_reason='signature_failed',updated_at=now() where id=$1 returning *`, [row.id])).rows[0];
     if (status) {
@@ -217,14 +196,11 @@ async function markFromChainIfTerminal(row) {
 
 async function persistVerifiedBoost(client, quote, route, proof) {
   const receiptMs = Number(proof.receipt.createdAt) * 1000;
-  if (receiptMs > new Date(quote.expires_at).getTime()) {
-    return (await client.query(`update public.arena_solana_boost_quotes set payment_status='failed',status_reason='receipt_after_quote_expiry_landed',updated_at=now() where id=$1 returning *`, [quote.id])).rows[0];
-  }
+  if (receiptMs > new Date(quote.expires_at).getTime()) return (await client.query(`update public.arena_solana_boost_quotes set payment_status='failed',status_reason='receipt_after_quote_expiry_landed',updated_at=now() where id=$1 returning *`, [quote.id])).rows[0];
+  if (String(proof.receiptPda || "") !== String(quote.receipt_pda || "")) return (await client.query(`update public.arena_solana_boost_quotes set payment_status='failed',status_reason='receipt_identity_mismatch_landed',updated_at=now() where id=$1 returning *`, [quote.id])).rows[0];
   const context = await paymentContext(route, quote);
-  if (context.error || String(context.battle.id) !== String(quote.battle_id) || context.side !== quote.side || context.competitionId.toLowerCase() !== String(quote.competition_id).toLowerCase()) return quote;
-  if (route.product === "vote_tournament" && (!context.battle.ends_at || receiptMs >= new Date(context.battle.ends_at).getTime())) {
-    return (await client.query(`update public.arena_solana_boost_quotes set payment_status='failed',status_reason='outside_regulation_landed',updated_at=now() where id=$1 returning *`, [quote.id])).rows[0];
-  }
+  if (context.error || String(context.battle.id) !== String(quote.battle_id) || context.side !== quote.side || context.competitionId.toLowerCase() !== String(quote.competition_id).toLowerCase()) return (await client.query(`update public.arena_solana_boost_quotes set payment_status='failed',status_reason='operation_identity_changed_landed',updated_at=now() where id=$1 returning *`, [quote.id])).rows[0];
+  if (!context.battle.ends_at || receiptMs >= new Date(context.battle.ends_at).getTime()) return (await client.query(`update public.arena_solana_boost_quotes set payment_status='failed',status_reason='outside_regulation_landed',updated_at=now() where id=$1 returning *`, [quote.id])).rows[0];
   const points = route.product === "vote_tournament" ? BigInt(quote.boost_units) * 2n : 0n;
   const inserted = (await client.query(
     `insert into public.arena_contest_actions (chain_id,tournament_id,battle_id,match_id,round_number,phase,salvo_index,side,wallet,action_type,boost_units,points,gross_native_raw,pool_native_raw,protocol_native_raw,tx_hash,log_index,signature_reference,confirmed_at)
@@ -234,11 +210,12 @@ async function persistVerifiedBoost(client, quote, route, proof) {
   )).rows[0];
   if (!inserted) {
     const existing = (await client.query(`select * from public.arena_contest_actions where chain_id=$1 and signature_reference=$2 limit 1`, [quote.chain_id, quote.signature_reference])).rows[0];
-    const same = existing && String(existing.battle_id) === String(quote.battle_id) && String(existing.wallet) === String(quote.wallet) && String(existing.boost_units) === String(quote.boost_units);
+    const same = existing && String(existing.battle_id) === String(quote.battle_id) && String(existing.wallet) === String(quote.wallet) && String(existing.side) === String(quote.side) && String(existing.boost_units) === String(quote.boost_units);
     if (!same) return (await client.query(`update public.arena_solana_boost_quotes set payment_status='failed',status_reason='signature_conflict_landed',updated_at=now() where id=$1 returning *`, [quote.id])).rows[0];
   }
   if (inserted && route.product === "normal_battle") {
-    await client.query(`insert into public.arena_battle_points_v3 (battle_id,token_id,side,boost_units,boost_gross_native_raw,boost_pool_native_raw,boost_protocol_native_raw) values ($1,$2,$3,$4,$5,$6,$7) on conflict (battle_id,side) do update set boost_units=public.arena_battle_points_v3.boost_units+excluded.boost_units,boost_gross_native_raw=public.arena_battle_points_v3.boost_gross_native_raw+excluded.boost_gross_native_raw,boost_pool_native_raw=public.arena_battle_points_v3.boost_pool_native_raw+excluded.boost_pool_native_raw,boost_protocol_native_raw=public.arena_battle_points_v3.boost_protocol_native_raw+excluded.boost_protocol_native_raw,metrics_updated_at=now(),updated_at=now()`, [quote.battle_id, quote.target_token, quote.side, quote.boost_units, quote.gross_lamports, quote.prize_lamports, quote.protocol_lamports]);
+    const scoring = await applyConfirmedNormalBattleBoostV3(client, quote);
+    if (!scoring.updated && scoring.reason !== "historical_scoring_generation") throw new Error(`Normal Battle V3 projection update refused: ${scoring.reason}`);
   }
   return (await client.query(`update public.arena_solana_boost_quotes set consumed_at=coalesce(consumed_at,now()),payment_status='confirmed',status_reason=null,updated_at=now() where id=$1 returning *`, [quote.id])).rows[0];
 }
@@ -257,12 +234,8 @@ async function reconcileRegisteredBoost(route, row) {
       return updated;
     }
     let proof;
-    try {
-      proof = await verifySolanaBoostPayment({ chainId: quote.chain_id, signature: quote.signature_reference, competitionId: quote.competition_id, fundingId: quote.funding_id, funder: quote.wallet, grossLamports: quote.gross_lamports, prizeLamports: quote.prize_lamports, protocolLamports: quote.protocol_lamports });
-    } catch {
-      await client.query("rollback");
-      return markFromChainIfTerminal(quote);
-    }
+    try { proof = await verifySolanaBoostPayment({ chainId: quote.chain_id, signature: quote.signature_reference, competitionId: quote.competition_id, fundingId: quote.funding_id, funder: quote.wallet, grossLamports: quote.gross_lamports, prizeLamports: quote.prize_lamports, protocolLamports: quote.protocol_lamports }); }
+    catch { await client.query("rollback"); return markFromChainIfTerminal(quote); }
     const updated = await persistVerifiedBoost(client, quote, route, proof);
     await client.query("commit");
     return updated;
@@ -275,19 +248,15 @@ async function reconcileRegisteredBoost(route, row) {
 
 async function resolveOperationState(route, row) {
   if (!row) return null;
-  if (!row.signature_reference && UNRESOLVED.has(String(row.payment_status)) && new Date(row.expires_at).getTime() <= Date.now()) {
-    return (await pool.query(`update public.arena_solana_boost_quotes set payment_status='expired',status_reason='unsigned_quote_expired',updated_at=now() where id=$1 returning *`, [row.id])).rows[0];
-  }
+  if (!row.signature_reference && UNRESOLVED.has(String(row.payment_status)) && new Date(row.expires_at).getTime() <= Date.now()) return (await pool.query(`update public.arena_solana_boost_quotes set payment_status='expired',status_reason='unsigned_quote_expired',updated_at=now() where id=$1 returning *`, [row.id])).rows[0];
   return row.signature_reference ? reconcileRegisteredBoost(route, row) : row;
 }
 
 async function handleState(req, res, route) {
   const query = queryOf(req);
   let wallet, targetToken;
-  try {
-    wallet = assertSolanaPubkey(query.get("wallet") || query.get("walletAddress"), "wallet");
-    targetToken = assertSolanaPubkey(query.get("targetToken"), "targetToken");
-  } catch (error) { return json(res, 400, { ok: false, error: error.message }); }
+  try { wallet = assertSolanaPubkey(query.get("wallet") || query.get("walletAddress"), "wallet"); targetToken = assertSolanaPubkey(query.get("targetToken"), "targetToken"); }
+  catch (error) { return json(res, 400, { ok: false, error: error.message }); }
   const lookup = await latestOperationQuote(route, wallet, targetToken);
   if (lookup.error) return json(res, lookup.error.status || 409, { ok: false, error: lookup.error.error, code: lookup.error.code });
   const row = await resolveOperationState(route, lookup.row);
@@ -300,25 +269,21 @@ async function createQuote(req, res, route) {
   const units = positiveUnits(body.boostUnits);
   if (!units) return json(res, 400, { ok: false, error: "boostUnits must be a positive integer" });
   const context = await buildContext(route, body.targetToken);
-  if (context.error) return json(res, context.status, { ok: false, error: context.error, code: context.code });
+  if (context.error) return json(res, context.status, { ok: false, error: context.error, code: context.code, scoringReason: context.scoringReason });
   let wallet;
   try { wallet = assertSolanaPubkey(body.wallet || body.walletAddress || body.auth?.walletAddress, "wallet"); } catch (error) { return json(res, 400, { ok: false, error: error.message }); }
-
   const lookup = await latestOperationQuote(route, wallet, context.targetToken);
   if (lookup.error) return json(res, lookup.error.status || 409, { ok: false, error: lookup.error.error, code: lookup.error.code });
   const prior = await resolveOperationState(route, lookup.row);
   const priorState = publicBoostState(prior);
   if (prior && priorState.newPaymentAllowed !== true) return json(res, 409, { ok: false, error: "A Solana Boost quote/payment for this operation is still unresolved", code: "SOLANA_BOOST_PAYMENT_UNRESOLVED", payment: priorState });
-
   const auth = await requireWalletActionAuth({
     res, pool, auth: body.auth || body, expectedWallet: wallet, chainId: context.chainId,
     action: route.product === "normal_battle" ? "arena_battle_boost_quote" : "arena_tournament_boost_quote",
     routeLabel: route.product === "normal_battle" ? "arena/boosts/solana-quote" : "arena/tournaments/boosts/solana-quote",
-    extraLines: [route.product === "normal_battle" ? `Battle: ${route.battleId}` : `Tournament: ${route.tournamentId}`,
-      ...(context.match ? [`Round: ${context.match.roundNumber}`, `Match: ${context.match.matchId}`] : []), `Target: ${context.targetToken}`, `Boost Units: ${units}`],
+    extraLines: [route.product === "normal_battle" ? `Battle: ${route.battleId}` : `Tournament: ${route.tournamentId}`, ...(context.match ? [`Round: ${context.match.roundNumber}`, `Match: ${context.match.matchId}`] : []), `Target: ${context.targetToken}`, `Boost Units: ${units}`],
   });
   if (!auth || auth.legacy) return auth?.legacy ? json(res, 401, { ok: false, error: "Signed wallet authentication is required" }) : undefined;
-
   let money;
   try { money = quoteSolanaBoost({ chainId: context.chainId, boostUnits: units }); }
   catch (error) { return json(res, 503, { ok: false, error: "SOL Boost pricing is unavailable", detail: String(error?.message || error) }); }
@@ -331,7 +296,7 @@ async function createQuote(req, res, route) {
     [context.chainId, route.product, context.battle.id, route.tournamentId || null, context.match?.matchId || null, context.match?.roundNumber || 0, context.competitionId, fundingId, wallet, context.targetToken, context.side, units.toString(), context.pointsPerBoost, money.gross.toString(), money.prize.toString(), money.protocol.toString(), money.nativeUsdMicros.toString(), money.pricingVersion.toString(), money.oracleTimestamp.toString(), requirements.receiptPda, expiresAt],
   )).rows[0];
   res.setHeader("cache-control", "no-store");
-  return json(res, 201, { ok: true, quoteId: inserted.id, product: route.product, chainId: context.chainId, battleId: context.battle.id, tournamentId: route.tournamentId || null, matchId: context.match?.matchId || null, roundNumber: context.match?.roundNumber || 0, side: context.side, targetToken: context.targetToken, boostUnits: units.toString(), pointsPerBoost: context.pointsPerBoost, usdPerBoostMicros: "1000000", grossLamports: money.gross.toString(), prizeLamports: money.prize.toString(), protocolLamports: money.protocol.toString(), split: { prizeBps: 9000, protocolBps: 1000, leagueBps: 0 }, competitionId: context.competitionId, fundingId, transaction: requirements, expiresAt, newPaymentAllowed: false, battlePointsV3: { boostCurveVersion: "boost_hyperbolic_100_v1", scoringActive: false, boostPoints: null } });
+  return json(res, 201, { ok: true, quoteId: inserted.id, product: route.product, chainId: context.chainId, battleId: context.battle.id, tournamentId: route.tournamentId || null, matchId: context.match?.matchId || null, roundNumber: context.match?.roundNumber || 0, side: context.side, targetToken: context.targetToken, boostUnits: units.toString(), pointsPerBoost: context.pointsPerBoost, usdPerBoostMicros: "1000000", grossLamports: money.gross.toString(), prizeLamports: money.prize.toString(), protocolLamports: money.protocol.toString(), split: { prizeBps: 9000, protocolBps: 1000, leagueBps: 0 }, competitionId: context.competitionId, fundingId, transaction: requirements, expiresAt, newPaymentAllowed: false, battlePointsV3: { scoringVersion: context.v3?.lock?.scoring_version || null, boostCurveVersion: context.v3?.lock?.boost_curve_version || "boost_hyperbolic_100_v1", scoringActive: route.product === "normal_battle" ? true : false, boostPoints: null } });
 }
 
 async function handleSubmission(req, res, route) {
@@ -363,11 +328,7 @@ async function handleExpire(req, res, route) {
   const row = (await pool.query(`select * from public.arena_solana_boost_quotes where id=$1`, [quoteId])).rows[0];
   if (!sameQuote(row, route) || row.signature_reference !== signature) return json(res, 404, { ok: false, error: "Durable Boost payment not found" });
   const connection = connectionForArenaMoneyV2(Number(row.chain_id));
-  const [statuses, height, tx] = await Promise.all([
-    connection.getSignatureStatuses([signature], { searchTransactionHistory: true }),
-    connection.getBlockHeight("confirmed"),
-    connection.getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 }).catch(() => null),
-  ]);
+  const [statuses, height, tx] = await Promise.all([connection.getSignatureStatuses([signature], { searchTransactionHistory: true }), connection.getBlockHeight("confirmed"), connection.getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 }).catch(() => null)]);
   if (statuses?.value?.[0] || tx || Number(height) <= Number(row.signature_last_valid_block_height)) return json(res, 409, { ok: false, error: "Original signature is not proven expired/non-landed", code: "SOLANA_BOOST_STILL_UNRESOLVED" });
   const updated = (await pool.query(`update public.arena_solana_boost_quotes set payment_status='expired',status_reason='blockheight_expired_non_landed',updated_at=now() where id=$1 and signature_reference=$2 returning *`, [quoteId, signature])).rows[0];
   return json(res, 200, { ok: true, payment: publicBoostState(updated) });
@@ -394,9 +355,8 @@ async function confirmPayment(req, res, route) {
     if (!auth || auth.legacy) { await client.query("rollback"); return auth?.legacy ? json(res, 401, { ok: false, error: "Signed wallet authentication is required" }) : undefined; }
     await client.query(`update public.arena_solana_boost_quotes set signature_reference=$2,payment_status='verifying',submitted_at=coalesce(submitted_at,now()),updated_at=now() where id=$1`, [quote.id, signature]);
     let proof;
-    try {
-      proof = await verifySolanaBoostPayment({ chainId: quote.chain_id, signature, competitionId: quote.competition_id, fundingId: quote.funding_id, funder: quote.wallet, grossLamports: quote.gross_lamports, prizeLamports: quote.prize_lamports, protocolLamports: quote.protocol_lamports });
-    } catch (error) {
+    try { proof = await verifySolanaBoostPayment({ chainId: quote.chain_id, signature, competitionId: quote.competition_id, fundingId: quote.funding_id, funder: quote.wallet, grossLamports: quote.gross_lamports, prizeLamports: quote.prize_lamports, protocolLamports: quote.protocol_lamports }); }
+    catch (error) {
       await client.query(`update public.arena_solana_boost_quotes set payment_status='recovering',status_reason=$2,updated_at=now() where id=$1`, [quote.id, String(error?.message || error)]);
       await client.query("commit");
       return json(res, 409, { ok: false, error: "Solana Boost payment is not authoritative yet", code: "SOLANA_BOOST_PAYMENT_UNVERIFIED", reason: String(error?.message || error), payment: publicBoostState({ ...quote, signature_reference: signature, payment_status: "recovering" }) });
@@ -410,7 +370,7 @@ async function confirmPayment(req, res, route) {
     await client.query("commit");
     const action = (await pool.query(`select * from public.arena_contest_actions where chain_id=$1 and signature_reference=$2 limit 1`, [quote.chain_id, signature])).rows[0] || null;
     const rows = (await pool.query(`select side,boost_units,gross_native_raw,pool_native_raw,protocol_native_raw from public.arena_contest_actions where battle_id=$1 and action_type='boost' and phase='regulation' and confirmed_at is not null`, [quote.battle_id])).rows;
-    return json(res, 201, { ok: true, confirmed: true, idempotent: false, signature, receiptPda: proof.receiptPda, action, summary: serializeBoostSummary(boostSummary(rows)), pointsPerBoost: Number(quote.points_per_boost), battlePointsV3: { boostCurveVersion: "boost_hyperbolic_100_v1", scoringActive: false, boostPoints: null } });
+    return json(res, 201, { ok: true, confirmed: true, idempotent: false, signature, receiptPda: proof.receiptPda, action, summary: serializeBoostSummary(boostSummary(rows)), pointsPerBoost: Number(quote.points_per_boost), battlePointsV3: { boostCurveVersion: "boost_hyperbolic_100_v1", scoringActive: route.product === "normal_battle", boostPoints: null } });
   } catch (error) {
     await client.query("rollback").catch(() => {});
     console.error("[api/arenaSolanaBoosts] payment failed", error);
