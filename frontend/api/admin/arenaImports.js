@@ -103,7 +103,7 @@ async function loadHistory(importId) {
 }
 
 async function scanToken(chainId, token) {
-  return Number(chainId) === 101 || Number(chainId) === 102 ? scanSolana(token) : scanEvm(chainId, token);
+  return Number(chainId) === 101 || Number(chainId) === 102 ? scanSolana(chainId, token) : scanEvm(chainId, token);
 }
 
 async function mutateDecision({ id, body, admin, desiredStatus, decision }) {
@@ -229,7 +229,7 @@ async function rescanImport({ id, body, admin }) {
       [id, row.status, next.status, JSON.stringify(next.scan_json || {}), next.scan_version, next.evidence_version, reviewerIdentity(admin), reason, next.state_version],
     );
     await client.query("commit");
-    return { http: 200, body: { ok: true, item: mapImport(next, admin) } };
+    return { http: 200, body: { ok: true, item: mapImport(next, admin) };
   } catch (error) {
     await client.query("rollback").catch(() => {});
     throw error;
