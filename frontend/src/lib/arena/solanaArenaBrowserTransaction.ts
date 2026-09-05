@@ -58,16 +58,11 @@ export type SolanaArenaServerRecoveryState = {
 };
 
 export type SolanaArenaPaymentRecovery<T> = {
-  /** Stable logical operation key used only for same-tab serialization. */
   key: string;
   metadata: Record<string, string>;
-  /** Durable server lookup. Browser persistence is never payment authority. */
   lookup: () => Promise<SolanaArenaServerRecoveryState>;
-  /** Persist the wallet-signed exact signature before broadcast. */
   register: (pending: SolanaArenaPendingPayment) => Promise<void>;
-  /** Reconcile the exact signature through backend receipt/payment authority. */
   reconcile: (pending: SolanaArenaPendingPayment) => Promise<T | null>;
-  /** Mark retryable only after shared block-height recovery proves expiry/non-landing. */
   expire: (pending: SolanaArenaPendingPayment) => Promise<void>;
 };
 
@@ -178,31 +173,43 @@ async function confirmAndReconcile<T>(input: {
       return recoverySettlement !== null;
     },
   });
-
-  if (confirmation.err) {
-    throw new Error(`Solana Arena payment failed: ${JSON.stringify(confirmation.err)}`);
-  }
-
+  if (confirmation.err) throw new Error(`Solana Arena payment failed: ${JSON.stringify(confirmation.err)}`);
   const settlement = recoverySettlement ?? await input.recovery.reconcile(input.pending);
   if (settlement === null) {
-    throw new Error(
-      `Solana Arena payment ${input.pending.signature} landed but its authoritative receipt is not available yet. Do not retry the payment.`,
-    );
+    throw new Error(`Solana Arena payment ${input.pending.signature} landed but its authoritative receipt is not available yet. Do not retry the payment.`);
   }
-  return {
-    signature: input.pending.signature,
-    settlement,
-    recovered: input.recovered || confirmation.recovered === true,
-  };
+  return { signature: input.pending.signature, settlement, recovered: input.recovered || confirmation.recovered === true };
 }
 
-/**
- * Browser executor for Agent 3's frozen Arena Money V2 instruction envelope.
- * Durable payment identity lives on the server. Before any new signing the
- * executor asks the backend for unresolved state; after signing it registers
- * the exact signature before broadcast, then uses the proven block-height-aware
- * confirmation/recovery helper. No browser PDA/receipt authority is introduced.
- */
+export async function recoverSolanaArenaPayment<T>(input: {
+  chainId: number;
+  wallet: string;
+  label: string;
+  recovery: SolanaArenaPaymentRecovery<T>;
+}): Promise<SolanaArenaPaymentResult<T> | null> {
+  const expectedProgramId = canonicalProgramId();
+  return withRecoveryLock(input.recovery.key, async () => {
+    const web3 = await loadSolanaWeb3();
+    const connection = new web3.Connection(getPublicRpcUrl(input.chainId as SupportedChainId), "confirmed");
+    const state = await input.recovery.lookup();
+    if (!state.pending) return null;
+    const pending: SolanaArenaPendingPayment = {
+      ...state.pending,
+      programId: String(state.pending.programId || expectedProgramId),
+    };
+    assertPendingAuthority(pending, { chainId: input.chainId, wallet: input.wallet, programId: expectedProgramId });
+    try {
+      return await confirmAndReconcile({ connection, recovery: input.recovery, pending, recovered: true });
+    } catch (error) {
+      if (error instanceof LaunchpadSignatureExpiredError) {
+        await input.recovery.expire(pending);
+        return null;
+      }
+      throw error;
+    }
+  });
+}
+
 export async function sendSolanaArenaInstruction<T>(input: {
   chainId: number;
   wallet: string;
@@ -225,7 +232,6 @@ export async function sendSolanaArenaInstruction<T>(input: {
 
     const web3 = await loadSolanaWeb3();
     const connection = new web3.Connection(getPublicRpcUrl(input.chainId as SupportedChainId), "confirmed");
-
     const beforeSigning = await resolveArenaPaymentBeforeSigning({
       lookup: input.recovery.lookup,
       recoverPending: async (pending: SolanaArenaPendingPayment) => {
@@ -239,28 +245,19 @@ export async function sendSolanaArenaInstruction<T>(input: {
 
     const instruction = new web3.TransactionInstruction({
       programId: new web3.PublicKey(envelope.programId),
-      keys: envelope.accounts.map((account) => ({
-        pubkey: new web3.PublicKey(account.pubkey),
-        isSigner: account.isSigner === true,
-        isWritable: account.isWritable === true,
-      })),
+      keys: envelope.accounts.map((account) => ({ pubkey: new web3.PublicKey(account.pubkey), isSigner: account.isSigner === true, isWritable: account.isWritable === true })),
       data: decodeBase64(envelope.dataBase64),
     });
     const intent = { payer: connected, instructions: [instruction] };
-
     const simulated = await compileSolanaUserV0WithLatestBlockhash(web3, connection, intent);
     assertSolanaUserV0Intent(web3, simulated.transaction, intent);
     await simulateSolanaUserV0OrThrow(connection, simulated.transaction, input.label);
-
     const final = await compileSolanaUserV0WithLatestBlockhash(web3, connection, intent);
     assertSolanaUserV0Intent(web3, final.transaction, intent);
     const signed = await provider.signTransaction(final.transaction);
     assertSolanaUserV0Intent(web3, signed, intent);
-
     const signatureBytes = signed?.signatures?.[0];
-    if (!(signatureBytes instanceof Uint8Array) || signatureBytes.length !== 64) {
-      throw new Error("Wallet returned a Solana transaction without a valid payer signature.");
-    }
+    if (!(signatureBytes instanceof Uint8Array) || signatureBytes.length !== 64) throw new Error("Wallet returned a Solana transaction without a valid payer signature.");
     const signature = encodeBase58(signatureBytes);
     const pending: SolanaArenaPendingPayment = {
       signature,
@@ -272,13 +269,11 @@ export async function sendSolanaArenaInstruction<T>(input: {
       metadata: { ...input.recovery.metadata },
       createdAt: new Date().toISOString(),
     };
-
     await registerArenaPaymentBeforeBroadcast({
       pending,
       register: input.recovery.register,
       broadcast: () => connection.sendRawTransaction(signed.serialize(), { skipPreflight: false }),
     });
-
     return confirmAndReconcile({ connection, recovery: input.recovery, pending, recovered: false });
   });
 }
