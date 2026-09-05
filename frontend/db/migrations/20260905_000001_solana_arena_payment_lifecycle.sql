@@ -16,6 +16,18 @@ alter table if exists public.arena_solana_boost_quotes
 create index if not exists arena_solana_boost_quotes_operation_state_idx
   on public.arena_solana_boost_quotes(product_kind,tournament_id,battle_id,match_id,round_number,wallet,target_token,payment_status,updated_at desc);
 
+create unique index if not exists arena_solana_boost_quotes_one_unresolved_uidx
+  on public.arena_solana_boost_quotes(
+    product_kind,
+    coalesce(tournament_id,''),
+    battle_id,
+    coalesce(match_id,''),
+    round_number,
+    wallet,
+    target_token
+  )
+  where payment_status in ('pending','submitted','confirming','recovering','verifying');
+
 alter table if exists public.sponsorship_payment_quotes
   add column if not exists solana_payment_status text not null default 'pending',
   add column if not exists solana_signature_reference text,
@@ -36,5 +48,10 @@ create unique index if not exists sponsorship_payment_quotes_solana_signature_ui
 
 create index if not exists sponsorship_payment_quotes_wallet_event_state_idx
   on public.sponsorship_payment_quotes(event_id,sponsor_wallet,solana_payment_status,created_at desc);
+
+create unique index if not exists sponsorship_payment_quotes_one_unresolved_solana_uidx
+  on public.sponsorship_payment_quotes(event_id,sponsor_wallet)
+  where solana_payment_id is not null
+    and solana_payment_status in ('pending','submitted','confirming','recovering','verifying');
 
 commit;
