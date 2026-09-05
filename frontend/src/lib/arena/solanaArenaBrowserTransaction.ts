@@ -12,6 +12,10 @@ import {
   compileSolanaUserV0WithLatestBlockhash,
   simulateSolanaUserV0OrThrow,
 } from "@/lib/solanaUserV0Transaction";
+import {
+  registerArenaPaymentBeforeBroadcast,
+  resolveArenaPaymentBeforeSigning,
+} from "./solanaArenaPaymentRecoveryCoordinator.mjs";
 
 export type SolanaArenaInstructionAccount = {
   pubkey: string;
@@ -222,18 +226,16 @@ export async function sendSolanaArenaInstruction<T>(input: {
     const web3 = await loadSolanaWeb3();
     const connection = new web3.Connection(getPublicRpcUrl(input.chainId as SupportedChainId), "confirmed");
 
-    const serverState = await input.recovery.lookup();
-    if (serverState.pending) {
-      assertPendingAuthority(serverState.pending, { chainId: input.chainId, wallet: connected, programId: expectedProgramId });
-      try {
-        return await confirmAndReconcile({ connection, recovery: input.recovery, pending: serverState.pending, recovered: true });
-      } catch (error) {
-        if (!(error instanceof LaunchpadSignatureExpiredError)) throw error;
-        await input.recovery.expire(serverState.pending);
-      }
-    } else if (serverState.newPaymentAllowed !== true) {
-      throw new Error("Authoritative Arena payment state does not permit a replacement transaction.");
-    }
+    const beforeSigning = await resolveArenaPaymentBeforeSigning({
+      lookup: input.recovery.lookup,
+      recoverPending: async (pending: SolanaArenaPendingPayment) => {
+        assertPendingAuthority(pending, { chainId: input.chainId, wallet: connected, programId: expectedProgramId });
+        return confirmAndReconcile({ connection, recovery: input.recovery, pending, recovered: true });
+      },
+      expirePending: input.recovery.expire,
+      isExpiredError: (error: unknown) => error instanceof LaunchpadSignatureExpiredError,
+    });
+    if (beforeSigning.kind === "recovered") return beforeSigning.result;
 
     const instruction = new web3.TransactionInstruction({
       programId: new web3.PublicKey(envelope.programId),
@@ -271,13 +273,11 @@ export async function sendSolanaArenaInstruction<T>(input: {
       createdAt: new Date().toISOString(),
     };
 
-    // Durable registration happens before broadcast. If the tab dies after RPC
-    // accepts the transaction, the server already knows the exact signature.
-    await input.recovery.register(pending);
-    const sentSignature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false });
-    if (sentSignature !== signature) {
-      throw new Error("RPC returned a signature that does not match the durably registered wallet signature.");
-    }
+    await registerArenaPaymentBeforeBroadcast({
+      pending,
+      register: input.recovery.register,
+      broadcast: () => connection.sendRawTransaction(signed.serialize(), { skipPreflight: false }),
+    });
 
     return confirmAndReconcile({ connection, recovery: input.recovery, pending, recovered: false });
   });
