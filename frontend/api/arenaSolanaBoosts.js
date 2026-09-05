@@ -3,7 +3,7 @@ import { badMethod, json, readJson } from "../server/http.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { battlePoolId } from "./lib/arenaWarPoolEscrow.js";
 import { tournamentPoolIdV2 } from "./lib/arenaTournamentBuyInV2.mjs";
-import { resolveTournamentVoteMatch, tournamentVoteTokensEqual } from "./lib/arenaTournamentVoteRuntime.mjs";
+import { findTournamentVoteMatch, resolveTournamentVoteMatch, tournamentVoteTokensEqual } from "./lib/arenaTournamentVoteRuntime.mjs";
 import { boostSummary, serializeBoostSummary } from "./lib/arenaBoostRuntime.mjs";
 import { connectionForArenaMoneyV2, readCompetitionPoolV2 } from "./lib/solanaArenaMoneyV2Read.js";
 import {
@@ -87,20 +87,39 @@ async function tournamentContext(route, targetToken) {
 
 async function buildContext(route, targetToken) { return route.product === "normal_battle" ? normalContext(route, targetToken) : tournamentContext(route, targetToken); }
 
-async function tournamentPaymentContext(route, quote) {
-  const tournament = await loadTournament(route.tournamentId);
+export async function tournamentOperationIdentity(route, targetToken, db = pool) {
+  const tournament = await loadTournament(route.tournamentId, db);
   if (!tournament) return { error: "Tournament not found", status: 404 };
   const chainId = Number(tournament.chain_id);
-  if (!validateSolanaChain(chainId) || tournament.battle_mode !== "vote" || Number(tournament.round_duration_hours) !== 24 || tournament.competition_generation !== "arena_competition_v2") return { error: "Stored Tournament Boost no longer matches Vote Tournament authority", status: 409, code: "SOLANA_BOOST_STATE_CHANGED" };
+  if (!validateSolanaChain(chainId) || tournament.battle_mode !== "vote" || Number(tournament.round_duration_hours) !== 24 || tournament.competition_generation !== "arena_competition_v2") {
+    return { error: "Tournament does not match Vote Tournament authority", status: 409, code: "SOLANA_BOOST_STATE_CHANGED" };
+  }
   let token;
-  try { token = assertSolanaPubkey(quote.target_token, "targetToken"); } catch (error) { return { error: error.message, status: 400 }; }
-  const match = resolveTournamentVoteMatch({ tournament, matchRef: route.matchRef, selectedToken: token });
-  if (!match.ok || String(match.matchId) !== String(quote.match_id) || Number(match.roundNumber) !== Number(quote.round_number) || String(match.battleId) !== String(quote.battle_id)) return { error: "Stored Tournament Boost quote no longer matches its authoritative matchup", status: 409, code: "SOLANA_BOOST_STATE_CHANGED" };
+  try { token = assertSolanaPubkey(targetToken, "targetToken"); } catch (error) { return { error: error.message, status: 400 }; }
+  const match = findTournamentVoteMatch({ tournament, matchRef: route.matchRef });
+  if (!match.ok) return { error: `Tournament matchup cannot be resolved: ${match.reason}`, status: 409, code: "SOLANA_BOOST_MATCH_NOT_FOUND" };
+  if (!tournamentVoteTokensEqual(token, match.tokenA) && !tournamentVoteTokensEqual(token, match.tokenB)) {
+    return { error: "Boost target is not in this matchup", status: 409, code: "SOLANA_BOOST_TARGET_NOT_IN_MATCH" };
+  }
+  const side = tournamentVoteTokensEqual(token, match.tokenA) ? "left" : "right";
+  return {
+    tournament,
+    chainId,
+    targetToken: token,
+    side,
+    match,
+    competitionId: tournamentPoolIdV2(route.tournamentId),
+  };
+}
+
+async function tournamentPaymentContext(route, quote) {
+  const identity = await tournamentOperationIdentity(route, quote.target_token);
+  if (identity.error) return identity;
+  const { tournament, chainId, targetToken: token, match, side, competitionId } = identity;
+  if (String(match.matchId) !== String(quote.match_id) || Number(match.roundNumber) !== Number(quote.round_number) || String(match.battleId) !== String(quote.battle_id)) return { error: "Stored Tournament Boost quote no longer matches its authoritative matchup", status: 409, code: "SOLANA_BOOST_STATE_CHANGED" };
   const battle = await loadBattle(match.battleId);
   if (!battle || battle.battle_mode !== "vote" || battle.source !== "tournament" || String(battle.tournament_id || "") !== String(route.tournamentId) || battle.competition_generation !== "arena_competition_v2") return { error: "Stored Tournament Boost battle no longer matches tournament authority", status: 409, code: "SOLANA_BOOST_STATE_CHANGED" };
-  const side = tournamentVoteTokensEqual(token, match.tokenA) ? "left" : tournamentVoteTokensEqual(token, match.tokenB) ? "right" : null;
-  const competitionId = tournamentPoolIdV2(route.tournamentId);
-  if (!side || side !== quote.side || competitionId.toLowerCase() !== String(quote.competition_id).toLowerCase()) return { error: "Stored Tournament Boost authority changed", status: 409, code: "SOLANA_BOOST_STATE_CHANGED" };
+  if (side !== quote.side || competitionId.toLowerCase() !== String(quote.competition_id).toLowerCase()) return { error: "Stored Tournament Boost authority changed", status: 409, code: "SOLANA_BOOST_STATE_CHANGED" };
   return { tournament, battle, match, chainId, targetToken: token, side, competitionId, pointsPerBoost: 2 };
 }
 async function paymentContext(route, quote) { return route.product === "vote_tournament" ? tournamentPaymentContext(route, quote) : normalContext(route, quote.target_token); }
@@ -158,12 +177,18 @@ function publicBoostState(row) {
   };
 }
 
-async function latestOperationQuote(route, wallet, targetToken, db = pool) {
-  const params = [route.product, wallet, targetToken];
-  let scope;
-  if (route.product === "vote_tournament") { params.push(route.tournamentId); scope = `tournament_id=$4`; }
-  else { params.push(route.battleId); scope = `battle_id=$4`; }
-  return (await db.query(`select * from public.arena_solana_boost_quotes where product_kind=$1 and wallet=$2 and target_token=$3 and ${scope} order by created_at desc limit 1`, params)).rows[0] || null;
+export async function latestOperationQuote(route, wallet, targetToken, db = pool) {
+  if (route.product !== "vote_tournament") {
+    const row = (await db.query(`select * from public.arena_solana_boost_quotes where product_kind=$1 and wallet=$2 and target_token=$3 and battle_id=$4 order by created_at desc limit 1`, [route.product, wallet, targetToken, route.battleId])).rows[0] || null;
+    return { row, operation: null };
+  }
+  const operation = await tournamentOperationIdentity(route, targetToken, db);
+  if (operation.error) return { row: null, operation, error: operation };
+  const row = (await db.query(
+    `select * from public.arena_solana_boost_quotes where product_kind=$1 and chain_id=$2 and tournament_id=$3 and battle_id=$4 and match_id=$5 and round_number=$6 and wallet=$7 and target_token=$8 order by created_at desc limit 1`,
+    [route.product, operation.chainId, route.tournamentId, operation.match.battleId, operation.match.matchId, operation.match.roundNumber, wallet, operation.targetToken],
+  )).rows[0] || null;
+  return { row, operation };
 }
 
 async function markFromChainIfTerminal(row) {
@@ -263,7 +288,9 @@ async function handleState(req, res, route) {
     wallet = assertSolanaPubkey(query.get("wallet") || query.get("walletAddress"), "wallet");
     targetToken = assertSolanaPubkey(query.get("targetToken"), "targetToken");
   } catch (error) { return json(res, 400, { ok: false, error: error.message }); }
-  const row = await resolveOperationState(route, await latestOperationQuote(route, wallet, targetToken));
+  const lookup = await latestOperationQuote(route, wallet, targetToken);
+  if (lookup.error) return json(res, lookup.error.status || 409, { ok: false, error: lookup.error.error, code: lookup.error.code });
+  const row = await resolveOperationState(route, lookup.row);
   res.setHeader("cache-control", "no-store");
   return json(res, 200, { ok: true, payment: publicBoostState(row) });
 }
@@ -277,7 +304,9 @@ async function createQuote(req, res, route) {
   let wallet;
   try { wallet = assertSolanaPubkey(body.wallet || body.walletAddress || body.auth?.walletAddress, "wallet"); } catch (error) { return json(res, 400, { ok: false, error: error.message }); }
 
-  const prior = await resolveOperationState(route, await latestOperationQuote(route, wallet, context.targetToken));
+  const lookup = await latestOperationQuote(route, wallet, context.targetToken);
+  if (lookup.error) return json(res, lookup.error.status || 409, { ok: false, error: lookup.error.error, code: lookup.error.code });
+  const prior = await resolveOperationState(route, lookup.row);
   const priorState = publicBoostState(prior);
   if (prior && priorState.newPaymentAllowed !== true) return json(res, 409, { ok: false, error: "A Solana Boost quote/payment for this operation is still unresolved", code: "SOLANA_BOOST_PAYMENT_UNRESOLVED", payment: priorState });
 
