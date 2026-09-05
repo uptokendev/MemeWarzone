@@ -31,6 +31,33 @@ create unique index if not exists arena_solana_boost_quotes_one_unresolved_uidx
   where operation_key is not null
     and payment_status in ('pending','submitted','confirming','recovering','verifying');
 
+create or replace function public.set_arena_solana_boost_operation_key()
+returns trigger
+language plpgsql
+as $$
+begin
+  if tg_op = 'INSERT' and new.operation_key is null then
+    new.operation_key := concat_ws(':',
+      'solana-boost-v1',
+      new.chain_id::text,
+      new.product_kind,
+      coalesce(new.tournament_id::text,''),
+      new.battle_id::text,
+      coalesce(new.match_id::text,''),
+      new.round_number::text,
+      new.wallet,
+      new.target_token
+    );
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists set_arena_solana_boost_operation_key on public.arena_solana_boost_quotes;
+create trigger set_arena_solana_boost_operation_key
+before insert on public.arena_solana_boost_quotes
+for each row execute function public.set_arena_solana_boost_operation_key();
+
 alter table if exists public.sponsorship_payment_quotes
   add column if not exists solana_payment_status text not null default 'pending',
   add column if not exists solana_operation_key text,
@@ -66,5 +93,27 @@ create unique index if not exists sponsorship_payment_quotes_one_unresolved_sola
   on public.sponsorship_payment_quotes(solana_operation_key)
   where solana_operation_key is not null
     and solana_payment_status in ('pending','submitted','confirming','recovering','verifying');
+
+create or replace function public.set_sponsorship_solana_operation_key()
+returns trigger
+language plpgsql
+as $$
+begin
+  if tg_op = 'INSERT' and new.solana_payment_id is not null and new.solana_operation_key is null then
+    new.solana_operation_key := concat_ws(':',
+      'solana-sponsorship-v1',
+      new.chain_id::text,
+      new.event_id::text,
+      new.sponsor_wallet
+    );
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists set_sponsorship_solana_operation_key on public.sponsorship_payment_quotes;
+create trigger set_sponsorship_solana_operation_key
+before insert on public.sponsorship_payment_quotes
+for each row execute function public.set_sponsorship_solana_operation_key();
 
 commit;
