@@ -193,12 +193,16 @@ export async function recoverSolanaArenaPayment<T>(input: {
     const connection = new web3.Connection(getPublicRpcUrl(input.chainId as SupportedChainId), "confirmed");
     const state = await input.recovery.lookup();
     if (!state.pending) return null;
-    assertPendingAuthority(state.pending, { chainId: input.chainId, wallet: input.wallet, programId: expectedProgramId });
+    const pending: SolanaArenaPendingPayment = {
+      ...state.pending,
+      programId: String(state.pending.programId || expectedProgramId),
+    };
+    assertPendingAuthority(pending, { chainId: input.chainId, wallet: input.wallet, programId: expectedProgramId });
     try {
-      return await confirmAndReconcile({ connection, recovery: input.recovery, pending: state.pending, recovered: true });
+      return await confirmAndReconcile({ connection, recovery: input.recovery, pending, recovered: true });
     } catch (error) {
       if (error instanceof LaunchpadSignatureExpiredError) {
-        await input.recovery.expire(state.pending);
+        await input.recovery.expire(pending);
         return null;
       }
       throw error;
