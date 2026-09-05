@@ -2,7 +2,11 @@ import { Contract, formatUnits, type JsonRpcSigner } from "ethers";
 
 import { apiFetch } from "@/lib/apiBase";
 import { getNativeSymbol } from "@/lib/chainConfig";
-import { sendSolanaArenaInstruction, type SolanaArenaInstructionEnvelope } from "@/lib/arena/solanaArenaBrowserTransaction";
+import {
+  sendSolanaArenaInstruction,
+  type SolanaArenaInstructionEnvelope,
+  type SolanaArenaPendingPayment,
+} from "@/lib/arena/solanaArenaBrowserTransaction";
 import type {
   EventSponsorshipPaymentState,
   EventSponsorshipQuote,
@@ -245,23 +249,64 @@ export function createEventSponsorshipTransport(input: {
     return normalized;
   }
 
+  async function reconcileSolanaSponsorship(inputRecovery: {
+    quote: EventSponsorshipQuote;
+    pending: SolanaArenaPendingPayment;
+  }): Promise<EventSponsorshipPaymentState | null> {
+    const quoteId = String(inputRecovery.pending.metadata.quoteId || "").trim();
+    if (!quoteId) throw new Error("Stored sponsorship recovery is missing its authoritative quote.");
+
+    const current = await fetchEventSponsorshipPaymentState(quoteId);
+    if (current.verified) {
+      if (current.signature && current.signature !== inputRecovery.pending.signature) {
+        throw new Error("Sponsorship receipt signature does not match the preserved payment.");
+      }
+      return current;
+    }
+
+    const auth = await signWalletAction({
+      action: "arena_sponsorship_payment",
+      walletAddress: inputRecovery.quote.sponsorWallet,
+      chainId: inputRecovery.quote.chainId,
+      walletType: "solana",
+      signMessage: async (message) => (await signSolanaMessage(message, inputRecovery.quote.sponsorWallet)).signature,
+      extraLines: [`Quote: ${quoteId}`, `Signature: ${inputRecovery.pending.signature}`],
+    });
+    const res = await apiFetch("/api/arena/sponsorships/solana-payment", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ quoteId, signature: inputRecovery.pending.signature, auth }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (res.status === 409 && json?.code === "SPONSORSHIP_PAYMENT_UNVERIFIED") return null;
+    if (!res.ok || json?.ok === false) {
+      throw new Error(String(json?.error || `Solana sponsorship recovery failed (${res.status})`));
+    }
+
+    const verified = await fetchEventSponsorshipPaymentState(quoteId);
+    if (!verified.verified) throw new Error("Solana sponsorship receipt is not confirmed by public sponsorship authority.");
+    if (verified.signature && verified.signature !== inputRecovery.pending.signature) {
+      throw new Error("Sponsorship receipt signature does not match the preserved payment.");
+    }
+    return verified;
+  }
+
   async function submitPayment(request: { quoteId: string; eventId: string; sponsorWallet: string }): Promise<EventSponsorshipPaymentState> {
     const quote = quoteCache.get(request.quoteId);
     if (!quote) throw new Error("Sponsorship quote is not available in this wallet session.");
     if (quote.transactionKind === "solana") {
-      const signature = await sendSolanaArenaInstruction({
-        chainId: quote.chainId, wallet: quote.sponsorWallet, transaction: quote.transaction as SolanaArenaInstructionEnvelope, label: "Event sponsorship",
+      const payment = await sendSolanaArenaInstruction<EventSponsorshipPaymentState>({
+        chainId: quote.chainId,
+        wallet: quote.sponsorWallet,
+        transaction: quote.transaction as SolanaArenaInstructionEnvelope,
+        label: "Event sponsorship",
+        recovery: {
+          key: `event-sponsorship:${quote.chainId}:${quote.sponsorWallet}:${quote.eventId}`,
+          metadata: { quoteId: quote.quoteId, eventId: quote.eventId },
+          reconcile: (pending) => reconcileSolanaSponsorship({ quote, pending }),
+        },
       });
-      const auth = await signWalletAction({
-        action: "arena_sponsorship_payment", walletAddress: quote.sponsorWallet, chainId: quote.chainId, walletType: "solana",
-        signMessage: async (message) => (await signSolanaMessage(message, quote.sponsorWallet)).signature,
-        extraLines: [`Quote: ${quote.quoteId}`, `Signature: ${signature}`],
-      });
-      const res = await apiFetch("/api/arena/sponsorships/solana-payment", {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ quoteId: quote.quoteId, signature, auth }),
-      });
-      const raw = await readJson(res, "Solana sponsorship payment");
-      return { quoteId: quote.quoteId, eventId: quote.eventId, status: "confirmed", verified: true, signature, receiptPda: raw.receiptPda || null, confirmedAt: raw.confirmedAt || null, eventPrizeNative: native(raw.allocation?.prizeNativeRaw, quote.chainId), nativeSymbol: "SOL" };
+      return payment.settlement;
     }
 
     if (!input.evmSigner) throw new Error("Connect the event-chain EVM wallet before paying sponsorship.");
