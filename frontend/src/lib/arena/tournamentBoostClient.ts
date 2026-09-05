@@ -66,6 +66,7 @@ export async function submitSolanaTournamentBoost(input: { tournamentId: string;
     metadata: { quoteId: quote.quoteId, tournamentId: input.tournamentId, matchRef: input.matchRef, targetToken: quote.targetToken },
     lookup: async () => {
       const state = await fetchSolanaTournamentBoostPaymentState({ tournamentId: input.tournamentId, matchRef: input.matchRef, wallet: input.wallet, targetToken: quote.targetToken });
+      if (state.quoteId === quote.quoteId && state.status === "pending" && !state.signature) return { pending: null, newPaymentAllowed: true };
       const pending = state.unresolved && state.recovery ? { ...state.recovery, programId: quote.transaction.programId } as SolanaArenaPendingPayment : null;
       return { pending, newPaymentAllowed: state.newPaymentAllowed };
     },
