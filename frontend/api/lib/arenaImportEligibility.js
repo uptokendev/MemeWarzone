@@ -1,4 +1,4 @@
-import { ARENA_IMPORT_SCAN_VERSION, FINDING_AUTHORITY } from "./arenaImportScan.js";
+import { ARENA_IMPORT_SCAN_VERSION, FINDING_AUTHORITY, classifyFinding } from "./arenaImportScan.js";
 
 const DEFAULT_MAX_SCAN_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -14,7 +14,12 @@ function scanObject(row) {
 
 export function hasNonOverridableFinding(row) {
   const scan = scanObject(row);
-  const findings = Array.isArray(scan.findings) ? scan.findings : [];
+  const findings = Array.isArray(scan.findings) ? [...scan.findings] : [];
+  // Pre-v2 evidence stored only reason codes. Re-classify that immutable evidence so
+  // an old hard failure cannot be manually upgraded merely because it predates v2.
+  if (Array.isArray(scan.reasons)) {
+    for (const reason of scan.reasons) findings.push(classifyFinding(reason));
+  }
   return findings.some((finding) => finding?.authority === FINDING_AUTHORITY.NON_OVERRIDABLE);
 }
 
