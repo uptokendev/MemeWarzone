@@ -4,7 +4,11 @@ import test from "node:test";
 import "./arenaBoostQuote.test.mjs";
 import {
   boostSummary,
+  exactBattlePointsV3Lock,
   expectedBoostSplit,
+  projectBattlePointsV3Row,
+  resolveBattlePointsV3Authority,
+  resolveBattlePointsV3BoostSaleStatus,
   resolveBattleSide,
   serializeBoostSummary,
   validateConfirmedBoost,
@@ -57,4 +61,86 @@ test("summary aggregates confirmed rows without converting raw native values to 
   });
   assert.equal(summary.total.boostUnits, "7");
   assert.equal(summary.total.grossNativeRaw, "100000000000000301");
+});
+
+const V3_PARAMS = { maxPoints: 10, halfSaturationUnits: 100, unitUsdMicros: 1_000_000 };
+const V3_LOCK = {
+  scoring_version: "battle_points_v3",
+  boost_curve_version: "boost_hyperbolic_100_v1",
+  boost_curve_parameters: V3_PARAMS,
+};
+const V3_BATTLE = {
+  state: "live",
+  battle_mode: "normal",
+  source: "manual",
+  competition_generation: "arena_competition_v2",
+};
+const V3_ENV = { ARENA_BATTLE_POINTS_V3: "true", ARENA_BATTLE_POINTS_V3_SETTLEMENT: "true" };
+
+function projectionRow(side, boostUnits = "100") {
+  return {
+    battle_id: "battle-v3",
+    token_id: side === "left" ? "0xabc" : "0xdef",
+    side,
+    scoring_version: "battle_points_v3",
+    mcap_weight: 45,
+    holder_weight: 27,
+    volume_weight: 18,
+    boost_weight: 10,
+    boost_curve_version: "boost_hyperbolic_100_v1",
+    boost_curve_parameters: V3_PARAMS,
+    boost_units: boostUnits,
+    boost_gross_native_raw: "100",
+    boost_pool_native_raw: "90",
+    boost_protocol_native_raw: "10",
+    mcap_points: 20,
+    holder_points: 10,
+    volume_points: 5,
+  };
+}
+
+function healthyMetric(side) {
+  return {
+    side,
+    data_healthy: true,
+    data_lag_seconds: 30,
+    market_data_updated_at: "2026-09-05T08:59:30.000Z",
+  };
+}
+
+test("V3 Boost authority requires the immutable founder-locked scoring generation", () => {
+  assert.equal(exactBattlePointsV3Lock(V3_LOCK), true);
+  const projections = ["left", "right"].map((side) => ({ side, ...projectBattlePointsV3Row(projectionRow(side), healthyMetric(side), { now: Date.parse("2026-09-05T09:00:00.000Z") }) }));
+  assert.deepEqual(resolveBattlePointsV3BoostSaleStatus({ battle: V3_BATTLE, lock: null, projections, env: V3_ENV }), {
+    active: false,
+    reason: "historical_scoring_generation",
+  });
+  assert.equal(resolveBattlePointsV3BoostSaleStatus({ battle: V3_BATTLE, lock: V3_LOCK, projections, env: V3_ENV }).active, true);
+});
+
+test("V3 projection reuses the canonical hyperbolic curve and combine path", () => {
+  const projected = projectBattlePointsV3Row(projectionRow("left", "100"), healthyMetric("left"), {
+    now: Date.parse("2026-09-05T09:00:00.000Z"),
+  });
+  assert.equal(projected.projectionValid, true);
+  assert.equal(projected.scoringReady, true);
+  assert.equal(projected.boostPoints, 5);
+  assert.equal(projected.totalPoints, 40);
+});
+
+test("V3 scoring authority follows feature flags and market data health without disabling confirmed-unit accounting", () => {
+  const fresh = ["left", "right"].map((side) => ({ side, ...projectBattlePointsV3Row(projectionRow(side), healthyMetric(side), { now: Date.parse("2026-09-05T09:00:00.000Z") }) }));
+  assert.equal(resolveBattlePointsV3Authority({ battle: V3_BATTLE, lock: V3_LOCK, projections: fresh, env: V3_ENV }).active, true);
+  assert.equal(resolveBattlePointsV3Authority({ battle: V3_BATTLE, lock: V3_LOCK, projections: fresh, env: {} }).reason, "feature_disabled");
+
+  const staleMetric = { ...healthyMetric("left"), market_data_updated_at: "2026-09-05T08:50:00.000Z" };
+  const delayed = [
+    { side: "left", ...projectBattlePointsV3Row(projectionRow("left"), staleMetric, { now: Date.parse("2026-09-05T09:00:00.000Z") }) },
+    fresh[1],
+  ];
+  assert.equal(resolveBattlePointsV3BoostSaleStatus({ battle: V3_BATTLE, lock: V3_LOCK, projections: delayed, env: V3_ENV }).active, true);
+  assert.deepEqual(
+    resolveBattlePointsV3Authority({ battle: V3_BATTLE, lock: V3_LOCK, projections: delayed, env: V3_ENV }).reason,
+    "data_delay",
+  );
 });
