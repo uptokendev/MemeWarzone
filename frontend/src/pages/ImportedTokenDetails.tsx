@@ -17,6 +17,7 @@ import { isSolanaChainId } from "@/lib/chainConfig";
 import {
   canRequestImportManualReview,
   importAuditPresentation,
+  presentImportCompetitionEligibility,
   presentImportScanFindings,
 } from "@/lib/arena/importAuditPresentation.mjs";
 import { requestArenaImportReview, type ArenaImportItem } from "@/lib/arenaImports";
@@ -45,7 +46,8 @@ export default function ImportedTokenDetails({ item }: { item: ArenaImportItem }
   const canRequestReview = canRequestImportManualReview(currentItem, connectedImportWallet, solana);
   const reviewEligibleStatus = currentItem.status === "needs_review" || currentItem.status === "declined";
   const findings = presentImportScanFindings(currentItem.scan);
-  const audit = importAuditPresentation(currentItem.status);
+  const audit = importAuditPresentation(currentItem);
+  const competition = presentImportCompetitionEligibility(currentItem);
   const isOwner = Boolean(wallet.account && currentItem.ownerWallet && wallet.account.toLowerCase() === currentItem.ownerWallet.toLowerCase());
 
   useEffect(() => {
@@ -140,7 +142,7 @@ export default function ImportedTokenDetails({ item }: { item: ArenaImportItem }
         </div>
       </section>
 
-      <section className={`rounded-md border p-4 ${auditToneClass}`} data-import-audit-status={currentItem.status}>
+      <section className={`rounded-md border p-4 ${auditToneClass}`} data-import-audit-status={competition.authorityOutcome}>
         <div className="flex items-start gap-3">
           {audit.tone === "passed" ? (
             <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-300" />
@@ -152,6 +154,16 @@ export default function ImportedTokenDetails({ item }: { item: ArenaImportItem }
           <div className="min-w-0 flex-1">
             <h2 className="font-retro text-sm uppercase tracking-[0.12em] text-foreground">{audit.title}</h2>
             <p className="mt-2 max-w-3xl text-sm text-muted-foreground">{audit.description}</p>
+
+            <div
+              className="mt-3 rounded border border-white/10 bg-black/20 p-3"
+              data-import-competition-eligibility={competition.eligible ? "eligible" : "not-eligible"}
+              data-import-authority-outcome={competition.authorityOutcome}
+            >
+              <div className="text-[10px] uppercase tracking-[0.12em] text-white/45">Arena competition authority</div>
+              <div className="mt-1 font-retro text-xs uppercase tracking-[0.12em] text-foreground">{competition.label}</div>
+              {competition.code ? <div className="mt-1 text-[10px] text-white/42">{competition.code}</div> : null}
+            </div>
 
             {findings.length ? (
               <div className="mt-4">
@@ -171,7 +183,7 @@ export default function ImportedTokenDetails({ item }: { item: ArenaImportItem }
               <div className="mt-4 rounded-md border border-white/10 bg-black/20 p-3" data-import-review-requested="true">
                 <div className="font-retro text-xs uppercase tracking-[0.12em] text-foreground">MANUAL REVIEW REQUESTED</div>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Requested {formatReviewTimestamp(currentItem.reviewRequestedAt)}. A manual review request does not approve this token.
+                  Requested {formatReviewTimestamp(currentItem.reviewRequestedAt)}. A manual review request does not approve this token or override current competition authority.
                 </p>
                 {currentItem.reviewReason ? (
                   <div className="mt-3 rounded border border-white/10 bg-black/20 p-2">
@@ -184,7 +196,7 @@ export default function ImportedTokenDetails({ item }: { item: ArenaImportItem }
               <div className="mt-4 max-w-xl rounded-md border border-white/10 bg-black/20 p-3" data-import-review-action="available">
                 <div className="font-retro text-xs uppercase tracking-[0.12em] text-foreground">Manual investigation</div>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  You can ask the MemeWarzone team to investigate the automatic-check result. Requesting a manual check does not approve the token or change its current status.
+                  You can ask the MemeWarzone team to investigate the automatic-check result. Requesting a manual check does not approve the token, bypass a hard failure or stale authority, or determine Arena competition eligibility.
                 </p>
                 <Textarea
                   value={reviewReason}
