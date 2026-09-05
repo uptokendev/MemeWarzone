@@ -48,20 +48,27 @@ export type SolanaArenaPaymentResult<T> = {
   recovered: boolean;
 };
 
-export type SolanaArenaPaymentRecovery<T> = {
-  /** Stable per wallet + logical Arena payment lane, not per quote. */
-  key: string;
-  metadata: Record<string, string>;
-  /**
-   * Reconcile the exact signature through the authoritative backend receipt path.
-   * Return null only when authority proves no receipt/payment exists yet.
-   * Throw on transport/authority ambiguity so the pending signature is retained.
-   */
-  reconcile: (pending: SolanaArenaPendingPayment) => Promise<T | null>;
+export type SolanaArenaServerRecoveryState = {
+  pending: SolanaArenaPendingPayment | null;
+  newPaymentAllowed: boolean;
 };
 
-const STORAGE_PREFIX = "mwz:arena-solana-payment:v1:";
+export type SolanaArenaPaymentRecovery<T> = {
+  /** Stable logical operation key used only for same-tab serialization. */
+  key: string;
+  metadata: Record<string, string>;
+  /** Durable server lookup. Browser memory/localStorage is never payment authority. */
+  lookup: () => Promise<SolanaArenaServerRecoveryState>;
+  /** Persist the wallet-signed exact signature before broadcast. */
+  register: (pending: SolanaArenaPendingPayment) => Promise<void>;
+  /** Reconcile the exact signature through backend receipt/payment authority. */
+  reconcile: (pending: SolanaArenaPendingPayment) => Promise<T | null>;
+  /** Mark retryable only after shared block-height recovery proves expiry/non-landing. */
+  expire: (pending: SolanaArenaPendingPayment) => Promise<void>;
+};
+
 const inFlight = new Map<string, Promise<unknown>>();
+const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 function decodeBase64(value: string): Uint8Array {
   const raw = String(value || "").trim();
@@ -70,6 +77,30 @@ function decodeBase64(value: string): Uint8Array {
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
   return bytes;
+}
+
+function encodeBase58(bytes: Uint8Array): string {
+  if (!bytes.length) return "";
+  const digits = [0];
+  for (const byte of bytes) {
+    let carry = byte;
+    for (let index = 0; index < digits.length; index += 1) {
+      carry += digits[index] << 8;
+      digits[index] = carry % 58;
+      carry = Math.floor(carry / 58);
+    }
+    while (carry > 0) {
+      digits.push(carry % 58);
+      carry = Math.floor(carry / 58);
+    }
+  }
+  let output = "";
+  for (const byte of bytes) {
+    if (byte !== 0) break;
+    output += BASE58_ALPHABET[0];
+  }
+  for (let index = digits.length - 1; index >= 0; index -= 1) output += BASE58_ALPHABET[digits[index]];
+  return output;
 }
 
 function canonicalProgramId(): string {
@@ -93,59 +124,14 @@ function assertEnvelope(value: SolanaArenaInstructionEnvelope) {
   return value;
 }
 
-function storageKey(key: string) {
+function recoveryKey(key: string) {
   const normalized = String(key || "").trim();
   if (!normalized) throw new Error("Solana Arena payment recovery key is missing.");
-  return `${STORAGE_PREFIX}${normalized}`;
-}
-
-function storageOrThrow(): Storage {
-  try {
-    const storage = globalThis.localStorage;
-    if (!storage) throw new Error("localStorage unavailable");
-    const probe = `${STORAGE_PREFIX}probe`;
-    storage.setItem(probe, "1");
-    storage.removeItem(probe);
-    return storage;
-  } catch {
-    throw new Error("Persistent Solana Arena payment recovery is unavailable; payment was not sent.");
-  }
-}
-
-function readPending(storage: Storage, key: string): SolanaArenaPendingPayment | null {
-  const raw = storage.getItem(storageKey(key));
-  if (!raw) return null;
-  let value: SolanaArenaPendingPayment;
-  try {
-    value = JSON.parse(raw) as SolanaArenaPendingPayment;
-  } catch {
-    throw new Error("Stored Solana Arena payment recovery state is invalid; refusing to create a replacement payment.");
-  }
-  if (
-    !value?.signature ||
-    !value?.blockhash ||
-    !Number.isFinite(Number(value.lastValidBlockHeight)) ||
-    !value.chainId ||
-    !value.wallet ||
-    !value.programId ||
-    !value.metadata
-  ) {
-    throw new Error("Stored Solana Arena payment recovery state is incomplete; refusing to create a replacement payment.");
-  }
-  return value;
-}
-
-function writePending(storage: Storage, key: string, pending: SolanaArenaPendingPayment) {
-  storage.setItem(storageKey(key), JSON.stringify(pending));
-}
-
-function clearPending(storage: Storage, key: string, signature: string) {
-  const pending = readPending(storage, key);
-  if (pending?.signature === signature) storage.removeItem(storageKey(key));
+  return normalized;
 }
 
 async function withRecoveryLock<T>(key: string, work: () => Promise<T>): Promise<T> {
-  const normalized = storageKey(key);
+  const normalized = recoveryKey(key);
   const previous = inFlight.get(normalized) || Promise.resolve();
   let release!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
@@ -160,9 +146,21 @@ async function withRecoveryLock<T>(key: string, work: () => Promise<T>): Promise
   }
 }
 
+function assertPendingAuthority(pending: SolanaArenaPendingPayment, input: { chainId: number; wallet: string; programId: string }) {
+  if (
+    !pending?.signature ||
+    !pending.blockhash ||
+    !Number.isFinite(Number(pending.lastValidBlockHeight)) ||
+    Number(pending.chainId) !== Number(input.chainId) ||
+    String(pending.wallet) !== String(input.wallet) ||
+    String(pending.programId) !== String(input.programId)
+  ) {
+    throw new Error("Durable Solana Arena recovery state does not match this payment authority.");
+  }
+}
+
 async function confirmAndReconcile<T>(input: {
   connection: any;
-  storage: Storage;
   recovery: SolanaArenaPaymentRecovery<T>;
   pending: SolanaArenaPendingPayment;
   recovered: boolean;
@@ -178,7 +176,6 @@ async function confirmAndReconcile<T>(input: {
   });
 
   if (confirmation.err) {
-    clearPending(input.storage, input.recovery.key, input.pending.signature);
     throw new Error(`Solana Arena payment failed: ${JSON.stringify(confirmation.err)}`);
   }
 
@@ -188,7 +185,6 @@ async function confirmAndReconcile<T>(input: {
       `Solana Arena payment ${input.pending.signature} landed but its authoritative receipt is not available yet. Do not retry the payment.`,
     );
   }
-  clearPending(input.storage, input.recovery.key, input.pending.signature);
   return {
     signature: input.pending.signature,
     settlement,
@@ -198,10 +194,10 @@ async function confirmAndReconcile<T>(input: {
 
 /**
  * Browser executor for Agent 3's frozen Arena Money V2 instruction envelope.
- * The backend owns instruction/account/receipt authority. The browser binds the
- * envelope to the configured rewards-treasury program, constructs exactly the
- * returned data/metas, and preserves one exact signature until RPC + backend
- * receipt authority prove success or prove expiry/failure.
+ * Durable payment identity lives on the server. Before any new signing the
+ * executor asks the backend for unresolved state; after signing it registers
+ * the exact signature before broadcast, then uses the proven block-height-aware
+ * confirmation/recovery helper. No browser PDA/receipt authority is introduced.
  */
 export async function sendSolanaArenaInstruction<T>(input: {
   chainId: number;
@@ -214,7 +210,6 @@ export async function sendSolanaArenaInstruction<T>(input: {
   const expectedProgramId = canonicalProgramId();
 
   return withRecoveryLock(input.recovery.key, async () => {
-    const storage = storageOrThrow();
     const provider = getSolanaProvider();
     if (!provider?.publicKey || typeof provider.signTransaction !== "function") {
       throw new Error(`Connect a Solana wallet that can sign this ${input.label}.`);
@@ -227,29 +222,17 @@ export async function sendSolanaArenaInstruction<T>(input: {
     const web3 = await loadSolanaWeb3();
     const connection = new web3.Connection(getPublicRpcUrl(input.chainId as SupportedChainId), "confirmed");
 
-    const existing = readPending(storage, input.recovery.key);
-    if (existing) {
-      if (
-        Number(existing.chainId) !== Number(input.chainId) ||
-        existing.wallet !== connected ||
-        existing.programId !== expectedProgramId
-      ) {
-        throw new Error("An unresolved Solana Arena payment exists for this lane with different authority; refusing a replacement payment.");
-      }
+    const serverState = await input.recovery.lookup();
+    if (serverState.pending) {
+      assertPendingAuthority(serverState.pending, { chainId: input.chainId, wallet: connected, programId: expectedProgramId });
       try {
-        return await confirmAndReconcile({
-          connection,
-          storage,
-          recovery: input.recovery,
-          pending: existing,
-          recovered: true,
-        });
+        return await confirmAndReconcile({ connection, recovery: input.recovery, pending: serverState.pending, recovered: true });
       } catch (error) {
         if (!(error instanceof LaunchpadSignatureExpiredError)) throw error;
-        // The shared helper emits this only after block-height expiry,
-        // transaction lookup miss, and an authoritative recover() miss.
-        clearPending(storage, input.recovery.key, existing.signature);
+        await input.recovery.expire(serverState.pending);
       }
+    } else if (serverState.newPaymentAllowed !== true) {
+      throw new Error("Authoritative Arena payment state does not permit a replacement transaction.");
     }
 
     const instruction = new web3.TransactionInstruction({
@@ -271,7 +254,12 @@ export async function sendSolanaArenaInstruction<T>(input: {
     assertSolanaUserV0Intent(web3, final.transaction, intent);
     const signed = await provider.signTransaction(final.transaction);
     assertSolanaUserV0Intent(web3, signed, intent);
-    const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false });
+
+    const signatureBytes = signed?.signatures?.[0];
+    if (!(signatureBytes instanceof Uint8Array) || signatureBytes.length !== 64) {
+      throw new Error("Wallet returned a Solana transaction without a valid payer signature.");
+    }
+    const signature = encodeBase58(signatureBytes);
     const pending: SolanaArenaPendingPayment = {
       signature,
       blockhash: final.latest.blockhash,
@@ -283,16 +271,14 @@ export async function sendSolanaArenaInstruction<T>(input: {
       createdAt: new Date().toISOString(),
     };
 
-    // Persist immediately after sendRawTransaction and before confirmation.
-    // Storage is probed before signing; any unexpected persistence failure now
-    // fails closed rather than constructing a replacement in this invocation.
-    writePending(storage, input.recovery.key, pending);
-    return confirmAndReconcile({
-      connection,
-      storage,
-      recovery: input.recovery,
-      pending,
-      recovered: false,
-    });
+    // Durable registration happens before broadcast. If the tab dies after RPC
+    // accepts the transaction, the server already knows the exact signature.
+    await input.recovery.register(pending);
+    const sentSignature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false });
+    if (sentSignature !== signature) {
+      throw new Error("RPC returned a signature that does not match the durably registered wallet signature.");
+    }
+
+    return confirmAndReconcile({ connection, recovery: input.recovery, pending, recovered: false });
   });
 }
