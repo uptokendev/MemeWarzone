@@ -229,7 +229,7 @@ async function rescanImport({ id, body, admin }) {
       [id, row.status, next.status, JSON.stringify(next.scan_json || {}), next.scan_version, next.evidence_version, reviewerIdentity(admin), reason, next.state_version],
     );
     await client.query("commit");
-    return { http: 200, body: { ok: true, item: mapImport(next, admin) };
+    return { http: 200, body: { ok: true, item: mapImport(next, admin) } };
   } catch (error) {
     await client.query("rollback").catch(() => {});
     throw error;
