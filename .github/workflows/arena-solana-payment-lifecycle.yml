@@ -72,8 +72,14 @@ jobs:
       - name: Certify SOL Normal Battle Boost browser integration
         run: node --test frontend/src/lib/arena/battleBoostSolanaIntegration.test.mjs
 
-      - name: Certify current Battle Wall core
-        run: node --test frontend/src/lib/arena/battleWallPresentation.test.mjs frontend/src/lib/arena/battleWallRealtime.test.mjs frontend/src/lib/arena/battleSharePresentation.test.mjs frontend/src/lib/arena/battleShareCardPresentation.test.mjs
+      - name: Certify Battle Wall presentation
+        run: node --test frontend/src/lib/arena/battleWallPresentation.test.mjs
+
+      - name: Certify Battle Wall realtime
+        run: node --test frontend/src/lib/arena/battleWallRealtime.test.mjs
+
+      - name: Certify Battle sharing presentation
+        run: node --test frontend/src/lib/arena/battleSharePresentation.test.mjs frontend/src/lib/arena/battleShareCardPresentation.test.mjs
 
       - name: Certify Battle Boost V2/V3 presentation
         run: node --test frontend/src/lib/arena/battleBoostPresentation.test.mjs
