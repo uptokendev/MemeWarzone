@@ -74,15 +74,15 @@ export function FinalSalvoPanel({
 
       <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border border-white/10 bg-black/20 p-3 sm:gap-3">
         <div className="min-w-0">
-          <div className="truncate text-[9px] uppercase tracking-[0.18em] text-white/42" title={leftToken || leftLabel}>{leftLabel}</div>
+          <div className="truncate text-[10px] uppercase tracking-[0.16em] text-white/48" title={leftToken || leftLabel}>{leftLabel}</div>
           <div className="mt-1 font-retro text-xl text-white/90">{model.leftVotes}</div>
         </div>
-        <div className="text-center">
-          <div className="text-[9px] uppercase tracking-[0.18em] text-white/42">Series</div>
+        <div className="px-1 text-center">
+          <div className="text-[10px] uppercase tracking-[0.16em] text-white/48">Series</div>
           <div className="mt-1 font-retro text-lg text-white/80">{model.seriesLabel}</div>
         </div>
         <div className="min-w-0 text-right">
-          <div className="truncate text-[9px] uppercase tracking-[0.18em] text-white/42" title={rightToken || rightLabel}>{rightLabel}</div>
+          <div className="truncate text-[10px] uppercase tracking-[0.16em] text-white/48" title={rightToken || rightLabel}>{rightLabel}</div>
           <div className="mt-1 font-retro text-xl text-white/90">{model.rightVotes}</div>
         </div>
       </div>
@@ -93,7 +93,7 @@ export function FinalSalvoPanel({
             type="button"
             size="sm"
             variant={leftSelected ? "secondary" : "outline"}
-            className="min-w-0 font-retro"
+            className="min-h-11 min-w-0 font-retro"
             disabled={busy || !model.walletEligible || !onVote}
             onClick={() => onVote?.("left")}
           >
@@ -103,7 +103,7 @@ export function FinalSalvoPanel({
             type="button"
             size="sm"
             variant={rightSelected ? "secondary" : "outline"}
-            className="min-w-0 font-retro"
+            className="min-h-11 min-w-0 font-retro"
             disabled={busy || !model.walletEligible || !onVote}
             onClick={() => onVote?.("right")}
           >

@@ -41,7 +41,7 @@ const Arena = () => {
       <section data-warzone-featured="true">
         <h2 className="font-black text-lg uppercase tracking-[0.08em] text-foreground">Featured memecoins</h2>
         {featured.items.length ? (
-          <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="mt-4 grid gap-3 grid-cols-1 lg:grid-cols-2">
             {featured.items.slice(0, 8).map((item, index) => {
               const route = getArenaTokenRoute(item.tokenAddress, item.chainId);
               const image = resolveImageUri(item.imageUrl) || null;

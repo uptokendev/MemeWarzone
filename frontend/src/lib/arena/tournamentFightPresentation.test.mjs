@@ -25,7 +25,7 @@ test("normal and vote Tournament fights share the Battle Wall module and 24h mod
   const actions = readSrc("../../components/arena/BattleFightActions.tsx");
   assert.match(moduleSrc, /BattleFightActions/);
   assert.match(moduleSrc, /data-battle-mode-label/);
-  assert.match(moduleSrc, /md:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
+  assert.match(moduleSrc, /lg:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
   assert.match(combatant, /data-battle-combatant-split="true"/);
   assert.doesNotMatch(combatant, /BOOST|Vote Tournament/);
   assert.match(actions, /data-mock-battle-action="boost"/);

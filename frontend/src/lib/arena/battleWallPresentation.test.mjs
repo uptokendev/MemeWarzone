@@ -562,7 +562,7 @@ test("Battle Wall polish keeps stacked mobile combat layout and DATA DELAY copy"
   const effects = readSrc("../../components/arena/BattleCombatEffects.tsx");
 
   assert.match(moduleSrc, /grid-cols-1/);
-  assert.match(moduleSrc, /md:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
+  assert.match(moduleSrc, /lg:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
   assert.match(moduleSrc, /remaining=\{presented\.tab === "live"\}/);
   assert.match(moduleSrc, /motion-reduce:shadow-none/);
   assert.match(vs, /Score updates temporarily paused/);
@@ -655,8 +655,8 @@ test("Battle Wall visual parity uses bounded combatant cards, 2x2 metrics, and n
   assert.match(moduleSrc, /data-battle-wall-actions/);
   assert.match(moduleSrc, /data-battle-wall-actions-reserved/);
   assert.match(moduleSrc, /grid-cols-1/);
-  assert.match(moduleSrc, /md:items-center/);
-  assert.match(moduleSrc, /md:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
+  assert.match(moduleSrc, /lg:items-center/);
+  assert.match(moduleSrc, /lg:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
   assert.match(moduleSrc, /useBattleWallRealtime\(battle\.id, realtimeActive && live\)/);
   assert.equal(moduleSrc.split("useBattleWallRealtime(").length - 1, 1);
   assert.match(effects, /pointer-events-none/);
@@ -681,7 +681,7 @@ test("Battle Wall mockup parity keeps split combatant cards, SHARE/MORE, and gen
 
   assert.equal((moduleSrc.match(/<BattleWallCombatant/g) || []).length, 2);
   assert.match(moduleSrc, /grid-cols-1/);
-  assert.match(moduleSrc, /md:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
+  assert.match(moduleSrc, /lg:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
   assert.match(combatant, /data-battle-combatant-layout="split"/);
   assert.match(combatant, /mwz-flat-card/);
   assert.match(combatant, /data-battle-combatant-bleed/);
@@ -776,13 +776,13 @@ test("Battle Wall combatant keeps art-left split on mobile instead of stacking i
   assert.match(combatant, /aspect-square/);
   assert.match(combatant, /h-0 min-h-full w-auto shrink-0 self-stretch/);
   assert.match(combatant, /data-battle-combatant-bounded="true"/);
-  assert.match(combatant, /h-auto max-h-\[22rem\]/);
+  assert.match(combatant, /h-auto min-w-0 overflow-hidden lg:max-h-\[22rem\]/);
   assert.doesNotMatch(combatant, /100vh|min-h-screen/);
   assert.match(combatant, /hidden line-clamp-2[\s\S]*md:block/);
   assert.match(combatant, /grid-cols-2/);
   assert.match(combatant, /data-battle-combatant-actions/);
   assert.match(moduleSrc, /grid-cols-1/);
-  assert.match(moduleSrc, /md:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
+  assert.match(moduleSrc, /lg:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
   assert.match(vs, /py-1/);
   assert.match(vs, /data-battle-vs-reticle="true"/);
   assert.match(effects, /max-width: 767px/);

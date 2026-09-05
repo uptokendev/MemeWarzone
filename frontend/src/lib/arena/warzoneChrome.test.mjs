@@ -23,6 +23,13 @@ function readSrc(...parts) {
   return fs.readFileSync(path.join(here, ...parts), "utf8");
 }
 
+test("Warzone chrome does not import API modules through the /api proxy path", () => {
+  const src = readSrc("./warzoneChrome.mjs");
+  assert.doesNotMatch(src, /from ["'][^"']*\/api\//);
+  assert.match(src, /QF_MIN_FIGHTS = 3/);
+  assert.match(src, /QF_SEED_SIZE = 8/);
+});
+
 test("Warzone pages share the same centered content width", () => {
   const frame = readSrc("../../components/warzone/WarzoneContent.tsx");
   const overview = readSrc("../../pages/Arena.tsx");

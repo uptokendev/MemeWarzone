@@ -40,7 +40,7 @@ function MetricBox({
       className="min-w-0 border px-1.5 py-1 md:px-2.5 md:py-1.5"
       style={{ borderColor: "var(--mwz-flat-card-border)" }}
     >
-      <div className="text-[7px] uppercase tracking-[0.14em] text-white/42 md:text-[8px] md:tracking-[0.16em]">{label}</div>
+      <div className="text-[8px] uppercase tracking-[0.14em] text-white/48 md:text-[9px] md:tracking-[0.16em]">{label}</div>
       <div
         className={cn(
           "mt-0.5 truncate font-retro text-xs leading-none tabular-nums md:text-base",
@@ -155,7 +155,7 @@ export function BattleWallCombatant({
       data-battle-combatant-bounded="true"
       data-battle-leader={isLeader ? "true" : undefined}
       className={cn(
-        "mwz-flat-card relative flex h-auto max-h-[22rem] min-w-0 overflow-hidden",
+        "mwz-flat-card relative flex h-auto min-w-0 overflow-hidden lg:max-h-[22rem]",
         isLeader && "border-orange-400/45",
         trailerLive && "opacity-95",
         trailerDone && "opacity-90 saturate-[0.85]",

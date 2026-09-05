@@ -126,11 +126,15 @@ export function TournamentFinalSalvoControls({
   }
 
   if (loading && !payload) {
-    return <div role="status" className="text-[10px] uppercase tracking-[0.16em] text-white/45">Checking Final Salvo…</div>;
+    return (
+      <div role="status" className="border border-white/10 bg-black/20 px-3 py-2 text-[10px] uppercase tracking-[0.16em] text-white/50">
+        Checking Final Salvo…
+      </div>
+    );
   }
   if (unavailable || !payload) {
     return (
-      <div role="status" data-final-salvo-runtime="unavailable" className="text-[10px] uppercase tracking-[0.16em] text-white/45">
+      <div role="status" data-final-salvo-runtime="unavailable" className="border border-white/10 bg-black/20 px-3 py-2 text-[10px] uppercase tracking-[0.16em] text-white/50">
         Final Salvo runtime unavailable
       </div>
     );
