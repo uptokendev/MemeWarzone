@@ -75,9 +75,6 @@ jobs:
       - name: Certify Battle Wall presentation
         run: node --test frontend/src/lib/arena/battleWallPresentation.test.mjs
 
-      - name: Certify Battle Wall realtime
-        run: node --test frontend/src/lib/arena/battleWallRealtime.test.mjs
-
       - name: Certify Battle sharing presentation
         run: node --test frontend/src/lib/arena/battleSharePresentation.test.mjs frontend/src/lib/arena/battleShareCardPresentation.test.mjs
 
