@@ -1,3 +1,11 @@
+function isEvmCombatant(tokenId) {
+  return /^0x[a-fA-F0-9]{40}$/.test(String(tokenId || ""));
+}
+
+function isSolanaCombatant(tokenId) {
+  return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(String(tokenId || ""));
+}
+
 export function battleBoostAvailability(battle = {}) {
   const state = String(battle?.state || "").trim().toLowerCase();
   const source = String(battle?.source || "").trim().toLowerCase();
@@ -18,10 +26,12 @@ export function battleBoostAvailability(battle = {}) {
   if (competitionGeneration !== "arena_competition_v2") {
     return { available: false, reason: "wrong_generation", competitionGeneration, tokenIds };
   }
-  if (chainId === 101 || chainId === 102 || !Number.isInteger(chainId) || chainId <= 0) {
-    return { available: false, reason: "evm_only", competitionGeneration, tokenIds };
+  if (!Number.isInteger(chainId) || chainId <= 0) {
+    return { available: false, reason: "unsupported_chain", competitionGeneration, tokenIds };
   }
-  if (tokenIds.length < 2 || tokenIds.some((tokenId) => !/^0x[a-fA-F0-9]{40}$/.test(tokenId))) {
+  const solana = chainId === 101 || chainId === 102;
+  const validCombatant = solana ? isSolanaCombatant : isEvmCombatant;
+  if (tokenIds.length < 2 || tokenIds.some((tokenId) => !validCombatant(tokenId))) {
     return { available: false, reason: "missing_combatants", competitionGeneration, tokenIds };
   }
   return { available: true, reason: null, competitionGeneration, tokenIds };
