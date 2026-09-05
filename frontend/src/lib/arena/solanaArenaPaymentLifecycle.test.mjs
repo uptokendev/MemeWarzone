@@ -61,13 +61,17 @@ test("5 unresolved payment is discoverable after simulated client remount", () =
   assert.match(migration, /sponsorship_payment_quotes_wallet_event_state_idx/);
 });
 
-test("6 unresolved quote/payment blocks a second quote/payment", () => {
+test("6 unresolved quote/payment blocks a second quote/payment including concurrent server inserts", () => {
   assert.match(boostApi, /priorState\.newPaymentAllowed !== true/);
   assert.match(boostApi, /SOLANA_BOOST_PAYMENT_UNRESOLVED/);
   assert.match(sponsorshipApi, /priorState\.newPaymentAllowed !== true/);
   assert.match(sponsorshipApi, /SPONSORSHIP_PAYMENT_UNRESOLVED/);
   assert.match(tournament, /state\.quoteId === quote\.quoteId && state\.status === "pending" && !state\.signature/);
   assert.match(sponsorship, /state\.quoteId===quote\.quoteId&&state\.status==="pending"&&!state\.signature/);
+  assert.match(migration, /arena_solana_boost_quotes_one_unresolved_uidx/);
+  assert.match(migration, /sponsorship_payment_quotes_one_unresolved_solana_uidx/);
+  assert.match(migration, /set_arena_solana_boost_operation_key/);
+  assert.match(migration, /set_sponsorship_solana_operation_key/);
 });
 
 test("7 confirmed payment is discoverable and public read itself converges receipt state", () => {
@@ -98,7 +102,7 @@ test("9 persistence and idempotent payout guards survive backend restart/reload"
   assert.match(migration, /solana_signature_last_valid_block_height/);
   assert.match(boostApi, /for update/);
   assert.match(sponsorshipApi, /for update/);
-  assert.match(sponsorshipApi, /if \(inserted\)/);
+  assert.match(sponsorshipApi, /if \(!inserted\)/);
 });
 
 test("10 Final Salvo still prohibits paid Boost and regulation receipts are timestamp-bound", () => {
