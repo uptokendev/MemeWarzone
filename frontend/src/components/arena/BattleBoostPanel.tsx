@@ -189,7 +189,7 @@ export function BattleBoostPanel({ battleId, chainId, left, right }: {
           {!v3TotalAuthoritative ? <div>Final V3 total awaiting backend authoritative-total status.</div> : null}
         </div>
       ) : null}
-      {summary?.total?.grossNativeRaw ? <div className="text-[10px] uppercase tracking-[0.16em] text-white/42">Confirmed Boost support: {formatBoostNative(summary.total.grossNativeRaw, nativeSymbol)}</div> : null}
+      {summary?.total?.grossNativeRaw ? <div className="text-[10px] uppercase tracking-[0.16em] text-white/42">Confirmed Boost support: {isSolana ? formatBoostLamports(summary.total.grossNativeRaw) : formatBoostNative(summary.total.grossNativeRaw, nativeSymbol)}</div> : null}
     </section>
   );
 }
