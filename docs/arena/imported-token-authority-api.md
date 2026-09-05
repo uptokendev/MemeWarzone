@@ -105,7 +105,7 @@ Agent 4 must use `actionPolicy` to enable/disable controls. Server enforcement r
 
 `GET /api/admin/arena/imports`
 
-Optional query: `status=review_requested|passed|needs_review|declined|stale|scanning`.
+Persisted-status query filters are `status=review_requested|passed|needs_review|declined|scanning`. `stale` is a derived eligibility outcome rather than a persisted review status; Agent 4 must read `item.eligibility.authorityOutcome === "stale"` instead of relying on a persisted-status filter.
 
 Success `200`:
 
@@ -250,7 +250,9 @@ Scanner findings carry server-side `authority`:
 - `REVIEWABLE`
 - `NON_OVERRIDABLE`
 
-At minimum these are NON_OVERRIDABLE where emitted by the scanner: not a contract, not a mint, non-transferable token behavior, honeypot sell failure, and unsafe excessive transfer-tax structure. Manual review cannot erase those findings.
+At minimum these are NON_OVERRIDABLE where emitted by the scanner: not a contract, not a mint, non-transferable token behavior, honeypot sell failure, an objectively paused token, and unsafe excessive transfer-tax structure. Manual review cannot erase those findings.
+
+Incomplete EVM trading/pool probes are REVIEWABLE uncertainty, not a pass. A safe external Solana token is not required to have a MemeWarzone/Meteora graduation pool.
 
 ## Freshness and future participation
 
