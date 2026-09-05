@@ -10,8 +10,13 @@ on:
       - "frontend/src/lib/arena/tournamentBoostClient.ts"
       - "frontend/src/lib/arena/eventSponsorshipClient.ts"
       - "frontend/src/lib/arena/solanaArenaPaymentLifecycle.test.mjs"
+      - "frontend/src/lib/arena/integratedArenaRuntimeContracts.test.mjs"
       - "frontend/api/arenaSolanaBoosts.js"
       - "frontend/api/arenaSponsorshipPublic.js"
+      - "frontend/api/lib/arenaSolanaNormalBoostAuthority.mjs"
+      - "frontend/api/lib/arenaSolanaNormalBoostAuthority.test.mjs"
+      - "frontend/api/lib/arenaBoostRuntime.mjs"
+      - "frontend/api/lib/arenaBattlePointsV3*.js"
       - "frontend/db/migrations/20260905_000001_solana_arena_payment_lifecycle.sql"
       - "frontend/scripts/check-solana-user-v0-normalization.mjs"
       - ".github/workflows/arena-solana-payment-lifecycle.yml"
@@ -44,10 +49,11 @@ jobs:
       - name: Install locked frontend dependencies
         run: npm ci --prefix frontend --no-audit --no-fund
 
-      - name: Syntax-check affected Arena APIs and recovery coordinator
+      - name: Syntax-check affected Arena APIs and recovery authority
         run: |
           node --check frontend/api/arenaSolanaBoosts.js
           node --check frontend/api/arenaSponsorshipPublic.js
+          node --check frontend/api/lib/arenaSolanaNormalBoostAuthority.mjs
           node --check frontend/src/lib/arena/solanaArenaPaymentRecoveryCoordinator.mjs
 
       - name: Enforce Solana user V0 normalization
@@ -57,6 +63,18 @@ jobs:
         env:
           DATABASE_URL: postgres://127.0.0.1/mwz_test
         run: node --test frontend/src/lib/arena/solanaArenaPaymentLifecycle.test.mjs
+
+      - name: Certify Solana Normal Battle V3 and historical recovery
+        env:
+          ARENA_BATTLE_POINTS_V3: "true"
+          ARENA_BATTLE_POINTS_V3_SETTLEMENT: "true"
+        run: node --test frontend/api/lib/arenaSolanaNormalBoostAuthority.test.mjs
+
+      - name: Test founder-approved Battle Points V3 authority
+        run: node --test frontend/api/lib/arenaBattlePointsV3.test.mjs frontend/api/lib/arenaBoostRuntime.test.mjs
+
+      - name: Test integrated Arena authority contracts
+        run: node --test frontend/src/lib/arena/integratedArenaRuntimeContracts.test.mjs
 
       - name: Test proven Solana signature recovery helper
         run: npm --prefix frontend run test:solana-confirm
