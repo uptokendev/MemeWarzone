@@ -77,7 +77,7 @@ function StandingRow({
           <span className="min-w-0 truncate">
             <span className="font-retro text-foreground">${ticker}</span>
             <span className="ml-2 text-xs text-white/45">{entry.tokenName}</span>
-            {yours ? <span className="ml-2 text-[10px] uppercase tracking-[0.14em] text-orange-300">Your token</span> : null}
+            {yours ? <span className="ml-2 text-[10px] uppercase tracking-[0.14em] text-orange-300">Your Memecoin</span> : null}
           </span>
         </span>
         <span>{Number(entry.points || 0).toLocaleString()}</span>
@@ -93,7 +93,7 @@ function StandingRow({
         <div className="flex min-w-0 items-center gap-2">
           <WarzoneTokenMark imageUrl={entry.imageUrl} symbol={entry.symbol} name={entry.tokenName} size="sm" />
           <div className="min-w-0">
-            <div className="text-[10px] uppercase tracking-[0.16em] text-white/42">#{entry.rank}{yours ? " · Your token" : ""}</div>
+            <div className="text-[10px] uppercase tracking-[0.16em] text-white/42">#{entry.rank}{yours ? " · Your Memecoin" : ""}</div>
             <div className="truncate font-retro text-foreground">${ticker}</div>
             <div className="truncate text-[11px] uppercase tracking-[0.12em] text-white/50">{entry.tokenName}</div>
           </div>
@@ -120,6 +120,7 @@ const PostGradLeague = () => {
   const quarterFinals = presentQuarterFinalField(season, board.ranked);
   const yours = presentOwnedLeagueTokens(board.ranked, ownedTokenIds);
   const ownedKeys = new Set(yours.map((entry) => tokenIdentityKey(entry.tokenId)));
+  const quarterFinalOwned = presentOwnedLeagueTokens(quarterFinals.field, ownedTokenIds);
   const empty = presentWarzoneLeagueEmpty(source);
   const first = board.podium.find((entry) => entry.rank === 1) || board.podium[0];
   const second = board.podium.find((entry) => entry.rank === 2) || board.podium[1];
@@ -200,7 +201,7 @@ const PostGradLeague = () => {
                         <div className="text-[10px] uppercase tracking-[0.16em] text-white/45">#{entry.rank}</div>
                         <div className="truncate font-black text-foreground">${String(entry.symbol || "").replace(/^\$/, "")}</div>
                         <div className="truncate text-[11px] uppercase tracking-[0.12em] text-white/50">{entry.tokenName}</div>
-                        {yoursToken ? <div className="mt-1 text-[10px] uppercase tracking-[0.14em] text-orange-300">Your token</div> : null}
+                        {yoursToken ? <div className="mt-1 text-[10px] uppercase tracking-[0.14em] text-orange-300">Your Memecoin</div> : null}
                       </div>
                     </div>
                   </TokenLink>
@@ -236,6 +237,36 @@ const PostGradLeague = () => {
                   <div className="font-retro">{Number(quarterFinals.cut.outside.points || 0).toLocaleString()} PTS</div>
                 </div>
               </TokenLink>
+            </section>
+          ) : null}
+          {quarterFinalOwned.length ? (
+            <section data-warzone-mwl-your-tokens="true" data-mwl-qf-your-memecoin="true">
+              <div className="mb-2 text-[10px] uppercase tracking-[0.22em] text-white/45">Your Memecoin</div>
+              {quarterFinalOwned.map((entry) => (
+                <TokenLink key={`qf-yours-${entry.tokenId}`} tokenId={entry.tokenId}>
+                  <div
+                    className="flex items-center justify-between gap-3 border-b py-3"
+                    style={{ borderColor: "var(--mwz-flat-card-border)" }}
+                    data-mwl-your-rank={entry.rank}
+                    data-mwl-your-token="true"
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="w-10 shrink-0 font-retro text-white/60">#{entry.rank}</div>
+                      <WarzoneTokenMark imageUrl={(entry as { imageUrl?: string }).imageUrl} symbol={entry.symbol} name={entry.tokenName} />
+                      <div className="min-w-0">
+                        <div className="truncate font-black text-foreground">${String(entry.symbol || "").replace(/^\$/, "")}</div>
+                        <div className="truncate text-[11px] uppercase tracking-[0.12em] text-white/50">{entry.tokenName}</div>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="font-retro">{Number(entry.points || 0).toLocaleString()} PTS</div>
+                      <div className="text-xs text-white/50">
+                        {entry.wins}W / {entry.losses}L
+                      </div>
+                    </div>
+                  </div>
+                </TokenLink>
+              ))}
             </section>
           ) : null}
           <div className="flex flex-wrap gap-3">
@@ -339,7 +370,7 @@ const PostGradLeague = () => {
 
           {yours.length ? (
             <section data-warzone-mwl-your-tokens="true">
-              <div className="mb-2 text-[10px] uppercase tracking-[0.22em] text-white/45">Your tokens</div>
+              <div className="mb-2 text-[10px] uppercase tracking-[0.22em] text-white/45">Your Memecoin</div>
               {yours.map((entry) => (
                 <TokenLink key={`yours-${entry.tokenId}`} tokenId={entry.tokenId}>
                   <div
