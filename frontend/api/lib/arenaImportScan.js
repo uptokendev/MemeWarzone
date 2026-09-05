@@ -17,6 +17,26 @@ const ROUTER_ABI = [
 
 const ZERO = ethers.ZeroAddress;
 
+export const ARENA_IMPORT_SCAN_VERSION = "arena-import-scan-v2";
+export const FINDING_AUTHORITY = Object.freeze({
+  REVIEWABLE: "REVIEWABLE",
+  NON_OVERRIDABLE: "NON_OVERRIDABLE",
+});
+export const IMPORT_SCAN_STATUS = Object.freeze({
+  PASSED: "passed",
+  NEEDS_REVIEW: "needs_review",
+  HARD_FAILURE: "declined",
+  STALE: "stale",
+});
+
+const NON_OVERRIDABLE_CODES = new Set([
+  "not_a_contract",
+  "not_a_mint",
+  "honeypot_sell_failed",
+  "non_transferable",
+  "transfer_tax_too_high",
+]);
+
 function env(...keys) {
   for (const key of keys) {
     const value = String(process.env[key] || "").trim();
@@ -44,14 +64,60 @@ function topazAddresses(chainId) {
   };
 }
 
-function decideStatus({ reasons, warnings }) {
-  if (reasons.includes("not_a_contract") || reasons.includes("not_a_mint") || reasons.includes("honeypot_sell_failed") || reasons.includes("non_transferable")) {
-    return "declined";
+export function classifyFinding(code, detail = null) {
+  const normalized = String(code || "").trim();
+  return {
+    code: normalized,
+    authority: NON_OVERRIDABLE_CODES.has(normalized)
+      ? FINDING_AUTHORITY.NON_OVERRIDABLE
+      : FINDING_AUTHORITY.REVIEWABLE,
+    ...(detail ? { detail } : {}),
+  };
+}
+
+export function classifyScan({ reasons = [], warnings = [] } = {}) {
+  const findings = [...new Set(reasons)].map((code) => classifyFinding(code));
+  const hardFindings = findings.filter((finding) => finding.authority === FINDING_AUTHORITY.NON_OVERRIDABLE);
+  const reviewableFindings = findings.filter((finding) => finding.authority === FINDING_AUTHORITY.REVIEWABLE);
+  const reviewWarnings = new Set([
+    "owner_present",
+    "mint_authority_present",
+    "freeze_authority_present",
+    "no_topaz_pool",
+    "transfer_fee",
+    "permanent_delegate",
+  ]);
+  if (hardFindings.length) {
+    return { status: IMPORT_SCAN_STATUS.HARD_FAILURE, findings, hardFindings, reviewableFindings };
   }
-  if (reasons.length || warnings.includes("owner_present") || warnings.includes("mint_authority_present") || warnings.includes("freeze_authority_present") || warnings.includes("no_topaz_pool") || warnings.includes("no_meteora_pool") || warnings.includes("transfer_fee")) {
-    return "needs_review";
+  if (reviewableFindings.length || warnings.some((warning) => reviewWarnings.has(warning))) {
+    return { status: IMPORT_SCAN_STATUS.NEEDS_REVIEW, findings, hardFindings, reviewableFindings };
   }
-  return "passed";
+  return { status: IMPORT_SCAN_STATUS.PASSED, findings, hardFindings, reviewableFindings };
+}
+
+function finalizeScan({ name = null, symbol = null, scan = {}, scannedAt = new Date().toISOString() }) {
+  const warnings = Array.isArray(scan.warnings) ? scan.warnings : [];
+  const reasons = Array.isArray(scan.reasons) ? scan.reasons : [];
+  const classification = classifyScan({ reasons, warnings });
+  return {
+    status: classification.status,
+    name,
+    symbol,
+    scanVersion: ARENA_IMPORT_SCAN_VERSION,
+    scannedAt,
+    scan: {
+      ...scan,
+      ok: classification.status === IMPORT_SCAN_STATUS.PASSED,
+      warnings,
+      reasons,
+      findings: classification.findings,
+      hardFindings: classification.hardFindings,
+      reviewableFindings: classification.reviewableFindings,
+      scanVersion: ARENA_IMPORT_SCAN_VERSION,
+      scannedAt,
+    },
+  };
 }
 
 async function probeOwner(contract) {
@@ -106,33 +172,17 @@ export async function scanEvm(chainId, token) {
     const provider = new ethers.JsonRpcProvider(rpcUrl(chainId), Number(chainId));
     const code = await provider.getCode(token);
     if (!code || code === "0x") {
-      return { status: "declined", name: null, symbol: null, scan: { ok: false, reasons: ["not_a_contract"] } };
+      return finalizeScan({ scan: { reasons: ["not_a_contract"], warnings } });
     }
     const contract = new ethers.Contract(token, ERC20_ABI, provider);
     let name = null;
     let symbol = null;
     let decimals = null;
     let totalSupply = null;
-    try {
-      name = String(await contract.name());
-    } catch {
-      warnings.push("name_unreadable");
-    }
-    try {
-      symbol = String(await contract.symbol());
-    } catch {
-      warnings.push("symbol_unreadable");
-    }
-    try {
-      decimals = Number(await contract.decimals());
-    } catch {
-      warnings.push("decimals_unreadable");
-    }
-    try {
-      totalSupply = (await contract.totalSupply()).toString();
-    } catch {
-      warnings.push("supply_unreadable");
-    }
+    try { name = String(await contract.name()); } catch { warnings.push("name_unreadable"); }
+    try { symbol = String(await contract.symbol()); } catch { warnings.push("symbol_unreadable"); }
+    try { decimals = Number(await contract.decimals()); } catch { warnings.push("decimals_unreadable"); }
+    try { totalSupply = (await contract.totalSupply()).toString(); } catch { warnings.push("supply_unreadable"); }
     const owner = await probeOwner(contract);
     if (owner) warnings.push("owner_present");
     try {
@@ -156,13 +206,10 @@ export async function scanEvm(chainId, token) {
       if (!pool.buyQuoteOk) warnings.push("topaz_buy_quote_failed");
     }
 
-    const status = decideStatus({ reasons, warnings });
-    return {
-      status,
+    return finalizeScan({
       name,
       symbol,
       scan: {
-        ok: status === "passed",
         decimals,
         totalSupply,
         owner,
@@ -172,9 +219,9 @@ export async function scanEvm(chainId, token) {
         warnings,
         reasons,
       },
-    };
+    });
   } catch (error) {
-    return { status: "needs_review", name: null, symbol: null, scan: { ok: false, reasons: ["rpc_failed"], detail: String(error?.message || error) } };
+    return finalizeScan({ scan: { reasons: ["rpc_failed"], warnings, detail: String(error?.message || error) } });
   }
 }
 
@@ -185,9 +232,8 @@ export async function scanSolana(token) {
     const parsed = await connection.getParsedAccountInfo(pubkey);
     const data = parsed?.value?.data;
     const info = data && typeof data === "object" && "parsed" in data ? data.parsed?.info || {} : null;
-    if (!info) {
-      return { status: "declined", name: null, symbol: null, scan: { ok: false, reasons: ["not_a_mint"] } };
-    }
+    if (!info) return finalizeScan({ scan: { reasons: ["not_a_mint"], warnings: [] } });
+
     const warnings = [];
     const reasons = [];
     const mintAuthority = info.mintAuthority ? String(info.mintAuthority) : null;
@@ -202,31 +248,28 @@ export async function scanSolana(token) {
         const bps = Number(ext?.state?.newerTransferFee?.transferFeeBasisPoints ?? ext?.state?.transferFeeBasisPoints ?? 0);
         if (bps > 1000) reasons.push("transfer_tax_too_high");
       }
-      if (extType.includes("nontransferable") || extType.includes("defaultaccountstate")) {
-        reasons.push("non_transferable");
-      }
+      if (extType.includes("nontransferable") || extType.includes("defaultaccountstate")) reasons.push("non_transferable");
       if (extType.includes("permanentdelegate")) warnings.push("permanent_delegate");
     }
     const supply = info.supply != null ? String(info.supply) : null;
     const decimals = info.decimals != null ? Number(info.decimals) : null;
     if (decimals == null) reasons.push("mint_decimals_unreadable");
-    warnings.push("no_meteora_pool");
-    const status = decideStatus({ reasons, warnings });
-    return {
-      status,
-      name: null,
-      symbol: null,
+
+    // External Arena imports are not required to have graduated through MemeWarzone
+    // or to have a Meteora graduation pool. Pool provenance is intentionally not an
+    // eligibility finding; genuine mint/token safety findings above remain authoritative.
+    return finalizeScan({
       scan: {
-        ok: status === "passed",
         decimals,
         totalSupply: supply,
         mintAuthority,
         freezeAuthority,
         warnings,
         reasons,
+        poolProvenance: "external_not_required",
       },
-    };
+    });
   } catch (error) {
-    return { status: "needs_review", name: null, symbol: null, scan: { ok: false, reasons: ["solana_rpc_failed"], detail: String(error?.message || error) } };
+    return finalizeScan({ scan: { reasons: ["solana_rpc_failed"], warnings: [], detail: String(error?.message || error) } });
   }
 }
