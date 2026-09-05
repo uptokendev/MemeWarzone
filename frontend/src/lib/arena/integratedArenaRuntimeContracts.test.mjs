@@ -31,7 +31,9 @@ test("Normal Battle Boost client matches merged EVM runtime and never ingests co
   assert.match(battleClient, /quote\.value\.booster/);
   assert.doesNotMatch(battleClient, /boosts\/confirm/);
   assert.match(battleApi, /arena_battle_boost_quote/);
-  assert.match(battleApi, /boost_hyperbolic_100_v1/);
+  assert.match(battleApi, /BATTLE_POINTS_V3_CONFIG/);
+  assert.match(battleApi, /calculateBattlePointsV3Boost/);
+  assert.doesNotMatch(battleApi, /founder_pending|boost_curve_founder_pending/);
 });
 
 test("Vote Tournament Free Vote remains backend-authoritative and regulation-only", () => {
@@ -54,7 +56,7 @@ test("Vote Tournament paid Boost consumes EVM and frozen Solana runtime without 
   assert.match(tournamentBoostApi, /prizeBps: 9000, protocolBps: 1000, leagueBps: 0/);
   assert.match(tournamentBoostApi, /Boost is disabled during Final Salvo/);
   assert.match(solanaBoostApi, /pointsPerBoost: 2/);
-  assert.match(solanaBoostApi, /TOURNAMENT_BOOST_FINAL_SALVO/);
+  assert.match(solanaBoostApi, /FINAL_SALVO_BOOST_DISABLED/);
   assert.match(solanaBoostApi, /verifySolanaBoostPayment/);
   assert.match(solanaBrowser, /transaction\.accounts\.map|envelope\.accounts\.map/);
   assert.doesNotMatch(solanaBrowser, /findProgramAddress|derive.*Pda|verifySolanaBoostPayment/);
