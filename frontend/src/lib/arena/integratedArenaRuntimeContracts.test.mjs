@@ -54,7 +54,7 @@ test("Vote Tournament paid Boost consumes EVM and frozen Solana runtime without 
   assert.match(tournamentBoostApi, /prizeBps: 9000, protocolBps: 1000, leagueBps: 0/);
   assert.match(tournamentBoostApi, /Boost is disabled during Final Salvo/);
   assert.match(solanaBoostApi, /pointsPerBoost: 2/);
-  assert.match(solanaBoostApi, /TOURNAMENT_BOOST_FINAL_SALVO/);
+  assert.match(solanaBoostApi, /FINAL_SALVO_BOOST_DISABLED/);
   assert.match(solanaBoostApi, /verifySolanaBoostPayment/);
   assert.match(solanaBrowser, /transaction\.accounts\.map|envelope\.accounts\.map/);
   assert.doesNotMatch(solanaBrowser, /findProgramAddress|derive.*Pda|verifySolanaBoostPayment/);
