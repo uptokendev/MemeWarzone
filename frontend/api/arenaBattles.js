@@ -27,6 +27,7 @@ import {
   calculateMatchQuality,
   recommendMatchCandidates,
 } from "./lib/arenaMatchQuality.js";
+import { evaluateImportedCompetitionEligibility } from "./lib/arenaImportEligibility.js";
 import { advanceTournamentFromBattle } from "./arenaTournaments.js";
 import { solanaLiveTransition, solanaMatchedLifecyclePatch, solanaMayGoLive } from "./lib/arenaBattleLive.js";
 import { captureLiveBaselines } from "./lib/arenaBattleMetrics.js";
@@ -63,7 +64,8 @@ const NATIVE_COIN_SELECT = `c.chain_id, c.campaign_address, c.token_address, c.c
 const NATIVE_COIN_FROM = `from public.campaigns c
        left join public.market_stats ms on ms.chain_id = c.chain_id and ms.campaign_address = c.campaign_address
        left join public.token_stats ts on ts.chain_id = c.chain_id and ts.campaign_address = c.campaign_address`;
-const IMPORT_COIN_SELECT = `chain_id, token_address, owner_wallet as creator_address, name, symbol, status, scan_json, created_at`;
+const IMPORT_COIN_SELECT = `chain_id, token_address, owner_wallet as creator_address, name, symbol, status, scan_json,
+        scan_version, scanned_at, evidence_version, state_version, created_at, updated_at`;
 
 function nowIso() {
   return new Date().toISOString();
@@ -431,8 +433,20 @@ async function statusFor(coin) {
       unavailableReason: waiting ? "already_waiting" : "already_in_battle",
     };
   }
-  if (coin.origin === "import" && coin.status !== "passed") {
-    return { ...base, eligibility: false, currentState: "unavailable", battleState: null, battleId: null, openForBattleState: "not_open", unavailableReason: "import_not_approved" };
+  if (coin.origin === "import") {
+    const authority = evaluateImportedCompetitionEligibility(coin);
+    if (!authority.eligible) {
+      return {
+        ...base,
+        eligibility: false,
+        currentState: "unavailable",
+        battleState: null,
+        battleId: null,
+        openForBattleState: "not_open",
+        unavailableReason: authority.code,
+        importEligibility: authority,
+      };
+    }
   }
   if (coin.origin !== "import" && !coin.graduated_at_chain) {
     return { ...base, eligibility: false, currentState: "unavailable", battleState: null, battleId: null, openForBattleState: "not_open", unavailableReason: "bonding_not_graduated" };
@@ -443,7 +457,16 @@ async function statusFor(coin) {
   if (coin.origin !== "import" && coin.support_enabled === false) {
     return { ...base, eligibility: false, currentState: "unavailable", battleState: null, battleId: null, openForBattleState: "not_open", unavailableReason: "campaign_unsupported" };
   }
-  return { ...base, eligibility: true, currentState: "eligible", battleState: null, battleId: null, openForBattleState: "not_open", unavailableReason: null };
+  return {
+    ...base,
+    eligibility: true,
+    currentState: "eligible",
+    battleState: null,
+    battleId: null,
+    openForBattleState: "not_open",
+    unavailableReason: null,
+    importEligibility: coin.origin === "import" ? evaluateImportedCompetitionEligibility(coin) : null,
+  };
 }
 
 async function insertBattle(fields) {
@@ -705,6 +728,7 @@ async function eligibleRecommendationCoins(chainId, limit = 120) {
     deduped.set(tokenId, { ...row, origin: "native" });
   }
   for (const row of importRows.rows) {
+    if (!evaluateImportedCompetitionEligibility(row).eligible) continue;
     const tokenId = ident(row.token_address, chainId);
     if (!tokenId || deduped.has(tokenId)) continue;
     deduped.set(tokenId, {
@@ -735,6 +759,7 @@ async function tryAutoMatch(openBattle, openerCoin) {
   const scored = [];
   for (const row of candidates) {
     const rivalCoin = await coinByIdentity(chainId, row.challenger_token);
+    if (rivalCoin?.origin === "import" && !evaluateImportedCompetitionEligibility(rivalCoin).eligible) continue;
     const hydratedRival = rivalCoin ? await hydrateMatchCoin(rivalCoin) : null;
     const rivalProfile = hydratedRival
       ? coinMatchProfile(hydratedRival)
