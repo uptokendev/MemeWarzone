@@ -74,6 +74,9 @@ jobs:
       - name: Test feed and Token Details chain isolation
         run: npm --prefix frontend run test:feed-isolation
 
+      - name: Test imported token manual review UX
+        run: node --test frontend/src/lib/arena/importAuditPresentation.test.mjs
+
       - name: Build public application
         env:
           VITE_ENABLE_WAR_ROOM: "true"
