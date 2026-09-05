@@ -7,6 +7,7 @@ import arenaEvents from "./arenaEvents.js";
 import arenaFinalSalvo from "./arenaFinalSalvo.js";
 import arenaImports from "./arenaImports.js";
 import arenaEventSponsorshipAuthority from "./arenaEventSponsorshipAuthority.js";
+import arenaEventSponsorshipRecovery from "./arenaEventSponsorshipRecovery.js";
 import arenaTournaments from "./arenaTournaments.js";
 import arenaTournamentBoosts from "./arenaTournamentBoosts.js";
 import arenaTournamentVotes from "./arenaTournamentVotes.js";
@@ -30,7 +31,11 @@ const ROUTES = [
   { pattern: /^\/arena\/battles\/[^/]+\/v3-scoring-lock$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaBattlePointsV3Admin },
   { pattern: /^\/arena\/battles(?:\/.*)?$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaBattles },
   { pattern: /^\/arena\/imports(?:\/.*)?$/, flag: "POSTGRAD_ARENA_IMPORTS_ENABLED", handler: arenaImports },
-  // Warzone Event Sponsorship is authoritative here. Advertising sponsorship routes below remain separate.
+  // Payment confirmation/recovery is quote-bound and remains recoverable after wall-clock quote expiry.
+  { pattern: /^\/arena\/sponsorships\/(?:confirm|solana-submission|solana-expire|solana-payment)$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: arenaEventSponsorshipRecovery },
+  { pattern: /^\/arena\/sponsorships\/payments\/[^/]+$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: arenaEventSponsorshipRecovery },
+  { pattern: /^\/arena\/sponsorships\/[^/]+\/(?:state|solana-payment-state)$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: arenaEventSponsorshipRecovery },
+  // All other Warzone Event Sponsorship endpoints run through authoritative event/application gating.
   { pattern: /^\/arena\/sponsorships(?:\/.*)?$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: arenaEventSponsorshipAuthority },
   { pattern: /^\/arena\/tournaments\/v2\/(?:buy-in-quote|create)$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaVoteTournamentSetup },
   { pattern: /^\/arena\/tournaments\/[^/]+\/(?:v2-buy-in-receipt|buy-in-receipt)$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaVoteTournamentSetup },
