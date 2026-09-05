@@ -31,11 +31,12 @@ test("confirmed quote is unique so repeated confirmation cannot double-credit ev
   assert.match(sql, /where status = 'confirmed'/);
 });
 
-test("database enforces exact 70\/20\/10 conservation", async () => {
+test("database enforces exact 70\/20\/10 conservation with integer-native remainder to prize", async () => {
   const sql = await readFile(migrationUrl, "utf8");
   assert.match(sql, /prize_native_raw \+ marketing_native_raw \+ protocol_native_raw = gross_native_raw/);
-  assert.match(sql, /marketing_native_raw = \(gross_native_raw \* 2000\) \/ 10000/);
-  assert.match(sql, /protocol_native_raw = \(gross_native_raw \* 1000\) \/ 10000/);
+  assert.match(sql, /marketing_native_raw = floor\(\(gross_native_raw \* 2000\) \/ 10000\)/);
+  assert.match(sql, /protocol_native_raw = floor\(\(gross_native_raw \* 1000\) \/ 10000\)/);
+  assert.match(sql, /prize_native_raw = gross_native_raw - floor\(\(gross_native_raw \* 2000\) \/ 10000\) - floor\(\(gross_native_raw \* 1000\) \/ 10000\)/);
 });
 
 test("Solana recovery path returns an existing confirmed payment idempotently", async () => {
