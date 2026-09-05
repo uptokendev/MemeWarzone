@@ -34,6 +34,7 @@ const NON_OVERRIDABLE_CODES = new Set([
   "not_a_mint",
   "honeypot_sell_failed",
   "non_transferable",
+  "paused",
   "transfer_tax_too_high",
 ]);
 
@@ -86,6 +87,13 @@ export function classifyScan({ reasons = [], warnings = [] } = {}) {
     "no_topaz_pool",
     "transfer_fee",
     "permanent_delegate",
+    // A probe that did not run or did not produce a trustworthy trade result is
+    // uncertainty, never evidence that an external EVM token is safe.
+    "topaz_env_missing",
+    "getPool_failed",
+    "topaz_buy_quote_failed",
+    "supply_unreadable",
+    "zero_supply",
   ]);
   if (hardFindings.length) {
     return { status: IMPORT_SCAN_STATUS.HARD_FAILURE, findings, hardFindings, reviewableFindings };
