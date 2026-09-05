@@ -10,6 +10,7 @@ const targets = [
   "src/lib/solanaTradeV1.ts",
   "src/lib/solanaMeteoraTrade.ts",
   "src/lib/solanaArenaV0.ts",
+  "src/lib/arena/solanaArenaBrowserTransaction.ts",
   "src/components/token/UpvoteDialog.tsx",
 ];
 
@@ -27,6 +28,7 @@ const required = new Map([
   ["src/lib/solanaTradeV1.ts", "compileLaunchpadV0WithLatestBlockhash"],
   ["src/lib/solanaMeteoraTrade.ts", "compileSolanaUserV0WithLatestBlockhash"],
   ["src/lib/solanaArenaV0.ts", "submitArenaUserV0"],
+  ["src/lib/arena/solanaArenaBrowserTransaction.ts", "compileSolanaUserV0WithLatestBlockhash"],
   ["src/components/token/UpvoteDialog.tsx", "submitSolanaUpvoteV0"],
 ]);
 
@@ -106,6 +108,23 @@ for (const marker of [
   "instructions?: TransactionInstruction[]",
 ]) {
   if (!arenaExecutor.includes(marker)) failures.push(`src/lib/solanaArenaV0.ts: missing ${marker}`);
+}
+
+const arenaMoneyExecutor = fs.readFileSync(path.join(root, "src/lib/arena/solanaArenaBrowserTransaction.ts"), "utf8");
+for (const marker of [
+  "compileSolanaUserV0WithLatestBlockhash",
+  "simulateSolanaUserV0OrThrow",
+  "assertSolanaUserV0Intent",
+  "confirmLaunchpadSignature",
+  "LaunchpadSignatureExpiredError",
+  "ARENA_MONEY_V2_PROGRAM_ID",
+  "rewardsTreasuryProgramId",
+  "sendRawTransaction",
+]) {
+  if (!arenaMoneyExecutor.includes(marker)) failures.push(`src/lib/arena/solanaArenaBrowserTransaction.ts: missing ${marker}`);
+}
+if (/\.confirmTransaction\s*\(/.test(arenaMoneyExecutor)) {
+  failures.push("src/lib/arena/solanaArenaBrowserTransaction.ts: direct confirmTransaction cannot be Arena Money final authority");
 }
 
 if (failures.length) {
