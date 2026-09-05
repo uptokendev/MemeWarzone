@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "frontend/api/arenaEventSponsorshipAuthority.js"
+      - "frontend/api/arenaEventSponsorshipRecovery.js"
       - "frontend/api/arenaSponsorshipPublic.js"
       - "frontend/api/arenaSponsorships.js"
       - "frontend/api/postgrad.js"
@@ -37,6 +38,7 @@ jobs:
           node --check api/lib/eventSponsorshipAuthority.mjs
           node --check api/lib/eventSponsorshipLifecycle.mjs
           node --check api/arenaEventSponsorshipAuthority.js
+          node --check api/arenaEventSponsorshipRecovery.js
           node --check api/postgrad.js
       - name: Authority invariants
         run: node --test api/lib/eventSponsorshipAuthority.test.mjs api/lib/eventSponsorshipSeparation.test.mjs
