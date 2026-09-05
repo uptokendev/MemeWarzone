@@ -5,7 +5,7 @@ import { badMethod, json, readJson } from "../server/http.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { battlePoolId } from "./lib/arenaWarPoolEscrow.js";
 import { tournamentPoolIdV2 } from "./lib/arenaTournamentBuyInV2.mjs";
-import { findTournamentVoteMatch, resolveTournamentVoteMatch, tournamentVoteTokensEqual } from "./lib/arenaTournamentVoteRuntime.mjs";
+import { resolveTournamentVoteMatch, tournamentVoteTokensEqual } from "./lib/arenaTournamentVoteRuntime.mjs";
 import { boostSummary, serializeBoostSummary } from "./lib/arenaBoostRuntime.mjs";
 import { readCompetitionPoolV2 } from "./lib/solanaArenaMoneyV2Read.js";
 import {
@@ -104,6 +104,37 @@ async function tournamentContext(route, targetToken) {
 
 async function buildContext(route, targetToken) {
   return route.product === "normal_battle" ? normalContext(route, targetToken) : tournamentContext(route, targetToken);
+}
+
+async function tournamentPaymentContext(route, quote) {
+  const tournament = await loadTournament(route.tournamentId);
+  if (!tournament) return { error: "Tournament not found", status: 404 };
+  const chainId = Number(tournament.chain_id);
+  if (!validateSolanaChain(chainId)) return { error: "Tournament is not on a Solana Arena chain", status: 409 };
+  if (tournament.battle_mode !== "vote" || Number(tournament.round_duration_hours) !== 24 || tournament.competition_generation !== "arena_competition_v2") {
+    return { error: "Stored Tournament Boost no longer matches Vote Tournament authority", status: 409, code: "SOLANA_BOOST_STATE_CHANGED" };
+  }
+  let token;
+  try { token = assertSolanaPubkey(quote.target_token, "targetToken"); } catch (error) { return { error: error.message, status: 400 }; }
+  const match = resolveTournamentVoteMatch({ tournament, matchRef: route.matchRef, selectedToken: token });
+  if (!match.ok) return { error: `Stored Tournament Boost matchup is invalid: ${match.reason}`, status: 409, code: "SOLANA_BOOST_STATE_CHANGED" };
+  if (String(match.matchId) !== String(quote.match_id) || Number(match.roundNumber) !== Number(quote.round_number) || String(match.battleId) !== String(quote.battle_id)) {
+    return { error: "Stored Tournament Boost quote no longer matches its authoritative matchup", status: 409, code: "SOLANA_BOOST_STATE_CHANGED" };
+  }
+  const battle = await loadBattle(match.battleId);
+  if (!battle || battle.battle_mode !== "vote" || battle.source !== "tournament" || String(battle.tournament_id || "") !== String(route.tournamentId) || battle.competition_generation !== "arena_competition_v2") {
+    return { error: "Stored Tournament Boost battle no longer matches tournament authority", status: 409, code: "SOLANA_BOOST_STATE_CHANGED" };
+  }
+  const side = tournamentVoteTokensEqual(token, match.tokenA) ? "left" : tournamentVoteTokensEqual(token, match.tokenB) ? "right" : null;
+  if (!side || side !== quote.side) return { error: "Stored Tournament Boost target side changed", status: 409, code: "SOLANA_BOOST_STATE_CHANGED" };
+  const competitionId = tournamentPoolIdV2(route.tournamentId);
+  if (competitionId.toLowerCase() !== String(quote.competition_id).toLowerCase()) return { error: "Stored Tournament Boost competition changed", status: 409, code: "SOLANA_BOOST_STATE_CHANGED" };
+  return { tournament, battle, match, chainId, targetToken: token, side, competitionId, pointsPerBoost: 2 };
+}
+
+async function paymentContext(route, quote) {
+  if (route.product === "vote_tournament") return tournamentPaymentContext(route, quote);
+  return normalContext(route, quote.target_token);
 }
 
 async function createQuote(req, res, route) {
@@ -210,10 +241,10 @@ async function confirmPayment(req, res, route) {
     });
     if (!auth || auth.legacy) { await client.query("rollback"); return auth?.legacy ? json(res, 401, { ok: false, error: "Signed wallet authentication is required" }) : undefined; }
 
-    const context = await buildContext(route, quote.target_token);
+    const context = await paymentContext(route, quote);
     if (context.error || String(context.battle.id) !== String(quote.battle_id) || context.side !== quote.side || context.competitionId.toLowerCase() !== String(quote.competition_id).toLowerCase()) {
       await client.query("rollback");
-      return json(res, 409, { ok: false, error: context.error || "Boost quote no longer matches authoritative Arena state", code: context.code || "SOLANA_BOOST_STATE_CHANGED" });
+      return json(res, context.status || 409, { ok: false, error: context.error || "Boost quote no longer matches authoritative Arena state", code: context.code || "SOLANA_BOOST_STATE_CHANGED" });
     }
     let proof;
     try {
