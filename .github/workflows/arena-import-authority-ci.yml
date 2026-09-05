@@ -13,6 +13,10 @@ on:
       - "frontend/api/lib/arenaEligibility.js"
       - "frontend/api/lib/arenaImport*.js"
       - "frontend/api/lib/arenaImport*.mjs"
+      - "frontend/src/lib/arenaImports.ts"
+      - "frontend/src/lib/arena/importAuditPresentation.mjs"
+      - "frontend/src/lib/arena/importAuditPresentation.test.mjs"
+      - "frontend/src/pages/ImportedTokenDetails.tsx"
       - "db/migrations/*arena_import*"
       - "docs/arena/imported-token-authority-api.md"
       - ".github/workflows/arena-import-authority-ci.yml"
@@ -55,9 +59,13 @@ jobs:
           node --check frontend/api/lib/arenaEligibility.js
           node --check frontend/api/lib/arenaImportEligibility.js
           node --check frontend/api/lib/arenaImportScan.js
+          node --check frontend/src/lib/arena/importAuditPresentation.mjs
 
-      - name: Run imported-token authority certification
+      - name: Run imported-token backend authority certification
         run: node --test frontend/api/lib/arenaImportAuthority.test.mjs frontend/api/lib/arenaImportAuthorityContract.test.mjs
+
+      - name: Run focused public imported-token UX certification
+        run: node --test frontend/src/lib/arena/importAuditPresentation.test.mjs
 
       - name: Check frontend API import graph
         run: npm --prefix frontend run check:api-imports

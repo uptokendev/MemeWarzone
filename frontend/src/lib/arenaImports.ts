@@ -2,6 +2,24 @@ import { apiFetch } from "@/lib/apiBase";
 import { appendAuthToSearchParams, type WalletActionAuthPayload } from "@/lib/walletActionAuth";
 
 export type ArenaImportStatus = "scanning" | "passed" | "needs_review" | "declined";
+export type ArenaImportAuthorityOutcome = "passed" | "needs_review" | "hard_failure" | "stale" | "rejected" | "not_approved";
+
+export type ArenaImportEligibility = {
+  eligible: boolean;
+  code?: string | null;
+  status?: string | null;
+  authorityOutcome: ArenaImportAuthorityOutcome;
+  stateVersion?: number | null;
+  freshness?: {
+    fresh?: boolean;
+    stale?: boolean;
+    scanVersion?: string | null;
+    expectedScanVersion?: string | null;
+    scannedAt?: string | null;
+    ageMs?: number | null;
+    maxAgeMs?: number | null;
+  } | null;
+};
 
 export type ArenaImportItem = {
   id: string;
@@ -19,6 +37,11 @@ export type ArenaImportItem = {
   metadataUpdatedAt?: string | null;
   status: ArenaImportStatus;
   scan?: Record<string, unknown>;
+  scanVersion?: string | null;
+  scannedAt?: string | null;
+  evidenceVersion?: string | null;
+  stateVersion?: number | null;
+  eligibility?: ArenaImportEligibility | null;
   reviewRequestedAt?: string | null;
   reviewReason?: string | null;
 };
