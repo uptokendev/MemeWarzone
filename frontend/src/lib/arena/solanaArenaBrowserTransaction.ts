@@ -57,7 +57,7 @@ export type SolanaArenaPaymentRecovery<T> = {
   /** Stable logical operation key used only for same-tab serialization. */
   key: string;
   metadata: Record<string, string>;
-  /** Durable server lookup. Browser memory/localStorage is never payment authority. */
+  /** Durable server lookup. Browser persistence is never payment authority. */
   lookup: () => Promise<SolanaArenaServerRecoveryState>;
   /** Persist the wallet-signed exact signature before broadcast. */
   register: (pending: SolanaArenaPendingPayment) => Promise<void>;
