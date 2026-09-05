@@ -1,7 +1,11 @@
 import { Contract, formatEther, type JsonRpcSigner } from "ethers";
 
 import { apiFetch } from "@/lib/apiBase";
-import { sendSolanaArenaInstruction, type SolanaArenaInstructionEnvelope } from "@/lib/arena/solanaArenaBrowserTransaction";
+import {
+  sendSolanaArenaInstruction,
+  type SolanaArenaInstructionEnvelope,
+  type SolanaArenaPendingPayment,
+} from "@/lib/arena/solanaArenaBrowserTransaction";
 import { signSolanaMessage } from "@/lib/solanaWallet";
 import { signWalletAction } from "@/lib/walletActionAuth";
 
@@ -193,29 +197,67 @@ export async function submitTournamentBoost(input: { signer: JsonRpcSigner; quot
   return { txHash: String(tx.hash || receipt?.hash || ""), receipt };
 }
 
+async function reconcileSolanaTournamentBoost(input: {
+  tournamentId: string;
+  matchRef: string;
+  wallet: string;
+  chainId: number;
+  pending: SolanaArenaPendingPayment;
+}): Promise<SolanaTournamentBoostPayment | null> {
+  const quoteId = String(input.pending.metadata.quoteId || "").trim();
+  if (!quoteId) throw new Error("Stored Tournament Boost recovery is missing its authoritative quote.");
+  const auth = await signWalletAction({
+    action: "arena_tournament_boost_payment",
+    walletAddress: input.wallet,
+    chainId: input.chainId,
+    walletType: "solana",
+    signMessage: async (message) => (await signSolanaMessage(message, input.wallet)).signature,
+    extraLines: [`Quote: ${quoteId}`, `Signature: ${input.pending.signature}`],
+  });
+  const response = await apiFetch(route(input.tournamentId, input.matchRef, "/solana-payment"), {
+    method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ quoteId, signature: input.pending.signature, auth }),
+  });
+  const json = await response.json().catch(() => ({}));
+  if (response.status === 409 && json?.code === "SOLANA_BOOST_PAYMENT_UNVERIFIED") return null;
+  if (!response.ok || json?.ok === false) {
+    throw new Error(String(json?.error || `Tournament Boost recovery failed (${response.status})`));
+  }
+  const result = json as SolanaTournamentBoostPayment;
+  if (result.confirmed !== true) throw new Error("Solana Tournament Boost receipt is not confirmed by backend authority.");
+  if (result.signature && String(result.signature) !== input.pending.signature) {
+    throw new Error("Solana Tournament Boost receipt signature does not match the preserved payment.");
+  }
+  return result;
+}
+
 export async function submitSolanaTournamentBoost(input: {
   tournamentId: string; matchRef: string; wallet: string; quote: SolanaTournamentBoostQuote;
 }): Promise<SolanaTournamentBoostPayment> {
   const quote = parseSolanaQuote(input.quote);
   if (String(quote.tournamentId) !== String(input.tournamentId)) throw new Error("Solana Tournament Boost quote tournament mismatch.");
-  const signature = await sendSolanaArenaInstruction({
-    chainId: quote.chainId, wallet: input.wallet, transaction: quote.transaction, label: "Tournament Boost",
-  });
-  const auth = await signWalletAction({
-    action: "arena_tournament_boost_payment",
-    walletAddress: input.wallet,
+  const payment = await sendSolanaArenaInstruction<SolanaTournamentBoostPayment>({
     chainId: quote.chainId,
-    walletType: "solana",
-    signMessage: async (message) => (await signSolanaMessage(message, input.wallet)).signature,
-    extraLines: [`Quote: ${quote.quoteId}`, `Signature: ${signature}`],
+    wallet: input.wallet,
+    transaction: quote.transaction,
+    label: "Tournament Boost",
+    recovery: {
+      key: `tournament-boost:${quote.chainId}:${input.wallet}:${input.tournamentId}:${input.matchRef}`,
+      metadata: {
+        quoteId: quote.quoteId,
+        tournamentId: input.tournamentId,
+        matchRef: input.matchRef,
+      },
+      reconcile: (pending) => reconcileSolanaTournamentBoost({
+        tournamentId: String(pending.metadata.tournamentId || input.tournamentId),
+        matchRef: String(pending.metadata.matchRef || input.matchRef),
+        wallet: input.wallet,
+        chainId: quote.chainId,
+        pending,
+      }),
+    },
   });
-  const response = await apiFetch(route(input.tournamentId, input.matchRef, "/solana-payment"), {
-    method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ quoteId: quote.quoteId, signature, auth }),
-  });
-  const result = await readJson<SolanaTournamentBoostPayment>(response);
-  if (result.confirmed !== true) throw new Error("Solana Tournament Boost was not confirmed by the backend.");
-  return result;
+  return payment.settlement;
 }
 
 export function formatTournamentBoostNative(raw?: string | null, symbol = "BNB") {
