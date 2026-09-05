@@ -6,6 +6,7 @@ on:
       - build/cross-chain-stabilization-rh-base
     paths:
       - "frontend/src/lib/arena/solanaArenaBrowserTransaction.ts"
+      - "frontend/src/lib/arena/solanaArenaPaymentRecoveryCoordinator.mjs"
       - "frontend/src/lib/arena/tournamentBoostClient.ts"
       - "frontend/src/lib/arena/eventSponsorshipClient.ts"
       - "frontend/src/lib/arena/solanaArenaPaymentLifecycle.test.mjs"
@@ -43,10 +44,11 @@ jobs:
       - name: Install locked frontend dependencies
         run: npm ci --prefix frontend --no-audit --no-fund
 
-      - name: Syntax-check affected Arena APIs
+      - name: Syntax-check affected Arena APIs and recovery coordinator
         run: |
           node --check frontend/api/arenaSolanaBoosts.js
           node --check frontend/api/arenaSponsorshipPublic.js
+          node --check frontend/src/lib/arena/solanaArenaPaymentRecoveryCoordinator.mjs
 
       - name: Enforce Solana user V0 normalization
         run: node frontend/scripts/check-solana-user-v0-normalization.mjs
