@@ -1,4 +1,5 @@
 import { normalizeWalletFlexible } from "../../server/http.js";
+import { evaluateImportedCompetitionEligibility } from "./arenaImportEligibility.js";
 import { arenaSqlIdentityEquals } from "./arenaSqlIdentity.js";
 
 function ident(value) {
@@ -29,25 +30,31 @@ export async function resolveArenaVoteToken(pool, chainId, identity) {
       origin: "native",
       name: row.name || row.symbol || "Unknown",
       symbol: row.symbol || "---",
+      importEligibility: null,
     };
   }
 
   const importedTokenMatch = arenaSqlIdentityEquals(chainId, "token_address", "$2");
   const imported = await pool.query(
-    `select token_address, name, symbol
+    `select token_address, name, symbol, status, scan_json, scan_version, scanned_at,
+            evidence_version, state_version, created_at, updated_at
        from public.arena_token_imports
-      where chain_id = $1 and ${importedTokenMatch} and status = 'passed'
+      where chain_id = $1 and ${importedTokenMatch}
+      order by updated_at desc
       limit 1`,
     [chainId, address],
   );
   if (imported.rows[0]) {
     const row = imported.rows[0];
+    const importEligibility = evaluateImportedCompetitionEligibility(row);
+    if (!importEligibility.eligible) return null;
     return {
       tokenAddress: ident(row.token_address),
       campaignAddress: null,
       origin: "import",
       name: row.name || row.symbol || "Unknown",
       symbol: row.symbol || "---",
+      importEligibility,
     };
   }
   return null;

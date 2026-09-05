@@ -1,0 +1,112 @@
+name: Arena Solana Payment Lifecycle Gate
+
+on:
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - "frontend/src/lib/arena/solanaArenaBrowserTransaction.ts"
+      - "frontend/src/lib/arena/solanaArenaPaymentRecoveryCoordinator.mjs"
+      - "frontend/src/lib/arena/tournamentBoostClient.ts"
+      - "frontend/src/lib/arena/eventSponsorshipClient.ts"
+      - "frontend/src/lib/arena/battleBoostClient.ts"
+      - "frontend/src/lib/arena/battleBoostPresentation.mjs"
+      - "frontend/src/lib/arena/battleBoostPresentation.test.mjs"
+      - "frontend/src/lib/arena/battleBoostSolanaIntegration.test.mjs"
+      - "frontend/src/components/arena/BattleBoostPanel.tsx"
+      - "frontend/src/lib/arena/solanaArenaPaymentLifecycle.test.mjs"
+      - "frontend/src/lib/arena/integratedArenaRuntimeContracts.test.mjs"
+      - "frontend/api/arenaSolanaBoosts.js"
+      - "frontend/api/arenaSponsorshipPublic.js"
+      - "frontend/api/lib/arenaSolanaNormalBoostAuthority.mjs"
+      - "frontend/api/lib/arenaSolanaNormalBoostAuthority.test.mjs"
+      - "frontend/api/lib/arenaBoostRuntime.mjs"
+      - "frontend/api/lib/arenaBattlePointsV3*.js"
+      - "frontend/db/migrations/20260905_000001_solana_arena_payment_lifecycle.sql"
+      - "frontend/scripts/check-solana-user-v0-normalization.mjs"
+      - ".github/workflows/arena-solana-payment-lifecycle.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arena-solana-payment-lifecycle-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  arena-solana-payment-lifecycle:
+    name: Arena Solana payment lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install locked frontend dependencies
+        run: npm ci --prefix frontend --no-audit --no-fund
+
+      - name: Syntax-check affected Arena APIs and recovery authority
+        run: |
+          node --check frontend/api/arenaSolanaBoosts.js
+          node --check frontend/api/arenaSponsorshipPublic.js
+          node --check frontend/api/lib/arenaSolanaNormalBoostAuthority.mjs
+          node --check frontend/src/lib/arena/solanaArenaPaymentRecoveryCoordinator.mjs
+
+      - name: Enforce Solana user V0 normalization
+        run: node frontend/scripts/check-solana-user-v0-normalization.mjs
+
+      - name: Certify Arena Solana payment lifecycle
+        env:
+          DATABASE_URL: postgres://127.0.0.1/mwz_test
+        run: node --test frontend/src/lib/arena/solanaArenaPaymentLifecycle.test.mjs
+
+      - name: Certify SOL Normal Battle Boost browser integration
+        run: node --test frontend/src/lib/arena/battleBoostSolanaIntegration.test.mjs
+
+      - name: Certify Battle Wall presentation
+        run: node --test frontend/src/lib/arena/battleWallPresentation.test.mjs
+
+      - name: Certify Battle sharing presentation
+        run: node --test frontend/src/lib/arena/battleSharePresentation.test.mjs frontend/src/lib/arena/battleShareCardPresentation.test.mjs
+
+      - name: Certify Battle Boost V2/V3 presentation
+        run: node --test frontend/src/lib/arena/battleBoostPresentation.test.mjs
+
+      - name: Certify Arena functional UI safety
+        run: node --test frontend/src/lib/arena/arenaFunctionalUiSafety.test.mjs
+
+      - name: Certify Solana Normal Battle V3 and historical recovery
+        env:
+          ARENA_BATTLE_POINTS_V3: "true"
+          ARENA_BATTLE_POINTS_V3_SETTLEMENT: "true"
+        run: node --test frontend/api/lib/arenaSolanaNormalBoostAuthority.test.mjs
+
+      - name: Test founder-approved Battle Points V3 authority
+        run: node --test frontend/api/lib/arenaBattlePointsV3.test.mjs frontend/api/lib/arenaBoostRuntime.test.mjs
+
+      - name: Test integrated Arena authority contracts
+        run: node --test frontend/src/lib/arena/integratedArenaRuntimeContracts.test.mjs
+
+      - name: Test proven Solana signature recovery helper
+        run: npm --prefix frontend run test:solana-confirm
+
+      - name: Test generic Solana V0 transaction lifecycle
+        run: npm --prefix frontend run test:solana-v0
+
+      - name: Test Vote Tournament Boost and Final Salvo frozen rules
+        run: node --test frontend/api/lib/arenaTournamentV2Certification.test.mjs
+
+      - name: Check frontend API import graph
+        run: npm --prefix frontend run check:api-imports
+
+      - name: Build production frontend
+        run: npm --prefix frontend run build

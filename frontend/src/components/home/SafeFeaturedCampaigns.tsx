@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Contract } from "ethers";
 import { useNavigate } from "react-router-dom";
 import { ThumbsUp } from "lucide-react";
@@ -509,6 +509,7 @@ export function SafeFeaturedCampaigns({ className = "" }: { className?: string }
   const [loading, setLoading] = useState(true);
   const softPollInFlight = useRef(false);
   const softPollRef = useRef<() => void>(() => {});
+  const railRef = useRef<HTMLDivElement | null>(null);
 
   softPollRef.current = () => {
     if (softPollInFlight.current) return;
@@ -720,6 +721,19 @@ export function SafeFeaturedCampaigns({ className = "" }: { className?: string }
       });
   }, [items, nativeUsd, patchByCampaign]);
 
+  // Reset once after the initial board paints so a late sponsor cell cannot leave the rail one card in.
+  useLayoutEffect(() => {
+    if (loading) return;
+    const rail = railRef.current;
+    if (!rail) return;
+    const pin = () => {
+      rail.scrollLeft = 0;
+    };
+    pin();
+    const frame = window.requestAnimationFrame(pin);
+    return () => window.cancelAnimationFrame(frame);
+  }, [loading]);
+
   return (
     <div className={`w-full ${className}`}>
       <div className="mb-3 flex items-center justify-between gap-3">
@@ -730,7 +744,11 @@ export function SafeFeaturedCampaigns({ className = "" }: { className?: string }
         <div className="hidden text-xs uppercase tracking-[0.16em] mwz-muted md:block">Live campaigns ranked by 24h UpVotes</div>
       </div>
 
-      <div className="grid grid-flow-col grid-rows-2 auto-cols-[340px] gap-3 overflow-x-auto pb-1 pr-2 sm:auto-cols-[370px] lg:auto-cols-[392px]" style={{ scrollbarWidth: "none" }}>
+      <div
+        ref={railRef}
+        data-featured-campaign-rail="true"
+        className="grid grid-flow-col grid-rows-1 auto-cols-[100%] gap-3 overflow-x-auto snap-x snap-proximity pb-1 [overflow-anchor:none] [scrollbar-width:none] sm:auto-cols-[min(100%,24rem)] lg:grid-rows-2 lg:auto-cols-[392px]"
+      >
         {loading && !cards.length ? (
           <>
             {sponsor ? (

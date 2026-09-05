@@ -46,14 +46,18 @@ create index if not exists arena_solana_boost_quotes_battle_idx
   on public.arena_solana_boost_quotes(battle_id, created_at desc);
 
 -- Older valid Arena schemas did not always have this replay-reference column.
--- Add it before creating any replay/index dependency so this migration is
--- independently replay-safe against those states.
-alter table if exists public.arena_contest_actions
-  add column if not exists signature_reference text;
-
-create unique index if not exists arena_contest_actions_signature_uidx
-  on public.arena_contest_actions(chain_id, signature_reference)
-  where signature_reference is not null;
+-- Guard the optional arena_contest_actions dependency so this migration remains
+-- reproducible on a clean schema while still hardening the table when present.
+do $$
+begin
+  if to_regclass('public.arena_contest_actions') is not null then
+    alter table public.arena_contest_actions
+      add column if not exists signature_reference text;
+    create unique index if not exists arena_contest_actions_signature_uidx
+      on public.arena_contest_actions(chain_id, signature_reference)
+      where signature_reference is not null;
+  end if;
+end $$;
 
 alter table if exists public.sponsorship_payment_quotes
   add column if not exists solana_payment_id text,
