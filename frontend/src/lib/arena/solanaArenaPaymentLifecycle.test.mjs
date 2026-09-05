@@ -8,6 +8,7 @@ import {
   registerArenaPaymentBeforeBroadcast,
   resolveArenaPaymentBeforeSigning,
 } from "./solanaArenaPaymentRecoveryCoordinator.mjs";
+import { latestOperationQuote } from "../../../api/arenaSolanaBoosts.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const frontend = path.resolve(here, "../../..");
@@ -68,6 +69,68 @@ const pending = {
   metadata: { quoteId: "quote-1", tournamentId: "tour-1", matchRef: "match-1", targetToken: "Token111" },
   createdAt: "2026-09-05T11:00:00.000Z",
 };
+
+const ROUND_TOKEN = "11111111111111111111111111111111";
+const OPPONENT_R1 = "ComputeBudget111111111111111111111111111111";
+const OPPONENT_R2 = "SysvarRent111111111111111111111111111111111";
+const ROUND_WALLET = "Vote111111111111111111111111111111111111111";
+const tournamentRow = {
+  id: "tour-round-scope",
+  chain_id: 101,
+  status: "live",
+  battle_mode: "vote",
+  round_duration_hours: 24,
+  competition_generation: "arena_competition_v2",
+  bracket: {
+    rounds: [
+      { round: 1, matches: [{ id: "match-r1", battleId: "battle-r1", tokenA: ROUND_TOKEN, tokenB: OPPONENT_R1, winner: ROUND_TOKEN }] },
+      { round: 2, matches: [{ id: "match-r2", battleId: "battle-r2", tokenA: ROUND_TOKEN, tokenB: OPPONENT_R2 }] },
+    ],
+  },
+};
+const round1Payment = {
+  id: "quote-r1",
+  product_kind: "vote_tournament",
+  chain_id: 101,
+  tournament_id: tournamentRow.id,
+  battle_id: "battle-r1",
+  match_id: "match-r1",
+  round_number: 1,
+  wallet: ROUND_WALLET,
+  target_token: ROUND_TOKEN,
+  side: "left",
+  payment_status: "recovering",
+  signature_reference: "Round1PreservedSignature111111111111111111111111111111111111",
+};
+
+function makeRoundScopedDb(rows = [round1Payment]) {
+  const calls = [];
+  return {
+    calls,
+    async query(sql, params) {
+      calls.push({ sql, params });
+      if (sql.includes("from public.arena_tournaments")) return { rows: [structuredClone(tournamentRow)] };
+      if (sql.includes("from public.arena_solana_boost_quotes")) {
+        const [product, chainId, tournamentId, battleId, matchId, roundNumber, wallet, targetToken] = params;
+        const row = rows.find((candidate) =>
+          candidate.product_kind === product &&
+          Number(candidate.chain_id) === Number(chainId) &&
+          String(candidate.tournament_id) === String(tournamentId) &&
+          String(candidate.battle_id) === String(battleId) &&
+          String(candidate.match_id) === String(matchId) &&
+          Number(candidate.round_number) === Number(roundNumber) &&
+          String(candidate.wallet) === String(wallet) &&
+          String(candidate.target_token) === String(targetToken)
+        );
+        return { rows: row ? [structuredClone(row)] : [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    },
+  };
+}
+
+const round1Route = { product: "vote_tournament", tournamentId: tournamentRow.id, matchRef: "match-r1" };
+const round2Route = { product: "vote_tournament", tournamentId: tournamentRow.id, matchRef: "match-r2" };
 
 test("1 signed attempt is registered durably before broadcast", async () => {
   const server = makeDurableServer();
@@ -217,11 +280,11 @@ test("10 backend persistence keeps payout verification idempotent", () => {
 });
 
 test("11 Tournament Boost cannot be created during Final Salvo", () => {
-  hasAll(boostApi, ["FINAL_SALVO_BOOST_DISABLED", "Boost is disabled during Final Salvo"]);
+  hasAll(boostApi, ["FINAL_SALVO_BOOST_DISABLED", "Boost is disabled during Final Salvo", "resolveTournamentVoteMatch"]);
 });
 
 test("12 regulation Boost can recover after Final Salvo starts only when receipt timestamp proves regulation", () => {
-  hasAll(boostApi, ["tournamentPaymentContext", "receiptMs >= new Date(context.battle.ends_at).getTime()", "outside_regulation_landed", "verifySolanaBoostPayment"]);
+  hasAll(boostApi, ["tournamentPaymentContext", "tournamentOperationIdentity", "findTournamentVoteMatch", "receiptMs >= new Date(context.battle.ends_at).getTime()", "outside_regulation_landed", "verifySolanaBoostPayment"]);
 });
 
 test("13 Sponsorship stays 70/20/10 and individual Battle sponsorship stays forbidden", () => {
@@ -253,6 +316,55 @@ test("14 V0 intent confirmation and canonical program-ID guards remain intact", 
   const sign = executor.indexOf("await provider.signTransaction(final.transaction)");
   const revalidate = executor.indexOf("assertSolanaUserV0Intent(web3, signed, intent)");
   assert.ok(compileFirst >= 0 && compileFirst < simulate && simulate < compileFresh && compileFresh < sign && sign < revalidate);
+});
+
+test("15 unresolved Round-1 Boost does not block same wallet/token in Round 2", async () => {
+  const db = makeRoundScopedDb();
+  const lookup = await latestOperationQuote(round2Route, ROUND_WALLET, ROUND_TOKEN, db);
+  assert.equal(lookup.error, undefined);
+  assert.equal(lookup.row, null);
+  const quoteQuery = db.calls.find((call) => call.sql.includes("from public.arena_solana_boost_quotes"));
+  assert.deepEqual(quoteQuery.params.slice(3, 6), ["battle-r2", "match-r2", 2]);
+});
+
+test("16 Round-1 solana-state operation lookup still finds Round-1 payment", async () => {
+  const lookup = await latestOperationQuote(round1Route, ROUND_WALLET, ROUND_TOKEN, makeRoundScopedDb());
+  assert.equal(lookup.row.id, "quote-r1");
+  assert.equal(lookup.row.match_id, "match-r1");
+  assert.equal(lookup.row.round_number, 1);
+});
+
+test("17 Round-2 lookup never returns a Round-1 payment", async () => {
+  const lookup = await latestOperationQuote(round2Route, ROUND_WALLET, ROUND_TOKEN, makeRoundScopedDb());
+  assert.equal(lookup.row, null);
+});
+
+test("18 same-round unresolved payment still blocks duplicate lane and preserves signature", async () => {
+  const lookup = await latestOperationQuote(round1Route, ROUND_WALLET, ROUND_TOKEN, makeRoundScopedDb());
+  assert.equal(lookup.row.payment_status, "recovering");
+  assert.equal(lookup.row.signature_reference, round1Payment.signature_reference);
+});
+
+test("19 API lookup scope matches durable database operation-key scope", () => {
+  hasAll(boostApi, [
+    "chain_id=$2",
+    "tournament_id=$3",
+    "battle_id=$4",
+    "match_id=$5",
+    "round_number=$6",
+    "wallet=$7",
+    "target_token=$8",
+  ]);
+  hasAll(migration, [
+    "new.chain_id::text",
+    "new.product_kind",
+    "new.tournament_id::text",
+    "new.battle_id::text",
+    "new.match_id::text",
+    "new.round_number::text",
+    "new.wallet",
+    "new.target_token",
+  ]);
 });
 
 test("server public read contract and durable lifecycle schema remain explicit", () => {
