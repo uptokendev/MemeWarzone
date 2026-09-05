@@ -36,6 +36,7 @@ const NON_OVERRIDABLE_CODES = new Set([
   "non_transferable",
   "paused",
   "transfer_tax_too_high",
+  "unsupported_chain",
 ]);
 
 function env(...keys) {
@@ -46,14 +47,28 @@ function env(...keys) {
   return "";
 }
 
+export function importScannerChainFamily(chainId) {
+  const id = Number(chainId);
+  if (id === 56 || id === 97) return "evm";
+  if (id === 101 || id === 102) return "solana";
+  return null;
+}
+
 function rpcUrl(chainId) {
-  if (Number(chainId) === 101 || Number(chainId) === 102) {
+  const id = Number(chainId);
+  if (id === 101) {
     return env("SOLANA_RPC_URL", "VITE_SOLANA_RPC_URL", "VITE_SOLANA_MAINNET_RPC") || "https://api.mainnet-beta.solana.com";
   }
-  if (Number(chainId) === 56) {
+  if (id === 102) {
+    return env("SOLANA_DEVNET_RPC_URL", "VITE_SOLANA_DEVNET_RPC_URL") || "https://api.devnet.solana.com";
+  }
+  if (id === 56) {
     return env("BSC_RPC_URL", "VITE_PUBLIC_RPC_56") || "https://bsc-dataseed.binance.org";
   }
-  return env("BSC_TESTNET_RPC_URL", "VITE_PUBLIC_RPC_97") || "https://bsc-testnet-rpc.publicnode.com";
+  if (id === 97) {
+    return env("BSC_TESTNET_RPC_URL", "VITE_PUBLIC_RPC_97") || "https://bsc-testnet-rpc.publicnode.com";
+  }
+  return "";
 }
 
 function topazAddresses(chainId) {
@@ -176,6 +191,9 @@ async function probeTopaz(provider, chainId, token) {
 export async function scanEvm(chainId, token) {
   const warnings = [];
   const reasons = [];
+  if (importScannerChainFamily(chainId) !== "evm") {
+    return finalizeScan({ scan: { reasons: ["unsupported_chain"], warnings } });
+  }
   try {
     const provider = new ethers.JsonRpcProvider(rpcUrl(chainId), Number(chainId));
     const code = await provider.getCode(token);
@@ -233,9 +251,12 @@ export async function scanEvm(chainId, token) {
   }
 }
 
-export async function scanSolana(token) {
+export async function scanSolana(chainId, token) {
+  if (importScannerChainFamily(chainId) !== "solana") {
+    return finalizeScan({ scan: { reasons: ["unsupported_chain"], warnings: [] } });
+  }
   try {
-    const connection = new Connection(rpcUrl(101), "confirmed");
+    const connection = new Connection(rpcUrl(chainId), "confirmed");
     const pubkey = new PublicKey(token);
     const parsed = await connection.getParsedAccountInfo(pubkey);
     const data = parsed?.value?.data;
