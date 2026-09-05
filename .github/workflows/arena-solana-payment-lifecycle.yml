@@ -9,6 +9,9 @@ on:
       - "frontend/src/lib/arena/solanaArenaPaymentRecoveryCoordinator.mjs"
       - "frontend/src/lib/arena/tournamentBoostClient.ts"
       - "frontend/src/lib/arena/eventSponsorshipClient.ts"
+      - "frontend/src/lib/arena/battleBoostClient.ts"
+      - "frontend/src/lib/arena/battleBoostSolanaIntegration.test.mjs"
+      - "frontend/src/components/arena/BattleBoostPanel.tsx"
       - "frontend/src/lib/arena/solanaArenaPaymentLifecycle.test.mjs"
       - "frontend/src/lib/arena/integratedArenaRuntimeContracts.test.mjs"
       - "frontend/api/arenaSolanaBoosts.js"
@@ -63,6 +66,14 @@ jobs:
         env:
           DATABASE_URL: postgres://127.0.0.1/mwz_test
         run: node --test frontend/src/lib/arena/solanaArenaPaymentLifecycle.test.mjs
+
+      - name: Certify SOL Normal Battle Boost browser integration
+        run: node --test frontend/src/lib/arena/battleBoostSolanaIntegration.test.mjs
+
+      - name: Certify Battle UI and V2/V3 presentation
+        run: |
+          npm --prefix frontend run test:arena-battle-wall
+          node --test frontend/src/lib/arena/battleGenerationPresentation.test.mjs frontend/src/lib/arena/battleBoostPresentation.test.mjs
 
       - name: Certify Solana Normal Battle V3 and historical recovery
         env:
