@@ -6,8 +6,7 @@ import arenaSolanaBoosts from "./arenaSolanaBoosts.js";
 import arenaEvents from "./arenaEvents.js";
 import arenaFinalSalvo from "./arenaFinalSalvo.js";
 import arenaImports from "./arenaImports.js";
-import arenaSponsorships from "./arenaSponsorships.js";
-import arenaSponsorshipPublic from "./arenaSponsorshipPublic.js";
+import arenaEventSponsorshipAuthority from "./arenaEventSponsorshipAuthority.js";
 import arenaTournaments from "./arenaTournaments.js";
 import arenaTournamentBoosts from "./arenaTournamentBoosts.js";
 import arenaTournamentVotes from "./arenaTournamentVotes.js";
@@ -31,10 +30,8 @@ const ROUTES = [
   { pattern: /^\/arena\/battles\/[^/]+\/v3-scoring-lock$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaBattlePointsV3Admin },
   { pattern: /^\/arena\/battles(?:\/.*)?$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaBattles },
   { pattern: /^\/arena\/imports(?:\/.*)?$/, flag: "POSTGRAD_ARENA_IMPORTS_ENABLED", handler: arenaImports },
-  { pattern: /^\/arena\/sponsorships\/(?:options|solana-quote|solana-payment)$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: arenaSponsorshipPublic },
-  { pattern: /^\/arena\/sponsorships\/payments\/[^/]+$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: arenaSponsorshipPublic },
-  { pattern: /^\/arena\/sponsorships\/[^/]+\/state$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: arenaSponsorshipPublic },
-  { pattern: /^\/arena\/sponsorships\/(?:quote|confirm)$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: arenaSponsorships },
+  // Warzone Event Sponsorship is authoritative here. Advertising sponsorship routes below remain separate.
+  { pattern: /^\/arena\/sponsorships(?:\/.*)?$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: arenaEventSponsorshipAuthority },
   { pattern: /^\/arena\/tournaments\/v2\/(?:buy-in-quote|create)$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaVoteTournamentSetup },
   { pattern: /^\/arena\/tournaments\/[^/]+\/(?:v2-buy-in-receipt|buy-in-receipt)$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaVoteTournamentSetup },
   { pattern: /^\/arena\/tournaments\/[^/]+\/matches\/[^/]+\/final-salvo$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaFinalSalvo },
@@ -47,7 +44,7 @@ const ROUTES = [
   { pattern: /^\/arena\/notifications(?:\/.*)?$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaNotifications },
   { pattern: /^\/arena\/votes(?:\/.*)?$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaVotes },
   { pattern: /^\/arena\/war-pools(?:\/.*)?$/, flag: "POSTGRAD_WAR_POOLS_ENABLED", handler: arenaWarPools },
-  // Sponsored product is independent of battles; keep available without battle flags.
+  // Existing advertising sponsorship product: intentionally independent of Warzone Event Sponsorship.
   { pattern: /^\/sponsored$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: sponsored, alwaysOn: true },
   { pattern: /^\/sponsorship-applications$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: sponsorshipApplications, alwaysOn: true },
   { pattern: /^\/sponsorship-packages$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: sponsorshipPackages, alwaysOn: true },
