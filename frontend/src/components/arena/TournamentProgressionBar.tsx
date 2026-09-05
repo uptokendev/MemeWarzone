@@ -50,7 +50,7 @@ export function TournamentProgressionBar({
             </div>
             <div
               className={cn(
-                "mt-1 text-center text-[9px] uppercase tracking-[0.12em]",
+                "mt-1 text-center text-[10px] uppercase tracking-[0.12em]",
                 node.complete || node.current ? "text-orange-200" : "text-white/35",
               )}
             >

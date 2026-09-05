@@ -117,7 +117,7 @@ export function BattleWallModule({
       data-battle-wall-open="true"
       tabIndex={0}
       aria-label={`${presented.leftTicker} versus ${presented.rightTicker}, ${stateLabel}`}
-      className="relative isolate min-w-0 max-w-full bg-transparent py-4 outline-none motion-reduce:transition-none motion-reduce:shadow-none focus-visible:ring-2 focus-visible:ring-accent data-[battle-focused=true]:ring-2 data-[battle-focused=true]:ring-accent/80"
+      className="relative isolate min-w-0 max-w-full scroll-mt-24 bg-transparent py-4 outline-none motion-reduce:transition-none motion-reduce:shadow-none focus-visible:ring-2 focus-visible:ring-accent data-[battle-focused=true]:ring-2 data-[battle-focused=true]:ring-accent/80"
     >
       <div
         data-battle-wall-status-band="true"
@@ -158,7 +158,7 @@ export function BattleWallModule({
       </div>
 
       <div className="relative isolate overflow-hidden" data-battle-wall-combat-stage="true">
-        <div className="relative z-10 grid min-w-0 grid-cols-1 items-center gap-2 md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] md:items-center md:gap-2">
+        <div className="relative z-10 grid min-w-0 grid-cols-1 items-center gap-2 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] lg:items-center lg:gap-2">
           <BattleWallCombatant
             battle={displayBattle}
             participant={left}

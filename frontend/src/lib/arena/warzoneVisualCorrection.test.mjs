@@ -36,7 +36,7 @@ test("Battle combatant bleed is an absolute decorative layer outside card flow",
   assert.match(css, /z-index: 0 !important/);
   assert.match(combatant, /WarzoneDecorativeLayer/);
   assert.match(combatant, /data-battle-combatant-bounded="true"/);
-  assert.match(combatant, /h-auto max-h-\[22rem\]/);
+  assert.match(combatant, /h-auto min-w-0 overflow-hidden lg:max-h-\[22rem\]/);
   assert.match(combatant, /aspect-square/);
   assert.match(combatant, /h-0 min-h-full w-auto shrink-0 self-stretch/);
   assert.match(combatant, /data-battle-combatant-bleed="true"/);
@@ -44,7 +44,9 @@ test("Battle combatant bleed is an absolute decorative layer outside card flow",
   assert.match(combatant, /<WarzoneDecorativeLayer[\s\S]*data-battle-combatant-bleed="true"/);
   assert.doesNotMatch(combatant, /100vh|min-h-screen|h-screen/);
   assert.doesNotMatch(combatant, /data-selected=\{isLeader/);
-  assert.match(moduleSrc, /md:items-center/);
+  assert.match(moduleSrc, /lg:items-center/);
+  assert.match(moduleSrc, /lg:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
+  assert.doesNotMatch(moduleSrc, /md:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
 });
 
 test("WarzoneContent emits a static 1280px max width Tailwind can scan", () => {
@@ -80,6 +82,8 @@ test("Overview puts Featured first and three balanced pillar modules below", () 
   assert.ok(battles > pillars && tournaments > pillars && mwl > pillars);
   assert.match(overview, /lg:grid-cols-3/);
   assert.match(overview, /lg:items-stretch/);
+  assert.match(overview, /grid-cols-1 lg:grid-cols-2/);
+  assert.doesNotMatch(overview, /xl:grid-cols-4/);
   assert.doesNotMatch(preview, /scale-110 object-cover opacity-\[0\.12\] blur/);
   assert.doesNotMatch(preview, /mwz-flat-card/);
   assert.match(preview, /participant\?\.tokenName/);

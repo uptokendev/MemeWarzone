@@ -130,7 +130,7 @@ export function TournamentEventCard({
   return (
     <article
       data-tournament-card={card.id}
-      className={cn(!embedded && "mwz-flat-card relative overflow-hidden p-4", focused && !embedded && "ring-1 ring-accent/60")}
+      className={cn("min-w-0", !embedded && "mwz-flat-card relative overflow-x-clip p-4", focused && !embedded && "ring-1 ring-accent/60")}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2">

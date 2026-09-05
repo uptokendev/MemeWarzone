@@ -66,7 +66,7 @@ function StandingRow({
   return (
     <>
       <div
-        className="hidden items-center gap-2 border-b px-1 py-2.5 text-sm md:grid md:grid-cols-[3.5rem_minmax(0,1.4fr)_5rem_3rem_3rem_5rem_7rem]"
+        className="hidden items-center gap-2 border-b px-1 py-2.5 text-sm md:grid md:grid-cols-[4rem_minmax(0,1.4fr)_5rem_3rem_3rem_5rem_7rem]"
         style={{ borderColor: "var(--mwz-flat-card-border)" }}
         data-mwl-standing-rank={entry.rank}
         data-mwl-your-token={yours ? "true" : undefined}
@@ -89,6 +89,8 @@ function StandingRow({
       <div
         className="flex items-center justify-between gap-2 border-b py-3 md:hidden"
         style={{ borderColor: "var(--mwz-flat-card-border)" }}
+        data-mwl-standing-rank={entry.rank}
+        data-mwl-your-token={yours ? "true" : undefined}
       >
         <div className="flex min-w-0 items-center gap-2">
           <WarzoneTokenMark imageUrl={entry.imageUrl} symbol={entry.symbol} name={entry.tokenName} size="sm" />
@@ -98,11 +100,12 @@ function StandingRow({
             <div className="truncate text-[11px] uppercase tracking-[0.12em] text-white/50">{entry.tokenName}</div>
           </div>
         </div>
-        <div className="text-right">
+        <div className="shrink-0 text-right">
           <div className="font-retro text-sm">{Number(entry.points || 0).toLocaleString()} PTS</div>
           <div className="text-xs text-white/50">
             {entry.wins}W / {entry.losses}L
           </div>
+          {status ? <div className="mt-0.5 text-[10px] uppercase tracking-[0.12em] text-white/45">{status}</div> : null}
         </div>
       </div>
     </>
@@ -318,7 +321,7 @@ const PostGradLeague = () => {
             <section data-warzone-mwl-table="true">
               <div className="mb-2 text-[10px] uppercase tracking-[0.22em] text-white/45">Standings</div>
               <div
-                className="hidden grid-cols-[3.5rem_minmax(0,1.4fr)_5rem_3rem_3rem_5rem_7rem] gap-2 border-b px-1 py-2 text-[10px] uppercase tracking-[0.16em] text-white/42 md:grid"
+                className="hidden grid-cols-[4rem_minmax(0,1.4fr)_5rem_3rem_3rem_5rem_7rem] gap-2 border-b px-1 py-2 text-[10px] uppercase tracking-[0.16em] text-white/42 md:grid"
                 style={{ borderColor: "var(--mwz-flat-card-border)" }}
               >
                 <span>Rank</span>
