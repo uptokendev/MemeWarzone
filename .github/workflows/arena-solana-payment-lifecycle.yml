@@ -11,6 +11,7 @@ on:
       - "frontend/src/lib/arena/solanaArenaPaymentLifecycle.test.mjs"
       - "frontend/api/arenaSolanaBoosts.js"
       - "frontend/api/arenaSponsorshipPublic.js"
+      - "frontend/db/migrations/20260905_000001_solana_arena_payment_lifecycle.sql"
       - "frontend/scripts/check-solana-user-v0-normalization.mjs"
       - ".github/workflows/arena-solana-payment-lifecycle.yml"
 
