@@ -176,10 +176,10 @@ function AppShellLayout({
       <main
         ref={mainRef}
         className={[
-          "flex-1 overflow-x-hidden overflow-y-auto pb-10 md:pb-12 lg:pb-14 lg:pl-[calc(var(--mwz-left-sidebar-width)+0.75rem)]",
+          "flex-1 overflow-x-hidden overflow-y-auto pb-[calc(var(--mwz-footer-offset)+1.25rem+env(safe-area-inset-bottom,0px))] lg:pl-[calc(var(--mwz-left-sidebar-width)+0.75rem)]",
           isShowcaseRoute
             ? "scroll-pt-2 pt-2 md:scroll-pt-3 md:pt-3"
-            : "scroll-pt-[4.5rem] pt-[4.5rem] [&>:first-child]:!pt-0",
+            : "scroll-pt-[var(--mwz-topbar-offset)] pt-[var(--mwz-topbar-offset)] [&>:first-child]:!pt-0",
         ].join(" ")}
       >
         <Routes>
