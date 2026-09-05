@@ -65,6 +65,22 @@ jobs:
           SQL
 
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/sponsorships_import.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          insert into public.sponsorship_applications(
+            id, project_name, contact_name, contact_channel, website_url, bio,
+            preferred_slot, status
+          ) values (
+            'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+            'Advertising control row',
+            'Control Contact',
+            'control@example.invalid',
+            'https://example.invalid/ad-control',
+            'Must survive Event Sponsorship migrations unchanged.',
+            'homepage-sponsored-rail',
+            'submitted'
+          );
+          SQL
+
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/db/migrations/20260904_000000_event_sponsorship_core_schema.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/db/migrations/20260904_000001_solana_arena_money_v2_runtime.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/db/migrations/20260905_000001_solana_arena_payment_lifecycle.sql
