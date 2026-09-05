@@ -1,0 +1,74 @@
+name: Event Sponsorship DB Security
+
+on:
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - "frontend/db/migrations/20260905_000003_event_sponsorship_db_security.sql"
+      - "frontend/db/tests/event_sponsorship_security_certification.sql"
+      - ".github/workflows/event-sponsorship-db-security.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  security:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mwz_event_sponsorship_security_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d mwz_event_sponsorship_security_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/mwz_event_sponsorship_security_ci
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --prefix frontend --no-audit --no-fund
+
+      - name: Event Sponsorship authority regression
+        run: node --test frontend/api/lib/eventSponsorshipAuthority.test.mjs frontend/api/lib/eventSponsorshipSeparation.test.mjs
+
+      - name: Relevant Solana payment lifecycle regression
+        run: |
+          node --test frontend/src/lib/arena/solanaArenaPaymentLifecycle.test.mjs
+          node --test frontend/api/lib/arenaSolanaNormalBoostAuthority.test.mjs
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Certify Event Sponsorship schema security
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          do $$ begin create role anon; exception when duplicate_object then null; end $$;
+          do $$ begin create role authenticated; exception when duplicate_object then null; end $$;
+          SQL
+
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/sponsorships_import.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/db/migrations/20260904_000000_event_sponsorship_core_schema.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/db/migrations/20260904_000001_solana_arena_money_v2_runtime.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/db/migrations/20260905_000001_solana_arena_payment_lifecycle.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/db/migrations/20260905_000002_event_sponsorship_authority.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/db/migrations/20260905_000003_event_sponsorship_db_security.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/db/tests/event_sponsorship_schema_rehearsal.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/db/tests/event_sponsorship_security_certification.sql
