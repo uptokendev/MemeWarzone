@@ -1,0 +1,69 @@
+name: Arena Solana Payment Lifecycle Gate
+
+on:
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - "frontend/src/lib/arena/solanaArenaBrowserTransaction.ts"
+      - "frontend/src/lib/arena/tournamentBoostClient.ts"
+      - "frontend/src/lib/arena/eventSponsorshipClient.ts"
+      - "frontend/src/lib/arena/solanaArenaPaymentLifecycle.test.mjs"
+      - "frontend/api/arenaSolanaBoosts.js"
+      - "frontend/api/arenaSponsorshipPublic.js"
+      - "frontend/scripts/check-solana-user-v0-normalization.mjs"
+      - ".github/workflows/arena-solana-payment-lifecycle.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arena-solana-payment-lifecycle-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  arena-solana-payment-lifecycle:
+    name: Arena Solana payment lifecycle
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install locked frontend dependencies
+        run: npm ci --prefix frontend --no-audit --no-fund
+
+      - name: Syntax-check affected Arena APIs
+        run: |
+          node --check frontend/api/arenaSolanaBoosts.js
+          node --check frontend/api/arenaSponsorshipPublic.js
+
+      - name: Enforce Solana user V0 normalization
+        run: node frontend/scripts/check-solana-user-v0-normalization.mjs
+
+      - name: Certify Arena Solana payment lifecycle
+        run: node --test frontend/src/lib/arena/solanaArenaPaymentLifecycle.test.mjs
+
+      - name: Test proven Solana signature recovery helper
+        run: npm --prefix frontend run test:solana-confirm
+
+      - name: Test generic Solana V0 transaction lifecycle
+        run: npm --prefix frontend run test:solana-v0
+
+      - name: Test Vote Tournament Boost and Final Salvo frozen rules
+        run: node --test frontend/api/lib/arenaTournamentV2Certification.test.mjs
+
+      - name: Check frontend API import graph
+        run: npm --prefix frontend run check:api-imports
+
+      - name: Build production frontend
+        run: npm --prefix frontend run build
