@@ -12,7 +12,12 @@ on:
       - "frontend/api/lib/eventSponsorshipLifecycle.mjs"
       - "frontend/api/lib/eventSponsorshipAuthority.test.mjs"
       - "frontend/api/lib/eventSponsorshipSeparation.test.mjs"
+      - "frontend/db/migrations/20260904_000000_event_sponsorship_core_schema.sql"
+      - "frontend/db/migrations/20260904_000001_solana_arena_money_v2_runtime.sql"
+      - "frontend/db/migrations/20260905_000001_solana_arena_payment_lifecycle.sql"
       - "frontend/db/migrations/20260905_000002_event_sponsorship_authority.sql"
+      - "frontend/db/tests/event_sponsorship_schema_rehearsal.sql"
+      - "database/sponsorships_import.sql"
       - ".github/workflows/event-sponsorship-authority.yml"
   workflow_dispatch:
 
@@ -22,6 +27,21 @@ permissions:
 jobs:
   authority:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mwz_event_sponsorship_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d mwz_event_sponsorship_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/mwz_event_sponsorship_ci
     defaults:
       run:
         working-directory: frontend
@@ -42,3 +62,92 @@ jobs:
           node --check api/postgrad.js
       - name: Authority invariants
         run: node --test api/lib/eventSponsorshipAuthority.test.mjs api/lib/eventSponsorshipSeparation.test.mjs
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+      - name: Rehearse Event Sponsorship schema from clean PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          do $$ begin
+            create role anon;
+          exception when duplicate_object then null;
+          end $$;
+          do $$ begin
+            create role authenticated;
+          exception when duplicate_object then null;
+          end $$;
+          SQL
+
+          # Preserve the existing advertising product as an independent repository-owned schema.
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f ../database/sponsorships_import.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          insert into public.sponsorship_applications(
+            id, project_name, contact_name, contact_channel, website_url, bio,
+            preferred_slot, status
+          ) values (
+            'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+            'Advertising control row',
+            'Control Contact',
+            'control@example.invalid',
+            'https://example.invalid/ad-control',
+            'Must survive Event Sponsorship migrations unchanged.',
+            'homepage-sponsored-rail',
+            'submitted'
+          );
+          SQL
+
+          # Canonical minimum repository migration sequence required by Event Sponsorship.
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260904_000000_event_sponsorship_core_schema.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260904_000001_solana_arena_money_v2_runtime.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260905_000001_solana_arena_payment_lifecycle.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260905_000002_event_sponsorship_authority.sql
+
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/tests/event_sponsorship_schema_rehearsal.sql
+
+          # Repository migrations are intentionally replay-safe; run the exact sequence again.
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260904_000000_event_sponsorship_core_schema.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260904_000001_solana_arena_money_v2_runtime.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260905_000001_solana_arena_payment_lifecycle.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260905_000002_event_sponsorship_authority.sql
+
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          do $$
+          declare
+            advertising_count integer;
+            confirmed_count integer;
+            event_prize numeric(78,0);
+          begin
+            select count(*) into advertising_count
+            from public.sponsorship_applications
+            where id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid
+              and project_name = 'Advertising control row'
+              and contact_name = 'Control Contact'
+              and contact_channel = 'control@example.invalid'
+              and website_url = 'https://example.invalid/ad-control'
+              and bio = 'Must survive Event Sponsorship migrations unchanged.'
+              and preferred_slot = 'homepage-sponsored-rail'
+              and status = 'submitted';
+            if advertising_count <> 1 then
+              raise exception 'advertising control row changed after replay';
+            end if;
+
+            select count(*) into confirmed_count
+            from public.sponsorship_payments
+            where quote_id = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'::uuid
+              and status = 'confirmed';
+            if confirmed_count <> 1 then
+              raise exception 'confirmed payment replay count expected 1, got %', confirmed_count;
+            end if;
+
+            select sponsorship_prize_native_raw into event_prize
+            from public.sponsorship_events
+            where id = 'cccccccc-cccc-cccc-cccc-cccccccccccc'::uuid;
+            if event_prize <> 701 then
+              raise exception 'event prize changed on migration replay: %', event_prize;
+            end if;
+          end $$;
+          SQL
