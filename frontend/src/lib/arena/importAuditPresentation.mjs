@@ -26,8 +26,22 @@ const KNOWN_SCAN_REASONS = Object.freeze({
   getPool_failed: "The automatic Topaz pool lookup could not be completed.",
 });
 
+const AUTHORITY_OUTCOMES = new Set([
+  "passed",
+  "needs_review",
+  "hard_failure",
+  "stale",
+  "rejected",
+  "not_approved",
+]);
+
 function normalizedCode(value) {
   return String(value || "").trim();
+}
+
+function authorityOutcome(item) {
+  const value = normalizedCode(item?.eligibility?.authorityOutcome);
+  return AUTHORITY_OUTCOMES.has(value) ? value : "not_approved";
 }
 
 export function presentImportScanCode(value) {
@@ -53,32 +67,67 @@ export function presentImportScanFindings(scan) {
   return codes.map(presentImportScanCode).filter(Boolean);
 }
 
-export function importAuditPresentation(status) {
-  if (status === "passed") {
+export function importAuditPresentation(item) {
+  const outcome = authorityOutcome(item);
+  if (outcome === "passed") {
     return {
       title: "AUTOMATIC CHECK PASSED",
-      description: "This token passed the automatic checks currently implemented by MemeWarzone. This is not a guarantee that the token is safe or risk-free.",
+      description: "The backend reports a current approved automatic-check authority for this import. This is not a guarantee that the token is safe or risk-free.",
       tone: "passed",
     };
   }
-  if (status === "needs_review") {
+  if (outcome === "needs_review") {
     return {
       title: "AUTOMATIC CHECK NEEDS REVIEW",
-      description: "The automatic check found one or more items that need human investigation before this import can proceed under the existing backend rules.",
+      description: "The backend reports reviewable uncertainty. A manual review request does not approve this token or make it competitively eligible.",
       tone: "review",
     };
   }
-  if (status === "declined") {
+  if (outcome === "hard_failure") {
     return {
-      title: "AUTOMATIC CHECK FAILED",
-      description: "The automatic check found one or more conditions that prevented this import from passing. Requesting a manual check does not approve the token.",
+      title: "AUTOMATIC CHECK HARD FAILURE",
+      description: "The backend reports a non-approved hard-failure authority. Public review requests cannot override this competition authority.",
+      tone: "failed",
+    };
+  }
+  if (outcome === "stale") {
+    return {
+      title: "AUTOMATIC CHECK STALE",
+      description: "The backend reports that the previous scan authority is no longer current. This import is not currently eligible for new Arena competition admission.",
+      tone: "review",
+    };
+  }
+  if (outcome === "rejected") {
+    return {
+      title: "IMPORT NOT APPROVED",
+      description: "The backend reports that this import was rejected. A public review request does not approve it.",
       tone: "failed",
     };
   }
   return {
-    title: "AUTOMATIC CHECK STATUS",
-    description: "The current import status is provided by the MemeWarzone backend.",
+    title: "IMPORT NOT APPROVED",
+    description: "The backend does not currently report approved competition authority for this import.",
     tone: "neutral",
+  };
+}
+
+export function presentImportCompetitionEligibility(item) {
+  const outcome = authorityOutcome(item);
+  const eligible = item?.eligibility?.eligible === true && outcome === "passed";
+  const labels = {
+    passed: "CURRENTLY ELIGIBLE",
+    needs_review: "REVIEW REQUIRED",
+    hard_failure: "HARD FAILURE",
+    stale: "STALE AUTHORITY",
+    rejected: "REJECTED",
+    not_approved: "NOT APPROVED",
+  };
+  return {
+    eligible,
+    authorityOutcome: outcome,
+    label: labels[outcome],
+    code: normalizedCode(item?.eligibility?.code) || null,
+    freshness: item?.eligibility?.freshness || null,
   };
 }
 
