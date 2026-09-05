@@ -9,6 +9,7 @@ import {
   FINDING_AUTHORITY,
   classifyFinding,
   classifyScan,
+  importScannerChainFamily,
 } from "./arenaImportScan.js";
 import {
   evaluateImportedCompetitionEligibility,
@@ -17,6 +18,7 @@ import {
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const adminSource = fs.readFileSync(path.resolve(here, "../admin/arenaImports.js"), "utf8");
+const publicImportSource = fs.readFileSync(path.resolve(here, "../arenaImports.js"), "utf8");
 const scannerSource = fs.readFileSync(path.resolve(here, "./arenaImportScan.js"), "utf8");
 const migrationSource = [
   fs.readFileSync(path.resolve(here, "../../../db/migrations/20260905_000001_arena_import_authority.sql"), "utf8"),
@@ -133,6 +135,24 @@ test("15 eligibility evaluation and rescan authority do not rewrite running comp
   evaluateImportedCompetitionEligibility(original, now);
   assert.deepEqual(original, snapshot);
   assert.equal(/update\s+public\.arena_battles/i.test(adminSource), false);
+});
+
+test("16 scanner binds supported chains explicitly and hard-blocks unknown networks", () => {
+  assert.equal(importScannerChainFamily(56), "evm");
+  assert.equal(importScannerChainFamily(97), "evm");
+  assert.equal(importScannerChainFamily(101), "solana");
+  assert.equal(importScannerChainFamily(102), "solana");
+  assert.equal(importScannerChainFamily(4663), null);
+  assert.equal(classifyFinding("unsupported_chain").authority, FINDING_AUTHORITY.NON_OVERRIDABLE);
+});
+
+test("17 Solana mainnet and devnet scans use the requested chain identity", () => {
+  assert.match(scannerSource, /if \(id === 101\)[\s\S]*api\.mainnet-beta\.solana\.com/);
+  assert.match(scannerSource, /if \(id === 102\)[\s\S]*api\.devnet\.solana\.com/);
+  assert.match(scannerSource, /export async function scanSolana\(chainId, token\)/);
+  assert.match(scannerSource, /new Connection\(rpcUrl\(chainId\), "confirmed"\)/);
+  assert.match(publicImportSource, /scanSolana\(chainId, token\)/);
+  assert.match(adminSource, /scanSolana\(chainId, token\)/);
 });
 
 test("imported tokens never acquire native-launch creator economics", () => {
