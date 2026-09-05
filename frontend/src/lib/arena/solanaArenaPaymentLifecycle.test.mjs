@@ -9,7 +9,6 @@ import {
   resolveArenaPaymentBeforeSigning,
 } from "./solanaArenaPaymentRecoveryCoordinator.mjs";
 
-process.env.DATABASE_URL ||= "postgres://test:test@127.0.0.1:5432/mwz_test";
 const { latestOperationQuote } = await import("../../../api/arenaSolanaBoosts.js");
 
 const here = path.dirname(fileURLToPath(import.meta.url));
