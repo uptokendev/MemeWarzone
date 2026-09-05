@@ -3,6 +3,7 @@ import {
   confirmLaunchpadSignature,
   LaunchpadSignatureExpiredError,
 } from "@/lib/solanaConfirmSignature";
+import { ARENA_MONEY_V2_PROGRAM_ID } from "@/lib/solanaArenaMoneyV2Layout.mjs";
 import { rewardsTreasuryProgramId } from "@/lib/solanaRewardsTreasury";
 import { getSolanaProvider } from "@/lib/solanaWallet";
 import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
@@ -71,13 +72,22 @@ function decodeBase64(value: string): Uint8Array {
   return bytes;
 }
 
+function canonicalProgramId(): string {
+  const arenaMoney = String(ARENA_MONEY_V2_PROGRAM_ID || "").trim();
+  const configuredTreasury = String(rewardsTreasuryProgramId() || "").trim();
+  if (!arenaMoney || !configuredTreasury || arenaMoney !== configuredTreasury) {
+    throw new Error("Configured Solana rewards-treasury program does not match canonical Arena Money V2.");
+  }
+  return arenaMoney;
+}
+
 function assertEnvelope(value: SolanaArenaInstructionEnvelope) {
   if (!value?.programId || !value?.dataBase64 || !Array.isArray(value.accounts) || !value.accounts.length) {
     throw new Error("Solana Arena transaction envelope is incomplete.");
   }
-  const expectedProgramId = String(rewardsTreasuryProgramId() || "").trim();
+  const expectedProgramId = canonicalProgramId();
   const receivedProgramId = String(value.programId || "").trim();
-  if (!expectedProgramId || receivedProgramId !== expectedProgramId) {
+  if (receivedProgramId !== expectedProgramId) {
     throw new Error("Solana Arena transaction program does not match the configured Arena Money V2 program.");
   }
   return value;
@@ -201,7 +211,7 @@ export async function sendSolanaArenaInstruction<T>(input: {
   recovery: SolanaArenaPaymentRecovery<T>;
 }): Promise<SolanaArenaPaymentResult<T>> {
   const envelope = assertEnvelope(input.transaction);
-  const expectedProgramId = String(rewardsTreasuryProgramId()).trim();
+  const expectedProgramId = canonicalProgramId();
 
   return withRecoveryLock(input.recovery.key, async () => {
     const storage = storageOrThrow();
@@ -236,7 +246,7 @@ export async function sendSolanaArenaInstruction<T>(input: {
         });
       } catch (error) {
         if (!(error instanceof LaunchpadSignatureExpiredError)) throw error;
-        // confirmLaunchpadSignature only emits this after block-height expiry,
+        // The shared helper emits this only after block-height expiry,
         // transaction lookup miss, and an authoritative recover() miss.
         clearPending(storage, input.recovery.key, existing.signature);
       }
@@ -254,9 +264,11 @@ export async function sendSolanaArenaInstruction<T>(input: {
     const intent = { payer: connected, instructions: [instruction] };
 
     const simulated = await compileSolanaUserV0WithLatestBlockhash(web3, connection, intent);
+    assertSolanaUserV0Intent(web3, simulated.transaction, intent);
     await simulateSolanaUserV0OrThrow(connection, simulated.transaction, input.label);
 
     const final = await compileSolanaUserV0WithLatestBlockhash(web3, connection, intent);
+    assertSolanaUserV0Intent(web3, final.transaction, intent);
     const signed = await provider.signTransaction(final.transaction);
     assertSolanaUserV0Intent(web3, signed, intent);
     const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false });
@@ -272,7 +284,8 @@ export async function sendSolanaArenaInstruction<T>(input: {
     };
 
     // Persist immediately after sendRawTransaction and before confirmation.
-    // If persistence fails, this function cannot safely permit another payment.
+    // Storage is probed before signing; any unexpected persistence failure now
+    // fails closed rather than constructing a replacement in this invocation.
     writePending(storage, input.recovery.key, pending);
     return confirmAndReconcile({
       connection,
