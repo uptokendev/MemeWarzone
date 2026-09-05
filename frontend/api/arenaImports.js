@@ -11,6 +11,7 @@ import {
 } from "../server/http.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { scanEvm, scanSolana } from "./lib/arenaImportScan.js";
+import { evaluateImportedCompetitionEligibility, loadImportedCompetitionEligibility } from "./lib/arenaImportEligibility.js";
 import { getArenaTokenProfile } from "./lib/arenaTokenProfile.js";
 
 function ident(value, chainId) {
@@ -49,6 +50,11 @@ function mapImport(row) {
     metadataUpdatedAt: row.metadata_updated_at || null,
     status: String(row.status),
     scan: row.scan_json && typeof row.scan_json === "object" ? row.scan_json : {},
+    scanVersion: row.scan_version || row.scan_json?.scanVersion || null,
+    scannedAt: row.scanned_at || row.scan_json?.scannedAt || null,
+    evidenceVersion: row.evidence_version || null,
+    stateVersion: Number(row.state_version || 0),
+    eligibility: evaluateImportedCompetitionEligibility(row),
     reviewRequestedAt: row.review_requested_at || null,
     reviewReason: row.review_reason || null,
     reviewer: row.reviewer || null,
@@ -72,7 +78,7 @@ async function nativeExists(chainId, token) {
 }
 
 async function scanToken(chainId, token) {
-  return isSolanaChain(chainId) ? scanSolana(token) : scanEvm(chainId, token);
+  return isSolanaChain(chainId) ? scanSolana(chainId, token) : scanEvm(chainId, token);
 }
 
 async function findById(id) {
@@ -107,7 +113,6 @@ async function loadTrustedProfile(chainId, token) {
       metadataUpdatedAt: row.updated_at || null,
     };
   } catch (error) {
-    // Registry prefill is helpful but must never make token import unavailable.
     console.warn("[api/arenaImports] trusted metadata prefill unavailable", error?.message || error);
     return null;
   }
@@ -150,6 +155,18 @@ async function handleLookup(req, res) {
   const result = await pool.query(sql, params);
   const item = mapImport(result.rows[0]);
   return item ? json(res, 200, { item }) : json(res, 404, { error: "Import not found" });
+}
+
+async function handleEligibility(req, res) {
+  const query = getQuery(req);
+  const requestedChain = Number(query.chainId || 0);
+  const tokenHint = String(query.token || query.tokenAddress || query.address || "").trim();
+  const chainId = requestedChain || (isSolanaAddress(tokenHint) ? 101 : 56);
+  const token = ident(tokenHint, chainId);
+  if (!token || !chainId) return json(res, 400, { ok: false, error: "chainId and token are required", code: "IMPORT_IDENTITY_REQUIRED" });
+  const { row, eligibility } = await loadImportedCompetitionEligibility(pool, chainId, token, { exactAddress: isSolanaChain(chainId) });
+  if (!row) return json(res, 404, { ok: false, error: "Import not found", code: "IMPORT_NOT_FOUND", eligibility });
+  return json(res, 200, { ok: true, importId: String(row.id), eligibility, stateVersion: Number(row.state_version || 0), updatedAt: new Date().toISOString() });
 }
 
 async function handleProfile(req, res) {
@@ -206,8 +223,9 @@ async function handleCreate(req, res) {
   const inserted = await pool.query(
     `insert into public.arena_token_imports (
        chain_id, token_address, owner_wallet, name, symbol, status, scan_json,
+       scan_version, scanned_at,
        image_url, description, website, x_url, telegram_url, verified_at, metadata_updated_at
-     ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,$13::timestamptz,coalesce($14::timestamptz, now()))
+     ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9::timestamptz,$10,$11,$12,$13,$14,$15::timestamptz,coalesce($16::timestamptz, now()))
      returning *`,
     [
       chainId,
@@ -217,6 +235,8 @@ async function handleCreate(req, res) {
       scan.symbol,
       scan.status,
       JSON.stringify(scan.scan || {}),
+      scan.scanVersion || null,
+      scan.scannedAt || null,
       trusted?.imageUrl || null,
       trusted?.description || null,
       trusted?.website || null,
@@ -268,6 +288,7 @@ export default async function handler(req, res) {
   try {
     if (method === "GET" && path === "/arena/imports") return handleList(req, res);
     if (method === "GET" && path === "/arena/imports/lookup") return handleLookup(req, res);
+    if (method === "GET" && path === "/arena/imports/eligibility") return handleEligibility(req, res);
     if (method === "GET" && path === "/arena/imports/profile") return handleProfile(req, res);
     if (method === "POST" && path === "/arena/imports") return handleCreate(req, res);
     const review = path.match(/^\/arena\/imports\/([^/]+)\/request-review$/);
