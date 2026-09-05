@@ -78,7 +78,7 @@ async function nativeExists(chainId, token) {
 }
 
 async function scanToken(chainId, token) {
-  return isSolanaChain(chainId) ? scanSolana(token) : scanEvm(chainId, token);
+  return isSolanaChain(chainId) ? scanSolana(chainId, token) : scanEvm(chainId, token);
 }
 
 async function findById(id) {
