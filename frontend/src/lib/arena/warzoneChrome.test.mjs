@@ -168,6 +168,59 @@ test("MWL public table is Top 10, Your Tokens keep real off-table ranks, and QF 
   assert.doesNotMatch(page, /Quarterly Championship/);
 });
 
+test("MWL Your Memecoin is Regular Season copy plus Quarter Finals field-only owned entries", () => {
+  const ranked = presentRankedLeagueEntries([
+    { tokenId: "a", tokenName: "Alpha", symbol: "AAA", points: 144, wins: 12, losses: 2, finishedFights: 14 },
+    { tokenId: "b", tokenName: "Bravo", symbol: "BBB", points: 131, wins: 11, losses: 3, finishedFights: 14 },
+    { tokenId: "c", tokenName: "Charlie", symbol: "CCC", points: 118, wins: 9, losses: 4, finishedFights: 13 },
+    { tokenId: "d", tokenName: "Delta", symbol: "DDD", points: 104, wins: 8, losses: 4, finishedFights: 12 },
+    { tokenId: "e", tokenName: "Echo", symbol: "EEE", points: 98, wins: 7, losses: 4, finishedFights: 11 },
+    { tokenId: "f", tokenName: "Foxtrot", symbol: "FFF", points: 94, wins: 7, losses: 5, finishedFights: 12 },
+    { tokenId: "g", tokenName: "Golf", symbol: "GGG", points: 88, wins: 6, losses: 5, finishedFights: 11 },
+    { tokenId: "h", tokenName: "Hotel", symbol: "HHH", points: 76, wins: 6, losses: 6, finishedFights: 12 },
+    { tokenId: "i", tokenName: "India", symbol: "III", points: 73, wins: 5, losses: 6, finishedFights: 11 },
+    { tokenId: "j", tokenName: "Juliet", symbol: "JJJ", points: 71, wins: 5, losses: 6, finishedFights: 11 },
+    { tokenId: "mwl-mycoin", tokenName: "My Coin", symbol: "MYCOIN", points: 64, wins: 4, losses: 5, finishedFights: 9 },
+    { tokenId: "mwl-second", tokenName: "Second Coin", symbol: "SECOND", points: 21, wins: 1, losses: 7, finishedFights: 8 },
+  ]);
+  const projected = presentQuarterFinalField({ state: "live" }, ranked);
+  assert.equal(projected.field.length, 8);
+  assert.equal(projected.field.some((entry) => entry.tokenId === "mwl-mycoin"), false);
+  assert.equal(projected.cut.inside.rank, 8);
+  assert.equal(projected.cut.outside.rank, 9);
+
+  const regularOwned = presentOwnedLeagueTokens(ranked, ["a", "mwl-mycoin", "mwl-second"]);
+  assert.equal(regularOwned.map((entry) => entry.tokenId).join(","), "a,mwl-mycoin,mwl-second");
+
+  const quarterFinalOwned = presentOwnedLeagueTokens(projected.field, ["a", "mwl-mycoin", "mwl-second"]);
+  assert.equal(quarterFinalOwned.map((entry) => entry.tokenId).join(","), "a");
+  assert.equal(quarterFinalOwned.some((entry) => entry.tokenId === "mwl-mycoin"), false);
+  assert.equal(quarterFinalOwned.some((entry) => entry.tokenId === "mwl-second"), false);
+
+  const twoSeeds = presentOwnedLeagueTokens(projected.field, ["a", "h"]);
+  assert.equal(twoSeeds.map((entry) => entry.tokenId).join(","), "a,h");
+  assert.equal(presentOwnedLeagueTokens(projected.field, ["mwl-mycoin"]).length, 0);
+  assert.equal(presentOwnedLeagueTokens(projected.field, []).length, 0);
+
+  const page = readSrc("../../pages/PostGradLeague.tsx");
+  assert.match(page, /presentOwnedLeagueTokens\(quarterFinals\.field, ownedTokenIds\)/);
+  assert.match(page, /data-mwl-qf-your-memecoin="true"/);
+  assert.match(page, /data-warzone-mwl-your-tokens="true"/);
+  assert.match(page, />Your Memecoin</);
+  assert.match(page, /Your Memecoin/);
+  assert.doesNotMatch(page, />Your tokens</);
+  assert.doesNotMatch(page, />Your token</);
+  assert.doesNotMatch(page, /Your tokens/);
+  assert.doesNotMatch(page, /Your token</);
+  assert.match(page, /md:grid md:grid-cols-\[3\.5rem_minmax\(0,1\.4fr\)_5rem_3rem_3rem_5rem_7rem\]/);
+  assert.match(page, /md:hidden/);
+  assert.match(page, /data-mwl-qualification-cut="true"/);
+  assert.match(page, /data-mwl-view-quarter-finals="true"/);
+  assert.match(page, /TournamentBracketModal/);
+  assert.match(page, /data-mwl-qf-field=\{quarterFinals\.field\.length\}/);
+  assert.match(page, /quarterFinalOwned\.length/);
+});
+
 test("Warzone composition keeps cards floating without outer frames", () => {
   const overview = readSrc("../../pages/Arena.tsx");
   const league = readSrc("../../pages/PostGradLeague.tsx");
