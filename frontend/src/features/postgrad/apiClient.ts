@@ -43,7 +43,19 @@ export type PostGradSponsoredFeedParams = {
 export type OpenPostGradBattleInput = {
   tokenId: string;
   chainId?: number | null;
+  stakeNative?: number;
   initialPotBnb?: number;
+  durationHours?: number;
+  auth?: JsonObject;
+};
+
+export type ChallengePostGradBattleInput = {
+  tokenId: string;
+  targetTokenId: string;
+  chainId?: number | null;
+  stakeNative: number;
+  durationHours?: number;
+  auth?: JsonObject;
 };
 
 export type PostGradWarPoolState = "open" | "locked" | "settling" | "paid";
@@ -92,6 +104,44 @@ async function mutateJson(path: string, body: JsonObject = {}): Promise<boolean>
   return json == null || json.ok !== false;
 }
 
+async function mutateBattle(path: string, body: JsonObject = {}): Promise<JsonObject> {
+  const response = await apiFetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const json = (await readJson(response)) || {};
+  if (!response.ok || json.ok === false) {
+    throw new Error(String(json.error || json.reason || json.warning || `Request failed (${response.status})`));
+  }
+  return json;
+}
+
+export type ArenaMatchCandidate = {
+  token?: JsonObject | null;
+  matchQuality?: number | null;
+  classification?: string | null;
+  ranked?: boolean | null;
+};
+
+export type ArenaMatchRecommendations = {
+  tokenId?: string;
+  candidates?: ArenaMatchCandidate[];
+  updatedAt?: string;
+};
+
+export async function fetchArenaBattleMatches(
+  tokenId: string,
+  chainId?: number | null,
+  limit = 5,
+  signal?: AbortSignal,
+): Promise<ArenaMatchRecommendations | null> {
+  const params = new URLSearchParams({ tokenId });
+  if (chainId) params.set("chainId", String(chainId));
+  if (limit) params.set("limit", String(limit));
+  return fetchJson(`/api/arena/battles/matches?${params.toString()}`, { cache: "no-store", signal });
+}
+
 export async function fetchPostGradBattleFeed(signal?: AbortSignal) {
   return fetchJson("/api/arena/battles", { cache: "no-store", signal });
 }
@@ -106,29 +156,127 @@ export async function fetchPostGradBattleDetails(battleId: string, signal?: Abor
   return fetchJson(`/api/arena/battles/${encodeURIComponent(battleId)}`, { cache: "no-store", signal });
 }
 
+export async function cancelPostGradBattleOpen(battleId: string, auth?: JsonObject) {
+  await mutateBattle(`/api/arena/battles/${encodeURIComponent(battleId)}/cancel-open`, { auth });
+  return true;
+}
+
 export async function openPostGradBattle(input: OpenPostGradBattleInput) {
   const payload: JsonObject = {
     tokenId: input.tokenId,
     chainId: input.chainId || undefined,
+    auth: input.auth,
   };
 
-  if (typeof input.initialPotBnb === "number" && input.initialPotBnb > 0) {
-    payload.initialPotBnb = input.initialPotBnb;
-  }
+  const stake = input.stakeNative ?? input.initialPotBnb;
+  if (typeof stake === "number" && stake > 0) payload.stakeNative = stake;
+  if (input.durationHours) payload.durationHours = input.durationHours;
 
-  return mutateJson("/api/arena/battles/open", payload);
+  await mutateBattle("/api/arena/battles/open", payload);
+  return true;
+}
+
+export async function challengePostGradBattle(input: ChallengePostGradBattleInput) {
+  await mutateBattle("/api/arena/battles/challenge", {
+    tokenId: input.tokenId,
+    targetTokenId: input.targetTokenId,
+    chainId: input.chainId || undefined,
+    stakeNative: input.stakeNative,
+    durationHours: input.durationHours,
+    auth: input.auth,
+  });
+  return true;
+}
+
+export async function acceptPostGradBattle(battleId: string, auth?: JsonObject) {
+  return mutateBattle(`/api/arena/battles/${encodeURIComponent(battleId)}/accept`, { auth });
+}
+
+export async function fetchArenaStakeStatus(battleId: string, wallet?: string, signal?: AbortSignal) {
+  const params = new URLSearchParams();
+  if (wallet) params.set("wallet", wallet);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  return fetchJson(`/api/arena/war-pools/${encodeURIComponent(battleId)}/stake${suffix}`, { cache: "no-store", signal });
+}
+
+export async function postArenaStakeReceipt(battleId: string, body: JsonObject) {
+  return mutateBattle(`/api/arena/war-pools/${encodeURIComponent(battleId)}/stake-receipt`, body);
+}
+
+export async function declinePostGradBattle(battleId: string, auth?: JsonObject) {
+  await mutateBattle(`/api/arena/battles/${encodeURIComponent(battleId)}/decline`, { auth });
+  return true;
+}
+
+export async function counterPostGradBattle(battleId: string, stakeNative: number, auth?: JsonObject, durationHours?: number) {
+  await mutateBattle(`/api/arena/battles/${encodeURIComponent(battleId)}/counter`, { stakeNative, durationHours, auth });
+  return true;
 }
 
 export async function fetchPostGradEventFeed(signal?: AbortSignal) {
   return fetchJson("/api/arena/events", { cache: "no-store", signal });
 }
 
+export async function fetchPostGradTournamentFeed(signal?: AbortSignal) {
+  return fetchJson("/api/arena/tournaments", { cache: "no-store", signal });
+}
+
 export async function fetchPostGradEventDetails(eventId: string, signal?: AbortSignal) {
   return fetchJson(`/api/arena/events/${encodeURIComponent(eventId)}`, { cache: "no-store", signal });
 }
 
-export async function fetchPostGradLeagueFeed(signal?: AbortSignal) {
-  return fetchJson("/api/arena/league", { cache: "no-store", signal });
+export async function fetchPostGradTournamentDetails(eventId: string, signal?: AbortSignal) {
+  return fetchJson(`/api/arena/tournaments/${encodeURIComponent(eventId)}`, { cache: "no-store", signal });
+}
+
+export async function fetchPostGradLeagueFeed(
+  signal?: AbortSignal,
+  options?: { wallet?: string | null; chainId?: number | null },
+) {
+  const params = new URLSearchParams();
+  if (options?.wallet) params.set("wallet", String(options.wallet));
+  if (options?.chainId) params.set("chainId", String(options.chainId));
+  const query = params.toString();
+  return fetchJson(`/api/arena/league${query ? `?${query}` : ""}`, { cache: "no-store", signal });
+}
+
+export async function fetchArenaLeagueCheckin(wallet: string, chainId?: number | null, signal?: AbortSignal) {
+  const params = new URLSearchParams({ wallet });
+  if (chainId) params.set("chainId", String(chainId));
+  return fetchJson(`/api/arena/league/checkin?${params.toString()}`, { cache: "no-store", signal });
+}
+
+export async function postArenaLeagueCheckin(body: JsonObject) {
+  return mutateBattle("/api/arena/league/checkin", body);
+}
+
+export async function postArenaWarDispatch(body: JsonObject) {
+  return mutateBattle("/api/arena/league/dispatch", body);
+}
+
+export async function fetchArenaFeaturedVotes(signal?: AbortSignal) {
+  return fetchJson("/api/arena/votes/featured", { cache: "no-store", signal });
+}
+
+export async function fetchArenaNotificationEmailStatus(body: JsonObject) {
+  return mutateBattle("/api/arena/notifications/email/status", body);
+}
+
+export async function setArenaNotificationEmail(body: JsonObject) {
+  return mutateBattle("/api/arena/notifications/email", body);
+}
+
+export async function verifyArenaNotificationEmail(token: string) {
+  const response = await apiFetch(`/api/arena/notifications/email/verify?token=${encodeURIComponent(token)}`, { cache: "no-store" });
+  const json = (await readJson(response)) || {};
+  if (!response.ok || json.ok === false) {
+    throw new Error(String(json.error || `Request failed (${response.status})`));
+  }
+  return json;
+}
+
+export async function optInPostGradTournament(tournamentId: string, body: JsonObject) {
+  return mutateBattle(`/api/arena/tournaments/${encodeURIComponent(tournamentId)}/opt-in`, body);
 }
 
 export async function mutatePostGradLeague(action: PostGradLeagueAction) {
@@ -143,8 +291,16 @@ export async function fetchPostGradWarPoolSummary(signal?: AbortSignal) {
   return fetchJson("/api/arena/war-pools", { cache: "no-store", signal });
 }
 
-export async function supportPostGradWarPool(battleId: string, sideTokenId: string, amountUsd: number) {
-  return mutateJson(`/api/arena/war-pools/${encodeURIComponent(battleId)}/support`, { sideTokenId, amountUsd });
+export async function supportPostGradWarPool(battleId: string, sideTokenId: string, amountUsd: number, extra: JsonObject = {}) {
+  return mutateJson(`/api/arena/war-pools/${encodeURIComponent(battleId)}/support`, { sideTokenId, amountUsd, ...extra });
+}
+
+export async function postArenaSupportReceipt(poolSubjectId: string, body: JsonObject) {
+  return mutateBattle(`/api/arena/war-pools/${encodeURIComponent(poolSubjectId)}/support-receipt`, body);
+}
+
+export async function postArenaBuyInReceipt(tournamentId: string, body: JsonObject) {
+  return mutateBattle(`/api/arena/tournaments/${encodeURIComponent(tournamentId)}/buy-in-receipt`, body);
 }
 
 export async function transitionPostGradWarPool(battleId: string, state: PostGradWarPoolState) {

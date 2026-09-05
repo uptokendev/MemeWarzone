@@ -131,7 +131,7 @@ describe("PermanentLpLocker Topaz fee harvest", function () {
   });
 
   it("routes protocol fee assets through an authorized TreasuryRouterV2 locker", async () => {
-    const [owner, creator, creatorFeeRecipient, campaign, protocolRevenueVault, weeklyVault, monthlyTreasury] = await ethers.getSigners();
+    const [owner, creator, creatorFeeRecipient, campaign, , weeklyVault, monthlyTreasury] = await ethers.getSigners();
 
     const Factory = await ethers.getContractFactory("MockTopazFactory");
     const topazFactory = await Factory.deploy();
@@ -141,6 +141,10 @@ describe("PermanentLpLocker Topaz fee harvest", function () {
     const locker = await Locker.deploy(await owner.getAddress());
     await locker.waitForDeployment();
 
+    const ProtocolVault = await ethers.getContractFactory("ProtocolRevenueVault");
+    const protocolVault = await ProtocolVault.deploy(await owner.getAddress());
+    await protocolVault.waitForDeployment();
+
     const TreasuryRouterV2 = await ethers.getContractFactory("TreasuryRouterV2");
     const treasuryRouter = await TreasuryRouterV2.deploy(
       await owner.getAddress(),
@@ -149,7 +153,7 @@ describe("PermanentLpLocker Topaz fee harvest", function () {
       3600
     );
     await treasuryRouter.waitForDeployment();
-    await treasuryRouter.setProtocolRevenueVault(await protocolRevenueVault.getAddress());
+    await treasuryRouter.setProtocolRevenueVault(await protocolVault.getAddress());
     await treasuryRouter.setAuthorizedLpLocker(await locker.getAddress(), true);
     await treasuryRouter.setPrimaryLpLocker(await locker.getAddress());
 
@@ -163,7 +167,7 @@ describe("PermanentLpLocker Topaz fee harvest", function () {
     await expectHarvestSplit({
       locker,
       creatorFeeRecipient,
-      protocolRevenueVault,
+      protocolRevenueVault: protocolVault,
       feeToken,
       feeWbnb,
       ...poolSetup,

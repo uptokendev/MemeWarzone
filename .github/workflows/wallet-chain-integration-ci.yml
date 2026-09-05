@@ -1,0 +1,112 @@
+name: Wallet and chain integration proof
+
+on:
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - "frontend/package.json"
+      - "frontend/package-lock.json"
+      - "frontend/src/contexts/WalletContext.tsx"
+      - "frontend/src/hooks/useWallet.ts"
+      - "frontend/src/hooks/useRecruiterWallet.ts"
+      - "frontend/src/hooks/useRecruiterWallet.compatibility.test.mjs"
+      - "frontend/src/lib/injectedProviderDiscovery.ts"
+      - "frontend/src/lib/injectedProviderDiscovery.test.mjs"
+      - "frontend/src/lib/injectedWallets.ts"
+      - "frontend/src/lib/injectedWallets.test.mjs"
+      - "frontend/src/lib/solanaWallet.ts"
+      - "frontend/src/lib/solanaWalletStandard.ts"
+      - "frontend/src/lib/solanaWalletStandard.test.mjs"
+      - "frontend/src/lib/walletConnect.ts"
+      - "frontend/src/lib/walletConnect.contract.test.mjs"
+      - "frontend/src/lib/chainConfig.ts"
+      - "frontend/src/lib/chainRegistry.ts"
+      - "frontend/src/lib/evmChainAdapter.ts"
+      - ".github/workflows/wallet-chain-integration-ci.yml"
+  push:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - "frontend/package.json"
+      - "frontend/package-lock.json"
+      - "frontend/src/contexts/WalletContext.tsx"
+      - "frontend/src/hooks/useWallet.ts"
+      - "frontend/src/hooks/useRecruiterWallet.ts"
+      - "frontend/src/hooks/useRecruiterWallet.compatibility.test.mjs"
+      - "frontend/src/lib/injectedProviderDiscovery.ts"
+      - "frontend/src/lib/injectedProviderDiscovery.test.mjs"
+      - "frontend/src/lib/injectedWallets.ts"
+      - "frontend/src/lib/injectedWallets.test.mjs"
+      - "frontend/src/lib/solanaWallet.ts"
+      - "frontend/src/lib/solanaWalletStandard.ts"
+      - "frontend/src/lib/solanaWalletStandard.test.mjs"
+      - "frontend/src/lib/walletConnect.ts"
+      - "frontend/src/lib/walletConnect.contract.test.mjs"
+      - "frontend/src/lib/chainConfig.ts"
+      - "frontend/src/lib/chainRegistry.ts"
+      - "frontend/src/lib/evmChainAdapter.ts"
+      - ".github/workflows/wallet-chain-integration-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wallet-chain-integration-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  wallet-chain:
+    name: Wallet standards, recruiter auth, WalletConnect, and Robinhood EVM proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies from committed lockfile
+        run: npm ci --prefix frontend --no-audit --no-fund
+
+      - name: Test injected provider wake discovery
+        run: node --test frontend/src/lib/injectedProviderDiscovery.test.mjs
+
+      - name: Test generic and unknown EVM wallet acceptance
+        run: node --test frontend/src/lib/injectedWallets.test.mjs
+
+      - name: Test Solana Wallet Standard compatibility
+        run: node --test frontend/src/lib/solanaWalletStandard.test.mjs
+
+      - name: Test recruiter EVM authentication compatibility
+        run: node --test frontend/src/hooks/useRecruiterWallet.compatibility.test.mjs
+
+      - name: Test WalletConnect shared EVM connector contract
+        run: node --test frontend/src/lib/walletConnect.contract.test.mjs
+
+      - name: Build normal BNB and Solana frontend
+        env:
+          VITE_DEFAULT_CHAIN_ID: "56"
+          VITE_ALLOWED_CHAIN_IDS: "56,97,101"
+          VITE_PUBLIC_RPC_56: "https://rpc-evm-56.test.mwz"
+          VITE_PUBLIC_RPC_97: "https://rpc-evm-97.test.mwz"
+          VITE_SOLANA_MAINNET_RPC: "https://rpc-solana-101.test.mwz"
+          VITE_PUBLIC_RPC_101: "https://rpc-solana-101.test.mwz"
+          VITE_WALLETCONNECT_PROJECT_ID: "mwz-ci-walletconnect-project"
+        run: npm --prefix frontend run build
+
+      - name: Build Robinhood EVM acceptance frontend
+        env:
+          VITE_RUNTIME_ENVIRONMENT: "local"
+          VITE_DEFAULT_CHAIN_ID: "46630"
+          VITE_ALLOWED_CHAIN_IDS: "56,101,46630"
+          VITE_PUBLIC_RPC_56: "https://rpc-evm-56.test.mwz"
+          VITE_PUBLIC_RPC_46630: "https://rpc.testnet.chain.robinhood.com"
+          VITE_SOLANA_MAINNET_RPC: "https://rpc-solana-101.test.mwz"
+          VITE_PUBLIC_RPC_101: "https://rpc-solana-101.test.mwz"
+          VITE_WALLETCONNECT_PROJECT_ID: "mwz-ci-walletconnect-project"
+        run: npm --prefix frontend run build

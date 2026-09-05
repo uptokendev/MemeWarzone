@@ -1,12 +1,22 @@
 import { useMemo, useState } from "react";
 import { NavLink } from "react-router-dom";
-import { Coins, Gift, Home, LifeBuoy, Menu, Settings, Shield, Trophy, Users, X } from "lucide-react";
+import { Coins, Gift, Home, LifeBuoy, Menu, Settings, Shield, Swords, Trophy, Users, X } from "lucide-react";
 
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
+import { postGradFlags } from "@/features/postgrad/config";
+import { useArenaBattleFeed } from "@/hooks/useArenaBattleFeed";
 
-const menuItems = [
+const menuItems: Array<{
+  label: string;
+  path: string;
+  icon: typeof Home;
+  end?: boolean;
+  requiresSquad?: boolean;
+  requiresArena?: boolean;
+}> = [
   { label: "Overview", path: "", icon: Home, end: true },
   { label: "Coins", path: "coins", icon: Coins },
+  { label: "Battles", path: "battles", icon: Swords, requiresArena: true },
   { label: "Recruiter", path: "recruiter", icon: Shield },
   { label: "Squad", path: "squad", icon: Users, requiresSquad: true },
   { label: "Warzone Airdrops", path: "airdrops", icon: Gift },
@@ -30,14 +40,17 @@ type CommandCenterSidebarProps = {
 
 export function CommandCenterSidebar({ basePath }: CommandCenterSidebarProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
-  const { attribution } = useCommandCenterData();
+  const { attribution, walletAddress, chainId } = useCommandCenterData();
+  const battleFeed = useArenaBattleFeed(walletAddress, chainId);
+  const hasArenaCoins = battleFeed.creatorStatuses.some((item) => item.eligibility || Boolean(item.battleId));
 
   const visibleMenuItems = useMemo(
     () => menuItems.filter((item) => {
       if (item.requiresSquad && !hasSquadAccess(attribution?.squadState, attribution?.recruiterLinkState)) return false;
+      if (item.requiresArena && (!postGradFlags.arena || (!battleFeed.loading && !hasArenaCoins))) return false;
       return true;
     }),
-    [attribution?.recruiterLinkState, attribution?.squadState],
+    [attribution?.recruiterLinkState, attribution?.squadState, battleFeed.loading, hasArenaCoins],
   );
 
   return (

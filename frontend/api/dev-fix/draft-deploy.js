@@ -3,6 +3,11 @@ import { json, readJson } from "../../server/http.js";
 import { getRpcUrls, getServerReadProvider } from "../lib/getServerReadProvider.js";
 import { draftDeploy as baseDraftDeploy } from "./draft-deploy-base.js";
 import { solanaCreateAuthorizationV4 } from "./solana-create-authorization-v4.js";
+import {
+  expectedCampaignGeneration,
+  generationRule,
+  isSupportedFactoryGeneration,
+} from "./routeAuthorizationSigner.js";
 
 import { isCreatorArmCooldownActive, normalizeCreatorArmCooldownEndsAt } from "../lib/creatorArmCooldown.js";
 import { runJsonTransform } from "./json-transform.js";
@@ -13,8 +18,7 @@ import {
 } from "./scheduled-lifecycle.js";
 
 const OBSOLETE_BSC_TESTNET_SCHEDULED_FACTORY = "0xe0FbBa4533513110Cec7e78aa3e48EC45301B5E6";
-const EXPECTED_FACTORY_GENERATION = 3;
-const EXPECTED_CAMPAIGN_GENERATION = 2;
+const ROBINHOOD_CHAIN_IDS = new Set([4663, 46630]);
 const CREATION_PREFLIGHT_ABI = [
   "function live() view returns (bool)",
   "function globalPaused() view returns (bool)",
@@ -30,12 +34,18 @@ const CREATOR_REGISTRY_PREFLIGHT_ABI = [
   "function getCreatorRules(address) view returns (uint256 maxLiveBonding,uint256 cooldownSeconds,uint256 creatorBuyLockSeconds,uint256 creatorBuyCapWei,uint256 maxClusterWallets)",
 ];
 
+function factoryGenerationRule(chainId) {
+  return generationRule(chainId);
+}
+
 function configuredScheduledFactory(chainId) {
   const id = Number(chainId);
   const configured = String(
     process.env[`SCHEDULED_FACTORY_ADDRESS_${id}`] ||
       process.env[`SCHEDULED_LAUNCH_FACTORY_ADDRESS_${id}`] ||
+      process.env[`FACTORY_ADDRESS_${id}`] ||
       process.env[`VITE_SCHEDULED_FACTORY_ADDRESS_${id}`] ||
+      process.env[`VITE_FACTORY_ADDRESS_${id}`] ||
       process.env.SCHEDULED_FACTORY_ADDRESS ||
       process.env.SCHEDULED_LAUNCH_FACTORY_ADDRESS ||
       "",
@@ -46,9 +56,14 @@ function configuredScheduledFactory(chainId) {
   return address;
 }
 
-function routeSignerAddress() {
+function routeSignerAddress(chainId) {
+  const id = Number(chainId);
   const privateKey = String(
-    process.env.ROUTE_AUTHORITY_PRIVATE_KEY ||
+    (ROBINHOOD_CHAIN_IDS.has(id)
+      ? process.env[`ROBINHOOD_ROUTE_AUTHORITY_PRIVATE_KEY_${id}`] || process.env.ROBINHOOD_ROUTE_AUTHORITY_PRIVATE_KEY
+      : "") ||
+      process.env[`ROUTE_AUTHORITY_PRIVATE_KEY_${id}`] ||
+      process.env.ROUTE_AUTHORITY_PRIVATE_KEY ||
       process.env.MWZ_ROUTE_AUTHORITY_PRIVATE_KEY ||
       process.env.ROUTE_AUTH_PRIVATE_KEY ||
       "",
@@ -77,7 +92,6 @@ async function verifyCurrentScheduledArmEligibility({ chainId, factoryAddress, w
     }
 
     const factory = new ethers.Contract(factoryAddress, CREATION_PREFLIGHT_ABI, provider);
-    // Immediate and timed arms share the same arm-time cooldown + live-cap checks.
     const [live, globalPaused, createPaused, routeAuthority, factoryGenerationRaw, campaignGenerationRaw, eligibility] = await Promise.all([
       factory.live(),
       factory.globalPaused(),
@@ -90,12 +104,12 @@ async function verifyCurrentScheduledArmEligibility({ chainId, factoryAddress, w
 
     const factoryGeneration = Number(factoryGenerationRaw);
     const campaignGeneration = Number(campaignGenerationRaw);
-    if (factoryGeneration !== EXPECTED_FACTORY_GENERATION || campaignGeneration !== EXPECTED_CAMPAIGN_GENERATION) {
+    if (!isSupportedFactoryGeneration(chainId, factoryGeneration) || campaignGeneration !== expectedCampaignGeneration(chainId)) {
       return {
         ok: false,
         status: 409,
         code: "SCHEDULED_CREATE_FACTORY_GENERATION_MISMATCH",
-        error: `Scheduled creation requires factory/campaign generation ${EXPECTED_FACTORY_GENERATION}/${EXPECTED_CAMPAIGN_GENERATION}; configured factory reports ${factoryGeneration}/${campaignGeneration}.`,
+        error: `Scheduled creation on chain ${chainId} requires factory/campaign generation ${factoryGenerationRule(chainId)}; configured factory reports ${factoryGeneration}/${campaignGeneration}.`,
       };
     }
     if (!live || globalPaused || createPaused) {
@@ -103,17 +117,19 @@ async function verifyCurrentScheduledArmEligibility({ chainId, factoryAddress, w
         ok: false,
         status: 503,
         code: "SCHEDULED_CREATE_FACTORY_NOT_READY",
-        error: !live ? "The corrected scheduled factory is not live." : globalPaused ? "The scheduled factory is globally paused." : "New campaign creation is paused.",
+        error: !live ? "The configured scheduled factory is not live." : globalPaused ? "The scheduled factory is globally paused." : "New campaign creation is paused.",
+        preflight: { factoryGeneration, campaignGeneration },
       };
     }
 
-    const signerAddress = routeSignerAddress();
+    const signerAddress = routeSignerAddress(chainId);
     if (!signerAddress || signerAddress.toLowerCase() !== String(routeAuthority).toLowerCase()) {
       return {
         ok: false,
         status: 503,
         code: "SCHEDULED_CREATE_ROUTE_AUTHORITY_MISMATCH",
-        error: "Configured route signer does not match the active scheduled factory route authority.",
+        error: `Configured route signer for chain ${chainId} does not match the active scheduled factory route authority.`,
+        preflight: { factoryGeneration, campaignGeneration },
       };
     }
 
@@ -233,7 +249,7 @@ export async function draftDeploy(req, res) {
       const supplied = String(body.factoryAddress || "").trim();
       if (!expected) {
         return json(res, 503, {
-          error: "The corrected scheduled LaunchFactory is not configured. The obsolete BSC Testnet factory is blocked for new campaigns.",
+          error: "The scheduled LaunchFactory is not configured for this chain.",
           code: "SCHEDULED_FACTORY_NOT_CONFIGURED",
         });
       }

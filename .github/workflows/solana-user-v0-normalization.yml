@@ -1,0 +1,76 @@
+name: Solana User V0 Normalization
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - frontend/src/lib/solanaUserV0Transaction.ts
+      - frontend/src/lib/solanaUserV0Transaction.test.mjs
+      - frontend/src/lib/solanaLeagueClaim.ts
+      - frontend/src/lib/solanaRewardClaim.ts
+      - frontend/src/lib/solanaRewardLaneClaim.ts
+      - frontend/src/lib/solanaRewardV0Claim.ts
+      - frontend/src/lib/solanaTradeV1.ts
+      - frontend/src/lib/solanaTradeAtaV0.test.mjs
+      - frontend/src/lib/solanaUpvoteV0.ts
+      - frontend/src/lib/solanaArenaV0.ts
+      - frontend/src/lib/solanaArenaV0.test.mjs
+      - frontend/src/lib/solanaArenaLayout.mjs
+      - frontend/src/lib/solanaArenaLayout.test.mjs
+      - frontend/src/lib/solanaArenaClient.ts
+      - frontend/api/lib/solanaArenaPoolRead.js
+      - frontend/api/lib/arenaWarPoolLive.js
+      - frontend/src/lib/solanaMeteoraTrade.ts
+      - frontend/src/lib/arena/**
+      - frontend/src/components/arena/**
+      - frontend/src/components/token/UpvoteDialog.tsx
+      - frontend/src/pages/Arena*.tsx
+      - frontend/src/pages/BattleDetails.tsx
+      - frontend/src/pages/TournamentDetails.tsx
+      - frontend/scripts/check-solana-user-v0-normalization.mjs
+      - frontend/scripts/load-solana-v0-module.mjs
+      - .github/workflows/solana-user-v0-normalization.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  user-v0:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install frontend dependencies
+        run: npm install --prefix frontend --no-audit --no-fund
+
+      - name: Gate live user paths against Legacy Solana transactions
+        run: node frontend/scripts/check-solana-user-v0-normalization.mjs
+
+      - name: Test generic user V0 envelope
+        run: node --test frontend/src/lib/solanaUserV0Transaction.test.mjs
+
+      - name: Test Arena layout probe and V0 executor contract
+        run: node --test frontend/src/lib/solanaArenaLayout.test.mjs frontend/src/lib/solanaArenaV0.test.mjs
+
+      - name: Test first-buy ATA in one V0 trade
+        run: node --test frontend/src/lib/solanaTradeAtaV0.test.mjs
+
+      - name: Re-run proven CREATE / BUY / SELL V0 invariants
+        run: npm --prefix frontend run test:solana-v0
+
+      - name: Re-run confirmation helper invariants
+        run: npm --prefix frontend run test:solana-confirm
+
+      - name: Build production frontend
+        run: npm --prefix frontend run build

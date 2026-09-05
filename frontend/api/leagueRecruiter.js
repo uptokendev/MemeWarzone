@@ -2,6 +2,7 @@ import { pool } from "../server/db.js";
 import { badMethod, getQuery, json } from "../server/http.js";
 import { resolveBnbUsdPrice } from "./lib/bnbUsdPrice.js";
 import { resolveSolUsdPrice } from "./lib/solUsdPrice.js";
+import { resolveEthUsdPrice } from "./lib/ethUsdPrice.js";
 import { scoreUniversalRecruiter, toNumber, weiToNative } from "./leagueRecruiterScore.js";
 
 /**
@@ -11,15 +12,8 @@ import { scoreUniversalRecruiter, toNumber, weiToNative } from "./leagueRecruite
  * Network counts = active relationships as of epoch end / now.
  * Activity (volume, earnings) = current epoch only, USD-normalized per chain.
  *
- * Native accounting stays separate: BNB rewards remain BNB, SOL rewards remain SOL.
- * Ranking uses referredVolumeUsd / epochEarnedUsd via normalizedScoreVolume and
- * normalizedScoreEarnings so existing 0.05 / 1.0 weights keep their scale.
- * Those normalized fields are ranking inputs only — not claim balances.
- *
- * Score weights stay configurable:
- *   linked wallets 1, creators 3, traders 2,
- *   normalizedScoreVolume * 0.05, normalizedScoreEarnings * 1
- * (override via RECRUITER_LEADERBOARD_WEIGHT_* env on frontend-api).
+ * Native accounting stays separate: BNB remains BNB, SOL remains SOL, Robinhood
+ * remains ETH. USD totals are ranking/display values only and are never claim balances.
  */
 
 function clampInt(v, lo, hi, def) {
@@ -60,7 +54,6 @@ function getMonthlyEpochUtc(epochOffset) {
 
 function normPeriod(periodRaw) {
   const p = String(periodRaw || "weekly").toLowerCase().trim();
-  if (p === "weekly") return "weekly";
   if (p === "monthly") return "monthly";
   return "weekly";
 }
@@ -99,33 +92,19 @@ function preserveWallet(value) {
   return raw;
 }
 
-/**
- * Universal recruiter board.
- * $1 = epochStart, $2 = rangeEnd (now for live epochs).
- * Network = still-active relationships as of $2, including pre-epoch links.
- * Volume/earnings = activity with occurred_at in [$1, $2).
- */
 async function loadEpochRecruiterRows(startIso, endIso, limit, prices) {
   const weights = getWeights();
   const { rows } = await pool.query(
     `
     WITH active_links AS (
-      SELECT
-        l.recruiter_id,
-        l.wallet_address,
-        l.linked_at,
-        l.detached_at
+      SELECT l.recruiter_id, l.wallet_address, l.linked_at, l.detached_at
       FROM public.wallet_recruiter_links l
       WHERE l.is_active = true
         AND l.linked_at <= $2::timestamptz
         AND (l.detached_at IS NULL OR l.detached_at > $2::timestamptz)
     ),
     active_squad AS (
-      SELECT
-        s.recruiter_id,
-        s.wallet_address,
-        s.joined_at,
-        lower(coalesce(s.member_role, '')) AS member_role
+      SELECT s.recruiter_id, s.wallet_address, s.joined_at, lower(coalesce(s.member_role, '')) AS member_role
       FROM public.wallet_squad_memberships s
       WHERE s.is_active = true
         AND s.joined_at <= $2::timestamptz
@@ -136,32 +115,22 @@ async function loadEpochRecruiterRows(startIso, endIso, limit, prices) {
       SELECT recruiter_id, wallet_address FROM active_squad
     ),
     link_stats AS (
-      SELECT
-        el.recruiter_id,
+      SELECT el.recruiter_id,
         count(DISTINCT el.wallet_address)::int AS linked_wallet_count,
         max(el.linked_at) AS latest_linked_activity_at
       FROM active_links el
       GROUP BY el.recruiter_id
     ),
     squad_stats AS (
-      SELECT
-        es.recruiter_id,
+      SELECT es.recruiter_id,
         count(DISTINCT es.wallet_address)::int AS active_squad_member_count,
-        count(DISTINCT es.wallet_address) FILTER (
-          WHERE es.member_role IN ('creator', 'both')
-        )::int AS linked_creators_count,
-        count(DISTINCT es.wallet_address) FILTER (
-          WHERE es.member_role IN ('trader', 'both')
-        )::int AS linked_traders_count
+        count(DISTINCT es.wallet_address) FILTER (WHERE es.member_role IN ('creator', 'both'))::int AS linked_creators_count,
+        count(DISTINCT es.wallet_address) FILTER (WHERE es.member_role IN ('trader', 'both'))::int AS linked_traders_count
       FROM active_squad es
       GROUP BY es.recruiter_id
     ),
     bnb_matches AS (
-      SELECT
-        w.recruiter_id,
-        re.raw_amount,
-        re.recruiter_amount,
-        re.occurred_at
+      SELECT w.recruiter_id, re.raw_amount, re.recruiter_amount, re.occurred_at
       FROM public.reward_events re
       JOIN volume_wallets w
         ON re.route_kind = 'trade'
@@ -171,11 +140,7 @@ async function loadEpochRecruiterRows(startIso, endIso, limit, prices) {
         AND re.occurred_at >= $1::timestamptz
         AND re.occurred_at < $2::timestamptz
       UNION ALL
-      SELECT
-        w.recruiter_id,
-        re.raw_amount,
-        re.recruiter_amount,
-        re.occurred_at
+      SELECT w.recruiter_id, re.raw_amount, re.recruiter_amount, re.occurred_at
       FROM public.reward_events re
       JOIN public.campaigns c
         ON re.route_kind = 'finalize'
@@ -187,9 +152,31 @@ async function loadEpochRecruiterRows(startIso, endIso, limit, prices) {
         AND re.occurred_at >= $1::timestamptz
         AND re.occurred_at < $2::timestamptz
     ),
+    robinhood_matches AS (
+      SELECT w.recruiter_id, re.raw_amount, re.recruiter_amount, re.occurred_at
+      FROM public.reward_events re
+      JOIN volume_wallets w
+        ON re.route_kind = 'trade'
+       AND re.wallet_address IS NOT NULL
+       AND (w.wallet_address = re.wallet_address OR lower(w.wallet_address) = lower(re.wallet_address))
+      WHERE re.chain_id IN (4663, 46630)
+        AND re.occurred_at >= $1::timestamptz
+        AND re.occurred_at < $2::timestamptz
+      UNION ALL
+      SELECT w.recruiter_id, re.raw_amount, re.recruiter_amount, re.occurred_at
+      FROM public.reward_events re
+      JOIN public.campaigns c
+        ON re.route_kind = 'finalize'
+       AND c.chain_id = re.chain_id
+       AND c.campaign_address = re.campaign_address
+      JOIN volume_wallets w
+        ON (w.wallet_address = c.creator_address OR lower(w.wallet_address) = lower(c.creator_address))
+      WHERE re.chain_id IN (4663, 46630)
+        AND re.occurred_at >= $1::timestamptz
+        AND re.occurred_at < $2::timestamptz
+    ),
     sol_matches AS (
-      SELECT
-        w.recruiter_id,
+      SELECT w.recruiter_id,
         t.bnb_amount_raw::numeric AS raw_amount,
         floor((t.bnb_amount_raw::numeric * 20) / 10000) AS recruiter_amount,
         t.block_time AS occurred_at
@@ -201,31 +188,32 @@ async function loadEpochRecruiterRows(startIso, endIso, limit, prices) {
         AND t.block_time < $2::timestamptz
     ),
     bnb_totals AS (
-      SELECT
-        recruiter_id,
+      SELECT recruiter_id,
         coalesce(sum(raw_amount), 0)::numeric AS referred_volume_raw,
         coalesce(sum(recruiter_amount), 0)::numeric AS epoch_earned_raw,
         max(occurred_at) AS last_referred_event_at
-      FROM bnb_matches
-      GROUP BY recruiter_id
+      FROM bnb_matches GROUP BY recruiter_id
+    ),
+    robinhood_totals AS (
+      SELECT recruiter_id,
+        coalesce(sum(raw_amount), 0)::numeric AS referred_volume_raw,
+        coalesce(sum(recruiter_amount), 0)::numeric AS epoch_earned_raw,
+        max(occurred_at) AS last_referred_event_at
+      FROM robinhood_matches GROUP BY recruiter_id
     ),
     sol_totals AS (
-      SELECT
-        recruiter_id,
+      SELECT recruiter_id,
         coalesce(sum(raw_amount), 0)::numeric AS referred_volume_raw,
         coalesce(sum(recruiter_amount), 0)::numeric AS epoch_earned_raw,
         max(occurred_at) AS last_referred_event_at
-      FROM sol_matches
-      GROUP BY recruiter_id
+      FROM sol_matches GROUP BY recruiter_id
     ),
     recruiter_ids AS (
       SELECT recruiter_id FROM link_stats
-      UNION
-      SELECT recruiter_id FROM squad_stats
-      UNION
-      SELECT recruiter_id FROM bnb_totals
-      UNION
-      SELECT recruiter_id FROM sol_totals
+      UNION SELECT recruiter_id FROM squad_stats
+      UNION SELECT recruiter_id FROM bnb_totals
+      UNION SELECT recruiter_id FROM robinhood_totals
+      UNION SELECT recruiter_id FROM sol_totals
     )
     SELECT
       r.id AS recruiter_id,
@@ -240,14 +228,17 @@ async function loadEpochRecruiterRows(startIso, endIso, limit, prices) {
       coalesce(ss.linked_traders_count, 0) AS linked_traders_count,
       coalesce(bt.referred_volume_raw, 0)::text AS referred_volume_bnb_raw,
       coalesce(st.referred_volume_raw, 0)::text AS referred_volume_sol_raw,
+      coalesce(rt.referred_volume_raw, 0)::text AS referred_volume_eth_raw,
       coalesce(bt.epoch_earned_raw, 0)::text AS epoch_earned_bnb_raw,
       coalesce(st.epoch_earned_raw, 0)::text AS epoch_earned_sol_raw,
-      coalesce(ls.latest_linked_activity_at, bt.last_referred_event_at, st.last_referred_event_at) AS latest_linked_activity_at
+      coalesce(rt.epoch_earned_raw, 0)::text AS epoch_earned_eth_raw,
+      coalesce(ls.latest_linked_activity_at, bt.last_referred_event_at, rt.last_referred_event_at, st.last_referred_event_at) AS latest_linked_activity_at
     FROM recruiter_ids ids
     JOIN public.recruiters r ON r.id = ids.recruiter_id
     LEFT JOIN link_stats ls ON ls.recruiter_id = r.id
     LEFT JOIN squad_stats ss ON ss.recruiter_id = r.id
     LEFT JOIN bnb_totals bt ON bt.recruiter_id = r.id
+    LEFT JOIN robinhood_totals rt ON rt.recruiter_id = r.id
     LEFT JOIN sol_totals st ON st.recruiter_id = r.id
     WHERE r.status = 'active'
     `,
@@ -256,6 +247,7 @@ async function loadEpochRecruiterRows(startIso, endIso, limit, prices) {
 
   const bnbUsd = toNumber(prices?.bnbUsd);
   const solUsd = toNumber(prices?.solUsd);
+  const ethUsd = toNumber(prices?.ethUsd);
   const scored = rows.map((row) => {
     const linkedWalletCount = toNumber(row.linked_wallet_count);
     const linkedCreatorsCount = toNumber(row.linked_creators_count);
@@ -263,18 +255,23 @@ async function loadEpochRecruiterRows(startIso, endIso, limit, prices) {
     const activeSquadMemberCount = toNumber(row.active_squad_member_count);
     const referredVolumeBnb = weiToNative(row.referred_volume_bnb_raw, 18);
     const referredVolumeSol = weiToNative(row.referred_volume_sol_raw, 9);
+    const referredVolumeEth = weiToNative(row.referred_volume_eth_raw, 18);
     const epochEarnedBnb = weiToNative(row.epoch_earned_bnb_raw, 18);
     const epochEarnedSol = weiToNative(row.epoch_earned_sol_raw, 9);
+    const epochEarnedEth = weiToNative(row.epoch_earned_eth_raw, 18);
     const money = scoreUniversalRecruiter({
       linkedWalletCount,
       linkedCreatorsCount,
       linkedTradersCount,
       referredVolumeBnb,
       referredVolumeSol,
+      referredVolumeEth,
       epochEarnedBnb,
       epochEarnedSol,
+      epochEarnedEth,
       bnbUsd,
       solUsd,
+      ethUsd,
     }, weights);
 
     return {
@@ -296,9 +293,11 @@ async function loadEpochRecruiterRows(startIso, endIso, limit, prices) {
       linkedTraders: linkedTradersCount,
       referredVolumeBnb,
       referredVolumeSol,
+      referredVolumeEth,
       referredVolumeUsd: money.referredVolumeUsd,
       epochEarnedBnb,
       epochEarnedSol,
+      epochEarnedEth,
       epochEarnedUsd: money.epochEarnedUsd,
       normalizedScoreVolume: money.normalizedScoreVolume,
       normalizedScoreEarnings: money.normalizedScoreEarnings,
@@ -320,7 +319,6 @@ async function loadEpochRecruiterRows(startIso, endIso, limit, prices) {
   return scored.slice(0, limit).map((row, index) => ({ ...row, rank: index + 1 }));
 }
 
-/** Links-only fallback when reward_events table is missing. */
 async function loadEpochLinksOnly(startIso, endIso, limit) {
   const weights = getWeights();
   const { rows } = await pool.query(
@@ -386,9 +384,11 @@ async function loadEpochLinksOnly(startIso, endIso, limit) {
       linkedTradersCount,
       referredVolumeBnb: 0,
       referredVolumeSol: 0,
+      referredVolumeEth: 0,
       referredVolumeUsd: 0,
       epochEarnedBnb: 0,
       epochEarnedSol: 0,
+      epochEarnedEth: 0,
       epochEarnedUsd: 0,
       normalizedScoreVolume: 0,
       normalizedScoreEarnings: 0,
@@ -406,8 +406,7 @@ export default async function handler(req, res) {
 
   const q = getQuery(req);
   const periodNorm = normPeriod(q.period);
-  const epochOffset =
-    periodNorm === "monthly" ? clampInt(q.epochOffset ?? 0, 0, 12, 0) : clampInt(q.epochOffset ?? 0, 0, 12, 0);
+  const epochOffset = clampInt(q.epochOffset ?? 0, 0, 12, 0);
   const limit = clampInt(q.limit ?? 10, 1, 50, 10);
   const meta = epochMeta(periodNorm, epochOffset);
   const startIso = meta.epochStart;
@@ -418,23 +417,25 @@ export default async function handler(req, res) {
     let rows;
     let warning;
     try {
-      const [bnbPrice, solPrice] = await Promise.all([resolveBnbUsdPrice(), resolveSolUsdPrice()]);
+      const [bnbPrice, solPrice, ethPrice] = await Promise.all([
+        resolveBnbUsdPrice(),
+        resolveSolUsdPrice(),
+        resolveEthUsdPrice(),
+      ]);
       rows = await loadEpochRecruiterRows(startIso, endIso, limit, {
         bnbUsd: bnbPrice.price,
         solUsd: solPrice.price,
+        ethUsd: ethPrice.price,
       });
     } catch (error) {
       if (!schemaMissing(error)) throw error;
       console.warn("[api/league recruiter] reward_events path unavailable; links-only epoch board", error?.message || error);
       rows = await loadEpochLinksOnly(startIso, endIso, limit);
-      warning =
-        "Epoch recruiter volume table unavailable; board ranks links/squad joins in this epoch only (not all-time).";
+      warning = "Epoch recruiter volume table unavailable; board ranks active links/squad members only.";
     }
 
     if (!rows.length) {
-      warning =
-        warning ||
-        "No active recruiters with a live network or epoch referred volume yet.";
+      warning = warning || "No active recruiters with a live network or epoch referred volume yet.";
     }
 
     return json(res, 200, {

@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { isEvmAddress, isSolanaAddress } from "@/lib/address";
-import { BNB_TESTNET_CHAIN_ID, getActiveChainId, isEvmChainId, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
+import { BNB_CHAIN_ID, getActiveChainId, isEvmChainId, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
 import { useLaunchpad } from "@/lib/launchpadClient";
 import { useEditableProfile } from "@/hooks/profile/useEditableProfile";
 import { useProfileFollows } from "@/hooks/profile/useProfileFollows";
@@ -50,7 +50,6 @@ type CommandCenterData = {
   nativeBalance: string;
   tokenBalances: ReturnType<typeof useProfileBalances>["tokenBalances"];
   loadingBalances: boolean;
-  // Additive Phase 2 portfolio metrics (derived client-side for owner freshness).
   portfolioMetrics: ReturnType<typeof useProfileBalances>["portfolioMetrics"];
   loadingPortfolioMetrics: boolean;
   liveRank: ReturnType<typeof useProfileRank>["liveRank"];
@@ -72,27 +71,28 @@ export function CommandCenterDataProvider({
   const anyWallet: any = wallet as any;
   const hasSolanaWallet = Boolean(isSolanaConnected && solanaAccount);
 
-  // `walletChainId` is what the wallet reports (could be unsupported, e.g. ETH=1
-  // for an ETH-mainnet wallet). `chainId` is the active app chain — mapped to a
-  // supported value so signed messages and reads never carry an unsupported id.
-  // Solana wallets do not report an EVM-style chainId, so force the app's Solana
-  // chain id when the connected owner wallet is Solana.
   const evmWalletChainId: number | undefined = anyWallet?.chainId ?? anyWallet?.network?.chainId;
-  // Viewed Command Center wallet decides the chain. Never inherit the leftover
-  // BNB feed or a still-connected MetaMask session when the URL is a Solana pubkey.
+  const activeAppChainId = getActiveChainId(evmWalletChainId);
+
+  // A 0x address cannot identify which EVM network owns the current Command Center.
+  // Prefer the wallet's actual supported EVM chain; if that is temporarily unavailable
+  // during provider refresh, preserve the active app/feed EVM chain. Only fall back to
+  // BNB mainnet when there is no EVM context at all. Never fall back to BNB testnet,
+  // because that caused Robinhood pages to flip back to BNB after initially rendering ETH.
   const addressDrivenChainId = isSolanaAddress(walletAddress)
     ? SOLANA_CHAIN_ID
     : isEvmAddress(walletAddress)
-      ? (isEvmChainId(evmWalletChainId) ? evmWalletChainId : BNB_TESTNET_CHAIN_ID)
+      ? (isEvmChainId(evmWalletChainId)
+        ? evmWalletChainId
+        : isEvmChainId(activeAppChainId)
+          ? activeAppChainId
+          : BNB_CHAIN_ID)
       : undefined;
+
   const walletChainId: number | undefined = addressDrivenChainId
     ?? (hasSolanaWallet ? SOLANA_CHAIN_ID : evmWalletChainId);
   const chainId: number | undefined = addressDrivenChainId
-    ?? (hasSolanaWallet
-      ? SOLANA_CHAIN_ID
-      : evmWalletChainId
-        ? getActiveChainId(evmWalletChainId)
-        : undefined);
+    ?? (hasSolanaWallet ? SOLANA_CHAIN_ID : activeAppChainId);
   const account = isSolanaAddress(walletAddress)
     ? walletAddress
     : hasSolanaWallet
@@ -304,5 +304,4 @@ export function useCommandCenterData() {
   return ctx;
 }
 
-// Re-export the pure PortfolioMetrics type for Command Center consumers (per Phase 2 plan).
 export type { PortfolioMetrics } from "@/lib/profile/portfolioCalculations";

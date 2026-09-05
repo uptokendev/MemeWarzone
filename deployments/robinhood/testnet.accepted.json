@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "kind": "robinhood-testnet-acceptance-freeze",
+  "accepted5BSha": "d1783b4d31133bfcb107d1d32e04047c9e827fbf",
+  "chainId": 46630,
+  "chainKey": "robinhood-testnet",
+  "factory": "0xF170a2C97953754c2C1105E2AcC522Bc8e764D75",
+  "routeAuthority": "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0",
+  "admin": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "factoryGeneration": 4,
+  "campaignGeneration": 3,
+  "liquidityKind": 2,
+  "factoryStartBlock": 110723466,
+  "expectedLive": true,
+  "expectedCreatePaused": true,
+  "productionCompatible": false,
+  "productionCreationEnabled": false,
+  "contracts": {
+    "launchFactory": "0xF170a2C97953754c2C1105E2AcC522Bc8e764D75",
+    "launchCampaignImplementation": "0xC50DfbA761A9A4e9F55Dc01886Bf6659aEd9B817",
+    "permanentV3PositionLocker": "0x9523d856E469E37D4b2C52f3b6C8fA2d360a229F",
+    "treasuryRouterV3": "0xEf6572863967623605D866BeaAB6890FF7521278",
+    "graduationAdapter": "0xe69a6a41363a48179beaB9b1E6122885bbFe8C65",
+    "v3NativeSwapAdapter": "0x1948411B84424f6f67fDf83ce4A9b8ED49c8bF4F",
+    "upVoteTreasury": "0xEEEfa12B14ea922B21bAf05Ad4aa79B2643c8eA6"
+  }
+}

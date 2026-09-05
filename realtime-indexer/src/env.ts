@@ -22,19 +22,41 @@ function csvEnv(...names: string[]): string[] {
     .filter(Boolean);
 }
 
+function truthy(value: unknown): boolean {
+  return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+}
+
+const runtimeEnvironment = String(process.env.RUNTIME_ENVIRONMENT || process.env.VITE_RUNTIME_ENVIRONMENT || "").trim().toLowerCase();
+const localRuntime = runtimeEnvironment === "local";
+const ablyDisabled = localRuntime && truthy(process.env.LOCAL_DISABLE_ABLY || "1");
+
 export const ENV = {
   DATABASE_URL: req("DATABASE_URL"),
-  ABLY_API_KEY: req("ABLY_API_KEY"),
+  ABLY_DISABLED: ablyDisabled,
+  ABLY_API_KEY: ablyDisabled ? "" : req("ABLY_API_KEY"),
 
   BSC_RPC_HTTP_97: process.env.BSC_RPC_HTTP_97 || "",
   BSC_RPC_HTTP_56: process.env.BSC_RPC_HTTP_56 || "",
+  ROBINHOOD_RPC_HTTP_46630: firstEnv("ROBINHOOD_RPC_HTTP_46630", "ROBINHOOD_TESTNET_RPC_URL"),
+  ROBINHOOD_RPC_HTTP_4663: firstEnv("ROBINHOOD_RPC_HTTP_4663", "ROBINHOOD_MAINNET_RPC_URL"),
+  ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_46630: firstEnv(
+    "ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_46630",
+    "VITE_ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_46630",
+  ),
+  ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_4663: firstEnv(
+    "ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_4663",
+    "VITE_ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_4663",
+  ),
   DEPLOYMENT_NETWORK: String(process.env.DEPLOYMENT_NETWORK || "mainnet").toLowerCase(),
   DEFAULT_EVM_CHAIN_ID: Number(process.env.DEFAULT_EVM_CHAIN_ID || (String(process.env.DEPLOYMENT_NETWORK || "mainnet").toLowerCase() === "testnet" ? 97 : 56)),
+  EVM_INDEXER_CHAIN_IDS: csvEnv("EVM_INDEXER_CHAIN_IDS").map((value) => Number(value || 0)).filter((value) => Number.isInteger(value) && value > 0),
 
   // Creation resolves only against the accepted active factory. The former
   // scheduled-slot factory is never a fallback creation target.
   FACTORY_ADDRESS_97: firstEnv("FACTORY_ADDRESS_97", "VITE_FACTORY_ADDRESS_97", "FACTORY_ADDRESS", "VITE_FACTORY_ADDRESS"),
   FACTORY_ADDRESS_56: firstEnv("FACTORY_ADDRESS_56", "VITE_FACTORY_ADDRESS_56", "FACTORY_ADDRESS", "VITE_FACTORY_ADDRESS"),
+  FACTORY_ADDRESS_46630: firstEnv("FACTORY_ADDRESS_46630", "VITE_FACTORY_ADDRESS_46630"),
+  FACTORY_ADDRESS_4663: firstEnv("FACTORY_ADDRESS_4663", "VITE_FACTORY_ADDRESS_4663"),
 
   // Support inventory is deliberately separate from the one active creation
   // factory. Old factories remain readable and their campaigns continue to be
@@ -44,6 +66,10 @@ export const ENV = {
   SUPPORTED_FACTORY_START_BLOCKS_97: csvEnv("SUPPORTED_FACTORY_START_BLOCKS_97", "VITE_SUPPORTED_FACTORY_START_BLOCKS_97").map((value) => Number(value || 0)),
   SUPPORTED_FACTORY_ADDRESSES_56: csvEnv("SUPPORTED_FACTORY_ADDRESSES_56", "VITE_SUPPORTED_FACTORY_ADDRESSES_56"),
   SUPPORTED_FACTORY_START_BLOCKS_56: csvEnv("SUPPORTED_FACTORY_START_BLOCKS_56", "VITE_SUPPORTED_FACTORY_START_BLOCKS_56").map((value) => Number(value || 0)),
+  SUPPORTED_FACTORY_ADDRESSES_46630: csvEnv("SUPPORTED_FACTORY_ADDRESSES_46630", "VITE_SUPPORTED_FACTORY_ADDRESSES_46630"),
+  SUPPORTED_FACTORY_START_BLOCKS_46630: csvEnv("SUPPORTED_FACTORY_START_BLOCKS_46630", "VITE_SUPPORTED_FACTORY_START_BLOCKS_46630").map((value) => Number(value || 0)),
+  SUPPORTED_FACTORY_ADDRESSES_4663: csvEnv("SUPPORTED_FACTORY_ADDRESSES_4663", "VITE_SUPPORTED_FACTORY_ADDRESSES_4663"),
+  SUPPORTED_FACTORY_START_BLOCKS_4663: csvEnv("SUPPORTED_FACTORY_START_BLOCKS_4663", "VITE_SUPPORTED_FACTORY_START_BLOCKS_4663").map((value) => Number(value || 0)),
 
   SOLANA_RPC_HTTP: process.env.SOLANA_RPC_HTTP || "",
   SOLANA_LAUNCHPAD_PROGRAM_ID: process.env.SOLANA_LAUNCHPAD_PROGRAM_ID || "",
@@ -59,14 +85,20 @@ export const ENV = {
   // UPVoteTreasury addresses (optional; if not set, vote indexing is disabled for that chain)
   VOTE_TREASURY_ADDRESS_97: firstEnv("VOTE_TREASURY_ADDRESS_97", "VITE_VOTE_TREASURY_ADDRESS_97", "VOTE_TREASURY_ADDRESS", "VITE_VOTE_TREASURY_ADDRESS"),
   VOTE_TREASURY_ADDRESS_56: firstEnv("VOTE_TREASURY_ADDRESS_56", "VITE_VOTE_TREASURY_ADDRESS_56", "VOTE_TREASURY_ADDRESS", "VITE_VOTE_TREASURY_ADDRESS"),
+  VOTE_TREASURY_ADDRESS_46630: firstEnv("VOTE_TREASURY_ADDRESS_46630", "VITE_VOTE_TREASURY_ADDRESS_46630"),
+  VOTE_TREASURY_ADDRESS_4663: firstEnv("VOTE_TREASURY_ADDRESS_4663", "VITE_VOTE_TREASURY_ADDRESS_4663"),
 
   // Indexing window controls
   FACTORY_START_BLOCK_97: Number(process.env.FACTORY_START_BLOCK_97 || 0),
   FACTORY_START_BLOCK_56: Number(process.env.FACTORY_START_BLOCK_56 || 0),
+  FACTORY_START_BLOCK_46630: Number(process.env.FACTORY_START_BLOCK_46630 || 0),
+  FACTORY_START_BLOCK_4663: Number(process.env.FACTORY_START_BLOCK_4663 || 0),
 
   // VoteTreasury start blocks (optional; if not set, fallback to latest - LOOKBACK)
   VOTE_TREASURY_START_BLOCK_97: Number(process.env.VOTE_TREASURY_START_BLOCK_97 || 0),
   VOTE_TREASURY_START_BLOCK_56: Number(process.env.VOTE_TREASURY_START_BLOCK_56 || 0),
+  VOTE_TREASURY_START_BLOCK_46630: Number(process.env.VOTE_TREASURY_START_BLOCK_46630 || 0),
+  VOTE_TREASURY_START_BLOCK_4663: Number(process.env.VOTE_TREASURY_START_BLOCK_4663 || 0),
   // If FACTORY_START_BLOCK_* is not set, we fallback to (latest - FACTORY_LOOKBACK_BLOCKS)
   FACTORY_LOOKBACK_BLOCKS: Number(process.env.FACTORY_LOOKBACK_BLOCKS || 250000),
 
@@ -84,7 +116,7 @@ export const ENV = {
   // NOTE: Testnet UX benefits from lower latency; tune up for mainnet / free RPCs.
   INDEXER_INTERVAL_MS: Number(process.env.INDEXER_INTERVAL_MS || 10000),
   // Factory discovery (registry + CampaignCreated logs) is heavier than trade ticks —
-  // do not share the aggressive trade interval on free RPCs.
+  // do not share the aggressive trade interval on free RPC budgets.
   FACTORY_DISCOVERY_INTERVAL_MS: Number(process.env.FACTORY_DISCOVERY_INTERVAL_MS || 60000),
   // If a single pass holds the lock longer than this, the next loop tick takes over.
   // Previously only *manual* jobs could take over — a wedged normal pass blocked forever.
@@ -109,9 +141,10 @@ export const ENV = {
   // Lower default confirmations for faster UI updates (especially on testnet).
   CONFIRMATIONS: Number(process.env.CONFIRMATIONS || "1"),
 
-  // Optional telemetry (recommended). If not set, telemetry is disabled.
-  TELEMETRY_INGEST_URL: process.env.TELEMETRY_INGEST_URL || "https://memebattles-telemetry-production.up.railway.app/ingest",
-  TELEMETRY_TOKEN: process.env.TELEMETRY_TOKEN || "",
+  // Optional telemetry. Local acceptance defaults to completely disabled even when
+  // the developer shell still contains old production telemetry variables.
+  TELEMETRY_INGEST_URL: localRuntime ? String(process.env.TELEMETRY_INGEST_URL || "") : (process.env.TELEMETRY_INGEST_URL || "https://memebattles-telemetry-production.up.railway.app/ingest"),
+  TELEMETRY_TOKEN: localRuntime ? "" : (process.env.TELEMETRY_TOKEN || ""),
   TELEMETRY_INTERVAL_MS: Number(process.env.TELEMETRY_INTERVAL_MS || "15000"),
 
   RANK_EVENTS_TOKEN: process.env.RANK_EVENTS_TOKEN || "",
@@ -150,6 +183,9 @@ export const ENV = {
   // Set explicitly to "0" on a host that must stay dark.
   ENABLE_UNIFIED_MARKET_API: String(process.env.ENABLE_UNIFIED_MARKET_API || "1") === "1",
   ENABLE_TOPAZ_POOL_INDEXER: String(process.env.ENABLE_TOPAZ_POOL_INDEXER || "1") === "1",
+  ENABLE_ROBINHOOD_V3_POOL_INDEXER: String(process.env.ENABLE_ROBINHOOD_V3_POOL_INDEXER || "0") === "1",
+  ROBINHOOD_V3_POOL_INDEXER_INTERVAL_MS: Number(process.env.ROBINHOOD_V3_POOL_INDEXER_INTERVAL_MS || "5000"),
+  ROBINHOOD_V3_POOL_INDEXER_MAX_POOLS: Number(process.env.ROBINHOOD_V3_POOL_INDEXER_MAX_POOLS || "100"),
   ENABLE_UNIFIED_MARKET_CHART: String(process.env.ENABLE_UNIFIED_MARKET_CHART || "1") === "1",
   // Quote/trade kill-switches for the market-route API only; wallet still uses on-chain Topaz.
   ENABLE_TOPAZ_QUOTES: String(process.env.ENABLE_TOPAZ_QUOTES || "1") === "1",

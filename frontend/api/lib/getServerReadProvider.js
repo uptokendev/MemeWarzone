@@ -4,15 +4,15 @@ import { ethers } from "ethers";
  * Server equivalent of src/lib/readProvider.ts — keep config choices in sync.
  *
  * IMPORTANT (same as client):
- * - We DISABLE batching (batchMaxCount: 1) because public BSC endpoints
- *   often rate-limit when getLogs requests are batched.
+ * - We DISABLE batching (batchMaxCount: 1) because public endpoints often
+ *   rate-limit when requests are batched.
  * - We set staticNetwork to avoid extra "detectNetwork" chatter.
- * - Primary env RPCs are tried first; built-in public fallbacks are used when
- *   the configured endpoint returns 5xx/timeouts (common on free public RPCs).
+ * - Primary env RPCs are tried first; public fallbacks are only a last resort.
  *
  * Supports env vars:
- *   BSC_RPC_HTTP_${chainId}  (CSV allowed)
+ *   BSC_RPC_HTTP_${chainId} / ROBINHOOD_RPC_HTTP_${chainId} (CSV allowed)
  *   VITE_PUBLIC_RPC_${chainId}
+ *   ROBINHOOD_TESTNET_RPC_URL / ROBINHOOD_MAINNET_RPC_URL
  *   BSC_RPC_HTTP / VITE_BSC_MAINNET_RPC / VITE_BSC_TESTNET_RPC
  */
 
@@ -29,10 +29,19 @@ const PUBLIC_FALLBACKS = {
     "https://data-seed-prebsc-2-s1.binance.org:8545",
     "https://bsc-testnet.bnbchain.org",
   ],
+  // Official Robinhood public RPCs are rate-limited; production should provide
+  // managed endpoints through ROBINHOOD_RPC_HTTP_* instead of relying on these.
+  4663: ["https://rpc.mainnet.chain.robinhood.com"],
+  46630: ["https://rpc.testnet.chain.robinhood.com"],
 };
 
 function networkName(chainId) {
-  return Number(chainId) === 56 ? "bsc" : "bsc-testnet";
+  const id = Number(chainId);
+  if (id === 56) return "bsc";
+  if (id === 97) return "bsc-testnet";
+  if (id === 4663) return "robinhood";
+  if (id === 46630) return "robinhood-testnet";
+  return `chain-${id}`;
 }
 
 function csvValues(value) {
@@ -58,12 +67,11 @@ function uniqueUrls(urls) {
   return out;
 }
 
-/**
- * Ordered RPC candidates for a chain: configured env first, then public fallbacks.
- */
+/** Ordered RPC candidates for a chain: configured env first, then public fallback. */
 export function getRpcUrls(chainId) {
   const id = Number(chainId);
   const configured = [
+    ...csvValues(process.env[`ROBINHOOD_RPC_HTTP_${id}`]),
     ...csvValues(process.env[`BSC_RPC_HTTP_${id}`]),
     ...csvValues(process.env[`VITE_PUBLIC_RPC_${id}`]),
   ];
@@ -72,13 +80,29 @@ export function getRpcUrls(chainId) {
     configured.push(
       ...csvValues(process.env.BSC_RPC_HTTP_56),
       ...csvValues(process.env.VITE_BSC_MAINNET_RPC),
+      ...csvValues(process.env.BSC_MAINNET_RPC),
+      ...csvValues(process.env.BSC_MAINNET_RPC_URL),
       ...csvValues(process.env.BSC_RPC_HTTP),
     );
   } else if (id === 97) {
     configured.push(
       ...csvValues(process.env.BSC_RPC_HTTP_97),
       ...csvValues(process.env.VITE_BSC_TESTNET_RPC),
+      ...csvValues(process.env.BSC_TESTNET_RPC),
+      ...csvValues(process.env.BSC_TESTNET_RPC_URL),
       ...csvValues(process.env.BSC_RPC_HTTP),
+    );
+  } else if (id === 4663) {
+    configured.push(
+      ...csvValues(process.env.ROBINHOOD_RPC_HTTP_4663),
+      ...csvValues(process.env.ROBINHOOD_MAINNET_RPC_URL),
+      ...csvValues(process.env.ROBINHOOD_MAINNET_RPC),
+    );
+  } else if (id === 46630) {
+    configured.push(
+      ...csvValues(process.env.ROBINHOOD_RPC_HTTP_46630),
+      ...csvValues(process.env.ROBINHOOD_TESTNET_RPC_URL),
+      ...csvValues(process.env.ROBINHOOD_TESTNET_RPC),
     );
   } else {
     configured.push(...csvValues(process.env.BSC_RPC_HTTP));
@@ -110,10 +134,7 @@ function hostOf(url) {
   }
 }
 
-/**
- * Returns a read-only provider for server-side on-chain reads.
- * Probes candidates until one answers eth_blockNumber successfully.
- */
+/** Returns a read-only provider for server-side on-chain reads. */
 export async function getServerReadProvider(chainId) {
   const numChainId = Number(chainId);
   if (!Number.isFinite(numChainId)) {
@@ -133,7 +154,7 @@ export async function getServerReadProvider(chainId) {
   const urls = getRpcUrls(numChainId);
   if (!urls.length) {
     throw new Error(
-      `Missing RPC URL for chainId=${numChainId} (set BSC_RPC_HTTP_${numChainId} or VITE_PUBLIC_RPC_${numChainId})`,
+      `Missing RPC URL for chainId=${numChainId} (set ROBINHOOD_RPC_HTTP_${numChainId}, BSC_RPC_HTTP_${numChainId}, or VITE_PUBLIC_RPC_${numChainId})`,
     );
   }
 
@@ -141,6 +162,10 @@ export async function getServerReadProvider(chainId) {
   for (const url of urls) {
     const provider = makeProvider(url, numChainId);
     try {
+      const network = await provider.getNetwork();
+      if (Number(network.chainId) !== numChainId) {
+        throw new Error(`RPC returned chainId=${network.chainId}; expected ${numChainId}`);
+      }
       await provider.getBlockNumber();
       providerCache.set(numChainId, { provider, url });
       return provider;
@@ -159,10 +184,7 @@ export async function getServerReadProvider(chainId) {
   );
 }
 
-/**
- * Sync helper for call sites that already hold a URL string.
- * Prefer getServerReadProvider for create/deploy eligibility.
- */
+/** Sync helper for call sites that already hold a URL string. */
 export function getServerReadProviderForUrl(chainId, url) {
   if (!url) {
     throw new Error(`Missing RPC URL for chainId=${chainId}`);

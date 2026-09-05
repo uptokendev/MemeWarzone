@@ -9,15 +9,32 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const configPath = path.join(root, "config/bsc-testnet-certification.json");
 const resolver = path.join(root, "scripts/resolve-bsc-certification-factory.mjs");
 
-test("network canary distinguishes Topaz preflight from full-cycle", () => {
+test("network canary separates accepted 3/2 preflight, source-head 4/3 testnet, and no-funds mainnet fork", () => {
   const canary = fs.readFileSync(path.join(root, ".github/workflows/solana-network-canary.yml"), "utf8");
   const driver = fs.readFileSync(path.join(root, "scripts/run-bnb-lifecycle-certification.ts"), "utf8");
   const verifier = fs.readFileSync(path.join(root, "scripts/test-topaz-graduation-flow.ts"), "utf8");
+  const sourceHeadLifecycle = fs.readFileSync(path.join(root, "scripts/test-bnb-6c-testnet-lifecycle.ts"), "utf8");
+
   assert.match(canary, /bsc-testnet-preflight/);
   assert.match(canary, /bsc-testnet-full-cycle/);
+  assert.match(canary, /bsc-mainnet-fork-source-head/);
+  assert.match(canary, /resolve-bsc-certification-factory\.mjs/);
+  assert.match(canary, /test-topaz-graduation-flow\.ts/);
   assert.match(canary, /run-bnb-lifecycle-certification\.ts/);
-  assert.match(canary, /TOPAZ_ACCEPTANCE_REQUIRE_EVIDENCE/);
-  assert.match(driver, /Do not fund this path until the dedicated testnet-certification/);
+  assert.match(canary, /reports\/bnb-6c-testnet-acceptance\.json/);
+  assert.match(canary, /BnbSourceHeadMainnetForkTopazV3\.spec\.ts/);
+  assert.match(canary, /Mainnet fork only: no production transaction can be broadcast/);
+
+  assert.match(driver, /deploy-bnb-testnet-stage\.ts/);
+  assert.match(driver, /verify-bnb-testnet-stage\.ts/);
+  assert.match(driver, /test-bnb-6c-testnet-lifecycle\.ts/);
+  assert.match(driver, /BNB_6C_ALLOW_SOURCE_HEAD_BROADCAST/);
+  assert.match(driver, /factoryLiveAfter/);
+  assert.match(driver, /createPausedAfter/);
+
+  assert.match(sourceHeadLifecycle, /acceptance refuses the live 3\/2 factory/);
+  assert.match(sourceHeadLifecycle, /realTopazCompatibility: false/);
+  assert.match(sourceHeadLifecycle, /liveFactoryUnchanged: true/);
   assert.match(verifier, /acceptance preflight passed/);
 });
 

@@ -5,13 +5,49 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 
 import {LaunchCampaign} from "./LaunchCampaign.sol";
 import {CreatorRegistry} from "./CreatorRegistry.sol";
 import {RiskRegistry} from "./RiskRegistry.sol";
 import {PermanentLpLocker} from "./PermanentLpLocker.sol";
+import {PermanentV3PositionLocker} from "./PermanentV3PositionLocker.sol";
 import {ITopazRouter02} from "./interfaces/ITopazRouter02.sol";
-import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
+
+interface IPermanentLiquidityLocker {
+    function configureRevenue(address treasuryRouter_, address integrationSource_) external;
+    function setIntegrationSourceAuthorized(address sourceAddress, bool authorized) external;
+    function registeredLpToken(address lpAsset) external view returns (bool);
+    function registerGraduatedPool(
+        address campaign,
+        address creator,
+        address creatorFeeRecipient,
+        address pool,
+        address expectedTokenA,
+        address expectedTokenB,
+        uint256 lockedLpAmount
+    ) external;
+}
+
+interface IRobinhoodStockGraduationRouteRegistry {
+    function stockRoutes(address stockToken)
+        external
+        view
+        returns (
+            address oracleFeed,
+            address acquisitionPool,
+            uint24 acquisitionFeeTier,
+            uint256 minimumRouteLiquidityUsdWad,
+            uint16 maxSwapSlippageBps,
+            uint16 maxOracleDeviationBps,
+            uint16 maxPriceImpactBps,
+            bool enabled
+        );
+}
+
+interface IRobinhoodStockCampaignImplementation {
+    function isStockCampaignImplementation() external view returns (bool);
+}
 
 contract LaunchFactory is Ownable {
     using ECDSA for bytes32;
@@ -28,6 +64,8 @@ contract LaunchFactory is Ownable {
     error FeeTooLowForLeague();
     error ParamTooHigh();
     error UnsupportedGraduationTarget();
+    error UnsupportedLiquidityKind();
+    error LiquidityKindMismatch();
     error OutOfBounds();
     error Offset();
     error SupplyZero();
@@ -62,6 +100,9 @@ contract LaunchFactory is Ownable {
     error MissingMetadataHash();
     error InvalidReservationVersion();
     error InvalidAuthorizationNonce();
+    error StockGraduationAdapterUnavailable();
+    error StockCampaignImplementationUnavailable();
+    error UnsupportedStockToken();
 
     struct LaunchConfig {
         uint256 totalSupply;
@@ -118,10 +159,25 @@ contract LaunchFactory is Ownable {
     uint8 public constant ROUTE_PROFILE_STANDARD_LINKED = 0;
     uint8 public constant ROUTE_PROFILE_STANDARD_UNLINKED = 1;
     uint8 public constant ROUTE_PROFILE_OG_LINKED = 2;
-    uint32 public constant FACTORY_GENERATION = 3;
-    uint32 public constant CAMPAIGN_GENERATION = 2;
+    uint8 public constant LIQUIDITY_KIND_V2_ERC20 = 1;
+    uint8 public constant LIQUIDITY_KIND_V3_NFT = 2;
+    uint32 public constant FACTORY_GENERATION = 4;
+    uint32 public constant CAMPAIGN_GENERATION = 3;
     uint256 public constant MIN_SCHEDULE_DELAY = 5 minutes;
     uint256 public constant MAX_SCHEDULE_WINDOW = 30 days;
+
+    uint256 public constant LEAGUE_FEE_BPS = 75;
+    uint256 public constant TEST_GRADUATION_USD_THRESHOLD = 6 ether;
+    uint256 public constant FAST_GRADUATION_USD_THRESHOLD = 15_000 ether;
+    uint256 public constant DEFAULT_GRADUATION_USD_THRESHOLD = 30_000 ether;
+    uint256 public constant DEEP_GRADUATION_USD_THRESHOLD = 50_000 ether;
+    uint256 public constant MAX_TOTAL_SUPPLY = 1_000_000_000 ether;
+    uint256 public constant MAX_BASE_PRICE = 1_000 ether;
+    uint256 public constant MAX_PRICE_SLOPE = 1e36;
+    uint256 public constant MAX_GRADUATION_TARGET = 1_000_000 ether;
+    uint256 public constant MAX_LAUNCH_PROTECTION_BLOCKS = 28_800;
+    uint256 public constant MAX_LAUNCH_PROTECTION_BUY_WEI = 1_000 ether;
+    uint256 public constant MAX_LAUNCH_PROTECTION_WALLET_WEI = 1_000 ether;
 
     LaunchConfig public config;
     address public feeRecipient;
@@ -140,29 +196,21 @@ contract LaunchFactory is Ownable {
     uint256 public launchProtectionMaxBuyWei;
     uint256 public launchProtectionMaxWalletWei;
 
-    uint256 public constant LEAGUE_FEE_BPS = 75;
-    uint256 public constant TEST_GRADUATION_USD_THRESHOLD = 6 ether;
-    uint256 public constant FAST_GRADUATION_USD_THRESHOLD = 15_000 ether;
-    uint256 public constant DEFAULT_GRADUATION_USD_THRESHOLD = 30_000 ether;
-    uint256 public constant DEEP_GRADUATION_USD_THRESHOLD = 50_000 ether;
-    uint256 public constant MAX_TOTAL_SUPPLY = 1_000_000_000 ether;
-    uint256 public constant MAX_BASE_PRICE = 1_000 ether;
-    uint256 public constant MAX_PRICE_SLOPE = 1e36;
-    uint256 public constant MAX_GRADUATION_TARGET = 1_000_000 ether;
-    uint256 public constant MAX_LAUNCH_PROTECTION_BLOCKS = 28_800;
-    uint256 public constant MAX_LAUNCH_PROTECTION_BUY_WEI = 1_000 ether;
-    uint256 public constant MAX_LAUNCH_PROTECTION_WALLET_WEI = 1_000 ether;
     address public immutable leagueReceiver;
     address public immutable campaignImplementation;
-    PermanentLpLocker public immutable permanentLpLocker;
+    IPermanentLiquidityLocker public immutable permanentLpLocker;
+    uint8 public immutable liquidityKind;
     address public router;
     address public graduationOracle;
+    address public stockGraduationAdapter;
+    address public stockCampaignImplementation;
     CreatorRegistry public creatorRegistry;
     RiskRegistry public riskRegistry;
 
     CampaignInfo[] private _campaigns;
     mapping(address => bool) public isCampaign;
     mapping(address => bool) public campaignGraduationRecorded;
+    mapping(address => address) public campaignGraduationQuoteToken;
     mapping(bytes32 => bool) public usedCreateRouteAuthorizations;
     mapping(address => mapping(uint256 => bool)) public usedAuthorizationNonces;
 
@@ -190,6 +238,9 @@ contract LaunchFactory is Ownable {
         uint32 factoryGeneration,
         uint32 campaignGeneration
     );
+    event StockGraduationAdapterUpdated(address indexed adapter);
+    event StockCampaignImplementationUpdated(address indexed implementation);
+    event StockCampaignConfigured(address indexed campaign, address indexed token, address indexed stockToken, address adapter);
     event ConfigUpdated(LaunchConfig newConfig);
     event FeeRecipientUpdated(address indexed newRecipient);
     event RouterUpdated(address indexed newRouter);
@@ -230,8 +281,20 @@ contract LaunchFactory is Ownable {
         feeRecipient = treasuryRouter_;
         campaignImplementation = campaignImplementation_;
         graduationOracle = graduationOracle_;
-        permanentLpLocker = new PermanentLpLocker(address(this));
-        permanentLpLocker.configureRevenue(treasuryRouter_, ITopazRouter02(topazRouter_).poolFactory());
+
+        uint8 detectedLiquidityKind = _readLiquidityKind(topazRouter_);
+        liquidityKind = detectedLiquidityKind;
+        if (detectedLiquidityKind == LIQUIDITY_KIND_V3_NFT) {
+            PermanentV3PositionLocker locker = new PermanentV3PositionLocker(address(this));
+            permanentLpLocker = IPermanentLiquidityLocker(address(locker));
+            locker.configureRevenue(treasuryRouter_, topazRouter_);
+        } else {
+            address poolFactory = _v2PoolFactory(topazRouter_);
+            PermanentLpLocker locker = new PermanentLpLocker(address(this));
+            permanentLpLocker = IPermanentLiquidityLocker(address(locker));
+            locker.configureRevenue(treasuryRouter_, poolFactory);
+        }
+
         config = LaunchConfig({
             totalSupply: MAX_TOTAL_SUPPLY,
             curveBps: 8400,
@@ -269,7 +332,7 @@ contract LaunchFactory is Ownable {
             target == DEFAULT_GRADUATION_USD_THRESHOLD ||
             target == DEEP_GRADUATION_USD_THRESHOLD
         ) return true;
-        return chainId == 97 && target == TEST_GRADUATION_USD_THRESHOLD;
+        return (chainId == 97 || chainId == 46630) && target == TEST_GRADUATION_USD_THRESHOLD;
     }
 
     function isGraduationTargetAllowed(uint256 target) public view returns (bool) {
@@ -279,7 +342,7 @@ contract LaunchFactory is Ownable {
 
     function createCampaign(CampaignRequest calldata req) external returns (address campaignAddr, address tokenAddr) {
         if (requireRouteAuthorization) revert RouteAuthorizationRequired();
-        return _createCampaign(req, tradeRouteProfile, finalizeRouteProfile, _immediateSchedule(msg.sender));
+        return _createCampaign(req, tradeRouteProfile, finalizeRouteProfile, _immediateSchedule(msg.sender), campaignImplementation);
     }
 
     function createCampaignAuthorized(CampaignRequest calldata req, RouteAuthorization calldata routeAuth)
@@ -287,7 +350,36 @@ contract LaunchFactory is Ownable {
         returns (address campaignAddr, address tokenAddr)
     {
         _verifyRouteAuthorization(msg.sender, req, routeAuth);
-        return _createCampaign(req, routeAuth.tradeRouteProfile, routeAuth.finalizeRouteProfile, _immediateSchedule(msg.sender));
+        return _createCampaign(
+            req,
+            routeAuth.tradeRouteProfile,
+            routeAuth.finalizeRouteProfile,
+            _immediateSchedule(msg.sender),
+            campaignImplementation
+        );
+    }
+
+    function createStockCampaignAuthorized(
+        CampaignRequest calldata req,
+        address stockToken,
+        RouteAuthorization calldata routeAuth
+    ) external returns (address campaignAddr, address tokenAddr) {
+        address adapter = stockGraduationAdapter;
+        address implementation = stockCampaignImplementation;
+        if (liquidityKind != LIQUIDITY_KIND_V3_NFT || adapter == address(0)) revert StockGraduationAdapterUnavailable();
+        if (implementation == address(0)) revert StockCampaignImplementationUnavailable();
+        _requireStockRouteEnabled(adapter, stockToken);
+        _verifyStockRouteAuthorization(msg.sender, req, stockToken, adapter, implementation, routeAuth);
+        (campaignAddr, tokenAddr) = _createCampaign(
+            req,
+            routeAuth.tradeRouteProfile,
+            routeAuth.finalizeRouteProfile,
+            _immediateSchedule(msg.sender),
+            implementation
+        );
+        campaignGraduationQuoteToken[campaignAddr] = stockToken;
+        LaunchCampaign(payable(campaignAddr)).configureStockGraduation(stockToken, adapter);
+        emit StockCampaignConfigured(campaignAddr, tokenAddr, stockToken, adapter);
     }
 
     function createScheduledCampaignAuthorized(ScheduledCampaignRequest calldata req, RouteAuthorization calldata routeAuth)
@@ -310,7 +402,13 @@ contract LaunchFactory is Ownable {
             campaignGeneration: CAMPAIGN_GENERATION
         });
 
-        return _createCampaign(req.campaign, routeAuth.tradeRouteProfile, routeAuth.finalizeRouteProfile, schedule);
+        return _createCampaign(
+            req.campaign,
+            routeAuth.tradeRouteProfile,
+            routeAuth.finalizeRouteProfile,
+            schedule,
+            campaignImplementation
+        );
     }
 
     function _immediateSchedule(address creator) internal view returns (LaunchCampaign.ScheduleParams memory schedule) {
@@ -330,11 +428,13 @@ contract LaunchFactory is Ownable {
         CampaignRequest calldata req,
         uint8 campaignTradeRouteProfile,
         uint8 campaignFinalizeRouteProfile,
-        LaunchCampaign.ScheduleParams memory schedule
+        LaunchCampaign.ScheduleParams memory schedule,
+        address implementation
     ) internal returns (address campaignAddr, address tokenAddr) {
         if (!live) revert NotLive();
         if (globalPaused) revert Paused();
         if (createPaused) revert CreatePaused();
+        if (implementation == address(0) || implementation.code.length == 0) revert ImplementationZero();
         if (bytes(req.name).length == 0) revert NameEmpty();
         if (bytes(req.symbol).length == 0) revert SymbolEmpty();
         if (bytes(req.logoURI).length == 0) revert LogoEmpty();
@@ -373,10 +473,11 @@ contract LaunchFactory is Ownable {
             creatorBuyCapWei: creatorBuyCapWei,
             requireAuthorizedTrading: requireAuthorizedTrading,
             tradeRouteProfile: campaignTradeRouteProfile,
-            finalizeRouteProfile: campaignFinalizeRouteProfile
+            finalizeRouteProfile: campaignFinalizeRouteProfile,
+            strictFeeRouting: true
         });
 
-        address clone = Clones.clone(campaignImplementation);
+        address clone = Clones.clone(implementation);
         LaunchCampaign(payable(clone)).initializeScheduled(params, schedule.launchAt);
         campaignAddr = clone;
         tokenAddr = address(LaunchCampaign(payable(clone)).token());
@@ -384,9 +485,6 @@ contract LaunchFactory is Ownable {
         string memory metadataURI = "";
 
         if (address(creatorRegistry) != address(0)) {
-            // Immediate and scheduled deployments are both irreversible creator
-            // launch actions. The registry records the current block timestamp,
-            // never the future trading-open timestamp.
             creatorRegistry.recordLaunch(msg.sender);
         }
 
@@ -431,15 +529,18 @@ contract LaunchFactory is Ownable {
 
         if (lpToken != address(0) && !permanentLpLocker.registeredLpToken(lpToken)) {
             address tokenAddr = address(LaunchCampaign(payable(msg.sender)).token());
-            address wrappedNative = ITopazRouter02(router).WETH();
-            uint256 lockedLpAmount = IERC20(lpToken).balanceOf(address(permanentLpLocker));
+            address quoteToken = campaignGraduationQuoteToken[msg.sender];
+            if (quoteToken == address(0)) quoteToken = ITopazRouter02(router).WETH();
+            uint256 lockedLpAmount = liquidityKind == LIQUIDITY_KIND_V2_ERC20
+                ? IERC20(lpToken).balanceOf(address(permanentLpLocker))
+                : 0;
             permanentLpLocker.registerGraduatedPool(
                 msg.sender,
                 campaignCreator,
                 campaignCreator,
                 lpToken,
                 tokenAddr,
-                wrappedNative,
+                quoteToken,
                 lockedLpAmount
             );
         }
@@ -460,15 +561,45 @@ contract LaunchFactory is Ownable {
         if (newTreasuryRouter == address(0)) revert RecipientZero();
         if (newRouter.code.length == 0 || newTreasuryRouter.code.length == 0) revert ContractCodeMissing();
 
-        address newPoolFactory = ITopazRouter02(newRouter).poolFactory();
-        if (newPoolFactory == address(0) || newPoolFactory.code.length == 0) revert ContractCodeMissing();
+        uint8 newLiquidityKind = _readLiquidityKind(newRouter);
+        if (newLiquidityKind != liquidityKind) revert LiquidityKindMismatch();
+        address lockerIntegrationSource = newLiquidityKind == LIQUIDITY_KIND_V3_NFT ? newRouter : _v2PoolFactory(newRouter);
+        address stockAdapter = stockGraduationAdapter;
+        if (stockAdapter != address(0)) permanentLpLocker.setIntegrationSourceAuthorized(stockAdapter, false);
 
         router = newRouter;
         feeRecipient = newTreasuryRouter;
-        permanentLpLocker.configureRevenue(newTreasuryRouter, newPoolFactory);
+        permanentLpLocker.configureRevenue(newTreasuryRouter, lockerIntegrationSource);
+        if (stockAdapter != address(0)) permanentLpLocker.setIntegrationSourceAuthorized(stockAdapter, true);
 
         emit RouterUpdated(newRouter);
         emit FeeRecipientUpdated(newTreasuryRouter);
+    }
+
+    function setStockGraduationAdapter(address newAdapter) external onlyOwner whenMutable {
+        if (liquidityKind != LIQUIDITY_KIND_V3_NFT) revert UnsupportedLiquidityKind();
+        address oldAdapter = stockGraduationAdapter;
+        if (oldAdapter != address(0)) permanentLpLocker.setIntegrationSourceAuthorized(oldAdapter, false);
+        if (newAdapter != address(0)) {
+            if (newAdapter.code.length == 0) revert ContractCodeMissing();
+            permanentLpLocker.setIntegrationSourceAuthorized(newAdapter, true);
+        }
+        stockGraduationAdapter = newAdapter;
+        emit StockGraduationAdapterUpdated(newAdapter);
+    }
+
+    function setStockCampaignImplementation(address newImplementation) external onlyOwner whenMutable {
+        if (liquidityKind != LIQUIDITY_KIND_V3_NFT) revert UnsupportedLiquidityKind();
+        if (newImplementation != address(0)) {
+            if (newImplementation.code.length == 0) revert ContractCodeMissing();
+            try IRobinhoodStockCampaignImplementation(newImplementation).isStockCampaignImplementation() returns (bool supported) {
+                if (!supported) revert StockCampaignImplementationUnavailable();
+            } catch {
+                revert StockCampaignImplementationUnavailable();
+            }
+        }
+        stockCampaignImplementation = newImplementation;
+        emit StockCampaignImplementationUpdated(newImplementation);
     }
 
     function setGraduationOracle(address newOracle) external onlyOwner whenMutable {
@@ -549,18 +680,13 @@ contract LaunchFactory is Ownable {
         LaunchCampaign(payable(campaign)).setRequireAuthorizedTrading(required);
     }
 
-    /// @notice Returns whether the creator may perform an irreversible deploy/arm
-    /// action in the current block. launchAt is intentionally not an input.
     function creatorLaunchEligibility(address creator)
         public
         view
         returns (bool allowed, uint256 cooldownEndsAt, uint256 currentLiveCount, uint256 maxLiveBonding)
     {
         cooldownEndsAt = block.timestamp;
-
-        if (address(creatorRegistry) == address(0)) {
-            return (true, cooldownEndsAt, 0, type(uint256).max);
-        }
+        if (address(creatorRegistry) == address(0)) return (true, cooldownEndsAt, 0, type(uint256).max);
 
         CreatorRegistry.CreatorProfile memory profile = creatorRegistry.getCreatorProfile(creator);
         CreatorRegistry.CreatorRules memory rules = creatorRegistry.getCreatorRules(creator);
@@ -618,6 +744,40 @@ contract LaunchFactory is Ownable {
                     address(this),
                     creator,
                     _hashCampaignRequest(req),
+                    routeAuth.tradeRouteProfile,
+                    routeAuth.finalizeRouteProfile,
+                    routeAuth.deadline
+                )
+            )
+        );
+        if (digest.recover(routeAuth.signature) != authority) revert InvalidRouteAuthorization();
+        if (usedCreateRouteAuthorizations[digest]) revert RouteAuthorizationReplayed();
+        usedCreateRouteAuthorizations[digest] = true;
+    }
+
+    function _verifyStockRouteAuthorization(
+        address creator,
+        CampaignRequest calldata req,
+        address stockToken,
+        address adapter,
+        address implementation,
+        RouteAuthorization calldata routeAuth
+    ) internal {
+        address authority = routeAuthority;
+        if (authority == address(0)) revert RouteAuthorityZero();
+        if (routeAuth.deadline < block.timestamp) revert RouteAuthorizationExpired();
+        if (!_isValidRouteProfile(routeAuth.tradeRouteProfile) || !_isValidRouteProfile(routeAuth.finalizeRouteProfile)) revert InvalidRouteProfile();
+        bytes32 digest = MessageHashUtils.toEthSignedMessageHash(
+            keccak256(
+                abi.encode(
+                    "MWZ_CREATE_STOCK_ROUTE_AUTH",
+                    block.chainid,
+                    address(this),
+                    creator,
+                    _hashCampaignRequest(req),
+                    stockToken,
+                    adapter,
+                    implementation,
                     routeAuth.tradeRouteProfile,
                     routeAuth.finalizeRouteProfile,
                     routeAuth.deadline
@@ -689,6 +849,12 @@ contract LaunchFactory is Ownable {
         );
     }
 
+    function _requireStockRouteEnabled(address adapter, address stockToken) internal view {
+        if (stockToken == address(0) || stockToken.code.length == 0) revert UnsupportedStockToken();
+        (,,,,,,, bool enabled) = IRobinhoodStockGraduationRouteRegistry(adapter).stockRoutes(stockToken);
+        if (!enabled) revert UnsupportedStockToken();
+    }
+
     function getCampaign(uint256 id) external view returns (CampaignInfo memory) {
         if (id >= _campaigns.length) revert OutOfBounds();
         return _campaigns[id];
@@ -702,6 +868,21 @@ contract LaunchFactory is Ownable {
         uint256 size = end > offset ? end - offset : 0;
         page = new CampaignInfo[](size);
         for (uint256 i = 0; i < size; i++) page[i] = _campaigns[offset + i];
+    }
+
+    function _readLiquidityKind(address candidateRouter) internal view returns (uint8) {
+        (bool ok, bytes memory data) = candidateRouter.staticcall(abi.encodeWithSignature("liquidityKind()"));
+        if (!ok || data.length < 32) return LIQUIDITY_KIND_V2_ERC20;
+        uint256 reportedKind = abi.decode(data, (uint256));
+        if (reportedKind == LIQUIDITY_KIND_V2_ERC20 || reportedKind == LIQUIDITY_KIND_V3_NFT) {
+            return uint8(reportedKind);
+        }
+        revert UnsupportedLiquidityKind();
+    }
+
+    function _v2PoolFactory(address candidateRouter) internal view returns (address poolFactory) {
+        poolFactory = ITopazRouter02(candidateRouter).poolFactory();
+        if (poolFactory == address(0) || poolFactory.code.length == 0) revert ContractCodeMissing();
     }
 
     function _isValidRouteProfile(uint8 profile) internal pure returns (bool) {

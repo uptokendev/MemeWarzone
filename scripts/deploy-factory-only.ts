@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { ethers, network } from "hardhat";
 import { assertCode, pickAddress, resolveContracts } from "./verify-deployment";
+import { refuseBnbFactoryBroadcastIfSourceHeadIsNotLive } from "./lib/bnbLiveGenerationGuard";
 
 const { writeFrontendEnv } = require("./lib/frontendEnv.cjs");
 const { writeIndexerManifest } = require("./lib/indexerManifest.cjs");
@@ -144,6 +145,7 @@ function buildFactoryRegistry(baseDeployment: any, nextDeployment: any, oldFacto
 }
 
 async function main() {
+  refuseBnbFactoryBroadcastIfSourceHeadIsNotLive();
   const { file: baseFile, deployment: baseDeployment } = loadBaseDeployment();
   const contracts = resolveContracts(baseDeployment);
   const [deployer] = await ethers.getSigners();

@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { postGradFlags } from "@/features/postgrad/config";
+import { MOCK_LEAGUE_OWNED_TOKEN_IDS } from "@/features/postgrad/mockRegistry";
 import { fetchPostGradLeagueFeed, mutatePostGradLeague, type PostGradLeagueAction } from "@/features/postgrad/apiClient";
+import { useActiveFeedWallet } from "@/hooks/useActiveFeedWallet";
 import { useMockLeagueSeason } from "@/hooks/useMockLeagueRuntime";
 
 export type ArenaLeagueFeedSource = "qa-runtime" | "api" | "empty";
@@ -11,23 +13,21 @@ export type ArenaLeagueHistoryEntry = ReturnType<typeof useMockLeagueSeason>["hi
 type ArenaLeagueFeedPayload = {
   season: ArenaLeagueSeason;
   history: ArenaLeagueHistoryEntry[];
+  owned: string[];
 };
 
-const SEASON_STATES = new Set(["preseason", "live", "playoffs", "completed"]);
+const SEASON_STATES = new Set(["preseason", "live", "playoffs", "quarter_finals", "completed"]);
 const DIVISIONS = new Set(["bronze", "silver", "gold", "apex"]);
 const MOVEMENTS = new Set(["promoted", "safe", "relegated"]);
 
 function isLeagueEntry(value: any): boolean {
   return Boolean(
-    value?.tokenId &&
+    (value?.tokenId || value?.tokenAddress) &&
       typeof value?.tokenName === "string" &&
       typeof value?.symbol === "string" &&
-      DIVISIONS.has(value?.division) &&
-      MOVEMENTS.has(value?.movement) &&
       Number.isFinite(Number(value?.points)) &&
       Number.isFinite(Number(value?.wins)) &&
-      Number.isFinite(Number(value?.losses)) &&
-      Number.isFinite(Number(value?.streak)),
+      Number.isFinite(Number(value?.losses)),
   );
 }
 
@@ -35,7 +35,6 @@ function normalizeSeason(value: any): ArenaLeagueSeason | null {
   if (!value || typeof value !== "object") return null;
   if (!value.id || !value.label || !SEASON_STATES.has(value.state)) return null;
   const entries = Array.isArray(value.entries) ? value.entries.filter(isLeagueEntry) : [];
-  if (!entries.length) return null;
 
   return {
     id: String(value.id),
@@ -44,19 +43,29 @@ function normalizeSeason(value: any): ArenaLeagueSeason | null {
     week: Number.isFinite(Number(value.week)) && Number(value.week) > 0 ? Number(value.week) : 1,
     rewardPoolUsd: Number.isFinite(Number(value.rewardPoolUsd)) ? Number(value.rewardPoolUsd) : 0,
     resetAt: String(value.resetAt || new Date().toISOString()),
-    divisions: Array.isArray(value.divisions) ? value.divisions.filter((division: unknown) => DIVISIONS.has(String(division))) : ["bronze", "silver", "gold", "apex"],
+    divisions: Array.isArray(value.divisions) ? value.divisions.filter((division: unknown) => DIVISIONS.has(String(division))) : [],
+    frozenAt: value.frozenAt ? String(value.frozenAt) : value.frozen_at ? String(value.frozen_at) : null,
+    regularSeasonClosed: value.regularSeasonClosed === true || value.regular_season_closed === true,
+    quarterFinalsTournamentId: value.quarterFinalsTournamentId || value.quarter_finals_tournament_id
+      ? String(value.quarterFinalsTournamentId || value.quarter_finals_tournament_id)
+      : undefined,
     entries: entries.map((entry: any) => ({
-      tokenId: String(entry.tokenId),
+      tokenId: String(entry.tokenId || entry.tokenAddress),
       tokenName: String(entry.tokenName),
       symbol: String(entry.symbol),
-      division: entry.division,
+      imageUrl: entry.imageUrl || entry.logoUri || entry.logo_uri || undefined,
+      division: DIVISIONS.has(entry.division) ? entry.division : "apex",
       points: Number(entry.points),
       wins: Number(entry.wins),
       losses: Number(entry.losses),
-      streak: Number(entry.streak),
-      movement: entry.movement,
+      finishedFights: Number.isFinite(Number(entry.finishedFights ?? entry.finished_fights))
+        ? Number(entry.finishedFights ?? entry.finished_fights)
+        : 0,
+      rank: Number.isFinite(Number(entry.rank)) && Number(entry.rank) > 0 ? Number(entry.rank) : undefined,
+      streak: Number.isFinite(Number(entry.streak)) ? Number(entry.streak) : 0,
+      movement: MOVEMENTS.has(entry.movement) ? entry.movement : "safe",
     })),
-  };
+  } as ArenaLeagueSeason;
 }
 
 function normalizeHistory(value: unknown): ArenaLeagueHistoryEntry[] {
@@ -74,8 +83,11 @@ function normalizeHistory(value: unknown): ArenaLeagueHistoryEntry[] {
     }));
 }
 
-async function loadLeagueFeed(signal?: AbortSignal): Promise<ArenaLeagueFeedPayload | null> {
-  const json = await fetchPostGradLeagueFeed(signal);
+async function loadLeagueFeed(
+  signal?: AbortSignal,
+  options?: { wallet?: string | null; chainId?: number | null },
+): Promise<ArenaLeagueFeedPayload | null> {
+  const json = await fetchPostGradLeagueFeed(signal, options);
   if (!json) return null;
 
   const season = normalizeSeason(json.season ?? json.currentSeason ?? json.items?.season);
@@ -84,6 +96,7 @@ async function loadLeagueFeed(signal?: AbortSignal): Promise<ArenaLeagueFeedPayl
   return {
     season,
     history: normalizeHistory(json.history ?? json.archive ?? json.items?.history),
+    owned: Array.isArray(json.owned) ? json.owned.filter(isLeagueEntry).map((entry: any) => String(entry.tokenId || entry.tokenAddress)) : [],
   };
 }
 
@@ -93,12 +106,12 @@ async function mutateLeague(action: PostGradLeagueAction): Promise<boolean> {
 
 const EMPTY_SEASON: ArenaLeagueSeason = {
   id: "arena-league-empty",
-  label: "Arena league",
-  state: "preseason",
+  label: "Major War League",
+  state: "live",
   week: 1,
   rewardPoolUsd: 0,
   resetAt: new Date(0).toISOString(),
-  divisions: ["bronze", "silver", "gold", "apex"],
+  divisions: [],
   entries: [],
 };
 
@@ -110,12 +123,15 @@ const EMPTY_SEASON: ArenaLeagueSeason = {
  */
 export function useArenaLeagueFeed() {
   const runtime = useMockLeagueSeason();
+  const wallet = useActiveFeedWallet();
   const allowMockFallback = postGradFlags.mocks;
   const [apiPayload, setApiPayload] = useState<ArenaLeagueFeedPayload | null>(null);
   const [loading, setLoading] = useState(true);
+  const walletAddress = String(wallet.address || "").trim();
+  const chainId = Number(wallet.chainId || 0) || null;
 
   const refreshFeed = async () => {
-    const payload = await loadLeagueFeed().catch(() => null);
+    const payload = await loadLeagueFeed(undefined, { wallet: walletAddress || null, chainId }).catch(() => null);
     setApiPayload(payload);
     return payload;
   };
@@ -124,7 +140,7 @@ export function useArenaLeagueFeed() {
     const controller = new AbortController();
     let cancelled = false;
 
-    loadLeagueFeed(controller.signal)
+    loadLeagueFeed(controller.signal, { wallet: walletAddress || null, chainId })
       .then((payload) => {
         if (!cancelled) setApiPayload(payload);
       })
@@ -140,7 +156,7 @@ export function useArenaLeagueFeed() {
       cancelled = true;
       controller.abort();
     };
-  }, [runtime.season.id, runtime.season.week, runtime.history.length]);
+  }, [runtime.season.id, runtime.season.week, runtime.history.length, walletAddress, chainId]);
 
   const advanceWeek = async () => {
     try {
@@ -181,11 +197,17 @@ export function useArenaLeagueFeed() {
     return allowMockFallback ? runtime.cycleMockLeagueState() : false;
   };
 
+  const source = apiPayload ? "api" as ArenaLeagueFeedSource : allowMockFallback ? "qa-runtime" as ArenaLeagueFeedSource : "empty" as ArenaLeagueFeedSource;
   return {
-    source: apiPayload ? "api" as ArenaLeagueFeedSource : allowMockFallback ? "qa-runtime" as ArenaLeagueFeedSource : "empty" as ArenaLeagueFeedSource,
+    source,
     loading,
     season: apiPayload?.season ?? (allowMockFallback ? runtime.season : EMPTY_SEASON),
     history: apiPayload?.history ?? (allowMockFallback ? runtime.history : []),
+    ownedTokenIds: apiPayload?.owned?.length
+      ? apiPayload.owned
+      : source === "qa-runtime"
+        ? MOCK_LEAGUE_OWNED_TOKEN_IDS
+        : [],
     advanceWeek,
     cycleSeasonState,
     rebalanceDivisions,

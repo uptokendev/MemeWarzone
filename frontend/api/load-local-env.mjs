@@ -28,6 +28,12 @@ const SUPABASE_SERVICE_ROLE_KEY_ALIASES = [
   "SUPABASE_SECRET_KEY",
 ];
 
+const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
+
+function truthy(value) {
+  return TRUE_VALUES.has(String(value || "").trim().toLowerCase());
+}
+
 function stripInlineComment(value) {
   let quote = null;
   for (let i = 0; i < value.length; i++) {
@@ -117,6 +123,24 @@ function autoConfigureLocalPgSsl() {
   }
 }
 
+function disableRemoteSupabaseForIsolatedLocalRuntime() {
+  const runtime = String(process.env.RUNTIME_ENVIRONMENT || process.env.VITE_RUNTIME_ENVIRONMENT || "").trim().toLowerCase();
+  if (runtime !== "local" || !truthy(process.env.LOCAL_DISABLE_REMOTE_SUPABASE)) return;
+
+  for (const key of [
+    "SUPABASE_URL",
+    "SUPABASE_PROJECT_URL",
+    "VITE_SUPABASE_URL",
+    "NEXT_PUBLIC_SUPABASE_URL",
+    "SUPABASE_SERVICE_ROLE_KEY",
+    "SUPABASE_SERVICE_KEY",
+    "SUPABASE_SECRET_KEY",
+  ]) {
+    delete process.env[key];
+  }
+  console.log("[api/load-local-env] remote Supabase disabled for isolated local runtime");
+}
+
 const loaded = [
   path.join(frontendDir, ".env.local"),
   path.join(frontendDir, ".env"),
@@ -131,6 +155,7 @@ if (loaded.length) {
 aliasEnv("DATABASE_URL", DATABASE_URL_ALIASES);
 aliasEnv("SUPABASE_URL", SUPABASE_URL_ALIASES);
 aliasEnv("SUPABASE_SERVICE_ROLE_KEY", SUPABASE_SERVICE_ROLE_KEY_ALIASES);
+disableRemoteSupabaseForIsolatedLocalRuntime();
 autoConfigureLocalPgSsl();
 
 if (!String(process.env.DATABASE_URL || "").trim()) {

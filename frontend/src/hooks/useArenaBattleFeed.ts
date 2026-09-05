@@ -22,6 +22,7 @@ export type CreatorBattleStatus = {
   tokenAddress?: string | null;
   tokenName: string;
   symbol: string;
+  origin?: string;
   eligibility: boolean;
   currentState: CreatorBattleStatusState;
   battleState?: Battle["state"] | null;
@@ -42,10 +43,15 @@ const SOLANA_CHAIN_ID = 101;
 
 const CREATOR_BATTLE_STATES = new Set([
   "eligible",
+  "waiting",
+  "challenged",
+  "matched",
+  "live",
+  "finished",
+  "expired",
   "open_for_battle",
   "pending",
   "accepted",
-  "live",
   "completed",
   "settled",
   "unavailable",
@@ -102,6 +108,7 @@ function normalizeCreatorBattleStatuses(value: unknown): CreatorBattleStatus[] {
         tokenAddress: entry?.tokenAddress ? normalizeIdentity(entry.tokenAddress) : null,
         tokenName: String(entry?.tokenName ?? entry?.name ?? entry?.symbol ?? "Unknown token"),
         symbol: String(entry?.symbol ?? ""),
+        origin: entry?.origin ? String(entry.origin) : undefined,
         eligibility: Boolean(entry?.eligibility),
         currentState: currentState as CreatorBattleStatusState,
         battleState: entry?.battleState ? String(entry.battleState) as Battle["state"] : null,
@@ -230,7 +237,7 @@ export function useArenaBattleFeed(creatorAddress?: string | null, chainId?: num
     try {
       const normalized = normalizeIdentity(tokenId);
       if (isSolanaIdentity(normalized) && normalizedChainId !== SOLANA_CHAIN_ID) return false;
-      const opened = await openPostGradBattle({ tokenId, chainId: normalizedChainId, initialPotBnb });
+      const opened = await openPostGradBattle({ tokenId, chainId: normalizedChainId, stakeNative: initialPotBnb, initialPotBnb });
       if (opened) {
         await refreshFeed();
         return true;

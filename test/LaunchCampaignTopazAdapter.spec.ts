@@ -90,6 +90,7 @@ describe("LaunchCampaign TopazRouterAdapter integration", function () {
       requireAuthorizedTrading: false,
       tradeRouteProfile: 1,
       finalizeRouteProfile: 1,
+      strictFeeRouting: false,
     });
 
     const token = await ethers.getContractAt("LaunchToken", await campaign.token());
