@@ -34,7 +34,7 @@ export function FeaturedCampaignCard({
     <div
       data-featured-campaign-card="true"
       data-live-id={liveId}
-      className="mwz-hud-frame group flex h-[150px] w-full cursor-pointer overflow-hidden rounded-none border border-orange-400/30 bg-black/70 transition hover:border-orange-400/80 hover:shadow-[0_0_18px_rgba(240,106,26,0.22)]"
+      className="mwz-hud-frame group flex h-[150px] w-full snap-start cursor-pointer overflow-hidden rounded-none border border-orange-400/30 bg-black/70 transition hover:border-orange-400/80 hover:shadow-[0_0_18px_rgba(240,106,26,0.22)]"
       role="button"
       tabIndex={0}
       onClick={open}
@@ -62,23 +62,27 @@ export function FeaturedCampaignCard({
         </div>
       </div>
 
-      <div className="flex h-[150px] min-w-0 flex-1 flex-col justify-between px-4 py-3">
+      <div className="flex h-[150px] min-w-0 flex-1 flex-col justify-between px-2.5 py-2 sm:px-4 sm:py-3">
         <div className="min-w-0">
-          <div className="truncate text-[19px] font-semibold leading-tight text-foreground group-hover:text-orange-200">{name || "Unknown"}</div>
-          <div className="mt-1.5 flex items-center justify-between gap-2">
-            <span className="truncate text-[13px] font-semibold uppercase tracking-[0.08em] text-orange-300">{symbol ? `$${String(symbol).replace(/^\$/, "")}` : "—"}</span>
-            <span className="shrink-0 text-[12px] font-semibold text-orange-300">{Number(votes24h || 0)} votes / 24h</span>
+          <div className="line-clamp-2 break-all text-[14px] font-semibold leading-tight text-foreground group-hover:text-orange-200 sm:text-[16px] md:text-[19px]">{name || "Unknown"}</div>
+          <div className="mt-1 flex items-center justify-between gap-1 sm:mt-1.5 sm:gap-2">
+            <span className="min-w-0 truncate text-[12px] font-semibold uppercase tracking-[0.06em] text-orange-300 sm:text-[13px] sm:tracking-[0.08em]">{symbol ? `$${String(symbol).replace(/^\$/, "")}` : "—"}</span>
+            <span className="shrink-0 text-[10px] font-semibold text-orange-300 sm:text-[12px]">
+              {Number(votes24h || 0)}
+              <span className="sm:hidden">/24h</span>
+              <span className="hidden sm:inline"> votes / 24h</span>
+            </span>
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 text-[11px] leading-tight">
-          <div className="min-w-0 rounded-sm border border-orange-400/20 bg-black/35 px-2 py-2">
+        <div className="grid grid-cols-2 gap-2 text-[11px] leading-tight sm:gap-3">
+          <div className="min-w-0 rounded-sm border border-orange-400/20 bg-black/35 px-1.5 py-1.5 sm:px-2 sm:py-2">
             <div className="uppercase tracking-[0.14em] text-orange-300/65">MCap</div>
-            <div className="mt-1 truncate text-[16px] font-bold text-foreground">{mcapUsdLabel ?? "—"}</div>
+            <div className="mt-1 truncate text-[13px] font-bold text-foreground sm:text-[16px]">{mcapUsdLabel ?? "—"}</div>
           </div>
-          <div className="min-w-0 rounded-sm border border-orange-400/20 bg-black/35 px-2 py-2">
+          <div className="min-w-0 rounded-sm border border-orange-400/20 bg-black/35 px-1.5 py-1.5 sm:px-2 sm:py-2">
             <div className="uppercase tracking-[0.14em] text-orange-300/65">ATH</div>
-            <div className="mt-1 truncate text-[16px] font-bold text-foreground">{athUsdLabel ?? "—"}</div>
+            <div className="mt-1 truncate text-[13px] font-bold text-foreground sm:text-[16px]">{athUsdLabel ?? "—"}</div>
           </div>
         </div>
       </div>
