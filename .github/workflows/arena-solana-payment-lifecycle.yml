@@ -73,7 +73,7 @@ jobs:
       - name: Certify Battle UI and V2/V3 presentation
         run: |
           npm --prefix frontend run test:arena-battle-wall
-          node --test frontend/src/lib/arena/battleGenerationPresentation.test.mjs frontend/src/lib/arena/battleBoostPresentation.test.mjs
+          node --test frontend/src/lib/arena/battleBoostPresentation.test.mjs frontend/src/lib/arena/arenaFunctionalUiSafety.test.mjs
 
       - name: Certify Solana Normal Battle V3 and historical recovery
         env:
