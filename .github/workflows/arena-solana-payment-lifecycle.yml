@@ -10,6 +10,8 @@ on:
       - "frontend/src/lib/arena/tournamentBoostClient.ts"
       - "frontend/src/lib/arena/eventSponsorshipClient.ts"
       - "frontend/src/lib/arena/battleBoostClient.ts"
+      - "frontend/src/lib/arena/battleBoostPresentation.mjs"
+      - "frontend/src/lib/arena/battleBoostPresentation.test.mjs"
       - "frontend/src/lib/arena/battleBoostSolanaIntegration.test.mjs"
       - "frontend/src/components/arena/BattleBoostPanel.tsx"
       - "frontend/src/lib/arena/solanaArenaPaymentLifecycle.test.mjs"
@@ -70,10 +72,14 @@ jobs:
       - name: Certify SOL Normal Battle Boost browser integration
         run: node --test frontend/src/lib/arena/battleBoostSolanaIntegration.test.mjs
 
-      - name: Certify Battle UI and V2/V3 presentation
-        run: |
-          npm --prefix frontend run test:arena-battle-wall
-          node --test frontend/src/lib/arena/battleBoostPresentation.test.mjs frontend/src/lib/arena/arenaFunctionalUiSafety.test.mjs
+      - name: Certify Battle Wall frontend
+        run: npm --prefix frontend run test:arena-battle-wall
+
+      - name: Certify Battle Boost V2/V3 presentation
+        run: node --test frontend/src/lib/arena/battleBoostPresentation.test.mjs
+
+      - name: Certify Arena functional UI safety
+        run: node --test frontend/src/lib/arena/arenaFunctionalUiSafety.test.mjs
 
       - name: Certify Solana Normal Battle V3 and historical recovery
         env:
