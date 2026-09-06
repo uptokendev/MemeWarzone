@@ -26,12 +26,13 @@ create table if not exists public.quote_assets (
   state_version bigint not null default 1 check (state_version > 0),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  unique (provider_id, asset_key)
+  unique (provider_id, asset_key),
+  unique (id, provider_id)
 );
 
 create table if not exists public.quote_asset_deployments (
   id uuid primary key default gen_random_uuid(),
-  quote_asset_id uuid not null references public.quote_assets(id),
+  quote_asset_id uuid not null,
   provider_id uuid not null references public.quote_asset_providers(id),
   chain_id text not null,
   identity_kind text not null check (identity_kind in ('EVM_ADDRESS','SOLANA_MINT','NATIVE')),
@@ -46,13 +47,14 @@ create table if not exists public.quote_asset_deployments (
   last_scan_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
+  foreign key (quote_asset_id, provider_id) references public.quote_assets(id, provider_id),
   unique (provider_id, chain_id, identity_key),
   unique (quote_asset_id, chain_id, identity_key)
 );
 
 create table if not exists public.quote_asset_policy_versions (
   id uuid primary key default gen_random_uuid(),
-  quote_asset_id uuid references public.quote_assets(id),
+  quote_asset_id uuid,
   provider_id uuid not null references public.quote_asset_providers(id),
   policy_key text not null,
   version integer not null check (version > 0),
@@ -64,6 +66,7 @@ create table if not exists public.quote_asset_policy_versions (
   require_market_healthy boolean not null default true,
   policy_config jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
+  foreign key (quote_asset_id, provider_id) references public.quote_assets(id, provider_id),
   unique (provider_id, policy_key, version)
 );
 
