@@ -6,12 +6,19 @@ on:
       - build/cross-chain-stabilization-rh-base
     paths:
       - "db/migrations/*arena*.sql"
+      - "frontend/api/arenaBattleMetrics.js"
+      - "frontend/api/arenaBattlesRuntime.js"
+      - "frontend/api/postgrad.js"
       - "frontend/api/lib/arenaBattleMetrics.js"
       - "frontend/api/lib/arenaBattleMetrics.test.mjs"
       - "frontend/api/lib/arenaBattleVolume.js"
       - "frontend/api/lib/arenaBattleVolume.test.mjs"
       - "frontend/api/lib/arenaBattlePoints*.js"
       - "frontend/api/lib/arenaBattlePoints*.mjs"
+      - "frontend/api/lib/arenaBattleSettle.js"
+      - "frontend/api/lib/arenaBattleSettleV3.js"
+      - "frontend/api/lib/arenaBattleSettlement*.js"
+      - "frontend/api/lib/arenaBattleSettlement*.mjs"
       - "frontend/api/lib/arena4aCertification.test.mjs"
       - ".github/workflows/arena-battle-scoring-foundation.yml"
   workflow_dispatch:
@@ -41,14 +48,20 @@ jobs:
         working-directory: frontend
         run: npm ci --no-audit --no-fund
 
-      - name: Syntax-check scoring foundation
+      - name: Syntax-check scoring foundation and runtime settlement
         working-directory: frontend
         run: |
           node --check api/lib/arenaBattlePointsCanonical.js
           node --check api/lib/arenaBattleVolume.js
           node --check api/lib/arenaBattleMetrics.js
+          node --check api/lib/arenaBattleSettlementRuntime.js
+          node --check api/lib/arenaBattleSettlementGuard.js
+          node --check api/lib/arenaBattleSettlementV2Service.js
+          node --check api/lib/arenaBattleSettlementV3Service.js
+          node --check api/arenaBattlesRuntime.js
+          node --check api/arenaBattleMetrics.js
 
-      - name: Pure calculator and volume certification
+      - name: Pure calculator, volume and runtime activation certification
         working-directory: frontend
         env:
           DATABASE_URL: ""
@@ -57,6 +70,7 @@ jobs:
           node --test api/lib/arenaBattleVolume.test.mjs
           node --test api/lib/arenaBattlePoints.test.mjs
           node --test api/lib/arenaBattlePointsV3.test.mjs
+          node --test api/lib/arenaBattleSettlementV3Activation.test.mjs
 
       - name: Baseline and 4a regression certification
         working-directory: frontend
@@ -65,6 +79,7 @@ jobs:
           PG_DISABLE_SSL: "1"
         run: |
           node --test api/lib/arenaBattleMetrics.test.mjs
+          node --test api/lib/arenaBattleSettlementV2Certification.test.mjs
           node --test api/lib/arena4aCertification.test.mjs
 
       - name: Prove canonical scoring math is chain neutral
