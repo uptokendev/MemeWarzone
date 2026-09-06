@@ -18,6 +18,7 @@ import {
   i64,
 } from "./solana-v4-primitives.js";
 import { getSolanaChainUnixTime } from "./solana-chain-unix-time.js";
+import { getGraduationQuoteAssetDetail } from "../lib/quoteAssetCatalog.js";
 
 const GRADUATION_AUTH_DOMAIN = Buffer.from("MEMEWARZONE_SOLANA_GRADUATION_V1", "utf8");
 const GRADUATION_AUTH_SCHEMA_VERSION = 3;
@@ -102,6 +103,74 @@ function samePublicKey(left, right) {
 
 function configHash(configId) {
   return crypto.createHash("sha256").update(String(configId), "utf8").digest();
+}
+
+const PROVIDER_CLASS = Object.freeze({
+  NATIVE: 0,
+  BASIC: 1,
+  PROVIDER_RWA: 2,
+  MWZ_NATIVE: 3,
+  COMMUNITY: 4,
+});
+
+function profileForAssetClass(assetClass) {
+  const value = QUOTE_PROFILE[String(assetClass || "").trim().toUpperCase()];
+  if (!Number.isInteger(value)) throw new SolanaGraduationAuthorizationError(`Unsupported quote asset class ${assetClass}.`, { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });
+  return value;
+}
+
+function providerClassCode(providerClass) {
+  const value = PROVIDER_CLASS[String(providerClass || "").trim().toUpperCase()];
+  if (!Number.isInteger(value)) throw new SolanaGraduationAuthorizationError(`Unsupported quote provider class ${providerClass}.`, { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });
+  return value;
+}
+
+function catalogBindingHash(item) {
+  const policy = item.policy || {};
+  const provider = item.provider || {};
+  const fields = [item.id, item.assetId, provider.id, provider.key, provider.providerClass, item.chainId, item.identityKind, item.contractAddressOrMint, item.stateVersion, policy.id, policy.policyKey, policy.version];
+  return crypto.createHash("sha256").update(fields.map((v) => String(v ?? "")).join("\u0000"), "utf8").digest();
+}
+
+async function resolveCatalogQuoteConfig({ chainId, quoteConfigId }) {
+  let detail;
+  try {
+    detail = await getGraduationQuoteAssetDetail(quoteConfigId);
+  } catch (error) {
+    throw new SolanaGraduationAuthorizationError("Quote Asset Catalog is unavailable.", { code: "SOLANA_GRADUATION_QUOTE_CATALOG_UNAVAILABLE", httpStatus: 503, cause: error });
+  }
+  const item = detail?.item;
+  if (!item || String(item.id) !== String(quoteConfigId)) throw new SolanaGraduationAuthorizationError("Requested quote configuration is not present in the authoritative catalog.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });
+  if (String(item.chainId) !== String(chainId) || item.newGraduationEligible !== true) throw new SolanaGraduationAuthorizationError("Requested quote configuration is not approved for new graduation.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });
+  if (item.policy?.authority !== "generic" || item.policy?.active !== true || item.policy?.basicApproved !== true) throw new SolanaGraduationAuthorizationError("Requested quote policy is not an active BASIC generic policy.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });
+  const profile = profileForAssetClass(item.assetClass);
+  if (isTruthy(process.env.SOLANA_GRADUATION_BASIC_RELEASE_ONLY, true) && ![QUOTE_PROFILE.NATIVE, QUOTE_PROFILE.STABLECOIN].includes(profile)) throw new SolanaGraduationAuthorizationError("BASIC release permits only native SOL and one approved canonical stablecoin.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });
+  const rootRoute = item.policy?.config?.solanaGraduation || {};
+  const route = rootRoute.chains?.[String(chainId)] || rootRoute;
+  const quoteMint = publicKeyString(route.quoteMint || (item.identityKind === "SOLANA_MINT" ? item.contractAddressOrMint : NATIVE_MINT), "authoritative quote mint");
+  if (profile === QUOTE_PROFILE.NATIVE) {
+    if (item.identityKind !== "NATIVE" || !samePublicKey(quoteMint, NATIVE_MINT)) throw new SolanaGraduationAuthorizationError("Native catalog identity must resolve exactly to WSOL for graduation.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });
+  } else if (item.identityKind !== "SOLANA_MINT" || !samePublicKey(item.contractAddressOrMint, quoteMint)) {
+    throw new SolanaGraduationAuthorizationError("Catalog deployment mint does not match its configured graduation quote mint.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });
+  }
+  const maxSlippageBps = Number(route.maxSlippageBps ?? DEFAULT_SLIPPAGE_BPS);
+  const maxImpactBps = Number(route.maxImpactBps ?? 100);
+  const maxDeviationBps = Number(route.maxDeviationBps ?? 100);
+  if (maxSlippageBps < 0 || maxSlippageBps > ABSOLUTE_MAX_SLIPPAGE_BPS) failUnsafe("Catalog slippage policy exceeds the absolute Solana limit.");
+  if (maxImpactBps < 0 || maxImpactBps > ABSOLUTE_MAX_IMPACT_BPS) failUnsafe("Catalog impact policy exceeds the absolute Solana limit.");
+  if (maxDeviationBps < 0 || maxDeviationBps > ABSOLUTE_MAX_DEVIATION_BPS) failUnsafe("Catalog deviation policy exceeds the absolute Solana limit.");
+  return {
+    id: String(item.id), bindingHash: catalogBindingHash(item), assetId: item.assetId,
+    providerId: item.provider?.id, providerKey: item.provider?.key, providerClassName: item.provider?.providerClass,
+    policyId: item.policy?.id, policyKey: item.policy?.policyKey, stateVersion: Number(item.stateVersion || 0),
+    mint: quoteMint, policyVersion: parsePositiveInteger(item.policy?.version, 1, 65_535), profile,
+    providerClass: providerClassCode(item.provider?.providerClass), decimals: Number(route.decimals ?? (profile === QUOTE_PROFILE.NATIVE ? 9 : 0)),
+    acquisitionProgram: publicKeyString(route.acquisitionProgram || SYSTEM_PROGRAM_ID, "acquisitionProgram"), recoveryAccount: SYSTEM_PROGRAM_ID,
+    maxSlippageBps, maxImpactBps, maxDeviationBps,
+    quoteUsdMicros: route.referenceUsdMicros == null ? null : BigInt(route.referenceUsdMicros),
+    binanceSymbol: String(route.binanceSymbol || "").trim(), coinGeckoId: String(route.coinGeckoId || "").trim(),
+    jupiterApiBase: String(route.jupiterApiBase || process.env.SOLANA_GRADUATION_JUPITER_API_BASE || "https://lite-api.jup.ag/swap/v1").replace(new RegExp("/+$"), ""),
+  };
 }
 
 function parseQuoteCatalog() {
@@ -379,10 +448,9 @@ export async function solanaGraduationAuthorizationV2(req, res) {
     if (!isSolanaChain(chainId)) throw new SolanaGraduationAuthorizationError("chainId must be Solana (101).", { code: "NOT_A_SOLANA_CHAIN", httpStatus: 400 });
     if (body.quoteMint) throw new SolanaGraduationAuthorizationError("quoteMint is not accepted from clients; select an approved quoteConfigId.", { code: "SOLANA_GRADUATION_ARBITRARY_QUOTE_REJECTED", httpStatus: 400 });
 
-    const catalog = parseQuoteCatalog();
-    const requestedConfigId = String(body.quoteConfigId || "SOL_NATIVE_V1").trim();
-    const quoteConfig = catalog.find((entry) => entry.id === requestedConfigId && entry.activeInBasicRelease);
-    if (!quoteConfig) throw new SolanaGraduationAuthorizationError("Requested quote configuration is not approved for new graduation.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });
+    const requestedConfigId = String(body.quoteConfigId || process.env.SOLANA_GRADUATION_NATIVE_QUOTE_CONFIG_ID || "").trim();
+    if (!requestedConfigId) throw new SolanaGraduationAuthorizationError("quoteConfigId is required and must be an authoritative Quote Asset Catalog deployment id.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 400 });
+    const quoteConfig = await resolveCatalogQuoteConfig({ chainId, quoteConfigId: requestedConfigId });
 
     const campaignAddress = publicKeyString(body.campaignAddress, "campaignAddress");
     const authorityAddress = publicKeyString(body.authorityAddress, "authorityAddress");
@@ -405,7 +473,15 @@ export async function solanaGraduationAuthorizationV2(req, res) {
     if (campaign.economicsVersion < 3 || campaign.dexAdapter !== 1) throw new SolanaGraduationAuthorizationError("Campaign is not an Economics V3 / Meteora-only campaign.", { code: "SOLANA_GRADUATION_CAMPAIGN_UNSUPPORTED" });
     if (samePublicKey(campaign.mint, quoteConfig.mint)) throw new SolanaGraduationAuthorizationError("Campaign mint cannot be its own quote asset.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED" });
 
-    const [oraclePriceUsdMicros, quoteReferenceUsdMicros] = await Promise.all([fetchSolUsdMicros(), fetchQuoteUsdMicros(quoteConfig)]);
+    if (quoteConfig.profile !== QUOTE_PROFILE.NATIVE) {
+    quoteConfig.recoveryAccount = deriveAta(authorityAddress, quoteConfig.mint);
+    const mintData = await getAccountData(rpcUrl, quoteConfig.mint, TOKEN_PROGRAM_ID, "Quote mint");
+    if (mintData.length < 45) failUnsafe("Quote mint account is too short.");
+    const chainDecimals = mintData.readUInt8(44);
+    if (quoteConfig.decimals && quoteConfig.decimals !== chainDecimals) failUnsafe("Catalog quote decimals do not match the mint account.");
+    quoteConfig.decimals = chainDecimals;
+  }
+  const [oraclePriceUsdMicros, quoteReferenceUsdMicros] = await Promise.all([fetchSolUsdMicros(), fetchQuoteUsdMicros(quoteConfig)]);
     const nativeTargetLamports = ceilDiv(campaign.graduationTargetUsdMicros * ONE_SOL_LAMPORTS, oraclePriceUsdMicros);
     if (!(campaign.soldTokens >= campaign.curveTokenSupply || campaign.netRaisedLamports >= nativeTargetLamports)) throw new SolanaGraduationAuthorizationError("Campaign has not reached the native graduation target yet.", { code: "SOLANA_GRADUATION_THRESHOLD_NOT_MET" });
     const liquidity = graduationLiquidityQuote(campaign);
@@ -433,7 +509,7 @@ export async function solanaGraduationAuthorizationV2(req, res) {
     const deadline = BigInt(chainNow + ttlSeconds);
     const nonce = crypto.randomBytes(32);
     const finalizeRouteProfile = ROUTE_PROFILE_UNLINKED;
-    const quoteConfigHash = configHash(quoteConfig.id);
+    const quoteConfigHash = quoteConfig.bindingHash || configHash(quoteConfig.id);
     const digest = buildGraduationDigest({
       programId, campaign: campaignAddress, mint: campaign.mint, authority: authorityAddress,
       graduationTargetUsdMicros: campaign.graduationTargetUsdMicros, nativeTargetLamports, oraclePriceUsdMicros,
@@ -454,7 +530,7 @@ export async function solanaGraduationAuthorizationV2(req, res) {
       campaign: { address: campaignAddress, mint: campaign.mint, creator: campaign.creator, generationConfig: campaign.generationConfig, graduationTargetUsdMicros: campaign.graduationTargetUsdMicros.toString(), soldTokens: campaign.soldTokens.toString(), curveTokenSupply: campaign.curveTokenSupply.toString(), netRaisedLamports: campaign.netRaisedLamports.toString() },
       oracle: { solUsdMicros: oraclePriceUsdMicros.toString(), nativeTargetLamports: nativeTargetLamports.toString(), quoteUsdMicros: quoteReferenceUsdMicros.toString() },
       graduationLiquidity: { maxLiquidityLamports: liquidity.maxLiquidityLamports.toString(), maxLiquidityTokens: liquidity.maxLiquidityTokens.toString(), finalizeFeeLamports: liquidity.finalizeFeeLamports.toString(), creatorPayoutLamports: liquidity.creatorPayoutLamports.toString(), finalSpotNanoLamports: liquidity.spotNano.toString() },
-      quote: { configId: quoteConfig.id, configHashHex: quoteConfigHash.toString("hex"), mint: quoteConfig.mint, policyVersion: quoteConfig.policyVersion, profile: quoteConfig.profile, providerClass: quoteConfig.providerClass, decimals: quoteConfig.decimals, acquisitionProgram: quoteConfig.acquisitionProgram, recoveryAccount: quoteConfig.recoveryAccount, expectedQuoteAmount: expectedQuoteAmount.toString(), minQuoteAmount: minQuoteAmount.toString(), maxSlippageBps, maxImpactBps, maxDeviationBps, acquisitionQuote: acquisition?.quote || null },
+      quote: { configId: quoteConfig.id, assetId: quoteConfig.assetId, providerId: quoteConfig.providerId, providerKey: quoteConfig.providerKey, providerClassName: quoteConfig.providerClassName, policyId: quoteConfig.policyId, policyKey: quoteConfig.policyKey, stateVersion: quoteConfig.stateVersion, configHashHex: quoteConfigHash.toString("hex"), mint: quoteConfig.mint, policyVersion: quoteConfig.policyVersion, profile: quoteConfig.profile, providerClass: quoteConfig.providerClass, decimals: quoteConfig.decimals, acquisitionProgram: quoteConfig.acquisitionProgram, recoveryAccount: quoteConfig.recoveryAccount, expectedQuoteAmount: expectedQuoteAmount.toString(), minQuoteAmount: minQuoteAmount.toString(), maxSlippageBps, maxImpactBps, maxDeviationBps, acquisitionQuote: acquisition?.quote || null },
       createArgs: { nativeTargetLamports: nativeTargetLamports.toString(), oraclePriceUsdMicros: oraclePriceUsdMicros.toString(), deadline: deadline.toString(), nonce: Array.from(nonce), positionNftMint, finalizeRouteProfile, quoteMint: quoteConfig.mint, quoteConfigId: Array.from(quoteConfigHash), quotePolicyVersion: quoteConfig.policyVersion, quoteProfile: quoteConfig.profile, quoteProviderClass: quoteConfig.providerClass, acquisitionProgram: quoteConfig.acquisitionProgram, quoteReferenceUsdMicros: quoteReferenceUsdMicros.toString(), quoteDecimals: quoteConfig.decimals, expectedQuoteAmount: expectedQuoteAmount.toString(), minQuoteAmount: minQuoteAmount.toString(), maxSlippageBps, maxImpactBps, maxDeviationBps, quoteRecoveryAccount: quoteConfig.recoveryAccount },
       accounts: { authority: authorityAddress, globalConfig, generationConfig: campaign.generationConfig, campaign: campaignAddress, mint: campaign.mint, tokenVault: campaign.tokenVault, solVault: campaign.solVault, authorityTokenAccount: deriveAta(authorityAddress, campaign.mint), authorityQuoteAccount: quoteConfig.profile === QUOTE_PROFILE.NATIVE ? null : deriveAta(authorityAddress, quoteConfig.mint), quoteRecoveryAccount: quoteConfig.recoveryAccount, creator: campaign.creator, creatorTokenAccount: deriveAta(campaign.creator, campaign.mint), creatorProfile: findProgramAddressSync([Buffer.from("creator"), publicKeyBytes(campaign.creator)], programId).publicKey, graduationState: findProgramAddressSync([Buffer.from("graduation"), publicKeyBytes(campaignAddress)], programId).publicKey, meteoraProgram: METEORA_CP_AMM_PROGRAM_ID, meteoraPool, meteoraPosition, meteoraTokenVault: deriveMeteoraVault(campaign.mint, meteoraPool), meteoraNativeVault: deriveMeteoraVault(quoteConfig.mint, meteoraPool), positionNftMint, instructions: SYSVAR_INSTRUCTIONS_ID, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SYSTEM_PROGRAM_ID },
       authorization: { digestHex: digest.toString("hex"), digestBase64: digest.toString("base64"), signatureBase64: signature.toString("base64"), routeSigner: signer.publicKeyBase58, deadline: deadline.toString(), validUntil: new Date(Number(deadline) * 1000).toISOString(), ed25519InstructionMustImmediatelyPrecedeBeginGraduation: true },
