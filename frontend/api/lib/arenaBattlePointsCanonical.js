@@ -1,6 +1,10 @@
 import { BATTLE_POINTS_V2, BATTLE_POINTS_V3, BATTLE_POINTS_V3_BOOST_CURVE } from "./arenaBattlePointsConfig.js";
 import { calculateBattlePoints } from "./arenaBattlePoints.js";
-import { calculateBattlePointsV3, calculateBattlePointsV3Market } from "./arenaBattlePointsV3.js";
+import {
+  calculateBattlePointsV3Boost,
+  calculateBattlePointsV3Market,
+  combineBattlePointsV3,
+} from "./arenaBattlePointsV3.js";
 
 function finite(value) {
   if (value === null || value === undefined || value === "") return null;
@@ -49,6 +53,12 @@ function gate(score, extraReasons = []) {
   };
 }
 
+function hasConfirmedBoostUnits(value) {
+  if (value === null || value === undefined || value === "") return false;
+  const n = Number(value);
+  return Number.isSafeInteger(n) && n >= 0;
+}
+
 /**
  * Pure, chain-neutral Battle Points entrypoint.
  *
@@ -81,9 +91,13 @@ export function calculateCanonicalBattlePoints({
   }
 
   const evidence = evidenceReasons({ baseline, current, eligibleVolume });
+  // Delegates expect an object. Missing evidence is represented as an empty
+  // object for pure math, then the canonical gate nulls totalPoints so absence
+  // can never become authoritative zero performance.
+  const normalizedVolumeEvidence = eligibleVolume || {};
 
   if (scoringVersion === BATTLE_POINTS_V2) {
-    const scored = calculateBattlePoints({ baseline, current, eligibleVolume, now });
+    const scored = calculateBattlePoints({ baseline, current, eligibleVolume: normalizedVolumeEvidence, now });
     return gate({
       ...scored,
       scoringVersion: BATTLE_POINTS_V2,
@@ -100,16 +114,20 @@ export function calculateCanonicalBattlePoints({
     }, evidence);
   }
 
-  const hasAuthoritativeBoost = Number.isInteger(Number(confirmedBoostUnits)) && Number(confirmedBoostUnits) >= 0;
-  const scored = hasAuthoritativeBoost
-    ? calculateBattlePointsV3({
-        baseline,
-        current,
-        eligibleVolume,
-        boost: { units: Number(confirmedBoostUnits) },
-        now,
+  const hasAuthoritativeBoost = hasConfirmedBoostUnits(confirmedBoostUnits);
+  const marketScore = calculateBattlePointsV3Market({
+    baseline,
+    current,
+    eligibleVolume: normalizedVolumeEvidence,
+    now,
+  });
+  const marketHealthy = evidence.length === 0 && marketScore?.dataHealth?.healthy === true;
+  const scored = hasAuthoritativeBoost && marketHealthy
+    ? combineBattlePointsV3({
+        marketScore,
+        boostPoints: calculateBattlePointsV3Boost(Number(confirmedBoostUnits)),
       })
-    : calculateBattlePointsV3Market({ baseline, current, eligibleVolume, now });
+    : marketScore;
 
   const normalized = {
     ...scored,
@@ -125,11 +143,11 @@ export function calculateCanonicalBattlePoints({
     boost: {
       ...(scored.boost || {}),
       confirmedUnits: hasAuthoritativeBoost ? Number(confirmedBoostUnits) : null,
-      points: hasAuthoritativeBoost ? scored.boost?.points ?? null : null,
+      points: hasAuthoritativeBoost && marketHealthy ? scored.boost?.points ?? null : null,
       maxPoints: 10,
       curveVersion: BATTLE_POINTS_V3_BOOST_CURVE,
     },
-    settleable: hasAuthoritativeBoost && scored?.dataHealth?.healthy === true && scored?.settleable !== false,
+    settleable: hasAuthoritativeBoost && marketHealthy && scored?.settleable !== false,
   };
 
   const boostReasons = hasAuthoritativeBoost ? [] : ["confirmed_boost_units_unavailable"];
