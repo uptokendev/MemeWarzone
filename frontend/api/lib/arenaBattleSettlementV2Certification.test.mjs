@@ -42,9 +42,9 @@ test("V2 reconciliation stays 50/30/20 with no Boost path and no duplicate calcu
   const finalScore = readApi("lib/arenaBattleFinalScore.js");
   const service = readApi("lib/arenaBattleSettlementV2Service.js");
   const config = readApi("lib/arenaBattlePointsConfig.js");
-  assert.match(config, /mcap:\s*50/);
-  assert.match(config, /holders:\s*30/);
-  assert.match(config, /volume:\s*20/);
+  assert.match(config, /mcap:\s*Object\.freeze\(\{\s*weight:\s*50/);
+  assert.match(config, /holders:\s*Object\.freeze\(\{\s*weight:\s*30/);
+  assert.match(config, /volume:\s*Object\.freeze\(\{[\s\S]*?weight:\s*20/);
   assert.match(finalScore, /finishAt:\s*closeAt/);
   assert.match(finalScore, /loadBattleWindowTrades/);
   assert.match(finalScore, /loadVolumeContext/);
