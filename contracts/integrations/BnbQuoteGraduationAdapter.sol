@@ -85,8 +85,6 @@ contract BnbQuoteGraduationAdapter is ReentrancyGuard {
         address campaignToken;
         address quoteToken;
         uint256 memeAmountDesired;
-        uint256 minimumMemeUsed;
-        uint256 minimumQuoteOut;
         uint256 finalCurvePriceNativeWad;
         uint256 deadline;
     }
@@ -157,7 +155,6 @@ contract BnbQuoteGraduationAdapter is ReentrancyGuard {
     error OracleStale();
     error RouteLiquidityTooLow();
     error QuoteUnavailable();
-    error SlippageTooHigh();
     error PriceImpactTooHigh();
     error OracleDeviationTooHigh();
     error GraduationPriceDeviationTooHigh();
@@ -213,7 +210,7 @@ contract BnbQuoteGraduationAdapter is ReentrancyGuard {
             revert ContractCodeMissing();
         }
         if (
-            route.minimumRouteLiquidityUsdWad == 0 || route.maxSwapSlippageBps > BPS ||
+            route.minimumRouteLiquidityUsdWad == 0 || route.maxSwapSlippageBps == 0 || route.maxSwapSlippageBps >= BPS ||
             route.maxOracleDeviationBps > BPS || route.maxPriceImpactBps > BPS ||
             route.maxGraduationPriceDeviationBps > BPS
         ) revert InvalidPolicy();
@@ -274,9 +271,8 @@ contract BnbQuoteGraduationAdapter is ReentrancyGuard {
         });
 
         uint256 quotedQuoteOut = _quote(msg.value, acquisitionRoute);
-        if (request.minimumQuoteOut == 0 || request.minimumQuoteOut > quotedQuoteOut) revert SlippageTooHigh();
-        uint256 slippageBps = Math.mulDiv(quotedQuoteOut - request.minimumQuoteOut, BPS, quotedQuoteOut);
-        if (slippageBps > route.maxSwapSlippageBps) revert SlippageTooHigh();
+        uint256 minimumQuoteOut = Math.mulDiv(quotedQuoteOut, BPS - route.maxSwapSlippageBps, BPS);
+        if (minimumQuoteOut == 0) revert QuoteUnavailable();
 
         uint256 probeNative = msg.value / 100;
         if (probeNative == 0) probeNative = 1;
@@ -293,7 +289,7 @@ contract BnbQuoteGraduationAdapter is ReentrancyGuard {
 
         uint256 quoteBefore = IERC20(request.quoteToken).balanceOf(address(this));
         uint256[] memory swapAmounts = IBnbQuoteTopazRouter(topazRouter).swapExactETHForTokens{value: msg.value}(
-            request.minimumQuoteOut,
+            minimumQuoteOut,
             acquisitionRoute,
             address(this),
             request.deadline
@@ -309,8 +305,8 @@ contract BnbQuoteGraduationAdapter is ReentrancyGuard {
             false,
             request.memeAmountDesired,
             quoteAcquired,
-            request.minimumMemeUsed,
-            request.minimumQuoteOut,
+            request.memeAmountDesired,
+            quoteAcquired,
             permanentLpLocker,
             request.deadline
         );
