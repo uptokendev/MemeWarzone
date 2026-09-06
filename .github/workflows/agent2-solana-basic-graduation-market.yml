@@ -1,0 +1,142 @@
+name: Agent 2 Solana Basic Graduation Market
+
+on:
+  push:
+    branches:
+      - agent2/solana-basic-graduation-market
+    paths:
+      - programs/memewarzone_solana/**
+      - frontend/api/dev-fix/solana-graduation-authorization-v1.js
+      - frontend/api/dev-fix/solana-graduation-authorization-v2.js
+      - tools/solana-meteora-graduation/**
+      - .github/workflows/agent2-solana-basic-graduation-market.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ANCHOR_VERSION: 0.30.1
+  SOLANA_VERSION: 1.18.26
+  RUST_TOOLCHAIN: 1.79.0
+  IDL_RUST_TOOLCHAIN: nightly-2024-05-09
+  BASE_SHA: e0a3107a77fb2b3ce066de6b3bd305a6018bdc14
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install Rust toolchains
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup toolchain install "$IDL_RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+
+      - name: Install Solana CLI
+        run: |
+          release_dir="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
+          mkdir -p "$release_dir"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error \
+            --output /tmp/solana-release.tar.bz2 \
+            "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"
+          ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Install Anchor CLI
+        run: npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+
+      - name: Static backend checks
+        run: |
+          node --check frontend/api/dev-fix/solana-graduation-authorization-v1.js
+          node --check frontend/api/dev-fix/solana-graduation-authorization-v2.js
+
+      - name: Candidate Rust tests
+        run: |
+          rm -f Cargo.lock programs/memewarzone_solana/Cargo.lock
+          cargo test -p memewarzone_solana --lib
+
+      - name: Candidate SBF build
+        run: |
+          anchor build --no-idl
+          candidate_bytes=$(wc -c < target/deploy/memewarzone_solana.so)
+          echo "candidate_bytes=${candidate_bytes}" | tee agent2-certification.txt
+
+      - name: Base SBF build
+        run: |
+          git worktree add --detach /tmp/mwz-agent2-base "$BASE_SHA"
+          cd /tmp/mwz-agent2-base
+          rm -f Cargo.lock programs/memewarzone_solana/Cargo.lock
+          anchor build --no-idl
+          base_bytes=$(wc -c < target/deploy/memewarzone_solana.so)
+          echo "base_bytes=${base_bytes}" | tee -a "$GITHUB_WORKSPACE/agent2-certification.txt"
+
+      - name: Candidate IDL
+        working-directory: programs/memewarzone_solana
+        env:
+          RUSTUP_TOOLCHAIN: ${{ env.IDL_RUST_TOOLCHAIN }}
+        run: |
+          mkdir -p ../../target/idl
+          anchor idl build --out ../../target/idl/memewarzone_solana.json
+          test -s ../../target/idl/memewarzone_solana.json
+
+      - name: Read-only mainnet ProgramData sizing
+        shell: bash
+        run: |
+          program_id=$(sed -n 's/.*declare_id!("\([^"]*\)").*/\1/p' programs/memewarzone_solana/src/lib.rs | head -n1)
+          echo "program_id=${program_id}" | tee -a agent2-certification.txt
+          solana program show "$program_id" --url https://api.mainnet-beta.solana.com | tee /tmp/program-show.txt
+          cat /tmp/program-show.txt >> agent2-certification.txt
+          programdata=$(awk -F': ' '/ProgramData Address/{print $2}' /tmp/program-show.txt | tr -d ' ')
+          allocation=$(awk '/Data Length/{gsub(/[^0-9]/,"",$3); print $3}' /tmp/program-show.txt | head -n1)
+          if [ -z "$allocation" ]; then
+            allocation=$(awk -F': ' '/Data Length/{gsub(/[^0-9]/,"",$2); print $2}' /tmp/program-show.txt | head -n1)
+          fi
+          echo "programdata_address=${programdata}" | tee -a agent2-certification.txt
+          echo "programdata_allocation_bytes=${allocation}" | tee -a agent2-certification.txt
+          candidate=$(awk -F= '/candidate_bytes/{print $2}' agent2-certification.txt)
+          extension=0
+          if [ "$candidate" -gt "$allocation" ]; then extension=$((candidate-allocation)); fi
+          echo "extension_required_bytes=${extension}" | tee -a agent2-certification.txt
+          solana account "$programdata" --url https://api.mainnet-beta.solana.com --output json > /tmp/programdata.json
+          node - <<'NODE' | tee -a agent2-certification.txt
+          const fs = require('fs');
+          const account = JSON.parse(fs.readFileSync('/tmp/programdata.json','utf8'));
+          const cert = fs.readFileSync('agent2-certification.txt','utf8');
+          const candidate = Number(cert.match(/candidate_bytes=(\d+)/)?.[1] || 0);
+          const allocation = Number(cert.match(/programdata_allocation_bytes=(\d+)/)?.[1] || 0);
+          console.log(`programdata_lamports=${account.lamports}`);
+          console.log(`programdata_account_data_length=${account.data?.length || account.dataLength || 0}`);
+          console.log(`extension_required=${candidate > allocation ? 'YES' : 'NO'}`);
+NODE
+          if [ "$extension" -gt 0 ]; then
+            target_account_len=$((candidate+45))
+            current_lamports=$(node -e "const a=require('/tmp/programdata.json'); console.log(a.lamports)")
+            rent=$(curl -sS https://api.mainnet-beta.solana.com -H 'content-type: application/json' --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"getMinimumBalanceForRentExemption\",\"params\":[${target_account_len}]}" | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>console.log(JSON.parse(s).result))")
+            topup=$((rent-current_lamports)); if [ "$topup" -lt 0 ]; then topup=0; fi
+            echo "estimated_extension_rent_lamports=${topup}" | tee -a agent2-certification.txt
+          else
+            echo "estimated_extension_rent_lamports=0" | tee -a agent2-certification.txt
+          fi
+
+      - name: Upload certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent2-solana-basic-graduation-${{ github.sha }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            agent2-certification.txt
+            target/deploy/memewarzone_solana.so
+            target/idl/memewarzone_solana.json
