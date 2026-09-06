@@ -1,7 +1,9 @@
 import { battlePointsV2PersistenceEnabled } from "./arenaBattlePointsConfig.js";
+import { isAuthoritativeSettlementClaimed } from "./arenaBattleSettlementGuard.js";
 import { settleBattleResult } from "./arenaLeagueScoreMath.js";
 
 export function canSettleBattle(row, nowMs = Date.now()) {
+  if (isAuthoritativeSettlementClaimed(row?.id)) return false;
   if (battlePointsV2PersistenceEnabled()) return false;
   if (!row || String(row.state || "") !== "live") return false;
   const ends = row.ends_at ? Date.parse(row.ends_at) : NaN;
