@@ -355,6 +355,15 @@ async function handleConfirm(req, res) {
       [quoteId],
     )).rows[0];
     if (!sponsorship) throw new Error("event-sponsorship-row-missing");
+    if (sponsorship.status !== "pending_payment") {
+      await client.query("rollback");
+      return json(res, 409, {
+        ok: false,
+        error: "Sponsorship is not awaiting payment confirmation",
+        code: "SPONSORSHIP_INVALID_STATE",
+        state: sponsorship.status,
+      });
+    }
     const payment = (await client.query(
       `insert into public.sponsorship_payments (
          event_sponsorship_id, quote_id, chain_id, gross_native_raw, prize_native_raw,
