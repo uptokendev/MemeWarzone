@@ -135,6 +135,7 @@ function mapGenericRow(row) {
     require_identity_verified: row.require_identity_verified,
     require_security_verified: row.require_security_verified,
     require_market_healthy: row.require_market_healthy,
+    policy_config: row.policy_config || {},
   };
   const authority = deriveGenericQuoteAuthority({ provider, asset, deployment, policy });
   return {
@@ -162,11 +163,13 @@ function mapGenericRow(row) {
     existingMarketSupport: authority.existingMarketSupport,
     adminState: row.deployment_admin_state,
     policy: {
+      id: row.policy_version_id,
       authority: "generic",
       policyKey: authority.policyKey,
       version: authority.policyVersion,
       active: authority.policyActive,
       basicApproved: authority.basicApproved,
+      config: row.policy_config || {},
     },
     lastVerifiedAt: row.last_scan_at,
   };
@@ -205,7 +208,8 @@ select
   pv.new_graduation_enabled,
   pv.require_identity_verified,
   pv.require_security_verified,
-  pv.require_market_healthy
+  pv.require_market_healthy,
+  pv.policy_config
 from public.quote_asset_deployments d
 join public.quote_assets a on a.id = d.quote_asset_id
 join public.quote_asset_providers p on p.id = d.provider_id and p.id = a.provider_id
