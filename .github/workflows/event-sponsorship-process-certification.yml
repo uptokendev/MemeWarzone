@@ -102,7 +102,7 @@ jobs:
           cat /tmp/sponsorship-hardhat.log
           exit 1
 
-      - name: Prepare certification-only deployer nonce manager
+      - name: Prepare certification-only process harness
         shell: bash
         run: |
           node <<'NODE'
@@ -113,6 +113,24 @@ jobs:
           source = source.replace('const owner = wallet(0);', 'const ownerWallet = wallet(0);\nconst owner = new NonceManager(ownerWallet);');
           source = source.replace('const vault = await deploy("EventPrizeVaultV1", [owner.address]);', 'const vault = await deploy("EventPrizeVaultV1", [ownerWallet.address]);');
           source = source.replace('  owner.address,\n  quoteSigner.address,', '  ownerWallet.address,\n  quoteSigner.address,');
+          const typedSchema = `{ SponsorshipQuote: [
+            { name: "eventId", type: "bytes32" },
+            { name: "sponsor", type: "address" },
+            { name: "pricingTier", type: "bytes32" },
+            { name: "pricingVersion", type: "uint256" },
+            { name: "minimumUsdMicros", type: "uint256" },
+            { name: "requestedUsdMicros", type: "uint256" },
+            { name: "minimumNativeRaw", type: "uint256" },
+            { name: "requestedNativeRaw", type: "uint256" },
+            { name: "nativeUsdReferenceMicros", type: "uint256" },
+            { name: "oracleTimestamp", type: "uint256" },
+            { name: "nonce", type: "uint256" },
+            { name: "deadline", type: "uint256" },
+          ] }`;
+          source = source.replace(
+            'const recoveredSigner = verifyTypedData(mainQuote.quote.domain, mainQuote.quote.types, mainQuote.quote.value, mainQuote.quote.signature);',
+            `const recoveredSigner = verifyTypedData(mainQuote.quote.domain, ${typedSchema}, mainQuote.quote.value, mainQuote.quote.signature);`,
+          );
           fs.writeFileSync(file, source);
           NODE
 
