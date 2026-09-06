@@ -34,7 +34,10 @@ create table if not exists public.robinhood_stock_token_registry (
   unique (chain_id, contract_address)
 );
 
-create unique index if not exists robinhood_stock_token_registry_asset_uid_chain_uidx
+-- Asset UID is identity evidence but is intentionally not unique: if Robinhood
+-- replaces a deployment address, the old historical row is retained rather than
+-- rewritten/deleted and the new exact chain/address receives its own row.
+create index if not exists robinhood_stock_token_registry_asset_uid_chain_idx
   on public.robinhood_stock_token_registry (chain_id, robinhood_asset_uid)
   where robinhood_asset_uid is not null;
 
