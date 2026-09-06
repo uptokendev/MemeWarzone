@@ -1,0 +1,120 @@
+name: Agent 4 Market Normalization
+on:
+  push:
+    branches: [agent4/basic-multi-quote-market-normalization]
+  pull_request:
+    branches: [build/cross-chain-stabilization-rh-base]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  market-normalization:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: |
+            realtime-indexer/package-lock.json
+            frontend/package-lock.json
+      - name: Install realtime-indexer locked dependencies
+        working-directory: realtime-indexer
+        run: npm ci --no-audit --no-fund
+      - name: Install frontend locked dependencies for catalog integration
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+      - name: TypeScript build
+        working-directory: realtime-indexer
+        run: npm run build
+      - name: Real Agent 1 catalog result -> Agent 4 market binding
+        run: node scripts/certify-agent1-agent4-quote-binding.mjs
+      - name: Real Agent 1 -> Agent 3 BNB binding -> Agent 4 normalized market
+        run: node scripts/certify-agent1-agent3-agent4-bnb-market-binding.mjs
+      - name: Legacy BNB Topaz / War Trade Room regression
+        working-directory: realtime-indexer
+        run: npm run test:wtr
+      - name: Existing Solana history/indexer regression
+        working-directory: realtime-indexer
+        run: npm run test:solana-history
+      - name: Multi-quote / BASIC / exact raw / degradation / LP-fee / Arena normalization
+        working-directory: realtime-indexer
+        run: npm run test:market-normalization
+
+  create-regression:
+    name: Grok Create catalog-reference regression
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - working-directory: frontend
+        run: npm ci --no-audit --no-fund
+      - name: Graduation Market Step 5, draft reference, RH Stock, BNB native, fail-closed generic Direct Deploy
+        working-directory: frontend
+        run: |
+          node --test api/lib/draftGraduationQuoteSelection.test.mjs
+          node --test src/lib/graduationMarketPresentation.test.mjs
+          node --test src/lib/graduationMarketCreateRegression.test.mjs
+
+  legacy-contract-routing:
+    name: BNB BASIC, legacy Topaz LP fees, and Robinhood Stock routing
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: npm }
+      - run: npm ci --no-audit --no-fund
+      - run: npx hardhat compile
+      - name: Agent 3 actual BNB catalog-bound MEME/QUOTE graduation
+        run: npx hardhat test test/BnbBasicGraduationMarket.spec.ts
+      - name: Existing BNB lifecycle BUY SELL and Topaz LP-fee regression
+        run: npx hardhat test test/BnbLifecycleCertification.spec.ts test/PermanentLpLockerTopazFee.spec.ts
+      - name: Existing Robinhood Stock ETH routing and route identity regression
+        run: npx hardhat test test/RobinhoodV3MultiHopSwapAdapter.spec.ts test/RobinhoodV3MultiHopRouteIdentity.spec.ts test/RobinhoodV3NativeSwapAdapter.spec.ts
+
+  arena-regression:
+    name: Arena normalized snapshots and quote-neutral scoring
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - working-directory: frontend
+        run: npm ci --no-audit --no-fund
+      - name: Existing Arena scoring and V3 regressions
+        working-directory: frontend
+        env: { DATABASE_URL: "" }
+        run: |
+          node --test api/lib/arenaBattlePointsCanonical.test.mjs
+          node --test api/lib/arenaBattleVolume.test.mjs
+          node --test api/lib/arenaBattlePoints.test.mjs
+          node --test api/lib/arenaBattlePointsV3.test.mjs
+          node --test api/lib/arenaBattleSettlementV3Activation.test.mjs
+      - name: Existing Arena normalized snapshot regression
+        working-directory: frontend
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+          PG_DISABLE_SSL: "1"
+        run: node --test api/lib/arena4aCertification.test.mjs
+      - name: Prove canonical scoring remains chain and quote neutral
+        run: |
+          if grep -En '\b(BNB|Solana|Robinhood|WBNB|WSOL|WETH|USDC|STOCK)\b|quoteAsset|quote_asset|chainId|chain_id' frontend/api/lib/arenaBattlePointsCanonical.js; then exit 1; fi
+
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
