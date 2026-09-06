@@ -12,8 +12,6 @@ interface IBnbQuoteGraduationExecutor {
         address campaignToken;
         address quoteToken;
         uint256 memeAmountDesired;
-        uint256 minimumMemeUsed;
-        uint256 minimumQuoteOut;
         uint256 finalCurvePriceNativeWad;
         uint256 deadline;
     }
@@ -36,24 +34,23 @@ interface IBnbQuoteGraduationExecutor {
         returns (GraduationResult memory result);
 }
 
-interface IBnbQuoteFactoryOwner {
-    function owner() external view returns (address);
-}
-
 /// @notice New-generation BNB campaign implementation for approved non-native quote graduation.
 /// @dev All bonding behavior is inherited unchanged from LaunchCampaign. Crossing the threshold
-/// commits a PENDING state; explicit completion revalidates the approved quote route. There is
-/// deliberately no fallback to native MEME/WBNB if the quote route is unsafe.
+/// commits PENDING. Any caller may deterministically retry; unsafe attempts revert atomically and
+/// leave PENDING intact. There is deliberately no fallback to native MEME/WBNB.
 contract BnbQuoteLaunchCampaign is LaunchCampaign {
     using SafeERC20 for IERC20;
 
     uint256 private constant QUOTE_WAD = 1e18;
     uint256 private constant QUOTE_BPS = 10_000;
+    uint256 private constant QUOTE_RETRY_DEADLINE_SECONDS = 15 minutes;
     uint8 private constant ROUTE_KIND_FINALIZE_QUOTE = 1;
 
     uint256 public quoteFinalCurveMemeUsdWad;
     uint256 public quoteInitialDexMemeUsdWad;
+    bytes32 public quoteCatalogBindingHash;
 
+    event QuoteCatalogBindingConfigured(bytes32 indexed quoteCatalogBindingHash);
     event QuoteGraduationCompleted(
         address indexed pool,
         address indexed quoteToken,
@@ -68,12 +65,21 @@ contract BnbQuoteLaunchCampaign is LaunchCampaign {
 
     error QuoteCampaignNotConfigured();
     error QuoteGraduationNotPending();
-    error QuoteGraduationDeadlineExpired();
     error QuoteGraduationResultInvalid();
-    error OnlyQuoteGraduationExecutor();
+    error QuoteCatalogBindingMissing();
+    error QuoteCatalogBindingLocked();
 
     function isBnbQuoteCampaignImplementation() external pure returns (bool) {
         return true;
+    }
+
+    function configureQuoteCatalogBinding(bytes32 bindingHash) external onlyFactory {
+        if (bindingHash == bytes32(0)) revert QuoteCatalogBindingMissing();
+        if (quoteCatalogBindingHash != bytes32(0) || sold != 0 || netRaisedWei != 0 || launched || graduationPending) {
+            revert QuoteCatalogBindingLocked();
+        }
+        quoteCatalogBindingHash = bindingHash;
+        emit QuoteCatalogBindingConfigured(bindingHash);
     }
 
     function graduateIfEligible(uint256, uint256)
@@ -82,7 +88,7 @@ contract BnbQuoteLaunchCampaign is LaunchCampaign {
         nonReentrant
         returns (uint256 usedTokens, uint256 usedBnb)
     {
-        if (!stockGraduationEnabled) revert QuoteCampaignNotConfigured();
+        if (!stockGraduationEnabled || quoteCatalogBindingHash == bytes32(0)) revert QuoteCampaignNotConfigured();
         if (graduationPending) revert GraduationPending();
         uint256 nativeTarget = graduationNativeTarget();
         if (netRaisedWei < nativeTarget) revert ThresholdNotMet();
@@ -90,23 +96,18 @@ contract BnbQuoteLaunchCampaign is LaunchCampaign {
         return (0, 0);
     }
 
-    function completeQuoteGraduation(uint256 minimumMemeUsed, uint256 minimumQuoteOut, uint256 deadline)
-        external
-        nonReentrant
-        returns (address pool, uint256 lpAmount)
-    {
-        if (msg.sender != factory && msg.sender != IBnbQuoteFactoryOwner(factory).owner()) {
-            revert OnlyQuoteGraduationExecutor();
-        }
+    /// @notice Permissionless deterministic retry for a PENDING approved-quote graduation.
+    /// @dev The adapter derives all minimums from its approved route policy and fresh on-chain
+    /// quote. If validation/execution fails, this entire call reverts and PENDING remains true.
+    function retryQuoteGraduation() external nonReentrant returns (address pool, uint256 lpAmount) {
         if (!stockGraduationEnabled || stockGraduationAdapter == address(0) || graduationQuoteToken == address(0)) {
             revert QuoteCampaignNotConfigured();
         }
+        if (quoteCatalogBindingHash == bytes32(0)) revert QuoteCatalogBindingMissing();
         if (!graduationPending) revert QuoteGraduationNotPending();
         if (paused) revert CampaignPaused();
         if (graduationPaused) revert GraduationPaused();
         if (launched) revert Finalized();
-        if (deadline < block.timestamp) revert QuoteGraduationDeadlineExpired();
-        if (minimumMemeUsed == 0 || minimumQuoteOut == 0) revert ZeroAmount();
 
         GraduationState storage g = graduation;
         uint256 protocolFee = Math.mulDiv(g.graduationBalance, protocolFeeBps, QUOTE_BPS);
@@ -126,11 +127,7 @@ contract BnbQuoteLaunchCampaign is LaunchCampaign {
             if (liquidityValue == 0) revert LiquidityZero();
             emit GraduationLiquidityCapped(desiredMeme, memeAmountDesired, desiredNative, liquidityValue);
         }
-        if (minimumMemeUsed > memeAmountDesired) revert Slippage();
 
-        // The adapter must transfer MEME and create the final Topaz pool in the same atomic
-        // completion. If any health check or swap fails, this enableTrading state reverts too
-        // and the campaign remains PENDING.
         token.enableTrading();
 
         IERC20 meme = IERC20(address(token));
@@ -142,10 +139,8 @@ contract BnbQuoteLaunchCampaign is LaunchCampaign {
                     campaignToken: address(token),
                     quoteToken: graduationQuoteToken,
                     memeAmountDesired: memeAmountDesired,
-                    minimumMemeUsed: minimumMemeUsed,
-                    minimumQuoteOut: minimumQuoteOut,
                     finalCurvePriceNativeWad: g.finalCurvePrice,
-                    deadline: deadline
+                    deadline: block.timestamp + QUOTE_RETRY_DEADLINE_SECONDS
                 })
             );
         meme.forceApprove(adapter, 0);
