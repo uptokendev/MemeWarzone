@@ -1,0 +1,53 @@
+name: Agent 2 Devnet Stable Preflight
+
+on:
+  push:
+    branches:
+      - cert/agent2-basic-graduation-final
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    environment: testnet-certification
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: cert/agent2-basic-graduation-final
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate devnet-only credentials and inspect canonical devnet USDC balance
+        shell: bash
+        env:
+          SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER }}
+          SOLANA_RPC_URL: ${{ secrets.SOLANA_RPC_URL }}
+        run: |
+          set -euo pipefail
+          test -n "${SOLANA_DEVNET_PAYER:-}" || { echo 'BLOCKER: SOLANA_DEVNET_PAYER missing'; exit 1; }
+          test -n "${SOLANA_RPC_URL:-}" || { echo 'BLOCKER: SOLANA_RPC_URL missing'; exit 1; }
+          npm install --prefix tests/solana --no-audit --no-fund
+          operator_file="$RUNNER_TEMP/mwz-agent2-devnet-operator.json"
+          SOLANA_GRADUATION_OPERATOR_KEYPAIR="$operator_file" node scripts/solana/materialize-devnet-payer.mjs
+          OPERATOR_FILE="$operator_file" node - <<'NODE'
+          const fs=require('fs');
+          const {Connection,Keypair,PublicKey}=require('./tests/solana/node_modules/@solana/web3.js');
+          const {getAssociatedTokenAddressSync}=require('./tests/solana/node_modules/@solana/spl-token');
+          const key=Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(process.env.OPERATOR_FILE,'utf8'))));
+          const rpc=process.env.SOLANA_RPC_URL;
+          const c=new Connection(rpc,'confirmed');
+          const usdc=new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU');
+          const ata=getAssociatedTokenAddressSync(usdc,key.publicKey);
+          const genesis=await c.getGenesisHash();
+          if(genesis!=='EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG') throw new Error(`not devnet: ${genesis}`);
+          let amount='0';
+          try { amount=(await c.getTokenAccountBalance(ata)).value.amount; } catch(e) { if(!String(e).includes('could not find account')) throw e; }
+          console.log(`cluster=devnet`);
+          console.log(`operator=${key.publicKey.toBase58()}`);
+          console.log(`canonical_devnet_usdc_mint=${usdc.toBase58()}`);
+          console.log(`operator_usdc_ata=${ata.toBase58()}`);
+          console.log(`operator_usdc_raw=${amount}`);
+          console.log(`stable_live_route_prefunded=${BigInt(amount)>0n?'YES':'NO'}`);
+          NODE
