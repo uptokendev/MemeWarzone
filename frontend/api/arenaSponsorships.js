@@ -183,7 +183,7 @@ async function handleQuote(req, res) {
   let signed;
   try {
     config = readSponsorshipPricingConfig(event.chain_id);
-    const provider = getServerReadProvider(Number(event.chain_id));
+    const provider = await getServerReadProvider(Number(event.chain_id));
     deployment = await verifySponsorshipDeployment({
       provider,
       chainId: Number(event.chain_id),
@@ -294,8 +294,9 @@ async function handleConfirm(req, res) {
 
   let proof;
   try {
+    const provider = await getServerReadProvider(Number(quote.chain_id));
     proof = await verifySponsorshipPayment({
-      provider: getServerReadProvider(Number(quote.chain_id)),
+      provider,
       chainId: Number(quote.chain_id),
       txHash,
       logIndex,
