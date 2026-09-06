@@ -1,0 +1,38 @@
+name: BNB Basic Graduation Market
+
+on:
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - "contracts/BnbBasicLaunchFactory.sol"
+      - "contracts/BnbQuoteLaunchCampaign.sol"
+      - "contracts/integrations/BnbQuoteGraduationAdapter.sol"
+      - "contracts/mocks/MockBnbQuoteTopazRouter.sol"
+      - "test/BnbBasicGraduationMarket.spec.ts"
+      - ".github/workflows/bnb-basic-graduation-market.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  certify-bnb-basic-graduation-market:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Compile
+        run: npm run compile
+      - name: Contract size report
+        run: >-
+          node -e "for (const [n,p] of [['BnbQuoteLaunchCampaign','artifacts/contracts/BnbQuoteLaunchCampaign.sol/BnbQuoteLaunchCampaign.json'],['BnbBasicLaunchFactory','artifacts/contracts/BnbBasicLaunchFactory.sol/BnbBasicLaunchFactory.json'],['BnbQuoteGraduationAdapter','artifacts/contracts/integrations/BnbQuoteGraduationAdapter.sol/BnbQuoteGraduationAdapter.json']]) { const j=require('./'+p); console.log(n+': '+((j.deployedBytecode.length-2)/2)+' bytes'); }"
+      - name: BNB basic graduation market regression
+        run: npx hardhat test test/BnbBasicGraduationMarket.spec.ts
