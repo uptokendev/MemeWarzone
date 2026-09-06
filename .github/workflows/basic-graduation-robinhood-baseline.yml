@@ -1,0 +1,161 @@
+name: Basic Graduation Robinhood Baseline
+
+on:
+  push:
+    branches:
+      - cert/basic-graduation-market
+    paths:
+      - .github/workflows/basic-graduation-robinhood-baseline.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  EXPECTED_AUTHORITY: 0204c4a47555a747b95e7c80deb113d36f91e491
+
+jobs:
+  contracts-routing:
+    name: Exact-authority Stock graduation and ETH routing
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 0204c4a47555a747b95e7c80deb113d36f91e491
+      - name: Pin exact production authority
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_AUTHORITY"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install locked contract dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Compile contracts
+        run: npx hardhat compile
+      - name: Native ETH WETH graduation, permanent custody, Stock pending safety and exact binding
+        run: >-
+          npx hardhat test
+          test/RobinhoodV3Mocks.spec.ts
+          test/RobinhoodV3GraduationAdapter.spec.ts
+          test/RobinhoodStockGraduationAdapter.spec.ts
+          test/RobinhoodStockPendingGraduation.spec.ts
+          test/RobinhoodStockFactoryBinding.spec.ts
+          test/RobinhoodStockGraduationCompletion.spec.ts
+          test/LaunchFactoryLiquidityKinds.spec.ts
+          test/LaunchFactoryGraduationThresholds.spec.ts
+      - name: ETH Stock MEME buy sell and immutable route identity
+        run: >-
+          npx hardhat test
+          test/RobinhoodV3MultiHopSwapAdapter.spec.ts
+          test/RobinhoodV3MultiHopRouteIdentity.spec.ts
+          test/RobinhoodV3NativeSwapAdapter.spec.ts
+
+  registry-authority:
+    name: Exact-authority Stock registry and disable semantics
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      PG_DISABLE_SSL: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 0204c4a47555a747b95e7c80deb113d36f91e491
+      - name: Pin exact production authority
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_AUTHORITY"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend --no-audit --no-fund
+      - name: Exact Stock registry and quote identity authority
+        working-directory: frontend
+        run: |
+          node --test api/lib/robinhoodStockGraduationRegistry.test.mjs
+          node --test api/lib/quoteAssetCatalog.test.mjs
+      - name: ENV registry cannot be production authority
+        run: |
+          if grep -q 'ROBINHOOD_STOCK_TOKEN_REGISTRY_' frontend/api/dev-fix/robinhoodStockCreatePolicy.js; then
+            echo 'ENV Stock Token registry is still referenced by production create authorization'
+            exit 1
+          fi
+
+  market-arena:
+    name: Exact-authority Stock USD market and Arena normalization
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      RUNTIME_ENVIRONMENT: local
+      VITE_RUNTIME_ENVIRONMENT: local
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/memewarzone_robinhood_local
+      PG_DISABLE_SSL: "1"
+      DEFAULT_EVM_CHAIN_ID: "46630"
+      EVM_INDEXER_CHAIN_IDS: "46630"
+      LOCAL_DISABLE_ABLY: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 0204c4a47555a747b95e7c80deb113d36f91e491
+      - name: Pin exact production authority
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_AUTHORITY"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install market dependencies
+        run: |
+          npm install --prefix frontend --package-lock=false --no-audit --no-fund
+          npm install --prefix realtime-indexer --package-lock=false --no-audit --no-fund
+      - name: Compile realtime indexer
+        run: npm run --prefix realtime-indexer build
+      - name: Arena consumes normalized Stock USD without native fallback
+        working-directory: frontend
+        run: node --test api/lib/robinhoodStockArenaSnapshotCompatibility.test.mjs
+      - name: Oracle, route, registry, valuation and Stock acquisition semantics
+        run: >-
+          npx --prefix realtime-indexer tsx --test
+          realtime-indexer/src/tests/robinhoodPairSemantics.test.ts
+          realtime-indexer/src/tests/robinhoodMarketRoutes.test.ts
+          realtime-indexer/src/tests/robinhoodGraduationQuote.test.ts
+          realtime-indexer/src/tests/robinhoodNativeUsdOracle.test.ts
+          realtime-indexer/src/tests/robinhoodStockTokenRegistry.test.ts
+          realtime-indexer/src/tests/robinhoodStockAcquisitionQuote.test.ts
+          realtime-indexer/src/tests/robinhoodMarketValuation.test.ts
+          realtime-indexer/src/tests/robinhoodBeatTheMarket.test.ts
+          realtime-indexer/src/tests/robinhoodBeatTheMarketService.test.ts
+          realtime-indexer/src/tests/robinhoodV3PoolIndexer.test.ts
+      - name: Bootstrap exact committed market schema
+        run: node frontend/scripts/prepare-robinhood-local-db.mjs
+      - name: Prove bonding plus V3 continuity and Stock USD evidence
+        run: node realtime-indexer/scripts/verify-robinhood-market-db.mjs
