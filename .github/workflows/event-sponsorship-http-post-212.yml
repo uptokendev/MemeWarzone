@@ -136,7 +136,7 @@ jobs:
 
       - name: Post-212 lifecycle and mixed race certification
         shell: bash
-        run: node certification/event-sponsorship/post212-lifecycle-race.mjs 2>&1 | tee /tmp/post212-${{ matrix.repeat }}.log
+        run: node frontend/scripts/certify-event-sponsorship-post212-lifecycle-race.mjs 2>&1 | tee /tmp/post212-${{ matrix.repeat }}.log
 
       - name: Existing sponsorship authority regression
         working-directory: frontend
