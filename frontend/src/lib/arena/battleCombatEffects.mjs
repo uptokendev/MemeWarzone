@@ -36,6 +36,18 @@ export function targetFor(attacker) {
   return attacker === "left" ? "right" : "left";
 }
 
+export function trailingSideFor(score) {
+  if (score?.leader === "left") return "right";
+  if (score?.leader === "right") return "left";
+  return null;
+}
+
+export function retainCurrentTrailerDamage(rows, score) {
+  const trailer = trailingSideFor(score);
+  if (!trailer) return [];
+  return rows.filter((row) => row.side === trailer);
+}
+
 export function capHoles(rows) {
   const left = rows.filter((row) => row.side === "left").slice(-MAX_HOLES_PER_SIDE);
   const right = rows.filter((row) => row.side === "right").slice(-MAX_HOLES_PER_SIDE);
@@ -62,18 +74,16 @@ export function planCombatAttacks(prior, next) {
   const attacks = [];
   if (!prior || !next) return attacks;
   if (prior.updatedAt === next.updatedAt) return attacks;
+  if (next.leader !== "left" && next.leader !== "right") return attacks;
+
   const leftDelta = Math.max(0, next.left - prior.left);
   const rightDelta = Math.max(0, next.right - prior.right);
-  if (leftDelta >= 0.1) attacks.push({ attacker: "left", delta: leftDelta, leadChange: false });
-  if (rightDelta >= 0.1) attacks.push({ attacker: "right", delta: rightDelta, leadChange: false });
+  const leaderDelta = next.leader === "left" ? leftDelta : rightDelta;
   const directLeadChange = (prior.leader === "left" || prior.leader === "right")
-    && (next.leader === "left" || next.leader === "right")
     && prior.leader !== next.leader;
-  if (directLeadChange) {
-    const winner = next.leader;
-    const existing = attacks.find((attack) => attack.attacker === winner);
-    if (existing) existing.leadChange = true;
-    else attacks.push({ attacker: winner, delta: 0, leadChange: true });
+
+  if (leaderDelta >= 0.1 || directLeadChange) {
+    attacks.push({ attacker: next.leader, delta: leaderDelta, leadChange: directLeadChange });
   }
   return attacks;
 }
@@ -132,9 +142,10 @@ export function stepCombatEffects({
   }
   const attacks = planCombatAttacks(previous, next);
   const spawned = spawnCombatEffects(attacks, { now, reducedMotion, compact });
+  const currentDamage = retainCurrentTrailerDamage([...holes, ...spawned.holes], next);
   return {
     previous: next,
-    holes: capHoles([...holes, ...spawned.holes]),
+    holes: capHoles(currentDamage),
     tracers: capTracers([...tracers, ...spawned.tracers]),
     attacks,
     spawnedHoles: spawned.holes.length,
