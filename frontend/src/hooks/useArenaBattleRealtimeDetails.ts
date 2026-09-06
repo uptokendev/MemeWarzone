@@ -19,6 +19,10 @@ function timestamp(value: unknown) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function usesFrozenAuthoritativeResult(metrics: BattleRealtimeMetrics | null) {
+  return Boolean((metrics as any)?.authoritativeResult && Number((metrics as any)?.scoringGeneration) >= 2);
+}
+
 export function useArenaBattleRealtimeDetails(battleId?: string) {
   const base = useArenaBattleDetails(battleId);
   const [battle, setBattle] = useState<Battle | null>(base.battle);
@@ -104,6 +108,17 @@ export function useArenaBattleRealtimeDetails(battleId?: string) {
       const incomingMetricTs = timestamp(data?.metricsUpdatedAt);
       if (currentMetricTs !== null && incomingMetricTs !== null && incomingMetricTs < currentMetricTs) return;
 
+      if (
+        usesFrozenAuthoritativeResult(metricsRef.current) &&
+        (name === "arena_battle_metrics_patch" || name === "arena_battle_points_patch" || name === "arena_battle_lead_changed")
+      ) {
+        // The realtime event is only an invalidation signal for frozen V2/V3
+        // presentation. Re-read the authoritative result contract; never
+        // predict or reconstruct canonical Battle Points from patch payloads.
+        void reconcile().catch((error) => console.warn("[useArenaBattleRealtimeDetails] score reconciliation failed", error));
+        return;
+      }
+
       const applied = applyArenaBattleRealtimeEvent(battleRef.current, metricsRef.current, name, data);
       if (applied.shouldRefetch) {
         void reconcile().catch((error) => console.warn("[useArenaBattleRealtimeDetails] finish reconciliation failed", error));
@@ -118,8 +133,6 @@ export function useArenaBattleRealtimeDetails(battleId?: string) {
     const onConnected = () => {
       setRealtimeState("connected");
       if (connectedOnce.current) {
-        // REST is authoritative after any disconnect/suspend gap. The channel
-        // remains subscribed, but stale rewind patches are timestamp-gated.
         void reconcile().catch((error) => console.warn("[useArenaBattleRealtimeDetails] reconnect reconciliation failed", error));
       }
       connectedOnce.current = true;
