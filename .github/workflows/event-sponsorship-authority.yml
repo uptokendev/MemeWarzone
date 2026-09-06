@@ -12,6 +12,7 @@ on:
       - "frontend/api/lib/eventSponsorshipLifecycle.mjs"
       - "frontend/api/lib/eventSponsorshipAuthority.test.mjs"
       - "frontend/api/lib/eventSponsorshipSeparation.test.mjs"
+      - "frontend/api/lib/arenaSponsorshipProviderAwait.test.mjs"
       - "frontend/db/migrations/20260904_000000_event_sponsorship_core_schema.sql"
       - "frontend/db/migrations/20260904_000001_solana_arena_money_v2_runtime.sql"
       - "frontend/db/migrations/20260905_000001_solana_arena_payment_lifecycle.sql"
@@ -61,9 +62,12 @@ jobs:
           node --check api/lib/eventSponsorshipLifecycle.mjs
           node --check api/arenaEventSponsorshipAuthority.js
           node --check api/arenaEventSponsorshipRecovery.js
+          node --check api/arenaSponsorships.js
           node --check api/postgrad.js
       - name: Authority invariants
         run: node --test api/lib/eventSponsorshipAuthority.test.mjs api/lib/eventSponsorshipSeparation.test.mjs
+      - name: Sponsorship provider await regression
+        run: node --test api/lib/arenaSponsorshipProviderAwait.test.mjs
       - name: Install PostgreSQL client
         run: |
           sudo apt-get update
