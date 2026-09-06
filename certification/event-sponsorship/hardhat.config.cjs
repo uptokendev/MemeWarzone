@@ -1,4 +1,7 @@
+const path = require("node:path");
 require("@nomicfoundation/hardhat-toolbox");
+
+const root = path.resolve(__dirname, "../..");
 
 module.exports = {
   networks: {
@@ -20,9 +23,9 @@ module.exports = {
     },
   },
   paths: {
-    sources: "../../contracts",
-    tests: "../../test",
-    cache: "../../cache-sponsorship-cert",
-    artifacts: "../../artifacts-sponsorship-cert",
+    sources: path.join(root, "contracts"),
+    tests: path.join(root, "test"),
+    cache: path.join(root, "cache-sponsorship-cert"),
+    artifacts: path.join(root, "artifacts-sponsorship-cert"),
   },
 };
