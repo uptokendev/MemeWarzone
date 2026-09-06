@@ -1,0 +1,48 @@
+name: Agent 2 Catalog Alignment Fix
+
+on:
+  push:
+    branches:
+      - agent2/solana-basic-graduation-market
+
+permissions:
+  contents: write
+
+jobs:
+  align:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent2/solana-basic-graduation-market
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Execute corrected alignment patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('.github/workflows/agent2-catalog-alignment.yml').read_text()
+          start_marker = "          python - <<'PY'\n"
+          end_marker = "\n          PY\n"
+          start = text.index(start_marker) + len(start_marker)
+          end = text.index(end_marker, start)
+          lines = text[start:end].splitlines()
+          code = "\n".join(line[10:] if line.startswith("          ") else line for line in lines)
+          code = code.replace('.replace(/\\\\\\/$/, "")', '.replace(new RegExp("/+$"), "")')
+          exec(compile(code, 'agent2-catalog-alignment', 'exec'), {})
+          PY
+          node --check frontend/api/lib/quoteAssetCatalog.js
+          node --check frontend/api/dev-fix/solana-graduation-authorization-v2.js
+      - name: Commit aligned candidate
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/agent2-catalog-alignment.yml .github/workflows/agent2-catalog-alignment-fix.yml
+          git add frontend/api/dev-fix/solana-graduation-authorization-v2.js .github/workflows/agent2-certify.yml
+          git commit -m 'fix(solana): bind graduation authorization to quote catalog authority'
+          git push origin HEAD:agent2/solana-basic-graduation-market
