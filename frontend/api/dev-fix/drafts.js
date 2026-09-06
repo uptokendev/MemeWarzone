@@ -2,8 +2,8 @@ import * as base from "./drafts-base.js";
 export * from "./drafts-base.js";
 
 import { getQuery, json } from "../../server/http.js";
+import { getRobinhoodStockGraduationAsset } from "../lib/robinhoodStockGraduationRegistry.js";
 import { runJsonTransform } from "./json-transform.js";
-import { resolveRobinhoodStockGraduationAsset } from "./robinhoodStockCreatePolicy.js";
 import {
   augmentDraftLifecycle,
   enrichDraftItems,
@@ -96,9 +96,11 @@ async function persistDraftGraduationPolicy(pool, draftId, body) {
   let quoteAsset = null;
   if (marketKind === "STOCK_TOKEN") {
     const requested = String(body.graduationQuoteAsset || body.stockToken || "").trim();
-    const policyChainId = chainId === 4663 ? 4663 : 46630;
-    const registryRaw = process.env[`ROBINHOOD_STOCK_TOKEN_REGISTRY_${policyChainId}`] || "[]";
-    const asset = resolveRobinhoodStockGraduationAsset({ chainId, stockToken: requested, rawRegistry: registryRaw });
+    const asset = await getRobinhoodStockGraduationAsset({
+      chainId,
+      contractAddress: requested,
+      requireFresh: true,
+    });
     quoteAsset = asset.contractAddress;
   }
 
