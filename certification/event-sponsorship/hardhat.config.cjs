@@ -23,6 +23,7 @@ module.exports = {
     },
   },
   paths: {
+    root,
     sources: path.join(root, "contracts"),
     tests: path.join(root, "test"),
     cache: path.join(root, "cache-sponsorship-cert"),
