@@ -63,8 +63,6 @@ if (!ready) {
 
 process.env.SPONSORSHIP_CERT_RPC = rpc;
 
-// Certification-only guard: a stuck live HTTP request is itself a certification failure.
-// Do not allow an open API/DB/provider handle to turn that into a 25-minute job timeout.
 const nativeFetch = globalThis.fetch;
 globalThis.fetch = (input, init = {}) => nativeFetch(input, {
   ...init,
@@ -76,4 +74,7 @@ try {
 } finally {
   globalThis.fetch = nativeFetch;
   chain.kill("SIGTERM");
+  chain.stdout?.destroy();
+  chain.stderr?.destroy();
+  chain.unref();
 }
