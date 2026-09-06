@@ -20,29 +20,26 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Execute corrected alignment patch
+      - name: Remove obsolete environment quote catalog
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
-          text = Path('.github/workflows/agent2-catalog-alignment.yml').read_text()
-          start_marker = "          python - <<'PY'\n"
-          end_marker = "\n          PY\n"
-          start = text.index(start_marker) + len(start_marker)
-          end = text.index(end_marker, start)
-          lines = text[start:end].splitlines()
-          code = "\n".join(line[10:] if line.startswith("          ") else line for line in lines)
-          code = code.replace('.replace(/\\\\\\/$/, "")', '.replace(new RegExp("/+$"), "")')
-          exec(compile(code, 'agent2-catalog-alignment', 'exec'), {})
+          p = Path('frontend/api/dev-fix/solana-graduation-authorization-v2.js')
+          s = p.read_text()
+          start = s.index('function parseQuoteCatalog() {')
+          end = s.index('\nasync function rpcCall', start)
+          s = s[:start] + s[end + 1:]
+          if 'SOLANA_GRADUATION_QUOTE_CATALOG_JSON' in s or 'function parseQuoteCatalog' in s:
+            raise SystemExit('parallel quote catalog removal incomplete')
+          p.write_text(s)
           PY
-          node --check frontend/api/lib/quoteAssetCatalog.js
           node --check frontend/api/dev-fix/solana-graduation-authorization-v2.js
-      - name: Commit aligned authorization only
+      - name: Commit source cleanup
         shell: bash
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git restore .github/workflows/agent2-certify.yml
           git add frontend/api/dev-fix/solana-graduation-authorization-v2.js
-          git commit -m 'fix(solana): bind graduation authorization to quote catalog authority'
+          git commit -m 'refactor(solana): remove parallel graduation quote catalog'
           git push origin HEAD:agent2/solana-basic-graduation-market
