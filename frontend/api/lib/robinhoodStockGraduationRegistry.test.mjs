@@ -9,7 +9,7 @@ import {
 } from "./robinhoodStockGraduationRegistry.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const repoRoot = path.resolve(root, "../..");
+const repoRoot = path.resolve(root, "..");
 
 const NOW = new Date();
 function healthyRow(overrides = {}) {
@@ -99,7 +99,7 @@ test("admin overrides are version protected and audited", () => {
   assert.match(service, /for update/i);
   assert.match(service, /RegistryVersionConflictError/);
   assert.match(service, /robinhood_stock_token_registry_audit/);
-  assert.match(adminOps, /state_version\) !== Number\(expectedVersion\)/);
+  assert.match(adminOps, /Number\(row\.state_version\) !== Number\(expectedVersion\)/);
   assert.match(adminOps, /action, reason, operator_identity/);
   assert.match(admin, /requireDashboardAdmin/);
   assert.match(admin, /expectedVersion/);
