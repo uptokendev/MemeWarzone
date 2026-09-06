@@ -30,6 +30,7 @@ jobs:
           --health-retries 10
     env:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/mwz_sponsorship_process_cert
+      PG_DISABLE_SSL: "1"
       SPONSORSHIP_CERT_RPC: http://127.0.0.1:8545
       SPONSORSHIP_CERT_API_PORT: "3301"
 
