@@ -96,12 +96,14 @@ export function authoritativeLeaderSide(result) {
   return left > right ? "left" : "right";
 }
 
-export function authoritativeWinnerSide(result) {
+export function authoritativeWinnerSide(result, leftTokenId = null, rightTokenId = null) {
   if (!result?.battleResult || result.battleResult.draw === true) return null;
   const winner = nullableString(result.battleResult.winnerToken);
   if (!winner) return null;
-  if (winner === nullableString(result?.sides?.left?.tokenId)) return "left";
-  if (winner === nullableString(result?.sides?.right?.tokenId)) return "right";
+  const left = nullableString(leftTokenId) || nullableString(result?.sides?.left?.tokenId);
+  const right = nullableString(rightTokenId) || nullableString(result?.sides?.right?.tokenId);
+  if (left && winner === left) return "left";
+  if (right && winner === right) return "right";
   return null;
 }
 
