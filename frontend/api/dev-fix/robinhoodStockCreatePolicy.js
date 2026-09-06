@@ -1,5 +1,6 @@
 import { ethers } from "ethers";
 import { getServerReadProvider } from "../lib/getServerReadProvider.js";
+import { getRobinhoodStockGraduationAsset } from "../lib/robinhoodStockGraduationRegistry.js";
 import { signRobinhoodStockCreateAuthorization } from "./robinhoodStockCreateAuthorizationSigner.js";
 
 const ROBINHOOD_MAINNET_CHAIN_ID = 4663;
@@ -35,41 +36,6 @@ function policyChainId(chainId) {
   return Number(chainId) === LOCAL_HARDHAT_CHAIN_ID ? ROBINHOOD_TESTNET_CHAIN_ID : Number(chainId);
 }
 
-export function parseRobinhoodStockGraduationRegistry({ chainId, rawRegistry }) {
-  const cid = policyChainId(chainId);
-  let parsed;
-  try {
-    parsed = JSON.parse(String(rawRegistry || "[]"));
-  } catch {
-    throw new Error(`ROBINHOOD_STOCK_TOKEN_REGISTRY_${cid} is not valid JSON`);
-  }
-  if (!Array.isArray(parsed)) throw new Error(`ROBINHOOD_STOCK_TOKEN_REGISTRY_${cid} must be an array`);
-  return parsed;
-}
-
-export function resolveRobinhoodStockGraduationAsset({ chainId, stockToken, rawRegistry }) {
-  const normalized = normalizeAddress(stockToken, "stockToken");
-  const items = parseRobinhoodStockGraduationRegistry({ chainId, rawRegistry });
-  const item = items.find((entry) => {
-    try {
-      return ethers.getAddress(String(entry?.contractAddress || "")) === normalized;
-    } catch {
-      return false;
-    }
-  });
-  if (!item || item.canonical !== true || item.enabledForGraduation !== true) {
-    throw new Error("Selected Stock Token is not canonical and enabled for graduation");
-  }
-  return {
-    contractAddress: normalized,
-    symbol: String(item.symbol || "").trim(),
-    displayName: String(item.displayName || "").trim(),
-    underlyingSymbol: String(item.underlyingSymbol || item.symbol || "").trim(),
-    canonical: true,
-    enabledForGraduation: true,
-  };
-}
-
 async function requireCode(provider, address, label) {
   const code = await provider.getCode(address);
   if (!code || code === "0x") throw new Error(`${label} has no deployed bytecode`);
@@ -99,11 +65,12 @@ export async function prepareRobinhoodStockCreateAuthorization({
     throw new Error("Robinhood mainnet Stock Battlefield markets are not enabled");
   }
 
-  const registryEnv = process.env[`ROBINHOOD_STOCK_TOKEN_REGISTRY_${targetPolicyChainId}`] || "[]";
-  const asset = resolveRobinhoodStockGraduationAsset({
-    chainId: cid,
-    stockToken,
-    rawRegistry: registryEnv,
+  // Persistent DB registry is the sole offchain identity/eligibility authority.
+  // Exact chainId + contractAddress lookup prevents ticker-only authorization.
+  const asset = await getRobinhoodStockGraduationAsset({
+    chainId: targetPolicyChainId,
+    contractAddress: stockToken,
+    requireFresh: true,
   });
 
   const provider = await getServerReadProvider(cid);
@@ -122,8 +89,11 @@ export async function prepareRobinhoodStockCreateAuthorization({
     requireCode(provider, stockCampaignImplementation, "Stock campaign implementation"),
   ]);
 
+  // Preserve the deployed Stock Graduation Adapter as the live route-safety authority.
   const adapter = new ethers.Contract(stockGraduationAdapter, STOCK_ADAPTER_ABI, provider);
   const route = await adapter.stockRoutes(asset.contractAddress);
+  const oracleFeed = normalizeAddress(route?.oracleFeed ?? route?.[0], "stockRoute.oracleFeed");
+  const acquisitionPool = normalizeAddress(route?.acquisitionPool ?? route?.[1], "stockRoute.acquisitionPool");
   const routeEnabled = route?.enabled === true || route?.[7] === true;
   if (!routeEnabled) throw new Error("Selected Stock Token graduation route is disabled onchain");
 
@@ -148,5 +118,15 @@ export async function prepareRobinhoodStockCreateAuthorization({
     stockCampaignImplementation,
     marketPolicyVersion: "robinhood_market_v1",
     asset,
+    route: {
+      oracleFeed,
+      acquisitionPool,
+      acquisitionFeeTier: Number(route?.acquisitionFeeTier ?? route?.[2] ?? 0),
+      minimumRouteLiquidityUsdWad: String(route?.minimumRouteLiquidityUsdWad ?? route?.[3] ?? 0),
+      maxSwapSlippageBps: Number(route?.maxSwapSlippageBps ?? route?.[4] ?? 0),
+      maxOracleDeviationBps: Number(route?.maxOracleDeviationBps ?? route?.[5] ?? 0),
+      maxPriceImpactBps: Number(route?.maxPriceImpactBps ?? route?.[6] ?? 0),
+      enabled: true,
+    },
   };
 }
