@@ -111,6 +111,9 @@ jobs:
           let source = fs.readFileSync(file, 'utf8');
           source = source.replace('  JsonRpcProvider,\n', '  JsonRpcProvider,\n  NonceManager,\n');
           source = source.replace('const owner = wallet(0);', 'const ownerWallet = wallet(0);\nconst owner = new NonceManager(ownerWallet);');
+          source = source.replace('const payer = wallet(1);', 'const payerWallet = wallet(1);\nconst payer = new NonceManager(payerWallet);');
+          source = source.replace('const payerAddress = payer.address.toLowerCase();', 'const payerAddress = payerWallet.address.toLowerCase();');
+          source = source.replace('async function signedAuth(action, extraLines, signer = payer) {', 'async function signedAuth(action, extraLines, signer = payerWallet) {');
           source = source.replace('const vault = await deploy("EventPrizeVaultV1", [owner.address]);', 'const vault = await deploy("EventPrizeVaultV1", [ownerWallet.address]);');
           source = source.replace('  owner.address,\n  quoteSigner.address,', '  ownerWallet.address,\n  quoteSigner.address,');
           const typedSchema = `{ SponsorshipQuote: [
