@@ -1,0 +1,52 @@
+name: Battle Combat Effects Gate
+
+on:
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - "frontend/src/components/arena/BattleCombatEffects.tsx"
+      - "frontend/src/lib/arena/battleCombatEffects*.mjs"
+      - ".github/workflows/battle-combat-effects-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: battle-combat-effects-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  current-loser-damage:
+    name: Current-loser damage and Battle Wall proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install locked frontend dependencies
+        run: npm ci --prefix frontend --no-audit --no-fund
+
+      - name: Test existing and current-loser combat effects
+        run: node --test frontend/src/lib/arena/battleCombatEffects.test.mjs frontend/src/lib/arena/battleCombatEffects.currentLoser.test.mjs
+
+      - name: Test Battle Wall presentation
+        run: node --test frontend/src/lib/arena/battleWallPresentation.test.mjs
+
+      - name: Test Battle Wall realtime behavior
+        run: node --test frontend/src/lib/arena/battleWallRealtime.test.mjs
+
+      - name: Production frontend build with combat effects enabled
+        env:
+          VITE_ARENA_COMBAT_EFFECTS: "true"
+        run: npm --prefix frontend run build
