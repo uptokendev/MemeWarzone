@@ -1,6 +1,7 @@
 /**
- * Create coin — 5-step card slide wizard.
+ * Create coin — 6-step card slide wizard.
  * Draft / deploy handlers preserve existing API + navigation contracts.
+ * Graduation Market selection is presentation-only; server validation remains authority.
  */
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,7 +16,7 @@ import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { LaunchpadSafetyStatus } from "@/components/launchpad/LaunchpadSafetyStatus";
 import { emitCreatorArmBlocked, resolveCreatorArmBlock } from "@/components/prepare/CreatorArmEligibilityDialog";
-import { RobinhoodGraduationMarketPicker } from "@/components/create/RobinhoodGraduationMarketPicker";
+import { GraduationMarketStep } from "@/components/create/GraduationMarketStep";
 import { getBnbContractAddresses, getBnbContractReadiness } from "@/lib/bnbContracts";
 import { checkTickerAvailability, createCampaignDraft, type TickerAvailability } from "@/lib/draftApi";
 import { signDraftAction } from "@/lib/draftAuth";
@@ -29,11 +30,21 @@ import {
 import { submitSolanaV4CreateFromAuthorization } from "@/lib/solanaV4CreateSubmit";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import { apiFetch } from "@/lib/apiBase";
-import type { RobinhoodStockToken } from "@/lib/marketContinuityApi";
 import {
   createRobinhoodStockCampaign,
-  type RobinhoodGraduationMarketKind,
 } from "@/lib/robinhoodStockCreate";
+import {
+  buildCreateDraftGraduationFields,
+  isNativeQuote,
+  isRobinhoodStockQuote,
+  nativeDefaultQuoteAsset,
+  selectedMarketSummary,
+} from "@/lib/graduationMarketPresentation.mjs";
+import {
+  assertFreshGraduationQuote,
+  resolveRobinhoodStockTokenForQuote,
+  type GraduationQuoteAsset,
+} from "@/lib/graduationQuoteCatalog";
 import {
   BNB_CHAIN_ID,
   getActiveChainId,
@@ -62,7 +73,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { ContentContainer } from "@/components/layout/ContentContainer";
 import { normalizeSocialUrl } from "@/lib/socialLinks";
 import { CreateDraftCardPreview, CreateLiveCardPreview } from "@/components/create/CreateCardPreviews";
-import { CreateSplitPane, CreateWizardShell } from "@/components/create/CreateWizardShell";
+import { CreateFullPane, CreateSplitPane, CreateWizardShell } from "@/components/create/CreateWizardShell";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { analytics, analyticsErrorCode } from "@/lib/analytics/ProductAnalytics";
@@ -76,7 +87,7 @@ const stepSlideVariants = {
 };
 
 const MAX_LOGO_UPLOAD_BYTES = 5 * 1024 * 1024;
-const TOTAL_STEPS = 5;
+const TOTAL_STEPS = 6;
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 
 type CreateMode = "draft" | "deploy" | null;
@@ -146,9 +157,9 @@ const Create = () => {
   const [graduationTargetWei, setGraduationTargetWei] = useState<bigint>(() =>
     getDefaultGraduationTargetWei(getActiveChainId()),
   );
-  const [robinhoodGraduationMarketKind, setRobinhoodGraduationMarketKind] = useState<RobinhoodGraduationMarketKind>("NATIVE");
-  const [robinhoodStockToken, setRobinhoodStockToken] = useState<RobinhoodStockToken | null>(null);
-  const [robinhoodStockDisclosureAccepted, setRobinhoodStockDisclosureAccepted] = useState(false);
+  const [graduationQuoteAsset, setGraduationQuoteAsset] = useState<GraduationQuoteAsset>(() =>
+    nativeDefaultQuoteAsset(getActiveChainId()),
+  );
   const [creatorEligibility, setCreatorEligibility] = useState<ScheduledCreatorLaunchEligibility | null>(null);
   const [creatorEligibilityError, setCreatorEligibilityError] = useState<string | null>(null);
   const armDialogShownForWallet = useRef<string | null>(null);
@@ -197,15 +208,7 @@ const Create = () => {
   ]);
   const isSolanaProtocolPending = launchpadSafetyStatus.protocolStatus === "protocol_pending";
   const robinhoodSelected = isRobinhoodChain(Number(configuredEvmChainId));
-  const robinhoodStockUiEnabled = robinhoodSelected && readFlag(import.meta.env.VITE_ROBINHOOD_STOCK_MARKET_UI, false);
-  const robinhoodStockMarketReady =
-    !robinhoodStockUiEnabled ||
-    robinhoodGraduationMarketKind === "NATIVE" ||
-    Boolean(
-      robinhoodStockToken?.canonical &&
-      robinhoodStockToken.enabledForGraduation &&
-      robinhoodStockDisclosureAccepted,
-    );
+  const graduationMarketReady = Boolean(graduationQuoteAsset?.id);
   const evmDirectDeployEnabled = robinhoodSelected
     ? readFlag(import.meta.env.VITE_ENABLE_DIRECT_ROBINHOOD_DEPLOY, false)
     : readFlag(import.meta.env.VITE_ENABLE_DIRECT_BNB_DEPLOY, false);
@@ -221,10 +224,8 @@ const Create = () => {
   const evmChainLabel = getChainLabel(configuredEvmChainId);
 
   useEffect(() => {
-    setRobinhoodGraduationMarketKind("NATIVE");
-    setRobinhoodStockToken(null);
-    setRobinhoodStockDisclosureAccepted(false);
-  }, [configuredEvmChainId, robinhoodStockUiEnabled]);
+    setGraduationQuoteAsset(nativeDefaultQuoteAsset(chainId));
+  }, [chainId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -461,8 +462,8 @@ const Create = () => {
 
   const handleCreateDraft = async () => {
     if (!validateCoreForm()) return;
-    if (!robinhoodStockMarketReady) {
-      toast.error("Choose an approved Stock Token and confirm the Stock Battlefield disclosure first.");
+    if (!graduationMarketReady) {
+      toast.error("Choose a Graduation Market first.");
       return;
     }
     setIsDrafting(true);
@@ -486,36 +487,27 @@ const Create = () => {
         otherUrl: normalizeSocialUrl(formData.otherLink, "other") || null,
         graduationTargetWei: graduationTargetWei.toString(),
         visibility: "private",
-        ...(robinhoodStockUiEnabled
-          ? {
-              graduationMarketKind: robinhoodGraduationMarketKind,
-              graduationQuoteAsset:
-                robinhoodGraduationMarketKind === "STOCK_TOKEN"
-                  ? robinhoodStockToken?.contractAddress || null
-                  : null,
-              graduationMarketPolicyVersion: "robinhood_market_v1",
-            }
-          : {}),
+        ...buildCreateDraftGraduationFields(graduationQuoteAsset, chainId),
         ...(isSolanaCreator
           ? { cluster: String(import.meta.env.VITE_SOLANA_CLUSTER || "solana-mainnet-beta") }
           : {}),
       } as any);
       cacheDraftLogo(draft.id, logoUrl);
 
-      if (robinhoodStockUiEnabled) {
-        const persistedKind = String((draft as any).graduationMarketKind || "").toUpperCase();
-        const persistedQuote = String((draft as any).graduationQuoteAsset || "").toLowerCase();
-        const expectedQuote = robinhoodGraduationMarketKind === "STOCK_TOKEN"
-          ? String(robinhoodStockToken?.contractAddress || "").toLowerCase()
-          : "";
-        const persisted =
-          persistedKind === robinhoodGraduationMarketKind &&
-          (robinhoodGraduationMarketKind === "NATIVE" || persistedQuote === expectedQuote);
-        if (!persisted) {
-          toast.error("Draft saved, but its Robinhood Graduation Market policy did not persist. Do not deploy it until the policy is restored.");
-          navigate(`/drafts/${draft.id}/promotion`);
-          return;
-        }
+      const expectedSelection = buildCreateDraftGraduationFields(graduationQuoteAsset, chainId);
+      const persistedId = String((draft as any).graduationQuoteAssetId || "");
+      const persistedKind = String((draft as any).graduationMarketKind || "").toUpperCase();
+      const persistedQuote = String((draft as any).graduationQuoteAsset || "").toLowerCase();
+      const expectedQuote = String(expectedSelection.graduationQuoteAsset || "").toLowerCase();
+      const quoteSelectionPersisted = Boolean(persistedId) && persistedId === expectedSelection.graduationQuoteAssetId;
+      const legacyPersisted =
+        !expectedSelection.graduationMarketKind ||
+        (persistedKind === expectedSelection.graduationMarketKind &&
+          (expectedSelection.graduationMarketKind === "NATIVE" || persistedQuote === expectedQuote));
+      if (!quoteSelectionPersisted && !legacyPersisted) {
+        toast.error("Draft saved, but its Graduation Market selection did not persist. Do not deploy it until the policy is restored.");
+        navigate(`/drafts/${draft.id}/promotion`);
+        return;
       }
 
       toast.success(isSolanaCreator ? "Solana draft signed and saved. No gas spent." : `${evmChainLabel} draft signed and saved. No gas spent.`);
@@ -536,9 +528,14 @@ const Create = () => {
         toast.error("Connect your Solana wallet first.");
         return;
       }
+      if (!isNativeQuote(graduationQuoteAsset)) {
+        toast.error("Direct Deploy for this Graduation Market requires fresh server quote binding. Save a Draft, then Push Live after server validation.");
+        return;
+      }
       setIsDeploying(true);
       analytics.track("token_create_started", { surface: "launchpad", chain: "solana" });
       try {
+        await assertFreshGraduationQuote(graduationQuoteAsset);
         const graduationTargetUsdMicros = graduationTargetToUsdMicros(graduationTargetWei);
         toast.message("Checking Solana launch eligibility…");
         const directPreflight = await preflightSolanaDirectCreate({
@@ -688,8 +685,8 @@ const Create = () => {
       toast.error(`Connect your ${evmChainLabel} wallet first.`);
       return;
     }
-    if (!robinhoodStockMarketReady) {
-      toast.error("Choose an approved Stock Token and confirm the Stock Battlefield disclosure first.");
+    if (!graduationMarketReady) {
+      toast.error("Choose a Graduation Market first.");
       return;
     }
     setIsDeploying(true);
@@ -722,11 +719,10 @@ const Create = () => {
       const logoUrl = await uploadLogo();
       let campaignAddress = "";
       let tokenAddress = "";
+      const freshQuote = await assertFreshGraduationQuote(graduationQuoteAsset);
 
-      if (robinhoodStockUiEnabled && robinhoodGraduationMarketKind === "STOCK_TOKEN") {
-        if (!robinhoodStockToken || !robinhoodStockDisclosureAccepted) {
-          throw new Error("Stock Battlefield selection is incomplete.");
-        }
+      if (isRobinhoodStockQuote(freshQuote)) {
+        const stockToken = await resolveRobinhoodStockTokenForQuote(Number(chainId), freshQuote);
         const stockFactoryAddress = launchpad.factoryAddress || evmAddresses.launchFactory;
         const created = await createRobinhoodStockCampaign({
           signer: wallet.signer,
@@ -740,7 +736,7 @@ const Create = () => {
           website: normalizeSocialUrl(formData.website, "website"),
           extraLink: normalizeSocialUrl(formData.otherLink, "other"),
           graduationTargetWei,
-          stockToken: robinhoodStockToken,
+          stockToken,
         });
         campaignAddress = created.campaignAddress;
         tokenAddress = created.tokenAddress;
@@ -748,9 +744,11 @@ const Create = () => {
           surface: "launchpad",
           chain: "robinhood",
           graduation_market: "stock_token",
-          stock_symbol: robinhoodStockToken.symbol,
+          stock_symbol: stockToken.symbol,
         });
-        toast.success(`Stock Battlefield campaign deployed on ${evmChainLabel} · permanent market ${normalizedTicker}/${robinhoodStockToken.symbol}.`);
+        toast.success(`Campaign deployed on ${evmChainLabel} · permanent market $${normalizedTicker}/${stockToken.symbol}.`);
+      } else if (!isNativeQuote(freshQuote)) {
+        throw new Error("Direct Deploy for this Graduation Market requires fresh server quote binding. Save a Draft, then Push Live after server validation.");
       } else {
         const receipt: any = await launchpad.createCampaign({
           name: formData.name,
@@ -817,7 +815,8 @@ const Create = () => {
     if (fromStep === 1) return mode === "draft" || mode === "deploy";
     if (fromStep === 2) return identityReady;
     if (fromStep === 3) return storyReady;
-    if (fromStep === 4) return robinhoodStockMarketReady;
+    if (fromStep === 4) return true;
+    if (fromStep === 5) return graduationMarketReady;
     return false;
   };
 
@@ -832,7 +831,7 @@ const Create = () => {
         else if (checkingTicker) toast.error("Wait for ticker availability check to finish.");
         else toast.error(tickerAvailability?.reason || "Ticker must be available before continuing.");
       } else if (step === 3) toast.error("Add a short description before continuing.");
-      else if (step === 4) toast.error("Choose an approved Stock Token and confirm the Stock Battlefield disclosure first.");
+      else if (step === 5) toast.error("Choose a Graduation Market first.");
       return;
     }
     setSlideDir("next");
@@ -845,6 +844,11 @@ const Create = () => {
   };
 
   const selectedGraduation = graduationOptions.find((o) => o.targetWei === graduationTargetWei);
+  const graduationSummary = selectedMarketSummary({
+    ticker: normalizedTicker,
+    asset: graduationQuoteAsset,
+    chainId,
+  });
   const preview =
     mode === "deploy" ? (
       <CreateLiveCardPreview
@@ -909,6 +913,7 @@ const Create = () => {
             exit="exit"
             transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
             className="absolute inset-0 flex min-h-0 flex-col overflow-hidden"
+            data-testid={`create-step-${step}`}
           >
             {step === 1 ? (
               <CreateSplitPane
@@ -1011,17 +1016,6 @@ const Create = () => {
                         );
                       })}
                     </div>
-                    {robinhoodStockUiEnabled ? (
-                      <RobinhoodGraduationMarketPicker
-                        chainId={Number(configuredEvmChainId)}
-                        kind={robinhoodGraduationMarketKind}
-                        selectedStockToken={robinhoodStockToken}
-                        disclosureAccepted={robinhoodStockDisclosureAccepted}
-                        onKindChange={setRobinhoodGraduationMarketKind}
-                        onStockTokenChange={setRobinhoodStockToken}
-                        onDisclosureAcceptedChange={setRobinhoodStockDisclosureAccepted}
-                      />
-                    ) : null}
                     <Collapsible open={safetyOpen} onOpenChange={setSafetyOpen} className="rounded-xl border border-border/50 bg-background/25">
                       <CollapsibleTrigger className="group flex w-full items-center justify-between gap-2 p-3 text-left">
                         <div><div className="font-retro text-sm text-foreground">Launch Safety</div><p className="mt-0.5 text-xs text-muted-foreground">{launchpadSafetyStatus.protocolLabel ?? (launchpadSafetyStatus.protocolStatus === "ready" ? "Live" : launchpadSafetyStatus.protocolStatus)}{" · "}{launchpadSafetyStatus.chainLabel}</p></div>
@@ -1036,30 +1030,32 @@ const Create = () => {
             ) : null}
 
             {step === 5 ? (
+              <CreateFullPane>
+                <GraduationMarketStep
+                  chainId={chainId}
+                  ticker={normalizedTicker}
+                  selected={graduationQuoteAsset}
+                  onSelectedChange={setGraduationQuoteAsset}
+                  onNext={goNext}
+                  canNext={canGoNext(5)}
+                />
+              </CreateFullPane>
+            ) : null}
+
+            {step === 6 ? (
               <CreateSplitPane
                 left={<div className="flex w-full flex-col items-center gap-2"><p className="font-retro text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Final preview</p>{preview}</div>}
                 right={
                   <div className="flex h-full min-h-0 flex-col gap-3">
-                    <div className="space-y-2 rounded-xl border border-border/50 bg-background/30 p-3 text-sm">
+                    <div className="space-y-2 rounded-xl border border-border/50 bg-background/30 p-3 text-sm" data-testid="create-review">
                       <div className="flex justify-between gap-3"><span className="text-muted-foreground">Mode</span><span className="font-retro text-foreground">{mode === "deploy" ? "Direct deploy" : "Draft"}</span></div>
                       <div className="flex justify-between gap-3"><span className="text-muted-foreground">Name</span><span className="truncate font-medium text-foreground">{formData.name || "—"}</span></div>
                       <div className="flex justify-between gap-3"><span className="text-muted-foreground">Ticker</span><span className="font-medium text-foreground">{normalizedTicker ? `$${normalizedTicker}` : "—"}</span></div>
-                      <div className="flex justify-between gap-3"><span className="text-muted-foreground">Graduation</span><span className="text-foreground">{selectedGraduation?.label || "—"}</span></div>
-                      {robinhoodStockUiEnabled ? (
-                        <div className="flex justify-between gap-3">
-                          <span className="text-muted-foreground">Graduation Market</span>
-                          <span className="text-right text-foreground">
-                            {robinhoodGraduationMarketKind === "STOCK_TOKEN"
-                              ? `Stock Battlefield · $${normalizedTicker || "TOKEN"}/${robinhoodStockToken?.symbol || "—"}`
-                              : "Standard · MEME/WETH"}
-                          </span>
-                        </div>
-                      ) : null}
-                      {robinhoodStockUiEnabled && robinhoodGraduationMarketKind === "STOCK_TOKEN" ? (
-                        <p className="rounded-md border border-orange-400/20 bg-orange-500/5 p-2 text-[11px] leading-relaxed text-orange-100/80">
-                          Bonding remains ETH. On deployment, this Stock Token selection becomes the immutable graduation policy for the campaign.
-                        </p>
-                      ) : null}
+                      <div className="flex justify-between gap-3"><span className="text-muted-foreground">Graduation threshold</span><span className="text-foreground">{selectedGraduation?.label || "—"}</span></div>
+                      <div className="flex justify-between gap-3"><span className="text-muted-foreground">Graduation Market</span><span className="text-right text-foreground">{graduationSummary.pair}</span></div>
+                      <div className="flex justify-between gap-3"><span className="text-muted-foreground">Quote Asset</span><span className="text-foreground">{graduationSummary.quoteAsset}</span></div>
+                      <div className="flex justify-between gap-3"><span className="text-muted-foreground">Provider</span><span className="text-foreground">{graduationSummary.provider}</span></div>
+                      <div className="flex justify-between gap-3"><span className="text-muted-foreground">Bonding currency</span><span className="text-foreground">{graduationSummary.bonding}</span></div>
                       {!creatorWallet ? <p className="pt-1 text-xs text-orange-300">Connect your wallet before launching.</p> : null}
                       {mode === "deploy" && !directDeployRouteReady ? (
                         <p className="pt-1 text-xs text-orange-300">
@@ -1078,9 +1074,9 @@ const Create = () => {
                     </div>
 
                     {mode === "deploy" ? (
-                      <Button type="button" className="mwz-button mwz-button-orange mt-auto h-12 w-full font-retro text-base" disabled={isDeploying || isDrafting || !directDeployRouteReady || !robinhoodStockMarketReady} onClick={() => void handleDeployNow()}><Rocket className="mr-2 h-5 w-5" />{isDeploying ? "Deploying… waiting for confirmation" : "Deploy now"}</Button>
+                      <Button type="button" className="mwz-button mwz-button-orange mt-auto h-12 w-full font-retro text-base" disabled={isDeploying || isDrafting || !directDeployRouteReady || !graduationMarketReady} onClick={() => void handleDeployNow()}><Rocket className="mr-2 h-5 w-5" />{isDeploying ? "Deploying… waiting for confirmation" : "Deploy now"}</Button>
                     ) : (
-                      <Button type="button" className="mwz-button mt-auto h-12 w-full font-retro text-base" disabled={isDrafting || isDeploying || !robinhoodStockMarketReady} onClick={() => void handleCreateDraft()}><FileText className="mr-2 h-5 w-5" />{isDrafting ? "Signing & saving draft…" : "Save Draft"}</Button>
+                      <Button type="button" className="mwz-button mt-auto h-12 w-full font-retro text-base" disabled={isDrafting || isDeploying || !graduationMarketReady} onClick={() => void handleCreateDraft()}><FileText className="mr-2 h-5 w-5" />{isDrafting ? "Signing & saving draft…" : "Save Draft"}</Button>
                     )}
                     <p className="text-[11px] text-muted-foreground">{mode === "deploy" ? "Wallet signs + gas. Stay here until deploy confirms — then Token Details." : "One signature to save. No gas. Next: promotion setup / edit page."}</p>
                   </div>

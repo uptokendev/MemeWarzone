@@ -71,6 +71,81 @@ function attachDraftPolicy(draft, row) {
   return policy ? { ...draft, ...policy } : draft;
 }
 
+function attachDraftQuoteSelection(draft, row) {
+  if (!draft || !row) return draft;
+  return {
+    ...draft,
+    graduationQuoteAssetId: row.quote_asset_id || null,
+    graduationQuoteChainId: row.chain_id != null ? Number(row.chain_id) : Number(draft.chainId || draft.chain_id || 0) || null,
+    graduationQuoteContractOrMint: row.quote_contract_or_mint || null,
+    graduationQuoteProvider: row.provider_key || null,
+    graduationMarketPolicyVersion: row.policy_version || draft.graduationMarketPolicyVersion || null,
+  };
+}
+
+async function loadDraftQuoteSelections(pool, draftIds) {
+  const ids = Array.from(new Set((draftIds || []).map((id) => String(id || "")).filter(Boolean)));
+  const selections = new Map();
+  if (!pool || !ids.length) return selections;
+  try {
+    const result = await pool.query(
+      `select draft_id::text as draft_id, chain_id, quote_asset_id, quote_contract_or_mint, provider_key, policy_version
+         from public.campaign_draft_graduation_quote_selection
+        where draft_id::text = any($1::text[])`,
+      [ids],
+    );
+    for (const row of result.rows) selections.set(String(row.draft_id), row);
+  } catch (error) {
+    if (error?.code !== "42P01" && error?.code !== "42703") throw error;
+  }
+  return selections;
+}
+
+async function persistGraduationQuoteSelection(pool, draftId, body) {
+  const quoteAssetId = String(body.graduationQuoteAssetId || "").trim();
+  if (!quoteAssetId) return null;
+  if (!pool) throw new Error("Draft Graduation Market requires DATABASE_URL-backed persistence.");
+
+  const draftResult = await pool.query(
+    "select id::text as id, chain_id, status from public.campaign_drafts where id::text=$1 limit 1",
+    [String(draftId)],
+  );
+  const draft = draftResult.rows[0];
+  if (!draft) throw new Error("Draft not found while saving Graduation Market.");
+  if (String(draft.status || "").toLowerCase() === "deployed") {
+    throw new Error("Graduation Market is locked after deployment.");
+  }
+
+  const chainId = Number(body.graduationQuoteChainId || body.chainId || draft.chain_id);
+  const quoteContract = String(body.graduationQuoteContractOrMint || "").trim();
+  const provider = String(body.graduationQuoteProvider || "").trim();
+  const policyVersion = String(body.graduationMarketPolicyVersion || body.policyVersion || "").trim();
+  if (!Number.isFinite(chainId) || chainId <= 0 || !quoteContract || !provider || !policyVersion) {
+    throw new Error("Graduation Market selection is incomplete.");
+  }
+
+  try {
+    const result = await pool.query(
+      `insert into public.campaign_draft_graduation_quote_selection(
+         draft_id, chain_id, quote_asset_id, quote_contract_or_mint, provider_key, policy_version, updated_at
+       ) values ($1::uuid,$2,$3,$4,$5,$6,now())
+       on conflict (draft_id) do update set
+         chain_id=excluded.chain_id,
+         quote_asset_id=excluded.quote_asset_id,
+         quote_contract_or_mint=excluded.quote_contract_or_mint,
+         provider_key=excluded.provider_key,
+         policy_version=excluded.policy_version,
+         updated_at=now()
+       returning draft_id::text as draft_id, chain_id, quote_asset_id, quote_contract_or_mint, provider_key, policy_version`,
+      [String(draftId), chainId, quoteAssetId, quoteContract, provider, policyVersion],
+    );
+    return result.rows[0] || null;
+  } catch (error) {
+    if (error?.code === "42P01" || error?.code === "42703") return null;
+    throw error;
+  }
+}
+
 async function persistDraftGraduationPolicy(pool, draftId, body) {
   if (!pool) throw new Error("Draft Graduation Market requires DATABASE_URL-backed persistence.");
   const marketKind = String(body.graduationMarketKind || body.graduation_market_kind || "").trim().toUpperCase();
@@ -127,14 +202,15 @@ async function enrichPayload(payload, pool) {
     const items = await enrichDraftItems(pool, payload.items);
     if (!pool) return { ...payload, items };
     const ids = items.map((item) => item.id);
-    const [reservations, policies] = await Promise.all([
+    const [reservations, policies, quoteSelections] = await Promise.all([
       loadTickerReservationsByDraftIds(pool, ids),
       loadDraftGraduationPolicies(pool, ids),
+      loadDraftQuoteSelections(pool, ids),
     ]);
     return {
       ...payload,
       items: items.map((item) => ({
-        ...attachDraftPolicy(item, policies.get(String(item.id))),
+        ...attachDraftQuoteSelection(attachDraftPolicy(item, policies.get(String(item.id))), quoteSelections.get(String(item.id))),
         tickerReservation: reservations.get(String(item.id)) || null,
       })),
     };
@@ -142,14 +218,18 @@ async function enrichPayload(payload, pool) {
 
   if (payload.draft?.id) {
     const row = await loadDraftRowById(pool, payload.draft.id);
-    const [tickerReservation, policies] = await Promise.all([
+    const [tickerReservation, policies, quoteSelections] = await Promise.all([
       pool ? loadTickerReservationByDraft(pool, payload.draft.id, { includeReleased: true }) : null,
       loadDraftGraduationPolicies(pool, [payload.draft.id]),
+      loadDraftQuoteSelections(pool, [payload.draft.id]),
     ]);
     return {
       ...payload,
       draft: {
-        ...attachDraftPolicy(augmentDraftLifecycle(payload.draft, row), policies.get(String(payload.draft.id))),
+        ...attachDraftQuoteSelection(
+          attachDraftPolicy(augmentDraftLifecycle(payload.draft, row), policies.get(String(payload.draft.id))),
+          quoteSelections.get(String(payload.draft.id)),
+        ),
         tickerReservation,
       },
     };
@@ -224,9 +304,34 @@ export async function drafts(req, res) {
   const wantsGraduationPolicy = req.method === "POST" && Boolean(
     String(body.graduationMarketKind || body.graduation_market_kind || "").trim(),
   );
+  const wantsQuoteSelection = req.method === "POST" && Boolean(String(body.graduationQuoteAssetId || "").trim());
 
   return runJsonTransform(base.drafts, req, res, async (payload, meta) => {
     let enriched = await enrichPayload(payload, pool);
+
+    if (
+      wantsQuoteSelection &&
+      meta.statusCode >= 200 &&
+      meta.statusCode < 300 &&
+      enriched?.draft?.id
+    ) {
+      try {
+        const selectionRow = await persistGraduationQuoteSelection(pool, enriched.draft.id, body);
+        if (selectionRow) {
+          enriched = {
+            ...enriched,
+            graduationQuoteSelectionPersisted: true,
+            draft: attachDraftQuoteSelection(enriched.draft, selectionRow),
+          };
+        }
+      } catch (error) {
+        enriched = {
+          ...enriched,
+          graduationQuoteSelectionPersisted: false,
+          graduationQuoteSelectionError: String(error?.message || error || "Graduation Market selection could not be saved."),
+        };
+      }
+    }
 
     if (
       wantsGraduationPolicy &&
@@ -291,10 +396,32 @@ export async function draftPromotion(req, res) {
   await reconcileScheduledDraftLifecycle(pool);
   const body = requestBody(req);
   const wantsGraduationPolicy = Boolean(String(body.graduationMarketKind || body.graduation_market_kind || "").trim());
+  const wantsQuoteSelection = Boolean(String(body.graduationQuoteAssetId || "").trim());
 
   return runJsonTransform(base.draftPromotion, req, res, async (payload, meta) => {
     let next = await enrichPayload(payload, pool);
-    if (!wantsGraduationPolicy || meta.statusCode < 200 || meta.statusCode >= 300) return next;
+    if (meta.statusCode < 200 || meta.statusCode >= 300) return next;
+
+    if (wantsQuoteSelection) {
+      try {
+        const selectionRow = await persistGraduationQuoteSelection(pool, String(req.params?.draftId || ""), body);
+        if (selectionRow && next?.draft) {
+          next = {
+            ...next,
+            graduationQuoteSelectionPersisted: true,
+            draft: attachDraftQuoteSelection(next.draft, selectionRow),
+          };
+        }
+      } catch (error) {
+        next = {
+          ...next,
+          graduationQuoteSelectionPersisted: false,
+          graduationQuoteSelectionError: String(error?.message || error || "Graduation Market selection could not be saved."),
+        };
+      }
+    }
+
+    if (!wantsGraduationPolicy) return next;
 
     try {
       const policyRow = await persistDraftGraduationPolicy(pool, String(req.params?.draftId || ""), body);
@@ -323,4 +450,5 @@ export async function draftArchive(req, res) {
 export const robinhoodDraftGraduationPolicyInternals = {
   normalizeDraftPolicyRow,
   attachDraftPolicy,
+  attachDraftQuoteSelection,
 };

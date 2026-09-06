@@ -40,6 +40,7 @@
     "lint": "eslint .",
     "test:wallet-discovery": "node --test src/lib/injectedProviderDiscovery.test.mjs",
     "test:feed-isolation": "node --test src/lib/feedChainIsolation.test.mjs",
+    "test:graduation-market": "node --test src/lib/graduationMarketPresentation.test.mjs",
     "test:e2e:isolation": "playwright test -c playwright.config.ts",
     "test:solana-v0": "node --test src/lib/solanaV0Transaction.test.mjs",
     "test:solana-arena": "node --test src/lib/solanaArenaLayout.test.mjs src/lib/solanaArenaV0.test.mjs",
