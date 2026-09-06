@@ -5,6 +5,10 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  canonicalTokenKey as backendCanonicalTokenKey,
+  quarterFinalSeeds as backendQuarterFinalSeeds,
+} from "../../../api/lib/arenaLeagueScoreMath.js";
+import {
   WARZONE_CONTENT_MAX_CLASS,
   WARZONE_CONTENT_MAX_WIDTH_PX,
   presentLeaguePhase,
@@ -15,6 +19,7 @@ import {
   presentWarzoneLeagueBoard,
   presentWarzoneLeagueEmpty,
   presentWarzoneLeagueStatus,
+  tokenIdentityKey,
 } from "./warzoneChrome.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -22,6 +27,83 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 function readSrc(...parts) {
   return fs.readFileSync(path.join(here, ...parts), "utf8");
 }
+
+function walkFiles(dir, acc = []) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) walkFiles(full, acc);
+    else if (/\.(mjs|js|ts|tsx)$/.test(entry.name) && !/\.test\.(mjs|js|ts|tsx)$/.test(entry.name)) acc.push(full);
+  }
+  return acc;
+}
+
+test("Warzone chrome does not import API modules through the /api proxy path", () => {
+  const src = readSrc("./warzoneChrome.mjs");
+  assert.doesNotMatch(src, /from ["'][^"']*\/api\//);
+  assert.doesNotMatch(src, /\.\.\/\.\.\/\.\.\/api\//);
+  assert.doesNotMatch(src, /arenaLeagueScoreMath/);
+  assert.match(src, /QF_MIN_FIGHTS = 3/);
+  assert.match(src, /QF_SEED_SIZE = 8/);
+});
+
+test("local QF presentation matches backend helper fixtures", () => {
+  const evmUpper = "0xABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD";
+  const evmLower = "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd";
+  const solana = "SoL11111111111111111111111111111111111111112";
+  assert.equal(tokenIdentityKey(evmUpper), evmLower);
+  assert.equal(tokenIdentityKey(evmUpper), backendCanonicalTokenKey(evmUpper));
+  assert.equal(tokenIdentityKey(solana), solana);
+  assert.equal(tokenIdentityKey(solana), backendCanonicalTokenKey(solana));
+  assert.notEqual(tokenIdentityKey(solana.toLowerCase()), tokenIdentityKey(solana));
+
+  const entries = [
+    { tokenId: "low-fights", points: 200, wins: 20, finishedFights: 2 },
+    { tokenId: "p1", points: 90, wins: 4, finishedFights: 10 },
+    { tokenId: "p2", points: 90, wins: 9, finished_fights: 10 },
+    { tokenId: evmUpper, points: 80, wins: 8, finishedFights: 8 },
+    { tokenId: solana, points: 70, wins: 7, finishedFights: 7 },
+    { tokenId: "p5", points: 60, wins: 6, finishedFights: 6 },
+    { tokenId: "p6", points: 50, wins: 5, finishedFights: 5 },
+    { tokenId: "p7", points: 40, wins: 4, finishedFights: 4 },
+    { tokenId: "p8", points: 30, wins: 3, finishedFights: 3 },
+    { tokenId: "p9", points: 29, wins: 12, finishedFights: 12 },
+    { tokenId: "p10", points: 20, wins: 2, finishedFights: 3 },
+  ];
+  const backend = backendQuarterFinalSeeds(entries);
+  const field = presentQuarterFinalField({ state: "live" }, entries).field;
+  assert.equal(backend.length, 8);
+  assert.equal(field.length, 8);
+  assert.equal(backend.some((entry) => entry.tokenId === "low-fights"), false);
+  assert.equal(field.some((entry) => entry.tokenId === "low-fights"), false);
+  assert.equal(backend[0].tokenId, "p2");
+  assert.equal(field[0].tokenId, "p2");
+  assert.equal(backend[1].tokenId, "p1");
+  assert.equal(field[1].tokenId, "p1");
+  assert.deepEqual(
+    backend.map((entry) => entry.tokenId),
+    field.map((entry) => entry.tokenId),
+  );
+  assert.equal(backend[7].tokenId, "p8");
+  assert.equal(field.some((entry) => entry.tokenId === "p9"), false);
+  assert.equal(tokenIdentityKey(field.find((entry) => String(entry.tokenId).startsWith("0x")).tokenId), evmLower);
+});
+
+test("no client Arena presentation module imports frontend/api", () => {
+  const roots = [
+    path.join(here),
+    path.join(here, "../../pages"),
+    path.join(here, "../../components/warzone"),
+    path.join(here, "../../components/arena"),
+  ];
+  const files = roots.flatMap((dir) => (fs.existsSync(dir) ? walkFiles(dir) : []));
+  assert.ok(files.some((file) => file.endsWith(`${path.sep}warzoneChrome.mjs`)));
+  for (const file of files) {
+    const src = fs.readFileSync(file, "utf8");
+    assert.doesNotMatch(src, /from ["'][^"']*frontend\/api/);
+    assert.doesNotMatch(src, /from ["']\.\.\/\.\.\/\.\.\/api\//);
+    assert.doesNotMatch(src, /from ["'][^"']*\/api\/lib\//);
+  }
+});
 
 test("Warzone pages share the same centered content width", () => {
   const frame = readSrc("../../components/warzone/WarzoneContent.tsx");

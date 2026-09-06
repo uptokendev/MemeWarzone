@@ -1,7 +1,23 @@
-import { QF_SEED_SIZE, canonicalTokenKey, quarterFinalSeeds } from "../../../api/lib/arenaLeagueScoreMath.js";
-
 export const WARZONE_CONTENT_MAX_WIDTH_PX = 1280;
 export const WARZONE_CONTENT_MAX_CLASS = "max-w-[1280px]";
+
+// Keep QF presentation rules in the client bundle. Importing frontend/api/lib
+// becomes `/api/lib/...` in Vite dev, which the API proxy 404s and blanks Warzone.
+const QF_MIN_FIGHTS = 3;
+const QF_SEED_SIZE = 8;
+
+function canonicalTokenKey(value) {
+  const raw = String(value || "").trim();
+  if (/^0x[0-9a-fA-F]{40}$/.test(raw)) return raw.toLowerCase();
+  return raw;
+}
+
+function quarterFinalSeeds(entries) {
+  return [...(entries || [])]
+    .filter((entry) => Number(entry.finishedFights ?? entry.finished_fights ?? 0) >= QF_MIN_FIGHTS)
+    .sort((left, right) => Number(right.points || 0) - Number(left.points || 0) || Number(right.wins || 0) - Number(left.wins || 0))
+    .slice(0, QF_SEED_SIZE);
+}
 
 export function presentWarzoneFeedTone(source) {
   const value = String(source || "");
