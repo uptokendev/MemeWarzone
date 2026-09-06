@@ -133,14 +133,18 @@ test("Final Salvo certifies exact-tie entry, 60-second shots, early win and Sudd
   assert.equal(tied.suddenDeathRound, 1);
 });
 
-test("Vote Tournament finalizer is lease-protected and never dispatches Vote battles into Battle V2 settlement", () => {
+test("Vote Tournament finalizer is lease-protected and never enters the Normal Battle settlement dispatcher", () => {
   const finalizer = readApi("lib/arenaVoteTournamentFinalizationService.js");
+  const normalRuntime = readApi("lib/arenaBattleSettlementRuntime.js");
   const worker = readFrontend("scripts/run-arena-battle-realtime-worker.mjs");
   assert.match(finalizer, /pg_try_advisory_xact_lock/);
   assert.match(finalizer, /arena-vote-finalize:/);
   assert.match(finalizer, /phase = 'regulation'/);
   assert.match(finalizer, /insert into public\.arena_vote_tiebreaks/);
-  assert.match(worker, /coalesce\(b\.battle_mode\s*,\s*'normal'\)\s*<>\s*'vote'/);
+  assert.match(worker, /settleDueNormalBattles/);
+  assert.match(normalRuntime, /coalesce\(b\.battle_mode, 'normal'\) = 'normal'/);
+  assert.match(normalRuntime, /b\.source <> 'tournament'/);
+  assert.doesNotMatch(normalRuntime, /finalizeDueVoteTournamentBattle|advanceDueFinalSalvo/);
   assert.match(worker, /finalizeDueVoteTournamentBattle/);
   assert.match(worker, /advanceDueFinalSalvo/);
 });
