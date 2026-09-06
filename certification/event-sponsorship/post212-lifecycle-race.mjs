@@ -64,4 +64,6 @@ for(let rep=1;rep<=10;rep++){
   } else { const e=await seedEvent(); const q=await quoteFor(e); const p=await pay(q); const blocker=new Client({connectionString:DB_URL}); await blocker.connect(); await blocker.query("begin"); await blocker.query(`update public.event_sponsorships set status='cancelled_before_payment' where quote_id=$1`,[q.quoteId]); const pending=confirm(q,p); await sleep(150); await blocker.query("commit"); await blocker.end(); const r=await pending; const c=await counts(q); const ok=r.status===409&&r.data?.code==="SPONSORSHIP_INVALID_STATE"&&Number(c.payments)===0&&c.status==="cancelled_before_payment"&&String(c.sponsorship_prize_native_raw)==="0"; assert.equal(ok,true); report.races.push({rep,type:"confirm-vs-cancel",http:[r.status],payments:c.payments,state:c.status,result:"PASS"}); }
 }
 console.log("POST212_EVENT_SPONSORSHIP_JSON="+JSON.stringify(report));
-api.kill("SIGTERM"); await db.end();
+api.kill("SIGTERM");
+await db.end();
+if (typeof provider.destroy === "function") provider.destroy();
