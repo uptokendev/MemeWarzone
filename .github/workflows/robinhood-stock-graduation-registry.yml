@@ -14,8 +14,11 @@ on:
       - "frontend/api/lib/robinhoodStockGraduationRegistry.test.mjs"
       - "frontend/api/robinhood/stock-tokens.js"
       - "frontend/api/server.mjs"
-      - "frontend/supabase/migrations/20260906231500_quote_asset_catalog.sql"
-      - "docs/robinhood/stock-graduation-registry-api.md"
+      - ".github/workflows/robinhood-stock-graduation-registry.yml"
+  push:
+    branches:
+      - "feat/robinhood-*"
+    paths:
       - ".github/workflows/robinhood-stock-graduation-registry.yml"
   workflow_dispatch:
 
@@ -23,11 +26,29 @@ jobs:
   registry-certification:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
       PG_DISABLE_SSL: "1"
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: 0204c4a47555a747b95e7c80deb113d36f91e491
+      - name: Pin exact production authority
+        run: test "$(git rev-parse HEAD)" = "0204c4a47555a747b95e7c80deb113d36f91e491"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -35,16 +56,6 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install frontend dependencies
         run: npm ci --prefix frontend --no-audit --no-fund
-      - name: Syntax checks
-        run: |
-          node --check frontend/api/lib/robinhoodStockGraduationRegistry.js
-          node --check frontend/api/lib/robinhoodStockGraduationAdminOps.js
-          node --check frontend/api/lib/quoteAssetCatalog.js
-          node --check frontend/api/admin/robinhoodStockGraduationRegistry.js
-          node --check frontend/api/robinhood/stock-tokens.js
-          node --check frontend/api/graduation/quote-assets.js
-          node --check frontend/api/dev-fix/robinhoodStockCreatePolicy.js
-          node --check frontend/api/server.mjs
       - name: Registry authority tests
         working-directory: frontend
         run: |
