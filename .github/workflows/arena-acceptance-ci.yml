@@ -4,6 +4,7 @@ on:
   pull_request:
     branches:
       - main
+      - build/cross-chain-stabilization-rh-base
     paths:
       - "contracts/ArenaWarPoolTreasury.sol"
       - "contracts/ArenaWarPoolTreasuryV2.sol"
