@@ -25,6 +25,10 @@ import { getNativeSymbol } from "@/lib/chainConfig";
 
 function noopViewportReport(_report: BattleWallViewportReport) {}
 
+function participantTokenIdentity(participant: any) {
+  return String(participant?.tokenAddress || participant?.tokenId || participant?.campaignAddress || "").trim() || null;
+}
+
 type Props = {
   battle: Battle;
   metrics?: BattleRealtimeMetrics | null;
@@ -84,7 +88,7 @@ export function BattleWallModule({
       ? realtime.battle
       : battle;
   const displayMetrics = selected.metrics;
-  const presented = presentBattleWallModule(displayBattle, displayMetrics, {
+  let presented = presentBattleWallModule(displayBattle, displayMetrics, {
     requested: selected.requested,
     loaded: selected.loaded,
   });
@@ -102,12 +106,15 @@ export function BattleWallModule({
   const scoringGeneration = Number((displayMetrics as any)?.scoringGeneration ?? authoritativeResult?.scoringGeneration) || null;
   const scoreHealthy = authoritativeResult ? authoritativeResult.dataHealth?.healthy === true : displayMetrics?.dataHealth?.healthy === true;
   const resultDraw = presented.tab === "finished" && authoritativeDraw(authoritativeResult);
-  const resultWinnerSide = presented.tab === "finished" ? authoritativeWinnerSide(authoritativeResult) : null;
+  const resultWinnerSide = presented.tab === "finished"
+    ? authoritativeWinnerSide(authoritativeResult, participantTokenIdentity(left), participantTokenIdentity(right))
+    : null;
   const authoritativeWinnerIndex = resultWinnerSide === "left" ? 0 : resultWinnerSide === "right" ? 1 : null;
 
   const delay = presented.scoreKind === "delay" || presented.statusLabel === DATA_DELAY_LABEL;
   const effectiveLeaderIndex = resultDraw ? null : authoritativeWinnerIndex ?? presented.leaderIndex;
-  const leaderReady = !upcoming && !delay && (effectiveLeaderIndex === 0 || effectiveLeaderIndex === 1);
+  presented = { ...presented, leaderIndex: effectiveLeaderIndex };
+  const leaderReady = !upcoming && !delay && (presented.leaderIndex === 0 || presented.leaderIndex === 1);
   const band = presentBattleWallFightBand(presented, {
     chainLabel: battleChainLabel(chainId),
     clockLabel: upcoming ? null : battleClockLabel(displayBattle),
@@ -161,8 +168,8 @@ export function BattleWallModule({
             scoreHealthy={scoreHealthy}
             pointsLabel={upcoming ? null : presented.leftPointsLabel}
             scoreCaption={upcoming ? null : presented.scoreCaption}
-            isLeader={leaderReady && effectiveLeaderIndex === 0}
-            isTrailer={leaderReady && effectiveLeaderIndex === 1}
+            isLeader={leaderReady && presented.leaderIndex === 0}
+            isTrailer={leaderReady && presented.leaderIndex === 1}
             finished={presented.tab === "finished"}
             accent="ember"
             combatSide="left"
@@ -173,7 +180,7 @@ export function BattleWallModule({
             rightLabel={presented.rightTicker}
             leftPoints={upcoming ? null : presented.leftPointsLabel}
             rightPoints={upcoming ? null : presented.rightPointsLabel}
-            leaderIndex={upcoming ? null : effectiveLeaderIndex}
+            leaderIndex={upcoming ? null : presented.leaderIndex}
             gapLabel={upcoming ? null : presented.gapLabel}
             clockLabel={upcoming ? null : battleClockLabel(displayBattle)}
             remaining={presented.tab === "live"}
@@ -192,8 +199,8 @@ export function BattleWallModule({
             scoreHealthy={scoreHealthy}
             pointsLabel={upcoming ? null : presented.rightPointsLabel}
             scoreCaption={upcoming ? null : presented.scoreCaption}
-            isLeader={leaderReady && effectiveLeaderIndex === 1}
-            isTrailer={leaderReady && effectiveLeaderIndex === 0}
+            isLeader={leaderReady && presented.leaderIndex === 1}
+            isTrailer={leaderReady && presented.leaderIndex === 0}
             finished={presented.tab === "finished"}
             accent="cyan"
             combatSide="right"
