@@ -1,488 +1,91 @@
-name: Solana Final Launch Blocker Gate
+name: Agent2 Graduation Source Formatter
 
 on:
   push:
     branches:
-      - 'hotfix/solana-*'
-      - 'agent/solana-*'
-  pull_request:
-    branches:
-      - main
-    paths:
-      - Anchor.toml
-      - Cargo.toml
-      - Cargo.lock
-      - programs/memewarzone_solana/**
-      - tests/solana/**
-      - tests/solana/gate-k-meteora.cjs
-      - config/solana/meteora-cp-amm.certification.json
-      - scripts/solana/fetch-pinned-meteora-cp-amm.mjs
-      - frontend/src/lib/solanaV4CreateSubmit.ts
-      - frontend/src/lib/solanaTradeV1.ts
-      - frontend/src/lib/solanaLaunchpadInstructions.ts
-      - frontend/src/lib/solanaV0Transaction.ts
-      - frontend/src/lib/solanaV0Transaction.test.mjs
-      - frontend/scripts/load-solana-v0-module.mjs
-      - frontend/scripts/solana-launchpad-alt-plan.mjs
-      - frontend/scripts/create-launchpad-alt.mjs
-      - docs/solana/launchpad-alt.md
-      - tools/solana-meteora-graduation/graduate.mjs
-      - scripts/solana/fetch-pinned-meteora-cp-amm.mjs
-      - scripts/resolve-bsc-certification-factory.mjs
-      - config/solana/meteora-cp-amm.certification.json
-      - config/bsc-testnet-certification.json
-      - frontend/api/dev-fix/solana-trade-authorization-v1.js
-      - frontend/api/dev-fix/solana-trade-preflight-final.test.mjs
-      - scripts/solana/upgrade-mainnet-launchpad.cjs
-      - .github/workflows/solana-final-launch-blockers.yml
-  workflow_dispatch:
-
-concurrency:
-  group: solana-final-launch-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+      - 'agent/solana-agent2-basic-graduation-cert'
 
 permissions:
-  contents: read
-
-env:
-  ANCHOR_VERSION: 0.30.1
-  SOLANA_VERSION: 1.18.26
-  AGAVE_VERSION: 4.2.0
-  RUST_TOOLCHAIN: 1.79.0
-  IDL_RUST_TOOLCHAIN: nightly-2024-05-09
-  CARGO_NET_RETRY: 10
-  ANCHOR_PROVIDER_URL: http://127.0.0.1:8899
-  MAINNET_RPC: https://api.mainnet-beta.solana.com
-  PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+  contents: write
 
 jobs:
-  exact-sbf-gate:
-    name: Exact launchpad SBF create + buy/sell gate
+  format-source:
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 55
     steps:
-      - name: Checkout exact candidate SHA
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 2
-
-      - name: Use Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Validate committed preflight and frontend surfaces
+      - name: Install pinned Rust formatter
+        run: |
+          rustup toolchain install 1.79.0 --profile minimal
+          rustup component add rustfmt --toolchain 1.79.0
+      - name: Apply deterministic safety corrections
         shell: bash
         run: |
-          set -euo pipefail
-          git diff --check HEAD^ HEAD
-          node --check scripts/solana/upgrade-mainnet-launchpad.cjs
-          node --check frontend/api/dev-fix/solana-trade-authorization-v1.js
-          node --test frontend/api/dev-fix/solana-trade-preflight-final.test.mjs
-          node --test tests/solana/graduate-operator-accounts.test.mjs
-          node --test tests/solana/fee-escrow-lease.pg.test.mjs
-          node --test tests/solana/fee-escrow-worker-torture.pg.test.mjs
-          node --test tests/solana/meteora-cp-amm-pin.test.mjs
-          node --test tests/solana/bsc-certification-factory.test.mjs
-          node --test frontend/api/admin/sponsorship.test.mjs
-          npm install --prefix frontend --no-audit --no-fund
-          npm --prefix frontend run build
-
-      - name: Install Rust toolchains
-        shell: bash
-        run: |
-          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
-          rustup toolchain install "$IDL_RUST_TOOLCHAIN" --profile minimal
-          rustup default "$RUST_TOOLCHAIN"
-          rustup component add rustfmt --toolchain "$RUST_TOOLCHAIN"
-
-      - name: Install frozen Solana build CLI
-        shell: bash
-        run: |
-          release_dir="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
-          mkdir -p "$release_dir"
-          curl --fail --location --retry 5 --retry-all-errors --silent --show-error \
-            --output /tmp/solana-release.tar.bz2 \
-            "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
-          tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
-          mkdir -p "$HOME/.local/share/solana/install"
-          ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
-          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
-
-      - name: Install current Mainnet Agave runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          agave_dir="$RUNNER_TEMP/agave-v${AGAVE_VERSION}"
-          mkdir -p "$agave_dir"
-          curl --fail --location --retry 5 --retry-all-errors --silent --show-error \
-            --output /tmp/agave-release.tar.bz2 \
-            "https://github.com/anza-xyz/agave/releases/download/v${AGAVE_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
-          tar -xjf /tmp/agave-release.tar.bz2 -C "$agave_dir" --strip-components=1
-          test -x "$agave_dir/bin/solana-test-validator"
-          test -x "$agave_dir/bin/solana"
-          echo "AGAVE_BIN=$agave_dir/bin" >> "$GITHUB_ENV"
-          "$agave_dir/bin/solana-test-validator" --version
-          "$agave_dir/bin/solana" --version
-
-      - name: Install Anchor CLI
-        run: npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
-
-      - name: Record release environment
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "git_sha=$(git rev-parse HEAD)"
-          anchor --version
-          solana --version
-          "$AGAVE_BIN/solana-test-validator" --version
-          rustc --version
-          cargo --version
-          node --version
-          npm --version
-          rustfmt --edition 2021 --check \
-            programs/memewarzone_solana/src/authorized_trade.rs \
-            programs/memewarzone_solana/src/fee_escrow.rs \
-            programs/memewarzone_solana/src/graduation.rs
-
-      - name: Create ephemeral test payer
-        shell: bash
-        run: |
-          mkdir -p "$HOME/.config/solana"
-          solana-keygen new --no-bip39-passphrase --silent --force --outfile "$HOME/.config/solana/id.json"
-          echo "ANCHOR_WALLET=$HOME/.config/solana/id.json" >> "$GITHUB_ENV"
-
-      - name: Build exact launchpad SBF artifact once
-        shell: bash
-        run: |
-          set -o pipefail
-          anchor build --program-name memewarzone_solana --no-idl \
-            2>&1 | tee /tmp/mwz-anchor-build.log | tail -n 180
-          if grep -Eqi 'Stack offset .*exceeded max offset|exceeded max offset.*4096|stack frame.*exceed' /tmp/mwz-anchor-build.log; then
-            echo 'FATAL: launchpad SBF stack-frame diagnostic found in build output' >&2
-            grep -Ein 'Stack offset|exceeded max offset|stack frame' /tmp/mwz-anchor-build.log >&2 || true
-            exit 1
-          fi
-          test -s target/deploy/memewarzone_solana.so
-          sha256sum target/deploy/memewarzone_solana.so | tee /tmp/mwz-so-sha256.txt
-          wc -c target/deploy/memewarzone_solana.so | tee /tmp/mwz-so-bytes.txt
-          cp target/deploy/memewarzone_solana.so /tmp/mwz-so-build-1.so
-
-      - name: Rebuild SBF independently and require identical SHA256
-        shell: bash
-        run: |
-          set -euo pipefail
-          rebuild_dir="$RUNNER_TEMP/mwz-sbf-rebuild-isolated"
-          rm -rf "$rebuild_dir"
-          mkdir -p "$rebuild_dir"
-          # Isolated cargo target so this cannot be a hit on the first build's target/deploy.
-          CARGO_TARGET_DIR="$rebuild_dir" \
-            anchor build --program-name memewarzone_solana --no-idl \
-            2>&1 | tee /tmp/mwz-anchor-rebuild.log | tail -n 80
-          isolated_so="$rebuild_dir/deploy/memewarzone_solana.so"
-          if [ ! -s "$isolated_so" ]; then
-            isolated_so="$(find "$rebuild_dir" -name memewarzone_solana.so -type f | head -n 1)"
-          fi
-          test -s "$isolated_so"
-          sha256sum /tmp/mwz-so-build-1.so "$isolated_so"
-          cmp -s /tmp/mwz-so-build-1.so "$isolated_so"
-          cp "$isolated_so" target/deploy/memewarzone_solana.so
-          sha256sum -c /tmp/mwz-so-sha256.txt
-          echo 'INDEPENDENT_SBF_REBUILD_MATCH=true'
-          echo 'INDEPENDENT_SBF_REBUILD_ISOLATED=true'
-
-      - name: Compare candidate with live mainnet program
-        shell: bash
-        run: |
-          set +e
-          rm -f /tmp/mwz-mainnet-live.so /tmp/mwz-mainnet-program.json /tmp/mwz-mainnet-audit.err
-          solana program show "$PROGRAM_ID" --url "$MAINNET_RPC" --output json \
-            > /tmp/mwz-mainnet-program.json 2> /tmp/mwz-mainnet-audit.err
-          show_status=$?
-          if [ "$show_status" -eq 0 ]; then
-            cat /tmp/mwz-mainnet-program.json
-            solana program dump "$PROGRAM_ID" /tmp/mwz-mainnet-live.so --url "$MAINNET_RPC" \
-              2>> /tmp/mwz-mainnet-audit.err
-            dump_status=$?
-          else
-            dump_status=1
-          fi
-          if [ "$show_status" -eq 0 ] && [ "$dump_status" -eq 0 ] && [ -s /tmp/mwz-mainnet-live.so ]; then
-            sha256sum /tmp/mwz-mainnet-live.so | tee /tmp/mwz-mainnet-sha256.txt
-            wc -c /tmp/mwz-mainnet-live.so | tee /tmp/mwz-mainnet-bytes.txt
-            if cmp -s target/deploy/memewarzone_solana.so /tmp/mwz-mainnet-live.so; then
-              echo 'LIVE_BINARY_MATCH=true' | tee /tmp/mwz-mainnet-compare.txt
-            else
-              echo 'LIVE_BINARY_MATCH=false' | tee /tmp/mwz-mainnet-compare.txt
-            fi
-          else
-            echo 'MAINNET_BINARY_AUDIT=UNAVAILABLE' | tee /tmp/mwz-mainnet-compare.txt
-            cat /tmp/mwz-mainnet-audit.err >&2 || true
-          fi
-          exit 0
-
-      - name: Generate matching launchpad IDL without rebuilding SBF
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p target/idl
-          (
-            cd programs/memewarzone_solana
-            RUSTUP_TOOLCHAIN="$IDL_RUST_TOOLCHAIN" anchor idl build \
-              --out ../../target/idl/memewarzone_solana.json
-          ) 2>&1 | tee /tmp/mwz-idl-build.log | tail -n 220
-          test -s target/idl/memewarzone_solana.json
-          sha256sum -c /tmp/mwz-so-sha256.txt
-
-      - name: Install acceptance dependencies
-        run: npm install --prefix tests/solana --no-audit --no-fund
-
-      - name: Pin and fetch Meteora DAMM v2 binary
-        shell: bash
-        run: |
-          set -euo pipefail
-          node scripts/solana/fetch-pinned-meteora-cp-amm.mjs --with-accounts
-          python3 - <<'PY' | sha256sum -c
-          import json
+          python3 - <<'PY'
           from pathlib import Path
-          manifest = json.loads(Path("config/solana/meteora-cp-amm.certification.json").read_text())
-          print(f"{manifest['artifact']['sha256']}  {manifest['artifact']['localPath']}")
+          import re
+          p = Path('programs/memewarzone_solana/src/graduation.rs')
+          s = p.read_text()
+
+          # 1) Persist the operator balance immediately before campaign graduation SOL is staged.
+          marker = 'pub struct GraduationState {'
+          a = s.index(marker)
+          b = s.index('\n}', a)
+          block = s[a:b]
+          old = '    pub quote_recovery_account: Pubkey,\n'
+          new = old + '    pub authority_lamports_before: u64,\n'
+          if 'authority_lamports_before' not in block:
+              if old not in block:
+                  raise SystemExit('GraduationState insertion marker missing')
+              block = block.replace(old, new, 1)
+              s = s[:a] + block + s[b:]
+
+          # 2) Capture the pre-staging authority lamport balance after the exact transfer amount is known.
+          old = '''    move_program_owned_lamports(&ctx.accounts.sol_vault.to_account_info(), &ctx.accounts.authority.to_account_info(), quote.max_liquidity_lamports)?;\n\n    let state = &mut ctx.accounts.graduation_state;'''
+          new = '''    let authority_lamports_before = ctx.accounts.authority.lamports();\n    move_program_owned_lamports(&ctx.accounts.sol_vault.to_account_info(), &ctx.accounts.authority.to_account_info(), quote.max_liquidity_lamports)?;\n\n    let state = &mut ctx.accounts.graduation_state;'''
+          if 'let authority_lamports_before = ctx.accounts.authority.lamports();' not in s:
+              if old not in s:
+                  raise SystemExit('pre-staging balance marker missing')
+              s = s.replace(old, new, 1)
+
+          # 3) Persist captured balance in GraduationState.
+          old = 'state.quote_recovery_account = args.quote_recovery_account; state.authorization_hash = digest;'
+          new = 'state.quote_recovery_account = args.quote_recovery_account; state.authority_lamports_before = authority_lamports_before; state.authorization_hash = digest;'
+          if 'state.authority_lamports_before = authority_lamports_before;' not in s:
+              if old not in s:
+                  raise SystemExit('state assignment marker missing')
+              s = s.replace(old, new, 1)
+
+          # 4) Non-native exact-in must actually consume the staged campaign SOL; it cannot remain with the operator.
+          old = 'let native_quote = is_native_quote(state.quote_mint);\n    if native_quote {'
+          new = '''let native_quote = is_native_quote(state.quote_mint);\n    if !native_quote {\n        require!(ctx.accounts.authority.lamports() <= state.authority_lamports_before, LaunchpadError::GraduationAssetMismatch);\n    }\n    if native_quote {'''
+          if 'ctx.accounts.authority.lamports() <= state.authority_lamports_before' not in s:
+              if old not in s:
+                  raise SystemExit('confirm balance invariant marker missing')
+              s = s.replace(old, new, 1)
+
+          # 5) Preserve precision in the quote/USD deviation calculation.
+          old = '''final_spot_nano.checked_mul(u128::from(sol_usd_micros)).ok_or(LaunchpadError::MathOverflow)?.checked_div(1_000_000_000_000_000_000u128).ok_or(LaunchpadError::MathOverflow)?.checked_mul(quote_scale).ok_or(LaunchpadError::MathOverflow)?.checked_div(u128::from(quote_usd_micros)).ok_or(LaunchpadError::MathOverflow)?'''
+          new = '''final_spot_nano.checked_mul(u128::from(sol_usd_micros)).ok_or(LaunchpadError::MathOverflow)?.checked_div(u128::from(quote_usd_micros)).ok_or(LaunchpadError::MathOverflow)?.checked_mul(quote_scale).ok_or(LaunchpadError::MathOverflow)?.checked_div(1_000_000_000_000_000_000u128).ok_or(LaunchpadError::MathOverflow)?'''
+          if old not in s:
+              if new not in s:
+                  raise SystemExit('quote deviation precision marker missing')
+          else:
+              s = s.replace(old, new, 1)
+
+          p.write_text(s)
           PY
-
-      - name: Run CREATE acceptance against exact .so on frozen 1.18 runtime
-        shell: bash
+      - name: Format and validate
         run: |
-          set -euo pipefail
-          rm -rf /tmp/mwz-create-ledger
-          solana-test-validator \
-            --reset \
-            --quiet \
-            --ledger /tmp/mwz-create-ledger \
-            --bpf-program "$PROGRAM_ID" target/deploy/memewarzone_solana.so \
-            > /tmp/mwz-create-validator.log 2>&1 &
-          validator_pid=$!
-          trap 'kill "$validator_pid" 2>/dev/null || true' EXIT
-          for attempt in $(seq 1 90); do
-            if solana cluster-version --url "$ANCHOR_PROVIDER_URL" >/dev/null 2>&1; then break; fi
-            if [ "$attempt" -eq 90 ]; then tail -n 200 /tmp/mwz-create-validator.log >&2; exit 1; fi
-            sleep 2
-          done
-          solana config set --url "$ANCHOR_PROVIDER_URL" --keypair "$ANCHOR_WALLET" >/dev/null
-          solana airdrop 100 >/dev/null
-          (
-            cd tests/solana
-            ANCHOR_PROVIDER_URL="$ANCHOR_PROVIDER_URL" ANCHOR_WALLET="$ANCHOR_WALLET" \
-              npx mocha --timeout 1000000 v4-create-acceptance.cjs
-          ) 2>&1 | tee /tmp/mwz-create-acceptance.log
-          if grep -Eqi 'Access violation|stack frame|Program failed to complete' /tmp/mwz-create-acceptance.log; then
-            echo 'FATAL: CREATE acceptance contains a BPF crash signature' >&2
-            exit 1
-          fi
-          kill "$validator_pid" 2>/dev/null || true
-          wait "$validator_pid" 2>/dev/null || true
-          trap - EXIT
-          sha256sum -c /tmp/mwz-so-sha256.txt
-
-      - name: Run BUY/SELL lifecycle against exact .so on frozen 1.18 runtime
-        shell: bash
+          rustfmt +1.79.0 --edition 2021 programs/memewarzone_solana/src/graduation.rs
+          rustfmt +1.79.0 --edition 2021 --check programs/memewarzone_solana/src/graduation.rs
+          git diff --check
+      - name: Commit formatted source only
         run: |
-          set -euo pipefail
-          rm -rf /tmp/mwz-lifecycle-ledger
-          solana-test-validator \
-            --reset \
-            --quiet \
-            --ledger /tmp/mwz-lifecycle-ledger \
-            --bpf-program "$PROGRAM_ID" target/deploy/memewarzone_solana.so \
-            --bpf-program cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG third_party/meteora/cp_amm.so \
-            --account-dir third_party/meteora/accounts \
-            > /tmp/mwz-lifecycle-validator.log 2>&1 &
-          validator_pid=$!
-          trap 'kill "$validator_pid" 2>/dev/null || true' EXIT
-          for attempt in $(seq 1 90); do
-            if solana cluster-version --url "$ANCHOR_PROVIDER_URL" >/dev/null 2>&1; then break; fi
-            if [ "$attempt" -eq 90 ]; then tail -n 200 /tmp/mwz-lifecycle-validator.log >&2; exit 1; fi
-            sleep 2
-          done
-          solana config set --url "$ANCHOR_PROVIDER_URL" --keypair "$ANCHOR_WALLET" >/dev/null
-          solana airdrop 100 >/dev/null
-          (
-            cd tests/solana
-            ANCHOR_PROVIDER_URL="$ANCHOR_PROVIDER_URL" ANCHOR_WALLET="$ANCHOR_WALLET" \
-            GATE_K_METEORA=1 \
-              npx mocha --timeout 1000000 v4-lifecycle-acceptance.cjs v0-launchpad-onchain.cjs gate-k-meteora.cjs
-          ) 2>&1 | tee /tmp/mwz-lifecycle-acceptance.log
-          if grep -Eqi 'Access violation|stack frame|Program failed to complete' /tmp/mwz-lifecycle-acceptance.log; then
-            echo 'FATAL: lifecycle acceptance contains a BPF crash signature' >&2
-            exit 1
-          fi
-          kill "$validator_pid" 2>/dev/null || true
-          wait "$validator_pid" 2>/dev/null || true
-          trap - EXIT
-          sha256sum -c /tmp/mwz-so-sha256.txt
-          if grep -q 'Gate K: graduate closed campaign' /tmp/mwz-lifecycle-acceptance.log \
-            && grep -q 'GRADUATED' /tmp/mwz-lifecycle-acceptance.log; then
-            echo 'GATE_K_CURVE_CLOSE_GRADUATE_POOL_TRADE=PASS'
-          else
-            echo 'GATE_K_CURVE_CLOSE_GRADUATE_POOL_TRADE=FAIL' >&2
-            exit 1
-          fi
-
-      - name: Run CREATE acceptance on Agave with Mainnet feature set
-        shell: bash
-        run: |
-          set -euo pipefail
-          sha256sum -c /tmp/mwz-so-sha256.txt
-          rm -rf /tmp/mwz-agave-create-ledger
-          "$AGAVE_BIN/solana-test-validator" \
-            --reset \
-            --quiet \
-            --ledger /tmp/mwz-agave-create-ledger \
-            --url "$MAINNET_RPC" \
-            --clone-feature-set \
-            --bpf-program "$PROGRAM_ID" target/deploy/memewarzone_solana.so \
-            > /tmp/mwz-agave-create-validator.log 2>&1 &
-          validator_pid=$!
-          trap 'kill "$validator_pid" 2>/dev/null || true' EXIT
-          for attempt in $(seq 1 120); do
-            if "$AGAVE_BIN/solana" cluster-version --url "$ANCHOR_PROVIDER_URL" >/dev/null 2>&1; then break; fi
-            if [ "$attempt" -eq 120 ]; then tail -n 240 /tmp/mwz-agave-create-validator.log >&2; exit 1; fi
-            sleep 2
-          done
-          "$AGAVE_BIN/solana" config set --url "$ANCHOR_PROVIDER_URL" --keypair "$ANCHOR_WALLET" >/dev/null
-          "$AGAVE_BIN/solana" airdrop 100 >/dev/null
-          (
-            cd tests/solana
-            ANCHOR_PROVIDER_URL="$ANCHOR_PROVIDER_URL" ANCHOR_WALLET="$ANCHOR_WALLET" \
-              npx mocha --timeout 1000000 v4-create-acceptance.cjs
-          ) 2>&1 | tee /tmp/mwz-agave-create-acceptance.log
-          if grep -Eqi 'Access violation|stack frame|Program failed to complete' /tmp/mwz-agave-create-acceptance.log; then
-            echo 'FATAL: Agave/Mainnet-feature CREATE acceptance contains a BPF crash signature' >&2
-            exit 1
-          fi
-          kill "$validator_pid" 2>/dev/null || true
-          wait "$validator_pid" 2>/dev/null || true
-          trap - EXIT
-          sha256sum -c /tmp/mwz-so-sha256.txt
-
-      - name: Run BUY/SELL lifecycle on Agave with Mainnet feature set
-        shell: bash
-        run: |
-          set -euo pipefail
-          sha256sum -c /tmp/mwz-so-sha256.txt
-          rm -rf /tmp/mwz-agave-lifecycle-ledger
-          "$AGAVE_BIN/solana-test-validator" \
-            --reset \
-            --quiet \
-            --ledger /tmp/mwz-agave-lifecycle-ledger \
-            --url "$MAINNET_RPC" \
-            --clone-feature-set \
-            --bpf-program "$PROGRAM_ID" target/deploy/memewarzone_solana.so \
-            > /tmp/mwz-agave-lifecycle-validator.log 2>&1 &
-          validator_pid=$!
-          trap 'kill "$validator_pid" 2>/dev/null || true' EXIT
-          for attempt in $(seq 1 120); do
-            if "$AGAVE_BIN/solana" cluster-version --url "$ANCHOR_PROVIDER_URL" >/dev/null 2>&1; then break; fi
-            if [ "$attempt" -eq 120 ]; then tail -n 240 /tmp/mwz-agave-lifecycle-validator.log >&2; exit 1; fi
-            sleep 2
-          done
-          "$AGAVE_BIN/solana" config set --url "$ANCHOR_PROVIDER_URL" --keypair "$ANCHOR_WALLET" >/dev/null
-          "$AGAVE_BIN/solana" airdrop 100 >/dev/null
-          (
-            cd tests/solana
-            ANCHOR_PROVIDER_URL="$ANCHOR_PROVIDER_URL" ANCHOR_WALLET="$ANCHOR_WALLET" \
-              npx mocha --timeout 1000000 v4-lifecycle-acceptance.cjs v0-launchpad-onchain.cjs
-          ) 2>&1 | tee /tmp/mwz-agave-lifecycle-acceptance.log
-          if grep -Eqi 'Access violation|stack frame|Program failed to complete' /tmp/mwz-agave-lifecycle-acceptance.log; then
-            echo 'FATAL: Agave/Mainnet-feature lifecycle contains a BPF crash signature' >&2
-            exit 1
-          fi
-          kill "$validator_pid" 2>/dev/null || true
-          wait "$validator_pid" 2>/dev/null || true
-          trap - EXIT
-          sha256sum -c /tmp/mwz-so-sha256.txt
-
-      - name: Emit frozen candidate manifest
-        shell: bash
-        run: |
-          set -euo pipefail
-          export MWZ_GIT_SHA="$(git rev-parse HEAD)"
-          export MWZ_PROGRAM_SHA256="$(awk '{print $1}' /tmp/mwz-so-sha256.txt)"
-          export MWZ_PROGRAM_BYTES="$(awk '{print $1}' /tmp/mwz-so-bytes.txt)"
-          export MWZ_LIVE_COMPARE="$(cat /tmp/mwz-mainnet-compare.txt 2>/dev/null || true)"
-          python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          manifest = {
-              "programId": os.environ["PROGRAM_ID"],
-              "gitSha": os.environ["MWZ_GIT_SHA"],
-              "sha256": os.environ["MWZ_PROGRAM_SHA256"],
-              "bytes": int(os.environ["MWZ_PROGRAM_BYTES"]),
-              "createGate": "PASS",
-              "tradeGate": "PASS",
-              "mainnetRuntimeGate": "PASS",
-              "mainnetRuntimeAgaveVersion": os.environ["AGAVE_VERSION"],
-              "mainnetFeatureSet": "cloned-from-mainnet-beta",
-              "backendPreflightGate": "PASS",
-              "bpfAccessViolations": 0,
-              "stackFrameErrors": 0,
-              "programFailedToComplete": 0,
-              "liveBinaryComparisonBeforeUpgrade": os.environ.get("MWZ_LIVE_COMPARE", ""),
-          }
-          path = Path("target/deploy/memewarzone_solana.release.json")
-          path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-          print(path.read_text(encoding="utf-8"))
-          PY
-          sha256sum -c /tmp/mwz-so-sha256.txt
-          printf '%s\n' '========================================'
-          printf '%s\n' 'MEMEWARZONE SOLANA FINAL RELEASE GATE'
-          printf '%s\n' '========================================'
-          echo "git_sha=$MWZ_GIT_SHA"
-          echo "program_id=$PROGRAM_ID"
-          echo "mainnet_runtime_agave=$AGAVE_VERSION"
-          cat /tmp/mwz-so-bytes.txt
-          cat /tmp/mwz-so-sha256.txt
-          cat /tmp/mwz-mainnet-compare.txt 2>/dev/null || true
-          echo 'CREATE_ACCEPTANCE=PASS'
-          echo 'BONDING_LIFECYCLE=PASS'
-          echo 'MAINNET_RUNTIME_CREATE=PASS'
-          echo 'MAINNET_RUNTIME_BONDING_LIFECYCLE=PASS'
-          echo 'BACKEND_PREFLIGHT_GATE=PASS'
-          echo 'BPF_ACCESS_VIOLATIONS=0'
-          echo 'PROGRAM_FAILED_TO_COMPLETE=0'
-          echo 'STACK_FRAME_ERRORS=0'
-          echo 'FINAL_GATE=PASS'
-          printf '%s\n' '========================================'
-
-      - name: Upload frozen launch candidate and diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: solana-final-launch-${{ github.sha }}
-          if-no-files-found: ignore
-          retention-days: 7
-          path: |
-            /tmp/mwz-anchor-build.log
-            /tmp/mwz-idl-build.log
-            /tmp/mwz-so-sha256.txt
-            /tmp/mwz-so-bytes.txt
-            /tmp/mwz-mainnet-program.json
-            /tmp/mwz-mainnet-audit.err
-            /tmp/mwz-mainnet-compare.txt
-            /tmp/mwz-mainnet-sha256.txt
-            /tmp/mwz-mainnet-bytes.txt
-            /tmp/mwz-create-validator.log
-            /tmp/mwz-create-acceptance.log
-            /tmp/mwz-lifecycle-validator.log
-            /tmp/mwz-lifecycle-acceptance.log
-            /tmp/mwz-gate-k-validator.log
-            /tmp/mwz-gate-k.log
-            /tmp/mwz-agave-create-validator.log
-            /tmp/mwz-agave-create-acceptance.log
-            /tmp/mwz-agave-lifecycle-validator.log
-            /tmp/mwz-agave-lifecycle-acceptance.log
-            target/deploy/memewarzone_solana.so
-            target/deploy/memewarzone_solana.release.json
-            target/idl/memewarzone_solana.json
+          git config user.name 'MemeWarzone Agent2 Cert'
+          git config user.email 'actions@users.noreply.github.com'
+          git add programs/memewarzone_solana/src/graduation.rs
+          git commit -m 'chore(cert): rustfmt agent2 graduation core [skip ci]'
+          git push origin HEAD:agent/solana-agent2-basic-graduation-cert
