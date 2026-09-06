@@ -49,6 +49,7 @@ for (let i = 0; i < 60; i += 1) {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_chainId", params: [] }),
+      signal: AbortSignal.timeout(5_000),
     });
     const body = await response.json();
     if (body?.result === "0x61") { ready = true; break; }
@@ -59,9 +60,20 @@ if (!ready) {
   chain.kill("SIGTERM");
   throw new Error(`post-212 isolated chain failed to start\n${chainLog}`);
 }
+
 process.env.SPONSORSHIP_CERT_RPC = rpc;
+
+// Certification-only guard: a stuck live HTTP request is itself a certification failure.
+// Do not allow an open API/DB/provider handle to turn that into a 25-minute job timeout.
+const nativeFetch = globalThis.fetch;
+globalThis.fetch = (input, init = {}) => nativeFetch(input, {
+  ...init,
+  signal: init.signal ?? AbortSignal.timeout(15_000),
+});
+
 try {
   await import("../../certification/event-sponsorship/post212-lifecycle-race.mjs");
 } finally {
+  globalThis.fetch = nativeFetch;
   chain.kill("SIGTERM");
 }
