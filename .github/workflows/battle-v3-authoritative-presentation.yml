@@ -1,0 +1,68 @@
+name: Battle V3 Authoritative Presentation
+
+on:
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - "frontend/src/components/arena/BattleWallCombatant.tsx"
+      - "frontend/src/components/arena/BattleWallModule.tsx"
+      - "frontend/src/hooks/useArenaBattleRealtimeDetails.ts"
+      - "frontend/src/lib/arena/battleRealtimeApi.ts"
+      - "frontend/src/lib/arena/battleAuthoritativePresentation*.mjs"
+      - ".github/workflows/battle-v3-authoritative-presentation.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: battle-v3-authoritative-presentation-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  authoritative-presentation:
+    name: V3/V2 Battle presentation and build proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install locked frontend dependencies
+        run: npm ci --prefix frontend --no-audit --no-fund
+
+      - name: Certify authoritative Battle V3/V2 presentation contract
+        run: node --test frontend/src/lib/arena/battleAuthoritativePresentation.test.mjs
+
+      - name: Test Battle Wall presentation
+        run: node --test frontend/src/lib/arena/battleWallPresentation.test.mjs frontend/src/lib/arena/battleWallMorePresentation.test.mjs
+
+      - name: Test Battle Wall realtime behavior
+        run: node --test frontend/src/lib/arena/battleWallRealtime.test.mjs
+
+      - name: Test current-loser damage behavior
+        run: node --test frontend/src/lib/arena/battleCombatEffects.test.mjs frontend/src/lib/arena/battleCombatEffects.currentLoser.test.mjs
+
+      - name: Test Battle Boost presentation and confirmed authority
+        run: node --test frontend/src/lib/arena/battleBoostPresentation.test.mjs frontend/src/lib/arena/battleBoostSolanaIntegration.test.mjs
+
+      - name: Test Warzone frontend safety surfaces
+        run: node --test frontend/src/lib/arena/arenaFunctionalUiSafety.test.mjs frontend/src/lib/arena/warzoneChrome.test.mjs
+
+      - name: Production frontend build
+        env:
+          VITE_ARENA_COMBAT_EFFECTS: "true"
+          VITE_ENABLE_WAR_ROOM: "true"
+          VITE_ENABLE_POSTGRAD: "true"
+          VITE_ENABLE_POSTGRAD_ARENA: "true"
+          VITE_ENABLE_POSTGRAD_BATTLE: "true"
+        run: npm --prefix frontend run build
