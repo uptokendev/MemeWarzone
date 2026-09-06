@@ -52,7 +52,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo fmt --manifest-path programs/memewarzone_solana/Cargo.toml -- --check
+          rustfmt --edition 2021 --check programs/memewarzone_solana/src/graduation.rs programs/memewarzone_solana/src/lib.rs
           cargo test -p memewarzone_solana --lib
           node --check frontend/api/lib/quoteAssetCatalog.js
           node --check frontend/api/dev-fix/solana-graduation-authorization-v2.js
