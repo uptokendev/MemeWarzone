@@ -19,9 +19,27 @@ const OBSOLETE_BSC_TESTNET_FACTORY = "0xe0FbBa4533513110Cec7e78aa3e48EC45301B5E6
 export const ROBINHOOD_TESTNET_CHAIN_ID = 46630n;
 export const ROBINHOOD_MAINNET_CHAIN_ID = 4663n;
 export const LOCAL_HARDHAT_CHAIN_ID = 31337n;
+export const BNB_BASIC_FACTORY_GENERATION = 5;
+export const BNB_BASIC_CAMPAIGN_GENERATION = 4;
 const ROBINHOOD_CHAIN_IDS = new Set([ROBINHOOD_MAINNET_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID]);
 
 export const CREATE_AUTH_TYPES = ["string", "uint256", "address", "address", "bytes32", "uint8", "uint8", "uint64"];
+export const BNB_BASIC_QUOTE_AUTH_TYPES = [
+  "string",
+  "uint256",
+  "address",
+  "address",
+  "bytes32",
+  "address",
+  "bytes32",
+  "address",
+  "address",
+  "uint32",
+  "uint32",
+  "uint8",
+  "uint8",
+  "uint64",
+];
 export const SCHEDULED_CREATE_AUTH_TYPES = [
   "string",
   "uint256",
@@ -166,6 +184,52 @@ export function buildCreateAuthorizationDigest({
 
 export async function signCreateAuthorization(options) {
   const digest = buildCreateAuthorizationDigest(options);
+  return options.signer.signMessage(ethers.getBytes(digest));
+}
+
+export function buildBnbBasicQuoteAuthorizationDigest({
+  chainId,
+  factoryAddress,
+  factory = factoryAddress,
+  creator,
+  request,
+  requestHash = hashCampaignRequest(request),
+  quoteToken,
+  quoteCatalogBindingHash,
+  adapter,
+  campaignImplementation,
+  tradeRouteProfileId,
+  tradeRouteProfile = tradeRouteProfileId,
+  finalizeRouteProfileId,
+  finalizeRouteProfile = finalizeRouteProfileId,
+  deadline,
+}) {
+  const { normalizedChainId, normalizedFactory } = assertCreationFactoryAllowed(chainId, factory);
+  if (!quoteCatalogBindingHash || quoteCatalogBindingHash === ethers.ZeroHash) {
+    throw new Error("quoteCatalogBindingHash is required");
+  }
+  return ethers.keccak256(
+    coder.encode(BNB_BASIC_QUOTE_AUTH_TYPES, [
+      "MWZ_CREATE_BNB_BASIC_QUOTE_AUTH_V2",
+      normalizedChainId,
+      normalizedFactory,
+      ethers.getAddress(creator),
+      requestHash,
+      ethers.getAddress(quoteToken),
+      quoteCatalogBindingHash,
+      ethers.getAddress(adapter),
+      ethers.getAddress(campaignImplementation),
+      BNB_BASIC_FACTORY_GENERATION,
+      BNB_BASIC_CAMPAIGN_GENERATION,
+      Number(tradeRouteProfile),
+      Number(finalizeRouteProfile),
+      toBigInt(deadline, "deadline"),
+    ]),
+  );
+}
+
+export async function signBnbBasicQuoteAuthorization(options) {
+  const digest = buildBnbBasicQuoteAuthorizationDigest(options);
   return options.signer.signMessage(ethers.getBytes(digest));
 }
 

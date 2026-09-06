@@ -21,6 +21,39 @@ function boolEnv(name: string, fallback = false): boolean {
   return raw === "1" || raw === "true" || raw === "yes" || raw === "on";
 }
 
+async function quoteBinding(campaignAddress: string): Promise<string> {
+  try {
+    const quoteCampaign = await ethers.getContractAt("BnbQuoteLaunchCampaign", campaignAddress);
+    return String(await quoteCampaign.quoteCatalogBindingHash());
+  } catch {
+    return ethers.ZeroHash;
+  }
+}
+
+async function retryPendingQuoteGraduation(id: number, symbol: string, campaignAddress: string, dryRun: boolean) {
+  const binding = await quoteBinding(campaignAddress);
+  if (binding === ethers.ZeroHash) {
+    console.log(`[graduation-keeper] #${id} ${symbol} pending but not a BNB BASIC catalog-bound quote campaign`);
+    return false;
+  }
+
+  console.log(`[graduation-keeper] #${id} ${symbol} BNB BASIC pending catalogBinding=${binding}`);
+  if (dryRun) return false;
+
+  const quoteCampaign = await ethers.getContractAt("BnbQuoteLaunchCampaign", campaignAddress);
+  try {
+    const tx = await quoteCampaign.retryQuoteGraduation();
+    console.log(`[graduation-keeper] retry submitted #${id} tx=${tx.hash}`);
+    await tx.wait();
+    return true;
+  } catch (error: any) {
+    // Unsafe/unavailable routes are expected to remain PENDING. The keeper is restart-safe:
+    // a later run retries from current on-chain state without an operator-specific payload.
+    console.warn(`[graduation-keeper] retry pending #${id}: ${String(error.message).split("\n")[0]}`);
+    return false;
+  }
+}
+
 async function main() {
   const dryRun = boolEnv("KEEPER_DRY_RUN", true);
   const offset = numberEnv("KEEPER_CAMPAIGN_OFFSET", 0);
@@ -46,6 +79,11 @@ async function main() {
     if (await campaign.paused()) continue;
     if (await campaign.graduationPaused()) continue;
 
+    if (await campaign.graduationPending()) {
+      if (await retryPendingQuoteGraduation(id, info.symbol, info.campaign, dryRun)) submitted += 1;
+      continue;
+    }
+
     let target: bigint;
     try {
       target = await campaign.graduationNativeTarget();
@@ -59,13 +97,19 @@ async function main() {
     console.log(
       `[graduation-keeper] #${id} ${info.symbol} eligible=${eligible} balance=${balance} target=${target} campaign=${info.campaign}`
     );
-    if (!eligible) continue;
+    if (!eligible || dryRun) continue;
 
-    if (dryRun) continue;
     const tx = await campaign.graduateIfEligible(minTokens, minNative);
     console.log(`[graduation-keeper] submitted #${id} tx=${tx.hash}`);
     await tx.wait();
     submitted += 1;
+
+    // New BNB BASIC quote campaigns deliberately cross into PENDING first so route failures
+    // cannot revert the user's threshold-crossing trade. Immediately retry in a separate atomic
+    // transaction; if unsafe, the catch above leaves PENDING for the next keeper restart/run.
+    if (await campaign.graduationPending()) {
+      if (await retryPendingQuoteGraduation(id, info.symbol, info.campaign, false)) submitted += 1;
+    }
   }
 
   console.log(`[graduation-keeper] complete submitted=${submitted}`);
