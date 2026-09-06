@@ -1,0 +1,50 @@
+name: Agent 2 Repair
+
+on:
+  push:
+    branches:
+      - agent2/solana-basic-graduation-market
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent2/solana-basic-graduation-market
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Correct quote deviation arithmetic
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('programs/memewarzone_solana/src/graduation.rs')
+          s = p.read_text()
+          old = "let expected = final_spot_nano.checked_mul(u128::from(sol_usd_micros)).ok_or(LaunchpadError::MathOverflow)?.checked_div(1_000_000_000_000_000_000u128).ok_or(LaunchpadError::MathOverflow)?.checked_mul(quote_scale).ok_or(LaunchpadError::MathOverflow)?.checked_div(u128::from(quote_usd_micros)).ok_or(LaunchpadError::MathOverflow)?;"
+          new = "let expected_numerator = final_spot_nano.checked_mul(u128::from(sol_usd_micros)).ok_or(LaunchpadError::MathOverflow)?.checked_mul(quote_scale).ok_or(LaunchpadError::MathOverflow)?; let expected_denominator = 1_000_000_000_000_000_000u128.checked_mul(u128::from(quote_usd_micros)).ok_or(LaunchpadError::MathOverflow)?; let expected = expected_numerator.checked_div(expected_denominator).ok_or(LaunchpadError::MathOverflow)?;"
+          if old not in s:
+              raise SystemExit('expected quote-deviation expression not found; refusing broad rewrite')
+          p.write_text(s.replace(old, new, 1))
+      - name: Format Solana program
+        run: cargo fmt --all
+      - name: Rust formatting gate
+        run: cargo fmt --all -- --check
+      - name: Rust unit tests
+        run: cargo test -p memewarzone_solana --lib
+      - name: Commit repaired candidate
+        run: |
+          if git diff --quiet; then
+            echo 'No repair diff produced'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add programs/memewarzone_solana/src/graduation.rs
+          git commit -m 'fix(solana): preserve precision in quote deviation validation'
+          git push origin HEAD:agent2/solana-basic-graduation-market
