@@ -5,6 +5,7 @@ const WAD = 10n ** 18n;
 const BPS = 10_000n;
 const FACTORY_GENERATION = 5;
 const QUOTE_CAMPAIGN_GENERATION = 4;
+const CATALOG_DOMAIN = "MWZ_BNB_BASIC_QUOTE_CATALOG_V1";
 
 async function nowTs() {
   return BigInt((await ethers.provider.getBlock("latest"))!.timestamp);
@@ -14,6 +15,20 @@ async function setFeed(feed: any, value: bigint, decimals = 8) {
   const now = await nowTs();
   const scaled = value * (10n ** BigInt(decimals));
   await (await feed.setRoundData(1, scaled, now, now, 1)).wait();
+}
+
+function buildCatalogBinding(quoteToken: string, overrides: Record<string, any> = {}) {
+  const deploymentId = overrides.deploymentId ?? "11111111-2222-3333-4444-555555555555";
+  const providerId = overrides.providerId ?? "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  const providerKey = overrides.providerKey ?? "bnb-basic-canonical";
+  const policyKey = overrides.policyKey ?? "bnb-basic-stable";
+  const policyVersion = BigInt(overrides.policyVersion ?? 7);
+  const stateVersion = BigInt(overrides.stateVersion ?? 12);
+  const coder = ethers.AbiCoder.defaultAbiCoder();
+  return ethers.keccak256(coder.encode(
+    ["string", "string", "address", "string", "string", "string", "uint256", "uint256", "uint32", "uint32"],
+    [CATALOG_DOMAIN, deploymentId, quoteToken, providerId, providerKey, policyKey, policyVersion, stateVersion, FACTORY_GENERATION, QUOTE_CAMPAIGN_GENERATION],
+  ));
 }
 
 async function deployCore() {
@@ -99,7 +114,13 @@ async function createNativeCampaign(core: Awaited<ReturnType<typeof deployCore>>
   };
 }
 
-async function signBasicQuoteCreate(core: Awaited<ReturnType<typeof deployCore>>, req: any, quoteToken: string, deadline: bigint) {
+async function signBasicQuoteCreate(
+  core: Awaited<ReturnType<typeof deployCore>>,
+  req: any,
+  quoteToken: string,
+  catalogBinding: string,
+  deadline: bigint,
+) {
   const { owner, creator, factory, quoteImpl } = core;
   const coder = ethers.AbiCoder.defaultAbiCoder();
   const reqHash = ethers.keccak256(coder.encode(
@@ -116,14 +137,15 @@ async function signBasicQuoteCreate(core: Awaited<ReturnType<typeof deployCore>>
   ));
 
   const payloadHash = ethers.keccak256(coder.encode(
-    ["string", "uint256", "address", "address", "bytes32", "address", "address", "address", "uint32", "uint32", "uint8", "uint8", "uint64"],
+    ["string", "uint256", "address", "address", "bytes32", "address", "bytes32", "address", "address", "uint32", "uint32", "uint8", "uint8", "uint64"],
     [
-      "MWZ_CREATE_BNB_BASIC_QUOTE_AUTH",
+      "MWZ_CREATE_BNB_BASIC_QUOTE_AUTH_V2",
       (await ethers.provider.getNetwork()).chainId,
       await factory.getAddress(),
       await creator.getAddress(),
       reqHash,
       quoteToken,
+      catalogBinding,
       await factory.bnbQuoteGraduationAdapter(),
       await quoteImpl.getAddress(),
       FACTORY_GENERATION,
@@ -197,13 +219,16 @@ async function createQuoteCampaign(core: Awaited<ReturnType<typeof deployCore>>,
     extraLink: "",
     graduationTarget: ethers.parseEther("60"),
   };
+  const catalogBinding = buildCatalogBinding(await quote.getAddress());
   const deadline = (await nowTs()) + 3600n;
-  const signature = await signBasicQuoteCreate(core, req, await quote.getAddress(), deadline);
-  await (await factory.connect(creator).createBasicQuoteCampaignAuthorized(
+  const signature = await signBasicQuoteCreate(core, req, await quote.getAddress(), catalogBinding, deadline);
+  const createTx = await factory.connect(creator).createBasicQuoteCampaignAuthorized(
     req,
     await quote.getAddress(),
+    catalogBinding,
     { tradeRouteProfile: 1, finalizeRouteProfile: 1, deadline, signature },
-  )).wait();
+  );
+  await createTx.wait();
 
   const info = await factory.getCampaign(0);
   const campaign = await ethers.getContractAt("BnbQuoteLaunchCampaign", info.campaign);
@@ -213,7 +238,7 @@ async function createQuoteCampaign(core: Awaited<ReturnType<typeof deployCore>>,
     await (await adapter.configureQuoteRoute(await quote.getAddress(), { ...route, enabled: false })).wait();
   }
 
-  return { quote, quoteFeed, acquisitionPool, adapter, campaign, token };
+  return { quote, quoteFeed, acquisitionPool, adapter, route, req, deadline, signature, catalogBinding, campaign, token };
 }
 
 async function crossThreshold(campaign: any, buyer: any) {
@@ -243,33 +268,31 @@ describe("BNB BASIC graduation market", function () {
     expect(await locker.lockedBalance(pair)).to.be.gt(0n);
   });
 
-  it("graduates an approved stable quote through fresh Topaz route checks and preserves locker fee economics", async function () {
+  it("binds the Agent 1 catalog commitment and generation into creation authority", async function () {
+    const core = await deployCore();
+    const created = await createQuoteCampaign(core);
+    expect(await created.campaign.quoteCatalogBindingHash()).to.equal(created.catalogBinding);
+
+    const scheduleEvents = await core.factory.queryFilter(core.factory.filters.ScheduledCampaignCreated());
+    expect(scheduleEvents.length).to.equal(1);
+    expect(scheduleEvents[0].args.factoryGeneration).to.equal(5n);
+    expect(scheduleEvents[0].args.campaignGeneration).to.equal(4n);
+
+    const mutatedBinding = buildCatalogBinding(await created.quote.getAddress(), { policyVersion: 8 });
+    await expect(core.factory.connect(core.creator).createBasicQuoteCampaignAuthorized(
+      created.req,
+      await created.quote.getAddress(),
+      mutatedBinding,
+      { tradeRouteProfile: 1, finalizeRouteProfile: 1, deadline: created.deadline, signature: created.signature },
+    )).to.be.revertedWithCustomError(core.factory, "InvalidRouteAuthorization");
+  });
+
+  it("graduates an approved stable quote permissionlessly and preserves locker fee economics", async function () {
     const core = await deployCore();
     const { quote, campaign, token } = await createQuoteCampaign(core);
     await crossThreshold(campaign, core.buyer);
 
-    const stateBefore = await campaign.getGraduationState();
-    const graduationBalance = stateBefore[9];
-    const finalCurvePrice = stateBefore[1];
-    const protocolFee = (graduationBalance * 200n) / BPS;
-    const liquidityValue = ((graduationBalance - protocolFee) * 3300n) / BPS;
-    let memeDesired = (liquidityValue * WAD) / finalCurvePrice;
-    const liquiditySupply = await campaign.liquiditySupply();
-    let actualLiquidityValue = liquidityValue;
-    if (memeDesired > liquiditySupply) {
-      memeDesired = liquiditySupply;
-      actualLiquidityValue = (memeDesired * finalCurvePrice) / WAD;
-    }
-
-    const route = [{ from: await core.wbnb.getAddress(), to: await quote.getAddress(), stable: false, factory: await core.topazFactory.getAddress() }];
-    const quoted = await core.router.getAmountsOut(actualLiquidityValue, route);
-    const minimumQuoteOut = (quoted[1] * 99n) / 100n;
-    const minimumMemeUsed = (memeDesired * 99n) / 100n;
-    const deadline = (await nowTs()) + 3600n;
-
-    await (await core.factory.completeBasicQuoteGraduation(
-      await campaign.getAddress(), minimumMemeUsed, minimumQuoteOut, deadline,
-    )).wait();
+    await (await campaign.connect(core.other).retryQuoteGraduation()).wait();
 
     expect(await campaign.launched()).to.equal(true);
     expect(await campaign.graduationPending()).to.equal(false);
@@ -297,18 +320,25 @@ describe("BNB BASIC graduation market", function () {
     expect(await locker.lockedBalance(pairAddress)).to.equal(principalBefore);
   });
 
-  it("keeps an unsafe/disabled quote graduation pending with no silent WBNB fallback", async function () {
+  it("keeps an unsafe quote pending with no native fallback, then graduates on deterministic recovery retry", async function () {
     const core = await deployCore();
-    const { campaign, token, quote } = await createQuoteCampaign(core, true);
+    const { campaign, token, quote, adapter, route } = await createQuoteCampaign(core, true);
     await crossThreshold(campaign, core.buyer);
 
-    await expect(core.factory.completeBasicQuoteGraduation(
-      await campaign.getAddress(), 1n, 1n, (await nowTs()) + 3600n,
-    )).to.be.revertedWithCustomError(await ethers.getContractAt("BnbQuoteGraduationAdapter", await core.factory.bnbQuoteGraduationAdapter()), "RouteDisabled");
+    await expect(campaign.connect(core.other).retryQuoteGraduation())
+      .to.be.revertedWithCustomError(adapter, "RouteDisabled");
 
     expect(await campaign.graduationPending()).to.equal(true);
     expect(await campaign.launched()).to.equal(false);
     expect(await core.topazFactory.getPool(await token.getAddress(), await quote.getAddress(), false)).to.equal(ethers.ZeroAddress);
+    expect(await core.topazFactory.getPool(await token.getAddress(), await core.wbnb.getAddress(), false)).to.equal(ethers.ZeroAddress);
+
+    await (await adapter.configureQuoteRoute(await quote.getAddress(), { ...route, enabled: true })).wait();
+    await (await campaign.connect(core.other).retryQuoteGraduation()).wait();
+
+    expect(await campaign.graduationPending()).to.equal(false);
+    expect(await campaign.launched()).to.equal(true);
+    expect(await core.topazFactory.getPool(await token.getAddress(), await quote.getAddress(), false)).to.not.equal(ethers.ZeroAddress);
     expect(await core.topazFactory.getPool(await token.getAddress(), await core.wbnb.getAddress(), false)).to.equal(ethers.ZeroAddress);
   });
 });
