@@ -13,6 +13,7 @@ permissions:
 
 env:
   EXPECTED_AUTHORITY: 0204c4a47555a747b95e7c80deb113d36f91e491
+  BASELINE_CONTROL: before-basic-graduation-market
 
 jobs:
   contracts-routing:
