@@ -101,6 +101,20 @@ jobs:
           cat /tmp/sponsorship-hardhat.log
           exit 1
 
+      - name: Prepare certification-only deployer nonce manager
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const file = 'frontend/scripts/certify-event-sponsorship-process.mjs';
+          let source = fs.readFileSync(file, 'utf8');
+          source = source.replace('  JsonRpcProvider,\n', '  JsonRpcProvider,\n  NonceManager,\n');
+          source = source.replace('const owner = wallet(0);', 'const ownerWallet = wallet(0);\nconst owner = new NonceManager(ownerWallet);');
+          source = source.replace('const vault = await deploy("EventPrizeVaultV1", [owner.address]);', 'const vault = await deploy("EventPrizeVaultV1", [ownerWallet.address]);');
+          source = source.replace('  owner.address,\n  quoteSigner.address,', '  ownerWallet.address,\n  quoteSigner.address,');
+          fs.writeFileSync(file, source);
+          NODE
+
       - name: Real production API process certification
         id: process_cert
         continue-on-error: true
