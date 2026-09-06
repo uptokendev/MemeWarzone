@@ -80,14 +80,14 @@ test("global flags cannot reinterpret an already locked V2 Battle", () => {
   assert.match(service, /if \(!deps\.force && !battlePointsV2SettlementEnabled\(\)\)/);
 });
 
-test("existing V2 worker and post-commit tournament advancement remain intact", () => {
+test("worker uses immutable Normal Battle dispatcher and tournament advancement remains post-commit", () => {
   const service = readApi("lib/arenaBattleSettlementV2Service.js");
   const worker = readFrontend("scripts/run-arena-battle-realtime-worker.mjs");
   const start = readFrontend("scripts/run-railway-api-start.mjs");
-  assert.match(worker, /settleBattlePointsV2ById/);
-  assert.match(worker, /state = 'live'/);
-  assert.match(worker, /ends_at <= now\(\)/);
+  assert.match(worker, /settleDueNormalBattles/);
+  assert.doesNotMatch(worker, /arena_battle_scoring_locks/);
   assert.match(worker, /ARENA_BATTLE_SETTLEMENT_SCAN_MS/);
+  assert.match(worker, /Vote Tournament \+ Final Salvo runtime active/);
   assert.match(start, /run-arena-battle-realtime-worker\.mjs/);
   const commitAt = service.lastIndexOf('await client.query("commit")');
   const advanceAt = service.indexOf("await advanceTournamentFromBattle({");
