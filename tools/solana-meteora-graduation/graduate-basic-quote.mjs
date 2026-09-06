@@ -175,7 +175,7 @@ async function buildJupiterInstructions(auth, operator) {
 async function main() {
   const campaignArg = process.argv[2] || process.env.SOLANA_GRADUATION_CAMPAIGN; if (!campaignArg) fail("usage: npm run graduate:basic-quote -- <CAMPAIGN_PDA>");
   const campaignPk = asPk(campaignArg, "campaign");
-  const quoteConfigId = String(process.env.SOLANA_GRADUATION_QUOTE_CONFIG_ID || "SOL_NATIVE_V1").trim();
+  const quoteConfigId = String(process.env.SOLANA_GRADUATION_QUOTE_CONFIG_ID || "").trim(); if (!quoteConfigId) fail("SOLANA_GRADUATION_QUOTE_CONFIG_ID is required and must be an authoritative Quote Asset Catalog deployment id");
   const rpcUrl = process.env.SOLANA_RPC_URL || DEFAULT_RPC;
   const operator = loadKeypair(process.env.SOLANA_GRADUATION_OPERATOR_KEYPAIR || DEFAULT_OPERATOR);
   const connection = new Connection(rpcUrl, "confirmed"); operator.connection = connection;
