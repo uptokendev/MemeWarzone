@@ -1,5 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
+import { spawn } from "node:child_process";
+import { setTimeout as sleep } from "node:timers/promises";
 import { Client } from "pg";
 
 const root = path.resolve(process.cwd());
@@ -33,4 +35,33 @@ const rootPg = path.join(root, "node_modules", "pg");
 const frontendPg = path.join(root, "frontend", "node_modules", "pg");
 if (!fs.existsSync(rootPg)) fs.symlinkSync(frontendPg, rootPg, "dir");
 
-await import("../../certification/event-sponsorship/post212-lifecycle-race.mjs");
+const rpc = "http://127.0.0.1:8546";
+const chain = spawn("npx", ["hardhat", "--config", "certification/event-sponsorship/hardhat.config.cjs", "node", "--port", "8546"], {
+  cwd: root,
+  stdio: ["ignore", "pipe", "pipe"],
+});
+let chainLog = "";
+for (const stream of [chain.stdout, chain.stderr]) stream.on("data", (chunk) => { chainLog += chunk.toString(); });
+let ready = false;
+for (let i = 0; i < 60; i += 1) {
+  try {
+    const response = await fetch(rpc, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_chainId", params: [] }),
+    });
+    const body = await response.json();
+    if (body?.result === "0x61") { ready = true; break; }
+  } catch {}
+  await sleep(250);
+}
+if (!ready) {
+  chain.kill("SIGTERM");
+  throw new Error(`post-212 isolated chain failed to start\n${chainLog}`);
+}
+process.env.SPONSORSHIP_CERT_RPC = rpc;
+try {
+  await import("../../certification/event-sponsorship/post212-lifecycle-race.mjs");
+} finally {
+  chain.kill("SIGTERM");
+}
