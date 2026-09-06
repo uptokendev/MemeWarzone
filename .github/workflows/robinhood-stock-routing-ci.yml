@@ -28,6 +28,7 @@ on:
     branches:
       - "feat/robinhood-*"
       - "build/cross-chain-stabilization-rh-base"
+      - "cert/basic-graduation-market"
     paths:
       - "contracts/integrations/RobinhoodV3MultiHopSwapAdapter.sol"
       - "contracts/integrations/RobinhoodV3NativeSwapAdapter.sol"
@@ -63,6 +64,10 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: 0204c4a47555a747b95e7c80deb113d36f91e491
+      - name: Pin exact baseline authority
+        run: test "$(git rev-parse HEAD)" = "0204c4a47555a747b95e7c80deb113d36f91e491"
 
       - uses: actions/setup-node@v4
         with:
