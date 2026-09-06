@@ -27,15 +27,14 @@ interface IBnbQuoteCampaignImplementation {
     function isBnbQuoteCampaignImplementation() external view returns (bool);
 }
 
-interface IBnbQuoteCampaignCompletion {
-    function completeQuoteGraduation(uint256 minimumMemeUsed, uint256 minimumQuoteOut, uint256 deadline)
-        external
-        returns (address pool, uint256 lpAmount);
+interface IBnbQuoteCatalogBoundCampaign {
+    function configureQuoteCatalogBinding(bytes32 quoteCatalogBindingHash) external;
 }
 
 /// @notice New BNB factory-generation extension for BASIC approved quote markets.
 /// @dev Native BNB/WBNB creation and bonding behavior remain inherited from LaunchFactory.
-/// The quote-specific surface only chooses a pre-approved graduation implementation/adapter.
+/// The backend Quote Asset Catalog remains the eligibility authority. This contract only
+/// verifies and persists the signed immutable catalog-selection commitment.
 contract BnbBasicLaunchFactory is LaunchFactory {
     using ECDSA for bytes32;
 
@@ -51,6 +50,7 @@ contract BnbBasicLaunchFactory is LaunchFactory {
         address indexed token,
         address indexed quoteToken,
         address adapter,
+        bytes32 quoteCatalogBindingHash,
         uint32 factoryGeneration,
         uint32 campaignGeneration
     );
@@ -58,6 +58,7 @@ contract BnbBasicLaunchFactory is LaunchFactory {
     error BnbQuoteGraduationAdapterUnavailable();
     error BnbQuoteCampaignImplementationUnavailable();
     error UnsupportedBnbQuoteToken();
+    error QuoteCatalogBindingRequired();
 
     constructor(
         address topazRouter_,
@@ -85,49 +86,43 @@ contract BnbBasicLaunchFactory is LaunchFactory {
         emit BnbQuoteGraduationAdapterUpdated(newAdapter);
     }
 
+    /// @param quoteCatalogBindingHash Backend-authorized commitment over the exact Agent 1
+    /// Quote Asset Catalog selection: deployment id, quote address, provider identity,
+    /// policy key/version, deployment stateVersion, and this 5/4 factory/campaign generation.
     function createBasicQuoteCampaignAuthorized(
         CampaignRequest calldata req,
         address quoteToken,
+        bytes32 quoteCatalogBindingHash,
         RouteAuthorization calldata routeAuth
     ) external returns (address campaignAddr, address tokenAddr) {
         address adapter = bnbQuoteGraduationAdapter;
         if (adapter == address(0)) revert BnbQuoteGraduationAdapterUnavailable();
+        if (quoteCatalogBindingHash == bytes32(0)) revert QuoteCatalogBindingRequired();
         _requireBasicQuoteRouteEnabled(adapter, quoteToken);
-        _verifyBasicQuoteRouteAuthorization(msg.sender, req, quoteToken, adapter, routeAuth);
+        _verifyBasicQuoteRouteAuthorization(msg.sender, req, quoteToken, quoteCatalogBindingHash, adapter, routeAuth);
 
+        LaunchCampaign.ScheduleParams memory schedule = _immediateSchedule(msg.sender);
+        schedule.factoryGeneration = BASIC_FACTORY_GENERATION;
+        schedule.campaignGeneration = BASIC_QUOTE_CAMPAIGN_GENERATION;
         (campaignAddr, tokenAddr) = _createCampaign(
             req,
             routeAuth.tradeRouteProfile,
             routeAuth.finalizeRouteProfile,
-            _immediateSchedule(msg.sender),
+            schedule,
             bnbQuoteCampaignImplementation
         );
 
         campaignGraduationQuoteToken[campaignAddr] = quoteToken;
         LaunchCampaign(payable(campaignAddr)).configureStockGraduation(quoteToken, adapter);
+        IBnbQuoteCatalogBoundCampaign(campaignAddr).configureQuoteCatalogBinding(quoteCatalogBindingHash);
         emit BasicQuoteCampaignConfigured(
             campaignAddr,
             tokenAddr,
             quoteToken,
             adapter,
+            quoteCatalogBindingHash,
             BASIC_FACTORY_GENERATION,
             BASIC_QUOTE_CAMPAIGN_GENERATION
-        );
-    }
-
-    /// @notice Explicit operator/multisig completion after a PENDING quote graduation.
-    /// @dev The campaign/adapter revalidate all current route-health conditions atomically.
-    function completeBasicQuoteGraduation(
-        address campaign,
-        uint256 minimumMemeUsed,
-        uint256 minimumQuoteOut,
-        uint256 deadline
-    ) external onlyOwner returns (address pool, uint256 lpAmount) {
-        if (!isCampaign[campaign]) revert UnknownCampaign();
-        return IBnbQuoteCampaignCompletion(campaign).completeQuoteGraduation(
-            minimumMemeUsed,
-            minimumQuoteOut,
-            deadline
         );
     }
 
@@ -135,6 +130,7 @@ contract BnbBasicLaunchFactory is LaunchFactory {
         address creator,
         CampaignRequest calldata req,
         address quoteToken,
+        bytes32 quoteCatalogBindingHash,
         address adapter,
         RouteAuthorization calldata routeAuth
     ) internal {
@@ -148,12 +144,13 @@ contract BnbBasicLaunchFactory is LaunchFactory {
         bytes32 digest = MessageHashUtils.toEthSignedMessageHash(
             keccak256(
                 abi.encode(
-                    "MWZ_CREATE_BNB_BASIC_QUOTE_AUTH",
+                    "MWZ_CREATE_BNB_BASIC_QUOTE_AUTH_V2",
                     block.chainid,
                     address(this),
                     creator,
                     _hashCampaignRequest(req),
                     quoteToken,
+                    quoteCatalogBindingHash,
                     adapter,
                     bnbQuoteCampaignImplementation,
                     BASIC_FACTORY_GENERATION,
