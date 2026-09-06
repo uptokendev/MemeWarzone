@@ -143,7 +143,7 @@ test("Vote Tournament finalizer is lease-protected and never enters the Normal B
   assert.match(finalizer, /insert into public\.arena_vote_tiebreaks/);
   assert.match(worker, /settleDueNormalBattles/);
   assert.match(normalRuntime, /coalesce\(b\.battle_mode, 'normal'\) = 'normal'/);
-  assert.match(normalRuntime, /b\.source <> 'tournament'/);
+  assert.match(normalRuntime, /coalesce\(b\.source, 'queue'\) <> 'tournament'/);
   assert.doesNotMatch(normalRuntime, /finalizeDueVoteTournamentBattle|advanceDueFinalSalvo/);
   assert.match(worker, /finalizeDueVoteTournamentBattle/);
   assert.match(worker, /advanceDueFinalSalvo/);
