@@ -79,12 +79,29 @@ jobs:
           PG_DISABLE_SSL: "1"
         run: node --test api/lib/arenaBattleMetrics.test.mjs
 
-      - name: Historical V2 settlement certification
+      - name: V2 lock and rollback certification
         working-directory: frontend
-        env:
-          DATABASE_URL: "postgresql://postgres:postgres@127.0.0.1:5432/postgres"
-          PG_DISABLE_SSL: "1"
-        run: node --test api/lib/arenaBattleSettlementV2Certification.test.mjs
+        run: node --test --test-name-pattern="historical V2 settlement still locks" api/lib/arenaBattleSettlementV2Certification.test.mjs
+
+      - name: V2 immutable generation certification
+        working-directory: frontend
+        run: node --test --test-name-pattern="historical V2 service is selected" api/lib/arenaBattleSettlementV2Certification.test.mjs
+
+      - name: V2 50 30 20 certification
+        working-directory: frontend
+        run: node --test --test-name-pattern="V2 reconciliation stays" api/lib/arenaBattleSettlementV2Certification.test.mjs
+
+      - name: V2 persistence certification
+        working-directory: frontend
+        run: node --test --test-name-pattern="V2 settlement evidence persists" api/lib/arenaBattleSettlementV2Certification.test.mjs
+
+      - name: V2 immutable global config certification
+        working-directory: frontend
+        run: node --test --test-name-pattern="global flags cannot reinterpret" api/lib/arenaBattleSettlementV2Certification.test.mjs
+
+      - name: V2 worker and tournament regression certification
+        working-directory: frontend
+        run: node --test --test-name-pattern="existing V2 worker" api/lib/arenaBattleSettlementV2Certification.test.mjs
 
       - name: Existing 4a certification unchanged
         working-directory: frontend
