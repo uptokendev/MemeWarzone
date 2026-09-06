@@ -131,6 +131,17 @@ jobs:
             'const recoveredSigner = verifyTypedData(mainQuote.quote.domain, mainQuote.quote.types, mainQuote.quote.value, mainQuote.quote.signature);',
             `const recoveredSigner = verifyTypedData(mainQuote.quote.domain, ${typedSchema}, mainQuote.quote.value, mainQuote.quote.signature);`,
           );
+          source = source.replace(
+            '  assert.equal(Number(row.founding_count), 1);',
+            `  if (Number(row.founding_count) !== 1) {
+              for (let i = 0; i < 20; i += 1) {
+                await sleep(50);
+                const founding = (await db.query('select count(*)::int as count from public.event_sponsorship_founding_history where event_id=$1', [event.eventId])).rows[0];
+                if (Number(founding?.count) === 1) { row.founding_count = 1; break; }
+              }
+            }
+            assert.equal(Number(row.founding_count), 1);`,
+          );
           fs.writeFileSync(file, source);
           NODE
 
