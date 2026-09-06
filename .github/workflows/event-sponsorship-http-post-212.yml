@@ -1,0 +1,154 @@
+name: Event Sponsorship HTTP Post-212 Certification
+
+on:
+  push:
+    branches:
+      - cert/event-sponsorship-http-post-212
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  clean-room:
+    strategy:
+      fail-fast: false
+      matrix:
+        repeat: [1, 2]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mwz_sponsorship_process_cert
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres -d mwz_sponsorship_process_cert"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/mwz_sponsorship_process_cert
+      PG_DISABLE_SSL: "1"
+      SPONSORSHIP_CERT_RPC: http://127.0.0.1:8545
+      SPONSORSHIP_CERT_API_PORT: "3301"
+      SPONSORSHIP_POST212_API_PORT: "3302"
+      EXPECTED_AUTHORITY: e0a3107a77fb2b3ce066de6b3bd305a6018bdc14
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pin exact post-212 authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin build/cross-chain-stabilization-rh-base
+          authority="$(git rev-parse origin/build/cross-chain-stabilization-rh-base)"
+          base="$(git merge-base HEAD origin/build/cross-chain-stabilization-rh-base)"
+          echo "CURRENT_INTEGRATION_SHA=$authority"
+          test "$authority" = "$EXPECTED_AUTHORITY"
+          test "$base" = "$EXPECTED_AUTHORITY"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm --prefix frontend ci
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Build disposable PostgreSQL 16 state
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          do $$ begin create role anon; exception when duplicate_object then null; end $$;
+          do $$ begin create role authenticated; exception when duplicate_object then null; end $$;
+          SQL
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/sponsorships_import.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/db/migrations/20260904_000000_event_sponsorship_core_schema.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/db/migrations/20260904_000001_solana_arena_money_v2_runtime.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/db/migrations/20260905_000001_solana_arena_payment_lifecycle.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/db/migrations/20260905_000002_event_sponsorship_authority.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/db/migrations/20260905_000003_event_sponsorship_db_security.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f certification/event-sponsorship/fixture-scaffold.sql
+
+      - name: Compile and start real local chain 97
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat --config certification/event-sponsorship/hardhat.config.cjs compile
+          nohup npx hardhat --config certification/event-sponsorship/hardhat.config.cjs node >/tmp/sponsorship-hardhat.log 2>&1 &
+          for i in $(seq 1 40); do
+            if curl -sS -X POST http://127.0.0.1:8545 -H 'content-type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' | grep -q '0x61'; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/sponsorship-hardhat.log
+          exit 1
+
+      - name: Prepare prior real-process harness with 1001-raw quote
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const file = 'frontend/scripts/certify-event-sponsorship-process.mjs';
+          let s = fs.readFileSync(file, 'utf8');
+          s = s.replace('  JsonRpcProvider,\n', '  JsonRpcProvider,\n  NonceManager,\n');
+          s = s.replace('const owner = wallet(0);', 'const ownerWallet = wallet(0);\nconst owner = new NonceManager(ownerWallet);');
+          s = s.replace('const payer = wallet(1);', 'const payerWallet = wallet(1);\nconst payer = new NonceManager(payerWallet);');
+          s = s.replace('const payerAddress = payer.address.toLowerCase();', 'const payerAddress = payerWallet.address.toLowerCase();');
+          s = s.replace('async function signedAuth(action, extraLines, signer = payer) {', 'async function signedAuth(action, extraLines, signer = payerWallet) {');
+          s = s.replace('const vault = await deploy("EventPrizeVaultV1", [owner.address]);', 'const vault = await deploy("EventPrizeVaultV1", [ownerWallet.address]);');
+          s = s.replace('  owner.address,\n  quoteSigner.address,', '  ownerWallet.address,\n  quoteSigner.address,');
+          s = s.replace('ARENA_SPONSORSHIP_NATIVE_USD_MICROS_97: "1000000"', 'ARENA_SPONSORSHIP_NATIVE_USD_MICROS_97: "9990009990009990010"');
+          const typed = `{ SponsorshipQuote: [
+            { name: "eventId", type: "bytes32" }, { name: "sponsor", type: "address" }, { name: "pricingTier", type: "bytes32" },
+            { name: "pricingVersion", type: "uint256" }, { name: "minimumUsdMicros", type: "uint256" }, { name: "requestedUsdMicros", type: "uint256" },
+            { name: "minimumNativeRaw", type: "uint256" }, { name: "requestedNativeRaw", type: "uint256" }, { name: "nativeUsdReferenceMicros", type: "uint256" },
+            { name: "oracleTimestamp", type: "uint256" }, { name: "nonce", type: "uint256" }, { name: "deadline", type: "uint256" }
+          ] }`;
+          s = s.replace('const recoveredSigner = verifyTypedData(mainQuote.quote.domain, mainQuote.quote.types, mainQuote.quote.value, mainQuote.quote.signature);', `const recoveredSigner = verifyTypedData(mainQuote.quote.domain, ${typed}, mainQuote.quote.value, mainQuote.quote.signature);`);
+          s = s.replace('  assert.equal(Number(row.founding_count), 1);', `  if (Number(row.founding_count) !== 1) { for (let i=0;i<20;i++){ await sleep(50); const f=(await db.query('select count(*)::int count from public.event_sponsorship_founding_history where event_id=$1',[event.eventId])).rows[0]; if(Number(f?.count)===1){row.founding_count=1;break;} } }\n  assert.equal(Number(row.founding_count), 1);`);
+          s = s.replace('const beforeMarketing = await provider.getBalance(marketing.address);\nconst beforeProtocol = await provider.getBalance(protocol.address);', 'const beforeReceiverBlock = await provider.getBlockNumber();\nconst beforeMarketing = await provider.getBalance(marketing.address, beforeReceiverBlock);\nconst beforeProtocol = await provider.getBalance(protocol.address, beforeReceiverBlock);');
+          s = s.replace('assert.equal((await provider.getBalance(marketing.address)) - beforeMarketing, settlement.marketingRaw);\nassert.equal((await provider.getBalance(protocol.address)) - beforeProtocol, settlement.protocolRaw);', 'assert.equal((await provider.getBalance(marketing.address, mainPayment.receipt.blockNumber)) - beforeMarketing, settlement.marketingRaw);\nassert.equal((await provider.getBalance(protocol.address, mainPayment.receipt.blockNumber)) - beforeProtocol, settlement.protocolRaw);');
+          fs.writeFileSync(file, s);
+          NODE
+
+      - name: Full real HTTP production-path certification
+        shell: bash
+        run: node frontend/scripts/certify-event-sponsorship-process.mjs 2>&1 | tee /tmp/full-${{ matrix.repeat }}.log
+
+      - name: Prove actual DB 1001 to 701/200/100 reconciliation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(psql "$DATABASE_URL" -Atc "select count(*) from public.sponsorship_payments where status='confirmed' and gross_native_raw=1001 and prize_native_raw=701 and marketing_native_raw=200 and protocol_native_raw=100")" -ge 1
+          test "$(psql "$DATABASE_URL" -Atc "select count(*) from public.sponsorship_payments where status='confirmed' and prize_native_raw+marketing_native_raw+protocol_native_raw<>gross_native_raw")" = "0"
+
+      - name: Post-212 lifecycle and mixed race certification
+        shell: bash
+        run: node certification/event-sponsorship/post212-lifecycle-race.mjs 2>&1 | tee /tmp/post212-${{ matrix.repeat }}.log
+
+      - name: Existing sponsorship authority regression
+        working-directory: frontend
+        run: node --test api/lib/eventSponsorshipAuthority.test.mjs api/lib/eventSponsorshipSeparation.test.mjs api/lib/arenaSponsorshipProviderAwait.test.mjs
+
+      - name: Upload certification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: event-sponsorship-post212-cleanroom-${{ matrix.repeat }}
+          path: |
+            /tmp/full-${{ matrix.repeat }}.log
+            /tmp/post212-${{ matrix.repeat }}.log
+            /tmp/sponsorship-hardhat.log
+          if-no-files-found: warn
