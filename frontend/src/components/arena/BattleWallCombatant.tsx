@@ -1,11 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { Battle, BattleParticipant } from "@/features/postgrad/contracts";
+import { BattleAuthoritativeScoreBreakdown } from "@/components/arena/BattleAuthoritativeScoreBreakdown";
 import { WarzoneDecorativeLayer } from "@/components/warzone/WarzoneDecorativeLayer";
 import { useArenaTokenProfile } from "@/hooks/useArenaTokenProfile";
 import type { BattleRealtimeSide } from "@/lib/arena/battleRealtime";
 import { formatCompactUsd } from "@/lib/arena/battlePresentation";
 import { firstFiniteBattleMetric } from "@/lib/arena/battleWallPresentation.mjs";
-import { authoritativeScoreRows } from "@/lib/arena/battleAuthoritativePresentation.mjs";
 import { resolveImageUri } from "@/lib/media";
 import { cn } from "@/lib/utils";
 
@@ -53,35 +53,6 @@ function MetricBox({
       >
         {ready ? value : "—"}
       </div>
-    </div>
-  );
-}
-
-function scoreValue(value: unknown) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed.toFixed(1) : "—";
-}
-
-function AuthoritativeScoreBreakdown({ side, generation, healthy }: { side?: any; generation?: number | null; healthy?: boolean }) {
-  if (!side || !healthy) return null;
-  const rows = authoritativeScoreRows(side, generation);
-  if (!rows.length) return null;
-  return (
-    <div className="grid min-w-0 gap-1 border-t border-white/10 pt-1.5" data-battle-authoritative-breakdown={generation === 3 ? "v3" : "v2"}>
-      {rows.map((row: any) => (
-        <div key={row.key} className="flex min-w-0 items-center justify-between gap-2 text-[8px] uppercase tracking-[0.08em] text-white/50 md:text-[9px]">
-          <span className="truncate">{row.label}</span>
-          <span className="shrink-0 font-retro tabular-nums text-white/78" data-battle-score-row={row.key}>
-            {scoreValue(row.points)} / {scoreValue(row.maxPoints)}
-          </span>
-        </div>
-      ))}
-      {generation === 3 && side.boost ? (
-        <div className="truncate text-[8px] text-white/34" data-battle-boost-authority="confirmed">
-          {Number(side.boost.confirmedUnits || 0).toLocaleString()} confirmed Boost{Number(side.boost.confirmedUnits || 0) === 1 ? "" : "s"}
-          {side.boost.curveVersion ? <span title={String(side.boost.curveVersion)}> · verified curve</span> : null}
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -178,7 +149,7 @@ export function BattleWallCombatant({
   const battleVolume = firstFiniteBattleMetric(authoritativeSide?.volume?.eligibleUsd, metricsSide?.eligibleBattleVolumeUsd, participant?.battleVolumeUsd);
   const pointsReady = Boolean(pointsLabel) && scoreHealthy;
   const caption = String(scoreCaption || "").toLowerCase();
-  const pointsBoxLabel = caption.includes("vote") ? "VOTES" : caption.includes("score") ? "SCORE" : "BATTLE POINTS";
+  const pointsBoxLabel = caption.includes("vote") ? "VOTES" : caption.includes("score") ? "SCORE" : "POINTS";
   const sideIndex = combatSide === "right" ? "2" : "1";
   const trailerLive = isTrailer && !finished;
   const trailerDone = isTrailer && finished;
@@ -191,7 +162,7 @@ export function BattleWallCombatant({
       data-battle-combatant-bounded="true"
       data-battle-leader={isLeader ? "true" : undefined}
       className={cn(
-        "mwz-flat-card relative flex h-auto max-h-[26rem] min-w-0 overflow-hidden",
+        "mwz-flat-card relative flex h-auto max-h-[22rem] min-w-0 overflow-hidden",
         isLeader && "border-orange-400/45",
         trailerLive && "opacity-95",
         trailerDone && "opacity-90 saturate-[0.85]",
@@ -232,7 +203,7 @@ export function BattleWallCombatant({
               <MetricBox label="ELIGIBLE VOL" value={battleVolume === null ? "—" : formatCompactUsd(battleVolume)} ready={battleVolume !== null} accent={accent} />
               <MetricBox label={pointsBoxLabel} value={pointsLabel || "—"} ready={pointsReady} accent={accent} />
             </div>
-            <AuthoritativeScoreBreakdown side={authoritativeSide} generation={scoringGeneration} healthy={scoreHealthy} />
+            <BattleAuthoritativeScoreBreakdown side={authoritativeSide} generation={scoringGeneration} healthy={scoreHealthy} />
           </div>
 
           <div data-battle-combatant-actions="true" className="relative z-10 min-h-11 border-t px-2 sm:px-3" style={{ borderColor: "var(--mwz-flat-card-border)" }} aria-hidden={!actions}>
