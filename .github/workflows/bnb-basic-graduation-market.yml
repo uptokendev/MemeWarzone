@@ -9,6 +9,10 @@ on:
       - "contracts/BnbQuoteLaunchCampaign.sol"
       - "contracts/integrations/BnbQuoteGraduationAdapter.sol"
       - "contracts/mocks/MockBnbQuoteTopazRouter.sol"
+      - "frontend/api/dev-fix/routeAuthorizationSigner.js"
+      - "frontend/api/lib/bnbBasicQuoteCatalogBinding.js"
+      - "frontend/api/lib/bnbBasicQuoteCatalogBinding.test.mjs"
+      - "scripts/graduation-keeper.ts"
       - "test/BnbBasicGraduationMarket.spec.ts"
       - ".github/workflows/bnb-basic-graduation-market.yml"
 
@@ -34,5 +38,10 @@ jobs:
       - name: Contract size report
         run: >-
           node -e "for (const [n,p] of [['BnbQuoteLaunchCampaign','artifacts/contracts/BnbQuoteLaunchCampaign.sol/BnbQuoteLaunchCampaign.json'],['BnbBasicLaunchFactory','artifacts/contracts/BnbBasicLaunchFactory.sol/BnbBasicLaunchFactory.json'],['BnbQuoteGraduationAdapter','artifacts/contracts/integrations/BnbQuoteGraduationAdapter.sol/BnbQuoteGraduationAdapter.json']]) { const j=require('./'+p); console.log(n+': '+((j.deployedBytecode.length-2)/2)+' bytes'); }"
+      - name: Quote Catalog binding unit tests
+        run: node --test frontend/api/lib/bnbBasicQuoteCatalogBinding.test.mjs
+      - name: Keeper retry wiring gate
+        run: >-
+          node -e "const s=require('fs').readFileSync('scripts/graduation-keeper.ts','utf8'); for (const x of ['graduationPending()','retryQuoteGraduation()','retry pending']) if (!s.includes(x)) throw new Error('missing keeper retry marker '+x);"
       - name: BNB basic graduation market regression
         run: npx hardhat test test/BnbBasicGraduationMarket.spec.ts
