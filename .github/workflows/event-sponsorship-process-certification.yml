@@ -102,7 +102,24 @@ jobs:
           exit 1
 
       - name: Real production API process certification
-        run: node frontend/scripts/certify-event-sponsorship-process.mjs
+        id: process_cert
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          node frontend/scripts/certify-event-sponsorship-process.mjs 2>&1 | tee /tmp/event-sponsorship-process-certification.log
+
+      - name: Preserve process certification output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: event-sponsorship-process-certification-log
+          path: /tmp/event-sponsorship-process-certification.log
+          if-no-files-found: warn
+
+      - name: Require process certification success
+        if: steps.process_cert.outcome != 'success'
+        run: exit 1
 
       - name: Existing Event Sponsorship authority tests
         working-directory: frontend
