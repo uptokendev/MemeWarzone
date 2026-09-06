@@ -15,7 +15,7 @@ test("EVM quote identity is exact-address based, not symbol based", () => {
   const identity = normalizeQuoteIdentity({
     chainId: 4663,
     identityKind: "EVM_ADDRESS",
-    contractAddressOrMint: "0x00000000000000000000000000000000000000aA",
+    contractAddressOrMint: "0x00000000000000000000000000000000000000aa",
   });
   assert.equal(identity.chainId, "4663");
   assert.equal(identity.identityKind, "EVM_ADDRESS");
