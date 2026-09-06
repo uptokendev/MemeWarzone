@@ -14,6 +14,7 @@ import { useBattleWallViewport, type BattleWallViewportReport } from "@/hooks/us
 import { battleChainLabel, battleClockLabel, battleDurationLabel } from "@/lib/arena/battlePresentation";
 import { battleMorePanelId, battleMoreToggle } from "@/lib/arena/battleWallMorePresentation.mjs";
 import { DATA_DELAY_LABEL, battleDomId, presentBattleWallFightBand, presentBattleWallModule } from "@/lib/arena/battleWallPresentation.mjs";
+import { authoritativeDraw, authoritativeStatusLabel, authoritativeWinnerSide } from "@/lib/arena/battleAuthoritativePresentation.mjs";
 import {
   isWallRealtimeEligible,
   retainWallRealtimeMetrics,
@@ -97,8 +98,16 @@ export function BattleWallModule({
     snapshotReady: realtime.snapshotReady,
   });
 
+  const authoritativeResult = (displayMetrics as any)?.authoritativeResult || null;
+  const scoringGeneration = Number((displayMetrics as any)?.scoringGeneration ?? authoritativeResult?.scoringGeneration) || null;
+  const scoreHealthy = authoritativeResult ? authoritativeResult.dataHealth?.healthy === true : displayMetrics?.dataHealth?.healthy === true;
+  const resultDraw = presented.tab === "finished" && authoritativeDraw(authoritativeResult);
+  const resultWinnerSide = presented.tab === "finished" ? authoritativeWinnerSide(authoritativeResult) : null;
+  const authoritativeWinnerIndex = resultWinnerSide === "left" ? 0 : resultWinnerSide === "right" ? 1 : null;
+
   const delay = presented.scoreKind === "delay" || presented.statusLabel === DATA_DELAY_LABEL;
-  const leaderReady = !upcoming && !delay && (presented.leaderIndex === 0 || presented.leaderIndex === 1);
+  const effectiveLeaderIndex = resultDraw ? null : authoritativeWinnerIndex ?? presented.leaderIndex;
+  const leaderReady = !upcoming && !delay && (effectiveLeaderIndex === 0 || effectiveLeaderIndex === 1);
   const band = presentBattleWallFightBand(presented, {
     chainLabel: battleChainLabel(chainId),
     clockLabel: upcoming ? null : battleClockLabel(displayBattle),
@@ -106,6 +115,8 @@ export function BattleWallModule({
   });
   const stateLabel = band.stateLabel;
   const fightMode = presented.fightMode?.key || null;
+  const healthLabel = authoritativeResult ? authoritativeStatusLabel(authoritativeResult) : null;
+  const vsStatusLabel = resultDraw ? "DRAW" : healthLabel || (upcoming ? null : presented.statusLabel);
 
   return (
     <article
@@ -115,6 +126,8 @@ export function BattleWallModule({
       data-battle-wall-module={presented.tab}
       data-battle-realtime={realtimeActive && live ? selected.source : "off"}
       data-battle-wall-open="true"
+      data-battle-result-draw={resultDraw ? "true" : undefined}
+      data-battle-result-winner={resultWinnerSide || undefined}
       tabIndex={0}
       aria-label={`${presented.leftTicker} versus ${presented.rightTicker}, ${stateLabel}`}
       className="relative isolate min-w-0 max-w-full bg-transparent py-4 outline-none motion-reduce:transition-none motion-reduce:shadow-none focus-visible:ring-2 focus-visible:ring-accent data-[battle-focused=true]:ring-2 data-[battle-focused=true]:ring-accent/80"
@@ -129,32 +142,12 @@ export function BattleWallModule({
         </span>
         <span className="text-white/20" aria-hidden="true">|</span>
         <span className="font-retro text-[11px] text-white/88">{band.matchup}</span>
-        {band.classification ? (
-          <>
-            <span className="text-white/20" aria-hidden="true">|</span>
-            <span>{band.classification}</span>
-          </>
-        ) : null}
+        {band.classification ? <><span className="text-white/20" aria-hidden="true">|</span><span>{band.classification}</span></> : null}
         <span className="text-white/20" aria-hidden="true">|</span>
         <span>{band.typeLabel}</span>
-        {band.chainLabel ? (
-          <>
-            <span className="text-white/20" aria-hidden="true">|</span>
-            <span>{band.chainLabel}</span>
-          </>
-        ) : null}
-        {band.clockLabel ? (
-          <>
-            <span className="text-white/20" aria-hidden="true">|</span>
-            <span className="text-white/75">{band.clockLabel}</span>
-          </>
-        ) : null}
-        {band.modeLabel ? (
-          <>
-            <span className="text-white/20" aria-hidden="true">|</span>
-            <span data-battle-mode-label={presented.fightMode?.key}>{band.modeLabel}</span>
-          </>
-        ) : null}
+        {band.chainLabel ? <><span className="text-white/20" aria-hidden="true">|</span><span>{band.chainLabel}</span></> : null}
+        {band.clockLabel ? <><span className="text-white/20" aria-hidden="true">|</span><span className="text-white/75">{band.clockLabel}</span></> : null}
+        {band.modeLabel ? <><span className="text-white/20" aria-hidden="true">|</span><span data-battle-mode-label={presented.fightMode?.key}>{band.modeLabel}</span></> : null}
       </div>
 
       <div className="relative isolate overflow-hidden" data-battle-wall-combat-stage="true">
@@ -163,113 +156,67 @@ export function BattleWallModule({
             battle={displayBattle}
             participant={left}
             metricsSide={displayMetrics?.sides?.left}
+            authoritativeSide={authoritativeResult?.sides?.left}
+            scoringGeneration={scoringGeneration}
+            scoreHealthy={scoreHealthy}
             pointsLabel={upcoming ? null : presented.leftPointsLabel}
             scoreCaption={upcoming ? null : presented.scoreCaption}
-            isLeader={leaderReady && presented.leaderIndex === 0}
-            isTrailer={leaderReady && presented.leaderIndex === 1}
+            isLeader={leaderReady && effectiveLeaderIndex === 0}
+            isTrailer={leaderReady && effectiveLeaderIndex === 1}
             finished={presented.tab === "finished"}
             accent="ember"
             combatSide="left"
-            actions={
-              <BattleFightActions
-                mode={fightMode}
-                mocksEnabled={postGradFlags.mocks}
-              />
-            }
+            actions={<BattleFightActions mode={fightMode} mocksEnabled={postGradFlags.mocks} />}
           />
           <BattleWallVs
             leftLabel={presented.leftTicker}
             rightLabel={presented.rightTicker}
             leftPoints={upcoming ? null : presented.leftPointsLabel}
             rightPoints={upcoming ? null : presented.rightPointsLabel}
-            leaderIndex={upcoming ? null : presented.leaderIndex}
+            leaderIndex={upcoming ? null : effectiveLeaderIndex}
             gapLabel={upcoming ? null : presented.gapLabel}
             clockLabel={upcoming ? null : battleClockLabel(displayBattle)}
             remaining={presented.tab === "live"}
-            statusLabel={upcoming ? null : presented.statusLabel}
+            statusLabel={vsStatusLabel}
             scoreKind={upcoming ? null : presented.scoreKind}
             deploymentPending={upcoming}
-            stakeLabel={
-              upcoming
-                ? `${presented.stakeNative} ${presented.nativeSymbol || getNativeSymbol(chainId)}`.trim()
-                : null
-            }
+            stakeLabel={upcoming ? `${presented.stakeNative} ${presented.nativeSymbol || getNativeSymbol(chainId)}`.trim() : null}
             durationLabel={upcoming ? battleDurationLabel(presented.durationHours) : null}
           />
           <BattleWallCombatant
             battle={displayBattle}
             participant={right}
             metricsSide={displayMetrics?.sides?.right}
+            authoritativeSide={authoritativeResult?.sides?.right}
+            scoringGeneration={scoringGeneration}
+            scoreHealthy={scoreHealthy}
             pointsLabel={upcoming ? null : presented.rightPointsLabel}
             scoreCaption={upcoming ? null : presented.scoreCaption}
-            isLeader={leaderReady && presented.leaderIndex === 1}
-            isTrailer={leaderReady && presented.leaderIndex === 0}
+            isLeader={leaderReady && effectiveLeaderIndex === 1}
+            isTrailer={leaderReady && effectiveLeaderIndex === 0}
             finished={presented.tab === "finished"}
             accent="cyan"
             combatSide="right"
-            actions={
-              <BattleFightActions
-                mode={fightMode}
-                mocksEnabled={postGradFlags.mocks}
-              />
-            }
+            actions={<BattleFightActions mode={fightMode} mocksEnabled={postGradFlags.mocks} />}
           />
         </div>
-        {mountEffects ? (
-          <BattleCombatEffects metrics={displayMetrics} rootRef={moduleRef} battleId={battle.id} />
-        ) : null}
+        {mountEffects ? <BattleCombatEffects metrics={displayMetrics} rootRef={moduleRef} battleId={battle.id} /> : null}
       </div>
 
-      <div
-        data-battle-wall-actions="true"
-        className="relative z-20 mt-3 flex min-w-0 flex-wrap items-center justify-between gap-2 border-t pt-2.5"
-        style={{ borderColor: "var(--mwz-flat-card-border)" }}
-      >
+      <div data-battle-wall-actions="true" className="relative z-20 mt-3 flex min-w-0 flex-wrap items-center justify-between gap-2 border-t pt-2.5" style={{ borderColor: "var(--mwz-flat-card-border)" }}>
         <div className="flex min-h-11 min-w-0 flex-1 flex-wrap items-center gap-2" data-battle-wall-actions-reserved="true">
-          <BattleShareMenu
-            battle={displayBattle}
-            metrics={displayMetrics}
-            metricsRequested={selected.requested}
-            metricsLoaded={selected.loaded}
-          />
+          <BattleShareMenu battle={displayBattle} metrics={displayMetrics} metricsRequested={selected.requested} metricsLoaded={selected.loaded} />
         </div>
         <div className="flex flex-wrap items-center justify-end gap-3">
-          <button
-            type="button"
-            aria-expanded={moreToggle.expanded}
-            aria-controls={morePanelId}
-            data-battle-more-toggle={battle.id}
-            onClick={() => setMoreOpen((open) => !open)}
-            className="min-h-11 text-xs uppercase tracking-[0.16em] text-white/55 underline-offset-4 hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-          >
+          <button type="button" aria-expanded={moreToggle.expanded} aria-controls={morePanelId} data-battle-more-toggle={battle.id} onClick={() => setMoreOpen((open) => !open)} className="min-h-11 text-xs uppercase tracking-[0.16em] text-white/55 underline-offset-4 hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">
             {moreToggle.label}
           </button>
-          <Link
-            to={presented.href}
-            className="min-h-11 inline-flex items-center text-xs uppercase tracking-[0.16em] text-white/40 underline-offset-4 hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-          >
-            Open fight
-          </Link>
+          <Link to={presented.href} className="min-h-11 inline-flex items-center text-xs uppercase tracking-[0.16em] text-white/40 underline-offset-4 hover:text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent">Open fight</Link>
         </div>
       </div>
 
-      <div
-        id={morePanelId}
-        hidden={!moreToggle.expanded}
-        data-battle-more={battle.id}
-        data-battle-more-open={moreToggle.expanded ? "true" : "false"}
-        className="relative z-20"
-      >
-        {moreToggle.expanded ? (
-          <div className="mt-3 border-t border-white/10 pt-4">
-            <BattleWallMore
-              battle={displayBattle}
-              metrics={displayMetrics}
-              realtimeState={realtime.realtimeState}
-              dataSource={selected.source}
-            />
-          </div>
-        ) : null}
+      <div id={morePanelId} hidden={!moreToggle.expanded} data-battle-more={battle.id} data-battle-more-open={moreToggle.expanded ? "true" : "false"} className="relative z-20">
+        {moreToggle.expanded ? <div className="mt-3 border-t border-white/10 pt-4"><BattleWallMore battle={displayBattle} metrics={displayMetrics} realtimeState={realtime.realtimeState} dataSource={selected.source} /></div> : null}
       </div>
     </article>
   );
