@@ -2,22 +2,17 @@
 
 import { pool } from "../server/db.js";
 import { publishBattleFinished, startArenaBattleRealtimeWorker, stopArenaBattleRealtimeWorker } from "../api/lib/arenaBattleRealtime.js";
-import { battlePointsV2SettlementEnabled, settleBattlePointsV2ById } from "../api/lib/arenaBattleSettlementV2Service.js";
-import { battlePointsV3SettlementRuntimeEnabled, settleBattlePointsV3ById } from "../api/lib/arenaBattleSettlementV3Service.js";
+import { settleDueNormalBattles } from "../api/lib/arenaBattleSettlementRuntime.js";
 import { advanceDueFinalSalvo, finalizeDueVoteTournamentBattle, voteTournamentRuntimeEnabled } from "../api/lib/arenaVoteTournamentFinalizationService.js";
 import { advanceTournamentFromBattle } from "../api/arenaTournaments.js";
 
-const settlementV2Enabled = battlePointsV2SettlementEnabled();
-const settlementV3Enabled = battlePointsV3SettlementRuntimeEnabled();
 const voteRuntimeEnabled = voteTournamentRuntimeEnabled();
 const started = startArenaBattleRealtimeWorker();
-if (!started.started && !settlementV2Enabled && !settlementV3Enabled && !voteRuntimeEnabled) {
-  console.log(`[arena-battle-realtime-worker] not started: ${started.reason || "unknown"}`);
-  process.exit(0);
+if (!started.started && !voteRuntimeEnabled) {
+  console.log(`[arena-battle-realtime-worker] realtime polling disabled: ${started.reason || "unknown"}; authoritative Normal Battle settlement worker remains active`);
 }
 if (started.started) console.log(`[arena-battle-realtime-worker] realtime active intervalMs=${started.intervalMs}`);
-if (settlementV2Enabled) console.log("[arena-battle-realtime-worker] Battle Points V2 settlement active");
-if (settlementV3Enabled) console.log("[arena-battle-realtime-worker] Battle Points V3 settlement active for explicitly locked Battles");
+console.log("[arena-battle-realtime-worker] immutable Normal Battle settlement dispatcher active");
 if (voteRuntimeEnabled) console.log("[arena-battle-realtime-worker] Vote Tournament + Final Salvo runtime active");
 
 const finishedScanMs = Math.max(5_000, Number(process.env.ARENA_BATTLE_FINISHED_SCAN_MS || 5_000));
@@ -71,49 +66,21 @@ async function processVoteTournamentRuntime() {
 }
 
 async function settleDueBattlePoints() {
-  if ((!settlementV2Enabled && !settlementV3Enabled) || settlementScanRunning) return;
+  if (settlementScanRunning) return;
   settlementScanRunning = true;
   try {
-    if (settlementV3Enabled) {
-      const dueV3 = await pool.query(
-        `select b.id from public.arena_battles b
-         join public.arena_battle_scoring_locks l on l.battle_id=b.id
-         where b.state='live' and coalesce(b.battle_mode,'normal')='normal' and b.source<>'tournament'
-           and b.ends_at is not null and b.ends_at<=now()
-           and l.scoring_version='battle_points_v3' and l.boost_curve_version='boost_hyperbolic_100_v1'
-         order by b.ends_at asc limit 50`,
-      );
-      for (const row of dueV3.rows || []) {
-        try {
-          const settled = await settleBattlePointsV3ById(row.id);
-          if (!settled?.settled) {
-            if (settled?.dataDelay) console.warn("[arena-battle-realtime-worker] V3 settlement DATA DELAY", row.id, settled.reason, settled.side || "");
-            continue;
-          }
-          const published = await publishBattleFinished(settled.battle, null).catch(() => ({ published: false }));
-          if (published?.published) finishedPublished.set(`${row.id}:${String(settled.battle?.settled_at || settled.battle?.finished_at || "")}`, Date.now());
-        } catch (error) { console.warn("[arena-battle-realtime-worker] V3 settlement failed", row.id, error?.message || error); }
+    const outcomes = await settleDueNormalBattles({ pool });
+    for (const outcome of outcomes) {
+      if (!outcome?.settled) {
+        if (outcome?.reason && outcome.reason !== "not_due_already_settled_or_not_normal" && outcome.reason !== "not_due_already_settled_or_not_v2_locked") {
+          console.warn("[arena-battle-realtime-worker] authoritative settlement pending", outcome.battleId, outcome.scoringGeneration || "unknown", outcome.reason, outcome.side || "");
+        }
+        continue;
       }
-    }
-    if (settlementV2Enabled) {
-      const dueV2 = await pool.query(
-        `select b.id from public.arena_battles b
-         where b.state='live' and coalesce(b.battle_mode,'normal')<>'vote'
-           and b.ends_at is not null and b.ends_at<=now()
-           and not exists (select 1 from public.arena_battle_scoring_locks l where l.battle_id=b.id and l.scoring_version='battle_points_v3')
-         order by b.ends_at asc limit 50`,
-      );
-      for (const row of dueV2.rows || []) {
-        try {
-          const settled = await settleBattlePointsV2ById(row.id);
-          if (!settled?.settled) {
-            if (settled?.dataDelay) console.warn("[arena-battle-realtime-worker] V2 settlement DATA DELAY", row.id, settled.reason, settled.side || "");
-            continue;
-          }
-          const published = await publishBattleFinished(settled.battle, null).catch(() => ({ published: false }));
-          if (published?.published) finishedPublished.set(`${row.id}:${String(settled.battle?.settled_at || settled.battle?.finished_at || "")}`, Date.now());
-        } catch (error) { console.warn("[arena-battle-realtime-worker] V2 settlement failed", row.id, error?.message || error); }
-      }
+      const battle = outcome.battle;
+      if (!battle?.id) continue;
+      const published = await publishBattleFinished(battle, null).catch(() => ({ published: false }));
+      if (published?.published) finishedPublished.set(`${battle.id}:${String(battle?.settled_at || battle?.finished_at || "")}`, Date.now());
     }
   } catch (error) { console.warn("[arena-battle-realtime-worker] settlement scan failed", error?.message || error); }
   finally { settlementScanRunning = false; }

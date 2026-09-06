@@ -32,9 +32,13 @@ export async function settleBattlePointsV2ById(battleId, deps = {}) {
           and b.state = 'live'
           and b.ends_at is not null
           and b.ends_at <= now()
-          and not exists (
-            select 1 from public.arena_battle_scoring_locks l
-             where l.battle_id = b.id and l.scoring_version = 'battle_points_v3'
+          and exists (
+            select 1
+              from public.arena_battle_metrics m
+             where m.battle_id = b.id
+             group by m.battle_id
+            having count(*) = 2
+               and bool_and(coalesce(m.scoring_generation, m.scoring_version) = 'battle_points_v2')
           )
         for update`,
       [String(battleId)],
@@ -42,7 +46,7 @@ export async function settleBattlePointsV2ById(battleId, deps = {}) {
     const current = locked.rows[0];
     if (!current) {
       await client.query("commit");
-      return { settled: false, reason: "not_due_already_settled_or_explicit_v3" };
+      return { settled: false, reason: "not_due_already_settled_or_not_v2_locked" };
     }
 
     const query = (text, params) => client.query(text, params);
