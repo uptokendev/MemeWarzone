@@ -5,10 +5,10 @@ import {
   getRobinhoodStockRegistryDetail,
   listRobinhoodStockRegistry,
   refreshAllRobinhoodStockHealth,
-  refreshRobinhoodStockHealthById,
   setRobinhoodStockAdminState,
   syncCanonicalRobinhoodStockTokens,
 } from "../lib/robinhoodStockGraduationRegistry.js";
+import { rescanRobinhoodStockHealthVersioned } from "../lib/robinhoodStockGraduationAdminOps.js";
 
 function operatorIdentity(admin) {
   return `admin:${String(admin?.id || "unknown")}:${String(admin?.email || "").toLowerCase()}`;
@@ -60,19 +60,22 @@ export default async function robinhoodStockGraduationRegistryAdmin(req, res) {
     const body = await readJson(req);
     const operator = operatorIdentity(admin);
 
+    // Bulk sync/rescan are system-derived refreshes rather than manual row overrides.
+    // They still require authenticated admin + audit reason. Row-targeting mutations
+    // below additionally require optimistic expectedVersion.
     if (!id && action === "sync") {
       const reason = requiredReason(body, res);
       if (!reason) return;
       const sync = await syncCanonicalRobinhoodStockTokens({ operatorIdentity: operator });
       const items = await refreshAllRobinhoodStockHealth();
-      return json(res, 200, { ok: true, sync, rescanned: items.length, items });
+      return json(res, 200, { ok: true, sync, reason, rescanned: items.length, items });
     }
 
     if (!id && action === "rescan") {
       const reason = requiredReason(body, res);
       if (!reason) return;
       const items = await refreshAllRobinhoodStockHealth();
-      return json(res, 200, { ok: true, rescanned: items.length, items });
+      return json(res, 200, { ok: true, reason, rescanned: items.length, items });
     }
 
     if (!id) return json(res, 400, { ok: false, error: "Registry id is required", code: "REGISTRY_ID_REQUIRED" });
@@ -80,7 +83,12 @@ export default async function robinhoodStockGraduationRegistryAdmin(req, res) {
     if (expectedVersion == null) return;
 
     if (action === "rescan") {
-      const item = await refreshRobinhoodStockHealthById(id, { expectedVersion, operatorIdentity: operator });
+      const item = await rescanRobinhoodStockHealthVersioned({
+        id,
+        expectedVersion,
+        operatorIdentity: operator,
+        reason: String(body.reason || "manual rescan").trim() || "manual rescan",
+      });
       if (!item) return json(res, 404, { ok: false, error: "Stock Token registry entry not found", code: "REGISTRY_ENTRY_NOT_FOUND" });
       const detail = await getRobinhoodStockRegistryDetail(id);
       return json(res, 200, { ok: true, ...detail });
