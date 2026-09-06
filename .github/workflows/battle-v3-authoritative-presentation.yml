@@ -5,6 +5,7 @@ on:
     branches:
       - build/cross-chain-stabilization-rh-base
     paths:
+      - "frontend/src/components/arena/BattleAuthoritativeScoreBreakdown.tsx"
       - "frontend/src/components/arena/BattleWallCombatant.tsx"
       - "frontend/src/components/arena/BattleWallModule.tsx"
       - "frontend/src/hooks/useArenaBattleRealtimeDetails.ts"
