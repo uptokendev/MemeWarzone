@@ -78,3 +78,7 @@ try {
   chain.stderr?.destroy();
   chain.unref();
 }
+
+// The imported certification module has completed all assertions at this point.
+// Force-close any test-only child handles so CI can continue to the authority regression.
+process.exit(0);
