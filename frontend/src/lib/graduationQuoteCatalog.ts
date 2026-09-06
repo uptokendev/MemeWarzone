@@ -2,8 +2,8 @@ import { apiFetch } from "@/lib/apiBase";
 import type { RobinhoodStockToken } from "@/lib/marketContinuityApi";
 import { fetchRobinhoodStockGraduationAssets } from "@/lib/robinhoodStockCreate";
 import {
+  catalogQuoteAssetsOnly,
   isRobinhoodStockQuote,
-  mergeCatalogWithNativeDefault,
 } from "@/lib/graduationMarketPresentation.mjs";
 
 export type GraduationQuoteAsset = {
@@ -56,7 +56,7 @@ export async function fetchGraduationQuoteAssets(chainId: number): Promise<Gradu
     { method: "GET", cache: "no-store" },
   );
   const body = await readJson<{ items?: GraduationQuoteAsset[] }>(response);
-  return mergeCatalogWithNativeDefault(chainId, Array.isArray(body?.items) ? body.items : []);
+  return catalogQuoteAssetsOnly(Array.isArray(body?.items) ? body.items : []);
 }
 
 export async function fetchGraduationQuoteAssetDetail(id: string): Promise<GraduationQuoteAsset> {
@@ -70,9 +70,10 @@ export async function fetchGraduationQuoteAssetDetail(id: string): Promise<Gradu
 }
 
 export async function assertFreshGraduationQuote(asset: GraduationQuoteAsset): Promise<GraduationQuoteAsset> {
-  if (asset?.presentationDefault) return asset;
   const id = String(asset?.id || "").trim();
-  if (!id) throw new Error("Choose a Graduation Market before continuing.");
+  if (!id || asset?.presentationDefault === true) {
+    throw new Error("Choose a catalog Graduation Market before continuing.");
+  }
   const fresh = await fetchGraduationQuoteAssetDetail(id);
   if (fresh.newGraduationEligible !== true) {
     throw new Error("Graduation Market is no longer eligible. Choose another quote asset.");

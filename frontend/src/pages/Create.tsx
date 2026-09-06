@@ -35,9 +35,7 @@ import {
 } from "@/lib/robinhoodStockCreate";
 import {
   buildCreateDraftGraduationFields,
-  isNativeQuote,
-  isRobinhoodStockQuote,
-  nativeDefaultQuoteAsset,
+  directDeployBindPath,
   selectedMarketSummary,
 } from "@/lib/graduationMarketPresentation.mjs";
 import {
@@ -49,6 +47,7 @@ import {
   BNB_CHAIN_ID,
   getActiveChainId,
   getChainLabel,
+  getNativeSymbol,
   isEvmChainId,
   ROBINHOOD_CHAIN_ID,
   ROBINHOOD_TESTNET_CHAIN_ID,
@@ -157,9 +156,7 @@ const Create = () => {
   const [graduationTargetWei, setGraduationTargetWei] = useState<bigint>(() =>
     getDefaultGraduationTargetWei(getActiveChainId()),
   );
-  const [graduationQuoteAsset, setGraduationQuoteAsset] = useState<GraduationQuoteAsset>(() =>
-    nativeDefaultQuoteAsset(getActiveChainId()),
-  );
+  const [graduationQuoteAsset, setGraduationQuoteAsset] = useState<GraduationQuoteAsset | null>(null);
   const [creatorEligibility, setCreatorEligibility] = useState<ScheduledCreatorLaunchEligibility | null>(null);
   const [creatorEligibilityError, setCreatorEligibilityError] = useState<string | null>(null);
   const armDialogShownForWallet = useRef<string | null>(null);
@@ -208,7 +205,9 @@ const Create = () => {
   ]);
   const isSolanaProtocolPending = launchpadSafetyStatus.protocolStatus === "protocol_pending";
   const robinhoodSelected = isRobinhoodChain(Number(configuredEvmChainId));
-  const graduationMarketReady = Boolean(graduationQuoteAsset?.id);
+  const graduationMarketReady = Boolean(
+    graduationQuoteAsset?.id && graduationQuoteAsset.newGraduationEligible === true,
+  );
   const evmDirectDeployEnabled = robinhoodSelected
     ? readFlag(import.meta.env.VITE_ENABLE_DIRECT_ROBINHOOD_DEPLOY, false)
     : readFlag(import.meta.env.VITE_ENABLE_DIRECT_BNB_DEPLOY, false);
@@ -224,7 +223,7 @@ const Create = () => {
   const evmChainLabel = getChainLabel(configuredEvmChainId);
 
   useEffect(() => {
-    setGraduationQuoteAsset(nativeDefaultQuoteAsset(chainId));
+    setGraduationQuoteAsset(null);
   }, [chainId]);
 
   useEffect(() => {
@@ -462,7 +461,7 @@ const Create = () => {
 
   const handleCreateDraft = async () => {
     if (!validateCoreForm()) return;
-    if (!graduationMarketReady) {
+    if (!graduationMarketReady || !graduationQuoteAsset) {
       toast.error("Choose a Graduation Market first.");
       return;
     }
@@ -497,14 +496,11 @@ const Create = () => {
       const expectedSelection = buildCreateDraftGraduationFields(graduationQuoteAsset, chainId);
       const persistedId = String((draft as any).graduationQuoteAssetId || "");
       const persistedKind = String((draft as any).graduationMarketKind || "").toUpperCase();
-      const persistedQuote = String((draft as any).graduationQuoteAsset || "").toLowerCase();
-      const expectedQuote = String(expectedSelection.graduationQuoteAsset || "").toLowerCase();
-      const quoteSelectionPersisted = Boolean(persistedId) && persistedId === expectedSelection.graduationQuoteAssetId;
-      const legacyPersisted =
-        !expectedSelection.graduationMarketKind ||
-        (persistedKind === expectedSelection.graduationMarketKind &&
-          (expectedSelection.graduationMarketKind === "NATIVE" || persistedQuote === expectedQuote));
-      if (!quoteSelectionPersisted && !legacyPersisted) {
+      const quoteSelectionPersisted = persistedId === expectedSelection.graduationQuoteAssetId;
+      const legacyStockPersisted =
+        expectedSelection.graduationMarketKind === "STOCK_TOKEN" &&
+        persistedKind === "STOCK_TOKEN";
+      if (!quoteSelectionPersisted && !legacyStockPersisted) {
         toast.error("Draft saved, but its Graduation Market selection did not persist. Do not deploy it until the policy is restored.");
         navigate(`/drafts/${draft.id}/promotion`);
         return;
@@ -522,14 +518,18 @@ const Create = () => {
 
   const handleDeployNow = async () => {
     if (!validateCoreForm()) return;
+    if (!graduationMarketReady || !graduationQuoteAsset) {
+      toast.error("Choose a Graduation Market first.");
+      return;
+    }
 
     if (isSolanaCreator) {
       if (!solanaWallet.solanaAccount) {
         toast.error("Connect your Solana wallet first.");
         return;
       }
-      if (!isNativeQuote(graduationQuoteAsset)) {
-        toast.error("Direct Deploy for this Graduation Market requires fresh server quote binding. Save a Draft, then Push Live after server validation.");
+      if (directDeployBindPath(graduationQuoteAsset) !== "native") {
+        toast.error("Direct Deploy for this Graduation Market is not available until server quote binding is integrated. Save a Draft instead.");
         return;
       }
       setIsDeploying(true);
@@ -685,7 +685,7 @@ const Create = () => {
       toast.error(`Connect your ${evmChainLabel} wallet first.`);
       return;
     }
-    if (!graduationMarketReady) {
+    if (!graduationMarketReady || !graduationQuoteAsset) {
       toast.error("Choose a Graduation Market first.");
       return;
     }
@@ -720,8 +720,9 @@ const Create = () => {
       let campaignAddress = "";
       let tokenAddress = "";
       const freshQuote = await assertFreshGraduationQuote(graduationQuoteAsset);
+      const bindPath = directDeployBindPath(freshQuote);
 
-      if (isRobinhoodStockQuote(freshQuote)) {
+      if (bindPath === "robinhood-stock") {
         const stockToken = await resolveRobinhoodStockTokenForQuote(Number(chainId), freshQuote);
         const stockFactoryAddress = launchpad.factoryAddress || evmAddresses.launchFactory;
         const created = await createRobinhoodStockCampaign({
@@ -747,8 +748,8 @@ const Create = () => {
           stock_symbol: stockToken.symbol,
         });
         toast.success(`Campaign deployed on ${evmChainLabel} · permanent market $${normalizedTicker}/${stockToken.symbol}.`);
-      } else if (!isNativeQuote(freshQuote)) {
-        throw new Error("Direct Deploy for this Graduation Market requires fresh server quote binding. Save a Draft, then Push Live after server validation.");
+      } else if (bindPath !== "native") {
+        throw new Error("Direct Deploy for this Graduation Market is not available until server quote binding is integrated.");
       } else {
         const receipt: any = await launchpad.createCampaign({
           name: formData.name,
@@ -844,11 +845,19 @@ const Create = () => {
   };
 
   const selectedGraduation = graduationOptions.find((o) => o.targetWei === graduationTargetWei);
-  const graduationSummary = selectedMarketSummary({
-    ticker: normalizedTicker,
-    asset: graduationQuoteAsset,
-    chainId,
-  });
+  const graduationSummary = graduationQuoteAsset
+    ? selectedMarketSummary({
+        ticker: normalizedTicker,
+        asset: graduationQuoteAsset,
+        chainId,
+      })
+    : {
+        pair: "—",
+        quoteAsset: "—",
+        provider: "—",
+        bonding: getNativeSymbol(chainId),
+        moving: false,
+      };
   const preview =
     mode === "deploy" ? (
       <CreateLiveCardPreview

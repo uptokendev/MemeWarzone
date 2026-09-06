@@ -6,15 +6,15 @@ import { fileURLToPath } from "node:url";
 
 import {
   buildCreateDraftGraduationFields,
+  catalogQuoteAssetsOnly,
   categoryForQuoteAsset,
+  directDeployBindPath,
   displayQuoteSymbol,
   groupQuoteAssetsByCategory,
   isMovingQuoteAsset,
   isNativeQuote,
   isRobinhoodStockQuote,
-  mergeCatalogWithNativeDefault,
   MOVING_QUOTE_NOTICE,
-  nativeDefaultQuoteAsset,
   nativeSymbol,
   providerLabel,
   robinhoodLegacyMarketKind,
@@ -23,80 +23,97 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-function quote(overrides = {}) {
+function catalogQuote(overrides = {}) {
   return {
-    id: "asset-1",
+    id: "11111111-1111-1111-1111-111111111111",
     provider: { key: "bnb-basic", displayName: "BNB BASIC" },
     chainId: "56",
-    identityKind: "EVM_ADDRESS",
-    contractAddressOrMint: "0x00000000000000000000000000000000000000aa",
-    assetClass: "STABLECOIN",
-    symbol: "USDC",
-    displayName: "USD Coin",
+    identityKind: "NATIVE",
+    contractAddressOrMint: "native:56",
+    assetClass: "NATIVE",
+    symbol: "BNB",
+    displayName: "BNB",
     newGraduationEligible: true,
-    policy: { authority: "generic", policyKey: "bnb-usdc-basic", version: 1 },
+    stateVersion: 3,
+    policy: { authority: "generic", policyKey: "bnb-native-basic", version: 1 },
     ...overrides,
   };
 }
 
-test("chain defaults display as SOL, BNB, and ETH — not wrapped tickers", () => {
+test("chain copy displays SOL, BNB, and ETH — not wrapped tickers", () => {
   assert.equal(nativeSymbol(101), "SOL");
   assert.equal(nativeSymbol(56), "BNB");
   assert.equal(nativeSymbol(97), "BNB");
   assert.equal(nativeSymbol(4663), "ETH");
-  assert.equal(displayQuoteSymbol(nativeDefaultQuoteAsset(101)), "SOL");
-  assert.equal(displayQuoteSymbol(nativeDefaultQuoteAsset(56)), "BNB");
-  assert.equal(displayQuoteSymbol(nativeDefaultQuoteAsset(4663)), "ETH");
-  assert.equal(displayQuoteSymbol(quote({ symbol: "WETH", identityKind: "NATIVE", assetClass: "NATIVE", chainId: "4663" })), "ETH");
-  assert.equal(displayQuoteSymbol(quote({ symbol: "WETH", identityKind: "NATIVE", assetClass: "NATIVE", chainId: "4663" }), { technical: true }), "WETH");
+  assert.equal(displayQuoteSymbol(catalogQuote({ chainId: "101", symbol: "WSOL", identityKind: "NATIVE", assetClass: "NATIVE" })), "SOL");
+  assert.equal(displayQuoteSymbol(catalogQuote({ chainId: "4663", symbol: "WETH", identityKind: "NATIVE", assetClass: "NATIVE" })), "ETH");
+  assert.equal(displayQuoteSymbol(catalogQuote({ chainId: "4663", symbol: "WETH", identityKind: "NATIVE", assetClass: "NATIVE" }), { technical: true }), "WETH");
 });
 
-test("empty categories are omitted and Solana/BNB BASIC stay small", () => {
-  const solana = groupQuoteAssetsByCategory(mergeCatalogWithNativeDefault(101, []));
-  assert.deepEqual(solana.map((group) => group.id), ["POPULAR"]);
-  assert.equal(solana[0].items[0].symbol, "SOL");
+test("empty catalog renders no categories and does not invent quote assets", () => {
+  assert.deepEqual(groupQuoteAssetsByCategory([]).map((group) => group.id), []);
+  assert.deepEqual(catalogQuoteAssetsOnly([]), []);
+  assert.deepEqual(catalogQuoteAssetsOnly([{ id: "native:56", presentationDefault: true, newGraduationEligible: true }]), []);
+});
 
-  const bnb = groupQuoteAssetsByCategory(mergeCatalogWithNativeDefault(56, [
-    quote({ id: "usdc", symbol: "USDC", assetClass: "STABLECOIN" }),
-  ]));
-  assert.deepEqual(bnb.map((group) => group.id), ["POPULAR", "STABLECOINS"]);
-  assert.equal(bnb.find((group) => group.id === "STOCKS_ETFS"), undefined);
-  assert.equal(bnb.find((group) => group.id === "CUSTOM"), undefined);
+test("UI fixture USDC is categorized only when the catalog actually returns it", () => {
+  const fixtureUsdc = catalogQuote({
+    id: "fixture-usdc",
+    identityKind: "EVM_ADDRESS",
+    assetClass: "STABLECOIN",
+    symbol: "USDC",
+    displayName: "USD Coin",
+    contractAddressOrMint: "0x00000000000000000000000000000000000000aa",
+  });
+  const groups = groupQuoteAssetsByCategory([catalogQuote(), fixtureUsdc]);
+  assert.deepEqual(groups.map((group) => group.id), ["POPULAR", "STABLECOINS"]);
+  assert.equal(groups.find((group) => group.id === "STOCKS_ETFS"), undefined);
 });
 
 test("Robinhood Stock Tokens appear under STOCKS & ETFs, not a NATIVE/STOCK_TOKEN split", () => {
-  const nvda = quote({
+  const nvda = catalogQuote({
     id: "rh-stock:nvda",
     provider: { key: "robinhood-stock-token", displayName: "Robinhood Stock Token Registry", authorityMode: "ROBINHOOD_STOCK_REGISTRY" },
     chainId: "4663",
     assetClass: "PROVIDER_RWA",
+    identityKind: "EVM_ADDRESS",
     symbol: "NVDA",
     displayName: "NVIDIA",
     contractAddressOrMint: "0x0000000000000000000000000000000000000aaa",
   });
-  const usdc = quote({
+  const usdc = catalogQuote({
     id: "rh-usdc",
     provider: { key: "robinhood-basic", displayName: "Robinhood BASIC" },
     chainId: "4663",
+    identityKind: "EVM_ADDRESS",
     assetClass: "STABLECOIN",
     symbol: "USDC",
   });
-  const groups = groupQuoteAssetsByCategory(mergeCatalogWithNativeDefault(4663, [nvda, usdc]));
+  const eth = catalogQuote({
+    id: "rh-eth",
+    provider: { key: "robinhood-basic" },
+    chainId: "4663",
+    identityKind: "NATIVE",
+    assetClass: "NATIVE",
+    symbol: "ETH",
+  });
+  const groups = groupQuoteAssetsByCategory([eth, nvda, usdc]);
   assert.deepEqual(groups.map((group) => group.id), ["POPULAR", "STABLECOINS", "STOCKS_ETFS"]);
   assert.equal(categoryForQuoteAsset(nvda), "STOCKS_ETFS");
   assert.equal(isRobinhoodStockQuote(nvda), true);
   assert.equal(isRobinhoodStockQuote(usdc), false);
   assert.equal(robinhoodLegacyMarketKind(nvda), "STOCK_TOKEN");
-  assert.equal(robinhoodLegacyMarketKind(nativeDefaultQuoteAsset(4663)), "NATIVE");
+  assert.equal(robinhoodLegacyMarketKind(eth), "NATIVE");
   assert.equal(robinhoodLegacyMarketKind(usdc), null);
 });
 
 test("selected Graduation Market summary uses the token/quote pair and bonding currency", () => {
-  const nvda = quote({
+  const nvda = catalogQuote({
     id: "rh-stock:nvda",
     provider: { key: "robinhood-stock-token" },
     chainId: "4663",
     assetClass: "PROVIDER_RWA",
+    identityKind: "EVM_ADDRESS",
     symbol: "NVDA",
   });
   const selected = selectedMarketSummary({ ticker: "DOGE", asset: nvda, chainId: 4663 });
@@ -105,81 +122,95 @@ test("selected Graduation Market summary uses the token/quote pair and bonding c
   assert.equal(selected.postGraduationMarket, "$DOGE / NVDA");
   assert.equal(selected.provider, "Robinhood");
   assert.equal(selected.moving, true);
-
-  const stable = selectedMarketSummary({
-    ticker: "TOKEN",
-    asset: quote({ symbol: "USDC", assetClass: "STABLECOIN", chainId: "101", provider: { key: "solana-basic" } }),
-    chainId: 101,
-  });
-  assert.equal(stable.pair, "$TOKEN / USDC");
-  assert.equal(stable.bonding, "SOL");
-  assert.equal(stable.moving, false);
 });
 
 test("moving quote notice is for stocks/RWAs/other moving assets, not native or stables", () => {
-  assert.equal(isMovingQuoteAsset(nativeDefaultQuoteAsset(56)), false);
-  assert.equal(isMovingQuoteAsset(quote({ assetClass: "STABLECOIN", symbol: "USDC" })), false);
-  assert.equal(isMovingQuoteAsset(quote({ assetClass: "PROVIDER_RWA", symbol: "NVDA", provider: { key: "robinhood-stock-token" } })), true);
+  assert.equal(isMovingQuoteAsset(catalogQuote({ identityKind: "NATIVE", assetClass: "NATIVE", symbol: "BNB" })), false);
+  assert.equal(isMovingQuoteAsset(catalogQuote({ assetClass: "STABLECOIN", symbol: "USDC", identityKind: "EVM_ADDRESS" })), false);
+  assert.equal(isMovingQuoteAsset(catalogQuote({ assetClass: "PROVIDER_RWA", symbol: "NVDA", provider: { key: "robinhood-stock-token" }, identityKind: "EVM_ADDRESS" })), true);
   assert.match(MOVING_QUOTE_NOTICE, /own market price/);
 });
 
-test("draft payload stores quote id, chain, contract/mint, provider, and policy version", () => {
-  const nvda = quote({
+test("draft payload stores catalog id, selected state version, and policy version — not copied provider/address authority", () => {
+  const nvda = catalogQuote({
     id: "rh-stock:nvda",
     provider: { key: "robinhood-stock-token" },
     chainId: "4663",
     assetClass: "PROVIDER_RWA",
+    identityKind: "EVM_ADDRESS",
     symbol: "NVDA",
     contractAddressOrMint: "0x1111111111111111111111111111111111111111",
+    stateVersion: 7,
     policy: { version: 7, policyKey: "robinhood-stock-authority" },
   });
   const fields = buildCreateDraftGraduationFields(nvda, 4663);
   assert.equal(fields.graduationQuoteAssetId, "rh-stock:nvda");
-  assert.equal(fields.graduationQuoteChainId, 4663);
-  assert.equal(fields.graduationQuoteContractOrMint, "0x1111111111111111111111111111111111111111");
-  assert.equal(fields.graduationQuoteProvider, "robinhood-stock-token");
+  assert.equal(fields.graduationQuoteStateVersion, 7);
+  assert.equal(fields.graduationQuoteContractOrMint, undefined);
+  assert.equal(fields.graduationQuoteProvider, undefined);
   assert.equal(fields.graduationMarketKind, "STOCK_TOKEN");
   assert.equal(fields.graduationQuoteAsset, "0x1111111111111111111111111111111111111111");
   assert.equal(fields.graduationMarketPolicyVersion, "robinhood_market_v1");
 
-  const solana = buildCreateDraftGraduationFields(nativeDefaultQuoteAsset(101), 101);
-  assert.equal(solana.graduationQuoteAssetId, "native:101");
-  assert.equal(solana.graduationQuoteProvider, "solana-basic");
-  assert.equal(solana.graduationMarketKind, undefined);
-});
-
-test("catalog native wins over the presentation default and stays eligible", () => {
-  const catalogNative = quote({
+  const solNative = buildCreateDraftGraduationFields(catalogQuote({
     id: "sol-native-id",
     chainId: "101",
     identityKind: "NATIVE",
     assetClass: "NATIVE",
-    symbol: "WSOL",
-    contractAddressOrMint: "native:101",
+    symbol: "SOL",
     provider: { key: "solana-basic" },
-  });
-  const merged = mergeCatalogWithNativeDefault(101, [catalogNative]);
-  assert.equal(merged.filter(isNativeQuote).length, 1);
-  assert.equal(merged[0].id, "sol-native-id");
-  assert.equal(displayQuoteSymbol(merged[0]), "SOL");
+    stateVersion: 2,
+    policy: { version: 4, policyKey: "solana-native-basic" },
+  }), 101);
+  assert.equal(solNative.graduationQuoteAssetId, "sol-native-id");
+  assert.equal(solNative.graduationQuoteStateVersion, 2);
+  assert.equal(solNative.graduationMarketPolicyVersion, "4");
+  assert.equal(solNative.graduationMarketKind, undefined);
+  assert.equal(solNative.graduationQuoteProvider, undefined);
 });
 
-test("Create flow is 6 steps and the NATIVE/STOCK_TOKEN picker is no longer the product UI", () => {
+test("disabled catalog assets are omitted from Step 5 groups", () => {
+  const live = catalogQuote({ id: "live-bnb", newGraduationEligible: true });
+  const disabled = catalogQuote({ id: "dead-bnb", newGraduationEligible: false, symbol: "USDC", assetClass: "STABLECOIN" });
+  const groups = groupQuoteAssetsByCategory([live, disabled]);
+  assert.deepEqual(groups.map((group) => group.id), ["POPULAR"]);
+  assert.equal(groups[0].items.some((item) => item.id === "dead-bnb"), false);
+});
+
+test("generic non-native Direct Deploy stays fail-closed; native and Robinhood stock keep bind paths", () => {
+  assert.equal(directDeployBindPath(catalogQuote({ identityKind: "NATIVE", assetClass: "NATIVE" })), "native");
+  assert.equal(directDeployBindPath(catalogQuote({
+    id: "rh-stock:nvda",
+    provider: { key: "robinhood-stock-token" },
+    assetClass: "PROVIDER_RWA",
+    identityKind: "EVM_ADDRESS",
+  })), "robinhood-stock");
+  assert.equal(directDeployBindPath(catalogQuote({
+    id: "fixture-usdc",
+    identityKind: "EVM_ADDRESS",
+    assetClass: "STABLECOIN",
+    symbol: "USDC",
+  })), null);
+  assert.equal(directDeployBindPath(catalogQuote({ newGraduationEligible: false })), null);
+});
+
+test("Create flow is 6 steps, catalog-only, and the NATIVE/STOCK_TOKEN picker is gone", () => {
   const create = readFileSync(join(here, "../pages/Create.tsx"), "utf8");
   const shell = readFileSync(join(here, "../components/create/CreateWizardShell.tsx"), "utf8");
   const step = readFileSync(join(here, "../components/create/GraduationMarketStep.tsx"), "utf8");
+  const catalog = readFileSync(join(here, "./graduationQuoteCatalog.ts"), "utf8");
   assert.match(create, /const TOTAL_STEPS = 6;/);
   assert.match(create, /GraduationMarketStep/);
+  assert.match(create, /directDeployBindPath/);
   assert.doesNotMatch(create, /RobinhoodGraduationMarketPicker/);
+  assert.doesNotMatch(create, /nativeDefaultQuoteAsset/);
   assert.doesNotMatch(create, /Stock Battlefield/);
-  assert.doesNotMatch(create, /kind === "NATIVE"/);
-  assert.doesNotMatch(create, /kind === "STOCK_TOKEN"/);
   assert.match(shell, /"Path", "Identity", "Story", "Bond", "Market", "Review"/);
-  assert.match(step, /copy\.title/);
-  assert.match(step, /Selected Graduation Market/);
-  assert.match(step, /data-testid="graduation-market-step"/);
-  assert.doesNotMatch(step, /Stock Battlefield/);
-  assert.doesNotMatch(step, /onKindChange/);
+  assert.match(step, /No approved Graduation Markets are available on this chain yet/);
+  assert.doesNotMatch(step, /nativeDefaultQuoteAsset/);
+  assert.match(catalog, /catalogQuoteAssetsOnly/);
+  assert.doesNotMatch(catalog, /mergeCatalogWithNativeDefault/);
+  assert.doesNotMatch(catalog, /presentationDefault\) return asset/);
 });
 
 test("Robinhood Stock Token persist authority is unchanged", () => {
@@ -187,12 +218,17 @@ test("Robinhood Stock Token persist authority is unchanged", () => {
   assert.match(drafts, /Graduation Market must be NATIVE or STOCK_TOKEN/);
   assert.match(drafts, /getRobinhoodStockGraduationAsset/);
   assert.match(drafts, /persistDraftGraduationPolicy/);
-  assert.match(drafts, /persistGraduationQuoteSelection/);
-  assert.match(drafts, /campaign_draft_graduation_quote_selection/);
+  assert.match(drafts, /getGraduationQuoteAssetDetail/);
+  assert.doesNotMatch(drafts, /quote_contract_or_mint/);
+  assert.doesNotMatch(drafts, /provider_key/);
 });
 
 test("provider labels stay product-facing", () => {
   assert.equal(providerLabel({ chainId: "4663", provider: { key: "robinhood-stock-token", displayName: "Robinhood Stock Token Registry" } }), "Robinhood");
   assert.equal(providerLabel({ chainId: "101", provider: { key: "solana-basic" } }), "Solana");
   assert.equal(providerLabel({ chainId: "56", provider: { key: "bnb-basic" } }), "BNB");
+});
+
+test("catalog native identity is classified as native even when symbol is wrapped", () => {
+  assert.equal(isNativeQuote(catalogQuote({ chainId: "101", symbol: "WSOL", identityKind: "NATIVE" })), true);
 });

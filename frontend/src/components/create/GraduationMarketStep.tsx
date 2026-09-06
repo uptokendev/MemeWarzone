@@ -8,8 +8,8 @@ import {
   displayQuoteSymbol,
   groupQuoteAssetsByCategory,
   isMovingQuoteAsset,
+  isNativeQuote,
   MOVING_QUOTE_NOTICE,
-  nativeDefaultQuoteAsset,
   selectedMarketSummary,
 } from "@/lib/graduationMarketPresentation.mjs";
 import {
@@ -21,7 +21,7 @@ export type GraduationMarketStepProps = {
   chainId: number;
   ticker: string;
   selected: GraduationQuoteAsset | null;
-  onSelectedChange: (asset: GraduationQuoteAsset) => void;
+  onSelectedChange: (asset: GraduationQuoteAsset | null) => void;
   onNext: () => void;
   canNext: boolean;
 };
@@ -34,7 +34,7 @@ export function GraduationMarketStep({
   onNext,
   canNext,
 }: GraduationMarketStepProps) {
-  const [items, setItems] = useState<GraduationQuoteAsset[]>(() => [nativeDefaultQuoteAsset(chainId)]);
+  const [items, setItems] = useState<GraduationQuoteAsset[]>([]);
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState("POPULAR");
   const [loading, setLoading] = useState(false);
@@ -47,19 +47,19 @@ export function GraduationMarketStep({
     fetchGraduationQuoteAssets(chainId)
       .then((next) => {
         if (cancelled) return;
-        setItems(next);
-        const stillSelected = next.some((item) => item.id === selected?.id);
+        const catalogItems = next.filter((item) => item.newGraduationEligible === true);
+        setItems(catalogItems);
+        const stillSelected = catalogItems.some((item) => item.id === selected?.id);
         if (!stillSelected) {
-          const native = next.find((item) => String(item.identityKind || "").toUpperCase() === "NATIVE") || next[0];
-          if (native) onSelectedChange(native);
+          const native = catalogItems.find((item) => isNativeQuote(item)) || catalogItems[0] || null;
+          onSelectedChange(native);
         }
       })
       .catch((err) => {
         if (cancelled) return;
-        const fallback = [nativeDefaultQuoteAsset(chainId)];
-        setItems(fallback);
+        setItems([]);
         setError(String((err as Error)?.message || err || "Graduation Market catalog unavailable."));
-        if (!selected) onSelectedChange(fallback[0]);
+        onSelectedChange(null);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -146,7 +146,7 @@ export function GraduationMarketStep({
           {error ? (
             <div className="flex items-start gap-2 rounded-lg border border-orange-400/25 bg-orange-500/10 p-2.5 text-xs text-orange-100">
               <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
-              <span>{error} Native bonding default remains available.</span>
+              <span>{error}</span>
             </div>
           ) : null}
 
@@ -170,8 +170,12 @@ export function GraduationMarketStep({
               ))}
             </div>
           ) : (
-            <div className="rounded-lg border border-border/60 bg-background/25 p-3 text-xs text-muted-foreground">
-              No approved quote assets match this search.
+            <div className="rounded-lg border border-border/60 bg-background/25 p-3 text-xs text-muted-foreground" data-testid="graduation-market-empty">
+              {loading
+                ? "Loading approved Graduation Markets…"
+                : items.length
+                  ? "No approved quote assets match this search."
+                  : "No approved Graduation Markets are available on this chain yet."}
             </div>
           )}
 

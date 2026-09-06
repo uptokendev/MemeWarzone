@@ -165,15 +165,15 @@ export function nativeDefaultQuoteAsset(chainId) {
   };
 }
 
-export function mergeCatalogWithNativeDefault(chainId, items) {
-  const list = Array.isArray(items) ? items.filter(Boolean) : [];
-  const natives = list.filter(isNativeQuote);
-  if (natives.length) {
-    const preferred = natives.find((item) => item.presentationDefault !== true) || natives[0];
-    const nativeIds = new Set(natives.map((item) => item.id));
-    return [preferred, ...list.filter((item) => !nativeIds.has(item.id))];
-  }
-  return [nativeDefaultQuoteAsset(chainId), ...list];
+export function catalogQuoteAssetsOnly(items) {
+  return (Array.isArray(items) ? items : []).filter((item) => item && item.presentationDefault !== true);
+}
+
+export function directDeployBindPath(asset) {
+  if (!asset || asset.presentationDefault === true || asset.newGraduationEligible !== true) return null;
+  if (isRobinhoodStockQuote(asset)) return "robinhood-stock";
+  if (isNativeQuote(asset)) return "native";
+  return null;
 }
 
 export function formatTokenTicker(ticker) {
@@ -198,15 +198,14 @@ export function selectedMarketSummary({ ticker, asset, chainId }) {
 export function draftGraduationSelection(asset, chainId) {
   const resolvedChainId = Number(asset?.chainId || chainId);
   const policyVersion =
-    asset?.policy?.version != null && asset.policy.version !== ""
+    asset?.policy?.version != null && String(asset.policy.version).trim() !== ""
       ? String(asset.policy.version)
-      : String(asset?.policy?.policyKey || (asset?.presentationDefault ? "chain-native-default" : "catalog"));
+      : String(asset?.policy?.policyKey || "");
   return {
     graduationQuoteAssetId: String(asset?.id || ""),
-    chainId: resolvedChainId,
-    quoteContractOrMint: String(asset?.contractAddressOrMint || `native:${resolvedChainId}`),
-    provider: String(asset?.provider?.key || nativeProviderKey(resolvedChainId)),
+    graduationQuoteStateVersion: Number(asset?.stateVersion || 0),
     policyVersion,
+    chainId: resolvedChainId,
   };
 }
 
@@ -220,9 +219,7 @@ export function buildCreateDraftGraduationFields(asset, chainId) {
   const selection = draftGraduationSelection(asset, chainId);
   const fields = {
     graduationQuoteAssetId: selection.graduationQuoteAssetId,
-    graduationQuoteChainId: selection.chainId,
-    graduationQuoteContractOrMint: selection.quoteContractOrMint,
-    graduationQuoteProvider: selection.provider,
+    graduationQuoteStateVersion: selection.graduationQuoteStateVersion,
     graduationMarketPolicyVersion: selection.policyVersion,
   };
   const n = Number(chainId);
@@ -232,7 +229,7 @@ export function buildCreateDraftGraduationFields(asset, chainId) {
   return {
     ...fields,
     graduationMarketKind: legacyKind,
-    graduationQuoteAsset: legacyKind === "STOCK_TOKEN" ? selection.quoteContractOrMint : null,
+    graduationQuoteAsset: legacyKind === "STOCK_TOKEN" ? String(asset?.contractAddressOrMint || "") : null,
     graduationMarketPolicyVersion: "robinhood_market_v1",
   };
 }

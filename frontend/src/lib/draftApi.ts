@@ -626,9 +626,7 @@ export type CampaignDraft = {
   updatedAt: string;
   tickerReservation?: TickerReservation | null;
   graduationQuoteAssetId?: string | null;
-  graduationQuoteChainId?: number | null;
-  graduationQuoteContractOrMint?: string | null;
-  graduationQuoteProvider?: string | null;
+  graduationQuoteStateVersion?: number | null;
   graduationMarketKind?: string | null;
   graduationQuoteAsset?: string | null;
   graduationMarketPolicyVersion?: string | null;
@@ -781,9 +779,7 @@ export type CreateDraftInput = {
   graduationTargetWei?: string;
   visibility?: DraftVisibility;
   graduationQuoteAssetId?: string | null;
-  graduationQuoteChainId?: number | null;
-  graduationQuoteContractOrMint?: string | null;
-  graduationQuoteProvider?: string | null;
+  graduationQuoteStateVersion?: number | null;
   graduationMarketKind?: string | null;
   graduationQuoteAsset?: string | null;
   graduationMarketPolicyVersion?: string | null;

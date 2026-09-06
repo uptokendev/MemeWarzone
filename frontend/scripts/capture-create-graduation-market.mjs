@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// UI screenshot fixtures only. Mock USDC / extra quote rows are not production catalog
+// availability for BNB or Solana. Production Step 5 renders GET /api/graduation/quote-assets.
 import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -30,6 +32,7 @@ const VIEWPORTS = [
 ];
 
 function quoteItems(chainId) {
+  // Fixture catalog rows for screenshot layout only — not a claim of live BASIC stables.
   const nativeSymbol = chainId === 101 ? "SOL" : chainId === 56 || chainId === 97 ? "BNB" : "ETH";
   const native = {
     id: `native:${chainId}`,

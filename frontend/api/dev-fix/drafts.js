@@ -3,6 +3,8 @@ export * from "./drafts-base.js";
 
 import { getQuery, json } from "../../server/http.js";
 import { getRobinhoodStockGraduationAsset } from "../lib/robinhoodStockGraduationRegistry.js";
+import { getGraduationQuoteAssetDetail } from "../lib/quoteAssetCatalog.js";
+import { catalogQuoteSelectionReference } from "../lib/draftGraduationQuoteSelection.js";
 import { runJsonTransform } from "./json-transform.js";
 import {
   augmentDraftLifecycle,
@@ -76,9 +78,7 @@ function attachDraftQuoteSelection(draft, row) {
   return {
     ...draft,
     graduationQuoteAssetId: row.quote_asset_id || null,
-    graduationQuoteChainId: row.chain_id != null ? Number(row.chain_id) : Number(draft.chainId || draft.chain_id || 0) || null,
-    graduationQuoteContractOrMint: row.quote_contract_or_mint || null,
-    graduationQuoteProvider: row.provider_key || null,
+    graduationQuoteStateVersion: row.selected_state_version != null ? Number(row.selected_state_version) : null,
     graduationMarketPolicyVersion: row.policy_version || draft.graduationMarketPolicyVersion || null,
   };
 }
@@ -89,7 +89,7 @@ async function loadDraftQuoteSelections(pool, draftIds) {
   if (!pool || !ids.length) return selections;
   try {
     const result = await pool.query(
-      `select draft_id::text as draft_id, chain_id, quote_asset_id, quote_contract_or_mint, provider_key, policy_version
+      `select draft_id::text as draft_id, chain_id, quote_asset_id, selected_state_version, policy_version
          from public.campaign_draft_graduation_quote_selection
         where draft_id::text = any($1::text[])`,
       [ids],
@@ -116,28 +116,23 @@ async function persistGraduationQuoteSelection(pool, draftId, body) {
     throw new Error("Graduation Market is locked after deployment.");
   }
 
-  const chainId = Number(body.graduationQuoteChainId || body.chainId || draft.chain_id);
-  const quoteContract = String(body.graduationQuoteContractOrMint || "").trim();
-  const provider = String(body.graduationQuoteProvider || "").trim();
-  const policyVersion = String(body.graduationMarketPolicyVersion || body.policyVersion || "").trim();
-  if (!Number.isFinite(chainId) || chainId <= 0 || !quoteContract || !provider || !policyVersion) {
-    throw new Error("Graduation Market selection is incomplete.");
-  }
+  const detail = await getGraduationQuoteAssetDetail(quoteAssetId);
+  if (!detail?.item) throw new Error("Graduation Market quote asset is not in the catalog.");
+  const reference = catalogQuoteSelectionReference(detail.item, draft.chain_id);
 
   try {
     const result = await pool.query(
       `insert into public.campaign_draft_graduation_quote_selection(
-         draft_id, chain_id, quote_asset_id, quote_contract_or_mint, provider_key, policy_version, updated_at
-       ) values ($1::uuid,$2,$3,$4,$5,$6,now())
+         draft_id, chain_id, quote_asset_id, selected_state_version, policy_version, updated_at
+       ) values ($1::uuid,$2,$3,$4,$5,now())
        on conflict (draft_id) do update set
          chain_id=excluded.chain_id,
          quote_asset_id=excluded.quote_asset_id,
-         quote_contract_or_mint=excluded.quote_contract_or_mint,
-         provider_key=excluded.provider_key,
+         selected_state_version=excluded.selected_state_version,
          policy_version=excluded.policy_version,
          updated_at=now()
-       returning draft_id::text as draft_id, chain_id, quote_asset_id, quote_contract_or_mint, provider_key, policy_version`,
-      [String(draftId), chainId, quoteAssetId, quoteContract, provider, policyVersion],
+       returning draft_id::text as draft_id, chain_id, quote_asset_id, selected_state_version, policy_version`,
+      [String(draftId), reference.chainId, reference.quoteAssetId, reference.selectedStateVersion, reference.policyVersion],
     );
     return result.rows[0] || null;
   } catch (error) {
@@ -451,4 +446,5 @@ export const robinhoodDraftGraduationPolicyInternals = {
   normalizeDraftPolicyRow,
   attachDraftPolicy,
   attachDraftQuoteSelection,
+  persistGraduationQuoteSelection,
 };
