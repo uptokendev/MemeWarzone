@@ -116,6 +116,27 @@ function contractChecks(readiness, presentation) {
   });
 }
 
+function walletNetworkDetail(params, presentation, wrongWalletNetwork) {
+  if (wrongWalletNetwork) {
+    return `Your wallet is connected to chain ${params.walletChainId}. Switch to ${presentation.chainLabel} (chain ${params.chainId}) to continue.`;
+  }
+  if (params.hasAccount) {
+    return presentation.isRobinhood
+      ? `Wallet connected to ${presentation.chainLabel} (chain ${params.chainId}). Gas is paid in ${presentation.nativeSymbol}.`
+      : `Wallet connected to ${presentation.chainLabel} (chain ${params.chainId}).`;
+  }
+  return presentation.isRobinhood
+    ? `Connect an EVM wallet on ${presentation.chainLabel} (chain ${params.chainId}). Gas is paid in ${presentation.nativeSymbol}.`
+    : `Connect a BNB-compatible wallet on ${presentation.chainLabel} (chain ${params.chainId}).`;
+}
+
+function walletConnectionDetail(params, presentation) {
+  if (params.hasSigner && params.hasAccount) return "Wallet ready.";
+  return presentation.isRobinhood
+    ? "Connect an EVM wallet to continue."
+    : "Connect a BNB-compatible wallet to continue.";
+}
+
 export function buildEvmLaunchpadSafetyStatus(params) {
   const presentation = getEvmLaunchpadPresentation(params.chainId);
   const readiness = params.contractReadiness;
@@ -157,11 +178,7 @@ export function buildEvmLaunchpadSafetyStatus(params) {
         id: "network",
         label: "Wallet network",
         state: wrongWalletNetwork ? "blocked" : params.hasAccount ? "ready" : "pending",
-        detail: wrongWalletNetwork
-          ? `Your wallet is connected to chain ${params.walletChainId}. Switch to ${presentation.chainLabel} (chain ${params.chainId}) to continue.`
-          : params.hasAccount
-            ? `Wallet connected to ${presentation.chainLabel} (chain ${params.chainId}). Gas is paid in ${presentation.nativeSymbol}.`
-            : `Connect an ${presentation.walletLabel} on ${presentation.chainLabel} (chain ${params.chainId}). Gas is paid in ${presentation.nativeSymbol}.`,
+        detail: walletNetworkDetail(params, presentation, wrongWalletNetwork),
       },
       {
         id: "routeAuth",
@@ -173,10 +190,7 @@ export function buildEvmLaunchpadSafetyStatus(params) {
         id: "signer",
         label: "Wallet connection",
         state: params.hasSigner && params.hasAccount ? "ready" : "pending",
-        detail:
-          params.hasSigner && params.hasAccount
-            ? "Wallet ready."
-            : `Connect an ${presentation.walletLabel} to continue.`,
+        detail: walletConnectionDetail(params, presentation),
       },
       ...contractChecks(readiness, presentation),
     ],
