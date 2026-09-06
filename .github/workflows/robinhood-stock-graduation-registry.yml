@@ -6,11 +6,15 @@ on:
       - "database/robinhood_stock_graduation_registry.sql"
       - "frontend/api/admin/robinhoodStockGraduationRegistry.js"
       - "frontend/api/dev-fix/robinhoodStockCreatePolicy.js"
+      - "frontend/api/graduation/quote-assets.js"
+      - "frontend/api/lib/quoteAssetCatalog.js"
+      - "frontend/api/lib/quoteAssetCatalog.test.mjs"
       - "frontend/api/lib/robinhoodStockGraduationRegistry.js"
       - "frontend/api/lib/robinhoodStockGraduationAdminOps.js"
       - "frontend/api/lib/robinhoodStockGraduationRegistry.test.mjs"
       - "frontend/api/robinhood/stock-tokens.js"
       - "frontend/api/server.mjs"
+      - "frontend/supabase/migrations/20260906231500_quote_asset_catalog.sql"
       - "docs/robinhood/stock-graduation-registry-api.md"
       - ".github/workflows/robinhood-stock-graduation-registry.yml"
   workflow_dispatch:
@@ -35,13 +39,17 @@ jobs:
         run: |
           node --check frontend/api/lib/robinhoodStockGraduationRegistry.js
           node --check frontend/api/lib/robinhoodStockGraduationAdminOps.js
+          node --check frontend/api/lib/quoteAssetCatalog.js
           node --check frontend/api/admin/robinhoodStockGraduationRegistry.js
           node --check frontend/api/robinhood/stock-tokens.js
+          node --check frontend/api/graduation/quote-assets.js
           node --check frontend/api/dev-fix/robinhoodStockCreatePolicy.js
           node --check frontend/api/server.mjs
       - name: Registry authority tests
         working-directory: frontend
-        run: node --test api/lib/robinhoodStockGraduationRegistry.test.mjs
+        run: |
+          node --test api/lib/robinhoodStockGraduationRegistry.test.mjs
+          node --test api/lib/quoteAssetCatalog.test.mjs
       - name: API relative-import gate
         working-directory: frontend
         run: npm run check:api-imports
