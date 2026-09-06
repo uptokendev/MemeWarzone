@@ -1,4 +1,4 @@
-import arenaBattles from "./arenaBattles.js";
+import arenaBattles from "./arenaBattlesRuntime.js";
 import arenaBattleMetrics from "./arenaBattleMetrics.js";
 import arenaBattlePointsV3Admin from "./arenaBattlePointsV3Admin.js";
 import arenaBoosts from "./arenaBoosts.js";
