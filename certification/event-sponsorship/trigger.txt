@@ -1,1 +1,1 @@
-process-certification trigger
+process-certification trigger current-authority 368f359bbae6ec23c0d260e75cd0dbfe5392b6c8
