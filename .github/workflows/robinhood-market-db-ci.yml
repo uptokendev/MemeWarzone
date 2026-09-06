@@ -5,8 +5,6 @@ on:
     branches: [main]
     paths:
       - "db/migrations/**"
-      - "frontend/scripts/prepare-robinhood-local-db.mjs"
-      - "frontend/scripts/prepare-robinhood-local-db.test.mjs"
       - "frontend/api/lib/robinhoodStockArenaSnapshotCompatibility.test.mjs"
       - "realtime-indexer/scripts/verify-robinhood-market-db.mjs"
       - "realtime-indexer/src/robinhoodPairSemantics.ts"
@@ -16,22 +14,7 @@ on:
       - "realtime-indexer/src/robinhoodStockTokenRegistry.ts"
       - "realtime-indexer/src/robinhoodStockAcquisitionQuote.ts"
       - "realtime-indexer/src/robinhoodMarketValuation.ts"
-      - "realtime-indexer/src/robinhoodBeatTheMarket.ts"
-      - "realtime-indexer/src/robinhoodBeatTheMarketService.ts"
-      - "realtime-indexer/src/robinhoodBeatTheMarketApi.ts"
-      - "realtime-indexer/src/wtrPreload.ts"
-      - "realtime-indexer/src/tests/robinhoodPairSemantics.test.ts"
-      - "realtime-indexer/src/tests/robinhoodMarketRoutes.test.ts"
-      - "realtime-indexer/src/tests/robinhoodGraduationQuote.test.ts"
-      - "realtime-indexer/src/tests/robinhoodNativeUsdOracle.test.ts"
-      - "realtime-indexer/src/tests/robinhoodStockTokenRegistry.test.ts"
-      - "realtime-indexer/src/tests/robinhoodStockAcquisitionQuote.test.ts"
-      - "realtime-indexer/src/tests/robinhoodMarketValuation.test.ts"
-      - "realtime-indexer/src/tests/robinhoodBeatTheMarket.test.ts"
-      - "realtime-indexer/src/tests/robinhoodBeatTheMarketService.test.ts"
-      - "realtime-indexer/src/tests/robinhoodV3PoolIndexer.test.ts"
       - "realtime-indexer/src/robinhoodV3PoolIndexer.ts"
-      - "realtime-indexer/src/robinhoodMarketApi.ts"
       - ".github/workflows/robinhood-market-db-ci.yml"
   push:
     branches:
@@ -39,8 +22,6 @@ on:
       - "build/cross-chain-stabilization-rh-base"
     paths:
       - "db/migrations/**"
-      - "frontend/scripts/prepare-robinhood-local-db.mjs"
-      - "frontend/scripts/prepare-robinhood-local-db.test.mjs"
       - "frontend/api/lib/robinhoodStockArenaSnapshotCompatibility.test.mjs"
       - "realtime-indexer/scripts/verify-robinhood-market-db.mjs"
       - "realtime-indexer/src/robinhoodPairSemantics.ts"
@@ -50,30 +31,11 @@ on:
       - "realtime-indexer/src/robinhoodStockTokenRegistry.ts"
       - "realtime-indexer/src/robinhoodStockAcquisitionQuote.ts"
       - "realtime-indexer/src/robinhoodMarketValuation.ts"
-      - "realtime-indexer/src/robinhoodBeatTheMarket.ts"
-      - "realtime-indexer/src/robinhoodBeatTheMarketService.ts"
-      - "realtime-indexer/src/robinhoodBeatTheMarketApi.ts"
-      - "realtime-indexer/src/wtrPreload.ts"
-      - "realtime-indexer/src/tests/robinhoodPairSemantics.test.ts"
-      - "realtime-indexer/src/tests/robinhoodMarketRoutes.test.ts"
-      - "realtime-indexer/src/tests/robinhoodGraduationQuote.test.ts"
-      - "realtime-indexer/src/tests/robinhoodNativeUsdOracle.test.ts"
-      - "realtime-indexer/src/tests/robinhoodStockTokenRegistry.test.ts"
-      - "realtime-indexer/src/tests/robinhoodStockAcquisitionQuote.test.ts"
-      - "realtime-indexer/src/tests/robinhoodMarketValuation.test.ts"
-      - "realtime-indexer/src/tests/robinhoodBeatTheMarket.test.ts"
-      - "realtime-indexer/src/tests/robinhoodBeatTheMarketService.test.ts"
-      - "realtime-indexer/src/tests/robinhoodV3PoolIndexer.test.ts"
       - "realtime-indexer/src/robinhoodV3PoolIndexer.ts"
-      - "realtime-indexer/src/robinhoodMarketApi.ts"
       - ".github/workflows/robinhood-market-db-ci.yml"
 
 permissions:
   contents: read
-
-concurrency:
-  group: robinhood-market-db-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
 
 jobs:
   market-db:
@@ -103,35 +65,29 @@ jobs:
       LOCAL_DISABLE_ABLY: "1"
     steps:
       - uses: actions/checkout@v4
-
+        with:
+          ref: 0204c4a47555a747b95e7c80deb113d36f91e491
+      - name: Pin exact production authority
+        run: test "$(git rev-parse HEAD)" = "0204c4a47555a747b95e7c80deb113d36f91e491"
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-
       - name: Install frontend migration dependencies
         run: npm install --prefix frontend --package-lock=false --no-audit --no-fund
-
       - name: Install realtime indexer dependencies
         run: npm install --prefix realtime-indexer --package-lock=false --no-audit --no-fund
-
       - name: Compile realtime indexer
         run: npm run --prefix realtime-indexer build
-
       - name: Prove tournament support migration is empty-DB replay safe
         run: node --test frontend/scripts/prepare-robinhood-local-db.test.mjs
-
       - name: Prove Battle V2 consumes normalized Robinhood Stock USD without native fallback
         working-directory: frontend
         run: node --test api/lib/robinhoodStockArenaSnapshotCompatibility.test.mjs
-
       - name: Prove Robinhood pair, route, graduation, oracle, registry, valuation, Beat the Market, and acquisition-quote semantics
         run: npx --prefix realtime-indexer tsx --test realtime-indexer/src/tests/robinhoodPairSemantics.test.ts realtime-indexer/src/tests/robinhoodMarketRoutes.test.ts realtime-indexer/src/tests/robinhoodGraduationQuote.test.ts realtime-indexer/src/tests/robinhoodNativeUsdOracle.test.ts realtime-indexer/src/tests/robinhoodStockTokenRegistry.test.ts realtime-indexer/src/tests/robinhoodStockAcquisitionQuote.test.ts realtime-indexer/src/tests/robinhoodMarketValuation.test.ts realtime-indexer/src/tests/robinhoodBeatTheMarket.test.ts realtime-indexer/src/tests/robinhoodBeatTheMarketService.test.ts realtime-indexer/src/tests/robinhoodV3PoolIndexer.test.ts
-
       - name: Replay all committed migrations into a fresh Robinhood database
         run: node frontend/scripts/prepare-robinhood-local-db.mjs
-
       - name: Replay a second time to prove the ledger is idempotent
         run: node frontend/scripts/prepare-robinhood-local-db.mjs
-
       - name: Prove bonding plus V3 continuity, duplicate safety, cursor persistence, and Stock USD evidence
         run: node realtime-indexer/scripts/verify-robinhood-market-db.mjs
