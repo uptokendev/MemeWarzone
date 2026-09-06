@@ -164,7 +164,7 @@ async function resolveCatalogQuoteConfig({ chainId, quoteConfigId }) {
     providerId: item.provider?.id, providerKey: item.provider?.key, providerClassName: item.provider?.providerClass,
     policyId: item.policy?.id, policyKey: item.policy?.policyKey, stateVersion: Number(item.stateVersion || 0),
     mint: quoteMint, policyVersion: parsePositiveInteger(item.policy?.version, 1, 65_535), profile,
-    providerClass: providerClassCode(item.provider?.providerClass), decimals: Number(route.decimals ?? (profile === QUOTE_PROFILE.NATIVE ? 9 : 0)),
+    providerClass: profile === QUOTE_PROFILE.NATIVE ? PROVIDER_CLASS.NATIVE : providerClassCode(item.provider?.providerClass), decimals: Number(route.decimals ?? (profile === QUOTE_PROFILE.NATIVE ? 9 : 0)),
     acquisitionProgram: publicKeyString(route.acquisitionProgram || SYSTEM_PROGRAM_ID, "acquisitionProgram"), recoveryAccount: SYSTEM_PROGRAM_ID,
     maxSlippageBps, maxImpactBps, maxDeviationBps,
     quoteUsdMicros: route.referenceUsdMicros == null ? null : BigInt(route.referenceUsdMicros),
