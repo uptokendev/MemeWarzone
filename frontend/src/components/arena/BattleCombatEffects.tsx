@@ -7,6 +7,7 @@ import {
   burstCount,
   capHoles,
   planCombatAttacks,
+  retainCurrentTrailerDamage,
   severityFor,
   shouldClearCombatBaseline,
   snapshotCombatScore,
@@ -111,7 +112,13 @@ export function BattleCombatEffects({
     const prior = previous.current;
     previous.current = next;
     const attacks = planCombatAttacks(prior, next);
-    if (!attacks.length) return;
+    const leaderChanged = Boolean(prior && prior.leader !== next.leader);
+
+    if (!attacks.length) {
+      setHoles((current) => retainCurrentTrailerDamage(current, next) as BulletHole[]);
+      if (leaderChanged) setTracers([]);
+      return;
+    }
 
     const now = Date.now();
     const newHoles: BulletHole[] = [];
@@ -157,8 +164,15 @@ export function BattleCombatEffects({
         }
       }
     }
-    if (newHoles.length) setHoles((current) => capHoles([...current, ...newHoles]) as BulletHole[]);
-    if (newTracers.length) setTracers((current) => [...current, ...newTracers].slice(-MAX_TRACERS));
+    setHoles((current) => capHoles([
+      ...(retainCurrentTrailerDamage(current, next) as BulletHole[]),
+      ...newHoles,
+    ]) as BulletHole[]);
+    if (leaderChanged) {
+      setTracers(newTracers.slice(-MAX_TRACERS));
+    } else if (newTracers.length) {
+      setTracers((current) => [...current, ...newTracers].slice(-MAX_TRACERS));
+    }
   }, [enabled, metrics, reducedMotion, compact, stacked]);
 
   useEffect(() => {
