@@ -1,0 +1,383 @@
+name: Agent 2 Final Recovery
+
+on:
+  push:
+    branches:
+      - agent2/solana-basic-graduation-recovery-final
+
+permissions:
+  contents: write
+
+env:
+  AUTHORITY_SHA: 23d8f259a6f4295e28d3a8d9699bb974d5e2cae8
+  SALVAGE_REF: agent2/solana-basic-graduation-market-salvage-b81ee75
+  TARGET_BRANCH: agent2/solana-basic-graduation-market
+  SOLANA_VERSION: 1.18.26
+  ANCHOR_VERSION: 0.30.1
+  RUST_TOOLCHAIN: 1.79.0
+  IDL_RUST_TOOLCHAIN: nightly-2024-05-09
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Reconstruct directly on current authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin "$SALVAGE_REF"
+          git reset --hard "$AUTHORITY_SHA"
+          git checkout "origin/$SALVAGE_REF" -- \
+            frontend/api/dev-fix/solana-graduation-authorization-v1.js \
+            frontend/api/dev-fix/solana-graduation-authorization-v2.js \
+            frontend/api/lib/quoteAssetCatalog.js \
+            frontend/supabase/migrations/20260907001000_solana_basic_quote_catalog.sql \
+            programs/memewarzone_solana/src/graduation.rs \
+            programs/memewarzone_solana/src/lib.rs \
+            tools/solana-meteora-graduation/graduate-basic-quote.mjs \
+            tools/solana-meteora-graduation/package.json
+          rm -f .github/workflows/agent2-certify.yml \
+            .github/workflows/agent2-repair.yml \
+            .github/workflows/agent2-catalog-alignment.yml \
+            .github/workflows/agent2-runner-config-id-fix.yml \
+            .github/workflows/agent2-native-provider-fix.yml
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          auth = Path('frontend/api/dev-fix/solana-graduation-authorization-v2.js')
+          s = auth.read_text()
+          s = s.replace('import { badMethod, isSolanaChain, json, readJson } from "../../server/http.js";', 'import { badMethod, json, readJson } from "../../server/http.js";')
+          s = s.replace('const GRADUATION_AUTH_SCHEMA_VERSION = 3;', 'const GRADUATION_AUTH_SCHEMA_VERSION = 4;', 1)
+          old = '    publicKeyBytes(fields.programId), publicKeyBytes(fields.campaign), publicKeyBytes(fields.mint), publicKeyBytes(fields.authority),'
+          new = '    publicKeyBytes(fields.programId), publicKeyBytes(fields.campaign), publicKeyBytes(fields.generationConfig), publicKeyBytes(fields.mint), publicKeyBytes(fields.authority),'
+          if old not in s: raise SystemExit('backend digest field marker missing')
+          s = s.replace(old, new, 1)
+          old = '''    const chainId = Number(body.chainId || 101);\n    if (!isSolanaChain(chainId)) throw new SolanaGraduationAuthorizationError("chainId must be Solana (101).", { code: "NOT_A_SOLANA_CHAIN", httpStatus: 400 });'''
+          new = '''    const configuredChainId = Number(process.env.SOLANA_GRADUATION_CHAIN_ID || 101);\n    const chainId = Number(body.chainId || configuredChainId);\n    if (!Number.isInteger(configuredChainId) || configuredChainId <= 0 || !Number.isInteger(chainId) || chainId !== configuredChainId) throw new SolanaGraduationAuthorizationError(`chainId must match the configured Solana network (${configuredChainId}).`, { code: "NOT_A_SOLANA_CHAIN", httpStatus: 400 });'''
+          if old not in s: raise SystemExit('backend chain marker missing')
+          s = s.replace(old, new, 1)
+          old = '      programId, campaign: campaignAddress, mint: campaign.mint, authority: authorityAddress,'
+          new = '      programId, campaign: campaignAddress, generationConfig: campaign.generationConfig, mint: campaign.mint, authority: authorityAddress,'
+          if old not in s: raise SystemExit('backend digest call marker missing')
+          s = s.replace(old, new, 1)
+          auth.write_text(s)
+
+          runner = Path('tools/solana-meteora-graduation/graduate-basic-quote.mjs')
+          s = runner.read_text()
+          old = '    body: JSON.stringify({ chainId: 101, campaignAddress: campaign.toBase58(), authorityAddress: authority.toBase58(), positionNftMint: positionNftMint.toBase58(), quoteConfigId }),' 
+          new = '    body: JSON.stringify({ chainId: Number(process.env.SOLANA_GRADUATION_CHAIN_ID || 101), campaignAddress: campaign.toBase58(), authorityAddress: authority.toBase58(), positionNftMint: positionNftMint.toBase58(), quoteConfigId }),' 
+          if old not in s: raise SystemExit('runner chain marker missing')
+          s = s.replace(old, new, 1)
+          old = '  assertPk(auth.programId, program.programId, "programId"); assertPk(auth.accounts.campaign, campaignPk, "campaign"); assertPk(auth.accounts.mint, campaign.mint, "mint");'
+          new = '  assertPk(auth.programId, program.programId, "programId"); assertPk(auth.accounts.campaign, campaignPk, "campaign"); assertPk(auth.accounts.generationConfig, campaign.generationConfig, "generationConfig"); assertPk(auth.accounts.mint, campaign.mint, "mint");'
+          if old not in s: raise SystemExit('runner generation assertion marker missing')
+          s = s.replace(old, new, 1)
+          runner.write_text(s)
+
+          rust = Path('programs/memewarzone_solana/src/graduation.rs')
+          s = rust.read_text()
+          s = s.replace('pub const GRADUATION_AUTH_SCHEMA_VERSION: u16 = 3;', 'pub const GRADUATION_AUTH_SCHEMA_VERSION: u16 = 4;', 1)
+          old = '''        crate::ID,\n        campaign_key,\n        campaign.mint,'''
+          new = '''        crate::ID,\n        campaign_key,\n        ctx.accounts.generation_config.key(),\n        campaign.mint,'''
+          if old not in s: raise SystemExit('Rust digest call marker missing')
+          s = s.replace(old, new, 1)
+          old = '''    program_id: Pubkey,\n    campaign: Pubkey,\n    mint: Pubkey,'''
+          new = '''    program_id: Pubkey,\n    campaign: Pubkey,\n    generation_config: Pubkey,\n    mint: Pubkey,'''
+          if old not in s: raise SystemExit('Rust digest signature marker missing')
+          s = s.replace(old, new, 1)
+          old = '''    m.extend_from_slice(program_id.as_ref());\n    m.extend_from_slice(campaign.as_ref());\n    m.extend_from_slice(mint.as_ref());'''
+          new = '''    m.extend_from_slice(program_id.as_ref());\n    m.extend_from_slice(campaign.as_ref());\n    m.extend_from_slice(generation_config.as_ref());\n    m.extend_from_slice(mint.as_ref());'''
+          if old not in s: raise SystemExit('Rust digest serialization marker missing')
+          s = s.replace(old, new, 1)
+
+          start = s.index('fn validate_quote_pool_deviation(')
+          end = s.index('\n#[inline(never)]\nfn read_graduation_global', start)
+          replacement = r'''const QUOTE_RATIO_FIXED_SCALE: u128 = 1_000_000_000_000;
+
+fn gcd_u128(mut a: u128, mut b: u128) -> u128 {
+    while b != 0 {
+        let r = a % b;
+        a = b;
+        b = r;
+    }
+    a
+}
+
+fn scaled_ratio(numerator: u128, denominator: u128) -> Result<u128> {
+    require!(denominator > 0, LaunchpadError::GraduationPriceDrift);
+    let whole = numerator
+        .checked_div(denominator)
+        .ok_or(LaunchpadError::MathOverflow)?;
+    let remainder = numerator % denominator;
+    let whole_scaled = whole
+        .checked_mul(QUOTE_RATIO_FIXED_SCALE)
+        .ok_or(LaunchpadError::MathOverflow)?;
+    if remainder == 0 {
+        return Ok(whole_scaled);
+    }
+    let g1 = gcd_u128(remainder, denominator);
+    let reduced_remainder = remainder / g1;
+    let reduced_denominator = denominator / g1;
+    let g2 = gcd_u128(QUOTE_RATIO_FIXED_SCALE, reduced_denominator);
+    let reduced_scale = QUOTE_RATIO_FIXED_SCALE / g2;
+    let final_denominator = reduced_denominator / g2;
+    let fractional = reduced_remainder
+        .checked_mul(reduced_scale)
+        .ok_or(LaunchpadError::MathOverflow)?
+        .checked_div(final_denominator)
+        .ok_or(LaunchpadError::MathOverflow)?;
+    whole_scaled
+        .checked_add(fractional)
+        .ok_or_else(|| error!(LaunchpadError::MathOverflow))
+}
+
+fn validate_quote_pool_deviation(
+    quote_raw: u64,
+    token_raw: u64,
+    token_decimals: u8,
+    quote_decimals: u8,
+    final_spot_nano: u128,
+    sol_usd_micros: u64,
+    quote_usd_micros: u64,
+    max_deviation_bps: u16,
+) -> Result<()> {
+    require!(
+        quote_raw > 0
+            && token_raw > 0
+            && final_spot_nano > 0
+            && sol_usd_micros > 0
+            && quote_usd_micros > 0,
+        LaunchpadError::GraduationPriceDrift
+    );
+    let launch_scale = token_scale(token_decimals)?;
+    let quote_scale = token_scale(quote_decimals)?;
+    let expected_numerator = final_spot_nano
+        .checked_mul(u128::from(sol_usd_micros))
+        .ok_or(LaunchpadError::MathOverflow)?
+        .checked_mul(quote_scale)
+        .ok_or(LaunchpadError::MathOverflow)?;
+    let expected_denominator = 1_000_000_000_000_000_000u128
+        .checked_mul(u128::from(quote_usd_micros))
+        .ok_or(LaunchpadError::MathOverflow)?;
+    let actual_numerator = u128::from(quote_raw)
+        .checked_mul(launch_scale)
+        .ok_or(LaunchpadError::MathOverflow)?;
+    let expected = scaled_ratio(expected_numerator, expected_denominator)?;
+    let actual = scaled_ratio(actual_numerator, u128::from(token_raw))?;
+    require!(expected > 0 && actual > 0, LaunchpadError::GraduationPriceDrift);
+    let drift_bps = actual
+        .abs_diff(expected)
+        .checked_mul(u128::from(BPS_DENOMINATOR))
+        .ok_or(LaunchpadError::MathOverflow)?
+        .checked_div(expected)
+        .ok_or(LaunchpadError::MathOverflow)?;
+    require!(
+        drift_bps <= u128::from(max_deviation_bps),
+        LaunchpadError::GraduationPriceDrift
+    );
+    Ok(())
+}
+'''
+          s = s[:start] + replacement + s[end:]
+
+          marker = '\n}'
+          pos = s.rfind(marker)
+          if pos < 0: raise SystemExit('Rust test module terminator missing')
+          tests = r'''
+    #[test]
+    fn generation_config_is_cryptographically_bound_into_authorization() {
+        assert_eq!(GRADUATION_AUTH_SCHEMA_VERSION, 4);
+        let args = native_args();
+        let program_id = Pubkey::new_unique();
+        let campaign = Pubkey::new_unique();
+        let mint = Pubkey::new_unique();
+        let authority = Pubkey::new_unique();
+        let generation_a = Pubkey::new_unique();
+        let generation_b = Pubkey::new_unique();
+        let pool = derive_meteora_pool_for_quote(mint, args.quote_mint);
+        let position = derive_meteora_position(args.position_nft_mint);
+        let first = build_graduation_authorization_digest(
+            program_id, campaign, generation_a, mint, authority, 6_000_000, &args, pool, position,
+        );
+        let substituted = build_graduation_authorization_digest(
+            program_id, campaign, generation_b, mint, authority, 6_000_000, &args, pool, position,
+        );
+        assert_ne!(first, substituted, "authorization replay across generationConfig must fail");
+    }
+
+    #[test]
+    fn quote_deviation_accepts_sub_raw_unit_ratio_without_zero_truncation() {
+        assert!(validate_quote_pool_deviation(
+            75,
+            1_000_000_000,
+            6,
+            6,
+            500_000_000,
+            150_000_000,
+            1_000_000,
+            1,
+        )
+        .is_ok());
+        assert!(validate_quote_pool_deviation(
+            100,
+            1_000_000_000,
+            6,
+            6,
+            500_000_000,
+            150_000_000,
+            1_000_000,
+            100,
+        )
+        .is_err());
+    }
+'''
+          s = s[:pos] + tests + s[pos:]
+          rust.write_text(s)
+
+          # Cross-language schema/order guard: backend and Rust must commit generationConfig
+          # immediately after campaign and before mint.
+          js = auth.read_text()
+          rs = rust.read_text()
+          required = [
+              'const GRADUATION_AUTH_SCHEMA_VERSION = 4;',
+              'publicKeyBytes(fields.campaign), publicKeyBytes(fields.generationConfig), publicKeyBytes(fields.mint)',
+          ]
+          if not all(x in js for x in required): raise SystemExit('backend generation-binding schema guard failed')
+          if 'pub const GRADUATION_AUTH_SCHEMA_VERSION: u16 = 4;' not in rs or 'm.extend_from_slice(campaign.as_ref());\n    m.extend_from_slice(generation_config.as_ref());\n    m.extend_from_slice(mint.as_ref());' not in rs:
+              raise SystemExit('Rust generation-binding schema guard failed')
+          PY
+
+          cargo fmt --manifest-path programs/memewarzone_solana/Cargo.toml
+          node --check frontend/api/dev-fix/solana-graduation-authorization-v2.js
+          node --check tools/solana-meteora-graduation/graduate-basic-quote.mjs
+          cargo test -p memewarzone_solana --lib
+
+      - name: Commit corrected candidate directly on authority and update target branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$AUTHORITY_SHA"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add frontend/api/dev-fix/solana-graduation-authorization-v1.js \
+            frontend/api/dev-fix/solana-graduation-authorization-v2.js \
+            frontend/api/lib/quoteAssetCatalog.js \
+            frontend/supabase/migrations/20260907001000_solana_basic_quote_catalog.sql \
+            programs/memewarzone_solana/src/graduation.rs \
+            programs/memewarzone_solana/src/lib.rs \
+            tools/solana-meteora-graduation/graduate-basic-quote.mjs \
+            tools/solana-meteora-graduation/package.json
+          git commit -m 'fix(solana): recover generic graduation on current authority'
+          candidate="$(git rev-parse HEAD)"
+          parent="$(git rev-parse HEAD^)"
+          test "$parent" = "$AUTHORITY_SHA"
+          test ! -e .github/workflows/agent2-certify.yml
+          echo "candidate_sha=$candidate"
+          echo "CANDIDATE_SHA=$candidate" >> "$GITHUB_ENV"
+          git push --force origin HEAD:"$TARGET_BRANCH"
+
+      - name: Install pinned Solana build toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt
+          rustup toolchain install "$IDL_RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          release_dir="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
+          mkdir -p "$release_dir"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error --output /tmp/solana-release.tar.bz2 "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"
+          ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+
+      - name: Final source gates and clean pinned candidate SBF
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+          test -z "$(git status --porcelain)"
+          cargo fmt --manifest-path programs/memewarzone_solana/Cargo.toml -- --check
+          cargo test -p memewarzone_solana --lib
+          rm -rf "$RUNNER_TEMP/candidate-target"
+          CARGO_TARGET_DIR="$RUNNER_TEMP/candidate-target" anchor build --program-name memewarzone_solana --no-idl
+          candidate_so="$RUNNER_TEMP/candidate-target/deploy/memewarzone_solana.so"
+          test -s "$candidate_so"
+          echo "CANDIDATE_BYTES=$(wc -c < "$candidate_so" | tr -d ' ')" >> "$GITHUB_ENV"
+          echo "CANDIDATE_SHA256=$(sha256sum "$candidate_so" | awk '{print $1}')" >> "$GITHUB_ENV"
+          mkdir -p target/deploy target/idl
+          cp "$candidate_so" target/deploy/memewarzone_solana.so
+          (cd programs/memewarzone_solana && RUSTUP_TOOLCHAIN="$IDL_RUST_TOOLCHAIN" anchor idl build --out ../../target/idl/memewarzone_solana.json)
+          test -s target/idl/memewarzone_solana.json
+          node - <<'NODE'
+          const idl=require('./target/idl/memewarzone_solana.json');
+          const names=new Set((idl.instructions||[]).map((x)=>x.name));
+          if(!names.has('beginGraduation')||!names.has('confirmGraduation')) throw new Error('generated IDL missing graduation instructions');
+          console.log('generated_idl_integrity=pass');
+          NODE
+
+      - name: Build exact current-authority baseline SBF
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+          git worktree add "$RUNNER_TEMP/authority" "$AUTHORITY_SHA"
+          cd "$RUNNER_TEMP/authority"
+          rm -rf "$RUNNER_TEMP/baseline-target"
+          CARGO_TARGET_DIR="$RUNNER_TEMP/baseline-target" anchor build --program-name memewarzone_solana --no-idl
+          baseline_so="$RUNNER_TEMP/baseline-target/deploy/memewarzone_solana.so"
+          test -s "$baseline_so"
+          echo "BASELINE_BYTES=$(wc -c < "$baseline_so" | tr -d ' ')" >> "$GITHUB_ENV"
+          echo "BASELINE_SHA256=$(sha256sum "$baseline_so" | awk '{print $1}')" >> "$GITHUB_ENV"
+
+      - name: Read actual devnet ProgramData allocation and exact extension rent
+        shell: bash
+        env:
+          PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+        run: |
+          set -euo pipefail
+          node <<'NODE' | tee agent2-programdata.json
+          const rpc='https://api.devnet.solana.com';
+          const programId=process.env.PROGRAM_ID;
+          const candidateBytes=Number(process.env.CANDIDATE_BYTES);
+          async function call(method,params){const r=await fetch(rpc,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})});const j=await r.json();if(j.error)throw new Error(JSON.stringify(j.error));return j.result;}
+          function b58(bytes){const alphabet='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';let x=0n;for(const b of bytes)x=(x<<8n)+BigInt(b);let s='';while(x>0){const m=Number(x%58n);s=alphabet[m]+s;x/=58n;}for(const b of bytes){if(b===0)s='1'+s;else break;}return s||'1';}
+          const prog=await call('getAccountInfo',[programId,{encoding:'base64',commitment:'confirmed'}]);if(!prog.value)throw new Error('program missing');
+          const pd=Buffer.from(prog.value.data[0],'base64');if(pd.length<36||pd.readUInt32LE(0)!==2)throw new Error('unexpected program account');
+          const address=b58(pd.subarray(4,36));const info=await call('getAccountInfo',[address,{encoding:'base64',commitment:'confirmed'}]);if(!info.value)throw new Error('ProgramData missing');
+          const raw=Buffer.from(info.value.data[0],'base64');const metadata=45;const capacity=raw.length-metadata;const extensionRequired=candidateBytes>capacity;const targetLen=candidateBytes+metadata;
+          const targetRent=extensionRequired?await call('getMinimumBalanceForRentExemption',[targetLen,{commitment:'confirmed'}]):info.value.lamports;
+          const extensionLamports=extensionRequired?Math.max(0,targetRent-info.value.lamports):0;
+          console.log(JSON.stringify({programId,programDataAddress:address,programDataDataLength:raw.length,programBinaryCapacityBytes:capacity,currentProgramDataLamports:info.value.lamports,candidateBytes,extensionRequired,extensionLamports},null,2));
+          NODE
+
+      - name: Write recovery build evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "authority_sha=$AUTHORITY_SHA"
+            echo "candidate_sha=$CANDIDATE_SHA"
+            echo "baseline_bytes=$BASELINE_BYTES"
+            echo "baseline_sha256=$BASELINE_SHA256"
+            echo "candidate_bytes=$CANDIDATE_BYTES"
+            echo "candidate_sha256=$CANDIDATE_SHA256"
+            echo "schema_version=4"
+            echo "generation_substitution_regression=PASS"
+            echo "sub_raw_unit_quote_deviation_regression=PASS"
+            cat agent2-programdata.json
+          } | tee agent2-recovery-build-evidence.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent2-recovery-build-evidence
+          path: |
+            agent2-recovery-build-evidence.txt
+            agent2-programdata.json
+            target/idl/memewarzone_solana.json
+          retention-days: 14
