@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {
+
+process.env.DATABASE_URL ||= "postgresql://test:test@127.0.0.1:5432/test";
+
+const {
   deriveGenericQuoteAuthority,
   mapRobinhoodStockToQuoteAsset,
   normalizeQuoteIdentity,
   ROBINHOOD_BASIC_PROVIDER_KEY,
   ROBINHOOD_STOCK_PROVIDER_KEY,
-} from "./quoteAssetCatalog.js";
+} = await import("./quoteAssetCatalog.js");
 
 test("EVM quote identity is exact-address based, not symbol based", () => {
   const identity = normalizeQuoteIdentity({
