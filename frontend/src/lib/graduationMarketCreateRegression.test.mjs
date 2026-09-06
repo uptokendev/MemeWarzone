@@ -34,6 +34,32 @@ test("Solana native Direct Deploy still uses the existing direct-create session 
 test("generic non-native Direct Deploy remains fail-closed", () => {
   assert.match(create, /not available until server quote binding is integrated/);
   assert.doesNotMatch(create, /createGenericQuoteCampaign/);
+  assert.doesNotMatch(create, /createBasicQuoteCampaignAuthorized/);
+  assert.doesNotMatch(create, /signBnbBasicQuoteAuthorization/);
+  assert.doesNotMatch(create, /buildBnbBasicQuoteCatalogBinding/);
+});
+
+test("BNB BASIC quote Direct Deploy stays fail-closed because HTTP/frontend bind glue is still absent", () => {
+  const routeAuth = readFileSync(join(here, "../../api/dev-fix/route-auth.js"), "utf8");
+  const signer = readFileSync(join(here, "../../api/dev-fix/routeAuthorizationSigner.js"), "utf8");
+  const binding = readFileSync(join(here, "../../api/lib/bnbBasicQuoteCatalogBinding.js"), "utf8");
+  const launchpad = readFileSync(join(here, "./launchpadClient.ts"), "utf8");
+  const factory = readFileSync(join(here, "../../../contracts/BnbBasicLaunchFactory.sol"), "utf8");
+
+  assert.match(factory, /function createBasicQuoteCampaignAuthorized/);
+  assert.match(signer, /export async function signBnbBasicQuoteAuthorization/);
+  assert.match(binding, /export function buildBnbBasicQuoteCatalogBinding/);
+
+  assert.doesNotMatch(routeAuth, /signBnbBasicQuoteAuthorization/);
+  assert.doesNotMatch(routeAuth, /buildBnbBasicQuoteCatalogBinding/);
+  assert.doesNotMatch(routeAuth, /graduationQuoteAssetId/);
+  assert.match(routeAuth, /signCreateAuthorization/);
+  assert.match(routeAuth, /prepareRobinhoodStockCreateAuthorization/);
+
+  assert.doesNotMatch(launchpad, /createBasicQuoteCampaignAuthorized/);
+  assert.match(launchpad, /createCampaignAuthorized/);
+  assert.match(create, /directDeployBindPath/);
+  assert.doesNotMatch(create, /createBasicQuoteCampaignAuthorized/);
 });
 
 test("production catalog fetch does not synthesize quote assets", () => {

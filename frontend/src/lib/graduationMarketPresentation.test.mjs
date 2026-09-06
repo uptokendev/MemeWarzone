@@ -190,6 +190,7 @@ test("generic non-native Direct Deploy stays fail-closed; native and Robinhood s
     identityKind: "EVM_ADDRESS",
     assetClass: "STABLECOIN",
     symbol: "USDC",
+    chainId: "56",
   })), null);
   assert.equal(directDeployBindPath(catalogQuote({ newGraduationEligible: false })), null);
 });
