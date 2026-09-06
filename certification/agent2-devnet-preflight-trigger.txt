@@ -1,0 +1,3 @@
+Application source under certification: b81ee75a4f8c6c5bc8a99a6b2be70b75ef9e3149
+Purpose: trigger the existing cert-branch Agent 2 devnet USDC public-RPC preflight.
+No production or mainnet deployment.
