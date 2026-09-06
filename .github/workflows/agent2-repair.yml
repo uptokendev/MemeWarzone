@@ -20,45 +20,32 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - name: Repair graduation compile blockers
+      - name: Restore lib and bind confirm lifetime
         shell: python
         run: |
+          import subprocess
           from pathlib import Path
-          p = Path('programs/memewarzone_solana/src/graduation.rs')
+          subprocess.run([
+              'git', 'checkout', 'bd59f13226de2d6f66fc8bfd3cbb05e0d4f93e93', '--',
+              'programs/memewarzone_solana/src/lib.rs'
+          ], check=True)
+          p = Path('programs/memewarzone_solana/src/lib.rs')
           s = p.read_text()
-          replacements = [
-            (
-              "pub fn confirm_graduation_handler(ctx: Context<ConfirmGraduation>) -> Result<()> {",
-              "pub fn confirm_graduation_handler<'info>(ctx: Context<'_, '_, '_, 'info, ConfirmGraduation<'info>>) -> Result<()> {",
-            ),
-            (
-              "let token_scale = token_scale(token_decimals)?; let quote_scale = token_scale(quote_decimals)?;",
-              "let launch_scale = token_scale(token_decimals)?; let quote_scale = token_scale(quote_decimals)?;",
-            ),
-            (
-              "let expected = final_spot_nano.checked_mul(u128::from(sol_usd_micros)).ok_or(LaunchpadError::MathOverflow)?.checked_div(1_000_000_000_000_000_000u128).ok_or(LaunchpadError::MathOverflow)?.checked_mul(quote_scale).ok_or(LaunchpadError::MathOverflow)?.checked_div(u128::from(quote_usd_micros)).ok_or(LaunchpadError::MathOverflow)?;",
-              "let expected_numerator = final_spot_nano.checked_mul(u128::from(sol_usd_micros)).ok_or(LaunchpadError::MathOverflow)?.checked_mul(quote_scale).ok_or(LaunchpadError::MathOverflow)?; let expected_denominator = 1_000_000_000_000_000_000u128.checked_mul(u128::from(quote_usd_micros)).ok_or(LaunchpadError::MathOverflow)?; let expected = expected_numerator.checked_div(expected_denominator).ok_or(LaunchpadError::MathOverflow)?;",
-            ),
-            (
-              "let actual = u128::from(quote_raw).checked_mul(token_scale).ok_or(LaunchpadError::MathOverflow)?.checked_div(u128::from(token_raw)).ok_or(LaunchpadError::MathOverflow)?;",
-              "let actual = u128::from(quote_raw).checked_mul(launch_scale).ok_or(LaunchpadError::MathOverflow)?.checked_div(u128::from(token_raw)).ok_or(LaunchpadError::MathOverflow)?;",
-            ),
-          ]
-          for old, new in replacements:
-              if old not in s:
-                  raise SystemExit(f'expected repair target not found: {old[:80]}')
-              s = s.replace(old, new, 1)
-          p.write_text(s)
+          old = 'pub fn confirm_graduation(ctx: Context<ConfirmGraduation>) -> Result<()> {'
+          new = "pub fn confirm_graduation<'info>(ctx: Context<'_, '_, '_, 'info, ConfirmGraduation<'info>>) -> Result<()> {"
+          if old not in s:
+              raise SystemExit('confirm_graduation wrapper target not found')
+          p.write_text(s.replace(old, new, 1))
       - name: Format Solana program
         run: cargo fmt --all
-      - name: Commit repaired candidate
-        run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add programs/memewarzone_solana/src/graduation.rs
-          git commit -m 'fix(solana): compile generic quote graduation path'
-          git push origin HEAD:agent2/solana-basic-graduation-market
       - name: Rust formatting gate
         run: cargo fmt --all -- --check
       - name: Rust unit tests
         run: cargo test -p memewarzone_solana --lib
+      - name: Commit repaired candidate
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add programs/memewarzone_solana/src/lib.rs
+          git commit -m 'fix(solana): bind confirm graduation account lifetime'
+          git push origin HEAD:agent2/solana-basic-graduation-market
