@@ -1,0 +1,66 @@
+name: Agent 4 Realtime Lock Repair
+on:
+  push:
+    branches: [agent4/basic-multi-quote-market-normalization]
+permissions:
+  contents: write
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent4/basic-multi-quote-market-normalization
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Guarded lock-only repair
+        working-directory: realtime-indexer
+        run: |
+          cp package-lock.json /tmp/package-lock.before.json
+          npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+          node <<'NODE'
+          const fs = require('fs');
+          const before = JSON.parse(fs.readFileSync('/tmp/package-lock.before.json','utf8'));
+          const after = JSON.parse(fs.readFileSync('package-lock.json','utf8'));
+          const allowed = 'node_modules/jayson/node_modules/utf-8-validate';
+          const beforePkgs = before.packages || {};
+          const afterPkgs = after.packages || {};
+          for (const [key, value] of Object.entries(beforePkgs)) {
+            if (!(key in afterPkgs)) throw new Error(`package removed: ${key}`);
+            for (const field of ['version','resolved','integrity']) {
+              if ((value?.[field] ?? null) !== (afterPkgs[key]?.[field] ?? null)) {
+                throw new Error(`existing ${field} changed for ${key}`);
+              }
+            }
+          }
+          const additions = Object.keys(afterPkgs).filter((key) => !(key in beforePkgs));
+          if (additions.length !== 1 || additions[0] !== allowed) {
+            throw new Error(`unexpected package additions: ${additions.join(',')}`);
+          }
+          const repaired = afterPkgs[allowed];
+          if (repaired.version !== '5.0.10') throw new Error(`unexpected repaired version ${repaired.version}`);
+          if (repaired.resolved !== 'https://registry.npmjs.org/utf-8-validate/-/utf-8-validate-5.0.10.tgz') throw new Error('unexpected repaired resolved URL');
+          if (repaired.integrity !== 'sha512-Z6czzLq4u8fPOyx7TU6X3dvUZVvoJmxSQ+IcrlmagKhilxlhZgxPK6C5Jqbkw1IDUmFTM+cz9QDnnLTwDz/2gQ==') throw new Error('unexpected repaired integrity');
+          const beforeRoot = beforePkgs[''] || {};
+          const afterRoot = afterPkgs[''] || {};
+          for (const field of ['dependencies','devDependencies']) {
+            if (JSON.stringify(beforeRoot[field] || {}) !== JSON.stringify(afterRoot[field] || {})) {
+              throw new Error(`root ${field} changed`);
+            }
+          }
+          console.log('lock_repair_only=node_modules/jayson/node_modules/utf-8-validate@5.0.10; existing versions/resolved/integrity unchanged');
+          NODE
+          npm ci --ignore-scripts --no-audit --no-fund
+      - name: Commit deterministic repair when needed
+        run: |
+          if git diff --quiet -- realtime-indexer/package-lock.json; then
+            echo "lock already repaired"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add realtime-indexer/package-lock.json
+          git commit -m "chore(indexer): repair deterministic npm lock entry"
+          git push origin HEAD:agent4/basic-multi-quote-market-normalization
