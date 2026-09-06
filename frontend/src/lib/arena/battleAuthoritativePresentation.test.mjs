@@ -21,7 +21,7 @@ function side(tokenId, totalPoints, maxima, { boostPoints = null, confirmedUnits
     side: tokenId === "LEFT" ? "left" : "right",
     tokenId,
     totalPoints,
-    mcap: { points: totalPoints / 2, maxPoints: maxima[0], start: 100, current: 120, changePct: 20 },
+    mcap: { points: 30, maxPoints: maxima[0], start: 100, current: 120, changePct: 20 },
     holders: { points: 10, maxPoints: maxima[1], start: 10, current: 12, changePct: 20 },
     volume: { points: 8, maxPoints: maxima[2], rawUsd: 1200, excludedUsd: 200, eligibleUsd: 1000 },
     boost: { points: boostPoints, maxPoints: maxima[3] ?? 0, confirmedUnits, curveVersion: boostPoints == null ? null : "boost_hyperbolic_100_v1" },
@@ -76,7 +76,11 @@ test("Battle winner follows battleResult and never moneyResult", () => {
     battleResult: { state: "settled", result: "left_win", draw: false, winnerToken: "LEFT" },
     moneyResult: { winnerToken: "RIGHT", tieBreak: "eligible_volume", tieBreakUsed: true },
   });
-  assert.equal(authoritativeWinnerSide(value), "left");
+  // The UI binds the frozen result token to actual Battle participants. This
+  // does not depend on optional side token metadata being present.
+  value.sides.left.tokenId = null;
+  value.sides.right.tokenId = null;
+  assert.equal(authoritativeWinnerSide(value, "LEFT", "RIGHT"), "left");
   assert.equal(value.moneyResult.winnerToken, "RIGHT");
 });
 
@@ -85,7 +89,7 @@ test("draw has no winner styling", () => {
     battleResult: { state: "settled", result: "draw", draw: true, winnerToken: null },
   });
   assert.equal(authoritativeDraw(value), true);
-  assert.equal(authoritativeWinnerSide(value), null);
+  assert.equal(authoritativeWinnerSide(value, "LEFT", "RIGHT"), null);
 });
 
 test("unhealthy evidence exposes explicit unavailable state and no leader", () => {
@@ -98,23 +102,26 @@ test("unhealthy evidence exposes explicit unavailable state and no leader", () =
 test("client consumes frozen fields without duplicating canonical scoring formulas", () => {
   const client = read("./battleRealtimeApi.ts");
   const component = read("../../components/arena/BattleWallCombatant.tsx");
+  const scoreComponent = read("../../components/arena/BattleAuthoritativeScoreBreakdown.tsx");
   const module = read("../../components/arena/BattleWallModule.tsx");
   const helper = read("./battleAuthoritativePresentation.mjs");
+  const source = `${client}\n${component}\n${scoreComponent}\n${module}\n${helper}`;
   for (const needle of ["authoritativeResult", "scoringGeneration", "battleResult", "moneyResult", "eligibleUsd", "confirmedUnits", "curveVersion", "totalPoints"]) {
-    assert.match(`${client}\n${component}\n${module}\n${helper}`, new RegExp(needle));
+    assert.match(source, new RegExp(needle));
   }
   assert.match(component, /ELIGIBLE VOL/);
-  assert.match(component, /data-battle-boost-authority="confirmed"/);
-  assert.match(module, /authoritativeWinnerSide\(authoritativeResult\)/);
+  assert.match(scoreComponent, /data-battle-boost-authority="confirmed"/);
+  assert.match(module, /authoritativeWinnerSide\(authoritativeResult/);
   assert.doesNotMatch(module, /moneyResult\.winnerToken/);
-  assert.doesNotMatch(`${client}\n${component}\n${module}\n${helper}`, /10\s*\*\s*[A-Za-z_$][\w$]*\s*\/\s*\([^)]*\+\s*100\)/);
-  assert.doesNotMatch(`${client}\n${component}\n${module}`, /marketCapWeight|holderWeight|volumeWeight|boostWeight|calculateBattlePoints/);
+  assert.doesNotMatch(source, /10\s*\*\s*[A-Za-z_$][\w$]*\s*\/\s*\([^)]*\+\s*100\)/);
+  assert.doesNotMatch(`${client}\n${component}\n${scoreComponent}\n${module}`, /marketCapWeight|holderWeight|volumeWeight|boostWeight|calculateBattlePoints/);
 });
 
 test("responsive Battle Wall keeps min-width containment and existing combat overlay isolation", () => {
   const component = read("../../components/arena/BattleWallCombatant.tsx");
   const module = read("../../components/arena/BattleWallModule.tsx");
   assert.match(component, /min-w-0/);
+  assert.match(component, /max-h-\[22rem\]/);
   assert.match(component, /grid-cols-2/);
   assert.match(module, /grid-cols-1/);
   assert.match(module, /md:grid-cols-\[minmax\(0,1fr\)_auto_minmax\(0,1fr\)\]/);
