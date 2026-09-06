@@ -21,6 +21,25 @@ UPDATE public.arena_battle_metrics
 ALTER TABLE IF EXISTS public.arena_battle_metrics
   ALTER COLUMN scoring_generation SET DEFAULT 'battle_points_v2';
 
+CREATE OR REPLACE FUNCTION public.initialize_arena_battle_scoring_lock()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.scoring_generation := NEW.scoring_version;
+  NEW.curve_version := CASE
+    WHEN NEW.scoring_version = 'battle_points_v3' THEN 'boost_hyperbolic_100_v1'
+    ELSE NULL
+  END;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS initialize_arena_battle_scoring_lock ON public.arena_battle_metrics;
+CREATE TRIGGER initialize_arena_battle_scoring_lock
+BEFORE INSERT ON public.arena_battle_metrics
+FOR EACH ROW EXECUTE FUNCTION public.initialize_arena_battle_scoring_lock();
+
 CREATE OR REPLACE FUNCTION public.guard_arena_battle_scoring_lock()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -41,14 +60,15 @@ BEFORE UPDATE OF scoring_version, scoring_generation, curve_version
 ON public.arena_battle_metrics
 FOR EACH ROW EXECUTE FUNCTION public.guard_arena_battle_scoring_lock();
 
--- Existing V3 projection storage already owns the frozen Boost-curve evidence.
--- This constraint prevents an invalid curve from being attached to a V3 metrics lock.
 ALTER TABLE IF EXISTS public.arena_battle_metrics
   DROP CONSTRAINT IF EXISTS arena_battle_metrics_curve_lock_check;
 ALTER TABLE IF EXISTS public.arena_battle_metrics
   ADD CONSTRAINT arena_battle_metrics_curve_lock_check CHECK (
-    (scoring_generation = 'battle_points_v3' AND curve_version = 'boost_hyperbolic_100_v1')
-    OR (scoring_generation <> 'battle_points_v3' AND curve_version IS NULL)
+    scoring_generation = scoring_version
+    AND (
+      (scoring_generation = 'battle_points_v3' AND curve_version = 'boost_hyperbolic_100_v1')
+      OR (scoring_generation <> 'battle_points_v3' AND curve_version IS NULL)
+    )
   );
 
 COMMIT;
