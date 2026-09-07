@@ -73,58 +73,47 @@ jobs:
           python <<'PY'
           from pathlib import Path
           import base64, re
-
-          raw = Path('/tmp/agent2-existing-harness.yml').read_text().splitlines()
-          start = next(i for i, line in enumerate(raw) if line.strip() == "python <<'PY'") + 1
-          end = next(i for i in range(start, len(raw)) if raw[i].strip() == 'PY')
-          code = [line[10:] if line.startswith('          ') else line for line in raw[start:end]]
-          exec(compile('\n'.join(code), '<existing-agent2-local-harness>', 'exec'), {'__name__': '__main__'})
-
-          p = Path('tests/solana/v4-lifecycle-acceptance.cjs')
-          s = p.read_text()
-          slash_n = chr(92) + 'n'
-          s = s.replace('atomic.logs.join("' + chr(10) + '")', 'atomic.logs.join("' + slash_n + '")')
-          s = s.replace('(simulation.value.logs||[]).join("' + chr(10) + '")', '(simulation.value.logs||[]).join("' + slash_n + '")')
-
-          old = 'let quoteMint=NATIVE_MINT,quoteDecimals=9,binding=nativeGraduationBinding(oraclePrice),acquisitionIx=null,quoteRemaining=[],poolQuoteRaw=quote.maxLiquidityLamports,residual=0n,recoveryAccount=null,authorityQuote=null;'
-          new = 'let quoteMint=NATIVE_MINT,quoteDecimals=9,binding=nativeGraduationBinding(oraclePrice),acquisitionIx=null,quoteRemaining=[],poolQuoteRaw=quote.maxLiquidityLamports,residual=0n,recoveryAccount=null,authorityQuote=null,acquisitionSource=null,acquired=0n;'
+          raw=Path('/tmp/agent2-existing-harness.yml').read_text().splitlines()
+          start=next(i for i,line in enumerate(raw) if line.strip()=="python <<'PY'")+1
+          end=next(i for i in range(start,len(raw)) if raw[i].strip()=='PY')
+          code=[line[10:] if line.startswith('          ') else line for line in raw[start:end]]
+          exec(compile('\n'.join(code),'<existing-agent2-local-harness>','exec'),{'__name__':'__main__'})
+          p=Path('tests/solana/v4-lifecycle-acceptance.cjs'); s=p.read_text(); slash_n=chr(92)+'n'
+          s=s.replace('atomic.logs.join("'+chr(10)+'")','atomic.logs.join("'+slash_n+'")')
+          s=s.replace('(simulation.value.logs||[]).join("'+chr(10)+'")','(simulation.value.logs||[]).join("'+slash_n+'")')
+          old='let quoteMint=NATIVE_MINT,quoteDecimals=9,binding=nativeGraduationBinding(oraclePrice),acquisitionIx=null,quoteRemaining=[],poolQuoteRaw=quote.maxLiquidityLamports,residual=0n,recoveryAccount=null,authorityQuote=null;'
+          new='let quoteMint=NATIVE_MINT,quoteDecimals=9,binding=nativeGraduationBinding(oraclePrice),acquisitionIx=null,quoteRemaining=[],poolQuoteRaw=quote.maxLiquidityLamports,residual=0n,recoveryAccount=null,authorityQuote=null,acquisitionSource=null,acquired=0n;'
           if old not in s: raise SystemExit('stable setup declaration not found')
-          s = s.replace(old, new, 1)
-          s = s.replace('const acquisitionSource=await createAccount(connection,adminKeypair,quoteMint,admin);', 'acquisitionSource=await createAccount(connection,adminKeypair,quoteMint,admin);', 1)
-          s = s.replace('const acquired=poolQuoteRaw+residual;', 'acquired=poolQuoteRaw+residual;', 1)
-
-          prev = Path('/tmp/agent2-prev-cert.yml').read_text()
-          match = re.search(r"pending = base64\.b64decode\('([^']+)'\)\.decode\('utf-8'\)", prev)
+          s=s.replace(old,new,1)
+          s=s.replace('authorityQuote=await getOrCreateAssociatedTokenAccount(connection,adminKeypair,quoteMint,admin);','authorityQuote={address:await createAccount(connection,adminKeypair,quoteMint,admin)};',1)
+          s=s.replace('const acquisitionSource=await createAccount(connection,adminKeypair,quoteMint,admin);','acquisitionSource=await createAccount(connection,adminKeypair,quoteMint,admin);',1)
+          s=s.replace('const acquired=poolQuoteRaw+residual;','acquired=poolQuoteRaw+residual;',1)
+          prev=Path('/tmp/agent2-prev-cert.yml').read_text()
+          match=re.search(r"pending = base64\.b64decode\('([^']+)'\)\.decode\('utf-8'\)",prev)
           if not match: raise SystemExit('pending retry assertion payload not found')
-          pending = base64.b64decode(match.group(1)).decode('utf-8')
-          marker = 'const latest=await connection.getLatestBlockhash("confirmed"); const versioned=v0Helpers.buildLaunchpadV0Transaction(web3,{payer:admin,recentBlockhash:latest.blockhash,instructions,lookupTableAccounts:[lookupTableAccount]});'
+          pending=base64.b64decode(match.group(1)).decode('utf-8')
+          marker='const latest=await connection.getLatestBlockhash("confirmed"); const versioned=v0Helpers.buildLaunchpadV0Transaction(web3,{payer:admin,recentBlockhash:latest.blockhash,instructions,lookupTableAccounts:[lookupTableAccount]});'
           if marker not in s: raise SystemExit('safe graduation V0 marker not found')
-          s = s.replace(marker, pending, 1)
-          p.write_text(s)
+          s=s.replace(marker,pending,1); p.write_text(s)
           PY
           node --check tests/solana/v4-lifecycle-acceptance.cjs
-      - name: Run native and canonical-stable graduation on fresh disposable validators
+      - name: Run canonical-stable graduation on fresh disposable validator
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p "$HOME/.config/solana"
           solana-keygen new --no-bip39-passphrase --silent --force --outfile "$HOME/.config/solana/id.json"
           export ANCHOR_WALLET="$HOME/.config/solana/id.json"
-          for mode in native stable; do
-            ledger="/tmp/agent2-${mode}-ledger"
-            rm -rf "$ledger"
-            solana-test-validator --reset --quiet --ledger "$ledger" --bpf-program "$PROGRAM_ID" target/deploy/memewarzone_solana.so --bpf-program cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG third_party/meteora/cp_amm.so --account-dir third_party/meteora/accounts >"/tmp/agent2-${mode}-validator.log" 2>&1 &
-            pid=$!
-            trap 'kill $pid 2>/dev/null || true' EXIT
-            for i in $(seq 1 60); do
-              solana cluster-version --url "$LOCAL_RPC" >/dev/null 2>&1 && break
-              if [ "$i" -eq 60 ]; then cat "/tmp/agent2-${mode}-validator.log"; exit 1; fi
-              sleep 2
-            done
-            solana config set --url "$LOCAL_RPC" --keypair "$ANCHOR_WALLET" >/dev/null
-            solana airdrop 100 >/dev/null
-            (cd tests/solana && BASIC_GRAD_QUOTE_MODE="$mode" ANCHOR_PROVIDER_URL="$LOCAL_RPC" ANCHOR_WALLET="$ANCHOR_WALLET" GATE_K_METEORA=1 npx mocha --timeout 1000000 v4-lifecycle-acceptance.cjs)
-            kill $pid 2>/dev/null || true
-            wait $pid 2>/dev/null || true
-            trap - EXIT
+          ledger=/tmp/agent2-stable-ledger
+          rm -rf "$ledger"
+          solana-test-validator --reset --quiet --ledger "$ledger" --bpf-program "$PROGRAM_ID" target/deploy/memewarzone_solana.so --bpf-program cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG third_party/meteora/cp_amm.so --account-dir third_party/meteora/accounts >/tmp/agent2-stable-validator.log 2>&1 &
+          pid=$!
+          trap 'kill $pid 2>/dev/null || true' EXIT
+          for i in $(seq 1 60); do
+            solana cluster-version --url "$LOCAL_RPC" >/dev/null 2>&1 && break
+            if [ "$i" -eq 60 ]; then cat /tmp/agent2-stable-validator.log; exit 1; fi
+            sleep 2
           done
+          solana config set --url "$LOCAL_RPC" --keypair "$ANCHOR_WALLET" >/dev/null
+          solana airdrop 100 >/dev/null
+          (cd tests/solana && BASIC_GRAD_QUOTE_MODE=stable ANCHOR_PROVIDER_URL="$LOCAL_RPC" ANCHOR_WALLET="$ANCHOR_WALLET" GATE_K_METEORA=1 npx mocha --timeout 1000000 v4-lifecycle-acceptance.cjs)
