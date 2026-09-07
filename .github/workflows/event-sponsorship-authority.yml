@@ -7,9 +7,12 @@ on:
       - "frontend/api/arenaEventSponsorshipRecovery.js"
       - "frontend/api/arenaSponsorshipPublic.js"
       - "frontend/api/arenaSponsorships.js"
+      - "frontend/api/arenaSponsorVisibility.js"
       - "frontend/api/postgrad.js"
       - "frontend/api/lib/eventSponsorshipAuthority.mjs"
       - "frontend/api/lib/eventSponsorshipLifecycle.mjs"
+      - "frontend/api/lib/arenaSponsorVisibilityPolicy.mjs"
+      - "frontend/api/lib/arenaSponsorVisibilityPolicy.test.mjs"
       - "frontend/api/lib/eventSponsorshipAuthority.test.mjs"
       - "frontend/api/lib/eventSponsorshipSeparation.test.mjs"
       - "frontend/api/lib/arenaSponsorshipProviderAwait.test.mjs"
@@ -60,12 +63,14 @@ jobs:
         run: |
           node --check api/lib/eventSponsorshipAuthority.mjs
           node --check api/lib/eventSponsorshipLifecycle.mjs
+          node --check api/lib/arenaSponsorVisibilityPolicy.mjs
           node --check api/arenaEventSponsorshipAuthority.js
           node --check api/arenaEventSponsorshipRecovery.js
+          node --check api/arenaSponsorVisibility.js
           node --check api/arenaSponsorships.js
           node --check api/postgrad.js
       - name: Authority invariants
-        run: node --test api/lib/eventSponsorshipAuthority.test.mjs api/lib/eventSponsorshipSeparation.test.mjs
+        run: node --test api/lib/eventSponsorshipAuthority.test.mjs api/lib/eventSponsorshipSeparation.test.mjs api/lib/arenaSponsorVisibilityPolicy.test.mjs
       - name: Sponsorship provider await regression
         run: node --test api/lib/arenaSponsorshipProviderAwait.test.mjs
       - name: Install PostgreSQL client
