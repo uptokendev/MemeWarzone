@@ -1,16 +1,13 @@
 import { useState } from "react";
+import { EventSponsorAttribution } from "@/components/arena/EventSponsorAttribution";
 import { TournamentBracketModal } from "@/components/arena/TournamentBracketModal";
 import { TournamentLiveRoundDrawer } from "@/components/arena/TournamentLiveRoundDrawer";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { tournamentSponsorEventType, useEventSponsors } from "@/hooks/useEventSponsors";
 import { useTournamentCommandState } from "@/hooks/useTournamentCommandState";
 
-export function TournamentLiveOverviewModal({
-  tournamentId,
-  open,
-  onOpenChange,
-  onViewBracket,
-}: {
+export function TournamentLiveOverviewModal({ tournamentId, open, onOpenChange, onViewBracket }: {
   tournamentId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -20,22 +17,20 @@ export function TournamentLiveOverviewModal({
   const [roundOpen, setRoundOpen] = useState(false);
   const state = useTournamentCommandState(open ? tournamentId : "", { loadMetrics: true });
   const card = state.card;
+  const source = { ...((state.tournament || {}) as Record<string, unknown>), ...((state.detail?.event || {}) as Record<string, unknown>) };
+  const sponsors = useEventSponsors({ eventType: tournamentSponsorEventType(source), eventReferenceId: state.id, chainId: state.tournamentChainId, enabled: open });
   const liveBattles = state.liveMatches;
   const liveBattleIds = liveBattles.map((match) => String(match.battleId || "")).filter(Boolean);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        data-tournament-live-modal="true"
-        data-tournament-details-modal="true"
-        className="max-h-[90vh] w-[95vw] max-w-lg overflow-y-auto border bg-[#050505] p-4 md:p-6"
-        style={{ borderColor: "var(--mwz-flat-card-border)" }}
-      >
+      <DialogContent data-tournament-live-modal="true" data-tournament-details-modal="true" className="max-h-[90vh] w-[95vw] max-w-lg overflow-y-auto border bg-[#050505] p-4 md:p-6" style={{ borderColor: "var(--mwz-flat-card-border)" }}>
         <DialogHeader className="pr-8 text-left">
           <DialogTitle className="font-black text-xl text-foreground">{card?.title || "Tournament"}</DialogTitle>
           <DialogDescription className="text-[11px] uppercase tracking-[0.16em] text-white/50">
             {[card?.status.label, card?.bracketStage ? String(card.bracketStage).replaceAll("_", " ") : null].filter(Boolean).join(" · ")}
           </DialogDescription>
+          <EventSponsorAttribution sponsors={sponsors} variant="prominent" />
         </DialogHeader>
         {!state.tournament ? (
           <p className="text-sm text-muted-foreground">This tournament could not be loaded.</p>
@@ -50,54 +45,16 @@ export function TournamentLiveOverviewModal({
               {card?.participantCount != null ? <div>{card.participantCount} started</div> : null}
               {state.remaining != null ? <div>{state.remaining} remaining</div> : null}
               {card?.bracketStage ? <div>{String(card.bracketStage).replaceAll("_", " ")}</div> : null}
-              {liveBattles.length ? (
-                <div data-tournament-live-battle-count={liveBattles.length}>{liveBattles.length} battles live</div>
-              ) : null}
+              {liveBattles.length ? <div data-tournament-live-battle-count={liveBattles.length}>{liveBattles.length} battles live</div> : null}
             </div>
             <div className="flex flex-wrap gap-3">
-              <button
-                type="button"
-                onClick={() => {
-                  if (onViewBracket) onViewBracket();
-                  else setBracketOpen(true);
-                }}
-                className="mwz-button inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em]"
-              >
-                View bracket
-              </button>
+              <button type="button" onClick={() => { if (onViewBracket) onViewBracket(); else setBracketOpen(true); }} className="mwz-button inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em]">View bracket</button>
               {liveBattleIds.length ? (
-                <button
-                  type="button"
-                  data-tournament-watch-live-round="true"
-                  onClick={() => setRoundOpen(true)}
-                  className="inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em] text-accent hover:underline"
-                >
-                  Watch live round
-                </button>
+                <button type="button" data-tournament-watch-live-round="true" onClick={() => setRoundOpen(true)} className="inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em] text-accent hover:underline">Watch live round</button>
               ) : null}
             </div>
-            <TournamentBracketModal
-              open={bracketOpen}
-              onOpenChange={setBracketOpen}
-              title={card?.title || "Tournament"}
-              statusLabel={card?.status.label}
-              stageLabel={card?.bracketStage}
-              rounds={state.bracketRounds}
-              entries={state.entries}
-              chainId={state.tournamentChainId}
-            />
-            <TournamentLiveRoundDrawer
-              open={roundOpen}
-              onOpenChange={setRoundOpen}
-              title={card?.title || "Tournament"}
-              statusLabel={card?.status.label}
-              stageLabel={card?.bracketStage}
-              rounds={state.bracketRounds}
-              liveBattleIds={liveBattleIds}
-              tournamentId={tournamentId}
-              tournamentMode={state.mode}
-              tournamentChainId={state.tournamentChainId}
-            />
+            <TournamentBracketModal open={bracketOpen} onOpenChange={setBracketOpen} title={card?.title || "Tournament"} statusLabel={card?.status.label} stageLabel={card?.bracketStage} rounds={state.bracketRounds} entries={state.entries} chainId={state.tournamentChainId} sponsors={sponsors} />
+            <TournamentLiveRoundDrawer open={roundOpen} onOpenChange={setRoundOpen} title={card?.title || "Tournament"} statusLabel={card?.status.label} stageLabel={card?.bracketStage} rounds={state.bracketRounds} liveBattleIds={liveBattleIds} tournamentId={tournamentId} tournamentMode={state.mode} tournamentChainId={state.tournamentChainId} />
           </div>
         )}
       </DialogContent>
