@@ -5,6 +5,7 @@ import { getServerReadProvider } from "./lib/getServerReadProvider.js";
 import { isSolanaChainId } from "./lib/chainNative.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { verifySponsorshipDeployment } from "./lib/arenaSponsorshipDeploymentVerification.mjs";
+import { canonicalEventSponsorshipType, sponsorshipRegistryTypesForCanonical } from "./lib/eventSponsorshipAuthority.mjs";
 import {
   readSponsorshipPricingConfig,
   serializeSponsorshipQuote,
@@ -108,27 +109,29 @@ async function activeTier() {
 
 function tierMinimumCents(tier, eventType) {
   if (!tier) throw new Error("No active sponsorship pricing tier is configured");
-  if (eventType === "normal_tournament" || eventType === "vote_tournament") return BigInt(String(tier.tournament_min_usd_cents));
-  if (eventType === "monthly_mwl") return BigInt(String(tier.mwl_min_usd_cents));
-  if (eventType === "quarterly_championship") return BigInt(String(tier.quarterly_min_usd_cents));
+  const canonicalType = canonicalEventSponsorshipType(eventType);
+  if (canonicalType === "normal_tournament" || canonicalType === "vote_tournament") return BigInt(String(tier.tournament_min_usd_cents));
+  if (canonicalType === "monthly_mwl") return BigInt(String(tier.mwl_min_usd_cents));
+  if (canonicalType === "quarterly_championship") return BigInt(String(tier.quarterly_min_usd_cents));
   throw new Error("Unsupported sponsorship event type");
 }
 
 async function authoritativeMinimumCents(event, tier) {
+  const pricingTypes = sponsorshipRegistryTypesForCanonical(event.event_type);
   const override = (await pool.query(
     `select min_usd_cents
        from public.sponsorship_price_overrides
       where active = true
         and (starts_at is null or starts_at <= now())
         and (ends_at is null or ends_at > now())
-        and (event_type is null or event_type = $3)
+        and (event_type is null or event_type = any($3::text[]))
         and (
           (scope_type = 'event' and scope_id in ($1, $2))
           or (scope_type = 'chain' and chain_id = $4)
         )
       order by case when scope_type = 'event' then 0 else 1 end, created_at desc
       limit 1`,
-    [String(event.id), String(event.event_reference_id), String(event.event_type), Number(event.chain_id)],
+    [String(event.id), String(event.event_reference_id), pricingTypes, Number(event.chain_id)],
   )).rows[0];
   return override ? BigInt(String(override.min_usd_cents)) : tierMinimumCents(tier, event.event_type);
 }
@@ -247,7 +250,7 @@ async function handleQuote(req, res) {
       ok: true,
       eventId: event.id,
       eventReferenceId: event.event_reference_id,
-      eventType: event.event_type,
+      eventType: canonicalEventSponsorshipType(event.event_type),
       sponsorshipId: sponsorship.id,
       quoteId: quoteRow.id,
       minimumUsdCents: minimumCents.toString(),

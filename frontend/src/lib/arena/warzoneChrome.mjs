@@ -1,8 +1,9 @@
 export const WARZONE_CONTENT_MAX_WIDTH_PX = 1280;
 export const WARZONE_CONTENT_MAX_CLASS = "max-w-[1280px]";
 
-// Keep QF presentation rules in the client bundle. Importing frontend/api/lib
-// becomes `/api/lib/...` in Vite dev, which the API proxy 404s and blanks Warzone.
+// Legacy quarterly-transition selection rules remain unchanged here. The public
+// product name is Quarterly Championship; these constants are retained only to
+// preserve the current runtime field until scoring architecture is reconciled.
 const QF_MIN_FIGHTS = 3;
 const QF_SEED_SIZE = 8;
 
@@ -82,11 +83,13 @@ export function presentLeaguePhase(season = {}) {
     return { key: "completed", label: "COMPLETED", live: false, projected: false, official: true };
   }
   if (official) {
-    return { key: "qualified", label: "QUALIFIED", live: false, projected: false, official: true };
+    return { key: "quarterly", label: "QUARTERLY", live: false, projected: false, official: true };
   }
   return { key: "live", label: "LIVE", live: true, projected: true, official: false };
 }
 
+// Function name retained for compatibility with existing callers. Its return
+// value is public Quarterly Championship transition presentation, not a knockout stage.
 export function presentQuarterFinalField(season = {}, rankedEntries = []) {
   const ranked = Array.isArray(rankedEntries) && rankedEntries.length
     ? rankedEntries
@@ -102,8 +105,8 @@ export function presentQuarterFinalField(season = {}, rankedEntries = []) {
     size: QF_SEED_SIZE,
     field,
     cut: inside && outside ? { inside, outside } : null,
-    label: phase.projected ? "PROJECTED QUALIFIERS · LIVE" : "QUARTER FINALISTS",
-    statusLabel: phase.projected ? "PROJECTED" : "QUALIFIED",
+    label: phase.projected ? "MWL LEADERS · LIVE" : "MWL LEADERS",
+    statusLabel: phase.projected ? "LIVE" : "LOCKED",
     tournamentId: String(season?.quarterFinalsTournamentId || "").trim() || null,
   };
 }

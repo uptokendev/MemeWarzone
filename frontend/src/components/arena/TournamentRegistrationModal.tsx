@@ -1,11 +1,17 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ArenaBuyInButton } from "@/components/arena/ArenaBuyInButton";
+import { EventSponsorAttribution } from "@/components/arena/EventSponsorAttribution";
 import { TournamentBracketModal } from "@/components/arena/TournamentBracketModal";
 import { TournamentTokenIdentity } from "@/components/arena/TournamentTokenIdentity";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { tournamentSponsorEventType, useEventSponsors } from "@/hooks/useEventSponsors";
 import { useTournamentCommandState } from "@/hooks/useTournamentCommandState";
+import {
+  isQuarterlyChampionshipRuntime,
+  presentQuarterlyChampionshipCard,
+} from "@/lib/arena/quarterlyChampionshipPresentation.mjs";
 import { cn } from "@/lib/utils";
 
 export function TournamentRegistrationModal({
@@ -21,16 +27,24 @@ export function TournamentRegistrationModal({
 }) {
   const [bracketOpen, setBracketOpen] = useState(false);
   const state = useTournamentCommandState(open ? tournamentId : "", { loadMetrics: false });
-  const card = state.card;
+  const source = {
+    ...((state.tournament || {}) as Record<string, unknown>),
+    ...((state.detail?.event || {}) as Record<string, unknown>),
+  };
+  const quarterlyChampionship = isQuarterlyChampionshipRuntime(source);
+  const card = state.card ? presentQuarterlyChampionshipCard(state.card, source) : null;
   const selected = state.eligible.find((item) => item.tokenId === state.selectedToken);
   const entered = state.optedIn && (!state.needsBuyIn || state.buyInPaid);
   const payBuyIn = state.optedIn && state.needsBuyIn && !state.buyInPaid;
+  const sponsorType = tournamentSponsorEventType(source);
+  const sponsors = useEventSponsors({ eventType: sponsorType, eventReferenceId: state.id, chainId: state.tournamentChainId, enabled: open });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         data-tournament-registration-modal="true"
         data-tournament-details-modal="true"
+        data-quarterly-championship={quarterlyChampionship ? "true" : undefined}
         className="max-h-[90vh] w-[95vw] max-w-lg overflow-y-auto border bg-[#050505] p-4 md:p-6"
         style={{ borderColor: "var(--mwz-flat-card-border)" }}
       >
@@ -41,6 +55,7 @@ export function TournamentRegistrationModal({
               .filter(Boolean)
               .join(" · ")}
           </DialogDescription>
+          <EventSponsorAttribution sponsors={sponsors} variant={quarterlyChampionship ? "premium" : "prominent"} />
         </DialogHeader>
 
         {!state.tournament ? (
@@ -54,14 +69,14 @@ export function TournamentRegistrationModal({
             </div>
 
             <section>
-              <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Registration</div>
+              <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">{quarterlyChampionship ? "Championship entry" : "Registration"}</div>
               <h3 className="mt-1 font-black text-sm uppercase tracking-[0.12em] text-foreground">Your token</h3>
               {!state.walletAddress ? (
                 <p className="mt-2 text-sm text-muted-foreground">Connect the owner wallet to opt in.</p>
               ) : !state.eligible.length ? (
                 <div className="mt-3 space-y-2" data-tournament-no-eligible="true">
                   <div className="font-black text-sm uppercase tracking-[0.12em] text-foreground">No eligible coins on this wallet</div>
-                  <p className="text-sm text-muted-foreground">Only eligible post-grad coins can enter this tournament.</p>
+                  <p className="text-sm text-muted-foreground">Only eligible post-grad coins can enter this competition.</p>
                   <Link
                     to={`/profile/${encodeURIComponent(state.walletAddress)}/command/coins`}
                     className="inline-flex min-h-11 items-center text-xs uppercase tracking-[0.16em] text-accent hover:underline"
@@ -125,7 +140,7 @@ export function TournamentRegistrationModal({
                     onClick={() => void state.handleOptIn()}
                     className="mwz-button inline-flex min-h-11 items-center justify-center px-4 text-xs uppercase tracking-[0.16em] disabled:opacity-60"
                   >
-                    {state.busy ? "Recording..." : "Enter tournament"}
+                    {state.busy ? "Recording..." : quarterlyChampionship ? "Enter championship" : "Enter tournament"}
                   </button>
                 ) : null}
                 {payBuyIn && selected ? (
@@ -152,27 +167,32 @@ export function TournamentRegistrationModal({
               </div>
             ) : null}
 
-            <button
-              type="button"
-              data-tournament-view-bracket={state.id}
-              onClick={() => {
-                if (onViewBracket) onViewBracket();
-                else setBracketOpen(true);
-              }}
-              className="inline-flex min-h-11 items-center text-xs uppercase tracking-[0.16em] text-accent hover:underline"
-            >
-              View bracket
-            </button>
-            <TournamentBracketModal
-              open={bracketOpen}
-              onOpenChange={setBracketOpen}
-              title={card?.title || "Tournament"}
-              statusLabel={card?.status.label}
-              stageLabel={card?.bracketStage}
-              rounds={state.bracketRounds}
-              entries={state.entries}
-              chainId={state.tournamentChainId}
-            />
+            {!quarterlyChampionship ? (
+              <>
+                <button
+                  type="button"
+                  data-tournament-view-bracket={state.id}
+                  onClick={() => {
+                    if (onViewBracket) onViewBracket();
+                    else setBracketOpen(true);
+                  }}
+                  className="inline-flex min-h-11 items-center text-xs uppercase tracking-[0.16em] text-accent hover:underline"
+                >
+                  View bracket
+                </button>
+                <TournamentBracketModal
+                  open={bracketOpen}
+                  onOpenChange={setBracketOpen}
+                  title={card?.title || "Tournament"}
+                  statusLabel={card?.status.label}
+                  stageLabel={card?.bracketStage}
+                  rounds={state.bracketRounds}
+                  entries={state.entries}
+                  chainId={state.tournamentChainId}
+                  sponsors={sponsors}
+                />
+              </>
+            ) : null}
           </div>
         )}
       </DialogContent>

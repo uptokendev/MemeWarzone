@@ -13,6 +13,7 @@ import {
 import { QF_MIN_FIGHTS, quarterFinalSeeds, utcDay } from "./lib/arenaLeagueScoreMath.js";
 import { nativeSymbolFor } from "./lib/chainNative.js";
 
+// `quarter_finals` is a retained legacy runtime state. Public product naming is Quarterly Championship.
 const STATES = ["live", "quarter_finals", "completed"];
 
 function ident(value) {
@@ -43,6 +44,7 @@ function mapEntry(row) {
 function mapSeason(row, entries) {
   const sorted = [...entries].sort((a, b) => b.points - a.points || b.wins - a.wins);
   const ranked = sorted.map((entry, index) => ({ ...entry, rank: index + 1 }));
+  const legacyQuarterlyId = row.quarter_finals_tournament_id || null;
   return {
     id: String(row.id),
     label: String(row.label || "Major War League"),
@@ -54,7 +56,8 @@ function mapSeason(row, entries) {
     resetAt: row.reset_at ? new Date(row.reset_at).toISOString() : futureIso(7),
     frozenAt: row.frozen_at ? new Date(row.frozen_at).toISOString() : null,
     regularSeasonClosed: Boolean(row.regular_season_closed),
-    quarterFinalsTournamentId: row.quarter_finals_tournament_id || null,
+    quarterFinalsTournamentId: legacyQuarterlyId,
+    quarterlyChampionshipId: legacyQuarterlyId,
     divisions: [],
     entries: ranked,
   };
@@ -202,7 +205,7 @@ async function handleOpenQuarterFinals(req, res) {
   const season = await activeSeason(seasonRow.chain_id);
   if (!season) return json(res, 404, { ok: false, error: "Active arena season not found" });
   if (season.quarterFinalsTournamentId) {
-    return json(res, 200, { ok: true, tournamentId: season.quarterFinalsTournamentId, ...(await feed(seasonRow.chain_id)) });
+    return json(res, 200, { ok: true, tournamentId: season.quarterFinalsTournamentId, quarterlyChampionshipId: season.quarterFinalsTournamentId, ...(await feed(seasonRow.chain_id)) });
   }
   await freezeSeason(season.id);
   const frozen = await activeSeason(seasonRow.chain_id);
@@ -210,7 +213,7 @@ async function handleOpenQuarterFinals(req, res) {
   if (seeds.length < 2) {
     return json(res, 409, {
       ok: false,
-      error: `Need at least 2 coins with ${QF_MIN_FIGHTS}+ finished fights to open Quarter Finals`,
+      error: `Need at least 2 coins with ${QF_MIN_FIGHTS}+ finished fights to open the Quarterly Championship`,
     });
   }
   const id = `qf-${season.id}`;
@@ -223,9 +226,9 @@ async function handleOpenQuarterFinals(req, res) {
     [
       id,
       seasonRow.chain_id,
-      `${season.label} Quarter Finals`,
+      `${season.label} Quarterly Championship`,
       nativeSymbolFor(seasonRow.chain_id),
-      "System tournament seeded from the frozen Major War League table.",
+      "Legacy quarterly competition runtime linked from Major War League performance.",
       startsAt,
       Math.max(2, seeds.length),
       String(admin.mode || "ops"),
@@ -245,7 +248,7 @@ async function handleOpenQuarterFinals(req, res) {
       where id = $1`,
     [season.id, id],
   );
-  return json(res, 200, { ok: true, tournamentId: id, seeds: seeds.map((row) => row.tokenId), ...(await feed(seasonRow.chain_id)) });
+  return json(res, 200, { ok: true, tournamentId: id, quarterlyChampionshipId: id, seeds: seeds.map((row) => row.tokenId), ...(await feed(seasonRow.chain_id)) });
 }
 
 async function handleCheckinStatus(req, res) {

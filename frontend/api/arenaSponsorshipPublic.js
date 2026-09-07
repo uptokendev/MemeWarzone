@@ -3,6 +3,7 @@ import { badMethod, json, readJson } from "../server/http.js";
 import { isSolanaChainId } from "./lib/chainNative.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { sponsorshipEventId } from "./lib/arenaSponsorshipRuntime.mjs";
+import { canonicalEventSponsorshipType, sponsorshipRegistryTypesForCanonical } from "./lib/eventSponsorshipAuthority.mjs";
 import { connectionForArenaMoneyV2, readEventPrizeVaultV1, readSponsorshipEventV1 } from "./lib/solanaArenaMoneyV2Read.js";
 import {
   assertSolanaPubkey,
@@ -12,7 +13,8 @@ import {
   verifySolanaSponsorshipPayment,
 } from "./lib/solanaArenaMoneyV2Runtime.mjs";
 
-const SUPPORTED_EVENT_TYPES = new Set(["normal_tournament", "vote_tournament", "monthly_mwl", "quarterly_championship"]);
+const CANONICAL_SUPPORTED_EVENT_TYPES = new Set(["normal_tournament", "vote_tournament", "monthly_mwl", "quarterly_championship"]);
+const SUPPORTED_REGISTRY_EVENT_TYPES = new Set([...CANONICAL_SUPPORTED_EVENT_TYPES, "mwl_quarter_finals"]);
 const QUOTE_TTL_SECONDS = 300;
 const UNRESOLVED = new Set(["pending", "submitted", "confirming", "recovering", "verifying"]);
 
@@ -32,15 +34,17 @@ async function activeTier() {
 }
 function tierMinimumCents(tier, type) {
   if (!tier) return null;
-  if (type === "normal_tournament" || type === "vote_tournament") return BigInt(String(tier.tournament_min_usd_cents));
-  if (type === "monthly_mwl") return BigInt(String(tier.mwl_min_usd_cents));
-  if (type === "quarterly_championship") return BigInt(String(tier.quarterly_min_usd_cents));
+  const canonicalType = canonicalEventSponsorshipType(type);
+  if (canonicalType === "normal_tournament" || canonicalType === "vote_tournament") return BigInt(String(tier.tournament_min_usd_cents));
+  if (canonicalType === "monthly_mwl") return BigInt(String(tier.mwl_min_usd_cents));
+  if (canonicalType === "quarterly_championship") return BigInt(String(tier.quarterly_min_usd_cents));
   return null;
 }
 async function authoritativeMinimumCents(event, tier) {
   const base = tierMinimumCents(tier, event.event_type);
   if (base == null) return null;
-  const override = (await pool.query(`select min_usd_cents from public.sponsorship_price_overrides where active=true and (starts_at is null or starts_at<=now()) and (ends_at is null or ends_at>now()) and (event_type is null or event_type=$3) and ((scope_type='event' and scope_id in ($1,$2)) or (scope_type='chain' and chain_id=$4)) order by case when scope_type='event' then 0 else 1 end,created_at desc limit 1`, [String(event.id), String(event.event_reference_id), String(event.event_type), Number(event.chain_id)])).rows[0];
+  const pricingTypes = sponsorshipRegistryTypesForCanonical(event.event_type);
+  const override = (await pool.query(`select min_usd_cents from public.sponsorship_price_overrides where active=true and (starts_at is null or starts_at<=now()) and (ends_at is null or ends_at>now()) and (event_type is null or event_type=any($3::text[])) and ((scope_type='event' and scope_id in ($1,$2)) or (scope_type='chain' and chain_id=$4)) order by case when scope_type='event' then 0 else 1 end,created_at desc limit 1`, [String(event.id), String(event.event_reference_id), pricingTypes, Number(event.chain_id)])).rows[0];
   return override ? BigInt(String(override.min_usd_cents)) : base;
 }
 async function loadEvent(ref, chainId = null, db = pool) {
@@ -67,28 +71,33 @@ async function handleOptions(req, res) {
   const walletRaw = ident(query.get("walletAddress") || query.get("wallet"));
   const chainFilter = query.get("chainId") ? Number(query.get("chainId")) : null;
   const tier = await activeTier();
-  const rows = (await pool.query(`select id,event_type,event_reference_id,chain_id,starts_at,ends_at,sponsorship_open,prize_native_raw,sponsorship_prize_native_raw from public.sponsorship_events where event_type=any($1::text[]) and ($2::integer is null or chain_id=$2) order by starts_at asc nulls last,created_at desc`, [[...SUPPORTED_EVENT_TYPES], Number.isInteger(chainFilter) ? chainFilter : null])).rows;
+  const rows = (await pool.query(`select id,event_type,event_reference_id,chain_id,starts_at,ends_at,sponsorship_open,prize_native_raw,sponsorship_prize_native_raw from public.sponsorship_events where event_type=any($1::text[]) and ($2::integer is null or chain_id=$2) order by starts_at asc nulls last,created_at desc`, [[...SUPPORTED_REGISTRY_EVENT_TYPES], Number.isInteger(chainFilter) ? chainFilter : null])).rows;
   const options = [];
+  const seen = new Set();
   for (const event of rows) {
+    const canonicalType = canonicalEventSponsorshipType(event.event_type);
+    const entitlement = `${Number(event.chain_id)}:${canonicalType}:${String(event.event_reference_id)}`;
+    if (seen.has(entitlement)) continue;
+    seen.add(entitlement);
     const minimum = await authoritativeMinimumCents(event, tier);
     let wallet = walletRaw;
     if (wallet && isSolanaChainId(event.chain_id)) { try { wallet = assertSolanaPubkey(wallet); } catch { wallet = ""; } }
     const profile = wallet ? await sponsorProfile(wallet, Number(event.chain_id)) : null;
     const chainState = await solanaChainState(event);
     const open = Boolean(event.sponsorship_open) && (!event.ends_at || new Date(event.ends_at).getTime() > Date.now());
-    options.push({ eventId: String(event.id), eventReferenceId: event.event_reference_id, eventType: event.event_type, chainId: Number(event.chain_id), sponsorshipOpen: open, authoritativeTier: tier ? { id: tier.id, code: tier.code } : null, minimumUsdCents: minimum?.toString() || null, sponsorProfile: profileShape(profile), chainState, allowedRequest: minimum == null ? null : { minimumUsdCents: minimum.toString(), maximumUsdCents: null }, allocation: { prizeBps: 7000, marketingOpsBps: 2000, protocolBps: 1000 } });
+    options.push({ eventId: String(event.id), eventReferenceId: event.event_reference_id, eventType: canonicalType, registryEventType: event.event_type, chainId: Number(event.chain_id), sponsorshipOpen: open, authoritativeTier: tier ? { id: tier.id, code: tier.code } : null, minimumUsdCents: minimum?.toString() || null, sponsorProfile: profileShape(profile), chainState, allowedRequest: minimum == null ? null : { minimumUsdCents: minimum.toString(), maximumUsdCents: null }, allocation: { prizeBps: 7000, marketingOpsBps: 2000, protocolBps: 1000 } });
   }
   res.setHeader("cache-control", "no-store");
-  return json(res, 200, { ok: true, options, supportedEventTypes: [...SUPPORTED_EVENT_TYPES], individualBattleSponsorship: false });
+  return json(res, 200, { ok: true, options, supportedEventTypes: [...CANONICAL_SUPPORTED_EVENT_TYPES], individualBattleSponsorship: false });
 }
 
 async function handleState(req, res, eventRef) {
   const event = await loadEvent(eventRef);
-  if (!event || !SUPPORTED_EVENT_TYPES.has(event.event_type)) return json(res, 404, { ok: false, error: "Sponsorship event not found" });
+  if (!event || !SUPPORTED_REGISTRY_EVENT_TYPES.has(event.event_type)) return json(res, 404, { ok: false, error: "Sponsorship event not found" });
   const sponsors = (await pool.query(`select es.id,es.status,es.prize_native_raw,es.activated_at,sp.project_name,sp.founding_sponsor,sp.verified_wallet,p.status as payment_status,p.confirmed_at from public.event_sponsorships es join public.sponsor_profiles sp on sp.id=es.sponsor_profile_id left join lateral (select status,confirmed_at from public.sponsorship_payments where event_sponsorship_id=es.id order by confirmed_at desc nulls last limit 1) p on true where es.event_id=$1 and es.status in ('active','completed') order by es.activated_at asc nulls last,es.created_at asc`, [event.id])).rows;
   const chainState = await solanaChainState(event);
   res.setHeader("cache-control", "no-store");
-  return json(res, 200, { ok: true, event: { id: String(event.id), referenceId: event.event_reference_id, type: event.event_type, chainId: Number(event.chain_id), sponsorshipOpen: Boolean(event.sponsorship_open) && (!event.ends_at || new Date(event.ends_at).getTime() > Date.now()), prizeNativeRaw: String(event.prize_native_raw || 0), sponsorshipPrizeNativeRaw: String(event.sponsorship_prize_native_raw || 0) }, sponsors: sponsors.map((row) => ({ sponsorshipId: row.id, projectName: row.project_name, foundingSponsor: Boolean(row.founding_sponsor), prizeContributionNativeRaw: String(row.prize_native_raw || 0), status: row.status, paymentStatus: row.payment_status || null, confirmedAt: row.confirmed_at || null })), foundingSponsors: sponsors.filter((r) => r.founding_sponsor).map((r) => ({ projectName: r.project_name, sponsorshipId: r.id })), chainState, allocation: { prizeBps: 7000, marketingOpsBps: 2000, protocolBps: 1000 } });
+  return json(res, 200, { ok: true, event: { id: String(event.id), referenceId: event.event_reference_id, type: canonicalEventSponsorshipType(event.event_type), registryType: event.event_type, chainId: Number(event.chain_id), sponsorshipOpen: Boolean(event.sponsorship_open) && (!event.ends_at || new Date(event.ends_at).getTime() > Date.now()), prizeNativeRaw: String(event.prize_native_raw || 0), sponsorshipPrizeNativeRaw: String(event.sponsorship_prize_native_raw || 0) }, sponsors: sponsors.map((row) => ({ sponsorshipId: row.id, projectName: row.project_name, foundingSponsor: Boolean(row.founding_sponsor), prizeContributionNativeRaw: String(row.prize_native_raw || 0), status: row.status, paymentStatus: row.payment_status || null, confirmedAt: row.confirmed_at || null })), foundingSponsors: sponsors.filter((r) => r.founding_sponsor).map((r) => ({ projectName: r.project_name, sponsorshipId: r.id })), chainState, allocation: { prizeBps: 7000, marketingOpsBps: 2000, protocolBps: 1000 } });
 }
 
 function retryableSponsorshipState(row, status) {
@@ -253,7 +262,7 @@ async function handlePaymentReadback(_req, res, quoteId) {
 }
 async function handleWalletEventPaymentState(req, res, eventRef) {
   const event = await loadEvent(eventRef);
-  if (!event || !SUPPORTED_EVENT_TYPES.has(event.event_type) || !isSolanaChainId(event.chain_id)) return json(res, 404, { ok: false, error: "Eligible Solana sponsorship event not found" });
+  if (!event || !SUPPORTED_REGISTRY_EVENT_TYPES.has(event.event_type) || !isSolanaChainId(event.chain_id)) return json(res, 404, { ok: false, error: "Eligible Solana sponsorship event not found" });
   let wallet;
   try { wallet = assertSolanaPubkey(queryOf(req).get("wallet") || queryOf(req).get("walletAddress"), "wallet"); } catch (error) { return json(res, 400, { ok: false, error: error.message }); }
   const row = await resolveSponsorshipState(await quoteReadback(`q.event_id=$1 and q.sponsor_wallet=$2`, [event.id, wallet]));
@@ -264,7 +273,7 @@ async function handleWalletEventPaymentState(req, res, eventRef) {
 async function handleSolanaQuote(req, res) {
   const body = await readJson(req);
   const event = await loadEvent(body.eventId || body.eventReferenceId, body.chainId ?? null);
-  if (!event || !SUPPORTED_EVENT_TYPES.has(event.event_type) || !isSolanaChainId(event.chain_id)) return json(res, 404, { ok: false, error: "Eligible Solana sponsorship event not found" });
+  if (!event || !SUPPORTED_REGISTRY_EVENT_TYPES.has(event.event_type) || !isSolanaChainId(event.chain_id)) return json(res, 404, { ok: false, error: "Eligible Solana sponsorship event not found" });
   if (!event.sponsorship_open || (event.ends_at && new Date(event.ends_at).getTime() <= Date.now())) return json(res, 409, { ok: false, error: "Sponsorship is closed", code: "SPONSORSHIP_CLOSED" });
   let wallet;
   try { wallet = assertSolanaPubkey(body.walletAddress || body.auth?.walletAddress, "walletAddress"); } catch (error) { return json(res, 400, { ok: false, error: error.message }); }
@@ -297,7 +306,7 @@ async function handleSolanaQuote(req, res) {
     const quote = (await client.query(`insert into public.sponsorship_payment_quotes(event_id,chain_id,sponsor_profile_id,sponsor_wallet,pricing_tier_id,pricing_version,minimum_usd_cents,requested_usd_cents,requested_native_raw,minimum_native_raw,native_usd_reference_micro_cents,oracle_timestamp,expires_at,nonce,solana_payment_id,solana_receipt_pda,solana_payment_status) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,to_timestamp($12),to_timestamp($13),$14,$15,$16,'pending') returning id`, [event.id, event.chain_id, profile.id, wallet, tier.id, money.pricingVersion.toString(), minimumCents.toString(), requestedCents.toString(), money.gross.toString(), minimumMoney.gross.toString(), money.nativeUsdMicros.toString(), money.oracleTimestamp.toString(), expiresAtSeconds, BigInt(paymentId).toString(), paymentId, transaction.receiptPda])).rows[0];
     const sponsorship = (await client.query(`insert into public.event_sponsorships(event_id,sponsor_profile_id,pricing_tier_id,quote_id,status) values($1,$2,$3,$4,'pending_payment') returning id`, [event.id, profile.id, tier.id, quote.id])).rows[0];
     await client.query("commit");
-    return json(res, 201, { ok: true, eventId: String(event.id), eventReferenceId: event.event_reference_id, eventType: event.event_type, chainId: Number(event.chain_id), sponsorshipId: sponsorship.id, quoteId: quote.id, minimumUsdCents: minimumCents.toString(), requestedUsdCents: requestedCents.toString(), grossLamports: money.gross.toString(), prizeLamports: money.prize.toString(), marketingLamports: money.marketing.toString(), protocolLamports: money.protocol.toString(), allocation: { prizeBps: 7000, marketingOpsBps: 2000, protocolBps: 1000 }, paymentId, transaction, expiresAt: new Date(expiresAtSeconds * 1000).toISOString(), newPaymentAllowed: false });
+    return json(res, 201, { ok: true, eventId: String(event.id), eventReferenceId: event.event_reference_id, eventType: canonicalEventSponsorshipType(event.event_type), registryEventType: event.event_type, chainId: Number(event.chain_id), sponsorshipId: sponsorship.id, quoteId: quote.id, minimumUsdCents: minimumCents.toString(), requestedUsdCents: requestedCents.toString(), grossLamports: money.gross.toString(), prizeLamports: money.prize.toString(), marketingLamports: money.marketing.toString(), protocolLamports: money.protocol.toString(), allocation: { prizeBps: 7000, marketingOpsBps: 2000, protocolBps: 1000 }, paymentId, transaction, expiresAt: new Date(expiresAtSeconds * 1000).toISOString(), newPaymentAllowed: false });
   } catch (error) { await client.query("rollback").catch(() => {}); throw error; } finally { client.release(); }
 }
 

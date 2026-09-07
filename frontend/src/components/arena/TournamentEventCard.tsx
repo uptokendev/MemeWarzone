@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { EventSponsorAttribution } from "@/components/arena/EventSponsorAttribution";
 import { TournamentBracketModal } from "@/components/arena/TournamentBracketModal";
 import { TournamentLiveRoundPanel } from "@/components/arena/TournamentLiveRoundBattles";
 import { TournamentProgressionBar } from "@/components/arena/TournamentProgressionBar";
@@ -8,6 +9,11 @@ import { WarzoneTokenMark } from "@/components/warzone/WarzoneTokenMark";
 import { fetchPostGradTournamentDetails } from "@/features/postgrad/apiClient";
 import { postGradFlags } from "@/features/postgrad/config";
 import { getMockTournamentDetails } from "@/features/postgrad/mockTournamentFixtures.mjs";
+import { tournamentSponsorEventType, useEventSponsors } from "@/hooks/useEventSponsors";
+import {
+  isQuarterlyChampionshipRuntime,
+  presentQuarterlyChampionshipCard,
+} from "@/lib/arena/quarterlyChampionshipPresentation.mjs";
 import { presentTournamentCard, presentTournamentChampion, readBracketRounds } from "@/lib/arena/tournamentCommandPresentation.mjs";
 import { cn } from "@/lib/utils";
 
@@ -44,7 +50,9 @@ export function TournamentEventCard({
 }) {
   const [hydrated, setHydrated] = useState<Record<string, unknown> | null>(null);
   const source = hydrated ? { ...event, ...hydrated } : event;
-  const card = presentTournamentCard(source, { tab, focused });
+  const quarterlyChampionship = isQuarterlyChampionshipRuntime(source);
+  const baseCard = presentTournamentCard(source, { tab, focused });
+  const card = presentQuarterlyChampionshipCard(baseCard, source);
   const preview = (card.preview || []) as Entrant[];
   const extra = Number(card.extraEntrants || 0);
   const [bracketOpen, setBracketOpen] = useState(false);
@@ -52,6 +60,12 @@ export function TournamentEventCard({
   const [roundOpen, setRoundOpen] = useState(false);
   const [bracketRounds, setBracketRounds] = useState(() => readBracketRounds(event));
   const [bracketEntries, setBracketEntries] = useState<Entrant[]>(Array.isArray(event.entrants) ? (event.entrants as Entrant[]) : []);
+  const sponsorEventType = tournamentSponsorEventType(source);
+  const sponsors = useEventSponsors({
+    eventType: sponsorEventType,
+    eventReferenceId: event.id,
+    chainId: Number(source.chainId || source.chain_id || 0) || null,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -81,9 +95,10 @@ export function TournamentEventCard({
     return () => {
       cancelled = true;
     };
-  }, [event.id]);
+  }, [event.id, event.entrants]);
 
   async function handleViewBracket() {
+    if (quarterlyChampionship) return;
     if (bracketRounds.length) {
       setBracketOpen(true);
       return;
@@ -105,10 +120,10 @@ export function TournamentEventCard({
     }
   }
 
-  const champion = presentTournamentChampion(source, bracketEntries);
+  const champion = quarterlyChampionship ? null : presentTournamentChampion(source, bracketEntries);
   const live = card.status.key === "live";
   const finished = card.status.key === "finished";
-  const showLiveRound = live && !embedded;
+  const showLiveRound = live && !embedded && !quarterlyChampionship;
 
   function handlePrimary() {
     if (live) onViewTournament?.(card.id);
@@ -130,6 +145,7 @@ export function TournamentEventCard({
   return (
     <article
       data-tournament-card={card.id}
+      data-quarterly-championship={quarterlyChampionship ? "true" : undefined}
       className={cn(!embedded && "mwz-flat-card relative overflow-hidden p-4", focused && !embedded && "ring-1 ring-accent/60")}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -142,6 +158,7 @@ export function TournamentEventCard({
         {card.chain ? <TacticalTag label={card.chain.label} tone="default" /> : null}
       </div>
       <h2 className="mt-3 font-black text-xl leading-tight text-foreground md:text-2xl">{card.title}</h2>
+      <EventSponsorAttribution sponsors={sponsors} variant={quarterlyChampionship ? "premium" : "compact"} />
 
       {finished && champion ? (
         <div className="mt-3 flex items-center gap-3" data-tournament-champion="true">
@@ -212,15 +229,17 @@ export function TournamentEventCard({
         ) : (
           primary
         )}
-        <button
-          type="button"
-          data-tournament-view-bracket={card.id}
-          onClick={() => void handleViewBracket()}
-          disabled={bracketBusy}
-          className="inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em] text-accent hover:underline disabled:opacity-60"
-        >
-          {bracketBusy ? "Loading bracket" : card.bracketCta}
-        </button>
+        {card.bracketCta ? (
+          <button
+            type="button"
+            data-tournament-view-bracket={card.id}
+            onClick={() => void handleViewBracket()}
+            disabled={bracketBusy}
+            className="inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em] text-accent hover:underline disabled:opacity-60"
+          >
+            {bracketBusy ? "Loading bracket" : card.bracketCta}
+          </button>
+        ) : null}
         {showLiveRound ? (
           <button
             type="button"
@@ -241,15 +260,18 @@ export function TournamentEventCard({
           />
         </div>
       ) : null}
-      <TournamentBracketModal
-        open={bracketOpen}
-        onOpenChange={setBracketOpen}
-        title={card.title}
-        statusLabel={card.status.label}
-        stageLabel={card.bracketStage}
-        rounds={bracketRounds}
-        entries={bracketEntries}
-      />
+      {!quarterlyChampionship ? (
+        <TournamentBracketModal
+          open={bracketOpen}
+          onOpenChange={setBracketOpen}
+          title={card.title}
+          statusLabel={card.status.label}
+          stageLabel={card.bracketStage}
+          rounds={bracketRounds}
+          entries={bracketEntries}
+          sponsors={sponsors}
+        />
+      ) : null}
     </article>
   );
 }

@@ -3,11 +3,14 @@ import test from "node:test";
 
 import { sponsorshipSplit } from "./arenaSponsorshipRuntime.mjs";
 import {
+  canonicalEventSponsorshipEntitlementKey,
+  canonicalEventSponsorshipType,
   deterministicFoundingSponsorOrder,
   eventSponsorshipContractSummary,
   nativeAssetForEventSponsorship,
   publicSponsorActive,
   resolveSponsorableEvent,
+  tierMinimumColumnForEventType,
 } from "./eventSponsorshipAuthority.mjs";
 import {
   canIssueQuote,
@@ -17,11 +20,15 @@ import {
   paymentStateFromQuote,
 } from "./eventSponsorshipLifecycle.mjs";
 
-function fakeDb({ registry, tournament = null, league = null, qf = null }) {
+function fakeDb({ registry, tournament = null, league = null, championship = null, quarterlyAliases = null }) {
   return {
     async query(sql) {
+      if (sql.includes("from public.sponsorship_events") && sql.includes("event_type = any")) {
+        const aliases = quarterlyAliases || (registry ? [{ id: registry.id, event_type: registry.event_type }] : []);
+        return { rows: aliases };
+      }
       if (sql.includes("from public.sponsorship_events")) return { rows: registry ? [registry] : [] };
-      if (sql.includes("from public.arena_tournaments t") && sql.includes("join public.arena_league_seasons")) return { rows: qf ? [qf] : [] };
+      if (sql.includes("from public.arena_tournaments t") && sql.includes("join public.arena_league_seasons")) return { rows: championship ? [championship] : [] };
       if (sql.includes("from public.arena_tournaments")) return { rows: tournament ? [tournament] : [] };
       if (sql.includes("from public.arena_league_seasons")) return { rows: league ? [league] : [] };
       throw new Error(`unexpected query: ${sql}`);
@@ -39,6 +46,19 @@ const baseRegistry = {
 };
 const future = Date.parse("2026-09-05T12:00:00.000Z");
 
+const championshipRuntime = {
+  tournament_id: "qf-season-1",
+  chain_id: 56,
+  status: "upcoming",
+  origin: "quarter_finals",
+  starts_at: baseRegistry.starts_at,
+  ends_at: baseRegistry.ends_at,
+  league_id: "33333333-3333-4333-8333-333333333333",
+  league_state: "quarter_finals",
+  league_active: true,
+  quarter_finals_tournament_id: "qf-season-1",
+};
+
 test("Normal Tournament is eligible only from canonical tournament identity", async () => {
   const result = await resolveSponsorableEvent(fakeDb({
     registry: { ...baseRegistry, event_type: "normal_tournament" },
@@ -47,6 +67,7 @@ test("Normal Tournament is eligible only from canonical tournament identity", as
   assert.equal(result.ok, true);
   assert.equal(result.sponsorable, true);
   assert.equal(result.canonical.kind, "normal_tournament");
+  assert.equal(result.eventType, "normal_tournament");
 });
 
 test("Vote Tournament is eligible only when canonical battle_mode is vote", async () => {
@@ -65,39 +86,77 @@ test("Major War League is eligible from the canonical season", async () => {
   }), { eventRef: baseRegistry.id, nowMs: future });
   assert.equal(result.ok, true);
   assert.equal(result.canonical.kind, "major_war_league");
+  assert.equal(result.eventType, "monthly_mwl");
 });
 
-test("MWL Quarter Finals requires exact season quarter_finals_tournament_id relationship", async () => {
-  const qf = {
-    tournament_id: "qf-season-1", chain_id: 56, status: "upcoming", origin: "quarter_finals",
-    starts_at: baseRegistry.starts_at, ends_at: baseRegistry.ends_at,
-    league_id: "33333333-3333-4333-8333-333333333333", league_state: "quarter_finals", league_active: true,
-    quarter_finals_tournament_id: "qf-season-1",
-  };
-  const result = await resolveSponsorableEvent(fakeDb({ registry: { ...baseRegistry, event_type: "mwl_quarter_finals", event_reference_id: "qf-season-1" }, qf }), { eventRef: baseRegistry.id, nowMs: future });
+test("Quarterly Championship uses the legacy season relationship without exposing a Quarter Finals product", async () => {
+  const registry = { ...baseRegistry, event_type: "quarterly_championship", event_reference_id: "qf-season-1" };
+  const result = await resolveSponsorableEvent(fakeDb({ registry, championship: championshipRuntime }), { eventRef: baseRegistry.id, nowMs: future });
   assert.equal(result.ok, true);
-  assert.equal(result.canonical.parentEventId, qf.league_id);
-  assert.equal(result.canonical.childEventId, qf.tournament_id);
+  assert.equal(result.sponsorable, true);
+  assert.equal(result.eventType, "quarterly_championship");
+  assert.equal(result.registryEventType, "quarterly_championship");
+  assert.equal(result.canonical.kind, "quarterly_championship");
+  assert.equal(result.canonical.parentEventId, championshipRuntime.league_id);
+  assert.equal(result.canonical.childEventId, championshipRuntime.tournament_id);
   assert.match(result.canonical.relationship, /quarter_finals_tournament_id/);
 });
 
-test("fake Quarter Finals origin without canonical MWL relationship fails closed", async () => {
-  const result = await resolveSponsorableEvent(fakeDb({ registry: { ...baseRegistry, event_type: "mwl_quarter_finals", event_reference_id: "fake-qf" }, qf: null }), { eventRef: baseRegistry.id, nowMs: future });
-  assert.equal(result.ok, false);
-  assert.equal(result.code, "MWL_QUARTER_FINALS_RELATIONSHIP_INVALID");
+test("legacy mwl_quarter_finals registry rows resolve to the one canonical Quarterly Championship entitlement", async () => {
+  const registry = { ...baseRegistry, event_type: "mwl_quarter_finals", event_reference_id: "qf-season-1" };
+  const result = await resolveSponsorableEvent(fakeDb({ registry, championship: championshipRuntime }), { eventRef: baseRegistry.id, nowMs: future });
+  assert.equal(result.ok, true);
+  assert.equal(result.eventType, "quarterly_championship");
+  assert.equal(result.registryEventType, "mwl_quarter_finals");
+  assert.equal(result.canonical.kind, "quarterly_championship");
+  assert.equal(canonicalEventSponsorshipType("mwl_quarter_finals"), "quarterly_championship");
+  assert.equal(canonicalEventSponsorshipEntitlementKey(result), "56:quarterly_championship:qf-season-1");
 });
 
-for (const eventType of ["quarterly_championship", "battle", "legacy_event", "unknown"]) {
-  test(`${eventType} is explicitly rejected`, async () => {
+test("legacy and canonical quarterly registry rows fail closed for new purchases instead of creating duplicate entitlement", async () => {
+  const registry = { ...baseRegistry, event_type: "quarterly_championship", event_reference_id: "qf-season-1" };
+  const aliases = [
+    { id: "11111111-1111-4111-8111-111111111111", event_type: "quarterly_championship" },
+    { id: "22222222-2222-4222-8222-222222222222", event_type: "mwl_quarter_finals" },
+  ];
+  const result = await resolveSponsorableEvent(fakeDb({ registry, championship: championshipRuntime, quarterlyAliases: aliases }), { eventRef: baseRegistry.id, nowMs: future });
+  assert.equal(result.ok, true);
+  assert.equal(result.eventType, "quarterly_championship");
+  assert.equal(result.sponsorable, false);
+  assert.equal(result.sponsorabilityReason, "quarterly_identity_ambiguous");
+  assert.equal(result.registryAliasCount, 2);
+  assert.equal(canonicalEventSponsorshipEntitlementKey(result), "56:quarterly_championship:qf-season-1");
+});
+
+test("quarterly relationship must still resolve through arena_league_seasons.quarter_finals_tournament_id", async () => {
+  const result = await resolveSponsorableEvent(fakeDb({
+    registry: { ...baseRegistry, event_type: "quarterly_championship", event_reference_id: "missing-quarterly-runtime" },
+    championship: null,
+  }), { eventRef: baseRegistry.id, nowMs: future });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "QUARTERLY_CHAMPIONSHIP_RELATIONSHIP_INVALID");
+});
+
+for (const eventType of ["battle", "legacy_event", "unknown"]) {
+  test(`${eventType} remains explicitly rejected`, async () => {
     const result = await resolveSponsorableEvent(fakeDb({ registry: { ...baseRegistry, event_type: eventType } }), { eventRef: baseRegistry.id, nowMs: future });
     assert.equal(result.ok, false);
     assert.equal(result.code, "EVENT_CLASS_INELIGIBLE");
   });
 }
 
+test("pricing columns preserve tournament < MWL < Quarterly product classes", () => {
+  assert.equal(tierMinimumColumnForEventType("normal_tournament"), "tournament_min_usd_cents");
+  assert.equal(tierMinimumColumnForEventType("vote_tournament"), "tournament_min_usd_cents");
+  assert.equal(tierMinimumColumnForEventType("monthly_mwl"), "mwl_min_usd_cents");
+  assert.equal(tierMinimumColumnForEventType("quarterly_championship"), "quarterly_min_usd_cents");
+  assert.equal(tierMinimumColumnForEventType("mwl_quarter_finals"), "quarterly_min_usd_cents");
+});
+
 test("wrong chain cannot resolve a canonical event", async () => {
   const db = {
     async query(sql, params) {
+      if (sql.includes("from public.sponsorship_events") && sql.includes("event_type = any")) return { rows: [] };
       if (sql.includes("from public.sponsorship_events")) return Number(params?.[1]) === 101 ? { rows: [] } : { rows: [{ ...baseRegistry, event_type: "normal_tournament" }] };
       return { rows: [] };
     },
@@ -165,10 +224,13 @@ test("event cancellation after confirmed payment requires operator policy and ne
   assert.equal(deriveSponsorshipState({ applicationStatus: "approved", paymentState: "confirmed", eventCancelled: true }), "operator_policy_required");
 });
 
-test("advertising sponsorship remains a separate product contract", () => {
+test("commercial contract exposes one Quarterly Championship product and preserves advertising separation", () => {
   const contract = eventSponsorshipContractSummary();
   assert.equal(contract.advertisingSystem, "separate:sponsorship_applications");
   assert.deepEqual(contract.allocationBps, { prize: 7000, marketing: 2000, protocol: 1000 });
+  assert.equal(contract.eligibleEventTypes.includes("quarterly_championship"), true);
+  assert.equal(contract.eligibleEventTypes.includes("mwl_quarter_finals"), false);
+  assert.equal(contract.legacyEventTypeAliases.mwl_quarter_finals, "quarterly_championship");
+  assert.equal(contract.quarterlyCommercialProduct, "quarterly_championship");
   assert.equal(contract.explicitlyIneligible.includes("battle"), true);
-  assert.equal(contract.explicitlyIneligible.includes("quarterly_championship"), true);
 });
