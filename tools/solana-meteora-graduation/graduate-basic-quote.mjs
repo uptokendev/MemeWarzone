@@ -6,7 +6,6 @@ import anchor from "@coral-xyz/anchor";
 import * as solanaWeb3 from "@solana/web3.js";
 import {
   AddressLookupTableProgram,
-  ComputeBudgetProgram,
   Connection,
   Ed25519Program,
   Keypair,
@@ -16,7 +15,9 @@ import {
   TransactionInstruction,
 } from "@solana/web3.js";
 import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
   closeAccount,
+  createSyncNativeInstruction,
   getAccount,
   getOrCreateAssociatedTokenAccount,
   NATIVE_MINT,
@@ -112,7 +113,8 @@ async function sendLegacy(connection, payer, ixs) {
   const tx = new Transaction({ feePayer: payer.publicKey, recentBlockhash: latest.blockhash }).add(...ixs); tx.sign(payer);
   const sig = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false });
   const confirmation = await connection.confirmTransaction({ signature: sig, ...latest }, "confirmed");
-  if (confirmation.value.err) fail(`ALT update failed: ${JSON.stringify(confirmation.value.err)}`);
+  if (confirmation.value.err) fail(`setup transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+  return sig;
 }
 function resolveGraduationAltAddress() {
   const configured = String(process.env.SOLANA_GRADUATION_ALT_ADDRESS || "").trim();
@@ -150,7 +152,7 @@ function jupiterInstruction(raw) {
   });
 }
 async function buildJupiterInstructions(auth, operator) {
-  if (Number(auth.quote.profile) === QUOTE_PROFILE_NATIVE) return { instructions: [], lookupTables: [] };
+  if (Number(auth.quote.profile) === QUOTE_PROFILE_NATIVE) return { instructions: [], lookupTables: [], setupInstructions: [] };
   const base = String(process.env.SOLANA_GRADUATION_JUPITER_API_BASE || "https://lite-api.jup.ag/swap/v1").replace(/\/$/, "");
   const response = await fetch(`${base}/swap-instructions`, {
     method: "POST", headers: { "content-type": "application/json", accept: "application/json" },
@@ -170,7 +172,7 @@ async function buildJupiterInstructions(auth, operator) {
     const result = await operator.connection.getAddressLookupTable(asPk(address, "Jupiter ALT"));
     if (!result.value) fail(`Jupiter ALT missing: ${address}`); lookupTables.push(result.value);
   }
-  return { instructions, lookupTables };
+  return { instructions, lookupTables, setupInstructions: [] };
 }
 
 function kitInstructionToWeb3(raw) {
@@ -220,13 +222,28 @@ async function buildOrcaInstructions(auth, operator) {
   );
   if (BigInt(built.quote.tokenEstOut || 0) !== BigInt(auth.quote.expectedQuoteAmount)) fail("Orca quote changed after authorization; refresh authorization");
   if (BigInt(built.quote.tokenMinOut || 0) < BigInt(auth.quote.minQuoteAmount)) fail("Orca minimum output fell below signed authorization");
-  const instructions = (built.instructions || []).map(kitInstructionToWeb3).filter(Boolean);
-  if (!instructions.some((ix) => ix.programId.equals(expectedProgram))) fail("Orca route does not contain the approved acquisition program");
-  return { instructions, lookupTables: [] };
+  const converted = (built.instructions || []).map(kitInstructionToWeb3).filter(Boolean);
+  const allowedSetupPrograms = new Set([
+    SystemProgram.programId.toBase58(),
+    TOKEN_PROGRAM_ID.toBase58(),
+    ASSOCIATED_TOKEN_PROGRAM_ID.toBase58(),
+  ]);
+  for (const ix of converted) {
+    if (!ix.programId.equals(expectedProgram) && !allowedSetupPrograms.has(ix.programId.toBase58())) fail(`unexpected Orca setup program ${ix.programId}`);
+  }
+  const instructions = converted.filter((ix) => ix.programId.equals(expectedProgram));
+  if (!instructions.length) fail("Orca route does not contain the approved acquisition program");
+  const wrapLamports = BigInt(auth.graduationLiquidity.maxLiquidityLamports);
+  if (wrapLamports > BigInt(Number.MAX_SAFE_INTEGER)) fail("WSOL setup amount exceeds safe integer range");
+  const setupInstructions = [
+    SystemProgram.transfer({ fromPubkey: operator.publicKey, toPubkey: wsolAta.address, lamports: Number(wrapLamports) }),
+    createSyncNativeInstruction(wsolAta.address, TOKEN_PROGRAM_ID),
+  ];
+  return { instructions, lookupTables: [], setupInstructions };
 }
 
 async function buildAcquisitionInstructions(auth, operator) {
-  if (Number(auth.quote.profile) === QUOTE_PROFILE_NATIVE) return { instructions: [], lookupTables: [] };
+  if (Number(auth.quote.profile) === QUOTE_PROFILE_NATIVE) return { instructions: [], lookupTables: [], setupInstructions: [] };
   const adapter = String(auth.quote.acquisitionAdapter || "JUPITER").trim().toUpperCase();
   if (adapter === "JUPITER") return buildJupiterInstructions(auth, operator);
   if (adapter === "ORCA_WHIRLPOOL_DEVNET") return buildOrcaInstructions(auth, operator);
@@ -287,8 +304,26 @@ async function main() {
   const quoteRemaining = nativeQuote ? [] : [{ pubkey: quoteMint, isWritable: false, isSigner: false }, { pubkey: quoteAta.address, isWritable: true, isSigner: false }, { pubkey: recoveryAccount, isWritable: true, isSigner: false }];
   const confirmIx = await program.methods.confirmGraduation().accountsStrict({ authority: operator.publicKey, globalConfig: asPk(auth.accounts.globalConfig, "globalConfig"), campaign: campaignPk, mint: campaign.mint, tokenVault: campaign.tokenVault, solVault: campaign.solVault, authorityTokenAccount: stagingAta.address, creator: campaign.creator, creatorTokenAccount: creatorAta.address, creatorProfile: asPk(auth.accounts.creatorProfile, "creatorProfile"), graduationState: asPk(auth.accounts.graduationState, "graduationState"), meteoraPool: pool, meteoraPosition: position, meteoraTokenVault: asPk(auth.accounts.meteoraTokenVault, "meteoraTokenVault"), meteoraNativeVault: asPk(auth.accounts.meteoraNativeVault, "meteora quote vault"), tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId }).remainingAccounts([...quoteRemaining, ...rewardRemaining]).instruction();
   const acquisition = await buildAcquisitionInstructions(auth, { publicKey: operator.publicKey, secretKey: operator.secretKey, connection });
-  const computeUnits = Number(process.env.SOLANA_GRADUATION_COMPUTE_UNITS || 1_400_000);
-  const instructions = [ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnits }), flushFeesIx, ed25519Ix, beginIx, ...acquisition.instructions, ...meteoraTx.instructions, confirmIx];
+
+  const precreatedAtaTargets = new Set([stagingAta.address.toBase58(), ...(quoteAta ? [quoteAta.address.toBase58()] : [])]);
+  const meteoraInstructions = [];
+  for (const ix of meteoraTx.instructions) {
+    if (!ix.programId.equals(ASSOCIATED_TOKEN_PROGRAM_ID)) {
+      meteoraInstructions.push(ix);
+      continue;
+    }
+    const target = ix.keys?.[1]?.pubkey?.toBase58?.() || "";
+    if (!precreatedAtaTargets.has(target)) fail(`refusing to strip non-precreated Meteora ATA instruction for ${target || "unknown target"}`);
+    console.log("METEORA PRECREATED ATA OMITTED", target);
+  }
+
+  const setupInstructions = [flushFeesIx, ...(acquisition.setupInstructions || [])];
+  if (setupInstructions.length) {
+    const setupSignature = await sendLegacy(connection, operator, setupInstructions);
+    console.log("GRADUATION REVERSIBLE SETUP", setupSignature, "instructions", setupInstructions.length);
+  }
+
+  const instructions = [ed25519Ix, beginIx, ...acquisition.instructions, ...meteoraInstructions, confirmIx];
   const latest = await connection.getLatestBlockhash("confirmed"); const projectLookup = await loadProjectLookupTable(connection, operator, instructions);
   const lookupMap = new Map([...projectLookup, ...acquisition.lookupTables].map((table) => [table.key.toBase58(), table])); const lookupTables = [...lookupMap.values()];
   const v0 = await loadSolanaV0Module();
