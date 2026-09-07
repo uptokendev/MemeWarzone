@@ -1,17 +1,14 @@
 import { useState } from "react";
 import { ArenaWarPoolClaimButton } from "@/components/arena/ArenaWarPoolClaimButton";
+import { EventSponsorAttribution } from "@/components/arena/EventSponsorAttribution";
 import { TournamentBracketModal } from "@/components/arena/TournamentBracketModal";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { WarzoneTokenMark } from "@/components/warzone/WarzoneTokenMark";
+import { tournamentSponsorEventType, useEventSponsors } from "@/hooks/useEventSponsors";
 import { useTournamentCommandState } from "@/hooks/useTournamentCommandState";
 
-export function TournamentResultsModal({
-  tournamentId,
-  open,
-  onOpenChange,
-  onViewBracket,
-}: {
+export function TournamentResultsModal({ tournamentId, open, onOpenChange, onViewBracket }: {
   tournamentId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -20,19 +17,17 @@ export function TournamentResultsModal({
   const [bracketOpen, setBracketOpen] = useState(false);
   const state = useTournamentCommandState(open ? tournamentId : "", { loadMetrics: false });
   const card = state.card;
+  const source = { ...((state.tournament || {}) as Record<string, unknown>), ...((state.detail?.event || {}) as Record<string, unknown>) };
+  const sponsors = useEventSponsors({ eventType: tournamentSponsorEventType(source), eventReferenceId: state.id, chainId: state.tournamentChainId, enabled: open });
   const champion = state.champion;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        data-tournament-results-modal="true"
-        data-tournament-details-modal="true"
-        className="max-h-[90vh] w-[95vw] max-w-lg overflow-y-auto border bg-[#050505] p-4 md:p-6"
-        style={{ borderColor: "var(--mwz-flat-card-border)" }}
-      >
+      <DialogContent data-tournament-results-modal="true" data-tournament-details-modal="true" className="max-h-[90vh] w-[95vw] max-w-lg overflow-y-auto border bg-[#050505] p-4 md:p-6" style={{ borderColor: "var(--mwz-flat-card-border)" }}>
         <DialogHeader className="pr-8 text-left">
           <DialogTitle className="font-black text-xl text-foreground">{card?.title || "Tournament"}</DialogTitle>
           <DialogDescription className="text-[11px] uppercase tracking-[0.16em] text-white/50">Results</DialogDescription>
+          <EventSponsorAttribution sponsors={sponsors} variant="prominent" />
         </DialogHeader>
         {!state.tournament ? (
           <p className="text-sm text-muted-foreground">This tournament could not be loaded.</p>
@@ -49,31 +44,9 @@ export function TournamentResultsModal({
                 </div>
               </div>
             ) : null}
-            <ArenaWarPoolClaimButton
-              battleId={state.id}
-              chainId={state.tournamentChainId}
-              label="CLAIM TOURNAMENT REWARDS"
-            />
-            <button
-              type="button"
-              onClick={() => {
-                if (onViewBracket) onViewBracket();
-                else setBracketOpen(true);
-              }}
-              className="inline-flex min-h-11 items-center text-xs uppercase tracking-[0.16em] text-accent hover:underline"
-            >
-              Final bracket
-            </button>
-            <TournamentBracketModal
-              open={bracketOpen}
-              onOpenChange={setBracketOpen}
-              title={card?.title || "Tournament"}
-              statusLabel={card?.status.label}
-              stageLabel={card?.bracketStage}
-              rounds={state.bracketRounds}
-              entries={state.entries}
-              chainId={state.tournamentChainId}
-            />
+            <ArenaWarPoolClaimButton battleId={state.id} chainId={state.tournamentChainId} label="CLAIM TOURNAMENT REWARDS" />
+            <button type="button" onClick={() => { if (onViewBracket) onViewBracket(); else setBracketOpen(true); }} className="inline-flex min-h-11 items-center text-xs uppercase tracking-[0.16em] text-accent hover:underline">Final bracket</button>
+            <TournamentBracketModal open={bracketOpen} onOpenChange={setBracketOpen} title={card?.title || "Tournament"} statusLabel={card?.status.label} stageLabel={card?.bracketStage} rounds={state.bracketRounds} entries={state.entries} chainId={state.tournamentChainId} sponsors={sponsors} />
           </div>
         )}
       </DialogContent>
