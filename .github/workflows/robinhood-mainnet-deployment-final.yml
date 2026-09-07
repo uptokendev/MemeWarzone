@@ -1,0 +1,70 @@
+name: Robinhood Mainnet Deployment Final
+
+on:
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - "scripts/deploy-robinhood-mainnet-final.ts"
+      - "scripts/deploy-robinhood-mainnet-final.test.mjs"
+      - "config/robinhood-mainnet-deployment.env.example"
+      - "scripts/prepare-robinhood-production-manifest.mjs"
+      - "scripts/prove-robinhood-production-manifest.mjs"
+      - "scripts/verify-robinhood-production-live.mjs"
+      - ".github/workflows/robinhood-mainnet-deployment-final.yml"
+  push:
+    branches:
+      - agent8/robinhood-mainnet-deployment-final
+    paths:
+      - "scripts/deploy-robinhood-mainnet-final.ts"
+      - "scripts/deploy-robinhood-mainnet-final.test.mjs"
+      - "config/robinhood-mainnet-deployment.env.example"
+      - ".github/workflows/robinhood-mainnet-deployment-final.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  executor-certification:
+    name: Chain-4663 dark deployment executor certification
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Compile accepted production contracts
+        run: npx hardhat compile
+
+      - name: Prove deployment executor guardrails
+        run: node --test scripts/deploy-robinhood-mainnet-final.test.mjs
+
+      - name: Prove existing production manifest authority remains fail-closed
+        run: node --test scripts/prove-robinhood-production-manifest.test.mjs scripts/prepare-robinhood-production-manifest.test.mjs scripts/prove-robinhood-production-policy.test.mjs
+
+      - name: Type-check executor without broadcasting
+        run: npx tsc --noEmit --pretty false
+
+      - name: Verify committed production manifest remains dark
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const manifest = JSON.parse(fs.readFileSync('deployments/robinhood/mainnet.json', 'utf8'));
+          if (Number(manifest.chainId) !== 4663) throw new Error('Robinhood mainnet manifest must remain chain 4663');
+          if (manifest.supportEnabled !== false || manifest.creationEnabled !== false) throw new Error('Robinhood production must remain dark before canary');
+          if (Object.keys(manifest.contracts || {}).length !== 0) throw new Error('Committed authority must not be mutated by deployment-tooling PR');
+          NODE
+
+      - name: Ensure no testnet mocks entered production executor
+        run: |
+          if grep -E 'MockWETH9|MockUniswapV3|MockUsdPriceFeed|46630|ALLOW_LOCAL_RH_PROTOCOL_STAGE' scripts/deploy-robinhood-mainnet-final.ts; then
+            echo 'Production executor contains forbidden testnet-only dependency' >&2
+            exit 1
+          fi
