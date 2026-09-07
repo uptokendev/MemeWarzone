@@ -45,7 +45,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npm install --prefix tools/solana-meteora-graduation --no-save --no-audit --no-fund @orca-so/whirlpools@8.0.1 @solana/kit@2
+          npm install --prefix tools/solana-meteora-graduation --no-save --no-audit --no-fund @orca-so/whirlpools@8.0.1 @solana/kit@5.0.0
 
       - name: Create or verify and seed canonical Circle-USDC Whirlpool
         shell: bash
