@@ -32,6 +32,8 @@ const DEFAULT_SEED_SOL = 0.10;
 const DEFAULT_RANGE_BPS = 300;
 // $6 fixture: 0.05 SOL close buy -> 2% buy fee -> 2% finalize fee -> 80% liquidity.
 const DEFAULT_CERT_ACQUISITION_LAMPORTS = 38_416_000n;
+const MIN_ACCEPTANCE_SOL_RESERVE_LAMPORTS = 900_000_000;
+const DEVNET_AIRDROP_LAMPORTS = 1_000_000_000;
 const MAX_REFERENCE_DRIFT_BPS = 25;
 const MAX_CERT_IMPACT_BPS = 100;
 const REPORT_PATH = process.env.ORCA_DEVNET_CERT_REPORT || "/tmp/mwz-orca-devnet-cert-pool.json";
@@ -108,6 +110,28 @@ async function parkResidualUsdc(connection, operator, report) {
     parkingOwner: parkingOwner.toBase58(), parkingAta: parkingAta.address.toBase58(),
     parkedRaw: balance.raw, parkingSignature: signature, operatorUsdcRawAfterParking: after.raw,
   };
+}
+async function ensureAcceptanceSolReserve(connection, owner, report) {
+  const before = await connection.getBalance(owner, "confirmed");
+  if (before >= MIN_ACCEPTANCE_SOL_RESERVE_LAMPORTS) {
+    report.acceptanceSolReserve = { beforeLamports: before, afterLamports: before, airdropSignature: null };
+    return;
+  }
+  const signature = await connection.requestAirdrop(owner, DEVNET_AIRDROP_LAMPORTS);
+  let confirmed = false;
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const status = (await connection.getSignatureStatuses([signature], { searchTransactionHistory: true })).value[0];
+    if (status?.err) fail(`devnet SOL reserve airdrop failed: ${JSON.stringify(status.err)}`);
+    if (status?.confirmationStatus === "confirmed" || status?.confirmationStatus === "finalized") {
+      confirmed = true;
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+  if (!confirmed) fail(`devnet SOL reserve airdrop did not confirm: ${signature}`);
+  const after = await connection.getBalance(owner, "confirmed");
+  if (after < MIN_ACCEPTANCE_SOL_RESERVE_LAMPORTS) fail(`operator SOL reserve remains below acceptance minimum after airdrop: ${after}`);
+  report.acceptanceSolReserve = { beforeLamports: before, afterLamports: after, airdropSignature: signature };
 }
 
 async function main() {
@@ -215,6 +239,7 @@ async function main() {
   }
 
   await parkResidualUsdc(web3, operator, report);
+  await ensureAcceptanceSolReserve(web3, owner, report);
   report.status = "READY";
   fs.writeFileSync(REPORT_PATH, toJson(report)); console.log(toJson(report));
 }
