@@ -17,14 +17,6 @@ export function normalizedCreatorQuoteCategory(asset) {
   return "ECOSYSTEM";
 }
 
-export function isCreatorQuoteSelectable(asset) {
-  if (!asset || asset.newGraduationEligible !== true) return false;
-  if (String(asset.adminState || "enabled").toLowerCase() === "disabled") return false;
-  const catalogState = String(asset.catalogState || "ACTIVE").toUpperCase();
-  if (["PENDING", "REJECTED", "DISABLED", "SUPPORT_ONLY"].includes(catalogState)) return false;
-  return true;
-}
-
 export function creatorQuoteIdentityKey(asset) {
   const chainId = String(asset?.chainId || "").trim();
   const provider = String(asset?.provider?.key || "").trim().toLowerCase();
@@ -33,6 +25,15 @@ export function creatorQuoteIdentityKey(asset) {
   if (!chainId || !provider || !exactIdentity || !id) return "";
   const normalizedIdentity = chainId === "101" ? exactIdentity : exactIdentity.toLowerCase();
   return `${chainId}:${provider}:${normalizedIdentity}:${id}`;
+}
+
+export function isCreatorQuoteSelectable(asset) {
+  if (!asset || asset.newGraduationEligible !== true) return false;
+  if (!creatorQuoteIdentityKey(asset)) return false;
+  if (String(asset.adminState || "enabled").toLowerCase() === "disabled") return false;
+  const catalogState = String(asset.catalogState || "ACTIVE").toUpperCase();
+  if (["PENDING", "REJECTED", "DISABLED", "SUPPORT_ONLY"].includes(catalogState)) return false;
+  return true;
 }
 
 export function filterCreatorQuoteAssets(items, { chainId, query = "", category = "ALL" } = {}) {
@@ -45,13 +46,8 @@ export function filterCreatorQuoteAssets(items, { chainId, query = "", category 
     .filter((asset) => wantedCategory === "ALL" || normalizedCreatorQuoteCategory(asset) === wantedCategory)
     .filter((asset) => {
       if (!needle) return true;
-      return [
-        asset.symbol,
-        asset.displayName,
-        asset.provider?.displayName,
-        asset.provider?.key,
-        normalizedCreatorQuoteCategory(asset),
-      ].some((value) => String(value || "").toLowerCase().includes(needle));
+      return [asset.symbol, asset.displayName, asset.provider?.displayName, asset.provider?.key, normalizedCreatorQuoteCategory(asset)]
+        .some((value) => String(value || "").toLowerCase().includes(needle));
     });
 }
 
