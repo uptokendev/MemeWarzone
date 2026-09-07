@@ -2,12 +2,11 @@ import fs from "node:fs";
 
 import {
   createSplashPool,
-  fetchWhirlpoolsByTokenPair,
+  fetchSplashPool,
   openFullRangePosition,
   orderMints,
   setPayerFromBytes,
   setRpc,
-  setWhirlpoolsConfig,
   WhirlpoolDeployment,
 } from "@orca-so/whirlpools";
 import { address, createSolanaRpc, devnet } from "@solana/kit";
@@ -68,7 +67,6 @@ async function main() {
 
   const operatorBytes = loadOperatorBytes();
   await setRpc(rpcUrl);
-  await setWhirlpoolsConfig("solanaDevnet");
   const payer = await setPayerFromBytes(operatorBytes);
   const rpc = createSolanaRpc(devnet(rpcUrl));
   const web3 = new Connection(rpcUrl, "confirmed");
@@ -78,24 +76,24 @@ async function main() {
   const wsolIsA = String(mintA) === WSOL;
   const initialPrice = wsolIsA ? initialPriceUsd : 1 / initialPriceUsd;
 
-  const poolInfos = await fetchWhirlpoolsByTokenPair(
+  const existing = await fetchSplashPool(
     rpc,
     address(WSOL),
     address(CIRCLE_DEVNET_USDC),
     WhirlpoolDeployment.devnet,
   );
-  const existingSplash = poolInfos.find((pool) => Number(pool.tickSpacing) === 32896 && pool.initialized);
-  let poolAddress = existingSplash ? String(existingSplash.address) : null;
+  let poolAddress = String(existing.address);
   let poolCreationSignature = null;
 
-  if (!poolAddress) {
+  if (!existing.initialized) {
     const created = await createSplashPool(
-      rpc,
       mintA,
       mintB,
-      initialPrice,
-      payer,
-      { whirlpoolDeployment: WhirlpoolDeployment.devnet },
+      {
+        initialPrice,
+        funder: payer,
+        whirlpoolDeployment: WhirlpoolDeployment.devnet,
+      },
     );
     poolAddress = String(created.poolAddress);
     poolCreationSignature = await created.callback();
@@ -110,8 +108,9 @@ async function main() {
     rpcUrl,
     network: "solana-devnet",
     operator: owner.toBase58(),
-    orca: { programId: ORCA_PROGRAM, config: ORCA_DEVNET_CONFIG },
+    orca: { programId: ORCA_PROGRAM, config: ORCA_DEVNET_CONFIG, deployment: "devnet" },
     poolAddress,
+    poolWasReused: Boolean(existing.initialized),
     tokenA: String(mintA),
     tokenB: String(mintB),
     wsolMint: WSOL,
@@ -138,18 +137,19 @@ async function main() {
     fail("operator does not have enough devnet SOL for liquidity plus transaction rent/fees");
   }
 
-  const seedParam = wsolIsA ? { tokenA: desiredSolRaw } : { tokenB: desiredSolRaw };
+  const seedParam = wsolIsA ? { tokenMaxA: desiredSolRaw } : { tokenMaxB: desiredSolRaw };
   const opened = await openFullRangePosition(
-    rpc,
     address(poolAddress),
     seedParam,
-    100,
-    payer,
-    { whirlpoolDeployment: WhirlpoolDeployment.devnet },
+    {
+      slippageToleranceBps: 100,
+      funder: payer,
+      whirlpoolDeployment: WhirlpoolDeployment.devnet,
+    },
   );
   report.liquiditySeedingSignature = await opened.callback();
-  report.liquidityPositionMint = String(opened.positionMint || opened.positionAddress || "");
-  report.seedQuote = opened.quote;
+  report.liquidityPositionMint = String(opened.positionMint || "");
+  report.initializationCost = opened.initializationCost;
   report.status = "READY";
   fs.writeFileSync(REPORT_PATH, toJson(report));
   console.log(toJson(report));
