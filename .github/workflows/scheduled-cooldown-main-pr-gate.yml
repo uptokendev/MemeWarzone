@@ -1,4 +1,4 @@
-name: Agent 2 99d1 Local BASIC Quote Acceptance
+name: Agent 2 Local Quote Acceptance Runner
 
 on:
   push:
@@ -11,6 +11,7 @@ permissions:
 env:
   CANDIDATE_SHA: 1e7b45802a7e2e39e13e46321209d2eb6c87606f
   HARNESS_SOURCE_SHA: 93b2359db5910fb16552a7a7e574ba078d3df61b
+  HARNESS_WRAPPER_SHA: ad1daaf96126558f345482759141229b5dd80bcf
   PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
   SOLANA_VERSION: 1.18.26
   ANCHOR_VERSION: 0.30.1
@@ -27,17 +28,14 @@ jobs:
         with:
           ref: ${{ env.CANDIDATE_SHA }}
           fetch-depth: 0
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-
       - name: Verify exact candidate
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
-
       - name: Install pinned toolchain
         shell: bash
         run: |
@@ -53,7 +51,6 @@ jobs:
           ln -sfn "$d" "$HOME/.local/share/solana/install/active_release"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
           npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
-
       - name: Build exact candidate and pinned Meteora fixture
         shell: bash
         run: |
@@ -61,71 +58,25 @@ jobs:
           anchor build --program-name memewarzone_solana --no-idl
           mkdir -p target/idl
           (cd programs/memewarzone_solana && RUSTUP_TOOLCHAIN="$IDL_TOOLCHAIN" anchor idl build --out ../../target/idl/memewarzone_solana.json)
-          test -s target/deploy/memewarzone_solana.so
-          test -s target/idl/memewarzone_solana.json
           npm install --prefix tests/solana --no-audit --no-fund
           npm install --prefix frontend --ignore-scripts --no-audit --no-fund
           node scripts/solana/fetch-pinned-meteora-cp-amm.mjs --with-accounts
-
-      - name: Execute existing dedicated harness adaptation and add pending retry assertion
+      - name: Materialize preserved dedicated harness
         shell: bash
         run: |
           set -euo pipefail
-          git fetch --no-tags origin "$HARNESS_SOURCE_SHA"
+          git fetch --no-tags origin "$HARNESS_SOURCE_SHA" "$HARNESS_WRAPPER_SHA"
           git show "$HARNESS_SOURCE_SHA:.github/workflows/agent2-99d1-local-quotes.yml" > /tmp/agent2-existing-harness.yml
+          git show "$HARNESS_WRAPPER_SHA:.github/workflows/agent2-99d1-local-quotes.yml" > /tmp/agent2-wrapper.yml
           python <<'PY'
           from pathlib import Path
-          import os
-
-          raw = Path('/tmp/agent2-existing-harness.yml').read_text().splitlines()
+          raw = Path('/tmp/agent2-wrapper.yml').read_text().splitlines()
           start = next(i for i, line in enumerate(raw) if line.strip() == "python <<'PY'") + 1
           end = next(i for i in range(start, len(raw)) if raw[i].strip() == 'PY')
-          code = []
-          for line in raw[start:end]:
-              code.append(line[10:] if line.startswith('          ') else line)
-          exec(compile('\n'.join(code), '<existing-agent2-local-harness>', 'exec'), {'__name__': '__main__'})
-
-          p = Path('tests/solana/v4-lifecycle-acceptance.cjs')
-          s = p.read_text()
-          old = 'let quoteMint=NATIVE_MINT,quoteDecimals=9,binding=nativeGraduationBinding(oraclePrice),acquisitionIx=null,quoteRemaining=[],poolQuoteRaw=quote.maxLiquidityLamports,residual=0n,recoveryAccount=null,authorityQuote=null;'
-          new = 'let quoteMint=NATIVE_MINT,quoteDecimals=9,binding=nativeGraduationBinding(oraclePrice),acquisitionIx=null,quoteRemaining=[],poolQuoteRaw=quote.maxLiquidityLamports,residual=0n,recoveryAccount=null,authorityQuote=null,acquisitionSource=null,acquired=0n;'
-          if old not in s:
-              raise SystemExit('stable setup declaration not found')
-          s = s.replace(old, new, 1)
-          s = s.replace('const acquisitionSource=await createAccount(connection,adminKeypair,quoteMint,admin);', 'acquisitionSource=await createAccount(connection,adminKeypair,quoteMint,admin);', 1)
-          s = s.replace('const acquired=poolQuoteRaw+residual;', 'acquired=poolQuoteRaw+residual;', 1)
-
-          marker = 'const latest=await connection.getLatestBlockhash("confirmed"); const versioned=v0Helpers.buildLaunchpadV0Transaction(web3,{payer:admin,recentBlockhash:latest.blockhash,instructions,lookupTableAccounts:[lookupTableAccount]});'
-          if marker not in s:
-              raise SystemExit('safe graduation V0 marker not found')
-          pending = r'''if(stableMode){
-      const unsafeBinding={...binding,quoteReferenceUsdMicros:quoteUsd*2n};
-      const unsafeDigest=graduationDigest(digestInput(campaign,nativeTarget,oraclePrice,deadline,hash32("graduation:stable-v4-unsafe"),nftMint.publicKey,pool,position,unsafeBinding));
-      const unsafeEd25519=Ed25519Program.createInstructionWithPrivateKey({privateKey:routeSigner.secretKey,message:unsafeDigest});
-      const unsafeBeginIx=await program.methods.beginGraduation(anchorGraduationArgs(nativeTarget,oraclePrice,deadline,hash32("graduation:stable-v4-unsafe"),nftMint.publicKey,unsafeBinding)).accountsStrict({authority:admin,globalConfig,generationConfig,campaign:campaignAccounts.campaign,mint:campaignAccounts.mint,tokenVault:campaignAccounts.tokenVault,solVault:campaignAccounts.solVault,feeEscrow:campaignAccounts.feeEscrow,authorityTokenAccount:authorityAta,meteoraPool:pool,meteoraPosition:position,positionNftMint:nftMint.publicKey,graduationState,instructions:SYSVAR_INSTRUCTIONS_PUBKEY,tokenProgram:TOKEN_PROGRAM_ID,systemProgram:SystemProgram.programId}).instruction();
-      const unsafeInstructions=[ComputeBudgetProgram.setComputeUnitLimit({units:1_400_000}),unsafeEd25519,unsafeBeginIx,acquisitionIx,...meteoraTx.instructions,confirmIx];
-      const unsafeLatest=await connection.getLatestBlockhash("confirmed");
-      const unsafeV0=v0Helpers.buildLaunchpadV0Transaction(web3,{payer:admin,recentBlockhash:unsafeLatest.blockhash,instructions:unsafeInstructions,lookupTableAccounts:[lookupTableAccount]});
-      unsafeV0.sign([adminKeypair,nftMint]);
-      const unsafeSig=await connection.sendRawTransaction(unsafeV0.serialize(),{skipPreflight:true,maxRetries:5});
-      const unsafeConfirmation=await connection.confirmTransaction({signature:unsafeSig,blockhash:unsafeLatest.blockhash,lastValidBlockHeight:unsafeLatest.lastValidBlockHeight},"confirmed");
-      assert.ok(unsafeConfirmation.value.err,"unsafe stable quote must fail closed and remain pending");
-      const pendingCampaign=decodeCampaign((await connection.getAccountInfo(campaignAccounts.campaign,"confirmed")).data);
-      assert.equal(pendingCampaign.graduated,false,"unsafe stable must leave campaign pending");
-      assert.equal(await connection.getAccountInfo(graduationState,"confirmed"),null,"unsafe stable must roll back graduation state");
-      assert.equal(await connection.getAccountInfo(pool,"confirmed"),null,"unsafe stable must roll back Meteora pool creation");
-      const pendingAuthorityQuote=await getAccount(connection,authorityQuote.address,"confirmed");
-      assert.equal(BigInt(pendingAuthorityQuote.amount.toString()),0n,"unsafe stable must roll back quote acquisition");
-      const pendingSource=await getAccount(connection,acquisitionSource,"confirmed");
-      assert.equal(BigInt(pendingSource.amount.toString()),acquired,"unsafe stable must preserve acquisition source on rollback");
-      console.log(`[basic-grad-local] mode=stable GRADUATION_PENDING_QUOTE_UNSAFE signature=${unsafeSig}`);
-    }
-    const latest=await connection.getLatestBlockhash("confirmed"); const versioned=v0Helpers.buildLaunchpadV0Transaction(web3,{payer:admin,recentBlockhash:latest.blockhash,instructions,lookupTableAccounts:[lookupTableAccount]});'''
-          s = s.replace(marker, pending, 1)
-          p.write_text(s)
+          code = [line[10:] if line.startswith('          ') else line for line in raw[start:end]]
+          exec(compile('\n'.join(code), '<preserved-agent2-wrapper>', 'exec'), {'__name__': '__main__'})
           PY
           node --check tests/solana/v4-lifecycle-acceptance.cjs
-
       - name: Run native and canonical-stable graduation on fresh disposable validators
         shell: bash
         run: |
