@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { PUBLIC_SPONSOR_EVENT_TYPES, projectPublicSponsors, safeHttpsUrl } from "./arenaSponsorVisibilityPolicy.mjs";
+import {
+  PUBLIC_SPONSOR_EVENT_TYPES,
+  canonicalPublicSponsorEventType,
+  projectPublicSponsors,
+  publicSponsorRegistryTypes,
+  safeHttpsUrl,
+} from "./arenaSponsorVisibilityPolicy.mjs";
 
 const active = (overrides = {}) => ({
   sponsor_profile_id: "profile-a",
@@ -11,16 +17,22 @@ const active = (overrides = {}) => ({
   ...overrides,
 });
 
-test("public visibility supports the authoritative event classes without weekly-league expansion", () => {
+test("public visibility exposes Quarterly Championship but not the legacy Quarter Finals product name", () => {
   assert.deepEqual(PUBLIC_SPONSOR_EVENT_TYPES, [
     "normal_tournament",
     "vote_tournament",
     "monthly_mwl",
     "quarterly_championship",
-    "mwl_quarter_finals",
   ]);
+  assert.equal(PUBLIC_SPONSOR_EVENT_TYPES.includes("mwl_quarter_finals"), false);
   assert.equal(PUBLIC_SPONSOR_EVENT_TYPES.includes("weekly_league"), false);
   assert.equal(PUBLIC_SPONSOR_EVENT_TYPES.includes("battle"), false);
+});
+
+test("legacy quarterly registry identity maps to the canonical public Quarterly Championship", () => {
+  assert.equal(canonicalPublicSponsorEventType("mwl_quarter_finals"), "quarterly_championship");
+  assert.deepEqual(publicSponsorRegistryTypes("quarterly_championship"), ["quarterly_championship", "mwl_quarter_finals"]);
+  assert.deepEqual(publicSponsorRegistryTypes("mwl_quarter_finals"), ["quarterly_championship", "mwl_quarter_finals"]);
 });
 
 test("only active sponsorships with approved sponsor profiles are publicly projected", () => {
@@ -38,11 +50,11 @@ test("no sponsor produces no attribution payload", () => {
   assert.deepEqual(projectPublicSponsors([]), []);
 });
 
-test("multiple sponsors preserve deterministic authority order and dedupe profile identity", () => {
+test("multiple sponsors preserve deterministic authority order and dedupe profile identity across quarterly aliases", () => {
   const rows = [
     active({ sponsor_profile_id: "profile-a", project_name: "PROJECT A" }),
     active({ sponsor_profile_id: "profile-b", project_name: "PROJECT B" }),
-    active({ sponsor_profile_id: "profile-a", project_name: "PROJECT A DUPLICATE" }),
+    active({ sponsor_profile_id: "profile-a", project_name: "PROJECT A LEGACY DUPLICATE" }),
     active({ sponsor_profile_id: "profile-c", project_name: "PROJECT C" }),
   ];
   assert.deepEqual(projectPublicSponsors(rows).map((row) => row.projectName), ["PROJECT A", "PROJECT B", "PROJECT C"]);
