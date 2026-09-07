@@ -104,6 +104,8 @@ export type CreateCampaignParams = {
   basePriceWei?: bigint;
   priceSlopeWei?: bigint;
   graduationTargetWei?: bigint;
+  /** Opaque server-side Quote Asset Catalog deployment id; never a raw quote token/router address. */
+  graduationQuoteAssetId?: string;
   lpReceiver?: string;
 };
 
