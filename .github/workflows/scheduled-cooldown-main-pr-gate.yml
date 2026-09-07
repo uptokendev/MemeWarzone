@@ -75,6 +75,10 @@ jobs:
           end = next(i for i in range(start, len(raw)) if raw[i].strip() == 'PY')
           code = [line[10:] if line.startswith('          ') else line for line in raw[start:end]]
           exec(compile('\n'.join(code), '<preserved-agent2-wrapper>', 'exec'), {'__name__': '__main__'})
+          p = Path('tests/solana/v4-lifecycle-acceptance.cjs')
+          s = p.read_text()
+          s = s.replace('atomic.logs.join("\n")', 'atomic.logs.join("\\n")')
+          p.write_text(s)
           PY
           node --check tests/solana/v4-lifecycle-acceptance.cjs
       - name: Run native and canonical-stable graduation on fresh disposable validators
