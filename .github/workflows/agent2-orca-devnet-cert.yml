@@ -1,5 +1,6 @@
 name: Agent 2 Orca devnet certification pool
 
+# Final read-only source gate plus dedicated devnet certification mutation rail.
 on:
   push:
     branches:
