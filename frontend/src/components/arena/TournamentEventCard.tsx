@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { EventSponsorAttribution } from "@/components/arena/EventSponsorAttribution";
 import { TournamentBracketModal } from "@/components/arena/TournamentBracketModal";
 import { TournamentLiveRoundPanel } from "@/components/arena/TournamentLiveRoundBattles";
 import { TournamentProgressionBar } from "@/components/arena/TournamentProgressionBar";
@@ -8,6 +9,7 @@ import { WarzoneTokenMark } from "@/components/warzone/WarzoneTokenMark";
 import { fetchPostGradTournamentDetails } from "@/features/postgrad/apiClient";
 import { postGradFlags } from "@/features/postgrad/config";
 import { getMockTournamentDetails } from "@/features/postgrad/mockTournamentFixtures.mjs";
+import { tournamentSponsorEventType, useEventSponsors } from "@/hooks/useEventSponsors";
 import { presentTournamentCard, presentTournamentChampion, readBracketRounds } from "@/lib/arena/tournamentCommandPresentation.mjs";
 import { cn } from "@/lib/utils";
 
@@ -52,6 +54,12 @@ export function TournamentEventCard({
   const [roundOpen, setRoundOpen] = useState(false);
   const [bracketRounds, setBracketRounds] = useState(() => readBracketRounds(event));
   const [bracketEntries, setBracketEntries] = useState<Entrant[]>(Array.isArray(event.entrants) ? (event.entrants as Entrant[]) : []);
+  const sponsorEventType = tournamentSponsorEventType(source);
+  const sponsors = useEventSponsors({
+    eventType: sponsorEventType,
+    eventReferenceId: event.id,
+    chainId: Number(source.chainId || 0) || null,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -142,6 +150,7 @@ export function TournamentEventCard({
         {card.chain ? <TacticalTag label={card.chain.label} tone="default" /> : null}
       </div>
       <h2 className="mt-3 font-black text-xl leading-tight text-foreground md:text-2xl">{card.title}</h2>
+      <EventSponsorAttribution sponsors={sponsors} variant={sponsorEventType === "mwl_quarter_finals" || sponsorEventType === "quarterly_championship" ? "premium" : "compact"} />
 
       {finished && champion ? (
         <div className="mt-3 flex items-center gap-3" data-tournament-champion="true">
@@ -249,6 +258,7 @@ export function TournamentEventCard({
         stageLabel={card.bracketStage}
         rounds={bracketRounds}
         entries={bracketEntries}
+        sponsors={sponsors}
       />
     </article>
   );
