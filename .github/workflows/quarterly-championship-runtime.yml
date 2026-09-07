@@ -179,9 +179,10 @@ jobs:
           SQL
 
       - name: Exact-once Championship database lifecycle
-        run: node --test \
-          frontend/api/lib/arenaQuarterlyChampionshipBasePointsDb.test.mjs \
-          frontend/api/lib/arenaQuarterlyChampionshipDb.test.mjs
+        run: |
+          node --test \
+            frontend/api/lib/arenaQuarterlyChampionshipBasePointsDb.test.mjs \
+            frontend/api/lib/arenaQuarterlyChampionshipDb.test.mjs
 
       - name: Existing MWL regression suite
         run: npm --prefix frontend run test:arena-mwl
