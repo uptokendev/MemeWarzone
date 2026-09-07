@@ -16,10 +16,16 @@ export type GraduationQuoteAsset = {
     authorityMode?: string;
     providerClass?: string;
   };
+  providerAssetId?: string | null;
   chainId: string;
+  chainFamily?: string | null;
   identityKind?: string;
   contractAddressOrMint?: string;
   assetClass?: string;
+  category?: string;
+  tags?: string[];
+  catalogState?: string;
+  decimals?: number | null;
   symbol?: string;
   displayName?: string;
   logoUrl?: string | null;
@@ -56,7 +62,8 @@ export async function fetchGraduationQuoteAssets(chainId: number): Promise<Gradu
     { method: "GET", cache: "no-store" },
   );
   const body = await readJson<{ items?: GraduationQuoteAsset[] }>(response);
-  return catalogQuoteAssetsOnly(Array.isArray(body?.items) ? body.items : []);
+  return catalogQuoteAssetsOnly(Array.isArray(body?.items) ? body.items : [])
+    .filter((item) => item.newGraduationEligible === true && String(item.chainId) === String(chainId));
 }
 
 export async function fetchGraduationQuoteAssetDetail(id: string): Promise<GraduationQuoteAsset> {
@@ -72,11 +79,14 @@ export async function fetchGraduationQuoteAssetDetail(id: string): Promise<Gradu
 export async function assertFreshGraduationQuote(asset: GraduationQuoteAsset): Promise<GraduationQuoteAsset> {
   const id = String(asset?.id || "").trim();
   if (!id || asset?.presentationDefault === true) {
-    throw new Error("Choose a catalog Graduation Market before continuing.");
+    throw new Error("Choose a currently approved Graduation Market before continuing.");
   }
   const fresh = await fetchGraduationQuoteAssetDetail(id);
-  if (fresh.newGraduationEligible !== true) {
-    throw new Error("Graduation Market is no longer eligible. Choose another quote asset.");
+  const sameChain = String(fresh.chainId) === String(asset.chainId);
+  const sameProvider = String(fresh.provider?.key || "").toLowerCase() === String(asset.provider?.key || "").toLowerCase();
+  const sameIdentity = String(fresh.contractAddressOrMint || "").toLowerCase() === String(asset.contractAddressOrMint || "").toLowerCase();
+  if (!sameChain || !sameProvider || !sameIdentity || fresh.newGraduationEligible !== true) {
+    throw new Error("That Graduation Market is no longer approved. Select another currently available market.");
   }
   return fresh;
 }
