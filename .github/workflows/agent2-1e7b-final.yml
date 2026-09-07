@@ -1,0 +1,154 @@
+name: Agent 2 Exact Final Head Certification
+
+on:
+  push:
+    branches:
+      - cert/agent2-1e7b-final
+
+permissions:
+  contents: read
+
+env:
+  CANDIDATE_SHA: 1e7b45802a7e2e39e13e46321209d2eb6c87606f
+  PRIOR_SHA: 99d1d5befc814d60342d553d08eb5a871c5570dd
+  BASE_SHA: 2f0b461bf8fc4c26e662e33014445d28f9924fda
+  PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+  SOLANA_VERSION: 1.18.26
+  ANCHOR_VERSION: 0.30.1
+  RUST_TOOLCHAIN: 1.79.0
+  IDL_TOOLCHAIN: nightly-2024-05-09
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify exact final head and cleanup-only delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse HEAD^)" = "$PRIOR_SHA"
+          test "$(git diff --name-only "$PRIOR_SHA" "$CANDIDATE_SHA")" = ".github/workflows/agent2-certify.yml"
+          test "$(git diff --diff-filter=D --name-only "$PRIOR_SHA" "$CANDIDATE_SHA")" = ".github/workflows/agent2-certify.yml"
+          git diff --check "$BASE_SHA" "$CANDIDATE_SHA"
+      - name: Exact-head source/unit/backend regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --package memewarzone_solana -- --check
+          cargo test -p memewarzone_solana --lib
+          node --check frontend/api/lib/quoteAssetCatalog.js
+          node --check frontend/api/dev-fix/solana-graduation-auth-bytes.js
+          node --check frontend/api/dev-fix/solana-graduation-authorization-v2.js
+          node --check tools/solana-meteora-graduation/graduate-basic-quote.mjs
+          node tools/solana-meteora-graduation/check-graduation-auth-fixture.mjs
+      - name: Exact-head V0 ALT blockhash regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --prefix frontend --ignore-scripts
+          npm --prefix frontend run test:solana-v0
+          npm --prefix frontend run test:solana-confirm
+          npm --prefix frontend run check:solana-launchpad-alt
+      - name: Install pinned toolchains
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt
+          rustup toolchain install "$IDL_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          d="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
+          mkdir -p "$d"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error -o /tmp/solana.tar.bz2 "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana.tar.bz2 -C "$d" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"
+          ln -sfn "$d" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+          rustc --version
+          solana --version
+          anchor --version
+      - name: Clean pinned candidate SBF build
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf target/deploy target/sbf-solana-solana target/idl
+          anchor build --program-name memewarzone_solana --no-idl 2>&1 | tee /tmp/candidate-build.log
+          test -s target/deploy/memewarzone_solana.so
+          if grep -Eqi 'Stack offset .*exceeded max offset|exceeded max offset.*4096|stack frame.*exceed' /tmp/candidate-build.log; then exit 1; fi
+          wc -c < target/deploy/memewarzone_solana.so | tr -d ' ' | tee /tmp/candidate-bytes
+          sha256sum target/deploy/memewarzone_solana.so | tee /tmp/candidate-sha
+      - name: Exact current-authority baseline SBF build
+        shell: bash
+        run: |
+          set -euo pipefail
+          git worktree add --detach /tmp/mwz-base "$BASE_SHA"
+          cd /tmp/mwz-base
+          rm -rf target/deploy target/sbf-solana-solana target/idl
+          anchor build --program-name memewarzone_solana --no-idl
+          test -s target/deploy/memewarzone_solana.so
+          wc -c < target/deploy/memewarzone_solana.so | tr -d ' ' | tee /tmp/baseline-bytes
+          sha256sum target/deploy/memewarzone_solana.so | tee /tmp/baseline-sha
+      - name: Generated IDL integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p target/idl
+          (cd programs/memewarzone_solana && RUSTUP_TOOLCHAIN="$IDL_TOOLCHAIN" anchor idl build --out ../../target/idl/memewarzone_solana.json)
+          test -s target/idl/memewarzone_solana.json
+          node - <<'NODE'
+          const fs=require('fs'); const j=JSON.parse(fs.readFileSync('target/idl/memewarzone_solana.json','utf8'));
+          const names=new Set((j.instructions||[]).map(x=>x.name));
+          for(const n of ['beginGraduation','confirmGraduation']) if(!names.has(n)) throw new Error(`IDL missing ${n}`);
+          console.log(`IDL_INTEGRITY=PASS instructions=${names.size}`);
+          NODE
+          sha256sum target/idl/memewarzone_solana.json | tee /tmp/idl-sha
+      - name: Read-only devnet ProgramData fit
+        shell: bash
+        run: |
+          set -euo pipefail
+          CANDIDATE_BYTES="$(cat /tmp/candidate-bytes)" node <<'NODE' | tee /tmp/programdata
+          const rpc='https://api.devnet.solana.com', programId=process.env.PROGRAM_ID, candidate=Number(process.env.CANDIDATE_BYTES);
+          async function call(method,params){const r=await fetch(rpc,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})});if(!r.ok)throw new Error(`${method} HTTP ${r.status}`);const j=await r.json();if(j.error)throw new Error(JSON.stringify(j.error));return j.result;}
+          function b58(bytes){const a='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';let x=0n;for(const b of bytes)x=(x<<8n)+BigInt(b);let s='';while(x){s=a[Number(x%58n)]+s;x/=58n;}for(const b of bytes){if(b===0)s='1'+s;else break;}return s||'1';}
+          const genesis=await call('getGenesisHash',[]); if(genesis!=='EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG') throw new Error('not devnet');
+          const p=(await call('getAccountInfo',[programId,{encoding:'base64',commitment:'confirmed'}])).value; if(!p)throw new Error('program missing');
+          const pd=Buffer.from(p.data[0],'base64'); const addr=b58(pd.subarray(4,36)); const info=(await call('getAccountInfo',[addr,{encoding:'base64',commitment:'confirmed'}])).value; if(!info)throw new Error('ProgramData missing');
+          const raw=Buffer.from(info.data[0],'base64'); const metadata=45, capacity=raw.length-metadata, extra=Math.max(0,candidate-capacity), targetLen=metadata+Math.max(capacity,candidate), targetRent=Number(await call('getMinimumBalanceForRentExemption',[targetLen])), lamports=extra?Math.max(0,targetRent-info.lamports):0;
+          console.log(`PROGRAM_DATA=${addr}`); console.log(`PROGRAMDATA_LENGTH=${raw.length}`); console.log(`PROGRAM_CAPACITY=${capacity}`); console.log(`PROGRAMDATA_LAMPORTS=${info.lamports}`); console.log(`CANDIDATE_BYTES=${candidate}`); console.log(`EXTENSION_REQUIRED=${extra>0?'YES':'NO'}`); console.log(`EXTENSION_BYTES=${extra}`); console.log(`TARGET_PROGRAMDATA_LENGTH=${targetLen}`); console.log(`TARGET_RENT_LAMPORTS=${targetRent}`); console.log(`EXTENSION_LAMPORTS=${lamports}`);
+          NODE
+          solana program show -ud "$PROGRAM_ID" --output json | tee /tmp/program-show.json
+          solana program dump -ud "$PROGRAM_ID" /tmp/deployed-program.so
+          echo "DEPLOYED_PROGRAM_DUMP_BYTES=$(wc -c < /tmp/deployed-program.so | tr -d ' ')" | tee /tmp/deployed-bytes
+          echo "DEPLOYED_PROGRAM_DUMP_SHA256=$(sha256sum /tmp/deployed-program.so | awk '{print $1}')" | tee /tmp/deployed-sha
+      - name: Evidence summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "CANDIDATE_SHA=$CANDIDATE_SHA"
+            echo "BASE_SHA=$BASE_SHA"
+            echo "BASELINE_BYTES=$(cat /tmp/baseline-bytes)"
+            echo "CANDIDATE_BYTES=$(cat /tmp/candidate-bytes)"
+            echo "BASELINE_SHA256=$(awk '{print $1}' /tmp/baseline-sha)"
+            echo "CANDIDATE_SHA256=$(awk '{print $1}' /tmp/candidate-sha)"
+            echo "IDL_SHA256=$(awk '{print $1}' /tmp/idl-sha)"
+            cat /tmp/programdata
+            cat /tmp/program-show.json
+            cat /tmp/deployed-bytes
+            cat /tmp/deployed-sha
+          } | tee agent2-1e7b-certification.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent2-1e7b-certification
+          path: agent2-1e7b-certification.txt
+          retention-days: 7
