@@ -8,6 +8,7 @@ import arenaFinalSalvo from "./arenaFinalSalvo.js";
 import arenaImports from "./arenaImports.js";
 import arenaEventSponsorshipAuthority from "./arenaEventSponsorshipAuthority.js";
 import arenaEventSponsorshipRecovery from "./arenaEventSponsorshipRecovery.js";
+import arenaSponsorVisibility from "./arenaSponsorVisibility.js";
 import arenaTournaments from "./arenaTournaments.js";
 import arenaTournamentBoosts from "./arenaTournamentBoosts.js";
 import arenaTournamentVotes from "./arenaTournamentVotes.js";
@@ -31,6 +32,8 @@ const ROUTES = [
   { pattern: /^\/arena\/battles\/[^/]+\/v3-scoring-lock$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaBattlePointsV3Admin },
   { pattern: /^\/arena\/battles(?:\/.*)?$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaBattles },
   { pattern: /^\/arena\/imports(?:\/.*)?$/, flag: "POSTGRAD_ARENA_IMPORTS_ENABLED", handler: arenaImports },
+  // Public attribution is read-only and never exposes payment/accounting internals.
+  { pattern: /^\/arena\/sponsorships\/public$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: arenaSponsorVisibility, alwaysOn: true },
   // Payment confirmation/recovery is quote-bound and remains recoverable after wall-clock quote expiry.
   { pattern: /^\/arena\/sponsorships\/(?:confirm|solana-submission|solana-expire|solana-payment)$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: arenaEventSponsorshipRecovery },
   { pattern: /^\/arena\/sponsorships\/payments\/[^/]+$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: arenaEventSponsorshipRecovery },
