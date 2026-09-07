@@ -1,181 +1,285 @@
-name: Scheduled cooldown default-branch deployment gate
+name: Agent 2 99d1 Local BASIC Quote Acceptance
 
 on:
-  pull_request:
+  push:
     branches:
-      - main
-    paths:
-      - .github/deployment-gates/scheduled-cooldown-pr-runner.txt
+      - cert/agent2-99d1-local-quotes
 
 permissions:
-  contents: write
+  contents: read
 
-concurrency:
-  group: scheduled-cooldown-factory-bsc-testnet
-  cancel-in-progress: false
+env:
+  CANDIDATE_SHA: 99d1d5befc814d60342d553d08eb5a871c5570dd
+  PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+  SOLANA_VERSION: 1.18.26
+  ANCHOR_VERSION: 0.30.1
+  RUST_TOOLCHAIN: 1.79.0
+  IDL_TOOLCHAIN: nightly-2024-05-09
+  LOCAL_RPC: http://127.0.0.1:8899
 
 jobs:
-  deploy-verify-publish:
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'agent/scheduled-cooldown-deploy-runner'
-    name: deploy, verify and publish BSC Testnet replacement
+  accept:
     runs-on: ubuntu-latest
-    timeout-minutes: 50
-    env:
-      BSC_TESTNET_RPC: ${{ secrets.BSC_TESTNET_RPC }}
-      BSC_TESTNET_RPC_URL: ${{ secrets.BSC_TESTNET_RPC_URL }}
-      DEPLOYER_PK: ${{ secrets.DEPLOYER_PK }}
-      PRIVATE_KEY_DEPLOY: ${{ secrets.PRIVATE_KEY_DEPLOY }}
-      ACTIVE_SCHEDULED_FACTORY_ADDRESS: 0xF7872169265eCE4E4C93ef894F1635E84DC6F681
-      QA_CREATOR_ADDRESS: 0x13ad79765e14927df2c554d9662bbe539e89c8e8
-
+    timeout-minutes: 70
     steps:
-      - name: Checkout exact approved feature branch
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          repository: uptokendev/MemeBattles
-          ref: agent/fix-scheduled-cooldown-timezone
+          ref: ${{ env.CANDIDATE_SHA }}
           fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            frontend/package-lock.json
-            realtime-indexer/package-lock.json
-
-      - name: Verify BSC Testnet deployment credentials
+      - name: Verify exact candidate
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+      - name: Install pinned toolchain
         shell: bash
         run: |
-          if [ -z "${BSC_TESTNET_RPC}${BSC_TESTNET_RPC_URL}" ]; then
-            echo "Missing BSC_TESTNET_RPC or BSC_TESTNET_RPC_URL secret."
-            exit 1
-          fi
-          if [ -z "${DEPLOYER_PK}${PRIVATE_KEY_DEPLOY}" ]; then
-            echo "Missing DEPLOYER_PK or PRIVATE_KEY_DEPLOY secret."
-            exit 1
-          fi
-
-      - name: Prepare duplicate-safe deployment source
-        run: |
-          node --check scripts/prepare-scheduled-cooldown-deployment.mjs
-          node scripts/prepare-scheduled-cooldown-deployment.mjs
-
-      - name: Install and verify contract source
-        run: |
-          npm ci --no-audit --no-fund
-          npm run compile
-          npx hardhat test test/LaunchFactory.spec.ts
-          npm run size
-
-      - name: Deploy and activate factory-only replacement
-        id: deploy
-        run: npx hardhat run scripts/deploy-scheduled-cooldown-factory.ts --network bscTestnet
-
-      - name: Sync frontend ABI
-        run: npm run sync:frontend-abis
-
-      - name: Restore permanent workflow and remove one-time triggers
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup toolchain install "$IDL_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          d="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
+          mkdir -p "$d"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error -o /tmp/solana.tar.bz2 "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana.tar.bz2 -C "$d" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"
+          ln -sfn "$d" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+      - name: Build candidate and IDL
         shell: bash
         run: |
-          cat > .github/workflows/frontend-pr-proof.yml <<'YAML'
-          name: frontend pull request proof
-
-          on:
-            pull_request:
-              branches:
-                - devpostgrad
-              paths:
-                - frontend/**
-                - .github/workflows/frontend-pr-proof.yml
-
-          permissions:
-            contents: read
-
-          concurrency:
-            group: frontend-pr-proof-${{ github.event.pull_request.number }}
-            cancel-in-progress: true
-
-          jobs:
-            frontend:
-              name: frontend imports and production build
-              runs-on: ubuntu-latest
-              timeout-minutes: 25
-
-              steps:
-                - name: Checkout pull request source
-                  uses: actions/checkout@v4
-
-                - name: Setup Node.js
-                  uses: actions/setup-node@v4
-                  with:
-                    node-version: 20
-                    cache: npm
-                    cache-dependency-path: frontend/package-lock.json
-
-                - name: Install frontend dependencies
-                  run: npm ci --prefix frontend
-
-                - name: Check lifecycle API module syntax
-                  run: |
-                    node --check frontend/api/campaigns.js
-                    node --check frontend/api/campaigns-base.js
-                    node --check frontend/api/featured.js
-                    node --check frontend/api/dev-fix/drafts.js
-                    node --check frontend/api/dev-fix/drafts-base.js
-                    node --check frontend/api/dev-fix/draft-read.js
-                    node --check frontend/api/dev-fix/draft-read-base.js
-                    node --check frontend/api/dev-fix/draft-deploy.js
-                    node --check frontend/api/dev-fix/draft-deploy-base.js
-                    node --check frontend/api/dev-fix/json-transform.js
-                    node --check frontend/api/dev-fix/scheduled-lifecycle.js
-
-                - name: Test scheduled lifecycle timestamp transitions
-                  run: node --test frontend/api/dev-fix/scheduled-lifecycle.test.mjs
-
-                - name: Check API imports
-                  run: npm --prefix frontend run check:api-imports
-
-                - name: Test wallet provider discovery
-                  run: npm --prefix frontend run test:wallet-discovery
-
-                - name: Build public application
-                  run: npm --prefix frontend run build
-          YAML
-          git fetch origin devpostgrad --depth=1
-          git checkout origin/devpostgrad -- frontend/yarn.lock 2>/dev/null || true
-          rm -f scripts/prepare-scheduled-cooldown-deployment.mjs
-          rm -f frontend/src/__trigger-scheduled-cooldown-deployment.ts
-
-      - name: Validate API and frontend against active replacement
-        run: |
-          node --check frontend/api/dev-fix/security.js
-          node --check frontend/api/dev-fix/draft-deploy-base.js
-          node --check frontend/api/dev-fix/draft-deploy.js
-          npm ci --prefix frontend --no-audit --no-fund
-          npm --prefix frontend run check:api-imports
-          npm --prefix frontend run test:wallet-discovery
-          npm --prefix frontend run build
-
-      - name: Validate realtime indexer against active replacement
-        run: |
-          npm ci --prefix realtime-indexer --no-audit --no-fund
-          npm --prefix realtime-indexer run build
-
-      - name: Publish deployment manifest and active pointers
+          set -euo pipefail
+          anchor build --program-name memewarzone_solana --no-idl
+          mkdir -p target/idl
+          (cd programs/memewarzone_solana && RUSTUP_TOOLCHAIN="$IDL_TOOLCHAIN" anchor idl build --out ../../target/idl/memewarzone_solana.json)
+          test -s target/deploy/memewarzone_solana.so
+          test -s target/idl/memewarzone_solana.json
+          npm install --prefix tests/solana --no-audit --no-fund
+          npm install --prefix frontend --ignore-scripts --no-audit --no-fund
+          node scripts/solana/fetch-pinned-meteora-cp-amm.mjs --with-accounts
+      - name: Adapt lifecycle harness to authorization schema v4 and BASIC quote mode
         shell: bash
         run: |
-          test -f deployments/bscTestnet.scheduled-cooldown-factory.json
-          test -f deployments/bscTestnet.scheduled-cooldown-factory.env
-          git diff --check
-          git config user.name "MemeWarzone Deployment Agent"
-          git config user.email "actions@users.noreply.github.com"
-          git add -A
-          if git diff --cached --quiet; then
-            echo "Deployment produced no repository changes."
-            exit 1
-          fi
-          git commit -m "Activate scheduled cooldown factory on BSC Testnet"
-          git push origin HEAD:agent/fix-scheduled-cooldown-timezone
+          set -euo pipefail
+          python <<'PY'
+          from pathlib import Path
+          import re
+          p=Path('tests/solana/v4-lifecycle-acceptance.cjs')
+          s=p.read_text()
+          s=s.replace('  createAssociatedTokenAccountInstruction,\n} = require("@solana/spl-token");', '  createAssociatedTokenAccountInstruction,\n  createAccount,\n  createMint,\n  createTransferInstruction,\n  getOrCreateAssociatedTokenAccount,\n  mintTo,\n} = require("@solana/spl-token");')
+          s=s.replace('const GRADUATION_AUTH_SCHEMA_VERSION = 2;', 'const GRADUATION_AUTH_SCHEMA_VERSION = 4;')
+          old=re.compile(r'  function graduationDigest\(input\) \{.*?\n  \}\n\n\n\n  it\("begin_graduation our-side simulates without stack overflow \(no Meteora LP\)"', re.S)
+          new=r'''  function graduationDigest(input) {
+    return crypto
+      .createHash("sha256")
+      .update(
+        Buffer.concat([
+          GRADUATION_AUTH_DOMAIN,
+          u16le(GRADUATION_AUTH_SCHEMA_VERSION),
+          program.programId.toBuffer(),
+          input.campaign.toBuffer(),
+          input.mint.toBuffer(),
+          input.authority.toBuffer(),
+          input.generationConfig.toBuffer(),
+          u64le(input.graduationTargetUsdMicros),
+          u64le(input.nativeTargetLamports),
+          u64le(input.oraclePriceUsdMicros),
+          input.pool.toBuffer(),
+          input.position.toBuffer(),
+          input.nftMint.toBuffer(),
+          i64le(input.deadline),
+          input.nonce,
+          Buffer.from([input.finalizeRouteProfile ?? ROUTE_PROFILE_UNLINKED]),
+          input.quoteMint.toBuffer(),
+          Buffer.from(input.quoteConfigId),
+          u16le(input.quotePolicyVersion),
+          Buffer.from([input.quoteProfile]),
+          Buffer.from([input.quoteProviderClass]),
+          input.acquisitionProgram.toBuffer(),
+          u64le(input.quoteReferenceUsdMicros),
+          Buffer.from([input.quoteDecimals]),
+          u64le(input.expectedQuoteAmount),
+          u64le(input.minQuoteAmount),
+          u16le(input.maxSlippageBps),
+          u16le(input.maxImpactBps),
+          u16le(input.maxDeviationBps),
+          input.quoteRecoveryAccount.toBuffer(),
+        ]),
+      )
+      .digest();
+  }
+
+  function nativeGraduationBinding(oraclePrice) {
+    return {
+      quoteMint: NATIVE_MINT,
+      quoteConfigId: hash32("local-basic-native-sol"),
+      quotePolicyVersion: 1,
+      quoteProfile: 0,
+      quoteProviderClass: 0,
+      acquisitionProgram: SystemProgram.programId,
+      quoteReferenceUsdMicros: oraclePrice,
+      quoteDecimals: 9,
+      expectedQuoteAmount: 0n,
+      minQuoteAmount: 0n,
+      maxSlippageBps: 0,
+      maxImpactBps: 0,
+      maxDeviationBps: 0,
+      quoteRecoveryAccount: SystemProgram.programId,
+    };
+  }
+
+  function anchorGraduationArgs(nativeTarget, oraclePrice, deadline, nonce, nftMint, binding) {
+    return {
+      nativeTargetLamports: new BN(nativeTarget.toString()),
+      oraclePriceUsdMicros: new BN(oraclePrice.toString()),
+      deadline: new BN(deadline),
+      nonce: Array.from(nonce),
+      positionNftMint: nftMint,
+      finalizeRouteProfile: ROUTE_PROFILE_UNLINKED,
+      quoteMint: binding.quoteMint,
+      quoteConfigId: Array.from(binding.quoteConfigId),
+      quotePolicyVersion: binding.quotePolicyVersion,
+      quoteProfile: binding.quoteProfile,
+      quoteProviderClass: binding.quoteProviderClass,
+      acquisitionProgram: binding.acquisitionProgram,
+      quoteReferenceUsdMicros: new BN(binding.quoteReferenceUsdMicros.toString()),
+      quoteDecimals: binding.quoteDecimals,
+      expectedQuoteAmount: new BN(binding.expectedQuoteAmount.toString()),
+      minQuoteAmount: new BN(binding.minQuoteAmount.toString()),
+      maxSlippageBps: binding.maxSlippageBps,
+      maxImpactBps: binding.maxImpactBps,
+      maxDeviationBps: binding.maxDeviationBps,
+      quoteRecoveryAccount: binding.quoteRecoveryAccount,
+    };
+  }
+
+  function digestInput(campaign, nativeTarget, oraclePrice, deadline, nonce, nftMint, pool, position, binding) {
+    return {
+      campaign: campaignAccounts.campaign,
+      mint: campaignAccounts.mint,
+      authority: admin,
+      generationConfig,
+      graduationTargetUsdMicros: campaign.graduationTargetUsdMicros,
+      nativeTargetLamports: nativeTarget,
+      oraclePriceUsdMicros: oraclePrice,
+      pool,
+      position,
+      nftMint,
+      deadline,
+      nonce,
+      finalizeRouteProfile: ROUTE_PROFILE_UNLINKED,
+      ...binding,
+    };
+  }
+
+  it("begin_graduation our-side simulates without stack overflow (no Meteora LP)"'''
+          s,n=old.subn(new,s,count=1)
+          if n!=1: raise SystemExit('graduation digest block not found')
+          # Replace the entire begin-only test with schema-v4 native atomicity proof.
+          begin=re.compile(r'  it\("begin_graduation our-side simulates without stack overflow \(no Meteora LP\)".*?\n  \}\);\n\n  it\("Gate K: graduate closed campaign into pinned DAMM v2 and swap"', re.S)
+          begin_new=r'''  it("begin_graduation our-side simulates without stack overflow (no Meteora LP)", async function () {
+    assert.ok(campaignAccounts, "bonding lifecycle must create+close a campaign first");
+    const adminKeypair = provider.wallet.payer;
+    await program.methods.setPauseFlags({ paused:false, createPaused:false, buyPaused:false, sellPaused:false, graduationPaused:false, claimsPaused:true })
+      .accountsStrict({ globalConfig, authority: admin }).rpc({ commitment:"confirmed", preflightCommitment:"confirmed" });
+    const campaign = decodeCampaign((await connection.getAccountInfo(campaignAccounts.campaign, "confirmed")).data);
+    const nftMint=Keypair.generate();
+    const [pa,pb]=orderedPubkeys(campaignAccounts.mint,NATIVE_MINT);
+    const pool=PublicKey.findProgramAddressSync([Buffer.from("cpool"),pa.toBuffer(),pb.toBuffer()],METEORA_CP_AMM)[0];
+    const position=deriveMeteoraPosition(nftMint.publicKey);
+    const graduationState=derivePda(program.programId,"graduation",campaignAccounts.campaign.toBuffer());
+    const authorityAta=getAssociatedTokenAddressSync(campaignAccounts.mint,admin);
+    if(!(await connection.getAccountInfo(authorityAta,"confirmed"))) await simulateThenSend(new Transaction().add(createAssociatedTokenAccountInstruction(admin,authorityAta,admin,campaignAccounts.mint)),"createAuthorityAta",[adminKeypair]);
+    const now=await chainUnixTimestamp(connection); const deadline=now+3600; const nonce=hash32("graduation:v4-atomicity"); const oraclePrice=150_000_000n;
+    const nativeTarget=(campaign.graduationTargetUsdMicros*1_000_000_000n+oraclePrice-1n)/oraclePrice;
+    const binding=nativeGraduationBinding(oraclePrice);
+    const digest=graduationDigest(digestInput(campaign,nativeTarget,oraclePrice,deadline,nonce,nftMint.publicKey,pool,position,binding));
+    const ed25519=Ed25519Program.createInstructionWithPrivateKey({privateKey:routeSigner.secretKey,message:digest});
+    const beginIx=await program.methods.beginGraduation(anchorGraduationArgs(nativeTarget,oraclePrice,deadline,nonce,nftMint.publicKey,binding)).accountsStrict({authority:admin,globalConfig,generationConfig,campaign:campaignAccounts.campaign,mint:campaignAccounts.mint,tokenVault:campaignAccounts.tokenVault,solVault:campaignAccounts.solVault,feeEscrow:campaignAccounts.feeEscrow,authorityTokenAccount:authorityAta,meteoraPool:pool,meteoraPosition:position,positionNftMint:nftMint.publicKey,graduationState,instructions:SYSVAR_INSTRUCTIONS_PUBKEY,tokenProgram:TOKEN_PROGRAM_ID,systemProgram:SystemProgram.programId}).instruction();
+    const atomic=await simulateUnsigned(new Transaction().add(ComputeBudgetProgram.setComputeUnitLimit({units:800000}),ed25519,beginIx),"begin_graduation without Meteora follow-up",adminKeypair.publicKey);
+    assert.ok(atomic.err,"begin_graduation must refuse to run without atomic Meteora+confirm");
+    assert.ok(atomic.logs.some((line)=>/GraduationAtomicity|custom program error/i.test(line)),atomic.logs.join("\n"));
+  });
+
+  it("Gate K: graduate closed campaign into pinned DAMM v2 and swap"'''
+          s,n=begin.subn(begin_new,s,count=1)
+          if n!=1: raise SystemExit('begin test block not found')
+          # Replace Gate K with a dual-mode native/stable full atomic graduation.
+          gate=re.compile(r'  it\("Gate K: graduate closed campaign into pinned DAMM v2 and swap".*?\n  \}\);\n\}\);\s*$', re.S)
+          gate_new=r'''  it("Gate K: graduate closed campaign into pinned DAMM v2 and swap", async function () {
+    assert.ok(campaignAccounts, "bonding lifecycle must create+close a campaign first");
+    const meteoraAccount=await connection.getAccountInfo(METEORA_CP_AMM,"confirmed"); if(!meteoraAccount||!meteoraAccount.executable)this.skip();
+    const stableMode=String(process.env.BASIC_GRAD_QUOTE_MODE||"native").toLowerCase()==="stable";
+    const adminKeypair=provider.wallet.payer; assert.ok(adminKeypair?.secretKey); assert.ok(v0Helpers&&lookupTableAccount);
+    const sdk=await import("@meteora-ag/cp-amm-sdk");
+    const {ActivationType,BaseFeeMode,CollectFeeMode,CpAmm,getBaseFeeParams,getSqrtPriceFromPrice,MAX_SQRT_PRICE,MIN_SQRT_PRICE}=sdk;
+    const campaign=decodeCampaign((await connection.getAccountInfo(campaignAccounts.campaign,"confirmed")).data); assert.equal(campaign.curveClosed,true); assert.equal(campaign.graduated,false);
+    const authorityAta=getAssociatedTokenAddressSync(campaignAccounts.mint,admin); if(!(await connection.getAccountInfo(authorityAta,"confirmed"))) await simulateThenSend(new Transaction().add(createAssociatedTokenAccountInstruction(admin,authorityAta,admin,campaignAccounts.mint)),"gateKCreateAuthorityAta",[adminKeypair]);
+    const creatorAta=getAssociatedTokenAddressSync(campaignAccounts.mint,campaign.creator); if(!(await connection.getAccountInfo(creatorAta,"confirmed"))) await simulateThenSend(new Transaction().add(createAssociatedTokenAccountInstruction(admin,creatorAta,campaign.creator,campaignAccounts.mint)),"gateKCreateCreatorAta",[adminKeypair]);
+    const quote=graduationQuote(campaign); const oraclePrice=150_000_000n; const quoteUsd=1_000_000n;
+    let quoteMint=NATIVE_MINT,quoteDecimals=9,binding=nativeGraduationBinding(oraclePrice),acquisitionIx=null,quoteRemaining=[],poolQuoteRaw=quote.maxLiquidityLamports,residual=0n,recoveryAccount=null,authorityQuote=null;
+    if(stableMode){
+      quoteDecimals=6;
+      quoteMint=await createMint(connection,adminKeypair,admin,null,quoteDecimals);
+      authorityQuote=await getOrCreateAssociatedTokenAccount(connection,adminKeypair,quoteMint,admin);
+      const acquisitionSource=await createAccount(connection,adminKeypair,quoteMint,admin);
+      recoveryAccount=await createAccount(connection,adminKeypair,quoteMint,campaign.creator);
+      poolQuoteRaw=(quote.maxLiquidityLamports*oraclePrice*(10n**BigInt(quoteDecimals)))/(1_000_000_000n*quoteUsd);
+      assert.ok(poolQuoteRaw>0n,"stable pool quote amount must be positive");
+      residual=1234n; const acquired=poolQuoteRaw+residual;
+      await mintTo(connection,adminKeypair,quoteMint,acquisitionSource,admin,acquired);
+      acquisitionIx=createTransferInstruction(acquisitionSource,authorityQuote.address,admin,acquired);
+      binding={quoteMint,quoteConfigId:hash32("local-basic-canonical-stable"),quotePolicyVersion:1,quoteProfile:1,quoteProviderClass:1,acquisitionProgram:TOKEN_PROGRAM_ID,quoteReferenceUsdMicros:quoteUsd,quoteDecimals,expectedQuoteAmount:acquired,minQuoteAmount:poolQuoteRaw,maxSlippageBps:100,maxImpactBps:100,maxDeviationBps:100,quoteRecoveryAccount:recoveryAccount};
+      quoteRemaining=[{pubkey:quoteMint,isWritable:false,isSigner:false},{pubkey:authorityQuote.address,isWritable:true,isSigner:false},{pubkey:recoveryAccount,isWritable:true,isSigner:false}];
+    }
+    const [pa,pb]=orderedPubkeys(campaignAccounts.mint,quoteMint); const pool=PublicKey.findProgramAddressSync([Buffer.from("cpool"),pa.toBuffer(),pb.toBuffer()],METEORA_CP_AMM)[0];
+    const nftMint=Keypair.generate(); const position=deriveMeteoraPosition(nftMint.publicKey); const graduationState=derivePda(program.programId,"graduation",campaignAccounts.campaign.toBuffer());
+    const now=await chainUnixTimestamp(connection),deadline=now+3600,nonce=hash32(stableMode?"graduation:stable-v4":"graduation:native-v4"); const nativeTarget=(campaign.graduationTargetUsdMicros*1_000_000_000n+oraclePrice-1n)/oraclePrice;
+    const digest=graduationDigest(digestInput(campaign,nativeTarget,oraclePrice,deadline,nonce,nftMint.publicKey,pool,position,binding));
+    const ed25519=Ed25519Program.createInstructionWithPrivateKey({privateKey:routeSigner.secretKey,message:digest});
+    const beginIx=await program.methods.beginGraduation(anchorGraduationArgs(nativeTarget,oraclePrice,deadline,nonce,nftMint.publicKey,binding)).accountsStrict({authority:admin,globalConfig,generationConfig,campaign:campaignAccounts.campaign,mint:campaignAccounts.mint,tokenVault:campaignAccounts.tokenVault,solVault:campaignAccounts.solVault,feeEscrow:campaignAccounts.feeEscrow,authorityTokenAccount:authorityAta,meteoraPool:pool,meteoraPosition:position,positionNftMint:nftMint.publicKey,graduationState,instructions:SYSVAR_INSTRUCTIONS_PUBKEY,tokenProgram:TOKEN_PROGRAM_ID,systemProgram:SystemProgram.programId}).instruction();
+    function decimalRatio(n,d,precision=18){const whole=n/d;let rem=n%d;let frac="";for(let i=0;i<precision&&rem;i++){rem*=10n;frac+=(rem/d).toString();rem%=d;}frac=frac.replace(/0+$/,'');return frac?`${whole}.${frac}`:whole.toString();}
+    const price=stableMode?decimalRatio(quote.spotNano*oraclePrice,1_000_000_000_000_000_000n*quoteUsd):decimalRatio(quote.spotNano,1_000_000_000_000_000_000n);
+    const cpAmm=new CpAmm(connection); const initSqrtPrice=getSqrtPriceFromPrice(price,campaign.tokenDecimals,quoteDecimals); const tokenAAmount=new BN(quote.maxLiquidityTokens.toString()); const tokenBAmount=new BN(poolQuoteRaw.toString());
+    const liquidityDelta=cpAmm.getLiquidityDelta({maxAmountTokenA:tokenAAmount,maxAmountTokenB:tokenBAmount,sqrtPrice:initSqrtPrice,sqrtMinPrice:MIN_SQRT_PRICE,sqrtMaxPrice:MAX_SQRT_PRICE,collectFeeMode:CollectFeeMode.BothToken});
+    const {tx:meteoraTx,pool:sdkPool,position:sdkPosition}=await cpAmm.createCustomPool({payer:admin,creator:admin,positionNft:nftMint.publicKey,tokenAMint:campaignAccounts.mint,tokenBMint:quoteMint,tokenAAmount,tokenBAmount,sqrtMinPrice:MIN_SQRT_PRICE,sqrtMaxPrice:MAX_SQRT_PRICE,liquidityDelta,initSqrtPrice,poolFees:{baseFee:getBaseFeeParams({baseFeeMode:BaseFeeMode.FeeTimeSchedulerLinear,feeTimeSchedulerParam:{startingFeeBps:25,endingFeeBps:25,numberOfPeriod:0,totalDuration:0}},quoteDecimals,ActivationType.Timestamp),compoundingFeeBps:0,padding:0,dynamicFee:null},hasAlphaVault:false,activationType:ActivationType.Timestamp,collectFeeMode:CollectFeeMode.BothToken,activationPoint:null,tokenAProgram:TOKEN_PROGRAM_ID,tokenBProgram:TOKEN_PROGRAM_ID,isLockLiquidity:true});
+    assert.equal(sdkPool.toBase58(),pool.toBase58()); assert.equal(sdkPosition.toBase58(),position.toBase58());
+    const launchVault=PublicKey.findProgramAddressSync([Buffer.from("token_vault"),campaignAccounts.mint.toBuffer(),pool.toBuffer()],METEORA_CP_AMM)[0]; const quoteVault=PublicKey.findProgramAddressSync([Buffer.from("token_vault"),quoteMint.toBuffer(),pool.toBuffer()],METEORA_CP_AMM)[0];
+    const confirmIx=await program.methods.confirmGraduation().accountsStrict({authority:admin,globalConfig,campaign:campaignAccounts.campaign,mint:campaignAccounts.mint,tokenVault:campaignAccounts.tokenVault,solVault:campaignAccounts.solVault,authorityTokenAccount:authorityAta,creator:campaign.creator,creatorTokenAccount:creatorAta,creatorProfile:derivePda(program.programId,"creator",campaign.creator.toBuffer()),graduationState,meteoraPool:pool,meteoraPosition:position,meteoraTokenVault:launchVault,meteoraNativeVault:quoteVault,tokenProgram:TOKEN_PROGRAM_ID,systemProgram:SystemProgram.programId}).remainingAccounts([...quoteRemaining,...remainingRewardAccounts()]).instruction();
+    const instructions=[ComputeBudgetProgram.setComputeUnitLimit({units:1_400_000}),ed25519,beginIx,...(acquisitionIx?[acquisitionIx]:[]),...meteoraTx.instructions,confirmIx];
+    const present=new Set(lookupTableAccount.state.addresses.map(x=>x.toBase58())); const missing=[]; for(const ix of instructions)for(const key of [ix.programId,...(ix.keys||[]).map(m=>m.pubkey)]){const e=key.toBase58();if(present.has(e)||missing.some(x=>x.equals(key)))continue;missing.push(key);} for(let i=0;i<missing.length;i+=20)await sendLegacy(adminKeypair,[AddressLookupTableProgram.extendLookupTable({payer:admin,authority:admin,lookupTable:lookupTableAccount.key,addresses:missing.slice(i,i+20)})],"gateKExtendAlt"); if(missing.length){await new Promise(r=>setTimeout(r,2000));lookupTableAccount=(await connection.getAddressLookupTable(lookupTableAccount.key)).value;assert.ok(lookupTableAccount);}
+    const latest=await connection.getLatestBlockhash("confirmed"); const versioned=v0Helpers.buildLaunchpadV0Transaction(web3,{payer:admin,recentBlockhash:latest.blockhash,instructions,lookupTableAccounts:[lookupTableAccount]}); const stats=v0Helpers.inspectLaunchpadV0Envelope(web3,versioned,[lookupTableAccount]); assert.ok(stats.serializedBytes<=1232); assert.ok(stats.requiredSigners>=1&&stats.requiredSigners<=2);
+    const decompiled=web3.TransactionMessage.decompile(versioned.message,{addressLookupTableAccounts:[lookupTableAccount]}); const beginIndex=decompiled.instructions.findIndex(ix=>ix.programId.equals(program.programId)&&Buffer.from(ix.data).equals(Buffer.from(beginIx.data))); const confirmIndex=decompiled.instructions.findIndex((ix,i)=>i>beginIndex&&ix.programId.equals(program.programId)); assert.ok(beginIndex>0&&confirmIndex>beginIndex); assert.equal(decompiled.instructions[beginIndex-1].programId.toBase58(),Ed25519Program.programId.toBase58()); const between=decompiled.instructions.slice(beginIndex+1,confirmIndex); assert.ok(between.some(ix=>ix.programId.equals(METEORA_CP_AMM)),"Meteora missing between begin/confirm"); if(stableMode){const acq=between.findIndex(ix=>ix.programId.equals(TOKEN_PROGRAM_ID));const met=between.findIndex(ix=>ix.programId.equals(METEORA_CP_AMM));assert.ok(acq>=0&&acq<met,"approved acquisition must precede Meteora");}
+    versioned.sign([adminKeypair,nftMint]); const serialized=versioned.serialize(); const simulation=await v0Helpers.simulateLaunchpadV0Transaction(connection,versioned); if(simulation.value.err)throw new Error(`graduation simulation failed: ${JSON.stringify(simulation.value.err)}\n${(simulation.value.logs||[]).join("\n")}`); const signature=await connection.sendRawTransaction(serialized,{skipPreflight:true,maxRetries:5}); const confirmation=await connection.confirmTransaction({signature,blockhash:latest.blockhash,lastValidBlockHeight:latest.lastValidBlockHeight},"confirmed"); if(confirmation.value.err)throw new Error(JSON.stringify(confirmation.value.err));
+    const graduated=decodeCampaign((await connection.getAccountInfo(campaignAccounts.campaign,"confirmed")).data); assert.equal(graduated.graduated,true); const poolInfo=await connection.getAccountInfo(pool,"confirmed");assert.ok(poolInfo);assert.equal(poolInfo.owner.toBase58(),METEORA_CP_AMM.toBase58()); const positionInfo=await connection.getAccountInfo(position,"confirmed");assert.ok(positionInfo);const readU128=(b,o)=>b.readBigUInt64LE(o)+(b.readBigUInt64LE(o+8)<<64n);assert.equal(readU128(positionInfo.data,152),0n,"unlocked liquidity must be zero");assert.ok(readU128(positionInfo.data,184)>0n,"permanent locked liquidity must be positive");
+    if(stableMode){const rec=await getAccount(connection,recoveryAccount,"confirmed");assert.equal(BigInt(rec.amount.toString()),residual,"residual quote must be swept to recovery account");const authq=await getAccount(connection,authorityQuote.address,"confirmed");assert.equal(BigInt(authq.amount.toString()),0n,"authority quote staging must be swept");const qv=await getAccount(connection,quoteVault,"confirmed");assert.equal(qv.mint.toBase58(),quoteMint.toBase58(),"stable pool must not fall back to SOL");assert.notEqual(qv.mint.toBase58(),NATIVE_MINT.toBase58(),"no silent SOL fallback");}
+    console.log(`[basic-grad-local] mode=${stableMode?'stable':'native'} GRADUATED ${signature} pool=${pool.toBase58()} bytes=${serialized.length} permanentLocked=${readU128(positionInfo.data,184)} residual=${residual}`);
+  });
+});
+'''
+          s,n=gate.subn(gate_new,s,count=1)
+          if n!=1: raise SystemExit('Gate K block not found')
+          p.write_text(s)
+          PY
+          node --check tests/solana/v4-lifecycle-acceptance.cjs
+      - name: Run native and canonical-stable graduation on fresh local validators
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.config/solana"
+          solana-keygen new --no-bip39-passphrase --silent --force --outfile "$HOME/.config/solana/id.json"
+          export ANCHOR_WALLET="$HOME/.config/solana/id.json"
+          for mode in native stable; do
+            ledger="/tmp/agent2-${mode}-ledger"
+            rm -rf "$ledger"
+            solana-test-validator --reset --quiet --ledger "$ledger" --bpf-program "$PROGRAM_ID" target/deploy/memewarzone_solana.so --bpf-program cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG third_party/meteora/cp_amm.so --account-dir third_party/meteora/accounts >"/tmp/agent2-${mode}-validator.log" 2>&1 &
+            pid=$!; trap 'kill $pid 2>/dev/null || true' EXIT
+            for i in $(seq 1 60); do solana cluster-version --url "$LOCAL_RPC" >/dev/null 2>&1 && break; [ "$i" -eq 60 ] && { cat "/tmp/agent2-${mode}-validator.log"; exit 1; }; sleep 2; done
+            solana config set --url "$LOCAL_RPC" --keypair "$ANCHOR_WALLET" >/dev/null
+            solana airdrop 100 >/dev/null
+            (cd tests/solana && BASIC_GRAD_QUOTE_MODE="$mode" ANCHOR_PROVIDER_URL="$LOCAL_RPC" ANCHOR_WALLET="$ANCHOR_WALLET" GATE_K_METEORA=1 npx mocha --timeout 1000000 v4-lifecycle-acceptance.cjs)
+            kill $pid 2>/dev/null || true; wait $pid 2>/dev/null || true; trap - EXIT
+          done
