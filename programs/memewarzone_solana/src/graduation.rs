@@ -194,25 +194,36 @@ pub struct CampaignGraduated {
 pub struct BeginGraduation<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
+    /// CHECK: PDA-constrained GlobalConfig; handler parses and validates the stored route signer and treasury operator.
     #[account(seeds = [GLOBAL_CONFIG_SEED], bump)]
     pub global_config: UncheckedAccount<'info>,
+    /// CHECK: Handler validates ownership, PDA identity, activation, economics, and exact campaign generation binding.
     pub generation_config: UncheckedAccount<'info>,
+    /// CHECK: Handler loads the program-owned campaign and validates its deterministic campaign, mint, token-vault, and SOL-vault bindings.
     #[account(mut)]
     pub campaign: UncheckedAccount<'info>,
+    /// CHECK: Handler requires this key to equal the mint recorded in the validated campaign.
     pub mint: UncheckedAccount<'info>,
+    /// CHECK: Handler requires this key to equal the deterministic token vault recorded in the validated campaign.
     #[account(mut)]
     pub token_vault: UncheckedAccount<'info>,
+    /// CHECK: Handler requires this key to equal the deterministic SOL vault recorded in the validated campaign.
     #[account(mut)]
     pub sol_vault: UncheckedAccount<'info>,
+    /// CHECK: PDA-constrained FeeEscrow; handler verifies it is the campaign escrow and empty before graduation.
     #[account(seeds = [FEE_ESCROW_SEED, campaign.key().as_ref()], bump)]
     pub fee_escrow: UncheckedAccount<'info>,
+    /// CHECK: Handler unpacks this SPL token account and validates campaign mint, authority ownership, and empty staging balance.
     #[account(mut)]
     pub authority_token_account: UncheckedAccount<'info>,
+    /// CHECK: Handler derives the exact Meteora MEME/QUOTE pool address and requires the account to be empty before creation.
     pub meteora_pool: UncheckedAccount<'info>,
+    /// CHECK: Handler derives the exact Meteora position address and requires the account to be empty before creation.
     pub meteora_position: UncheckedAccount<'info>,
     pub position_nft_mint: Signer<'info>,
     #[account(init, payer = authority, space = 8 + GraduationState::INIT_SPACE, seeds = [GRADUATION_SEED, campaign.key().as_ref()], bump)]
     pub graduation_state: Account<'info, GraduationState>,
+    /// CHECK: Address-constrained instructions sysvar; handler parses it to verify Ed25519 authorization and atomic instruction ordering.
     #[account(address = INSTRUCTIONS_SYSVAR_ID)]
     pub instructions: UncheckedAccount<'info>,
     pub token_program: Program<'info, Token>,
@@ -223,29 +234,42 @@ pub struct BeginGraduation<'info> {
 pub struct ConfirmGraduation<'info> {
     #[account(mut)]
     pub authority: Signer<'info>,
+    /// CHECK: PDA-constrained GlobalConfig; handler parses and validates the treasury operator.
     #[account(seeds = [GLOBAL_CONFIG_SEED], bump)]
     pub global_config: UncheckedAccount<'info>,
+    /// CHECK: Handler loads the program-owned campaign and validates its deterministic account bindings and lifecycle state.
     #[account(mut)]
     pub campaign: UncheckedAccount<'info>,
+    /// CHECK: Handler requires this key to equal the mint recorded in the validated campaign.
     #[account(mut)]
     pub mint: UncheckedAccount<'info>,
+    /// CHECK: Handler requires this key to equal the deterministic campaign token vault before transfers and burns.
     #[account(mut)]
     pub token_vault: UncheckedAccount<'info>,
+    /// CHECK: Handler requires this key to equal the deterministic campaign SOL vault before settlement.
     #[account(mut)]
     pub sol_vault: UncheckedAccount<'info>,
+    /// CHECK: Handler unpacks this SPL staging account and validates its campaign mint and authority ownership.
     #[account(mut)]
     pub authority_token_account: UncheckedAccount<'info>,
+    /// CHECK: Handler requires this key to equal the creator recorded in the validated campaign.
     #[account(mut)]
     pub creator: UncheckedAccount<'info>,
+    /// CHECK: Handler unpacks and validates this SPL token account against the campaign mint and creator owner.
     #[account(mut)]
     pub creator_token_account: UncheckedAccount<'info>,
+    /// CHECK: Handler validates the creator-profile PDA, ownership, and wallet binding before updating graduation counters.
     #[account(mut)]
     pub creator_profile: UncheckedAccount<'info>,
     #[account(mut, seeds = [GRADUATION_SEED, campaign.key().as_ref()], bump = graduation_state.bump, has_one = campaign, has_one = authority, has_one = mint)]
     pub graduation_state: Account<'info, GraduationState>,
+    /// CHECK: Handler validates Meteora owner, deterministic pool identity, both mints, and vault keys from account data.
     pub meteora_pool: UncheckedAccount<'info>,
+    /// CHECK: Handler validates Meteora owner, pool binding, NFT mint, and permanent-liquidity lock state.
     pub meteora_position: UncheckedAccount<'info>,
+    /// CHECK: Handler unpacks and validates this SPL pool vault against the launch-token mint and validated pool state.
     pub meteora_token_vault: UncheckedAccount<'info>,
+    /// CHECK: Handler unpacks and validates this SPL pool vault against the signed quote mint and validated pool state.
     pub meteora_native_vault: UncheckedAccount<'info>,
     pub token_program: Program<'info, Token>,
     pub system_program: Program<'info, System>,
