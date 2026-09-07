@@ -25,7 +25,7 @@ import ArenaTournaments from "./pages/ArenaTournaments";
 import PostGradLeague from "./pages/PostGradLeague";
 import League from "./pages/League";
 import ArenaVerifyEmail from "./pages/ArenaVerifyEmail";
-import Create from "./pages/Create";
+import { CreateChainReadinessGate } from "@/components/create/CreateChainReadinessGate";
 import SponsorshipApplication from "./pages/SponsorshipApplication";
 import ProfilePage from "./pages/ProfilePage";
 import TokenDetailsEntry from "./pages/TokenDetailsEntry";
@@ -203,7 +203,7 @@ function AppShellLayout({
           <Route path="/league" element={<League />} />
           <Route path="/leagues" element={<Navigate to="/league" replace />} />
           {postGradEnabled && postGradFlags.tournament ? <Route path="/tournament/:id" element={<LegacyTournamentRedirect />} /> : null}
-          <Route path="/create" element={<Create />} />
+          <Route path="/create" element={<CreateChainReadinessGate />} />
           <Route path="/drafts/:draftId/promotion" element={<DraftOwnerRoute><DraftPromotionSetup /></DraftOwnerRoute>} />
           <Route path="/drafts/:draftId/push-live" element={<DraftOwnerRoute><PushDraftLive /></DraftOwnerRoute>} />
           <Route path="/prepare/:slug" element={<Prepare />} />

@@ -4,6 +4,7 @@ import { pool } from "../../server/db.js";
 import { badMethod, isSolanaChain, json, readJson } from "../../server/http.js";
 import { requireWalletActionAuth } from "../lib/walletActionAuth.js";
 import { emitNotification } from "../lib/notifications.js";
+import { getLaunchChainReadiness } from "../lib/launchChainReadiness.js";
 import {
   TickerReservationError,
   canonicalClusterForChain,
@@ -724,6 +725,8 @@ function publicAccounts({ creatorWallet, onchain, pdas }) {
 async function handlePreflight(body, res) {
   const creatorWallet = validateCreatorWallet(body.creatorWallet);
   const chainId = Number(body.chainId || 101);
+  const launchReadiness = getLaunchChainReadiness(chainId);
+  if (!launchReadiness.creationReady) throw new SolanaDirectCreateError("Creator deployment is not enabled for this chain.", { code: "CHAIN_CREATION_NOT_READY", httpStatus: 503 });
   // Read policy without throwing creator cooldown/live-cap so the frontend can show the same rich arm dialog as BNB.
   // Begin/authorize still enforce the limits again server-side to close races.
   const runtime = await loadRuntime({ creatorWallet, chainId, skipCreatorLaunchLimits: true });
@@ -764,6 +767,8 @@ async function handlePreflight(body, res) {
 async function handleBegin(body, res) {
   const creatorWallet = validateCreatorWallet(body.creatorWallet);
   const chainId = Number(body.chainId || 101);
+  const launchReadiness = getLaunchChainReadiness(chainId);
+  if (!launchReadiness.creationReady) throw new SolanaDirectCreateError("Creator deployment is not enabled for this chain.", { code: "CHAIN_CREATION_NOT_READY", httpStatus: 503 });
   const ticker = normalizeTicker(body.ticker);
   if (!ticker) {
     throw new SolanaDirectCreateError("Ticker is required for Direct deploy.", {
@@ -863,6 +868,8 @@ async function handleAuthorize(body, res) {
   const session = verifySolanaDirectSessionToken(body.sessionToken);
   const creatorWallet = validateCreatorWallet(session.creatorWallet);
   const chainId = Number(session.chainId);
+  const launchReadiness = getLaunchChainReadiness(chainId);
+  if (!launchReadiness.creationReady) throw new SolanaDirectCreateError("Creator deployment is not enabled for this chain.", { code: "CHAIN_CREATION_NOT_READY", httpStatus: 503 });
   const ticker = normalizeTicker(session.ticker);
   const runtime = await loadRuntime({ creatorWallet, chainId, skipCreatorLaunchLimits: true });
   if (runtime.cluster !== session.cluster) {

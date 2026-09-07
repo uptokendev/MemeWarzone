@@ -1,0 +1,15 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { readFileSync } from "node:fs";
+const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
+const app = read("../../src/App.tsx");
+const gate = read("../../src/components/create/CreateChainReadinessGate.tsx");
+const routeAuth = read("../dev-fix/route-auth.js");
+const drafts = read("../dev-fix/drafts-base.js");
+const solana = read("../dev-fix/solana-direct-create.js");
+const picker = read("../graduation/quote-assets.js");
+test("creator UI is readiness gated", () => { assert.match(app, /CreateChainReadinessGate/); assert.match(gate, /\/api\/routing\/status\?chainId=/); assert.match(gate, /creationReady === true && body\?\.readyForCoreFlow === true/); });
+test("direct deploy respects readiness", () => { assert.match(routeAuth, /CHAIN_CREATION_NOT_READY/); assert.match(solana, /CHAIN_CREATION_NOT_READY/); });
+test("draft deploy respects readiness", () => assert.match(drafts, /getLaunchChainReadiness\(chainId\)/));
+test("picker respects readiness and stays empty", () => { assert.match(picker, /creationReady: false/); assert.match(picker, /items: \[\]/); assert.match(picker, /newGraduationEligible/); });
+test("blocked Robinhood safe UI preserves public support", () => { assert.match(gate, /Robinhood launching soon/); assert.match(gate, /Wallet, read-only and historical support remain available/); });

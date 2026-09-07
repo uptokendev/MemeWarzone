@@ -1,0 +1,34 @@
+name: Launch Chain Readiness Guard
+
+on:
+  pull_request:
+    branches: [build/cross-chain-stabilization-rh-base]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --prefix frontend --no-audit --no-fund
+      - name: Readiness policy matrix
+        run: node --test frontend/api/lib/launchChainReadiness.test.mjs
+      - name: Direct draft picker integration guard
+        run: node --test frontend/api/lib/launchChainReadinessIntegration.test.mjs
+      - name: Existing quote eligibility regression
+        run: node --test frontend/api/lib/approvedQuoteCatalog.test.mjs frontend/api/lib/quoteAssetCatalog.test.mjs
+      - name: API import graph
+        run: npm --prefix frontend run check:api-imports
+      - name: Production frontend build
+        run: npm --prefix frontend run build
