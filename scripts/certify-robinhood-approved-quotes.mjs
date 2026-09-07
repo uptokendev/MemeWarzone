@@ -1,20 +1,19 @@
 #!/usr/bin/env node
 import fs from "node:fs";
-import { ethers } from "ethers";
 import { APPROVED_QUOTE_CATALOG } from "../frontend/api/lib/approvedQuoteCatalog.js";
 import {
   certifyRobinhoodStockRuntime,
+  normalizeRuntimeAddress,
   ROBINHOOD_MAINNET_CHAIN_ID,
   ROBINHOOD_STOCK_PROVIDER,
 } from "../frontend/api/lib/robinhoodStockRuntimeCertification.js";
+import { createRobinhoodRuntimeProvider } from "../frontend/api/lib/robinhoodStockRuntimeProvider.js";
 
 const DEFAULT_MANIFEST = "deployments/robinhood/mainnet.json";
 const CANONICAL_URL = "https://api.robinhood.com/rhj/assets";
 
 function normalizeAddress(value) {
-  const raw = String(value || "").trim();
-  if (!ethers.isAddress(raw) || raw === ethers.ZeroAddress) return "";
-  return ethers.getAddress(raw);
+  return normalizeRuntimeAddress(value);
 }
 
 function deriveTradingHalted(asset) {
@@ -127,7 +126,7 @@ export async function certifyRobinhoodApprovedQuotes({
   }
 
   if (!rpcUrl) throw new Error("ROBINHOOD_MAINNET_RPC_URL is required once the production manifest is enabled");
-  const provider = new ethers.JsonRpcProvider(rpcUrl, ROBINHOOD_MAINNET_CHAIN_ID, { staticNetwork: true });
+  const provider = createRobinhoodRuntimeProvider(rpcUrl, ROBINHOOD_MAINNET_CHAIN_ID);
   try {
     const network = await provider.getNetwork();
     if (Number(network.chainId) !== ROBINHOOD_MAINNET_CHAIN_ID) throw new Error(`RPC chain mismatch: ${network.chainId}`);
