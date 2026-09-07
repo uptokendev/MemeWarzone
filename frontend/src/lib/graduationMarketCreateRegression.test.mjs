@@ -39,25 +39,43 @@ test("generic non-native Direct Deploy remains fail-closed", () => {
   assert.doesNotMatch(create, /buildBnbBasicQuoteCatalogBinding/);
 });
 
-test("BNB BASIC quote Direct Deploy stays fail-closed because HTTP/frontend bind glue is still absent", () => {
+test("BNB BASIC quote Direct Deploy uses catalog id -> server binding -> authorized factory call", () => {
   const routeAuth = readFileSync(join(here, "../../api/dev-fix/route-auth.js"), "utf8");
+  const policy = readFileSync(join(here, "../../api/dev-fix/bnbBasicQuoteCreatePolicy.js"), "utf8");
   const signer = readFileSync(join(here, "../../api/dev-fix/routeAuthorizationSigner.js"), "utf8");
   const binding = readFileSync(join(here, "../../api/lib/bnbBasicQuoteCatalogBinding.js"), "utf8");
   const launchpad = readFileSync(join(here, "./launchpadClient.ts"), "utf8");
+  const apiBase = readFileSync(join(here, "./apiBase.ts"), "utf8");
+  const selection = readFileSync(join(here, "./graduationQuoteSelectionSession.ts"), "utf8");
   const factory = readFileSync(join(here, "../../../contracts/BnbBasicLaunchFactory.sol"), "utf8");
 
   assert.match(factory, /function createBasicQuoteCampaignAuthorized/);
   assert.match(signer, /export async function signBnbBasicQuoteAuthorization/);
   assert.match(binding, /export function buildBnbBasicQuoteCatalogBinding/);
 
-  assert.doesNotMatch(routeAuth, /signBnbBasicQuoteAuthorization/);
-  assert.doesNotMatch(routeAuth, /buildBnbBasicQuoteCatalogBinding/);
-  assert.doesNotMatch(routeAuth, /graduationQuoteAssetId/);
-  assert.match(routeAuth, /signCreateAuthorization/);
-  assert.match(routeAuth, /prepareRobinhoodStockCreateAuthorization/);
+  assert.match(routeAuth, /graduationQuoteAssetId/);
+  assert.match(routeAuth, /prepareBnbBasicQuoteCreateAuthorization/);
+  assert.match(routeAuth, /BNB_BASIC_QUOTE/);
+  assert.match(policy, /getGraduationQuoteAssetDetail/);
+  assert.match(policy, /buildBnbBasicQuoteCatalogBinding/);
+  assert.match(policy, /signBnbBasicQuoteAuthorization/);
+  assert.match(policy, /newGraduationEligible !== true/);
+  assert.match(policy, /BASIC_FACTORY_GENERATION/);
+  assert.match(policy, /BASIC_QUOTE_CAMPAIGN_GENERATION/);
 
-  assert.doesNotMatch(launchpad, /createBasicQuoteCampaignAuthorized/);
+  assert.match(launchpad, /createBasicQuoteCampaignAuthorized/);
+  assert.match(launchpad, /graduationQuoteAssetId/);
+  assert.match(launchpad, /quoteCatalogBindingHash/);
+  assert.match(launchpad, /graduationMarket\?\.kind === "BNB_BASIC_QUOTE"/);
   assert.match(launchpad, /createCampaignAuthorized/);
+
+  assert.match(selection, /mwz:graduation-quote-selection:/);
+  assert.match(apiBase, /\/api\/routing\/create-authorization/);
+  assert.match(apiBase, /graduationQuoteAssetId/);
+  assert.doesNotMatch(apiBase, /quoteTokenAddress/);
+  assert.doesNotMatch(apiBase, /routerAddress/);
+  assert.doesNotMatch(apiBase, /adapterAddress/);
+
   assert.match(create, /directDeployBindPath/);
   assert.doesNotMatch(create, /createBasicQuoteCampaignAuthorized/);
 });
