@@ -45,6 +45,28 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Verify #216 Solana BASIC rebase boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          authority=809b94d3246e7d0cf5b20a83a9babc12d8047cb5
+          git merge-base --is-ancestor "$authority" HEAD
+          git diff --exit-code "$authority"..HEAD -- \
+            frontend/api/lib/quoteAssetCatalog.js \
+            frontend/api/lib/solanaOrcaGraduationQuote.js \
+            frontend/api/dev-fix/solana-graduation-auth-bytes.js \
+            frontend/api/dev-fix/solana-graduation-authorization-v1.js \
+            frontend/api/dev-fix/solana-graduation-authorization-v2.js \
+            frontend/supabase/migrations/20260907001000_solana_basic_quote_catalog.sql \
+            frontend/supabase/migrations/20260907163000_solana_devnet_basic_quote_certification.sql \
+            programs/memewarzone_solana \
+            tools/solana-meteora-graduation
+          node --check frontend/api/lib/quoteAssetCatalog.js
+          node --check frontend/api/lib/solanaOrcaGraduationQuote.js
+          node --check frontend/api/dev-fix/solana-graduation-authorization-v2.js
+          echo "SOLANA_BASIC_REBASE_REGRESSION=PASS"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
