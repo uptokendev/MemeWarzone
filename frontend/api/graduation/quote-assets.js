@@ -1,5 +1,6 @@
 import { badMethod, getQuery, json } from "../../server/http.js";
 import { getGraduationQuoteAssetDetail, listGraduationQuoteAssets } from "../lib/quoteAssetCatalog.js";
+import { decorateQuoteAsset, filterCreatorGraduationAssets } from "../lib/approvedQuoteCatalog.js";
 
 export default async function graduationQuoteAssets(req, res) {
   if (req.method !== "GET") return badMethod(res);
@@ -8,17 +9,28 @@ export default async function graduationQuoteAssets(req, res) {
     if (id) {
       const detail = await getGraduationQuoteAssetDetail(id);
       if (!detail) return json(res, 404, { ok: false, error: "Quote asset not found", code: "QUOTE_ASSET_NOT_FOUND" });
-      return json(res, 200, { ok: true, ...detail, updatedAt: new Date().toISOString() });
+      return json(res, 200, {
+        ok: true,
+        ...detail,
+        item: decorateQuoteAsset(detail.item),
+        updatedAt: new Date().toISOString(),
+      });
     }
 
     const q = getQuery(req);
     const chainId = String(q.chainId || "").trim();
     if (!chainId) return json(res, 400, { ok: false, error: "chainId is required", code: "CHAIN_ID_REQUIRED" });
-    const items = await listGraduationQuoteAssets({ chainId });
+    const catalogItems = await listGraduationQuoteAssets({ chainId });
+    const items = filterCreatorGraduationAssets(catalogItems, {
+      category: q.category,
+      provider: q.provider,
+      search: q.search || q.q,
+    });
     return json(res, 200, {
       ok: true,
       chainId,
       authority: "server",
+      eligibility: "new_graduation_only",
       items,
       updatedAt: new Date().toISOString(),
     });
