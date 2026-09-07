@@ -78,8 +78,9 @@ jobs:
           set -euo pipefail
           node --input-type=module <<'NODE'
           import fs from 'node:fs';
-          import {Connection,Keypair,PublicKey} from './tools/solana-meteora-graduation/node_modules/@solana/web3.js';
+          import web3 from './tools/solana-meteora-graduation/node_modules/@solana/web3.js/lib/index.cjs.js';
           import {getAssociatedTokenAddressSync,TOKEN_PROGRAM_ID,getAccount} from './tools/solana-meteora-graduation/node_modules/@solana/spl-token/lib/esm/index.js';
+          const {Connection,Keypair,PublicKey}=web3;
           const operator=Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(process.env.SOLANA_GRADUATION_OPERATOR_KEYPAIR,'utf8'))));
           const connection=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
           const pool=new PublicKey('6XqJUqX4zUL7KEm9wGqTvJmE7DdC8e6MYeMBF9uYLckX');
