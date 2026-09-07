@@ -24,7 +24,7 @@ const CIRCLE_DEVNET_USDC = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
 const WSOL = NATIVE_MINT.toBase58();
 const DEFAULT_RPC = "https://api.devnet.solana.com";
 const DEFAULT_PRICE = 150;
-const DEFAULT_SEED_SOL = 0.25;
+const DEFAULT_SEED_SOL = 0.10;
 const REPORT_PATH = process.env.ORCA_DEVNET_CERT_REPORT || "/tmp/mwz-orca-devnet-cert-pool.json";
 
 function fail(message) {
@@ -111,6 +111,14 @@ async function main() {
     orca: { programId: ORCA_PROGRAM, config: ORCA_DEVNET_CONFIG, deployment: "devnet" },
     poolAddress,
     poolWasReused: Boolean(existing.initialized),
+    poolStateBeforeSeed: existing.initialized ? {
+      priceTokenBPerTokenA: existing.price,
+      liquidity: existing.liquidity,
+      tickSpacing: existing.tickSpacing,
+      feeRate: existing.feeRate,
+      tokenVaultA: existing.tokenVaultA,
+      tokenVaultB: existing.tokenVaultB,
+    } : null,
     tokenA: String(mintA),
     tokenB: String(mintB),
     wsolMint: WSOL,
@@ -150,6 +158,17 @@ async function main() {
   report.liquiditySeedingSignature = await opened.callback();
   report.liquidityPositionMint = String(opened.positionMint || "");
   report.initializationCost = opened.initializationCost;
+  const after = await fetchSplashPool(
+    rpc,
+    address(WSOL),
+    address(CIRCLE_DEVNET_USDC),
+    WhirlpoolDeployment.devnet,
+  );
+  report.poolStateAfterSeed = after.initialized ? {
+    priceTokenBPerTokenA: after.price,
+    liquidity: after.liquidity,
+    tickSpacing: after.tickSpacing,
+  } : null;
   report.status = "READY";
   fs.writeFileSync(REPORT_PATH, toJson(report));
   console.log(toJson(report));
