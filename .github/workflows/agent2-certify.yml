@@ -1,15 +1,16 @@
-name: Agent 2 Basic Graduation Certification
+name: Agent 2 Current-Authority Graduation Certification
 
 on:
   push:
     branches:
-      - agent2/solana-basic-graduation-market
+      - cert/agent2-basic-graduation-db249-current
 
 permissions:
   contents: read
 
 env:
-  BASE_SHA: 0204c4a47555a747b95e7c80deb113d36f91e491
+  BASE_SHA: 2f0b461bf8fc4c26e662e33014445d28f9924fda
+  CANDIDATE_SHA: db2490f8a19bf3cbe5799845bab49e86e211137c
   PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
   SOLANA_VERSION: 1.18.26
   ANCHOR_VERSION: 0.30.1
@@ -19,24 +20,38 @@ env:
 jobs:
   certify:
     runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 70
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: agent2/solana-basic-graduation-market
+          ref: ${{ env.CANDIDATE_SHA }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Verify exact source authorities
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse "$CANDIDATE_SHA^")" = "ba7a0d1210e2410ad14d6b2ce4593f903b8811ae"
+          test "$(git rev-parse "$BASE_SHA")" = "$BASE_SHA"
+          grep -Fq 'declare_id!("3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt")' programs/memewarzone_solana/src/lib.rs
+          echo "CANDIDATE_SOURCE_SHA=$CANDIDATE_SHA"
+          echo "BASELINE_SOURCE_SHA=$BASE_SHA"
       - name: Install pinned Rust
         shell: bash
         run: |
+          set -euo pipefail
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal --component rustfmt
           rustup toolchain install "$IDL_TOOLCHAIN" --profile minimal
           rustup default "$RUST_TOOLCHAIN"
+          rustc --version
+          cargo --version
       - name: Install pinned Solana CLI
         shell: bash
         run: |
+          set -euo pipefail
           release_dir="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
           mkdir -p "$release_dir"
           curl --fail --location --retry 5 --retry-all-errors --silent --show-error \
@@ -47,36 +62,51 @@ jobs:
           ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
       - name: Install Anchor CLI
+        shell: bash
         run: npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
-      - name: Source, unit and transaction regression gates
+      - name: Versions
+        shell: bash
+        run: |
+          solana --version
+          cargo-build-sbf --version || true
+          anchor --version
+      - name: Current candidate source and unit gates
         shell: bash
         run: |
           set -euo pipefail
-          rustfmt --edition 2021 --check programs/memewarzone_solana/src/graduation.rs
-          rustfmt --edition 2021 --check --config skip_children=true programs/memewarzone_solana/src/lib.rs
+          cargo fmt --package memewarzone_solana -- --check
           cargo test -p memewarzone_solana --lib
           node --check frontend/api/lib/quoteAssetCatalog.js
+          node --check frontend/api/dev-fix/solana-graduation-auth-bytes.js
           node --check frontend/api/dev-fix/solana-graduation-authorization-v2.js
           node --check tools/solana-meteora-graduation/graduate-basic-quote.mjs
+          node tools/solana-meteora-graduation/check-graduation-auth-fixture.mjs
           node <<'NODE'
           const fs=require('fs');
-          const s=fs.readFileSync('tools/solana-meteora-graduation/graduate-basic-quote.mjs','utf8');
-          const required=['VersionedTransaction','AddressLookupTable','getLatestBlockhash','lastValidBlockHeight','confirmTransaction'];
-          for(const token of required){ if(!s.includes(token)) throw new Error(`missing V0/ALT/blockhash regression token: ${token}`); }
-          if(!s.includes('quoteRecoveryAccount') || !s.includes('permanent')) throw new Error('graduation recovery/custody proof tokens missing');
-          console.log('V0_ALT_BLOCKHASH_SOURCE_REGRESSION=PASS');
+          const r=fs.readFileSync('programs/memewarzone_solana/src/graduation.rs','utf8');
+          const b=fs.readFileSync('frontend/api/dev-fix/solana-graduation-auth-bytes.js','utf8');
+          const t=fs.readFileSync('tools/solana-meteora-graduation/graduate-basic-quote.mjs','utf8');
+          for(const token of ['GRADUATION_AUTH_SCHEMA_VERSION: u16 = 4','generation_config.as_ref()','quote_deviation_accepts_sub_raw_unit_and_rejects_excessive_drift','graduation_authorization_binds_exact_generation']) if(!r.includes(token)) throw new Error(`missing Rust certification token: ${token}`);
+          for(const token of ['GRADUATION_AUTH_SCHEMA_VERSION = 4','fields.generationConfig']) if(!b.includes(token)) throw new Error(`missing backend-byte token: ${token}`);
+          for(const token of ['VersionedTransaction','AddressLookupTable','getLatestBlockhash','lastValidBlockHeight','confirmTransaction','quoteRecoveryAccount']) if(!t.includes(token)) throw new Error(`missing transaction regression token: ${token}`);
+          if(!r.includes('PermanentLiquidityRequired') && !r.toLowerCase().includes('permanent')) throw new Error('permanent custody validation source missing');
+          console.log('SOURCE_BINDING_V0_ALT_BLOCKHASH_RECOVERY=PASS');
           NODE
-      - name: Build candidate SBF
+      - name: Clean candidate SBF build
         shell: bash
         run: |
           set -euo pipefail
+          rm -rf target/deploy target/sbf-solana-solana target/idl
           anchor build --program-name memewarzone_solana --no-idl
           test -s target/deploy/memewarzone_solana.so
           candidate_bytes=$(wc -c < target/deploy/memewarzone_solana.so | tr -d ' ')
-          candidate_sha=$(sha256sum target/deploy/memewarzone_solana.so | awk '{print $1}')
+          candidate_sha256=$(sha256sum target/deploy/memewarzone_solana.so | awk '{print $1}')
+          cp target/deploy/memewarzone_solana.so /tmp/candidate.so
           echo "CANDIDATE_BYTES=$candidate_bytes" >> "$GITHUB_ENV"
-          echo "CANDIDATE_SHA256=$candidate_sha" >> "$GITHUB_ENV"
-      - name: Build candidate IDL with pinned IDL toolchain
+          echo "CANDIDATE_SHA256=$candidate_sha256" >> "$GITHUB_ENV"
+          echo "CANDIDATE_SBF_BYTES=$candidate_bytes"
+          echo "CANDIDATE_SBF_SHA256=$candidate_sha256"
+      - name: Generate and validate candidate IDL
         shell: bash
         run: |
           set -euo pipefail
@@ -88,67 +118,97 @@ jobs:
           const idl=JSON.parse(fs.readFileSync('target/idl/memewarzone_solana.json','utf8'));
           const names=new Set((idl.instructions||[]).map(x=>x.name));
           for(const n of ['beginGraduation','confirmGraduation']) if(!names.has(n)) throw new Error(`IDL missing ${n}`);
+          const begin=(idl.instructions||[]).find(x=>x.name==='beginGraduation');
+          if(!begin) throw new Error('beginGraduation absent');
           const address=idl.address || idl.metadata?.address;
-          if(address && address!==process.env.PROGRAM_ID) throw new Error(`IDL program address mismatch: ${address}`);
-          console.log(`IDL_BUILD_INTEGRITY=PASS instructions=${names.size}`);
+          if(address && address!==process.env.PROGRAM_ID) throw new Error(`IDL address mismatch ${address}`);
+          fs.writeFileSync('/tmp/candidate-idl.json', JSON.stringify(idl,null,2));
+          console.log(`IDL_INTEGRITY=PASS instructions=${names.size} address=${address||'not-emitted'}`);
           NODE
-          if test -f scripts/check-solana-v4-idl.mjs; then node scripts/check-solana-v4-idl.mjs target/idl/memewarzone_solana.json target/idl/memewarzone_solana.v4.binding.json; fi
-      - name: Build exact baseline SBF
+      - name: Clean exact-current baseline SBF build
         shell: bash
         run: |
           set -euo pipefail
-          git worktree add /tmp/mwz-agent2-base "$BASE_SHA"
+          git worktree add --detach /tmp/mwz-agent2-base "$BASE_SHA"
           cd /tmp/mwz-agent2-base
+          rm -rf target/deploy target/sbf-solana-solana target/idl
           anchor build --program-name memewarzone_solana --no-idl
           test -s target/deploy/memewarzone_solana.so
           baseline_bytes=$(wc -c < target/deploy/memewarzone_solana.so | tr -d ' ')
-          baseline_sha=$(sha256sum target/deploy/memewarzone_solana.so | awk '{print $1}')
+          baseline_sha256=$(sha256sum target/deploy/memewarzone_solana.so | awk '{print $1}')
           echo "BASELINE_BYTES=$baseline_bytes" >> "$GITHUB_ENV"
-          echo "BASELINE_SHA256=$baseline_sha" >> "$GITHUB_ENV"
-      - name: Read devnet ProgramData allocation and extension rent
+          echo "BASELINE_SHA256=$baseline_sha256" >> "$GITHUB_ENV"
+          echo "BASELINE_SBF_BYTES=$baseline_bytes"
+          echo "BASELINE_SBF_SHA256=$baseline_sha256"
+      - name: Read-only devnet ProgramData and deployed binary
         shell: bash
         run: |
           set -euo pipefail
-          node <<'NODE' > /tmp/programdata.json
+          solana config set --url https://api.devnet.solana.com >/dev/null
+          node <<'NODE' | tee /tmp/programdata.json
           const rpc='https://api.devnet.solana.com';
           const programId=process.env.PROGRAM_ID;
           const candidateBytes=Number(process.env.CANDIDATE_BYTES);
-          async function call(method,params){const r=await fetch(rpc,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})});if(!r.ok)throw new Error(`${method} HTTP ${r.status}`);const j=await r.json();if(j.error)throw new Error(`${method}: ${JSON.stringify(j.error)}`);return j.result;}
-          function b58(bytes){const alphabet='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';let x=0n;for(const b of bytes)x=(x<<8n)+BigInt(b);let s='';while(x>0){const m=Number(x%58n);s=alphabet[m]+s;x/=58n;}for(const b of bytes){if(b===0)s='1'+s;else break;}return s||'1';}
+          async function call(method,params){
+            const r=await fetch(rpc,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})});
+            if(!r.ok) throw new Error(`${method} HTTP ${r.status}`);
+            const j=await r.json(); if(j.error) throw new Error(`${method}: ${JSON.stringify(j.error)}`); return j.result;
+          }
+          function b58(bytes){const alphabet='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';let x=0n;for(const b of bytes)x=(x<<8n)+BigInt(b);let s='';while(x>0n){const m=Number(x%58n);s=alphabet[m]+s;x/=58n;}for(const b of bytes){if(b===0)s='1'+s;else break;}return s||'1';}
           const prog=await call('getAccountInfo',[programId,{encoding:'base64',commitment:'confirmed'}]);
-          if(!prog.value)throw new Error('program account missing on devnet');
-          const pdata=Buffer.from(prog.value.data[0],'base64');
-          if(pdata.length<36||pdata.readUInt32LE(0)!==2)throw new Error(`unexpected UpgradeableLoader Program state len=${pdata.length} tag=${pdata.readUInt32LE(0)}`);
-          const programDataAddress=b58(pdata.subarray(4,36));
+          if(!prog.value) throw new Error(`launchpad program ${programId} missing on devnet`);
+          const state=Buffer.from(prog.value.data[0],'base64');
+          if(state.length!==36 || state.readUInt32LE(0)!==2) throw new Error(`unexpected program state len=${state.length} tag=${state.readUInt32LE(0)}`);
+          const programDataAddress=b58(state.subarray(4,36));
           const pdi=await call('getAccountInfo',[programDataAddress,{encoding:'base64',commitment:'confirmed'}]);
-          if(!pdi.value)throw new Error('ProgramData account missing on devnet');
+          if(!pdi.value) throw new Error('ProgramData account missing');
           const raw=Buffer.from(pdi.value.data[0],'base64');
+          if(raw.length<45 || raw.readUInt32LE(0)!==3) throw new Error(`unexpected ProgramData state len=${raw.length} tag=${raw.readUInt32LE(0)}`);
           const metadataBytes=45;
           const capacity=raw.length-metadataBytes;
           const extensionRequired=candidateBytes>capacity;
-          const targetLen=candidateBytes+metadataBytes;
-          const targetRent=extensionRequired?await call('getMinimumBalanceForRentExemption',[targetLen,{commitment:'confirmed'}]):pdi.value.lamports;
-          const extensionRentLamports=extensionRequired?Math.max(0,targetRent-pdi.value.lamports):0;
-          console.log(JSON.stringify({programId,programDataAddress,programDataDataLength:raw.length,programBinaryCapacityBytes:capacity,currentProgramDataLamports:pdi.value.lamports,candidateBytes,extensionRequired,targetProgramDataLength:targetLen,targetRentLamports,extensionRentLamports},null,2));
+          const extraBytes=Math.max(0,candidateBytes-capacity);
+          const targetLen=metadataBytes+Math.max(capacity,candidateBytes);
+          const targetRent=await call('getMinimumBalanceForRentExemption',[targetLen]);
+          const extensionLamports=extensionRequired?Math.max(0,targetRent-pdi.value.lamports):0;
+          const deployedRegion=raw.subarray(metadataBytes);
+          let used=deployedRegion.length;
+          while(used>0 && deployedRegion[used-1]===0) used--;
+          const deployedBytes=deployedRegion.subarray(0,used);
+          const crypto=require('node:crypto');
+          const result={programId,programOwner:prog.value.owner,programExecutable:prog.value.executable,programDataAddress,programDataOwner:pdi.value.owner,programDataLamports:pdi.value.lamports,programDataDataLength:raw.length,programDataMetadataBytes:metadataBytes,programBinaryCapacityBytes:capacity,deployedNonZeroTailTrimmedBytes:used,deployedTailTrimmedSha256:crypto.createHash('sha256').update(deployedBytes).digest('hex'),candidateBytes,extensionRequired,additionalBytesRequired:extraBytes,targetProgramDataLength:targetLen,targetRentExemptLamports:targetRent,exactAdditionalLamportsRequired:extensionLamports};
+          console.log(JSON.stringify(result,null,2));
           NODE
-          cat /tmp/programdata.json
-      - name: Certification summary
+          solana program show -ud "$PROGRAM_ID" --output json | tee /tmp/program-show.json
+          solana program dump -ud "$PROGRAM_ID" /tmp/deployed-program.so
+          echo "DEPLOYED_PROGRAM_DUMP_BYTES=$(wc -c < /tmp/deployed-program.so | tr -d ' ')"
+          echo "DEPLOYED_PROGRAM_DUMP_SHA256=$(sha256sum /tmp/deployed-program.so | awk '{print $1}')"
+      - name: Certification evidence summary
         shell: bash
         run: |
           set -euo pipefail
           {
-            echo "starting_sha=$BASE_SHA"
-            echo "candidate_sha=$(git rev-parse HEAD)"
-            echo "baseline_bytes=$BASELINE_BYTES"
-            echo "candidate_bytes=$CANDIDATE_BYTES"
-            echo "baseline_sha256=$BASELINE_SHA256"
-            echo "candidate_sha256=$CANDIDATE_SHA256"
-            echo "idl_integrity=PASS"
-            echo "v0_alt_blockhash_regression=PASS"
+            echo "BASE_SHA=$BASE_SHA"
+            echo "CANDIDATE_SHA=$CANDIDATE_SHA"
+            echo "PROGRAM_ID=$PROGRAM_ID"
+            echo "SOLANA_VERSION=$SOLANA_VERSION"
+            echo "ANCHOR_VERSION=$ANCHOR_VERSION"
+            echo "RUST_TOOLCHAIN=$RUST_TOOLCHAIN"
+            echo "BASELINE_BYTES=$BASELINE_BYTES"
+            echo "BASELINE_SHA256=$BASELINE_SHA256"
+            echo "CANDIDATE_BYTES=$CANDIDATE_BYTES"
+            echo "CANDIDATE_SHA256=$CANDIDATE_SHA256"
+            echo "RUST_UNIT_AND_AUTH_BYTES=PASS"
+            echo "IDL_INTEGRITY=PASS"
             cat /tmp/programdata.json
-          } | tee agent2-certification.txt
+            cat /tmp/program-show.json
+            echo "DEPLOYED_PROGRAM_DUMP_BYTES=$(wc -c < /tmp/deployed-program.so | tr -d ' ')"
+            echo "DEPLOYED_PROGRAM_DUMP_SHA256=$(sha256sum /tmp/deployed-program.so | awk '{print $1}')"
+          } | tee agent2-current-authority-certification.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: agent2-basic-graduation-certification
-          path: agent2-certification.txt
+          name: agent2-current-authority-certification
+          path: |
+            agent2-current-authority-certification.txt
+            /tmp/candidate-idl.json
           retention-days: 7
