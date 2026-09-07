@@ -1,9 +1,7 @@
 import fs from "node:fs";
 
 import {
-  createConcentratedLiquidityPool,
   fetchConcentratedLiquidityPool,
-  fetchWhirlpoolsByTokenPair,
   openFullRangePosition,
   orderMints,
   setPayerFromBytes,
@@ -23,15 +21,15 @@ const ORCA_PROGRAM = "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc";
 const ORCA_DEVNET_CONFIG = "FcrweFY1G9HJAHG5inkGB6pKg1HZ6x9UC2WioAfWrGkR";
 const CIRCLE_DEVNET_USDC = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
 const WSOL = NATIVE_MINT.toBase58();
+const CERT_POOL = "6XqJUqX4zUL7KEm9wGqTvJmE7DdC8e6MYeMBF9uYLckX";
+const CERT_TICK_SPACING = 1;
 const DEFAULT_RPC = "https://api.devnet.solana.com";
-const DEFAULT_PRICE = 150;
+const DEFAULT_PRICE = 145.948162;
 const DEFAULT_SEED_SOL = 0.10;
-const MAX_REUSE_PRICE_DRIFT_BPS = 25;
+const MAX_REFERENCE_DRIFT_BPS = 25;
 const REPORT_PATH = process.env.ORCA_DEVNET_CERT_REPORT || "/tmp/mwz-orca-devnet-cert-pool.json";
 
-function fail(message) {
-  throw new Error(`[orca-devnet-cert-pool] ${message}`);
-}
+function fail(message) { throw new Error(`[orca-devnet-cert-pool] ${message}`); }
 function loadOperatorBytes() {
   const keypairPath = String(process.env.SOLANA_GRADUATION_OPERATOR_KEYPAIR || "").trim();
   if (!keypairPath) fail("SOLANA_GRADUATION_OPERATOR_KEYPAIR is required");
@@ -61,9 +59,9 @@ function poolSnapshot(pool) {
 
 async function main() {
   const rpcUrl = String(process.env.SOLANA_RPC_URL || DEFAULT_RPC).trim();
-  const initialPriceUsd = Number(process.env.ORCA_DEVNET_CERT_SOL_USDC_PRICE || DEFAULT_PRICE);
+  const referencePriceUsd = Number(process.env.ORCA_DEVNET_CERT_SOL_USDC_PRICE || DEFAULT_PRICE);
   const seedSol = Number(process.env.ORCA_DEVNET_CERT_SEED_SOL || DEFAULT_SEED_SOL);
-  if (!Number.isFinite(initialPriceUsd) || initialPriceUsd <= 0) fail("ORCA_DEVNET_CERT_SOL_USDC_PRICE must be > 0");
+  if (!Number.isFinite(referencePriceUsd) || referencePriceUsd <= 0) fail("ORCA_DEVNET_CERT_SOL_USDC_PRICE must be > 0");
   if (!Number.isFinite(seedSol) || seedSol <= 0) fail("ORCA_DEVNET_CERT_SEED_SOL must be > 0");
 
   const operatorBytes = loadOperatorBytes();
@@ -75,70 +73,48 @@ async function main() {
   const [mintA, mintB] = orderMints(address(WSOL), address(CIRCLE_DEVNET_USDC));
   if (String(mintA) !== WSOL || String(mintB) !== CIRCLE_DEVNET_USDC) fail("certification pool canonical mint order unexpectedly changed");
 
-  const candidates = (await fetchWhirlpoolsByTokenPair(rpc, mintA, mintB, WhirlpoolDeployment.devnet))
-    .sort((a, b) => Number(a.tickSpacing) - Number(b.tickSpacing));
-  const reusable = candidates.find((candidate) => candidate.initialized && priceDriftBps(candidate.price, initialPriceUsd) <= MAX_REUSE_PRICE_DRIFT_BPS);
-  const uninitialized = candidates.find((candidate) => !candidate.initialized);
-  let selected = reusable || uninitialized;
-  if (!selected) {
-    const report = { status: "BLOCKED_NO_CLEAN_ORCA_FEE_TIER", candidates: candidates.map((p) => p.initialized ? poolSnapshot(p) : { address: String(p.address), initialized: false, tickSpacing: p.tickSpacing, feeRate: p.feeRate }) };
-    fs.writeFileSync(REPORT_PATH, toJson(report));
-    console.log(toJson(report));
-    fail("all supported Orca WSOL/Circle-USDC fee tiers are already initialized away from the certification reference price");
-  }
-
-  const tickSpacing = Number(selected.tickSpacing);
-  let poolCreationSignature = null;
-  if (!selected.initialized) {
-    const created = await createConcentratedLiquidityPool(mintA, mintB, tickSpacing, {
-      initialPrice: initialPriceUsd,
-      funder: payer,
-      whirlpoolDeployment: WhirlpoolDeployment.devnet,
-    });
-    if (String(created.poolAddress) !== String(selected.address)) fail("derived Orca pool address changed between resolve and create");
-    poolCreationSignature = await created.callback();
-    selected = await fetchConcentratedLiquidityPool(rpc, mintA, mintB, tickSpacing, WhirlpoolDeployment.devnet);
-  }
-  if (!selected.initialized) fail("dedicated Orca certification pool did not initialize");
-  if (String(selected.tokenMintA) !== WSOL || String(selected.tokenMintB) !== CIRCLE_DEVNET_USDC) fail("dedicated Orca certification pool mint binding mismatch");
-  if (priceDriftBps(selected.price, initialPriceUsd) > MAX_REUSE_PRICE_DRIFT_BPS) fail(`certification pool price ${selected.price} is outside ${MAX_REUSE_PRICE_DRIFT_BPS} bps of ${initialPriceUsd}`);
+  const pool = await fetchConcentratedLiquidityPool(rpc, mintA, mintB, CERT_TICK_SPACING, WhirlpoolDeployment.devnet);
+  if (!pool.initialized) fail("policy-selected Orca certification pool is not initialized");
+  if (String(pool.address) !== CERT_POOL) fail(`policy-selected pool mismatch: ${pool.address}`);
+  if (String(pool.tokenMintA) !== WSOL || String(pool.tokenMintB) !== CIRCLE_DEVNET_USDC) fail("policy-selected pool mint binding mismatch");
+  if (Number(pool.tickSpacing) !== CERT_TICK_SPACING) fail("policy-selected pool tick spacing mismatch");
+  if (priceDriftBps(pool.price, referencePriceUsd) > MAX_REFERENCE_DRIFT_BPS) fail(`policy-selected pool price ${pool.price} is outside ${MAX_REFERENCE_DRIFT_BPS} bps of ${referencePriceUsd}`);
 
   const usdc = await tokenBalance(web3, owner, CIRCLE_DEVNET_USDC);
   const solLamports = await web3.getBalance(owner, "confirmed");
   const desiredSolRaw = decimalSeedRaw(seedSol);
-  const desiredUsdcRaw = BigInt(Math.ceil(seedSol * initialPriceUsd * 1_000_000));
+  const desiredUsdcRaw = BigInt(Math.ceil(seedSol * referencePriceUsd * 1_000_000));
   const report = {
     rpcUrl, network: "solana-devnet", operator: owner.toBase58(),
     orca: { programId: ORCA_PROGRAM, config: ORCA_DEVNET_CONFIG, deployment: "devnet" },
-    poolAddress: String(selected.address), poolWasReused: poolCreationSignature === null, tickSpacing,
-    poolStateBeforeSeed: poolSnapshot(selected), tokenA: String(mintA), tokenB: String(mintB),
-    wsolMint: WSOL, circleDevnetUsdcMint: CIRCLE_DEVNET_USDC, initialPriceUsdPerSol: initialPriceUsd,
-    poolCreationSignature, balancesBeforeSeed: { solLamports, usdcAta: usdc.ata, usdcRaw: usdc.raw },
+    poolAddress: CERT_POOL, poolWasReused: true, poolCreationSignature: null, tickSpacing: CERT_TICK_SPACING,
+    poolStateBeforeSeed: poolSnapshot(pool), tokenA: String(mintA), tokenB: String(mintB),
+    wsolMint: WSOL, circleDevnetUsdcMint: CIRCLE_DEVNET_USDC, referencePriceUsdPerSol: referencePriceUsd,
+    balancesBeforeSeed: { solLamports, usdcAta: usdc.ata, usdcRaw: usdc.raw },
     desiredSeed: { solRaw: desiredSolRaw, usdcRaw: desiredUsdcRaw }, liquiditySeedingSignature: null, liquidityPositionMint: null,
-    status: "POOL_READY_UNSEEDED",
+    status: BigInt(pool.liquidity || 0) > 0n ? "READY_EXISTING_LIQUIDITY" : "POOL_READY_UNSEEDED",
   };
 
-  if (usdc.raw < desiredUsdcRaw) {
-    report.status = "BLOCKED_CIRCLE_DEVNET_USDC_FUNDING";
-    fs.writeFileSync(REPORT_PATH, toJson(report));
-    console.log(toJson(report));
-    fail(`operator Circle devnet USDC balance ${usdc.raw} is below required seed ${desiredUsdcRaw}; fund ${usdc.ata} from the Circle devnet faucet or an existing funded devnet wallet`);
-  }
-  if (BigInt(solLamports) <= desiredSolRaw + 50_000_000n) {
-    report.status = "BLOCKED_DEVNET_SOL_FUNDING";
-    fs.writeFileSync(REPORT_PATH, toJson(report)); console.log(toJson(report));
-    fail("operator does not have enough devnet SOL for liquidity plus transaction rent/fees");
-  }
-
-  if (BigInt(selected.liquidity || 0) === 0n) {
-    const opened = await openFullRangePosition(address(String(selected.address)), { tokenMaxA: desiredSolRaw }, {
+  if (BigInt(pool.liquidity || 0) === 0n) {
+    if (usdc.raw < desiredUsdcRaw) {
+      report.status = "BLOCKED_CIRCLE_DEVNET_USDC_FUNDING";
+      fs.writeFileSync(REPORT_PATH, toJson(report)); console.log(toJson(report));
+      fail(`operator Circle devnet USDC balance ${usdc.raw} is below required seed ${desiredUsdcRaw}; fund ${usdc.ata} with canonical Circle devnet USDC`);
+    }
+    if (BigInt(solLamports) <= desiredSolRaw + 50_000_000n) {
+      report.status = "BLOCKED_DEVNET_SOL_FUNDING";
+      fs.writeFileSync(REPORT_PATH, toJson(report)); console.log(toJson(report));
+      fail("operator does not have enough devnet SOL for liquidity plus transaction rent/fees");
+    }
+    const opened = await openFullRangePosition(address(CERT_POOL), { tokenMaxA: desiredSolRaw }, {
       slippageToleranceBps: 100, funder: payer, whirlpoolDeployment: WhirlpoolDeployment.devnet,
     });
     report.liquiditySeedingSignature = await opened.callback();
     report.liquidityPositionMint = String(opened.positionMint || "");
     report.initializationCost = opened.initializationCost;
   }
-  const after = await fetchConcentratedLiquidityPool(rpc, mintA, mintB, tickSpacing, WhirlpoolDeployment.devnet);
+
+  const after = await fetchConcentratedLiquidityPool(rpc, mintA, mintB, CERT_TICK_SPACING, WhirlpoolDeployment.devnet);
   report.poolStateAfterSeed = poolSnapshot(after);
   report.status = BigInt(after.liquidity || 0) > 0n ? "READY" : "POOL_READY_UNSEEDED";
   fs.writeFileSync(REPORT_PATH, toJson(report)); console.log(toJson(report));
