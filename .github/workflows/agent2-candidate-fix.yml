@@ -26,6 +26,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          sed -i 's/exact\.to_bytes()/exact/g; s/substituted\.to_bytes()/substituted/g' .github/agent2-candidate-fix.py
           python .github/agent2-candidate-fix.py
       - name: Format
         run: |
