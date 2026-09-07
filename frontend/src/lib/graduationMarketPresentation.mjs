@@ -173,6 +173,10 @@ export function directDeployBindPath(asset) {
   if (!asset || asset.presentationDefault === true || asset.newGraduationEligible !== true) return null;
   if (isRobinhoodStockQuote(asset)) return "robinhood-stock";
   if (isNativeQuote(asset)) return "native";
+  // BNB BASIC uses the same launchpad client surface as native creation. The client consumes the
+  // remembered opaque catalog deployment id and switches to createBasicQuoteCampaignAuthorized
+  // only after the server returns a signed BNB_BASIC_QUOTE binding.
+  if (Number(asset?.chainId) === 56) return "native";
   return null;
 }
 

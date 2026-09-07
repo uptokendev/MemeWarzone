@@ -22,6 +22,7 @@ import {
   signTradeAuthorization,
 } from "./routeAuthorizationSigner.js";
 import { prepareRobinhoodStockCreateAuthorization } from "./robinhoodStockCreatePolicy.js";
+import { prepareBnbBasicQuoteCreateAuthorization, readBnbBasicCreationPreflight } from "./bnbBasicQuoteCreatePolicy.js";
 import { defaultEvmChainId } from "../lib/defaultEvmChain.js";
 import { isCreatorArmCooldownActive, normalizeCreatorArmCooldownEndsAt } from "../lib/creatorArmCooldown.js";
 
@@ -230,15 +231,7 @@ async function readOnchainCreationPreflight({ chainId, factoryAddress, walletAdd
     }
 
     const factory = new ethers.Contract(factoryAddress, FACTORY_CREATION_PREFLIGHT_ABI, provider);
-    const [
-      live,
-      globalPaused,
-      createPaused,
-      factoryGenerationRaw,
-      campaignGenerationRaw,
-      eligibility,
-      routeAuthority,
-    ] = await Promise.all([
+    const [live, globalPaused, createPaused, factoryGenerationRaw, campaignGenerationRaw, eligibility, routeAuthority] = await Promise.all([
       factory.live(),
       factory.globalPaused(),
       factory.createPaused(),
@@ -338,9 +331,7 @@ function buildReadinessWarnings({ signer, factoryAddress, rpcUrlConfigured, onch
   if (!factoryAddress) warnings.push("Factory address is missing for this chain.");
   if (!rpcUrlConfigured) warnings.push("RPC URL is missing for this chain, so on-chain routeAuthority cannot be verified.");
   if (onchain.error) warnings.push(`On-chain routeAuthority check failed: ${onchain.error}`);
-  if (signer && onchain.routeAuthority && !matchesOnchain) {
-    warnings.push("Configured signer address does not match LaunchFactory.routeAuthority().");
-  }
+  if (signer && onchain.routeAuthority && !matchesOnchain) warnings.push("Configured signer address does not match LaunchFactory.routeAuthority().");
   return warnings;
 }
 
@@ -355,7 +346,6 @@ function readinessStatus({ signer, factoryAddress, rpcUrlConfigured, onchain, ma
 
 export async function routingStatus(req, res) {
   if (!methodAllowed(req, res, ["GET"])) return;
-
   const q = getQuery(req);
   const chainId = parsePositiveInt(q.chainId || process.env.VITE_DEFAULT_CHAIN_ID || process.env.VITE_TARGET_CHAIN_ID, defaultEvmChainId());
   const signer = getSigner();
@@ -365,16 +355,12 @@ export async function routingStatus(req, res) {
   const rpcUrlConfigured = Boolean(getRpcUrl(chainId));
   const onchain = await readOnchainRouteAuthority({ chainId, factoryAddress });
   const matchesOnchain = Boolean(routeAuthority && onchain.routeAuthority && routeAuthority.toLowerCase() === onchain.routeAuthority.toLowerCase());
-
   const readyForCoreFlow = Boolean(signer && factoryAddress && rpcUrlConfigured && onchain.routeAuthority && matchesOnchain);
   const warnings = buildReadinessWarnings({ signer, factoryAddress, rpcUrlConfigured, onchain, matchesOnchain });
-
   const walletAddress = normalizeAddress(q.walletAddress);
   const routeDecision = walletAddress ? await getRouteDecision(walletAddress) : null;
   const createPreflight = walletAddress ? await evaluateCreatePreflight({ walletAddress }) : null;
-  const onChainCreationPreflight = walletAddress && factoryAddress
-    ? await readOnchainCreationPreflight({ chainId, factoryAddress, walletAddress })
-    : null;
+  const onChainCreationPreflight = walletAddress && factoryAddress ? await readOnchainCreationPreflight({ chainId, factoryAddress, walletAddress }) : null;
 
   return json(res, 200, {
     ok: readyForCoreFlow,
@@ -420,11 +406,15 @@ export async function routingCreateAuthorization(req, res) {
   const chainId = parsePositiveInt(body.chainId, 0);
   const requestedStockToken = String(body.stockToken || body.graduationQuoteAsset || "").trim();
   const stockToken = requestedStockToken ? normalizeAddress(requestedStockToken) : "";
+  const graduationQuoteAssetId = String(body.graduationQuoteAssetId || body.quoteAssetId || "").trim();
 
   if (!walletAddress) return json(res, 400, { error: "Invalid or missing walletAddress" });
   if (!factoryAddress) return json(res, 400, { error: "Invalid or missing factoryAddress" });
   if (!chainId) return json(res, 400, { error: "Invalid or missing chainId" });
   if (requestedStockToken && !stockToken) return json(res, 400, { error: "Invalid stockToken" });
+  if (stockToken && graduationQuoteAssetId) {
+    return json(res, 400, { error: "Choose either a stock-token graduation or BNB approved quote, not both" });
+  }
 
   let campaignRequest;
   try {
@@ -434,7 +424,9 @@ export async function routingCreateAuthorization(req, res) {
     return json(res, 400, { error: error.message });
   }
 
-  const onChainPreflight = await readOnchainCreationPreflight({ chainId, factoryAddress, walletAddress });
+  const onChainPreflight = graduationQuoteAssetId
+    ? await readBnbBasicCreationPreflight({ chainId, factoryAddress, walletAddress })
+    : await readOnchainCreationPreflight({ chainId, factoryAddress, walletAddress });
   if (!onChainPreflight.ok) {
     return json(res, onChainPreflight.status || 503, {
       error: onChainPreflight.error,
@@ -443,10 +435,7 @@ export async function routingCreateAuthorization(req, res) {
     });
   }
   if (onChainPreflight.onChain.routeAuthority.toLowerCase() !== signer.address.toLowerCase()) {
-    return json(res, 503, {
-      error: "Configured route signer does not match the active factory route authority.",
-      code: "ROUTE_AUTHORITY_MISMATCH",
-    });
+    return json(res, 503, { error: "Configured route signer does not match the active factory route authority.", code: "ROUTE_AUTHORITY_MISMATCH" });
   }
 
   const createPreflight = await evaluateCreatePreflight({ walletAddress });
@@ -462,13 +451,45 @@ export async function routingCreateAuthorization(req, res) {
   const deadline = getAuthDeadline();
   const validUntil = validUntilFromDeadline(deadline);
   let signature;
-  let graduationMarket = {
-    kind: "NATIVE",
-    quoteAsset: null,
-    marketPolicyVersion: "robinhood_market_v1",
-  };
+  let routeKind = "create";
+  let graduationMarket = { kind: "NATIVE", quoteAsset: null, marketPolicyVersion: "robinhood_market_v1" };
 
-  if (stockToken) {
+  if (graduationQuoteAssetId) {
+    try {
+      const quoteAuthorization = await prepareBnbBasicQuoteCreateAuthorization({
+        signer,
+        chainId,
+        factoryAddress,
+        creator: walletAddress,
+        request: campaignRequest,
+        graduationQuoteAssetId,
+        tradeRouteProfileId,
+        finalizeRouteProfileId,
+        deadline,
+      });
+      signature = quoteAuthorization.signature;
+      routeKind = "create_bnb_basic_quote";
+      graduationMarket = {
+        kind: "BNB_BASIC_QUOTE",
+        quoteAsset: quoteAuthorization.quoteToken,
+        graduationQuoteAssetId: quoteAuthorization.graduationQuoteAssetId,
+        quoteCatalogBindingHash: quoteAuthorization.quoteCatalogBindingHash,
+        providerId: quoteAuthorization.providerId,
+        providerKey: quoteAuthorization.providerKey,
+        policyKey: quoteAuthorization.policyKey,
+        policyVersion: quoteAuthorization.policyVersion,
+        deploymentStateVersion: quoteAuthorization.deploymentStateVersion,
+        factoryGeneration: quoteAuthorization.factoryGeneration,
+        campaignGeneration: quoteAuthorization.campaignGeneration,
+        asset: quoteAuthorization.asset,
+      };
+    } catch (error) {
+      return json(res, 409, {
+        error: String(error?.message || error || "BNB BASIC approved quote authorization failed"),
+        code: "BNB_BASIC_QUOTE_CREATE_POLICY_BLOCKED",
+      });
+    }
+  } else if (stockToken) {
     try {
       const stockAuthorization = await prepareRobinhoodStockCreateAuthorization({
         signer,
@@ -482,6 +503,7 @@ export async function routingCreateAuthorization(req, res) {
         deadline,
       });
       signature = stockAuthorization.signature;
+      routeKind = "create_stock";
       graduationMarket = {
         kind: "STOCK_TOKEN",
         quoteAsset: stockAuthorization.stockToken,
@@ -513,7 +535,7 @@ export async function routingCreateAuthorization(req, res) {
   await logRouteAuthorization({
     chainId,
     walletAddress,
-    routeKind: stockToken ? "create_stock" : "create",
+    routeKind,
     routeProfileId: tradeRouteProfileId,
     finalizeRouteProfileId,
     factoryAddress,
@@ -521,12 +543,7 @@ export async function routingCreateAuthorization(req, res) {
     routeAuthority: signer.address,
     authorizationDeadline: deadline,
     validUntil,
-    metadata: {
-      endpoint: "/api/routing/create-authorization",
-      campaignRequest,
-      graduationMarket,
-      preflight: combinedPreflight,
-    },
+    metadata: { endpoint: "/api/routing/create-authorization", campaignRequest, graduationMarket, preflight: combinedPreflight },
   });
 
   return json(res, 200, {
@@ -604,13 +621,7 @@ export async function routingTradeAuthorization(req, res) {
   }
 
   const authorizedPreflight = capReservation.reservation
-    ? {
-        ...tradePreflight,
-        creatorProtection: {
-          ...(tradePreflight.creatorProtection || {}),
-          reservation: capReservation.reservation,
-        },
-      }
+    ? { ...tradePreflight, creatorProtection: { ...(tradePreflight.creatorProtection || {}), reservation: capReservation.reservation } }
     : tradePreflight;
 
   const signature = await signTradeAuthorization({
