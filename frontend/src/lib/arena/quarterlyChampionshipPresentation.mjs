@@ -16,6 +16,9 @@ export function presentQuarterlyChampionshipCard(card = {}, source = {}) {
     progression: null,
     bracketCta: null,
     liveRoundCta: null,
+    remaining: null,
+    liveBattleCount: null,
+    champion: null,
     primaryCta: statusKey === "finished" ? "View results" : "View championship",
     quarterlyChampionship: true,
   };
