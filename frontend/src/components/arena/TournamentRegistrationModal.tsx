@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ArenaBuyInButton } from "@/components/arena/ArenaBuyInButton";
+import { EventSponsorAttribution } from "@/components/arena/EventSponsorAttribution";
 import { TournamentBracketModal } from "@/components/arena/TournamentBracketModal";
 import { TournamentTokenIdentity } from "@/components/arena/TournamentTokenIdentity";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { tournamentSponsorEventType, useEventSponsors } from "@/hooks/useEventSponsors";
 import { useTournamentCommandState } from "@/hooks/useTournamentCommandState";
 import { cn } from "@/lib/utils";
 
@@ -22,6 +24,17 @@ export function TournamentRegistrationModal({
   const [bracketOpen, setBracketOpen] = useState(false);
   const state = useTournamentCommandState(open ? tournamentId : "", { loadMetrics: false });
   const card = state.card;
+  const source = {
+    ...((state.tournament || {}) as Record<string, unknown>),
+    ...((state.detail?.event || {}) as Record<string, unknown>),
+  };
+  const sponsorEventType = tournamentSponsorEventType(source);
+  const sponsors = useEventSponsors({
+    eventType: sponsorEventType,
+    eventReferenceId: state.id,
+    chainId: state.tournamentChainId,
+    enabled: open,
+  });
   const selected = state.eligible.find((item) => item.tokenId === state.selectedToken);
   const entered = state.optedIn && (!state.needsBuyIn || state.buyInPaid);
   const payBuyIn = state.optedIn && state.needsBuyIn && !state.buyInPaid;
@@ -41,6 +54,7 @@ export function TournamentRegistrationModal({
               .filter(Boolean)
               .join(" · ")}
           </DialogDescription>
+          <EventSponsorAttribution sponsors={sponsors} variant="prominent" />
         </DialogHeader>
 
         {!state.tournament ? (
@@ -62,39 +76,19 @@ export function TournamentRegistrationModal({
                 <div className="mt-3 space-y-2" data-tournament-no-eligible="true">
                   <div className="font-black text-sm uppercase tracking-[0.12em] text-foreground">No eligible coins on this wallet</div>
                   <p className="text-sm text-muted-foreground">Only eligible post-grad coins can enter this tournament.</p>
-                  <Link
-                    to={`/profile/${encodeURIComponent(state.walletAddress)}/command/coins`}
-                    className="inline-flex min-h-11 items-center text-xs uppercase tracking-[0.16em] text-accent hover:underline"
-                  >
+                  <Link to={`/profile/${encodeURIComponent(state.walletAddress)}/command/coins`} className="inline-flex min-h-11 items-center text-xs uppercase tracking-[0.16em] text-accent hover:underline">
                     View your coins
                   </Link>
                 </div>
               ) : (
                 <div className="mt-2 space-y-1" data-tournament-eligible-select="true">
-                  {state.eligible.length > 1 ? (
-                    <div className="mb-2 text-[10px] uppercase tracking-[0.16em] text-white/45">Select your contender</div>
-                  ) : null}
+                  {state.eligible.length > 1 ? <div className="mb-2 text-[10px] uppercase tracking-[0.16em] text-white/45">Select your contender</div> : null}
                   {state.eligible.map((item) => {
                     const active = item.tokenId === state.selectedToken;
                     return (
-                      <button
-                        key={item.tokenId}
-                        type="button"
-                        onClick={() => state.setSelectedToken(item.tokenId)}
-                        className={cn(
-                          "flex w-full items-center gap-2 border px-2 py-2 text-left",
-                          active ? "border-orange-400/50 bg-orange-500/[0.06]" : "border-transparent hover:border-white/15",
-                        )}
-                      >
+                      <button key={item.tokenId} type="button" onClick={() => state.setSelectedToken(item.tokenId)} className={cn("flex w-full items-center gap-2 border px-2 py-2 text-left", active ? "border-orange-400/50 bg-orange-500/[0.06]" : "border-transparent hover:border-white/15")}>
                         <span className={cn("h-2.5 w-2.5 rounded-full border", active ? "border-orange-300 bg-orange-400" : "border-white/35")} />
-                        <TournamentTokenIdentity
-                          chainId={state.tournamentChainId}
-                          tokenAddress={item.tokenId}
-                          symbol={item.symbol}
-                          tokenName={item.tokenName}
-                          imageUrl={item.imageUrl}
-                          compact
-                        />
+                        <TournamentTokenIdentity chainId={state.tournamentChainId} tokenAddress={item.tokenId} symbol={item.symbol} tokenName={item.tokenName} imageUrl={item.imageUrl} compact />
                       </button>
                     );
                   })}
@@ -119,12 +113,7 @@ export function TournamentRegistrationModal({
             {state.walletAddress && state.eligible.length ? (
               <div className="flex flex-col gap-2">
                 {!entered && !payBuyIn ? (
-                  <button
-                    type="button"
-                    disabled={state.busy || !state.selectedToken}
-                    onClick={() => void state.handleOptIn()}
-                    className="mwz-button inline-flex min-h-11 items-center justify-center px-4 text-xs uppercase tracking-[0.16em] disabled:opacity-60"
-                  >
+                  <button type="button" disabled={state.busy || !state.selectedToken} onClick={() => void state.handleOptIn()} className="mwz-button inline-flex min-h-11 items-center justify-center px-4 text-xs uppercase tracking-[0.16em] disabled:opacity-60">
                     {state.busy ? "Recording..." : "Enter tournament"}
                   </button>
                 ) : null}
@@ -140,27 +129,14 @@ export function TournamentRegistrationModal({
                     buyInPaid={state.buyInPaid}
                     buyInNative={state.buyIn}
                     nativeSymbol={state.symbol}
-                    onDone={() => {
-                      void state.reloadDetail();
-                      void state.refreshPool(state.id);
-                    }}
+                    onDone={() => { void state.reloadDetail(); void state.refreshPool(state.id); }}
                   />
                 ) : null}
-                {entered ? (
-                  <div className="inline-flex min-h-11 items-center justify-center px-4 text-xs uppercase tracking-[0.16em] text-white/55">Entered</div>
-                ) : null}
+                {entered ? <div className="inline-flex min-h-11 items-center justify-center px-4 text-xs uppercase tracking-[0.16em] text-white/55">Entered</div> : null}
               </div>
             ) : null}
 
-            <button
-              type="button"
-              data-tournament-view-bracket={state.id}
-              onClick={() => {
-                if (onViewBracket) onViewBracket();
-                else setBracketOpen(true);
-              }}
-              className="inline-flex min-h-11 items-center text-xs uppercase tracking-[0.16em] text-accent hover:underline"
-            >
+            <button type="button" data-tournament-view-bracket={state.id} onClick={() => { if (onViewBracket) onViewBracket(); else setBracketOpen(true); }} className="inline-flex min-h-11 items-center text-xs uppercase tracking-[0.16em] text-accent hover:underline">
               View bracket
             </button>
             <TournamentBracketModal
@@ -172,6 +148,7 @@ export function TournamentRegistrationModal({
               rounds={state.bracketRounds}
               entries={state.entries}
               chainId={state.tournamentChainId}
+              sponsors={sponsors}
             />
           </div>
         )}
