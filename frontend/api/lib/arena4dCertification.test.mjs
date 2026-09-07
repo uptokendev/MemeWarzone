@@ -54,14 +54,15 @@ test("4d: missing chain_id is MISSING_BATTLE_CHAIN_ID before lock, rematch looku
   assert.doesNotMatch(fn, /ensureActiveSeason\(row\.chain_id/);
 });
 
-test("4d: advisory lock is season plus canonical pair; season id remains chain-specific", () => {
+test("4d: advisory lock is season plus canonical pair; monthly MWL season id remains chain-specific", () => {
   const key = pairKey(SOL_A, SOL_B);
-  assert.equal(pairScoringLockKey("mwl-2026-q3-c101", key), `mwl-2026-q3-c101:${key}`);
+  assert.equal(pairScoringLockKey("mwl-2026-m09-c101", key), `mwl-2026-m09-c101:${key}`);
   assert.match(key, /:/);
   assert.doesNotMatch(key, /\|/);
 
   const writer = readApi("lib/arenaLeagueScore.js");
-  assert.match(writer, /mwl-\$\{year\}-q\$\{quarter\}-c\$\{idNum\}/);
+  assert.match(writer, /canonicalMonthlyMwlId\(\{ chainId: idNum, year, month \}\)/);
+  assert.match(writer, /currentMwlEpoch\(now\)/);
   const record = writer.split("export async function recordFinishedBattle")[1]?.split("export async function creditCheckin")[0] || "";
   assert.match(record, /ensureActiveSeason\(chain\.chainId/);
   assert.match(record, /lockPairScoring\(season\.id, key/);

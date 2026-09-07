@@ -1,0 +1,188 @@
+name: Quarterly Championship Runtime
+
+on:
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - "db/migrations/20260907_000001_quarterly_championship_runtime.sql"
+      - "db/migrations/20260907_000002_quarterly_championship_continuous_base_points.sql"
+      - "frontend/api/arenaLeague.js"
+      - "frontend/api/lib/arenaLeagueScore.js"
+      - "frontend/api/lib/arenaLeagueScoreMath.js"
+      - "frontend/api/lib/arenaQuarterlyChampionship.js"
+      - "frontend/api/lib/arenaQuarterlyChampionshipMath.mjs"
+      - "frontend/api/lib/arenaQuarterlyChampionship*.test.mjs"
+      - "frontend/src/hooks/useArenaLeagueFeed.ts"
+      - "frontend/package.json"
+      - ".github/workflows/quarterly-championship-runtime.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quarterly-championship:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mwz_quarterly_championship_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d mwz_quarterly_championship_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/mwz_quarterly_championship_ci
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Verify #216 Solana BASIC rebase boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          authority=809b94d3246e7d0cf5b20a83a9babc12d8047cb5
+          git merge-base --is-ancestor "$authority" HEAD
+          git diff --exit-code "$authority"..HEAD -- \
+            frontend/api/lib/quoteAssetCatalog.js \
+            frontend/api/lib/solanaOrcaGraduationQuote.js \
+            frontend/api/dev-fix/solana-graduation-auth-bytes.js \
+            frontend/api/dev-fix/solana-graduation-authorization-v1.js \
+            frontend/api/dev-fix/solana-graduation-authorization-v2.js \
+            frontend/supabase/migrations/20260907001000_solana_basic_quote_catalog.sql \
+            frontend/supabase/migrations/20260907163000_solana_devnet_basic_quote_certification.sql \
+            programs/memewarzone_solana \
+            tools/solana-meteora-graduation
+          node --check frontend/api/lib/quoteAssetCatalog.js
+          node --check frontend/api/lib/solanaOrcaGraduationQuote.js
+          node --check frontend/api/dev-fix/solana-graduation-authorization-v2.js
+          echo "SOLANA_BASIC_REBASE_REGRESSION=PASS"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install locked frontend dependencies
+        run: npm ci --prefix frontend --no-audit --no-fund
+
+      - name: Syntax and pure authority tests
+        run: |
+          node --check frontend/api/arenaLeague.js
+          node --check frontend/api/lib/arenaLeagueScore.js
+          node --check frontend/api/lib/arenaQuarterlyChampionship.js
+          node --check frontend/api/lib/arenaQuarterlyChampionshipMath.mjs
+          node --test \
+            frontend/api/lib/arenaQuarterlyChampionshipMath.test.mjs \
+            frontend/api/lib/arenaQuarterlyChampionshipRuntime.test.mjs \
+            frontend/api/lib/arenaLeagueScoreMath.test.mjs \
+            frontend/api/lib/arenaLeagueIntegrationV2Certification.test.mjs
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Rehearse schema from clean PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          do $$ begin create role anon; exception when duplicate_object then null; end $$;
+          do $$ begin create role authenticated; exception when duplicate_object then null; end $$;
+          do $$ begin create role service_role; exception when duplicate_object then null; end $$;
+          SQL
+
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260826_000001_arena_identity_schema.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260827_000003_arena_league_scorecard.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260829_000001_arena_settle_idempotency.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260907_000001_quarterly_championship_runtime.sql
+
+          # Seed one pre-migration active legacy MWL point. The continuous-base
+          # migration must bind its canonical quarter and backfill it exactly once.
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          insert into public.arena_league_seasons
+            (id,chain_id,label,state,week,quarter,year,reset_at,active)
+          values ('legacy-active-q3-c990077',990077,'Legacy active Q3','live',1,3,2026,'2026-09-30T00:00:00Z',true);
+          insert into public.arena_league_entries
+            (season_id,token_address,token_name,symbol,points,wins,losses,finished_fights)
+          values ('legacy-active-q3-c990077','legacy-token','Legacy Token','LEG',3,1,0,1);
+          insert into public.arena_league_point_events
+            (season_id,token_address,kind,points,battle_id,created_at)
+          values ('legacy-active-q3-c990077','legacy-token','battle_win',3,'legacy-battle','2026-08-15T12:00:00Z');
+          SQL
+
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260907_000002_quarterly_championship_continuous_base_points.sql
+
+          # Additive migrations must be replay-safe and must not rewrite history.
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260907_000001_quarterly_championship_runtime.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260907_000002_quarterly_championship_continuous_base_points.sql
+
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          do $$
+          declare
+            seeded_policies integer;
+            legacy_column integer;
+            mirrored_base_events integer;
+            mirrored_base numeric;
+            linked_epoch text;
+          begin
+            select count(*) into seeded_policies from public.arena_championship_bonus_policies;
+            if seeded_policies <> 0 then
+              raise exception 'production migration seeded non-authoritative Championship bonus policy';
+            end if;
+
+            select count(*) into legacy_column
+              from information_schema.columns
+             where table_schema='public'
+               and table_name='arena_league_seasons'
+               and column_name='quarter_finals_tournament_id';
+            if legacy_column <> 1 then
+              raise exception 'legacy quarter_finals_tournament_id compatibility column was removed';
+            end if;
+
+            select championship_epoch_id into linked_epoch
+              from public.arena_league_seasons
+             where id='legacy-active-q3-c990077';
+            if linked_epoch <> 'quarterly-championship-2026-q3-c990077' then
+              raise exception 'active legacy MWL was not bound to canonical quarterly epoch: %', linked_epoch;
+            end if;
+
+            select count(*) into mirrored_base_events
+              from public.arena_championship_point_events
+             where epoch_id='quarterly-championship-2026-q3-c990077'
+               and source_kind='mwl_base';
+            if mirrored_base_events <> 1 then
+              raise exception 'legacy point backfill was not exact-once: %', mirrored_base_events;
+            end if;
+
+            select base_points into mirrored_base
+              from public.arena_championship_entries
+             where epoch_id='quarterly-championship-2026-q3-c990077'
+               and token_address='legacy-token';
+            if mirrored_base <> 3 then
+              raise exception 'legacy point backfill produced wrong base points: %', mirrored_base;
+            end if;
+          end $$;
+          SQL
+
+      - name: Exact-once Championship database lifecycle
+        run: |
+          node --test \
+            frontend/api/lib/arenaQuarterlyChampionshipBasePointsDb.test.mjs \
+            frontend/api/lib/arenaQuarterlyChampionshipDb.test.mjs
+
+      - name: Existing MWL regression suite
+        run: npm --prefix frontend run test:arena-mwl
