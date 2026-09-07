@@ -1,5 +1,7 @@
 import { pool } from "../../server/db.js";
 import { normalizeWalletFlexible } from "../../server/http.js";
+import { ensureChampionshipEpoch } from "./arenaQuarterlyChampionship.js";
+import { canonicalMonthlyMwlId, currentMwlEpoch } from "./arenaQuarterlyChampionshipMath.mjs";
 import {
   CHECKIN_POINTS,
   DISPATCH_POINTS,
@@ -20,10 +22,6 @@ function ident(value) {
   return normalizeWalletFlexible(value) || identToken(value);
 }
 
-function currentQuarter(date = new Date()) {
-  return Math.floor(date.getUTCMonth() / 3) + 1;
-}
-
 export async function ensureActiveSeason(chainId, db = pool) {
   const idNum = Number(chainId) || 56;
   const existing = await db.query(
@@ -33,21 +31,34 @@ export async function ensureActiveSeason(chainId, db = pool) {
   if (existing.rows[0]) return existing.rows[0];
 
   const now = new Date();
-  const year = now.getUTCFullYear();
-  const quarter = currentQuarter(now);
-  const id = `mwl-${year}-q${quarter}-c${idNum}`;
+  const { year, month, quarter } = currentMwlEpoch(now);
+  const id = canonicalMonthlyMwlId({ chainId: idNum, year, month });
+  const epoch = await ensureChampionshipEpoch(db, { chainId: idNum, year, quarter });
+
+  // Never resurrect a closed MWL from the same month. The next MWL opens only
+  // when the calendar month advances; historical quarter-keyed rows remain intact.
+  const sameMonth = await db.query(`select * from public.arena_league_seasons where id=$1 limit 1`, [id]);
+  if (sameMonth.rows[0]) return sameMonth.rows[0];
+
   const resetAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const label = `Major War League ${year}-${String(month).padStart(2, "0")}`;
   const inserted = await db.query(
     `insert into public.arena_league_seasons (
-        id, chain_id, label, state, week, quarter, year, reset_at, active
-      ) values ($1,$2,$3,'live',1,$4,$5,$6,true)
-      on conflict (id) do update set active = true, updated_at = now()
+        id, chain_id, label, state, week, month, quarter, year, reset_at, active,
+        mwl_epoch_key, championship_epoch_id
+      ) values ($1,$2,$3,'live',1,$4,$5,$6,$7,true,$1,$8)
+      on conflict (id) do nothing
       returning *`,
-    [id, idNum, `Major War League ${year} Q${quarter}`, quarter, year, resetAt],
+    [id, idNum, label, month, quarter, year, resetAt, epoch.id],
   );
-  return inserted.rows[0];
+  if (inserted.rows[0]) return inserted.rows[0];
+  const resolved = await db.query(`select * from public.arena_league_seasons where id=$1 limit 1`, [id]);
+  if (!resolved.rows[0]) throw new Error("Major War League monthly epoch could not be resolved");
+  return resolved.rows[0];
 }
 
+// Legacy compatibility only. New MWL finalization uses
+// finalizeMwlForChampionship() and does not create a quarter-final tournament.
 export async function freezeSeason(seasonId) {
   const result = await pool.query(
     `update public.arena_league_seasons
@@ -232,13 +243,13 @@ export async function recordFinishedBattle(row, db = pool) {
 export async function creditCheckin({ chainId, wallet, token, name, symbol }) {
   const season = await ensureActiveSeason(chainId);
   if (!seasonAcceptsRegularPoints(season)) {
-    return { ok: false, error: "Regular season is frozen." };
+    return { ok: false, error: "Major War League scoring is closed for this monthly epoch." };
   }
   const address = ident(token);
   const owner = ident(wallet);
   if (!address || !owner) return { ok: false, error: "Wallet and token are required." };
   if (!(await hasEntry(season.id, address))) {
-    return { ok: false, error: "Fight at least once this quarter before check-in points land." };
+    return { ok: false, error: "Fight at least once in this Major War League before check-in points land." };
   }
 
   const day = utcDay();
@@ -298,14 +309,14 @@ export async function creditCheckin({ chainId, wallet, token, name, symbol }) {
 export async function creditDispatch({ chainId, wallet, token, name, symbol, cardId }) {
   const season = await ensureActiveSeason(chainId);
   if (!seasonAcceptsRegularPoints(season)) {
-    return { ok: false, error: "Regular season is frozen." };
+    return { ok: false, error: "Major War League scoring is closed for this monthly epoch." };
   }
   const address = ident(token);
   const owner = ident(wallet);
   const card = String(cardId || "").trim();
   if (!address || !owner || !card) return { ok: false, error: "Wallet, token, and card id are required." };
   if (!(await hasEntry(season.id, address))) {
-    return { ok: false, error: "Fight at least once this quarter before War Dispatch points land." };
+    return { ok: false, error: "Fight at least once in this Major War League before War Dispatch points land." };
   }
 
   const day = utcDay();

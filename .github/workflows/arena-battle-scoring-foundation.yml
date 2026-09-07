@@ -6,6 +6,11 @@ on:
       - build/cross-chain-stabilization-rh-base
     paths:
       - "db/migrations/*arena*.sql"
+      - "db/migrations/*quarterly_championship*.sql"
+      - "frontend/api/arenaLeague.js"
+      - "frontend/api/lib/arenaLeagueScore.js"
+      - "frontend/api/lib/arenaQuarterlyChampionship*.js"
+      - "frontend/api/lib/arenaQuarterlyChampionship*.mjs"
       - "frontend/api/arenaBattleMetrics.js"
       - "frontend/api/arenaBattlesRuntime.js"
       - "frontend/api/postgrad.js"

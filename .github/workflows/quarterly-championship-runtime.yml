@@ -1,0 +1,119 @@
+name: Quarterly Championship Runtime
+
+on:
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - "db/migrations/20260907_000001_quarterly_championship_runtime.sql"
+      - "frontend/api/arenaLeague.js"
+      - "frontend/api/lib/arenaLeagueScore.js"
+      - "frontend/api/lib/arenaLeagueScoreMath.js"
+      - "frontend/api/lib/arenaQuarterlyChampionship.js"
+      - "frontend/api/lib/arenaQuarterlyChampionshipMath.mjs"
+      - "frontend/api/lib/arenaQuarterlyChampionship*.test.mjs"
+      - "frontend/src/hooks/useArenaLeagueFeed.ts"
+      - "frontend/package.json"
+      - ".github/workflows/quarterly-championship-runtime.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quarterly-championship:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mwz_quarterly_championship_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d mwz_quarterly_championship_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/mwz_quarterly_championship_ci
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install locked frontend dependencies
+        run: npm ci --prefix frontend --no-audit --no-fund
+
+      - name: Syntax and pure authority tests
+        run: |
+          node --check frontend/api/arenaLeague.js
+          node --check frontend/api/lib/arenaLeagueScore.js
+          node --check frontend/api/lib/arenaQuarterlyChampionship.js
+          node --check frontend/api/lib/arenaQuarterlyChampionshipMath.mjs
+          node --test \
+            frontend/api/lib/arenaQuarterlyChampionshipMath.test.mjs \
+            frontend/api/lib/arenaQuarterlyChampionshipRuntime.test.mjs \
+            frontend/api/lib/arenaLeagueScoreMath.test.mjs \
+            frontend/api/lib/arenaLeagueIntegrationV2Certification.test.mjs
+
+      - name: Install PostgreSQL client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Rehearse schema from clean PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          do $$ begin create role anon; exception when duplicate_object then null; end $$;
+          do $$ begin create role authenticated; exception when duplicate_object then null; end $$;
+          do $$ begin create role service_role; exception when duplicate_object then null; end $$;
+          SQL
+
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260826_000001_arena_identity_schema.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260827_000003_arena_league_scorecard.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260829_000001_arena_settle_idempotency.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260907_000001_quarterly_championship_runtime.sql
+
+          # Additive migration must be replay-safe and must not rewrite historical rows.
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260907_000001_quarterly_championship_runtime.sql
+
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          do $$
+          declare
+            seeded_policies integer;
+            legacy_column integer;
+          begin
+            select count(*) into seeded_policies from public.arena_championship_bonus_policies;
+            if seeded_policies <> 0 then
+              raise exception 'production migration seeded non-authoritative Championship bonus policy';
+            end if;
+
+            select count(*) into legacy_column
+              from information_schema.columns
+             where table_schema='public'
+               and table_name='arena_league_seasons'
+               and column_name='quarter_finals_tournament_id';
+            if legacy_column <> 1 then
+              raise exception 'legacy quarter_finals_tournament_id compatibility column was removed';
+            end if;
+          end $$;
+          SQL
+
+      - name: Exact-once monthly MWL to quarterly standing database lifecycle
+        run: node --test frontend/api/lib/arenaQuarterlyChampionshipDb.test.mjs
+
+      - name: Existing MWL regression suite
+        run: npm --prefix frontend run test:arena-mwl

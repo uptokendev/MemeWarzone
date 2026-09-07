@@ -4,14 +4,18 @@ import { requireAdminOrOps } from "./lib/apiAuth.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { tokenEligible } from "./lib/arenaEligibility.js";
 import {
+  closeChampionshipEpoch,
+  finalizeMwlForChampionship,
+  readChampionshipStanding,
+} from "./lib/arenaQuarterlyChampionship.js";
+import { currentMwlEpoch } from "./lib/arenaQuarterlyChampionshipMath.mjs";
+import {
   checkinStatus,
   creditCheckin,
   creditDispatch,
   ensureActiveSeason,
-  freezeSeason,
 } from "./lib/arenaLeagueScore.js";
-import { QF_MIN_FIGHTS, quarterFinalSeeds, utcDay } from "./lib/arenaLeagueScoreMath.js";
-import { nativeSymbolFor } from "./lib/chainNative.js";
+import { utcDay } from "./lib/arenaLeagueScoreMath.js";
 
 const STATES = ["live", "quarter_finals", "completed"];
 
@@ -41,19 +45,24 @@ function mapEntry(row) {
 }
 
 function mapSeason(row, entries) {
-  const sorted = [...entries].sort((a, b) => b.points - a.points || b.wins - a.wins);
+  const sorted = [...entries].sort((a, b) => b.points - a.points || b.wins - a.wins || String(a.tokenAddress).localeCompare(String(b.tokenAddress)));
   const ranked = sorted.map((entry, index) => ({ ...entry, rank: index + 1 }));
   return {
     id: String(row.id),
+    chainId: Number(row.chain_id),
     label: String(row.label || "Major War League"),
     state: STATES.includes(row.state) ? row.state : "live",
     week: Math.max(1, Number(row.week || 1)),
+    month: row.month == null ? null : Math.max(1, Number(row.month)),
     quarter: Math.max(1, Number(row.quarter || 1)),
     year: Number(row.year || new Date().getUTCFullYear()),
     rewardPoolUsd: 0,
     resetAt: row.reset_at ? new Date(row.reset_at).toISOString() : futureIso(7),
     frozenAt: row.frozen_at ? new Date(row.frozen_at).toISOString() : null,
+    finalizedAt: row.finalized_at ? new Date(row.finalized_at).toISOString() : null,
     regularSeasonClosed: Boolean(row.regular_season_closed),
+    quarterlyChampionshipId: row.championship_epoch_id || null,
+    // Historical compatibility only. New MWLs never populate this field.
     quarterFinalsTournamentId: row.quarter_finals_tournament_id || null,
     divisions: [],
     entries: ranked,
@@ -89,10 +98,21 @@ function ownedFromSeason(season, ownedRows) {
     .filter((entry) => entry && Number.isFinite(Number(entry.rank)) && Number(entry.rank) > 0);
 }
 
+async function currentChampionshipFor(chainId, season = null) {
+  if (season?.quarterlyChampionshipId) {
+    return readChampionshipStanding(pool, { epochId: season.quarterlyChampionshipId });
+  }
+  const chain = Number(chainId || season?.chainId || 0) || null;
+  if (!chain) return null;
+  const now = currentMwlEpoch(new Date());
+  return readChampionshipStanding(pool, { chainId: chain, year: now.year, quarter: now.quarter });
+}
+
 async function feed(chainId, wallet) {
   const season = await activeSeason(chainId);
-  const owned = season && wallet ? ownedFromSeason(season, await ownedLeagueCoins(chainId, wallet, season.id)) : [];
-  return { season, history: [], owned };
+  const owned = season && wallet ? ownedFromSeason(season, await ownedLeagueCoins(chainId || season.chainId, wallet, season.id)) : [];
+  const championship = await currentChampionshipFor(chainId, season);
+  return { season, championship, history: [], owned };
 }
 
 async function ownedCoin(chainId, wallet, token) {
@@ -138,7 +158,7 @@ async function ownedCoin(chainId, wallet, token) {
 
 async function ownedLeagueCoins(chainId, wallet, seasonId) {
   const owner = ident(wallet);
-  if (!owner) return [];
+  if (!owner || !seasonId) return [];
   const result = await pool.query(
     `select e.token_address, e.token_name, e.symbol, e.points, e.wins, e.losses, e.finished_fights
        from public.arena_league_entries e
@@ -162,7 +182,7 @@ async function ownedLeagueCoins(chainId, wallet, seasonId) {
                and lower(i.token_address) = lower(e.token_address)
           )
         )
-      order by e.points desc, e.wins desc`,
+      order by e.points desc, e.wins desc, e.token_address asc`,
     [seasonId, chainId, owner],
   );
   return result.rows.map(mapEntry);
@@ -176,8 +196,20 @@ async function handleFeed(req, res) {
     return json(res, 200, await feed(chainId, wallet));
   } catch (error) {
     console.error("[api/arenaLeague] feed failed", error);
-    return json(res, 200, { season: null, history: [], warning: "Arena league data is unavailable." });
+    return json(res, 200, { season: null, championship: null, history: [], warning: "Arena league data is unavailable." });
   }
+}
+
+async function handleChampionshipFeed(req, res) {
+  const query = getQuery(req);
+  const now = currentMwlEpoch(new Date());
+  const chainId = Number(query.chainId || 56);
+  const year = Number(query.year || now.year);
+  const quarter = Number(query.quarter || now.quarter);
+  const epochId = String(query.epochId || "").trim() || null;
+  const championship = await readChampionshipStanding(pool, { chainId, year, quarter, epochId });
+  if (!championship) return json(res, 404, { ok: false, error: "Quarterly Championship epoch not found" });
+  return json(res, 200, { ok: true, championship });
 }
 
 async function handleAdvanceWeek(req, res) {
@@ -185,6 +217,9 @@ async function handleAdvanceWeek(req, res) {
   if (!admin) return;
   const body = await readJson(req).catch(() => ({}));
   const seasonRow = await ensureActiveSeason(Number(body.chainId || 56));
+  if (seasonRow.regular_season_closed || seasonRow.state === "completed") {
+    return json(res, 409, { ok: false, error: "Major War League monthly epoch is already closed." });
+  }
   await pool.query(
     `update public.arena_league_seasons
         set week = week + 1, reset_at = $2, updated_at = now()
@@ -194,58 +229,50 @@ async function handleAdvanceWeek(req, res) {
   return json(res, 200, { ok: true, ...(await feed(seasonRow.chain_id)) });
 }
 
-async function handleOpenQuarterFinals(req, res) {
-  const admin = await requireAdminOrOps(req, res, { routeLabel: "arena/league/quarter-finals", allowOps: true });
+async function handleFinalizeMwl(req, res, routeLabel = "arena/league/finalize") {
+  const admin = await requireAdminOrOps(req, res, { routeLabel, allowOps: true });
   if (!admin) return;
   const body = await readJson(req).catch(() => ({}));
-  const seasonRow = await ensureActiveSeason(Number(body.chainId || 56));
-  const season = await activeSeason(seasonRow.chain_id);
-  if (!season) return json(res, 404, { ok: false, error: "Active arena season not found" });
-  if (season.quarterFinalsTournamentId) {
-    return json(res, 200, { ok: true, tournamentId: season.quarterFinalsTournamentId, ...(await feed(seasonRow.chain_id)) });
-  }
-  await freezeSeason(season.id);
-  const frozen = await activeSeason(seasonRow.chain_id);
-  const seeds = quarterFinalSeeds(frozen?.entries || season.entries);
-  if (seeds.length < 2) {
-    return json(res, 409, {
-      ok: false,
-      error: `Need at least 2 coins with ${QF_MIN_FIGHTS}+ finished fights to open Quarter Finals`,
-    });
-  }
-  const id = `qf-${season.id}`;
-  const startsAt = futureIso(1);
-  await pool.query(
-    `insert into public.arena_tournaments (
-        id, chain_id, name, status, origin, registration_mode, buy_in_native, native_symbol, terms, starts_at, cap, created_by
-      ) values ($1,$2,$3,'upcoming','quarter_finals','invite_only',0,$4,$5,$6,$7,$8)
-      on conflict (id) do nothing`,
-    [
-      id,
-      seasonRow.chain_id,
-      `${season.label} Quarter Finals`,
-      nativeSymbolFor(seasonRow.chain_id),
-      "System tournament seeded from the frozen Major War League table.",
-      startsAt,
-      Math.max(2, seeds.length),
-      String(admin.mode || "ops"),
-    ],
-  );
-  for (const entry of seeds) {
-    await pool.query(
-      `insert into public.arena_tournament_invites (tournament_id, token_address)
-       values ($1,$2)
-       on conflict (tournament_id, token_address) do nothing`,
-      [id, entry.tokenId],
-    );
-  }
-  await pool.query(
-    `update public.arena_league_seasons
-        set state = 'quarter_finals', quarter_finals_tournament_id = $2, updated_at = now()
-      where id = $1`,
-    [season.id, id],
-  );
-  return json(res, 200, { ok: true, tournamentId: id, seeds: seeds.map((row) => row.tokenId), ...(await feed(seasonRow.chain_id)) });
+  const chainId = Number(body.chainId || 56);
+  const explicitSeasonId = String(body.seasonId || "").trim();
+  const season = explicitSeasonId ? { id: explicitSeasonId } : await activeSeason(chainId);
+  if (!season?.id) return json(res, 404, { ok: false, error: "Active Major War League not found" });
+  const result = await finalizeMwlForChampionship(pool, season.id);
+  if (!result.ok) return json(res, 409, result);
+  return json(res, 200, {
+    ...result,
+    legacyQuarterFinalRoute: routeLabel.includes("quarter-finals"),
+    quarterFinalTournamentCreated: false,
+    ...(await feed(result.chainId)),
+  });
+}
+
+async function handleCloseChampionship(req, res) {
+  const admin = await requireAdminOrOps(req, res, { routeLabel: "arena/league/championship/close", allowOps: true });
+  if (!admin) return;
+  const body = await readJson(req).catch(() => ({}));
+  const now = currentMwlEpoch(new Date());
+  const result = await closeChampionshipEpoch(pool, {
+    epochId: String(body.epochId || "").trim() || null,
+    chainId: Number(body.chainId || 56),
+    year: Number(body.year || now.year),
+    quarter: Number(body.quarter || now.quarter),
+  });
+  if (!result.ok) return json(res, 409, result);
+  return json(res, 200, result);
+}
+
+async function handleRetryChampionshipBonus(req, res) {
+  const admin = await requireAdminOrOps(req, res, { routeLabel: "arena/league/championship/apply-mwl-bonus", allowOps: true });
+  if (!admin) return;
+  const body = await readJson(req).catch(() => ({}));
+  const seasonId = String(body.seasonId || "").trim();
+  if (!seasonId) return json(res, 400, { ok: false, error: "seasonId is required" });
+  // Re-running finalization is the transaction-safe retry path. It never changes
+  // the frozen MWL result snapshot and cannot double-credit the Championship.
+  const result = await finalizeMwlForChampionship(pool, seasonId);
+  if (!result.ok) return json(res, 409, result);
+  return json(res, 200, result);
 }
 
 async function handleCheckinStatus(req, res) {
@@ -253,7 +280,7 @@ async function handleCheckinStatus(req, res) {
   const chainId = Number(query.chainId || 56);
   const wallet = ident(query.wallet || query.address);
   const status = await checkinStatus({ chainId, wallet });
-  const coins = wallet ? await ownedLeagueCoins(chainId, wallet, status.seasonId) : [];
+  const coins = wallet && status.seasonId ? await ownedLeagueCoins(chainId, wallet, status.seasonId) : [];
   return json(res, 200, { ok: true, ...status, coins });
 }
 
@@ -295,7 +322,7 @@ async function handleCheckin(req, res) {
 
 async function handleCheckinPayload(chainId, wallet) {
   const status = await checkinStatus({ chainId, wallet });
-  const coins = await ownedLeagueCoins(chainId, wallet, status.seasonId);
+  const coins = status.seasonId ? await ownedLeagueCoins(chainId, wallet, status.seasonId) : [];
   return { ...status, coins };
 }
 
@@ -339,15 +366,21 @@ export default async function handler(req, res) {
   const path = String(req.path || new URL(req.url, "http://localhost").pathname);
   try {
     if (method === "GET" && path === "/arena/league") return handleFeed(req, res);
+    if (method === "GET" && path === "/arena/league/championship") return handleChampionshipFeed(req, res);
     if (method === "GET" && path === "/arena/league/checkin") return handleCheckinStatus(req, res);
     if (method === "POST" && path === "/arena/league/checkin") return handleCheckin(req, res);
     if (method === "POST" && path === "/arena/league/dispatch") return handleDispatch(req, res);
     if (method === "POST" && path === "/arena/league/advance-week") return handleAdvanceWeek(req, res);
-    if (method === "POST" && path === "/arena/league/quarter-finals") return handleOpenQuarterFinals(req, res);
+    if (method === "POST" && path === "/arena/league/finalize") return handleFinalizeMwl(req, res);
+    // Legacy route retained as a compatibility alias only. It no longer creates
+    // a quarter-final tournament or tournament invitation roster.
+    if (method === "POST" && path === "/arena/league/quarter-finals") return handleFinalizeMwl(req, res, "arena/league/quarter-finals");
+    if (method === "POST" && path === "/arena/league/championship/apply-mwl-bonus") return handleRetryChampionshipBonus(req, res);
+    if (method === "POST" && path === "/arena/league/championship/close") return handleCloseChampionship(req, res);
     if (method === "POST" && path === "/arena/league/rebalance-divisions") {
       return json(res, 410, { ok: false, error: "Major War League has no divisions." });
     }
-    if (method === "POST" && path === "/arena/league/cycle-season-state") return handleOpenQuarterFinals(req, res);
+    if (method === "POST" && path === "/arena/league/cycle-season-state") return handleFinalizeMwl(req, res, "arena/league/cycle-season-state");
     if (path.startsWith("/arena/league")) return badMethod(res);
     return json(res, 404, { error: `Unknown arena league route: ${path}` });
   } catch (error) {
