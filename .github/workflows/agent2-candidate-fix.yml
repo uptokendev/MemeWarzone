@@ -33,19 +33,18 @@ jobs:
           p = Path('programs/memewarzone_solana/src/graduation.rs')
           s = p.read_text()
           s = s.replace(
+              'fn mul_div_reduced(mut numerators: [u128; 3], mut denominators: [u128; 2]) -> Result<u128> {',
+              'fn mul_div_reduced<const N: usize, const D: usize>(mut numerators: [u128; N], mut denominators: [u128; D]) -> Result<u128> {',
+              1,
+          )
+          s = s.replace(
               '[u128::from(quote_raw), token_scale(token_decimals)?, RATIO_SCALE],\n        [u128::from(token_raw), token_scale(quote_decimals)?],',
-              '[u128::from(quote_raw), token_scale(token_decimals)?, RATIO_SCALE],\n        [u128::from(token_raw), 1],',
+              '[u128::from(quote_raw), token_scale(token_decimals)?, RATIO_SCALE],\n        [u128::from(token_raw)],',
               1,
           )
           s = s.replace(
               '[final_spot_nano, u128::from(sol_usd_micros), RATIO_SCALE],\n        [NANO_LAMPORTS_PER_SOL, u128::from(quote_usd_micros)],',
-              '[final_spot_nano, u128::from(sol_usd_micros), token_scale(quote_decimals)?],\n        [NANO_LAMPORTS_PER_SOL, u128::from(quote_usd_micros)],\n    )?\n    .checked_mul(RATIO_SCALE)\n    .ok_or(LaunchpadError::MathOverflow)?;',
-              1,
-          )
-          # Undo the now duplicated tail introduced by replacement if present.
-          s = s.replace(
-              '    )?\n    .checked_mul(RATIO_SCALE)\n    .ok_or(LaunchpadError::MathOverflow)?;\n    )?;',
-              '    )?\n    .checked_mul(RATIO_SCALE)\n    .ok_or(LaunchpadError::MathOverflow)?;',
+              '[final_spot_nano, u128::from(sol_usd_micros), token_scale(quote_decimals)?, RATIO_SCALE],\n        [NANO_LAMPORTS_PER_SOL, u128::from(quote_usd_micros)],',
               1,
           )
           s = s.replace('            1_000_000_000,\n            9,\n            6,', '            1_000_000_000_000,\n            9,\n            6,', 2)
