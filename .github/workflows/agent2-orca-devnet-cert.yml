@@ -6,46 +6,41 @@ on:
       - agent2/solana-basic-graduation-market
     paths:
       - .github/workflows/agent2-orca-devnet-cert.yml
+      - frontend/api/lib/quoteAssetCatalog.js
+      - frontend/api/lib/solanaOrcaGraduationQuote.js
+      - frontend/api/dev-fix/solana-graduation-authorization-v2.js
+      - frontend/supabase/migrations/20260907163000_solana_devnet_basic_quote_certification.sql
       - tools/solana-meteora-graduation/orca-devnet-cert-pool.mjs
+      - tools/solana-meteora-graduation/graduate-basic-quote.mjs
+      - tools/solana-meteora-graduation/check-devnet-basic-route.mjs
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  pin-orca-lockfiles:
+  static-regression:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: agent2/solana-basic-graduation-market
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Pin Orca and Solana Kit dependencies
-        shell: bash
+      - name: Install pinned dependencies
         run: |
-          set -euo pipefail
-          npm install --prefix frontend --save-exact --no-audit --no-fund @orca-so/whirlpools@8.0.1 @solana/kit@5.0.0
-          npm install --prefix tools/solana-meteora-graduation --save-exact --no-audit --no-fund @orca-so/whirlpools@8.0.1 @solana/kit@5.0.0
+          npm ci --prefix frontend --no-audit --no-fund
+          npm ci --prefix tools/solana-meteora-graduation --no-audit --no-fund
+      - name: Agent 2 route and authorization regressions
+        run: |
+          node --check frontend/api/lib/quoteAssetCatalog.js
           node --check frontend/api/lib/solanaOrcaGraduationQuote.js
           node --check frontend/api/dev-fix/solana-graduation-authorization-v2.js
           node --check tools/solana-meteora-graduation/orca-devnet-cert-pool.mjs
           node --check tools/solana-meteora-graduation/graduate-basic-quote.mjs
-      - name: Commit reproducible dependency state
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add frontend/package.json frontend/package-lock.json tools/solana-meteora-graduation/package.json tools/solana-meteora-graduation/package-lock.json
-          if git diff --cached --quiet; then
-            echo 'dependency state already pinned'
-            exit 0
-          fi
-          git commit -m 'build(agent2): pin Orca devnet acquisition dependencies'
-          git push origin HEAD:agent2/solana-basic-graduation-market
+          node tools/solana-meteora-graduation/check-graduation-auth-fixture.mjs
+          node tools/solana-meteora-graduation/check-devnet-basic-route.mjs
 
   orca-devnet-cert-pool:
     runs-on: ubuntu-latest
@@ -55,12 +50,10 @@ jobs:
       SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER }}
       SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
       ORCA_DEVNET_CERT_REPORT: /tmp/mwz-orca-devnet-cert-pool.json
-      ORCA_DEVNET_CERT_SOL_USDC_PRICE: "150"
+      ORCA_DEVNET_CERT_SOL_USDC_PRICE: "145.948162"
       ORCA_DEVNET_CERT_SEED_SOL: "0.10"
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -72,11 +65,9 @@ jobs:
           operator_file="${RUNNER_TEMP}/mwz-solana-devnet-operator.json"
           SOLANA_GRADUATION_OPERATOR_KEYPAIR="$operator_file" node scripts/solana/materialize-devnet-payer.mjs
           echo "SOLANA_GRADUATION_OPERATOR_KEYPAIR=$operator_file" >> "$GITHUB_ENV"
-      - name: Install pinned Orca certification SDK
-        shell: bash
-        run: npm install --prefix tools/solana-meteora-graduation --no-save --no-audit --no-fund @orca-so/whirlpools@8.0.1 @solana/kit@5.0.0
-      - name: Create or verify and seed canonical Circle-USDC Whirlpool
-        shell: bash
+      - name: Install pinned operator dependencies
+        run: npm ci --prefix tools/solana-meteora-graduation --no-audit --no-fund
+      - name: Verify or seed policy-selected canonical Circle-USDC Whirlpool
         run: node tools/solana-meteora-graduation/orca-devnet-cert-pool.mjs
       - name: Upload certification pool evidence
         if: ${{ always() }}
