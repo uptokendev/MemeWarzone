@@ -8,7 +8,9 @@ export default async function graduationQuoteAssets(req, res) {
     const id = String(req.params?.id || "").trim();
     if (id) {
       const detail = await getGraduationQuoteAssetDetail(id);
-      if (!detail) return json(res, 404, { ok: false, error: "Quote asset not found", code: "QUOTE_ASSET_NOT_FOUND" });
+      if (!detail?.item?.newGraduationEligible) {
+        return json(res, 404, { ok: false, error: "Quote asset not eligible for new graduation", code: "QUOTE_ASSET_NOT_ELIGIBLE" });
+      }
       return json(res, 200, {
         ok: true,
         ...detail,
