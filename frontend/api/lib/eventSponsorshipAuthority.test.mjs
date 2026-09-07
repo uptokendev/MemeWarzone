@@ -19,6 +19,7 @@ function fakeDb({ registry, tournament = null, league = null, championship = nul
         if (wrongChain && params?.length > 1) return { rows: [] };
         return { rows: registry ? [registry] : [] };
       }
+      if (sql.includes("join public.arena_championship_epochs")) return { rows: championship ? [championship] : [] };
       if (sql.includes("from public.arena_championship_epochs")) return { rows: championship ? [championship] : [] };
       if (sql.includes("from public.arena_tournaments")) return { rows: tournament ? [tournament] : [] };
       if (sql.includes("from public.arena_league_seasons")) return { rows: league ? [league] : [] };
@@ -80,10 +81,11 @@ test("Quarterly Championship binds exact #220 arena_championship_epochs identity
   assert.equal(canonicalEventSponsorshipEntitlementKey(result), `56:quarterly_championship:${epochId}`);
 });
 
-test("legacy mwl_quarter_finals can resolve the canonical epoch but is read-only for new purchases", async () => {
+test("legacy mwl_quarter_finals resolves through historical tournament/season to canonical epoch and stays read-only", async () => {
   const epochId = "quarterly-championship-2026-q3-c56";
+  const legacyRef = "legacy-qf-tournament-1";
   const result = await resolveSponsorableEvent(fakeDb({
-    registry: { ...baseRegistry, event_type: "mwl_quarter_finals", event_reference_id: epochId, ends_at: "2026-10-01T00:00:00.000Z" },
+    registry: { ...baseRegistry, event_type: "mwl_quarter_finals", event_reference_id: legacyRef, ends_at: "2026-09-20T00:00:00.000Z" },
     championship: { id: epochId, event_type: "quarterly_championship", chain_id: 56, year: 2026, quarter: 3, state: "open", opens_at: "2026-07-01T00:00:00.000Z", closes_at: "2026-10-01T00:00:00.000Z" },
   }), { eventRef: baseRegistry.id, nowMs: now });
   assert.equal(result.ok, true);
@@ -91,6 +93,9 @@ test("legacy mwl_quarter_finals can resolve the canonical epoch but is read-only
   assert.equal(result.registryEventType, "mwl_quarter_finals");
   assert.equal(result.sponsorable, false);
   assert.equal(result.sponsorabilityReason, "legacy_quarterly_alias_read_only");
+  assert.equal(result.canonical.epochId, epochId);
+  assert.equal(result.canonical.legacyAliasReference, legacyRef);
+  assert.match(result.canonical.relationship, /legacy quarter-final tournament/);
   assert.equal(canonicalEventSponsorshipType("mwl_quarter_finals"), "quarterly_championship");
   assert.equal(canonicalEventSponsorshipEntitlementKey(result), `56:quarterly_championship:${epochId}`);
 });
