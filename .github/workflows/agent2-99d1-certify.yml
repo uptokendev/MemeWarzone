@@ -11,6 +11,7 @@ permissions:
 env:
   CANDIDATE_SHA: 1e7b45802a7e2e39e13e46321209d2eb6c87606f
   HARNESS_SOURCE_SHA: 93b2359db5910fb16552a7a7e574ba078d3df61b
+  PREVIOUS_CERT_SHA: e9c1e2be6bcd259de72fcfe103bcdd5f99b75462
   PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
   SOLANA_VERSION: 1.18.26
   ANCHOR_VERSION: 0.30.1
@@ -27,17 +28,14 @@ jobs:
         with:
           ref: ${{ env.CANDIDATE_SHA }}
           fetch-depth: 0
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-
       - name: Verify exact candidate
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
-
       - name: Install pinned toolchain
         shell: bash
         run: |
@@ -53,7 +51,6 @@ jobs:
           ln -sfn "$d" "$HOME/.local/share/solana/install/active_release"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
           npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
-
       - name: Build exact candidate and pinned Meteora fixture
         shell: bash
         run: |
@@ -66,43 +63,46 @@ jobs:
           npm install --prefix tests/solana --no-audit --no-fund
           npm install --prefix frontend --ignore-scripts --no-audit --no-fund
           node scripts/solana/fetch-pinned-meteora-cp-amm.mjs --with-accounts
-
       - name: Execute existing dedicated harness adaptation and add pending retry assertion
         shell: bash
         run: |
           set -euo pipefail
-          git fetch --no-tags origin "$HARNESS_SOURCE_SHA"
+          git fetch --no-tags origin "$HARNESS_SOURCE_SHA" "$PREVIOUS_CERT_SHA"
           git show "$HARNESS_SOURCE_SHA:.github/workflows/agent2-99d1-local-quotes.yml" > /tmp/agent2-existing-harness.yml
+          git show "$PREVIOUS_CERT_SHA:.github/workflows/agent2-99d1-certify.yml" > /tmp/agent2-prev-cert.yml
           python <<'PY'
           from pathlib import Path
-          import base64
+          import base64, re
 
           raw = Path('/tmp/agent2-existing-harness.yml').read_text().splitlines()
           start = next(i for i, line in enumerate(raw) if line.strip() == "python <<'PY'") + 1
           end = next(i for i in range(start, len(raw)) if raw[i].strip() == 'PY')
-          code = []
-          for line in raw[start:end]:
-              code.append(line[10:] if line.startswith('          ') else line)
+          code = [line[10:] if line.startswith('          ') else line for line in raw[start:end]]
           exec(compile('\n'.join(code), '<existing-agent2-local-harness>', 'exec'), {'__name__': '__main__'})
 
           p = Path('tests/solana/v4-lifecycle-acceptance.cjs')
           s = p.read_text()
+          slash_n = chr(92) + 'n'
+          s = s.replace('atomic.logs.join("' + chr(10) + '")', 'atomic.logs.join("' + slash_n + '")')
+          s = s.replace('(simulation.value.logs||[]).join("' + chr(10) + '")', '(simulation.value.logs||[]).join("' + slash_n + '")')
+
           old = 'let quoteMint=NATIVE_MINT,quoteDecimals=9,binding=nativeGraduationBinding(oraclePrice),acquisitionIx=null,quoteRemaining=[],poolQuoteRaw=quote.maxLiquidityLamports,residual=0n,recoveryAccount=null,authorityQuote=null;'
           new = 'let quoteMint=NATIVE_MINT,quoteDecimals=9,binding=nativeGraduationBinding(oraclePrice),acquisitionIx=null,quoteRemaining=[],poolQuoteRaw=quote.maxLiquidityLamports,residual=0n,recoveryAccount=null,authorityQuote=null,acquisitionSource=null,acquired=0n;'
-          if old not in s:
-              raise SystemExit('stable setup declaration not found')
+          if old not in s: raise SystemExit('stable setup declaration not found')
           s = s.replace(old, new, 1)
           s = s.replace('const acquisitionSource=await createAccount(connection,adminKeypair,quoteMint,admin);', 'acquisitionSource=await createAccount(connection,adminKeypair,quoteMint,admin);', 1)
           s = s.replace('const acquired=poolQuoteRaw+residual;', 'acquired=poolQuoteRaw+residual;', 1)
+
+          prev = Path('/tmp/agent2-prev-cert.yml').read_text()
+          match = re.search(r"pending = base64\.b64decode\('([^']+)'\)\.decode\('utf-8'\)", prev)
+          if not match: raise SystemExit('pending retry assertion payload not found')
+          pending = base64.b64decode(match.group(1)).decode('utf-8')
           marker = 'const latest=await connection.getLatestBlockhash("confirmed"); const versioned=v0Helpers.buildLaunchpadV0Transaction(web3,{payer:admin,recentBlockhash:latest.blockhash,instructions,lookupTableAccounts:[lookupTableAccount]});'
-          if marker not in s:
-              raise SystemExit('safe graduation V0 marker not found')
-          pending = base64.b64decode('aWYoc3RhYmxlTW9kZSl7CiAgY29uc3QgdW5zYWZlQmluZGluZz17Li4uYmluZGluZyxxdW90ZVJlZmVyZW5jZVVzZE1pY3JvczpxdW90ZVVzZCoybn07CiAgY29uc3QgdW5zYWZlTm9uY2U9aGFzaDMyKCJncmFkdWF0aW9uOnN0YWJsZS12NC11bnNhZmUiKTsKICBjb25zdCB1bnNhZmVEaWdlc3Q9Z3JhZHVhdGlvbkRpZ2VzdChkaWdlc3RJbnB1dChjYW1wYWlnbixuYXRpdmVUYXJnZXQsb3JhY2xlUHJpY2UsZGVhZGxpbmUsdW5zYWZlTm9uY2UsbmZ0TWludC5wdWJsaWNLZXkscG9vbCxwb3NpdGlvbix1bnNhZmVCaW5kaW5nKSk7CiAgY29uc3QgdW5zYWZlRWQyNTUxOT1FZDI1NTE5UHJvZ3JhbS5jcmVhdGVJbnN0cnVjdGlvbldpdGhQcml2YXRlS2V5KHtwcml2YXRlS2V5OnJvdXRlU2lnbmVyLnNlY3JldEtleSxtZXNzYWdlOnVuc2FmZURpZ2VzdH0pOwogIGNvbnN0IHVuc2FmZUJlZ2luSXg9YXdhaXQgcHJvZ3JhbS5tZXRob2RzLmJlZ2luR3JhZHVhdGlvbihhbmNob3JHcmFkdWF0aW9uQXJncyhuYXRpdmVUYXJnZXQsb3JhY2xlUHJpY2UsZGVhZGxpbmUsdW5zYWZlTm9uY2UsbmZ0TWludC5wdWJsaWNLZXksdW5zYWZlQmluZGluZykpLmFjY291bnRzU3RyaWN0KHthdXRob3JpdHk6YWRtaW4sZ2xvYmFsQ29uZmlnLGdlbmVyYXRpb25Db25maWcsY2FtcGFpZ246Y2FtcGFpZ25BY2NvdW50cy5jYW1wYWlnbixtaW50OmNhbXBhaWduQWNjb3VudHMubWludCx0b2tlblZhdWx0OmNhbXBhaWduQWNjb3VudHMudG9rZW5WYXVsdCxzb2xWYXVsdDpjYW1wYWlnbkFjY291bnRzLnNvbFZhdWx0LGZlZUVzY3JvdzpjYW1wYWlnbkFjY291bnRzLmZlZUVzY3JvdyxhdXRob3JpdHlUb2tlbkFjY291bnQ6YXV0aG9yaXR5QXRhLG1ldGVvcmFQb29sOnBvb2wsbWV0ZW9yYVBvc2l0aW9uOnBvc2l0aW9uLHBvc2l0aW9uTmZ0TWludDpuZnRNaW50LnB1YmxpY0tleSxncmFkdWF0aW9uU3RhdGUsaW5zdHJ1Y3Rpb25zOlNZU1ZBUl9JTlNUUlVDVElPTlNfUFVCS0VZLHRva2VuUHJvZ3JhbTpUT0tFTl9QUk9HUkFNX0lELHN5c3RlbVByb2dyYW06U3lzdGVtUHJvZ3JhbS5wcm9ncmFtSWR9KS5pbnN0cnVjdGlvbigpOwogIGNvbnN0IHVuc2FmZUluc3RydWN0aW9ucz1bQ29tcHV0ZUJ1ZGdldFByb2dyYW0uc2V0Q29tcHV0ZVVuaXRMaW1pdCh7dW5pdHM6MV80MDBfMDAwfSksdW5zYWZlRWQyNTUxOSx1bnNhZmVCZWdpbkl4LGFjcXVpc2l0aW9uSXgsLi4ubWV0ZW9yYVR4Lmluc3RydWN0aW9ucyxjb25maXJtSXhdOwogIGNvbnN0IHVuc2FmZUxhdGVzdD1hd2FpdCBjb25uZWN0aW9uLmdldExhdGVzdEJsb2NraGFzaCgiY29uZmlybWVkIik7CiAgY29uc3QgdW5zYWZlVjA9djBIZWxwZXJzLmJ1aWxkTGF1bmNocGFkVjBUcmFuc2FjdGlvbih3ZWIzLHtwYXllcjphZG1pbixyZWNlbnRCbG9ja2hhc2g6dW5zYWZlTGF0ZXN0LmJsb2NraGFzaCxpbnN0cnVjdGlvbnM6dW5zYWZlSW5zdHJ1Y3Rpb25zLGxvb2t1cFRhYmxlQWNjb3VudHM6W2xvb2t1cFRhYmxlQWNjb3VudF19KTsKICB1bnNhZmVWMC5zaWduKFthZG1pbktleXBhaXIsbmZ0TWludF0pOwogIGNvbnN0IHVuc2FmZVNpZz1hd2FpdCBjb25uZWN0aW9uLnNlbmRSYXdUcmFuc2FjdGlvbih1bnNhZmVWMC5zZXJpYWxpemUoKSx7c2tpcFByZWZsaWdodDp0cnVlLG1heFJldHJpZXM6NX0pOwogIGNvbnN0IHVuc2FmZUNvbmZpcm1hdGlvbj1hd2FpdCBjb25uZWN0aW9uLmNvbmZpcm1UcmFuc2FjdGlvbih7c2lnbmF0dXJlOnVuc2FmZVNpZyxibG9ja2hhc2g6dW5zYWZlTGF0ZXN0LmJsb2NraGFzaCxsYXN0VmFsaWRCbG9ja0hlaWdodDp1bnNhZmVMYXRlc3QubGFzdFZhbGlkQmxvY2tIZWlnaHR9LCJjb25maXJtZWQiKTsKICBhc3NlcnQub2sodW5zYWZlQ29uZmlybWF0aW9uLnZhbHVlLmVyciwidW5zYWZlIHN0YWJsZSBxdW90ZSBtdXN0IGZhaWwgY2xvc2VkIGFuZCByZW1haW4gcGVuZGluZyIpOwogIGNvbnN0IHBlbmRpbmdDYW1wYWlnbj1kZWNvZGVDYW1wYWlnbigoYXdhaXQgY29ubmVjdGlvbi5nZXRBY2NvdW50SW5mbyhjYW1wYWlnbkFjY291bnRzLmNhbXBhaWduLCJjb25maXJtZWQiKSkuZGF0YSk7CiAgYXNzZXJ0LmVxdWFsKHBlbmRpbmdDYW1wYWlnbi5ncmFkdWF0ZWQsZmFsc2UsInVuc2FmZSBzdGFibGUgbXVzdCBsZWF2ZSBjYW1wYWlnbiBwZW5kaW5nIik7CiAgYXNzZXJ0LmVxdWFsKGF3YWl0IGNvbm5lY3Rpb24uZ2V0QWNjb3VudEluZm8oZ3JhZHVhdGlvblN0YXRlLCJjb25maXJtZWQiKSxudWxsLCJ1bnNhZmUgc3RhYmxlIG11c3Qgcm9sbCBiYWNrIGdyYWR1YXRpb24gc3RhdGUiKTsKICBhc3NlcnQuZXF1YWwoYXdhaXQgY29ubmVjdGlvbi5nZXRBY2NvdW50SW5mbyhwb29sLCJjb25maXJtZWQiKSxudWxsLCJ1bnNhZmUgc3RhYmxlIG11c3Qgcm9sbCBiYWNrIE1ldGVvcmEgcG9vbCBjcmVhdGlvbiIpOwogIGNvbnN0IHBlbmRpbmdBdXRob3JpdHlRdW90ZT1hd2FpdCBnZXRBY2NvdW50KGNvbm5lY3Rpb24sYXV0aG9yaXR5UXVvdGUuYWRkcmVzcywiY29uZmlybWVkIik7CiAgYXNzZXJ0LmVxdWFsKEJpZ0ludChwZW5kaW5nQXV0aG9yaXR5UXVvdGUuYW1vdW50LnRvU3RyaW5nKCkpLDBuLCJ1bnNhZmUgc3RhYmxlIG11c3Qgcm9sbCBiYWNrIHF1b3RlIGFjcXVpc2l0aW9uIik7CiAgY29uc3QgcGVuZGluZ1NvdXJjZT1hd2FpdCBnZXRBY2NvdW50KGNvbm5lY3Rpb24sYWNxdWlzaXRpb25Tb3VyY2UsImNvbmZpcm1lZCIpOwogIGFzc2VydC5lcXVhbChCaWdJbnQocGVuZGluZ1NvdXJjZS5hbW91bnQudG9TdHJpbmcoKSksYWNxdWlyZWQsInVuc2FmZSBzdGFibGUgbXVzdCBwcmVzZXJ2ZSBhY3F1aXNpdGlvbiBzb3VyY2Ugb24gcm9sbGJhY2siKTsKICBjb25zb2xlLmxvZyhgW2Jhc2ljLWdyYWQtbG9jYWxdIG1vZGU9c3RhYmxlIEdSQURVQVRJT05fUEVORElOR19RVU9URV9VTlNBRkUgc2lnbmF0dXJlPSR7dW5zYWZlU2lnfWApOwp9CmNvbnN0IGxhdGVzdD1hd2FpdCBjb25uZWN0aW9uLmdldExhdGVzdEJsb2NraGFzaCgiY29uZmlybWVkIik7IGNvbnN0IHZlcnNpb25lZD12MEhlbHBlcnMuYnVpbGRMYXVuY2hwYWRWMFRyYW5zYWN0aW9uKHdlYjMse3BheWVyOmFkbWluLHJlY2VudEJsb2NraGFzaDpsYXRlc3QuYmxvY2toYXNoLGluc3RydWN0aW9ucyxsb29rdXBUYWJsZUFjY291bnRzOltsb29rdXBUYWJsZUFjY291bnRdfSk7').decode('utf-8')
+          if marker not in s: raise SystemExit('safe graduation V0 marker not found')
           s = s.replace(marker, pending, 1)
           p.write_text(s)
           PY
           node --check tests/solana/v4-lifecycle-acceptance.cjs
-
       - name: Run native and canonical-stable graduation on fresh disposable validators
         shell: bash
         run: |
