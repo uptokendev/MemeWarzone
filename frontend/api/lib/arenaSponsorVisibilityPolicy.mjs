@@ -3,8 +3,19 @@ export const PUBLIC_SPONSOR_EVENT_TYPES = Object.freeze([
   "vote_tournament",
   "monthly_mwl",
   "quarterly_championship",
-  "mwl_quarter_finals",
 ]);
+
+export function canonicalPublicSponsorEventType(value) {
+  const type = String(value || "").trim();
+  return type === "mwl_quarter_finals" ? "quarterly_championship" : type;
+}
+
+export function publicSponsorRegistryTypes(value) {
+  const type = canonicalPublicSponsorEventType(value);
+  return type === "quarterly_championship"
+    ? ["quarterly_championship", "mwl_quarter_finals"]
+    : [type];
+}
 
 export function safeHttpsUrl(value) {
   const raw = String(value || "").trim();
