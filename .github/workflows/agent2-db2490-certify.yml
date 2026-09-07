@@ -1,0 +1,169 @@
+name: Agent 2 db2490 Certification
+
+on:
+  push:
+    branches:
+      - cert/agent2-db2490-final
+
+permissions:
+  contents: read
+
+env:
+  CANDIDATE_SHA: db2490f8a19bf3cbe5799845bab49e86e211137c
+  BASE_SHA: 2f0b461bf8fc4c26e662e33014445d28f9924fda
+  SOLANA_VERSION: 1.18.26
+  ANCHOR_VERSION: 0.30.1
+  RUST_TOOLCHAIN: 1.79.0
+  IDL_TOOLCHAIN: nightly-2024-05-09
+  PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+  DEVNET_RPC: https://api.devnet.solana.com
+  LOCAL_RPC: http://127.0.0.1:8899
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Exact head and source regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          test "$(git rev-parse HEAD^)" = "ba7a0d1210e2410ad14d6b2ce4593f903b8811ae"
+          git diff --check "$BASE_SHA" "$CANDIDATE_SHA"
+          rustfmt --edition 2021 --check programs/memewarzone_solana/src/graduation.rs
+          cargo test -p memewarzone_solana --lib
+          node --check frontend/api/dev-fix/solana-graduation-auth-bytes.js
+          node --check frontend/api/dev-fix/solana-graduation-authorization-v2.js
+          node --check tools/solana-meteora-graduation/graduate-basic-quote.mjs
+          node tools/solana-meteora-graduation/check-graduation-auth-fixture.mjs
+      - name: Frontend V0 blockhash and ALT regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --prefix frontend --ignore-scripts
+          npm --prefix frontend run test:solana-v0
+          npm --prefix frontend run test:solana-confirm
+          npm --prefix frontend run check:solana-launchpad-alt
+      - name: Install pinned Rust toolchains
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup toolchain install "$IDL_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          rustup component add rustfmt --toolchain "$RUST_TOOLCHAIN"
+      - name: Install pinned Solana CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          d="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
+          mkdir -p "$d"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error -o /tmp/solana.tar.bz2 "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana.tar.bz2 -C "$d" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"
+          ln -sfn "$d" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+      - name: Install pinned Anchor CLI
+        run: npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+      - name: Pinned environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustc --version
+          cargo --version
+          rustfmt --version
+          solana --version
+          anchor --version
+      - name: Clean candidate SBF build
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clean -ffdx target || true
+          anchor build --program-name memewarzone_solana --no-idl 2>&1 | tee /tmp/candidate-build.log
+          test -s target/deploy/memewarzone_solana.so
+          if grep -Eqi 'Stack offset .*exceeded max offset|exceeded max offset.*4096|stack frame.*exceed' /tmp/candidate-build.log; then exit 1; fi
+          wc -c < target/deploy/memewarzone_solana.so | tee /tmp/candidate-bytes
+          sha256sum target/deploy/memewarzone_solana.so | tee /tmp/candidate-sha
+          cp target/deploy/memewarzone_solana.so /tmp/candidate.so
+      - name: Independent candidate SBF rebuild
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/candidate-rebuild
+          CARGO_TARGET_DIR=/tmp/candidate-rebuild anchor build --program-name memewarzone_solana --no-idl 2>&1 | tee /tmp/candidate-rebuild.log
+          so=/tmp/candidate-rebuild/deploy/memewarzone_solana.so
+          if [ ! -s "$so" ]; then so="$(find /tmp/candidate-rebuild -name memewarzone_solana.so -type f | head -n1)"; fi
+          test -s "$so"
+          cmp -s /tmp/candidate.so "$so"
+          echo INDEPENDENT_CANDIDATE_SBF_MATCH=YES
+      - name: Exact baseline SBF build
+        shell: bash
+        run: |
+          set -euo pipefail
+          git worktree add --detach /tmp/mwz-base "$BASE_SHA"
+          cd /tmp/mwz-base
+          anchor build --program-name memewarzone_solana --no-idl 2>&1 | tee /tmp/baseline-build.log
+          test -s target/deploy/memewarzone_solana.so
+          wc -c < target/deploy/memewarzone_solana.so | tee /tmp/baseline-bytes
+          sha256sum target/deploy/memewarzone_solana.so | tee /tmp/baseline-sha
+      - name: Generated IDL integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p target/idl
+          (cd programs/memewarzone_solana && RUSTUP_TOOLCHAIN="$IDL_TOOLCHAIN" anchor idl build --out ../../target/idl/memewarzone_solana.json)
+          test -s target/idl/memewarzone_solana.json
+          node -e 'const j=require("./target/idl/memewarzone_solana.json"); if(!j.instructions||!j.instructions.length) process.exit(1); console.log("IDL_INSTRUCTIONS="+j.instructions.length)'
+          sha256sum target/idl/memewarzone_solana.json | tee /tmp/idl-sha
+      - name: Read-only devnet ProgramData fit and extension rent
+        shell: bash
+        run: |
+          set -euo pipefail
+          CANDIDATE_BYTES="$(cat /tmp/candidate-bytes)" node <<'NODE'
+          const rpc=process.env.DEVNET_RPC; const programId=process.env.PROGRAM_ID; const candidate=Number(process.env.CANDIDATE_BYTES);
+          async function call(method,params){const r=await fetch(rpc,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})}); if(!r.ok)throw new Error(`${method} HTTP ${r.status}`); const j=await r.json();if(j.error)throw new Error(JSON.stringify(j.error));return j.result;}
+          function b58(bytes){const a='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';let x=0n;for(const b of bytes)x=(x<<8n)+BigInt(b);let s='';while(x){s=a[Number(x%58n)]+s;x/=58n;}for(const b of bytes){if(b===0)s='1'+s;else break;}return s||'1';}
+          const genesis=await call('getGenesisHash',[]); if(genesis!=='EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG')throw new Error('not devnet');
+          const p=(await call('getAccountInfo',[programId,{encoding:'base64',commitment:'confirmed'}])).value; if(!p)throw new Error('program missing');
+          const pd=Buffer.from(p.data[0],'base64'); const addr=b58(pd.subarray(4,36));
+          const info=(await call('getAccountInfo',[addr,{encoding:'base64',commitment:'confirmed'}])).value; if(!info)throw new Error('ProgramData missing');
+          const len=Buffer.from(info.data[0],'base64').length; const metadata=45; const capacity=len-metadata; const extension=Math.max(0,candidate-capacity); const targetLen=candidate+metadata;
+          const targetRent=Number(await call('getMinimumBalanceForRentExemption',[targetLen])); const lamports=Math.max(0,targetRent-info.lamports);
+          console.log(`PROGRAM_DATA=${addr}`); console.log(`PROGRAMDATA_LENGTH=${len}`); console.log(`PROGRAM_CAPACITY=${capacity}`); console.log(`CANDIDATE_BYTES=${candidate}`); console.log(`EXTENSION_REQUIRED=${extension>0?'YES':'NO'}`); console.log(`EXTENSION_BYTES=${extension}`); console.log(`EXTENSION_LAMPORTS=${extension>0?lamports:0}`); console.log(`CURRENT_PROGRAMDATA_LAMPORTS=${info.lamports}`);
+          NODE
+      - name: Local validator launchpad + pinned Meteora regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix tests/solana --no-audit --no-fund
+          node scripts/solana/fetch-pinned-meteora-cp-amm.mjs --with-accounts
+          mkdir -p "$HOME/.config/solana"
+          solana-keygen new --no-bip39-passphrase --silent --force --outfile "$HOME/.config/solana/id.json"
+          export ANCHOR_WALLET="$HOME/.config/solana/id.json"
+          rm -rf /tmp/agent2-ledger
+          solana-test-validator --reset --quiet --ledger /tmp/agent2-ledger --bpf-program "$PROGRAM_ID" /tmp/candidate.so --bpf-program cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG third_party/meteora/cp_amm.so --account-dir third_party/meteora/accounts >/tmp/agent2-validator.log 2>&1 &
+          pid=$!; trap 'kill $pid 2>/dev/null || true' EXIT
+          for i in $(seq 1 60); do solana cluster-version --url "$LOCAL_RPC" >/dev/null 2>&1 && break; [ "$i" -eq 60 ] && { cat /tmp/agent2-validator.log; exit 1; }; sleep 2; done
+          solana config set --url "$LOCAL_RPC" --keypair "$ANCHOR_WALLET" >/dev/null
+          solana airdrop 100 >/dev/null
+          (cd tests/solana && ANCHOR_PROVIDER_URL="$LOCAL_RPC" ANCHOR_WALLET="$ANCHOR_WALLET" GATE_K_METEORA=1 npx mocha --timeout 1000000 v4-lifecycle-acceptance.cjs v0-launchpad-onchain.cjs gate-k-meteora.cjs)
+          kill $pid 2>/dev/null || true; wait $pid 2>/dev/null || true; trap - EXIT
+      - name: Certification summary
+        shell: bash
+        run: |
+          echo "CANDIDATE_SHA=$CANDIDATE_SHA"
+          echo "BASE_SHA=$BASE_SHA"
+          echo "BASELINE_BYTES=$(cat /tmp/baseline-bytes)"
+          echo "CANDIDATE_BYTES=$(cat /tmp/candidate-bytes)"
+          echo "CANDIDATE_SHA256=$(awk '{print $1}' /tmp/candidate-sha)"
+          echo "BASELINE_SHA256=$(awk '{print $1}' /tmp/baseline-sha)"
+          echo "IDL_SHA256=$(awk '{print $1}' /tmp/idl-sha)"
