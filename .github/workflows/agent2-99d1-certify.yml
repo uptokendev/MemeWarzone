@@ -75,6 +75,7 @@ jobs:
           git show "$HARNESS_SOURCE_SHA:.github/workflows/agent2-99d1-local-quotes.yml" > /tmp/agent2-existing-harness.yml
           python <<'PY'
           from pathlib import Path
+          import base64
 
           raw = Path('/tmp/agent2-existing-harness.yml').read_text().splitlines()
           start = next(i for i, line in enumerate(raw) if line.strip() == "python <<'PY'") + 1
@@ -93,34 +94,10 @@ jobs:
           s = s.replace(old, new, 1)
           s = s.replace('const acquisitionSource=await createAccount(connection,adminKeypair,quoteMint,admin);', 'acquisitionSource=await createAccount(connection,adminKeypair,quoteMint,admin);', 1)
           s = s.replace('const acquired=poolQuoteRaw+residual;', 'acquired=poolQuoteRaw+residual;', 1)
-
           marker = 'const latest=await connection.getLatestBlockhash("confirmed"); const versioned=v0Helpers.buildLaunchpadV0Transaction(web3,{payer:admin,recentBlockhash:latest.blockhash,instructions,lookupTableAccounts:[lookupTableAccount]});'
           if marker not in s:
               raise SystemExit('safe graduation V0 marker not found')
-          pending = r'''if(stableMode){
-      const unsafeBinding={...binding,quoteReferenceUsdMicros:quoteUsd*2n};
-      const unsafeNonce=hash32("graduation:stable-v4-unsafe");
-      const unsafeDigest=graduationDigest(digestInput(campaign,nativeTarget,oraclePrice,deadline,unsafeNonce,nftMint.publicKey,pool,position,unsafeBinding));
-      const unsafeEd25519=Ed25519Program.createInstructionWithPrivateKey({privateKey:routeSigner.secretKey,message:unsafeDigest});
-      const unsafeBeginIx=await program.methods.beginGraduation(anchorGraduationArgs(nativeTarget,oraclePrice,deadline,unsafeNonce,nftMint.publicKey,unsafeBinding)).accountsStrict({authority:admin,globalConfig,generationConfig,campaign:campaignAccounts.campaign,mint:campaignAccounts.mint,tokenVault:campaignAccounts.tokenVault,solVault:campaignAccounts.solVault,feeEscrow:campaignAccounts.feeEscrow,authorityTokenAccount:authorityAta,meteoraPool:pool,meteoraPosition:position,positionNftMint:nftMint.publicKey,graduationState,instructions:SYSVAR_INSTRUCTIONS_PUBKEY,tokenProgram:TOKEN_PROGRAM_ID,systemProgram:SystemProgram.programId}).instruction();
-      const unsafeInstructions=[ComputeBudgetProgram.setComputeUnitLimit({units:1_400_000}),unsafeEd25519,unsafeBeginIx,acquisitionIx,...meteoraTx.instructions,confirmIx];
-      const unsafeLatest=await connection.getLatestBlockhash("confirmed");
-      const unsafeV0=v0Helpers.buildLaunchpadV0Transaction(web3,{payer:admin,recentBlockhash:unsafeLatest.blockhash,instructions:unsafeInstructions,lookupTableAccounts:[lookupTableAccount]});
-      unsafeV0.sign([adminKeypair,nftMint]);
-      const unsafeSig=await connection.sendRawTransaction(unsafeV0.serialize(),{skipPreflight:true,maxRetries:5});
-      const unsafeConfirmation=await connection.confirmTransaction({signature:unsafeSig,blockhash:unsafeLatest.blockhash,lastValidBlockHeight:unsafeLatest.lastValidBlockHeight},"confirmed");
-      assert.ok(unsafeConfirmation.value.err,"unsafe stable quote must fail closed and remain pending");
-      const pendingCampaign=decodeCampaign((await connection.getAccountInfo(campaignAccounts.campaign,"confirmed")).data);
-      assert.equal(pendingCampaign.graduated,false,"unsafe stable must leave campaign pending");
-      assert.equal(await connection.getAccountInfo(graduationState,"confirmed"),null,"unsafe stable must roll back graduation state");
-      assert.equal(await connection.getAccountInfo(pool,"confirmed"),null,"unsafe stable must roll back Meteora pool creation");
-      const pendingAuthorityQuote=await getAccount(connection,authorityQuote.address,"confirmed");
-      assert.equal(BigInt(pendingAuthorityQuote.amount.toString()),0n,"unsafe stable must roll back quote acquisition");
-      const pendingSource=await getAccount(connection,acquisitionSource,"confirmed");
-      assert.equal(BigInt(pendingSource.amount.toString()),acquired,"unsafe stable must preserve acquisition source on rollback");
-      console.log(`[basic-grad-local] mode=stable GRADUATION_PENDING_QUOTE_UNSAFE signature=${unsafeSig}`);
-    }
-    const latest=await connection.getLatestBlockhash("confirmed"); const versioned=v0Helpers.buildLaunchpadV0Transaction(web3,{payer:admin,recentBlockhash:latest.blockhash,instructions,lookupTableAccounts:[lookupTableAccount]});'''
+          pending = base64.b64decode('aWYoc3RhYmxlTW9kZSl7CiAgY29uc3QgdW5zYWZlQmluZGluZz17Li4uYmluZGluZyxxdW90ZVJlZmVyZW5jZVVzZE1pY3JvczpxdW90ZVVzZCoybn07CiAgY29uc3QgdW5zYWZlTm9uY2U9aGFzaDMyKCJncmFkdWF0aW9uOnN0YWJsZS12NC11bnNhZmUiKTsKICBjb25zdCB1bnNhZmVEaWdlc3Q9Z3JhZHVhdGlvbkRpZ2VzdChkaWdlc3RJbnB1dChjYW1wYWlnbixuYXRpdmVUYXJnZXQsb3JhY2xlUHJpY2UsZGVhZGxpbmUsdW5zYWZlTm9uY2UsbmZ0TWludC5wdWJsaWNLZXkscG9vbCxwb3NpdGlvbix1bnNhZmVCaW5kaW5nKSk7CiAgY29uc3QgdW5zYWZlRWQyNTUxOT1FZDI1NTE5UHJvZ3JhbS5jcmVhdGVJbnN0cnVjdGlvbldpdGhQcml2YXRlS2V5KHtwcml2YXRlS2V5OnJvdXRlU2lnbmVyLnNlY3JldEtleSxtZXNzYWdlOnVuc2FmZURpZ2VzdH0pOwogIGNvbnN0IHVuc2FmZUJlZ2luSXg9YXdhaXQgcHJvZ3JhbS5tZXRob2RzLmJlZ2luR3JhZHVhdGlvbihhbmNob3JHcmFkdWF0aW9uQXJncyhuYXRpdmVUYXJnZXQsb3JhY2xlUHJpY2UsZGVhZGxpbmUsdW5zYWZlTm9uY2UsbmZ0TWludC5wdWJsaWNLZXksdW5zYWZlQmluZGluZykpLmFjY291bnRzU3RyaWN0KHthdXRob3JpdHk6YWRtaW4sZ2xvYmFsQ29uZmlnLGdlbmVyYXRpb25Db25maWcsY2FtcGFpZ246Y2FtcGFpZ25BY2NvdW50cy5jYW1wYWlnbixtaW50OmNhbXBhaWduQWNjb3VudHMubWludCx0b2tlblZhdWx0OmNhbXBhaWduQWNjb3VudHMudG9rZW5WYXVsdCxzb2xWYXVsdDpjYW1wYWlnbkFjY291bnRzLnNvbFZhdWx0LGZlZUVzY3JvdzpjYW1wYWlnbkFjY291bnRzLmZlZUVzY3JvdyxhdXRob3JpdHlUb2tlbkFjY291bnQ6YXV0aG9yaXR5QXRhLG1ldGVvcmFQb29sOnBvb2wsbWV0ZW9yYVBvc2l0aW9uOnBvc2l0aW9uLHBvc2l0aW9uTmZ0TWludDpuZnRNaW50LnB1YmxpY0tleSxncmFkdWF0aW9uU3RhdGUsaW5zdHJ1Y3Rpb25zOlNZU1ZBUl9JTlNUUlVDVElPTlNfUFVCS0VZLHRva2VuUHJvZ3JhbTpUT0tFTl9QUk9HUkFNX0lELHN5c3RlbVByb2dyYW06U3lzdGVtUHJvZ3JhbS5wcm9ncmFtSWR9KS5pbnN0cnVjdGlvbigpOwogIGNvbnN0IHVuc2FmZUluc3RydWN0aW9ucz1bQ29tcHV0ZUJ1ZGdldFByb2dyYW0uc2V0Q29tcHV0ZVVuaXRMaW1pdCh7dW5pdHM6MV80MDBfMDAwfSksdW5zYWZlRWQyNTUxOSx1bnNhZmVCZWdpbkl4LGFjcXVpc2l0aW9uSXgsLi4ubWV0ZW9yYVR4Lmluc3RydWN0aW9ucyxjb25maXJtSXhdOwogIGNvbnN0IHVuc2FmZUxhdGVzdD1hd2FpdCBjb25uZWN0aW9uLmdldExhdGVzdEJsb2NraGFzaCgiY29uZmlybWVkIik7CiAgY29uc3QgdW5zYWZlVjA9djBIZWxwZXJzLmJ1aWxkTGF1bmNocGFkVjBUcmFuc2FjdGlvbih3ZWIzLHtwYXllcjphZG1pbixyZWNlbnRCbG9ja2hhc2g6dW5zYWZlTGF0ZXN0LmJsb2NraGFzaCxpbnN0cnVjdGlvbnM6dW5zYWZlSW5zdHJ1Y3Rpb25zLGxvb2t1cFRhYmxlQWNjb3VudHM6W2xvb2t1cFRhYmxlQWNjb3VudF19KTsKICB1bnNhZmVWMC5zaWduKFthZG1pbktleXBhaXIsbmZ0TWludF0pOwogIGNvbnN0IHVuc2FmZVNpZz1hd2FpdCBjb25uZWN0aW9uLnNlbmRSYXdUcmFuc2FjdGlvbih1bnNhZmVWMC5zZXJpYWxpemUoKSx7c2tpcFByZWZsaWdodDp0cnVlLG1heFJldHJpZXM6NX0pOwogIGNvbnN0IHVuc2FmZUNvbmZpcm1hdGlvbj1hd2FpdCBjb25uZWN0aW9uLmNvbmZpcm1UcmFuc2FjdGlvbih7c2lnbmF0dXJlOnVuc2FmZVNpZyxibG9ja2hhc2g6dW5zYWZlTGF0ZXN0LmJsb2NraGFzaCxsYXN0VmFsaWRCbG9ja0hlaWdodDp1bnNhZmVMYXRlc3QubGFzdFZhbGlkQmxvY2tIZWlnaHR9LCJjb25maXJtZWQiKTsKICBhc3NlcnQub2sodW5zYWZlQ29uZmlybWF0aW9uLnZhbHVlLmVyciwidW5zYWZlIHN0YWJsZSBxdW90ZSBtdXN0IGZhaWwgY2xvc2VkIGFuZCByZW1haW4gcGVuZGluZyIpOwogIGNvbnN0IHBlbmRpbmdDYW1wYWlnbj1kZWNvZGVDYW1wYWlnbigoYXdhaXQgY29ubmVjdGlvbi5nZXRBY2NvdW50SW5mbyhjYW1wYWlnbkFjY291bnRzLmNhbXBhaWduLCJjb25maXJtZWQiKSkuZGF0YSk7CiAgYXNzZXJ0LmVxdWFsKHBlbmRpbmdDYW1wYWlnbi5ncmFkdWF0ZWQsZmFsc2UsInVuc2FmZSBzdGFibGUgbXVzdCBsZWF2ZSBjYW1wYWlnbiBwZW5kaW5nIik7CiAgYXNzZXJ0LmVxdWFsKGF3YWl0IGNvbm5lY3Rpb24uZ2V0QWNjb3VudEluZm8oZ3JhZHVhdGlvblN0YXRlLCJjb25maXJtZWQiKSxudWxsLCJ1bnNhZmUgc3RhYmxlIG11c3Qgcm9sbCBiYWNrIGdyYWR1YXRpb24gc3RhdGUiKTsKICBhc3NlcnQuZXF1YWwoYXdhaXQgY29ubmVjdGlvbi5nZXRBY2NvdW50SW5mbyhwb29sLCJjb25maXJtZWQiKSxudWxsLCJ1bnNhZmUgc3RhYmxlIG11c3Qgcm9sbCBiYWNrIE1ldGVvcmEgcG9vbCBjcmVhdGlvbiIpOwogIGNvbnN0IHBlbmRpbmdBdXRob3JpdHlRdW90ZT1hd2FpdCBnZXRBY2NvdW50KGNvbm5lY3Rpb24sYXV0aG9yaXR5UXVvdGUuYWRkcmVzcywiY29uZmlybWVkIik7CiAgYXNzZXJ0LmVxdWFsKEJpZ0ludChwZW5kaW5nQXV0aG9yaXR5UXVvdGUuYW1vdW50LnRvU3RyaW5nKCkpLDBuLCJ1bnNhZmUgc3RhYmxlIG11c3Qgcm9sbCBiYWNrIHF1b3RlIGFjcXVpc2l0aW9uIik7CiAgY29uc3QgcGVuZGluZ1NvdXJjZT1hd2FpdCBnZXRBY2NvdW50KGNvbm5lY3Rpb24sYWNxdWlzaXRpb25Tb3VyY2UsImNvbmZpcm1lZCIpOwogIGFzc2VydC5lcXVhbChCaWdJbnQocGVuZGluZ1NvdXJjZS5hbW91bnQudG9TdHJpbmcoKSksYWNxdWlyZWQsInVuc2FmZSBzdGFibGUgbXVzdCBwcmVzZXJ2ZSBhY3F1aXNpdGlvbiBzb3VyY2Ugb24gcm9sbGJhY2siKTsKICBjb25zb2xlLmxvZyhgW2Jhc2ljLWdyYWQtbG9jYWxdIG1vZGU9c3RhYmxlIEdSQURVQVRJT05fUEVORElOR19RVU9URV9VTlNBRkUgc2lnbmF0dXJlPSR7dW5zYWZlU2lnfWApOwp9CmNvbnN0IGxhdGVzdD1hd2FpdCBjb25uZWN0aW9uLmdldExhdGVzdEJsb2NraGFzaCgiY29uZmlybWVkIik7IGNvbnN0IHZlcnNpb25lZD12MEhlbHBlcnMuYnVpbGRMYXVuY2hwYWRWMFRyYW5zYWN0aW9uKHdlYjMse3BheWVyOmFkbWluLHJlY2VudEJsb2NraGFzaDpsYXRlc3QuYmxvY2toYXNoLGluc3RydWN0aW9ucyxsb29rdXBUYWJsZUFjY291bnRzOltsb29rdXBUYWJsZUFjY291bnRdfSk7').decode('utf-8')
           s = s.replace(marker, pending, 1)
           p.write_text(s)
           PY
