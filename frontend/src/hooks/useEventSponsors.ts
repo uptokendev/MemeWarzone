@@ -57,7 +57,7 @@ export function useEventSponsors(input: {
     const controller = new AbortController();
     fetchEventSponsors({ ...input, signal: controller.signal })
       .then((items) => setSponsors(items))
-      .catch((error) => {
+      .catch(() => {
         if (!controller.signal.aborted) setSponsors([]);
       });
     return () => controller.abort();
