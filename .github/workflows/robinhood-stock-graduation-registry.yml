@@ -14,6 +14,7 @@ on:
       - "frontend/api/lib/quoteAssetCatalog.test.mjs"
       - "frontend/api/lib/robinhoodStockGraduationRegistry.js"
       - "frontend/api/lib/robinhoodStockRuntimeCertification.js"
+      - "frontend/api/lib/robinhoodStockRuntimeProvider.js"
       - "frontend/api/lib/robinhoodStockGraduationAdminOps.js"
       - "frontend/api/lib/robinhoodStockGraduationRegistry.test.mjs"
       - "frontend/api/robinhood/stock-tokens.js"
@@ -48,6 +49,7 @@ jobs:
         run: |
           node --check frontend/api/lib/robinhoodStockGraduationRegistry.js
           node --check frontend/api/lib/robinhoodStockRuntimeCertification.js
+          node --check frontend/api/lib/robinhoodStockRuntimeProvider.js
           node --check frontend/api/lib/robinhoodStockGraduationAdminOps.js
           node --check frontend/api/lib/quoteAssetCatalog.js
           node --check frontend/api/lib/approvedQuoteCatalog.js
@@ -57,6 +59,7 @@ jobs:
           node --check frontend/api/dev-fix/robinhoodStockCreatePolicy.js
           node --check frontend/api/server.mjs
           node --check scripts/certify-robinhood-approved-quotes.mjs
+          node --check scripts/certify-robinhood-approved-quotes.test.mjs
           node -e 'JSON.parse(require("fs").readFileSync("frontend/api/data/approved-quote-catalog.v1.json", "utf8"))'
       - name: Registry authority tests
         working-directory: frontend
