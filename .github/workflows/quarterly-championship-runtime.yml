@@ -8,12 +8,15 @@ on:
       - "db/migrations/20260907_000001_quarterly_championship_runtime.sql"
       - "db/migrations/20260907_000002_quarterly_championship_continuous_base_points.sql"
       - "frontend/api/arenaLeague.js"
+      - "frontend/api/arenaSponsorVisibility.js"
       - "frontend/api/lib/arenaLeagueScore.js"
       - "frontend/api/lib/arenaLeagueScoreMath.js"
       - "frontend/api/lib/arenaQuarterlyChampionship.js"
       - "frontend/api/lib/arenaQuarterlyChampionshipMath.mjs"
       - "frontend/api/lib/arenaQuarterlyChampionship*.test.mjs"
+      - "frontend/api/lib/eventSponsorshipAuthority.mjs"
       - "frontend/src/hooks/useArenaLeagueFeed.ts"
+      - "frontend/src/pages/PostGradLeague.tsx"
       - "frontend/package.json"
       - ".github/workflows/quarterly-championship-runtime.yml"
   workflow_dispatch:
@@ -47,26 +50,30 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
-      - name: Verify #216 Solana BASIC rebase boundary
+      - name: Verify #216/#221 protected boundary
         shell: bash
         run: |
           set -euo pipefail
-          authority=809b94d3246e7d0cf5b20a83a9babc12d8047cb5
+          authority=42f00b9c5cc56d9956efa79f1fdb5cfd8edd7566
           git merge-base --is-ancestor "$authority" HEAD
           git diff --exit-code "$authority"..HEAD -- \
             frontend/api/lib/quoteAssetCatalog.js \
+            frontend/api/lib/approvedQuoteCatalog.js \
+            frontend/api/data/approved-quote-catalog.v1.json \
             frontend/api/lib/solanaOrcaGraduationQuote.js \
             frontend/api/dev-fix/solana-graduation-auth-bytes.js \
             frontend/api/dev-fix/solana-graduation-authorization-v1.js \
             frontend/api/dev-fix/solana-graduation-authorization-v2.js \
             frontend/supabase/migrations/20260907001000_solana_basic_quote_catalog.sql \
             frontend/supabase/migrations/20260907163000_solana_devnet_basic_quote_certification.sql \
+            frontend/supabase/migrations/20260907235000_approved_quote_catalog_expansion.sql \
             programs/memewarzone_solana \
             tools/solana-meteora-graduation
           node --check frontend/api/lib/quoteAssetCatalog.js
+          node --check frontend/api/lib/approvedQuoteCatalog.js
           node --check frontend/api/lib/solanaOrcaGraduationQuote.js
           node --check frontend/api/dev-fix/solana-graduation-authorization-v2.js
-          echo "SOLANA_BASIC_REBASE_REGRESSION=PASS"
+          echo "SOLANA_BASIC_AND_QUOTE_CATALOG_REGRESSION=PASS"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -110,8 +117,6 @@ jobs:
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260829_000001_arena_settle_idempotency.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260907_000001_quarterly_championship_runtime.sql
 
-          # Seed one pre-migration active legacy MWL point. The continuous-base
-          # migration must bind its canonical quarter and backfill it exactly once.
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
           insert into public.arena_league_seasons
             (id,chain_id,label,state,week,quarter,year,reset_at,active)
@@ -125,8 +130,6 @@ jobs:
           SQL
 
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260907_000002_quarterly_championship_continuous_base_points.sql
-
-          # Additive migrations must be replay-safe and must not rewrite history.
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260907_000001_quarterly_championship_runtime.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260907_000002_quarterly_championship_continuous_base_points.sql
 
