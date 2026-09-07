@@ -1,4 +1,4 @@
-name: Agent 2 99d1 Final Certification
+name: Agent 2 Final Head Certification
 
 on:
   push:
@@ -9,7 +9,8 @@ permissions:
   contents: read
 
 env:
-  CANDIDATE_SHA: 99d1d5befc814d60342d553d08eb5a871c5570dd
+  CANDIDATE_SHA: 1e7b45802a7e2e39e13e46321209d2eb6c87606f
+  CODE_SHA: 99d1d5befc814d60342d553d08eb5a871c5570dd
   BASE_SHA: 2f0b461bf8fc4c26e662e33014445d28f9924fda
   SOLANA_VERSION: 1.18.26
   ANCHOR_VERSION: 0.30.1
@@ -36,7 +37,8 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
-          test "$(git rev-parse HEAD^)" = "db2490f8a19bf3cbe5799845bab49e86e211137c"
+          test "$(git rev-parse HEAD^)" = "$CODE_SHA"
+          test "$(git rev-parse "$CODE_SHA^")" = "db2490f8a19bf3cbe5799845bab49e86e211137c"
           git diff --check "$BASE_SHA" "$CANDIDATE_SHA"
           rustfmt --edition 2021 --check programs/memewarzone_solana/src/graduation.rs
           cargo test -p memewarzone_solana --lib
@@ -126,8 +128,10 @@ jobs:
           const j=require('./target/idl/memewarzone_solana.json');
           if(!j.instructions||!j.instructions.length) process.exit(1);
           const names=new Set(j.instructions.map(x=>x.name));
-          for (const n of ['beginGraduation','confirmGraduation']) if(!names.has(n)) throw new Error(`IDL missing ${n}`);
+          const required=[['begin_graduation','beginGraduation'],['confirm_graduation','confirmGraduation']];
+          for(const variants of required) if(!variants.some(n=>names.has(n))) throw new Error(`IDL missing ${variants.join(' or ')}`);
           console.log('IDL_INSTRUCTIONS='+j.instructions.length);
+          console.log('IDL_NAMES='+[...names].join(','));
           NODE
           sha256sum target/idl/memewarzone_solana.json | tee /tmp/idl-sha
       - name: Read-only devnet ProgramData fit and extension rent
@@ -173,6 +177,7 @@ jobs:
           set -euo pipefail
           {
             echo "CANDIDATE_SHA=$CANDIDATE_SHA"
+            echo "CODE_SHA=$CODE_SHA"
             echo "BASE_SHA=$BASE_SHA"
             echo "BASELINE_BYTES=$(cat /tmp/baseline-bytes)"
             echo "CANDIDATE_BYTES=$(cat /tmp/candidate-bytes)"
@@ -183,9 +188,9 @@ jobs:
             cat /tmp/program-show.json
             cat /tmp/deployed-bytes
             cat /tmp/deployed-sha
-          } | tee agent2-99d1-certification.txt
+          } | tee agent2-final-certification.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: agent2-99d1-certification
-          path: agent2-99d1-certification.txt
+          name: agent2-final-certification
+          path: agent2-final-certification.txt
           retention-days: 7
