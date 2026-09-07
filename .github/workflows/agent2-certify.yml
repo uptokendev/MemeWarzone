@@ -85,10 +85,12 @@ jobs:
           const fs=require('fs');
           const r=fs.readFileSync('programs/memewarzone_solana/src/graduation.rs','utf8');
           const b=fs.readFileSync('frontend/api/dev-fix/solana-graduation-auth-bytes.js','utf8');
-          const t=fs.readFileSync('tools/solana-meteora-graduation/graduate-basic-quote.mjs','utf8');
+          const g=fs.readFileSync('tools/solana-meteora-graduation/graduate-basic-quote.mjs','utf8');
+          const v=fs.readFileSync('frontend/src/lib/solanaV0Transaction.ts','utf8');
           for(const token of ['GRADUATION_AUTH_SCHEMA_VERSION: u16 = 4','generation_config.as_ref()','quote_deviation_accepts_sub_raw_unit_and_rejects_excessive_drift','graduation_authorization_binds_exact_generation']) if(!r.includes(token)) throw new Error(`missing Rust certification token: ${token}`);
           for(const token of ['GRADUATION_AUTH_SCHEMA_VERSION = 4','fields.generationConfig']) if(!b.includes(token)) throw new Error(`missing backend-byte token: ${token}`);
-          for(const token of ['VersionedTransaction','AddressLookupTable','getLatestBlockhash','lastValidBlockHeight','confirmTransaction','quoteRecoveryAccount']) if(!t.includes(token)) throw new Error(`missing transaction regression token: ${token}`);
+          for(const token of ['VersionedTransaction','TransactionMessage','compileToV0Message','AddressLookupTableAccount']) if(!v.includes(token)) throw new Error(`missing V0 implementation token: ${token}`);
+          for(const token of ['loadSolanaV0Module','getLatestBlockhash','confirmTransaction','quoteRecoveryAccount','AddressLookupTableProgram']) if(!g.includes(token)) throw new Error(`missing graduation transaction token: ${token}`);
           if(!r.includes('PermanentLiquidityRequired') && !r.toLowerCase().includes('permanent')) throw new Error('permanent custody validation source missing');
           console.log('SOURCE_BINDING_V0_ALT_BLOCKHASH_RECOVERY=PASS');
           NODE
