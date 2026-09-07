@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { badMethod, getQuery, isAddress, isSolanaChain, normalizeAddress as normalizeAddressBase, json, readJson } from "../../server/http.js";
 import { requireDraftActionAuth } from "./draft-auth.js";
+import { getLaunchChainReadiness } from "../lib/launchChainReadiness.js";
 import { notifyDraftOwner } from "./prepare-notify.js";
 import {
   TickerReservationError,
@@ -478,6 +479,10 @@ export async function drafts(req, res) {
 
   const body = await readJson(req);
   const chainId = Number(body.chainId || process.env.VITE_TARGET_CHAIN_ID || 97);
+  const launchReadiness = getLaunchChainReadiness(chainId);
+  if (!launchReadiness.creationReady) {
+    return json(res, 503, { error: "Creator deployment is not enabled for this chain.", code: "CHAIN_CREATION_NOT_READY", ...launchReadiness });
+  }
   const creatorWallet = normalizeAddress(body.creatorWallet || body.walletAddress, chainId);
   if (!creatorWallet) return json(res, 400, { error: "Draft requires a connected wallet." });
 

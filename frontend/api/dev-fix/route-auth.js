@@ -23,6 +23,7 @@ import {
 } from "./routeAuthorizationSigner.js";
 import { prepareRobinhoodStockCreateAuthorization } from "./robinhoodStockCreatePolicy.js";
 import { defaultEvmChainId } from "../lib/defaultEvmChain.js";
+import { getLaunchChainReadiness, isSolanaLaunchChain } from "../lib/launchChainReadiness.js";
 import { isCreatorArmCooldownActive, normalizeCreatorArmCooldownEndsAt } from "../lib/creatorArmCooldown.js";
 
 const VALID_PROFILES = new Set([
@@ -358,6 +359,18 @@ export async function routingStatus(req, res) {
 
   const q = getQuery(req);
   const chainId = parsePositiveInt(q.chainId || process.env.VITE_DEFAULT_CHAIN_ID || process.env.VITE_TARGET_CHAIN_ID, defaultEvmChainId());
+  const launchReadiness = getLaunchChainReadiness(chainId);
+  if (isSolanaLaunchChain(chainId)) {
+    return json(res, 200, {
+      ok: true,
+      chainId,
+      status: launchReadiness.creationReady ? "ready" : "blocked",
+      readyForCoreFlow: launchReadiness.creationReady,
+      ...launchReadiness,
+      readinessReason: launchReadiness.reason,
+      authority: "server_runtime",
+    });
+  }
   const signer = getSigner();
   const routeAuthority = signer?.address || null;
   const factoryAddress = normalizeAddress(q.factoryAddress) || getFactoryAddressFromEnv(chainId);
@@ -366,7 +379,7 @@ export async function routingStatus(req, res) {
   const onchain = await readOnchainRouteAuthority({ chainId, factoryAddress });
   const matchesOnchain = Boolean(routeAuthority && onchain.routeAuthority && routeAuthority.toLowerCase() === onchain.routeAuthority.toLowerCase());
 
-  const readyForCoreFlow = Boolean(signer && factoryAddress && rpcUrlConfigured && onchain.routeAuthority && matchesOnchain);
+  const readyForCoreFlow = Boolean(launchReadiness.creationReady && signer && factoryAddress && rpcUrlConfigured && onchain.routeAuthority && matchesOnchain);
   const warnings = buildReadinessWarnings({ signer, factoryAddress, rpcUrlConfigured, onchain, matchesOnchain });
 
   const walletAddress = normalizeAddress(q.walletAddress);
@@ -379,6 +392,8 @@ export async function routingStatus(req, res) {
   return json(res, 200, {
     ok: readyForCoreFlow,
     readyForCoreFlow,
+    ...launchReadiness,
+    readinessReason: launchReadiness.reason,
     status: readinessStatus({ signer, factoryAddress, rpcUrlConfigured, onchain, matchesOnchain }),
     warnings,
     signerConfigured: Boolean(signer),
@@ -418,6 +433,10 @@ export async function routingCreateAuthorization(req, res) {
   const walletAddress = normalizeAddress(body.walletAddress);
   const factoryAddress = normalizeAddress(body.factoryAddress);
   const chainId = parsePositiveInt(body.chainId, 0);
+  const launchReadiness = getLaunchChainReadiness(chainId);
+  if (!launchReadiness.creationReady) {
+    return json(res, 503, { error: "Creator deployment is not enabled for this chain.", code: "CHAIN_CREATION_NOT_READY", ...launchReadiness });
+  }
   const requestedStockToken = String(body.stockToken || body.graduationQuoteAsset || "").trim();
   const stockToken = requestedStockToken ? normalizeAddress(requestedStockToken) : "";
 

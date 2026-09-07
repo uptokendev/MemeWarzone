@@ -1,0 +1,13 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { getLaunchChainReadiness } from "./launchChainReadiness.js";
+const evm = (id) => ({ [`CHAIN_${id}_SUPPORT_ENABLED`]: "true", [`CHAIN_${id}_CREATION_ENABLED`]: "true", [`FACTORY_ADDRESS_${id}`]: "0x1111111111111111111111111111111111111111" });
+const sol = { CHAIN_101_SUPPORT_ENABLED: "true", CHAIN_101_CREATION_ENABLED: "true", SOLANA_CREATE_AUTH_ENABLED: "true", SOLANA_RPC_URL: "https://rpc.example", SOLANA_LAUNCHPAD_PROGRAM_ID: "program", SOLANA_ROUTE_SIGNER_PUBLIC_KEY: "pub", SOLANA_ROUTE_SIGNER_SECRET_KEY: "secret", SOLANA_CLUSTER: "mainnet-beta", SOLANA_CLUSTER_HASH_HEX: "11".repeat(32) };
+test("BNB enabled + valid runtime", () => assert.equal(getLaunchChainReadiness(56, evm(56)).creationReady, true));
+test("Solana enabled + valid runtime", () => assert.equal(getLaunchChainReadiness(101, sol).creationReady, true));
+test("Robinhood creationEnabled=false", () => assert.equal(getLaunchChainReadiness(4663, { ...evm(4663), CHAIN_4663_CREATION_ENABLED: "false" }).creationReady, false));
+test("Robinhood missing factory", () => assert.equal(getLaunchChainReadiness(4663, { CHAIN_4663_SUPPORT_ENABLED: "true", CHAIN_4663_CREATION_ENABLED: "true" }).reason, "factory_missing"));
+test("Robinhood later enabled without code rewrite", () => assert.equal(getLaunchChainReadiness(4663, evm(4663)).creationReady, true));
+test("blocked Robinhood does not disable BNB/Solana", () => { assert.equal(getLaunchChainReadiness(4663, { ...evm(4663), CHAIN_4663_CREATION_ENABLED: "false" }).creationReady, false); assert.equal(getLaunchChainReadiness(56, evm(56)).creationReady, true); assert.equal(getLaunchChainReadiness(101, sol).creationReady, true); });
+test("frontend override cannot enable Robinhood", () => { const s = getLaunchChainReadiness(4663, { VITE_ENABLE_DIRECT_ROBINHOOD_DEPLOY: "true", VITE_FACTORY_ADDRESS_4663: "0x1111111111111111111111111111111111111111" }); assert.equal(s.creationReady, false); assert.equal(s.reason, "creation_disabled"); });
+test("supportEnabled=false blocks", () => assert.equal(getLaunchChainReadiness(56, { ...evm(56), CHAIN_56_SUPPORT_ENABLED: "false" }).creationReady, false));
