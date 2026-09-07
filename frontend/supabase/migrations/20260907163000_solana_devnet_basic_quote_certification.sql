@@ -82,7 +82,9 @@ insert into public.quote_asset_policy_versions (
       'decimals', 6,
       'acquisitionProgram', 'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc',
       'orcaWhirlpoolsConfig', 'FcrweFY1G9HJAHG5inkGB6pKg1HZ6x9UC2WioAfWrGkR',
-      'orcaPool', '4VXmK9STHvwHdrFpdA7tC4npDpKrmHnU5Ezuv4sytcR4',
+      'orcaPool', '6XqJUqX4zUL7KEm9wGqTvJmE7DdC8e6MYeMBF9uYLckX',
+      'orcaTickSpacing', 1,
+      'certificationSolUsdMicros', 145948162,
       'inputMint', 'So11111111111111111111111111111111111111112',
       'outputMint', '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
       'referenceUsdMicros', 1000000,
@@ -120,7 +122,8 @@ select
     'marketHealthStatus', d.market_health_status,
     'acquisitionAdapter', p.policy_config #>> '{solanaGraduation,acquisitionAdapter}',
     'acquisitionProgram', p.policy_config #>> '{solanaGraduation,acquisitionProgram}',
-    'orcaPool', p.policy_config #>> '{solanaGraduation,orcaPool}'
+    'orcaPool', p.policy_config #>> '{solanaGraduation,orcaPool}',
+    'orcaTickSpacing', p.policy_config #>> '{solanaGraduation,orcaTickSpacing}'
   ),
   'migration:20260907163000_solana_devnet_basic_quote_certification'
 from public.quote_asset_deployments d
