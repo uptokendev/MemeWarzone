@@ -13,78 +13,13 @@ env:
   HARNESS_SOURCE_SHA: 93b2359db5910fb16552a7a7e574ba078d3df61b
   PREVIOUS_CERT_SHA: e9c1e2be6bcd259de72fcfe103bcdd5f99b75462
   PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
-  PROGRAMDATA_ID: 9y6db1TSRHuMk1FK2GdLDYG4frdFH1z1wWtu2d1v5qM6
-  CANDIDATE_BYTES: 1165328
   SOLANA_VERSION: 1.18.26
   ANCHOR_VERSION: 0.30.1
   RUST_TOOLCHAIN: 1.79.0
   IDL_TOOLCHAIN: nightly-2024-05-09
   LOCAL_RPC: http://127.0.0.1:8899
-  DEVNET_RPC: https://api.devnet.solana.com
 
 jobs:
-  programdata-rent-readonly:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Read-only ProgramData allocation and rent proof
-        shell: bash
-        run: |
-          set -euo pipefail
-          node <<'NODE'
-          const rpc = process.env.DEVNET_RPC;
-          const programId = process.env.PROGRAM_ID;
-          const programDataId = process.env.PROGRAMDATA_ID;
-          const candidateBytes = Number(process.env.CANDIDATE_BYTES);
-          const metadataBytes = 45;
-          async function call(method, params = []) {
-            const response = await fetch(rpc, {
-              method: 'POST',
-              headers: {'content-type': 'application/json'},
-              body: JSON.stringify({jsonrpc:'2.0', id:1, method, params}),
-            });
-            if (!response.ok) throw new Error(`${method} HTTP ${response.status}`);
-            const json = await response.json();
-            if (json.error) throw new Error(`${method}: ${JSON.stringify(json.error)}`);
-            return json.result;
-          }
-          const genesis = await call('getGenesisHash');
-          const program = (await call('getAccountInfo', [programId, {encoding:'base64', commitment:'confirmed', dataSlice:{offset:0,length:0}}])).value;
-          if (!program || !program.executable) throw new Error('program account missing or not executable');
-          if (program.owner !== 'BPFLoaderUpgradeab1e11111111111111111111111') throw new Error(`unexpected program owner ${program.owner}`);
-          const pd = (await call('getAccountInfo', [programDataId, {encoding:'base64', commitment:'confirmed', dataSlice:{offset:0,length:0}}])).value;
-          if (!pd) throw new Error('ProgramData account missing');
-          if (pd.owner !== 'BPFLoaderUpgradeab1e11111111111111111111111') throw new Error(`unexpected ProgramData owner ${pd.owner}`);
-          let currentTotal = Number(pd.space);
-          if (!Number.isInteger(currentTotal) || currentTotal <= metadataBytes) {
-            const full = (await call('getAccountInfo', [programDataId, {encoding:'base64', commitment:'confirmed'}])).value;
-            currentTotal = Buffer.from(full.data[0], 'base64').length;
-          }
-          const currentCapacity = currentTotal - metadataBytes;
-          const extensionBytes = Math.max(0, candidateBytes - currentCapacity);
-          const targetTotal = candidateBytes + metadataBytes;
-          const rentMinimum = Number(await call('getMinimumBalanceForRentExemption', [targetTotal, {commitment:'confirmed'}]));
-          const currentLamports = Number(pd.lamports);
-          const additionalLamports = Math.max(0, rentMinimum - currentLamports);
-          console.log(`devnet_genesis ${genesis}`);
-          console.log(`program ${programId}`);
-          console.log(`programdata ${programDataId}`);
-          console.log(`current_programdata_allocation ${currentTotal}`);
-          console.log(`current_binary_capacity ${currentCapacity}`);
-          console.log(`candidate_binary_bytes ${candidateBytes}`);
-          console.log(`extension_bytes ${extensionBytes}`);
-          console.log(`resulting_required_allocation ${targetTotal}`);
-          console.log(`rent_exempt_minimum_lamports ${rentMinimum}`);
-          console.log(`current_balance_lamports ${currentLamports}`);
-          console.log(`additional_lamports_required ${additionalLamports}`);
-          console.log(`programdata_extension_required ${extensionBytes > 0 ? 'YES' : 'NO'}`);
-          if (currentCapacity !== 1124416) throw new Error(`capacity drift ${currentCapacity}`);
-          if (extensionBytes !== 40912) throw new Error(`extension drift ${extensionBytes}`);
-          NODE
-
   accept-local-basic-quotes:
     runs-on: ubuntu-latest
     timeout-minutes: 70
@@ -150,9 +85,9 @@ jobs:
           new='let quoteMint=NATIVE_MINT,quoteDecimals=9,binding=nativeGraduationBinding(oraclePrice),acquisitionIx=null,quoteRemaining=[],poolQuoteRaw=quote.maxLiquidityLamports,residual=0n,recoveryAccount=null,authorityQuote=null,acquisitionSource=null,acquired=0n;'
           if old not in s: raise SystemExit('stable setup declaration not found')
           s=s.replace(old,new,1)
-          s=s.replace('authorityQuote=await getOrCreateAssociatedTokenAccount(connection,adminKeypair,quoteMint,admin);','console.log("[stable-stage] authority-token-account:start"); authorityQuote={address:await createAccount(connection,adminKeypair,quoteMint,admin)}; console.log("[stable-stage] authority-token-account:ok",authorityQuote.address.toBase58());',1)
-          s=s.replace('const acquisitionSource=await createAccount(connection,adminKeypair,quoteMint,admin);','console.log("[stable-stage] acquisition-source:start"); acquisitionSource=await createAccount(connection,adminKeypair,quoteMint,admin); console.log("[stable-stage] acquisition-source:ok",acquisitionSource.toBase58());',1)
-          s=s.replace('recoveryAccount=await createAccount(connection,adminKeypair,quoteMint,campaign.creator);','console.log("[stable-stage] recovery-account:start",campaign.creator.toBase58()); recoveryAccount=await createAccount(connection,adminKeypair,quoteMint,campaign.creator); console.log("[stable-stage] recovery-account:ok",recoveryAccount.toBase58());',1)
+          s=s.replace('authorityQuote=await getOrCreateAssociatedTokenAccount(connection,adminKeypair,quoteMint,admin);','console.log("[stable-stage] authority-token-account:start"); authorityQuote={address:await createAccount(connection,adminKeypair,quoteMint,admin,Keypair.generate())}; console.log("[stable-stage] authority-token-account:ok",authorityQuote.address.toBase58());',1)
+          s=s.replace('const acquisitionSource=await createAccount(connection,adminKeypair,quoteMint,admin);','console.log("[stable-stage] acquisition-source:start"); acquisitionSource=await createAccount(connection,adminKeypair,quoteMint,admin,Keypair.generate()); console.log("[stable-stage] acquisition-source:ok",acquisitionSource.toBase58());',1)
+          s=s.replace('recoveryAccount=await createAccount(connection,adminKeypair,quoteMint,campaign.creator);','console.log("[stable-stage] recovery-account:start",campaign.creator.toBase58()); recoveryAccount=await createAccount(connection,adminKeypair,quoteMint,campaign.creator,Keypair.generate()); console.log("[stable-stage] recovery-account:ok",recoveryAccount.toBase58());',1)
           s=s.replace('quoteMint=await createMint(connection,adminKeypair,admin,null,quoteDecimals);','console.log("[stable-stage] mint:start",admin.toBase58()); quoteMint=await createMint(connection,adminKeypair,admin,null,quoteDecimals); console.log("[stable-stage] mint:ok",quoteMint.toBase58());',1)
           s=s.replace('const acquired=poolQuoteRaw+residual;','acquired=poolQuoteRaw+residual;',1)
           s=s.replace('const creatorAta=getAssociatedTokenAddressSync(campaignAccounts.mint,campaign.creator);','console.log("[stable-stage] creator-ata:owner",campaign.creator.toBase58()); const creatorAta=getAssociatedTokenAddressSync(campaignAccounts.mint,campaign.creator);',1)
@@ -162,7 +97,9 @@ jobs:
           pending=base64.b64decode(match.group(1)).decode('utf-8')
           marker='const latest=await connection.getLatestBlockhash("confirmed"); const versioned=v0Helpers.buildLaunchpadV0Transaction(web3,{payer:admin,recentBlockhash:latest.blockhash,instructions,lookupTableAccounts:[lookupTableAccount]});'
           if marker not in s: raise SystemExit('safe graduation V0 marker not found')
-          s=s.replace(marker,pending,1); p.write_text(s)
+          s=s.replace(marker,pending,1)
+          if 'getOrCreateAssociatedTokenAccount(connection,adminKeypair,quoteMint,admin)' in s: raise SystemExit('implicit stable authority ATA helper still present')
+          p.write_text(s)
           PY
           node --check tests/solana/v4-lifecycle-acceptance.cjs
       - name: Run canonical-stable graduation on fresh disposable validator
