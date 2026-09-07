@@ -7,6 +7,7 @@ const MAINNET_USDC = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const DEVNET_USDC = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
 const JUPITER = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
 const ORCA = "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc";
+const ORCA_CERT_POOL = "6XqJUqX4zUL7KEm9wGqTvJmE7DdC8e6MYeMBF9uYLckX";
 const DEVNET_NATIVE_CONFIG = "a2100000-0000-4000-8000-000000000211";
 const DEVNET_USDC_CONFIG = "a2100000-0000-4000-8000-000000000212";
 
@@ -30,6 +31,9 @@ has(devnet, "native:102", "devnet native identity");
 has(devnet, DEVNET_USDC, "devnet canonical Circle USDC");
 has(devnet, "ORCA_WHIRLPOOL_DEVNET", "devnet Orca adapter");
 has(devnet, ORCA, "devnet Orca program");
+has(devnet, ORCA_CERT_POOL, "devnet Orca certification pool");
+has(devnet, "'orcaTickSpacing', 1", "devnet Orca certification tick spacing");
+has(devnet, "'certificationSolUsdMicros', 145948162", "devnet certification reference");
 has(devnet, "'review'", "unseeded devnet stable must fail closed");
 assert.ok(!devnet.includes(MAINNET_USDC), "chain-102 migration must not contain mainnet USDC");
 
@@ -48,10 +52,16 @@ has(auth, "quoteConfigHash", "quote config digest binding");
 has(auth, "generationConfig: campaign.generationConfig", "generation digest binding");
 
 const orcaQuote = text("frontend/api/lib/solanaOrcaGraduationQuote.js");
-has(orcaQuote, DEVNET_USDC, "Orca exact output mint path is policy supplied and verified");
 has(orcaQuote, ORCA, "Orca exact program binding");
+has(orcaQuote, "fetchConcentratedLiquidityPool", "Orca concentrated pool resolver");
+has(orcaQuote, "route.orcaTickSpacing", "Orca tick spacing authority");
 has(orcaQuote, "pool.liquidity", "Orca liquidity health gate");
 has(orcaQuote, "pool mint binding mismatch", "Orca pool mint binding");
+
+const poolTool = text("tools/solana-meteora-graduation/orca-devnet-cert-pool.mjs");
+has(poolTool, ORCA_CERT_POOL, "operator exact Orca pool");
+has(poolTool, "CERT_TICK_SPACING = 1", "operator exact Orca fee tier");
+has(poolTool, DEVNET_USDC, "operator exact Circle USDC");
 
 const operator = text("tools/solana-meteora-graduation/graduate-basic-quote.mjs");
 has(operator, "buildAcquisitionInstructions", "operator policy adapter dispatch");
@@ -76,6 +86,8 @@ console.log(JSON.stringify({
   circleDevnetUsdc: DEVNET_USDC,
   productionJupiterProgram: JUPITER,
   devnetOrcaProgram: ORCA,
+  devnetOrcaPool: ORCA_CERT_POOL,
+  devnetOrcaTickSpacing: 1,
   solanaProgramSourceChanged: false,
   result: "PASS",
 }, null, 2));
