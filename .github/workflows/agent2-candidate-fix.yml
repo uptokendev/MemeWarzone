@@ -28,6 +28,29 @@ jobs:
           set -euo pipefail
           sed -i 's/exact\.to_bytes()/exact/g; s/substituted\.to_bytes()/substituted/g' .github/agent2-candidate-fix.py
           python .github/agent2-candidate-fix.py
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('programs/memewarzone_solana/src/graduation.rs')
+          s = p.read_text()
+          s = s.replace(
+              '[u128::from(quote_raw), token_scale(token_decimals)?, RATIO_SCALE],\n        [u128::from(token_raw), token_scale(quote_decimals)?],',
+              '[u128::from(quote_raw), token_scale(token_decimals)?, RATIO_SCALE],\n        [u128::from(token_raw), 1],',
+              1,
+          )
+          s = s.replace(
+              '[final_spot_nano, u128::from(sol_usd_micros), RATIO_SCALE],\n        [NANO_LAMPORTS_PER_SOL, u128::from(quote_usd_micros)],',
+              '[final_spot_nano, u128::from(sol_usd_micros), token_scale(quote_decimals)?],\n        [NANO_LAMPORTS_PER_SOL, u128::from(quote_usd_micros)],\n    )?\n    .checked_mul(RATIO_SCALE)\n    .ok_or(LaunchpadError::MathOverflow)?;',
+              1,
+          )
+          # Undo the now duplicated tail introduced by replacement if present.
+          s = s.replace(
+              '    )?\n    .checked_mul(RATIO_SCALE)\n    .ok_or(LaunchpadError::MathOverflow)?;\n    )?;',
+              '    )?\n    .checked_mul(RATIO_SCALE)\n    .ok_or(LaunchpadError::MathOverflow)?;',
+              1,
+          )
+          s = s.replace('            1_000_000_000,\n            9,\n            6,', '            1_000_000_000_000,\n            9,\n            6,', 2)
+          p.write_text(s)
+          PY
       - name: Format
         run: |
           set -euo pipefail
