@@ -94,7 +94,7 @@ export async function assertFreshGraduationQuote(asset: GraduationQuoteAsset): P
     : freshIdentity.toLowerCase() === sourceIdentity.toLowerCase();
   if (!sameChain || !sameProvider || !sameIdentity || fresh.newGraduationEligible !== true) {
     lastFreshSelection = null;
-    throw new Error("That Graduation Market is no longer approved. Select another currently available market.");
+    throw new Error("Graduation Market is no longer eligible. Choose another currently approved quote asset.");
   }
   lastFreshSelection = fresh;
   return fresh;
