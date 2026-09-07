@@ -1,6 +1,11 @@
 import { apiFetch } from "@/lib/apiBase";
 import type { WalletActionAuthPayload } from "@/lib/walletActionAuth";
 import type { SolanaV4CreateAuthorizationResponse } from "@/lib/solanaCreateAuthorizationV4";
+import {
+  assertFreshGraduationQuote,
+  lastFreshGraduationQuote,
+  type GraduationQuoteAsset,
+} from "@/lib/graduationQuoteCatalog";
 
 export type SolanaDirectPreflightResponse = {
   ok: true;
@@ -30,20 +35,11 @@ export type SolanaDirectBeginResponse = {
   alreadyOnChain: boolean;
   sessionToken?: string;
   tokenPath?: string;
-  accounts?: {
-    campaign: string;
-    mint: string;
-    tokenVault?: string;
-    solVault?: string;
-  };
+  accounts?: { campaign: string; mint: string; tokenVault?: string; solVault?: string };
   reservation?: Record<string, unknown>;
 };
 
-export type SolanaDirectAuthorizationResponse = SolanaV4CreateAuthorizationResponse & {
-  ok: true;
-  finalizeToken: string;
-};
-
+export type SolanaDirectAuthorizationResponse = SolanaV4CreateAuthorizationResponse & { ok: true; finalizeToken: string };
 export type SolanaDirectFinalizeResponse = {
   ok: true;
   campaignAddress: string;
@@ -66,10 +62,7 @@ async function postDirect(body: Record<string, unknown>) {
   if (!response.ok) {
     const message = String(payload?.error || payload?.message || `Solana Direct request failed (${response.status}).`);
     const code = payload?.code ? String(payload.code) : "";
-    const error = new Error(code ? `${message} [${code}]` : message) as Error & {
-      code?: string;
-      status?: number;
-    };
+    const error = new Error(code ? `${message} [${code}]` : message) as Error & { code?: string; status?: number };
     error.code = code || undefined;
     error.status = response.status;
     throw error;
@@ -77,32 +70,12 @@ async function postDirect(body: Record<string, unknown>) {
   return payload;
 }
 
-export async function preflightSolanaDirectCreate(input: {
-  creatorWallet: string;
-  chainId: number;
-  graduationTargetUsdMicros: string | number | bigint;
-}): Promise<SolanaDirectPreflightResponse> {
-  return postDirect({
-    operation: "preflight",
-    creatorWallet: input.creatorWallet,
-    chainId: input.chainId,
-    graduationTargetUsdMicros: String(input.graduationTargetUsdMicros),
-  }) as Promise<SolanaDirectPreflightResponse>;
+export async function preflightSolanaDirectCreate(input: { creatorWallet: string; chainId: number; graduationTargetUsdMicros: string | number | bigint }): Promise<SolanaDirectPreflightResponse> {
+  return postDirect({ operation: "preflight", creatorWallet: input.creatorWallet, chainId: input.chainId, graduationTargetUsdMicros: String(input.graduationTargetUsdMicros) }) as Promise<SolanaDirectPreflightResponse>;
 }
 
-export async function beginSolanaDirectCreate(input: {
-  creatorWallet: string;
-  chainId: number;
-  ticker: string;
-  auth: WalletActionAuthPayload;
-}): Promise<SolanaDirectBeginResponse> {
-  return postDirect({
-    operation: "begin",
-    creatorWallet: input.creatorWallet,
-    chainId: input.chainId,
-    ticker: input.ticker,
-    auth: input.auth,
-  }) as Promise<SolanaDirectBeginResponse>;
+export async function beginSolanaDirectCreate(input: { creatorWallet: string; chainId: number; ticker: string; auth: WalletActionAuthPayload }): Promise<SolanaDirectBeginResponse> {
+  return postDirect({ operation: "begin", creatorWallet: input.creatorWallet, chainId: input.chainId, ticker: input.ticker, auth: input.auth }) as Promise<SolanaDirectBeginResponse>;
 }
 
 export async function authorizeSolanaDirectCreate(input: {
@@ -118,7 +91,18 @@ export async function authorizeSolanaDirectCreate(input: {
   discordUrl?: string | null;
   otherUrl?: string | null;
   graduationTargetUsdMicros: string | number | bigint;
+  graduationQuoteAsset?: GraduationQuoteAsset;
 }): Promise<SolanaDirectAuthorizationResponse | (SolanaDirectBeginResponse & { alreadyOnChain: true })> {
+  const selected = input.graduationQuoteAsset || lastFreshGraduationQuote(101);
+  if (!selected) {
+    throw new Error("Your approved Graduation Market selection is missing. Select it again before Direct Deploy.");
+  }
+  // The browser-held object is only a reference. Re-read the exact asset from the
+  // authoritative API immediately before authorization; stale eligibility fails closed.
+  const freshQuote = await assertFreshGraduationQuote(selected);
+  if (String(freshQuote.chainId) !== "101") {
+    throw new Error("The selected Graduation Market belongs to another chain. Select a Solana-approved market.");
+  }
   return postDirect({
     operation: "authorize",
     sessionToken: input.sessionToken,
@@ -133,16 +117,14 @@ export async function authorizeSolanaDirectCreate(input: {
     discordUrl: input.discordUrl || null,
     otherUrl: input.otherUrl || null,
     graduationTargetUsdMicros: String(input.graduationTargetUsdMicros),
+    graduationQuoteAssetId: freshQuote.id,
+    graduationQuoteStateVersion: Number(freshQuote.stateVersion || 0),
+    graduationQuoteChainId: String(freshQuote.chainId),
+    graduationQuoteProvider: String(freshQuote.provider?.key || ""),
+    graduationQuoteIdentity: String(freshQuote.contractAddressOrMint || ""),
   }) as Promise<SolanaDirectAuthorizationResponse | (SolanaDirectBeginResponse & { alreadyOnChain: true })>;
 }
 
-export async function finalizeSolanaDirectCreate(input: {
-  finalizeToken: string;
-  deployTxHash: string;
-}): Promise<SolanaDirectFinalizeResponse> {
-  return postDirect({
-    operation: "finalize",
-    finalizeToken: input.finalizeToken,
-    deployTxHash: input.deployTxHash,
-  }) as Promise<SolanaDirectFinalizeResponse>;
+export async function finalizeSolanaDirectCreate(input: { finalizeToken: string; deployTxHash: string }): Promise<SolanaDirectFinalizeResponse> {
+  return postDirect({ operation: "finalize", finalizeToken: input.finalizeToken, deployTxHash: input.deployTxHash }) as Promise<SolanaDirectFinalizeResponse>;
 }

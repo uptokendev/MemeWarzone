@@ -1,0 +1,53 @@
+name: Approved Quote Picker Launch UI
+
+on:
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - "frontend/src/components/create/GraduationMarketStep.tsx"
+      - "frontend/src/lib/graduationQuoteCatalog.ts"
+      - "frontend/src/lib/graduationQuotePickerLaunch.mjs"
+      - "frontend/src/lib/graduationQuotePickerLaunch.test.mjs"
+      - "frontend/src/lib/graduationMarketPresentation.mjs"
+      - "frontend/src/lib/solanaDirectCreate.ts"
+      - "frontend/api/graduation/quote-assets.js"
+      - "frontend/api/lib/approvedQuoteCatalog.js"
+      - "frontend/api/lib/approvedQuoteCatalog.test.mjs"
+      - "frontend/api/lib/quoteAssetCatalog.js"
+      - "frontend/api/lib/quoteAssetCatalog.test.mjs"
+      - ".github/workflows/approved-quote-picker-launch-ui.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quote-picker-launch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --prefix frontend --no-audit --no-fund
+      - name: Launch picker matrix
+        run: |
+          node --test frontend/src/lib/graduationQuotePickerLaunch.test.mjs
+          node --test frontend/src/lib/graduationMarketPresentation.test.mjs
+      - name: Existing quote catalog regressions
+        run: |
+          node --test frontend/api/lib/approvedQuoteCatalog.test.mjs
+          node --test frontend/api/lib/quoteAssetCatalog.test.mjs
+      - name: API import graph
+        run: npm --prefix frontend run check:api-imports
+      - name: Production frontend build
+        run: npm --prefix frontend run build
