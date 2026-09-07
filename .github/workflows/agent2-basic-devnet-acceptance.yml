@@ -1,0 +1,288 @@
+name: Agent 2 BASIC devnet acceptance
+
+on:
+  push:
+    branches:
+      - agent2/solana-basic-graduation-market
+    paths:
+      - .github/workflows/agent2-basic-devnet-acceptance.yml
+      - frontend/api/lib/quoteAssetCatalog.js
+      - frontend/api/lib/solanaOrcaGraduationQuote.js
+      - frontend/api/dev-fix/solana-graduation-authorization-v2.js
+      - frontend/supabase/migrations/20260907163000_solana_devnet_basic_quote_certification.sql
+      - tools/solana-meteora-graduation/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent2-basic-devnet-acceptance
+  cancel-in-progress: false
+
+jobs:
+  basic-devnet-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: testnet-certification
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mwz_agent2
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d mwz_agent2"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/mwz_agent2
+      PG_DISABLE_SSL: "1"
+      SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER }}
+      SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
+      SOLANA_LAUNCHPAD_PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+      SOLANA_GRADUATION_AUTH_URL: http://127.0.0.1:43101/api/solana/graduation-authorize
+      SOLANA_GRADUATION_AUTH_ENABLED: "true"
+      SOLANA_GRADUATION_CHAIN_ID: "102"
+      SOLANA_GRADUATION_BASIC_RELEASE_ONLY: "true"
+      SOLANA_GRADUATION_SOL_USD_MICROS: "145948162"
+      SOLANA_GRADUATION_SEND: "true"
+      ORCA_DEVNET_CERT_REPORT: /tmp/mwz-orca-devnet-cert-pool.json
+      ORCA_DEVNET_CERT_SOL_USDC_PRICE: "145.948162"
+      ORCA_DEVNET_CERT_SEED_SOL: "0.10"
+      ORCA_DEVNET_CERT_RANGE_BPS: "300"
+      ORCA_DEVNET_CERT_ACQUISITION_LAMPORTS: "38416000"
+      SOLANA_GRADUATION_PAUSE_SNAPSHOT: /tmp/mwz-solana-devnet-pause-snapshot.json
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Verify frozen Solana program source and exact candidate identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git diff --name-only 1e7b45802a7e2e39e13e46321209d2eb6c87606f..HEAD -- programs/memewarzone_solana | wc -l | tr -d ' ')" = "0"
+          echo "sbf_expected_sha256=27ad65b560dba8a33330bd95f08ae7ca6945f71ebf667a5a3756ae0cb9f7f080"
+          echo "sbf_expected_bytes=1165328"
+          echo "program_upgrade_step=ABSENT"
+
+      - name: Install pinned runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --prefix frontend --no-audit --no-fund
+          npm install --prefix tests/solana --no-audit --no-fund
+          npm ci --prefix tools/solana-meteora-graduation --no-audit --no-fund
+          npm --prefix tools/solana-meteora-graduation run check
+          node tools/solana-meteora-graduation/check-graduation-auth-fixture.mjs
+          node tools/solana-meteora-graduation/check-devnet-basic-route.mjs
+
+      - name: Materialize dedicated devnet operator and route signer
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SOLANA_DEVNET_PAYER:-}" || { echo "BLOCKER: SOLANA_DEVNET_PAYER missing"; exit 1; }
+          test -n "${SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY:-}" || { echo "BLOCKER: SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY missing"; exit 1; }
+          operator_file="${RUNNER_TEMP}/mwz-solana-devnet-operator.json"
+          route_file="${RUNNER_TEMP}/mwz-solana-devnet-route-signer.json"
+          SOLANA_GRADUATION_OPERATOR_KEYPAIR="$operator_file" node scripts/solana/materialize-devnet-payer.mjs
+          ROUTE_FILE="$route_file" python3 - <<'PY'
+          import json, os
+          raw = os.environ['SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY'].strip()
+          value = json.loads(raw)
+          if not isinstance(value, list) or len(value) != 64:
+              raise SystemExit('route signer must be a 64-byte JSON array')
+          with open(os.environ['ROUTE_FILE'], 'w', encoding='utf-8') as f:
+              json.dump(value, f)
+          os.chmod(os.environ['ROUTE_FILE'], 0o600)
+          PY
+          route_pub="$(ROUTE_FILE="$route_file" node - <<'NODE'
+          const fs=require('fs');
+          const {Keypair}=require('./tests/solana/node_modules/@solana/web3.js');
+          const b=JSON.parse(fs.readFileSync(process.env.ROUTE_FILE,'utf8'));
+          process.stdout.write(Keypair.fromSecretKey(Uint8Array.from(b)).publicKey.toBase58());
+          NODE
+          )"
+          echo "SOLANA_GRADUATION_OPERATOR_KEYPAIR=$operator_file" >> "$GITHUB_ENV"
+          echo "SOLANA_OPERATOR_KEYPAIR=$operator_file" >> "$GITHUB_ENV"
+          echo "SOLANA_NEW_ROUTE_SIGNER_KEYPAIR=$route_file" >> "$GITHUB_ENV"
+          echo "SOLANA_ROUTE_SIGNER_PUBLIC_KEY=$route_pub" >> "$GITHUB_ENV"
+          echo "ORCA_DEVNET_CERT_PARKING_OWNER=$route_pub" >> "$GITHUB_ENV"
+          echo "derived_devnet_route_signer=$route_pub"
+
+      - name: Create disposable authoritative Quote Asset Catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p 5432 -U postgres -d mwz_agent2 && break; sleep 1; done
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/supabase/migrations/20260906231500_quote_asset_catalog.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/supabase/migrations/20260907001000_solana_basic_quote_catalog.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/supabase/migrations/20260907163000_solana_devnet_basic_quote_certification.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "select id||':'||chain_id||':'||contract_address_or_mint||':'||market_health_status from public.quote_asset_deployments where id in ('a2100000-0000-4000-8000-000000000201','a2100000-0000-4000-8000-000000000202','a2100000-0000-4000-8000-000000000211','a2100000-0000-4000-8000-000000000212') order by id" | tee /tmp/mwz-agent2-catalog-before.txt
+          grep -q 'a2100000-0000-4000-8000-000000000202:101:EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v:healthy' /tmp/mwz-agent2-catalog-before.txt
+          grep -q 'a2100000-0000-4000-8000-000000000212:102:4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU:review' /tmp/mwz-agent2-catalog-before.txt
+
+      - name: Verify or seed real Orca WSOL Circle-USDC certification pool
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tools/solana-meteora-graduation/orca-devnet-cert-pool.mjs
+          node -e 'const r=require("/tmp/mwz-orca-devnet-cert-pool.json"); if(r.status!=="READY"||r.poolAddress!=="6XqJUqX4zUL7KEm9wGqTvJmE7DdC8e6MYeMBF9uYLckX"||r.circleDevnetUsdcMint!=="4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"||Number(r.certificationSwap.measuredImpactBps)>100)process.exit(1); if(r.residualParking?.operatorUsdcRawAfterParking!=="0")process.exit(2); console.log(r);'
+
+      - name: Generate IDL only without SBF build
+        shell: bash
+        env:
+          ANCHOR_VERSION: 0.30.1
+          IDL_RUST_TOOLCHAIN: nightly-2024-05-09
+        run: |
+          set -euo pipefail
+          test ! -e target/deploy/memewarzone_solana.so
+          rustup toolchain install "$IDL_RUST_TOOLCHAIN" --profile minimal
+          npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+          mkdir -p target/idl
+          (cd programs/memewarzone_solana && RUSTUP_TOOLCHAIN="$IDL_RUST_TOOLCHAIN" anchor idl build --out ../../target/idl/memewarzone_solana.json)
+          test -s target/idl/memewarzone_solana.json
+          test ! -e target/deploy/memewarzone_solana.so || { echo 'BLOCKER: IDL-only lane unexpectedly emitted an SBF'; exit 1; }
+
+      - name: Start isolated chain-102 graduation authorization
+        shell: bash
+        env:
+          SOLANA_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          nohup node scripts/solana/devnet-graduation-auth-server.mjs >/tmp/mwz-agent2-auth.log 2>&1 &
+          echo $! >/tmp/mwz-agent2-auth.pid
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:43101/health >/tmp/mwz-agent2-auth-health.json; then cat /tmp/mwz-agent2-auth-health.json; exit 0; fi
+            sleep 1
+          done
+          cat /tmp/mwz-agent2-auth.log || true
+          exit 1
+
+      - name: Open isolated graduation window
+        shell: bash
+        run: npm --prefix tests/solana run devnet:graduation-window -- open
+
+      - name: Native chain-102 graduation
+        shell: bash
+        run: |
+          set -euo pipefail
+          export SOLANA_GRADUATION_FIXTURE_OUTPUT=/tmp/mwz-agent2-native-fixture.json
+          npm --prefix tests/solana run devnet:create-graduation-fixture
+          native_campaign="$(node -e 'const r=require("/tmp/mwz-agent2-native-fixture.json");process.stdout.write(r.campaign)')"
+          echo "$native_campaign" >/tmp/mwz-agent2-native-campaign.txt
+          export SOLANA_GRADUATION_QUOTE_CONFIG_ID=a2100000-0000-4000-8000-000000000211
+          node tools/solana-meteora-graduation/graduate-basic-quote.mjs "$native_campaign" | tee /tmp/mwz-agent2-native-graduation.log
+          SOLANA_BASIC_RESULT_REPORT=/tmp/mwz-agent2-native-result.json node tools/solana-meteora-graduation/verify-basic-graduation-result.mjs "$native_campaign" /tmp/mwz-agent2-native-graduation.log So11111111111111111111111111111111111111112
+
+      - name: Create stable fixture and prove unsafe quote stays pending with no native fallback
+        shell: bash
+        run: |
+          set -euo pipefail
+          export SOLANA_GRADUATION_FIXTURE_OUTPUT=/tmp/mwz-agent2-stable-fixture.json
+          npm --prefix tests/solana run devnet:create-graduation-fixture
+          stable_campaign="$(node -e 'const r=require("/tmp/mwz-agent2-stable-fixture.json");process.stdout.write(r.campaign)')"
+          echo "$stable_campaign" >/tmp/mwz-agent2-stable-campaign.txt
+          operator="$(node -e 'const fs=require("fs");const {Keypair}=require("./tests/solana/node_modules/@solana/web3.js");const b=JSON.parse(fs.readFileSync(process.env.SOLANA_OPERATOR_KEYPAIR,"utf8"));process.stdout.write(Keypair.fromSecretKey(Uint8Array.from(b)).publicKey.toBase58())')"
+          position="$(node -e 'const {Keypair}=require("./tests/solana/node_modules/@solana/web3.js");process.stdout.write(Keypair.generate().publicKey.toBase58())')"
+          http_code="$(curl -sS -o /tmp/mwz-agent2-unsafe-auth.json -w '%{http_code}' -H 'content-type: application/json' -d "{\"chainId\":102,\"campaignAddress\":\"$stable_campaign\",\"authorityAddress\":\"$operator\",\"positionNftMint\":\"$position\",\"quoteConfigId\":\"a2100000-0000-4000-8000-000000000212\"}" "$SOLANA_GRADUATION_AUTH_URL")"
+          test "$http_code" = "409"
+          cat /tmp/mwz-agent2-unsafe-auth.json
+          node --input-type=module - "$stable_campaign" <<'NODE'
+          import {Connection,PublicKey} from './tools/solana-meteora-graduation/node_modules/@solana/web3.js';
+          const campaign=new PublicKey(process.argv[2]);
+          const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
+          const info=await c.getAccountInfo(campaign,'confirmed'); if(!info) throw new Error('campaign missing');
+          if(info.data[713]===1) throw new Error('unsafe campaign unexpectedly graduated');
+          const mint=new PublicKey(info.data.subarray(168,200));
+          const wsol=new PublicKey('So11111111111111111111111111111111111111112');
+          const [a,b]=Buffer.compare(mint.toBuffer(),wsol.toBuffer())>0?[mint,wsol]:[wsol,mint];
+          const pool=PublicKey.findProgramAddressSync([Buffer.from('cpool'),a.toBuffer(),b.toBuffer()],new PublicKey('cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG'))[0];
+          if(await c.getAccountInfo(pool,'confirmed')) throw new Error(`native fallback pool exists: ${pool}`);
+          console.log(`unsafe_pending_campaign=${campaign} native_fallback_pool_absent=${pool}`);
+          NODE
+
+      - name: Promote verified devnet Orca route health and append decision evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e 'const r=require("/tmp/mwz-orca-devnet-cert-pool.json");if(r.status!=="READY"||Number(r.certificationSwap.measuredImpactBps)>100)process.exit(1)'
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          begin;
+          update public.quote_asset_deployments
+             set market_health_status='healthy', existing_market_support=true, state_version=state_version+1, last_scan_at=now(), updated_at=now()
+           where id='a2100000-0000-4000-8000-000000000212'::uuid
+             and chain_id='102'
+             and contract_address_or_mint='4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
+             and market_health_status='review';
+          insert into public.quote_asset_decision_history(deployment_id,provider_id,policy_version_id,state_version,decision,reason,decision_snapshot,actor_identity)
+          select d.id,d.provider_id,'a2100000-0000-4000-8000-000000000312'::uuid,d.state_version,'eligible',
+                 'Real Orca devnet WSOL/Circle-USDC pool seeded and graduation-sized impact certified.',
+                 jsonb_build_object('chainId','102','orcaPool','6XqJUqX4zUL7KEm9wGqTvJmE7DdC8e6MYeMBF9uYLckX','quoteMint','4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'),
+                 'ci:agent2-basic-devnet-acceptance'
+            from public.quote_asset_deployments d
+           where d.id='a2100000-0000-4000-8000-000000000212'::uuid;
+          commit;
+          SQL
+
+      - name: Retry same stable campaign and graduate through Orca into Meteora
+        shell: bash
+        run: |
+          set -euo pipefail
+          stable_campaign="$(cat /tmp/mwz-agent2-stable-campaign.txt)"
+          export SOLANA_GRADUATION_FIXTURE_OUTPUT=/tmp/mwz-agent2-stable-fixture.json
+          export SOLANA_GRADUATION_QUOTE_CONFIG_ID=a2100000-0000-4000-8000-000000000212
+          node tools/solana-meteora-graduation/graduate-basic-quote.mjs "$stable_campaign" | tee /tmp/mwz-agent2-stable-graduation.log
+          SOLANA_BASIC_RESULT_REPORT=/tmp/mwz-agent2-stable-result.json node tools/solana-meteora-graduation/verify-basic-graduation-result.mjs "$stable_campaign" /tmp/mwz-agent2-stable-graduation.log 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
+          node --input-type=module - "$stable_campaign" <<'NODE'
+          import {Connection,PublicKey} from './tools/solana-meteora-graduation/node_modules/@solana/web3.js';
+          const campaign=new PublicKey(process.argv[2]); const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
+          const info=await c.getAccountInfo(campaign,'confirmed'); if(!info||info.data[713]!==1) throw new Error('stable retry did not graduate exactly once');
+          const mint=new PublicKey(info.data.subarray(168,200)); const wsol=new PublicKey('So11111111111111111111111111111111111111112');
+          const [a,b]=Buffer.compare(mint.toBuffer(),wsol.toBuffer())>0?[mint,wsol]:[wsol,mint];
+          const nativePool=PublicKey.findProgramAddressSync([Buffer.from('cpool'),a.toBuffer(),b.toBuffer()],new PublicKey('cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG'))[0];
+          if(await c.getAccountInfo(nativePool,'confirmed')) throw new Error(`silent WSOL fallback exists: ${nativePool}`);
+          console.log(`stable_graduated=true native_fallback_absent=${nativePool}`);
+          NODE
+
+      - name: Restore original graduation pause state
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "${SOLANA_OPERATOR_KEYPAIR:-}" ] && [ -s target/idl/memewarzone_solana.json ] && [ -s "$SOLANA_GRADUATION_PAUSE_SNAPSHOT" ]; then
+            npm --prefix tests/solana run devnet:graduation-window -- restore
+          else
+            echo 'No graduation pause snapshot exists; nothing to restore.'
+          fi
+
+      - name: Upload Agent 2 acceptance evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent2-basic-devnet-acceptance-${{ github.sha }}
+          path: |
+            /tmp/mwz-orca-devnet-cert-pool.json
+            /tmp/mwz-agent2-catalog-before.txt
+            /tmp/mwz-agent2-auth.log
+            /tmp/mwz-agent2-auth-health.json
+            /tmp/mwz-agent2-native-fixture.json
+            /tmp/mwz-agent2-native-graduation.log
+            /tmp/mwz-agent2-native-result.json
+            /tmp/mwz-agent2-stable-fixture.json
+            /tmp/mwz-agent2-unsafe-auth.json
+            /tmp/mwz-agent2-stable-graduation.log
+            /tmp/mwz-agent2-stable-result.json
+            /tmp/mwz-solana-devnet-pause-snapshot.json
+          if-no-files-found: warn
+          retention-days: 14
