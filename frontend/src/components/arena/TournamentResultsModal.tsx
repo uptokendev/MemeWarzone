@@ -7,6 +7,10 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { WarzoneTokenMark } from "@/components/warzone/WarzoneTokenMark";
 import { tournamentSponsorEventType, useEventSponsors } from "@/hooks/useEventSponsors";
 import { useTournamentCommandState } from "@/hooks/useTournamentCommandState";
+import {
+  isQuarterlyChampionshipRuntime,
+  presentQuarterlyChampionshipCard,
+} from "@/lib/arena/quarterlyChampionshipPresentation.mjs";
 
 export function TournamentResultsModal({
   tournamentId,
@@ -21,12 +25,14 @@ export function TournamentResultsModal({
 }) {
   const [bracketOpen, setBracketOpen] = useState(false);
   const state = useTournamentCommandState(open ? tournamentId : "", { loadMetrics: false });
-  const card = state.card;
-  const champion = state.champion;
-  const sponsorType = tournamentSponsorEventType({
+  const source = {
     ...((state.tournament || {}) as Record<string, unknown>),
     ...((state.detail?.event || {}) as Record<string, unknown>),
-  });
+  };
+  const quarterlyChampionship = isQuarterlyChampionshipRuntime(source);
+  const card = state.card ? presentQuarterlyChampionshipCard(state.card, source) : null;
+  const champion = quarterlyChampionship ? null : state.champion;
+  const sponsorType = tournamentSponsorEventType(source);
   const sponsors = useEventSponsors({ eventType: sponsorType, eventReferenceId: state.id, chainId: state.tournamentChainId, enabled: open });
 
   return (
@@ -34,13 +40,16 @@ export function TournamentResultsModal({
       <DialogContent
         data-tournament-results-modal="true"
         data-tournament-details-modal="true"
+        data-quarterly-championship={quarterlyChampionship ? "true" : undefined}
         className="max-h-[90vh] w-[95vw] max-w-lg overflow-y-auto border bg-[#050505] p-4 md:p-6"
         style={{ borderColor: "var(--mwz-flat-card-border)" }}
       >
         <DialogHeader className="pr-8 text-left">
           <DialogTitle className="font-black text-xl text-foreground">{card?.title || "Tournament"}</DialogTitle>
-          <DialogDescription className="text-[11px] uppercase tracking-[0.16em] text-white/50">Results</DialogDescription>
-          <EventSponsorAttribution sponsors={sponsors} variant={sponsorType === "mwl_quarter_finals" || sponsorType === "quarterly_championship" ? "premium" : "prominent"} />
+          <DialogDescription className="text-[11px] uppercase tracking-[0.16em] text-white/50">
+            {quarterlyChampionship ? "Quarterly Championship results" : "Results"}
+          </DialogDescription>
+          <EventSponsorAttribution sponsors={sponsors} variant={quarterlyChampionship ? "premium" : "prominent"} />
         </DialogHeader>
         {!state.tournament ? (
           <p className="text-sm text-muted-foreground">This tournament could not be loaded.</p>
@@ -56,33 +65,41 @@ export function TournamentResultsModal({
                   {champion.tokenName ? <div className="text-[11px] uppercase tracking-[0.12em] text-white/50">{champion.tokenName}</div> : null}
                 </div>
               </div>
+            ) : quarterlyChampionship ? (
+              <p className="text-sm text-muted-foreground">
+                Final Quarterly Championship placement follows the authoritative quarterly standings at epoch close.
+              </p>
             ) : null}
             <ArenaWarPoolClaimButton
               battleId={state.id}
               chainId={state.tournamentChainId}
-              label="CLAIM TOURNAMENT REWARDS"
+              label={quarterlyChampionship ? "CLAIM CHAMPIONSHIP REWARDS" : "CLAIM TOURNAMENT REWARDS"}
             />
-            <button
-              type="button"
-              onClick={() => {
-                if (onViewBracket) onViewBracket();
-                else setBracketOpen(true);
-              }}
-              className="inline-flex min-h-11 items-center text-xs uppercase tracking-[0.16em] text-accent hover:underline"
-            >
-              Final bracket
-            </button>
-            <TournamentBracketModal
-              open={bracketOpen}
-              onOpenChange={setBracketOpen}
-              title={card?.title || "Tournament"}
-              statusLabel={card?.status.label}
-              stageLabel={card?.bracketStage}
-              rounds={state.bracketRounds}
-              entries={state.entries}
-              chainId={state.tournamentChainId}
-              sponsors={sponsors}
-            />
+            {!quarterlyChampionship ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onViewBracket) onViewBracket();
+                    else setBracketOpen(true);
+                  }}
+                  className="inline-flex min-h-11 items-center text-xs uppercase tracking-[0.16em] text-accent hover:underline"
+                >
+                  Final bracket
+                </button>
+                <TournamentBracketModal
+                  open={bracketOpen}
+                  onOpenChange={setBracketOpen}
+                  title={card?.title || "Tournament"}
+                  statusLabel={card?.status.label}
+                  stageLabel={card?.bracketStage}
+                  rounds={state.bracketRounds}
+                  entries={state.entries}
+                  chainId={state.tournamentChainId}
+                  sponsors={sponsors}
+                />
+              </>
+            ) : null}
           </div>
         )}
       </DialogContent>
