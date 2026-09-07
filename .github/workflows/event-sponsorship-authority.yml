@@ -8,6 +8,7 @@ on:
       - "frontend/api/arenaSponsorshipPublic.js"
       - "frontend/api/arenaSponsorships.js"
       - "frontend/api/arenaSponsorVisibility.js"
+      - "frontend/api/arenaLeague.js"
       - "frontend/api/postgrad.js"
       - "frontend/api/lib/eventSponsorshipAuthority.mjs"
       - "frontend/api/lib/eventSponsorshipLifecycle.mjs"
@@ -16,6 +17,18 @@ on:
       - "frontend/api/lib/eventSponsorshipAuthority.test.mjs"
       - "frontend/api/lib/eventSponsorshipSeparation.test.mjs"
       - "frontend/api/lib/arenaSponsorshipProviderAwait.test.mjs"
+      - "frontend/src/lib/arena/quarterlyChampionshipPresentation.mjs"
+      - "frontend/src/lib/arena/quarterlyChampionshipPresentation.test.mjs"
+      - "frontend/src/lib/arena/warzoneChrome.mjs"
+      - "frontend/src/lib/arena/warzoneChrome.test.mjs"
+      - "frontend/src/hooks/useEventSponsors.ts"
+      - "frontend/src/pages/PostGradLeague.tsx"
+      - "frontend/src/components/arena/EventSponsorAttribution.tsx"
+      - "frontend/src/components/arena/TournamentEventCard.tsx"
+      - "frontend/src/components/arena/TournamentLiveOverviewModal.tsx"
+      - "frontend/src/components/arena/TournamentRegistrationModal.tsx"
+      - "frontend/src/components/arena/TournamentResultsModal.tsx"
+      - "frontend/src/components/warzone/WarzoneLeagueHowItWorks.tsx"
       - "frontend/db/migrations/20260904_000000_event_sponsorship_core_schema.sql"
       - "frontend/db/migrations/20260904_000001_solana_arena_money_v2_runtime.sql"
       - "frontend/db/migrations/20260905_000001_solana_arena_payment_lifecycle.sql"
@@ -68,9 +81,12 @@ jobs:
           node --check api/arenaEventSponsorshipRecovery.js
           node --check api/arenaSponsorVisibility.js
           node --check api/arenaSponsorships.js
+          node --check api/arenaSponsorshipPublic.js
+          node --check api/arenaLeague.js
           node --check api/postgrad.js
-      - name: Authority invariants
-        run: node --test api/lib/eventSponsorshipAuthority.test.mjs api/lib/eventSponsorshipSeparation.test.mjs api/lib/arenaSponsorVisibilityPolicy.test.mjs
+          node --check src/lib/arena/quarterlyChampionshipPresentation.mjs
+      - name: Authority and quarterly presentation invariants
+        run: node --test api/lib/eventSponsorshipAuthority.test.mjs api/lib/eventSponsorshipSeparation.test.mjs api/lib/arenaSponsorVisibilityPolicy.test.mjs src/lib/arena/quarterlyChampionshipPresentation.test.mjs
       - name: Sponsorship provider await regression
         run: node --test api/lib/arenaSponsorshipProviderAwait.test.mjs
       - name: Install PostgreSQL client
