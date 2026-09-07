@@ -1,0 +1,63 @@
+name: Agent 2 Candidate Fix
+
+on:
+  push:
+    branches:
+      - agent2/candidate-work
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: ${{ !contains(github.event.head_commit.message, '[agent2-candidate]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent2/candidate-work
+          fetch-depth: 0
+          token: ${{ github.token }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply candidate corrections
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -i 's/exact\.to_bytes()/exact/g; s/substituted\.to_bytes()/substituted/g' .github/agent2-candidate-fix.py
+          python .github/agent2-candidate-fix.py
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('programs/memewarzone_solana/src/graduation.rs')
+          s = p.read_text()
+          s = s.replace('''            150,\n            1_000_000_000,\n            9,\n            6,''', '''            150,\n            1_000_000_000_000,\n            9,\n            6,''', 1)
+          s = s.replace('''            180,\n            1_000_000_000,\n            9,\n            6,''', '''            180,\n            1_000_000_000_000,\n            9,\n            6,''', 1)
+          p.write_text(s)
+          PY
+      - name: Format
+        run: |
+          set -euo pipefail
+          cargo fmt --package memewarzone_solana
+          rustfmt --edition 2021 --check programs/memewarzone_solana/src/graduation.rs
+      - name: Rust unit suite
+        run: cargo test -p memewarzone_solana --lib
+      - name: JS syntax and auth bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check frontend/api/dev-fix/solana-graduation-auth-bytes.js
+          node --check frontend/api/dev-fix/solana-graduation-authorization-v2.js
+          node --check tools/solana-meteora-graduation/graduate-basic-quote.mjs
+          node tools/solana-meteora-graduation/check-graduation-auth-fixture.mjs
+      - name: Commit real candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/agent2-candidate-fix.py .github/workflows/agent2-candidate-fix.yml
+          git add -A
+          git commit -m "[agent2-candidate] bind generation and fix quote deviation"
+          git push origin HEAD:agent2/candidate-work
