@@ -22,7 +22,7 @@ const ORCA_PROGRAM = "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc";
 const ORCA_DEVNET_CONFIG = "FcrweFY1G9HJAHG5inkGB6pKg1HZ6x9UC2WioAfWrGkR";
 const CIRCLE_DEVNET_USDC = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
 const WSOL = NATIVE_MINT.toBase58();
-const CERT_TICK_SPACING = 64;
+const CERT_TICK_SPACING = 128;
 const DEFAULT_RPC = "https://api.devnet.solana.com";
 const DEFAULT_PRICE = 150;
 const DEFAULT_SEED_SOL = 0.10;
@@ -170,10 +170,9 @@ async function main() {
   }
 
   if (BigInt(pool.liquidity || 0) === 0n) {
-    const seedParam = { tokenMaxA: desiredSolRaw };
     const opened = await openFullRangePosition(
       address(intendedPoolAddress),
-      seedParam,
+      { tokenMaxA: desiredSolRaw },
       {
         slippageToleranceBps: 100,
         funder: payer,
