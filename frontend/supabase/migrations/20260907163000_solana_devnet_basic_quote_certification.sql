@@ -38,7 +38,7 @@ insert into public.quote_asset_deployments (
   '102', 'SOLANA_MINT',
   '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
   '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
-  'verified', 'verified', 'healthy', true, 'enabled', 1, now()
+  'verified', 'verified', 'review', false, 'enabled', 1, now()
 )
 on conflict (provider_id, chain_id, identity_key) do nothing;
 
@@ -72,7 +72,7 @@ insert into public.quote_asset_policy_versions (
   'a2100000-0000-4000-8000-000000000312'::uuid,
   'a2100000-0000-4000-8000-000000000112'::uuid,
   (select id from public.quote_asset_providers where provider_key = 'solana-basic'),
-  'solana-devnet-basic-circle-usdc-v1', 1, 'active', true, true, true, true, true,
+  'solana-devnet-basic-circle-usdc-v1', 1, 'active', true, false, true, true, true,
   jsonb_build_object(
     'solanaGraduation', jsonb_build_object(
       'cluster', 'devnet',
@@ -104,10 +104,11 @@ select
   d.provider_id,
   p.id,
   d.state_version,
-  'eligible',
+  case when d.id = 'a2100000-0000-4000-8000-000000000211'::uuid then 'eligible' else 'review' end,
   case
-    when d.identity_kind = 'NATIVE' then 'Solana devnet BASIC certification native quote: exact chain-102 native identity and policy pinned.'
-    else 'Solana devnet BASIC certification stable quote: exact Circle devnet USDC mint and Orca Whirlpool acquisition authority pinned.'
+    when d.id = 'a2100000-0000-4000-8000-000000000211'::uuid
+      then 'Solana devnet BASIC certification native quote: exact chain-102 native identity and policy pinned.'
+    else 'Circle devnet USDC identity and Orca route are pinned, but the certification pool is unseeded; keep new graduation disabled until real canonical-USDC liquidity is verified.'
   end,
   jsonb_build_object(
     'chainId', d.chain_id,
@@ -115,6 +116,8 @@ select
     'contractAddressOrMint', d.contract_address_or_mint,
     'policyKey', p.policy_key,
     'policyVersion', p.version,
+    'newGraduationEnabled', p.new_graduation_enabled,
+    'marketHealthStatus', d.market_health_status,
     'acquisitionAdapter', p.policy_config #>> '{solanaGraduation,acquisitionAdapter}',
     'acquisitionProgram', p.policy_config #>> '{solanaGraduation,acquisitionProgram}',
     'orcaPool', p.policy_config #>> '{solanaGraduation,orcaPool}'
