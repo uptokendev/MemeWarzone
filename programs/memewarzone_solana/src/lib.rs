@@ -448,7 +448,9 @@ pub mod memewarzone_solana {
     }
 
     /// Verifies the deterministic DAMM v2 pool + permanently locked position, then finalizes Campaign.
-    pub fn confirm_graduation(ctx: Context<ConfirmGraduation>) -> Result<()> {
+    pub fn confirm_graduation<'info>(
+        ctx: Context<'_, '_, '_, 'info, ConfirmGraduation<'info>>,
+    ) -> Result<()> {
         confirm_graduation_handler(ctx)
     }
 }

@@ -163,10 +163,16 @@ function mapGenericRow(row) {
     adminState: row.deployment_admin_state,
     policy: {
       authority: "generic",
+      id: row.policy_version_id,
       policyKey: authority.policyKey,
       version: authority.policyVersion,
       active: authority.policyActive,
       basicApproved: authority.basicApproved,
+      newGraduationEnabled: row.new_graduation_enabled === true,
+      requireIdentityVerified: row.require_identity_verified !== false,
+      requireSecurityVerified: row.require_security_verified !== false,
+      requireMarketHealthy: row.require_market_healthy !== false,
+      config: row.policy_config || {},
     },
     lastVerifiedAt: row.last_scan_at,
   };
@@ -205,7 +211,8 @@ select
   pv.new_graduation_enabled,
   pv.require_identity_verified,
   pv.require_security_verified,
-  pv.require_market_healthy
+  pv.require_market_healthy,
+  pv.policy_config
 from public.quote_asset_deployments d
 join public.quote_assets a on a.id = d.quote_asset_id
 join public.quote_asset_providers p on p.id = d.provider_id and p.id = a.provider_id

@@ -1,0 +1,95 @@
+name: Agent 2 Orca devnet certification pool
+
+# Read-only preflight only. Real liquidity mutation lives exclusively in the full BASIC acceptance rail.
+on:
+  push:
+    branches:
+      - agent2/solana-basic-graduation-market
+    paths:
+      - .github/workflows/agent2-orca-devnet-cert.yml
+      - frontend/api/lib/quoteAssetCatalog.js
+      - frontend/api/lib/solanaOrcaGraduationQuote.js
+      - frontend/api/dev-fix/solana-graduation-authorization-v2.js
+      - frontend/supabase/migrations/20260907163000_solana_devnet_basic_quote_certification.sql
+      - tools/solana-meteora-graduation/orca-devnet-cert-pool.mjs
+      - tools/solana-meteora-graduation/graduate-basic-quote.mjs
+      - tools/solana-meteora-graduation/check-devnet-basic-route.mjs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install pinned dependencies
+        run: |
+          npm ci --prefix frontend --no-audit --no-fund
+          npm ci --prefix tools/solana-meteora-graduation --no-audit --no-fund
+      - name: Agent 2 route and authorization regressions
+        run: |
+          node --check frontend/api/lib/quoteAssetCatalog.js
+          node --check frontend/api/lib/solanaOrcaGraduationQuote.js
+          node --check frontend/api/dev-fix/solana-graduation-authorization-v2.js
+          node --check tools/solana-meteora-graduation/orca-devnet-cert-pool.mjs
+          node --check tools/solana-meteora-graduation/graduate-basic-quote.mjs
+          node tools/solana-meteora-graduation/check-graduation-auth-fixture.mjs
+          node tools/solana-meteora-graduation/check-devnet-basic-route.mjs
+      - name: Confirm certified Solana program source remains frozen
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git diff --name-only 1e7b45802a7e2e39e13e46321209d2eb6c87606f..HEAD -- programs/memewarzone_solana | wc -l | tr -d ' ')" = "0"
+          echo "certified_sbf_sha256=27ad65b560dba8a33330bd95f08ae7ca6945f71ebf667a5a3756ae0cb9f7f080"
+          echo "certified_sbf_bytes=1165328"
+
+  orca-devnet-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: testnet-certification
+    env:
+      SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER }}
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Materialize dedicated devnet operator
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SOLANA_DEVNET_PAYER:-}" || { echo "BLOCKER: SOLANA_DEVNET_PAYER missing"; exit 1; }
+          operator_file="${RUNNER_TEMP}/mwz-solana-devnet-operator.json"
+          SOLANA_GRADUATION_OPERATOR_KEYPAIR="$operator_file" node scripts/solana/materialize-devnet-payer.mjs
+          echo "SOLANA_GRADUATION_OPERATOR_KEYPAIR=$operator_file" >> "$GITHUB_ENV"
+      - name: Install pinned operator dependencies
+        run: npm ci --prefix tools/solana-meteora-graduation --no-audit --no-fund
+      - name: Read-only canonical pool and funding preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import web3 from './tools/solana-meteora-graduation/node_modules/@solana/web3.js/lib/index.cjs.js';
+          import {getAssociatedTokenAddressSync,TOKEN_PROGRAM_ID,getAccount} from './tools/solana-meteora-graduation/node_modules/@solana/spl-token/lib/esm/index.js';
+          const {Connection,Keypair,PublicKey}=web3;
+          const operator=Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(process.env.SOLANA_GRADUATION_OPERATOR_KEYPAIR,'utf8'))));
+          const connection=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
+          const pool=new PublicKey('6XqJUqX4zUL7KEm9wGqTvJmE7DdC8e6MYeMBF9uYLckX');
+          const orca=new PublicKey('whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc');
+          const usdc=new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU');
+          const info=await connection.getAccountInfo(pool,'confirmed');
+          if(!info||!info.owner.equals(orca)) throw new Error('canonical Orca certification pool missing or wrong owner');
+          const ata=getAssociatedTokenAddressSync(usdc,operator.publicKey,false,TOKEN_PROGRAM_ID);
+          let raw=0n; try{raw=(await getAccount(connection,ata,'confirmed',TOKEN_PROGRAM_ID)).amount}catch{}
+          console.log(JSON.stringify({operator:operator.publicKey.toBase58(),pool:pool.toBase58(),orcaProgram:orca.toBase58(),circleDevnetUsdc:usdc.toBase58(),operatorUsdcAta:ata.toBase58(),operatorUsdcRaw:raw.toString(),requiredConservativeSeedRaw:'15032661',mutation:false},null,2));
+          NODE
+          echo "This workflow never seeds liquidity. Mutation is exclusive to Agent 2 BASIC devnet acceptance."

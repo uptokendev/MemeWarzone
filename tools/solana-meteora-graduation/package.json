@@ -5,12 +5,15 @@
   "type": "module",
   "scripts": {
     "graduate": "node graduate.mjs",
+    "graduate:basic-quote": "node graduate-basic-quote.mjs",
     "keeper": "node keeper.mjs",
-    "check": "node --check graduate.mjs && node --check keeper.mjs"
+    "check": "node --check graduate.mjs && node --check graduate-basic-quote.mjs && node --check keeper.mjs"
   },
   "dependencies": {
     "@coral-xyz/anchor": "0.30.1",
     "@meteora-ag/cp-amm-sdk": "1.4.5",
+    "@orca-so/whirlpools": "8.0.1",
+    "@solana/kit": "5.0.0",
     "@solana/spl-token": "0.4.8",
     "@solana/web3.js": "1.95.4"
   }
