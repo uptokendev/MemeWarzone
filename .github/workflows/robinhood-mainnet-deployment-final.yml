@@ -49,8 +49,18 @@ jobs:
       - name: Prove existing production manifest authority remains fail-closed
         run: node --test scripts/prove-robinhood-production-manifest.test.mjs scripts/prepare-robinhood-production-manifest.test.mjs scripts/prove-robinhood-production-policy.test.mjs
 
-      - name: Type-check executor without broadcasting
-        run: npx tsc --noEmit --pretty false
+      - name: Load executor and prove wrong-chain fail-closed without broadcasting
+        run: |
+          set +e
+          output=$(npx hardhat run scripts/deploy-robinhood-mainnet-final.ts --network hardhat 2>&1)
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          if [ "$status" -eq 0 ]; then
+            echo 'Executor unexpectedly succeeded on a non-4663 network' >&2
+            exit 1
+          fi
+          printf '%s\n' "$output" | grep -F 'CHAIN-ID LOCK: expected 4663, got 31337. No transactions sent.'
 
       - name: Verify committed production manifest remains dark
         run: |
