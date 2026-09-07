@@ -5,7 +5,8 @@ import arenaSponsorshipPublic from "./arenaSponsorshipPublic.js";
 import { requireAdminOrOps } from "./lib/apiAuth.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import {
-  ELIGIBLE_EVENT_SPONSORSHIP_TYPES,
+  canonicalEventSponsorshipEntitlementKey,
+  RESOLVABLE_EVENT_SPONSORSHIP_TYPES,
   resolveEventFromQuote,
   resolveSponsorableEvent,
   tierMinimumColumnForEventType,
@@ -94,18 +95,22 @@ async function linkLatestQuote(gate) {
 }
 
 async function handleEligibleEvents(_req, res) {
-  const rows = (await pool.query(`select id from public.sponsorship_events where event_type=any($1::text[]) order by starts_at asc nulls last,created_at desc`, [[...ELIGIBLE_EVENT_SPONSORSHIP_TYPES]])).rows;
+  const rows = (await pool.query(`select id from public.sponsorship_events where event_type=any($1::text[]) order by starts_at asc nulls last,created_at desc`, [[...RESOLVABLE_EVENT_SPONSORSHIP_TYPES]])).rows;
   const tier = await activeTier();
   const events = [];
+  const seenEntitlements = new Set();
   for (const row of rows) {
     const resolution = await resolveSponsorableEvent(pool, { eventRef: row.id });
     if (!resolution.ok) continue;
+    const entitlementKey = canonicalEventSponsorshipEntitlementKey(resolution) || `${resolution.chainId}:${resolution.eventType}:${resolution.eventReferenceId}`;
+    if (seenEntitlements.has(entitlementKey)) continue;
+    seenEntitlements.add(entitlementKey);
     let minimumUsdCents = null;
     if (tier) minimumUsdCents = String(tier[tierMinimumColumnForEventType(resolution.eventType)] ?? "");
-    events.push({ ...resolution, minimumUsdCents: minimumUsdCents || null, tier: tier ? { id: tier.id, code: tier.code } : null, allocation: { prizeBps: 7000, marketingBps: 2000, protocolBps: 1000 } });
+    events.push({ ...resolution, entitlementKey, minimumUsdCents: minimumUsdCents || null, tier: tier ? { id: tier.id, code: tier.code } : null, allocation: { prizeBps: 7000, marketingBps: 2000, protocolBps: 1000 } });
   }
   res.setHeader("cache-control", "no-store");
-  return json(res, 200, { ok: true, events, individualBattleSponsorship: false, quarterlyChampionshipSponsorship: false });
+  return json(res, 200, { ok: true, events, individualBattleSponsorship: false, quarterlyChampionshipSponsorship: true });
 }
 
 async function handleApply(req, res) {
