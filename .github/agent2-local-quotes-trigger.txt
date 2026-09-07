@@ -1,0 +1,1 @@
+Trigger the existing local native/stable BASIC graduation harness after final candidate cleanup. Runtime code SHA remains 99d1d5befc814d60342d553d08eb5a871c5570dd; PR head 1e7b45802a7e2e39e13e46321209d2eb6c87606f only removes obsolete certification workflow.
