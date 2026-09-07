@@ -19,9 +19,8 @@ import {
 } from "./solana-v4-primitives.js";
 import { getSolanaChainUnixTime } from "./solana-chain-unix-time.js";
 import { getGraduationQuoteAssetDetail } from "../lib/quoteAssetCatalog.js";
+import { GRADUATION_AUTH_SCHEMA_VERSION, buildGraduationDigest } from "./solana-graduation-auth-bytes.js";
 
-const GRADUATION_AUTH_DOMAIN = Buffer.from("MEMEWARZONE_SOLANA_GRADUATION_V1", "utf8");
-const GRADUATION_AUTH_SCHEMA_VERSION = 3;
 const ROUTE_PROFILE_UNLINKED = 1;
 const METEORA_CP_AMM_PROGRAM_ID = "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG";
 const NATIVE_MINT = "So11111111111111111111111111111111111111112";
@@ -340,28 +339,13 @@ async function fetchAcquisitionQuote(config, amountLamports) {
 
 function ceilDiv(numerator, denominator) { return (numerator + denominator - 1n) / denominator; }
 
-function buildGraduationDigest(fields) {
-  return sha256(
-    GRADUATION_AUTH_DOMAIN,
-    u16(GRADUATION_AUTH_SCHEMA_VERSION, "schemaVersion"),
-    publicKeyBytes(fields.programId), publicKeyBytes(fields.campaign), publicKeyBytes(fields.mint), publicKeyBytes(fields.authority),
-    u64(fields.graduationTargetUsdMicros), u64(fields.nativeTargetLamports), u64(fields.oraclePriceUsdMicros),
-    publicKeyBytes(fields.meteoraPool), publicKeyBytes(fields.meteoraPosition), publicKeyBytes(fields.positionNftMint),
-    i64(fields.deadline), Buffer.from(fields.nonce), u8(fields.finalizeRouteProfile),
-    publicKeyBytes(fields.quoteMint), Buffer.from(fields.quoteConfigHash), u16(fields.quotePolicyVersion),
-    u8(fields.quoteProfile), u8(fields.quoteProviderClass), publicKeyBytes(fields.acquisitionProgram),
-    u64(fields.quoteReferenceUsdMicros), u8(fields.quoteDecimals), u64(fields.expectedQuoteAmount), u64(fields.minQuoteAmount),
-    u16(fields.maxSlippageBps), u16(fields.maxImpactBps), u16(fields.maxDeviationBps), publicKeyBytes(fields.quoteRecoveryAccount),
-  );
-}
-
 export async function solanaGraduationAuthorizationV2(req, res) {
   if (!methodAllowed(req, res, ["POST"])) return;
   try {
     if (!isTruthy(process.env.SOLANA_GRADUATION_AUTH_ENABLED)) throw new SolanaGraduationAuthorizationError("Solana graduation authorization is disabled.", { code: "SOLANA_GRADUATION_AUTH_DISABLED", httpStatus: 503 });
     const body = await readJson(req);
     const chainId = Number(body.chainId || 101);
-    if (!isSolanaChain(chainId)) throw new SolanaGraduationAuthorizationError("chainId must be Solana (101).", { code: "NOT_A_SOLANA_CHAIN", httpStatus: 400 });
+    if (!isSolanaChain(chainId)) throw new SolanaGraduationAuthorizationError("chainId must be a supported Solana chain.", { code: "NOT_A_SOLANA_CHAIN", httpStatus: 400 });
     if (body.quoteMint) throw new SolanaGraduationAuthorizationError("quoteMint is not accepted from clients; select an approved quoteConfigId.", { code: "SOLANA_GRADUATION_ARBITRARY_QUOTE_REJECTED", httpStatus: 400 });
 
     const requestedConfigId = String(body.quoteConfigId || process.env.SOLANA_GRADUATION_NATIVE_QUOTE_CONFIG_ID || "").trim();
@@ -427,7 +411,7 @@ export async function solanaGraduationAuthorizationV2(req, res) {
     const finalizeRouteProfile = ROUTE_PROFILE_UNLINKED;
     const quoteConfigHash = quoteConfig.bindingHash || configHash(quoteConfig.id);
     const digest = buildGraduationDigest({
-      programId, campaign: campaignAddress, mint: campaign.mint, authority: authorityAddress,
+      programId, campaign: campaignAddress, mint: campaign.mint, authority: authorityAddress, generationConfig: campaign.generationConfig,
       graduationTargetUsdMicros: campaign.graduationTargetUsdMicros, nativeTargetLamports, oraclePriceUsdMicros,
       meteoraPool, meteoraPosition, positionNftMint, deadline, nonce, finalizeRouteProfile,
       quoteMint: quoteConfig.mint, quoteConfigHash, quotePolicyVersion: quoteConfig.policyVersion,

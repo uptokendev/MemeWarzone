@@ -41,7 +41,7 @@ use crate::{authorized_create::Campaign, campaign_view::campaign_view_from_campa
 
 pub const GRADUATION_SEED: &[u8] = b"graduation";
 pub const GRADUATION_AUTH_DOMAIN: &[u8] = b"MEMEWARZONE_SOLANA_GRADUATION_V1";
-pub const GRADUATION_AUTH_SCHEMA_VERSION: u16 = 3;
+pub const GRADUATION_AUTH_SCHEMA_VERSION: u16 = 4;
 pub const METEORA_CP_AMM_PROGRAM_ID: Pubkey =
     pubkey!("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG");
 pub const GRADUATION_PRICE_TOLERANCE_BPS: u16 = 50;
@@ -357,6 +357,7 @@ pub fn begin_graduation_handler(
         campaign_key,
         campaign.mint,
         ctx.accounts.authority.key(),
+        campaign.generation_config,
         campaign.graduation_target_usd_micros,
         &args,
         expected_pool,
@@ -960,6 +961,40 @@ fn validate_price_tolerance(
     Ok(())
 }
 
+fn gcd_u128(mut a: u128, mut b: u128) -> u128 {
+    while b != 0 {
+        let remainder = a % b;
+        a = b;
+        b = remainder;
+    }
+    a
+}
+
+fn mul_div_reduced<const N: usize, const D: usize>(
+    mut numerators: [u128; N],
+    mut denominators: [u128; D],
+) -> Result<u128> {
+    for denominator in &mut denominators {
+        require!(*denominator > 0, LaunchpadError::GraduationPriceDrift);
+        for numerator in &mut numerators {
+            let common = gcd_u128(*numerator, *denominator);
+            if common > 1 {
+                *numerator /= common;
+                *denominator /= common;
+            }
+        }
+    }
+    let numerator = numerators.into_iter().try_fold(1u128, |acc, value| {
+        acc.checked_mul(value).ok_or(LaunchpadError::MathOverflow)
+    })?;
+    let denominator = denominators.into_iter().try_fold(1u128, |acc, value| {
+        acc.checked_mul(value).ok_or(LaunchpadError::MathOverflow)
+    })?;
+    numerator
+        .checked_div(denominator)
+        .ok_or_else(|| error!(LaunchpadError::MathOverflow))
+}
+
 fn validate_quote_pool_deviation(
     quote_raw: u64,
     token_raw: u64,
@@ -978,30 +1013,37 @@ fn validate_quote_pool_deviation(
             && quote_usd_micros > 0,
         LaunchpadError::GraduationPriceDrift
     );
-    let launch_scale = token_scale(token_decimals)?;
-    let quote_scale = token_scale(quote_decimals)?;
-    let expected_numerator = final_spot_nano
-        .checked_mul(u128::from(sol_usd_micros))
-        .ok_or(LaunchpadError::MathOverflow)?
-        .checked_mul(quote_scale)
-        .ok_or(LaunchpadError::MathOverflow)?;
-    let expected_denominator = 1_000_000_000_000_000_000u128
-        .checked_mul(u128::from(quote_usd_micros))
-        .ok_or(LaunchpadError::MathOverflow)?;
-    let expected = expected_numerator
-        .checked_div(expected_denominator)
-        .ok_or(LaunchpadError::MathOverflow)?;
-    require!(expected > 0, LaunchpadError::GraduationPriceDrift);
-    let actual = u128::from(quote_raw)
-        .checked_mul(launch_scale)
-        .ok_or(LaunchpadError::MathOverflow)?
-        .checked_div(u128::from(token_raw))
-        .ok_or(LaunchpadError::MathOverflow)?;
-    let drift_bps = actual
-        .abs_diff(expected)
+
+    // Compare both ratios at high fixed-point precision without performing an
+    // early integer division. Cross-cancelling denominator factors first keeps
+    // legitimate sub-raw-unit quote/token ratios representable and bounds u128
+    // multiplication pressure. No floating point is used.
+    const RATIO_SCALE: u128 = 1_000_000_000_000;
+    const NANO_LAMPORTS_PER_SOL: u128 = 1_000_000_000_000_000_000;
+    let actual_scaled = mul_div_reduced(
+        [
+            u128::from(quote_raw),
+            token_scale(token_decimals)?,
+            RATIO_SCALE,
+        ],
+        [u128::from(token_raw)],
+    )?;
+    let expected_scaled = mul_div_reduced(
+        [
+            final_spot_nano,
+            u128::from(sol_usd_micros),
+            token_scale(quote_decimals)?,
+            RATIO_SCALE,
+        ],
+        [NANO_LAMPORTS_PER_SOL, u128::from(quote_usd_micros)],
+    )?;
+    require!(expected_scaled > 0, LaunchpadError::GraduationPriceDrift);
+
+    let drift_bps = actual_scaled
+        .abs_diff(expected_scaled)
         .checked_mul(u128::from(BPS_DENOMINATOR))
         .ok_or(LaunchpadError::MathOverflow)?
-        .checked_div(expected)
+        .checked_div(expected_scaled)
         .ok_or(LaunchpadError::MathOverflow)?;
     require!(
         drift_bps <= u128::from(max_deviation_bps),
@@ -1177,6 +1219,7 @@ fn build_graduation_authorization_digest(
     campaign: Pubkey,
     mint: Pubkey,
     authority: Pubkey,
+    generation_config: Pubkey,
     target: u64,
     args: &BeginGraduationArgs,
     pool: Pubkey,
@@ -1189,6 +1232,7 @@ fn build_graduation_authorization_digest(
     m.extend_from_slice(campaign.as_ref());
     m.extend_from_slice(mint.as_ref());
     m.extend_from_slice(authority.as_ref());
+    m.extend_from_slice(generation_config.as_ref());
     m.extend_from_slice(&target.to_le_bytes());
     m.extend_from_slice(&args.native_target_lamports.to_le_bytes());
     m.extend_from_slice(&args.oracle_price_usd_micros.to_le_bytes());
@@ -1600,6 +1644,89 @@ mod tests {
         assert!(validate_price_tolerance(50, 10_000_000, 6, 5_000_000_000).is_ok());
         assert!(validate_price_tolerance(60, 10_000_000, 6, 5_000_000_000).is_err())
     }
+    #[test]
+    fn graduation_authorization_binds_exact_generation() {
+        let args = BeginGraduationArgs {
+            native_target_lamports: 200_000_000_000,
+            oracle_price_usd_micros: 150_000_000,
+            deadline: 1_900_000_000,
+            nonce: [12u8; 32],
+            position_nft_mint: Pubkey::new_from_array([7u8; 32]),
+            finalize_route_profile: 1,
+            quote_mint: Pubkey::new_from_array([8u8; 32]),
+            quote_config_id: [11u8; 32],
+            quote_policy_version: 7,
+            quote_profile: 1,
+            quote_provider_class: 1,
+            acquisition_program: Pubkey::new_from_array([9u8; 32]),
+            quote_reference_usd_micros: 1_000_000,
+            quote_decimals: 6,
+            expected_quote_amount: 123_456_789,
+            min_quote_amount: 120_000_000,
+            max_slippage_bps: 100,
+            max_impact_bps: 100,
+            max_deviation_bps: 100,
+            quote_recovery_account: Pubkey::new_from_array([10u8; 32]),
+        };
+        let exact = build_graduation_authorization_digest(
+            Pubkey::new_from_array([0u8; 32]),
+            Pubkey::new_from_array([1u8; 32]),
+            Pubkey::new_from_array([2u8; 32]),
+            Pubkey::new_from_array([3u8; 32]),
+            Pubkey::new_from_array([4u8; 32]),
+            30_000_000_000,
+            &args,
+            Pubkey::new_from_array([5u8; 32]),
+            Pubkey::new_from_array([6u8; 32]),
+        );
+        assert_eq!(
+            exact,
+            [
+                212, 43, 6, 198, 126, 184, 102, 231, 52, 54, 221, 59, 12, 119, 171, 53, 171, 83,
+                229, 118, 225, 159, 15, 65, 23, 197, 228, 40, 104, 47, 219, 197
+            ]
+        );
+
+        let substituted = build_graduation_authorization_digest(
+            Pubkey::new_from_array([0u8; 32]),
+            Pubkey::new_from_array([1u8; 32]),
+            Pubkey::new_from_array([2u8; 32]),
+            Pubkey::new_from_array([3u8; 32]),
+            Pubkey::new_from_array([13u8; 32]),
+            30_000_000_000,
+            &args,
+            Pubkey::new_from_array([5u8; 32]),
+            Pubkey::new_from_array([6u8; 32]),
+        );
+        assert_ne!(substituted, exact);
+    }
+
+    #[test]
+    fn quote_deviation_accepts_sub_raw_unit_and_rejects_excessive_drift() {
+        assert!(validate_quote_pool_deviation(
+            150,
+            1_000_000_000_000,
+            9,
+            6,
+            1_000_000_000,
+            150_000_000,
+            1_000_000,
+            1,
+        )
+        .is_ok());
+        assert!(validate_quote_pool_deviation(
+            180,
+            1_000_000_000_000,
+            9,
+            6,
+            1_000_000_000,
+            150_000_000,
+            1_000_000,
+            100,
+        )
+        .is_err());
+    }
+
     #[test]
     fn native_target_matches_ceil_usd_conversion() {
         assert_eq!(
