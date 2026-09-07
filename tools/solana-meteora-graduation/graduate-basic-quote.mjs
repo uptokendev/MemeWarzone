@@ -189,7 +189,7 @@ function kitInstructionToWeb3(raw) {
 }
 
 async function buildOrcaInstructions(auth, operator) {
-  const [{ swapInstructions, setPayerFromBytes, WhirlpoolDeployment }, kit] = await Promise.all([
+  const [{ swapInstructions, setNativeMintWrappingStrategy, setPayerFromBytes, WhirlpoolDeployment }, kit] = await Promise.all([
     import("@orca-so/whirlpools"),
     import("@solana/kit"),
   ]);
@@ -198,6 +198,7 @@ async function buildOrcaInstructions(auth, operator) {
   if (!poolAddress) fail("authorized Orca pool is missing");
   const expectedProgram = asPk(auth.quote.acquisitionProgram, "acquisitionProgram");
   const kitPayer = await setPayerFromBytes(operator.secretKey);
+  setNativeMintWrappingStrategy("seed");
   const rpc = createSolanaRpc(devnet(operator.connection.rpcEndpoint));
   const built = await swapInstructions(
     rpc,
