@@ -54,6 +54,10 @@ jobs:
           s = p.read_text()
           s = s.replace('join("\n")', 'join("\\n")')
           s = s.replace("join('\n')", "join('\\n')")
+          s = s.replace(
+              'authorityQuote=await getOrCreateAssociatedTokenAccount(connection,adminKeypair,quoteMint,admin);',
+              'authorityQuote={address:await createAccount(connection,adminKeypair,quoteMint,admin)};'
+          )
           p.write_text(s)
           PY
           node --check tests/solana/v4-lifecycle-acceptance.cjs
