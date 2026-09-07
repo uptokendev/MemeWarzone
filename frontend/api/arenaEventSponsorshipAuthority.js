@@ -105,7 +105,7 @@ async function handleEligibleEvents(_req, res) {
     events.push({ ...resolution, minimumUsdCents: minimumUsdCents || null, tier: tier ? { id: tier.id, code: tier.code } : null, allocation: { prizeBps: 7000, marketingBps: 2000, protocolBps: 1000 } });
   }
   res.setHeader("cache-control", "no-store");
-  return json(res, 200, { ok: true, events, individualBattleSponsorship: false, quarterlyChampionshipSponsorship: false });
+  return json(res, 200, { ok: true, events, individualBattleSponsorship: false, quarterlyChampionshipSponsorship: true });
 }
 
 async function handleApply(req, res) {
@@ -151,13 +151,15 @@ async function handlePublicSponsors(req, res) {
   const q = queryOf(req);
   const resolution = await resolveSponsorableEvent(pool, { eventRef: q.get("eventId") || q.get("eventReferenceId"), chainId: q.get("chainId") });
   if (!resolution.ok) return json(res, 404, { ok: false, code: resolution.code });
+  if (!resolution.sponsorable) return json(res, 200, { ok: true, event: resolution, sponsors: [] });
   const rows = (await pool.query(
     `select es.id as sponsorship_id,es.prize_native_raw,es.marketing_native_raw,es.protocol_native_raw,sp.project_name,p.id as payment_id,p.confirmed_at,p.signature_reference,
             exists(select 1 from public.event_sponsorship_founding_history fh where fh.event_id=es.event_id and fh.payment_id=p.id) as founding_sponsor
        from public.event_sponsorships es
        join public.sponsor_profiles sp on sp.id=es.sponsor_profile_id
+       join public.sponsorship_events se on se.id=es.event_id
        join lateral (select id,confirmed_at,signature_reference from public.sponsorship_payments where event_sponsorship_id=es.id and status='confirmed' order by confirmed_at asc limit 1) p on true
-      where es.event_id=$1 and es.status in ('active','completed')
+      where es.event_id=$1 and es.status='active' and sp.status='approved' and (se.ends_at is null or se.ends_at>now())
       order by p.confirmed_at asc,p.signature_reference asc`,
     [resolution.eventId],
   )).rows;
@@ -288,7 +290,6 @@ export default async function handler(req, res) {
       return result;
     }
 
-    // Legacy readback remains available only behind canonical event identity in its own handler.
     if (/^\/arena\/sponsorships\/payments\/[^/]+$/.test(path) || /^\/arena\/sponsorships\/[^/]+\/(?:state|solana-payment-state)$/.test(path)) return arenaSponsorshipPublic(req, res);
     return json(res, 404, { ok: false, error: "Unknown Warzone Event Sponsorship route" });
   } catch (error) {
