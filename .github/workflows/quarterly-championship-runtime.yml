@@ -6,6 +6,7 @@ on:
       - build/cross-chain-stabilization-rh-base
     paths:
       - "db/migrations/20260907_000001_quarterly_championship_runtime.sql"
+      - "db/migrations/20260907_000002_quarterly_championship_continuous_base_points.sql"
       - "frontend/api/arenaLeague.js"
       - "frontend/api/lib/arenaLeagueScore.js"
       - "frontend/api/lib/arenaLeagueScoreMath.js"
@@ -87,14 +88,34 @@ jobs:
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260829_000001_arena_settle_idempotency.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260907_000001_quarterly_championship_runtime.sql
 
-          # Additive migration must be replay-safe and must not rewrite historical rows.
+          # Seed one pre-migration active legacy MWL point. The continuous-base
+          # migration must bind its canonical quarter and backfill it exactly once.
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          insert into public.arena_league_seasons
+            (id,chain_id,label,state,week,quarter,year,reset_at,active)
+          values ('legacy-active-q3-c990077',990077,'Legacy active Q3','live',1,3,2026,'2026-09-30T00:00:00Z',true);
+          insert into public.arena_league_entries
+            (season_id,token_address,token_name,symbol,points,wins,losses,finished_fights)
+          values ('legacy-active-q3-c990077','legacy-token','Legacy Token','LEG',3,1,0,1);
+          insert into public.arena_league_point_events
+            (season_id,token_address,kind,points,battle_id,created_at)
+          values ('legacy-active-q3-c990077','legacy-token','battle_win',3,'legacy-battle','2026-08-15T12:00:00Z');
+          SQL
+
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260907_000002_quarterly_championship_continuous_base_points.sql
+
+          # Additive migrations must be replay-safe and must not rewrite history.
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260907_000001_quarterly_championship_runtime.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260907_000002_quarterly_championship_continuous_base_points.sql
 
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
           do $$
           declare
             seeded_policies integer;
             legacy_column integer;
+            mirrored_base_events integer;
+            mirrored_base numeric;
+            linked_epoch text;
           begin
             select count(*) into seeded_policies from public.arena_championship_bonus_policies;
             if seeded_policies <> 0 then
@@ -109,11 +130,36 @@ jobs:
             if legacy_column <> 1 then
               raise exception 'legacy quarter_finals_tournament_id compatibility column was removed';
             end if;
+
+            select championship_epoch_id into linked_epoch
+              from public.arena_league_seasons
+             where id='legacy-active-q3-c990077';
+            if linked_epoch <> 'quarterly-championship-2026-q3-c990077' then
+              raise exception 'active legacy MWL was not bound to canonical quarterly epoch: %', linked_epoch;
+            end if;
+
+            select count(*) into mirrored_base_events
+              from public.arena_championship_point_events
+             where epoch_id='quarterly-championship-2026-q3-c990077'
+               and source_kind='mwl_base';
+            if mirrored_base_events <> 1 then
+              raise exception 'legacy point backfill was not exact-once: %', mirrored_base_events;
+            end if;
+
+            select base_points into mirrored_base
+              from public.arena_championship_entries
+             where epoch_id='quarterly-championship-2026-q3-c990077'
+               and token_address='legacy-token';
+            if mirrored_base <> 3 then
+              raise exception 'legacy point backfill produced wrong base points: %', mirrored_base;
+            end if;
           end $$;
           SQL
 
-      - name: Exact-once monthly MWL to quarterly standing database lifecycle
-        run: node --test frontend/api/lib/arenaQuarterlyChampionshipDb.test.mjs
+      - name: Exact-once Championship database lifecycle
+        run: node --test \
+          frontend/api/lib/arenaQuarterlyChampionshipBasePointsDb.test.mjs \
+          frontend/api/lib/arenaQuarterlyChampionshipDb.test.mjs
 
       - name: Existing MWL regression suite
         run: npm --prefix frontend run test:arena-mwl
