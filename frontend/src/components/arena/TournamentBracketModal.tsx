@@ -1,6 +1,8 @@
 import { Link } from "react-router-dom";
+import { EventSponsorAttribution } from "@/components/arena/EventSponsorAttribution";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { WarzoneTokenMark } from "@/components/warzone/WarzoneTokenMark";
+import type { PublicEventSponsor } from "@/hooks/useEventSponsors";
 import { identitiesFromEntries, presentSymmetricBracket } from "@/lib/arena/tournamentBracketPresentation.mjs";
 import { battleFightHref } from "@/lib/arena/tournamentCommandPresentation.mjs";
 import { cn } from "@/lib/utils";
@@ -75,6 +77,7 @@ export function TournamentBracketModal({
   rounds,
   entries,
   chainId = 56,
+  sponsors,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -84,6 +87,7 @@ export function TournamentBracketModal({
   rounds: Array<{ round: number; matches?: BracketMatch[] }>;
   entries?: Array<Record<string, unknown>>;
   chainId?: number;
+  sponsors?: PublicEventSponsor[];
 }) {
   const identities = identitiesFromEntries(entries);
   const bracket = presentSymmetricBracket(rounds, identities);
@@ -102,6 +106,7 @@ export function TournamentBracketModal({
           <DialogDescription className="text-[11px] uppercase tracking-[0.16em] text-white/50">
             {[statusLabel, stageLabel].filter(Boolean).join(" · ") || "Tournament bracket"}
           </DialogDescription>
+          <EventSponsorAttribution sponsors={sponsors} variant="prominent" />
         </DialogHeader>
         {bracket.empty ? (
           <p className="py-8 text-sm text-muted-foreground">The bracket appears after the roster locks.</p>
