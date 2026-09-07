@@ -1,28 +1,11 @@
 import { pool } from "../server/db.js";
 import { badMethod, json } from "../server/http.js";
+import { PUBLIC_SPONSOR_EVENT_TYPES, projectPublicSponsors } from "./lib/arenaSponsorVisibilityPolicy.mjs";
 
-const VISIBLE_EVENT_TYPES = new Set([
-  "normal_tournament",
-  "vote_tournament",
-  "monthly_mwl",
-  "quarterly_championship",
-  "mwl_quarter_finals",
-]);
+const VISIBLE_EVENT_TYPES = new Set(PUBLIC_SPONSOR_EVENT_TYPES);
 
 function text(value) {
   return String(value || "").trim();
-}
-
-export function safeHttpsUrl(value) {
-  const raw = text(value);
-  if (!raw) return null;
-  try {
-    const url = new URL(raw);
-    if (url.protocol !== "https:") return null;
-    return url.toString();
-  } catch {
-    return null;
-  }
 }
 
 function publicEventShape(row) {
@@ -79,29 +62,6 @@ async function resolveExactEvent(query) {
   if (!rows.length) return { ok: false, status: 404, code: "EVENT_NOT_FOUND" };
   if (rows.length > 1) return { ok: false, status: 409, code: "EVENT_CHAIN_REQUIRED" };
   return { ok: true, event: rows[0] };
-}
-
-export function projectPublicSponsors(rows) {
-  const seen = new Set();
-  const sponsors = [];
-  for (const row of rows || []) {
-    if (String(row.sponsorship_status || "active") !== "active") continue;
-    if (String(row.profile_status || "approved") !== "approved") continue;
-    const sponsorProfileId = text(row.sponsor_profile_id);
-    if (!sponsorProfileId || seen.has(sponsorProfileId)) continue;
-    const projectName = text(row.project_name);
-    if (!projectName) continue;
-    seen.add(sponsorProfileId);
-    sponsors.push({
-      sponsorProfileId,
-      projectName,
-      logoUrl: safeHttpsUrl(row.logo_url),
-      websiteUrl: safeHttpsUrl(row.website_url),
-      foundingSponsor: Boolean(row.event_founding_sponsor || row.founding_sponsor),
-      foundingSponsorBadge: text(row.founding_sponsor_badge) || null,
-    });
-  }
-  return sponsors;
 }
 
 async function handleGet(req, res) {
