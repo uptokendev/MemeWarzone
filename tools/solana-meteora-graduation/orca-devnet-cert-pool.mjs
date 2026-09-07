@@ -10,12 +10,14 @@ import {
   WhirlpoolDeployment,
 } from "@orca-so/whirlpools";
 import { address, createSolanaRpc, devnet } from "@solana/kit";
-import { Connection, PublicKey } from "@solana/web3.js";
+import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import {
   getAssociatedTokenAddressSync,
   getAccount,
+  getOrCreateAssociatedTokenAccount,
   NATIVE_MINT,
   TOKEN_PROGRAM_ID,
+  transfer,
 } from "@solana/spl-token";
 
 const ORCA_PROGRAM = "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc";
@@ -69,6 +71,44 @@ function impactBps(actualOut, spotOut) {
   if (actualOut >= spotOut) return 0;
   return Number(((spotOut - actualOut) * 10_000n) / spotOut);
 }
+async function parkResidualUsdc(connection, operator, report) {
+  const parkingOwnerRaw = String(process.env.ORCA_DEVNET_CERT_PARKING_OWNER || "").trim();
+  if (!parkingOwnerRaw) return;
+  const parkingOwner = new PublicKey(parkingOwnerRaw);
+  if (parkingOwner.equals(operator.publicKey)) fail("ORCA_DEVNET_CERT_PARKING_OWNER must differ from the graduation operator");
+  const balance = await tokenBalance(connection, operator.publicKey, CIRCLE_DEVNET_USDC);
+  if (balance.raw <= 0n) {
+    report.residualParking = { parkingOwner: parkingOwner.toBase58(), parkedRaw: "0", operatorUsdcRawAfterParking: "0" };
+    return;
+  }
+  const parkingAta = await getOrCreateAssociatedTokenAccount(
+    connection,
+    operator,
+    new PublicKey(CIRCLE_DEVNET_USDC),
+    parkingOwner,
+    false,
+    "confirmed",
+    undefined,
+    TOKEN_PROGRAM_ID,
+  );
+  const signature = await transfer(
+    connection,
+    operator,
+    new PublicKey(balance.ata),
+    parkingAta.address,
+    operator,
+    balance.raw,
+    [],
+    { commitment: "confirmed", preflightCommitment: "confirmed" },
+    TOKEN_PROGRAM_ID,
+  );
+  const after = await tokenBalance(connection, operator.publicKey, CIRCLE_DEVNET_USDC);
+  if (after.raw !== 0n) fail(`operator USDC ATA must be empty after parking; balance=${after.raw}`);
+  report.residualParking = {
+    parkingOwner: parkingOwner.toBase58(), parkingAta: parkingAta.address.toBase58(),
+    parkedRaw: balance.raw, parkingSignature: signature, operatorUsdcRawAfterParking: after.raw,
+  };
+}
 
 async function main() {
   const rpcUrl = String(process.env.SOLANA_RPC_URL || DEFAULT_RPC).trim();
@@ -82,11 +122,13 @@ async function main() {
   if (certInputLamports <= 0n) fail("ORCA_DEVNET_CERT_ACQUISITION_LAMPORTS must be > 0");
 
   const operatorBytes = loadOperatorBytes();
+  const operator = Keypair.fromSecretKey(operatorBytes);
   await setRpc(rpcUrl);
   const payer = await setPayerFromBytes(operatorBytes);
   const rpc = createSolanaRpc(devnet(rpcUrl));
   const web3 = new Connection(rpcUrl, "confirmed");
-  const owner = new PublicKey(String(payer.address));
+  const owner = operator.publicKey;
+  if (owner.toBase58() !== String(payer.address)) fail("web3/kit operator identity mismatch");
   const [mintA, mintB] = orderMints(address(WSOL), address(CIRCLE_DEVNET_USDC));
   if (String(mintA) !== WSOL || String(mintB) !== CIRCLE_DEVNET_USDC) fail("certification pool canonical mint order unexpectedly changed");
 
@@ -100,8 +142,6 @@ async function main() {
   const usdc = await tokenBalance(web3, owner, CIRCLE_DEVNET_USDC);
   const solLamports = await web3.getBalance(owner, "confirmed");
   const desiredSolRaw = decimalSeedRaw(seedSol);
-  // A symmetric concentrated range needs approximately equal notional on each side at the current price.
-  // Keep this explicit preflight conservative; the SDK computes the exact token-B requirement when opening.
   const desiredUsdcRaw = BigInt(Math.ceil(seedSol * referencePriceUsd * 1_000_000 * 1.03));
   const lowerPrice = referencePriceUsd * (1 - rangeBps / 10_000);
   const upperPrice = referencePriceUsd * (1 + rangeBps / 10_000);
@@ -168,9 +208,15 @@ async function main() {
     measuredImpactBps,
     maxImpactBps: MAX_CERT_IMPACT_BPS,
   };
-  report.status = estimatedOut > 0n && minOut > 0n && measuredImpactBps <= MAX_CERT_IMPACT_BPS ? "READY" : "BLOCKED_GRADUATION_SIZED_IMPACT";
+  if (!(estimatedOut > 0n && minOut > 0n && measuredImpactBps <= MAX_CERT_IMPACT_BPS)) {
+    report.status = "BLOCKED_GRADUATION_SIZED_IMPACT";
+    fs.writeFileSync(REPORT_PATH, toJson(report)); console.log(toJson(report));
+    fail(`graduation-sized Orca quote is not safe: impact=${measuredImpactBps} bps`);
+  }
+
+  await parkResidualUsdc(web3, operator, report);
+  report.status = "READY";
   fs.writeFileSync(REPORT_PATH, toJson(report)); console.log(toJson(report));
-  if (report.status !== "READY") fail(`graduation-sized Orca quote is not safe: impact=${measuredImpactBps} bps`);
 }
 
 main().catch((error) => { console.error(error?.stack || error); process.exitCode = 1; });
