@@ -1,0 +1,55 @@
+name: Agent 2 ProgramData Readonly
+
+on:
+  push:
+    branches:
+      - cert/agent2-programdata-readonly
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Read authoritative devnet launchpad ProgramData
+        shell: bash
+        env:
+          PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const rpc='https://api.devnet.solana.com';
+          const programId=process.env.PROGRAM_ID;
+          async function call(method,params){
+            const r=await fetch(rpc,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})});
+            if(!r.ok) throw new Error(`${method} HTTP ${r.status}`);
+            const j=await r.json(); if(j.error) throw new Error(`${method}: ${JSON.stringify(j.error)}`); return j.result;
+          }
+          function b58(bytes){const a='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';let x=0n;for(const b of bytes)x=(x<<8n)+BigInt(b);let s='';while(x){s=a[Number(x%58n)]+s;x/=58n;}for(const b of bytes){if(b===0)s='1'+s;else break;}return s||'1';}
+          const genesis=await call('getGenesisHash',[]);
+          if(genesis!=='EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG') throw new Error(`not devnet: ${genesis}`);
+          const program=await call('getAccountInfo',[programId,{encoding:'base64',commitment:'confirmed'}]);
+          if(!program.value) throw new Error('launchpad program missing');
+          const pdata=Buffer.from(program.value.data[0],'base64');
+          if(pdata.length<36 || pdata.readUInt32LE(0)!==2) throw new Error(`unexpected program state tag=${pdata.readUInt32LE(0)} len=${pdata.length}`);
+          const programDataAddress=b58(pdata.subarray(4,36));
+          const info=await call('getAccountInfo',[programDataAddress,{encoding:'base64',commitment:'confirmed'}]);
+          if(!info.value) throw new Error('ProgramData missing');
+          const raw=Buffer.from(info.value.data[0],'base64');
+          const metadataBytes=45;
+          console.log(JSON.stringify({
+            cluster:'devnet', genesis, programId, programOwner:program.value.owner,
+            programExecutable:program.value.executable, programLamports:program.value.lamports,
+            programDataAddress, programDataOwner:info.value.owner,
+            programDataDataLength:raw.length,
+            programBinaryCapacityBytes:raw.length-metadataBytes,
+            programDataLamports:info.value.lamports,
+            programDataRentEpoch:info.value.rentEpoch,
+            metadataBytes
+          },null,2));
+          NODE
