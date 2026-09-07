@@ -4,7 +4,6 @@ import {
   PUBLIC_SPONSOR_EVENT_TYPES,
   canonicalPublicSponsorEventType,
   projectPublicSponsors,
-  publicSponsorRegistryTypes,
 } from "./lib/arenaSponsorVisibilityPolicy.mjs";
 
 const VISIBLE_EVENT_TYPES = new Set(PUBLIC_SPONSOR_EVENT_TYPES);
@@ -30,7 +29,7 @@ async function resolveCanonicalEvent(query) {
       chainFilter = `and chain_id=$${params.length}`;
     }
     const epochRows = (await pool.query(
-      `select id,event_type,chain_id,opens_at,closes_at,state
+      `select id,event_type,chain_id,year,quarter,opens_at,closes_at,state
          from public.arena_championship_epochs
         where id=$1 ${chainFilter}
         limit 2`,
@@ -40,15 +39,28 @@ async function resolveCanonicalEvent(query) {
       return { ok: false, status: 404, code: "CHAMPIONSHIP_EPOCH_NOT_FOUND" };
     }
     const epoch = epochRows[0];
-    const registryRows = (await pool.query(
+    const canonicalRows = (await pool.query(
       `select id,event_type,event_reference_id,chain_id,starts_at,ends_at,created_at
          from public.sponsorship_events
         where event_reference_id=$1
           and chain_id=$2
-          and event_type=any($3::text[])
-        order by case when event_type='quarterly_championship' then 0 else 1 end,created_at asc,id asc`,
-      [reference, Number(epoch.chain_id), publicSponsorRegistryTypes(requestedType)],
+          and event_type='quarterly_championship'
+        order by created_at asc,id asc`,
+      [reference, Number(epoch.chain_id)],
     )).rows || [];
+    const legacyRows = (await pool.query(
+      `select se.id,se.event_type,se.event_reference_id,se.chain_id,se.starts_at,se.ends_at,se.created_at
+         from public.sponsorship_events se
+         join public.arena_tournaments t
+           on t.id=se.event_reference_id and t.chain_id=se.chain_id and t.origin='quarter_finals'
+         join public.arena_league_seasons s
+           on s.chain_id=t.chain_id and s.quarter_finals_tournament_id=t.id
+        where se.event_type='mwl_quarter_finals'
+          and s.chain_id=$1 and s.year=$2 and s.quarter=$3
+        order by se.created_at asc,se.id asc`,
+      [Number(epoch.chain_id), Number(epoch.year), Number(epoch.quarter)],
+    )).rows || [];
+    const registryRows = [...canonicalRows, ...legacyRows];
     if (!registryRows.length) return { ok: false, status: 404, code: "EVENT_NOT_FOUND" };
     return { ok: true, canonicalType: requestedType, reference, chainId: Number(epoch.chain_id), events: registryRows, epoch };
   }
