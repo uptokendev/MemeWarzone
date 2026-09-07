@@ -4,10 +4,10 @@ import { apiFetch } from "@/lib/apiBase";
 export type PublicEventSponsor = {
   sponsorProfileId: string;
   projectName: string;
-  logoUrl: string | null;
-  websiteUrl: string | null;
   foundingSponsor: boolean;
-  foundingSponsorBadge: string | null;
+  logoUrl?: string | null;
+  websiteUrl?: string | null;
+  foundingSponsorBadge?: string | null;
 };
 
 export type SponsorEventType = "normal_tournament" | "vote_tournament" | "monthly_mwl" | "mwl_quarter_finals" | "quarterly_championship";
