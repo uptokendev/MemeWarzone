@@ -108,7 +108,7 @@ export function mapRobinhoodStockToQuoteAsset(stock) {
   };
 }
 
-export function mapGenericQuoteAssetRow(row) {
+function mapGenericRow(row) {
   const provider = {
     id: row.provider_id,
     provider_key: row.provider_key,
@@ -135,7 +135,6 @@ export function mapGenericQuoteAssetRow(row) {
     require_identity_verified: row.require_identity_verified,
     require_security_verified: row.require_security_verified,
     require_market_healthy: row.require_market_healthy,
-    policy_config: row.policy_config || {},
   };
   const authority = deriveGenericQuoteAuthority({ provider, asset, deployment, policy });
   return {
@@ -163,12 +162,16 @@ export function mapGenericQuoteAssetRow(row) {
     existingMarketSupport: authority.existingMarketSupport,
     adminState: row.deployment_admin_state,
     policy: {
-      id: row.policy_version_id,
       authority: "generic",
+      id: row.policy_version_id,
       policyKey: authority.policyKey,
       version: authority.policyVersion,
       active: authority.policyActive,
       basicApproved: authority.basicApproved,
+      newGraduationEnabled: row.new_graduation_enabled === true,
+      requireIdentityVerified: row.require_identity_verified !== false,
+      requireSecurityVerified: row.require_security_verified !== false,
+      requireMarketHealthy: row.require_market_healthy !== false,
       config: row.policy_config || {},
     },
     lastVerifiedAt: row.last_scan_at,
@@ -220,13 +223,13 @@ export async function listGenericQuoteAssets({ chainId }) {
   const chain = String(chainId ?? "").trim();
   if (!chain) throw new Error("chainId is required");
   const result = await pool.query(`${GENERIC_SELECT} where d.chain_id = $1 order by a.asset_class, a.symbol nulls last, a.display_name`, [chain]);
-  return result.rows.map(mapGenericQuoteAssetRow).filter((item) => item.policy.basicApproved && (item.newGraduationEligible || item.existingMarketSupport));
+  return result.rows.map(mapGenericRow).filter((item) => item.policy.basicApproved && (item.newGraduationEligible || item.existingMarketSupport));
 }
 
 export async function getGenericQuoteAssetDetail(id) {
   const result = await pool.query(`${GENERIC_SELECT} where d.id = $1::uuid limit 1`, [id]);
   if (!result.rows[0]) return null;
-  const item = mapGenericQuoteAssetRow(result.rows[0]);
+  const item = mapGenericRow(result.rows[0]);
   const [scans, decisions] = await Promise.all([
     pool.query(`select id, state_version, scan_kind, identity_status, security_status, market_health_status, evidence, scanner_identity, created_at from public.quote_asset_scan_history where deployment_id = $1::uuid order by created_at desc limit 200`, [id]),
     pool.query(`select id, policy_version_id, state_version, decision, reason, decision_snapshot, actor_identity, created_at from public.quote_asset_decision_history where deployment_id = $1::uuid order by created_at desc limit 200`, [id]),
