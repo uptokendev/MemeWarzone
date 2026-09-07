@@ -123,12 +123,6 @@ const PostGradLeague = () => {
   const third = board.podium.find((entry) => entry.rank === 3) || board.podium[2];
   const quarterlyChampionshipId = quarterlyTransition.tournamentId;
   const headerMeta = [season.label, season.week ? `WEEK ${season.week}` : null, phase.label].filter(Boolean).join(" · ");
-  const monthlySponsors = useEventSponsors({
-    eventType: "monthly_mwl",
-    eventReferenceId: String(season.id || ""),
-    chainId: wallet.chainId,
-    enabled: source !== "empty",
-  });
   const quarterlySponsors = useEventSponsors({
     eventType: "quarterly_championship",
     eventReferenceId: quarterlyChampionshipId || "",
@@ -144,7 +138,6 @@ const PostGradLeague = () => {
         <TacticalTag label={phase.label} tone={phase.live ? "success" : "default"} />
         <WarzoneLeagueHowItWorks />
       </WarzonePageHeader>
-      <EventSponsorAttribution sponsors={monthlySponsors} variant="premium" />
 
       <div className="flex flex-wrap gap-3 text-xs font-semibold uppercase tracking-[0.14em]">
         <button
@@ -173,7 +166,7 @@ const PostGradLeague = () => {
               {quarterlyTransition.label}
             </h2>
             <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-              Top Major War League finishers carry an advantage into the Quarterly Championship. This is a standings competition, not a knockout Quarter Final stage.
+              Top Major War League finishers carry an advantage into the Quarterly Championship. This is a standings competition, not an elimination bracket.
             </p>
             <p className="mt-2 text-xs uppercase tracking-[0.14em] text-white/50">
               {quarterlyTransition.field.length} MWL leaders shown
