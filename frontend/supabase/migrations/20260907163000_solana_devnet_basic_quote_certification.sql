@@ -72,7 +72,7 @@ insert into public.quote_asset_policy_versions (
   'a2100000-0000-4000-8000-000000000312'::uuid,
   'a2100000-0000-4000-8000-000000000112'::uuid,
   (select id from public.quote_asset_providers where provider_key = 'solana-basic'),
-  'solana-devnet-basic-circle-usdc-v1', 1, 'active', true, false, true, true, true,
+  'solana-devnet-basic-circle-usdc-v1', 1, 'active', true, true, true, true, true,
   jsonb_build_object(
     'solanaGraduation', jsonb_build_object(
       'cluster', 'devnet',
@@ -108,7 +108,7 @@ select
   case
     when d.id = 'a2100000-0000-4000-8000-000000000211'::uuid
       then 'Solana devnet BASIC certification native quote: exact chain-102 native identity and policy pinned.'
-    else 'Circle devnet USDC identity and Orca route are pinned, but the certification pool is unseeded; keep new graduation disabled until real canonical-USDC liquidity is verified.'
+    else 'Circle devnet USDC identity and Orca route are approved, but the certification pool is unseeded; deployment market health keeps graduation fail-closed until real canonical-USDC liquidity is verified.'
   end,
   jsonb_build_object(
     'chainId', d.chain_id,
