@@ -7,10 +7,7 @@ const active = (overrides = {}) => ({
   sponsorship_status: "active",
   profile_status: "approved",
   project_name: "PROJECT A",
-  logo_url: "https://cdn.example.com/a.png",
-  website_url: "https://project-a.example/",
   founding_sponsor: false,
-  founding_sponsor_badge: null,
   ...overrides,
 });
 
@@ -32,7 +29,7 @@ test("only active sponsorships with approved sponsor profiles are publicly proje
     active({ sponsor_profile_id: "pending", sponsorship_status: "pending_payment", project_name: "PENDING" }),
     active({ sponsor_profile_id: "cancelled", sponsorship_status: "cancelled", project_name: "CANCELLED" }),
     active({ sponsor_profile_id: "expired", sponsorship_status: "expired", project_name: "EXPIRED" }),
-    active({ sponsor_profile_id: "disabled", profile_status: "disabled", project_name: "DISABLED" }),
+    active({ sponsor_profile_id: "disabled", profile_status: "suspended", project_name: "DISABLED" }),
   ];
   assert.deepEqual(projectPublicSponsors(rows).map((row) => row.projectName), ["PROJECT A"]);
 });
@@ -51,14 +48,14 @@ test("multiple sponsors preserve deterministic authority order and dedupe profil
   assert.deepEqual(projectPublicSponsors(rows).map((row) => row.projectName), ["PROJECT A", "PROJECT B", "PROJECT C"]);
 });
 
-test("safe links accept HTTPS only", () => {
+test("safe link policy accepts HTTPS only for future authoritative destinations", () => {
   assert.equal(safeHttpsUrl("javascript:alert(1)"), null);
   assert.equal(safeHttpsUrl("http://example.com"), null);
   assert.equal(safeHttpsUrl("data:text/html,boom"), null);
   assert.equal(safeHttpsUrl("https://example.com/path"), "https://example.com/path");
 });
 
-test("public projection contains promotional identity only", () => {
+test("public projection contains canonical promotional identity only", () => {
   const [row] = projectPublicSponsors([
     active({
       prize_native_raw: "700",
@@ -68,17 +65,11 @@ test("public projection contains promotional identity only", () => {
       confirmed_at: "2026-09-07T00:00:00.000Z",
       signature_reference: "0xreceipt",
       verified_wallet: "0xwallet",
+      logo_url: "https://legacy.example/logo.png",
+      website_url: "https://legacy.example/",
       founding_sponsor: true,
-      founding_sponsor_badge: "FOUNDING",
     }),
   ]);
-  assert.deepEqual(Object.keys(row).sort(), [
-    "foundingSponsor",
-    "foundingSponsorBadge",
-    "logoUrl",
-    "projectName",
-    "sponsorProfileId",
-    "websiteUrl",
-  ].sort());
+  assert.deepEqual(Object.keys(row).sort(), ["foundingSponsor", "projectName", "sponsorProfileId"].sort());
   assert.equal(row.foundingSponsor, true);
 });
