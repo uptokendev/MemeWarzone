@@ -116,6 +116,21 @@ async function resolveLeague(db, event) {
 }
 
 async function resolveQuarterlyChampionship(db, event) {
+  if (String(event.event_type) === EVENT_SPONSORSHIP_TYPES.MWL_QUARTER_FINALS) {
+    const legacy = await db.query(
+      `select e.id,e.event_type,e.chain_id,e.year,e.quarter,e.state,e.opens_at,e.closes_at,e.closed_at
+         from public.arena_tournaments t
+         join public.arena_league_seasons s
+           on s.chain_id=t.chain_id and s.quarter_finals_tournament_id=t.id
+         join public.arena_championship_epochs e
+           on e.chain_id=s.chain_id and e.year=s.year and e.quarter=s.quarter
+        where t.id=$1 and t.chain_id=$2 and t.origin='quarter_finals'
+          and e.event_type='quarterly_championship'
+        limit 1`,
+      [String(event.event_reference_id), Number(event.chain_id)],
+    );
+    return legacy.rows?.[0] || null;
+  }
   const result = await db.query(
     `select id,event_type,chain_id,year,quarter,state,opens_at,closes_at,closed_at
        from public.arena_championship_epochs
@@ -170,8 +185,8 @@ export async function resolveSponsorableEvent(db, { eventRef, chainId = null, no
       return { ok: false, code: "QUARTERLY_CHAMPIONSHIP_RELATIONSHIP_INVALID", sponsorable: false, eventId: String(event.id), eventType: EVENT_SPONSORSHIP_TYPES.QUARTERLY_CHAMPIONSHIP, registryEventType: String(event.event_type), chainId: Number(event.chain_id) };
     }
     const base = resolvedBase(event, championship, nowMs);
-    // Historical aliases remain readable but can never receive new purchases.
-    if (String(event.event_type) === EVENT_SPONSORSHIP_TYPES.MWL_QUARTER_FINALS) {
+    const legacyAlias = String(event.event_type) === EVENT_SPONSORSHIP_TYPES.MWL_QUARTER_FINALS;
+    if (legacyAlias) {
       base.sponsorable = false;
       base.sponsorabilityReason = "legacy_quarterly_alias_read_only";
     }
@@ -183,7 +198,10 @@ export async function resolveSponsorableEvent(db, { eventRef, chainId = null, no
         epochId: String(championship.id),
         parentEventId: null,
         childEventId: null,
-        relationship: "sponsorship_events.event_reference_id=arena_championship_epochs.id",
+        relationship: legacyAlias
+          ? "legacy quarter-final tournament -> arena_league_seasons -> arena_championship_epochs"
+          : "sponsorship_events.event_reference_id=arena_championship_epochs.id",
+        legacyAliasReference: legacyAlias ? String(event.event_reference_id) : null,
       },
     };
   }
