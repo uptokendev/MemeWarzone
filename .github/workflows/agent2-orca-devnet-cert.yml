@@ -22,7 +22,9 @@ jobs:
       SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
       ORCA_DEVNET_CERT_REPORT: /tmp/mwz-orca-devnet-cert-pool.json
       ORCA_DEVNET_CERT_SOL_USDC_PRICE: "150"
-      ORCA_DEVNET_CERT_SEED_SOL: "0.25"
+      # The existing devnet V3 certification target is $6 / 0.04 SOL at the pinned $150/SOL reference.
+      # 0.10 SOL + 15 canonical devnet USDC is deliberately small test liquidity while leaving >2x route headroom.
+      ORCA_DEVNET_CERT_SEED_SOL: "0.10"
     steps:
       - uses: actions/checkout@v4
         with:
