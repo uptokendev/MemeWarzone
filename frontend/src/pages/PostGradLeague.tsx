@@ -1,18 +1,17 @@
-import { useState, type ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { Link } from "react-router-dom";
-import { TournamentBracketModal } from "@/components/arena/TournamentBracketModal";
+import { EventSponsorAttribution } from "@/components/arena/EventSponsorAttribution";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { WarzoneContent } from "@/components/warzone/WarzoneContent";
 import { WarzoneLeagueHowItWorks } from "@/components/warzone/WarzoneLeagueHowItWorks";
 import { WarzonePageHeader } from "@/components/warzone/WarzonePageHeader";
 import { WarzoneRankCard } from "@/components/warzone/WarzoneRankCard";
 import { WarzoneTokenMark } from "@/components/warzone/WarzoneTokenMark";
-import { fetchPostGradTournamentDetails } from "@/features/postgrad/apiClient";
-import { postGradFlags } from "@/features/postgrad/config";
-import { getMockTournamentDetails } from "@/features/postgrad/mockTournamentFixtures.mjs";
 import { getArenaTokenRoute } from "@/features/postgrad/tokenRoutes";
+import { useActiveFeedWallet } from "@/hooks/useActiveFeedWallet";
 import { useArenaLeagueFeed } from "@/hooks/useArenaLeagueFeed";
-import { readBracketRounds, tournamentHref } from "@/lib/arena/tournamentCommandPresentation.mjs";
+import { useEventSponsors } from "@/hooks/useEventSponsors";
+import { tournamentHref } from "@/lib/arena/tournamentCommandPresentation.mjs";
 import {
   presentLeaguePhase,
   presentOwnedLeagueTokens,
@@ -111,38 +110,31 @@ function StandingRow({
 
 const PostGradLeague = () => {
   const { season, source, ownedTokenIds } = useArenaLeagueFeed();
+  const wallet = useActiveFeedWallet();
   const [tab, setTab] = useState<LeagueTab>("regular");
-  const [bracketOpen, setBracketOpen] = useState(false);
-  const [bracketRounds, setBracketRounds] = useState<unknown[]>([]);
-  const [bracketBusy, setBracketBusy] = useState(false);
   const board = presentWarzoneLeagueBoard(season.entries);
   const phase = presentLeaguePhase(season);
-  const quarterFinals = presentQuarterFinalField(season, board.ranked);
+  const quarterlyTransition = presentQuarterFinalField(season, board.ranked);
   const yours = presentOwnedLeagueTokens(board.ranked, ownedTokenIds);
   const ownedKeys = new Set(yours.map((entry) => tokenIdentityKey(entry.tokenId)));
   const empty = presentWarzoneLeagueEmpty(source);
   const first = board.podium.find((entry) => entry.rank === 1) || board.podium[0];
   const second = board.podium.find((entry) => entry.rank === 2) || board.podium[1];
   const third = board.podium.find((entry) => entry.rank === 3) || board.podium[2];
-  const quarterFinalsId = quarterFinals.tournamentId;
+  const quarterlyChampionshipId = quarterlyTransition.tournamentId;
   const headerMeta = [season.label, season.week ? `WEEK ${season.week}` : null, phase.label].filter(Boolean).join(" · ");
-
-  async function handleViewBracket() {
-    if (!quarterFinalsId) return;
-    setBracketBusy(true);
-    try {
-      const json = await fetchPostGradTournamentDetails(quarterFinalsId);
-      const payload = json || (postGradFlags.mocks ? getMockTournamentDetails(quarterFinalsId) : null);
-      setBracketRounds(readBracketRounds(payload));
-      setBracketOpen(true);
-    } catch {
-      const fallback = postGradFlags.mocks ? getMockTournamentDetails(quarterFinalsId) : null;
-      setBracketRounds(readBracketRounds(fallback));
-      setBracketOpen(true);
-    } finally {
-      setBracketBusy(false);
-    }
-  }
+  const monthlySponsors = useEventSponsors({
+    eventType: "monthly_mwl",
+    eventReferenceId: String(season.id || ""),
+    chainId: wallet.chainId,
+    enabled: source !== "empty",
+  });
+  const quarterlySponsors = useEventSponsors({
+    eventType: "quarterly_championship",
+    eventReferenceId: quarterlyChampionshipId || "",
+    chainId: wallet.chainId,
+    enabled: Boolean(quarterlyChampionshipId),
+  });
 
   return (
     <WarzoneContent className="space-y-6">
@@ -152,6 +144,7 @@ const PostGradLeague = () => {
         <TacticalTag label={phase.label} tone={phase.live ? "success" : "default"} />
         <WarzoneLeagueHowItWorks />
       </WarzonePageHeader>
+      <EventSponsorAttribution sponsors={monthlySponsors} variant="premium" />
 
       <div className="flex flex-wrap gap-3 text-xs font-semibold uppercase tracking-[0.14em]">
         <button
@@ -168,24 +161,28 @@ const PostGradLeague = () => {
           data-selected={tab === "quarter_finals" ? "true" : undefined}
           className={`px-1 py-1 ${tab === "quarter_finals" ? "text-accent" : "text-muted-foreground hover:text-foreground"}`}
         >
-          Quarter Finals
+          Quarterly Championship
         </button>
       </div>
 
       {tab === "quarter_finals" ? (
-        <section data-warzone-mwl-quarter-finals="true" className="space-y-6">
+        <section data-warzone-mwl-quarter-finals="true" data-quarterly-championship="true" className="space-y-6">
           <div>
-            <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Quarter Finals</div>
-            <h2 className="mt-1 font-retro text-lg text-foreground" data-mwl-qf-label={quarterFinals.statusLabel}>
-              {quarterFinals.label}
+            <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Quarterly Championship</div>
+            <h2 className="mt-1 font-retro text-lg text-foreground" data-mwl-qf-label={quarterlyTransition.statusLabel}>
+              {quarterlyTransition.label}
             </h2>
-            <p className="mt-1 text-xs uppercase tracking-[0.14em] text-white/50">
-              {quarterFinals.field.length} {quarterFinals.phase.projected ? "projected" : "qualified"}
+            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+              Top Major War League finishers carry an advantage into the Quarterly Championship. This is a standings competition, not a knockout Quarter Final stage.
+            </p>
+            <p className="mt-2 text-xs uppercase tracking-[0.14em] text-white/50">
+              {quarterlyTransition.field.length} MWL leaders shown
             </p>
           </div>
-          {quarterFinals.field.length ? (
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4" data-mwl-qf-field={quarterFinals.field.length}>
-              {quarterFinals.field.map((entry) => {
+          <EventSponsorAttribution sponsors={quarterlySponsors} variant="premium" />
+          {quarterlyTransition.field.length ? (
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4" data-mwl-qf-field={quarterlyTransition.field.length}>
+              {quarterlyTransition.field.map((entry) => {
                 const yoursToken = ownedKeys.has(tokenIdentityKey(entry.tokenId));
                 return (
                   <TokenLink key={entry.tokenId} tokenId={entry.tokenId}>
@@ -208,64 +205,48 @@ const PostGradLeague = () => {
               })}
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">No projected Quarter Finalists yet.</p>
+            <p className="text-sm text-muted-foreground">No MWL leaders are available for the quarterly transition yet.</p>
           )}
-          {quarterFinals.cut ? (
+          {quarterlyTransition.cut ? (
             <section data-mwl-qualification-cut="true" className="space-y-2">
-              <div className="text-[10px] uppercase tracking-[0.22em] text-white/45">Qualification cut</div>
-              <TokenLink tokenId={quarterFinals.cut.inside.tokenId}>
+              <div className="text-[10px] uppercase tracking-[0.22em] text-white/45">MWL advantage line</div>
+              <TokenLink tokenId={quarterlyTransition.cut.inside.tokenId}>
                 <div className="flex items-center justify-between gap-3 py-2">
                   <div className="flex min-w-0 items-center gap-2">
-                    <WarzoneTokenMark imageUrl={(quarterFinals.cut.inside as { imageUrl?: string }).imageUrl} symbol={quarterFinals.cut.inside.symbol} name={quarterFinals.cut.inside.tokenName} size="sm" />
+                    <WarzoneTokenMark imageUrl={(quarterlyTransition.cut.inside as { imageUrl?: string }).imageUrl} symbol={quarterlyTransition.cut.inside.symbol} name={quarterlyTransition.cut.inside.tokenName} size="sm" />
                     <div className="min-w-0">
-                      <div className="font-retro text-foreground">#{quarterFinals.cut.inside.rank} ${String(quarterFinals.cut.inside.symbol || "").replace(/^\$/, "")}</div>
+                      <div className="font-retro text-foreground">#{quarterlyTransition.cut.inside.rank} ${String(quarterlyTransition.cut.inside.symbol || "").replace(/^\$/, "")}</div>
                     </div>
                   </div>
-                  <div className="font-retro">{Number(quarterFinals.cut.inside.points || 0).toLocaleString()} PTS</div>
+                  <div className="font-retro">{Number(quarterlyTransition.cut.inside.points || 0).toLocaleString()} PTS</div>
                 </div>
               </TokenLink>
               <div className="border-t" style={{ borderColor: "rgba(240,106,26,0.55)" }} />
-              <TokenLink tokenId={quarterFinals.cut.outside.tokenId}>
+              <TokenLink tokenId={quarterlyTransition.cut.outside.tokenId}>
                 <div className="flex items-center justify-between gap-3 py-2">
                   <div className="flex min-w-0 items-center gap-2">
-                    <WarzoneTokenMark imageUrl={(quarterFinals.cut.outside as { imageUrl?: string }).imageUrl} symbol={quarterFinals.cut.outside.symbol} name={quarterFinals.cut.outside.tokenName} size="sm" />
+                    <WarzoneTokenMark imageUrl={(quarterlyTransition.cut.outside as { imageUrl?: string }).imageUrl} symbol={quarterlyTransition.cut.outside.symbol} name={quarterlyTransition.cut.outside.tokenName} size="sm" />
                     <div className="min-w-0">
-                      <div className="font-retro text-foreground">#{quarterFinals.cut.outside.rank} ${String(quarterFinals.cut.outside.symbol || "").replace(/^\$/, "")}</div>
+                      <div className="font-retro text-foreground">#{quarterlyTransition.cut.outside.rank} ${String(quarterlyTransition.cut.outside.symbol || "").replace(/^\$/, "")}</div>
                     </div>
                   </div>
-                  <div className="font-retro">{Number(quarterFinals.cut.outside.points || 0).toLocaleString()} PTS</div>
+                  <div className="font-retro">{Number(quarterlyTransition.cut.outside.points || 0).toLocaleString()} PTS</div>
                 </div>
               </TokenLink>
             </section>
           ) : null}
-          <div className="flex flex-wrap gap-3">
-            {quarterFinalsId ? (
+          {quarterlyChampionshipId ? (
+            <div className="flex flex-wrap gap-3">
               <Link
-                to={tournamentHref(quarterFinalsId)}
+                to={tournamentHref(quarterlyChampionshipId)}
                 data-mwl-view-quarter-finals="true"
+                data-mwl-view-quarterly-championship="true"
                 className="mwz-button inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em]"
               >
-                View Quarter Finals
+                View Quarterly Championship
               </Link>
-            ) : null}
-            {quarterFinalsId ? (
-              <button
-                type="button"
-                onClick={() => void handleViewBracket()}
-                disabled={bracketBusy}
-                className="inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em] text-accent hover:underline disabled:opacity-60"
-              >
-                {bracketBusy ? "Loading bracket" : "View bracket"}
-              </button>
-            ) : null}
-          </div>
-          <TournamentBracketModal
-            open={bracketOpen}
-            onOpenChange={setBracketOpen}
-            title={`${season.label} Quarter Finals`}
-            statusLabel={quarterFinals.statusLabel}
-            rounds={bracketRounds as never}
-          />
+            </div>
+          ) : null}
         </section>
       ) : season.entries.length ? (
         <>
