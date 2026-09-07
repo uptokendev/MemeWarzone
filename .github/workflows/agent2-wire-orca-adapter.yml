@@ -1,0 +1,58 @@
+name: Agent 2 wire policy-selected Orca adapter
+
+on:
+  push:
+    branches: [agent2/solana-basic-graduation-market]
+    paths: [.github/workflows/agent2-wire-orca-adapter.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  wire:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent2/solana-basic-graduation-market
+          fetch-depth: 0
+      - name: Patch authorizer narrowly
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('frontend/api/dev-fix/solana-graduation-authorization-v2.js')
+          s=p.read_text()
+          old='import { getGraduationQuoteAssetDetail } from "../lib/quoteAssetCatalog.js";\n'
+          new=old+'import { quoteOrcaWhirlpoolDevnet } from "../lib/solanaOrcaGraduationQuote.js";\n'
+          if old not in s: raise SystemExit('catalog import anchor missing')
+          s=s.replace(old,new,1)
+
+          old='''  const maxSlippageBps = Number(route.maxSlippageBps ?? DEFAULT_SLIPPAGE_BPS);\n  const maxImpactBps = Number(route.maxImpactBps ?? 100);\n  const maxDeviationBps = Number(route.maxDeviationBps ?? 100);'''
+          new='''  const acquisitionAdapter = String(route.acquisitionAdapter || (profile === QUOTE_PROFILE.NATIVE ? "NATIVE" : "JUPITER")).trim().toUpperCase();\n  if (profile === QUOTE_PROFILE.NATIVE && acquisitionAdapter !== "NATIVE") throw new SolanaGraduationAuthorizationError("Native quote must use the NATIVE acquisition adapter.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });\n  if (profile !== QUOTE_PROFILE.NATIVE && !["JUPITER", "ORCA_WHIRLPOOL_DEVNET"].includes(acquisitionAdapter)) throw new SolanaGraduationAuthorizationError(`Unsupported acquisition adapter ${acquisitionAdapter}.`, { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });\n  if (acquisitionAdapter === "ORCA_WHIRLPOOL_DEVNET" && String(chainId) !== "102") throw new SolanaGraduationAuthorizationError("Orca certification adapter is restricted to Solana devnet chain 102.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });\n  const maxSlippageBps = Number(route.maxSlippageBps ?? DEFAULT_SLIPPAGE_BPS);\n  const maxImpactBps = Number(route.maxImpactBps ?? 100);\n  const maxDeviationBps = Number(route.maxDeviationBps ?? 100);'''
+          if old not in s: raise SystemExit('safety anchor missing')
+          s=s.replace(old,new,1)
+
+          old='''    binanceSymbol: String(route.binanceSymbol || "").trim(), coinGeckoId: String(route.coinGeckoId || "").trim(),\n    jupiterApiBase: String(route.jupiterApiBase || process.env.SOLANA_GRADUATION_JUPITER_API_BASE || "https://lite-api.jup.ag/swap/v1").replace(new RegExp("/+$"), ""),\n  };'''
+          new='''    binanceSymbol: String(route.binanceSymbol || "").trim(), coinGeckoId: String(route.coinGeckoId || "").trim(),\n    acquisitionAdapter, rawRoute: route,\n    orcaPool: String(route.orcaPool || "").trim(), orcaWhirlpoolsConfig: String(route.orcaWhirlpoolsConfig || "").trim(),\n    jupiterApiBase: String(route.jupiterApiBase || process.env.SOLANA_GRADUATION_JUPITER_API_BASE || "https://lite-api.jup.ag/swap/v1").replace(new RegExp("/+$"), ""),\n  };'''
+          if old not in s: raise SystemExit('return anchor missing')
+          s=s.replace(old,new,1)
+
+          old='''async function fetchAcquisitionQuote(config, amountLamports) {\n  const slippageBps = config.maxSlippageBps || DEFAULT_SLIPPAGE_BPS;\n  const params = new URLSearchParams({'''
+          new='''async function fetchAcquisitionQuote(config, amountLamports) {\n  if (config.acquisitionAdapter === "ORCA_WHIRLPOOL_DEVNET") {\n    let result;\n    try {\n      result = await quoteOrcaWhirlpoolDevnet({ rpcUrl: requiredEnv("SOLANA_RPC_URL"), route: config.rawRoute, amountLamports });\n    } catch (error) {\n      failUnsafe(`Graduation-sized Orca acquisition quote for ${config.id} is unavailable.`, error);\n    }\n    if (result.impactBps > config.maxImpactBps) failUnsafe(`Acquisition price impact ${result.impactBps} bps exceeds ${config.maxImpactBps} bps.`);\n    return {\n      quote: { adapter: result.adapter, pool: result.pool, programId: result.programId, inputMint: result.inputMint, outputMint: result.outputMint, inputAmount: result.inputAmount.toString(), outAmount: result.outAmount.toString(), minOut: result.minOut.toString(), poolLiquidity: result.poolLiquidity.toString(), poolSpotQuotePerSol: result.poolSpotQuotePerSol },\n      outAmount: result.outAmount, minOut: result.minOut, impactBps: result.impactBps, slippageBps: result.slippageBps,\n    };\n  }\n  if (config.acquisitionAdapter !== "JUPITER") failUnsafe(`Unsupported non-native acquisition adapter ${config.acquisitionAdapter}.`);\n  const slippageBps = config.maxSlippageBps || DEFAULT_SLIPPAGE_BPS;\n  const params = new URLSearchParams({'''
+          if old not in s: raise SystemExit('acquisition function anchor missing')
+          s=s.replace(old,new,1)
+
+          old='''quote: { configId: quoteConfig.id, assetId: quoteConfig.assetId, providerId: quoteConfig.providerId, providerKey: quoteConfig.providerKey, providerClassName: quoteConfig.providerClassName, policyId: quoteConfig.policyId, policyKey: quoteConfig.policyKey, stateVersion: quoteConfig.stateVersion, configHashHex: quoteConfigHash.toString("hex"), mint: quoteConfig.mint, policyVersion: quoteConfig.policyVersion, profile: quoteConfig.profile, providerClass: quoteConfig.providerClass, decimals: quoteConfig.decimals, acquisitionProgram: quoteConfig.acquisitionProgram, recoveryAccount: quoteConfig.recoveryAccount, expectedQuoteAmount: expectedQuoteAmount.toString(), minQuoteAmount: minQuoteAmount.toString(), maxSlippageBps, maxImpactBps, maxDeviationBps, acquisitionQuote: acquisition?.quote || null },'''
+          new='''quote: { configId: quoteConfig.id, assetId: quoteConfig.assetId, providerId: quoteConfig.providerId, providerKey: quoteConfig.providerKey, providerClassName: quoteConfig.providerClassName, policyId: quoteConfig.policyId, policyKey: quoteConfig.policyKey, stateVersion: quoteConfig.stateVersion, configHashHex: quoteConfigHash.toString("hex"), mint: quoteConfig.mint, policyVersion: quoteConfig.policyVersion, profile: quoteConfig.profile, providerClass: quoteConfig.providerClass, decimals: quoteConfig.decimals, acquisitionAdapter: quoteConfig.acquisitionAdapter, acquisitionProgram: quoteConfig.acquisitionProgram, orcaPool: quoteConfig.orcaPool || null, orcaWhirlpoolsConfig: quoteConfig.orcaWhirlpoolsConfig || null, recoveryAccount: quoteConfig.recoveryAccount, expectedQuoteAmount: expectedQuoteAmount.toString(), minQuoteAmount: minQuoteAmount.toString(), maxSlippageBps, maxImpactBps, maxDeviationBps, acquisitionQuote: acquisition?.quote || null },'''
+          if old not in s: raise SystemExit('response quote anchor missing')
+          s=s.replace(old,new,1)
+          p.write_text(s)
+      - name: Syntax check
+        run: node --check frontend/api/dev-fix/solana-graduation-authorization-v2.js && node --check frontend/api/lib/solanaOrcaGraduationQuote.js
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add frontend/api/dev-fix/solana-graduation-authorization-v2.js
+          git commit -m 'feat(agent2): select graduation acquisition from quote policy'
+          git push origin HEAD:agent2/solana-basic-graduation-market
