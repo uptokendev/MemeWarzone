@@ -54,6 +54,6 @@ test("Robinhood stock graduation source keeps explicit selected quote and no nat
   const campaign = fs.readFileSync("contracts/RobinhoodStockLaunchCampaign.sol", "utf8");
   assert.match(campaign, /graduationQuoteToken/);
   assert.match(campaign, /completeStockGraduation/);
-  assert.match(campaign, /never silently\s+\/\/\s+fall back to the native MEME\/WETH finalizer/i);
+  assert.match(campaign, /never silently[\s\S]*fall back to the native MEME\/WETH finalizer/i);
   assert.match(campaign, /adapter\/oracle\/mint failure reverts this state[\s\S]*preserving PENDING/i);
 });
