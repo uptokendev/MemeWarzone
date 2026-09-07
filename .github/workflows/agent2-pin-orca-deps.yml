@@ -28,6 +28,7 @@ jobs:
           node --check frontend/api/lib/solanaOrcaGraduationQuote.js
           node --check frontend/api/dev-fix/solana-graduation-authorization-v2.js
           node --check tools/solana-meteora-graduation/orca-devnet-cert-pool.mjs
+          node --check tools/solana-meteora-graduation/graduate-basic-quote.mjs
       - name: Commit lockfiles
         shell: bash
         run: |
