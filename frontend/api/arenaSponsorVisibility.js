@@ -1,6 +1,11 @@
 import { pool } from "../server/db.js";
 import { badMethod, json } from "../server/http.js";
-import { PUBLIC_SPONSOR_EVENT_TYPES, projectPublicSponsors } from "./lib/arenaSponsorVisibilityPolicy.mjs";
+import {
+  PUBLIC_SPONSOR_EVENT_TYPES,
+  canonicalPublicSponsorEventType,
+  projectPublicSponsors,
+  publicSponsorRegistryTypes,
+} from "./lib/arenaSponsorVisibilityPolicy.mjs";
 
 const VISIBLE_EVENT_TYPES = new Set(PUBLIC_SPONSOR_EVENT_TYPES);
 
@@ -8,16 +13,36 @@ function text(value) {
   return String(value || "").trim();
 }
 
-function publicEventShape(row) {
+function publicEventShape(rows, canonicalType) {
+  const row = rows[0];
   return {
-    eventType: String(row.event_type),
+    eventType: canonicalType,
     eventReferenceId: String(row.event_reference_id),
     chainId: Number(row.chain_id),
   };
 }
 
+async function rowsForCanonicalIdentity({ eventType, eventReferenceId, chainId }) {
+  const registryTypes = publicSponsorRegistryTypes(eventType);
+  const params = [eventReferenceId, registryTypes];
+  let chainFilter = "";
+  if (chainId != null) {
+    params.push(chainId);
+    chainFilter = `and chain_id = $${params.length}`;
+  }
+  return (await pool.query(
+    `select id,event_type,event_reference_id,chain_id,created_at
+       from public.sponsorship_events
+      where event_reference_id = $1
+        and event_type = any($2::text[])
+        ${chainFilter}
+      order by chain_id asc,created_at asc,id asc`,
+    params,
+  )).rows;
+}
+
 async function resolveExactEvent(query) {
-  const eventType = text(query.get("eventType"));
+  const requestedEventType = text(query.get("eventType"));
   const eventReferenceId = text(query.get("eventReferenceId"));
   const eventId = text(query.get("eventId"));
   const chainRaw = text(query.get("chainId"));
@@ -27,41 +52,42 @@ async function resolveExactEvent(query) {
     return { ok: false, status: 400, code: "EVENT_CHAIN_INVALID" };
   }
 
-  const params = [];
-  let where = "";
-  if (eventType || eventReferenceId) {
-    if (!eventType || !eventReferenceId) {
+  let canonicalType;
+  let reference = eventReferenceId;
+  if (requestedEventType || eventReferenceId) {
+    if (!requestedEventType || !eventReferenceId) {
       return { ok: false, status: 400, code: "EVENT_TYPE_AND_REFERENCE_REQUIRED" };
     }
-    if (!VISIBLE_EVENT_TYPES.has(eventType)) {
+    canonicalType = canonicalPublicSponsorEventType(requestedEventType);
+    if (!VISIBLE_EVENT_TYPES.has(canonicalType)) {
       return { ok: false, status: 404, code: "EVENT_CLASS_INELIGIBLE" };
     }
-    params.push(eventType, eventReferenceId);
-    where = "event_type = $1 and event_reference_id = $2";
   } else {
     if (!eventId) return { ok: false, status: 400, code: "EVENT_REFERENCE_REQUIRED" };
-    params.push(eventId);
-    where = "id::text = $1";
+    const params = [eventId];
+    let chainFilter = "";
+    if (chainId != null) {
+      params.push(chainId);
+      chainFilter = `and chain_id = $${params.length}`;
+    }
+    const direct = (await pool.query(
+      `select id,event_type,event_reference_id,chain_id,created_at
+         from public.sponsorship_events
+        where id::text = $1 ${chainFilter}
+        limit 1`,
+      params,
+    )).rows[0];
+    if (!direct) return { ok: false, status: 404, code: "EVENT_NOT_FOUND" };
+    canonicalType = canonicalPublicSponsorEventType(direct.event_type);
+    if (!VISIBLE_EVENT_TYPES.has(canonicalType)) return { ok: false, status: 404, code: "EVENT_CLASS_INELIGIBLE" };
+    reference = String(direct.event_reference_id);
   }
 
-  let chainFilter = "";
-  if (chainId != null) {
-    params.push(chainId);
-    chainFilter = `and chain_id = $${params.length}`;
-  }
-  const rows = (await pool.query(
-    `select id,event_type,event_reference_id,chain_id
-       from public.sponsorship_events
-      where ${where}
-        ${chainFilter}
-      order by created_at asc,id asc
-      limit 2`,
-    params,
-  )).rows.filter((row) => VISIBLE_EVENT_TYPES.has(String(row.event_type)));
-
+  const rows = await rowsForCanonicalIdentity({ eventType: canonicalType, eventReferenceId: reference, chainId });
   if (!rows.length) return { ok: false, status: 404, code: "EVENT_NOT_FOUND" };
-  if (rows.length > 1) return { ok: false, status: 409, code: "EVENT_CHAIN_REQUIRED" };
-  return { ok: true, event: rows[0] };
+  const chains = new Set(rows.map((row) => Number(row.chain_id)));
+  if (chains.size > 1) return { ok: false, status: 409, code: "EVENT_CHAIN_REQUIRED" };
+  return { ok: true, canonicalType, events: rows };
 }
 
 async function handleGet(req, res) {
@@ -76,9 +102,13 @@ async function handleGet(req, res) {
     return json(res, resolved.status || 400, { ok: false, code: resolved.code, sponsors: [] });
   }
 
+  const eventIds = resolved.events.map((row) => row.id);
   const rows = (await pool.query(
     `select es.sponsor_profile_id,
             es.status as sponsorship_status,
+            es.activated_at,
+            es.created_at,
+            es.id as event_sponsorship_id,
             sp.status as profile_status,
             sp.project_name,
             sp.founding_sponsor,
@@ -94,17 +124,17 @@ async function handleGet(req, res) {
        from public.event_sponsorships es
        join public.sponsor_profiles sp
          on sp.id = es.sponsor_profile_id
-      where es.event_id = $1
+      where es.event_id = any($1::uuid[])
         and es.status = 'active'
         and sp.status = 'approved'
       order by es.activated_at asc nulls last,es.created_at asc,es.id asc`,
-    [resolved.event.id],
+    [eventIds],
   )).rows;
 
   return json(res, 200, {
     ok: true,
     eligible: true,
-    event: publicEventShape(resolved.event),
+    event: publicEventShape(resolved.events, resolved.canonicalType),
     sponsors: projectPublicSponsors(rows),
   });
 }
