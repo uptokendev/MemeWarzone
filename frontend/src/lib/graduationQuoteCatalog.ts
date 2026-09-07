@@ -48,6 +48,8 @@ export type GraduationQuoteAsset = {
   presentationDefault?: boolean;
 };
 
+let lastFreshSelection: GraduationQuoteAsset | null = null;
+
 async function readJson<T>(response: Response): Promise<T> {
   const body = await response.json().catch(() => null);
   if (!response.ok) {
@@ -79,16 +81,33 @@ export async function fetchGraduationQuoteAssetDetail(id: string): Promise<Gradu
 export async function assertFreshGraduationQuote(asset: GraduationQuoteAsset): Promise<GraduationQuoteAsset> {
   const id = String(asset?.id || "").trim();
   if (!id || asset?.presentationDefault === true) {
+    lastFreshSelection = null;
     throw new Error("Choose a currently approved Graduation Market before continuing.");
   }
   const fresh = await fetchGraduationQuoteAssetDetail(id);
   const sameChain = String(fresh.chainId) === String(asset.chainId);
   const sameProvider = String(fresh.provider?.key || "").toLowerCase() === String(asset.provider?.key || "").toLowerCase();
-  const sameIdentity = String(fresh.contractAddressOrMint || "").toLowerCase() === String(asset.contractAddressOrMint || "").toLowerCase();
+  const sourceIdentity = String(asset.contractAddressOrMint || "");
+  const freshIdentity = String(fresh.contractAddressOrMint || "");
+  const sameIdentity = String(fresh.chainId) === "101"
+    ? freshIdentity === sourceIdentity
+    : freshIdentity.toLowerCase() === sourceIdentity.toLowerCase();
   if (!sameChain || !sameProvider || !sameIdentity || fresh.newGraduationEligible !== true) {
+    lastFreshSelection = null;
     throw new Error("That Graduation Market is no longer approved. Select another currently available market.");
   }
+  lastFreshSelection = fresh;
   return fresh;
+}
+
+export function lastFreshGraduationQuote(chainId?: number): GraduationQuoteAsset | null {
+  if (!lastFreshSelection) return null;
+  if (chainId != null && String(lastFreshSelection.chainId) !== String(chainId)) return null;
+  return lastFreshSelection;
+}
+
+export function clearFreshGraduationQuote() {
+  lastFreshSelection = null;
 }
 
 export async function resolveRobinhoodStockTokenForQuote(
