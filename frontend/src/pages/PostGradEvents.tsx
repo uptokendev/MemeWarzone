@@ -1,12 +1,15 @@
 import { Link } from "react-router-dom";
+import { EventSponsorAttribution } from "@/components/arena/EventSponsorAttribution";
 import { ArenaCampaignRail } from "@/components/postgrad/ArenaCampaignRailCard";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { Button } from "@/components/ui/button";
+import { ContentContainer } from "@/components/layout/ContentContainer";
 import { getPostGradWarRoomSearchRoute } from "@/features/postgrad/identityRoutes";
 import { useArenaCampaignFeed } from "@/hooks/useArenaCampaignFeed";
-import { ContentContainer } from "@/components/layout/ContentContainer";
 import type { ArenaEventSummary } from "@/hooks/useArenaEventFeed";
 import { useArenaEventFeed } from "@/hooks/useArenaEventFeed";
+import { tournamentSponsorEventType, useEventSponsors } from "@/hooks/useEventSponsors";
+import { isQuarterlyChampionshipRuntime, QUARTERLY_CHAMPIONSHIP_PUBLIC_NAME } from "@/lib/arena/quarterlyChampionshipPresentation.mjs";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useRef, useState, useEffect, useMemo } from "react";
 import { useLaunchpad } from "@/lib/launchpadClient";
@@ -28,24 +31,48 @@ const eventTypeLabels = {
   seasonal_league: "Seasonal league",
 };
 
+type ArenaEventWithRuntimeIdentity = ArenaEventSummary & {
+  origin?: string;
+  chainId?: number;
+  eventType?: string;
+};
+
 function formatWhen(value: string) {
   return new Date(value).toLocaleDateString();
 }
 
+function quarterlyEvent(event?: ArenaEventSummary | null) {
+  return Boolean(event && isQuarterlyChampionshipRuntime(event as ArenaEventWithRuntimeIdentity));
+}
+
+function publicEventTitle(event?: ArenaEventSummary | null) {
+  if (!event) return "";
+  return quarterlyEvent(event) ? QUARTERLY_CHAMPIONSHIP_PUBLIC_NAME : event.title;
+}
+
 function EventSurfaceCard({ event }: { event: ArenaEventSummary }) {
-  const bracketLabel = event.type === "tournament" && event.bracketStage ? bracketLabels[event.bracketStage] : null;
+  const runtimeEvent = event as ArenaEventWithRuntimeIdentity;
+  const quarterly = quarterlyEvent(event);
+  const bracketLabel = !quarterly && event.type === "tournament" && event.bracketStage ? bracketLabels[event.bracketStage] : null;
   const tone = event.status === "live" ? "success" : event.type === "tournament" ? "sponsored" : "default";
+  const sponsors = useEventSponsors({
+    eventType: quarterly ? "quarterly_championship" : tournamentSponsorEventType(runtimeEvent as Record<string, unknown>),
+    eventReferenceId: event.id,
+    chainId: Number(runtimeEvent.chainId || 0) || null,
+    enabled: event.type === "tournament",
+  });
 
   return (
-    <div className="mwz-hud-frame p-4">
+    <div className="mwz-hud-frame p-4" data-quarterly-championship={quarterly ? "true" : undefined}>
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <TacticalTag label={eventTypeLabels[event.type]} tone={event.type === "tournament" ? "sponsored" : "default"} />
+            <TacticalTag label={quarterly ? QUARTERLY_CHAMPIONSHIP_PUBLIC_NAME : eventTypeLabels[event.type]} tone={event.type === "tournament" ? "sponsored" : "default"} />
             <TacticalTag label={event.status} tone={tone} />
             {bracketLabel ? <TacticalTag label={bracketLabel} tone="hot" /> : null}
           </div>
-          <div className="mt-3 font-retro text-lg text-foreground">{event.title}</div>
+          <div className="mt-3 font-retro text-lg text-foreground">{publicEventTitle(event)}</div>
+          <EventSponsorAttribution sponsors={sponsors} variant={quarterly ? "premium" : "compact"} />
           <div className="mt-2 text-sm text-muted-foreground">{event.summary}</div>
           <div className="mt-3 text-xs text-muted-foreground/80">
             {event.participantCount} participants · Starts {formatWhen(event.startsAt)} · Ends {formatWhen(event.endsAt)}
@@ -54,10 +81,44 @@ function EventSurfaceCard({ event }: { event: ArenaEventSummary }) {
         <div className="flex flex-wrap gap-2">
           {event.type === "tournament" ? (
             <Button asChild size="sm" variant="outline" className="font-retro">
-              <Link to={`/tournament/${event.id}`}>Open bracket</Link>
+              <Link to={`/tournament/${event.id}`}>{quarterly ? "View championship" : "Open bracket"}</Link>
             </Button>
           ) : null}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ArchivedEventSurfaceCard({ event }: { event: ArenaEventSummary & { completedAt: string } }) {
+  const runtimeEvent = event as ArenaEventWithRuntimeIdentity & { completedAt: string };
+  const quarterly = quarterlyEvent(event);
+  const sponsors = useEventSponsors({
+    eventType: quarterly ? "quarterly_championship" : tournamentSponsorEventType(runtimeEvent as Record<string, unknown>),
+    eventReferenceId: event.id,
+    chainId: Number(runtimeEvent.chainId || 0) || null,
+    enabled: event.type === "tournament",
+  });
+
+  return (
+    <div className="mwz-hud-frame p-4" data-quarterly-championship={quarterly ? "true" : undefined}>
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="font-retro text-sm text-foreground">{publicEventTitle(event)}</div>
+            <TacticalTag label={quarterly ? QUARTERLY_CHAMPIONSHIP_PUBLIC_NAME : eventTypeLabels[event.type]} tone="sponsored" />
+          </div>
+          <EventSponsorAttribution sponsors={sponsors} variant={quarterly ? "premium" : "compact"} />
+          <div className="mt-2 text-xs text-muted-foreground/80">
+            Completed {new Date(event.completedAt).toLocaleString()} · {event.participantCount} participants
+          </div>
+          <div className="mt-2 text-sm text-muted-foreground">{event.summary}</div>
+        </div>
+        {event.type === "tournament" ? (
+          <Button asChild size="sm" variant="outline" className="font-retro">
+            <Link to={`/tournament/${event.id}`}>{quarterly ? "View championship results" : "Open bracket"}</Link>
+          </Button>
+        ) : null}
       </div>
     </div>
   );
@@ -70,6 +131,8 @@ const PostGradEvents = () => {
   const liveEvents = events.filter((event) => event.status === "live");
   const upcomingEvents = events.filter((event) => event.status === "scheduled" || event.status === "deploying");
   const tournaments = events.filter((event) => event.type === "tournament");
+  const trackedTournament = tournaments[0] || null;
+  const trackedQuarterly = quarterlyEvent(trackedTournament);
   const eventEntrantFeedLabel = hasRealCampaigns ? "Live data" : eventEntrantsLoading ? "Loading" : campaignSource === "empty" ? "Data unavailable" : "Awaiting data";
 
   const eventRailRef = useRef<HTMLDivElement | null>(null);
@@ -81,7 +144,6 @@ const PostGradEvents = () => {
     el.scrollBy({ left: dir === "left" ? -amount : amount, behavior: "smooth" });
   };
 
-  // Logo hydration for the event entrant rail
   const [logoCache, setLogoCache] = useState<Record<string, string>>({});
   const { fetchCampaignLogoURI } = useLaunchpad();
 
@@ -125,7 +187,6 @@ const PostGradEvents = () => {
 
   return (
     <>
-      {/* Top section (like Sponsored on Arena) */}
       <div className="mt-14 space-y-4 pl-1 pr-8 pb-10">
         <section className="mwz-hud-frame p-5 md:p-7">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -144,24 +205,30 @@ const PostGradEvents = () => {
         </section>
       </div>
 
-      {/* Rest of the page inside constrained container */}
       <ContentContainer className="-mt-8 space-y-4 px-1 pb-10">
-
       <section className="grid gap-4 xl:grid-cols-3">
         <div className="mwz-hud-frame p-4">
           <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Live now</div>
-          <div className="mt-2 font-retro text-lg text-foreground">{liveEvents[0]?.title ?? "No live event"}</div>
+          <div className="mt-2 font-retro text-lg text-foreground">{liveEvents[0] ? publicEventTitle(liveEvents[0]) : "No live event"}</div>
           <div className="mt-1 text-sm text-muted-foreground">{liveEvents[0] ? `${liveEvents[0].participantCount} participants in motion` : eventSource === "empty" ? "Live event data isn’t available right now." : "The next event will appear here when it goes live."}</div>
         </div>
         <div className="mwz-hud-frame p-4">
           <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Next up</div>
-          <div className="mt-2 font-retro text-lg text-foreground">{upcomingEvents[0]?.title ?? "No scheduled event"}</div>
+          <div className="mt-2 font-retro text-lg text-foreground">{upcomingEvents[0] ? publicEventTitle(upcomingEvents[0]) : "No scheduled event"}</div>
           <div className="mt-1 text-sm text-muted-foreground">{upcomingEvents[0] ? `Starts ${formatWhen(upcomingEvents[0].startsAt)}` : eventSource === "empty" ? "Upcoming event data isn’t available right now." : "The schedule is clear right now."}</div>
         </div>
         <div className="mwz-hud-frame p-4">
           <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">Tournament tracker</div>
-          <div className="mt-2 font-retro text-lg text-foreground">{tournaments[0]?.title ?? "No tournament scheduled"}</div>
-          <div className="mt-1 text-sm text-muted-foreground">{tournaments[0]?.bracketStage ? `Current stage: ${bracketLabels[tournaments[0].bracketStage]}` : eventSource === "empty" ? "Tournament event data isn’t available right now." : "Bracket updates appear here when available."}</div>
+          <div className="mt-2 font-retro text-lg text-foreground">{trackedTournament ? publicEventTitle(trackedTournament) : "No tournament scheduled"}</div>
+          <div className="mt-1 text-sm text-muted-foreground">
+            {trackedQuarterly
+              ? "Quarterly standings remain live through the epoch."
+              : trackedTournament?.bracketStage
+                ? `Current stage: ${bracketLabels[trackedTournament.bracketStage]}`
+                : eventSource === "empty"
+                  ? "Tournament event data isn’t available right now."
+                  : "Bracket updates appear here when available."}
+          </div>
         </div>
       </section>
 
@@ -264,27 +331,7 @@ const PostGradEvents = () => {
         </div>
         <div className="mt-4 space-y-3">
           {archivedEvents.length ? (
-            archivedEvents.map((event) => (
-              <div key={`${event.id}-${event.completedAt}`} className="mwz-hud-frame p-4">
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <div className="font-retro text-sm text-foreground">{event.title}</div>
-                      <TacticalTag label={eventTypeLabels[event.type]} tone="sponsored" />
-                    </div>
-                    <div className="mt-2 text-xs text-muted-foreground/80">
-                      Completed {new Date(event.completedAt).toLocaleString()} · {event.participantCount} participants
-                    </div>
-                    <div className="mt-2 text-sm text-muted-foreground">{event.summary}</div>
-                  </div>
-                  {event.type === "tournament" ? (
-                    <Button asChild size="sm" variant="outline" className="font-retro">
-                      <Link to={`/tournament/${event.id}`}>Open bracket</Link>
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-            ))
+            archivedEvents.map((event) => <ArchivedEventSurfaceCard key={`${event.id}-${event.completedAt}`} event={event} />)
           ) : (
             <div className="mwz-hud-frame p-5 text-sm text-muted-foreground">
               {eventSource === "empty" ? "Archived event data isn’t available right now." : "Completed events will appear here after they wrap."}
