@@ -65,6 +65,9 @@ function envEnabled(value: unknown): boolean {
 const ENABLE_ONCHAIN_CAMPAIGN_FALLBACK = envEnabled(import.meta.env.VITE_ENABLE_ONCHAIN_CAMPAIGN_FALLBACK);
 
 const FACTORY_ABI = bnbContractAbis.launchFactory as ethers.InterfaceAbi;
+const BNB_BASIC_FACTORY_WRITE_ABI = [
+  "function createBasicQuoteCampaignAuthorized((string name,string symbol,string logoURI,string xAccount,string website,string extraLink,uint256 graduationTarget) req,address quoteToken,bytes32 quoteCatalogBindingHash,(uint8 tradeRouteProfile,uint8 finalizeRouteProfile,uint64 deadline,bytes signature) routeAuth) returns (address campaignAddr,address tokenAddr)",
+] as const;
 const FACTORY_INTERFACE = new ethers.Interface(FACTORY_ABI);
 const CAMPAIGN_ABI = [
   ...((bnbContractAbis.launchCampaign as any[]) ?? []),
@@ -121,12 +124,14 @@ async function requestCreateAuthorization(params: {
   chainId: number;
   factoryAddress: string;
   campaignRequest: CampaignRequestPayload;
+  graduationQuoteAssetId?: string;
 }) {
   return postApiJson("/api/routing/create-authorization", {
     walletAddress: params.walletAddress,
     chainId: params.chainId,
     factoryAddress: params.factoryAddress,
     campaignRequest: params.campaignRequest,
+    ...(params.graduationQuoteAssetId ? { graduationQuoteAssetId: params.graduationQuoteAssetId } : {}),
   });
 }
 
@@ -309,8 +314,6 @@ export async function resolveCanonicalCampaignAddress(
   const normalized = normalizeAddress(submittedAddress);
   if (!normalized) throw new Error("Invalid campaign or token address");
 
-  // Resolve through the canonical database mirror first. Public token URLs are
-  // expected here, and the database row carries the authoritative campaign/token pair.
   const campaigns = await fetchDbCampaigns(chainId, 500);
   const match = campaigns.find((campaign) =>
     normalizeAddress(campaign.campaign) === normalized ||
@@ -319,8 +322,6 @@ export async function resolveCanonicalCampaignAddress(
   const canonicalCampaign = normalizeAddress(match?.campaign);
   if (canonicalCampaign) return canonicalCampaign;
 
-  // A direct LaunchCampaign address may not be mirrored yet. Verify both token()
-  // and creator() so a non-campaign contract cannot be accepted by one weak probe.
   try {
     const candidate = new Contract(normalized, CAMPAIGN_IDENTITY_ABI, provider) as any;
     const [tokenRaw, creatorRaw] = await Promise.all([candidate.token(), candidate.creator()]);
@@ -374,11 +375,8 @@ function mergeCampaigns(onChain: CampaignInfo[], db: CampaignInfo[]): CampaignIn
     extraLink: isUseful(base.extraLink) ? base.extraLink : incoming.extraLink,
     createdAt: base.createdAt || incoming.createdAt,
     dexPairAddress: base.dexPairAddress || incoming.dexPairAddress,
-
   });
 
-  // Keep canonical factory addresses/order, but backfill partial direct-deploy
-  // metadata from the API row while the indexer catches up.
   for (const item of [...onChain, ...db]) {
     const key = normalizeAddress(item?.campaign);
     if (!key) continue;
@@ -392,7 +390,6 @@ async function hydrateMissingLogosFromContract(
   campaigns: CampaignInfo[],
   fetchCampaignLogoURI: (campaignAddress: string) => Promise<string | null>,
 ): Promise<CampaignInfo[]> {
-  // Older multi-factory inventories can have many empty logo rows; hydrate more than one page.
   const targets = campaigns.filter((campaign) => !hasLogo(campaign.logoURI)).slice(0, 80);
   if (!targets.length) return campaigns;
 
@@ -528,10 +525,6 @@ export function useLaunchpad(): LaunchpadAdapter {
   const { provider: walletProvider, signer, chainId: walletChainId, account: evmAccount } = wallet;
   const { solanaAccount, solanaWalletName, isSolanaConnected } = solanaWallet;
 
-  // CRITICAL BUG (fixed): preferSolana used `!wallet.isConnected`, which is true whenever
-  // the *app* has no EVM session — even if MetaMask is injected on BNB. Combined with a
-  // connected Phantom/Solana session, EVERY page (including /token/0x…) selected the
-  // Solana adapter → metrics throw VITE_SOLANA_LAUNCHPAD_PROGRAM_ID and charts go blank.
   const location = useLocation();
   const onEvmTokenPage = isEvmTokenRoutePath(location.pathname) || isEvmTokenRoutePath(readWindowPathname());
   const hasEvmAppSession = Boolean(evmAccount || walletProvider);
@@ -542,13 +535,11 @@ export function useLaunchpad(): LaunchpadAdapter {
       !onEvmTokenPage,
   );
 
-  // 0x Token Details: campaign chain from the URL, never the Solana feed latch.
   const tokenPageReadChain = onEvmTokenPage
     ? resolveTokenPageChainId({ pathname: location.pathname, search: location.search })
     : null;
 
   const activeChainId = useMemo<SupportedChainId>(() => {
-    // 0x token pages: pinned/featured/default EVM — never MetaMask network.
     if (tokenPageReadChain) return tokenPageReadChain;
     if (preferSolanaLaunchpad) return SOLANA_CHAIN_ID;
     return getActiveChainId(walletChainId);
@@ -829,19 +820,36 @@ export function useLaunchpad(): LaunchpadAdapter {
       chainId: Number(activeChainId),
       factoryAddress,
       campaignRequest,
+      graduationQuoteAssetId: params.graduationQuoteAssetId,
     });
     const auth = authResponse.authorization;
+    const routeAuthorization = {
+      tradeRouteProfile: auth.tradeRouteProfileId,
+      finalizeRouteProfile: auth.finalizeRouteProfileId,
+      deadline: Math.floor(new Date(auth.validUntil).getTime() / 1000),
+      signature: auth.signature,
+    };
+    const gasOverrides = await legacyGasOverrides(signer, readProvider);
 
-    const tx = await writer.createCampaignAuthorized(
-      campaignRequest,
-      {
-        tradeRouteProfile: auth.tradeRouteProfileId,
-        finalizeRouteProfile: auth.finalizeRouteProfileId,
-        deadline: Math.floor(new Date(auth.validUntil).getTime() / 1000),
-        signature: auth.signature,
-      },
-      await legacyGasOverrides(signer, readProvider),
-    );
+    let tx;
+    if (authResponse.graduationMarket?.kind === "BNB_BASIC_QUOTE") {
+      if (Number(activeChainId) !== Number(BNB_CHAIN_ID)) throw new Error("BNB BASIC quote authorization returned on a non-BNB chain");
+      const quoteToken = normalizeAddress(authResponse.graduationMarket?.quoteAsset);
+      const quoteCatalogBindingHash = String(authResponse.graduationMarket?.quoteCatalogBindingHash || "");
+      if (!quoteToken || !ethers.isHexString(quoteCatalogBindingHash, 32)) {
+        throw new Error("BNB BASIC quote authorization is missing its canonical quote binding");
+      }
+      const basicWriter = new Contract(factoryAddress, BNB_BASIC_FACTORY_WRITE_ABI, signer) as any;
+      tx = await basicWriter.createBasicQuoteCampaignAuthorized(
+        campaignRequest,
+        quoteToken,
+        quoteCatalogBindingHash,
+        routeAuthorization,
+        gasOverrides,
+      );
+    } else {
+      tx = await writer.createCampaignAuthorized(campaignRequest, routeAuthorization, gasOverrides);
+    }
 
     const receipt = await tx.wait();
     const created = extractCreatedCampaign(receipt);
@@ -1102,8 +1110,6 @@ export function useLaunchpad(): LaunchpadAdapter {
     solanaAccount,
   }), [fetchCampaigns, walletProvider, solanaAccount, solanaWalletName]);
 
-  // Hard rule: /token/0x… always BNB. Solana adapter only when active chain is Solana
-  // and we are not on an EVM token details route.
   if (onEvmTokenPage) return bnbAdapter;
   return isSolanaChainId(activeChainId) ? solanaAdapter : bnbAdapter;
 }

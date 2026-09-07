@@ -16,6 +16,7 @@ import {
   fetchGraduationQuoteAssets,
   type GraduationQuoteAsset,
 } from "@/lib/graduationQuoteCatalog";
+import { rememberGraduationQuoteAssetId } from "@/lib/graduationQuoteSelectionSession";
 
 export type GraduationMarketStepProps = {
   chainId: number;
@@ -70,6 +71,10 @@ export function GraduationMarketStep({
     // Catalog is chain-scoped. Parent resets selection on chain change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chainId]);
+
+  useEffect(() => {
+    rememberGraduationQuoteAssetId(chainId, selected?.id || "");
+  }, [chainId, selected?.id]);
 
   const categories = useMemo(() => {
     const needle = search.trim().toLowerCase();
