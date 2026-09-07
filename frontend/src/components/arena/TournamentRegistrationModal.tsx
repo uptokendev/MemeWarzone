@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ArenaBuyInButton } from "@/components/arena/ArenaBuyInButton";
+import { EventSponsorAttribution } from "@/components/arena/EventSponsorAttribution";
 import { TournamentBracketModal } from "@/components/arena/TournamentBracketModal";
 import { TournamentTokenIdentity } from "@/components/arena/TournamentTokenIdentity";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { tournamentSponsorEventType, useEventSponsors } from "@/hooks/useEventSponsors";
 import { useTournamentCommandState } from "@/hooks/useTournamentCommandState";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +27,11 @@ export function TournamentRegistrationModal({
   const selected = state.eligible.find((item) => item.tokenId === state.selectedToken);
   const entered = state.optedIn && (!state.needsBuyIn || state.buyInPaid);
   const payBuyIn = state.optedIn && state.needsBuyIn && !state.buyInPaid;
+  const sponsorType = tournamentSponsorEventType({
+    ...((state.tournament || {}) as Record<string, unknown>),
+    ...((state.detail?.event || {}) as Record<string, unknown>),
+  });
+  const sponsors = useEventSponsors({ eventType: sponsorType, eventReferenceId: state.id, chainId: state.tournamentChainId, enabled: open });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -41,6 +48,7 @@ export function TournamentRegistrationModal({
               .filter(Boolean)
               .join(" · ")}
           </DialogDescription>
+          <EventSponsorAttribution sponsors={sponsors} variant="prominent" />
         </DialogHeader>
 
         {!state.tournament ? (
@@ -172,6 +180,7 @@ export function TournamentRegistrationModal({
               rounds={state.bracketRounds}
               entries={state.entries}
               chainId={state.tournamentChainId}
+              sponsors={sponsors}
             />
           </div>
         )}
