@@ -174,7 +174,7 @@ async function main() {
       { tokenA: desiredSolRaw },
       lowerPrice,
       upperPrice,
-      { slippageToleranceBps: 100, whirlpoolDeployment: WhirlpoolDeployment.devnet },
+      { slippageToleranceBps: 100, funder: payer, whirlpoolDeployment: WhirlpoolDeployment.devnet },
     );
     report.liquiditySeedingSignature = await opened.callback();
     report.liquidityPositionMint = String(opened.positionMint || opened.positionAddress || "");
