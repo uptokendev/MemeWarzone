@@ -30,10 +30,7 @@ export function projectPublicSponsors(rows = []) {
     sponsors.push({
       sponsorProfileId,
       projectName,
-      logoUrl: safeHttpsUrl(row.logo_url),
-      websiteUrl: safeHttpsUrl(row.website_url),
       foundingSponsor: Boolean(row.event_founding_sponsor || row.founding_sponsor),
-      foundingSponsorBadge: String(row.founding_sponsor_badge || "").trim() || null,
     });
   }
   return sponsors;
