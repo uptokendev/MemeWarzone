@@ -12,8 +12,6 @@ on:
 permissions:
   contents: read
 
-environment: testnet-certification
-
 jobs:
   orca-devnet-cert-pool:
     runs-on: ubuntu-latest
