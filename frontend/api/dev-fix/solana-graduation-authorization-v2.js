@@ -19,6 +19,7 @@ import {
 } from "./solana-v4-primitives.js";
 import { getSolanaChainUnixTime } from "./solana-chain-unix-time.js";
 import { getGraduationQuoteAssetDetail } from "../lib/quoteAssetCatalog.js";
+import { quoteOrcaWhirlpoolDevnet } from "../lib/solanaOrcaGraduationQuote.js";
 import { GRADUATION_AUTH_SCHEMA_VERSION, buildGraduationDigest } from "./solana-graduation-auth-bytes.js";
 
 const ROUTE_PROFILE_UNLINKED = 1;
@@ -152,6 +153,10 @@ async function resolveCatalogQuoteConfig({ chainId, quoteConfigId }) {
   } else if (item.identityKind !== "SOLANA_MINT" || !samePublicKey(item.contractAddressOrMint, quoteMint)) {
     throw new SolanaGraduationAuthorizationError("Catalog deployment mint does not match its configured graduation quote mint.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });
   }
+  const acquisitionAdapter = String(route.acquisitionAdapter || (profile === QUOTE_PROFILE.NATIVE ? "NATIVE" : "JUPITER")).trim().toUpperCase();
+  if (profile === QUOTE_PROFILE.NATIVE && acquisitionAdapter !== "NATIVE") throw new SolanaGraduationAuthorizationError("Native quote must use the NATIVE acquisition adapter.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });
+  if (profile !== QUOTE_PROFILE.NATIVE && !["JUPITER", "ORCA_WHIRLPOOL_DEVNET"].includes(acquisitionAdapter)) throw new SolanaGraduationAuthorizationError(`Unsupported acquisition adapter ${acquisitionAdapter}.`, { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });
+  if (acquisitionAdapter === "ORCA_WHIRLPOOL_DEVNET" && String(chainId) !== "102") throw new SolanaGraduationAuthorizationError("Orca certification adapter is restricted to Solana devnet chain 102.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });
   const maxSlippageBps = Number(route.maxSlippageBps ?? DEFAULT_SLIPPAGE_BPS);
   const maxImpactBps = Number(route.maxImpactBps ?? 100);
   const maxDeviationBps = Number(route.maxDeviationBps ?? 100);
@@ -168,6 +173,8 @@ async function resolveCatalogQuoteConfig({ chainId, quoteConfigId }) {
     maxSlippageBps, maxImpactBps, maxDeviationBps,
     quoteUsdMicros: route.referenceUsdMicros == null ? null : BigInt(route.referenceUsdMicros),
     binanceSymbol: String(route.binanceSymbol || "").trim(), coinGeckoId: String(route.coinGeckoId || "").trim(),
+    acquisitionAdapter, rawRoute: route,
+    orcaPool: String(route.orcaPool || "").trim(), orcaWhirlpoolsConfig: String(route.orcaWhirlpoolsConfig || "").trim(),
     jupiterApiBase: String(route.jupiterApiBase || process.env.SOLANA_GRADUATION_JUPITER_API_BASE || "https://lite-api.jup.ag/swap/v1").replace(new RegExp("/+$"), ""),
   };
 }
@@ -314,6 +321,20 @@ function deviationBps(actual, reference) {
 }
 
 async function fetchAcquisitionQuote(config, amountLamports) {
+  if (config.acquisitionAdapter === "ORCA_WHIRLPOOL_DEVNET") {
+    let result;
+    try {
+      result = await quoteOrcaWhirlpoolDevnet({ rpcUrl: requiredEnv("SOLANA_RPC_URL"), route: config.rawRoute, amountLamports });
+    } catch (error) {
+      failUnsafe(`Graduation-sized Orca acquisition quote for ${config.id} is unavailable.`, error);
+    }
+    if (result.impactBps > config.maxImpactBps) failUnsafe(`Acquisition price impact ${result.impactBps} bps exceeds ${config.maxImpactBps} bps.`);
+    return {
+      quote: { adapter: result.adapter, pool: result.pool, programId: result.programId, inputMint: result.inputMint, outputMint: result.outputMint, inputAmount: result.inputAmount.toString(), outAmount: result.outAmount.toString(), minOut: result.minOut.toString(), poolLiquidity: result.poolLiquidity.toString(), poolSpotQuotePerSol: result.poolSpotQuotePerSol },
+      outAmount: result.outAmount, minOut: result.minOut, impactBps: result.impactBps, slippageBps: result.slippageBps,
+    };
+  }
+  if (config.acquisitionAdapter !== "JUPITER") failUnsafe(`Unsupported non-native acquisition adapter ${config.acquisitionAdapter}.`);
   const slippageBps = config.maxSlippageBps || DEFAULT_SLIPPAGE_BPS;
   const params = new URLSearchParams({
     inputMint: NATIVE_MINT,
@@ -430,7 +451,7 @@ export async function solanaGraduationAuthorizationV2(req, res) {
       campaign: { address: campaignAddress, mint: campaign.mint, creator: campaign.creator, generationConfig: campaign.generationConfig, graduationTargetUsdMicros: campaign.graduationTargetUsdMicros.toString(), soldTokens: campaign.soldTokens.toString(), curveTokenSupply: campaign.curveTokenSupply.toString(), netRaisedLamports: campaign.netRaisedLamports.toString() },
       oracle: { solUsdMicros: oraclePriceUsdMicros.toString(), nativeTargetLamports: nativeTargetLamports.toString(), quoteUsdMicros: quoteReferenceUsdMicros.toString() },
       graduationLiquidity: { maxLiquidityLamports: liquidity.maxLiquidityLamports.toString(), maxLiquidityTokens: liquidity.maxLiquidityTokens.toString(), finalizeFeeLamports: liquidity.finalizeFeeLamports.toString(), creatorPayoutLamports: liquidity.creatorPayoutLamports.toString(), finalSpotNanoLamports: liquidity.spotNano.toString() },
-      quote: { configId: quoteConfig.id, assetId: quoteConfig.assetId, providerId: quoteConfig.providerId, providerKey: quoteConfig.providerKey, providerClassName: quoteConfig.providerClassName, policyId: quoteConfig.policyId, policyKey: quoteConfig.policyKey, stateVersion: quoteConfig.stateVersion, configHashHex: quoteConfigHash.toString("hex"), mint: quoteConfig.mint, policyVersion: quoteConfig.policyVersion, profile: quoteConfig.profile, providerClass: quoteConfig.providerClass, decimals: quoteConfig.decimals, acquisitionProgram: quoteConfig.acquisitionProgram, recoveryAccount: quoteConfig.recoveryAccount, expectedQuoteAmount: expectedQuoteAmount.toString(), minQuoteAmount: minQuoteAmount.toString(), maxSlippageBps, maxImpactBps, maxDeviationBps, acquisitionQuote: acquisition?.quote || null },
+      quote: { configId: quoteConfig.id, assetId: quoteConfig.assetId, providerId: quoteConfig.providerId, providerKey: quoteConfig.providerKey, providerClassName: quoteConfig.providerClassName, policyId: quoteConfig.policyId, policyKey: quoteConfig.policyKey, stateVersion: quoteConfig.stateVersion, configHashHex: quoteConfigHash.toString("hex"), mint: quoteConfig.mint, policyVersion: quoteConfig.policyVersion, profile: quoteConfig.profile, providerClass: quoteConfig.providerClass, decimals: quoteConfig.decimals, acquisitionAdapter: quoteConfig.acquisitionAdapter, acquisitionProgram: quoteConfig.acquisitionProgram, orcaPool: quoteConfig.orcaPool || null, orcaWhirlpoolsConfig: quoteConfig.orcaWhirlpoolsConfig || null, recoveryAccount: quoteConfig.recoveryAccount, expectedQuoteAmount: expectedQuoteAmount.toString(), minQuoteAmount: minQuoteAmount.toString(), maxSlippageBps, maxImpactBps, maxDeviationBps, acquisitionQuote: acquisition?.quote || null },
       createArgs: { nativeTargetLamports: nativeTargetLamports.toString(), oraclePriceUsdMicros: oraclePriceUsdMicros.toString(), deadline: deadline.toString(), nonce: Array.from(nonce), positionNftMint, finalizeRouteProfile, quoteMint: quoteConfig.mint, quoteConfigId: Array.from(quoteConfigHash), quotePolicyVersion: quoteConfig.policyVersion, quoteProfile: quoteConfig.profile, quoteProviderClass: quoteConfig.providerClass, acquisitionProgram: quoteConfig.acquisitionProgram, quoteReferenceUsdMicros: quoteReferenceUsdMicros.toString(), quoteDecimals: quoteConfig.decimals, expectedQuoteAmount: expectedQuoteAmount.toString(), minQuoteAmount: minQuoteAmount.toString(), maxSlippageBps, maxImpactBps, maxDeviationBps, quoteRecoveryAccount: quoteConfig.recoveryAccount },
       accounts: { authority: authorityAddress, globalConfig, generationConfig: campaign.generationConfig, campaign: campaignAddress, mint: campaign.mint, tokenVault: campaign.tokenVault, solVault: campaign.solVault, authorityTokenAccount: deriveAta(authorityAddress, campaign.mint), authorityQuoteAccount: quoteConfig.profile === QUOTE_PROFILE.NATIVE ? null : deriveAta(authorityAddress, quoteConfig.mint), quoteRecoveryAccount: quoteConfig.recoveryAccount, creator: campaign.creator, creatorTokenAccount: deriveAta(campaign.creator, campaign.mint), creatorProfile: findProgramAddressSync([Buffer.from("creator"), publicKeyBytes(campaign.creator)], programId).publicKey, graduationState: findProgramAddressSync([Buffer.from("graduation"), publicKeyBytes(campaignAddress)], programId).publicKey, meteoraProgram: METEORA_CP_AMM_PROGRAM_ID, meteoraPool, meteoraPosition, meteoraTokenVault: deriveMeteoraVault(campaign.mint, meteoraPool), meteoraNativeVault: deriveMeteoraVault(quoteConfig.mint, meteoraPool), positionNftMint, instructions: SYSVAR_INSTRUCTIONS_ID, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SYSTEM_PROGRAM_ID },
       authorization: { digestHex: digest.toString("hex"), digestBase64: digest.toString("base64"), signatureBase64: signature.toString("base64"), routeSigner: signer.publicKeyBase58, deadline: deadline.toString(), validUntil: new Date(Number(deadline) * 1000).toISOString(), ed25519InstructionMustImmediatelyPrecedeBeginGraduation: true },
