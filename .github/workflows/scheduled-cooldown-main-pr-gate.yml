@@ -77,7 +77,7 @@ jobs:
           exec(compile('\n'.join(code), '<preserved-agent2-wrapper>', 'exec'), {'__name__': '__main__'})
           p = Path('tests/solana/v4-lifecycle-acceptance.cjs')
           s = p.read_text()
-          s = s.replace('atomic.logs.join("\n")', 'atomic.logs.join("\\n")')
+          s = s.replace('join("\n")', 'join("\\n")')
           p.write_text(s)
           PY
           node --check tests/solana/v4-lifecycle-acceptance.cjs
