@@ -197,8 +197,11 @@ async function buildOrcaInstructions(auth, operator) {
   const poolAddress = String(auth.quote.orcaPool || "").trim();
   if (!poolAddress) fail("authorized Orca pool is missing");
   const expectedProgram = asPk(auth.quote.acquisitionProgram, "acquisitionProgram");
+  const wsolAta = await getOrCreateAssociatedTokenAccount(operator.connection, operator, NATIVE_MINT, operator.publicKey, false, "confirmed", undefined, TOKEN_PROGRAM_ID);
+  const wsolState = await getAccount(operator.connection, wsolAta.address, "confirmed", TOKEN_PROGRAM_ID);
+  if (wsolState.amount !== 0n) fail(`operator WSOL ATA must be empty before atomic acquisition; balance=${wsolState.amount}`);
   const kitPayer = await setPayerFromBytes(operator.secretKey);
-  setNativeMintWrappingStrategy("seed");
+  setNativeMintWrappingStrategy("ata");
   const rpc = createSolanaRpc(devnet(operator.connection.rpcEndpoint));
   const built = await swapInstructions(
     rpc,
