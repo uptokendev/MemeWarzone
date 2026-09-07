@@ -10,9 +10,43 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
+  pin-orca-lockfiles:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent2/solana-basic-graduation-market
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Pin Orca and Solana Kit dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix frontend --save-exact --no-audit --no-fund @orca-so/whirlpools@8.0.1 @solana/kit@5.0.0
+          npm install --prefix tools/solana-meteora-graduation --save-exact --no-audit --no-fund @orca-so/whirlpools@8.0.1 @solana/kit@5.0.0
+          node --check frontend/api/lib/solanaOrcaGraduationQuote.js
+          node --check frontend/api/dev-fix/solana-graduation-authorization-v2.js
+          node --check tools/solana-meteora-graduation/orca-devnet-cert-pool.mjs
+          node --check tools/solana-meteora-graduation/graduate-basic-quote.mjs
+      - name: Commit reproducible dependency state
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add frontend/package.json frontend/package-lock.json tools/solana-meteora-graduation/package.json tools/solana-meteora-graduation/package-lock.json
+          if git diff --cached --quiet; then
+            echo 'dependency state already pinned'
+            exit 0
+          fi
+          git commit -m 'build(agent2): pin Orca devnet acquisition dependencies'
+          git push origin HEAD:agent2/solana-basic-graduation-market
+
   orca-devnet-cert-pool:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -22,18 +56,14 @@ jobs:
       SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
       ORCA_DEVNET_CERT_REPORT: /tmp/mwz-orca-devnet-cert-pool.json
       ORCA_DEVNET_CERT_SOL_USDC_PRICE: "150"
-      # The existing devnet V3 certification target is $6 / 0.04 SOL at the pinned $150/SOL reference.
-      # 0.10 SOL + 15 canonical devnet USDC is deliberately small test liquidity while leaving >2x route headroom.
       ORCA_DEVNET_CERT_SEED_SOL: "0.10"
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
-
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-
       - name: Materialize dedicated devnet operator
         shell: bash
         run: |
@@ -42,17 +72,12 @@ jobs:
           operator_file="${RUNNER_TEMP}/mwz-solana-devnet-operator.json"
           SOLANA_GRADUATION_OPERATOR_KEYPAIR="$operator_file" node scripts/solana/materialize-devnet-payer.mjs
           echo "SOLANA_GRADUATION_OPERATOR_KEYPAIR=$operator_file" >> "$GITHUB_ENV"
-
-      - name: Install pinned Orca certification SDK without changing lockfiles
+      - name: Install pinned Orca certification SDK
         shell: bash
-        run: |
-          set -euo pipefail
-          npm install --prefix tools/solana-meteora-graduation --no-save --no-audit --no-fund @orca-so/whirlpools@8.0.1 @solana/kit@5.0.0
-
+        run: npm install --prefix tools/solana-meteora-graduation --no-save --no-audit --no-fund @orca-so/whirlpools@8.0.1 @solana/kit@5.0.0
       - name: Create or verify and seed canonical Circle-USDC Whirlpool
         shell: bash
         run: node tools/solana-meteora-graduation/orca-devnet-cert-pool.mjs
-
       - name: Upload certification pool evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
