@@ -1,13 +1,49 @@
-import { isRobinhoodChainId, isSolanaChainId, nativeSymbolFor } from "./chainNative.js";
+import { isRobinhoodChainId, isSolanaChainId } from "./chainNative.js";
 
 export const EVENT_SPONSORSHIP_TYPES = Object.freeze({
   NORMAL_TOURNAMENT: "normal_tournament",
   VOTE_TOURNAMENT: "vote_tournament",
   MAJOR_WAR_LEAGUE: "monthly_mwl",
+  QUARTERLY_CHAMPIONSHIP: "quarterly_championship",
+  // Legacy runtime / registry alias. Do not expose this as a separate commercial product.
   MWL_QUARTER_FINALS: "mwl_quarter_finals",
 });
 
-export const ELIGIBLE_EVENT_SPONSORSHIP_TYPES = new Set(Object.values(EVENT_SPONSORSHIP_TYPES));
+export const ELIGIBLE_EVENT_SPONSORSHIP_TYPES = new Set([
+  EVENT_SPONSORSHIP_TYPES.NORMAL_TOURNAMENT,
+  EVENT_SPONSORSHIP_TYPES.VOTE_TOURNAMENT,
+  EVENT_SPONSORSHIP_TYPES.MAJOR_WAR_LEAGUE,
+  EVENT_SPONSORSHIP_TYPES.QUARTERLY_CHAMPIONSHIP,
+]);
+
+export const RESOLVABLE_EVENT_SPONSORSHIP_TYPES = new Set([
+  ...ELIGIBLE_EVENT_SPONSORSHIP_TYPES,
+  EVENT_SPONSORSHIP_TYPES.MWL_QUARTER_FINALS,
+]);
+
+export function canonicalEventSponsorshipType(eventType) {
+  const type = String(eventType || "");
+  if (type === EVENT_SPONSORSHIP_TYPES.MWL_QUARTER_FINALS) return EVENT_SPONSORSHIP_TYPES.QUARTERLY_CHAMPIONSHIP;
+  return type;
+}
+
+export function sponsorshipRegistryTypesForCanonical(eventType) {
+  const canonical = canonicalEventSponsorshipType(eventType);
+  if (canonical === EVENT_SPONSORSHIP_TYPES.QUARTERLY_CHAMPIONSHIP) {
+    return [EVENT_SPONSORSHIP_TYPES.QUARTERLY_CHAMPIONSHIP, EVENT_SPONSORSHIP_TYPES.MWL_QUARTER_FINALS];
+  }
+  return [canonical];
+}
+
+export function canonicalEventSponsorshipEntitlementKey(resolution) {
+  if (!resolution?.ok) return null;
+  const type = canonicalEventSponsorshipType(resolution.eventType || resolution.registryEventType);
+  const identity = type === EVENT_SPONSORSHIP_TYPES.QUARTERLY_CHAMPIONSHIP
+    ? resolution.canonical?.childEventId || resolution.eventReferenceId
+    : resolution.eventReferenceId;
+  if (!type || !identity || !resolution.chainId) return null;
+  return `${Number(resolution.chainId)}:${type}:${String(identity)}`;
+}
 
 export function nativeAssetForEventSponsorship(chainId) {
   const id = Number(chainId);
@@ -58,6 +94,19 @@ async function loadRegistryEvent(db, eventRef, chainId = null) {
   return result.rows?.[0] || null;
 }
 
+async function loadQuarterlyRegistryAliases(db, event) {
+  const result = await db.query(
+    `select id, event_type
+       from public.sponsorship_events
+      where event_reference_id = $1
+        and chain_id = $2
+        and event_type = any($3::text[])
+      order by created_at asc, id asc`,
+    [String(event.event_reference_id), Number(event.chain_id), sponsorshipRegistryTypesForCanonical(EVENT_SPONSORSHIP_TYPES.QUARTERLY_CHAMPIONSHIP)],
+  );
+  return result.rows || [];
+}
+
 async function resolveTournament(db, event) {
   const result = await db.query(
     `select id, chain_id, status, origin, starts_at, ends_at, battle_mode,
@@ -81,7 +130,7 @@ async function resolveLeague(db, event) {
   return result.rows?.[0] || null;
 }
 
-async function resolveQuarterFinals(db, event) {
+async function resolveQuarterlyChampionship(db, event) {
   const result = await db.query(
     `select t.id as tournament_id, t.chain_id, t.status, t.origin, t.starts_at, t.ends_at, t.battle_mode,
             t.competition_generation, t.contest_scoring_version,
@@ -110,7 +159,8 @@ function resolvedBase(event, canonical, nowMs) {
   return {
     eventId: String(event.id),
     eventReferenceId: String(event.event_reference_id),
-    eventType: String(event.event_type),
+    eventType: canonicalEventSponsorshipType(event.event_type),
+    registryEventType: String(event.event_type),
     chainId,
     nativeAsset,
     startsAt,
@@ -126,7 +176,7 @@ export async function resolveSponsorableEvent(db, { eventRef, chainId = null, no
   if (!db || typeof db.query !== "function") throw new Error("event sponsorship resolver requires a database client");
   const event = await loadRegistryEvent(db, eventRef, chainId);
   if (!event) return { ok: false, code: "EVENT_NOT_FOUND", sponsorable: false };
-  if (!ELIGIBLE_EVENT_SPONSORSHIP_TYPES.has(String(event.event_type))) {
+  if (!RESOLVABLE_EVENT_SPONSORSHIP_TYPES.has(String(event.event_type))) {
     return { ok: false, code: "EVENT_CLASS_INELIGIBLE", sponsorable: false, eventId: String(event.id), eventType: String(event.event_type), chainId: Number(event.chain_id) };
   }
 
@@ -137,18 +187,25 @@ export async function resolveSponsorableEvent(db, { eventRef, chainId = null, no
     return { ok: true, ...base, canonical: { kind: "major_war_league", parentEventId: String(league.id), childEventId: null } };
   }
 
-  if (String(event.event_type) === EVENT_SPONSORSHIP_TYPES.MWL_QUARTER_FINALS) {
-    const qf = await resolveQuarterFinals(db, event);
-    if (!qf) return { ok: false, code: "MWL_QUARTER_FINALS_RELATIONSHIP_INVALID", sponsorable: false, eventId: String(event.id), eventType: String(event.event_type), chainId: Number(event.chain_id) };
-    const base = resolvedBase(event, { ...qf, state: qf.status }, nowMs);
+  if (canonicalEventSponsorshipType(event.event_type) === EVENT_SPONSORSHIP_TYPES.QUARTERLY_CHAMPIONSHIP) {
+    const championship = await resolveQuarterlyChampionship(db, event);
+    if (!championship) return { ok: false, code: "QUARTERLY_CHAMPIONSHIP_RELATIONSHIP_INVALID", sponsorable: false, eventId: String(event.id), eventType: EVENT_SPONSORSHIP_TYPES.QUARTERLY_CHAMPIONSHIP, registryEventType: String(event.event_type), chainId: Number(event.chain_id) };
+    const aliases = await loadQuarterlyRegistryAliases(db, event);
+    const base = resolvedBase(event, { ...championship, state: championship.status }, nowMs);
+    if (aliases.length > 1) {
+      base.sponsorable = false;
+      base.sponsorabilityReason = "quarterly_identity_ambiguous";
+    }
     return {
       ok: true,
       ...base,
+      registryAliasCount: aliases.length,
       canonical: {
-        kind: "mwl_quarter_finals",
-        parentEventId: String(qf.league_id),
-        childEventId: String(qf.tournament_id),
+        kind: "quarterly_championship",
+        parentEventId: String(championship.league_id),
+        childEventId: String(championship.tournament_id),
         relationship: "arena_league_seasons.quarter_finals_tournament_id=arena_tournaments.id",
+        legacyRuntimeIdentity: "mwl_quarter_finals",
       },
     };
   }
@@ -156,7 +213,7 @@ export async function resolveSponsorableEvent(db, { eventRef, chainId = null, no
   const tournament = await resolveTournament(db, event);
   if (!tournament) return { ok: false, code: "CANONICAL_TOURNAMENT_NOT_FOUND", sponsorable: false, eventId: String(event.id), eventType: String(event.event_type), chainId: Number(event.chain_id) };
   if (String(tournament.origin || "") === "quarter_finals") {
-    return { ok: false, code: "MWL_QUARTER_FINALS_REQUIRES_CANONICAL_RELATIONSHIP", sponsorable: false, eventId: String(event.id), eventType: String(event.event_type), chainId: Number(event.chain_id) };
+    return { ok: false, code: "QUARTERLY_CHAMPIONSHIP_REQUIRES_CANONICAL_RELATIONSHIP", sponsorable: false, eventId: String(event.id), eventType: String(event.event_type), chainId: Number(event.chain_id) };
   }
   const battleMode = String(tournament.battle_mode || "normal").toLowerCase();
   const expectedVote = String(event.event_type) === EVENT_SPONSORSHIP_TYPES.VOTE_TOURNAMENT;
@@ -219,16 +276,19 @@ export function deterministicFoundingSponsorOrder(rows = []) {
 }
 
 export function tierMinimumColumnForEventType(eventType) {
-  const type = String(eventType || "");
-  if (type === EVENT_SPONSORSHIP_TYPES.NORMAL_TOURNAMENT || type === EVENT_SPONSORSHIP_TYPES.VOTE_TOURNAMENT || type === EVENT_SPONSORSHIP_TYPES.MWL_QUARTER_FINALS) return "tournament_min_usd_cents";
+  const type = canonicalEventSponsorshipType(eventType);
+  if (type === EVENT_SPONSORSHIP_TYPES.NORMAL_TOURNAMENT || type === EVENT_SPONSORSHIP_TYPES.VOTE_TOURNAMENT) return "tournament_min_usd_cents";
   if (type === EVENT_SPONSORSHIP_TYPES.MAJOR_WAR_LEAGUE) return "mwl_min_usd_cents";
+  if (type === EVENT_SPONSORSHIP_TYPES.QUARTERLY_CHAMPIONSHIP) return "quarterly_min_usd_cents";
   throw new Error("Unsupported sponsorship event type");
 }
 
 export function eventSponsorshipContractSummary() {
   return {
     eligibleEventTypes: [...ELIGIBLE_EVENT_SPONSORSHIP_TYPES],
-    explicitlyIneligible: ["battle", "quarterly_championship", "unknown", "legacy"],
+    legacyEventTypeAliases: { mwl_quarter_finals: EVENT_SPONSORSHIP_TYPES.QUARTERLY_CHAMPIONSHIP },
+    explicitlyIneligible: ["battle", "unknown", "legacy"],
+    quarterlyCommercialProduct: EVENT_SPONSORSHIP_TYPES.QUARTERLY_CHAMPIONSHIP,
     allocationBps: { prize: 7000, marketing: 2000, protocol: 1000 },
     nativeAssets: { bnb: "BNB", solana: "SOL", robinhood: "ETH" },
     advertisingSystem: "separate:sponsorship_applications",
