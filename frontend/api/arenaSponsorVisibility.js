@@ -81,10 +81,7 @@ async function handleGet(req, res) {
             es.status as sponsorship_status,
             sp.status as profile_status,
             sp.project_name,
-            sp.logo_url,
-            sp.website_url,
             sp.founding_sponsor,
-            sp.founding_sponsor_badge,
             exists (
               select 1
                 from public.sponsorship_payments p
