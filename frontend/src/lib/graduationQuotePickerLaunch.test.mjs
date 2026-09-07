@@ -104,7 +104,8 @@ test("Robinhood approved Stock Token lane remains explicit", () => {
 });
 
 test("no arbitrary address or symbol-only selection exists in picker authority", () => {
-  assert.equal(creatorQuoteIdentityKey({ symbol: "USDC", chainId: "56" }), "");
-  assert.equal(isCreatorQuoteSelectable({ symbol: "USDC", newGraduationEligible: true }), true);
+  const symbolOnly = { symbol: "USDC", chainId: "56", newGraduationEligible: true };
+  assert.equal(creatorQuoteIdentityKey(symbolOnly), "");
+  assert.equal(isCreatorQuoteSelectable(symbolOnly), false);
   assert.equal(creatorQuoteIdentityKey(asset()).includes("0x1111111111111111111111111111111111111111"), true);
 });
