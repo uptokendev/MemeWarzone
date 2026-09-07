@@ -2,10 +2,11 @@ import fs from "node:fs";
 
 import {
   fetchConcentratedLiquidityPool,
-  openFullRangePosition,
+  openConcentratedPosition,
   orderMints,
   setPayerFromBytes,
   setRpc,
+  swapInstructions,
   WhirlpoolDeployment,
 } from "@orca-so/whirlpools";
 import { address, createSolanaRpc, devnet } from "@solana/kit";
@@ -26,7 +27,11 @@ const CERT_TICK_SPACING = 1;
 const DEFAULT_RPC = "https://api.devnet.solana.com";
 const DEFAULT_PRICE = 145.948162;
 const DEFAULT_SEED_SOL = 0.10;
+const DEFAULT_RANGE_BPS = 300;
+// $6 fixture: 0.05 SOL close buy -> 2% buy fee -> 2% finalize fee -> 80% liquidity.
+const DEFAULT_CERT_ACQUISITION_LAMPORTS = 38_416_000n;
 const MAX_REFERENCE_DRIFT_BPS = 25;
+const MAX_CERT_IMPACT_BPS = 100;
 const REPORT_PATH = process.env.ORCA_DEVNET_CERT_REPORT || "/tmp/mwz-orca-devnet-cert-pool.json";
 
 function fail(message) { throw new Error(`[orca-devnet-cert-pool] ${message}`); }
@@ -56,13 +61,25 @@ function poolSnapshot(pool) {
     tokenVaultA: String(pool.tokenVaultA), tokenVaultB: String(pool.tokenVaultB),
   };
 }
+function expectedRawAtSpot(inputLamports, price) {
+  return BigInt(Math.floor(Number(inputLamports) / 1_000_000_000 * Number(price) * 1_000_000));
+}
+function impactBps(actualOut, spotOut) {
+  if (spotOut <= 0n) fail("spot output is invalid");
+  if (actualOut >= spotOut) return 0;
+  return Number(((spotOut - actualOut) * 10_000n) / spotOut);
+}
 
 async function main() {
   const rpcUrl = String(process.env.SOLANA_RPC_URL || DEFAULT_RPC).trim();
   const referencePriceUsd = Number(process.env.ORCA_DEVNET_CERT_SOL_USDC_PRICE || DEFAULT_PRICE);
   const seedSol = Number(process.env.ORCA_DEVNET_CERT_SEED_SOL || DEFAULT_SEED_SOL);
+  const rangeBps = Number(process.env.ORCA_DEVNET_CERT_RANGE_BPS || DEFAULT_RANGE_BPS);
+  const certInputLamports = BigInt(process.env.ORCA_DEVNET_CERT_ACQUISITION_LAMPORTS || DEFAULT_CERT_ACQUISITION_LAMPORTS);
   if (!Number.isFinite(referencePriceUsd) || referencePriceUsd <= 0) fail("ORCA_DEVNET_CERT_SOL_USDC_PRICE must be > 0");
   if (!Number.isFinite(seedSol) || seedSol <= 0) fail("ORCA_DEVNET_CERT_SEED_SOL must be > 0");
+  if (!Number.isInteger(rangeBps) || rangeBps < 100 || rangeBps > 1000) fail("ORCA_DEVNET_CERT_RANGE_BPS must be between 100 and 1000");
+  if (certInputLamports <= 0n) fail("ORCA_DEVNET_CERT_ACQUISITION_LAMPORTS must be > 0");
 
   const operatorBytes = loadOperatorBytes();
   await setRpc(rpcUrl);
@@ -83,7 +100,11 @@ async function main() {
   const usdc = await tokenBalance(web3, owner, CIRCLE_DEVNET_USDC);
   const solLamports = await web3.getBalance(owner, "confirmed");
   const desiredSolRaw = decimalSeedRaw(seedSol);
-  const desiredUsdcRaw = BigInt(Math.ceil(seedSol * referencePriceUsd * 1_000_000));
+  // A symmetric concentrated range needs approximately equal notional on each side at the current price.
+  // Keep this explicit preflight conservative; the SDK computes the exact token-B requirement when opening.
+  const desiredUsdcRaw = BigInt(Math.ceil(seedSol * referencePriceUsd * 1_000_000 * 1.03));
+  const lowerPrice = referencePriceUsd * (1 - rangeBps / 10_000);
+  const upperPrice = referencePriceUsd * (1 + rangeBps / 10_000);
   const report = {
     rpcUrl, network: "solana-devnet", operator: owner.toBase58(),
     orca: { programId: ORCA_PROGRAM, config: ORCA_DEVNET_CONFIG, deployment: "devnet" },
@@ -91,7 +112,9 @@ async function main() {
     poolStateBeforeSeed: poolSnapshot(pool), tokenA: String(mintA), tokenB: String(mintB),
     wsolMint: WSOL, circleDevnetUsdcMint: CIRCLE_DEVNET_USDC, referencePriceUsdPerSol: referencePriceUsd,
     balancesBeforeSeed: { solLamports, usdcAta: usdc.ata, usdcRaw: usdc.raw },
-    desiredSeed: { solRaw: desiredSolRaw, usdcRaw: desiredUsdcRaw }, liquiditySeedingSignature: null, liquidityPositionMint: null,
+    desiredSeed: { solRaw: desiredSolRaw, conservativeUsdcRaw: desiredUsdcRaw, rangeBps, lowerPrice, upperPrice },
+    certificationSwap: { inputLamports: certInputLamports, maxImpactBps: MAX_CERT_IMPACT_BPS },
+    liquiditySeedingSignature: null, liquidityPositionMint: null,
     status: BigInt(pool.liquidity || 0) > 0n ? "READY_EXISTING_LIQUIDITY" : "POOL_READY_UNSEEDED",
   };
 
@@ -99,26 +122,55 @@ async function main() {
     if (usdc.raw < desiredUsdcRaw) {
       report.status = "BLOCKED_CIRCLE_DEVNET_USDC_FUNDING";
       fs.writeFileSync(REPORT_PATH, toJson(report)); console.log(toJson(report));
-      fail(`operator Circle devnet USDC balance ${usdc.raw} is below required seed ${desiredUsdcRaw}; fund ${usdc.ata} with canonical Circle devnet USDC`);
+      fail(`operator Circle devnet USDC balance ${usdc.raw} is below conservative required seed ${desiredUsdcRaw}; fund ${usdc.ata} with canonical Circle devnet USDC`);
     }
     if (BigInt(solLamports) <= desiredSolRaw + 50_000_000n) {
       report.status = "BLOCKED_DEVNET_SOL_FUNDING";
       fs.writeFileSync(REPORT_PATH, toJson(report)); console.log(toJson(report));
       fail("operator does not have enough devnet SOL for liquidity plus transaction rent/fees");
     }
-    const opened = await openFullRangePosition(address(CERT_POOL), { tokenMaxA: desiredSolRaw }, {
-      slippageToleranceBps: 100, funder: payer, whirlpoolDeployment: WhirlpoolDeployment.devnet,
-    });
+    const opened = await openConcentratedPosition(
+      address(CERT_POOL),
+      { tokenA: desiredSolRaw },
+      lowerPrice,
+      upperPrice,
+      { slippageToleranceBps: 100, whirlpoolDeployment: WhirlpoolDeployment.devnet },
+    );
     report.liquiditySeedingSignature = await opened.callback();
-    report.liquidityPositionMint = String(opened.positionMint || "");
+    report.liquidityPositionMint = String(opened.positionMint || opened.positionAddress || "");
     report.initializationCost = opened.initializationCost;
+    report.liquidityQuote = opened.quote;
   }
 
   const after = await fetchConcentratedLiquidityPool(rpc, mintA, mintB, CERT_TICK_SPACING, WhirlpoolDeployment.devnet);
   report.poolStateAfterSeed = poolSnapshot(after);
-  report.status = BigInt(after.liquidity || 0) > 0n ? "READY" : "POOL_READY_UNSEEDED";
+  if (BigInt(after.liquidity || 0) <= 0n) {
+    report.status = "POOL_READY_UNSEEDED";
+    fs.writeFileSync(REPORT_PATH, toJson(report)); console.log(toJson(report));
+    fail("certification pool remains unseeded");
+  }
+
+  const swap = await swapInstructions(
+    rpc,
+    { inputAmount: certInputLamports, mint: address(WSOL) },
+    address(CERT_POOL),
+    { signer: payer, slippageToleranceBps: 100, whirlpoolDeployment: WhirlpoolDeployment.devnet },
+  );
+  const estimatedOut = BigInt(swap.quote.tokenEstOut || 0);
+  const minOut = BigInt(swap.quote.tokenMinOut || 0);
+  const spotOut = expectedRawAtSpot(certInputLamports, after.price);
+  const measuredImpactBps = impactBps(estimatedOut, spotOut);
+  report.certificationSwap = {
+    inputLamports: certInputLamports,
+    estimatedUsdcRaw: estimatedOut,
+    minUsdcRaw: minOut,
+    spotExpectedUsdcRaw: spotOut,
+    measuredImpactBps,
+    maxImpactBps: MAX_CERT_IMPACT_BPS,
+  };
+  report.status = estimatedOut > 0n && minOut > 0n && measuredImpactBps <= MAX_CERT_IMPACT_BPS ? "READY" : "BLOCKED_GRADUATION_SIZED_IMPACT";
   fs.writeFileSync(REPORT_PATH, toJson(report)); console.log(toJson(report));
-  if (report.status !== "READY") fail("certification pool remains unseeded");
+  if (report.status !== "READY") fail(`graduation-sized Orca quote is not safe: impact=${measuredImpactBps} bps`);
 }
 
 main().catch((error) => { console.error(error?.stack || error); process.exitCode = 1; });
