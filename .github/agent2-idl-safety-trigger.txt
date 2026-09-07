@@ -1,1 +1,1 @@
-Trigger IDL-safe candidate production from db2490f8a19bf3cbe5799845bab49e86e211137c after replacing the recognized certification workflow.
+Run the valid IDL-safe candidate producer workflow against db2490f8a19bf3cbe5799845bab49e86e211137c.
