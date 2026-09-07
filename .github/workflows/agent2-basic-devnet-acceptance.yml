@@ -198,18 +198,20 @@ jobs:
           http_code="$(curl -sS -o /tmp/mwz-agent2-unsafe-auth.json -w '%{http_code}' -H 'content-type: application/json' -d "{\"chainId\":102,\"campaignAddress\":\"$stable_campaign\",\"authorityAddress\":\"$operator\",\"positionNftMint\":\"$position\",\"quoteConfigId\":\"a2100000-0000-4000-8000-000000000212\"}" "$SOLANA_GRADUATION_AUTH_URL")"
           test "$http_code" = "409"
           cat /tmp/mwz-agent2-unsafe-auth.json
-          node --input-type=module - "$stable_campaign" <<'NODE'
-          import {Connection,PublicKey} from './tools/solana-meteora-graduation/node_modules/@solana/web3.js';
+          node - "$stable_campaign" <<'NODE'
+          const {Connection,PublicKey}=require('./tools/solana-meteora-graduation/node_modules/@solana/web3.js');
           const campaign=new PublicKey(process.argv[2]);
           const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
-          const info=await c.getAccountInfo(campaign,'confirmed'); if(!info) throw new Error('campaign missing');
-          if(info.data[713]===1) throw new Error('unsafe campaign unexpectedly graduated');
-          const mint=new PublicKey(info.data.subarray(168,200));
-          const wsol=new PublicKey('So11111111111111111111111111111111111111112');
-          const [a,b]=Buffer.compare(mint.toBuffer(),wsol.toBuffer())>0?[mint,wsol]:[wsol,mint];
-          const pool=PublicKey.findProgramAddressSync([Buffer.from('cpool'),a.toBuffer(),b.toBuffer()],new PublicKey('cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG'))[0];
-          if(await c.getAccountInfo(pool,'confirmed')) throw new Error(`native fallback pool exists: ${pool}`);
-          console.log(`unsafe_pending_campaign=${campaign} native_fallback_pool_absent=${pool}`);
+          (async()=>{
+            const info=await c.getAccountInfo(campaign,'confirmed'); if(!info) throw new Error('campaign missing');
+            if(info.data[713]===1) throw new Error('unsafe campaign unexpectedly graduated');
+            const mint=new PublicKey(info.data.subarray(168,200));
+            const wsol=new PublicKey('So11111111111111111111111111111111111111112');
+            const [a,b]=Buffer.compare(mint.toBuffer(),wsol.toBuffer())>0?[mint,wsol]:[wsol,mint];
+            const pool=PublicKey.findProgramAddressSync([Buffer.from('cpool'),a.toBuffer(),b.toBuffer()],new PublicKey('cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG'))[0];
+            if(await c.getAccountInfo(pool,'confirmed')) throw new Error(`native fallback pool exists: ${pool}`);
+            console.log(`unsafe_pending_campaign=${campaign} native_fallback_pool_absent=${pool}`);
+          })().catch(e=>{console.error(e);process.exit(1)});
           NODE
 
       - name: Promote verified devnet Orca route health and append decision evidence
@@ -244,16 +246,39 @@ jobs:
           export SOLANA_GRADUATION_QUOTE_CONFIG_ID=a2100000-0000-4000-8000-000000000212
           node tools/solana-meteora-graduation/graduate-basic-quote.mjs "$stable_campaign" | tee /tmp/mwz-agent2-stable-graduation.log
           SOLANA_BASIC_RESULT_REPORT=/tmp/mwz-agent2-stable-result.json node tools/solana-meteora-graduation/verify-basic-graduation-result.mjs "$stable_campaign" /tmp/mwz-agent2-stable-graduation.log 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
-          node --input-type=module - "$stable_campaign" <<'NODE'
-          import {Connection,PublicKey} from './tools/solana-meteora-graduation/node_modules/@solana/web3.js';
+          node - "$stable_campaign" <<'NODE'
+          const {Connection,PublicKey}=require('./tools/solana-meteora-graduation/node_modules/@solana/web3.js');
           const campaign=new PublicKey(process.argv[2]); const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
-          const info=await c.getAccountInfo(campaign,'confirmed'); if(!info||info.data[713]!==1) throw new Error('stable retry did not graduate exactly once');
-          const mint=new PublicKey(info.data.subarray(168,200)); const wsol=new PublicKey('So11111111111111111111111111111111111111112');
-          const [a,b]=Buffer.compare(mint.toBuffer(),wsol.toBuffer())>0?[mint,wsol]:[wsol,mint];
-          const nativePool=PublicKey.findProgramAddressSync([Buffer.from('cpool'),a.toBuffer(),b.toBuffer()],new PublicKey('cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG'))[0];
-          if(await c.getAccountInfo(nativePool,'confirmed')) throw new Error(`silent WSOL fallback exists: ${nativePool}`);
-          console.log(`stable_graduated=true native_fallback_absent=${nativePool}`);
+          (async()=>{
+            const info=await c.getAccountInfo(campaign,'confirmed'); if(!info||info.data[713]!==1) throw new Error('stable retry did not graduate');
+            const mint=new PublicKey(info.data.subarray(168,200)); const wsol=new PublicKey('So11111111111111111111111111111111111111112');
+            const [a,b]=Buffer.compare(mint.toBuffer(),wsol.toBuffer())>0?[mint,wsol]:[wsol,mint];
+            const nativePool=PublicKey.findProgramAddressSync([Buffer.from('cpool'),a.toBuffer(),b.toBuffer()],new PublicKey('cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG'))[0];
+            if(await c.getAccountInfo(nativePool,'confirmed')) throw new Error(`silent WSOL fallback exists: ${nativePool}`);
+            console.log(`stable_graduated=true native_fallback_absent=${nativePool}`);
+          })().catch(e=>{console.error(e);process.exit(1)});
           NODE
+
+      - name: Prove stable exactly-once replay rejection
+        shell: bash
+        run: |
+          set -euo pipefail
+          stable_campaign="$(cat /tmp/mwz-agent2-stable-campaign.txt)"
+          export SOLANA_GRADUATION_FIXTURE_OUTPUT=/tmp/mwz-agent2-stable-fixture.json
+          export SOLANA_GRADUATION_QUOTE_CONFIG_ID=a2100000-0000-4000-8000-000000000212
+          set +e
+          node tools/solana-meteora-graduation/graduate-basic-quote.mjs "$stable_campaign" >/tmp/mwz-agent2-stable-replay.log 2>&1
+          replay_status=$?
+          set -e
+          test "$replay_status" -ne 0
+          grep -q 'SOLANA_GRADUATION_CAMPAIGN_NOT_EXECUTABLE' /tmp/mwz-agent2-stable-replay.log
+          if grep -q 'GRADUATED ' /tmp/mwz-agent2-stable-replay.log; then
+            echo 'BLOCKER: replay produced a second graduation'; cat /tmp/mwz-agent2-stable-replay.log; exit 1
+          fi
+          cat /tmp/mwz-agent2-stable-replay.log
+          SOLANA_BASIC_RESULT_REPORT=/tmp/mwz-agent2-stable-result-recheck.json node tools/solana-meteora-graduation/verify-basic-graduation-result.mjs "$stable_campaign" /tmp/mwz-agent2-stable-graduation.log 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
+          cmp /tmp/mwz-agent2-stable-result.json /tmp/mwz-agent2-stable-result-recheck.json
+          echo 'exactly_once_replay_rejected=true duplicate_graduation_absent=true'
 
       - name: Restore original graduation pause state
         if: ${{ always() }}
@@ -283,6 +308,8 @@ jobs:
             /tmp/mwz-agent2-unsafe-auth.json
             /tmp/mwz-agent2-stable-graduation.log
             /tmp/mwz-agent2-stable-result.json
+            /tmp/mwz-agent2-stable-replay.log
+            /tmp/mwz-agent2-stable-result-recheck.json
             /tmp/mwz-solana-devnet-pause-snapshot.json
           if-no-files-found: warn
           retention-days: 14
