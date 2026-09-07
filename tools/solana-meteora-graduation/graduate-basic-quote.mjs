@@ -172,6 +172,54 @@ async function buildJupiterInstructions(auth, operator) {
   return { instructions, lookupTables };
 }
 
+function kitInstructionToWeb3(raw) {
+  if (!raw) return null;
+  return new TransactionInstruction({
+    programId: asPk(String(raw.programAddress), "Orca instruction program"),
+    keys: (raw.accounts || []).map((account) => {
+      const role = Number(account.role);
+      return {
+        pubkey: asPk(String(account.address), "Orca instruction account"),
+        isSigner: role === 2 || role === 3,
+        isWritable: role === 1 || role === 3,
+      };
+    }),
+    data: Buffer.from(raw.data || []),
+  });
+}
+
+async function buildOrcaInstructions(auth, operator) {
+  const [{ swapInstructions, setPayerFromBytes, WhirlpoolDeployment }, kit] = await Promise.all([
+    import("@orca-so/whirlpools"),
+    import("@solana/kit"),
+  ]);
+  const { address, createSolanaRpc, devnet } = kit;
+  const poolAddress = String(auth.quote.orcaPool || "").trim();
+  if (!poolAddress) fail("authorized Orca pool is missing");
+  const expectedProgram = asPk(auth.quote.acquisitionProgram, "acquisitionProgram");
+  const kitPayer = await setPayerFromBytes(operator.secretKey);
+  const rpc = createSolanaRpc(devnet(operator.connection.rpcEndpoint));
+  const built = await swapInstructions(
+    rpc,
+    { inputAmount: BigInt(auth.graduationLiquidity.maxLiquidityLamports), mint: address(NATIVE_MINT.toBase58()) },
+    address(poolAddress),
+    { signer: kitPayer, slippageToleranceBps: Number(auth.quote.maxSlippageBps), whirlpoolDeployment: WhirlpoolDeployment.devnet },
+  );
+  if (BigInt(built.quote.tokenEstOut || 0) !== BigInt(auth.quote.expectedQuoteAmount)) fail("Orca quote changed after authorization; refresh authorization");
+  if (BigInt(built.quote.tokenMinOut || 0) < BigInt(auth.quote.minQuoteAmount)) fail("Orca minimum output fell below signed authorization");
+  const instructions = (built.instructions || []).map(kitInstructionToWeb3).filter(Boolean);
+  if (!instructions.some((ix) => ix.programId.equals(expectedProgram))) fail("Orca route does not contain the approved acquisition program");
+  return { instructions, lookupTables: [] };
+}
+
+async function buildAcquisitionInstructions(auth, operator) {
+  if (Number(auth.quote.profile) === QUOTE_PROFILE_NATIVE) return { instructions: [], lookupTables: [] };
+  const adapter = String(auth.quote.acquisitionAdapter || "JUPITER").trim().toUpperCase();
+  if (adapter === "JUPITER") return buildJupiterInstructions(auth, operator);
+  if (adapter === "ORCA_WHIRLPOOL_DEVNET") return buildOrcaInstructions(auth, operator);
+  fail(`unsupported authorized acquisition adapter ${adapter}`);
+}
+
 async function main() {
   const campaignArg = process.argv[2] || process.env.SOLANA_GRADUATION_CAMPAIGN; if (!campaignArg) fail("usage: npm run graduate:basic-quote -- <CAMPAIGN_PDA>");
   const campaignPk = asPk(campaignArg, "campaign");
@@ -225,11 +273,11 @@ async function main() {
   const rewardRemaining = Object.values(rewardVaults).map((pubkey) => ({ pubkey, isWritable: true, isSigner: false }));
   const quoteRemaining = nativeQuote ? [] : [{ pubkey: quoteMint, isWritable: false, isSigner: false }, { pubkey: quoteAta.address, isWritable: true, isSigner: false }, { pubkey: recoveryAccount, isWritable: true, isSigner: false }];
   const confirmIx = await program.methods.confirmGraduation().accountsStrict({ authority: operator.publicKey, globalConfig: asPk(auth.accounts.globalConfig, "globalConfig"), campaign: campaignPk, mint: campaign.mint, tokenVault: campaign.tokenVault, solVault: campaign.solVault, authorityTokenAccount: stagingAta.address, creator: campaign.creator, creatorTokenAccount: creatorAta.address, creatorProfile: asPk(auth.accounts.creatorProfile, "creatorProfile"), graduationState: asPk(auth.accounts.graduationState, "graduationState"), meteoraPool: pool, meteoraPosition: position, meteoraTokenVault: asPk(auth.accounts.meteoraTokenVault, "meteoraTokenVault"), meteoraNativeVault: asPk(auth.accounts.meteoraNativeVault, "meteora quote vault"), tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId }).remainingAccounts([...quoteRemaining, ...rewardRemaining]).instruction();
-  const jupiter = await buildJupiterInstructions(auth, { publicKey: operator.publicKey, connection });
+  const acquisition = await buildAcquisitionInstructions(auth, { publicKey: operator.publicKey, secretKey: operator.secretKey, connection });
   const computeUnits = Number(process.env.SOLANA_GRADUATION_COMPUTE_UNITS || 1_400_000);
-  const instructions = [ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnits }), flushFeesIx, ed25519Ix, beginIx, ...jupiter.instructions, ...meteoraTx.instructions, confirmIx];
+  const instructions = [ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnits }), flushFeesIx, ed25519Ix, beginIx, ...acquisition.instructions, ...meteoraTx.instructions, confirmIx];
   const latest = await connection.getLatestBlockhash("confirmed"); const projectLookup = await loadProjectLookupTable(connection, operator, instructions);
-  const lookupMap = new Map([...projectLookup, ...jupiter.lookupTables].map((table) => [table.key.toBase58(), table])); const lookupTables = [...lookupMap.values()];
+  const lookupMap = new Map([...projectLookup, ...acquisition.lookupTables].map((table) => [table.key.toBase58(), table])); const lookupTables = [...lookupMap.values()];
   const v0 = await loadSolanaV0Module();
   const tx = v0.buildLaunchpadV0Transaction(solanaWeb3, { payer: operator.publicKey, recentBlockhash: latest.blockhash, instructions, lookupTableAccounts: lookupTables });
   const stats = v0.assertLaunchpadV0Intent(solanaWeb3, tx, { payer: operator.publicKey, ed25519Instruction: ed25519Ix, programInstruction: beginIx, lookupTableAccounts: lookupTables, hardMaxBytes: MAX_TRANSACTION_BYTES, releaseMaxBytes: null, maxRequiredSigners: 2, allowAdditionalProgramInstructions: true, allowInstructionPrivilegePromotion: true });
