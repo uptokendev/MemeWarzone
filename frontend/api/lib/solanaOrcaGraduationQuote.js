@@ -21,17 +21,26 @@ export async function quoteOrcaWhirlpoolDevnet({ rpcUrl, route, amountLamports }
   if (String(route.acquisitionProgram || "") !== ORCA_WHIRLPOOL_PROGRAM) throw new Error("Orca acquisition program does not match the verified Whirlpool deployment");
   if (String(route.inputMint || "") !== WSOL_MINT) throw new Error("Orca certification route input mint must be WSOL");
   if (!route.orcaPool) throw new Error("Orca certification route pool is missing");
+  const tickSpacing = Number(route.orcaTickSpacing);
+  if (!Number.isInteger(tickSpacing) || tickSpacing <= 0) throw new Error("Orca certification route tick spacing is invalid");
 
-  const [{ fetchSplashPool, swapInstructions, WhirlpoolDeployment }, kit] = await Promise.all([
+  const [{ fetchConcentratedLiquidityPool, swapInstructions, WhirlpoolDeployment }, kit] = await Promise.all([
     import("@orca-so/whirlpools"),
     import("@solana/kit"),
   ]);
   const { address, createSolanaRpc, devnet, generateKeyPairSigner } = kit;
   const rpc = createSolanaRpc(devnet(rpcUrl));
   const outputMint = String(route.outputMint || route.quoteMint || "");
-  const pool = await fetchSplashPool(rpc, address(WSOL_MINT), address(outputMint), WhirlpoolDeployment.devnet);
+  const pool = await fetchConcentratedLiquidityPool(
+    rpc,
+    address(WSOL_MINT),
+    address(outputMint),
+    tickSpacing,
+    WhirlpoolDeployment.devnet,
+  );
   if (!pool.initialized) throw new Error("Configured Orca certification pool is not initialized");
-  if (String(pool.address) !== String(route.orcaPool)) throw new Error("Configured Orca pool does not match canonical WSOL/quote Splash Pool");
+  if (String(pool.address) !== String(route.orcaPool)) throw new Error("Configured Orca pool does not match the policy-selected WSOL/quote Whirlpool");
+  if (Number(pool.tickSpacing) !== tickSpacing) throw new Error("Configured Orca pool tick spacing mismatch");
   if (String(pool.tokenMintA) !== WSOL_MINT || String(pool.tokenMintB) !== outputMint) throw new Error("Configured Orca pool mint binding mismatch");
   if (BigInt(pool.liquidity || 0) <= 0n) throw new Error("Configured Orca certification pool has zero liquidity");
 
@@ -54,6 +63,7 @@ export async function quoteOrcaWhirlpoolDevnet({ rpcUrl, route, amountLamports }
   return {
     adapter: "ORCA_WHIRLPOOL_DEVNET",
     pool: String(pool.address),
+    tickSpacing,
     programId: ORCA_WHIRLPOOL_PROGRAM,
     inputMint: WSOL_MINT,
     outputMint,
