@@ -1,0 +1,54 @@
+name: Agent 2 wire Orca graduation operator
+
+on:
+  push:
+    branches: [agent2/solana-basic-graduation-market]
+    paths: [.github/workflows/agent2-wire-orca-operator.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  wire:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent2/solana-basic-graduation-market
+          fetch-depth: 0
+      - name: Patch operator narrowly
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('tools/solana-meteora-graduation/graduate-basic-quote.mjs')
+          s=p.read_text()
+          old='''async function buildJupiterInstructions(auth, operator) {\n  if (Number(auth.quote.profile) === QUOTE_PROFILE_NATIVE) return { instructions: [], lookupTables: [] };'''
+          new='''async function buildJupiterInstructions(auth, operator) {\n  if (Number(auth.quote.profile) === QUOTE_PROFILE_NATIVE) return { instructions: [], lookupTables: [] };'''
+          if old not in s: raise SystemExit('Jupiter function anchor missing')
+
+          anchor='''  return { instructions, lookupTables };\n}\n\nasync function main() {'''
+          insert='''  return { instructions, lookupTables };\n}\n\nfunction kitInstructionToWeb3(raw) {\n  if (!raw) return null;\n  return new TransactionInstruction({\n    programId: asPk(String(raw.programAddress), "Orca instruction program"),\n    keys: (raw.accounts || []).map((account) => {\n      const role = Number(account.role);\n      return {\n        pubkey: asPk(String(account.address), "Orca instruction account"),\n        isSigner: role === 2 || role === 3,\n        isWritable: role === 1 || role === 3,\n      };\n    }),\n    data: Buffer.from(raw.data || []),\n  });\n}\n\nasync function buildOrcaInstructions(auth, operator) {\n  const [{ swapInstructions, setPayerFromBytes, WhirlpoolDeployment }, kit] = await Promise.all([\n    import("@orca-so/whirlpools"),\n    import("@solana/kit"),\n  ]);\n  const { address, createSolanaRpc, devnet } = kit;\n  const poolAddress = String(auth.quote.orcaPool || "").trim();\n  if (!poolAddress) fail("authorized Orca pool is missing");\n  const expectedProgram = asPk(auth.quote.acquisitionProgram, "acquisitionProgram");\n  const kitPayer = await setPayerFromBytes(operator.secretKey);\n  const rpc = createSolanaRpc(devnet(operator.connection.rpcEndpoint));\n  const built = await swapInstructions(\n    rpc,\n    { inputAmount: BigInt(auth.graduationLiquidity.maxLiquidityLamports), mint: address(NATIVE_MINT.toBase58()) },\n    address(poolAddress),\n    { signer: kitPayer, slippageToleranceBps: Number(auth.quote.maxSlippageBps), whirlpoolDeployment: WhirlpoolDeployment.devnet },\n  );\n  if (BigInt(built.quote.tokenEstOut || 0) !== BigInt(auth.quote.expectedQuoteAmount)) fail("Orca quote changed after authorization; refresh authorization");\n  if (BigInt(built.quote.tokenMinOut || 0) < BigInt(auth.quote.minQuoteAmount)) fail("Orca minimum output fell below signed authorization");\n  const instructions = (built.instructions || []).map(kitInstructionToWeb3).filter(Boolean);\n  if (!instructions.some((ix) => ix.programId.equals(expectedProgram))) fail("Orca route does not contain the approved acquisition program");\n  return { instructions, lookupTables: [] };\n}\n\nasync function buildAcquisitionInstructions(auth, operator) {\n  if (Number(auth.quote.profile) === QUOTE_PROFILE_NATIVE) return { instructions: [], lookupTables: [] };\n  const adapter = String(auth.quote.acquisitionAdapter || "JUPITER").trim().toUpperCase();\n  if (adapter === "JUPITER") return buildJupiterInstructions(auth, operator);\n  if (adapter === "ORCA_WHIRLPOOL_DEVNET") return buildOrcaInstructions(auth, operator);\n  fail(`unsupported authorized acquisition adapter ${adapter}`);\n}\n\nasync function main() {'''
+          if anchor not in s: raise SystemExit('insert anchor missing')
+          s=s.replace(anchor,insert,1)
+          old='''  const jupiter = await buildJupiterInstructions(auth, { publicKey: operator.publicKey, connection });'''
+          new='''  const acquisition = await buildAcquisitionInstructions(auth, { publicKey: operator.publicKey, secretKey: operator.secretKey, connection });'''
+          if old not in s: raise SystemExit('acquisition call anchor missing')
+          s=s.replace(old,new,1)
+          old='''  const instructions = [ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnits }), flushFeesIx, ed25519Ix, beginIx, ...jupiter.instructions, ...meteoraTx.instructions, confirmIx];'''
+          new='''  const instructions = [ComputeBudgetProgram.setComputeUnitLimit({ units: computeUnits }), flushFeesIx, ed25519Ix, beginIx, ...acquisition.instructions, ...meteoraTx.instructions, confirmIx];'''
+          if old not in s: raise SystemExit('instruction list anchor missing')
+          s=s.replace(old,new,1)
+          old='''  const lookupMap = new Map([...projectLookup, ...jupiter.lookupTables].map((table) => [table.key.toBase58(), table])); const lookupTables = [...lookupMap.values()];'''
+          new='''  const lookupMap = new Map([...projectLookup, ...acquisition.lookupTables].map((table) => [table.key.toBase58(), table])); const lookupTables = [...lookupMap.values()];'''
+          if old not in s: raise SystemExit('lookup anchor missing')
+          s=s.replace(old,new,1)
+          p.write_text(s)
+      - name: Syntax check
+        run: node --check tools/solana-meteora-graduation/graduate-basic-quote.mjs
+      - name: Commit
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/solana-meteora-graduation/graduate-basic-quote.mjs
+          git commit -m 'feat(agent2): build acquisition instructions from quote policy'
+          git push origin HEAD:agent2/solana-basic-graduation-market
