@@ -283,6 +283,9 @@ jobs:
 
       - name: Retry SAME stable campaign atomically through Orca into Meteora
         shell: bash
+        env:
+          NODE_OPTIONS: --require=${{ github.workspace }}/tools/solana-meteora-graduation/v0-envelope-diagnostics.cjs
+          SOLANA_V0_DIAGNOSTIC_REPORT: /tmp/mwz-agent2-v0-envelope.json
         run: |
           set -euo pipefail
           export SOLANA_GRADUATION_FIXTURE_OUTPUT=/tmp/mwz-agent2-stable-fixture.json
@@ -372,6 +375,7 @@ jobs:
             /tmp/mwz-agent2-stable-acquisition.json
             /tmp/mwz-agent2-stable-replay.log
             /tmp/mwz-agent2-stable-result-recheck.json
+            /tmp/mwz-agent2-v0-envelope.json
             /tmp/mwz-solana-stable-pause-snapshot.json
           if-no-files-found: warn
           retention-days: 14
