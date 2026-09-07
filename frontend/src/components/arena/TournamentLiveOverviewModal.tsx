@@ -1,8 +1,10 @@
 import { useState } from "react";
+import { EventSponsorAttribution } from "@/components/arena/EventSponsorAttribution";
 import { TournamentBracketModal } from "@/components/arena/TournamentBracketModal";
 import { TournamentLiveRoundDrawer } from "@/components/arena/TournamentLiveRoundDrawer";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { tournamentSponsorEventType, useEventSponsors } from "@/hooks/useEventSponsors";
 import { useTournamentCommandState } from "@/hooks/useTournamentCommandState";
 
 export function TournamentLiveOverviewModal({
@@ -22,6 +24,11 @@ export function TournamentLiveOverviewModal({
   const card = state.card;
   const liveBattles = state.liveMatches;
   const liveBattleIds = liveBattles.map((match) => String(match.battleId || "")).filter(Boolean);
+  const sponsorType = tournamentSponsorEventType({
+    ...((state.tournament || {}) as Record<string, unknown>),
+    ...((state.detail?.event || {}) as Record<string, unknown>),
+  });
+  const sponsors = useEventSponsors({ eventType: sponsorType, eventReferenceId: state.id, chainId: state.tournamentChainId, enabled: open });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -36,6 +43,7 @@ export function TournamentLiveOverviewModal({
           <DialogDescription className="text-[11px] uppercase tracking-[0.16em] text-white/50">
             {[card?.status.label, card?.bracketStage ? String(card.bracketStage).replaceAll("_", " ") : null].filter(Boolean).join(" · ")}
           </DialogDescription>
+          <EventSponsorAttribution sponsors={sponsors} variant={sponsorType === "mwl_quarter_finals" || sponsorType === "quarterly_championship" ? "premium" : "prominent"} />
         </DialogHeader>
         {!state.tournament ? (
           <p className="text-sm text-muted-foreground">This tournament could not be loaded.</p>
@@ -85,6 +93,7 @@ export function TournamentLiveOverviewModal({
               rounds={state.bracketRounds}
               entries={state.entries}
               chainId={state.tournamentChainId}
+              sponsors={sponsors}
             />
             <TournamentLiveRoundDrawer
               open={roundOpen}
