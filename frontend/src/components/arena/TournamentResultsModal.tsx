@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { ArenaWarPoolClaimButton } from "@/components/arena/ArenaWarPoolClaimButton";
+import { EventSponsorAttribution } from "@/components/arena/EventSponsorAttribution";
 import { TournamentBracketModal } from "@/components/arena/TournamentBracketModal";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { WarzoneTokenMark } from "@/components/warzone/WarzoneTokenMark";
+import { tournamentSponsorEventType, useEventSponsors } from "@/hooks/useEventSponsors";
 import { useTournamentCommandState } from "@/hooks/useTournamentCommandState";
 
 export function TournamentResultsModal({
@@ -21,6 +23,11 @@ export function TournamentResultsModal({
   const state = useTournamentCommandState(open ? tournamentId : "", { loadMetrics: false });
   const card = state.card;
   const champion = state.champion;
+  const sponsorType = tournamentSponsorEventType({
+    ...((state.tournament || {}) as Record<string, unknown>),
+    ...((state.detail?.event || {}) as Record<string, unknown>),
+  });
+  const sponsors = useEventSponsors({ eventType: sponsorType, eventReferenceId: state.id, chainId: state.tournamentChainId, enabled: open });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -33,6 +40,7 @@ export function TournamentResultsModal({
         <DialogHeader className="pr-8 text-left">
           <DialogTitle className="font-black text-xl text-foreground">{card?.title || "Tournament"}</DialogTitle>
           <DialogDescription className="text-[11px] uppercase tracking-[0.16em] text-white/50">Results</DialogDescription>
+          <EventSponsorAttribution sponsors={sponsors} variant={sponsorType === "mwl_quarter_finals" || sponsorType === "quarterly_championship" ? "premium" : "prominent"} />
         </DialogHeader>
         {!state.tournament ? (
           <p className="text-sm text-muted-foreground">This tournament could not be loaded.</p>
@@ -73,6 +81,7 @@ export function TournamentResultsModal({
               rounds={state.bracketRounds}
               entries={state.entries}
               chainId={state.tournamentChainId}
+              sponsors={sponsors}
             />
           </div>
         )}
