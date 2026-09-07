@@ -22,6 +22,8 @@ create table if not exists public.robinhood_stock_token_registry (
   enabled_for_trading boolean not null default false,
   automated_health_status text not null default 'stale' check (automated_health_status in ('healthy','review','unhealthy','stale')),
   automated_health_reason text,
+  health_certification_version text,
+  certification_evidence jsonb,
   existing_market_support boolean not null default true,
   state_version bigint not null default 1,
   oracle_feed_address text,
@@ -60,8 +62,9 @@ create table if not exists public.robinhood_stock_token_registry_audit (
 create index if not exists robinhood_stock_token_registry_audit_registry_idx
   on public.robinhood_stock_token_registry_audit (registry_id, created_at desc);
 
--- Release candidates are database state, not a frontend/source-code allowlist.
--- Candidate status never authorizes graduation by itself.
+-- Historical seed table retained for compatibility/audit only. Candidate status
+-- used by the runtime sync is now derived from the Agent-1 approved quote manifest
+-- using exact chain + provider + contract identity, never ticker alone.
 create table if not exists public.robinhood_stock_token_release_candidates (
   symbol text primary key,
   created_at timestamptz not null default now()
@@ -72,4 +75,8 @@ values ('NVDA'),('SPY'),('QQQ'),('GOOGL'),('AAPL'),('MSFT'),('TSLA'),('COST')
 on conflict (symbol) do nothing;
 
 comment on column public.robinhood_stock_token_registry.enabled_for_graduation is
-  'Server-derived effective authority for NEW graduations only. Existing MEME/STOCK markets are governed independently by existing_market_support.';
+  'Server-derived effective authority for NEW graduations only. Requires fresh runtime-parity-v1 health; existing MEME/STOCK markets are governed independently by existing_market_support.';
+comment on column public.robinhood_stock_token_registry.health_certification_version is
+  'Fail-closed scanner version. NEW Robinhood graduations require runtime-parity-v1 plus fresh health.';
+comment on column public.robinhood_stock_token_registry.certification_evidence is
+  'Per-asset runtime evidence for exact identity, acquisition, price execution policy, and final permanent MEME/QUOTE LP compatibility.';

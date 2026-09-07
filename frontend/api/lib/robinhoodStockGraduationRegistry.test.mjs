@@ -3,10 +3,16 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { APPROVED_QUOTE_CATALOG } from "./approvedQuoteCatalog.js";
 import {
   deriveEffectiveAuthority,
   parseCanonicalRobinhoodDeployments,
+  ROBINHOOD_RUNTIME_CERTIFICATION_VERSION,
 } from "./robinhoodStockGraduationRegistry.js";
+import {
+  findExactRobinhoodManifestCandidate,
+  isExactRobinhoodReleaseCandidate,
+} from "./robinhoodStockRuntimeCertification.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const repoRoot = path.resolve(root, "..");
@@ -20,6 +26,7 @@ function healthyRow(overrides = {}) {
     candidate: true,
     admin_state: "default",
     automated_health_status: "healthy",
+    health_certification_version: ROBINHOOD_RUNTIME_CERTIFICATION_VERSION,
     existing_market_support: true,
     route_enabled: true,
     oracle_feed_address: "0x0000000000000000000000000000000000000011",
@@ -58,12 +65,26 @@ test("malformed or fake deployment address is never imported as canonical", () =
   assert.deepEqual(rows, []);
 });
 
-test("effective authority is fail-closed for noncanonical, unhealthy, halted, stale, disabled route, and missing route addresses", () => {
+test("merged Agent-1 Robinhood candidate set is exact-address bound and contains 33 stock tokens", () => {
+  const candidates = APPROVED_QUOTE_CATALOG.assets.filter((asset) =>
+    String(asset.chainId) === "4663" && asset.provider === "robinhood-stock-token"
+  );
+  assert.equal(candidates.length, 33);
+  for (const asset of candidates) {
+    assert.equal(isExactRobinhoodReleaseCandidate({ chainId: 4663, contractAddress: asset.address }), true, asset.symbol);
+    assert.equal(findExactRobinhoodManifestCandidate({ chainId: 4663, contractAddress: asset.address })?.providerAssetId, asset.providerAssetId);
+  }
+  assert.equal(isExactRobinhoodReleaseCandidate({ chainId: 4663, contractAddress: "0x0000000000000000000000000000000000000001" }), false);
+});
+
+test("effective authority is fail-closed for noncanonical, unhealthy, halted, stale, legacy scanner, disabled route, and missing route addresses", () => {
   assert.equal(deriveEffectiveAuthority(healthyRow(), { healthFresh: true }).enabledForGraduation, true);
   assert.equal(deriveEffectiveAuthority(healthyRow({ canonical: false }), { healthFresh: true }).enabledForGraduation, false);
   assert.equal(deriveEffectiveAuthority(healthyRow({ automated_health_status: "unhealthy" }), { healthFresh: true }).enabledForGraduation, false);
   assert.equal(deriveEffectiveAuthority(healthyRow({ trading_halted: true }), { healthFresh: true }).enabledForGraduation, false);
   assert.equal(deriveEffectiveAuthority(healthyRow(), { healthFresh: false }).enabledForGraduation, false);
+  assert.equal(deriveEffectiveAuthority(healthyRow({ health_certification_version: null }), { healthFresh: true }).enabledForGraduation, false);
+  assert.equal(deriveEffectiveAuthority(healthyRow({ health_certification_version: "legacy" }), { healthFresh: true }).enabledForGraduation, false);
   assert.equal(deriveEffectiveAuthority(healthyRow({ route_enabled: false }), { healthFresh: true }).enabledForGraduation, false);
   assert.equal(deriveEffectiveAuthority(healthyRow({ oracle_feed_address: null }), { healthFresh: true }).enabledForGraduation, false);
   assert.equal(deriveEffectiveAuthority(healthyRow({ acquisition_pool_address: null }), { healthFresh: true }).enabledForGraduation, false);
@@ -75,10 +96,11 @@ test("force-disabled blocks new graduations without disabling existing market su
   assert.equal(decision.enabledForTrading, true);
 });
 
-test("force-enabled can admit noncandidate only when hard safety is healthy", () => {
+test("force-enabled can admit noncandidate only when runtime-parity hard safety is healthy", () => {
   assert.equal(deriveEffectiveAuthority(healthyRow({ candidate: false, admin_state: "force_enabled" }), { healthFresh: true }).enabledForGraduation, true);
   assert.equal(deriveEffectiveAuthority(healthyRow({ candidate: false, admin_state: "force_enabled", canonical: false }), { healthFresh: true }).enabledForGraduation, false);
   assert.equal(deriveEffectiveAuthority(healthyRow({ candidate: false, admin_state: "force_enabled", route_enabled: false }), { healthFresh: true }).enabledForGraduation, false);
+  assert.equal(deriveEffectiveAuthority(healthyRow({ candidate: false, admin_state: "force_enabled", health_certification_version: null }), { healthFresh: true }).enabledForGraduation, false);
 });
 
 test("create authorization uses DB exact chain + contract lookup and ENV JSON is no longer authority", () => {
@@ -90,6 +112,32 @@ test("create authorization uses DB exact chain + contract lookup and ENV JSON is
   assert.doesNotMatch(registry, /where[^;]*symbol\s*=\s*\$\d[^;]*limit 1/i);
   assert.match(policy, /stockRoutes\(asset\.contractAddress\)/);
   assert.match(policy, /Selected Stock Token graduation route is disabled onchain/);
+});
+
+test("canonical candidate selection no longer trusts symbol-only release seeds", () => {
+  const registry = fs.readFileSync(path.join(root, "api/lib/robinhoodStockGraduationRegistry.js"), "utf8");
+  assert.match(registry, /isExactRobinhoodReleaseCandidate/);
+  assert.doesNotMatch(registry, /select upper\(symbol\) as symbol from public\.robinhood_stock_token_release_candidates/i);
+  assert.match(registry, /chainId: asset\.chainId/);
+  assert.match(registry, /contractAddress: asset\.contractAddress/);
+});
+
+test("runtime certification mirrors acquisition, oracle, execution-price, slippage, and locker requirements", () => {
+  const runtime = fs.readFileSync(path.join(root, "api/lib/robinhoodStockRuntimeCertification.js"), "utf8");
+  for (const required of [
+    /getPool\(weth, tokenAddress, acquisitionFeeTier\)/,
+    /balanceOf\(acquisitionPool\)/,
+    /latestRoundData/,
+    /quoteExactInputSingle/,
+    /priceImpactBps/,
+    /oracleDeviation/,
+    /minimumOutAtPolicy/,
+    /authorizedIntegrationSource/,
+    /configuredFeeTier/,
+    /ROBINHOOD_STOCK_CERT_PROBE_NATIVE_WEI/,
+  ]) {
+    assert.match(runtime, required);
+  }
 });
 
 test("admin overrides are version protected and audited", () => {
@@ -115,11 +163,12 @@ test("public endpoint is DB-backed and server exposes frozen public/admin paths"
   assert.match(server, /\/admin\/robinhood\/stock-graduation-registry/);
 });
 
-test("initial eight are database seed candidates, not frontend/code authorization allowlist", () => {
+test("historical symbol seeds are not frontend/code authorization allowlists", () => {
   const migration = fs.readFileSync(path.join(repoRoot, "database/robinhood_stock_graduation_registry.sql"), "utf8");
   for (const symbol of ["NVDA", "SPY", "QQQ", "GOOGL", "AAPL", "MSFT", "TSLA", "COST"]) {
     assert.match(migration, new RegExp(`'${symbol}'`));
   }
+  assert.match(migration, /Historical seed table retained for compatibility\/audit only/);
   const policy = fs.readFileSync(path.join(root, "api/dev-fix/robinhoodStockCreatePolicy.js"), "utf8");
   assert.doesNotMatch(policy, /NVDA|SPY|QQQ|GOOGL|AAPL|MSFT|TSLA|COST/);
 });
