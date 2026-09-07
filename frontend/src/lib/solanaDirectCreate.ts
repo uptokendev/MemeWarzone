@@ -3,6 +3,7 @@ import type { WalletActionAuthPayload } from "@/lib/walletActionAuth";
 import type { SolanaV4CreateAuthorizationResponse } from "@/lib/solanaCreateAuthorizationV4";
 import {
   assertFreshGraduationQuote,
+  lastFreshGraduationQuote,
   type GraduationQuoteAsset,
 } from "@/lib/graduationQuoteCatalog";
 
@@ -34,20 +35,11 @@ export type SolanaDirectBeginResponse = {
   alreadyOnChain: boolean;
   sessionToken?: string;
   tokenPath?: string;
-  accounts?: {
-    campaign: string;
-    mint: string;
-    tokenVault?: string;
-    solVault?: string;
-  };
+  accounts?: { campaign: string; mint: string; tokenVault?: string; solVault?: string };
   reservation?: Record<string, unknown>;
 };
 
-export type SolanaDirectAuthorizationResponse = SolanaV4CreateAuthorizationResponse & {
-  ok: true;
-  finalizeToken: string;
-};
-
+export type SolanaDirectAuthorizationResponse = SolanaV4CreateAuthorizationResponse & { ok: true; finalizeToken: string };
 export type SolanaDirectFinalizeResponse = {
   ok: true;
   campaignAddress: string;
@@ -78,25 +70,11 @@ async function postDirect(body: Record<string, unknown>) {
   return payload;
 }
 
-export async function preflightSolanaDirectCreate(input: {
-  creatorWallet: string;
-  chainId: number;
-  graduationTargetUsdMicros: string | number | bigint;
-}): Promise<SolanaDirectPreflightResponse> {
-  return postDirect({
-    operation: "preflight",
-    creatorWallet: input.creatorWallet,
-    chainId: input.chainId,
-    graduationTargetUsdMicros: String(input.graduationTargetUsdMicros),
-  }) as Promise<SolanaDirectPreflightResponse>;
+export async function preflightSolanaDirectCreate(input: { creatorWallet: string; chainId: number; graduationTargetUsdMicros: string | number | bigint }): Promise<SolanaDirectPreflightResponse> {
+  return postDirect({ operation: "preflight", creatorWallet: input.creatorWallet, chainId: input.chainId, graduationTargetUsdMicros: String(input.graduationTargetUsdMicros) }) as Promise<SolanaDirectPreflightResponse>;
 }
 
-export async function beginSolanaDirectCreate(input: {
-  creatorWallet: string;
-  chainId: number;
-  ticker: string;
-  auth: WalletActionAuthPayload;
-}): Promise<SolanaDirectBeginResponse> {
+export async function beginSolanaDirectCreate(input: { creatorWallet: string; chainId: number; ticker: string; auth: WalletActionAuthPayload }): Promise<SolanaDirectBeginResponse> {
   return postDirect({ operation: "begin", creatorWallet: input.creatorWallet, chainId: input.chainId, ticker: input.ticker, auth: input.auth }) as Promise<SolanaDirectBeginResponse>;
 }
 
@@ -113,11 +91,18 @@ export async function authorizeSolanaDirectCreate(input: {
   discordUrl?: string | null;
   otherUrl?: string | null;
   graduationTargetUsdMicros: string | number | bigint;
-  graduationQuoteAsset: GraduationQuoteAsset;
+  graduationQuoteAsset?: GraduationQuoteAsset;
 }): Promise<SolanaDirectAuthorizationResponse | (SolanaDirectBeginResponse & { alreadyOnChain: true })> {
-  // Do not authorize from browser-cached eligibility. Re-read the exact catalog asset
-  // immediately before the server authorization request and preserve canonical identity.
-  const freshQuote = await assertFreshGraduationQuote(input.graduationQuoteAsset);
+  const selected = input.graduationQuoteAsset || lastFreshGraduationQuote(101);
+  if (!selected) {
+    throw new Error("Your approved Graduation Market selection is missing. Select it again before Direct Deploy.");
+  }
+  // The browser-held object is only a reference. Re-read the exact asset from the
+  // authoritative API immediately before authorization; stale eligibility fails closed.
+  const freshQuote = await assertFreshGraduationQuote(selected);
+  if (String(freshQuote.chainId) !== "101") {
+    throw new Error("The selected Graduation Market belongs to another chain. Select a Solana-approved market.");
+  }
   return postDirect({
     operation: "authorize",
     sessionToken: input.sessionToken,
