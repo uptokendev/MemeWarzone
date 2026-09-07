@@ -88,7 +88,6 @@ insert into public.quote_asset_policy_versions (
       'inputMint', 'So11111111111111111111111111111111111111112',
       'outputMint', '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU',
       'referenceUsdMicros', 1000000,
-      'coinGeckoId', 'usd-coin',
       'maxSlippageBps', 100,
       'maxImpactBps', 100,
       'maxDeviationBps', 100
