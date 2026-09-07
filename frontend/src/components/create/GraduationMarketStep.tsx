@@ -139,7 +139,7 @@ export function GraduationMarketStep({
 
           {!loading && !items.length ? (
             <div className="rounded-lg border border-border/60 bg-background/25 p-3 text-xs text-muted-foreground" data-testid="graduation-market-empty">
-              No currently approved Graduation Markets are certified for this chain. Nothing will be substituted automatically.
+              No approved Graduation Markets are available on this chain yet. Nothing will be substituted automatically.
             </div>
           ) : !loading && items.length && !visibleAssets.length ? (
             <div className="rounded-lg border border-border/60 bg-background/25 p-3 text-xs text-muted-foreground" data-testid="graduation-market-no-results">No approved quote assets match this search or category.</div>
