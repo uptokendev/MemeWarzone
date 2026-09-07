@@ -171,7 +171,7 @@ async function main() {
     }
     const opened = await openConcentratedPosition(
       address(CERT_POOL),
-      { tokenA: desiredSolRaw },
+      { tokenMaxA: desiredSolRaw, tokenMaxB: desiredUsdcRaw },
       lowerPrice,
       upperPrice,
       { slippageToleranceBps: 100, funder: payer, whirlpoolDeployment: WhirlpoolDeployment.devnet },
