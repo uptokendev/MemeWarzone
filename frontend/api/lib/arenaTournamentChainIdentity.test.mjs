@@ -58,7 +58,7 @@ test("detail lookup binds tournament id and chain id", () => {
 test("registration cannot bind a wrong-chain tournament", () => {
   assert.match(tournamentsSource, /handleOptIn[\s\S]*loadTournamentRow\(id, context\.chainId\)/);
   assert.match(tournamentsSource, /insert into public\.arena_tournament_entries[\s\S]*where t\.id = \$1 and t\.chain_id = \$4/);
-  assert.match(tournamentsSource, /arena_tournament_opt_in[\s\S]*chainId: Number\(row\.chain_id\)/);
+  assert.match(tournamentsSource, /chainId: Number\(row\.chain_id\)[\s\S]*action: "arena_tournament_opt_in"/);
 });
 
 test("payment association cannot update a wrong-chain tournament entry", () => {
