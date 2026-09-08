@@ -16,6 +16,7 @@ import {
   fetchGraduationQuoteAssets,
   type GraduationQuoteAsset,
 } from "@/lib/graduationQuoteCatalog";
+import { bnbNativeLaunchQuote, isBnbNativeLaunchQuote } from "@/lib/bnbNativeLaunchQuote";
 import { rememberGraduationQuoteAssetId } from "@/lib/graduationQuoteSelectionSession";
 
 export type GraduationMarketStepProps = {
@@ -49,10 +50,14 @@ export function GraduationMarketStep({
       .then((next) => {
         if (cancelled) return;
         const catalogItems = next.filter((item) => item.newGraduationEligible === true);
-        setItems(catalogItems);
-        const stillSelected = catalogItems.some((item) => item.id === selected?.id);
+        const bnbNative = bnbNativeLaunchQuote(chainId);
+        const availableItems = bnbNative
+          ? [bnbNative, ...catalogItems.filter((item) => !isNativeQuote(item))]
+          : catalogItems;
+        setItems(availableItems);
+        const stillSelected = availableItems.some((item) => item.id === selected?.id);
         if (!stillSelected) {
-          const native = catalogItems.find((item) => isNativeQuote(item)) || catalogItems[0] || null;
+          const native = availableItems.find((item) => isNativeQuote(item)) || availableItems[0] || null;
           onSelectedChange(native);
         }
       })
@@ -73,8 +78,8 @@ export function GraduationMarketStep({
   }, [chainId]);
 
   useEffect(() => {
-    rememberGraduationQuoteAssetId(chainId, selected?.id || "");
-  }, [chainId, selected?.id]);
+    rememberGraduationQuoteAssetId(chainId, isBnbNativeLaunchQuote(selected) ? "" : selected?.id || "");
+  }, [chainId, selected?.id, selected?.presentationDefault]);
 
   const categories = useMemo(() => {
     const needle = search.trim().toLowerCase();
