@@ -38,13 +38,13 @@ test("registration image is required and never grants ownership", () => {
 });
 
 test("manual review becomes visible and the request button is removed after success", () => {
-  assert.match(importPage, /OWNERSHIP REVIEW REQUESTED/); assert.match(importPage, /!ownerVerified&&!reviewRequested/);
+  assert.match(importPage, /OWNERSHIP REVIEW REQUESTED/); assert.match(importPage, /item\.ownershipStatus!=="ownership_manual_review"/); assert.match(importPage, /REQUEST PROJECT CLAIM/);
   assert.match(importedPage, /OWNERSHIP REVIEW REQUESTED/); assert.match(importedPage, /item\.ownershipStatus!=="ownership_manual_review"/); assert.match(importedPage, /REQUEST PROJECT CLAIM/);
 });
 
 test("manual claim persistence is retry-safe and cannot self-approve", () => {
   const manual = core.match(/export async function requestManualProjectClaim[\s\S]+?export async function patchProjectMetadata/)?.[0] || "";
-  assert.match(manual, /ownership_status==="ownership_manual_review"/); assert.match(manual, /claimant===signer/);
+  assert.match(manual, /ownership_status==="ownership_manual_review"/); assert.match(manual, /normalizeAddress\(existing\.manual_claim_wallet\|\|"",identity\.chainId\)[\s\S]*?===signer[\s\S]*?===normalizedNote[\s\S]*?return existing/);
   assert.match(manual, /ownership_status='ownership_pending'/); assert.match(manual, /ownership_manual_review/);
   assert.doesNotMatch(manual, /SET[^;]*project_owner_wallet\s*=/i); assert.doesNotMatch(manual, /SET[^;]*ownership_status='ownership_verified'/i);
 });
@@ -80,7 +80,7 @@ test("operator ownership review is admin-authenticated, CAS-safe, audited, and A
   assert.match(api, /requireDashboardAdmin/); assert.match(api, /\/admin\/ownership-claims/); assert.match(api, /reviewProjectOwnership\(pool/);
   assert.match(reviewCore, /ownership_status = \$1/); assert.match(reviewCore, /manual_claim_wallet IS NOT NULL/);
   assert.match(reviewCore, /xmin::text AS state_version/); assert.match(reviewCore, /expectedVersion/); assert.match(reviewCore, /FOR UPDATE/); assert.match(reviewCore, /PROJECT_OWNERSHIP_STATE_CONFLICT/);
-  assert.match(reviewCore, /wm_admin_audit_log/); assert.match(reviewCore, /operatorReason/); assert.match(reviewCore, /project_owner_wallet = manual_claim_wallet/);
+  assert.match(reviewCore, /wm_admin_audit_log/); assert.match(reviewCore, /operatorReason/); assert.match(reviewCore, /project_owner_wallet\s*=\s*manual_claim_wallet/);
   assert.match(reviewCore, /ownership_status = \$2/); assert.match(reviewCore, /VERIFIED/); assert.match(reviewCore, /PENDING/);
   assert.doesNotMatch(reviewCore, /SET[^;]*(?:\bstatus\b|review_requested_at|review_reason|reviewer|reviewed_at)\s*=/i);
 });
