@@ -294,7 +294,7 @@ export async function verifySolanaRewardClaim({ row, txHash, walletAddress }) {
   }
 
   const [tx, statusResult] = await Promise.all([
-    rpc(call.chainId, "getTransaction", [txHash, { encoding: "jsonParsed", commitment: "confirmed", maxSupportedTransactionVersion: 0 }]),
+    rpc(call.chainId, "getTransaction", [txHash, { encoding: "jsonParsed", commitment: "finalized", maxSupportedTransactionVersion: 0 }]),
     rpc(call.chainId, "getSignatureStatuses", [[txHash], { searchTransactionHistory: true }]),
   ]);
   if (!tx || tx?.meta?.err) {

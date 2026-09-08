@@ -86,8 +86,8 @@ function envDistributorAddress(chainId) {
     chain === 97 ? process.env.BNB_TESTNET_REWARD_DISTRIBUTOR_ADDRESS : null,
     chain === 56 ? process.env.BNB_REWARD_DISTRIBUTOR_ADDRESS : null,
     chain === 56 ? process.env.REWARD_DISTRIBUTOR_ADDRESS_BNB : null,
-    process.env.REWARD_DISTRIBUTOR_ADDRESS,
-    process.env.VITE_REWARD_DISTRIBUTOR_ADDRESS,
+    chain === 56 || chain === 97 ? process.env.REWARD_DISTRIBUTOR_ADDRESS : null,
+    chain === 56 || chain === 97 ? process.env.VITE_REWARD_DISTRIBUTOR_ADDRESS : null,
   ];
   return cleanAddress(candidates.find(Boolean));
 }
