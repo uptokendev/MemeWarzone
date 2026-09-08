@@ -109,6 +109,7 @@ export async function requireProjectImportWalletAuth({
     action,
     routeLabel,
     extraLines: intent.extraLines,
+    strict: true,
   });
   if (!verified) return null;
   if (verified.legacy) {
