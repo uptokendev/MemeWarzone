@@ -4,7 +4,7 @@ import test from "node:test";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
-const [app, config, importPage, importedPage, tokenEntry, liveTokenEntry, navigation, leftSidebar, mobileSidebar, client, showcase, overlay] = await Promise.all([
+const [app, config, importPage, importedPage, tokenEntry, liveTokenEntry, navigation, leftSidebar, mobileSidebar, client, showcase, overlay, coinsPage, coinRow, profilePage, commandShell] = await Promise.all([
   read("./App.tsx"),
   read("./features/projectImports/config.ts"),
   read("./pages/ProjectImport.tsx"),
@@ -17,6 +17,10 @@ const [app, config, importPage, importedPage, tokenEntry, liveTokenEntry, naviga
   read("./lib/projectImports.ts"),
   read("./pages/Showcase.tsx"),
   read("./components/home/ImportedProjectsOverlay.tsx"),
+  read("./pages/command-center/CommandCenterCoins.tsx"),
+  read("./components/postgrad/CommandCenterCoinRow.tsx"),
+  read("./pages/ProfilePage.tsx"),
+  read("./components/command-center/CommandCenterShell.tsx"),
 ]);
 
 test("import route is independently gated from Arena", () => {
@@ -174,4 +178,60 @@ test("import form cannot complete without a PNG, JPEG or WEBP image", () => {
   assert.match(importPage, /This does not make you the verified project owner/);
   assert.match(client, /listRecentProjectImports/);
   assert.match(client, /uploadProjectRegistrationImage/);
+});
+
+test("command center coins has a compact collapsed import card above My Coins", () => {
+  assert.match(coinsPage, /data-command-center-import-card="true"/);
+  assert.match(coinsPage, /IMPORT EXISTING MEMECOIN/);
+  assert.match(coinsPage, /<ProjectImportPanel embedded/);
+  assert.match(coinsPage, /searchParams.get\("import"\) === "1"/);
+  assert.match(coinsPage, /useState\(importRequested\)/);
+  assert.ok(coinsPage.indexOf("IMPORT EXISTING MEMECOIN") < coinsPage.indexOf('title="My Coins"'));
+  assert.match(importPage, /export function ProjectImportPanel/);
+  assert.match(importPage, /data-project-import-panel="true"/);
+});
+
+test("global Import menu remains and lands in Command Center Coins with the import panel open", () => {
+  assert.match(navigation, /IMPORT YOUR MEMECOIN/);
+  assert.match(leftSidebar, /IMPORT YOUR MEMECOIN/);
+  assert.match(leftSidebar, /path: "\/import"/);
+  assert.match(mobileSidebar, /"\/import"/);
+  assert.match(app, /projectImportsEnabled \? <Route path="\/import" element={<ProjectImport \/>} \/>/);
+  assert.match(importPage, /Navigate to=\{commandCenterImportPath\(feedWallet\.address\)\}/);
+  assert.match(client, /return "\/profile\?import=1"/);
+  assert.match(client, /\/profile\/\$\{encodeURIComponent\(normalized\)\}\/command\/coins\?import=1/);
+  assert.match(profilePage, /searchParams.get\("import"\) === "1"/);
+  assert.match(profilePage, /\/profile\/\$\{accountWallet\}\/command\/coins\?import=1/);
+  assert.match(commandShell, /to=\{`\/profile\$\{location\.search\}`\}/);
+  assert.match(commandShell, /\/profile\/\$\{connectedWallet\}\/command\$\{section\}\$\{location\.search\}/);
+});
+
+test("imported projects appear in My Coins with wallet-relative ownership states", () => {
+  assert.match(coinsPage, /listUserProjectImports\(walletAddress, importChainId\)/);
+  assert.match(client, /wallet: walletAddress, chainId: String\(chainId\)/);
+  assert.match(client, /\/api\/project-imports\?\$\{params\.toString\(\)\}/);
+  assert.doesNotMatch(client, /\/api\/arena\/imports/);
+  assert.match(coinsPage, /type: "imported"/);
+  assert.match(coinsPage, /importedProjectHref\(project\)/);
+  assert.match(coinRow, /type: 'draft' \| 'coin' \| 'imported'/);
+  assert.match(coinRow, /label="IMPORTED"/);
+  assert.match(coinRow, /data-imported-project-row="true"/);
+  assert.match(coinRow, /Open imported project/);
+  assert.match(coinsPage, /label: "OWNER VERIFIED"/);
+  assert.match(coinsPage, /label: "OWNERSHIP PENDING"/);
+  assert.match(coinsPage, /label: "MANUAL REVIEW"/);
+  assert.match(coinsPage, /item\.ownershipStatus === "ownership_verified" && sameWallet\(item\.projectOwnerWallet, walletAddress, solana\)/);
+  assert.doesNotMatch(coinsPage, /imported_by_wallet|importedByWallet/);
+});
+
+test("existing drafts, launched coins and Create Coin stay independent of the import card", () => {
+  assert.match(coinsPage, /fetchOwnerCampaignDrafts\(walletAddress/);
+  assert.match(coinsPage, /type: "draft"/);
+  assert.match(coinsPage, /type: "coin"/);
+  assert.match(coinsPage, /<Link to="\/create"/);
+  assert.match(coinsPage, /New coin/);
+  assert.match(coinsPage, /title="My Coins"/);
+  assert.match(navigation, /Create Coin/);
+  assert.match(navigation, /path: "\/create"/);
+  assert.doesNotMatch(coinsPage, /postGradFlags|VITE_ENABLE_POSTGRAD_ARENA/);
 });
