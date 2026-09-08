@@ -7,8 +7,13 @@ const MAX_DUE_PER_PASS = 50;
 
 export async function loadDueNormalBattleLocks(deps = {}) {
   const query = deps.query || ((text, params) => pool.query(text, params));
+  const chainId = deps.chainId == null ? null : Number(deps.chainId);
+  const params = [Math.max(1, Number(deps.limit || MAX_DUE_PER_PASS))];
+  const chainClause = chainId == null ? "" : `\n        and b.chain_id = $2`;
+  if (chainId != null) params.push(chainId);
   const result = await query(
     `select b.id,
+            b.chain_id,
             b.contest_scoring_version,
             min(coalesce(m.scoring_generation, m.scoring_version)) as scoring_generation,
             max(coalesce(m.scoring_generation, m.scoring_version)) as scoring_generation_max,
@@ -19,11 +24,11 @@ export async function loadDueNormalBattleLocks(deps = {}) {
         and coalesce(b.battle_mode, 'normal') = 'normal'
         and coalesce(b.source, 'queue') <> 'tournament'
         and b.ends_at is not null
-        and b.ends_at <= now()
-      group by b.id, b.ends_at, b.contest_scoring_version
+        and b.ends_at <= now()${chainClause}
+      group by b.id, b.chain_id, b.ends_at, b.contest_scoring_version
       order by b.ends_at asc
       limit $1`,
-    [Math.max(1, Number(deps.limit || MAX_DUE_PER_PASS))],
+    params,
   );
   return result.rows || [];
 }
@@ -55,6 +60,10 @@ export async function settleDueNormalBattles(deps = {}) {
   const rows = await loadDueNormalBattleLocks(deps);
   const results = [];
   for (const row of rows) {
+    if (deps.chainId != null && Number(row.chain_id) !== Number(deps.chainId)) {
+      results.push({ battleId: String(row.id), settled: false, reason: "battle_chain_mismatch", scoringGeneration: row.scoring_generation || null, authoritative: true });
+      continue;
+    }
     const lock = classifySettlementGeneration(row);
     if (!lock.supported) {
       results.push({ battleId: String(row.id), settled: false, reason: lock.reason, scoringGeneration: lock.scoringGeneration, authoritative: lock.authoritative });

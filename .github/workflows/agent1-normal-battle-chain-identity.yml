@@ -1,0 +1,53 @@
+name: Agent 1 Normal Battle Chain Identity
+
+on:
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - "frontend/api/arenaBattleMetrics.js"
+      - "frontend/api/arenaBattlesRuntime.js"
+      - "frontend/api/lib/arenaBattleChainIdentity.js"
+      - "frontend/api/lib/arenaBattleChainIdentity.test.mjs"
+      - "frontend/api/lib/arenaBattleSettlementRuntime.js"
+      - ".github/workflows/agent1-normal-battle-chain-identity.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  focused-chain-identity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install locked frontend dependencies
+        run: npm ci --prefix frontend --no-audit --no-fund
+
+      - name: Syntax check changed Normal Battle runtime
+        run: |
+          node --check frontend/api/arenaBattleMetrics.js
+          node --check frontend/api/arenaBattlesRuntime.js
+          node --check frontend/api/lib/arenaBattleChainIdentity.js
+          node --check frontend/api/lib/arenaBattleSettlementRuntime.js
+
+      - name: Focused three-chain identity matrix
+        run: node --test frontend/api/lib/arenaBattleChainIdentity.test.mjs
+
+      - name: V3 scoring regression
+        run: node --test frontend/api/lib/arenaBattlePointsV3.test.mjs
+
+      - name: Historical V2 regression
+        run: npm --prefix frontend run test:arena-battle-v2

@@ -1,7 +1,8 @@
 import { pool } from "../server/db.js";
-import { badMethod, json } from "../server/http.js";
+import { badMethod, getQuery, json } from "../server/http.js";
 import { buildPublicBattleMetricsSnapshot, readPublicBattleMetricsSnapshot } from "./lib/arenaBattleRealtime.js";
 import { arenaSettlementMode } from "./lib/arenaSettlementMode.js";
+import { optionalChainId } from "./lib/arenaBattleChainIdentity.js";
 
 function safeBattleId(value) {
   const id = String(value || "").trim();
@@ -131,6 +132,14 @@ export default async function handler(req, res) {
   const battleId = routeBattleId(req);
   if (!battleId) return json(res, 400, { ok: false, error: "Invalid battle id" });
 
+  let chainId = null;
+  try {
+    chainId = optionalChainId(getQuery(req).chainId);
+  } catch {
+    return json(res, 400, { ok: false, error: "Invalid Arena chain id", code: "INVALID_CHAIN" });
+  }
+  const chainClause = chainId == null ? "" : " and chain_id = $2";
+  const params = chainId == null ? [battleId] : [battleId, chainId];
   const result = await pool.query(
     `select id, chain_id, state, challenger_token, defender_token, started_at, ends_at,
             money_winner_token, winner_token, money_tie_break, settlement_tie_break_used,
@@ -139,12 +148,12 @@ export default async function handler(req, res) {
             challenger_battle_points, defender_battle_points,
             settlement_metrics_updated_at, settled_at, finished_at, updated_at
        from public.arena_battles
-      where id = $1
+      where id = $1${chainClause}
       limit 1`,
-    [battleId],
+    params,
   );
   const battle = result.rows[0];
-  if (!battle) return json(res, 404, { ok: false, error: "Battle not found" });
+  if (!battle) return json(res, 404, { ok: false, error: "Battle not found on requested chain", code: chainId == null ? "BATTLE_NOT_FOUND" : "BATTLE_CHAIN_MISMATCH" });
 
   let metrics = await readPublicBattleMetricsSnapshot(battle).catch((error) => {
     console.warn("[api/arenaBattleMetrics] metrics read failed", battleId, error?.message || error);
@@ -168,6 +177,7 @@ export default async function handler(req, res) {
   return json(res, 200, {
     ok: true,
     battleId,
+    chainId: Number(battle.chain_id),
     state: String(battle.state || ""),
     settlementMode,
     settlementVersion: battle.settlement_version ?? null,
