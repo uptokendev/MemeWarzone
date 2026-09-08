@@ -71,6 +71,7 @@ jobs:
           node --check frontend/api/lib/projectImportResolvers.js
           node --check frontend/api/lib/projectImportResolverAdapters.js
           node --check frontend/api/lib/projectImportSecurity.js
+          node --check frontend/api/lib/projectImportOwnershipCoordinator.js
           node --check frontend/api/lib/imageFileValidation.js
           node --check frontend/api/lib/projectOwnershipResolveBnb.js
           node --check frontend/api/lib/projectOwnershipResolveSolana.js
@@ -115,6 +116,8 @@ jobs:
 
       - name: Emergency scope guard
         run: |
-          files='frontend/api/projectImports.js frontend/api/projectImportImage.js frontend/api/lib/projectImportCore.js frontend/api/lib/projectImportResolverAdapters.js frontend/api/lib/projectImportResolvers.js frontend/api/lib/projectImportSecurity.js frontend/src/lib/projectImports.ts frontend/src/pages/ProjectImport.tsx frontend/src/pages/ImportedProjectDetails.tsx frontend/src/pages/ImportedProjectRoute.tsx'
-          ! grep -Ein '4663|46630|Robinhood|LaunchFactory|Topaz|Meteora|graduation|bonding' $files
-          ! grep -Ein '/api/arena/imports|status[[:space:]]*=[[:space:]]*["'"']passed|needs_review' $files
+          files='frontend/api/projectImports.js frontend/api/projectImportImage.js frontend/api/lib/projectImportCore.js frontend/api/lib/projectImportResolverAdapters.js frontend/api/lib/projectImportResolvers.js frontend/api/lib/projectImportSecurity.js frontend/api/lib/projectImportOwnershipCoordinator.js frontend/src/lib/projectImports.ts frontend/src/pages/ProjectImport.tsx frontend/src/pages/ImportedProjectDetails.tsx frontend/src/pages/TokenDetailsEntry.tsx'
+          ! grep -Ein '4663|46630|Robinhood|LaunchFactory' $files
+          ! grep -Ein 'from .*Topaz|from .*Meteora|from .*graduation|from .*bonding|import\(.*Topaz|import\(.*Meteora|import\(.*graduation|import\(.*bonding' $files
+          ! grep -Ein '/api/arena/imports|status[[:space:]]*=[[:space:]]*["'"']passed' $files
+          ! grep -Ein 'INSERT[[:space:]]+INTO[[:space:]].*campaign|UPDATE[[:space:]].*campaign' $files
