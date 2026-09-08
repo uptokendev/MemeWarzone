@@ -6,12 +6,22 @@ import {
   ROBINHOOD_CANONICAL_ASSETS_URL,
   summarizeRobinhoodPairCandidates,
 } from "../frontend/api/lib/robinhoodFullApprovedPairCatalog.js";
+import { ROBINHOOD_VERIFIED_NON_STOCK_DISCOVERY } from "../frontend/api/lib/robinhoodVerifiedNonStockDiscovery.js";
 
 const DEFAULT_MANIFEST = "deployments/robinhood/mainnet.json";
 
+function mergeCandidates(baseCandidates) {
+  const byContract = new Map(baseCandidates.map((item) => [String(item.contract).toLowerCase(), item]));
+  for (const candidate of ROBINHOOD_VERIFIED_NON_STOCK_DISCOVERY) {
+    if (!byContract.has(String(candidate.contract).toLowerCase())) byContract.set(String(candidate.contract).toLowerCase(), candidate);
+  }
+  return [...byContract.values()].sort((a, b) => a.category.localeCompare(b.category) || a.asset.localeCompare(b.asset));
+}
+
 export function buildRobinhoodApprovedPairReport({ productionManifest, canonicalPayload, discoveryError = null } = {}) {
   const manifest = productionManifest || JSON.parse(fs.readFileSync(DEFAULT_MANIFEST, "utf8"));
-  const candidates = canonicalPayload ? discoverRobinhoodCanonicalStockCandidates(canonicalPayload) : listRobinhoodManifestPairCandidates();
+  const baseCandidates = canonicalPayload ? discoverRobinhoodCanonicalStockCandidates(canonicalPayload) : listRobinhoodManifestPairCandidates();
+  const candidates = mergeCandidates(baseCandidates);
   const runtimeReady = manifest?.supportEnabled === true && manifest?.creationEnabled === true && Boolean(manifest?.contracts?.launchFactory);
   const blocker = runtimeReady
     ? "runtime certification required per candidate before ACTIVE"
