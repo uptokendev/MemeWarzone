@@ -1,0 +1,48 @@
+name: Agent 3 Temporary Imported Project Page
+
+on:
+  push:
+    branches:
+      - agent3/temp-imported-project-page
+  pull_request:
+    paths:
+      - frontend/src/pages/ImportedTokenDetailsPage.tsx
+      - frontend/src/pages/TokenDetailsEntry.tsx
+      - frontend/src/imported-token-details-page.test.mjs
+      - .github/workflows/agent3-temp-imported-project-page.yml
+
+permissions:
+  contents: read
+
+jobs:
+  imported-project-page:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      VITE_ENABLE_PROJECT_IMPORTS: "true"
+      VITE_ENABLE_POSTGRAD_ARENA: "false"
+      VITE_ENABLE_POSTGRAD_BATTLE: "false"
+      VITE_ENABLE_POSTGRAD_TOURNAMENT: "false"
+      VITE_ENABLE_POSTGRAD_LEAGUE: "false"
+      VITE_ENABLE_POSTGRAD_CLAIMS: "false"
+    steps:
+      - name: Checkout exact source head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install locked frontend dependencies
+        run: npm ci --prefix frontend --legacy-peer-deps --no-audit --no-fund
+
+      - name: Temporary imported project page proof
+        run: node --test frontend/src/imported-token-details-page.test.mjs
+
+      - name: Production frontend build with imports on and Arena off
+        run: npm run --prefix frontend build
