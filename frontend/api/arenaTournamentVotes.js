@@ -6,6 +6,11 @@ import {
   tournamentVoteSummary,
   tournamentVoteTokensEqual,
 } from "./lib/arenaTournamentVoteRuntime.mjs";
+import {
+  voteTournamentChainIdFromBody,
+  voteTournamentChainIdFromQuery,
+  voteTournamentIdentityError,
+} from "./lib/arenaVoteTournamentChainIdentity.js";
 
 function ident(value) {
   return String(value || "").trim();
@@ -30,7 +35,11 @@ async function loadTournament(id) {
   return result.rows[0] || null;
 }
 
-async function listMatchVotes({ tournamentId, roundNumber, matchId, battleId }) {
+function identityFailure(res, error) {
+  return json(res, error.status, { ok: false, error: error.error, code: error.code });
+}
+
+async function listMatchVotes({ tournamentId, chainId, roundNumber, matchId, battleId }) {
   const result = await pool.query(
     `select side, wallet, created_at
        from public.arena_contest_actions
@@ -38,10 +47,11 @@ async function listMatchVotes({ tournamentId, roundNumber, matchId, battleId }) 
         and battle_id = $2
         and round_number = $3
         and coalesce(match_id, battle_id) = $4
+        and chain_id = $5
         and phase = 'regulation'
         and action_type = 'free_vote'
       order by created_at asc`,
-    [tournamentId, battleId, roundNumber, matchId],
+    [tournamentId, battleId, roundNumber, matchId, Number(chainId)],
   );
   return result.rows;
 }
@@ -54,6 +64,7 @@ async function handleGet(req, res, route, tournament) {
 
   const rows = await listMatchVotes({
     tournamentId: route.tournamentId,
+    chainId: tournament.chain_id,
     roundNumber: resolved.roundNumber,
     matchId: resolved.matchId,
     battleId: resolved.battleId,
@@ -69,6 +80,7 @@ async function handleGet(req, res, route, tournament) {
 
   return json(res, 200, {
     ok: true,
+    chainId: Number(tournament.chain_id),
     tournamentId: route.tournamentId,
     roundNumber: resolved.roundNumber,
     matchId: resolved.matchId,
@@ -85,6 +97,15 @@ async function handleGet(req, res, route, tournament) {
 
 async function handlePost(req, res, route, tournament) {
   const body = await readJson(req);
+  let requestedChainId;
+  try {
+    requestedChainId = voteTournamentChainIdFromBody(body);
+  } catch (error) {
+    return json(res, 400, { ok: false, error: error.message, code: error.code || "INVALID_CHAIN" });
+  }
+  const identityError = voteTournamentIdentityError(tournament, requestedChainId);
+  if (identityError) return identityFailure(res, identityError);
+
   const chainId = Number(tournament.chain_id);
   const wallet = normalizeAddress(body.walletAddress || body.auth?.walletAddress || "", chainId);
   const selectedToken = ident(body.tokenAddress || body.tokenId || body.selectedToken);
@@ -120,13 +141,15 @@ async function handlePost(req, res, route, tournament) {
     await client.query("begin");
     const locked = await client.query(
       `select id, chain_id, status, bracket, battle_mode, round_duration_hours
-         from public.arena_tournaments where id = $1 limit 1 for update`,
-      [route.tournamentId],
+         from public.arena_tournaments
+        where id = $1 and chain_id = $2 and battle_mode = 'vote'
+        limit 1 for update`,
+      [route.tournamentId, chainId],
     );
     const current = locked.rows[0];
     if (!current) {
       await client.query("rollback");
-      return json(res, 404, { ok: false, error: "Tournament not found", code: "TOURNAMENT_NOT_FOUND" });
+      return json(res, 404, { ok: false, error: "Vote Tournament not found on requested chain", code: "TOURNAMENT_CHAIN_MISMATCH" });
     }
 
     const currentMatch = resolveTournamentVoteMatch({ tournament: current, matchRef: route.matchRef, selectedToken });
@@ -145,7 +168,7 @@ async function handlePost(req, res, route, tournament) {
        on conflict do nothing
        returning id, side, created_at`,
       [
-        Number(current.chain_id),
+        chainId,
         route.tournamentId,
         currentMatch.matchId,
         currentMatch.battleId,
@@ -162,11 +185,12 @@ async function handlePost(req, res, route, tournament) {
             and battle_id = $2
             and round_number = $3
             and coalesce(match_id, battle_id) = $4
+            and wallet = $5
+            and chain_id = $6
             and phase = 'regulation'
             and action_type = 'free_vote'
-            and wallet = $5
           limit 1`,
-        [route.tournamentId, currentMatch.battleId, currentMatch.roundNumber, currentMatch.matchId, wallet],
+        [route.tournamentId, currentMatch.battleId, currentMatch.roundNumber, currentMatch.matchId, wallet, chainId],
       );
       await client.query("rollback");
       const existingSide = existing.rows[0]?.side;
@@ -184,14 +208,16 @@ async function handlePost(req, res, route, tournament) {
           and battle_id = $2
           and round_number = $3
           and coalesce(match_id, battle_id) = $4
+          and chain_id = $5
           and phase = 'regulation'
           and action_type = 'free_vote'`,
-      [route.tournamentId, currentMatch.battleId, currentMatch.roundNumber, currentMatch.matchId],
+      [route.tournamentId, currentMatch.battleId, currentMatch.roundNumber, currentMatch.matchId, chainId],
     );
     await client.query("commit");
 
     return json(res, 201, {
       ok: true,
+      chainId,
       tournamentId: route.tournamentId,
       roundNumber: currentMatch.roundNumber,
       matchId: currentMatch.matchId,
@@ -218,8 +244,19 @@ export default async function handler(req, res) {
 
   try {
     const tournament = await loadTournament(route.tournamentId);
-    if (!tournament) return json(res, 404, { ok: false, error: "Tournament not found", code: "TOURNAMENT_NOT_FOUND" });
-    if (method === "GET") return handleGet(req, res, route, tournament);
+    if (method === "GET") {
+      let requestedChainId;
+      try {
+        requestedChainId = voteTournamentChainIdFromQuery(req);
+      } catch (error) {
+        return json(res, 400, { ok: false, error: error.message, code: error.code || "INVALID_CHAIN" });
+      }
+      const identityError = voteTournamentIdentityError(tournament, requestedChainId);
+      if (identityError) return identityFailure(res, identityError);
+      return handleGet(req, res, route, tournament);
+    }
+    const identityError = voteTournamentIdentityError(tournament, null);
+    if (identityError) return identityFailure(res, identityError);
     return handlePost(req, res, route, tournament);
   } catch (error) {
     console.error("[api/arenaTournamentVotes]", error);
