@@ -102,7 +102,7 @@ function chainClaimConfig(chainId) {
       mode: "solana_treasury",
       reason: null,
       distributorAddress: "",
-      supportedRewardTypes: ["airdrop"],
+      supportedRewardTypes: ["airdrop", "squad"],
     };
   }
 

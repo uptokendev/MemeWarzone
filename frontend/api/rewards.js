@@ -96,21 +96,22 @@ async function finalizeRecoveredClaim(row, verification) {
     const reused = await client.query(
       `select id
          from public.reward_ledger
-        where claim_tx_hash = $1
+        where lower(coalesce(claim_tx_hash, '')) = lower($1)
           and id <> $2::uuid
         limit 1`,
       [verification.txHash, current.id],
     );
     if (reused.rows.length) {
-      const error = new Error("Confirmed Solana claim signature is already attached to another reward entitlement");
-      error.code = "SOLANA_CLAIM_TX_REUSED";
+      const error = new Error("Confirmed claim transaction is already attached to another reward entitlement");
+      error.code = "CLAIM_TX_REUSED";
       throw error;
     }
 
+    const isSolanaRecovery = Boolean(verification.claimReceiptAddress);
     const reconciledAt = new Date().toISOString();
     const claimVerification = {
       ...verification,
-      reconciliationSource: "deterministic_claim_receipt",
+      reconciliationSource: isSolanaRecovery ? "deterministic_claim_receipt" : "reward_claimed_event",
       reconciledAt,
     };
 
@@ -141,9 +142,18 @@ async function finalizeRecoveredClaim(row, verification) {
       `insert into public.reward_audit_logs
         (reward_ledger_id, actor_type, actor_id, action, old_value, new_value, reason, tx_hash, metadata)
        values
-        ($1::uuid, 'system', 'solana-reconciler', 'claim_reconciled_onchain', $2, 'claimed',
-         'Recovered confirmed Solana claim from deterministic receipt PDA', $3, $4::jsonb)`,
-      [current.id, current.status, verification.txHash, JSON.stringify(claimVerification)],
+        ($1::uuid, 'system', $5, 'claim_reconciled_onchain', $2, 'claimed',
+         $6, $3, $4::jsonb)`,
+      [
+        current.id,
+        current.status,
+        verification.txHash,
+        JSON.stringify(claimVerification),
+        isSolanaRecovery ? "solana-reconciler" : "evm-reconciler",
+        isSolanaRecovery
+          ? "Recovered confirmed Solana claim from deterministic receipt PDA"
+          : "Recovered confirmed EVM RewardDistributor claim from exact on-chain event",
+      ],
     );
 
     await refreshBatchCounts(client, current.id);
@@ -383,8 +393,8 @@ async function reconcileSolanaClaims(req, res, body) {
 
 // GET /api/rewards?chainId=56&address=0x...
 // Returns *unclaimed* League prizes for the recipient.
-// POST /api/rewards with action=reconcile-solana-claims is a proof-only state repair:
-// it cannot move funds and only advances stale DB state after strict on-chain verification.
+// POST /api/rewards reconciliation actions are proof-only state repair:
+// they cannot move funds and only advance stale DB state after strict on-chain verification.
 export default async function handler(req, res) {
   if (req.method === "POST") {
     const body = await readJson(req);
@@ -421,15 +431,15 @@ export default async function handler(req, res) {
           w.payload,
           w.computed_at AS "computedAt"
         FROM league_epoch_winners w
-        LEFT JOIN league_epoch_claims c
-          ON c.chain_id = w.chain_id
-         AND c.period = w.period
-         AND c.epoch_start = w.epoch_start
-         AND c.category = w.category
-         AND c.rank = w.rank
+        LEFT JOIN league_epoch_payouts p
+          ON p.chain_id = w.chain_id
+         AND p.period = w.period
+         AND p.epoch_start = w.epoch_start
+         AND p.category = w.category
+         AND p.rank = w.rank
         WHERE w.chain_id = $1
           AND ${recipientClause}
-          AND c.claimed_at IS NULL
+          AND p.tx_hash IS NULL
           AND (w.expires_at IS NULL OR w.expires_at > NOW())
         ORDER BY w.epoch_start DESC, w.period DESC, w.category ASC, w.rank ASC`,
       [chainId, address]
