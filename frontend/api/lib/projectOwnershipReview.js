@@ -47,6 +47,22 @@ export async function getProjectOwnershipAudit(db, projectId) {
 
 function reviewError(message, code, extra = {}) { return Object.assign(new Error(message), { code, ...extra }); }
 
+function auditPayload(item, admin, reason) {
+  return {
+    ...item,
+    operatorAuthUserId: String(admin.id),
+    operatorEmail: admin.email || null,
+    operatorReason: reason,
+  };
+}
+
+async function resolveAuditAdminUserId(client, adminId) {
+  const raw = String(adminId || "").trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw)) return null;
+  const found = await client.query("SELECT id FROM public.wm_users WHERE id=$1::uuid LIMIT 1", [raw]);
+  return found.rows?.[0]?.id || null;
+}
+
 export async function reviewProjectOwnership(db, { projectId, action, reason, expectedVersion, admin }) {
   const cleanReason = String(reason || "").trim().slice(0, 1000);
   if (cleanReason.length < 3) throw reviewError("Operator reason is required", "PROJECT_OWNERSHIP_REASON_REQUIRED");
@@ -88,12 +104,13 @@ export async function reviewProjectOwnership(db, { projectId, action, reason, ex
 
     const before = projectOwnershipClaimItem(current);
     const after = projectOwnershipClaimItem(updated);
+    const auditAdminUserId = await resolveAuditAdminUserId(client, admin.id);
     await client.query(`
       INSERT INTO public.wm_admin_audit_log(admin_user_id,action,target_type,target_id,before,after)
       VALUES($1,$2,'project_ownership_claim',$3,$4::jsonb,$5::jsonb)
-    `, [admin.id, action, projectId,
-      JSON.stringify({ ...before, operatorReason: cleanReason, operatorEmail: admin.email || null }),
-      JSON.stringify({ ...after, operatorReason: cleanReason, operatorEmail: admin.email || null })]);
+    `, [auditAdminUserId, action, projectId,
+      JSON.stringify(auditPayload(before, admin, cleanReason)),
+      JSON.stringify(auditPayload(after, admin, cleanReason))]);
     await client.query("COMMIT");
     return updated;
   } catch (error) {

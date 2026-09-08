@@ -80,7 +80,7 @@ test("operator ownership review is admin-authenticated, CAS-safe, audited, and A
   assert.match(api, /requireDashboardAdmin/); assert.match(api, /\/admin\/ownership-claims/); assert.match(api, /reviewProjectOwnership\(pool/);
   assert.match(reviewCore, /ownership_status = \$1/); assert.match(reviewCore, /manual_claim_wallet IS NOT NULL/);
   assert.match(reviewCore, /xmin::text AS state_version/); assert.match(reviewCore, /expectedVersion/); assert.match(reviewCore, /FOR UPDATE/); assert.match(reviewCore, /PROJECT_OWNERSHIP_STATE_CONFLICT/);
-  assert.match(reviewCore, /wm_admin_audit_log/); assert.match(reviewCore, /operatorReason/); assert.match(reviewCore, /project_owner_wallet\s*=\s*manual_claim_wallet/);
+  assert.match(reviewCore, /wm_admin_audit_log/); assert.match(reviewCore, /operatorReason/); assert.match(reviewCore, /operatorAuthUserId/); assert.match(reviewCore, /FROM public.wm_users WHERE id=\$1::uuid/); assert.match(reviewCore, /project_owner_wallet\s*=\s*manual_claim_wallet/);
   assert.match(reviewCore, /ownership_status\s*=\s*\$2/); assert.match(reviewCore, /VERIFIED/); assert.match(reviewCore, /PENDING/);
   assert.doesNotMatch(reviewCore, /SET[^;]*(?:\bstatus\b|review_requested_at|review_reason|reviewer|reviewed_at)\s*=/i);
 });

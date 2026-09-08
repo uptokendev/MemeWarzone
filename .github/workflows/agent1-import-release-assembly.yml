@@ -88,6 +88,7 @@ jobs:
           node --test frontend/api/lib/projectOwnershipResolveSolana.test.mjs
           node --test frontend/api/lib/projectImportSecurity.test.mjs
           node --test frontend/api/lib/projectImportCore.test.mjs
+          node --test frontend/api/lib/projectOwnershipReview.test.mjs
           node --test frontend/src/project-imports-ui.test.mjs
 
       # Component tests drop their import table during teardown.
