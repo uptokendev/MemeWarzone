@@ -42,6 +42,8 @@ test("clear import entry is present on desktop and mobile navigation", () => {
 });
 
 test("public token route resolves imported DB state before mounting live campaign runtime", () => {
+  assert.match(importPage, /`\/token\/\$\{encodeURIComponent\(item\.tokenAddress\)\}\?chainId=\$\{item\.chainId\}`/);
+  assert.doesNotMatch(importPage, /`\/imported\//);
   assert.match(tokenEntry, /lookupProjectImport/);
   assert.match(tokenEntry, /ImportedProjectDetails/);
   assert.match(tokenEntry, /projectImportsEnabled/);
