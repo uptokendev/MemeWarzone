@@ -9,8 +9,16 @@ export const PROJECT_IMPORT_ACTIONS = Object.freeze({
   image: "project_import_image",
 });
 
+// Agent 1 currently exposes hyphenated route-action strings. Keep an explicit map so
+// Launch Control can wire the API without changing the security intent vocabulary.
+export const PROJECT_IMPORT_API_ACTIONS = Object.freeze({
+  create: "project-import-create",
+  claim: "project-import-claim",
+  metadata: "project-import-metadata",
+  image: "project-import-image",
+});
+
 export const PROJECT_IMPORT_OWNERSHIP = Object.freeze({
-  unverified: "ownership_unverified",
   pending: "ownership_pending",
   manualReview: "ownership_manual_review",
   verified: "ownership_verified",
@@ -18,30 +26,29 @@ export const PROJECT_IMPORT_OWNERSHIP = Object.freeze({
 });
 
 const METADATA_FIELDS = new Set([
-  "name",
   "description",
   "website",
-  "websiteUrl",
-  "xUrl",
-  "xAccount",
-  "telegramUrl",
-  "telegram",
-  "discordUrl",
-  "discord",
+  "x_url",
+  "telegram_url",
 ]);
 
 const FORBIDDEN_METADATA_KEYS = new Set([
   "id",
   "chain",
   "chainId",
+  "chain_id",
   "token",
   "tokenId",
   "tokenAddress",
+  "token_address",
   "contract",
   "contractAddress",
   "mint",
   "mintAddress",
   "ownerWallet",
+  "owner_wallet",
+  "projectOwnerWallet",
+  "project_owner_wallet",
   "ownershipStatus",
   "ownership_status",
   "arenaStatus",
@@ -56,19 +63,21 @@ const FORBIDDEN_METADATA_KEYS = new Set([
   "creator_economics",
   "payout",
   "payoutAmount",
+  "payout_amount",
   "rewards",
   "rewardAmount",
   "financial",
+  "imageUrl",
+  "image_url",
+  "name",
+  "symbol",
+  "decimals",
 ]);
 
 function stableValue(value) {
   if (Array.isArray(value)) return value.map(stableValue);
   if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.keys(value)
-        .sort()
-        .map((key) => [key, stableValue(value[key])]),
-    );
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stableValue(value[key])]));
   }
   return value;
 }
@@ -93,7 +102,7 @@ export function canonicalProjectImportIdentity(chainId, rawToken) {
   const id = Number(chainId);
   const token = normalizeProjectImportToken(id, rawToken);
   if (!token) throw Object.assign(new Error("Invalid project import chain/token identity"), { code: "IMPORT_IDENTITY_INVALID" });
-  return Object.freeze({ chainId: id, token, key: `${id}:${token}` });
+  return Object.freeze({ chainId: id, token, tokenAddress: token, key: `${id}:${token}` });
 }
 
 export function projectImportIntent({ action, chainId, token, projectId = null, body = null, imageDigest = null }) {
@@ -113,10 +122,7 @@ export function projectImportIntent({ action, chainId, token, projectId = null, 
   return Object.freeze({
     identity,
     digest,
-    extraLines: [
-      `Project token: ${identity.token}`,
-      `Project import intent: ${digest}`,
-    ],
+    extraLines: [`Project token: ${identity.token}`, `Project import intent: ${digest}`],
   });
 }
 
@@ -169,6 +175,10 @@ function ownershipStatus(project) {
   return String((project?.ownership_status ?? project?.ownershipStatus) || "");
 }
 
+function projectOwnerWallet(project) {
+  return project?.project_owner_wallet ?? project?.projectOwnerWallet ?? project?.owner_wallet ?? project?.ownerWallet ?? "";
+}
+
 export function assertVerifiedProjectOwner(project, { wallet, chainId, token } = {}) {
   if (!project) throw Object.assign(new Error("Project import not found"), { code: "IMPORT_NOT_FOUND" });
   const projectIdentity = canonicalProjectImportIdentity(project.chain_id ?? project.chainId, project.token_address ?? project.tokenAddress ?? project.mint);
@@ -179,7 +189,7 @@ export function assertVerifiedProjectOwner(project, { wallet, chainId, token } =
   if (ownershipStatus(project) !== PROJECT_IMPORT_OWNERSHIP.verified) {
     throw Object.assign(new Error("Project ownership is not verified"), { code: "IMPORT_OWNER_NOT_VERIFIED" });
   }
-  const expected = normalizeWalletForProject(projectIdentity.chainId, project.owner_wallet ?? project.ownerWallet);
+  const expected = normalizeWalletForProject(projectIdentity.chainId, projectOwnerWallet(project));
   const actual = normalizeWalletForProject(projectIdentity.chainId, wallet);
   if (!expected || !actual || expected !== actual) {
     throw Object.assign(new Error("Connected wallet is not the verified project owner"), { code: "IMPORT_OWNER_MISMATCH" });
@@ -231,11 +241,8 @@ export function ownershipClaimDecision(project, { claimantWallet, currentOwnerPr
   if (!claimant || claimant !== proven) {
     throw Object.assign(new Error("Current owner proof does not bind to claimant wallet"), { code: "IMPORT_OWNER_PROOF_MISMATCH" });
   }
-  const existingOwner = normalizeWalletForProject(identity.chainId, project.owner_wallet ?? project.ownerWallet);
+  const existingOwner = normalizeWalletForProject(identity.chainId, projectOwnerWallet(project));
   const alreadyVerified = ownershipStatus(project) === PROJECT_IMPORT_OWNERSHIP.verified;
   if (alreadyVerified && existingOwner === claimant) return Object.freeze({ outcome: "already_verified", identity, ownerWallet: claimant });
-  if (alreadyVerified && existingOwner !== claimant) {
-    throw Object.assign(new Error("A different wallet is already the verified owner"), { code: "IMPORT_OWNER_ALREADY_VERIFIED" });
-  }
   return Object.freeze({ outcome: "verify_owner", identity, ownerWallet: claimant });
 }
