@@ -1,0 +1,50 @@
+name: Agent 6 Claims Patch
+
+on:
+  push:
+    branches:
+      - agent6/all-launch-claims-three-chain
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent6/all-launch-claims-three-chain
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Apply claim remediation
+        run: python3 scripts/agent6_apply_claim_matrix.py
+      - name: Claim safety source matrix
+        run: node frontend/scripts/agent6-all-claims-three-chain.test.mjs
+      - name: API syntax
+        run: |
+          node --check frontend/api/rewards.js
+          node --check frontend/api/dev-fix/reward-claim-intent.js
+          node --check frontend/api/leagueRouter.js
+          node --check frontend/api/lib/rewardClaimVerification.js
+          node --check frontend/api/lib/solanaRewardClaim.js
+          node --check frontend/api/lib/solanaLeagueClaimVerification.js
+      - name: Install frontend
+        working-directory: frontend
+        run: npm ci
+      - name: Production frontend build
+        working-directory: frontend
+        run: npm run build
+      - name: Commit verified product changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/api/dev-fix/reward-claim-intent.js frontend/api/rewards.js frontend/api/lib/rewardClaimVerification.js frontend/api/lib/solanaRewardClaim.js frontend/api/lib/solanaLeagueClaimVerification.js frontend/src/lib/rewardProgramsApi.ts frontend/scripts/agent6-all-claims-three-chain.test.mjs docs/launch-control/AGENT6_ALL_LAUNCH_CLAIMS_THREE_CHAIN.md
+          git diff --cached --quiet && exit 0
+          git commit -m "Agent 6: harden three-chain claim reconciliation"
+          git push origin HEAD:agent6/all-launch-claims-three-chain
