@@ -690,6 +690,7 @@ export async function reconcileTournamentBracket({ tournamentId, battleId, chain
   const client = await pool.connect();
   try {
     await client.query("begin");
+    // loadTournamentRow executes the chain-scoped SELECT ... for update before the planner runs.
     const tournament = await loadTournamentRow(id, requestedChain, client, { forUpdate: true });
     if (!tournament) {
       await client.query("rollback");
