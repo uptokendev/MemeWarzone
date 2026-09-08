@@ -170,7 +170,10 @@ export function catalogQuoteAssetsOnly(items) {
 }
 
 export function directDeployBindPath(asset) {
-  if (!asset || asset.presentationDefault === true || asset.newGraduationEligible !== true) return null;
+  if (!asset || asset.newGraduationEligible !== true) return null;
+  if (asset.presentationDefault === true) {
+    return Number(asset?.chainId) === 56 && isNativeQuote(asset) ? "native" : null;
+  }
   if (isRobinhoodStockQuote(asset)) return "robinhood-stock";
   if (isNativeQuote(asset)) return "native";
   // BNB BASIC uses the same launchpad client surface as native creation. The client consumes the
@@ -201,6 +204,14 @@ export function selectedMarketSummary({ ticker, asset, chainId }) {
 
 export function draftGraduationSelection(asset, chainId) {
   const resolvedChainId = Number(asset?.chainId || chainId);
+  if (resolvedChainId === 56 && asset?.presentationDefault === true && isNativeQuote(asset)) {
+    return {
+      graduationQuoteAssetId: "",
+      graduationQuoteStateVersion: 0,
+      policyVersion: "chain-native-default",
+      chainId: resolvedChainId,
+    };
+  }
   const policyVersion =
     asset?.policy?.version != null && String(asset.policy.version).trim() !== ""
       ? String(asset.policy.version)
