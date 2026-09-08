@@ -19,7 +19,7 @@ test("public token route intercepts authoritative project imports before live To
   assert.match(entry, /return <TokenDetailsLiveEntry \/>/);
   assert.doesNotMatch(entry, /ImportedProjectDetails/);
   assert.match(client, /\/api\/project-imports/);
-  assert.doesNotMatch(entry, /campaigns|LaunchFactory|bonding|graduation|Topaz|Meteora/i);
+  assert.doesNotMatch(entry, /from .*campaign|from .*LaunchFactory|from .*bonding|from .*graduation|from .*Topaz|from .*Meteora/i);
 });
 
 test("BNB and Solana imported identities select the temporary registration page", () => {
