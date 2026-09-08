@@ -86,6 +86,7 @@ jobs:
           tar -xjf /tmp/s.tar.bz2 -C "$d" --strip-components=1
           mkdir -p "$HOME/.local/share/solana/install"; ln -sfn "$d" "$HOME/.local/share/solana/install/active_release"
           echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
           npm i -g --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
           npm install --prefix tests/solana --no-audit --no-fund
           mkdir -p target/deploy target/idl "$HOME/.config/solana"
