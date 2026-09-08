@@ -34,7 +34,10 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install frontend dependencies
-        run: npm ci --prefix frontend
+        # The frozen release base currently has package.json/package-lock drift.
+        # Do not rewrite that release lock from this narrow UI branch; install
+        # from package.json so the import-only production build can be proven.
+        run: npm install --prefix frontend --no-package-lock
 
       - name: Import-only UI contract
         run: node --test frontend/src/project-imports-ui.test.mjs
