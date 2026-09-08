@@ -1,9 +1,10 @@
 import { useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, Rocket, Swords, Target, Trophy, User } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, Rocket, Swords, Target, Trophy, Upload, User } from "lucide-react";
 import { socialLinks } from "@/constants/navigation";
 import { SocialTooltip } from "@/components/ui/social-media";
 import { cn } from "@/lib/utils";
+import { projectImportsEnabled } from "@/features/projectImports/config";
 import { isPostGradNavEnabled, warRoomEnabled } from "@/features/postgrad/config";
 
 const brandLogo = "/assets/navbar-logo.png";
@@ -38,6 +39,7 @@ export function LeftBattleSidebar({ collapsed, onToggleCollapse }: LeftBattleSid
     () => [
       { icon: Rocket, label: "Launchpad", path: "/" },
       { icon: Trophy, label: "Leagues", path: "/league" },
+      ...(projectImportsEnabled ? [{ icon: Upload, label: "IMPORT YOUR MEMECOIN", path: "/import" }] : []),
       ...(showArenaNav ? [{ icon: Swords, label: "Arena", path: "/arena", hasSubmenu: true }] : []),
       ...(warRoomEnabled ? [{ icon: Target, label: "War Trade Room", path: "/war-room" }] : []),
       { icon: User, label: "Profile", path: "/profile" },

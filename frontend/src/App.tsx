@@ -27,7 +27,6 @@ import League from "./pages/League";
 import TournamentDetails from "./pages/TournamentDetails";
 import Create from "./pages/Create";
 import ProjectImport from "./pages/ProjectImport";
-import ImportedProjectRoute from "./pages/ImportedProjectRoute";
 import SponsorshipApplication from "./pages/SponsorshipApplication";
 import ProfilePage from "./pages/ProfilePage";
 import TokenDetailsEntry from "./pages/TokenDetailsEntry";
@@ -88,38 +87,91 @@ function OwnWalletRouteSync() {
   const feedWallet = useActiveFeedWallet();
   const previousWalletRef = useRef<string | null>(null);
   const currentWallet = normalizeRouteWallet(feedWallet.address);
+
   useEffect(() => {
     const previousWallet = previousWalletRef.current;
     previousWalletRef.current = currentWallet;
     if (!previousWallet || !currentWallet || routeWalletsMatch(previousWallet, currentWallet)) return;
+
     const match = location.pathname.match(/^\/profile\/([^/]+)(\/command(?:\/.*)?)?$/);
     if (!match) return;
     let urlWallet = match[1];
-    try { urlWallet = decodeURIComponent(match[1]); } catch {}
+    try {
+      urlWallet = decodeURIComponent(match[1]);
+    } catch {
+      // keep raw
+    }
     if (!routeWalletsMatch(urlWallet, previousWallet)) return;
     navigate(`/profile/${currentWallet}${match[2] || ""}${location.search}`, { replace: true });
   }, [currentWallet, location.pathname, location.search, navigate]);
+
   return null;
 }
 
-function AppShellLayout({ mobileMenuOpen, setMobileMenuOpen }: { mobileMenuOpen: boolean; setMobileMenuOpen: (open: boolean) => void }) {
+function AppShellLayout({
+  mobileMenuOpen,
+  setMobileMenuOpen,
+}: {
+  mobileMenuOpen: boolean;
+  setMobileMenuOpen: (open: boolean) => void;
+}) {
   const postGradEnabled = isPostGradRouteEnabled();
   const location = useLocation();
   const isShowcaseRoute = location.pathname === "/";
   const mainRef = useRef<HTMLElement | null>(null);
-  useEffect(() => { mainRef.current?.scrollTo({ top: 0, left: 0 }); }, [location.pathname, location.search]);
-  const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState<boolean>(() => typeof window === "undefined" ? false : localStorage.getItem("mwz:left-sidebar-collapsed") === "true");
-  const toggleLeftSidebar = () => { const next = !leftSidebarCollapsed; setLeftSidebarCollapsed(next); try { localStorage.setItem("mwz:left-sidebar-collapsed", String(next)); } catch {} };
-  const currentSidebarWidth = leftSidebarCollapsed ? 64 : 224;
+
+  useEffect(() => {
+    mainRef.current?.scrollTo({ top: 0, left: 0 });
+  }, [location.pathname, location.search]);
+
+  const [leftSidebarCollapsed, setLeftSidebarCollapsed] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("mwz:left-sidebar-collapsed") === "true";
+  });
+
+  const toggleLeftSidebar = () => {
+    const next = !leftSidebarCollapsed;
+    setLeftSidebarCollapsed(next);
+    try {
+      localStorage.setItem("mwz:left-sidebar-collapsed", String(next));
+    } catch {}
+  };
+
+  const sidebarExpanded = 224;
+  const sidebarCollapsed = 64;
+  const currentSidebarWidth = leftSidebarCollapsed ? sidebarCollapsed : sidebarExpanded;
   const mainStyle = { "--mwz-left-sidebar-width": `${currentSidebarWidth}px` } as CSSProperties;
+
   return (
-    <div className="mwz-app-shell flex h-screen flex-col overflow-x-hidden overflow-y-hidden" style={mainStyle}>
-      <DocumentTitleSync /><ProductAnalytics /><OwnWalletRouteSync />
-      <div className="hidden lg:block"><LeftBattleSidebar collapsed={leftSidebarCollapsed} onToggleCollapse={toggleLeftSidebar} /></div>
+    <div
+      className="mwz-app-shell flex h-screen flex-col overflow-x-hidden overflow-y-hidden"
+      style={mainStyle}
+    >
+      <DocumentTitleSync />
+      <ProductAnalytics />
+      <OwnWalletRouteSync />
+      <div className="hidden lg:block">
+        <LeftBattleSidebar collapsed={leftSidebarCollapsed} onToggleCollapse={toggleLeftSidebar} />
+      </div>
+
       <Sidebar mobileMenuOpen={mobileMenuOpen} setMobileMenuOpen={setMobileMenuOpen} />
       <TopBar mobileMenuOpen={mobileMenuOpen} setMobileMenuOpen={setMobileMenuOpen} leftSidebarWidth={currentSidebarWidth} />
-      <RankPromotionListener /><LiveStreamOverlay /><RewardUnlockFlight /><VictoryUnlockModal /><CreatorProtectionDialog /><CreatorArmEligibilityDialog />
-      <main ref={mainRef} className={["flex-1 overflow-x-hidden overflow-y-auto pb-10 md:pb-12 lg:pb-14 lg:pl-[calc(var(--mwz-left-sidebar-width)+0.75rem)]", isShowcaseRoute ? "scroll-pt-2 pt-2 md:scroll-pt-3 md:pt-3" : "scroll-pt-[4.5rem] pt-[4.5rem] [&>:first-child]:!pt-0"].join(" ")}>
+      <RankPromotionListener />
+      <LiveStreamOverlay />
+      <RewardUnlockFlight />
+      <VictoryUnlockModal />
+      <CreatorProtectionDialog />
+      <CreatorArmEligibilityDialog />
+
+      <main
+        ref={mainRef}
+        className={[
+          "flex-1 overflow-x-hidden overflow-y-auto pb-10 md:pb-12 lg:pb-14 lg:pl-[calc(var(--mwz-left-sidebar-width)+0.75rem)]",
+          isShowcaseRoute
+            ? "scroll-pt-2 pt-2 md:scroll-pt-3 md:pt-3"
+            : "scroll-pt-[4.5rem] pt-[4.5rem] [&>:first-child]:!pt-0",
+        ].join(" ")}
+      >
         <Routes>
           <Route path="/" element={<Showcase />} />
           {postGradEnabled && postGradFlags.arena ? <Route path="/arena" element={<Arena />} /> : null}
@@ -131,28 +183,100 @@ function AppShellLayout({ mobileMenuOpen, setMobileMenuOpen }: { mobileMenuOpen:
           {postGradEnabled && postGradFlags.battle ? <Route path="/battle/:id" element={<BattleDetails />} /> : null}
           <Route path="/sponsorships/apply" element={<SponsorshipApplication />} />
           {postGradEnabled && postGradFlags.events ? <Route path="/events" element={<Navigate to="/arena/events" replace />} /> : null}
-          <Route path="/league" element={<League />} /><Route path="/leagues" element={<Navigate to="/league" replace />} />
+          <Route path="/league" element={<League />} />
+          <Route path="/leagues" element={<Navigate to="/league" replace />} />
           {postGradEnabled && postGradFlags.tournament ? <Route path="/tournament/:id" element={<TournamentDetails />} /> : null}
           <Route path="/create" element={<Create />} />
           {projectImportsEnabled ? <Route path="/import" element={<ProjectImport />} /> : null}
-          {projectImportsEnabled ? <Route path="/imported/:chainId/:tokenAddress" element={<ImportedProjectRoute />} /> : null}
           <Route path="/drafts/:draftId/promotion" element={<DraftOwnerRoute><DraftPromotionSetup /></DraftOwnerRoute>} />
           <Route path="/drafts/:draftId/push-live" element={<DraftOwnerRoute><PushDraftLive /></DraftOwnerRoute>} />
-          <Route path="/prepare/:slug" element={<Prepare />} /><Route path="/live" element={<Live />} /><Route path="/profile" element={<ProfilePage />} />
-          <Route path="/command" element={<LegacyCommandCenterRedirect section="overview" />} /><Route path="/command/overview" element={<LegacyCommandCenterRedirect section="overview" />} /><Route path="/command/recruiter" element={<LegacyCommandCenterRedirect section="recruiter" />} /><Route path="/command/squad" element={<LegacyCommandCenterRedirect section="squad" />} /><Route path="/command/airdrops" element={<LegacyCommandCenterRedirect section="airdrops" />} /><Route path="/command/claims" element={<LegacyCommandCenterRedirect section="claims" />} /><Route path="/command/settings" element={<LegacyCommandCenterRedirect section="settings" />} /><Route path="/command/followers" element={<LegacyCommandCenterRedirect section="followers" />} /><Route path="/command/following" element={<LegacyCommandCenterRedirect section="following" />} /><Route path="/command/coins" element={<LegacyCommandCenterRedirect section="coins" />} /><Route path="/command/support" element={<LegacyCommandCenterRedirect section="support" />} /><Route path="/command/support/report" element={<LegacyCommandCenterRedirect section="support/report" />} /><Route path="/command/support/reports" element={<LegacyCommandCenterRedirect section="support/reports" />} /><Route path="/command/support/reports/:reportId" element={<LegacyCommandCenterRedirect section="support/reports/:reportId" />} /><Route path="/command/*" element={<LegacyCommandCenterRedirect section="overview" />} />
-          <Route path="/profile/:wallet/command" element={<CommandCenterShell><CommandCenterOverview /></CommandCenterShell>} /><Route path="/profile/:wallet/command/overview" element={<CommandCenterShell><CommandCenterOverview /></CommandCenterShell>} /><Route path="/profile/:wallet/command/recruiter" element={<CommandCenterShell><CommandCenterRecruiter /></CommandCenterShell>} /><Route path="/profile/:wallet/command/squad" element={<CommandCenterShell><CommandCenterSquad /></CommandCenterShell>} /><Route path="/profile/:wallet/command/airdrops" element={<CommandCenterShell><CommandCenterAirdrops /></CommandCenterShell>} /><Route path="/profile/:wallet/command/claims" element={<CommandCenterShell><CommandCenterClaims /></CommandCenterShell>} /><Route path="/profile/:wallet/command/settings" element={<CommandCenterShell><CommandCenterSettings /></CommandCenterShell>} /><Route path="/profile/:wallet/command/followers" element={<CommandCenterShell><CommandCenterSocial mode="followers" /></CommandCenterShell>} /><Route path="/profile/:wallet/command/following" element={<CommandCenterShell><CommandCenterSocial mode="following" /></CommandCenterShell>} /><Route path="/profile/:wallet/command/coins" element={<CommandCenterShell><CommandCenterCoins /></CommandCenterShell>} /><Route path="/profile/:wallet/command/support" element={<CommandCenterShell><CommandCenterSupport /></CommandCenterShell>} /><Route path="/profile/:wallet/command/support/report" element={<CommandCenterShell><CommandCenterReportAbuse /></CommandCenterShell>} /><Route path="/profile/:wallet/command/support/reports/:reportId" element={<CommandCenterShell><CommandCenterAbuseReportDetail /></CommandCenterShell>} /><Route path="/profile/:wallet/command/support/reports" element={<CommandCenterShell><CommandCenterAbuseReports /></CommandCenterShell>} /><Route path="/profile/:wallet/command/*" element={<CommandCenterShell><CommandCenterOverview /></CommandCenterShell>} />
-          <Route path="/profile/:identifier" element={<ProfilePage />} /><Route path="/profile/:wallet/*" element={<ProfileWalletFallbackRedirect />} /><Route path="/airdrops" element={<AirdropOverview />} /><Route path="/airdrops/winners" element={<AirdropWinners />} /><Route path="/recruiter" element={<Recruiter />} /><Route path="/recruiter/signup" element={<RecruiterSignup />} /><Route path="/recruiters" element={<RecruiterLeaderboard />} /><Route path="/recruiters/:code" element={<RecruiterProfile />} /><Route path="/recruiter-dashboard" element={<LegacyCommandCenterRedirect section="recruiter" />} /><Route path="/squads" element={<SquadLeaderboard />} /><Route path="/squad-dashboard" element={<LegacyCommandCenterRedirect section="squad" />} /><Route path="/r/:code" element={<RecruiterReferral />} />
+          <Route path="/prepare/:slug" element={<Prepare />} />
+          <Route path="/live" element={<Live />} />
+          <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/command" element={<LegacyCommandCenterRedirect section="overview" />} />
+          <Route path="/command/overview" element={<LegacyCommandCenterRedirect section="overview" />} />
+          <Route path="/command/recruiter" element={<LegacyCommandCenterRedirect section="recruiter" />} />
+          <Route path="/command/squad" element={<LegacyCommandCenterRedirect section="squad" />} />
+          <Route path="/command/airdrops" element={<LegacyCommandCenterRedirect section="airdrops" />} />
+          <Route path="/command/claims" element={<LegacyCommandCenterRedirect section="claims" />} />
+          <Route path="/command/settings" element={<LegacyCommandCenterRedirect section="settings" />} />
+          <Route path="/command/followers" element={<LegacyCommandCenterRedirect section="followers" />} />
+          <Route path="/command/following" element={<LegacyCommandCenterRedirect section="following" />} />
+          <Route path="/command/coins" element={<LegacyCommandCenterRedirect section="coins" />} />
+          <Route path="/command/support" element={<LegacyCommandCenterRedirect section="support" />} />
+          <Route path="/command/support/report" element={<LegacyCommandCenterRedirect section="support/report" />} />
+          <Route path="/command/support/reports" element={<LegacyCommandCenterRedirect section="support/reports" />} />
+          <Route path="/command/support/reports/:reportId" element={<LegacyCommandCenterRedirect section="support/reports/:reportId" />} />
+          <Route path="/command/*" element={<LegacyCommandCenterRedirect section="overview" />} />
+          <Route path="/profile/:wallet/command" element={<CommandCenterShell><CommandCenterOverview /></CommandCenterShell>} />
+          <Route path="/profile/:wallet/command/overview" element={<CommandCenterShell><CommandCenterOverview /></CommandCenterShell>} />
+          <Route path="/profile/:wallet/command/recruiter" element={<CommandCenterShell><CommandCenterRecruiter /></CommandCenterShell>} />
+          <Route path="/profile/:wallet/command/squad" element={<CommandCenterShell><CommandCenterSquad /></CommandCenterShell>} />
+          <Route path="/profile/:wallet/command/airdrops" element={<CommandCenterShell><CommandCenterAirdrops /></CommandCenterShell>} />
+          <Route path="/profile/:wallet/command/claims" element={<CommandCenterShell><CommandCenterClaims /></CommandCenterShell>} />
+          <Route path="/profile/:wallet/command/settings" element={<CommandCenterShell><CommandCenterSettings /></CommandCenterShell>} />
+          <Route path="/profile/:wallet/command/followers" element={<CommandCenterShell><CommandCenterSocial mode="followers" /></CommandCenterShell>} />
+          <Route path="/profile/:wallet/command/following" element={<CommandCenterShell><CommandCenterSocial mode="following" /></CommandCenterShell>} />
+          <Route path="/profile/:wallet/command/coins" element={<CommandCenterShell><CommandCenterCoins /></CommandCenterShell>} />
+          <Route path="/profile/:wallet/command/support" element={<CommandCenterShell><CommandCenterSupport /></CommandCenterShell>} />
+          <Route path="/profile/:wallet/command/support/report" element={<CommandCenterShell><CommandCenterReportAbuse /></CommandCenterShell>} />
+          <Route path="/profile/:wallet/command/support/reports/:reportId" element={<CommandCenterShell><CommandCenterAbuseReportDetail /></CommandCenterShell>} />
+          <Route path="/profile/:wallet/command/support/reports" element={<CommandCenterShell><CommandCenterAbuseReports /></CommandCenterShell>} />
+          <Route path="/profile/:wallet/command/*" element={<CommandCenterShell><CommandCenterOverview /></CommandCenterShell>} />
+          <Route path="/profile/:identifier" element={<ProfilePage />} />
+          <Route path="/profile/:wallet/*" element={<ProfileWalletFallbackRedirect />} />
+          <Route path="/airdrops" element={<AirdropOverview />} />
+          <Route path="/airdrops/winners" element={<AirdropWinners />} />
+          <Route path="/recruiter" element={<Recruiter />} />
+          <Route path="/recruiter/signup" element={<RecruiterSignup />} />
+          <Route path="/recruiters" element={<RecruiterLeaderboard />} />
+          <Route path="/recruiters/:code" element={<RecruiterProfile />} />
+          <Route path="/recruiter-dashboard" element={<LegacyCommandCenterRedirect section="recruiter" />} />
+          <Route path="/squads" element={<SquadLeaderboard />} />
+          <Route path="/squad-dashboard" element={<LegacyCommandCenterRedirect section="squad" />} />
+          <Route path="/r/:code" element={<RecruiterReferral />} />
           <Route path="/token/:campaignAddress" element={<ScheduledTokenAccessRoute><TokenDetailsEntry /><TokenSafetyRouteOverlay /></ScheduledTokenAccessRoute>} />
-          <Route path="/playbook" element={<Playbook />} /><Route path="/docs" element={<Playbook />} /><Route path="/status" element={<Status />} /><Route path="*" element={<NotFound />} />
+          <Route path="/playbook" element={<Playbook />} />
+          <Route path="/docs" element={<Playbook />} />
+          <Route path="/status" element={<Status />} />
+          <Route path="*" element={<NotFound />} />
         </Routes>
-      </main><Footer /><ScreenFrame />
+      </main>
+      <Footer />
+      <ScreenFrame />
     </div>
   );
 }
 
 const App = () => {
-  const [isLoading, setIsLoading] = useState(true); const [showContent, setShowContent] = useState(false); const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const handleLoadComplete = () => { setIsLoading(false); setTimeout(() => setShowContent(true), 100); };
-  return <QueryClientProvider client={queryClient}><WalletProvider><SolanaWalletProvider><FeedChainWalletLatch /><TooltipProvider><Toaster /><Sonner />{isLoading && <LoadingScreen onLoadComplete={handleLoadComplete} />}{showContent && <BrowserRouter future={{ v7_relativeSplatPath: true }}><AppShellLayout mobileMenuOpen={mobileMenuOpen} setMobileMenuOpen={setMobileMenuOpen} /></BrowserRouter>}</TooltipProvider></SolanaWalletProvider></WalletProvider></QueryClientProvider>;
+  const [isLoading, setIsLoading] = useState(true);
+  const [showContent, setShowContent] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const handleLoadComplete = () => {
+    setIsLoading(false);
+    setTimeout(() => setShowContent(true), 100);
+  };
+
+  return (
+    <QueryClientProvider client={queryClient}>
+      <WalletProvider>
+        <SolanaWalletProvider>
+          <FeedChainWalletLatch />
+          <TooltipProvider>
+            <Toaster />
+            <Sonner />
+            {isLoading && <LoadingScreen onLoadComplete={handleLoadComplete} />}
+            {showContent && (
+              <BrowserRouter future={{ v7_relativeSplatPath: true }}>
+                <AppShellLayout mobileMenuOpen={mobileMenuOpen} setMobileMenuOpen={setMobileMenuOpen} />
+              </BrowserRouter>
+            )}
+          </TooltipProvider>
+        </SolanaWalletProvider>
+      </WalletProvider>
+    </QueryClientProvider>
+  );
 };
+
 export default App;

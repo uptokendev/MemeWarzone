@@ -42,7 +42,25 @@ export const navItems: NavItem[] = [
 ];
 
 export const socialLinks: SocialItem[] = [
-  { href: "https://x.com/memewarzone", ariaLabel: "X", tooltip: "X", color: "#000000", svgUrl: twitterIcon },
-  { href: "https://discord.gg/aXTkn3Asu", ariaLabel: "Discord", tooltip: "Discord", color: "#5865F2", svgUrl: discordIcon },
-  { href: "https://t.me/memewarzonehq", ariaLabel: "Telegram", tooltip: "Telegram", color: "#0088cc", svgUrl: telegramIcon },
+  {
+    href: "https://x.com/memewarzone",
+    ariaLabel: "X",
+    tooltip: "X",
+    color: "#000000",
+    svgUrl: twitterIcon,
+  },
+  {
+    href: "https://discord.gg/aXTkn3Asu",
+    ariaLabel: "Discord",
+    tooltip: "Discord",
+    color: "#5865F2",
+    svgUrl: discordIcon,
+  },
+  {
+    href: "https://t.me/memewarzonehq",
+    ariaLabel: "Telegram",
+    tooltip: "Telegram",
+    color: "#0088cc",
+    svgUrl: telegramIcon,
+  },
 ];
