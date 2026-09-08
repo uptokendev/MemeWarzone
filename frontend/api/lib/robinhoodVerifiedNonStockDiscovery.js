@@ -1,0 +1,26 @@
+export const ROBINHOOD_VERIFIED_NON_STOCK_DISCOVERY = Object.freeze([
+  {
+    asset: "SYRUPUSDG",
+    displayName: "Maple syrupUSDG",
+    category: "LEVERAGE_YIELD",
+    contract: "0x40858070814a57FdF33a613ae84fE0a8b4a874f7",
+    provider: "MAPLE",
+    providerKey: "maple-syrupusdg",
+    decimals: 6,
+    priceAuthority: "Maple share/NAV authority plus USDG/USD reference required",
+    ethAcquisitionRoute: "ETH -> WETH -> syrupUSDG executable V3 route not yet certified",
+    graduationRoute: "GENERIC_QUOTE_PENDING_RUNTIME",
+    v3Venue: "Robinhood V3 required; observed public syrupUSDG/USDG liquidity is V4 and is not accepted as V3 proof",
+    liquidity: "PENDING_V3_ROUTE_DISCOVERY",
+    capacity: "PENDING_LAUNCH_SIZE_SIMULATION",
+    health: "PENDING_GENERIC_RUNTIME",
+    disposition: "PENDING",
+    manifestState: "DISCOVERED_NOT_ADMITTED",
+    identityStatus: "VERIFIED_CHAIN_4663_DEPLOYMENT",
+    evidence: [
+      "https://maple.finance/insights/syrupusdg",
+      "https://robinhoodchain.blockscout.com/address/0x40858070814a57FdF33a613ae84fE0a8b4a874f7",
+    ],
+    discoverySource: "PROVIDER+CHAIN_EXPLORER",
+  },
+]);
