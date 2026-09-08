@@ -39,6 +39,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/memewarzone_import_test
       PROJECT_IMPORT_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/memewarzone_import_test
+      PG_DISABLE_SSL: "1"
       ENABLE_PROJECT_IMPORTS: "true"
       ENABLE_ARENA: "false"
     steps:
