@@ -8,6 +8,7 @@ on:
   push:
     branches:
       - "hotfix/solana-*"
+      - "agent2/solana-approved-quote-expansion"
     paths:
       - programs/memewarzone_solana/**
       - Anchor.toml
