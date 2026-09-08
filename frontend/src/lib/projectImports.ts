@@ -1,3 +1,4 @@
+import { normalizeRouteWallet } from "@/lib/address";
 import { apiFetch } from "@/lib/apiBase";
 import { appendAuthToSearchParams, type WalletActionAuthPayload } from "@/lib/walletActionAuth";
 
@@ -60,6 +61,18 @@ export async function listRecentProjectImports(limit = 24): Promise<ProjectImpor
   const json = await readJson(res);
   if (!res.ok) throw new Error(String(json?.error || `Imported project list failed (${res.status})`));
   return Array.isArray(json?.items) ? json.items : [];
+}
+export async function listUserProjectImports(walletAddress: string, chainId: number): Promise<ProjectImportItem[]> {
+  const params = new URLSearchParams({ wallet: walletAddress, chainId: String(chainId) });
+  const res = await apiFetch(`/api/project-imports?${params.toString()}`, { cache: "no-store" });
+  const json = await readJson(res);
+  if (!res.ok) throw new Error(String(json?.error || `Imported project wallet lookup failed (${res.status})`));
+  return Array.isArray(json?.items) ? json.items : [];
+}
+export function commandCenterImportPath(wallet?: string | null): string {
+  const normalized = normalizeRouteWallet(wallet);
+  if (!normalized) return "/profile?import=1";
+  return `/profile/${encodeURIComponent(normalized)}/command/coins?import=1`;
 }
 export async function resolveProjectImport(input: { tokenAddress: string; chainId: number; auth: WalletActionAuthPayload }): Promise<ProjectResolveResult> {
   const res = await apiFetch("/api/project-imports/resolve", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
