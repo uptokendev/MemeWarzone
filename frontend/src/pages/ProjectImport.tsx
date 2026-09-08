@@ -14,7 +14,7 @@ import { signSolanaMessage } from "@/lib/solanaWallet";
 import { signWalletAction } from "@/lib/walletActionAuth";
 
 type ImportChain = "bnb" | "solana";
-function projectUrl(item: ProjectImportItem) { return `/token/${encodeURIComponent(item.tokenAddress)}?chainId=${item.chainId}`; }
+function projectUrl(item: ProjectImportItem) { return `/imported/${item.chainId}/${encodeURIComponent(item.tokenAddress)}`; }
 
 export default function ProjectImport() {
   const navigate = useNavigate(); const wallet = useWallet(); const solanaWallet = useSolanaWallet();
