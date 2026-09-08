@@ -94,7 +94,7 @@ async function strictAuth(res, body, { identity, action, projectId = null, inten
   });
 }
 
-async function enrichExistingProjectIdentity(identity, resolved) {
+export async function enrichExistingProjectIdentity(identity, resolved) {
   const name = String(resolved?.name || "").trim().slice(0, 256) || null;
   const symbol = String(resolved?.symbol || "").trim().slice(0, 64) || null;
   if (!name && !symbol) return null;
@@ -127,6 +127,24 @@ async function enrichExistingProjectIdentity(identity, resolved) {
   return result.rows?.[0] || null;
 }
 
+async function refreshVerifiedProjectIdentityBestEffort(project) {
+  if (!project || project.ownership_status !== "ownership_verified" || !project.project_owner_wallet) return null;
+  const identity = normalizeProjectIdentity(project.chain_id, project.token_address);
+  try {
+    const resolved = await resolveForSigner(identity, project.project_owner_wallet);
+    return await enrichExistingProjectIdentity(identity, resolved);
+  } catch (error) {
+    console.warn("[api/projectImports] verified ownership identity refresh failed", {
+      projectId: project.id,
+      chainId: identity.chainId,
+      tokenAddress: identity.tokenAddress,
+      code: error?.code || null,
+      error: String(error?.message || error),
+    });
+    return null;
+  }
+}
+
 async function handleOwnershipAdmin(req, res, path) {
   const admin = await requireDashboardAdmin(req, res);
   if (!admin) return true;
@@ -147,13 +165,15 @@ async function handleOwnershipAdmin(req, res, path) {
   const actionMatch = path.match(/^\/admin\/ownership-claims\/([0-9a-f-]+)\/(verify|reject)$/i);
   if (req.method === "POST" && actionMatch) {
     const body = await readJson(req);
+    const action = actionMatch[2].toLowerCase() === "verify" ? "verify_owner" : "reject_claim";
     const updated = await reviewProjectOwnership(pool, {
       projectId: actionMatch[1],
-      action: actionMatch[2].toLowerCase() === "verify" ? "verify_owner" : "reject_claim",
+      action,
       reason: body.reason,
       expectedVersion: body.expectedVersion,
       admin,
     });
+    if (action === "verify_owner") await refreshVerifiedProjectIdentityBestEffort(updated);
     return json(res, 200, { item: projectOwnershipClaimItem(updated) });
   }
 
@@ -235,6 +255,7 @@ export default async function projectImports(req, res) {
       if (!auth) return;
       const resolved = await resolveForSigner(identity, auth.walletAddress);
       const project = await claimExistingProject(pool, { resolverResult: resolved, signedWallet: auth.walletAddress });
+      await enrichExistingProjectIdentity(identity, resolved);
       return json(res, 200, { project: publicProject(project) });
     }
 
@@ -260,6 +281,7 @@ export default async function projectImports(req, res) {
         signedWallet: auth.walletAddress,
         note,
       });
+      await enrichExistingProjectIdentity(identity, resolved);
       return json(res, 200, { project: publicProject(project) });
     }
 
