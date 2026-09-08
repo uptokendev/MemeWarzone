@@ -1,11 +1,30 @@
 export const GRADUATION_MARKET_CATEGORIES = Object.freeze([
-  { id: "POPULAR", label: "POPULAR" },
-  { id: "STABLECOINS", label: "STABLECOINS" },
-  { id: "STOCKS_ETFS", label: "STOCKS & ETFs" },
-  { id: "CRYPTO", label: "CRYPTO" },
-  { id: "OTHER_APPROVED", label: "OTHER APPROVED" },
-  { id: "CUSTOM", label: "CUSTOM" },
+  { id: "POPULAR", label: "Popular" },
+  { id: "STABLECOINS", label: "Stablecoins" },
+  { id: "STOCKS_ETFS", label: "Stocks & ETFs" },
+  { id: "PRE_IPO", label: "Pre-IPO" },
+  { id: "COMMODITIES", label: "Commodities" },
+  { id: "CRYPTO", label: "Crypto" },
+  { id: "MEMEWARZONE", label: "MemeWarzone" },
+  { id: "COMMUNITY", label: "Community" },
 ]);
+
+const API_CATEGORY_TO_CREATOR = Object.freeze({
+  CORE: "POPULAR",
+  STABLES_CURRENCIES: "STABLECOINS",
+  STOCKS: "STOCKS_ETFS",
+  ETFS: "STOCKS_ETFS",
+  PRE_IPO: "PRE_IPO",
+  RWA_COMMODITIES: "COMMODITIES",
+  ECOSYSTEM: "CRYPTO",
+  MEMEWARZONE: "MEMEWARZONE",
+  COMMUNITY: "COMMUNITY",
+  POPULAR: "POPULAR",
+  STABLECOINS: "STABLECOINS",
+  STOCKS_ETFS: "STOCKS_ETFS",
+  COMMODITIES: "COMMODITIES",
+  CRYPTO: "CRYPTO",
+});
 
 export const WRAPPED_DISPLAY_SYMBOLS = Object.freeze({
   WSOL: "SOL",
@@ -96,14 +115,19 @@ export function isMovingQuoteAsset(asset) {
 
 export function categoryForQuoteAsset(asset) {
   if (isNativeQuote(asset)) return "POPULAR";
-  if (isRobinhoodStockQuote(asset) || String(asset?.assetClass || "").toUpperCase() === "PROVIDER_RWA") {
+  const apiCategory = String(asset?.category || "").trim().toUpperCase();
+  if (API_CATEGORY_TO_CREATOR[apiCategory]) return API_CATEGORY_TO_CREATOR[apiCategory];
+  if (isRobinhoodStockQuote(asset) || String(asset?.assetClass || "").toUpperCase() === "PROVIDER_RWA" || String(asset?.assetClass || "").toUpperCase() === "PUBLIC_RWA") {
     return "STOCKS_ETFS";
   }
   const assetClass = String(asset?.assetClass || "").toUpperCase();
   if (assetClass === "STABLECOIN") return "STABLECOINS";
-  if (assetClass === "MWZ_NATIVE") return "CRYPTO";
-  if (assetClass === "COMMUNITY") return "CUSTOM";
-  return "OTHER_APPROVED";
+  if (assetClass === "PRE_IPO_RWA") return "PRE_IPO";
+  if (assetClass === "COMMODITY") return "COMMODITIES";
+  if (assetClass === "CRYPTO") return "CRYPTO";
+  if (assetClass === "MWZ_NATIVE") return "MEMEWARZONE";
+  if (assetClass === "COMMUNITY") return "COMMUNITY";
+  return "CRYPTO";
 }
 
 export function enabledQuoteAssets(items) {

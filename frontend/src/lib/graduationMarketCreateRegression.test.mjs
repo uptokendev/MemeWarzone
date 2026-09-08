@@ -84,4 +84,6 @@ test("production catalog fetch does not synthesize quote assets", () => {
   assert.match(catalog, /catalogQuoteAssetsOnly/);
   assert.doesNotMatch(catalog, /nativeDefaultQuoteAsset/);
   assert.match(catalog, /Graduation Market is no longer eligible/);
+  assert.match(catalog, /sameAuthoritativeQuoteIdentity/);
+  assert.match(catalog, /quoteVersionUnchanged/);
 });

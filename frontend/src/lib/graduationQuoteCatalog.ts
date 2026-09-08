@@ -6,6 +6,7 @@ import {
   isNativeQuote,
   isRobinhoodStockQuote,
 } from "@/lib/graduationMarketPresentation.mjs";
+import { sameAuthoritativeQuoteIdentity, quoteVersionUnchanged } from "@/lib/graduationQuotePicker.mjs";
 
 export type GraduationQuoteAsset = {
   id: string;
@@ -21,6 +22,9 @@ export type GraduationQuoteAsset = {
   identityKind?: string;
   contractAddressOrMint?: string;
   assetClass?: string;
+  category?: string;
+  tags?: string[];
+  catalogState?: string;
   symbol?: string;
   displayName?: string;
   logoUrl?: string | null;
@@ -57,7 +61,8 @@ export async function fetchGraduationQuoteAssets(chainId: number): Promise<Gradu
     { method: "GET", cache: "no-store" },
   );
   const body = await readJson<{ items?: GraduationQuoteAsset[] }>(response);
-  return catalogQuoteAssetsOnly(Array.isArray(body?.items) ? body.items : []);
+  return catalogQuoteAssetsOnly(Array.isArray(body?.items) ? body.items : [])
+    .filter((item) => String(item.chainId) === String(chainId));
 }
 
 export async function fetchGraduationQuoteAssetDetail(id: string): Promise<GraduationQuoteAsset> {
@@ -79,6 +84,9 @@ export async function assertFreshGraduationQuote(asset: GraduationQuoteAsset): P
   }
   const fresh = await fetchGraduationQuoteAssetDetail(id);
   if (fresh.newGraduationEligible !== true) {
+    throw new Error("Graduation Market is no longer eligible. Choose another quote asset.");
+  }
+  if (!sameAuthoritativeQuoteIdentity(asset, fresh) || !quoteVersionUnchanged(asset, fresh)) {
     throw new Error("Graduation Market is no longer eligible. Choose another quote asset.");
   }
   return fresh;
