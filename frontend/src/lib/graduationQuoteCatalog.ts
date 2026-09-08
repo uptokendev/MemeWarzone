@@ -3,6 +3,7 @@ import type { RobinhoodStockToken } from "@/lib/marketContinuityApi";
 import { fetchRobinhoodStockGraduationAssets } from "@/lib/robinhoodStockCreate";
 import {
   catalogQuoteAssetsOnly,
+  isNativeQuote,
   isRobinhoodStockQuote,
 } from "@/lib/graduationMarketPresentation.mjs";
 
@@ -71,7 +72,9 @@ export async function fetchGraduationQuoteAssetDetail(id: string): Promise<Gradu
 
 export async function assertFreshGraduationQuote(asset: GraduationQuoteAsset): Promise<GraduationQuoteAsset> {
   const id = String(asset?.id || "").trim();
-  if (!id || asset?.presentationDefault === true) {
+  if (!id) throw new Error("Choose a catalog Graduation Market before continuing.");
+  if (asset?.presentationDefault === true) {
+    if (Number(asset.chainId) === 56 && isNativeQuote(asset)) return asset;
     throw new Error("Choose a catalog Graduation Market before continuing.");
   }
   const fresh = await fetchGraduationQuoteAssetDetail(id);

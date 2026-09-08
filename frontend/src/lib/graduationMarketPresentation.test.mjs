@@ -177,7 +177,7 @@ test("disabled catalog assets are omitted from Step 5 groups", () => {
   assert.equal(groups[0].items.some((item) => item.id === "dead-bnb"), false);
 });
 
-test("generic non-native Direct Deploy stays fail-closed; native and Robinhood stock keep bind paths", () => {
+test("BNB catalog Direct Deploy uses the signed shared create surface; unrelated generic assets stay fail-closed", () => {
   assert.equal(directDeployBindPath(catalogQuote({ identityKind: "NATIVE", assetClass: "NATIVE" })), "native");
   assert.equal(directDeployBindPath(catalogQuote({
     id: "rh-stock:nvda",
@@ -191,6 +191,13 @@ test("generic non-native Direct Deploy stays fail-closed; native and Robinhood s
     assetClass: "STABLECOIN",
     symbol: "USDC",
     chainId: "56",
+  })), "native");
+  assert.equal(directDeployBindPath(catalogQuote({
+    id: "fixture-generic",
+    identityKind: "EVM_ADDRESS",
+    assetClass: "STABLECOIN",
+    symbol: "USDC",
+    chainId: "1",
   })), null);
   assert.equal(directDeployBindPath(catalogQuote({ newGraduationEligible: false })), null);
 });
@@ -232,4 +239,31 @@ test("provider labels stay product-facing", () => {
 
 test("catalog native identity is classified as native even when symbol is wrapped", () => {
   assert.equal(isNativeQuote(catalogQuote({ chainId: "101", symbol: "WSOL", identityKind: "NATIVE" })), true);
+});
+
+test("BNB launch-day native choice stays on native create/draft semantics and hides catalog-native duplicates", () => {
+  const nativeLaunch = catalogQuote({
+    id: "native:56",
+    provider: { key: "bnb-basic", authorityMode: "CHAIN_NATIVE_DEFAULT" },
+    chainId: "56",
+    identityKind: "NATIVE",
+    contractAddressOrMint: "native:56",
+    assetClass: "NATIVE",
+    symbol: "BNB",
+    stateVersion: 0,
+    policy: { authority: "presentation-default", policyKey: "chain-native-default", version: null },
+    presentationDefault: true,
+  });
+  assert.equal(directDeployBindPath(nativeLaunch), "native");
+  const fields = buildCreateDraftGraduationFields(nativeLaunch, 56);
+  assert.equal(fields.graduationQuoteAssetId, "");
+  assert.equal(fields.graduationQuoteStateVersion, 0);
+  assert.equal(fields.graduationMarketPolicyVersion, "chain-native-default");
+
+  const step = readFileSync(join(here, "../components/create/GraduationMarketStep.tsx"), "utf8");
+  const helper = readFileSync(join(here, "./bnbNativeLaunchQuote.ts"), "utf8");
+  assert.match(step, /bnbNativeLaunchQuote\(chainId\)/);
+  assert.match(step, /catalogItems\.filter\(\(item\) => !isNativeQuote\(item\)\)/);
+  assert.match(step, /isBnbNativeLaunchQuote\(selected\) \? ""/);
+  assert.match(helper, /contractAddressOrMint \|\| ""\) === "native:56"/);
 });
