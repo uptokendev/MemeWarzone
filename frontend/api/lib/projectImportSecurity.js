@@ -165,6 +165,10 @@ function normalizeWalletForProject(chainId, wallet) {
   return normalizeAddress(raw, Number(chainId));
 }
 
+function ownershipStatus(project) {
+  return String((project?.ownership_status ?? project?.ownershipStatus) || "");
+}
+
 export function assertVerifiedProjectOwner(project, { wallet, chainId, token } = {}) {
   if (!project) throw Object.assign(new Error("Project import not found"), { code: "IMPORT_NOT_FOUND" });
   const projectIdentity = canonicalProjectImportIdentity(project.chain_id ?? project.chainId, project.token_address ?? project.tokenAddress ?? project.mint);
@@ -172,7 +176,7 @@ export function assertVerifiedProjectOwner(project, { wallet, chainId, token } =
   if (projectIdentity.key !== requestedIdentity.key) {
     throw Object.assign(new Error("Project import chain/token identity mismatch"), { code: "IMPORT_IDENTITY_MISMATCH" });
   }
-  if (String(project.ownership_status ?? project.ownershipStatus || "") !== PROJECT_IMPORT_OWNERSHIP.verified) {
+  if (ownershipStatus(project) !== PROJECT_IMPORT_OWNERSHIP.verified) {
     throw Object.assign(new Error("Project ownership is not verified"), { code: "IMPORT_OWNER_NOT_VERIFIED" });
   }
   const expected = normalizeWalletForProject(projectIdentity.chainId, project.owner_wallet ?? project.ownerWallet);
@@ -219,7 +223,7 @@ export function ownershipClaimDecision(project, { claimantWallet, currentOwnerPr
   const identity = canonicalProjectImportIdentity(project.chain_id ?? project.chainId, project.token_address ?? project.tokenAddress ?? project.mint);
   const requested = canonicalProjectImportIdentity(chainId ?? identity.chainId, token ?? identity.token);
   if (identity.key !== requested.key) throw Object.assign(new Error("Claim identity mismatch"), { code: "IMPORT_IDENTITY_MISMATCH" });
-  if (String(project.ownership_status ?? project.ownershipStatus || "") === PROJECT_IMPORT_OWNERSHIP.suspended) {
+  if (ownershipStatus(project) === PROJECT_IMPORT_OWNERSHIP.suspended) {
     throw Object.assign(new Error("Project ownership is suspended"), { code: "IMPORT_OWNER_SUSPENDED" });
   }
   const claimant = normalizeWalletForProject(identity.chainId, claimantWallet);
@@ -228,7 +232,7 @@ export function ownershipClaimDecision(project, { claimantWallet, currentOwnerPr
     throw Object.assign(new Error("Current owner proof does not bind to claimant wallet"), { code: "IMPORT_OWNER_PROOF_MISMATCH" });
   }
   const existingOwner = normalizeWalletForProject(identity.chainId, project.owner_wallet ?? project.ownerWallet);
-  const alreadyVerified = String(project.ownership_status ?? project.ownershipStatus || "") === PROJECT_IMPORT_OWNERSHIP.verified;
+  const alreadyVerified = ownershipStatus(project) === PROJECT_IMPORT_OWNERSHIP.verified;
   if (alreadyVerified && existingOwner === claimant) return Object.freeze({ outcome: "already_verified", identity, ownerWallet: claimant });
   if (alreadyVerified && existingOwner !== claimant) {
     throw Object.assign(new Error("A different wallet is already the verified owner"), { code: "IMPORT_OWNER_ALREADY_VERIFIED" });
