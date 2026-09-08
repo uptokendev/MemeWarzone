@@ -10,10 +10,6 @@ def patch_golden():
         "2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX",
     )
     s = s.replace("const BUY_LAMPORTS = 5_000_000n;", "const BUY_LAMPORTS = 1_000_000n;")
-    s = s.replace(
-        "lamports:100_000_000",
-        'lamports:label==="creator"?100_000_000:100_000_000',
-    )
     old_sim = '  const sim=await v0.simulateLaunchpadV0OrThrow(connection,compiled.transaction,label);'
     new_sim = '''  let sim;
   try {
@@ -72,8 +68,6 @@ def patch_golden():
 def patch_middle():
     p = Path("tests/solana/candidate-wallet-middle-devnet.cjs")
     s = p.read_text()
-    s = s.replace("lamports=50_000_000", "lamports=100_000")
-    s = s.replace("entrant.publicKey,80_000_000", "entrant.publicKey,6_500_000")
     old = 'const retrySig=await connection.sendRawTransaction(raw,{skipPreflight:false,maxRetries:3});if(retrySig!==sig)fail(`${label} same packet retry changed signature`);'
     new = 'let retryResult="";try{const retrySig=await connection.sendRawTransaction(raw,{skipPreflight:false,maxRetries:3});if(retrySig!==sig)fail(`${label} same packet retry changed signature`);retryResult="same signature";}catch(e){const m=String(e?.message||e);if(!/already been processed/i.test(m))throw e;retryResult="already processed";}'
     if old not in s:
@@ -98,10 +92,6 @@ def patch_fixture():
     if target not in s:
         raise SystemExit("fixture buyer hook target missing")
     s = s.replace(target, replacement, 1)
-    s = s.replace("if (balance < 500_000_000)", "if (balance < 85_000_000)")
-    s = s.replace("operator needs at least 0.5 devnet SOL", "operator needs at least 0.085 devnet SOL")
-    s = s.replace("creator.publicKey, 200_000_000", "creator.publicKey, 100_000_000")
-    s = s.replace("buyer.publicKey, 120_000_000", "buyer.publicKey, 53_000_000")
     p.write_text(s)
 
 
