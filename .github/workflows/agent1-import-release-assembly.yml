@@ -1,0 +1,120 @@
+name: Agent 1 Import Release Assembly
+
+on:
+  push:
+    branches:
+      - agent1/import-release-assembly
+  pull_request:
+    branches:
+      - release/main-import-onboarding
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  import-release-assembly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: memewarzone_import_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d memewarzone_import_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/memewarzone_import_test
+      PROJECT_IMPORT_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/memewarzone_import_test
+      PG_DISABLE_SSL: "1"
+      ENABLE_PROJECT_IMPORTS: "true"
+      ENABLE_ARENA: "false"
+      ENABLE_POSTGRAD_ARENA: "false"
+      ENABLE_POSTGRAD_BATTLE: "false"
+      ENABLE_POSTGRAD_TOURNAMENT: "false"
+      ENABLE_POSTGRAD_LEAGUE: "false"
+      VITE_ENABLE_PROJECT_IMPORTS: "true"
+      VITE_ENABLE_POSTGRAD_ARENA: "false"
+      VITE_ENABLE_POSTGRAD_BATTLE: "false"
+      VITE_ENABLE_POSTGRAD_TOURNAMENT: "false"
+      VITE_ENABLE_POSTGRAD_LEAGUE: "false"
+      VITE_ENABLE_POSTGRAD_CLAIMS: "false"
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install locked frontend dependencies
+        run: npm ci --prefix frontend --legacy-peer-deps --no-audit --no-fund
+
+      - name: Syntax check import assembly
+        run: |
+          node --check frontend/api/server.mjs
+          node --check frontend/api/projectImports.js
+          node --check frontend/api/projectImportImage.js
+          node --check frontend/api/lib/projectImportCore.js
+          node --check frontend/api/lib/projectImportResolvers.js
+          node --check frontend/api/lib/projectImportResolverAdapters.js
+          node --check frontend/api/lib/projectImportSecurity.js
+          node --check frontend/api/lib/imageFileValidation.js
+          node --check frontend/api/lib/projectOwnershipResolveBnb.js
+          node --check frontend/api/lib/projectOwnershipResolveSolana.js
+
+      - name: Apply additive project import migration twice
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260908_000001_project_import_onboarding.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260908_000001_project_import_onboarding.sql
+
+      - name: Component compatibility tests
+        run: |
+          node --test frontend/api/lib/projectOwnershipResolveBnb.test.mjs
+          node --test frontend/api/lib/projectOwnershipResolveSolana.test.mjs
+          node --test frontend/api/lib/projectImportSecurity.test.mjs
+          node --test frontend/api/lib/projectImportCore.test.mjs
+          node --test frontend/src/project-imports-ui.test.mjs
+
+      - name: Real Express mount smoke test with Arena off
+        env:
+          PORT: "3017"
+        run: |
+          node frontend/api/server.mjs > /tmp/import-api.log 2>&1 &
+          pid=$!
+          trap 'kill $pid 2>/dev/null || true; cat /tmp/import-api.log' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:3017/healthz >/dev/null; then break; fi
+            sleep 1
+          done
+          status=$(curl -sS -o /tmp/import-response.json -w '%{http_code}' 'http://127.0.0.1:3017/api/project-imports?chainId=56&tokenAddress=0x1111111111111111111111111111111111111111')
+          test "$status" = "404"
+          grep -q 'PROJECT_NOT_FOUND' /tmp/import-response.json
+          ! grep -q 'Unknown route' /tmp/import-response.json
+          kill $pid
+          wait $pid || true
+          trap - EXIT
+
+      - name: Imports-on Arena-off production build
+        run: npm run --prefix frontend build
+
+      - name: Existing main API import graph regression
+        run: npm run --prefix frontend check:api-imports
+
+      - name: Emergency scope guard
+        run: |
+          files='frontend/api/projectImports.js frontend/api/projectImportImage.js frontend/api/lib/projectImportCore.js frontend/api/lib/projectImportResolverAdapters.js frontend/api/lib/projectImportResolvers.js frontend/api/lib/projectImportSecurity.js frontend/src/lib/projectImports.ts frontend/src/pages/ProjectImport.tsx frontend/src/pages/ImportedProjectDetails.tsx frontend/src/pages/ImportedProjectRoute.tsx'
+          ! grep -Ein '4663|46630|Robinhood|LaunchFactory|Topaz|Meteora|graduation|bonding' $files
+          ! grep -Ein '/api/arena/imports|status[[:space:]]*=[[:space:]]*["'"']passed|needs_review' $files
