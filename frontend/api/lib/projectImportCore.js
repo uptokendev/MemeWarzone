@@ -12,6 +12,8 @@ export async function listRecentProjectImports(pool,{limit=24}={}){
   const r=await pool.query(
     `SELECT * FROM public.arena_token_imports
       WHERE chain_id IN (56,101)
+        AND image_url IS NOT NULL
+        AND btrim(image_url) <> ''
       ORDER BY created_at DESC NULLS LAST, metadata_updated_at DESC NULLS LAST
       LIMIT $1`,
     [n],

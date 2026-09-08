@@ -119,6 +119,15 @@ test("homepage overlay lists imported projects without Arena or financial action
   assert.doesNotMatch(overlay, /from .*Topaz|from .*Meteora|from .*graduation/i);
 });
 
+test("public recent-import query excludes incomplete imageless registrations", async () => {
+  const core = await read("../api/lib/projectImportCore.js");
+  const listFn = core.match(/export async function listRecentProjectImports[\s\S]+?return r\.rows\|\|\[\];/)?.[0] || "";
+  assert.match(listFn, /image_url IS NOT NULL/);
+  assert.match(listFn, /btrim\(image_url\) <> ''/);
+  assert.doesNotMatch(listFn, /ownership_verified/);
+  assert.doesNotMatch(listFn, /passed/);
+});
+
 test("import form cannot complete without a PNG, JPEG or WEBP image", () => {
   assert.match(importPage, /data-project-import-image-required="true"/);
   assert.match(importPage, /Add a project image \(PNG, JPEG or WEBP\) before registering/);
