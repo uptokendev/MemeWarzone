@@ -88,6 +88,7 @@ jobs:
           node --test frontend/api/lib/projectOwnershipResolveBnb.test.mjs
           node --test frontend/api/lib/projectOwnershipResolveSolana.test.mjs
           node --test frontend/api/lib/projectImportResolverAdapters.test.mjs
+          node --test frontend/api/lib/projectImportToken2022Support.test.mjs
           node --test frontend/api/lib/projectImportSecurity.test.mjs
           node --test frontend/api/lib/projectImportCore.test.mjs
           node --test frontend/api/lib/projectImportIdentity.test.mjs
