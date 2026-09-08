@@ -29,6 +29,15 @@ async function executeV0({connection,payer,instructions,label,replayMode}){
   const latest=await connection.getLatestBlockhash("confirmed");
   const msg=new TransactionMessage({payerKey:payer.publicKey,recentBlockhash:latest.blockhash,instructions}).compileToV0Message();
   const tx=new VersionedTransaction(msg);tx.sign([payer]);const raw=tx.serialize();if(raw.length>PACKET_LIMIT)fail(`${label} packet ${raw.length}>${PACKET_LIMIT}`);
+  if(label==="UPVOTE"){
+    const account1=tx.message.staticAccountKeys[1];
+    const payerBalance=await connection.getBalance(payer.publicKey,"confirmed");
+    const account1Balance=account1?await connection.getBalance(account1,"confirmed"):null;
+    console.log("UPVOTE_PAYER",payer.publicKey.toBase58());
+    console.log("UPVOTE_PAYER_BALANCE_BEFORE_SIM",payerBalance);
+    console.log("UPVOTE_ACCOUNT_INDEX_1",account1?.toBase58()||"MISSING");
+    console.log("UPVOTE_ACCOUNT_INDEX_1_BALANCE_BEFORE_SIM",account1Balance);
+  }
   const sim=await connection.simulateTransaction(tx,{commitment:"confirmed",sigVerify:false,replaceRecentBlockhash:false});if(sim.value.err)fail(`${label} simulation ${JSON.stringify(sim.value.err)} ${(sim.value.logs||[]).join(" | ")}`);
   const sig=await connection.sendRawTransaction(raw,{skipPreflight:false,maxRetries:3});const conf=await connection.confirmTransaction({signature:sig,...latest},"confirmed");if(conf.value.err)fail(`${label} confirmation ${JSON.stringify(conf.value.err)}`);
   const retrySig=await connection.sendRawTransaction(raw,{skipPreflight:false,maxRetries:3});if(retrySig!==sig)fail(`${label} same packet retry changed signature`);
@@ -44,8 +53,13 @@ async function main(){
   const out={createdAt:new Date().toISOString()};
   // UpVote user rail: V0 memo + SOL transfer. A disposable certification treasury is used on devnet.
   const voter=Keypair.generate(),voteTreasury=Keypair.generate().publicKey,subject=Keypair.generate().publicKey;await fund(connection,operator,voter.publicKey);
+  const voteTreasuryInitialBalance=await connection.getBalance(voteTreasury,"confirmed");
+  const voteTreasuryRentMinimum=await connection.getMinimumBalanceForRentExemption(0,"confirmed");
+  console.log("UPVOTE_ACCOUNT_INDEX_1_INITIAL_BALANCE",voteTreasuryInitialBalance);
+  console.log("UPVOTE_ACCOUNT_INDEX_1_RENT_MINIMUM",voteTreasuryRentMinimum);
+  if(voteTreasuryInitialBalance<voteTreasuryRentMinimum)await fund(connection,operator,voteTreasury,voteTreasuryRentMinimum-voteTreasuryInitialBalance);
   const memo=new TransactionInstruction({keys:[{pubkey:voter.publicKey,isSigner:true,isWritable:false}],programId:MEMO_PROGRAM_ID,data:Buffer.from(`mwz-upvote:${subject.toBase58()}`)});const transfer=SystemProgram.transfer({fromPubkey:voter.publicKey,toPubkey:voteTreasury,lamports:10_000});
-  out.upvote=await executeV0({connection,payer:voter,instructions:[memo,transfer],label:"UPVOTE",replayMode:"repeatable"});out.upvote.destination=voteTreasury.toBase58();
+  out.upvote=await executeV0({connection,payer:voter,instructions:[memo,transfer],label:"UPVOTE",replayMode:"repeatable"});out.upvote.destination=voteTreasury.toBase58();out.upvote.destinationInitialBalance=voteTreasuryInitialBalance;out.upvote.destinationRentMinimum=voteTreasuryRentMinimum;
 
   const config=pda([CONFIG_SEED]);const configState=await program.account.arenaMoneyConfigV2.fetch(config);if(!new PublicKey(configState.authority).equals(operator.publicKey))fail(`ArenaMoneyV2 authority ${configState.authority} != cert operator ${operator.publicKey}`);const wasPaused=Boolean(configState.paused);
   try{
