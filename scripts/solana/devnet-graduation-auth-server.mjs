@@ -28,6 +28,7 @@ console.log(
   `devnet_graduation_auth_route_signer=${routeSignerPublicKey} source=${configuredRouteSignerPublicKey ? "SOLANA_ROUTE_SIGNER_PUBLIC_KEY" : "derived_from_secret"}`,
 );
 process.env.SOLANA_GRADUATION_AUTH_ENABLED = "true";
+process.env.SOLANA_ROUTE_SIGNER_PUBLIC_KEY = routeSignerPublicKey;
 
 const server = http.createServer(async (req, res) => {
   try {

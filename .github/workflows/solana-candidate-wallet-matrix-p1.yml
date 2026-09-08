@@ -228,9 +228,14 @@ jobs:
           echo $! >/tmp/mwz-agent2-auth.pid
           for i in $(seq 1 20); do
             if curl -fsS http://127.0.0.1:43101/health >/tmp/mwz-agent2-auth-health.json; then break; fi
+            if ! kill -0 "$(cat /tmp/mwz-agent2-auth.pid)" 2>/dev/null; then
+              cat /tmp/mwz-agent2-auth.log
+              echo "BLOCKER: certification auth server exited before binding"
+              exit 1
+            fi
             sleep 1
           done
-          curl -fsS http://127.0.0.1:43101/health
+          curl -fsS http://127.0.0.1:43101/health || { cat /tmp/mwz-agent2-auth.log; exit 1; }
           npm --prefix tests/solana run devnet:graduation-window -- open
           npm --prefix tests/solana run devnet:create-graduation-fixture
           test -s "$SOLANA_GRADUATION_FIXTURE_OUTPUT"
@@ -288,6 +293,15 @@ jobs:
           test "$NATIVE_OUTCOME" = success
           test "$POSTGRAD_OUTCOME" = success
           test "$RESTORE_OUTCOME" = success
+      - name: Capture certification auth server log
+        if: always()
+        shell: bash
+        run: |
+          if test -f /tmp/mwz-agent2-auth.log; then
+            cat /tmp/mwz-agent2-auth.log
+          else
+            echo "AUTH_LOG_UNAVAILABLE: server startup was not reached"
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -298,5 +312,9 @@ jobs:
             /tmp/mwz-native-graduation.json
             /tmp/mwz-postgrad.json
             /tmp/mwz-final.json
+            /tmp/mwz-agent2-auth.log
+            /tmp/mwz-agent2-auth-health.json
+            /tmp/mwz-agent2-native-fixture.json
+            /tmp/mwz-solana-devnet-pause-snapshot.json
           if-no-files-found: warn
           retention-days: 14

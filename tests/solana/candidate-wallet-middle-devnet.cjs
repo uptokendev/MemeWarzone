@@ -29,6 +29,7 @@ async function executeV0({connection,payer,instructions,label,replayMode}){
   const latest=await connection.getLatestBlockhash("confirmed");
   const msg=new TransactionMessage({payerKey:payer.publicKey,recentBlockhash:latest.blockhash,instructions}).compileToV0Message();
   const tx=new VersionedTransaction(msg);tx.sign([payer]);const raw=tx.serialize();if(raw.length>PACKET_LIMIT)fail(`${label} packet ${raw.length}>${PACKET_LIMIT}`);
+  const diagnostics={payerBalanceBeforeSimulation:await connection.getBalance(payer.publicKey,"confirmed")};
   if(label==="UPVOTE"){
     const account1=tx.message.staticAccountKeys[1];
     const payerBalance=await connection.getBalance(payer.publicKey,"confirmed");
@@ -37,6 +38,7 @@ async function executeV0({connection,payer,instructions,label,replayMode}){
     console.log("UPVOTE_PAYER_BALANCE_BEFORE_SIM",payerBalance);
     console.log("UPVOTE_ACCOUNT_INDEX_1",account1?.toBase58()||"MISSING");
     console.log("UPVOTE_ACCOUNT_INDEX_1_BALANCE_BEFORE_SIM",account1Balance);
+    Object.assign(diagnostics,{accountIndex1:account1?.toBase58(),accountIndex1BalanceBeforeSimulation:account1Balance});
   }
   const sim=await connection.simulateTransaction(tx,{commitment:"confirmed",sigVerify:false,replaceRecentBlockhash:false});if(sim.value.err)fail(`${label} simulation ${JSON.stringify(sim.value.err)} ${(sim.value.logs||[]).join(" | ")}`);
   const sig=await connection.sendRawTransaction(raw,{skipPreflight:false,maxRetries:3});const conf=await connection.confirmTransaction({signature:sig,...latest},"confirmed");if(conf.value.err)fail(`${label} confirmation ${JSON.stringify(conf.value.err)}`);
@@ -45,7 +47,7 @@ async function executeV0({connection,payer,instructions,label,replayMode}){
   if(replayMode==="must-fail"&&!replaySim.value.err)fail(`${label} fresh-blockhash replay unexpectedly succeeds`);
   if(replayMode==="repeatable"&&replaySim.value.err)fail(`${label} repeatable fresh intent unexpectedly fails ${JSON.stringify(replaySim.value.err)}`);
   const bogus=Keypair.generate().publicKey.toBase58();const expiredTx=new VersionedTransaction(new TransactionMessage({payerKey:payer.publicKey,recentBlockhash:bogus,instructions}).compileToV0Message());expiredTx.sign([payer]);const expired=await connection.simulateTransaction(expiredTx,{commitment:"confirmed",sigVerify:false,replaceRecentBlockhash:false});if(!expired.value.err)fail(`${label} unknown/expired blockhash unexpectedly succeeds`);
-  return {status:"PASS",version:"V0",altUsage:"NO",freshBlockhash:"YES",lastValidBlockHeight:latest.lastValidBlockHeight,payer:payer.publicKey.toBase58(),requiredSigners:signerKeys(tx),simulation:`PASS units=${sim.value.unitsConsumed??"unknown"}`,serializedPacketBytes:raw.length,sendMethod:"sendRawTransaction(skipPreflight=false,maxRetries=3)",confirmationMethod:"confirmTransaction({signature,blockhash,lastValidBlockHeight},confirmed)",expiryBehavior:`PASS unknown/expired blockhash rejected: ${JSON.stringify(expired.value.err)}`,retryBehavior:"PASS identical signed packet returned same signature",duplicateReplayBehavior:replayMode==="must-fail"?`PASS fresh-blockhash duplicate rejected: ${JSON.stringify(replaySim.value.err)}`:"EXPECTED repeatable intent: same signed packet deduped; fresh-blockhash UpVote intent simulates successfully",signature:sig};
+  return {diagnostics,status:"PASS",version:"V0",altUsage:"NO",freshBlockhash:"YES",lastValidBlockHeight:latest.lastValidBlockHeight,payer:payer.publicKey.toBase58(),requiredSigners:signerKeys(tx),simulation:`PASS units=${sim.value.unitsConsumed??"unknown"}`,serializedPacketBytes:raw.length,sendMethod:"sendRawTransaction(skipPreflight=false,maxRetries=3)",confirmationMethod:"confirmTransaction({signature,blockhash,lastValidBlockHeight},confirmed)",expiryBehavior:`PASS unknown/expired blockhash rejected: ${JSON.stringify(expired.value.err)}`,retryBehavior:"PASS identical signed packet returned same signature",duplicateReplayBehavior:replayMode==="must-fail"?`PASS fresh-blockhash duplicate rejected: ${JSON.stringify(replaySim.value.err)}`:"EXPECTED repeatable intent: same signed packet deduped; fresh-blockhash UpVote intent simulates successfully",signature:sig};
 }
 async function main(){
   const operator=loadKeypair(requiredEnv("SOLANA_OPERATOR_KEYPAIR"));const connection=new web3.Connection(String(process.env.SOLANA_RPC_URL||"https://api.devnet.solana.com"),"confirmed");if((await connection.getGenesisHash())!==EXPECTED_DEVNET_GENESIS)fail("not devnet");
@@ -61,7 +63,18 @@ async function main(){
   const memo=new TransactionInstruction({keys:[{pubkey:voter.publicKey,isSigner:true,isWritable:false}],programId:MEMO_PROGRAM_ID,data:Buffer.from(`mwz-upvote:${subject.toBase58()}`)});const transfer=SystemProgram.transfer({fromPubkey:voter.publicKey,toPubkey:voteTreasury,lamports:10_000});
   out.upvote=await executeV0({connection,payer:voter,instructions:[memo,transfer],label:"UPVOTE",replayMode:"repeatable"});out.upvote.destination=voteTreasury.toBase58();out.upvote.destinationInitialBalance=voteTreasuryInitialBalance;out.upvote.destinationRentMinimum=voteTreasuryRentMinimum;
 
-  const config=pda([CONFIG_SEED]);const configState=await program.account.arenaMoneyConfigV2.fetch(config);if(!new PublicKey(configState.authority).equals(operator.publicKey))fail(`ArenaMoneyV2 authority ${configState.authority} != cert operator ${operator.publicKey}`);const wasPaused=Boolean(configState.paused);
+  fs.writeFileSync(REPORT,JSON.stringify(out,null,2)+"\n");
+  console.log("UPVOTE",JSON.stringify(out.upvote));
+  const config=pda([CONFIG_SEED]);
+  const configInfo=await connection.getAccountInfo(config,"confirmed");
+  console.log("ARENA_MONEY_V2_CONFIG",JSON.stringify({address:config.toBase58(),exists:Boolean(configInfo),owner:configInfo?.owner.toBase58(),bytes:configInfo?.data.length??0}));
+  if(!configInfo){
+    out.battlePayment={status:"BLOCK",reason:"ArenaMoneyV2 config missing",config:config.toBase58()};
+    out.tournamentPayment={...out.battlePayment};
+    fs.writeFileSync(REPORT,JSON.stringify(out,null,2)+"\n");
+    fail(`ArenaMoneyV2 config ${config} is missing; shared protocol initialization is outside harness-only repair`);
+  }
+  const configState=await program.account.arenaMoneyConfigV2.fetch(config);if(!new PublicKey(configState.authority).equals(operator.publicKey))fail(`ArenaMoneyV2 authority ${configState.authority} != cert operator ${operator.publicKey}`);const wasPaused=Boolean(configState.paused);
   try{
     if(wasPaused)await program.methods.setArenaMoneyV2Pause(false).accountsStrict({authority:operator.publicKey,config}).rpc({commitment:"confirmed"});
     for(const spec of [{key:"battlePayment",kind:0},{key:"tournamentPayment",kind:1}]){
