@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { test, before, after } from "node:test";
 import pg from "pg";
 import { ethers } from "ethers";
+import projectImports from "../projectImports.js";
 import {
   claimExistingProject,
   createProjectImport,
@@ -49,6 +50,16 @@ function resolver({ tokenAddress, wallet, match = false, available = true }) {
     currentAuthority: available ? "0x00000000000000000000000000000000000000aa" : null,
     signedWalletMatchesAuthority: match,
     wallet,
+  };
+}
+
+function mockRes() {
+  return {
+    statusCode: 200,
+    headers: {},
+    body: "",
+    setHeader(k, v) { this.headers[k] = v; },
+    end(v) { this.body = String(v ?? ""); },
   };
 }
 
@@ -144,7 +155,7 @@ test("manual claim requires strict signature and does not alter Arena status", a
   const action = "project-import-manual-claim";
   const message = buildProjectImportMessage({ action, walletAddress: address, chainId: 56, nonce, tokenAddress: token });
   const signature = await wallet.signMessage(message);
-  const res = { statusCode: 200, headers: {}, setHeader(k,v){this.headers[k]=v;}, end(v){this.body=v;} };
+  const res = mockRes();
   const auth = await requireProjectImportAuth({ res, pool, auth: { walletAddress: address, chainId: 56, action, nonce, signature }, chainId: 56, action, tokenAddress: token });
   assert.equal(auth.walletAddress, address);
   const beforeStatus = (await pool.query(`SELECT status FROM public.arena_token_imports WHERE chain_id=56 AND token_address=$1`, [token])).rows[0].status;
@@ -167,10 +178,16 @@ test("project import module graph is isolated from Arena competition modules", (
   }
 });
 
-test("dedicated import flag is independent from Arena flag", async () => {
+test("dedicated import API works with imports ON and Arena OFF", async () => {
   process.env.ENABLE_PROJECT_IMPORTS = "true";
   process.env.ENABLE_ARENA = "false";
   const source = fs.readFileSync(new URL("../projectImports.js", import.meta.url), "utf8");
   assert.match(source, /ENABLE_PROJECT_IMPORTS/);
   assert.doesNotMatch(source, /ENABLE_ARENA|ENABLE_POSTGRAD/);
+  const req = { method: "GET", url: "/project-imports?chainId=56&tokenAddress=0x0000000000000000000000000000000000000011" };
+  const res = mockRes();
+  await projectImports(req, res);
+  assert.equal(res.statusCode, 200);
+  const payload = JSON.parse(res.body);
+  assert.equal(payload.project.token_address, "0x0000000000000000000000000000000000000011");
 });
