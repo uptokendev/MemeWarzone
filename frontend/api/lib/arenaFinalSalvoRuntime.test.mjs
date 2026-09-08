@@ -19,7 +19,7 @@ import {
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const apiDir = path.join(here, "..");
-const repoRoot = path.resolve(here, "..", "..", "..", "..");
+const repoRoot = path.resolve(here, "..", "..", "..");
 const endpointSource = fs.readFileSync(path.join(apiDir, "arenaFinalSalvo.js"), "utf8");
 const finalizerSource = fs.readFileSync(path.join(here, "arenaFinalSalvoFinalizer.js"), "utf8");
 const migrationSource = fs.readFileSync(path.join(repoRoot, "db", "migrations", "20260909_000001_arena_final_salvo_identity.sql"), "utf8");
