@@ -71,6 +71,8 @@ jobs:
           node --test api/lib/approvedQuoteCatalog.test.mjs
       - name: Full Robinhood pair catalog tests
         run: node --test scripts/report-robinhood-approved-pairs.test.mjs
+      - name: Deterministic launch catalog evidence
+        run: node scripts/report-robinhood-approved-pairs.mjs --markdown
       - name: API relative-import gate
         working-directory: frontend
         run: npm run check:api-imports
