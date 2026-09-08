@@ -253,7 +253,7 @@ test("registration image binds without granting verified owner rights", async ()
   assert.equal(created.project.project_owner_wallet, null);
   await assert.rejects(
     () => persistProjectImage(pool, { chainId: 56, tokenAddress: token, signedWallet: registrar, imageUrl: "https://cdn.example/owner.png" }),
-    /verified project owner/i,
+    (error) => error?.code === "IMPORT_OWNER_NOT_VERIFIED",
   );
   await assert.rejects(
     () => bindRegistrationImage(pool, { chainId: 56, tokenAddress: token, signedWallet: stranger, imageUrl: "https://cdn.example/nope.png" }),
