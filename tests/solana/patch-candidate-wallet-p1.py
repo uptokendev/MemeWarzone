@@ -98,6 +98,20 @@ def patch_fixture():
 def patch_graduation():
     p = Path("tools/solana-meteora-graduation/graduate-basic-quote.mjs")
     s = p.read_text()
+    native_target = '  const ed25519Ix = Ed25519Program.createInstructionWithPublicKey('
+    native_setup = '''  // Devnet certification setup: Meteora also requires the operator WSOL ATA.
+  if (nativeQuote) {
+    if ((await connection.getGenesisHash()) !== "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG") fail("native ATA certification setup requires devnet");
+    if (!quoteMint.equals(NATIVE_MINT)) fail("native certification quote must be WSOL");
+    quoteAta = await getOrCreateAssociatedTokenAccount(connection, operator, quoteMint, operator.publicKey, false, "confirmed", undefined, TOKEN_PROGRAM_ID);
+    const nativeState = await getAccount(connection, quoteAta.address, "confirmed", TOKEN_PROGRAM_ID);
+    if (nativeState.amount !== 0n) fail(`native certification WSOL ATA must be empty; balance=${nativeState.amount}`);
+    console.log("CERT_NATIVE_WSOL_ATA", quoteAta.address.toBase58(), "owner", operator.publicKey.toBase58(), "amount", nativeState.amount.toString());
+  }
+'''
+    if s.count(native_target) != 1:
+        raise SystemExit("native graduation certification ATA setup target missing or ambiguous")
+    s = s.replace(native_target, native_setup + native_target, 1)
     target = '''  const signature = await connection.sendRawTransaction(serialized, { skipPreflight: false, maxRetries: 5 });
   const confirmation = await connection.confirmTransaction({ signature, blockhash: latest.blockhash, lastValidBlockHeight: latest.lastValidBlockHeight }, "confirmed");
   if (confirmation.value.err) fail(`graduation confirmation failed: ${JSON.stringify(confirmation.value.err)}`);
@@ -161,3 +175,4 @@ patch_middle()
 patch_fixture()
 patch_graduation()
 print("candidate wallet P1 runtime telemetry patches applied")
+
