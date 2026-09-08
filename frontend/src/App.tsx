@@ -26,6 +26,7 @@ import PostGradLeague from "./pages/PostGradLeague";
 import League from "./pages/League";
 import TournamentDetails from "./pages/TournamentDetails";
 import Create from "./pages/Create";
+import ProjectImport from "./pages/ProjectImport";
 import SponsorshipApplication from "./pages/SponsorshipApplication";
 import ProfilePage from "./pages/ProfilePage";
 import TokenDetailsEntry from "./pages/TokenDetailsEntry";
@@ -73,6 +74,7 @@ import CommandCenterSupport from "@/pages/command-center/CommandCenterSupport";
 import CommandCenterReportAbuse from "@/pages/command-center/CommandCenterReportAbuse";
 import CommandCenterAbuseReports from "@/pages/command-center/CommandCenterAbuseReports";
 import CommandCenterAbuseReportDetail from "@/pages/command-center/CommandCenterAbuseReportDetail";
+import { projectImportsEnabled } from "@/features/projectImports/config";
 import { isPostGradRouteEnabled, postGradFlags, warRoomEnabled } from "@/features/postgrad/config";
 import { DocumentTitleSync } from "@/hooks/useDocumentTitle";
 import { ProductAnalytics } from "@/lib/analytics/ProductAnalytics";
@@ -185,6 +187,7 @@ function AppShellLayout({
           <Route path="/leagues" element={<Navigate to="/league" replace />} />
           {postGradEnabled && postGradFlags.tournament ? <Route path="/tournament/:id" element={<TournamentDetails />} /> : null}
           <Route path="/create" element={<Create />} />
+          {projectImportsEnabled ? <Route path="/import" element={<ProjectImport />} /> : null}
           <Route path="/drafts/:draftId/promotion" element={<DraftOwnerRoute><DraftPromotionSetup /></DraftOwnerRoute>} />
           <Route path="/drafts/:draftId/push-live" element={<DraftOwnerRoute><PushDraftLive /></DraftOwnerRoute>} />
           <Route path="/prepare/:slug" element={<Prepare />} />
