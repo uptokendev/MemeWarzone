@@ -44,6 +44,18 @@ assert.match(client, /reconcileEvmRewardClaims/);
 assert.match(client, /reconcileSolanaRewardClaims/);
 assert.match(client, /claim_pending/);
 
+const profileRewards = read("src/hooks/profile/useProfileRewards.ts");
+assert.match(profileRewards, /reward\.period === "monthly" && !solana/);
+assert.match(profileRewards, /const recordNonce = await requestNonce\(chainId, account\)/);
+assert.match(profileRewards, /nonce: recordNonce/);
+assert.match(profileRewards, /signature: recordSignature/);
+assert.doesNotMatch(profileRewards, /if \(reward\.period === "monthly"\) \{/);
+
+const commandCenterClaims = read("src/pages/command-center/CommandCenterClaims.tsx");
+assert.match(commandCenterClaims, /const recordNonce = await requestNonce\(claimChainId, walletAddress\)/);
+assert.match(commandCenterClaims, /nonce: recordNonce/);
+assert.match(commandCenterClaims, /signature: recordSignature/);
+
 const lp = read("src/lib/lpFeeHarvest.ts");
 assert.match(lp, /Wrong wallet network/);
 assert.match(lp, /registered/);
