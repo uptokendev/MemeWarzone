@@ -16,8 +16,8 @@ function requireStore(store) {
 /**
  * Creates at most one canonical project row for chain + token/mint.
  * The importer is audit attribution only. It is deliberately NOT edit authority.
- * The storage adapter must make withIdentityLock mutually exclusive for identity.key
- * (DB transaction/advisory lock or equivalent) and keep a unique constraint on chain + token.
+ * The storage adapter must serialize identity.key and retain Agent 1's unique
+ * (chain_id, token_address) index as the final duplicate backstop.
  */
 export async function createCanonicalProjectImport({ store, chainId, token, importerWallet, seed = {} }) {
   requireStore(store);
@@ -30,8 +30,8 @@ export async function createCanonicalProjectImport({ store, chainId, token, impo
       chain_id: identity.chainId,
       token_address: identity.token,
       imported_by_wallet: String(importerWallet || "").trim() || null,
-      owner_wallet: null,
-      ownership_status: PROJECT_IMPORT_OWNERSHIP.unverified,
+      project_owner_wallet: null,
+      ownership_status: PROJECT_IMPORT_OWNERSHIP.pending,
     });
     return { project, existing: false, identity };
   });
@@ -39,16 +39,10 @@ export async function createCanonicalProjectImport({ store, chainId, token, impo
 
 /**
  * Claims edit authority only after a chain resolver has independently proven currentOwnerProof.
- * All competing claims serialize on canonical identity; persistence is expected to use a
- * state/version CAS so a stale decision cannot overwrite a newer suspension/verification.
+ * Competing claims serialize on canonical identity. The adapter receives the current owner/status
+ * as compare-and-set inputs so suspension or a concurrent owner transition cannot be overwritten.
  */
-export async function claimCanonicalProjectOwnership({
-  store,
-  chainId,
-  token,
-  claimantWallet,
-  currentOwnerProof,
-}) {
+export async function claimCanonicalProjectOwnership({ store, chainId, token, claimantWallet, currentOwnerProof }) {
   requireStore(store);
   const identity = canonicalProjectImportIdentity(chainId, token);
   return store.withIdentityLock(identity.key, async () => {
@@ -67,7 +61,7 @@ export async function claimCanonicalProjectOwnership({
       identity,
       ownerWallet: decision.ownerWallet,
       expectedOwnershipStatus: project.ownership_status ?? project.ownershipStatus,
-      expectedStateVersion: Number(project.state_version ?? project.stateVersion ?? 0),
+      expectedOwnerWallet: project.project_owner_wallet ?? project.projectOwnerWallet ?? null,
     });
     if (!updated) {
       throw Object.assign(new Error("Project ownership changed during claim"), { code: "IMPORT_OWNER_CAS_CONFLICT" });
