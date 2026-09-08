@@ -1,6 +1,8 @@
 import { ethers } from "ethers";
 import { normalizeAddress } from "@/lib/address";
 
+const EVM_LEAGUE_CHAINS = new Set([56, 97, 4663, 46630]);
+
 export type RewardItem = {
   period: "weekly" | "monthly";
   epochStart: string;
@@ -76,7 +78,35 @@ export function buildLeagueClaimMessage(args: {
   ].join("\n");
 }
 
+export async function reconcileEvmLeagueClaims(chainId: number, address: string): Promise<{
+  reconciledCount: number;
+  items?: Array<{ txHash?: string | null }>;
+  unresolved?: Array<{ code?: string; reason?: string }>;
+}> {
+  if (!EVM_LEAGUE_CHAINS.has(Number(chainId))) return { reconciledCount: 0 };
+  const { apiFetch } = await import("@/lib/apiBase");
+  const r = await apiFetch(`/api/league`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      action: "reconcile-evm-claims",
+      chainId: Number(chainId),
+      recipient: normalizeAddress(address),
+    }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j?.error || "League claim reconciliation failed");
+  return j;
+}
+
 export async function fetchClaimableRewards(chainId: number, address: string): Promise<RewardItem[]> {
+  if (EVM_LEAGUE_CHAINS.has(Number(chainId))) {
+    try {
+      await reconcileEvmLeagueClaims(chainId, address);
+    } catch (error) {
+      console.warn("[rewardsApi] EVM League reconciliation deferred:", error);
+    }
+  }
   const qs = new URLSearchParams({ chainId: String(chainId), address: normalizeAddress(address) });
   const r = await fetch(`/api/rewards?${qs.toString()}`);
   const j = await r.json();
