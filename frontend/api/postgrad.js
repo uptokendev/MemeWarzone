@@ -9,9 +9,12 @@ import arenaImports from "./arenaImports.js";
 import arenaEventSponsorshipAuthority from "./arenaEventSponsorshipAuthority.js";
 import arenaEventSponsorshipRecovery from "./arenaEventSponsorshipRecovery.js";
 import arenaTournaments from "./arenaTournaments.js";
-import arenaTournamentBoosts from "./arenaTournamentBoosts.js";
 import arenaTournamentVotes from "./arenaTournamentVotes.js";
-import arenaVoteTournamentSetup from "./arenaVoteTournamentSetup.js";
+import {
+  arenaVoteTournamentBoostsIdentityGate,
+  arenaVoteTournamentSetupIdentityGate,
+  arenaVoteTournamentSolanaBoostsIdentityGate,
+} from "./arenaVoteTournamentIdentityGate.js";
 import arenaLeague from "./arenaLeague.js";
 import arenaNotifications from "./arenaNotifications.js";
 import arenaVotes from "./arenaVotes.js";
@@ -37,11 +40,11 @@ const ROUTES = [
   { pattern: /^\/arena\/sponsorships\/[^/]+\/(?:state|solana-payment-state)$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: arenaEventSponsorshipRecovery },
   // All other Warzone Event Sponsorship endpoints run through authoritative event/application gating.
   { pattern: /^\/arena\/sponsorships(?:\/.*)?$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: arenaEventSponsorshipAuthority },
-  { pattern: /^\/arena\/tournaments\/v2\/(?:buy-in-quote|create)$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaVoteTournamentSetup },
-  { pattern: /^\/arena\/tournaments\/[^/]+\/(?:v2-buy-in-receipt|buy-in-receipt)$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaVoteTournamentSetup },
+  { pattern: /^\/arena\/tournaments\/v2\/(?:buy-in-quote|create)$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaVoteTournamentSetupIdentityGate },
+  { pattern: /^\/arena\/tournaments\/[^/]+\/(?:v2-buy-in-receipt|buy-in-receipt)$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaVoteTournamentSetupIdentityGate },
   { pattern: /^\/arena\/tournaments\/[^/]+\/matches\/[^/]+\/final-salvo$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaFinalSalvo },
-  { pattern: /^\/arena\/tournaments\/[^/]+\/matches\/[^/]+\/boosts\/(?:solana-quote|solana-payment)$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaSolanaBoosts },
-  { pattern: /^\/arena\/tournaments\/[^/]+\/matches\/[^/]+\/boosts(?:\/.*)?$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaTournamentBoosts },
+  { pattern: /^\/arena\/tournaments\/[^/]+\/matches\/[^/]+\/boosts\/(?:solana-quote|solana-payment)$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaVoteTournamentSolanaBoostsIdentityGate },
+  { pattern: /^\/arena\/tournaments\/[^/]+\/matches\/[^/]+\/boosts(?:\/.*)?$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaVoteTournamentBoostsIdentityGate },
   { pattern: /^\/arena\/tournaments\/[^/]+\/matches\/[^/]+\/votes$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaTournamentVotes },
   { pattern: /^\/arena\/tournaments(?:\/.*)?$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaTournaments },
   { pattern: /^\/arena\/events(?:\/.*)?$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaEvents },
