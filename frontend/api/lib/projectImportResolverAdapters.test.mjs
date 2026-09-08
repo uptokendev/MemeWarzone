@@ -25,28 +25,50 @@ function metadataBytes(name, symbol) {
 }
 
 test("Solana project metadata resolves Metaplex name and ticker from on-chain account", async () => {
+  let calls = 0;
   const connection = {
     async getAccountInfo() {
+      calls += 1;
       return { owner: PROGRAM, data: metadataBytes("Derpy Dave", "DERPY") };
     },
   };
   const metadata = await resolveSolanaDisplayMetadata(connection, MINT);
-  assert.deepEqual(metadata, { name: "Derpy Dave", symbol: "DERPY" });
+  assert.deepEqual(metadata, {
+    name: "Derpy Dave",
+    symbol: "DERPY",
+    source: "metaplex",
+    type: "token_metadata_pda",
+  });
+  assert.equal(calls, 1, "Metaplex success must remain first authority and avoid fallback reads");
 });
 
-test("missing or malformed optional metadata does not invalidate a normal mint", async () => {
+test("missing optional metadata does not invalidate a normal mint", async () => {
   const missing = await resolveSolanaDisplayMetadata({ async getAccountInfo() { return null; } }, MINT);
-  assert.deepEqual(missing, { name: null, symbol: null });
+  assert.deepEqual(missing, { name: null, symbol: null, source: null, type: null });
+});
 
-  const malformed = await resolveSolanaDisplayMetadata({
-    async getAccountInfo() { return { owner: PROGRAM, data: Buffer.from([4, 1, 2, 3]) }; },
-  }, MINT);
-  assert.deepEqual(malformed, { name: null, symbol: null });
+test("malformed Metaplex metadata fails gracefully for display identity only", async () => {
+  const connection = {
+    async getAccountInfo(address) {
+      if (!address.equals(MINT)) return { owner: PROGRAM, data: Buffer.from([4, 1, 2, 3]) };
+      return null;
+    },
+  };
+  const malformed = await resolveSolanaDisplayMetadata(connection, MINT);
+  assert.deepEqual(malformed, { name: null, symbol: null, source: null, type: null });
 });
 
 test("metadata owned by a different program is ignored", async () => {
   const metadata = await resolveSolanaDisplayMetadata({
-    async getAccountInfo() { return { owner: MINT, data: metadataBytes("Wrong", "BAD") }; },
+    async getAccountInfo(address) {
+      if (!address.equals(MINT)) return { owner: MINT, data: metadataBytes("Wrong", "BAD") };
+      return null;
+    },
   }, MINT);
-  assert.deepEqual(metadata, { name: null, symbol: null });
+  assert.deepEqual(metadata, { name: null, symbol: null, source: null, type: null });
+});
+
+test("invalid mint input returns empty optional display metadata", async () => {
+  const metadata = await resolveSolanaDisplayMetadata({ async getAccountInfo() { throw new Error("should not run"); } }, "not-a-public-key");
+  assert.deepEqual(metadata, { name: null, symbol: null, source: null, type: null });
 });

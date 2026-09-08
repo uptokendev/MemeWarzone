@@ -53,6 +53,9 @@ export function CommandCenterCoinRow({
   const isImported = item.type === 'imported';
   const tokenRoute = item.tokenRoute || item.href || (item.type === 'coin' ? getPostGradTokenDetailRoute(item.id) : null);
   const showBattleInfo = battleFeaturesEnabled && Boolean(item.battleInfo);
+  const displayedTicker = isImported
+    ? (item.ticker && item.ticker !== "???" ? `$${item.ticker}` : item.name)
+    : (item.ticker || item.name);
   const identityClassName = "min-w-0 rounded-xl text-left transition-colors hover:bg-white/[0.03]";
   const identity = (
           <div className="flex items-center gap-2.5">
@@ -64,7 +67,7 @@ export function CommandCenterCoinRow({
             />
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-1.5">
-                <div className="truncate text-[13px] font-semibold text-white lg:text-[15px]">{item.ticker || item.name}</div>
+                <div className="truncate text-[13px] font-semibold text-white lg:text-[15px]">{displayedTicker}</div>
                 <div className="truncate text-[11px] font-semibold text-white/45 lg:text-sm">{item.name}</div>
                 {isImported && (
                   <TacticalTag label="IMPORTED" tone="sponsored" />
