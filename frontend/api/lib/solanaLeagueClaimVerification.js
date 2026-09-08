@@ -118,7 +118,7 @@ export async function verifySolanaLeagueClaimTransaction({
   const [tx, statusResult] = await Promise.all([
     rpc(expected.chainId, "getTransaction", [signature, {
       encoding: "jsonParsed",
-      commitment: "confirmed",
+      commitment: "finalized",
       maxSupportedTransactionVersion: 0,
     }]),
     rpc(expected.chainId, "getSignatureStatuses", [[signature], { searchTransactionHistory: true }]),

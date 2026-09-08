@@ -33,6 +33,18 @@ function rewardKey(reward: RewardItem) {
   return `${reward.period}:${reward.epochStart}:${reward.category}:${reward.rank}`;
 }
 
+function isSolanaLeagueChain(chainId?: number | null) {
+  const id = Number(chainId || 0);
+  return id === 101 || id === 102;
+}
+
+function rewardCurrency(chainId?: number | null) {
+  const id = Number(chainId || 0);
+  if (isSolanaLeagueChain(id)) return "SOL";
+  if (id === 4663 || id === 46630) return "ETH";
+  return "BNB";
+}
+
 export function useProfileRewards({
   activeTab,
   chainId,
@@ -56,9 +68,10 @@ export function useProfileRewards({
     try {
       const raw = await fetchClaimableRewards(chainId, account);
       const filtered: RewardItem[] = [];
+      const solana = isSolanaLeagueChain(chainId);
 
       for (const reward of raw) {
-        if (reward.period !== "monthly") {
+        if (reward.period !== "monthly" || solana) {
           filtered.push(reward);
           continue;
         }
@@ -112,7 +125,7 @@ export function useProfileRewards({
         toast.error("Connect the winning wallet to claim this prize.");
         return null;
       }
-      const solana = Number(chainId) === 101 || Number(chainId) === 102;
+      const solana = isSolanaLeagueChain(chainId);
       if (!solana && !wallet?.signer) {
         toast.error("Wallet signer is unavailable. Reconnect and try again.");
         return null;
@@ -124,7 +137,7 @@ export function useProfileRewards({
       try {
         let txHash: string | null = null;
 
-        if (reward.period === "monthly") {
+        if (reward.period === "monthly" && !solana) {
           const monthId = monthIdFromEpochStart(reward.epochStart);
           const monthly = await fetchMonthlyClaim(chainId, monthId, account);
           const claim = monthly.rewards.find(
@@ -181,17 +194,6 @@ export function useProfileRewards({
           if ("mode" in prepared && prepared.mode === "solana_treasury") {
             const { submitSolanaLeagueClaim } = await import("@/lib/solanaLeagueClaim");
             txHash = await submitSolanaLeagueClaim(prepared);
-            await recordLeagueClaimTx({
-              chainId,
-              period: reward.period,
-              epochStart: reward.epochStart,
-              category: reward.category,
-              rank: reward.rank,
-              recipient: account,
-              nonce,
-              signature,
-              txHash,
-            });
           } else if ("mode" in prepared && prepared.mode === "merkle") {
             const treasury = new (await import("ethers")).ethers.Contract(
               prepared.vaultAddress,
@@ -210,6 +212,28 @@ export function useProfileRewards({
             );
             await tx.wait();
             txHash = tx.hash;
+          } else {
+            txHash = prepared.txHash || null;
+          }
+
+          if (txHash && "mode" in prepared && (prepared.mode === "solana_treasury" || prepared.mode === "merkle")) {
+            const recordNonce = await requestNonce(chainId, account);
+            const recordMessage = buildLeagueClaimMessage({
+              chainId,
+              recipient: account,
+              period: reward.period,
+              epochStart: reward.epochStart,
+              category: reward.category,
+              rank: reward.rank,
+              nonce: recordNonce,
+            });
+            let recordSignature = "";
+            if (solana) {
+              const { signSolanaMessage } = await import("@/lib/solanaWallet");
+              recordSignature = (await signSolanaMessage(recordMessage, account)).signature;
+            } else {
+              recordSignature = await wallet.signer.signMessage(recordMessage);
+            }
             await recordLeagueClaimTx({
               chainId,
               period: reward.period,
@@ -217,12 +241,10 @@ export function useProfileRewards({
               category: reward.category,
               rank: reward.rank,
               recipient: account,
-              nonce,
-              signature,
+              nonce: recordNonce,
+              signature: recordSignature,
               txHash,
             });
-          } else {
-            txHash = prepared.txHash || null;
           }
         }
 
@@ -237,7 +259,7 @@ export function useProfileRewards({
             eyebrow: "Reward secured",
             title: "Victory Unlocked",
             subtitle: "Your reward is secured and your trophy is entering the League Cabinet.",
-            currency: solana ? "SOL" : "BNB",
+            currency: rewardCurrency(chainId),
             destinationLabel: "View Cabinet",
             destinationPath: `/profile/${account}`,
             destinationHash: "league-cabinet",

@@ -232,6 +232,24 @@ async function fetchRewardClaimsRaw(params: {
     : [];
 }
 
+export async function reconcileEvmRewardClaims(params: {
+  walletAddress: string;
+  chainId: number;
+  rewardLedgerIds: string[];
+}): Promise<SolanaRewardReconciliationResult> {
+  const res = await fetch(buildRealtimeApiUrl("/api/rewards"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      action: "reconcile-evm-claims",
+      walletAddress: params.walletAddress,
+      chainId: params.chainId,
+      rewardLedgerIds: params.rewardLedgerIds,
+    }),
+  });
+  return parseJson(res) as Promise<SolanaRewardReconciliationResult>;
+}
+
 export async function reconcileSolanaRewardClaims(params: {
   walletAddress: string;
   chainId: number;
@@ -258,16 +276,18 @@ export async function fetchRewardClaims(params: {
 }): Promise<RewardLedgerItem[]> {
   const initial = await fetchRewardClaimsRaw(params);
   const chainId = Number(params.chainId || 0);
-  if (![101, 102].includes(chainId)) return initial;
+  const isSolana = [101, 102].includes(chainId);
+  const isEvm = [56, 97, 4663, 46630].includes(chainId);
+  if (!isSolana && !isEvm) return initial;
 
   const stale = initial.filter((item) =>
-    (item.status === "claim_pending" || item.status === "failed") &&
-    (item.rewardType === "airdrop" || item.rewardType === "squad")
+    item.status === "claim_pending" || item.status === "failed"
   );
   if (!stale.length) return initial;
 
   try {
-    const reconciliation = await reconcileSolanaRewardClaims({
+    const reconcile = isSolana ? reconcileSolanaRewardClaims : reconcileEvmRewardClaims;
+    const reconciliation = await reconcile({
       walletAddress: params.walletAddress,
       chainId,
       rewardLedgerIds: stale.slice(0, 10).map((item) => item.id),
@@ -288,7 +308,7 @@ export async function fetchRewardClaims(params: {
         : item);
     }
   } catch (error) {
-    console.warn("[rewardProgramsApi] Solana claim reconciliation deferred:", error);
+    console.warn(`[rewardProgramsApi] ${isSolana ? "Solana" : "EVM"} claim reconciliation deferred:`, error);
   }
 
   return initial;

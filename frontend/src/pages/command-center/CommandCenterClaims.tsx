@@ -584,6 +584,17 @@ export default function CommandCenterClaims() {
                 );
                 await tx.wait();
                 txHash = tx.hash;
+                const recordNonce = await requestNonce(claimChainId, walletAddress);
+                const recordMessage = buildLeagueClaimMessage({
+                  chainId: claimChainId,
+                  recipient: walletAddress,
+                  period: metadata.period,
+                  epochStart: metadata.epochStart,
+                  category: metadata.category,
+                  rank: metadata.rank,
+                  nonce: recordNonce,
+                });
+                const recordSignature = await wallet.signer.signMessage(recordMessage);
                 await recordLeagueClaimTx({
                   chainId: claimChainId,
                   period: metadata.period,
@@ -591,8 +602,8 @@ export default function CommandCenterClaims() {
                   category: metadata.category,
                   rank: metadata.rank,
                   recipient: walletAddress,
-                  nonce,
-                  signature,
+                  nonce: recordNonce,
+                  signature: recordSignature,
                   txHash,
                 });
               }

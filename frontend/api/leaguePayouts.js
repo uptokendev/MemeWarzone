@@ -48,6 +48,7 @@ export default async function handler(req, res) {
     const payouts = Array.isArray(body.payouts) ? body.payouts : [];
 
     if (!Number.isFinite(chainId)) return json(res, 400, { error: "Invalid chainId" });
+    if (txHash && !/^0x[a-f0-9]{64}$/.test(txHash)) return json(res, 400, { error: "Invalid txHash" });
     if (!(period === "weekly" || period === "monthly")) return json(res, 400, { error: "Invalid period" });
     if (!epochStart) return json(res, 400, { error: "epochStart missing" });
     if (!payouts.length) return json(res, 400, { error: "payouts missing" });
@@ -81,7 +82,14 @@ export default async function handler(req, res) {
         `insert into public.league_epoch_payouts
            (chain_id, period, epoch_start, category, rank, recipient_address, amount_raw, tx_hash)
          values ($1,$2,$3::timestamptz,$4,$5,$6,$7::numeric,$8)
-         on conflict (chain_id, period, epoch_start, category, rank) do nothing`,
+         on conflict (chain_id, period, epoch_start, category, rank)
+         do update set
+           recipient_address = excluded.recipient_address,
+           amount_raw = excluded.amount_raw,
+           tx_hash = excluded.tx_hash,
+           paid_at = now()
+         where public.league_epoch_payouts.tx_hash is null
+           and excluded.tx_hash is not null`,
         [chainId, period, epochStart, category, rank, recipient, amountRaw, txHash]
       );
       inserted += r.rowCount ?? 0;

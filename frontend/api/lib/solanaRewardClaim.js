@@ -58,8 +58,12 @@ function proofFromMeta(meta) {
 
 export function solanaRewardsProgramId() {
   const programId = String(process.env.SOLANA_REWARDS_TREASURY_PROGRAM_ID || "").trim();
-  if (!programId) throw new Error("SOLANA_REWARDS_TREASURY_PROGRAM_ID is required");
-  return programId;
+  if (!programId) return "";
+  try {
+    return publicKeyBytes(programId).length === 32 ? programId : "";
+  } catch {
+    return "";
+  }
 }
 
 export function solanaRewardRpcUrl(chainId = 101) {
@@ -107,6 +111,7 @@ function buildSolanaSquadCall(row, meta, chainId, amount) {
   else if (!amountValid) reason = "AMOUNT_ZERO";
 
   const programId = solanaRewardsProgramId();
+  if (!reason && !programId) reason = "MISSING_SOLANA_REWARDS_PROGRAM_ID";
   if (reason) {
     return {
       rewardLedgerId: String(row.id),
@@ -187,6 +192,7 @@ export function buildSolanaRewardCall(row) {
   else if (!amountValid) reason = "AMOUNT_ZERO";
 
   const programId = solanaRewardsProgramId();
+  if (!reason && !programId) reason = "MISSING_SOLANA_REWARDS_PROGRAM_ID";
   if (reason) {
     return {
       rewardLedgerId: String(row.id), chainId, tokenSymbol: row.token_symbol || "SOL",
@@ -294,7 +300,7 @@ export async function verifySolanaRewardClaim({ row, txHash, walletAddress }) {
   }
 
   const [tx, statusResult] = await Promise.all([
-    rpc(call.chainId, "getTransaction", [txHash, { encoding: "jsonParsed", commitment: "confirmed", maxSupportedTransactionVersion: 0 }]),
+    rpc(call.chainId, "getTransaction", [txHash, { encoding: "jsonParsed", commitment: "finalized", maxSupportedTransactionVersion: 0 }]),
     rpc(call.chainId, "getSignatureStatuses", [[txHash], { searchTransactionHistory: true }]),
   ]);
   if (!tx || tx?.meta?.err) {

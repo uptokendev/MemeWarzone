@@ -9,8 +9,10 @@ import {
   readJson,
 } from "../server/http.js";
 import { discoverSolanaRewardClaim } from "./lib/solanaRewardReconciliation.js";
+import { discoverEvmRewardClaim } from "./lib/rewardClaimVerification.js";
 
 const SOLANA_CHAINS = new Set([101, 102]);
+const EVM_CHAINS = new Set([56, 97, 4663, 46630]);
 const RECOVERABLE_REWARD_TYPES = new Set(["airdrop", "squad"]);
 const RECOVERABLE_STATUSES = new Set(["claim_pending", "failed"]);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -94,21 +96,22 @@ async function finalizeRecoveredClaim(row, verification) {
     const reused = await client.query(
       `select id
          from public.reward_ledger
-        where claim_tx_hash = $1
+        where lower(coalesce(claim_tx_hash, '')) = lower($1)
           and id <> $2::uuid
         limit 1`,
       [verification.txHash, current.id],
     );
     if (reused.rows.length) {
-      const error = new Error("Confirmed Solana claim signature is already attached to another reward entitlement");
-      error.code = "SOLANA_CLAIM_TX_REUSED";
+      const error = new Error("Confirmed claim transaction is already attached to another reward entitlement");
+      error.code = "CLAIM_TX_REUSED";
       throw error;
     }
 
+    const isSolanaRecovery = Boolean(verification.claimReceiptAddress);
     const reconciledAt = new Date().toISOString();
     const claimVerification = {
       ...verification,
-      reconciliationSource: "deterministic_claim_receipt",
+      reconciliationSource: isSolanaRecovery ? "deterministic_claim_receipt" : "reward_claimed_event",
       reconciledAt,
     };
 
@@ -139,9 +142,18 @@ async function finalizeRecoveredClaim(row, verification) {
       `insert into public.reward_audit_logs
         (reward_ledger_id, actor_type, actor_id, action, old_value, new_value, reason, tx_hash, metadata)
        values
-        ($1::uuid, 'system', 'solana-reconciler', 'claim_reconciled_onchain', $2, 'claimed',
-         'Recovered confirmed Solana claim from deterministic receipt PDA', $3, $4::jsonb)`,
-      [current.id, current.status, verification.txHash, JSON.stringify(claimVerification)],
+        ($1::uuid, 'system', $5, 'claim_reconciled_onchain', $2, 'claimed',
+         $6, $3, $4::jsonb)`,
+      [
+        current.id,
+        current.status,
+        verification.txHash,
+        JSON.stringify(claimVerification),
+        isSolanaRecovery ? "solana-reconciler" : "evm-reconciler",
+        isSolanaRecovery
+          ? "Recovered confirmed Solana claim from deterministic receipt PDA"
+          : "Recovered confirmed EVM RewardDistributor claim from exact on-chain event",
+      ],
     );
 
     await refreshBatchCounts(client, current.id);
@@ -161,12 +173,142 @@ async function finalizeRecoveredClaim(row, verification) {
   }
 }
 
-async function reconcileSolanaClaims(req, res) {
-  if (!pool) return json(res, 500, { error: "Server misconfigured: DATABASE_URL missing" });
-  const body = await readJson(req);
-  if (String(body?.action || "") !== "reconcile-solana-claims") {
-    return json(res, 400, { error: "Unsupported rewards action" });
+function rewardMetadata(row) {
+  const raw = row?.metadata;
+  if (!raw) return {};
+  if (typeof raw === "object") return raw;
+  try {
+    const parsed = JSON.parse(String(raw));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
   }
+}
+
+function firstText(source, keys) {
+  for (const key of keys) {
+    const value = source?.[key];
+    if (value == null) continue;
+    const text = String(value).trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function evmRewardDistributor(row, chainId) {
+  const chain = Number(chainId);
+  const meta = rewardMetadata(row);
+  const fromMeta = firstText(meta, [
+    "distributorAddress",
+    "rewardDistributorAddress",
+    "claimContractAddress",
+    "contractAddress",
+  ]);
+  if (/^0x[a-fA-F0-9]{40}$/.test(fromMeta)) return fromMeta;
+  const chainSpecific = String(
+    process.env[`REWARD_DISTRIBUTOR_ADDRESS_${chain}`] ||
+    process.env[`VITE_REWARD_DISTRIBUTOR_ADDRESS_${chain}`] ||
+    (chain === 97 ? process.env.BNB_TESTNET_REWARD_DISTRIBUTOR_ADDRESS : "") ||
+    (chain === 56 ? process.env.BNB_REWARD_DISTRIBUTOR_ADDRESS : "") ||
+    (chain === 56 ? process.env.REWARD_DISTRIBUTOR_ADDRESS_BNB : "") ||
+    ((chain === 56 || chain === 97) ? process.env.REWARD_DISTRIBUTOR_ADDRESS : "") ||
+    ((chain === 56 || chain === 97) ? process.env.VITE_REWARD_DISTRIBUTOR_ADDRESS : "") ||
+    "",
+  ).trim();
+  return /^0x[a-fA-F0-9]{40}$/.test(chainSpecific) ? chainSpecific : "";
+}
+
+function evmRewardBatchId(row) {
+  const meta = rewardMetadata(row);
+  const value = firstText(meta, [
+    "contractBatchId",
+    "merkleBatchId",
+    "batchIdBytes32",
+    "rewardBatchBytes32",
+    "claimBatchBytes32",
+  ]);
+  return /^0x[a-fA-F0-9]{64}$/.test(value) ? value : "";
+}
+
+async function reconcileEvmClaims(req, res, body) {
+  if (!pool) return json(res, 500, { error: "Server misconfigured: DATABASE_URL missing" });
+  const chainId = Number(body?.chainId);
+  const walletAddress = normalizeWalletFlexible(body?.walletAddress || body?.address);
+  const rawIds = Array.isArray(body?.rewardLedgerIds) ? body.rewardLedgerIds : [];
+  const rewardLedgerIds = Array.from(new Set(rawIds.map((id) => String(id || "").trim()).filter(Boolean)));
+
+  if (!EVM_CHAINS.has(chainId)) return json(res, 400, { error: "Reconciliation is only available for EVM reward chains" });
+  if (!walletAddress || !isAddress(walletAddress)) return json(res, 400, { error: "Invalid EVM wallet address" });
+  if (!rewardLedgerIds.length) return json(res, 200, { reconciledCount: 0, items: [], unresolved: [] });
+  if (rewardLedgerIds.length > 10) return json(res, 400, { error: "At most 10 reward claims can be reconciled per request" });
+  if (rewardLedgerIds.some((id) => !UUID_RE.test(id))) return json(res, 400, { error: "Invalid reward ledger id" });
+
+  try {
+    const { rows } = await pool.query(
+      `select *
+         from public.reward_ledger
+        where id = any($1::uuid[])
+          and lower(wallet_address) = lower($2)
+          and chain::text = $3::text
+          and status = any($4::text[])
+        order by created_at asc`,
+      [rewardLedgerIds, walletAddress, String(chainId), Array.from(RECOVERABLE_STATUSES)],
+    );
+
+    const items = [];
+    const unresolved = [];
+    for (const row of rows) {
+      try {
+        const distributorAddress = evmRewardDistributor(row, chainId);
+        const batchId = evmRewardBatchId(row);
+        if (!distributorAddress || !batchId) {
+          unresolved.push({ rewardLedgerId: String(row.id), reason: "claim_metadata_missing", code: "EVM_CLAIM_METADATA_MISSING" });
+          continue;
+        }
+        const verification = await discoverEvmRewardClaim({
+          chainId,
+          walletAddress,
+          distributorAddress,
+          batchId,
+          amount: String(row.amount || "0"),
+          minConfirmations: Number(process.env[`REWARD_CLAIM_MIN_CONFIRMATIONS_${chainId}`] || process.env.REWARD_CLAIM_MIN_CONFIRMATIONS || 1),
+        });
+        if (!verification) {
+          unresolved.push({ rewardLedgerId: String(row.id), reason: "not_claimed_onchain", code: "EVM_CLAIM_NOT_FOUND" });
+          continue;
+        }
+        items.push(await finalizeRecoveredClaim(row, verification));
+      } catch (error) {
+        console.warn(`[api/rewards] EVM reconciliation deferred for ${row.id}:`, error?.code || error?.message || error);
+        unresolved.push({
+          rewardLedgerId: String(row.id),
+          reason: "verification_pending",
+          code: error?.code || "EVM_CLAIM_RECONCILE_PENDING",
+        });
+      }
+    }
+
+    return json(res, 200, {
+      walletAddress,
+      chainId,
+      requestedCount: rewardLedgerIds.length,
+      checkedCount: rows.length,
+      reconciledCount: items.filter((item) => item.status === "reconciled").length,
+      items,
+      unresolved,
+      reconciledAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("[api/rewards:reconcile-evm]", error);
+    if (error?.code === "42P01" || error?.code === "42703") {
+      return json(res, 503, { error: "Reward reconciliation schema is not installed", code: "REWARD_SCHEMA_MISSING" });
+    }
+    return json(res, 500, { error: "Server error", code: error?.code || "REWARD_RECONCILE_FAILED" });
+  }
+}
+
+async function reconcileSolanaClaims(req, res, body) {
+  if (!pool) return json(res, 500, { error: "Server misconfigured: DATABASE_URL missing" });
 
   const chainId = Number(body?.chainId);
   const walletAddress = normalizeWalletFlexible(body?.walletAddress || body?.address);
@@ -251,10 +393,16 @@ async function reconcileSolanaClaims(req, res) {
 
 // GET /api/rewards?chainId=56&address=0x...
 // Returns *unclaimed* League prizes for the recipient.
-// POST /api/rewards with action=reconcile-solana-claims is a proof-only state repair:
-// it cannot move funds and only advances stale DB state after strict on-chain verification.
+// POST /api/rewards reconciliation actions are proof-only state repair:
+// they cannot move funds and only advance stale DB state after strict on-chain verification.
 export default async function handler(req, res) {
-  if (req.method === "POST") return reconcileSolanaClaims(req, res);
+  if (req.method === "POST") {
+    const body = await readJson(req);
+    const action = String(body?.action || "");
+    if (action === "reconcile-solana-claims") return reconcileSolanaClaims(req, res, body);
+    if (action === "reconcile-evm-claims") return reconcileEvmClaims(req, res, body);
+    return json(res, 400, { error: "Unsupported rewards action" });
+  }
   if (req.method !== "GET") return badMethod(res);
 
   try {
@@ -283,15 +431,15 @@ export default async function handler(req, res) {
           w.payload,
           w.computed_at AS "computedAt"
         FROM league_epoch_winners w
-        LEFT JOIN league_epoch_claims c
-          ON c.chain_id = w.chain_id
-         AND c.period = w.period
-         AND c.epoch_start = w.epoch_start
-         AND c.category = w.category
-         AND c.rank = w.rank
+        LEFT JOIN league_epoch_payouts p
+          ON p.chain_id = w.chain_id
+         AND p.period = w.period
+         AND p.epoch_start = w.epoch_start
+         AND p.category = w.category
+         AND p.rank = w.rank
         WHERE w.chain_id = $1
           AND ${recipientClause}
-          AND c.claimed_at IS NULL
+          AND p.tx_hash IS NULL
           AND (w.expires_at IS NULL OR w.expires_at > NOW())
         ORDER BY w.epoch_start DESC, w.period DESC, w.category ASC, w.rank ASC`,
       [chainId, address]
