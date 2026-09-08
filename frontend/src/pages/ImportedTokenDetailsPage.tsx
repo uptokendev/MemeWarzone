@@ -21,6 +21,20 @@ export default function ImportedTokenDetailsPage({ item }: { item: ProjectImport
   const isSolana = item.chainId === SOLANA_CHAIN_ID;
   const chainLabel = isSolana ? "Solana" : "BNB";
   const identityLabel = isSolana ? "Mint" : "Contract";
+  const imageUrl = String(item.imageUrl || "").trim();
+
+  if (!imageUrl) {
+    return (
+      <ContentContainer className="space-y-5 px-1 pb-12 pt-2" data-project-registration-incomplete="true">
+        <section className="mwz-hud-frame border-amber-400/30 bg-amber-500/[0.04] p-5">
+          <h1 className="font-retro text-lg text-amber-100">PROJECT REGISTRATION INCOMPLETE</h1>
+          <p className="mt-3 text-sm text-foreground">A project image is required before this registration becomes public.</p>
+          <p className="mt-2 text-sm text-muted-foreground">No trading, Arena actions or claims are available from this incomplete registration.</p>
+        </section>
+      </ContentContainer>
+    );
+  }
+
   const ownerVerified = item.ownershipStatus === "ownership_verified";
   const websiteHref = safeExternalUrl(item.website);
   const xHref = safeExternalUrl(item.xUrl);
@@ -54,18 +68,12 @@ export default function ImportedTokenDetailsPage({ item }: { item: ProjectImport
       <section className="mwz-hud-frame p-5">
         <div className="flex flex-col gap-5 md:flex-row md:items-start">
           <div className="h-28 w-28 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-white/5">
-            {item.imageUrl ? (
-              <img
-                src={item.imageUrl}
-                alt={`${item.name || item.symbol || "Imported project"} logo`}
-                className="h-full w-full object-cover"
-                data-project-image="true"
-              />
-            ) : (
-              <div className="flex h-full w-full items-center justify-center text-3xl font-black text-white/30">
-                {(item.symbol || item.name || "?").slice(0, 2).toUpperCase()}
-              </div>
-            )}
+            <img
+              src={imageUrl}
+              alt={`${item.name || item.symbol || "Imported project"} logo`}
+              className="h-full w-full object-cover"
+              data-project-image="true"
+            />
           </div>
 
           <div className="min-w-0 flex-1">
@@ -137,7 +145,7 @@ export default function ImportedTokenDetailsPage({ item }: { item: ProjectImport
             <p className="mt-2 text-sm text-muted-foreground">
               The full Warzone is opening soon. This page will expand into the full project and trading experience with live project information, market data, chart, trading, Battles, Tournaments and War Leagues.
             </p>
-            <p className="mt-2 text-sm text-muted-foreground">Follow and share this project while the Warzone prepares for deployment.</p>
+            <p className="mt-2 text-sm text-muted-foreground">Share this project while the Warzone prepares for deployment.</p>
           </div>
         </div>
       </section>
