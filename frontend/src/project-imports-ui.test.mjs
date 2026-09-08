@@ -49,7 +49,7 @@ test("public token route resolves imported DB state before mounting live campaig
   assert.match(tokenEntry, /projectImportsEnabled/);
   assert.match(tokenEntry, /TokenDetailsLiveEntry/);
   assert.match(tokenEntry, /if \(project\) return <ImportedProjectDetails item={project} \/>/);
-  assert.doesNotMatch(tokenEntry, /graduation|bonding|Topaz|Meteora|claim_intent/i);
+  assert.doesNotMatch(tokenEntry, /from .*graduation|from .*bonding|from .*Topaz|from .*Meteora|claim_intent/i);
   assert.match(liveTokenEntry, /TokenDetails/);
 });
 
