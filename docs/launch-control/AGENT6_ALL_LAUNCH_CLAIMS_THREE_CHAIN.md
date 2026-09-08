@@ -6,24 +6,26 @@ Integration authority audited: `build/cross-chain-stabilization-rh-base` at `3f4
 
 Feature branch: `agent6/all-launch-claims-three-chain`.
 
-Exact product state certified: `7a050d2c1612c429e29dc499f9c2748a10caeb9b`.
+Exact product state certified: `e9542e341c531e92c7eb01205a7a7f3e83d3580d`.
 
-Certification run: GitHub Actions run `34186969763`, job `101937156176`.
+Certification run: GitHub Actions run `34187665063`, job `101939158960`.
 
 All dedicated gates passed:
 
 - Agent 6 three-chain source matrix: PASS.
 - EVM League verifier tests: PASS.
+- Solana missing/invalid program-configuration runtime tests: PASS.
 - Claim API syntax + import checks: PASS.
 - Frontend production build: PASS.
+- Certified product commit: PASS.
 
-After that green run, only temporary certification/recovery tooling was deleted and this evidence document was updated. No claim product file was changed after the certified product state.
+After that green run, only temporary certification/patch tooling was deleted and this evidence document was updated. No claim product file was changed after the certified product state.
 
-This certification is fail-closed: an absent entitlement, proof, configured contract/program, chain-native settlement lane, or authoritative on-chain confirmation is **NOT CLAIMABLE**. It is never silently mapped to another chain, wallet, currency, vault, or transaction.
+This certification is fail-closed: an absent entitlement, proof, configured contract/program, chain-native settlement lane, or authoritative on-chain confirmation is **NOT CLAIMABLE**. It is never silently mapped to another chain, wallet, currency, vault, program, or transaction.
 
 ## Document authority used
 
-The repository is authoritative for what is actually wired on this branch. Product intent was cross-checked against the project document register, with newer/current chain plans and explicit founder decisions taking precedence over older treasury/economic assumptions.
+The repository is authoritative for what is actually wired on this branch. Product intent was cross-checked against the full MemeWarzone project document register, with newer/current chain plans and explicit founder decisions taking precedence over older treasury/economic assumptions.
 
 Relevant locked principles:
 
@@ -39,14 +41,14 @@ Relevant locked principles:
 Legend:
 
 - **CODE CERTIFIED** — branch contains a chain-native preparation/verification/recovery path and dedicated certification passed.
-- **CONFIG REQUIRED** — code supports the lane, but the production chain-specific contract/RPC/configuration must exist before it is claimable.
+- **CONFIG REQUIRED** — code supports the lane, but the production chain-specific contract/RPC/program configuration must exist before it is claimable.
 - **NOT IMPLEMENTED** — no legitimate native settlement lane exists in this product surface; fail closed.
 
 | Surface | BNB | Solana | Robinhood |
 |---|---|---|---|
-| Generic reward ledger — Airdrop | **CODE CERTIFIED** via RewardDistributor when entitlement/proof is materialized | **CODE CERTIFIED / CONFIG REQUIRED** via rewards program, deterministic batch + receipt, finalized tx verification | **CODE CERTIFIED / CONFIG REQUIRED** via explicit chain-specific RewardDistributor only; native value is ETH |
-| Generic reward ledger — Squad | **CODE CERTIFIED** via RewardDistributor when entitlement/proof is materialized | **CODE CERTIFIED / CONFIG REQUIRED** via `claim_squad`, deterministic batch + receipt, finalized tx verification | **CODE CERTIFIED / CONFIG REQUIRED** via explicit chain-specific RewardDistributor only; ETH |
-| Generic reward ledger — other types (`creator`, `manual`, `future`, etc.) | **CODE CERTIFIED** when a valid RewardDistributor entitlement/proof exists | **NOT IMPLEMENTED** unless an explicit Solana rewards-program instruction is added; returns `solana_unavailable` | **CODE CERTIFIED / CONFIG REQUIRED** only with explicit chain-specific RewardDistributor + entitlement/proof |
+| Generic reward ledger — Airdrop | **CODE CERTIFIED** via RewardDistributor when entitlement/proof is materialized | **CODE CERTIFIED / CONFIG REQUIRED** via rewards program, deterministic batch + receipt, finalized tx verification; missing/invalid program config reports disabled | **CODE CERTIFIED / CONFIG REQUIRED** via explicit chain-specific RewardDistributor only; native value is ETH |
+| Generic reward ledger — Squad | **CODE CERTIFIED** via RewardDistributor when entitlement/proof is materialized | **CODE CERTIFIED / CONFIG REQUIRED** via `claim_squad`, deterministic batch + receipt, finalized tx verification; missing/invalid program config reports disabled | **CODE CERTIFIED / CONFIG REQUIRED** via explicit chain-specific RewardDistributor only; ETH |
+| Generic reward ledger — other types (`creator`, `manual`, `future`, etc.) | **CODE CERTIFIED** when a valid RewardDistributor entitlement/proof exists | **NOT IMPLEMENTED** unless an explicit Solana rewards-program instruction is added; returns unavailable/disabled rather than falling back | **CODE CERTIFIED / CONFIG REQUIRED** only with explicit chain-specific RewardDistributor + entitlement/proof |
 | Recruiter native portal | **CODE CERTIFIED** native BNB portal | **CODE CERTIFIED / CONFIG REQUIRED** native SOL portal + Solana reward lane | **NOT IMPLEMENTED** in recruiter-native UI; no false BNB/ETH substitution |
 | Weekly League / MWL | **CODE CERTIFIED** TreasuryVaultV2 Merkle claim + exact tx/event verification + reconciliation | **CODE CERTIFIED / CONFIG REQUIRED** rewards treasury claim receipt + finalized tx/account/vault-delta verification | **CODE CERTIFIED / CONFIG REQUIRED** TreasuryVaultV2 only with Robinhood-specific vault + RPC; ETH |
 | Monthly League | **CODE CERTIFIED** monthly treasury path | **CODE CERTIFIED / CONFIG REQUIRED** Solana League treasury path; Profile no longer routes monthly Solana into EVM treasury | **CODE CERTIFIED / CONFIG REQUIRED** only with chain-specific EVM League vault/RPC |
@@ -80,6 +82,28 @@ Claim recording/reconciliation now relies on chain evidence:
 - Solana reward lanes: expected program accounts, deterministic receipt/batch, finalized transaction and exact vault balance movement.
 - Solana League: expected program/config/vault/epoch/claim-receipt accounts, finalized transaction and exact vault delta.
 
+### 4. Verified EVM League recovery could be blocked by a null-hash payout placeholder
+
+The existing admin/multisig payout recorder can create a `league_epoch_payouts` slot before a transaction hash is attached. Recovery previously used `ON CONFLICT DO NOTHING`, so even a strictly verified on-chain claim could fail to populate that empty slot.
+
+Fixed narrowly:
+
+- Reconciliation may update only a conflicting row whose existing `tx_hash IS NULL`.
+- A non-null recorded payout is never overwritten.
+- The admin recorder validates supplied EVM transaction hashes and may attach a real hash only to an empty placeholder.
+- A concurrent non-null record causes recovery to fail closed with `LEAGUE_PAYOUT_ALREADY_RECORDED`.
+
+### 5. Missing Solana rewards-program config could advertise enabled then throw
+
+The generic Solana reward config previously reported enabled even if the rewards treasury program ID was absent, while the builder could throw an internal error.
+
+Fixed so:
+
+- Missing or malformed `SOLANA_REWARDS_TREASURY_PROGRAM_ID` resolves to a structured disabled state.
+- Airdrop and Squad builders return `MISSING_SOLANA_REWARDS_PROGRAM_ID` instead of throwing.
+- `/reward-claim-config` reports the queried chain disabled when required program configuration is absent.
+- Runtime unit tests prove both Airdrop and Squad fail closed without a configured program.
+
 ## Recovery and exactly-once boundaries
 
 - Chain binding: every verifier/reconciliation path binds the entitlement chain. Robinhood cannot inherit a generic BNB contract or vault fallback.
@@ -89,6 +113,7 @@ Claim recording/reconciliation now relies on chain evidence:
 - Confirmation: Solana requires finalized evidence in these recovery verifiers; EVM requires a successful receipt and configured confirmation depth.
 - Lost HTTP response/reload: stale `claim_pending`/failed rows can be reconciled from authoritative chain evidence rather than paid twice.
 - Concurrency: database row/advisory locks serialize record/reconciliation, while on-chain claim receipts/leaves are the payment-level exactly-once boundary.
+- Placeholder safety: a null-hash League payout slot can be completed only from validated evidence; a non-null payout remains immutable through recovery.
 - Failed/unconfirmed transactions never advance the claim to authoritative `claimed` state.
 - Transaction reuse across a different entitlement is rejected.
 
@@ -101,12 +126,13 @@ Before enabling any `CONFIG REQUIRED` cell in production, Launch Control must in
 In particular:
 
 - Solana Airdrop/Squad/League code exists here, but production activation must still respect the revised Solana mainnet plan's program/deployment/reconciliation gates.
+- Missing or malformed generic Solana rewards-program configuration now visibly disables that claim lane instead of returning a generic server error.
 - Robinhood EVM claim support requires explicit Robinhood chain-specific addresses/RPC. Missing values fail closed; BNB defaults are not accepted.
 - Recruiter native payouts remain BNB + Solana only in the current recruiter UI. Robinhood must not be marketed as supported for that surface.
 - Do not describe all generic Solana reward types as live: only explicitly wired native instructions are claimable.
 
 ## PR hygiene
 
-PR #234 contains only intentional runtime/verifier/recovery/frontend/test/evidence files. Temporary patch runners, recovery scripts and certification workflows were removed after use.
+PR #234 must contain only intentional runtime/verifier/recovery/frontend/test/evidence files. Temporary patch runners, recovery scripts and certification workflows are not part of the deliverable and were removed after the green run.
 
 Do not merge this PR solely because source certification is green. Launch Control should first verify any production environment/deployment claims needed for the cells intended to be enabled at launch.
