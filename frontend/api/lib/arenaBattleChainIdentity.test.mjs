@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   battleBelongsToChain,
+  battleIdFromPath,
   chainIdFromMutation,
   filterBattleFeedByChain,
   loadBattleOnChain,
@@ -49,6 +50,14 @@ test("Battle lookup binds id plus chain, so identical ids cannot cross chains", 
   assert.equal((await loadBattleOnChain(query, "same-battle-id", BNB)).chain_id, BNB);
   assert.equal(await loadBattleOnChain(query, "same-battle-id", SOLANA), null);
   assert.match(observed.sql, /where id = \$1 and chain_id = \$2/i);
+});
+
+test("ACCEPT COUNTER DECLINE cancel and LIVE transition all resolve the same guarded Battle identity", () => {
+  for (const suffix of ["", "/accept", "/counter", "/decline", "/cancel-open", "/transition"]) {
+    assert.equal(battleIdFromPath(`/arena/battles/same-battle-id${suffix}`), "same-battle-id");
+  }
+  assert.equal(battleIdFromPath("/arena/battles/challenge"), "");
+  assert.equal(battleIdFromPath("/arena/battles/open"), "");
 });
 
 test("Battle list/feed is chain isolated while aggregate payload can remain chain-aware", () => {
