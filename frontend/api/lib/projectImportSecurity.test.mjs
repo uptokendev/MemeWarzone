@@ -22,14 +22,9 @@ const TOKEN = "0x1111111111111111111111111111111111111111";
 const OTHER_TOKEN = "0x2222222222222222222222222222222222222222";
 
 function response() {
-  return {
-    statusCode: 200,
-    body: null,
-    headersSent: false,
-    headers: {},
+  return { statusCode: 200, body: null, headersSent: false, headers: {},
     setHeader(name, value) { this.headers[String(name).toLowerCase()] = value; },
-    end(raw) { this.body = raw ? JSON.parse(String(raw)) : null; this.headersSent = true; },
-  };
+    end(raw) { this.body = raw ? JSON.parse(String(raw)) : null; this.headersSent = true; } };
 }
 
 class NoncePool {
@@ -57,10 +52,7 @@ async function signedAuth({ wallet, pool, action, chainId = CHAIN, token = TOKEN
 
 async function authorize({ pool, wallet, auth, action, chainId = CHAIN, token = TOKEN, body = null, projectId = null, imageDigest = null }) {
   const res = response();
-  const result = await requireProjectImportWalletAuth({
-    res, pool, auth, expectedWallet: wallet.address, chainId, token, action, body, projectId, imageDigest,
-    routeLabel: "project-import-security-test",
-  });
+  const result = await requireProjectImportWalletAuth({ res, pool, auth, expectedWallet: wallet.address, chainId, token, action, body, projectId, imageDigest, routeLabel: "project-import-security-test" });
   return { result, res };
 }
 
@@ -79,19 +71,15 @@ class MemoryStore {
   async insertCanonical(row) {
     const key = `${row.chain_id}:${row.token_address}`;
     assert.equal(this.projects.has(key), false);
-    const project = {
-      id: String(this.nextId++), state_version: 0,
-      arena_status: "locked", arena_eligible: false, campaign_id: null,
-      payout: null, rewards: null, creator_economics: null, graduation_eligible: false,
-      ...row,
-    };
+    const project = { id: String(this.nextId++), arena_status: "locked", arena_eligible: false, campaign_id: null, payout: null, rewards: null, creator_economics: null, graduation_eligible: false, ...row };
     this.projects.set(key, project);
     return project;
   }
-  async persistVerifiedOwner({ project, identity, ownerWallet, expectedOwnershipStatus, expectedStateVersion }) {
+  async persistVerifiedOwner({ project, identity, ownerWallet, expectedOwnershipStatus, expectedOwnerWallet }) {
     const current = this.projects.get(identity.key);
-    if (!current || current.id !== project.id || current.ownership_status !== expectedOwnershipStatus || current.state_version !== expectedStateVersion) return null;
-    const updated = { ...current, owner_wallet: ownerWallet.toLowerCase(), ownership_status: PROJECT_IMPORT_OWNERSHIP.verified, state_version: current.state_version + 1 };
+    const currentOwner = current?.project_owner_wallet ?? null;
+    if (!current || current.id !== project.id || current.ownership_status !== expectedOwnershipStatus || currentOwner !== expectedOwnerWallet) return null;
+    const updated = { ...current, project_owner_wallet: ownerWallet.toLowerCase(), ownership_status: PROJECT_IMPORT_OWNERSHIP.verified };
     this.projects.set(identity.key, updated);
     return updated;
   }
@@ -106,8 +94,7 @@ function png1x1() {
 }
 
 test("create replay and exact intent binding", async () => {
-  const wallet = Wallet.createRandom();
-  const pool = new NoncePool();
+  const wallet = Wallet.createRandom(); const pool = new NoncePool();
   const auth = await signedAuth({ wallet, pool, action: PROJECT_IMPORT_ACTIONS.create });
   assert.ok((await authorize({ pool, wallet, auth, action: PROJECT_IMPORT_ACTIONS.create })).result);
   const replay = await authorize({ pool, wallet, auth, action: PROJECT_IMPORT_ACTIONS.create });
@@ -122,7 +109,7 @@ test("canonical create race gives first writer no owner authority", async () => 
   ]);
   assert.equal(store.projects.size, 1); assert.equal(Number(x.existing) + Number(y.existing), 1);
   const row = [...store.projects.values()][0];
-  assert.equal(row.owner_wallet, null); assert.equal(row.ownership_status, PROJECT_IMPORT_OWNERSHIP.unverified);
+  assert.equal(row.project_owner_wallet, null); assert.equal(row.ownership_status, PROJECT_IMPORT_OWNERSHIP.pending);
   assert.throws(() => assertVerifiedProjectOwner(row, { wallet: row.imported_by_wallet, chainId: CHAIN, token: TOKEN }), /not verified/i);
 });
 
@@ -143,40 +130,30 @@ test("two real-owner claims race to one transition and repeat is idempotent", as
     claimCanonicalProjectOwnership({ store, chainId: CHAIN, token: TOKEN, claimantWallet: real.address, currentOwnerProof: real.address }),
   ]);
   assert.equal(Number(a.claimed) + Number(b.claimed), 1); assert.equal(Number(a.replay) + Number(b.replay), 1);
-  assert.equal([...store.projects.values()][0].state_version, 1);
+  assert.equal([...store.projects.values()][0].project_owner_wallet, real.address.toLowerCase());
 });
 
-test("signed claim replay, stale nonce, wrong chain, altered contract all fail", async () => {
+test("claim replay, stale nonce, wrong chain and altered contract fail closed", async () => {
   const wallet = Wallet.createRandom();
-  {
-    const pool = new NoncePool(); const auth = await signedAuth({ wallet, pool, action: PROJECT_IMPORT_ACTIONS.claim, projectId: "p1" });
-    assert.ok((await authorize({ pool, wallet, auth, action: PROJECT_IMPORT_ACTIONS.claim, projectId: "p1" })).result);
-    const replay = await authorize({ pool, wallet, auth, action: PROJECT_IMPORT_ACTIONS.claim, projectId: "p1" });
-    assert.equal(replay.res.body.code, "NONCE_INVALID");
-  }
-  {
-    const pool = new NoncePool(); const auth = await signedAuth({ wallet, pool, action: PROJECT_IMPORT_ACTIONS.claim, expiresAt: Date.now() - 1 });
-    const stale = await authorize({ pool, wallet, auth, action: PROJECT_IMPORT_ACTIONS.claim }); assert.equal(stale.res.body.code, "NONCE_INVALID");
-  }
-  {
-    const pool = new NoncePool(); const auth = await signedAuth({ wallet, pool, action: PROJECT_IMPORT_ACTIONS.claim, chainId: CHAIN });
-    const wrong = await authorize({ pool, wallet, auth, action: PROJECT_IMPORT_ACTIONS.claim, chainId: OTHER_CHAIN }); assert.equal(wrong.res.body.code, "CHAIN_MISMATCH");
-  }
-  {
-    const pool = new NoncePool(); const auth = await signedAuth({ wallet, pool, action: PROJECT_IMPORT_ACTIONS.claim, token: TOKEN });
-    const altered = await authorize({ pool, wallet, auth, action: PROJECT_IMPORT_ACTIONS.claim, token: OTHER_TOKEN });
-    assert.ok(["MESSAGE_MISMATCH", "INVALID_SIGNATURE"].includes(altered.res.body.code));
-  }
+  let pool = new NoncePool(); let auth = await signedAuth({ wallet, pool, action: PROJECT_IMPORT_ACTIONS.claim, projectId: "p1" });
+  assert.ok((await authorize({ pool, wallet, auth, action: PROJECT_IMPORT_ACTIONS.claim, projectId: "p1" })).result);
+  assert.equal((await authorize({ pool, wallet, auth, action: PROJECT_IMPORT_ACTIONS.claim, projectId: "p1" })).res.body.code, "NONCE_INVALID");
+  pool = new NoncePool(); auth = await signedAuth({ wallet, pool, action: PROJECT_IMPORT_ACTIONS.claim, expiresAt: Date.now() - 1 });
+  assert.equal((await authorize({ pool, wallet, auth, action: PROJECT_IMPORT_ACTIONS.claim })).res.body.code, "NONCE_INVALID");
+  pool = new NoncePool(); auth = await signedAuth({ wallet, pool, action: PROJECT_IMPORT_ACTIONS.claim, chainId: CHAIN });
+  assert.equal((await authorize({ pool, wallet, auth, action: PROJECT_IMPORT_ACTIONS.claim, chainId: OTHER_CHAIN })).res.body.code, "CHAIN_MISMATCH");
+  pool = new NoncePool(); auth = await signedAuth({ wallet, pool, action: PROJECT_IMPORT_ACTIONS.claim, token: TOKEN });
+  assert.ok(["MESSAGE_MISMATCH", "INVALID_SIGNATURE"].includes((await authorize({ pool, wallet, auth, action: PROJECT_IMPORT_ACTIONS.claim, token: OTHER_TOKEN })).res.body.code));
 });
 
-test("metadata auth binds body and blocks identity Arena and financial fields", async () => {
+test("metadata auth binds exact body and protects identity Arena and finance", async () => {
   const owner = Wallet.createRandom(); const pool = new NoncePool();
-  const body = { description: "alpha", website: "https://example.test" };
+  const body = { description: "alpha", website: "https://example.test", x_url: "https://x.com/test", telegram_url: "https://t.me/test" };
   const auth = await signedAuth({ wallet: owner, pool, action: PROJECT_IMPORT_ACTIONS.metadata, projectId: "p1", body });
   const altered = await authorize({ pool, wallet: owner, auth, action: PROJECT_IMPORT_ACTIONS.metadata, projectId: "p1", body: { ...body, description: "bravo" } });
   assert.equal(altered.res.body.code, "MESSAGE_MISMATCH");
   assert.deepEqual(sanitizeProjectImportMetadataPatch(body), body);
-  for (const key of ["tokenAddress","chainId","arenaStatus","arenaEligible","campaignId","payout","rewards","creatorEconomics","graduationEligible","imageUrl"]) {
+  for (const key of ["tokenAddress","chainId","arenaStatus","arenaEligible","campaignId","payout","rewards","creatorEconomics","graduationEligible","image_url","name","symbol","decimals"]) {
     assert.throws(() => sanitizeProjectImportMetadataPatch({ [key]: "x" }), /not editable/i);
   }
   const baseline = { chain_id: CHAIN, token_address: TOKEN, arena_status: "locked", arena_eligible: false, campaign_id: null, payout: null, rewards: null, creator_economics: null, graduation_eligible: false };
@@ -184,9 +161,9 @@ test("metadata auth binds body and blocks identity Arena and financial fields", 
   assert.throws(() => assertNoImportSideEffectMutation(baseline, { ...baseline, arena_eligible: true }), /protected field/i);
 });
 
-test("metadata and image require ownership_verified exact wallet; suspended/pending/manual fail", async () => {
+test("metadata and image require verified project owner; pending/manual/suspended/forged fail", async () => {
   const owner = Wallet.createRandom(); const other = Wallet.createRandom();
-  const base = { chain_id: CHAIN, token_address: TOKEN, owner_wallet: owner.address.toLowerCase() };
+  const base = { chain_id: CHAIN, token_address: TOKEN, project_owner_wallet: owner.address.toLowerCase() };
   const verified = { ...base, ownership_status: PROJECT_IMPORT_OWNERSHIP.verified };
   assertVerifiedProjectOwner(verified, { wallet: owner.address, chainId: CHAIN, token: TOKEN });
   assert.throws(() => assertVerifiedProjectOwner(verified, { wallet: other.address, chainId: CHAIN, token: TOKEN }), /not the verified/i);
@@ -199,15 +176,14 @@ test("metadata and image require ownership_verified exact wallet; suspended/pend
   const digest = sha256Hex(image.toString("base64")); const pool = new NoncePool();
   const auth = await signedAuth({ wallet: owner, pool, action: PROJECT_IMPORT_ACTIONS.image, projectId: "p1", imageDigest: digest });
   assert.ok((await authorize({ pool, wallet: owner, auth, action: PROJECT_IMPORT_ACTIONS.image, projectId: "p1", imageDigest: digest })).result);
-  const replay = await authorize({ pool, wallet: owner, auth, action: PROJECT_IMPORT_ACTIONS.image, projectId: "p1", imageDigest: digest });
-  assert.equal(replay.res.body.code, "NONCE_INVALID");
+  assert.equal((await authorize({ pool, wallet: owner, auth, action: PROJECT_IMPORT_ACTIONS.image, projectId: "p1", imageDigest: digest })).res.body.code, "NONCE_INVALID");
 });
 
 test("suspended owner cannot reclaim or edit", async () => {
   const store = new MemoryStore(); const owner = Wallet.createRandom();
   await createCanonicalProjectImport({ store, chainId: CHAIN, token: TOKEN, importerWallet: owner.address });
   const row = [...store.projects.values()][0];
-  store.projects.set(`${CHAIN}:${TOKEN}`, { ...row, owner_wallet: owner.address.toLowerCase(), ownership_status: PROJECT_IMPORT_OWNERSHIP.suspended, state_version: 3 });
+  store.projects.set(`${CHAIN}:${TOKEN}`, { ...row, project_owner_wallet: owner.address.toLowerCase(), ownership_status: PROJECT_IMPORT_OWNERSHIP.suspended });
   await assert.rejects(claimCanonicalProjectOwnership({ store, chainId: CHAIN, token: TOKEN, claimantWallet: owner.address, currentOwnerProof: owner.address }), /suspended/i);
   assert.throws(() => assertVerifiedProjectOwner([...store.projects.values()][0], { wallet: owner.address, chainId: CHAIN, token: TOKEN }), /not verified/i);
 });
