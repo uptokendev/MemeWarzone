@@ -134,7 +134,8 @@ test("verified owner metadata patch works and non-owner patch fails", async () =
 });
 
 test("manual claim requires strict signature and does not alter Arena status", async () => {
-  await pool.query(`UPDATE public.arena_token_imports SET project_owner_wallet=NULL, ownership_status='ownership_pending' WHERE chain_id=56`);
+  await pool.query(`ALTER TABLE public.arena_token_imports ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'scanning'`);
+  await pool.query(`UPDATE public.arena_token_imports SET project_owner_wallet=NULL, ownership_status='ownership_pending', status='needs_review' WHERE chain_id=56`);
   const wallet = ethers.Wallet.createRandom();
   const address = wallet.address.toLowerCase();
   const token = "0x0000000000000000000000000000000000000011";
