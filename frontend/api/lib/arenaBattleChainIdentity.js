@@ -1,9 +1,10 @@
 import { getQuery, readJson } from "../../server/http.js";
-import { requireChainId } from "./arenaSqlIdentity.js";
 
 export function optionalChainId(value) {
   if (value == null || String(value).trim() === "") return null;
-  return requireChainId(value);
+  const chainId = Number(value);
+  if (!Number.isSafeInteger(chainId) || chainId <= 0) throw new Error("Invalid Arena chain id");
+  return chainId;
 }
 
 export function chainIdFromQuery(req) {
