@@ -9,6 +9,7 @@ on:
       - "frontend/api/lib/robinhoodStockGraduationRegistry.js"
       - "frontend/api/server.mjs"
       - "database/robinhood_stock_graduation_registry.sql"
+      - "frontend/supabase/migrations/20260908043000_robinhood_full_quote_runtime_certification.sql"
       - ".github/workflows/robinhood-registry-import-regression.yml"
   workflow_dispatch:
 
@@ -47,8 +48,10 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install frontend dependencies
         run: npm ci --prefix frontend --no-audit --no-fund
-      - name: Apply Robinhood registry schema
-        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/robinhood_stock_graduation_registry.sql
+      - name: Apply Robinhood registry schema and runtime certification migration
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/robinhood_stock_graduation_registry.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/supabase/migrations/20260908043000_robinhood_full_quote_runtime_certification.sql
       - name: Production syntax and import checks
         run: |
           node --check frontend/api/dev-fix/drafts.js
