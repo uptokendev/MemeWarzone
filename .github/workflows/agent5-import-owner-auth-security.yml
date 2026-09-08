@@ -1,0 +1,31 @@
+name: Agent 5 Import Ownership Security
+
+on:
+  pull_request:
+    paths:
+      - 'frontend/api/lib/projectImportSecurity.js'
+      - 'frontend/api/lib/projectImportOwnershipCoordinator.js'
+      - 'frontend/api/lib/projectImportSecurity.test.mjs'
+      - 'frontend/api/lib/imageFileValidation.js'
+      - '.github/workflows/agent5-import-owner-auth-security.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  import-owner-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Install frontend API dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund --prefix frontend
+      - name: Run focused project import security harness
+        env:
+          NODE_ENV: production
+          API_AUTH_ENFORCE_USER_WRITES: '1'
+        run: node --test frontend/api/lib/projectImportSecurity.test.mjs
