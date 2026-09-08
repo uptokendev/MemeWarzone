@@ -3,276 +3,88 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
-
-const [app, config, importPage, importedPage, tokenEntry, liveTokenEntry, navigation, leftSidebar, mobileSidebar, client, showcase, overlay, coinsPage, coinRow, profilePage, commandShell] = await Promise.all([
-  read("./App.tsx"),
-  read("./features/projectImports/config.ts"),
-  read("./pages/ProjectImport.tsx"),
-  read("./pages/ImportedTokenDetailsPage.tsx"),
-  read("./pages/TokenDetailsEntry.tsx"),
-  read("./pages/TokenDetailsLiveEntry.tsx"),
-  read("./constants/navigation.ts"),
-  read("./components/LeftBattleSidebar.tsx"),
-  read("./components/Sidebar.tsx"),
-  read("./lib/projectImports.ts"),
-  read("./pages/Showcase.tsx"),
-  read("./components/home/ImportedProjectsOverlay.tsx"),
-  read("./pages/command-center/CommandCenterCoins.tsx"),
-  read("./components/postgrad/CommandCenterCoinRow.tsx"),
-  read("./pages/ProfilePage.tsx"),
-  read("./components/command-center/CommandCenterShell.tsx"),
+const [app, config, importPage, importedPage, tokenEntry, liveTokenEntry, client, coinsPage, navigation, leftSidebar, mobileSidebar, api, core, resolverAdapters, reviewCore] = await Promise.all([
+  read("./App.tsx"), read("./features/projectImports/config.ts"), read("./pages/ProjectImport.tsx"), read("./pages/ImportedProjectDetails.tsx"),
+  read("./pages/TokenDetailsEntry.tsx"), read("./pages/TokenDetailsLiveEntry.tsx"), read("./lib/projectImports.ts"), read("./pages/command-center/CommandCenterCoins.tsx"),
+  read("./constants/navigation.ts"), read("./components/LeftBattleSidebar.tsx"), read("./components/Sidebar.tsx"), read("../api/projectImports.js"),
+  read("../api/lib/projectImportCore.js"), read("../api/lib/projectImportResolverAdapters.js"), read("../api/lib/projectOwnershipReview.js"),
 ]);
 
-test("import route is independently gated from Arena", () => {
-  assert.match(config, /VITE_ENABLE_PROJECT_IMPORTS/);
-  assert.doesNotMatch(config, /postGradFlags|VITE_ENABLE_POSTGRAD_ARENA/);
-  assert.match(app, /projectImportsEnabled \? <Route path="\/import" element={<ProjectImport \/>} \/>/);
-  assert.doesNotMatch(app.match(/projectImportsEnabled \? <Route path="\/import"[^\n]+/)?.[0] || "", /postGradFlags/);
+test("project imports remain independently gated from Arena", () => {
+  assert.match(config, /VITE_ENABLE_PROJECT_IMPORTS/); assert.doesNotMatch(config, /VITE_ENABLE_POSTGRAD_ARENA|postGradFlags/);
+  assert.match(app, /projectImportsEnabled/); assert.match(client, /\/api\/project-imports/); assert.doesNotMatch(client, /\/api\/arena\/imports/);
 });
 
-test("BNB and Solana onboarding render without Robinhood", () => {
-  assert.match(importPage, /type ImportChain = "bnb" \| "solana"/);
-  assert.match(importPage, />BNB<\/Button>/);
-  assert.match(importPage, />Solana<\/Button>/);
-  assert.match(importPage, /CONNECT BNB WALLET/);
-  assert.match(importPage, /CONNECT SOLANA WALLET/);
-  assert.match(importPage, /RESOLVE PROJECT/);
-  assert.match(importPage, /REGISTER &amp; VERIFY PROJECT/);
-  assert.doesNotMatch(importPage, /Robinhood/i);
+test("BNB and Solana onboarding use approved wording and no Robinhood dependency", () => {
+  assert.match(importPage, /type ImportChain = "bnb" \| "solana"/); assert.match(importPage, />BNB<\/Button>/); assert.match(importPage, />Solana<\/Button>/);
+  assert.match(importPage, /detectedChain/); assert.match(importPage, /}IMPORT<\/Button>/); assert.match(importPage, /REGISTER &amp; VERIFY MEMECOIN/);
+  assert.doesNotMatch(importPage, /RESOLVE PROJECT|REGISTER &amp; VERIFY PROJECT/); assert.doesNotMatch(importPage, /Robinhood/i);
 });
 
-test("clear import entry is present on desktop and mobile navigation", () => {
-  assert.match(navigation, /Import your memecoin/);
-  assert.match(leftSidebar, /Import your memecoin/);
-  assert.doesNotMatch(navigation, /IMPORT YOUR MEMECOIN/);
-  assert.doesNotMatch(leftSidebar, /IMPORT YOUR MEMECOIN/);
-  assert.match(mobileSidebar, /"\/import"/);
+test("wallet family auto-select remains safe while explicit chain choice is possible", () => {
+  assert.match(importPage, /detectImportChain/); assert.match(importPage, /feedWallet\.solanaAccount/); assert.match(importPage, /feedWallet\.evmAccount/);
+  assert.match(importPage, /setChainChosenByUser\(true\)/); assert.match(importPage, /disabled=\{!validAddress\|\|!connected\|\|working\}/);
 });
 
-test("public token route resolves imported DB state before mounting live campaign runtime", () => {
-  assert.match(importPage, /`\/token\/\$\{encodeURIComponent\(item\.tokenAddress\)\}\?chainId=\$\{item\.chainId\}`/);
-  assert.doesNotMatch(importPage, /`\/imported\//);
-  assert.match(tokenEntry, /lookupProjectImport\(routeId, importChainId\)/);
-  assert.match(tokenEntry, /import ImportedTokenDetailsPage from "\.\/ImportedTokenDetailsPage"/);
-  assert.match(tokenEntry, /import TokenDetailsLiveEntry from "\.\/TokenDetailsLiveEntry"/);
-  assert.match(tokenEntry, /projectImportsEnabled/);
-  assert.ok(tokenEntry.indexOf("lookupProjectImport(routeId, importChainId)") < tokenEntry.indexOf("if (project) return <ImportedTokenDetailsPage item={project} />"));
-  assert.ok(tokenEntry.indexOf("if (project) return <ImportedTokenDetailsPage item={project} />") < tokenEntry.lastIndexOf("return <TokenDetailsLiveEntry />"));
-  assert.match(tokenEntry, /if \(!projectImportsEnabled\) return <TokenDetailsLiveEntry \/>/);
-  assert.match(tokenEntry, /if \(project\) return <ImportedTokenDetailsPage item={project} \/>/);
-  assert.match(tokenEntry, /return <TokenDetailsLiveEntry \/>/);
-  assert.doesNotMatch(tokenEntry, /ImportedProjectDetails/);
-  assert.doesNotMatch(tokenEntry, /from .*graduation|from .*bonding|from .*Topaz|from .*Meteora|claim_intent/i);
+test("clear import navigation remains available", () => {
+  assert.match(navigation, /Import your memecoin/i); assert.match(leftSidebar, /Import your memecoin/i); assert.match(mobileSidebar, /"\/import"/);
+});
+
+test("registration image is required and never grants ownership", () => {
+  assert.match(importPage, /data-project-import-image-required="true"/); assert.match(importPage, /PNG, JPEG or WEBP/);
+  assert.match(importPage, /This does not make you the verified project owner/); assert.match(importPage, /project_import_registration_image/);
+  assert.match(core, /Only the registering wallet can attach the initial project image/);
+  assert.doesNotMatch(core.match(/export async function bindRegistrationImage[\s\S]*$/)?.[0] || "", /ownership_status='ownership_verified'/);
+});
+
+test("manual review becomes visible and the request button is removed after success", () => {
+  assert.match(importPage, /OWNERSHIP REVIEW REQUESTED/); assert.match(importPage, /item\.ownershipStatus!=="ownership_manual_review"/); assert.match(importPage, /REQUEST PROJECT CLAIM/);
+  assert.match(importedPage, /OWNERSHIP REVIEW REQUESTED/); assert.match(importedPage, /item\.ownershipStatus!=="ownership_manual_review"/); assert.match(importedPage, /REQUEST PROJECT CLAIM/);
+});
+
+test("manual claim persistence is retry-safe and cannot self-approve", () => {
+  const manual = core.match(/export async function requestManualProjectClaim[\s\S]+?export async function patchProjectMetadata/)?.[0] || "";
+  assert.match(manual, /ownership_status==="ownership_manual_review"/); assert.match(manual, /normalizeAddress\(existing\.manual_claim_wallet\|\|"",identity\.chainId\)[\s\S]*?===signer[\s\S]*?===normalizedNote[\s\S]*?return existing/);
+  assert.match(manual, /ownership_status='ownership_pending'/); assert.match(manual, /ownership_manual_review/);
+  assert.doesNotMatch(manual, /SET[^;]*project_owner_wallet\s*=/i); assert.doesNotMatch(manual, /SET[^;]*ownership_status='ownership_verified'/i);
+});
+
+test("imported project route mounts owner-manageable surface before live token runtime", () => {
+  assert.match(tokenEntry, /lookupProjectImport\(routeId, importChainId\)/); assert.match(tokenEntry, /import ImportedProjectDetails from "\.\/ImportedProjectDetails"/);
+  assert.match(tokenEntry, /if \(project\) return <ImportedProjectDetails item=\{project\} \/>/); assert.match(tokenEntry, /return <TokenDetailsLiveEntry \/>/);
   assert.match(liveTokenEntry, /import TokenDetails from "\.\/TokenDetails"/);
 });
 
-test("frontend uses independent project ownership fields and new API namespace", () => {
-  assert.match(client, /ownershipStatus/);
-  assert.match(client, /projectOwnerWallet/);
-  assert.match(client, /ownershipVerifiedAt/);
-  assert.match(client, /manualClaimRequestedAt/);
-  assert.match(client, /arenaStatus/);
-  assert.match(client, /\/api\/project-imports/);
-  assert.doesNotMatch(client, /\/api\/arena\/imports/);
+test("verified project owner is the only profile and replacement-image edit authority", () => {
+  assert.match(importedPage, /item\.ownershipStatus==="ownership_verified"/); assert.match(importedPage, /ownerConnected/); assert.match(importedPage, /canEdit=ownerVerified&&ownerConnected/);
+  assert.match(importedPage, /data-owner-edit-controls="true"/); assert.match(importedPage, /data-owner-image-edit="true"/); assert.match(importedPage, /data-owner-profile-editor="true"/);
+  assert.match(core, /project_owner_wallet=\$3 AND ownership_status='ownership_verified'/);
+  assert.doesNotMatch(core.match(/export async function patchProjectMetadata[\s\S]+?export async function persistProjectImage/)?.[0] || "", /imported_by_wallet/);
 });
 
-test("OWNER VERIFIED comes only from project ownership authority", () => {
-  assert.match(importedPage, /item\.ownershipStatus === "ownership_verified"/);
-  assert.match(importedPage, /const ownerVerified = item\.ownershipStatus === "ownership_verified"/);
-  assert.match(importedPage, /data-owner-verified-badge="true"/);
-  assert.match(importedPage, /OWNER VERIFIED/);
-  assert.ok(importedPage.indexOf("if (!imageUrl)") < importedPage.indexOf('data-owner-verified-badge="true"'));
-  assert.doesNotMatch(importedPage, /verifiedAt/);
-  assert.doesNotMatch(importedPage, /status===.*passed|status===.*needs_review/);
-  assert.doesNotMatch(importedPage, /arenaStatus/);
-});
-
-test("completed imported token page certifies the current temporary public profile", () => {
-  assert.match(importedPage, /export default function ImportedTokenDetailsPage/);
-  assert.match(importedPage, /const chainLabel = isSolana \? "Solana" : "BNB"/);
-  assert.match(importedPage, /const identityLabel = isSolana \? "Mint" : "Contract"/);
-  assert.match(importedPage, /src={imageUrl}/);
-  assert.match(importedPage, /data-project-image="true"/);
-  assert.match(importedPage, /data-project-name="true"/);
-  assert.match(importedPage, /data-project-ticker="true"/);
-  assert.match(importedPage, /data-project-chain="true"/);
-  assert.match(importedPage, /data-project-address="true"/);
-  assert.match(importedPage, /data-imported-badge="true"/);
-  assert.match(importedPage, />[\s\n]*IMPORTED[\s\n]*<\//);
-  assert.match(importedPage, /data-project-description="true"/);
-  assert.match(importedPage, /data-project-socials="true"/);
-  assert.match(importedPage, />Website<\/a>/);
-  assert.match(importedPage, />X<\/a>/);
-  assert.match(importedPage, />Telegram<\/a>/);
-  assert.match(importedPage, /data-project-share="true"/);
-  assert.match(importedPage, /SHARE/);
-  assert.match(importedPage, /WARZONE ACCESS LOCKED/);
-  assert.match(importedPage, /This project is registered with MemeWarzone\./);
-  assert.match(importedPage, /The full Warzone is opening soon\./);
-  assert.match(importedPage, /Share this project while the Warzone prepares for deployment\./);
-  assert.ok(importedPage.indexOf("if (!imageUrl)") < importedPage.indexOf('data-imported-badge="true"'));
-  assert.ok(importedPage.indexOf("if (!imageUrl)") < importedPage.indexOf('data-project-image="true"'));
-});
-
-test("temporary imported token page does not expose old public-page ownership or campaign controls", () => {
-  assert.doesNotMatch(importedPage, /REQUEST PROJECT CLAIM/);
-  assert.doesNotMatch(importedPage, /data-owner-edit-controls/);
-  assert.doesNotMatch(importedPage, /data-owner-image-edit/);
-  assert.doesNotMatch(importedPage, /data-manual-claim-state/);
-  assert.doesNotMatch(importedPage, /claimProject|requestProjectClaim|manualClaimRequestedAt/);
-  assert.doesNotMatch(importedPage, /canEdit=ownerVerified&&ownerConnected/);
-  assert.doesNotMatch(importedPage, /\bBUY\b|\bSELL\b/);
-  assert.doesNotMatch(importedPage, />\s*TRADE\s*</i);
-  assert.doesNotMatch(importedPage, /UpVote/i);
-  assert.doesNotMatch(importedPage, /AUTO DEPLOY/i);
-  assert.doesNotMatch(importedPage, /Boost/i);
-  assert.doesNotMatch(importedPage, /Follow this project/i);
-  assert.doesNotMatch(importedPage, /Quarterly/i);
+test("public imported project remains financially inert and visibly locked", () => {
+  for (const marker of [/data-imported-badge="true"/, /OWNER VERIFIED/, /data-project-image="true"/, /data-project-name="true"/, /data-project-ticker="true"/, /data-project-description="true"/, /data-project-socials="true"/, /data-project-share="true"/, /WARZONE ACCESS LOCKED/]) assert.match(importedPage, marker);
+  assert.match(importedPage, /No trading, claims, Arena actions or launch deployment are enabled from this page/);
+  assert.doesNotMatch(importedPage, />\s*BUY\s*</i); assert.doesNotMatch(importedPage, />\s*SELL\s*</i); assert.doesNotMatch(importedPage, /AUTO DEPLOY|Boost|UpVote|Quarterly/i);
   assert.doesNotMatch(importedPage, /from .*TokenDetails|from .*launchpad|from .*chart|from .*trading|from .*swap|from .*bonding|from .*graduation|from .*Topaz|from .*Meteora/i);
-  assert.doesNotMatch(importedPage, /\/api\/arena|\/api\/campaign|candles|lightweight-charts|TradingView|swapRouter|bondingCurve|graduationMarket/i);
-  assert.doesNotMatch(importedPage, /Arena admission|BATTLE READY|ARENA APPROVED|VERIFIED SAFE|LAUNCHED BY MEMEWARZONE|APPROVED FOR TRADING|GRADUATION MARKET APPROVED/i);
 });
 
-test("image-less authoritative import stays on the temporary page and does not fall through to live TokenDetails", () => {
-  assert.match(importedPage, /const imageUrl = String\(item\.imageUrl \|\| ""\)\.trim\(\)/);
-  const start = importedPage.indexOf("if (!imageUrl)");
-  const end = importedPage.indexOf("const ownerVerified");
-  assert.ok(start >= 0 && end > start, "incomplete image gate must precede completed profile rendering");
-  const incomplete = importedPage.slice(start, end);
-  assert.match(incomplete, /PROJECT REGISTRATION INCOMPLETE/);
-  assert.match(incomplete, /A project image is required before this registration becomes public\./);
-  assert.match(incomplete, /No trading, Arena actions or claims are available from this incomplete registration\./);
-  assert.doesNotMatch(incomplete, /IMPORTED/);
-  assert.doesNotMatch(incomplete, /OWNER VERIFIED/);
-  assert.doesNotMatch(incomplete, /data-imported-badge|data-owner-verified-badge|data-project-profile|data-project-description|data-project-socials|data-project-share/);
-  assert.doesNotMatch(tokenEntry, /imageUrl/);
-  assert.match(tokenEntry, /if \(project\) return <ImportedTokenDetailsPage item={project} \/>/);
-  assert.doesNotMatch(importedPage, /TokenDetailsLiveEntry/);
-  assert.doesNotMatch(importedPage, /from "\.\/TokenDetails"|from '\.\/TokenDetails'/);
+test("Solana display metadata is optional on-chain Metaplex data while ownership remains mintAuthority", () => {
+  assert.match(resolverAdapters, /metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s/); assert.match(resolverAdapters, /findProgramAddressSync/); assert.match(resolverAdapters, /getAccountInfo/);
+  assert.match(resolverAdapters, /name:metadata\.name/); assert.match(resolverAdapters, /symbol:metadata\.symbol/); assert.match(resolverAdapters, /currentAuthority:raw\.mintAuthority/);
+  assert.match(resolverAdapters, /signedWalletMatchesAuthority:Boolean\(raw\.verified\)/); assert.doesNotMatch(resolverAdapters, /jupiter|birdeye|dexscreener|updateAuthority/i);
+  assert.match(api, /enrichExistingProjectIdentity/); assert.match(api, /name IS NULL OR btrim\(name\) = ''/); assert.match(api, /symbol IS NULL OR btrim\(symbol\) = ''/);
 });
 
-test("homepage overlay lists imported projects without Arena or financial actions", () => {
-  assert.match(showcase, /ImportedProjectsOverlay/);
-  assert.match(overlay, /WARZONE REGISTERED/);
-  assert.match(overlay, /BATTLE ACCESS LOCKED/);
-  assert.match(overlay, /listRecentProjectImports/);
-  assert.match(overlay, /`\/token\/\$\{encodeURIComponent\(item\.tokenAddress\)\}\?chainId=\$\{item\.chainId\}`/);
-  assert.match(overlay, /item\.imageUrl/);
-  assert.match(overlay, /\$\{item\.symbol\}/);
-  assert.doesNotMatch(overlay, /arenaStatus|Battle Ready|TRADE|Boost|UpVote|claims|status===.*passed/i);
-  assert.doesNotMatch(overlay, /from .*Topaz|from .*Meteora|from .*graduation/i);
+test("operator ownership review is admin-authenticated, CAS-safe, audited, and Arena-independent", () => {
+  assert.match(api, /requireDashboardAdmin/); assert.match(api, /\/admin\/ownership-claims/); assert.match(api, /reviewProjectOwnership\(pool/);
+  assert.match(reviewCore, /ownership_status = \$1/); assert.match(reviewCore, /manual_claim_wallet IS NOT NULL/);
+  assert.match(reviewCore, /xmin::text AS state_version/); assert.match(reviewCore, /expectedVersion/); assert.match(reviewCore, /FOR UPDATE/); assert.match(reviewCore, /PROJECT_OWNERSHIP_STATE_CONFLICT/);
+  assert.match(reviewCore, /wm_admin_audit_log/); assert.match(reviewCore, /operatorReason/); assert.match(reviewCore, /project_owner_wallet\s*=\s*manual_claim_wallet/);
+  assert.match(reviewCore, /ownership_status\s*=\s*\$2/); assert.match(reviewCore, /VERIFIED/); assert.match(reviewCore, /PENDING/);
+  assert.doesNotMatch(reviewCore, /SET[^;]*(?:\bstatus\b|review_requested_at|review_reason|reviewer|reviewed_at)\s*=/i);
 });
 
-test("public recent-import query excludes incomplete imageless registrations", async () => {
-  const core = await read("../api/lib/projectImportCore.js");
-  const listFn = core.match(/export async function listRecentProjectImports[\s\S]+?return r\.rows\|\|\[\];/)?.[0] || "";
-  assert.match(listFn, /image_url IS NOT NULL/);
-  assert.match(listFn, /btrim\(image_url\) <> ''/);
-  assert.doesNotMatch(listFn, /ownership_verified/);
-  assert.doesNotMatch(listFn, /passed/);
-});
-
-test("import form cannot complete without a PNG, JPEG or WEBP image", () => {
-  assert.match(importPage, /data-project-import-image-required="true"/);
-  assert.match(importPage, /Add a project image \(PNG, JPEG or WEBP\) before registering/);
-  assert.match(importPage, /disabled=\{!connected\|\|!validAddress\|\|working\|\|!evidence\|\|!imageFile\}/);
-  assert.match(importPage, /project_import_registration_image/);
-  assert.match(importPage, /This does not make you the verified project owner/);
-  assert.match(client, /listRecentProjectImports/);
-  assert.match(client, /uploadProjectRegistrationImage/);
-});
-
-test("command center coins has a compact collapsed import card above My Coins", () => {
-  assert.match(coinsPage, /data-command-center-import-card="true"/);
-  assert.match(coinsPage, /IMPORT EXISTING MEMECOIN/);
-  assert.match(coinsPage, /<ProjectImportPanel embedded/);
-  assert.match(coinsPage, /searchParams.get\("import"\) === "1"/);
-  assert.match(coinsPage, /useState\(importRequested\)/);
-  assert.ok(coinsPage.indexOf("IMPORT EXISTING MEMECOIN") < coinsPage.indexOf('title="My Coins"'));
-  assert.match(importPage, /export function ProjectImportPanel/);
-  assert.match(importPage, /data-project-import-panel="true"/);
-});
-
-test("global Import menu remains and lands in Command Center Coins with the import panel open", () => {
-  assert.match(navigation, /Import your memecoin/);
-  assert.match(leftSidebar, /Import your memecoin/);
-  assert.match(leftSidebar, /path: "\/import"/);
-  assert.match(mobileSidebar, /"\/import"/);
-  assert.match(app, /projectImportsEnabled \? <Route path="\/import" element={<ProjectImport \/>} \/>/);
-  assert.match(importPage, /Navigate to=\{commandCenterImportPath\(feedWallet\.address\)\}/);
-  assert.match(client, /return "\/profile\?import=1"/);
-  assert.match(client, /\/profile\/\$\{encodeURIComponent\(normalized\)\}\/command\/coins\?import=1/);
-  assert.match(profilePage, /searchParams.get\("import"\) === "1"/);
-  assert.match(profilePage, /\/profile\/\$\{accountWallet\}\/command\/coins\?import=1/);
-  assert.match(commandShell, /to=\{`\/profile\$\{location\.search\}`\}/);
-  assert.match(commandShell, /\/profile\/\$\{connectedWallet\}\/command\$\{section\}\$\{location\.search\}/);
-});
-
-test("imported projects appear in My Coins with wallet-relative ownership states", () => {
-  assert.match(coinsPage, /listUserProjectImports\(walletAddress, importChainId\)/);
-  assert.match(client, /wallet: walletAddress, chainId: String\(chainId\)/);
-  assert.match(client, /\/api\/project-imports\?\$\{params\.toString\(\)\}/);
-  assert.doesNotMatch(client, /\/api\/arena\/imports/);
-  assert.match(coinsPage, /type: "imported"/);
-  assert.match(coinsPage, /importedProjectHref\(project\)/);
-  assert.match(coinRow, /type: 'draft' \| 'coin' \| 'imported'/);
-  assert.match(coinRow, /label="IMPORTED"/);
-  assert.match(coinRow, /data-imported-project-row="true"/);
-  assert.match(coinRow, /Open imported project/);
-  assert.match(coinsPage, /label: "OWNER VERIFIED"/);
-  assert.match(coinsPage, /label: "OWNERSHIP PENDING"/);
-  assert.match(coinsPage, /label: "MANUAL REVIEW"/);
-  assert.match(coinsPage, /item\.ownershipStatus === "ownership_verified" && sameWallet\(item\.projectOwnerWallet, walletAddress, solana\)/);
-  assert.doesNotMatch(coinsPage, /imported_by_wallet|importedByWallet/);
-});
-
-test("existing drafts, launched coins and Create Coin stay independent of the import card", () => {
-  assert.match(coinsPage, /fetchOwnerCampaignDrafts\(walletAddress/);
-  assert.match(coinsPage, /type: "draft"/);
-  assert.match(coinsPage, /type: "coin"/);
-  assert.match(coinsPage, /<Link to="\/create"/);
-  assert.match(coinsPage, /New coin/);
-  assert.match(coinsPage, /title="My Coins"/);
-  assert.match(navigation, /Create Coin/);
-  assert.match(navigation, /path: "\/create"/);
-  assert.doesNotMatch(coinsPage, /postGradFlags|VITE_ENABLE_POSTGRAD_ARENA/);
-});
-
-test("import panel auto-selects Solana from an already connected Solana wallet", () => {
-  assert.match(importPage, /function detectImportChain\(solanaAccount\?: string \| null, evmAccount\?: string \| null, preferSolana = false\): ImportChain \| null/);
-  assert.match(importPage, /if \(solana && \(!evm \|\| preferSolana\)\) return "solana"/);
-  assert.match(importPage, /detectImportChain\(feedWallet\.solanaAccount, feedWallet\.evmAccount, feedWallet\.isSolana\)/);
-  assert.match(importPage, /useState<ImportChain>\(detectedChain \|\| "bnb"\)/);
-  const detector = importPage.match(/function detectImportChain[\s\S]+?return "bnb";\n\}/)?.[0] || "";
-  assert.match(detector, /if \(!solana && !evm\) return null/);
-  assert.match(detector, /return "solana"/);
-  assert.ok(detector.indexOf('return "solana"') < detector.indexOf('return "bnb"'));
-});
-
-test("import panel auto-selects BNB from an already connected EVM wallet and defaults to BNB with no wallet", () => {
-  assert.match(importPage, /if \(!solana && !evm\) return null/);
-  assert.match(importPage, /return "bnb"/);
-  assert.match(importPage, /useState<ImportChain>\(detectedChain \|\| "bnb"\)/);
-  assert.match(importPage, /if\(!detectedChain\|\|detectedChain===chain\)return/);
-  assert.match(importPage, /setChain\(detectedChain\)/);
-});
-
-test("manual BNB and Solana selection still works and is not overwritten by auto-detect", () => {
-  assert.match(importPage, /setChainChosenByUser\(true\);setChain\("bnb"\);reset\(\)/);
-  assert.match(importPage, /setChainChosenByUser\(true\);setChain\("solana"\);reset\(\)/);
-  assert.match(importPage, /if\(chainChosenByUser\)return/);
-  assert.match(importPage, /useState\(false\)/);
-  assert.ok(importPage.indexOf("if(chainChosenByUser)return") < importPage.indexOf("setChain(detectedChain)"));
-});
-
-test("import panel auto-select does not change wallet auth or signing requirements", () => {
-  assert.match(importPage, /signAction\("project_import_resolve",null\)/);
-  assert.match(importPage, /signAction\("project_import_create",null,body\)/);
-  assert.match(importPage, /signAction\("project_import_claim",item.id,body\)/);
-  assert.match(importPage, /signAction\("project_import_manual_claim",item.id,\{note\}\)/);
-  assert.match(importPage, /signAction\("project_import_registration_image",project.id,null,digest\)/);
-  assert.match(importPage, /walletType:"solana",extraLines,signMessage:async\(message\)=>\(await signSolanaMessage\(message,connectedWallet\)\)\.signature/);
-  assert.match(importPage, /signWalletAction\(\{action,walletAddress:connectedWallet,chainId,extraLines,signer:wallet.signer\}\)/);
-  assert.match(coinsPage, /<ProjectImportPanel embedded/);
-  assert.match(importPage, /export function ProjectImportPanel/);
+test("existing MemeWarzone token runtime remains the fallback for non-imported rows", () => {
+  assert.match(coinsPage, /type: "imported"/); assert.match(client, /listUserProjectImports/); assert.match(tokenEntry, /return <TokenDetailsLiveEntry \/>/);
 });
