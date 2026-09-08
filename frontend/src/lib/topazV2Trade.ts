@@ -1,8 +1,14 @@
 import { Contract, ethers } from "ethers";
 import { fetchMarketRoute, type MarketRoute } from "@/lib/marketContinuityApi";
 import { isMarketContinuityApiEnabled } from "@/lib/marketContinuityFlags";
+import {
+  assertBnbMarketQuoteIdentity,
+  assertBnbRequiredPools,
+  buildBnbTopazBuyRoute,
+  effectiveBnbQuoteToken,
+  reverseBnbTopazRoute,
+} from "@/lib/bnbTopazQuoteRouting.mjs";
 
-// Production Topaz router used for quotes and swaps.
 const EXECUTION_ROUTER_ABI = [
   "function defaultFactory() view returns (address)",
   "function weth() view returns (address)",
@@ -11,7 +17,6 @@ const EXECUTION_ROUTER_ABI = [
   "function swapExactTokensForETH(uint256 amountIn,uint256 amountOutMin,(address from,address to,bool stable,address factory)[] routes,address to,uint256 deadline) returns (uint256[] amounts)",
 ] as const;
 
-// Campaign.router() is usually TopazRouterAdapter (liquidity-only ABI surface).
 const ROUTER_ADAPTER_ABI = [
   "function topazRouter() view returns (address)",
   "function poolFactory() view returns (address)",
@@ -22,10 +27,34 @@ const FACTORY_ABI = [
   "function getPool(address tokenA,address tokenB,bool stable) view returns (address pool)",
 ] as const;
 
+const FACTORY_QUOTE_ABI = [
+  "function campaignGraduationQuoteToken(address campaign) view returns (address)",
+] as const;
+
 const ERC20_ABI = [
   "function balanceOf(address owner) view returns (uint256)",
   "function allowance(address owner,address spender) view returns (uint256)",
   "function approve(address spender,uint256 amount) returns (bool)",
+] as const;
+
+const CAMPAIGN_ROUTE_ABI = [
+  "function token() view returns (address)",
+  "function router() view returns (address)",
+  "function factory() view returns (address)",
+  "function launched() view returns (bool)",
+  "function graduationQuoteToken() view returns (address)",
+  "function getGraduationState() view returns (address dexPair,uint256 finalCurvePrice,uint256 initialDexPrice,uint256 graduatedLiquidityTokens,uint256 graduatedLiquidityBnb,uint256 graduatedLiquidityLp,uint256 burnedUnsoldTokens,uint256 burnedUnusedLpTokens,uint256 postBurnTotalSupply,uint256 graduationBalance,uint256 graduationOvershoot)",
+] as const;
+
+const POOL_FEE_ABI = [
+  "function fee() view returns (uint256)",
+  "function swapFee() view returns (uint256)",
+  "function stable() view returns (bool)",
+] as const;
+
+const FACTORY_FEE_ABI = [
+  "function getFee(address pool,bool stable) view returns (uint256)",
+  "function getFee(address pool) view returns (uint256)",
 ] as const;
 
 export type TopazRouteLeg = {
@@ -41,6 +70,7 @@ export type TopazResolvedRoute = {
   routerAddress: string;
   factoryAddress: string;
   wrappedNativeAddress: string;
+  quoteTokenAddress: string;
   tokenAddress: string;
   pairAddress: string;
   feeBps: number;
@@ -75,6 +105,12 @@ function sameAddress(a: unknown, b: unknown): boolean {
   }
 }
 
+function isMissingViewSelector(error: any): boolean {
+  const code = String(error?.code || "");
+  const data = error?.data ?? error?.info?.error?.data;
+  return code === "CALL_EXCEPTION" && (data == null || data === "0x");
+}
+
 export function validateSlippageBps(value: number): number {
   const bps = Math.trunc(Number(value));
   if (!Number.isFinite(bps) || bps < 10 || bps > 500) {
@@ -95,29 +131,18 @@ async function assertContract(provider: ethers.Provider, address: string, label:
 }
 
 type ResolvedRouterMeta = {
-  /** Address used for getAmountsOut / swapExact* (production Topaz router). */
   executionRouterAddress: string;
-  /** Address stored on the campaign (often TopazRouterAdapter). */
   campaignRouterAddress: string;
   factoryAddress: string;
   wrappedNativeAddress: string;
 };
 
-/**
- * Resolve factory/WBNB and the execution router from either:
- * - TopazRouterAdapter (campaign.router): poolFactory/WETH + topazRouter()
- * - production Topaz router: defaultFactory/weth
- *
- * Swaps must target the production router. The adapter only forwards addLiquidityETH.
- */
 async function resolveRouterMeta(
   provider: ethers.Provider,
   routerOrAdapterAddress: string,
 ): Promise<ResolvedRouterMeta> {
   const campaignRouterAddress = normalizeAddress(routerOrAdapterAddress, "Topaz router");
   const adapter = new Contract(campaignRouterAddress, ROUTER_ADAPTER_ABI, provider) as any;
-
-  // Prefer adapter shape first — this is what LaunchCampaign stores on BSC testnet.
   try {
     const [productionRaw, factoryRaw, wrappedRaw] = await Promise.all([
       adapter.topazRouter(),
@@ -127,8 +152,6 @@ async function resolveRouterMeta(
     const executionRouterAddress = normalizeAddress(productionRaw, "production Topaz router");
     const factoryAddress = normalizeAddress(factoryRaw, "Topaz factory");
     const wrappedNativeAddress = normalizeAddress(wrappedRaw, "wrapped native token");
-
-    // Cross-check production router views when available.
     try {
       const production = new Contract(executionRouterAddress, EXECUTION_ROUTER_ABI, provider) as any;
       const [prodFactory, prodWrapped] = await Promise.all([
@@ -144,19 +167,11 @@ async function resolveRouterMeta(
     } catch (error: any) {
       const message = String(error?.message || "");
       if (message.includes("does not match")) throw error;
-      // If production views are unavailable, still use adapter metadata after bytecode check.
     }
-
-    return {
-      executionRouterAddress,
-      campaignRouterAddress,
-      factoryAddress,
-      wrappedNativeAddress,
-    };
+    return { executionRouterAddress, campaignRouterAddress, factoryAddress, wrappedNativeAddress };
   } catch (error: any) {
     const message = String(error?.message || "");
     if (message.includes("does not match") || message.includes("Invalid")) throw error;
-    // Fall through to production-router shape.
   }
 
   const production = new Contract(campaignRouterAddress, EXECUTION_ROUTER_ABI, provider) as any;
@@ -172,24 +187,6 @@ async function resolveRouterMeta(
   };
 }
 
-const CAMPAIGN_ROUTE_ABI = [
-  "function token() view returns (address)",
-  "function router() view returns (address)",
-  "function launched() view returns (bool)",
-  "function getGraduationState() view returns (address dexPair,uint256 finalCurvePrice,uint256 initialDexPrice,uint256 graduatedLiquidityTokens,uint256 graduatedLiquidityBnb,uint256 graduatedLiquidityLp,uint256 burnedUnsoldTokens,uint256 burnedUnusedLpTokens,uint256 postBurnTotalSupply,uint256 graduationBalance,uint256 graduationOvershoot)",
-] as const;
-
-const POOL_FEE_ABI = [
-  "function fee() view returns (uint256)",
-  "function swapFee() view returns (uint256)",
-  "function stable() view returns (bool)",
-] as const;
-
-const FACTORY_FEE_ABI = [
-  "function getFee(address pool,bool stable) view returns (uint256)",
-  "function getFee(address pool) view returns (uint256)",
-] as const;
-
 async function readPoolFeeBps(
   provider: ethers.Provider,
   factoryAddress: string,
@@ -200,29 +197,45 @@ async function readPoolFeeBps(
   try {
     const fee = Number(await pool.fee());
     if (Number.isInteger(fee) && fee >= 0 && fee <= 1_000) return fee;
-  } catch {
-    // continue
-  }
+  } catch {}
   try {
     const fee = Number(await pool.swapFee());
     if (Number.isInteger(fee) && fee >= 0 && fee <= 1_000) return fee;
-  } catch {
-    // continue
-  }
+  } catch {}
   try {
     const fee = Number(await factory.getFee(pairAddress, false));
     if (Number.isInteger(fee) && fee >= 0 && fee <= 1_000) return fee;
-  } catch {
-    // continue
-  }
+  } catch {}
   try {
     const fee = Number(await factory["getFee(address)"](pairAddress));
     if (Number.isInteger(fee) && fee >= 0 && fee <= 1_000) return fee;
-  } catch {
-    // continue
-  }
-  // Official Topaz volatile fee is 100 bps. Use only after pair/router verification.
+  } catch {}
   return 100;
+}
+
+async function readAuthoritativeQuoteToken(
+  provider: ethers.Provider,
+  campaign: any,
+  campaignAddress: string,
+  factoryAddress: string,
+): Promise<string | null> {
+  try {
+    return normalizeAddress(await campaign.graduationQuoteToken(), "graduation quote token");
+  } catch (campaignError: any) {
+    if (!isMissingViewSelector(campaignError)) throw campaignError;
+  }
+  try {
+    const factory = new Contract(factoryAddress, FACTORY_QUOTE_ABI, provider) as any;
+    return normalizeAddress(
+      await factory.campaignGraduationQuoteToken(campaignAddress),
+      "factory graduation quote token",
+    );
+  } catch (factoryError: any) {
+    if (!isMissingViewSelector(factoryError)) throw factoryError;
+  }
+  // Historical native generations predate quote identity views. Only this explicit
+  // legacy capability absence maps to native; transient/read errors above fail closed.
+  return null;
 }
 
 async function finalizeResolvedRoute(input: {
@@ -230,8 +243,9 @@ async function finalizeResolvedRoute(input: {
   campaignAddress: string;
   tokenAddress: string;
   pairAddress: string;
-  /** Campaign router or production router; adapter is unwrapped automatically. */
   routerAddress: string;
+  authoritativeQuoteToken?: string | null;
+  marketQuoteToken?: string | null;
   factoryAddress?: string | null;
   wrappedNativeAddress?: string | null;
   feeBps?: number | null;
@@ -241,7 +255,6 @@ async function finalizeResolvedRoute(input: {
   const campaignAddress = normalizeAddress(input.campaignAddress, "campaign address");
   const tokenAddress = normalizeAddress(input.tokenAddress, "market token");
   const pairAddress = normalizeAddress(input.pairAddress, "Topaz pair");
-
   if (input.expectedTokenAddress && !sameAddress(tokenAddress, input.expectedTokenAddress)) {
     throw new Error("Market route token mismatch.");
   }
@@ -253,19 +266,26 @@ async function finalizeResolvedRoute(input: {
   const wrappedNativeAddress = input.wrappedNativeAddress
     ? normalizeAddress(input.wrappedNativeAddress, "wrapped native token")
     : routerMeta.wrappedNativeAddress;
-  const executionRouterAddress = routerMeta.executionRouterAddress;
-
   if (!sameAddress(factoryAddress, routerMeta.factoryAddress)) {
     throw new Error("Topaz factory mismatch between market route and router metadata.");
   }
   if (!sameAddress(wrappedNativeAddress, routerMeta.wrappedNativeAddress)) {
     throw new Error("Wrapped native mismatch between market route and router metadata.");
   }
-  if (
-    [pairAddress, executionRouterAddress, factoryAddress, wrappedNativeAddress].some(
-      (value) => value.toLowerCase() === ZERO,
-    )
-  ) {
+
+  const quoteTokenAddress = normalizeAddress(
+    assertBnbMarketQuoteIdentity({
+      authoritativeQuoteToken: input.authoritativeQuoteToken,
+      marketQuoteToken: input.marketQuoteToken,
+      wrappedNativeAddress,
+    }),
+    "graduation quote token",
+  );
+
+  const executionRouterAddress = routerMeta.executionRouterAddress;
+  if ([pairAddress, executionRouterAddress, factoryAddress, wrappedNativeAddress, quoteTokenAddress].some(
+    (value) => value.toLowerCase() === ZERO,
+  )) {
     throw new Error("Topaz route contains a zero address.");
   }
 
@@ -275,19 +295,33 @@ async function finalizeResolvedRoute(input: {
     assertContract(input.provider, executionRouterAddress, "Topaz execution router"),
     assertContract(input.provider, factoryAddress, "Topaz factory"),
     assertContract(input.provider, wrappedNativeAddress, "Wrapped native token"),
+    assertContract(input.provider, quoteTokenAddress, "Graduation quote token"),
   ]);
 
   const factory = new Contract(factoryAddress, FACTORY_ABI, input.provider) as any;
   const pool = new Contract(pairAddress, POOL_FEE_ABI, input.provider) as any;
-  const factoryPair = await factory.getPool(tokenAddress, wrappedNativeAddress, false);
-  if (!sameAddress(factoryPair, pairAddress)) throw new Error("Topaz factory pair mismatch.");
+  const [resolvedFinalPair, acquisitionPair] = await Promise.all([
+    factory.getPool(tokenAddress, quoteTokenAddress, false),
+    sameAddress(quoteTokenAddress, wrappedNativeAddress)
+      ? Promise.resolve(ethers.ZeroAddress)
+      : factory.getPool(wrappedNativeAddress, quoteTokenAddress, false),
+  ]);
+  assertBnbRequiredPools({
+    finalPairAddress: pairAddress,
+    resolvedFinalPairAddress: resolvedFinalPair,
+    acquisitionPairAddress: acquisitionPair,
+    quoteTokenAddress,
+    wrappedNativeAddress,
+  });
+  if (!sameAddress(quoteTokenAddress, wrappedNativeAddress)) {
+    await assertContract(input.provider, normalizeAddress(acquisitionPair, "WBNB/QUOTE pair"), "WBNB/QUOTE pair");
+  }
 
   try {
     const stable = Boolean(await pool.stable());
     if (stable) throw new Error("MemeWarzone graduation requires a volatile Topaz pool.");
   } catch (error: any) {
     if (String(error?.message || "").includes("volatile")) throw error;
-    // Some mock/rehearsal pools may omit stable(); factory pair match still gates the route.
   }
 
   let feeBps = Number(input.feeBps);
@@ -298,6 +332,13 @@ async function finalizeResolvedRoute(input: {
     throw new Error("Topaz pool fee is not verified.");
   }
 
+  const route = buildBnbTopazBuyRoute({
+    wrappedNativeAddress,
+    quoteTokenAddress,
+    tokenAddress,
+    factoryAddress,
+  });
+
   return {
     market: {
       ...input.market,
@@ -306,10 +347,10 @@ async function finalizeResolvedRoute(input: {
       campaignAddress,
       token: tokenAddress,
       pair: pairAddress,
-      // Surface the execution router for trading; campaign adapter is not swap-capable.
       router: executionRouterAddress,
       factory: factoryAddress,
       wrappedNative: wrappedNativeAddress,
+      quoteToken: quoteTokenAddress,
       stable: false,
       feeBps,
       verified: true,
@@ -318,17 +359,11 @@ async function finalizeResolvedRoute(input: {
     routerAddress: executionRouterAddress,
     factoryAddress,
     wrappedNativeAddress,
+    quoteTokenAddress,
     tokenAddress,
     pairAddress,
     feeBps,
-    route: [
-      {
-        from: wrappedNativeAddress,
-        to: tokenAddress,
-        stable: false,
-        factory: factoryAddress,
-      },
-    ],
+    route,
   };
 }
 
@@ -340,9 +375,10 @@ async function resolveTopazRouteOnChain(input: {
 }): Promise<TopazResolvedRoute> {
   const campaignAddress = normalizeAddress(input.campaignAddress, "campaign address");
   const campaign = new Contract(campaignAddress, CAMPAIGN_ROUTE_ABI, input.provider) as any;
-  const [tokenRaw, routerRaw, launched, graduation] = await Promise.all([
+  const [tokenRaw, routerRaw, factoryRaw, launched, graduation] = await Promise.all([
     campaign.token(),
     campaign.router(),
+    campaign.factory(),
     campaign.launched(),
     campaign.getGraduationState(),
   ]);
@@ -350,8 +386,16 @@ async function resolveTopazRouteOnChain(input: {
 
   const tokenAddress = normalizeAddress(tokenRaw, "campaign token");
   const campaignRouterAddress = normalizeAddress(routerRaw, "campaign Topaz router");
+  const campaignFactoryAddress = normalizeAddress(factoryRaw, "campaign factory");
   const pairAddress = normalizeAddress(graduation?.[0] ?? graduation?.dexPair, "graduation Topaz pair");
   if (pairAddress.toLowerCase() === ZERO) throw new Error("Graduation pair is not available yet.");
+
+  const authoritativeQuoteToken = await readAuthoritativeQuoteToken(
+    input.provider,
+    campaign,
+    campaignAddress,
+    campaignFactoryAddress,
+  );
 
   return finalizeResolvedRoute({
     provider: input.provider,
@@ -359,6 +403,7 @@ async function resolveTopazRouteOnChain(input: {
     tokenAddress,
     pairAddress,
     routerAddress: campaignRouterAddress,
+    authoritativeQuoteToken,
     expectedTokenAddress: input.expectedTokenAddress,
     market: {
       chainId: input.chainId,
@@ -369,6 +414,7 @@ async function resolveTopazRouteOnChain(input: {
       router: campaignRouterAddress,
       factory: null,
       wrappedNative: null,
+      quoteToken: authoritativeQuoteToken,
       stable: false,
       feeBps: null,
       verified: true,
@@ -390,16 +436,8 @@ export async function resolveVerifiedTopazRoute(input: {
   if (Number(network.chainId) !== Number(input.chainId)) {
     throw new Error(`Wrong network. Connect chain ${input.chainId}.`);
   }
-
   const campaignAddress = normalizeAddress(input.campaignAddress, "campaign address");
 
-  // Prefer the verified market-route API when the continuity backend is live.
-  // Fall back to on-chain campaign graduation state so Token Details / War Room
-  // can still quote and execute Topaz trades during rollout.
-  // Skip when the unified market flag is off so we do not spam 503 trade-route calls.
-  // Bound the API wait: a degraded/slow Railway indexer must not block Topaz quotes.
-  // Prefer on-chain graduation first for reliability when CMS is stuck on BONDING
-  // (WIC after cleanup). API route is a fast-path only when already TOPAZ_ACTIVE.
   try {
     return await resolveTopazRouteOnChain({
       provider: input.provider,
@@ -409,7 +447,6 @@ export async function resolveVerifiedTopazRoute(input: {
     });
   } catch (onChainError) {
     if (!isMarketContinuityApiEnabled()) throw onChainError;
-
     const apiController = new AbortController();
     const parentAbort = () => apiController.abort();
     input.signal?.addEventListener("abort", parentAbort, { once: true });
@@ -420,9 +457,10 @@ export async function resolveVerifiedTopazRoute(input: {
         market.marketStage === "TOPAZ_ACTIVE" &&
         market.pair &&
         market.tradingEnabled !== false &&
-        market.stable !== true
+        market.stable !== true &&
+        market.quoteToken
       ) {
-        return finalizeResolvedRoute({
+        return await finalizeResolvedRoute({
           provider: input.provider,
           campaignAddress,
           tokenAddress: String(market.token || ""),
@@ -430,6 +468,8 @@ export async function resolveVerifiedTopazRoute(input: {
           routerAddress: String(market.router || ""),
           factoryAddress: market.factory ? String(market.factory) : null,
           wrappedNativeAddress: market.wrappedNative ? String(market.wrappedNative) : null,
+          authoritativeQuoteToken: String(market.quoteToken),
+          marketQuoteToken: String(market.quoteToken),
           feeBps: market.feeBps,
           expectedTokenAddress: input.expectedTokenAddress,
           market,
@@ -453,9 +493,7 @@ async function quoteExactInput(
 ): Promise<{ amountOutRaw: bigint; quoteBlock: number }> {
   if (amountInRaw <= 0n) throw new Error("Trade amount must be greater than zero.");
   const router = new Contract(resolved.routerAddress, EXECUTION_ROUTER_ABI, provider) as any;
-  const route = reverse
-    ? resolved.route.map((leg) => ({ ...leg, from: leg.to, to: leg.from }))
-    : resolved.route;
+  const route = reverse ? reverseBnbTopazRoute(resolved.route) : resolved.route;
   const [amounts, quoteBlock] = await Promise.all([
     router.getAmountsOut(amountInRaw, route),
     provider.getBlockNumber(),
@@ -472,12 +510,7 @@ export async function quoteTopazBuy(input: {
   slippageBps: number;
   deadlineSeconds?: number;
 }): Promise<TopazQuote> {
-  const { amountOutRaw, quoteBlock } = await quoteExactInput(
-    input.provider,
-    input.resolved,
-    input.nativeAmountInRaw,
-    false,
-  );
+  const { amountOutRaw, quoteBlock } = await quoteExactInput(input.provider, input.resolved, input.nativeAmountInRaw, false);
   const now = Math.floor(Date.now() / 1000);
   return {
     amountInRaw: input.nativeAmountInRaw,
@@ -499,12 +532,7 @@ export async function quoteTopazSell(input: {
   slippageBps: number;
   deadlineSeconds?: number;
 }): Promise<TopazQuote> {
-  const { amountOutRaw, quoteBlock } = await quoteExactInput(
-    input.provider,
-    input.resolved,
-    input.tokenAmountInRaw,
-    true,
-  );
+  const { amountOutRaw, quoteBlock } = await quoteExactInput(input.provider, input.resolved, input.tokenAmountInRaw, true);
   const now = Math.floor(Date.now() / 1000);
   return {
     amountInRaw: input.tokenAmountInRaw,
@@ -529,14 +557,12 @@ async function solveInputForTargetOutput(input: {
   if (input.targetOutRaw <= 0n) return 0n;
   let low = 0n;
   let high = input.initialHighRaw > 0n ? input.initialHighRaw : 1n;
-
   for (let expansion = 0; expansion < 16; expansion += 1) {
     const quote = await quoteExactInput(input.provider, input.resolved, high, input.reverse);
     if (quote.amountOutRaw >= input.targetOutRaw) break;
     high *= 2n;
     if (expansion === 15) throw new Error("Unable to solve Topaz quote for the requested output.");
   }
-
   for (let iteration = 0; iteration < 32; iteration += 1) {
     const mid = (low + high) / 2n;
     if (mid <= low) break;
@@ -620,7 +646,7 @@ export async function executeTopazSell(input: {
 }) {
   assertFreshQuote(input.quote);
   const recipient = normalizeAddress(input.recipient, "recipient");
-  const reverseRoute = input.quote.route.route.map((leg) => ({ ...leg, from: leg.to, to: leg.from }));
+  const reverseRoute = reverseBnbTopazRoute(input.quote.route.route);
   const router = new Contract(input.quote.route.routerAddress, EXECUTION_ROUTER_ABI, input.signer) as any;
   return router.swapExactTokensForETH(
     input.quote.amountInRaw,

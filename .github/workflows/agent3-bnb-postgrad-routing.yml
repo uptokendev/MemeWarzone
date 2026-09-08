@@ -1,0 +1,34 @@
+name: Agent 3 BNB Post-Grad Routing
+
+on:
+  pull_request:
+    paths:
+      - 'frontend/src/lib/topazV2Trade.ts'
+      - 'frontend/src/lib/bnbTopazQuoteRouting.mjs'
+      - 'frontend/src/lib/bnbTopazQuoteRouting.test.mjs'
+      - 'realtime-indexer/src/bnbPostGradQuoteIdentity.test.mjs'
+      - 'db/migrations/202609080003_bnb_postgrad_quote_identity.sql'
+      - '.github/workflows/agent3-bnb-postgrad-routing.yml'
+  workflow_dispatch:
+
+jobs:
+  focused-routing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Route unit tests
+        run: node --test frontend/src/lib/bnbTopazQuoteRouting.test.mjs realtime-indexer/src/bnbPostGradQuoteIdentity.test.mjs
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Frontend build regression
+        working-directory: frontend
+        run: npm run build
+      - name: Existing post-grad routing regression
+        working-directory: frontend
+        run: npm run check:postgrad-routing
