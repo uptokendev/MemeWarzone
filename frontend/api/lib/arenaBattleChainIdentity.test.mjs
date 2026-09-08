@@ -78,8 +78,9 @@ test("AUTO DEPLOY candidate selection is chain-scoped in the Normal Battle imple
 });
 
 test("LIVE transition baseline uses the Battle row chain identity", () => {
-  const source = fs.readFileSync(path.join(API_ROOT, "arenaBattles.js"), "utf8");
-  assert.match(source, /captureLiveBaselines\([\s\S]*chainId:\s*Number\(row\.chain_id\)/);
+  const source = fs.readFileSync(path.join(HERE, "arenaBattleMetrics.js"), "utf8");
+  assert.match(source, /export async function captureLiveBaselines\(row[\s\S]*const chainId = Number\(row\.chain_id \?\? row\.chainId\)/);
+  assert.match(source, /getArenaMarketSnapshot\(chainId, tokenId/);
 });
 
 test("settlement market evidence is resolved from current Battle chain", () => {
