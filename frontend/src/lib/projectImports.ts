@@ -65,6 +65,32 @@ export async function requestProjectClaim(id: string, auth: WalletActionAuthPayl
   return json.item;
 }
 
+export async function updateProjectImportProfile(input: {
+  item: ProjectImportItem;
+  auth: WalletActionAuthPayload;
+  description: string;
+  website: string;
+  xUrl: string;
+  telegramUrl: string;
+}): Promise<ProjectImportItem> {
+  const res = await apiFetch(`/api/arena/imports/${encodeURIComponent(input.item.id)}/profile`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      auth: input.auth,
+      description: input.description,
+      website: input.website,
+      xUrl: input.xUrl,
+      telegramUrl: input.telegramUrl,
+    }),
+  });
+  const json = await readJson(res);
+  if (!res.ok || json?.ok === false || !json?.item) {
+    throw new Error(String(json?.error || `Project profile update failed (${res.status})`));
+  }
+  return json.item;
+}
+
 export async function uploadProjectImportImage(input: {
   item: ProjectImportItem;
   file: File;
