@@ -8,6 +8,7 @@ import {
 import {
   buildSolanaRewardCall,
   isSolanaSignature,
+  solanaRewardsProgramId,
   verifySolanaRewardClaim,
 } from "../lib/solanaRewardClaim.js";
 
@@ -95,13 +96,16 @@ function envDistributorAddress(chainId) {
 function chainClaimConfig(chainId) {
   const chain = Number(chainId) || 56;
   if (SOLANA_CHAINS.has(chain)) {
+    const programId = solanaRewardsProgramId();
+    const enabled = Boolean(programId);
     return {
       chainId: chain,
       tokenSymbol: "SOL",
-      enabled: true,
-      mode: "solana_treasury",
-      reason: null,
+      enabled,
+      mode: enabled ? "solana_treasury" : "disabled",
+      reason: enabled ? null : "MISSING_SOLANA_REWARDS_PROGRAM_ID",
       distributorAddress: "",
+      programId,
       supportedRewardTypes: ["airdrop", "squad"],
     };
   }
@@ -354,7 +358,7 @@ export async function rewardClaimConfig(req, res) {
   return json(res, 200, {
     config,
     supportedChains: [56, 97, 4663, 46630, 101, 102],
-    disabledChains: [],
+    disabledChains: config.enabled ? [] : [chainId],
     contract: SOLANA_CHAINS.has(chainId)
       ? {
           name: "mwz_rewards_treasury",

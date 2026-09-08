@@ -206,11 +206,18 @@ async function persistRecoveredEvmLeagueClaim(row, verification) {
        on conflict (chain_id, period, epoch_start, category, rank) do nothing`,
       [row.chainId, row.period, row.epochStart, row.category, row.rank, row.recipientAddress],
     );
-    await client.query(
+    const { rows: payoutRows } = await client.query(
       `insert into public.league_epoch_payouts
         (chain_id, period, epoch_start, category, rank, recipient_address, amount_raw, tx_hash)
        values ($1,$2,$3::timestamptz,$4,$5,$6,$7,$8)
-       on conflict (chain_id, period, epoch_start, category, rank) do nothing`,
+       on conflict (chain_id, period, epoch_start, category, rank)
+       do update set
+         recipient_address = excluded.recipient_address,
+         amount_raw = excluded.amount_raw,
+         tx_hash = excluded.tx_hash,
+         paid_at = now()
+       where public.league_epoch_payouts.tx_hash is null
+       returning tx_hash as "txHash"`,
       [
         row.chainId,
         row.period,
@@ -222,6 +229,11 @@ async function persistRecoveredEvmLeagueClaim(row, verification) {
         verification.txHash,
       ],
     );
+    if (!payoutRows[0]?.txHash) {
+      const error = new Error("League payout slot was recorded concurrently and cannot be overwritten");
+      error.code = "LEAGUE_PAYOUT_ALREADY_RECORDED";
+      throw error;
+    }
     await client.query("commit");
     return { status: "reconciled", txHash: verification.txHash, blockNumber: verification.blockNumber };
   } catch (error) {
