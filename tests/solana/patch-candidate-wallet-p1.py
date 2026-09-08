@@ -12,8 +12,39 @@ def patch_golden():
     s = s.replace("const BUY_LAMPORTS = 5_000_000n;", "const BUY_LAMPORTS = 1_000_000n;")
     s = s.replace(
         "lamports:100_000_000",
-        'lamports:label==="creator"?9_000_000:4_000_000',
+        'lamports:label==="creator"?100_000_000:4_000_000',
     )
+    old_sim = '  const sim=await v0.simulateLaunchpadV0OrThrow(connection,compiled.transaction,label);'
+    new_sim = '''  let sim;
+  try {
+    sim=await v0.simulateLaunchpadV0OrThrow(connection,compiled.transaction,label);
+  } catch (error) {
+    const failedSim=await connection.simulateTransaction(compiled.transaction,{commitment:"confirmed",sigVerify:false,replaceRecentBlockhash:false});
+    console.error("SIMULATION_FAILURE",label,JSON.stringify({err:failedSim.value.err,logs:failedSim.value.logs||[],unitsConsumed:failedSim.value.unitsConsumed??null}));
+    throw error;
+  }'''
+    if old_sim not in s:
+        raise SystemExit("golden simulation telemetry target missing")
+    s = s.replace(old_sim, new_sim, 1)
+    old_setup = '  const creator=await setupWallet(program,connection,operator,globalConfig,clusterId,"creator");\n  const buyer=await setupWallet(program,connection,operator,globalConfig,clusterId,"buyer");'
+    new_setup = '''  const creator=await setupWallet(program,connection,operator,globalConfig,clusterId,"creator");
+  const buyer=await setupWallet(program,connection,operator,globalConfig,clusterId,"buyer");
+  const rentSizes={mint:82,tokenVault:165,campaign:720,solVault:81,createAuthorization:155};
+  const rentMinima={};
+  for(const [name,size] of Object.entries(rentSizes)) rentMinima[name]=await connection.getMinimumBalanceForRentExemption(size,"confirmed");
+  rentMinima.total=Object.values(rentMinima).reduce((sum,value)=>sum+value,0);
+  const creatorBalanceBeforeCreate=await connection.getBalance(creator.keypair.publicKey,"confirmed");
+  console.log("CREATE_PAYER",creator.keypair.publicKey.toBase58());
+  console.log("CREATE_PAYER_BALANCE_BEFORE",creatorBalanceBeforeCreate);
+  console.log("CREATE_RENT_MINIMA",JSON.stringify({...rentSizes,lamports:rentMinima}));'''
+    if old_setup not in s:
+        raise SystemExit("golden creator diagnostics target missing")
+    s = s.replace(old_setup, new_setup, 1)
+    old_return = '  return {create,buy,sell,campaign:campaign.toBase58(),mint:mint.toBase58(),alt:alt.key.toBase58()};'
+    new_return = '  return {create,buy,sell,campaign:campaign.toBase58(),mint:mint.toBase58(),alt:alt.key.toBase58(),creatorDiagnostics:{payer:creator.keypair.publicKey.toBase58(),balanceBeforeCreate:creatorBalanceBeforeCreate,rentMinima}};'
+    if old_return not in s:
+        raise SystemExit("golden diagnostics report target missing")
+    s = s.replace(old_return, new_return, 1)
     old = 'const retrySig=await connection.sendRawTransaction(raw,{skipPreflight:false,maxRetries:3});\n  if(retrySig!==signature) fail(`${label} identical retry signature changed`);'
     new = 'let retryResult=""; try { const retrySig=await connection.sendRawTransaction(raw,{skipPreflight:false,maxRetries:3}); if(retrySig!==signature) fail(`${label} identical retry signature changed`); retryResult="same signature"; } catch(e) { const m=String(e?.message||e); if(!/already been processed/i.test(m)) throw e; retryResult="already processed"; }'
     if old not in s:
