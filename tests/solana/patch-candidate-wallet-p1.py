@@ -100,7 +100,7 @@ def patch_fixture():
     s = s.replace(target, replacement, 1)
     s = s.replace("if (balance < 500_000_000)", "if (balance < 85_000_000)")
     s = s.replace("operator needs at least 0.5 devnet SOL", "operator needs at least 0.085 devnet SOL")
-    s = s.replace("creator.publicKey, 200_000_000", "creator.publicKey, 9_000_000")
+    s = s.replace("creator.publicKey, 200_000_000", "creator.publicKey, 100_000_000")
     s = s.replace("buyer.publicKey, 120_000_000", "buyer.publicKey, 53_000_000")
     p.write_text(s)
 
