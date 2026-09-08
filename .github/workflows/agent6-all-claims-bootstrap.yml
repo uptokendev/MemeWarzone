@@ -1,0 +1,503 @@
+name: Agent 6 All Claims Bootstrap
+
+on:
+  push:
+    branches: [agent6/all-launch-claims-three-chain]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent6/all-launch-claims-three-chain
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Apply claim recovery patches
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              if old not in text:
+                  raise SystemExit(f"pattern not found in {path}: {old[:100]!r}")
+              p.write_text(text.replace(old, new, 1))
+
+          path = "frontend/api/dev-fix/reward-claim-intent.js"
+          old = '''function envDistributorAddress(chainId) {
+            const chain = Number(chainId);
+            const candidates = [
+              process.env[`REWARD_DISTRIBUTOR_ADDRESS_${chain}`],
+              process.env[`VITE_REWARD_DISTRIBUTOR_ADDRESS_${chain}`],
+              chain === 97 ? process.env.BNB_TESTNET_REWARD_DISTRIBUTOR_ADDRESS : null,
+              chain === 56 ? process.env.BNB_REWARD_DISTRIBUTOR_ADDRESS : null,
+              chain === 56 ? process.env.REWARD_DISTRIBUTOR_ADDRESS_BNB : null,
+              process.env.REWARD_DISTRIBUTOR_ADDRESS,
+              process.env.VITE_REWARD_DISTRIBUTOR_ADDRESS,
+            ];
+            return cleanAddress(candidates.find(Boolean));
+          }'''
+          new = '''function envDistributorAddress(chainId) {
+            const chain = Number(chainId);
+            const perChain = [
+              process.env[`REWARD_DISTRIBUTOR_ADDRESS_${chain}`],
+              process.env[`VITE_REWARD_DISTRIBUTOR_ADDRESS_${chain}`],
+            ];
+            // Robinhood must never inherit an unscoped BNB/global distributor.
+            // Its reward rail is enabled only by explicit chain-local authority.
+            if (ROBINHOOD_CHAINS.has(chain)) return cleanAddress(perChain.find(Boolean));
+            const candidates = [
+              ...perChain,
+              chain === 97 ? process.env.BNB_TESTNET_REWARD_DISTRIBUTOR_ADDRESS : null,
+              chain === 56 ? process.env.BNB_REWARD_DISTRIBUTOR_ADDRESS : null,
+              chain === 56 ? process.env.REWARD_DISTRIBUTOR_ADDRESS_BNB : null,
+              process.env.REWARD_DISTRIBUTOR_ADDRESS,
+              process.env.VITE_REWARD_DISTRIBUTOR_ADDRESS,
+            ];
+            return cleanAddress(candidates.find(Boolean));
+          }'''
+          replace_once(path, old, new)
+          replace_once(path, 'supportedRewardTypes: ["airdrop"],', 'supportedRewardTypes: ["airdrop", "squad"],')
+
+          path = "frontend/src/lib/rewardProgramsApi.ts"
+          old = '''export async function reconcileSolanaRewardClaims(params: {
+            walletAddress: string;
+            chainId: number;
+            rewardLedgerIds: string[];
+          }): Promise<SolanaRewardReconciliationResult> {
+            const res = await fetch(buildRealtimeApiUrl("/api/rewards"), {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                action: "reconcile-solana-claims",
+                walletAddress: params.walletAddress,
+                chainId: params.chainId,
+                rewardLedgerIds: params.rewardLedgerIds,
+              }),
+            });
+            return parseJson(res) as Promise<SolanaRewardReconciliationResult>;
+          }
+
+          export async function fetchRewardClaims(params: {
+            walletAddress: string;
+            chainId?: number | null;
+            rewardType?: string | null;
+            limit?: number;
+          }): Promise<RewardLedgerItem[]> {
+            const initial = await fetchRewardClaimsRaw(params);
+            const chainId = Number(params.chainId || 0);
+            if (![101, 102].includes(chainId)) return initial;
+
+            const stale = initial.filter((item) =>
+              (item.status === "claim_pending" || item.status === "failed") &&
+              (item.rewardType === "airdrop" || item.rewardType === "squad")
+            );
+            if (!stale.length) return initial;
+
+            try {
+              const reconciliation = await reconcileSolanaRewardClaims({
+                walletAddress: params.walletAddress,
+                chainId,
+                rewardLedgerIds: stale.slice(0, 10).map((item) => item.id),
+              });
+
+              if (reconciliation.reconciledCount > 0) {
+                return fetchRewardClaimsRaw(params);
+              }
+
+              const blocked = new Set(
+                reconciliation.unresolved
+                  .filter((item) => item.code !== "SOLANA_CLAIM_RECEIPT_MISSING")
+                  .map((item) => item.rewardLedgerId),
+              );
+              if (blocked.size) {
+                return initial.map((item) => blocked.has(item.id)
+                  ? { ...item, status: "claim_pending", claimError: "On-chain reconciliation is pending." }
+                  : item);
+              }
+            } catch (error) {
+              console.warn("[rewardProgramsApi] Solana claim reconciliation deferred:", error);
+            }
+
+            return initial;
+          }'''
+          new = '''export async function reconcileSolanaRewardClaims(params: {
+            walletAddress: string;
+            chainId: number;
+            rewardLedgerIds: string[];
+          }): Promise<SolanaRewardReconciliationResult> {
+            const res = await fetch(buildRealtimeApiUrl("/api/rewards"), {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                action: "reconcile-solana-claims",
+                walletAddress: params.walletAddress,
+                chainId: params.chainId,
+                rewardLedgerIds: params.rewardLedgerIds,
+              }),
+            });
+            return parseJson(res) as Promise<SolanaRewardReconciliationResult>;
+          }
+
+          export async function reconcileEvmRewardClaims(params: {
+            walletAddress: string;
+            chainId: number;
+            rewardLedgerIds: string[];
+          }): Promise<SolanaRewardReconciliationResult> {
+            const res = await fetch(buildRealtimeApiUrl("/api/rewards"), {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                action: "reconcile-evm-claims",
+                walletAddress: params.walletAddress,
+                chainId: params.chainId,
+                rewardLedgerIds: params.rewardLedgerIds,
+              }),
+            });
+            return parseJson(res) as Promise<SolanaRewardReconciliationResult>;
+          }
+
+          export async function fetchRewardClaims(params: {
+            walletAddress: string;
+            chainId?: number | null;
+            rewardType?: string | null;
+            limit?: number;
+          }): Promise<RewardLedgerItem[]> {
+            const initial = await fetchRewardClaimsRaw(params);
+            const chainId = Number(params.chainId || 0);
+            const staleBase = initial.filter((item) => item.status === "claim_pending" || item.status === "failed");
+
+            if ([101, 102].includes(chainId)) {
+              const stale = staleBase.filter((item) => item.rewardType === "airdrop" || item.rewardType === "squad");
+              if (!stale.length) return initial;
+              try {
+                const reconciliation = await reconcileSolanaRewardClaims({
+                  walletAddress: params.walletAddress,
+                  chainId,
+                  rewardLedgerIds: stale.slice(0, 10).map((item) => item.id),
+                });
+                if (reconciliation.reconciledCount > 0) return fetchRewardClaimsRaw(params);
+                const blocked = new Set(
+                  reconciliation.unresolved
+                    .filter((item) => item.code !== "SOLANA_CLAIM_RECEIPT_MISSING")
+                    .map((item) => item.rewardLedgerId),
+                );
+                if (blocked.size) {
+                  return initial.map((item) => blocked.has(item.id)
+                    ? { ...item, status: "claim_pending", claimError: "On-chain reconciliation is pending." }
+                    : item);
+                }
+              } catch (error) {
+                console.warn("[rewardProgramsApi] Solana claim reconciliation deferred:", error);
+              }
+              return initial;
+            }
+
+            if ([56, 97, 4663, 46630].includes(chainId)) {
+              if (!staleBase.length) return initial;
+              try {
+                const reconciliation = await reconcileEvmRewardClaims({
+                  walletAddress: params.walletAddress,
+                  chainId,
+                  rewardLedgerIds: staleBase.slice(0, 10).map((item) => item.id),
+                });
+                if (reconciliation.reconciledCount > 0) return fetchRewardClaimsRaw(params);
+              } catch (error) {
+                console.warn("[rewardProgramsApi] EVM claim reconciliation deferred:", error);
+              }
+            }
+
+            return initial;
+          }'''
+          replace_once(path, old, new)
+
+          path = "frontend/api/rewards.js"
+          text = Path(path).read_text()
+          old = 'import { discoverSolanaRewardClaim } from "./lib/solanaRewardReconciliation.js";\n\nconst SOLANA_CHAINS = new Set([101, 102]);'
+          new = 'import { discoverEvmRewardClaim } from "./lib/rewardClaimVerification.js";\nimport { discoverSolanaRewardClaim } from "./lib/solanaRewardReconciliation.js";\n\nconst EVM_CHAINS = new Set([56, 97, 4663, 46630]);\nconst SOLANA_CHAINS = new Set([101, 102]);'
+          if old not in text: raise SystemExit("rewards.js import pattern missing")
+          text = text.replace(old, new, 1)
+
+          marker = 'const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;\n'
+          helpers = r'''
+const BYTES32_RE = /^0x[a-fA-F0-9]{64}$/;
+const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
+
+function rewardMeta(row) {
+  const raw = row?.metadata;
+  if (!raw) return {};
+  if (typeof raw === "object") return raw;
+  try { return JSON.parse(String(raw)) || {}; } catch { return {}; }
+}
+
+function firstString(source, keys) {
+  for (const key of keys) {
+    const value = source?.[key];
+    if (value == null) continue;
+    const text = String(value).trim();
+    if (text) return text;
+  }
+  return "";
+}
+
+function rewardRowChainId(row) {
+  const meta = rewardMeta(row);
+  const raw = String(row?.chain ?? "").trim().toLowerCase();
+  if (raw === "solana" || raw === "sol") return Number(meta.chainId) || 101;
+  if (raw === "robinhood" || raw === "rh") return Number(meta.chainId) || 4663;
+  const numeric = Number(row?.chain);
+  if (Number.isFinite(numeric) && numeric > 0) return numeric;
+  const metadataChain = Number(meta.chainId);
+  return Number.isFinite(metadataChain) && metadataChain > 0 ? metadataChain : 56;
+}
+
+function rewardDistributorAddress(chainId, meta) {
+  const chain = Number(chainId);
+  const explicit = firstString(meta, ["distributorAddress", "rewardDistributorAddress", "claimContractAddress", "contractAddress"]);
+  if (ADDRESS_RE.test(explicit)) return explicit;
+  const perChain = String(
+    process.env[`REWARD_DISTRIBUTOR_ADDRESS_${chain}`] ||
+    process.env[`VITE_REWARD_DISTRIBUTOR_ADDRESS_${chain}`] ||
+    "",
+  ).trim();
+  if (ADDRESS_RE.test(perChain)) return perChain;
+  if (chain === 4663 || chain === 46630) return "";
+  const fallback = String(
+    (chain === 97 ? process.env.BNB_TESTNET_REWARD_DISTRIBUTOR_ADDRESS : "") ||
+    (chain === 56 ? process.env.BNB_REWARD_DISTRIBUTOR_ADDRESS : "") ||
+    (chain === 56 ? process.env.REWARD_DISTRIBUTOR_ADDRESS_BNB : "") ||
+    process.env.REWARD_DISTRIBUTOR_ADDRESS ||
+    process.env.VITE_REWARD_DISTRIBUTOR_ADDRESS ||
+    "",
+  ).trim();
+  return ADDRESS_RE.test(fallback) ? fallback : "";
+}
+
+function evmRewardRecoveryTarget(row) {
+  const chainId = rewardRowChainId(row);
+  const meta = rewardMeta(row);
+  const batchId = firstString(meta, ["contractBatchId", "merkleBatchId", "batchIdBytes32", "rewardBatchBytes32", "claimBatchBytes32"]);
+  const distributorAddress = rewardDistributorAddress(chainId, meta);
+  const amount = String(row?.amount ?? "0");
+  if (!EVM_CHAINS.has(chainId) || !distributorAddress || !BYTES32_RE.test(batchId) || !/^\d+$/.test(amount) || BigInt(amount) <= 0n) {
+    return null;
+  }
+  return { chainId, distributorAddress, batchId, amount };
+}
+
+function rewardClaimMinConfirmations(chainId) {
+  const value = Number(process.env[`REWARD_CLAIM_MIN_CONFIRMATIONS_${Number(chainId)}`] || process.env.REWARD_CLAIM_MIN_CONFIRMATIONS || 1);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 1;
+}
+'''
+          if marker not in text: raise SystemExit("rewards.js helper marker missing")
+          text = text.replace(marker, marker + helpers, 1)
+
+          insert_before = 'async function reconcileSolanaClaims(req, res) {'
+          evm_block = r'''
+async function finalizeRecoveredEvmClaim(row, verification) {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    const { rows } = await client.query(
+      `select * from public.reward_ledger where id = $1::uuid for update`,
+      [row.id],
+    );
+    const current = rows[0];
+    if (!current) {
+      await client.query("rollback");
+      return { rewardLedgerId: String(row.id), status: "missing" };
+    }
+    if (
+      String(current.wallet_address || "").toLowerCase() !== String(row.wallet_address || "").toLowerCase() ||
+      rewardRowChainId(current) !== rewardRowChainId(row)
+    ) {
+      const error = new Error("Reward entitlement changed during EVM reconciliation");
+      error.code = "REWARD_RECONCILE_ROW_CHANGED";
+      throw error;
+    }
+    if (current.status === "claimed") {
+      await client.query("commit");
+      return { rewardLedgerId: String(current.id), status: "already_claimed", txHash: current.claim_tx_hash || verification.txHash };
+    }
+    if (!RECOVERABLE_STATUSES.has(String(current.status || ""))) {
+      await client.query("commit");
+      return { rewardLedgerId: String(current.id), status: "not_recoverable" };
+    }
+
+    const reused = await client.query(
+      `select id from public.reward_ledger
+        where lower(coalesce(claim_tx_hash, '')) = lower($1) and id <> $2::uuid limit 1`,
+      [verification.txHash, current.id],
+    );
+    if (reused.rows.length) {
+      const error = new Error("Confirmed EVM claim transaction is already attached to another reward entitlement");
+      error.code = "EVM_CLAIM_TX_REUSED";
+      throw error;
+    }
+
+    const reconciledAt = new Date().toISOString();
+    const claimVerification = { ...verification, reconciliationSource: "reward_claimed_event", reconciledAt };
+    await client.query(
+      `update public.reward_ledger
+          set status='claimed', claim_tx_hash=$2, claim_error=null,
+              claimed_at=coalesce(claimed_at, now()),
+              metadata=coalesce(metadata, '{}'::jsonb) || jsonb_build_object('claimVerification',$3::jsonb,'claimReconciledAt',$4::text),
+              updated_at=now()
+        where id=$1::uuid`,
+      [current.id, verification.txHash, JSON.stringify(claimVerification), reconciledAt],
+    );
+    await client.query(`update public.reward_batch_items set status='claimed' where reward_ledger_id=$1::uuid`, [current.id]);
+    await client.query(
+      `insert into public.reward_audit_logs
+        (reward_ledger_id, actor_type, actor_id, action, old_value, new_value, reason, tx_hash, metadata)
+       values ($1::uuid,'system','evm-reconciler','claim_reconciled_onchain',$2,'claimed',
+         'Recovered confirmed EVM RewardDistributor claim from exact on-chain event',$3,$4::jsonb)`,
+      [current.id, current.status, verification.txHash, JSON.stringify(claimVerification)],
+    );
+    await refreshBatchCounts(client, current.id);
+    await client.query("commit");
+    return { rewardLedgerId: String(current.id), status: "reconciled", txHash: verification.txHash, blockNumber: verification.blockNumber ?? null };
+  } catch (error) {
+    try { await client.query("rollback"); } catch {}
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function reconcileEvmClaims(req, res) {
+  if (!pool) return json(res, 500, { error: "Server misconfigured: DATABASE_URL missing" });
+  const body = await readJson(req);
+  if (String(body?.action || "") !== "reconcile-evm-claims") return json(res, 400, { error: "Unsupported rewards action" });
+  const chainId = Number(body?.chainId);
+  const walletAddress = String(normalizeWalletFlexible(body?.walletAddress || body?.address) || "").trim().toLowerCase();
+  const rawIds = Array.isArray(body?.rewardLedgerIds) ? body.rewardLedgerIds : [];
+  const rewardLedgerIds = Array.from(new Set(rawIds.map((id) => String(id || "").trim()).filter(Boolean)));
+
+  if (!EVM_CHAINS.has(chainId)) return json(res, 400, { error: "Reconciliation is only available for BNB/Robinhood EVM reward chains" });
+  if (!walletAddress || !isAddress(walletAddress)) return json(res, 400, { error: "Invalid EVM reward wallet address" });
+  if (!rewardLedgerIds.length) return json(res, 200, { walletAddress, chainId, requestedCount: 0, checkedCount: 0, reconciledCount: 0, items: [], unresolved: [] });
+  if (rewardLedgerIds.length > 10) return json(res, 400, { error: "At most 10 reward claims can be reconciled per request" });
+  if (rewardLedgerIds.some((id) => !UUID_RE.test(id))) return json(res, 400, { error: "Invalid reward ledger id" });
+
+  try {
+    const { rows } = await pool.query(
+      `select * from public.reward_ledger
+        where id = any($1::uuid[])
+          and lower(wallet_address)=lower($2)
+          and chain::text=$3::text
+          and status = any($4::text[])
+        order by created_at asc`,
+      [rewardLedgerIds, walletAddress, String(chainId), Array.from(RECOVERABLE_STATUSES)],
+    );
+    const items = [];
+    const unresolved = [];
+    for (const row of rows) {
+      try {
+        const target = evmRewardRecoveryTarget(row);
+        if (!target) {
+          unresolved.push({ rewardLedgerId: String(row.id), reason: "claim_target_missing", code: "EVM_CLAIM_TARGET_NOT_READY" });
+          continue;
+        }
+        const verification = await discoverEvmRewardClaim({
+          chainId: target.chainId,
+          walletAddress,
+          distributorAddress: target.distributorAddress,
+          batchId: target.batchId,
+          amount: target.amount,
+          minConfirmations: rewardClaimMinConfirmations(target.chainId),
+        });
+        if (!verification) {
+          unresolved.push({ rewardLedgerId: String(row.id), reason: "not_claimed_onchain", code: "EVM_CLAIM_NOT_CLAIMED_ONCHAIN" });
+          continue;
+        }
+        items.push(await finalizeRecoveredEvmClaim(row, verification));
+      } catch (error) {
+        console.warn(`[api/rewards] EVM reconciliation deferred for ${row.id}:`, error?.code || error?.message || error);
+        unresolved.push({ rewardLedgerId: String(row.id), reason: "verification_pending", code: error?.code || "EVM_CLAIM_RECONCILE_PENDING" });
+      }
+    }
+    return json(res, 200, {
+      walletAddress, chainId, requestedCount: rewardLedgerIds.length, checkedCount: rows.length,
+      reconciledCount: items.filter((item) => item.status === "reconciled").length,
+      items, unresolved, reconciledAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error("[api/rewards:evm-reconcile]", error);
+    if (error?.code === "42P01" || error?.code === "42703") return json(res, 503, { error: "Reward reconciliation schema is not installed", code: "REWARD_SCHEMA_MISSING" });
+    return json(res, 500, { error: "Server error", code: error?.code || "EVM_REWARD_RECONCILE_FAILED" });
+  }
+}
+
+'''
+          if insert_before not in text: raise SystemExit("rewards.js reconcile marker missing")
+          text = text.replace(insert_before, evm_block + insert_before, 1)
+
+          old = '''// POST /api/rewards with action=reconcile-solana-claims is a proof-only state repair:
+// it cannot move funds and only advances stale DB state after strict on-chain verification.
+export default async function handler(req, res) {
+  if (req.method === "POST") return reconcileSolanaClaims(req, res);'''
+          new = '''// POST /api/rewards reconciliation actions are proof-only state repair:
+// they cannot move funds and only advance stale DB state after strict on-chain verification.
+export default async function handler(req, res) {
+  if (req.method === "POST") {
+    const action = String(req.body?.action || "").trim();
+    if (action === "reconcile-evm-claims") return reconcileEvmClaims(req, res);
+    return reconcileSolanaClaims(req, res);
+  }'''
+          if old not in text: raise SystemExit("rewards.js handler pattern missing")
+          text = text.replace(old, new, 1)
+
+          old = '''        FROM league_epoch_winners w
+        LEFT JOIN league_epoch_claims c
+          ON c.chain_id = w.chain_id
+         AND c.period = w.period
+         AND c.epoch_start = w.epoch_start
+         AND c.category = w.category
+         AND c.rank = w.rank
+        WHERE w.chain_id = $1
+          AND ${recipientClause}
+          AND c.claimed_at IS NULL'''
+          new = '''        FROM league_epoch_winners w
+        LEFT JOIN league_epoch_payouts p
+          ON p.chain_id = w.chain_id
+         AND p.period = w.period
+         AND p.epoch_start = w.epoch_start
+         AND p.category = w.category
+         AND p.rank = w.rank
+        WHERE w.chain_id = $1
+          AND ${recipientClause}
+          AND p.tx_hash IS NULL'''
+          if old not in text: raise SystemExit("rewards.js league payment truth pattern missing")
+          text = text.replace(old, new, 1)
+          Path(path).write_text(text)
+          PY
+      - name: Install and verify
+        run: |
+          npm ci --prefix frontend --no-audit --no-fund
+          node --check frontend/api/lib/rewardClaimVerification.js
+          node --check frontend/api/lib/evmLeagueClaimVerification.js
+          node --check frontend/api/leagueRouter.js
+          node --check frontend/api/rewards.js
+          node --check frontend/api/dev-fix/reward-claim-intent.js
+          npm --prefix frontend run check:api-imports
+          npm --prefix frontend run build
+      - name: Commit product patch
+        run: |
+          git checkout HEAD -- .github/workflows/agent6-all-claims-bootstrap.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add frontend/api/dev-fix/reward-claim-intent.js frontend/api/rewards.js frontend/src/lib/rewardProgramsApi.ts
+          git commit -m "fix(claims): recover three-chain claim state safely"
+          git push origin HEAD:agent6/all-launch-claims-three-chain
