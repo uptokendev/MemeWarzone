@@ -1,17 +1,14 @@
 import { ethers } from "ethers";
 import { pool } from "../../server/db.js";
 import { getServerReadProvider } from "./getServerReadProvider.js";
+import {
+  certifyRobinhoodStockRuntime,
+  isExactRobinhoodReleaseCandidate,
+} from "./robinhoodStockRuntimeCertification.js";
 
 export const ROBINHOOD_MAINNET_CHAIN_ID = 4663;
 export const ROBINHOOD_CANONICAL_ASSETS_URL = "https://api.robinhood.com/rhj/assets";
-
-const STOCK_FACTORY_ABI = [
-  "function stockGraduationAdapter() view returns (address)",
-  "function stockCampaignImplementation() view returns (address)",
-];
-const STOCK_ADAPTER_ABI = [
-  "function stockRoutes(address stockToken) view returns (address oracleFeed,address acquisitionPool,uint24 acquisitionFeeTier,uint256 minimumRouteLiquidityUsdWad,uint16 maxSwapSlippageBps,uint16 maxOracleDeviationBps,uint16 maxPriceImpactBps,bool enabled)",
-];
+export const ROBINHOOD_RUNTIME_CERTIFICATION_VERSION = "runtime-parity-v1";
 
 function truthy(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
@@ -87,6 +84,7 @@ export function deriveEffectiveAuthority(row, { healthFresh = isHealthFresh(row)
     robinhoodAssetIsActive(row?.robinhood_status) &&
     row?.trading_halted !== true &&
     row?.automated_health_status === "healthy" &&
+    row?.health_certification_version === ROBINHOOD_RUNTIME_CERTIFICATION_VERSION &&
     healthFresh &&
     row?.route_enabled === true &&
     normalizeStockAddress(row?.oracle_feed_address) &&
@@ -119,6 +117,8 @@ function rowToAsset(row) {
     adminState: row.admin_state,
     automatedHealthStatus: row.automated_health_status,
     automatedHealthReason: row.automated_health_reason,
+    healthCertificationVersion: row.health_certification_version || null,
+    certificationEvidence: row.certification_evidence || null,
     existingMarketSupport: row.existing_market_support === true,
     stateVersion: Number(row.state_version),
     oracleFeedAddress: row.oracle_feed_address,
@@ -205,43 +205,36 @@ function getFactoryAddress(chainId) {
   );
 }
 
-async function requireCode(provider, address, label) {
-  const normalized = normalizeStockAddress(address);
-  if (!normalized) throw new Error(`${label} is not configured`);
-  const code = await provider.getCode(normalized);
-  if (!code || code === "0x") throw new Error(`${label} has no deployed bytecode`);
-  return normalized;
-}
-
 export async function evaluateRobinhoodStockHealth(row) {
-  if (!row?.canonical) return { status: "unhealthy", reason: "noncanonical Robinhood deployment", route: null };
-  if (!robinhoodAssetIsActive(row.robinhood_status)) return { status: "unhealthy", reason: "Robinhood asset is inactive", route: null };
-  if (row.trading_halted === true) return { status: "unhealthy", reason: "Robinhood asset trading is halted", route: null };
+  if (!row?.canonical) return { status: "unhealthy", reason: "noncanonical Robinhood deployment", route: null, evidence: null };
+  if (!robinhoodAssetIsActive(row.robinhood_status)) return { status: "unhealthy", reason: "Robinhood asset is inactive", route: null, evidence: null };
+  if (row.trading_halted === true) return { status: "unhealthy", reason: "Robinhood asset trading is halted", route: null, evidence: null };
+  if (!isExactRobinhoodReleaseCandidate({ chainId: row.chain_id, contractAddress: row.contract_address })) {
+    return { status: "unhealthy", reason: "exact chain + provider + contract identity is not an approved Robinhood release candidate", route: null, evidence: null };
+  }
 
   try {
     const chainId = Number(row.chain_id);
     const provider = await getServerReadProvider(chainId);
-    await requireCode(provider, row.contract_address, "Stock Token");
     const factoryAddress = getFactoryAddress(chainId);
-    await requireCode(provider, factoryAddress, "Stock factory");
-    const factory = new ethers.Contract(factoryAddress, STOCK_FACTORY_ABI, provider);
-    const [adapterRaw, implementationRaw] = await Promise.all([
-      factory.stockGraduationAdapter(),
-      factory.stockCampaignImplementation(),
-    ]);
-    const adapterAddress = await requireCode(provider, adapterRaw, "Stock graduation adapter");
-    await requireCode(provider, implementationRaw, "Stock campaign implementation");
-    const adapter = new ethers.Contract(adapterAddress, STOCK_ADAPTER_ABI, provider);
-    const route = await adapter.stockRoutes(normalizeStockAddress(row.contract_address));
-    const oracleFeed = normalizeStockAddress(route?.oracleFeed ?? route?.[0]);
-    const acquisitionPool = normalizeStockAddress(route?.acquisitionPool ?? route?.[1]);
-    const routeEnabled = route?.enabled === true || route?.[7] === true;
-    if (!routeEnabled) return { status: "unhealthy", reason: "onchain Stock Graduation Adapter route disabled", route: { oracleFeed, acquisitionPool, enabled: false } };
-    if (!oracleFeed) return { status: "unhealthy", reason: "onchain Stock Graduation Adapter route has no oracleFeed", route: { oracleFeed: null, acquisitionPool, enabled: true } };
-    if (!acquisitionPool) return { status: "unhealthy", reason: "onchain Stock Graduation Adapter route has no acquisitionPool", route: { oracleFeed, acquisitionPool: null, enabled: true } };
-    return { status: "healthy", reason: "canonical Robinhood deployment and onchain graduation route verified", route: { oracleFeed, acquisitionPool, enabled: true } };
+    const evidence = await certifyRobinhoodStockRuntime({ row, provider, factoryAddress });
+    return {
+      status: "healthy",
+      reason: "runtime-parity certification passed: exact identity, executable acquisition, fresh price authority, deviation/impact/slippage policy, and permanent MEME/QUOTE LP custody verified",
+      route: {
+        oracleFeed: evidence.oracleFeed,
+        acquisitionPool: evidence.acquisitionPool,
+        enabled: evidence.routeEnabled === true,
+      },
+      evidence,
+    };
   } catch (error) {
-    return { status: "review", reason: `live health verification unavailable: ${String(error?.shortMessage || error?.message || error)}`, route: null };
+    return {
+      status: "review",
+      reason: `runtime-parity certification pending: ${String(error?.shortMessage || error?.message || error)}`,
+      route: null,
+      evidence: null,
+    };
   }
 }
 
@@ -251,6 +244,8 @@ async function persistHealth(client, row, health) {
     ...row,
     automated_health_status: health.status,
     automated_health_reason: health.reason,
+    health_certification_version: health.status === "healthy" ? ROBINHOOD_RUNTIME_CERTIFICATION_VERSION : null,
+    certification_evidence: health.evidence || null,
     oracle_feed_address: route.oracleFeed ?? row.oracle_feed_address,
     acquisition_pool_address: route.acquisitionPool ?? row.acquisition_pool_address,
     route_enabled: route.enabled ?? false,
@@ -261,17 +256,31 @@ async function persistHealth(client, row, health) {
     `update public.robinhood_stock_token_registry
         set automated_health_status = $2,
             automated_health_reason = $3,
-            oracle_feed_address = $4,
-            acquisition_pool_address = $5,
-            route_enabled = $6,
-            enabled_for_graduation = $7,
-            enabled_for_discovery = $8,
-            enabled_for_trading = $9,
+            health_certification_version = $4,
+            certification_evidence = $5::jsonb,
+            oracle_feed_address = $6,
+            acquisition_pool_address = $7,
+            route_enabled = $8,
+            enabled_for_graduation = $9,
+            enabled_for_discovery = $10,
+            enabled_for_trading = $11,
             last_health_check_at = now(),
             state_version = state_version + 1,
             updated_at = now()
       where id = $1::uuid returning *`,
-    [row.id, health.status, health.reason, route.oracleFeed ?? row.oracle_feed_address, route.acquisitionPool ?? row.acquisition_pool_address, route.enabled ?? false, authority.enabledForGraduation, authority.enabledForDiscovery, authority.enabledForTrading],
+    [
+      row.id,
+      health.status,
+      health.reason,
+      health.status === "healthy" ? ROBINHOOD_RUNTIME_CERTIFICATION_VERSION : null,
+      JSON.stringify(health.evidence || null),
+      route.oracleFeed ?? row.oracle_feed_address,
+      route.acquisitionPool ?? row.acquisition_pool_address,
+      route.enabled ?? false,
+      authority.enabledForGraduation,
+      authority.enabledForDiscovery,
+      authority.enabledForTrading,
+    ],
   );
   return result.rows[0];
 }
@@ -303,16 +312,19 @@ export async function syncCanonicalRobinhoodStockTokens({ fetchImpl = fetch, ope
   const syncStartedAt = new Date();
   try {
     await client.query("begin");
-    const candidateResult = await client.query(`select upper(symbol) as symbol from public.robinhood_stock_token_release_candidates`);
-    const candidates = new Set(candidateResult.rows.map((row) => row.symbol));
     for (const asset of canonicalRows) {
+      const exactCandidate = isExactRobinhoodReleaseCandidate({
+        chainId: asset.chainId,
+        contractAddress: asset.contractAddress,
+      });
       await client.query(
         `insert into public.robinhood_stock_token_registry (
            chain_id, robinhood_asset_uid, contract_address, symbol, display_name, underlying_symbol,
            canonical, robinhood_status, trading_halted, candidate, automated_health_status,
-           automated_health_reason, enabled_for_graduation, enabled_for_discovery, enabled_for_trading,
+           automated_health_reason, health_certification_version, certification_evidence,
+           enabled_for_graduation, enabled_for_discovery, enabled_for_trading,
            existing_market_support, last_canonical_sync_at
-         ) values ($1,$2,$3,$4,$5,$6,true,$7,$8,$9,'stale','canonical identity changed; health rescan required',false,$9,false,true,now())
+         ) values ($1,$2,$3,$4,$5,$6,true,$7,$8,$9,'stale','canonical identity sync requires runtime-parity health rescan',null,null,false,$9,false,true,now())
          on conflict (chain_id, contract_address) do update set
            robinhood_asset_uid = excluded.robinhood_asset_uid,
            symbol = excluded.symbol,
@@ -322,25 +334,16 @@ export async function syncCanonicalRobinhoodStockTokens({ fetchImpl = fetch, ope
            robinhood_status = excluded.robinhood_status,
            trading_halted = excluded.trading_halted,
            candidate = excluded.candidate,
-           automated_health_status = case
-             when public.robinhood_stock_token_registry.robinhood_asset_uid is distinct from excluded.robinhood_asset_uid then 'stale'
-             when public.robinhood_stock_token_registry.robinhood_status is distinct from excluded.robinhood_status then 'stale'
-             when public.robinhood_stock_token_registry.trading_halted is distinct from excluded.trading_halted then 'stale'
-             else public.robinhood_stock_token_registry.automated_health_status
-           end,
-           automated_health_reason = case
-             when public.robinhood_stock_token_registry.robinhood_asset_uid is distinct from excluded.robinhood_asset_uid
-               or public.robinhood_stock_token_registry.robinhood_status is distinct from excluded.robinhood_status
-               or public.robinhood_stock_token_registry.trading_halted is distinct from excluded.trading_halted
-             then 'canonical identity/status changed; health rescan required'
-             else public.robinhood_stock_token_registry.automated_health_reason
-           end,
+           automated_health_status = 'stale',
+           automated_health_reason = 'canonical identity sync requires runtime-parity health rescan',
+           health_certification_version = null,
+           certification_evidence = null,
            enabled_for_graduation = false,
            enabled_for_discovery = excluded.candidate and public.robinhood_stock_token_registry.admin_state <> 'force_disabled',
            last_canonical_sync_at = now(),
            state_version = public.robinhood_stock_token_registry.state_version + 1,
            updated_at = now()`,
-        [asset.chainId, asset.robinhoodAssetUid, asset.contractAddress, asset.symbol, asset.displayName, asset.underlyingSymbol, asset.robinhoodStatus, asset.tradingHalted, candidates.has(asset.symbol)],
+        [asset.chainId, asset.robinhoodAssetUid, asset.contractAddress, asset.symbol, asset.displayName, asset.underlyingSymbol, asset.robinhoodStatus, asset.tradingHalted, exactCandidate],
       );
     }
 
@@ -349,6 +352,8 @@ export async function syncCanonicalRobinhoodStockTokens({ fetchImpl = fetch, ope
           set canonical = false,
               automated_health_status = 'unhealthy',
               automated_health_reason = 'deployment missing from latest Robinhood canonical chain-4663 sync',
+              health_certification_version = null,
+              certification_evidence = null,
               enabled_for_graduation = false,
               enabled_for_discovery = false,
               last_canonical_sync_at = now(),
