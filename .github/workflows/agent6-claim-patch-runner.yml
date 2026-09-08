@@ -1,0 +1,44 @@
+name: Agent 6 Claim Patch Runner
+
+on:
+  push:
+    branches:
+      - agent6/all-launch-claims-three-chain
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent6/all-launch-claims-three-chain
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Apply focused claim corrections
+        run: python3 scripts/agent6_claim_recovery_patch.py
+      - name: Validate changed claim files
+        run: |
+          node --check frontend/api/rewards.js
+          node --check frontend/api/dev-fix/reward-claim-intent.js
+          npm ci --prefix frontend --no-audit --no-fund
+          npm --prefix frontend run check:api-imports
+          npm --prefix frontend run build
+      - name: Commit product changes
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add frontend/api/rewards.js frontend/api/dev-fix/reward-claim-intent.js
+          if git diff --cached --quiet; then
+            echo "No product changes to commit"
+            exit 0
+          fi
+          git commit -m "fix(claims): close reward recovery truth gaps"
+          git push origin HEAD:agent6/all-launch-claims-three-chain
