@@ -235,3 +235,42 @@ test("existing drafts, launched coins and Create Coin stay independent of the im
   assert.match(navigation, /path: "\/create"/);
   assert.doesNotMatch(coinsPage, /postGradFlags|VITE_ENABLE_POSTGRAD_ARENA/);
 });
+
+test("import panel auto-selects Solana from an already connected Solana wallet", () => {
+  assert.match(importPage, /function detectImportChain\(solanaAccount\?: string \| null, evmAccount\?: string \| null, preferSolana = false\): ImportChain \| null/);
+  assert.match(importPage, /if \(solana && \(!evm \|\| preferSolana\)\) return "solana"/);
+  assert.match(importPage, /detectImportChain\(feedWallet\.solanaAccount, feedWallet\.evmAccount, feedWallet\.isSolana\)/);
+  assert.match(importPage, /useState<ImportChain>\(detectedChain \|\| "bnb"\)/);
+  const detector = importPage.match(/function detectImportChain[\s\S]+?return "bnb";\n\}/)?.[0] || "";
+  assert.match(detector, /if \(!solana && !evm\) return null/);
+  assert.match(detector, /return "solana"/);
+  assert.ok(detector.indexOf('return "solana"') < detector.indexOf('return "bnb"'));
+});
+
+test("import panel auto-selects BNB from an already connected EVM wallet and defaults to BNB with no wallet", () => {
+  assert.match(importPage, /if \(!solana && !evm\) return null/);
+  assert.match(importPage, /return "bnb"/);
+  assert.match(importPage, /useState<ImportChain>\(detectedChain \|\| "bnb"\)/);
+  assert.match(importPage, /if\(!detectedChain\|\|detectedChain===chain\)return/);
+  assert.match(importPage, /setChain\(detectedChain\)/);
+});
+
+test("manual BNB and Solana selection still works and is not overwritten by auto-detect", () => {
+  assert.match(importPage, /setChainChosenByUser\(true\);setChain\("bnb"\);reset\(\)/);
+  assert.match(importPage, /setChainChosenByUser\(true\);setChain\("solana"\);reset\(\)/);
+  assert.match(importPage, /if\(chainChosenByUser\)return/);
+  assert.match(importPage, /useState\(false\)/);
+  assert.ok(importPage.indexOf("if(chainChosenByUser)return") < importPage.indexOf("setChain(detectedChain)"));
+});
+
+test("import panel auto-select does not change wallet auth or signing requirements", () => {
+  assert.match(importPage, /signAction\("project_import_resolve",null\)/);
+  assert.match(importPage, /signAction\("project_import_create",null,body\)/);
+  assert.match(importPage, /signAction\("project_import_claim",item.id,body\)/);
+  assert.match(importPage, /signAction\("project_import_manual_claim",item.id,\{note\}\)/);
+  assert.match(importPage, /signAction\("project_import_registration_image",project.id,null,digest\)/);
+  assert.match(importPage, /walletType:"solana",extraLines,signMessage:async\(message\)=>\(await signSolanaMessage\(message,connectedWallet\)\)\.signature/);
+  assert.match(importPage, /signWalletAction\(\{action,walletAddress:connectedWallet,chainId,extraLines,signer:wallet.signer\}\)/);
+  assert.match(coinsPage, /<ProjectImportPanel embedded/);
+  assert.match(importPage, /export function ProjectImportPanel/);
+});
