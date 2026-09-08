@@ -42,8 +42,10 @@ test("BNB and Solana onboarding render without Robinhood", () => {
 });
 
 test("clear import entry is present on desktop and mobile navigation", () => {
-  assert.match(navigation, /IMPORT YOUR MEMECOIN/);
-  assert.match(leftSidebar, /IMPORT YOUR MEMECOIN/);
+  assert.match(navigation, /Import your memecoin/);
+  assert.match(leftSidebar, /Import your memecoin/);
+  assert.doesNotMatch(navigation, /IMPORT YOUR MEMECOIN/);
+  assert.doesNotMatch(leftSidebar, /IMPORT YOUR MEMECOIN/);
   assert.match(mobileSidebar, /"\/import"/);
 });
 
@@ -192,8 +194,8 @@ test("command center coins has a compact collapsed import card above My Coins", 
 });
 
 test("global Import menu remains and lands in Command Center Coins with the import panel open", () => {
-  assert.match(navigation, /IMPORT YOUR MEMECOIN/);
-  assert.match(leftSidebar, /IMPORT YOUR MEMECOIN/);
+  assert.match(navigation, /Import your memecoin/);
+  assert.match(leftSidebar, /Import your memecoin/);
   assert.match(leftSidebar, /path: "\/import"/);
   assert.match(mobileSidebar, /"\/import"/);
   assert.match(app, /projectImportsEnabled \? <Route path="\/import" element={<ProjectImport \/>} \/>/);
