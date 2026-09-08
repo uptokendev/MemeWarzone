@@ -1,0 +1,93 @@
+name: Agent 5 BNB Battle Claim Recovery
+
+on:
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - "frontend/api/dev-fix/reward-claim-intent.js"
+      - "frontend/api/dev-fix/reward-claim-intent-generic.js"
+      - "frontend/api/dev-fix/reward-claim-battle-router.js"
+      - "frontend/api/lib/bnbBattleClaimRecovery.js"
+      - "frontend/api/lib/rewardClaimVerification.js"
+      - "frontend/api/lib/bnbBattleClaimRecovery.integration.test.mjs"
+      - "hardhat.agent5-claim-recovery.config.cjs"
+      - ".github/workflows/agent5-bnb-battle-claim-recovery.yml"
+  workflow_dispatch:
+
+jobs:
+  local-crash-recovery-certification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: memewarzone_claim_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d memewarzone_claim_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Compile RewardDistributor for disposable chain
+        run: npx hardhat compile --config hardhat.agent5-claim-recovery.config.cjs
+
+      - name: Start disposable BNB-shaped EVM chain 97
+        run: |
+          nohup npx hardhat node --config hardhat.agent5-claim-recovery.config.cjs > /tmp/agent5-hardhat.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS -X POST http://127.0.0.1:8545 \
+              -H 'content-type: application/json' \
+              --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
+              | grep -qi '0x61'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/agent5-hardhat.log
+          exit 1
+
+      - name: Run Agent 5 crash-recovery certification
+        working-directory: frontend
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/memewarzone_claim_test
+          PG_DISABLE_SSL: "1"
+          API_AUTH_ENFORCE_USER_WRITES: "1"
+          BSC_RPC_HTTP_97: http://127.0.0.1:8545
+          REWARD_CLAIM_MIN_CONFIRMATIONS_97: "1"
+          REWARD_CLAIM_RECOVERY_FROM_BLOCK_97: "0"
+          REWARD_DISTRIBUTOR_ADDRESS_97: "0x0000000000000000000000000000000000000001"
+        run: |
+          set -o pipefail
+          node --test api/lib/bnbBattleClaimRecovery.integration.test.mjs 2>&1 | tee /tmp/agent5-test.log
+
+      - name: Upload certification log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent5-bnb-claim-recovery-log
+          path: /tmp/agent5-test.log
+          if-no-files-found: warn
+
+      - name: Show chain log on failure
+        if: failure()
+        run: cat /tmp/agent5-hardhat.log || true
