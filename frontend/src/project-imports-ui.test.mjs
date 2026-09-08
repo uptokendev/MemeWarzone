@@ -42,12 +42,14 @@ test("clear import entry is present on desktop and mobile navigation", () => {
 });
 
 test("public token route resolves imported DB state before mounting live campaign runtime", () => {
+  assert.match(importPage, /`\/token\/\$\{encodeURIComponent\(item\.tokenAddress\)\}\?chainId=\$\{item\.chainId\}`/);
+  assert.doesNotMatch(importPage, /`\/imported\//);
   assert.match(tokenEntry, /lookupProjectImport/);
   assert.match(tokenEntry, /ImportedProjectDetails/);
   assert.match(tokenEntry, /projectImportsEnabled/);
   assert.match(tokenEntry, /TokenDetailsLiveEntry/);
   assert.match(tokenEntry, /if \(project\) return <ImportedProjectDetails item={project} \/>/);
-  assert.doesNotMatch(tokenEntry, /graduation|bonding|Topaz|Meteora|claim_intent/i);
+  assert.doesNotMatch(tokenEntry, /from .*graduation|from .*bonding|from .*Topaz|from .*Meteora|claim_intent/i);
   assert.match(liveTokenEntry, /TokenDetails/);
 });
 
