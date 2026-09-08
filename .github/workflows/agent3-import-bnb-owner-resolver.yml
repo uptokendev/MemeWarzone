@@ -1,0 +1,34 @@
+name: Agent 3 Import BNB Owner Resolver
+
+on:
+  pull_request:
+    paths:
+      - 'frontend/api/lib/projectOwnershipResolveBnb.js'
+      - 'frontend/api/lib/projectOwnershipResolveBnb.test.mjs'
+      - '.github/workflows/agent3-import-bnb-owner-resolver.yml'
+  push:
+    branches:
+      - 'agent3/import-bnb-owner-resolver'
+    paths:
+      - 'frontend/api/lib/projectOwnershipResolveBnb.js'
+      - 'frontend/api/lib/projectOwnershipResolveBnb.test.mjs'
+      - '.github/workflows/agent3-import-bnb-owner-resolver.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  owner-resolver:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install resolver runtime dependency
+        working-directory: frontend
+        run: npm install --ignore-scripts --no-audit --no-fund --no-save --package-lock=false ethers@6.15.0
+      - name: BNB import ownership resolver tests
+        working-directory: frontend
+        run: node --test api/lib/projectOwnershipResolveBnb.test.mjs
