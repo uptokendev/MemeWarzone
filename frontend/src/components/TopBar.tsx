@@ -184,22 +184,23 @@ export const TopBar = ({ mobileMenuOpen, setMobileMenuOpen, leftSidebarWidth = 0
 
   return (
     <div
+      data-mwz-topbar="true"
       className="fixed left-0 right-0 top-0 z-40 bg-transparent transition-[left] lg:left-[var(--mwz-left-sidebar-width)]"
       style={topbarStyle}
     >
       {/* Minimal top action bar - no borders, no menu items, compact mobile logo */}
-      <div className="mx-2 mt-3 flex min-h-[30px] items-center gap-1.5 px-2 md:mx-3 md:px-3">
+      <div className="mx-1.5 mt-2 flex min-h-11 items-center gap-1 px-1.5 sm:mx-3 sm:mt-3 sm:gap-1.5 sm:px-3">
         {/* Mobile menu trigger only */}
         <button
           onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-          className="mwz-button inline-flex h-8 w-8 shrink-0 items-center justify-center p-0 lg:hidden"
+          className="mwz-button inline-flex h-11 w-11 shrink-0 items-center justify-center p-0 lg:hidden"
           aria-label="Toggle menu"
         >
           <Menu className="h-4 w-4 shrink-0" />
         </button>
 
         {/* Compact mark only on mobile (desktop logo is in the left sidebar) */}
-        <Link to="/" className="mr-1 flex h-8 w-8 shrink-0 items-center justify-center lg:hidden" aria-label="MemeWarzone home">
+        <Link to="/" className="flex h-11 w-11 shrink-0 items-center justify-center lg:hidden" aria-label="MemeWarzone home">
           <img
             src={brandMark}
             alt="MemeWarzone"
@@ -209,7 +210,7 @@ export const TopBar = ({ mobileMenuOpen, setMobileMenuOpen, leftSidebarWidth = 0
         </Link>
 
         {/* Right cluster: Socials -> Search -> Create -> Bell -> Wallet (pushed right) */}
-        <div className="ml-auto flex items-center gap-1.5">
+        <div className="ml-auto flex min-w-0 items-center justify-end gap-1 sm:gap-1.5">
           {/* Social icons first */}
           <div className="hidden items-center xl:flex">
             <SocialTooltip
@@ -218,21 +219,20 @@ export const TopBar = ({ mobileMenuOpen, setMobileMenuOpen, leftSidebarWidth = 0
             />
           </div>
 
-          {/* Compact Search (after socials) - height reduced, text larger */}
-          <div className="w-[92px] lg:w-[110px] xl:w-28">
+          {/* Compact Search (after socials) - icon-only on the narrowest phones */}
+          <div className="w-11 shrink-0 sm:w-[92px] lg:w-[110px] xl:w-28">
             <button
               type="button"
               onClick={() => setPaletteOpen(true)}
               aria-label="Open search"
-              className="mwz-button search-button group flex h-[10px] w-full items-center justify-center gap-1 px-2 text-[11px] leading-none"
+              className="mwz-button search-button group flex h-11 w-full items-center justify-center gap-1 px-1.5 text-[11px] leading-none sm:px-2"
             >
-              <Search className="h-2 w-2 shrink-0" />
-              <span className="truncate text-[11px] uppercase tracking-[0.12em] text-success/70">Search</span>
+              <Search className="h-3.5 w-3.5 shrink-0 sm:h-2 sm:w-2" />
+              <span className="hidden truncate text-[11px] uppercase tracking-[0.12em] text-success/70 sm:inline">Search</span>
             </button>
           </div>
 
-          {/* Orange action buttons - shorter height + pushed down + moved left */}
-          <div className="relative -ml-1 flex shrink-0 items-center gap-1 self-end mb-2">
+          <div className="relative flex min-w-0 shrink-0 items-center gap-1 sm:-ml-1 sm:mb-2 sm:self-end">
             <Button onClick={() => { setMobileMenuOpen(false); navigate("/create"); }} className={topbarButtonClass}>
               <Plus className="h-2.5 w-2.5 shrink-0" />
               <span className="hidden sm:inline">Create Coin</span>

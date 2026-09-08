@@ -26,6 +26,7 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import { ethers, network } from "hardhat";
+import { refuseBnbFactoryBroadcastIfSourceHeadIsNotLive } from "./lib/bnbLiveGenerationGuard";
 
 const TESTNET_CHAIN_ID = 97n;
 const DEFAULT_KEEP_FACTORY = "0xA2B19f194826b6D930D18F3fBCad662FaDC9459E";
@@ -72,6 +73,7 @@ async function waitTx(txPromise: Promise<any> | any, label: string) {
 }
 
 async function main() {
+  refuseBnbFactoryBroadcastIfSourceHeadIsNotLive();
   const net = await ethers.provider.getNetwork();
   if (net.chainId !== TESTNET_CHAIN_ID) {
     throw new Error(`Dual-test factory deploy is restricted to BSC Testnet 97; got chain ${net.chainId}`);

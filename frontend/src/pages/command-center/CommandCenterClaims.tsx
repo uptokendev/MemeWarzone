@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { CommandCenterCard } from "@/components/command-center/CommandCenterCard";
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
 import { RecruiterNativePayoutsPanel } from "@/components/command-center/RecruiterNativePayoutsPanel";
+import { ArenaWarPoolClaimButton } from "@/components/arena/ArenaWarPoolClaimButton";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { addressesMatch } from "@/lib/address";
@@ -144,16 +145,34 @@ function isSolana(chainId?: number | null) {
   return isSolanaRewardChainId(chainId);
 }
 
+function isRobinhood(chainId?: number | null) {
+  const id = Number(chainId || 0);
+  return id === 4663 || id === 46630;
+}
+
+function rewardNativeSymbol(chainId?: number | null) {
+  if (isSolana(chainId)) return "SOL";
+  if (isRobinhood(chainId)) return "ETH";
+  return "BNB";
+}
+
+function rewardChainLabel(chainId?: number | null) {
+  if (isSolana(chainId)) return "Solana";
+  if (isRobinhood(chainId)) return "Robinhood";
+  return "BNB";
+}
+
 function formatNativeAmount(raw: string, chainId?: number | null, symbol?: string | null) {
+  const nativeSymbol = symbol || rewardNativeSymbol(chainId);
   try {
     if (isSolana(chainId)) {
       const value = Number(BigInt(raw || "0")) / LAMPORTS_PER_SOL;
-      return `${value.toLocaleString(undefined, { maximumFractionDigits: value >= 100 ? 2 : 9 })} ${symbol || "SOL"}`;
+      return `${value.toLocaleString(undefined, { maximumFractionDigits: value >= 100 ? 2 : 9 })} ${nativeSymbol}`;
     }
     const value = Number(formatEther(BigInt(raw || "0")));
-    return `${value.toLocaleString(undefined, { maximumFractionDigits: value >= 100 ? 2 : 6 })} ${symbol || "BNB"}`;
+    return `${value.toLocaleString(undefined, { maximumFractionDigits: value >= 100 ? 2 : 6 })} ${nativeSymbol}`;
   } catch {
-    return `0 ${symbol || (isSolana(chainId) ? "SOL" : "BNB")}`;
+    return `0 ${nativeSymbol}`;
   }
 }
 
@@ -284,17 +303,19 @@ async function fetchLeagueRewardItems(walletAddress?: string | null, chainId?: n
       payload: reward.payload && typeof reward.payload === "object" ? reward.payload : {},
     };
 
-    const solana = isSolanaRewardChainId(Number(chainId));
+    const id = Number(chainId);
+    const solana = isSolanaRewardChainId(id);
+    const robinhood = isRobinhood(id);
     return {
-      id: buildLeagueRewardId(Number(chainId), reward),
+      id: buildLeagueRewardId(id, reward),
       rewardType: "league",
       sourceId: null,
       sourceLabel: `${metadata.period}:${metadata.category}:${metadata.rank}`,
       walletAddress,
       userId: null,
-      chain: solana ? "solana" : "bnb",
-      chainId: Number(chainId),
-      tokenSymbol: solana ? "SOL" : "BNB",
+      chain: solana ? "solana" : robinhood ? "robinhood" : "bnb",
+      chainId: id,
+      tokenSymbol: rewardNativeSymbol(id),
       amount: String(reward.amountRaw || "0"),
       amountUsd: null,
       status: "claimable",
@@ -421,6 +442,7 @@ export default function CommandCenterClaims() {
   const [claimingType, setClaimingType] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [isRecruiterFlag, setIsRecruiterFlag] = useState(false);
+  const [battleClaims, setBattleClaims] = useState<Array<{ battleId: string; chainId: number }>>([]);
   const rewardChainId = isSolana(chainId) ? getConfiguredSolanaRewardChainId() : chainId;
 
   const loadClaims = () => {
@@ -430,6 +452,14 @@ export default function CommandCenterClaims() {
       const ledgerItems = await fetchRewardClaims({ walletAddress, chainId: rewardChainId, limit: 100 });
       const leagueItems = await fetchLeagueRewardItems(walletAddress, rewardChainId).catch(() => []);
       setItems([...(Array.isArray(ledgerItems) ? ledgerItems : []), ...leagueItems]);
+      if (walletAddress) {
+        const war = await apiFetch(`/api/arena/war-pools/claimable?wallet=${encodeURIComponent(walletAddress)}`, { cache: "no-store" })
+          .then((res) => res.json())
+          .catch(() => null);
+        setBattleClaims(Array.isArray(war?.items) ? war.items : []);
+      } else {
+        setBattleClaims([]);
+      }
     })()
       .catch((err: any) => setMessage(String(err?.message || err || "Failed to load rewards")))
       .finally(() => setLoading(false));
@@ -487,7 +517,7 @@ export default function CommandCenterClaims() {
           return;
         }
       } else if (!wallet?.signer) {
-        setMessage("Connect the BNB wallet that owns these league rewards before claiming.");
+        setMessage(`Connect the ${rewardChainLabel(firstChainId)} wallet that owns these league rewards before claiming.`);
         try { window.dispatchEvent(new CustomEvent("memewarzone:openWalletModal")); } catch {}
         return;
       }
@@ -639,7 +669,7 @@ export default function CommandCenterClaims() {
           if (call.mode === "solana_airdrop") {
             txHash = await submitSolanaAirdropClaim(call);
           } else {
-            if (!signer) throw new Error("BNB signer is unavailable for this reward claim.");
+            if (!signer) throw new Error("EVM signer is unavailable for this reward claim.");
             const contract = new Contract(call.contractAddress, REWARD_DISTRIBUTOR_ABI, signer);
             const tx = await contract.claim(call.batchId, call.amount, call.proof);
             toast.dismiss(toastId);
@@ -692,7 +722,7 @@ export default function CommandCenterClaims() {
 
   return (
     <div className="space-y-4">
-      <CommandCenterCard title={isSolana(rewardChainId) ? "Your Solana Rewards" : "Your BNB Rewards"}>
+      <CommandCenterCard title={`Your ${rewardChainLabel(rewardChainId)} Rewards`}>
         {message ? <div className="mb-3 rounded-xl border border-border/60 bg-background/30 p-3 text-sm text-muted-foreground">{message}</div> : null}
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
           {rewardCards.map((card) => {
@@ -731,6 +761,22 @@ export default function CommandCenterClaims() {
           })}
         </div>
       </CommandCenterCard>
+
+      {battleClaims.length ? (
+        <CommandCenterCard title="Arena war pool">
+          <p className="text-sm text-muted-foreground">
+            Winning campaign owners pull 85% of stakes plus Support. Protocol does not send. Supporters are not paid.
+          </p>
+          <div className="mt-3 space-y-2">
+            {battleClaims.map((item) => (
+              <div key={item.battleId} className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border/50 p-3">
+                <div className="font-mono text-xs text-muted-foreground">{item.battleId}</div>
+                <ArenaWarPoolClaimButton battleId={item.battleId} chainId={item.chainId} />
+              </div>
+            ))}
+          </div>
+        </CommandCenterCard>
+      ) : null}
 
       {showRecruiterRewards ? <RecruiterNativePayoutsPanel /> : null}
     </div>

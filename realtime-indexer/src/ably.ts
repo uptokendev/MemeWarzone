@@ -1,7 +1,24 @@
 import Ably from "ably";
 import { ENV } from "./env.js";
 
-export const ablyRest = new Ably.Rest({ key: ENV.ABLY_API_KEY });
+const disabledChannel = {
+  publish: async () => undefined,
+};
+
+const disabledAblyRest = {
+  channels: {
+    get: () => disabledChannel,
+  },
+  auth: {
+    createTokenRequest: async () => {
+      throw new Error("Ably is disabled in isolated local runtime");
+    },
+  },
+};
+
+export const ablyRest: any = ENV.ABLY_DISABLED
+  ? disabledAblyRest
+  : new Ably.Rest({ key: ENV.ABLY_API_KEY });
 
 function channelAddress(chainId: number, value: string) {
   const raw = String(value || "").trim();

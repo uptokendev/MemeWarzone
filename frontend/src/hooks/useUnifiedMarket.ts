@@ -9,22 +9,17 @@ import {
   type MarketState,
   type MarketSummary,
   type MarketTrade,
+  type MarketTradeSource,
 } from "@/lib/marketContinuityApi";
 import { campaignKey, isCampaignAddress, isTradeTxId } from "@/lib/chart/normalizeTrade";
 import { normalizeTradeTxHash } from "@/lib/tradeDedupe";
 
 export type MarketResolution = "1s" | "5s" | "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d";
 
-// Durable server market data is the chart source of truth for Market Cap.
-// UnifiedMarketChart does not reconstruct historical mcap from the trade tape.
-
 function tradeKey(trade: Pick<MarketTrade, "txHash" | "logIndex">) {
   const tx = normalizeTradeTxHash(trade.txHash) || String(trade.txHash || "").trim();
   const logIndex = Number(trade.logIndex ?? 0);
-  // Preserve real log indices (bonding multi-log txs); collapse missing/0 synthetics.
-  if (!Number.isFinite(logIndex) || logIndex <= 0 || logIndex >= 1_000_000) {
-    return `${tx}:synthetic`;
-  }
+  if (!Number.isFinite(logIndex) || logIndex <= 0 || logIndex >= 1_000_000) return `${tx}:synthetic`;
   return `${tx}:${logIndex}`;
 }
 
@@ -68,7 +63,6 @@ function mergeCandles(current: MarketCandle[], incoming: MarketCandle[]) {
   return Array.from(map.values()).sort((a, b) => candleKey(a) - candleKey(b));
 }
 
-/** REST snapshot merges into live candles; never blank a populated chart or drop a newer last bucket. */
 function applyRestCandles(current: MarketCandle[], incoming: MarketCandle[]): MarketCandle[] {
   if (!incoming.length) return current.length ? current : incoming;
   const merged = mergeCandles(current, incoming);
@@ -80,9 +74,7 @@ function applyRestCandles(current: MarketCandle[], incoming: MarketCandle[]): Ma
   if (!Number.isFinite(localKey) || localKey <= incomingKey) return merged;
   const lastMerged = merged[merged.length - 1];
   if (!lastMerged || candleKey(lastMerged) < localKey) return [...merged, lastLocal];
-  if (candleKey(lastMerged) === localKey) {
-    merged[merged.length - 1] = lastLocal;
-  }
+  if (candleKey(lastMerged) === localKey) merged[merged.length - 1] = lastLocal;
   return merged;
 }
 
@@ -99,7 +91,6 @@ function stringOrNull(value: unknown): string | null {
 function realtimeCandle(data: any, resolution: MarketResolution): MarketCandle | null {
   const tf = String(data?.resolution || data?.timeframe || data?.tf || "").trim();
   if (tf && tf !== resolution) return null;
-
   const bucketRaw = data?.bucket_start ?? data?.bucketStart ?? data?.time ?? data?.bucket;
   let bucketMs = 0;
   if (typeof bucketRaw === "number" || /^\d+(?:\.\d+)?$/.test(String(bucketRaw || ""))) {
@@ -109,27 +100,16 @@ function realtimeCandle(data: any, resolution: MarketResolution): MarketCandle |
     bucketMs = new Date(String(bucketRaw || "")).getTime();
   }
   if (!Number.isFinite(bucketMs) || bucketMs <= 0) return null;
-
   const o = data?.open ?? data?.o;
   const h = data?.high ?? data?.h;
   const l = data?.low ?? data?.l;
   const c = data?.close ?? data?.c;
   const volume = data?.volume_bnb ?? data?.volumeBnb ?? data?.volume_native ?? data?.volumeNative ?? data?.volume;
   const tradesCount = numberOrNull(data?.trades_count ?? data?.tradesCount);
-
-  // Legacy indexers published only close + per-trade volume (`c`/`v`). That is
-  // not enough to mutate an authoritative OHLC candle safely. Let the caller
-  // reconcile those events from REST until every publisher has been upgraded.
-  if ([o, h, l, c, volume].some((value) => value == null || value === "") || tradesCount == null) {
-    return null;
-  }
-
+  if ([o, h, l, c, volume].some((value) => value == null || value === "") || tradesCount == null) return null;
   return {
     bucket_start: new Date(bucketMs).toISOString(),
-    o: String(o),
-    h: String(h),
-    l: String(l),
-    c: String(c),
+    o: String(o), h: String(h), l: String(l), c: String(c),
     price_o: stringOrNull(data?.price_o ?? data?.priceOpen),
     price_h: stringOrNull(data?.price_h ?? data?.priceHigh),
     price_l: stringOrNull(data?.price_l ?? data?.priceLow),
@@ -143,36 +123,34 @@ function realtimeCandle(data: any, resolution: MarketResolution): MarketCandle |
     volume_bnb: String(volume),
     trades_count: Math.max(0, Math.trunc(tradesCount)),
     source_mask: Math.max(0, Math.trunc(numberOrNull(data?.source_mask ?? data?.sourceMask) ?? 1)),
-    bonding_trade_count: Math.max(
-      0,
-      Math.trunc(numberOrNull(data?.bonding_trade_count ?? data?.bondingTradeCount) ?? tradesCount),
-    ),
-    dex_trade_count: Math.max(
-      0,
-      Math.trunc(numberOrNull(data?.dex_trade_count ?? data?.dexTradeCount) ?? 0),
-    ),
-    bonding_volume_bnb: String(
-      data?.bonding_volume_bnb ?? data?.bondingVolumeBnb ?? volume,
-    ),
+    bonding_trade_count: Math.max(0, Math.trunc(numberOrNull(data?.bonding_trade_count ?? data?.bondingTradeCount) ?? tradesCount)),
+    dex_trade_count: Math.max(0, Math.trunc(numberOrNull(data?.dex_trade_count ?? data?.dexTradeCount) ?? 0)),
+    bonding_volume_bnb: String(data?.bonding_volume_bnb ?? data?.bondingVolumeBnb ?? volume),
     dex_volume_bnb: String(data?.dex_volume_bnb ?? data?.dexVolumeBnb ?? "0"),
     last_block_number: numberOrNull(data?.last_block_number ?? data?.lastBlockNumber ?? data?.lastBlock),
     last_log_index: numberOrNull(data?.last_log_index ?? data?.lastLogIndex),
   };
 }
 
+function normalizeMarketTradeSource(value: unknown): MarketTradeSource {
+  const source = String(value || "").trim().toLowerCase();
+  if (source === "bonding") return "bonding";
+  if (source === "robinhood_v3") return "robinhood_v3";
+  return "topaz";
+}
+
 function realtimeTrade(data: any, chainId: number): MarketTrade | null {
   const txHash = normalizeTradeTxHash(data?.txHash || data?.tx_hash);
   const blockNumber = Number(data?.blockNumber || data?.block_number || 0);
   if (!txHash || !isTradeTxId(chainId, txHash) || !Number.isInteger(blockNumber) || blockNumber <= 0) return null;
+  const source = normalizeMarketTradeSource(data?.source);
   return {
     chainId: Number(data.chainId || chainId || 0),
     campaignAddress: campaignKey(chainId, data.campaignAddress || data.campaign_address || ""),
     tokenAddress: campaignKey(chainId, data.tokenAddress || data.token_address || ""),
-    pairAddress: data.pairAddress || data.pair_address
-      ? campaignKey(chainId, data.pairAddress || data.pair_address)
-      : null,
-    marketStage: String(data.marketStage || "TOPAZ"),
-    source: String(data.source || "topaz") === "bonding" ? "bonding" : "topaz",
+    pairAddress: data.pairAddress || data.pair_address ? campaignKey(chainId, data.pairAddress || data.pair_address) : null,
+    marketStage: String(data.marketStage || (source === "robinhood_v3" ? "DEX" : source === "topaz" ? "TOPAZ" : "BONDING")),
+    source,
     side: String(data.side || "buy") === "sell" ? "sell" : "buy",
     wallet: campaignKey(chainId, data.wallet || ""),
     recipient: data.recipient ? campaignKey(chainId, data.recipient) : null,
@@ -187,19 +165,11 @@ function realtimeTrade(data: any, chainId: number): MarketTrade | null {
   };
 }
 
-export function useUnifiedMarket(input: {
-  campaignAddress?: string;
-  chainId: number;
-  resolution?: MarketResolution;
-  enabled?: boolean;
-}) {
+export function useUnifiedMarket(input: { campaignAddress?: string; chainId: number; resolution?: MarketResolution; enabled?: boolean }) {
   const campaignAddress = campaignKey(input.chainId, input.campaignAddress || "");
   const resolution = input.resolution ?? "1m";
-  // Chart stays available for a valid campaign even if durable market data is unavailable.
   const enabled = (input.enabled ?? true) && isCampaignAddress(input.chainId, campaignAddress);
-  // Durable indexer candles are chart truth even when the WTR UI flag is off.
   const apiEnabled = enabled;
-
   const [state, setState] = useState<MarketState | null>(null);
   const [summary, setSummary] = useState<MarketSummary | null>(null);
   const [trades, setTrades] = useState<MarketTrade[]>([]);
@@ -213,114 +183,44 @@ export function useUnifiedMarket(input: {
   const previousStageRef = useRef<string | null>(null);
   const [stageTransition, setStageTransition] = useState<{ from: string | null; to: string; at: number } | null>(null);
 
-  const realtime = useAblyTokenChannel({
-    enabled: apiEnabled,
-    chainId: input.chainId,
-    campaignAddress,
-  });
+  const realtime = useAblyTokenChannel({ enabled: apiEnabled, chainId: input.chainId, campaignAddress });
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
-    if (!apiEnabled) {
-      setLoading(false);
-      return;
-    }
+    if (!apiEnabled) { setLoading(false); return; }
     const requestId = ++requestRef.current;
     try {
-      // Soft-timeout each market endpoint so a hung Railway indexer cannot freeze quotes/UI.
       const withTimeout = <T,>(promise: Promise<T>, ms: number, fallback: T): Promise<T> => {
         let timer: ReturnType<typeof setTimeout> | null = null;
-        const timeout = new Promise<T>((resolve) => {
-          timer = setTimeout(() => resolve(fallback), ms);
-        });
-        return Promise.race([promise, timeout]).finally(() => {
-          if (timer) clearTimeout(timer);
-        });
+        const timeout = new Promise<T>((resolve) => { timer = setTimeout(() => resolve(fallback), ms); });
+        return Promise.race([promise, timeout]).finally(() => { if (timer) clearTimeout(timer); });
       };
-
       const emptyTrades = { items: [] as MarketTrade[], nextCursor: null as string | null };
-      const emptyCandles = {
-        items: [] as MarketCandle[],
-        graduationMarker: null,
-        marketStage: "BONDING" as const,
-        serverTime: null as string | null,
-      };
-
+      const emptyCandles = { items: [] as MarketCandle[], graduationMarker: null, marketStage: "BONDING" as const, serverTime: null as string | null };
       const [nextState, nextSummary, nextTrades, nextCandles] = await Promise.all([
-        withTimeout(
-          fetchMarketState(campaignAddress, input.chainId, signal).catch(() => null),
-          4_000,
-          null,
-        ),
-        withTimeout(
-          fetchMarketSummary(campaignAddress, input.chainId, signal).catch(() => null),
-          4_000,
-          null,
-        ),
-        withTimeout(
-          fetchMarketTrades(campaignAddress, input.chainId, { limit: 500, signal }).catch(() => emptyTrades),
-          4_000,
-          emptyTrades,
-        ),
-        withTimeout(
-          fetchMarketCandles(campaignAddress, input.chainId, resolution, { limit: 5000, signal }).catch(
-            () => emptyCandles,
-          ),
-          4_000,
-          emptyCandles,
-        ),
+        withTimeout(fetchMarketState(campaignAddress, input.chainId, signal).catch(() => null), 4_000, null),
+        withTimeout(fetchMarketSummary(campaignAddress, input.chainId, signal).catch(() => null), 4_000, null),
+        withTimeout(fetchMarketTrades(campaignAddress, input.chainId, { limit: 500, signal }).catch(() => emptyTrades), 4_000, emptyTrades),
+        withTimeout(fetchMarketCandles(campaignAddress, input.chainId, resolution, { limit: 5000, signal }).catch(() => emptyCandles), 4_000, emptyCandles),
       ]);
       if (requestId !== requestRef.current || signal?.aborted) return;
-
-      // Missing market-state row is normal for pre-handoff / older campaigns.
-      // Still keep any candles/trades from the snapshot — do not blank the chart.
       if (!nextState && !nextSummary) {
         setTrades((current) => mergeTrades(current, nextTrades?.items || [], input.chainId));
         setCandles((current) => applyRestCandles(current, nextCandles?.items || []));
         setGraduationMarker(nextCandles?.graduationMarker || null);
         setServerTime(nextCandles?.serverTime || null);
-        setState((prev) =>
-          prev || {
-            chainId: input.chainId,
-            campaignAddress,
-            tokenAddress: campaignAddress,
-            factoryAddress: null,
-            campaignGeneration: null,
-            marketStage: "BONDING",
-            graduation: null,
-            pairAddress: null,
-            routerAddress: null,
-            dexFactoryAddress: null,
-            wrappedNativeAddress: null,
-            stable: null,
-            feeBps: null,
-            poolVerified: false,
-            supportEnabled: true,
-            bondingActive: true,
-            tradingEnabled: true,
-            indexingStatus: {
-              enabled: true,
-              poolEnabled: false,
-              lastIndexedBlock: null,
-              lastFinalizedBlock: null,
-              lastSwapAt: null,
-              lastSyncAt: null,
-              dataLagSeconds: null,
-            },
-            reserves: { tokenRaw: null, nativeRaw: null },
-            lastVerifiedAt: null,
-            lastError: null,
-          },
-        );
-        setError(null);
-        setLoading(false);
-        return;
+        setState((prev) => prev || {
+          chainId: input.chainId, campaignAddress, tokenAddress: campaignAddress, factoryAddress: null, campaignGeneration: null,
+          marketStage: "BONDING", graduation: null, pairAddress: null, routerAddress: null, dexFactoryAddress: null,
+          wrappedNativeAddress: null, stable: null, feeBps: null, poolVerified: false, supportEnabled: true, bondingActive: true,
+          tradingEnabled: true,
+          indexingStatus: { enabled: true, poolEnabled: false, lastIndexedBlock: null, lastFinalizedBlock: null, lastSwapAt: null, lastSyncAt: null, dataLagSeconds: null },
+          reserves: { tokenRaw: null, nativeRaw: null }, lastVerifiedAt: null, lastError: null,
+        });
+        setError(null); setLoading(false); return;
       }
-
       const previousStage = previousStageRef.current;
       const stage = nextState?.marketStage || nextSummary?.marketStage || previousStage;
-      if (previousStage && stage && previousStage !== stage) {
-        setStageTransition({ from: previousStage, to: stage, at: Date.now() });
-      }
+      if (previousStage && stage && previousStage !== stage) setStageTransition({ from: previousStage, to: stage, at: Date.now() });
       if (stage) previousStageRef.current = stage;
       if (nextState) setState(nextState);
       if (nextSummary) setSummary(nextSummary);
@@ -330,9 +230,7 @@ export function useUnifiedMarket(input: {
       setServerTime(nextCandles?.serverTime || null);
       setError(null);
     } catch (caught: any) {
-      if (caught?.name === "AbortError" || signal?.aborted) return;
-      if (requestId !== requestRef.current) return;
-      // Soft-fail: chart still works from bonding curve points.
+      if (caught?.name === "AbortError" || signal?.aborted || requestId !== requestRef.current) return;
       setError(null);
     } finally {
       if (requestId === requestRef.current && !signal?.aborted) setLoading(false);
@@ -342,160 +240,76 @@ export function useUnifiedMarket(input: {
   const scheduleRefresh = useCallback((delay = 120) => {
     if (!apiEnabled) return;
     if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
-    refreshTimerRef.current = setTimeout(() => {
-      refreshTimerRef.current = null;
-      void refresh();
-    }, delay);
+    refreshTimerRef.current = setTimeout(() => { refreshTimerRef.current = null; void refresh(); }, delay);
   }, [apiEnabled, refresh]);
 
   useEffect(() => {
     if (!apiEnabled) {
-      setState(null);
-      setSummary(null);
-      setTrades([]);
-      setCandles([]);
-      setGraduationMarker(null);
-      setServerTime(null);
-      setLoading(false);
-      setError(null);
-      previousStageRef.current = null;
+      setState(null); setSummary(null); setTrades([]); setCandles([]); setGraduationMarker(null); setServerTime(null); setLoading(false); setError(null); previousStageRef.current = null;
       return;
     }
     const controller = new AbortController();
-    setTrades([]);
-    setCandles([]);
-    setLoading(true);
-    void refresh(controller.signal);
+    setTrades([]); setCandles([]); setLoading(true); void refresh(controller.signal);
     return () => controller.abort();
   }, [apiEnabled, refresh]);
 
   useEffect(() => {
     const channel = realtime.channel;
     if (!apiEnabled || !channel) return;
-
-    const revealLiveTradeFallback = () => {
-      // Keep historical candles. useCurveTrades / the trade stream drive the last print;
-      // wiping the snapshot blanks the chart for ~2.5s. REST can still catch up.
-      scheduleRefresh(2_500);
-    };
-
+    const revealLiveTradeFallback = () => scheduleRefresh(2_500);
     const onStage = (message: any) => {
       const data = message?.data || {};
       const nextStage = String(data.marketStage || data.to || "");
       if (nextStage) {
         const previousStage = previousStageRef.current;
-        if (previousStage !== nextStage) {
-          setStageTransition({ from: previousStage, to: nextStage, at: Date.now() });
-          previousStageRef.current = nextStage;
-        }
+        if (previousStage !== nextStage) { setStageTransition({ from: previousStage, to: nextStage, at: Date.now() }); previousStageRef.current = nextStage; }
         setState((current) => current ? { ...current, marketStage: nextStage as any } : current);
       }
       scheduleRefresh(50);
     };
-    const onTrade = (message: any) => {
-      const trade = realtimeTrade(message?.data, input.chainId);
-      if (trade) setTrades((current) => mergeTrades(current, [trade], input.chainId));
-      revealLiveTradeFallback();
-    };
-    const onLegacyTrade = () => {
-      // Bonding indexers publish the production `trade` event consumed by
-      // useCurveTrades. Mirror that signal here so a stale canonical candle snapshot
-      // never freezes the chart while the Trade tab is already moving.
-      revealLiveTradeFallback();
-    };
+    const onTrade = (message: any) => { const trade = realtimeTrade(message?.data, input.chainId); if (trade) setTrades((current) => mergeTrades(current, [trade], input.chainId)); revealLiveTradeFallback(); };
+    const onLegacyTrade = () => revealLiveTradeFallback();
     const onCandle = (message: any) => {
       const candle = realtimeCandle(message?.data, resolution);
-      if (!candle) {
-        // Compatibility path for legacy c/v-only publishers and malformed events.
-        scheduleRefresh(80);
-        return;
-      }
-
+      if (!candle) { scheduleRefresh(80); return; }
       setCandles((current) => {
-        if (!current.length) {
-          // Do not replace empty history with one isolated realtime bucket; wait for REST.
-          scheduleRefresh(300);
-          return current;
-        }
-        const incomingKey = candleKey(candle);
-        const lastKey = candleKey(current[current.length - 1]);
-        if (!Number.isFinite(incomingKey) || incomingKey <= 0) {
-          scheduleRefresh(0);
-          return current;
-        }
-        if (incomingKey < lastKey) {
-          // A changed historical bucket means late indexing/backfill/reorg. The
-          // server snapshot is safer than mutating history blindly in-browser.
-          scheduleRefresh(0);
-          return current;
-        }
+        if (!current.length) { scheduleRefresh(300); return current; }
+        const incomingKey = candleKey(candle); const lastKey = candleKey(current[current.length - 1]);
+        if (!Number.isFinite(incomingKey) || incomingKey <= 0 || incomingKey < lastKey) { scheduleRefresh(0); return current; }
         return mergeCandles(current, [candle]);
       });
     };
-    const onStats = (message: any) => {
-      const patch = message?.data || {};
-      setSummary((current) => current ? { ...current, ...patch } : current);
-    };
+    const onStats = (message: any) => { const patch = message?.data || {}; setSummary((current) => current ? { ...current, ...patch } : current); };
     const onHealth = () => scheduleRefresh(100);
-
     channel.subscribe("trade", onLegacyTrade);
     channel.subscribe("market_stage_changed", onStage);
     channel.subscribe("market_trade", onTrade);
     channel.subscribe("market_candle_upsert", onCandle);
     channel.subscribe("market_stats_patch", onStats);
     channel.subscribe("market_health_changed", onHealth);
-
     const onConnected = () => scheduleRefresh(0);
     realtime.client?.connection?.on?.("connected", onConnected);
-
     return () => {
-      try { channel.unsubscribe("trade", onLegacyTrade); } catch { /* noop */ }
-      try { channel.unsubscribe("market_stage_changed", onStage); } catch { /* noop */ }
-      try { channel.unsubscribe("market_trade", onTrade); } catch { /* noop */ }
-      try { channel.unsubscribe("market_candle_upsert", onCandle); } catch { /* noop */ }
-      try { channel.unsubscribe("market_stats_patch", onStats); } catch { /* noop */ }
-      try { channel.unsubscribe("market_health_changed", onHealth); } catch { /* noop */ }
-      try { realtime.client?.connection?.off?.("connected", onConnected); } catch { /* noop */ }
+      try { channel.unsubscribe("trade", onLegacyTrade); } catch {}
+      try { channel.unsubscribe("market_stage_changed", onStage); } catch {}
+      try { channel.unsubscribe("market_trade", onTrade); } catch {}
+      try { channel.unsubscribe("market_candle_upsert", onCandle); } catch {}
+      try { channel.unsubscribe("market_stats_patch", onStats); } catch {}
+      try { channel.unsubscribe("market_health_changed", onHealth); } catch {}
+      try { realtime.client?.connection?.off?.("connected", onConnected); } catch {}
     };
   }, [apiEnabled, input.chainId, realtime.channel, realtime.client, resolution, scheduleRefresh]);
 
-  useEffect(() => () => {
-    if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
-  }, []);
+  useEffect(() => () => { if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current); }, []);
 
   const topazActive = state?.marketStage === "TOPAZ_ACTIVE";
-  const degraded = state?.marketStage === "TOPAZ_DEGRADED" || Boolean(error);
+  const dexActive = state?.marketStage === "DEX_ACTIVE";
+  const postGradActive = topazActive || dexActive;
+  const degraded = state?.marketStage === "TOPAZ_DEGRADED" || state?.marketStage === "DEX_DEGRADED" || Boolean(error);
   const dataLagSeconds = state?.indexingStatus?.dataLagSeconds ?? summary?.dataLagSeconds ?? null;
 
   return useMemo(() => ({
-    enabled,
-    state,
-    summary,
-    trades,
-    candles,
-    graduationMarker,
-    serverTime,
-    stageTransition,
-    topazActive,
-    degraded,
-    dataLagSeconds,
-    loading,
-    error,
-    refresh,
-  }), [
-    enabled,
-    state,
-    summary,
-    trades,
-    candles,
-    graduationMarker,
-    serverTime,
-    stageTransition,
-    topazActive,
-    degraded,
-    dataLagSeconds,
-    loading,
-    error,
-    refresh,
-  ]);
+    enabled, state, summary, trades, candles, graduationMarker, serverTime, stageTransition,
+    topazActive, dexActive, postGradActive, degraded, dataLagSeconds, loading, error, refresh,
+  }), [enabled,state,summary,trades,candles,graduationMarker,serverTime,stageTransition,topazActive,dexActive,postGradActive,degraded,dataLagSeconds,loading,error,refresh]);
 }

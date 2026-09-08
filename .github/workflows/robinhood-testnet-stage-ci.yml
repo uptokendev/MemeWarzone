@@ -1,0 +1,197 @@
+name: Robinhood testnet staged deployment proof
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "contracts/LaunchFactory.sol"
+      - "contracts/LaunchCampaign.sol"
+      - "contracts/GraduationOracle.sol"
+      - "contracts/TreasuryRouterV2.sol"
+      - "contracts/TreasuryVaultV2.sol"
+      - "contracts/MonthlyLeagueTreasury.sol"
+      - "contracts/CharityTreasury.sol"
+      - "contracts/RecruiterRewardsVault.sol"
+      - "contracts/CommunityRewardsVault.sol"
+      - "contracts/ProtocolRevenueVault.sol"
+      - "contracts/CreatorRegistry.sol"
+      - "contracts/RiskRegistry.sol"
+      - "contracts/UPVoteTreasury.sol"
+      - "contracts/PermanentV3PositionLocker.sol"
+      - "contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol"
+      - "contracts/integrations/RobinhoodV3NativeSwapAdapter.sol"
+      - "contracts/integrations/RobinhoodV3MultiHopSwapAdapter.sol"
+      - "contracts/mocks/MockUniswapV3*.sol"
+      - "contracts/mocks/MockWETH9.sol"
+      - "contracts/mocks/MockUsdPriceFeed.sol"
+      - "scripts/deploy-robinhood-testnet-stage.ts"
+      - "scripts/deploy-robinhood-testnet-auxiliary.ts"
+      - "scripts/verify-robinhood-testnet-stage.ts"
+      - "scripts/prove-robinhood-staged-manifest.mjs"
+      - "scripts/prove-robinhood-staged-manifest.test.mjs"
+      - "scripts/prove-robinhood-testnet-indexer-continuity.mjs"
+      - "scripts/prove-robinhood-testnet-indexer-continuity.test.mjs"
+      - "scripts/robinhoodTestnetFreeze.mjs"
+      - "scripts/prove-robinhood-testnet-acceptance-freeze.mjs"
+      - "scripts/prove-robinhood-testnet-acceptance-freeze.test.mjs"
+      - "scripts/verify-robinhood-testnet-acceptance-freeze.ts"
+      - "deployments/robinhood/testnet.accepted.json"
+      - "scripts/test-robinhood-testnet-lifecycle.ts"
+      - "test/RobinhoodV3NativeSwapAdapter.spec.ts"
+      - "test/RobinhoodV3MultiHopSwapAdapter.spec.ts"
+      - "test/RobinhoodV3MultiHopRouteIdentity.spec.ts"
+      - ".github/workflows/robinhood-testnet-stage-ci.yml"
+  push:
+    branches:
+      - "feat/robinhood-*"
+      - "build/cross-chain-stabilization-rh-base"
+    paths:
+      - "contracts/LaunchFactory.sol"
+      - "contracts/LaunchCampaign.sol"
+      - "contracts/GraduationOracle.sol"
+      - "contracts/TreasuryRouterV2.sol"
+      - "contracts/TreasuryVaultV2.sol"
+      - "contracts/MonthlyLeagueTreasury.sol"
+      - "contracts/CharityTreasury.sol"
+      - "contracts/RecruiterRewardsVault.sol"
+      - "contracts/CommunityRewardsVault.sol"
+      - "contracts/ProtocolRevenueVault.sol"
+      - "contracts/CreatorRegistry.sol"
+      - "contracts/RiskRegistry.sol"
+      - "contracts/UPVoteTreasury.sol"
+      - "contracts/PermanentV3PositionLocker.sol"
+      - "contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol"
+      - "contracts/integrations/RobinhoodV3NativeSwapAdapter.sol"
+      - "contracts/integrations/RobinhoodV3MultiHopSwapAdapter.sol"
+      - "contracts/mocks/MockUniswapV3*.sol"
+      - "contracts/mocks/MockWETH9.sol"
+      - "contracts/mocks/MockUsdPriceFeed.sol"
+      - "scripts/deploy-robinhood-testnet-stage.ts"
+      - "scripts/deploy-robinhood-testnet-auxiliary.ts"
+      - "scripts/verify-robinhood-testnet-stage.ts"
+      - "scripts/prove-robinhood-staged-manifest.mjs"
+      - "scripts/prove-robinhood-staged-manifest.test.mjs"
+      - "scripts/prove-robinhood-testnet-indexer-continuity.mjs"
+      - "scripts/prove-robinhood-testnet-indexer-continuity.test.mjs"
+      - "scripts/robinhoodTestnetFreeze.mjs"
+      - "scripts/prove-robinhood-testnet-acceptance-freeze.mjs"
+      - "scripts/prove-robinhood-testnet-acceptance-freeze.test.mjs"
+      - "scripts/verify-robinhood-testnet-acceptance-freeze.ts"
+      - "deployments/robinhood/testnet.accepted.json"
+      - "scripts/test-robinhood-testnet-lifecycle.ts"
+      - "test/RobinhoodV3NativeSwapAdapter.spec.ts"
+      - "test/RobinhoodV3MultiHopSwapAdapter.spec.ts"
+      - "test/RobinhoodV3MultiHopRouteIdentity.spec.ts"
+      - ".github/workflows/robinhood-testnet-stage-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: robinhood-testnet-stage-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  staged-protocol-rehearsal:
+    name: Deploy, verify and exercise full Robinhood staging protocol
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked contract dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Compile contracts
+        run: npx hardhat compile
+
+      - name: Unit-test direct-native and Stock two-hop Robinhood V3 execution
+        run: >-
+          npx hardhat test
+          test/RobinhoodV3NativeSwapAdapter.spec.ts
+          test/RobinhoodV3MultiHopSwapAdapter.spec.ts
+          test/RobinhoodV3MultiHopRouteIdentity.spec.ts
+
+      - name: Start persistent local EVM chain
+        run: |
+          set -e
+          npx hardhat node > /tmp/robinhood-hardhat-node.log 2>&1 &
+          echo $! > /tmp/robinhood-hardhat-node.pid
+          ok=0
+          for i in $(seq 1 60); do
+            if curl -fsS -X POST http://127.0.0.1:8545 \
+              -H 'content-type: application/json' \
+              --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
+              | grep -q '0x7a69'; then
+              ok=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ok" -ne 1 ]; then
+            cat /tmp/robinhood-hardhat-node.log || true
+            exit 1
+          fi
+
+      - name: Deploy complete Robinhood staged protocol onto persistent rehearsal chain
+        env:
+          ALLOW_LOCAL_RH_PROTOCOL_STAGE: "true"
+          ROBINHOOD_STAGE_DEPLOYMENT_FILE: /tmp/robinhood-testnet-stage.json
+          ROBINHOOD_TEST_NATIVE_USD_PRICE: "3000"
+        run: npx hardhat run scripts/deploy-robinhood-testnet-stage.ts --network localhost
+
+      - name: Independently verify staged deployment and disabled activation state
+        env:
+          ALLOW_LOCAL_RH_PROTOCOL_STAGE: "true"
+          ROBINHOOD_STAGE_DEPLOYMENT_FILE: /tmp/robinhood-testnet-stage.json
+        run: npx hardhat run scripts/verify-robinhood-testnet-stage.ts --network localhost
+
+      - name: Deploy auxiliary parity contracts
+        env:
+          ALLOW_LOCAL_RH_PROTOCOL_STAGE: "true"
+          ROBINHOOD_STAGE_DEPLOYMENT_FILE: /tmp/robinhood-testnet-stage.json
+        run: npx hardhat run scripts/deploy-robinhood-testnet-auxiliary.ts --network localhost
+
+      - name: Prove staged-manifest invariant source
+        run: node --test scripts/prove-robinhood-staged-manifest.test.mjs scripts/prove-robinhood-testnet-indexer-continuity.test.mjs scripts/prove-robinhood-testnet-acceptance-freeze.test.mjs
+
+      - name: Prove 5C freeze forbids 46630 mutations while 31337 rehearsal stays allowed
+        run: node scripts/prove-robinhood-testnet-acceptance-freeze.mjs
+
+      - name: Prove manifest stays staging-only and disabled before acceptance
+        env:
+          ROBINHOOD_STAGE_DEPLOYMENT_FILE: /tmp/robinhood-testnet-stage.json
+        run: node scripts/prove-robinhood-staged-manifest.mjs /tmp/robinhood-testnet-stage.json
+
+      - name: Exercise authorized create, buy, sell, graduation, V3 swap and 80/20 harvest
+        env:
+          ALLOW_LOCAL_RH_PROTOCOL_STAGE: "true"
+          ROBINHOOD_ACCEPTANCE_ENABLE_LIVE: "true"
+          ROBINHOOD_STAGE_DEPLOYMENT_FILE: /tmp/robinhood-testnet-stage.json
+          ROBINHOOD_ACCEPTANCE_RESULT_FILE: /tmp/robinhood-acceptance-result.json
+        run: npx hardhat run scripts/test-robinhood-testnet-lifecycle.ts --network localhost
+
+      - name: Refuse to accept a local rehearsal as Robinhood testnet
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const r = JSON.parse(fs.readFileSync('/tmp/robinhood-acceptance-result.json', 'utf8'));
+          if (r.chainId === 46630) throw new Error('localhost rehearsal reported chain 46630');
+          if (r.accepted !== false) throw new Error('localhost must not set accepted=true');
+          if (r.rehearsalPassed !== true) throw new Error('rehearsalPassed must be true on Hardhat');
+          if (r.createPausedAfter !== true) throw new Error('creation must be paused after rehearsal');
+          if (r.scheduledCreate !== true || r.nativePostGradBuySell !== true) throw new Error('expanded lifecycle items missing');
+          if (r.signerPolicy46630 !== '4/3') throw new Error('signer policy must remain 4/3');
+          console.log('local rehearsal is not Robinhood testnet acceptance');
+          NODE
+
+      - name: Show rehearsal node log on failure
+        if: failure()
+        run: cat /tmp/robinhood-hardhat-node.log || true

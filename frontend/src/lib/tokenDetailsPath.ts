@@ -51,7 +51,7 @@ export function normalizeTokenRouteAddress(value: unknown, chainId?: number | nu
 /**
  * Build `/token/:tokenAddress` for navigation.
  * Prefer tokenAddress; fall back to campaign only when token is unknown.
- * Always attach chainId for Solana (101) so TokenDetails does not default to EVM.
+ * Attach chainId whenever address shape alone is ambiguous between EVM chains.
  *
  * ALWAYS use this instead of `/token/${addr.toLowerCase()}`.
  */
@@ -98,11 +98,16 @@ export function tokenDetailsPath(
         ? chainId
         : 0;
 
-  // Shareable TokenDetails URLs stay clean when the address already implies the chain:
-  //   /token/0x…     → BNB mainnet (56)
-  //   /token/<mint>  → Solana (101)
-  // Keep an explicit pin only when it is not the default for that address shape.
-  if (resolvedChain === 97 || resolvedChain === 102) {
+  // Every known EVM market is ambiguous by address shape alone. Internal links
+  // therefore pin the chain explicitly, including BNB mainnet, so browsing a
+  // campaign never follows whichever EVM network MetaMask currently has active.
+  if (
+    resolvedChain === 56 ||
+    resolvedChain === 97 ||
+    resolvedChain === 102 ||
+    resolvedChain === 4663 ||
+    resolvedChain === 46630
+  ) {
     params.set("chainId", String(resolvedChain));
   }
 

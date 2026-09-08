@@ -1,0 +1,74 @@
+name: Arena Integration PR Focused Gate
+
+on:
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - "frontend/api/arenaBoosts.js"
+      - "frontend/api/lib/arenaBoostRuntime.mjs"
+      - "frontend/api/lib/arenaBoostRuntime.test.mjs"
+      - "frontend/api/lib/arenaBattlePointsV3*.js"
+      - "frontend/api/lib/arenaBattlePointsV3*.mjs"
+      - "frontend/api/lib/arenaSettlementMode*.js"
+      - "frontend/api/lib/arenaSettlementMode*.mjs"
+      - "frontend/api/lib/arenaTournamentV2Certification.test.mjs"
+      - "frontend/src/lib/arena/integratedArenaRuntimeContracts.test.mjs"
+      - ".github/workflows/arena-integration-pr-focused.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arena-integration-pr-focused-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  focused-arena-authority:
+    name: Battle Boost V3 and Final Salvo authority
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install locked frontend dependencies
+        run: npm ci --prefix frontend --no-audit --no-fund
+
+      - name: Syntax-check changed Arena authority modules
+        run: |
+          node --check frontend/api/arenaBoosts.js
+          node --check frontend/api/lib/arenaBoostRuntime.mjs
+
+      - name: Test Battle Boost runtime invariants
+        run: node --test frontend/api/lib/arenaBoostRuntime.test.mjs
+
+      - name: Test founder-approved Battle Points V3 fixtures
+        run: node --test frontend/api/lib/arenaBattlePointsV3.test.mjs
+
+      - name: Test Battle Points V3 persistence
+        run: node --test frontend/api/lib/arenaBattlePointsV3Persistence.test.mjs
+
+      - name: Test Battle Points V3 refresh projection
+        run: node --test frontend/api/lib/arenaBattlePointsV3Refresh.test.mjs
+
+      - name: Test integrated browser authority contracts
+        run: node --test frontend/src/lib/arena/integratedArenaRuntimeContracts.test.mjs
+
+      - name: Test V3 historical settlement-mode preservation
+        run: node --test frontend/api/lib/arenaSettlementMode.test.mjs
+
+      - name: Test Vote Tournament Boost and Final Salvo frozen rules
+        run: node --test frontend/api/lib/arenaTournamentV2Certification.test.mjs
+
+      - name: Check frontend API import graph
+        run: npm --prefix frontend run check:api-imports

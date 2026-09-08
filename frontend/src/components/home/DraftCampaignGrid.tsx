@@ -7,17 +7,27 @@ import {
   fetchPublicCampaignDrafts,
   type DraftPopularity,
 } from "@/lib/draftApi";
-import { BNB_CHAIN_ID, BNB_TESTNET_CHAIN_ID, SOLANA_CHAIN_ID, isEvmChainId } from "@/lib/chainConfig";
+import {
+  BNB_CHAIN_ID,
+  BNB_TESTNET_CHAIN_ID,
+  ROBINHOOD_CHAIN_ID,
+  ROBINHOOD_TESTNET_CHAIN_ID,
+  SOLANA_CHAIN_ID,
+} from "@/lib/chainConfig";
 import { resolveImageUri } from "@/lib/media";
 import { timestampSeconds, type CampaignDraftLifecycle } from "@/lib/scheduledLaunchApi";
 import { cn } from "@/lib/utils";
 import type { HomeQuery } from "./CampaignGrid";
 
-/** BNB toggle is one button but staging defaults to 97 while live drafts also sit on 56. */
+/** Keep draft discovery isolated by product chain. BNB alone retains its legacy 56+97 merge. */
 function draftFeedChainIds(selectedChainId: number): number[] {
-  if (Number(selectedChainId) === SOLANA_CHAIN_ID) return [SOLANA_CHAIN_ID];
-  if (isEvmChainId(selectedChainId)) return [BNB_CHAIN_ID, BNB_TESTNET_CHAIN_ID];
-  return [Number(selectedChainId)];
+  if (selectedChainId === SOLANA_CHAIN_ID) return [SOLANA_CHAIN_ID];
+  if (selectedChainId === ROBINHOOD_CHAIN_ID) return [ROBINHOOD_CHAIN_ID];
+  if (selectedChainId === ROBINHOOD_TESTNET_CHAIN_ID) return [ROBINHOOD_TESTNET_CHAIN_ID];
+  if (selectedChainId === BNB_CHAIN_ID || selectedChainId === BNB_TESTNET_CHAIN_ID) {
+    return [BNB_CHAIN_ID, BNB_TESTNET_CHAIN_ID];
+  }
+  return [selectedChainId];
 }
 
 type DraftCampaignVM = {
@@ -156,6 +166,20 @@ function isDiscoverableDraft(draft: CampaignDraftLifecycle, nowMs = Date.now()) 
   return !draft.campaignAddress;
 }
 
+function draftChainLabel(chainId: number) {
+  if (chainId === SOLANA_CHAIN_ID) return "Solana";
+  if (chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID) return "Robinhood";
+  return "BNB";
+}
+
+function draftChainBadgeClass(chainId: number) {
+  if (chainId === SOLANA_CHAIN_ID) return "border-violet-400/60 bg-violet-400/10 text-violet-300";
+  if (chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID) {
+    return "border-sky-400/60 bg-sky-400/10 text-sky-300";
+  }
+  return "border-amber-400/60 bg-amber-400/10 text-amber-300";
+}
+
 export function DraftCampaignGrid({ className, query }: { className?: string; query: HomeQuery & { tab?: string } }) {
   const [chainId] = useSelectedFeedChainId();
   const [items, setItems] = useState<DraftCampaignVM[]>([]);
@@ -267,12 +291,12 @@ export function DraftCampaignGrid({ className, query }: { className?: string; qu
             const follows = Number(popularity?.follows || 0);
             const popularityPct = Number(popularity?.popularityPercentage || 0);
             const scheduled = isDiscoverableScheduledDraft(draft);
-            const isSolanaDraft = Number(draft.chainId) === SOLANA_CHAIN_ID;
             const launchDate = scheduled
               ? (scheduledLaunchSeconds(draft)
                   ? formatLaunchDate(draft.scheduledLaunchAt)
                   : "On-chain launch armed")
               : "";
+            const draftChainId = Number(draft.chainId);
 
             return (
               <article key={draft.id} className={cn("mwz-hud-frame group relative flex min-h-[322px] flex-col overflow-hidden border-success/30", cardClass)}>
@@ -305,13 +329,9 @@ export function DraftCampaignGrid({ className, query }: { className?: string; qu
                       <div className="mt-1 flex items-center gap-1.5 overflow-hidden">
                         <div className="truncate text-sm text-success/70">{draft.ticker ? `$${draft.ticker}` : ""}</div>
                         <span
-                          className={`inline-flex shrink-0 items-center rounded border px-1.5 py-px text-[9px] font-medium uppercase tracking-[0.08em] ${
-                            isSolanaDraft
-                              ? "border-violet-400/60 bg-violet-400/10 text-violet-300"
-                              : "border-amber-400/60 bg-amber-400/10 text-amber-300"
-                          }`}
+                          className={`inline-flex shrink-0 items-center rounded border px-1.5 py-px text-[9px] font-medium uppercase tracking-[0.08em] ${draftChainBadgeClass(draftChainId)}`}
                         >
-                          {isSolanaDraft ? "Solana" : "BNB"}
+                          {draftChainLabel(draftChainId)}
                         </span>
                       </div>
                     </div>
@@ -336,7 +356,6 @@ export function DraftCampaignGrid({ className, query }: { className?: string; qu
                       <div className="max-w-[112px] text-success">{readiness(String(draft.status))}</div>
                     </div>
                   </div>
-
 
                   <p className="mt-3 min-h-[4.375rem] line-clamp-3 text-sm leading-relaxed text-success/70">{mission}</p>
 

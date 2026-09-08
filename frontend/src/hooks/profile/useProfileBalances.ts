@@ -4,14 +4,19 @@ import type { CampaignSummary } from "@/lib/launchpadClient";
 import type { TokenBalanceRow } from "@/types/profilePage";
 import { pickTokenAddressFromSummary } from "@/lib/profile/profileFormatters";
 import { resolveImageUri } from "@/lib/media";
-import { useBnbUsdPrice } from "@/hooks/useBnbUsdPrice";
 import {
   derivePortfolioMetrics,
   calculateHoldingValueUsd,
   type PortfolioMetrics,
 } from "@/lib/profile/portfolioCalculations";
 import { getReadProvider } from "@/lib/readProvider";
-import { getActiveChainId, isEvmChainId } from "@/lib/chainConfig";
+import {
+  getActiveChainId,
+  isEvmChainId,
+  ROBINHOOD_CHAIN_ID,
+  ROBINHOOD_TESTNET_CHAIN_ID,
+} from "@/lib/chainConfig";
+import { useNativeUsdPrice } from "@/hooks/useNativeUsdPrice";
 import { isSolanaAddress } from "@/lib/address";
 import { getSolanaReadConnection } from "@/lib/solanaReadConnection";
 
@@ -52,9 +57,7 @@ interface UseProfileBalancesArgs {
   wallet: any;
   fetchCampaigns: FetchCampaigns;
   fetchCampaignSummary: FetchCampaignSummary;
-  /** Wallet-age timestamp from the profile service. */
   profileCreatedAt?: string | null;
-  /** Address-driven chain. Do not re-derive from the global wallet latch. */
   chainId?: number | null;
 }
 
@@ -151,10 +154,16 @@ export function useProfileBalances({
   const [nativeBalance, setNativeBalance] = useState<string>("");
   const [tokenBalances, setTokenBalances] = useState<TokenBalanceRow[]>([]);
   const [loadingBalances, setLoadingBalances] = useState(false);
-  const { price: bnbUsd } = useBnbUsdPrice(!!viewedAddress);
   const [portfolioMetrics, setPortfolioMetrics] = useState<PortfolioMetrics | null>(null);
   const [loadingPortfolioMetrics, setLoadingPortfolioMetrics] = useState(false);
   const walletChainId = wallet?.chainId ?? wallet?.network?.chainId;
+  const requestedChainId = Number(chainIdOverride);
+  const effectiveEvmChainId = isEvmChainId(requestedChainId)
+    ? requestedChainId
+    : getActiveChainId(walletChainId);
+  const robinhood = effectiveEvmChainId === ROBINHOOD_CHAIN_ID || effectiveEvmChainId === ROBINHOOD_TESTNET_CHAIN_ID;
+  const nativeSymbol = robinhood ? "ETH" : "BNB";
+  const { price: nativeUsdPrice } = useNativeUsdPrice(effectiveEvmChainId);
 
   useEffect(() => {
     let cancelled = false;
@@ -270,9 +279,9 @@ export function useProfileBalances({
         setLoadingPortfolioMetrics(true);
 
         const bal = await readProvider.getBalance(target);
-        const bnb = Number(ethers.formatUnits(bal, 18)).toFixed(4);
-        const nativeBnbForMetrics = Number.parseFloat(bnb) || 0;
-        if (!cancelled) setNativeBalance(`${bnb} BNB`);
+        const native = Number(ethers.formatUnits(bal, 18)).toFixed(4);
+        const nativeForMetrics = Number.parseFloat(native) || 0;
+        if (!cancelled) setNativeBalance(`${native} ${nativeSymbol}`);
 
         const campaigns = ((await fetchCampaigns()) ?? [])
           .filter((campaign) => ethers.isAddress(metadataFromCampaign(campaign).tokenAddress))
@@ -343,8 +352,8 @@ export function useProfileBalances({
             const matchingSummary = fulfilled.find(
               (summary) => String(pickTokenAddressFromSummary(summary) || "").toLowerCase() === row.tokenAddress.toLowerCase(),
             );
-            const marketCapBnb = matchingSummary?.stats?.marketCapBnb;
-            const valueUsd = calculateHoldingValueUsd(row.balanceFormatted, marketCapBnb, bnbUsd ?? 0);
+            const marketCapNative = matchingSummary?.stats?.marketCapBnb;
+            const valueUsd = calculateHoldingValueUsd(row.balanceFormatted, marketCapNative, nativeUsdPrice ?? 0);
             return {
               ticker: row.ticker || row.name || "???",
               valueUsd,
@@ -355,10 +364,12 @@ export function useProfileBalances({
             ? Math.floor(new Date(profileCreatedAt).getTime() / 1000)
             : null;
 
+          // Portfolio calculation retains legacy field names, but the values are native-chain
+          // amounts/prices. On Robinhood this is ETH + ETH/USD, never BNB + BNB/USD.
           const metrics = derivePortfolioMetrics({
-            nativeBnb: nativeBnbForMetrics,
+            nativeBnb: nativeForMetrics,
             tokenHoldingsWithValues,
-            bnbUsd: bnbUsd ?? 0,
+            bnbUsd: nativeUsdPrice ?? 0,
             firstActivityTimestamp: effectiveTimestamp,
           });
 
@@ -390,7 +401,17 @@ export function useProfileBalances({
     return () => {
       cancelled = true;
     };
-  }, [viewedAddress, account, fetchCampaigns, fetchCampaignSummary, walletChainId, profileCreatedAt, bnbUsd, chainIdOverride]);
+  }, [
+    viewedAddress,
+    account,
+    fetchCampaigns,
+    fetchCampaignSummary,
+    walletChainId,
+    profileCreatedAt,
+    nativeUsdPrice,
+    chainIdOverride,
+    nativeSymbol,
+  ]);
 
   return {
     nativeBalance,

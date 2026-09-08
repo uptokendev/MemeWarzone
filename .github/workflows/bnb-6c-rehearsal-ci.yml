@@ -1,0 +1,60 @@
+name: BNB 6C local rehearsal
+
+on:
+  pull_request:
+    paths:
+      - "contracts/LaunchFactory.sol"
+      - "contracts/LaunchCampaign.sol"
+      - "contracts/PermanentLpLocker.sol"
+      - "contracts/TreasuryRouterV3.sol"
+      - "contracts/CreatorRewardsVault.sol"
+      - "scripts/deploy-bnb-testnet-stage.ts"
+      - "scripts/deploy-bnb-mainnet-v3-cutover.ts"
+      - "scripts/verify-bnb-testnet-stage.ts"
+      - "scripts/test-bnb-testnet-lifecycle.ts"
+      - "scripts/test-bnb-6c-testnet-lifecycle.ts"
+      - "scripts/run-bnb-lifecycle-certification.ts"
+      - "scripts/rehearse-bnb-6c.mjs"
+      - "scripts/lib/bnbLiveGenerationGuard.ts"
+      - "scripts/lib/bnb6cAcceptanceSigner.ts"
+      - "scripts/lib/bnbLiveFactorySnapshot.ts"
+      - "scripts/bnb6cRouteAuthority.ts"
+      - "scripts/prove-bnb-6c-rehearsal.test.mjs"
+      - "scripts/prove-bnb-mainnet-v3-cutover.test.mjs"
+      - "test/BnbSourceHeadMainnetForkTopazV3.spec.ts"
+      - ".github/workflows/bnb-6c-rehearsal-ci.yml"
+      - ".github/workflows/solana-network-canary.yml"
+  push:
+    branches:
+      - "build/cross-chain-stabilization-rh-base"
+      - "feat/bnb-*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bnb-6c-rehearsal-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rehearsal:
+    name: 6C Hardhat rehearsalPassed=true accepted=false
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install locked contract dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Prove 6A census still 3/2 and 6C source gates
+        run: npm run prove:bnb-6a-census && npm run prove:bnb-6c-rehearsal
+      - name: Prove clean BNB V3 mainnet cutover stays fail-closed
+        run: node --test scripts/prove-bnb-mainnet-v3-cutover.test.mjs
+      - name: Load source-head real-Topaz fork harness without a fork RPC
+        run: npx hardhat test test/BnbSourceHeadMainnetForkTopazV3.spec.ts
+      - name: Full local 6C deploy, verify, and lifecycle rehearsal
+        run: npm run rehearse:bnb-6c

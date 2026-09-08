@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 /**
- * Write a Solana JSON keypair file from a GitHub Actions secret.
+ * Write the dedicated Solana devnet graduation operator keypair from a GitHub
+ * Actions secret. This is intentionally separate from the production
+ * FeeEscrow worker payer.
+ *
  * Accepts a JSON byte array, base58, or 64-byte hex. Never prints the secret.
  */
 import fs from "node:fs";
@@ -28,7 +31,7 @@ function decodeBase58(value) {
 
 function parseSecret(raw) {
   const value = String(raw || "").trim();
-  if (!value) fail("SOLANA_FEE_ESCROW_PAYER_KEYPAIR or SOLANA_DEVNET_PAYER is empty");
+  if (!value) fail("SOLANA_DEVNET_PAYER is empty");
   if (value.startsWith("[")) {
     const parsed = JSON.parse(value);
     if (!Array.isArray(parsed) || parsed.length < 64) fail("JSON keypair must contain at least 64 bytes");
@@ -45,7 +48,7 @@ function parseSecret(raw) {
 }
 
 function main() {
-  const raw = process.env.SOLANA_FEE_ESCROW_PAYER_KEYPAIR || process.env.SOLANA_DEVNET_PAYER || "";
+  const raw = process.env.SOLANA_DEVNET_PAYER || "";
   const dest =
     process.env.SOLANA_GRADUATION_OPERATOR_KEYPAIR ||
     path.join(process.env.RUNNER_TEMP || "/tmp", "mwz-solana-devnet-payer.json");

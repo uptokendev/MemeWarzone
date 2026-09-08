@@ -72,6 +72,11 @@ function uploadChainIdForWallet(walletAddress?: string | null) {
   return String(walletAddress || "").trim().startsWith("0x") ? 56 : 101;
 }
 
+function safeCount(value: unknown): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
+
 export default function CommandCenterRecruiter() {
   const { walletAddress } = useCommandCenterData();
   const recruiterWallet = useRecruiterWallet();
@@ -158,7 +163,7 @@ export default function CommandCenterRecruiter() {
   const activeSquadImage = squadImageUrl || getPortalSquadImageUrl(portal);
 
   const shareText = useMemo(() => {
-    const squadSize = portal?.squad?.counts?.total ?? recruiter?.linkedWalletCount ?? 0;
+    const squadSize = safeCount(portal?.squad?.counts?.total ?? recruiter?.linkedWalletCount);
     return `I’m building my MemeWarzone squad early. ${squadSize} creators and traders already locked in. Join with my code ${activeCode}: ${canonicalLink}`;
   }, [activeCode, canonicalLink, portal?.squad?.counts?.total, recruiter?.linkedWalletCount]);
 
@@ -177,7 +182,7 @@ export default function CommandCenterRecruiter() {
       return;
     }
     if (!activeRecruiterWallet.canSign) {
-      toast.error(`Connect the approved ${activeRecruiterWallet.chain === "solana" ? "Solana" : "BNB"} recruiter wallet first.`);
+      toast.error(`Connect the approved ${activeRecruiterWallet.label} recruiter wallet first.`);
       return;
     }
 
@@ -233,7 +238,7 @@ export default function CommandCenterRecruiter() {
       toast.success("Squad image updated");
     } catch (err: any) {
       setPortalError(String(err?.message || err || "Failed to update squad image."));
-      toast.error(String(err?.message || "Failed to update squad image."));
+      toast.error(String(err?.message || "Failed to update recruiter code."));
     } finally {
       setSavingSquadImage(false);
     }
@@ -265,7 +270,7 @@ export default function CommandCenterRecruiter() {
 
     try {
       // Keep chain aligned with the connected wallet (same as Create logo upload).
-      // Do not hardcode 56 — testnet squad uploads must use 97 so nonce + message match.
+      // Do not hardcode 56 — EVM and Solana uploads must sign for their actual chain.
       const chainId = Number(activeRecruiterWallet.chainId || uploadChainIdForWallet(walletAddress));
       const address =
         activeRecruiterWallet.chain === "solana"
@@ -392,6 +397,7 @@ export default function CommandCenterRecruiter() {
   }
 
   const portalLocked = !portal;
+  const linkedWalletCount = safeCount(portal?.squad?.counts?.total ?? recruiter?.linkedWalletCount);
 
   return (
     <div className="space-y-4">
@@ -406,8 +412,8 @@ export default function CommandCenterRecruiter() {
         <CommandCenterCard title="Recruiter account" description="Your active recruiter identity and public referral link.">
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="rounded-2xl border border-border/50 bg-background/25 p-4"><div className="font-retro text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Code</div><div className="mt-2 break-all font-retro text-lg text-foreground">{activeCode}</div></div>
-            <div className="rounded-2xl border border-border/50 bg-background/25 p-4"><div className="font-retro text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Status</div><div className="mt-2 font-retro text-lg capitalize text-foreground">{portal?.recruiter?.status || recruiter.status}</div></div>
-            <div className="rounded-2xl border border-border/50 bg-background/25 p-4"><div className="font-retro text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Linked wallets</div><div className="mt-2 font-retro text-lg text-foreground">{(portal?.squad?.counts?.total ?? recruiter.linkedWalletCount).toLocaleString()}</div></div>
+            <div className="rounded-2xl border border-border/50 bg-background/25 p-4"><div className="font-retro text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Status</div><div className="mt-2 font-retro text-lg capitalize text-foreground">{portal?.recruiter?.status || recruiter?.status || "unknown"}</div></div>
+            <div className="rounded-2xl border border-border/50 bg-background/25 p-4"><div className="font-retro text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Linked wallets</div><div className="mt-2 font-retro text-lg text-foreground">{linkedWalletCount.toLocaleString()}</div></div>
             <div className="rounded-2xl border border-border/50 bg-background/25 p-4"><div className="font-retro text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Wallet</div><div className="mt-2 font-retro text-lg text-foreground">{shortAddress(walletAddress)}</div></div>
           </div>
 
@@ -487,13 +493,13 @@ export default function CommandCenterRecruiter() {
       {portal && (
         <CommandCenterCard title="Squad roster" description="Creators and traders connected through your recruiter link.">
           <div className="grid gap-3 md:grid-cols-4">
-            <div className="rounded-2xl border border-border/50 bg-background/25 p-4"><div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Squad size</div><div className="mt-2 font-retro text-2xl text-foreground">{portal.squad.counts.total}</div></div>
-            <div className="rounded-2xl border border-border/50 bg-background/25 p-4"><div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Creators</div><div className="mt-2 font-retro text-2xl text-foreground">{portal.squad.counts.creators}</div></div>
-            <div className="rounded-2xl border border-border/50 bg-background/25 p-4"><div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Traders</div><div className="mt-2 font-retro text-2xl text-foreground">{portal.squad.counts.traders}</div></div>
-            <div className="rounded-2xl border border-border/50 bg-background/25 p-4"><div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Role pending</div><div className="mt-2 font-retro text-2xl text-foreground">{portal.squad.counts.unknown}</div></div>
+            <div className="rounded-2xl border border-border/50 bg-background/25 p-4"><div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Squad size</div><div className="mt-2 font-retro text-2xl text-foreground">{safeCount(portal.squad?.counts?.total)}</div></div>
+            <div className="rounded-2xl border border-border/50 bg-background/25 p-4"><div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Creators</div><div className="mt-2 font-retro text-2xl text-foreground">{safeCount(portal.squad?.counts?.creators)}</div></div>
+            <div className="rounded-2xl border border-border/50 bg-background/25 p-4"><div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Traders</div><div className="mt-2 font-retro text-2xl text-foreground">{safeCount(portal.squad?.counts?.traders)}</div></div>
+            <div className="rounded-2xl border border-border/50 bg-background/25 p-4"><div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Role pending</div><div className="mt-2 font-retro text-2xl text-foreground">{safeCount(portal.squad?.counts?.unknown)}</div></div>
           </div>
           <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {portal.squad.rows.length === 0 ? <div className="rounded-2xl border border-border/50 bg-background/25 p-4 text-sm text-muted-foreground">No squad members yet. Share your code and start onboarding creators or traders.</div> : portal.squad.rows.map((row) => (
+            {!Array.isArray(portal.squad?.rows) || portal.squad.rows.length === 0 ? <div className="rounded-2xl border border-border/50 bg-background/25 p-4 text-sm text-muted-foreground">No squad members yet. Share your code and start onboarding creators or traders.</div> : portal.squad.rows.map((row) => (
               <div key={`${row.wallet_address}-${row.bound_at}`} className="rounded-2xl border border-border/50 bg-background/25 p-4">
                 <div className="flex items-center justify-between gap-3"><div><div className="font-retro text-sm text-foreground">{shortAddress(row.wallet_address)}</div><div className="mt-1 text-xs text-muted-foreground">Joined {formatDate(row.bound_at)}</div></div><span className="rounded-full border border-accent/30 bg-accent/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-accent">{row.role}</span></div>
                 <Button onClick={() => copyText(row.wallet_address, "Wallet")} variant="outline" className="mt-3 w-full font-retro">Copy wallet</Button>

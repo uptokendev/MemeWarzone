@@ -1,10 +1,7 @@
 import { expect } from "chai";
 import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 import { ethers, network } from "hardhat";
-import { deployCoreFixture } from "./fixtures/core";
-
-const FACTORY_GENERATION = 3;
-const CAMPAIGN_GENERATION = 2;
+import { deployScheduledCreateFixture, signScheduledCreateAuthorization } from "./helpers/scheduledCreateAuth";
 
 const baseCampaign = (overrides: Record<string, unknown> = {}) => ({
   name: "Scheduled Token",
@@ -17,23 +14,6 @@ const baseCampaign = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-function hashCampaignRequest(req: ReturnType<typeof baseCampaign>) {
-  return ethers.keccak256(
-    ethers.AbiCoder.defaultAbiCoder().encode(
-      ["bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "bytes32", "uint256"],
-      [
-        ethers.keccak256(ethers.toUtf8Bytes(String(req.name))),
-        ethers.keccak256(ethers.toUtf8Bytes(String(req.symbol))),
-        ethers.keccak256(ethers.toUtf8Bytes(String(req.logoURI))),
-        ethers.keccak256(ethers.toUtf8Bytes(String(req.xAccount))),
-        ethers.keccak256(ethers.toUtf8Bytes(String(req.website))),
-        ethers.keccak256(ethers.toUtf8Bytes(String(req.extraLink))),
-        req.graduationTarget,
-      ],
-    ),
-  );
-}
-
 async function signScheduledCreate(
   factory: any,
   creator: string,
@@ -43,52 +23,19 @@ async function signScheduledCreate(
   finalizeRouteProfile: number,
   deadline: bigint,
 ) {
-  const chainId = (await ethers.provider.getNetwork()).chainId;
-  const digest = ethers.keccak256(
-    ethers.AbiCoder.defaultAbiCoder().encode(
-      [
-        "string",
-        "uint256",
-        "address",
-        "address",
-        "bytes32",
-        "uint64",
-        "bytes32",
-        "bytes32",
-        "bytes32",
-        "uint64",
-        "uint256",
-        "uint32",
-        "uint32",
-        "uint8",
-        "uint8",
-        "uint64",
-      ],
-      [
-        "MWZ_CREATE_SCHEDULED_V2_AUTH",
-        chainId,
-        await factory.getAddress(),
-        creator,
-        hashCampaignRequest(request.campaign),
-        request.launchAt,
-        request.draftReferenceHash,
-        request.normalizedTickerHash,
-        request.metadataHash,
-        request.reservationVersion,
-        request.authorizationNonce,
-        FACTORY_GENERATION,
-        CAMPAIGN_GENERATION,
-        tradeRouteProfile,
-        finalizeRouteProfile,
-        deadline,
-      ],
-    ),
+  return signScheduledCreateAuthorization(
+    factory,
+    creator,
+    signer,
+    request,
+    tradeRouteProfile,
+    finalizeRouteProfile,
+    deadline,
   );
-  return signer.signMessage(ethers.getBytes(digest));
 }
 
 async function scheduledFixture() {
-  const fixture = await deployCoreFixture();
+  const fixture = await deployScheduledCreateFixture();
   const { factory, owner, creator } = fixture;
   await factory.connect(owner).setRouteAuthority(await owner.getAddress());
 
@@ -135,10 +82,12 @@ async function scheduledFixture() {
 }
 
 describe("Scheduled LaunchFactory generation", function () {
-  it("persists the bound schedule evidence in the factory event and fixed test graduation target", async () => {
+  it("persists bound schedule evidence, fixed test graduation target, and launch-anchored creator lock", async () => {
     const { factory, creator, request, authorization, launchAt } = await scheduledFixture();
     const creatorAddress = await creator.getAddress();
 
+    const factoryGeneration = await factory.FACTORY_GENERATION();
+    const campaignGeneration = await factory.CAMPAIGN_GENERATION();
     const tx = factory.connect(creator).createScheduledCampaignAuthorized(request, authorization);
     await expect(tx)
       .to.emit(factory, "ScheduledCampaignCreated")
@@ -153,8 +102,8 @@ describe("Scheduled LaunchFactory generation", function () {
         request.metadataHash,
         1n,
         1n,
-        BigInt(FACTORY_GENERATION),
-        BigInt(CAMPAIGN_GENERATION),
+        factoryGeneration,
+        campaignGeneration,
       );
 
     const info = await factory.getCampaign(0n);
@@ -162,6 +111,9 @@ describe("Scheduled LaunchFactory generation", function () {
 
     expect(await campaign.launchAt()).to.equal(launchAt);
     expect(await campaign.graduationTarget()).to.equal(ethers.parseEther("6"));
+    // The fixture has no CreatorRegistry, so creatorBuyLockSeconds=0. This makes
+    // the exact anchor observable: scheduled deploy time must not be used here.
+    expect(await campaign.creatorBuyLockUntil()).to.equal(launchAt);
     expect(await factory.usedAuthorizationNonces(creatorAddress, 1n)).to.equal(true);
   });
 

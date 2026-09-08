@@ -3,12 +3,15 @@ import type { CampaignSummary } from "@/lib/launchpadClient";
 export function getExplorerBase(chainId?: number): string {
   // Solana
   if (chainId === 101 || chainId === 102) return "https://explorer.solana.com";
+  // Robinhood Chain
+  if (chainId === 46630) return "https://explorer.testnet.chain.robinhood.com";
+  if (chainId === 4663) return "https://robinhoodchain.blockscout.com";
   // BSC
   if (chainId === 97) return "https://testnet.bscscan.com";
   if (chainId === 56) return "https://bscscan.com";
 
-  // Fallback (keeps link valid-ish)
-  return "https://bscscan.com";
+  // Unknown chain: do not silently send users to BscScan.
+  return "";
 }
 
 export function shorten(addr?: string | null): string {
@@ -19,7 +22,6 @@ export function shorten(addr?: string | null): string {
 
 export function pickTokenAddressFromSummary(s: CampaignSummary): string | null {
   const anyCampaign: any = s?.campaign as any;
-  // Try common fields (adjust once you confirm your schema)
   return (
     anyCampaign?.token ||
     anyCampaign?.tokenAddress ||
@@ -45,6 +47,6 @@ export function formatTimeAgo(createdAt?: number): string {
 }
 
 export function formatNumber(value?: number | null, maxDecimals = 4): string {
-  if (value == null || !Number.isFinite(value)) return "â€”";
+  if (value == null || !Number.isFinite(value)) return "—";
   return Number(value).toLocaleString(undefined, { maximumFractionDigits: maxDecimals });
 }

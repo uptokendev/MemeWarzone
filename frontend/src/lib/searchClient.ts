@@ -1,6 +1,6 @@
 import { apiFetch } from "@/lib/apiBase";
 import { getBnbCampaignFeedChainIds } from "@/lib/feedChainConfig";
-import { isSolanaChainId } from "@/lib/chainConfig";
+import { BNB_CHAIN_ID, isSolanaChainId } from "@/lib/chainConfig";
 import {
   isSolanaBase58Address,
   normalizeEvmAddress,
@@ -122,7 +122,7 @@ function walletResult(query: string, chainId: number): TokenSearchResult | null 
   const solana = isSolanaBase58Address(raw);
   if (!evm && !solana) return null;
   const address = evm || raw;
-  const walletChain = evm ? (isSolanaChainId(chainId) ? 97 : chainId) : 101;
+  const walletChain = evm ? (isSolanaChainId(chainId) ? BNB_CHAIN_ID : chainId) : 101;
   return {
     kind: "wallet",
     campaignAddress: address,
@@ -157,7 +157,7 @@ export async function searchTokensRemote(
     .slice(0, limit)
     .map((entry) => entry.row);
 
-  const wallet = walletResult(query, Number(opts?.chainId || chainIds[0] || 97));
+  const wallet = walletResult(query, Number(opts?.chainId || chainIds[0] || BNB_CHAIN_ID));
   if (wallet && !ranked.some((row) => row.kind === "wallet" && row.href === wallet.href)) {
     ranked.push(wallet);
   }

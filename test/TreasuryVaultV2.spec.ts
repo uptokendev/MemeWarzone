@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { authorizeEpoch, latestTs } from "./helpers/settlementAuth";
 
 function hexToBigInt(h: string) {
   return BigInt(h);
@@ -209,10 +210,13 @@ describe("TreasuryVaultV2", function () {
     const root = ethers.keccak256(ethers.toUtf8Bytes("root"));
 
     await expect(vault.connect(alice).setEpochRoot(epochId, root, 100n)).to.be.revertedWith("not rootPoster");
+    await expect(vault.connect(rootPosterSigner).setEpochRoot(epochId, root, 100n)).to.be.revertedWith("epoch not authorized");
+    await authorizeEpoch(vault, multisig, epochId, 100n);
     await expect(vault.connect(rootPosterSigner).setEpochRoot(epochId, root, 100n)).to.emit(vault, "EpochRootSet");
     await expect(vault.connect(rootPosterSigner).setEpochRoot(epochId, root, 100n)).to.be.revertedWith("root already set");
 
     const epochId2 = 124n;
+    await authorizeEpoch(vault, multisig, epochId2, 100n);
     await expect(vault.connect(multisig).setEpochRoot(epochId2, root, 100n)).to.emit(vault, "EpochRootSet");
   });
 
@@ -223,6 +227,7 @@ describe("TreasuryVaultV2", function () {
     await expect(vault.connect(rootPosterSigner).setEpochRoot(1n, ethers.ZeroHash, 1n)).to.be.revertedWith("root=0");
 
     await vault.connect(multisig).setClaimCaps(ethers.parseEther("0.25"), ethers.parseEther("1"));
+    await authorizeEpoch(vault, multisig, 2n, ethers.parseEther("2"));
     await expect(vault.connect(rootPosterSigner).setEpochRoot(2n, root, ethers.parseEther("1.1"))).to.be.revertedWith(
       "maxEpochTotal"
     );
@@ -260,6 +265,7 @@ describe("TreasuryVaultV2", function () {
     const { proof: proofBob } = buildMerkleRootAndProof(leaves, 1);
 
     await vault.connect(multisig).setClaimCaps(ethers.parseEther("0.25"), ethers.parseEther("0.5"));
+    await authorizeEpoch(vault, multisig, epochId, ethers.parseEther("0.3"));
     await vault.connect(rootPosterSigner).setEpochRoot(epochId, root, ethers.parseEther("0.3"));
 
     await expect(
@@ -290,6 +296,7 @@ describe("TreasuryVaultV2", function () {
       )
     );
     const { root: root2, proof: proofTooMuch } = buildMerkleRootAndProof([leafTooMuch, leafAlice], 0);
+    await authorizeEpoch(vault, multisig, epochId2, ethers.parseEther("0.01"));
     await vault.connect(rootPosterSigner).setEpochRoot(epochId2, root2, ethers.parseEther("0.01"));
     await expect(
       vault.connect(bob).claim(epochId2, category, 3, bobAddr, amountTooMuch, proofTooMuch)
@@ -315,6 +322,7 @@ describe("TreasuryVaultV2", function () {
 
     const { root, proof } = buildMerkleRootAndProof([leaf, leaf], 0);
     await vault.connect(multisig).setClaimCaps(ethers.parseEther("0.25"), ethers.parseEther("1"));
+    await authorizeEpoch(vault, multisig, epochId, ethers.parseEther("0.3"));
     await vault.connect(rootPosterSigner).setEpochRoot(epochId, root, ethers.parseEther("0.3"));
     await vault.connect(multisig).setClaimsPaused(false);
 
@@ -345,6 +353,7 @@ describe("TreasuryVaultV2", function () {
       "root not set"
     );
 
+    await authorizeEpoch(vault, multisig, epochId, amount);
     await vault.connect(rootPosterSigner).setEpochRoot(epochId, root, amount);
     await expect(vault.connect(alice).claim(epochId, category, rank, ethers.ZeroAddress, amount, proof)).to.be.revertedWith(
       "to=0"
@@ -380,6 +389,7 @@ describe("TreasuryVaultV2", function () {
     const otherLeaf = ethers.keccak256(ethers.toUtf8Bytes("other-claim-leaf"));
     const { root, proof } = buildMerkleRootAndProof([leaf, otherLeaf], 0);
 
+    await authorizeEpoch(vault, multisig, epochId, amount);
     await vault.connect(rootPosterSigner).setEpochRoot(epochId, root, amount);
     await expect(vault.connect(alice).claim(epochId, category, rank, rejectingAddress, amount, proof)).to.be.revertedWith(
       "transfer failed"
@@ -406,5 +416,45 @@ describe("TreasuryVaultV2", function () {
       "transfer failed"
     );
     expect(await ethers.provider.getBalance(await vault.getAddress())).to.eq(ethers.parseEther("1"));
+  });
+
+  it("rejects unknown, revoked, expired, early, over-ceiling, and replayed epoch publication", async () => {
+    const { vault, multisig, rootPosterSigner, alice } = await deploy();
+    const root = ethers.keccak256(ethers.toUtf8Bytes("authorized-root"));
+    const now = await latestTs();
+
+    await expect(vault.connect(rootPosterSigner).authorizeEpoch(1n, 100n, now, now + 100)).to.be.revertedWith("not multisig");
+    await expect(vault.connect(rootPosterSigner).setEpochRoot(1n, root, 100n)).to.be.revertedWith("epoch not authorized");
+
+    await vault.connect(multisig).authorizeEpoch(2n, 100n, now, now + 3600);
+    await vault.connect(multisig).revokeEpoch(2n);
+    await expect(vault.connect(rootPosterSigner).setEpochRoot(2n, root, 100n)).to.be.revertedWith("epoch not authorized");
+    await expect(vault.connect(rootPosterSigner).revokeEpoch(2n)).to.be.revertedWith("not multisig");
+
+    await vault.connect(multisig).authorizeEpoch(3n, 100n, now + 10_000, now + 20_000);
+    await expect(vault.connect(rootPosterSigner).setEpochRoot(3n, root, 100n)).to.be.revertedWith("too early");
+
+    await vault.connect(multisig).authorizeEpoch(4n, 100n, now - 20, now - 1);
+    await expect(vault.connect(rootPosterSigner).setEpochRoot(4n, root, 100n)).to.be.revertedWith("auth expired");
+
+    await authorizeEpoch(vault, multisig, 5n, 50n);
+    await expect(vault.connect(rootPosterSigner).setEpochRoot(5n, root, 51n)).to.be.revertedWith("above authorized max");
+
+    await authorizeEpoch(vault, multisig, 6n, 100n);
+    await vault.connect(rootPosterSigner).setEpochRoot(6n, root, 100n);
+    await expect(vault.connect(multisig).authorizeEpoch(6n, 100n, now, now + 3600)).to.be.revertedWith("auth consumed");
+    await expect(vault.connect(rootPosterSigner).setEpochRoot(6n, root, 100n)).to.be.revertedWith("root already set");
+
+    await expect(vault.connect(alice).authorizeEpoch(7n, 100n, now, now + 3600)).to.be.revertedWith("not multisig");
+  });
+
+  it("lets Safe re-authorize an unconsumed epoch and still consume it once", async () => {
+    const { vault, multisig, rootPosterSigner } = await deploy();
+    const root = ethers.keccak256(ethers.toUtf8Bytes("reauth-root"));
+    const now = await latestTs();
+
+    await vault.connect(multisig).authorizeEpoch(8n, 10n, now, now + 3600);
+    await vault.connect(multisig).authorizeEpoch(8n, 25n, now, now + 7200);
+    await expect(vault.connect(rootPosterSigner).setEpochRoot(8n, root, 25n)).to.emit(vault, "EpochRootSet");
   });
 });

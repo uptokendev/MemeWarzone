@@ -1,0 +1,77 @@
+name: Arena Money V2 Deploy Rehearsal
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "contracts/ArenaWarPoolTreasuryV2.sol"
+      - "contracts/PostGradLeagueTreasuryV2.sol"
+      - "scripts/deployArenaWarPoolTreasuryV2.ts"
+      - "test/ArenaMoneyV2.spec.ts"
+      - ".github/workflows/arena-money-v2-deploy-rehearsal.yml"
+  push:
+    branches:
+      - "build/cross-chain-stabilization-rh-base"
+    paths:
+      - "contracts/ArenaWarPoolTreasuryV2.sol"
+      - "contracts/PostGradLeagueTreasuryV2.sol"
+      - "scripts/deployArenaWarPoolTreasuryV2.ts"
+      - "test/ArenaMoneyV2.spec.ts"
+      - ".github/workflows/arena-money-v2-deploy-rehearsal.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arena-money-v2-deploy-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rehearse:
+    name: Deploy V2 money path on isolated Hardhat chain
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact source SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Compile V2 contracts
+        run: npx hardhat compile
+
+      - name: Run V2 treasury tests
+        run: npx hardhat test test/ArenaMoneyV2.spec.ts
+
+      - name: Rehearse fresh League + WarPool deployment and ownership finalization
+        env:
+          ARENA_V2_ALLOW_LOCAL: "1"
+          ARENA_V2_OWNER: "0x7777777777777777777777777777777777777777"
+          ARENA_LEAGUE_V2_OWNER: "0x6666666666666666666666666666666666666666"
+          ARENA_V2_RESOLVER: "0x1111111111111111111111111111111111111111"
+          ARENA_BOOST_QUOTE_SIGNER_ADDRESS: "0x2222222222222222222222222222222222222222"
+          ARENA_PROTOCOL_RECEIVER: "0x3333333333333333333333333333333333333333"
+          ARENA_MONTHLY_MWL_RECEIVER: "0x4444444444444444444444444444444444444444"
+          ARENA_QUARTERLY_RESERVE_RECEIVER: "0x5555555555555555555555555555555555555555"
+        run: |
+          set -euo pipefail
+          output="$(npx hardhat run scripts/deployArenaWarPoolTreasuryV2.ts)"
+          printf '%s\n' "$output"
+          grep -q '^ArenaWarPoolTreasuryV2:' <<<"$output"
+          grep -q '^Post-Grad League V2:' <<<"$output"
+          grep -q '^Post-Grad League V2 owner: 0x6666666666666666666666666666666666666666$' <<<"$output"
+          grep -q '^ARENA_WAR_POOL_TREASURY_V2_ADDRESS_31337=0x' <<<"$output"
+          grep -q '^ARENA_POSTGRAD_LEAGUE_TREASURY_V2_ADDRESS_31337=0x' <<<"$output"
+          grep -q '^ARENA_BOOST_QUOTE_SIGNER_ADDRESS_31337=0x2222222222222222222222222222222222222222$' <<<"$output"

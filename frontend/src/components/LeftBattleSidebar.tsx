@@ -23,10 +23,10 @@ type SidebarNavItem = {
 };
 
 const arenaSubItems = [
-  { label: "Overview", path: "/arena" },
-  { label: "Battles", path: "/arena/battles" },
-  { label: "Major War League", path: "/arena/major-war-league" },
-  { label: "Events", path: "/arena/events" },
+  { label: "Overview", path: "/warzone" },
+  { label: "Battles", path: "/warzone/battles" },
+  { label: "Tournaments", path: "/warzone/tournaments" },
+  { label: "Major War League", path: "/warzone/major-war-league" },
 ];
 
 export function LeftBattleSidebar({ collapsed, onToggleCollapse }: LeftBattleSidebarProps) {
@@ -38,7 +38,7 @@ export function LeftBattleSidebar({ collapsed, onToggleCollapse }: LeftBattleSid
     () => [
       { icon: Rocket, label: "Launchpad", path: "/" },
       { icon: Trophy, label: "Leagues", path: "/league" },
-      ...(showArenaNav ? [{ icon: Swords, label: "Arena", path: "/arena", hasSubmenu: true }] : []),
+      ...(showArenaNav ? [{ icon: Swords, label: "Warzone", path: "/warzone", hasSubmenu: true }] : []),
       ...(warRoomEnabled ? [{ icon: Target, label: "War Trade Room", path: "/war-room" }] : []),
       { icon: User, label: "Profile", path: "/profile" },
       { icon: BookOpen, label: "Docs", path: "https://docs.memewar.zone", external: true },
@@ -49,7 +49,13 @@ export function LeftBattleSidebar({ collapsed, onToggleCollapse }: LeftBattleSid
   const isActive = (path: string) => {
     if (path === "/") return location.pathname === "/";
     if (path === "/league") return location.pathname === "/league" || location.pathname === "/leagues";
-    return location.pathname.startsWith(path);
+    if (path === "/warzone") return location.pathname === "/warzone" || location.pathname.startsWith("/warzone/") || location.pathname === "/arena" || location.pathname.startsWith("/arena/");
+    return location.pathname === path || location.pathname.startsWith(`${path}/`);
+  };
+
+  const isSubActive = (path: string) => {
+    if (path === "/warzone") return location.pathname === "/warzone" || location.pathname === "/arena";
+    return location.pathname === path || location.pathname.startsWith(`${path}/`);
   };
 
   const sidebarWidth = collapsed ? "w-[75px]" : "w-56";
@@ -111,7 +117,7 @@ export function LeftBattleSidebar({ collapsed, onToggleCollapse }: LeftBattleSid
                       <Link
                         key={sub.path}
                         to={sub.path}
-                        className={cn("block rounded px-2 py-1.5 text-white/65 transition hover:text-white", isActive(sub.path) && "text-accent")}
+                        className={cn("block rounded px-2 py-1.5 text-white/65 transition hover:text-white", isSubActive(sub.path) && "text-accent")}
                       >
                         {sub.label}
                       </Link>

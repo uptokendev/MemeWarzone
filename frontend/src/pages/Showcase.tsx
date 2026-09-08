@@ -36,7 +36,7 @@ const Showcase = () => {
         <HeaderBand showTicker={false} />
       </div>
 
-      <ContentContainer className="relative px-1 md:px-2 pb-10 space-y-3">
+      <ContentContainer className="relative space-y-3 px-1 pb-6 md:px-2">
         <CampaignTickerBar className="-mt-12 !pt-0" />
 
         <div className="relative z-20 -mt-1 mb-2 md:-mt-2 md:mb-3">

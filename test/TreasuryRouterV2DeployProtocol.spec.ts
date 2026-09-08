@@ -4,6 +4,7 @@ import { expect } from "chai";
 import { ethers } from "hardhat";
 import { deployProtocol } from "../scripts/lib/deployProtocol";
 import { verifyDeployment } from "../scripts/verify-deployment";
+import { verifyDeploymentAuthority } from "../scripts/verify-deployment-authority";
 
 const ENV_KEYS = [
   "DEPLOY_TREASURY_ROUTER_V2",
@@ -101,6 +102,9 @@ describe("deployProtocol TreasuryRouterV2 path", function () {
     expect(deployment.routing.charityTreasury).to.equal(deployment.charityTreasury);
     expect(deployment.routing.permanentLpLockerAuthorized).to.equal(true);
     expect(deployment.postDeployActions).to.deep.equal([]);
+    expect(deployment.authority.status).to.equal("local");
+    expect(deployment.authority.factoryOwner).to.equal(deployment.deployer);
+    expect(deployment.authority.expectedSafe).to.equal(deployment.treasurySafe);
 
     const router = await ethers.getContractAt("TreasuryRouterV2", deployment.contracts.TreasuryRouterV2);
     expect(await router.weeklyLeagueVault()).to.equal(deployment.contracts.WeeklyLeagueVault);
@@ -124,5 +128,40 @@ describe("deployProtocol TreasuryRouterV2 path", function () {
     expect(await charity.multisig()).to.equal(deployment.treasurySafe);
 
     await verifyDeployment(deployment);
+    const authority = await verifyDeploymentAuthority(deployment, { allowLocalDeployerOwner: true });
+    expect(authority.status).to.equal("local");
+    expect(authority.githubMainProtection).to.equal("manual");
+    expect(authority.errors).to.deep.equal([]);
+    expect(authority.matrix.LaunchFactory).to.equal(deployment.deployer);
+    expect(authority.matrix.TreasuryRouterAdmin).to.equal(deployment.treasurySafe);
+  });
+
+  it("queues TreasuryVaultV2 admin actions when TREASURY_SAFE differs from the deployer", async () => {
+    const [, safe] = await ethers.getSigners();
+    process.env.TREASURY_SAFE = await safe.getAddress();
+    process.env.LEAGUE_PAYOUT_MAX_PER_TX = ethers.parseEther("1").toString();
+    process.env.LEAGUE_PAYOUT_DAILY_CAP = ethers.parseEther("2").toString();
+    process.env.LEAGUE_CLAIM_MAX_PER_TX = ethers.parseEther("0.25").toString();
+    process.env.LEAGUE_CLAIM_MAX_EPOCH_TOTAL = ethers.parseEther("3").toString();
+    process.env.ENABLE_LEAGUE_PAYOUTS = "true";
+    process.env.ENABLE_LEAGUE_CLAIMS = "true";
+
+    const deployment: any = await deployProtocol();
+    const vault = await ethers.getContractAt("TreasuryVaultV2", deployment.contracts.TreasuryVaultV2);
+    const factory = await ethers.getContractAt("LaunchFactory", deployment.contracts.LaunchFactory);
+
+    expect(deployment.treasurySafe).to.equal(await safe.getAddress());
+    expect(deployment.deployer).to.not.equal(deployment.treasurySafe);
+    expect(await vault.payoutsPaused()).to.equal(true);
+    expect(await vault.claimsPaused()).to.equal(true);
+    expect(await vault.maxPayoutPerTx()).to.equal(0n);
+    expect(await vault.maxClaimPerTx()).to.equal(0n);
+    expect(await factory.owner()).to.equal(await safe.getAddress());
+    expect(deployment.postDeployActions).to.include(`TreasuryVaultV2.setCaps(${ethers.parseEther("1")}, ${ethers.parseEther("2")})`);
+    expect(deployment.postDeployActions).to.include(
+      `TreasuryVaultV2.setClaimCaps(${ethers.parseEther("0.25")}, ${ethers.parseEther("3")})`
+    );
+    expect(deployment.postDeployActions).to.include("TreasuryVaultV2.setPayoutsPaused(false)");
+    expect(deployment.postDeployActions).to.include("TreasuryVaultV2.setClaimsPaused(false)");
   });
 });

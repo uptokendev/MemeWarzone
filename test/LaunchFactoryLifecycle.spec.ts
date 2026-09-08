@@ -33,6 +33,34 @@ async function deployRegistries() {
   return { creatorRegistry, riskRegistry };
 }
 
+async function deployLifecycleFactoryWithUnifiedFeeRouter() {
+  const { owner, creator, alice, router, campaignImplementation, graduationOracle } =
+    await deployCoreFixture();
+  const MockPhase1TreasuryRouter = await ethers.getContractFactory("MockPhase1TreasuryRouter");
+  const strictFeeRouter = await MockPhase1TreasuryRouter.deploy();
+  await strictFeeRouter.waitForDeployment();
+
+  const Factory = await ethers.getContractFactory("LaunchFactory");
+  const factory = await Factory.deploy(
+    await router.getAddress(),
+    await strictFeeRouter.getAddress(),
+    await campaignImplementation.getAddress(),
+    await graduationOracle.getAddress()
+  );
+  await factory.waitForDeployment();
+
+  const permanentLpLocker = await ethers.getContractAt(
+    "PermanentLpLocker",
+    await factory.permanentLpLocker()
+  );
+
+  await factory.connect(owner).setRequireRouteAuthorization(false);
+  await factory.connect(owner).setRequireAuthorizedTrading(false);
+  await factory.connect(owner).enableLive();
+
+  return { owner, creator, alice, factory, permanentLpLocker };
+}
+
 describe("LaunchFactory lifecycle integration", function () {
   it("global and create pauses are owner-only and gate new campaigns independently", async () => {
     const { factory, owner, creator, alice } = await deployCoreFixture();
@@ -206,7 +234,8 @@ describe("LaunchFactory lifecycle integration", function () {
   });
 
   it("graduation notification decrements creator live count and registers the LP token", async () => {
-    const { factory, owner, creator, alice, permanentLpLocker } = await deployCoreFixture();
+    const { factory, owner, creator, alice, permanentLpLocker } =
+      await deployLifecycleFactoryWithUnifiedFeeRouter();
     const { creatorRegistry, riskRegistry } = await deployRegistries();
     const creatorAddress = await creator.getAddress();
 

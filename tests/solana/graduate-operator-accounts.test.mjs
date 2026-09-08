@@ -6,14 +6,45 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
-test("operator graduate.mjs keeps feeEscrow on beginGraduation only", () => {
+test("operator graduate.mjs atomically flushes FeeEscrow before signed graduation", () => {
   const source = fs.readFileSync(path.join(root, "tools/solana-meteora-graduation/graduate.mjs"), "utf8");
-  const begin = source.split("confirmGraduation")[0];
-  const confirm = source.split("confirmGraduation")[1] || "";
-  assert.match(begin, /feeEscrow:/);
-  assert.doesNotMatch(confirm, /feeEscrow:/);
+  const flushStart = source.indexOf(".flushCampaignFees()");
+  const beginStart = source.indexOf(".beginGraduation(");
+  const confirmStart = source.indexOf(".confirmGraduation()");
+  const instructionListStart = source.indexOf("const instructions = [");
+
+  assert.ok(flushStart >= 0, "graduate.mjs must build flushCampaignFees");
+  assert.ok(beginStart > flushStart, "beginGraduation must be built after the fee flush instruction");
+  assert.ok(confirmStart > beginStart, "confirmGraduation must be built after beginGraduation");
+  assert.ok(instructionListStart > confirmStart, "graduation instruction list must be assembled after confirmGraduation");
+
+  const flush = source.slice(flushStart, beginStart);
+  const begin = source.slice(beginStart, confirmStart);
+  const confirm = source.slice(confirmStart, instructionListStart);
+  const instructionList = source.slice(instructionListStart, source.indexOf("const latest =", instructionListStart));
+
+  assert.match(flush, /\bfeeEscrow\s*,/);
+  for (const vault of [
+    "weeklyLeagueVault",
+    "airdropVault",
+    "monthlyLeagueVault",
+    "recruiterVault",
+    "squadVault",
+    "protocolVault",
+  ]) {
+    assert.match(flush, new RegExp(`\\b${vault}\\s*:`), `flushCampaignFees must include ${vault}`);
+  }
+
+  assert.match(begin, /\bfeeEscrow\s*,/);
+  assert.doesNotMatch(confirm, /\bfeeEscrow\b/);
   assert.match(confirm, /remainingAccounts/);
   assert.match(confirm, /leagueVault/);
+
+  assert.match(
+    instructionList,
+    /flushFeesIx\s*,\s*ed25519Ix[\s\S]*?beginIx\s*,/,
+    "atomic graduation must order flush -> Ed25519 -> beginGraduation",
+  );
 });
 
 test("FeeEscrow worker uses a DB lease instead of session advisory locks", () => {

@@ -29,8 +29,8 @@ const MockTokenDetails = () => {
         <div className="rounded-2xl border border-white/10 bg-black/25 p-6 text-white/70">
           <div className="text-lg font-semibold text-white">Mock token not found</div>
           <p className="mt-2">This frontend test route expects a token from the post-grad mock roster.</p>
-          <Link to="/arena" className="mt-4 inline-flex text-sm text-accent hover:text-accent/80">
-            Return to Arena
+          <Link to="/warzone" className="mt-4 inline-flex text-sm text-accent hover:text-accent/80">
+            Return to Warzone
           </Link>
         </div>
       </div>

@@ -1,0 +1,91 @@
+name: Robinhood Registry Import Regression
+
+on:
+  pull_request:
+    paths:
+      - "frontend/api/dev-fix/drafts.js"
+      - "frontend/api/dev-fix/robinhood-stock-create-policy.test.mjs"
+      - "frontend/api/dev-fix/robinhoodStockCreatePolicy.js"
+      - "frontend/api/lib/robinhoodStockGraduationRegistry.js"
+      - "frontend/api/server.mjs"
+      - "database/robinhood_stock_graduation_registry.sql"
+      - "frontend/supabase/migrations/20260908043000_robinhood_full_quote_runtime_certification.sql"
+      - ".github/workflows/robinhood-registry-import-regression.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  api-import-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: memewarzone
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d memewarzone"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/memewarzone
+      PG_DISABLE_SSL: "1"
+      PORT: "3001"
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend --no-audit --no-fund
+      - name: Apply Robinhood registry schema and runtime certification migration
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/robinhood_stock_graduation_registry.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/supabase/migrations/20260908043000_robinhood_full_quote_runtime_certification.sql
+      - name: Production syntax and import checks
+        run: |
+          node --check frontend/api/dev-fix/drafts.js
+          node --check frontend/api/dev-fix/robinhoodStockCreatePolicy.js
+          node --check frontend/api/lib/robinhoodStockGraduationRegistry.js
+          node --check frontend/api/server.mjs
+          npm --prefix frontend run check:api-imports
+      - name: Robinhood registry and create-policy regression tests
+        working-directory: frontend
+        run: |
+          node --test api/lib/robinhoodStockGraduationRegistry.test.mjs
+          node --test api/dev-fix/robinhood-stock-create-policy.test.mjs
+          npm run test:draft-auth
+      - name: Real API boot and handler acceptance
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          node --import ./api/load-local-env.mjs api/server.mjs > /tmp/mwz-api.log 2>&1 &
+          API_PID=$!
+          trap 'kill $API_PID 2>/dev/null || true; cat /tmp/mwz-api.log' EXIT
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3001/healthz >/tmp/healthz.json; then break; fi
+            if ! kill -0 $API_PID 2>/dev/null; then
+              echo "API process exited during boot"
+              cat /tmp/mwz-api.log
+              exit 1
+            fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:3001/healthz | grep '"ok":true'
+          STATUS=$(curl --silent --output /tmp/stock-tokens.json --write-out '%{http_code}' http://127.0.0.1:3001/api/robinhood/stock-tokens)
+          test "$STATUS" = "200"
+          grep '"source":"robinhood_stock_token_registry"' /tmp/stock-tokens.json
+          kill $API_PID
+          wait $API_PID || true
+          trap - EXIT
+          echo "API BOOT: PASS"

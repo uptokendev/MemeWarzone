@@ -103,9 +103,9 @@ export function PostGradStatusStrip() {
 
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
           <StatusTile
-            to="/arena"
+            to="/warzone"
             icon={Crosshair}
-            label="Arena"
+            label="Warzone"
             value={`${featuredTokens.length} featured`}
             detail={`${sponsoredTokenIds.length} sponsored placements`}
           />
@@ -131,14 +131,14 @@ export function PostGradStatusStrip() {
             detail={`Week ${streak.weekProgressDays}/${streak.weeklyGoalDays} · ${streak.activeReward.status === "claimable" ? "reward ready" : "reward locked"}`}
           />
           <StatusTile
-            to="/arena/events"
+            to="/warzone/tournaments"
             icon={CalendarDays}
             label="Events"
             value={`${activeEvents} active`}
             detail={`${completedEvents} completed or archived`}
           />
           <StatusTile
-            to="/arena/leagues"
+            to="/warzone/major-war-league"
             icon={Trophy}
             label="League"
             value={`Week ${season.week} · ${season.state}`}

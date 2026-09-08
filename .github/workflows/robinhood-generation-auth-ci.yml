@@ -1,0 +1,107 @@
+name: Robinhood generation and authorization proof
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "frontend/api/dev-fix/draft-deploy-base.js"
+      - "frontend/api/dev-fix/draft-deploy.js"
+      - "frontend/api/dev-fix/drafts.js"
+      - "frontend/api/dev-fix/route-auth.js"
+      - "frontend/api/dev-fix/routeAuthorizationSigner.js"
+      - "frontend/api/dev-fix/route-authorization-signer.test.mjs"
+      - "frontend/api/dev-fix/robinhoodStockCreateAuthorizationSigner.js"
+      - "frontend/api/dev-fix/robinhood-stock-create-authorization-signer.test.mjs"
+      - "frontend/api/dev-fix/robinhoodStockCreatePolicy.js"
+      - "frontend/api/dev-fix/robinhood-stock-create-policy.test.mjs"
+      - "frontend/api/lib/getServerReadProvider.js"
+      - "frontend/api/lib/get-server-read-provider.test.mjs"
+      - "frontend/src/components/create/RobinhoodGraduationMarketPicker.tsx"
+      - "frontend/src/lib/robinhoodStockCreate.ts"
+      - "frontend/src/pages/Create.tsx"
+      - "db/migrations/20260903_000100_robinhood_draft_graduation_market.sql"
+      - "frontend/src/lib/scheduledLaunchClientV2.ts"
+      - ".github/workflows/robinhood-generation-auth-ci.yml"
+  push:
+    branches:
+      - "feat/robinhood-*"
+      - "build/cross-chain-stabilization-rh-base"
+    paths:
+      - "frontend/api/dev-fix/draft-deploy-base.js"
+      - "frontend/api/dev-fix/draft-deploy.js"
+      - "frontend/api/dev-fix/drafts.js"
+      - "frontend/api/dev-fix/route-auth.js"
+      - "frontend/api/dev-fix/routeAuthorizationSigner.js"
+      - "frontend/api/dev-fix/route-authorization-signer.test.mjs"
+      - "frontend/api/dev-fix/robinhoodStockCreateAuthorizationSigner.js"
+      - "frontend/api/dev-fix/robinhood-stock-create-authorization-signer.test.mjs"
+      - "frontend/api/dev-fix/robinhoodStockCreatePolicy.js"
+      - "frontend/api/dev-fix/robinhood-stock-create-policy.test.mjs"
+      - "frontend/api/lib/getServerReadProvider.js"
+      - "frontend/api/lib/get-server-read-provider.test.mjs"
+      - "frontend/src/components/create/RobinhoodGraduationMarketPicker.tsx"
+      - "frontend/src/lib/robinhoodStockCreate.ts"
+      - "frontend/src/pages/Create.tsx"
+      - "db/migrations/20260903_000100_robinhood_draft_graduation_market.sql"
+      - "frontend/src/lib/scheduledLaunchClientV2.ts"
+      - ".github/workflows/robinhood-generation-auth-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: robinhood-generation-auth-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  generation-auth:
+    name: Preserve BNB gen 3/2 and require Robinhood testnet 4/3
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm install --prefix frontend --package-lock=false --no-audit --no-fund
+
+      - name: Syntax-check authorization and Stock creator API modules
+        run: |
+          node --check frontend/api/dev-fix/draft-deploy-base.js
+          node --check frontend/api/dev-fix/draft-deploy.js
+          node --check frontend/api/dev-fix/drafts.js
+          node --check frontend/api/dev-fix/route-auth.js
+          node --check frontend/api/dev-fix/routeAuthorizationSigner.js
+          node --check frontend/api/dev-fix/robinhoodStockCreateAuthorizationSigner.js
+          node --check frontend/api/dev-fix/robinhoodStockCreatePolicy.js
+          node --check frontend/api/lib/getServerReadProvider.js
+
+      - name: Prove explicit generation and Stock create signing policy
+        working-directory: frontend
+        run: >-
+          node --test
+          api/dev-fix/route-authorization-signer.test.mjs
+          api/dev-fix/robinhood-stock-create-authorization-signer.test.mjs
+          api/dev-fix/robinhood-stock-create-policy.test.mjs
+
+      - name: Prove Robinhood server RPC selection
+        working-directory: frontend
+        run: node --test api/lib/get-server-read-provider.test.mjs
+
+      - name: Build isolated Robinhood frontend with Stock creator UI enabled
+        env:
+          VITE_RUNTIME_ENVIRONMENT: "local"
+          VITE_DEFAULT_CHAIN_ID: "46630"
+          VITE_ALLOWED_CHAIN_IDS: "46630"
+          VITE_PUBLIC_RPC_46630: "https://rpc.testnet.chain.robinhood.com"
+          VITE_FRONTEND_API_BASE: "http://127.0.0.1:3001"
+          VITE_TOKEN_API_BASE: "http://127.0.0.1:3002"
+          VITE_REALTIME_API_BASE: "http://127.0.0.1:3002"
+          VITE_ROBINHOOD_STOCK_MARKET_UI: "true"
+        run: npm --prefix frontend run build

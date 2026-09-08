@@ -1,0 +1,86 @@
+name: Robinhood Stock Graduation Registry
+
+on:
+  pull_request:
+    paths:
+      - "database/robinhood_stock_graduation_registry.sql"
+      - "frontend/api/admin/robinhoodStockGraduationRegistry.js"
+      - "frontend/api/data/approved-quote-catalog.v1.json"
+      - "frontend/api/dev-fix/robinhoodStockCreatePolicy.js"
+      - "frontend/api/graduation/quote-assets.js"
+      - "frontend/api/lib/approvedQuoteCatalog.js"
+      - "frontend/api/lib/approvedQuoteCatalog.test.mjs"
+      - "frontend/api/lib/quoteAssetCatalog.js"
+      - "frontend/api/lib/quoteAssetCatalog.test.mjs"
+      - "frontend/api/lib/robinhoodFullApprovedPairCatalog.js"
+      - "frontend/api/lib/robinhoodVerifiedNonStockDiscovery.js"
+      - "frontend/api/lib/robinhoodStockGraduationRegistry.js"
+      - "frontend/api/lib/robinhoodStockRuntimeCertification.js"
+      - "frontend/api/lib/robinhoodStockRuntimeProvider.js"
+      - "frontend/api/lib/robinhoodStockGraduationAdminOps.js"
+      - "frontend/api/lib/robinhoodStockGraduationRegistry.test.mjs"
+      - "frontend/api/robinhood/stock-tokens.js"
+      - "frontend/api/server.mjs"
+      - "frontend/supabase/migrations/20260906231500_quote_asset_catalog.sql"
+      - "frontend/supabase/migrations/20260907235000_approved_quote_catalog_expansion.sql"
+      - "frontend/supabase/migrations/20260908043000_robinhood_full_quote_runtime_certification.sql"
+      - "scripts/report-robinhood-approved-pairs.mjs"
+      - "scripts/report-robinhood-approved-pairs.test.mjs"
+      - "deployments/robinhood/mainnet.json"
+      - "docs/robinhood/stock-graduation-registry-api.md"
+      - ".github/workflows/robinhood-stock-graduation-registry.yml"
+  workflow_dispatch:
+
+jobs:
+  registry-certification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      PG_DISABLE_SSL: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend --no-audit --no-fund
+      - name: Syntax checks
+        run: |
+          node --check frontend/api/lib/robinhoodStockGraduationRegistry.js
+          node --check frontend/api/lib/robinhoodStockRuntimeCertification.js
+          node --check frontend/api/lib/robinhoodStockRuntimeProvider.js
+          node --check frontend/api/lib/robinhoodFullApprovedPairCatalog.js
+          node --check frontend/api/lib/robinhoodVerifiedNonStockDiscovery.js
+          node --check frontend/api/lib/robinhoodStockGraduationAdminOps.js
+          node --check frontend/api/lib/quoteAssetCatalog.js
+          node --check frontend/api/lib/approvedQuoteCatalog.js
+          node --check frontend/api/admin/robinhoodStockGraduationRegistry.js
+          node --check frontend/api/robinhood/stock-tokens.js
+          node --check frontend/api/graduation/quote-assets.js
+          node --check frontend/api/dev-fix/robinhoodStockCreatePolicy.js
+          node --check frontend/api/server.mjs
+          node --check scripts/report-robinhood-approved-pairs.mjs
+          node --check scripts/report-robinhood-approved-pairs.test.mjs
+          node -e 'JSON.parse(require("fs").readFileSync("frontend/api/data/approved-quote-catalog.v1.json", "utf8"))'
+      - name: Registry authority tests
+        working-directory: frontend
+        run: |
+          node --test api/lib/robinhoodStockGraduationRegistry.test.mjs
+          node --test api/lib/quoteAssetCatalog.test.mjs
+          node --test api/lib/approvedQuoteCatalog.test.mjs
+      - name: Full Robinhood pair catalog tests
+        run: node --test scripts/report-robinhood-approved-pairs.test.mjs
+      - name: Deterministic launch catalog evidence
+        run: node scripts/report-robinhood-approved-pairs.mjs --markdown
+      - name: API relative-import gate
+        working-directory: frontend
+        run: npm run check:api-imports
+      - name: ENV registry cannot remain production authority
+        run: |
+          if grep -q 'ROBINHOOD_STOCK_TOKEN_REGISTRY_' frontend/api/dev-fix/robinhoodStockCreatePolicy.js; then
+            echo 'ENV Stock Token registry is still referenced by production create authorization'
+            exit 1
+          fi

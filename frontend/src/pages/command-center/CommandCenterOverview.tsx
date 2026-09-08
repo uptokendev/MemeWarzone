@@ -3,7 +3,18 @@ import { Link } from "react-router-dom";
 import { CommandCenterCard } from "@/components/command-center/CommandCenterCard";
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
 import { PortfolioMetricsGrid } from "@/components/profile/PortfolioMetricsGrid";
-import { isSolanaChainId } from "@/lib/chainConfig";
+import {
+  isSolanaChainId,
+  ROBINHOOD_CHAIN_ID,
+  ROBINHOOD_TESTNET_CHAIN_ID,
+} from "@/lib/chainConfig";
+import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
+
+function nativeSymbol(chainId?: number | null): "BNB" | "SOL" | "ETH" {
+  if (isSolanaChainId(chainId)) return "SOL";
+  if (chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID) return "ETH";
+  return "BNB";
+}
 
 export default function CommandCenterOverview() {
   const {
@@ -22,6 +33,7 @@ export default function CommandCenterOverview() {
     : Array.isArray((leagueCabinet as any)?.badges)
       ? (leagueCabinet as any).badges.length
       : 0;
+  const symbol = nativeSymbol(chainId);
 
   return (
     <div>
@@ -59,10 +71,10 @@ export default function CommandCenterOverview() {
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-border/50 bg-card/35">
-                  <img src="/assets/ticker.png" alt={isSolanaChainId(chainId) ? "SOL" : "BNB"} className="h-7 w-7 object-contain" />
+                  <img src="/assets/ticker.png" alt={symbol} className="h-7 w-7 object-contain" />
                 </div>
                 <div>
-                  <div className="font-retro text-sm text-foreground">{isSolanaChainId(chainId) ? "Native SOL" : "Native BNB"}</div>
+                  <div className="font-retro text-sm text-foreground">Native {symbol}</div>
                   <div className="mt-1 text-xs text-muted-foreground">Connected wallet balance</div>
                 </div>
               </div>
@@ -79,7 +91,14 @@ export default function CommandCenterOverview() {
                   {tokenBalances.slice(0, 6).map((token) => (
                     <Link
                       key={`${token.tokenAddress}-${token.campaignAddress}`}
-                      to={`/token/${token.tokenAddress || token.campaignAddress}`}
+                      to={tokenDetailsPath(
+                        {
+                          tokenAddress: token.tokenAddress,
+                          campaignAddress: token.campaignAddress,
+                          chainId,
+                        },
+                        { chainId },
+                      )}
                       className="flex items-center justify-between gap-3 rounded-xl border border-border/40 bg-card/25 p-3 transition hover:border-accent/50 hover:bg-card/45"
                     >
                       <div className="flex min-w-0 items-center gap-3">

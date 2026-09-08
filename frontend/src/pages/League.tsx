@@ -1,14 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { ethers } from "ethers";
-import { AlertTriangle, TrendingUp, Trophy, Users, Wallet, Zap } from "lucide-react";
+import { AlertTriangle, TrendingUp, Trophy, Users, Zap } from "lucide-react";
 import { ContentContainer } from "@/components/layout/ContentContainer";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { Button } from "@/components/ui/button";
 import { RadarLoader } from "@/components/ui/RadarLoader";
-import { useWallet } from "@/contexts/WalletContext";
-import { getDefaultChainId, isAllowedChainId, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
-import { resolveBnbFeedChainId, setSelectedFeedChainId, useSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
+import {
+  ChainFeedSwitch,
+  useSelectedFeedChainId,
+} from "@/components/common/ChainFeedSwitch";
+import {
+  BNB_CHAIN_ID,
+  BNB_TESTNET_CHAIN_ID,
+  ROBINHOOD_CHAIN_ID,
+  ROBINHOOD_TESTNET_CHAIN_ID,
+  SOLANA_CHAIN_ID,
+  type SupportedChainId,
+} from "@/lib/chainConfig";
 import {
   LEAGUES,
   calculatePaidPlaces,
@@ -39,6 +48,7 @@ type RecruiterRow = {
   referredVolumeUsd?: number;
   referredVolumeBnb?: number;
   referredVolumeSol?: number;
+  referredVolumeEth?: number;
   weightedScore?: number;
   estimatedPayoutUsd?: number;
   claimStatus?: string;
@@ -86,7 +96,6 @@ function formatDelta(value?: number | null, unit = "") {
 }
 
 function formatEpochEnd(summary?: LeagueSummaryResponse) {
-  // Prefer full epoch end (not "now" rangeEnd) so users see when the season closes.
   const end = summary?.epoch?.epochEnd || summary?.epoch?.rangeEnd;
   if (!end) return "Awaiting epoch";
   const date = new Date(end);
@@ -273,7 +282,6 @@ function LeagueSwitch({ selected, period, onSelect }: { selected: LeagueKey; per
     <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
       {LEAGUES.map((league) => {
         const active = league.key === selected;
-        const validPeriod = league.supports.includes(period);
         return (
           <button
             key={league.key}
@@ -293,7 +301,6 @@ function LeagueSwitch({ selected, period, onSelect }: { selected: LeagueKey; per
               <img src={league.image} alt="" className="h-9 w-9 shrink-0 object-contain opacity-80" draggable={false} />
             </div>
             <p className="mt-3 line-clamp-2 text-xs leading-5 text-muted-foreground">{league.ruleSummary}</p>
-           
           </button>
         );
       })}
@@ -357,19 +364,26 @@ function StandingsTable({
             <tr className="border-b border-border/50"><th className="py-3 pr-3">Rank</th><th className="py-3 pr-3">Recruiter</th><th className="py-3 pr-3">Wallet</th><th className="py-3 pr-3">Network</th><th className="py-3 pr-3">Volume</th><th className="py-3 pr-3">Score</th><th className="py-3 pr-3">Payout</th><th className="py-3 pr-3">Claim</th><th className="py-3">Actions</th></tr>
           </thead>
           <tbody>
-            {(rows as RecruiterRow[]).map((row, index) => (
-              <tr key={`${row.wallet ?? row.recruiterCode ?? row.code ?? index}`} className="border-b border-border/30 align-top">
-                <td className="py-3 pr-3 font-retro">#{row.rank ?? index + 1}</td>
-                <td className="py-3 pr-3"><div className="font-semibold text-foreground">{row.displayName || "Recruiter"}</div><div className="text-xs text-muted-foreground">{row.recruiterCode || row.code || "Code pending"}</div></td>
-                <td className="py-3 pr-3 text-muted-foreground">{shortAddr(row.wallet)}</td>
-                <td className="py-3 pr-3 text-muted-foreground"><div>{row.linkedWallets ?? row.linkedWalletCount ?? 0} wallets</div><div className="text-xs">{row.activeSquadMembers ?? row.activeSquadMemberCount ?? 0} squad / {row.linkedCreators ?? row.linkedCreatorsCount ?? 0} creators / {row.linkedTraders ?? row.linkedTradersCount ?? 0} traders</div></td>
-                <td className="py-3 pr-3"><div>{formatUsd(Number(row.referredVolumeUsd ?? 0))}</div>{Number(row.referredVolumeBnb || 0) > 0 || Number(row.referredVolumeSol || 0) > 0 ? <div className="text-xs text-muted-foreground">{Number(row.referredVolumeBnb || 0) > 0 ? `${Number(row.referredVolumeBnb).toFixed(4)} BNB` : null}{Number(row.referredVolumeBnb || 0) > 0 && Number(row.referredVolumeSol || 0) > 0 ? " · " : ""}{Number(row.referredVolumeSol || 0) > 0 ? `${Number(row.referredVolumeSol).toFixed(4)} SOL` : null}</div> : null}</td>
-                <td className="py-3 pr-3">{Number(row.weightedScore ?? 0).toLocaleString()}</td>
-                <td className="py-3 pr-3">{formatUsd(Number(row.estimatedPayoutUsd ?? 0))}</td>
-                <td className="py-3 pr-3 text-muted-foreground">{row.claimStatus || "Pending"}</td>
-                <td className="py-3"><RecruiterLinks wallet={row.wallet} code={row.recruiterCode} /></td>
-              </tr>
-            ))}
+            {(rows as RecruiterRow[]).map((row, index) => {
+              const volumes = [
+                Number(row.referredVolumeBnb || 0) > 0 ? `${Number(row.referredVolumeBnb).toFixed(4)} BNB` : "",
+                Number(row.referredVolumeSol || 0) > 0 ? `${Number(row.referredVolumeSol).toFixed(4)} SOL` : "",
+                Number(row.referredVolumeEth || 0) > 0 ? `${Number(row.referredVolumeEth).toFixed(4)} ETH` : "",
+              ].filter(Boolean);
+              return (
+                <tr key={`${row.wallet ?? row.recruiterCode ?? row.code ?? index}`} className="border-b border-border/30 align-top">
+                  <td className="py-3 pr-3 font-retro">#{row.rank ?? index + 1}</td>
+                  <td className="py-3 pr-3"><div className="font-semibold text-foreground">{row.displayName || "Recruiter"}</div><div className="text-xs text-muted-foreground">{row.recruiterCode || row.code || "Code pending"}</div></td>
+                  <td className="py-3 pr-3 text-muted-foreground">{shortAddr(row.wallet)}</td>
+                  <td className="py-3 pr-3 text-muted-foreground"><div>{row.linkedWallets ?? row.linkedWalletCount ?? 0} wallets</div><div className="text-xs">{row.activeSquadMembers ?? row.activeSquadMemberCount ?? 0} squad / {row.linkedCreators ?? row.linkedCreatorsCount ?? 0} creators / {row.linkedTraders ?? row.linkedTradersCount ?? 0} traders</div></td>
+                  <td className="py-3 pr-3"><div>{formatUsd(Number(row.referredVolumeUsd ?? 0))}</div>{volumes.length ? <div className="text-xs text-muted-foreground">{volumes.join(" · ")}</div> : null}</td>
+                  <td className="py-3 pr-3">{Number(row.weightedScore ?? 0).toLocaleString()}</td>
+                  <td className="py-3 pr-3">{formatUsd(Number(row.estimatedPayoutUsd ?? 0))}</td>
+                  <td className="py-3 pr-3 text-muted-foreground">{row.claimStatus || "Pending"}</td>
+                  <td className="py-3"><RecruiterLinks wallet={row.wallet} code={row.recruiterCode} /></td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -408,25 +422,40 @@ function StandingsTable({
             </Link>
           );
         }
-        return (
-          <div key={key} className="mwz-hud-frame p-4">
-            {body}
-          </div>
-        );
+        return <div key={key} className="mwz-hud-frame p-4">{body}</div>;
       })}
     </div>
   );
 }
 
-export default function League({ chainId = 56 }: { chainId?: number }) {
-  const wallet = useWallet();
-  const defaultChain = getDefaultChainId();
-  const walletChainId = wallet.isConnected && isAllowedChainId(wallet.chainId) ? Number(wallet.chainId) : Number(chainId ?? defaultChain);
-  const activeBnbChainId = walletChainId === 97 ? 97 : 56;
-  const { price: bnbUsd } = useBnbUsdPrice(true);
+function leagueChainForFeed(chainId: SupportedChainId): LeagueChain {
+  if (chainId === SOLANA_CHAIN_ID) return "solana";
+  if (chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID) return "robinhood";
+  return "bnb";
+}
 
+function leagueNativeSymbol(chain: LeagueChain) {
+  if (chain === "solana") return "SOL";
+  if (chain === "robinhood") return "ETH";
+  return "BNB";
+}
+
+function normalizedLeagueChainId(feedChainId: SupportedChainId, chain: LeagueChain): SupportedChainId {
+  if (chain === "solana") return SOLANA_CHAIN_ID;
+  if (chain === "robinhood") {
+    return feedChainId === ROBINHOOD_CHAIN_ID || feedChainId === ROBINHOOD_TESTNET_CHAIN_ID
+      ? feedChainId
+      : ROBINHOOD_CHAIN_ID;
+  }
+  return feedChainId === BNB_TESTNET_CHAIN_ID ? BNB_TESTNET_CHAIN_ID : BNB_CHAIN_ID;
+}
+
+export default function League() {
+  const { price: bnbUsd } = useBnbUsdPrice(true);
   const [feedChainId] = useSelectedFeedChainId();
-  const [chain, setChain] = useState<LeagueChain>(() => (feedChainId === SOLANA_CHAIN_ID ? "solana" : "bnb"));
+  const chain = leagueChainForFeed(feedChainId);
+  const selectedChainId = normalizedLeagueChainId(feedChainId, chain);
+
   const [period, setPeriod] = useState<Period>("weekly");
   const [epochOffset, setEpochOffset] = useState(0);
   const [selectedLeagueKey, setSelectedLeagueKey] = useState<LeagueKey>("fastest_finish");
@@ -436,10 +465,6 @@ export default function League({ chainId = 56 }: { chainId?: number }) {
 
   const selectedLeague = LEAGUES.find((league) => league.key === selectedLeagueKey) ?? LEAGUES[0];
   const epochOptions = useMemo(() => getEpochOptions(period), [period]);
-
-  useEffect(() => {
-    setChain(feedChainId === SOLANA_CHAIN_ID ? "solana" : "bnb");
-  }, [feedChainId]);
 
   useEffect(() => {
     if (!selectedLeague.supports.includes(period)) {
@@ -456,42 +481,38 @@ export default function League({ chainId = 56 }: { chainId?: number }) {
     let cancelled = false;
     setLoading(true);
     setError(undefined);
-    loadLeagueSummary({
-      chain,
-      chainId: chain === "solana" ? SOLANA_CHAIN_ID : activeBnbChainId,
-      period,
-      epochOffset,
-    })
+    loadLeagueSummary({ chain, chainId: selectedChainId, period, epochOffset })
       .then((next) => { if (!cancelled) setSummary(next); })
       .catch((err) => {
         console.error("[League] failed to load command center", err);
         if (!cancelled) {
           setSummary(undefined);
-          setError("League feed unavailable.");
+          setError(`${chain === "robinhood" ? "Robinhood" : chain === "solana" ? "Solana" : "BNB"} league feed unavailable.`);
         }
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [activeBnbChainId, chain, period, epochOffset]);
+  }, [chain, selectedChainId, period, epochOffset]);
 
   const isSolana = chain === "solana";
+  const isRobinhood = chain === "robinhood";
   const selectedCard = summary?.leagues.find((league) => league.key === selectedLeagueKey);
   const rows = useMemo(() => selectedCard?.rows ?? [], [selectedCard]);
   const selectedPrize = selectedCard?.prize;
   const summaryPrize = summary?.prize;
-  // Hub prize uses total epoch league-fee pot; selected category pot is secondary.
   const hubPrizeRaw = getPrizeRaw(summaryPrize) !== "0" ? getPrizeRaw(summaryPrize) : getPrizeRaw(selectedPrize);
   const categoryPrizeRaw = getPrizeRaw(selectedPrize);
   const nativeDecimals = isSolana ? 9 : Number(summaryPrize?.nativeDecimals || selectedPrize?.nativeDecimals || 18);
-  const nativeSymbol = String(summaryPrize?.nativeSymbol || selectedPrize?.nativeSymbol || (isSolana ? "SOL" : "BNB"));
+  const nativeSymbol = String(summaryPrize?.nativeSymbol || selectedPrize?.nativeSymbol || leagueNativeSymbol(chain));
   const rawPrizeNative = rawToNative(hubPrizeRaw, nativeDecimals);
   const categoryPrizeNative = rawToNative(categoryPrizeRaw, nativeDecimals);
   const displayPrizeNative = rawPrizeNative > 0 ? rawPrizeNative : categoryPrizeNative;
-  const rawGeneratedUsd = resolveGeneratedUsd(
-    summaryPrize || selectedPrize,
-    displayPrizeNative,
-    isSolana ? (summaryPrize?.solUsdPrice ?? summaryPrize?.nativeUsdPrice ?? null) : bnbUsd,
-  );
+  const nativeUsd = isSolana
+    ? (summaryPrize?.solUsdPrice ?? summaryPrize?.nativeUsdPrice ?? null)
+    : isRobinhood
+      ? (summaryPrize?.nativeUsdPrice ?? null)
+      : bnbUsd;
+  const rawGeneratedUsd = resolveGeneratedUsd(summaryPrize || selectedPrize, displayPrizeNative, nativeUsd);
   const policy = summary?.payoutPolicy || getPayoutPolicy(period);
   const playerPoolFromApi = Number(summaryPrize?.playerPrizePoolUsd);
   const cappedPlayerPoolUsd =
@@ -507,18 +528,16 @@ export default function League({ chainId = 56 }: { chainId?: number }) {
       : period === "monthly"
         ? Math.max(0, rawGeneratedUsd - policy.monthlyPlayerPrizeCapUsd)
         : 0;
-  // Hub "active paid places": use the strongest field size this epoch (any league with entrants).
   const maxLeagueEntrants = Math.max(
-        0,
-        ...(summary?.leagues || []).map((card) => Math.max(Number(card.entrants || 0), Array.isArray(card.rows) ? card.rows.length : 0)),
-        rows.length,
-      );
+    0,
+    ...(summary?.leagues || []).map((card) => Math.max(Number(card.entrants || 0), Array.isArray(card.rows) ? card.rows.length : 0)),
+    rows.length,
+  );
   const selectedEntrants = Math.max(Number(selectedCard?.entrants || 0), rows.length);
   const paidFieldEntrants = Math.max(selectedEntrants, maxLeagueEntrants);
   const computedPaidPlaces = calculatePaidPlaces(paidFieldEntrants, policy);
   const activePaidPlaces = paidFieldEntrants > 0 ? Math.max(1, computedPaidPlaces) : 0;
-  const payoutCurve =
-    activePaidPlaces > 0 ? calculatePayoutCurve(Math.max(selectedEntrants, 1), cappedPlayerPoolUsd, policy) : [];
+  const payoutCurve = activePaidPlaces > 0 ? calculatePayoutCurve(Math.max(selectedEntrants, 1), cappedPlayerPoolUsd, policy) : [];
   const previewRanks = payoutCurve.filter(
     (row) => row.rank === 1 || row.rank === Math.ceil(activePaidPlaces / 2) || row.rank === activePaidPlaces,
   );
@@ -533,7 +552,6 @@ export default function League({ chainId = 56 }: { chainId?: number }) {
   const epochLabel = formatEpochEnd(summary);
   const seasonId = summary?.seasonId || summary?.epochId || summary?.season?.seasonId;
   const epochId = summary?.epochId || summary?.season?.epochId || seasonId;
-  
 
   const handleSelectLeague = (key: LeagueKey) => {
     const next = LEAGUES.find((league) => league.key === key);
@@ -550,7 +568,6 @@ export default function League({ chainId = 56 }: { chainId?: number }) {
         <section className="mwz-hud-frame p-4">
           <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
             <div className="min-w-0">
-              <div className="text-[10px] uppercase tracking-[0.28em] text-accent/80"></div>
               <div className="mt-1 flex flex-wrap items-center gap-2">
                 <span className="font-retro text-xl text-foreground">Warzone Leagues</span>
                 <TacticalTag label={`${period === "weekly" ? "Weekly" : "Monthly"} ends ${epochLabel}`} tone="default" />
@@ -574,16 +591,10 @@ export default function League({ chainId = 56 }: { chainId?: number }) {
                   <div className="rounded px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-foreground">All chains</div>
                 </div>
               ) : (
-                <TacticalSwitch<LeagueChain>
-                  label="Chain"
-                  value={chain}
-                  left={{ value: "bnb", label: "BNB" }}
-                  right={{ value: "solana", label: "Solana" }}
-                  onChange={(next) => {
-                    setChain(next);
-                    setSelectedFeedChainId(next === "solana" ? SOLANA_CHAIN_ID : resolveBnbFeedChainId());
-                  }}
-                />
+                <div className="rounded-md border border-border/60 bg-background/45 px-3 py-2">
+                  <div className="mb-1 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Chain</div>
+                  <ChainFeedSwitch value={feedChainId} />
+                </div>
               )}
               <TacticalSwitch<Period>
                 label="Epoch"
@@ -608,12 +619,9 @@ export default function League({ chainId = 56 }: { chainId?: number }) {
         <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
           <div className="mwz-hud-frame p-4">
             <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-              <Zap className="h-3.5 w-3.5" />
-              Prize pool
+              <Zap className="h-3.5 w-3.5" /> Prize pool
             </div>
-            <div className="mt-2 font-retro text-xl">
-              {displayPrizeNative > 0 ? formatNative(displayPrizeNative, nativeSymbol) : "No fees yet"}
-            </div>
+            <div className="mt-2 font-retro text-xl">{displayPrizeNative > 0 ? formatNative(displayPrizeNative, nativeSymbol) : "No fees yet"}</div>
             <div className="mt-1 text-xs text-muted-foreground">
               {displayPrizeNative > 0
                 ? rawGeneratedUsd > 0
@@ -625,19 +633,11 @@ export default function League({ chainId = 56 }: { chainId?: number }) {
           <div className="mwz-hud-frame p-4">
             <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Player prize cap</div>
             <div className="mt-2 font-retro text-xl">{period === "monthly" ? formatUsd(policy.monthlyPlayerPrizeCapUsd) : "No weekly cap"}</div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              {period === "monthly" ? (capReached ? "Monthly cap reached." : "Monthly hard cap before charity overflow.") : "Weekly pools pay without the monthly cap."}
-            </div>
+            <div className="mt-1 text-xs text-muted-foreground">{period === "monthly" ? (capReached ? "Monthly cap reached." : "Monthly hard cap before charity overflow.") : "Weekly pools pay without the monthly cap."}</div>
           </div>
           <div className="mwz-hud-frame p-4">
             <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Player prize pool</div>
-            <div className="mt-2 font-retro text-xl">
-              {rawGeneratedUsd > 0
-                ? formatUsd(cappedPlayerPoolUsd)
-                : displayPrizeNative > 0
-                  ? formatNative(displayPrizeNative, nativeSymbol)
-                  : "—"}
-            </div>
+            <div className="mt-2 font-retro text-xl">{rawGeneratedUsd > 0 ? formatUsd(cappedPlayerPoolUsd) : displayPrizeNative > 0 ? formatNative(displayPrizeNative, nativeSymbol) : "—"}</div>
             <div className="mt-1 text-xs text-muted-foreground">
               {categoryPrizeNative > 0
                 ? `This board: ${formatNative(categoryPrizeNative, nativeSymbol)}`
@@ -648,22 +648,13 @@ export default function League({ chainId = 56 }: { chainId?: number }) {
           </div>
           <div className="mwz-hud-frame p-4">
             <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Charity reserve</div>
-            <div className="mt-2 font-retro text-xl">
-              {period === "monthly" ? formatUsd(charityReserveUsd) : formatUsd(0)}
-            </div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              Overflow past monthly player cap (monthly only).
-            </div>
+            <div className="mt-2 font-retro text-xl">{period === "monthly" ? formatUsd(charityReserveUsd) : formatUsd(0)}</div>
+            <div className="mt-1 text-xs text-muted-foreground">Overflow past monthly player cap (monthly only).</div>
           </div>
           <div className="mwz-hud-frame p-4">
-            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-              <Users className="h-3.5 w-3.5" />
-              Active paid places
-            </div>
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-muted-foreground"><Users className="h-3.5 w-3.5" /> Active paid places</div>
             <div className="mt-2 font-retro text-xl">{activePaidPlaces}</div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              Field size {paidFieldEntrants} · min winners {policy.minWinners} · 15% rule
-            </div>
+            <div className="mt-1 text-xs text-muted-foreground">Field size {paidFieldEntrants} · min winners {policy.minWinners} · 15% rule</div>
           </div>
         </section>
 
@@ -671,14 +662,10 @@ export default function League({ chainId = 56 }: { chainId?: number }) {
           <section role="status" className="mwz-hud-frame border-accent/70 bg-accent/10 p-4 shadow-[0_0_24px_rgba(245,132,32,0.12)]">
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="flex min-w-0 gap-3">
-                <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-accent/50 bg-background/70 text-accent">
-                  <AlertTriangle className="h-5 w-5" />
-                </div>
+                <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-accent/50 bg-background/70 text-accent"><AlertTriangle className="h-5 w-5" /></div>
                 <div>
                   <div className="font-retro text-base text-foreground">Monthly player prize cap reached</div>
-                  <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-                    Player payouts are locked at {formatUsd(policy.monthlyPlayerPrizeCapUsd)}. The overflow is routed to the charity reserve and cannot be claimed by players.
-                  </p>
+                  <p className="mt-1 max-w-3xl text-sm text-muted-foreground">Player payouts are locked at {formatUsd(policy.monthlyPlayerPrizeCapUsd)}. The overflow is routed to the charity reserve and cannot be claimed by players.</p>
                 </div>
               </div>
               <div className="grid shrink-0 grid-cols-2 gap-2 text-right text-xs md:min-w-[260px]">
@@ -699,21 +686,10 @@ export default function League({ chainId = 56 }: { chainId?: number }) {
                 <TacticalTag label={`${selectedEntrants} qualified`} tone="success" />
               </div>
               <div className="mt-5">
-                {error ? (
-                  <div className="mwz-hud-frame p-5 text-sm text-muted-foreground">{error}</div>
-                ) : loading ? (
-                  <div className="flex min-h-[280px] items-center justify-center bg-black py-12">
-                    <RadarLoader label="Scanning league standings…" size="md" />
-                  </div>
+                {error ? <div className="mwz-hud-frame p-5 text-sm text-muted-foreground">{error}</div> : loading ? (
+                  <div className="flex min-h-[280px] items-center justify-center bg-black py-12"><RadarLoader label="Scanning league standings…" size="md" /></div>
                 ) : (
-                  <StandingsTable
-                    league={selectedLeague}
-                    rows={rows}
-                    status={selectedStatus}
-                    pendingCopy={selectedCard?.warning || selectedLeague.emptyStateCopy}
-                    warningCopy={selectedCard?.warning}
-                    native={{ decimals: nativeDecimals, symbol: nativeSymbol }}
-                  />
+                  <StandingsTable league={selectedLeague} rows={rows} status={selectedStatus} pendingCopy={selectedCard?.warning || selectedLeague.emptyStateCopy} warningCopy={selectedCard?.warning} native={{ decimals: nativeDecimals, symbol: nativeSymbol }} />
                 )}
               </div>
             </section>
@@ -726,57 +702,25 @@ export default function League({ chainId = 56 }: { chainId?: number }) {
 
           <aside className="space-y-4">
             <div className="mwz-hud-frame p-5">
-              <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.24em] text-accent/80">
-                <TrendingUp className="h-4 w-4" />
-                Season intel
-              </div>
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.24em] text-accent/80"><TrendingUp className="h-4 w-4" /> Season intel</div>
               <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
-                <div className="rounded-lg border border-border/40 bg-card/55 px-3 py-2">
-                  <div className="text-muted-foreground">Entrants delta</div>
-                  <div className="font-retro text-foreground">{formatDelta(trendMetrics?.changeVsPreviousEpoch?.entrants ?? 0)}</div>
-                  <div className="mt-1 text-muted-foreground">{formatDelta(trendMetrics?.entrantsGrowthPct ?? 0, "%")}</div>
-                </div>
-                <div className="rounded-lg border border-border/40 bg-card/55 px-3 py-2">
-                  <div className="text-muted-foreground">Prize delta</div>
-                  <div className="font-retro text-foreground">{formatUsd(Number(trendMetrics?.changeVsPreviousEpoch?.playerPrizePoolUsd || 0))}</div>
-                  <div className="mt-1 text-muted-foreground">{formatDelta(trendMetrics?.prizePoolGrowthPct ?? 0, "%")}</div>
-                </div>
+                <div className="rounded-lg border border-border/40 bg-card/55 px-3 py-2"><div className="text-muted-foreground">Entrants delta</div><div className="font-retro text-foreground">{formatDelta(trendMetrics?.changeVsPreviousEpoch?.entrants ?? 0)}</div><div className="mt-1 text-muted-foreground">{formatDelta(trendMetrics?.entrantsGrowthPct ?? 0, "%")}</div></div>
+                <div className="rounded-lg border border-border/40 bg-card/55 px-3 py-2"><div className="text-muted-foreground">Prize delta</div><div className="font-retro text-foreground">{formatUsd(Number(trendMetrics?.changeVsPreviousEpoch?.playerPrizePoolUsd || 0))}</div><div className="mt-1 text-muted-foreground">{formatDelta(trendMetrics?.prizePoolGrowthPct ?? 0, "%")}</div></div>
               </div>
-              <div className="mt-3 text-[11px] text-muted-foreground">
-                Compared to previous {period} epoch · {trendBasis.replace(/_/g, " ")}
-              </div>
+              <div className="mt-3 text-[11px] text-muted-foreground">Compared to previous {period} epoch · {trendBasis.replace(/_/g, " ")}</div>
             </div>
             <div className="mwz-hud-frame p-5">
-              <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.24em] text-accent/80">
-                <Trophy className="h-4 w-4" />
-                Current #1s
-              </div>
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.24em] text-accent/80"><Trophy className="h-4 w-4" /> Current #1s</div>
               <div className="mt-4 space-y-2">
-                {summary?.currentLeaders.length ? (
-                  summary.currentLeaders.map((leader) => (
-                    <button
-                      key={leader.leagueKey}
-                      type="button"
-                      onClick={() => handleSelectLeague(leader.leagueKey)}
-                      className="w-full border border-border/40 bg-card/55 px-3 py-2 text-left transition"
-                    >
-                      <div className="text-[11px] text-muted-foreground">{leader.leagueTitle}</div>
-                      <div className="truncate text-sm font-semibold">{leader.label}</div>
-                      <div className="truncate text-[11px] text-accent">{leader.metric}</div>
-                    </button>
-                  ))
-                ) : (
-                  <div className="text-sm text-muted-foreground">
-                    {isSolana ? "No Solana leaders in this epoch yet." : "No leaders yet."}
-                  </div>
-                )}
+                {summary?.currentLeaders.length ? summary.currentLeaders.map((leader) => (
+                  <button key={leader.leagueKey} type="button" onClick={() => handleSelectLeague(leader.leagueKey)} className="w-full border border-border/40 bg-card/55 px-3 py-2 text-left transition">
+                    <div className="text-[11px] text-muted-foreground">{leader.leagueTitle}</div><div className="truncate text-sm font-semibold">{leader.label}</div><div className="truncate text-[11px] text-accent">{leader.metric}</div>
+                  </button>
+                )) : <div className="text-sm text-muted-foreground">No {chain === "robinhood" ? "Robinhood" : chain === "solana" ? "Solana" : "BNB"} leaders in this epoch yet.</div>}
               </div>
             </div>
             <div className="mwz-hud-frame p-5"><div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.24em] text-accent/80"><Trophy className="h-4 w-4" />Hall of Fame</div><div className="mt-4 space-y-3 text-sm"><div className="rounded-lg border border-border/40 bg-card/55 px-3 py-2"><div className="text-[11px] text-muted-foreground">Most wins</div><div className="truncate font-semibold text-foreground">{topWinner?.name || topWinner?.symbol || shortAddr(topWinner?.wallet) || "Awaiting history"}</div><div className="text-[11px] text-accent">{topWinner?.wins ? `${topWinner.wins} wins` : hallOfFame?.basis || "summary_history_scaffold"}</div></div><div className="rounded-lg border border-border/40 bg-card/55 px-3 py-2"><div className="text-[11px] text-muted-foreground">Biggest pool</div><div className="font-semibold text-foreground">{biggestPrizePool ? formatUsd(Number(biggestPrizePool.playerPrizePoolUsd || biggestPrizePool.generatedUsd || 0)) : "Awaiting history"}</div><div className="text-[11px] text-accent">{biggestPrizePool?.period || "No finalized pool yet"}</div></div></div></div>
-            
             <div className="mwz-hud-frame p-5"><div className="text-[10px] uppercase tracking-[0.24em] text-accent/80">Recent winners</div><div className="mt-4 space-y-2">{!isSolana && summary?.history.length ? summary.history.slice(0, 5).map((item) => <div key={item.id} className="rounded-xl border border-border/40 bg-card/55 px-3 py-2"><div className="text-sm font-semibold text-foreground">{item.winnerLabel || item.label}</div><div className="mt-1 text-[11px] text-muted-foreground">{item.completedAt || "Finalized epoch"}</div></div>) : <div className="text-sm text-muted-foreground">{isSolana ? "Solana winner history pending." : "Winner history will appear once finalized league epochs are published."}</div>}</div></div>
-            
-            
           </aside>
         </section>
       </ContentContainer>

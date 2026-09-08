@@ -3,7 +3,16 @@ import { cn } from "@/lib/utils";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { isEvmAddress } from "@/lib/address";
-import { BNB_CHAIN_ID, BNB_TESTNET_CHAIN_ID, isAllowedChainId, isEvmChainId, SOLANA_CHAIN_ID, type SupportedChainId } from "@/lib/chainConfig";
+import {
+  BNB_CHAIN_ID,
+  BNB_TESTNET_CHAIN_ID,
+  isAllowedChainId,
+  isEvmChainId,
+  ROBINHOOD_CHAIN_ID,
+  ROBINHOOD_TESTNET_CHAIN_ID,
+  SOLANA_CHAIN_ID,
+  type SupportedChainId,
+} from "@/lib/chainConfig";
 import { isTestnetCampaignsEnabled } from "@/features/postgrad/apiClient";
 import { getCampaignFeedChainId } from "@/lib/feedChainConfig";
 import { FEED_CHAIN_EVENT, FEED_CHAIN_KEY, getActiveWalletKind, setActiveWalletKind } from "@/lib/activeWalletChain";
@@ -17,7 +26,13 @@ export function resolveBnbFeedChainId(): SupportedChainId {
   return BNB_CHAIN_ID;
 }
 
-function bnbFeedForWallet(chainId?: number | null): SupportedChainId {
+export function resolveRobinhoodFeedChainId(): SupportedChainId | null {
+  if (isAllowedChainId(ROBINHOOD_CHAIN_ID)) return ROBINHOOD_CHAIN_ID;
+  if (isAllowedChainId(ROBINHOOD_TESTNET_CHAIN_ID)) return ROBINHOOD_TESTNET_CHAIN_ID;
+  return null;
+}
+
+function evmFeedForWallet(chainId?: number | null): SupportedChainId {
   if (chainId === BNB_TESTNET_CHAIN_ID && (!isTestnetCampaignsEnabled() || !isAllowedChainId(BNB_TESTNET_CHAIN_ID))) {
     return BNB_CHAIN_ID;
   }
@@ -27,48 +42,61 @@ function bnbFeedForWallet(chainId?: number | null): SupportedChainId {
 
 /**
  * Last connected wallet owns the whole frontend.
- * Phantom/Solana present → Solana feed. Explicit BNB connect → BNB feed.
+ * A Solana wallet selects Solana; an EVM wallet selects its actual supported chain.
  */
 export function useLatchFeedChainToWallet() {
   const wallet = useWallet();
   const { solanaAccount, isSolanaConnected } = useSolanaWallet();
   const prevSolana = useRef<string | null | undefined>(undefined);
   const prevEvm = useRef<string | null | undefined>(undefined);
+  const prevEvmChainId = useRef<number | null | undefined>(undefined);
 
   useEffect(() => {
     const solanaNow = isSolanaConnected && solanaAccount ? String(solanaAccount) : null;
     const evmNow = wallet.isConnected && isEvmAddress(wallet.account) ? String(wallet.account) : null;
+    const evmChainNow = evmNow && isEvmChainId(wallet.chainId) ? Number(wallet.chainId) : null;
     const firstRun = prevSolana.current === undefined && prevEvm.current === undefined;
     const solanaConnected = Boolean(solanaNow && solanaNow !== prevSolana.current);
     const evmConnected = Boolean(evmNow && evmNow !== prevEvm.current);
+    const evmChainChanged = Boolean(
+      evmNow &&
+      evmChainNow &&
+      prevEvmChainId.current !== undefined &&
+      evmChainNow !== prevEvmChainId.current,
+    );
 
     const activateSolana = () => {
       setActiveWalletKind("solana");
       setSelectedFeedChainId(SOLANA_CHAIN_ID);
     };
-    const activateBnb = () => {
+    const activateEvm = () => {
       setActiveWalletKind("bnb");
-      setSelectedFeedChainId(bnbFeedForWallet(wallet.chainId));
+      setSelectedFeedChainId(evmFeedForWallet(wallet.chainId));
     };
 
     if (firstRun) {
-      // Restored Phantom must beat leftover MetaMask on refresh.
+      // Restored Solana wallet must beat leftover EVM auto-connect on refresh.
       if (solanaNow) activateSolana();
-      else if (evmNow) activateBnb();
+      else if (evmNow) activateEvm();
     } else if (solanaConnected) {
       activateSolana();
+    } else if (evmChainChanged && !solanaNow) {
+      // The same EVM account exists on BNB and Robinhood. Network changes must
+      // still relatch the whole app even though the wallet address is unchanged.
+      activateEvm();
     } else if (evmConnected && !solanaNow) {
-      // Auto-reconnect of MetaMask must not steal the app from a live Solana session.
-      // Explicit BNB connect goes through the wallet modal and sets the feed directly.
-      activateBnb();
+      // EVM auto-reconnect must not steal the app from a live Solana session.
+      // Explicit EVM connect goes through the wallet modal and selects its actual chain.
+      activateEvm();
     } else if (!solanaNow && prevSolana.current && evmNow) {
-      activateBnb();
+      activateEvm();
     } else if (!evmNow && prevEvm.current && solanaNow) {
       activateSolana();
     }
 
     prevSolana.current = solanaNow;
     prevEvm.current = evmNow;
+    prevEvmChainId.current = evmChainNow;
   }, [isSolanaConnected, solanaAccount, wallet.isConnected, wallet.account, wallet.chainId]);
 }
 
@@ -80,6 +108,8 @@ export function FeedChainWalletLatch() {
 function normalizeFeedChainId(value: unknown): SupportedChainId {
   const chainId = Number(value);
   if (chainId === SOLANA_CHAIN_ID) return SOLANA_CHAIN_ID;
+  if (chainId === ROBINHOOD_CHAIN_ID && isAllowedChainId(ROBINHOOD_CHAIN_ID)) return ROBINHOOD_CHAIN_ID;
+  if (chainId === ROBINHOOD_TESTNET_CHAIN_ID && isAllowedChainId(ROBINHOOD_TESTNET_CHAIN_ID)) return ROBINHOOD_TESTNET_CHAIN_ID;
   if (chainId === BNB_TESTNET_CHAIN_ID && isTestnetCampaignsEnabled() && isAllowedChainId(BNB_TESTNET_CHAIN_ID)) {
     return BNB_TESTNET_CHAIN_ID;
   }
@@ -102,6 +132,7 @@ export function setSelectedFeedChainId(chainId: SupportedChainId): SupportedChai
     try {
       window.localStorage.setItem(FEED_CHAIN_KEY, String(next));
       window.localStorage.setItem("mwz:last_featured_chain_id", String(next));
+      // "bnb" remains the legacy storage key for the EVM wallet family.
       setActiveWalletKind(next === SOLANA_CHAIN_ID ? "solana" : "bnb");
       window.dispatchEvent(new CustomEvent(FEED_CHAIN_EVENT, { detail: { chainId: next } }));
     } catch {
@@ -138,6 +169,7 @@ export function ChainFeedSwitch({ className, value, onChange }: { className?: st
   const [selected, setSelected] = useSelectedFeedChainId();
   const active = value ?? selected;
   const bnbChainId = useMemo(() => resolveBnbFeedChainId(), []);
+  const robinhoodChainId = useMemo(() => resolveRobinhoodFeedChainId(), []);
 
   const select = (next: SupportedChainId) => {
     const resolved = setSelectedFeedChainId(next);
@@ -146,14 +178,18 @@ export function ChainFeedSwitch({ className, value, onChange }: { className?: st
   };
 
   const options = [
-    { chainId: bnbChainId, label: "BNB" },
-    { chainId: SOLANA_CHAIN_ID, label: "Solana" },
+    { chainId: bnbChainId, label: "BNB", family: "bnb" },
+    { chainId: SOLANA_CHAIN_ID, label: "Solana", family: "solana" },
+    ...(robinhoodChainId ? [{ chainId: robinhoodChainId, label: "Robinhood", family: "robinhood" } as const] : []),
   ] as const;
 
   return (
     <div className={cn("inline-flex items-center gap-1 border border-[var(--mwz-flat-card-border)] bg-black/25 p-1", className)}>
       {options.map((option) => {
-        const isActive = active === option.chainId || (option.label === "BNB" && (active === BNB_CHAIN_ID || active === BNB_TESTNET_CHAIN_ID));
+        const isActive =
+          active === option.chainId ||
+          (option.family === "bnb" && (active === BNB_CHAIN_ID || active === BNB_TESTNET_CHAIN_ID)) ||
+          (option.family === "robinhood" && (active === ROBINHOOD_CHAIN_ID || active === ROBINHOOD_TESTNET_CHAIN_ID));
         return (
           <button
             key={option.label}

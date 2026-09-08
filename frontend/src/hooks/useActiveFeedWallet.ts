@@ -2,7 +2,7 @@ import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { isEvmAddress, isSolanaAddress } from "@/lib/address";
 import {
-  BNB_TESTNET_CHAIN_ID,
+  BNB_CHAIN_ID,
   isEvmChainId,
   SOLANA_CHAIN_ID,
   type SupportedChainId,
@@ -12,8 +12,8 @@ import { useSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
 
 /**
  * Owner wallet for Command Center / Claims / profile.
- * Last connected wallet wins: Solana session beats leftover MetaMask unless
- * the user just connected a BNB wallet.
+ * Last connected wallet wins: Solana session beats a leftover EVM session unless
+ * the user explicitly selected/connected an EVM chain. EVM means BNB or Robinhood.
  */
 export function useActiveFeedWallet() {
   const [feedChainId] = useSelectedFeedChainId();
@@ -38,7 +38,7 @@ export function useActiveFeedWallet() {
   } else if (isEvmChainId(feedChainId)) {
     chainId = feedChainId;
   } else {
-    chainId = BNB_TESTNET_CHAIN_ID;
+    chainId = BNB_CHAIN_ID;
   }
 
   return {

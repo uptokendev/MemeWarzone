@@ -115,7 +115,7 @@ export function DiscoveryControls({ className, query, onChange }: DiscoveryContr
   return (
     <div className={cn("mwz-hud-frame w-full px-3 py-3", className)}>
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {TAB_DEFS.map((t) => {
             const active = query.tab === t.key;
             return (
@@ -123,7 +123,7 @@ export function DiscoveryControls({ className, query, onChange }: DiscoveryContr
                 key={t.key}
                 variant="ghost"
                 size="sm"
-                className={cn("mwz-chip gap-2 h-9 px-2 font-retro !text-[9px]", active && "mwz-chip-active")}
+                className={cn("mwz-chip shrink-0 gap-2 h-9 px-2 font-retro !text-[9px]", active && "mwz-chip-active")}
                 onClick={() => {
                   const nextTab = t.key;
                   const nextStatus = nextTab === "ending" ? "live" : nextTab === "dex" ? "graduated" : "all";
@@ -218,7 +218,7 @@ export function DiscoveryControls({ className, query, onChange }: DiscoveryContr
             </Sheet>
           )}
 
-          <div className="shrink-0 w-[220px]">
+          <div className="min-w-0 w-[min(11.5rem,48vw)] shrink sm:w-[220px]">
             <Select value={sortValue} onValueChange={(v) => onChange({ ...query, sort: v as any })}>
               <SelectTrigger className="mwz-chip h-9 rounded-none">
                 <SelectValue placeholder="Sort" />

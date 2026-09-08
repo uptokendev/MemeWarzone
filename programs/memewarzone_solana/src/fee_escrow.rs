@@ -2,7 +2,8 @@
 //!
 //! User trades accrue the 2% protocol fee here. Physical six-way routing to
 //! rewards vaults happens later via permissionless `flush_campaign_fees`.
-//! Slice math stays in `preview_bnb_route` — this module only stores and moves it.
+//! The creator's 0.10% share is isolated in a dedicated per-campaign vault PDA
+//! so FeeEscrow V1 stays byte-for-byte stable for deployed campaigns.
 
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::program::invoke;
@@ -12,11 +13,13 @@ use crate::authorized_trade::{
     preview_bnb_route, validate_route_profile_id, TRADE_SIDE_BUY, TRADE_SIDE_FINALIZE,
     TRADE_SIDE_SELL,
 };
-use crate::campaign_view::CAMPAIGN_ACCOUNT_BYTES;
+use crate::campaign_view::{load_campaign_view, CAMPAIGN_ACCOUNT_BYTES};
 use crate::{LaunchpadError, ROUTE_KIND_TRADE};
 
 pub const FEE_ESCROW_SEED: &[u8] = b"fee-escrow";
 pub const FEE_ESCROW_VERSION: u8 = 1;
+pub const CREATOR_FEE_VAULT_SEED: &[u8] = b"creator-fee-vault";
+pub const CREATOR_FEE_VAULT_VERSION: u8 = 1;
 
 #[account]
 #[derive(InitSpace)]
@@ -34,6 +37,18 @@ pub struct FeeEscrow {
     pub version: u8,
 }
 
+#[account]
+#[derive(InitSpace)]
+pub struct CreatorFeeVault {
+    pub campaign: Pubkey,
+    pub creator: Pubkey,
+    pub pending_lamports: u64,
+    pub total_received: u64,
+    pub total_claimed: u64,
+    pub bump: u8,
+    pub version: u8,
+}
+
 #[event]
 pub struct FeeSlicesAccrued {
     pub campaign: Pubkey,
@@ -43,6 +58,7 @@ pub struct FeeSlicesAccrued {
     pub fee_lamports: u64,
     pub weekly_league_lamports: u64,
     pub monthly_league_lamports: u64,
+    pub creator_lamports: u64,
     pub recruiter_lamports: u64,
     pub airdrop_lamports: u64,
     pub squad_lamports: u64,
@@ -54,6 +70,36 @@ pub struct FeeEscrowInitialized {
     pub campaign: Pubkey,
     pub escrow: Pubkey,
     pub payer: Pubkey,
+}
+
+#[event]
+pub struct CreatorFeeVaultInitialized {
+    pub campaign: Pubkey,
+    pub creator: Pubkey,
+    pub creator_fee_vault: Pubkey,
+    pub payer: Pubkey,
+}
+
+#[event]
+pub struct CreatorFeeAccrued {
+    pub campaign: Pubkey,
+    pub creator: Pubkey,
+    pub creator_fee_vault: Pubkey,
+    pub trader: Pubkey,
+    pub side: u8,
+    pub route_profile: u8,
+    pub amount_lamports: u64,
+    pub pending_lamports: u64,
+    pub total_received: u64,
+}
+
+#[event]
+pub struct CreatorFeeClaimed {
+    pub campaign: Pubkey,
+    pub creator: Pubkey,
+    pub creator_fee_vault: Pubkey,
+    pub amount_lamports: u64,
+    pub total_claimed: u64,
 }
 
 #[event]
@@ -85,6 +131,38 @@ pub struct InitializeFeeEscrow<'info> {
     )]
     pub fee_escrow: Account<'info, FeeEscrow>,
     pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct InitializeCreatorFeeVault<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    /// CHECK: launchpad-owned Campaign; validated in handler.
+    pub campaign: UncheckedAccount<'info>,
+    #[account(
+        init,
+        payer = payer,
+        space = 8 + CreatorFeeVault::INIT_SPACE,
+        seeds = [CREATOR_FEE_VAULT_SEED, campaign.key().as_ref()],
+        bump
+    )]
+    pub creator_fee_vault: Account<'info, CreatorFeeVault>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct ClaimCreatorFees<'info> {
+    #[account(mut)]
+    pub creator: Signer<'info>,
+    /// CHECK: campaign is validated in handler and binds the creator fee vault PDA.
+    pub campaign: UncheckedAccount<'info>,
+    /// CHECK: deserialized in handler so the fee-escrow layout stays isolated.
+    #[account(
+        mut,
+        seeds = [CREATOR_FEE_VAULT_SEED, campaign.key().as_ref()],
+        bump
+    )]
+    pub creator_fee_vault: UncheckedAccount<'info>,
 }
 
 #[derive(Accounts)]
@@ -147,6 +225,122 @@ pub fn initialize_fee_escrow_handler(ctx: Context<InitializeFeeEscrow>) -> Resul
         campaign: escrow.campaign,
         escrow: ctx.accounts.fee_escrow.key(),
         payer: ctx.accounts.payer.key(),
+    });
+    Ok(())
+}
+
+pub fn initialize_creator_fee_vault_handler(ctx: Context<InitializeCreatorFeeVault>) -> Result<()> {
+    require_keys_eq!(
+        *ctx.accounts.campaign.owner,
+        crate::ID,
+        LaunchpadError::InvalidCampaign
+    );
+    require!(
+        ctx.accounts.campaign.data_len() == CAMPAIGN_ACCOUNT_BYTES,
+        LaunchpadError::InvalidCampaign
+    );
+    let campaign_view = load_campaign_view(&ctx.accounts.campaign.to_account_info())?;
+
+    let creator_fee_vault = &mut ctx.accounts.creator_fee_vault;
+    creator_fee_vault.campaign = ctx.accounts.campaign.key();
+    creator_fee_vault.creator = campaign_view.creator;
+    creator_fee_vault.pending_lamports = 0;
+    creator_fee_vault.total_received = 0;
+    creator_fee_vault.total_claimed = 0;
+    creator_fee_vault.bump = ctx.bumps.creator_fee_vault;
+    creator_fee_vault.version = CREATOR_FEE_VAULT_VERSION;
+
+    emit!(CreatorFeeVaultInitialized {
+        campaign: creator_fee_vault.campaign,
+        creator: creator_fee_vault.creator,
+        creator_fee_vault: ctx.accounts.creator_fee_vault.key(),
+        payer: ctx.accounts.payer.key(),
+    });
+    Ok(())
+}
+
+pub fn claim_creator_fees_handler(ctx: Context<ClaimCreatorFees>) -> Result<()> {
+    require_keys_eq!(
+        *ctx.accounts.campaign.owner,
+        crate::ID,
+        LaunchpadError::InvalidCampaign
+    );
+    require!(
+        ctx.accounts.campaign.data_len() == CAMPAIGN_ACCOUNT_BYTES,
+        LaunchpadError::InvalidCampaign
+    );
+    let campaign = load_campaign_view(&ctx.accounts.campaign.to_account_info())?;
+    require_keys_eq!(
+        campaign.creator,
+        ctx.accounts.creator.key(),
+        LaunchpadError::Unauthorized
+    );
+    require_creator_fee_vault(
+        &ctx.accounts.creator_fee_vault.to_account_info(),
+        ctx.accounts.campaign.key(),
+    )?;
+
+    let amount = {
+        let data = ctx.accounts.creator_fee_vault.try_borrow_data()?;
+        let mut slice: &[u8] = &data;
+        let vault = Box::new(CreatorFeeVault::try_deserialize(&mut slice)?);
+        require_keys_eq!(
+            vault.creator,
+            ctx.accounts.creator.key(),
+            LaunchpadError::Unauthorized
+        );
+        vault.pending_lamports
+    };
+    if amount == 0 {
+        return Ok(());
+    }
+
+    let rent_min = Rent::get()?.minimum_balance(8 + CreatorFeeVault::INIT_SPACE);
+    let spendable = ctx
+        .accounts
+        .creator_fee_vault
+        .to_account_info()
+        .lamports()
+        .saturating_sub(rent_min);
+    require!(
+        spendable >= amount,
+        LaunchpadError::FeeEscrowBalanceMismatch
+    );
+
+    {
+        let vault_info = ctx.accounts.creator_fee_vault.to_account_info();
+        let creator_info = ctx.accounts.creator.to_account_info();
+        **vault_info.try_borrow_mut_lamports()? = vault_info
+            .lamports()
+            .checked_sub(amount)
+            .ok_or(LaunchpadError::FeeEscrowBalanceMismatch)?;
+        **creator_info.try_borrow_mut_lamports()? = creator_info
+            .lamports()
+            .checked_add(amount)
+            .ok_or(LaunchpadError::MathOverflow)?;
+    }
+
+    let total_claimed = {
+        let mut data = ctx.accounts.creator_fee_vault.try_borrow_mut_data()?;
+        let mut slice: &[u8] = &data;
+        let mut vault = Box::new(CreatorFeeVault::try_deserialize(&mut slice)?);
+        vault.pending_lamports = 0;
+        vault.total_claimed = vault
+            .total_claimed
+            .checked_add(amount)
+            .ok_or(LaunchpadError::MathOverflow)?;
+        let total_claimed = vault.total_claimed;
+        let mut cursor = std::io::Cursor::new(&mut data[..]);
+        vault.try_serialize(&mut cursor)?;
+        total_claimed
+    };
+
+    emit!(CreatorFeeClaimed {
+        campaign: ctx.accounts.campaign.key(),
+        creator: ctx.accounts.creator.key(),
+        creator_fee_vault: ctx.accounts.creator_fee_vault.key(),
+        amount_lamports: amount,
+        total_claimed,
     });
     Ok(())
 }
@@ -269,6 +463,32 @@ pub fn require_fee_escrow(info: &AccountInfo, campaign: Pubkey, bump: u8) -> Res
 }
 
 #[inline(never)]
+pub fn require_creator_fee_vault(info: &AccountInfo, campaign: Pubkey) -> Result<()> {
+    require_keys_eq!(
+        *info.owner,
+        crate::ID,
+        LaunchpadError::FeeEscrowNotInitialized
+    );
+    let expected =
+        Pubkey::find_program_address(&[CREATOR_FEE_VAULT_SEED, campaign.as_ref()], &crate::ID);
+    require_keys_eq!(*info.key, expected.0, LaunchpadError::InvalidFeeEscrow);
+    require!(
+        info.data_len() == 8 + CreatorFeeVault::INIT_SPACE,
+        LaunchpadError::FeeEscrowNotInitialized
+    );
+    let data = info.try_borrow_data()?;
+    let mut slice: &[u8] = &data;
+    let vault = Box::new(CreatorFeeVault::try_deserialize(&mut slice)?);
+    require_keys_eq!(vault.campaign, campaign, LaunchpadError::InvalidFeeEscrow);
+    require!(
+        vault.version == CREATOR_FEE_VAULT_VERSION,
+        LaunchpadError::InvalidFeeEscrow
+    );
+    require!(vault.bump == expected.1, LaunchpadError::InvalidFeeEscrow);
+    Ok(())
+}
+
+#[inline(never)]
 pub fn require_fee_escrow_empty(info: &AccountInfo, campaign: Pubkey) -> Result<()> {
     require_keys_eq!(
         *info.owner,
@@ -287,6 +507,7 @@ pub fn require_fee_escrow_empty(info: &AccountInfo, campaign: Pubkey) -> Result<
 #[inline(never)]
 pub fn accrue_fee_escrow(
     info: &AccountInfo,
+    creator_fee_vault: &AccountInfo,
     campaign: Pubkey,
     trader: Pubkey,
     side: u8,
@@ -312,12 +533,36 @@ pub fn accrue_fee_escrow(
     let slices_sum = amounts
         .weekly_league
         .checked_add(amounts.monthly_league)
+        .and_then(|v| v.checked_add(amounts.creator))
         .and_then(|v| v.checked_add(amounts.recruiter))
         .and_then(|v| v.checked_add(amounts.airdrop))
         .and_then(|v| v.checked_add(amounts.squad))
         .and_then(|v| v.checked_add(amounts.protocol))
         .ok_or(LaunchpadError::MathOverflow)?;
     require!(slices_sum == fee_lamports, LaunchpadError::InvalidFeeEscrow);
+
+    {
+        let data = info.try_borrow_data()?;
+        let mut slice: &[u8] = &data;
+        let escrow = Box::new(FeeEscrow::try_deserialize(&mut slice)?);
+        require_keys_eq!(escrow.campaign, campaign, LaunchpadError::InvalidFeeEscrow);
+        require!(
+            escrow.version == FEE_ESCROW_VERSION,
+            LaunchpadError::InvalidFeeEscrow
+        );
+    }
+
+    if fee_lamports > 0 && amounts.creator > 0 {
+        accrue_creator_fee_vault(
+            creator_fee_vault,
+            campaign,
+            trader,
+            side,
+            route_profile,
+            amounts.creator,
+        )?;
+        move_creator_fee_lamports(info, creator_fee_vault, amounts.creator)?;
+    }
 
     let mut data = info.try_borrow_mut_data()?;
     let mut slice: &[u8] = &data;
@@ -367,11 +612,76 @@ pub fn accrue_fee_escrow(
         fee_lamports,
         weekly_league_lamports: amounts.weekly_league,
         monthly_league_lamports: amounts.monthly_league,
+        creator_lamports: amounts.creator,
         recruiter_lamports: amounts.recruiter,
         airdrop_lamports: amounts.airdrop,
         squad_lamports: amounts.squad,
         protocol_lamports: amounts.protocol,
     });
+    Ok(())
+}
+
+#[inline(never)]
+fn accrue_creator_fee_vault(
+    info: &AccountInfo,
+    campaign: Pubkey,
+    trader: Pubkey,
+    side: u8,
+    route_profile: u8,
+    amount_lamports: u64,
+) -> Result<()> {
+    require_creator_fee_vault(info, campaign)?;
+    let mut data = info.try_borrow_mut_data()?;
+    let mut slice: &[u8] = &data;
+    let mut vault = Box::new(CreatorFeeVault::try_deserialize(&mut slice)?);
+    vault.pending_lamports = vault
+        .pending_lamports
+        .checked_add(amount_lamports)
+        .ok_or(LaunchpadError::MathOverflow)?;
+    vault.total_received = vault
+        .total_received
+        .checked_add(amount_lamports)
+        .ok_or(LaunchpadError::MathOverflow)?;
+    let pending_lamports = vault.pending_lamports;
+    let total_received = vault.total_received;
+    let creator = vault.creator;
+    let mut cursor = std::io::Cursor::new(&mut data[..]);
+    vault.try_serialize(&mut cursor)?;
+    drop(data);
+
+    emit!(CreatorFeeAccrued {
+        campaign,
+        creator,
+        creator_fee_vault: *info.key,
+        trader,
+        side,
+        route_profile,
+        amount_lamports,
+        pending_lamports,
+        total_received,
+    });
+    Ok(())
+}
+
+#[inline(never)]
+fn move_creator_fee_lamports(
+    escrow_info: &AccountInfo,
+    creator_fee_vault: &AccountInfo,
+    amount_lamports: u64,
+) -> Result<()> {
+    if amount_lamports == 0 {
+        return Ok(());
+    }
+    {
+        let mut escrow_lamports = escrow_info.try_borrow_mut_lamports()?;
+        **escrow_lamports = escrow_lamports
+            .checked_sub(amount_lamports)
+            .ok_or(LaunchpadError::FeeEscrowBalanceMismatch)?;
+    }
+    let mut creator_vault_lamports = creator_fee_vault.try_borrow_mut_lamports()?;
+    **creator_vault_lamports = creator_vault_lamports
+        .checked_add(amount_lamports)
+        .ok_or(LaunchpadError::MathOverflow)?;
     Ok(())
 }
 
@@ -485,6 +795,11 @@ mod tests {
     }
 
     #[test]
+    fn creator_fee_vault_account_size_is_stable() {
+        assert_eq!(8 + CreatorFeeVault::INIT_SPACE, 98);
+    }
+
+    #[test]
     fn trade_slices_sum_to_fee_for_all_profiles() {
         let fee = 10_000u64;
         for profile in [
@@ -495,11 +810,13 @@ mod tests {
             let amounts = preview_bnb_route(ROUTE_KIND_TRADE, profile, fee).unwrap();
             let sum = amounts.weekly_league
                 + amounts.monthly_league
+                + amounts.creator
                 + amounts.recruiter
                 + amounts.airdrop
                 + amounts.squad
                 + amounts.protocol;
             assert_eq!(sum, fee, "profile {profile}");
+            assert_eq!(amounts.creator, 500, "profile {profile}");
         }
     }
 }

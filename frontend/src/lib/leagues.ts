@@ -6,7 +6,7 @@ export type LeagueKey =
   | "crowd_favorite"
   | "recruiter_league";
 
-export type LeagueChain = "bnb" | "solana";
+export type LeagueChain = "bnb" | "solana" | "robinhood";
 export type Period = "weekly" | "monthly";
 export type LeaguePeriod = Period;
 export type LeagueRowType = "token" | "wallet" | "recruiter";
@@ -118,7 +118,7 @@ export const LEAGUES: LeagueDef[] = [
     supportedPeriods: ["weekly", "monthly"],
     metricLabel: "Epoch referral score",
     ruleSummary:
-      "Universal All-Chains board. Active recruiter network counts now; BNB and SOL referred volume this epoch are converted to USD separately then combined.",
+      "Universal All-Chains board. Active recruiter network counts now; BNB, SOL and Robinhood referred volume this epoch are converted to USD per chain then combined.",
     emptyStateCopy:
       "No active recruiters yet. Existing linked wallets still count this week; only trades and earnings are limited to the current epoch.",
     weeklyLimit: 50,

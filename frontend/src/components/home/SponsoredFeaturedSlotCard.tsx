@@ -70,7 +70,7 @@ export function SponsoredFeaturedSlotCard({
 
   return (
     <div
-      className={`${plainBorder ? "border-orange-400/25 hover:border-orange-300/70 ![clip-path:none] before:!hidden after:!hidden" : "mwz-hud-frame border-amber-400/40 hover:border-amber-300/70 hover:shadow-[0_0_18px_rgba(251,191,36,0.16)]"} group relative flex h-[150px] w-full overflow-hidden rounded-none border bg-black transition ${clickable ? "cursor-pointer" : ""} ${className}`}
+      className={`${plainBorder ? "border-orange-400/25 hover:border-orange-300/70 ![clip-path:none] before:!hidden after:!hidden" : "mwz-hud-frame border-amber-400/40 hover:border-amber-300/70 hover:shadow-[0_0_18px_rgba(251,191,36,0.16)]"} group relative flex h-[150px] w-full snap-start overflow-hidden rounded-none border bg-black transition ${clickable ? "cursor-pointer" : ""} ${className}`}
       style={plainBorder ? { clipPath: "none" } : undefined}
       role={clickable ? "button" : "article"}
       tabIndex={clickable ? 0 : undefined}
@@ -104,14 +104,16 @@ export function SponsoredFeaturedSlotCard({
 
         <button
           type="button"
-          className={`absolute right-2 top-2 z-20 whitespace-nowrap border border-white/25 bg-black/80 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-white ${onAdvertisementClick ? "hover:border-orange-300/70 hover:text-orange-200" : "cursor-default"}`}
+          className={`absolute right-2 top-2 z-20 max-w-[calc(100%-1rem)] truncate border border-white/25 bg-black/80 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-white ${onAdvertisementClick ? "hover:border-orange-300/70 hover:text-orange-200" : "cursor-default"}`}
+          aria-label="Advertisement"
           onClick={(event) => {
             event.preventDefault();
             event.stopPropagation();
             onAdvertisementClick?.();
           }}
         >
-          Advertisement
+          <span className="sm:hidden">Ad</span>
+          <span className="hidden sm:inline">Advertisement</span>
         </button>
 
         {isHouse ? (

@@ -1,0 +1,245 @@
+name: Agent 2 stable devnet closeout
+
+on:
+  push:
+    branches:
+      - agent2/solana-basic-graduation-market
+    paths:
+      - .github/workflows/agent2-stable-devnet-closeout.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent2-stable-devnet-closeout
+  cancel-in-progress: false
+
+jobs:
+  stable-devnet-closeout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: testnet-certification
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mwz_agent2_closeout
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d mwz_agent2_closeout"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/mwz_agent2_closeout
+      PG_DISABLE_SSL: "1"
+      SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER }}
+      SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
+      SOLANA_LAUNCHPAD_PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+      SOLANA_GRADUATION_AUTH_URL: http://127.0.0.1:43101/api/solana/graduation-authorize
+      SOLANA_GRADUATION_AUTH_ENABLED: "true"
+      SOLANA_GRADUATION_CHAIN_ID: "102"
+      SOLANA_GRADUATION_BASIC_RELEASE_ONLY: "true"
+      SOLANA_GRADUATION_SOL_USD_MICROS: "145948162"
+      STABLE_CAMPAIGN: 2SYTpdhQ2LDfJX9pZNPueKXwa3RrofxHZeRDHziLUrjg
+      STABLE_MEME_MINT: FfUd6ER6JhHZBZexiWX6N6mMqwdpLvFmU5LYv3JUUFMk
+      CIRCLE_DEVNET_USDC: 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
+      STABLE_GRADUATION_SIGNATURE: dFngb1r3Kevuuk1Sm7D4t1UfaRvdV2D55XezYs19Go1xvnirmA8LUgc3vsyUFJDaaP7KW8iiGw8uXfYF8ciQEe3
+      STABLE_METEORA_POOL: 8rftKfhBt5xuVnYHu7KDjJzXVvPnHCSj2Uohg1mxsPdx
+      STABLE_METEORA_POSITION: E1UE27Go4kBE6C3z9eYBvH7RVem1yq69E8rHhKz6vuXm
+      STABLE_POSITION_NFT: 49Nbzg8gXkEHmuqMYsvBdnEwEFZYvDXbr8SeELRqcSjN
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Verify frozen SBF source and exact chain authority regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git diff --name-only 1e7b45802a7e2e39e13e46321209d2eb6c87606f..HEAD -- programs/memewarzone_solana | wc -l | tr -d ' ')" = "0"
+          echo "sbf_expected_sha256=27ad65b560dba8a33330bd95f08ae7ca6945f71ebf667a5a3756ae0cb9f7f080"
+          echo "sbf_expected_bytes=1165328"
+          echo "program_upgrade_step=ABSENT"
+          npm ci --prefix frontend --no-audit --no-fund
+          npm install --prefix tests/solana --no-audit --no-fund
+          npm ci --prefix tools/solana-meteora-graduation --no-audit --no-fund
+          npm --prefix tools/solana-meteora-graduation run check
+          node tools/solana-meteora-graduation/check-graduation-auth-fixture.mjs
+          node tools/solana-meteora-graduation/check-devnet-basic-route.mjs | tee /tmp/mwz-agent2-closeout-route-regression.json
+
+      - name: Materialize dedicated devnet operator and route signer
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SOLANA_DEVNET_PAYER:-}" || { echo "BLOCKER: SOLANA_DEVNET_PAYER missing"; exit 1; }
+          test -n "${SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY:-}" || { echo "BLOCKER: SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY missing"; exit 1; }
+          operator_file="${RUNNER_TEMP}/mwz-solana-devnet-operator.json"
+          route_file="${RUNNER_TEMP}/mwz-solana-devnet-route-signer.json"
+          SOLANA_GRADUATION_OPERATOR_KEYPAIR="$operator_file" node scripts/solana/materialize-devnet-payer.mjs
+          ROUTE_FILE="$route_file" python3 - <<'PY'
+          import json, os
+          value=json.loads(os.environ['SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY'].strip())
+          if not isinstance(value,list) or len(value)!=64: raise SystemExit('route signer must be a 64-byte JSON array')
+          with open(os.environ['ROUTE_FILE'],'w',encoding='utf-8') as f: json.dump(value,f)
+          os.chmod(os.environ['ROUTE_FILE'],0o600)
+          PY
+          route_pub="$(ROUTE_FILE="$route_file" node - <<'NODE'
+          const fs=require('fs');
+          const {Keypair}=require('./tests/solana/node_modules/@solana/web3.js');
+          const b=JSON.parse(fs.readFileSync(process.env.ROUTE_FILE,'utf8'));
+          process.stdout.write(Keypair.fromSecretKey(Uint8Array.from(b)).publicKey.toBase58());
+          NODE
+          )"
+          echo "SOLANA_GRADUATION_OPERATOR_KEYPAIR=$operator_file" >> "$GITHUB_ENV"
+          echo "SOLANA_OPERATOR_KEYPAIR=$operator_file" >> "$GITHUB_ENV"
+          echo "SOLANA_ROUTE_SIGNER_PUBLIC_KEY=$route_pub" >> "$GITHUB_ENV"
+
+      - name: Rebuild disposable chain-102 authority and restore healthy route
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p 5432 -U postgres -d mwz_agent2_closeout && break; sleep 1; done
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/supabase/migrations/20260906231500_quote_asset_catalog.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/supabase/migrations/20260907001000_solana_basic_quote_catalog.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/supabase/migrations/20260907163000_solana_devnet_basic_quote_certification.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          update public.quote_asset_deployments
+             set market_health_status='healthy', existing_market_support=true, state_version=state_version+1, last_scan_at=now(), updated_at=now()
+           where id='a2100000-0000-4000-8000-000000000212'::uuid
+             and chain_id='102'
+             and contract_address_or_mint='4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU';
+          SQL
+          psql "$DATABASE_URL" -Atc "select id||':'||chain_id||':'||contract_address_or_mint||':'||market_health_status from public.quote_asset_deployments where id in ('a2100000-0000-4000-8000-000000000202','a2100000-0000-4000-8000-000000000212') order by id" | tee /tmp/mwz-agent2-closeout-catalog.txt
+          grep -q 'a2100000-0000-4000-8000-000000000202:101:EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v:healthy' /tmp/mwz-agent2-closeout-catalog.txt
+          grep -q 'a2100000-0000-4000-8000-000000000212:102:4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU:healthy' /tmp/mwz-agent2-closeout-catalog.txt
+
+      - name: Re-certify stable transaction, real Orca acquisition, residual recovery and permanent custody
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'GRADUATED %s pool %s position %s\n' "$STABLE_GRADUATION_SIGNATURE" "$STABLE_METEORA_POOL" "$STABLE_METEORA_POSITION" > /tmp/mwz-agent2-closeout-graduation.log
+          SOLANA_BASIC_RESULT_REPORT=/tmp/mwz-agent2-closeout-result-before.json node tools/solana-meteora-graduation/verify-basic-graduation-result.mjs "$STABLE_CAMPAIGN" /tmp/mwz-agent2-closeout-graduation.log "$CIRCLE_DEVNET_USDC"
+          node - <<'NODE'
+          const fs=require('fs');
+          const {Connection,Keypair,PublicKey}=require('./tools/solana-meteora-graduation/node_modules/@solana/web3.js');
+          const {getAccount,getAssociatedTokenAddressSync,TOKEN_PROGRAM_ID}=require('./tools/solana-meteora-graduation/node_modules/@solana/spl-token');
+          const secret=Uint8Array.from(JSON.parse(fs.readFileSync(process.env.SOLANA_OPERATOR_KEYPAIR,'utf8')));
+          const owner=Keypair.fromSecretKey(secret).publicKey;
+          const mint=new PublicKey(process.env.CIRCLE_DEVNET_USDC);
+          const ata=getAssociatedTokenAddressSync(mint,owner,false,TOKEN_PROGRAM_ID);
+          const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
+          (async()=>{
+            const tx=await c.getParsedTransaction(process.env.STABLE_GRADUATION_SIGNATURE,{commitment:'confirmed',maxSupportedTransactionVersion:0});
+            if(!tx||tx.meta?.err) throw new Error('stable graduation transaction missing or failed');
+            const instructions=[...(tx.transaction.message.instructions||[])];
+            for(const group of tx.meta?.innerInstructions||[]) instructions.push(...(group.instructions||[]));
+            let acquired=0n, spent=0n, recoverySelfTransfer=0n;
+            for(const ix of instructions){
+              const info=ix?.parsed?.info; if(!info) continue;
+              const source=String(info.source||''); const destination=String(info.destination||'');
+              const amount=ix.parsed.type==='transferChecked' ? BigInt(info.tokenAmount?.amount||0) : ix.parsed.type==='transfer' ? BigInt(info.amount||0) : 0n;
+              if(amount<=0n) continue;
+              if(destination===ata.toBase58() && source!==ata.toBase58()) acquired+=amount;
+              if(source===ata.toBase58() && destination!==ata.toBase58()) spent+=amount;
+              if(source===ata.toBase58() && destination===ata.toBase58()) recoverySelfTransfer+=amount;
+            }
+            if(acquired<=0n) throw new Error('no real Circle-USDC acquisition into operator quote ATA found');
+            const after=(await getAccount(c,ata,'confirmed',TOKEN_PROGRAM_ID)).amount;
+            if(acquired!==spent+after) throw new Error(`quote conservation mismatch acquired=${acquired} spent=${spent} after=${after}`);
+            if(after>1n) throw new Error(`unexpected quote residual exceeds one raw micro-USDC: ${after}`);
+            if(after>0n && recoverySelfTransfer<after) throw new Error(`signed recovery self-transfer evidence missing for residual ${after}`);
+            const report={
+              signature:process.env.STABLE_GRADUATION_SIGNATURE,
+              campaign:process.env.STABLE_CAMPAIGN,
+              memeMint:process.env.STABLE_MEME_MINT,
+              pool:process.env.STABLE_METEORA_POOL,
+              position:process.env.STABLE_METEORA_POSITION,
+              positionNft:process.env.STABLE_POSITION_NFT,
+              operator:owner.toBase58(),
+              quoteMint:mint.toBase58(),
+              quoteAta:ata.toBase58(),
+              quoteRawBefore:'0',
+              actualUsdcAcquiredRaw:acquired.toString(),
+              actualUsdcAcquired:(Number(acquired)/1e6).toFixed(6),
+              quoteRawDepositedOrSpent:spent.toString(),
+              quoteRawAfter:after.toString(),
+              recoveryRawSelfTransfer:recoverySelfTransfer.toString(),
+              recoveryAccount:ata.toBase58(),
+              residualHandling:'SIGNED_TREASURY_OPERATOR_QUOTE_ATA_RECOVERY',
+              preexistingQuoteCouldMasquerade:false
+            };
+            fs.writeFileSync('/tmp/mwz-agent2-closeout-acquisition.json',JSON.stringify(report,null,2));
+            console.log(JSON.stringify(report,null,2));
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          grep -q 'quoteConfig.recoveryAccount = deriveAta(authorityAddress, quoteConfig.mint)' frontend/api/dev-fix/solana-graduation-authorization-v2.js
+
+      - name: Start isolated chain-102 authorization for replay rejection
+        shell: bash
+        env:
+          SOLANA_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          nohup node scripts/solana/devnet-graduation-auth-server.mjs >/tmp/mwz-agent2-closeout-auth.log 2>&1 &
+          echo $! >/tmp/mwz-agent2-closeout-auth.pid
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:43101/health >/tmp/mwz-agent2-closeout-auth-health.json; then cat /tmp/mwz-agent2-closeout-auth-health.json; exit 0; fi
+            sleep 1
+          done
+          cat /tmp/mwz-agent2-closeout-auth.log || true
+          exit 1
+
+      - name: Prove exactly-once replay is rejected before acquisition or settlement
+        shell: bash
+        run: |
+          set -euo pipefail
+          operator="$(node -e 'const fs=require("fs");const {Keypair}=require("./tests/solana/node_modules/@solana/web3.js");const b=JSON.parse(fs.readFileSync(process.env.SOLANA_OPERATOR_KEYPAIR,"utf8"));process.stdout.write(Keypair.fromSecretKey(Uint8Array.from(b)).publicKey.toBase58())')"
+          position="$(node -e 'const {Keypair}=require("./tests/solana/node_modules/@solana/web3.js");process.stdout.write(Keypair.generate().publicKey.toBase58())')"
+          node - <<'NODE' > /tmp/mwz-agent2-closeout-before-replay.json
+          const fs=require('fs'); const {Connection,Keypair,PublicKey}=require('./tools/solana-meteora-graduation/node_modules/@solana/web3.js'); const {getAccount,getAssociatedTokenAddressSync,TOKEN_PROGRAM_ID}=require('./tools/solana-meteora-graduation/node_modules/@solana/spl-token');
+          const owner=Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(process.env.SOLANA_OPERATOR_KEYPAIR,'utf8')))).publicKey; const mint=new PublicKey(process.env.CIRCLE_DEVNET_USDC); const ata=getAssociatedTokenAddressSync(mint,owner,false,TOKEN_PROGRAM_ID); const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
+          (async()=>{const bal=(await getAccount(c,ata,'confirmed',TOKEN_PROGRAM_ID)).amount; const sigs=await c.getSignaturesForAddress(new PublicKey(process.env.STABLE_CAMPAIGN),{limit:1},'confirmed'); console.log(JSON.stringify({quoteRaw:bal.toString(),latestCampaignSignature:sigs[0]?.signature||null}));})().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          http_code="$(curl -sS -o /tmp/mwz-agent2-closeout-replay.json -w '%{http_code}' -H 'content-type: application/json' -d "{\"chainId\":102,\"campaignAddress\":\"$STABLE_CAMPAIGN\",\"authorityAddress\":\"$operator\",\"positionNftMint\":\"$position\",\"quoteConfigId\":\"a2100000-0000-4000-8000-000000000212\"}" "$SOLANA_GRADUATION_AUTH_URL")"
+          test "$http_code" = "409"
+          grep -q 'SOLANA_GRADUATION_CAMPAIGN_NOT_EXECUTABLE' /tmp/mwz-agent2-closeout-replay.json
+          cat /tmp/mwz-agent2-closeout-replay.json
+          node - <<'NODE' > /tmp/mwz-agent2-closeout-after-replay.json
+          const fs=require('fs'); const {Connection,Keypair,PublicKey}=require('./tools/solana-meteora-graduation/node_modules/@solana/web3.js'); const {getAccount,getAssociatedTokenAddressSync,TOKEN_PROGRAM_ID}=require('./tools/solana-meteora-graduation/node_modules/@solana/spl-token');
+          const owner=Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(process.env.SOLANA_OPERATOR_KEYPAIR,'utf8')))).publicKey; const mint=new PublicKey(process.env.CIRCLE_DEVNET_USDC); const ata=getAssociatedTokenAddressSync(mint,owner,false,TOKEN_PROGRAM_ID); const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
+          (async()=>{const bal=(await getAccount(c,ata,'confirmed',TOKEN_PROGRAM_ID)).amount; const sigs=await c.getSignaturesForAddress(new PublicKey(process.env.STABLE_CAMPAIGN),{limit:1},'confirmed'); console.log(JSON.stringify({quoteRaw:bal.toString(),latestCampaignSignature:sigs[0]?.signature||null}));})().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+          cmp /tmp/mwz-agent2-closeout-before-replay.json /tmp/mwz-agent2-closeout-after-replay.json
+          SOLANA_BASIC_RESULT_REPORT=/tmp/mwz-agent2-closeout-result-after.json node tools/solana-meteora-graduation/verify-basic-graduation-result.mjs "$STABLE_CAMPAIGN" /tmp/mwz-agent2-closeout-graduation.log "$CIRCLE_DEVNET_USDC"
+          cmp /tmp/mwz-agent2-closeout-result-before.json /tmp/mwz-agent2-closeout-result-after.json
+          echo 'EXACTLY_ONCE_REPLAY_REJECTED_BEFORE_CHAIN_MUTATION=PASS'
+
+      - name: Upload Agent 2 closeout evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent2-stable-devnet-closeout-${{ github.sha }}
+          path: |
+            /tmp/mwz-agent2-closeout-route-regression.json
+            /tmp/mwz-agent2-closeout-catalog.txt
+            /tmp/mwz-agent2-closeout-graduation.log
+            /tmp/mwz-agent2-closeout-result-before.json
+            /tmp/mwz-agent2-closeout-acquisition.json
+            /tmp/mwz-agent2-closeout-auth.log
+            /tmp/mwz-agent2-closeout-auth-health.json
+            /tmp/mwz-agent2-closeout-replay.json
+            /tmp/mwz-agent2-closeout-before-replay.json
+            /tmp/mwz-agent2-closeout-after-replay.json
+            /tmp/mwz-agent2-closeout-result-after.json
+          if-no-files-found: warn

@@ -173,7 +173,11 @@ describe("BNB factory replacement security sequence", function () {
 
     await creatorRegistry.connect(safe).setLaunchRecorder(await factory.getAddress(), true);
     expect(await creatorRegistry.launchRecorder(await factory.getAddress())).to.equal(true);
-    await treasury.connect(safe).setAuthorizedLpLocker(await locker.getAddress(), true);
+    await expect(treasury.connect(safe).setAuthorizedLpLocker(await locker.getAddress(), true)).to.be.revertedWith("use propose");
+    await treasury.connect(safe).proposeAuthorizedLpLocker(await locker.getAddress());
+    await ethers.provider.send("evm_increaseTime", [3600]);
+    await ethers.provider.send("evm_mine", []);
+    await treasury.connect(safe).acceptAuthorizedLpLocker();
     await treasury.connect(safe).setPrimaryLpLocker(await locker.getAddress());
     expect(await treasury.authorizedLpLocker(await oldLocker.getAddress())).to.equal(true);
     expect(await treasury.authorizedLpLocker(await locker.getAddress())).to.equal(true);

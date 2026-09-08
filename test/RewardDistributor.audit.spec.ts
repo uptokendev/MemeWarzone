@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { createAuthorizedBatch } from "./helpers/settlementAuth";
 
 function leafFor(account: string, amount: bigint) {
   const encoded = ethers.AbiCoder.defaultAbiCoder().encode(["address", "uint256"], [account, amount]);
@@ -28,7 +29,7 @@ describe("RewardDistributor audit hardening", function () {
     const root = leafFor(await user.getAddress(), batchAmount);
     const recoveryAddress = await recovery.getAddress();
 
-    await distributor.connect(owner).createBatch(batchId, root, 0, { value: batchAmount });
+    await createAuthorizedBatch(distributor, owner, batchId, root, 0, batchAmount);
     await owner.sendTransaction({ to: await distributor.getAddress(), value: excessAmount });
 
     expect(await distributor.totalOutstandingRewards()).to.equal(batchAmount);
@@ -58,7 +59,7 @@ describe("RewardDistributor audit hardening", function () {
     const root = leafFor(await user.getAddress(), amount);
     const now = (await ethers.provider.getBlock("latest"))!.timestamp;
 
-    await distributor.connect(owner).createBatch(batchId, root, now + 10, { value: amount });
+    await createAuthorizedBatch(distributor, owner, batchId, root, now + 10, amount);
     await increaseTime(11);
 
     await expect(distributor.connect(owner).recoverUnclaimed(batchId, ethers.ZeroAddress)).to.be.revertedWithCustomError(

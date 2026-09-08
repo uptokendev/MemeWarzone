@@ -2,7 +2,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
-const STEP_LABELS = ["Path", "Identity", "Story", "Bond", "Launch"] as const;
+const STEP_LABELS = ["Path", "Identity", "Story", "Bond", "Market", "Review"] as const;
 
 /**
  * Snug wizard shell: height tracks the preview card (~420–460px) + ~100px chrome,
@@ -45,7 +45,7 @@ export function CreateWizardShell({
       <div
         className={cn(
           "mwz-card flex w-full flex-col overflow-hidden border-accent/25 bg-background/40",
-          "h-[min(600px,calc(100dvh-4.75rem))] min-h-[500px]",
+          "h-[min(640px,calc(100dvh-4.75rem))] min-h-[min(420px,calc(100dvh-4.75rem))]",
         )}
       >
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/50 px-3 py-1.5 sm:px-3.5">
@@ -130,4 +130,8 @@ export function CreateSplitPane({
       <div className="flex min-h-0 flex-col overflow-y-auto overscroll-contain p-2.5 sm:p-3">{right}</div>
     </div>
   );
+}
+
+export function CreateFullPane({ children }: { children: ReactNode }) {
+  return <div className="flex h-full min-h-0 flex-col overflow-hidden">{children}</div>;
 }

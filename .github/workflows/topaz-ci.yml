@@ -25,13 +25,22 @@ jobs:
       - name: Compile
         run: npm run compile
 
-      - name: Topaz, TreasuryRouterV2, generation-indexer, and monthly treasury tests
+      - name: Prove live BNB 56/97 census stays 3/2 and source-head 4/3 is not live BNB
+        run: npm run prove:bnb-6a-census
+
+      - name: Prove 6B creator-fee math stays 0.10% of volume on Topaz V2 + fee-router V3
+        run: npm run prove:bnb-6b-fees
+
+      - name: Topaz V2, live treasury V2, Gate D source-head lifecycle, and 30 bps locker tests
         run: >-
           npx hardhat test
           test/TopazRouterAdapter.spec.ts
           test/LaunchCampaignTopazAdapter.spec.ts
           test/PermanentLpLockerTopazFee.spec.ts
           test/PermanentLpLockerHarvest.spec.ts
+          test/BnbLifecycleCertification.spec.ts
+          test/BnbCreatorFeeGeneration.spec.ts
+          test/LaunchFactoryLiquidityKinds.spec.ts
           test/TreasuryRouterV2.spec.ts
           test/IndexerManifestTreasuryRouterV2.spec.ts
           test/TreasuryRouterV2Tooling.spec.ts

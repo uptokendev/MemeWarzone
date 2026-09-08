@@ -1,4 +1,15 @@
-import { getAllowedChainIds, getChainParams, getDefaultChainId, getFactoryAddress, isAllowedChainId, type SupportedChainId } from "@/lib/chainConfig";
+import {
+  getAllowedChainIds,
+  getChainLabel,
+  getChainParams,
+  getDefaultChainId,
+  getFactoryAddress,
+  getPublicRpcUrls,
+  isAllowedChainId,
+  isSolanaChainId,
+  type SupportedChainId,
+} from "@/lib/chainConfig";
+import { buildEvmWalletChainParams, isKnownEvmChainId } from "@/lib/evmChainAdapter";
 
 export type LaunchpadWriteReadiness = {
   ready: boolean;
@@ -22,6 +33,28 @@ export function launchpadWritesEnabled(): boolean {
   return envFlag("VITE_LAUNCHPAD_WRITES_ENABLED", false);
 }
 
+function allowedChainNames(): string {
+  return getAllowedChainIds()
+    .map((chainId) => getChainLabel(chainId))
+    .join(", ");
+}
+
+function launchpadWriteTarget(chainId: SupportedChainId): { address: string; kind: "factory" | "program" } {
+  if (isSolanaChainId(chainId)) {
+    const program = String((import.meta.env.VITE_SOLANA_LAUNCHPAD_PROGRAM_ID as string | undefined) || "").trim();
+    return { address: program, kind: "program" };
+  }
+  return { address: getFactoryAddress(chainId), kind: "factory" };
+}
+
+function missingTargetMessage(chainId: SupportedChainId, kind: "factory" | "program"): string {
+  const label = getChainLabel(chainId);
+  if (kind === "program") {
+    return `No Solana launchpad program is configured for ${label}. Set VITE_SOLANA_LAUNCHPAD_PROGRAM_ID before enabling launchpad writes.`;
+  }
+  return `No LaunchFactory address is configured for ${label}. Deploy contracts and set VITE_FACTORY_ADDRESS_${chainId} before enabling launchpad writes.`;
+}
+
 export function getLaunchpadWriteReadiness({
   isConnected,
   walletChainId,
@@ -31,7 +64,8 @@ export function getLaunchpadWriteReadiness({
 }): LaunchpadWriteReadiness {
   const defaultChainId = getDefaultChainId();
   const activeChainId = isAllowedChainId(walletChainId) ? (walletChainId as SupportedChainId) : defaultChainId;
-  const factoryAddress = getFactoryAddress(activeChainId);
+  const target = launchpadWriteTarget(activeChainId);
+  const factoryAddress = target.address;
 
   if (!isConnected) {
     return {
@@ -47,7 +81,6 @@ export function getLaunchpadWriteReadiness({
   }
 
   if (!isAllowedChainId(walletChainId)) {
-    const allowed = getAllowedChainIds().join(" or ");
     return {
       ready: false,
       reason: "wrong_chain",
@@ -55,8 +88,8 @@ export function getLaunchpadWriteReadiness({
       walletChainId: walletChainId || undefined,
       factoryAddress,
       title: "Wrong network",
-      message: `Switch to a supported BNB Chain network before using launchpad actions. Supported chain IDs: ${allowed}.`,
-      actionLabel: `Switch to ${getChainParams(defaultChainId).chainName}`,
+      message: `Switch to a supported MemeWarzone network before using launchpad actions: ${allowedChainNames()}.`,
+      actionLabel: `Switch to ${getChainLabel(defaultChainId)}`,
       targetChainId: defaultChainId,
     };
   }
@@ -69,7 +102,7 @@ export function getLaunchpadWriteReadiness({
       walletChainId: walletChainId || undefined,
       factoryAddress,
       title: "Prepare Mode not enabled yet",
-      message: `Launchpad write actions are disabled for this deploy. After the new contracts are deployed and verified, set VITE_LAUNCHPAD_WRITES_ENABLED=true to enable create, buy, sell, and finalize actions.`,
+      message: `Launchpad write actions are disabled for this deploy. After the new contracts are deployed and verified, set VITE_LAUNCHPAD_WRITES_ENABLED=true to enable create, buy, sell, and finalize actions on ${getChainLabel(activeChainId)}.`,
     };
   }
 
@@ -81,7 +114,7 @@ export function getLaunchpadWriteReadiness({
       walletChainId: walletChainId || undefined,
       factoryAddress,
       title: "Contracts not deployed for this network",
-      message: `No LaunchFactory address is configured for chain ${activeChainId}. Deploy contracts and set VITE_FACTORY_ADDRESS_${activeChainId} before enabling launchpad writes.`,
+      message: missingTargetMessage(activeChainId, target.kind),
     };
   }
 
@@ -92,13 +125,23 @@ export function getLaunchpadWriteReadiness({
     walletChainId: walletChainId || undefined,
     factoryAddress,
     title: "Launchpad ready",
-    message: `Connected to chain ${activeChainId}.`,
+    message: `Connected to ${getChainLabel(activeChainId)}.`,
   };
 }
 
+export function getWalletChainSwitchParams(chainId: SupportedChainId) {
+  if (isKnownEvmChainId(chainId)) {
+    return buildEvmWalletChainParams(chainId, getPublicRpcUrls(chainId));
+  }
+  return getChainParams(chainId);
+}
+
 export async function requestWalletChainSwitch(provider: { send?: (method: string, params?: unknown[]) => Promise<unknown> } | null | undefined, chainId: SupportedChainId) {
+  if (isSolanaChainId(chainId)) {
+    throw new Error(`Switch to ${getChainLabel(chainId)} from your Solana wallet. EVM wallets cannot add Solana.`);
+  }
   if (!provider?.send) throw new Error("Wallet provider is not available.");
-  const params = getChainParams(chainId);
+  const params = getWalletChainSwitchParams(chainId);
 
   try {
     await provider.send("wallet_switchEthereumChain", [{ chainId: params.chainId }]);

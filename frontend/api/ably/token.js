@@ -113,6 +113,7 @@ export default async function handler(req, res) {
     const campaign = isSolanaChain(chainId) ? campaignRaw : campaignRaw.toLowerCase();
     const scope = p(q.scope).toLowerCase();
     const liveChannel = p(q.channel).toLowerCase();
+    const battleId = p(q.battleId ?? q.battle);
 
     const capability = {};
 
@@ -121,6 +122,7 @@ export default async function handler(req, res) {
       chainId,
       campaign,
       liveChannel,
+      battleId,
     });
     if (scope === "live") {
       // Live launch-party / AMA chat channel. Bilateral: clients subscribe AND
@@ -144,6 +146,13 @@ export default async function handler(req, res) {
       if (!Number.isFinite(chainId))
         return json(res, 400, { error: "Invalid chainId" });
       capability[`league:${chainId}`] = ["subscribe"];
+    } else if (scope === "battle") {
+      if (!/^[A-Za-z0-9._:-]{1,160}$/.test(battleId)) {
+        return json(res, 400, { error: "Invalid Arena battle id" });
+      }
+      // Battle channels are server-published and client-read-only. Never grant
+      // publish/presence here; realtime patches must come from authoritative metrics.
+      capability[`arena:battle:${battleId}`] = ["subscribe"];
     } else {
       if (!Number.isFinite(chainId))
         return json(res, 400, { error: "Invalid chainId" });

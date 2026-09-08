@@ -134,9 +134,15 @@ if (requestedApiAlreadyRunning && reuseExistingApi) {
 
   // Use stable API mode by default. The node --watch API script can restart from
   // unrelated file activity and cause browser refreshes across every route.
+  // Hybrid local development must never make an upstream Railway 404/405 final:
+  // the local API owns many routes that Railway may not have yet. Keep proxying
+  // successful upstream routes, but always fall back to the local handler when
+  // the upstream does not recognize a route.
   start("api", "api:start", {
     PORT: String(apiPort),
     API_PORT: String(apiPort),
+    API_RAILWAY_PROXY_STRICT: "false",
+    RAILWAY_API_PROXY_STRICT: "false",
   });
 
   console.log(`[dev-hybrid] waiting for API health: ${healthUrlForPort(apiPort)}`);

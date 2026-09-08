@@ -2,7 +2,7 @@ import { useCallback, useMemo } from "react";
 
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
-import { getActiveChainId } from "@/lib/chainConfig";
+import { getActiveChainId, isEvmChainId, ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
 import { signSolanaMessage } from "@/lib/solanaWallet";
 
 export type RecruiterWalletChain = "bnb" | "solana";
@@ -34,6 +34,10 @@ function sameAddress(chain: RecruiterWalletChain, left?: string | null, right?: 
   return chain === "bnb" ? a.toLowerCase() === b.toLowerCase() : a === b;
 }
 
+function evmRecruiterLabel(chainId?: number | null) {
+  return chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID ? "Robinhood" : "BNB";
+}
+
 export function useRecruiterWallet(): RecruiterWalletController {
   const bnbWallet = useWallet();
   const solanaWallet = useSolanaWallet();
@@ -54,11 +58,14 @@ export function useRecruiterWallet(): RecruiterWalletController {
       });
     }
     if (bnbAddress) {
+      const actualEvmChainId = isEvmChainId(bnbChainId) ? Number(bnbChainId) : Number(getActiveChainId(bnbChainId));
       wallets.push({
+        // Keep the legacy "bnb" discriminator for EVM signing compatibility; the
+        // actual EVM network is carried by chainId and the user-facing label.
         chain: "bnb",
         address: bnbAddress,
-        chainId: getActiveChainId(bnbChainId),
-        label: "BNB",
+        chainId: actualEvmChainId,
+        label: evmRecruiterLabel(actualEvmChainId),
         canSign: Boolean(bnbWallet.signer),
       });
     }
@@ -90,8 +97,8 @@ export function useRecruiterWallet(): RecruiterWalletController {
     if (chain === "solana") {
       return (await signSolanaMessage(message, address)).signature;
     }
-    if (!bnbWallet.signer || !bnbAddress) throw new Error("Connect your BNB wallet before signing.");
-    if (!sameAddress("bnb", bnbAddress, address)) throw new Error("Connected BNB wallet does not match the selected wallet.");
+    if (!bnbWallet.signer || !bnbAddress) throw new Error("Connect your EVM wallet before signing.");
+    if (!sameAddress("bnb", bnbAddress, address)) throw new Error("Connected EVM wallet does not match the selected wallet.");
     return bnbWallet.signer.signMessage(message);
   }, [bnbAddress, bnbWallet.signer]);
 

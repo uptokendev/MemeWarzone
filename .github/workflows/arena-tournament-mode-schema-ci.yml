@@ -1,0 +1,57 @@
+name: Arena Tournament Mode Schema Gate
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "db/migrations/20260903_000103_arena_tournament_battle_modes.sql"
+      - "db/migrations/20260903_000104_arena_vote_boost_sponsorship_v1_foundation.sql"
+      - "scripts/arenaTournamentModeSchemaGate.mjs"
+      - ".github/workflows/arena-tournament-mode-schema-ci.yml"
+  push:
+    branches:
+      - "build/cross-chain-stabilization-rh-base"
+    paths:
+      - "db/migrations/20260903_000103_arena_tournament_battle_modes.sql"
+      - "db/migrations/20260903_000104_arena_vote_boost_sponsorship_v1_foundation.sql"
+      - "scripts/arenaTournamentModeSchemaGate.mjs"
+      - ".github/workflows/arena-tournament-mode-schema-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: arena-tournament-mode-schema-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  schema:
+    name: Tournament mode, replay, and foundation invariants
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: arena_schema_gate
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d arena_schema_gate"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout exact source SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Verify tournament mode and Phase 1 schema foundations
+        env:
+          ARENA_SCHEMA_GATE_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/arena_schema_gate
+        run: node scripts/arenaTournamentModeSchemaGate.mjs

@@ -27,8 +27,8 @@ use crate::{
     generation_allows_graduation_target, ClusterProfile, CreatorProfile, GenerationConfig,
     GlobalConfig, LaunchpadError, RiskProfile, BPS_DENOMINATOR, CLUSTER_PROFILE_SEED,
     CREATOR_PROFILE_SEED, CREATOR_TIER_1, EMPTY_CLUSTER_ID, GENERATION_CONFIG_SEED,
-    GLOBAL_CONFIG_SEED, RISK_PROFILE_SEED, TIER_1_CREATOR_LOCK_SECONDS,
-    TIER_1_MAX_LIVE_BONDING, TIER_COOLDOWN_SECONDS,
+    GLOBAL_CONFIG_SEED, RISK_PROFILE_SEED, TIER_1_CREATOR_LOCK_SECONDS, TIER_1_MAX_LIVE_BONDING,
+    TIER_COOLDOWN_SECONDS,
 };
 
 pub const CAMPAIGN_SEED: &[u8] = b"campaign";
@@ -246,7 +246,11 @@ fn create_token_program_account<'info>(
     signer_seeds: &[&[u8]],
     rent: &Rent,
 ) -> Result<()> {
-    require_keys_eq!(*token_program.key, token::ID, LaunchpadError::InvalidCampaign);
+    require_keys_eq!(
+        *token_program.key,
+        token::ID,
+        LaunchpadError::InvalidCampaign
+    );
     require!(account.lamports() == 0, LaunchpadError::InvalidCampaign);
     require!(account.data_is_empty(), LaunchpadError::InvalidCampaign);
     let lamports = rent.minimum_balance(space);
@@ -316,8 +320,14 @@ fn ensure_creator_profile<'info>(ctx: &Context<CreateCampaign<'info>>) -> Result
     if account.owner == &crate::ID && !account.data_is_empty() {
         return Ok(());
     }
-    require!(account.lamports() == 0, LaunchpadError::InvalidCreatorProfile);
-    require!(account.data_is_empty(), LaunchpadError::InvalidCreatorProfile);
+    require!(
+        account.lamports() == 0,
+        LaunchpadError::InvalidCreatorProfile
+    );
+    require!(
+        account.data_is_empty(),
+        LaunchpadError::InvalidCreatorProfile
+    );
 
     let wallet = ctx.accounts.creator.key();
     let bump_seed = [ctx.bumps.creator_profile];
@@ -565,7 +575,11 @@ pub fn create_campaign_handler(
             LaunchpadError::InvalidCampaign
         );
         require_keys_eq!(vault_state.mint, mint_key, LaunchpadError::InvalidCampaign);
-        require_keys_eq!(vault_state.owner, campaign_key, LaunchpadError::InvalidCampaign);
+        require_keys_eq!(
+            vault_state.owner,
+            campaign_key,
+            LaunchpadError::InvalidCampaign
+        );
     }
 
     token::set_authority(
@@ -594,7 +608,18 @@ pub fn create_campaign_handler(
     )?;
     bump_creator_launch_stats(&ctx.accounts.creator_profile.to_account_info(), now)?;
 
-    emit_campaign_created(ctx, args, &prep, now, generation_key, campaign_key, mint_key, token_vault_key, sol_vault_key, creator_key)?;
+    emit_campaign_created(
+        ctx,
+        args,
+        &prep,
+        now,
+        generation_key,
+        campaign_key,
+        mint_key,
+        token_vault_key,
+        sol_vault_key,
+        creator_key,
+    )?;
 
     Ok(())
 }
@@ -691,7 +716,11 @@ fn prepare_and_verify_create_auth<'info>(
                 &[CLUSTER_PROFILE_SEED, EMPTY_CLUSTER_ID.as_ref()],
                 &crate::ID,
             );
-            require_keys_eq!(cluster_key, expected_cluster, LaunchpadError::InvalidCampaign);
+            require_keys_eq!(
+                cluster_key,
+                expected_cluster,
+                LaunchpadError::InvalidCampaign
+            );
         } else {
             let data = ctx.accounts.cluster_profile.try_borrow_data()?;
             let mut slice: &[u8] = &data;
@@ -700,7 +729,11 @@ fn prepare_and_verify_create_auth<'info>(
                 &[CLUSTER_PROFILE_SEED, risk_profile.cluster_id.as_ref()],
                 &crate::ID,
             );
-            require_keys_eq!(cluster_key, expected_cluster, LaunchpadError::InvalidCampaign);
+            require_keys_eq!(
+                cluster_key,
+                expected_cluster,
+                LaunchpadError::InvalidCampaign
+            );
             validate_create_risk_profiles(creator_key, &risk_profile, &cluster_profile)?;
         }
         risk_profile.cluster_id

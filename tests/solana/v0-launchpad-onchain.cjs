@@ -130,6 +130,7 @@ describe("shared V0/ALT launchpad helper on local validator", function () {
         tokenProgram: planAddress("tokenProgram"),
         systemProgram: planAddress("systemProgram"),
         feeEscrow: Keypair.generate().publicKey.toBase58(),
+        creatorFeeVault: Keypair.generate().publicKey.toBase58(),
       },
     });
 
@@ -161,7 +162,7 @@ describe("shared V0/ALT launchpad helper on local validator", function () {
     console.info("[v0-onchain] CREATE", createV0.stats);
     console.info("[v0-onchain] BUY", tradeV0.stats);
     assert.equal(createInstruction.keys.length, 14);
-    assert.equal(tradeInstruction.keys.length, 14);
+    assert.equal(tradeInstruction.keys.length, 15);
     assert.equal(createV0.stats.requiredSigners, 1);
     assert.equal(tradeV0.stats.requiredSigners, 1);
     assert.ok(createV0.stats.serializedBytes <= v0.SOLANA_RELEASE_MAX_BYTES);

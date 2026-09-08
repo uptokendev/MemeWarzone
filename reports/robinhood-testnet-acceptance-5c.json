@@ -1,0 +1,48 @@
+{
+  "kind": "robinhood-testnet-acceptance-5c-report",
+  "result": "PASS",
+  "accepted5BSha": "d1783b4d31133bfcb107d1d32e04047c9e827fbf",
+  "freezeSchemaVersion": 1,
+  "verifiedAt": "2026-08-31T21:19:24.764Z",
+  "chainId": 46630,
+  "currentBlock": 110760041,
+  "factory": "0xF170a2C97953754c2C1105E2AcC522Bc8e764D75",
+  "factoryGeneration": 4,
+  "campaignGeneration": 3,
+  "admin": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "routeAuthority": "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0",
+  "routeAuthorityDiffersFromAdmin": true,
+  "live": true,
+  "createPaused": true,
+  "campaignsCount": "2",
+  "factoryStartBlock": 110723466,
+  "continuity": {
+    "ok": true,
+    "no56Alias": true,
+    "chainId": 46630,
+    "factory": "0xF170a2C97953754c2C1105E2AcC522Bc8e764D75",
+    "factoryStartBlock": 110723466,
+    "indexed": [
+      "0xa0b95f9c5b47903f4f949b7e6f4e9dc89f5b7fe4",
+      "0x4466cea8f1dfa3cab26362b8f1a452bec0eb9f14"
+    ],
+    "reason": "indexed from chain 46630 with no 56 alias"
+  },
+  "no56Alias": true,
+  "productionRobinhoodDisabled": true,
+  "productionFlags": {
+    "productionCreationEnabled": false,
+    "directRobinhoodDeployEnabled": false,
+    "activeEvmChainIds": [
+      56,
+      97
+    ],
+    "activeEvmIndexerChainIds": [
+      56,
+      97
+    ],
+    "robinhoodV3PoolIndexerDefault": 0,
+    "productionContractsEmpty": true
+  },
+  "factoryUntouched": true
+}

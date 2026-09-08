@@ -23,37 +23,55 @@ export function weiToNative(raw, decimals = 18) {
 
 /**
  * Ranking vs accounting:
- * - referredVolumeBnb / referredVolumeSol / epochEarnedBnb / epochEarnedSol
- *   are native claim-side amounts. Never merge them.
- * - referredVolumeUsd / epochEarnedUsd are display/compare totals.
- * - normalizedScoreVolume / normalizedScoreEarnings are ranking inputs only
- *   so existing 0.05 / 1.0 weights keep their scale. They are not balances.
+ * - referredVolumeBnb / referredVolumeSol / referredVolumeEth and their matching
+ *   epoch-earned fields are native claim-side amounts. Never merge them.
+ * - referredVolumeUsd / epochEarnedUsd are display/compare totals only.
+ * - normalizedScoreVolume / normalizedScoreEarnings are ranking inputs only so
+ *   the historical 0.05 / 1.0 weights keep their scale. They are not balances.
  */
 export function combineReferredUsd({
   referredVolumeBnb = 0,
   referredVolumeSol = 0,
+  referredVolumeEth = 0,
   epochEarnedBnb = 0,
   epochEarnedSol = 0,
+  epochEarnedEth = 0,
   bnbUsd = 0,
   solUsd = 0,
+  ethUsd = 0,
 }) {
   const bnbPrice = toNumber(bnbUsd);
   const solPrice = toNumber(solUsd);
+  const ethPrice = toNumber(ethUsd);
   const volumeBnb = toNumber(referredVolumeBnb);
   const volumeSol = toNumber(referredVolumeSol);
+  const volumeEth = toNumber(referredVolumeEth);
   const earnedBnb = toNumber(epochEarnedBnb);
   const earnedSol = toNumber(epochEarnedSol);
+  const earnedEth = toNumber(epochEarnedEth);
+
   const bnbVolumeUsd = bnbPrice > 0 ? volumeBnb * bnbPrice : 0;
   const solVolumeUsd = solPrice > 0 ? volumeSol * solPrice : 0;
+  const ethVolumeUsd = ethPrice > 0 ? volumeEth * ethPrice : 0;
   const bnbEarnedUsd = bnbPrice > 0 ? earnedBnb * bnbPrice : 0;
   const solEarnedUsd = solPrice > 0 ? earnedSol * solPrice : 0;
-  const referredVolumeUsd = bnbVolumeUsd + solVolumeUsd;
-  const epochEarnedUsd = bnbEarnedUsd + solEarnedUsd;
+  const ethEarnedUsd = ethPrice > 0 ? earnedEth * ethPrice : 0;
+
+  const referredVolumeUsd = bnbVolumeUsd + solVolumeUsd + ethVolumeUsd;
+  const epochEarnedUsd = bnbEarnedUsd + solEarnedUsd + ethEarnedUsd;
+
+  // BNB-equivalent normalization preserves the scale of the pre-existing score
+  // weights while all native balances stay segregated. If BNB/USD is unavailable,
+  // use another available USD basis instead of silently discarding Robinhood/Solana.
+  const normalizationUsd = bnbPrice || ethPrice || solPrice || 0;
+  const fallbackVolumeNative = volumeBnb + volumeEth + volumeSol;
+  const fallbackEarnedNative = earnedBnb + earnedEth + earnedSol;
+
   return {
     referredVolumeUsd,
     epochEarnedUsd,
-    normalizedScoreVolume: bnbPrice > 0 ? referredVolumeUsd / bnbPrice : volumeBnb,
-    normalizedScoreEarnings: bnbPrice > 0 ? epochEarnedUsd / bnbPrice : earnedBnb,
+    normalizedScoreVolume: normalizationUsd > 0 ? referredVolumeUsd / normalizationUsd : fallbackVolumeNative,
+    normalizedScoreEarnings: normalizationUsd > 0 ? epochEarnedUsd / normalizationUsd : fallbackEarnedNative,
   };
 }
 

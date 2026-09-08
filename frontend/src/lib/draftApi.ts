@@ -625,6 +625,11 @@ export type CampaignDraft = {
   createdAt: string;
   updatedAt: string;
   tickerReservation?: TickerReservation | null;
+  graduationQuoteAssetId?: string | null;
+  graduationQuoteStateVersion?: number | null;
+  graduationMarketKind?: string | null;
+  graduationQuoteAsset?: string | null;
+  graduationMarketPolicyVersion?: string | null;
 };
 
 export type CampaignDraftPromotion = {
@@ -773,6 +778,11 @@ export type CreateDraftInput = {
   otherUrl?: string | null;
   graduationTargetWei?: string;
   visibility?: DraftVisibility;
+  graduationQuoteAssetId?: string | null;
+  graduationQuoteStateVersion?: number | null;
+  graduationMarketKind?: string | null;
+  graduationQuoteAsset?: string | null;
+  graduationMarketPolicyVersion?: string | null;
 };
 
 export type SavePromotionInput = {

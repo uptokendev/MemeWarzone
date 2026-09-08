@@ -3,7 +3,11 @@ import { ethers } from "ethers";
 import type { CurveTradePoint } from "@/hooks/useCurveTrades";
 import { getReadProvider } from "@/lib/readProvider";
 import { fetchTopazMarketSnapshot, type TopazMarketSnapshot } from "@/lib/topazMarketData";
-import type { SupportedChainId } from "@/lib/chainConfig";
+import { BNB_CHAIN_ID, BNB_TESTNET_CHAIN_ID, type SupportedChainId } from "@/lib/chainConfig";
+
+function isBnbTopazChain(chainId: number): boolean {
+  return chainId === BNB_CHAIN_ID || chainId === BNB_TESTNET_CHAIN_ID;
+}
 
 export function useTopazMarket(input: {
   campaignAddress?: string;
@@ -16,6 +20,7 @@ export function useTopazMarket(input: {
   const tokenAddress = String(input.tokenAddress || "").trim().toLowerCase();
   const enabled =
     (input.enabled ?? true) &&
+    isBnbTopazChain(Number(input.chainId)) &&
     ethers.isAddress(campaignAddress) &&
     Number.isFinite(input.chainId) &&
     input.chainId > 0;

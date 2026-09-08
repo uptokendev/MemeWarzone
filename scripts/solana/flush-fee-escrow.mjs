@@ -9,10 +9,9 @@ import {
   Connection,
   Keypair,
   PublicKey,
-  Transaction,
   TransactionInstruction,
-  sendAndConfirmTransaction,
 } from "@solana/web3.js";
+import { sendServerV0 } from "./send-server-v0.mjs";
 
 function requiredEnv(name) {
   const value = String(process.env[name] || "").trim();
@@ -60,9 +59,7 @@ async function main() {
     ],
     data: FLUSH_DISC,
   });
-  const sig = await sendAndConfirmTransaction(connection, new Transaction().add(ix), [payer], {
-    commitment: "confirmed",
-  });
+  const sig = await sendServerV0(connection, payer, [ix], `FeeEscrow flush ${CAMPAIGN.toBase58()}`);
   console.log(`flushed ${CAMPAIGN.toBase58()} escrow=${escrow.toBase58()} sig=${sig}`);
 }
 

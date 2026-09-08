@@ -13,7 +13,9 @@ import {LaunchToken} from "./token/LaunchToken.sol";
 import {ITopazRouter02} from "./interfaces/ITopazRouter02.sol";
 import {ITopazV2Factory} from "./interfaces/ITopazV2Factory.sol";
 
-interface IPhase1TreasuryRouter {
+interface IPhase1TreasuryRouterV3 {
+    function routeTrade(uint8 profile) external payable;
+    function routeFinalize(uint8 profile) external payable;
     function route(uint8 kind, uint8 profile) external payable;
 }
 
@@ -37,7 +39,6 @@ interface ILaunchProtectionConfigSource {
     function launchProtectionConfig() external view returns (uint256 blocks_, uint256 maxBuyWei, uint256 maxWalletWei);
 }
 
-/// @notice Pump.fun inspired bonding curve launch campaign that targets a Topaz v2 volatile pool for final liquidity.
 contract LaunchCampaign is ReentrancyGuard, Ownable {
     using SafeERC20 for IERC20;
     using ECDSA for bytes32;
@@ -68,9 +69,9 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         bool requireAuthorizedTrading;
         uint8 tradeRouteProfile;
         uint8 finalizeRouteProfile;
+        bool strictFeeRouting;
     }
 
-    /// @dev Reservation evidence is verified and stored by LaunchFactory. The campaign only needs launchAt to enforce trading.
     struct ScheduleParams {
         uint64 launchAt;
         bytes32 draftReferenceHash;
@@ -119,10 +120,10 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     address public lpReceiver;
     uint8 public tradeRouteProfile;
     uint8 public finalizeRouteProfile;
+    bool public strictFeeRouting;
 
     uint256 public basePrice;
     uint256 public priceSlope;
-    /// @notice USD-denominated graduation threshold, scaled to 18 decimals.
     uint256 public graduationTarget;
     uint256 public liquidityBps;
     uint256 public protocolFeeBps;
@@ -133,11 +134,16 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     uint256 public creatorReserve;
 
     uint256 public sold;
-    /// @notice Net bonding-curve principal from buys minus sell gross, excluding fees and direct native transfers.
     uint256 public netRaisedWei;
     bool public launched;
     uint256 public finalizedAt;
-    GraduationState private graduation;
+    GraduationState internal graduation;
+
+    bool public stockGraduationEnabled;
+    bool public graduationPending;
+    address public graduationQuoteToken;
+    address public stockGraduationAdapter;
+    uint256 public pendingGraduationNativeTarget;
 
     address public creator;
     address public riskRegistry;
@@ -175,6 +181,14 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     event NativeClaimed(address indexed beneficiary, uint256 amount);
     event CampaignPauseStateUpdated(bool paused, bool buyPaused, bool sellPaused, bool graduationPaused);
     event RequireAuthorizedTradingUpdated(bool required);
+    event StockGraduationConfigured(address indexed quoteToken, address indexed adapter);
+    event StockGraduationPending(
+        address indexed caller,
+        address indexed quoteToken,
+        uint256 graduationBalance,
+        uint256 nativeTarget,
+        uint256 finalCurvePrice
+    );
     event CampaignFinalized(
         address indexed caller,
         address indexed pair,
@@ -246,6 +260,10 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
     error ExceedsSold();
     error Slippage();
     error InsufficientValue();
+    error FeeRoutingFailed();
+    error GraduationPending();
+    error StockGraduationConfigLocked();
+    error StockGraduationConfigInvalid();
 
     bool private _initialized;
 
@@ -257,7 +275,7 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         _initialize(params, uint64(block.timestamp));
     }
 
-function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt) external {
+    function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt) external {
         _initialize(params, scheduledLaunchAt);
     }
 
@@ -297,6 +315,7 @@ function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt)
         router = ITopazRouter02(params.router);
         tradeRouteProfile = params.tradeRouteProfile;
         finalizeRouteProfile = params.finalizeRouteProfile;
+        strictFeeRouting = params.strictFeeRouting;
         creator = params.creator;
         riskRegistry = params.riskRegistry;
         creatorBuyLockUntil = params.creatorBuyLockUntil;
@@ -332,6 +351,18 @@ function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt)
     function setRequireAuthorizedTrading(bool required) external onlyFactory {
         requireAuthorizedTrading = required;
         emit RequireAuthorizedTradingUpdated(required);
+    }
+
+    function configureStockGraduation(address quoteToken, address adapter) external onlyFactory {
+        if (sold != 0 || netRaisedWei != 0 || launched || graduationPending || stockGraduationEnabled) revert StockGraduationConfigLocked();
+        if (
+            quoteToken == address(0) || adapter == address(0) || quoteToken == address(token) ||
+            quoteToken.code.length == 0 || adapter.code.length == 0
+        ) revert StockGraduationConfigInvalid();
+        stockGraduationEnabled = true;
+        graduationQuoteToken = quoteToken;
+        stockGraduationAdapter = adapter;
+        emit StockGraduationConfigured(quoteToken, adapter);
     }
 
     function quoteBuyExactTokens(uint256 amountOut) public view returns (uint256) {
@@ -425,15 +456,7 @@ function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt)
         uint64 routeDeadline,
         bytes calldata routeSignature
     ) external payable nonReentrant returns (uint256 cost) {
-        _verifyTradeRouteAuthorization(
-            msg.sender,
-            routeProfile,
-            TRADE_AUTH_BUY_EXACT_TOKENS,
-            amountOut,
-            maxCost,
-            routeDeadline,
-            routeSignature
-        );
+        _verifyTradeRouteAuthorization(msg.sender, routeProfile, TRADE_AUTH_BUY_EXACT_TOKENS, amountOut, maxCost, routeDeadline, routeSignature);
         return _buyExactTokens(msg.sender, amountOut, maxCost, true, routeProfile);
     }
 
@@ -448,15 +471,7 @@ function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt)
         uint64 routeDeadline,
         bytes calldata routeSignature
     ) external payable nonReentrant returns (uint256 tokensOut, uint256 totalSpent) {
-        _verifyTradeRouteAuthorization(
-            msg.sender,
-            routeProfile,
-            TRADE_AUTH_BUY_EXACT_BNB,
-            msg.value,
-            minTokensOut,
-            routeDeadline,
-            routeSignature
-        );
+        _verifyTradeRouteAuthorization(msg.sender, routeProfile, TRADE_AUTH_BUY_EXACT_BNB, msg.value, minTokensOut, routeDeadline, routeSignature);
         return _buyExactBnb(msg.sender, minTokensOut, true, routeProfile);
     }
 
@@ -472,15 +487,7 @@ function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt)
         uint64 routeDeadline,
         bytes calldata routeSignature
     ) external nonReentrant returns (uint256 payout) {
-        _verifyTradeRouteAuthorization(
-            msg.sender,
-            routeProfile,
-            TRADE_AUTH_SELL_EXACT_TOKENS,
-            amountIn,
-            minPayout,
-            routeDeadline,
-            routeSignature
-        );
+        _verifyTradeRouteAuthorization(msg.sender, routeProfile, TRADE_AUTH_SELL_EXACT_TOKENS, amountIn, minPayout, routeDeadline, routeSignature);
         return _sellExactTokens(msg.sender, amountIn, minPayout, true, routeProfile);
     }
 
@@ -511,13 +518,20 @@ function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt)
         emit ExcessNativeRescued(recipient, amount);
     }
 
-    function graduateIfEligible(uint256 minTokens, uint256 minBnb) external nonReentrant returns (uint256 usedTokens, uint256 usedBnb) {
+    function graduateIfEligible(uint256 minTokens, uint256 minBnb) external virtual nonReentrant returns (uint256 usedTokens, uint256 usedBnb) {
         uint256 nativeTarget = graduationNativeTarget();
+        if (stockGraduationEnabled) {
+            if (graduationPending) revert GraduationPending();
+            if (netRaisedWei < nativeTarget) revert ThresholdNotMet();
+            _markStockGraduationPending(msg.sender, nativeTarget);
+            return (0, 0);
+        }
         return _finalizeWithTarget(minTokens, minBnb, msg.sender, nativeTarget);
     }
 
     function _buyExactTokens(address buyer, uint256 amountOut, uint256 maxCost, bool useAuthorizedRoute, uint8 routeProfile) internal returns (uint256 cost) {
         if (launched) revert Finalized();
+        if (graduationPending) revert GraduationPending();
         if (amountOut == 0) revert ZeroAmount();
         if (sold + amountOut > curveSupply) revert SoldOut();
         uint256 costNoFee = _quoteBuyNoFee(amountOut);
@@ -539,6 +553,7 @@ function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt)
 
     function _buyExactBnb(address buyer, uint256 minTokensOut, bool useAuthorizedRoute, uint8 routeProfile) internal returns (uint256 tokensOut, uint256 totalSpent) {
         if (launched) revert Finalized();
+        if (graduationPending) revert GraduationPending();
         (tokensOut, totalSpent, ) = quoteBuyExactBnb(msg.value);
         if (tokensOut == 0) revert ZeroAmount();
         if (tokensOut < minTokensOut) revert Slippage();
@@ -561,6 +576,7 @@ function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt)
 
     function _sellExactTokens(address seller, uint256 amountIn, uint256 minPayout, bool useAuthorizedRoute, uint8 routeProfile) internal returns (uint256 payout) {
         if (launched) revert Finalized();
+        if (graduationPending) revert GraduationPending();
         _beforeSell(seller);
         if (amountIn == 0) revert ZeroAmount();
         if (amountIn > sold) revert ExceedsSold();
@@ -596,6 +612,7 @@ function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt)
     function _beforeBuy(address buyer, uint256 costNoFee) internal {
         if (paused) revert CampaignPaused();
         if (buyPaused) revert BuysPaused();
+        if (graduationPending) revert GraduationPending();
         _requireTradingOpen();
         _activateLaunchProtectionIfNeeded();
         _assertWalletCanTrade(buyer);
@@ -617,6 +634,7 @@ function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt)
     function _beforeSell(address seller) internal view {
         if (paused) revert CampaignPaused();
         if (sellPaused) revert SellsPaused();
+        if (graduationPending) revert GraduationPending();
         _requireTradingOpen();
         _assertWalletCanTrade(seller);
     }
@@ -660,16 +678,32 @@ function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt)
         } catch {}
     }
 
-    function _autoFinalizeIfEligible(address caller) internal {
+    function _autoFinalizeIfEligible(address caller) internal virtual {
         try graduationOracle.nativeTargetForUsd(graduationTarget) returns (uint256 nativeTarget) {
-            if (netRaisedWei >= nativeTarget) _finalizeWithTarget(0, 0, caller, nativeTarget);
+            if (netRaisedWei >= nativeTarget) {
+                if (stockGraduationEnabled) _markStockGraduationPending(caller, nativeTarget);
+                else _finalizeWithTarget(0, 0, caller, nativeTarget);
+            }
         } catch {}
+    }
+
+    function _markStockGraduationPending(address caller, uint256 nativeTarget) internal {
+        if (graduationPending) return;
+        if (netRaisedWei < nativeTarget) revert ThresholdNotMet();
+        GraduationState storage g = graduation;
+        g.graduationBalance = netRaisedWei;
+        g.graduationOvershoot = g.graduationBalance > nativeTarget ? g.graduationBalance - nativeTarget : 0;
+        g.finalCurvePrice = _currentPrice();
+        pendingGraduationNativeTarget = nativeTarget;
+        graduationPending = true;
+        emit StockGraduationPending(caller, graduationQuoteToken, g.graduationBalance, nativeTarget, g.finalCurvePrice);
     }
 
     function _finalizeWithTarget(uint256 minTokens, uint256 minBnb, address caller, uint256 nativeTarget) internal returns (uint256 usedTokens, uint256 usedBnb) {
         if (paused) revert CampaignPaused();
         if (graduationPaused) revert GraduationPaused();
         if (launched) revert Finalized();
+        if (graduationPending) revert GraduationPending();
         if (netRaisedWei < nativeTarget) revert ThresholdNotMet();
         launched = true;
         finalizedAt = block.timestamp;
@@ -695,7 +729,6 @@ function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt)
             emit GraduationLiquidityCapped(desiredLiquidityTokens, lpTokensDesired, desiredLiquidityValue, liquidityValue);
         }
 
-        // Production Topaz pulls from the adapter, so the launch token must allow the adapter-to-pool transfer during this atomic handoff.
         token.enableTrading();
         tokenInterface.forceApprove(address(router), lpTokensDesired);
         (usedTokens, usedBnb, g.graduatedLiquidityLp) = router.addLiquidityETH{value: liquidityValue}(
@@ -764,11 +797,7 @@ function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt)
     function _useUnifiedRewardRouter() internal view returns (bool) {
         address receiver = feeRecipient;
         if (receiver == address(0) || receiver != leagueReceiver) return false;
-        uint256 size;
-        assembly {
-            size := extcodesize(receiver)
-        }
-        return size > 0;
+        return receiver.code.length > 0;
     }
 
     function _routeFeeOrSendLegacy(uint256 feeAmount, uint8 routeKind, uint256 feeBaseAmount) internal {
@@ -777,14 +806,26 @@ function initializeScheduled(InitParams memory params, uint64 scheduledLaunchAt)
 
     function _routeFeeOrSendLegacyWithProfile(uint256 feeAmount, uint8 routeKind, uint256 feeBaseAmount, uint8 routeProfile) internal {
         if (feeAmount == 0) return;
+
         if (_useUnifiedRewardRouter()) {
-            try IPhase1TreasuryRouter(payable(feeRecipient)).route{value: feeAmount}(routeKind, routeProfile) {
+            if (strictFeeRouting) {
+                if (routeKind == ROUTE_KIND_TRADE) {
+                    IPhase1TreasuryRouterV3(payable(feeRecipient)).routeTrade{value: feeAmount}(routeProfile);
+                } else {
+                    IPhase1TreasuryRouterV3(payable(feeRecipient)).routeFinalize{value: feeAmount}(routeProfile);
+                }
+                return;
+            }
+
+            try IPhase1TreasuryRouterV3(payable(feeRecipient)).route(routeKind, routeProfile) {
                 return;
             } catch {
                 _escrowNativeFee(feeRecipient, feeAmount);
                 return;
             }
         }
+
+        if (strictFeeRouting) revert FeeRoutingFailed();
         if (routeKind == ROUTE_KIND_FINALIZE) {
             if (feeRecipient != address(0)) _sendNativeFee(payable(feeRecipient), feeAmount);
             return;

@@ -37,7 +37,7 @@ export function SearchOverlayCard({
       <img src={image} alt="" className="h-full w-full object-cover" />
       <div className="absolute inset-0 bg-gradient-to-b from-black/70 via-transparent to-black/90" />
       <div className="absolute inset-x-0 top-0 p-2">
-        <div className="truncate text-[11px] font-semibold text-white drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)]">{name}</div>
+        <div className="line-clamp-2 break-all text-[10px] font-semibold leading-tight text-white drop-shadow-[0_1px_4px_rgba(0,0,0,0.9)]">{name}</div>
       </div>
       <div className="absolute inset-x-0 bottom-0 p-2">
         {mcapLabel ? <div className="text-[11px] font-semibold text-white">{mcapLabel}</div> : null}

@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { authorizeBatch } from "./helpers/settlementAuth";
 
 describe("CommunityRewardsVault", function () {
   async function deployFixture() {
@@ -179,6 +180,7 @@ describe("CommunityRewardsVault", function () {
     await fundTrackedAirdrop(vault, router, amount);
     await vault.connect(admin).setRewardDistributor(await distributor.getAddress());
     await distributor.connect(admin).setBatchOperator(await vault.getAddress());
+    await authorizeBatch(distributor, admin, batchId, amount);
 
     await expect(vault.connect(admin).fundAirdropBatch(batchId, root, deadline, amount))
       .to.emit(vault, "AirdropBatchFunded")
@@ -205,6 +207,7 @@ describe("CommunityRewardsVault", function () {
     await vault.connect(admin).setRewardDistributor(await distributor.getAddress());
     await vault.connect(admin).setAirdropOperator(await operator.getAddress());
     await distributor.connect(admin).setBatchOperator(await vault.getAddress());
+    await authorizeBatch(distributor, admin, batchId, amount);
 
     await expect(vault.connect(operator).fundAirdropBatch(batchId, root, 0, amount)).to.emit(
       distributor,
@@ -223,6 +226,7 @@ describe("CommunityRewardsVault", function () {
     await fundTrackedAirdrop(vault, router, amount * 2n);
     await vault.connect(admin).setRewardDistributor(await distributor.getAddress());
     await distributor.connect(admin).setBatchOperator(await vault.getAddress());
+    await authorizeBatch(distributor, admin, batchId, amount);
 
     await vault.connect(admin).fundAirdropBatch(batchId, root, 0, amount);
     await expect(vault.connect(admin).fundAirdropBatch(batchId, root, 0, amount)).to.be.revertedWithCustomError(
@@ -233,5 +237,23 @@ describe("CommunityRewardsVault", function () {
     expect(await vault.warzoneAirdropBalance()).to.eq(amount);
     expect(await ethers.provider.getBalance(await vault.getAddress())).to.eq(amount);
     expect(await distributor.unclaimed(batchId)).to.eq(amount);
+  });
+
+  it("blocks airdrop operators from inventing a RewardDistributor batch without Safe authorization", async () => {
+    const { vault, distributor, admin, router, operator } = await deployFixture();
+    const amount = ethers.parseEther("0.3");
+    const batchId = ethers.id("unauth-operator-batch");
+    const root = ethers.keccak256(ethers.toUtf8Bytes("unauth-root"));
+
+    await fundTrackedAirdrop(vault, router, amount);
+    await vault.connect(admin).setRewardDistributor(await distributor.getAddress());
+    await vault.connect(admin).setAirdropOperator(await operator.getAddress());
+    await distributor.connect(admin).setBatchOperator(await vault.getAddress());
+
+    await expect(vault.connect(operator).fundAirdropBatch(batchId, root, 0, amount)).to.be.revertedWithCustomError(
+      distributor,
+      "BatchNotAuthorized"
+    );
+    expect(await vault.warzoneAirdropBalance()).to.eq(amount);
   });
 });

@@ -1,6 +1,6 @@
-import { getSolanaRewardRpcUrl, isSolanaRewardChainId } from "@/lib/solanaRewardNetwork";
+import { isSolanaRewardChainId } from "@/lib/solanaRewardNetwork";
 import { submitSolanaRewardLaneClaim } from "@/lib/solanaRewardLaneClaim";
-import { getSolanaProvider } from "@/lib/solanaWallet";
+import { submitSolanaRewardV0Claim } from "@/lib/solanaRewardV0Claim";
 import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
 
 const SYSTEM_PROGRAM = "11111111111111111111111111111111";
@@ -30,7 +30,6 @@ type SolanaLaneClaimCall = {
   rewardLedgerId: string;
   chainId: number;
   tokenSymbol: "SOL" | string;
-  // Compatibility envelope used by the existing Claim Center dispatcher.
   mode: "solana_airdrop";
   kind: "solana_reward_lane";
   lane: "squad";
@@ -128,37 +127,29 @@ export async function submitSolanaAirdropClaim(call: SolanaAirdropClaimCall): Pr
     });
   }
 
-  const provider = getSolanaProvider();
-  if (!provider?.publicKey || typeof provider.signTransaction !== "function") {
-    throw new Error("Connect a Solana wallet that can sign this reward claim.");
-  }
-
-  const winner = String(provider.publicKey.toString?.() || provider.publicKey);
-  if (winner !== String(call.recipient || "").trim()) {
-    throw new Error("Connected Solana wallet does not own this reward.");
-  }
-
   const proof = (call.proof || []).map(hexToBytes);
   if (proof.some((item) => item.length !== 32)) throw new Error("Invalid Solana reward Merkle proof.");
+  const programCode = Number(call.programCode);
+  if (!Number.isInteger(programCode) || programCode < 0 || programCode > 255) {
+    throw new Error("Invalid Solana reward program code.");
+  }
 
   const discriminator = await anchorDiscriminator("claim_airdrop");
   const data = concat([
     discriminator,
     i64le(call.epochId),
-    Uint8Array.from([Number(call.programCode) & 0xff]),
+    Uint8Array.from([programCode]),
     u64le(call.amount),
     u32le(proof.length),
     ...proof,
   ]);
 
   const web3 = await loadSolanaWeb3();
-  const { Connection, PublicKey, Transaction, TransactionInstruction, SystemProgram } = web3;
-  const connection = new Connection(getSolanaRewardRpcUrl(call.chainId), "confirmed");
-
+  const { PublicKey, TransactionInstruction, SystemProgram } = web3;
   const ix = new TransactionInstruction({
     programId: new PublicKey(call.programId),
     keys: [
-      { pubkey: new PublicKey(winner), isSigner: true, isWritable: true },
+      { pubkey: new PublicKey(call.recipient), isSigner: true, isWritable: true },
       { pubkey: new PublicKey(call.configAddress), isSigner: false, isWritable: false },
       { pubkey: new PublicKey(call.vaultAddress), isSigner: false, isWritable: true },
       { pubkey: new PublicKey(call.batchAddress), isSigner: false, isWritable: true },
@@ -168,12 +159,23 @@ export async function submitSolanaAirdropClaim(call: SolanaAirdropClaimCall): Pr
     data,
   });
 
-  const tx = new Transaction().add(ix);
-  const latest = await connection.getLatestBlockhash("confirmed");
-  tx.feePayer = new PublicKey(winner);
-  tx.recentBlockhash = latest.blockhash;
-  const signed = await provider.signTransaction(tx);
-  const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false });
-  await connection.confirmTransaction({ signature, ...latest }, "confirmed");
-  return signature;
+  return submitSolanaRewardV0Claim({
+    web3,
+    chainId: call.chainId,
+    addresses: {
+      programId: call.programId,
+      configAddress: call.configAddress,
+      vaultAddress: call.vaultAddress,
+      batchAddress: call.batchAddress,
+      claimReceiptAddress: call.claimReceiptAddress,
+      recipient: call.recipient,
+    },
+    canonical: {
+      kind: "airdrop",
+      epochId: call.epochId,
+      programCode,
+    },
+    instruction: ix,
+    label: "Solana airdrop claim",
+  });
 }

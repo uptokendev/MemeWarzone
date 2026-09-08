@@ -6,7 +6,7 @@ import { arenaSubNavItems } from "@/constants/navigation";
 import { cn } from "@/lib/utils";
 
 function matchesPath(pathname: string, target: string) {
-  return pathname === target || (target !== "/arena" && pathname.startsWith(`${target}/`));
+  return pathname === target || (target !== "/warzone" && pathname.startsWith(`${target}/`));
 }
 
 export function ArenaDesktopNav() {
@@ -55,7 +55,7 @@ export function ArenaDesktopNav() {
 
   if (!arenaSubNavItems.length) return null;
 
-  const arenaActive = location.pathname === "/arena" || location.pathname.startsWith("/arena/");
+  const arenaActive = location.pathname === "/warzone" || location.pathname.startsWith("/warzone/") || location.pathname === "/arena" || location.pathname.startsWith("/arena/");
 
   return (
     <>
@@ -72,7 +72,7 @@ export function ArenaDesktopNav() {
         data-arena-desktop-nav
       >
         <Crosshair className="h-3.5 w-3.5" />
-        <span>Arena</span>
+        <span>Warzone</span>
         <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", open && "rotate-180")} />
       </button>
 
@@ -83,7 +83,7 @@ export function ArenaDesktopNav() {
               className="w-44 rounded-2xl border border-sidebar-border/70 bg-[linear-gradient(180deg,rgba(23,26,31,0.98),rgba(11,13,16,0.98))] p-2 shadow-[0_24px_60px_-28px_rgba(0,0,0,0.95)]"
               style={{ position: "fixed", top: popoverAnchor.top, left: popoverAnchor.left, zIndex: 80 }}
             >
-              <div className="mb-1 px-2 py-1 text-[10px] uppercase tracking-[0.24em] text-success/65">Arena</div>
+              <div className="mb-1 px-2 py-1 text-[10px] uppercase tracking-[0.24em] text-success/65">Warzone</div>
               <div className="space-y-1">
                 {arenaSubNavItems.map((item) => {
                   const active = activeItem?.path === item.path;

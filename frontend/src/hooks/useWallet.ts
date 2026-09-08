@@ -2,7 +2,7 @@ import { BrowserProvider, JsonRpcSigner } from "ethers";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { syncWalletRecruiterAttribution } from "@/lib/recruiterApi";
-import { isAllowedChainId } from "@/lib/chainConfig";
+import { getActiveChainId, getAllowedChainIds, isAllowedChainId, isEvmChainId } from "@/lib/chainConfig";
 import { watchInjectedProviderAvailability } from "@/lib/injectedProviderDiscovery";
 
 export type WalletType =
@@ -166,7 +166,7 @@ function walletBrand(provider: Eip1193Provider, info?: Partial<Eip6963ProviderIn
     hasAny(rdns, ["crypto.com", "cryptocom", "com.crypto"])
   ) return { id: "cryptocom" as WalletType, name: meta.name || "Crypto.com DeFi Wallet", description: "Crypto.com self-custody EVM wallet.", score: 93 };
   if (flag("isOkxWallet") || flag("isOKExWallet") || hasAny(name, ["okx", "okex"]) || hasAny(rdns, ["okx", "okex"])) return { id: "okx" as WalletType, name: meta.name || "OKX Wallet", description: "Multi-chain EVM wallet.", score: 88 };
-  if (flag("isPhantom") || hasAny(name, ["phantom"]) || hasAny(rdns, ["phantom"])) return { id: "phantom" as WalletType, name: meta.name || "Phantom", description: "Multi-chain wallet. Use Solana rows for Solana; EVM only for BNB.", score: 70 };
+  if (flag("isPhantom") || hasAny(name, ["phantom"]) || hasAny(rdns, ["phantom"])) return { id: "phantom" as WalletType, name: meta.name || "Phantom", description: "Multi-chain wallet. Use the Solana row for Solana; EVM sessions follow the selected MemeWarzone EVM chain.", score: 70 };
   if (flag("isBraveWallet") || hasAny(name, ["brave"]) || hasAny(rdns, ["brave"])) return { id: "brave" as WalletType, name: meta.name || "Brave Wallet", description: "Built-in Brave wallet.", score: 82 };
   if (flag("isMetaMask") || flag("_metamask") || hasAny(name, ["metamask"]) || hasAny(rdns, ["metamask"])) return { id: "metamask" as WalletType, name: meta.name || "MetaMask", description: "Injected EVM browser wallet.", score: 90 };
 
@@ -303,7 +303,6 @@ function parseChainId(value: unknown): number | undefined {
 
 async function chooseAccount(provider: Eip1193Provider, accounts: string[]) {
   const normalized = accounts.map(normalizeHexAddress).filter(Boolean);
-  // Prefer the first account from the provided list (caller/event order).
   if (normalized[0]) return normalized[0];
   try {
     const active = normalizeAccounts(await provider.request({ method: "eth_accounts" }));
@@ -355,7 +354,7 @@ function isRejected(error: unknown) {
   return error.code === 4001 || message.includes("user rejected") || message.includes("user denied");
 }
 
-async function ensureBnbChainOnly(provider: Eip1193Provider): Promise<number> {
+async function ensureSupportedEvmChain(provider: Eip1193Provider): Promise<number> {
   let cid: number | undefined;
   try {
     const bp = new BrowserProvider(provider);
@@ -368,23 +367,29 @@ async function ensureBnbChainOnly(provider: Eip1193Provider): Promise<number> {
     } catch {}
   }
 
-  if (isAllowedChainId(cid)) return cid as number;
+  if (isEvmChainId(cid) && isAllowedChainId(cid)) return cid as number;
 
-  const target = 56;
+  const selected = Number(getActiveChainId());
+  const allowedEvmChains = getAllowedChainIds().filter((chainId) => isEvmChainId(chainId));
+  const target = isEvmChainId(selected) && isAllowedChainId(selected)
+    ? selected
+    : Number(allowedEvmChains[0] || 56);
   const targetHex = "0x" + target.toString(16);
+
   try {
     await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: targetHex }] });
     const bp2 = new BrowserProvider(provider);
     const net2 = await bp2.getNetwork();
     const cid2 = Number(net2.chainId);
-    if (isAllowedChainId(cid2)) return cid2;
-    throw new Error("Switch did not land on allowed chain.");
+    if (isEvmChainId(cid2) && isAllowedChainId(cid2)) return cid2;
+    throw new Error("Switch did not land on an allowed MemeWarzone EVM chain.");
   } catch {
+    const allowedLabel = allowedEvmChains.length ? allowedEvmChains.join(", ") : "none configured";
     throw new Error(
-      `Only BNB Smart Chain mainnet (56) is supported for EVM. ` +
-        `No Ethereum, no testnets. ` +
-        `For Solana use the dedicated Solana button in the connect modal. ` +
-        `Switch your EVM wallet to BNB mainnet (ID 56) and try again.`
+      `Your wallet is not on an enabled MemeWarzone EVM chain. ` +
+        `Enabled EVM chain IDs: ${allowedLabel}. ` +
+        `Switch to the chain selected in MemeWarzone and try again. ` +
+        `For Solana use the dedicated Solana wallet row.`
     );
   }
 }
@@ -447,7 +452,7 @@ export function useWallet(): WalletHook {
     setSigner(nextSigner);
     const network = await browserProvider.getNetwork();
     const cid = Number(network.chainId);
-    if (!isAllowedChainId(cid)) throw new Error("Unsupported chain in provider state.");
+    if (!isEvmChainId(cid) || !isAllowedChainId(cid)) throw new Error("Unsupported EVM chain in provider state.");
     setChainId(cid);
     if (typeof window !== "undefined" && selectedWalletId) {
       window.localStorage.setItem(SELECTED_WALLET_KEY, selectedWalletId);
@@ -471,7 +476,7 @@ export function useWallet(): WalletHook {
           return;
         }
         if (chosen.toLowerCase() === accountRef.current.toLowerCase()) return;
-        await ensureBnbChainOnly(selectedProvider);
+        await ensureSupportedEvmChain(selectedProvider);
         await applyProviderState(selectedProvider, chosen);
       } catch {
         setSigner(null);
@@ -485,9 +490,6 @@ export function useWallet(): WalletHook {
 
     const onAccountsChanged = async (accounts: unknown) => {
       if (eip1193Ref.current !== selectedProvider || !accountRef.current) return;
-      // Trust the event list first (MetaMask puts the newly active account at [0]).
-      // chooseAccount() used to prefer provider.selectedAddress, which can lag and
-      // keep the previous wallet after a switch.
       const fromEvent = normalizeAccounts(accounts);
       const chosen = fromEvent[0] || (await chooseAccount(selectedProvider, fromEvent));
       setAccount((previous) => {
@@ -500,7 +502,7 @@ export function useWallet(): WalletHook {
         return;
       }
       try {
-        await ensureBnbChainOnly(selectedProvider);
+        await ensureSupportedEvmChain(selectedProvider);
         await applyProviderState(selectedProvider, chosen);
       } catch {
         setSigner(null);
@@ -511,7 +513,7 @@ export function useWallet(): WalletHook {
     const onChainChanged = async (nextChainId: unknown) => {
       if (eip1193Ref.current !== selectedProvider || !accountRef.current) return;
       const c = parseChainId(nextChainId);
-      if (c && !isAllowedChainId(c)) {
+      if (c && (!isEvmChainId(c) || !isAllowedChainId(c))) {
         resetWalletState(false);
         return;
       }
@@ -563,7 +565,7 @@ export function useWallet(): WalletHook {
         if (!selectedId || accountRef.current) return;
         requestEip6963Providers();
         setDetectedWalletSnapshot();
-        let selectedWallet = findWallet(selectedId as WalletType);
+        const selectedWallet = findWallet(selectedId as WalletType);
         if (!selectedWallet?.provider) return;
         const accounts = normalizeAccounts(
           await selectedWallet.provider.request({ method: "eth_accounts" }),
@@ -573,7 +575,7 @@ export function useWallet(): WalletHook {
         const browserProvider = new BrowserProvider(selectedWallet.provider);
         const network = await browserProvider.getNetwork();
         const cid = Number(network.chainId);
-        if (!isAllowedChainId(cid)) return;
+        if (!isEvmChainId(cid) || !isAllowedChainId(cid)) return;
         bindListeners(selectedWallet.provider);
         await applyProviderState(selectedWallet.provider, chosen, selectedWallet.id);
         if (!cancelled) setChainId(cid);
@@ -599,7 +601,7 @@ export function useWallet(): WalletHook {
     setConnecting(true);
     setConnectingWalletId(wallet);
     const { analytics, analyticsErrorCode } = await import("@/lib/analytics/ProductAnalytics");
-    analytics.track("wallet_connect_started", { wallet_type: wallet, chain: "bnb" });
+    analytics.track("wallet_connect_started", { wallet_type: wallet, chain: "evm" });
 
     try {
       requestEip6963Providers();
@@ -610,10 +612,10 @@ export function useWallet(): WalletHook {
       }
       if (!selectedWallet?.provider) throw new Error("Selected wallet was not found. Unlock it and refresh detection.");
       if ((selectedWallet.provider as any)?.isPhantom || String(selectedWallet.id || "").toLowerCase().includes("phantom")) {
-        throw new Error("Use the Solana wallet row for Phantom/Solana. Phantom EVM is not used for BNB trades.");
+        throw new Error("Use the Solana wallet row for Phantom/Solana. Select an EVM wallet for BNB or Robinhood Chain.");
       }
 
-      const cid = await ensureBnbChainOnly(selectedWallet.provider);
+      const cid = await ensureSupportedEvmChain(selectedWallet.provider);
       const accounts = normalizeAccounts(await selectedWallet.provider.request({ method: "eth_requestAccounts" }));
       const chosen = await chooseAccount(selectedWallet.provider, accounts);
       if (!chosen) throw new Error("No account returned by wallet.");
@@ -622,11 +624,11 @@ export function useWallet(): WalletHook {
       await applyProviderState(selectedWallet.provider, chosen, selectedWallet.id);
       setChainId(cid);
       window.localStorage.removeItem(DISCONNECTED_KEY);
-      analytics.track("wallet_connect_succeeded", { wallet_type: wallet, chain: "bnb" });
+      analytics.track("wallet_connect_succeeded", { wallet_type: wallet, chain: String(cid) });
     } catch (error) {
       analytics.track("wallet_connect_failed", {
         wallet_type: wallet,
-        chain: "bnb",
+        chain: "evm",
         error_code: isRejected(error) ? "rejected" : analyticsErrorCode(error),
       });
       if (!isRejected(error)) throw new Error(getErrorMessage(error));
@@ -653,6 +655,6 @@ export function useWallet(): WalletHook {
     disconnect,
     detectWallets,
     isConnected: Boolean(account),
-    isOnSupportedChain: Boolean(chainId && isAllowedChainId(chainId)),
+    isOnSupportedChain: Boolean(chainId && isEvmChainId(chainId) && isAllowedChainId(chainId)),
   };
 }

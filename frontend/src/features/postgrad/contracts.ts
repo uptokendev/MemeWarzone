@@ -36,25 +36,36 @@ export const mockTokenProfileSchema = graduatedTokenSchema.extend({
 });
 
 export const battleStateSchema = z.enum([
+  "waiting",
+  "challenged",
+  "matched",
+  "live",
+  "finished",
+  "expired",
+  // Legacy states still appear in older mock payloads.
   "draft",
   "open_for_battle",
   "pending",
   "accepted",
-  "live",
   "completed",
   "settled",
   "cancelled",
 ]);
 
 export const POST_GRAD_BATTLE_TRANSITIONS = {
-  draft: ["open_for_battle"],
-  open_for_battle: ["pending", "accepted", "live", "cancelled"],
-  pending: ["accepted", "live", "cancelled"],
-  accepted: ["live", "cancelled"],
-  live: ["completed"],
-  completed: ["settled"],
+  waiting: ["live", "expired"],
+  challenged: ["live", "matched", "expired"],
+  matched: ["live", "expired"],
+  live: ["finished"],
+  finished: [],
+  expired: [],
+  draft: ["waiting"],
+  open_for_battle: ["waiting", "live", "expired"],
+  pending: ["live", "expired"],
+  accepted: ["live", "expired"],
+  completed: ["finished"],
   settled: [],
-  cancelled: [],
+  cancelled: ["expired"],
 } as const satisfies Record<z.infer<typeof battleStateSchema>, readonly z.infer<typeof battleStateSchema>[]>;
 
 export const battleParticipantSchema = z.object({

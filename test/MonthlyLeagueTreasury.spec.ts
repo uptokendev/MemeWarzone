@@ -1,6 +1,9 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
+import { authorizeMonth, latestTs } from "./helpers/settlementAuth";
+
+const AUTH_CEILING = ethers.parseEther("10000");
 
 const MAX_AGE = 3600n;
 const MONTHLY_CAP_USD = ethers.parseUnits("1500000", 18);
@@ -102,12 +105,13 @@ describe("MonthlyLeagueTreasury", function () {
   });
 
   it("seals a month once, snapshots price, reserves claims, and transfers overflow atomically to charity", async () => {
-    const { rootPoster, winner, charity, monthly } = await loadFixture(deployFixture);
+    const { multisig, rootPoster, winner, charity, monthly } = await loadFixture(deployFixture);
     const monthId = 202607n;
     const winnerTotal = ethers.parseEther("2500");
     const leaf = claimLeaf(monthId, CATEGORY, 1, await winner.getAddress(), winnerTotal);
 
     await rootPoster.sendTransaction({ to: await monthly.getAddress(), value: ethers.parseEther("3000") });
+    await authorizeMonth(monthly, multisig, monthId, AUTH_CEILING);
     await expect(monthly.connect(rootPoster).sealMonth(monthId, leaf, winnerTotal))
       .to.emit(monthly, "MonthSealed")
       .withArgs(monthId, leaf, MONTHLY_CAP_USD, ethers.parseEther("2500"), ethers.parseEther("2500"), winnerTotal, ethers.parseEther("500"));
@@ -129,18 +133,20 @@ describe("MonthlyLeagueTreasury", function () {
   });
 
   it("rejects winner totals above the oracle cap or funded unallocated player pool", async () => {
-    const { rootPoster, winner, monthly } = await loadFixture(deployFixture);
+    const { multisig, rootPoster, winner, monthly } = await loadFixture(deployFixture);
     const monthId = 202608n;
     const cap = ethers.parseEther("2500");
     const leaf = claimLeaf(monthId, CATEGORY, 1, await winner.getAddress(), cap + 1n);
 
     await rootPoster.sendTransaction({ to: await monthly.getAddress(), value: ethers.parseEther("3000") });
+    await authorizeMonth(monthly, multisig, monthId, AUTH_CEILING);
     await expect(monthly.connect(rootPoster).sealMonth(monthId, leaf, cap + 1n)).to.be.revertedWithCustomError(monthly, "WinnerTotalAboveCap");
 
     const lowFundedMonth = 202609n;
     const lowFundedLeaf = claimLeaf(lowFundedMonth, CATEGORY, 1, await winner.getAddress(), ethers.parseEther("1000"));
-    const { rootPoster: rootPoster2, monthly: monthly2 } = await deployFixture();
+    const { multisig: multisig2, rootPoster: rootPoster2, monthly: monthly2 } = await deployFixture();
     await rootPoster2.sendTransaction({ to: await monthly2.getAddress(), value: ethers.parseEther("900") });
+    await authorizeMonth(monthly2, multisig2, lowFundedMonth, AUTH_CEILING);
     await expect(monthly2.connect(rootPoster2).sealMonth(lowFundedMonth, lowFundedLeaf, ethers.parseEther("1000"))).to.be.revertedWithCustomError(
       monthly2,
       "WinnerTotalAbovePlayerPool"
@@ -148,7 +154,7 @@ describe("MonthlyLeagueTreasury", function () {
   });
 
   it("keeps prior-month unclaimed rewards reserved when sealing another month", async () => {
-    const { rootPoster, winner, other, charity, monthly } = await loadFixture(deployFixture);
+    const { multisig, rootPoster, winner, other, charity, monthly } = await loadFixture(deployFixture);
     const firstMonth = 202607n;
     const secondMonth = 202608n;
     const firstPrize = ethers.parseEther("100");
@@ -157,12 +163,14 @@ describe("MonthlyLeagueTreasury", function () {
     const secondLeaf = claimLeaf(secondMonth, CATEGORY, 1, await other.getAddress(), secondPrize);
 
     await rootPoster.sendTransaction({ to: await monthly.getAddress(), value: firstPrize });
+    await authorizeMonth(monthly, multisig, firstMonth, AUTH_CEILING);
     await monthly.connect(rootPoster).sealMonth(firstMonth, firstLeaf, firstPrize);
     expect(await monthly.totalOutstandingClaims()).to.eq(firstPrize);
 
     await rootPoster.sendTransaction({ to: await monthly.getAddress(), value: ethers.parseEther("70") });
     expect(await monthly.unallocatedBalance()).to.eq(ethers.parseEther("70"));
 
+    await authorizeMonth(monthly, multisig, secondMonth, AUTH_CEILING);
     await monthly.connect(rootPoster).sealMonth(secondMonth, secondLeaf, secondPrize);
 
     expect(await monthly.monthOutstandingClaims(firstMonth)).to.eq(firstPrize);
@@ -180,6 +188,7 @@ describe("MonthlyLeagueTreasury", function () {
     const leaf = claimLeaf(monthId, CATEGORY, 1, await winner.getAddress(), prize);
 
     await rootPoster.sendTransaction({ to: await monthly.getAddress(), value: prize + ethers.parseEther("3") });
+    await authorizeMonth(monthly, multisig, monthId, AUTH_CEILING);
     await monthly.connect(rootPoster).sealMonth(monthId, leaf, prize);
 
     expect(await monthly.unallocatedBalance()).to.eq(ethers.parseEther("3"));
@@ -196,19 +205,20 @@ describe("MonthlyLeagueTreasury", function () {
   });
 
   it("reverts sealing when oracle data is stale or charity overflow transfer fails", async () => {
-    const { rootPoster, winner, feed, monthly } = await loadFixture(deployFixture);
+    const { multisig, rootPoster, winner, feed, monthly } = await loadFixture(deployFixture);
     const now = await latestTimestamp();
     await feed.setRoundData(2n, ethers.parseUnits("600", 8), now - MAX_AGE - 1n, now - MAX_AGE - 1n, 2n);
 
     const leaf = claimLeaf(202610n, CATEGORY, 1, await winner.getAddress(), ethers.parseEther("1"));
     await rootPoster.sendTransaction({ to: await monthly.getAddress(), value: ethers.parseEther("2") });
+    await authorizeMonth(monthly, multisig, 202610n, AUTH_CEILING);
     const monthlyOracle = await ethers.getContractAt("GraduationOracle", await monthly.oracle());
     await expect(monthly.connect(rootPoster).sealMonth(202610n, leaf, ethers.parseEther("1"))).to.be.revertedWithCustomError(
       monthlyOracle,
       "StalePrice"
     );
 
-    const [multisig, rejectingRootPoster] = await ethers.getSigners();
+    const [, rejectingRootPoster] = await ethers.getSigners();
     const Feed = await ethers.getContractFactory("MockUsdPriceFeed");
     const freshFeed = await Feed.deploy(8);
     await freshFeed.waitForDeployment();
@@ -230,6 +240,7 @@ describe("MonthlyLeagueTreasury", function () {
     await revertingMonthly.waitForDeployment();
 
     await rejectingRootPoster.sendTransaction({ to: await revertingMonthly.getAddress(), value: ethers.parseEther("3000") });
+    await authorizeMonth(revertingMonthly, multisig, 202611n, AUTH_CEILING);
     await expect(revertingMonthly.connect(rejectingRootPoster).sealMonth(202611n, leaf, ethers.parseEther("2500"))).to.be.revertedWithCustomError(
       revertingMonthly,
       "NativeTransferFailed"
@@ -238,12 +249,13 @@ describe("MonthlyLeagueTreasury", function () {
   });
 
   it("allows winners to claim from the sealed root and releases their reserved balance", async () => {
-    const { rootPoster, winner, other, monthly } = await loadFixture(deployFixture);
+    const { multisig, rootPoster, winner, other, monthly } = await loadFixture(deployFixture);
     const monthId = 202612n;
     const amount = ethers.parseEther("12.5");
     const leaf = claimLeaf(monthId, CATEGORY, 1, await winner.getAddress(), amount);
 
     await rootPoster.sendTransaction({ to: await monthly.getAddress(), value: amount });
+    await authorizeMonth(monthly, multisig, monthId, AUTH_CEILING);
     await monthly.connect(rootPoster).sealMonth(monthId, leaf, amount);
     expect(await monthly.monthOutstandingClaims(monthId)).to.eq(amount);
 
@@ -260,16 +272,78 @@ describe("MonthlyLeagueTreasury", function () {
 
   it("restricts sealing to rootPoster or multisig and rootPoster updates to multisig", async () => {
     const { multisig, rootPoster, other, winner, monthly } = await loadFixture(deployFixture);
-    const leaf = claimLeaf(202613n, CATEGORY, 1, await winner.getAddress(), 1n);
+    const monthId = 202701n;
+    const leaf = claimLeaf(monthId, CATEGORY, 1, await winner.getAddress(), 1n);
 
     await other.sendTransaction({ to: await monthly.getAddress(), value: 1n });
-    await expect(monthly.connect(other).sealMonth(202613n, leaf, 1n)).to.be.revertedWithCustomError(monthly, "NotRootPosterOrMultisig");
+    await expect(monthly.connect(other).sealMonth(monthId, leaf, 1n)).to.be.revertedWithCustomError(monthly, "NotRootPosterOrMultisig");
     await expect(monthly.connect(other).setRootPoster(await other.getAddress())).to.be.revertedWithCustomError(monthly, "NotMultisig");
 
     await monthly.connect(multisig).setRootPoster(await other.getAddress());
     expect(await monthly.rootPoster()).to.eq(await other.getAddress());
-    await monthly.connect(other).sealMonth(202613n, leaf, 1n);
-    expect((await monthly.monthSeal(202613n)).isSealed).to.eq(true);
+    await authorizeMonth(monthly, multisig, monthId, AUTH_CEILING);
+    await monthly.connect(other).sealMonth(monthId, leaf, 1n);
+    expect((await monthly.monthSeal(monthId)).isSealed).to.eq(true);
     expect(await monthly.rootPoster()).to.not.eq(await rootPoster.getAddress());
+  });
+
+  it("requires Safe-authorized canonical months and rejects invented or skipped settlement", async () => {
+    const { multisig, rootPoster, other, monthly } = await loadFixture(deployFixture);
+    const leaf = ethers.keccak256(ethers.toUtf8Bytes("month-leaf"));
+    await rootPoster.sendTransaction({ to: await monthly.getAddress(), value: ethers.parseEther("10") });
+
+    await expect(monthly.connect(rootPoster).sealMonth(202608n, leaf, 1n)).to.be.revertedWithCustomError(monthly, "MonthNotAuthorized");
+    await expect(monthly.connect(rootPoster).authorizeMonth(202608n, AUTH_CEILING, 1, 2, false)).to.be.revertedWithCustomError(
+      monthly,
+      "NotMultisig"
+    );
+    await expect(monthly.connect(multisig).authorizeMonth(999999n, AUTH_CEILING, 1, 2, false)).to.be.revertedWithCustomError(
+      monthly,
+      "InvalidMonthId"
+    );
+    await expect(monthly.connect(multisig).authorizeMonth(202613n, AUTH_CEILING, 1, 2, false)).to.be.revertedWithCustomError(
+      monthly,
+      "InvalidMonthId"
+    );
+
+    await authorizeMonth(monthly, multisig, 202608n, AUTH_CEILING);
+    await expect(monthly.connect(multisig).authorizeMonth(202610n, AUTH_CEILING, 1, 2, false)).to.be.revertedWithCustomError(
+      monthly,
+      "MonthNotNextCanonical"
+    );
+
+    await monthly.connect(multisig).revokeMonth(202608n);
+    await expect(monthly.connect(rootPoster).sealMonth(202608n, leaf, 1n)).to.be.revertedWithCustomError(monthly, "MonthNotAuthorized");
+
+    await authorizeMonth(monthly, multisig, 202608n, ethers.parseEther("1"));
+    await expect(monthly.connect(rootPoster).sealMonth(202608n, leaf, ethers.parseEther("2"))).to.be.revertedWithCustomError(
+      monthly,
+      "WinnerTotalAboveAuthorizedMax"
+    );
+
+    const now = Number(await latestTs());
+    await monthly.connect(multisig).authorizeMonth(202608n, AUTH_CEILING, now + 10_000, now + 20_000, false);
+    await expect(monthly.connect(rootPoster).sealMonth(202608n, leaf, 1n)).to.be.revertedWithCustomError(monthly, "SealTooEarly");
+
+    await monthly.connect(multisig).authorizeMonth(202608n, AUTH_CEILING, now - 20, now - 1, false);
+    await expect(monthly.connect(rootPoster).sealMonth(202608n, leaf, 1n)).to.be.revertedWithCustomError(monthly, "SealAuthExpired");
+
+    await authorizeMonth(monthly, multisig, 202608n, AUTH_CEILING);
+    await monthly.connect(rootPoster).sealMonth(202608n, leaf, 1n);
+    await expect(monthly.connect(multisig).authorizeMonth(202608n, AUTH_CEILING, 1, 2, false)).to.be.revertedWithCustomError(
+      monthly,
+      "MonthAuthConsumed"
+    );
+
+    await expect(monthly.connect(multisig).authorizeMonth(202610n, AUTH_CEILING, 1, 2, false)).to.be.revertedWithCustomError(
+      monthly,
+      "MonthNotNextCanonical"
+    );
+    await authorizeMonth(monthly, multisig, 202609n, AUTH_CEILING);
+    await monthly.connect(rootPoster).sealMonth(202609n, leaf, 1n);
+
+    await authorizeMonth(monthly, multisig, 202701n, AUTH_CEILING, true);
+    expect((await monthly.monthAuthorization(202701n)).exceptional).to.eq(true);
+    await expect(monthly.connect(other).revokeMonth(202701n)).to.be.revertedWithCustomError(monthly, "NotMultisig");
   });
 });

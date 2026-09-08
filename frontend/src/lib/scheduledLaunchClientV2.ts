@@ -39,8 +39,40 @@ const CREATOR_REGISTRY_ABI = [
 ] as const;
 
 const FACTORY_INTERFACE = new ethers.Interface(SCHEDULED_FACTORY_ABI);
-const EXPECTED_FACTORY_GENERATION = 3;
-const EXPECTED_CAMPAIGN_GENERATION = 2;
+const ROBINHOOD_TESTNET_CHAIN_ID = 46630;
+const ROBINHOOD_MAINNET_CHAIN_ID = 4663;
+const LOCAL_HARDHAT_CHAIN_ID = 31337;
+const ROBINHOOD_CHAIN_IDS = new Set([ROBINHOOD_MAINNET_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID]);
+
+/** Mirror of frontend/api/dev-fix/routeAuthorizationSigner.js expectedCampaignGeneration(). */
+function expectedCampaignGeneration(chainId: number): number {
+  const id = Number(chainId);
+  if (id === ROBINHOOD_TESTNET_CHAIN_ID || id === LOCAL_HARDHAT_CHAIN_ID) return 3;
+  return 2;
+}
+
+function isSupportedFactoryGeneration(chainId: number, generation: number): boolean {
+  if (ROBINHOOD_CHAIN_IDS.has(Number(chainId))) return generation === 4;
+  // Existing BNB factories are generation 3. Generation 4 remains acceptable for
+  // a future BNB factory built from the liquidity-kind-aware source.
+  return generation === 3 || generation === 4;
+}
+
+function generationRule(chainId: number): string {
+  const id = Number(chainId);
+  if (id === ROBINHOOD_TESTNET_CHAIN_ID || id === LOCAL_HARDHAT_CHAIN_ID) return "4/3";
+  if (ROBINHOOD_CHAIN_IDS.has(id)) return "4/2";
+  return "3-or-4/2";
+}
+
+function assertSupportedGeneration(chainId: number, factoryGeneration: number, campaignGeneration: number) {
+  if (!isSupportedFactoryGeneration(chainId, factoryGeneration) || campaignGeneration !== expectedCampaignGeneration(chainId)) {
+    throw new Error(
+      `The configured factory is generation ${factoryGeneration}/${campaignGeneration}; ` +
+        `chain ${chainId} requires ${generationRule(chainId)}.`,
+    );
+  }
+}
 
 async function parseApiJson(res: Response) {
   const json = await res.json().catch(() => ({}));
@@ -158,7 +190,6 @@ export async function readScheduledCreatorLaunchEligibility(input: {
   const factory = new Contract(input.factoryAddress, SCHEDULED_FACTORY_ABI, provider) as any;
   try {
     const creator = await input.signer.getAddress();
-    // Same on-chain rule for immediate and timed arms: 24h arm cooldown + live-cap.
     const [result, registryAddressRaw, factoryGenerationRaw, campaignGenerationRaw] = await Promise.all([
       factory.creatorLaunchEligibility(creator),
       factory.creatorRegistry(),
@@ -168,11 +199,7 @@ export async function readScheduledCreatorLaunchEligibility(input: {
 
     const factoryGeneration = Number(factoryGenerationRaw ?? 0);
     const campaignGeneration = Number(campaignGenerationRaw ?? 0);
-    if (factoryGeneration !== EXPECTED_FACTORY_GENERATION || campaignGeneration !== EXPECTED_CAMPAIGN_GENERATION) {
-      throw new Error(
-        `The configured factory is generation ${factoryGeneration}/${campaignGeneration}; expected ${EXPECTED_FACTORY_GENERATION}/${EXPECTED_CAMPAIGN_GENERATION}.`,
-      );
-    }
+    assertSupportedGeneration(input.chainId, factoryGeneration, campaignGeneration);
 
     let cooldownSeconds = 0;
     let lastRecordedLaunchAt = 0;
@@ -277,7 +304,7 @@ async function assertScheduledFactoryReady(input: {
     throw new Error("This creator wallet cannot deploy or arm another campaign right now.");
   }
 
-  return factory;
+  return { factory, eligibility };
 }
 
 export async function deployScheduledDraftCampaignV2(input: {
@@ -289,7 +316,7 @@ export async function deployScheduledDraftCampaignV2(input: {
   launchAt: number;
   graduationTargetWei: bigint;
 }) {
-  const factory = await assertScheduledFactoryReady(input);
+  const { factory, eligibility } = await assertScheduledFactoryReady(input);
   const response = await apiFetch(`/api/drafts/${encodeURIComponent(input.draftId)}/deploy`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -306,11 +333,17 @@ export async function deployScheduledDraftCampaignV2(input: {
   const scheduledRequest = json.scheduledRequest;
   const authorization = json.authorization;
   if (!scheduledRequest || !authorization) throw new Error("Scheduled launch authorization response is incomplete.");
-  if (Number(authorization.factoryGeneration || 0) !== EXPECTED_FACTORY_GENERATION) {
-    throw new Error("The server returned an authorization for the wrong factory generation.");
+  if (Number(authorization.factoryGeneration || 0) !== eligibility.factoryGeneration) {
+    throw new Error(
+      `The server returned factory generation ${Number(authorization.factoryGeneration || 0)}, ` +
+        `but the configured factory reports ${eligibility.factoryGeneration}.`,
+    );
   }
-  if (Number(authorization.campaignGeneration || 0) !== EXPECTED_CAMPAIGN_GENERATION) {
-    throw new Error("The server returned an authorization for the wrong campaign generation.");
+  if (Number(authorization.campaignGeneration || 0) !== eligibility.campaignGeneration) {
+    throw new Error(
+      `The server returned campaign generation ${Number(authorization.campaignGeneration || 0)}, ` +
+        `but the configured factory reports ${eligibility.campaignGeneration}.`,
+    );
   }
 
   const request = {

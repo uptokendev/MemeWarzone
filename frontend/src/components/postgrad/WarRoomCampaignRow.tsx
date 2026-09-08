@@ -7,10 +7,11 @@ import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { ContinuousMarketChartPanel } from "@/components/token/ContinuousMarketChartPanel";
 import { AthBar } from "@/components/token/AthBar";
 import { WarRoomTradePanel } from "@/components/postgrad/WarRoomTradePanel";
+import { RobinhoodWarRoomTradePanel } from "@/components/postgrad/RobinhoodWarRoomTradePanel";
 import { getPostGradTokenDetailRoute } from "@/features/postgrad/identityRoutes";
 import { getWarRoomCampaignMetrics } from "@/features/postgrad/warRoomMetrics";
 import { isSolanaAddress } from "@/lib/address";
-import { getChainLabel } from "@/lib/chainConfig";
+import { getChainLabel, ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
 
 function shortenAddress(value?: string | null) {
   const input = String(value ?? "").trim();
@@ -106,6 +107,13 @@ export function WarRoomCampaignRow({
   const metrics = getWarRoomCampaignMetrics(campaign, bnbUsd);
   const isDraft = metrics.status === "draft";
   const rich = campaign as any;
+  const inferredChainId = Number(rich.chainId);
+  const rowChainId = isSolanaAddress(campaign.campaign)
+    ? 101
+    : inferredChainId === 56 || inferredChainId === 97 || inferredChainId === ROBINHOOD_CHAIN_ID || inferredChainId === ROBINHOOD_TESTNET_CHAIN_ID
+      ? inferredChainId
+      : 56;
+  const isRobinhoodRow = rowChainId === ROBINHOOD_CHAIN_ID || rowChainId === ROBINHOOD_TESTNET_CHAIN_ID;
   const isScheduledDraft =
     Boolean(rich.isScheduled) || String(rich.draftStatus || "").toLowerCase() === "scheduled";
   const statusLabel =
@@ -120,7 +128,7 @@ export function WarRoomCampaignRow({
     metrics.status === "graduated" ? "success" : metrics.status === "bonding" ? "hot" : isScheduledDraft ? "sponsored" : "default";
   const chartSourceLabel =
     metrics.status === "graduated"
-      ? "TOPAZ"
+      ? isRobinhoodRow ? "ROBINHOOD V3" : "TOPAZ"
       : metrics.status === "bonding"
         ? "BONDING"
         : "CHART";
@@ -128,12 +136,6 @@ export function WarRoomCampaignRow({
   const draftDescription = String(rich.draftDescription || "No promotion description has been added yet.");
   const founderNote = String(rich.draftFounderNote || "No founder note has been added yet.");
   const draftStatus = formatStatus(rich.draftStatus || (isScheduledDraft ? "scheduled" : "draft"));
-  const inferredChainId = Number(rich.chainId);
-  const rowChainId = isSolanaAddress(campaign.campaign)
-    ? 101
-    : inferredChainId === 56 || inferredChainId === 97
-      ? inferredChainId
-      : 56;
   const chainLabel = getChainLabel(rowChainId) || `Chain ${rowChainId || "unknown"}`;
   const draftFollows = formatCompactNumber(rich.draftFollowCount);
   const draftOptIns = formatCompactNumber(rich.draftOptInCount);
@@ -177,7 +179,6 @@ export function WarRoomCampaignRow({
                 <span className="hidden sm:inline">Creator {shortenAddress(campaign.creator)}</span>
               </div>
             </div>
-            {/* Mobile collapsed bar: only MCap on the right (desktop uses table columns). */}
             {!isDraft ? (
               <div className="ml-1 shrink-0 text-right lg:hidden">
                 <div className="text-[8px] uppercase tracking-[0.14em] text-white/35">MCap</div>
@@ -207,7 +208,6 @@ export function WarRoomCampaignRow({
             </div>
           </div>
         ) : (
-          /* Desktop metric columns only — mobile metrics live inside the expanded panel. */
           <div className="hidden lg:contents">
             <div className="font-semibold text-white">{metrics.marketCapLabel}</div>
             <div className="font-semibold text-white">{metrics.liquidityLabel}</div>
@@ -313,7 +313,6 @@ export function WarRoomCampaignRow({
           </div>
         ) : (
           <div className="mx-2.5 mb-2.5 grid gap-3 rounded-[18px] border border-white/10 bg-[linear-gradient(180deg,rgba(16,18,24,0.88),rgba(8,9,12,0.94))] p-2.5 md:mx-3 md:mb-3 md:gap-4 md:p-4 xl:grid-cols-[1.35fr_0.65fr]">
-            {/* Mobile expand order: metrics text → chart → buy/sell (+ links). Desktop: chart | trade. */}
             <div className="order-1 col-span-full flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-white/8 pb-2 text-[10px] text-white/70 xl:hidden">
               <span><span className="text-white/40">MCap</span> {metrics.marketCapLabel}</span>
               <span><span className="text-white/40">Liq</span> {metrics.liquidityLabel}</span>
@@ -349,7 +348,6 @@ export function WarRoomCampaignRow({
             </div>
 
             <div className="order-3 space-y-2.5 md:space-y-3 xl:order-2">
-              {/* Token details / links sit above buy-sell so they are seen first */}
               <div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-3 md:rounded-[20px] md:p-4">
                 <div className="text-[10px] uppercase tracking-[0.24em] text-accent/80">Token details</div>
                 <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 md:mt-4">
@@ -380,7 +378,7 @@ export function WarRoomCampaignRow({
                 </div>
               </div>
 
-              <WarRoomTradePanel campaign={campaign} />
+              {isRobinhoodRow ? <RobinhoodWarRoomTradePanel campaign={campaign} /> : <WarRoomTradePanel campaign={campaign} />}
             </div>
           </div>
         )

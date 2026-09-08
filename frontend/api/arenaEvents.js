@@ -56,6 +56,7 @@ async function listEvents() {
   const result = await pool.query(
     `select id, type, title, status, starts_at, ends_at, participant_count, summary, bracket_stage, completed_at, created_at, updated_at
        from public.arena_events
+      where type <> 'tournament'
       order by starts_at asc, created_at asc`,
   );
   return result.rows.map(mapEvent).filter(Boolean);

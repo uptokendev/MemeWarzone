@@ -1,7 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
-import { SOLANA_CHAIN_ID } from "@/lib/chainConfig";
+import { useSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
+import {
+  BNB_CHAIN_ID,
+  BNB_TESTNET_CHAIN_ID,
+  ROBINHOOD_CHAIN_ID,
+  ROBINHOOD_TESTNET_CHAIN_ID,
+  SOLANA_CHAIN_ID,
+} from "@/lib/chainConfig";
 import { apiFetch } from "@/lib/apiBase";
 import { useLaunchpad, type CampaignInfo } from "@/lib/launchpadClient";
 import {
@@ -12,8 +19,10 @@ import { requestSolanaGraduationHandoff } from "@/lib/solanaGraduationHandoff";
 import { isSolanaTokenRouteId } from "@/lib/tokenDetailsPath";
 import { recordRecentlyViewed } from "@/lib/searchHistory";
 import { analytics } from "@/lib/analytics/ProductAnalytics";
+import { lookupArenaImport, type ArenaImportItem } from "@/lib/arenaImports";
 
 import TokenDetails from "./TokenDetails";
+import ImportedTokenDetails from "./ImportedTokenDetails";
 
 const SOLANA_ROUTE_CACHE_PREFIX = "mwz:solana-token-route:v2:";
 const SOLANA_ROUTE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -28,6 +37,14 @@ function tokenIdMatches(candidate?: string | null, routeId?: string | null): boo
   const right = String(routeId || "").trim();
   if (!left || !right) return false;
   return left === right || left.toLowerCase() === right.toLowerCase();
+}
+
+function isRobinhoodChainId(chainId: number): boolean {
+  return chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID;
+}
+
+function isBnbChainId(chainId: number): boolean {
+  return chainId === BNB_CHAIN_ID || chainId === BNB_TESTNET_CHAIN_ID;
 }
 
 function routeCacheKey(routeId: string): string {
@@ -62,13 +79,23 @@ function writeRouteCache(routeId: string, cache: SolanaRouteCache) {
 const TokenDetailsEntry = () => {
   const { campaignAddress } = useParams<{ campaignAddress: string }>();
   const [searchParams] = useSearchParams();
+  const [selectedFeedChainId] = useSelectedFeedChainId();
   const { fetchCampaigns } = useLaunchpad();
 
   const routeId = String(campaignAddress || "").trim();
   const forcedChainId = Number(searchParams.get("chainId") || "");
+  const selectedEvmChainId = isRobinhoodChainId(Number(selectedFeedChainId)) || isBnbChainId(Number(selectedFeedChainId))
+    ? Number(selectedFeedChainId)
+    : 0;
+  // Explicit URL identity wins. Legacy /token/0x... links inherit the currently
+  // selected EVM product chain instead of silently becoming BNB testnet.
+  const effectiveEvmChainId = isRobinhoodChainId(forcedChainId) || isBnbChainId(forcedChainId)
+    ? forcedChainId
+    : selectedEvmChainId || BNB_TESTNET_CHAIN_ID;
+  const robinhoodRoute = isRobinhoodChainId(effectiveEvmChainId);
   const isSolanaRoute = useMemo(() => {
-    // A 0x BNB/ETH token is never a Solana route, even if the wallet latch
-    // or a stale ?chainId=101 is present. That was collapsing WIC trades/holders.
+    // A 0x BNB/Robinhood token is never a Solana route, even if the wallet latch
+    // or a stale ?chainId=101 is present. That was collapsing EVM trades/holders.
     if (/^0x[a-fA-F0-9]{40}$/i.test(routeId)) return false;
     return forcedChainId === SOLANA_CHAIN_ID || isSolanaTokenRouteId(routeId);
   }, [forcedChainId, routeId]);
@@ -82,11 +109,16 @@ const TokenDetailsEntry = () => {
   const [curve, setCurve] = useState<SolanaCampaignCurveState | null>(null);
   const [curveResolved, setCurveResolved] = useState<boolean>(!isSolanaRoute);
   const [cachedCampaignAddress, setCachedCampaignAddress] = useState<string>(initialCache?.campaignAddress || "");
+  const [imported, setImported] = useState<ArenaImportItem | null>(null);
+  const [importLookupDone, setImportLookupDone] = useState(false);
 
   useEffect(() => {
     if (!routeId) return;
-    analytics.track("token_page_viewed", { chain: isSolanaRoute ? "solana" : "bnb" });
-  }, [routeId, isSolanaRoute]);
+    analytics.track("token_page_viewed", {
+      chain: isSolanaRoute ? "solana" : robinhoodRoute ? "robinhood" : "bnb",
+      chainId: isSolanaRoute ? SOLANA_CHAIN_ID : effectiveEvmChainId,
+    });
+  }, [effectiveEvmChainId, isSolanaRoute, robinhoodRoute, routeId]);
 
   useEffect(() => {
     if (!isSolanaRoute) {
@@ -222,21 +254,79 @@ const TokenDetailsEntry = () => {
   }, [cachedCampaignAddress, curveLookupAddress, isSolanaRoute, resolvedCampaignAddress, routeId]);
 
   useEffect(() => {
-    const campaignAddress = String(campaign?.campaign || resolvedCampaignAddress || (!isSolanaRoute ? routeId : "") || "").trim();
-    const tokenAddress = String(campaign?.token || (isSolanaRoute ? routeId : campaignAddress) || "").trim();
-    if (!campaignAddress && !tokenAddress) return;
-    const chainId = isSolanaRoute ? SOLANA_CHAIN_ID : Number((campaign as { chainId?: number } | null)?.chainId || 97);
+    const campaignAddressToRecord = String(campaign?.campaign || resolvedCampaignAddress || (!isSolanaRoute ? routeId : "") || "").trim();
+    const tokenAddress = String(campaign?.token || (isSolanaRoute ? routeId : campaignAddressToRecord) || "").trim();
+    if (!campaignAddressToRecord && !tokenAddress) return;
+
+    const campaignChainId = Number((campaign as { chainId?: number } | null)?.chainId || 0);
+    const chainId = isSolanaRoute
+      ? SOLANA_CHAIN_ID
+      : isRobinhoodChainId(forcedChainId) || isBnbChainId(forcedChainId)
+        ? forcedChainId
+        : campaignChainId || effectiveEvmChainId;
+
     recordRecentlyViewed({
       name: String(campaign?.name || campaign?.symbol || tokenAddress.slice(0, 6) || "Token"),
       symbol: campaign?.symbol,
       logoURI: (campaign as { logoURI?: string } | null)?.logoURI,
       tokenAddress,
-      campaignAddress,
+      campaignAddress: campaignAddressToRecord,
       chainId,
     });
-  }, [campaign, isSolanaRoute, resolvedCampaignAddress, routeId]);
+  }, [campaign, effectiveEvmChainId, forcedChainId, isSolanaRoute, resolvedCampaignAddress, routeId]);
 
-  return <TokenDetails key={routeId || (isSolanaRoute ? "solana" : "evm")} />;
+  useEffect(() => {
+    if (!routeId) {
+      setImported(null);
+      setImportLookupDone(true);
+      return;
+    }
+    let cancelled = false;
+    setImportLookupDone(false);
+    setImported(null);
+
+    const preferredChainId = isSolanaRoute
+      ? SOLANA_CHAIN_ID
+      : isRobinhoodChainId(forcedChainId) || isBnbChainId(forcedChainId)
+        ? forcedChainId
+        : effectiveEvmChainId;
+    const chainIds = [
+      preferredChainId,
+      effectiveEvmChainId,
+      BNB_CHAIN_ID,
+      BNB_TESTNET_CHAIN_ID,
+      ROBINHOOD_CHAIN_ID,
+      ROBINHOOD_TESTNET_CHAIN_ID,
+      SOLANA_CHAIN_ID,
+    ].filter((value, index, list) => value > 0 && list.indexOf(value) === index);
+
+    (async () => {
+      for (const chainId of chainIds) {
+        const item = await lookupArenaImport(routeId, chainId);
+        if (cancelled) return;
+        if (item) {
+          setImported(item);
+          setImportLookupDone(true);
+          return;
+        }
+      }
+      if (!cancelled) {
+        setImported(null);
+        setImportLookupDone(true);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveEvmChainId, forcedChainId, isSolanaRoute, routeId]);
+
+  if (!importLookupDone) return null;
+  if (imported) {
+    return <ImportedTokenDetails item={imported} />;
+  }
+
+  return <TokenDetails key={`${routeId || (isSolanaRoute ? "solana" : "evm")}:${isSolanaRoute ? SOLANA_CHAIN_ID : effectiveEvmChainId}`} />;
 };
 
 export default TokenDetailsEntry;

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import type { ProfileTab } from "@/types/profile";
 import type { CampaignSummary } from "@/lib/launchpadClient";
@@ -18,6 +18,7 @@ import {
 } from "@/lib/draftApi";
 import { formatTimeAgo } from "@/lib/profile/profileFormatters";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
+import { getActiveChainId } from "@/lib/chainConfig";
 
 type FetchCampaigns = () => Promise<any[]>;
 type FetchCampaignSummary = (campaign: any) => Promise<CampaignSummary>;
@@ -54,6 +55,10 @@ export function useProfileFollows({
   const [followedDrafts, setFollowedDrafts] = useState<CampaignDraft[]>([]);
   const [followedCards, setFollowedCards] = useState<any[]>([]);
   const [loadingFollows, setLoadingFollows] = useState(true);
+  const resolvedChainId = useMemo(() => {
+    const explicit = Number(chainId || 0);
+    return explicit > 0 ? explicit : Number(getActiveChainId());
+  }, [chainId]);
 
 useEffect(() => {
   let cancelled = false;
@@ -75,16 +80,16 @@ useEffect(() => {
 
     try {
       const [fc, profileFollowingCount, isF] = await Promise.all([
-        getFollowersCount(viewedAddress, chainId ?? 0),
-        getFollowingCount(viewedAddress, chainId ?? 0),
+        getFollowersCount(viewedAddress, resolvedChainId),
+        getFollowingCount(viewedAddress, resolvedChainId),
         isOwnProfile || !account
           ? Promise.resolve(false)
-          : isFollowingUser(account, viewedAddress, chainId ?? 0),
+          : isFollowingUser(account, viewedAddress, resolvedChainId),
       ]);
 
       const followedCampaignAddresses: string[] = await getFollowedCampaigns(
         viewedAddress,
-        chainId ?? 0
+        resolvedChainId
       ).catch((): string[] => []);
 
       const draftItems: CampaignDraft[] = await fetchFollowedCampaignDrafts({
@@ -106,10 +111,10 @@ useEffect(() => {
       setFollowedDrafts(draftItems);
 
       if (activeTab === "followers") {
-        const fl = await getFollowers(viewedAddress, chainId ?? 0);
+        const fl = await getFollowers(viewedAddress, resolvedChainId);
         if (!cancelled) setFollowersList(fl);
       } else if (activeTab === "following") {
-        const fl = await getFollowing(viewedAddress, chainId ?? 0);
+        const fl = await getFollowing(viewedAddress, resolvedChainId);
         if (!cancelled) setFollowingList(fl);
       }
     } catch (err) {
@@ -124,7 +129,7 @@ useEffect(() => {
   return () => {
     cancelled = true;
   };
-}, [viewedAddress, activeTab, isOwnProfile, chainId, account]);
+}, [viewedAddress, activeTab, isOwnProfile, resolvedChainId, account]);
 
 useEffect(() => {
   let cancelled = false;
@@ -174,7 +179,8 @@ useEffect(() => {
             href: tokenDetailsPath({
               tokenAddress: s.campaign.token,
               campaignAddress: s.campaign.campaign,
-            }),
+              chainId: resolvedChainId,
+            }, { chainId: resolvedChainId }),
             marketCap: s.stats.marketCap,
             timeAgo: (s.campaign as any).timeAgo || formatTimeAgo(s.campaign.createdAt),
             buyersCount: (s.stats as any)?.buyersCount ?? undefined,
@@ -218,6 +224,7 @@ useEffect(() => {
   followedDrafts,
   fetchCampaigns,
   fetchCampaignSummary,
+  resolvedChainId,
 ]);
 
   const handleToggleFollow = useCallback(async () => {
@@ -228,18 +235,18 @@ useEffect(() => {
 
       const signOpts = signer ? { signer } : undefined;
       if (isFollowing) {
-        await unfollowUser(account, viewedAddress, chainId ?? 0, signOpts);
+        await unfollowUser(account, viewedAddress, resolvedChainId, signOpts);
         setIsFollowing(false);
         setFollowersCount((c) => Math.max(0, c - 1));
       } else {
-        await followUser(account, viewedAddress, chainId ?? 0, signOpts);
+        await followUser(account, viewedAddress, resolvedChainId, signOpts);
         setIsFollowing(true);
         setFollowersCount((c) => c + 1);
       }
     } catch (err) {
       toast.error("Failed to update follow");
     }
-  }, [account, chainId, isFollowing, isOwnProfile, viewedAddress, signer]);
+  }, [account, resolvedChainId, isFollowing, isOwnProfile, viewedAddress, signer]);
 
   return {
     followersCount,

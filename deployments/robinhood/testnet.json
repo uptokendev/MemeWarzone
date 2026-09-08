@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "chainKey": "robinhood-testnet",
+  "chainId": 46630,
+  "environment": "staging",
+  "generation": 1,
+  "deploymentBlock": null,
+  "supportEnabled": false,
+  "creationEnabled": false,
+  "contracts": {}
+}

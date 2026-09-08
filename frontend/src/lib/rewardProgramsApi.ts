@@ -19,6 +19,14 @@ function buildQuery(params: Record<string, string | number | null | undefined>) 
   return query ? `?${query}` : "";
 }
 
+function nativeSymbolForChain(chainId?: number | null, fallback?: string | null): string {
+  const chain = Number(chainId || 0);
+  if (chain === 101 || chain === 102) return "SOL";
+  if (chain === 4663 || chain === 46630) return "ETH";
+  if (chain === 56 || chain === 97) return "BNB";
+  return String(fallback || "").trim() || "BNB";
+}
+
 export type RewardLedgerItem = {
   id: string;
   rewardType: string;
@@ -173,6 +181,15 @@ export type SolanaRewardReconciliationResult = {
   reconciledAt: string;
 };
 
+function normalizeRewardItem(item: any, requestedChainId?: number | null): RewardLedgerItem {
+  const chainId = Number(item?.chainId ?? item?.chain_id ?? requestedChainId ?? 0) || null;
+  return {
+    ...item,
+    chainId,
+    tokenSymbol: nativeSymbolForChain(chainId, item?.tokenSymbol ?? item?.token_symbol),
+  } as RewardLedgerItem;
+}
+
 export async function fetchRewardsMe(params: {
   walletAddress: string;
   chainId?: number | null;
@@ -186,11 +203,12 @@ export async function fetchRewardsMe(params: {
     limit: params.limit ?? 100,
   })}`));
   const json = await parseJson(res);
+  const responseChainId = Number(json?.chainId ?? params.chainId ?? 0) || null;
   return {
     address: String(json?.address || params.walletAddress),
-    chainId: json?.chainId ?? params.chainId ?? null,
-    claimable: Array.isArray(json?.claimable) ? json.claimable : [],
-    items: Array.isArray(json?.items) ? json.items : [],
+    chainId: responseChainId,
+    claimable: Array.isArray(json?.claimable) ? json.claimable.map((item: any) => normalizeRewardItem(item, responseChainId)) : [],
+    items: Array.isArray(json?.items) ? json.items.map((item: any) => normalizeRewardItem(item, responseChainId)) : [],
     totals: json?.totals || { claimableAmount: "0", claimedAmount: "0", expiredAmount: "0" },
     materializedAt: json?.materializedAt || null,
   };
@@ -209,7 +227,9 @@ async function fetchRewardClaimsRaw(params: {
     limit: params.limit ?? 100,
   })}`));
   const json = await parseJson(res);
-  return Array.isArray(json?.items) ? json.items as RewardLedgerItem[] : [];
+  return Array.isArray(json?.items)
+    ? json.items.map((item: any) => normalizeRewardItem(item, params.chainId))
+    : [];
 }
 
 export async function reconcileSolanaRewardClaims(params: {
@@ -254,14 +274,9 @@ export async function fetchRewardClaims(params: {
     });
 
     if (reconciliation.reconciledCount > 0) {
-      // A confirmed chain claim was recovered and the canonical ledger was repaired.
-      // Re-read so the Command Center cannot render the stale reward as claimable/pending.
       return fetchRewardClaimsRaw(params);
     }
 
-    // If a deterministic receipt exists but its settlement transaction cannot currently
-    // be strictly verified, fail safe in the browser: keep the reward pending rather than
-    // inviting a retry. The DB remains unchanged until the server can prove the payment.
     const blocked = new Set(
       reconciliation.unresolved
         .filter((item) => item.code !== "SOLANA_CLAIM_RECEIPT_MISSING")
@@ -273,8 +288,6 @@ export async function fetchRewardClaims(params: {
         : item);
     }
   } catch (error) {
-    // Loading the Claim Center must remain available during an RPC/API outage. Existing
-    // claim_pending rows are already non-clickable and on-chain receipt PDAs prevent replay.
     console.warn("[rewardProgramsApi] Solana claim reconciliation deferred:", error);
   }
 
@@ -292,7 +305,9 @@ export async function requestRewardClaim(input: {
     body: JSON.stringify(input),
   });
   const json = await parseJson(res);
-  return Array.isArray(json?.items) ? json.items as RewardLedgerItem[] : [];
+  return Array.isArray(json?.items)
+    ? json.items.map((item: any) => normalizeRewardItem(item, input.chainId))
+    : [];
 }
 
 export type AirdropPreviewWallet = {
@@ -327,7 +342,12 @@ export async function fetchAirdropPreview(chainId?: number | null): Promise<Aird
   if (!res.ok) return null;
   const json = await res.json().catch(() => null);
   if (!json || json.ok === false) return null;
-  return json as AirdropPreview;
+  const responseChainId = Number(json?.chainId ?? chainId ?? 0) || 0;
+  return {
+    ...json,
+    chainId: responseChainId,
+    tokenSymbol: nativeSymbolForChain(responseChainId, json?.tokenSymbol),
+  } as AirdropPreview;
 }
 
 export async function fetchAirdropCurrent(chainId?: number | null): Promise<AirdropCurrent> {
@@ -336,11 +356,13 @@ export async function fetchAirdropCurrent(chainId?: number | null): Promise<Aird
     return { status: "empty", currentEpochId: null, current: null, prizePool: null, materializedAt: null };
   }
   const json = await parseJson(res);
+  const responseChainId = Number(json?.current?.chainId ?? chainId ?? 0) || null;
+  const symbol = nativeSymbolForChain(responseChainId, json?.current?.tokenSymbol ?? json?.prizePool?.tokenSymbol);
   return {
     status: String(json?.status || "empty"),
     currentEpochId: json?.currentEpochId ?? null,
-    current: json?.current ?? null,
-    prizePool: json?.prizePool ?? null,
+    current: json?.current ? { ...json.current, chainId: responseChainId, tokenSymbol: symbol } : null,
+    prizePool: json?.prizePool ? { ...json.prizePool, tokenSymbol: symbol } : null,
     materializedAt: json?.materializedAt || null,
   };
 }

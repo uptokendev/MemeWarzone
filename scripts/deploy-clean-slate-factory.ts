@@ -27,6 +27,7 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import { ethers, network } from "hardhat";
+import { refuseBnbFactoryBroadcastIfSourceHeadIsNotLive } from "./lib/bnbLiveGenerationGuard";
 
 const TESTNET_CHAIN_ID = 97n;
 const DEFAULT_TEMPLATE = "0x8d4937D3BEe8A750411c0a24f888C0088754D3eD";
@@ -76,6 +77,7 @@ async function waitTx(txPromise: Promise<any> | any, label: string) {
 }
 
 async function main() {
+  refuseBnbFactoryBroadcastIfSourceHeadIsNotLive();
   const net = await ethers.provider.getNetwork();
   if (net.chainId !== TESTNET_CHAIN_ID) {
     throw new Error(`Clean-slate factory deploy is restricted to BSC Testnet 97; got chain ${net.chainId}`);

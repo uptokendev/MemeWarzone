@@ -4,6 +4,8 @@ import { postGradFlags } from "@/features/postgrad/config";
 import {
   fetchPostGradEventDetails,
   fetchPostGradEventFeed,
+  fetchPostGradTournamentDetails,
+  fetchPostGradTournamentFeed,
 } from "@/features/postgrad/apiClient";
 import { useMockEvents, useMockEventDetails } from "@/hooks/useMockEventRuntime";
 
@@ -65,10 +67,16 @@ function normalizeArchivedEventList(value: unknown): ArenaArchivedEvent[] {
 
 async function loadEventFeed(signal?: AbortSignal): Promise<ArenaEventFeedPayload | null> {
   const json = await fetchPostGradEventFeed(signal);
-  if (!json) return null;
+  const tournamentJson = await fetchPostGradTournamentFeed(signal);
 
-  const events = normalizeEventList(json.events ?? json.items?.events ?? json.items);
-  const archivedEvents = normalizeArchivedEventList(json.archivedEvents ?? json.archive ?? json.items?.archivedEvents);
+  const events = [
+    ...normalizeEventList(json?.events ?? json?.items?.events ?? json?.items),
+    ...normalizeEventList(tournamentJson?.events),
+  ];
+  const archivedEvents = [
+    ...normalizeArchivedEventList(json?.archivedEvents ?? json?.archive ?? json?.items?.archivedEvents),
+    ...normalizeArchivedEventList(tournamentJson?.archivedEvents),
+  ];
 
   if (!events.length && !archivedEvents.length) return null;
   return { events, archivedEvents };
@@ -77,7 +85,10 @@ async function loadEventFeed(signal?: AbortSignal): Promise<ArenaEventFeedPayloa
 async function loadEventDetails(eventId: string, signal?: AbortSignal): Promise<ArenaEventSummary | null> {
   const json = await fetchPostGradEventDetails(eventId, signal);
   const event = json?.event ?? json;
-  return isEventSummary(event) ? event : null;
+  if (isEventSummary(event)) return event;
+  const tournamentJson = await fetchPostGradTournamentDetails(eventId, signal);
+  const tournament = tournamentJson?.event ?? tournamentJson;
+  return isEventSummary(tournament) ? tournament : null;
 }
 
 /**

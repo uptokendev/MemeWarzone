@@ -1,10 +1,22 @@
 import { Contract, type Signer } from "ethers";
 import PermanentLpLockerArtifact from "@/abi/PermanentLpLocker.json";
 import { getBnbContractAddresses } from "@/lib/bnbContracts";
-import type { SupportedChainId } from "@/lib/chainConfig";
-import { isEvmChainId } from "@/lib/chainConfig";
+import {
+  ROBINHOOD_CHAIN_ID,
+  ROBINHOOD_TESTNET_CHAIN_ID,
+  type SupportedChainId,
+  isEvmChainId,
+} from "@/lib/chainConfig";
 
-const LOCKER_ABI = PermanentLpLockerArtifact.abi as any;
+const BNB_LOCKER_ABI = PermanentLpLockerArtifact.abi as any;
+const V3_LOCKER_ABI = [
+  "function harvest(address pool) returns (uint256 collected0,uint256 collected1)",
+  "function poolInfo(address pool) view returns (address campaign,address creator,address creatorFeeRecipient,address poolAddress,address token0,address token1,uint256 tokenId,uint128 lockedLiquidity,uint24 feeTier,uint16 creatorFeeBps,uint16 protocolFeeBps,bool registered)",
+] as const;
+
+function isRobinhoodChainId(chainId: number): boolean {
+  return chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID;
+}
 
 export type LpFeePoolRow = {
   chainId: number;
@@ -17,6 +29,9 @@ export type LpFeePoolRow = {
   marketStage?: string | null;
   fees?: {
     registered?: boolean;
+    kind?: "topaz_v2" | "robinhood_v3" | string;
+    tokenId?: string | null;
+    lockedLiquidity?: string;
     pairLabel?: string;
     token0Meta?: { symbol?: string };
     token1Meta?: { symbol?: string };
@@ -65,7 +80,7 @@ export function resolvePermanentLpLockerAddress(chainId: number): string {
   if (!isEvmChainId(chainId)) return "";
   const fromEnv = getBnbContractAddresses(chainId as SupportedChainId).permanentLpLocker;
   if (fromEnv) return fromEnv;
-  // Clean-slate BSC testnet locker
+  // Clean-slate BSC testnet locker. Never apply this fallback to Robinhood.
   if (Number(chainId) === 97) return "0xb083929D2bbabdE7fc580090D5B18bbD918Fda9a";
   return "";
 }
@@ -106,7 +121,6 @@ export async function fetchLpFeePools(input: {
   if (!res.ok) throw new Error(String(json?.error || `LP fee fetch failed (${res.status})`));
 
   let items = Array.isArray(json?.items) ? (json.items as LpFeePoolRow[]) : [];
-  // Server already filters by creator when provided; keep a client guard for mixed responses.
   if (creator) {
     items = items.filter((it) =>
       solana
@@ -126,10 +140,6 @@ export function hasUnharvestedFees(row: LpFeePoolRow): boolean {
   return Number(u.token0 || 0) > 0 || Number(u.token1 || 0) > 0;
 }
 
-/**
- * Creator / user harvest path: connected wallet pays gas, fees push to creator (80%) + treasury (20%).
- * Anyone may call harvest(); only the fee recipient receives the creator share.
- */
 export async function harvestSolanaLpFees(input: {
   chainId: number;
   campaignAddress?: string | null;
@@ -158,27 +168,55 @@ export async function harvestSolanaLpFees(input: {
   };
 }
 
+/**
+ * Creator/user EVM harvest path. Anyone may call harvest; only the registered
+ * creator recipient receives the creator share. BNB uses PermanentLpLocker,
+ * Robinhood uses PermanentV3PositionLocker, both with the same harvest(pool) seam.
+ */
 export async function harvestLpFeesWithWallet(input: {
   chainId: number;
   pairAddress: string;
   signer: Signer;
   lockerAddress?: string | null;
 }): Promise<{ txHash: string; lockerAddress: string; pairAddress: string }> {
-  const pair = String(input.pairAddress || "").trim().toLowerCase();
-  if (!/^0x[a-f0-9]{40}$/.test(pair)) throw new Error("Invalid Topaz pair address.");
+  const chainId = Number(input.chainId);
+  if (!isEvmChainId(chainId)) throw new Error("EVM LP fee harvest requires an EVM chain.");
 
-  const lockerAddress =
-    String(input.lockerAddress || "").trim() || resolvePermanentLpLockerAddress(input.chainId);
-  if (!/^0x[a-fA-F0-9]{40}$/.test(lockerAddress)) {
-    throw new Error("Permanent LP locker address is not configured for this chain.");
+  const pool = String(input.pairAddress || "").trim().toLowerCase();
+  if (!/^0x[a-f0-9]{40}$/.test(pool)) {
+    throw new Error(isRobinhoodChainId(chainId) ? "Invalid Robinhood V3 pool address." : "Invalid Topaz pair address.");
   }
 
-  const locker = new Contract(lockerAddress, LOCKER_ABI, input.signer);
-  const tx = await locker.harvest(pair);
+  const lockerAddress = String(input.lockerAddress || "").trim() || resolvePermanentLpLockerAddress(chainId);
+  if (!/^0x[a-fA-F0-9]{40}$/.test(lockerAddress)) {
+    throw new Error(isRobinhoodChainId(chainId)
+      ? "Permanent V3 position locker address is not configured for Robinhood."
+      : "Permanent LP locker address is not configured for this chain.");
+  }
+
+  const network = await input.signer.provider?.getNetwork();
+  if (!network || Number(network.chainId) !== chainId) {
+    throw new Error(`Wrong wallet network. Connect chain ${chainId} before harvesting fees.`);
+  }
+
+  const abi = isRobinhoodChainId(chainId) ? V3_LOCKER_ABI : BNB_LOCKER_ABI;
+  const locker = new Contract(lockerAddress, abi, input.signer) as any;
+
+  // Robinhood gets an extra registration/principal read before allowing the tx.
+  if (isRobinhoodChainId(chainId)) {
+    const info = await locker.poolInfo(pool);
+    const registered = Boolean(info?.registered ?? info?.[11]);
+    const lockedLiquidity = BigInt(info?.lockedLiquidity ?? info?.[7] ?? 0);
+    if (!registered || lockedLiquidity <= 0n) {
+      throw new Error("Robinhood V3 position is not registered with locked liquidity.");
+    }
+  }
+
+  const tx = await locker.harvest(pool);
   const receipt = await tx.wait();
   return {
     txHash: String(receipt?.hash || tx.hash),
     lockerAddress: lockerAddress.toLowerCase(),
-    pairAddress: pair,
+    pairAddress: pool,
   };
 }

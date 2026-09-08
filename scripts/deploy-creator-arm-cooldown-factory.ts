@@ -3,6 +3,7 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import { ethers, network } from "hardhat";
+import { refuseBnbFactoryBroadcastIfSourceHeadIsNotLive } from "./lib/bnbLiveGenerationGuard";
 
 const TESTNET_CHAIN_ID = 97n;
 const OBSOLETE_FACTORY_FALLBACK = "0xe0FbBa4533513110Cec7e78aa3e48EC45301B5E6";
@@ -45,6 +46,7 @@ async function waitTx(txPromise: Promise<any> | any, label: string) {
 }
 
 async function main() {
+  refuseBnbFactoryBroadcastIfSourceHeadIsNotLive();
   const net = await ethers.provider.getNetwork();
   if (net.chainId !== TESTNET_CHAIN_ID) {
     throw new Error(`This staged replacement is restricted to BSC Testnet chain 97; connected chain is ${net.chainId}.`);

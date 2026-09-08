@@ -21,6 +21,12 @@ contract RewardDistributor is Ownable, Pausable, ReentrancyGuard {
     error InsufficientExcessNative();
     error NotBatchOperator(address caller);
     error ZeroAddress();
+    error BatchNotAuthorized(bytes32 batchId);
+    error BatchAuthConsumed(bytes32 batchId);
+    error BatchTooEarly(bytes32 batchId);
+    error BatchAuthExpired(bytes32 batchId);
+    error BatchAboveAuthorizedMax(bytes32 batchId);
+    error BadPublishWindow();
 
     struct Batch {
         bytes32 merkleRoot;
@@ -31,13 +37,24 @@ contract RewardDistributor is Ownable, Pausable, ReentrancyGuard {
         bool exists;
     }
 
+    struct BatchAuthorization {
+        uint256 maxAmount;
+        uint64 publishAfter;
+        uint64 publishDeadline;
+        bool authorized;
+        bool consumed;
+    }
+
     mapping(bytes32 => Batch) public batches;
     mapping(bytes32 => mapping(address => bool)) public hasClaimed;
+    mapping(bytes32 => BatchAuthorization) public batchAuthorization;
 
     address public batchOperator;
     uint256 public totalOutstandingRewards;
 
     event BatchOperatorUpdated(address indexed oldOperator, address indexed newOperator);
+    event BatchAuthorized(bytes32 indexed batchId, uint256 maxAmount, uint64 publishAfter, uint64 publishDeadline);
+    event BatchAuthorizationRevoked(bytes32 indexed batchId);
     event BatchCreated(bytes32 indexed batchId, bytes32 indexed merkleRoot, uint256 totalFunded, uint64 claimDeadline);
     event BatchPauseUpdated(bytes32 indexed batchId, bool paused);
     event RewardClaimed(bytes32 indexed batchId, address indexed account, uint256 amount);
@@ -58,10 +75,37 @@ contract RewardDistributor is Ownable, Pausable, ReentrancyGuard {
         batchOperator = newOperator;
     }
 
+    function authorizeBatch(bytes32 batchId, uint256 maxAmount, uint64 publishAfter, uint64 publishDeadline) external onlyOwner {
+        if (batchId == bytes32(0)) revert RootZero();
+        if (maxAmount == 0) revert AmountZero();
+        if (publishDeadline <= publishAfter) revert BadPublishWindow();
+        BatchAuthorization storage auth = batchAuthorization[batchId];
+        if (auth.consumed) revert BatchAuthConsumed(batchId);
+        if (batches[batchId].exists) revert BatchExists(batchId);
+        auth.maxAmount = maxAmount;
+        auth.publishAfter = publishAfter;
+        auth.publishDeadline = publishDeadline;
+        auth.authorized = true;
+        emit BatchAuthorized(batchId, maxAmount, publishAfter, publishDeadline);
+    }
+
+    function revokeBatch(bytes32 batchId) external onlyOwner {
+        BatchAuthorization storage auth = batchAuthorization[batchId];
+        if (!auth.authorized || auth.consumed) revert BatchNotAuthorized(batchId);
+        auth.authorized = false;
+        emit BatchAuthorizationRevoked(batchId);
+    }
+
     function createBatch(bytes32 batchId, bytes32 merkleRoot, uint64 claimDeadline) external payable onlyOwnerOrBatchOperator {
         if (batchId == bytes32(0) || merkleRoot == bytes32(0)) revert RootZero();
         if (msg.value == 0) revert AmountZero();
         if (batches[batchId].exists) revert BatchExists(batchId);
+        BatchAuthorization storage auth = batchAuthorization[batchId];
+        if (!auth.authorized || auth.consumed) revert BatchNotAuthorized(batchId);
+        if (block.timestamp < auth.publishAfter) revert BatchTooEarly(batchId);
+        if (block.timestamp > auth.publishDeadline) revert BatchAuthExpired(batchId);
+        if (msg.value > auth.maxAmount) revert BatchAboveAuthorizedMax(batchId);
+        auth.consumed = true;
 
         batches[batchId] = Batch({
             merkleRoot: merkleRoot,

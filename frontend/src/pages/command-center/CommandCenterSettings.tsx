@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Bell, ExternalLink, Image, Settings, ShieldCheck, Wallet } from "lucide-react";
+import { Bell, ExternalLink, Image, Mail, Settings, ShieldCheck, Wallet } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,11 @@ import { CommandCenterCard } from "@/components/command-center/CommandCenterCard
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
 import { EditProfileDialog } from "@/components/profile/EditProfileDialog";
 import { useWallet } from "@/contexts/WalletContext";
+import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
+import { setArenaNotificationEmail } from "@/features/postgrad/apiClient";
+import { postGradFlags } from "@/features/postgrad/config";
 import { usePrepareNotificationCenter } from "@/hooks/usePrepareNotificationCenter";
+import { signArenaWalletAction } from "@/lib/arena/signArenaWalletAction";
 import { getActiveChainId, getChainLabel, isAllowedChainId } from "@/lib/chainConfig";
 import { requestWalletChainSwitch } from "@/lib/launchpadReadiness";
 import type { DraftNotification } from "@/lib/draftPromotion";
@@ -23,6 +27,7 @@ function formatNotificationDate(value?: string | null) {
 export default function CommandCenterSettings() {
   const {
     walletAddress,
+    chainId,
     walletChainId,
     profile,
     loadingProfile,
@@ -41,8 +46,12 @@ export default function CommandCenterSettings() {
   } = useCommandCenterData();
 
   const wallet = useWallet();
+  const { solanaAccount } = useSolanaWallet();
   const navigate = useNavigate();
   const [switchingChain, setSwitchingChain] = useState(false);
+  const [arenaEmail, setArenaEmail] = useState("");
+  const [arenaEmailStatus, setArenaEmailStatus] = useState<{ configured: boolean; verified: boolean; email?: string | null } | null>(null);
+  const [savingEmail, setSavingEmail] = useState(false);
   const {
     notifications,
     unreadCount,
@@ -78,6 +87,27 @@ export default function CommandCenterSettings() {
     await markOneRead(notification.id);
     navigate(notification.target);
   };
+
+  async function handleSaveArenaEmail() {
+    setSavingEmail(true);
+    try {
+      const auth = await signArenaWalletAction({
+        action: "arena_notification_email_set",
+        extraLines: [],
+        walletAddress,
+        chainId: chainId || walletChainId,
+        evmWallet: wallet,
+        solanaAccount,
+      });
+      const json = await setArenaNotificationEmail({ walletAddress, chainId: chainId || walletChainId, email: arenaEmail, auth });
+      setArenaEmailStatus({ configured: true, verified: Boolean(json.verified), email: json.email || arenaEmail });
+      toast.success(json.verifyEmailSent ? "Check your inbox to verify this address." : json.verifyEmailSkipped ? "Email saved. Verification mail is not configured in this environment." : "Email saved.");
+    } catch (error) {
+      toast.error(String((error as Error)?.message || "Could not save email."));
+    } finally {
+      setSavingEmail(false);
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -180,6 +210,40 @@ export default function CommandCenterSettings() {
           </div>
         </CommandCenterCard>
       </div>
+
+      {postGradFlags.arena ? (
+        <CommandCenterCard title="Arena challenge email">
+          <div className="rounded-2xl border border-border/50 bg-background/25 p-4">
+            <div className="mb-2 flex items-center gap-2 font-retro text-sm text-foreground">
+              <Mail className="h-4 w-4 text-accent" />
+              Notify this wallet
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Challenges also show in Command Center Battles. Add an email if you want a copy when someone challenges your coin.
+            </p>
+            <label className="mt-3 block text-xs uppercase tracking-[0.14em] text-muted-foreground">
+              Email
+              <input
+                type="email"
+                value={arenaEmail}
+                onChange={(event) => setArenaEmail(event.target.value)}
+                className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
+                placeholder="you@example.com"
+              />
+            </label>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Button size="sm" className="font-retro" disabled={savingEmail || !arenaEmail.trim()} onClick={() => void handleSaveArenaEmail()}>
+                {savingEmail ? "Saving..." : "Save and verify"}
+              </Button>
+              {arenaEmailStatus?.configured ? (
+                <span className="text-xs uppercase tracking-[0.14em] text-muted-foreground">
+                  {arenaEmailStatus.verified ? "Verified" : "Awaiting verification"}
+                </span>
+              ) : null}
+            </div>
+          </div>
+        </CommandCenterCard>
+      ) : null}
 
       <div id="notifications" className="scroll-mt-24">
         <CommandCenterCard title="Notifications">

@@ -49,6 +49,40 @@ test("mixed BNB + SOL volume is summed in USD only", () => {
   assert.equal(usd.referredVolumeUsd, 1.25 * 600 + 3.41 * 150);
 });
 
+test("Robinhood ETH remains a separate native lane while ranking uses USD", () => {
+  const money = combineReferredUsd({
+    referredVolumeBnb: 1,
+    referredVolumeSol: 2,
+    referredVolumeEth: 0.5,
+    epochEarnedBnb: 0.01,
+    epochEarnedSol: 0.02,
+    epochEarnedEth: 0.003,
+    bnbUsd: 600,
+    solUsd: 150,
+    ethUsd: 3000,
+  });
+  assert.equal(money.referredVolumeUsd, 600 + 300 + 1500);
+  assert.equal(money.epochEarnedUsd, 6 + 3 + 9);
+  assert.equal(money.normalizedScoreVolume, 2400 / 600);
+  assert.equal(money.normalizedScoreEarnings, 18 / 600);
+});
+
+test("Robinhood-only recruiter is not discarded when BNB volume is zero", () => {
+  const scored = scoreUniversalRecruiter({
+    linkedWalletCount: 2,
+    linkedCreatorsCount: 1,
+    linkedTradersCount: 2,
+    referredVolumeEth: 1.25,
+    epochEarnedEth: 0.004,
+    bnbUsd: 600,
+    solUsd: 150,
+    ethUsd: 3000,
+  }, WEIGHTS);
+  assert.equal(scored.referredVolumeUsd, 3750);
+  assert.equal(scored.epochEarnedUsd, 12);
+  assert.ok(scored.weightedScore > 0);
+});
+
 test("old active links still score without epoch trades", () => {
   const scored = scoreUniversalRecruiter({
     linkedWalletCount: 10,
@@ -56,8 +90,10 @@ test("old active links still score without epoch trades", () => {
     linkedTradersCount: 8,
     referredVolumeBnb: 0,
     referredVolumeSol: 0,
+    referredVolumeEth: 0,
     bnbUsd: 600,
     solUsd: 150,
+    ethUsd: 3000,
   }, WEIGHTS);
   assert.equal(scored.weightedScore, 10 * 1 + 2 * 3 + 8 * 2);
   assert.equal(scored.referredVolumeUsd, 0);
@@ -80,36 +116,42 @@ test("ranking inputs are named score fields, not claim balances", () => {
   assert.equal(money.earnedBnbEquivalent, undefined);
 });
 
-test("native BNB and SOL amounts stay separate from USD ranking totals", () => {
+test("native BNB SOL and ETH amounts stay separate from USD ranking totals", () => {
   const scored = scoreUniversalRecruiter({
     linkedWalletCount: 0,
     linkedCreatorsCount: 0,
     linkedTradersCount: 0,
     referredVolumeBnb: 1.25,
     referredVolumeSol: 3.41,
+    referredVolumeEth: 0.2,
     epochEarnedBnb: 0.003,
     epochEarnedSol: 0.018,
+    epochEarnedEth: 0.001,
     bnbUsd: 600,
     solUsd: 150,
+    ethUsd: 3000,
   }, WEIGHTS);
-  assert.equal(scored.referredVolumeUsd, 1.25 * 600 + 3.41 * 150);
+  assert.equal(scored.referredVolumeUsd, 1.25 * 600 + 3.41 * 150 + 0.2 * 3000);
   assert.ok(scored.normalizedScoreVolume > 0);
   assert.notEqual(scored.normalizedScoreVolume, scored.referredVolumeUsd);
-  assert.notEqual(scored.weightedScore, scored.referredVolumeBnb);
+  assert.equal(scored.referredVolumeBnb, undefined);
+  assert.equal(scored.referredVolumeEth, undefined);
 });
 
-test("BNB and Solana selector would rank a mixed recruiter the same", () => {
+test("chain selector does not alter one universal recruiter score", () => {
   const input = {
     linkedWalletCount: 9,
     linkedCreatorsCount: 3,
     linkedTradersCount: 6,
     referredVolumeBnb: 1,
     referredVolumeSol: 2,
+    referredVolumeEth: 0.1,
     bnbUsd: 600,
     solUsd: 150,
+    ethUsd: 3000,
   };
   const a = scoreUniversalRecruiter(input, WEIGHTS);
   const b = scoreUniversalRecruiter(input, WEIGHTS);
   assert.equal(a.weightedScore, b.weightedScore);
-  assert.equal(a.referredVolumeUsd, 600 + 300);
+  assert.equal(a.referredVolumeUsd, 600 + 300 + 300);
 });

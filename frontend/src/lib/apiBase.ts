@@ -107,6 +107,9 @@ const FRONTEND_API_PREFIXES = [
   // Vote receipt → vote_aggregates (must not hit indexer /api/votes proxy).
   "/api/vote-ingest",
   "/api/votes/ingest",
+  "/api/arena",
+  // Server-side route authority (including BNB BASIC quote catalog binding).
+  "/api/routing",
   // Solana V4 create/trade/vote — must hit frontend-api, never indexer.
   "/api/solana",
   "/api/drafts",
@@ -418,6 +421,28 @@ async function notifyCreatorProtectionResponse(res: Response): Promise<void> {
   }
 }
 
+function injectBnbGraduationQuoteSelection(path: string, init?: RequestInit): RequestInit | undefined {
+  if (typeof window === "undefined" || getMethod(init) !== "POST" || typeof init?.body !== "string") return init;
+  let pathname = "";
+  try {
+    pathname = new URL(path, "http://local").pathname;
+  } catch {
+    pathname = normalizePath(path).split("?")[0];
+  }
+  if (pathname !== "/api/routing/create-authorization") return init;
+
+  try {
+    const body = JSON.parse(init.body);
+    if (Number(body?.chainId) !== 56 || body?.graduationQuoteAssetId) return init;
+    const key = `mwz:graduation-quote-selection:${Number(body.chainId)}`;
+    const deploymentId = String(window.sessionStorage.getItem(key) || "").trim();
+    if (!deploymentId || deploymentId.startsWith("native:")) return init;
+    return { ...init, body: JSON.stringify({ ...body, graduationQuoteAssetId: deploymentId }) };
+  } catch {
+    return init;
+  }
+}
+
 export function apiUrl(path: string): string {
   if (isHttpUrl(path)) return path;
   const normalized = normalizePath(path);
@@ -444,14 +469,15 @@ export function apiUrl(path: string): string {
 }
 
 export async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
-  const compatibilityFallback = buildPublicCompatibilityFallback(path, init);
+  const effectiveInit = injectBnbGraduationQuoteSelection(path, init);
+  const compatibilityFallback = buildPublicCompatibilityFallback(path, effectiveInit);
   const deferredFallback = deferCompatibilityFallback(path);
   if (compatibilityFallback && !deferredFallback) return compatibilityFallback;
 
   const url = apiUrl(path);
 
   try {
-    const res = await fetch(url, init);
+    const res = await fetch(url, effectiveInit);
     if (!res.ok && isCampaignFeedPath(path)) {
       const fallback = await buildTokenDetailsCampaignFallback(path);
       if (fallback) return fallback;

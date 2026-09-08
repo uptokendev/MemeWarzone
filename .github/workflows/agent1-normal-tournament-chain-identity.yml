@@ -1,0 +1,49 @@
+name: Agent 1 Normal Tournament Chain Identity
+
+on:
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - "frontend/api/arenaTournaments.js"
+      - "frontend/api/lib/arenaTournamentChainIdentity.js"
+      - "frontend/api/lib/arenaTournamentChainIdentity.test.mjs"
+      - ".github/workflows/agent1-normal-tournament-chain-identity.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  focused-chain-identity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install locked frontend dependencies
+        run: npm ci --prefix frontend --no-audit --no-fund
+
+      - name: Syntax check Normal Tournament identity runtime
+        run: |
+          node --check frontend/api/arenaTournaments.js
+          node --check frontend/api/lib/arenaTournamentChainIdentity.js
+
+      - name: Focused three-chain identity matrix
+        run: node --test frontend/api/lib/arenaTournamentChainIdentity.test.mjs
+
+      - name: Existing Normal Tournament roster and bracket regression
+        run: node --test frontend/api/lib/arenaTournamentRoster.test.mjs frontend/api/lib/arenaTournamentBracketReconcile.test.mjs
+
+      - name: Existing tournament certification regression
+        run: node --test frontend/api/lib/arenaTournamentV2Certification.test.mjs

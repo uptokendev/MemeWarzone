@@ -20,7 +20,10 @@ const FINALIZED_WINNER_SOURCE = 'legacy_rankings_inferred';
 const FROZEN_WINNER_SOURCE = 'league_epoch_winners';
 
 function normChain(value) {
-  return String(value || 'bnb').toLowerCase() === 'solana' ? 'solana' : 'bnb';
+  const chain = String(value || 'bnb').toLowerCase().trim();
+  if (chain === 'solana') return 'solana';
+  if (chain === 'robinhood') return 'robinhood';
+  return 'bnb';
 }
 
 function normPeriod(value) {
@@ -70,7 +73,9 @@ function buildSeasonMeta({ chain, chainId, period, epochOffset, epoch }) {
 function pendingLeagues(chain) {
   const warning = chain === 'solana'
     ? 'Solana league feed pending. BNB standings and prize pools are not reused for Solana.'
-    : 'BNB summary aggregation is not enabled yet. Frontend should use legacy /api/league fallback.';
+    : chain === 'robinhood'
+      ? 'Robinhood league feed pending. BNB and Solana standings are not reused for Robinhood.'
+      : 'BNB summary aggregation is not enabled yet. Frontend should use legacy /api/league fallback.';
 
   return LEAGUES.map((leagueMeta) => ({
     key: leagueMeta.key,
@@ -100,27 +105,31 @@ function emptyHallOfFame() {
   };
 }
 
-function buildPendingSummary({ chain, period, epochOffset }) {
+function buildPendingSummary({ chain, chainId, period, epochOffset }) {
   const policy = getPayoutPolicy(period);
   const cap = getCapMeta(period, 0, policy);
   const epoch = pendingEpoch(period, epochOffset);
   const prize = {
-    basis: chain === 'solana' ? 'solana_pending' : 'bnb_summary_pending',
+    basis: chain === 'solana' ? 'solana_pending' : chain === 'robinhood' ? 'robinhood_pending' : 'bnb_summary_pending',
     capReached: cap.capReached,
     charityReserveUsd: cap.charityReserveUsd,
     monthlyPlayerPrizeCapUsd: cap.monthlyPlayerPrizeCapUsd,
     playerPrizePoolUsd: cap.playerPrizePoolUsd,
     generatedUsd: cap.generatedUsd,
+    nativeSymbol: chain === 'solana' ? 'SOL' : chain === 'robinhood' ? 'ETH' : 'BNB',
     warning: chain === 'solana'
       ? 'Solana prize feed pending.'
-      : 'BNB summary endpoint scaffolded; legacy category feeds remain the source of truth.',
+      : chain === 'robinhood'
+        ? 'Robinhood prize feed pending. ETH pots remain isolated from BNB.'
+        : 'BNB summary endpoint scaffolded; legacy category feeds remain the source of truth.',
   };
 
   return {
     chain,
+    chainId,
     period,
     epoch,
-    season: buildSeasonMeta({ chain, chainId: chain === 'solana' ? 0 : 97, period, epochOffset, epoch }),
+    season: buildSeasonMeta({ chain, chainId, period, epochOffset, epoch }),
     winnerSource: { source: 'pending', finalized: false },
     current: { epoch, winners: [], prize },
     payoutPolicy: policy,
@@ -143,6 +152,10 @@ function firstDefined(...values) {
 
 function isSolanaChainId(chainId) {
   return Number(chainId) === 101 || Number(chainId) === 102;
+}
+
+function isRobinhoodChainId(chainId) {
+  return Number(chainId) === 4663 || Number(chainId) === 46630;
 }
 
 function nativeDecimals(chainId) {
@@ -172,10 +185,15 @@ function sumEntrants(leagues) {
   return (Array.isArray(leagues) ? leagues : []).reduce((sum, leagueResult) => sum + (Number(leagueResult?.entrants) || 0), 0);
 }
 
-/** @type {{ price: number, source: string }} */
 let lastNativeUsd = { price: 0, source: 'none', chainId: 0 };
 
 async function ensureNativeUsd(chainId) {
+  if (isRobinhoodChainId(chainId)) {
+    // Fail closed on USD conversion until a dedicated ETH/USD resolver is wired.
+    // Never use BNB/USD as a proxy for Robinhood ETH.
+    lastNativeUsd = { price: 0, source: 'robinhood_eth_usd_unconfigured', chainId: Number(chainId) };
+    return lastNativeUsd;
+  }
   const resolved = isSolanaChainId(chainId) ? await resolveSolUsdPrice() : await resolveBnbUsdPrice();
   lastNativeUsd = { price: resolved.price || 0, source: resolved.source || 'none', chainId: Number(chainId) };
   return lastNativeUsd;
@@ -268,7 +286,8 @@ function summarizePrize(leagues, period, policy, chainId) {
   const priceSource = lastNativeUsd.source || 'none';
   const decimals = nativeDecimals(chainId);
   const solana = isSolanaChainId(chainId);
-  const nativeSymbol = solana ? 'SOL' : 'BNB';
+  const robinhood = isRobinhoodChainId(chainId);
+  const nativeSymbol = solana ? 'SOL' : robinhood ? 'ETH' : 'BNB';
   let generatedUsd = 0;
   let totalLeagueFeeRaw = '0';
   const byLeague = {};
@@ -292,8 +311,13 @@ function summarizePrize(leagues, period, policy, chainId) {
   }
 
   const cap = getCapMeta(period, generatedUsd, policy);
+  const basis = solana
+    ? 'solana_aggregated_legacy_categories'
+    : robinhood
+      ? 'robinhood_aggregated_legacy_categories'
+      : 'bnb_aggregated_legacy_categories';
   return {
-    basis: solana ? 'solana_aggregated_legacy_categories' : 'bnb_aggregated_legacy_categories',
+    basis,
     nativeSymbol,
     nativeDecimals: decimals,
     generatedUsd: cap.generatedUsd,
@@ -302,9 +326,9 @@ function summarizePrize(leagues, period, policy, chainId) {
     monthlyPlayerPrizeCapUsd: cap.monthlyPlayerPrizeCapUsd,
     capApplies: cap.capApplies,
     capReached: cap.capReached,
-    bnbUsdPrice: solana ? null : nativeUsd || null,
+    bnbUsdPrice: !solana && !robinhood ? nativeUsd || null : null,
     solUsdPrice: solana ? nativeUsd || null : null,
-    bnbUsdPriceSource: solana ? undefined : priceSource,
+    bnbUsdPriceSource: !solana && !robinhood ? priceSource : undefined,
     nativeUsdPrice: nativeUsd || null,
     nativeUsdPriceSource: priceSource,
     totalLeagueFeeRaw,
@@ -313,7 +337,9 @@ function summarizePrize(leagues, period, policy, chainId) {
       ? undefined
       : solana
         ? 'SOL/USD price unavailable (set SOL_USD_PRICE or allow spot fetch). SOL prize pools still show from curve fees.'
-        : 'BNB/USD price unavailable (set BNB_USD_PRICE or allow spot fetch). BNB prize pools still show from curve fees.',
+        : robinhood
+          ? 'ETH/USD price is not wired for Robinhood leagues yet. ETH prize pools still show from chain-isolated curve fees; BNB/USD is never reused.'
+          : 'BNB/USD price unavailable (set BNB_USD_PRICE or allow spot fetch). BNB prize pools still show from curve fees.',
   };
 }
 
@@ -360,6 +386,9 @@ function prizeSnapshot(prize) {
     capApplies: Boolean(prize?.capApplies),
     capReached: Boolean(prize?.capReached),
     bnbUsdPrice: prize?.bnbUsdPrice || null,
+    solUsdPrice: prize?.solUsdPrice || null,
+    nativeUsdPrice: prize?.nativeUsdPrice || null,
+    nativeSymbol: prize?.nativeSymbol || null,
     totalLeagueFeeRaw: prize?.totalLeagueFeeRaw || '0',
     byLeague: prize?.byLeague || {},
     warning: prize?.warning,
@@ -381,7 +410,13 @@ function leagueHistorySnapshot(leagueResult) {
 
 function buildHistoryEntry(period, epochOffset, summary) {
   const prize = prizeSnapshot(summary.prize);
-  const season = buildSeasonMeta({ chain: 'bnb', chainId: summary.chainId || 97, period, epochOffset, epoch: summary.epoch });
+  const season = buildSeasonMeta({
+    chain: summary.chain || 'bnb',
+    chainId: summary.chainId || 97,
+    period,
+    epochOffset,
+    epoch: summary.epoch,
+  });
   return {
     period,
     epochOffset,
@@ -399,13 +434,13 @@ function buildHistoryEntry(period, epochOffset, summary) {
   };
 }
 
-async function buildHistory(req, { chainId, limit }) {
+async function buildHistory(req, { chain, chainId, limit }) {
   const historyLimit = Math.max(1, Math.min(5, Number(limit) || 5));
   const weekly = await Promise.all(
     HISTORY_WEEKLY_OFFSETS.map(async (epochOffset) => buildHistoryEntry(
       'weekly',
       epochOffset,
-      await aggregateBnbSummary(req, { chain: 'bnb', chainId, period: 'weekly', epochOffset, limit: historyLimit, includeHistory: false })
+      await aggregateChainSummary(req, { chain, chainId, period: 'weekly', epochOffset, limit: historyLimit, includeHistory: false })
     ))
   );
 
@@ -413,7 +448,7 @@ async function buildHistory(req, { chainId, limit }) {
     HISTORY_MONTHLY_OFFSETS.map(async (epochOffset) => buildHistoryEntry(
       'monthly',
       epochOffset,
-      await aggregateBnbSummary(req, { chain: 'bnb', chainId, period: 'monthly', epochOffset, limit: historyLimit, includeHistory: false })
+      await aggregateChainSummary(req, { chain, chainId, period: 'monthly', epochOffset, limit: historyLimit, includeHistory: false })
     ))
   );
 
@@ -485,10 +520,9 @@ function buildHallOfFame(history) {
   };
 }
 
-async function aggregateBnbSummary(req, { chain, chainId, period, epochOffset, limit, includeHistory = false }) {
+async function aggregateChainSummary(req, { chain, chainId, period, epochOffset, limit, includeHistory = false }) {
   await ensureNativeUsd(chainId);
   const policy = getPayoutPolicy(period);
-  // Live categories first (parallel). History is expensive — only when asked.
   const results = await Promise.all(
     LEAGUES.map(async (leagueMeta) => {
       try {
@@ -505,8 +539,7 @@ async function aggregateBnbSummary(req, { chain, chainId, period, epochOffset, l
   const season = buildSeasonMeta({ chain, chainId, period, epochOffset, epoch });
   const prize = summarizePrize(results, period, policy, chainId);
   const currentLeaders = pickCurrentLeaders(results);
-  // History multiplies category fan-out (3 epochs × 6 boards). Keep first paint lean.
-  const history = includeHistory ? await buildHistory(req, { chainId, limit }) : { weekly: [], monthly: [] };
+  const history = includeHistory ? await buildHistory(req, { chain, chainId, limit }) : { weekly: [], monthly: [] };
   const baseSummary = { leagues: results, prize };
 
   return {
@@ -549,25 +582,22 @@ export default async function handler(req, res) {
   const chain = normChain(q.chain);
   const period = normPeriod(q.period);
   const epochOffset = normEpochOffset(q.epochOffset, period);
-  const chainId =
-    chain === "solana"
-      ? clampInt(q.chainId ?? 101, 1, 999999, 101)
-      : clampInt(q.chainId ?? 97, 1, 999999, 97);
+  const fallbackChainId = chain === 'solana' ? 101 : chain === 'robinhood' ? 46630 : 97;
+  const chainId = clampInt(q.chainId ?? fallbackChainId, 1, 999999, fallbackChainId);
   const limit = clampInt(q.limit ?? 10, 1, 50, 10);
-  // Default OFF for first paint. Pass includeHistory=1 for hall-of-fame / trends.
   const includeHistory =
     String(q.includeHistory ?? q.history ?? '0').trim() === '1' ||
     String(q.includeHistory ?? '').toLowerCase() === 'true';
 
   try {
-    const payload = await aggregateBnbSummary(req, { chain, chainId, period, epochOffset, limit, includeHistory });
-    if (chain === "solana" && payload) {
+    const payload = await aggregateChainSummary(req, { chain, chainId, period, epochOffset, limit, includeHistory });
+    if (chain === 'solana' && payload) {
       payload.prize = {
         ...(payload.prize || {}),
         claimsOpen: false,
         warning:
           payload.prize?.warning ||
-          "Solana prize estimate is live from bonding fees. Claims stay closed until the SOL league pot is funded.",
+          'Solana prize estimate is live from bonding fees. Claims stay closed until the SOL league pot is funded.',
       };
     }
     return json(res, 200, payload);
