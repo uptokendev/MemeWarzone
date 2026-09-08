@@ -23,7 +23,9 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Apply claim remediation
-        run: python3 scripts/agent6_apply_claim_matrix.py
+        run: |
+          sed -i '/frontend\/api\/lib\/rewardClaimVerification.js/d' scripts/agent6_apply_claim_matrix.py
+          python3 scripts/agent6_apply_claim_matrix.py
       - name: Claim safety source matrix
         run: node frontend/scripts/agent6-all-claims-three-chain.test.mjs
       - name: API syntax
