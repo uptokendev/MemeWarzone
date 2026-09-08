@@ -3,11 +3,11 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
-const [app, config, importPage, importedPage, tokenEntry, liveTokenEntry, client, coinsPage, navigation, leftSidebar, mobileSidebar, api, core, resolverAdapters] = await Promise.all([
+const [app, config, importPage, importedPage, tokenEntry, liveTokenEntry, client, coinsPage, navigation, leftSidebar, mobileSidebar, api, core, resolverAdapters, reviewCore] = await Promise.all([
   read("./App.tsx"), read("./features/projectImports/config.ts"), read("./pages/ProjectImport.tsx"), read("./pages/ImportedProjectDetails.tsx"),
   read("./pages/TokenDetailsEntry.tsx"), read("./pages/TokenDetailsLiveEntry.tsx"), read("./lib/projectImports.ts"), read("./pages/command-center/CommandCenterCoins.tsx"),
   read("./constants/navigation.ts"), read("./components/LeftBattleSidebar.tsx"), read("./components/Sidebar.tsx"), read("../api/projectImports.js"),
-  read("../api/lib/projectImportCore.js"), read("../api/lib/projectImportResolverAdapters.js"),
+  read("../api/lib/projectImportCore.js"), read("../api/lib/projectImportResolverAdapters.js"), read("../api/lib/projectOwnershipReview.js"),
 ]);
 
 test("project imports remain independently gated from Arena", () => {
@@ -38,14 +38,14 @@ test("registration image is required and never grants ownership", () => {
 });
 
 test("manual review becomes visible and the request button is removed after success", () => {
-  assert.match(importPage, /OWNERSHIP REVIEW REQUESTED/); assert.match(importPage, /item\.ownershipStatus!=="ownership_manual_review"/);
+  assert.match(importPage, /OWNERSHIP REVIEW REQUESTED/); assert.match(importPage, /!ownerVerified&&!reviewRequested/);
   assert.match(importedPage, /OWNERSHIP REVIEW REQUESTED/); assert.match(importedPage, /item\.ownershipStatus!=="ownership_manual_review"/); assert.match(importedPage, /REQUEST PROJECT CLAIM/);
 });
 
 test("manual claim persistence is retry-safe and cannot self-approve", () => {
   const manual = core.match(/export async function requestManualProjectClaim[\s\S]+?export async function patchProjectMetadata/)?.[0] || "";
-  assert.match(manual, /ownership_status==="ownership_manual_review"/); assert.match(manual, /currentClaimant===signer/);
-  assert.match(manual, /ownership_status='ownership_pending'/); assert.match(manual, /ownership_status='ownership_manual_review'/);
+  assert.match(manual, /ownership_status==="ownership_manual_review"/); assert.match(manual, /claimant===signer/);
+  assert.match(manual, /ownership_status='ownership_pending'/); assert.match(manual, /ownership_manual_review/);
   assert.doesNotMatch(manual, /SET[^;]*project_owner_wallet\s*=/i); assert.doesNotMatch(manual, /SET[^;]*ownership_status='ownership_verified'/i);
 });
 
@@ -73,15 +73,16 @@ test("Solana display metadata is optional on-chain Metaplex data while ownership
   assert.match(resolverAdapters, /metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s/); assert.match(resolverAdapters, /findProgramAddressSync/); assert.match(resolverAdapters, /getAccountInfo/);
   assert.match(resolverAdapters, /name:metadata\.name/); assert.match(resolverAdapters, /symbol:metadata\.symbol/); assert.match(resolverAdapters, /currentAuthority:raw\.mintAuthority/);
   assert.match(resolverAdapters, /signedWalletMatchesAuthority:Boolean\(raw\.verified\)/); assert.doesNotMatch(resolverAdapters, /jupiter|birdeye|dexscreener|updateAuthority/i);
+  assert.match(api, /enrichExistingProjectIdentity/); assert.match(api, /name IS NULL OR btrim\(name\) = ''/); assert.match(api, /symbol IS NULL OR btrim\(symbol\) = ''/);
 });
 
 test("operator ownership review is admin-authenticated, CAS-safe, audited, and Arena-independent", () => {
-  assert.match(api, /requireDashboardAdmin/); assert.match(api, /ownership_status='ownership_manual_review'/); assert.match(api, /manual_claim_wallet IS NOT NULL/);
-  assert.match(api, /xmin::text AS state_version/); assert.match(api, /expectedVersion/); assert.match(api, /FOR UPDATE/); assert.match(api, /PROJECT_OWNERSHIP_STATE_CONFLICT/);
-  assert.match(api, /wm_admin_audit_log/); assert.match(api, /operatorReason/); assert.match(api, /project_owner_wallet=manual_claim_wallet/);
-  assert.match(api, /ownership_status='ownership_verified'/); assert.match(api, /ownership_status='ownership_pending'/);
-  const review = api.match(/async function reviewProjectOwnership[\s\S]+?async function handleOwnershipAdmin/)?.[0] || "";
-  assert.doesNotMatch(review, /SET[^;]*(?:\bstatus\b|review_requested_at|review_reason|reviewer|reviewed_at)\s*=/i);
+  assert.match(api, /requireDashboardAdmin/); assert.match(api, /\/admin\/ownership-claims/); assert.match(api, /reviewProjectOwnership\(pool/);
+  assert.match(reviewCore, /ownership_status = \$1/); assert.match(reviewCore, /manual_claim_wallet IS NOT NULL/);
+  assert.match(reviewCore, /xmin::text AS state_version/); assert.match(reviewCore, /expectedVersion/); assert.match(reviewCore, /FOR UPDATE/); assert.match(reviewCore, /PROJECT_OWNERSHIP_STATE_CONFLICT/);
+  assert.match(reviewCore, /wm_admin_audit_log/); assert.match(reviewCore, /operatorReason/); assert.match(reviewCore, /project_owner_wallet = manual_claim_wallet/);
+  assert.match(reviewCore, /ownership_status = \$2/); assert.match(reviewCore, /VERIFIED/); assert.match(reviewCore, /PENDING/);
+  assert.doesNotMatch(reviewCore, /SET[^;]*(?:\bstatus\b|review_requested_at|review_reason|reviewer|reviewed_at)\s*=/i);
 });
 
 test("existing MemeWarzone token runtime remains the fallback for non-imported rows", () => {
