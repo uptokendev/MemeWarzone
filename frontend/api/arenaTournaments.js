@@ -15,6 +15,11 @@ import {
 } from "./lib/arenaTournamentBracketReconcile.js";
 import { captureLiveBaselines } from "./lib/arenaBattleMetrics.js";
 import { getArenaMarketSnapshot } from "./lib/arenaMarketSnapshot.js";
+import {
+  chainIdFromBody,
+  chainIdFromQuery,
+  optionalChainId,
+} from "./lib/arenaTournamentChainIdentity.js";
 
 const NATIVE_COIN_SELECT = `c.name, c.symbol, c.token_address, c.campaign_address, c.creator_address,
        c.created_at, c.graduated_at_chain`;
@@ -55,16 +60,67 @@ function mapAdmin(row, entryCount = 0) {
   };
 }
 
-async function entryCount(id) {
-  const result = await pool.query(`select count(*)::int as count from public.arena_tournament_entries where tournament_id = $1`, [id]);
+function invalidChain(res) {
+  return json(res, 400, { ok: false, error: "Invalid Arena chain id", code: "INVALID_CHAIN" });
+}
+
+function tournamentNotFound(res, chainScoped = false) {
+  return json(res, 404, {
+    ok: false,
+    error: "Tournament not found",
+    ...(chainScoped ? { code: "TOURNAMENT_CHAIN_MISMATCH" } : {}),
+  });
+}
+
+function queryChainContext(req, res) {
+  try {
+    return { ok: true, chainId: chainIdFromQuery(req) };
+  } catch {
+    invalidChain(res);
+    return { ok: false, chainId: null };
+  }
+}
+
+function bodyChainContext(body, res) {
+  try {
+    return { ok: true, chainId: chainIdFromBody(body) };
+  } catch {
+    invalidChain(res);
+    return { ok: false, chainId: null };
+  }
+}
+
+async function loadTournamentRow(id, chainId = null, db = pool, { forUpdate = false } = {}) {
+  const params = [id];
+  const chainClause = chainId == null ? "" : " and chain_id = $2";
+  if (chainId != null) params.push(Number(chainId));
+  const lockClause = forUpdate ? " for update" : "";
+  const result = await db.query(
+    `select * from public.arena_tournaments where id = $1${chainClause} limit 1${lockClause}`,
+    params,
+  );
+  return result.rows[0] || null;
+}
+
+async function entryCount(id, chainId, db = pool) {
+  const result = await db.query(
+    `select count(*)::int as count
+       from public.arena_tournament_entries e
+       join public.arena_tournaments t on t.id = e.tournament_id
+      where e.tournament_id = $1 and t.chain_id = $2`,
+    [id, Number(chainId)],
+  );
   return Number(result.rows[0]?.count || 0);
 }
 
-async function listEntries(id) {
-  const result = await pool.query(
-    `select token_address, owner_wallet, buy_in_intent, buy_in_paid, created_at
-       from public.arena_tournament_entries where tournament_id = $1 order by created_at asc`,
-    [id],
+async function listEntries(id, chainId, db = pool) {
+  const result = await db.query(
+    `select e.token_address, e.owner_wallet, e.buy_in_intent, e.buy_in_paid, e.created_at
+       from public.arena_tournament_entries e
+       join public.arena_tournaments t on t.id = e.tournament_id
+      where e.tournament_id = $1 and t.chain_id = $2
+      order by e.created_at asc`,
+    [id, Number(chainId)],
   );
   return result.rows.map((row) => ({
     tokenAddress: String(row.token_address),
@@ -74,10 +130,13 @@ async function listEntries(id) {
   }));
 }
 
-async function listInvites(id) {
-  const result = await pool.query(
-    `select token_address, owner_wallet, status from public.arena_tournament_invites where tournament_id = $1`,
-    [id],
+async function listInvites(id, chainId, db = pool) {
+  const result = await db.query(
+    `select i.token_address, i.owner_wallet, i.status
+       from public.arena_tournament_invites i
+       join public.arena_tournaments t on t.id = i.tournament_id
+      where i.tournament_id = $1 and t.chain_id = $2`,
+    [id, Number(chainId)],
   );
   return result.rows.map((row) => ({
     tokenAddress: String(row.token_address),
@@ -148,12 +207,20 @@ async function coinSnapshot(chainId, token) {
   return normalizedCoinSnapshot(row, market, row.token_address);
 }
 
-async function handleList(_req, res) {
-  const result = await pool.query(`select * from public.arena_tournaments where status <> 'cancelled' order by starts_at asc`);
+async function handleList(req, res) {
+  const context = queryChainContext(req, res);
+  if (!context.ok) return;
+  const params = [];
+  const chainClause = context.chainId == null ? "" : " and chain_id = $1";
+  if (context.chainId != null) params.push(context.chainId);
+  const result = await pool.query(
+    `select * from public.arena_tournaments where status <> 'cancelled'${chainClause} order by starts_at asc`,
+    params,
+  );
   const events = [];
   const archivedEvents = [];
   for (const row of result.rows) {
-    const count = await entryCount(row.id);
+    const count = await entryCount(row.id, row.chain_id);
     const mapped = mapPublic(row, count);
     if (row.status === "finished") archivedEvents.push({ ...mapped, completedAt: mapped.endsAt });
     else events.push(mapped);
@@ -162,23 +229,26 @@ async function handleList(_req, res) {
 }
 
 async function handleDetail(req, res, id) {
-  const result = await pool.query(`select * from public.arena_tournaments where id = $1 limit 1`, [id]);
-  if (!result.rows[0]) return json(res, 404, { error: "Tournament not found" });
-  const row = result.rows[0];
-  const entries = await listEntries(id);
+  const context = queryChainContext(req, res);
+  if (!context.ok) return;
+  const row = await loadTournamentRow(id, context.chainId);
+  if (!row) return tournamentNotFound(res, context.chainId != null);
+  const entries = await listEntries(id, row.chain_id);
   return json(res, 200, {
     event: mapPublic(row, entries.length),
     tournament: row,
     entries,
-    invites: await listInvites(id),
+    invites: await listInvites(id, row.chain_id),
     bracket: row.bracket || [],
   });
 }
 
 async function handleOptIn(req, res, id) {
   const body = await readJson(req);
-  const row = (await pool.query(`select * from public.arena_tournaments where id = $1 limit 1`, [id])).rows[0];
-  if (!row) return json(res, 404, { ok: false, error: "Tournament not found" });
+  const context = bodyChainContext(body, res);
+  if (!context.ok) return;
+  const row = await loadTournamentRow(id, context.chainId);
+  if (!row) return tournamentNotFound(res, context.chainId != null);
   if (row.status !== "upcoming") return json(res, 409, { ok: false, error: "Registration is closed" });
   const token = ident(body.tokenId || body.tokenAddress || "");
   const wallet = ident(body.walletAddress || body.auth?.walletAddress || "");
@@ -199,25 +269,38 @@ async function handleOptIn(req, res, id) {
   }
   if (row.registration_mode === "invite_only") {
     const invite = await pool.query(
-      `select 1 from public.arena_tournament_invites
-        where tournament_id = $1 and lower(token_address) = lower($2) limit 1`,
-      [id, token],
+      `select 1
+         from public.arena_tournament_invites i
+         join public.arena_tournaments t on t.id = i.tournament_id
+        where i.tournament_id = $1 and lower(i.token_address) = lower($2) and t.chain_id = $3
+        limit 1`,
+      [id, token, Number(row.chain_id)],
     );
     if (!invite.rows[0]) return json(res, 403, { ok: false, error: "This tournament is invite-only" });
   }
-  const count = await entryCount(id);
+  const count = await entryCount(id, row.chain_id);
   if (count >= Number(row.cap || 16)) return json(res, 409, { ok: false, error: "Tournament is full" });
-  await pool.query(
+  const inserted = await pool.query(
     `insert into public.arena_tournament_entries (tournament_id, token_address, owner_wallet, buy_in_intent)
-     values ($1,$2,$3,true)
-     on conflict (tournament_id, token_address) do update set buy_in_intent = true, owner_wallet = excluded.owner_wallet, updated_at = now()`,
-    [id, token, wallet],
+     select t.id, $2, $3, true
+       from public.arena_tournaments t
+      where t.id = $1 and t.chain_id = $4
+     on conflict (tournament_id, token_address) do update
+       set buy_in_intent = true, owner_wallet = excluded.owner_wallet, updated_at = now()
+     returning tournament_id`,
+    [id, token, wallet, Number(row.chain_id)],
   );
+  if (!inserted.rows[0]) return tournamentNotFound(res, true);
   if (row.registration_mode !== "open") {
     await pool.query(
-      `update public.arena_tournament_invites set status = 'accepted', updated_at = now()
-        where tournament_id = $1 and lower(token_address) = lower($2)`,
-      [id, token],
+      `update public.arena_tournament_invites i
+          set status = 'accepted', updated_at = now()
+        where i.tournament_id = $1 and lower(i.token_address) = lower($2)
+          and exists (
+            select 1 from public.arena_tournaments t
+             where t.id = i.tournament_id and t.chain_id = $3
+          )`,
+      [id, token, Number(row.chain_id)],
     );
   }
   return json(res, 200, { ok: true, event: mapPublic(row, count + 1) });
@@ -225,8 +308,10 @@ async function handleOptIn(req, res, id) {
 
 async function handleBuyInReceipt(req, res, id) {
   const body = await readJson(req);
-  const row = (await pool.query(`select * from public.arena_tournaments where id = $1 limit 1`, [id])).rows[0];
-  if (!row) return json(res, 404, { ok: false, error: "Tournament not found" });
+  const context = bodyChainContext(body, res);
+  if (!context.ok) return;
+  const row = await loadTournamentRow(id, context.chainId);
+  if (!row) return tournamentNotFound(res, context.chainId != null);
   const chainId = Number(row.chain_id);
   if (!isSolanaChainId(chainId)) return json(res, 400, { ok: false, error: "On-chain buy-in is Solana-only in this cut." });
   const token = ident(body.tokenAddress || body.tokenId || "", chainId);
@@ -263,20 +348,36 @@ async function handleBuyInReceipt(req, res, id) {
       reason: receipt.reason,
     });
   }
-  await pool.query(
-    `update public.arena_tournament_entries
+  const paid = await pool.query(
+    `update public.arena_tournament_entries e
         set buy_in_paid = true, updated_at = now()
-      where tournament_id = $1 and token_address = $2 and owner_wallet = $3`,
-    [id, token, wallet],
+      where e.tournament_id = $1 and e.token_address = $2 and e.owner_wallet = $3
+        and exists (
+          select 1 from public.arena_tournaments t
+           where t.id = e.tournament_id and t.chain_id = $4
+        )
+      returning e.tournament_id`,
+    [id, token, wallet, chainId],
   );
+  if (!paid.rows[0]) {
+    return json(res, 409, { ok: false, error: "Tournament entry is not registered on this chain", code: "TOURNAMENT_ENTRY_CHAIN_MISMATCH" });
+  }
   return json(res, 200, { ok: true, buyInPaid: true, receipt: receipt.pda });
 }
 
-async function handleAdminList(_req, res) {
-  const result = await pool.query(`select * from public.arena_tournaments order by created_at desc`);
+async function handleAdminList(req, res) {
+  const context = queryChainContext(req, res);
+  if (!context.ok) return;
+  const params = [];
+  const chainClause = context.chainId == null ? "" : " where chain_id = $1";
+  if (context.chainId != null) params.push(context.chainId);
+  const result = await pool.query(
+    `select * from public.arena_tournaments${chainClause} order by created_at desc`,
+    params,
+  );
   const items = [];
   for (const row of result.rows) {
-    items.push(mapAdmin(row, await entryCount(row.id)));
+    items.push(mapAdmin(row, await entryCount(row.id, row.chain_id)));
   }
   return json(res, 200, { items, updatedAt: new Date().toISOString() });
 }
@@ -286,7 +387,12 @@ async function handleAdminCreate(req, res) {
   if (!admin) return;
   const body = await readJson(req);
   const name = String(body.name || "").trim();
-  const chainId = Number(body.chainId || 56);
+  let chainId;
+  try {
+    chainId = optionalChainId(body.chainId || 56);
+  } catch {
+    return invalidChain(res);
+  }
   const startsAt = body.startsAt || body.starts_at;
   if (!name || !startsAt) return json(res, 400, { error: "name and startsAt are required" });
   const id = `tourney-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;
@@ -393,10 +499,12 @@ async function insertTournamentBattle({ chainId, tournamentId, left, right, nati
 async function handleAdminStart(req, res, id) {
   const admin = await requireAdminOrOps(req, res, { routeLabel: "admin/arena/tournaments/start", allowOps: true });
   if (!admin) return;
-  const row = (await pool.query(`select * from public.arena_tournaments where id = $1 limit 1`, [id])).rows[0];
-  if (!row) return json(res, 404, { error: "Tournament not found" });
+  const context = queryChainContext(req, res);
+  if (!context.ok) return;
+  const row = await loadTournamentRow(id, context.chainId);
+  if (!row) return tournamentNotFound(res, context.chainId != null);
   if (row.status !== "upcoming") return json(res, 409, { error: "Tournament is not upcoming" });
-  const entries = await listEntries(id);
+  const entries = await listEntries(id, row.chain_id);
   const start = tournamentStartRoster(entries, { buyInNative: row.buy_in_native });
   if (!start.ok) {
     return json(res, 409, {
@@ -454,8 +562,8 @@ async function handleAdminStart(req, res, id) {
 
   const bracket = { rounds: [{ round: 1, matches }] };
   await pool.query(
-    `update public.arena_tournaments set status = 'live', bracket = $2::jsonb, updated_at = now() where id = $1`,
-    [id, JSON.stringify(bracket)],
+    `update public.arena_tournaments set status = 'live', bracket = $2::jsonb, updated_at = now() where id = $1 and chain_id = $3`,
+    [id, JSON.stringify(bracket), Number(row.chain_id)],
   );
   return json(res, 200, {
     ok: true,
@@ -468,9 +576,14 @@ async function handleAdminStart(req, res, id) {
 export async function advanceTournamentFromBattle(row) {
   const tournamentId = row?.tournament_id;
   const winner = ident(row?.winner_token);
-  if (!tournamentId || !winner) return null;
-  const result = await pool.query(`select * from public.arena_tournaments where id = $1 limit 1`, [tournamentId]);
-  const tournament = result.rows[0];
+  let battleChain;
+  try {
+    battleChain = optionalChainId(row?.chain_id ?? row?.chainId);
+  } catch {
+    return null;
+  }
+  if (!tournamentId || !winner || battleChain == null) return null;
+  const tournament = await loadTournamentRow(tournamentId, battleChain);
   if (!tournament || tournament.status !== "live") return null;
   const bracket = tournament.bracket && typeof tournament.bracket === "object" ? tournament.bracket : { rounds: [] };
   const rounds = Array.isArray(bracket.rounds) ? bracket.rounds : [];
@@ -492,8 +605,8 @@ export async function advanceTournamentFromBattle(row) {
       await pool.query(
         `update public.arena_tournaments
             set status = 'finished', ends_at = now(), winner_token = $3, bracket = $2::jsonb, updated_at = now()
-          where id = $1`,
-        [tournamentId, JSON.stringify({ rounds }), winners[0]],
+          where id = $1 and chain_id = $4`,
+        [tournamentId, JSON.stringify({ rounds }), winners[0], battleChain],
       );
       try {
         await pool.query(
@@ -521,11 +634,11 @@ export async function advanceTournamentFromBattle(row) {
         continue;
       }
       const battleId = await insertTournamentBattle({
-        chainId: tournament.chain_id,
+        chainId: battleChain,
         tournamentId,
         left: a,
         right: b,
-        nativeSymbol: tournament.native_symbol || nativeSymbolFor(tournament.chain_id),
+        nativeSymbol: tournament.native_symbol || nativeSymbolFor(battleChain),
       });
       nextMatches.push({
         id: `r${(last.round || 1) + 1}-m${nextMatches.length + 1}`,
@@ -542,8 +655,8 @@ export async function advanceTournamentFromBattle(row) {
       await pool.query(
         `update public.arena_tournaments
             set status = 'finished', ends_at = now(), winner_token = $3, bracket = $2::jsonb, updated_at = now()
-          where id = $1`,
-        [tournamentId, JSON.stringify({ rounds }), nextWinners[0]],
+          where id = $1 and chain_id = $4`,
+        [tournamentId, JSON.stringify({ rounds }), nextWinners[0], battleChain],
       );
       try {
         await pool.query(
@@ -557,27 +670,39 @@ export async function advanceTournamentFromBattle(row) {
     }
   }
   await pool.query(
-    `update public.arena_tournaments set bracket = $2::jsonb, updated_at = now() where id = $1`,
-    [tournamentId, JSON.stringify({ rounds })],
+    `update public.arena_tournaments set bracket = $2::jsonb, updated_at = now() where id = $1 and chain_id = $3`,
+    [tournamentId, JSON.stringify({ rounds }), battleChain],
   );
   return { finished: false };
 }
 
-export async function reconcileTournamentBracket({ tournamentId, battleId }) {
+export async function reconcileTournamentBracket({ tournamentId, battleId, chainId = null }) {
   const id = ident(tournamentId);
   const battleIdent = String(battleId || "").trim();
+  let requestedChain;
+  try {
+    requestedChain = optionalChainId(chainId);
+  } catch {
+    return { ok: false, action: "block", reason: "invalid-chain", http: 400, error: "Invalid Arena chain id" };
+  }
   if (!id) return { ok: false, action: "block", reason: "missing-tournament-id", http: 400 };
   if (!battleIdent) return { ok: false, action: "block", reason: "missing-battle-id", http: 400 };
   const client = await pool.connect();
   try {
     await client.query("begin");
-    const locked = await client.query(`select * from public.arena_tournaments where id = $1 limit 1 for update`, [id]);
-    const tournament = locked.rows[0];
+    // loadTournamentRow executes the chain-scoped SELECT ... for update before the planner runs.
+    const tournament = await loadTournamentRow(id, requestedChain, client, { forUpdate: true });
     if (!tournament) {
       await client.query("rollback");
       return { ok: false, action: "block", reason: "tournament-not-found", http: 404, error: "Tournament not found" };
     }
-    const battleRow = await client.query(`select * from public.arena_battles where id = $1 limit 1`, [battleIdent]);
+    const tournamentChain = Number(tournament.chain_id);
+    const battleRow = await client.query(
+      `select * from public.arena_battles
+        where id = $1 and tournament_id = $2 and chain_id = $3 and coalesce(source, '') = 'tournament'
+        limit 1`,
+      [battleIdent, id, tournamentChain],
+    );
     const battle = battleRow.rows[0];
     if (!battle) {
       await client.query("rollback");
@@ -590,9 +715,9 @@ export async function reconcileTournamentBracket({ tournamentId, battleId }) {
     const existing = await client.query(
       `select id, tournament_id, chain_id, source, state, challenger_token, defender_token, created_at
          from public.arena_battles
-        where tournament_id = $1 and coalesce(source, '') = 'tournament'
+        where tournament_id = $1 and chain_id = $2 and coalesce(source, '') = 'tournament'
         order by created_at asc, id asc`,
-      [id],
+      [id, tournamentChain],
     );
     const planned = planTournamentBracketReconcile({
       tournament,
@@ -611,11 +736,11 @@ export async function reconcileTournamentBracket({ tournamentId, battleId }) {
     const nextBracket = JSON.parse(JSON.stringify(planned.nextBracket));
     for (const spec of planned.battlesToInsert) {
       const insertedId = await insertTournamentBattle({
-        chainId: tournament.chain_id,
+        chainId: tournamentChain,
         tournamentId: id,
         left: spec.tokenA,
         right: spec.tokenB,
-        nativeSymbol: tournament.native_symbol || nativeSymbolFor(tournament.chain_id),
+        nativeSymbol: tournament.native_symbol || nativeSymbolFor(tournamentChain),
         db: client,
       });
       attachInsertedBattleId(nextBracket, spec.tokenA, spec.tokenB, insertedId);
@@ -624,8 +749,8 @@ export async function reconcileTournamentBracket({ tournamentId, battleId }) {
       await client.query(
         `update public.arena_tournaments
             set status = 'finished', ends_at = now(), winner_token = $3, bracket = $2::jsonb, updated_at = now()
-          where id = $1`,
-        [id, JSON.stringify(nextBracket), planned.winner],
+          where id = $1 and chain_id = $4`,
+        [id, JSON.stringify(nextBracket), planned.winner, tournamentChain],
       );
       try {
         await client.query(
@@ -637,8 +762,8 @@ export async function reconcileTournamentBracket({ tournamentId, battleId }) {
       }
     } else {
       await client.query(
-        `update public.arena_tournaments set bracket = $2::jsonb, updated_at = now() where id = $1`,
-        [id, JSON.stringify(nextBracket)],
+        `update public.arena_tournaments set bracket = $2::jsonb, updated_at = now() where id = $1 and chain_id = $3`,
+        [id, JSON.stringify(nextBracket), tournamentChain],
       );
     }
     await client.query("commit");
@@ -655,9 +780,14 @@ async function handleAdminReconcileBracket(req, res, id) {
   const admin = await requireAdminOrOps(req, res, { routeLabel: "admin/arena/tournaments/reconcile-bracket", allowOps: true });
   if (!admin) return;
   const body = await readJson(req);
+  const bodyContext = bodyChainContext(body, res);
+  if (!bodyContext.ok) return;
+  const queryContext = queryChainContext(req, res);
+  if (!queryContext.ok) return;
+  const requestedChain = bodyContext.chainId ?? queryContext.chainId;
   const battleId = String(body.battleId || body.battle_id || "").trim();
   if (!battleId) return json(res, 400, { ok: false, error: "battleId is required", reason: "missing-battle-id" });
-  const result = await reconcileTournamentBracket({ tournamentId: id, battleId });
+  const result = await reconcileTournamentBracket({ tournamentId: id, battleId, chainId: requestedChain });
   const status = Number(result.http || (result.ok ? 200 : 409));
   return json(res, status, {
     ok: Boolean(result.ok),
