@@ -73,7 +73,7 @@ export function CommandCenterShell({ children }: CommandCenterShellProps) {
   const requestedWallet = normalizeRouteWallet(walletParam);
   const walletAddress = requestedWallet ? effectiveWalletAddress(requestedWallet, connectedWallet) : null;
 
-  if (!walletAddress) return <Navigate to="/profile" replace />;
+  if (!walletAddress) return <Navigate to={`/profile${location.search}`} replace />;
 
   if (!connectedWallet) {
     return <ConnectRequired onConnect={() => openWalletModal(anyWallet)} />;
@@ -81,7 +81,7 @@ export function CommandCenterShell({ children }: CommandCenterShellProps) {
 
   const section = getCommandSection(location.pathname);
   if (!routeWalletsMatch(requestedWallet, connectedWallet) || walletAddress !== requestedWallet) {
-    return <Navigate to={`/profile/${connectedWallet}/command${section}`} replace />;
+    return <Navigate to={`/profile/${connectedWallet}/command${section}${location.search}`} replace />;
   }
 
   return (

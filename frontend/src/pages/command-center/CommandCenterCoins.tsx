@@ -1,16 +1,25 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { Coins, FileText, Rocket } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
+import { ChevronDown, Coins, FileText, Rocket } from "lucide-react";
 import { toast } from "sonner";
 import { resolveImageUri } from "@/lib/media";
 
 import { CommandCenterCard } from "@/components/command-center/CommandCenterCard";
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
 import { CommandCenterCoinRow } from "@/components/postgrad/CommandCenterCoinRow";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { getPostGradTokenDetailRoute } from "@/features/postgrad/identityRoutes";
+import { projectImportsEnabled } from "@/features/projectImports/config";
 import { fetchOwnerCampaignDrafts, type CampaignDraft } from "@/lib/draftApi";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import { useWallet } from "@/contexts/WalletContext";
+import { isSolanaAddress } from "@/lib/address";
+import { BNB_CHAIN_ID, SOLANA_CHAIN_ID, isSolanaChainId } from "@/lib/chainConfig";
+import {
+  listUserProjectImports,
+  type ProjectImportItem,
+} from "@/lib/projectImports";
+import { ProjectImportPanel } from "@/pages/ProjectImport";
 import {
   fetchLpFeePools,
   harvestLpFeesWithWallet,
@@ -18,7 +27,6 @@ import {
   hasUnharvestedFees,
   type LpFeePoolRow,
 } from "@/lib/lpFeeHarvest";
-import { isSolanaChainId } from "@/lib/chainConfig";
 
 const BATTLE_FEATURES_ENABLED = false;
 
@@ -94,16 +102,40 @@ function getCreatedCoinMarketCap(coin: any) {
   return String(coin?.marketCap || coin?.stats?.marketCap || coin?.campaign?.marketCap || "—");
 }
 
+function sameWallet(a?: string | null, b?: string | null, solana = false) {
+  const left = String(a || "").trim();
+  const right = String(b || "").trim();
+  if (!left || !right) return false;
+  return solana ? left === right : left.toLowerCase() === right.toLowerCase();
+}
+
+function importedProjectHref(item: ProjectImportItem) {
+  return `/token/${encodeURIComponent(item.tokenAddress)}?chainId=${item.chainId}`;
+}
+
+function importedWalletOwnership(item: ProjectImportItem, walletAddress: string) {
+  const solana = Number(item.chainId) === SOLANA_CHAIN_ID;
+  const viewerIsVerifiedOwner =
+    item.ownershipStatus === "ownership_verified" && sameWallet(item.projectOwnerWallet, walletAddress, solana);
+  if (viewerIsVerifiedOwner) return { label: "OWNER VERIFIED", tone: "success" as const };
+  if (item.ownershipStatus === "ownership_manual_review") return { label: "MANUAL REVIEW", tone: "sponsored" as const };
+  return { label: "OWNERSHIP PENDING", tone: "default" as const };
+}
+
 export default function CommandCenterCoins() {
   const { walletAddress, chainId, created } = useCommandCenterData();
   const wallet = useWallet();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [drafts, setDrafts] = useState<CampaignDraft[]>([]);
   const [loadingDrafts, setLoadingDrafts] = useState(false);
   const [draftsError, setDraftsError] = useState<string | null>(null);
+  const [importedProjects, setImportedProjects] = useState<ProjectImportItem[]>([]);
   const [activeFilter, setActiveFilter] = useState<CoinFilter>("all");
   const [lpFeeByCampaign, setLpFeeByCampaign] = useState<Record<string, LpFeePoolRow>>({});
   const [claimingCampaign, setClaimingCampaign] = useState<string | null>(null);
   const [lpFeeError, setLpFeeError] = useState<string | null>(null);
+  const importRequested = projectImportsEnabled && searchParams.get("import") === "1";
+  const [importOpen, setImportOpen] = useState(importRequested);
 
   const refreshLpFees = useCallback(async () => {
     if (!walletAddress) {
@@ -133,6 +165,36 @@ export default function CommandCenterCoins() {
   useEffect(() => {
     void refreshLpFees();
   }, [refreshLpFees]);
+
+  useEffect(() => {
+    if (importRequested) setImportOpen(true);
+  }, [importRequested]);
+
+  const refreshImportedProjects = useCallback(async () => {
+    if (!projectImportsEnabled || !walletAddress) {
+      setImportedProjects([]);
+      return;
+    }
+    const importChainId = isSolanaAddress(walletAddress) ? SOLANA_CHAIN_ID : BNB_CHAIN_ID;
+    try {
+      setImportedProjects(await listUserProjectImports(walletAddress, importChainId));
+    } catch {
+      setImportedProjects([]);
+    }
+  }, [walletAddress]);
+
+  useEffect(() => {
+    void refreshImportedProjects();
+  }, [refreshImportedProjects]);
+
+  const handleImportOpenChange = (open: boolean) => {
+    setImportOpen(open);
+    if (!open && searchParams.get("import") === "1") {
+      const next = new URLSearchParams(searchParams);
+      next.delete("import");
+      setSearchParams(next, { replace: true });
+    }
+  };
 
   const handleClaimLpFees = useCallback(
     async (campaignAddress: string) => {
@@ -298,15 +360,30 @@ export default function CommandCenterCoins() {
       });
     });
 
+    importedProjects.forEach((project) => {
+      const ownership = importedWalletOwnership(project, walletAddress);
+      items.push({
+        id: `imported:${project.id}`,
+        type: "imported",
+        name: project.name || project.symbol || "Imported project",
+        ticker: project.symbol || "???",
+        image: resolveImageUri(project.imageUrl) || "/placeholder.svg",
+        statusLabel: ownership.label,
+        statusTone: ownership.tone,
+        href: importedProjectHref(project),
+        tokenRoute: importedProjectHref(project),
+      });
+    });
+
     return items;
-  }, [drafts, createdCoins, lpFeeByCampaign, claimingCampaign]);
+  }, [drafts, createdCoins, importedProjects, lpFeeByCampaign, claimingCampaign, walletAddress]);
 
   const filteredItems = useMemo(() => {
     if (activeFilter === "all") return unifiedItems;
 
     return unifiedItems.filter((item) => {
       if (activeFilter === "drafts") return item.type === "draft";
-      if (activeFilter === "coins") return item.type === "coin";
+      if (activeFilter === "coins") return item.type === "coin" || item.type === "imported";
       if (!BATTLE_FEATURES_ENABLED) return true;
       if (activeFilter === "open_for_battle") return item.type === "coin" && item.creatorState === "open_for_battle";
       if (activeFilter === "in_battle") return item.type === "coin" && ["pending", "accepted", "live"].includes(item.creatorState);
@@ -339,6 +416,22 @@ export default function CommandCenterCoins() {
           <div className="font-retro text-2xl text-foreground">New coin</div>
         </Link>
       </div>
+
+      {projectImportsEnabled ? (
+        <Collapsible open={importOpen} onOpenChange={handleImportOpenChange}>
+          <section className="mwz-hud-frame" data-command-center-import-card="true" data-import-open={importOpen ? "true" : "false"}>
+            <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left">
+              <span className="font-retro text-[11px] uppercase tracking-[0.16em] text-foreground">IMPORT EXISTING MEMECOIN</span>
+              <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${importOpen ? "rotate-180" : ""}`} />
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="border-t border-white/10 px-4 py-4">
+                <ProjectImportPanel embedded onProjectChange={() => void refreshImportedProjects()} />
+              </div>
+            </CollapsibleContent>
+          </section>
+        </Collapsible>
+      ) : null}
 
       <CommandCenterCard
         title="My Coins"
