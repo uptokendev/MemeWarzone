@@ -5,7 +5,7 @@ import { projectImportsEnabled } from "@/features/projectImports/config";
 import { BNB_CHAIN_ID, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
 import { lookupProjectImport, type ProjectImportItem } from "@/lib/projectImports";
 
-import ImportedTokenDetailsPage from "./ImportedTokenDetailsPage";
+import ImportedProjectDetails from "./ImportedProjectDetails";
 import TokenDetailsLiveEntry from "./TokenDetailsLiveEntry";
 
 /**
@@ -61,6 +61,6 @@ export default function TokenDetailsEntry() {
 
   if (!projectImportsEnabled) return <TokenDetailsLiveEntry />;
   if (!resolved) return null;
-  if (project) return <ImportedTokenDetailsPage item={project} />;
+  if (project) return <ImportedProjectDetails item={project} />;
   return <TokenDetailsLiveEntry />;
 }
