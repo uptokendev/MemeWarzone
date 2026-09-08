@@ -1,0 +1,310 @@
+name: Agent 4 Robinhood 46630 live re-attestation
+
+on:
+  push:
+    branches:
+      - audit/agent4-rh46630-live-reattest-818a5049
+
+permissions:
+  contents: read
+
+jobs:
+  live-reattest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 818a5049211300210727af0c773c62a92ca64714
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Read-only live Robinhood Testnet 46630 re-attestation
+        env:
+          RH_RPC_URL: https://rpc.testnet.chain.robinhood.com
+        run: |
+          node <<'NODE'
+          const { ethers } = require('ethers');
+
+          const EXPECTED_CHAIN_ID = 46630;
+          const C = {
+            factory: '0xF170a2C97953754c2C1105E2AcC522Bc8e764D75',
+            implementation: '0xC50DfbA761A9A4e9F55Dc01886Bf6659aEd9B817',
+            adapter: '0xe69a6a41363a48179beaB9b1E6122885bbFe8C65',
+            locker: '0x9523d856E469E37D4b2C52f3b6C8fA2d360a229F',
+            routeAuthority: '0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0',
+          };
+          const same = (a,b) => String(a).toLowerCase() === String(b).toLowerCase();
+          const nonzero = (a) => ethers.isAddress(a) && !same(a, ethers.ZeroAddress);
+          const out = {
+            sourceAuthority: '818a5049211300210727af0c773c62a92ca64714',
+            rpcUrl: process.env.RH_RPC_URL,
+            rpcChain: 'FAIL',
+            chainId: null,
+            factory: 'UNREACHABLE',
+            implementation: 'UNREACHABLE',
+            adapter: 'UNREACHABLE',
+            locker: 'UNREACHABLE',
+            routeAuthority: 'UNREACHABLE',
+            discovered: { weth: null, v3Factory: null, positionManager: null, router: null, oracle: null, oraclePriceFeed: null },
+            generation: null,
+            live: null,
+            createPaused: null,
+            wiring: 'FAIL',
+            deploymentBlocks: {},
+            notes: [],
+            result: 'RPC_BLOCKED',
+          };
+
+          function markFailure(name, error) {
+            out.notes.push(`${name}: ${error?.shortMessage || error?.message || String(error)}`);
+          }
+
+          async function codePresent(provider, address) {
+            const code = await provider.getCode(address);
+            return !!code && code !== '0x';
+          }
+
+          async function tryDeploymentBlock(provider, address, latest) {
+            try {
+              if (!(await codePresent(provider, address))) return null;
+              let lo = 0;
+              let hi = latest;
+              while (lo < hi) {
+                const mid = Math.floor((lo + hi) / 2);
+                const code = await provider.getCode(address, mid);
+                if (code && code !== '0x') hi = mid;
+                else lo = mid + 1;
+              }
+              return lo;
+            } catch (e) {
+              out.notes.push(`deployment block not recoverable for ${address}: ${e?.shortMessage || e?.message || String(e)}`);
+              return null;
+            }
+          }
+
+          (async () => {
+            let provider;
+            try {
+              provider = new ethers.JsonRpcProvider(process.env.RH_RPC_URL, undefined, { staticNetwork: false });
+              const net = await provider.getNetwork();
+              out.chainId = Number(net.chainId);
+              if (out.chainId !== EXPECTED_CHAIN_ID) {
+                out.notes.push(`RPC returned chain ${out.chainId}, expected ${EXPECTED_CHAIN_ID}`);
+                console.log('AGENT4_RH46630_REATTEST=' + JSON.stringify(out));
+                return;
+              }
+              out.rpcChain = 'PASS';
+            } catch (e) {
+              markFailure('RPC', e);
+              console.log('AGENT4_RH46630_REATTEST=' + JSON.stringify(out));
+              return;
+            }
+
+            const factoryAbi = [
+              'function campaignImplementation() view returns (address)',
+              'function router() view returns (address)',
+              'function graduationOracle() view returns (address)',
+              'function permanentLpLocker() view returns (address)',
+              'function routeAuthority() view returns (address)',
+              'function FACTORY_GENERATION() view returns (uint32)',
+              'function CAMPAIGN_GENERATION() view returns (uint32)',
+              'function liquidityKind() view returns (uint8)',
+              'function live() view returns (bool)',
+              'function createPaused() view returns (bool)',
+            ];
+            const implementationAbi = [
+              'function owner() view returns (address)',
+              'function factory() view returns (address)',
+              'function router() view returns (address)',
+              'function launchAt() view returns (uint64)',
+            ];
+            const adapterAbi = [
+              'function liquidityKind() view returns (uint8)',
+              'function poolFactory() view returns (address)',
+              'function v3Factory() view returns (address)',
+              'function positionManager() view returns (address)',
+              'function WETH() view returns (address)',
+              'function feeTier() view returns (uint24)',
+            ];
+            const lockerAbi = [
+              'function admin() view returns (address)',
+              'function integrationSource() view returns (address)',
+              'function v3Factory() view returns (address)',
+              'function positionManager() view returns (address)',
+              'function wrappedNative() view returns (address)',
+              'function configuredFeeTier() view returns (uint24)',
+              'function authorizedIntegrationSource(address) view returns (bool)',
+            ];
+            const oracleAbi = [
+              'function priceFeed() view returns (address)',
+              'function maxPriceAge() view returns (uint256)',
+            ];
+            const v3FactoryAbi = ['function feeAmountTickSpacing(uint24) view returns (int24)'];
+            const positionManagerAbi = [
+              'function factory() view returns (address)',
+              'function WETH9() view returns (address)',
+            ];
+            const wethAbi = ['function decimals() view returns (uint8)', 'function symbol() view returns (string)'];
+            const feedAbi = ['function decimals() view returns (uint8)', 'function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)'];
+
+            let f, impl, a, l;
+            let factoryValues, adapterValues, lockerValues;
+
+            try {
+              if (!(await codePresent(provider, C.factory))) throw new Error('no bytecode');
+              f = new ethers.Contract(C.factory, factoryAbi, provider);
+              const [implementation, router, oracle, locker, routeAuthority, fg, cg, lk, live, paused] = await Promise.all([
+                f.campaignImplementation(), f.router(), f.graduationOracle(), f.permanentLpLocker(), f.routeAuthority(),
+                f.FACTORY_GENERATION(), f.CAMPAIGN_GENERATION(), f.liquidityKind(), f.live(), f.createPaused(),
+              ]);
+              factoryValues = { implementation, router, oracle, locker, routeAuthority, fg:Number(fg), cg:Number(cg), lk:Number(lk), live:Boolean(live), paused:Boolean(paused) };
+              out.generation = `${Number(fg)}/${Number(cg)}`;
+              out.live = Boolean(live);
+              out.createPaused = Boolean(paused);
+              out.discovered.oracle = oracle;
+              if (!same(implementation, C.implementation)) throw new Error(`implementation ${implementation} != historical ${C.implementation}`);
+              if (!same(router, C.adapter)) throw new Error(`router ${router} != historical adapter ${C.adapter}`);
+              if (!same(locker, C.locker)) throw new Error(`locker ${locker} != historical ${C.locker}`);
+              if (!same(routeAuthority, C.routeAuthority)) throw new Error(`routeAuthority ${routeAuthority} != historical ${C.routeAuthority}`);
+              if (Number(fg) !== 4 || Number(cg) !== 3) throw new Error(`generation ${fg}/${cg} != 4/3`);
+              if (Number(lk) !== 2) throw new Error(`liquidityKind ${lk} != 2`);
+              if (live !== true || paused !== true) throw new Error(`accepted freeze state expected live=true/createPaused=true; got ${live}/${paused}`);
+              out.factory = 'VALID';
+              out.routeAuthority = 'VALID';
+            } catch (e) {
+              out.factory = 'INVALID';
+              out.routeAuthority = 'INVALID';
+              markFailure('factory', e);
+            }
+
+            try {
+              if (!(await codePresent(provider, C.implementation))) throw new Error('no bytecode');
+              impl = new ethers.Contract(C.implementation, implementationAbi, provider);
+              const [owner, implementationFactory, implementationRouter, launchAt] = await Promise.all([
+                impl.owner(), impl.factory(), impl.router(), impl.launchAt(),
+              ]);
+              const lockedOwner = '0x0000000000000000000000000000000000000001';
+              if (!same(owner, lockedOwner)) throw new Error(`implementation owner ${owner} != constructor lock ${lockedOwner}`);
+              if (!same(implementationFactory, ethers.ZeroAddress)) throw new Error(`implementation factory storage expected zero; got ${implementationFactory}`);
+              if (!same(implementationRouter, ethers.ZeroAddress)) throw new Error(`implementation router storage expected zero; got ${implementationRouter}`);
+              if (Number(launchAt) !== 0) throw new Error(`implementation launchAt expected zero; got ${launchAt}`);
+              out.implementation = 'VALID';
+            } catch (e) {
+              out.implementation = 'INVALID';
+              markFailure('implementation', e);
+            }
+
+            try {
+              if (!(await codePresent(provider, C.adapter))) throw new Error('no bytecode');
+              a = new ethers.Contract(C.adapter, adapterAbi, provider);
+              const [lk, poolFactory, v3Factory, positionManager, weth, feeTier] = await Promise.all([
+                a.liquidityKind(), a.poolFactory(), a.v3Factory(), a.positionManager(), a.WETH(), a.feeTier(),
+              ]);
+              adapterValues = { lk:Number(lk), poolFactory, v3Factory, positionManager, weth, feeTier:Number(feeTier) };
+              out.discovered.weth = weth;
+              out.discovered.v3Factory = v3Factory;
+              out.discovered.positionManager = positionManager;
+              // The listed factory/adapter expose no post-grad V3 swap-router getter. Do not infer one.
+              out.discovered.router = null;
+              if (Number(lk) !== 2) throw new Error(`liquidityKind ${lk} != 2`);
+              if (!same(poolFactory, C.adapter)) throw new Error(`poolFactory ${poolFactory} != adapter self`);
+              if (!nonzero(v3Factory) || !nonzero(positionManager) || !nonzero(weth)) throw new Error('zero V3 dependency');
+              if (Number(feeTier) !== 3000) throw new Error(`feeTier ${feeTier} != 3000`);
+              for (const [name, addr] of [['v3Factory',v3Factory],['positionManager',positionManager],['WETH',weth]]) {
+                if (!(await codePresent(provider, addr))) throw new Error(`${name} has no bytecode at ${addr}`);
+              }
+              const vf = new ethers.Contract(v3Factory, v3FactoryAbi, provider);
+              const spacing = Number(await vf.feeAmountTickSpacing(feeTier));
+              if (!(spacing > 0)) throw new Error(`V3 factory fee tier ${feeTier} unsupported`);
+              const pm = new ethers.Contract(positionManager, positionManagerAbi, provider);
+              const [pmFactory, pmWeth] = await Promise.all([pm.factory(), pm.WETH9()]);
+              if (!same(pmFactory, v3Factory)) throw new Error(`position manager factory ${pmFactory} != ${v3Factory}`);
+              if (!same(pmWeth, weth)) throw new Error(`position manager WETH9 ${pmWeth} != ${weth}`);
+              const w = new ethers.Contract(weth, wethAbi, provider);
+              const decimals = Number(await w.decimals());
+              const symbol = await w.symbol();
+              if (decimals !== 18) throw new Error(`WETH decimals ${decimals} != 18`);
+              if (!String(symbol).toUpperCase().includes('WETH')) throw new Error(`unexpected WETH symbol ${symbol}`);
+              out.adapter = 'VALID';
+            } catch (e) {
+              out.adapter = 'INVALID';
+              markFailure('adapter', e);
+            }
+
+            try {
+              if (!(await codePresent(provider, C.locker))) throw new Error('no bytecode');
+              l = new ethers.Contract(C.locker, lockerAbi, provider);
+              const [admin, integrationSource, v3Factory, positionManager, wrappedNative, feeTier, sourceAuthorized] = await Promise.all([
+                l.admin(), l.integrationSource(), l.v3Factory(), l.positionManager(), l.wrappedNative(), l.configuredFeeTier(), l.authorizedIntegrationSource(C.adapter),
+              ]);
+              lockerValues = { admin, integrationSource, v3Factory, positionManager, wrappedNative, feeTier:Number(feeTier), sourceAuthorized:Boolean(sourceAuthorized) };
+              if (!same(admin, C.factory)) throw new Error(`locker admin ${admin} != factory ${C.factory}`);
+              if (!same(integrationSource, C.adapter)) throw new Error(`locker integrationSource ${integrationSource} != adapter ${C.adapter}`);
+              if (adapterValues) {
+                if (!same(v3Factory, adapterValues.v3Factory)) throw new Error(`locker v3Factory ${v3Factory} != adapter ${adapterValues.v3Factory}`);
+                if (!same(positionManager, adapterValues.positionManager)) throw new Error(`locker positionManager ${positionManager} != adapter ${adapterValues.positionManager}`);
+                if (!same(wrappedNative, adapterValues.weth)) throw new Error(`locker wrappedNative ${wrappedNative} != adapter ${adapterValues.weth}`);
+                if (Number(feeTier) !== adapterValues.feeTier) throw new Error(`locker feeTier ${feeTier} != adapter ${adapterValues.feeTier}`);
+              }
+              if (sourceAuthorized !== true) throw new Error('adapter is not authorized integration source');
+              out.locker = 'VALID';
+            } catch (e) {
+              out.locker = 'INVALID';
+              markFailure('locker', e);
+            }
+
+            try {
+              if (!factoryValues || !nonzero(factoryValues.oracle)) throw new Error('factory oracle unavailable');
+              if (!(await codePresent(provider, factoryValues.oracle))) throw new Error(`oracle has no bytecode at ${factoryValues.oracle}`);
+              const oracle = new ethers.Contract(factoryValues.oracle, oracleAbi, provider);
+              const [priceFeed, maxPriceAge] = await Promise.all([oracle.priceFeed(), oracle.maxPriceAge()]);
+              out.discovered.oraclePriceFeed = priceFeed;
+              if (!nonzero(priceFeed)) throw new Error('oracle priceFeed is zero');
+              if (!(await codePresent(provider, priceFeed))) throw new Error(`oracle price feed has no bytecode at ${priceFeed}`);
+              const feed = new ethers.Contract(priceFeed, feedAbi, provider);
+              const [decimals, round] = await Promise.all([feed.decimals(), feed.latestRoundData()]);
+              out.oracleDetails = {
+                maxPriceAge: maxPriceAge.toString(),
+                feedDecimals: Number(decimals),
+                roundId: round[0].toString(),
+                answer: round[1].toString(),
+                updatedAt: round[3].toString(),
+                answeredInRound: round[4].toString(),
+              };
+            } catch (e) {
+              markFailure('oracle discovery', e);
+            }
+
+            // Best-effort deployment block recovery from archive-capable RPC state.
+            try {
+              const latest = await provider.getBlockNumber();
+              for (const [name, addr] of Object.entries({ factory:C.factory, implementation:C.implementation, adapter:C.adapter, locker:C.locker })) {
+                out.deploymentBlocks[name] = await tryDeploymentBlock(provider, addr, latest);
+              }
+            } catch (e) {
+              markFailure('deployment blocks', e);
+            }
+
+            const allHistoricalValid = ['factory','implementation','adapter','locker','routeAuthority'].every(k => out[k] === 'VALID');
+            const wiringOk = allHistoricalValid && factoryValues && adapterValues && lockerValues &&
+              same(factoryValues.implementation, C.implementation) && same(factoryValues.router, C.adapter) &&
+              same(factoryValues.locker, C.locker) && same(factoryValues.routeAuthority, C.routeAuthority) &&
+              same(lockerValues.integrationSource, C.adapter) && same(lockerValues.v3Factory, adapterValues.v3Factory) &&
+              same(lockerValues.positionManager, adapterValues.positionManager) && same(lockerValues.wrappedNative, adapterValues.weth);
+            out.wiring = wiringOk ? 'PASS' : 'FAIL';
+            out.result = wiringOk ? 'REUSE_STACK' : 'PARTIAL_REDEPLOY_REQUIRED';
+
+            console.log('AGENT4_RH46630_REATTEST=' + JSON.stringify(out));
+          })().catch((e) => {
+            markFailure('fatal', e);
+            console.log('AGENT4_RH46630_REATTEST=' + JSON.stringify(out));
+          });
+          NODE
