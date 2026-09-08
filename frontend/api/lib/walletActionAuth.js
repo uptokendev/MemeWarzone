@@ -2,6 +2,7 @@
  * Generic wallet action auth (nonce + signature), shared across claims/follows/upload.
  * Message brand: MemeWarzone API Action
  * Dual-auth: when API_AUTH_ENFORCE_USER_WRITES is off, missing auth is allowed with a warning.
+ * Callers that can never use the legacy-open path may pass strict=true.
  */
 
 import crypto from "node:crypto";
@@ -84,6 +85,7 @@ async function consumeNonce({ pool, chainId, wallet, nonce }) {
  * @param {number} opts.chainId
  * @param {string} opts.action
  * @param {string[]} [opts.extraLines]
+ * @param {boolean} [opts.strict] - force nonce/signature enforcement regardless of the global legacy-open flag
  * @returns {Promise<{ walletAddress: string, chainId: number, legacy?: boolean }|null>}
  */
 export async function requireWalletActionAuth({
@@ -95,8 +97,9 @@ export async function requireWalletActionAuth({
   action,
   extraLines = [],
   routeLabel = action,
+  strict = false,
 }) {
-  const enforce = isAuthEnforceUserWrites();
+  const enforce = Boolean(strict) || isAuthEnforceUserWrites();
   const expectedChainId = Number(chainId);
   // Allow 0 for EVM social-graph follows (wallet-global, not per 56/97).
   if (!Number.isFinite(expectedChainId) || expectedChainId < 0) {
@@ -131,7 +134,6 @@ export async function requireWalletActionAuth({
     return null;
   }
 
-  // Dual-auth: signed request preferred, but never 500 the client while enforce is off.
   const rejectOrLegacy = (code, error) => {
     if (!enforce) {
       console.warn(`[walletActionAuth] ${routeLabel}: ${code}; legacy open for ${wallet}`);
@@ -162,7 +164,6 @@ export async function requireWalletActionAuth({
 
     const nonce = String(auth.nonce || "").trim();
     const signature = String(auth.signature || "").trim();
-    // Multipart proxies sometimes rewrite \n → \r\n; normalize before compare.
     const clientMessage = String(auth.message || "").replace(/\r\n/g, "\n").trim();
     const expectedMessage = buildWalletActionMessage({
       action,
@@ -172,9 +173,6 @@ export async function requireWalletActionAuth({
       extraLines,
     });
 
-    // Canonical message is authoritative. Client message is only a diagnostic hint —
-    // never reject solely on string inequality if the signature recovers the wallet
-    // for the canonical server message (proxies often mangle multiline form fields).
     if (clientMessage && clientMessage !== expectedMessage) {
       console.warn(`[walletActionAuth] ${routeLabel}: client message differs from canonical (will verify signature on canonical)`, {
         expectedPreview: expectedMessage.slice(0, 160),
@@ -197,7 +195,6 @@ export async function requireWalletActionAuth({
     }
 
     if (!signatureValid) {
-      // Prefer a clear mismatch code when the client clearly signed a different body.
       if (clientMessage && clientMessage !== expectedMessage) {
         return rejectOrLegacy("MESSAGE_MISMATCH", "Wallet signature message mismatch.");
       }
