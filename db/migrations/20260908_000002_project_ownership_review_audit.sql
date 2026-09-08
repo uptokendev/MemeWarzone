@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS public.project_ownership_review_audit (
   operator_email text,
   reason text NOT NULL,
   claimant_wallet text,
+  claim_requested_at timestamptz,
+  claim_note text,
   previous_owner_wallet text,
   next_owner_wallet text,
   previous_ownership_status text NOT NULL,
@@ -24,6 +26,10 @@ CREATE TABLE IF NOT EXISTS public.project_ownership_review_audit (
   CONSTRAINT project_ownership_review_audit_next_status_check
     CHECK (next_ownership_status IN ('ownership_pending','ownership_verified','ownership_manual_review','ownership_suspended'))
 );
+
+ALTER TABLE public.project_ownership_review_audit
+  ADD COLUMN IF NOT EXISTS claim_requested_at timestamptz,
+  ADD COLUMN IF NOT EXISTS claim_note text;
 
 CREATE INDEX IF NOT EXISTS project_ownership_review_audit_project_idx
   ON public.project_ownership_review_audit(project_id, created_at DESC);
