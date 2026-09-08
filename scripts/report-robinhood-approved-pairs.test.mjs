@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { listRobinhoodManifestPairCandidates } from "../frontend/api/lib/robinhoodFullApprovedPairCatalog.js";
+import {
+  discoverRobinhoodCanonicalStockCandidates,
+  listRobinhoodManifestPairCandidates,
+} from "../frontend/api/lib/robinhoodFullApprovedPairCatalog.js";
 import { buildRobinhoodApprovedPairReport } from "./report-robinhood-approved-pairs.mjs";
 
 test("Robinhood catalog contains canonical WETH and USDG plus Stock Token provider candidates", () => {
@@ -22,7 +25,7 @@ test("Solana-only provider catalogs are never projected onto Robinhood", () => {
   assert.equal(providers.has("sunrise"), false);
 });
 
-test("actual Robinhood deployments retain ETF, provider-RWA and pre-IPO classification", () => {
+test("actual admitted Robinhood deployments retain ETF, provider-RWA and pre-IPO classification", () => {
   const items = listRobinhoodManifestPairCandidates();
   assert.equal(items.find((item) => item.asset === "SPY")?.category, "ETF");
   assert.equal(items.find((item) => item.asset === "QQQ")?.category, "ETF");
@@ -30,9 +33,39 @@ test("actual Robinhood deployments retain ETF, provider-RWA and pre-IPO classifi
   assert.equal(items.find((item) => item.asset === "SPCX")?.category, "PRE_IPO");
 });
 
-test("dark production manifest leaves every candidate PENDING", () => {
+test("live provider discovery adds exact chain-4663 deployments without self-admitting them", () => {
+  const payload = {
+    assets: [{
+      tokenSymbol: "P",
+      tokenName: "Everpure • Robinhood Token",
+      tokenDecimals: 18,
+      status: "ASSET_STATUS_ACTIVE",
+      deployments: [{ chainId: 4663, contractAddress: "0x1Cdad396DB64BDa184d5182A97Dd9B3C62100b7D" }],
+      tradingCapabilities: { market: { whole: "TRADING_STATUS_TRADABLE" } },
+    }],
+  };
+  const items = discoverRobinhoodCanonicalStockCandidates(payload);
+  const discovered = items.find((item) => item.asset === "P");
+  assert.equal(discovered?.contract, "0x1Cdad396DB64BDa184d5182A97Dd9B3C62100b7D");
+  assert.equal(discovered?.provider, "ROBINHOOD_CANONICAL");
+  assert.equal(discovered?.identityStatus, "VERIFIED_ROBINHOOD_CHAIN_4663_PROVIDER_FEED");
+  assert.equal(discovered?.manifestState, "DISCOVERED_NOT_ADMITTED");
+  assert.equal(discovered?.disposition, "PENDING");
+});
+
+test("dark production manifest leaves every discovered candidate PENDING", () => {
   const report = buildRobinhoodApprovedPairReport({
     productionManifest: { chainId: 4663, supportEnabled: false, creationEnabled: false, contracts: {} },
+    canonicalPayload: {
+      assets: [{
+        tokenSymbol: "P",
+        tokenName: "Everpure • Robinhood Token",
+        tokenDecimals: 18,
+        status: "ASSET_STATUS_ACTIVE",
+        deployments: [{ chainId: 4663, contractAddress: "0x1Cdad396DB64BDa184d5182A97Dd9B3C62100b7D" }],
+        tradingCapabilities: { market: { whole: "TRADING_STATUS_TRADABLE" } },
+      }],
+    },
   });
   assert.equal(report.productionRuntimeReady, false);
   assert.ok(report.candidates.length > 0);
