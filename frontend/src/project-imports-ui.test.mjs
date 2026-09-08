@@ -69,10 +69,11 @@ test("public imported project remains financially inert and visibly locked", () 
   assert.doesNotMatch(importedPage, /from .*TokenDetails|from .*launchpad|from .*chart|from .*trading|from .*swap|from .*bonding|from .*graduation|from .*Topaz|from .*Meteora/i);
 });
 
-test("Solana display metadata is optional on-chain Metaplex data while ownership remains mintAuthority", () => {
+test("Solana display metadata is optional on-chain metadata while ownership remains mintAuthority", () => {
   assert.match(resolverAdapters, /metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s/); assert.match(resolverAdapters, /findProgramAddressSync/); assert.match(resolverAdapters, /getAccountInfo/);
-  assert.match(resolverAdapters, /name:metadata\.name/); assert.match(resolverAdapters, /symbol:metadata\.symbol/); assert.match(resolverAdapters, /currentAuthority:raw\.mintAuthority/);
-  assert.match(resolverAdapters, /signedWalletMatchesAuthority:Boolean\(raw\.verified\)/); assert.doesNotMatch(resolverAdapters, /jupiter|birdeye|dexscreener|updateAuthority/i);
+  assert.match(resolverAdapters, /getTokenMetadata/); assert.match(resolverAdapters, /TOKEN_2022_PROGRAM_ID/);
+  assert.match(resolverAdapters, /name:\s*metadata\.name/); assert.match(resolverAdapters, /symbol:\s*metadata\.symbol/); assert.match(resolverAdapters, /currentAuthority:\s*raw\.mintAuthority/);
+  assert.match(resolverAdapters, /signedWalletMatchesAuthority:\s*Boolean\(raw\.verified\)/); assert.doesNotMatch(resolverAdapters, /jupiter|birdeye|dexscreener|updateAuthority/i);
   assert.match(api, /enrichExistingProjectIdentity/); assert.match(api, /name IS NULL OR btrim\(name\) = ''/); assert.match(api, /symbol IS NULL OR btrim\(symbol\) = ''/);
 });
 
