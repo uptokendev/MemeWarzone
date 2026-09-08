@@ -39,7 +39,7 @@ export function LeftBattleSidebar({ collapsed, onToggleCollapse }: LeftBattleSid
     () => [
       { icon: Rocket, label: "Launchpad", path: "/" },
       { icon: Trophy, label: "Leagues", path: "/league" },
-      ...(projectImportsEnabled ? [{ icon: Upload, label: "IMPORT YOUR MEMECOIN", path: "/import" }] : []),
+      ...(projectImportsEnabled ? [{ icon: Upload, label: "Import your memecoin", path: "/import" }] : []),
       ...(showArenaNav ? [{ icon: Swords, label: "Arena", path: "/arena", hasSubmenu: true }] : []),
       ...(warRoomEnabled ? [{ icon: Target, label: "War Trade Room", path: "/war-room" }] : []),
       { icon: User, label: "Profile", path: "/profile" },
@@ -54,7 +54,7 @@ export function LeftBattleSidebar({ collapsed, onToggleCollapse }: LeftBattleSid
     return location.pathname.startsWith(path);
   };
 
-  const sidebarWidth = collapsed ? "w-[75px]" : "w-56";
+  const sidebarWidth = collapsed ? "w-[75px]" : "w-[calc(var(--mwz-left-sidebar-width)+0.75rem)]";
   const labelClass = collapsed ? "hidden" : "block";
 
   return (
