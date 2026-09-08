@@ -1,0 +1,85 @@
+name: Agent 1 Final Salvo Five-Step
+
+on:
+  push:
+    branches:
+      - agent1/final-salvo-five-step
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+
+permissions:
+  contents: read
+
+jobs:
+  final-salvo-five-step:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Exact base and forbidden-scope preservation
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=88f6de5b07160bb9e4aea1b23a43253dafdcaf44
+          git merge-base --is-ancestor "$BASE" HEAD
+          git diff --name-only "$BASE"...HEAD | tee /tmp/final-salvo-files.txt
+
+          forbidden_exact=(
+            .github/workflows/agent3-bnb-postgrad-routing.yml
+            db/migrations/202609080003_bnb_postgrad_quote_identity.sql
+            frontend/src/lib/bnbTopazQuoteRouting.mjs
+            frontend/src/lib/bnbTopazQuoteRouting.test.mjs
+            frontend/src/lib/topazV2Trade.ts
+            realtime-indexer/src/bnbPostGradQuoteIdentity.test.mjs
+            .github/workflows/agent5-bnb-battle-claim-recovery.yml
+            frontend/api/dev-fix/reward-claim-battle-router.js
+            frontend/api/dev-fix/reward-claim-intent-generic.js
+            frontend/api/dev-fix/reward-claim-intent.js
+            frontend/api/lib/bnbBattleClaimRecovery.integration.test.mjs
+            frontend/api/lib/bnbBattleClaimRecovery.js
+            frontend/api/lib/rewardClaimVerification.js
+            hardhat.agent5-claim-recovery.config.cjs
+            .github/workflows/agent1-vote-tournament-three-chain-identity.yml
+            frontend/api/arenaTournamentVotes.js
+            frontend/api/arenaVoteTournamentIdentityGate.js
+            frontend/api/lib/arenaVoteTournamentChainIdentity.js
+            frontend/api/lib/arenaVoteTournamentChainIdentity.test.mjs
+            frontend/api/postgrad.js
+          )
+          for path in "${forbidden_exact[@]}"; do
+            if grep -Fxq "$path" /tmp/final-salvo-files.txt; then
+              echo "Forbidden preservation file changed: $path" >&2
+              exit 1
+            fi
+          done
+
+          if grep -E '(^|/)(claim|claims|graduation|imports?|dashboard|mwl|quarterly|sponsorship)(/|[-_.])' /tmp/final-salvo-files.txt; then
+            echo "Forbidden scope path changed" >&2
+            exit 1
+          fi
+
+      - name: Syntax checks
+        run: |
+          node --check frontend/api/arenaFinalSalvo.js
+          node --check frontend/api/lib/arenaFinalSalvoFinalizer.js
+          node --check frontend/api/lib/arenaFinalSalvoRuntime.mjs
+
+      - name: Final Salvo five-step certification
+        run: node --test frontend/api/lib/arenaFinalSalvoRuntime.test.mjs
+
+      - name: Normal Tournament PR 240 regression
+        run: node --test frontend/api/lib/arenaTournamentChainIdentity.test.mjs
+
+      - name: Vote Tournament PR 264 regression
+        run: node --test frontend/api/lib/arenaVoteTournamentChainIdentity.test.mjs
