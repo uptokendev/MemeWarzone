@@ -1,0 +1,77 @@
+name: CI Import Ownership Final Cert
+
+on:
+  pull_request:
+    branches:
+      - release/main-import-onboarding
+
+permissions:
+  contents: read
+
+jobs:
+  final-cert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: memewarzone_import_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d memewarzone_import_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/memewarzone_import_test
+      PROJECT_IMPORT_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/memewarzone_import_test
+      PG_DISABLE_SSL: "1"
+      ENABLE_PROJECT_IMPORTS: "true"
+      ENABLE_ARENA: "false"
+      ENABLE_POSTGRAD_ARENA: "false"
+      ENABLE_POSTGRAD_BATTLE: "false"
+      ENABLE_POSTGRAD_TOURNAMENT: "false"
+      ENABLE_POSTGRAD_LEAGUE: "false"
+      VITE_ENABLE_PROJECT_IMPORTS: "true"
+      VITE_ENABLE_POSTGRAD_ARENA: "false"
+      VITE_ENABLE_POSTGRAD_BATTLE: "false"
+      VITE_ENABLE_POSTGRAD_TOURNAMENT: "false"
+      VITE_ENABLE_POSTGRAD_LEAGUE: "false"
+      VITE_ENABLE_POSTGRAD_CLAIMS: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install locked frontend dependencies
+        run: npm ci --prefix frontend --legacy-peer-deps --no-audit --no-fund
+      - name: Syntax check changed backend modules
+        run: |
+          node --check frontend/api/projectImports.js
+          node --check frontend/api/lib/projectImportCore.js
+          node --check frontend/api/lib/projectImportResolverAdapters.js
+          node --check frontend/api/lib/projectOwnershipReview.js
+      - name: BNB ownership resolver
+        run: node --test frontend/api/lib/projectOwnershipResolveBnb.test.mjs
+      - name: Solana ownership resolver
+        run: node --test frontend/api/lib/projectOwnershipResolveSolana.test.mjs
+      - name: Import security
+        run: node --test frontend/api/lib/projectImportSecurity.test.mjs
+      - name: Import core
+        run: node --test frontend/api/lib/projectImportCore.test.mjs
+      - name: Project ownership review transactions
+        run: node --test frontend/api/lib/projectOwnershipReview.test.mjs
+      - name: Import UI contract
+        run: node --test frontend/src/project-imports-ui.test.mjs
+      - name: Imported project page contract
+        run: node --test frontend/src/imported-token-details-page.test.mjs
+      - name: Imports-on Arena-off production build
+        run: npm run --prefix frontend build
+      - name: API import graph
+        run: npm run --prefix frontend check:api-imports

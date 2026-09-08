@@ -7,7 +7,7 @@ import { getPostGradTokenDetailRoute } from "@/features/postgrad/identityRoutes"
 
 interface CoinRowItem {
   id: string;
-  type: 'draft' | 'coin';
+  type: 'draft' | 'coin' | 'imported';
   name: string;
   ticker: string;
   image: string;
@@ -50,17 +50,11 @@ export function CommandCenterCoinRow({
   const [expanded, setExpanded] = useState(false);
 
   const isDraft = item.type === 'draft';
-  const tokenRoute = item.tokenRoute || (item.type === 'coin' ? getPostGradTokenDetailRoute(item.id) : null);
+  const isImported = item.type === 'imported';
+  const tokenRoute = item.tokenRoute || item.href || (item.type === 'coin' ? getPostGradTokenDetailRoute(item.id) : null);
   const showBattleInfo = battleFeaturesEnabled && Boolean(item.battleInfo);
-
-  return (
-    <div className="border-b border-white/8 last:border-b-0">
-      <div className="grid grid-cols-1 gap-2 px-2.5 py-2.5 transition-colors hover:bg-white/[0.025] lg:grid-cols-[minmax(280px,1.4fr)_100px_100px_100px_28px] lg:items-center lg:gap-3 lg:px-4 lg:py-2.5">
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="min-w-0 rounded-xl text-left transition-colors hover:bg-white/[0.03]"
-        >
+  const identityClassName = "min-w-0 rounded-xl text-left transition-colors hover:bg-white/[0.03]";
+  const identity = (
           <div className="flex items-center gap-2.5">
             <img
               src={item.image}
@@ -72,6 +66,9 @@ export function CommandCenterCoinRow({
               <div className="flex flex-wrap items-center gap-1.5">
                 <div className="truncate text-[13px] font-semibold text-white lg:text-[15px]">{item.ticker || item.name}</div>
                 <div className="truncate text-[11px] font-semibold text-white/45 lg:text-sm">{item.name}</div>
+                {isImported && (
+                  <TacticalTag label="IMPORTED" tone="sponsored" />
+                )}
                 {item.statusLabel && (
                   <TacticalTag label={item.statusLabel} tone={(item.statusTone as any) || "default"} />
                 )}
@@ -86,7 +83,24 @@ export function CommandCenterCoinRow({
               </div>
             </div>
           </div>
-        </button>
+  );
+
+  return (
+    <div className="border-b border-white/8 last:border-b-0">
+      <div className="grid grid-cols-1 gap-2 px-2.5 py-2.5 transition-colors hover:bg-white/[0.025] lg:grid-cols-[minmax(280px,1.4fr)_100px_100px_100px_28px] lg:items-center lg:gap-3 lg:px-4 lg:py-2.5">
+        {isImported && tokenRoute ? (
+          <Link to={tokenRoute} className={identityClassName} data-imported-project-row="true">
+            {identity}
+          </Link>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className={identityClassName}
+          >
+            {identity}
+          </button>
+        )}
 
         <div className="hidden lg:block text-sm font-semibold text-white">
           {item.marketCap || "—"}
@@ -125,6 +139,18 @@ export function CommandCenterCoinRow({
                     <Link to={item.href}>Edit Draft</Link>
                   </Button>
                 )}
+              </>
+            ) : isImported ? (
+              <>
+                <div>
+                  <div className="text-[10px] uppercase tracking-[0.2em] text-accent/80">Imported project</div>
+                  <div className="mt-1 text-white/80">{item.statusLabel || "IMPORTED"}</div>
+                </div>
+                {tokenRoute ? (
+                  <Button asChild size="sm" variant="outline" className="w-full justify-between">
+                    <Link to={tokenRoute}>Open imported project</Link>
+                  </Button>
+                ) : null}
               </>
             ) : (
               <>
