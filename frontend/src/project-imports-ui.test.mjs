@@ -77,6 +77,12 @@ test("Solana display metadata is optional on-chain metadata while ownership rema
   assert.match(api, /enrichExistingProjectIdentity/); assert.match(api, /name IS NULL OR btrim\(name\) = ''/); assert.match(api, /symbol IS NULL OR btrim\(symbol\) = ''/);
 });
 
+test("ownership verification commits before best-effort display metadata refresh", () => {
+  const refresh = api.match(/async function refreshVerifiedProjectIdentityBestEffort[\s\S]+?async function handleOwnershipAdmin/)?.[0] || "";
+  assert.match(refresh, /try[\s\S]*resolveForSigner[\s\S]*enrichExistingProjectIdentity[\s\S]*catch/);
+  assert.match(api, /const updated = await reviewProjectOwnership\(pool,[\s\S]*?\);[\s\S]*?if \(action === "verify_owner"\) await refreshVerifiedProjectIdentityBestEffort\(updated\);[\s\S]*?return json/);
+});
+
 test("operator ownership review is admin-authenticated, CAS-safe, audited, and Arena-independent", () => {
   assert.match(api, /requireDashboardAdmin/); assert.match(api, /\/admin\/ownership-claims/); assert.match(api, /reviewProjectOwnership\(pool/);
   assert.match(reviewCore, /ownership_status = \$1/); assert.match(reviewCore, /manual_claim_wallet IS NOT NULL/);
