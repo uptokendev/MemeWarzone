@@ -1,0 +1,71 @@
+name: Agent 1 Import Project API Core
+
+on:
+  push:
+    branches:
+      - agent1/import-project-api-core
+  pull_request:
+    branches:
+      - release/main-import-onboarding
+    paths:
+      - "db/migrations/20260908_000001_project_import_onboarding.sql"
+      - "frontend/api/projectImports.js"
+      - "frontend/api/lib/projectImport*.js"
+      - "frontend/api/lib/projectImport*.mjs"
+      - ".github/workflows/agent1-import-project-api-core.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  import-project-api-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: memewarzone_import_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d memewarzone_import_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/memewarzone_import_test
+      PROJECT_IMPORT_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/memewarzone_import_test
+      ENABLE_PROJECT_IMPORTS: "true"
+      ENABLE_ARENA: "false"
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install locked frontend dependencies
+        run: npm ci --prefix frontend --no-audit --no-fund
+
+      - name: Syntax check import-only API
+        run: |
+          node --check frontend/api/projectImports.js
+          node --check frontend/api/lib/projectImportAuth.js
+          node --check frontend/api/lib/projectImportCore.js
+          node --check frontend/api/lib/projectImportResolvers.js
+
+      - name: Import-only database and API certification
+        run: node --test frontend/api/lib/projectImportCore.test.mjs
+
+      - name: Existing main API import graph regression
+        run: npm run --prefix frontend check:api-imports
