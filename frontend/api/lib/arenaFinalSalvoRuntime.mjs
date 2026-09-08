@@ -1,9 +1,14 @@
 const SHOT_SECONDS = 60;
 const MAX_SALVO_SHOTS = 5;
+const SUPPORTED_CHAINS = new Set([56, 101, 4663]);
 
 function int(value) {
   const n = Number(value);
   return Number.isInteger(n) && n >= 0 ? n : 0;
+}
+
+function text(value) {
+  return String(value ?? "").trim();
 }
 
 function iso(value) {
@@ -12,10 +17,57 @@ function iso(value) {
   return date.toISOString();
 }
 
+function millis(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) throw new Error("invalid-time");
+  return date.getTime();
+}
+
 function plusShot(value) {
   const date = value instanceof Date ? value : new Date(value || Date.now());
   if (Number.isNaN(date.getTime())) throw new Error("invalid-time");
   return new Date(date.getTime() + SHOT_SECONDS * 1000).toISOString();
+}
+
+export function requiredFinalSalvoChainId(value) {
+  const chainId = Number(value);
+  if (!Number.isSafeInteger(chainId) || !SUPPORTED_CHAINS.has(chainId)) {
+    const error = new Error("Unsupported Final Salvo chain id");
+    error.code = "INVALID_CHAIN";
+    throw error;
+  }
+  return chainId;
+}
+
+export function finalSalvoEntryDecision({ battleEndsAt, now = new Date(), regulationLeftPoints, regulationRightPoints } = {}) {
+  if (millis(now) < millis(battleEndsAt)) return { ok: false, reason: "regulation-active" };
+  const left = int(regulationLeftPoints);
+  const right = int(regulationRightPoints);
+  if (left !== right) return { ok: false, reason: "regulation-not-tied" };
+  return { ok: true, reason: "exact-regulation-tie", leftPoints: left, rightPoints: right };
+}
+
+export function finalSalvoIdentityMatches(row, { chainId, tournamentId, matchId, battleId, roundNumber } = {}) {
+  return Boolean(
+    row &&
+    Number(row.chain_id) === Number(chainId) &&
+    text(row.tournament_id) === text(tournamentId) &&
+    text(row.match_id) === text(matchId) &&
+    text(row.battle_id) === text(battleId) &&
+    Number(row.round_number) === Number(roundNumber)
+  );
+}
+
+export function finalSalvoShotIdentity(tiebreak) {
+  const phase = String(tiebreak?.state || "");
+  if (phase === "salvo") {
+    return { phase, index: Math.max(1, int(tiebreak?.current_salvo_index ?? tiebreak?.currentSalvoIndex)), suddenDeathRound: 0 };
+  }
+  if (phase === "sudden_death") {
+    const round = Math.max(1, int(tiebreak?.sudden_death_round ?? tiebreak?.suddenDeathRound));
+    return { phase, index: round, suddenDeathRound: round };
+  }
+  return { phase, index: null, suddenDeathRound: int(tiebreak?.sudden_death_round ?? tiebreak?.suddenDeathRound) };
 }
 
 export function finalSalvoShotWinner(leftUnique, rightUnique) {
@@ -176,5 +228,6 @@ export function closeFinalSalvoShot({ tiebreak, leftUnique, rightUnique, now = n
   };
 }
 
+export const FINAL_SALVO_CHAIN_IDS = Object.freeze([56, 101, 4663]);
 export const FINAL_SALVO_SHOT_SECONDS = SHOT_SECONDS;
 export const FINAL_SALVO_MAX_SHOTS = MAX_SALVO_SHOTS;
