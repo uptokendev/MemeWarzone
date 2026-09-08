@@ -18,6 +18,7 @@ test("public token route intercepts authoritative project imports before live To
   assert.match(entry, /if \(project\) return <ImportedTokenDetailsPage item={project} \/>/);
   assert.match(entry, /return <TokenDetailsLiveEntry \/>/);
   assert.doesNotMatch(entry, /ImportedProjectDetails/);
+  assert.doesNotMatch(entry, /imageUrl/);
   assert.match(client, /\/api\/project-imports/);
   assert.doesNotMatch(entry, /from .*campaign|from .*LaunchFactory|from .*bonding|from .*graduation|from .*Topaz|from .*Meteora/i);
 });
@@ -31,8 +32,22 @@ test("BNB and Solana imported identities select the temporary registration page"
   assert.match(page, /data-project-address="true"/);
 });
 
-test("temporary imported page renders authoritative registration profile fields", () => {
-  assert.match(page, /item\.imageUrl/);
+test("image-less authoritative import renders only incomplete registration state", () => {
+  assert.match(page, /const imageUrl = String\(item\.imageUrl \|\| ""\)\.trim\(\)/);
+  const start = page.indexOf("if (!imageUrl)");
+  const end = page.indexOf("const ownerVerified");
+  assert.ok(start >= 0 && end > start);
+  const incomplete = page.slice(start, end);
+  assert.match(incomplete, /PROJECT REGISTRATION INCOMPLETE/);
+  assert.match(incomplete, /A project image is required before this registration becomes public\./);
+  assert.match(incomplete, /No trading, Arena actions or claims are available from this incomplete registration\./);
+  assert.doesNotMatch(incomplete, /IMPORTED|OWNER VERIFIED|data-project-profile|data-project-description|data-project-socials|data-project-share/);
+  assert.ok(page.indexOf("if (!imageUrl)") < page.indexOf('data-imported-badge="true"'));
+  assert.ok(page.indexOf("if (!imageUrl)") < page.indexOf('data-owner-verified-badge="true"'));
+});
+
+test("completed imported page renders authoritative registration profile fields only after image gate", () => {
+  assert.match(page, /src={imageUrl}/);
   assert.match(page, /data-project-image="true"/);
   assert.match(page, /data-project-name="true"/);
   assert.match(page, /data-project-ticker="true"/);
@@ -57,7 +72,8 @@ test("Warzone access remains visibly locked while future experience is explained
   assert.match(page, /The full Warzone is opening soon\./);
   assert.match(page, /full project and trading experience/);
   assert.match(page, /Battles, Tournaments and War Leagues/);
-  assert.match(page, /Follow and share this project while the Warzone prepares for deployment\./);
+  assert.match(page, /Share this project while the Warzone prepares for deployment\./);
+  assert.doesNotMatch(page, /Follow and share this project while the Warzone prepares for deployment\./);
 });
 
 test("temporary page mounts no trading, Arena, claim, paid discovery or campaign implementation", () => {
