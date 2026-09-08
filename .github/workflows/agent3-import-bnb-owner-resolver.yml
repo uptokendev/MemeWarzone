@@ -6,6 +6,13 @@ on:
       - 'frontend/api/lib/projectOwnershipResolveBnb.js'
       - 'frontend/api/lib/projectOwnershipResolveBnb.test.mjs'
       - '.github/workflows/agent3-import-bnb-owner-resolver.yml'
+  push:
+    branches:
+      - 'agent3/import-bnb-owner-resolver'
+    paths:
+      - 'frontend/api/lib/projectOwnershipResolveBnb.js'
+      - 'frontend/api/lib/projectOwnershipResolveBnb.test.mjs'
+      - '.github/workflows/agent3-import-bnb-owner-resolver.yml'
   workflow_dispatch:
 
 permissions:
