@@ -12,7 +12,7 @@ def patch_golden():
     s = s.replace("const BUY_LAMPORTS = 5_000_000n;", "const BUY_LAMPORTS = 1_000_000n;")
     s = s.replace(
         "lamports:100_000_000",
-        'lamports:label==="creator"?100_000_000:4_000_000',
+        'lamports:label==="creator"?100_000_000:100_000_000',
     )
     old_sim = '  const sim=await v0.simulateLaunchpadV0OrThrow(connection,compiled.transaction,label);'
     new_sim = '''  let sim;
