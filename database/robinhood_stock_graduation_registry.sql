@@ -60,6 +60,7 @@ create table if not exists public.robinhood_stock_token_registry_audit (
 create index if not exists robinhood_stock_token_registry_audit_registry_idx
   on public.robinhood_stock_token_registry_audit (registry_id, created_at desc);
 
+-- Historical seed table retained for compatibility/audit only.
 -- Release candidates are database state, not a frontend/source-code allowlist.
 -- Candidate status never authorizes graduation by itself.
 create table if not exists public.robinhood_stock_token_release_candidates (
