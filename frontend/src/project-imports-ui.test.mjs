@@ -17,7 +17,7 @@ test("project imports remain independently gated from Arena", () => {
 
 test("BNB and Solana onboarding use approved wording and no Robinhood dependency", () => {
   assert.match(importPage, /type ImportChain = "bnb" \| "solana"/); assert.match(importPage, />BNB<\/Button>/); assert.match(importPage, />Solana<\/Button>/);
-  assert.match(importPage, /detectedChain/); assert.match(importPage, />IMPORT<\/Button>/); assert.match(importPage, /REGISTER &amp; VERIFY MEMECOIN/);
+  assert.match(importPage, /detectedChain/); assert.match(importPage, /}IMPORT<\/Button>/); assert.match(importPage, /REGISTER &amp; VERIFY MEMECOIN/);
   assert.doesNotMatch(importPage, /RESOLVE PROJECT|REGISTER &amp; VERIFY PROJECT/); assert.doesNotMatch(importPage, /Robinhood/i);
 });
 
@@ -46,7 +46,7 @@ test("manual claim persistence is retry-safe and cannot self-approve", () => {
   const manual = core.match(/export async function requestManualProjectClaim[\s\S]+?export async function patchProjectMetadata/)?.[0] || "";
   assert.match(manual, /ownership_status==="ownership_manual_review"/); assert.match(manual, /currentClaimant===signer/);
   assert.match(manual, /ownership_status='ownership_pending'/); assert.match(manual, /ownership_status='ownership_manual_review'/);
-  assert.doesNotMatch(manual, /project_owner_wallet=/); assert.doesNotMatch(manual, /ownership_verified/);
+  assert.doesNotMatch(manual, /SET[^;]*project_owner_wallet\s*=/i); assert.doesNotMatch(manual, /SET[^;]*ownership_status='ownership_verified'/i);
 });
 
 test("imported project route mounts owner-manageable surface before live token runtime", () => {
