@@ -55,7 +55,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install locked frontend dependencies
-        run: npm ci --prefix frontend --no-audit --no-fund
+        run: npm ci --prefix frontend --legacy-peer-deps --no-audit --no-fund
 
       - name: Syntax check import-only API
         run: |
