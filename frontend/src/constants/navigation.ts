@@ -36,7 +36,7 @@ export const navItems: NavItem[] = [
   { icon: Trophy, label: "Leagues", path: "/league" },
   ...(warRoomEnabled ? [{ icon: Eye, label: "Trade War Room", path: "/war-room" }] : []),
   { icon: Plus, label: "Create Coin", path: "/create" },
-  ...(projectImportsEnabled ? [{ icon: Upload, label: "IMPORT YOUR MEMECOIN", path: "/import" }] : []),
+  ...(projectImportsEnabled ? [{ icon: Upload, label: "Import your memecoin", path: "/import" }] : []),
   { icon: User, label: "Profile", path: "/profile" },
   { icon: BookOpen, label: "Docs", path: "https://docs.memewar.zone" },
 ];
