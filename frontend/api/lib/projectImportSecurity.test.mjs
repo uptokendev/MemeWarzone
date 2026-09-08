@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { Wallet } from "ethers";
-import { buildWalletActionMessage } from "./walletActionAuth.js";
+import { buildWalletActionMessage, requireWalletActionAuth } from "./walletActionAuth.js";
 import {
   PROJECT_IMPORT_ACTIONS,
   PROJECT_IMPORT_OWNERSHIP,
@@ -93,6 +93,47 @@ function png1x1() {
   return buf;
 }
 
+test("valid project import auth uses strict nonce-backed wallet proof even when legacy user writes are open", async () => {
+  const previous = process.env.API_AUTH_ENFORCE_USER_WRITES;
+  process.env.API_AUTH_ENFORCE_USER_WRITES = "0";
+  try {
+    const wallet = Wallet.createRandom();
+    const pool = new NoncePool();
+    const auth = await signedAuth({ wallet, pool, action: PROJECT_IMPORT_ACTIONS.create });
+    const result = await authorize({ pool, wallet, auth, action: PROJECT_IMPORT_ACTIONS.create });
+    assert.ok(result.result);
+    assert.equal(result.result.legacy, false);
+    assert.equal(result.res.headersSent, false);
+  } finally {
+    if (previous === undefined) delete process.env.API_AUTH_ENFORCE_USER_WRITES;
+    else process.env.API_AUTH_ENFORCE_USER_WRITES = previous;
+  }
+});
+
+test("legacy non-project-import wallet auth remains open when global user-write enforcement is off", async () => {
+  const previous = process.env.API_AUTH_ENFORCE_USER_WRITES;
+  process.env.API_AUTH_ENFORCE_USER_WRITES = "0";
+  try {
+    const wallet = Wallet.createRandom();
+    const res = response();
+    const result = await requireWalletActionAuth({
+      res,
+      pool: null,
+      auth: null,
+      expectedWallet: wallet.address,
+      chainId: CHAIN,
+      action: "legacy_non_import_test",
+      routeLabel: "legacy-non-import-test",
+    });
+    assert.ok(result);
+    assert.equal(result.legacy, true);
+    assert.equal(res.headersSent, false);
+  } finally {
+    if (previous === undefined) delete process.env.API_AUTH_ENFORCE_USER_WRITES;
+    else process.env.API_AUTH_ENFORCE_USER_WRITES = previous;
+  }
+});
+
 test("create replay and exact intent binding", async () => {
   const wallet = Wallet.createRandom(); const pool = new NoncePool();
   const auth = await signedAuth({ wallet, pool, action: PROJECT_IMPORT_ACTIONS.create });
@@ -143,7 +184,7 @@ test("claim replay, stale nonce, wrong chain and altered contract fail closed", 
   pool = new NoncePool(); auth = await signedAuth({ wallet, pool, action: PROJECT_IMPORT_ACTIONS.claim, chainId: CHAIN });
   assert.equal((await authorize({ pool, wallet, auth, action: PROJECT_IMPORT_ACTIONS.claim, chainId: OTHER_CHAIN })).res.body.code, "CHAIN_MISMATCH");
   pool = new NoncePool(); auth = await signedAuth({ wallet, pool, action: PROJECT_IMPORT_ACTIONS.claim, token: TOKEN });
-  assert.ok(["MESSAGE_MISMATCH", "INVALID_SIGNATURE"].includes((await authorize({ pool, wallet, auth, action: PROJECT_IMPORT_ACTIONS.claim, token: OTHER_TOKEN })).res.body.code));
+  assert.equal((await authorize({ pool, wallet, auth, action: PROJECT_IMPORT_ACTIONS.claim, token: OTHER_TOKEN })).res.body.code, "MESSAGE_MISMATCH");
 });
 
 test("metadata auth binds exact body and protects identity Arena and finance", async () => {
