@@ -70,10 +70,9 @@ export async function settleDueNormalBattles(deps = {}) {
       continue;
     }
     try {
-      const settlementDeps = { ...deps, chainId: Number(row.chain_id) };
       const settlement = lock.version === 3
-        ? await settleBattlePointsV3ById(row.id, settlementDeps)
-        : await settleBattlePointsV2ById(row.id, { ...settlementDeps, force: true });
+        ? await settleBattlePointsV3ById(row.id, deps)
+        : await settleBattlePointsV2ById(row.id, { ...deps, force: true });
       results.push({ battleId: String(row.id), scoringGeneration: lock.scoringGeneration, authoritative: true, ...settlement });
     } catch (error) {
       results.push({
