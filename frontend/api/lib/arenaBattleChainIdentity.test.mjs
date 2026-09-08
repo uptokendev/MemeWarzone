@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   battleBelongsToChain,
@@ -20,7 +21,8 @@ import { calculateBattlePointsV3Boost } from "./arenaBattlePointsV3.js";
 const BNB = 56;
 const SOLANA = 101;
 const ROBINHOOD = 4663;
-
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const API_ROOT = path.resolve(HERE, "..");
 const row = (chainId, id = "same-battle-id") => ({ id, chain_id: chainId });
 
 test("BNB Battle is accessible on BNB and rejected through Solana/Robinhood context", () => {
@@ -62,8 +64,7 @@ test("Battle list/feed is chain isolated while aggregate payload can remain chai
 });
 
 test("challenge lifecycle chain context is taken from explicit body or signed auth and cannot be silently reinterpreted", async () => {
-  const req = {};
-  const fromBody = await chainIdFromMutation(req, { readJson: async () => ({ chainId: SOLANA }) });
+  const fromBody = await chainIdFromMutation({}, { readJson: async () => ({ chainId: SOLANA }) });
   assert.equal(fromBody.chainId, SOLANA);
   const fromAuth = await chainIdFromMutation({}, { readJson: async () => ({ auth: { chainId: ROBINHOOD } }) });
   assert.equal(fromAuth.chainId, ROBINHOOD);
@@ -71,18 +72,18 @@ test("challenge lifecycle chain context is taken from explicit body or signed au
 });
 
 test("AUTO DEPLOY candidate selection is chain-scoped in the Normal Battle implementation", () => {
-  const source = fs.readFileSync(path.join(process.cwd(), "api/arenaBattles.js"), "utf8");
-  assert.match(source, /from public\.arena_battles[\s\S]*where chain_id = \$1[\s\S]*state = 'waiting'/i);
-  assert.match(source, /coinRowsForChain\(chainId/);
+  const source = fs.readFileSync(path.join(API_ROOT, "arenaBattles.js"), "utf8");
+  assert.match(source, /async function waitingCandidates\(chainId[\s\S]*where chain_id = \$1 and state = 'waiting'/i);
+  assert.match(source, /const candidates = await waitingCandidates\(chainId,/);
 });
 
 test("LIVE transition baseline uses the Battle row chain identity", () => {
-  const source = fs.readFileSync(path.join(process.cwd(), "api/arenaBattles.js"), "utf8");
+  const source = fs.readFileSync(path.join(API_ROOT, "arenaBattles.js"), "utf8");
   assert.match(source, /captureLiveBaselines\([\s\S]*chainId:\s*Number\(row\.chain_id\)/);
 });
 
 test("settlement market evidence is resolved from current Battle chain", () => {
-  const source = fs.readFileSync(path.join(process.cwd(), "api/lib/arenaBattleSettlementV3Service.js"), "utf8");
+  const source = fs.readFileSync(path.join(HERE, "arenaBattleSettlementV3Service.js"), "utf8");
   assert.match(source, /const chainId = Number\(current\.chain_id\)/);
   assert.match(source, /getArenaMarketSnapshot\)\(chainId, metricsRow\.token_id/);
   assert.match(source, /loadBattleWindowTrades\(\{[\s\S]*chainId,/);
