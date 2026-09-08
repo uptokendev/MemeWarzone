@@ -3,7 +3,7 @@ name: Agent 6 Final Claim Certification
 on:
   push:
     branches:
-      - agent6/all-launch-claims-three-chain
+      - agent6/all-launch-claims-three-chain-finalize
 
 permissions:
   contents: write
@@ -15,14 +15,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: agent6/all-launch-claims-three-chain
+          ref: agent6/all-launch-claims-three-chain-finalize
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Apply final recovery hardening
+      - name: Apply final claim hardening
         run: python3 scripts/agent6_final_recovery_hardening.py
       - name: Install frontend dependencies
         run: npm ci --prefix frontend --no-audit --no-fund
@@ -30,11 +30,15 @@ jobs:
         run: node frontend/scripts/agent6-all-claims-three-chain.test.mjs
       - name: EVM League verifier tests
         run: node --test frontend/api/lib/evmLeagueClaimVerification.test.mjs
+      - name: Solana config fail-closed tests
+        run: node --test frontend/api/lib/solanaRewardClaim.test.mjs
       - name: Claim API syntax and import checks
         run: |
           node --check frontend/api/rewards.js
           node --check frontend/api/leagueRouter.js
           node --check frontend/api/leaguePayouts.js
+          node --check frontend/api/lib/solanaRewardClaim.js
+          node --check frontend/api/dev-fix/reward-claim-intent.js
           npm --prefix frontend run check:api-imports
       - name: Frontend production build
         run: npm --prefix frontend run build
@@ -42,10 +46,10 @@ jobs:
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add frontend/api/leagueRouter.js frontend/api/leaguePayouts.js frontend/scripts/agent6-all-claims-three-chain.test.mjs
+          git add frontend/api/leagueRouter.js frontend/api/leaguePayouts.js frontend/api/lib/solanaRewardClaim.js frontend/api/lib/solanaRewardClaim.test.mjs frontend/api/dev-fix/reward-claim-intent.js frontend/scripts/agent6-all-claims-three-chain.test.mjs
           if git diff --cached --quiet; then
             echo "No product changes to commit"
             exit 0
           fi
-          git commit -m "fix(claims): harden League payout recovery slots"
-          git push origin HEAD:agent6/all-launch-claims-three-chain
+          git commit -m "fix(claims): harden recovery and Solana config boundaries"
+          git push origin HEAD:agent6/all-launch-claims-three-chain-finalize
