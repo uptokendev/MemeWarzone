@@ -1,0 +1,60 @@
+name: Agent 4 import onboarding UI
+
+on:
+  push:
+    branches:
+      - agent4/import-onboarding-ui
+    paths:
+      - frontend/**
+      - .github/workflows/agent4-import-onboarding-ui.yml
+  pull_request:
+    branches:
+      - release/main-import-onboarding
+    paths:
+      - frontend/**
+      - .github/workflows/agent4-import-onboarding-ui.yml
+
+permissions:
+  contents: read
+
+jobs:
+  import-ui:
+    name: BNB + Solana import-only production proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        # The frozen release base currently has package.json/package-lock drift.
+        # Do not rewrite that release lock from this narrow UI branch; install
+        # from package.json so the import-only production build can be proven.
+        run: npm install --prefix frontend --no-package-lock
+
+      - name: Import-only UI contract
+        run: node --test frontend/src/project-imports-ui.test.mjs
+
+      - name: Production build with imports ON and Arena OFF
+        env:
+          VITE_ENABLE_PROJECT_IMPORTS: "true"
+          VITE_ENABLE_POSTGRAD: "false"
+          VITE_ENABLE_POSTGRAD_ARENA: "false"
+          VITE_ENABLE_POSTGRAD_BATTLE: "false"
+          VITE_ENABLE_POSTGRAD_EVENTS: "false"
+          VITE_ENABLE_POSTGRAD_LEAGUE: "false"
+          VITE_ENABLE_POSTGRAD_TOURNAMENT: "false"
+          VITE_ENABLE_WAR_ROOM: "true"
+          VITE_ALLOWED_CHAIN_IDS: "56,101"
+          VITE_DEFAULT_CHAIN_ID: "56"
+          VITE_PUBLIC_RPC_56: "https://rpc-evm-56.test.mwz"
+          VITE_PUBLIC_RPC_101: "https://rpc-solana-101.test.mwz"
+          VITE_SOLANA_MAINNET_RPC: "https://rpc-solana-101.test.mwz"
+        run: npm --prefix frontend run build

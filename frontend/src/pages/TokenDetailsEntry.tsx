@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
-import { SOLANA_CHAIN_ID } from "@/lib/chainConfig";
+import { BNB_CHAIN_ID, BNB_TESTNET_CHAIN_ID, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
 import { apiFetch } from "@/lib/apiBase";
 import { useLaunchpad, type CampaignInfo } from "@/lib/launchpadClient";
 import {
@@ -12,8 +12,11 @@ import { requestSolanaGraduationHandoff } from "@/lib/solanaGraduationHandoff";
 import { isSolanaTokenRouteId } from "@/lib/tokenDetailsPath";
 import { recordRecentlyViewed } from "@/lib/searchHistory";
 import { analytics } from "@/lib/analytics/ProductAnalytics";
+import { projectImportsEnabled } from "@/features/projectImports/config";
+import { lookupProjectImport, type ProjectImportItem } from "@/lib/projectImports";
 
 import TokenDetails from "./TokenDetails";
+import ImportedProjectDetails from "./ImportedProjectDetails";
 
 const SOLANA_ROUTE_CACHE_PREFIX = "mwz:solana-token-route:v2:";
 const SOLANA_ROUTE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -82,6 +85,40 @@ const TokenDetailsEntry = () => {
   const [curve, setCurve] = useState<SolanaCampaignCurveState | null>(null);
   const [curveResolved, setCurveResolved] = useState<boolean>(!isSolanaRoute);
   const [cachedCampaignAddress, setCachedCampaignAddress] = useState<string>(initialCache?.campaignAddress || "");
+  const [importedProject, setImportedProject] = useState<ProjectImportItem | null>(null);
+  const [importLookupDone, setImportLookupDone] = useState(!projectImportsEnabled);
+
+  useEffect(() => {
+    if (!projectImportsEnabled || !routeId) {
+      setImportedProject(null);
+      setImportLookupDone(true);
+      return;
+    }
+
+    let cancelled = false;
+    setImportLookupDone(false);
+    setImportedProject(null);
+    const importChainId = isSolanaRoute
+      ? SOLANA_CHAIN_ID
+      : forcedChainId === BNB_CHAIN_ID || forcedChainId === BNB_TESTNET_CHAIN_ID
+        ? forcedChainId
+        : BNB_CHAIN_ID;
+
+    void lookupProjectImport(routeId, importChainId)
+      .then((item) => {
+        if (!cancelled) setImportedProject(item);
+      })
+      .catch(() => {
+        if (!cancelled) setImportedProject(null);
+      })
+      .finally(() => {
+        if (!cancelled) setImportLookupDone(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [forcedChainId, isSolanaRoute, routeId]);
 
   useEffect(() => {
     if (!routeId) return;
@@ -235,6 +272,9 @@ const TokenDetailsEntry = () => {
       chainId,
     });
   }, [campaign, isSolanaRoute, resolvedCampaignAddress, routeId]);
+
+  if (!importLookupDone) return null;
+  if (projectImportsEnabled && importedProject) return <ImportedProjectDetails item={importedProject} />;
 
   return <TokenDetails key={routeId || (isSolanaRoute ? "solana" : "evm")} />;
 };
