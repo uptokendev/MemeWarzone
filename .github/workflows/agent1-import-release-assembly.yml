@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - agent1/import-release-assembly
+      - release/main-import-onboarding
   pull_request:
     branches:
       - release/main-import-onboarding
@@ -88,6 +89,10 @@ jobs:
           node --test frontend/api/lib/projectImportSecurity.test.mjs
           node --test frontend/api/lib/projectImportCore.test.mjs
           node --test frontend/src/project-imports-ui.test.mjs
+
+      # Component tests drop their import table during teardown.
+      - name: Restore import schema for real-server smoke test
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260908_000001_project_import_onboarding.sql
 
       - name: Real Express mount smoke test with Arena off
         env:
