@@ -1,0 +1,35 @@
+name: Agent 5 Import Auth Compatibility
+
+on:
+  push:
+    branches:
+      - agent5/import-auth-compat
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  import-auth-compat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install locked frontend dependencies
+        run: npm ci --prefix frontend --legacy-peer-deps --no-audit --no-fund
+
+      - name: Focused project import auth/security tests only
+        env:
+          API_AUTH_ENFORCE_USER_WRITES: "0"
+        run: node --test frontend/api/lib/projectImportSecurity.test.mjs
