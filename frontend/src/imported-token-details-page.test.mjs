@@ -31,13 +31,12 @@ test("BNB and Solana imported identities select the dedicated project page", () 
   assert.match(page, /data-project-address="true"/);
 });
 
-test("image-less authoritative import renders only incomplete registration state", () => {
-  const start = page.indexOf('if(!String(item.imageUrl||"").trim())');
-  assert.ok(start >= 0);
-  const incomplete = page.slice(start, page.indexOf('return <ContentContainer', start + 20));
-  assert.match(incomplete, /PROJECT REGISTRATION INCOMPLETE/);
-  assert.match(incomplete, /A project image is required before this registration becomes public\./);
-  assert.match(incomplete, /No trading, Arena actions or claims are available from this incomplete registration\./);
+test("image-less authoritative import renders incomplete registration state", () => {
+  assert.match(page, /if\(!String\(item\.imageUrl\|\|""\)\.trim\(\)\)/);
+  assert.match(page, /PROJECT REGISTRATION INCOMPLETE/);
+  assert.match(page, /A project image is required before this registration becomes public\./);
+  assert.match(page, /No trading, Arena actions or claims are available from this incomplete registration\./);
+  assert.match(page, /data-project-registration-incomplete="true"/);
 });
 
 test("completed imported page renders project identity, profile and share fields", () => {
