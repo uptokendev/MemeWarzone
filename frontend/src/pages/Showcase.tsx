@@ -6,6 +6,7 @@ import { DraftCampaignGrid } from "@/components/home/DraftCampaignGrid";
 import { SafeFeaturedCampaigns } from "@/components/home/SafeFeaturedCampaigns";
 import { HeaderBand } from "@/components/home/HeaderBand";
 import { CampaignTickerBar } from "@/components/home/CampaignTickerBar";
+import { ImportedProjectsOverlay } from "@/components/home/ImportedProjectsOverlay";
 import { ContentContainer } from "@/components/layout/ContentContainer";
 
 const Showcase = () => {
@@ -62,6 +63,7 @@ const Showcase = () => {
           <CampaignGrid query={effectiveQuery} />
         )}
       </ContentContainer>
+      <ImportedProjectsOverlay />
     </div>
   );
 };

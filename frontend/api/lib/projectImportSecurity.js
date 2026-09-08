@@ -9,6 +9,7 @@ export const PROJECT_IMPORT_ACTIONS = Object.freeze({
   manualClaim: "project_import_manual_claim",
   metadata: "project_import_metadata",
   image: "project_import_image",
+  registrationImage: "project_import_registration_image",
 });
 
 export const PROJECT_IMPORT_OWNERSHIP = Object.freeze({

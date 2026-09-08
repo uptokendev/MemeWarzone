@@ -22,6 +22,7 @@ export type ProjectImportItem = {
   manualClaimRequestedAt?: string | null;
   metadataUpdatedAt?: string | null;
   arenaStatus?: string | null;
+  createdAt?: string | null;
 };
 export type ProjectResolveResult = {
   chainId: number;
@@ -53,6 +54,13 @@ export async function lookupProjectImport(tokenAddress: string, chainId: number)
   if (res.status === 404) return null;
   const json = await readJson(res); if (!res.ok || !json?.project) throw new Error(String(json?.error || `Project lookup failed (${res.status})`)); return json.project;
 }
+export async function listRecentProjectImports(limit = 24): Promise<ProjectImportItem[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  const res = await apiFetch(`/api/project-imports?${params.toString()}`, { cache: "no-store" });
+  const json = await readJson(res);
+  if (!res.ok) throw new Error(String(json?.error || `Imported project list failed (${res.status})`));
+  return Array.isArray(json?.items) ? json.items : [];
+}
 export async function resolveProjectImport(input: { tokenAddress: string; chainId: number; auth: WalletActionAuthPayload }): Promise<ProjectResolveResult> {
   const res = await apiFetch("/api/project-imports/resolve", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
   const json = await readJson(res); if (!res.ok || !json?.resolved) throw new Error(String(json?.error || `Project resolve failed (${res.status})`)); return json.resolved;
@@ -79,4 +87,7 @@ export async function uploadProjectImportImage(input: { item: ProjectImportItem;
   const params = new URLSearchParams({ chainId: String(input.item.chainId), tokenAddress: input.item.tokenAddress }); appendAuthToSearchParams(params, input.auth);
   const res = await apiFetch(`/api/project-imports/image?${params.toString()}`, { method: "POST", body: form });
   const json = await readJson(res); if (!res.ok || !json?.project) throw new Error(String(json?.error || `Image upload failed (${res.status})`)); return json.project;
+}
+export async function uploadProjectRegistrationImage(input: { item: ProjectImportItem; file: File; auth: WalletActionAuthPayload }): Promise<ProjectImportItem> {
+  return uploadProjectImportImage(input);
 }

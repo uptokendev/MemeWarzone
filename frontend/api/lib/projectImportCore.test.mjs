@@ -6,10 +6,13 @@ import { ethers } from "ethers";
 
 import projectImports from "../projectImports.js";
 import {
+  bindRegistrationImage,
   claimExistingProject,
   createProjectImport,
+  listRecentProjectImports,
   lookupProjectImport,
   patchProjectMetadata,
+  persistProjectImage,
   publicProject,
   requestManualProjectClaim,
 } from "./projectImportCore.js";
@@ -185,4 +188,53 @@ test("dedicated project-import API works with imports ON and Arena OFF", async (
 
 test("unsupported chain fails closed", async () => {
   await assert.rejects(() => lookupProjectImport(pool, { chainId: 4663, tokenAddress: "0x0000000000000000000000000000000000000011" }), /Unsupported project import chain/);
+});
+
+test("recent public list uses imported project records and ignores Arena status", async () => {
+  await pool.query(`ALTER TABLE public.arena_token_imports ADD COLUMN IF NOT EXISTS status text`);
+  await pool.query(`UPDATE public.arena_token_imports SET status='needs_review' WHERE chain_id=56`);
+  const items = await listRecentProjectImports(pool, { limit: 10 });
+  assert.ok(items.length >= 1);
+  assert.equal(items.some((row) => row.status === "needs_review" || row.ownership_status === "ownership_verified" || row.ownership_status === "ownership_pending" || row.ownership_status === "ownership_manual_review"), true);
+  const req = { method: "GET", url: "/project-imports?limit=10" };
+  const res = mockRes();
+  await projectImports(req, res);
+  assert.equal(res.statusCode, 200);
+  const payload = JSON.parse(res.body);
+  assert.ok(Array.isArray(payload.items));
+  assert.ok(payload.items.length >= 1);
+  assert.equal("arenaStatus" in payload.items[0], true);
+});
+
+test("registration image binds without granting verified owner rights", async () => {
+  await resetImportTable();
+  await applyMigration();
+  const registrar = ethers.Wallet.createRandom().address.toLowerCase();
+  const stranger = ethers.Wallet.createRandom().address.toLowerCase();
+  const owner = ethers.Wallet.createRandom().address.toLowerCase();
+  const token = "0x00000000000000000000000000000000000000aa";
+  const created = await createProjectImport(pool, { resolverResult: resolver({ tokenAddress: token }), signedWallet: registrar });
+  assert.equal(created.project.ownership_status, "ownership_pending");
+  assert.equal(created.project.project_owner_wallet, null);
+  await assert.rejects(
+    () => persistProjectImage(pool, { chainId: 56, tokenAddress: token, signedWallet: registrar, imageUrl: "https://cdn.example/owner.png" }),
+    /verified project owner/i,
+  );
+  await assert.rejects(
+    () => bindRegistrationImage(pool, { chainId: 56, tokenAddress: token, signedWallet: stranger, imageUrl: "https://cdn.example/nope.png" }),
+    /registering wallet/i,
+  );
+  const bound = await bindRegistrationImage(pool, { chainId: 56, tokenAddress: token, signedWallet: registrar, imageUrl: "https://cdn.example/registered.png" });
+  assert.equal(bound.image_url, "https://cdn.example/registered.png");
+  assert.equal(bound.project_owner_wallet, null);
+  assert.equal(bound.ownership_status, "ownership_pending");
+  await assert.rejects(
+    () => bindRegistrationImage(pool, { chainId: 56, tokenAddress: token, signedWallet: registrar, imageUrl: "https://cdn.example/second.png" }),
+    /already registered/i,
+  );
+  const claimed = await claimExistingProject(pool, { resolverResult: resolver({ tokenAddress: token, match: true }), signedWallet: owner });
+  assert.equal(claimed.project_owner_wallet, owner);
+  const replaced = await persistProjectImage(pool, { chainId: 56, tokenAddress: token, signedWallet: owner, imageUrl: "https://cdn.example/owner.png" });
+  assert.equal(replaced.image_url, "https://cdn.example/owner.png");
+  assert.equal(replaced.ownership_status, "ownership_verified");
 });

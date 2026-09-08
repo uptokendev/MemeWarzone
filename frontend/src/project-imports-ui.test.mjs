@@ -4,7 +4,7 @@ import test from "node:test";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
-const [app, config, importPage, importedPage, tokenEntry, liveTokenEntry, navigation, leftSidebar, mobileSidebar, client] = await Promise.all([
+const [app, config, importPage, importedPage, tokenEntry, liveTokenEntry, navigation, leftSidebar, mobileSidebar, client, showcase, overlay] = await Promise.all([
   read("./App.tsx"),
   read("./features/projectImports/config.ts"),
   read("./pages/ProjectImport.tsx"),
@@ -15,6 +15,8 @@ const [app, config, importPage, importedPage, tokenEntry, liveTokenEntry, naviga
   read("./components/LeftBattleSidebar.tsx"),
   read("./components/Sidebar.tsx"),
   read("./lib/projectImports.ts"),
+  read("./pages/Showcase.tsx"),
+  read("./components/home/ImportedProjectsOverlay.tsx"),
 ]);
 
 test("import route is independently gated from Arena", () => {
@@ -103,4 +105,26 @@ test("owner edits are gated by verified ownership and authoritative owner wallet
   assert.match(importedPage, /editing&&canEdit/);
   assert.match(importedPage, /if\(!canEdit\|\|saving\)return/);
   assert.match(importedPage, /if\(!canEdit\|\|uploading\)return/);
+});
+
+test("homepage overlay lists imported projects without Arena or financial actions", () => {
+  assert.match(showcase, /ImportedProjectsOverlay/);
+  assert.match(overlay, /WARZONE REGISTERED/);
+  assert.match(overlay, /BATTLE ACCESS LOCKED/);
+  assert.match(overlay, /listRecentProjectImports/);
+  assert.match(overlay, /`\/token\/\$\{encodeURIComponent\(item\.tokenAddress\)\}\?chainId=\$\{item\.chainId\}`/);
+  assert.match(overlay, /item\.imageUrl/);
+  assert.match(overlay, /\$\{item\.symbol\}/);
+  assert.doesNotMatch(overlay, /arenaStatus|Battle Ready|TRADE|Boost|UpVote|claims|status===.*passed/i);
+  assert.doesNotMatch(overlay, /from .*Topaz|from .*Meteora|from .*graduation/i);
+});
+
+test("import form cannot complete without a PNG, JPEG or WEBP image", () => {
+  assert.match(importPage, /data-project-import-image-required="true"/);
+  assert.match(importPage, /Add a project image \(PNG, JPEG or WEBP\) before registering/);
+  assert.match(importPage, /disabled=\{!connected\|\|!validAddress\|\|working\|\|!evidence\|\|!imageFile\}/);
+  assert.match(importPage, /project_import_registration_image/);
+  assert.match(importPage, /This does not make you the verified project owner/);
+  assert.match(client, /listRecentProjectImports/);
+  assert.match(client, /uploadProjectRegistrationImage/);
 });

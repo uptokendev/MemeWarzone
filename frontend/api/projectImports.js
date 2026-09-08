@@ -1,7 +1,7 @@
 import { pool } from "../server/db.js";
 import { getQuery, json, readJson } from "../server/http.js";
 import { PROJECT_IMPORT_ACTIONS, requireProjectImportWalletAuth, sanitizeProjectImportMetadataPatch } from "./lib/projectImportSecurity.js";
-import { assertResolverIdentity, claimExistingProject, createProjectImport, listUserProjectImports, lookupProjectImport, normalizeProjectIdentity, patchProjectMetadata, publicProject, requestManualProjectClaim } from "./lib/projectImportCore.js";
+import { assertResolverIdentity, claimExistingProject, createProjectImport, listRecentProjectImports, listUserProjectImports, lookupProjectImport, normalizeProjectIdentity, patchProjectMetadata, publicProject, requestManualProjectClaim } from "./lib/projectImportCore.js";
 import { resolveProjectToken } from "./lib/projectImportResolvers.js";
 import { registerDefaultProjectImportResolvers } from "./lib/projectImportResolverAdapters.js";
 
@@ -21,7 +21,8 @@ export default async function projectImports(req,res){
   if(req.method==="GET"&&path==="/"){
    const q=getQuery(req);const tokenAddress=q.tokenAddress||q.token;
    if(q.wallet){const items=await listUserProjectImports(pool,{chainId:q.chainId,walletAddress:q.wallet});return json(res,200,{items:items.map(publicProject)});}
-   const project=await lookupProjectImport(pool,{chainId:q.chainId,tokenAddress});if(!project)return json(res,404,{error:"Imported project not found",code:"PROJECT_NOT_FOUND"});return json(res,200,{project:publicProject(project)});
+   if(tokenAddress){const project=await lookupProjectImport(pool,{chainId:q.chainId,tokenAddress});if(!project)return json(res,404,{error:"Imported project not found",code:"PROJECT_NOT_FOUND"});return json(res,200,{project:publicProject(project)});}
+   const items=await listRecentProjectImports(pool,{limit:q.limit||24});return json(res,200,{items:items.map(publicProject)});
   }
   if(req.method==="POST"&&path==="/resolve"){
    const body=await readJson(req),identity=normalizeProjectIdentity(body.chainId,body.tokenAddress);const auth=await strictAuth(res,body,{identity,action:PROJECT_IMPORT_ACTIONS.resolve});if(!auth)return;const resolved=await resolveForSigner(identity,auth.walletAddress);return json(res,200,{resolved});

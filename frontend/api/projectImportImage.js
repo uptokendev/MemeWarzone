@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import { pool } from "../server/db.js";
 import { inspectImageFile, PROJECT_IMPORT_IMAGE_LIMITS } from "./lib/imageFileValidation.js";
 import { PROJECT_IMPORT_ACTIONS, requireProjectImportWalletAuth } from "./lib/projectImportSecurity.js";
-import { lookupProjectImport, normalizeProjectIdentity, persistProjectImage, publicProject } from "./lib/projectImportCore.js";
+import { bindRegistrationImage, lookupProjectImport, normalizeProjectIdentity, persistProjectImage, publicProject } from "./lib/projectImportCore.js";
 
 let storageClient=null;
 function storage(){if(storageClient)return storageClient;const url=String(process.env.SUPABASE_URL||"").trim(),key=String(process.env.SUPABASE_SERVICE_ROLE_KEY||"").trim();if(!url||!key)throw Object.assign(new Error("Project image storage is not configured"),{code:"PROJECT_IMPORT_STORAGE_UNAVAILABLE"});storageClient=createClient(url,key);return storageClient;}
@@ -27,10 +27,15 @@ export default async function projectImportImage(req,res){
  try{
   const existing=await lookupProjectImport(pool,identity);if(!existing)return fail(res,404,"Imported project not found","PROJECT_NOT_FOUND");
   const auth=authFrom(q,fields);const digest=crypto.createHash("sha256").update(buf).digest("hex");
-  const verified=await requireProjectImportWalletAuth({res,pool,auth,expectedWallet:auth.walletAddress,chainId:identity.chainId,token:identity.tokenAddress,action:PROJECT_IMPORT_ACTIONS.image,projectId:existing.id,imageDigest:digest,routeLabel:"project-imports/image"});if(!verified)return;
+  const registration=String(auth.action||"")===PROJECT_IMPORT_ACTIONS.registrationImage;
+  const action=registration?PROJECT_IMPORT_ACTIONS.registrationImage:PROJECT_IMPORT_ACTIONS.image;
+  const verified=await requireProjectImportWalletAuth({res,pool,auth,expectedWallet:auth.walletAddress,chainId:identity.chainId,token:identity.tokenAddress,action,projectId:existing.id,imageDigest:digest,routeLabel:registration?"project-imports/registration-image":"project-imports/image"});if(!verified)return;
   const client=storage(),bucket=process.env.SUPABASE_BUCKET||"memebattles",uuid=crypto.randomUUID(),name=`project-imports/${identity.chainId}/${identity.tokenAddress}/${uuid}.${info.ext}`;
   const {error:uploadError}=await client.storage.from(bucket).upload(name,buf,{contentType:info.mime,upsert:false,cacheControl:"3600"});if(uploadError)throw Object.assign(new Error(`Project image upload failed: ${uploadError.message}`),{code:"PROJECT_IMPORT_IMAGE_STORAGE_FAILED"});
   const {data}=client.storage.from(bucket).getPublicUrl(name);if(!data?.publicUrl)throw Object.assign(new Error("Project image public URL unavailable"),{code:"PROJECT_IMPORT_IMAGE_STORAGE_FAILED"});
-  const project=await persistProjectImage(pool,{...identity,signedWallet:verified.walletAddress,imageUrl:data.publicUrl});return res.status(200).json({project:publicProject(project),url:data.publicUrl});
- }catch(error){console.error("[api/projectImportImage]",error);const code=error?.code||"PROJECT_IMPORT_IMAGE_ERROR",status=["IMPORT_OWNER_NOT_VERIFIED","IMPORT_OWNER_MISMATCH","PROJECT_OWNER_REQUIRED"].includes(code)?403:code==="PROJECT_NOT_FOUND"?404:code==="PROJECT_IMPORT_STORAGE_UNAVAILABLE"?503:500;return fail(res,status,String(error?.message||error),code);}
+  const project=registration
+    ? await bindRegistrationImage(pool,{...identity,signedWallet:verified.walletAddress,imageUrl:data.publicUrl})
+    : await persistProjectImage(pool,{...identity,signedWallet:verified.walletAddress,imageUrl:data.publicUrl});
+  return res.status(200).json({project:publicProject(project),url:data.publicUrl});
+ }catch(error){console.error("[api/projectImportImage]",error);const code=error?.code||"PROJECT_IMPORT_IMAGE_ERROR",status=["IMPORT_OWNER_NOT_VERIFIED","IMPORT_OWNER_MISMATCH","PROJECT_OWNER_REQUIRED","PROJECT_REGISTRAR_REQUIRED"].includes(code)?403:code==="PROJECT_NOT_FOUND"?404:code==="PROJECT_IMAGE_ALREADY_SET"?409:code==="PROJECT_IMPORT_STORAGE_UNAVAILABLE"?503:500;return fail(res,status,String(error?.message||error),code);}
 }
