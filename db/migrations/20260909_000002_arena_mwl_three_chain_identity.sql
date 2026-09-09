@@ -39,6 +39,47 @@ BEFORE INSERT OR UPDATE OF id, chain_id, year, month, mwl_epoch_key
 ON public.arena_league_seasons
 FOR EACH ROW EXECUTE FUNCTION public.enforce_arena_mwl_monthly_identity();
 
+CREATE OR REPLACE FUNCTION public.enforce_arena_mwl_child_season_identity()
+RETURNS trigger AS $$
+DECLARE
+  season public.arena_league_seasons%ROWTYPE;
+  expected_id text;
+BEGIN
+  SELECT * INTO season FROM public.arena_league_seasons WHERE id = NEW.season_id;
+  IF NOT FOUND OR season.month IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'MWL_MONTHLY_SEASON_REQUIRED';
+  END IF;
+  IF season.chain_id NOT IN (56, 97, 101, 4663, 46630) THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'MWL_CHAIN_UNSUPPORTED';
+  END IF;
+  expected_id := format('mwl-%s-m%s-c%s', season.year, lpad(season.month::text, 2, '0'), season.chain_id);
+  IF season.id <> expected_id OR COALESCE(season.mwl_epoch_key, '') <> expected_id THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'MWL_SEASON_IDENTITY_MISMATCH';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS enforce_arena_mwl_entry_season_identity ON public.arena_league_entries;
+CREATE TRIGGER enforce_arena_mwl_entry_season_identity
+BEFORE INSERT OR UPDATE OF season_id ON public.arena_league_entries
+FOR EACH ROW EXECUTE FUNCTION public.enforce_arena_mwl_child_season_identity();
+
+DROP TRIGGER IF EXISTS enforce_arena_mwl_point_event_season_identity ON public.arena_league_point_events;
+CREATE TRIGGER enforce_arena_mwl_point_event_season_identity
+BEFORE INSERT OR UPDATE OF season_id ON public.arena_league_point_events
+FOR EACH ROW EXECUTE FUNCTION public.enforce_arena_mwl_child_season_identity();
+
+DROP TRIGGER IF EXISTS enforce_arena_mwl_checkin_season_identity ON public.arena_creator_checkins;
+CREATE TRIGGER enforce_arena_mwl_checkin_season_identity
+BEFORE INSERT OR UPDATE OF season_id ON public.arena_creator_checkins
+FOR EACH ROW EXECUTE FUNCTION public.enforce_arena_mwl_child_season_identity();
+
+DROP TRIGGER IF EXISTS enforce_arena_mwl_dispatch_season_identity ON public.arena_war_dispatches;
+CREATE TRIGGER enforce_arena_mwl_dispatch_season_identity
+BEFORE INSERT OR UPDATE OF season_id ON public.arena_war_dispatches
+FOR EACH ROW EXECUTE FUNCTION public.enforce_arena_mwl_child_season_identity();
+
 CREATE TABLE IF NOT EXISTS public.arena_mwl_finalizations (
   season_id text PRIMARY KEY,
   chain_id integer NOT NULL,
@@ -60,6 +101,30 @@ CREATE TABLE IF NOT EXISTS public.arena_mwl_finalizations (
     CHECK (chain_id IN (56, 97, 101, 4663, 46630)),
   CONSTRAINT arena_mwl_finalizations_period_unique UNIQUE (chain_id, year, month)
 );
+
+CREATE OR REPLACE FUNCTION public.enforce_arena_mwl_finalization_identity()
+RETURNS trigger AS $$
+DECLARE
+  season public.arena_league_seasons%ROWTYPE;
+  expected_month_id text;
+BEGIN
+  SELECT * INTO season FROM public.arena_league_seasons WHERE id = NEW.season_id AND chain_id = NEW.chain_id;
+  IF NOT FOUND OR season.month IS NULL THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'MWL_FINALIZATION_SEASON_MISMATCH';
+  END IF;
+  expected_month_id := format('%s%s', season.year, lpad(season.month::text, 2, '0'));
+  IF NEW.year <> season.year OR NEW.month <> season.month OR NEW.month_id <> expected_month_id
+     OR btrim(NEW.treasury_id) = '' OR btrim(NEW.treasury_config_key) = '' THEN
+    RAISE EXCEPTION USING ERRCODE = 'P0001', MESSAGE = 'MWL_FINALIZATION_IDENTITY_MISMATCH';
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS enforce_arena_mwl_finalization_identity_row ON public.arena_mwl_finalizations;
+CREATE TRIGGER enforce_arena_mwl_finalization_identity_row
+BEFORE INSERT OR UPDATE ON public.arena_mwl_finalizations
+FOR EACH ROW EXECUTE FUNCTION public.enforce_arena_mwl_finalization_identity();
 
 CREATE TABLE IF NOT EXISTS public.arena_mwl_settlement_entitlements (
   entitlement_id text PRIMARY KEY,
