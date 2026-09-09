@@ -79,6 +79,15 @@ async function resolveForSigner(identity, signer) {
   return result;
 }
 
+function requireResolvedOwner(resolved) {
+  if (!resolved?.automaticOwnershipAvailable) {
+    throw Object.assign(new Error("Current token ownership cannot be verified automatically"), { code: "OWNERSHIP_PROOF_REQUIRED" });
+  }
+  if (!resolved?.signedWalletMatchesAuthority) {
+    throw Object.assign(new Error("Connected wallet is not the current token owner"), { code: "OWNERSHIP_PROOF_REQUIRED" });
+  }
+}
+
 async function strictAuth(res, body, { identity, action, projectId = null, intentBody = null }) {
   return requireProjectImportWalletAuth({
     res,
@@ -226,6 +235,7 @@ export default async function projectImports(req, res) {
       const auth = await strictAuth(res, body, { identity, action: PROJECT_IMPORT_ACTIONS.create, intentBody });
       if (!auth) return;
       const resolved = await resolveForSigner(identity, auth.walletAddress);
+      requireResolvedOwner(resolved);
       const result = await createProjectImport(pool, { resolverResult: resolved, signedWallet: auth.walletAddress });
       const project = result.created
         ? result.project
