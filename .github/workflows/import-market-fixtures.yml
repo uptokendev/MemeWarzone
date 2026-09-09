@@ -1,0 +1,60 @@
+name: Import market read-only fixtures
+on:
+  push:
+    branches: [diagnose/import-review-build-kit-20260909]
+    paths: [.github/workflows/import-market-fixtures.yml]
+permissions:
+  contents: read
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ad0811f0471f558e2e612f536a7a506f4bad95ff
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --prefix frontend --no-audit --no-fund
+      - name: Only public read requests
+        working-directory: frontend
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import {Connection,PublicKey} from '@solana/web3.js';
+          import {Interface} from 'ethers';
+          const out={checkedAt:new Date().toISOString(),bnb:{},solana:{}};
+          const capture=async f=>{try{return await f();}catch(e){return {error:String(e.message)};}};
+          const request=async(url,body)=>{const r=await fetch(url,{method:body?'POST':'GET',headers:{accept:'application/json','content-type':'application/json'},body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(10000)});if(!r.ok)throw Error('HTTP '+r.status);return r.json();};
+          const urls=['https://bsc-rpc.publicnode.com','https://bsc-dataseed.binance.org'];
+          let rpcUrl=null;
+          for(const url of urls){const r=await capture(()=>request(url,{jsonrpc:'2.0',id:1,method:'eth_chainId',params:[]}));out.bnb[url]=r;if(r.result==='0x38'){rpcUrl=url;break;}}
+          const iface=new Interface(['function getTokenInfo(address) view returns(uint256 version,address tokenManager,address quote,uint256 lastPrice,uint256 tradingFeeRate,uint256 minTradingFee,uint256 launchTime,uint256 offers,uint256 maxOffers,uint256 funds,uint256 maxFunds,bool liquidityAdded)','function getPair(address,address) view returns(address)','function getPool(address,address,uint24) view returns(address)','function token0() view returns(address)','function token1() view returns(address)','function factory() view returns(address)','function getReserves() view returns(uint112,uint112,uint32)','function balanceOf(address) view returns(uint256)','function totalSupply() view returns(uint256)','function symbol() view returns(string)','function decimals() view returns(uint8)']);
+          const helper='0xF251F83e40a78868FcfA3FA4599Dad6494E46034',factory='0xcA143Ce32Fe78f1f7019d7d551a6402fC5350c73',wn='0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c';
+          out.bnb.samples=[{label:'CAKE',address:'0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82'}];
+          for(const [label,status,type] of [['Four bonding','PUBLISH','NEW'],['Four graduated','TRADE','DEX']]){
+            const list=await capture(()=>request('https://four.meme/meme-api/v1/public/token/search',{type,listType:status==='PUBLISH'?'NOR':'NOR_DEX',pageIndex:1,pageSize:2,status,sort:'DESC'}));
+            out.bnb[label]=list;
+            const candidates=Array.isArray(list.data)?list.data:Array.isArray(list.data?.list)?list.data.list:Array.isArray(list.data?.records)?list.data.records:[];
+            const item=candidates.find(x=>/^0x[0-9a-fA-F]{40}$/.test(x.tokenAddress||x.address||''));if(item)out.bnb.samples.push({label,address:item.tokenAddress||item.address});
+          }
+          if(rpcUrl){
+            const send=async(method,params)=>{const r=await request(rpcUrl,{jsonrpc:'2.0',id:1,method,params});if(r.error)throw Error(JSON.stringify(r.error));return r.result;};
+            const block=await send('eth_blockNumber',[]);out.bnb.block=await send('eth_getBlockByNumber',[block,false]);out.bnb.rpc=rpcUrl;out.bnb.calls=[];
+            const call=async(to,method,args=[])=>{const raw=await send('eth_call',[{to,data:iface.encodeFunctionData(method,args)},block]);const decoded=iface.decodeFunctionResult(method,raw);out.bnb.calls.push({to,method,args,raw});return decoded;};
+            for(const sample of out.bnb.samples){sample.helper=await capture(()=>call(helper,'getTokenInfo',[sample.address]));sample.symbol=await capture(()=>call(sample.address,'symbol'));sample.pair=await capture(()=>call(factory,'getPair',[sample.address,wn]));if(Array.isArray(sample.pair)&&sample.pair[0]!=='0x0000000000000000000000000000000000000000'){const p=sample.pair[0];for(const m of ['token0','token1','factory','getReserves','totalSupply'])await capture(()=>call(p,m));await capture(()=>call(sample.address,'balanceOf',[p]));await capture(()=>call(wn,'balanceOf',[p]));}}
+          }
+          const rpc=new Connection('https://api.mainnet-beta.solana.com',{commitment:'confirmed',disableRetryOnRateLimit:true,fetch:(u,i)=>fetch(u,{...i,signal:AbortSignal.timeout(10000)})});
+          const amm=new PublicKey('pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA'),global=PublicKey.findProgramAddressSync([Buffer.from('global_config')],amm)[0];
+          const keys=['7AVB9viRcpmr8gRMTCAYSmhP7gbuBMpBR51DMjwcpump','6Bizh2PkwgfZGhJPQYvwqAMRfE6JjgEZB6YhzQAr4jdH','5jCCA6YfURQGxdMF4HWevaMyHkyPhFGwMpuo8W2mbDxf','D84uWbccwP1zLjfsmwcUDsMoXjegGC6SoK9wZRwxvFzK','F4VKhJ8Ek63AQC21sLcTj9Rt9xDoTSWwoaFw6YDXEN6V',global.toBase58()];
+          out.solana.global=global.toBase58();out.solana.accounts=await capture(async()=>{const r=await rpc.getMultipleAccountsInfoAndContext(keys.map(k=>new PublicKey(k)),'confirmed');return keys.map((address,i)=>({address,slot:r.context.slot,account:r.value[i]?{owner:r.value[i].owner.toBase58(),lamports:r.value[i].lamports,executable:r.value[i].executable,data:r.value[i].data.toString('base64')}:null}));});
+          fs.writeFileSync('/tmp/import-market-fixtures.json',JSON.stringify(out,(_,v)=>typeof v==='bigint'?v.toString():v,2));
+          console.log(JSON.stringify({checkedAt:out.checkedAt,bnbRpc:out.bnb.rpc,samples:out.bnb.samples,solanaGlobal:out.solana.global},(_,v)=>typeof v==='bigint'?v.toString():v));
+          JS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: import-market-fixtures
+          path: /tmp/import-market-fixtures.json
+          retention-days: 7
