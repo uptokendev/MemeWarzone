@@ -65,32 +65,26 @@ curl.exe -sS -X POST "$TOKEN_API/internal/wtr/index-topaz-pools" -H "Authorizati
 
 ## 1. Deploy Minimal Topaz
 
-From `MemeWarzone-Topaz` on BSC testnet:
+The current repository-authoritative BSC Testnet 97 Topaz generation was deployed from `MemeWarzone-Topaz` authority `0507a2debf438c9d3b2e387c880c96394ffade9d` and is already deployed. Do not deploy another Topaz stack for this certification.
 
-```bash
-npm run compile
-npx hardhat deploy --network bscTestnet
-npx hardhat run scripts/export-manifest.ts --network bscTestnet
-```
-
-The expected manifest is:
+The authoritative integration manifest is:
 
 ```text
 deployments/bscTestnet/minimal-topaz.json
 ```
 
-The manifest must include `contracts.Router`, `contracts.PoolFactory`, `contracts.WBNB`, `chainId: 97`, and `configuration.volatileFeeBps: 100`.
+The manifest must include the exact chain-97 Router, PoolFactory, FactoryRegistry and WBNB identities, `chainId: 97`, and `configuration.volatileFeeBps: 30`.
 
 ## 2. Deploy MemeBattles With The Topaz Manifest
 
-Copy the Minimal Topaz manifest into the MemeBattles repo at `deployments/bscTestnet/minimal-topaz.json`, or point to it with `TOPAZ_MANIFEST`.
+Use the checked-in Minimal Topaz manifest or point to it with `TOPAZ_MANIFEST`.
 
 ```bash
 npm run deploy:check-env:bsc-testnet
 TOPAZ_MANIFEST=deployments/bscTestnet/minimal-topaz.json npm run deploy:with-topaz-manifest:bsc-testnet
 ```
 
-The deploy script reads the manifest, sets `TOPAZ_ROUTER` from `contracts.Router`, deploys the protocol, and runs deployment verification. Verification checks that the Topaz router exposes a factory/WBNB pair and that the factory volatile fee is exactly 100 bps.
+The deploy script reads the manifest, sets `TOPAZ_ROUTER` from `contracts.Router`, deploys the protocol, and runs deployment verification. BSC Testnet verification requires the Topaz router/factory/WBNB wiring and the factory volatile fee to be exactly 30 bps.
 
 ## 3. Run A Graduation Scenario
 
@@ -146,4 +140,4 @@ The script writes:
 reports/topaz-graduation-testnet-<timestamp>.json
 ```
 
-The report validates BSC testnet chain id 97, Minimal Topaz manifest values, Topaz router/factory/WBNB bytecode, fixed volatile fee of 100 bps, MemeBattles deployment bytecode, optional campaign/token/pool bytecode, optional transaction receipts, pool reserves, pool stability, Topaz WBNB pairing, price continuity, locked LP preservation after harvest, nonzero claimed fees in both assets, and the exact 80/20 creator/protocol fee split.
+The report validates BSC testnet chain id 97, Minimal Topaz manifest values, Topaz router/factory/WBNB bytecode, fixed volatile fee of 30 bps, MemeBattles deployment bytecode, optional campaign/token/pool bytecode, optional transaction receipts, pool reserves, pool stability, Topaz WBNB pairing, price continuity, locked LP preservation after harvest, nonzero claimed fees in both assets, and the exact 80/20 creator/protocol fee split.

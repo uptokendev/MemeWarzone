@@ -1,0 +1,42 @@
+name: Agent 3 BSC97 Topaz 30bps
+
+on:
+  pull_request:
+    paths:
+      - 'deployments/bscTestnet/minimal-topaz.json'
+      - 'scripts/deploy-with-topaz-manifest.ts'
+      - 'scripts/test-topaz-graduation-flow.ts'
+      - 'scripts/check-deploy-env.cjs'
+      - 'scripts/check-frontend-contracts.cjs'
+      - 'scripts/prove-bsc97-topaz-30bps.test.mjs'
+      - 'contracts/PermanentLpLocker.sol'
+      - 'deployments/bscMainnet/minimal-topaz.json'
+      - '.github/workflows/agent3-bsc97-topaz-30bps.yml'
+  workflow_dispatch:
+
+jobs:
+  focused-certification:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Compile protocol
+        run: npm run compile
+
+      - name: BSC97 Topaz manifest and certification proof
+        run: node --test scripts/prove-bsc97-topaz-30bps.test.mjs
+
+      - name: Source-head BNB lifecycle regression
+        run: npx hardhat test test/BnbLifecycleCertification.spec.ts

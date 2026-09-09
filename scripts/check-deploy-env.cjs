@@ -204,10 +204,13 @@ function checkTopazManifest(required = false) {
     const fee = Number(manifest.configuration && manifest.configuration.volatileFeeBps);
     const graduationPoolStable = manifest.configuration && manifest.configuration.graduationPoolStable;
     const expectedChainId = IS_BSC_MAINNET ? 56 : IS_BSC_TESTNET ? 97 : null;
+    const expectedVolatileFeeBps = IS_BSC_TESTNET ? 30 : 100;
     if (expectedChainId && chainId !== expectedChainId) {
       errors.push(`TOPAZ_MANIFEST: chainId must be ${expectedChainId} for ${TARGET}, got ${chainId}`);
     }
-    if (fee !== 100) errors.push(`TOPAZ_MANIFEST: configuration.volatileFeeBps must be 100, got ${fee}`);
+    if (fee !== expectedVolatileFeeBps) {
+      errors.push(`TOPAZ_MANIFEST: configuration.volatileFeeBps must be ${expectedVolatileFeeBps}, got ${fee}`);
+    }
     if (graduationPoolStable !== false) errors.push(`TOPAZ_MANIFEST: configuration.graduationPoolStable must be false, got ${graduationPoolStable}`);
     return true;
   } catch (error) {
