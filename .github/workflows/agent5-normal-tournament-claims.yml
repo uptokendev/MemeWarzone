@@ -103,6 +103,7 @@ jobs:
       SOLANA_VERSION: 1.18.26
       RUST_TOOLCHAIN: 1.79.0
       IDL_RUST_TOOLCHAIN: nightly-2024-05-09
+      CARGO_NET_RETRY: 10
       ANCHOR_PROVIDER_URL: http://127.0.0.1:8899
     steps:
       - uses: actions/checkout@v4
@@ -139,7 +140,12 @@ jobs:
         run: |
           set -o pipefail
           rm -f Cargo.lock programs/mwz_rewards_treasury/Cargo.lock
-          anchor build 2>&1 | tee /tmp/agent5-solana-build.log | tail -n 200
+          anchor build --no-idl 2>&1 | tee /tmp/agent5-solana-build.log | tail -n 200
+          mkdir -p target/idl
+          (
+            cd programs/mwz_rewards_treasury
+            RUSTUP_TOOLCHAIN="$IDL_RUST_TOOLCHAIN" anchor idl build --out ../../target/idl/mwz_rewards_treasury.json
+          ) 2>&1 | tee /tmp/agent5-solana-idl.log | tail -n 240
           test -s target/deploy/mwz_rewards_treasury.so
           test -s target/idl/mwz_rewards_treasury.json
       - name: Start local validator with canonical rewards program
@@ -174,6 +180,7 @@ jobs:
           name: agent5-normal-tournament-solana-logs
           path: |
             /tmp/agent5-solana-build.log
+            /tmp/agent5-solana-idl.log
             /tmp/agent5-solana-validator.log
           if-no-files-found: ignore
 
