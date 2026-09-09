@@ -1,0 +1,81 @@
+name: Read-only three-token import authority comparison
+on:
+  push:
+    branches: [diagnose/everglen-import-evidence-20260909]
+    paths: [.github/workflows/import-three-token-authority-readonly.yml]
+permissions:
+  contents: read
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: c0ce2e9ba4eac69fe3d8b5f6395a3a86f47e7b7e
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --prefix frontend --no-audit --no-fund
+      - name: Read only exact token curve and fee-sharing accounts
+        working-directory: frontend
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import crypto from 'node:crypto';
+          import { Connection, PublicKey } from '@solana/web3.js';
+          import { BorshAccountsCoder } from '@coral-xyz/anchor';
+          import { PUMP_PROGRAM_ID, pumpBondingCurveAddress, decodePumpProjectCreator } from './api/lib/projectSolanaProjectAuthority.js';
+          const rpc=new Connection('https://api.mainnet-beta.solana.com',{commitment:'confirmed',disableRetryOnRateLimit:true,fetch:(u,i)=>fetch(u,{...i,signal:AbortSignal.timeout(10000)})});
+          const feeProgram=new PublicKey('pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ');
+          const tokens=[
+            ['ASK','7AVB9viRcpmr8gRMTCAYSmhP7gbuBMpBR51DMjwcpump','9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H'],
+            ['Everglen','FcBb7avR9LgmgwFxRcVJDiroZxZfgvtnUJrRKQ7kpump','3ZMWQiR7YauYYmdHPs8Qr1bLZZbtvnPeobhDvjR7VbkD'],
+            ['Legacy Coin','2XnP5fdNbeBbBUX1sh4gKTJCM7zD1SoKX2QhEHudpump','2wsYUHLBo8Y7voFjLkwXFZFn7iayUmaXARtQTZkrNhYB'],
+          ];
+          const report={checkedAt:new Date().toISOString(),sourceHead:'c0ce2e9ba4eac69fe3d8b5f6395a3a86f47e7b7e',tokens:[]};
+          const capture=async(fn)=>{try{return await fn();}catch(e){return {error:String(e?.message||e)};}};
+          report.genesis=await capture(()=>rpc.getGenesisHash());
+          let coder=null,accountName=null;
+          report.idl=await capture(async()=>{
+            const blobSha='900a99fbaa528ea98ffa327cf25ff0359f5361c5';
+            const r=await fetch('https://api.github.com/repos/pump-fun/pump-public-docs/git/blobs/'+blobSha,{signal:AbortSignal.timeout(10000)});
+            if(!r.ok)throw Error('IDL HTTP '+r.status);
+            const b=await r.json(),bytes=Buffer.from(b.content,'base64');
+            const hash=crypto.createHash('sha1').update(Buffer.from('blob '+bytes.length+'\0')).update(bytes).digest('hex');
+            if(hash!==blobSha)throw Error('IDL hash mismatch');
+            const idl=JSON.parse(bytes.toString());
+            if(idl.address!==feeProgram.toBase58())throw Error('IDL program mismatch');
+            accountName=idl.accounts.find(a=>/sharing.?config/i.test(a.name))?.name;
+            coder=new BorshAccountsCoder(idl);
+            return {blobSha,accountName,program:idl.address};
+          });
+          for(const [name,mint,claimant] of tokens){
+            const row={name,mint,claimant};
+            row.evidence=await capture(async()=>{
+              const mintKey=new PublicKey(mint),curve=pumpBondingCurveAddress(mintKey);
+              const share=PublicKey.findProgramAddressSync([Buffer.from('sharing-config'),mintKey.toBuffer()],feeProgram)[0];
+              const response=await rpc.getMultipleAccountsInfoAndContext([curve,share],'confirmed');
+              const [a,s]=response.value;
+              if(!a) return {slot:response.context.slot,curve:curve.toBase58(),curveFound:false};
+              const bytes=Buffer.from(a.data);
+              const valid=!a.executable&&a.owner.equals(PUMP_PROGRAM_ID)&&bytes.length>=81&&bytes.subarray(0,8).equals(Buffer.from([23,183,248,55,96,216,172,96]))&&[0,1].includes(bytes[48]);
+              if(!valid)throw Error('Curve identity/layout validation failed');
+              const creator=new PublicKey(bytes.subarray(49,81));
+              const answer={slot:response.context.slot,curve:curve.toBase58(),curveFound:true,complete:bytes[48]===1,rawCreator:creator.toBase58(),creatorOnCurve:PublicKey.isOnCurve(creator.toBytes()),decodedSigningCreator:decodePumpProjectCreator(a),claimantMatchesCreator:creator.toBase58()===claimant,canonicalSharingConfig:share.toBase58(),creatorIsSharingConfig:creator.equals(share),sharingConfigFound:Boolean(s)};
+              if(s){answer.sharingConfigOwner=s.owner.toBase58();answer.sharingConfigDataLength=s.data.length;if(s.owner.equals(feeProgram)&&!s.executable&&coder&&accountName){answer.sharingConfig=await capture(async()=>coder.decode(accountName,s.data));}}
+              return answer;
+            });
+            report.tokens.push(row);
+          }
+          fs.writeFileSync('/tmp/import-three-token-authority.json',JSON.stringify(report,null,2));
+          console.log('IMPORT_AUTHORITY_COMPARISON',JSON.stringify(report));
+          JS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: import-three-token-authority-readonly
+          path: /tmp/import-three-token-authority.json
+          retention-days: 7
