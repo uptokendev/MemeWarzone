@@ -20,7 +20,7 @@ export async function listRecentProjectImports(pool,{limit=24}={}){
   );
   return r.rows||[];
 }
-export async function createProjectImport(pool,{resolverResult,signedWallet}){const identity=normalizeProjectIdentity(resolverResult?.chainId,resolverResult?.tokenAddress);const signer=normalizeWallet(signedWallet,identity.chainId);if(!resolverResult?.automaticOwnershipAvailable)throw Object.assign(new Error("Current token ownership cannot be verified automatically"),{code:"OWNERSHIP_PROOF_REQUIRED"});if(!resolverResult?.signedWalletMatchesAuthority)throw Object.assign(new Error("Connected wallet is not the current token owner"),{code:"OWNERSHIP_PROOF_REQUIRED"});const r=await pool.query(`INSERT INTO public.arena_token_imports (chain_id,token_address,owner_wallet,imported_by_wallet,project_owner_wallet,name,symbol,decimals,total_supply,ownership_status,verified_at,ownership_verified_at,metadata_updated_at) VALUES ($1,$2,'',$3,$3,$4,$5,$6,$7,'ownership_verified',NOW(),NOW(),NOW()) ON CONFLICT (chain_id,token_address) DO NOTHING RETURNING *`,[identity.chainId,identity.tokenAddress,signer,resolverResult?.name??null,resolverResult?.symbol??null,Number.isFinite(Number(resolverResult?.decimals))?Number(resolverResult.decimals):null,resolverResult?.totalSupply==null?null:String(resolverResult.totalSupply)]);if(r.rows?.[0])return{created:true,project:r.rows[0]};const existing=await lookupProjectImport(pool,identity);if(existing?.ownership_status==="ownership_verified"&&normalizeAddress(existing.project_owner_wallet||"",identity.chainId)===signer)return{created:false,project:existing};throw Object.assign(new Error("This token is already registered by a different project owner"),{code:"OWNERSHIP_CONFLICT"});}
+export async function createProjectImport(pool,{resolverResult,signedWallet}){const identity=normalizeProjectIdentity(resolverResult?.chainId,resolverResult?.tokenAddress);const signer=normalizeWallet(signedWallet,identity.chainId);const verified=Boolean(resolverResult?.signedWalletMatchesAuthority);const r=await pool.query(`INSERT INTO public.arena_token_imports (chain_id,token_address,owner_wallet,imported_by_wallet,project_owner_wallet,name,symbol,decimals,total_supply,ownership_status,verified_at,ownership_verified_at,metadata_updated_at) VALUES ($1,$2,'',$3,$4,$5,$6,$7,$8,$9,CASE WHEN $9='ownership_verified' THEN NOW() ELSE NULL END,CASE WHEN $9='ownership_verified' THEN NOW() ELSE NULL END,NOW()) ON CONFLICT (chain_id,token_address) DO NOTHING RETURNING *`,[identity.chainId,identity.tokenAddress,signer,verified?signer:null,resolverResult?.name??null,resolverResult?.symbol??null,Number.isFinite(Number(resolverResult?.decimals))?Number(resolverResult.decimals):null,resolverResult?.totalSupply==null?null:String(resolverResult.totalSupply),verified?"ownership_verified":"ownership_pending"]);if(r.rows?.[0])return{created:true,project:r.rows[0]};return{created:false,project:await lookupProjectImport(pool,identity)};}
 export async function claimExistingProject(pool,{resolverResult,signedWallet}){const identity=normalizeProjectIdentity(resolverResult?.chainId,resolverResult?.tokenAddress);const signer=normalizeWallet(signedWallet,identity.chainId);if(!resolverResult?.signedWalletMatchesAuthority)throw Object.assign(new Error("Current authority proof does not match signed wallet"),{code:"OWNERSHIP_PROOF_REQUIRED"});const existing=await lookupProjectImport(pool,identity);if(!existing)throw Object.assign(new Error("Imported project not found"),{code:"PROJECT_NOT_FOUND"});if(existing.ownership_status==="ownership_suspended")throw Object.assign(new Error("Project ownership is suspended"),{code:"OWNERSHIP_SUSPENDED"});if(existing.ownership_status==="ownership_verified"){
   const current=normalizeAddress(existing.project_owner_wallet||"",identity.chainId);
   if(current===signer)return existing;
@@ -55,14 +55,18 @@ export async function bindRegistrationImage(pool,{chainId,tokenAddress,signedWal
   const url=String(imageUrl||"").trim();
   if(!url||/^data:/i.test(url))throw Object.assign(new Error("Invalid project image URL"),{code:"PROJECT_IMPORT_IMAGE_INVALID"});
   const existing=await lookupProjectImport(pool,identity);
-  assertVerifiedProjectOwner(existing,{wallet:signer,chainId:identity.chainId,token:identity.tokenAddress});
+  if(!existing)throw Object.assign(new Error("Imported project not found"),{code:"PROJECT_NOT_FOUND"});
+  const registrar=normalizeAddress(existing.imported_by_wallet||"",identity.chainId);
+  if(!registrar||registrar!==signer){
+    throw Object.assign(new Error("Only the registering wallet can attach the initial project image"),{code:"PROJECT_REGISTRAR_REQUIRED"});
+  }
   if(String(existing.image_url||"").trim()){
     throw Object.assign(new Error("Project image is already registered"),{code:"PROJECT_IMAGE_ALREADY_SET"});
   }
   const r=await pool.query(
     `UPDATE public.arena_token_imports
         SET image_url=$4, metadata_updated_at=NOW(), updated_at=NOW()
-      WHERE chain_id=$1 AND token_address=$2 AND project_owner_wallet=$3 AND ownership_status='ownership_verified'
+      WHERE chain_id=$1 AND token_address=$2 AND imported_by_wallet=$3
         AND (image_url IS NULL OR btrim(image_url)='')
       RETURNING *`,
     [identity.chainId,identity.tokenAddress,signer,url],
