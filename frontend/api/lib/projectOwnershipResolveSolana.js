@@ -10,6 +10,10 @@ function emptyResult(reason) {
   return { validMint: false, decimals: null, totalSupply: null, mintAuthority: null, verified: false, automaticVerificationAvailable: false, reason };
 }
 
+function rpcError(message) {
+  return Object.assign(new Error(message), { code: "PROJECT_IMPORT_RPC_UNAVAILABLE" });
+}
+
 function canonicalAddress(value) { return new PublicKey(String(value || "").trim()).toBase58(); }
 
 export async function resolveProjectOwnershipSolana({ mint, connectedWallet, connection }) {
@@ -20,7 +24,7 @@ export async function resolveProjectOwnershipSolana({ mint, connectedWallet, con
   catch { return emptyResult("invalid_address"); }
   let response;
   try { response = await connection.getParsedAccountInfo(new PublicKey(mintAddress), "confirmed"); }
-  catch { return emptyResult("mint_lookup_failed"); }
+  catch { throw rpcError("Solana mint lookup is temporarily unavailable. Please retry."); }
   const account = response?.value;
   if (!account) return emptyResult("mint_not_found");
   const owner = account.owner?.toBase58?.() || String(account.owner || "");

@@ -3,6 +3,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import { getTokenMetadata, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { resolveProjectOwnershipBnb } from "./projectOwnershipResolveBnb.js";
 import { resolveProjectOwnershipSolana } from "./projectOwnershipResolveSolana.js";
+import { assertSolanaImportMainnet, resolveSolanaProjectAuthority } from "./projectSolanaProjectAuthority.js";
 import { registerProjectImportResolver } from "./projectImportResolvers.js";
 
 const BNB_CHAIN_ID = 56;
@@ -119,8 +120,10 @@ export async function resolveSolanaDisplayMetadata(connection, mint) {
 export async function resolveSolanaProjectImport({ chainId, tokenAddress, signedWallet }) {
   if (Number(chainId) !== SOLANA_CHAIN_ID) throw Object.assign(new Error("Solana project import resolver only supports chain 101"), { code: "UNSUPPORTED_CHAIN" });
   const connection = getSolanaConnection();
+  await assertSolanaImportMainnet(connection);
   const raw = await resolveProjectOwnershipSolana({ mint: tokenAddress, connectedWallet: signedWallet, connection });
-  if (!raw?.validMint) throw Object.assign(new Error(`Solana mint resolution failed: ${raw?.reason || "invalid mint"}`), { code: "SOLANA_MINT_INVALID" });
+  if (!raw?.validMint) throw Object.assign(new Error(raw?.reason === "mint_lookup_failed" ? "Solana token lookup is temporarily unavailable." : "No valid Solana token was found. Check the Contract Address and selected chain."), { code: raw?.reason === "mint_lookup_failed" ? "PROJECT_IMPORT_RPC_UNAVAILABLE" : "SOLANA_MINT_INVALID" });
+  const authority = await resolveSolanaProjectAuthority({ connection, mint: raw.mint, mintAuthority: raw.mintAuthority });
   const metadata = await resolveSolanaDisplayMetadata(connection, raw.mint);
   return {
     chainId: SOLANA_CHAIN_ID,
@@ -131,9 +134,10 @@ export async function resolveSolanaProjectImport({ chainId, tokenAddress, signed
     totalSupply: raw.totalSupply,
     metadataSource: metadata.source,
     metadataType: metadata.type,
-    automaticOwnershipAvailable: Boolean(raw.automaticVerificationAvailable),
-    currentAuthority: raw.mintAuthority ?? null,
-    signedWalletMatchesAuthority: Boolean(raw.verified),
+    automaticOwnershipAvailable: Boolean(authority.currentAuthority),
+    ...authority,
+    mintAuthority: raw.mintAuthority ?? null,
+    signedWalletMatchesAuthority: Boolean(authority.currentAuthority && authority.currentAuthority === new PublicKey(signedWallet).toBase58()),
   };
 }
 

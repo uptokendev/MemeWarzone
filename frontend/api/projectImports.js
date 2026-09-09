@@ -56,7 +56,7 @@ function errorStatus(code) {
     "OWNERSHIP_SUSPENDED", "MANUAL_CLAIM_NOT_ALLOWED", "RESOLVER_IDENTITY_MISMATCH",
     "OWNERSHIP_CONFLICT", "PROJECT_OWNERSHIP_STATE_CONFLICT", "PROJECT_OWNERSHIP_IMAGE_REQUIRED",
   ].includes(code)) return 409;
-  if (["PROJECT_IMPORT_RESOLVER_UNAVAILABLE", "PROJECT_IMPORT_RPC_UNAVAILABLE"].includes(code)) return 503;
+  if (["PROJECT_IMPORT_RESOLVER_UNAVAILABLE", "PROJECT_IMPORT_RPC_UNAVAILABLE", "PROJECT_IMPORT_CHAIN_MISMATCH"].includes(code)) return 503;
   return 500;
 }
 
@@ -65,6 +65,7 @@ function projectError(res, error) {
   return json(res, errorStatus(code), {
     error: String(error?.message || error),
     code,
+    currentAuthority: error?.currentAuthority || undefined,
     currentVersion: error?.currentVersion || undefined,
     currentOwnershipStatus: error?.currentOwnershipStatus || undefined,
   });
@@ -104,7 +105,9 @@ function requireResolvedOwner(resolved) {
     throw Object.assign(new Error("Current token ownership cannot be verified automatically"), { code: "OWNERSHIP_PROOF_REQUIRED" });
   }
   if (!resolved?.signedWalletMatchesAuthority) {
-    throw Object.assign(new Error("Connected wallet is not the current token owner"), { code: "OWNERSHIP_PROOF_REQUIRED" });
+    const address = String(resolved.currentAuthority || "");
+    const masked = address.length > 8 ? `${address.slice(0, 4)}...${address.slice(-4)}` : address;
+    throw Object.assign(new Error(`This token is controlled by wallet ${masked}. Connect that wallet to continue.`), { code: "OWNERSHIP_PROOF_REQUIRED", currentAuthority: address });
   }
 }
 
@@ -251,8 +254,7 @@ export default async function projectImports(req, res) {
       }
       if (tokenAddress) {
         const project = await lookupProjectImport(pool, { chainId: q.chainId, tokenAddress });
-        if (!project) return json(res, 404, { error: "Imported project not found", code: "PROJECT_NOT_FOUND" });
-        return json(res, 200, { project: publicProject(project) });
+        return json(res, 200, { found: Boolean(project), project: publicProject(project) });
       }
       const items = await listRecentProjectImports(pool, { limit: q.limit || 24 });
       return json(res, 200, { items: items.map(publicProject) });
@@ -270,7 +272,7 @@ export default async function projectImports(req, res) {
         resolved = unresolvedEvidence(identity, error);
       }
       const security = await scanProjectImportSecurity(identity);
-      const project = await enrichExistingProjectIdentity(identity, resolved);
+      const project = await enrichExistingProjectIdentity(identity, resolved) || await lookupProjectImport(pool, identity);
       return json(res, 200, { resolved: { ...resolved, security }, project: publicProject(project) });
     }
 
@@ -339,7 +341,7 @@ export default async function projectImports(req, res) {
         resolved = unresolvedEvidence(identity, error);
       }
       if (resolved.automaticOwnershipAvailable && !resolved.signedWalletMatchesAuthority) {
-        throw Object.assign(new Error("Connected wallet is not the current token owner. Connect the owner wallet to continue."), { code: "OWNERSHIP_PROOF_REQUIRED" });
+        requireResolvedOwner(resolved);
       }
       const security = await scanProjectImportSecurity(identity);
       const manualRequired = !resolved.automaticOwnershipAvailable || !securityAllowsAutomaticImport(security) || Boolean(resolved.resolverError);
