@@ -42,6 +42,15 @@ jobs:
       - name: Align npm with frontend packageManager
         run: npm install --global npm@10.9.2
 
+      - name: Diagnose frontend lockfile drift
+        shell: bash
+        run: |
+          npm install --package-lock-only --prefix frontend --ignore-scripts --no-audit --no-fund
+          echo '--- FRONTEND PACKAGE-LOCK DIFF START ---'
+          git diff -- frontend/package-lock.json
+          echo '--- FRONTEND PACKAGE-LOCK DIFF END ---'
+          test -z "$(git status --short -- frontend/package-lock.json)"
+
       - name: Install frontend dependencies
         run: npm ci --prefix frontend
 
