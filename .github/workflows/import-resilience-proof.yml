@@ -1,0 +1,93 @@
+name: Import resilience proof
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - frontend/api/**
+      - frontend/server/**
+      - frontend/src/pages/ProjectImport.tsx
+      - frontend/src/lib/projectImport*
+      - frontend/src/project-imports-ui.test.mjs
+      - frontend/e2e/import-harness/**
+      - frontend/e2e/project-import-resilience.browser.ts
+      - frontend/playwright.imports.config.ts
+      - .github/workflows/import-resilience-proof.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  imports:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: memewarzone_import_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d memewarzone_import_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/memewarzone_import_test
+      PROJECT_IMPORT_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/memewarzone_import_test
+      PG_DISABLE_SSL: '1'
+      ENABLE_PROJECT_IMPORTS: 'true'
+      ENABLE_ARENA: 'false'
+      VITE_ENABLE_PROJECT_IMPORTS: 'true'
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: git rev-parse HEAD && npm ci --prefix frontend --no-audit --no-fund
+      - name: Syntax and API import graph
+        run: |
+          node --check frontend/api/server.mjs
+          node --check frontend/api/projectImports.js
+          node --check frontend/server/railwayProxy.js
+          npm --prefix frontend run check:api-imports
+      - name: Runtime crash, ownership, HTTP and persistence regressions
+        run: |
+          set -e
+          for test in \
+            frontend/server/railwayProxy.failure.test.mjs \
+            frontend/api/lib/projectSolanaProjectAuthority.test.mjs \
+            frontend/api/lib/projectImportHttp.test.mjs \
+            frontend/api/lib/projectOwnershipResolveBnb.test.mjs \
+            frontend/api/lib/projectOwnershipResolveSolana.test.mjs \
+            frontend/api/lib/projectImportResolverAdapters.test.mjs \
+            frontend/api/lib/projectImportToken2022Support.test.mjs \
+            frontend/api/lib/projectImportSecurity.test.mjs \
+            frontend/api/lib/projectImportRiskSecurity.test.mjs \
+            frontend/api/lib/projectImportCore.test.mjs \
+            frontend/api/lib/projectImportIdentity.test.mjs \
+            frontend/api/lib/projectOwnershipReview.test.mjs \
+            frontend/src/project-imports-ui.test.mjs \
+            frontend/src/lib/projectImportFeedback.test.mjs; do
+            node --test "$test"
+          done
+      - name: Production frontend build
+        run: npm --prefix frontend run build
+      - name: Browser setup
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.list.save /etc/apt/sources.list.d/google-chrome.sources
+          cd frontend
+          npx playwright install --with-deps chromium
+      - name: Browser import flow and persistent error checks
+        working-directory: frontend
+        run: npx playwright test -c playwright.imports.config.ts
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: import-resilience-browser-failures
+          path: frontend/test-results
+          retention-days: 3
