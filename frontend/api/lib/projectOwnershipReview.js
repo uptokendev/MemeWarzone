@@ -82,12 +82,15 @@ export async function reviewProjectOwnership(db, { projectId, action, reason, ex
         currentVersion: String(current.state_version || ""), currentOwnershipStatus: current.ownership_status,
       });
     }
+    if (action === "verify_owner" && !String(current.image_url || "").trim()) {
+      throw reviewError("Manual ownership approval requires a project image", "PROJECT_OWNERSHIP_IMAGE_REQUIRED");
+    }
 
     const updatedResult = action === "verify_owner"
       ? await client.query(`
           UPDATE public.arena_token_imports
-             SET project_owner_wallet=manual_claim_wallet, ownership_status=$2, ownership_verified_at=NOW(),
-                 manual_claim_wallet=NULL, manual_claim_requested_at=NULL, manual_claim_note=NULL, updated_at=NOW()
+             SET project_owner_wallet=manual_claim_wallet, ownership_status=$2, ownership_verified_at=NOW(), verified_at=NOW(),
+                 manual_claim_wallet=NULL, manual_claim_requested_at=NULL, manual_claim_note=NULL, updated_at=NOW(), metadata_updated_at=NOW()
            WHERE id=$1 AND xmin::text=$3 AND ownership_status=$4
            RETURNING *, xmin::text AS state_version
         `, [projectId, VERIFIED, String(expectedVersion), MANUAL_REVIEW])

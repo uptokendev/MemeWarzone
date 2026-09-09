@@ -190,40 +190,49 @@ test("unsupported chain fails closed", async () => {
   await assert.rejects(() => lookupProjectImport(pool, { chainId: 4663, tokenAddress: "0x0000000000000000000000000000000000000011" }), /Unsupported project import chain/);
 });
 
-test("recent public list hides incomplete imageless registrations and ignores Arena status", async () => {
+test("recent public list hides pending and manual-review projects even when review image exists", async () => {
   await resetImportTable();
   await applyMigration();
   await pool.query(`ALTER TABLE public.arena_token_imports ADD COLUMN IF NOT EXISTS status text`);
+
   const pendingWallet = ethers.Wallet.createRandom().address.toLowerCase();
   const pendingToken = "0x00000000000000000000000000000000000000b1";
   const pending = await createProjectImport(pool, { resolverResult: resolver({ tokenAddress: pendingToken }), signedWallet: pendingWallet });
   assert.equal(pending.project.ownership_status, "ownership_pending");
-  await bindRegistrationImage(pool, { chainId: 56, tokenAddress: pendingToken, signedWallet: pendingWallet, imageUrl: "https://cdn.example/pending.png" });
+
+  const manualWallet = ethers.Wallet.createRandom().address.toLowerCase();
+  const manualToken = "0x00000000000000000000000000000000000000b5";
+  await createProjectImport(pool, { resolverResult: resolver({ tokenAddress: manualToken }), signedWallet: manualWallet });
+  const manual = await requestManualProjectClaim(pool, { chainId: 56, tokenAddress: manualToken, signedWallet: manualWallet, note: "manual review" });
+  assert.equal(manual.ownership_status, "ownership_manual_review");
+  const manualWithImage = await bindRegistrationImage(pool, { chainId: 56, tokenAddress: manualToken, signedWallet: manualWallet, imageUrl: "https://cdn.example/manual.png" });
+  assert.equal(manualWithImage.image_url, "https://cdn.example/manual.png");
+  assert.equal(manualWithImage.project_owner_wallet, null);
 
   const nullToken = "0x00000000000000000000000000000000000000b2";
-  await createProjectImport(pool, { resolverResult: resolver({ tokenAddress: nullToken }), signedWallet: ethers.Wallet.createRandom().address.toLowerCase() });
+  const nullWallet = ethers.Wallet.createRandom().address.toLowerCase();
+  await createProjectImport(pool, { resolverResult: resolver({ tokenAddress: nullToken, match: true }), signedWallet: nullWallet });
 
   const blankToken = "0x00000000000000000000000000000000000000b3";
-  const blank = await createProjectImport(pool, { resolverResult: resolver({ tokenAddress: blankToken }), signedWallet: ethers.Wallet.createRandom().address.toLowerCase() });
+  const blankWallet = ethers.Wallet.createRandom().address.toLowerCase();
+  const blank = await createProjectImport(pool, { resolverResult: resolver({ tokenAddress: blankToken, match: true }), signedWallet: blankWallet });
   await pool.query(`UPDATE public.arena_token_imports SET image_url='' WHERE chain_id=56 AND token_address=$1`, [blank.project.token_address]);
 
   const arenaToken = "0x00000000000000000000000000000000000000b4";
   const arenaWallet = ethers.Wallet.createRandom().address.toLowerCase();
-  await createProjectImport(pool, { resolverResult: resolver({ tokenAddress: arenaToken }), signedWallet: arenaWallet });
+  await createProjectImport(pool, { resolverResult: resolver({ tokenAddress: arenaToken, match: true }), signedWallet: arenaWallet });
   await bindRegistrationImage(pool, { chainId: 56, tokenAddress: arenaToken, signedWallet: arenaWallet, imageUrl: "https://cdn.example/arena.png" });
   await pool.query(`UPDATE public.arena_token_imports SET status='needs_review' WHERE chain_id=56 AND token_address=$1`, [arenaToken]);
 
   const items = await listRecentProjectImports(pool, { limit: 10 });
   const tokens = items.map((row) => String(row.token_address));
-  assert.equal(tokens.includes(pendingToken), true);
-  assert.equal(tokens.includes(arenaToken), true);
+  assert.equal(tokens.includes(pendingToken), false);
+  assert.equal(tokens.includes(manualToken), false);
   assert.equal(tokens.includes(nullToken), false);
   assert.equal(tokens.includes(blankToken), false);
-  const pendingRow = items.find((row) => row.token_address === pendingToken);
-  assert.equal(pendingRow.ownership_status, "ownership_pending");
-  assert.equal(pendingRow.project_owner_wallet, null);
-  assert.equal(pendingRow.image_url, "https://cdn.example/pending.png");
+  assert.equal(tokens.includes(arenaToken), true);
   const arenaRow = items.find((row) => row.token_address === arenaToken);
+  assert.equal(arenaRow.ownership_status, "ownership_verified");
   assert.equal(arenaRow.status, "needs_review");
   assert.ok(arenaRow.image_url);
 
@@ -233,15 +242,14 @@ test("recent public list hides incomplete imageless registrations and ignores Ar
   assert.equal(res.statusCode, 200);
   const payload = JSON.parse(res.body);
   const publicTokens = payload.items.map((item) => String(item.tokenAddress));
-  assert.equal(publicTokens.includes(pendingToken), true);
+  assert.equal(publicTokens.includes(pendingToken), false);
+  assert.equal(publicTokens.includes(manualToken), false);
   assert.equal(publicTokens.includes(nullToken), false);
   assert.equal(publicTokens.includes(blankToken), false);
-  const publicPending = payload.items.find((item) => item.tokenAddress === pendingToken);
-  assert.equal(publicPending.ownershipStatus, "ownership_pending");
-  assert.equal(publicPending.imageUrl, "https://cdn.example/pending.png");
+  assert.equal(publicTokens.includes(arenaToken), true);
 });
 
-test("registration image binds without granting verified owner rights", async () => {
+test("registration image is blocked while merely pending and allowed for the active manual-review claimant", async () => {
   await resetImportTable();
   await applyMigration();
   const registrar = ethers.Wallet.createRandom().address.toLowerCase();
@@ -251,24 +259,36 @@ test("registration image binds without granting verified owner rights", async ()
   const created = await createProjectImport(pool, { resolverResult: resolver({ tokenAddress: token }), signedWallet: registrar });
   assert.equal(created.project.ownership_status, "ownership_pending");
   assert.equal(created.project.project_owner_wallet, null);
+
   await assert.rejects(
     () => persistProjectImage(pool, { chainId: 56, tokenAddress: token, signedWallet: registrar, imageUrl: "https://cdn.example/owner.png" }),
     (error) => error?.code === "IMPORT_OWNER_NOT_VERIFIED",
   );
   await assert.rejects(
+    () => bindRegistrationImage(pool, { chainId: 56, tokenAddress: token, signedWallet: registrar, imageUrl: "https://cdn.example/pending.png" }),
+    (error) => error?.code === "PROJECT_REGISTRAR_REQUIRED",
+  );
+
+  const review = await requestManualProjectClaim(pool, { chainId: 56, tokenAddress: token, signedWallet: registrar, note: "manual verification" });
+  assert.equal(review.ownership_status, "ownership_manual_review");
+  assert.equal(review.manual_claim_wallet, registrar);
+
+  await assert.rejects(
     () => bindRegistrationImage(pool, { chainId: 56, tokenAddress: token, signedWallet: stranger, imageUrl: "https://cdn.example/nope.png" }),
-    /registering wallet/i,
+    (error) => error?.code === "PROJECT_REGISTRAR_REQUIRED",
   );
   const bound = await bindRegistrationImage(pool, { chainId: 56, tokenAddress: token, signedWallet: registrar, imageUrl: "https://cdn.example/registered.png" });
   assert.equal(bound.image_url, "https://cdn.example/registered.png");
   assert.equal(bound.project_owner_wallet, null);
-  assert.equal(bound.ownership_status, "ownership_pending");
+  assert.equal(bound.ownership_status, "ownership_manual_review");
   await assert.rejects(
     () => bindRegistrationImage(pool, { chainId: 56, tokenAddress: token, signedWallet: registrar, imageUrl: "https://cdn.example/second.png" }),
     /already registered/i,
   );
+
   const claimed = await claimExistingProject(pool, { resolverResult: resolver({ tokenAddress: token, match: true }), signedWallet: owner });
   assert.equal(claimed.project_owner_wallet, owner);
+  assert.equal(claimed.ownership_status, "ownership_verified");
   const replaced = await persistProjectImage(pool, { chainId: 56, tokenAddress: token, signedWallet: owner, imageUrl: "https://cdn.example/owner.png" });
   assert.equal(replaced.image_url, "https://cdn.example/owner.png");
   assert.equal(replaced.ownership_status, "ownership_verified");

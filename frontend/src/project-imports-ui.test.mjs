@@ -3,11 +3,12 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
-const [app, config, importPage, importedPage, tokenEntry, liveTokenEntry, client, coinsPage, navigation, leftSidebar, mobileSidebar, api, core, resolverAdapters, reviewCore] = await Promise.all([
+const [app, config, importPage, importedPage, tokenEntry, liveTokenEntry, client, coinsPage, navigation, leftSidebar, mobileSidebar, api, core, resolverAdapters, reviewCore, imageApi, riskCore] = await Promise.all([
   read("./App.tsx"), read("./features/projectImports/config.ts"), read("./pages/ProjectImport.tsx"), read("./pages/ImportedProjectDetails.tsx"),
   read("./pages/TokenDetailsEntry.tsx"), read("./pages/TokenDetailsLiveEntry.tsx"), read("./lib/projectImports.ts"), read("./pages/command-center/CommandCenterCoins.tsx"),
   read("./constants/navigation.ts"), read("./components/LeftBattleSidebar.tsx"), read("./components/Sidebar.tsx"), read("../api/projectImports.js"),
   read("../api/lib/projectImportCore.js"), read("../api/lib/projectImportResolverAdapters.js"), read("../api/lib/projectOwnershipReview.js"),
+  read("../api/projectImportImage.js"), read("../api/lib/projectImportRiskSecurity.js"),
 ]);
 
 test("project imports remain independently gated from Arena", () => {
@@ -15,10 +16,10 @@ test("project imports remain independently gated from Arena", () => {
   assert.match(app, /projectImportsEnabled/); assert.match(client, /\/api\/project-imports/); assert.doesNotMatch(client, /\/api\/arena\/imports/);
 });
 
-test("BNB and Solana onboarding use approved wording and no Robinhood dependency", () => {
+test("BNB and Solana onboarding use Contract Address and no Robinhood dependency", () => {
   assert.match(importPage, /type ImportChain = "bnb" \| "solana"/); assert.match(importPage, />BNB<\/Button>/); assert.match(importPage, />Solana<\/Button>/);
-  assert.match(importPage, /detectedChain/); assert.match(importPage, /}IMPORT<\/Button>/); assert.match(importPage, /REGISTER &amp; VERIFY MEMECOIN/);
-  assert.doesNotMatch(importPage, /RESOLVE PROJECT|REGISTER &amp; VERIFY PROJECT/); assert.doesNotMatch(importPage, /Robinhood/i);
+  assert.match(importPage, /3\. Contract Address/); assert.match(importPage, /placeholder="Contract Address"/); assert.match(importPage, /}IMPORT<\/Button>/); assert.match(importPage, /REGISTER MEMECOIN/);
+  assert.doesNotMatch(importPage, /mint address/i); assert.doesNotMatch(importPage, /Robinhood/i);
 });
 
 test("wallet family auto-select remains safe while explicit chain choice is possible", () => {
@@ -26,20 +27,29 @@ test("wallet family auto-select remains safe while explicit chain choice is poss
   assert.match(importPage, /setChainChosenByUser\(true\)/); assert.match(importPage, /disabled=\{!validAddress\|\|!connected\|\|working\}/);
 });
 
-test("clear import navigation remains available", () => {
-  assert.match(navigation, /Import your memecoin/i); assert.match(leftSidebar, /Import your memecoin/i); assert.match(mobileSidebar, /"\/import"/);
+test("wrong wallet is fully blocked and shows the masked controlling wallet", () => {
+  assert.match(importPage, /NOT TOKEN OWNER/); assert.match(importPage, /This token is controlled by wallet/); assert.match(importPage, /Connect that wallet to continue/);
+  assert.match(importPage, /slice\(0, 4\)/); assert.match(importPage, /slice\(-4\)/); assert.match(importPage, /Import blocked/);
+  assert.match(importPage, /canRequestManual=.*?!wrongAuthorityWallet/);
+  assert.match(api, /resolved\.automaticOwnershipAvailable && !resolved\.signedWalletMatchesAuthority/);
+  assert.match(api, /Connected wallet is not the current token owner\. Connect the owner wallet to continue/);
 });
 
-test("registration image is required and never grants ownership", () => {
-  assert.match(importPage, /data-project-import-image-required="true"/); assert.match(importPage, /PNG, JPEG or WEBP/);
-  assert.match(importPage, /This does not make you the verified project owner/); assert.match(importPage, /project_import_registration_image/);
-  assert.match(core, /Only the registering wallet can attach the initial project image/);
-  assert.doesNotMatch(core.match(/export async function bindRegistrationImage[\s\S]*$/)?.[0] || "", /ownership_status='ownership_verified'/);
+test("automatic import is gated by scam-risk screening", () => {
+  assert.match(api, /scanProjectImportSecurity/); assert.match(api, /requireSecurityPass\(security\)/);
+  assert.match(riskCore, /is_honeypot/); assert.match(riskCore, /cannot_sell_all/); assert.match(riskCore, /malicious_address/);
+  assert.match(riskCore, /owner_change_balance/); assert.match(riskCore, /selfdestruct/); assert.match(riskCore, /can_take_back_ownership/);
+  assert.match(riskCore, /freezable/); assert.match(riskCore, /non_transferable/); assert.match(riskCore, /balance_mutable_authority/); assert.match(riskCore, /transfer_hook/);
+  assert.match(riskCore, /status === "pass"/);
 });
 
-test("manual review becomes visible and the request button is removed after success", () => {
-  assert.match(importPage, /OWNERSHIP REVIEW REQUESTED/); assert.match(importPage, /item\.ownershipStatus!=="ownership_manual_review"/); assert.match(importPage, /REQUEST PROJECT CLAIM/);
-  assert.match(importedPage, /OWNERSHIP REVIEW REQUESTED/); assert.match(importedPage, /item\.ownershipStatus!=="ownership_manual_review"/); assert.match(importedPage, /REQUEST PROJECT CLAIM/);
+test("manual-review cases can attach an image but remain hidden until approval", () => {
+  assert.match(importPage, /REQUEST MANUAL CHECK/); assert.match(importPage, /Add the project image before requesting manual review/);
+  assert.match(importPage, /uploadPendingImage/); assert.match(importPage, /ATTACH IMAGE TO REVIEW/); assert.match(importPage, /project stays hidden until an admin approves it/);
+  assert.match(core, /ownership_status='ownership_verified'/); assert.match(core, /ownership_status='ownership_manual_review'/); assert.match(core, /manual_claim_wallet=\$3/);
+  assert.match(core, /AND ownership_status='ownership_verified'/);
+  assert.match(reviewCore, /Manual ownership approval requires a project image/); assert.match(reviewCore, /PROJECT_OWNERSHIP_IMAGE_REQUIRED/);
+  assert.doesNotMatch(imageApi, /if\(registration\)assertVerifiedProjectOwner/);
 });
 
 test("manual claim persistence is retry-safe and cannot self-approve", () => {
@@ -49,10 +59,13 @@ test("manual claim persistence is retry-safe and cannot self-approve", () => {
   assert.doesNotMatch(manual, /SET[^;]*project_owner_wallet\s*=/i); assert.doesNotMatch(manual, /SET[^;]*ownership_status='ownership_verified'/i);
 });
 
+test("clear import navigation remains available", () => {
+  assert.match(navigation, /Import your memecoin/i); assert.match(leftSidebar, /Import your memecoin/i); assert.match(mobileSidebar, /"\/import"/);
+});
+
 test("imported project route mounts owner-manageable surface before live token runtime", () => {
   assert.match(tokenEntry, /lookupProjectImport\(routeId, importChainId\)/); assert.match(tokenEntry, /import ImportedProjectDetails from "\.\/ImportedProjectDetails"/);
-  assert.match(tokenEntry, /if \(project\) return <ImportedProjectDetails item=\{project\} \/>/); assert.match(tokenEntry, /return <TokenDetailsLiveEntry \/>/);
-  assert.match(liveTokenEntry, /import TokenDetails from "\.\/TokenDetails"/);
+  assert.match(tokenEntry, /if \(project\) return <ImportedProjectDetails item=\{project\} \/>/); assert.match(liveTokenEntry, /import TokenDetails from "\.\/TokenDetails"/);
 });
 
 test("verified project owner is the only profile and replacement-image edit authority", () => {
@@ -83,12 +96,12 @@ test("ownership verification commits before best-effort display metadata refresh
   assert.match(api, /const updated = await reviewProjectOwnership\(pool,[\s\S]*?\);[\s\S]*?if \(action === "verify_owner"\) await refreshVerifiedProjectIdentityBestEffort\(updated\);[\s\S]*?return json/);
 });
 
-test("operator ownership review is admin-authenticated, CAS-safe, audited, and Arena-independent", () => {
+test("operator ownership review is admin-authenticated, CAS-safe, audited, image-gated, and Arena-independent", () => {
   assert.match(api, /requireDashboardAdmin/); assert.match(api, /\/admin\/ownership-claims/); assert.match(api, /reviewProjectOwnership\(pool/);
   assert.match(reviewCore, /ownership_status = \$1/); assert.match(reviewCore, /manual_claim_wallet IS NOT NULL/);
   assert.match(reviewCore, /xmin::text AS state_version/); assert.match(reviewCore, /expectedVersion/); assert.match(reviewCore, /FOR UPDATE/); assert.match(reviewCore, /PROJECT_OWNERSHIP_STATE_CONFLICT/);
-  assert.match(reviewCore, /wm_admin_audit_log/); assert.match(reviewCore, /operatorReason/); assert.match(reviewCore, /operatorAuthUserId/); assert.match(reviewCore, /FROM public.wm_users WHERE id=\$1::uuid/); assert.match(reviewCore, /project_owner_wallet\s*=\s*manual_claim_wallet/);
-  assert.match(reviewCore, /ownership_status\s*=\s*\$2/); assert.match(reviewCore, /VERIFIED/); assert.match(reviewCore, /PENDING/);
+  assert.match(reviewCore, /PROJECT_OWNERSHIP_IMAGE_REQUIRED/); assert.match(reviewCore, /wm_admin_audit_log/); assert.match(reviewCore, /operatorReason/); assert.match(reviewCore, /operatorAuthUserId/);
+  assert.match(reviewCore, /project_owner_wallet=manual_claim_wallet/); assert.match(reviewCore, /ownership_status=\$2/); assert.match(reviewCore, /VERIFIED/); assert.match(reviewCore, /PENDING/);
   assert.doesNotMatch(reviewCore, /SET[^;]*(?:\bstatus\b|review_requested_at|review_reason|reviewer|reviewed_at)\s*=/i);
 });
 

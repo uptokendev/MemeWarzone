@@ -12,6 +12,7 @@ export async function listRecentProjectImports(pool,{limit=24}={}){
   const r=await pool.query(
     `SELECT * FROM public.arena_token_imports
       WHERE chain_id IN (56,101)
+        AND ownership_status='ownership_verified'
         AND image_url IS NOT NULL
         AND btrim(image_url) <> ''
       ORDER BY created_at DESC NULLS LAST, metadata_updated_at DESC NULLS LAST
@@ -56,9 +57,10 @@ export async function bindRegistrationImage(pool,{chainId,tokenAddress,signedWal
   if(!url||/^data:/i.test(url))throw Object.assign(new Error("Invalid project image URL"),{code:"PROJECT_IMPORT_IMAGE_INVALID"});
   const existing=await lookupProjectImport(pool,identity);
   if(!existing)throw Object.assign(new Error("Imported project not found"),{code:"PROJECT_NOT_FOUND"});
-  const registrar=normalizeAddress(existing.imported_by_wallet||"",identity.chainId);
-  if(!registrar||registrar!==signer){
-    throw Object.assign(new Error("Only the registering wallet can attach the initial project image"),{code:"PROJECT_REGISTRAR_REQUIRED"});
+  const verifiedOwner=existing.ownership_status==="ownership_verified"&&normalizeAddress(existing.project_owner_wallet||"",identity.chainId)===signer;
+  const manualClaimant=existing.ownership_status==="ownership_manual_review"&&normalizeAddress(existing.manual_claim_wallet||"",identity.chainId)===signer;
+  if(!verifiedOwner&&!manualClaimant){
+    throw Object.assign(new Error("Only the verified owner or active manual-review claimant can attach the initial project image"),{code:"PROJECT_REGISTRAR_REQUIRED"});
   }
   if(String(existing.image_url||"").trim()){
     throw Object.assign(new Error("Project image is already registered"),{code:"PROJECT_IMAGE_ALREADY_SET"});
@@ -66,8 +68,10 @@ export async function bindRegistrationImage(pool,{chainId,tokenAddress,signedWal
   const r=await pool.query(
     `UPDATE public.arena_token_imports
         SET image_url=$4, metadata_updated_at=NOW(), updated_at=NOW()
-      WHERE chain_id=$1 AND token_address=$2 AND imported_by_wallet=$3
+      WHERE chain_id=$1 AND token_address=$2
         AND (image_url IS NULL OR btrim(image_url)='')
+        AND ((ownership_status='ownership_verified' AND project_owner_wallet=$3)
+          OR (ownership_status='ownership_manual_review' AND manual_claim_wallet=$3))
       RETURNING *`,
     [identity.chainId,identity.tokenAddress,signer,url],
   );
