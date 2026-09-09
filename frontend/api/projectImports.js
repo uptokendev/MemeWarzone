@@ -15,6 +15,7 @@ import {
 } from "./lib/projectImportCore.js";
 import { registerDefaultProjectImportResolvers } from "./lib/projectImportResolverAdapters.js";
 import { resolveProjectToken } from "./lib/projectImportResolvers.js";
+import { scanProjectImportSecurity, securityAllowsAutomaticImport } from "./lib/projectImportRiskSecurity.js";
 import {
   getProjectOwnershipAudit,
   getProjectOwnershipClaim,
@@ -49,7 +50,7 @@ function errorStatus(code) {
   if (["PROJECT_NOT_FOUND", "IMPORT_NOT_FOUND"].includes(code)) return 404;
   if ([
     "OWNERSHIP_PROOF_REQUIRED", "PROJECT_OWNER_REQUIRED", "IMPORT_OWNER_NOT_VERIFIED",
-    "IMPORT_OWNER_MISMATCH", "PROJECT_OWNERSHIP_ADMIN_REQUIRED",
+    "IMPORT_OWNER_MISMATCH", "PROJECT_OWNERSHIP_ADMIN_REQUIRED", "PROJECT_IMPORT_SECURITY_REQUIRED",
   ].includes(code)) return 403;
   if ([
     "OWNERSHIP_SUSPENDED", "MANUAL_CLAIM_NOT_ALLOWED", "RESOLVER_IDENTITY_MISMATCH",
@@ -85,6 +86,15 @@ function requireResolvedOwner(resolved) {
   }
   if (!resolved?.signedWalletMatchesAuthority) {
     throw Object.assign(new Error("Connected wallet is not the current token owner"), { code: "OWNERSHIP_PROOF_REQUIRED" });
+  }
+}
+
+function requireSecurityPass(security) {
+  if (!securityAllowsAutomaticImport(security)) {
+    const critical = security?.criticalRisks?.map((risk) => risk.label).filter(Boolean) || [];
+    const review = security?.reviewRisks?.map((risk) => risk.label).filter(Boolean) || [];
+    const summary = [...critical, ...review].slice(0, 3).join("; ");
+    throw Object.assign(new Error(summary ? `Token security check requires review: ${summary}` : "Token security check requires manual review"), { code: "PROJECT_IMPORT_SECURITY_REQUIRED" });
   }
 }
 
@@ -189,6 +199,17 @@ async function handleOwnershipAdmin(req, res, path) {
   return false;
 }
 
+function manualReviewNote({ resolved, security, note }) {
+  const reasons = [];
+  if (resolved?.automaticOwnershipAvailable && !resolved?.signedWalletMatchesAuthority) reasons.push("automatic owner mismatch");
+  if (!resolved?.automaticOwnershipAvailable) reasons.push("automatic ownership unavailable");
+  for (const risk of security?.criticalRisks || []) reasons.push(`security:${risk.code}`);
+  for (const risk of security?.reviewRisks || []) reasons.push(`security:${risk.code}`);
+  const userNote = String(note || "").trim();
+  const prefix = reasons.length ? `System: ${reasons.join(", ")}.` : "System: manual verification requested.";
+  return `${prefix}${userNote ? ` User: ${userNote}` : ""}`.slice(0, 1000);
+}
+
 export default async function projectImports(req, res) {
   if (!enabled()) return json(res, 404, { error: "Project imports are disabled.", code: "PROJECT_IMPORTS_DISABLED" });
   if (!pool) return json(res, 503, { error: "Project imports require DATABASE_URL." });
@@ -224,8 +245,9 @@ export default async function projectImports(req, res) {
       const auth = await strictAuth(res, body, { identity, action: PROJECT_IMPORT_ACTIONS.resolve });
       if (!auth) return;
       const resolved = await resolveForSigner(identity, auth.walletAddress);
+      const security = await scanProjectImportSecurity(identity);
       const project = await enrichExistingProjectIdentity(identity, resolved);
-      return json(res, 200, { resolved, project: publicProject(project) });
+      return json(res, 200, { resolved: { ...resolved, security }, project: publicProject(project) });
     }
 
     if (req.method === "POST" && path === "/") {
@@ -235,7 +257,9 @@ export default async function projectImports(req, res) {
       const auth = await strictAuth(res, body, { identity, action: PROJECT_IMPORT_ACTIONS.create, intentBody });
       if (!auth) return;
       const resolved = await resolveForSigner(identity, auth.walletAddress);
+      const security = await scanProjectImportSecurity(identity);
       requireResolvedOwner(resolved);
+      requireSecurityPass(security);
       const result = await createProjectImport(pool, { resolverResult: resolved, signedWallet: auth.walletAddress });
       const project = result.created
         ? result.project
@@ -247,6 +271,7 @@ export default async function projectImports(req, res) {
           automaticOwnershipAvailable: resolved.automaticOwnershipAvailable,
           signedWalletMatchesAuthority: resolved.signedWalletMatchesAuthority,
           currentAuthority: resolved.currentAuthority,
+          security,
         },
       });
     }
@@ -264,6 +289,8 @@ export default async function projectImports(req, res) {
       });
       if (!auth) return;
       const resolved = await resolveForSigner(identity, auth.walletAddress);
+      const security = await scanProjectImportSecurity(identity);
+      requireSecurityPass(security);
       const project = await claimExistingProject(pool, { resolverResult: resolved, signedWallet: auth.walletAddress });
       await enrichExistingProjectIdentity(identity, resolved);
       return json(res, 200, { project: publicProject(project) });
@@ -272,27 +299,32 @@ export default async function projectImports(req, res) {
     if (req.method === "POST" && path === "/manual-claim") {
       const body = await readJson(req);
       const identity = normalizeProjectIdentity(body.chainId, body.tokenAddress);
-      const existing = await lookupProjectImport(pool, identity);
-      if (!existing) throw Object.assign(new Error("Imported project not found"), { code: "PROJECT_NOT_FOUND" });
+      let existing = await lookupProjectImport(pool, identity);
       const note = body.note == null ? null : String(body.note).slice(0, 1000);
       const auth = await strictAuth(res, body, {
         identity,
         action: PROJECT_IMPORT_ACTIONS.manualClaim,
-        projectId: existing.id,
+        projectId: existing?.id || null,
         intentBody: { note },
       });
       if (!auth) return;
       const resolved = await resolveForSigner(identity, auth.walletAddress);
-      if (resolved.automaticOwnershipAvailable) {
-        throw Object.assign(new Error("Automatic ownership evidence is available; manual claim is not permitted"), { code: "MANUAL_CLAIM_NOT_ALLOWED" });
+      const security = await scanProjectImportSecurity(identity);
+      if (!existing) {
+        const pendingEvidence = { ...resolved, signedWalletMatchesAuthority: false };
+        const created = await createProjectImport(pool, { resolverResult: pendingEvidence, signedWallet: auth.walletAddress });
+        existing = created.project;
+      }
+      if (existing?.ownership_status === "ownership_verified") {
+        throw Object.assign(new Error("Manual claim cannot overwrite a verified owner"), { code: "OWNERSHIP_CONFLICT" });
       }
       const project = await requestManualProjectClaim(pool, {
         ...identity,
         signedWallet: auth.walletAddress,
-        note,
+        note: manualReviewNote({ resolved, security, note }),
       });
       await enrichExistingProjectIdentity(identity, resolved);
-      return json(res, 200, { project: publicProject(project) });
+      return json(res, 200, { project: publicProject(project), ownershipEvidence: { ...resolved, security } });
     }
 
     if (req.method === "PATCH" && path === "/") {
