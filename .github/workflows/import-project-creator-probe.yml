@@ -1,0 +1,56 @@
+name: Read-only Solana project creator evidence
+on:
+  push:
+    branches: [diagnose/import-api-availability-943e60f]
+    paths: [.github/workflows/import-project-creator-probe.yml]
+permissions:
+  contents: read
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 943e60f9b45a0a1325e6786e8bfc773def053cde
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --prefix frontend --no-audit --no-fund
+      - name: Read mint-linked accounts only; no signing or transactions
+        working-directory: frontend
+        run: |
+          node --input-type=module <<'JS'
+          import { Connection, PublicKey } from '@solana/web3.js';
+          import { createHash } from 'node:crypto';
+          const rpc = new Connection('https://api.mainnet-beta.solana.com', { commitment: 'confirmed', disableRetryOnRateLimit: true, fetch: (url, init) => fetch(url, { ...init, signal: AbortSignal.timeout(12000) }) });
+          const mint = new PublicKey('7AVB9viRcpmr8gRMTCAYSmhP7gbuBMpBR51DMjwcpump');
+          const pump = new PublicKey('6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P');
+          const metadataProgram = new PublicKey('metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s');
+          const [curve] = PublicKey.findProgramAddressSync([Buffer.from('bonding-curve'), mint.toBuffer()], pump);
+          const [metadata] = PublicKey.findProgramAddressSync([Buffer.from('metadata'), metadataProgram.toBuffer(), mint.toBuffer()], metadataProgram);
+          console.log('GENESIS', await rpc.getGenesisHash());
+          const result = await rpc.getMultipleAccountsInfoAndContext([mint, curve, metadata]);
+          for (let i = 0; i < 3; i++) {
+            const account = result.value[i];
+            const row = { kind: ['mint','pump_bonding_curve','metaplex_metadata'][i], address: [mint,curve,metadata][i].toBase58(), slot: result.context.slot, exists: Boolean(account) };
+            if (account) {
+              const data = Buffer.from(account.data);
+              Object.assign(row, { program: account.owner.toBase58(), executable: account.executable, length: data.length, sha256: createHash('sha256').update(data).digest('hex'), dataBase64: data.toString('base64') });
+              if (i === 1 && account.owner.equals(pump) && data.subarray(0,8).equals(Buffer.from([23,183,248,55,96,216,172,96])) && data.length >= 81) {
+                const creator = new PublicKey(data.subarray(49,81));
+                Object.assign(row, { creator: creator.toBase58(), creatorOnCurve: PublicKey.isOnCurve(creator.toBytes()), complete: data[48] });
+              }
+              if (i === 2 && data.length >= 65) Object.assign(row, { updateAuthority: new PublicKey(data.subarray(1,33)).toBase58(), embeddedMint: new PublicKey(data.subarray(33,65)).toBase58() });
+            }
+            console.log(JSON.stringify(row));
+          }
+          JS
+      - name: Package exact source for isolated inspection
+        run: tar -czf /tmp/mwz-source.tar.gz --exclude=.git --exclude=node_modules --exclude=frontend/node_modules .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: exact-import-source
+          path: /tmp/mwz-source.tar.gz
+          retention-days: 1
