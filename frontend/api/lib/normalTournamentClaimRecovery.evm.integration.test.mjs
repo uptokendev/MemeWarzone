@@ -101,6 +101,10 @@ for (const spec of CASES) {
     res=await call(rewardClaimRecord,{walletAddress:normal.wallet,chainId:ctx.chainId,rewardLedgerIds:[normal.ledgerId],txHash:normalTx.hash,status:"claimed",auth:a});
     assert.equal(res.statusCode,200,JSON.stringify(res.payload));
 
+    const totalAfterFirst = (await ctx.distributor.batches(normal.contractBatchId)).totalClaimed;
+    await assert.rejects(() => ctx.distributor.connect(ctx.user).claim(normal.contractBatchId,normal.amount,[]));
+    assert.equal((await ctx.distributor.batches(normal.contractBatchId)).totalClaimed,totalAfterFirst);
+
     a=await auth(ctx,normal.wallet,"claim_intent");
     res=await call(rewardClaimIntent,{walletAddress:normal.wallet,chainId:ctx.chainId,rewardLedgerIds:[normal.ledgerId],auth:a});
     assert.equal(res.statusCode,200,JSON.stringify(res.payload));
@@ -134,7 +138,8 @@ for (const spec of CASES) {
     const wrong=await entitlement(ctx);
     const wrongTx=await ctx.user.sendTransaction({to:ctx.distributorAddress,value:1n});await wrongTx.wait();
     await assert.rejects(()=>verifyNormalTournamentClaim({row:wrong.row,txHash:wrongTx.hash,requestedChainId:ctx.chainId,requestedWallet:wrong.wallet}));
-    assert.throws(()=>normalTournamentEntitlementIdentity(wrong.row,{requestedChainId:ctx.chainId,requestedWallet:awaitAddress(ctx.other)}),(e)=>e?.code==="CLAIM_WALLET_MISMATCH");
+    const otherWallet = await ctx.other.getAddress();
+    assert.throws(()=>normalTournamentEntitlementIdentity(wrong.row,{requestedChainId:ctx.chainId,requestedWallet:otherWallet}),(e)=>e?.code==="CLAIM_WALLET_MISMATCH");
     assert.throws(()=>normalTournamentEntitlementIdentity(wrong.row,{requestedChainId:ctx.chainId===97?56:4663,requestedWallet:wrong.wallet}),(e)=>e?.code==="REWARD_CHAIN_MISMATCH");
     const rightTx=await claim(ctx,wrong);
     await assert.rejects(()=>verifyNormalTournamentClaim({row:{...wrong.row,amount:String(wrong.amount+1n)},txHash:rightTx.hash,requestedChainId:ctx.chainId,requestedWallet:wrong.wallet}),(e)=>e?.code==="CLAIM_AMOUNT_MISMATCH");
@@ -149,5 +154,3 @@ for (const spec of CASES) {
     await ctx.provider.destroy();
   });
 }
-
-async function awaitAddress(signer){return signer.getAddress();}
