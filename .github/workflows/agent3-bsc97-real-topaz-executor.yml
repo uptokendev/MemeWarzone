@@ -1,0 +1,41 @@
+name: Agent 3 BSC97 Real Topaz Executor
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/lib/bnbRealTopazAuthority.cjs'
+      - 'scripts/deploy-bnb-real-topaz-testnet-stage.ts'
+      - 'scripts/test-bnb-real-topaz-testnet-lifecycle.ts'
+      - 'scripts/run-bnb-real-topaz-certification.ts'
+      - 'scripts/prove-bnb-real-topaz-executor.test.mjs'
+      - 'deployments/bscTestnet/minimal-topaz.json'
+      - 'contracts/PermanentLpLocker.sol'
+      - '.github/workflows/agent3-bsc97-real-topaz-executor.yml'
+  workflow_dispatch:
+
+jobs:
+  focused-proof:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Compile
+        run: npm run compile
+
+      - name: Real Topaz fail-closed proof
+        run: node --test scripts/prove-bnb-real-topaz-executor.test.mjs
+
+      - name: Controlled 6C regression remains independent
+        run: npx hardhat test test/BnbLifecycleCertification.spec.ts
