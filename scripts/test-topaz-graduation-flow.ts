@@ -4,7 +4,7 @@ import { ethers, network } from "hardhat";
 import { loadDeployment, resolveContracts } from "./verify-deployment";
 
 const REQUIRED_CHAIN_ID = 97n;
-const REQUIRED_VOLATILE_FEE_BPS = 100n;
+const REQUIRED_VOLATILE_FEE_BPS = 30n;
 const BPS_DENOMINATOR = 10000n;
 const CREATOR_SHARE_BPS = 8000n;
 const PROTOCOL_SHARE_BPS = 2000n;
