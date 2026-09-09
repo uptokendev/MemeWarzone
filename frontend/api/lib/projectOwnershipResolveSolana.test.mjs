@@ -1,16 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { PublicKey } from "@solana/web3.js";
+import { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import { resolveProjectOwnershipSolana } from "./projectOwnershipResolveSolana.js";
 
-const TOKEN_PROGRAM = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+const TOKEN_PROGRAM = TOKEN_PROGRAM_ID;
+const TOKEN_2022_PROGRAM = TOKEN_2022_PROGRAM_ID;
 const MINT = new PublicKey("So11111111111111111111111111111111111111112");
 const AUTHORITY = new PublicKey("Vote111111111111111111111111111111111111111");
 const OTHER_WALLET = new PublicKey("Stake11111111111111111111111111111111111111");
 
-function mintAccount({ mintAuthority = AUTHORITY.toBase58(), decimals = 9, supply = "1234567890" } = {}) {
+function mintAccount({ mintAuthority = AUTHORITY.toBase58(), decimals = 9, supply = "1234567890", owner = TOKEN_PROGRAM } = {}) {
   return {
-    owner: TOKEN_PROGRAM,
+    owner,
     data: {
       parsed: {
         type: "mint",
@@ -59,6 +61,33 @@ test("valid mint resolves authoritative decimals, supply and mint authority", as
   assert.equal(result.totalSupply, "1234567890");
   assert.equal(result.mintAuthority, AUTHORITY.toBase58());
   assert.equal(connection.calls, 1);
+});
+
+test("canonical Token-2022 mint is accepted by the ownership resolver", async () => {
+  const result = await resolveProjectOwnershipSolana({
+    mint: MINT.toBase58(),
+    connectedWallet: AUTHORITY.toBase58(),
+    connection: readOnlyConnection(mintAccount({ owner: TOKEN_2022_PROGRAM })),
+  });
+
+  assert.equal(result.validMint, true);
+  assert.equal(result.automaticVerificationAvailable, true);
+  assert.equal(result.verified, true);
+  assert.equal(result.reason, "mint_authority_match");
+});
+
+test("Token-2022 mint with revoked authority stays valid but cannot auto-verify ownership", async () => {
+  const result = await resolveProjectOwnershipSolana({
+    mint: MINT.toBase58(),
+    connectedWallet: AUTHORITY.toBase58(),
+    connection: readOnlyConnection(mintAccount({ owner: TOKEN_2022_PROGRAM, mintAuthority: null })),
+  });
+
+  assert.equal(result.validMint, true);
+  assert.equal(result.mintAuthority, null);
+  assert.equal(result.automaticVerificationAvailable, false);
+  assert.equal(result.verified, false);
+  assert.equal(result.reason, "mint_authority_unavailable");
 });
 
 test("invalid mint fails safely without RPC or transaction construction", async () => {
