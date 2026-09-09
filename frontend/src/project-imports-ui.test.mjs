@@ -32,7 +32,7 @@ test("wrong wallet is fully blocked and shows the masked controlling wallet", ()
   assert.match(importPage, /slice\(0, 4\)/); assert.match(importPage, /slice\(-4\)/); assert.match(importPage, /Import blocked/);
   assert.match(importPage, /canRequestManual=.*?!wrongAuthorityWallet/);
   assert.match(api, /resolved\.automaticOwnershipAvailable && !resolved\.signedWalletMatchesAuthority/);
-  assert.match(api, /Connected wallet is not the current token owner\. Connect the owner wallet to continue/);
+  assert.match(api, /Connect that wallet to continue/);
 });
 
 test("automatic import is gated by scam-risk screening", () => {
@@ -82,11 +82,11 @@ test("public imported project remains financially inert and visibly locked", () 
   assert.doesNotMatch(importedPage, /from .*TokenDetails|from .*launchpad|from .*chart|from .*trading|from .*swap|from .*bonding|from .*graduation|from .*Topaz|from .*Meteora/i);
 });
 
-test("Solana display metadata is optional on-chain metadata while ownership remains mintAuthority", () => {
+test("Solana display metadata stays optional and separate from authenticated project-wallet evidence", () => {
   assert.match(resolverAdapters, /metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s/); assert.match(resolverAdapters, /findProgramAddressSync/); assert.match(resolverAdapters, /getAccountInfo/);
   assert.match(resolverAdapters, /getTokenMetadata/); assert.match(resolverAdapters, /TOKEN_2022_PROGRAM_ID/);
-  assert.match(resolverAdapters, /name:\s*metadata\.name/); assert.match(resolverAdapters, /symbol:\s*metadata\.symbol/); assert.match(resolverAdapters, /currentAuthority:\s*raw\.mintAuthority/);
-  assert.match(resolverAdapters, /signedWalletMatchesAuthority:\s*Boolean\(raw\.verified\)/); assert.doesNotMatch(resolverAdapters, /jupiter|birdeye|dexscreener|updateAuthority/i);
+  assert.match(resolverAdapters, /name:\s*metadata\.name/); assert.match(resolverAdapters, /symbol:\s*metadata\.symbol/); assert.match(resolverAdapters, /resolveSolanaProjectAuthority/);
+  assert.match(resolverAdapters, /signedWalletMatchesAuthority:\s*Boolean\(authority\.currentAuthority/); assert.doesNotMatch(resolverAdapters, /jupiter|birdeye|dexscreener|updateAuthority/i);
   assert.match(api, /enrichExistingProjectIdentity/); assert.match(api, /name IS NULL OR btrim\(name\) = ''/); assert.match(api, /symbol IS NULL OR btrim\(symbol\) = ''/);
 });
 

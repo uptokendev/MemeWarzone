@@ -1,0 +1,2 @@
+import { defineConfig } from '@playwright/test';
+export default defineConfig({testDir:'./e2e',testMatch:'project-import-feedback.browser.ts',workers:1,retries:0,timeout:20000,reporter:'list',use:{baseURL:'http://127.0.0.1:4181',browserName:'chromium',headless:true,screenshot:'only-on-failure',trace:'retain-on-failure'},webServer:{command:'npx vite --config e2e/import-harness/vite.config.mjs --host 127.0.0.1 --port 4181 --strictPort',url:'http://127.0.0.1:4181',reuseExistingServer:false,timeout:60000}});

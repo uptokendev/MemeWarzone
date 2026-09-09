@@ -44,9 +44,16 @@ export type ProjectResolveResult = {
   currentAuthority?: string | null;
   signedWalletMatchesAuthority: boolean;
   security?: ProjectImportSecurity;
+  authoritySource?: string | null;
+  authorityEvidenceAccount?: string | null;
+  ownershipReason?: string | null;
+  mintAuthority?: string | null;
 };
 
 async function readJson(res: Response) { return res.json().catch(() => ({})) as Promise<any>; }
+function importRequestError(res: Response, json: any, fallback: string) {
+  return Object.assign(new Error(String(json?.error || fallback)), { status: res.status, code: json?.code || null, currentAuthority: json?.currentAuthority || null });
+}
 function stable(value: any): any { if (Array.isArray(value)) return value.map(stable); if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stable(value[key])])); return value; }
 async function sha256HexBytes(bytes: ArrayBuffer | Uint8Array) { const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes); const digest = await crypto.subtle.digest("SHA-256", data); return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join(""); }
 async function sha256HexText(text: string) { return sha256HexBytes(new TextEncoder().encode(text)); }
@@ -61,21 +68,24 @@ export async function projectImportImageDigest(file: File) { return sha256HexByt
 export async function lookupProjectImport(tokenAddress: string, chainId: number): Promise<ProjectImportItem | null> {
   const params = new URLSearchParams({ tokenAddress, chainId: String(chainId) });
   const res = await apiFetch(`/api/project-imports?${params.toString()}`, { cache: "no-store" });
-  if (res.status === 404) return null;
-  const json = await readJson(res); if (!res.ok || !json?.project) throw new Error(String(json?.error || `Project lookup failed (${res.status})`)); return json.project;
+  const json = await readJson(res);
+  // Compatibility with the explicit legacy empty-lookup response only.
+  if (res.status === 404 && json?.code === "PROJECT_NOT_FOUND") return null;
+  if (!res.ok || !Object.hasOwn(json, "project")) throw importRequestError(res, json, `Project lookup failed (${res.status})`);
+  return json.project ?? null;
 }
 export async function listRecentProjectImports(limit = 24): Promise<ProjectImportItem[]> {
   const params = new URLSearchParams({ limit: String(limit) });
   const res = await apiFetch(`/api/project-imports?${params.toString()}`, { cache: "no-store" });
   const json = await readJson(res);
-  if (!res.ok) throw new Error(String(json?.error || `Imported project list failed (${res.status})`));
+  if (!res.ok) throw importRequestError(res, json, `Imported project list failed (${res.status})`);
   return Array.isArray(json?.items) ? json.items : [];
 }
 export async function listUserProjectImports(walletAddress: string, chainId: number): Promise<ProjectImportItem[]> {
   const params = new URLSearchParams({ wallet: walletAddress, chainId: String(chainId) });
   const res = await apiFetch(`/api/project-imports?${params.toString()}`, { cache: "no-store" });
   const json = await readJson(res);
-  if (!res.ok) throw new Error(String(json?.error || `Imported project wallet lookup failed (${res.status})`));
+  if (!res.ok) throw importRequestError(res, json, `Imported project wallet lookup failed (${res.status})`);
   return Array.isArray(json?.items) ? json.items : [];
 }
 export function commandCenterImportPath(wallet?: string | null): string {
@@ -84,34 +94,39 @@ export function commandCenterImportPath(wallet?: string | null): string {
   return `/profile/${encodeURIComponent(normalized)}/command/coins?import=1`;
 }
 export async function resolveProjectImport(input: { tokenAddress: string; chainId: number; auth: WalletActionAuthPayload }): Promise<ProjectResolveResult> {
+  return (await resolveProjectImportWithProject(input)).resolved;
+}
+export async function resolveProjectImportWithProject(input: { tokenAddress: string; chainId: number; auth: WalletActionAuthPayload }): Promise<{ resolved: ProjectResolveResult; project: ProjectImportItem | null }> {
   const res = await apiFetch("/api/project-imports/resolve", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
-  const json = await readJson(res); if (!res.ok || !json?.resolved) throw new Error(String(json?.error || `Project resolve failed (${res.status})`)); return json.resolved;
+  const json = await readJson(res);
+  if (!res.ok || !json?.resolved) throw importRequestError(res, json, `Project resolve failed (${res.status})`);
+  return { resolved: json.resolved, project: json.project ?? null };
 }
 export async function createProjectImport(input: { tokenAddress: string; chainId: number; auth: WalletActionAuthPayload }): Promise<{ project: ProjectImportItem; created: boolean; ownershipEvidence?: ProjectResolveResult }> {
   const res = await apiFetch("/api/project-imports", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
-  const json = await readJson(res); if (!res.ok || !json?.project) throw new Error(String(json?.error || `Project import failed (${res.status})`)); return { project: json.project, created: Boolean(json.created), ownershipEvidence: json.ownershipEvidence };
+  const json = await readJson(res); if (!res.ok || !json?.project) throw importRequestError(res, json, `Project import failed (${res.status})`); return { project: json.project, created: Boolean(json.created), ownershipEvidence: json.ownershipEvidence };
 }
 export async function claimProjectImport(input: { item: ProjectImportItem; auth: WalletActionAuthPayload }): Promise<ProjectImportItem> {
   const res = await apiFetch("/api/project-imports/claim", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ chainId: input.item.chainId, tokenAddress: input.item.tokenAddress, auth: input.auth }) });
-  const json = await readJson(res); if (!res.ok || !json?.project) throw new Error(String(json?.error || `Project ownership claim failed (${res.status})`)); return json.project;
+  const json = await readJson(res); if (!res.ok || !json?.project) throw importRequestError(res, json, `Project ownership claim failed (${res.status})`); return json.project;
 }
 export async function requestProjectClaim(input: { item: ProjectImportItem; auth: WalletActionAuthPayload; note?: string }): Promise<ProjectImportItem> {
   return requestProjectManualCheck({ chainId: input.item.chainId, tokenAddress: input.item.tokenAddress, auth: input.auth, note: input.note });
 }
 export async function requestProjectManualCheck(input: { chainId: number; tokenAddress: string; auth: WalletActionAuthPayload; note?: string }): Promise<ProjectImportItem> {
   const res = await apiFetch("/api/project-imports/manual-claim", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ chainId: input.chainId, tokenAddress: input.tokenAddress, note: input.note || null, auth: input.auth }) });
-  const json = await readJson(res); if (!res.ok || !json?.project) throw new Error(String(json?.error || `Project manual check request failed (${res.status})`)); return json.project;
+  const json = await readJson(res); if (!res.ok || !json?.project) throw importRequestError(res, json, `Project manual check request failed (${res.status})`); return json.project;
 }
 export async function updateProjectImportProfile(input: { item: ProjectImportItem; auth: WalletActionAuthPayload; description: string; website: string; xUrl: string; telegramUrl: string }): Promise<ProjectImportItem> {
   const metadata = { description: input.description, website: input.website, x_url: input.xUrl, telegram_url: input.telegramUrl };
   const res = await apiFetch("/api/project-imports", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ chainId: input.item.chainId, tokenAddress: input.item.tokenAddress, metadata, auth: input.auth }) });
-  const json = await readJson(res); if (!res.ok || !json?.project) throw new Error(String(json?.error || `Project profile update failed (${res.status})`)); return json.project;
+  const json = await readJson(res); if (!res.ok || !json?.project) throw importRequestError(res, json, `Project profile update failed (${res.status})`); return json.project;
 }
 export async function uploadProjectImportImage(input: { item: ProjectImportItem; file: File; auth: WalletActionAuthPayload }): Promise<ProjectImportItem> {
   const form = new FormData(); form.append("file", input.file);
   const params = new URLSearchParams({ chainId: String(input.item.chainId), tokenAddress: input.item.tokenAddress }); appendAuthToSearchParams(params, input.auth);
   const res = await apiFetch(`/api/project-imports/image?${params.toString()}`, { method: "POST", body: form });
-  const json = await readJson(res); if (!res.ok || !json?.project) throw new Error(String(json?.error || `Image upload failed (${res.status})`)); return json.project;
+  const json = await readJson(res); if (!res.ok || !json?.project) throw importRequestError(res, json, `Image upload failed (${res.status})`); return json.project;
 }
 export async function uploadProjectRegistrationImage(input: { item: ProjectImportItem; file: File; auth: WalletActionAuthPayload }): Promise<ProjectImportItem> {
   return uploadProjectImportImage(input);
