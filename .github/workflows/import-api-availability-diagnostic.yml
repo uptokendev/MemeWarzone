@@ -1,0 +1,72 @@
+name: Read-only import API incident diagnostic
+on:
+  push:
+    branches: [diagnose/import-api-availability-943e60f]
+    paths: [.github/workflows/import-api-availability-diagnostic.yml]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Read public API health and response headers without credentials
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import datetime, json, time, urllib.request, urllib.error
+          base = 'https://api.memewar.zone'
+          wallet = '9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H'
+          token = '7AVB9viRcpmr8gRMTCAYSmhP7gbuBMpBR51DMjwcpump'
+          paths = [
+              ('GET', '/healthz'), ('GET', '/health'),
+              ('GET', '/api/project-imports?tokenAddress=' + token + '&chainId=101'),
+              ('GET', '/api/project-imports?wallet=' + wallet + '&chainId=101'),
+              ('GET', '/api/profile?chainId=101&address=' + wallet),
+              ('GET', '/api/drafts?owner=' + wallet + '&chainId=101&limit=1'),
+              ('OPTIONS', '/api/project-imports/resolve'),
+              ('OPTIONS', '/api/analytics/ingest'),
+          ]
+          allowed = ['server','content-type','access-control-allow-origin','access-control-allow-methods','access-control-allow-headers','retry-after','cf-ray','x-request-id','x-mwz-api-upstream']
+          for method, path in paths:
+              start = time.monotonic()
+              row = {'utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'method':method,'path':path}
+              headers = {'Origin':'https://app.memewar.zone','User-Agent':'MWZ-ReadOnly-Incident-Probe/1.0'}
+              if method == 'OPTIONS':
+                  headers.update({'Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'content-type'})
+              try:
+                  req = urllib.request.Request(base + path, method=method, headers=headers)
+                  try:
+                      response = urllib.request.urlopen(req, timeout=12)
+                  except urllib.error.HTTPError as error:
+                      response = error
+                  with response:
+                      row['status'] = response.status
+                      row['headers'] = {k:response.headers.get(k) for k in allowed if response.headers.get(k)}
+                      raw = response.read(16384).decode('utf-8',errors='replace')
+                      try:
+                          body = json.loads(raw)
+                          row['body'] = {k:body[k] for k in ['ok','service','db','warning','error','code','detail','message'] if k in body}
+                          if 'items' in body: row['itemCount'] = len(body['items']) if isinstance(body['items'],list) else None
+                          if 'project' in body: row['projectPresent'] = body['project'] is not None
+                      except (ValueError,TypeError):
+                          row['bodyFormat'] = 'non-JSON or empty'
+              except Exception as error:
+                  row['transportError'] = str(error)[:500]
+              row['seconds'] = round(time.monotonic()-start,3)
+              print(json.dumps(row),flush=True)
+          PY
+  source-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 943e60f9b45a0a1325e6786e8bfc773def053cde
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci --prefix frontend --no-audit --no-fund
+      - name: Test exact merged import ownership, risk and UI source
+        run: node --test frontend/api/lib/projectOwnershipResolveSolana.test.mjs frontend/api/lib/projectImportRiskSecurity.test.mjs frontend/src/project-imports-ui.test.mjs
