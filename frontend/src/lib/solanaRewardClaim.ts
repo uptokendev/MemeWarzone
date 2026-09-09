@@ -1,6 +1,7 @@
 import { isSolanaRewardChainId } from "@/lib/solanaRewardNetwork";
 import { submitSolanaRewardLaneClaim } from "@/lib/solanaRewardLaneClaim";
 import { submitSolanaRewardV0Claim } from "@/lib/solanaRewardV0Claim";
+import { submitSolanaTournamentClaim, type SolanaTournamentClaimCall } from "@/lib/solanaTournamentClaim";
 import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
 
 const SYSTEM_PROGRAM = "11111111111111111111111111111111";
@@ -48,7 +49,9 @@ type SolanaLaneClaimCall = {
   explorerTxBase?: string;
 };
 
-export type SolanaAirdropClaimCall = SolanaAirdropOnlyClaimCall | SolanaLaneClaimCall;
+type SolanaTournamentCompatCall = Omit<SolanaTournamentClaimCall, "mode"> & { mode: "solana_airdrop" };
+
+export type SolanaAirdropClaimCall = SolanaAirdropOnlyClaimCall | SolanaLaneClaimCall | SolanaTournamentCompatCall;
 
 function hexToBytes(value: string): Uint8Array {
   const hex = String(value || "").trim().replace(/^0x/i, "");
@@ -109,6 +112,10 @@ function concat(parts: Uint8Array[]): Uint8Array {
 export async function submitSolanaAirdropClaim(call: SolanaAirdropClaimCall): Promise<string> {
   if (!call.enabled) throw new Error(call.reason || "Solana reward claim is not ready.");
   if (!isSolanaRewardChainId(call.chainId)) throw new Error("Wrong Solana chain for reward claim.");
+
+  if (call.kind === "solana_tournament") {
+    return submitSolanaTournamentClaim({ ...call, mode: "solana_tournament" });
+  }
 
   if (call.kind === "solana_reward_lane") {
     return submitSolanaRewardLaneClaim({
