@@ -1,0 +1,75 @@
+name: Project import owner and feedback proof
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - frontend/api/projectImports.js
+      - frontend/api/lib/projectImport*
+      - frontend/api/lib/projectOwnership*
+      - frontend/api/lib/projectSolanaProjectAuthority*
+      - frontend/src/lib/projectImport*
+      - frontend/src/pages/ProjectImport.tsx
+      - frontend/src/project-imports-ui.test.mjs
+      - frontend/e2e/import-harness/**
+      - frontend/e2e/project-import-feedback.browser.ts
+      - frontend/playwright.imports.config.ts
+      - .github/workflows/project-import-owner-proof.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  import-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: import_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d import_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/import_test
+      PROJECT_IMPORT_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/import_test
+      PG_DISABLE_SSL: '1'
+      ENABLE_PROJECT_IMPORTS: 'true'
+      VITE_ENABLE_PROJECT_IMPORTS: 'true'
+      ENABLE_ARENA: 'false'
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: git rev-parse HEAD && npm ci --prefix frontend --no-audit --no-fund
+      - run: npm --prefix frontend run check:api-imports
+      - name: Serial isolated import regressions
+        run: |
+          set -e
+          for testfile in frontend/api/lib/projectOwnershipResolve*.test.mjs frontend/api/lib/projectImport*.test.mjs frontend/api/lib/projectSolanaProjectAuthority.test.mjs frontend/api/lib/projectOwnershipReview.test.mjs frontend/src/project-imports-ui.test.mjs frontend/src/lib/projectImportFeedback.test.mjs; do
+            node --test "$testfile"
+          done
+      - run: npm --prefix frontend run build
+      - name: Browser setup
+        working-directory: frontend
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.list.save /etc/apt/sources.list.d/google-chrome.sources
+          npx playwright install --with-deps chromium
+      - name: Actual import component browser regressions
+        working-directory: frontend
+        run: npx playwright test -c playwright.imports.config.ts
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: import-owner-browser-failures
+          path: frontend/test-results
+          retention-days: 3
