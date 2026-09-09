@@ -3,6 +3,14 @@ import { apiFetch } from "@/lib/apiBase";
 import { appendAuthToSearchParams, type WalletActionAuthPayload } from "@/lib/walletActionAuth";
 
 export type ProjectOwnershipStatus = "ownership_pending" | "ownership_verified" | "ownership_manual_review" | "ownership_suspended";
+export type ProjectImportSecurityRisk = { code: string; label: string };
+export type ProjectImportSecurity = {
+  status: "pass" | "review" | "blocked";
+  provider: string;
+  criticalRisks: ProjectImportSecurityRisk[];
+  reviewRisks: ProjectImportSecurityRisk[];
+  details?: Record<string, unknown>;
+};
 export type ProjectImportItem = {
   id: string;
   chainId: number;
@@ -35,6 +43,7 @@ export type ProjectResolveResult = {
   automaticOwnershipAvailable: boolean;
   currentAuthority?: string | null;
   signedWalletMatchesAuthority: boolean;
+  security?: ProjectImportSecurity;
 };
 
 async function readJson(res: Response) { return res.json().catch(() => ({})) as Promise<any>; }
@@ -87,8 +96,11 @@ export async function claimProjectImport(input: { item: ProjectImportItem; auth:
   const json = await readJson(res); if (!res.ok || !json?.project) throw new Error(String(json?.error || `Project ownership claim failed (${res.status})`)); return json.project;
 }
 export async function requestProjectClaim(input: { item: ProjectImportItem; auth: WalletActionAuthPayload; note?: string }): Promise<ProjectImportItem> {
-  const res = await apiFetch("/api/project-imports/manual-claim", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ chainId: input.item.chainId, tokenAddress: input.item.tokenAddress, note: input.note || null, auth: input.auth }) });
-  const json = await readJson(res); if (!res.ok || !json?.project) throw new Error(String(json?.error || `Project claim request failed (${res.status})`)); return json.project;
+  return requestProjectManualCheck({ chainId: input.item.chainId, tokenAddress: input.item.tokenAddress, auth: input.auth, note: input.note });
+}
+export async function requestProjectManualCheck(input: { chainId: number; tokenAddress: string; auth: WalletActionAuthPayload; note?: string }): Promise<ProjectImportItem> {
+  const res = await apiFetch("/api/project-imports/manual-claim", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ chainId: input.chainId, tokenAddress: input.tokenAddress, note: input.note || null, auth: input.auth }) });
+  const json = await readJson(res); if (!res.ok || !json?.project) throw new Error(String(json?.error || `Project manual check request failed (${res.status})`)); return json.project;
 }
 export async function updateProjectImportProfile(input: { item: ProjectImportItem; auth: WalletActionAuthPayload; description: string; website: string; xUrl: string; telegramUrl: string }): Promise<ProjectImportItem> {
   const metadata = { description: input.description, website: input.website, x_url: input.xUrl, telegram_url: input.telegramUrl };
