@@ -1,0 +1,106 @@
+name: Import market coverage candidate proof
+on:
+  push:
+    branches: [diagnose/import-review-build-kit-20260909]
+    paths: [.github/workflows/import-market-candidate.yml]
+permissions:
+  contents: write
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: import_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d import_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PROJECT_IMPORT_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/import_test
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/import_test
+      PG_DISABLE_SSL: '1'
+      ENABLE_PROJECT_IMPORTS: 'true'
+      VITE_ENABLE_PROJECT_IMPORTS: 'true'
+      ENABLE_ARENA: 'false'
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ad0811f0471f558e2e612f536a7a506f4bad95ff
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate candidate checksum and exact import-only scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import crypto from 'node:crypto';
+          import {brotliDecompressSync} from 'node:zlib';
+          import {execFileSync} from 'node:child_process';
+          let text='';
+          for(const sha of ['0e009579b55288c0c65bc9929de112227c76c6c2','743a4619c72211127aa583bc52d6d93e2c651755']){
+            const response=await fetch(`https://api.github.com/repos/uptokendev/MemeWarzone/git/blobs/${sha}`,{headers:{Authorization:`Bearer ${process.env.GH_TOKEN}`,Accept:'application/vnd.github+json'},signal:AbortSignal.timeout(20000)});
+            if(!response.ok)throw Error(`Blob fetch ${response.status}`);
+            const blob=await response.json(),bytes=Buffer.from(blob.content,'base64');
+            if(crypto.createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')!==sha)throw Error('Git blob checksum mismatch');
+            text+=bytes.toString();
+          }
+          const patch=brotliDecompressSync(Buffer.from(text,'base64'));
+          if(crypto.createHash('sha256').update(patch).digest('hex')!=='4c6e19aaf24764cde8499c8393c58d39c04661dc8cb9d66f0c56afc151731b6b')throw Error('Patch checksum mismatch');
+          fs.writeFileSync('/tmp/import-market.patch',patch);
+          execFileSync('git',['apply','--unidiff-zero','--check','/tmp/import-market.patch'],{stdio:'inherit'});
+          execFileSync('git',['apply','--unidiff-zero','/tmp/import-market.patch'],{stdio:'inherit'});
+          const expected=['.github/workflows/import-review-v1.yml','.github/workflows/project-import-owner-proof.yml','docs/import-review-v1.md','frontend/api/lib/fixtures/ask-market-20260909.json','frontend/api/lib/projectImportAssessment.js','frontend/api/lib/projectImportBnbMarket.js','frontend/api/lib/projectImportBnbMarket.test.mjs','frontend/api/lib/projectImportMarketFixtures.test.mjs','frontend/api/lib/projectImportPumpEvidence.js','frontend/api/lib/projectImportPumpEvidence.test.mjs','frontend/api/lib/projectImportResolverAdapters.js','frontend/api/lib/projectImportResolvers.js','frontend/api/lib/projectImportRiskSecurity.js','frontend/api/lib/projectOwnershipReview.js','frontend/api/lib/projectOwnershipReview.test.mjs','frontend/api/projectImports.js','frontend/e2e/project-import-feedback.browser.ts','frontend/src/lib/projectImports.ts','frontend/src/pages/ProjectImport.tsx','scripts/import-market-canary.mjs'].sort();
+          const actual=[...execFileSync('git',['diff','--name-only']).toString().trim().split('\n'),...execFileSync('git',['ls-files','--others','--exclude-standard']).toString().trim().split('\n')].filter(Boolean).sort();
+          if(JSON.stringify(actual)!==JSON.stringify(expected))throw Error('Unexpected source scope: '+JSON.stringify(actual));
+          execFileSync('git',['add','--',...expected],{stdio:'inherit'});
+          JS
+          git config user.name 'MemeWarzone import build'
+          git config user.email 'import-build@users.noreply.github.com'
+          git commit -m 'feat(import): verify Pump virtual-reserve markets and BNB pool provenance'
+          git rev-parse HEAD | tee /tmp/import-market-candidate-head
+      - run: npm ci --prefix frontend --no-audit --no-fund
+      - run: npm --prefix frontend run check:api-imports
+      - name: Serial isolated HTTP, ownership, market, persistence and audit tests
+        run: |
+          set -eu
+          for file in frontend/api/lib/projectImport*.test.mjs frontend/api/lib/projectOwnershipResolve*.test.mjs frontend/api/lib/projectSolanaProjectAuthority.test.mjs frontend/api/lib/projectOwnershipReview.test.mjs frontend/src/project-imports-ui.test.mjs frontend/src/lib/projectImportFeedback.test.mjs; do node --test "$file"; done
+      - run: npm --prefix frontend run build
+      - name: Chromium setup
+        working-directory: frontend
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.list.save /etc/apt/sources.list.d/google-chrome.sources
+          npx playwright install --with-deps chromium
+      - name: Ten actual import component browser regressions
+        working-directory: frontend
+        run: npx playwright test -c playwright.imports.config.ts
+      - name: Actual read-only mainnet market and registry canary
+        env:
+          SOLANA_RPC_URL: https://api.mainnet-beta.solana.com
+          BSC_RPC_URL: https://bsc-rpc.publicnode.com
+          IMPORT_CANARY_OUTPUT: /tmp/import-market-canary.json
+        run: env -u DATABASE_URL -u PROJECT_IMPORT_TEST_DATABASE_URL node scripts/import-market-canary.mjs
+      - name: Fast-forward the tested draft branch only
+        run: |
+          set -eu
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = c0ce2e9ba4eac69fe3d8b5f6395a3a86f47e7b7e
+          test "$(git ls-remote origin refs/heads/feat/import-review-v1 | cut -f1)" = ad0811f0471f558e2e612f536a7a506f4bad95ff
+          test -z "$(git status --porcelain --untracked-files=no)"
+          git push origin HEAD:refs/heads/feat/import-review-v1
+          echo "PUBLISHED_HEAD=$(git rev-parse HEAD)"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: import-market-coverage-proof
+          path: |
+            /tmp/import-market-candidate-head
+            /tmp/import-market-canary.json
+            frontend/test-results
+          retention-days: 7
