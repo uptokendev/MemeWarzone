@@ -10,6 +10,7 @@ export const WRAPPED_SOL = new PublicKey("So111111111111111111111111111111111111
 const ZERO = PublicKey.default;
 const CURVE_DISC = Buffer.from([23,183,248,55,96,216,172,96]);
 const SHARE_DISC = Buffer.from([216,74,9,0,56,140,93,75]);
+const GLOBAL_DISC = Buffer.from([149,8,156,202,160,252,176,217]);
 const POOL_DISC = Buffer.from([241,154,109,4,17,177,109,188]);
 const keyAt = (b, i) => new PublicKey(b.subarray(i, i + 32));
 const boolAt = (b, i) => b[i] === 0 || b[i] === 1;
@@ -57,11 +58,21 @@ export function decodePumpSharing(account, mint, address) {
   if (shareholders.reduce((sum,x)=>sum+x.shareBps,0)!==10000) return null;
   return { address:canonical.toBase58(), version:2, active:b[10]===1, admin:keyAt(b,43).toBase58(), adminRevoked:b[75]===1, shareholders };
 }
+export function pumpGlobalAddress() {
+  return PublicKey.findProgramAddressSync([Buffer.from("global_config")], PUMP_AMM_PROGRAM)[0];
+}
+export function decodePumpGlobal(account) {
+  const b=checkedBytes(account,PUMP_AMM_PROGRAM,GLOBAL_DISC,57);
+  if(!b)return null;
+  return {buyEnabled:(b[56]&8)===0,sellEnabled:(b[56]&16)===0,disableFlags:b[56]};
+}
 export function decodeCanonicalPumpPool(account, mint, quote=WRAPPED_SOL) {
   const expected = pumpPoolAddress(mint,quote);
   const b = checkedBytes(account,PUMP_AMM_PROGRAM,POOL_DISC,243);
-  if (!b || (b.length>=244&&(!boolAt(b,243)||b[243]===1)) || (b.length>=245&&!boolAt(b,244)) || (b.length>=261&&b.subarray(245,261).some(byte=>byte!==0)) || b[8]!==expected.bump || b.readUInt16LE(9)!==0 || !keyAt(b,11).equals(expected.authority) || !keyAt(b,43).equals(new PublicKey(mint)) || !keyAt(b,75).equals(expected.quote)) return null;
-  return { address:expected.address.toBase58(), baseMint:new PublicKey(mint).toBase58(), quoteMint:expected.quote.toBase58(), baseTokenAccount:keyAt(b,139).toBase58(), quoteTokenAccount:keyAt(b,171).toBase58(), lpSupply:b.readBigUInt64LE(203).toString(), coinCreator:keyAt(b,211).toBase58() };
+  if (!b || (b.length>=244&&(!boolAt(b,243)||b[243]===1)) || (b.length>=245&&!boolAt(b,244)) || (b.length>245&&b.length<261) || b[8]!==expected.bump || b.readUInt16LE(9)!==0 || !keyAt(b,11).equals(expected.authority) || !keyAt(b,43).equals(new PublicKey(mint)) || !keyAt(b,75).equals(expected.quote)) return null;
+  // i128 is a documented signed pricing adjustment, not funded SOL or a wallet authority.
+  const virtualQuoteReserves=b.length>=261?BigInt.asIntN(128,b.readBigUInt64LE(245)|(b.readBigUInt64LE(253)<<64n)):0n;
+  return { virtualQuoteReserves:virtualQuoteReserves.toString(), address:expected.address.toBase58(), baseMint:new PublicKey(mint).toBase58(), quoteMint:expected.quote.toBase58(), baseTokenAccount:keyAt(b,139).toBase58(), quoteTokenAccount:keyAt(b,171).toBase58(), lpSupply:b.readBigUInt64LE(203).toString(), coinCreator:keyAt(b,211).toBase58() };
 }
 export function inspectCustodyTokenAccount(account, address, mint, owner) {
   if (!account || account.executable || !isTokenProgram(account.owner)) return null;
@@ -78,7 +89,7 @@ async function read(connection,address) {
 export async function readPumpImportEvidence({connection,mint,curveAccount,tokenProgram,claimant}) {
   const address=pumpCurveAddress(mint), curve=decodePumpCurve(curveAccount);
   if (!curve) return { platform:"unknown", authorityType:"unknown", market:{phase:"unknown",verified:false,reason:"launch_platform_unverified"}, custody:[] };
-  const evidence={platform:"pumpfun",authorityType:"wallet",curveAddress:address.toBase58(),rawCreator:curve.creator,curveComplete:curve.complete,sharing:null,relationships:[],custody:[],market:{phase:curve.complete?"migration_pending":"bonding",verified:true,platform:"pumpfun",reason:curve.complete?"canonical_pool_not_verified":"external_bonding",curveAddress:address.toBase58(),realQuoteReserves:curve.realQuoteReserves,quoteMint:curve.quoteMint}};
+  const evidence={platform:"pumpfun",authorityType:"wallet",curveAddress:address.toBase58(),rawCreator:curve.creator,curveComplete:curve.complete,sharing:null,relationships:[],custody:[],market:{phase:curve.complete?"postgrad_unverified":"bonding",verified:!curve.complete,platform:"pumpfun",reason:curve.complete?"supported_pool_not_verified":"external_bonding",curveAddress:address.toBase58(),realQuoteReserves:curve.realQuoteReserves,quoteMint:curve.quoteMint}};
   const [sharingKey]=pumpSharingAddress(mint);
   if (curve.creator===sharingKey.toBase58()) {
     evidence.authorityType="fee_sharing";
@@ -113,12 +124,21 @@ export async function readPumpImportEvidence({connection,mint,curveAccount,token
     const pool=decodeCanonicalPumpPool(await read(connection,expected.address),mint);
     if (!pool) return evidence;
     if(pool.coinCreator!==curve.creator) evidence.authorityError="curve_pool_creator_conflict";
-    const [base,quote]=await Promise.all([read(connection,pool.baseTokenAccount),read(connection,pool.quoteTokenAccount)]);
+    const [base,quote,globalAccount]=await Promise.all([read(connection,pool.baseTokenAccount),read(connection,pool.quoteTokenAccount),read(connection,pumpGlobalAddress())]);
+    const global=decodePumpGlobal(globalAccount);
+    if(!global){evidence.market.reason="pool_controls_unverified";return evidence;}
+    // The canonical pool owns canonical ATAs, not merely any accounts mentioning these mints.
+    if(!isTokenProgram(base?.owner)||!isTokenProgram(quote?.owner)||
+       !getAssociatedTokenAddressSync(new PublicKey(mint),expected.address,true,base.owner).equals(new PublicKey(pool.baseTokenAccount))||
+       !getAssociatedTokenAddressSync(WRAPPED_SOL,expected.address,true,quote.owner).equals(new PublicKey(pool.quoteTokenAccount))) {
+      evidence.market.reason="pool_custody_unverified";return evidence;
+    }
     const baseCustody=inspectCustodyTokenAccount(base,pool.baseTokenAccount,mint,pool.address);
     const quoteCustody=inspectCustodyTokenAccount(quote,pool.quoteTokenAccount,WRAPPED_SOL,pool.address);
     if (!baseCustody || !quoteCustody) { evidence.market.reason="pool_custody_unverified";return evidence; }
     evidence.custody.push(baseCustody);
-    evidence.market={...evidence.market,phase:"postgrad",poolAddress:pool.address,poolProgram:PUMP_AMM_PROGRAM.toBase58(),verified:true,liquidityAvailable:BigInt(baseCustody.amount)>0n&&BigInt(quoteCustody.amount)>0n,baseReserve:baseCustody.amount,quoteReserve:quoteCustody.amount,reason:"canonical_pumpswap_pool_verified",executionTested:false};
+    const effectiveQuote=BigInt(quoteCustody.amount)+BigInt(pool.virtualQuoteReserves);
+    evidence.market={...evidence.market,phase:"postgrad",poolAddress:pool.address,poolProgram:PUMP_AMM_PROGRAM.toBase58(),verified:true,liquidityAvailable:BigInt(baseCustody.amount)>0n&&BigInt(quoteCustody.amount)>0n,controlsVerified:true,buyEnabled:global.buyEnabled,sellEnabled:global.sellEnabled,pricingValid:effectiveQuote>0n,virtualQuoteReserves:pool.virtualQuoteReserves,effectiveQuoteReserves:effectiveQuote.toString(),virtualReservesAreLiquidity:false,venue:"PumpSwap",baseReserve:baseCustody.amount,quoteReserve:quoteCustody.amount,reason:"canonical_pumpswap_pool_verified",executionTested:false};
   } catch { evidence.market={...evidence.market,verified:false,reason:"market_rpc_unavailable"}; }
   return evidence;
 }

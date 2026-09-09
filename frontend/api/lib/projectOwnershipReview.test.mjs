@@ -319,3 +319,18 @@ test("import evidence is append-only and RLS-enabled",async()=>{
  await assert.rejects(()=>pool.query("DELETE FROM public.project_import_review_evidence WHERE project_id=$1",[id]),/append-only/);
  const r=await pool.query("SELECT relrowsecurity FROM pg_class WHERE oid='public.project_import_review_evidence'::regclass");assert.equal(r.rows[0].relrowsecurity,true);
 });
+
+test('direct DEX launch provenance is required, audited, and cannot grant Arena access',async()=>{
+ await reset();const id=await insertClaim(9994);const row=await getProjectOwnershipClaim(pool,id);
+ const original=(await pool.query('SELECT snapshot FROM public.project_import_review_evidence WHERE project_id=$1',[id])).rows[0].snapshot;
+ const assessment={...original,market:{...original.market,phase:'dex_market',requiresLaunchReview:true,launchStageVerified:false},automaticImportAllowed:false,decision:'manual_review'};
+ const entry=await appendImportEvidence(pool,{project:row,assessment,source:'admin_recheck'});evidenceIds.set(id,entry.id);
+ const args={projectId:id,action:'verify_owner',reason:'Independent launch history inspected',expectedVersion:row.state_version,admin:{id:ADMIN_AUTH_ID}};
+ await assert.rejects(()=>reviewProjectOwnership(pool,args),{code:'PROJECT_IMPORT_MARKET_PROOF_REQUIRED'});
+ assert.equal((await getProjectOwnershipClaim(pool,id)).ownership_status,'ownership_manual_review');
+ const reviewProof={marketMethod:'independent_launch_history',marketReference:'operator ticket 987: actual launch records and no active external bonding'};
+ await reviewProjectOwnership(pool,{...args,reviewProof});
+ const audit=(await pool.query('SELECT after FROM public.wm_admin_audit_log WHERE target_id=$1',[id])).rows[0].after;
+ assert.equal(audit.reviewProof.marketReference,reviewProof.marketReference);assert.equal(audit.reviewProof.marketMethod,reviewProof.marketMethod);
+ assert.equal((await getProjectOwnershipClaim(pool,id)).status,'scanning');
+});

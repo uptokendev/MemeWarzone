@@ -121,7 +121,7 @@ export async function reviewProjectOwnership(db, { projectId, action, reason, ex
       VALUES($1,$2,'project_ownership_claim',$3,$4::jsonb,$5::jsonb)
     `, [auditAdminUserId, action, projectId,
       JSON.stringify(auditPayload(before, admin, cleanReason)),
-      JSON.stringify({...auditPayload(after, admin, cleanReason),reviewProof:reviewProof?{method:String(reviewProof.method||""),reference:String(reviewProof.reference||"").slice(0,1000)}:null})]);
+      JSON.stringify({...auditPayload(after, admin, cleanReason),reviewProof:reviewProof?{method:String(reviewProof.method||""),reference:String(reviewProof.reference||"").slice(0,1000),marketMethod:String(reviewProof.marketMethod||""),marketReference:String(reviewProof.marketReference||"").slice(0,1000)}:null})]);
     await client.query("COMMIT");
     return updated;
   } catch (error) {

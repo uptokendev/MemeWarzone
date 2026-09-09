@@ -37,7 +37,10 @@ function holderConcentration(raw, critical, review, context = {}) {
   for (const holder of holders) {
     const percent = asNumber(holder?.percent);
     if (percent === null || percent < 0 || percent > 1) { add(review,true,"holder_data_invalid","A holder percentage was unavailable or invalid"); continue; }
-    const match = custody.find(c => c.verified === true && c.mint === context.tokenAddress && holder.token_account === c.tokenAccount && (!holder.account || holder.account === c.owner));
+    const sameEvm=(a,b)=>/^0x[0-9a-fA-F]{40}$/.test(String(a||"")) && String(a).toLowerCase()===String(b||"").toLowerCase();
+    const match = custody.find(c => c.verified === true && (context.chainId===56
+      ? c.chainId===56 && c.kind==='evm_factory_pool' && sameEvm(c.mint,context.tokenAddress) && sameEvm(holder.address,c.owner) && sameEvm(c.owner,c.tokenAccount)
+      : c.mint === context.tokenAddress && holder.token_account === c.tokenAccount && (!holder.account || holder.account === c.owner)));
     if (match) { excludedMarketInventory.push({ account:match.owner, tokenAccount:match.tokenAccount, percent, reason:"verified_market_custody" }); continue; }
     percentages.push(percent);
   }
@@ -50,7 +53,7 @@ function holderConcentration(raw, critical, review, context = {}) {
 function liquidityAssessment(raw, review, context = {}) {
   const market=context.market;
   if (market?.verified && market?.phase === "bonding") return { dexPools:null, lpHolderCount:null, liquidityEvidence:"bonding_curve_not_graduated" };
-  if (market?.verified && market?.phase === "postgrad") {
+  if (market?.verified && ["postgrad","dex_market"].includes(market?.phase)) {
     add(review, market.liquidityAvailable !== true, "pool_reserves_unavailable", "A post-graduation pool exists but usable reserves were not established");
     return { dexPools:1, lpHolderCount:null, liquidityEvidence:"onchain_pool_and_reserves", executionTested:false };
   }
@@ -144,9 +147,12 @@ function solanaAssessment(raw, context) {
 
 export function classifyProjectImportSecurity({ chainId, raw, tokenAddress = null, market = null, custody = [] }) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw) || Object.keys(raw).length === 0) return { status:"review",provider:"goplus",criticalRisks:[],reviewRisks:[{code:"no_security_data",label:"No usable security data returned"}],details:{},providerRaw:null };
-  const context={tokenAddress,market,custody};
+  const context={chainId:Number(chainId),tokenAddress,market,custody};
   const assessment = Number(chainId) === 56 ? bnbAssessment(raw, context) : Number(chainId) === 101 ? solanaAssessment(raw, context) : null;
   if (!assessment) return { status: "review", provider: "goplus", criticalRisks: [], reviewRisks: [{ code: "unsupported_chain", label: "Security scanner does not support this chain" }], details: {} };
+  add(assessment.critical, market?.controlsVerified===true && (market.buyEnabled===false||market.sellEnabled===false), "market_trading_disabled", "The verified market currently disables buying or selling");
+  add(assessment.review, market?.pricingValid===false, "market_pricing_invalid", "The market's effective pricing reserves are invalid");
+  add(assessment.review, market?.virtualQuoteReserves!=null && market.virtualQuoteReserves!=="0", "virtual_quote_pricing", "Pool pricing includes virtual quote reserves; these are not funded liquidity and trading execution is not certified");
   const status = assessment.critical.length ? "blocked" : assessment.review.length ? "review" : "pass";
   return { status, provider: "goplus", criticalRisks: assessment.critical, reviewRisks: assessment.review, details: assessment.details, providerRaw: providerRawSnapshot(raw) };
 }

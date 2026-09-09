@@ -3,6 +3,7 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - frontend/api/lib/fixtures/**
       - frontend/api/projectImports.js
       - frontend/api/lib/projectImport*
       - frontend/api/lib/projectOwnership*

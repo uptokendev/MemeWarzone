@@ -1,9 +1,10 @@
-import { JsonRpcProvider } from "ethers";
+import { JsonRpcProvider, FetchRequest } from "ethers";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { getTokenMetadata, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { resolveProjectOwnershipBnb } from "./projectOwnershipResolveBnb.js";
 import { resolveProjectOwnershipSolana } from "./projectOwnershipResolveSolana.js";
 import { assertSolanaImportMainnet, resolveSolanaProjectAuthority } from "./projectSolanaProjectAuthority.js";
+import { readBnbImportMarket } from "./projectImportBnbMarket.js";
 import { registerProjectImportResolver } from "./projectImportResolvers.js";
 
 const BNB_CHAIN_ID = 56;
@@ -18,7 +19,9 @@ function getBnbProvider() {
   if (bnbProvider) return bnbProvider;
   const url = bnbRpcUrl();
   if (!url) throw Object.assign(new Error("BNB project import resolver is not configured"), { code: "PROJECT_IMPORT_RPC_UNAVAILABLE" });
-  bnbProvider = new JsonRpcProvider(url, BNB_CHAIN_ID);
+  const request = new FetchRequest(url);
+  request.timeout = 7000;
+  bnbProvider = new JsonRpcProvider(request, BNB_CHAIN_ID, { batchMaxCount: 1 });
   return bnbProvider;
 }
 function getSolanaConnection() {
@@ -35,14 +38,17 @@ export function setProjectImportReadClientsForTest({ bnb = null, solana = null }
 }
 
 export async function resolveBnbProjectImport({ chainId, tokenAddress, signedWallet }) {
+  const provider = getBnbProvider();
   const raw = await resolveProjectOwnershipBnb({
-    provider: getBnbProvider(),
+    provider,
     chainId,
     contractAddress: tokenAddress,
     signedConnectedWallet: signedWallet,
   });
   if (!raw?.ok) throw Object.assign(new Error(raw?.error || "BNB token resolution failed"), { code: raw?.errorCode || "PROJECT_IMPORT_RESOLVE_FAILED" });
+  const marketEvidence = await readBnbImportMarket({ provider, tokenAddress: raw.contractAddress });
   return {
+    ...marketEvidence,
     chainId: BNB_CHAIN_ID,
     tokenAddress: raw.contractAddress,
     name: raw.token?.name ?? null,

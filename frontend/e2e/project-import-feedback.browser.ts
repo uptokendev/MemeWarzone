@@ -37,3 +37,11 @@ test('verified import retries only its failed image',async({page})=>{
  await start(page,owner);await page.locator('#project-import-image').setInputFiles({name:'logo.png',mimeType:'image/png',buffer:png});await page.getByRole('button',{name:'REGISTER MEMECOIN'}).click();await expect(page.locator('[data-import-error]')).toContainText('IMAGE UPLOAD NOT COMPLETED');await page.getByRole('button',{name:'ATTACH REQUIRED IMAGE'}).click();await expect(page.getByRole('button',{name:'OPEN PROJECT PAGE'})).toBeVisible();expect(registrations).toBe(1);expect(uploads).toBe(2);
 });
 test('wrong-family address remains explained inline',async({page})=>{await page.goto('/');await page.getByLabel('3. Contract Address').fill('0x1111111111111111111111111111111111111111');await expect(page.getByRole('alert')).toContainText('not valid for the selected chain');await expect(page.getByRole('button',{name:'IMPORT',exact:true})).toBeDisabled();});
+
+test('matched wallet and clean scan still permit image plus manual launch-history review',async({page})=>{
+ await page.route('**/api/project-imports/resolve',r=>r.fulfill({json:{resolved:{...resolved(true),market:{phase:'dex_market',verified:true,requiresLaunchReview:true},assessment:{decision:'manual_review',automaticImportAllowed:false,manualRequestAllowed:true,checks:[]}},project:null}}));await start(page,owner);
+ await expect(page.locator('[data-launch-history-review]')).toContainText('a pool alone');await expect(page.locator('#project-import-image')).toBeVisible();await expect(page.getByRole('button',{name:'REGISTER MEMECOIN'})).toHaveCount(0);await page.locator('#project-import-image').setInputFiles({name:'logo.png',mimeType:'image/png',buffer:png});await expect(page.getByRole('button',{name:'REQUEST MANUAL CHECK'})).toBeEnabled();
+});
+test('Four bonding message does not incorrectly name Pump.fun',async({page})=>{
+ await page.route('**/api/project-imports/resolve',r=>r.fulfill({json:{resolved:{...resolved(true),market:{phase:'bonding',verified:true,platform:'fourmeme'},assessment:{decision:'not_eligible',automaticImportAllowed:false,manualRequestAllowed:false,checks:[]}},project:null}}));await start(page,owner);await expect(page.locator('[data-import-bonding]')).toContainText('STILL BONDING ON FOUR.MEME');await expect(page.locator('#project-import-image')).toHaveCount(0);
+});

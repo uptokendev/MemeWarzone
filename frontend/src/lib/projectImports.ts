@@ -41,7 +41,7 @@ export type ImportAssessment = {
 export type ProjectResolveResult = {
   assessment?: ImportAssessment;
   retainedPageOnly?: boolean;
-  market?: {phase:string;verified:boolean;reason?:string};
+  market?: {phase:string;verified:boolean;reason?:string;platform?:string;requiresLaunchReview?:boolean};
   projectAuthorityEvidence?: {authorityType:string;relationships?:{kind:string;shareBps?:number;wallet:string}[]};
   chainId: number;
   tokenAddress: string;
