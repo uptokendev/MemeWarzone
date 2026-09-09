@@ -31,7 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 912032366e764759eddd4f36873211a35b86110f
+          ref: 2377d7d4ec0d1ea3ff9a2d8b9274ce66399cecb2
           persist-credentials: true
       - uses: actions/setup-node@v4
         with:
@@ -40,7 +40,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Close the verified-owner missing-image recovery path
         run: |
-          test "$(git rev-parse HEAD)" = 912032366e764759eddd4f36873211a35b86110f
+          test "$(git rev-parse HEAD)" = 2377d7d4ec0d1ea3ff9a2d8b9274ce66399cecb2
           python3 - <<'PY'
           from pathlib import Path
           p=Path('frontend/src/pages/ProjectImport.tsx');s=p.read_text()
@@ -112,7 +112,7 @@ jobs:
           JS
       - name: Publish only the tested import feature head
         run: |
-          test "$(git ls-remote origin refs/heads/fix/import-project-creator-persistent-feedback | cut -f1)" = 912032366e764759eddd4f36873211a35b86110f
+          test "$(git ls-remote origin refs/heads/fix/import-project-creator-persistent-feedback | cut -f1)" = 2377d7d4ec0d1ea3ff9a2d8b9274ce66399cecb2
           git diff --exit-code
           git push origin HEAD:refs/heads/fix/import-project-creator-persistent-feedback
           echo "FINAL_IMPORT_HEAD=$(git rev-parse HEAD)"
@@ -120,7 +120,7 @@ jobs:
         if: always()
         run: |
           git rev-parse HEAD > /tmp/import-final-head.txt
-          git diff 912032366e764759eddd4f36873211a35b86110f > /tmp/import-final-recovery.patch
+          git diff 2377d7d4ec0d1ea3ff9a2d8b9274ce66399cecb2 > /tmp/import-final-recovery.patch
       - uses: actions/upload-artifact@v4
         if: always()
         with:
