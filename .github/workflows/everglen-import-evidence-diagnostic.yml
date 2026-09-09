@@ -1,0 +1,67 @@
+name: Everglen read-only import evidence
+on:
+  push:
+    branches: [diagnose/everglen-import-evidence-20260909]
+    paths: [.github/workflows/everglen-import-evidence-diagnostic.yml]
+permissions:
+  contents: read
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: c0ce2e9ba4eac69fe3d8b5f6395a3a86f47e7b7e
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --prefix frontend --no-audit --no-fund
+      - name: Read public scanner and chain data, no signatures or mutations
+        working-directory: frontend
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import { Connection, PublicKey } from '@solana/web3.js';
+          import { classifyProjectImportSecurity } from './api/lib/projectImportRiskSecurity.js';
+          import { PUMP_PROGRAM_ID, pumpBondingCurveAddress, decodePumpProjectCreator, resolveSolanaProjectAuthority } from './api/lib/projectSolanaProjectAuthority.js';
+          const mint='FcBb7avR9LgmgwFxRcVJDiroZxZfgvtnUJrRKQ7kpump';
+          const claimant='3ZMWQiR7YauYYmdHPs8Qr1bLZZbtvnPeobhDvjR7VbkD';
+          const output={checkedAt:new Date().toISOString(),sourceHead:'c0ce2e9ba4eac69fe3d8b5f6395a3a86f47e7b7e',mint,claimant};
+          const connection=new Connection('https://api.mainnet-beta.solana.com',{commitment:'confirmed',disableRetryOnRateLimit:true,fetch:(url,init)=>fetch(url,{...init,signal:AbortSignal.timeout(8000)})});
+          async function captured(fn){try{return await fn();}catch(e){return {error:String(e?.message||e)};}}
+          async function json(url){const r=await fetch(url,{signal:AbortSignal.timeout(8000)});if(!r.ok)throw Error('HTTP '+r.status);return r.json();}
+          const curve=pumpBondingCurveAddress(mint);
+          const [gp,ds,genesis,mintInfo,curveInfo]=await Promise.all([
+            captured(()=>json('https://api.gopluslabs.io/api/v1/solana/token_security?contract_addresses='+mint)),
+            captured(()=>json('https://api.dexscreener.com/latest/dex/tokens/'+mint)),
+            captured(()=>connection.getGenesisHash()),
+            captured(()=>connection.getParsedAccountInfo(new PublicKey(mint),'confirmed')),
+            captured(()=>connection.getAccountInfo(curve,'confirmed')),
+          ]);
+          output.goplus=gp;output.genesis=genesis;
+          output.market=ds?.pairs?ds.pairs.map(p=>({chainId:p.chainId,dexId:p.dexId,pairAddress:p.pairAddress,baseToken:p.baseToken,quoteToken:p.quoteToken,liquidity:p.liquidity,volume:p.volume,txns:p.txns})):ds;
+          output.mintInfo=mintInfo?.value?{slot:mintInfo.context?.slot,ownerProgram:mintInfo.value.owner.toBase58(),parsed:mintInfo.value.data?.parsed}:mintInfo;
+          if(curveInfo?.data){
+            const bytes=Buffer.from(curveInfo.data);
+            output.curve={address:curve.toBase58(),ownerProgram:curveInfo.owner.toBase58(),expectedProgram:PUMP_PROGRAM_ID.toBase58(),executable:curveInfo.executable,dataLength:bytes.length,dataBase64:bytes.toString('base64'),complete:bytes.length>=49?bytes[48]:null,rawCreator:bytes.length>=81?new PublicKey(bytes.subarray(49,81)).toBase58():null,decodedCreator:decodePumpProjectCreator(curveInfo)};
+          }else output.curve=curveInfo;
+          const raw=gp?.result?.[mint];
+          if(raw){
+            output.currentClassifierResult=classifyProjectImportSecurity({chainId:101,raw});
+            const top=raw?.holders?.[0];
+            if(top?.token_account){const p=await captured(()=>connection.getParsedAccountInfo(new PublicKey(top.token_account),'confirmed'));output.topHolderAccount=p?.value?{tokenAccount:top.token_account,programOwner:p.value.owner.toBase58(),parsed:p.value.data?.parsed}:p;}
+          }
+          if(mintInfo?.value){output.projectAuthority=await captured(()=>resolveSolanaProjectAuthority({connection,mint,mintAuthority:mintInfo.value.data?.parsed?.info?.mintAuthority}));}
+          output.enumReproduction=['0','1','2'].map(state=>({default_account_state:state,result:classifyProjectImportSecurity({chainId:101,raw:{default_account_state:state,dex:[{id:'fixture'}],holders:[]}})}));
+          fs.writeFileSync('/tmp/everglen-import-evidence.json',JSON.stringify(output,null,2));
+          console.log('EVERGLEN_EVIDENCE',JSON.stringify(output));
+          JS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: everglen-read-only-import-evidence
+          path: /tmp/everglen-import-evidence.json
+          retention-days: 7
