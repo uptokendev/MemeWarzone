@@ -1,0 +1,52 @@
+name: Import review read-only token canary
+on:
+  push:
+    branches: [diagnose/import-review-build-kit-20260909]
+    paths: [.github/workflows/import-review-live-readonly.yml]
+permissions:
+  contents: read
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 6ddafa5d5166084780ba258503cfb7d977fe1242
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --prefix frontend --no-audit --no-fund
+      - name: Run actual detector without wallet signatures, database or writes
+        working-directory: frontend
+        env:
+          SOLANA_RPC_URL: https://api.mainnet-beta.solana.com
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import {resolveSolanaProjectImport} from './api/lib/projectImportResolverAdapters.js';
+          import {scanProjectImportSecurity} from './api/lib/projectImportRiskSecurity.js';
+          import {assessProjectImport} from './api/lib/projectImportAssessment.js';
+          const tokens=[
+            ['ASK','7AVB9viRcpmr8gRMTCAYSmhP7gbuBMpBR51DMjwcpump','9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H'],
+            ['Everglen','FcBb7avR9LgmgwFxRcVJDiroZxZfgvtnUJrRKQ7kpump','3ZMWQiR7YauYYmdHPs8Qr1bLZZbtvnPeobhDvjR7VbkD'],
+            ['Legacy Coin','2XnP5fdNbeBbBUX1sh4gKTJCM7zD1SoKX2QhEHudpump','2wsYUHLBo8Y7voFjLkwXFZFn7iayUmaXARtQTZkrNhYB'],
+          ];
+          const report={head:'6ddafa5d5166084780ba258503cfb7d977fe1242',checkedAt:new Date().toISOString(),liveSignatureVerified:false,rows:[]};
+          for(const [name,tokenAddress,claimantWallet] of tokens){
+            try{
+              const resolved=await resolveSolanaProjectImport({chainId:101,tokenAddress,signedWallet:claimantWallet});
+              const security=await scanProjectImportSecurity({chainId:101,tokenAddress,market:resolved.market,custody:resolved.custody});
+              const assessment=assessProjectImport({resolved,security,claimantWallet,proof:null});
+              const row={name,tokenAddress,resolved,assessment};report.rows.push(row);
+              console.log(JSON.stringify({name,phase:resolved.market?.phase,marketVerified:resolved.market?.verified,authorityType:resolved.projectAuthorityEvidence?.authorityType,authority:resolved.currentAuthority,ownershipMatches:resolved.signedWalletMatchesAuthority,relationships:resolved.projectAuthorityEvidence?.relationships,decision:assessment.decision,critical:security.criticalRisks,review:security.reviewRisks}));
+            }catch(error){const row={name,tokenAddress,error:String(error?.message||error),code:error?.code};report.rows.push(row);console.log(JSON.stringify(row));}
+          }
+          fs.writeFileSync('/tmp/import-review-live-readonly.json',JSON.stringify(report,null,2));
+          JS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: import-review-live-readonly
+          path: /tmp/import-review-live-readonly.json
+          retention-days: 7
