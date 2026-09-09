@@ -1,0 +1,56 @@
+name: Import market coverage source and discovery
+on:
+  push:
+    branches: [diagnose/import-review-build-kit-20260909]
+    paths: [.github/workflows/import-market-source.yml]
+permissions:
+  contents: read
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ad0811f0471f558e2e612f536a7a506f4bad95ff
+          persist-credentials: false
+      - name: Export tracked review source only
+        run: |
+          mkdir -p /tmp/market-kit
+          git archive --format=tar.gz -o /tmp/market-kit/review-source.tar.gz HEAD frontend docs/import-review-v1.md supabase/migrations .github/workflows/import-review-v1.yml .github/workflows/project-import-owner-proof.yml .gitleaksignore
+          git rev-parse HEAD > /tmp/market-kit/SOURCE_SHA
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --prefix frontend --no-audit --no-fund
+      - name: Bounded public discovery - no transactions or credentials
+        working-directory: frontend
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          import {Connection,PublicKey} from '@solana/web3.js';
+          const mint='7AVB9viRcpmr8gRMTCAYSmhP7gbuBMpBR51DMjwcpump';
+          const capture=async f=>{try{return await f();}catch(e){return {error:String(e.message)};}};
+          const json=async url=>{const r=await fetch(url,{signal:AbortSignal.timeout(8000)});if(!r.ok)throw Error('HTTP '+r.status);return r.json();};
+          const discovery=await capture(()=>json('https://api.dexscreener.com/latest/dex/tokens/'+mint));
+          const output={checkedAt:new Date().toISOString(),mint,discovery,accounts:[],references:{}};
+          const rpc=new Connection('https://api.mainnet-beta.solana.com',{commitment:'confirmed',disableRetryOnRateLimit:true,fetch:(u,i)=>fetch(u,{...i,signal:AbortSignal.timeout(10000)})});
+          output.genesis=await capture(()=>rpc.getGenesisHash());
+          const addresses=[mint,...(discovery.pairs||[]).filter(p=>p.chainId==='solana'&&(p.baseToken?.address===mint||p.quoteToken?.address===mint)).slice(0,6).map(p=>p.pairAddress)];
+          output.accounts=await capture(async()=>{const r=await rpc.getMultipleAccountsInfoAndContext(addresses.map(x=>new PublicKey(x)),'confirmed');return addresses.map((address,i)=>({address,slot:r.context.slot,account:r.value[i]?{owner:r.value[i].owner.toBase58(),executable:r.value[i].executable,lamports:r.value[i].lamports,data:r.value[i].data.toString('base64')}:null}));});
+          const refs={
+            raydiumAddresses:'https://docs.raydium.io/reference/program-addresses.md',
+            raydiumV4Layout:'https://raw.githubusercontent.com/raydium-io/raydium-sdk-V2/master/src/raydium/liquidity/layout.ts',
+            raydiumV4State:'https://raw.githubusercontent.com/raydium-io/raydium-amm/master/program/src/state.rs',
+            fourAddresses:'https://raw.githubusercontent.com/four-meme-community/four-meme-ai/main/skills/four-meme-integration/references/contract-addresses.md',
+            fourQuery:'https://raw.githubusercontent.com/four-meme-community/four-meme-ai/main/skills/four-meme-integration/references/token-query-api.md'
+          };
+          for(const [name,url] of Object.entries(refs)){output.references[name]=await capture(async()=>{const r=await fetch(url,{signal:AbortSignal.timeout(8000)});if(!r.ok)throw Error('HTTP '+r.status);return {url,text:await r.text()};});}
+          fs.writeFileSync('/tmp/market-kit/discovery.json',JSON.stringify(output,null,2));
+          console.log(JSON.stringify({checkedAt:output.checkedAt,pairs:(discovery.pairs||[]).map(p=>({dex:p.dexId,pair:p.pairAddress,base:p.baseToken,quote:p.quoteToken,liquidity:p.liquidity})),accounts:Array.isArray(output.accounts)?output.accounts.map(a=>({address:a.address,owner:a.account?.owner,length:a.account?Buffer.from(a.account.data,'base64').length:0})):output.accounts}));
+          JS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: import-market-source
+          path: /tmp/market-kit
+          retention-days: 3
