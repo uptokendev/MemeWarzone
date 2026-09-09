@@ -1,0 +1,27 @@
+# Preview-only deployment configuration. Application source is PR #275 at
+# c15d5edd6f998884a1a1a9078bd6b4a5c76466d3. No production config is changed.
+# Coolify: base /frontend, Nixpacks, static site OFF, internal port 3001.
+# Build variable: NIXPACKS_CONFIG_FILE=nixpacks.import-preview-api.toml
+# Runtime only: isolated DATABASE_URL, SUPABASE_* and read-only RPC credentials.
+# Apply the baseline schema and additive evidence migration before starting.
+providers = ["node"]
+
+[variables]
+NIXPACKS_NODE_VERSION = "22"
+NIXPACKS_SPA_CADDY = "false"
+
+[phases.setup]
+nixPkgs = ["nodejs_22"]
+
+[phases.install]
+cmds = ["node --version && npx --yes npm@10.9.2 ci --include=dev --no-audit --no-fund"]
+
+[phases.build]
+# The API is JavaScript, not a second Vite site. This validates paths/syntax
+# without requiring database or storage credentials in the build environment.
+cmds = ["npm run check:api-imports && node --check api/server.mjs"]
+
+[start]
+# Same shim/env loader/server as api:start, but no best-effort closeout patch
+# runner. Migrations and source changes are explicit release operations.
+cmd = "node --require ./scripts/rpc-websockets-compat.cjs --import ./api/load-local-env.mjs ./api/server.mjs"
