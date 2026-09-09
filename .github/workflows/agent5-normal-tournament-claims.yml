@@ -79,6 +79,102 @@ jobs:
             /tmp/agent5-rh.log
           if-no-files-found: ignore
 
+  solana-exactly-once:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: memewarzone_tournament_claim_sol_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d memewarzone_tournament_claim_sol_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ANCHOR_VERSION: 0.30.1
+      SOLANA_VERSION: 1.18.26
+      RUST_TOOLCHAIN: 1.79.0
+      IDL_RUST_TOOLCHAIN: nightly-2024-05-09
+      ANCHOR_PROVIDER_URL: http://127.0.0.1:8899
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install frontend and Solana test dependencies
+        run: |
+          npm ci --prefix frontend
+          npm install --prefix tests/solana --no-audit --no-fund
+      - name: Install Rust and Solana toolchains
+        shell: bash
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup toolchain install "$IDL_RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          release_dir="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
+          mkdir -p "$release_dir"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error --output /tmp/solana-release.tar.bz2 "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"
+          ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+      - name: Install Anchor CLI
+        run: npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+      - name: Create local provider wallet
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.config/solana"
+          solana-keygen new --no-bip39-passphrase --silent --force --outfile "$HOME/.config/solana/id.json"
+          echo "ANCHOR_WALLET=$HOME/.config/solana/id.json" >> "$GITHUB_ENV"
+      - name: Build rewards treasury SBF and IDL
+        shell: bash
+        run: |
+          set -o pipefail
+          rm -f Cargo.lock programs/mwz_rewards_treasury/Cargo.lock
+          anchor build 2>&1 | tee /tmp/agent5-solana-build.log | tail -n 200
+          test -s target/deploy/mwz_rewards_treasury.so
+          test -s target/idl/mwz_rewards_treasury.json
+      - name: Start local validator with canonical rewards program
+        shell: bash
+        run: |
+          rm -rf /tmp/agent5-solana-ledger
+          solana-test-validator --reset --quiet --ledger /tmp/agent5-solana-ledger --bpf-program 2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX target/deploy/mwz_rewards_treasury.so > /tmp/agent5-solana-validator.log 2>&1 &
+          echo $! > /tmp/agent5-solana-validator.pid
+          for i in $(seq 1 90); do
+            if solana cluster-version --url "$ANCHOR_PROVIDER_URL" >/dev/null 2>&1; then exit 0; fi
+            sleep 2
+          done
+          cat /tmp/agent5-solana-validator.log
+          exit 1
+      - name: Fund provider
+        shell: bash
+        run: |
+          solana config set --url "$ANCHOR_PROVIDER_URL" --keypair "$ANCHOR_WALLET"
+          solana airdrop 100
+      - name: Run SOL Tournament matrix
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/memewarzone_tournament_claim_sol_test
+          PG_DISABLE_SSL: "1"
+          API_AUTH_ENFORCE_USER_WRITES: "1"
+          SOLANA_REWARDS_RPC_URL_102: http://127.0.0.1:8899
+          SOLANA_REWARDS_TREASURY_PROGRAM_ID: 2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX
+        run: node tests/solana/agent5-normal-tournament-claim.mjs
+      - name: Upload Solana diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent5-normal-tournament-solana-logs
+          path: |
+            /tmp/agent5-solana-build.log
+            /tmp/agent5-solana-validator.log
+          if-no-files-found: ignore
+
   scope-guard:
     runs-on: ubuntu-latest
     steps:
