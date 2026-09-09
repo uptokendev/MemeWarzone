@@ -1,0 +1,24 @@
+# Preview-only deployment configuration. Application source is PR #275 at
+# c15d5edd6f998884a1a1a9078bd6b4a5c76466d3. No production config is changed.
+# Coolify: base /frontend, Nixpacks, static site ON, SPA ON, publish /dist.
+# Build variable: NIXPACKS_CONFIG_FILE=nixpacks.import-preview-web.toml
+# Supply public VITE_* values at build time; never supply database/service keys.
+providers = ["node"]
+
+[variables]
+NIXPACKS_NODE_VERSION = "22"
+NIXPACKS_SPA_CADDY = "false"
+
+[phases.setup]
+nixPkgs = ["nodejs_22"]
+
+[phases.install]
+cmds = ["node --version && npx --yes npm@10.9.2 ci --include=dev --no-audit --no-fund"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+# Coolify static-site mode replaces this with Nginx. Fail visibly if static
+# mode is accidentally omitted instead of launching package.json's API server.
+cmd = "echo 'Static frontend: enable Coolify static-site and SPA mode, publish /dist.' >&2; exit 1"
