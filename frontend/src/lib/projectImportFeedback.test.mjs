@@ -15,3 +15,5 @@ test('invalid address, disabled imports and signature cancellation remain distin
   assert.equal(projectImportFeedback({code:'PROJECT_IMPORTS_DISABLED',status:404}).title,'IMPORTS TEMPORARILY UNAVAILABLE');
   assert.equal(projectImportFeedback({code:4001}).title,'SIGNATURE CANCELLED');
 });
+
+test("image failure explains saved progress without restarting import",()=>{const r=projectImportFeedback({status:503,importStage:"image"});assert.equal(r.title,"IMAGE UPLOAD NOT COMPLETED");assert.match(r.message,/request is saved/);assert.equal(r.retry,false);});
