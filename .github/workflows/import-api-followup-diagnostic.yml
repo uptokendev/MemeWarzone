@@ -1,0 +1,83 @@
+name: Read-only import incident follow-up
+on:
+  push:
+    branches: [diagnose/import-api-availability-943e60f]
+    paths: [.github/workflows/import-api-followup-diagnostic.yml]
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - name: Check remaining reported endpoints and read Solana token account
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import datetime, json, time, urllib.request, urllib.error
+          base = 'https://api.memewar.zone'
+          wallet = '9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H'
+          token = '7AVB9viRcpmr8gRMTCAYSmhP7gbuBMpBR51DMjwcpump'
+          paths = [
+              '/health',
+              '/api/drafts?owner=' + wallet + '&chainId=101&limit=100',
+              '/api/attribution/wallet/' + wallet,
+              '/api/follows/user-counts?chainId=101&address=' + wallet,
+              '/api/campaigns?chainId=101&limit=200&tab=trending&sort=default&status=all',
+              '/api/campaigns?chainId=101&limit=500&tab=trending&sort=default&status=all',
+              '/api/project-imports?tokenAddress=' + token + '&chainId=101',
+          ]
+          allowed = ['content-type','access-control-allow-origin','retry-after','x-mwz-api-upstream']
+          for path in paths:
+              start = time.monotonic()
+              row = {'utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'path':path}
+              req = urllib.request.Request(base + path, headers={'Origin':'https://app.memewar.zone','User-Agent':'MWZ-ReadOnly-Incident-Probe/1.0'})
+              try:
+                  try:
+                      response = urllib.request.urlopen(req, timeout=12)
+                  except urllib.error.HTTPError as error:
+                      response = error
+                  with response:
+                      row['status'] = response.status
+                      row['headers'] = {k:response.headers.get(k) for k in allowed if response.headers.get(k)}
+                      text = response.read(1000000).decode('utf-8', errors='replace')
+                      try:
+                          body = json.loads(text)
+                          if isinstance(body,dict):
+                              row['body'] = {k:body[k] for k in ['ok','service','db','warning','error','code','message'] if k in body}
+                              if isinstance(body.get('items'),list): row['itemCount'] = len(body['items'])
+                      except ValueError:
+                          row['bodyFormat'] = 'non-JSON or empty'
+              except Exception as error:
+                  row['transportError'] = str(error)[:300]
+              row['seconds'] = round(time.monotonic()-start,3)
+              print(json.dumps(row),flush=True)
+          rpc = 'https://api.mainnet-beta.solana.com'
+          for method, params in [('getGenesisHash',[]), ('getAccountInfo',[token,{'encoding':'jsonParsed','commitment':'confirmed'}])]:
+              row = {'utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'rpc':rpc,'method':method}
+              try:
+                  data = json.dumps({'jsonrpc':'2.0','id':1,'method':method,'params':params}).encode()
+                  req = urllib.request.Request(rpc,data=data,headers={'Content-Type':'application/json'},method='POST')
+                  with urllib.request.urlopen(req,timeout=12) as response:
+                      body = json.load(response)
+                  if body.get('error'):
+                      row['rpcError'] = body['error']
+                  elif method == 'getGenesisHash':
+                      row['genesisHash'] = body.get('result')
+                  else:
+                      result = body.get('result') or {}
+                      value = result.get('value')
+                      row['slot'] = (result.get('context') or {}).get('slot')
+                      row['accountFound'] = value is not None
+                      if isinstance(value,dict):
+                          row['accountOwnerProgram'] = value.get('owner')
+                          parsed = (value.get('data') or {}).get('parsed') or {}
+                          row['accountType'] = parsed.get('type')
+                          info = parsed.get('info') or {}
+                          row['mintAuthority'] = info.get('mintAuthority')
+                          row['freezeAuthority'] = info.get('freezeAuthority')
+                          row['connectedWalletMatchesMintAuthority'] = info.get('mintAuthority') == wallet
+              except Exception as error:
+                  row['transportError'] = str(error)[:300]
+              print(json.dumps(row),flush=True)
+          PY
