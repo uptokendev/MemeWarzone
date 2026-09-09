@@ -117,7 +117,7 @@ function checkAbiFiles(root, deployment, errors) {
   }
 }
 
-function checkTopazMetadata(deployment, sourceLabel, errors, warnings) {
+function checkTopazMetadata(deployment, sourceLabel, targetChainId, errors, warnings) {
   const topazContracts = deployment.topazInfrastructure && deployment.topazInfrastructure.contracts;
   const topazConfig = deployment.topazInfrastructure && deployment.topazInfrastructure.configuration;
   const topazManifest = deployment.topazManifest || {};
@@ -138,8 +138,9 @@ function checkTopazMetadata(deployment, sourceLabel, errors, warnings) {
     errors.push(`${sourceLabel}: invalid topazInfrastructure.contracts.PoolImplementation.`);
   }
 
-  if (Number(topazConfig && topazConfig.volatileFeeBps) !== 100) {
-    errors.push(`${sourceLabel}: Topaz volatile fee must be 100 bps for the frozen BNB testnet rollout.`);
+  const expectedVolatileFeeBps = Number(targetChainId) === 97 ? 30 : 100;
+  if (Number(topazConfig && topazConfig.volatileFeeBps) !== expectedVolatileFeeBps) {
+    errors.push(`${sourceLabel}: Topaz volatile fee must be ${expectedVolatileFeeBps} bps for chain ${targetChainId}.`);
   }
   if (!topazConfig || topazConfig.graduationPoolStable !== false) {
     errors.push(`${sourceLabel}: Topaz graduationPoolStable must be false.`);
@@ -203,7 +204,7 @@ function main() {
 
   if (deployment) {
     checkDeploymentContracts(deployment, deploymentFile, errors);
-    checkTopazMetadata(deployment, deploymentFile, errors, warnings);
+    checkTopazMetadata(deployment, deploymentFile, target.chainId, errors, warnings);
     checkFrontendEnvFile(frontendEnvFile, expectedPairs, errors);
     checkAbiFiles(root, deployment, errors);
   }
