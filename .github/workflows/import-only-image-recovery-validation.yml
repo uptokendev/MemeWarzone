@@ -1,0 +1,132 @@
+name: Import-only image recovery final validation
+on:
+  push:
+    branches: [diagnose/import-api-availability-943e60f]
+    paths: [.github/workflows/import-only-image-recovery-validation.yml]
+permissions:
+  contents: write
+jobs:
+  import-final:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: import_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d import_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/import_test
+      PROJECT_IMPORT_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/import_test
+      PG_DISABLE_SSL: '1'
+      ENABLE_PROJECT_IMPORTS: 'true'
+      VITE_ENABLE_PROJECT_IMPORTS: 'true'
+      ENABLE_ARENA: 'false'
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 912032366e764759eddd4f36873211a35b86110f
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Close the verified-owner missing-image recovery path
+        run: |
+          test "$(git rev-parse HEAD)" = 912032366e764759eddd4f36873211a35b86110f
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('frontend/src/pages/ProjectImport.tsx');s=p.read_text()
+          old='const attachRegistrationImage=async(project:ProjectImportItem,file:File)=>{const digest=await projectImportImageDigest(file);const auth=await signAction("project_import_registration_image",project.id,null,digest);return uploadProjectRegistrationImage({item:project,file,auth});};'
+          new='const attachRegistrationImage=async(project:ProjectImportItem,file:File)=>{try{const digest=await projectImportImageDigest(file);const auth=await signAction("project_import_registration_image",project.id,null,digest);return await uploadProjectRegistrationImage({item:project,file,auth});}catch(error:any){throw Object.assign(error instanceof Error?error:new Error(String(error?.message||error)),{importStage:"image"});}};'
+          assert s.count(old)==1;s=s.replace(old,new)
+          old='OPEN PROJECT PAGE</Button>:null}'
+          new=old+'{!item?.imageUrl?<Button type="button" variant="outline" disabled={working||!imageFile} onClick={()=>void attachManualImage()}>ATTACH REQUIRED IMAGE</Button>:null}'
+          assert s.count(old)==1;s=s.replace(old,new)
+          old='Connect a wallet before importing.</p>:null}</div>'
+          new='Connect a wallet before importing.</p>:null}{tokenAddress.trim()&&!validAddress?<p role="alert" className="mt-2 text-sm text-red-200">This Contract Address is not valid for the selected chain. Check the address or choose the correct chain.</p>:null}</div>'
+          assert s.count(old)==1;s=s.replace(old,new);p.write_text(s)
+          p=Path('frontend/src/lib/projectImportFeedback.mjs');s=p.read_text()
+          old='  if (error?.code === 4001'
+          new='  if (error?.importStage === "image") return { title: "IMAGE UPLOAD NOT COMPLETED", message: "Your project registration or review request is saved. Retry the image upload below; you do not need to import again.", retry: false };\n'+old
+          assert s.count(old)==1;p.write_text(s.replace(old,new))
+          p=Path('frontend/src/lib/projectImportFeedback.test.mjs')
+          with p.open('a') as f:f.write('\ntest("image failure explains saved progress without restarting import",()=>{const r=projectImportFeedback({status:503,importStage:"image"});assert.equal(r.title,"IMAGE UPLOAD NOT COMPLETED");assert.match(r.message,/request is saved/);assert.equal(r.retry,false);});\n')
+          p=Path('frontend/e2e/project-import-feedback.browser.ts')
+          with p.open('a') as f:f.write('''
+          test('verified import retries only its failed image and completes without duplicate registration',async({page})=>{
+            const project={id:'verified-fixture',chainId:101,tokenAddress:mint,ownershipStatus:'ownership_verified',projectOwnerWallet:owner,imageUrl:null};let registrations=0,uploads=0;
+            await page.route('**/api/project-imports/resolve',r=>r.fulfill({json:{resolved:resolved(true),project:null}}));
+            await page.route('**/api/project-imports',r=>{registrations++;return r.fulfill({json:{created:true,project}});});
+            await page.route('**/api/project-imports/image?*',r=>{uploads++;return uploads===1?r.fulfill({status:503,json:{error:'Storage unavailable'}}):r.fulfill({json:{project:{...project,imageUrl:'https://example.test/image.png'}}});});
+            await start(page,owner);await page.locator('#project-import-image').setInputFiles({name:'logo.png',mimeType:'image/png',buffer:png});await page.getByRole('button',{name:'REGISTER MEMECOIN'}).click();
+            await expect(page.locator('[data-import-error]')).toContainText('IMAGE UPLOAD NOT COMPLETED');await page.getByRole('button',{name:'ATTACH REQUIRED IMAGE'}).click();await expect(page.getByRole('button',{name:'OPEN PROJECT PAGE'})).toBeVisible();expect(registrations).toBe(1);expect(uploads).toBe(2);
+          });
+          test('malformed or wrong-family address has a permanent inline explanation',async({page})=>{
+            await page.goto('/');await page.getByLabel('3. Contract Address').fill('0x1111111111111111111111111111111111111111');await expect(page.getByRole('alert')).toContainText('not valid for the selected chain');await expect(page.getByRole('button',{name:'IMPORT',exact:true})).toBeDisabled();
+          });
+          ''')
+          PY
+          git diff --check
+          git add frontend/src/pages/ProjectImport.tsx frontend/src/lib/projectImportFeedback.mjs frontend/src/lib/projectImportFeedback.test.mjs frontend/e2e/project-import-feedback.browser.ts
+          git -c user.name='MemeWarzone import repair' -c user.email='import-repair@users.noreply.github.com' commit -m 'fix(import): recover initial image upload without repeating registration'
+          git rev-parse HEAD
+      - run: npm ci --prefix frontend --no-audit --no-fund
+      - run: npm --prefix frontend run check:api-imports
+      - name: All focused import regressions on the final commit
+        run: |
+          for testfile in frontend/api/lib/projectOwnershipResolve*.test.mjs frontend/api/lib/projectImport*.test.mjs frontend/api/lib/projectSolanaProjectAuthority.test.mjs frontend/api/lib/projectOwnershipReview.test.mjs frontend/src/project-imports-ui.test.mjs frontend/src/lib/projectImportFeedback.test.mjs; do
+            node --test "$testfile"
+          done
+      - run: npm --prefix frontend run build
+      - name: Browser setup
+        working-directory: frontend
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.list.save /etc/apt/sources.list.d/google-chrome.sources
+          npx playwright install --with-deps chromium
+      - name: Six browser import and recovery regressions
+        working-directory: frontend
+        run: npx playwright test -c playwright.imports.config.ts
+      - name: Bounded read-only mainnet resolver canary, no signing or transactions
+        continue-on-error: true
+        working-directory: frontend
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import { Connection } from '@solana/web3.js';
+          import { resolveSolanaProjectImport, setProjectImportReadClientsForTest } from './api/lib/projectImportResolverAdapters.js';
+          const rpc=new Connection('https://api.mainnet-beta.solana.com',{commitment:'confirmed',disableRetryOnRateLimit:true,fetch:(url,init)=>fetch(url,{...init,signal:AbortSignal.timeout(8000)})});
+          setProjectImportReadClientsForTest({solana:rpc});
+          const result=await resolveSolanaProjectImport({chainId:101,tokenAddress:'7AVB9viRcpmr8gRMTCAYSmhP7gbuBMpBR51DMjwcpump',signedWallet:'9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H'});
+          console.log('READ_ONLY_RESOLVER_CANARY',JSON.stringify({checkedAt:new Date().toISOString(),...result}));
+          assert.equal(result.currentAuthority,'3cG2kAQ4NQfy4zN1g7pTYUUHSiCCMmECenBssYddBrS3');
+          assert.equal(result.signedWalletMatchesAuthority,false);
+          assert.equal(result.authoritySource,'pump_bonding_curve_creator');
+          JS
+      - name: Publish only the tested import feature head
+        run: |
+          test "$(git ls-remote origin refs/heads/fix/import-project-creator-persistent-feedback | cut -f1)" = 912032366e764759eddd4f36873211a35b86110f
+          git diff --exit-code
+          git push origin HEAD:refs/heads/fix/import-project-creator-persistent-feedback
+          echo "FINAL_IMPORT_HEAD=$(git rev-parse HEAD)"
+      - name: Save exact candidate evidence
+        if: always()
+        run: |
+          git rev-parse HEAD > /tmp/import-final-head.txt
+          git diff 912032366e764759eddd4f36873211a35b86110f > /tmp/import-final-recovery.patch
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: import-final-recovery-evidence
+          path: |
+            /tmp/import-final-head.txt
+            /tmp/import-final-recovery.patch
+            frontend/test-results
+          retention-days: 3
