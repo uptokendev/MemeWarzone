@@ -1,0 +1,128 @@
+name: Agent 1 Monthly MWL Three-Chain
+
+on:
+  push:
+    branches:
+      - agent1/monthly-major-war-league-three-chain
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mwl-three-chain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Exact base and forbidden-scope preservation
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=39afafc4b17facb20c9dda02a19fb3635e3cc394
+          git merge-base --is-ancestor "$BASE" HEAD
+          git diff --name-only "$BASE"...HEAD | tee /tmp/mwl-files.txt
+
+          allowed=(
+            .github/workflows/agent1-mwl-three-chain.yml
+            db/migrations/20260909_000002_arena_mwl_three_chain_identity.sql
+            frontend/api/arenaLeague.js
+            frontend/api/lib/arenaMwlChainIdentity.mjs
+            frontend/api/lib/arenaMwlChainIdentity.test.mjs
+          )
+          while IFS= read -r path; do
+            ok=false
+            for allowed_path in "${allowed[@]}"; do
+              if [ "$path" = "$allowed_path" ]; then ok=true; break; fi
+            done
+            if [ "$ok" != true ]; then
+              echo "Unexpected MWL lane change: $path" >&2
+              exit 1
+            fi
+          done < /tmp/mwl-files.txt
+
+          protected=(
+            frontend/api/arenaBattles.js
+            frontend/api/lib/arenaTournamentChainIdentity.js
+            frontend/api/lib/arenaTournamentChainIdentity.test.mjs
+            frontend/api/arenaTournamentVotes.js
+            frontend/api/arenaVoteTournamentIdentityGate.js
+            frontend/api/lib/arenaVoteTournamentChainIdentity.js
+            frontend/api/lib/arenaVoteTournamentChainIdentity.test.mjs
+            frontend/api/arenaFinalSalvo.js
+            frontend/api/lib/arenaFinalSalvoFinalizer.js
+            frontend/api/lib/arenaFinalSalvoRuntime.mjs
+            frontend/api/lib/arenaFinalSalvoRuntime.test.mjs
+            frontend/api/lib/arenaQuarterlyChampionship.js
+            frontend/api/lib/arenaQuarterlyChampionshipMath.mjs
+            db/migrations/20260907_000001_quarterly_championship_runtime.sql
+            .github/workflows/agent3-bnb-postgrad-routing.yml
+            db/migrations/202609080003_bnb_postgrad_quote_identity.sql
+            frontend/src/lib/bnbTopazQuoteRouting.mjs
+            frontend/src/lib/bnbTopazQuoteRouting.test.mjs
+            frontend/src/lib/topazV2Trade.ts
+            realtime-indexer/src/bnbPostGradQuoteIdentity.test.mjs
+            .github/workflows/agent5-bnb-battle-claim-recovery.yml
+            frontend/api/dev-fix/reward-claim-battle-router.js
+            frontend/api/dev-fix/reward-claim-intent-generic.js
+            frontend/api/dev-fix/reward-claim-intent.js
+            frontend/api/lib/bnbBattleClaimRecovery.integration.test.mjs
+            frontend/api/lib/bnbBattleClaimRecovery.js
+            frontend/api/lib/rewardClaimVerification.js
+            hardhat.agent5-claim-recovery.config.cjs
+          )
+          for path in "${protected[@]}"; do
+            git diff --quiet "$BASE"...HEAD -- "$path" || {
+              echo "Protected authority changed: $path" >&2
+              exit 1
+            }
+          done
+
+          if grep -E '(^|/)(imports?|dashboard|graduation|claims?|robinhood[^/]*deploy|solana-program)(/|[-_.])' /tmp/mwl-files.txt; then
+            echo "Forbidden scope path changed" >&2
+            exit 1
+          fi
+
+      - name: Syntax checks
+        run: |
+          node --check frontend/api/arenaLeague.js
+          node --check frontend/api/lib/arenaMwlChainIdentity.mjs
+          node --check frontend/api/lib/arenaMwlChainIdentity.test.mjs
+
+      - name: MWL three-chain identity certification
+        run: node --test frontend/api/lib/arenaMwlChainIdentity.test.mjs
+
+      - name: Normal Tournament regression
+        run: node --test frontend/api/lib/arenaTournamentChainIdentity.test.mjs
+
+      - name: Vote Tournament regression
+        run: node --test frontend/api/lib/arenaVoteTournamentChainIdentity.test.mjs
+
+      - name: Final Salvo regression
+        run: node --test frontend/api/lib/arenaFinalSalvoRuntime.test.mjs
+
+      - name: PR 236 BNB routing regression
+        run: |
+          node --test frontend/src/lib/bnbTopazQuoteRouting.test.mjs
+          node --test realtime-indexer/src/bnbPostGradQuoteIdentity.test.mjs
+
+      - name: Normal Battle and PR 241 preservation proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=39afafc4b17facb20c9dda02a19fb3635e3cc394
+          git diff --quiet "$BASE"...HEAD -- frontend/api/arenaBattles.js
+          git diff --quiet "$BASE"...HEAD -- frontend/api/lib/bnbBattleClaimRecovery.js
+          git diff --quiet "$BASE"...HEAD -- frontend/api/lib/rewardClaimVerification.js
+          git diff --quiet "$BASE"...HEAD -- frontend/api/dev-fix/reward-claim-battle-router.js
+          echo "Normal Battle and PR #241 implementation files unchanged from exact base"
