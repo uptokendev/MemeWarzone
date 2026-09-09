@@ -5,7 +5,7 @@ import { deployProtocol } from "./lib/deployProtocol";
 import { verifyDeployment } from "./verify-deployment";
 
 const REQUIRED_CHAIN_ID = 97;
-const REQUIRED_VOLATILE_FEE_BPS = 100;
+const REQUIRED_VOLATILE_FEE_BPS = 30;
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
 function resolveTopazManifestPath() {
@@ -32,6 +32,7 @@ function loadMinimalTopazManifest() {
   const manifest = JSON.parse(fs.readFileSync(file, "utf8"));
   const router = requireManifestAddress(manifest, file, "Router");
   requireManifestAddress(manifest, file, "PoolFactory");
+  requireManifestAddress(manifest, file, "FactoryRegistry");
   requireManifestAddress(manifest, file, "WBNB");
 
   const chainId = Number(manifest.chainId ?? 0);
