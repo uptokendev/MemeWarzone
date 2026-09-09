@@ -8,7 +8,6 @@ import {
 import { getSolanaProvider } from "@/lib/solanaWallet";
 import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
 
-const SYSTEM_PROGRAM = "11111111111111111111111111111111";
 const CANONICAL_PROGRAM = "2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX";
 
 export type SolanaTournamentClaimCall = {
@@ -30,7 +29,9 @@ export type SolanaTournamentClaimCall = {
 function hex32(value: string): Uint8Array {
   const hex = String(value || "").trim().replace(/^0x/i, "");
   if (!/^[0-9a-fA-F]{64}$/.test(hex)) throw new Error("Invalid Tournament competition id.");
-  return Uint8Array.from(Buffer.from(hex, "hex"));
+  const out = new Uint8Array(32);
+  for (let i = 0; i < 32; i += 1) out[i] = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return out;
 }
 
 async function discriminator(name: string): Promise<Uint8Array> {
