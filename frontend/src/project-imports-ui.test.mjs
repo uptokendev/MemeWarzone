@@ -28,7 +28,7 @@ test("wallet family auto-select remains safe while explicit chain choice is poss
 });
 
 test("wrong wallet is fully blocked and shows the masked controlling wallet", () => {
-  assert.match(importPage, /NOT TOKEN OWNER/); assert.match(importPage, /This token is controlled by wallet/); assert.match(importPage, /Connect that wallet to continue/);
+  assert.match(importPage, /CREATOR WALLET DOES NOT MATCH/); assert.match(importPage, /The recorded creator wallet is/); assert.match(importPage, /Connect and sign with that wallet to continue/);
   assert.match(importPage, /slice\(0, 4\)/); assert.match(importPage, /slice\(-4\)/); assert.match(importPage, /Import blocked/);
   assert.match(importPage, /canRequestManual=.*?!wrongAuthorityWallet/);
   assert.match(api, /resolved\.automaticOwnershipAvailable && !resolved\.signedWalletMatchesAuthority/);

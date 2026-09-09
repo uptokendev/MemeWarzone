@@ -3,7 +3,7 @@ const REQUEST_TIMEOUT_MS = 6500;
 
 function flag(value) { return value === "1" || value === 1 || value === true; }
 function nestedFlag(value) { return Boolean(value) && flag(value.status); }
-function asNumber(value) { const n = Number(value); return Number.isFinite(n) ? n : null; }
+function asNumber(value) { if (value == null || typeof value === "boolean" || String(value).trim() === "") return null; const n = Number(value); return Number.isFinite(n) ? n : null; }
 function add(list, condition, code, label) { if (condition && !list.some((entry) => entry.code === code)) list.push({ code, label }); }
 function maliciousInAuthorities(value) {
   const entries = Array.isArray(value) ? value : [];
@@ -29,28 +29,51 @@ async function fetchJson(url, fetchImpl = fetch) {
   }
 }
 
-function holderConcentration(raw, critical, review) {
-  const holders = Array.isArray(raw?.holders) ? raw.holders : [];
-  const topPercent = asNumber(holders[0]?.percent);
-  add(critical, topPercent !== null && topPercent > 0.5, "holder_concentration_extreme", `Top holder controls ${(topPercent * 100).toFixed(1)}% of supply`);
-  add(review, topPercent !== null && topPercent > 0.2 && topPercent <= 0.5, "holder_concentration_high", `Top holder controls ${(topPercent * 100).toFixed(1)}% of supply`);
-  return topPercent;
-}
-
-function liquidityAssessment(raw, review) {
-  const dex = Array.isArray(raw?.dex) ? raw.dex : [];
-  add(review, dex.length === 0, "no_dex_liquidity", "No DEX liquidity was detected");
-  const lpHolders = Array.isArray(raw?.lp_holders) ? raw.lp_holders : [];
-  if (lpHolders.length) {
-    const locked = lpHolders.some((entry) => flag(entry?.is_locked));
-    add(review, !locked, "liquidity_not_locked", "No locked LP position was detected");
+function holderConcentration(raw, critical, review, context = {}) {
+  const holders = Array.isArray(raw?.holders) ? raw.holders : null;
+  if (!holders) { add(review,true,"holder_data_unavailable","Holder concentration could not be checked"); return { topHolderPercent:null, excludedMarketInventory:[] }; }
+  const custody = Array.isArray(context.custody) ? context.custody : [];
+  const excludedMarketInventory = [], percentages = [];
+  for (const holder of holders) {
+    const percent = asNumber(holder?.percent);
+    if (percent === null || percent < 0 || percent > 1) { add(review,true,"holder_data_invalid","A holder percentage was unavailable or invalid"); continue; }
+    const sameEvm=(a,b)=>/^0x[0-9a-fA-F]{40}$/.test(String(a||"")) && String(a).toLowerCase()===String(b||"").toLowerCase();
+    const match = custody.find(c => c.verified === true && (context.chainId===56
+      ? c.chainId===56 && c.kind==='evm_factory_pool' && sameEvm(c.mint,context.tokenAddress) && sameEvm(holder.address,c.owner) && sameEvm(c.owner,c.tokenAccount)
+      : c.mint === context.tokenAddress && holder.token_account === c.tokenAccount && (!holder.account || holder.account === c.owner)));
+    if (match) { excludedMarketInventory.push({ account:match.owner, tokenAccount:match.tokenAccount, percent, reason:"verified_market_custody" }); continue; }
+    percentages.push(percent);
   }
-  return { dexPools: dex.length, lpHolderCount: lpHolders.length };
+  const topPercent = percentages.length ? Math.max(...percentages) : null;
+  add(critical, topPercent !== null && topPercent > 0.5, "holder_concentration_extreme", `Largest listed non-market holder has ${(topPercent * 100).toFixed(1)}% of supply`);
+  add(review, topPercent !== null && topPercent > 0.2 && topPercent <= 0.5, "holder_concentration_high", `Largest listed non-market holder has ${(topPercent * 100).toFixed(1)}% of supply`);
+  return { topHolderPercent:topPercent, excludedMarketInventory };
 }
 
-function bnbAssessment(raw) {
+function liquidityAssessment(raw, review, context = {}) {
+  const market=context.market;
+  if (market?.verified && market?.phase === "bonding") return { dexPools:null, lpHolderCount:null, liquidityEvidence:"bonding_curve_not_graduated" };
+  if (market?.verified && ["postgrad","dex_market"].includes(market?.phase)) {
+    add(review, market.liquidityAvailable !== true, "pool_reserves_unavailable", "A post-graduation pool exists but usable reserves were not established");
+    return { dexPools:1, lpHolderCount:null, liquidityEvidence:"onchain_pool_and_reserves", executionTested:false };
+  }
+  const dex = Array.isArray(raw?.dex) ? raw.dex : null;
+  add(review, dex === null, "liquidity_data_unavailable", "The scanner did not provide DEX liquidity data; this is not a zero-liquidity finding");
+  add(review, dex !== null && dex.length === 0, "no_indexed_dex_pool", "The scanner reported no indexed DEX pool; market status needs verification");
+  const lpHolders = Array.isArray(raw?.lp_holders) ? raw.lp_holders : null;
+  if (lpHolders?.length) add(review, !lpHolders.some(entry => flag(entry?.is_locked)), "liquidity_not_locked", "No locked LP position was reported by the scanner");
+  return { dexPools:dex?.length ?? null, lpHolderCount:lpHolders?.length ?? null, liquidityEvidence:dex ? "provider_report_only" : "unavailable" };
+}
+
+function providerRawSnapshot(raw) {
+  const fields=["default_account_state","non_transferable","freezable","mintable","closable","balance_mutable_authority","metadata_mutable","transfer_fee","transfer_fee_upgradable","transfer_hook","transfer_hook_upgradable","default_account_state_upgradable","creator","creators","holder_count","holders","dex","lp_holders","is_honeypot","cannot_sell_all","buy_tax","sell_tax","is_open_source","owner_change_balance","selfdestruct","can_take_back_ownership","hidden_owner","transfer_pausable","is_blacklisted","is_whitelisted","slippage_modifiable","is_proxy","trading_cooldown","malicious_address","honeypot_with_same_creator"];
+  return Object.fromEntries(fields.filter(k=>Object.hasOwn(raw,k)).map(k=>[k,Array.isArray(raw[k])?raw[k].slice(0,20):raw[k]]));
+}
+
+function bnbAssessment(raw, context) {
   const critical = [];
   const review = [];
+  add(review,["is_honeypot","cannot_sell_all"].some(k=>!["0","1",0,1,false,true].includes(raw?.[k])),"sell_risk_data_unavailable","Honeypot or sell-restriction data is incomplete");
   add(critical, flag(raw?.is_honeypot), "honeypot", "Honeypot / cannot be sold");
   add(critical, flag(raw?.cannot_sell_all), "cannot_sell_all", "Sell-all restriction detected");
   add(critical, flag(raw?.malicious_address), "malicious_token", "Token is linked to malicious activity");
@@ -82,15 +105,20 @@ function bnbAssessment(raw) {
   add(review, nestedFlag(b20?.whitelist), "b20_whitelist", "Whitelist-only trading capability detected");
   add(review, nestedFlag(b20?.transfer_pausable), "b20_transfer_pausable", "Admin can pause transfers");
 
-  const topHolderPercent = holderConcentration(raw, critical, review);
-  const liquidity = liquidityAssessment(raw, review);
-  return { critical, review, details: { buyTax, sellTax, holderCount: raw?.holder_count ?? null, topHolderPercent, ...liquidity } };
+  const concentration = holderConcentration(raw, critical, review, context);
+  const liquidity = liquidityAssessment(raw, review, context);
+  return { critical, review, details: { buyTax, sellTax, holderCount: raw?.holder_count ?? null, ...concentration, ...liquidity } };
 }
 
-function solanaAssessment(raw) {
+function solanaAssessment(raw, context) {
   const critical = [];
   const review = [];
-  add(critical, String(raw?.default_account_state ?? "") === "1", "default_frozen", "New token accounts default to frozen");
+  add(critical, String(raw?.default_account_state ?? "") === "2", "default_frozen", "New token accounts default to frozen");
+  add(review, String(raw?.default_account_state ?? "") === "0", "default_uninitialized", "Token account state was reported uninitialized");
+  add(review, !["0","1","2"].includes(String(raw?.default_account_state ?? "")), "default_state_unavailable", "Default token account state could not be checked");
+  add(review, !["0","1",0,1,false,true].includes(raw?.non_transferable), "transferability_unavailable", "Transferability data is missing");
+  add(review, ["freezable","mintable","balance_mutable_authority"].some(k => !["0","1",0,1,false,true].includes(raw?.[k]?.status)), "authority_risk_data_unavailable", "One or more token-authority risk checks are incomplete");
+  add(critical, maliciousInAuthorities(raw?.creators), "malicious_creator", "A reported token creator is flagged malicious");
   add(critical, flag(raw?.non_transferable), "non_transferable", "Token is non-transferable");
   add(critical, flag(raw?.creator?.malicious_address), "malicious_creator", "Token creator is flagged malicious");
   add(critical, nestedFlag(raw?.balance_mutable_authority), "balance_mutable", "Authority can alter holder balances");
@@ -112,19 +140,24 @@ function solanaAssessment(raw) {
   add(critical, currentFeeBps !== null && currentFeeBps >= 5000, "extreme_transfer_fee", `Extreme transfer fee (${(currentFeeBps / 100).toFixed(0)}%)`);
   add(review, currentFeeBps !== null && currentFeeBps >= 1000 && currentFeeBps < 5000, "high_transfer_fee", `High transfer fee (${(currentFeeBps / 100).toFixed(0)}%)`);
 
-  const topHolderPercent = holderConcentration(raw, critical, review);
-  const liquidity = liquidityAssessment(raw, review);
-  return { critical, review, details: { transferFeeBps: currentFeeBps, trustedToken: raw?.trusted_token ?? null, holderCount: raw?.holder_count ?? null, topHolderPercent, ...liquidity } };
+  const concentration = holderConcentration(raw, critical, review, context);
+  const liquidity = liquidityAssessment(raw, review, context);
+  return { critical, review, details: { transferFeeBps: currentFeeBps, trustedToken: raw?.trusted_token ?? null, holderCount: raw?.holder_count ?? null, ...concentration, ...liquidity } };
 }
 
-export function classifyProjectImportSecurity({ chainId, raw }) {
-  const assessment = Number(chainId) === 56 ? bnbAssessment(raw) : Number(chainId) === 101 ? solanaAssessment(raw) : null;
+export function classifyProjectImportSecurity({ chainId, raw, tokenAddress = null, market = null, custody = [] }) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw) || Object.keys(raw).length === 0) return { status:"review",provider:"goplus",criticalRisks:[],reviewRisks:[{code:"no_security_data",label:"No usable security data returned"}],details:{},providerRaw:null };
+  const context={chainId:Number(chainId),tokenAddress,market,custody};
+  const assessment = Number(chainId) === 56 ? bnbAssessment(raw, context) : Number(chainId) === 101 ? solanaAssessment(raw, context) : null;
   if (!assessment) return { status: "review", provider: "goplus", criticalRisks: [], reviewRisks: [{ code: "unsupported_chain", label: "Security scanner does not support this chain" }], details: {} };
+  add(assessment.critical, market?.controlsVerified===true && (market.buyEnabled===false||market.sellEnabled===false), "market_trading_disabled", "The verified market currently disables buying or selling");
+  add(assessment.review, market?.pricingValid===false, "market_pricing_invalid", "The market's effective pricing reserves are invalid");
+  add(assessment.review, market?.virtualQuoteReserves!=null && market.virtualQuoteReserves!=="0", "virtual_quote_pricing", "Pool pricing includes virtual quote reserves; these are not funded liquidity and trading execution is not certified");
   const status = assessment.critical.length ? "blocked" : assessment.review.length ? "review" : "pass";
-  return { status, provider: "goplus", criticalRisks: assessment.critical, reviewRisks: assessment.review, details: assessment.details };
+  return { status, provider: "goplus", criticalRisks: assessment.critical, reviewRisks: assessment.review, details: assessment.details, providerRaw: providerRawSnapshot(raw) };
 }
 
-export async function scanProjectImportSecurity({ chainId, tokenAddress, fetchImpl = fetch }) {
+export async function scanProjectImportSecurity({ chainId, tokenAddress, market = null, custody = [], fetchImpl = fetch }) {
   const id = Number(chainId);
   const token = String(tokenAddress || "").trim();
   const url = id === 56
@@ -136,11 +169,11 @@ export async function scanProjectImportSecurity({ chainId, tokenAddress, fetchIm
   try {
     const payload = await fetchJson(url, fetchImpl);
     const result = payload?.result;
-    const raw = id === 56 ? result?.[token.toLowerCase()] || result?.[token] : result?.[token] || result?.[token.toLowerCase()];
+    const raw = id === 56 ? result?.[token.toLowerCase()] || result?.[token] : result?.[token];
     if (!raw) {
       return { status: "review", provider: "goplus", criticalRisks: [], reviewRisks: [{ code: "no_security_data", label: "No security data returned for this token" }], details: {} };
     }
-    return classifyProjectImportSecurity({ chainId: id, raw });
+    return { ...classifyProjectImportSecurity({ chainId: id, raw, tokenAddress:token, market, custody }), checkedAt:new Date().toISOString() };
   } catch (error) {
     return { status: "review", provider: "goplus", criticalRisks: [], reviewRisks: [{ code: "scanner_unavailable", label: "Automatic scam-risk scan is unavailable" }], details: { error: String(error?.message || error) } };
   }

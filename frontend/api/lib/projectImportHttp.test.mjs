@@ -14,7 +14,8 @@ globalThis.__memewarzone_pool={async query(sql,params){
 }};
 process.env.ENABLE_PROJECT_IMPORTS='true';
 const {default:handler}=await import('../projectImports.js');
-registerProjectImportResolver(101,async input=>({chainId:101,tokenAddress:input.tokenAddress,automaticOwnershipAvailable:true,currentAuthority:owner,signedWalletMatchesAuthority:input.signedWallet===owner,authoritySource:'pump_bonding_curve_creator'}));
+let marketOverride=null;
+registerProjectImportResolver(101,async input=>({market:marketOverride,chainId:101,tokenAddress:input.tokenAddress,automaticOwnershipAvailable:true,currentAuthority:owner,signedWalletMatchesAuthority:input.signedWallet===owner,authoritySource:'pump_bonding_curve_creator'}));
 const oldFetch=globalThis.fetch;globalThis.fetch=async()=>({ok:true,json:async()=>({code:1,result:{[mint]:{dex:[{}],holders:[]}}})});test.after(()=>{globalThis.fetch=oldFetch;});
 function response(){return {statusCode:200,body:null,headersSent:false,headers:{},setHeader(k,v){this.headers[k]=v;},end(v){this.body=JSON.parse(v);this.headersSent=true;}};}
 function signed(action,body){const {privateKey,publicKey}=crypto.generateKeyPairSync('ed25519');const walletAddress=new PublicKey(publicKey.export({format:'der',type:'spki'}).subarray(-32)).toBase58();const nonce=crypto.randomUUID();nonces.add([101,walletAddress,nonce].join(':'));const intent=projectImportIntent({action,chainId:101,token:mint,body});const message=buildWalletActionMessage({action,chainId:101,walletAddress,nonce,extraLines:intent.extraLines});return {action,walletAddress,chainId:101,nonce,message,signature:crypto.sign(null,Buffer.from(message),privateKey).toString('base64'),walletType:'solana'};}
@@ -25,3 +26,8 @@ for(const [path,action,intent] of [['/','project_import_create',{operation:'crea
   assert.equal(res.statusCode,403,JSON.stringify(res.body));assert.equal(res.body.currentAuthority,owner);assert.match(res.body.error,/3cG2\.\.\.BrS3/);assert.equal(writes,0);
 });
 test('disabled service remains an actual error, not a null lookup',async()=>{process.env.ENABLE_PROJECT_IMPORTS='false';try{const res=response();await handler({method:'GET',url:`/project-imports?chainId=101&tokenAddress=${mint}`},res);assert.equal(res.statusCode,404);assert.equal(res.body.code,'PROJECT_IMPORTS_DISABLED');}finally{process.env.ENABLE_PROJECT_IMPORTS='true';}});
+
+for(const [path,action,intent] of [['/','project_import_create',{operation:'create'}],['/manual-claim','project_import_manual_claim',{note:null}]])test(`server-known bonding blocks forged client graduation at ${path}`,async()=>{
+ marketOverride={phase:'bonding',verified:true};writes=0;
+ try{const res=response();await handler({method:'POST',url:`/project-imports${path}`,body:{chainId:101,tokenAddress:mint,note:null,market:{phase:'postgrad',verified:true},auth:signed(action,intent)}},res);assert.equal(res.statusCode,409);assert.equal(res.body.code,'PROJECT_IMPORT_STILL_BONDING');assert.equal(writes,0);}finally{marketOverride=null;}
+});

@@ -33,7 +33,16 @@ export type ProjectImportItem = {
   arenaStatus?: string | null;
   createdAt?: string | null;
 };
+export type ImportAssessment = {
+  decision: string; checkedAt: string; policyVersion: string;
+  automaticImportAllowed: boolean; manualRequestAllowed: boolean; canVerifyOwner: boolean;
+  checks: { key: string; status: string; title: string; finding: string; meaning: string; nextAction: string }[];
+};
 export type ProjectResolveResult = {
+  assessment?: ImportAssessment;
+  retainedPageOnly?: boolean;
+  market?: {phase:string;verified:boolean;reason?:string;platform?:string;requiresLaunchReview?:boolean};
+  projectAuthorityEvidence?: {authorityType:string;relationships?:{kind:string;shareBps?:number;wallet:string}[]};
   chainId: number;
   tokenAddress: string;
   name?: string | null;

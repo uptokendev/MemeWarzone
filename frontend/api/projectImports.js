@@ -29,6 +29,9 @@ import {
   sanitizeProjectImportMetadataPatch,
 } from "./lib/projectImportSecurity.js";
 
+import { assessProjectImport, assertAutomaticImport, assertNewImportMarket, importProofReceipt, isRetainedImportPage } from "./lib/projectImportAssessment.js";
+import { withImportTransaction, appendImportEvidence, latestImportEvidence, importEvidenceHistory } from "./lib/projectImportEvidenceStore.js";
+
 registerDefaultProjectImportResolvers();
 
 function enabled() {
@@ -56,6 +59,7 @@ function errorStatus(code) {
     "OWNERSHIP_SUSPENDED", "MANUAL_CLAIM_NOT_ALLOWED", "RESOLVER_IDENTITY_MISMATCH",
     "OWNERSHIP_CONFLICT", "PROJECT_OWNERSHIP_STATE_CONFLICT", "PROJECT_OWNERSHIP_IMAGE_REQUIRED",
   ].includes(code)) return 409;
+  if (String(code).startsWith("PROJECT_IMPORT_EVIDENCE") || ["PROJECT_IMPORT_SIGNED_CLAIM_REQUIRED","PROJECT_IMPORT_TECHNICAL_REVIEW","PROJECT_IMPORT_REVIEW_PROOF_REQUIRED", "PROJECT_IMPORT_MARKET_PROOF_REQUIRED","PROJECT_IMPORT_STILL_BONDING","PROJECT_IMPORT_REVIEW_REQUIRED"].includes(code)) return 409;
   if (["PROJECT_IMPORT_RESOLVER_UNAVAILABLE", "PROJECT_IMPORT_RPC_UNAVAILABLE", "PROJECT_IMPORT_CHAIN_MISMATCH"].includes(code)) return 503;
   return 500;
 }
@@ -107,7 +111,7 @@ function requireResolvedOwner(resolved) {
   if (!resolved?.signedWalletMatchesAuthority) {
     const address = String(resolved.currentAuthority || "");
     const masked = address.length > 8 ? `${address.slice(0, 4)}...${address.slice(-4)}` : address;
-    throw Object.assign(new Error(`This token is controlled by wallet ${masked}. Connect that wallet to continue.`), { code: "OWNERSHIP_PROOF_REQUIRED", currentAuthority: address });
+    throw Object.assign(new Error(`The connected wallet does not match the recorded creator wallet ${masked}. Connect that wallet to continue.`), { code: "OWNERSHIP_PROOF_REQUIRED", currentAuthority: address });
   }
 }
 
@@ -163,6 +167,8 @@ export async function enrichExistingProjectIdentity(identity, resolved) {
            END
      WHERE chain_id = $1
        AND token_address = $2
+       AND (((name IS NULL OR btrim(name) = '') AND $3::text IS NOT NULL)
+         OR ((symbol IS NULL OR btrim(symbol) = '') AND $4::text IS NOT NULL))
      RETURNING *
   `, [identity.chainId, identity.tokenAddress, name, symbol]);
   return result.rows?.[0] || null;
@@ -186,13 +192,28 @@ async function refreshVerifiedProjectIdentityBestEffort(project) {
   }
 }
 
+async function attachAdminEvidence(row) {
+  if (!row) return row;
+  const evidence = await latestImportEvidence(pool, row);
+  return { ...row, import_evidence: evidence?.snapshot || null, import_evidence_id: evidence?.id || null };
+}
+async function buildImportChecks(identity, signer, authPayload, fallback = false) {
+  let resolved;
+  try { resolved = await resolveForSigner(identity, signer); }
+  catch (error) { if (!fallback || !canFallbackToManual(error)) throw error; resolved = unresolvedEvidence(identity, error); }
+  const security = await scanProjectImportSecurity({ ...identity, market: resolved.market, custody: resolved.custody });
+  const proof = authPayload ? importProofReceipt({ ...authPayload, walletAddress: signer }) : null;
+  const assessment = assessProjectImport({ resolved, security, claimantWallet: signer, proof });
+  return { resolved, security, assessment };
+}
+
 async function handleOwnershipAdmin(req, res, path) {
   const admin = await requireDashboardAdmin(req, res);
   if (!admin) return true;
 
   if (req.method === "GET" && path === "/admin/ownership-claims") {
     const rows = await listProjectOwnershipClaims(pool);
-    return json(res, 200, { items: rows.map(projectOwnershipClaimItem) });
+    return json(res, 200, { items: (await Promise.all(rows.map(attachAdminEvidence))).map(projectOwnershipClaimItem) });
   }
 
   const detailMatch = path.match(/^\/admin\/ownership-claims\/([0-9a-f-]+)$/i);
@@ -200,7 +221,45 @@ async function handleOwnershipAdmin(req, res, path) {
     const row = await getProjectOwnershipClaim(pool, detailMatch[1]);
     if (!row) return json(res, 404, { error: "Imported project not found", code: "PROJECT_NOT_FOUND" });
     const history = await getProjectOwnershipAudit(pool, detailMatch[1]);
-    return json(res, 200, { item: projectOwnershipClaimItem(row), history });
+    return json(res, 200, { item: projectOwnershipClaimItem(await attachAdminEvidence(row)), history, evidenceHistory: await importEvidenceHistory(pool, row.id) });
+  }
+
+  const followupMatch = path.match(/^\/admin\/ownership-claims\/([0-9a-f-]+)\/(request-info|escalate)$/i);
+  if (req.method === "POST" && followupMatch) {
+    const body=await readJson(req),reason=String(body.reason||"").trim().slice(0,1000);
+    if(reason.length<3)return json(res,400,{error:"An operator reason is required",code:"PROJECT_OWNERSHIP_REASON_REQUIRED"});
+    await withImportTransaction(pool,async client=>{
+      const found=await client.query("SELECT *,xmin::text AS state_version FROM public.arena_token_imports WHERE id=$1 FOR UPDATE",[followupMatch[1]]);
+      const current=found.rows[0];
+      if(!current||current.state_version!==String(body.expectedVersion||""))throw Object.assign(new Error("Claim changed; reload before recording follow-up"),{code:"PROJECT_OWNERSHIP_STATE_CONFLICT"});
+      const before=projectOwnershipClaimItem(current);
+      await client.query("UPDATE public.arena_token_imports SET updated_at=NOW() WHERE id=$1",[current.id]);
+      await client.query("INSERT INTO public.wm_admin_audit_log(admin_user_id,action,target_type,target_id,before,after) VALUES(NULL,$1,'project_ownership_claim',$2,$3::jsonb,$4::jsonb)",[followupMatch[2],current.id,JSON.stringify(before),JSON.stringify({...before,operatorAuthUserId:admin.id,operatorEmail:admin.email||null,operatorReason:reason})]);
+    });
+    return json(res,200,{recorded:true,notificationSent:false});
+  }
+
+  const recheckMatch = path.match(/^\/admin\/ownership-claims\/([0-9a-f-]+)\/recheck$/i);
+  if (req.method === "POST" && recheckMatch) {
+    const body = await readJson(req);
+    const current = await getProjectOwnershipClaim(pool, recheckMatch[1]);
+    if (!current) return json(res,404,{error:"Imported project not found",code:"PROJECT_NOT_FOUND"});
+    if (!body.expectedVersion || String(body.expectedVersion) !== current.state_version || String(body.reason||"").trim().length < 3) return json(res,409,{error:"Reload the claim and supply an operator reason",code:"PROJECT_OWNERSHIP_STATE_CONFLICT"});
+    const claimant = current.manual_claim_wallet || current.project_owner_wallet;
+    if (!claimant) return json(res,409,{error:"No current claimant to recheck",code:"MANUAL_CLAIM_NOT_ALLOWED"});
+    const previous = await latestImportEvidence(pool,current);
+    const checks = await buildImportChecks(normalizeProjectIdentity(current.chain_id,current.token_address),claimant,null,true);
+    // Rechecking chain data does not create a new wallet signature. Retain the original receipt if present.
+    checks.assessment.proof = previous?.snapshot?.proof || null;
+    await withImportTransaction(pool,async client=>{
+      const locked = await client.query("SELECT *, xmin::text AS state_version FROM public.arena_token_imports WHERE id=$1 FOR UPDATE",[current.id]);
+      if (locked.rows[0]?.state_version !== String(body.expectedVersion)) throw Object.assign(new Error("Claim changed during recheck"),{code:"PROJECT_OWNERSHIP_STATE_CONFLICT"});
+      const saved=await appendImportEvidence(client,{project:locked.rows[0],assessment:checks.assessment,source:"admin_recheck"});
+      await client.query("UPDATE public.arena_token_imports SET updated_at=NOW() WHERE id=$1",[current.id]);
+      await client.query("INSERT INTO public.wm_admin_audit_log(admin_user_id,action,target_type,target_id,before,after) VALUES(NULL,'recheck','project_ownership_claim',$1,$2::jsonb,$3::jsonb)",[current.id,JSON.stringify({evidenceId:previous?.id||null}),JSON.stringify({evidenceId:saved.id,operatorAuthUserId:admin.id,operatorEmail:admin.email||null,operatorReason:String(body.reason).slice(0,1000)})]);
+    });
+    const row=await getProjectOwnershipClaim(pool,current.id);
+    return json(res,200,{item:projectOwnershipClaimItem(await attachAdminEvidence(row))});
   }
 
   const actionMatch = path.match(/^\/admin\/ownership-claims\/([0-9a-f-]+)\/(verify|reject)$/i);
@@ -212,10 +271,12 @@ async function handleOwnershipAdmin(req, res, path) {
       action,
       reason: body.reason,
       expectedVersion: body.expectedVersion,
+      expectedEvidenceId: body.expectedEvidenceId,
+      reviewProof: body.reviewProof,
       admin,
     });
     if (action === "verify_owner") await refreshVerifiedProjectIdentityBestEffort(updated);
-    return json(res, 200, { item: projectOwnershipClaimItem(updated) });
+    return json(res, 200, { item: projectOwnershipClaimItem(await attachAdminEvidence(updated)) });
   }
 
   return false;
@@ -265,15 +326,9 @@ export default async function projectImports(req, res) {
       const identity = normalizeProjectIdentity(body.chainId, body.tokenAddress);
       const auth = await strictAuth(res, body, { identity, action: PROJECT_IMPORT_ACTIONS.resolve });
       if (!auth) return;
-      let resolved;
-      try { resolved = await resolveForSigner(identity, auth.walletAddress); }
-      catch (error) {
-        if (!canFallbackToManual(error)) throw error;
-        resolved = unresolvedEvidence(identity, error);
-      }
-      const security = await scanProjectImportSecurity(identity);
+      const {resolved,security,assessment} = await buildImportChecks(identity,auth.walletAddress,body.auth,true);
       const project = await enrichExistingProjectIdentity(identity, resolved) || await lookupProjectImport(pool, identity);
-      return json(res, 200, { resolved: { ...resolved, security }, project: publicProject(project) });
+      return json(res, 200, { resolved: { ...resolved, security, assessment, retainedPageOnly: isRetainedImportPage(project) }, project: publicProject(project) });
     }
 
     if (req.method === "POST" && path === "/") {
@@ -282,24 +337,17 @@ export default async function projectImports(req, res) {
       const intentBody = { operation: "create" };
       const auth = await strictAuth(res, body, { identity, action: PROJECT_IMPORT_ACTIONS.create, intentBody });
       if (!auth) return;
-      const resolved = await resolveForSigner(identity, auth.walletAddress);
-      const security = await scanProjectImportSecurity(identity);
+      const {resolved,security,assessment} = await buildImportChecks(identity,auth.walletAddress,body.auth);
+      assertNewImportMarket(resolved);
       requireResolvedOwner(resolved);
       requireSecurityPass(security);
-      const result = await createProjectImport(pool, { resolverResult: resolved, signedWallet: auth.walletAddress });
-      const project = result.created
-        ? result.project
-        : (await enrichExistingProjectIdentity(identity, resolved)) || result.project;
-      return json(res, result.created ? 201 : 200, {
-        created: result.created,
-        project: publicProject(project),
-        ownershipEvidence: {
-          automaticOwnershipAvailable: resolved.automaticOwnershipAvailable,
-          signedWalletMatchesAuthority: resolved.signedWalletMatchesAuthority,
-          currentAuthority: resolved.currentAuthority,
-          security,
-        },
+      assertAutomaticImport(assessment);
+      const result = await withImportTransaction(pool,async client=>{
+        const result=await createProjectImport(client,{resolverResult:resolved,signedWallet:auth.walletAddress});
+        if(result.created) await appendImportEvidence(client,{project:result.project,assessment,source:"automatic_import"});
+        return result;
       });
+      return json(res,result.created?201:200,{...result,project:publicProject(result.project),ownershipEvidence:{...resolved,security,assessment}});
     }
 
     if (req.method === "POST" && path === "/claim") {
@@ -314,12 +362,14 @@ export default async function projectImports(req, res) {
         intentBody: { operation: "claim" },
       });
       if (!auth) return;
-      const resolved = await resolveForSigner(identity, auth.walletAddress);
-      const security = await scanProjectImportSecurity(identity);
-      requireSecurityPass(security);
-      const project = await claimExistingProject(pool, { resolverResult: resolved, signedWallet: auth.walletAddress });
-      await enrichExistingProjectIdentity(identity, resolved);
-      return json(res, 200, { project: publicProject(project) });
+      const {resolved,security,assessment} = await buildImportChecks(identity,auth.walletAddress,body.auth);
+      assertNewImportMarket(resolved); requireResolvedOwner(resolved); requireSecurityPass(security); assertAutomaticImport(assessment);
+      const project=await withImportTransaction(pool,async client=>{
+        const claimed=await claimExistingProject(client,{resolverResult:resolved,signedWallet:auth.walletAddress});
+        await appendImportEvidence(client,{project:claimed,assessment,source:"owner_claim"}); return claimed;
+      });
+      await enrichExistingProjectIdentity(identity,resolved);
+      return json(res,200,{project:publicProject(project)});
     }
 
     if (req.method === "POST" && path === "/manual-claim") {
@@ -334,35 +384,24 @@ export default async function projectImports(req, res) {
         intentBody: { note },
       });
       if (!auth) return;
-      let resolved;
-      try { resolved = await resolveForSigner(identity, auth.walletAddress); }
-      catch (error) {
-        if (!canFallbackToManual(error)) throw error;
-        resolved = unresolvedEvidence(identity, error);
-      }
-      if (resolved.automaticOwnershipAvailable && !resolved.signedWalletMatchesAuthority) {
-        requireResolvedOwner(resolved);
-      }
-      const security = await scanProjectImportSecurity(identity);
-      const manualRequired = !resolved.automaticOwnershipAvailable || !securityAllowsAutomaticImport(security) || Boolean(resolved.resolverError);
-      if (!manualRequired) {
-        throw Object.assign(new Error("Automatic ownership and security checks pass; manual review is not required"), { code: "MANUAL_CLAIM_NOT_ALLOWED" });
-      }
-      if (!existing) {
-        const pendingEvidence = { ...resolved, signedWalletMatchesAuthority: false };
-        const created = await createProjectImport(pool, { resolverResult: pendingEvidence, signedWallet: auth.walletAddress });
-        existing = created.project;
-      }
-      if (existing?.ownership_status === "ownership_verified") {
-        throw Object.assign(new Error("Manual claim cannot overwrite a verified owner"), { code: "OWNERSHIP_CONFLICT" });
-      }
-      const project = await requestManualProjectClaim(pool, {
-        ...identity,
-        signedWallet: auth.walletAddress,
-        note: manualReviewNote({ resolved, security, note }),
+      const {resolved,security,assessment} = await buildImportChecks(identity,auth.walletAddress,body.auth,true);
+      assertNewImportMarket(resolved);
+      if (resolved.automaticOwnershipAvailable && !resolved.signedWalletMatchesAuthority) requireResolvedOwner(resolved);
+      if (!assessment.manualRequestAllowed && !(existing?.ownership_status === "ownership_manual_review" && existing.manual_claim_wallet === auth.walletAddress)) throw Object.assign(new Error("Use the normal verified import flow"),{code:"MANUAL_CLAIM_NOT_ALLOWED"});
+      const project=await withImportTransaction(pool,async client=>{
+        const created=await createProjectImport(client,{resolverResult:{...resolved,signedWalletMatchesAuthority:false},signedWallet:auth.walletAddress});
+        const locked=await client.query("SELECT * FROM public.arena_token_imports WHERE id=$1 FOR UPDATE",[created.project.id]);
+        const current=locked.rows[0];
+        // A repeat signed request from the same claimant refreshes evidence without changing the original note/image.
+        if(current.ownership_status==='ownership_manual_review'&&current.manual_claim_wallet===auth.walletAddress){
+          await appendImportEvidence(client,{project:current,assessment,source:"signed_recheck"});
+          await client.query("UPDATE public.arena_token_imports SET updated_at=NOW() WHERE id=$1",[current.id]); return current;
+        }
+        const claimed=await requestManualProjectClaim(client,{...identity,signedWallet:auth.walletAddress,note:manualReviewNote({resolved,security,note})});
+        await appendImportEvidence(client,{project:claimed,assessment,source:"manual_claim"}); return claimed;
       });
-      await enrichExistingProjectIdentity(identity, resolved);
-      return json(res, 200, { project: publicProject(project), ownershipEvidence: { ...resolved, security } });
+      await enrichExistingProjectIdentity(identity,resolved);
+      return json(res,200,{project:publicProject(project),ownershipEvidence:{...resolved,security,assessment}});
     }
 
     if (req.method === "PATCH" && path === "/") {
