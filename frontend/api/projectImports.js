@@ -54,7 +54,7 @@ function errorStatus(code) {
   ].includes(code)) return 403;
   if ([
     "OWNERSHIP_SUSPENDED", "MANUAL_CLAIM_NOT_ALLOWED", "RESOLVER_IDENTITY_MISMATCH",
-    "OWNERSHIP_CONFLICT", "PROJECT_OWNERSHIP_STATE_CONFLICT",
+    "OWNERSHIP_CONFLICT", "PROJECT_OWNERSHIP_STATE_CONFLICT", "PROJECT_OWNERSHIP_IMAGE_REQUIRED",
   ].includes(code)) return 409;
   if (["PROJECT_IMPORT_RESOLVER_UNAVAILABLE", "PROJECT_IMPORT_RPC_UNAVAILABLE"].includes(code)) return 503;
   return 500;
@@ -93,6 +93,10 @@ function unresolvedEvidence(identity, error) {
     signedWalletMatchesAuthority: false,
     resolverError: String(error?.message || error || "ownership resolver unavailable"),
   };
+}
+
+function canFallbackToManual(error) {
+  return ["PROJECT_IMPORT_RPC_UNAVAILABLE", "PROJECT_IMPORT_RESOLVER_UNAVAILABLE", "BYTECODE_CHECK_FAILED"].includes(String(error?.code || ""));
 }
 
 function requireResolvedOwner(resolved) {
@@ -217,7 +221,6 @@ async function handleOwnershipAdmin(req, res, path) {
 function manualReviewNote({ resolved, security, note }) {
   const reasons = [];
   if (resolved?.resolverError) reasons.push(`resolver error: ${resolved.resolverError}`);
-  else if (resolved?.automaticOwnershipAvailable && !resolved?.signedWalletMatchesAuthority) reasons.push("automatic owner mismatch");
   else if (!resolved?.automaticOwnershipAvailable) reasons.push("automatic ownership unavailable");
   for (const risk of security?.criticalRisks || []) reasons.push(`security:${risk.code}`);
   for (const risk of security?.reviewRisks || []) reasons.push(`security:${risk.code}`);
@@ -260,7 +263,12 @@ export default async function projectImports(req, res) {
       const identity = normalizeProjectIdentity(body.chainId, body.tokenAddress);
       const auth = await strictAuth(res, body, { identity, action: PROJECT_IMPORT_ACTIONS.resolve });
       if (!auth) return;
-      const resolved = await resolveForSigner(identity, auth.walletAddress);
+      let resolved;
+      try { resolved = await resolveForSigner(identity, auth.walletAddress); }
+      catch (error) {
+        if (!canFallbackToManual(error)) throw error;
+        resolved = unresolvedEvidence(identity, error);
+      }
       const security = await scanProjectImportSecurity(identity);
       const project = await enrichExistingProjectIdentity(identity, resolved);
       return json(res, 200, { resolved: { ...resolved, security }, project: publicProject(project) });
@@ -326,8 +334,18 @@ export default async function projectImports(req, res) {
       if (!auth) return;
       let resolved;
       try { resolved = await resolveForSigner(identity, auth.walletAddress); }
-      catch (error) { resolved = unresolvedEvidence(identity, error); }
+      catch (error) {
+        if (!canFallbackToManual(error)) throw error;
+        resolved = unresolvedEvidence(identity, error);
+      }
+      if (resolved.automaticOwnershipAvailable && !resolved.signedWalletMatchesAuthority) {
+        throw Object.assign(new Error("Connected wallet is not the current token owner. Connect the owner wallet to continue."), { code: "OWNERSHIP_PROOF_REQUIRED" });
+      }
       const security = await scanProjectImportSecurity(identity);
+      const manualRequired = !resolved.automaticOwnershipAvailable || !securityAllowsAutomaticImport(security) || Boolean(resolved.resolverError);
+      if (!manualRequired) {
+        throw Object.assign(new Error("Automatic ownership and security checks pass; manual review is not required"), { code: "MANUAL_CLAIM_NOT_ALLOWED" });
+      }
       if (!existing) {
         const pendingEvidence = { ...resolved, signedWalletMatchesAuthority: false };
         const created = await createProjectImport(pool, { resolverResult: pendingEvidence, signedWallet: auth.walletAddress });
