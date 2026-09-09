@@ -73,6 +73,7 @@ jobs:
           node --check frontend/api/lib/projectImportResolvers.js
           node --check frontend/api/lib/projectImportResolverAdapters.js
           node --check frontend/api/lib/projectImportSecurity.js
+          node --check frontend/api/lib/projectImportRiskSecurity.js
           node --check frontend/api/lib/projectImportOwnershipCoordinator.js
           node --check frontend/api/lib/imageFileValidation.js
           node --check frontend/api/lib/projectOwnershipResolveBnb.js
@@ -90,6 +91,7 @@ jobs:
           node --test frontend/api/lib/projectImportResolverAdapters.test.mjs
           node --test frontend/api/lib/projectImportToken2022Support.test.mjs
           node --test frontend/api/lib/projectImportSecurity.test.mjs
+          node --test frontend/api/lib/projectImportRiskSecurity.test.mjs
           node --test frontend/api/lib/projectImportCore.test.mjs
           node --test frontend/api/lib/projectImportIdentity.test.mjs
           node --test frontend/api/lib/projectOwnershipReview.test.mjs
@@ -133,6 +135,7 @@ jobs:
             "frontend/api/projectImports.js", "frontend/api/projectImportImage.js",
             "frontend/api/lib/projectImportCore.js", "frontend/api/lib/projectImportResolverAdapters.js",
             "frontend/api/lib/projectImportResolvers.js", "frontend/api/lib/projectImportSecurity.js",
+            "frontend/api/lib/projectImportRiskSecurity.js",
             "frontend/api/lib/projectImportOwnershipCoordinator.js", "frontend/src/lib/projectImports.ts",
             "frontend/src/pages/ProjectImport.tsx", "frontend/src/pages/ImportedProjectDetails.tsx",
             "frontend/src/pages/ImportedTokenDetailsPage.tsx", "frontend/src/pages/TokenDetailsEntry.tsx"
