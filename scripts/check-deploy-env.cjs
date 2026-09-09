@@ -34,7 +34,7 @@ const KNOWN_LOCAL_ADDRESSES = new Set([
   "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
   "0x70997970c51812dc3a010c7d01b50e0d17dc79c8",
   "0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc",
-  "0x90f79bf6eb2c4f870365e785982e1f101e93b906",
+  "0x90f79bf6e51aad88f6f4ce6ab8827279cfffb906",
   "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",
 ]);
 const KNOWN_LOCAL_PRIVATE_KEYS = new Set([
@@ -204,10 +204,13 @@ function checkTopazManifest(required = false) {
     const fee = Number(manifest.configuration && manifest.configuration.volatileFeeBps);
     const graduationPoolStable = manifest.configuration && manifest.configuration.graduationPoolStable;
     const expectedChainId = IS_BSC_MAINNET ? 56 : IS_BSC_TESTNET ? 97 : null;
+    const expectedVolatileFeeBps = IS_BSC_TESTNET ? 30 : 100;
     if (expectedChainId && chainId !== expectedChainId) {
       errors.push(`TOPAZ_MANIFEST: chainId must be ${expectedChainId} for ${TARGET}, got ${chainId}`);
     }
-    if (fee !== 100) errors.push(`TOPAZ_MANIFEST: configuration.volatileFeeBps must be 100, got ${fee}`);
+    if (fee !== expectedVolatileFeeBps) {
+      errors.push(`TOPAZ_MANIFEST: configuration.volatileFeeBps must be ${expectedVolatileFeeBps}, got ${fee}`);
+    }
     if (graduationPoolStable !== false) errors.push(`TOPAZ_MANIFEST: configuration.graduationPoolStable must be false, got ${graduationPoolStable}`);
     return true;
   } catch (error) {
