@@ -23,3 +23,15 @@ test('manual image failure keeps saved review and retries image only',async({pag
 test('wallet swap revokes old creator image permission immediately',async({page})=>{
   await page.route('**/api/project-imports/resolve',r=>r.fulfill({json:{resolved:resolved(true),project:null}}));await start(page,owner);await expect(page.locator('#project-import-image')).toBeVisible();await page.evaluate(address=>window.dispatchEvent(new CustomEvent('test-wallet-change',{detail:address})),wrong);await expect(page.locator('#project-import-image')).toHaveCount(0);
 });
+
+test('verified import retries only its failed image and completes without duplicate registration',async({page})=>{
+  const project={id:'verified-fixture',chainId:101,tokenAddress:mint,ownershipStatus:'ownership_verified',projectOwnerWallet:owner,imageUrl:null};let registrations=0,uploads=0;
+  await page.route('**/api/project-imports/resolve',r=>r.fulfill({json:{resolved:resolved(true),project:null}}));
+  await page.route('**/api/project-imports',r=>{registrations++;return r.fulfill({json:{created:true,project}});});
+  await page.route('**/api/project-imports/image?*',r=>{uploads++;return uploads===1?r.fulfill({status:503,json:{error:'Storage unavailable'}}):r.fulfill({json:{project:{...project,imageUrl:'https://example.test/image.png'}}});});
+  await start(page,owner);await page.locator('#project-import-image').setInputFiles({name:'logo.png',mimeType:'image/png',buffer:png});await page.getByRole('button',{name:'REGISTER MEMECOIN'}).click();
+  await expect(page.locator('[data-import-error]')).toContainText('IMAGE UPLOAD NOT COMPLETED');await page.getByRole('button',{name:'ATTACH REQUIRED IMAGE'}).click();await expect(page.getByRole('button',{name:'OPEN PROJECT PAGE'})).toBeVisible();expect(registrations).toBe(1);expect(uploads).toBe(2);
+});
+test('malformed or wrong-family address has a permanent inline explanation',async({page})=>{
+  await page.goto('/');await page.getByLabel('3. Contract Address').fill('0x1111111111111111111111111111111111111111');await expect(page.getByRole('alert')).toContainText('not valid for the selected chain');await expect(page.getByRole('button',{name:'IMPORT',exact:true})).toBeDisabled();
+});
