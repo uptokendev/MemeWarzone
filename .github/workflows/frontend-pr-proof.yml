@@ -16,7 +16,7 @@ on:
       - .github/workflows/frontend-pr-proof.yml
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: frontend-pr-proof-${{ github.event.pull_request.number || github.ref }}
@@ -31,8 +31,6 @@ jobs:
     steps:
       - name: Checkout pull request source
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -40,21 +38,6 @@ jobs:
           node-version: 20
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-
-      - name: Align npm with frontend packageManager
-        run: npm install --global npm@10.9.2
-
-      - name: Regenerate and commit frontend lockfile
-        shell: bash
-        run: |
-          npm install --package-lock-only --prefix frontend --ignore-scripts --no-audit --no-fund
-          if ! git diff --quiet -- frontend/package-lock.json; then
-            git config user.name "MemeWarzone CI"
-            git config user.email "actions@users.noreply.github.com"
-            git add frontend/package-lock.json
-            git commit -m "fix: sync frontend package lock"
-            git push origin HEAD:${{ github.event.pull_request.head.ref }}
-          fi
 
       - name: Install frontend dependencies
         run: npm ci --prefix frontend
