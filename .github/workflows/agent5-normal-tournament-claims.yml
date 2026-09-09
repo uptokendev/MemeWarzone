@@ -63,6 +63,8 @@ jobs:
           API_AUTH_ENFORCE_USER_WRITES: "1"
           REWARD_CLAIM_RPC_URL_97: http://127.0.0.1:8545
           REWARD_CLAIM_RPC_URL_46630: http://127.0.0.1:9545
+          BSC_RPC_HTTP_97: http://127.0.0.1:8545
+          ROBINHOOD_RPC_HTTP_46630: http://127.0.0.1:9545
           REWARD_CLAIM_RECOVERY_FROM_BLOCK_97: "0"
           REWARD_CLAIM_RECOVERY_FROM_BLOCK_46630: "0"
         run: node --test api/lib/normalTournamentClaimRecovery.evm.integration.test.mjs
