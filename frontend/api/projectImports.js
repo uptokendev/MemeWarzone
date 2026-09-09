@@ -80,6 +80,21 @@ async function resolveForSigner(identity, signer) {
   return result;
 }
 
+function unresolvedEvidence(identity, error) {
+  return {
+    chainId: identity.chainId,
+    tokenAddress: identity.tokenAddress,
+    name: null,
+    symbol: null,
+    decimals: null,
+    totalSupply: null,
+    automaticOwnershipAvailable: false,
+    currentAuthority: null,
+    signedWalletMatchesAuthority: false,
+    resolverError: String(error?.message || error || "ownership resolver unavailable"),
+  };
+}
+
 function requireResolvedOwner(resolved) {
   if (!resolved?.automaticOwnershipAvailable) {
     throw Object.assign(new Error("Current token ownership cannot be verified automatically"), { code: "OWNERSHIP_PROOF_REQUIRED" });
@@ -201,8 +216,9 @@ async function handleOwnershipAdmin(req, res, path) {
 
 function manualReviewNote({ resolved, security, note }) {
   const reasons = [];
-  if (resolved?.automaticOwnershipAvailable && !resolved?.signedWalletMatchesAuthority) reasons.push("automatic owner mismatch");
-  if (!resolved?.automaticOwnershipAvailable) reasons.push("automatic ownership unavailable");
+  if (resolved?.resolverError) reasons.push(`resolver error: ${resolved.resolverError}`);
+  else if (resolved?.automaticOwnershipAvailable && !resolved?.signedWalletMatchesAuthority) reasons.push("automatic owner mismatch");
+  else if (!resolved?.automaticOwnershipAvailable) reasons.push("automatic ownership unavailable");
   for (const risk of security?.criticalRisks || []) reasons.push(`security:${risk.code}`);
   for (const risk of security?.reviewRisks || []) reasons.push(`security:${risk.code}`);
   const userNote = String(note || "").trim();
@@ -308,7 +324,9 @@ export default async function projectImports(req, res) {
         intentBody: { note },
       });
       if (!auth) return;
-      const resolved = await resolveForSigner(identity, auth.walletAddress);
+      let resolved;
+      try { resolved = await resolveForSigner(identity, auth.walletAddress); }
+      catch (error) { resolved = unresolvedEvidence(identity, error); }
       const security = await scanProjectImportSecurity(identity);
       if (!existing) {
         const pendingEvidence = { ...resolved, signedWalletMatchesAuthority: false };
