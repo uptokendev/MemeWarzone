@@ -1,0 +1,6 @@
+# Exact reviewed false positives only: Everglen's PUBLIC Solana contract address.
+# These two locations bind/test the founder-approved existing page-only exception.
+# No rule, directory, real credential, or future finding is exempted.
+# The scanner scans historical PR commits; modifying today's literal does not remove these entries.
+d8192ddff6e8381d8bf58d9b68bce274ef6d6671:frontend/api/lib/projectImportAssessment.js:generic-api-key:6
+d8192ddff6e8381d8bf58d9b68bce274ef6d6671:frontend/api/lib/projectImportAssessment.test.mjs:generic-api-key:17
