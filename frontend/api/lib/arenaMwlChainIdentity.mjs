@@ -46,7 +46,7 @@ export function canonicalMwlMonth({ chainId, year, month } = {}) {
     year: y,
     month: m,
     monthId: `${y}${month2}`,
-    seasonId: `mwl-${y}-${month2}-c${id}`,
+    seasonId: `mwl-${y}-m${month2}-c${id}`,
     epochStart: new Date(Date.UTC(y, m - 1, 1, 0, 0, 0, 0)).toISOString(),
   };
 }
@@ -65,6 +65,13 @@ export function mwlSeasonIdentityMatches(row, expected = {}) {
     && Number(row.month) === period.month
     && String(row.id || "") === period.seasonId
     && String(row.mwl_epoch_key || row.id || "") === period.seasonId;
+}
+
+export function assertMwlSeasonIdentity(row, expected = {}) {
+  if (!mwlSeasonIdentityMatches(row, expected)) {
+    throw new MwlIdentityError("MWL_SEASON_CHAIN_MISMATCH", "Major War League season identity does not match chain/month", 409);
+  }
+  return row;
 }
 
 export function mwlTreasuryEnvKeys(chainId) {
