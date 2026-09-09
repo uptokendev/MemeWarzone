@@ -89,7 +89,11 @@ jobs:
 
       - name: Remove unrelated Google Chrome apt source
         shell: bash
-        run: sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.list.save
+        run: |
+          sudo rm -f \
+            /etc/apt/sources.list.d/google-chrome.list \
+            /etc/apt/sources.list.d/google-chrome.list.save \
+            /etc/apt/sources.list.d/google-chrome.sources
 
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
