@@ -1,0 +1,70 @@
+name: Import review v1 proof
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'frontend/api/projectImports.js'
+      - 'frontend/api/lib/projectImport*'
+      - 'frontend/api/lib/projectOwnership*'
+      - 'frontend/api/lib/projectSolanaProjectAuthority*'
+      - 'frontend/src/components/imports/**'
+      - 'frontend/src/pages/ProjectImport.tsx'
+      - 'frontend/src/lib/projectImport*'
+      - 'frontend/src/project-imports-ui.test.mjs'
+      - 'frontend/e2e/project-import-feedback.browser.ts'
+      - 'supabase/migrations/*project_import_review_evidence.sql'
+      - '.github/workflows/import-review-v1.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  imports:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: import_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d import_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PROJECT_IMPORT_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/import_test
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/import_test
+      PG_DISABLE_SSL: '1'
+      ENABLE_PROJECT_IMPORTS: 'true'
+      VITE_ENABLE_PROJECT_IMPORTS: 'true'
+      ENABLE_ARENA: 'false'
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: git rev-parse HEAD && npm ci --prefix frontend --no-audit --no-fund
+      - run: npm --prefix frontend run check:api-imports
+      - name: Serial isolated ownership, risk, HTTP, database and UI regressions
+        run: |
+          set -e
+          for file in frontend/api/lib/projectImport*.test.mjs frontend/api/lib/projectOwnershipResolve*.test.mjs frontend/api/lib/projectSolanaProjectAuthority.test.mjs frontend/api/lib/projectOwnershipReview.test.mjs frontend/src/project-imports-ui.test.mjs frontend/src/lib/projectImportFeedback.test.mjs; do node --test "$file"; done
+      - run: npm --prefix frontend run build
+      - name: Chromium
+        working-directory: frontend
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.list.save /etc/apt/sources.list.d/google-chrome.sources
+          npx playwright install --with-deps chromium
+      - run: npx playwright test -c playwright.imports.config.ts
+        working-directory: frontend
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: import-review-v1-browser-failures
+          path: frontend/test-results
+          retention-days: 3
