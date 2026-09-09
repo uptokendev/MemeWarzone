@@ -17,33 +17,28 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@v4
         with:
-          repository: uptokendev/web-dashboard
-          ref: 593829411ea8a0d9544b5219b8846edd3586007b
-          path: dashboard
-          persist-credentials: false
-      - uses: actions/checkout@v4
-        with:
           repository: pump-fun/pump-public-docs
           path: pump-docs
           persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm ci --prefix mwz/frontend --no-audit --no-fund && npm ci --prefix dashboard --no-audit --no-fund
+      - run: npm ci --prefix mwz/frontend --no-audit --no-fund
       - name: Record sources and documentation
         run: |
           git -C mwz rev-parse HEAD > mwz/SOURCE_SHA
-          git -C dashboard rev-parse HEAD > dashboard/SOURCE_SHA
           git -C pump-docs rev-parse HEAD > pump-docs/SOURCE_SHA
           mkdir -p references
           curl -fsSL --max-time 20 https://supabase.com/changelog.md > references/supabase-changelog.md
           cd mwz
-          npx --yes supabase@2.101.0 --version
-          npx --yes supabase@2.101.0 migration new --help
-          npx --yes supabase@2.101.0 migration new project_import_review_evidence
+          CLI_VERSION=$(npm view supabase version)
+          printf '%s\n' "$CLI_VERSION" > ../references/supabase-cli-version
+          npx --yes supabase@$CLI_VERSION --version
+          npx --yes supabase@$CLI_VERSION migration new --help
+          npx --yes supabase@$CLI_VERSION migration new project_import_review_evidence
       - name: Pack only development source and installed dependencies
         run: |
-          tar --exclude='.git' --exclude='.env' --exclude='.env.*' -czf /tmp/import-review-kit.tar.gz mwz/frontend mwz/supabase mwz/SOURCE_SHA dashboard pump-docs references
+          tar --exclude='.git' --exclude='.env' --exclude='.env.*' -czf /tmp/import-review-kit.tar.gz mwz/frontend mwz/supabase mwz/SOURCE_SHA pump-docs references
       - uses: actions/upload-artifact@v4
         with:
           name: import-review-build-kit
