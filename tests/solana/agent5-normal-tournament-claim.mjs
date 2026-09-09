@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
-import { AnchorProvider, BN, Program, setProvider } from "@coral-xyz/anchor";
+import anchor from "@coral-xyz/anchor";
 import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
+
+const { AnchorProvider, BN, Program, setProvider } = anchor;
 
 import { pool } from "../../frontend/server/db.js";
 import { buildWalletActionMessage } from "../../frontend/api/lib/walletActionAuth.js";
