@@ -1,0 +1,51 @@
+name: Import review isolated build kit
+on:
+  push:
+    branches: [diagnose/import-review-build-kit-20260909]
+    paths: [.github/workflows/import-review-build-kit.yml]
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: c0ce2e9ba4eac69fe3d8b5f6395a3a86f47e7b7e
+          path: mwz
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: uptokendev/web-dashboard
+          ref: 593829411ea8a0d9544b5219b8846edd3586007b
+          path: dashboard
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: pump-fun/pump-public-docs
+          path: pump-docs
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --prefix mwz/frontend --no-audit --no-fund && npm ci --prefix dashboard --no-audit --no-fund
+      - name: Record sources and documentation
+        run: |
+          git -C mwz rev-parse HEAD > mwz/SOURCE_SHA
+          git -C dashboard rev-parse HEAD > dashboard/SOURCE_SHA
+          git -C pump-docs rev-parse HEAD > pump-docs/SOURCE_SHA
+          mkdir -p references
+          curl -fsSL --max-time 20 https://supabase.com/changelog.md > references/supabase-changelog.md
+          cd mwz
+          npx --yes supabase@2.101.0 --version
+          npx --yes supabase@2.101.0 migration new --help
+          npx --yes supabase@2.101.0 migration new project_import_review_evidence
+      - name: Pack only development source and installed dependencies
+        run: |
+          tar --exclude='.git' --exclude='.env' --exclude='.env.*' -czf /tmp/import-review-kit.tar.gz mwz/frontend mwz/supabase mwz/SOURCE_SHA dashboard pump-docs references
+      - uses: actions/upload-artifact@v4
+        with:
+          name: import-review-build-kit
+          path: /tmp/import-review-kit.tar.gz
+          retention-days: 2
