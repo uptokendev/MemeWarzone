@@ -1,0 +1,99 @@
+name: Agent 5 Normal Tournament Claims
+
+on:
+  push:
+    branches:
+      - agent5/normal-tournament-claims-39afafc
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evm-exactly-once:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: memewarzone_tournament_claim_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d memewarzone_tournament_claim_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm ci --prefix frontend
+      - name: Compile RewardDistributor
+        run: npx hardhat compile --config hardhat.agent5-claim-recovery.config.cjs
+      - name: Start disposable BNB chain 97
+        run: |
+          nohup npx hardhat node --config hardhat.agent5-claim-recovery.config.cjs --port 8545 > /tmp/agent5-bnb.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS -X POST http://127.0.0.1:8545 -H 'content-type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' | grep -qi '0x61'; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/agent5-bnb.log
+          exit 1
+      - name: Start disposable Robinhood chain 46630
+        run: |
+          nohup npx hardhat node --config hardhat.agent5-tournament-rh.config.cjs --port 9545 > /tmp/agent5-rh.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS -X POST http://127.0.0.1:9545 -H 'content-type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' | grep -qi '0xb626'; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/agent5-rh.log
+          exit 1
+      - name: Run BNB + Robinhood Tournament matrix
+        working-directory: frontend
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/memewarzone_tournament_claim_test
+          PG_DISABLE_SSL: "1"
+          API_AUTH_ENFORCE_USER_WRITES: "1"
+          REWARD_CLAIM_RPC_URL_97: http://127.0.0.1:8545
+          REWARD_CLAIM_RPC_URL_46630: http://127.0.0.1:9545
+          REWARD_CLAIM_RECOVERY_FROM_BLOCK_97: "0"
+          REWARD_CLAIM_RECOVERY_FROM_BLOCK_46630: "0"
+        run: node --test api/lib/normalTournamentClaimRecovery.evm.integration.test.mjs
+      - name: Frontend build
+        working-directory: frontend
+        run: npm run build
+      - name: Upload EVM logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent5-normal-tournament-evm-logs
+          path: |
+            /tmp/agent5-bnb.log
+            /tmp/agent5-rh.log
+          if-no-files-found: ignore
+
+  scope-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Preserve Battle and economics scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=39afafc4b17facb20c9dda02a19fb3635e3cc394
+          changed="$(git diff --name-only "$base"...HEAD)"
+          echo "$changed"
+          forbidden='frontend/api/lib/bnbBattleClaimRecovery.js|frontend/api/dev-fix/reward-claim-battle-router.js|programs/mwz_rewards_treasury/src/arena_money_v2/competition.rs|frontend/api/lib/arenaTournamentChainIdentity.js'
+          if echo "$changed" | grep -E "$forbidden"; then
+            echo "Forbidden preserved authority changed" >&2
+            exit 1
+          fi
