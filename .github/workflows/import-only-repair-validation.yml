@@ -1,0 +1,115 @@
+name: Isolated import-only repair validation
+on:
+  push:
+    branches: [diagnose/import-api-availability-943e60f]
+    paths: [.github/workflows/import-only-repair-validation.yml]
+permissions:
+  contents: write
+jobs:
+  imports:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: import_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d import_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/import_test
+      PROJECT_IMPORT_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/import_test
+      PG_DISABLE_SSL: '1'
+      ENABLE_PROJECT_IMPORTS: 'true'
+      VITE_ENABLE_PROJECT_IMPORTS: 'true'
+      ENABLE_ARENA: 'false'
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: instructions
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: 4cd5aef8ab0e1dea1097c8b82b72cb3e61ffdc47
+          path: candidate
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: candidate/frontend/package-lock.json
+      - name: Apply exact-anchor import-only source edits
+        working-directory: candidate
+        run: |
+          test "$(git rev-parse HEAD)" = 4cd5aef8ab0e1dea1097c8b82b72cb3e61ffdc47
+          python3 ../instructions/diagnostics/import-only/apply-repair.py
+          git diff --check
+          python3 - <<'PY'
+          from pathlib import Path
+          import subprocess
+          paths=Path('/tmp/import-only-changed-files.txt').read_text().splitlines()
+          allowed=['frontend/api/projectImports.js','frontend/api/lib/project','frontend/src/lib/projectImport','frontend/src/pages/ProjectImport.tsx','frontend/src/project-imports-ui.test.mjs','frontend/e2e/import-harness/','frontend/e2e/project-import-feedback.browser.ts','frontend/playwright.imports.config.ts']
+          assert paths and all(any(p.startswith(a) for a in allowed) for p in paths)
+          assert not any(p.startswith('frontend/server/') or p.endswith('server.mjs') for p in paths)
+          subprocess.run(['git','add','--',*paths],check=True)
+          PY
+          git -c user.name='MemeWarzone import repair' -c user.email='import-repair@users.noreply.github.com' commit -m 'fix(import): verify Pump creator and persist actionable import feedback'
+          git rev-parse HEAD
+          git diff HEAD^ --stat
+      - name: Install locked frontend dependencies
+        working-directory: candidate
+        run: npm ci --prefix frontend --no-audit --no-fund
+      - name: API syntax and import graph
+        working-directory: candidate
+        run: |
+          node --check frontend/api/projectImports.js
+          node --check frontend/api/lib/projectImportResolverAdapters.js
+          npm --prefix frontend run check:api-imports
+      - name: Import ownership, security, HTTP and database regressions
+        working-directory: candidate
+        run: |
+          set -e
+          for testfile in frontend/api/lib/projectOwnershipResolve*.test.mjs frontend/api/lib/projectImport*.test.mjs frontend/api/lib/projectSolanaProjectAuthority.test.mjs frontend/api/lib/projectOwnershipReview.test.mjs frontend/src/project-imports-ui.test.mjs frontend/src/lib/projectImportFeedback.test.mjs; do
+            echo "TEST_FILE=$testfile"
+            node --test "$testfile"
+          done
+      - name: Production frontend build
+        working-directory: candidate
+        run: npm --prefix frontend run build
+      - name: Install test browser
+        working-directory: candidate/frontend
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.list.save /etc/apt/sources.list.d/google-chrome.sources
+          npx playwright install --with-deps chromium
+      - name: Browser wrong-wallet, persistent errors and manual-image retry
+        working-directory: candidate/frontend
+        run: npx playwright test -c playwright.imports.config.ts
+      - name: Publish only the tested feature commit without force push
+        working-directory: candidate
+        run: |
+          test "$(git ls-remote origin refs/heads/fix/import-project-creator-persistent-feedback | cut -f1)" = 4cd5aef8ab0e1dea1097c8b82b72cb3e61ffdc47
+          git diff --exit-code
+          git push origin HEAD:refs/heads/fix/import-project-creator-persistent-feedback
+          echo "VERIFIED_FEATURE_HEAD=$(git rev-parse HEAD)"
+      - name: Preserve exact candidate evidence
+        if: always()
+        working-directory: candidate
+        run: |
+          git rev-parse HEAD > /tmp/import-only-candidate-head.txt
+          git diff 4cd5aef8ab0e1dea1097c8b82b72cb3e61ffdc47 -- frontend > /tmp/import-only-candidate.patch
+          tar -czf /tmp/import-only-source.tar.gz --exclude=node_modules --exclude=dist --exclude=public --exclude=assets frontend/api frontend/src/lib/projectImport* frontend/src/pages/ProjectImport.tsx frontend/src/project-imports-ui.test.mjs frontend/e2e/import-harness frontend/e2e/project-import-feedback.browser.ts frontend/playwright.imports.config.ts || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: import-only-repair-evidence
+          path: |
+            /tmp/import-only-candidate-head.txt
+            /tmp/import-only-candidate.patch
+            /tmp/import-only-source.tar.gz
+            candidate/frontend/test-results
+          retention-days: 3
