@@ -3,25 +3,25 @@
   "chainId": 97,
   "upstreamRepository": "topazdex/topaz-contacts",
   "upstreamCommit": "858d93c0e595777aef9564124f634f4138be8f6d",
-  "deploymentCommit": "",
+  "deploymentCommit": "0507a2debf438c9d3b2e387c880c96394ffade9d",
   "deployer": "0x13AD79765e14927dF2c554d9662Bbe539e89C8e8",
   "contracts": {
-    "WBNB": "0x4E7aF54D355684EF206DAb0b5Dca8695D1e75dA2",
-    "PoolImplementation": "0xD68Cc707566f09bb2dD1A79FeD56E49999945A56",
-    "PoolFactory": "0xE34346710cca352a3b69A080067d176C8ACA97D9",
-    "FactoryRegistry": "0x1D3a9664B9d61a6559B6FA6D6F98158d728e538B",
-    "Router": "0xe559d93643631E9E8Cc7d10ADFA581Be4b5399C8"
+    "WBNB": "0xcd2c34926894616F6768F15F15614b1F7816bC2E",
+    "PoolImplementation": "0x740587c402078029cB7C6f04049C0834215243A2",
+    "PoolFactory": "0xb9F2b64DE9f7850Dcc9C5fFed0ca33603250640e",
+    "FactoryRegistry": "0xA761DA0015Bf88407F4a04C068A23d5eD42B9fA8",
+    "Router": "0xa241AEd1cfE4eC2892d6Cb2274B4BeB6EcD07EaF"
   },
   "configuration": {
-    "volatileFeeBps": 100,
+    "volatileFeeBps": 30,
     "graduationPoolStable": false
   },
   "transactions": {
-    "deployWBNB": "0x48ca011a2689b8af6c94b097951a119f8197a16e308e0a1a30ca48e523ed1bdd",
-    "deployPoolImplementation": "0xdc7c9b71e8f5addf72645180b85e8e41ff6db2ede3141319449f04e4966cbebf",
-    "deployPoolFactory": "0x24dc166cdfb4f3a4a7e9dd340fff786bc3a68412933eae267853c97864b961c7",
-    "deployFactoryRegistry": "0xddef91e5b93645628cb0773d7019ec13064b9a90702032c5f014a548f84f579b",
-    "deployRouter": "0x45bc9d40b027077a308dec7676143c68ab4bbc63fccd5ec2a01814c688df6f92",
-    "setVolatileFee": "0x619eabb9d4dbc402a09c263a78b56f950a9deabaa2bf4b202074cda032814668"
+    "deployWBNB": "0x0893708bae7c70a0c361eae85a2f344a7373bdd4e3c1c46d2da99ecd21ac325d",
+    "deployPoolImplementation": "0xc8223bd2977239964125fb39942031c441ee5d8e606cf02a34e9ecbbc06f4d9e",
+    "deployPoolFactory": "0x0ea48078879723d5bb51ce2b26917e55c67879b600639fc32e532adaa54ac46d",
+    "deployFactoryRegistry": "0x8f27b6a36fc22758db17aabe11162f2aac278cda23447a84c4bcf7b9b382d179",
+    "deployRouter": "0x1ec8e791f7b9ba86671be439864760ae4efdcef753cf1a5948ea53c708a415ca",
+    "setVolatileFee": "0xd9b4be13b7f9f57e01d3ff50d7b1b999270ba471382fa002dfb6010a821d7779"
   }
 }
