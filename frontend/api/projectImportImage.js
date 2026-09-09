@@ -4,7 +4,7 @@ import fs from "fs";
 import crypto from "node:crypto";
 import { pool } from "../server/db.js";
 import { inspectImageFile, PROJECT_IMPORT_IMAGE_LIMITS } from "./lib/imageFileValidation.js";
-import { PROJECT_IMPORT_ACTIONS, requireProjectImportWalletAuth } from "./lib/projectImportSecurity.js";
+import { PROJECT_IMPORT_ACTIONS, assertVerifiedProjectOwner, requireProjectImportWalletAuth } from "./lib/projectImportSecurity.js";
 import { bindRegistrationImage, lookupProjectImport, normalizeProjectIdentity, persistProjectImage, publicProject } from "./lib/projectImportCore.js";
 
 let storageClient=null;
@@ -30,6 +30,7 @@ export default async function projectImportImage(req,res){
   const registration=String(auth.action||"")===PROJECT_IMPORT_ACTIONS.registrationImage;
   const action=registration?PROJECT_IMPORT_ACTIONS.registrationImage:PROJECT_IMPORT_ACTIONS.image;
   const verified=await requireProjectImportWalletAuth({res,pool,auth,expectedWallet:auth.walletAddress,chainId:identity.chainId,token:identity.tokenAddress,action,projectId:existing.id,imageDigest:digest,routeLabel:registration?"project-imports/registration-image":"project-imports/image"});if(!verified)return;
+  if(registration)assertVerifiedProjectOwner(existing,{wallet:verified.walletAddress,chainId:identity.chainId,token:identity.tokenAddress});
   const client=storage(),bucket=process.env.SUPABASE_BUCKET||"memebattles",uuid=crypto.randomUUID(),name=`project-imports/${identity.chainId}/${identity.tokenAddress}/${uuid}.${info.ext}`;
   const {error:uploadError}=await client.storage.from(bucket).upload(name,buf,{contentType:info.mime,upsert:false,cacheControl:"3600"});if(uploadError)throw Object.assign(new Error(`Project image upload failed: ${uploadError.message}`),{code:"PROJECT_IMPORT_IMAGE_STORAGE_FAILED"});
   const {data}=client.storage.from(bucket).getPublicUrl(name);if(!data?.publicUrl)throw Object.assign(new Error("Project image public URL unavailable"),{code:"PROJECT_IMPORT_IMAGE_STORAGE_FAILED"});
