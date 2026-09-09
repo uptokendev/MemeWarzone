@@ -18,14 +18,14 @@ function getBnbProvider() {
   if (bnbProvider) return bnbProvider;
   const url = bnbRpcUrl();
   if (!url) throw Object.assign(new Error("BNB project import resolver is not configured"), { code: "PROJECT_IMPORT_RPC_UNAVAILABLE" });
-  bnbProvider = new JsonRpcProvider(url, BNB_CHAIN_ID, { staticNetwork: true });
+  bnbProvider = new JsonRpcProvider(url, BNB_CHAIN_ID);
   return bnbProvider;
 }
 function getSolanaConnection() {
   if (solanaConnection) return solanaConnection;
   const url = solanaRpcUrl();
   if (!url) throw Object.assign(new Error("Solana project import resolver is not configured"), { code: "PROJECT_IMPORT_RPC_UNAVAILABLE" });
-  solanaConnection = new Connection(url, "confirmed");
+  solanaConnection = new Connection(url, {commitment:"confirmed",disableRetryOnRateLimit:true,fetch:(input,init)=>fetch(input,{...init,signal:init?.signal?AbortSignal.any([init.signal,AbortSignal.timeout(8000)]):AbortSignal.timeout(8000)})});
   return solanaConnection;
 }
 
@@ -123,7 +123,7 @@ export async function resolveSolanaProjectImport({ chainId, tokenAddress, signed
   await assertSolanaImportMainnet(connection);
   const raw = await resolveProjectOwnershipSolana({ mint: tokenAddress, connectedWallet: signedWallet, connection });
   if (!raw?.validMint) throw Object.assign(new Error(raw?.reason === "mint_lookup_failed" ? "Solana token lookup is temporarily unavailable." : "No valid Solana token was found. Check the Contract Address and selected chain."), { code: raw?.reason === "mint_lookup_failed" ? "PROJECT_IMPORT_RPC_UNAVAILABLE" : "SOLANA_MINT_INVALID" });
-  const authority = await resolveSolanaProjectAuthority({ connection, mint: raw.mint, mintAuthority: raw.mintAuthority });
+  const authority = await resolveSolanaProjectAuthority({ connection, mint: raw.mint, mintAuthority: raw.mintAuthority, claimant: new PublicKey(signedWallet).toBase58(), tokenProgram: new PublicKey(raw.tokenProgramId) });
   const metadata = await resolveSolanaDisplayMetadata(connection, raw.mint);
   return {
     chainId: SOLANA_CHAIN_ID,
@@ -137,6 +137,7 @@ export async function resolveSolanaProjectImport({ chainId, tokenAddress, signed
     automaticOwnershipAvailable: Boolean(authority.currentAuthority),
     ...authority,
     mintAuthority: raw.mintAuthority ?? null,
+    observedSlot: raw.observedSlot ?? null,
     signedWalletMatchesAuthority: Boolean(authority.currentAuthority && authority.currentAuthority === new PublicKey(signedWallet).toBase58()),
   };
 }

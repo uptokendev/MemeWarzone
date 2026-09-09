@@ -7,12 +7,18 @@ import {
   getProjectOwnershipAudit,
   getProjectOwnershipClaim,
   listProjectOwnershipClaims,
-  reviewProjectOwnership,
+  reviewProjectOwnership as originalReviewProjectOwnership,
 } from "./projectOwnershipReview.js";
 
+import { assessProjectImport } from "./projectImportAssessment.js";
+import { appendImportEvidence } from "./projectImportEvidenceStore.js";
+const evidenceIds = new Map();
+const reviewProjectOwnership = (db,options) => originalReviewProjectOwnership(db,{expectedEvidenceId:evidenceIds.get(options.projectId),...options});
+const evidenceMigration = fs.readFileSync(new URL("../../../supabase/migrations/20260909213428_project_import_review_evidence.sql",import.meta.url),"utf8");
 const { Pool } = pg;
 const databaseUrl = process.env.PROJECT_IMPORT_TEST_DATABASE_URL || process.env.DATABASE_URL;
 if (!databaseUrl) throw new Error("PROJECT_IMPORT_TEST_DATABASE_URL or DATABASE_URL is required");
+if(!['localhost','127.0.0.1','postgres'].includes(new URL(databaseUrl).hostname)) throw new Error('Ownership tests require an isolated localhost/Postgres service, never production');
 const pool = new Pool({ connectionString: databaseUrl });
 const migration = fs.readFileSync(
   new URL("../../../db/migrations/20260908_000001_project_import_onboarding.sql", import.meta.url),
@@ -26,8 +32,10 @@ const OPERATOR_EMAIL = "operator@example.com";
 async function reset() {
   await pool.query("DROP TABLE IF EXISTS public.wm_admin_audit_log CASCADE");
   await pool.query("DROP TABLE IF EXISTS public.wm_users CASCADE");
+  await pool.query("DROP TABLE IF EXISTS public.project_import_review_evidence CASCADE");
   await pool.query("DROP TABLE IF EXISTS public.arena_token_imports CASCADE");
   await pool.query(migration);
+  await pool.query(evidenceMigration);
   await pool.query("ALTER TABLE public.arena_token_imports ADD COLUMN IF NOT EXISTS status text DEFAULT 'scanning'");
   await pool.query("ALTER TABLE public.arena_token_imports ADD COLUMN IF NOT EXISTS review_requested_at timestamptz");
   await pool.query("ALTER TABLE public.arena_token_imports ADD COLUMN IF NOT EXISTS scan_json jsonb");
@@ -51,7 +59,7 @@ async function reset() {
   )`);
 }
 
-async function insertClaim(suffix) {
+async function insertClaim(suffix,withEvidence=true) {
   const token = `0x${String(suffix).padStart(40, "0")}`;
   const result = await pool.query(`
     INSERT INTO public.arena_token_imports (
@@ -61,7 +69,13 @@ async function insertClaim(suffix) {
     ) VALUES (56, $1, '', $2, 'ownership_manual_review', $2, NOW(), 'manual evidence', 'scanning', 'https://cdn.example/project.png')
     RETURNING id
   `, [token, CLAIMANT]);
-  return result.rows[0].id;
+  const id=result.rows[0].id;
+  const row=(await pool.query("SELECT * FROM public.arena_token_imports WHERE id=$1",[id])).rows[0];
+  if(!withEvidence)return id;
+  const assessment=assessProjectImport({resolved:{chainId:56,tokenAddress:token,currentAuthority:CLAIMANT,automaticOwnershipAvailable:true,signedWalletMatchesAuthority:true,market:{phase:'postgrad',verified:true,liquidityAvailable:true}},security:{status:'pass',criticalRisks:[],reviewRisks:[]},claimantWallet:CLAIMANT,proof:{verifiedBy:'server_wallet_action',signedWallet:CLAIMANT}});
+  const evidence=await appendImportEvidence(pool,{project:row,assessment,source:'manual_claim'});
+  evidenceIds.set(id,evidence.id);
+  return id;
 }
 
 async function insertWmUser(id) {
@@ -79,6 +93,7 @@ before(async () => {
 after(async () => {
   await pool.query("DROP TABLE IF EXISTS public.wm_admin_audit_log CASCADE");
   await pool.query("DROP TABLE IF EXISTS public.wm_users CASCADE");
+  await pool.query("DROP TABLE IF EXISTS public.project_import_review_evidence CASCADE");
   await pool.query("DROP TABLE IF EXISTS public.arena_token_imports CASCADE");
   await pool.end();
 });
@@ -284,4 +299,23 @@ test("review core refuses missing admin identity or reason", async () => {
   );
   const row = await getProjectOwnershipClaim(pool, id);
   assert.equal(row.ownership_status, "ownership_manual_review");
+});
+
+test("legacy empty evidence prevents approval without changing owner or Arena",async()=>{
+ await reset();const id=await insertClaim(9991,false);const row=await getProjectOwnershipClaim(pool,id);
+ await assert.rejects(()=>reviewProjectOwnership(pool,{projectId:id,action:'verify_owner',reason:'Legacy review attempt',expectedVersion:row.state_version,admin:{id:ADMIN_AUTH_ID}}),{code:'PROJECT_IMPORT_EVIDENCE_REQUIRED'});
+ const after=await getProjectOwnershipClaim(pool,id);assert.equal(after.ownership_status,'ownership_manual_review');assert.equal(after.status,'scanning');assert.equal((await getProjectOwnershipAudit(pool,id)).length,0);
+});
+test("a new snapshot invalidates an operator's old evidence id even if row version is unchanged",async()=>{
+ await reset();const id=await insertClaim(9992);const row=await getProjectOwnershipClaim(pool,id);const previous=(await pool.query("SELECT * FROM public.project_import_review_evidence WHERE project_id=$1",[id])).rows[0];
+ const next=await appendImportEvidence(pool,{project:row,assessment:previous.snapshot,source:'admin_recheck'});assert.notEqual(next.id,evidenceIds.get(id));
+ await assert.rejects(()=>reviewProjectOwnership(pool,{projectId:id,action:'verify_owner',reason:'Stale snapshot test',expectedVersion:row.state_version,admin:{id:ADMIN_AUTH_ID}}),{code:'PROJECT_IMPORT_EVIDENCE_REQUIRED'});
+ assert.equal((await pool.query("SELECT count(*)::int n FROM public.project_import_review_evidence WHERE project_id=$1",[id])).rows[0].n,2);
+});
+
+test("import evidence is append-only and RLS-enabled",async()=>{
+ await reset();const id=await insertClaim(9993);
+ await assert.rejects(()=>pool.query("UPDATE public.project_import_review_evidence SET snapshot='{}' WHERE project_id=$1",[id]),/append-only/);
+ await assert.rejects(()=>pool.query("DELETE FROM public.project_import_review_evidence WHERE project_id=$1",[id]),/append-only/);
+ const r=await pool.query("SELECT relrowsecurity FROM pg_class WHERE oid='public.project_import_review_evidence'::regclass");assert.equal(r.rows[0].relrowsecurity,true);
 });
