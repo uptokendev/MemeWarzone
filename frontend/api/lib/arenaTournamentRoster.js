@@ -5,12 +5,12 @@ export function isExactTournamentBracketSize(value) {
   return Number.isInteger(size) && size >= 2 && (size & (size - 1)) === 0;
 }
 
-export function tournamentStartRoster(entries, { buyInNative } = {}) {
+export function tournamentStartRoster(entries, { buyInNative, exactBracketRequired = true } = {}) {
   const list = Array.isArray(entries) ? entries : [];
 
-  // Normal Tournaments are single-elimination without synthetic byes.
-  // Reject the start roster before seeding when it cannot form an exact bracket.
-  if (!isExactTournamentBracketSize(list.length)) {
+  // New-generation Normal Tournaments are single-elimination without synthetic byes.
+  // Historical rows can explicitly opt out so their persisted generation remains replayable.
+  if (exactBracketRequired && !isExactTournamentBracketSize(list.length)) {
     return {
       ok: false,
       reason: "invalid-bracket-size",
