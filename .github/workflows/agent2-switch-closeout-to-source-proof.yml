@@ -1,0 +1,44 @@
+name: Agent 2 switch native closeout to committed-source proof
+
+on:
+  push:
+    branches:
+      - agent2/solana-current-authority-launch-d37dcf7
+    paths:
+      - .github/workflows/agent2-switch-closeout-to-source-proof.yml
+
+permissions:
+  contents: write
+
+jobs:
+  switch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent2/solana-current-authority-launch-d37dcf7
+          fetch-depth: 0
+      - name: Remove cert runtime patch and require committed fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('.github/workflows/agent2-native-graduation-closeout.yml')
+          s=p.read_text()
+          start=s.index('      - name: Apply narrow native WSOL precreation fix under certification\n')
+          end=s.index('      - name: Start graduation authorization service and prepare fixture\n', start)
+          replacement='''      - name: Verify committed native WSOL precreation fix\n        shell: bash\n        run: |\n          set -euo pipefail\n          grep -q 'operator native quote ATA must be empty' tools/solana-meteora-graduation/graduate-basic-quote.mjs\n          grep -q 'getOrCreateAssociatedTokenAccount(connection, operator, quoteMint, operator.publicKey' tools/solana-meteora-graduation/graduate-basic-quote.mjs\n          echo "COMMITTED_NATIVE_WSOL_FIX=YES"\n\n'''
+          p.write_text(s[:start]+replacement+s[end:])
+          PY
+          git diff --check
+          git diff -- .github/workflows/agent2-native-graduation-closeout.yml
+      - name: Commit source-proof closeout
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "MemeWarzone Agent 2"
+          git config user.email "actions@users.noreply.github.com"
+          git add .github/workflows/agent2-native-graduation-closeout.yml
+          git commit -m "cert: prove native graduation from committed source"
+          git push origin HEAD:agent2/solana-current-authority-launch-d37dcf7
