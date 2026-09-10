@@ -9,6 +9,7 @@ on:
       - frontend/api/lib/projectImportAssessment.test.mjs
       - frontend/api/lib/projectImportPumpChallenge.js
       - frontend/api/lib/projectImportPumpChallenge.test.mjs
+      - frontend/api/lib/projectImportHttp.test.mjs
       - frontend/api/projectImports.js
       - frontend/api/lib/projectImportSecurity.js
       - frontend/src/lib/projectImports.ts
