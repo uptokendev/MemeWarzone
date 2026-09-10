@@ -8,11 +8,12 @@ const {
   TOKEN_PROGRAM_ID,
   getAccount,
   getAssociatedTokenAddressSync,
+  getOrCreateAssociatedTokenAccount,
 } = require("@solana/spl-token");
 const { CpAmm } = require("@meteora-ag/cp-amm-sdk");
 
 const { BN } = anchor;
-const { Connection, Keypair, PublicKey, TransactionMessage, VersionedTransaction } = web3;
+const { Connection, Keypair, PublicKey, SystemProgram, Transaction, TransactionMessage, VersionedTransaction } = web3;
 const EXPECTED_DEVNET_GENESIS = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
 const PACKET_LIMIT = 1232;
 const REPORT = process.env.SOLANA_POSTGRAD_REPORT || "/tmp/mwz-postgrad-roundtrip.json";
@@ -26,6 +27,18 @@ async function materializeTransaction(built) {
   if (typeof built?.transaction === "function") return built.transaction();
   if (typeof built?.build === "function") return built.build();
   return built;
+}
+
+async function fund(connection, operator, recipient, lamports) {
+  const latest = await connection.getLatestBlockhash("confirmed");
+  const tx = new Transaction({ feePayer: operator.publicKey, recentBlockhash: latest.blockhash }).add(
+    SystemProgram.transfer({ fromPubkey: operator.publicKey, toPubkey: recipient, lamports }),
+  );
+  tx.sign(operator);
+  const signature = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false, maxRetries: 5 });
+  const confirmation = await connection.confirmTransaction({ signature, ...latest }, "confirmed");
+  if (confirmation.value.err) fail(`trader funding failed ${JSON.stringify(confirmation.value.err)}`);
+  return signature;
 }
 
 async function executeV0(connection, payer, legacyTransaction, label) {
@@ -135,13 +148,16 @@ async function main() {
   const fixture = JSON.parse(fs.readFileSync(required("SOLANA_GRADUATION_FIXTURE_OUTPUT"), "utf8"));
   const graduation = JSON.parse(fs.readFileSync(required("SOLANA_GRADUATION_MATRIX_REPORT"), "utf8"));
   if (graduation.status !== "PASS") fail("native graduation report is not PASS");
-  const buyer = loadKeypair(required("SOLANA_GRADUATION_BUYER_KEYPAIR_OUTPUT"));
-  if (fixture.buyer !== buyer.publicKey.toBase58()) fail("buyer keypair does not match graduation fixture");
 
   const connection = new Connection(String(process.env.SOLANA_RPC_URL || "https://api.devnet.solana.com"), "confirmed");
   if ((await connection.getGenesisHash()) !== EXPECTED_DEVNET_GENESIS) fail("refusing non-devnet cluster");
 
+  const operator = loadKeypair(required("SOLANA_OPERATOR_KEYPAIR"));
+  const buyer = Keypair.generate();
+  const fundingSignature = await fund(connection, operator, buyer.publicKey, 50_000_000);
   const mint = new PublicKey(fixture.mint);
+  await getOrCreateAssociatedTokenAccount(connection, buyer, mint, buyer.publicKey, false, "confirmed", undefined, TOKEN_PROGRAM_ID);
+
   const pool = new PublicKey(graduation.pool);
   const cpAmm = new CpAmm(connection);
   const poolState = await cpAmm.fetchPoolState(pool);
@@ -195,6 +211,7 @@ async function main() {
     mint: mint.toBase58(),
     pool: pool.toBase58(),
     buyer: buyer.publicKey.toBase58(),
+    fundingSignature,
     poolTokenA: poolState.tokenAMint.toBase58(),
     poolTokenB: poolState.tokenBMint.toBase58(),
     buy,
