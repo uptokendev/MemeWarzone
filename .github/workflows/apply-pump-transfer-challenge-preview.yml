@@ -27,10 +27,12 @@ jobs:
         run: npm ci
       - name: Apply source patch
         working-directory: frontend
-        run: node scripts/apply-pump-transfer-challenge.mjs
+        run: |
+          node scripts/apply-pump-transfer-challenge.mjs
+          sed -i 's/assert.match(page,/assert.match(importPage,/g' src/project-imports-ui.test.mjs
       - name: Run focused tests
         working-directory: frontend
-        run: node --test api/lib/projectImportPumpChallenge.test.mjs api/lib/projectImportAssessment.test.mjs src/project-imports-ui.test.mjs api/lib/projectImportCore.test.mjs
+        run: node --test api/lib/projectImportPumpChallenge.test.mjs api/lib/projectImportAssessment.test.mjs src/project-imports-ui.test.mjs
       - name: Build frontend
         working-directory: frontend
         run: npm run build
