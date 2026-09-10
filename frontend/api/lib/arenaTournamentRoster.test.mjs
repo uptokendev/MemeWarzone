@@ -36,6 +36,13 @@ test("new tournament start fails closed before seeding a bye", () => {
   }
 });
 
+test("historical generation can explicitly replay a non-exact roster", () => {
+  const result = tournamentStartRoster(entries(3), { buyInNative: 0, exactBracketRequired: false });
+  assert.equal(result.ok, true);
+  assert.equal(result.reason, "no-buy-in");
+  assert.equal(result.roster.length, 3);
+});
+
 test("zero buy-in tournaments can start from an exact opted-in roster", () => {
   const result = tournamentStartRoster(entries(4), { buyInNative: 0 });
   assert.equal(result.ok, true);
@@ -63,13 +70,22 @@ test("positive buy-in starts only when every entry is buyInPaid", () => {
   assert.equal(result.roster.length, 2);
 });
 
-test("handleAdminStart consumes tournamentStartRoster before tournament seeding", () => {
+test("handleAdminStart serializes and atomically creates the exact Round-1 bracket", () => {
   const source = fs.readFileSync(path.join(here, "../arenaTournaments.js"), "utf8");
   const handler = source.split("async function handleAdminStart")[1]?.split("export async function advanceTournamentFromBattle")[0] || "";
+  assert.match(handler, /const client = await pool\.connect\(\)/);
+  assert.match(handler, /client\.query\("begin"\)/);
+  assert.match(handler, /loadTournamentRow\(id, context\.chainId, client, \{ forUpdate: true \}\)/);
+  assert.match(handler, /TOURNAMENT_START_TIME_NOT_REACHED/);
   assert.match(handler, /tournamentStartRoster/);
   assert.match(handler, /optimizeMatchPairings/);
   assert.ok(handler.indexOf("tournamentStartRoster") < handler.indexOf("optimizeMatchPairings"));
-  assert.match(handler, /buy_in_native/);
+  assert.match(handler, /TOURNAMENT_SEEDING_BYE_FORBIDDEN/);
+  assert.doesNotMatch(handler, /matches\.push\([\s\S]*?bye:\s*true/);
+  assert.match(handler, /db:\s*client/);
+  assert.match(handler, /where id = \$1 and chain_id = \$3 and status = 'upcoming'/);
+  assert.match(handler, /client\.query\("commit"\)/);
+  assert.match(handler, /client\.query\("rollback"\)/);
 });
 
 test("new-generation DB authority forbids byes and tournament battles before starts_at", () => {
@@ -78,7 +94,7 @@ test("new-generation DB authority forbids byes and tournament battles before sta
     "utf8",
   );
   assert.match(migration, /exact_bracket_required/);
-  assert.match(migration, /SET exact_bracket_required = false/);
+  assert.match(migration, /CASE WHEN status = 'upcoming' THEN true ELSE false END/);
   assert.match(migration, /SET DEFAULT true/);
   assert.match(migration, /TOURNAMENT_EXACT_BRACKET_REQUIRED/);
   assert.match(migration, /TOURNAMENT_BYE_FORBIDDEN/);
@@ -86,7 +102,12 @@ test("new-generation DB authority forbids byes and tournament battles before sta
   assert.match(migration, /NEW\.source = 'tournament'/);
 });
 
-test("Normal Tournament battle duration remains founder-locked to exactly 24 hours", () => {
+test("Normal Tournament battle duration is exactly 24 hours in API and DB authority", () => {
+  const source = fs.readFileSync(path.join(here, "../arenaTournaments.js"), "utf8");
+  const insert = source.split("async function insertTournamentBattle")[1]?.split("async function handleAdminStart")[0] || "";
+  assert.match(insert, /interval '24 hours'/);
+  assert.doesNotMatch(insert, /interval '12 hours'/);
+
   const migration = fs.readFileSync(
     path.join(repoRoot, "db/migrations/20260903_000103_arena_tournament_battle_modes.sql"),
     "utf8",
