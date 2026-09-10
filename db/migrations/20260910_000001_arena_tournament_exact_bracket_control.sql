@@ -91,6 +91,49 @@ ON public.arena_tournaments
 FOR EACH ROW
 EXECUTE FUNCTION public.enforce_arena_tournament_exact_bracket();
 
+-- Serialize roster mutation against the same parent-row lock used by Start.
+-- If registration wins the lock, Start waits and includes that committed entry.
+-- If Start wins, registration waits and then observes status=live and fails closed.
+CREATE OR REPLACE FUNCTION public.enforce_arena_tournament_roster_open()
+RETURNS trigger AS $$
+DECLARE
+  tournament_status text;
+BEGIN
+  SELECT status
+    INTO tournament_status
+    FROM public.arena_tournaments
+   WHERE id = NEW.tournament_id
+   FOR KEY SHARE;
+
+  IF tournament_status IS NULL THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'P0001',
+      MESSAGE = 'TOURNAMENT_NOT_FOUND';
+  END IF;
+
+  IF tournament_status <> 'upcoming' THEN
+    RAISE EXCEPTION USING
+      ERRCODE = 'P0001',
+      MESSAGE = 'TOURNAMENT_REGISTRATION_CLOSED',
+      DETAIL = format('Tournament %s status is %s', NEW.tournament_id, tournament_status);
+  END IF;
+
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS enforce_arena_tournament_roster_open_insert ON public.arena_tournament_entries;
+CREATE TRIGGER enforce_arena_tournament_roster_open_insert
+BEFORE INSERT ON public.arena_tournament_entries
+FOR EACH ROW
+EXECUTE FUNCTION public.enforce_arena_tournament_roster_open();
+
+DROP TRIGGER IF EXISTS enforce_arena_tournament_roster_open_update ON public.arena_tournament_entries;
+CREATE TRIGGER enforce_arena_tournament_roster_open_update
+BEFORE UPDATE OF buy_in_intent, owner_wallet ON public.arena_tournament_entries
+FOR EACH ROW
+EXECUTE FUNCTION public.enforce_arena_tournament_roster_open();
+
 CREATE OR REPLACE FUNCTION public.enforce_arena_tournament_battle_start_time()
 RETURNS trigger AS $$
 DECLARE
