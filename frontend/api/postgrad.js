@@ -9,6 +9,7 @@ import arenaImports from "./arenaImports.js";
 import arenaEventSponsorshipAuthority from "./arenaEventSponsorshipAuthority.js";
 import arenaEventSponsorshipRecovery from "./arenaEventSponsorshipRecovery.js";
 import arenaTournaments from "./arenaTournaments.js";
+import arenaTournamentBuyIns from "./arenaTournamentBuyIns.js";
 import arenaTournamentVotes from "./arenaTournamentVotes.js";
 import {
   arenaVoteTournamentBoostsIdentityGate,
@@ -41,7 +42,8 @@ const ROUTES = [
   // All other Warzone Event Sponsorship endpoints run through authoritative event/application gating.
   { pattern: /^\/arena\/sponsorships(?:\/.*)?$/, flag: "POSTGRAD_SPONSORSHIPS_ENABLED", handler: arenaEventSponsorshipAuthority },
   { pattern: /^\/arena\/tournaments\/v2\/(?:buy-in-quote|create)$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaVoteTournamentSetupIdentityGate },
-  { pattern: /^\/arena\/tournaments\/[^/]+\/(?:v2-buy-in-receipt|buy-in-receipt)$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaVoteTournamentSetupIdentityGate },
+  // T2 buy-in status and reconciliation are shared by Battle + Vote Tournaments across EVM and Solana.
+  { pattern: /^\/arena\/tournaments\/[^/]+\/(?:buy-in-status|v2-buy-in-receipt|buy-in-receipt)$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaTournamentBuyIns },
   { pattern: /^\/arena\/tournaments\/[^/]+\/matches\/[^/]+\/final-salvo$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaFinalSalvo },
   { pattern: /^\/arena\/tournaments\/[^/]+\/matches\/[^/]+\/boosts\/(?:solana-quote|solana-payment)$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaVoteTournamentSolanaBoostsIdentityGate },
   { pattern: /^\/arena\/tournaments\/[^/]+\/matches\/[^/]+\/boosts(?:\/.*)?$/, flag: "POSTGRAD_EVENTS_ENABLED", handler: arenaVoteTournamentBoostsIdentityGate },
