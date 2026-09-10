@@ -1,0 +1,33 @@
+name: Fix Robinhood disabled import test once
+on:
+  push:
+    branches: [release/live-import-20260910]
+    paths: ['.github/workflows/fix-robinhood-disabled-test-once.yml']
+permissions:
+  contents: write
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release/live-import-20260910
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: |
+          node <<'NODE'
+          const fs=require('fs'),p='frontend/api/lib/projectImportCore.test.mjs';let s=fs.readFileSync(p,'utf8');
+          const a='test("unsupported chain fails closed", async () => {\n  await assert.rejects(() => lookupProjectImport(pool, { chainId: 4663, tokenAddress: "0x0000000000000000000000000000000000000011" }), /Unsupported project import chain/);\n});';
+          const b='test("Robinhood chain fails closed while its independent import switch is disabled", async () => {\n  await assert.rejects(() => lookupProjectImport(pool, { chainId: 4663, tokenAddress: "0x0000000000000000000000000000000000000011" }), (error) => error?.code === "PROJECT_IMPORT_CHAIN_DISABLED" && /Robinhood project import is disabled/.test(error.message));\n});\n\ntest("unknown project import chains remain unsupported", async () => {\n  await assert.rejects(() => lookupProjectImport(pool, { chainId: 999999, tokenAddress: "0x0000000000000000000000000000000000000011" }), /Unsupported project import chain/);\n});';
+          if(!s.includes(a))throw new Error('test anchor missing');fs.writeFileSync(p,s.replace(a,b));fs.rmSync('.github/workflows/fix-robinhood-disabled-test-once.yml');
+          NODE
+          npm ci --prefix frontend --no-audit --no-fund
+          node --test frontend/api/lib/projectImportCore.test.mjs frontend/api/lib/projectOwnershipResolveEvm.test.mjs frontend/src/robinhood-import-gate.test.mjs
+          npm --prefix frontend run build
+      - run: |
+          git config user.name "MemeWarzone Launch Control"
+          git config user.email "launch-control@users.noreply.github.com"
+          git add -A
+          git commit -m "test(import): cover disabled Robinhood gate"
+          git push origin HEAD:release/live-import-20260910
