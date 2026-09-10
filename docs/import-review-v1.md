@@ -8,8 +8,9 @@ Production release branch: `release/live-import-20260910`.
 1. Review/test the exact release head against current `main`.
 2. Apply the additive `20260909213428_project_import_review_evidence.sql` migration.
 3. Apply the additive `20260910175500_project_import_pump_challenges.sql` migration.
-4. Deploy compatible API first, then frontend, then dashboard.
-5. Smoke-test real BNB and Solana import flows and confirm existing launchpad behavior is unchanged.
+4. Apply the additive `20260910194000_project_import_robinhood_chain.sql` migration.
+5. Deploy compatible API first, then frontend, then dashboard.
+6. Smoke-test real BNB and Solana import flows and confirm existing launchpad behavior is unchanged. Robinhood stays disabled until its independent import switch is deliberately enabled and smoke-tested.
 
 Both import migrations are additive. Rollback of application code may leave the evidence/challenge tables in place; do not delete evidence as a rollback mechanism.
 
@@ -38,6 +39,8 @@ Never request, collect, log or store private keys or recovery phrases. Wallet-im
 Solana coverage includes canonical Pump bonding curves and supported SOL-quoted PumpSwap pools. Actual funded reserves and virtual pricing reserves are kept separate. Virtual reserves are not counted as funded liquidity. Unsupported Pump modes, quotes or venues remain technical review.
 
 BNB coverage authenticates supported Four.meme launch state and canonical PancakeSwap market identity. A recognized still-bonding token is rejected before independent pool discovery can create a false graduation signal. Direct-DEX/unknown-origin markets can require independent launch-history review rather than being auto-cleared.
+
+Robinhood import support is fully isolated and read-only on chain 4663. It checks deployed ERC-20 bytecode, name/symbol/decimals/totalSupply where readable, and current `owner()` / `getOwner()` authority. It has no LaunchFactory, graduation, router, locker, oracle, quote-catalog, trading, claims or Arena dependency. Production must keep both `ENABLE_PROJECT_IMPORT_ROBINHOOD=false` and `VITE_ENABLE_PROJECT_IMPORT_ROBINHOOD=false` until Robinhood import is deliberately activated. Enabling later requires both flags, a chain-4663 `ROBINHOOD_RPC_URL`, and a real import smoke test. The import-only market marker never grants trading or Arena approval.
 
 Security evidence is fail-closed. Missing provider liquidity data is recorded as unavailable, not fabricated as zero. Known market custody can be excluded from holder concentration only when its identity is authenticated. Missing/failed checks never become a safety PASS.
 
