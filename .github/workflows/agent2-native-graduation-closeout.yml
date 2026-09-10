@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/agent2-native-graduation-closeout.yml
       - tests/solana/current-authority-postgrad-roundtrip-devnet.cjs
+      - tools/solana-meteora-graduation/graduate-basic-quote.mjs
   workflow_dispatch:
 
 permissions:
@@ -61,15 +62,19 @@ jobs:
         with:
           node-version: 22
 
-      - name: Prove ownership boundary
+      - name: Prove current authority and narrow ownership boundary
         shell: bash
         run: |
           set -euo pipefail
           git cat-file -e "$BASE_SHA^{commit}"
           test "$(git merge-base HEAD "$BASE_SHA")" = "$BASE_SHA"
           test -z "$(git diff --name-only "$BASE_SHA"..HEAD -- programs/memewarzone_solana frontend/src frontend/api tests/solana/devnet-create-graduation-fixture.cjs)"
+          changed_prod="$(git diff --name-only "$BASE_SHA"..HEAD -- tools/solana-meteora-graduation | tr '\n' ' ')"
+          test "$changed_prod" = "tools/solana-meteora-graduation/graduate-basic-quote.mjs "
           echo "BASE_SHA=$BASE_SHA"
           echo "HEAD=$(git rev-parse HEAD)"
+          echo "PROGRAM_SOURCE_CHANGED=NO"
+          echo "NARROW_PRODUCTION_CHANGE=$changed_prod"
           echo "MAINNET_UPGRADE=NO"
 
       - name: Install dependencies
@@ -107,7 +112,7 @@ jobs:
           echo "SOLANA_NEW_ROUTE_SIGNER_KEYPAIR=$route_file" >> "$GITHUB_ENV"
           echo "SOLANA_ROUTE_SIGNER_PUBLIC_KEY=$route_pubkey" >> "$GITHUB_ENV"
 
-      - name: Prove operator and cluster
+      - name: Prove devnet operator
         shell: bash
         run: |
           set -euo pipefail
@@ -137,22 +142,15 @@ jobs:
           test -s target/idl/mwz_rewards_treasury.json
           test ! -e target/deploy/memewarzone_solana.so
 
-      - name: Apply narrow native WSOL precreation fix under certification
+      - name: Verify committed native WSOL precreation fix
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('tools/solana-meteora-graduation/graduate-basic-quote.mjs')
-          s=p.read_text()
-          old='''  let quoteAta = null; let recoveryAccount = null;\n  if (!nativeQuote) {\n'''
-          new='''  let quoteAta = null; let recoveryAccount = null;\n  if (nativeQuote) {\n    quoteAta = await getOrCreateAssociatedTokenAccount(connection, operator, quoteMint, operator.publicKey, false, "confirmed", undefined, TOKEN_PROGRAM_ID);\n    const q = await getAccount(connection, quoteAta.address, "confirmed", TOKEN_PROGRAM_ID);\n    if (q.amount !== 0n) fail(`operator native quote ATA must be empty; balance=${q.amount}`);\n    console.log("NATIVE QUOTE ATA PRECREATED", quoteAta.address.toBase58());\n  } else {\n'''
-          if old not in s: raise SystemExit('native quote patch target missing')
-          p.write_text(s.replace(old,new,1))
-          PY
-          grep -q 'NATIVE QUOTE ATA PRECREATED' tools/solana-meteora-graduation/graduate-basic-quote.mjs
+          grep -q 'operator native quote ATA must be empty' tools/solana-meteora-graduation/graduate-basic-quote.mjs
+          grep -q 'getOrCreateAssociatedTokenAccount(connection, operator, quoteMint, operator.publicKey' tools/solana-meteora-graduation/graduate-basic-quote.mjs
+          echo "COMMITTED_NATIVE_WSOL_FIX=YES"
 
-      - name: Start graduation authorization service and prepare fixture
+      - name: Start graduation authorization service and prepare fresh fixture
         shell: bash
         env:
           SOLANA_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
@@ -175,7 +173,7 @@ jobs:
           test -s "$SOLANA_GRADUATION_FIXTURE_OUTPUT"
           cat "$SOLANA_GRADUATION_FIXTURE_OUTPUT"
 
-      - name: Normalize native WSOL certification ATA only
+      - name: Normalize operator WSOL ATA to existing zero-balance account
         shell: bash
         run: |
           set -euo pipefail
@@ -235,7 +233,7 @@ jobs:
         shell: bash
         run: npm --prefix tests/solana run devnet:graduation-window -- restore
 
-      - name: Enforce closeout
+      - name: Enforce source-proof closeout
         if: always()
         env:
           GRADUATE_OUTCOME: ${{ steps.graduate.outcome }}
@@ -248,12 +246,12 @@ jobs:
           test "$GRADUATE_OUTCOME" = success
           test "$POSTGRAD_OUTCOME" = success
           test "$RESTORE_OUTCOME" = success
-          echo "SOLANA_NATIVE_GRADUATION_CLOSEOUT=PASS"
+          echo "SOLANA_NATIVE_GRADUATION_SOURCE_PROOF=PASS"
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: agent2-native-closeout-${{ github.sha }}
+          name: agent2-native-source-proof-${{ github.sha }}
           path: |
             /tmp/mwz-agent2-native-fixture.json
             /tmp/mwz-native-graduation.json
