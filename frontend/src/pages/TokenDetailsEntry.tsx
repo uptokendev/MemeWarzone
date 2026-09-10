@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
-import { projectImportsEnabled } from "@/features/projectImports/config";
+import { projectImportsEnabled, projectImportRobinhoodEnabled } from "@/features/projectImports/config";
 import { BNB_CHAIN_ID, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
 import { lookupProjectImport, type ProjectImportItem } from "@/lib/projectImports";
 
@@ -25,7 +25,7 @@ export default function TokenDetailsEntry() {
 
   const importChainId = useMemo(() => {
     const requested = Number(searchParams.get("chainId") || "");
-    if (requested === BNB_CHAIN_ID || requested === SOLANA_CHAIN_ID) return requested;
+    if (requested === BNB_CHAIN_ID || requested === SOLANA_CHAIN_ID || (requested === 4663 && projectImportRobinhoodEnabled)) return requested;
     return /^0x[a-fA-F0-9]{40}$/.test(routeId) ? BNB_CHAIN_ID : SOLANA_CHAIN_ID;
   }, [routeId, searchParams]);
 
@@ -59,8 +59,37 @@ export default function TokenDetailsEntry() {
     };
   }, [importChainId, routeId]);
 
+  // Manual ownership decisions happen in the private operator dashboard while
+  // a claimant may already have this page open. Re-read only pending/manual
+  // imported projects so approval/rejection is reflected without a hard reload.
+  useEffect(() => {
+    if (!projectImportsEnabled || !routeId || !project) return;
+    if (project.ownershipStatus !== "ownership_pending" && project.ownershipStatus !== "ownership_manual_review") return;
+
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const next = await lookupProjectImport(routeId, importChainId);
+        if (!cancelled && next) setProject(next);
+      } catch {
+        // Keep the last authoritative state visible on transient API failures.
+      }
+    };
+    const onFocus = () => { void refresh(); };
+    const onVisibility = () => { if (document.visibilityState === "visible") void refresh(); };
+    const timer = window.setInterval(() => { void refresh(); }, 10_000);
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [importChainId, project?.id, project?.ownershipStatus, routeId]);
+
   if (!projectImportsEnabled) return <TokenDetailsLiveEntry />;
   if (!resolved) return null;
-  if (project) return <ImportedProjectDetails item={project} />;
+  if (project) return <ImportedProjectDetails key={`${project.id}:${project.ownershipStatus}:${project.ownershipVerifiedAt || ""}`} item={project} />;
   return <TokenDetailsLiveEntry />;
 }

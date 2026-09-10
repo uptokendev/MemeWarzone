@@ -14,7 +14,7 @@ const [entry, page, liveEntry, client, importsConfig, postgradConfig] = await Pr
 
 test("public token route intercepts authoritative project imports before live Token Details", () => {
   assert.match(entry, /lookupProjectImport\(routeId, importChainId\)/);
-  assert.match(entry, /if \(project\) return <ImportedProjectDetails item={project} \/>/);
+  assert.match(entry, /if \(project\) return <ImportedProjectDetails/);
   assert.match(entry, /return <TokenDetailsLiveEntry \/>/);
   assert.match(entry, /import ImportedProjectDetails from "\.\/ImportedProjectDetails"/);
   assert.doesNotMatch(entry, /imageUrl/);
@@ -22,10 +22,18 @@ test("public token route intercepts authoritative project imports before live To
   assert.doesNotMatch(entry, /from .*campaign|from .*LaunchFactory|from .*bonding|from .*graduation|from .*Topaz|from .*Meteora/i);
 });
 
-test("BNB and Solana imported identities select the dedicated project page", () => {
-  assert.match(entry, /requested === BNB_CHAIN_ID \|\| requested === SOLANA_CHAIN_ID/);
+test("pending ownership refreshes from the authoritative API without a hard reload", () => {
+  assert.match(entry, /project\.ownershipStatus !== "ownership_pending" && project\.ownershipStatus !== "ownership_manual_review"/);
+  assert.match(entry, /window\.setInterval\(\(\) => \{ void refresh\(\); \}, 10_000\)/);
+  assert.match(entry, /window\.addEventListener\("focus", onFocus\)/);
+  assert.match(entry, /document\.addEventListener\("visibilitychange", onVisibility\)/);
+  assert.match(entry, /key=\{`\$\{project\.id\}:\$\{project\.ownershipStatus\}:\$\{project\.ownershipVerifiedAt \|\| ""\}`\}/);
+});
+
+test("BNB, Solana and feature-gated Robinhood imported identities select the dedicated project page", () => {
+  assert.match(entry, /requested === BNB_CHAIN_ID \|\| requested === SOLANA_CHAIN_ID \|\| \(requested === 4663 && projectImportRobinhoodEnabled\)/);
   assert.match(entry, /\^0x\[a-fA-F0-9\]\{40\}\$/);
-  assert.match(page, /const chainLabel=solana\?"Solana":"BNB"/);
+  assert.match(page, /item\.chainId===4663\?"Robinhood":"BNB"/);
   assert.match(page, /identityLabel=solana\?"Mint":"Contract"/);
   assert.match(page, /data-project-chain="true"/);
   assert.match(page, /data-project-address="true"/);
@@ -97,6 +105,6 @@ test("imports remain independent from post-grad Arena flags", () => {
 test("ordinary token fallback preserves original live Token Details boundary", () => {
   assert.match(liveEntry, /import TokenDetails from "\.\/TokenDetails"/);
   assert.match(entry, /if \(!projectImportsEnabled\) return <TokenDetailsLiveEntry \/>/);
-  assert.match(entry, /if \(project\) return <ImportedProjectDetails item={project} \/>/);
+  assert.match(entry, /if \(project\) return <ImportedProjectDetails/);
   assert.match(entry, /return <TokenDetailsLiveEntry \/>/);
 });

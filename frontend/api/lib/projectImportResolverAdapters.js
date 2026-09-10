@@ -1,48 +1,68 @@
-import { JsonRpcProvider } from "ethers";
+import { JsonRpcProvider, FetchRequest } from "ethers";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { getTokenMetadata, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { resolveProjectOwnershipBnb } from "./projectOwnershipResolveBnb.js";
+import { resolveProjectOwnershipEvm } from "./projectOwnershipResolveEvm.js";
 import { resolveProjectOwnershipSolana } from "./projectOwnershipResolveSolana.js";
 import { assertSolanaImportMainnet, resolveSolanaProjectAuthority } from "./projectSolanaProjectAuthority.js";
+import { readBnbImportMarket } from "./projectImportBnbMarket.js";
 import { registerProjectImportResolver } from "./projectImportResolvers.js";
 
 const BNB_CHAIN_ID = 56;
 const SOLANA_CHAIN_ID = 101;
+const ROBINHOOD_CHAIN_ID = 4663;
 const TOKEN_METADATA_PROGRAM_ID = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
 let bnbProvider = null;
+let robinhoodProvider = null;
 let solanaConnection = null;
 
 function bnbRpcUrl() { return String(process.env.BNB_RPC_URL || process.env.BSC_RPC_URL || process.env.BSC_MAINNET_RPC_URL || "").trim(); }
 function solanaRpcUrl() { return String(process.env.SOLANA_RPC_URL || process.env.SOLANA_MAINNET_RPC_URL || "").trim(); }
+function robinhoodRpcUrl() { return String(process.env.ROBINHOOD_RPC_URL || process.env.ROBINHOOD_MAINNET_RPC_URL || process.env.RH_RPC_URL || process.env.RPC_URL_4663 || "").trim(); }
+function robinhoodEnabled() { return /^(1|true|yes|on)$/i.test(String(process.env.ENABLE_PROJECT_IMPORT_ROBINHOOD || "").trim()); }
 function getBnbProvider() {
   if (bnbProvider) return bnbProvider;
   const url = bnbRpcUrl();
   if (!url) throw Object.assign(new Error("BNB project import resolver is not configured"), { code: "PROJECT_IMPORT_RPC_UNAVAILABLE" });
-  bnbProvider = new JsonRpcProvider(url, BNB_CHAIN_ID, { staticNetwork: true });
+  const request = new FetchRequest(url);
+  request.timeout = 7000;
+  bnbProvider = new JsonRpcProvider(request, BNB_CHAIN_ID, { batchMaxCount: 1 });
   return bnbProvider;
+}
+function getRobinhoodProvider() {
+  if (robinhoodProvider) return robinhoodProvider;
+  const url = robinhoodRpcUrl();
+  if (!url) throw Object.assign(new Error("Robinhood project import resolver is not configured"), { code: "PROJECT_IMPORT_RPC_UNAVAILABLE" });
+  const request = new FetchRequest(url); request.timeout = 7000;
+  robinhoodProvider = new JsonRpcProvider(request, ROBINHOOD_CHAIN_ID, { batchMaxCount: 1 });
+  return robinhoodProvider;
 }
 function getSolanaConnection() {
   if (solanaConnection) return solanaConnection;
   const url = solanaRpcUrl();
   if (!url) throw Object.assign(new Error("Solana project import resolver is not configured"), { code: "PROJECT_IMPORT_RPC_UNAVAILABLE" });
-  solanaConnection = new Connection(url, "confirmed");
+  solanaConnection = new Connection(url, {commitment:"confirmed",disableRetryOnRateLimit:true,fetch:(input,init)=>fetch(input,{...init,signal:init?.signal?AbortSignal.any([init.signal,AbortSignal.timeout(8000)]):AbortSignal.timeout(8000)})});
   return solanaConnection;
 }
 
-export function setProjectImportReadClientsForTest({ bnb = null, solana = null } = {}) {
+export function setProjectImportReadClientsForTest({ bnb = null, solana = null, robinhood = null } = {}) {
   bnbProvider = bnb;
   solanaConnection = solana;
+  robinhoodProvider = robinhood;
 }
 
 export async function resolveBnbProjectImport({ chainId, tokenAddress, signedWallet }) {
+  const provider = getBnbProvider();
   const raw = await resolveProjectOwnershipBnb({
-    provider: getBnbProvider(),
+    provider,
     chainId,
     contractAddress: tokenAddress,
     signedConnectedWallet: signedWallet,
   });
   if (!raw?.ok) throw Object.assign(new Error(raw?.error || "BNB token resolution failed"), { code: raw?.errorCode || "PROJECT_IMPORT_RESOLVE_FAILED" });
+  const marketEvidence = await readBnbImportMarket({ provider, tokenAddress: raw.contractAddress });
   return {
+    ...marketEvidence,
     chainId: BNB_CHAIN_ID,
     tokenAddress: raw.contractAddress,
     name: raw.token?.name ?? null,
@@ -54,6 +74,22 @@ export async function resolveBnbProjectImport({ chainId, tokenAddress, signedWal
     automaticOwnershipAvailable: raw.ownership?.automaticOwnershipVerification !== "unavailable" && Boolean(raw.ownership?.currentOwner),
     currentAuthority: raw.ownership?.currentOwner ?? null,
     signedWalletMatchesAuthority: Boolean(raw.ownership?.automaticOwnershipVerified),
+  };
+}
+
+export async function resolveRobinhoodProjectImport({ chainId, tokenAddress, signedWallet }) {
+  if (!robinhoodEnabled()) throw Object.assign(new Error("Robinhood project import is disabled"), { code: "PROJECT_IMPORT_CHAIN_DISABLED" });
+  if (Number(chainId) !== ROBINHOOD_CHAIN_ID) throw Object.assign(new Error("Robinhood project import resolver only supports chain 4663"), { code: "UNSUPPORTED_CHAIN" });
+  const raw = await resolveProjectOwnershipEvm({ provider:getRobinhoodProvider(), chainId:ROBINHOOD_CHAIN_ID, contractAddress:tokenAddress, signedConnectedWallet:signedWallet });
+  if (!raw?.ok) throw Object.assign(new Error(raw?.error || "Robinhood token resolution failed"), { code: raw?.errorCode || "PROJECT_IMPORT_RESOLVE_FAILED" });
+  return {
+    chainId:ROBINHOOD_CHAIN_ID, tokenAddress:raw.contractAddress,
+    name:raw.token?.name??null, symbol:raw.token?.symbol??null, decimals:raw.token?.decimals??null, totalSupply:raw.token?.totalSupply??null,
+    metadataSource:"erc20_contract", metadataType:"erc20_readonly",
+    automaticOwnershipAvailable:raw.ownership?.automaticOwnershipVerification!=="unavailable"&&Boolean(raw.ownership?.currentOwner),
+    currentAuthority:raw.ownership?.currentOwner??null, signedWalletMatchesAuthority:Boolean(raw.ownership?.automaticOwnershipVerified),
+    authoritySource:raw.ownership?.method?`evm_${raw.ownership.method}`:null,
+    market:{phase:"import_only",verified:true,reason:"robinhood_read_only_project_import",venue:"Robinhood",liquidityAvailable:null,pricingValid:null,buyEnabled:null,sellEnabled:null,requiresLaunchReview:false},
   };
 }
 
@@ -123,7 +159,7 @@ export async function resolveSolanaProjectImport({ chainId, tokenAddress, signed
   await assertSolanaImportMainnet(connection);
   const raw = await resolveProjectOwnershipSolana({ mint: tokenAddress, connectedWallet: signedWallet, connection });
   if (!raw?.validMint) throw Object.assign(new Error(raw?.reason === "mint_lookup_failed" ? "Solana token lookup is temporarily unavailable." : "No valid Solana token was found. Check the Contract Address and selected chain."), { code: raw?.reason === "mint_lookup_failed" ? "PROJECT_IMPORT_RPC_UNAVAILABLE" : "SOLANA_MINT_INVALID" });
-  const authority = await resolveSolanaProjectAuthority({ connection, mint: raw.mint, mintAuthority: raw.mintAuthority });
+  const authority = await resolveSolanaProjectAuthority({ connection, mint: raw.mint, mintAuthority: raw.mintAuthority, claimant: new PublicKey(signedWallet).toBase58(), tokenProgram: new PublicKey(raw.tokenProgramId) });
   const metadata = await resolveSolanaDisplayMetadata(connection, raw.mint);
   return {
     chainId: SOLANA_CHAIN_ID,
@@ -137,6 +173,7 @@ export async function resolveSolanaProjectImport({ chainId, tokenAddress, signed
     automaticOwnershipAvailable: Boolean(authority.currentAuthority),
     ...authority,
     mintAuthority: raw.mintAuthority ?? null,
+    observedSlot: raw.observedSlot ?? null,
     signedWalletMatchesAuthority: Boolean(authority.currentAuthority && authority.currentAuthority === new PublicKey(signedWallet).toBase58()),
   };
 }
@@ -144,4 +181,5 @@ export async function resolveSolanaProjectImport({ chainId, tokenAddress, signed
 export function registerDefaultProjectImportResolvers() {
   registerProjectImportResolver(BNB_CHAIN_ID, resolveBnbProjectImport);
   registerProjectImportResolver(SOLANA_CHAIN_ID, resolveSolanaProjectImport);
+  if (robinhoodEnabled()) registerProjectImportResolver(ROBINHOOD_CHAIN_ID, resolveRobinhoodProjectImport);
 }

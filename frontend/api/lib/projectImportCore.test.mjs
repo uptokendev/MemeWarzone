@@ -186,8 +186,12 @@ test("dedicated project-import API works with imports ON and Arena OFF", async (
   assert.equal(payload.project.arenaStatus, "needs_review");
 });
 
-test("unsupported chain fails closed", async () => {
-  await assert.rejects(() => lookupProjectImport(pool, { chainId: 4663, tokenAddress: "0x0000000000000000000000000000000000000011" }), /Unsupported project import chain/);
+test("Robinhood chain fails closed while its independent import switch is disabled", async () => {
+  await assert.rejects(() => lookupProjectImport(pool, { chainId: 4663, tokenAddress: "0x0000000000000000000000000000000000000011" }), (error) => error?.code === "PROJECT_IMPORT_CHAIN_DISABLED" && /Robinhood project import is disabled/.test(error.message));
+});
+
+test("unknown project import chains remain unsupported", async () => {
+  await assert.rejects(() => lookupProjectImport(pool, { chainId: 999999, tokenAddress: "0x0000000000000000000000000000000000000011" }), /Unsupported project import chain/);
 });
 
 test("recent public list hides pending and manual-review projects even when review image exists", async () => {
