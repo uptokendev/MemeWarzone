@@ -64,11 +64,11 @@ test("durable deployment paths are chain-specific", () => {
 
 test("contract generations and founder-locked economics are unchanged", () => {
   assert.match(warPool, /uint256 public constant GENERATION = 2;/);
-  assert.match(warPool, /uint16 public constant ENTRY_LEAGUE_BPS = 2_000;/);
-  assert.match(warPool, /uint16 public constant ENTRY_PROTOCOL_BPS = 500;/);
-  assert.match(warPool, /uint16 public constant BOOST_PROTOCOL_BPS = 1_000;/);
+  assert.match(warPool, /uint256 public constant ENTRY_LEAGUE_BPS = 2_000;/);
+  assert.match(warPool, /uint256 public constant ENTRY_PROTOCOL_BPS = 500;/);
+  assert.match(warPool, /uint256 public constant BOOST_PROTOCOL_BPS = 1_000;/);
   assert.match(league, /uint256 public constant GENERATION = 2;/);
-  assert.match(league, /uint16 public constant MONTHLY_BPS = 6_000;/);
+  assert.match(league, /uint256 public constant MONTHLY_BPS = 6_000;/);
 });
 
 test("deployment tool uses existing contracts, authorizes League source, and writes full evidence", () => {
