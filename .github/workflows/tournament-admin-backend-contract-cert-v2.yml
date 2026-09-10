@@ -1,0 +1,99 @@
+name: Tournament Admin Backend Contract Cert V2
+
+on:
+  push:
+    branches:
+      - agent/tournament-admin-backend-contract-4b50cef
+
+permissions:
+  contents: write
+
+jobs:
+  patch-certify-commit:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: arena_schema_gate
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d arena_schema_gate"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      ARENA_SCHEMA_GATE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/arena_schema_gate
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/arena_schema_gate
+      ARENA_ADMIN_AUTH_ENFORCED: "true"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: agent/tournament-admin-backend-contract-4b50cef
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Apply focused backend patch
+        run: python scripts/applyTournamentAdminContractPatch.py
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Bootstrap certified Arena schema
+        run: node scripts/arenaTournamentModeSchemaGate.mjs
+
+      - name: Apply later Tournament prerequisites and admin migration twice
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260909_000001_arena_final_salvo_identity.sql >/dev/null
+          if [[ -f db/migrations/20260910123000_arena_tournament_exact_bracket.sql ]]; then
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260910123000_arena_tournament_exact_bracket.sql >/dev/null
+          fi
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260910_000002_arena_tournament_admin_contract.sql >/dev/null
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260910_000002_arena_tournament_admin_contract.sql >/dev/null
+
+      - name: Contract and Tournament regressions
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          tests=(api/arenaTournamentAdminContract.test.mjs)
+          for f in \
+            api/arenaTournamentModeSchema.test.mjs \
+            api/arenaTournamentModeFoundation.test.mjs \
+            api/arenaTournamentExactBracket.test.mjs \
+            api/arenaTournamentStart.test.mjs \
+            api/arenaTournamentBuyIn.test.mjs \
+            api/arenaTournamentBracketReconcile.test.mjs \
+            api/arenaTournamentChainIdentity.test.mjs; do
+            [[ -f "$f" ]] && tests+=("$f")
+          done
+          node --test "${tests[@]}"
+          shopt -s nullglob
+          extra=(api/*Vote*.test.mjs api/*vote*.test.mjs api/*FinalSalvo*.test.mjs api/*final*salvo*.test.mjs api/*T2*.test.mjs api/*t2*.test.mjs)
+          if ((${#extra[@]})); then node --test "${extra[@]}"; fi
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Commit certified backend patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/api/arenaTournaments.js frontend/api/lib/arenaTournamentAdminContract.js frontend/api/arenaTournamentAdminContract.test.mjs db/migrations/20260910_000002_arena_tournament_admin_contract.sql
+          git commit -m "feat(arena): complete authenticated tournament admin contract"
+          git push origin HEAD:agent/tournament-admin-backend-contract-4b50cef
