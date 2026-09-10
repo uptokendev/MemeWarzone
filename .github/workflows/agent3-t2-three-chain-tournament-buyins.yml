@@ -10,6 +10,8 @@ on:
       - "frontend/api/postgrad.js"
       - "frontend/src/components/arena/ArenaBuyInButton.tsx"
       - "frontend/api/lib/arenaTournamentBuyInCompletion.test.mjs"
+      - "scripts/t2-tournament-buyin-evm-real.mjs"
+      - "frontend/scripts/t2-tournament-buyin-solana-real.mjs"
       - ".github/workflows/agent3-t2-three-chain-tournament-buyins.yml"
   workflow_dispatch:
 
@@ -34,5 +36,9 @@ jobs:
         run: node --test frontend/api/lib/arenaTournamentBuyInCompletion.test.mjs
       - name: Arena V2 deployment authority regression
         run: node --test scripts/arenaV2DeploymentAuthority.test.mjs
+      - name: Real staging runner syntax
+        run: |
+          node --check scripts/t2-tournament-buyin-evm-real.mjs
+          node --check frontend/scripts/t2-tournament-buyin-solana-real.mjs
       - name: Frontend build
         run: npm --prefix frontend run build
