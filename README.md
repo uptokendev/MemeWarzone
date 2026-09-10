@@ -1,47 +1,40 @@
-# MemeWarzone wallet connection upgrade
+# MemeWarzone
 
-This package replaces the old hard-coded wallet modal with a 2026-style EVM wallet flow:
+MemeWarzone is a multichain memecoin platform built around the full life of a project — from preparation and launch to community growth, trading, Battles, Tournaments and the wider Warzone.
 
-- Detects EIP-6963 wallet providers and legacy injected providers.
-- Lists only detected wallets in the connect modal.
-- Keeps a link to trusted EVM wallet directories when nothing is detected.
-- Uses `eth_accounts` for hydration and `eth_requestAccounts` only after the user selects a wallet.
-- Keeps your existing `ethers` provider/signer API, so existing launchpad code should continue to work.
-- Adds no new npm dependencies.
+**Website:** https://memewar.zone  
+**X:** https://x.com/memewarzone
 
-## Files to copy
+## Enter the Warzone
 
-Copy these into the repo, preserving paths:
+Creators can prepare a campaign, build their project page and community, then launch through MemeWarzone on supported chains. Projects that already exist elsewhere can also enter through the import flow instead of creating a new ticker.
 
-- `frontend/src/hooks/useWallet.ts`
-- `frontend/src/contexts/WalletContext.tsx`
-- `frontend/src/components/wallet/ConnectWalletModal.tsx`
+Imported projects keep their existing token identity. Ownership verification and project registration are separate from any competition or market eligibility decisions.
 
-## Patch TopBar
+## For creators
 
-From the repository root, after copying the files above, run:
+MemeWarzone gives creators a place to build momentum before and after launch. Project pages bring together identity, media, socials, community activity and market visibility so a campaign does not end when the initial launch phase is over.
 
-```bash
-node apply-wallet-connection-patch.mjs
-```
+## For traders and communities
 
-The patch script updates `frontend/src/components/TopBar.tsx` by:
+Traders can discover projects, follow activity and support the communities they believe in. MemeWarzone is designed around continued participation rather than a one-time token creation event.
 
-1. removing the inline `createPortal` wallet modal,
-2. removing the old `WalletType`/`toast` modal handler,
-3. importing `ConnectWalletModal`, and
-4. rendering `<ConnectWalletModal open={walletModalOpen} onOpenChange={setWalletModalOpen} />`.
+## Battles
 
-If the script says `TopBar.tsx did not change`, make these manual edits:
+Battles turn project performance and community participation into direct competition. Projects can challenge opponents and compete for points across defined Battle rules and scoring periods.
 
-```tsx
-import { useWallet } from "@/contexts/WalletContext";
-import { ConnectWalletModal } from "@/components/wallet/ConnectWalletModal";
-```
+## Tournaments
 
-Remove the old `handleWalletSelect` function and replace the entire old `{/* Wallet selection modal */} ... createPortal(..., document.body)}` block with:
+Tournaments expand competition into structured brackets and event formats. Projects advance through rounds toward a final winner, with formats designed for both market-driven and community-driven competition.
 
-```tsx
-{/* Wallet selection modal */}
-<ConnectWalletModal open={walletModalOpen} onOpenChange={setWalletModalOpen} />
-```
+## The wider Warzone
+
+MemeWarzone connects launch, discovery, community, markets and competition into one product. The broader Warzone includes recurring competitive formats, project progression and additional ways for creators, traders and communities to stay active beyond launch day.
+
+## Public documentation
+
+User-facing guides are maintained in the `docs-site/` section of this repository. Internal operational, deployment, security, certification and implementation documentation is intentionally kept out of the public repository documentation surface.
+
+---
+
+MemeWarzone is software for crypto markets. Participation in memecoins and digital assets involves substantial risk. Always do your own research.
