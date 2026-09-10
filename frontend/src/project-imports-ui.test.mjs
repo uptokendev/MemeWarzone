@@ -16,10 +16,12 @@ test("project imports remain independently gated from Arena", () => {
   assert.match(app, /projectImportsEnabled/); assert.match(client, /\/api\/project-imports/); assert.doesNotMatch(client, /\/api\/arena\/imports/);
 });
 
-test("BNB and Solana onboarding use Contract Address and no Robinhood dependency", () => {
-  assert.match(importPage, /type ImportChain = "bnb" \| "solana"/); assert.match(importPage, />BNB<\/Button>/); assert.match(importPage, />Solana<\/Button>/);
+test("BNB and Solana stay live while Robinhood import is built behind its own disabled-by-default switch", () => {
+  assert.match(importPage, /type ImportChain = "bnb" \| "solana" \| "robinhood"/); assert.match(importPage, />BNB<\/Button>/); assert.match(importPage, />Solana<\/Button>/);
+  assert.match(importPage, /projectImportRobinhoodEnabled\?<Button/); assert.match(importPage, />Robinhood<\/Button>/);
+  assert.match(config, /VITE_ENABLE_PROJECT_IMPORT_ROBINHOOD/); assert.match(config, /projectImportRobinhoodEnabled = readBoolean\(import\.meta\.env\.VITE_ENABLE_PROJECT_IMPORT_ROBINHOOD, false\)/);
   assert.match(importPage, /3\. Contract Address/); assert.match(importPage, /placeholder="Contract Address"/); assert.match(importPage, /}IMPORT<\/Button>/); assert.match(importPage, /REGISTER MEMECOIN/);
-  assert.doesNotMatch(importPage, /mint address/i); assert.doesNotMatch(importPage, /Robinhood/i);
+  assert.doesNotMatch(importPage, /mint address/i);
 });
 
 test("wallet family auto-select remains safe while explicit chain choice is possible", () => {
@@ -64,9 +66,9 @@ test("clear import navigation remains available", () => {
   assert.match(navigation, /Import your memecoin/i); assert.match(leftSidebar, /Import your memecoin/i); assert.match(mobileSidebar, /"\/import"/);
 });
 
-test("imported project route mounts owner-manageable surface before live token runtime", () => {
+test("imported project route mounts owner-manageable surface and refreshes manual approval before live token runtime", () => {
   assert.match(tokenEntry, /lookupProjectImport\(routeId, importChainId\)/); assert.match(tokenEntry, /import ImportedProjectDetails from "\.\/ImportedProjectDetails"/);
-  assert.match(tokenEntry, /if \(project\) return <ImportedProjectDetails item=\{project\} \/>/); assert.match(liveTokenEntry, /import TokenDetails from "\.\/TokenDetails"/);
+  assert.match(tokenEntry, /if \(project\) return <ImportedProjectDetails key=/); assert.match(tokenEntry, /item=\{project\} \/>/); assert.match(tokenEntry, /window\.setInterval\(\(\) => \{ void refresh\(\); \}, 10_000\)/); assert.match(liveTokenEntry, /import TokenDetails from "\.\/TokenDetails"/);
 });
 
 test("verified project owner is the only profile and replacement-image edit authority", () => {
