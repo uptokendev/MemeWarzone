@@ -29,7 +29,7 @@ BEGIN
     RETURN NEW;
   END IF;
 
-  IF NEW.status = 'live' THEN
+  IF NEW.status IN ('live', 'finished') THEN
     IF NEW.starts_at IS NULL THEN
       RAISE EXCEPTION USING
         ERRCODE = 'P0001',
