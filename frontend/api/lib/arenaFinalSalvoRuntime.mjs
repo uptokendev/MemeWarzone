@@ -1,6 +1,7 @@
+import { ARENA_CHAIN_IDS, arenaEnvironmentIdentity, requiredArenaChainId } from "./arenaChainEnvironment.js";
+
 const SHOT_SECONDS = 60;
 const MAX_SALVO_SHOTS = 5;
-const SUPPORTED_CHAINS = new Set([56, 101, 4663]);
 
 function int(value) {
   const n = Number(value);
@@ -30,13 +31,11 @@ function plusShot(value) {
 }
 
 export function requiredFinalSalvoChainId(value) {
-  const chainId = Number(value);
-  if (!Number.isSafeInteger(chainId) || !SUPPORTED_CHAINS.has(chainId)) {
-    const error = new Error("Unsupported Final Salvo chain id");
-    error.code = "INVALID_CHAIN";
-    throw error;
-  }
-  return chainId;
+  return requiredArenaChainId(value, "Final Salvo");
+}
+
+export function finalSalvoEnvironmentIdentity(chainId, identity = {}) {
+  return arenaEnvironmentIdentity(requiredFinalSalvoChainId(chainId), identity);
 }
 
 export function finalSalvoEntryDecision({ battleEndsAt, now = new Date(), regulationLeftPoints, regulationRightPoints } = {}) {
@@ -228,6 +227,6 @@ export function closeFinalSalvoShot({ tiebreak, leftUnique, rightUnique, now = n
   };
 }
 
-export const FINAL_SALVO_CHAIN_IDS = Object.freeze([56, 101, 4663]);
+export const FINAL_SALVO_CHAIN_IDS = ARENA_CHAIN_IDS;
 export const FINAL_SALVO_SHOT_SECONDS = SHOT_SECONDS;
 export const FINAL_SALVO_MAX_SHOTS = MAX_SALVO_SHOTS;

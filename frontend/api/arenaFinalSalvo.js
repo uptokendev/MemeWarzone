@@ -7,6 +7,7 @@ import {
   tournamentVoteTokensEqual,
 } from "./lib/arenaTournamentVoteRuntime.mjs";
 import {
+  finalSalvoEnvironmentIdentity,
   finalSalvoIdentityMatches,
   requiredFinalSalvoChainId,
 } from "./lib/arenaFinalSalvoRuntime.mjs";
@@ -28,9 +29,36 @@ function requestedChainId(req, body = null) {
   return requiredFinalSalvoChainId(value);
 }
 
+function requestedEnvironment(req, body = null) {
+  const query = getQuery(req);
+  const source = body == null ? query : { ...(body || {}), ...(body?.auth || {}) };
+  return {
+    environment: source?.environment ?? source?.runtimeEnvironment ?? source?.runtime_environment ?? null,
+    solanaCluster: source?.solanaCluster ?? source?.solana_cluster ?? source?.cluster ?? null,
+  };
+}
+
+function assertTournamentEnvironment(tournament, chainId, requested) {
+  const rowIdentity = finalSalvoEnvironmentIdentity(chainId, {
+    environment: tournament?.environment,
+    solanaCluster: tournament?.solana_cluster,
+  });
+  if (chainId === 101 && !requested?.environment && !requested?.solanaCluster) {
+    throw Object.assign(new Error("Solana Final Salvo requires devnet or mainnet-beta identity"), { code: "FINAL_SALVO_ENVIRONMENT_REQUIRED" });
+  }
+  const requestIdentity = finalSalvoEnvironmentIdentity(chainId, requested || {});
+  if (
+    rowIdentity.environment !== requestIdentity.environment ||
+    rowIdentity.solanaCluster !== requestIdentity.solanaCluster
+  ) {
+    throw Object.assign(new Error("Final Salvo tournament environment mismatch"), { code: "FINAL_SALVO_ENVIRONMENT_MISMATCH" });
+  }
+  return rowIdentity;
+}
+
 async function loadTournament(id, chainId) {
   const result = await pool.query(
-    `select id, chain_id, status, bracket, battle_mode, round_duration_hours
+    `select id, chain_id, status, bracket, battle_mode, round_duration_hours, environment, solana_cluster
        from public.arena_tournaments where id = $1 and chain_id = $2 limit 1`,
     [id, chainId],
   );
@@ -285,7 +313,9 @@ export default async function handler(req, res) {
     const chainId = requestedChainId(req, body);
     const tournament = await loadTournament(route.tournamentId, chainId);
     if (!tournament) return json(res, 404, { ok: false, error: "Tournament not found on requested chain", code: "TOURNAMENT_CHAIN_MISMATCH" });
-    if (tournament.battle_mode !== "vote" || Number(tournament.round_duration_hours) !== 24) {
+    assertTournamentEnvironment(tournament, chainId, requestedEnvironment(req, body));
+    const roundHours = Number(tournament.round_duration_hours);
+    if (tournament.battle_mode !== "vote" || !Number.isInteger(roundHours) || roundHours < 1) {
       return json(res, 409, { ok: false, error: "Final Salvo requires a Vote Tournament", code: "FINAL_SALVO_TOURNAMENT_INACTIVE" });
     }
 
@@ -304,7 +334,9 @@ export default async function handler(req, res) {
     }
     return handlePost(req, res, route, tournament, matchup, chainId, body);
   } catch (error) {
-    if (error?.code === "INVALID_CHAIN") return json(res, 400, { ok: false, error: error.message, code: error.code });
+    if (["INVALID_CHAIN", "INVALID_ENVIRONMENT", "FINAL_SALVO_ENVIRONMENT_REQUIRED", "FINAL_SALVO_ENVIRONMENT_MISMATCH"].includes(error?.code)) {
+      return json(res, error.code === "FINAL_SALVO_ENVIRONMENT_MISMATCH" ? 404 : 400, { ok: false, error: error.message, code: error.code });
+    }
     console.error("[api/arenaFinalSalvo]", error);
     return json(res, 503, { ok: false, error: "Final Salvo runtime is unavailable", detail: String(error?.message || error) });
   }
