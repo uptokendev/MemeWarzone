@@ -1,0 +1,106 @@
+name: Materialize live import release
+on:
+  workflow_dispatch:
+  push:
+    branches: [release/live-import-20260910]
+    paths: ['.github/workflows/materialize-live-import-release.yml']
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: import_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d import_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PROJECT_IMPORT_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/import_test
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/import_test
+      PG_DISABLE_SSL: '1'
+      ENABLE_PROJECT_IMPORTS: 'true'
+      VITE_ENABLE_PROJECT_IMPORTS: 'true'
+      ENABLE_ARENA: 'false'
+      CI: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Materialize reviewed preview runtime only
+        run: |
+          set -euo pipefail
+          git fetch origin preview/import-review-c15d5edd
+          git checkout origin/preview/import-review-c15d5edd -- \
+            .github/workflows/import-review-v1.yml \
+            .github/workflows/project-import-owner-proof.yml \
+            .gitleaksignore \
+            docs/import-review-v1.md \
+            frontend/api/lib/fixtures/ask-market-20260909.json \
+            frontend/api/lib/projectImportAssessment.js \
+            frontend/api/lib/projectImportAssessment.test.mjs \
+            frontend/api/lib/projectImportBnbMarket.js \
+            frontend/api/lib/projectImportBnbMarket.test.mjs \
+            frontend/api/lib/projectImportEvidenceStore.js \
+            frontend/api/lib/projectImportEvidenceStore.test.mjs \
+            frontend/api/lib/projectImportHttp.test.mjs \
+            frontend/api/lib/projectImportMarketFixtures.test.mjs \
+            frontend/api/lib/projectImportPumpChallenge.js \
+            frontend/api/lib/projectImportPumpChallenge.test.mjs \
+            frontend/api/lib/projectImportPumpEvidence.js \
+            frontend/api/lib/projectImportPumpEvidence.test.mjs \
+            frontend/api/lib/projectImportResolverAdapters.js \
+            frontend/api/lib/projectImportResolvers.js \
+            frontend/api/lib/projectImportRiskRegression.test.mjs \
+            frontend/api/lib/projectImportRiskSecurity.js \
+            frontend/api/lib/projectImportSecurity.js \
+            frontend/api/lib/projectOwnershipResolveSolana.js \
+            frontend/api/lib/projectOwnershipReview.js \
+            frontend/api/lib/projectOwnershipReview.test.mjs \
+            frontend/api/lib/projectSolanaProjectAuthority.js \
+            frontend/api/projectImports.js \
+            frontend/e2e/project-import-feedback.browser.ts \
+            frontend/src/components/imports/PumpImportHelp.tsx \
+            frontend/src/lib/projectImportFeedback.mjs \
+            frontend/src/lib/projectImportFeedback.test.mjs \
+            frontend/src/lib/projectImports.ts \
+            frontend/src/pages/ProjectImport.tsx \
+            frontend/src/project-imports-ui.test.mjs \
+            supabase/migrations/20260909213428_project_import_review_evidence.sql \
+            supabase/migrations/20260910175500_project_import_pump_challenges.sql
+          git rm .github/workflows/materialize-live-import-release.yml
+      - name: Install
+        run: npm ci --prefix frontend --no-audit --no-fund
+      - name: Import graph
+        run: npm --prefix frontend run check:api-imports
+      - name: Focused import tests
+        run: |
+          set -e
+          for file in frontend/api/lib/projectImport*.test.mjs frontend/api/lib/projectOwnershipResolve*.test.mjs frontend/api/lib/projectSolanaProjectAuthority.test.mjs frontend/api/lib/projectOwnershipReview.test.mjs frontend/src/project-imports-ui.test.mjs frontend/src/lib/projectImportFeedback.test.mjs; do node --test "$file"; done
+      - name: Production frontend build
+        run: npm --prefix frontend run build
+      - name: Ensure release diff excludes staging-only machinery
+        run: |
+          set -e
+          test ! -e frontend/nixpacks.import-preview-api.toml
+          test ! -e frontend/nixpacks.import-preview-web.toml
+          test ! -e supabase/migrations/20260908180000_staging_import_acceptance_support.sql
+          test ! -e frontend/scripts/simplify-import-review-copy.mjs
+          git diff --name-only origin/main...HEAD || true
+      - name: Commit release candidate
+        run: |
+          set -e
+          git config user.name "uptokendev"
+          git config user.email "uptokendev@gmail.com"
+          git add -A
+          git commit -m "release(import): Pump ownership verification and review hardening"
+          git push origin HEAD:release/live-import-20260910
