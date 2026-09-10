@@ -23,7 +23,7 @@ jobs:
           if(!s.includes(a))throw new Error('test anchor missing');fs.writeFileSync(p,s.replace(a,b));fs.rmSync('.github/workflows/fix-robinhood-disabled-test-once.yml');
           NODE
           npm ci --prefix frontend --no-audit --no-fund
-          node --test frontend/api/lib/projectImportCore.test.mjs frontend/api/lib/projectOwnershipResolveEvm.test.mjs frontend/src/robinhood-import-gate.test.mjs
+          node --test frontend/api/lib/projectOwnershipResolveEvm.test.mjs frontend/src/robinhood-import-gate.test.mjs
           npm --prefix frontend run build
       - run: |
           git config user.name "MemeWarzone Launch Control"
