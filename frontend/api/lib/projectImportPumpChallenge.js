@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { Connection, PublicKey, SystemProgram } from "@solana/web3.js";
+import { Connection, PublicKey } from "@solana/web3.js";
 
 export const PUMP_CHALLENGE_TTL_MS = 15 * 60 * 1000;
 export const PUMP_CHALLENGE_MIN_LAMPORTS = 10_000;
@@ -36,27 +36,20 @@ export async function createPumpOwnershipChallenge(pool, { tokenAddress, creator
     throw challengeError("Pump.fun ownership challenge requires different valid creator and connected wallets.");
   }
   const expiresAt = new Date(Date.now() + PUMP_CHALLENGE_TTL_MS);
-  return pool.query("BEGIN").then(async () => {
+  // A pg Pool cannot safely use BEGIN across independent pool.query calls. We do
+  // not need a transaction here: stale pending rows are explicitly cancelled and
+  // the unique indexes reject amount/signature collisions.
+  await pool.query(`UPDATE public.project_import_pump_challenges SET cancelled_at=NOW() WHERE chain_id=101 AND token_address=$1 AND claimant_wallet=$2 AND verified_at IS NULL AND cancelled_at IS NULL AND expires_at>NOW()`, [tokenAddress, claimantWallet]);
+  for (let i = 0; i < 8; i += 1) {
+    const lamports = createChallengeLamports();
     try {
-      await pool.query(`UPDATE public.project_import_pump_challenges SET cancelled_at=NOW() WHERE chain_id=101 AND token_address=$1 AND claimant_wallet=$2 AND verified_at IS NULL AND cancelled_at IS NULL AND expires_at>NOW()`, [tokenAddress, claimantWallet]);
-      let row = null;
-      for (let i = 0; i < 8 && !row; i += 1) {
-        const lamports = createChallengeLamports();
-        try {
-          const result = await pool.query(`INSERT INTO public.project_import_pump_challenges(chain_id,token_address,creator_wallet,claimant_wallet,lamports,expires_at) VALUES(101,$1,$2,$3,$4,$5) RETURNING *`, [tokenAddress, creatorWallet, claimantWallet, lamports, expiresAt]);
-          row = result.rows[0];
-        } catch (error) {
-          if (error?.code !== "23505") throw error;
-        }
-      }
-      if (!row) throw challengeError("Could not create a unique verification amount. Please retry.", "PROJECT_IMPORT_PUMP_CHALLENGE_RETRY");
-      await pool.query("COMMIT");
-      return row;
+      const result = await pool.query(`INSERT INTO public.project_import_pump_challenges(chain_id,token_address,creator_wallet,claimant_wallet,lamports,expires_at) VALUES(101,$1,$2,$3,$4,$5) RETURNING *`, [tokenAddress, creatorWallet, claimantWallet, lamports, expiresAt]);
+      if (result.rows[0]) return result.rows[0];
     } catch (error) {
-      await pool.query("ROLLBACK").catch(() => {});
-      throw error;
+      if (error?.code !== "23505") throw error;
     }
-  });
+  }
+  throw challengeError("Could not create a unique verification amount. Please retry.", "PROJECT_IMPORT_PUMP_CHALLENGE_RETRY");
 }
 
 export async function latestPumpOwnershipChallenge(pool, { tokenAddress, claimantWallet }) {
