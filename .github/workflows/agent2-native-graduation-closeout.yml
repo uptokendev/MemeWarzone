@@ -6,6 +6,7 @@ on:
       - agent2/solana-current-authority-launch-d37dcf7
     paths:
       - .github/workflows/agent2-native-graduation-closeout.yml
+      - tests/solana/current-authority-postgrad-roundtrip-devnet.cjs
   workflow_dispatch:
 
 permissions:
@@ -28,7 +29,6 @@ env:
   SOLANA_GRADUATION_SEND: "true"
   SOLANA_GRADUATION_PAUSE_SNAPSHOT: /tmp/mwz-solana-devnet-pause-snapshot.json
   SOLANA_GRADUATION_FIXTURE_OUTPUT: /tmp/mwz-agent2-native-fixture.json
-  SOLANA_GRADUATION_BUYER_KEYPAIR_OUTPUT: /tmp/mwz-agent2-native-buyer.json
   SOLANA_GRADUATION_MATRIX_REPORT: /tmp/mwz-native-graduation.json
   SOLANA_POSTGRAD_REPORT: /tmp/mwz-postgrad-roundtrip.json
 
@@ -159,7 +159,6 @@ jobs:
           npm --prefix tests/solana run devnet:graduation-window -- open
           npm --prefix tests/solana run devnet:create-graduation-fixture
           test -s "$SOLANA_GRADUATION_FIXTURE_OUTPUT"
-          test -s "$SOLANA_GRADUATION_BUYER_KEYPAIR_OUTPUT"
           cat "$SOLANA_GRADUATION_FIXTURE_OUTPUT"
 
       - name: Normalize native WSOL certification ATA only
