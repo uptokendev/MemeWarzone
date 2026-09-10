@@ -94,3 +94,4 @@ replaceExact(test,
 `assert.match(importPage, /uploadPendingImage/); assert.match(importPage, /ATTACH IMAGE TO REVIEW/); assert.match(importPage, /MANUAL CHECK NEEDED/); assert.match(importPage, /project stays hidden until we approve it/);`);
 
 console.log('Simplified import review copy without changing import decisions or permissions.');
+// One-shot preview verifier trigger: 2026-09-10.
