@@ -109,3 +109,13 @@ test("operator ownership review is admin-authenticated, CAS-safe, audited, image
 test("existing MemeWarzone token runtime remains the fallback for non-imported rows", () => {
   assert.match(coinsPage, /type: "imported"/); assert.match(client, /listUserProjectImports/); assert.match(tokenEntry, /return <TokenDetailsLiveEntry \/>/);
 });
+
+
+test("Pump.fun mismatch offers a 15-minute creator-wallet transfer proof without weakening other mismatches",()=>{
+  assert.match(importPage,/VERIFY YOUR PUMP\.FUN WALLET/);
+  assert.match(importPage,/START VERIFICATION/);
+  assert.match(importPage,/I SENT IT - CHECK NOW/);
+  assert.match(importPage,/MemeWarzone never receives the SOL/);
+  assert.match(importPage,/project_import_pump_challenge_start/);
+  assert.match(importPage,/project_import_pump_challenge_check/);
+});

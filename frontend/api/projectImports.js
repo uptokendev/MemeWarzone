@@ -31,6 +31,7 @@ import {
 
 import { assessProjectImport, assertAutomaticImport, assertNewImportMarket, importProofReceipt, isRetainedImportPage } from "./lib/projectImportAssessment.js";
 import { withImportTransaction, appendImportEvidence, latestImportEvidence, importEvidenceHistory } from "./lib/projectImportEvidenceStore.js";
+import { applyVerifiedPumpChallenge, createPumpOwnershipChallenge, latestPumpOwnershipChallenge, pumpChallengeConnection, pumpChallengePublic, verifyPumpOwnershipChallenge } from "./lib/projectImportPumpChallenge.js";
 
 registerDefaultProjectImportResolvers();
 
@@ -201,6 +202,7 @@ async function buildImportChecks(identity, signer, authPayload, fallback = false
   let resolved;
   try { resolved = await resolveForSigner(identity, signer); }
   catch (error) { if (!fallback || !canFallbackToManual(error)) throw error; resolved = unresolvedEvidence(identity, error); }
+  resolved = await applyVerifiedPumpChallenge(pool, identity, signer, resolved);
   const security = await scanProjectImportSecurity({ ...identity, market: resolved.market, custody: resolved.custody });
   const proof = authPayload ? importProofReceipt({ ...authPayload, walletAddress: signer }) : null;
   const assessment = assessProjectImport({ resolved, security, claimantWallet: signer, proof });
@@ -319,6 +321,37 @@ export default async function projectImports(req, res) {
       }
       const items = await listRecentProjectImports(pool, { limit: q.limit || 24 });
       return json(res, 200, { items: items.map(publicProject) });
+    }
+
+
+    if (req.method === "POST" && path === "/pump-challenge") {
+      const body = await readJson(req);
+      const identity = normalizeProjectIdentity(body.chainId, body.tokenAddress);
+      if (identity.chainId !== 101) throw Object.assign(new Error("Pump.fun wallet verification is only available on Solana."), { code: "INVALID_CHAIN" });
+      const auth = await strictAuth(res, body, { identity, action: PROJECT_IMPORT_ACTIONS.pumpChallengeStart });
+      if (!auth) return;
+      const resolved = await resolveForSigner(identity, auth.walletAddress);
+      if (resolved?.authoritySource !== "pump_bonding_curve_creator" || !resolved?.currentAuthority) throw Object.assign(new Error("A signable Pump.fun creator wallet could not be established for this token."), { code: "PROJECT_IMPORT_PUMP_CHALLENGE_UNAVAILABLE" });
+      if (resolved.signedWalletMatchesAuthority) throw Object.assign(new Error("This wallet already matches the Pump.fun creator wallet."), { code: "PROJECT_IMPORT_PUMP_CHALLENGE_NOT_NEEDED" });
+      const challenge = await createPumpOwnershipChallenge(pool, { tokenAddress: identity.tokenAddress, creatorWallet: resolved.currentAuthority, claimantWallet: auth.walletAddress });
+      return json(res, 201, { challenge: pumpChallengePublic(challenge) });
+    }
+
+    if (req.method === "POST" && path === "/pump-challenge/check") {
+      const body = await readJson(req);
+      const identity = normalizeProjectIdentity(body.chainId, body.tokenAddress);
+      if (identity.chainId !== 101) throw Object.assign(new Error("Pump.fun wallet verification is only available on Solana."), { code: "INVALID_CHAIN" });
+      const intentBody = { challengeId: String(body.challengeId || "") };
+      const auth = await strictAuth(res, body, { identity, action: PROJECT_IMPORT_ACTIONS.pumpChallengeCheck, intentBody });
+      if (!auth) return;
+      const challenge = await latestPumpOwnershipChallenge(pool, { tokenAddress: identity.tokenAddress, claimantWallet: auth.walletAddress });
+      if (!challenge || challenge.id !== intentBody.challengeId) throw Object.assign(new Error("Verification challenge not found. Start a new one."), { code: "PROJECT_IMPORT_PUMP_CHALLENGE_NOT_FOUND" });
+      const current = await resolveForSigner(identity, auth.walletAddress);
+      if (current?.authoritySource !== "pump_bonding_curve_creator" || current?.currentAuthority !== challenge.creator_wallet) throw Object.assign(new Error("The Pump.fun creator record changed. Start verification again."), { code: "PROJECT_IMPORT_PUMP_CREATOR_CHANGED" });
+      const verified = await verifyPumpOwnershipChallenge(pool, challenge, pumpChallengeConnection());
+      const { resolved, security, assessment } = await buildImportChecks(identity, auth.walletAddress, body.auth, true);
+      const project = await enrichExistingProjectIdentity(identity, resolved) || await lookupProjectImport(pool, identity);
+      return json(res, 200, { challenge: pumpChallengePublic(verified), resolved: { ...resolved, security, assessment, retainedPageOnly: isRetainedImportPage(project) }, project: publicProject(project) });
     }
 
     if (req.method === "POST" && path === "/resolve") {
