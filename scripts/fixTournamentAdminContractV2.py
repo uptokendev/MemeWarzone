@@ -4,6 +4,14 @@ import re
 helper_path = Path('frontend/api/lib/arenaTournamentAdminContract.js')
 helper = helper_path.read_text()
 
+# Complete CREATE persistence for the new admin generation.
+create_pattern = re.compile(r'''(sponsor_reference, state_version, exact_bracket_required\n\s*\) values \(\$1,\$2,\$3,'upcoming','custom',\$4,\$5,\$6,\$7,\$8,\$9,\$10,\$11,\$12,\$13,\$14,\$15,\$16,\$17,\$18,\$19,\$20,1,true\))''')
+create_replacement = '''sponsor_reference, state_version, exact_bracket_required, admin_contract_version, invite_wallets
+     ) values ($1,$2,$3,'upcoming','custom',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,1,true,1,$21::jsonb)'''
+helper, n = create_pattern.subn(create_replacement, helper, count=1)
+if n != 1:
+    raise SystemExit('create persistence structural anchor missing')
+
 # Complete the dashboard PATCH contract on the already-generated helper.
 edit_pattern = re.compile(r'''export function handleTournamentAdminEdit\(req, res, id\) \{.*?\n\}\n\nexport function handleTournamentRegistrationState''', re.S)
 edit_replacement = '''export function handleTournamentAdminEdit(req, res, id) {
@@ -24,8 +32,11 @@ edit_replacement = '''export function handleTournamentAdminEdit(req, res, id) {
       if (startMode === "scheduled" && Date.parse(startsAt) < Date.parse(closes)) throw new Error("Scheduled start must be at or after registration closes");
       const buyInNative = bodyValue(body, "buyInNative", "buy_in_native") == null
         ? Number(row.buy_in_native || 0)
-        : optionalNonnegativeNumber(bodyValue(body, "buyInNative", "buy_in_native"), "buyInNative");
-      const identity = normalizeEnvironment(Number(row.chain_id), body.environment ?? row.environment);
+        : normalizeBuyIn(bodyValue(body, "buyInNative", "buy_in_native"));
+      const identity = normalizeEnvironment(Number(row.chain_id), {
+        environment: body.environment ?? row.environment,
+        solanaCluster: bodyValue(body, "solanaCluster", "solana_cluster") ?? row.solana_cluster,
+      });
       return {
         ok: true,
         name: text(body.name ?? row.name),
@@ -85,13 +96,12 @@ if n != 1:
 
 # Export pure validators for executable boundary tests.
 helper = helper.replace('function isSafePowerOfTwo(value) {', 'export function isSafePowerOfTwo(value) {', 1)
-helper = helper.replace('function normalizeEnvironment(chainId, environmentRaw) {', 'export function normalizeEnvironment(chainId, environmentRaw) {', 1)
+helper = helper.replace('function normalizeEnvironment(chainId, body) {', 'export function normalizeEnvironment(chainId, body) {', 1)
 helper = helper.replace('function normalizeRoundDuration(kind, value) {', 'export function normalizeRoundDuration(kind, value) {', 1)
 helper_path.write_text(helper)
 
 arena_path = Path('frontend/api/arenaTournaments.js')
 arena = arena_path.read_text()
-
 status_anchor = '''    if (row.status !== "upcoming") {
       await client.query("rollback");
       return json(res, 409, { ok: false, error: "Tournament is not upcoming", code: "TOURNAMENT_ALREADY_STARTED" });
@@ -122,27 +132,22 @@ new_reconcile = 'const reconcile = path.match(/\\/admin\\/arena\\/tournaments\\/
 if old_reconcile not in arena:
     raise SystemExit('reconcile route anchor missing')
 arena = arena.replace(old_reconcile, new_reconcile, 1)
-
 start_response = '''      item: mapAdmin(updated.rows[0], start.roster.length),
       bracket,'''
 if start_response not in arena:
     raise SystemExit('start response anchor missing')
-arena = arena.replace(start_response,
-'''      item: mapAdmin(updated.rows[0], start.roster.length),
+arena = arena.replace(start_response, '''      item: mapAdmin(updated.rows[0], start.roster.length),
       tournament: mapAdmin(updated.rows[0], start.roster.length),
       bracket,''', 1)
 arena_path.write_text(arena)
 
 migration_path = Path('db/migrations/20260910_000002_arena_tournament_admin_contract.sql')
 migration = migration_path.read_text()
-
 wrong_salvo = re.compile(r'''\n-- Regulation duration follows the persisted Vote Tournament duration while Final\n-- Salvo timing remains immutable at 60-second shots/sudden death\.\nALTER TABLE public\.arena_vote_tiebreaks\n  DROP CONSTRAINT IF EXISTS arena_vote_tiebreaks_timing_check;\nALTER TABLE public\.arena_vote_tiebreaks\n  DROP CONSTRAINT IF EXISTS arena_vote_tiebreaks_identity_check;\nALTER TABLE public\.arena_vote_tiebreaks\n  ADD CONSTRAINT arena_vote_tiebreaks_timing_check CHECK \(\n    regulation_duration_seconds >= 3600\n    AND regulation_duration_seconds % 3600 = 0\n    AND salvo_duration_seconds = 60\n    AND sudden_death_shot_seconds = 60\n  \);\n''')
 migration, removed = wrong_salvo.subn('\n', migration, count=1)
 if removed != 1:
     raise SystemExit('incorrect Final Salvo block not found')
-
-migration = migration.replace(
-'''  IF tournament_mode = 'boost' THEN
+migration = migration.replace('''  IF tournament_mode = 'boost' THEN
     RAISE EXCEPTION 'Legacy boost Tournament battles remain fail-closed';
   END IF;
 ''', '', 1)
