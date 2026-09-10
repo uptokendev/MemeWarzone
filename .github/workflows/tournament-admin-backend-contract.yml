@@ -1,0 +1,162 @@
+name: Tournament Admin Backend Contract
+
+on:
+  push:
+    branches:
+      - agent/tournament-admin-backend-contract-4b50cef
+    paths:
+      - 'frontend/api/arenaTournaments.js'
+      - 'frontend/api/lib/arenaTournamentAdminContract.js'
+      - 'frontend/api/arenaTournamentAdminContract.test.mjs'
+      - 'db/migrations/20260910_000002_arena_tournament_admin_contract.sql'
+      - '.github/workflows/tournament-admin-backend-contract.yml'
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - 'frontend/api/arenaTournaments.js'
+      - 'frontend/api/lib/arenaTournamentAdminContract.js'
+      - 'frontend/api/arenaTournamentAdminContract.test.mjs'
+      - 'db/migrations/20260910_000002_arena_tournament_admin_contract.sql'
+      - '.github/workflows/tournament-admin-backend-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: arena_schema_gate
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d arena_schema_gate"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      ARENA_SCHEMA_GATE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/arena_schema_gate
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/arena_schema_gate
+      ARENA_ADMIN_AUTH_ENFORCED: "true"
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Bootstrap certified Arena schema
+        run: node scripts/arenaTournamentModeSchemaGate.mjs
+
+      - name: Apply Tournament prerequisites and admin migration twice
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260909_000001_arena_final_salvo_identity.sql >/dev/null
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260910_000001_arena_tournament_exact_bracket_control.sql >/dev/null
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260910_000002_arena_tournament_admin_contract.sql >/dev/null
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260910_000002_arena_tournament_admin_contract.sql >/dev/null
+
+      - name: SQL boundary matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO public.arena_tournaments
+            (id,name,chain_id,status,origin,registration_mode,buy_in_native,terms,starts_at,cap,bracket,created_at,updated_at,
+             native_symbol,battle_mode,round_duration_hours,contest_scoring_version,competition_generation,exact_bracket_required,
+             tournament_type,environment,solana_cluster,registration_state,registration_opens_at,registration_closes_at,
+             start_mode,sponsor_reference,state_version,admin_contract_version,invite_wallets)
+          VALUES
+            ('cert-bnb97','BNB staging',97,'upcoming','custom','open',0,'',now()+interval '3 hour',4,'{}'::jsonb,now(),now(),
+             'BNB','normal',12,'battle_points_v3','arena_competition_v2',true,'battle','staging',NULL,'closed',now()-interval '2 hour',now()-interval '1 hour','manual',NULL,1,1,'[]'::jsonb),
+            ('cert-bnb56','BNB production',56,'upcoming','custom','open',0,'',now()+interval '3 hour',8,'{}'::jsonb,now(),now(),
+             'BNB','normal',24,'battle_points_v3','arena_competition_v2',true,'battle','production',NULL,'closed',now()-interval '2 hour',now()-interval '1 hour','manual',NULL,1,1,'[]'::jsonb),
+            ('cert-rh46630','RH staging',46630,'upcoming','custom','open',0,'',now()+interval '3 hour',16,'{}'::jsonb,now(),now(),
+             'ETH','normal',12,'battle_points_v3','arena_competition_v2',true,'battle','staging',NULL,'closed',now()-interval '2 hour',now()-interval '1 hour','manual',NULL,1,1,'[]'::jsonb),
+            ('cert-rh4663','RH production',4663,'upcoming','custom','open',0,'',now()+interval '3 hour',32,'{}'::jsonb,now(),now(),
+             'ETH','normal',24,'battle_points_v3','arena_competition_v2',true,'battle','production',NULL,'closed',now()-interval '2 hour',now()-interval '1 hour','manual',NULL,1,1,'[]'::jsonb),
+            ('cert-soldev','SOL devnet vote',101,'upcoming','custom','open',0,'',now()+interval '3 hour',64,'{}'::jsonb,now(),now(),
+             'SOL','vote',1,'vote_tournament_v1','arena_competition_v2',true,'vote','staging','devnet','closed',now()-interval '2 hour',now()-interval '1 hour','manual',NULL,1,1,'[]'::jsonb),
+            ('cert-solmain','SOL mainnet vote',101,'upcoming','custom','open',0,'',now()+interval '3 hour',128,'{}'::jsonb,now(),now(),
+             'SOL','vote',721,'vote_tournament_v1','arena_competition_v2',true,'vote','production','mainnet-beta','closed',now()-interval '2 hour',now()-interval '1 hour','manual','sponsor-x',1,1,'[]'::jsonb);
+
+          DO $$
+          BEGIN
+            BEGIN
+              INSERT INTO public.arena_tournaments
+                (id,name,chain_id,status,origin,registration_mode,buy_in_native,terms,starts_at,cap,bracket,created_at,updated_at,native_symbol,battle_mode,round_duration_hours,contest_scoring_version,competition_generation,exact_bracket_required,tournament_type,environment,registration_state,registration_opens_at,registration_closes_at,start_mode,state_version,admin_contract_version)
+              VALUES ('bad-cap-2','bad',97,'upcoming','custom','open',0,'',now()+interval '3 hour',2,'{}',now(),now(),'BNB','normal',12,'battle_points_v3','arena_competition_v2',true,'battle','staging','closed',now()-interval '2 hour',now()-interval '1 hour','manual',1,1);
+              RAISE EXCEPTION 'cap 2 accepted';
+            EXCEPTION WHEN check_violation THEN NULL; END;
+            BEGIN
+              INSERT INTO public.arena_tournaments
+                (id,name,chain_id,status,origin,registration_mode,buy_in_native,terms,starts_at,cap,bracket,created_at,updated_at,native_symbol,battle_mode,round_duration_hours,contest_scoring_version,competition_generation,exact_bracket_required,tournament_type,environment,registration_state,registration_opens_at,registration_closes_at,start_mode,state_version,admin_contract_version)
+              VALUES ('bad-cap-3','bad',97,'upcoming','custom','open',0,'',now()+interval '3 hour',3,'{}',now(),now(),'BNB','normal',12,'battle_points_v3','arena_competition_v2',true,'battle','staging','closed',now()-interval '2 hour',now()-interval '1 hour','manual',1,1);
+              RAISE EXCEPTION 'cap 3 accepted';
+            EXCEPTION WHEN check_violation THEN NULL; END;
+            BEGIN
+              INSERT INTO public.arena_tournaments
+                (id,name,chain_id,status,origin,registration_mode,buy_in_native,terms,starts_at,cap,bracket,created_at,updated_at,native_symbol,battle_mode,round_duration_hours,contest_scoring_version,competition_generation,exact_bracket_required,tournament_type,environment,registration_state,registration_opens_at,registration_closes_at,start_mode,state_version,admin_contract_version)
+              VALUES ('bad-cap-6','bad',97,'upcoming','custom','open',0,'',now()+interval '3 hour',6,'{}',now(),now(),'BNB','normal',12,'battle_points_v3','arena_competition_v2',true,'battle','staging','closed',now()-interval '2 hour',now()-interval '1 hour','manual',1,1);
+              RAISE EXCEPTION 'non power-of-two accepted';
+            EXCEPTION WHEN check_violation THEN NULL; END;
+            BEGIN
+              INSERT INTO public.arena_tournaments
+                (id,name,chain_id,status,origin,registration_mode,buy_in_native,terms,starts_at,cap,bracket,created_at,updated_at,native_symbol,battle_mode,round_duration_hours,contest_scoring_version,competition_generation,exact_bracket_required,tournament_type,environment,registration_state,registration_opens_at,registration_closes_at,start_mode,state_version,admin_contract_version)
+              VALUES ('bad-battle-duration','bad',97,'upcoming','custom','open',0,'',now()+interval '3 hour',4,'{}',now(),now(),'BNB','normal',13,'battle_points_v3','arena_competition_v2',true,'battle','staging','closed',now()-interval '2 hour',now()-interval '1 hour','manual',1,1);
+              RAISE EXCEPTION 'battle duration 13 accepted';
+            EXCEPTION WHEN check_violation THEN NULL; END;
+            BEGIN
+              INSERT INTO public.arena_tournaments
+                (id,name,chain_id,status,origin,registration_mode,buy_in_native,terms,starts_at,cap,bracket,created_at,updated_at,native_symbol,battle_mode,round_duration_hours,contest_scoring_version,competition_generation,exact_bracket_required,tournament_type,environment,registration_state,registration_opens_at,registration_closes_at,start_mode,state_version,admin_contract_version)
+              VALUES ('bad-vote-duration','bad',97,'upcoming','custom','open',0,'',now()+interval '3 hour',4,'{}',now(),now(),'BNB','vote',0,'vote_tournament_v1','arena_competition_v2',true,'vote','staging','closed',now()-interval '2 hour',now()-interval '1 hour','manual',1,1);
+              RAISE EXCEPTION 'vote duration zero accepted';
+            EXCEPTION WHEN check_violation THEN NULL; END;
+            BEGIN
+              INSERT INTO public.arena_tournaments
+                (id,name,chain_id,status,origin,registration_mode,buy_in_native,terms,starts_at,cap,bracket,created_at,updated_at,native_symbol,battle_mode,round_duration_hours,contest_scoring_version,competition_generation,exact_bracket_required,tournament_type,environment,registration_state,registration_opens_at,registration_closes_at,start_mode,state_version,admin_contract_version)
+              VALUES ('bad-env','bad',56,'upcoming','custom','open',0,'',now()+interval '3 hour',4,'{}',now(),now(),'BNB','normal',12,'battle_points_v3','arena_competition_v2',true,'battle','staging','closed',now()-interval '2 hour',now()-interval '1 hour','manual',1,1);
+              RAISE EXCEPTION 'wrong environment accepted';
+            EXCEPTION WHEN check_violation THEN NULL; END;
+          END $$;
+          SQL
+
+      - name: Tournament, Vote, Final Salvo and T2 regressions
+        working-directory: frontend
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tests=(api/arenaTournamentAdminContract.test.mjs)
+          for f in api/*Tournament*.test.mjs api/*tournament*.test.mjs api/*Vote*.test.mjs api/*vote*.test.mjs api/*FinalSalvo*.test.mjs api/*final*salvo*.test.mjs api/*T2*.test.mjs api/*t2*.test.mjs; do
+            [[ "$f" == "api/arenaTournamentAdminContract.test.mjs" ]] || tests+=("$f")
+          done
+          node --test "${tests[@]}"
+
+      - name: Backend syntax checks
+        shell: bash
+        run: |
+          node --check frontend/api/arenaTournaments.js
+          node --check frontend/api/lib/arenaTournamentAdminContract.js
+
+      - name: Full frontend/backend TypeScript build
+        working-directory: frontend
+        run: npm run build
