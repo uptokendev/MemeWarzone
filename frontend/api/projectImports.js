@@ -386,7 +386,8 @@ export default async function projectImports(req, res) {
       if (!auth) return;
       const {resolved,security,assessment} = await buildImportChecks(identity,auth.walletAddress,body.auth,true);
       assertNewImportMarket(resolved);
-      if (resolved.automaticOwnershipAvailable && !resolved.signedWalletMatchesAuthority) requireResolvedOwner(resolved);
+      const pumpCreatorMismatch = resolved.automaticOwnershipAvailable === true && !resolved.signedWalletMatchesAuthority && resolved.authoritySource === "pump_bonding_curve_creator";
+      if (resolved.automaticOwnershipAvailable && !resolved.signedWalletMatchesAuthority && !pumpCreatorMismatch) requireResolvedOwner(resolved);
       if (!assessment.manualRequestAllowed && !(existing?.ownership_status === "ownership_manual_review" && existing.manual_claim_wallet === auth.walletAddress)) throw Object.assign(new Error("Use the normal verified import flow"),{code:"MANUAL_CLAIM_NOT_ALLOWED"});
       const project=await withImportTransaction(pool,async client=>{
         const created=await createProjectImport(client,{resolverResult:{...resolved,signedWalletMatchesAuthority:false},signedWallet:auth.walletAddress});

@@ -24,6 +24,10 @@ export function assessProjectImport({resolved,security,claimantWallet,proof=null
   const known=resolved.automaticOwnershipAvailable===true&&Boolean(authority);
   const match=known&&sameAddress(authority,claimantWallet,identity.chainId)&&resolved.signedWalletMatchesAuthority===true;
   const mismatch=known&&!match;
+  // Pump.fun commonly creates a separate embedded creator wallet. A known Pump creator
+  // mismatch may enter MANUAL ownership review, but never automatic import. The reviewer
+  // still needs independent project authorization (or a later cryptographic creator proof).
+  const pumpCreatorMismatch=mismatch&&resolved.authoritySource==='pump_bonding_curve_creator';
   const bonding=market.verified===true&&market.phase==='bonding';
   const postgrad=market.verified===true&&['postgrad','dex_market'].includes(market.phase)&&market.liquidityAvailable===true;
   const technicalFailure=Boolean(resolved.resolverError)||Boolean(resolved.projectAuthorityEvidence?.authorityError)||(security?.reviewRisks||[]).some(r=>/unavailable|no_security_data|invalid|uninitialized/.test(r.code));
@@ -39,14 +43,14 @@ export function assessProjectImport({resolved,security,claimantWallet,proof=null
     {key:'security',status:safe?'pass':security?.status==='blocked'?'blocked':'review',title:'Token safety',finding:safe?'Configured safety checks passed.':(security?.criticalRisks||[]).concat(security?.reviewRisks||[]).map(x=>x.label).join('; ')||'Safety data unavailable.',meaning:'No scan guarantees future safety. Ownership approval does not clear token risk.',nextAction:safe?'Keep the dated results; recheck before future competition admission.':'Resolve confirmed restrictions or escalate uncertain evidence. Do not call missing data safe.'},
   ];
   const automaticImportAllowed=match&&postgrad&&safe&&!technicalFailure&&!launchReview&&marketControlsOk;
-  const manualRequestAllowed=!bonding&&!mismatch&&!automaticImportAllowed;
-  const decision=bonding?'not_eligible':mismatch?'wrong_wallet':technicalFailure||!postgrad||!marketControlsOk?'technical_review':automaticImportAllowed?'automatic':'manual_review';
+  const manualRequestAllowed=!bonding&&!automaticImportAllowed&&(!mismatch||pumpCreatorMismatch);
+  const decision=bonding?'not_eligible':mismatch&&!pumpCreatorMismatch?'wrong_wallet':technicalFailure||!postgrad||!marketControlsOk?'technical_review':automaticImportAllowed?'automatic':'manual_review';
   return {
     schemaVersion:1,policyVersion:IMPORT_REVIEW_POLICY,checkedAt,...identity,claimantWallet,
     proof,observedSlot:resolved.observedSlot??null,observedBlock:resolved.observedBlock??null,launchEvidence:resolved.launchEvidence??null,
     authority:{status:mismatch?'mismatch':match?'matched':'unresolved',address:authority,source:resolved.authoritySource??null,reason:resolved.ownershipReason??null,evidence:resolved.projectAuthorityEvidence??null},
     market,security,checks,decision,automaticImportAllowed,manualRequestAllowed,
-    canVerifyOwner:!bonding&&!mismatch&&postgrad&&!technicalFailure&&marketControlsOk&&['pass','review'].includes(security?.status),
+    canVerifyOwner:!bonding&&(!mismatch||pumpCreatorMismatch)&&postgrad&&!technicalFailure&&marketControlsOk&&['pass','review'].includes(security?.status),
     permissions:{battle:'locked',trading:'locked',graduationAsset:'not_approved'},
   };
 }
@@ -60,7 +64,7 @@ export function assertReviewApproval(snapshot,{project,evidenceId,expectedEviden
   if(snapshot.chainId!==Number(project.chain_id)||!sameAddress(snapshot.tokenAddress,project.token_address,snapshot.chainId)||!sameAddress(snapshot.claimantWallet,project.manual_claim_wallet,snapshot.chainId))throw error('Evidence belongs to another project or claimant.','PROJECT_IMPORT_EVIDENCE_MISMATCH');
   if(!snapshot.proof||snapshot.proof.verifiedBy!=='server_wallet_action'||!sameAddress(snapshot.proof.signedWallet,project.manual_claim_wallet,project.chain_id))throw error('A fresh signed claim is required; this legacy record has no persisted signature receipt.','PROJECT_IMPORT_SIGNED_CLAIM_REQUIRED');
   if(snapshot.market?.phase==='bonding')throw error('Bonding tokens cannot be approved for a new public import.','PROJECT_IMPORT_STILL_BONDING');
-  if(!snapshot.canVerifyOwner||!['postgrad','dex_market'].includes(snapshot.market?.phase)||snapshot.market?.verified!==true||snapshot.market?.liquidityAvailable!==true||snapshot.authority?.status==='mismatch'||snapshot.market?.pricingValid===false||snapshot.market?.buyEnabled===false||snapshot.market?.sellEnabled===false||!['pass','review'].includes(snapshot.security?.status))throw error('The checks require technical review. Ownership approval cannot override them.','PROJECT_IMPORT_TECHNICAL_REVIEW');
+  if(!snapshot.canVerifyOwner||!['postgrad','dex_market'].includes(snapshot.market?.phase)||snapshot.market?.verified!==true||snapshot.market?.liquidityAvailable!==true||snapshot.market?.pricingValid===false||snapshot.market?.buyEnabled===false||snapshot.market?.sellEnabled===false||!['pass','review'].includes(snapshot.security?.status))throw error('The checks require technical review. Ownership approval cannot override them.','PROJECT_IMPORT_TECHNICAL_REVIEW');
   if(snapshot.market?.requiresLaunchReview===true) {
     const valid=reviewProof?.marketMethod==='independent_launch_history' && String(reviewProof.marketReference||'').trim().length>=12;
     if(!valid)throw error('A DEX pool alone does not prove graduation. Record independently checked launch history and absence of active external bonding.','PROJECT_IMPORT_MARKET_PROOF_REQUIRED');
