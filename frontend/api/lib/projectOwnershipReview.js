@@ -3,6 +3,7 @@ import { assertReviewApproval } from "./projectImportAssessment.js";
 const MANUAL_REVIEW = "ownership_manual_review";
 const VERIFIED = "ownership_verified";
 const PENDING = "ownership_pending";
+const MASTER_OVERRIDE_METHODS = new Set(["master_override_official_account", "master_override_personal"]);
 
 export function projectOwnershipClaimItem(row) {
   if (!row) return null;
@@ -65,12 +66,28 @@ async function resolveAuditAdminUserId(client, adminId) {
   return found.rows?.[0]?.id || null;
 }
 
+function masterOverrideProof(reviewProof) {
+  const method = String(reviewProof?.method || "").trim();
+  if (!MASTER_OVERRIDE_METHODS.has(method)) return null;
+  const reference = String(reviewProof?.reference || "").trim().slice(0, 1000);
+  if (reference.length < 6) throw reviewError("Master override requires a short verification reference", "PROJECT_OWNERSHIP_REASON_REQUIRED");
+  return { method, reference };
+}
+
 export async function reviewProjectOwnership(db, { projectId, action, reason, expectedVersion, expectedEvidenceId, reviewProof, admin }) {
   const cleanReason = String(reason || "").trim().slice(0, 1000);
   if (cleanReason.length < 3) throw reviewError("Operator reason is required", "PROJECT_OWNERSHIP_REASON_REQUIRED");
   if (!String(expectedVersion || "").trim()) throw reviewError("Expected ownership state version is required", "PROJECT_OWNERSHIP_EXPECTED_STATE_REQUIRED");
   if (!admin?.id) throw reviewError("Authenticated dashboard administrator required", "PROJECT_OWNERSHIP_ADMIN_REQUIRED");
   if (!["verify_owner", "reject_claim"].includes(action)) throw reviewError("Unsupported project ownership action", "PROJECT_OWNERSHIP_ACTION_INVALID");
+
+  const override = action === "verify_owner" ? masterOverrideProof(reviewProof) : null;
+  if (override && admin.isMasterAdmin !== true) {
+    throw reviewError("Master dashboard administrator required for ownership override", "PROJECT_OWNERSHIP_ADMIN_REQUIRED");
+  }
+  if (override && cleanReason.length < 10) {
+    throw reviewError("Master override requires a clear operator reason", "PROJECT_OWNERSHIP_REASON_REQUIRED");
+  }
 
   const client = await db.connect();
   try {
@@ -90,8 +107,11 @@ export async function reviewProjectOwnership(db, { projectId, action, reason, ex
 
     if (action === "verify_owner") {
       const evidence = await latestImportEvidence(client,current);
-      assertReviewApproval(evidence?.snapshot,{project:current,evidenceId:evidence?.id,expectedEvidenceId,reviewProof});
-      current.import_evidence=evidence.snapshot; current.import_evidence_id=evidence.id;
+      if (!override) {
+        assertReviewApproval(evidence?.snapshot,{project:current,evidenceId:evidence?.id,expectedEvidenceId,reviewProof});
+      }
+      current.import_evidence=evidence?.snapshot || null;
+      current.import_evidence_id=evidence?.id || null;
     }
     const updatedResult = action === "verify_owner"
       ? await client.query(`
@@ -116,12 +136,16 @@ export async function reviewProjectOwnership(db, { projectId, action, reason, ex
     const before = projectOwnershipClaimItem(current);
     const after = projectOwnershipClaimItem(updated);
     const auditAdminUserId = await resolveAuditAdminUserId(client, admin.id);
+    const auditAction = override ? "override_owner" : action;
+    const storedProof = override
+      ? { ...override, masterOverride: true, bypassedAutomaticOwnershipEvidence: true }
+      : reviewProof ? {method:String(reviewProof.method||""),reference:String(reviewProof.reference||"").slice(0,1000),marketMethod:String(reviewProof.marketMethod||""),marketReference:String(reviewProof.marketReference||"").slice(0,1000)} : null;
     await client.query(`
       INSERT INTO public.wm_admin_audit_log(admin_user_id,action,target_type,target_id,before,after)
       VALUES($1,$2,'project_ownership_claim',$3,$4::jsonb,$5::jsonb)
-    `, [auditAdminUserId, action, projectId,
+    `, [auditAdminUserId, auditAction, projectId,
       JSON.stringify(auditPayload(before, admin, cleanReason)),
-      JSON.stringify({...auditPayload(after, admin, cleanReason),reviewProof:reviewProof?{method:String(reviewProof.method||""),reference:String(reviewProof.reference||"").slice(0,1000),marketMethod:String(reviewProof.marketMethod||""),marketReference:String(reviewProof.marketReference||"").slice(0,1000)}:null})]);
+      JSON.stringify({...auditPayload(after, admin, cleanReason),reviewProof:storedProof})]);
     await client.query("COMMIT");
     return updated;
   } catch (error) {
