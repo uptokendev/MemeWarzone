@@ -59,9 +59,7 @@ jobs:
         run: |
           set -euo pipefail
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260909_000001_arena_final_salvo_identity.sql >/dev/null
-          if [[ -f db/migrations/20260910123000_arena_tournament_exact_bracket.sql ]]; then
-            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260910123000_arena_tournament_exact_bracket.sql >/dev/null
-          fi
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260910_000001_arena_tournament_exact_bracket_control.sql >/dev/null
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260910_000002_arena_tournament_admin_contract.sql >/dev/null
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260910_000002_arena_tournament_admin_contract.sql >/dev/null
 
