@@ -101,7 +101,7 @@ export async function reviewProjectOwnership(db, { projectId, action, reason, ex
         currentVersion: String(current.state_version || ""), currentOwnershipStatus: current.ownership_status,
       });
     }
-    if (action === "verify_owner" && !String(current.image_url || "").trim()) {
+    if (action === "verify_owner" && !override && !String(current.image_url || "").trim()) {
       throw reviewError("Manual ownership approval requires a project image", "PROJECT_OWNERSHIP_IMAGE_REQUIRED");
     }
 
