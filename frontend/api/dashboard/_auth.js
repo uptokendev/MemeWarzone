@@ -1,4 +1,5 @@
 const ADMIN_ROLES = new Set(["admin", "dashboard_admin"]);
+const MASTER_ADMIN_ROLES = new Set(["master_admin", "founder"]);
 
 function csvSet(name, { lower = false } = {}) {
   return new Set(
@@ -58,16 +59,35 @@ async function fetchSupabaseUser(accessToken) {
   return await response.json();
 }
 
-function isApprovedAdmin(user) {
+function approvedAdminMatch(user) {
   const approvedIds = csvSet("DASHBOARD_ADMIN_USER_IDS");
   const approvedEmails = csvSet("DASHBOARD_ADMIN_EMAILS", { lower: true });
   const userId = String(user?.id || "").trim();
   const email = String(user?.email || "").trim().toLowerCase();
+  return Boolean((userId && approvedIds.has(userId)) || (email && approvedEmails.has(email)));
+}
+
+function isApprovedAdmin(user) {
+  if (approvedAdminMatch(user)) return true;
+  const roles = appMetadataRoles(user);
+  return Array.from(roles).some((role) => ADMIN_ROLES.has(role) || MASTER_ADMIN_ROLES.has(role));
+}
+
+function isMasterAdmin(user) {
+  const masterIds = csvSet("DASHBOARD_MASTER_ADMIN_USER_IDS");
+  const masterEmails = csvSet("DASHBOARD_MASTER_ADMIN_EMAILS", { lower: true });
+  const userId = String(user?.id || "").trim();
+  const email = String(user?.email || "").trim().toLowerCase();
   const roles = appMetadataRoles(user);
 
-  if (userId && approvedIds.has(userId)) return true;
-  if (email && approvedEmails.has(email)) return true;
-  return Array.from(roles).some((role) => ADMIN_ROLES.has(role));
+  if (Array.from(roles).some((role) => MASTER_ADMIN_ROLES.has(role))) return true;
+  if ((userId && masterIds.has(userId)) || (email && masterEmails.has(email))) return true;
+
+  // Backwards-compatible owner setup: before explicit master allowlists existed,
+  // dashboard owners were commonly identified by the explicit admin allowlist.
+  // As soon as either master allowlist is configured, this fallback is disabled.
+  if (masterIds.size === 0 && masterEmails.size === 0) return approvedAdminMatch(user);
+  return false;
 }
 
 export async function requireDashboardAdmin(req, res) {
@@ -92,5 +112,6 @@ export async function requireDashboardAdmin(req, res) {
     id: String(user.id),
     email: String(user.email || ""),
     roles: Array.from(appMetadataRoles(user)),
+    isMasterAdmin: isMasterAdmin(user),
   };
 }
