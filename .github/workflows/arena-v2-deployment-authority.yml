@@ -1,0 +1,30 @@
+name: Arena V2 Deployment Authority
+
+on:
+  pull_request:
+    paths:
+      - "scripts/deployArenaWarPoolTreasuryV2.ts"
+      - "scripts/verifyArenaWarPoolTreasuryV2Deployment.ts"
+      - "scripts/lib/arenaV2DeploymentPolicy.cjs"
+      - "scripts/arenaV2DeploymentAuthority.test.mjs"
+      - ".github/workflows/arena-v2-deployment-authority.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Focused deployment authority matrix
+        run: node --test scripts/arenaV2DeploymentAuthority.test.mjs
+      - name: Hardhat compile
+        run: npx hardhat compile
