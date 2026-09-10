@@ -1,0 +1,38 @@
+name: Agent 3 T2 Three-Chain Tournament Buy-Ins
+
+on:
+  pull_request:
+    paths:
+      - "frontend/api/arenaTournamentBuyIns.js"
+      - "frontend/api/arenaVoteTournamentSetup.js"
+      - "frontend/api/lib/arenaTournamentBuyInV2.mjs"
+      - "frontend/api/lib/arenaWarPoolLive.js"
+      - "frontend/api/postgrad.js"
+      - "frontend/src/components/arena/ArenaBuyInButton.tsx"
+      - "frontend/api/lib/arenaTournamentBuyInCompletion.test.mjs"
+      - ".github/workflows/agent3-t2-three-chain-tournament-buyins.yml"
+  workflow_dispatch:
+
+jobs:
+  focused-proof:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install root
+        run: npm ci
+      - name: Install frontend
+        run: npm --prefix frontend ci
+      - name: Compile contracts
+        run: npm run compile
+      - name: T2 focused buy-in proof
+        run: node --test frontend/api/lib/arenaTournamentBuyInCompletion.test.mjs
+      - name: Arena V2 deployment authority regression
+        run: node --test scripts/arenaV2DeploymentAuthority.test.mjs
+      - name: Frontend build
+        run: npm --prefix frontend run build
