@@ -1,0 +1,133 @@
+name: Agent 4 Robinhood Current Stage Authority
+
+on:
+  push:
+    branches:
+      - agent4/robinhood-46630-deployment-authority-a82381d
+    paths:
+      - 'scripts/robinhoodCurrentStageAuthority.mjs'
+      - 'scripts/deploy-robinhood-current-stage.ts'
+      - 'scripts/robinhood-current-stage-authority.test.mjs'
+      - 'config/robinhood-current-stage-deployment.env.example'
+      - '.github/workflows/agent4-robinhood-current-stage-authority.yml'
+      - 'contracts/LaunchFactory.sol'
+      - 'contracts/LaunchCampaign.sol'
+      - 'contracts/PermanentV3PositionLocker.sol'
+      - 'contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol'
+      - 'contracts/TreasuryRouterV3.sol'
+      - 'contracts/TreasuryVaultV2.sol'
+      - 'contracts/MonthlyLeagueTreasury.sol'
+      - 'contracts/CharityTreasury.sol'
+      - 'contracts/RecruiterRewardsVault.sol'
+      - 'contracts/ProtocolRevenueVault.sol'
+      - 'contracts/CommunityRewardsVault.sol'
+      - 'contracts/CreatorRewardsVault.sol'
+      - 'contracts/GraduationOracle.sol'
+      - 'contracts/CreatorRegistry.sol'
+      - 'contracts/RiskRegistry.sol'
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - 'scripts/robinhoodCurrentStageAuthority.mjs'
+      - 'scripts/deploy-robinhood-current-stage.ts'
+      - 'scripts/robinhood-current-stage-authority.test.mjs'
+      - 'config/robinhood-current-stage-deployment.env.example'
+      - '.github/workflows/agent4-robinhood-current-stage-authority.yml'
+      - 'contracts/LaunchFactory.sol'
+      - 'contracts/LaunchCampaign.sol'
+      - 'contracts/PermanentV3PositionLocker.sol'
+      - 'contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol'
+      - 'contracts/TreasuryRouterV3.sol'
+      - 'contracts/TreasuryVaultV2.sol'
+      - 'contracts/MonthlyLeagueTreasury.sol'
+      - 'contracts/CharityTreasury.sol'
+      - 'contracts/RecruiterRewardsVault.sol'
+      - 'contracts/ProtocolRevenueVault.sol'
+      - 'contracts/CommunityRewardsVault.sol'
+      - 'contracts/CreatorRewardsVault.sol'
+      - 'contracts/GraduationOracle.sol'
+      - 'contracts/CreatorRegistry.sol'
+      - 'contracts/RiskRegistry.sol'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Static clean-room authority matrix
+        run: node --test scripts/robinhood-current-stage-authority.test.mjs
+
+      - name: Compile current EVM contracts
+        run: npx hardhat compile
+
+      - name: Executor rejects non-46630 before operator configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          output="$(npx hardhat run scripts/deploy-robinhood-current-stage.ts --network hardhat 2>&1)"
+          status=$?
+          set -e
+          test "$status" -ne 0
+          echo "$output" | grep -F 'current staging executor requires robinhoodTestnet / 46630'
+
+      - name: Prove historical 5C freeze remains intact
+        run: npm run prove:robinhood-5c-freeze
+
+      - name: Verify no current staging manifest was hand-filled in CI
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -f deployments/robinhood/testnet.staged.json
+
+      - name: Prove production/import boundaries are untouched by this PR
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base_sha="${{ github.event.pull_request.base.sha }}"
+          else
+            base_sha="${{ github.event.before }}"
+            if [ -z "$base_sha" ] || [ "$base_sha" = "0000000000000000000000000000000000000000" ]; then
+              base_sha="HEAD^"
+            fi
+          fi
+          git diff --name-only "$base_sha" HEAD > /tmp/changed.txt
+          if grep -E '^(programs/|tests/solana/|scripts/solana/|contracts/Bnb|web-dashboard/)' /tmp/changed.txt; then
+            echo 'Forbidden cross-chain/dashboard path changed' >&2
+            exit 1
+          fi
+          if grep -E '^(frontend/api/(battle|arenaTournaments|finalSalvo|claims)|frontend/src/.*(Battle|Tournament|FinalSalvo|Claim))' /tmp/changed.txt; then
+            echo 'Forbidden Arena/Battle/claim path changed' >&2
+            exit 1
+          fi
+
+      - name: Secret scan changed authority files
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -RInE '(PRIVATE KEY-----|[A-Fa-f0-9]{64})' \
+            scripts/robinhoodCurrentStageAuthority.mjs \
+            scripts/deploy-robinhood-current-stage.ts \
+            config/robinhood-current-stage-deployment.env.example; then
+            echo 'Potential committed secret detected' >&2
+            exit 1
+          fi
