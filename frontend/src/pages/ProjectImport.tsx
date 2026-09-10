@@ -150,7 +150,10 @@ export function ProjectImportPanel({
   };
   const pumpSecondsLeft=pumpChallenge?Math.max(0,Math.ceil((Date.parse(pumpChallenge.expiresAt)-pumpNow)/1000)):0;
   const pumpCountdown=`${Math.floor(pumpSecondsLeft/60)}:${String(pumpSecondsLeft%60).padStart(2,"0")}`;
-  const pumpChallengeActive=Boolean(reviewablePumpMismatch&&pumpChallenge?.status==="pending");
+  // Focus the import UI as soon as a Pump.fun creator-wallet mismatch is presented.
+  // Previously this only hid the setup fields after START VERIFICATION, which left
+  // the challenge below the Contract Address field on smaller screens.
+  const pumpChallengeActive=Boolean(reviewablePumpMismatch);
 
   const securityRisks=[...(evidence?.security?.criticalRisks||[]),...(evidence?.security?.reviewRisks||[])];
   const body = <>
