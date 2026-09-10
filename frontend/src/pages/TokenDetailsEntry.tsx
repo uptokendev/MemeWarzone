@@ -59,8 +59,37 @@ export default function TokenDetailsEntry() {
     };
   }, [importChainId, routeId]);
 
+  // Manual ownership decisions happen in the private operator dashboard while
+  // a claimant may already have this page open. Re-read only pending/manual
+  // imported projects so approval/rejection is reflected without a hard reload.
+  useEffect(() => {
+    if (!projectImportsEnabled || !routeId || !project) return;
+    if (project.ownershipStatus !== "ownership_pending" && project.ownershipStatus !== "ownership_manual_review") return;
+
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const next = await lookupProjectImport(routeId, importChainId);
+        if (!cancelled && next) setProject(next);
+      } catch {
+        // Keep the last authoritative state visible on transient API failures.
+      }
+    };
+    const onFocus = () => { void refresh(); };
+    const onVisibility = () => { if (document.visibilityState === "visible") void refresh(); };
+    const timer = window.setInterval(() => { void refresh(); }, 10_000);
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [importChainId, project?.id, project?.ownershipStatus, routeId]);
+
   if (!projectImportsEnabled) return <TokenDetailsLiveEntry />;
   if (!resolved) return null;
-  if (project) return <ImportedProjectDetails item={project} />;
+  if (project) return <ImportedProjectDetails key={`${project.id}:${project.ownershipStatus}:${project.ownershipVerifiedAt || ""}`} item={project} />;
   return <TokenDetailsLiveEntry />;
 }
