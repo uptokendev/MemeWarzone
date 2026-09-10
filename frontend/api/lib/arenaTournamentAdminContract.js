@@ -29,9 +29,19 @@ function parseTimestamp(value, field, { required = false } = {}) {
   return new Date(time).toISOString();
 }
 
+export function isSafePowerOfTwo(value) {
+  if (!Number.isSafeInteger(value) || value < 1) return false;
+  let n = value;
+  while (n > 1) {
+    if (n % 2 !== 0) return false;
+    n /= 2;
+  }
+  return true;
+}
+
 function parseExactBracketCap(value) {
   const cap = Number(value);
-  if (!Number.isSafeInteger(cap) || cap < 4 || (cap & (cap - 1)) !== 0) {
+  if (!Number.isSafeInteger(cap) || cap < 4 || !isSafePowerOfTwo(cap)) {
     throw new Error("cap must be an exact power of two of at least 4");
   }
   return cap;
@@ -44,7 +54,7 @@ function normalizeTournamentKind(body) {
   throw new Error("kind/tournament_type must be battle or vote");
 }
 
-function normalizeRoundDuration(kind, value) {
+export function normalizeRoundDuration(kind, value) {
   if (value == null || value === "") return kind === "vote" ? 24 : null;
   const hours = Number(value);
   if (kind === "battle") {
@@ -55,7 +65,7 @@ function normalizeRoundDuration(kind, value) {
   return hours;
 }
 
-function normalizeEnvironment(chainId, body) {
+export function normalizeEnvironment(chainId, body) {
   const explicit = text(bodyValue(body, "environment", "runtime_environment")).toLowerCase();
   if (!ENVIRONMENTS.has(explicit)) throw new Error("environment must be staging or production");
   if (chainId === 97 && explicit !== "staging") throw new Error("BNB chain 97 requires staging environment");
@@ -81,17 +91,18 @@ function normalizeBuyIn(value) {
 
 function expectedVersion(body) {
   const raw = bodyValue(body, "expectedStateVersion", "expected_state_version");
+  if (raw == null || raw === "") return null;
   const version = Number(raw);
-  if (!Number.isSafeInteger(version) || version < 1) throw new Error("expectedStateVersion is required and must be a positive integer");
+  if (!Number.isSafeInteger(version) || version < 1) throw new Error("expectedStateVersion must be a positive integer when supplied");
   return version;
 }
 
-async function adminAuth(req, res, routeLabel) {
+export async function requireTournamentAdminAuth(req, res, routeLabel) {
   const auth = await requireAdminOrOps(req, res, { routeLabel, allowOps: true });
   if (!auth) return null;
   // Tournament administration is never anonymous, including environments where
   // the shared helper may otherwise permit a disabled-enforcement fallback.
-  if (String(auth.mode || "").toLowerCase() === "disabled" || auth.anonymous === true) {
+  if (!["admin", "ops-key"].includes(String(auth.mode || "").toLowerCase()) || auth.anonymous === true) {
     json(res, 401, { ok: false, error: "Tournament admin authentication is required", code: "ADMIN_AUTH_REQUIRED" });
     return null;
   }
@@ -148,6 +159,7 @@ function adminItem(row, participantCount = 0) {
     bracket: row.bracket || [],
     createdBy: row.created_by || null,
     createdAt: row.created_at || null,
+    inviteCount: Array.isArray(row.invite_wallets) ? row.invite_wallets.length : 0,
   };
 }
 
@@ -161,7 +173,7 @@ async function readAdminBody(req, res) {
 }
 
 export async function handleTournamentAdminList(req, res) {
-  const admin = await adminAuth(req, res, "admin/arena/tournaments/list");
+  const admin = await requireTournamentAdminAuth(req, res, "admin/arena/tournaments/list");
   if (!admin) return true;
   let chainId = null;
   try {
@@ -181,7 +193,7 @@ export async function handleTournamentAdminList(req, res) {
 }
 
 export async function handleTournamentAdminCreate(req, res) {
-  const admin = await adminAuth(req, res, "admin/arena/tournaments/create");
+  const admin = await requireTournamentAdminAuth(req, res, "admin/arena/tournaments/create");
   if (!admin) return true;
   const parsed = await readAdminBody(req, res);
   if (!parsed.ok) return true;
@@ -214,13 +226,13 @@ export async function handleTournamentAdminCreate(req, res) {
          registration_opens_at, registration_closes_at, start_mode, buy_in_native,
          native_symbol, terms, starts_at, cap, created_by, battle_mode,
          tournament_type, environment, solana_cluster, round_duration_hours,
-         sponsor_reference, state_version, exact_bracket_required
-       ) values ($1,$2,$3,'upcoming','custom',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,1,true)
+         sponsor_reference, state_version, exact_bracket_required, admin_contract_version, invite_wallets
+     ) values ($1,$2,$3,'upcoming','custom',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,1,true,1,$21::jsonb)
        returning *`,
       [id, chainId, name, registrationMode, registrationState, registrationOpensAt, registrationClosesAt,
        startMode, buyInNative, nativeSymbolFor(chainId), text(body.terms), startsAt, cap,
        String(admin.mode || "admin"), kind.battleMode, kind.tournamentType, env.environment, env.solanaCluster,
-       roundDurationHours, sponsorReference],
+       roundDurationHours, sponsorReference, JSON.stringify(Array.isArray(body.inviteWallets) ? body.inviteWallets.map(text).filter(Boolean) : [])],
     );
     const invites = Array.isArray(body.invites) ? body.invites : [];
     for (const invite of invites) {
@@ -232,7 +244,7 @@ export async function handleTournamentAdminCreate(req, res) {
         [id, token, text(invite?.ownerWallet) || null],
       );
     }
-    json(res, 201, { ok: true, item: adminItem(inserted.rows[0], 0) });
+    json(res, 201, { ok: true, tournament: adminItem(inserted.rows[0], 0) });
   } catch (error) {
     json(res, 400, { ok: false, error: String(error?.message || error), code: "INVALID_TOURNAMENT_CONTRACT" });
   }
@@ -240,16 +252,16 @@ export async function handleTournamentAdminCreate(req, res) {
 }
 
 async function lockedMutation(req, res, id, routeLabel, mutate) {
-  const admin = await adminAuth(req, res, routeLabel);
+  const admin = await requireTournamentAdminAuth(req, res, routeLabel);
   if (!admin) return true;
   const parsed = await readAdminBody(req, res);
   if (!parsed.ok) return true;
   const body = parsed.body;
-  let chainId;
-  let version;
+  let chainId = null;
+  let version = null;
   try {
-    chainId = optionalChainId(body.chainId ?? body.chain_id);
-    if (chainId == null) throw new Error("chainId is required");
+    const rawChain = body.chainId ?? body.chain_id;
+    if (rawChain != null && rawChain !== "") chainId = optionalChainId(rawChain);
     version = expectedVersion(body);
   } catch (error) {
     json(res, 400, { ok: false, error: String(error?.message || error), code: "INVALID_TOURNAMENT_MUTATION" });
@@ -258,18 +270,27 @@ async function lockedMutation(req, res, id, routeLabel, mutate) {
   const client = await pool.connect();
   try {
     await client.query("begin");
-    const found = await client.query("select * from public.arena_tournaments where id = $1 and chain_id = $2 for update", [id, chainId]);
+    const found = chainId == null
+      ? await client.query("select * from public.arena_tournaments where id = $1 for update", [id])
+      : await client.query("select * from public.arena_tournaments where id = $1 and chain_id = $2 for update", [id, chainId]);
     const row = found.rows[0];
     if (!row) {
       await client.query("rollback");
       json(res, 404, { ok: false, error: "Tournament not found", code: "TOURNAMENT_CHAIN_MISMATCH" });
       return true;
     }
-    if (row.state_version == null || Number(row.state_version) !== version) {
+    if (body.expectedStatus && String(row.status) !== String(body.expectedStatus)) {
+      await client.query("rollback");
+      json(res, 409, { ok: false, error: "Tournament status changed", code: "TOURNAMENT_STATE_CONFLICT", status: row.status, stateVersion: row.state_version });
+      return true;
+    }
+    if (version != null && (row.state_version == null || Number(row.state_version) !== version)) {
       await client.query("rollback");
       json(res, 409, { ok: false, error: "Tournament was modified by another admin", code: "TOURNAMENT_STATE_CONFLICT", stateVersion: row.state_version });
       return true;
     }
+    chainId = Number(row.chain_id);
+    version = Number(row.state_version);
     const next = await mutate({ client, row, body, admin, chainId });
     if (!next?.ok) {
       await client.query("rollback");
@@ -282,8 +303,9 @@ async function lockedMutation(req, res, id, routeLabel, mutate) {
               registration_opens_at = $6, registration_closes_at = $7, start_mode = $8,
               starts_at = $9, cap = $10, terms = $11, sponsor_reference = $12,
               battle_mode = $13, tournament_type = $14, round_duration_hours = $15,
-              status = $16, state_version = state_version + 1, updated_at = now()
-        where id = $1 and chain_id = $2 and state_version = $17
+              status = $16, buy_in_native = $17, environment = $18, solana_cluster = $19,
+              state_version = state_version + 1, updated_at = now()
+        where id = $1 and chain_id = $2 and state_version = $20
         returning *`,
       [id, chainId, next.name ?? row.name, next.registrationMode ?? row.registration_mode,
        next.registrationState ?? row.registration_state, next.registrationOpensAt ?? row.registration_opens_at,
@@ -291,7 +313,11 @@ async function lockedMutation(req, res, id, routeLabel, mutate) {
        next.startsAt ?? row.starts_at, next.cap ?? row.cap, next.terms ?? row.terms,
        next.sponsorReference !== undefined ? next.sponsorReference : row.sponsor_reference,
        next.battleMode ?? row.battle_mode, next.tournamentType ?? row.tournament_type,
-       next.roundDurationHours ?? row.round_duration_hours, next.status ?? row.status, version],
+       next.roundDurationHours ?? row.round_duration_hours, next.status ?? row.status,
+       next.buyInNative === undefined ? row.buy_in_native : next.buyInNative,
+       next.environment ?? row.environment,
+       next.solanaCluster === undefined ? row.solana_cluster : next.solanaCluster,
+       version],
     );
     if (!update.rows[0]) {
       await client.query("rollback");
@@ -299,7 +325,7 @@ async function lockedMutation(req, res, id, routeLabel, mutate) {
       return true;
     }
     await client.query("commit");
-    json(res, 200, { ok: true, item: adminItem(update.rows[0], await countEntries(pool, id)) });
+    json(res, 200, { ok: true, tournament: adminItem(update.rows[0], await countEntries(pool, id)) });
     return true;
   } catch (error) {
     await client.query("rollback").catch(() => {});
@@ -326,11 +352,31 @@ export function handleTournamentAdminEdit(req, res, id) {
       if (!START_MODES.has(startMode)) throw new Error("Invalid startMode");
       const startsAt = parseTimestamp(bodyValue(body, "startsAt", "starts_at") ?? row.starts_at, "startsAt", { required: true });
       if (startMode === "scheduled" && Date.parse(startsAt) < Date.parse(closes)) throw new Error("Scheduled start must be at or after registration closes");
-      return { ok: true, name: text(body.name ?? row.name), cap, roundDurationHours: duration,
-        registrationMode, registrationOpensAt: opens, registrationClosesAt: closes, startMode, startsAt,
+      const buyInNative = bodyValue(body, "buyInNative", "buy_in_native") == null
+        ? Number(row.buy_in_native || 0)
+        : normalizeBuyIn(bodyValue(body, "buyInNative", "buy_in_native"));
+      const identity = normalizeEnvironment(Number(row.chain_id), {
+        environment: body.environment ?? row.environment,
+        solanaCluster: bodyValue(body, "solanaCluster", "solana_cluster") ?? row.solana_cluster,
+      });
+      return {
+        ok: true,
+        name: text(body.name ?? row.name),
+        cap,
+        buyInNative,
+        environment: identity.environment,
+        solanaCluster: identity.solanaCluster,
+        roundDurationHours: duration,
+        registrationMode,
+        registrationOpensAt: opens,
+        registrationClosesAt: closes,
+        startMode,
+        startsAt,
         terms: body.terms == null ? row.terms : text(body.terms),
         sponsorReference: bodyValue(body, "sponsorReference", "sponsor_reference") === undefined ? row.sponsor_reference : text(bodyValue(body, "sponsorReference", "sponsor_reference")) || null,
-        battleMode: kind.battleMode, tournamentType: kind.tournamentType };
+        battleMode: kind.battleMode,
+        tournamentType: kind.tournamentType,
+      };
     } catch (error) {
       return { ok: false, http: 400, code: "INVALID_TOURNAMENT_CONTRACT", error: String(error?.message || error) };
     }
@@ -356,37 +402,25 @@ export function handleTournamentCancel(req, res, id) {
   });
 }
 
-export async function handleTournamentRemoveUnpaidEntrant(req, res, id, tokenAddress) {
-  const admin = await adminAuth(req, res, "admin/arena/tournaments/remove-unpaid-entrant");
+export async function handleTournamentRemoveUnpaidEntrant(req, res, id, wallet) {
+  const admin = await requireTournamentAdminAuth(req, res, "admin/arena/tournaments/remove-unpaid-entrant");
   if (!admin) return true;
-  const parsed = await readAdminBody(req, res);
-  if (!parsed.ok) return true;
-  const body = parsed.body;
-  let chainId;
-  let version;
-  try {
-    chainId = optionalChainId(body.chainId ?? body.chain_id);
-    version = expectedVersion(body);
-  } catch (error) {
-    json(res, 400, { ok: false, error: String(error?.message || error), code: "INVALID_TOURNAMENT_MUTATION" });
-    return true;
-  }
   const client = await pool.connect();
   try {
     await client.query("begin");
-    const found = await client.query("select * from public.arena_tournaments where id = $1 and chain_id = $2 for update", [id, chainId]);
+    const found = await client.query("select * from public.arena_tournaments where id = $1 for update", [id]);
     const row = found.rows[0];
-    if (!row) { await client.query("rollback"); json(res, 404, { ok: false, code: "TOURNAMENT_CHAIN_MISMATCH" }); return true; }
-    if (row.status !== "upcoming" || Number(row.state_version) !== version) { await client.query("rollback"); json(res, 409, { ok: false, code: "TOURNAMENT_STATE_CONFLICT" }); return true; }
-    const entry = await client.query("select * from public.arena_tournament_entries where tournament_id = $1 and lower(token_address) = lower($2) for update", [id, tokenAddress]);
+    if (!row) { await client.query("rollback"); json(res, 404, { ok: false, code: "TOURNAMENT_NOT_FOUND" }); return true; }
+    if (row.status !== "upcoming") { await client.query("rollback"); json(res, 409, { ok: false, code: "TOURNAMENT_NOT_UPCOMING" }); return true; }
+    const entry = await client.query("select * from public.arena_tournament_entries where tournament_id = $1 and lower(owner_wallet) = lower($2) for update", [id, wallet]);
     if (!entry.rows[0]) { await client.query("rollback"); json(res, 404, { ok: false, code: "TOURNAMENT_ENTRY_NOT_FOUND" }); return true; }
     if (entry.rows[0].buy_in_paid) { await client.query("rollback"); json(res, 409, { ok: false, code: "PAID_ENTRANT_IMMUTABLE", error: "Paid entrant cannot be removed" }); return true; }
     if (Number(row.buy_in_native || 0) > 0) { await client.query("rollback"); json(res, 409, { ok: false, code: "PAYMENT_RECONCILIATION_REQUIRED", error: "Positive-buy-in entrant requires authoritative chain reconciliation before removal" }); return true; }
-    await client.query("delete from public.arena_tournament_entries where tournament_id = $1 and lower(token_address) = lower($2)", [id, tokenAddress]);
-    const updated = await client.query("update public.arena_tournaments set state_version = state_version + 1, updated_at = now() where id = $1 and chain_id = $2 and state_version = $3 returning *", [id, chainId, version]);
+    await client.query("delete from public.arena_tournament_entries where tournament_id = $1 and lower(owner_wallet) = lower($2)", [id, wallet]);
+    const updated = await client.query("update public.arena_tournaments set state_version = state_version + 1, updated_at = now() where id = $1 and state_version = $2 returning *", [id, Number(row.state_version)]);
     if (!updated.rows[0]) { await client.query("rollback"); json(res, 409, { ok: false, code: "TOURNAMENT_STATE_CONFLICT" }); return true; }
     await client.query("commit");
-    json(res, 200, { ok: true, item: adminItem(updated.rows[0], await countEntries(pool, id)) });
+    json(res, 200, { ok: true, tournament: adminItem(updated.rows[0], await countEntries(pool, id)) });
   } catch (error) {
     await client.query("rollback").catch(() => {});
     json(res, 503, { ok: false, error: "Tournament storage is unavailable", detail: String(error?.message || error) });
@@ -403,9 +437,9 @@ export async function handleTournamentAdminContractRoute(req, res, { method, pat
   if (method === "POST" && root.test(path)) return handleTournamentAdminCreate(req, res);
   const edit = path.match(/\/admin\/arena\/tournaments\/([^/]+)$/);
   if (edit && method === "PATCH") return handleTournamentAdminEdit(req, res, decodeURIComponent(edit[1]));
-  const open = path.match(/\/admin\/arena\/tournaments\/([^/]+)\/open-registration$/);
+  const open = path.match(/\/admin\/arena\/tournaments\/([^/]+)\/registration\/open$/);
   if (open && method === "POST") return handleTournamentRegistrationState(req, res, decodeURIComponent(open[1]), "open");
-  const close = path.match(/\/admin\/arena\/tournaments\/([^/]+)\/close-registration$/);
+  const close = path.match(/\/admin\/arena\/tournaments\/([^/]+)\/registration\/close$/);
   if (close && method === "POST") return handleTournamentRegistrationState(req, res, decodeURIComponent(close[1]), "closed");
   const cancel = path.match(/\/admin\/arena\/tournaments\/([^/]+)\/cancel$/);
   if (cancel && method === "POST") return handleTournamentCancel(req, res, decodeURIComponent(cancel[1]));

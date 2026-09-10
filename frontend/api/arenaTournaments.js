@@ -4,6 +4,7 @@ import { pool } from "../server/db.js";
 import { badMethod, json, normalizeWalletFlexible, readJson } from "../server/http.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { requireAdminOrOps } from "./lib/apiAuth.js";
+import { handleTournamentAdminContractRoute, requireTournamentAdminAuth } from "./lib/arenaTournamentAdminContract.js";
 import { tokenEligible as tokenIsEligible } from "./lib/arenaEligibility.js";
 import { optimizeMatchPairings } from "./lib/arenaMatchQuality.js";
 import { isSolanaChainId, nativeSymbolFor } from "./lib/chainNative.js";
@@ -452,7 +453,7 @@ async function insertTournamentBattle({ chainId, tournamentId, left, right, nati
     },
   ];
 
-  const ownsTransaction = typeof db.connect === "function";
+  const ownsTransaction = db === pool;
   const client = ownsTransaction ? await db.connect() : db;
   try {
     if (ownsTransaction) await client.query("begin");
@@ -497,7 +498,7 @@ async function insertTournamentBattle({ chainId, tournamentId, left, right, nati
 }
 
 async function handleAdminStart(req, res, id) {
-  const admin = await requireAdminOrOps(req, res, { routeLabel: "admin/arena/tournaments/start", allowOps: true });
+  const admin = await requireTournamentAdminAuth(req, res, "admin/arena/tournaments/start");
   if (!admin) return;
   const context = queryChainContext(req, res);
   if (!context.ok) return;
@@ -516,6 +517,15 @@ async function handleAdminStart(req, res, id) {
     if (row.status !== "upcoming") {
       await client.query("rollback");
       return json(res, 409, { ok: false, error: "Tournament is not upcoming", code: "TOURNAMENT_ALREADY_STARTED" });
+    }
+    if (Number(row.admin_contract_version || 0) === 1 && row.registration_state !== "closed") {
+      await client.query("rollback");
+      return json(res, 409, {
+        ok: false,
+        error: "Tournament registration must be closed before start.",
+        code: "TOURNAMENT_REGISTRATION_NOT_CLOSED",
+        registrationState: row.registration_state,
+      });
     }
 
     const clock = await client.query("select now() as now");
@@ -609,6 +619,7 @@ async function handleAdminStart(req, res, id) {
     return json(res, 200, {
       ok: true,
       item: mapAdmin(updated.rows[0], start.roster.length),
+      tournament: mapAdmin(updated.rows[0], start.roster.length),
       bracket,
       seeding: { totalMatchQuality: seeded.totalMatchQuality },
     });
@@ -824,7 +835,7 @@ export async function reconcileTournamentBracket({ tournamentId, battleId, chain
 }
 
 async function handleAdminReconcileBracket(req, res, id) {
-  const admin = await requireAdminOrOps(req, res, { routeLabel: "admin/arena/tournaments/reconcile-bracket", allowOps: true });
+  const admin = await requireTournamentAdminAuth(req, res, "admin/arena/tournaments/reconcile-bracket");
   if (!admin) return;
   const body = await readJson(req);
   const bodyContext = bodyChainContext(body, res);
@@ -850,8 +861,10 @@ export default async function handler(req, res) {
   const method = String(req.method || "GET").toUpperCase();
   const path = String(req.path || new URL(req.url, "http://localhost").pathname);
   try {
+    const handledAdminContract = await handleTournamentAdminContractRoute(req, res, { method, path });
+    if (handledAdminContract) return;
     if (path.startsWith("/admin/arena/tournaments") || path.startsWith("/api/admin/arena/tournaments")) {
-      const reconcile = path.match(/\/admin\/arena\/tournaments\/([^/]+)\/reconcile-bracket$/);
+      const reconcile = path.match(/\/admin\/arena\/tournaments\/([^/]+)\/(?:reconcile|reconcile-bracket)$/);
       if (reconcile) return method === "POST" ? handleAdminReconcileBracket(req, res, decodeURIComponent(reconcile[1])) : badMethod(res);
       const start = path.match(/\/admin\/arena\/tournaments\/([^/]+)\/start$/);
       if (start) return method === "POST" ? handleAdminStart(req, res, decodeURIComponent(start[1])) : badMethod(res);

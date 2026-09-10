@@ -14,7 +14,8 @@ ALTER TABLE public.arena_tournaments
   ADD COLUMN IF NOT EXISTS start_mode text,
   ADD COLUMN IF NOT EXISTS sponsor_reference text,
   ADD COLUMN IF NOT EXISTS state_version bigint,
-  ADD COLUMN IF NOT EXISTS admin_contract_version integer;
+  ADD COLUMN IF NOT EXISTS admin_contract_version integer,
+  ADD COLUMN IF NOT EXISTS invite_wallets jsonb NOT NULL DEFAULT '[]'::jsonb;
 
 UPDATE public.arena_tournaments
    SET state_version = 1
@@ -31,9 +32,15 @@ ALTER TABLE public.arena_tournaments
   DROP CONSTRAINT IF EXISTS arena_tournaments_round_duration_check;
 ALTER TABLE public.arena_tournaments
   ADD CONSTRAINT arena_tournaments_round_duration_check CHECK (
-    (battle_mode = 'normal' AND round_duration_hours IN (12, 24))
+    admin_contract_version IS NULL
+    OR (battle_mode = 'normal' AND round_duration_hours IN (12, 24))
     OR (battle_mode = 'vote' AND round_duration_hours >= 1)
   );
+
+ALTER TABLE public.arena_tournaments
+  DROP CONSTRAINT IF EXISTS arena_tournaments_battle_mode_check;
+ALTER TABLE public.arena_tournaments
+  ADD CONSTRAINT arena_tournaments_battle_mode_check CHECK (battle_mode IN ('normal', 'boost', 'vote'));
 
 ALTER TABLE public.arena_tournaments
   DROP CONSTRAINT IF EXISTS arena_tournaments_admin_contract_version_check;
@@ -228,5 +235,6 @@ COMMENT ON COLUMN public.arena_tournaments.registration_state IS
   'Admin-controlled registration state for admin_contract_version=1 rows.';
 COMMENT ON COLUMN public.arena_tournaments.state_version IS
   'Optimistic concurrency version for authenticated Tournament admin mutations.';
+
 
 COMMIT;
