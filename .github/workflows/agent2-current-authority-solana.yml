@@ -89,13 +89,11 @@ jobs:
           bytes="$(wc -c < /tmp/devnet-program.so | tr -d ' ')"
           echo "DEVNET_SBF_SHA=$sha"
           echo "DEVNET_SBF_BYTES=$bytes"
-          if test "$sha" = "$EXPECTED_CANDIDATE_SHA" && test "$bytes" = "$EXPECTED_CANDIDATE_BYTES"; then
-            echo "DEVNET_CANDIDATE_MATCH=YES"
-          else
-            echo "DEVNET_CANDIDATE_MATCH=NO"
-          fi
+          test "$sha" = "$EXPECTED_CANDIDATE_SHA"
+          test "$bytes" = "$EXPECTED_CANDIDATE_BYTES"
+          echo "DEVNET_CANDIDATE_MATCH=YES"
 
-      - name: Re-read frontend builder schema and CREATE payer fix
+      - name: Re-read frontend and API builder schema plus CREATE payer fix
         shell: bash
         run: |
           set -euo pipefail
@@ -104,6 +102,8 @@ jobs:
           grep -q 'const MIN_CREATE_LAMPORTS = 30_000_000' frontend/src/lib/solanaV4CreateSubmit.ts
           grep -q 'CREATE_RENT_ACCOUNT_SIZES = \[720, 82, 165, 81, 155\]' frontend/src/lib/solanaV4CreateSubmit.ts
           grep -q 'compileLaunchpadV0WithLatestBlockhash' frontend/src/lib/solanaTradeV1.ts
+          grep -q 'buildCreateAuthorizationPayload' frontend/api/dev-fix/solana-create-authorization-v4.js
+          grep -q 'createAuthorizationDigest' frontend/api/dev-fix/solana-create-authorization-v4.js
           grep -q 'await fund(connection, operator, creator.publicKey, 200_000_000)' tests/solana/devnet-create-graduation-fixture.cjs
           grep -q 'await fund(connection, operator, buyer.publicKey, 120_000_000)' tests/solana/devnet-create-graduation-fixture.cjs
           echo "CREATE_PAYER_FUNDING_FIX_PRESENT=YES"
@@ -124,5 +124,354 @@ jobs:
           path: |
             /tmp/devnet-program.json
             /tmp/devnet-program.so
+          if-no-files-found: warn
+          retention-days: 14
+
+  destructive-wallet-matrix:
+    needs: authority-freeze
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: testnet-certification
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: mwz_agent2_current
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d mwz_agent2_current"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/mwz_agent2_current
+      PG_DISABLE_SSL: "1"
+      SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER }}
+      SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
+      SOLANA_LAUNCHPAD_PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+      SOLANA_GRADUATION_AUTH_URL: http://127.0.0.1:43101/api/solana/graduation-authorize
+      SOLANA_GRADUATION_AUTH_ENABLED: "true"
+      SOLANA_GRADUATION_CHAIN_ID: "102"
+      SOLANA_GRADUATION_BASIC_RELEASE_ONLY: "true"
+      SOLANA_GRADUATION_SOL_USD_MICROS: "145948162"
+      SOLANA_GRADUATION_SEND: "true"
+      SOLANA_GRADUATION_PAUSE_SNAPSHOT: /tmp/mwz-solana-devnet-pause-snapshot.json
+      SOLANA_GRADUATION_FIXTURE_OUTPUT: /tmp/mwz-agent2-native-fixture.json
+      SOLANA_GRADUATION_BUYER_KEYPAIR_OUTPUT: /tmp/mwz-agent2-native-buyer.json
+      SOLANA_GRADUATION_MATRIX_REPORT: /tmp/mwz-native-graduation.json
+      SOLANA_POSTGRAD_REPORT: /tmp/mwz-postgrad-roundtrip.json
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Prove matrix source stays on current authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          git cat-file -e "$BASE_SHA^{commit}"
+          test "$(git merge-base HEAD "$BASE_SHA")" = "$BASE_SHA"
+          test -z "$(git diff --name-only "$BASE_SHA"..HEAD -- programs/memewarzone_solana frontend/src/lib/solanaV4CreateSubmit.ts frontend/src/lib/solanaTradeV1.ts frontend/api/dev-fix/solana-create-authorization-v4.js tests/solana/devnet-create-graduation-fixture.cjs tools/solana-meteora-graduation)"
+          echo "MATRIX_BASE_SHA=$BASE_SHA"
+          echo "MATRIX_HEAD=$(git rev-parse HEAD)"
+          echo "HISTORICAL_PR_239_IMPLEMENTATION_REPLAY=NO"
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix tests/solana --no-audit --no-fund
+          npm ci --prefix frontend --no-audit --no-fund
+          npm ci --prefix tools/solana-meteora-graduation --no-audit --no-fund
+
+      - name: Materialize dedicated devnet operator and route signer
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SOLANA_DEVNET_PAYER:-}"
+          test -n "${SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY:-}"
+          operator_file="${RUNNER_TEMP}/mwz-solana-current-operator.json"
+          route_file="${RUNNER_TEMP}/mwz-solana-current-route-signer.json"
+          SOLANA_GRADUATION_OPERATOR_KEYPAIR="$operator_file" node scripts/solana/materialize-devnet-payer.mjs
+          ROUTE_FILE="$route_file" python3 - <<'PY'
+          import json, os
+          value = json.loads(os.environ["SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY"])
+          assert isinstance(value, list) and len(value) == 64
+          with open(os.environ["ROUTE_FILE"], "w", encoding="utf-8") as handle:
+              json.dump(value, handle)
+          os.chmod(os.environ["ROUTE_FILE"], 0o600)
+          PY
+          operator_pubkey="$(node - <<'NODE'
+          const fs=require('fs');const {Keypair}=require('./tests/solana/node_modules/@solana/web3.js');
+          const kp=Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(process.env.OPERATOR_FILE,'utf8'))));
+          process.stdout.write(kp.publicKey.toBase58());
+          NODE
+          )"
+          route_pubkey="$(node - <<'NODE'
+          const fs=require('fs');const {Keypair}=require('./tests/solana/node_modules/@solana/web3.js');
+          const kp=Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(process.env.ROUTE_FILE,'utf8'))));
+          process.stdout.write(kp.publicKey.toBase58());
+          NODE
+          )"
+          echo "SOLANA_OPERATOR_KEYPAIR=$operator_file" >> "$GITHUB_ENV"
+          echo "SOLANA_GRADUATION_OPERATOR_KEYPAIR=$operator_file" >> "$GITHUB_ENV"
+          echo "SOLANA_NEW_ROUTE_SIGNER_KEYPAIR=$route_file" >> "$GITHUB_ENV"
+          echo "SOLANA_ROUTE_SIGNER_PUBLIC_KEY=$route_pubkey" >> "$GITHUB_ENV"
+          echo "OPERATOR_PUBKEY=$operator_pubkey"
+          echo "ROUTE_SIGNER_PUBKEY=$route_pubkey"
+        env:
+          OPERATOR_FILE: ${{ runner.temp }}/mwz-solana-current-operator.json
+          ROUTE_FILE: ${{ runner.temp }}/mwz-solana-current-route-signer.json
+
+      - name: Verify live operator authority and fund certification budget
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs');
+          const {Connection,Keypair,LAMPORTS_PER_SOL}=require('./tests/solana/node_modules/@solana/web3.js');
+          const kp=Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(process.env.SOLANA_OPERATOR_KEYPAIR,'utf8'))));
+          const connection=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
+          (async()=>{
+            const genesis=await connection.getGenesisHash();
+            if(genesis!=='EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG') throw new Error(`wrong cluster ${genesis}`);
+            if(kp.publicKey.toBase58()!=='HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9') throw new Error(`unexpected operator ${kp.publicKey}`);
+            let balance=await connection.getBalance(kp.publicKey,'confirmed');
+            console.log('OPERATOR_BALANCE_BEFORE',balance);
+            for(let attempt=0;attempt<5 && balance<2*LAMPORTS_PER_SOL;attempt++){
+              try{
+                const signature=await connection.requestAirdrop(kp.publicKey,LAMPORTS_PER_SOL);
+                const latest=await connection.getLatestBlockhash('confirmed');
+                await connection.confirmTransaction({signature,...latest},'confirmed');
+                console.log('AIRDROP_SIGNATURE',signature);
+              }catch(error){console.log('AIRDROP_ATTEMPT_FAILED',String(error?.message||error));}
+              balance=await connection.getBalance(kp.publicKey,'confirmed');
+              console.log('OPERATOR_BALANCE_AFTER_ATTEMPT',attempt+1,balance);
+            }
+            if(balance<600000000) throw new Error(`operator balance ${balance} below 600000000 lamports`);
+          })().catch((error)=>{console.error(error);process.exit(1);});
+          NODE
+
+      - name: Generate current IDLs without deploying
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install nightly-2024-05-09 --profile minimal
+          npm install --global --silent @coral-xyz/anchor-cli@0.30.1
+          mkdir -p target/idl
+          (cd programs/memewarzone_solana && RUSTUP_TOOLCHAIN=nightly-2024-05-09 anchor idl build --out ../../target/idl/memewarzone_solana.json)
+          (cd programs/mwz_rewards_treasury && RUSTUP_TOOLCHAIN=nightly-2024-05-09 anchor idl build --out ../../target/idl/mwz_rewards_treasury.json)
+          test -s target/idl/memewarzone_solana.json
+          test -s target/idl/mwz_rewards_treasury.json
+          test ! -e target/deploy/memewarzone_solana.so
+          echo "IDL_SOURCE=current-authority"
+          echo "PROGRAM_DEPLOYMENT_PERFORMED=NO"
+
+      - name: Materialize historical harness only and harden current payer telemetry
+        shell: bash
+        run: |
+          set -euo pipefail
+          harness_sha=ad4133dddf9f6033a7ef3af36b196ba080863918
+          curl -fsSL "https://raw.githubusercontent.com/uptokendev/MemeWarzone/${harness_sha}/tests/solana/candidate-wallet-golden-devnet.cjs" -o tests/solana/candidate-wallet-golden-devnet.cjs
+          curl -fsSL "https://raw.githubusercontent.com/uptokendev/MemeWarzone/${harness_sha}/tests/solana/candidate-wallet-middle-devnet.cjs" -o tests/solana/candidate-wallet-middle-devnet.cjs
+          curl -fsSL "https://raw.githubusercontent.com/uptokendev/MemeWarzone/${harness_sha}/tests/solana/patch-candidate-wallet-p1.py" -o /tmp/patch-candidate-wallet-p1.py
+          python3 /tmp/patch-candidate-wallet-p1.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('tests/solana/candidate-wallet-golden-devnet.cjs')
+          s=p.read_text()
+          old='lamports:100_000_000'
+          if old not in s:
+              raise SystemExit('golden 100m harness funding target missing')
+          s=s.replace(old,'lamports:200_000_000')
+          p.write_text(s)
+          PY
+          echo "HISTORICAL_HARNESS_SHA=$harness_sha"
+          echo "HISTORICAL_HARNESS_ROLE=TEST_ONLY"
+          echo "CURRENT_CREATE_PAYER_FUNDING=200000000"
+
+      - name: FIRST CREATE BUY SELL golden regression
+        id: first
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOLANA_GOLDEN_ONLY_FIRST=1 SOLANA_GOLDEN_REPORT=/tmp/mwz-first.json node tests/solana/candidate-wallet-golden-devnet.cjs
+          node - <<'NODE'
+          const r=require('/tmp/mwz-first.json');
+          for(const tx of ['create','buy','sell']){
+            if(r.first?.[tx]?.status!=='PASS') process.exit(1);
+            console.log('FIRST',tx.toUpperCase(),JSON.stringify(r.first[tx]));
+          }
+          console.log('FIRST_CREATE_DIAGNOSTICS',JSON.stringify(r.first.creatorDiagnostics));
+          NODE
+
+      - name: UPVOTE Normal Battle payment Tournament payment
+        id: middle
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOLANA_MIDDLE_REPORT=/tmp/mwz-middle.json node tests/solana/candidate-wallet-middle-devnet.cjs
+          node - <<'NODE'
+          const r=require('/tmp/mwz-middle.json');
+          for(const tx of ['upvote','battlePayment','tournamentPayment']){
+            if(r[tx]?.status!=='PASS') process.exit(1);
+            console.log(tx.toUpperCase(),JSON.stringify(r[tx]));
+          }
+          NODE
+
+      - name: Prepare native SOL graduation fixture
+        id: native_setup
+        continue-on-error: true
+        shell: bash
+        env:
+          SOLANA_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do pg_isready -h 127.0.0.1 -p 5432 -U postgres -d mwz_agent2_current && break; sleep 1; done
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/supabase/migrations/20260906231500_quote_asset_catalog.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/supabase/migrations/20260907001000_solana_basic_quote_catalog.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f frontend/supabase/migrations/20260907163000_solana_devnet_basic_quote_certification.sql
+          nohup node scripts/solana/devnet-graduation-auth-server.mjs >/tmp/mwz-agent2-auth.log 2>&1 &
+          echo $! >/tmp/mwz-agent2-auth.pid
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:43101/health >/tmp/mwz-agent2-auth-health.json; then break; fi
+            if ! kill -0 "$(cat /tmp/mwz-agent2-auth.pid)" 2>/dev/null; then cat /tmp/mwz-agent2-auth.log; exit 1; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:43101/health
+          npm --prefix tests/solana run devnet:graduation-window -- open
+          npm --prefix tests/solana run devnet:create-graduation-fixture
+          test -s "$SOLANA_GRADUATION_FIXTURE_OUTPUT"
+          test -s "$SOLANA_GRADUATION_BUYER_KEYPAIR_OUTPUT"
+          node - <<'NODE'
+          const fs=require('fs');const {Connection,Keypair}=require('./tests/solana/node_modules/@solana/web3.js');
+          const fixture=require(process.env.SOLANA_GRADUATION_FIXTURE_OUTPUT);
+          const buyer=Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(process.env.SOLANA_GRADUATION_BUYER_KEYPAIR_OUTPUT,'utf8'))));
+          const connection=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
+          (async()=>{
+            console.log('GRAD_FIXTURE_CAMPAIGN',fixture.campaign);
+            console.log('GRAD_FIXTURE_MINT',fixture.mint);
+            console.log('GRAD_FIXTURE_BUYER',buyer.publicKey.toBase58());
+            console.log('GRAD_FIXTURE_BUYER_SOL',await connection.getBalance(buyer.publicKey,'confirmed'));
+          })().catch((e)=>{console.error(e);process.exit(1);});
+          NODE
+
+      - name: NATIVE SOL GRADUATION to Meteora
+        id: native
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$SOLANA_GRADUATION_FIXTURE_OUTPUT"
+          campaign="$(node -e 'const r=require(process.env.SOLANA_GRADUATION_FIXTURE_OUTPUT);process.stdout.write(r.campaign)')"
+          export SOLANA_GRADUATION_QUOTE_CONFIG_ID=a2100000-0000-4000-8000-000000000211
+          node tools/solana-meteora-graduation/graduate-basic-quote.mjs "$campaign" | tee /tmp/mwz-native-graduation.log
+          node - <<'NODE'
+          const r=require(process.env.SOLANA_GRADUATION_MATRIX_REPORT);
+          if(r.status!=='PASS'||r.quoteMint!=='So11111111111111111111111111111111111111112') process.exit(1);
+          console.log('NATIVE_GRADUATION',JSON.stringify(r));
+          NODE
+
+      - name: POST-GRAD BUY then SELL on new Meteora pool
+        id: postgrad
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$SOLANA_GRADUATION_MATRIX_REPORT"
+          test -s "$SOLANA_GRADUATION_BUYER_KEYPAIR_OUTPUT"
+          node tests/solana/current-authority-postgrad-roundtrip-devnet.cjs
+          node - <<'NODE'
+          const r=require(process.env.SOLANA_POSTGRAD_REPORT);
+          if(r.status!=='PASS'||r.buy?.status!=='PASS'||r.sell?.status!=='PASS') process.exit(1);
+          console.log('POST_GRAD_BUY',JSON.stringify(r.buy));
+          console.log('POST_GRAD_SELL',JSON.stringify(r.sell));
+          console.log('POST_GRAD_POOL',r.pool);
+          NODE
+
+      - name: Restore graduation pause state
+        id: restore
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: npm --prefix tests/solana run devnet:graduation-window -- restore
+
+      - name: FINAL CREATE BUY SELL golden regression
+        id: final
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOLANA_GOLDEN_ONLY_FINAL=1 SOLANA_GOLDEN_REPORT=/tmp/mwz-final.json node tests/solana/candidate-wallet-golden-devnet.cjs
+          node - <<'NODE'
+          const r=require('/tmp/mwz-final.json');
+          for(const tx of ['create','buy','sell']){
+            if(r.final?.[tx]?.status!=='PASS') process.exit(1);
+            console.log('FINAL',tx.toUpperCase(),JSON.stringify(r.final[tx]));
+          }
+          console.log('FINAL_CREATE_DIAGNOSTICS',JSON.stringify(r.final.creatorDiagnostics));
+          NODE
+
+      - name: Classify and enforce complete launch matrix
+        if: always()
+        shell: bash
+        env:
+          FIRST_OUTCOME: ${{ steps.first.outcome }}
+          MIDDLE_OUTCOME: ${{ steps.middle.outcome }}
+          NATIVE_SETUP_OUTCOME: ${{ steps.native_setup.outcome }}
+          NATIVE_OUTCOME: ${{ steps.native.outcome }}
+          POSTGRAD_OUTCOME: ${{ steps.postgrad.outcome }}
+          RESTORE_OUTCOME: ${{ steps.restore.outcome }}
+          FINAL_OUTCOME: ${{ steps.final.outcome }}
+        run: |
+          set -euo pipefail
+          echo "first=$FIRST_OUTCOME middle=$MIDDLE_OUTCOME native_setup=$NATIVE_SETUP_OUTCOME native=$NATIVE_OUTCOME postgrad=$POSTGRAD_OUTCOME restore=$RESTORE_OUTCOME final=$FINAL_OUTCOME"
+          if test "$MIDDLE_OUTCOME" != success; then
+            if grep -Eq 'ArenaMoneyV2|arena_money|competition pool|rewards' /tmp/mwz-middle.log 2>/dev/null; then
+              echo 'EXTERNAL BLOCKER — AGENT 1'
+            fi
+          fi
+          test "$FIRST_OUTCOME" = success
+          test "$MIDDLE_OUTCOME" = success
+          test "$NATIVE_SETUP_OUTCOME" = success
+          test "$NATIVE_OUTCOME" = success
+          test "$POSTGRAD_OUTCOME" = success
+          test "$RESTORE_OUTCOME" = success
+          test "$FINAL_OUTCOME" = success
+          echo "SOLANA_CURRENT_AUTHORITY_LAUNCH_MATRIX=PASS"
+
+      - name: Capture auth server log
+        if: always()
+        shell: bash
+        run: |
+          test -f /tmp/mwz-agent2-auth.log && cat /tmp/mwz-agent2-auth.log || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent2-solana-destructive-matrix-${{ github.sha }}
+          path: |
+            /tmp/mwz-first.json
+            /tmp/mwz-middle.json
+            /tmp/mwz-native-graduation.json
+            /tmp/mwz-native-graduation.log
+            /tmp/mwz-postgrad-roundtrip.json
+            /tmp/mwz-final.json
+            /tmp/mwz-agent2-auth.log
+            /tmp/mwz-agent2-auth-health.json
+            /tmp/mwz-agent2-native-fixture.json
+            /tmp/mwz-solana-devnet-pause-snapshot.json
           if-no-files-found: warn
           retention-days: 14
