@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { isExactTournamentBracketSize, tournamentStartRoster } from "./arenaTournamentRoster.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const repoRoot = path.resolve(here, "../../..");
 
 const paid = { tokenAddress: "A", buyInPaid: true, buyInIntent: true };
 const unpaid = { tokenAddress: "B", buyInPaid: false, buyInIntent: true };
@@ -69,4 +70,27 @@ test("handleAdminStart consumes tournamentStartRoster before tournament seeding"
   assert.match(handler, /optimizeMatchPairings/);
   assert.ok(handler.indexOf("tournamentStartRoster") < handler.indexOf("optimizeMatchPairings"));
   assert.match(handler, /buy_in_native/);
+});
+
+test("new-generation DB authority forbids byes and tournament battles before starts_at", () => {
+  const migration = fs.readFileSync(
+    path.join(repoRoot, "db/migrations/20260910_000001_arena_tournament_exact_bracket_control.sql"),
+    "utf8",
+  );
+  assert.match(migration, /exact_bracket_required/);
+  assert.match(migration, /SET exact_bracket_required = false/);
+  assert.match(migration, /SET DEFAULT true/);
+  assert.match(migration, /TOURNAMENT_EXACT_BRACKET_REQUIRED/);
+  assert.match(migration, /TOURNAMENT_BYE_FORBIDDEN/);
+  assert.match(migration, /TOURNAMENT_START_TIME_NOT_REACHED/);
+  assert.match(migration, /NEW\.source = 'tournament'/);
+});
+
+test("Normal Tournament battle duration remains founder-locked to exactly 24 hours", () => {
+  const migration = fs.readFileSync(
+    path.join(repoRoot, "db/migrations/20260903_000103_arena_tournament_battle_modes.sql"),
+    "utf8",
+  );
+  assert.match(migration, /tournament_mode = 'normal'/);
+  assert.match(migration, /NEW\.ends_at := NEW\.started_at \+ interval '24 hours'/);
 });
