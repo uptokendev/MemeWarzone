@@ -41,7 +41,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BASE=d37dcf7b39c8cee0d472ad5f393db13104bb19b2
+          BASE=a82381d43628825f6b031c3a4f54fb70beb9d4de
           git cat-file -e "$BASE^{commit}"
           git merge-base --is-ancestor "$BASE" HEAD
           echo "base=$BASE"
