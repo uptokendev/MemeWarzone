@@ -10,6 +10,8 @@ export const PROJECT_IMPORT_ACTIONS = Object.freeze({
   metadata: "project_import_metadata",
   image: "project_import_image",
   registrationImage: "project_import_registration_image",
+  pumpChallengeStart: "project_import_pump_challenge_start",
+  pumpChallengeCheck: "project_import_pump_challenge_check",
 });
 
 export const PROJECT_IMPORT_OWNERSHIP = Object.freeze({

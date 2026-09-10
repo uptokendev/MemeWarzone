@@ -33,7 +33,16 @@ export type ProjectImportItem = {
   arenaStatus?: string | null;
   createdAt?: string | null;
 };
+export type ImportAssessment = {
+  decision: string; checkedAt: string; policyVersion: string;
+  automaticImportAllowed: boolean; manualRequestAllowed: boolean; canVerifyOwner: boolean;
+  checks: { key: string; status: string; title: string; finding: string; meaning: string; nextAction: string }[];
+};
 export type ProjectResolveResult = {
+  assessment?: ImportAssessment;
+  retainedPageOnly?: boolean;
+  market?: {phase:string;verified:boolean;reason?:string;platform?:string;requiresLaunchReview?:boolean};
+  projectAuthorityEvidence?: {authorityType:string;relationships?:{kind:string;shareBps?:number;wallet:string}[]};
   chainId: number;
   tokenAddress: string;
   name?: string | null;
@@ -48,7 +57,10 @@ export type ProjectResolveResult = {
   authorityEvidenceAccount?: string | null;
   ownershipReason?: string | null;
   mintAuthority?: string | null;
+  ownershipProofSource?: string | null;
+  ownershipProofTxSignature?: string | null;
 };
+export type PumpOwnershipChallenge = { id:string; chainId:number; tokenAddress:string; creatorWallet:string; claimantWallet:string; lamports:string; solAmount:string; createdAt:string; expiresAt:string; verifiedAt?:string|null; txSignature?:string|null; status:"pending"|"verified"|"expired" };
 
 async function readJson(res: Response) { return res.json().catch(() => ({})) as Promise<any>; }
 function importRequestError(res: Response, json: any, fallback: string) {
@@ -130,4 +142,13 @@ export async function uploadProjectImportImage(input: { item: ProjectImportItem;
 }
 export async function uploadProjectRegistrationImage(input: { item: ProjectImportItem; file: File; auth: WalletActionAuthPayload }): Promise<ProjectImportItem> {
   return uploadProjectImportImage(input);
+}
+
+export async function startPumpOwnershipChallenge(input: { tokenAddress:string; chainId:number; auth:WalletActionAuthPayload }): Promise<PumpOwnershipChallenge> {
+  const res=await apiFetch("/api/project-imports/pump-challenge",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input)});
+  const json=await readJson(res); if(!res.ok||!json?.challenge) throw importRequestError(res,json,`Pump.fun verification could not start (${res.status})`); return json.challenge;
+}
+export async function checkPumpOwnershipChallenge(input: { tokenAddress:string; chainId:number; challengeId:string; auth:WalletActionAuthPayload }): Promise<{challenge:PumpOwnershipChallenge;resolved:ProjectResolveResult;project:ProjectImportItem|null}> {
+  const res=await apiFetch("/api/project-imports/pump-challenge/check",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input)});
+  const json=await readJson(res); if(!res.ok||!json?.challenge||!json?.resolved) throw importRequestError(res,json,`Pump.fun verification check failed (${res.status})`); return {challenge:json.challenge,resolved:json.resolved,project:json.project??null};
 }

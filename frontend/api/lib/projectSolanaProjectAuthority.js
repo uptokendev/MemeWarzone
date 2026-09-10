@@ -1,4 +1,5 @@
 import { PublicKey } from "@solana/web3.js";
+import { readPumpImportEvidence } from "./projectImportPumpEvidence.js";
 
 // Pump's published IDL: BondingCurve = discriminator + 5*u64 + bool + creator.
 // The account is derived for the requested mint; no token suffix, holder list,
@@ -38,30 +39,33 @@ export function decodePumpProjectCreator(account) {
   if (creator.equals(ZERO) || !PublicKey.isOnCurve(creator.toBytes())) return null;
   return creator.toBase58();
 }
-export async function resolveSolanaProjectAuthority({ connection, mint, mintAuthority }) {
+export async function resolveSolanaProjectAuthority({ connection, mint, mintAuthority, claimant = null, tokenProgram = null }) {
   const curve = pumpBondingCurveAddress(mint);
   if (typeof connection?.getAccountInfo !== "function") throw rpcError("Solana project-wallet lookup is unavailable. Please retry.");
   let account;
   try { account = await connection.getAccountInfo(curve, "confirmed"); }
   catch { throw rpcError("Solana project-wallet lookup is temporarily unavailable. Please retry."); }
   if (account) {
+    const projectAuthorityEvidence = await readPumpImportEvidence({ connection, mint, curveAccount: account, claimant, tokenProgram });
+    const context = { projectAuthorityEvidence, market: projectAuthorityEvidence.market, custody: projectAuthorityEvidence.custody };
+    if (projectAuthorityEvidence.authorityError) return { ...unavailable(projectAuthorityEvidence.authorityError, curve.toBase58()), ...context };
     const creator = decodePumpProjectCreator(account);
-    if (!creator) return unavailable("project_creator_requires_manual_review", curve.toBase58());
+    if (!creator) return { ...unavailable("project_creator_requires_manual_review", curve.toBase58()), ...context };
     // A genuine, contradictory, independently signable mint authority is not
     // silently overridden. Pump's program authority and revoked authority are normal.
     if (mintAuthority) {
       const authority = new PublicKey(mintAuthority);
       if (!authority.equals(ZERO) && PublicKey.isOnCurve(authority.toBytes()) && authority.toBase58() !== creator) {
-        return unavailable("conflicting_project_authorities", curve.toBase58());
+        return { ...unavailable("conflicting_project_authorities", curve.toBase58()), ...context };
       }
     }
-    return { currentAuthority: creator, authoritySource: "pump_bonding_curve_creator", authorityEvidenceAccount: curve.toBase58(), ownershipReason: "project_creator_resolved" };
+    return { currentAuthority: creator, authoritySource: "pump_bonding_curve_creator", authorityEvidenceAccount: curve.toBase58(), ownershipReason: "project_creator_resolved", ...context };
   }
   if (mintAuthority) {
     const authority = new PublicKey(mintAuthority);
     if (!authority.equals(ZERO) && PublicKey.isOnCurve(authority.toBytes())) {
-      return { currentAuthority: authority.toBase58(), authoritySource: "mint_authority", authorityEvidenceAccount: new PublicKey(mint).toBase58(), ownershipReason: "mint_authority_resolved" };
+      return { currentAuthority: authority.toBase58(), authoritySource: "mint_authority", authorityEvidenceAccount: new PublicKey(mint).toBase58(), ownershipReason: "mint_authority_resolved", market: { phase: "unknown", verified: false, reason: "launch_platform_unverified" } };
     }
   }
-  return unavailable("project_authority_unavailable");
+  return { ...unavailable("project_authority_unavailable"), market: { phase: "unknown", verified: false, reason: "launch_platform_unverified" } };
 }

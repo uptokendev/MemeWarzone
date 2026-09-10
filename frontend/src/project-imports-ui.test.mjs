@@ -31,6 +31,7 @@ test("wrong wallet is fully blocked and shows the masked controlling wallet", ()
   assert.match(importPage, /NOT TOKEN OWNER/); assert.match(importPage, /This token is controlled by wallet/); assert.match(importPage, /Connect that wallet to continue/);
   assert.match(importPage, /slice\(0, 4\)/); assert.match(importPage, /slice\(-4\)/); assert.match(importPage, /Import blocked/);
   assert.match(importPage, /canRequestManual=.*?!wrongAuthorityWallet/);
+  assert.match(importPage, /reviewablePumpMismatch/); assert.match(importPage, /Easy project proof/); assert.match(importPage, /MWZ-/);
   assert.match(api, /resolved\.automaticOwnershipAvailable && !resolved\.signedWalletMatchesAuthority/);
   assert.match(api, /Connect that wallet to continue/);
 });
@@ -45,7 +46,7 @@ test("automatic import is gated by scam-risk screening", () => {
 
 test("manual-review cases can attach an image but remain hidden until approval", () => {
   assert.match(importPage, /REQUEST MANUAL CHECK/); assert.match(importPage, /Add the project image before requesting manual review/);
-  assert.match(importPage, /uploadPendingImage/); assert.match(importPage, /ATTACH IMAGE TO REVIEW/); assert.match(importPage, /project stays hidden until an admin approves it/);
+  assert.match(importPage, /uploadPendingImage/); assert.match(importPage, /ATTACH IMAGE TO REVIEW/); assert.match(importPage, /MANUAL CHECK NEEDED/); assert.match(importPage, /project stays hidden until we approve it/);
   assert.match(core, /ownership_status='ownership_verified'/); assert.match(core, /ownership_status='ownership_manual_review'/); assert.match(core, /manual_claim_wallet=\$3/);
   assert.match(core, /AND ownership_status='ownership_verified'/);
   assert.match(reviewCore, /Manual ownership approval requires a project image/); assert.match(reviewCore, /PROJECT_OWNERSHIP_IMAGE_REQUIRED/);
@@ -107,4 +108,14 @@ test("operator ownership review is admin-authenticated, CAS-safe, audited, image
 
 test("existing MemeWarzone token runtime remains the fallback for non-imported rows", () => {
   assert.match(coinsPage, /type: "imported"/); assert.match(client, /listUserProjectImports/); assert.match(tokenEntry, /return <TokenDetailsLiveEntry \/>/);
+});
+
+
+test("Pump.fun mismatch offers a 15-minute creator-wallet transfer proof without weakening other mismatches",()=>{
+  assert.match(importPage,/VERIFY YOUR PUMP\.FUN WALLET/);
+  assert.match(importPage,/START VERIFICATION/);
+  assert.match(importPage,/I SENT IT - CHECK NOW/);
+  assert.match(importPage,/MemeWarzone never receives the SOL/);
+  assert.match(importPage,/project_import_pump_challenge_start/);
+  assert.match(importPage,/project_import_pump_challenge_check/);
 });

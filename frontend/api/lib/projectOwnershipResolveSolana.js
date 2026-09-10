@@ -45,6 +45,8 @@ export async function resolveProjectOwnershipSolana({ mint, connectedWallet, con
   return {
     validMint: true,
     mint: mintAddress,
+    tokenProgramId: owner,
+    observedSlot: response?.context?.slot ?? null,
     decimals,
     totalSupply: supply,
     mintAuthority,
