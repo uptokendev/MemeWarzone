@@ -1,5 +1,6 @@
 import { Interface, ZeroAddress, getAddress, isAddress } from "ethers";
 
+// Import-only EVM authority resolver. Intentionally has no launch, market-routing, graduation, claims or Arena dependency.
 export const AUTOMATIC_EVM_OWNERSHIP_UNAVAILABLE = "automatic ownership verification unavailable";
 
 const TOKEN_READ_INTERFACE = new Interface([
