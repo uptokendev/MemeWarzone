@@ -11,7 +11,7 @@ export function PumpImportHelp({ onConnect, expectedCreator, disabled = false }:
   const [tab,setTab] = useState<'explain'|'phantom'|'solflare'>('explain');
   const [open,setOpen] = useState(false);
   return <Dialog open={open} onOpenChange={setOpen}>
-    <DialogTrigger asChild><Button type="button" variant="outline" size="sm">Got a Pump.fun token?</Button></DialogTrigger>
+    <DialogTrigger asChild><Button type="button" variant="outline" size="sm" className="border-orange-400/70 bg-orange-500/10 font-semibold text-orange-200 hover:border-orange-300 hover:bg-orange-500/20 hover:text-orange-100">Got a Pump.fun token?</Button></DialogTrigger>
     <DialogContent className="max-h-[85vh] overflow-y-auto" data-pump-import-help="true">
       <DialogHeader><DialogTitle>Verify your Pump.fun project wallet</DialogTitle><DialogDescription>Why the wallet may be different, and your optional wallet-import guides.</DialogDescription></DialogHeader>
       {expectedCreator?<div className="rounded border p-3 text-sm"><strong>Recorded creator wallet</strong><p className="mt-1 break-all font-mono text-xs">{expectedCreator}</p></div>:null}
