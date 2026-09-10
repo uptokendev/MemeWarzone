@@ -1,0 +1,115 @@
+name: Agent 1 Warzone Runtime Three-Chain Acceptance
+
+on:
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-certification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: arena_runtime_cert
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d arena_runtime_cert"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/arena_runtime_cert
+      ARENA_SCHEMA_GATE_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/arena_runtime_cert
+      ARENA_ADMIN_AUTH_ENFORCED: "true"
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prove requested base lineage
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=d37dcf7b39c8cee0d472ad5f393db13104bb19b2
+          git cat-file -e "$BASE^{commit}"
+          git merge-base --is-ancestor "$BASE" HEAD
+          echo "base=$BASE"
+          echo "head=$(git rev-parse HEAD)"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install locked frontend dependencies
+        run: npm ci --prefix frontend --no-audit --no-fund
+
+      - name: Syntax check Warzone runtime authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in \
+            frontend/api/arenaBattlesRuntime.js \
+            frontend/api/arenaBattleMetrics.js \
+            frontend/api/arenaTournaments.js \
+            frontend/api/arenaTournamentVotes.js \
+            frontend/api/arenaFinalSalvo.js \
+            frontend/api/lib/arenaBattleChainIdentity.js \
+            frontend/api/lib/arenaBattleSettlementRuntime.js \
+            frontend/api/lib/arenaTournamentChainIdentity.js \
+            frontend/api/lib/arenaVoteTournamentChainIdentity.js \
+            frontend/api/lib/arenaFinalSalvoFinalizer.js \
+            frontend/api/lib/arenaFinalSalvoRuntime.mjs; do
+            node --check "$file"
+          done
+
+      - name: Normal Battle three-chain identity and scoring
+        run: |
+          node --test frontend/api/lib/arenaBattleChainIdentity.test.mjs
+          node --test frontend/api/lib/arenaBattlePointsV3.test.mjs
+          npm --prefix frontend run test:arena-battle-v2
+          npm --prefix frontend run test:arena-settlement-v2
+          npm --prefix frontend run test:arena-runtime-acceptance
+
+      - name: Tournament three-chain identity, roster, bracket, restart reconciliation
+        run: |
+          node --test frontend/api/lib/arenaTournamentChainIdentity.test.mjs
+          npm --prefix frontend run test:arena-tournament
+
+      - name: Vote Tournament three-chain identity
+        run: node --test frontend/api/lib/arenaVoteTournamentChainIdentity.test.mjs
+
+      - name: Final Salvo five-step identity and restart safety
+        run: node --test frontend/api/lib/arenaFinalSalvoRuntime.test.mjs
+
+      - name: Bootstrap certified Arena schema
+        run: node scripts/arenaTournamentModeSchemaGate.mjs
+
+      - name: Apply current Tournament runtime migrations twice
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260909_000001_arena_final_salvo_identity.sql >/dev/null
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260910_000001_arena_tournament_exact_bracket_control.sql >/dev/null
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260910_000002_arena_tournament_admin_contract.sql >/dev/null
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260910_000002_arena_tournament_admin_contract.sql >/dev/null
+
+      - name: Tournament Admin to runtime contract
+        working-directory: frontend
+        run: node --test api/arenaTournamentAdminContract.test.mjs
+
+      - name: Build regression
+        run: npm --prefix frontend run build
