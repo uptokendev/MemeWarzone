@@ -1,6 +1,7 @@
 import { ethers } from "ethers";
 import { getServerReadProvider } from "./getServerReadProvider.js";
 import { WAR_POOL_ABI, battlePoolId, tournamentPoolId, warPoolTreasuryAddress } from "./arenaWarPoolEscrow.js";
+import { readEvmTournamentPoolV2 } from "./arenaTournamentBuyInV2.mjs";
 import { isSolanaWarzoneChainId, probeCanonicalArenaLive, readSolanaArenaPool } from "./solanaArenaPoolRead.js";
 
 export function escrowRequired(chainId) {
@@ -26,8 +27,41 @@ export async function readOnchainPool(chainId, subjectId, kind = "battle") {
   if (isSolanaWarzoneChainId(chainId)) {
     return readSolanaArenaPool(chainId, subjectId, kind);
   }
+
+  if (kind === "tournament") {
+    try {
+      const provider = await getServerReadProvider(chainId);
+      const onchain = await readEvmTournamentPoolV2({ provider, chainId, tournamentId: subjectId });
+      return {
+        configured: true,
+        live: true,
+        treasury: onchain.treasuryAddress,
+        poolId: onchain.poolId,
+        opened: onchain.opened,
+        buyInAmount: onchain.buyInAmount.toString(),
+        onchainState: onchain.state,
+        poolGeneration: "arena_competition_v2",
+        bothPaid: false,
+        paidA: false,
+        paidB: false,
+      };
+    } catch (error) {
+      return {
+        configured: false,
+        live: false,
+        treasury: "",
+        poolId: tournamentPoolId(subjectId),
+        opened: false,
+        bothPaid: false,
+        paidA: false,
+        paidB: false,
+        error: String(error?.message || error),
+      };
+    }
+  }
+
   const treasury = warPoolTreasuryAddress(chainId);
-  const poolId = kind === "tournament" ? tournamentPoolId(subjectId) : battlePoolId(subjectId);
+  const poolId = battlePoolId(subjectId);
   if (!treasury) {
     return { configured: false, treasury: "", poolId, opened: false, bothPaid: false };
   }
