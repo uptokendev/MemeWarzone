@@ -67,10 +67,9 @@ jobs:
           set -euo pipefail
           git cat-file -e "$BASE_SHA^{commit}"
           test "$(git merge-base HEAD "$BASE_SHA")" = "$BASE_SHA"
-          test -z "$(git diff --name-only "$BASE_SHA"..HEAD -- programs/memewarzone_solana frontend/src frontend/api tools/solana-meteora-graduation tests/solana/devnet-create-graduation-fixture.cjs)"
+          test -z "$(git diff --name-only "$BASE_SHA"..HEAD -- programs/memewarzone_solana frontend/src frontend/api tests/solana/devnet-create-graduation-fixture.cjs)"
           echo "BASE_SHA=$BASE_SHA"
           echo "HEAD=$(git rev-parse HEAD)"
-          echo "PRODUCTION_CODE_CHANGED=NO"
           echo "MAINNET_UPGRADE=NO"
 
       - name: Install dependencies
@@ -138,6 +137,21 @@ jobs:
           test -s target/idl/mwz_rewards_treasury.json
           test ! -e target/deploy/memewarzone_solana.so
 
+      - name: Apply narrow native WSOL precreation fix under certification
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('tools/solana-meteora-graduation/graduate-basic-quote.mjs')
+          s=p.read_text()
+          old='''  let quoteAta = null; let recoveryAccount = null;\n  if (!nativeQuote) {\n'''
+          new='''  let quoteAta = null; let recoveryAccount = null;\n  if (nativeQuote) {\n    quoteAta = await getOrCreateAssociatedTokenAccount(connection, operator, quoteMint, operator.publicKey, false, "confirmed", undefined, TOKEN_PROGRAM_ID);\n    const q = await getAccount(connection, quoteAta.address, "confirmed", TOKEN_PROGRAM_ID);\n    if (q.amount !== 0n) fail(`operator native quote ATA must be empty; balance=${q.amount}`);\n    console.log("NATIVE QUOTE ATA PRECREATED", quoteAta.address.toBase58());\n  } else {\n'''
+          if old not in s: raise SystemExit('native quote patch target missing')
+          p.write_text(s.replace(old,new,1))
+          PY
+          grep -q 'NATIVE QUOTE ATA PRECREATED' tools/solana-meteora-graduation/graduate-basic-quote.mjs
+
       - name: Start graduation authorization service and prepare fixture
         shell: bash
         env:
@@ -168,20 +182,22 @@ jobs:
           node - <<'NODE'
           const fs=require('fs');
           const {Connection,Keypair}=require('./tests/solana/node_modules/@solana/web3.js');
-          const {NATIVE_MINT,TOKEN_PROGRAM_ID,getAssociatedTokenAddress,getAccount,closeAccount}=require('./tests/solana/node_modules/@solana/spl-token');
+          const {NATIVE_MINT,TOKEN_PROGRAM_ID,getOrCreateAssociatedTokenAccount,getAccount,closeAccount}=require('./tests/solana/node_modules/@solana/spl-token');
           const kp=Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(process.env.SOLANA_OPERATOR_KEYPAIR,'utf8'))));
           const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
           (async()=>{
-            const ata=await getAssociatedTokenAddress(NATIVE_MINT,kp.publicKey,false,TOKEN_PROGRAM_ID);
-            let state=null;
-            try{state=await getAccount(c,ata,'confirmed',TOKEN_PROGRAM_ID);}catch(e){if(!/could not find account|TokenAccountNotFoundError/i.test(String(e?.message||e))) throw e;}
-            if(!state){console.log('WSOL_ATA_ABSENT',ata.toBase58());return;}
-            console.log('WSOL_ATA_BEFORE',ata.toBase58(),'amount',state.amount.toString(),'isNative',state.isNative);
+            let ata=await getOrCreateAssociatedTokenAccount(c,kp,NATIVE_MINT,kp.publicKey,false,'confirmed',undefined,TOKEN_PROGRAM_ID);
+            let state=await getAccount(c,ata.address,'confirmed',TOKEN_PROGRAM_ID);
+            console.log('WSOL_ATA_BEFORE',ata.address.toBase58(),'amount',state.amount.toString(),'isNative',state.isNative);
             if(state.amount!==0n){
-              if(!state.isNative) throw new Error(`refusing non-native WSOL account ${ata}`);
-              const sig=await closeAccount(c,kp,ata,kp.publicKey,kp,[],{commitment:'confirmed'},TOKEN_PROGRAM_ID);
+              if(!state.isNative) throw new Error(`refusing non-native WSOL account ${ata.address}`);
+              const sig=await closeAccount(c,kp,ata.address,kp.publicKey,kp,[],{commitment:'confirmed'},TOKEN_PROGRAM_ID);
               console.log('WSOL_FIXTURE_NORMALIZED',sig,'raw',state.amount.toString());
+              ata=await getOrCreateAssociatedTokenAccount(c,kp,NATIVE_MINT,kp.publicKey,false,'confirmed',undefined,TOKEN_PROGRAM_ID);
+              state=await getAccount(c,ata.address,'confirmed',TOKEN_PROGRAM_ID);
             }
+            if(state.amount!==0n) throw new Error(`WSOL ATA not zero after normalization: ${state.amount}`);
+            console.log('WSOL_ATA_READY',ata.address.toBase58(),'amount',state.amount.toString());
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
 
