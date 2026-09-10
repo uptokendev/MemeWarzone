@@ -1,15 +1,16 @@
 -- Arena Normal Tournament core-control hardening.
--- New tournaments only: exact elimination brackets, no synthetic byes, no battle before starts_at.
--- Historical tournament rows are grandfathered to preserve generation safety.
+-- New and not-yet-started tournaments: exact elimination brackets, no synthetic byes, no battle before starts_at.
+-- Already-started historical tournament rows are grandfathered to preserve generation safety.
 
 BEGIN;
 
 ALTER TABLE public.arena_tournaments
   ADD COLUMN IF NOT EXISTS exact_bracket_required boolean;
 
--- Existing rows retain their historical bracket semantics.
+-- Preserve already-started historical generations. Existing upcoming rows have not
+-- entered combat yet, so they adopt the new exact-bracket authority before start.
 UPDATE public.arena_tournaments
-   SET exact_bracket_required = false
+   SET exact_bracket_required = CASE WHEN status = 'upcoming' THEN true ELSE false END
  WHERE exact_bracket_required IS NULL;
 
 ALTER TABLE public.arena_tournaments
@@ -133,6 +134,6 @@ WHEN (NEW.source = 'tournament')
 EXECUTE FUNCTION public.enforce_arena_tournament_battle_start_time();
 
 COMMENT ON COLUMN public.arena_tournaments.exact_bracket_required IS
-  'Generation flag: true for new tournaments that must use exact single-elimination brackets without synthetic byes.';
+  'Generation flag: true for new/not-yet-started tournaments that require exact single-elimination brackets without synthetic byes; false preserves already-started historical generations.';
 
 COMMIT;
