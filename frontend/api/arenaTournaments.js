@@ -460,7 +460,7 @@ async function insertTournamentBattle({ chainId, tournamentId, left, right, nati
       `insert into public.arena_battles (
           id, chain_id, state, source, stake_native, native_symbol, challenger_token, defender_token, tournament_id,
           participants, challenger_start_mcap_usd, defender_start_mcap_usd, started_at, ends_at, creator_address
-        ) values ($1,$2,'live','tournament',0,$3,$4,$5,$6,$7::jsonb,$8,$9,$10::timestamptz,$10::timestamptz + interval '12 hours',$11)`,
+        ) values ($1,$2,'live','tournament',0,$3,$4,$5,$6,$7::jsonb,$8,$9,$10::timestamptz,$10::timestamptz + interval '24 hours',$11)`,
       [
         id,
         chainId,
@@ -501,76 +501,123 @@ async function handleAdminStart(req, res, id) {
   if (!admin) return;
   const context = queryChainContext(req, res);
   if (!context.ok) return;
-  const row = await loadTournamentRow(id, context.chainId);
-  if (!row) return tournamentNotFound(res, context.chainId != null);
-  if (row.status !== "upcoming") return json(res, 409, { error: "Tournament is not upcoming" });
-  const entries = await listEntries(id, row.chain_id);
-  const start = tournamentStartRoster(entries, { buyInNative: row.buy_in_native });
-  if (!start.ok) {
-    return json(res, 409, {
-      error: "All opted-in coins must have an authoritative paid buy-in before the tournament starts.",
-      code: "UNPAID_TOURNAMENT_ROSTER",
-      unpaid: start.unpaid.map((entry) => entry.tokenAddress),
-    });
-  }
-  if (start.roster.length < 2) return json(res, 409, { error: "Need at least 2 opted-in coins to start" });
 
-  const snapshots = new Map();
-  for (const entry of start.roster) {
-    snapshots.set(ident(entry.tokenAddress), await coinSnapshot(row.chain_id, entry.tokenAddress));
-  }
-  const seeded = optimizeMatchPairings(start.roster, {
-    getProfile: (entry) => snapshots.get(ident(entry.tokenAddress)),
-  });
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    // Serialize the complete start operation on the tournament row. A concurrent
+    // start waits here and then observes the committed live status instead of
+    // creating a second set of Round-1 battles.
+    const row = await loadTournamentRow(id, context.chainId, client, { forUpdate: true });
+    if (!row) {
+      await client.query("rollback");
+      return tournamentNotFound(res, context.chainId != null);
+    }
+    if (row.status !== "upcoming") {
+      await client.query("rollback");
+      return json(res, 409, { ok: false, error: "Tournament is not upcoming", code: "TOURNAMENT_ALREADY_STARTED" });
+    }
 
-  const matches = [];
-  let ordinal = 1;
-  for (const pairing of seeded.pairings) {
-    const battleId = await insertTournamentBattle({
-      chainId: row.chain_id,
-      tournamentId: id,
-      left: pairing.left.tokenAddress,
-      right: pairing.right.tokenAddress,
-      nativeSymbol: row.native_symbol || nativeSymbolFor(row.chain_id),
-    });
-    matches.push({
-      id: `m${ordinal}`,
-      tokenA: pairing.left.tokenAddress,
-      tokenB: pairing.right.tokenAddress,
-      battleId,
-      winner: null,
-      bye: false,
-      matchQuality: pairing.matchQuality,
-      classification: pairing.classification,
-      ranked: pairing.ranked,
-    });
-    ordinal += 1;
-  }
-  if (seeded.bye) {
-    matches.push({
-      id: `m${ordinal}`,
-      tokenA: seeded.bye.tokenAddress,
-      tokenB: null,
-      battleId: null,
-      winner: seeded.bye.tokenAddress,
-      bye: true,
-      matchQuality: null,
-      classification: "bye",
-      ranked: false,
-    });
-  }
+    const clock = await client.query("select now() as now");
+    const databaseNow = new Date(clock.rows[0]?.now).getTime();
+    const startsAt = new Date(row.starts_at).getTime();
+    if (!Number.isFinite(startsAt) || databaseNow < startsAt) {
+      await client.query("rollback");
+      return json(res, 409, {
+        ok: false,
+        error: "Tournament start time has not been reached.",
+        code: "TOURNAMENT_START_TIME_NOT_REACHED",
+        startsAt: row.starts_at,
+      });
+    }
 
-  const bracket = { rounds: [{ round: 1, matches }] };
-  await pool.query(
-    `update public.arena_tournaments set status = 'live', bracket = $2::jsonb, updated_at = now() where id = $1 and chain_id = $3`,
-    [id, JSON.stringify(bracket), Number(row.chain_id)],
-  );
-  return json(res, 200, {
-    ok: true,
-    item: mapAdmin({ ...row, status: "live", bracket }, start.roster.length),
-    bracket,
-    seeding: { totalMatchQuality: seeded.totalMatchQuality },
-  });
+    const entries = await listEntries(id, row.chain_id, client);
+    const start = tournamentStartRoster(entries, { buyInNative: row.buy_in_native });
+    if (!start.ok) {
+      await client.query("rollback");
+      if (start.code === "TOURNAMENT_EXACT_BRACKET_REQUIRED") {
+        return json(res, 409, {
+          ok: false,
+          error: "Tournament requires an exact power-of-two roster (2, 4, 8, 16, ...).",
+          code: start.code,
+          participantCount: Number(start.participantCount || entries.length),
+        });
+      }
+      return json(res, 409, {
+        ok: false,
+        error: "All opted-in coins must have an authoritative paid buy-in before the tournament starts.",
+        code: start.code || "UNPAID_TOURNAMENT_ROSTER",
+        unpaid: start.unpaid.map((entry) => entry.tokenAddress),
+      });
+    }
+
+    const snapshots = new Map();
+    for (const entry of start.roster) {
+      snapshots.set(ident(entry.tokenAddress), await coinSnapshot(row.chain_id, entry.tokenAddress));
+    }
+    const seeded = optimizeMatchPairings(start.roster, {
+      getProfile: (entry) => snapshots.get(ident(entry.tokenAddress)),
+    });
+    if (seeded.bye || seeded.pairings.length * 2 !== start.roster.length) {
+      await client.query("rollback");
+      return json(res, 409, {
+        ok: false,
+        error: "Tournament seeding did not produce an exact bracket.",
+        code: "TOURNAMENT_SEEDING_BYE_FORBIDDEN",
+      });
+    }
+
+    const matches = [];
+    let ordinal = 1;
+    for (const pairing of seeded.pairings) {
+      const battleId = await insertTournamentBattle({
+        chainId: row.chain_id,
+        tournamentId: id,
+        left: pairing.left.tokenAddress,
+        right: pairing.right.tokenAddress,
+        nativeSymbol: row.native_symbol || nativeSymbolFor(row.chain_id),
+        db: client,
+      });
+      matches.push({
+        id: `m${ordinal}`,
+        tokenA: pairing.left.tokenAddress,
+        tokenB: pairing.right.tokenAddress,
+        battleId,
+        winner: null,
+        bye: false,
+        matchQuality: pairing.matchQuality,
+        classification: pairing.classification,
+        ranked: pairing.ranked,
+      });
+      ordinal += 1;
+    }
+
+    const bracket = { rounds: [{ round: 1, matches }] };
+    const updated = await client.query(
+      `update public.arena_tournaments
+          set status = 'live', bracket = $2::jsonb, updated_at = now()
+        where id = $1 and chain_id = $3 and status = 'upcoming'
+        returning *`,
+      [id, JSON.stringify(bracket), Number(row.chain_id)],
+    );
+    if (!updated.rows[0]) {
+      await client.query("rollback");
+      return json(res, 409, { ok: false, error: "Tournament start lost its state lock.", code: "TOURNAMENT_START_CONFLICT" });
+    }
+
+    await client.query("commit");
+    return json(res, 200, {
+      ok: true,
+      item: mapAdmin(updated.rows[0], start.roster.length),
+      bracket,
+      seeding: { totalMatchQuality: seeded.totalMatchQuality },
+    });
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function advanceTournamentFromBattle(row) {
