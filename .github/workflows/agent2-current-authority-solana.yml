@@ -1,0 +1,128 @@
+name: Agent 2 Solana current-authority launch acceptance
+
+on:
+  push:
+    branches:
+      - agent2/solana-current-authority-launch-d37dcf7
+    paths:
+      - .github/workflows/agent2-current-authority-solana.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BASE_SHA: d37dcf7b39c8cee0d472ad5f393db13104bb19b2
+  PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+  EXPECTED_CANDIDATE_SHA: 27ad65b560dba8a33330bd95f08ae7ca6945f71ebf667a5a3756ae0cb9f7f080
+  EXPECTED_CANDIDATE_BYTES: "1165328"
+  SOLANA_VERSION: 1.18.26
+  ANCHOR_VERSION: 0.30.1
+  RUST_TOOLCHAIN: 1.79.0
+
+jobs:
+  authority-freeze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Prove exact current authority and ownership boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          git cat-file -e "$BASE_SHA^{commit}"
+          test "$(git merge-base HEAD "$BASE_SHA")" = "$BASE_SHA"
+          test -z "$(git diff --name-only "$BASE_SHA"..HEAD -- programs/memewarzone_solana frontend/src/lib/solanaV4CreateSubmit.ts frontend/src/lib/solanaTradeV1.ts frontend/src/lib/solanaV0Transaction.ts tests/solana/devnet-create-graduation-fixture.cjs tools/solana-meteora-graduation)"
+          echo "BASE_SHA=$BASE_SHA"
+          echo "CURRENT_HEAD=$(git rev-parse HEAD)"
+          echo "PROGRAM_SOURCE_CHANGED=NO"
+          echo "MAINNET_UPGRADE_STEP=ABSENT"
+
+      - name: Install frozen build toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          release_dir="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
+          mkdir -p "$release_dir"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error --output /tmp/solana-release.tar.bz2 "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"
+          ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+          npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+          mkdir -p "$HOME/.config/solana"
+          solana-keygen new --no-bip39-passphrase --silent --force --outfile "$HOME/.config/solana/id.json"
+
+      - name: Reproduce current candidate binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+          isolated="$RUNNER_TEMP/mwz-agent2-current-candidate"
+          mkdir -p "$isolated"
+          CARGO_TARGET_DIR="$isolated" anchor build --program-name memewarzone_solana --no-idl
+          so="$isolated/deploy/memewarzone_solana.so"
+          sha="$(sha256sum "$so" | awk '{print $1}')"
+          bytes="$(wc -c < "$so" | tr -d ' ')"
+          echo "CANDIDATE_SHA=$sha"
+          echo "CANDIDATE_BYTES=$bytes"
+          test "$sha" = "$EXPECTED_CANDIDATE_SHA"
+          test "$bytes" = "$EXPECTED_CANDIDATE_BYTES"
+
+      - name: Read live devnet Program ProgramData authority and binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+          rpc="https://api.devnet.solana.com"
+          solana genesis-hash --url "$rpc"
+          solana program show "$PROGRAM_ID" --url "$rpc" --output json | tee /tmp/devnet-program.json
+          solana program dump "$PROGRAM_ID" /tmp/devnet-program.so --url "$rpc"
+          sha="$(sha256sum /tmp/devnet-program.so | awk '{print $1}')"
+          bytes="$(wc -c < /tmp/devnet-program.so | tr -d ' ')"
+          echo "DEVNET_SBF_SHA=$sha"
+          echo "DEVNET_SBF_BYTES=$bytes"
+          if test "$sha" = "$EXPECTED_CANDIDATE_SHA" && test "$bytes" = "$EXPECTED_CANDIDATE_BYTES"; then
+            echo "DEVNET_CANDIDATE_MATCH=YES"
+          else
+            echo "DEVNET_CANDIDATE_MATCH=NO"
+          fi
+
+      - name: Re-read frontend builder schema and CREATE payer fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'compileLaunchpadV0WithLatestBlockhash' frontend/src/lib/solanaV4CreateSubmit.ts
+          grep -q 'simulateLaunchpadV0OrThrow' frontend/src/lib/solanaV4CreateSubmit.ts
+          grep -q 'const MIN_CREATE_LAMPORTS = 30_000_000' frontend/src/lib/solanaV4CreateSubmit.ts
+          grep -q 'CREATE_RENT_ACCOUNT_SIZES = \[720, 82, 165, 81, 155\]' frontend/src/lib/solanaV4CreateSubmit.ts
+          grep -q 'compileLaunchpadV0WithLatestBlockhash' frontend/src/lib/solanaTradeV1.ts
+          grep -q 'await fund(connection, operator, creator.publicKey, 200_000_000)' tests/solana/devnet-create-graduation-fixture.cjs
+          grep -q 'await fund(connection, operator, buyer.publicKey, 120_000_000)' tests/solana/devnet-create-graduation-fixture.cjs
+          echo "CREATE_PAYER_FUNDING_FIX_PRESENT=YES"
+          echo "CREATE_PAYER_FIXTURE_LAMPORTS=200000000"
+          echo "BUYER_FIXTURE_LAMPORTS=120000000"
+
+      - name: Static transaction-builder tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci --prefix frontend --no-audit --no-fund
+          node --test frontend/src/lib/solanaV0Transaction.test.mjs
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent2-current-authority-freeze-${{ github.sha }}
+          path: |
+            /tmp/devnet-program.json
+            /tmp/devnet-program.so
+          if-no-files-found: warn
+          retention-days: 14
