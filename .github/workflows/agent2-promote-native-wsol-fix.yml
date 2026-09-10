@@ -1,0 +1,55 @@
+name: Agent 2 promote native WSOL graduation fix
+
+on:
+  push:
+    branches:
+      - agent2/solana-current-authority-launch-d37dcf7
+    paths:
+      - .github/workflows/agent2-promote-native-wsol-fix.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent2/solana-current-authority-launch-d37dcf7
+          fetch-depth: 0
+      - name: Patch only native WSOL quote ATA precreation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('tools/solana-meteora-graduation/graduate-basic-quote.mjs')
+          s=p.read_text()
+          old='''  let quoteAta = null; let recoveryAccount = null;\n  if (!nativeQuote) {\n'''
+          new='''  let quoteAta = null; let recoveryAccount = null;\n  if (nativeQuote) {\n    quoteAta = await getOrCreateAssociatedTokenAccount(connection, operator, quoteMint, operator.publicKey, false, "confirmed", undefined, TOKEN_PROGRAM_ID);\n    const nativeQuoteAccount = await getAccount(connection, quoteAta.address, "confirmed", TOKEN_PROGRAM_ID);\n    if (nativeQuoteAccount.amount !== 0n) fail(`operator native quote ATA must be empty; balance=${nativeQuoteAccount.amount}`);\n  } else {\n'''
+          if old not in s:
+              if 'operator native quote ATA must be empty' in s:
+                  print('native WSOL precreation fix already present')
+                  raise SystemExit(0)
+              raise SystemExit('native quote patch target missing')
+          p.write_text(s.replace(old,new,1))
+          PY
+          git diff --check
+          changed="$(git diff --name-only)"
+          test "$changed" = "tools/solana-meteora-graduation/graduate-basic-quote.mjs"
+          git diff -- tools/solana-meteora-graduation/graduate-basic-quote.mjs
+      - name: Commit proven fix to Agent 2 branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No commit required; fix already present."
+            exit 0
+          fi
+          git config user.name "MemeWarzone Agent 2"
+          git config user.email "actions@users.noreply.github.com"
+          git add tools/solana-meteora-graduation/graduate-basic-quote.mjs
+          git commit -m "fix(solana): precreate native WSOL graduation quote ATA"
+          git push origin HEAD:agent2/solana-current-authority-launch-d37dcf7
