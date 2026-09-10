@@ -42,6 +42,8 @@ jobs:
       PG_DISABLE_SSL: '1'
       ENABLE_PROJECT_IMPORTS: 'true'
       VITE_ENABLE_PROJECT_IMPORTS: 'true'
+      ENABLE_PROJECT_IMPORT_ROBINHOOD: 'false'
+      VITE_ENABLE_PROJECT_IMPORT_ROBINHOOD: 'false'
       ENABLE_ARENA: 'false'
       CI: 'true'
     steps:
