@@ -4,115 +4,86 @@ import re
 helper_path = Path('frontend/api/lib/arenaTournamentAdminContract.js')
 helper = helper_path.read_text()
 
-# Complete dashboard PATCH contract: buyInNative and environment are editable while chain_id stays immutable.
-old_edit = '''export async function handleTournamentAdminEdit(req, res, id) {
-  const body = await readJson(req);
-  return withLockedUpcomingMutation(req, res, id, body, "edit", async ({ row, body: payload }) => {
-    const nextKind = normalizeTournamentType(payload.kind ?? payload.tournamentType ?? row.tournament_type ?? row.battle_mode);
-    const nextDuration = normalizeRoundDuration(nextKind, payload.roundDurationHours ?? row.round_duration_hours);
-    const nextStartMode = normalizeStartMode(payload.startMode ?? row.start_mode ?? "manual");
-    const nextStartsAt = requiredDate(payload.startsAt ?? row.starts_at, "startsAt");
-    const nextOpen = requiredDate(payload.registrationOpensAt ?? row.registration_opens_at, "registrationOpensAt");
-    const nextClose = requiredDate(payload.registrationClosesAt ?? row.registration_closes_at, "registrationClosesAt");
-    validateWindows({ registrationOpensAt: nextOpen, registrationClosesAt: nextClose, startsAt: nextStartsAt, startMode: nextStartMode });
-    const nextCap = payload.cap == null ? Number(row.cap) : parseExactBracketCap(payload.cap);
-    return {
-      name: payload.name == null ? row.name : requiredText(payload.name, "name"),
-      terms: payload.terms == null ? row.terms : text(payload.terms),
-      startsAt: nextStartsAt,
-      cap: nextCap,
-      battleMode: nextKind === "vote" ? "vote" : "normal",
-      tournamentType: nextKind,
-      registrationMode: row.registration_mode,
-      registrationState: row.registration_state,
-      registrationOpensAt: nextOpen,
-      registrationClosesAt: nextClose,
-      startMode: nextStartMode,
-      roundDurationHours: nextDuration,
-      sponsorReference: payload.sponsorReference == null ? row.sponsor_reference : text(payload.sponsorReference) || null,
-    };
+# Complete the dashboard PATCH contract on the already-generated helper.
+edit_pattern = re.compile(r'''export function handleTournamentAdminEdit\(req, res, id\) \{.*?\n\}\n\nexport function handleTournamentRegistrationState''', re.S)
+edit_replacement = '''export function handleTournamentAdminEdit(req, res, id) {
+  return lockedMutation(req, res, id, "admin/arena/tournaments/edit", async ({ row, body }) => {
+    if (row.status !== "upcoming") return { ok: false, code: "TOURNAMENT_NOT_UPCOMING", error: "Only upcoming tournaments can be edited" };
+    try {
+      const kind = normalizeTournamentKind({ kind: bodyValue(body, "kind", "tournament_type") ?? row.tournament_type ?? row.battle_mode });
+      const cap = body.cap == null ? Number(row.cap) : parseExactBracketCap(body.cap);
+      const duration = normalizeRoundDuration(kind.tournamentType, bodyValue(body, "roundDurationHours", "round_duration_hours") ?? row.round_duration_hours);
+      const registrationMode = text(bodyValue(body, "registrationMode", "registration_mode") ?? row.registration_mode);
+      if (!REGISTRATION_MODES.has(registrationMode)) throw new Error("Invalid registrationMode");
+      const opens = parseTimestamp(bodyValue(body, "registrationOpensAt", "registration_opens_at") ?? row.registration_opens_at, "registrationOpensAt", { required: true });
+      const closes = parseTimestamp(bodyValue(body, "registrationClosesAt", "registration_closes_at") ?? row.registration_closes_at, "registrationClosesAt", { required: true });
+      if (Date.parse(closes) <= Date.parse(opens)) throw new Error("registrationClosesAt must be after registrationOpensAt");
+      const startMode = text(bodyValue(body, "startMode", "start_mode") ?? row.start_mode);
+      if (!START_MODES.has(startMode)) throw new Error("Invalid startMode");
+      const startsAt = parseTimestamp(bodyValue(body, "startsAt", "starts_at") ?? row.starts_at, "startsAt", { required: true });
+      if (startMode === "scheduled" && Date.parse(startsAt) < Date.parse(closes)) throw new Error("Scheduled start must be at or after registration closes");
+      const buyInNative = bodyValue(body, "buyInNative", "buy_in_native") == null
+        ? Number(row.buy_in_native || 0)
+        : optionalNonnegativeNumber(bodyValue(body, "buyInNative", "buy_in_native"), "buyInNative");
+      const identity = normalizeEnvironment(Number(row.chain_id), body.environment ?? row.environment);
+      return {
+        ok: true,
+        name: text(body.name ?? row.name),
+        cap,
+        buyInNative,
+        environment: identity.environment,
+        solanaCluster: identity.solanaCluster,
+        roundDurationHours: duration,
+        registrationMode,
+        registrationOpensAt: opens,
+        registrationClosesAt: closes,
+        startMode,
+        startsAt,
+        terms: body.terms == null ? row.terms : text(body.terms),
+        sponsorReference: bodyValue(body, "sponsorReference", "sponsor_reference") === undefined ? row.sponsor_reference : text(bodyValue(body, "sponsorReference", "sponsor_reference")) || null,
+        battleMode: kind.battleMode,
+        tournamentType: kind.tournamentType,
+      };
+    } catch (error) {
+      return { ok: false, http: 400, code: "INVALID_TOURNAMENT_CONTRACT", error: String(error?.message || error) };
+    }
   });
-}'''
-new_edit = '''export async function handleTournamentAdminEdit(req, res, id) {
-  const body = await readJson(req);
-  return withLockedUpcomingMutation(req, res, id, body, "edit", async ({ row, body: payload }) => {
-    const nextKind = normalizeTournamentType(payload.kind ?? payload.tournamentType ?? row.tournament_type ?? row.battle_mode);
-    const nextDuration = normalizeRoundDuration(nextKind, payload.roundDurationHours ?? row.round_duration_hours);
-    const nextStartMode = normalizeStartMode(payload.startMode ?? row.start_mode ?? "manual");
-    const nextStartsAt = requiredDate(payload.startsAt ?? row.starts_at, "startsAt");
-    const nextOpen = requiredDate(payload.registrationOpensAt ?? row.registration_opens_at, "registrationOpensAt");
-    const nextClose = requiredDate(payload.registrationClosesAt ?? row.registration_closes_at, "registrationClosesAt");
-    validateWindows({ registrationOpensAt: nextOpen, registrationClosesAt: nextClose, startsAt: nextStartsAt, startMode: nextStartMode });
-    const nextCap = payload.cap == null ? Number(row.cap) : parseExactBracketCap(payload.cap);
-    const nextBuyIn = payload.buyInNative == null && payload.buy_in_native == null
-      ? Number(row.buy_in_native || 0)
-      : optionalNonnegativeNumber(payload.buyInNative ?? payload.buy_in_native, "buyInNative");
-    const envIdentity = normalizeEnvironment(Number(row.chain_id), payload.environment ?? row.environment);
-    return {
-      name: payload.name == null ? row.name : requiredText(payload.name, "name"),
-      terms: payload.terms == null ? row.terms : text(payload.terms),
-      startsAt: nextStartsAt,
-      cap: nextCap,
-      buyInNative: nextBuyIn,
-      environment: envIdentity.environment,
-      solanaCluster: envIdentity.solanaCluster,
-      battleMode: nextKind === "vote" ? "vote" : "normal",
-      tournamentType: nextKind,
-      registrationMode: row.registration_mode,
-      registrationState: row.registration_state,
-      registrationOpensAt: nextOpen,
-      registrationClosesAt: nextClose,
-      startMode: nextStartMode,
-      roundDurationHours: nextDuration,
-      sponsorReference: payload.sponsorReference == null ? row.sponsor_reference : text(payload.sponsorReference) || null,
-    };
-  });
-}'''
-if old_edit not in helper:
-    raise SystemExit('edit handler anchor missing')
-helper = helper.replace(old_edit, new_edit, 1)
+}
 
-old_update_sql = '''    const update = await client.query(
+export function handleTournamentRegistrationState'''
+helper, n = edit_pattern.subn(edit_replacement, helper, count=1)
+if n != 1:
+    raise SystemExit('edit handler structural anchor missing')
+
+# Extend the locked mutation UPDATE with editable chain-native buy-in and canonical environment fields.
+update_pattern = re.compile(r'''    const update = await client\.query\(\n      `update public\.arena_tournaments\n          set name = \$3, registration_mode = \$4, registration_state = \$5,\n              registration_opens_at = \$6, registration_closes_at = \$7, start_mode = \$8,\n              starts_at = \$9, cap = \$10, terms = \$11, sponsor_reference = \$12,\n              battle_mode = \$13, tournament_type = \$14, round_duration_hours = \$15,\n              status = \$16, state_version = state_version \+ 1, updated_at = now\(\)\n        where id = \$1 and chain_id = \$2 and state_version = \$17\n        returning \*`,\n      \[id, chainId, next\.name \?\? row\.name, next\.registrationMode \?\? row\.registration_mode,\n       next\.registrationState \?\? row\.registration_state, next\.registrationOpensAt \?\? row\.registration_opens_at,\n       next\.registrationClosesAt \?\? row\.registration_closes_at, next\.startMode \?\? row\.start_mode,\n       next\.startsAt \?\? row\.starts_at, next\.cap \?\? row\.cap, next\.terms \?\? row\.terms,\n       next\.sponsorReference !== undefined \? next\.sponsorReference : row\.sponsor_reference,\n       next\.battleMode \?\? row\.battle_mode, next\.tournamentType \?\? row\.tournament_type,\n       next\.roundDurationHours \?\? row\.round_duration_hours, next\.status \?\? row\.status, version\],\n    \);''', re.S)
+update_replacement = '''    const update = await client.query(
       `update public.arena_tournaments
-          set name=$3, registration_mode=$4, terms=$5, starts_at=$6, cap=$7,
-              battle_mode=$8, tournament_type=$9, registration_state=$10,
-              registration_opens_at=$11, registration_closes_at=$12, start_mode=$13,
-              round_duration_hours=$14, sponsor_reference=$15,
-              state_version=state_version+1, updated_at=now()
-        where id=$1 and chain_id=$2 and state_version=$16
+          set name = $3, registration_mode = $4, registration_state = $5,
+              registration_opens_at = $6, registration_closes_at = $7, start_mode = $8,
+              starts_at = $9, cap = $10, terms = $11, sponsor_reference = $12,
+              battle_mode = $13, tournament_type = $14, round_duration_hours = $15,
+              status = $16, buy_in_native = $17, environment = $18, solana_cluster = $19,
+              state_version = state_version + 1, updated_at = now()
+        where id = $1 and chain_id = $2 and state_version = $20
         returning *`,
-      [id, chainId, next.name ?? row.name, next.registrationMode ?? row.registration_mode, next.terms ?? row.terms,
-       next.startsAt ?? row.starts_at, next.cap ?? row.cap, next.battleMode ?? row.battle_mode,
-       next.tournamentType ?? row.tournament_type, next.registrationState ?? row.registration_state,
-       next.registrationOpensAt ?? row.registration_opens_at, next.registrationClosesAt ?? row.registration_closes_at,
-       next.startMode ?? row.start_mode, next.roundDurationHours ?? row.round_duration_hours,
-       next.sponsorReference === undefined ? row.sponsor_reference : next.sponsorReference, version],
-    );'''
-new_update_sql = '''    const update = await client.query(
-      `update public.arena_tournaments
-          set name=$3, registration_mode=$4, terms=$5, starts_at=$6, cap=$7,
-              battle_mode=$8, tournament_type=$9, registration_state=$10,
-              registration_opens_at=$11, registration_closes_at=$12, start_mode=$13,
-              round_duration_hours=$14, sponsor_reference=$15, buy_in_native=$16,
-              environment=$17, solana_cluster=$18,
-              state_version=state_version+1, updated_at=now()
-        where id=$1 and chain_id=$2 and state_version=$19
-        returning *`,
-      [id, chainId, next.name ?? row.name, next.registrationMode ?? row.registration_mode, next.terms ?? row.terms,
-       next.startsAt ?? row.starts_at, next.cap ?? row.cap, next.battleMode ?? row.battle_mode,
-       next.tournamentType ?? row.tournament_type, next.registrationState ?? row.registration_state,
-       next.registrationOpensAt ?? row.registration_opens_at, next.registrationClosesAt ?? row.registration_closes_at,
-       next.startMode ?? row.start_mode, next.roundDurationHours ?? row.round_duration_hours,
-       next.sponsorReference === undefined ? row.sponsor_reference : next.sponsorReference,
+      [id, chainId, next.name ?? row.name, next.registrationMode ?? row.registration_mode,
+       next.registrationState ?? row.registration_state, next.registrationOpensAt ?? row.registration_opens_at,
+       next.registrationClosesAt ?? row.registration_closes_at, next.startMode ?? row.start_mode,
+       next.startsAt ?? row.starts_at, next.cap ?? row.cap, next.terms ?? row.terms,
+       next.sponsorReference !== undefined ? next.sponsorReference : row.sponsor_reference,
+       next.battleMode ?? row.battle_mode, next.tournamentType ?? row.tournament_type,
+       next.roundDurationHours ?? row.round_duration_hours, next.status ?? row.status,
        next.buyInNative === undefined ? row.buy_in_native : next.buyInNative,
-       next.environment ?? row.environment, next.solanaCluster === undefined ? row.solana_cluster : next.solanaCluster,
+       next.environment ?? row.environment,
+       next.solanaCluster === undefined ? row.solana_cluster : next.solanaCluster,
        version],
     );'''
-if old_update_sql not in helper:
-    raise SystemExit('mutation update SQL anchor missing')
-helper = helper.replace(old_update_sql, new_update_sql, 1)
+helper, n = update_pattern.subn(update_replacement, helper, count=1)
+if n != 1:
+    raise SystemExit('mutation update SQL structural anchor missing')
 
-# Export validators for executable boundary tests.
+# Export pure validators for executable boundary tests.
 helper = helper.replace('function isSafePowerOfTwo(value) {', 'export function isSafePowerOfTwo(value) {', 1)
 helper = helper.replace('function normalizeEnvironment(chainId, environmentRaw) {', 'export function normalizeEnvironment(chainId, environmentRaw) {', 1)
 helper = helper.replace('function normalizeRoundDuration(kind, value) {', 'export function normalizeRoundDuration(kind, value) {', 1)
@@ -121,7 +92,6 @@ helper_path.write_text(helper)
 arena_path = Path('frontend/api/arenaTournaments.js')
 arena = arena_path.read_text()
 
-# New-generation admin tournaments cannot START while registration is still open/pending.
 status_anchor = '''    if (row.status !== "upcoming") {
       await client.query("rollback");
       return json(res, 409, { ok: false, error: "Tournament is not upcoming", code: "TOURNAMENT_ALREADY_STARTED" });
@@ -147,12 +117,12 @@ if status_anchor not in arena:
     raise SystemExit('start state anchor missing')
 arena = arena.replace(status_anchor, status_replacement, 1)
 
-# Dashboard authoritative alias while preserving historical reconcile-bracket callers.
-arena = arena.replace(
-'const reconcile = path.match(/\\/admin\\/arena\\/tournaments\\/([^/]+)\\/reconcile-bracket$/);',
-'const reconcile = path.match(/\\/admin\\/arena\\/tournaments\\/([^/]+)\\/(?:reconcile|reconcile-bracket)$/);', 1)
+old_reconcile = 'const reconcile = path.match(/\\/admin\\/arena\\/tournaments\\/([^/]+)\\/reconcile-bracket$/);'
+new_reconcile = 'const reconcile = path.match(/\\/admin\\/arena\\/tournaments\\/([^/]+)\\/(?:reconcile|reconcile-bracket)$/);'
+if old_reconcile not in arena:
+    raise SystemExit('reconcile route anchor missing')
+arena = arena.replace(old_reconcile, new_reconcile, 1)
 
-# Preserve historical item while adding dashboard-authoritative tournament shape.
 start_response = '''      item: mapAdmin(updated.rows[0], start.roster.length),
       bracket,'''
 if start_response not in arena:
@@ -166,23 +136,18 @@ arena_path.write_text(arena)
 migration_path = Path('db/migrations/20260910_000002_arena_tournament_admin_contract.sql')
 migration = migration_path.read_text()
 
-# Remove the V1 patch's incorrect dependency on a non-existent regulation column.
-# Regulation duration belongs to arena_tournaments.round_duration_hours and drives battle.ends_at.
 wrong_salvo = re.compile(r'''\n-- Regulation duration follows the persisted Vote Tournament duration while Final\n-- Salvo timing remains immutable at 60-second shots/sudden death\.\nALTER TABLE public\.arena_vote_tiebreaks\n  DROP CONSTRAINT IF EXISTS arena_vote_tiebreaks_timing_check;\nALTER TABLE public\.arena_vote_tiebreaks\n  DROP CONSTRAINT IF EXISTS arena_vote_tiebreaks_identity_check;\nALTER TABLE public\.arena_vote_tiebreaks\n  ADD CONSTRAINT arena_vote_tiebreaks_timing_check CHECK \(\n    regulation_duration_seconds >= 3600\n    AND regulation_duration_seconds % 3600 = 0\n    AND salvo_duration_seconds = 60\n    AND sudden_death_shot_seconds = 60\n  \);\n''')
 migration, removed = wrong_salvo.subn('\n', migration, count=1)
 if removed != 1:
     raise SystemExit('incorrect Final Salvo block not found')
 
-# Historical boost rows, if any, remain historical data/runtime; do not introduce a new fail-closed semantic here.
 migration = migration.replace(
 '''  IF tournament_mode = 'boost' THEN
     RAISE EXCEPTION 'Legacy boost Tournament battles remain fail-closed';
   END IF;
 ''', '', 1)
-
 migration_path.write_text(migration)
 
-# Extend focused executable/static tests.
 test_path = Path('frontend/api/arenaTournamentAdminContract.test.mjs')
 test = test_path.read_text()
 old_final_test = '''test("Vote regulation evolves while Final Salvo remains exactly 60 seconds", () => {
@@ -198,8 +163,8 @@ new_final_test = '''test("Vote regulation evolves through tournament duration wi
 });
 
 test("dashboard edit contract persists buyInNative and environment identity", () => {
-  assert.match(helper, /buy_in_native=\\$16/);
-  assert.match(helper, /environment=\\$17, solana_cluster=\\$18/);
+  assert.match(helper, /buy_in_native = \\$17/);
+  assert.match(helper, /environment = \\$18, solana_cluster = \\$19/);
   assert.match(helper, /normalizeEnvironment\\(Number\\(row\\.chain_id\\)/);
 });
 
