@@ -71,6 +71,7 @@ jobs:
           NODE
           )"
           echo "SOLANA_OPERATOR_KEYPAIR=$operator_file" >> "$GITHUB_ENV"
+          echo "SOLANA_NEW_ROUTE_SIGNER_KEYPAIR=$route_file" >> "$GITHUB_ENV"
           echo "SOLANA_ROUTE_SIGNER_PUBLIC_KEY=$route_pubkey" >> "$GITHUB_ENV"
       - name: Verify devnet operator
         shell: bash
