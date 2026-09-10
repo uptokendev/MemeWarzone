@@ -1,0 +1,190 @@
+name: Agent 2 final Solana golden current-integration
+
+on:
+  push:
+    branches:
+      - agent2/solana-native-graduation-promote-a32c6c8
+    paths:
+      - .github/workflows/agent2-final-golden-current.yml
+
+permissions:
+  contents: read
+
+env:
+  BASE_SHA: a32c6c89087c2f32dc59be0af466b41d5c55a438
+  SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER }}
+  SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
+  SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
+
+jobs:
+  final-golden:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: testnet-certification
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Prove source isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git merge-base HEAD "$BASE_SHA")" = "$BASE_SHA"
+          test -z "$(git diff --name-only "$BASE_SHA"..HEAD -- programs/memewarzone_solana programs/mwz_rewards_treasury frontend/src frontend/api | tr -d '\n')"
+          test "$(git diff --name-only "$BASE_SHA"..HEAD -- tools/solana-meteora-graduation | tr '\n' ' ')" = "tools/solana-meteora-graduation/graduate-basic-quote.mjs "
+          echo PROGRAM_SOURCE_UNCHANGED=YES
+          echo ARENA_MONEY_UNTOUCHED=YES
+
+      - name: Install runtime and generate current launchpad IDL without deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix tests/solana --no-audit --no-fund
+          npm ci --prefix frontend --no-audit --no-fund
+          npm install --global --silent @coral-xyz/anchor-cli@0.30.1
+          rustup toolchain install nightly-2024-05-09 --profile minimal
+          mkdir -p target/idl
+          (cd programs/memewarzone_solana && RUSTUP_TOOLCHAIN=nightly-2024-05-09 anchor idl build --out ../../target/idl/memewarzone_solana.json)
+          test -s target/idl/memewarzone_solana.json
+          test ! -e target/deploy/memewarzone_solana.so
+
+      - name: Materialize operator and route signer
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SOLANA_DEVNET_PAYER:-}"
+          test -n "${SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY:-}"
+          operator_file="${RUNNER_TEMP}/mwz-agent2-final-operator.json"
+          route_file="${RUNNER_TEMP}/mwz-agent2-final-route.json"
+          SOLANA_GRADUATION_OPERATOR_KEYPAIR="$operator_file" node scripts/solana/materialize-devnet-payer.mjs
+          ROUTE_FILE="$route_file" python3 - <<'PY'
+          import json, os
+          value=json.loads(os.environ['SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY'])
+          assert isinstance(value,list) and len(value)==64
+          with open(os.environ['ROUTE_FILE'],'w',encoding='utf-8') as h: json.dump(value,h)
+          os.chmod(os.environ['ROUTE_FILE'],0o600)
+          PY
+          route_pubkey="$(ROUTE_FILE="$route_file" node - <<'NODE'
+          const fs=require('fs');const {Keypair}=require('./tests/solana/node_modules/@solana/web3.js');
+          const kp=Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(process.env.ROUTE_FILE,'utf8'))));
+          process.stdout.write(kp.publicKey.toBase58());
+          NODE
+          )"
+          echo "SOLANA_OPERATOR_KEYPAIR=$operator_file" >> "$GITHUB_ENV"
+          echo "SOLANA_NEW_ROUTE_SIGNER_KEYPAIR=$route_file" >> "$GITHUB_ENV"
+          echo "SOLANA_ROUTE_SIGNER_PUBLIC_KEY=$route_pubkey" >> "$GITHUB_ENV"
+
+      - name: Verify devnet identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs');const {Connection,Keypair}=require('./tests/solana/node_modules/@solana/web3.js');
+          const kp=Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(process.env.SOLANA_OPERATOR_KEYPAIR,'utf8'))));
+          const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
+          (async()=>{
+            if((await c.getGenesisHash())!=='EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG') throw new Error('wrong cluster');
+            if(kp.publicKey.toBase58()!=='HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9') throw new Error('wrong operator');
+            console.log('OPERATOR',kp.publicKey.toBase58(),'BALANCE',await c.getBalance(kp.publicKey,'confirmed'));
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+
+      - name: Materialize golden harness and add expiry-safe cert retry
+        shell: bash
+        run: |
+          set -euo pipefail
+          harness_sha=ad4133dddf9f6033a7ef3af36b196ba080863918
+          curl -fsSL "https://raw.githubusercontent.com/uptokendev/MemeWarzone/${harness_sha}/tests/solana/candidate-wallet-golden-devnet.cjs" -o tests/solana/candidate-wallet-golden-devnet.cjs
+          curl -fsSL "https://raw.githubusercontent.com/uptokendev/MemeWarzone/${harness_sha}/tests/solana/candidate-wallet-middle-devnet.cjs" -o tests/solana/candidate-wallet-middle-devnet.cjs
+          curl -fsSL "https://raw.githubusercontent.com/uptokendev/MemeWarzone/${harness_sha}/tests/solana/patch-candidate-wallet-p1.py" -o /tmp/patch-candidate-wallet-p1.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/patch-candidate-wallet-p1.py')
+          s=p.read_text().replace('\npatch_fixture()\npatch_graduation()\n','\n')
+          p.write_text(s)
+          PY
+          python3 /tmp/patch-candidate-wallet-p1.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('tests/solana/candidate-wallet-golden-devnet.cjs')
+          s=p.read_text().replace('lamports:100_000_000','lamports:200_000_000')
+          start=s.index('async function executeLaunchpadV0(')
+          end=s.index('async function setupWallet(', start)
+          replacement=r'''async function executeLaunchpadV0({v0,connection,payer,ed25519,programIx,lookupTable,instructions,label}){
+  const ixes=instructions||[ed25519,programIx];
+  const expectation={payer:payer.publicKey,ed25519Instruction:ed25519,programInstruction:programIx,lookupTableAccounts:[lookupTable],allowInstructionPrivilegePromotion:true};
+  let compiled,stats,sim,raw,signature,confirmed;
+  const expiredAttempts=[];
+  for(let attempt=1;attempt<=3;attempt++){
+    compiled=await v0.compileLaunchpadV0WithLatestBlockhash(web3,connection,{payer:payer.publicKey,instructions:ixes,lookupTableAccounts:[lookupTable]},expectation);
+    compiled.transaction.sign([payer]);
+    stats=v0.assertLaunchpadV0Intent(web3,compiled.transaction,expectation);
+    sim=await v0.simulateLaunchpadV0OrThrow(connection,compiled.transaction,`${label} attempt ${attempt}`);
+    raw=compiled.transaction.serialize();
+    signature=await connection.sendRawTransaction(raw,{skipPreflight:false,maxRetries:5});
+    try {
+      confirmed=await connection.confirmTransaction({signature,...compiled.latest},"confirmed");
+      if(confirmed.value.err) fail(`${label} confirmation failed ${JSON.stringify(confirmed.value.err)}`);
+      break;
+    } catch(error) {
+      if(!/expired|block height exceeded/i.test(String(error?.message||error)) || attempt===3) throw error;
+      const status=(await connection.getSignatureStatuses([signature],{searchTransactionHistory:true})).value[0];
+      if(status){
+        if(status.err) fail(`${label} expired confirmation later resolved with error ${JSON.stringify(status.err)}`);
+        if(status.confirmationStatus==='confirmed'||status.confirmationStatus==='finalized') { confirmed={value:{err:null}}; break; }
+        fail(`${label} expiry retry refused because prior signature exists with status ${JSON.stringify(status)}`);
+      }
+      expiredAttempts.push({attempt,signature,blockhash:compiled.latest.blockhash,lastValidBlockHeight:compiled.latest.lastValidBlockHeight});
+      console.log('CERT_EXPIRED_UNLANDED_RETRY',label,JSON.stringify(expiredAttempts.at(-1)));
+    }
+  }
+  if(!confirmed) fail(`${label} did not confirm`);
+  let retryResult="";
+  try { const retrySig=await connection.sendRawTransaction(raw,{skipPreflight:false,maxRetries:5}); if(retrySig!==signature) fail(`${label} identical retry signature changed`); retryResult="same signature"; }
+  catch(e){ const m=String(e?.message||e); if(!/already been processed/i.test(m)) throw e; retryResult="already processed"; }
+  const replay=await v0.compileLaunchpadV0WithLatestBlockhash(web3,connection,{payer:payer.publicKey,instructions:ixes,lookupTableAccounts:[lookupTable]},expectation);
+  replay.transaction.sign([payer]);
+  const replaySim=await connection.simulateTransaction(replay.transaction,{commitment:"confirmed",sigVerify:false,replaceRecentBlockhash:false});
+  if(!replaySim.value.err) fail(`${label} fresh-blockhash replay unexpectedly simulated successfully`);
+  const bogus=Keypair.generate().publicKey.toBase58();
+  const expired=v0.compileAndAssertLaunchpadV0(web3,{payer:payer.publicKey,recentBlockhash:bogus,instructions:ixes,lookupTableAccounts:[lookupTable]},expectation);
+  expired.transaction.sign([payer]);
+  const expiredSim=await connection.simulateTransaction(expired.transaction,{commitment:"confirmed",sigVerify:false,replaceRecentBlockhash:false});
+  if(!expiredSim.value.err) fail(`${label} unknown/expired blockhash unexpectedly simulated successfully`);
+  return {status:"PASS",version:"V0",altUsage:`YES:${lookupTable.key.toBase58()}`,freshBlockhash:"YES",blockhash:compiled.latest.blockhash,lastValidBlockHeight:compiled.latest.lastValidBlockHeight,payer:payer.publicKey.toBase58(),requiredSigners:stats.requiredSigners,simulation:`PASS units=${sim.unitsConsumed??"unknown"}`,serializedPacketBytes:stats.serializedBytes,sendMethod:"sendRawTransaction(skipPreflight=false,maxRetries=5)",confirmationMethod:"confirmTransaction({signature,blockhash,lastValidBlockHeight},confirmed); expiry-safe rebuild only after null signature status",expiryBehavior:`PASS unknown/expired blockhash rejected: ${JSON.stringify(expiredSim.value.err)}`,retryBehavior:`PASS identical signed packet deduped (${retryResult})`,duplicateReplayBehavior:`PASS same signed packet deduped; fresh-blockhash same intent rejected: ${JSON.stringify(replaySim.value.err)}`,expiredUnlandedAttempts:expiredAttempts,signature};
+}
+'''
+          p.write_text(s[:start]+replacement+s[end:])
+          PY
+          grep -q 'expiry-safe rebuild only after null signature status' tests/solana/candidate-wallet-golden-devnet.cjs
+          echo CERT_ONLY_CONFIRMATION_HARDENING=YES
+
+      - name: Execute final CREATE BUY SELL
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOLANA_GOLDEN_ONLY_FINAL=1 SOLANA_GOLDEN_REPORT=/tmp/mwz-agent2-final-golden.json node tests/solana/candidate-wallet-golden-devnet.cjs | tee /tmp/mwz-agent2-final-golden.log
+          node - <<'NODE'
+          const r=require('/tmp/mwz-agent2-final-golden.json');
+          for(const key of ['create','buy','sell']){
+            if(r.final?.[key]?.status!=='PASS') process.exit(1);
+            console.log('FINAL',key.toUpperCase(),JSON.stringify(r.final[key]));
+          }
+          console.log('FINAL_CREATE_DIAGNOSTICS',JSON.stringify(r.final.creatorDiagnostics));
+          console.log('FINAL_GOLDEN_REGRESSION=PASS');
+          NODE
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent2-final-golden-${{ github.sha }}
+          path: |
+            /tmp/mwz-agent2-final-golden.json
+            /tmp/mwz-agent2-final-golden.log
+          if-no-files-found: warn
+          retention-days: 14
