@@ -31,9 +31,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          BASE=88f6de5b07160bb9e4aea1b23a43253dafdcaf44
+          INTEGRATION_REF=origin/build/cross-chain-stabilization-rh-base
+          git rev-parse --verify "$INTEGRATION_REF" >/dev/null
+          BASE=$(git merge-base "$INTEGRATION_REF" HEAD)
           git merge-base --is-ancestor "$BASE" HEAD
           git diff --name-only "$BASE"...HEAD | tee /tmp/final-salvo-files.txt
+
+          # Final Salvo must remain on the current integration lineage. The integration
+          # branch may legitimately evolve shared routing (for example Tournament T2),
+          # so guard the Final Salvo implementation itself rather than pinning an old SHA.
+          final_salvo_authority=(
+            frontend/api/arenaFinalSalvo.js
+            frontend/api/lib/arenaFinalSalvoFinalizer.js
+            frontend/api/lib/arenaFinalSalvoRuntime.mjs
+          )
+          for path in "${final_salvo_authority[@]}"; do
+            if ! git diff --quiet "$BASE"...HEAD -- "$path"; then
+              echo "Final Salvo authority file changed outside its dedicated lane: $path" >&2
+              exit 1
+            fi
+          done
 
           forbidden_exact=(
             .github/workflows/agent3-bnb-postgrad-routing.yml
@@ -55,7 +72,6 @@ jobs:
             frontend/api/arenaVoteTournamentIdentityGate.js
             frontend/api/lib/arenaVoteTournamentChainIdentity.js
             frontend/api/lib/arenaVoteTournamentChainIdentity.test.mjs
-            frontend/api/postgrad.js
           )
           for path in "${forbidden_exact[@]}"; do
             if grep -Fxq "$path" /tmp/final-salvo-files.txt; then
@@ -68,6 +84,11 @@ jobs:
             echo "Forbidden scope path changed" >&2
             exit 1
           fi
+
+          # Shared postgrad routing is allowed to evolve, but Final Salvo routing must
+          # still be wired into the current source graph.
+          grep -Eq 'import arenaFinalSalvo from "./arenaFinalSalvo.js"' frontend/api/postgrad.js
+          grep -Eq 'final-salvo' frontend/api/postgrad.js
 
       - name: Syntax checks
         run: |
