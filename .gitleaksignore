@@ -1,6 +1,9 @@
 # Exact reviewed false positives only: Everglen's PUBLIC Solana contract address.
-# These two locations bind/test the founder-approved existing page-only exception.
+# These locations bind/test the founder-approved existing page-only exception.
 # No rule, directory, real credential, or future finding is exempted.
-# The scanner scans historical PR commits; modifying today's literal does not remove these entries.
+# Gitleaks fingerprints include the commit SHA, so the production-release materialization
+# needs its own exact fingerprints for the same reviewed PUBLIC token address.
 d8192ddff6e8381d8bf58d9b68bce274ef6d6671:frontend/api/lib/projectImportAssessment.js:generic-api-key:6
 d8192ddff6e8381d8bf58d9b68bce274ef6d6671:frontend/api/lib/projectImportAssessment.test.mjs:generic-api-key:17
+59118a6fc525010f5c984717764e762ab64b9e0d:frontend/api/lib/projectImportAssessment.js:generic-api-key:6
+59118a6fc525010f5c984717764e762ab64b9e0d:frontend/api/lib/projectImportAssessment.test.mjs:generic-api-key:19
