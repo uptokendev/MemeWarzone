@@ -88,7 +88,7 @@ test("handleAdminStart serializes and atomically creates the exact Round-1 brack
   assert.match(handler, /client\.query\("rollback"\)/);
 });
 
-test("new-generation DB authority forbids byes and tournament battles before starts_at", () => {
+test("new-generation DB authority forbids byes, early battles and concurrent roster mutation", () => {
   const migration = fs.readFileSync(
     path.join(repoRoot, "db/migrations/20260910_000001_arena_tournament_exact_bracket_control.sql"),
     "utf8",
@@ -100,6 +100,11 @@ test("new-generation DB authority forbids byes and tournament battles before sta
   assert.match(migration, /TOURNAMENT_BYE_FORBIDDEN/);
   assert.match(migration, /TOURNAMENT_START_TIME_NOT_REACHED/);
   assert.match(migration, /NEW\.source = 'tournament'/);
+  assert.match(migration, /enforce_arena_tournament_roster_open/);
+  assert.match(migration, /FOR KEY SHARE/);
+  assert.match(migration, /TOURNAMENT_REGISTRATION_CLOSED/);
+  assert.match(migration, /BEFORE INSERT ON public\.arena_tournament_entries/);
+  assert.match(migration, /BEFORE UPDATE OF buy_in_intent, owner_wallet ON public\.arena_tournament_entries/);
 });
 
 test("Normal Tournament battle duration is exactly 24 hours in API and DB authority", () => {
