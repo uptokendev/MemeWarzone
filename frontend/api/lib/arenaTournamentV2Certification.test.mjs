@@ -220,5 +220,5 @@ test("V2 Vote Tournament setup uses stored native buy-in and generation-routes h
   assert.match(receipts, /action:\s*"arena_tournament_buy_in"/);
   assert.match(receipts, /buy_in_paid = true/);
   assert.match(receipts, /entryIdentitySql\(chainId\)/);
-  assert.match(routing, /pattern:\s*\/\^\\\/arena\\\/tournaments\\\/\[\^\/\]\+\\\/(?:\(\?:)?v2-buy-in-receipt\|buy-in-receipt/);
+  assert.match(routing, /pattern:\s*\/\^\\\/arena\\\/tournaments\\\/\[\^\/\]\+\\\/(?:\(\?:)?buy-in-status\|v2-buy-in-receipt\|buy-in-receipt/);
 });
