@@ -46,24 +46,29 @@ CREATE TABLE IF NOT EXISTS public.wm_admin_audit_log (
     REFERENCES public.wm_users(id) ON DELETE SET NULL
 );
 
+-- Match the production security posture for the imported-project table and
+-- the minimum backend-owned support tables used by staging acceptance.
+ALTER TABLE public.arena_token_imports ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.auth_nonces ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.wm_users ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.wm_admin_audit_log ENABLE ROW LEVEL SECURITY;
 
--- These are backend-owned support tables. Production currently exposes no
--- direct RLS policies for them; keep the fresh preview equally closed to
--- anonymous/authenticated Data API writes.
+-- Production exposes no direct Data API policies for these backend-owned
+-- tables. Keep staging equally closed to anonymous/authenticated direct access.
+REVOKE ALL ON public.arena_token_imports FROM PUBLIC;
 REVOKE ALL ON public.auth_nonces FROM PUBLIC;
 REVOKE ALL ON public.wm_users FROM PUBLIC;
 REVOKE ALL ON public.wm_admin_audit_log FROM PUBLIC;
 DO $block$
 BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon') THEN
+    REVOKE ALL ON public.arena_token_imports FROM anon;
     REVOKE ALL ON public.auth_nonces FROM anon;
     REVOKE ALL ON public.wm_users FROM anon;
     REVOKE ALL ON public.wm_admin_audit_log FROM anon;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN
+    REVOKE ALL ON public.arena_token_imports FROM authenticated;
     REVOKE ALL ON public.auth_nonces FROM authenticated;
     REVOKE ALL ON public.wm_users FROM authenticated;
     REVOKE ALL ON public.wm_admin_audit_log FROM authenticated;
