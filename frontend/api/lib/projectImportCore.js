@@ -1,23 +1,26 @@
 import { normalizeAddress } from "../../server/http.js";
 import { assertVerifiedProjectOwner, sanitizeProjectImportMetadataPatch } from "./projectImportSecurity.js";
 
-export function normalizeProjectIdentity(chainId,tokenAddress){const id=Number(chainId);if(!Number.isSafeInteger(id)||![56,101].includes(id))throw Object.assign(new Error("Unsupported project import chain"),{code:"UNSUPPORTED_CHAIN"});const token=normalizeAddress(tokenAddress,id);if(!token)throw Object.assign(new Error("Invalid token address or mint"),{code:"INVALID_TOKEN"});return{chainId:id,tokenAddress:token};}
+export const ROBINHOOD_PROJECT_IMPORT_CHAIN_ID=4663;
+export function robinhoodProjectImportEnabled(){return /^(1|true|yes|on)$/i.test(String(process.env.ENABLE_PROJECT_IMPORT_ROBINHOOD||"").trim());}
+function enabledProjectImportChains(){return robinhoodProjectImportEnabled()?[56,101,ROBINHOOD_PROJECT_IMPORT_CHAIN_ID]:[56,101];}
+export function normalizeProjectIdentity(chainId,tokenAddress){const id=Number(chainId);if(!Number.isSafeInteger(id)||!enabledProjectImportChains().includes(id))throw Object.assign(new Error(id===ROBINHOOD_PROJECT_IMPORT_CHAIN_ID?"Robinhood project import is disabled":"Unsupported project import chain"),{code:id===ROBINHOOD_PROJECT_IMPORT_CHAIN_ID?"PROJECT_IMPORT_CHAIN_DISABLED":"UNSUPPORTED_CHAIN"});const token=normalizeAddress(tokenAddress,id);if(!token)throw Object.assign(new Error("Invalid token address or mint"),{code:"INVALID_TOKEN"});return{chainId:id,tokenAddress:token};}
 function normalizeWallet(walletAddress,chainId){const wallet=normalizeAddress(walletAddress,chainId);if(!wallet)throw Object.assign(new Error("Invalid wallet"),{code:"INVALID_WALLET"});return wallet;}
 export function assertResolverIdentity(requested,resolved){const canonical=normalizeProjectIdentity(resolved?.chainId,resolved?.tokenAddress);if(canonical.chainId!==requested.chainId||canonical.tokenAddress!==requested.tokenAddress)throw Object.assign(new Error("Resolver returned a different project identity"),{code:"RESOLVER_IDENTITY_MISMATCH"});return canonical;}
 export function publicProject(row){if(!row)return null;return{id:String(row.id),chainId:Number(row.chain_id),tokenAddress:String(row.token_address),name:row.name??null,symbol:row.symbol??null,decimals:row.decimals==null?null:Number(row.decimals),totalSupply:row.total_supply??null,imageUrl:row.image_url??null,description:row.description??null,website:row.website??null,xUrl:row.x_url??null,telegramUrl:row.telegram_url??null,ownershipStatus:String(row.ownership_status||"ownership_pending"),projectOwnerWallet:row.project_owner_wallet??null,ownershipVerifiedAt:row.ownership_verified_at??row.verified_at??null,manualClaimWallet:row.manual_claim_wallet??null,manualClaimRequestedAt:row.manual_claim_requested_at??null,metadataUpdatedAt:row.metadata_updated_at??null,arenaStatus:row.status??row.arena_status??null,createdAt:row.created_at??null,updatedAt:row.updated_at??null};}
 export async function lookupProjectImport(pool,{chainId,tokenAddress}){const identity=normalizeProjectIdentity(chainId,tokenAddress);const r=await pool.query(`SELECT * FROM public.arena_token_imports WHERE chain_id=$1 AND token_address=$2 LIMIT 1`,[identity.chainId,identity.tokenAddress]);return r.rows?.[0]||null;}
-export async function listUserProjectImports(pool,{chainId,walletAddress}){const id=Number(chainId);if(![56,101].includes(id))throw Object.assign(new Error("Unsupported project import chain"),{code:"UNSUPPORTED_CHAIN"});const wallet=normalizeWallet(walletAddress,id);const r=await pool.query(`SELECT * FROM public.arena_token_imports WHERE chain_id=$1 AND (imported_by_wallet=$2 OR project_owner_wallet=$2 OR manual_claim_wallet=$2) ORDER BY metadata_updated_at DESC, created_at DESC`,[id,wallet]);return r.rows||[];}
+export async function listUserProjectImports(pool,{chainId,walletAddress}){const id=Number(chainId);if(!enabledProjectImportChains().includes(id))throw Object.assign(new Error(id===ROBINHOOD_PROJECT_IMPORT_CHAIN_ID?"Robinhood project import is disabled":"Unsupported project import chain"),{code:id===ROBINHOOD_PROJECT_IMPORT_CHAIN_ID?"PROJECT_IMPORT_CHAIN_DISABLED":"UNSUPPORTED_CHAIN"});const wallet=normalizeWallet(walletAddress,id);const r=await pool.query(`SELECT * FROM public.arena_token_imports WHERE chain_id=$1 AND (imported_by_wallet=$2 OR project_owner_wallet=$2 OR manual_claim_wallet=$2) ORDER BY metadata_updated_at DESC, created_at DESC`,[id,wallet]);return r.rows||[];}
 export async function listRecentProjectImports(pool,{limit=24}={}){
   const n=Math.min(50,Math.max(1,Number.parseInt(String(limit),10)||24));
   const r=await pool.query(
     `SELECT * FROM public.arena_token_imports
-      WHERE chain_id IN (56,101)
+      WHERE chain_id = ANY($2::integer[])
         AND ownership_status='ownership_verified'
         AND image_url IS NOT NULL
         AND btrim(image_url) <> ''
       ORDER BY created_at DESC NULLS LAST, metadata_updated_at DESC NULLS LAST
       LIMIT $1`,
-    [n],
+    [n,enabledProjectImportChains()],
   );
   return r.rows||[];
 }

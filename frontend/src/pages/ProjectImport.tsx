@@ -11,6 +11,7 @@ import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { useWallet } from "@/contexts/WalletContext";
 import { useActiveFeedWallet } from "@/hooks/useActiveFeedWallet";
 import { BNB_CHAIN_ID, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
+import { projectImportRobinhoodEnabled } from "@/features/projectImports/config";
 import { isSolanaAddress } from "@/lib/address";
 import {
   claimProjectImport,
@@ -30,7 +31,8 @@ import {
 import { signSolanaMessage } from "@/lib/solanaWallet";
 import { signWalletAction } from "@/lib/walletActionAuth";
 
-type ImportChain = "bnb" | "solana";
+type ImportChain = "bnb" | "solana" | "robinhood";
+const ROBINHOOD_CHAIN_ID = 4663;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const ALLOWED_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/jpg", "image/webp"]);
 function projectUrl(item: ProjectImportItem) { return `/token/${encodeURIComponent(item.tokenAddress)}?chainId=${item.chainId}`; }
@@ -59,7 +61,7 @@ export function ProjectImportPanel({
   const [chain,setChain]=useState<ImportChain>(detectedChain || "bnb"); const [chainChosenByUser,setChainChosenByUser]=useState(false); const [tokenAddress,setTokenAddress]=useState(""); const [item,setItem]=useState<ProjectImportItem|null>(null); const [evidence,setEvidence]=useState<ProjectResolveResult|null>(null); const [lookupCompleted,setLookupComplete]=useState(false); const [working,setWorking]=useState(false);
   const [imageFile,setImageFile]=useState<File|null>(null); const [imagePreview,setImagePreview]=useState("");
   const [pumpChallenge,setPumpChallenge]=useState<PumpOwnershipChallenge|null>(null); const [pumpNow,setPumpNow]=useState(Date.now());
-  const chainId=chain==="bnb"?BNB_CHAIN_ID:SOLANA_CHAIN_ID; const connectedWallet=chain==="bnb"?wallet.account:solanaWallet.solanaAccount; const connected=Boolean(connectedWallet);
+  const chainId=chain==="solana"?SOLANA_CHAIN_ID:chain==="robinhood"?ROBINHOOD_CHAIN_ID:BNB_CHAIN_ID; const connectedWallet=chain==="solana"?solanaWallet.solanaAccount:wallet.account; const connected=Boolean(connectedWallet);
   const [resolvedFor,setResolvedFor]=useState("");
   const [feedback,setFeedback]=useState<{title:string;message:string;retry:boolean}|null>(null);
   const contextKey=JSON.stringify([chainId,tokenAddress.trim(),connectedWallet]);
@@ -67,7 +69,7 @@ export function ProjectImportPanel({
   const current=()=>contextRef.current===contextKey;
   const lookupComplete=lookupCompleted&&resolvedFor===contextKey;
   const showError=(error:any)=>{if(!current())return;setFeedback(projectImportFeedback(error));if(error?.currentAuthority){setEvidence(null);setLookupComplete(false);}};
-  const validAddress=useMemo(()=>{const value=tokenAddress.trim();return chain==="bnb"?/^0x[a-fA-F0-9]{40}$/.test(value):isSolanaAddress(value);},[chain,tokenAddress]);
+  const validAddress=useMemo(()=>{const value=tokenAddress.trim();return chain==="solana"?isSolanaAddress(value):/^0x[a-fA-F0-9]{40}$/.test(value);},[chain,tokenAddress]);
   const assessment = evidence?.assessment;
   const stillBonding = lookupComplete && evidence?.market?.verified === true && evidence?.market?.phase === "bonding";
   const marketReview = lookupComplete && assessment?.decision === "technical_review";
@@ -154,8 +156,8 @@ export function ProjectImportPanel({
   const body = <>
     {embedded ? null : <section className="mwz-hud-frame p-5"><div className="text-[11px] uppercase tracking-[0.2em] text-accent">Existing project onboarding</div><h1 className="mt-2 font-retro text-2xl text-foreground">IMPORT YOUR MEMECOIN</h1><p className="mt-3 max-w-2xl text-sm text-muted-foreground">Enter the Contract Address and press IMPORT. We check the token, its market, safety and whether your wallet can manage it. If something cannot be confirmed automatically, you can ask our team to check it.</p></section>}
     {!pumpChallengeActive?<section className={embedded ? "space-y-5" : "mwz-hud-frame space-y-5 p-5"}>
-      <div><div className="text-xs font-semibold uppercase tracking-[0.14em] text-white/70">1. Choose chain</div><div className="mt-3 flex gap-2"><Button type="button" disabled={working} variant={chain==="bnb"?"default":"outline"} onClick={()=>{setChainChosenByUser(true);setChain("bnb");reset();}}>BNB</Button><Button type="button" disabled={working} variant={chain==="solana"?"default":"outline"} onClick={()=>{setChainChosenByUser(true);setChain("solana");reset();}}>Solana</Button></div></div>
-      <div><div className="text-xs font-semibold uppercase tracking-[0.14em] text-white/70">2. Wallet</div><div className="mt-3 flex flex-wrap items-center gap-3"><Button type="button" variant="outline" onClick={()=>void connect()} disabled={chain==="bnb"?wallet.connecting:solanaWallet.connectingSolana}>{connected?"WALLET CONNECTED":chain==="bnb"?"CONNECT BNB WALLET":"CONNECT SOLANA WALLET"}</Button>{connectedWallet?<span className="max-w-full truncate text-xs text-muted-foreground">{connectedWallet}</span>:null}</div></div>
+      <div><div className="text-xs font-semibold uppercase tracking-[0.14em] text-white/70">1. Choose chain</div><div className="mt-3 flex gap-2"><Button type="button" disabled={working} variant={chain==="bnb"?"default":"outline"} onClick={()=>{setChainChosenByUser(true);setChain("bnb");reset();}}>BNB</Button><Button type="button" disabled={working} variant={chain==="solana"?"default":"outline"} onClick={()=>{setChainChosenByUser(true);setChain("solana");reset();}}>Solana</Button>{projectImportRobinhoodEnabled?<Button type="button" disabled={working} variant={chain==="robinhood"?"default":"outline"} onClick={()=>{setChainChosenByUser(true);setChain("robinhood");reset();}}>Robinhood</Button>:null}</div></div>
+      <div><div className="text-xs font-semibold uppercase tracking-[0.14em] text-white/70">2. Wallet</div><div className="mt-3 flex flex-wrap items-center gap-3"><Button type="button" variant="outline" onClick={()=>void connect()} disabled={chain==="solana"?solanaWallet.connectingSolana:wallet.connecting}>{connected?"WALLET CONNECTED":chain==="solana"?"CONNECT SOLANA WALLET":chain==="robinhood"?"CONNECT ROBINHOOD WALLET":"CONNECT BNB WALLET"}</Button>{connectedWallet?<span className="max-w-full truncate text-xs text-muted-foreground">{connectedWallet}</span>:null}</div></div>
       <div><label htmlFor="project-import-token" className="text-xs font-semibold uppercase tracking-[0.14em] text-white/70">3. Contract Address</label><div className="mt-3 flex flex-col gap-2 sm:flex-row"><Input id="project-import-token" disabled={working} value={tokenAddress} onChange={(e)=>{setTokenAddress(e.target.value);reset();}} placeholder="Contract Address"/><Button type="button" variant="outline" disabled={!validAddress||!connected||working} onClick={()=>void resolve()}>{working?<Loader2 className="mr-2 h-4 w-4 animate-spin"/>:<Search className="mr-2 h-4 w-4"/>}IMPORT</Button></div>{!connected?<p className="mt-2 text-xs text-amber-200">Connect a wallet before importing.</p>:null}{tokenAddress.trim()&&!validAddress?<p role="alert" className="mt-2 text-sm text-red-200">This Contract Address is not valid for the selected chain. Check the address or choose the correct chain.</p>:null}{chain==="solana"?<div className="mt-3"><PumpImportHelp expectedCreator={evidence?.currentAuthority} onConnect={()=>void connect()} disabled={working}/></div>:null}</div>
       {canSelectImage?<div data-project-import-image-required="true"><label htmlFor="project-import-image" className="text-xs font-semibold uppercase tracking-[0.14em] text-white/70">4. Project image</label><p className="mt-2 text-xs text-muted-foreground">{canRequestManual||manualReviewMine?"Add the image you want to use on MemeWarzone. If we need to review the token, it stays hidden until we approve it.":"Ownership and security checks passed. Add the project image to finish registration."} PNG, JPEG or WEBP.</p><div className="mt-3 flex items-center gap-3"><input id="project-import-image" disabled={working} type="file" accept="image/png,image/jpeg,image/webp" onChange={(e)=>chooseImage(e.target.files?.[0]||null)}/><span className="text-xs text-muted-foreground">{imageFile?imageFile.name:item?.imageUrl?"Image already attached":"No image selected"}</span></div>{imagePreview?<img src={imagePreview} alt="Selected project" className="mt-3 h-16 w-16 rounded-md object-cover"/>:null}</div>:null}
     </section>:null}

@@ -30,10 +30,10 @@ test("pending ownership refreshes from the authoritative API without a hard relo
   assert.match(entry, /key=\{`\$\{project\.id\}:\$\{project\.ownershipStatus\}:\$\{project\.ownershipVerifiedAt \|\| ""\}`\}/);
 });
 
-test("BNB and Solana imported identities select the dedicated project page", () => {
-  assert.match(entry, /requested === BNB_CHAIN_ID \|\| requested === SOLANA_CHAIN_ID/);
+test("BNB, Solana and feature-gated Robinhood imported identities select the dedicated project page", () => {
+  assert.match(entry, /requested === BNB_CHAIN_ID \|\| requested === SOLANA_CHAIN_ID \|\| \(requested === 4663 && projectImportRobinhoodEnabled\)/);
   assert.match(entry, /\^0x\[a-fA-F0-9\]\{40\}\$/);
-  assert.match(page, /const chainLabel=solana\?"Solana":"BNB"/);
+  assert.match(page, /item\.chainId===4663\?"Robinhood":"BNB"/);
   assert.match(page, /identityLabel=solana\?"Mint":"Contract"/);
   assert.match(page, /data-project-chain="true"/);
   assert.match(page, /data-project-address="true"/);

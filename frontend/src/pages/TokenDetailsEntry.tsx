@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
-import { projectImportsEnabled } from "@/features/projectImports/config";
+import { projectImportsEnabled, projectImportRobinhoodEnabled } from "@/features/projectImports/config";
 import { BNB_CHAIN_ID, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
 import { lookupProjectImport, type ProjectImportItem } from "@/lib/projectImports";
 
@@ -25,7 +25,7 @@ export default function TokenDetailsEntry() {
 
   const importChainId = useMemo(() => {
     const requested = Number(searchParams.get("chainId") || "");
-    if (requested === BNB_CHAIN_ID || requested === SOLANA_CHAIN_ID) return requested;
+    if (requested === BNB_CHAIN_ID || requested === SOLANA_CHAIN_ID || (requested === 4663 && projectImportRobinhoodEnabled)) return requested;
     return /^0x[a-fA-F0-9]{40}$/.test(routeId) ? BNB_CHAIN_ID : SOLANA_CHAIN_ID;
   }, [routeId, searchParams]);
 

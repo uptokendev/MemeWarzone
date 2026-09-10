@@ -38,7 +38,7 @@ function holderConcentration(raw, critical, review, context = {}) {
     const percent = asNumber(holder?.percent);
     if (percent === null || percent < 0 || percent > 1) { add(review,true,"holder_data_invalid","A holder percentage was unavailable or invalid"); continue; }
     const sameEvm=(a,b)=>/^0x[0-9a-fA-F]{40}$/.test(String(a||"")) && String(a).toLowerCase()===String(b||"").toLowerCase();
-    const match = custody.find(c => c.verified === true && (context.chainId===56
+    const match = custody.find(c => c.verified === true && (context.chainId!==101
       ? c.chainId===56 && c.kind==='evm_factory_pool' && sameEvm(c.mint,context.tokenAddress) && sameEvm(holder.address,c.owner) && sameEvm(c.owner,c.tokenAccount)
       : c.mint === context.tokenAddress && holder.token_account === c.tokenAccount && (!holder.account || holder.account === c.owner)));
     if (match) { excludedMarketInventory.push({ account:match.owner, tokenAccount:match.tokenAccount, percent, reason:"verified_market_custody" }); continue; }
@@ -148,7 +148,7 @@ function solanaAssessment(raw, context) {
 export function classifyProjectImportSecurity({ chainId, raw, tokenAddress = null, market = null, custody = [] }) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw) || Object.keys(raw).length === 0) return { status:"review",provider:"goplus",criticalRisks:[],reviewRisks:[{code:"no_security_data",label:"No usable security data returned"}],details:{},providerRaw:null };
   const context={chainId:Number(chainId),tokenAddress,market,custody};
-  const assessment = Number(chainId) === 56 ? bnbAssessment(raw, context) : Number(chainId) === 101 ? solanaAssessment(raw, context) : null;
+  const assessment = Number(chainId) === 101 ? solanaAssessment(raw, context) : [56,4663].includes(Number(chainId)) ? bnbAssessment(raw, context) : null;
   if (!assessment) return { status: "review", provider: "goplus", criticalRisks: [], reviewRisks: [{ code: "unsupported_chain", label: "Security scanner does not support this chain" }], details: {} };
   add(assessment.critical, market?.controlsVerified===true && (market.buyEnabled===false||market.sellEnabled===false), "market_trading_disabled", "The verified market currently disables buying or selling");
   add(assessment.review, market?.pricingValid===false, "market_pricing_invalid", "The market's effective pricing reserves are invalid");
@@ -160,8 +160,8 @@ export function classifyProjectImportSecurity({ chainId, raw, tokenAddress = nul
 export async function scanProjectImportSecurity({ chainId, tokenAddress, market = null, custody = [], fetchImpl = fetch }) {
   const id = Number(chainId);
   const token = String(tokenAddress || "").trim();
-  const url = id === 56
-    ? `${GOPLUS_BASE}/token_security/56?contract_addresses=${encodeURIComponent(token.toLowerCase())}`
+  const url = [56,4663].includes(id)
+    ? `${GOPLUS_BASE}/token_security/${id}?contract_addresses=${encodeURIComponent(token.toLowerCase())}`
     : id === 101
       ? `${GOPLUS_BASE}/solana/token_security?contract_addresses=${encodeURIComponent(token)}`
       : null;
@@ -169,7 +169,7 @@ export async function scanProjectImportSecurity({ chainId, tokenAddress, market 
   try {
     const payload = await fetchJson(url, fetchImpl);
     const result = payload?.result;
-    const raw = id === 56 ? result?.[token.toLowerCase()] || result?.[token] : result?.[token];
+    const raw = id === 101 ? result?.[token] : result?.[token.toLowerCase()] || result?.[token];
     if (!raw) {
       return { status: "review", provider: "goplus", criticalRisks: [], reviewRisks: [{ code: "no_security_data", label: "No security data returned for this token" }], details: {} };
     }
