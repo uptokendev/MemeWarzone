@@ -1,12 +1,17 @@
 import {test,expect,type Page} from '@playwright/test';
 const mint='7AVB9viRcpmr8gRMTCAYSmhP7gbuBMpBR51DMjwcpump',owner='3cG2kAQ4NQfy4zN1g7pTYUUHSiCCMmECenBssYddBrS3',wrong='9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H';
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j0N0AAAAASUVORK5CYII=','base64');
-const resolved=(match:boolean)=>({chainId:101,tokenAddress:mint,currentAuthority:owner,automaticOwnershipAvailable:true,signedWalletMatchesAuthority:match,authoritySource:'pump_bonding_curve_creator',market:{phase:'postgrad',verified:true},assessment:{decision:match?'automatic':'wrong_wallet',automaticImportAllowed:match,manualRequestAllowed:false,checks:[]},security:{status:'pass',criticalRisks:[],reviewRisks:[],provider:'fixture'}});
+const resolved=(match:boolean)=>({chainId:101,tokenAddress:mint,currentAuthority:owner,automaticOwnershipAvailable:true,signedWalletMatchesAuthority:match,authoritySource:'pump_bonding_curve_creator',market:{phase:'postgrad',verified:true},assessment:{decision:match?'automatic':'manual_review',automaticImportAllowed:match,manualRequestAllowed:!match,checks:[]},security:{status:'pass',criticalRisks:[],reviewRisks:[],provider:'fixture'}});
 async function start(page:Page,wallet=wrong){await page.goto(`/?wallet=${wallet}`);await page.getByLabel('3. Contract Address').fill(mint);await page.getByRole('button',{name:'IMPORT',exact:true}).click();}
-test('wrong wallet gets shortened creator warning, no image or manual bypass and no preliminary GET',async({page})=>{
+test('Pump creator mismatch offers transfer proof and focuses the active challenge without preliminary GET',async({page})=>{
   let lookups=0;page.on('request',r=>{if(r.method()==='GET'&&r.url().includes('/api/project-imports'))lookups++;});
-  await page.route('**/api/project-imports/resolve',r=>r.fulfill({json:{resolved:resolved(false),project:null}}));await start(page);
-  await expect(page.getByRole('heading',{name:'CREATOR WALLET DOES NOT MATCH'})).toBeVisible();await expect(page.locator('[data-import-wrong-wallet-warning]')).toContainText('3cG2...BrS3');await expect(page.locator('#project-import-image')).toHaveCount(0);await expect(page.getByRole('button',{name:'REQUEST MANUAL CHECK'})).toHaveCount(0);expect(lookups).toBe(0);
+  await page.route('**/api/project-imports/resolve',r=>r.fulfill({json:{resolved:resolved(false),project:null}}));
+  await page.route('**/api/project-imports/pump-challenge/start',r=>r.fulfill({json:{challenge:{id:'challenge-1',chainId:101,tokenAddress:mint,creatorWallet:owner,claimantWallet:wrong,lamports:54321,solAmount:'0.000054321',createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+15*60*1000).toISOString(),status:'pending'}}}));
+  await start(page);
+  const verify=page.locator('[data-pump-wallet-verification]');
+  await expect(verify).toContainText('VERIFY YOUR PUMP.FUN WALLET');await expect(verify).toContainText('3cG2...BrS3');await expect(page.getByRole('button',{name:'START VERIFICATION'})).toBeVisible();await expect(page.getByRole('button',{name:'REGISTER MEMECOIN'})).toHaveCount(0);expect(lookups).toBe(0);
+  await page.getByRole('button',{name:'START VERIFICATION'}).click();
+  await expect(verify).toContainText('0.000054321 SOL');await expect(verify).toContainText(owner);await expect(verify).toContainText(wrong);await expect(page.getByLabel('3. Contract Address')).toHaveCount(0);await expect(page.locator('#project-import-image')).toHaveCount(0);
 });
 test('503 stays visible after a toast would expire and grants no image permission',async({page})=>{
   await page.route('**/api/project-imports/resolve',r=>r.fulfill({status:503,json:{error:'Service unavailable'}}));await start(page);
@@ -38,9 +43,9 @@ test('verified import retries only its failed image',async({page})=>{
 });
 test('wrong-family address remains explained inline',async({page})=>{await page.goto('/');await page.getByLabel('3. Contract Address').fill('0x1111111111111111111111111111111111111111');await expect(page.getByRole('alert')).toContainText('not valid for the selected chain');await expect(page.getByRole('button',{name:'IMPORT',exact:true})).toBeDisabled();});
 
-test('matched wallet and clean scan still permit image plus manual launch-history review',async({page})=>{
+test('matched wallet and clean scan permit image plus simplified manual launch-history review',async({page})=>{
  await page.route('**/api/project-imports/resolve',r=>r.fulfill({json:{resolved:{...resolved(true),market:{phase:'dex_market',verified:true,requiresLaunchReview:true},assessment:{decision:'manual_review',automaticImportAllowed:false,manualRequestAllowed:true,checks:[]}},project:null}}));await start(page,owner);
- await expect(page.locator('[data-launch-history-review]')).toContainText('a pool alone');await expect(page.locator('#project-import-image')).toBeVisible();await expect(page.getByRole('button',{name:'REGISTER MEMECOIN'})).toHaveCount(0);await page.locator('#project-import-image').setInputFiles({name:'logo.png',mimeType:'image/png',buffer:png});await expect(page.getByRole('button',{name:'REQUEST MANUAL CHECK'})).toBeEnabled();
+ await expect(page.locator('[data-import-manual-summary]')).toContainText('MANUAL CHECK NEEDED');await expect(page.locator('#project-import-image')).toBeVisible();await expect(page.getByRole('button',{name:'REGISTER MEMECOIN'})).toHaveCount(0);await page.locator('#project-import-image').setInputFiles({name:'logo.png',mimeType:'image/png',buffer:png});await expect(page.getByRole('button',{name:'REQUEST MANUAL CHECK'})).toBeEnabled();
 });
 test('Four bonding message does not incorrectly name Pump.fun',async({page})=>{
  await page.route('**/api/project-imports/resolve',r=>r.fulfill({json:{resolved:{...resolved(true),market:{phase:'bonding',verified:true,platform:'fourmeme'},assessment:{decision:'not_eligible',automaticImportAllowed:false,manualRequestAllowed:false,checks:[]}},project:null}}));await start(page,owner);await expect(page.locator('[data-import-bonding]')).toContainText('STILL BONDING ON FOUR.MEME');await expect(page.locator('#project-import-image')).toHaveCount(0);
