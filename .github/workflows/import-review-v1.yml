@@ -10,8 +10,11 @@ on:
       - 'frontend/api/lib/projectSolanaProjectAuthority*'
       - 'frontend/src/components/imports/**'
       - 'frontend/src/pages/ProjectImport.tsx'
+      - 'frontend/src/pages/TokenDetailsEntry.tsx'
+      - 'frontend/src/pages/ImportedProjectDetails.tsx'
       - 'frontend/src/lib/projectImport*'
       - 'frontend/src/project-imports-ui.test.mjs'
+      - 'frontend/src/imported-token-details-page.test.mjs'
       - 'frontend/e2e/project-import-feedback.browser.ts'
       - 'supabase/migrations/*project_import_review_evidence.sql'
       - '.github/workflows/import-review-v1.yml'
@@ -54,7 +57,7 @@ jobs:
       - name: Serial isolated ownership, risk, HTTP, database and UI regressions
         run: |
           set -e
-          for file in frontend/api/lib/projectImport*.test.mjs frontend/api/lib/projectOwnershipResolve*.test.mjs frontend/api/lib/projectSolanaProjectAuthority.test.mjs frontend/api/lib/projectOwnershipReview.test.mjs frontend/src/project-imports-ui.test.mjs frontend/src/lib/projectImportFeedback.test.mjs; do node --test "$file"; done
+          for file in frontend/api/lib/projectImport*.test.mjs frontend/api/lib/projectOwnershipResolve*.test.mjs frontend/api/lib/projectSolanaProjectAuthority.test.mjs frontend/api/lib/projectOwnershipReview.test.mjs frontend/src/project-imports-ui.test.mjs frontend/src/imported-token-details-page.test.mjs frontend/src/lib/projectImportFeedback.test.mjs; do node --test "$file"; done
       - run: npm --prefix frontend run build
       - name: Chromium
         working-directory: frontend
