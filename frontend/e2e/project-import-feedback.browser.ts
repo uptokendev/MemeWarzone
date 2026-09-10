@@ -6,7 +6,7 @@ async function start(page:Page,wallet=wrong){await page.goto(`/?wallet=${wallet}
 test('Pump creator mismatch offers transfer proof and focuses the active challenge without preliminary GET',async({page})=>{
   let lookups=0;page.on('request',r=>{if(r.method()==='GET'&&r.url().includes('/api/project-imports'))lookups++;});
   await page.route('**/api/project-imports/resolve',r=>r.fulfill({json:{resolved:resolved(false),project:null}}));
-  await page.route('**/api/project-imports/pump-challenge/start',r=>r.fulfill({json:{challenge:{id:'challenge-1',chainId:101,tokenAddress:mint,creatorWallet:owner,claimantWallet:wrong,lamports:54321,solAmount:'0.000054321',createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+15*60*1000).toISOString(),status:'pending'}}}));
+  await page.route('**/api/project-imports/pump-challenge',r=>r.fulfill({json:{challenge:{id:'challenge-1',chainId:101,tokenAddress:mint,creatorWallet:owner,claimantWallet:wrong,lamports:'54321',solAmount:'0.000054321',createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+15*60*1000).toISOString(),status:'pending'}}}));
   await start(page);
   const verify=page.locator('[data-pump-wallet-verification]');
   await expect(verify).toContainText('VERIFY YOUR PUMP.FUN WALLET');await expect(verify).toContainText('3cG2...BrS3');await expect(page.getByRole('button',{name:'START VERIFICATION'})).toBeVisible();await expect(page.getByRole('button',{name:'REGISTER MEMECOIN'})).toHaveCount(0);expect(lookups).toBe(0);
