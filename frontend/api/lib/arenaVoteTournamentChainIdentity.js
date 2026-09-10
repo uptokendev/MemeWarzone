@@ -1,15 +1,11 @@
 import { getQuery } from "../../server/http.js";
+import { ARENA_CHAIN_IDS, arenaEnvironmentIdentity, requiredArenaChainId } from "./arenaChainEnvironment.js";
 
-export const VOTE_TOURNAMENT_CHAIN_IDS = Object.freeze([56, 101, 4663]);
-const SUPPORTED = new Set(VOTE_TOURNAMENT_CHAIN_IDS);
+export const VOTE_TOURNAMENT_CHAIN_IDS = ARENA_CHAIN_IDS;
 
 export function optionalVoteTournamentChainId(value) {
   if (value == null || String(value).trim() === "") return null;
-  const chainId = Number(value);
-  if (!Number.isSafeInteger(chainId) || !SUPPORTED.has(chainId)) {
-    throw Object.assign(new Error("Unsupported Vote Tournament chain id"), { code: "INVALID_CHAIN" });
-  }
-  return chainId;
+  return requiredArenaChainId(value, "Vote Tournament");
 }
 
 export function requiredVoteTournamentChainId(value) {
@@ -18,6 +14,25 @@ export function requiredVoteTournamentChainId(value) {
     throw Object.assign(new Error("Vote Tournament chain id is required"), { code: "CHAIN_REQUIRED" });
   }
   return chainId;
+}
+
+export function voteTournamentEnvironmentIdentity(chainId, identity = {}) {
+  return arenaEnvironmentIdentity(requiredVoteTournamentChainId(chainId), identity);
+}
+
+function environmentValues(value = {}) {
+  return {
+    environment: value?.environment ?? value?.runtimeEnvironment ?? value?.runtime_environment ?? null,
+    solanaCluster: value?.solanaCluster ?? value?.solana_cluster ?? value?.cluster ?? null,
+  };
+}
+
+export function voteTournamentEnvironmentFromQuery(req) {
+  return environmentValues(getQuery(req));
+}
+
+export function voteTournamentEnvironmentFromBody(body) {
+  return environmentValues({ ...(body || {}), ...(body?.auth || {}) });
 }
 
 export function voteTournamentChainIdFromQuery(req, { required = false } = {}) {
@@ -31,13 +46,33 @@ export function voteTournamentChainIdFromBody(body, { required = false } = {}) {
   return required ? requiredVoteTournamentChainId(value) : optionalVoteTournamentChainId(value);
 }
 
-export function voteTournamentIdentityError(tournament, requestedChainId) {
+export function voteTournamentIdentityError(tournament, requestedChainId, requestedEnvironment = {}) {
   if (!tournament) return { status: 404, code: "TOURNAMENT_NOT_FOUND", error: "Tournament not found" };
   if (String(tournament.battle_mode || "") !== "vote") {
     return { status: 404, code: "VOTE_TOURNAMENT_NOT_FOUND", error: "Vote Tournament not found" };
   }
   if (requestedChainId != null && Number(tournament.chain_id) !== Number(requestedChainId)) {
     return { status: 404, code: "TOURNAMENT_CHAIN_MISMATCH", error: "Vote Tournament not found on requested chain" };
+  }
+
+  try {
+    const rowIdentity = voteTournamentEnvironmentIdentity(tournament.chain_id, {
+      environment: tournament.environment,
+      solanaCluster: tournament.solana_cluster,
+    });
+    const requestedValues = environmentValues(requestedEnvironment);
+    if (Number(tournament.chain_id) === 101 && !requestedValues.environment && !requestedValues.solanaCluster) {
+      return { status: 400, code: "TOURNAMENT_ENVIRONMENT_REQUIRED", error: "Solana Vote Tournament requires devnet or mainnet-beta identity" };
+    }
+    const requestIdentity = voteTournamentEnvironmentIdentity(tournament.chain_id, requestedValues);
+    if (
+      rowIdentity.environment !== requestIdentity.environment ||
+      rowIdentity.solanaCluster !== requestIdentity.solanaCluster
+    ) {
+      return { status: 404, code: "TOURNAMENT_ENVIRONMENT_MISMATCH", error: "Vote Tournament not found in requested environment" };
+    }
+  } catch (error) {
+    return { status: 400, code: error?.code || "INVALID_ENVIRONMENT", error: error?.message || "Invalid Vote Tournament environment" };
   }
   return null;
 }

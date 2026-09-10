@@ -6,6 +6,7 @@ on:
       - build/cross-chain-stabilization-rh-base
     paths:
       - "frontend/api/arenaTournaments.js"
+      - "frontend/api/lib/arenaChainEnvironment.js"
       - "frontend/api/lib/arenaTournamentChainIdentity.js"
       - "frontend/api/lib/arenaTournamentChainIdentity.test.mjs"
       - ".github/workflows/agent1-normal-tournament-chain-identity.yml"
@@ -36,6 +37,7 @@ jobs:
 
       - name: Syntax check Normal Tournament identity runtime
         run: |
+          node --check frontend/api/lib/arenaChainEnvironment.js
           node --check frontend/api/arenaTournaments.js
           node --check frontend/api/lib/arenaTournamentChainIdentity.js
 

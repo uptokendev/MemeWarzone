@@ -8,6 +8,8 @@ import {
   assertVoteTournamentBattleIdentity,
   voteTournamentChainIdFromBody,
   voteTournamentChainIdFromQuery,
+  voteTournamentEnvironmentFromBody,
+  voteTournamentEnvironmentFromQuery,
   voteTournamentIdentityError,
 } from "./lib/arenaVoteTournamentChainIdentity.js";
 
@@ -34,7 +36,7 @@ function invalidChain(res, error) {
 async function loadTournament(id) {
   return (await pool.query(
     `select id, chain_id, status, bracket, battle_mode, round_duration_hours, competition_generation,
-            contest_scoring_version
+            contest_scoring_version, environment, solana_cluster
        from public.arena_tournaments where id=$1 limit 1`,
     [id],
   )).rows[0] || null;
@@ -59,16 +61,29 @@ async function validateMatchBattleIdentity(tournament, matchRef) {
   return null;
 }
 
+function requestedEnvironment(req, body = null) {
+  return body == null ? voteTournamentEnvironmentFromQuery(req) : voteTournamentEnvironmentFromBody(body);
+}
+
 export async function arenaVoteTournamentSetupIdentityGate(req, res) {
   const path = pathOf(req);
   const method = methodOf(req);
   try {
     if (path === "/arena/tournaments/v2/buy-in-quote") {
-      voteTournamentChainIdFromQuery(req, { required: true });
+      const chainId = voteTournamentChainIdFromQuery(req, { required: true });
+      if (chainId === 101) {
+        const env = requestedEnvironment(req);
+        if (!env.environment && !env.solanaCluster) return invalidChain(res, Object.assign(new Error("Solana Vote Tournament requires devnet or mainnet-beta identity"), { code: "TOURNAMENT_ENVIRONMENT_REQUIRED" }));
+      }
       return arenaVoteTournamentSetup(req, res);
     }
     if (path === "/arena/tournaments/v2/create") {
-      voteTournamentChainIdFromBody(bodyOf(req), { required: true });
+      const body = bodyOf(req);
+      const chainId = voteTournamentChainIdFromBody(body, { required: true });
+      if (chainId === 101) {
+        const env = requestedEnvironment(req, body);
+        if (!env.environment && !env.solanaCluster) return invalidChain(res, Object.assign(new Error("Solana Vote Tournament requires devnet or mainnet-beta identity"), { code: "TOURNAMENT_ENVIRONMENT_REQUIRED" }));
+      }
       return arenaVoteTournamentSetup(req, res);
     }
 
@@ -77,20 +92,19 @@ export async function arenaVoteTournamentSetupIdentityGate(req, res) {
     const tournamentId = decodeURIComponent(receipt[1]);
     const tournament = await loadTournament(tournamentId);
 
-    // The legacy receipt path also serves Normal Tournaments. Preserve that path
-    // unchanged unless the referenced row is actually a Vote Tournament.
     if (receipt[2] === "buy-in-receipt" && tournament && tournament.battle_mode !== "vote") {
       return arenaVoteTournamentSetup(req, res);
     }
 
+    const body = method === "GET" ? null : bodyOf(req);
     const requestedChainId = method === "GET"
       ? voteTournamentChainIdFromQuery(req)
-      : voteTournamentChainIdFromBody(bodyOf(req));
-    const error = voteTournamentIdentityError(tournament, requestedChainId);
+      : voteTournamentChainIdFromBody(body);
+    const error = voteTournamentIdentityError(tournament, requestedChainId, requestedEnvironment(req, body));
     if (error) return identityFailure(res, error);
     return arenaVoteTournamentSetup(req, res);
   } catch (error) {
-    if (error?.code === "INVALID_CHAIN" || error?.code === "CHAIN_REQUIRED") return invalidChain(res, error);
+    if (["INVALID_CHAIN", "CHAIN_REQUIRED", "INVALID_ENVIRONMENT", "TOURNAMENT_ENVIRONMENT_REQUIRED"].includes(error?.code)) return invalidChain(res, error);
     throw error;
   }
 }
@@ -102,11 +116,12 @@ async function tournamentBoostGate(req, res, delegate, { solanaOnly = false } = 
   const tournamentId = decodeURIComponent(route[1]);
   const matchRef = decodeURIComponent(route[2]);
   try {
+    const body = methodOf(req) === "GET" ? null : bodyOf(req);
     const requestedChainId = methodOf(req) === "GET"
       ? voteTournamentChainIdFromQuery(req)
-      : voteTournamentChainIdFromBody(bodyOf(req));
+      : voteTournamentChainIdFromBody(body);
     const tournament = await loadTournament(tournamentId);
-    const error = voteTournamentIdentityError(tournament, requestedChainId);
+    const error = voteTournamentIdentityError(tournament, requestedChainId, requestedEnvironment(req, body));
     if (error) return identityFailure(res, error);
     if (solanaOnly && Number(tournament.chain_id) !== 101) {
       return json(res, 404, { ok: false, error: "Vote Tournament not found on Solana", code: "TOURNAMENT_CHAIN_MISMATCH" });
@@ -118,7 +133,7 @@ async function tournamentBoostGate(req, res, delegate, { solanaOnly = false } = 
     if (battleError) return identityFailure(res, battleError);
     return delegate(req, res);
   } catch (error) {
-    if (error?.code === "INVALID_CHAIN" || error?.code === "CHAIN_REQUIRED") return invalidChain(res, error);
+    if (["INVALID_CHAIN", "CHAIN_REQUIRED", "INVALID_ENVIRONMENT", "TOURNAMENT_ENVIRONMENT_REQUIRED"].includes(error?.code)) return invalidChain(res, error);
     throw error;
   }
 }
