@@ -1,0 +1,44 @@
+name: Apply Pump transfer challenge preview patch
+
+on:
+  push:
+    branches:
+      - preview/import-review-c15d5edd
+    paths:
+      - frontend/scripts/apply-pump-transfer-challenge.mjs
+      - .github/workflows/apply-pump-transfer-challenge-preview.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: preview/import-review-c15d5edd
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Apply source patch
+        working-directory: frontend
+        run: node scripts/apply-pump-transfer-challenge.mjs
+      - name: Run focused tests
+        working-directory: frontend
+        run: node --test api/lib/projectImportPumpChallenge.test.mjs api/lib/projectImportAssessment.test.mjs src/project-imports-ui.test.mjs api/lib/projectImportCore.test.mjs
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+      - name: Materialize changes and remove one-shot machinery
+        run: |
+          rm -f frontend/scripts/apply-pump-transfer-challenge.mjs .github/workflows/apply-pump-transfer-challenge-preview.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m "feat(imports): verify Pump.fun creator wallet by timed SOL transfer" || exit 0
+          git push origin HEAD:preview/import-review-c15d5edd
