@@ -1,0 +1,40 @@
+name: Import preview simpler user copy
+on:
+  push:
+    branches: [preview/import-review-c15d5edd]
+    paths:
+      - frontend/scripts/simplify-import-review-copy.mjs
+permissions:
+  contents: write
+jobs:
+  apply-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: preview/import-review-c15d5edd
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply copy-only changes
+        working-directory: frontend
+        run: node scripts/simplify-import-review-copy.mjs
+      - name: Install
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+      - name: Focused import UI tests
+        working-directory: frontend
+        run: node --test src/project-imports-ui.test.mjs src/lib/projectImportFeedback.test.mjs
+      - name: Production build
+        working-directory: frontend
+        run: npm run build
+      - name: Commit only tested user-copy changes
+        run: |
+          set -eu
+          git config user.name 'MemeWarzone import preview'
+          git config user.email 'import-preview@users.noreply.github.com'
+          git add frontend/src/pages/ProjectImport.tsx frontend/src/lib/projectImportFeedback.mjs frontend/src/project-imports-ui.test.mjs
+          git diff --cached --check
+          git commit -m 'ux(import): simplify manual review messages'
+          git push origin HEAD:preview/import-review-c15d5edd
