@@ -152,7 +152,7 @@ test("Vote Tournament finalizer is lease-protected and never enters the Normal B
 test("Final Salvo API is free-vote-only, shot-bound and exposes no Boost path", () => {
   const salvo = readApi("arenaFinalSalvo.js");
   assert.match(salvo, /action:\s*"arena_final_salvo_vote"/);
-  assert.match(salvo, /action_type, boost_units, points/);
+  assert.match(salvo, /action_type,\s*boost_units,\s*points/);
   assert.match(salvo, /'free_vote',0,1/);
   assert.match(salvo, /select now\(\) as now/);
   assert.match(salvo, /boostAllowed:\s*false/);
