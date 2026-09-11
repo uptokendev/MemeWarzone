@@ -1,0 +1,121 @@
+name: Agent 3 ArenaMoneyV2 Tournament Resume
+
+on:
+  push:
+    branches: [agent3/solana-arena-money-v2-reconcile-120401f]
+    paths:
+      - .github/workflows/agent3-arena-money-v2-tournament-resume.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent3-arena-money-v2-tournament-resume
+  cancel-in-progress: false
+
+env:
+  BASE_SHA: a5cfa696be1dd0e7f607eed9931513a2b729e519
+  INTEGRATION_BRANCH: build/cross-chain-stabilization-rh-base
+  PROGRAM_ID: 2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX
+  PROGRAMDATA: H8DKTTSuGQQccvQ9A3DZWesxsdcw619qJnr57yHtB9ZP
+  AUTHORITY: HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9
+
+jobs:
+  resume-and-certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: testnet-certification
+    env:
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
+      SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER }}
+      SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
+    steps:
+      - name: Checkout Agent 3 evidence harness
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: agent3
+          fetch-depth: 0
+      - name: Checkout exact integration head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BASE_SHA }}
+          path: source
+          fetch-depth: 0
+      - name: Freeze integration immediately before continuation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = "$BASE_SHA"
+          remote="$(git -C source ls-remote origin refs/heads/$INTEGRATION_BRANCH | awk '{print $1}')"
+          echo "CURRENT_INTEGRATION $remote"
+          if [ "$remote" != "$BASE_SHA" ]; then
+            echo "INTEGRATION_ADVANCED_BEFORE_TOURNAMENT_CONTINUATION expected=$BASE_SHA actual=$remote"
+            exit 43
+          fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Solana RPC dependencies
+        shell: bash
+        run: npm install --prefix agent3/tests/solana --no-audit --no-fund
+      - name: Recover upgrade/extend chain evidence
+        shell: bash
+        run: |
+          node <<'NODE'
+          const {Connection,PublicKey}=require('./agent3/tests/solana/node_modules/@solana/web3.js');
+          (async()=>{
+            const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
+            const authority=new PublicKey(process.env.AUTHORITY);
+            const programData=new PublicKey(process.env.PROGRAMDATA);
+            const rows=[];
+            for(const addr of [programData,authority]){
+              const sigs=await c.getSignaturesForAddress(addr,{limit:100},'confirmed');
+              for(const s of sigs){
+                if(s.slot < 496696000 || s.slot > 496697400) continue;
+                const t=await c.getTransaction(s.signature,{commitment:'confirmed',maxSupportedTransactionVersion:0});
+                if(!t) continue;
+                const keys=t.transaction.message.getAccountKeys?.().staticAccountKeys || t.transaction.message.accountKeys || [];
+                const loader='BPFLoaderUpgradeab1e11111111111111111111111';
+                const loaderTouched=keys.some(k=>k.toBase58()===loader);
+                rows.push({address:addr.toBase58(),signature:s.signature,slot:s.slot,err:s.err,blockTime:s.blockTime,fee:t.meta?.fee??null,feePayer:keys[0]?.toBase58?.()??null,loaderTouched,preBalances:t.meta?.preBalances?.slice(0,5),postBalances:t.meta?.postBalances?.slice(0,5)});
+              }
+            }
+            const unique=[...new Map(rows.map(x=>[x.signature,x])).values()].sort((a,b)=>a.slot-b.slot);
+            console.log('UPGRADE_WINDOW_EVIDENCE '+JSON.stringify(unique));
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
+      - name: Resume existing Tournament and execute payment acceptance
+        shell: bash
+        run: node agent3/tests/solana/arena-money-v2-tournament-resume.cjs
+      - name: Freeze integration after economic mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote="$(git -C source ls-remote origin refs/heads/$INTEGRATION_BRANCH | awk '{print $1}')"
+          echo "POST_PAYMENT_INTEGRATION $remote"
+          if [ "$remote" != "$BASE_SHA" ]; then
+            echo "INTEGRATION_ADVANCED_AFTER_PAYMENT expected=$BASE_SHA actual=$remote"
+            exit 44
+          fi
+      - name: Rewards treasury exact-head unit tests
+        shell: bash
+        working-directory: source
+        run: cargo test -p mwz_rewards_treasury --lib
+      - name: Current Solana authority exact-head tests
+        shell: bash
+        run: node --test source/frontend/shared/solanaCurrentAuthority.test.mjs source/frontend/shared/solanaCurrentArenaAuthority.test.mjs
+      - name: Install exact-head frontend dependencies
+        shell: bash
+        run: npm ci --prefix source/frontend --no-audit --no-fund
+      - name: Exact-head Arena payment lifecycle matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          DATABASE_URL=postgres://127.0.0.1/mwz_test node --test source/frontend/src/lib/arena/solanaArenaPaymentLifecycle.test.mjs
+          node --test source/frontend/src/lib/arena/battleBoostSolanaIntegration.test.mjs
+          node --test source/frontend/src/lib/arena/integratedArenaRuntimeContracts.test.mjs
+          npm --prefix source/frontend run test:solana-confirm
+          npm --prefix source/frontend run test:solana-v0
+          node --test source/frontend/api/lib/arenaTournamentV2Certification.test.mjs
