@@ -1,6 +1,8 @@
 import { Link } from "react-router-dom";
+import { EventSponsorAttribution } from "@/components/arena/EventSponsorAttribution";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { WarzoneTokenMark } from "@/components/warzone/WarzoneTokenMark";
+import type { PublicEventSponsor } from "@/hooks/useEventSponsors";
 import { identitiesFromEntries, presentSymmetricBracket } from "@/lib/arena/tournamentBracketPresentation.mjs";
 import { battleFightHref } from "@/lib/arena/tournamentCommandPresentation.mjs";
 import { cn } from "@/lib/utils";
@@ -14,27 +16,10 @@ type BracketMatch = {
   bye?: boolean;
 };
 
-function NodeCard({
-  node,
-  active = false,
-}: {
-  node: { symbol?: string | null; name?: string | null; imageUrl?: string | null; won?: boolean; lost?: boolean } | null;
-  active?: boolean;
-}) {
-  if (!node) {
-    return <div className="mwz-flat-card h-[3.25rem] opacity-40" />;
-  }
+function NodeCard({ node, active = false }: { node: { symbol?: string | null; name?: string | null; imageUrl?: string | null; won?: boolean; lost?: boolean } | null; active?: boolean }) {
+  if (!node) return <div className="mwz-flat-card h-[3.25rem] opacity-40" />;
   return (
-    <div
-      data-tournament-bracket-node={node.symbol || "token"}
-      data-bracket-winner={node.won ? "true" : undefined}
-      className={cn(
-        "mwz-flat-card flex items-center gap-2 px-2 py-1.5",
-        node.lost && "opacity-45",
-        node.won && "border-orange-400/40",
-        active && !node.won && "border-orange-400/70",
-      )}
-    >
+    <div data-tournament-bracket-node={node.symbol || "token"} data-bracket-winner={node.won ? "true" : undefined} className={cn("mwz-flat-card flex items-center gap-2 px-2 py-1.5", node.lost && "opacity-45", node.won && "border-orange-400/40", active && !node.won && "border-orange-400/70")}>
       <WarzoneTokenMark imageUrl={node.imageUrl} symbol={node.symbol} name={node.name} size="sm" />
       <div className="min-w-0">
         <div className="truncate font-black text-xs text-foreground">{node.symbol ? `$${node.symbol}` : "TOKEN"}</div>
@@ -51,31 +36,14 @@ function MatchPair({ match }: { match: ReturnType<typeof presentSymmetricBracket
   const body = (
     <div className="space-y-1" data-tournament-bracket-match={match.id}>
       <NodeCard node={match.left} active={match.live} />
-      {match.bye ? (
-        <div className="px-2 text-[9px] uppercase tracking-[0.14em] text-white/35">Bye</div>
-      ) : (
-        <NodeCard node={match.right} active={match.live} />
-      )}
+      {match.bye ? <div className="px-2 text-[9px] uppercase tracking-[0.14em] text-white/35">Bye</div> : <NodeCard node={match.right} active={match.live} />}
     </div>
   );
   if (!href) return body;
-  return (
-    <Link to={href} className="block hover:opacity-90">
-      {body}
-    </Link>
-  );
+  return <Link to={href} className="block hover:opacity-90">{body}</Link>;
 }
 
-export function TournamentBracketModal({
-  open,
-  onOpenChange,
-  title,
-  statusLabel,
-  stageLabel,
-  rounds,
-  entries,
-  chainId = 56,
-}: {
+export function TournamentBracketModal({ open, onOpenChange, title, statusLabel, stageLabel, rounds, entries, chainId = 56, sponsors }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
@@ -84,6 +52,7 @@ export function TournamentBracketModal({
   rounds: Array<{ round: number; matches?: BracketMatch[] }>;
   entries?: Array<Record<string, unknown>>;
   chainId?: number;
+  sponsors?: PublicEventSponsor[];
 }) {
   const identities = identitiesFromEntries(entries);
   const bracket = presentSymmetricBracket(rounds, identities);
@@ -91,17 +60,11 @@ export function TournamentBracketModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        data-tournament-bracket-modal="true"
-        data-bracket-chain={chainId}
-        className="max-h-[90vh] w-[95vw] max-w-[95vw] overflow-hidden border bg-[#050505] p-4 md:max-h-[88vh] md:p-6"
-        style={{ borderColor: "var(--mwz-flat-card-border)" }}
-      >
+      <DialogContent data-tournament-bracket-modal="true" data-bracket-chain={chainId} className="max-h-[90vh] w-[95vw] max-w-[95vw] overflow-hidden border bg-[#050505] p-4 md:max-h-[88vh] md:p-6" style={{ borderColor: "var(--mwz-flat-card-border)" }}>
         <DialogHeader className="pr-8">
           <DialogTitle className="font-retro text-xl text-foreground">{title}</DialogTitle>
-          <DialogDescription className="text-[11px] uppercase tracking-[0.16em] text-white/50">
-            {[statusLabel, stageLabel].filter(Boolean).join(" · ") || "Tournament bracket"}
-          </DialogDescription>
+          <DialogDescription className="text-[11px] uppercase tracking-[0.16em] text-white/50">{[statusLabel, stageLabel].filter(Boolean).join(" · ") || "Tournament bracket"}</DialogDescription>
+          <EventSponsorAttribution sponsors={sponsors} variant="prominent" />
         </DialogHeader>
         {bracket.empty ? (
           <p className="py-8 text-sm text-muted-foreground">The bracket appears after the roster locks.</p>
@@ -111,9 +74,7 @@ export function TournamentBracketModal({
               {bracket.left.map((column) => (
                 <div key={`left-${column.round}`} className="flex min-w-[9.5rem] flex-1 flex-col justify-around gap-4">
                   <div className="text-center text-[10px] uppercase tracking-[0.16em] text-white/45">{column.label}</div>
-                  {column.matches.map((match) => (
-                    <MatchPair key={match.id} match={match} />
-                  ))}
+                  {column.matches.map((match) => <MatchPair key={match.id} match={match} />)}
                 </div>
               ))}
               <div className="flex min-w-[12rem] flex-col items-center justify-center gap-3 px-3" data-tournament-championship="true">
@@ -127,26 +88,16 @@ export function TournamentBracketModal({
                   </div>
                 ) : bracket.championship ? (
                   <div className="mwz-flat-card space-y-2 p-3 text-center">
-                    <div className="flex flex-col items-center gap-1">
-                      <WarzoneTokenMark imageUrl={bracket.championship.left?.imageUrl} symbol={bracket.championship.left?.symbol} name={bracket.championship.left?.name} size="sm" />
-                      <div className="font-black text-sm">${bracket.championship.left?.symbol || "----"}</div>
-                    </div>
+                    <div className="flex flex-col items-center gap-1"><WarzoneTokenMark imageUrl={bracket.championship.left?.imageUrl} symbol={bracket.championship.left?.symbol} name={bracket.championship.left?.name} size="sm" /><div className="font-black text-sm">${bracket.championship.left?.symbol || "----"}</div></div>
                     <div className="font-black text-orange-400">VS</div>
-                    <div className="flex flex-col items-center gap-1">
-                      <WarzoneTokenMark imageUrl={bracket.championship.right?.imageUrl} symbol={bracket.championship.right?.symbol} name={bracket.championship.right?.name} size="sm" />
-                      <div className="font-black text-sm">${bracket.championship.right?.symbol || "----"}</div>
-                    </div>
+                    <div className="flex flex-col items-center gap-1"><WarzoneTokenMark imageUrl={bracket.championship.right?.imageUrl} symbol={bracket.championship.right?.symbol} name={bracket.championship.right?.name} size="sm" /><div className="font-black text-sm">${bracket.championship.right?.symbol || "----"}</div></div>
                   </div>
-                ) : (
-                  <div className="text-xs uppercase tracking-[0.14em] text-white/40">Pending</div>
-                )}
+                ) : <div className="text-xs uppercase tracking-[0.14em] text-white/40">Pending</div>}
               </div>
               {bracket.right.map((column) => (
                 <div key={`right-${column.round}`} className="flex min-w-[9.5rem] flex-1 flex-col justify-around gap-4">
                   <div className="text-center text-[10px] uppercase tracking-[0.16em] text-white/45">{column.label}</div>
-                  {column.matches.map((match) => (
-                    <MatchPair key={match.id} match={match} />
-                  ))}
+                  {column.matches.map((match) => <MatchPair key={match.id} match={match} />)}
                 </div>
               ))}
             </div>

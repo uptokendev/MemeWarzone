@@ -7,12 +7,28 @@ on:
       - "frontend/api/arenaEventSponsorshipRecovery.js"
       - "frontend/api/arenaSponsorshipPublic.js"
       - "frontend/api/arenaSponsorships.js"
+      - "frontend/api/arenaSponsorVisibility.js"
       - "frontend/api/postgrad.js"
       - "frontend/api/lib/eventSponsorshipAuthority.mjs"
       - "frontend/api/lib/eventSponsorshipLifecycle.mjs"
+      - "frontend/api/lib/arenaSponsorVisibilityPolicy.mjs"
+      - "frontend/api/lib/arenaSponsorVisibilityPolicy.test.mjs"
       - "frontend/api/lib/eventSponsorshipAuthority.test.mjs"
       - "frontend/api/lib/eventSponsorshipSeparation.test.mjs"
       - "frontend/api/lib/arenaSponsorshipProviderAwait.test.mjs"
+      - "frontend/api/lib/arenaQuarterlyChampionship.js"
+      - "frontend/api/lib/arenaQuarterlyChampionshipMath.mjs"
+      - "frontend/src/hooks/useEventSponsors.ts"
+      - "frontend/src/hooks/useArenaLeagueFeed.ts"
+      - "frontend/src/pages/PostGradLeague.tsx"
+      - "frontend/src/components/arena/EventSponsorAttribution.tsx"
+      - "frontend/src/components/arena/TournamentBracketModal.tsx"
+      - "frontend/src/components/arena/TournamentEventCard.tsx"
+      - "frontend/src/components/arena/TournamentLiveOverviewModal.tsx"
+      - "frontend/src/components/arena/TournamentRegistrationModal.tsx"
+      - "frontend/src/components/arena/TournamentResultsModal.tsx"
+      - "db/migrations/20260907_000001_quarterly_championship_runtime.sql"
+      - "db/migrations/20260907_000002_quarterly_championship_continuous_base_points.sql"
       - "frontend/db/migrations/20260904_000000_event_sponsorship_core_schema.sql"
       - "frontend/db/migrations/20260904_000001_solana_arena_money_v2_runtime.sql"
       - "frontend/db/migrations/20260905_000001_solana_arena_payment_lifecycle.sql"
@@ -60,12 +76,15 @@ jobs:
         run: |
           node --check api/lib/eventSponsorshipAuthority.mjs
           node --check api/lib/eventSponsorshipLifecycle.mjs
+          node --check api/lib/arenaSponsorVisibilityPolicy.mjs
           node --check api/arenaEventSponsorshipAuthority.js
           node --check api/arenaEventSponsorshipRecovery.js
+          node --check api/arenaSponsorVisibility.js
           node --check api/arenaSponsorships.js
+          node --check api/arenaSponsorshipPublic.js
           node --check api/postgrad.js
-      - name: Authority invariants
-        run: node --test api/lib/eventSponsorshipAuthority.test.mjs api/lib/eventSponsorshipSeparation.test.mjs
+      - name: Authority and public visibility invariants
+        run: node --test api/lib/eventSponsorshipAuthority.test.mjs api/lib/eventSponsorshipSeparation.test.mjs api/lib/arenaSponsorVisibilityPolicy.test.mjs
       - name: Sponsorship provider await regression
         run: node --test api/lib/arenaSponsorshipProviderAwait.test.mjs
       - name: Install PostgreSQL client
@@ -88,7 +107,6 @@ jobs:
           end $$;
           SQL
 
-          # Preserve the existing advertising product as an independent repository-owned schema.
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f ../database/sponsorships_import.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
           insert into public.sponsorship_applications(
@@ -106,7 +124,6 @@ jobs:
           );
           SQL
 
-          # Canonical minimum repository migration sequence required by Event Sponsorship.
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260904_000000_event_sponsorship_core_schema.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260904_000001_solana_arena_money_v2_runtime.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260905_000001_solana_arena_payment_lifecycle.sql
@@ -116,7 +133,6 @@ jobs:
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/tests/event_sponsorship_schema_rehearsal.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/tests/event_sponsorship_security_certification.sql
 
-          # Repository migrations are intentionally replay-safe; run the exact sequence again.
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260904_000000_event_sponsorship_core_schema.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260904_000001_solana_arena_money_v2_runtime.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260905_000001_solana_arena_payment_lifecycle.sql
