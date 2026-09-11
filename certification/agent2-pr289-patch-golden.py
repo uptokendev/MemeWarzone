@@ -10,6 +10,7 @@ end=s.index("async function setupWallet(",start)
 replacement=r'''async function executeLaunchpadV0({v0,connection,payer,ed25519,programIx,lookupTable,instructions,label}){
   const ixes=instructions||[ed25519,programIx];
   const expectation={payer:payer.publicKey,ed25519Instruction:ed25519,programInstruction:programIx,lookupTableAccounts:[lookupTable],allowInstructionPrivilegePromotion:true};
+  const payerBalanceBefore=await connection.getBalance(payer.publicKey,"confirmed");
   let compiled,stats,sim,raw,signature,confirmed;
   const expiredAttempts=[];
   for(let attempt=1;attempt<=3;attempt++){
@@ -48,7 +49,7 @@ replacement=r'''async function executeLaunchpadV0({v0,connection,payer,ed25519,p
   expired.transaction.sign([payer]);
   const expiredSim=await connection.simulateTransaction(expired.transaction,{commitment:"confirmed",sigVerify:false,replaceRecentBlockhash:false});
   if(!expiredSim.value.err) fail(`${label} unknown/expired blockhash unexpectedly simulated successfully`);
-  return {status:"PASS",version:"V0",altUsage:`YES:${lookupTable.key.toBase58()}`,freshBlockhash:"YES",blockhash:compiled.latest.blockhash,lastValidBlockHeight:compiled.latest.lastValidBlockHeight,payer:payer.publicKey.toBase58(),requiredSigners:stats.requiredSigners,simulation:`PASS units=${sim.unitsConsumed??"unknown"}`,serializedPacketBytes:stats.serializedBytes,sendMethod:"sendRawTransaction(skipPreflight=false,maxRetries=5)",confirmationMethod:"confirmTransaction({signature,blockhash,lastValidBlockHeight},confirmed); expiry-safe rebuild only after null signature status",expiryBehavior:`PASS unknown/expired blockhash rejected: ${JSON.stringify(expiredSim.value.err)}`,retryBehavior:`PASS identical signed packet deduped (${retryResult})`,duplicateReplayBehavior:`PASS same signed packet deduped; fresh-blockhash same intent rejected: ${JSON.stringify(replaySim.value.err)}`,expiredUnlandedAttempts:expiredAttempts,signature};
+  return {status:"PASS",version:"V0",altUsage:`YES:${lookupTable.key.toBase58()}`,freshBlockhash:"YES",blockhash:compiled.latest.blockhash,lastValidBlockHeight:compiled.latest.lastValidBlockHeight,payer:payer.publicKey.toBase58(),payerBalanceBefore,requiredSigners:stats.requiredSigners,simulation:`PASS units=${sim.unitsConsumed??"unknown"}`,serializedPacketBytes:stats.serializedBytes,sendMethod:"sendRawTransaction(skipPreflight=false,maxRetries=5)",confirmationMethod:"confirmTransaction({signature,blockhash,lastValidBlockHeight},confirmed); expiry-safe rebuild only after null signature status",expiryBehavior:`PASS unknown/expired blockhash rejected: ${JSON.stringify(expiredSim.value.err)}`,retryBehavior:`PASS identical signed packet deduped (${retryResult})`,duplicateReplayBehavior:`PASS same signed packet deduped; fresh-blockhash same intent rejected: ${JSON.stringify(replaySim.value.err)}`,expiredUnlandedAttempts:expiredAttempts,signature};
 }
 '''
 s=s[:start]+replacement+s[end:]
