@@ -12,7 +12,15 @@ try {
  * and SOLANA_REWARDS_AUTHORITY_SECRET_KEY. Does not mark claim_open unless the
  * on-chain batch root matches the DB merkle_root.
  */
-import { Connection, Keypair, PublicKey, SystemProgram, Transaction, TransactionInstruction } from "@solana/web3.js";
+import {
+  Connection,
+  Keypair,
+  PublicKey,
+  SystemProgram,
+  TransactionInstruction,
+  TransactionMessage,
+  VersionedTransaction,
+} from "@solana/web3.js";
 import { createHash } from "node:crypto";
 import { pool } from "../db.js";
 
@@ -104,6 +112,51 @@ function deadlineUnix(row: { claim_deadline?: unknown; deadline?: unknown }): bi
   throw new Error("Prepared recruiter batch is missing claim_deadline/deadline");
 }
 
+async function sendServerV0(
+  connection: Connection,
+  signer: Keypair,
+  instruction: TransactionInstruction,
+  label: string,
+): Promise<string> {
+  const compile = async () => {
+    const latest = await connection.getLatestBlockhash("confirmed");
+    const message = new TransactionMessage({
+      payerKey: signer.publicKey,
+      recentBlockhash: latest.blockhash,
+      instructions: [instruction],
+    }).compileToV0Message();
+    const transaction = new VersionedTransaction(message);
+    transaction.sign([signer]);
+    return { transaction, latest };
+  };
+
+  const simulated = await compile();
+  const simulation = await connection.simulateTransaction(simulated.transaction, {
+    commitment: "confirmed",
+    sigVerify: true,
+    replaceRecentBlockhash: false,
+  });
+  if (simulation.value.err) {
+    const logs = simulation.value.logs?.slice(-12).join("\n") || "";
+    throw new Error(`${label} simulation failed: ${JSON.stringify(simulation.value.err)}${logs ? `\n${logs}` : ""}`);
+  }
+
+  // Rebuild after simulation so the submitted transaction uses a fresh blockhash.
+  const final = await compile();
+  const signature = await connection.sendRawTransaction(final.transaction.serialize(), {
+    skipPreflight: false,
+    maxRetries: 3,
+  });
+  const confirmation = await connection.confirmTransaction(
+    { signature, ...final.latest },
+    "confirmed",
+  );
+  if (confirmation.value.err) {
+    throw new Error(`${label} failed on-chain: ${JSON.stringify(confirmation.value.err)}`);
+  }
+  return signature;
+}
+
 async function main() {
   const sha = process.env.SOURCE_COMMIT || process.env.COOLIFY_GIT_COMMIT_SHA || process.env.GIT_SHA || "unset";
   console.log(`[publishRecruiterSettlementRoot] BUILD_SHA=${sha}`);
@@ -165,7 +218,6 @@ async function main() {
         throw new Error(`On-chain recruiter batch for epoch ${epochId} does not match prepared DB batch`);
       }
     } else {
-      const latest = await connection.getLatestBlockhash("confirmed");
       const ix = new TransactionInstruction({
         programId: pid,
         keys: [
@@ -183,10 +235,7 @@ async function main() {
           i64le(deadline),
         ]),
       });
-      const tx = new Transaction({ feePayer: signer.publicKey, recentBlockhash: latest.blockhash }).add(ix);
-      tx.sign(signer);
-      txHash = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false, maxRetries: 3 });
-      await connection.confirmTransaction({ signature: txHash, ...latest }, "confirmed");
+      txHash = await sendServerV0(connection, signer, ix, `Recruiter epoch ${epochId} root publication`);
       const confirmed = await readOnChainBatch(connection, batchAddress.toBase58());
       if (
         !confirmed?.initialized ||

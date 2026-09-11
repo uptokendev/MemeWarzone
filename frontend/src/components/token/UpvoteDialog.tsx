@@ -23,6 +23,7 @@ import { getPublicRpcUrl } from "@/lib/chainConfig";
 import { isSolanaAddress } from "@/lib/address";
 import { getSolanaProvider } from "@/lib/solanaWallet";
 import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
+import { submitSolanaUpvoteV0 } from "@/lib/solanaUpvoteV0";
 
 /** Fixed UP Vote price in USD. Same product on BNB and Solana. */
 const UPVOTE_USD_TARGET = 3;
@@ -435,45 +436,23 @@ export function UpvoteDialog({
       getPublicRpcUrl(SOLANA_CHAIN_ID) ||
       "https://api.mainnet-beta.solana.com";
     const connection = new web3.Connection(rpc, "confirmed");
-    const from = new web3.PublicKey(solanaWallet.solanaAccount);
-    const to = new web3.PublicKey(treasuryAddress);
-    const latest = await connection.getLatestBlockhash("confirmed");
 
     const lamports = voteWei > BigInt(Number.MAX_SAFE_INTEGER) ? Number.MAX_SAFE_INTEGER : Number(voteWei);
     if (!Number.isFinite(lamports) || lamports <= 0) {
       fail("Price unavailable", "Resolved vote amount was invalid.");
     }
 
-    const tx = new web3.Transaction();
-    tx.feePayer = from;
-    tx.recentBlockhash = latest.blockhash;
-    tx.add(
-      new web3.TransactionInstruction({
-        keys: [{ pubkey: from, isSigner: true, isWritable: false }],
-        programId: new web3.PublicKey("MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"),
-        data: Buffer.from(`mwz-upvote:${campaignAddress}`, "utf8"),
-      }),
-    );
-    tx.add(
-      web3.SystemProgram.transfer({
-        fromPubkey: from,
-        toPubkey: to,
-        lamports,
-      }),
-    );
-
     toast({ title: "Confirm UP Vote", description: `Pay ~$${UPVOTE_USD_TARGET} in SOL…` });
 
     let signature = "";
     try {
-      const signed = await provider.signTransaction!(tx);
-      const raw =
-        typeof signed?.serialize === "function"
-          ? signed.serialize()
-          : tx.serialize({ requireAllSignatures: false, verifySignatures: false });
-      signature = await connection.sendRawTransaction(raw, {
-        skipPreflight: false,
-        preflightCommitment: "confirmed",
+      signature = await submitSolanaUpvoteV0({
+        web3,
+        connection,
+        voterAddress: solanaWallet.solanaAccount,
+        treasuryAddress,
+        campaignAddress,
+        lamports,
       });
     } catch (signErr: unknown) {
       const msg = String((signErr as { message?: string })?.message || signErr || "");
@@ -488,7 +467,6 @@ export function UpvoteDialog({
     if (!signature) fail("Upvote failed", "Wallet did not return a transaction signature.");
 
     toast({ title: "Upvote sent", description: "Waiting for confirmation…" });
-    await connection.confirmTransaction({ signature, ...latest }, "confirmed");
 
     let ingest: { votes24h?: number; votesAllTime?: number; campaignAddress?: string } | null = null;
     try {

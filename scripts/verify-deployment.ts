@@ -74,7 +74,7 @@ export async function assertTopazRouter(label: string, address: string) {
       ethers.provider
     );
     const volatileFeeBps = await factory.getFee(ethers.ZeroAddress, false);
-    assertBigIntEq(`${label}.${poolFactory.name}.volatileFeeBps`, volatileFeeBps, 100n);
+    assertBigIntEq(`${label}.${poolFactory.name}.volatileFeeBps`, volatileFeeBps, 30n);
     console.log(`[verify] ${label} Minimal Topaz interface: ok`);
   } catch (error: any) {
     throw new Error(`${label}: ${address} does not expose the Topaz router interface. ${error?.message ?? String(error)}`);

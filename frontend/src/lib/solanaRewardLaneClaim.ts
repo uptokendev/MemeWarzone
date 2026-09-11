@@ -1,5 +1,5 @@
-import { getSolanaRewardRpcUrl, isSolanaRewardChainId } from "@/lib/solanaRewardNetwork";
-import { getSolanaProvider } from "@/lib/solanaWallet";
+import { isSolanaRewardChainId } from "@/lib/solanaRewardNetwork";
+import { submitSolanaRewardV0Claim } from "@/lib/solanaRewardV0Claim";
 import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
 
 const SYSTEM_PROGRAM = "11111111111111111111111111111111";
@@ -58,10 +58,11 @@ function concat(parts: Uint8Array[]) {
 
 export async function submitSolanaRewardLaneClaim(call: SolanaRewardLaneClaim): Promise<string> {
   if (!isSolanaRewardChainId(call.chainId)) throw new Error("Wrong Solana chain for reward claim");
-  const provider = getSolanaProvider();
-  if (!provider?.publicKey || typeof provider.signTransaction !== "function") throw new Error("Connect a Solana wallet that can sign this reward claim");
-  const winner = String(provider.publicKey.toString?.() || provider.publicKey);
-  if (winner !== String(call.recipient || "").trim()) throw new Error("Connected Solana wallet does not own this reward");
+  const expectedInstruction = call.lane === "recruiter" ? "claim_recruiter" : "claim_squad";
+  if (call.instruction !== expectedInstruction) {
+    throw new Error(`Solana ${call.lane} claim instruction mismatch`);
+  }
+
   const proof = (call.proof || []).map(hexBytes);
   const data = concat([
     await discriminator(call.instruction),
@@ -72,12 +73,11 @@ export async function submitSolanaRewardLaneClaim(call: SolanaRewardLaneClaim): 
   ]);
 
   const web3 = await loadSolanaWeb3();
-  const { Connection, PublicKey, Transaction, TransactionInstruction, SystemProgram } = web3;
-  const connection = new Connection(getSolanaRewardRpcUrl(call.chainId), "confirmed");
+  const { PublicKey, TransactionInstruction, SystemProgram } = web3;
   const ix = new TransactionInstruction({
     programId: new PublicKey(call.programId),
     keys: [
-      { pubkey: new PublicKey(winner), isSigner: true, isWritable: true },
+      { pubkey: new PublicKey(call.recipient), isSigner: true, isWritable: true },
       { pubkey: new PublicKey(call.configAddress), isSigner: false, isWritable: false },
       { pubkey: new PublicKey(call.vaultAddress), isSigner: false, isWritable: true },
       { pubkey: new PublicKey(call.batchAddress), isSigner: false, isWritable: true },
@@ -86,12 +86,23 @@ export async function submitSolanaRewardLaneClaim(call: SolanaRewardLaneClaim): 
     ],
     data,
   });
-  const tx = new Transaction().add(ix);
-  const latest = await connection.getLatestBlockhash("confirmed");
-  tx.feePayer = new PublicKey(winner);
-  tx.recentBlockhash = latest.blockhash;
-  const signed = await provider.signTransaction(tx);
-  const signature = await connection.sendRawTransaction(signed.serialize(), { skipPreflight: false });
-  await connection.confirmTransaction({ signature, ...latest }, "confirmed");
-  return signature;
+
+  return submitSolanaRewardV0Claim({
+    web3,
+    chainId: call.chainId,
+    addresses: {
+      programId: call.programId,
+      configAddress: call.configAddress,
+      vaultAddress: call.vaultAddress,
+      batchAddress: call.batchAddress,
+      claimReceiptAddress: call.claimReceiptAddress,
+      recipient: call.recipient,
+    },
+    canonical: {
+      kind: call.lane,
+      epochId: call.epochId,
+    },
+    instruction: ix,
+    label: `Solana ${call.lane} claim`,
+  });
 }
