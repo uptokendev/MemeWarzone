@@ -12,6 +12,7 @@ permissions:
 
 env:
   TARGET_SHA: f18505e39186a5fa73fd89f00b242b94782f2f2c
+  PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
   OPERATOR_PUBKEY: HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9
 
 jobs:
@@ -29,26 +30,33 @@ jobs:
         with:
           node-version: 22
       - run: npm install --prefix tests/solana --no-audit --no-fund
-      - name: Read-only disposable ALT scan
+      - name: Read-only operator profile and exact rent budget
         shell: bash
         run: |
           set -euo pipefail
           node - <<'NODE'
           const {Connection,PublicKey}=require('./tests/solana/node_modules/@solana/web3.js');
           const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
-          const operator=new PublicKey(process.env.OPERATOR_PUBKEY);
-          const alts=[
-            ['FINAL_GOLDEN_TEMP','EdNwQtwKnVHPBe7rSBuUnGxD9StmWcUDK2AHNbDauMoL'],
-            ['NATIVE_FIXTURE_TEMP','2B3CnpQeBqvxep6jLyVkwJGGeaviiYw7EkqnXtALrVgH'],
-          ];
+          const program=new PublicKey(process.env.PROGRAM_ID), operator=new PublicKey(process.env.OPERATOR_PUBKEY);
+          const pda=(seed,key)=>PublicKey.findProgramAddressSync([Buffer.from(seed),key.toBuffer()],program)[0];
           (async()=>{
             const genesis=await c.getGenesisHash();if(genesis!=='EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG')throw new Error(`wrong cluster ${genesis}`);
             console.log('EXACT_TARGET',process.env.TARGET_SHA);
             console.log('OPERATOR_BALANCE',await c.getBalance(operator,'confirmed'));
-            console.log('CURRENT_SLOT',await c.getSlot('confirmed'));
-            for(const [label,s] of alts){
-              const key=new PublicKey(s); const info=await c.getAccountInfo(key,'confirmed'); const table=(await c.getAddressLookupTable(key)).value;
-              console.log('ALT',label,s,'LAMPORTS',info?.lamports??0,'BYTES',info?.data?.length??0,'OWNER',info?.owner?.toBase58?.()??'missing','AUTHORITY',table?.state?.authority?.toBase58?.()??'none','DEACTIVATION_SLOT',table?String(table.state.deactivationSlot):'missing','LAST_EXTENDED_SLOT',table?String(table.state.lastExtendedSlot):'missing','ADDRESSES',table?.state?.addresses?.length??0);
+            const cp=pda('creator',operator), rp=pda('risk',operator);
+            const ci=await c.getAccountInfo(cp,'confirmed'), ri=await c.getAccountInfo(rp,'confirmed');
+            if(!ci||ci.data.length<84) throw new Error('operator creator profile missing');
+            if(!ri||ri.data.length<76) throw new Error('operator risk profile missing');
+            const d=ci.data;
+            const creator={wallet:new PublicKey(d.subarray(8,40)).toBase58(),tier:d.readUInt8(40),trustScore:d.readUInt16LE(41),liveBondingCount:d.readUInt16LE(43),lastLaunchTimestamp:Number(d.readBigInt64LE(45)),totalLaunches:Number(d.readBigUInt64LE(53)),successfulGraduations:Number(d.readBigUInt64LE(61)),restricted:Boolean(d.readUInt8(69)),manualReviewRequired:Boolean(d.readUInt8(70)),creatorBuyCapBps:d.readUInt16LE(71),maxLiveBondingCount:d.readUInt16LE(73),cooldownSeconds:d.readUInt32LE(75),creatorBuyLockSeconds:d.readUInt32LE(79),bump:d.readUInt8(83)};
+            const r=ri.data;
+            const risk={wallet:new PublicKey(r.subarray(8,40)).toBase58(),riskLevel:r.readUInt8(40),restricted:Boolean(r.readUInt8(41)),clusterId:Buffer.from(r.subarray(42,74)).toString('hex'),manualReviewRequired:Boolean(r.readUInt8(74)),bump:r.readUInt8(75)};
+            console.log('CREATOR_PROFILE_PDA',cp.toBase58(),JSON.stringify(creator));
+            console.log('RISK_PROFILE_PDA',rp.toBase58(),JSON.stringify(risk));
+            let total=0;
+            for(const [name,size] of Object.entries({mint:82,tokenVault:165,campaign:720,solVault:81,createAuthorization:155,feeEscrow:106,creatorFeeVault:98,traderAta:165,tradeAuthorization196:196,tradeAuthorization188:188})){
+              const rent=await c.getMinimumBalanceForRentExemption(size,'confirmed'); console.log('RENT',name,size,rent); if(['mint','tokenVault','campaign','solVault','createAuthorization'].includes(name)) total+=rent;
             }
+            console.log('CREATE_CORE_RENT_TOTAL',total);
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
