@@ -1,0 +1,111 @@
+name: Agent 1 Solana 102 Closeout
+
+on:
+  push:
+    branches:
+      - agent1/solana-102-authority-elimination-120401f
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  authority-regressions:
+    name: authority + cross-chain regressions
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend/API dependencies
+        run: npm ci --prefix frontend --no-audit --no-fund
+
+      - name: Solana current-authority matrix
+        run: node --test frontend/shared/solanaCurrentAuthority.test.mjs frontend/api/dev-fix/ticker-reservation-service.test.mjs
+
+      - name: API import integrity
+        run: npm --prefix frontend run check:api-imports
+
+      - name: Post-grad routing regression
+        run: npm --prefix frontend run check:postgrad-routing
+
+      - name: Post-grad economics regression
+        run: npm --prefix frontend run check:postgrad-economics
+
+      - name: Graduation market regression
+        run: npm --prefix frontend run test:graduation-market
+
+      - name: Wallet and EVM chain regression
+        run: npm --prefix frontend run test:wallet-discovery
+
+      - name: Arena runtime regression
+        run: npm --prefix frontend run test:arena-runtime-acceptance
+
+      - name: Arena tournament regression
+        run: npm --prefix frontend run test:arena-tournament
+
+      - name: Frontend build/typecheck bundle gate
+        run: npm --prefix frontend run build
+
+  indexer-regressions:
+    name: LP fee + market indexer build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: realtime-indexer/package-lock.json
+
+      - name: Install realtime indexer dependencies
+        run: npm ci --prefix realtime-indexer --no-audit --no-fund
+
+      - name: Realtime indexer build/typecheck
+        run: npm --prefix realtime-indexer run build
+
+  secret-scan:
+    name: secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Reject tracked environment files
+        shell: bash
+        run: |
+          tracked_env_files="$(git ls-files | grep -E '(^|/)\.env($|\.)' | grep -Ev '\.example$' || true)"
+          if [ -n "$tracked_env_files" ]; then
+            echo "Tracked environment files are forbidden:"
+            echo "$tracked_env_files"
+            exit 1
+          fi
+
+      - name: Reject server secrets in browser source
+        shell: bash
+        run: |
+          if grep -RInE --exclude-dir=node_modules --exclude-dir=dist \
+            '(import\.meta\.env\.(SUPABASE_SERVICE_ROLE_KEY|DATABASE_URL|PRIVATE_KEY|MNEMONIC|ABLY_API_KEY|DISCORD_BOT_TOKEN|TELEGRAM_BOT_TOKEN)|process\.env\.(SUPABASE_SERVICE_ROLE_KEY|DATABASE_URL|PRIVATE_KEY|MNEMONIC|ABLY_API_KEY|DISCORD_BOT_TOKEN|TELEGRAM_BOT_TOKEN))' \
+            frontend/src 2>/dev/null; then
+            echo "Server-only secret access found in browser source."
+            exit 1
+          fi
+
+      - name: Gitleaks full history
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
