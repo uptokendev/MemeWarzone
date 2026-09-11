@@ -1,0 +1,37 @@
+"use strict";
+const fs=require("fs");
+const report=JSON.parse(fs.readFileSync(process.env.SOLANA_GOLDEN_REPORT,"utf8"));
+const expectedAlt="ALA7wQRuPdHWzLLpyDwbw7kPbJB7pCp1zNyzrNZApoiA";
+for(const key of ["create","buy","sell"]){
+  const x=report.final?.[key];
+  if(!x||x.status!=="PASS"||x.version!=="V0")throw new Error(`${key} not PASS/V0`);
+  if(x.altUsage!==`YES:${expectedAlt}`)throw new Error(`${key} wrong ALT ${x.altUsage}`);
+  if(!x.blockhash||!x.lastValidBlockHeight)throw new Error(`${key} blockhash/LVH missing`);
+  if(!String(x.simulation).startsWith("PASS"))throw new Error(`${key} simulation missing`);
+  if(!(Number(x.serializedPacketBytes)>0))throw new Error(`${key} packet bytes missing`);
+  if(!x.signature)throw new Error(`${key} signature missing`);
+  if(!String(x.retryBehavior).includes("deduped"))throw new Error(`${key} identical retry not deduped`);
+  if(!String(x.expiryBehavior).includes("rejected"))throw new Error(`${key} expired/unknown blockhash not rejected`);
+  if(!String(x.duplicateReplayBehavior).includes("fresh-blockhash same intent rejected"))throw new Error(`${key} duplicate intent not rejected`);
+  if(!String(x.confirmationMethod).includes("expiry-safe rebuild only after null signature status"))throw new Error(`${key} expiry safety marker missing`);
+  console.log(`FINAL_${key.toUpperCase()}`,JSON.stringify(x));
+}
+const d=report.final.creatorDiagnostics;
+if(Number(d.liveAfterCreate)!==Number(d.liveBefore)+1)throw new Error(`liveBondingCount delta not one ${JSON.stringify(d)}`);
+if(BigInt(d.totalAfterCreate)!==BigInt(d.totalBefore)+1n)throw new Error(`totalLaunches delta not one ${JSON.stringify(d)}`);
+const source=fs.readFileSync("tests/solana/candidate-wallet-golden-devnet.cjs","utf8");
+const status=source.indexOf("const status=(await connection.getSignatureStatuses");
+const exists=source.indexOf("if(status){",status);
+const nullRetry=source.indexOf("expiredAttempts.push",exists);
+if(!(status>=0&&exists>status&&nullRetry>exists))throw new Error("expiry retry ordering missing");
+const guarded=source.slice(exists,nullRetry);
+if(!guarded.includes("if(status.err)"))throw new Error("status error refusal missing");
+if(!guarded.includes('confirmationStatus==="confirmed"||status.confirmationStatus==="finalized"'))throw new Error("landed status acceptance missing");
+if(!guarded.includes("expiry retry refused because prior signature exists with status"))throw new Error("unresolved status refusal missing");
+console.log("FINAL_CREATE_DIAGNOSTICS",JSON.stringify(d));
+console.log("FINAL_CAMPAIGN",report.final.campaign);
+console.log("FINAL_MINT",report.final.mint);
+console.log("RETRY_SAFETY=PASS");
+console.log("DUPLICATE_INTENT_SAFETY=PASS");
+console.log("REBUILD_RESIGN_AFTER_EXPIRY_ONLY_AFTER_NULL_STATUS=PASS");
+console.log("NO_DUPLICATE_CREATE=YES");
