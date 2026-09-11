@@ -9,24 +9,22 @@ export const SOLANA_MAINNET_CLUSTER = "mainnet-beta";
 export function normalizeSolanaEnvironment(value) {
   const normalized = String(value ?? "").trim().toLowerCase();
   if (normalized === SOLANA_STAGING_ENVIRONMENT) return SOLANA_STAGING_ENVIRONMENT;
-  if (normalized === SOLANA_PRODUCTION_ENVIRONMENT || normalized === "prod") return SOLANA_PRODUCTION_ENVIRONMENT;
+  if (normalized === SOLANA_PRODUCTION_ENVIRONMENT) return SOLANA_PRODUCTION_ENVIRONMENT;
   return "";
 }
 
 export function normalizeSolanaCluster(value) {
   const normalized = String(value ?? "").trim().toLowerCase();
-  if (normalized === "solana-devnet") return SOLANA_DEVNET_CLUSTER;
-  if (normalized === "solana-mainnet-beta" || normalized === "mainnet" || normalized === "solana-mainnet") {
-    return SOLANA_MAINNET_CLUSTER;
-  }
-  if (normalized === SOLANA_DEVNET_CLUSTER || normalized === SOLANA_MAINNET_CLUSTER) return normalized;
+  if (normalized === SOLANA_DEVNET_CLUSTER) return SOLANA_DEVNET_CLUSTER;
+  if (normalized === SOLANA_MAINNET_CLUSTER) return SOLANA_MAINNET_CLUSTER;
   return "";
 }
 
 /**
  * Canonical current Solana authority is one application chain (101) plus an
  * explicit environment/cluster pair. Legacy application chain 102 is never a
- * current authority selector.
+ * current authority selector. Aliases are deliberately rejected so authority
+ * cannot be inferred from older naming conventions.
  */
 export function resolveCurrentSolanaAuthority({ chainId, environment, cluster } = {}) {
   if (Number(chainId) !== CURRENT_SOLANA_CHAIN_ID) return null;
