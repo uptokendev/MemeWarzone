@@ -1,3 +1,5 @@
+import { resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";
+
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 
 export const GRADUATION_WAD = 10n ** 18n;
@@ -11,6 +13,12 @@ export type GraduationTier = {
   description: string;
   targetWei: bigint;
   testOnly?: boolean;
+};
+
+export type GraduationRuntimeIdentity = {
+  environment?: string | null;
+  cluster?: string | null;
+  solanaCluster?: string | null;
 };
 
 export const STANDARD_GRADUATION_TIERS: readonly GraduationTier[] = [
@@ -42,21 +50,40 @@ export const TEST_GRADUATION_TIER: GraduationTier = {
   label: "$6",
   title: "Test grad",
   description:
-    "Dev/test only (BNB testnet + Solana). Rehearse graduation, LP lock, DEX trading, and fees without a $15k bond.",
+    "Dev/test only (BNB testnet + Solana devnet). Rehearse graduation, LP lock, DEX trading, and fees without a $15k bond.",
   targetWei: TEST_GRADUATION_TARGET_WEI,
   testOnly: true,
 };
 
-/** Chains that may expose the $6 test graduation threshold. */
-export function isTestGraduationChain(chainId: number): boolean {
-  const id = Number(chainId);
-  return id === 97 || id === 101 || id === 102;
+function runtimeSolanaIdentity(identity?: GraduationRuntimeIdentity): GraduationRuntimeIdentity {
+  if (identity) return identity;
+  return {
+    environment: import.meta.env.VITE_RUNTIME_ENVIRONMENT,
+    cluster: import.meta.env.VITE_SOLANA_CLUSTER,
+  };
 }
 
-export function isTestGraduationTierEnabled(chainId: number): boolean {
-  if (!isTestGraduationChain(chainId)) return false;
+/**
+ * Current $6 eligibility is a safety policy, not a product-chain shortcut.
+ * BNB testnet 97 remains eligible. Solana is eligible only as canonical chain
+ * 101 with staging + devnet. Legacy chain 102 can never activate the policy.
+ */
+export function isTestGraduationChain(chainId: number, identity?: GraduationRuntimeIdentity): boolean {
+  const id = Number(chainId);
+  if (id === 97) return true;
+  if (id !== 101) return false;
+  const runtime = runtimeSolanaIdentity(identity);
+  return resolveCurrentSolanaAuthority({
+    chainId: id,
+    environment: runtime.environment,
+    cluster: runtime.solanaCluster ?? runtime.cluster,
+  })?.environment === "staging";
+}
+
+export function isTestGraduationTierEnabled(chainId: number, identity?: GraduationRuntimeIdentity): boolean {
+  if (!isTestGraduationChain(chainId, identity)) return false;
   const raw = String(import.meta.env.VITE_ENABLE_TEST_GRADUATION_THRESHOLD ?? "").trim().toLowerCase();
-  // Default ON for test chains when env is unset (same as Create.tsx historical default).
+  // Default ON only after the chain/environment safety gate above succeeds.
   if (!raw) return true;
   return TRUE_VALUES.has(raw);
 }
@@ -68,7 +95,7 @@ export function graduationTargetToUsdMicros(targetWei: bigint | string | number)
     if (raw <= 0n) return "6000000";
     // Already micros (e.g. 6_000_000 for $6).
     if (raw < 1_000_000_000_000n) return raw.toString();
-    // Wei-scale USD wad: dollars * 10^18 → micros = dollars * 10^6.
+    // Wei-scale USD wad: dollars * 10^18 -> micros = dollars * 10^6.
     const dollars = raw / GRADUATION_WAD;
     if (dollars <= 0n) return "6000000";
     return (dollars * 1_000_000n).toString();
@@ -77,26 +104,30 @@ export function graduationTargetToUsdMicros(targetWei: bigint | string | number)
   }
 }
 
-export function getGraduationTiers(chainId: number): GraduationTier[] {
-  const withTest = isTestGraduationTierEnabled(chainId);
-  // Solana devnet generation currently allows only the $6 mask (bit 0). Prefer the
-  // test tier first so creators do not pick $15k/$30k/$50k that on-chain rejects.
-  if (Number(chainId) === 101 || Number(chainId) === 102) {
-    return withTest ? [TEST_GRADUATION_TIER, ...STANDARD_GRADUATION_TIERS] : [...STANDARD_GRADUATION_TIERS];
+export function getGraduationTiers(chainId: number, identity?: GraduationRuntimeIdentity): GraduationTier[] {
+  const withTest = isTestGraduationTierEnabled(chainId, identity);
+  // Current Solana devnet allows the $6 rehearsal tier. Production 101/mainnet-beta,
+  // missing identity, and legacy 102 all receive standard production tiers only.
+  if (Number(chainId) === 101 && withTest) {
+    return [TEST_GRADUATION_TIER, ...STANDARD_GRADUATION_TIERS];
   }
   return withTest ? [...STANDARD_GRADUATION_TIERS, TEST_GRADUATION_TIER] : [...STANDARD_GRADUATION_TIERS];
 }
 
-/** Default selected target: $6 on Solana/test chains when available, else $30K. */
-export function getDefaultGraduationTargetWei(chainId: number): bigint {
-  if (isTestGraduationTierEnabled(chainId) && (Number(chainId) === 101 || Number(chainId) === 102 || Number(chainId) === 97)) {
+/** Default selected target: $6 on an explicitly eligible test authority, else $30K. */
+export function getDefaultGraduationTargetWei(chainId: number, identity?: GraduationRuntimeIdentity): bigint {
+  if (isTestGraduationTierEnabled(chainId, identity) && (Number(chainId) === 101 || Number(chainId) === 97)) {
     return TEST_GRADUATION_TARGET_WEI;
   }
   return DEFAULT_GRADUATION_TARGET_WEI;
 }
 
-export function isSupportedGraduationTarget(chainId: number, targetWei: bigint): boolean {
-  return getGraduationTiers(chainId).some((tier) => tier.targetWei === targetWei);
+export function isSupportedGraduationTarget(
+  chainId: number,
+  targetWei: bigint,
+  identity?: GraduationRuntimeIdentity,
+): boolean {
+  return getGraduationTiers(chainId, identity).some((tier) => tier.targetWei === targetWei);
 }
 
 export function graduationTierLabel(targetWei: bigint): string {
