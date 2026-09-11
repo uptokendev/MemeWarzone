@@ -27,15 +27,27 @@ test("produces deterministic lowercase SHA-256 hashes", () => {
   assert.match(sha256Hex("reservation-id"), /^[0-9a-f]{64}$/);
 });
 
-test("maps supported chain identifiers to canonical clusters", () => {
+test("maps current chain identifiers to canonical clusters and rejects legacy Solana 102", () => {
   assert.equal(canonicalClusterForChain(56), "bsc-mainnet");
   assert.equal(canonicalClusterForChain(97), "bsc-testnet");
+  assert.equal(canonicalClusterForChain(4663), "chain-4663");
+  assert.equal(canonicalClusterForChain(46630), "chain-46630");
   assert.equal(canonicalClusterForChain(8453), "chain-8453");
-  assert.equal(canonicalClusterForChain(101), "solana-mainnet-beta");
-  assert.equal(canonicalClusterForChain(102), "solana-devnet");
   assert.equal(canonicalClusterForChain(101, "solana-devnet"), "solana-devnet");
   assert.equal(canonicalClusterForChain(101, "devnet"), "solana-devnet");
   assert.equal(canonicalClusterForChain(101, "mainnet-beta"), "solana-mainnet-beta");
+  assert.throws(
+    () => canonicalClusterForChain(102),
+    (error) => error instanceof TickerReservationError && error.code === "LEGACY_SOLANA_CHAIN_NOT_AUTHORIZED",
+  );
+  assert.throws(
+    () => canonicalClusterForChain(102, "devnet"),
+    (error) => error instanceof TickerReservationError && error.code === "LEGACY_SOLANA_CHAIN_NOT_AUTHORIZED",
+  );
+  assert.throws(
+    () => canonicalClusterForChain(102, "mainnet-beta"),
+    (error) => error instanceof TickerReservationError && error.code === "LEGACY_SOLANA_CHAIN_NOT_AUTHORIZED",
+  );
   assert.throws(
     () => canonicalClusterForChain(101, "bad cluster with spaces"),
     (error) => error instanceof TickerReservationError && error.code === "INVALID_RESERVATION_CLUSTER",
