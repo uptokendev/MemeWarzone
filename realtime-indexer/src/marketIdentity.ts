@@ -21,7 +21,11 @@ export type MarketIdentity = {
 };
 
 function isSolanaChain(chainId: number) {
-  return chainId === 101 || chainId === 102;
+  return chainId === 101;
+}
+
+function isCurrentMarketChain(chainId: number) {
+  return chainId === 56 || chainId === 97 || chainId === 101 || chainId === 4663 || chainId === 46630;
 }
 
 function normalizeAddress(chainId: number, value: unknown): string {
@@ -44,13 +48,15 @@ function isMarketAddress(chainId: number, value: string): boolean {
 /**
  * Resolve a path/query address that may be either the campaign or the token.
  * Returns null when neither matches a known campaigns row on this chain.
+ * Legacy chain 102 is historical data only and cannot select current market authority.
  */
 export async function resolveMarketIdentity(
   chainId: number,
   addressOrToken: string,
 ): Promise<MarketIdentity | null> {
+  if (!Number.isInteger(chainId) || !isCurrentMarketChain(chainId)) return null;
   const input = normalizeAddress(chainId, addressOrToken);
-  if (!Number.isInteger(chainId) || chainId <= 0 || !isMarketAddress(chainId, input)) {
+  if (!isMarketAddress(chainId, input)) {
     return null;
   }
 
@@ -98,13 +104,16 @@ export async function resolveMarketIdentity(
 /**
  * Like resolveMarketIdentity, but if the address is valid and not in DB yet,
  * still return it as a provisional campaign address so legacy campaign-only
- * callers keep working during discovery lag.
+ * callers keep working during discovery lag. Unsupported/current-invalid chain
+ * ids fail closed rather than creating a provisional market identity.
  */
 export async function resolveMarketIdentityOrPassthrough(
   chainId: number,
   addressOrToken: string,
-): Promise<MarketIdentity> {
+): Promise<MarketIdentity | null> {
+  if (!Number.isInteger(chainId) || !isCurrentMarketChain(chainId)) return null;
   const input = normalizeAddress(chainId, addressOrToken);
+  if (!isMarketAddress(chainId, input)) return null;
   const resolved = await resolveMarketIdentity(chainId, input);
   if (resolved) return resolved;
 
