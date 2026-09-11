@@ -1,0 +1,81 @@
+name: Agent 3 ArenaMoneyV2 Tournament Resume V2
+
+on:
+  push:
+    branches: [agent3/solana-arena-money-v2-reconcile-120401f]
+    paths:
+      - .github/workflows/agent3-arena-money-v2-tournament-resume-v2.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BASE_SHA: a5cfa696be1dd0e7f607eed9931513a2b729e519
+  INTEGRATION_BRANCH: build/cross-chain-stabilization-rh-base
+
+jobs:
+  resume:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: testnet-certification
+    env:
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
+      SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER }}
+      SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: agent3
+          fetch-depth: 0
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BASE_SHA }}
+          path: source
+          fetch-depth: 0
+      - name: Exact integration freeze immediately before continuation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = "$BASE_SHA"
+          remote="$(git -C source ls-remote origin refs/heads/$INTEGRATION_BRANCH | awk '{print $1}')"
+          echo "CURRENT_INTEGRATION $remote"
+          test "$remote" = "$BASE_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install RPC dependency
+        run: npm install --prefix agent3/tests/solana --no-audit --no-fund
+      - name: Apply certification-only web3 simulation overload compatibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -i "s/simulateTransaction(tx,{commitment:'confirmed'})/simulateTransaction(tx)/g" agent3/tests/solana/arena-money-v2-tournament-resume.cjs
+          grep -n "simulateTransaction" agent3/tests/solana/arena-money-v2-tournament-resume.cjs
+      - name: Execute retry-safe Tournament continuation
+        run: node agent3/tests/solana/arena-money-v2-tournament-resume.cjs
+      - name: Post-economic integration freeze
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote="$(git -C source ls-remote origin refs/heads/$INTEGRATION_BRANCH | awk '{print $1}')"
+          echo "POST_PAYMENT_INTEGRATION $remote"
+          test "$remote" = "$BASE_SHA"
+      - name: Rewards treasury exact-head tests
+        working-directory: source
+        run: cargo test -p mwz_rewards_treasury --lib
+      - name: Current Solana authority exact-head tests
+        run: node --test source/frontend/shared/solanaCurrentAuthority.test.mjs source/frontend/shared/solanaCurrentArenaAuthority.test.mjs
+      - name: Install exact-head frontend dependencies
+        run: npm ci --prefix source/frontend --no-audit --no-fund
+      - name: Exact-head Arena lifecycle tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          DATABASE_URL=postgres://127.0.0.1/mwz_test node --test source/frontend/src/lib/arena/solanaArenaPaymentLifecycle.test.mjs
+          node --test source/frontend/src/lib/arena/battleBoostSolanaIntegration.test.mjs
+          node --test source/frontend/src/lib/arena/integratedArenaRuntimeContracts.test.mjs
+          npm --prefix source/frontend run test:solana-confirm
+          npm --prefix source/frontend run test:solana-v0
+          node --test source/frontend/api/lib/arenaTournamentV2Certification.test.mjs
