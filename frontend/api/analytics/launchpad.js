@@ -3,6 +3,8 @@ import { pool } from "../../server/db.js";
 // Current operational analytics never use legacy Solana product chain 102 as a
 // staging selector. Keep it excluded so old rows cannot re-enter current KPIs.
 const CURRENTLY_EXCLUDED_CHAIN_IDS = new Set([97, 102]);
+// Historical 102 records still need Solana case-sensitive address joins while
+// they are being excluded from current operational totals.
 const SOLANA_ADDRESS_FAMILY_CHAIN_IDS = new Set([101, 102]);
 const CHAIN_META = new Map([
   [56, { label: "BNB", unit: "BNB" }],
@@ -185,7 +187,12 @@ async function chainRows(from, to, selectedChain) {
 }
 
 async function topCampaigns(from, to, selectedChain) {
-  const params = [from, to, Array.from(CURRENTLY_EXCLUDED_CHAIN_IDS)];
+  const params = [
+    from,
+    to,
+    Array.from(CURRENTLY_EXCLUDED_CHAIN_IDS),
+    Array.from(SOLANA_ADDRESS_FAMILY_CHAIN_IDS),
+  ];
   let selected = "";
   if (selectedChain != null) {
     params.push(selectedChain);
@@ -213,7 +220,7 @@ async function topCampaigns(from, to, selectedChain) {
      group by t.chain_id, t.campaign_address
      order by volume_native desc
      limit 20
-  `, [...params, Array.from(SOLANA_ADDRESS_FAMILY_CHAIN_IDS)]);
+  `, params);
   return result.rows.map((row) => {
     const meta = chainMeta(row.chain_id);
     return {
