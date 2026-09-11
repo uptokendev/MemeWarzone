@@ -11,40 +11,17 @@ permissions:
 
 env:
   BASE_SHA: 120401fd1fde0dce6e2439fc4156840e029f1ae6
+  PROGRAM_ID: 2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX
+  EXPECTED_GENESIS: EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG
 
 jobs:
-  authority-probe:
+  live-authority-probe:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: airdrop-solana-devnet
     env:
-      # Address candidates: public vars first, then protected secrets where deployments historically use secrets.
-      V_SOLANA_DEVNET_PROTOCOL_TREASURY_ADDRESS: ${{ vars.SOLANA_DEVNET_PROTOCOL_TREASURY_ADDRESS }}
-      V_SOLANA_PROTOCOL_TREASURY_ADDRESS: ${{ vars.SOLANA_PROTOCOL_TREASURY_ADDRESS }}
-      V_SOLANA_VOTE_TREASURY_ADDRESS: ${{ vars.SOLANA_VOTE_TREASURY_ADDRESS }}
-      V_ARENA_V2_RESOLVER: ${{ vars.ARENA_V2_RESOLVER }}
-      V_ARENA_MONEY_V2_RESOLVER: ${{ vars.ARENA_MONEY_V2_RESOLVER }}
-      V_SOLANA_ARENA_RESOLVER: ${{ vars.SOLANA_ARENA_RESOLVER }}
-      V_ARENA_PROTOCOL_RECEIVER: ${{ vars.ARENA_PROTOCOL_RECEIVER }}
-      V_ARENA_MONEY_V2_PROTOCOL_RECEIVER: ${{ vars.ARENA_MONEY_V2_PROTOCOL_RECEIVER }}
-      V_SOLANA_ARENA_PROTOCOL_RECEIVER: ${{ vars.SOLANA_ARENA_PROTOCOL_RECEIVER }}
-      V_ARENA_MARKETING_RECEIVER: ${{ vars.ARENA_MARKETING_RECEIVER }}
-      V_ARENA_MONEY_V2_MARKETING_RECEIVER: ${{ vars.ARENA_MONEY_V2_MARKETING_RECEIVER }}
-      V_SOLANA_ARENA_MARKETING_RECEIVER: ${{ vars.SOLANA_ARENA_MARKETING_RECEIVER }}
-      S_SOLANA_DEVNET_PROTOCOL_TREASURY_ADDRESS: ${{ secrets.SOLANA_DEVNET_PROTOCOL_TREASURY_ADDRESS }}
-      S_SOLANA_PROTOCOL_TREASURY_ADDRESS: ${{ secrets.SOLANA_PROTOCOL_TREASURY_ADDRESS }}
-      S_SOLANA_VOTE_TREASURY_ADDRESS: ${{ secrets.SOLANA_VOTE_TREASURY_ADDRESS }}
-      S_ARENA_V2_RESOLVER: ${{ secrets.ARENA_V2_RESOLVER }}
-      S_ARENA_MONEY_V2_RESOLVER: ${{ secrets.ARENA_MONEY_V2_RESOLVER }}
-      S_SOLANA_ARENA_RESOLVER: ${{ secrets.SOLANA_ARENA_RESOLVER }}
-      S_ARENA_PROTOCOL_RECEIVER: ${{ secrets.ARENA_PROTOCOL_RECEIVER }}
-      S_ARENA_MONEY_V2_PROTOCOL_RECEIVER: ${{ secrets.ARENA_MONEY_V2_PROTOCOL_RECEIVER }}
-      S_SOLANA_ARENA_PROTOCOL_RECEIVER: ${{ secrets.SOLANA_ARENA_PROTOCOL_RECEIVER }}
-      S_ARENA_MARKETING_RECEIVER: ${{ secrets.ARENA_MARKETING_RECEIVER }}
-      S_ARENA_MONEY_V2_MARKETING_RECEIVER: ${{ secrets.ARENA_MONEY_V2_MARKETING_RECEIVER }}
-      S_SOLANA_ARENA_MARKETING_RECEIVER: ${{ secrets.SOLANA_ARENA_MARKETING_RECEIVER }}
-      S_ARENA_RESOLVER_KEYPAIR: ${{ secrets.ARENA_RESOLVER_KEYPAIR }}
-      S_SOLANA_REWARDS_AUTHORITY_SECRET_KEY: ${{ secrets.SOLANA_REWARDS_AUTHORITY_SECRET_KEY }}
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_REWARDS_RPC_URL || secrets.SOLANA_DEVNET_RPC || vars.SOLANA_REWARDS_RPC_URL || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
+      SOLANA_REWARDS_AUTHORITY_SECRET_KEY: ${{ secrets.SOLANA_REWARDS_AUTHORITY_SECRET_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -53,42 +30,49 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Verify exact base and inspect current config references
+      - name: Exact source identity
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$BASE_SHA"
-          grep -RInE 'SOLANA_DEVNET_PROTOCOL_TREASURY_ADDRESS|SOLANA_PROTOCOL_TREASURY_ADDRESS|SOLANA_VOTE_TREASURY_ADDRESS|ARENA_RESOLVER_KEYPAIR|ARENA_MONEY_V2|ARENA_V2_RESOLVER|ARENA_PROTOCOL_RECEIVER|ARENA_MARKETING_RECEIVER' frontend scripts .github 2>/dev/null | head -n 240 || true
-      - name: Install Solana JS parser only
-        run: npm install --no-save --package-lock=false --no-audit --no-fund @solana/web3.js@1.95.4
-      - name: Resolve protected identities without exposing secret material
+          grep -F 'pub const ARENA_CONFIG_SEED: &[u8] = b"arena_config";' programs/mwz_rewards_treasury/src/arena.rs
+          grep -F 'pub struct ArenaConfig' programs/mwz_rewards_treasury/src/arena.rs
+      - run: npm install --no-save --package-lock=false --no-audit --no-fund @solana/web3.js@1.95.4
+      - name: Decode current live Arena config and rewards config
         shell: bash
         run: |
           set -euo pipefail
           node <<'NODE'
-          const {PublicKey,Keypair}=require('@solana/web3.js');
-          function asPubkey(raw) {
-            if (!raw) return null;
-            try { return new PublicKey(String(raw).trim()).toBase58(); } catch { return null; }
+          const {Connection,PublicKey,Keypair}=require('@solana/web3.js');
+          const program=new PublicKey(process.env.PROGRAM_ID);
+          function signer(raw){
+            const t=String(raw||'').trim(); if(!t) throw new Error('missing rewards signer');
+            const b=t.startsWith('[')?Uint8Array.from(JSON.parse(t).map(Number)):Uint8Array.from(Buffer.from(t,'base64'));
+            if(b.length===64)return Keypair.fromSecretKey(b); if(b.length===32)return Keypair.fromSeed(b); throw new Error('bad signer bytes');
           }
-          function keypairPubkey(raw) {
-            if (!raw) return null;
-            try {
-              const t=String(raw).trim();
-              let bytes;
-              if (t.startsWith('[')) bytes=Uint8Array.from(JSON.parse(t).map(Number));
-              else bytes=Uint8Array.from(Buffer.from(t,'base64'));
-              if(bytes.length===64) return Keypair.fromSecretKey(bytes).publicKey.toBase58();
-              if(bytes.length===32) return Keypair.fromSeed(bytes).publicKey.toBase58();
-            } catch {}
-            return null;
-          }
-          const addressNames=Object.keys(process.env).filter(k=>k.startsWith('V_')||k.startsWith('S_')).filter(k=>!k.endsWith('_KEYPAIR')&&!k.endsWith('_SECRET_KEY'));
-          const found={};
-          for(const name of addressNames){ const raw=process.env[name]||''; if(!raw) continue; const pk=asPubkey(raw); found[name]=pk||'PRESENT_BUT_NOT_A_SOLANA_PUBKEY'; }
-          const resolverKp=keypairPubkey(process.env.S_ARENA_RESOLVER_KEYPAIR||'');
-          if(resolverKp) found.S_ARENA_RESOLVER_KEYPAIR_PUBLIC_KEY=resolverKp;
-          const authorityPk=keypairPubkey(process.env.S_SOLANA_REWARDS_AUTHORITY_SECRET_KEY||'');
-          if(authorityPk) found.S_SOLANA_REWARDS_AUTHORITY_PUBLIC_KEY=authorityPk;
-          console.log('CURRENT_PROTECTED_IDENTITY_CANDIDATES '+JSON.stringify(found));
+          function pk(d,o){return new PublicKey(d.subarray(o,o+32)).toBase58();}
+          (async()=>{
+            const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
+            const g=await c.getGenesisHash(); console.log('GENESIS '+g); if(g!==process.env.EXPECTED_GENESIS) throw new Error('wrong cluster');
+            const s=signer(process.env.SOLANA_REWARDS_AUTHORITY_SECRET_KEY); console.log('REWARDS_SIGNER '+s.publicKey.toBase58());
+            const [arena,bump]=PublicKey.findProgramAddressSync([Buffer.from('arena_config')],program);
+            const ai=await c.getAccountInfo(arena,'confirmed');
+            console.log(`LEGACY_ARENA_CONFIG_PDA ${arena.toBase58()} BUMP ${bump} EXISTS ${Boolean(ai)}`);
+            if(ai){
+              if(!ai.owner.equals(program)) throw new Error('legacy Arena config wrong owner');
+              const d=Buffer.from(ai.data); if(d.length<8+131) throw new Error(`legacy Arena config too short ${d.length}`);
+              let o=8;
+              const authority=pk(d,o);o+=32; const resolver=pk(d,o);o+=32; const protocol=pk(d,o);o+=32; const mwl=pk(d,o);o+=32;
+              const paused=Boolean(d[o++]); const storedBump=d[o++]; const version=d[o++];
+              console.log('LEGACY_ARENA_AUTHORITY '+authority);
+              console.log('LEGACY_ARENA_RESOLVER '+resolver);
+              console.log('LEGACY_ARENA_PROTOCOL_RECEIVER '+protocol);
+              console.log('LEGACY_ARENA_MWL_RECEIVER '+mwl);
+              console.log(`LEGACY_ARENA_PAUSED ${paused} STORED_BUMP ${storedBump} VERSION ${version}`);
+            }
+            const [rewards,rb]=PublicKey.findProgramAddressSync([Buffer.from('rewards_config')],program);
+            const ri=await c.getAccountInfo(rewards,'confirmed');
+            console.log(`REWARDS_CONFIG_PDA ${rewards.toBase58()} BUMP ${rb} EXISTS ${Boolean(ri)} BYTES ${ri?.data?.length||0}`);
+            if(ri){ console.log('REWARDS_CONFIG_OWNER '+ri.owner.toBase58()); console.log('REWARDS_CONFIG_DATA_SHA256 '+require('crypto').createHash('sha256').update(Buffer.from(ri.data)).digest('hex')); }
+          })().catch(e=>{console.error('LIVE_AUTHORITY_BLOCKER '+(e?.stack||e));process.exit(1)});
           NODE
