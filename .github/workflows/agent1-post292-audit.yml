@@ -4,30 +4,34 @@ on:
   push:
     branches:
       - agent1/finish-solana-102-elimination-a5cfa696
-  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  audit:
+  patch:
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: agent1/finish-solana-102-elimination-a5cfa696
           fetch-depth: 0
-      - name: Exact head and focused authority audit
-        shell: bash
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply focused authority patch
+        run: python3 .github/scripts/agent1_post292_patch.py
+      - name: Focused authority tests
         run: |
           set -euo pipefail
-          echo "HEAD=$(git rev-parse HEAD)"
-          echo '--- solanaArenaLayout callers ---'
-          grep -RInE "solanaArenaLayout|expectedGenesisHash|validateCanonicalArenaConfig|isSolanaWarzoneChainId" frontend --exclude-dir=node_modules || true
-          echo '--- broad helper operational usages ---'
-          grep -nE "isSolanaChain\(" frontend/api/dev-fix/solana-trade-authorization-v1.js frontend/api/dev-fix/solana-vote-ingest.js frontend/api/arenaVotes.js frontend/api/dev-fix/solana-graduation-authorization-v2.js || true
-          echo '--- chainNative callers ---'
-          grep -RInE "isSolanaChainId\(|nativeSymbolFor\(" frontend --exclude-dir=node_modules || true
-          echo '--- all tracked quote/catalog/migration lines containing 102 ---'
-          git grep -n -i -E "102" -- '*.sql' '*.js' '*.mjs' '*.ts' '*.json' '*.md' | grep -Ei "basic|quote|graduat|devnet|chain_id" | head -n 1000 || true
-          echo '--- exact current devnet quote migration ---'
-          grep -nE "102|101|devnet|mainnet|quoteMint|contract_address_or_mint|identity_key" frontend/supabase/migrations/20260907001000_solana_basic_quote_catalog.sql frontend/supabase/migrations/20260907163000_solana_devnet_basic_quote_certification.sql || true
+          node --test frontend/shared/solanaCurrentAuthority.test.mjs frontend/shared/solanaPost292Authority.test.mjs
+          npm --prefix frontend run test:solana-arena
+      - name: Commit focused source delta
+        run: |
+          set -euo pipefail
+          git add frontend
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Finish Solana 102 operational authority elimination'
+          git push origin HEAD:agent1/finish-solana-102-elimination-a5cfa696
