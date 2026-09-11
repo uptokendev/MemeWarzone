@@ -73,6 +73,13 @@ function canonicalSolanaCluster(value) {
 
 export function canonicalClusterForChain(chainId, explicitCluster = "") {
   const numericChainId = Number(chainId);
+  if (numericChainId === 102) {
+    throw new TickerReservationError("Legacy Solana chain 102 cannot select a current reservation or deployment cluster.", {
+      code: "LEGACY_SOLANA_CHAIN_NOT_AUTHORIZED",
+      httpStatus: 400,
+    });
+  }
+
   const explicit = String(explicitCluster || "").trim().toLowerCase();
   if (explicit) {
     if (!/^[a-z0-9][a-z0-9._-]{0,79}$/.test(explicit)) {
@@ -81,20 +88,17 @@ export function canonicalClusterForChain(chainId, explicitCluster = "") {
         httpStatus: 400,
       });
     }
-    return numericChainId === 101 || numericChainId === 102
-      ? canonicalSolanaCluster(explicit)
-      : explicit;
+    return numericChainId === 101 ? canonicalSolanaCluster(explicit) : explicit;
   }
 
   if (numericChainId === 56) return "bsc-mainnet";
   if (numericChainId === 97) return "bsc-testnet";
-  // Product Solana id 101 is mainnet-beta. Chain 102 is the explicit cert/devnet rail.
+  // Current Solana application identity is chain 101; cluster is explicit runtime state.
   if (numericChainId === 101) {
     return canonicalSolanaCluster(
       process.env.SOLANA_CLUSTER || process.env.VITE_SOLANA_CLUSTER || "solana-mainnet-beta",
     );
   }
-  if (numericChainId === 102) return "solana-devnet";
   return `chain-${numericChainId}`;
 }
 
