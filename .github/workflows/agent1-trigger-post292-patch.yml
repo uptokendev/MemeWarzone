@@ -1,0 +1,17 @@
+name: Agent 1 Trigger Post-292 Patch
+on:
+  push:
+    branches:
+      - agent1/finish-solana-102-elimination-a5cfa696
+permissions:
+  actions: write
+  contents: read
+jobs:
+  trigger:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch focused patch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run agent1-post292-patch.yml --repo "$GITHUB_REPOSITORY" --ref agent1/finish-solana-102-elimination-a5cfa696
