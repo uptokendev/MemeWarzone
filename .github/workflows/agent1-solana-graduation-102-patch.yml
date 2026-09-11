@@ -1,0 +1,76 @@
+name: Agent 1 Solana graduation 102 patch
+
+on:
+  push:
+    branches:
+      - agent1/solana-102-authority-elimination-120401f
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[graduation-102-patch]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Patch graduation authorization to canonical 101 identity
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('frontend/api/dev-fix/solana-graduation-authorization-v2.js')
+          s = p.read_text()
+          old_import = 'import { badMethod, isSolanaChain, json, readJson } from "../../server/http.js";'
+          new_import = 'import { badMethod, json, readJson } from "../../server/http.js";\nimport { resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";'
+          if s.count(old_import) != 1:
+            raise SystemExit('graduation auth import seam changed')
+          s = s.replace(old_import, new_import)
+          old_sig = 'async function resolveCatalogQuoteConfig({ chainId, quoteConfigId }) {'
+          new_sig = 'async function resolveCatalogQuoteConfig({ chainId, quoteConfigId, solanaAuthority }) {'
+          if s.count(old_sig) != 1:
+            raise SystemExit('catalog resolver signature seam changed')
+          s = s.replace(old_sig, new_sig)
+          old_orca = 'if (acquisitionAdapter === "ORCA_WHIRLPOOL_DEVNET" && String(chainId) !== "102") throw new SolanaGraduationAuthorizationError("Orca certification adapter is restricted to Solana devnet chain 102.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });'
+          new_orca = 'if (acquisitionAdapter === "ORCA_WHIRLPOOL_DEVNET" && solanaAuthority?.environment !== "staging") throw new SolanaGraduationAuthorizationError("Orca certification adapter is restricted to canonical Solana staging/devnet authority.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });'
+          if s.count(old_orca) != 1:
+            raise SystemExit('legacy Orca chain seam changed')
+          s = s.replace(old_orca, new_orca)
+          old_handler = '''    const body = await readJson(req);\n    const chainId = Number(body.chainId || 101);\n    if (!isSolanaChain(chainId)) throw new SolanaGraduationAuthorizationError("chainId must be a supported Solana chain.", { code: "NOT_A_SOLANA_CHAIN", httpStatus: 400 });'''
+          new_handler = '''    const body = await readJson(req);\n    const chainId = Number(body.chainId || 101);\n    const solanaAuthority = resolveCurrentSolanaAuthority({\n      chainId,\n      environment: body.environment || process.env.RUNTIME_ENVIRONMENT || process.env.SOLANA_ENVIRONMENT || "",\n      cluster: body.solanaCluster || body.cluster || process.env.SOLANA_CLUSTER || "",\n    });\n    if (!solanaAuthority) throw new SolanaGraduationAuthorizationError("Solana graduation authorization requires chain 101 with explicit staging/devnet or production/mainnet-beta identity.", { code: "SOLANA_CURRENT_AUTHORITY_INVALID", httpStatus: 400 });'''
+          if s.count(old_handler) != 1:
+            raise SystemExit('graduation handler chain seam changed')
+          s = s.replace(old_handler, new_handler)
+          old_call = 'const quoteConfig = await resolveCatalogQuoteConfig({ chainId, quoteConfigId: requestedConfigId });'
+          new_call = 'const quoteConfig = await resolveCatalogQuoteConfig({ chainId, quoteConfigId: requestedConfigId, solanaAuthority });'
+          if s.count(old_call) != 1:
+            raise SystemExit('catalog resolver call seam changed')
+          s = s.replace(old_call, new_call)
+          p.write_text(s)
+
+          t = Path('frontend/shared/solanaCurrentAuthority.test.mjs')
+          ts = t.read_text()
+          marker = 'test("Solana graduation authorization cannot issue authority through legacy 102", async () => {'
+          if marker not in ts:
+            ts += '''\n\ntest("Solana graduation authorization cannot issue authority through legacy 102", async () => {\n  const text = await source("frontend/api/dev-fix/solana-graduation-authorization-v2.js");\n  assert.match(text, /resolveCurrentSolanaAuthority/);\n  assert.match(text, /SOLANA_CURRENT_AUTHORITY_INVALID/);\n  assert.doesNotMatch(text, /isSolanaChain\\(chainId\\)/);\n  assert.doesNotMatch(text, /String\\(chainId\\) !== ["']102["']/);\n  assert.match(text, /solanaAuthority\\?\\.environment !== ["']staging["']/);\n});\n'''
+            t.write_text(ts)
+          PY
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --prefix frontend --no-audit --no-fund
+      - run: node --test frontend/shared/solanaCurrentAuthority.test.mjs frontend/shared/solanaCurrentArenaAuthority.test.mjs frontend/api/dev-fix/ticker-reservation-service.test.mjs
+      - run: |
+          cd frontend
+          npx eslint api/dev-fix/solana-graduation-authorization-v2.js shared/solanaCurrentAuthority.test.mjs
+      - name: Commit canonical graduation authority fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/api/dev-fix/solana-graduation-authorization-v2.js frontend/shared/solanaCurrentAuthority.test.mjs
+          git diff --cached --check
+          git commit -m "fix(agent1-final): fail legacy 102 graduation auth closed [graduation-102-patch]"
+          git push origin HEAD:agent1/solana-102-authority-elimination-120401f
