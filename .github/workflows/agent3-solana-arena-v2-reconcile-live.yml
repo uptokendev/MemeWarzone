@@ -11,23 +11,19 @@ permissions:
 
 env:
   BASE_SHA: 120401fd1fde0dce6e2439fc4156840e029f1ae6
-  REWARDS_PROGRAM: 2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX
-  EXPECTED_PROGRAMDATA: H8DKTTSuGQQccvQ9A3DZWesxsdcw619qJnr57yHtB9ZP
-  EXPECTED_AUTHORITY: HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9
-  EXPECTED_CONFIG: Bio7bTMDLo1rYhKbR26jW98N4YvdeQW3UzUw4cHEv8xX
   EXPECTED_GENESIS: EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG
-  EXPECTED_OLD_SHA: 88ac2116a08187278b68ec543968a8cdaae8038f2fa3bdd67f71b0e22e50f163
-  EXPECTED_OLD_SIZE: '550861'
-  TARGET_BALANCE_LAMPORTS: '12000000000'
+  TARGET_AUTHORITY: HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9
+  REQUIRED_TOPUP_LAMPORTS: '11300000000'
+  OPERATING_RESERVE_LAMPORTS: '200000000'
 
 jobs:
-  devnet-funding:
+  route-signer-probe:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment: airdrop-solana-devnet
+    environment: testnet-certification
     env:
-      SOLANA_RPC_URL: ${{ secrets.SOLANA_REWARDS_RPC_URL || secrets.SOLANA_DEVNET_RPC || vars.SOLANA_REWARDS_RPC_URL || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
-      SOLANA_REWARDS_AUTHORITY_SECRET_KEY: ${{ secrets.SOLANA_REWARDS_AUTHORITY_SECRET_KEY }}
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
+      SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,62 +32,46 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Install Solana web3 client
-        run: npm install --no-save --package-lock=false --no-audit --no-fund @solana/web3.js@1.95.4
-      - name: Verify exact authority then fund devnet signer only
+      - name: Prove exact base and current-repository treatment
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$BASE_SHA"
+          echo 'EXACT_BASE_ROUTE_SIGNER_REFERENCES_BEGIN'
+          git grep -n 'SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY' "$BASE_SHA" -- . || true
+          echo 'EXACT_BASE_ROUTE_SIGNER_REFERENCES_END'
+          echo 'CURRENT_DEVNET_CONFIG_REFERENCES_BEGIN'
+          git grep -n -E 'SOLANA_CLUSTER=solana-devnet|SOLANA_ROUTE_SIGNER_SECRET_KEY|SOLANA_DEVNET_PAYER' "$BASE_SHA" -- frontend scripts .github 2>/dev/null | head -n 160 || true
+          echo 'CURRENT_DEVNET_CONFIG_REFERENCES_END'
+      - name: Install Solana web3 only
+        run: npm install --no-save --package-lock=false --no-audit --no-fund @solana/web3.js@1.95.4
+      - name: Derive route signer public key and devnet balance only
+        shell: bash
+        run: |
+          set -euo pipefail
           node <<'NODE'
-          const crypto=require('crypto');
-          const {Connection,PublicKey,Keypair,LAMPORTS_PER_SOL}=require('@solana/web3.js');
-          const loader=new PublicKey('BPFLoaderUpgradeab1e11111111111111111111111');
-          function signer(raw){const t=String(raw||'').trim();if(!t)throw new Error('missing signer');const b=t.startsWith('[')?Uint8Array.from(JSON.parse(t).map(Number)):Uint8Array.from(Buffer.from(t,'base64'));if(b.length===64)return Keypair.fromSecretKey(b);if(b.length===32)return Keypair.fromSeed(b);throw new Error('bad signer bytes')}
-          function pd(info){if(!info||!info.executable||!info.owner.equals(loader))throw new Error('bad program');const d=Buffer.from(info.data);if(d.readUInt32LE(0)!==2)throw new Error('bad program layout');return new PublicKey(d.subarray(4,36));}
-          function pdi(info){const d=Buffer.from(info.data);if(d.readUInt32LE(0)!==3||d[12]!==1)throw new Error('bad ProgramData');return {slot:d.readBigUInt64LE(4).toString(),authority:new PublicKey(d.subarray(13,45)).toBase58(),binary:d.subarray(45)};}
-          async function assertAuthority(c,s){
-            const g=await c.getGenesisHash(); console.log('GENESIS '+g); if(g!==process.env.EXPECTED_GENESIS)throw new Error('wrong cluster');
-            if(s.publicKey.toBase58()!==process.env.EXPECTED_AUTHORITY)throw new Error('signer mismatch');
-            const program=new PublicKey(process.env.REWARDS_PROGRAM); const programData=pd(await c.getAccountInfo(program,'confirmed')); console.log('PROGRAMDATA '+programData.toBase58()); if(programData.toBase58()!==process.env.EXPECTED_PROGRAMDATA)throw new Error('ProgramData mismatch');
-            const live=pdi(await c.getAccountInfo(programData,'confirmed')); const sha=crypto.createHash('sha256').update(live.binary).digest('hex'); console.log(`LIVE_SLOT ${live.slot} LIVE_AUTHORITY ${live.authority} LIVE_SHA ${sha} LIVE_SIZE ${live.binary.length}`); if(live.authority!==process.env.EXPECTED_AUTHORITY||sha!==process.env.EXPECTED_OLD_SHA||String(live.binary.length)!==process.env.EXPECTED_OLD_SIZE)throw new Error('live rewards identity changed');
-            const [cfg]=PublicKey.findProgramAddressSync([Buffer.from('arena_money_config_v2')],program); const ci=await c.getAccountInfo(cfg,'confirmed'); console.log(`CONFIG ${cfg.toBase58()} EXISTS ${Boolean(ci)}`); if(cfg.toBase58()!==process.env.EXPECTED_CONFIG||ci)throw new Error('config state changed');
-          }
-          async function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+          const {Connection,Keypair,PublicKey}=require('@solana/web3.js');
+          const ALPHABET='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+          function decodeBase58(value){let num=0n;for(const c of value){const i=ALPHABET.indexOf(c);if(i<0)throw new Error('invalid base58');num=num*58n+BigInt(i);}let hex=num.toString(16);if(hex.length%2)hex='0'+hex;let body=Buffer.from(hex,'hex');let zeros=0;for(const c of value){if(c==='1')zeros++;else break;}return Uint8Array.from(Buffer.concat([Buffer.alloc(zeros),body]));}
+          function parse(raw){const v=String(raw||'').trim();if(!v)throw new Error('SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY missing');let b;if(v.startsWith('['))b=Uint8Array.from(JSON.parse(v).map(Number));else if(/^(0x)?[0-9a-fA-F]{128}$/.test(v))b=Uint8Array.from(Buffer.from(v.replace(/^0x/,''),'hex'));else b=decodeBase58(v);if(b.length===64)return Keypair.fromSecretKey(b);if(b.length===32)return Keypair.fromSeed(b);throw new Error('route signer secret did not decode to 32/64 bytes');}
           (async()=>{
-            const protectedRpc=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
-            const publicRpc=new Connection('https://api.devnet.solana.com','confirmed');
-            const s=signer(process.env.SOLANA_REWARDS_AUTHORITY_SECRET_KEY);
-            console.log('TARGET_SIGNER '+s.publicKey.toBase58());
-            await assertAuthority(protectedRpc,s);
-            const publicGenesis=await publicRpc.getGenesisHash(); console.log('PUBLIC_FAUCET_GENESIS '+publicGenesis); if(publicGenesis!==process.env.EXPECTED_GENESIS)throw new Error('public faucet wrong cluster');
-            const target=BigInt(process.env.TARGET_BALANCE_LAMPORTS);
-            let balance=BigInt(await protectedRpc.getBalance(s.publicKey,'confirmed'));
-            console.log('BALANCE_BEFORE '+balance);
-            const signatures=[];
-            for(let attempt=1; attempt<=12 && balance<target; attempt++){
-              const need=target-balance;
-              const amount=need>=2000000000n?2:need>=1000000000n?1:Math.max(0.1,Number(need)/LAMPORTS_PER_SOL);
-              let sig=null; let lastErr=null;
-              for(const [label,c] of [['protected',protectedRpc],['public',publicRpc]]){
-                try{
-                  sig=await c.requestAirdrop(s.publicKey,Math.floor(amount*LAMPORTS_PER_SOL));
-                  const bh=await c.getLatestBlockhash('confirmed');
-                  await c.confirmTransaction({signature:sig,...bh},'confirmed');
-                  console.log(`AIRDROP_${attempt} SOURCE ${label} SOL ${amount} SIG ${sig}`);
-                  signatures.push(sig); lastErr=null; break;
-                }catch(e){lastErr=e; console.log(`AIRDROP_${attempt}_${label.toUpperCase()}_ERROR ${String(e?.message||e).slice(0,240)}`);}
-              }
-              if(!sig){console.log('AIRDROP_ATTEMPT_FAILED '+attempt+' '+String(lastErr?.message||lastErr)); await sleep(4000); continue;}
-              await sleep(2500);
-              balance=BigInt(await protectedRpc.getBalance(s.publicKey,'confirmed'));
-              console.log('BALANCE_AFTER_ATTEMPT_'+attempt+' '+balance);
-            }
-            balance=BigInt(await protectedRpc.getBalance(s.publicKey,'confirmed'));
-            console.log('BALANCE_FINAL '+balance);
-            console.log('AIRDROP_SIGNATURES '+JSON.stringify(signatures));
-            if(balance<target)throw new Error(`DEVNET_FUNDING_SHORTFALL final=${balance} target=${target}`);
-            await assertAuthority(protectedRpc,s);
-            console.log('DEVNET_FUNDING_GATE PASS');
-          })().catch(e=>{console.error('DEVNET_FUNDING_BLOCKER '+(e?.stack||e));process.exit(1)});
+            const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
+            const genesis=await c.getGenesisHash();
+            console.log('GENESIS '+genesis);
+            if(genesis!==process.env.EXPECTED_GENESIS)throw new Error('wrong cluster');
+            const kp=parse(process.env.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY);
+            const pub=kp.publicKey.toBase58();
+            const bal=await c.getBalance(kp.publicKey,'confirmed');
+            const reserve=Number(process.env.OPERATING_RESERVE_LAMPORTS);
+            const safe=Math.max(0,bal-reserve);
+            console.log('ROUTE_SIGNER_PUBLIC_KEY '+pub);
+            console.log('ROUTE_SIGNER_BALANCE_LAMPORTS '+bal);
+            console.log('ROUTE_SIGNER_BALANCE_SOL '+(bal/1e9).toFixed(9));
+            console.log('OPERATING_RESERVE_LAMPORTS '+reserve);
+            console.log('SAFE_TRANSFERABLE_LAMPORTS '+safe);
+            console.log('SAFE_TRANSFERABLE_SOL '+(safe/1e9).toFixed(9));
+            console.log('TARGET_TOPUP_LAMPORTS '+process.env.REQUIRED_TOPUP_LAMPORTS);
+            console.log('SUFFICIENT_FOR_TARGET '+(safe>=Number(process.env.REQUIRED_TOPUP_LAMPORTS)));
+            console.log('TARGET_AUTHORITY '+new PublicKey(process.env.TARGET_AUTHORITY).toBase58());
+          })().catch(e=>{console.error('ROUTE_SIGNER_PROBE_BLOCKER '+(e?.stack||e));process.exit(1)});
           NODE
