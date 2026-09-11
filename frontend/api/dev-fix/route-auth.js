@@ -168,9 +168,11 @@ function validateGraduationTarget(chainId, graduationTarget) {
     process.env.VITE_ENABLE_TEST_GRADUATION_THRESHOLD || process.env.ENABLE_TEST_GRADUATION_THRESHOLD || "false",
   );
   const cid = Number(chainId);
+  // This endpoint is EVM route authority only. Solana 101/legacy 102 must use
+  // the dedicated Solana authorization surface and can never unlock this tier.
   if (
     testThresholdEnabled &&
-    (cid === 97 || cid === 46630 || cid === 101 || cid === 102) &&
+    (cid === 97 || cid === 46630) &&
     graduationTarget === TEST_GRADUATION_TARGET
   ) {
     return;
@@ -261,102 +263,50 @@ async function readOnchainCreationPreflight({ chainId, factoryAddress, walletAdd
         onChain: { factoryGeneration, campaignGeneration },
       };
     }
-
-    const allowed = eligibility[0] === true || eligibility.allowed === true;
-    let lastRecordedLaunchAt = 0;
-    let cooldownSeconds = 0;
-    try {
-      const registryAddress = await factory.creatorRegistry();
-      if (registryAddress && registryAddress !== ethers.ZeroAddress) {
-        const registry = new ethers.Contract(registryAddress, CREATOR_REGISTRY_PREFLIGHT_ABI, provider);
-        const [profile, rules] = await Promise.all([
-          registry.getCreatorProfile(walletAddress),
-          registry.getCreatorRules(walletAddress),
-        ]);
-        lastRecordedLaunchAt = Number(profile.lastLaunchTimestamp ?? profile[3] ?? 0);
-        cooldownSeconds = Number(rules.cooldownSeconds ?? rules[1] ?? 0);
-      }
-    } catch {
-      lastRecordedLaunchAt = 0;
-    }
-    const cooldownEndsAt = normalizeCreatorArmCooldownEndsAt({
-      allowed,
-      lastRecordedLaunchAt,
-      cooldownSeconds,
-      cooldownEndsAt: Number(eligibility.cooldownEndsAt ?? eligibility[1] ?? 0),
-    });
-    const onChainLiveCampaignCount = Number(eligibility.currentLiveCount ?? eligibility[2] ?? 0);
-    const onChainLiveCampaignLimit = Number(eligibility.maxLiveBonding ?? eligibility[3] ?? 0);
-    if (!allowed) {
-      return {
-        ok: false,
-        status: 403,
-        code: "CREATE_ONCHAIN_ELIGIBILITY_BLOCKED",
-        error: onChainLiveCampaignCount >= onChainLiveCampaignLimit
-          ? `Live campaign limit reached (${onChainLiveCampaignCount}/${onChainLiveCampaignLimit}). Graduate an existing live campaign before another deploy. Tier 1 max is 3 concurrent live campaigns.`
-          : isCreatorArmCooldownActive({ allowed, lastRecordedLaunchAt, cooldownEndsAt })
-            ? `Creator arm cooldown active until ${new Date(cooldownEndsAt * 1000).toISOString()}. Immediate and timed arms both require 24h between on-chain deploys. A later trading-open time does not bypass this.`
-            : "This creator wallet cannot deploy or arm another campaign right now.",
-        onChain: { allowed, cooldownEndsAt, lastRecordedLaunchAt, onChainLiveCampaignCount, onChainLiveCampaignLimit, factoryGeneration, campaignGeneration },
-      };
-    }
-
     return {
       ok: true,
       onChain: {
-        allowed,
-        canArmNow: true,
-        cooldownEndsAt,
-        lastRecordedLaunchAt,
-        onChainLiveCampaignCount,
-        onChainLiveCampaignLimit,
+        live,
+        globalPaused,
+        createPaused,
         factoryGeneration,
         campaignGeneration,
         routeAuthority: ethers.getAddress(routeAuthority),
+        creatorAllowed: Boolean(eligibility?.allowed ?? eligibility?.[0]),
       },
     };
   } catch (error) {
-    return {
-      ok: false,
-      status: 503,
-      code: "CREATE_ONCHAIN_PREFLIGHT_FAILED",
-      error: `Current on-chain creation eligibility could not be verified: ${String(error?.shortMessage || error?.message || error)}`,
-    };
+    return { ok: false, status: 503, code: "CREATE_PREFLIGHT_FAILED", error: String(error?.shortMessage || error?.message || error) };
   }
 }
 
-function buildReadinessWarnings({ signer, factoryAddress, rpcUrlConfigured, onchain, matchesOnchain }) {
-  const warnings = [];
-  if (!signer) warnings.push("Route-authority private key is not configured or is invalid.");
-  if (!factoryAddress) warnings.push("Factory address is missing for this chain.");
-  if (!rpcUrlConfigured) warnings.push("RPC URL is missing for this chain, so on-chain routeAuthority cannot be verified.");
-  if (onchain.error) warnings.push(`On-chain routeAuthority check failed: ${onchain.error}`);
-  if (signer && onchain.routeAuthority && !matchesOnchain) warnings.push("Configured signer address does not match LaunchFactory.routeAuthority().");
-  return warnings;
-}
-
 function readinessStatus({ signer, factoryAddress, rpcUrlConfigured, onchain, matchesOnchain }) {
-  if (!signer) return "missing_signer";
-  if (!factoryAddress) return "missing_factory";
-  if (!rpcUrlConfigured) return "missing_rpc";
-  if (!onchain.routeAuthority) return "onchain_check_failed";
-  if (!matchesOnchain) return "authority_mismatch";
+  if (!signer) return "route_signer_missing";
+  if (!factoryAddress) return "factory_missing";
+  if (!rpcUrlConfigured) return "rpc_missing";
+  if (onchain.error) return "onchain_unreadable";
+  if (!matchesOnchain) return "route_authority_mismatch";
   return "ready";
 }
 
 export async function routingStatus(req, res) {
   if (!methodAllowed(req, res, ["GET"])) return;
   const q = getQuery(req);
-  const chainId = parsePositiveInt(q.chainId || process.env.VITE_DEFAULT_CHAIN_ID || process.env.VITE_TARGET_CHAIN_ID, defaultEvmChainId());
-  const signer = getSigner();
-  const routeAuthority = signer?.address || null;
+  const chainId = parsePositiveInt(q.chainId, defaultEvmChainId());
   const factoryAddress = normalizeAddress(q.factoryAddress) || getFactoryAddressFromEnv(chainId);
-  const defaults = getDefaultRouteProfiles();
+  const signer = getSigner();
   const rpcUrlConfigured = Boolean(getRpcUrl(chainId));
   const onchain = await readOnchainRouteAuthority({ chainId, factoryAddress });
+  const routeAuthority = signer?.address || null;
   const matchesOnchain = Boolean(routeAuthority && onchain.routeAuthority && routeAuthority.toLowerCase() === onchain.routeAuthority.toLowerCase());
-  const readyForCoreFlow = Boolean(signer && factoryAddress && rpcUrlConfigured && onchain.routeAuthority && matchesOnchain);
-  const warnings = buildReadinessWarnings({ signer, factoryAddress, rpcUrlConfigured, onchain, matchesOnchain });
+  const defaults = getDefaultRouteProfiles();
+  const readyForCoreFlow = Boolean(signer && factoryAddress && rpcUrlConfigured && matchesOnchain);
+  const warnings = [];
+  if (!signer) warnings.push("Route signer is not configured.");
+  if (!factoryAddress) warnings.push("Creation factory is not configured.");
+  if (!rpcUrlConfigured) warnings.push("RPC URL is not configured.");
+  if (onchain.error) warnings.push(onchain.error);
+  if (routeAuthority && onchain.routeAuthority && !matchesOnchain) warnings.push("Configured route signer does not match the factory routeAuthority().");
   const walletAddress = normalizeAddress(q.walletAddress);
   const routeDecision = walletAddress ? await getRouteDecision(walletAddress) : null;
   const createPreflight = walletAddress ? await evaluateCreatePreflight({ walletAddress }) : null;
@@ -441,7 +391,7 @@ export async function routingCreateAuthorization(req, res) {
   const createPreflight = await evaluateCreatePreflight({ walletAddress });
   if (!createPreflight.allowed) {
     return json(res, 403, {
-      error: createPreflight.reasons?.[0] || "Creator is not eligible to launch.",
+      error: createPreflight.reasons?.[0] || "Wallet is not eligible to launch.",
       code: "CREATE_PREFLIGHT_BLOCKED",
       preflight: createPreflight,
     });
