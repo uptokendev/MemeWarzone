@@ -105,7 +105,7 @@ jobs:
           printf 'LIVE_BINARY_BEFORE_SHA256 '
           sha256sum /tmp/live-before.so | cut -d' ' -f1
           stat -c 'LIVE_BINARY_BEFORE_SIZE %s' /tmp/live-before.so
-          solana program show "$PROGRAM_ID" --url "$SOLANA_RPC_URL"
+          solana program show "$PROGRAM_ID" --url "$SOLANA_RPC_URL" --keypair /tmp/mwz-payer.json
 
       - name: FINAL integration freeze before any broadcast
         shell: bash
@@ -157,7 +157,7 @@ jobs:
           stat -c 'LIVE_BINARY_AFTER_SIZE %s' /tmp/live-after.so
           cmp --silent source/target/deploy/mwz_rewards_treasury.so /tmp/live-after.so
           echo "LIVE_AFTER_EQUALS_EXACT_HEAD_CANDIDATE true"
-          solana program show "$PROGRAM_ID" --url "$SOLANA_RPC_URL"
+          solana program show "$PROGRAM_ID" --url "$SOLANA_RPC_URL" --keypair /tmp/mwz-payer.json
 
       - name: Initialize, unpause, Battle and Tournament payment acceptance
         shell: bash
@@ -193,4 +193,4 @@ jobs:
           set -euo pipefail
           remote="$(git -C source ls-remote origin refs/heads/$INTEGRATION_BRANCH | awk '{print $1}')"
           echo "FINAL_INTEGRATION_OBSERVED $remote"
-          solana program show "$PROGRAM_ID" --url "$SOLANA_RPC_URL"
+          solana program show "$PROGRAM_ID" --url "$SOLANA_RPC_URL" --keypair /tmp/mwz-payer.json
