@@ -1,0 +1,118 @@
+name: Agent 2 PR289 final funded golden v3
+
+on:
+  push:
+    branches:
+      - cert/agent2-pr289-final-exact-head-20260911
+    paths:
+      - .github/workflows/agent2-pr289-final-funded-golden-v3.yml
+
+permissions:
+  contents: read
+
+env:
+  BASE_SHA: 120401fd1fde0dce6e2439fc4156840e029f1ae6
+  PR_HEAD: f18505e39186a5fa73fd89f00b242b94782f2f2c
+  CERT_HARNESS_SHA: c7cb5ec297de6a4f4d3cd05972e3a02419ec4670
+  SOLANA_GOLDEN_REPORT: /tmp/pr289-final-golden.json
+  REUSABLE_ALT: ALA7wQRuPdHWzLLpyDwbw7kPbJB7pCp1zNyzrNZApoiA
+
+jobs:
+  golden:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: testnet-certification
+    env:
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
+      SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER }}
+      SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PR_HEAD }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Verify exact clean PR head
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PR_HEAD"
+          test "$(git merge-base HEAD "$BASE_SHA")" = "$BASE_SHA"
+          test -z "$(git status --porcelain)"
+          test "$(git diff --name-only "$BASE_SHA"..HEAD | tr '\n' ' ')" = "tools/solana-meteora-graduation/graduate-basic-quote.mjs "
+          test "$(git diff --numstat "$BASE_SHA"..HEAD -- tools/solana-meteora-graduation/graduate-basic-quote.mjs)" = $'5\t1\ttools/solana-meteora-graduation/graduate-basic-quote.mjs'
+          test -z "$(git diff --name-only "$BASE_SHA"..HEAD -- programs/memewarzone_solana programs/mwz_rewards_treasury)"
+          echo EXACT_CLEAN_HEAD=YES
+          echo PROGRAMS_UNCHANGED=YES
+
+      - name: Install exact-head runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix tests/solana --no-audit --no-fund
+          npm ci --prefix frontend --no-audit --no-fund
+          npm install --global --silent @coral-xyz/anchor-cli@0.30.1
+          rustup toolchain install nightly-2024-05-09 --profile minimal
+          mkdir -p target/idl
+          cd programs/memewarzone_solana
+          RUSTUP_TOOLCHAIN=nightly-2024-05-09 anchor idl build --out ../../target/idl/memewarzone_solana.json
+          cd ../..
+          test -s target/idl/memewarzone_solana.json
+          test ! -e target/deploy/memewarzone_solana.so
+
+      - name: Materialize approved devnet keys
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SOLANA_DEVNET_PAYER:-}"
+          test -n "${SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY:-}"
+          operator_file="$RUNNER_TEMP/operator.json"
+          route_file="$RUNNER_TEMP/route.json"
+          SOLANA_GRADUATION_OPERATOR_KEYPAIR="$operator_file" node scripts/solana/materialize-devnet-payer.mjs >/dev/null
+          ROUTE_FILE="$route_file" node -e 'const fs=require("fs");const v=JSON.parse(process.env.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY);if(!Array.isArray(v)||v.length!==64)throw new Error("bad route key");fs.writeFileSync(process.env.ROUTE_FILE,JSON.stringify(v),{mode:0o600});'
+          echo "SOLANA_OPERATOR_KEYPAIR=$operator_file" >> "$GITHUB_ENV"
+          echo "SOLANA_NEW_ROUTE_SIGNER_KEYPAIR=$route_file" >> "$GITHUB_ENV"
+
+      - name: Fetch certification-only harness after clean-head proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p certification
+          root="https://raw.githubusercontent.com/uptokendev/MemeWarzone/${CERT_HARNESS_SHA}/certification"
+          curl -fsSL "$root/agent2-pr289-reclaim-alt.cjs" -o certification/agent2-pr289-reclaim-alt.cjs
+          curl -fsSL "$root/agent2-pr289-patch-golden.py" -o certification/agent2-pr289-patch-golden.py
+          curl -fsSL "$root/agent2-pr289-validate-report.cjs" -o certification/agent2-pr289-validate-report.cjs
+
+      - name: Reclaim only verified disposable Agent-2 ALT rent
+        shell: bash
+        run: node certification/agent2-pr289-reclaim-alt.cjs
+
+      - name: Materialize disposable golden harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://raw.githubusercontent.com/uptokendev/MemeWarzone/ad4133dddf9f6033a7ef3af36b196ba080863918/tests/solana/candidate-wallet-golden-devnet.cjs -o tests/solana/candidate-wallet-golden-devnet.cjs
+          python3 certification/agent2-pr289-patch-golden.py
+          grep -q "expiry-safe rebuild only after null signature status" tests/solana/candidate-wallet-golden-devnet.cjs
+          grep -q "SOLANA_GOLDEN_EXISTING_ALT" tests/solana/candidate-wallet-golden-devnet.cjs
+
+      - name: Execute fresh exact-head CREATE BUY SELL
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOLANA_GOLDEN_ONLY_FINAL=1 SOLANA_GOLDEN_EXISTING_ALT="$REUSABLE_ALT" node tests/solana/candidate-wallet-golden-devnet.cjs | tee /tmp/pr289-final-golden.log
+          node certification/agent2-pr289-validate-report.cjs
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent2-pr289-final-golden-f18505e-v3
+          path: |
+            /tmp/pr289-final-golden.json
+            /tmp/pr289-final-golden.log
+          if-no-files-found: warn
+          retention-days: 14
