@@ -6,13 +6,17 @@ import { createRobinhoodLaunchpadAdapter } from "@/features/launchpad/robinhoodA
 import { createSolanaLaunchpadAdapter } from "@/features/launchpad/solanaAdapter";
 
 function resolveLaunchpadChain(input?: { chain?: LaunchpadChain | string | null; chainId?: number | string | null }): LaunchpadChain {
+  const chainId = Number(input?.chainId ?? 0);
+  if (chainId === 102) {
+    throw new Error("Legacy Solana chain 102 cannot select a current launchpad adapter.");
+  }
+
   const explicit = String(input?.chain || "").trim().toLowerCase();
   if (explicit === "sol" || explicit === "solana") return "solana";
   if (explicit === "robinhood" || explicit === "rh") return "robinhood";
   if (explicit === "bnb" || explicit === "bsc") return "bnb";
 
-  const chainId = Number(input?.chainId ?? 0);
-  if (chainId === 101 || chainId === 102) return "solana";
+  if (chainId === 101) return "solana";
   if (chainId === 4663 || chainId === 46630) return "robinhood";
   return "bnb";
 }
