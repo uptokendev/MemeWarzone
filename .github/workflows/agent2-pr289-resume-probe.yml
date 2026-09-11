@@ -1,0 +1,57 @@
+name: Agent 2 PR289 landed-state probe
+
+on:
+  push:
+    branches:
+      - cert/agent2-pr289-final-exact-head-20260911
+    paths:
+      - .github/workflows/agent2-pr289-resume-probe.yml
+
+permissions:
+  contents: read
+
+env:
+  PR_HEAD: f18505e39186a5fa73fd89f00b242b94782f2f2c
+  PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+  OPERATOR: HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: testnet-certification
+    env:
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PR_HEAD }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --prefix tests/solana --no-audit --no-fund
+      - name: Inspect recent operator transactions
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const {Connection,PublicKey}=require('./tests/solana/node_modules/@solana/web3.js');
+          const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
+          const operator=new PublicKey(process.env.OPERATOR);
+          const pid=process.env.PROGRAM_ID;
+          (async()=>{
+            console.log('GENESIS',await c.getGenesisHash());
+            console.log('OPERATOR_BALANCE',await c.getBalance(operator,'confirmed'));
+            const sigs=await c.getSignaturesForAddress(operator,{limit:40},'confirmed');
+            for(const s of sigs){
+              const tx=await c.getTransaction(s.signature,{commitment:'confirmed',maxSupportedTransactionVersion:0});
+              if(!tx) continue;
+              const logs=tx.meta?.logMessages||[];
+              const relevant=logs.some(x=>x.includes(pid)||x.includes('Instruction: CreateCampaign')||x.includes('Instruction: InitializeFeeEscrow')||x.includes('Instruction: InitializeCreatorFeeVault'));
+              if(!relevant) continue;
+              console.log('TX',JSON.stringify({signature:s.signature,slot:s.slot,blockTime:s.blockTime,err:s.err,blockhash:tx.transaction.message.recentBlockhash,computeUnits:tx.meta?.computeUnitsConsumed,logs:logs.filter(x=>x.includes('Instruction:')||x.includes(pid))}));
+              const keys=tx.transaction.message.getAccountKeys({accountKeysFromLookups:tx.meta?.loadedAddresses});
+              console.log('KEYS',JSON.stringify(Array.from({length:keys.length},(_,i)=>[i,keys.get(i).toBase58()])));
+              tx.transaction.message.compiledInstructions.forEach((ix,i)=>console.log('IX',i,JSON.stringify({programIdIndex:ix.programIdIndex,accountKeyIndexes:[...ix.accountKeyIndexes],data:Buffer.from(ix.data).toString('base64')})));
+            }
+          })().catch(e=>{console.error(e);process.exit(1)});
+          NODE
