@@ -48,6 +48,8 @@ export type LaunchpadPreflight = {
   campaign?: Record<string, unknown> | null;
   creatorProtection?: CreatorProtectionPreflight | null;
   lookupErrors?: string[];
+  canonicalCampaignAddress?: string | null;
+  submittedCampaignAddress?: string | null;
 };
 
 export class LaunchpadPreflightBlockedError extends Error {
@@ -103,10 +105,19 @@ function showCreatorProtection(preflight: LaunchpadPreflight) {
     // user knows MetaMask was not opened. Passive global apiFetch notifier no longer
     // fires UNAVAILABLE for passive TokenDetails probes.
     if (!code.startsWith("CREATOR_")) return;
+    const campaignAddress = String(
+      (preflight.creatorProtection as { campaignAddress?: string | null } | null)?.campaignAddress
+      || preflight.canonicalCampaignAddress
+      || preflight.submittedCampaignAddress
+      || (preflight.campaign as { address?: string | null } | null)?.address
+      || "",
+    ).trim();
     window.dispatchEvent(new CustomEvent("mwz:creatorProtectionBlocked", {
       detail: {
         ...(preflight.creatorProtection || {}),
+        campaignAddress: campaignAddress || null,
         code,
+        force: true,
       },
     }));
   } catch {
