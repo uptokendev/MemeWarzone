@@ -228,6 +228,18 @@ jobs:
       - name: Arena tournament regression
         run: npm --prefix frontend run test:arena-tournament
 
+      - name: Final Salvo staging identity regression
+        run: node --test frontend/api/lib/arenaStagingIdentityCompletion.test.mjs
+
+      - name: Final Salvo five-step runtime regression
+        run: node --test frontend/api/lib/arenaFinalSalvoRuntime.test.mjs
+
+      - name: Final Salvo Normal Tournament regression
+        run: node --test frontend/api/lib/arenaTournamentChainIdentity.test.mjs
+
+      - name: Final Salvo Vote Tournament regression
+        run: node --test frontend/api/lib/arenaVoteTournamentChainIdentity.test.mjs
+
       - name: Focused lint for changed authority consumers
         shell: bash
         run: |
