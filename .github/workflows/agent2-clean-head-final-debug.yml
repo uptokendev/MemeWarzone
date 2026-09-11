@@ -12,7 +12,11 @@ permissions:
 
 env:
   TARGET_SHA: f18505e39186a5fa73fd89f00b242b94782f2f2c
+  PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
   OPERATOR_PUBKEY: HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9
+  ROUTE_PUBKEY: 7hKQd798Z1ERmRUhm7shmstB1V13FQNnDLqtYjZBuJUz
+  EXISTING_ALT: ALA7wQRuPdHWzLLpyDwbw7kPbJB7pCp1zNyzrNZApoiA
+  PRIOR_CAMPAIGN: 8fes8XEmsV3PYL2Y5W2octzcEmKtFU1tiP3Bx362seyx
 
 jobs:
   scan:
@@ -21,7 +25,6 @@ jobs:
     environment: testnet-certification
     env:
       SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
-      SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,25 +33,40 @@ jobs:
         with:
           node-version: 22
       - run: npm install --prefix tests/solana --no-audit --no-fund
-      - name: Read-only route signer and operator balance scan
+      - name: Read-only exact rent/profile/ALT budget
         shell: bash
         run: |
           set -euo pipefail
-          test -n "${SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY:-}"
           node - <<'NODE'
-          const {Connection,Keypair,PublicKey}=require('./tests/solana/node_modules/@solana/web3.js');
-          const raw=JSON.parse(process.env.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY);
-          if(!Array.isArray(raw)||raw.length!==64) throw new Error('route signer secret shape invalid');
-          const route=Keypair.fromSecretKey(Uint8Array.from(raw));
-          const operator=new PublicKey(process.env.OPERATOR_PUBKEY);
+          const {Connection,PublicKey}=require('./tests/solana/node_modules/@solana/web3.js');
           const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
+          const program=new PublicKey(process.env.PROGRAM_ID);
+          const operator=new PublicKey(process.env.OPERATOR_PUBKEY);
+          const route=new PublicKey(process.env.ROUTE_PUBKEY);
+          const prior=new PublicKey(process.env.PRIOR_CAMPAIGN);
+          const pda=(...seeds)=>PublicKey.findProgramAddressSync(seeds.map(x=>Buffer.isBuffer(x)?x:Buffer.from(x)),program)[0];
+          const profile=(pk)=>pda(Buffer.from('creator'),pk.toBuffer());
+          const risk=(pk)=>pda(Buffer.from('risk'),pk.toBuffer());
+          const fee=pda(Buffer.from('fee-escrow'),prior.toBuffer());
+          const creatorFee=pda(Buffer.from('creator-fee-vault'),prior.toBuffer());
           (async()=>{
-            const genesis=await c.getGenesisHash();
-            if(genesis!=='EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG') throw new Error(`wrong cluster ${genesis}`);
+            const genesis=await c.getGenesisHash(); if(genesis!=='EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG') throw new Error(`wrong cluster ${genesis}`);
             console.log('EXACT_TARGET',process.env.TARGET_SHA);
-            console.log('ROUTE_SIGNER',route.publicKey.toBase58());
-            console.log('ROUTE_SIGNER_BALANCE',await c.getBalance(route.publicKey,'confirmed'));
-            console.log('OPERATOR',operator.toBase58());
             console.log('OPERATOR_BALANCE',await c.getBalance(operator,'confirmed'));
+            console.log('ROUTE_BALANCE',await c.getBalance(route,'confirmed'));
+            for(const [name,key] of [['operator_creator_profile',profile(operator)],['operator_risk_profile',risk(operator)],['route_creator_profile',profile(route)],['route_risk_profile',risk(route)],['prior_fee_escrow',fee],['prior_creator_fee_vault',creatorFee]]){
+              const info=await c.getAccountInfo(key,'confirmed');
+              console.log('ACCOUNT',name,key.toBase58(),info?`exists owner=${info.owner.toBase58()} bytes=${info.data.length} lamports=${info.lamports}`:'missing');
+            }
+            let total=0;
+            for(const [name,size] of Object.entries({mint:82,tokenVault:165,campaign:720,solVault:81,createAuthorization:155})){
+              const rent=await c.getMinimumBalanceForRentExemption(size,'confirmed'); total+=rent; console.log('RENT',name,size,rent);
+            }
+            console.log('CREATE_CORE_RENT_TOTAL',total);
+            const alt=(await c.getAddressLookupTable(new PublicKey(process.env.EXISTING_ALT))).value;
+            if(!alt){console.log('ALT missing');}else{
+              console.log('ALT',alt.key.toBase58(),'authority',alt.state.authority?.toBase58()||'none','deactivationSlot',String(alt.state.deactivationSlot),'lastExtendedSlot',String(alt.state.lastExtendedSlot),'addresses',alt.state.addresses.length);
+              console.log('ALT_ADDRESSES',alt.state.addresses.map(x=>x.toBase58()).join(','));
+            }
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
