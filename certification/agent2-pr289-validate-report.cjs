@@ -10,6 +10,7 @@ for(const key of ["create","buy","sell"]){
   if(!String(x.simulation).startsWith("PASS"))throw new Error(`${key} simulation missing`);
   if(!(Number(x.serializedPacketBytes)>0))throw new Error(`${key} packet bytes missing`);
   if(!x.signature)throw new Error(`${key} signature missing`);
+  if(!(Number(x.payerBalanceBefore)>0))throw new Error(`${key} payer balance missing`);
   if(!String(x.retryBehavior).includes("deduped"))throw new Error(`${key} identical retry not deduped`);
   if(!String(x.expiryBehavior).includes("rejected"))throw new Error(`${key} expired/unknown blockhash not rejected`);
   if(!String(x.duplicateReplayBehavior).includes("fresh-blockhash same intent rejected"))throw new Error(`${key} duplicate intent not rejected`);
