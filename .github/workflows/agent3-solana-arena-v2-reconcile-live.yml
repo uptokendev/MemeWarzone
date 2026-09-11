@@ -1,0 +1,172 @@
+name: Agent 3 ArenaMoneyV2 Devnet Reconciliation
+
+on:
+  push:
+    branches:
+      - agent3/solana-arena-money-v2-reconcile-120401f
+    paths:
+      - .github/workflows/agent3-solana-arena-v2-reconcile-live.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent3-arena-money-v2-reconcile-live
+  cancel-in-progress: false
+
+env:
+  BASE_SHA: 120401fd1fde0dce6e2439fc4156840e029f1ae6
+  REWARDS_PROGRAM: 2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX
+  EXPECTED_PROGRAMDATA: H8DKTTSuGQQccvQ9A3DZWesxsdcw619qJnr57yHtB9ZP
+  EXPECTED_AUTHORITY: HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9
+  EXPECTED_CONFIG: Bio7bTMDLo1rYhKbR26jW98N4YvdeQW3UzUw4cHEv8xX
+  EXPECTED_GENESIS: EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG
+  LAUNCHPAD_PROGRAM: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+
+jobs:
+  live-refresh:
+    name: Exact-current live refresh and authority discovery
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: airdrop-solana-devnet
+    env:
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_REWARDS_RPC_URL || secrets.SOLANA_DEVNET_RPC || vars.SOLANA_REWARDS_RPC_URL || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
+      SOLANA_REWARDS_AUTHORITY_SECRET_KEY: ${{ secrets.SOLANA_REWARDS_AUTHORITY_SECRET_KEY }}
+      GITHUB_PUBLIC_VARS_JSON: ${{ toJson(vars) }}
+    steps:
+      - name: Checkout exact product authority
+        uses: actions/checkout@v4
+        with:
+          ref: 120401fd1fde0dce6e2439fc4156840e029f1ae6
+          fetch-depth: 0
+
+      - name: Prove exact product authority and untouched launchpad boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$BASE_SHA"
+          grep -F "declare_id!(\"$REWARDS_PROGRAM\")" programs/mwz_rewards_treasury/src/lib.rs
+          grep -F "mwz_rewards_treasury = \"$REWARDS_PROGRAM\"" Anchor.toml
+          grep -F "mwz_launchpad = \"$LAUNCHPAD_PROGRAM\"" Anchor.toml
+          grep -F "pub mod arena_money_v2;" programs/mwz_rewards_treasury/src/lib.rs
+          grep -F "pub fn initialize_arena_money_v2" programs/mwz_rewards_treasury/src/lib.rs
+          printf 'BASE_SHA=%s\n' "$(git rev-parse HEAD)"
+
+      - name: Setup Node and exact Solana test dependencies
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - shell: bash
+        run: npm install --prefix tests/solana --no-audit --no-fund
+
+      - name: Refresh live loader state, binary hash, config and dispatcher
+        shell: bash
+        run: |
+          set -euo pipefail
+          NODE_PATH=tests/solana/node_modules node <<'NODE'
+          const crypto = require('crypto');
+          const {Connection,PublicKey,Keypair,Transaction,TransactionInstruction} = require('@solana/web3.js');
+          const expected = {
+            genesis: process.env.EXPECTED_GENESIS,
+            program: process.env.REWARDS_PROGRAM,
+            programData: process.env.EXPECTED_PROGRAMDATA,
+            authority: process.env.EXPECTED_AUTHORITY,
+            config: process.env.EXPECTED_CONFIG,
+            launchpad: process.env.LAUNCHPAD_PROGRAM,
+          };
+          const loader = new PublicKey('BPFLoaderUpgradeab1e11111111111111111111111');
+          const disc = (name) => crypto.createHash('sha256').update(`global:${name}`).digest().subarray(0,8);
+          function decodeSigner(raw) {
+            if (!raw) throw new Error('SOLANA_REWARDS_AUTHORITY_SECRET_KEY is unavailable in protected environment');
+            let bytes;
+            if (raw.trim().startsWith('[')) bytes = Uint8Array.from(JSON.parse(raw).map(Number));
+            else bytes = Uint8Array.from(Buffer.from(raw.trim(),'base64'));
+            if (bytes.length===64) return Keypair.fromSecretKey(bytes);
+            if (bytes.length===32) return Keypair.fromSeed(bytes);
+            throw new Error(`authority secret decodes to unexpected byte length ${bytes.length}`);
+          }
+          function decodeProgramAccount(info) {
+            if (!info || !info.executable) throw new Error('rewards program missing/non-executable');
+            if (!info.owner.equals(loader)) throw new Error(`program loader mismatch ${info.owner.toBase58()}`);
+            const d=Buffer.from(info.data);
+            if (d.length<36 || d.readUInt32LE(0)!==2) throw new Error('unexpected upgradeable Program layout');
+            return new PublicKey(d.subarray(4,36));
+          }
+          function decodeProgramData(info) {
+            if (!info || !info.owner.equals(loader)) throw new Error('ProgramData missing/wrong owner');
+            const d=Buffer.from(info.data);
+            if (d.length<45 || d.readUInt32LE(0)!==3) throw new Error('unexpected ProgramData layout');
+            const slot=d.readBigUInt64LE(4).toString();
+            const opt=d[12];
+            if (opt!==1) throw new Error(`upgrade authority option is ${opt}, expected Some`);
+            const authority=new PublicKey(d.subarray(13,45)).toBase58();
+            const binary=d.subarray(45);
+            return {slot,authority,binary,accountBytes:d.length};
+          }
+          function pubVars() {
+            let vars={}; try { vars=JSON.parse(process.env.GITHUB_PUBLIC_VARS_JSON||'{}'); } catch {}
+            const out={};
+            for (const [k,v] of Object.entries(vars)) {
+              if (!/(ARENA|SOLANA|PROTOCOL|MARKETING|RESOLVER)/i.test(k)) continue;
+              if (/(RPC|URL|ENDPOINT|SECRET|TOKEN|PASSWORD|PRIVATE|KEYPAIR)/i.test(k)) continue;
+              if (typeof v !== 'string' || !v) continue;
+              try { out[k]=new PublicKey(v).toBase58(); } catch {}
+            }
+            console.log('PUBLIC_AUTHORITY_VARS '+JSON.stringify(out));
+          }
+          (async()=>{
+            const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
+            const genesis=await c.getGenesisHash();
+            console.log('GENESIS '+genesis);
+            if(genesis!==expected.genesis) throw new Error(`WRONG_CLUSTER ${genesis}`);
+            const signer=decodeSigner(process.env.SOLANA_REWARDS_AUTHORITY_SECRET_KEY);
+            console.log('SIGNER '+signer.publicKey.toBase58());
+            if(signer.publicKey.toBase58()!==expected.authority) throw new Error(`SIGNER_MISMATCH ${signer.publicKey.toBase58()}`);
+            console.log('SIGNER_BALANCE_LAMPORTS '+await c.getBalance(signer.publicKey,'confirmed'));
+            const pinfo=await c.getAccountInfo(new PublicKey(expected.program),'confirmed');
+            const pd=decodeProgramAccount(pinfo);
+            console.log('PROGRAMDATA '+pd.toBase58());
+            if(pd.toBase58()!==expected.programData) throw new Error(`PROGRAMDATA_MISMATCH ${pd.toBase58()}`);
+            const pdInfo=await c.getAccountInfo(pd,'confirmed');
+            const live=decodeProgramData(pdInfo);
+            console.log('DEPLOY_SLOT '+live.slot);
+            console.log('UPGRADE_AUTHORITY '+live.authority);
+            if(live.authority!==expected.authority) throw new Error(`UPGRADE_AUTHORITY_MISMATCH ${live.authority}`);
+            console.log('PROGRAMDATA_ACCOUNT_BYTES '+live.accountBytes);
+            console.log('OLD_LIVE_BINARY_SIZE '+live.binary.length);
+            console.log('OLD_LIVE_BINARY_SHA256 '+crypto.createHash('sha256').update(live.binary).digest('hex'));
+            const [config,bump]=PublicKey.findProgramAddressSync([Buffer.from('arena_money_config_v2')],new PublicKey(expected.program));
+            console.log(`CONFIG_PDA ${config.toBase58()} BUMP ${bump}`);
+            if(config.toBase58()!==expected.config || bump!==255) throw new Error('CONFIG_PDA_MISMATCH');
+            const ci=await c.getAccountInfo(config,'confirmed');
+            console.log('CONFIG_EXISTS '+Boolean(ci));
+            if(ci) throw new Error(`CONFIG_ALREADY_EXISTS owner=${ci.owner.toBase58()} bytes=${ci.data.length}`);
+            const data=Buffer.concat([disc('initialize_arena_money_v2'),Buffer.alloc(32,1),Buffer.alloc(32,2),Buffer.alloc(32,3)]);
+            const tx=new Transaction({feePayer:signer.publicKey,recentBlockhash:(await c.getLatestBlockhash('confirmed')).blockhash}).add(new TransactionInstruction({programId:new PublicKey(expected.program),keys:[],data}));
+            const sim=await c.simulateTransaction(tx,undefined,false);
+            const logs=sim.value.logs||[];
+            console.log('PRE_DISPATCH_ERR '+JSON.stringify(sim.value.err));
+            console.log('PRE_DISPATCH_LOGS '+JSON.stringify(logs.slice(-12)));
+            const text=logs.join('\n');
+            const fallback=/InstructionFallbackNotFound|Fallback functions are not supported|instruction fallback is not implemented/i.test(text);
+            const anchor101=/Error Number:\s*101|Error Code:\s*InstructionFallbackNotFound/i.test(text);
+            if(!fallback || !anchor101) throw new Error('PRE_UPGRADE_DISPATCH_NOT_EXPECTED_FALLBACK_101');
+            console.log('PRE_UPGRADE_DISPATCH FALLBACK_101_CONFIRMED');
+            const lp=await c.getAccountInfo(new PublicKey(expected.launchpad),'confirmed');
+            const lpd=decodeProgramAccount(lp);
+            const lpdInfo=await c.getAccountInfo(lpd,'confirmed');
+            const lplive=decodeProgramData(lpdInfo);
+            console.log(`LAUNCHPAD_BASELINE PROGRAMDATA ${lpd.toBase58()} SLOT ${lplive.slot} SHA256 ${crypto.createHash('sha256').update(lplive.binary).digest('hex')} SIZE ${lplive.binary.length}`);
+            pubVars();
+          })().catch(e=>{console.error('LIVE_REFRESH_BLOCKER '+(e?.stack||e));process.exit(1)});
+          NODE
+
+      - name: Discover exact-current ArenaMoney application/config authority references
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '--- ARENA MONEY REFERENCES OUTSIDE PROGRAM ---'
+          grep -RInE 'arena_money_v2|ArenaMoneyV2|open_competition_pool_v2|deposit_competition_entry_v2|arena_competition_v2' frontend realtime-indexer services tests scripts .github 2>/dev/null | head -n 240 || true
+          echo '--- RECEIVER / RESOLVER REFERENCES ---'
+          grep -RInE 'marketing_receiver|protocol_receiver|ARENA.*RESOLVER|ARENA.*PROTOCOL|ARENA.*MARKETING|SOLANA.*RESOLVER|SOLANA.*PROTOCOL|SOLANA.*MARKETING' frontend realtime-indexer services tests scripts config .github 2>/dev/null | head -n 240 || true
