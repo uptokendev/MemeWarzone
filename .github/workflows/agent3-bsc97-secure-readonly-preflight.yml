@@ -1,7 +1,9 @@
 name: Agent 3 BSC97 Secure Read-Only Preflight
 
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - agent3/bsc97-secure-readonly-preflight-3512139
 
 permissions:
   contents: read
@@ -24,7 +26,7 @@ jobs:
       EXPECTED_ROUTE_AUTHORITY: 0x2b72A9E6C4Ea3525d83B8C5E8F2044BDbC1f1Dec
       STAGE_MANIFEST: reports/bnb-real-topaz-testnet-stage.json
     steps:
-      - name: Checkout dispatched source exactly
+      - name: Checkout pushed source exactly
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
@@ -61,33 +63,43 @@ jobs:
           const configuredAdmin = getAddress(process.env.BNB_TESTNET_ADMIN);
           const configuredRoute = getAddress(process.env.BNB_6C_ROUTE_AUTHORITY_ADDRESS);
           const rpc = String(process.env.BSC_TESTNET_RPC || '').trim();
-          const privateKey = String(process.env.DEPLOYER_PK || '').trim();
+          const rawPrivateKey = String(process.env.DEPLOYER_PK || '').trim();
+          const privateKey = rawPrivateKey && !rawPrivateKey.startsWith('0x') ? `0x${rawPrivateKey}` : rawPrivateKey;
           const stagePath = String(process.env.STAGE_MANIFEST || 'reports/bnb-real-topaz-testnet-stage.json');
 
           function fail(code) {
             console.error(`PREFLIGHT FAILED: ${code}`);
             process.exit(1);
           }
+
           async function safe(label, fn) {
-            try { return await fn(); } catch { fail(label); }
+            try {
+              return await fn();
+            } catch {
+              fail(label);
+            }
           }
 
           (async () => {
             if (!rpc) fail('BSC_TESTNET_RPC_OR_URL_MISSING');
             if (!privateKey) fail('DEPLOYER_PK_OR_PRIVATE_KEY_DEPLOY_MISSING');
 
-            const checkedOutSha = safe('SOURCE_HEAD_UNRESOLVED', () => resolveExactCheckedOutHead(process.cwd()));
-            const gitHead = safe('GIT_HEAD_UNRESOLVED', () => execFileSync('git', ['rev-parse', '--verify', 'HEAD^{commit}'], { encoding: 'utf8' }).trim().toLowerCase());
+            const checkedOutSha = await safe('SOURCE_HEAD_UNRESOLVED', () => resolveExactCheckedOutHead(process.cwd()));
+            const gitHead = await safe('GIT_HEAD_UNRESOLVED', () =>
+              execFileSync('git', ['rev-parse', '--verify', 'HEAD^{commit}'], { encoding: 'utf8' }).trim().toLowerCase(),
+            );
             const githubSha = String(process.env.GITHUB_SHA || '').trim().toLowerCase();
-            if (!/^[0-9a-f]{40}$/.test(checkedOutSha) || checkedOutSha !== gitHead || checkedOutSha !== githubSha) fail('SOURCE_SHA_NOT_EXACT_HEAD');
+            if (!/^[0-9a-f]{40}$/.test(checkedOutSha) || checkedOutSha !== gitHead || checkedOutSha !== githubSha) {
+              fail('SOURCE_SHA_NOT_EXACT_HEAD');
+            }
 
-            const provider = safe('RPC_PROVIDER_INIT_FAILED', () => new JsonRpcProvider(rpc));
+            const provider = await safe('RPC_PROVIDER_INIT_FAILED', () => new JsonRpcProvider(rpc));
             const network = await safe('RPC_CHAIN_ID_READ_FAILED', () => provider.getNetwork());
             const chainId = Number(network.chainId);
             if (chainId !== EXPECTED_CHAIN_ID) fail('CHAIN_NOT_97');
 
-            const deployer = safe('DEPLOYER_DERIVATION_FAILED', () => new Wallet(privateKey));
-            const deployerAddress = getAddress(deployer.address);
+            const deployer = await safe('DEPLOYER_DERIVATION_FAILED', () => new Wallet(privateKey));
+            const deployerAddress = await safe('DEPLOYER_ADDRESS_INVALID', () => getAddress(deployer.address));
             if (!sameAddress(deployerAddress, expectedOperator)) fail('DEPLOYER_NOT_FROZEN_OPERATOR');
             if (!sameAddress(configuredAdmin, deployerAddress)) fail('ADMIN_NOT_DEPLOYER');
             if (!sameAddress(configuredRoute, expectedRoute)) fail('ROUTE_AUTHORITY_NOT_FROZEN');
@@ -96,7 +108,8 @@ jobs:
             const operatorBalance = await safe('OPERATOR_BALANCE_READ_FAILED', () => provider.getBalance(expectedOperator));
             const routeBalance = await safe('ROUTE_BALANCE_READ_FAILED', () => provider.getBalance(expectedRoute));
 
-            const { manifest: topaz } = safe('TOPAZ_MANIFEST_INVALID', () => loadAuthoritativeTopazManifest());
+            const topazLoaded = await safe('TOPAZ_MANIFEST_INVALID', () => loadAuthoritativeTopazManifest());
+            const topaz = topazLoaded.manifest;
             const t = topaz.contracts;
             const bytecode = {};
             for (const [label, address] of Object.entries(t)) {
@@ -105,15 +118,15 @@ jobs:
               bytecode[label] = true;
             }
 
-            const routerProbe = new Contract(t.Router, [
+            const routerProbe = await safe('TOPAZ_ROUTER_PROBE_INIT_FAILED', () => new Contract(t.Router, [
               'function defaultFactory() view returns (address)',
               'function factoryRegistry() view returns (address)',
               'function weth() view returns (address)',
-            ], provider);
-            const poolFactoryProbe = new Contract(t.PoolFactory, [
+            ], provider));
+            const poolFactoryProbe = await safe('TOPAZ_POOL_FACTORY_PROBE_INIT_FAILED', () => new Contract(t.PoolFactory, [
               'function implementation() view returns (address)',
               'function getFee(address,bool) view returns (uint256)',
-            ], provider);
+            ], provider));
 
             const runtime = {
               chainId,
@@ -124,13 +137,15 @@ jobs:
               poolImplementation: await safe('TOPAZ_IMPLEMENTATION_READ_FAILED', () => poolFactoryProbe.implementation()),
               volatileFeeBps: Number(await safe('TOPAZ_FEE_READ_FAILED', () => poolFactoryProbe.getFee(ZeroAddress, false))),
             };
-            safe('TOPAZ_RUNTIME_IDENTITY_MISMATCH', () => assertRuntimeTopazIdentity(runtime, topaz));
+            await safe('TOPAZ_RUNTIME_IDENTITY_MISMATCH', () => assertRuntimeTopazIdentity(runtime, topaz));
 
             let stageExists = false;
             if (fs.existsSync(stagePath)) {
               stageExists = true;
-              const stage = safe('GEN4_STAGE_MANIFEST_PARSE_FAILED', () => JSON.parse(fs.readFileSync(stagePath, 'utf8')));
-              safe('GEN4_STAGE_MANIFEST_INVALID', () => assertRealStageManifest(stage, topaz));
+              const stage = await safe('GEN4_STAGE_MANIFEST_PARSE_FAILED', () =>
+                JSON.parse(fs.readFileSync(stagePath, 'utf8')),
+              );
+              await safe('GEN4_STAGE_MANIFEST_INVALID', () => assertRealStageManifest(stage, topaz));
               if (!sameAddress(stage.admin, expectedOperator)) fail('GEN4_STAGE_ADMIN_MISMATCH');
               if (!sameAddress(stage.routeAuthority, expectedRoute)) fail('GEN4_STAGE_ROUTE_AUTHORITY_MISMATCH');
               if (String(stage.sourceBaseSha || '').toLowerCase() !== checkedOutSha) fail('GEN4_STAGE_SOURCE_SHA_MISMATCH');
@@ -144,6 +159,7 @@ jobs:
             console.log(`ROUTE AUTHORITY ${configuredRoute}`);
             console.log(`ROUTE BALANCE ${formatEther(routeBalance)} tBNB`);
             console.log(`TOPAZ BYTECODE Router=${bytecode.Router ? 'YES' : 'NO'} PoolFactory=${bytecode.PoolFactory ? 'YES' : 'NO'} FactoryRegistry=${bytecode.FactoryRegistry ? 'YES' : 'NO'} WBNB=${bytecode.WBNB ? 'YES' : 'NO'} PoolImplementation=${bytecode.PoolImplementation ? 'YES' : 'NO'}`);
+            console.log(`TOPAZ RUNTIME Router=${t.Router} PoolFactory=${runtime.poolFactory} FactoryRegistry=${runtime.factoryRegistry} WBNB=${runtime.wbnb} PoolImplementation=${runtime.poolImplementation} VolatileFeeBps=${runtime.volatileFeeBps}`);
             console.log('TOPAZ LIVE VERIFIED YES');
             console.log('SOURCE SHA VERIFIED YES');
             console.log(`GEN-4 STAGE ALREADY EXISTS ${stageExists ? 'YES' : 'NO'}`);
