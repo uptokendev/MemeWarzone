@@ -22,12 +22,12 @@ jobs:
           set -euo pipefail
           echo "HEAD=$(git rev-parse HEAD)"
           echo '--- solanaArenaLayout callers ---'
-          rg -n "solanaArenaLayout|expectedGenesisHash|validateCanonicalArenaConfig|isSolanaWarzoneChainId" frontend || true
+          grep -RInE "solanaArenaLayout|expectedGenesisHash|validateCanonicalArenaConfig|isSolanaWarzoneChainId" frontend --exclude-dir=node_modules || true
           echo '--- broad helper operational usages ---'
-          rg -n "isSolanaChain\(" frontend/api/dev-fix/solana-trade-authorization-v1.js frontend/api/dev-fix/solana-vote-ingest.js frontend/api/arenaVotes.js frontend/api/dev-fix/solana-graduation-authorization-v2.js || true
+          grep -nE "isSolanaChain\(" frontend/api/dev-fix/solana-trade-authorization-v1.js frontend/api/dev-fix/solana-vote-ingest.js frontend/api/arenaVotes.js frontend/api/dev-fix/solana-graduation-authorization-v2.js || true
           echo '--- chainNative callers ---'
-          rg -n "isSolanaChainId\(|nativeSymbolFor\(" frontend --glob '!**/node_modules/**' || true
-          echo '--- quote/catalog/migration 102 candidates ---'
-          rg -n -i "(chain_id\s*=\s*102|chain_id[^\n]{0,40}102|\b102\b[^\n]{0,120}(basic|quote|graduat|devnet)|(basic|quote|graduat|devnet)[^\n]{0,120}\b102\b)" . --glob '*.sql' --glob '*.js' --glob '*.mjs' --glob '*.ts' --glob '*.json' --glob '*.md' | head -n 1000 || true
-          echo '--- quote asset/catalog paths ---'
-          find . -type f \( -iname '*quote*' -o -iname '*graduat*' \) | sort | head -n 1000
+          grep -RInE "isSolanaChainId\(|nativeSymbolFor\(" frontend --exclude-dir=node_modules || true
+          echo '--- all tracked quote/catalog/migration lines containing 102 ---'
+          git grep -n -i -E "102" -- '*.sql' '*.js' '*.mjs' '*.ts' '*.json' '*.md' | grep -Ei "basic|quote|graduat|devnet|chain_id" | head -n 1000 || true
+          echo '--- exact current devnet quote migration ---'
+          grep -nE "102|101|devnet|mainnet|quoteMint|contract_address_or_mint|identity_key" frontend/supabase/migrations/20260907001000_solana_basic_quote_catalog.sql frontend/supabase/migrations/20260907163000_solana_devnet_basic_quote_certification.sql || true
