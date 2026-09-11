@@ -13,39 +13,38 @@ env:
   BASE_SHA: 120401fd1fde0dce6e2439fc4156840e029f1ae6
   EXPECTED_GENESIS: EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG
   TARGET_AUTHORITY: HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9
-  REQUIRED_TOPUP_LAMPORTS: '11300000000'
-  OPERATING_RESERVE_LAMPORTS: '200000000'
+  PROGRAM_ID: 2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX
+  EXPECTED_CONFIG: Bio7bTMDLo1rYhKbR26jW98N4YvdeQW3UzUw4cHEv8xX
 
 jobs:
-  route-signer-probe:
+  authority-input-preflight:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: testnet-certification
     env:
       SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
+      SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER }}
       SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 120401fd1fde0dce6e2439fc4156840e029f1ae6
+          ref: ${{ env.BASE_SHA }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Prove exact base and current-repository treatment
+      - name: Freeze exact base and inspect ArenaMoney authority references
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$BASE_SHA"
-          echo 'EXACT_BASE_ROUTE_SIGNER_REFERENCES_BEGIN'
-          git grep -n 'SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY' "$BASE_SHA" -- . || true
-          echo 'EXACT_BASE_ROUTE_SIGNER_REFERENCES_END'
-          echo 'CURRENT_DEVNET_CONFIG_REFERENCES_BEGIN'
-          git grep -n -E 'SOLANA_CLUSTER=solana-devnet|SOLANA_ROUTE_SIGNER_SECRET_KEY|SOLANA_DEVNET_PAYER' "$BASE_SHA" -- frontend scripts .github 2>/dev/null | head -n 160 || true
-          echo 'CURRENT_DEVNET_CONFIG_REFERENCES_END'
+          echo "BASE_SHA $BASE_SHA"
+          echo 'ARENA_AUTHORITY_REFERENCES_BEGIN'
+          git grep -n -E 'arena_money|ArenaMoney|protocol_receiver|marketing_receiver|resolver|SOLANA_DEVNET_PAYER|SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY' "$BASE_SHA" -- programs frontend scripts .github 2>/dev/null | head -n 400 || true
+          echo 'ARENA_AUTHORITY_REFERENCES_END'
       - name: Install Solana web3 only
         run: npm install --no-save --package-lock=false --no-audit --no-fund @solana/web3.js@1.95.4
-      - name: Derive route signer public key and devnet balance only
+      - name: Prove signer identities, balances, ProgramData and config state
         shell: bash
         run: |
           set -euo pipefail
@@ -53,25 +52,23 @@ jobs:
           const {Connection,Keypair,PublicKey}=require('@solana/web3.js');
           const ALPHABET='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
           function decodeBase58(value){let num=0n;for(const c of value){const i=ALPHABET.indexOf(c);if(i<0)throw new Error('invalid base58');num=num*58n+BigInt(i);}let hex=num.toString(16);if(hex.length%2)hex='0'+hex;let body=Buffer.from(hex,'hex');let zeros=0;for(const c of value){if(c==='1')zeros++;else break;}return Uint8Array.from(Buffer.concat([Buffer.alloc(zeros),body]));}
-          function parse(raw){const v=String(raw||'').trim();if(!v)throw new Error('SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY missing');let b;if(v.startsWith('['))b=Uint8Array.from(JSON.parse(v).map(Number));else if(/^(0x)?[0-9a-fA-F]{128}$/.test(v))b=Uint8Array.from(Buffer.from(v.replace(/^0x/,''),'hex'));else b=decodeBase58(v);if(b.length===64)return Keypair.fromSecretKey(b);if(b.length===32)return Keypair.fromSeed(b);throw new Error('route signer secret did not decode to 32/64 bytes');}
+          function parse(raw,name){const v=String(raw||'').trim();if(!v)throw new Error(name+' missing');let b;if(v.startsWith('['))b=Uint8Array.from(JSON.parse(v).map(Number));else if(/^(0x)?[0-9a-fA-F]{64}$/.test(v))b=Uint8Array.from(Buffer.from(v.replace(/^0x/,''),'hex'));else if(/^(0x)?[0-9a-fA-F]{128}$/.test(v))b=Uint8Array.from(Buffer.from(v.replace(/^0x/,''),'hex'));else b=decodeBase58(v);if(b.length===64)return Keypair.fromSecretKey(b);if(b.length===32)return Keypair.fromSeed(b);throw new Error(name+' did not decode to 32/64 bytes');}
+          function readU32LE(b,o){return b[o]|(b[o+1]<<8)|(b[o+2]<<16)|(b[o+3]<<24);}
           (async()=>{
             const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
-            const genesis=await c.getGenesisHash();
-            console.log('GENESIS '+genesis);
-            if(genesis!==process.env.EXPECTED_GENESIS)throw new Error('wrong cluster');
-            const kp=parse(process.env.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY);
-            const pub=kp.publicKey.toBase58();
-            const bal=await c.getBalance(kp.publicKey,'confirmed');
-            const reserve=Number(process.env.OPERATING_RESERVE_LAMPORTS);
-            const safe=Math.max(0,bal-reserve);
-            console.log('ROUTE_SIGNER_PUBLIC_KEY '+pub);
-            console.log('ROUTE_SIGNER_BALANCE_LAMPORTS '+bal);
-            console.log('ROUTE_SIGNER_BALANCE_SOL '+(bal/1e9).toFixed(9));
-            console.log('OPERATING_RESERVE_LAMPORTS '+reserve);
-            console.log('SAFE_TRANSFERABLE_LAMPORTS '+safe);
-            console.log('SAFE_TRANSFERABLE_SOL '+(safe/1e9).toFixed(9));
-            console.log('TARGET_TOPUP_LAMPORTS '+process.env.REQUIRED_TOPUP_LAMPORTS);
-            console.log('SUFFICIENT_FOR_TARGET '+(safe>=Number(process.env.REQUIRED_TOPUP_LAMPORTS)));
-            console.log('TARGET_AUTHORITY '+new PublicKey(process.env.TARGET_AUTHORITY).toBase58());
-          })().catch(e=>{console.error('ROUTE_SIGNER_PROBE_BLOCKER '+(e?.stack||e));process.exit(1)});
+            const genesis=await c.getGenesisHash(); console.log('GENESIS '+genesis); if(genesis!==process.env.EXPECTED_GENESIS)throw new Error('wrong cluster');
+            const payer=parse(process.env.SOLANA_DEVNET_PAYER,'SOLANA_DEVNET_PAYER');
+            const route=parse(process.env.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY,'SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY');
+            const payerBal=await c.getBalance(payer.publicKey,'confirmed'); const routeBal=await c.getBalance(route.publicKey,'confirmed');
+            console.log('PAYER_PUBLIC_KEY '+payer.publicKey.toBase58()); console.log('PAYER_BALANCE_LAMPORTS '+payerBal); console.log('PAYER_IS_UPGRADE_AUTHORITY '+(payer.publicKey.toBase58()===process.env.TARGET_AUTHORITY));
+            console.log('ROUTE_SIGNER_PUBLIC_KEY '+route.publicKey.toBase58()); console.log('ROUTE_SIGNER_BALANCE_LAMPORTS '+routeBal);
+            const programPk=new PublicKey(process.env.PROGRAM_ID); const p=await c.getAccountInfo(programPk,'confirmed'); if(!p)throw new Error('program missing');
+            if(!p.executable)throw new Error('program not executable');
+            const programDataPk=new PublicKey(p.data.subarray(4,36)); const pd=await c.getAccountInfo(programDataPk,'confirmed'); if(!pd)throw new Error('ProgramData missing');
+            const slot=Number(pd.data.readBigUInt64LE(4)); const authOpt=readU32LE(pd.data,12); const auth=authOpt===1?new PublicKey(pd.data.subarray(16,48)).toBase58():null;
+            console.log('PROGRAM '+programPk.toBase58()); console.log('PROGRAMDATA '+programDataPk.toBase58()); console.log('DEPLOY_SLOT '+slot); console.log('UPGRADE_AUTHORITY '+auth); console.log('AUTHORITY_MATCH '+(auth===process.env.TARGET_AUTHORITY));
+            const [cfg,bump]=PublicKey.findProgramAddressSync([Buffer.from('arena_money_config_v2')],programPk); console.log('CONFIG_DERIVED '+cfg.toBase58()); console.log('CONFIG_BUMP '+bump); if(cfg.toBase58()!==process.env.EXPECTED_CONFIG)throw new Error('config PDA mismatch');
+            const cfgInfo=await c.getAccountInfo(cfg,'confirmed'); console.log('CONFIG_EXISTS '+Boolean(cfgInfo)); console.log('CONFIG_BYTES '+(cfgInfo?.data?.length||0));
+            if(payer.publicKey.toBase58()!==process.env.TARGET_AUTHORITY) throw new Error('SOLANA_DEVNET_PAYER is not upgrade authority; destructive upgrade cannot be signed from this environment');
+          })().catch(e=>{console.error('AUTHORITY_PREFLIGHT_BLOCKER '+(e?.stack||e));process.exit(1)});
           NODE
