@@ -17,7 +17,7 @@ env:
   EXPECTED_CONFIG: Bio7bTMDLo1rYhKbR26jW98N4YvdeQW3UzUw4cHEv8xX
 
 jobs:
-  authority-input-preflight:
+  receiver-authority-preflight:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: testnet-certification
@@ -25,6 +25,14 @@ jobs:
       SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
       SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER }}
       SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
+      V_SOLANA_ARENA_PROTOCOL_RECEIVER: ${{ vars.SOLANA_ARENA_PROTOCOL_RECEIVER }}
+      V_SOLANA_ARENA_MARKETING_RECEIVER: ${{ vars.SOLANA_ARENA_MARKETING_RECEIVER }}
+      V_ARENA_PROTOCOL_RECEIVER_101: ${{ vars.ARENA_PROTOCOL_RECEIVER_101 }}
+      V_ARENA_MARKETING_RECEIVER_101: ${{ vars.ARENA_MARKETING_RECEIVER_101 }}
+      V_ARENA_V2_PROTOCOL_RECEIVER: ${{ vars.ARENA_V2_PROTOCOL_RECEIVER }}
+      V_ARENA_V2_MARKETING_RECEIVER: ${{ vars.ARENA_V2_MARKETING_RECEIVER }}
+      V_PROTOCOL_REVENUE_VAULT: ${{ vars.PROTOCOL_REVENUE_VAULT_ADDRESS }}
+      V_MARKETING_RECEIVER: ${{ vars.MARKETING_RECEIVER }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,18 +41,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Freeze exact base and inspect ArenaMoney authority references
+      - name: Freeze remote authority and install web3
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$BASE_SHA"
-          echo "BASE_SHA $BASE_SHA"
-          echo 'ARENA_AUTHORITY_REFERENCES_BEGIN'
-          git grep -n -E 'arena_money|ArenaMoney|protocol_receiver|marketing_receiver|resolver|SOLANA_DEVNET_PAYER|SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY' "$BASE_SHA" -- programs frontend scripts .github 2>/dev/null | head -n 400 || true
-          echo 'ARENA_AUTHORITY_REFERENCES_END'
-      - name: Install Solana web3 only
-        run: npm install --no-save --package-lock=false --no-audit --no-fund @solana/web3.js@1.95.4
-      - name: Prove signer identities, balances, ProgramData and config state
+          remote="$(git ls-remote origin refs/heads/build/cross-chain-stabilization-rh-base | awk '{print $1}')"
+          echo "REMOTE_INTEGRATION_SHA $remote"
+          test "$remote" = "$BASE_SHA"
+          npm install --no-save --package-lock=false --no-audit --no-fund @solana/web3.js@1.95.4
+      - name: Re-read canonical signer and receiver candidates
         shell: bash
         run: |
           set -euo pipefail
@@ -52,23 +58,18 @@ jobs:
           const {Connection,Keypair,PublicKey}=require('@solana/web3.js');
           const ALPHABET='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
           function decodeBase58(value){let num=0n;for(const c of value){const i=ALPHABET.indexOf(c);if(i<0)throw new Error('invalid base58');num=num*58n+BigInt(i);}let hex=num.toString(16);if(hex.length%2)hex='0'+hex;let body=Buffer.from(hex,'hex');let zeros=0;for(const c of value){if(c==='1')zeros++;else break;}return Uint8Array.from(Buffer.concat([Buffer.alloc(zeros),body]));}
-          function parse(raw,name){const v=String(raw||'').trim();if(!v)throw new Error(name+' missing');let b;if(v.startsWith('['))b=Uint8Array.from(JSON.parse(v).map(Number));else if(/^(0x)?[0-9a-fA-F]{64}$/.test(v))b=Uint8Array.from(Buffer.from(v.replace(/^0x/,''),'hex'));else if(/^(0x)?[0-9a-fA-F]{128}$/.test(v))b=Uint8Array.from(Buffer.from(v.replace(/^0x/,''),'hex'));else b=decodeBase58(v);if(b.length===64)return Keypair.fromSecretKey(b);if(b.length===32)return Keypair.fromSeed(b);throw new Error(name+' did not decode to 32/64 bytes');}
-          function readU32LE(b,o){return b[o]|(b[o+1]<<8)|(b[o+2]<<16)|(b[o+3]<<24);}
+          function parse(raw,name){const v=String(raw||'').trim();if(!v)throw new Error(name+' missing');let b;if(v.startsWith('['))b=Uint8Array.from(JSON.parse(v).map(Number));else if(/^(0x)?[0-9a-fA-F]{64}$/.test(v))b=Uint8Array.from(Buffer.from(v.replace(/^0x/,''),'hex'));else if(/^(0x)?[0-9a-fA-F]{128}$/.test(v))b=Uint8Array.from(Buffer.from(v.replace(/^0x/,''),'hex'));else b=decodeBase58(v);if(b.length===64)return Keypair.fromSecretKey(b);if(b.length===32)return Keypair.fromSeed(b);throw new Error(name+' bad key bytes');}
           (async()=>{
             const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
             const genesis=await c.getGenesisHash(); console.log('GENESIS '+genesis); if(genesis!==process.env.EXPECTED_GENESIS)throw new Error('wrong cluster');
-            const payer=parse(process.env.SOLANA_DEVNET_PAYER,'SOLANA_DEVNET_PAYER');
-            const route=parse(process.env.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY,'SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY');
-            const payerBal=await c.getBalance(payer.publicKey,'confirmed'); const routeBal=await c.getBalance(route.publicKey,'confirmed');
-            console.log('PAYER_PUBLIC_KEY '+payer.publicKey.toBase58()); console.log('PAYER_BALANCE_LAMPORTS '+payerBal); console.log('PAYER_IS_UPGRADE_AUTHORITY '+(payer.publicKey.toBase58()===process.env.TARGET_AUTHORITY));
-            console.log('ROUTE_SIGNER_PUBLIC_KEY '+route.publicKey.toBase58()); console.log('ROUTE_SIGNER_BALANCE_LAMPORTS '+routeBal);
-            const programPk=new PublicKey(process.env.PROGRAM_ID); const p=await c.getAccountInfo(programPk,'confirmed'); if(!p)throw new Error('program missing');
-            if(!p.executable)throw new Error('program not executable');
-            const programDataPk=new PublicKey(p.data.subarray(4,36)); const pd=await c.getAccountInfo(programDataPk,'confirmed'); if(!pd)throw new Error('ProgramData missing');
-            const slot=Number(pd.data.readBigUInt64LE(4)); const authOpt=readU32LE(pd.data,12); const auth=authOpt===1?new PublicKey(pd.data.subarray(16,48)).toBase58():null;
-            console.log('PROGRAM '+programPk.toBase58()); console.log('PROGRAMDATA '+programDataPk.toBase58()); console.log('DEPLOY_SLOT '+slot); console.log('UPGRADE_AUTHORITY '+auth); console.log('AUTHORITY_MATCH '+(auth===process.env.TARGET_AUTHORITY));
-            const [cfg,bump]=PublicKey.findProgramAddressSync([Buffer.from('arena_money_config_v2')],programPk); console.log('CONFIG_DERIVED '+cfg.toBase58()); console.log('CONFIG_BUMP '+bump); if(cfg.toBase58()!==process.env.EXPECTED_CONFIG)throw new Error('config PDA mismatch');
-            const cfgInfo=await c.getAccountInfo(cfg,'confirmed'); console.log('CONFIG_EXISTS '+Boolean(cfgInfo)); console.log('CONFIG_BYTES '+(cfgInfo?.data?.length||0));
-            if(payer.publicKey.toBase58()!==process.env.TARGET_AUTHORITY) throw new Error('SOLANA_DEVNET_PAYER is not upgrade authority; destructive upgrade cannot be signed from this environment');
-          })().catch(e=>{console.error('AUTHORITY_PREFLIGHT_BLOCKER '+(e?.stack||e));process.exit(1)});
+            const payer=parse(process.env.SOLANA_DEVNET_PAYER,'payer'); const route=parse(process.env.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY,'route');
+            console.log('PAYER '+payer.publicKey.toBase58()); console.log('PAYER_BALANCE '+await c.getBalance(payer.publicKey,'confirmed'));
+            console.log('ROUTE_SIGNER '+route.publicKey.toBase58()); console.log('ROUTE_BALANCE '+await c.getBalance(route.publicKey,'confirmed'));
+            const program=new PublicKey(process.env.PROGRAM_ID);
+            const [legacy]=PublicKey.findProgramAddressSync([Buffer.from('arena_config')],program); console.log('LEGACY_ARENA_CONFIG '+legacy.toBase58());
+            const li=await c.getAccountInfo(legacy,'confirmed'); console.log('LEGACY_EXISTS '+Boolean(li));
+            if(li){const d=Buffer.from(li.data); console.log('LEGACY_BYTES '+d.length); if(d.length>=8+32*4+3){let o=8; const rd=()=>{const p=new PublicKey(d.subarray(o,o+32)).toBase58();o+=32;return p};console.log('LEGACY_AUTHORITY '+rd());console.log('LEGACY_RESOLVER '+rd());console.log('LEGACY_PROTOCOL_RECEIVER '+rd());console.log('LEGACY_MWL_RECEIVER '+rd());console.log('LEGACY_PAUSED '+Boolean(d[o++]));console.log('LEGACY_BUMP '+d[o++]);console.log('LEGACY_VERSION '+d[o++]);}}
+            const [cfg,bump]=PublicKey.findProgramAddressSync([Buffer.from('arena_money_config_v2')],program);console.log('V2_CONFIG '+cfg.toBase58());console.log('V2_BUMP '+bump);console.log('V2_EXISTS '+Boolean(await c.getAccountInfo(cfg,'confirmed')));
+            for(const k of ['V_SOLANA_ARENA_PROTOCOL_RECEIVER','V_SOLANA_ARENA_MARKETING_RECEIVER','V_ARENA_PROTOCOL_RECEIVER_101','V_ARENA_MARKETING_RECEIVER_101','V_ARENA_V2_PROTOCOL_RECEIVER','V_ARENA_V2_MARKETING_RECEIVER','V_PROTOCOL_REVENUE_VAULT','V_MARKETING_RECEIVER']){const v=String(process.env[k]||'').trim();if(v){try{console.log(k+' '+new PublicKey(v).toBase58())}catch{console.log(k+' INVALID')}}else console.log(k+' UNSET')}
+          })().catch(e=>{console.error(e?.stack||e);process.exit(1)});
           NODE
