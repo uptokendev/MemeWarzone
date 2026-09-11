@@ -1,0 +1,110 @@
+name: Agent 2 PR289 exact-head authority rerun
+
+on:
+  push:
+    branches:
+      - cert/agent2-pr289-final-exact-head-20260911
+    paths:
+      - .github/workflows/agent2-pr289-authority-rerun.yml
+
+permissions:
+  contents: read
+
+env:
+  BASE_SHA: 120401fd1fde0dce6e2439fc4156840e029f1ae6
+  PR_HEAD: f18505e39186a5fa73fd89f00b242b94782f2f2c
+  PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+  EXPECTED_SBF_SHA: 27ad65b560dba8a33330bd95f08ae7ca6945f71ebf667a5a3756ae0cb9f7f080
+  EXPECTED_SBF_BYTES: "1165328"
+  SOLANA_VERSION: 1.18.26
+  ANCHOR_VERSION: 0.30.1
+  RUST_TOOLCHAIN: 1.79.0
+
+jobs:
+  authority:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: testnet-certification
+    env:
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PR_HEAD }}
+          fetch-depth: 0
+      - name: Freeze exact production identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PR_HEAD"
+          test "$(git merge-base HEAD "$BASE_SHA")" = "$BASE_SHA"
+          test -z "$(git status --porcelain)"
+          mapfile -t files < <(git diff --name-only "$BASE_SHA"..HEAD)
+          test "${#files[@]}" -eq 1
+          test "${files[0]}" = "tools/solana-meteora-graduation/graduate-basic-quote.mjs"
+          test "$(git diff --numstat "$BASE_SHA"..HEAD -- tools/solana-meteora-graduation/graduate-basic-quote.mjs)" = $'5\t1\ttools/solana-meteora-graduation/graduate-basic-quote.mjs'
+          test -z "$(git diff --name-only "$BASE_SHA"..HEAD -- programs/memewarzone_solana programs/mwz_rewards_treasury)"
+          echo "BASE_SHA=$BASE_SHA"
+          echo "PR_HEAD=$PR_HEAD"
+          echo "PRODUCTION_DIFF_STILL_ONE_FILE=YES"
+          echo "PROGRAMS_UNCHANGED=YES"
+      - name: Install frozen build toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          release_dir="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
+          mkdir -p "$release_dir"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error --output /tmp/solana-release.tar.bz2 "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"
+          ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+      - name: Build exact-head candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/mwz-pr289-candidate"
+          anchor build --program-name memewarzone_solana --no-idl
+          so="$CARGO_TARGET_DIR/deploy/memewarzone_solana.so"
+          sha="$(sha256sum "$so" | awk '{print $1}')"
+          bytes="$(wc -c < "$so" | tr -d ' ')"
+          echo "CANDIDATE_SBF_SHA=$sha"
+          echo "CANDIDATE_SIZE=$bytes"
+          test "$sha" = "$EXPECTED_SBF_SHA"
+          test "$bytes" = "$EXPECTED_SBF_BYTES"
+          cp "$so" /tmp/candidate.so
+      - name: Re-read devnet ProgramData, authority and executable bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.config/solana"
+          solana-keygen new --no-bip39-passphrase --silent --outfile "$HOME/.config/solana/id.json" --force >/dev/null
+          genesis="$(solana genesis-hash --url "$SOLANA_RPC_URL")"
+          test "$genesis" = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
+          solana program show "$PROGRAM_ID" --url "$SOLANA_RPC_URL" --output json > /tmp/live-program.json
+          solana program dump "$PROGRAM_ID" /tmp/live.so --url "$SOLANA_RPC_URL"
+          programdata="$(node -e 'const x=require("/tmp/live-program.json");process.stdout.write(String(x.programdataAddress||x.programDataAddress||""))')"
+          authority="$(node -e 'const x=require("/tmp/live-program.json");process.stdout.write(String(x.authority||x.upgradeAuthority||""))')"
+          live_sha="$(sha256sum /tmp/live.so | awk '{print $1}')"
+          live_bytes="$(wc -c < /tmp/live.so | tr -d ' ')"
+          candidate_sha="$(sha256sum /tmp/candidate.so | awk '{print $1}')"
+          candidate_bytes="$(wc -c < /tmp/candidate.so | tr -d ' ')"
+          cat /tmp/live-program.json
+          echo "CLUSTER_GENESIS=$genesis"
+          echo "LIVE_PROGRAM=$PROGRAM_ID"
+          echo "LIVE_PROGRAMDATA=$programdata"
+          echo "LIVE_UPGRADE_AUTHORITY=$authority"
+          echo "LIVE_SBF_SHA=$live_sha"
+          echo "LIVE_SIZE=$live_bytes"
+          echo "CANDIDATE_SBF_SHA=$candidate_sha"
+          echo "CANDIDATE_SIZE=$candidate_bytes"
+          test -n "$programdata"
+          test -n "$authority"
+          test "$live_sha" = "$candidate_sha"
+          test "$live_bytes" = "$candidate_bytes"
+          test "$live_sha" = "$EXPECTED_SBF_SHA"
+          test "$live_bytes" = "$EXPECTED_SBF_BYTES"
+          echo "LIVE_BINARY_MATCH=YES"
