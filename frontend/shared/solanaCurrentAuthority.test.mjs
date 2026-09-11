@@ -98,6 +98,14 @@ test("draft deploy requires canonical 101 environment and cluster", async () => 
   assert.match(deploy, /staging\/devnet or production\/mainnet-beta/);
 });
 
+test("EVM route test graduation policy excludes both Solana application ids", async () => {
+  const text = await source("frontend/api/dev-fix/route-auth.js");
+  assert.match(text, /cid === 97 \|\| cid === 46630/);
+  assert.doesNotMatch(text, /cid === 101/);
+  assert.doesNotMatch(text, /cid === 102/);
+  assert.match(text, /dedicated Solana authorization surface/);
+});
+
 test("EVM route authorization cannot be selected by Solana 101 or legacy 102", async () => {
   const text = await source("frontend/api/dev-fix/routeAuthorizationSigner.js");
   assert.match(text, /normalizedChainId === 101n \|\| normalizedChainId === 102n/);
