@@ -46,7 +46,7 @@ jobs:
           const route=Keypair.fromSecretKey(Uint8Array.from(JSON.parse(process.env.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY)));
           const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
           const program=new PublicKey(process.env.PROGRAM_ID);
-          const rewards=new PublicKey('2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgVsfzcCCoZBKX');
+          const rewards=new PublicKey('2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX');
           const pda=(...seeds)=>PublicKey.findProgramAddressSync(seeds.map(s=>Buffer.isBuffer(s)?s:Buffer.from(s)),program)[0];
           const rewardPda=(seed)=>PublicKey.findProgramAddressSync([Buffer.from(seed)],rewards)[0];
           (async()=>{
