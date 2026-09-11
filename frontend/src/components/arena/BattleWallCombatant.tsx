@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { Battle, BattleParticipant } from "@/features/postgrad/contracts";
+import { BattleAuthoritativeScoreBreakdown } from "@/components/arena/BattleAuthoritativeScoreBreakdown";
 import { WarzoneDecorativeLayer } from "@/components/warzone/WarzoneDecorativeLayer";
 import { useArenaTokenProfile } from "@/hooks/useArenaTokenProfile";
 import type { BattleRealtimeSide } from "@/lib/arena/battleRealtime";
@@ -12,6 +13,9 @@ type Props = {
   battle: Battle;
   participant?: BattleParticipant;
   metricsSide?: BattleRealtimeSide | null;
+  authoritativeSide?: any;
+  scoringGeneration?: number | null;
+  scoreHealthy?: boolean;
   pointsLabel?: string | null;
   scoreCaption?: string | null;
   isLeader?: boolean;
@@ -108,6 +112,9 @@ export function BattleWallCombatant({
   battle,
   participant,
   metricsSide,
+  authoritativeSide,
+  scoringGeneration,
+  scoreHealthy = true,
   pointsLabel,
   scoreCaption,
   isLeader = false,
@@ -139,8 +146,8 @@ export function BattleWallCombatant({
     participant?.holderCount,
     participant?.holders,
   );
-  const battleVolume = firstFiniteBattleMetric(metricsSide?.eligibleBattleVolumeUsd, participant?.battleVolumeUsd);
-  const pointsReady = Boolean(pointsLabel);
+  const battleVolume = firstFiniteBattleMetric(authoritativeSide?.volume?.eligibleUsd, metricsSide?.eligibleBattleVolumeUsd, participant?.battleVolumeUsd);
+  const pointsReady = Boolean(pointsLabel) && scoreHealthy;
   const caption = String(scoreCaption || "").toLowerCase();
   const pointsBoxLabel = caption.includes("vote") ? "VOTES" : caption.includes("score") ? "SCORE" : "POINTS";
   const sideIndex = combatSide === "right" ? "2" : "1";
@@ -176,66 +183,30 @@ export function BattleWallCombatant({
           />
         </WarzoneDecorativeLayer>
       ) : null}
-      <div
-        data-battle-combatant-split="true"
-        className="relative z-10 grid min-h-0 min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)] items-stretch"
-      >
-        <div
-          data-battle-combatant-art="true"
-          className="relative aspect-square h-0 min-h-full w-auto shrink-0 self-stretch overflow-hidden"
-        >
+      <div data-battle-combatant-split="true" className="relative z-10 grid min-h-0 min-w-0 flex-1 grid-cols-[auto_minmax(0,1fr)] items-stretch">
+        <div data-battle-combatant-art="true" className="relative aspect-square h-0 min-h-full w-auto shrink-0 self-stretch overflow-hidden">
           <CombatantArtwork imageUrl={imageUrl} ticker={displaySymbol} name={displayName} accent={accent} />
-          <div className="absolute left-1 top-1 bg-black/65 px-1 py-0.5 font-retro text-[8px] uppercase tracking-[0.14em] text-white/80 md:left-1.5 md:top-1.5 md:px-1.5 md:text-[9px] md:tracking-[0.16em]">
-            #{sideIndex}
-          </div>
+          <div className="absolute left-1 top-1 bg-black/65 px-1 py-0.5 font-retro text-[8px] uppercase tracking-[0.14em] text-white/80 md:left-1.5 md:top-1.5 md:px-1.5 md:text-[9px] md:tracking-[0.16em]">#{sideIndex}</div>
         </div>
 
         <div className="relative z-10 flex min-w-0 flex-col">
           <div className="flex min-w-0 flex-1 flex-col gap-1.5 p-2 md:gap-2 md:p-3">
             <div className="min-w-0">
-              <div className="truncate font-retro text-base leading-none text-foreground sm:text-xl md:text-2xl lg:text-[1.65rem]">
-                ${displaySymbol}
-              </div>
+              <div className="truncate font-retro text-base leading-none text-foreground sm:text-xl md:text-2xl lg:text-[1.65rem]">${displaySymbol}</div>
               <div className="mt-0.5 truncate text-[10px] uppercase tracking-[0.14em] text-white/58 md:mt-1 md:text-[11px] md:tracking-[0.16em]">{displayName}</div>
-              {description ? (
-                <p className="mt-1 hidden line-clamp-2 text-[11px] leading-4 text-white/48 md:block">{description}</p>
-              ) : null}
+              {description ? <p className="mt-1 hidden line-clamp-2 text-[11px] leading-4 text-white/48 md:block">{description}</p> : null}
             </div>
 
             <div className="grid w-full grid-cols-2 gap-1 sm:gap-1.5" data-battle-metric-grid="true">
-              <MetricBox
-                label="MCAP"
-                value={currentMcap === null ? "—" : formatCompactUsd(currentMcap)}
-                ready={currentMcap !== null}
-                accent={accent}
-              />
-              <MetricBox
-                label="HOLDERS"
-                value={currentHolders === null ? "—" : Number(currentHolders).toLocaleString()}
-                ready={currentHolders !== null}
-                accent={accent}
-              />
-              <MetricBox
-                label="VOL"
-                value={battleVolume === null ? "—" : formatCompactUsd(battleVolume)}
-                ready={battleVolume !== null}
-                accent={accent}
-              />
-              <MetricBox
-                label={pointsBoxLabel}
-                value={pointsLabel || "—"}
-                ready={pointsReady}
-                accent={accent}
-              />
+              <MetricBox label="MCAP" value={currentMcap === null ? "—" : formatCompactUsd(currentMcap)} ready={currentMcap !== null} accent={accent} />
+              <MetricBox label="HOLDERS" value={currentHolders === null ? "—" : Number(currentHolders).toLocaleString()} ready={currentHolders !== null} accent={accent} />
+              <MetricBox label="ELIGIBLE VOL" value={battleVolume === null ? "—" : formatCompactUsd(battleVolume)} ready={battleVolume !== null} accent={accent} />
+              <MetricBox label={pointsBoxLabel} value={pointsLabel || "—"} ready={pointsReady} accent={accent} />
             </div>
+            <BattleAuthoritativeScoreBreakdown side={authoritativeSide} generation={scoringGeneration} healthy={scoreHealthy} />
           </div>
 
-          <div
-            data-battle-combatant-actions="true"
-            className="relative z-10 min-h-11 border-t px-2 sm:px-3"
-            style={{ borderColor: "var(--mwz-flat-card-border)" }}
-            aria-hidden={!actions}
-          >
+          <div data-battle-combatant-actions="true" className="relative z-10 min-h-11 border-t px-2 sm:px-3" style={{ borderColor: "var(--mwz-flat-card-border)" }} aria-hidden={!actions}>
             {actions}
           </div>
         </div>
