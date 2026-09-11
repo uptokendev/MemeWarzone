@@ -6,6 +6,7 @@ import { getRobinhoodStockGraduationAsset } from "../lib/robinhoodStockGraduatio
 import { getGraduationQuoteAssetDetail } from "../lib/quoteAssetCatalog.js";
 import { catalogQuoteSelectionReference } from "../lib/draftGraduationQuoteSelection.js";
 import { runJsonTransform } from "./json-transform.js";
+import { resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";
 import {
   augmentDraftLifecycle,
   enrichDraftItems,
@@ -21,6 +22,7 @@ import {
 
 const ROBINHOOD_CHAIN_IDS = new Set([4663, 46630]);
 const ROBINHOOD_MARKET_POLICY_VERSION = "robinhood_market_v1";
+const TEST_GRADUATION_TARGET_WEI = (6n * 10n ** 18n).toString();
 
 function requestBody(req) {
   if (req?.body && typeof req.body === "object" && !Buffer.isBuffer(req.body)) return req.body;
@@ -30,6 +32,44 @@ function requestBody(req) {
     } catch {}
   }
   return {};
+}
+
+function normalizeCurrentSolanaDraftWrite(req, body) {
+  const chainId = Number(body?.chainId || 0);
+  if (chainId === 102) {
+    return { ok: false, error: "Legacy Solana chain 102 cannot create current drafts." };
+  }
+  if (chainId !== 101) return { ok: true, body };
+
+  const authority = resolveCurrentSolanaAuthority({
+    chainId,
+    environment: body?.environment ?? process.env.RUNTIME_ENVIRONMENT ?? process.env.VITE_RUNTIME_ENVIRONMENT,
+    cluster: body?.solanaCluster ?? body?.cluster ?? body?.networkCluster ?? process.env.SOLANA_CLUSTER ?? process.env.VITE_SOLANA_CLUSTER,
+  });
+  if (!authority) {
+    return {
+      ok: false,
+      error: "Solana drafts require canonical chain 101 with staging/devnet or production/mainnet-beta identity.",
+    };
+  }
+
+  if (
+    authority.environment === "production" &&
+    String(body?.graduationTargetWei || "").trim() === TEST_GRADUATION_TARGET_WEI
+  ) {
+    return { ok: false, error: "The $6 graduation tier is staging/devnet only." };
+  }
+
+  const normalized = {
+    ...body,
+    chainId: 101,
+    environment: authority.environment,
+    cluster: authority.cluster,
+    networkCluster: authority.cluster,
+    solanaCluster: authority.cluster,
+  };
+  req.body = normalized;
+  return { ok: true, body: normalized };
 }
 
 function normalizeDraftPolicyRow(row, chainId) {
@@ -295,7 +335,14 @@ export async function drafts(req, res) {
 
   const pool = await getLifecyclePool();
   await reconcileScheduledDraftLifecycle(pool);
-  const body = requestBody(req);
+  let body = requestBody(req);
+  if (req.method === "POST") {
+    const normalized = normalizeCurrentSolanaDraftWrite(req, body);
+    if (!normalized.ok) {
+      return json(res, 400, { error: normalized.error, code: "SOLANA_CURRENT_AUTHORITY_INVALID" });
+    }
+    body = normalized.body;
+  }
   const wantsGraduationPolicy = req.method === "POST" && Boolean(
     String(body.graduationMarketKind || body.graduation_market_kind || "").trim(),
   );
