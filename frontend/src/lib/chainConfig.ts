@@ -442,7 +442,7 @@ export function getSupportedFactoryAddresses(chainId: SupportedChainId): string[
 }
 
 export function getVoteTreasuryAddress(chainId: SupportedChainId): string {
-  if (isSolanaChainId(chainId) || Number(chainId) === 102) {
+  if (isSolanaChainId(chainId)) {
     const solana =
       (import.meta.env.VITE_SOLANA_VOTE_TREASURY_ADDRESS as string | undefined) ||
       (import.meta.env.VITE_VOTE_TREASURY_ADDRESS_101 as string | undefined) ||
@@ -466,7 +466,7 @@ export function getVoteTreasuryAddress(chainId: SupportedChainId): string {
  * vote treasury so Arena keeps the same V0 payment rail and only changes memo domain.
  */
 export function getArenaVoteTreasuryAddress(chainId: SupportedChainId): string {
-  if (isSolanaChainId(chainId) || Number(chainId) === 102) {
+  if (isSolanaChainId(chainId)) {
     const solana =
       (import.meta.env.VITE_SOLANA_ARENA_VOTE_TREASURY_ADDRESS as string | undefined) ||
       (import.meta.env.VITE_ARENA_VOTE_TREASURY_ADDRESS_101 as string | undefined) ||

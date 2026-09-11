@@ -240,7 +240,7 @@ async function readBatch(connection, batchAddress) {
 export async function publishSolanaRewardLaneBatch({ lane, chainId, epochId, root, totalLamports, deadline }) {
   const config = laneConfig(lane);
   const cid = Number(chainId);
-  if (![101, 102].includes(cid)) throw new Error("Solana lane publisher only supports chain 101/102");
+  if (cid !== 101) throw new Error("Solana reward lane publisher requires canonical chain 101");
   const addresses = solanaLaneAddresses(lane, epochId);
   const connection = connectionFor(cid);
   const signer = authorityKeypair();

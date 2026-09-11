@@ -21,7 +21,23 @@ export type MarketIdentity = {
 };
 
 function isSolanaChain(chainId: number) {
-  return chainId === 101 || chainId === 102;
+  return chainId === 101;
+}
+
+function isCurrentMarketChain(chainId: number) {
+  return chainId === 56 || chainId === 97 || chainId === 101 || chainId === 4663 || chainId === 46630;
+}
+
+function assertCurrentMarketChain(chainId: number) {
+  if (!Number.isInteger(chainId) || !isCurrentMarketChain(chainId)) {
+    const error = new Error(
+      chainId === 102
+        ? "Legacy Solana chain 102 is not a current market authority."
+        : `Unsupported current market chain ${chainId}.`,
+    );
+    Object.assign(error, { code: "CURRENT_MARKET_CHAIN_INVALID", status: 400 });
+    throw error;
+  }
 }
 
 function normalizeAddress(chainId: number, value: unknown): string {
@@ -43,16 +59,16 @@ function isMarketAddress(chainId: number, value: string): boolean {
 
 /**
  * Resolve a path/query address that may be either the campaign or the token.
- * Returns null when neither matches a known campaigns row on this chain.
+ * Returns null when neither matches a known campaigns row on a current chain.
+ * Legacy chain 102 is historical data only and cannot select current market authority.
  */
 export async function resolveMarketIdentity(
   chainId: number,
   addressOrToken: string,
 ): Promise<MarketIdentity | null> {
+  if (!Number.isInteger(chainId) || !isCurrentMarketChain(chainId)) return null;
   const input = normalizeAddress(chainId, addressOrToken);
-  if (!Number.isInteger(chainId) || chainId <= 0 || !isMarketAddress(chainId, input)) {
-    return null;
-  }
+  if (!isMarketAddress(chainId, input)) return null;
 
   // Prefer exact campaign match, then token match (token/mint is the public URL id).
   // Solana URLs sometimes lose base58 case; fall back to lower() only after exact match.
@@ -98,13 +114,20 @@ export async function resolveMarketIdentity(
 /**
  * Like resolveMarketIdentity, but if the address is valid and not in DB yet,
  * still return it as a provisional campaign address so legacy campaign-only
- * callers keep working during discovery lag.
+ * callers keep working during discovery lag. Unsupported/current-invalid chain
+ * ids, including legacy Solana 102, fail closed before a provisional identity is created.
  */
 export async function resolveMarketIdentityOrPassthrough(
   chainId: number,
   addressOrToken: string,
 ): Promise<MarketIdentity> {
+  assertCurrentMarketChain(chainId);
   const input = normalizeAddress(chainId, addressOrToken);
+  if (!isMarketAddress(chainId, input)) {
+    const error = new Error("Invalid current market address.");
+    Object.assign(error, { code: "CURRENT_MARKET_ADDRESS_INVALID", status: 400 });
+    throw error;
+  }
   const resolved = await resolveMarketIdentity(chainId, input);
   if (resolved) return resolved;
 

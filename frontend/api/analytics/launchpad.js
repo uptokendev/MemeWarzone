@@ -1,6 +1,11 @@
 import { pool } from "../../server/db.js";
 
-const TESTNET_CHAIN_IDS = new Set([97, 102]);
+// Current operational analytics never use legacy Solana product chain 102 as a
+// staging selector. Keep it excluded so old rows cannot re-enter current KPIs.
+const CURRENTLY_EXCLUDED_CHAIN_IDS = new Set([97, 102]);
+// Historical 102 records still need Solana case-sensitive address joins while
+// they are being excluded from current operational totals.
+const SOLANA_ADDRESS_FAMILY_CHAIN_IDS = new Set([101, 102]);
 const CHAIN_META = new Map([
   [56, { label: "BNB", unit: "BNB" }],
   [101, { label: "Solana", unit: "SOL" }],
@@ -17,7 +22,7 @@ function requestedChain(value) {
   const raw = String(value ?? "all").trim().toLowerCase();
   if (!raw || raw === "all") return null;
   const chainId = Number(raw);
-  if (!Number.isInteger(chainId) || chainId <= 0 || TESTNET_CHAIN_IDS.has(chainId)) return null;
+  if (!Number.isInteger(chainId) || chainId <= 0 || CURRENTLY_EXCLUDED_CHAIN_IDS.has(chainId)) return null;
   return chainId;
 }
 
@@ -26,7 +31,7 @@ function n(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-async function availableMainnetChains() {
+async function availableCurrentChains() {
   const result = await pool.query(`
     select distinct chain_id
       from (
@@ -39,12 +44,12 @@ async function availableMainnetChains() {
      where chain_id is not null
        and chain_id <> all($1::int[])
      order by chain_id
-  `, [Array.from(TESTNET_CHAIN_IDS)]);
+  `, [Array.from(CURRENTLY_EXCLUDED_CHAIN_IDS)]);
   return result.rows.map((row) => Number(row.chain_id));
 }
 
 async function chainRows(from, to, selectedChain) {
-  const params = [from, to, Array.from(TESTNET_CHAIN_IDS)];
+  const params = [from, to, Array.from(CURRENTLY_EXCLUDED_CHAIN_IDS)];
   let selected = "";
   if (selectedChain != null) {
     params.push(selectedChain);
@@ -182,7 +187,12 @@ async function chainRows(from, to, selectedChain) {
 }
 
 async function topCampaigns(from, to, selectedChain) {
-  const params = [from, to, Array.from(TESTNET_CHAIN_IDS)];
+  const params = [
+    from,
+    to,
+    Array.from(CURRENTLY_EXCLUDED_CHAIN_IDS),
+    Array.from(SOLANA_ADDRESS_FAMILY_CHAIN_IDS),
+  ];
   let selected = "";
   if (selectedChain != null) {
     params.push(selectedChain);
@@ -198,12 +208,12 @@ async function topCampaigns(from, to, selectedChain) {
       from public.curve_trades t
       left join public.campaigns c
         on c.chain_id = t.chain_id
-       and ((t.chain_id in (101,102) and c.campaign_address = t.campaign_address)
-         or (t.chain_id not in (101,102) and lower(c.campaign_address) = lower(t.campaign_address)))
+       and ((t.chain_id = any($4::int[]) and c.campaign_address = t.campaign_address)
+         or (t.chain_id <> all($4::int[]) and lower(c.campaign_address) = lower(t.campaign_address)))
       left join public.campaign_drafts d
         on d.chain_id = t.chain_id
-       and ((t.chain_id in (101,102) and d.campaign_address = t.campaign_address)
-         or (t.chain_id not in (101,102) and lower(d.campaign_address) = lower(t.campaign_address)))
+       and ((t.chain_id = any($4::int[]) and d.campaign_address = t.campaign_address)
+         or (t.chain_id <> all($4::int[]) and lower(d.campaign_address) = lower(t.campaign_address)))
      where t.block_time >= $1 and t.block_time < $2
        and t.chain_id <> all($3::int[])
        ${selected}
@@ -228,7 +238,7 @@ async function topCampaigns(from, to, selectedChain) {
 
 export async function launchpadKpis({ from, to, chainId = "all" }) {
   const selectedChain = requestedChain(chainId);
-  const availableIds = await availableMainnetChains();
+  const availableIds = await availableCurrentChains();
   const chains = await chainRows(from, to, selectedChain);
   const top = await topCampaigns(from, to, selectedChain);
   const totals = chains.reduce((acc, row) => {

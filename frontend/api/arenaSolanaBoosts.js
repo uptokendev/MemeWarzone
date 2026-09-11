@@ -34,7 +34,7 @@ function routeInfo(req) {
 
 function queryOf(req) { return new URL(req.url, "http://localhost").searchParams; }
 function positiveUnits(value) { try { const n = BigInt(String(value)); return n > 0n && n <= 1_000_000n ? n : null; } catch { return null; } }
-function validateSolanaChain(chainId) { return [101, 102].includes(Number(chainId)); }
+function validateSolanaChain(chainId) { return Number(chainId) === 101; }
 function exactSolanaSide(participants, token) {
   if (!Array.isArray(participants) || participants.length < 2) return null;
   const idOf = (p) => String(p?.tokenId || p?.tokenAddress || p?.campaignAddress || "").trim();

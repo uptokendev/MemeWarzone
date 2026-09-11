@@ -66,7 +66,9 @@ export async function runOperatorJob({
   const settlement = settlementFromBattleRow(await loadSettlement(id));
   if (!settlement?.id) return fail("battle-not-found");
   if (settlement.state !== "finished") return fail("battle-not-finished");
-  if (Number(settlement.chain_id) !== 101 && Number(settlement.chain_id) !== 102) return fail("not-solana");
+  if (Number(settlement.chain_id) !== 101) {
+    return fail(Number(settlement.chain_id) === 102 ? "legacy-solana-chain-not-authorized" : "not-solana");
+  }
 
   const pool = await loadPool(id, settlement);
   if (!pool) return fail("pool-unreadable");

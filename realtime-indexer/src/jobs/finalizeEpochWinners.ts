@@ -37,7 +37,7 @@ function readBps(raw: any, def: number) {
 }
 
 function isSolanaChain(chainId: number) {
-  return Number(chainId) === 101 || Number(chainId) === 102;
+  return Number(chainId) === 101;
 }
 
 function sqlWallet(expr: string, chainId: number) {
@@ -606,11 +606,11 @@ async function main() {
   console.log(`[finalizeEpochWinners] BUILD_SHA=${sha}`);
 
   // Production defaults: BNB mainnet + Solana mainnet.
-  // Testnet only when explicitly set, e.g. LEAGUE_CHAINS=97,102
+  // BNB testnet remains opt-in. Legacy Solana chain identity is not current League authority.
   const chains = String(process.env.LEAGUE_CHAINS || "56,101")
     .split(",")
     .map((s) => Number(s.trim()))
-    .filter((n) => Number.isFinite(n));
+    .filter((n) => Number.isFinite(n) && n !== 102);
 
   const now = new Date();
 

@@ -23,6 +23,8 @@ import {
 } from "../../src/lib/solanaArenaMoneyV2Layout.mjs";
 import { isSolanaWarzoneChainId, poolIdToBytes } from "../../src/lib/solanaArenaLayout.mjs";
 
+const CURRENT_SOLANA_ARENA_CHAIN_ID = 101;
+
 function env(...names) {
   for (const name of names) {
     const value = String(process.env[name] || "").trim();
@@ -39,8 +41,10 @@ function rpcUrl(chainId) {
   ).split(",").map((item) => item.trim()).find(Boolean) || "";
 }
 
+/** Current Arena Money V2 authority is canonical application chain 101 only. */
 export function connectionForArenaMoneyV2(chainId) {
-  const url = rpcUrl(chainId);
+  if (Number(chainId) !== CURRENT_SOLANA_ARENA_CHAIN_ID) return null;
+  const url = rpcUrl(CURRENT_SOLANA_ARENA_CHAIN_ID);
   return url ? new Connection(url, "confirmed") : null;
 }
 
@@ -71,7 +75,8 @@ async function accountAt(connection, address) {
 
 export async function probeArenaMoneyV2(chainId) {
   const id = Number(chainId);
-  if (!isSolanaWarzoneChainId(id)) return { configured: false, live: false, reason: "not-solana" };
+  if (id === 102) return { configured: false, live: false, reason: "legacy-solana-chain-not-authorized" };
+  if (!isSolanaWarzoneChainId(id) || id !== CURRENT_SOLANA_ARENA_CHAIN_ID) return { configured: false, live: false, reason: "not-solana" };
   const connection = connectionForArenaMoneyV2(id);
   if (!connection) return { configured: false, live: false, reason: "rpc-missing" };
   const configPda = deriveArenaMoneyConfigV2Pda();
@@ -107,7 +112,7 @@ export async function readCompetitionPoolV2(chainId, competitionIdHex) {
 
 export async function readCompetitionEntryReceiptV2(chainId, competitionIdHex, entryAsset, entrant, expectedAmountLamports) {
   const connection = connectionForArenaMoneyV2(chainId);
-  if (!connection) return { ok: false, reason: "rpc-missing" };
+  if (!connection) return { ok: false, reason: Number(chainId) === 102 ? "legacy-solana-chain-not-authorized" : "rpc-missing" };
   const receiptPda = deriveCompetitionEntryReceiptV2Pda(competitionIdHex, entryAsset, entrant);
   const identity = await accountAt(connection, receiptPda);
   const verified = verifyCompetitionEntryReceiptV2({ ...identity, expectedPda: receiptPda.toBase58(), expectedCompetitionId: competitionIdHex, expectedEntrant: entrant, expectedEntryAsset: entryAsset, expectedAmountLamports, PublicKey });
@@ -116,7 +121,7 @@ export async function readCompetitionEntryReceiptV2(chainId, competitionIdHex, e
 
 export async function readBoostReceiptV2(chainId, expected) {
   const connection = connectionForArenaMoneyV2(chainId);
-  if (!connection) return { ok: false, reason: "rpc-missing" };
+  if (!connection) return { ok: false, reason: Number(chainId) === 102 ? "legacy-solana-chain-not-authorized" : "rpc-missing" };
   const receiptPda = deriveBoostReceiptV2Pda(expected.competitionId, expected.fundingId, expected.funder);
   const identity = await accountAt(connection, receiptPda);
   return { ...verifyBoostReceiptV2({ ...identity, expectedPda: receiptPda.toBase58(), expectedCompetitionId: expected.competitionId, expectedFundingId: expected.fundingId, expectedFunder: expected.funder, expectedGrossLamports: expected.grossLamports, expectedPrizeLamports: expected.prizeLamports, expectedProtocolLamports: expected.protocolLamports, PublicKey }), pda: receiptPda.toBase58() };
@@ -124,7 +129,7 @@ export async function readBoostReceiptV2(chainId, expected) {
 
 export async function readPostGradLeagueTreasuryV2(chainId) {
   const connection = connectionForArenaMoneyV2(chainId);
-  if (!connection) return { ok: false, reason: "rpc-missing" };
+  if (!connection) return { ok: false, reason: Number(chainId) === 102 ? "legacy-solana-chain-not-authorized" : "rpc-missing" };
   const treasuryPda = derivePostGradLeagueTreasuryV2Pda();
   const identity = await accountAt(connection, treasuryPda);
   return { ...verifyPostGradLeagueTreasuryV2({ ...identity, expectedPda: treasuryPda.toBase58(), PublicKey }), pda: treasuryPda.toBase58() };
@@ -132,7 +137,7 @@ export async function readPostGradLeagueTreasuryV2(chainId) {
 
 export async function readLeagueSourceReceiptV2(chainId, sourceId, expectedAmountLamports = null) {
   const connection = connectionForArenaMoneyV2(chainId);
-  if (!connection) return { ok: false, reason: "rpc-missing" };
+  if (!connection) return { ok: false, reason: Number(chainId) === 102 ? "legacy-solana-chain-not-authorized" : "rpc-missing" };
   const receiptPda = deriveLeagueSourceReceiptV2Pda(sourceId);
   const identity = await accountAt(connection, receiptPda);
   return { ...verifyLeagueSourceReceiptV2({ ...identity, expectedPda: receiptPda.toBase58(), expectedSourceId: sourceId, expectedAmountLamports }), pda: receiptPda.toBase58() };
@@ -140,7 +145,7 @@ export async function readLeagueSourceReceiptV2(chainId, sourceId, expectedAmoun
 
 export async function readSponsorshipEventV1(chainId, eventId) {
   const connection = connectionForArenaMoneyV2(chainId);
-  if (!connection) return { ok: false, reason: "rpc-missing" };
+  if (!connection) return { ok: false, reason: Number(chainId) === 102 ? "legacy-solana-chain-not-authorized" : "rpc-missing" };
   const eventPda = deriveSponsorshipEventV1Pda(eventId);
   const identity = await accountAt(connection, eventPda);
   return { ...verifySponsorshipEventV1({ ...identity, expectedPda: eventPda.toBase58(), expectedEventId: eventId, PublicKey }), pda: eventPda.toBase58() };
@@ -148,7 +153,7 @@ export async function readSponsorshipEventV1(chainId, eventId) {
 
 export async function readEventPrizeVaultV1(chainId, eventId) {
   const connection = connectionForArenaMoneyV2(chainId);
-  if (!connection) return { ok: false, reason: "rpc-missing" };
+  if (!connection) return { ok: false, reason: Number(chainId) === 102 ? "legacy-solana-chain-not-authorized" : "rpc-missing" };
   const vaultPda = deriveEventPrizeVaultV1Pda(eventId);
   const identity = await accountAt(connection, vaultPda);
   return { ...verifyEventPrizeVaultV1({ ...identity, expectedPda: vaultPda.toBase58(), expectedEventId: eventId }), pda: vaultPda.toBase58() };
@@ -156,7 +161,7 @@ export async function readEventPrizeVaultV1(chainId, eventId) {
 
 export async function readSponsorshipReceiptV1(chainId, expected) {
   const connection = connectionForArenaMoneyV2(chainId);
-  if (!connection) return { ok: false, reason: "rpc-missing" };
+  if (!connection) return { ok: false, reason: Number(chainId) === 102 ? "legacy-solana-chain-not-authorized" : "rpc-missing" };
   const receiptPda = deriveSponsorshipReceiptV1Pda(expected.eventId, expected.paymentId, expected.sponsor);
   const identity = await accountAt(connection, receiptPda);
   return { ...verifySponsorshipReceiptV1({ ...identity, expectedPda: receiptPda.toBase58(), expectedEventId: expected.eventId, expectedPaymentId: expected.paymentId, expectedSponsor: expected.sponsor, expectedGrossLamports: expected.grossLamports, expectedPrizeLamports: expected.prizeLamports, expectedMarketingLamports: expected.marketingLamports, expectedProtocolLamports: expected.protocolLamports, PublicKey }), pda: receiptPda.toBase58() };

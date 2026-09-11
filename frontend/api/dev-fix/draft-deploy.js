@@ -8,6 +8,7 @@ import {
   generationRule,
   isSupportedFactoryGeneration,
 } from "./routeAuthorizationSigner.js";
+import { resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";
 
 import { isCreatorArmCooldownActive, normalizeCreatorArmCooldownEndsAt } from "../lib/creatorArmCooldown.js";
 import { runJsonTransform } from "./json-transform.js";
@@ -222,6 +223,24 @@ export async function draftDeploy(req, res) {
     const operation = String(body?.operation || "").trim().toLowerCase();
 
     if (operation === "authorize_solana_v4") {
+      const authority = resolveCurrentSolanaAuthority({
+        chainId: Number(body?.chainId ?? body?.auth?.chainId ?? 101),
+        environment: body?.environment ?? process.env.RUNTIME_ENVIRONMENT ?? process.env.VITE_RUNTIME_ENVIRONMENT,
+        cluster: body?.solanaCluster ?? body?.cluster ?? process.env.SOLANA_CLUSTER ?? process.env.VITE_SOLANA_CLUSTER,
+      });
+      if (!authority) {
+        return json(res, 400, {
+          error: "Solana create authorization requires canonical chain 101 with staging/devnet or production/mainnet-beta identity.",
+          code: "SOLANA_CURRENT_AUTHORITY_INVALID",
+        });
+      }
+      req.body = {
+        ...body,
+        chainId: 101,
+        environment: authority.environment,
+        solanaCluster: authority.cluster,
+        cluster: authority.cluster,
+      };
       if (!String(process.env.SOLANA_GENERATION_MANIFEST_HASH || "").trim()) {
         return json(res, 503, {
           error: "SOLANA_GENERATION_MANIFEST_HASH is not configured.",

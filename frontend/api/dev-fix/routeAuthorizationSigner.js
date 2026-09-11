@@ -75,6 +75,16 @@ function toBigInt(value, label) {
   }
 }
 
+function assertEvmRouteChainAllowed(chainId) {
+  const normalizedChainId = toBigInt(chainId, "chainId");
+  if (normalizedChainId === 101n || normalizedChainId === 102n) {
+    throw new Error(
+      "Solana route authorization is not an EVM route-authority lane. Use canonical Solana chain 101 with explicit environment/cluster authorization.",
+    );
+  }
+  return normalizedChainId;
+}
+
 function positiveGeneration(value, label) {
   const n = Number(value);
   if (!Number.isInteger(n) || n <= 0) throw new Error(`${label} must be supplied as a positive integer`);
@@ -82,7 +92,7 @@ function positiveGeneration(value, label) {
 }
 
 function assertCreationFactoryAllowed(chainId, factory) {
-  const normalizedChainId = toBigInt(chainId, "chainId");
+  const normalizedChainId = assertEvmRouteChainAllowed(chainId);
   const normalizedFactory = ethers.getAddress(factory);
   if (
     normalizedChainId === 97n &&
@@ -299,10 +309,11 @@ export function buildTradeAuthorizationDigest({
   limit,
   deadline,
 }) {
+  const normalizedChainId = assertEvmRouteChainAllowed(chainId);
   return ethers.keccak256(
     coder.encode(TRADE_AUTH_TYPES, [
       "MWZ_ROUTE_TRADE_AUTH",
-      toBigInt(chainId, "chainId"),
+      normalizedChainId,
       ethers.getAddress(campaign),
       ethers.getAddress(actor),
       Number(routeProfile),

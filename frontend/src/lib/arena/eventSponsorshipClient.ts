@@ -21,7 +21,7 @@ const EVM_SPONSORSHIP_ABI = [
 ] as const;
 
 async function readJson(res: Response, label: string) { const json = await res.json().catch(() => ({})); if (!res.ok || json?.ok === false) throw new Error(String(json?.error || `${label} failed (${res.status})`)); return json; }
-function isSolana(chainId: number) { return Number(chainId) === 101 || Number(chainId) === 102; }
+function isSolana(chainId: number) { return Number(chainId) === 101; }
 function native(raw: unknown, chainId: number): string | null { if (raw === null || raw === undefined || raw === "") return null; try { return formatUnits(BigInt(String(raw)), isSolana(chainId) ? 9 : 18); } catch { return null; } }
 function centsToUsd(value: unknown): string | null { try { const cents = BigInt(String(value)); const whole = cents / 100n; const fraction = String(cents % 100n).padStart(2, "0"); return fraction === "00" ? whole.toString() : `${whole}.${fraction}`; } catch { return null; } }
 function usdToCents(value: number | string | null | undefined): string | null { const raw = String(value ?? "").trim(); if (!raw) return null; if (!/^\d+(?:\.\d{1,2})?$/.test(raw)) throw new Error("Sponsorship contribution must be a USD amount with at most 2 decimals."); const [whole,fraction=""] = raw.split("."); return (BigInt(whole) * 100n + BigInt((fraction + "00").slice(0,2))).toString(); }

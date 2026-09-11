@@ -157,7 +157,7 @@ export async function verifyExactVaultLamportDelta({ connection, signature, vaul
 
 export function readSolanaNativeUsdPricing(chainId, product = "BOOST", env = process.env, nowSeconds = Math.floor(Date.now() / 1000)) {
   const chain = Number(chainId);
-  if (![101, 102].includes(chain)) throw new Error("Solana Arena Money V2 only supports chain 101/102");
+  if (chain !== 101) throw new Error("Solana Arena Money V2 current authority requires chain 101");
   const prefix = product === "SPONSORSHIP" ? "ARENA_SPONSORSHIP" : "ARENA_BOOST";
   const nativeUsdRaw = env[`${prefix}_NATIVE_USD_MICROS_${chain}`] || env[`${prefix}_NATIVE_USD_MICROS`] || env[`ARENA_BOOST_NATIVE_USD_MICROS_${chain}`] || env.ARENA_BOOST_NATIVE_USD_MICROS;
   const pricingVersionRaw = env[`${prefix}_PRICING_VERSION_${chain}`] || env[`${prefix}_PRICING_VERSION`] || env[`ARENA_BOOST_PRICING_VERSION_${chain}`] || env.ARENA_BOOST_PRICING_VERSION;

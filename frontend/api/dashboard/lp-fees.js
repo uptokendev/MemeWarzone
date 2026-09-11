@@ -3,6 +3,7 @@ import { pool } from "../../server/db.js";
 import { badMethod, getQuery, json } from "../../server/http.js";
 import { getServerReadProvider } from "../lib/getServerReadProvider.js";
 import { requireDashboardAdmin } from "./_auth.js";
+import { resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";
 
 const BNB_LOCKER_ABI = [
   "function poolInfo(address) view returns (address campaign,address creator,address creatorFeeRecipient,address pool,address token0,address token1,uint256 lockedLpAmount,uint16 creatorFeeBps,uint16 protocolFeeBps,bool registered)",
@@ -72,7 +73,7 @@ function resolveIndexerBaseUrl() {
   return withProtocol.replace(/\/+$/, "");
 }
 
-async function proxySolanaLpFees(q, chainId, limit) {
+async function proxySolanaLpFees(q, authority, limit) {
   const base = resolveIndexerBaseUrl();
   if (!base) {
     const error = new Error("Realtime Indexer URL is not configured on the Frontend API.");
@@ -80,7 +81,12 @@ async function proxySolanaLpFees(q, chainId, limit) {
     throw error;
   }
 
-  const params = new URLSearchParams({ chainId: String(chainId), limit: String(limit) });
+  const params = new URLSearchParams({
+    chainId: String(authority.chainId),
+    environment: authority.environment,
+    solanaCluster: authority.cluster,
+    limit: String(limit),
+  });
   const campaign = String(q.campaign || "").trim();
   const creator = String(q.creator || "").trim();
   if (campaign) params.set("campaign", campaign);
@@ -97,7 +103,7 @@ async function proxySolanaLpFees(q, chainId, limit) {
     error.status = upstream.status;
     throw error;
   }
-  if (!payload || payload.ok !== true || Number(payload.chainId) !== chainId) {
+  if (!payload || payload.ok !== true || Number(payload.chainId) !== 101) {
     const error = new Error("Realtime Indexer returned an invalid Solana LP response.");
     error.status = 502;
     throw error;
@@ -369,8 +375,21 @@ export default async function handler(req, res) {
     const chainId = Number(q.chainId ?? 97);
     const limit = Math.max(1, Math.min(50, Number(q.limit ?? 20)));
 
-    if (chainId === 101 || chainId === 102) {
-      const payload = await proxySolanaLpFees(q, chainId, limit);
+    if (chainId === 102) {
+      return json(res, 400, { error: "Legacy Solana chain 102 is not a current LP fee authority." });
+    }
+    if (chainId === 101) {
+      const authority = resolveCurrentSolanaAuthority({
+        chainId,
+        environment: q.environment,
+        cluster: q.solanaCluster ?? q.cluster,
+      });
+      if (!authority) {
+        return json(res, 400, {
+          error: "Solana LP fee reads require explicit staging/devnet or production/mainnet-beta identity.",
+        });
+      }
+      const payload = await proxySolanaLpFees(q, authority, limit);
       return json(res, 200, payload);
     }
 

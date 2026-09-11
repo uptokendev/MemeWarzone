@@ -21,7 +21,7 @@ import {
 } from "@/lib/arena/battleBoostClient";
 
 const APPROVED_V3_CURVE = "boost_hyperbolic_100_v1";
-const SOLANA_ARENA_CHAIN_IDS = new Set([101, 102]);
+const SOLANA_ARENA_CHAIN_IDS = new Set([101]);
 
 type Side = { tokenId?: string | null; ticker?: string | null; name?: string | null };
 type PaymentStates = { left: SolanaBattleBoostRecoveryState | null; right: SolanaBattleBoostRecoveryState | null };
