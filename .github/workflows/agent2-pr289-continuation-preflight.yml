@@ -1,0 +1,211 @@
+name: Agent 2 PR289 existing-campaign continuation preflight
+
+on:
+  push:
+    branches:
+      - cert/agent2-pr289-final-exact-head-20260911
+    paths:
+      - .github/workflows/agent2-pr289-continuation-preflight.yml
+
+permissions:
+  contents: read
+
+env:
+  BASE_SHA: 120401fd1fde0dce6e2439fc4156840e029f1ae6
+  PR_HEAD: f18505e39186a5fa73fd89f00b242b94782f2f2c
+  PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+  CAMPAIGN: So9RKvmBQAwnCRtY4qBteNiS7gFFic4JvjxjN9hHHLk
+  MINT: FVEBya7Kz2CYMKLK65PZbsixsCgHjAvpGDLNSoXPm824
+  CREATE_SIG: 5F7QHoM1tBAhUNRFfHhtFR4FJ8dM7CBCMLEjv7HFW6f3d8p4jwB8EgvbBFs2dUJLKdjr9v6erQ81QhS8yWrTYDJi
+  OPERATOR: HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9
+  REUSABLE_ALT: ALA7wQRuPdHWzLLpyDwbw7kPbJB7pCp1zNyzrNZApoiA
+  BUY_LAMPORTS: "5000000"
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: testnet-certification
+    env:
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
+      SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER }}
+      SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PR_HEAD }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Freeze exact PR head and scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PR_HEAD"
+          test "$(git merge-base HEAD "$BASE_SHA")" = "$BASE_SHA"
+          test -z "$(git status --porcelain)"
+          test "$(git diff --name-only "$BASE_SHA"..HEAD | tr '\n' ' ')" = "tools/solana-meteora-graduation/graduate-basic-quote.mjs "
+          test "$(git diff --numstat "$BASE_SHA"..HEAD -- tools/solana-meteora-graduation/graduate-basic-quote.mjs)" = $'5\t1\ttools/solana-meteora-graduation/graduate-basic-quote.mjs'
+          test -z "$(git diff --name-only "$BASE_SHA"..HEAD -- programs/memewarzone_solana programs/mwz_rewards_treasury)"
+          echo EXACT_PR_HEAD=YES
+      - name: Install read-only probe dependencies and build IDL only
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix tests/solana --no-audit --no-fund
+          npm ci --prefix frontend --no-audit --no-fund
+          npm install --global --silent @coral-xyz/anchor-cli@0.30.1
+          rustup toolchain install nightly-2024-05-09 --profile minimal
+          mkdir -p target/idl
+          (cd programs/memewarzone_solana && RUSTUP_TOOLCHAIN=nightly-2024-05-09 anchor idl build --out ../../target/idl/memewarzone_solana.json)
+          test -s target/idl/memewarzone_solana.json
+          test ! -e target/deploy/memewarzone_solana.so
+      - name: Materialize approved operator locally without broadcasting
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SOLANA_DEVNET_PAYER:-}"
+          test -n "${SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY:-}"
+          operator_file="$RUNNER_TEMP/operator.json"
+          SOLANA_GRADUATION_OPERATOR_KEYPAIR="$operator_file" node scripts/solana/materialize-devnet-payer.mjs >/dev/null
+          echo "SOLANA_OPERATOR_KEYPAIR=$operator_file" >> "$GITHUB_ENV"
+      - name: Read live CREATE, campaign state, balance and exact continuation funding
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE' | tee /tmp/pr289-continuation-preflight.log
+          const fs=require('fs');
+          const crypto=require('crypto');
+          const anchor=require('./tests/solana/node_modules/@coral-xyz/anchor');
+          const web3=require('./tests/solana/node_modules/@solana/web3.js');
+          const spl=require('./tests/solana/node_modules/@solana/spl-token');
+          const bs58mod=require('./tests/solana/node_modules/bs58');
+          const bs58=bs58mod.default||bs58mod;
+          const {Connection,PublicKey,Keypair,Ed25519Program,ComputeBudgetProgram,SYSVAR_INSTRUCTIONS_PUBKEY,SystemProgram,VersionedTransaction}=web3;
+          const {TOKEN_PROGRAM_ID,ASSOCIATED_TOKEN_PROGRAM_ID,getAssociatedTokenAddressSync,createAssociatedTokenAccountInstruction}=spl;
+          const {AnchorProvider,Program,Wallet,BN}=anchor;
+          const PROGRAM_ID=new PublicKey(process.env.PROGRAM_ID);
+          const CAMPAIGN=new PublicKey(process.env.CAMPAIGN);
+          const MINT=new PublicKey(process.env.MINT);
+          const OPERATOR=new PublicKey(process.env.OPERATOR);
+          const ALT_KEY=new PublicKey(process.env.REUSABLE_ALT);
+          const BUY=BigInt(process.env.BUY_LAMPORTS);
+          const TRADE_AUTH_DOMAIN=Buffer.from('MEMEWARZONE_SOLANA_TRADE_V1','utf8');
+          const TRADE_AUTH_SCHEMA_VERSION=3;
+          const ROUTE_PROFILE_UNLINKED=1;
+          const pda=(...seeds)=>PublicKey.findProgramAddressSync(seeds.map(s=>Buffer.isBuffer(s)?s:Buffer.from(s)),PROGRAM_ID)[0];
+          const h=(v)=>crypto.createHash('sha256').update(v).digest();
+          const fixed32=v=>Array.from(Buffer.from(v));
+          const u16le=v=>{const b=Buffer.alloc(2);b.writeUInt16LE(v);return b};
+          const u64le=v=>{const b=Buffer.alloc(8);b.writeBigUInt64LE(BigInt(v));return b};
+          const i64le=v=>{const b=Buffer.alloc(8);b.writeBigInt64LE(BigInt(v));return b};
+          function tradeDigest({campaign,mint,trader,side,amountIn,minOut,deadline,nonce,nativeTargetLamports,routeProfile}){return crypto.createHash('sha256').update(Buffer.concat([TRADE_AUTH_DOMAIN,u16le(TRADE_AUTH_SCHEMA_VERSION),PROGRAM_ID.toBuffer(),campaign.toBuffer(),mint.toBuffer(),trader.toBuffer(),Buffer.from([side]),u64le(amountIn),u64le(minOut),i64le(deadline),Buffer.from(nonce),u64le(nativeTargetLamports),Buffer.from([routeProfile])])).digest()}
+          function costV3(base,slope,sold,a,decimals){const scale=10n**BigInt(decimals);const linear=a*base/scale;const numer=2n*sold*a+a*a;const denom=2n*scale*scale*1000000000n;return linear+slope*numer/denom}
+          function fee(amount,bps){return amount*BigInt(bps)/10000n}
+          function quoteBuyV3(base,slope,sold,supply,gross,bps,decimals){const scale=10n**BigInt(decimals);let high=(gross*scale/base);const remaining=supply-sold;if(high>remaining)high=remaining;let low=0n;while(low<high){const mid=low+(high-low+1n)/2n;const c=costV3(base,slope,sold,mid,decimals);const f=fee(c,bps);if(c+f<=gross)low=mid;else high=mid-1n}if(low<=0n)throw new Error('no buy quote');const c=costV3(base,slope,sold,low,decimals),f=fee(c,bps);return {tokens:low,curveCost:c,fee:f,spent:c+f}}
+          (async()=>{
+            const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
+            const genesis=await c.getGenesisHash();
+            if(genesis!=='EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG') throw new Error(`wrong cluster ${genesis}`);
+            const operator=Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(process.env.SOLANA_OPERATOR_KEYPAIR,'utf8'))));
+            if(!operator.publicKey.equals(OPERATOR)) throw new Error(`unapproved operator ${operator.publicKey}`);
+            const route=Keypair.fromSecretKey(Uint8Array.from(JSON.parse(process.env.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY)));
+            const idl=JSON.parse(fs.readFileSync('target/idl/memewarzone_solana.json','utf8'));
+            const provider=new AnchorProvider(c,new Wallet(operator),{commitment:'confirmed',preflightCommitment:'confirmed'});
+            const program=new Program(idl,provider);
+            if(!program.programId.equals(PROGRAM_ID)) throw new Error('IDL program mismatch');
+            const tx=await c.getTransaction(process.env.CREATE_SIG,{commitment:'confirmed',maxSupportedTransactionVersion:0});
+            if(!tx||tx.meta?.err) throw new Error('existing CREATE missing/failed');
+            const keys=tx.transaction.message.getAccountKeys({accountKeysFromLookups:tx.meta.loadedAddresses});
+            const createLogs=tx.meta.logMessages||[];
+            if(!createLogs.some(x=>x.includes('Instruction: CreateCampaign'))) throw new Error('signature is not CreateCampaign');
+            if(!Array.from({length:keys.length},(_,i)=>keys.get(i).toBase58()).includes(CAMPAIGN.toBase58())) throw new Error('CREATE campaign mismatch');
+            if(!Array.from({length:keys.length},(_,i)=>keys.get(i).toBase58()).includes(MINT.toBase58())) throw new Error('CREATE mint mismatch');
+            console.log('CREATE_RECOVERY_SIGNATURE',process.env.CREATE_SIG);
+            console.log('CREATE_RECOVERY_VERSION',String(tx.version));
+            console.log('CREATE_RECOVERY_SLOT',tx.slot);
+            console.log('CREATE_RECOVERY_BLOCK_TIME',tx.blockTime);
+            console.log('CREATE_RECOVERY_BLOCKHASH',tx.transaction.message.recentBlockhash);
+            console.log('CREATE_RECOVERY_COMPUTE_UNITS',tx.meta.computeUnitsConsumed??'unknown');
+            console.log('CREATE_RECOVERY_STATUS','SUCCESS');
+            const lookups=tx.transaction.message.addressTableLookups||[];
+            console.log('CREATE_RECOVERY_ALTS',lookups.map(x=>x.accountKey.toBase58()).join(',')||'NONE');
+            try{
+              const rebuilt=new VersionedTransaction(tx.transaction.message);
+              rebuilt.signatures=tx.transaction.signatures.map(s=>Uint8Array.from(bs58.decode(typeof s==='string'?s:s.toString())));
+              console.log('CREATE_RECONSTRUCTED_PACKET_BYTES',rebuilt.serialize().length);
+            }catch(e){console.log('CREATE_RECONSTRUCTED_PACKET_BYTES','UNAVAILABLE:'+e.message)}
+            console.log('CREATE_ORIGINAL_LVH','IRRETRIEVABLE_UNLESS_PRIOR_LOG_ARTIFACT_CAPTURED');
+            console.log('CREATE_ORIGINAL_SIMULATION','IRRETRIEVABLE_UNLESS_PRIOR_LOG_ARTIFACT_CAPTURED');
+
+            const state=await program.account.campaign.fetch(CAMPAIGN);
+            const sval=v=>BN.isBN(v)?v.toString():typeof v==='bigint'?v.toString():v;
+            const stateOut={creator:state.creator.toBase58(),mint:state.mint.toBase58(),tokenVault:state.tokenVault.toBase58(),solVault:state.solVault.toBase58(),launchAt:sval(state.launchAt),creatorBuyLockUntil:sval(state.creatorBuyLockUntil),creatorBuyCapBps:sval(state.creatorBuyCapBps),creatorBoughtTokens:sval(state.creatorBoughtTokens),soldTokens:sval(state.soldTokens),netRaisedLamports:sval(state.netRaisedLamports),curveTokenSupply:sval(state.curveTokenSupply),basePriceLamports:sval(state.basePriceLamports),priceSlopeLamports:sval(state.priceSlopeLamports),buyFeeBps:sval(state.buyFeeBps),sellFeeBps:sval(state.sellFeeBps),tokenDecimals:sval(state.tokenDecimals),curveClosed:state.curveClosed,graduated:state.graduated,paused:state.paused};
+            console.log('CAMPAIGN_STATE',JSON.stringify(stateOut));
+            if(stateOut.creator!==OPERATOR.toBase58()) throw new Error(`campaign creator mismatch ${stateOut.creator}`);
+            if(stateOut.mint!==MINT.toBase58()) throw new Error(`campaign mint mismatch ${stateOut.mint}`);
+            const slot=await c.getSlot('confirmed'); const now=(await c.getBlockTime(slot))||Math.floor(Date.now()/1000);
+            const lockUntil=Number(stateOut.creatorBuyLockUntil);
+            console.log('CHAIN_TIME',now);
+            console.log('CREATOR_LOCK_ACTIVE',now<lockUntil?'YES':'NO');
+            console.log('CREATOR_LOCK_SECONDS_REMAINING',Math.max(0,lockUntil-now));
+            const balance=await c.getBalance(OPERATOR,'confirmed');
+            console.log('OPERATOR_BALANCE_CURRENT',balance);
+            const ata=getAssociatedTokenAddressSync(MINT,OPERATOR);
+            const ataInfo=await c.getAccountInfo(ata,'confirmed');
+            const ataRent=ataInfo?0:await c.getMinimumBalanceForRentExemption(165,'confirmed');
+            console.log('OPERATOR_ATA',ata.toBase58(),ataInfo?'EXISTS':'MISSING','RENT_IF_MISSING',ataRent);
+            const tradeAuthSize=program.account.tradeAuthorization.size;
+            const tradeAuthRent=await c.getMinimumBalanceForRentExemption(tradeAuthSize,'confirmed');
+            console.log('TRADE_AUTH_SIZE',tradeAuthSize);
+            console.log('TRADE_AUTH_RENT_EACH',tradeAuthRent);
+            const alt=(await c.getAddressLookupTable(ALT_KEY,'confirmed')).value;
+            if(!alt) throw new Error('reusable ALT missing');
+            console.log('REUSABLE_ALT',ALT_KEY.toBase58(),'ADDRESSES',alt.state.addresses.length,'DEACTIVATION_SLOT',String(alt.state.deactivationSlot));
+            const globalConfig=pda('global');
+            const manifest=JSON.parse(fs.readFileSync('config/solana/devnet-generation-v3.json','utf8'));
+            const clusterId=h(manifest.riskClusterIdSeed), clusterProfile=pda('cluster',clusterId);
+            const riskProfile=pda('risk',OPERATOR.toBuffer());
+            const feeEscrow=pda('fee-escrow',CAMPAIGN.toBuffer());
+            const creatorFeeVault=pda('creator-fee-vault',CAMPAIGN.toBuffer());
+            for(const [name,key] of [['RISK_PROFILE',riskProfile],['CLUSTER_PROFILE',clusterProfile],['FEE_ESCROW',feeEscrow],['CREATOR_FEE_VAULT',creatorFeeVault],['TOKEN_VAULT',state.tokenVault],['SOL_VAULT',state.solVault]]){const i=await c.getAccountInfo(key,'confirmed');console.log(name,key.toBase58(),i?`EXISTS lamports=${i.lamports} bytes=${i.data.length}`:'MISSING')}
+            const q=quoteBuyV3(BigInt(stateOut.basePriceLamports),BigInt(stateOut.priceSlopeLamports),BigInt(stateOut.soldTokens),BigInt(stateOut.curveTokenSupply),BUY,Number(stateOut.buyFeeBps),Number(stateOut.tokenDecimals));
+            console.log('PROSPECTIVE_BUY_QUOTE',JSON.stringify(Object.fromEntries(Object.entries(q).map(([k,v])=>[k,v.toString()]))));
+            const tokensIn=q.tokens/4n;
+            const buyNonce=h(`preflight-buy:${process.env.CREATE_SIG}`), buyDeadline=now+3600;
+            const buyAuth=pda('trade-auth',OPERATOR.toBuffer(),buyNonce);
+            const buyDigest=tradeDigest({campaign:CAMPAIGN,mint:MINT,trader:OPERATOR,side:1,amountIn:BUY,minOut:1n,deadline:buyDeadline,nonce:buyNonce,nativeTargetLamports:40000000n,routeProfile:ROUTE_PROFILE_UNLINKED});
+            const edBuy=Ed25519Program.createInstructionWithPrivateKey({privateKey:route.secretKey,message:buyDigest});
+            const buyIx=await program.methods.buyTokens({lamportsIn:new BN(BUY.toString()),minTokensOut:new BN(1),deadline:new BN(buyDeadline),nonce:fixed32(buyNonce),nativeTargetLamports:new BN('40000000'),routeProfile:ROUTE_PROFILE_UNLINKED}).accountsStrict({trader:OPERATOR,globalConfig,campaign:CAMPAIGN,mint:MINT,tokenVault:state.tokenVault,solVault:state.solVault,traderTokenAccount:ata,riskProfile,clusterProfile,tradeAuthorization:buyAuth,instructions:SYSVAR_INSTRUCTIONS_PUBKEY,tokenProgram:TOKEN_PROGRAM_ID,systemProgram:SystemProgram.programId,feeEscrow,creatorFeeVault}).instruction();
+            const buyIxs=[]; if(!ataInfo) buyIxs.push(createAssociatedTokenAccountInstruction(OPERATOR,ata,OPERATOR,MINT)); buyIxs.push(edBuy,buyIx);
+            const {loadSolanaV0Module}=await import('./frontend/scripts/load-solana-v0-module.mjs'); const v0=await loadSolanaV0Module();
+            const buyExp={payer:OPERATOR,ed25519Instruction:edBuy,programInstruction:buyIx,lookupTableAccounts:[alt],allowInstructionPrivilegePromotion:true};
+            const buyCompiled=await v0.compileLaunchpadV0WithLatestBlockhash(web3,c,{payer:OPERATOR,instructions:buyIxs,lookupTableAccounts:[alt]},buyExp); buyCompiled.transaction.sign([operator]);
+            const buyStats=v0.assertLaunchpadV0Intent(web3,buyCompiled.transaction,buyExp); const buyFee=(await c.getFeeForMessage(buyCompiled.transaction.message,'confirmed')).value;
+            let buySim; try{buySim=await c.simulateTransaction(buyCompiled.transaction,{commitment:'confirmed',sigVerify:true,replaceRecentBlockhash:false})}catch(e){buySim={value:{err:'RPC:'+e.message,logs:[]}}}
+            console.log('PROSPECTIVE_BUY_V0',JSON.stringify({alt:ALT_KEY.toBase58(),blockhash:buyCompiled.latest.blockhash,lastValidBlockHeight:buyCompiled.latest.lastValidBlockHeight,packetBytes:buyStats.serializedBytes,txFee:buyFee,simulationErr:buySim.value.err,simulationLogs:(buySim.value.logs||[]).slice(-12)}));
+            const sellNonce=h(`preflight-sell:${process.env.CREATE_SIG}`), sellDeadline=now+3600;
+            const sellAuth=pda('trade-auth',OPERATOR.toBuffer(),sellNonce);
+            const sellDigest=tradeDigest({campaign:CAMPAIGN,mint:MINT,trader:OPERATOR,side:2,amountIn:tokensIn,minOut:1n,deadline:sellDeadline,nonce:sellNonce,nativeTargetLamports:0n,routeProfile:ROUTE_PROFILE_UNLINKED});
+            const edSell=Ed25519Program.createInstructionWithPrivateKey({privateKey:route.secretKey,message:sellDigest});
+            const sellIx=await program.methods.sellTokens({tokensIn:new BN(tokensIn.toString()),minLamportsOut:new BN(1),deadline:new BN(sellDeadline),nonce:fixed32(sellNonce),routeProfile:ROUTE_PROFILE_UNLINKED}).accountsStrict({trader:OPERATOR,globalConfig,campaign:CAMPAIGN,mint:MINT,tokenVault:state.tokenVault,solVault:state.solVault,traderTokenAccount:ata,riskProfile,clusterProfile,tradeAuthorization:sellAuth,instructions:SYSVAR_INSTRUCTIONS_PUBKEY,tokenProgram:TOKEN_PROGRAM_ID,systemProgram:SystemProgram.programId,feeEscrow,creatorFeeVault}).instruction();
+            const sellExp={payer:OPERATOR,ed25519Instruction:edSell,programInstruction:sellIx,lookupTableAccounts:[alt],allowInstructionPrivilegePromotion:true};
+            const sellCompiled=await v0.compileLaunchpadV0WithLatestBlockhash(web3,c,{payer:OPERATOR,instructions:[edSell,sellIx],lookupTableAccounts:[alt]},sellExp); sellCompiled.transaction.sign([operator]);
+            const sellStats=v0.assertLaunchpadV0Intent(web3,sellCompiled.transaction,sellExp); const sellFee=(await c.getFeeForMessage(sellCompiled.transaction.message,'confirmed')).value;
+            console.log('PROSPECTIVE_SELL_V0',JSON.stringify({amountTokens:tokensIn.toString(),alt:ALT_KEY.toBase58(),blockhash:sellCompiled.latest.blockhash,lastValidBlockHeight:sellCompiled.latest.lastValidBlockHeight,packetBytes:sellStats.serializedBytes,txFee:sellFee}));
+            const required=Number(q.spent)+ataRent+tradeAuthRent*2+Number(buyFee||0)+Number(sellFee||0);
+            const additional=Math.max(0,required-balance);
+            console.log('MIN_START_BALANCE_FOR_GOLDEN_BUY_SELL',required);
+            console.log('MIN_ADDITIONAL_LAMPORTS',additional);
+            console.log('MIN_ADDITIONAL_SOL',(additional/1e9).toFixed(9));
+            console.log('BROADCAST_PERFORMED','NO');
+          })().catch(e=>{console.error(e?.stack||e);process.exit(1)});
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent2-pr289-continuation-preflight
+          path: /tmp/pr289-continuation-preflight.log
+          if-no-files-found: warn
+          retention-days: 14
