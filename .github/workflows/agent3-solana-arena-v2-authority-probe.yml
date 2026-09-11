@@ -11,13 +11,26 @@ permissions:
 
 env:
   BASE_SHA: 120401fd1fde0dce6e2439fc4156840e029f1ae6
-  PROGRAM_ID: 2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX
+  REWARDS_PROGRAM: 2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX
+  EXPECTED_PROGRAMDATA: H8DKTTSuGQQccvQ9A3DZWesxsdcw619qJnr57yHtB9ZP
+  EXPECTED_AUTHORITY: HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9
+  EXPECTED_CONFIG: Bio7bTMDLo1rYhKbR26jW98N4YvdeQW3UzUw4cHEv8xX
   EXPECTED_GENESIS: EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG
+  EXPECTED_OLD_SHA: 88ac2116a08187278b68ec543968a8cdaae8038f2fa3bdd67f71b0e22e50f163
+  EXPECTED_OLD_SIZE: '550861'
+  CANDIDATE_SHA: 156ae2069c4c50acd81d6d26754e4ec12bf6f95dfb1e6dbdf99de46688fdb3e8
+  CANDIDATE_SIZE: '1487736'
+  LAUNCHPAD_PROGRAM: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+  LAUNCHPAD_SHA: 27ad65b560dba8a33330bd95f08ae7ca6945f71ebf667a5a3756ae0cb9f7f080
+  LAUNCHPAD_SIZE: '1165328'
+  ANCHOR_VERSION: 0.30.1
+  SOLANA_VERSION: 1.18.26
+  RUST_TOOLCHAIN: 1.79.0
 
 jobs:
-  live-authority-probe:
+  prebroadcast:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     environment: airdrop-solana-devnet
     env:
       SOLANA_RPC_URL: ${{ secrets.SOLANA_REWARDS_RPC_URL || secrets.SOLANA_DEVNET_RPC || vars.SOLANA_REWARDS_RPC_URL || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
@@ -30,49 +43,64 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Exact source identity
+      - name: Install pinned build and Solana toolchain
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$BASE_SHA"
-          grep -F 'pub const ARENA_CONFIG_SEED: &[u8] = b"arena_config";' programs/mwz_rewards_treasury/src/arena.rs
-          grep -F 'pub struct ArenaConfig' programs/mwz_rewards_treasury/src/arena.rs
-      - run: npm install --no-save --package-lock=false --no-audit --no-fund @solana/web3.js@1.95.4
-      - name: Decode current live Arena config and rewards config
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          release_dir="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
+          mkdir -p "$release_dir"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error --output /tmp/solana-release.tar.bz2 "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"
+          ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+          npm install --no-save --package-lock=false --no-audit --no-fund @solana/web3.js@1.95.4
+      - name: Rebuild exact candidate and verify certified bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf target
+          rm -f Cargo.lock programs/mwz_rewards_treasury/Cargo.lock
+          anchor build --program-name mwz_rewards_treasury --no-idl 2>&1 | tee /tmp/prebroadcast-build.log | tail -n 220
+          if grep -E 'Stack offset .* exceeded max offset|stack frame.*exceed' /tmp/prebroadcast-build.log; then exit 1; fi
+          sha="$(sha256sum target/deploy/mwz_rewards_treasury.so | awk '{print $1}')"
+          size="$(stat -c %s target/deploy/mwz_rewards_treasury.so)"
+          echo "PREBROADCAST_CANDIDATE_SHA=$sha"
+          echo "PREBROADCAST_CANDIDATE_SIZE=$size"
+          test "$sha" = "$CANDIDATE_SHA"
+          test "$size" = "$CANDIDATE_SIZE"
+      - name: Fresh live identity, capacity and rent gate
         shell: bash
         run: |
           set -euo pipefail
           node <<'NODE'
+          const crypto=require('crypto');
           const {Connection,PublicKey,Keypair}=require('@solana/web3.js');
-          const program=new PublicKey(process.env.PROGRAM_ID);
-          function signer(raw){
-            const t=String(raw||'').trim(); if(!t) throw new Error('missing rewards signer');
-            const b=t.startsWith('[')?Uint8Array.from(JSON.parse(t).map(Number)):Uint8Array.from(Buffer.from(t,'base64'));
-            if(b.length===64)return Keypair.fromSecretKey(b); if(b.length===32)return Keypair.fromSeed(b); throw new Error('bad signer bytes');
-          }
-          function pk(d,o){return new PublicKey(d.subarray(o,o+32)).toBase58();}
+          const loader=new PublicKey('BPFLoaderUpgradeab1e11111111111111111111111');
+          function signer(raw){const t=String(raw||'').trim();if(!t)throw new Error('missing signer');const b=t.startsWith('[')?Uint8Array.from(JSON.parse(t).map(Number)):Uint8Array.from(Buffer.from(t,'base64'));if(b.length===64)return Keypair.fromSecretKey(b);if(b.length===32)return Keypair.fromSeed(b);throw new Error('bad signer bytes')}
+          function programData(info){if(!info||!info.executable||!info.owner.equals(loader))throw new Error('bad program');const d=Buffer.from(info.data);if(d.readUInt32LE(0)!==2)throw new Error('bad Program layout');return new PublicKey(d.subarray(4,36));}
+          function live(info){if(!info||!info.owner.equals(loader))throw new Error('bad ProgramData');const d=Buffer.from(info.data);if(d.readUInt32LE(0)!==3||d[12]!==1)throw new Error('bad ProgramData layout');return {slot:d.readBigUInt64LE(4).toString(),authority:new PublicKey(d.subarray(13,45)).toBase58(),binary:d.subarray(45),lamports:info.lamports,totalBytes:d.length};}
           (async()=>{
             const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
-            const g=await c.getGenesisHash(); console.log('GENESIS '+g); if(g!==process.env.EXPECTED_GENESIS) throw new Error('wrong cluster');
-            const s=signer(process.env.SOLANA_REWARDS_AUTHORITY_SECRET_KEY); console.log('REWARDS_SIGNER '+s.publicKey.toBase58());
-            const [arena,bump]=PublicKey.findProgramAddressSync([Buffer.from('arena_config')],program);
-            const ai=await c.getAccountInfo(arena,'confirmed');
-            console.log(`LEGACY_ARENA_CONFIG_PDA ${arena.toBase58()} BUMP ${bump} EXISTS ${Boolean(ai)}`);
-            if(ai){
-              if(!ai.owner.equals(program)) throw new Error('legacy Arena config wrong owner');
-              const d=Buffer.from(ai.data); if(d.length<8+131) throw new Error(`legacy Arena config too short ${d.length}`);
-              let o=8;
-              const authority=pk(d,o);o+=32; const resolver=pk(d,o);o+=32; const protocol=pk(d,o);o+=32; const mwl=pk(d,o);o+=32;
-              const paused=Boolean(d[o++]); const storedBump=d[o++]; const version=d[o++];
-              console.log('LEGACY_ARENA_AUTHORITY '+authority);
-              console.log('LEGACY_ARENA_RESOLVER '+resolver);
-              console.log('LEGACY_ARENA_PROTOCOL_RECEIVER '+protocol);
-              console.log('LEGACY_ARENA_MWL_RECEIVER '+mwl);
-              console.log(`LEGACY_ARENA_PAUSED ${paused} STORED_BUMP ${storedBump} VERSION ${version}`);
-            }
-            const [rewards,rb]=PublicKey.findProgramAddressSync([Buffer.from('rewards_config')],program);
-            const ri=await c.getAccountInfo(rewards,'confirmed');
-            console.log(`REWARDS_CONFIG_PDA ${rewards.toBase58()} BUMP ${rb} EXISTS ${Boolean(ri)} BYTES ${ri?.data?.length||0}`);
-            if(ri){ console.log('REWARDS_CONFIG_OWNER '+ri.owner.toBase58()); console.log('REWARDS_CONFIG_DATA_SHA256 '+require('crypto').createHash('sha256').update(Buffer.from(ri.data)).digest('hex')); }
-          })().catch(e=>{console.error('LIVE_AUTHORITY_BLOCKER '+(e?.stack||e));process.exit(1)});
+            const genesis=await c.getGenesisHash();console.log('GENESIS '+genesis);if(genesis!==process.env.EXPECTED_GENESIS)throw new Error('genesis changed');
+            const s=signer(process.env.SOLANA_REWARDS_AUTHORITY_SECRET_KEY);console.log('SIGNER '+s.publicKey.toBase58());if(s.publicKey.toBase58()!==process.env.EXPECTED_AUTHORITY)throw new Error('signer changed');
+            const balance=await c.getBalance(s.publicKey,'confirmed');console.log('SIGNER_BALANCE_LAMPORTS '+balance);
+            const rp=new PublicKey(process.env.REWARDS_PROGRAM);const rpd=programData(await c.getAccountInfo(rp,'confirmed'));console.log('PROGRAMDATA '+rpd.toBase58());if(rpd.toBase58()!==process.env.EXPECTED_PROGRAMDATA)throw new Error('ProgramData changed');
+            const r=live(await c.getAccountInfo(rpd,'confirmed'));const rsha=crypto.createHash('sha256').update(r.binary).digest('hex');console.log(`LIVE_SLOT ${r.slot}`);console.log(`LIVE_AUTHORITY ${r.authority}`);console.log(`LIVE_SHA ${rsha}`);console.log(`LIVE_SIZE ${r.binary.length}`);if(r.authority!==process.env.EXPECTED_AUTHORITY||rsha!==process.env.EXPECTED_OLD_SHA||String(r.binary.length)!==process.env.EXPECTED_OLD_SIZE)throw new Error('rewards live identity changed');
+            const [cfg,bump]=PublicKey.findProgramAddressSync([Buffer.from('arena_money_config_v2')],rp);const cfgInfo=await c.getAccountInfo(cfg,'confirmed');console.log(`CONFIG ${cfg.toBase58()} BUMP ${bump} EXISTS ${Boolean(cfgInfo)}`);if(cfg.toBase58()!==process.env.EXPECTED_CONFIG||cfgInfo)throw new Error('config state changed');
+            const candidate=Number(process.env.CANDIDATE_SIZE);const newTotal=45+candidate;const currentCapacity=r.totalBytes-45;const additional=Math.max(0,candidate-currentCapacity);const targetRent=await c.getMinimumBalanceForRentExemption(newTotal,'confirmed');const deltaRent=Math.max(0,targetRent-r.lamports);const bufferRent=await c.getMinimumBalanceForRentExemption(candidate+37,'confirmed');
+            console.log(`PROGRAMDATA_CURRENT_TOTAL_BYTES ${r.totalBytes}`);console.log(`PROGRAMDATA_CURRENT_CAPACITY ${currentCapacity}`);console.log(`PROGRAMDATA_ADDITIONAL_BYTES_REQUIRED ${additional}`);console.log(`PROGRAMDATA_CURRENT_LAMPORTS ${r.lamports}`);console.log(`PROGRAMDATA_TARGET_RENT_LAMPORTS ${targetRent}`);console.log(`PROGRAMDATA_RENT_DELTA_LAMPORTS ${deltaRent}`);console.log(`DEPLOY_BUFFER_RENT_ESTIMATE_LAMPORTS ${bufferRent}`);console.log(`ESTIMATED_MIN_FUNDS_LAMPORTS ${deltaRent+bufferRent+10000000}`);
+            const lp=new PublicKey(process.env.LAUNCHPAD_PROGRAM);const lpd=programData(await c.getAccountInfo(lp,'confirmed'));const l=live(await c.getAccountInfo(lpd,'confirmed'));const lsha=crypto.createHash('sha256').update(l.binary).digest('hex');console.log(`LAUNCHPAD_PROGRAMDATA ${lpd.toBase58()} SLOT ${l.slot} SHA ${lsha} SIZE ${l.binary.length}`);if(lsha!==process.env.LAUNCHPAD_SHA||String(l.binary.length)!==process.env.LAUNCHPAD_SIZE)throw new Error('launchpad changed');
+          })().catch(e=>{console.error('PREBROADCAST_BLOCKER '+(e?.stack||e));process.exit(1)});
           NODE
+      - name: Capture exact CLI upgrade syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          solana --version
+          solana program extend --help | sed -n '1,120p'
+          solana program deploy --help | sed -n '1,180p'
