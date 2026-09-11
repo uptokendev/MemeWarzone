@@ -162,3 +162,13 @@ test("current realtime market identity excludes legacy 102 and preserves BNB Rob
   assert.match(text, /Legacy Solana chain 102 is not a current market authority/);
   assert.doesNotMatch(text, /chainId === 101 \|\| chainId === 102/);
 });
+
+
+test("Solana graduation authorization cannot issue authority through legacy 102", async () => {
+  const text = await source("frontend/api/dev-fix/solana-graduation-authorization-v2.js");
+  assert.match(text, /resolveCurrentSolanaAuthority/);
+  assert.match(text, /SOLANA_CURRENT_AUTHORITY_INVALID/);
+  assert.doesNotMatch(text, /isSolanaChain\(chainId\)/);
+  assert.doesNotMatch(text, /String\(chainId\) !== ["']102["']/);
+  assert.match(text, /solanaAuthority\?\.environment !== ["']staging["']/);
+});

@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 
-import { badMethod, isSolanaChain, json, readJson } from "../../server/http.js";
+import { badMethod, json, readJson } from "../../server/http.js";
+import { resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";
 import {
   TOKEN_PROGRAM_ID,
   SYSVAR_INSTRUCTIONS_ID,
@@ -132,7 +133,7 @@ function catalogBindingHash(item) {
   return crypto.createHash("sha256").update(fields.map((v) => String(v ?? "")).join("\u0000"), "utf8").digest();
 }
 
-async function resolveCatalogQuoteConfig({ chainId, quoteConfigId }) {
+async function resolveCatalogQuoteConfig({ chainId, quoteConfigId, solanaAuthority }) {
   let detail;
   try {
     detail = await getGraduationQuoteAssetDetail(quoteConfigId);
@@ -156,7 +157,7 @@ async function resolveCatalogQuoteConfig({ chainId, quoteConfigId }) {
   const acquisitionAdapter = String(route.acquisitionAdapter || (profile === QUOTE_PROFILE.NATIVE ? "NATIVE" : "JUPITER")).trim().toUpperCase();
   if (profile === QUOTE_PROFILE.NATIVE && acquisitionAdapter !== "NATIVE") throw new SolanaGraduationAuthorizationError("Native quote must use the NATIVE acquisition adapter.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });
   if (profile !== QUOTE_PROFILE.NATIVE && !["JUPITER", "ORCA_WHIRLPOOL_DEVNET"].includes(acquisitionAdapter)) throw new SolanaGraduationAuthorizationError(`Unsupported acquisition adapter ${acquisitionAdapter}.`, { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });
-  if (acquisitionAdapter === "ORCA_WHIRLPOOL_DEVNET" && String(chainId) !== "102") throw new SolanaGraduationAuthorizationError("Orca certification adapter is restricted to Solana devnet chain 102.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });
+  if (acquisitionAdapter === "ORCA_WHIRLPOOL_DEVNET" && solanaAuthority?.environment !== "staging") throw new SolanaGraduationAuthorizationError("Orca certification adapter is restricted to canonical Solana staging/devnet authority.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });
   const maxSlippageBps = Number(route.maxSlippageBps ?? DEFAULT_SLIPPAGE_BPS);
   const maxImpactBps = Number(route.maxImpactBps ?? 100);
   const maxDeviationBps = Number(route.maxDeviationBps ?? 100);
@@ -366,12 +367,17 @@ export async function solanaGraduationAuthorizationV2(req, res) {
     if (!isTruthy(process.env.SOLANA_GRADUATION_AUTH_ENABLED)) throw new SolanaGraduationAuthorizationError("Solana graduation authorization is disabled.", { code: "SOLANA_GRADUATION_AUTH_DISABLED", httpStatus: 503 });
     const body = await readJson(req);
     const chainId = Number(body.chainId || 101);
-    if (!isSolanaChain(chainId)) throw new SolanaGraduationAuthorizationError("chainId must be a supported Solana chain.", { code: "NOT_A_SOLANA_CHAIN", httpStatus: 400 });
+    const solanaAuthority = resolveCurrentSolanaAuthority({
+      chainId,
+      environment: body.environment || process.env.RUNTIME_ENVIRONMENT || process.env.SOLANA_ENVIRONMENT || "",
+      cluster: body.solanaCluster || body.cluster || process.env.SOLANA_CLUSTER || "",
+    });
+    if (!solanaAuthority) throw new SolanaGraduationAuthorizationError("Solana graduation authorization requires chain 101 with explicit staging/devnet or production/mainnet-beta identity.", { code: "SOLANA_CURRENT_AUTHORITY_INVALID", httpStatus: 400 });
     if (body.quoteMint) throw new SolanaGraduationAuthorizationError("quoteMint is not accepted from clients; select an approved quoteConfigId.", { code: "SOLANA_GRADUATION_ARBITRARY_QUOTE_REJECTED", httpStatus: 400 });
 
     const requestedConfigId = String(body.quoteConfigId || process.env.SOLANA_GRADUATION_NATIVE_QUOTE_CONFIG_ID || "").trim();
     if (!requestedConfigId) throw new SolanaGraduationAuthorizationError("quoteConfigId is required and must be an authoritative Quote Asset Catalog deployment id.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 400 });
-    const quoteConfig = await resolveCatalogQuoteConfig({ chainId, quoteConfigId: requestedConfigId });
+    const quoteConfig = await resolveCatalogQuoteConfig({ chainId, quoteConfigId: requestedConfigId, solanaAuthority });
 
     const campaignAddress = publicKeyString(body.campaignAddress, "campaignAddress");
     const authorityAddress = publicKeyString(body.authorityAddress, "authorityAddress");
