@@ -43,7 +43,7 @@ jobs:
         run: npm ci --prefix frontend --no-audit --no-fund
 
       - name: Solana current-authority matrix
-        run: node --test frontend/shared/solanaCurrentAuthority.test.mjs frontend/api/dev-fix/ticker-reservation-service.test.mjs
+        run: node --test frontend/shared/solanaCurrentAuthority.test.mjs frontend/shared/solanaCurrentArenaAuthority.test.mjs frontend/api/dev-fix/ticker-reservation-service.test.mjs
 
       - name: API import integrity
         run: npm --prefix frontend run check:api-imports
@@ -65,6 +65,30 @@ jobs:
 
       - name: Arena tournament regression
         run: npm --prefix frontend run test:arena-tournament
+
+      - name: Focused lint for changed authority consumers
+        shell: bash
+        run: |
+          cd frontend
+          npx eslint \
+            api/admin/finance.js \
+            api/analytics/launchpad.js \
+            api/dashboard/lp-fees.js \
+            api/dev-fix/draft-deploy.js \
+            api/dev-fix/drafts.js \
+            api/dev-fix/route-auth.js \
+            api/dev-fix/routeAuthorizationSigner.js \
+            api/dev-fix/ticker-reservation-service.js \
+            api/lib/financeFunding.js \
+            api/lib/solanaArenaMoneyV2Read.js \
+            shared/solanaCurrentAuthority.mjs \
+            shared/solanaCurrentAuthority.test.mjs \
+            shared/solanaCurrentArenaAuthority.test.mjs \
+            src/components/token/UpvoteDialog.tsx \
+            src/features/launchpad/useLaunchpadAdapter.ts \
+            src/features/postgrad/identityRoutes.ts \
+            src/lib/graduationTiers.ts \
+            src/lib/lpFeeHarvest.ts
 
       - name: Frontend build/typecheck bundle gate
         run: npm --prefix frontend run build
