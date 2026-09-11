@@ -416,9 +416,19 @@ pub mod memewarzone_solana {
         initialize_fee_escrow_handler(ctx)
     }
 
+    /// Permissionless rent-payer init of the per-campaign creator fee vault PDA.
+    pub fn initialize_creator_fee_vault(ctx: Context<InitializeCreatorFeeVault>) -> Result<()> {
+        initialize_creator_fee_vault_handler(ctx)
+    }
+
     /// Permissionless flush of accrued fee slices to canonical rewards vaults.
     pub fn flush_campaign_fees(ctx: Context<FlushCampaignFees>) -> Result<()> {
         flush_campaign_fees_handler(ctx)
+    }
+
+    /// Creator-only claim from the isolated per-campaign creator fee vault PDA.
+    pub fn claim_creator_fees(ctx: Context<ClaimCreatorFees>) -> Result<()> {
+        claim_creator_fees_handler(ctx)
     }
 
     /// Permissionless close of an expired TradeAuthorization PDA. Rent always returns to trader.
