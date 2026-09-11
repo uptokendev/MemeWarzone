@@ -1,6 +1,7 @@
+import { isCurrentSolanaChainId } from "../../shared/solanaCurrentAuthority.mjs";
+
 export function isSolanaChainId(chainId) {
-  const id = Number(chainId);
-  return id === 101 || id === 102;
+  return isCurrentSolanaChainId(chainId);
 }
 
 export function isRobinhoodChainId(chainId) {
