@@ -2,164 +2,144 @@ name: Agent 3 ArenaMoneyV2 Devnet Reconciliation
 
 on:
   push:
-    branches:
-      - agent3/solana-arena-money-v2-reconcile-120401f
-    paths:
-      - .github/workflows/agent3-solana-arena-v2-reconcile-live.yml
+    branches: [agent3/solana-arena-money-v2-reconcile-120401f]
+    paths: [.github/workflows/agent3-solana-arena-v2-reconcile-live.yml]
   workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: agent3-arena-money-v2-reconcile-live
-  cancel-in-progress: false
-
 env:
   BASE_SHA: 120401fd1fde0dce6e2439fc4156840e029f1ae6
-  REWARDS_PROGRAM: 2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX
-  EXPECTED_PROGRAMDATA: H8DKTTSuGQQccvQ9A3DZWesxsdcw619qJnr57yHtB9ZP
-  EXPECTED_AUTHORITY: HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9
-  EXPECTED_CONFIG: Bio7bTMDLo1rYhKbR26jW98N4YvdeQW3UzUw4cHEv8xX
-  EXPECTED_GENESIS: EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG
-  LAUNCHPAD_PROGRAM: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+  EXPECTED_PROGRAM_ID: 2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX
+  ANCHOR_VERSION: 0.30.1
+  SOLANA_VERSION: 1.18.26
+  RUST_TOOLCHAIN: 1.79.0
+  IDL_RUST_TOOLCHAIN: nightly-2024-05-09
+  CARGO_NET_RETRY: 10
 
 jobs:
-  live-refresh:
-    name: Exact-current live refresh and authority discovery
+  candidate-certification:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    environment: airdrop-solana-devnet
-    env:
-      SOLANA_RPC_URL: ${{ secrets.SOLANA_REWARDS_RPC_URL || secrets.SOLANA_DEVNET_RPC || vars.SOLANA_REWARDS_RPC_URL || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
-      SOLANA_REWARDS_AUTHORITY_SECRET_KEY: ${{ secrets.SOLANA_REWARDS_AUTHORITY_SECRET_KEY }}
-      GITHUB_PUBLIC_VARS_JSON: ${{ toJson(vars) }}
+    timeout-minutes: 55
     steps:
-      - name: Checkout exact product authority
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           ref: 120401fd1fde0dce6e2439fc4156840e029f1ae6
           fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
 
-      - name: Prove exact product authority and untouched launchpad boundary
+      - name: Verify exact authority, ArenaMoneyV2 and legacy surface
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$BASE_SHA"
-          grep -F "declare_id!(\"$REWARDS_PROGRAM\")" programs/mwz_rewards_treasury/src/lib.rs
-          grep -F "mwz_rewards_treasury = \"$REWARDS_PROGRAM\"" Anchor.toml
-          grep -F "memewarzone_solana = \"$LAUNCHPAD_PROGRAM\"" Anchor.toml
-          grep -F "pub mod arena_money_v2;" programs/mwz_rewards_treasury/src/lib.rs
-          grep -F "pub fn initialize_arena_money_v2" programs/mwz_rewards_treasury/src/lib.rs
-          printf 'BASE_SHA=%s\n' "$(git rev-parse HEAD)"
+          grep -F "declare_id!(\"$EXPECTED_PROGRAM_ID\")" programs/mwz_rewards_treasury/src/lib.rs
+          for ix in initialize_arena_money_v2 set_arena_money_v2_pause set_arena_money_v2_receivers open_competition_pool_v2 deposit_competition_entry_v2 deposit_competition_boost_v2 resolve_competition_pool_v2 claim_competition_winner_v2 claim_competition_protocol_v2 initialize_postgrad_league_treasury_v2 route_competition_league_v2 claim_monthly_league_v2 claim_quarterly_league_v2 initialize_sponsorship_event_v1 pay_sponsorship_v1 claim_event_prize_v1 claim_sponsorship_marketing_v1 claim_sponsorship_protocol_v1 initialize_config initialize_lanes_v2_primary initialize_lanes_v2_secondary set_recruiter_batch_root claim_recruiter set_squad_batch_root claim_squad initialize_arena set_arena_resolver set_arena_receivers set_arena_pause open_battle_pool_v2 open_tournament_pool_v2 activate_tournament_pool_v2 deposit_stake_v2 donate_support_v2 close_support_v2 deposit_buy_in_v2 deposit_prize_boost_v2 resolve_pool_v2 cancel_pool_v2 settle_expired_pool claim_winner claim_protocol claim_mwl refund_stake refund_buy_in_v2 refund_prize_boost_v2; do
+            grep -F "pub fn $ix" programs/mwz_rewards_treasury/src/lib.rs >/dev/null || { echo "MISSING_SOURCE_IX=$ix"; exit 1; }
+          done
+          grep -F 'COMPETITION_PRIZE_BPS: u64 = 7_500' programs/mwz_rewards_treasury/src/arena_money_v2/competition.rs
+          grep -F 'COMPETITION_LEAGUE_BPS: u64 = 2_000' programs/mwz_rewards_treasury/src/arena_money_v2/competition.rs
+          grep -F 'COMPETITION_PROTOCOL_BPS: u64 = 500' programs/mwz_rewards_treasury/src/arena_money_v2/competition.rs
+          grep -F 'config.paused = true' programs/mwz_rewards_treasury/src/arena_money_v2/config.rs
+          echo SOURCE_SURFACE_OK
 
-      - name: Setup Node and exact Solana test dependencies
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - shell: bash
-        run: npm install --prefix tests/solana --no-audit --no-fund
-
-      - name: Refresh live loader state, binary hash, config and dispatcher
+      - name: Install pinned toolchains
         shell: bash
         run: |
           set -euo pipefail
-          NODE_PATH=tests/solana/node_modules node <<'NODE'
-          const crypto = require('crypto');
-          const {Connection,PublicKey,Keypair,Transaction,TransactionInstruction} = require('@solana/web3.js');
-          const expected = { genesis: process.env.EXPECTED_GENESIS, program: process.env.REWARDS_PROGRAM, programData: process.env.EXPECTED_PROGRAMDATA, authority: process.env.EXPECTED_AUTHORITY, config: process.env.EXPECTED_CONFIG, launchpad: process.env.LAUNCHPAD_PROGRAM };
-          const loader = new PublicKey('BPFLoaderUpgradeab1e11111111111111111111111');
-          const disc = (name) => crypto.createHash('sha256').update(`global:${name}`).digest().subarray(0,8);
-          function decodeSigner(raw) {
-            if (!raw) throw new Error('SOLANA_REWARDS_AUTHORITY_SECRET_KEY is unavailable in protected environment');
-            let bytes;
-            if (raw.trim().startsWith('[')) bytes = Uint8Array.from(JSON.parse(raw).map(Number));
-            else bytes = Uint8Array.from(Buffer.from(raw.trim(),'base64'));
-            if (bytes.length===64) return Keypair.fromSecretKey(bytes);
-            if (bytes.length===32) return Keypair.fromSeed(bytes);
-            throw new Error(`authority secret decodes to unexpected byte length ${bytes.length}`);
-          }
-          function decodeProgramAccount(info) {
-            if (!info || !info.executable) throw new Error('program missing/non-executable');
-            if (!info.owner.equals(loader)) throw new Error(`program loader mismatch ${info.owner.toBase58()}`);
-            const d=Buffer.from(info.data);
-            if (d.length<36 || d.readUInt32LE(0)!==2) throw new Error('unexpected upgradeable Program layout');
-            return new PublicKey(d.subarray(4,36));
-          }
-          function decodeProgramData(info) {
-            if (!info || !info.owner.equals(loader)) throw new Error('ProgramData missing/wrong owner');
-            const d=Buffer.from(info.data);
-            if (d.length<45 || d.readUInt32LE(0)!==3) throw new Error('unexpected ProgramData layout');
-            const slot=d.readBigUInt64LE(4).toString();
-            const opt=d[12];
-            if (opt!==1) throw new Error(`upgrade authority option is ${opt}, expected Some`);
-            const authority=new PublicKey(d.subarray(13,45)).toBase58();
-            const binary=d.subarray(45);
-            return {slot,authority,binary,accountBytes:d.length};
-          }
-          function pubVars() {
-            let vars={}; try { vars=JSON.parse(process.env.GITHUB_PUBLIC_VARS_JSON||'{}'); } catch {}
-            const out={};
-            for (const [k,v] of Object.entries(vars)) {
-              if (!/(ARENA|SOLANA|PROTOCOL|MARKETING|RESOLVER)/i.test(k)) continue;
-              if (/(RPC|URL|ENDPOINT|SECRET|TOKEN|PASSWORD|PRIVATE|KEYPAIR)/i.test(k)) continue;
-              if (typeof v !== 'string' || !v) continue;
-              try { out[k]=new PublicKey(v).toBase58(); } catch {}
-            }
-            console.log('PUBLIC_AUTHORITY_VARS '+JSON.stringify(out));
-          }
-          (async()=>{
-            const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
-            const genesis=await c.getGenesisHash();
-            console.log('GENESIS '+genesis);
-            if(genesis!==expected.genesis) throw new Error(`WRONG_CLUSTER ${genesis}`);
-            const signer=decodeSigner(process.env.SOLANA_REWARDS_AUTHORITY_SECRET_KEY);
-            console.log('SIGNER '+signer.publicKey.toBase58());
-            if(signer.publicKey.toBase58()!==expected.authority) throw new Error(`SIGNER_MISMATCH ${signer.publicKey.toBase58()}`);
-            console.log('SIGNER_BALANCE_LAMPORTS '+await c.getBalance(signer.publicKey,'confirmed'));
-            const pinfo=await c.getAccountInfo(new PublicKey(expected.program),'confirmed');
-            const pd=decodeProgramAccount(pinfo);
-            console.log('PROGRAMDATA '+pd.toBase58());
-            if(pd.toBase58()!==expected.programData) throw new Error(`PROGRAMDATA_MISMATCH ${pd.toBase58()}`);
-            const pdInfo=await c.getAccountInfo(pd,'confirmed');
-            const live=decodeProgramData(pdInfo);
-            console.log('DEPLOY_SLOT '+live.slot);
-            console.log('UPGRADE_AUTHORITY '+live.authority);
-            if(live.authority!==expected.authority) throw new Error(`UPGRADE_AUTHORITY_MISMATCH ${live.authority}`);
-            console.log('PROGRAMDATA_ACCOUNT_BYTES '+live.accountBytes);
-            console.log('OLD_LIVE_BINARY_SIZE '+live.binary.length);
-            console.log('OLD_LIVE_BINARY_SHA256 '+crypto.createHash('sha256').update(live.binary).digest('hex'));
-            const [config,bump]=PublicKey.findProgramAddressSync([Buffer.from('arena_money_config_v2')],new PublicKey(expected.program));
-            console.log(`CONFIG_PDA ${config.toBase58()} BUMP ${bump}`);
-            if(config.toBase58()!==expected.config || bump!==255) throw new Error('CONFIG_PDA_MISMATCH');
-            const ci=await c.getAccountInfo(config,'confirmed');
-            console.log('CONFIG_EXISTS '+Boolean(ci));
-            if(ci) throw new Error(`CONFIG_ALREADY_EXISTS owner=${ci.owner.toBase58()} bytes=${ci.data.length}`);
-            const data=Buffer.concat([disc('initialize_arena_money_v2'),Buffer.alloc(32,1),Buffer.alloc(32,2),Buffer.alloc(32,3)]);
-            const tx=new Transaction({feePayer:signer.publicKey,recentBlockhash:(await c.getLatestBlockhash('confirmed')).blockhash}).add(new TransactionInstruction({programId:new PublicKey(expected.program),keys:[],data}));
-            const sim=await c.simulateTransaction(tx,undefined,false);
-            const logs=sim.value.logs||[];
-            console.log('PRE_DISPATCH_ERR '+JSON.stringify(sim.value.err));
-            console.log('PRE_DISPATCH_LOGS '+JSON.stringify(logs.slice(-12)));
-            const text=logs.join('\n');
-            const fallback=/InstructionFallbackNotFound|Fallback functions are not supported|instruction fallback is not implemented/i.test(text);
-            const anchor101=/Error Number:\s*101|Error Code:\s*InstructionFallbackNotFound/i.test(text);
-            if(!fallback || !anchor101) throw new Error('PRE_UPGRADE_DISPATCH_NOT_EXPECTED_FALLBACK_101');
-            console.log('PRE_UPGRADE_DISPATCH FALLBACK_101_CONFIRMED');
-            const lp=await c.getAccountInfo(new PublicKey(expected.launchpad),'confirmed');
-            const lpd=decodeProgramAccount(lp);
-            const lpdInfo=await c.getAccountInfo(lpd,'confirmed');
-            const lplive=decodeProgramData(lpdInfo);
-            console.log(`LAUNCHPAD_BASELINE PROGRAMDATA ${lpd.toBase58()} SLOT ${lplive.slot} SHA256 ${crypto.createHash('sha256').update(lplive.binary).digest('hex')} SIZE ${lplive.binary.length}`);
-            pubVars();
-          })().catch(e=>{console.error('LIVE_REFRESH_BLOCKER '+(e?.stack||e));process.exit(1)});
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup toolchain install "$IDL_RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          release_dir="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
+          mkdir -p "$release_dir"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error --output /tmp/solana-release.tar.bz2 "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"
+          ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+
+      - name: Record toolchain
+        shell: bash
+        run: |
+          rustc --version
+          cargo --version
+          solana --version
+          anchor --version
+          node --version
+
+      - name: Clean build one and IDL
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf target
+          rm -f Cargo.lock programs/mwz_rewards_treasury/Cargo.lock
+          anchor build --program-name mwz_rewards_treasury --no-idl 2>&1 | tee /tmp/build1.log | tail -n 220
+          if grep -E 'Stack offset .* exceeded max offset|stack frame.*exceed' /tmp/build1.log; then exit 1; fi
+          test -s target/deploy/mwz_rewards_treasury.so
+          cp target/deploy/mwz_rewards_treasury.so /tmp/build1.so
+          echo "BUILD1_SHA256=$(sha256sum /tmp/build1.so | awk '{print $1}')"
+          echo "BUILD1_SIZE=$(stat -c %s /tmp/build1.so)"
+          cd programs/mwz_rewards_treasury
+          RUSTUP_TOOLCHAIN="$IDL_RUST_TOOLCHAIN" anchor idl build --out ../../target/idl/mwz_rewards_treasury.json 2>&1 | tee /tmp/idl1.log | tail -n 220
+          cd ../..
+          test -s target/idl/mwz_rewards_treasury.json
+          echo "IDL_SHA256=$(sha256sum target/idl/mwz_rewards_treasury.json | awk '{print $1}')"
+
+      - name: Verify generated IDL surface
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const idl=JSON.parse(fs.readFileSync('target/idl/mwz_rewards_treasury.json','utf8'));
+          const names=new Set((idl.instructions||[]).map(x=>String(x.name)));
+          const required=[
+            ['initialize_arena_money_v2','initializeArenaMoneyV2'],['set_arena_money_v2_pause','setArenaMoneyV2Pause'],['set_arena_money_v2_receivers','setArenaMoneyV2Receivers'],['open_competition_pool_v2','openCompetitionPoolV2'],['deposit_competition_entry_v2','depositCompetitionEntryV2'],['deposit_competition_boost_v2','depositCompetitionBoostV2'],['resolve_competition_pool_v2','resolveCompetitionPoolV2'],['claim_competition_winner_v2','claimCompetitionWinnerV2'],['claim_competition_protocol_v2','claimCompetitionProtocolV2'],['initialize_postgrad_league_treasury_v2','initializePostgradLeagueTreasuryV2'],['route_competition_league_v2','routeCompetitionLeagueV2'],['claim_monthly_league_v2','claimMonthlyLeagueV2'],['claim_quarterly_league_v2','claimQuarterlyLeagueV2'],['initialize_sponsorship_event_v1','initializeSponsorshipEventV1'],['pay_sponsorship_v1','paySponsorshipV1'],['claim_event_prize_v1','claimEventPrizeV1'],['claim_sponsorship_marketing_v1','claimSponsorshipMarketingV1'],['claim_sponsorship_protocol_v1','claimSponsorshipProtocolV1'],['initialize_arena','initializeArena'],['open_battle_pool_v2','openBattlePoolV2'],['open_tournament_pool_v2','openTournamentPoolV2'],['deposit_buy_in_v2','depositBuyInV2'],['claim_winner','claimWinner'],['claim_protocol','claimProtocol'],['claim_mwl','claimMwl'],['set_recruiter_batch_root','setRecruiterBatchRoot'],['claim_recruiter','claimRecruiter'],['set_squad_batch_root','setSquadBatchRoot'],['claim_squad','claimSquad']
+          ];
+          for(const a of required) if(!a.some(n=>names.has(n))) throw new Error('IDL missing '+a[0]);
+          console.log('IDL_INSTRUCTION_COUNT='+names.size);
+          console.log('IDL_SURFACE_OK');
           NODE
 
-      - name: Discover exact-current ArenaMoney application/config authority references
+      - name: Rewards treasury authoritative Rust tests
+        run: cargo test -p mwz_rewards_treasury --lib -- --nocapture
+
+      - name: ArenaMoney and current Solana runtime tests
         shell: bash
         run: |
           set -euo pipefail
-          echo '--- ARENA MONEY REFERENCES OUTSIDE PROGRAM ---'
-          grep -RInE 'arena_money_v2|ArenaMoneyV2|open_competition_pool_v2|deposit_competition_entry_v2|arena_competition_v2' frontend realtime-indexer services tests scripts .github 2>/dev/null | head -n 240 || true
-          echo '--- RECEIVER / RESOLVER REFERENCES ---'
-          grep -RInE 'marketing_receiver|protocol_receiver|ARENA.*RESOLVER|ARENA.*PROTOCOL|ARENA.*MARKETING|SOLANA.*RESOLVER|SOLANA.*PROTOCOL|SOLANA.*MARKETING' frontend realtime-indexer services tests scripts config .github 2>/dev/null | head -n 240 || true
+          npm install --no-audit --no-fund
+          npm install --prefix frontend --no-audit --no-fund
+          npx hardhat test test/ArenaMoneyV2.spec.ts test/ArenaWarPoolTreasury.spec.ts
+          node --test frontend/api/lib/solanaArenaMoneyV2Runtime.test.mjs frontend/api/lib/arenaTournamentV2Certification.test.mjs frontend/api/lib/arenaSolanaNormalBoostAuthority.test.mjs frontend/src/lib/arena/solanaArenaPaymentLifecycle.test.mjs
+
+      - name: Clean build two and prove byte reproducibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf target
+          rm -f Cargo.lock programs/mwz_rewards_treasury/Cargo.lock
+          anchor build --program-name mwz_rewards_treasury --no-idl 2>&1 | tee /tmp/build2.log | tail -n 220
+          if grep -E 'Stack offset .* exceeded max offset|stack frame.*exceed' /tmp/build2.log; then exit 1; fi
+          test -s target/deploy/mwz_rewards_treasury.so
+          echo "BUILD2_SHA256=$(sha256sum target/deploy/mwz_rewards_treasury.so | awk '{print $1}')"
+          echo "BUILD2_SIZE=$(stat -c %s target/deploy/mwz_rewards_treasury.so)"
+          cmp -s /tmp/build1.so target/deploy/mwz_rewards_treasury.so || { echo CANDIDATE_NOT_REPRODUCIBLE; exit 1; }
+          echo CANDIDATE_REPRODUCIBLE
+          cd programs/mwz_rewards_treasury
+          RUSTUP_TOOLCHAIN="$IDL_RUST_TOOLCHAIN" anchor idl build --out ../../target/idl/mwz_rewards_treasury.json >/tmp/idl2.log 2>&1
+          cd ../..
+          echo "FINAL_IDL_SHA256=$(sha256sum target/idl/mwz_rewards_treasury.json | awk '{print $1}')"
+          echo "ECONOMICS=7500/2000/500"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent3-certified-rewards-120401fd
+          path: |
+            target/deploy/mwz_rewards_treasury.so
+            target/idl/mwz_rewards_treasury.json
+          retention-days: 7
+          if-no-files-found: error
