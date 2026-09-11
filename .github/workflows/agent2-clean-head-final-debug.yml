@@ -12,223 +12,43 @@ permissions:
 
 env:
   TARGET_SHA: f18505e39186a5fa73fd89f00b242b94782f2f2c
-  BASE_SHA: 120401fd1fde0dce6e2439fc4156840e029f1ae6
-  PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
-  EXPECTED_CANDIDATE_SHA: 27ad65b560dba8a33330bd95f08ae7ca6945f71ebf667a5a3756ae0cb9f7f080
-  EXPECTED_CANDIDATE_BYTES: "1165328"
   OPERATOR_PUBKEY: HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9
 
 jobs:
-  fund_operator:
+  scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment: airdrop-solana-devnet
-    env:
-      SOLANA_REWARDS_AUTHORITY_SECRET_KEY: ${{ secrets.SOLANA_REWARDS_AUTHORITY_SECRET_KEY }}
-      SOLANA_REWARDS_RPC_URL: ${{ secrets.SOLANA_REWARDS_RPC_URL }}
-      SOLANA_REWARDS_TREASURY_PROGRAM_ID: ${{ vars.SOLANA_REWARDS_TREASURY_PROGRAM_ID }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ env.TARGET_SHA }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Install minimal Solana client
-        run: npm ci --prefix frontend --ignore-scripts --no-audit --no-fund
-      - name: Verify authorized devnet rewards signer and top up launchpad operator
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "${SOLANA_REWARDS_AUTHORITY_SECRET_KEY:-}"
-          test -n "${SOLANA_REWARDS_RPC_URL:-}"
-          test -n "${SOLANA_REWARDS_TREASURY_PROGRAM_ID:-}"
-          node - <<'NODE'
-          const {Connection,Keypair,PublicKey,SystemProgram,Transaction}=require('./frontend/node_modules/@solana/web3.js');
-          const raw=String(process.env.SOLANA_REWARDS_AUTHORITY_SECRET_KEY||'').trim();
-          let bytes;
-          if(raw.startsWith('[')) bytes=Uint8Array.from(JSON.parse(raw).map(Number));
-          else bytes=Uint8Array.from(Buffer.from(raw,'base64'));
-          const signer=bytes.length===64?Keypair.fromSecretKey(bytes):bytes.length===32?Keypair.fromSeed(bytes):null;
-          if(!signer) throw new Error(`rewards authority secret decoded to ${bytes.length} bytes`);
-          const rpc=String(process.env.SOLANA_REWARDS_RPC_URL).split(',').map(x=>x.trim()).find(Boolean);
-          const c=new Connection(rpc,'confirmed');
-          const rewardsProgram=new PublicKey(process.env.SOLANA_REWARDS_TREASURY_PROGRAM_ID);
-          const [config]=PublicKey.findProgramAddressSync([Buffer.from('rewards_config')],rewardsProgram);
-          const operator=new PublicKey(process.env.OPERATOR_PUBKEY);
-          (async()=>{
-            const genesis=await c.getGenesisHash();
-            if(genesis!=='EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG') throw new Error(`funding RPC is not devnet: ${genesis}`);
-            const info=await c.getAccountInfo(config,'confirmed');
-            if(!info||info.data.length<44) throw new Error('RewardsConfig missing or malformed');
-            const configuredAuthority=new PublicKey(info.data.subarray(8,40));
-            if(!configuredAuthority.equals(signer.publicKey)) throw new Error(`RewardsConfig authority mismatch ${configuredAuthority.toBase58()}`);
-            const operatorBefore=await c.getBalance(operator,'confirmed');
-            const signerBefore=await c.getBalance(signer.publicKey,'confirmed');
-            const target=200_000_000;
-            const delta=Math.max(0,target-operatorBefore);
-            console.log('REWARDS_AUTHORITY',signer.publicKey.toBase58());
-            console.log('REWARDS_CONFIG',config.toBase58());
-            console.log('OPERATOR_BEFORE',operatorBefore);
-            console.log('REWARDS_AUTHORITY_BALANCE_BEFORE',signerBefore);
-            if(delta===0){console.log('FUNDING_NOT_REQUIRED');return;}
-            const reserve=100_000_000;
-            if(signerBefore<delta+reserve) throw new Error(`authorized rewards signer underfunded: balance=${signerBefore} need=${delta+reserve}`);
-            const latest=await c.getLatestBlockhash('confirmed');
-            const tx=new Transaction({feePayer:signer.publicKey,recentBlockhash:latest.blockhash}).add(SystemProgram.transfer({fromPubkey:signer.publicKey,toPubkey:operator,lamports:delta}));
-            tx.sign(signer);
-            const sig=await c.sendRawTransaction(tx.serialize(),{skipPreflight:false,maxRetries:3});
-            const conf=await c.confirmTransaction({signature:sig,...latest},'confirmed');
-            if(conf.value.err) throw new Error(`funding confirmation failed ${JSON.stringify(conf.value.err)}`);
-            const operatorAfter=await c.getBalance(operator,'confirmed');
-            console.log('OPERATOR_FUNDING_TX',sig);
-            console.log('OPERATOR_AFTER',operatorAfter);
-            if(operatorAfter<target-10_000) throw new Error(`operator top-up incomplete ${operatorAfter}`);
-          })().catch(e=>{console.error(e);process.exit(1)});
-          NODE
-
-  golden:
-    needs: fund_operator
-    runs-on: ubuntu-latest
-    timeout-minutes: 55
+    timeout-minutes: 10
     environment: testnet-certification
     env:
       SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
-      SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER }}
       SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.TARGET_SHA }}
-          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-
-      - name: Prove exact target and one-file production scope
+      - run: npm install --prefix tests/solana --no-audit --no-fund
+      - name: Read-only route signer and operator balance scan
         shell: bash
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
-          test "$(git merge-base HEAD "$BASE_SHA")" = "$BASE_SHA"
-          test "$(git diff --name-only "$BASE_SHA"..HEAD | tr '\n' ' ')" = "tools/solana-meteora-graduation/graduate-basic-quote.mjs "
-          test -z "$(git diff --name-only "$BASE_SHA"..HEAD -- programs/memewarzone_solana programs/mwz_rewards_treasury | tr -d '\n')"
-          echo "EXACT_TARGET=$TARGET_SHA"
-          echo "PROGRAM_SOURCE_CHANGED=NO"
-
-      - name: Install frozen Solana toolchain and runtime dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          rustup toolchain install 1.79.0 --profile minimal
-          rustup default 1.79.0
-          release_dir="$HOME/.local/share/solana/install/releases/v1.18.26"
-          mkdir -p "$release_dir"
-          curl --fail --location --retry 5 --retry-all-errors --silent --show-error --output /tmp/solana-release.tar.bz2 "https://github.com/solana-labs/solana/releases/download/v1.18.26/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
-          tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
-          mkdir -p "$HOME/.local/share/solana/install"
-          ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
-          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
-          export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
-          npm install --global --silent @coral-xyz/anchor-cli@0.30.1
-          mkdir -p "$HOME/.config/solana"
-          solana-keygen new --no-bip39-passphrase --silent --force --outfile "$HOME/.config/solana/id.json"
-          npm install --prefix tests/solana --no-audit --no-fund
-          npm ci --prefix frontend --no-audit --no-fund
-          rustup toolchain install nightly-2024-05-09 --profile minimal
-          mkdir -p target/idl
-          (cd programs/memewarzone_solana && RUSTUP_TOOLCHAIN=nightly-2024-05-09 anchor idl build --out ../../target/idl/memewarzone_solana.json)
-
-      - name: Reproduce candidate and prove live devnet binary match
-        shell: bash
-        run: |
-          set -euo pipefail
-          export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
-          isolated="$RUNNER_TEMP/mwz-agent2-final-candidate"
-          mkdir -p "$isolated"
-          CARGO_TARGET_DIR="$isolated" anchor build --program-name memewarzone_solana --no-idl
-          candidate="$isolated/deploy/memewarzone_solana.so"
-          candidate_sha="$(sha256sum "$candidate" | awk '{print $1}')"
-          candidate_bytes="$(wc -c < "$candidate" | tr -d ' ')"
-          test "$candidate_sha" = "$EXPECTED_CANDIDATE_SHA"
-          test "$candidate_bytes" = "$EXPECTED_CANDIDATE_BYTES"
-          solana program show "$PROGRAM_ID" --url "$SOLANA_RPC_URL" --output json | tee /tmp/program.json
-          solana program dump "$PROGRAM_ID" /tmp/live.so --url "$SOLANA_RPC_URL"
-          live_sha="$(sha256sum /tmp/live.so | awk '{print $1}')"
-          live_bytes="$(wc -c < /tmp/live.so | tr -d ' ')"
-          test "$live_sha" = "$EXPECTED_CANDIDATE_SHA"
-          test "$live_bytes" = "$EXPECTED_CANDIDATE_BYTES"
-          echo "CANDIDATE_SHA=$candidate_sha"
-          echo "LIVE_SHA=$live_sha"
-          echo "LIVE_BINARY_MATCH=YES"
-
-      - name: Materialize authorized operator and route signer
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "${SOLANA_DEVNET_PAYER:-}"
           test -n "${SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY:-}"
-          operator_file="${RUNNER_TEMP}/operator.json"
-          route_file="${RUNNER_TEMP}/route.json"
-          SOLANA_GRADUATION_OPERATOR_KEYPAIR="$operator_file" node scripts/solana/materialize-devnet-payer.mjs
-          ROUTE_FILE="$route_file" python3 - <<'PY'
-          import json, os
-          value=json.loads(os.environ['SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY'])
-          assert isinstance(value,list) and len(value)==64
-          with open(os.environ['ROUTE_FILE'],'w') as h: json.dump(value,h)
-          PY
-          echo "SOLANA_OPERATOR_KEYPAIR=$operator_file" >> "$GITHUB_ENV"
-          echo "SOLANA_NEW_ROUTE_SIGNER_KEYPAIR=$route_file" >> "$GITHUB_ENV"
-          OPERATOR_FILE="$operator_file" node - <<'NODE'
-          const fs=require('fs');const {Connection,Keypair}=require('./tests/solana/node_modules/@solana/web3.js');
-          const kp=Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(process.env.OPERATOR_FILE,'utf8'))));
+          node - <<'NODE'
+          const {Connection,Keypair,PublicKey}=require('./tests/solana/node_modules/@solana/web3.js');
+          const raw=JSON.parse(process.env.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY);
+          if(!Array.isArray(raw)||raw.length!==64) throw new Error('route signer secret shape invalid');
+          const route=Keypair.fromSecretKey(Uint8Array.from(raw));
+          const operator=new PublicKey(process.env.OPERATOR_PUBKEY);
           const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
-          (async()=>{const genesis=await c.getGenesisHash();if(genesis!=='EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG')throw new Error(`wrong cluster ${genesis}`);if(kp.publicKey.toBase58()!==process.env.OPERATOR_PUBKEY)throw new Error(`wrong operator ${kp.publicKey}`);const balance=await c.getBalance(kp.publicKey,'confirmed');console.log('OPERATOR',kp.publicKey.toBase58());console.log('OPERATOR_BALANCE',balance);if(balance<185_000_000)throw new Error(`operator not sufficiently funded ${balance}`);})().catch(e=>{console.error(e);process.exit(1)});
+          (async()=>{
+            const genesis=await c.getGenesisHash();
+            if(genesis!=='EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG') throw new Error(`wrong cluster ${genesis}`);
+            console.log('EXACT_TARGET',process.env.TARGET_SHA);
+            console.log('ROUTE_SIGNER',route.publicKey.toBase58());
+            console.log('ROUTE_SIGNER_BALANCE',await c.getBalance(route.publicKey,'confirmed'));
+            console.log('OPERATOR',operator.toBase58());
+            console.log('OPERATOR_BALANCE',await c.getBalance(operator,'confirmed'));
+          })().catch(e=>{console.error(e);process.exit(1)});
           NODE
-
-      - name: Build disposable exact-head golden harness
-        shell: bash
-        run: |
-          set -euo pipefail
-          h=ad4133dddf9f6033a7ef3af36b196ba080863918
-          curl -fsSL "https://raw.githubusercontent.com/uptokendev/MemeWarzone/$h/tests/solana/candidate-wallet-golden-devnet.cjs" -o tests/solana/candidate-wallet-golden-devnet.cjs
-          curl -fsSL "https://raw.githubusercontent.com/uptokendev/MemeWarzone/$h/tests/solana/candidate-wallet-middle-devnet.cjs" -o tests/solana/candidate-wallet-middle-devnet.cjs
-          curl -fsSL "https://raw.githubusercontent.com/uptokendev/MemeWarzone/$h/tests/solana/patch-candidate-wallet-p1.py" -o /tmp/p1.py
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('/tmp/p1.py')
-          p.write_text(p.read_text().replace('\npatch_fixture()\npatch_graduation()\n','\n'))
-          PY
-          python3 /tmp/p1.py
-          python3 - <<'PY'
-          from pathlib import Path
-          p=Path('tests/solana/candidate-wallet-golden-devnet.cjs')
-          s=p.read_text()
-          old='async function setupWallet(program,connection,operator,globalConfig,clusterId,label){const keypair=Keypair.generate();await sendControl(connection,operator,[SystemProgram.transfer({fromPubkey:operator.publicKey,toPubkey:keypair.publicKey,lamports:100_000_000})]);'
-          new='async function setupWallet(program,connection,operator,globalConfig,clusterId,label){const keypair=Keypair.generate();const fundingLamports=label==="creator"?115_000_000:5_000_000;await sendControl(connection,operator,[SystemProgram.transfer({fromPubkey:operator.publicKey,toPubkey:keypair.publicKey,lamports:fundingLamports})]);'
-          if old not in s: raise SystemExit('setupWallet funding patch target missing')
-          p.write_text(s.replace(old,new,1))
-          PY
-          curl -fsSL "https://raw.githubusercontent.com/uptokendev/MemeWarzone/f5e2fd222a42851b8e3fcc041d1ad6dac0025463/tests/solana/agent2-final-golden-expiry-patch.py" -o /tmp/expiry.py
-          python3 /tmp/expiry.py
-
-      - name: Execute exact clean head final golden
-        shell: bash
-        run: |
-          set -o pipefail
-          SOLANA_GOLDEN_ONLY_FINAL=1 SOLANA_GOLDEN_REPORT=/tmp/report.json node tests/solana/candidate-wallet-golden-devnet.cjs > /tmp/run.log 2>&1
-          rc=$?
-          cat /tmp/run.log
-          if [ -f /tmp/report.json ]; then cat /tmp/report.json; fi
-          exit $rc
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: agent2-exact-head-funded-golden-${{ github.sha }}
-          path: |
-            /tmp/run.log
-            /tmp/report.json
-            /tmp/program.json
-          if-no-files-found: warn
-          retention-days: 14
