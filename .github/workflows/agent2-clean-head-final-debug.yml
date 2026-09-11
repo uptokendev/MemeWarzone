@@ -1,0 +1,105 @@
+name: Agent 2 exact clean head final golden debug
+
+on:
+  push:
+    branches:
+      - agent2/cert-solana-native-f18505e
+    paths:
+      - .github/workflows/agent2-clean-head-final-debug.yml
+
+permissions:
+  contents: read
+
+env:
+  TARGET_SHA: f18505e39186a5fa73fd89f00b242b94782f2f2c
+  BASE_SHA: 120401fd1fde0dce6e2439fc4156840e029f1ae6
+  SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
+  SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER }}
+  SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
+
+jobs:
+  golden:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: testnet-certification
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prove target and install
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          test "$(git merge-base HEAD "$BASE_SHA")" = "$BASE_SHA"
+          test "$(git diff --name-only "$BASE_SHA"..HEAD | tr '\n' ' ')" = "tools/solana-meteora-graduation/graduate-basic-quote.mjs "
+          npm install --prefix tests/solana --no-audit --no-fund
+          npm ci --prefix frontend --no-audit --no-fund
+          npm install --global --silent @coral-xyz/anchor-cli@0.30.1
+          rustup toolchain install nightly-2024-05-09 --profile minimal
+          mkdir -p target/idl
+          (cd programs/memewarzone_solana && RUSTUP_TOOLCHAIN=nightly-2024-05-09 anchor idl build --out ../../target/idl/memewarzone_solana.json)
+      - name: Materialize signers
+        shell: bash
+        run: |
+          set -euo pipefail
+          operator_file="${RUNNER_TEMP}/operator.json"
+          route_file="${RUNNER_TEMP}/route.json"
+          SOLANA_GRADUATION_OPERATOR_KEYPAIR="$operator_file" node scripts/solana/materialize-devnet-payer.mjs
+          ROUTE_FILE="$route_file" python3 - <<'PY'
+          import json, os
+          value=json.loads(os.environ['SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY'])
+          assert isinstance(value,list) and len(value)==64
+          with open(os.environ['ROUTE_FILE'],'w') as h: json.dump(value,h)
+          PY
+          route_pubkey="$(ROUTE_FILE="$route_file" node - <<'NODE'
+          const fs=require('fs');const {Keypair}=require('./tests/solana/node_modules/@solana/web3.js');
+          process.stdout.write(Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(process.env.ROUTE_FILE,'utf8')))).publicKey.toBase58());
+          NODE
+          )"
+          echo "SOLANA_OPERATOR_KEYPAIR=$operator_file" >> "$GITHUB_ENV"
+          echo "SOLANA_NEW_ROUTE_SIGNER_KEYPAIR=$route_file" >> "$GITHUB_ENV"
+          echo "SOLANA_ROUTE_SIGNER_PUBLIC_KEY=$route_pubkey" >> "$GITHUB_ENV"
+          echo "ROUTE_SIGNER=$route_pubkey"
+      - name: Build disposable harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          h=ad4133dddf9f6033a7ef3af36b196ba080863918
+          curl -fsSL "https://raw.githubusercontent.com/uptokendev/MemeWarzone/$h/tests/solana/candidate-wallet-golden-devnet.cjs" -o tests/solana/candidate-wallet-golden-devnet.cjs
+          curl -fsSL "https://raw.githubusercontent.com/uptokendev/MemeWarzone/$h/tests/solana/candidate-wallet-middle-devnet.cjs" -o tests/solana/candidate-wallet-middle-devnet.cjs
+          curl -fsSL "https://raw.githubusercontent.com/uptokendev/MemeWarzone/$h/tests/solana/patch-candidate-wallet-p1.py" -o /tmp/p1.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/p1.py'); p.write_text(p.read_text().replace('\npatch_fixture()\npatch_graduation()\n','\n'))
+          g=Path('tests/solana/candidate-wallet-golden-devnet.cjs')
+          PY
+          python3 /tmp/p1.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('tests/solana/candidate-wallet-golden-devnet.cjs'); s=p.read_text(); p.write_text(s.replace('lamports:100_000_000','lamports:200_000_000'))
+          PY
+          curl -fsSL "https://raw.githubusercontent.com/uptokendev/MemeWarzone/f5e2fd222a42851b8e3fcc041d1ad6dac0025463/tests/solana/agent2-final-golden-expiry-patch.py" -o /tmp/expiry.py
+          python3 /tmp/expiry.py
+      - name: Execute and capture all output
+        shell: bash
+        run: |
+          set -o pipefail
+          SOLANA_GOLDEN_ONLY_FINAL=1 SOLANA_GOLDEN_REPORT=/tmp/report.json node tests/solana/candidate-wallet-golden-devnet.cjs > /tmp/run.log 2>&1
+          rc=$?
+          cat /tmp/run.log
+          if [ -f /tmp/report.json ]; then cat /tmp/report.json; fi
+          exit $rc
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent2-clean-final-debug-${{ github.sha }}
+          path: |
+            /tmp/run.log
+            /tmp/report.json
+          if-no-files-found: warn
+          retention-days: 14
