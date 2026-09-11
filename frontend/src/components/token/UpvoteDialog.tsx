@@ -98,10 +98,12 @@ export function UpvoteDialog({
   const { toast } = useToast();
   const wallet = useWallet();
   const solanaWallet = useSolanaWallet();
+  const legacySolanaChain = Number(chainIdOverride) === 102;
 
+  // Address recognition remains useful for rendering historical Solana rows, but
+  // legacy product chain 102 can never authorize a current paid vote.
   const isSolanaCampaign =
     isSolanaChainId(Number(chainIdOverride)) ||
-    Number(chainIdOverride) === 102 ||
     isSolanaAddress(voteIdentity);
 
   const chainId = isSolanaCampaign
@@ -362,7 +364,8 @@ export function UpvoteDialog({
   ]);
 
   const canUpvote = Boolean(
-    treasuryAddress &&
+    !legacySolanaChain &&
+      treasuryAddress &&
       voteIdentity &&
       priceReady &&
       !insufficient &&
@@ -378,6 +381,9 @@ export function UpvoteDialog({
       throw new Error(ABORT);
     };
 
+    if (legacySolanaChain) {
+      fail("UpVote unavailable", "Legacy Solana chain 102 cannot authorize a current paid UpVote.");
+    }
     if (!treasuryAddress) {
       fail(`${voteLabel}s are temporarily unavailable`, `${voteLabel}s can’t be processed on Solana right now. Please try again later.`);
     }
@@ -554,6 +560,10 @@ export function UpvoteDialog({
   const handleUpvote = async () => {
     try {
       setSubmitting(true);
+      if (legacySolanaChain) {
+        toast({ title: "UpVote unavailable", description: "Legacy Solana chain 102 cannot authorize a current paid UpVote." });
+        return;
+      }
       if (isSolanaCampaign) await handleSolanaUpvote();
       else await handleEvmUpvote();
     } catch (e: unknown) {
@@ -578,7 +588,8 @@ export function UpvoteDialog({
           variant={buttonVariant}
           size={buttonSize}
           className={className}
-          title={!treasuryAddress ? `${voteLabel}s are temporarily unavailable` : voteLabel}
+          disabled={legacySolanaChain}
+          title={legacySolanaChain ? "Legacy Solana chain 102 is read-only." : !treasuryAddress ? `${voteLabel}s are temporarily unavailable` : voteLabel}
         >
           {voteLabel}
         </Button>
