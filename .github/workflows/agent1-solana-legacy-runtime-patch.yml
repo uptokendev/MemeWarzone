@@ -1,0 +1,102 @@
+name: Agent 1 legacy Solana runtime patch
+
+on:
+  push:
+    branches:
+      - agent1/solana-102-authority-elimination-120401f
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[legacy-runtime-patch]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Patch only remaining current-authority selectors
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          edits = {
+            'frontend/api/arenaSolanaBoosts.js': [
+              ('function validateSolanaChain(chainId) { return [101, 102].includes(Number(chainId)); }',
+               'function validateSolanaChain(chainId) { return Number(chainId) === 101; }', 1),
+            ],
+            'frontend/api/lib/solanaArenaMoneyV2Runtime.mjs': [
+              ('if (![101, 102].includes(chain)) throw new Error("Solana Arena Money V2 only supports chain 101/102");',
+               'if (chain !== 101) throw new Error("Solana Arena Money V2 current authority requires chain 101");', 1),
+            ],
+            'frontend/src/components/arena/BattleBoostPanel.tsx': [
+              ('const SOLANA_ARENA_CHAIN_IDS = new Set([101, 102]);',
+               'const SOLANA_ARENA_CHAIN_IDS = new Set([101]);', 1),
+            ],
+            'frontend/src/lib/arena/eventSponsorshipClient.ts': [
+              ('function isSolana(chainId: number) { return Number(chainId) === 101 || Number(chainId) === 102; }',
+               'function isSolana(chainId: number) { return Number(chainId) === 101; }', 1),
+            ],
+            'frontend/src/lib/arena/solanaWarzoneEscrow.ts': [
+              ('return isSolanaChainId(id) || id === 102;',
+               'return isSolanaChainId(id);', 1),
+            ],
+            'frontend/src/lib/chainConfig.ts': [
+              ('if (isSolanaChainId(chainId) || Number(chainId) === 102) {',
+               'if (isSolanaChainId(chainId)) {', 2),
+            ],
+            'frontend/api/lib/solanaRewardLane.js': [
+              ('if (![101, 102].includes(cid)) throw new Error("Solana lane publisher only supports chain 101/102");',
+               'if (cid !== 101) throw new Error("Solana reward lane publisher requires canonical chain 101");', 1),
+            ],
+            'realtime-indexer/src/jobs/finalizeEpochWinners.ts': [
+              ('return Number(chainId) === 101 || Number(chainId) === 102;',
+               'return Number(chainId) === 101;', 1),
+              ('// Testnet only when explicitly set, e.g. LEAGUE_CHAINS=97,102',
+               '// BNB testnet remains opt-in. Legacy Solana chain identity is not current League authority.', 1),
+              ('.filter((n) => Number.isFinite(n));',
+               '.filter((n) => Number.isFinite(n) && n !== 102);', 1),
+            ],
+          }
+
+          for filename, replacements in edits.items():
+            path = Path(filename)
+            text = path.read_text()
+            for old, new, expected in replacements:
+              actual = text.count(old)
+              if actual != expected:
+                raise SystemExit(f'{filename}: expected {expected} occurrence(s) of {old!r}, found {actual}')
+              text = text.replace(old, new)
+            path.write_text(text)
+
+          test_path = Path('frontend/shared/solanaCurrentArenaAuthority.test.mjs')
+          test_text = test_path.read_text()
+          marker = 'test("remaining Solana money selectors reject legacy application identity before payment authority", async () => {'
+          if marker not in test_text:
+            test_text += '''\n\ntest("remaining Solana money selectors reject legacy application identity before payment authority", async () => {\n  const boosts = await source("frontend/api/arenaSolanaBoosts.js");\n  const runtime = await source("frontend/api/lib/solanaArenaMoneyV2Runtime.mjs");\n  const panel = await source("frontend/src/components/arena/BattleBoostPanel.tsx");\n  const sponsorship = await source("frontend/src/lib/arena/eventSponsorshipClient.ts");\n  const escrow = await source("frontend/src/lib/arena/solanaWarzoneEscrow.ts");\n  const chainConfig = await source("frontend/src/lib/chainConfig.ts");\n  const rewardLane = await source("frontend/api/lib/solanaRewardLane.js");\n  const leagueFinalizer = await source("realtime-indexer/src/jobs/finalizeEpochWinners.ts");\n\n  assert.match(boosts, /validateSolanaChain\\(chainId\\) \\{ return Number\\(chainId\\) === 101; \\}/);\n  assert.doesNotMatch(boosts, /\\[101, 102\\]\\.includes\\(Number\\(chainId\\)\\)/);\n  assert.match(runtime, /if \\(chain !== 101\\) throw new Error\\("Solana Arena Money V2 current authority requires chain 101"\\)/);\n  assert.match(panel, /SOLANA_ARENA_CHAIN_IDS = new Set\\(\\[101\\]\\)/);\n  assert.match(sponsorship, /function isSolana\\(chainId: number\\) \\{ return Number\\(chainId\\) === 101; \\}/);\n  assert.doesNotMatch(escrow, /id === 102/);\n  assert.doesNotMatch(chainConfig, /isSolanaChainId\\(chainId\\) \\|\\| Number\\(chainId\\) === 102/);\n  assert.match(rewardLane, /if \\(cid !== 101\\) throw new Error\\("Solana reward lane publisher requires canonical chain 101"\\)/);\n  assert.doesNotMatch(rewardLane, /\\[101, 102\\]\\.includes\\(cid\\)/);\n  assert.match(leagueFinalizer, /return Number\\(chainId\\) === 101;/);\n  assert.match(leagueFinalizer, /n !== 102/);\n});\n'''
+            test_path.write_text(test_text)
+          PY
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend --no-audit --no-fund
+      - name: Focused authority tests
+        run: node --test frontend/shared/solanaCurrentAuthority.test.mjs frontend/shared/solanaCurrentArenaAuthority.test.mjs frontend/api/dev-fix/ticker-reservation-service.test.mjs
+      - name: Focused lint
+        run: |
+          cd frontend
+          npx eslint api/arenaSolanaBoosts.js api/lib/solanaArenaMoneyV2Runtime.mjs api/lib/solanaRewardLane.js shared/solanaCurrentArenaAuthority.test.mjs src/components/arena/BattleBoostPanel.tsx src/lib/arena/eventSponsorshipClient.ts src/lib/arena/solanaWarzoneEscrow.ts src/lib/chainConfig.ts
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add frontend/api/arenaSolanaBoosts.js frontend/api/lib/solanaArenaMoneyV2Runtime.mjs frontend/api/lib/solanaRewardLane.js frontend/shared/solanaCurrentArenaAuthority.test.mjs frontend/src/components/arena/BattleBoostPanel.tsx frontend/src/lib/arena/eventSponsorshipClient.ts frontend/src/lib/arena/solanaWarzoneEscrow.ts frontend/src/lib/chainConfig.ts realtime-indexer/src/jobs/finalizeEpochWinners.ts
+          git diff --cached --check
+          git commit -m "fix(agent1-final): close legacy Solana runtime selectors [legacy-runtime-patch]"
+          git push origin HEAD:agent1/solana-102-authority-elimination-120401f
