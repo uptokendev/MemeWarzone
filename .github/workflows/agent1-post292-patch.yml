@@ -1,0 +1,206 @@
+name: Agent 1 Post-292 Patch Runner
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent1/finish-solana-102-elimination-a5cfa696
+          fetch-depth: 0
+      - name: Apply focused authority fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new):
+              p=Path(path); s=p.read_text()
+              if old not in s: raise SystemExit(f'missing pattern in {path}: {old[:120]!r}')
+              p.write_text(s.replace(old,new,1))
+
+          # Arena layout: application chain remains 101; environment + cluster select genesis.
+          p=Path('frontend/src/lib/solanaArenaLayout.mjs'); s=p.read_text()
+          s='import { resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";\n\n'+s
+          s=s.replace('export const SOLANA_GENESIS = Object.freeze({\n  101: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKvcnbdEad4t",\n  102: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wavy2uVvL2jH",\n});\n\nexport function isSolanaWarzoneChainId(chainId) {\n  const id = Number(chainId);\n  return id === 101 || id === 102;\n}\n\nexport function expectedGenesisHash(chainId) {\n  return SOLANA_GENESIS[Number(chainId)] || "";\n}', 'export const SOLANA_GENESIS_BY_CLUSTER = Object.freeze({\n  devnet: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wavy2uVvL2jH",\n  "mainnet-beta": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKvcnbdEad4t",\n});\n\nexport function isSolanaWarzoneChainId(chainId) {\n  return Number(chainId) === 101;\n}\n\nexport function expectedGenesisHash(chainId, environment, cluster) {\n  const authority = resolveCurrentSolanaAuthority({ chainId, environment, cluster });\n  return authority ? SOLANA_GENESIS_BY_CLUSTER[authority.cluster] || "" : "";\n}')
+          s=s.replace('export function validateCanonicalArenaConfig({ account, owner, genesisHash, chainId, PublicKey }) {\n  const expectedOwner = REWARDS_TREASURY_PROGRAM_ID;\n  const expectedGenesis = expectedGenesisHash(chainId);\n  if (expectedGenesis && String(genesisHash || "") !== expectedGenesis) {', 'export function validateCanonicalArenaConfig({ account, owner, genesisHash, chainId, environment, cluster, PublicKey }) {\n  const expectedOwner = REWARDS_TREASURY_PROGRAM_ID;\n  const expectedGenesis = expectedGenesisHash(chainId, environment, cluster);\n  if (!expectedGenesis) return { live: false, reason: "current-authority-invalid" };\n  if (String(genesisHash || "") !== expectedGenesis) {')
+          p.write_text(s)
+
+          # Arena reader passes explicit runtime identity.
+          replace('frontend/api/lib/solanaArenaPoolRead.js', '      chainId: id,\n      PublicKey,', '      chainId: id,\n      environment: env("RUNTIME_ENVIRONMENT", "SOLANA_ENVIRONMENT", "VITE_RUNTIME_ENVIRONMENT"),\n      cluster: env("SOLANA_CLUSTER", "VITE_SOLANA_CLUSTER"),\n      PublicKey,')
+
+          # Trading authorization uses current authority, not address-family helper.
+          replace('frontend/api/dev-fix/solana-trade-authorization-v1.js', 'import { badMethod, isSolanaChain, json, readJson, isSolanaAddress } from "../../server/http.js";', 'import { badMethod, json, readJson, isSolanaAddress } from "../../server/http.js";\nimport { resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";')
+          replace('frontend/api/dev-fix/solana-trade-authorization-v1.js', '    if (!isSolanaChain(chainId)) {\n      throw new SolanaTradeAuthorizationError("chainId must be a Solana chain (101).", {\n        code: "NOT_A_SOLANA_CHAIN",\n        httpStatus: 400,\n      });\n    }', '    const solanaAuthority = resolveCurrentSolanaAuthority({\n      chainId,\n      environment: body.environment || process.env.RUNTIME_ENVIRONMENT || process.env.SOLANA_ENVIRONMENT || "",\n      cluster: body.solanaCluster || body.cluster || process.env.SOLANA_CLUSTER || "",\n    });\n    if (!solanaAuthority) {\n      throw new SolanaTradeAuthorizationError("Solana trade authorization requires chain 101 with explicit staging/devnet or production/mainnet-beta identity.", {\n        code: "SOLANA_CURRENT_AUTHORITY_INVALID",\n        httpStatus: 400,\n      });\n    }')
+
+          # Vote ingest current authority.
+          replace('frontend/api/dev-fix/solana-vote-ingest.js', 'import { badMethod, isSolanaAddress, isSolanaChain, json, readJson } from "../../server/http.js";', 'import { badMethod, isSolanaAddress, json, readJson } from "../../server/http.js";\nimport { resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";')
+          replace('frontend/api/dev-fix/solana-vote-ingest.js', '    if (!isSolanaChain(chainId)) {\n      return json(res, 400, { error: "chainId must be Solana (101).", code: "NOT_A_SOLANA_CHAIN" });\n    }', '    const solanaAuthority = resolveCurrentSolanaAuthority({\n      chainId,\n      environment: body.environment || process.env.RUNTIME_ENVIRONMENT || process.env.SOLANA_ENVIRONMENT || "",\n      cluster: body.solanaCluster || body.cluster || process.env.SOLANA_CLUSTER || "",\n    });\n    if (!solanaAuthority) {\n      return json(res, 400, { error: "Solana vote ingest requires chain 101 with explicit staging/devnet or production/mainnet-beta identity.", code: "SOLANA_CURRENT_AUTHORITY_INVALID" });\n    }')
+
+          # Arena vote ingest current authority.
+          replace('frontend/api/arenaVotes.js', 'import { badMethod, getQuery, isSolanaAddress, isSolanaChain, json, readJson } from "../server/http.js";', 'import { badMethod, getQuery, isSolanaAddress, json, readJson } from "../server/http.js";\nimport { resolveCurrentSolanaAuthority } from "../shared/solanaCurrentAuthority.mjs";')
+          replace('frontend/api/arenaVotes.js', '  if (!isSolanaChain(chainId)) return json(res, 400, { ok: false, error: "chainId must be Solana (101)." });', '  const solanaAuthority = resolveCurrentSolanaAuthority({\n    chainId,\n    environment: body.environment || process.env.RUNTIME_ENVIRONMENT || process.env.SOLANA_ENVIRONMENT || "",\n    cluster: body.solanaCluster || body.cluster || process.env.SOLANA_CLUSTER || "",\n  });\n  if (!solanaAuthority) return json(res, 400, { ok: false, error: "Arena vote ingest requires chain 101 with explicit staging/devnet or production/mainnet-beta identity.", code: "SOLANA_CURRENT_AUTHORITY_INVALID" });')
+
+          # Graduation quote policies must match the current Solana environment/cluster exactly.
+          replace('frontend/api/dev-fix/solana-graduation-authorization-v2.js', '  const rootRoute = item.policy?.config?.solanaGraduation || {};\n  const route = rootRoute.chains?.[String(chainId)] || rootRoute;\n  const quoteMint =', '  const rootRoute = item.policy?.config?.solanaGraduation || {};\n  const route = rootRoute.chains?.[String(chainId)] || rootRoute;\n  const authorities = Array.isArray(route.authorities) ? route.authorities : [];\n  const authorityMatches = authorities.some((candidate) =>\n    String(candidate?.environment || "").trim().toLowerCase() === solanaAuthority?.environment &&\n    String(candidate?.cluster || "").trim().toLowerCase() === solanaAuthority?.cluster\n  ) || (\n    String(route.environment || "").trim().toLowerCase() === solanaAuthority?.environment &&\n    String(route.cluster || "").trim().toLowerCase() === solanaAuthority?.cluster\n  );\n  if (!authorityMatches) throw new SolanaGraduationAuthorizationError("Requested quote policy is not approved for the current Solana environment/cluster.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });\n  const quoteMint =')
+
+          # Update Arena layout tests to explicit identities and add crossed/legacy negative coverage.
+          p=Path('frontend/src/lib/solanaArenaLayout.test.mjs'); s=p.read_text()
+          s=s.replace('  isSolanaWarzoneChainId,\n', '  isSolanaWarzoneChainId,\n  expectedGenesisHash,\n')
+          s=s.replace('    chainId: 101,\n    PublicKey,', '    chainId: 101,\n    environment: "production",\n    cluster: "mainnet-beta",\n    PublicKey,')
+          s=s.replace('      chainId: 101,\n      PublicKey,', '      chainId: 101,\n      environment: "production",\n      cluster: "mainnet-beta",\n      PublicKey,')
+          # second occurrence for wrong genesis if only one replaced by replace-all above; replace() used all occurrences.
+          insert='''\n\ntest("Arena genesis authority is chain 101 plus exact environment/cluster and rejects legacy 102", () => {\n  const devnetGenesis = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wavy2uVvL2jH";\n  const mainnetGenesis = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKvcnbdEad4t";\n  assert.equal(isSolanaWarzoneChainId(101), true);\n  assert.equal(isSolanaWarzoneChainId(102), false);\n  assert.equal(expectedGenesisHash(101, "staging", "devnet"), devnetGenesis);\n  assert.equal(expectedGenesisHash(101, "production", "mainnet-beta"), mainnetGenesis);\n  assert.equal(expectedGenesisHash(101, "staging", "mainnet-beta"), "");\n  assert.equal(expectedGenesisHash(101, "production", "devnet"), "");\n  assert.equal(expectedGenesisHash(102, "staging", "devnet"), "");\n});\n'''
+          marker='test("isSolanaWarzoneMoneyLive requires configured and live both explicitly true", () => {'
+          s=s.replace(marker, insert+'\n'+marker,1)
+          p.write_text(s)
+
+          # Permanent focused authority tests.
+          Path('frontend/shared/solanaPost292Authority.test.mjs').write_text(r'''import assert from "node:assert/strict";
+import test from "node:test";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { nativeSymbolFor, isSolanaChainId, isBnbChainId, isRobinhoodChainId } from "../api/lib/chainNative.js";
+import { expectedGenesisHash, isSolanaWarzoneChainId } from "../src/lib/solanaArenaLayout.mjs";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const source = (p) => readFile(path.join(root, p), "utf8");
+
+test("current native selector rejects 102 and preserves BNB Robinhood and Solana 101", () => {
+  assert.equal(isSolanaChainId(101), true);
+  assert.equal(isSolanaChainId(102), false);
+  assert.equal(nativeSymbolFor(101), "SOL");
+  assert.throws(() => nativeSymbolFor(102), /not current financial authority/);
+  for (const id of [56,97]) { assert.equal(isBnbChainId(id), true); assert.equal(nativeSymbolFor(id), "BNB"); }
+  for (const id of [4663,46630]) { assert.equal(isRobinhoodChainId(id), true); assert.equal(nativeSymbolFor(id), "ETH"); }
+});
+
+test("Arena genesis authority is exact and legacy 102 fails closed", () => {
+  assert.equal(isSolanaWarzoneChainId(102), false);
+  assert.equal(expectedGenesisHash(101,"staging","devnet"), "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wavy2uVvL2jH");
+  assert.equal(expectedGenesisHash(101,"production","mainnet-beta"), "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKvcnbdEad4t");
+  assert.equal(expectedGenesisHash(101,"staging","mainnet-beta"), "");
+  assert.equal(expectedGenesisHash(101,"production","devnet"), "");
+  assert.equal(expectedGenesisHash(102,"staging","devnet"), "");
+});
+
+test("trade vote and Arena vote authorization no longer use broad historical Solana helper", async () => {
+  for (const p of ["frontend/api/dev-fix/solana-trade-authorization-v1.js","frontend/api/dev-fix/solana-vote-ingest.js","frontend/api/arenaVotes.js"]) {
+    const text=await source(p);
+    assert.match(text,/resolveCurrentSolanaAuthority/);
+    assert.match(text,/SOLANA_CURRENT_AUTHORITY_INVALID/);
+    assert.doesNotMatch(text,/isSolanaChain\(chainId\)/);
+  }
+});
+
+test("graduation quote authorization binds policies to exact Solana authority", async () => {
+  const text=await source("frontend/api/dev-fix/solana-graduation-authorization-v2.js");
+  assert.match(text,/authorityMatches/);
+  assert.match(text,/current Solana environment\/cluster/);
+  assert.match(text,/resolveCurrentSolanaAuthority/);
+});
+
+test("corrective BASIC quote migration retires legacy 102 and preserves environment-specific mints", async () => {
+  const text=await source("frontend/supabase/migrations/20260911170000_solana_101_environment_quote_authority.sql");
+  assert.match(text,/legacy chain 102/i);
+  assert.match(text,/chain_id = '101'/);
+  assert.match(text,/4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU/);
+  assert.match(text,/EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v/);
+  assert.match(text,/"staging"/);
+  assert.match(text,/"devnet"/);
+  assert.match(text,/"production"/);
+  assert.match(text,/"mainnet-beta"/);
+});
+
+test("ArenaMoneyV2 remains current chain 101 authority", async () => {
+  const text=await source("frontend/api/lib/solanaArenaMoneyV2Read.js");
+  assert.match(text,/CURRENT_SOLANA_ARENA_CHAIN_ID = 101/);
+  assert.match(text,/id !== CURRENT_SOLANA_ARENA_CHAIN_ID/);
+});
+''')
+
+          # Forward SQL correction: keep old migration/history immutable, disable legacy native deployment,
+          # move distinct devnet USDC deployment to current app-chain 101, and bind policy environments.
+          Path('frontend/supabase/migrations/20260911170000_solana_101_environment_quote_authority.sql').write_text(r'''begin;
+
+-- Post-#292 current-authority correction. Historical migration/decision rows are preserved.
+-- Application chain 101 is current for both environments; environment + cluster separates assets.
+-- Legacy chain 102 is never current graduation authority.
+
+update public.quote_asset_deployments
+set admin_state = 'disabled', state_version = state_version + 1
+where id = 'a2100000-0000-4000-8000-000000000211'::uuid
+  and chain_id = '102';
+
+update public.quote_asset_policy_versions
+set new_graduation_enabled = false,
+    policy_config = jsonb_set(policy_config, '{solanaGraduation,legacyAuthorityRetired}', 'true'::jsonb, true)
+where id = 'a2100000-0000-4000-8000-000000000311'::uuid;
+
+update public.quote_asset_deployments
+set chain_id = '101', state_version = state_version + 1
+where id = 'a2100000-0000-4000-8000-000000000212'::uuid
+  and chain_id = '102'
+  and contract_address_or_mint = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU';
+
+update public.quote_asset_policy_versions
+set policy_config = jsonb_set(
+  jsonb_set(policy_config, '{solanaGraduation,environment}', '"staging"'::jsonb, true),
+  '{solanaGraduation,cluster}', '"devnet"'::jsonb, true
+)
+where id = 'a2100000-0000-4000-8000-000000000312'::uuid;
+
+update public.quote_asset_policy_versions
+set policy_config = jsonb_set(
+  policy_config,
+  '{solanaGraduation,authorities}',
+  '[{"environment":"staging","cluster":"devnet"},{"environment":"production","cluster":"mainnet-beta"}]'::jsonb,
+  true
+)
+where id = 'a2100000-0000-4000-8000-000000000301'::uuid;
+
+update public.quote_asset_policy_versions
+set policy_config = jsonb_set(
+  jsonb_set(policy_config, '{solanaGraduation,environment}', '"production"'::jsonb, true),
+  '{solanaGraduation,cluster}', '"mainnet-beta"'::jsonb, true
+)
+where id = 'a2100000-0000-4000-8000-000000000302'::uuid
+  and policy_config #>> '{solanaGraduation,quoteMint}' = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
+
+insert into public.quote_asset_decision_history (
+  deployment_id, provider_id, policy_version_id, state_version,
+  decision, reason, decision_snapshot, actor_identity
+)
+select d.id, d.provider_id, p.id, d.state_version,
+       case when d.id = 'a2100000-0000-4000-8000-000000000212'::uuid then 'review' else 'rejected' end,
+       case when d.id = 'a2100000-0000-4000-8000-000000000212'::uuid
+         then 'Devnet Circle USDC moved to current application chain 101 and bound to staging/devnet; market-health review remains fail-closed.'
+         else 'Legacy chain 102 native certification deployment retired; current native SOL authority is chain 101 plus explicit environment/cluster.' end,
+       jsonb_build_object('chainId', d.chain_id, 'adminState', d.admin_state, 'environment', p.policy_config #>> '{solanaGraduation,environment}', 'cluster', p.policy_config #>> '{solanaGraduation,cluster}'),
+       'migration:20260911170000_solana_101_environment_quote_authority'
+from public.quote_asset_deployments d
+join public.quote_asset_policy_versions p on p.quote_asset_id = d.quote_asset_id
+where d.id in ('a2100000-0000-4000-8000-000000000211'::uuid, 'a2100000-0000-4000-8000-000000000212'::uuid)
+  and not exists (
+    select 1 from public.quote_asset_decision_history h
+    where h.deployment_id = d.id
+      and h.actor_identity = 'migration:20260911170000_solana_101_environment_quote_authority'
+  );
+
+commit;
+''')
+          PY
+
+          node --test frontend/shared/solanaCurrentAuthority.test.mjs frontend/shared/solanaPost292Authority.test.mjs
+          npm --prefix frontend run test:solana-arena
+          git status --short
+          git add frontend/src/lib/solanaArenaLayout.mjs frontend/src/lib/solanaArenaLayout.test.mjs frontend/api/lib/solanaArenaPoolRead.js frontend/api/dev-fix/solana-trade-authorization-v1.js frontend/api/dev-fix/solana-vote-ingest.js frontend/api/arenaVotes.js frontend/api/dev-fix/solana-graduation-authorization-v2.js frontend/shared/solanaPost292Authority.test.mjs frontend/supabase/migrations/20260911170000_solana_101_environment_quote_authority.sql
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git commit -m 'Finish Solana 102 operational authority elimination'
+          git push origin HEAD:agent1/finish-solana-102-elimination-a5cfa696
