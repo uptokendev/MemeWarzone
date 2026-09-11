@@ -7,7 +7,7 @@ export const SOLANA_WARZONE_ESCROW_NOT_LIVE =
 
 export function isSolanaWarzoneChain(chainId?: number | null): boolean {
   const id = Number(chainId);
-  return isSolanaChainId(id) || id === 102;
+  return isSolanaChainId(id);
 }
 
 /** Live only when the probe explicitly set both flags true. Missing live is blocked. */

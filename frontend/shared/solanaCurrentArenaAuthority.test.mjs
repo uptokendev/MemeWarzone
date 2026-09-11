@@ -58,3 +58,27 @@ test("Arena scoring and economics constants are not changed by the authority clo
   assert.match(boosts, /pointsPerBoost: 1/);
   assert.match(boosts, /pointsPerBoost: 2/);
 });
+
+
+test("remaining Solana money selectors reject legacy application identity before payment authority", async () => {
+  const boosts = await source("frontend/api/arenaSolanaBoosts.js");
+  const runtime = await source("frontend/api/lib/solanaArenaMoneyV2Runtime.mjs");
+  const panel = await source("frontend/src/components/arena/BattleBoostPanel.tsx");
+  const sponsorship = await source("frontend/src/lib/arena/eventSponsorshipClient.ts");
+  const escrow = await source("frontend/src/lib/arena/solanaWarzoneEscrow.ts");
+  const chainConfig = await source("frontend/src/lib/chainConfig.ts");
+  const rewardLane = await source("frontend/api/lib/solanaRewardLane.js");
+  const leagueFinalizer = await source("realtime-indexer/src/jobs/finalizeEpochWinners.ts");
+
+  assert.match(boosts, /validateSolanaChain\(chainId\) \{ return Number\(chainId\) === 101; \}/);
+  assert.doesNotMatch(boosts, /\[101, 102\]\.includes\(Number\(chainId\)\)/);
+  assert.match(runtime, /if \(chain !== 101\) throw new Error\("Solana Arena Money V2 current authority requires chain 101"\)/);
+  assert.match(panel, /SOLANA_ARENA_CHAIN_IDS = new Set\(\[101\]\)/);
+  assert.match(sponsorship, /function isSolana\(chainId: number\) \{ return Number\(chainId\) === 101; \}/);
+  assert.doesNotMatch(escrow, /id === 102/);
+  assert.doesNotMatch(chainConfig, /isSolanaChainId\(chainId\) \|\| Number\(chainId\) === 102/);
+  assert.match(rewardLane, /if \(cid !== 101\) throw new Error\("Solana reward lane publisher requires canonical chain 101"\)/);
+  assert.doesNotMatch(rewardLane, /\[101, 102\]\.includes\(cid\)/);
+  assert.match(leagueFinalizer, /return Number\(chainId\) === 101;/);
+  assert.match(leagueFinalizer, /n !== 102/);
+});
