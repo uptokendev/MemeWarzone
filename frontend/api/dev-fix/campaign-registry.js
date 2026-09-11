@@ -3,6 +3,7 @@
  * without waiting for an indexer (critical for Solana V4 create).
  */
 import { isSolanaChain } from "../../server/http.js";
+import { notifyCampaignCreated } from "../lib/campaignLifecycleNotifications.js";
 import { findProgramAddressSync, publicKeyBytes } from "./solana-v4-primitives.js";
 
 const FEE_ESCROW_SEED = Buffer.from("fee-escrow", "utf8");
@@ -269,6 +270,17 @@ export async function upsertCampaignFromDraft(db, input) {
       programId: input.programId || factoryAddress,
     });
   }
+
+  await notifyCampaignCreated(db, {
+    chainId,
+    campaignAddress,
+    name,
+    ticker: symbol,
+    imageUrl: logoUri,
+    creatorWallet: creatorAddress,
+    scheduledFor: input.scheduledLaunchAt || null,
+    graduationTarget: input.graduationTargetWei || null,
+  });
 
   return { ok: true, row, attempts, metaMerged };
 }

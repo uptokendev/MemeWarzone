@@ -13,6 +13,7 @@ import {
 } from "./solanaIngestResult.js";
 import { repairStateFromBackfill } from "./solanaHistoryStatus.js";
 import { checkMilestones } from "./milestones.js";
+import { notifyCampaignCreated } from "./campaignLifecycleNotifications.js";
 import { publishCandle, publishLeague, publishStats, publishTrade } from "./ably.js";
 import { createLeagueFeedPublisher } from "./leagueFeed.js";
 import { buildCampaignCreatedMessage } from "./solanaLeaguePublish.js";
@@ -862,6 +863,14 @@ async function upsertCampaign(event: CampaignCreatedEvent, slot: number, blockTi
       }),
     ],
   );
+
+  await notifyCampaignCreated(pool, {
+    chainId: SOLANA_CHAIN_ID,
+    campaignAddress: event.campaign,
+    name: "Solana Launch",
+    ticker: "SOL",
+    creatorWallet: event.creator,
+  });
 
   await insertActivityEvent({
     eventType: "CREATE_CAMPAIGN",

@@ -11,6 +11,7 @@ import { createStaticJsonRpcProvider, createWorkingProvider, parseRpcList } from
 import { bnbCurveState, parseRawTokenAmount } from "./bnbCurvePricing.js";
 import { campaignScanChunks } from "./campaignScanChunks.js";
 import { checkMilestones } from "./milestones.js";
+import { notifyCampaignCreated } from "./campaignLifecycleNotifications.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -402,6 +403,15 @@ async function upsertCampaign(
       console.warn("[phase2-attribution] campaign activity mark failed", { chainId, campaign: normalizedCampaign, creator }, e);
     }
   }
+
+  await notifyCampaignCreated(pool, {
+    chainId,
+    campaignAddress: normalizedCampaign,
+    name,
+    ticker: symbol,
+    imageUrl: logoURI,
+    creatorWallet: creator,
+  });
 
   cacheCampaignInfo(chainId, campaign, {
     tokenAddress: token ? token.toLowerCase() : null,

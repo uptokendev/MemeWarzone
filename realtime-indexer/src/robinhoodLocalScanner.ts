@@ -12,6 +12,7 @@ import {
 import { buildFactoryInventory, type SupportedFactory } from "./factoryInventory.js";
 import { createStaticJsonRpcProvider, parseRpcList } from "./rpcProvider.js";
 import { TIMEFRAMES, bucketStart, type TF } from "./timeframes.js";
+import { notifyCampaignCreated } from "./campaignLifecycleNotifications.js";
 
 const CHAIN_ID = 46630;
 const CURSOR_PREFIX = "robinhood-local";
@@ -160,6 +161,14 @@ async function upsertCampaign(input: {
       input.createdAt,
     ],
   );
+  await notifyCampaignCreated(pool, {
+    chainId: CHAIN_ID,
+    campaignAddress: input.campaign,
+    name: input.name,
+    ticker: input.symbol,
+    imageUrl: input.logoURI,
+    creatorWallet: input.creator,
+  });
 }
 
 function decodeRegistryCandidate(iface: ethers.Interface, raw: string, createdAtIndex: number) {

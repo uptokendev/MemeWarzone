@@ -69,6 +69,16 @@ export function getChainById(chainId) {
   return LABEL_ALIASES[key] ?? null;
 }
 
+const NATIVE_SYMBOL = {
+  bnb: "BNB",
+  solana: "SOL",
+  robinhood: "ETH",
+};
+
+export function getNativeSymbol(label) {
+  return NATIVE_SYMBOL[label] || null;
+}
+
 export function normalizeChain(input) {
   if (input === null || input === undefined) return null;
   if (typeof input === "number") return getChainById(input);
