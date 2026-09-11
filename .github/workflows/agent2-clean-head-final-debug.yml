@@ -80,9 +80,12 @@ jobs:
           python3 /tmp/p1.py
           python3 - <<'PY'
           from pathlib import Path
-          p=Path('tests/solana/candidate-wallet-golden-devnet.cjs'); s=p.read_text();
-          if 'lamports:100_000_000' not in s: raise SystemExit('golden funding target missing')
-          p.write_text(s.replace('lamports:100_000_000','lamports:120_000_000'))
+          p=Path('tests/solana/candidate-wallet-golden-devnet.cjs')
+          s=p.read_text()
+          old='await sendControl(connection,operator,[SystemProgram.transfer({fromPubkey:operator.publicKey,toPubkey:keypair.publicKey,lamports:100_000_000})])'
+          new='await (async()=>{const sig=await connection.requestAirdrop(keypair.publicKey,120_000_000);const latest=await connection.getLatestBlockhash("confirmed");const c=await connection.confirmTransaction({signature:sig,...latest},"confirmed");if(c.value.err) fail(`faucet funding failed ${JSON.stringify(c.value.err)}`);})()'
+          if old not in s: raise SystemExit('setupWallet funding expression missing')
+          p.write_text(s.replace(old,new))
           PY
           curl -fsSL "https://raw.githubusercontent.com/uptokendev/MemeWarzone/f5e2fd222a42851b8e3fcc041d1ad6dac0025463/tests/solana/agent2-final-golden-expiry-patch.py" -o /tmp/expiry.py
           python3 /tmp/expiry.py
