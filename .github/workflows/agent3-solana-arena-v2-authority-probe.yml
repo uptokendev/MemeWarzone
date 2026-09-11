@@ -1,0 +1,94 @@
+name: Agent 3 ArenaMoneyV2 Authority Probe
+
+on:
+  push:
+    branches: [agent3/solana-arena-money-v2-reconcile-120401f]
+    paths: [.github/workflows/agent3-solana-arena-v2-authority-probe.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BASE_SHA: 120401fd1fde0dce6e2439fc4156840e029f1ae6
+
+jobs:
+  authority-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: airdrop-solana-devnet
+    env:
+      # Address candidates: public vars first, then protected secrets where deployments historically use secrets.
+      V_SOLANA_DEVNET_PROTOCOL_TREASURY_ADDRESS: ${{ vars.SOLANA_DEVNET_PROTOCOL_TREASURY_ADDRESS }}
+      V_SOLANA_PROTOCOL_TREASURY_ADDRESS: ${{ vars.SOLANA_PROTOCOL_TREASURY_ADDRESS }}
+      V_SOLANA_VOTE_TREASURY_ADDRESS: ${{ vars.SOLANA_VOTE_TREASURY_ADDRESS }}
+      V_ARENA_V2_RESOLVER: ${{ vars.ARENA_V2_RESOLVER }}
+      V_ARENA_MONEY_V2_RESOLVER: ${{ vars.ARENA_MONEY_V2_RESOLVER }}
+      V_SOLANA_ARENA_RESOLVER: ${{ vars.SOLANA_ARENA_RESOLVER }}
+      V_ARENA_PROTOCOL_RECEIVER: ${{ vars.ARENA_PROTOCOL_RECEIVER }}
+      V_ARENA_MONEY_V2_PROTOCOL_RECEIVER: ${{ vars.ARENA_MONEY_V2_PROTOCOL_RECEIVER }}
+      V_SOLANA_ARENA_PROTOCOL_RECEIVER: ${{ vars.SOLANA_ARENA_PROTOCOL_RECEIVER }}
+      V_ARENA_MARKETING_RECEIVER: ${{ vars.ARENA_MARKETING_RECEIVER }}
+      V_ARENA_MONEY_V2_MARKETING_RECEIVER: ${{ vars.ARENA_MONEY_V2_MARKETING_RECEIVER }}
+      V_SOLANA_ARENA_MARKETING_RECEIVER: ${{ vars.SOLANA_ARENA_MARKETING_RECEIVER }}
+      S_SOLANA_DEVNET_PROTOCOL_TREASURY_ADDRESS: ${{ secrets.SOLANA_DEVNET_PROTOCOL_TREASURY_ADDRESS }}
+      S_SOLANA_PROTOCOL_TREASURY_ADDRESS: ${{ secrets.SOLANA_PROTOCOL_TREASURY_ADDRESS }}
+      S_SOLANA_VOTE_TREASURY_ADDRESS: ${{ secrets.SOLANA_VOTE_TREASURY_ADDRESS }}
+      S_ARENA_V2_RESOLVER: ${{ secrets.ARENA_V2_RESOLVER }}
+      S_ARENA_MONEY_V2_RESOLVER: ${{ secrets.ARENA_MONEY_V2_RESOLVER }}
+      S_SOLANA_ARENA_RESOLVER: ${{ secrets.SOLANA_ARENA_RESOLVER }}
+      S_ARENA_PROTOCOL_RECEIVER: ${{ secrets.ARENA_PROTOCOL_RECEIVER }}
+      S_ARENA_MONEY_V2_PROTOCOL_RECEIVER: ${{ secrets.ARENA_MONEY_V2_PROTOCOL_RECEIVER }}
+      S_SOLANA_ARENA_PROTOCOL_RECEIVER: ${{ secrets.SOLANA_ARENA_PROTOCOL_RECEIVER }}
+      S_ARENA_MARKETING_RECEIVER: ${{ secrets.ARENA_MARKETING_RECEIVER }}
+      S_ARENA_MONEY_V2_MARKETING_RECEIVER: ${{ secrets.ARENA_MONEY_V2_MARKETING_RECEIVER }}
+      S_SOLANA_ARENA_MARKETING_RECEIVER: ${{ secrets.SOLANA_ARENA_MARKETING_RECEIVER }}
+      S_ARENA_RESOLVER_KEYPAIR: ${{ secrets.ARENA_RESOLVER_KEYPAIR }}
+      S_SOLANA_REWARDS_AUTHORITY_SECRET_KEY: ${{ secrets.SOLANA_REWARDS_AUTHORITY_SECRET_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 120401fd1fde0dce6e2439fc4156840e029f1ae6
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify exact base and inspect current config references
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$BASE_SHA"
+          grep -RInE 'SOLANA_DEVNET_PROTOCOL_TREASURY_ADDRESS|SOLANA_PROTOCOL_TREASURY_ADDRESS|SOLANA_VOTE_TREASURY_ADDRESS|ARENA_RESOLVER_KEYPAIR|ARENA_MONEY_V2|ARENA_V2_RESOLVER|ARENA_PROTOCOL_RECEIVER|ARENA_MARKETING_RECEIVER' frontend scripts .github 2>/dev/null | head -n 240 || true
+      - name: Install Solana JS parser only
+        run: npm install --no-save --package-lock=false --no-audit --no-fund @solana/web3.js@1.95.4
+      - name: Resolve protected identities without exposing secret material
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const {PublicKey,Keypair}=require('@solana/web3.js');
+          function asPubkey(raw) {
+            if (!raw) return null;
+            try { return new PublicKey(String(raw).trim()).toBase58(); } catch { return null; }
+          }
+          function keypairPubkey(raw) {
+            if (!raw) return null;
+            try {
+              const t=String(raw).trim();
+              let bytes;
+              if (t.startsWith('[')) bytes=Uint8Array.from(JSON.parse(t).map(Number));
+              else bytes=Uint8Array.from(Buffer.from(t,'base64'));
+              if(bytes.length===64) return Keypair.fromSecretKey(bytes).publicKey.toBase58();
+              if(bytes.length===32) return Keypair.fromSeed(bytes).publicKey.toBase58();
+            } catch {}
+            return null;
+          }
+          const addressNames=Object.keys(process.env).filter(k=>k.startsWith('V_')||k.startsWith('S_')).filter(k=>!k.endsWith('_KEYPAIR')&&!k.endsWith('_SECRET_KEY'));
+          const found={};
+          for(const name of addressNames){ const raw=process.env[name]||''; if(!raw) continue; const pk=asPubkey(raw); found[name]=pk||'PRESENT_BUT_NOT_A_SOLANA_PUBKEY'; }
+          const resolverKp=keypairPubkey(process.env.S_ARENA_RESOLVER_KEYPAIR||'');
+          if(resolverKp) found.S_ARENA_RESOLVER_KEYPAIR_PUBLIC_KEY=resolverKp;
+          const authorityPk=keypairPubkey(process.env.S_SOLANA_REWARDS_AUTHORITY_SECRET_KEY||'');
+          if(authorityPk) found.S_SOLANA_REWARDS_AUTHORITY_PUBLIC_KEY=authorityPk;
+          console.log('CURRENT_PROTECTED_IDENTITY_CANDIDATES '+JSON.stringify(found));
+          NODE
