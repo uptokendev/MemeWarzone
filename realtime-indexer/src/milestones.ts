@@ -17,21 +17,21 @@ export async function checkMilestones(db: Pool, chainId: number, campaign: strin
     // Default targets: 50 for BNB (chains 56, 97), ~85 for Solana (chains 101, 102)
     const target = (chainId === 101 || chainId === 102) ? 85 : 50;
     const progressPct = (raised / target) * 100;
-    const chainStr = (chainId === 101 || chainId === 102) ? "solana" : "bnb";
 
     for (const threshold of MILESTONES) {
       if (progressPct >= threshold) {
         const markerKey = `milestone:${chainId}:${campaign}:${threshold}`;
         await emitNotification(db, {
           eventType: "campaign.progress_threshold_reached",
-          chain: chainStr,
+          chain: "",
+          chainId,
           dedupKey: markerKey,
           markerKey: markerKey,
           payload: {
-            chain: chainStr,
             campaign,
-            progressPct: threshold,
-            currentProgress: progressPct,
+            chainId,
+            threshold,
+            progressPct,
             raisedRaw: raised.toString(),
             reachedAt: new Date().toISOString()
           }
