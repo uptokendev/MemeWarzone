@@ -1,0 +1,164 @@
+name: Agent 2 clean PR head Solana certification
+
+on:
+  push:
+    branches:
+      - agent2/cert-solana-native-f18505e
+    paths:
+      - .github/workflows/agent2-clean-head-cert.yml
+
+permissions:
+  contents: read
+
+env:
+  TARGET_SHA: f18505e39186a5fa73fd89f00b242b94782f2f2c
+  BASE_SHA: 120401fd1fde0dce6e2439fc4156840e029f1ae6
+  PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+  EXPECTED_CANDIDATE_SHA: 27ad65b560dba8a33330bd95f08ae7ca6945f71ebf667a5a3756ae0cb9f7f080
+  EXPECTED_CANDIDATE_BYTES: "1165328"
+  SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
+  SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER }}
+  SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
+
+jobs:
+  exact-clean-head:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: testnet-certification
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Prove exact clean PR head and one-file scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          test "$(git merge-base HEAD "$BASE_SHA")" = "$BASE_SHA"
+          test "$(git diff --name-only "$BASE_SHA"..HEAD | tr '\n' ' ')" = "tools/solana-meteora-graduation/graduate-basic-quote.mjs "
+          test -z "$(git diff --name-only "$BASE_SHA"..HEAD -- programs/memewarzone_solana programs/mwz_rewards_treasury | tr -d '\n')"
+          grep -q 'operator native quote ATA must be empty' tools/solana-meteora-graduation/graduate-basic-quote.mjs
+          echo EXACT_CLEAN_HEAD=YES
+          echo PROGRAMS_UNCHANGED=YES
+      - name: Install frozen build/runtime dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.79.0 --profile minimal
+          rustup default 1.79.0
+          release_dir="$HOME/.local/share/solana/install/releases/v1.18.26"
+          mkdir -p "$release_dir"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error --output /tmp/solana-release.tar.bz2 "https://github.com/solana-labs/solana/releases/download/v1.18.26/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"
+          ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+          npm install --global --silent @coral-xyz/anchor-cli@0.30.1
+          mkdir -p "$HOME/.config/solana"
+          solana-keygen new --no-bip39-passphrase --silent --force --outfile "$HOME/.config/solana/id.json"
+          npm install --prefix tests/solana --no-audit --no-fund
+          npm ci --prefix frontend --no-audit --no-fund
+          npm ci --prefix tools/solana-meteora-graduation --no-audit --no-fund
+      - name: Reproduce candidate and prove live devnet binary match
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+          isolated="$RUNNER_TEMP/mwz-agent2-clean-candidate"
+          mkdir -p "$isolated"
+          CARGO_TARGET_DIR="$isolated" anchor build --program-name memewarzone_solana --no-idl
+          candidate="$isolated/deploy/memewarzone_solana.so"
+          candidate_sha="$(sha256sum "$candidate" | awk '{print $1}')"
+          candidate_bytes="$(wc -c < "$candidate" | tr -d ' ')"
+          test "$candidate_sha" = "$EXPECTED_CANDIDATE_SHA"
+          test "$candidate_bytes" = "$EXPECTED_CANDIDATE_BYTES"
+          solana program dump "$PROGRAM_ID" /tmp/mwz-agent2-clean-live.so --url https://api.devnet.solana.com
+          live_sha="$(sha256sum /tmp/mwz-agent2-clean-live.so | awk '{print $1}')"
+          live_bytes="$(wc -c < /tmp/mwz-agent2-clean-live.so | tr -d ' ')"
+          test "$live_sha" = "$EXPECTED_CANDIDATE_SHA"
+          test "$live_bytes" = "$EXPECTED_CANDIDATE_BYTES"
+          echo LIVE_BINARY_MATCH=YES
+          echo LIVE_SHA=$live_sha
+          echo LIVE_BYTES=$live_bytes
+      - name: Native graduation helper tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix tools/solana-meteora-graduation run check
+          node tools/solana-meteora-graduation/check-graduation-auth-fixture.mjs
+          node tools/solana-meteora-graduation/check-devnet-basic-route.mjs
+          echo NATIVE_GRADUATION_HELPERS=PASS
+      - name: Generate current IDL without deployment and materialize signers
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install nightly-2024-05-09 --profile minimal
+          mkdir -p target/idl
+          (cd programs/memewarzone_solana && RUSTUP_TOOLCHAIN=nightly-2024-05-09 anchor idl build --out ../../target/idl/memewarzone_solana.json)
+          test -s target/idl/memewarzone_solana.json
+          test ! -e target/deploy/memewarzone_solana.so
+          operator_file="${RUNNER_TEMP}/mwz-agent2-clean-operator.json"
+          route_file="${RUNNER_TEMP}/mwz-agent2-clean-route.json"
+          SOLANA_GRADUATION_OPERATOR_KEYPAIR="$operator_file" node scripts/solana/materialize-devnet-payer.mjs
+          ROUTE_FILE="$route_file" python3 - <<'PY'
+          import json, os
+          value=json.loads(os.environ['SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY'])
+          assert isinstance(value,list) and len(value)==64
+          with open(os.environ['ROUTE_FILE'],'w',encoding='utf-8') as h: json.dump(value,h)
+          os.chmod(os.environ['ROUTE_FILE'],0o600)
+          PY
+          echo "SOLANA_OPERATOR_KEYPAIR=$operator_file" >> "$GITHUB_ENV"
+          echo "SOLANA_NEW_ROUTE_SIGNER_KEYPAIR=$route_file" >> "$GITHUB_ENV"
+      - name: Materialize disposable golden harness and expiry guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          harness_sha=ad4133dddf9f6033a7ef3af36b196ba080863918
+          curl -fsSL "https://raw.githubusercontent.com/uptokendev/MemeWarzone/${harness_sha}/tests/solana/candidate-wallet-golden-devnet.cjs" -o tests/solana/candidate-wallet-golden-devnet.cjs
+          curl -fsSL "https://raw.githubusercontent.com/uptokendev/MemeWarzone/${harness_sha}/tests/solana/candidate-wallet-middle-devnet.cjs" -o tests/solana/candidate-wallet-middle-devnet.cjs
+          curl -fsSL "https://raw.githubusercontent.com/uptokendev/MemeWarzone/${harness_sha}/tests/solana/patch-candidate-wallet-p1.py" -o /tmp/patch-candidate-wallet-p1.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/patch-candidate-wallet-p1.py')
+          p.write_text(p.read_text().replace('\npatch_fixture()\npatch_graduation()\n','\n'))
+          PY
+          python3 /tmp/patch-candidate-wallet-p1.py
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('tests/solana/candidate-wallet-golden-devnet.cjs')
+          s=p.read_text()
+          if 'lamports:100_000_000' not in s: raise SystemExit('golden funding target missing')
+          p.write_text(s.replace('lamports:100_000_000','lamports:200_000_000'))
+          PY
+          curl -fsSL "https://raw.githubusercontent.com/uptokendev/MemeWarzone/f5e2fd222a42851b8e3fcc041d1ad6dac0025463/tests/solana/agent2-final-golden-expiry-patch.py" -o /tmp/expiry-patch.py
+          python3 /tmp/expiry-patch.py
+          grep -q 'expiry-safe rebuild only after null signature status' tests/solana/candidate-wallet-golden-devnet.cjs
+      - name: Execute exact-clean-head final CREATE BUY SELL
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOLANA_GOLDEN_ONLY_FINAL=1 SOLANA_GOLDEN_REPORT=/tmp/mwz-agent2-clean-final.json node tests/solana/candidate-wallet-golden-devnet.cjs
+          node - <<'NODE'
+          const r=require('/tmp/mwz-agent2-clean-final.json');
+          for(const key of ['create','buy','sell']){
+            const x=r.final?.[key];
+            if(x?.status!=='PASS') process.exit(1);
+            if(!String(x.expiryBehavior).startsWith('PASS')) process.exit(1);
+            if(!String(x.retryBehavior).startsWith('PASS')) process.exit(1);
+            if(!String(x.duplicateReplayBehavior).startsWith('PASS')) process.exit(1);
+            console.log('EXACT_FINAL',key.toUpperCase(),x.signature);
+          }
+          console.log('EXACT_CLEAN_HEAD_GOLDEN=PASS');
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent2-clean-head-cert-f18505e
+          path: /tmp/mwz-agent2-clean-final.json
+          if-no-files-found: warn
+          retention-days: 14
