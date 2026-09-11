@@ -11,47 +11,108 @@ permissions:
   contents: read
 
 env:
+  BASE_SHA: 120401fd1fde0dce6e2439fc4156840e029f1ae6
   PR_HEAD: f18505e39186a5fa73fd89f00b242b94782f2f2c
   PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
   OPERATOR: HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9
+  CAMPAIGN: So9RKvmBQAwnCRtY4qBteNiS7gFFic4JvjxjN9hHHLk
+  MINT: FVEBya7Kz2CYMKLK65PZbsixsCgHjAvpGDLNSoXPm824
+  CREATE_SIG: 5F7QHoM1tBAhUNRFfHhtFR4FJ8dM7CBCMLEjv7HFW6f3d8p4jwB8EgvbBFs2dUJLKdjr9v6erQ81QhS8yWrTYDJi
+  ALT: ALA7wQRuPdHWzLLpyDwbw7kPbJB7pCp1zNyzrNZApoiA
 
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     environment: testnet-certification
     env:
       SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
+      SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER }}
+      SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.PR_HEAD }}
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install --prefix tests/solana --no-audit --no-fund
-      - name: Inspect recent operator transactions
+      - name: Freeze exact clean PR head
         shell: bash
         run: |
-          node - <<'NODE'
-          const {Connection,PublicKey}=require('./tests/solana/node_modules/@solana/web3.js');
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PR_HEAD"
+          test "$(git merge-base HEAD "$BASE_SHA")" = "$BASE_SHA"
+          test -z "$(git status --porcelain)"
+          test "$(git diff --name-only "$BASE_SHA"..HEAD | tr '\n' ' ')" = "tools/solana-meteora-graduation/graduate-basic-quote.mjs "
+          test "$(git diff --numstat "$BASE_SHA"..HEAD -- tools/solana-meteora-graduation/graduate-basic-quote.mjs)" = $'5\t1\ttools/solana-meteora-graduation/graduate-basic-quote.mjs'
+          test -z "$(git diff --name-only "$BASE_SHA"..HEAD -- programs/memewarzone_solana programs/mwz_rewards_treasury)"
+          echo EXACT_CLEAN_PR_HEAD=YES
+      - run: npm install --prefix tests/solana --no-audit --no-fund
+      - run: npm ci --prefix frontend --no-audit --no-fund
+      - name: Build IDL only
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global --silent @coral-xyz/anchor-cli@0.30.1
+          rustup toolchain install nightly-2024-05-09 --profile minimal
+          mkdir -p target/idl
+          (cd programs/memewarzone_solana && RUSTUP_TOOLCHAIN=nightly-2024-05-09 anchor idl build --out ../../target/idl/memewarzone_solana.json)
+          test -s target/idl/memewarzone_solana.json
+          test ! -e target/deploy/memewarzone_solana.so
+      - name: Materialize approved operator locally
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SOLANA_DEVNET_PAYER:-}"
+          test -n "${SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY:-}"
+          f="$RUNNER_TEMP/operator.json"
+          SOLANA_GRADUATION_OPERATOR_KEYPAIR="$f" node scripts/solana/materialize-devnet-payer.mjs >/dev/null
+          echo "SOLANA_OPERATOR_KEYPAIR=$f" >> "$GITHUB_ENV"
+      - name: Read existing CREATE and funding preflight only
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE' | tee /tmp/pr289-preflight.log
+          const fs=require('fs'),crypto=require('crypto');
+          const anchor=require('./tests/solana/node_modules/@coral-xyz/anchor');
+          const web3=require('./tests/solana/node_modules/@solana/web3.js');
+          const spl=require('./tests/solana/node_modules/@solana/spl-token');
+          const {Connection,PublicKey,Keypair,VersionedTransaction}=web3;
+          const {getAssociatedTokenAddressSync}=spl;
+          const {AnchorProvider,Program,Wallet,BN}=anchor;
           const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
-          const operator=new PublicKey(process.env.OPERATOR);
-          const pid=process.env.PROGRAM_ID;
+          const PID=new PublicKey(process.env.PROGRAM_ID), OP=new PublicKey(process.env.OPERATOR), CAMP=new PublicKey(process.env.CAMPAIGN), MINT=new PublicKey(process.env.MINT), ALT=new PublicKey(process.env.ALT);
+          const pda=(seed,...more)=>PublicKey.findProgramAddressSync([Buffer.from(seed),...more],PID)[0];
           (async()=>{
-            console.log('GENESIS',await c.getGenesisHash());
-            console.log('OPERATOR_BALANCE',await c.getBalance(operator,'confirmed'));
-            const sigs=await c.getSignaturesForAddress(operator,{limit:40},'confirmed');
-            for(const s of sigs){
-              const tx=await c.getTransaction(s.signature,{commitment:'confirmed',maxSupportedTransactionVersion:0});
-              if(!tx) continue;
-              const logs=tx.meta?.logMessages||[];
-              const relevant=logs.some(x=>x.includes(pid)||x.includes('Instruction: CreateCampaign')||x.includes('Instruction: InitializeFeeEscrow')||x.includes('Instruction: InitializeCreatorFeeVault'));
-              if(!relevant) continue;
-              console.log('TX',JSON.stringify({signature:s.signature,slot:s.slot,blockTime:s.blockTime,err:s.err,blockhash:tx.transaction.message.recentBlockhash,computeUnits:tx.meta?.computeUnitsConsumed,logs:logs.filter(x=>x.includes('Instruction:')||x.includes(pid))}));
-              const keys=tx.transaction.message.getAccountKeys({accountKeysFromLookups:tx.meta?.loadedAddresses});
-              console.log('KEYS',JSON.stringify(Array.from({length:keys.length},(_,i)=>[i,keys.get(i).toBase58()])));
-              tx.transaction.message.compiledInstructions.forEach((ix,i)=>console.log('IX',i,JSON.stringify({programIdIndex:ix.programIdIndex,accountKeyIndexes:[...ix.accountKeyIndexes],data:Buffer.from(ix.data).toString('base64')})));
-            }
-          })().catch(e=>{console.error(e);process.exit(1)});
+            if(await c.getGenesisHash()!=='EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG') throw new Error('wrong cluster');
+            const kp=Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(process.env.SOLANA_OPERATOR_KEYPAIR,'utf8'))));
+            if(!kp.publicKey.equals(OP)) throw new Error('approved payer mismatch');
+            const bal=await c.getBalance(OP,'confirmed'); console.log('CURRENT_OPERATOR_BALANCE',bal);
+            const tx=await c.getTransaction(process.env.CREATE_SIG,{commitment:'confirmed',maxSupportedTransactionVersion:0});
+            if(!tx||tx.meta?.err) throw new Error('existing CREATE absent/failed');
+            const logs=tx.meta.logMessages||[]; if(!logs.some(x=>x.includes('Instruction: CreateCampaign'))) throw new Error('not CreateCampaign');
+            const keys=tx.transaction.message.getAccountKeys({accountKeysFromLookups:tx.meta.loadedAddresses});
+            const all=Array.from({length:keys.length},(_,i)=>keys.get(i).toBase58());
+            if(!all.includes(CAMP.toBase58())||!all.includes(MINT.toBase58())||!all.includes(OP.toBase58())) throw new Error('CREATE identity mismatch');
+            console.log('CREATE_STATUS','SUCCESS'); console.log('CREATE_SLOT',tx.slot); console.log('CREATE_BLOCK_TIME',tx.blockTime); console.log('CREATE_VERSION',String(tx.version)); console.log('CREATE_BLOCKHASH',tx.transaction.message.recentBlockhash); console.log('CREATE_CU',tx.meta.computeUnitsConsumed??'unknown');
+            console.log('CREATE_ALTS',(tx.transaction.message.addressTableLookups||[]).map(x=>x.accountKey.toBase58()).join(',')||'NONE');
+            try { const vt=new VersionedTransaction(tx.transaction.message); vt.signatures=tx.transaction.signatures.map(s=>typeof s==='string'?require('./tests/solana/node_modules/bs58').decode(s):s); console.log('CREATE_RECONSTRUCTED_PACKET_BYTES',vt.serialize().length); } catch(e) { console.log('CREATE_RECONSTRUCTED_PACKET_BYTES','UNAVAILABLE:'+e.message); }
+            console.log('CREATE_ORIGINAL_LVH','IRRETRIEVABLE'); console.log('CREATE_ORIGINAL_SIMULATION','IRRETRIEVABLE');
+            const idl=JSON.parse(fs.readFileSync('target/idl/memewarzone_solana.json','utf8')); const provider=new AnchorProvider(c,new Wallet(kp),{commitment:'confirmed'}); const program=new Program(idl,provider);
+            const s=await program.account.campaign.fetch(CAMP); const v=x=>BN.isBN(x)?x.toString():x?.toBase58?x.toBase58():String(x);
+            console.log('CAMPAIGN_CREATOR',v(s.creator)); console.log('CAMPAIGN_MINT',v(s.mint)); console.log('CAMPAIGN_SOLD_TOKENS',v(s.soldTokens)); console.log('CAMPAIGN_NET_RAISED',v(s.netRaisedLamports)); console.log('CAMPAIGN_CREATOR_LOCK_UNTIL',v(s.creatorBuyLockUntil)); console.log('CAMPAIGN_CREATOR_BUY_CAP_BPS',v(s.creatorBuyCapBps)); console.log('CAMPAIGN_CURVE_CLOSED',String(s.curveClosed)); console.log('CAMPAIGN_GRADUATED',String(s.graduated));
+            const slot=await c.getSlot('confirmed'), now=(await c.getBlockTime(slot))||Math.floor(Date.now()/1000); console.log('CHAIN_TIME',now); console.log('CREATOR_LOCK_SECONDS_REMAINING',Math.max(0,Number(v(s.creatorBuyLockUntil))-now));
+            const ata=getAssociatedTokenAddressSync(MINT,OP); const ai=await c.getAccountInfo(ata,'confirmed'); const ataRent=ai?0:await c.getMinimumBalanceForRentExemption(165,'confirmed'); console.log('OPERATOR_ATA',ata.toBase58(),ai?'EXISTS':'MISSING'); console.log('ATA_RENT_REQUIRED',ataRent);
+            const tradeAuthSize=188; const authRent=await c.getMinimumBalanceForRentExemption(tradeAuthSize,'confirmed'); console.log('TRADE_AUTH_SIZE',tradeAuthSize); console.log('TRADE_AUTH_RENT_EACH',authRent);
+            const alt=(await c.getAddressLookupTable(ALT,{commitment:'confirmed'})).value; if(!alt) throw new Error('ALT missing'); console.log('ALT_STATE',ALT.toBase58(),'addresses='+alt.state.addresses.length,'deactivationSlot='+String(alt.state.deactivationSlot));
+            const BUY=5000000; const estimatedTxFees=10000; const required=BUY+ataRent+authRent*2+estimatedTxFees; console.log('CONSERVATIVE_MIN_START_BALANCE',required); console.log('CONSERVATIVE_MIN_ADDITIONAL',Math.max(0,required-bal)); console.log('CONSERVATIVE_MIN_ADDITIONAL_SOL',(Math.max(0,required-bal)/1e9).toFixed(9)); console.log('BROADCAST_PERFORMED','NO');
+          })().catch(e=>{console.error(e?.stack||e);process.exit(1)});
           NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent2-pr289-resume-preflight
+          path: /tmp/pr289-preflight.log
+          if-no-files-found: warn
+          retention-days: 14
