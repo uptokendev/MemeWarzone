@@ -7,6 +7,7 @@ import {
   type SupportedChainId,
   isEvmChainId,
 } from "@/lib/chainConfig";
+import { resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";
 
 const BNB_LOCKER_ABI = PermanentLpLockerArtifact.abi as any;
 const V3_LOCKER_ABI = [
@@ -16,6 +17,14 @@ const V3_LOCKER_ABI = [
 
 function isRobinhoodChainId(chainId: number): boolean {
   return chainId === ROBINHOOD_CHAIN_ID || chainId === ROBINHOOD_TESTNET_CHAIN_ID;
+}
+
+function currentSolanaUiAuthority() {
+  return resolveCurrentSolanaAuthority({
+    chainId: 101,
+    environment: import.meta.env.VITE_RUNTIME_ENVIRONMENT,
+    cluster: import.meta.env.VITE_SOLANA_CLUSTER,
+  });
 }
 
 export type LpFeePoolRow = {
@@ -95,8 +104,14 @@ export async function fetchLpFeePools(input: {
   if (!Number.isFinite(chainId) || chainId <= 0) {
     return { lockerAddress: null, items: [] };
   }
+  if (chainId === 102) throw new Error("Legacy Solana chain 102 is not a current LP fee authority.");
+
   const creator = String(input.creatorAddress || "").trim();
-  const solana = chainId === 101 || chainId === 102;
+  const solana = chainId === 101;
+  const solanaAuthority = solana ? currentSolanaUiAuthority() : null;
+  if (solana && !solanaAuthority) {
+    throw new Error("Solana LP fee reads require explicit staging/devnet or production/mainnet-beta identity.");
+  }
   if (!solana && creator && !/^0x[a-fA-F0-9]{40}$/.test(creator)) {
     return { lockerAddress: null, items: [] };
   }
@@ -108,6 +123,10 @@ export async function fetchLpFeePools(input: {
     chainId: String(chainId),
     limit: String(input.limit ?? 50),
   });
+  if (solanaAuthority) {
+    qs.set("environment", solanaAuthority.environment);
+    qs.set("solanaCluster", solanaAuthority.cluster);
+  }
   if (input.campaignAddress) {
     qs.set("campaign", solana ? String(input.campaignAddress) : String(input.campaignAddress).toLowerCase());
   }
@@ -146,13 +165,21 @@ export async function harvestSolanaLpFees(input: {
   pairAddress?: string | null;
 }): Promise<{ txHash: string; pairAddress: string; note?: string }> {
   const chainId = Number(input.chainId || 101);
+  if (chainId !== 101) throw new Error("Solana LP harvest requires canonical chain 101.");
+  const authority = currentSolanaUiAuthority();
+  if (!authority) {
+    throw new Error("Solana LP harvest requires explicit staging/devnet or production/mainnet-beta identity.");
+  }
+
   const base = getTokenIndexerBase();
   if (!base) throw new Error("Token indexer URL is not configured.");
   const res = await fetch(`${base}/api/dashboard/lp-fees/collect`, {
     method: "POST",
     headers: { "content-type": "application/json", Accept: "application/json" },
     body: JSON.stringify({
-      chainId,
+      chainId: 101,
+      environment: authority.environment,
+      solanaCluster: authority.cluster,
       campaign: input.campaignAddress || null,
       campaignAddress: input.campaignAddress || null,
       pair: input.pairAddress || null,
