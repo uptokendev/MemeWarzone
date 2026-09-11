@@ -12,11 +12,7 @@ permissions:
 
 env:
   TARGET_SHA: f18505e39186a5fa73fd89f00b242b94782f2f2c
-  PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
   OPERATOR_PUBKEY: HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9
-  ROUTE_PUBKEY: 7hKQd798Z1ERmRUhm7shmstB1V13FQNnDLqtYjZBuJUz
-  EXISTING_ALT: ALA7wQRuPdHWzLLpyDwbw7kPbJB7pCp1zNyzrNZApoiA
-  PRIOR_CAMPAIGN: 8fes8XEmsV3PYL2Y5W2octzcEmKtFU1tiP3Bx362seyx
 
 jobs:
   scan:
@@ -33,40 +29,26 @@ jobs:
         with:
           node-version: 22
       - run: npm install --prefix tests/solana --no-audit --no-fund
-      - name: Read-only exact rent/profile/ALT budget
+      - name: Read-only disposable ALT scan
         shell: bash
         run: |
           set -euo pipefail
           node - <<'NODE'
           const {Connection,PublicKey}=require('./tests/solana/node_modules/@solana/web3.js');
           const c=new Connection(process.env.SOLANA_RPC_URL,'confirmed');
-          const program=new PublicKey(process.env.PROGRAM_ID);
           const operator=new PublicKey(process.env.OPERATOR_PUBKEY);
-          const route=new PublicKey(process.env.ROUTE_PUBKEY);
-          const prior=new PublicKey(process.env.PRIOR_CAMPAIGN);
-          const pda=(...seeds)=>PublicKey.findProgramAddressSync(seeds.map(x=>Buffer.isBuffer(x)?x:Buffer.from(x)),program)[0];
-          const profile=(pk)=>pda(Buffer.from('creator'),pk.toBuffer());
-          const risk=(pk)=>pda(Buffer.from('risk'),pk.toBuffer());
-          const fee=pda(Buffer.from('fee-escrow'),prior.toBuffer());
-          const creatorFee=pda(Buffer.from('creator-fee-vault'),prior.toBuffer());
+          const alts=[
+            ['FINAL_GOLDEN_TEMP','EdNwQtwKnVHPBe7rSBuUnGxD9StmWcUDK2AHNbDauMoL'],
+            ['NATIVE_FIXTURE_TEMP','2B3CnpQeBqvxep6jLyVkwJGGeaviiYw7EkqnXtALrVgH'],
+          ];
           (async()=>{
-            const genesis=await c.getGenesisHash(); if(genesis!=='EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG') throw new Error(`wrong cluster ${genesis}`);
+            const genesis=await c.getGenesisHash();if(genesis!=='EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG')throw new Error(`wrong cluster ${genesis}`);
             console.log('EXACT_TARGET',process.env.TARGET_SHA);
             console.log('OPERATOR_BALANCE',await c.getBalance(operator,'confirmed'));
-            console.log('ROUTE_BALANCE',await c.getBalance(route,'confirmed'));
-            for(const [name,key] of [['operator_creator_profile',profile(operator)],['operator_risk_profile',risk(operator)],['route_creator_profile',profile(route)],['route_risk_profile',risk(route)],['prior_fee_escrow',fee],['prior_creator_fee_vault',creatorFee]]){
-              const info=await c.getAccountInfo(key,'confirmed');
-              console.log('ACCOUNT',name,key.toBase58(),info?`exists owner=${info.owner.toBase58()} bytes=${info.data.length} lamports=${info.lamports}`:'missing');
-            }
-            let total=0;
-            for(const [name,size] of Object.entries({mint:82,tokenVault:165,campaign:720,solVault:81,createAuthorization:155})){
-              const rent=await c.getMinimumBalanceForRentExemption(size,'confirmed'); total+=rent; console.log('RENT',name,size,rent);
-            }
-            console.log('CREATE_CORE_RENT_TOTAL',total);
-            const alt=(await c.getAddressLookupTable(new PublicKey(process.env.EXISTING_ALT))).value;
-            if(!alt){console.log('ALT missing');}else{
-              console.log('ALT',alt.key.toBase58(),'authority',alt.state.authority?.toBase58()||'none','deactivationSlot',String(alt.state.deactivationSlot),'lastExtendedSlot',String(alt.state.lastExtendedSlot),'addresses',alt.state.addresses.length);
-              console.log('ALT_ADDRESSES',alt.state.addresses.map(x=>x.toBase58()).join(','));
+            console.log('CURRENT_SLOT',await c.getSlot('confirmed'));
+            for(const [label,s] of alts){
+              const key=new PublicKey(s); const info=await c.getAccountInfo(key,'confirmed'); const table=(await c.getAddressLookupTable(key)).value;
+              console.log('ALT',label,s,'LAMPORTS',info?.lamports??0,'BYTES',info?.data?.length??0,'OWNER',info?.owner?.toBase58?.()??'missing','AUTHORITY',table?.state?.authority?.toBase58?.()??'none','DEACTIVATION_SLOT',table?String(table.state.deactivationSlot):'missing','LAST_EXTENDED_SLOT',table?String(table.state.lastExtendedSlot):'missing','ADDRESSES',table?.state?.addresses?.length??0);
             }
           })().catch(e=>{console.error(e);process.exit(1)});
           NODE
