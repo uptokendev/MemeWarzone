@@ -15,6 +15,7 @@ const {
   loadAuthoritativeTopazManifest,
   assertRuntimeTopazIdentity,
 } = require("./lib/bnbRealTopazAuthority.cjs");
+const { resolveExactCheckedOutHead } = require("./lib/exactSourceHead.cjs");
 
 const BNB_TESTNET_CHAIN_ID = 97;
 const EXPECTED_FACTORY_GENERATION = 4n;
@@ -42,6 +43,7 @@ function eq(label: string, actual: unknown, expected: unknown): void {
 }
 
 async function main() {
+  const sourceBaseSha = resolveExactCheckedOutHead(process.cwd());
   const chainId = Number((await ethers.provider.getNetwork()).chainId);
   allowBnb6cTestnetSourceHeadBroadcast(chainId);
   if (chainId !== BNB_TESTNET_CHAIN_ID || network.name !== "bscTestnet") {
@@ -237,7 +239,7 @@ async function main() {
     environment: "staging",
     deployedAt: new Date().toISOString(),
     deploymentBlock,
-    sourceBaseSha: "bd7abeced408a62470b955607376639657e597c5",
+    sourceBaseSha,
     topazDeploymentAuthority: TOPAZ_DEPLOYMENT_AUTHORITY,
     topazManifest: path.relative(process.cwd(), topazPath).replace(/\\/g, "/"),
     factoryGeneration: 4,
