@@ -1,0 +1,165 @@
+name: Agent 3 ArenaMoneyV2 Post-Upgrade Recovery
+
+on:
+  push:
+    branches: [agent3/solana-arena-money-v2-reconcile-120401f]
+    paths:
+      - .github/workflows/agent3-arena-money-v2-post-upgrade-recovery.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent3-arena-money-v2-post-upgrade-recovery
+  cancel-in-progress: false
+
+env:
+  BASE_SHA: a5cfa696be1dd0e7f607eed9931513a2b729e519
+  INTEGRATION_BRANCH: build/cross-chain-stabilization-rh-base
+  PROGRAM_ID: 2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX
+  ANCHOR_VERSION: 0.30.1
+  SOLANA_VERSION: 1.18.26
+  RUST_TOOLCHAIN: 1.79.0
+
+jobs:
+  recover-and-accept:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    environment: testnet-certification
+    env:
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
+      SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER }}
+      SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
+    steps:
+      - name: Checkout Agent 3 executor
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: agent3
+          fetch-depth: 0
+
+      - name: Checkout exact frozen integration source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BASE_SHA }}
+          path: source
+          fetch-depth: 0
+
+      - name: Freeze integration before recovery
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = "$BASE_SHA"
+          remote="$(git -C source ls-remote origin refs/heads/$INTEGRATION_BRANCH | awk '{print $1}')"
+          echo "CURRENT_INTEGRATION $remote"
+          test "$remote" = "$BASE_SHA"
+
+      - name: Install exact Solana build toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          release_dir="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
+          mkdir -p "$release_dir"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error \
+            --output /tmp/solana-release.tar.bz2 \
+            "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"
+          ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+
+      - name: Rebuild exact-head candidate
+        shell: bash
+        working-directory: source
+        run: |
+          set -euo pipefail
+          rm -f Cargo.lock programs/memewarzone_solana/Cargo.lock programs/mwz_rewards_treasury/Cargo.lock
+          anchor build --no-idl
+          sha256sum target/deploy/mwz_rewards_treasury.so
+          stat -c 'EXACT_HEAD_CANDIDATE_SIZE %s' target/deploy/mwz_rewards_treasury.so
+
+      - name: Install executor dependencies
+        shell: bash
+        run: npm install --prefix agent3/tests/solana --no-audit --no-fund
+
+      - name: Fresh chain preflight after upgrade
+        shell: bash
+        run: node agent3/tests/solana/arena-money-v2-current-head-acceptance.cjs preflight
+
+      - name: Prove live executable equals exact candidate plus zero capacity padding
+        shell: bash
+        run: |
+          set -euo pipefail
+          solana program dump "$PROGRAM_ID" /tmp/live-current.so --url "$SOLANA_RPC_URL"
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          candidate = Path('source/target/deploy/mwz_rewards_treasury.so').read_bytes()
+          live = Path('/tmp/live-current.so').read_bytes()
+          print('EXACT_HEAD_CANDIDATE_SHA256', hashlib.sha256(candidate).hexdigest())
+          print('EXACT_HEAD_CANDIDATE_SIZE', len(candidate))
+          print('LIVE_BINARY_CURRENT_SHA256', hashlib.sha256(live).hexdigest())
+          print('LIVE_BINARY_CURRENT_SIZE', len(live))
+          if len(live) < len(candidate):
+              raise SystemExit('live executable is shorter than exact-head candidate')
+          prefix_equal = live[:len(candidate)] == candidate
+          trailing = live[len(candidate):]
+          padding_zero = all(b == 0 for b in trailing)
+          print('LIVE_PREFIX_EQUALS_CANDIDATE', str(prefix_equal).lower())
+          print('LIVE_TRAILING_PADDING_BYTES', len(trailing))
+          print('LIVE_TRAILING_PADDING_ALL_ZERO', str(padding_zero).lower())
+          if not prefix_equal or not padding_zero:
+              raise SystemExit('live program is not exact-head candidate plus zero padding')
+          PY
+          solana program show "$PROGRAM_ID" --url "$SOLANA_RPC_URL" --keypair /tmp/mwz-payer.json
+
+      - name: FINAL integration freeze before ArenaMoneyV2 initialization
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote="$(git -C source ls-remote origin refs/heads/$INTEGRATION_BRANCH | awk '{print $1}')"
+          echo "FINAL_PRE_INITIALIZE_INTEGRATION $remote"
+          if [ "$remote" != "$BASE_SHA" ]; then
+            echo "INTEGRATION_ADVANCED_BEFORE_INITIALIZE expected=$BASE_SHA actual=$remote"
+            exit 43
+          fi
+
+      - name: Initialize unpause and execute Battle Tournament payment matrix
+        shell: bash
+        run: node agent3/tests/solana/arena-money-v2-current-head-acceptance.cjs execute
+
+      - name: Exact-head rewards treasury tests
+        shell: bash
+        working-directory: source
+        run: cargo test -p mwz_rewards_treasury --lib
+
+      - name: Exact-head current Solana authority tests
+        shell: bash
+        run: node --test source/frontend/shared/solanaCurrentAuthority.test.mjs source/frontend/shared/solanaCurrentArenaAuthority.test.mjs
+
+      - name: Install exact-head frontend dependencies
+        shell: bash
+        run: npm ci --prefix source/frontend --no-audit --no-fund
+
+      - name: Exact-head Arena Solana payment lifecycle tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          DATABASE_URL=postgres://127.0.0.1/mwz_test node --test source/frontend/src/lib/arena/solanaArenaPaymentLifecycle.test.mjs
+          node --test source/frontend/src/lib/arena/battleBoostSolanaIntegration.test.mjs
+          node --test source/frontend/src/lib/arena/integratedArenaRuntimeContracts.test.mjs
+          npm --prefix source/frontend run test:solana-confirm
+          npm --prefix source/frontend run test:solana-v0
+          node --test source/frontend/api/lib/arenaTournamentV2Certification.test.mjs
+
+      - name: Final chain and integration state
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote="$(git -C source ls-remote origin refs/heads/$INTEGRATION_BRANCH | awk '{print $1}')"
+          echo "FINAL_INTEGRATION_OBSERVED $remote"
+          solana program show "$PROGRAM_ID" --url "$SOLANA_RPC_URL" --keypair /tmp/mwz-payer.json
