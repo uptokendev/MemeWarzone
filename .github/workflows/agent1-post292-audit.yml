@@ -21,7 +21,9 @@ jobs:
         with:
           node-version: 22
       - name: Apply focused authority patch
-        run: python3 .github/scripts/agent1_post292_patch.py
+        run: |
+          python3 .github/scripts/agent1_post292_patch.py
+          python3 .github/scripts/agent1_post292_fixup.py
       - name: Focused authority tests
         run: |
           set -euo pipefail
