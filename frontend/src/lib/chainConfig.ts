@@ -258,59 +258,42 @@ export function resolveTokenPageChainId(input?: {
 export function getEvmChainIdForAddress(
   address: string | null | undefined,
   _walletChainId?: number | null,
-  pathname?: string | null,
 ): SupportedChainId {
-  const a = String(address || "").trim();
-  const routePath = pathname ?? (typeof window !== "undefined" ? window.location.pathname : "");
-  const routeIsEvm = isEvmTokenRoutePath(routePath);
-  if (/^0x[a-fA-F0-9]{40}$/i.test(a) || routeIsEvm) return getEvmReadChainIdForTokenPage();
-  return getActiveChainId();
-}
-
-/**
- * Stable market read chain for hooks that render Token Details / charts.
- *
- * - /token/0x... always resolves to an EVM chain and ignores a connected Solana wallet.
- * - base58 /token/... always resolves to Solana 101.
- * - all other surfaces keep existing active-chain behavior.
- */
-export function getMarketReadChainId(input?: {
-  pathname?: string | null;
-  search?: string | null;
-  address?: string | null;
-  walletChainId?: number | null;
-}): SupportedChainId {
-  const pathname = input?.pathname ?? (typeof window !== "undefined" ? window.location.pathname : "");
-  const search = input?.search ?? (typeof window !== "undefined" ? window.location.search : "");
-  const address = String(input?.address || "").trim();
-  const routeId = tokenPathId(pathname);
-
-  if (/^0x[a-fA-F0-9]{40}$/i.test(address) || isEvmTokenRoutePath(pathname)) {
-    return resolveTokenPageChainId({ pathname, search, routeId: address || routeId });
+  const raw = String(address || "").trim();
+  if (/^0x[a-fA-F0-9]{40}$/i.test(raw)) {
+    return getEvmReadChainIdForTokenPage();
   }
-  if ((address && !address.startsWith("0x")) || isSolanaTokenPath(pathname)) return SOLANA_CHAIN_ID;
-  return getActiveChainId(input?.walletChainId);
+  return getActiveChainId(_walletChainId);
 }
 
-export function getChainLabel(chainId: SupportedChainId): string {
-  if (chainId === SOLANA_CHAIN_ID) return "Solana";
-  if (chainId === ROBINHOOD_TESTNET_CHAIN_ID) return "Robinhood Testnet";
-  if (chainId === ROBINHOOD_CHAIN_ID) return "Robinhood";
-  return chainId === BNB_TESTNET_CHAIN_ID ? "BNB Testnet" : "BNB Chain";
+function normalizeRpcUrl(u: string) {
+  const s = u.trim();
+  if (s.startsWith("https//")) return "https:" + s.slice("https".length);
+  if (s.startsWith("http//")) return "http:" + s.slice("http".length);
+  return s;
 }
 
-function firstFromCsv(raw?: string | null): string {
-  return String(raw || "")
+function usableHttpUrl(value: string) {
+  const raw = String(value || "").trim();
+  if (!raw || /\{\{/.test(raw) || /%7B%7B/i.test(raw)) return "";
+  return /^https?:\/\//i.test(raw) ? raw : "";
+}
+
+function firstFromCsv(raw?: string) {
+  if (!raw) return "";
+  const parts = String(raw)
     .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean)[0] || "";
-}
-
-function fromCsv(raw?: string | null): string[] {
-  return String(raw || "")
-    .split(",")
-    .map((s) => s.trim())
+    .map((p) => usableHttpUrl(normalizeRpcUrl(p)))
     .filter(Boolean);
+  return parts[0] ?? "";
+}
+
+function fromCsv(raw?: string) {
+  if (!raw) return [];
+  return String(raw)
+    .split(",")
+    .map((p) => usableHttpUrl(normalizeRpcUrl(p)))
+    .filter((p) => Boolean(p));
 }
 
 function robinhoodDefaultRpc(chainId: SupportedChainId): string {
@@ -459,7 +442,7 @@ export function getSupportedFactoryAddresses(chainId: SupportedChainId): string[
 }
 
 export function getVoteTreasuryAddress(chainId: SupportedChainId): string {
-  if (isSolanaChainId(chainId)) {
+  if (isSolanaChainId(chainId) || Number(chainId) === 102) {
     const solana =
       (import.meta.env.VITE_SOLANA_VOTE_TREASURY_ADDRESS as string | undefined) ||
       (import.meta.env.VITE_VOTE_TREASURY_ADDRESS_101 as string | undefined) ||
@@ -483,7 +466,7 @@ export function getVoteTreasuryAddress(chainId: SupportedChainId): string {
  * vote treasury so Arena keeps the same V0 payment rail and only changes memo domain.
  */
 export function getArenaVoteTreasuryAddress(chainId: SupportedChainId): string {
-  if (isSolanaChainId(chainId)) {
+  if (isSolanaChainId(chainId) || Number(chainId) === 102) {
     const solana =
       (import.meta.env.VITE_SOLANA_ARENA_VOTE_TREASURY_ADDRESS as string | undefined) ||
       (import.meta.env.VITE_ARENA_VOTE_TREASURY_ADDRESS_101 as string | undefined) ||
@@ -534,4 +517,80 @@ export function getExplorerTxBase(chainId: SupportedChainId): string {
   if (chainId === ROBINHOOD_TESTNET_CHAIN_ID) return "https://explorer.testnet.chain.robinhood.com/tx/";
   if (chainId === ROBINHOOD_CHAIN_ID) return "https://robinhoodchain.blockscout.com/tx/";
   return chainId === 97 ? "https://testnet.bscscan.com/tx/" : "https://bscscan.com/tx/";
+}
+
+export function getChainParams(chainId: SupportedChainId) {
+  if (chainId === BNB_CHAIN_ID) {
+    return {
+      chainId: "0x38",
+      chainName: "BNB Smart Chain",
+      nativeCurrency: { name: "BNB", symbol: "BNB", decimals: 18 },
+      rpcUrls: getPublicRpcUrls(BNB_CHAIN_ID),
+      blockExplorerUrls: ["https://bscscan.com/"],
+    };
+  }
+
+  if (chainId === BNB_TESTNET_CHAIN_ID) {
+    return {
+      chainId: "0x61",
+      chainName: "BNB Smart Chain Testnet",
+      nativeCurrency: { name: "tBNB", symbol: "tBNB", decimals: 18 },
+      rpcUrls: getPublicRpcUrls(BNB_TESTNET_CHAIN_ID),
+      blockExplorerUrls: ["https://testnet.bscscan.com/"],
+    };
+  }
+
+  if (chainId === ROBINHOOD_CHAIN_ID) {
+    return {
+      chainId: "0x1237",
+      chainName: "Robinhood Chain",
+      nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+      rpcUrls: getPublicRpcUrls(ROBINHOOD_CHAIN_ID),
+      blockExplorerUrls: ["https://robinhoodchain.blockscout.com/"],
+    };
+  }
+
+  if (chainId === ROBINHOOD_TESTNET_CHAIN_ID) {
+    return {
+      chainId: "0xb626",
+      chainName: "Robinhood Chain Testnet",
+      nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+      rpcUrls: getPublicRpcUrls(ROBINHOOD_TESTNET_CHAIN_ID),
+      blockExplorerUrls: ["https://explorer.testnet.chain.robinhood.com/"],
+    };
+  }
+
+  return {
+    chainId: "0x65",
+    chainName: "Solana mainnet",
+    nativeCurrency: { name: "SOL", symbol: "SOL", decimals: 9 },
+    rpcUrls: getPublicRpcUrls(SOLANA_CHAIN_ID),
+    blockExplorerUrls: ["https://solscan.io/"],
+  };
+}
+
+// Common chains the wallet may be connected to but the app doesn't support.
+// Used purely for human-readable labels on settings/diagnostic screens.
+const CHAIN_LABELS: Record<number, string> = {
+  1: "Ethereum",
+  56: "BNB Smart Chain",
+  97: "BNB Smart Chain Testnet",
+  101: "Solana mainnet",
+  137: "Polygon",
+  4663: "Robinhood Chain",
+  46630: "Robinhood Chain Testnet",
+  8453: "Base",
+  42161: "Arbitrum One",
+  10: "Optimism",
+  43114: "Avalanche C-Chain",
+};
+
+export function getChainLabel(chainId?: number | null): string {
+  if (!chainId) return "Unknown";
+  if (chainId === 56) return "BNB";
+  if (chainId === 97) return "BNB Testnet";
+  if (chainId === 101) return "Solana";
+  if (chainId === 4663) return "Robinhood";
+  if (chainId === 46630) return "Robinhood Testnet";
+  return CHAIN_LABELS[chainId] ?? `Chain ${chainId}`;
 }
