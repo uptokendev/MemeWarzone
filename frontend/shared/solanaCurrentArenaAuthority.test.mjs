@@ -40,11 +40,21 @@ test("Solana Boost financial contexts are downstream of the canonical Arena Mone
   assert.match(boosts, /verifySolanaBoostPayment/);
 });
 
+test("standalone Arena operator cannot resolve or claim a legacy 102 settlement", async () => {
+  const worker = await source("scripts/solana/arena-operator-worker.mjs");
+  assert.match(worker, /Number\(settlement\.chain_id\) !== 101/);
+  assert.match(worker, /Number\(settlement\.chain_id\) === 102 \? "legacy-solana-chain-not-authorized"/);
+  assert.doesNotMatch(worker, /Number\(settlement\.chain_id\) !== 101 && Number\(settlement\.chain_id\) !== 102/);
+});
+
 test("Arena scoring and economics constants are not changed by the authority closeout", async () => {
   const runtime = await source("frontend/api/lib/solanaArenaMoneyV2Runtime.mjs");
   const boosts = await source("frontend/api/arenaSolanaBoosts.js");
-  assert.match(runtime, /9000n/);
-  assert.match(runtime, /1000n/);
+  assert.match(runtime, /const BPS = 10_000n/);
+  assert.match(runtime, /const BOOST_PROTOCOL_BPS = 1_000n/);
+  assert.match(runtime, /return \{ gross, prize: gross - protocol, protocol \}/);
+  assert.match(runtime, /const SPONSORSHIP_MARKETING_BPS = 2_000n/);
+  assert.match(runtime, /const SPONSORSHIP_PROTOCOL_BPS = 1_000n/);
   assert.match(boosts, /pointsPerBoost: 1/);
   assert.match(boosts, /pointsPerBoost: 2/);
 });
