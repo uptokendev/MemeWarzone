@@ -1,6 +1,6 @@
 # Finance network activation checklist
 
-Finance supports four explicit network targets. No target falls back to another environment.
+Finance supports four explicit environment targets across the current application chains. No target falls back to another environment.
 
 ## BNB Testnet — chain 97
 
@@ -24,29 +24,43 @@ Use the equivalent `_56` variables. Leave them unset until mainnet deployment an
 
 Native paid-upvote revenue uses the same live `feeReceiver()` ownership check on chain 56.
 
-## Solana Devnet — Finance chain 101
+## Solana Devnet — chain 101 + staging/devnet
+
+Every Finance request for this target must carry:
+
+- `chainId=101`
+- `environment=staging`
+- `solanaCluster=devnet`
 
 Configure/verify:
 
 - `SOLANA_DEVNET_RPC_HTTP` or approved `SOLANA_RPC_HTTP` fallback
 - `SOLANA_DEVNET_PROTOCOL_TREASURY_ADDRESS`
-- `FINANCE_REWARD_CUSTODY_ADDRESSES_101` when claim custody is approved
+- `FINANCE_REWARD_CUSTODY_ADDRESSES_101_DEVNET` when claim custody is approved
+- optional shared compatibility `FINANCE_REWARD_CUSTODY_ADDRESSES_101`
 - optional compatibility `SOLANA_DEVNET_REWARD_VAULT_ADDRESS`
 - approved LP operator / Indexer configuration used by the existing LP authority
 
-Current Solana reward claims are disabled in the application claim flow, so reward funding remains blocked until a real approved claim-custody surface is supplied. Do not use the LP operator wallet as reward custody merely to clear the control.
+Current Solana reward claims remain governed by the dedicated claims lane. Do not use the LP operator wallet as reward custody merely to clear the control.
 
-## Solana Mainnet — Finance chain 102
+## Solana Mainnet — chain 101 + production/mainnet-beta
+
+Every Finance request for this target must carry:
+
+- `chainId=101`
+- `environment=production`
+- `solanaCluster=mainnet-beta`
 
 Configure mainnet-specific values only after production deployment:
 
 - `SOLANA_MAINNET_RPC_HTTP`
 - `SOLANA_MAINNET_PROTOCOL_TREASURY_ADDRESS`
-- `FINANCE_REWARD_CUSTODY_ADDRESSES_102`
+- `FINANCE_REWARD_CUSTODY_ADDRESSES_101_MAINNET`
+- optional shared compatibility `FINANCE_REWARD_CUSTODY_ADDRESSES_101`
 - optional compatibility `SOLANA_MAINNET_REWARD_VAULT_ADDRESS`
 - mainnet LP operator / Indexer configuration
 
-No devnet identity is inherited by mainnet.
+Legacy product chain `102` is not a current Finance target. Missing, crossed, or legacy identity must remain blocked. No devnet identity is inherited by mainnet and no mainnet identity is inherited by devnet.
 
 ## Current live Finance control dependencies
 
@@ -78,4 +92,4 @@ Composes Inventory, Revenue-source, Rewards and Reconciliation status server-sid
 
 ## Do not bypass blocked controls
 
-A blocked state caused by missing custody, missing RPC, undeployed mainnet contracts, disabled Solana claims, or an unapproved revenue destination is expected behavior. Fix the underlying deployment/configuration or accounting rule; do not add a frontend override that re-labels unknown data as ready.
+A blocked state caused by missing identity, missing custody, missing RPC, undeployed mainnet contracts, claims controls, or an unapproved revenue destination is expected behavior. Fix the underlying deployment/configuration or accounting rule; do not add a frontend override that re-labels unknown data as ready.
