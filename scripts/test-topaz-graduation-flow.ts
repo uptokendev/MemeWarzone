@@ -11,6 +11,7 @@ const {
 const { resolveExactCheckedOutHead } = require("./lib/exactSourceHead.cjs");
 
 const EXPECTED_CHAIN_ID = 97;
+const REQUIRED_VOLATILE_FEE_BPS = 30n;
 const FOUNDER_OPERATOR = "0xEE2c6A7605ED378CF1D26D1d828446d63A3fdeDa";
 const FOUNDER_ROUTE_AUTHORITY = "0x2b72A9E6C4Ea3525d83B8C5E8F2044BDbC1f1Dec";
 const HISTORICAL_OPERATOR = "0x6404b7eA3156F621aD9616C32214CAf1D0780c3";
@@ -105,7 +106,7 @@ async function runGen4ReadOnlyPreflight(): Promise<void> {
     volatileFeeBps: Number(await poolFactory.getFee(ethers.ZeroAddress, false)),
   };
   assertRuntimeTopazIdentity(runtime, topaz);
-  if (runtime.volatileFeeBps !== 30) fail("TOPAZ_VOLATILE_FEE_NOT_30_BPS");
+  if (BigInt(runtime.volatileFeeBps) !== REQUIRED_VOLATILE_FEE_BPS) fail("TOPAZ_VOLATILE_FEE_NOT_30_BPS");
 
   let stageExists = false;
   if (fs.existsSync(STAGE_MANIFEST)) {
