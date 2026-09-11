@@ -48,7 +48,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$BASE_SHA"
           grep -F "declare_id!(\"$REWARDS_PROGRAM\")" programs/mwz_rewards_treasury/src/lib.rs
           grep -F "mwz_rewards_treasury = \"$REWARDS_PROGRAM\"" Anchor.toml
-          grep -F "mwz_launchpad = \"$LAUNCHPAD_PROGRAM\"" Anchor.toml
+          grep -F "memewarzone_solana = \"$LAUNCHPAD_PROGRAM\"" Anchor.toml
           grep -F "pub mod arena_money_v2;" programs/mwz_rewards_treasury/src/lib.rs
           grep -F "pub fn initialize_arena_money_v2" programs/mwz_rewards_treasury/src/lib.rs
           printf 'BASE_SHA=%s\n' "$(git rev-parse HEAD)"
@@ -67,14 +67,7 @@ jobs:
           NODE_PATH=tests/solana/node_modules node <<'NODE'
           const crypto = require('crypto');
           const {Connection,PublicKey,Keypair,Transaction,TransactionInstruction} = require('@solana/web3.js');
-          const expected = {
-            genesis: process.env.EXPECTED_GENESIS,
-            program: process.env.REWARDS_PROGRAM,
-            programData: process.env.EXPECTED_PROGRAMDATA,
-            authority: process.env.EXPECTED_AUTHORITY,
-            config: process.env.EXPECTED_CONFIG,
-            launchpad: process.env.LAUNCHPAD_PROGRAM,
-          };
+          const expected = { genesis: process.env.EXPECTED_GENESIS, program: process.env.REWARDS_PROGRAM, programData: process.env.EXPECTED_PROGRAMDATA, authority: process.env.EXPECTED_AUTHORITY, config: process.env.EXPECTED_CONFIG, launchpad: process.env.LAUNCHPAD_PROGRAM };
           const loader = new PublicKey('BPFLoaderUpgradeab1e11111111111111111111111');
           const disc = (name) => crypto.createHash('sha256').update(`global:${name}`).digest().subarray(0,8);
           function decodeSigner(raw) {
@@ -87,7 +80,7 @@ jobs:
             throw new Error(`authority secret decodes to unexpected byte length ${bytes.length}`);
           }
           function decodeProgramAccount(info) {
-            if (!info || !info.executable) throw new Error('rewards program missing/non-executable');
+            if (!info || !info.executable) throw new Error('program missing/non-executable');
             if (!info.owner.equals(loader)) throw new Error(`program loader mismatch ${info.owner.toBase58()}`);
             const d=Buffer.from(info.data);
             if (d.length<36 || d.readUInt32LE(0)!==2) throw new Error('unexpected upgradeable Program layout');
