@@ -3,12 +3,11 @@ import { requireAdminOrOps } from "../lib/apiAuth.js";
 import { configuredRewardVaultAddresses, readRewardFunding } from "../lib/financeFunding.js";
 import { readNativeUpvoteRevenue } from "../lib/financeVoteRevenue.js";
 import { defaultEvmChainId } from "../lib/defaultEvmChain.js";
+import { resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";
 
 const FINANCE_NETWORKS = new Map([
   [56, { chain: "bnb", decimals: 18, asset: "BNB", environment: "mainnet" }],
   [97, { chain: "bnb", decimals: 18, asset: "BNB", environment: "testnet" }],
-  [101, { chain: "solana", decimals: 9, asset: "SOL", environment: "devnet" }],
-  [102, { chain: "solana", decimals: 9, asset: "SOL", environment: "mainnet" }],
 ]);
 
 const INDEXER_BASE = String(
@@ -53,9 +52,24 @@ function safeAsset(value, fallback) {
 
 function selectedNetwork(req) {
   const chainId = Number(req.query?.chainId ?? defaultEvmChainId());
-  const network = FINANCE_NETWORKS.get(chainId);
-  if (!network) return null;
-  return { chainId, ...network };
+  const evmNetwork = FINANCE_NETWORKS.get(chainId);
+  if (evmNetwork) return { chainId, ...evmNetwork };
+
+  if (chainId !== 101) return null;
+  const authority = resolveCurrentSolanaAuthority({
+    chainId,
+    environment: req.query?.environment,
+    cluster: req.query?.solanaCluster ?? req.query?.cluster,
+  });
+  if (!authority) return null;
+  return {
+    chainId: 101,
+    chain: "solana",
+    decimals: 9,
+    asset: "SOL",
+    environment: authority.environment,
+    cluster: authority.cluster,
+  };
 }
 
 function rewardState(status) {
@@ -69,13 +83,20 @@ function rewardState(status) {
   return null;
 }
 
-function rewardChainCandidates(chainId) {
-  if (chainId === 101) return ["101", "solana", "solana-mainnet", "solana-mainnet-beta"];
-  if (chainId === 102) return ["102", "solana-devnet"];
-  return [String(chainId)];
+function rewardChainCandidates(network) {
+  if (network.chain !== "solana") return [String(network.chainId)];
+  if (network.environment === "staging" && network.cluster === "devnet") {
+    return ["101", "solana-devnet"];
+  }
+  if (network.environment === "production" && network.cluster === "mainnet-beta") {
+    return ["101", "solana", "solana-mainnet", "solana-mainnet-beta"];
+  }
+  return [];
 }
 
 async function loadRewardRows(network) {
+  const candidates = rewardChainCandidates(network);
+  if (candidates.length === 0) return [];
   const { rows } = await pool.query(
     `select chain::text as chain,
             coalesce(nullif(token_symbol, ''), '') as token_symbol,
@@ -90,7 +111,7 @@ async function loadRewardRows(network) {
       where chain::text = any($1::text[])
       group by chain::text, token_symbol, reward_type, status
       order by period_end desc nulls last`,
-    [rewardChainCandidates(network.chainId)],
+    [candidates],
   );
   return rows;
 }
@@ -290,14 +311,14 @@ function financeInventoryItems(network) {
     configuredRewardVaultAddresses(network).forEach((address, index) => add(`bnb${network.chainId}-claim-custody-${index + 1}`, "vault", "Reward Claim Custody", address, "active reward claim funding"));
     add(`bnb${network.chainId}-lp-locker`, "contract", "Permanent LP Locker", env("PERMANENT_LP_LOCKER_ADDRESS") || env("LP_LOCKER_ADDRESS"), "permanently locked graduation liquidity");
     add(`bnb${network.chainId}-vote-treasury`, "contract", "UP Vote Treasury", env("VOTE_TREASURY_ADDRESS"), "verified paid-vote collection");
-  } else if (network.chainId === 101) {
-    add("sol101-protocol-treasury", "wallet", "Solana Protocol Treasury", process.env.SOLANA_DEVNET_PROTOCOL_TREASURY_ADDRESS || process.env.SOLANA_PROTOCOL_TREASURY_ADDRESS || process.env.SOLANA_VOTE_TREASURY_ADDRESS, "protocol revenue destination");
-    configuredRewardVaultAddresses(network).forEach((address, index) => add(`sol101-claim-custody-${index + 1}`, "vault", "Solana Reward Claim Custody", address, "reward claim funding"));
-    add("sol101-operator", "wallet", "Solana LP Operator", process.env.SOLANA_DEVNET_OPERATOR_ADDRESS || process.env.SOLANA_OPERATOR_ADDRESS || process.env.SOLANA_HARVEST_OPERATOR_ADDRESS, "Meteora position operator");
-  } else {
-    add("sol102-protocol-treasury", "wallet", "Solana Protocol Treasury", process.env.SOLANA_MAINNET_PROTOCOL_TREASURY_ADDRESS || process.env.SOLANA_MAINNET_VOTE_TREASURY_ADDRESS, "protocol revenue destination");
-    configuredRewardVaultAddresses(network).forEach((address, index) => add(`sol102-claim-custody-${index + 1}`, "vault", "Solana Reward Claim Custody", address, "reward claim funding"));
-    add("sol102-operator", "wallet", "Solana LP Operator", process.env.SOLANA_MAINNET_OPERATOR_ADDRESS || process.env.SOLANA_MAINNET_HARVEST_OPERATOR_ADDRESS, "Meteora position operator");
+  } else if (network.environment === "staging" && network.cluster === "devnet") {
+    add("sol101-devnet-protocol-treasury", "wallet", "Solana Protocol Treasury", process.env.SOLANA_DEVNET_PROTOCOL_TREASURY_ADDRESS || process.env.SOLANA_PROTOCOL_TREASURY_ADDRESS || process.env.SOLANA_VOTE_TREASURY_ADDRESS, "protocol revenue destination");
+    configuredRewardVaultAddresses(network).forEach((address, index) => add(`sol101-devnet-claim-custody-${index + 1}`, "vault", "Solana Reward Claim Custody", address, "reward claim funding"));
+    add("sol101-devnet-operator", "wallet", "Solana LP Operator", process.env.SOLANA_DEVNET_OPERATOR_ADDRESS || process.env.SOLANA_OPERATOR_ADDRESS || process.env.SOLANA_HARVEST_OPERATOR_ADDRESS, "Meteora position operator");
+  } else if (network.environment === "production" && network.cluster === "mainnet-beta") {
+    add("sol101-mainnet-protocol-treasury", "wallet", "Solana Protocol Treasury", process.env.SOLANA_MAINNET_PROTOCOL_TREASURY_ADDRESS || process.env.SOLANA_MAINNET_VOTE_TREASURY_ADDRESS, "protocol revenue destination");
+    configuredRewardVaultAddresses(network).forEach((address, index) => add(`sol101-mainnet-claim-custody-${index + 1}`, "vault", "Solana Reward Claim Custody", address, "reward claim funding"));
+    add("sol101-mainnet-operator", "wallet", "Solana LP Operator", process.env.SOLANA_MAINNET_OPERATOR_ADDRESS || process.env.SOLANA_MAINNET_HARVEST_OPERATOR_ADDRESS, "Meteora position operator");
   }
   return items;
 }
@@ -307,7 +328,12 @@ async function financeInventory(req, res, network) {
     schemaVersion: "finance-inventory-v1",
     generatedAt: new Date().toISOString(),
     source: "dashboard-api",
-    network: { chainId: network.chainId, chain: network.chain, environment: network.environment },
+    network: {
+      chainId: network.chainId,
+      chain: network.chain,
+      environment: network.environment,
+      ...(network.cluster ? { cluster: network.cluster } : {}),
+    },
     items: financeInventoryItems(network),
   });
 }
@@ -322,7 +348,12 @@ async function readIndexerLpFees(network) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12000);
   try {
-    const response = await fetch(`${INDEXER_BASE}/api/dashboard/lp-fees?chainId=${network.chainId}&limit=50`, {
+    const params = new URLSearchParams({ chainId: String(network.chainId), limit: "50" });
+    if (network.chain === "solana") {
+      params.set("environment", network.environment);
+      params.set("solanaCluster", network.cluster);
+    }
+    const response = await fetch(`${INDEXER_BASE}/api/dashboard/lp-fees?${params.toString()}`, {
       headers: indexerHeaders(),
       signal: controller.signal,
     });
@@ -437,7 +468,8 @@ async function revenueModuleStatus(network) {
 async function financeOverview(req, res, network) {
   const generatedAt = new Date().toISOString();
   const inventory = financeInventoryItems(network);
-  const inventoryStatus = inventory.length > 0 ? "ready" : network.environment === "mainnet" ? "pending" : "blocked";
+  const productionLike = network.environment === "mainnet" || network.environment === "production";
+  const inventoryStatus = inventory.length > 0 ? "ready" : productionLike ? "pending" : "blocked";
 
   let rewardStatus = "blocked";
   let rewardBlockers = 1;
@@ -529,6 +561,9 @@ async function financeLpHarvest(req, res, network) {
       headers: { Accept: "application/json", "Content-Type": "application/json", "x-ops-key": opsKey },
       body: JSON.stringify({
         chainId: network.chainId,
+        ...(network.chain === "solana"
+          ? { environment: network.environment, solanaCluster: network.cluster }
+          : {}),
         pair,
         pairAddress: pair,
         campaign: campaign || undefined,
@@ -545,6 +580,7 @@ async function financeLpHarvest(req, res, network) {
       chainId: network.chainId,
       chain: network.chain,
       environment: network.environment,
+      ...(network.cluster ? { cluster: network.cluster } : {}),
       txHash: payload?.txHash || null,
       note: payload?.note || null,
       harvestedAt: new Date().toISOString(),
@@ -562,7 +598,12 @@ export default async function financeAdmin(req, res) {
   if (!auth) return;
 
   const network = selectedNetwork(req);
-  if (!network) return res.status(400).json({ ok: false, error: "Finance network must be chainId 56, 97, 101, or 102." });
+  if (!network) {
+    return res.status(400).json({
+      ok: false,
+      error: "Finance network must be BNB 56/97 or Solana 101 with explicit staging/devnet or production/mainnet-beta identity.",
+    });
+  }
 
   const pathname = String(req.path || new URL(req.url, "http://localhost").pathname);
   const method = String(req.method || "GET").toUpperCase();
