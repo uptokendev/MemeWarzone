@@ -1,0 +1,31 @@
+name: Agent 1 legacy Solana classifier
+
+on:
+  push:
+    branches:
+      - "agent1/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  classify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Make the classifier self-classifying
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/ci/classify-legacy-solana.mjs')
+          text = path.read_text()
+          needle = 'function isFixtureOrHistory(path) {\n'
+          replacement = needle + '  if (path.endsWith("classify-legacy-solana.mjs")) return true;\n'
+          if needle not in text:
+            raise SystemExit('classifier fixture hook missing')
+          path.write_text(text.replace(needle, replacement, 1))
+          PY
+      - name: Exhaustive seven-category occurrence classification
+        run: node scripts/ci/classify-legacy-solana.mjs
