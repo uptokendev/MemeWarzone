@@ -47,6 +47,80 @@ function toAddr(value: unknown): string | null {
   return isAddress(raw) ? raw : null;
 }
 
+type SolanaRouteAuthority = {
+  chainId: 101;
+  environment: "staging" | "production";
+  cluster: "devnet" | "mainnet-beta";
+};
+
+function normalizeSolanaEnvironment(value: unknown): "staging" | "production" | "" {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "staging") return "staging";
+  if (normalized === "production" || normalized === "prod") return "production";
+  return "";
+}
+
+function normalizeSolanaCluster(value: unknown): "devnet" | "mainnet-beta" | "" {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (normalized === "devnet" || normalized === "solana-devnet") return "devnet";
+  if (["mainnet", "mainnet-beta", "solana-mainnet", "solana-mainnet-beta"].includes(normalized)) return "mainnet-beta";
+  return "";
+}
+
+function currentIndexerSolanaAuthority(): SolanaRouteAuthority | null {
+  const environment = normalizeSolanaEnvironment(
+    process.env.RUNTIME_ENVIRONMENT || process.env.VITE_RUNTIME_ENVIRONMENT,
+  );
+  const cluster = normalizeSolanaCluster(
+    process.env.SOLANA_CLUSTER || process.env.VITE_SOLANA_CLUSTER,
+  );
+  if (environment === "staging" && cluster === "devnet") return { chainId: 101, environment, cluster };
+  if (environment === "production" && cluster === "mainnet-beta") return { chainId: 101, environment, cluster };
+  return null;
+}
+
+function requestedSolanaAuthority(source: Record<string, unknown>): SolanaRouteAuthority | null {
+  const chainId = Number(source.chainId ?? 0);
+  if (chainId !== 101) return null;
+  const environment = normalizeSolanaEnvironment(source.environment);
+  const cluster = normalizeSolanaCluster(source.solanaCluster ?? source.cluster);
+  if (environment === "staging" && cluster === "devnet") return { chainId: 101, environment, cluster };
+  if (environment === "production" && cluster === "mainnet-beta") return { chainId: 101, environment, cluster };
+  return null;
+}
+
+function requireCurrentSolanaAuthority(source: Record<string, unknown>):
+  | { ok: true; authority: SolanaRouteAuthority }
+  | { ok: false; status: number; error: string } {
+  if (Number(source.chainId ?? 0) === 102) {
+    return { ok: false, status: 400, error: "Legacy Solana chain 102 is not a current LP fee authority." };
+  }
+  const requested = requestedSolanaAuthority(source);
+  if (!requested) {
+    return {
+      ok: false,
+      status: 400,
+      error: "Solana LP fee authority requires chain 101 plus explicit staging/devnet or production/mainnet-beta identity.",
+    };
+  }
+  const configured = currentIndexerSolanaAuthority();
+  if (!configured) {
+    return {
+      ok: false,
+      status: 503,
+      error: "Indexer Solana runtime identity is not explicitly configured.",
+    };
+  }
+  if (configured.environment !== requested.environment || configured.cluster !== requested.cluster) {
+    return {
+      ok: false,
+      status: 409,
+      error: `Requested Solana ${requested.environment}/${requested.cluster} does not match this indexer runtime.`,
+    };
+  }
+  return { ok: true, authority: requested };
+}
+
 function weiToDecimal(value: bigint | string | number): number {
   try {
     return Number(ethers.formatEther(BigInt(String(value ?? "0"))));
@@ -418,14 +492,28 @@ export function registerLpFeesRoutes(app: express.Application) {
         return;
       }
 
-      if (chainId === 101 || chainId === 102) {
+      if (chainId === 102) {
+        res.status(400).json({ ok: false, error: "Legacy Solana chain 102 is not a current LP fee authority." });
+        return;
+      }
+      if (chainId === 101) {
+        const authority = requireCurrentSolanaAuthority(req.query as Record<string, unknown>);
+        if (!authority.ok) {
+          res.status(authority.status).json({ ok: false, error: authority.error });
+          return;
+        }
         const payload = await listSolanaLpFees({
           pool,
           creator: String(creatorFilter || req.query.creator || "").trim() || null,
           campaign: String(campaignFilter || req.query.campaign || "").trim() || null,
           limit,
         });
-        res.status(200).json(payload);
+        res.status(200).json({
+          ...payload,
+          chainId: 101,
+          environment: authority.authority.environment,
+          cluster: authority.authority.cluster,
+        });
         return;
       }
 
@@ -550,8 +638,22 @@ export function registerLpFeesRoutes(app: express.Application) {
     "/api/dashboard/lp-fees/status",
     wrap(async (req, res) => {
       const chainId = Number(req.query.chainId ?? 101);
-      if (chainId === 101 || chainId === 102) {
-        res.status(200).json(solanaHarvestStatus());
+      if (chainId === 102) {
+        res.status(400).json({ ok: false, error: "Legacy Solana chain 102 is not a current LP fee authority." });
+        return;
+      }
+      if (chainId === 101) {
+        const authority = requireCurrentSolanaAuthority(req.query as Record<string, unknown>);
+        if (!authority.ok) {
+          res.status(authority.status).json({ ok: false, error: authority.error });
+          return;
+        }
+        res.status(200).json({
+          ...solanaHarvestStatus(),
+          chainId: 101,
+          environment: authority.authority.environment,
+          cluster: authority.authority.cluster,
+        });
         return;
       }
       res.status(200).json({
@@ -573,14 +675,28 @@ export function registerLpFeesRoutes(app: express.Application) {
       // Solana collect is permissionless like BNB locker.harvest(): anyone may
       // trigger it. The operator key only signs the Meteora claim; 80% still
       // belongs to the campaign creator once the split ix is live.
-      if (chainId === 101 || chainId === 102) {
+      if (chainId === 102) {
+        res.status(400).json({ ok: false, error: "Legacy Solana chain 102 is not a current LP fee authority." });
+        return;
+      }
+      if (chainId === 101) {
+        const authority = requireCurrentSolanaAuthority(req.body as Record<string, unknown>);
+        if (!authority.ok) {
+          res.status(authority.status).json({ ok: false, error: authority.error });
+          return;
+        }
         try {
           const result = await harvestSolanaLpFees({
             pool,
             campaign: String(req.body?.campaign || req.body?.campaignAddress || "").trim() || null,
             pair: String(req.body?.pair || req.body?.pool || req.body?.pairAddress || "").trim() || null,
           });
-          res.status(200).json(result);
+          res.status(200).json({
+            ...result,
+            chainId: 101,
+            environment: authority.authority.environment,
+            cluster: authority.authority.cluster,
+          });
         } catch (error: any) {
           res.status(Number(error?.status || 500)).json({
             ok: false,
