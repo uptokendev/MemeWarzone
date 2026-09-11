@@ -1,0 +1,174 @@
+name: Agent 3 ArenaMoneyV2 Candidate Certification
+
+on:
+  push:
+    branches:
+      - agent3/solana-arena-money-v2-reconcile-120401f
+    paths:
+      - .github/workflows/agent3-solana-arena-v2-candidate-cert.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BASE_SHA: 120401fd1fde0dce6e2439fc4156840e029f1ae6
+  EXPECTED_PROGRAM_ID: 2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX
+  ANCHOR_VERSION: 0.30.1
+  SOLANA_VERSION: 1.18.26
+  RUST_TOOLCHAIN: 1.79.0
+  IDL_RUST_TOOLCHAIN: nightly-2024-05-09
+  CARGO_NET_RETRY: 10
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 120401fd1fde0dce6e2439fc4156840e029f1ae6
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Exact authority and instruction surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$BASE_SHA"
+          grep -F "declare_id!(\"$EXPECTED_PROGRAM_ID\")" programs/mwz_rewards_treasury/src/lib.rs
+          required=(initialize_arena_money_v2 set_arena_money_v2_pause set_arena_money_v2_receivers open_competition_pool_v2 deposit_competition_entry_v2 deposit_competition_boost_v2 resolve_competition_pool_v2 claim_competition_winner_v2 claim_competition_protocol_v2 initialize_postgrad_league_treasury_v2 route_competition_league_v2 claim_monthly_league_v2 claim_quarterly_league_v2 initialize_sponsorship_event_v1 pay_sponsorship_v1 claim_event_prize_v1 claim_sponsorship_marketing_v1 claim_sponsorship_protocol_v1)
+          legacy=(initialize_config initialize_lanes_v2_primary initialize_lanes_v2_secondary set_recruiter_batch_root claim_recruiter set_squad_batch_root claim_squad initialize_arena set_arena_resolver set_arena_receivers set_arena_pause open_battle_pool_v2 open_tournament_pool_v2 activate_tournament_pool_v2 deposit_stake_v2 donate_support_v2 close_support_v2 deposit_buy_in_v2 deposit_prize_boost_v2 resolve_pool_v2 cancel_pool_v2 settle_expired_pool claim_winner claim_protocol claim_mwl refund_stake refund_buy_in_v2 refund_prize_boost_v2)
+          for ix in "${required[@]}" "${legacy[@]}"; do grep -F "pub fn $ix" programs/mwz_rewards_treasury/src/lib.rs >/dev/null || { echo "MISSING_SOURCE_IX $ix"; exit 1; }; done
+          grep -F 'COMPETITION_PRIZE_BPS: u64 = 7_500' programs/mwz_rewards_treasury/src/arena_money_v2/competition.rs
+          grep -F 'COMPETITION_LEAGUE_BPS: u64 = 2_000' programs/mwz_rewards_treasury/src/arena_money_v2/competition.rs
+          grep -F 'COMPETITION_PROTOCOL_BPS: u64 = 500' programs/mwz_rewards_treasury/src/arena_money_v2/competition.rs
+          grep -F 'config.paused = true' programs/mwz_rewards_treasury/src/arena_money_v2/config.rs
+          echo SOURCE_SURFACE_OK
+
+      - name: Install pinned Rust toolchains
+        shell: bash
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup toolchain install "$IDL_RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+      - name: Install pinned Solana CLI
+        shell: bash
+        run: |
+          release_dir="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
+          mkdir -p "$release_dir"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error --output /tmp/solana-release.tar.bz2 "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"
+          ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+      - name: Install pinned Anchor
+        run: npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+      - name: Toolchain record
+        shell: bash
+        run: |
+          rustc --version
+          cargo --version
+          solana --version
+          anchor --version
+          node --version
+
+      - name: Clean build one
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf target
+          rm -f Cargo.lock programs/mwz_rewards_treasury/Cargo.lock
+          anchor build --program-name mwz_rewards_treasury --no-idl 2>&1 | tee /tmp/build1.log | tail -n 220
+          ! grep -E 'Stack offset .* exceeded max offset|stack frame.*exceed' /tmp/build1.log
+          test -s target/deploy/mwz_rewards_treasury.so
+          sha256sum target/deploy/mwz_rewards_treasury.so | tee /tmp/build1.sha
+          stat -c 'BUILD1_SIZE %s' target/deploy/mwz_rewards_treasury.so
+          cp target/deploy/mwz_rewards_treasury.so /tmp/mwz_rewards_treasury.build1.so
+
+      - name: Generate exact-current IDL and verify full surface
+        shell: bash
+        working-directory: programs/mwz_rewards_treasury
+        env:
+          RUSTUP_TOOLCHAIN: nightly-2024-05-09
+        run: |
+          set -euo pipefail
+          mkdir -p ../../target/idl
+          anchor idl build --out ../../target/idl/mwz_rewards_treasury.json 2>&1 | tee /tmp/idl.log | tail -n 260
+          test -s ../../target/idl/mwz_rewards_treasury.json
+      - name: Verify IDL instruction preservation and hash
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum target/idl/mwz_rewards_treasury.json | tee /tmp/idl.sha
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const idl=JSON.parse(fs.readFileSync('target/idl/mwz_rewards_treasury.json','utf8'));
+          const names=new Set((idl.instructions||[]).map(x=>String(x.name)));
+          const groups=[
+            ['initialize_arena_money_v2','initializeArenaMoneyV2'],['set_arena_money_v2_pause','setArenaMoneyV2Pause'],['set_arena_money_v2_receivers','setArenaMoneyV2Receivers'],['open_competition_pool_v2','openCompetitionPoolV2'],['deposit_competition_entry_v2','depositCompetitionEntryV2'],['deposit_competition_boost_v2','depositCompetitionBoostV2'],['resolve_competition_pool_v2','resolveCompetitionPoolV2'],['claim_competition_winner_v2','claimCompetitionWinnerV2'],['claim_competition_protocol_v2','claimCompetitionProtocolV2'],['initialize_postgrad_league_treasury_v2','initializePostgradLeagueTreasuryV2'],['route_competition_league_v2','routeCompetitionLeagueV2'],['claim_monthly_league_v2','claimMonthlyLeagueV2'],['claim_quarterly_league_v2','claimQuarterlyLeagueV2'],['initialize_sponsorship_event_v1','initializeSponsorshipEventV1'],['pay_sponsorship_v1','paySponsorshipV1'],['claim_event_prize_v1','claimEventPrizeV1'],['claim_sponsorship_marketing_v1','claimSponsorshipMarketingV1'],['claim_sponsorship_protocol_v1','claimSponsorshipProtocolV1'],['initialize_arena','initializeArena'],['open_battle_pool_v2','openBattlePoolV2'],['open_tournament_pool_v2','openTournamentPoolV2'],['deposit_buy_in_v2','depositBuyInV2'],['claim_winner','claimWinner'],['claim_protocol','claimProtocol'],['claim_mwl','claimMwl'],['set_recruiter_batch_root','setRecruiterBatchRoot'],['claim_recruiter','claimRecruiter'],['set_squad_batch_root','setSquadBatchRoot'],['claim_squad','claimSquad']
+          ];
+          for(const alternatives of groups) if(!alternatives.some(n=>names.has(n))) throw new Error('IDL missing '+alternatives[0]);
+          console.log('IDL_INSTRUCTIONS '+names.size);
+          console.log('IDL_SURFACE_OK');
+          NODE
+
+      - name: Authoritative rewards and ArenaMoneyV2 unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test -p mwz_rewards_treasury --lib -- --nocapture
+
+      - name: Current Arena acceptance and runtime tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund
+          npm install --prefix frontend --no-audit --no-fund
+          npx hardhat test test/ArenaMoneyV2.spec.ts test/ArenaWarPoolTreasury.spec.ts
+          node --test frontend/api/lib/solanaArenaMoneyV2Runtime.test.mjs frontend/api/lib/arenaTournamentV2Certification.test.mjs frontend/api/lib/arenaSolanaNormalBoostAuthority.test.mjs frontend/src/lib/arena/solanaArenaPaymentLifecycle.test.mjs
+
+      - name: Clean build two and prove reproducibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf target
+          rm -f Cargo.lock programs/mwz_rewards_treasury/Cargo.lock
+          anchor build --program-name mwz_rewards_treasury --no-idl 2>&1 | tee /tmp/build2.log | tail -n 220
+          ! grep -E 'Stack offset .* exceeded max offset|stack frame.*exceed' /tmp/build2.log
+          test -s target/deploy/mwz_rewards_treasury.so
+          sha256sum target/deploy/mwz_rewards_treasury.so | tee /tmp/build2.sha
+          stat -c 'BUILD2_SIZE %s' target/deploy/mwz_rewards_treasury.so
+          cmp -s /tmp/mwz_rewards_treasury.build1.so target/deploy/mwz_rewards_treasury.so || { echo CANDIDATE_NOT_REPRODUCIBLE; exit 1; }
+          echo CANDIDATE_REPRODUCIBLE
+          cp target/deploy/mwz_rewards_treasury.so /tmp/certified-mwz_rewards_treasury.so
+
+      - name: Rebuild IDL for final hash
+        shell: bash
+        working-directory: programs/mwz_rewards_treasury
+        env:
+          RUSTUP_TOOLCHAIN: nightly-2024-05-09
+        run: |
+          mkdir -p ../../target/idl
+          anchor idl build --out ../../target/idl/mwz_rewards_treasury.json >/tmp/idl2.log 2>&1
+          tail -n 120 /tmp/idl2.log
+          sha256sum ../../target/idl/mwz_rewards_treasury.json
+
+      - name: Candidate summary
+        shell: bash
+        run: |
+          echo "BASE_SHA=$BASE_SHA"
+          echo "SBF=target/deploy/mwz_rewards_treasury.so"
+          echo "CANDIDATE_SHA256=$(sha256sum target/deploy/mwz_rewards_treasury.so | awk '{print $1}')"
+          echo "CANDIDATE_SIZE=$(stat -c %s target/deploy/mwz_rewards_treasury.so)"
+          echo "IDL_SHA256=$(sha256sum target/idl/mwz_rewards_treasury.json | awk '{print $1}')"
+          echo "ECONOMICS=7500/2000/500"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent3-certified-rewards-120401fd
+          path: |
+            target/deploy/mwz_rewards_treasury.so
+            target/idl/mwz_rewards_treasury.json
+          if-no-files-found: error
+          retention-days: 7
