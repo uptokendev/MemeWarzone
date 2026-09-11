@@ -1,0 +1,33 @@
+name: Agent 1 Post-292 Script Runner
+on:
+  push:
+    branches:
+      - agent1/finish-solana-102-elimination-a5cfa696
+permissions:
+  contents: write
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent1/finish-solana-102-elimination-a5cfa696
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply and test focused patch
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/agent1_post292_patch.py
+          node --test frontend/shared/solanaCurrentAuthority.test.mjs frontend/shared/solanaPost292Authority.test.mjs
+          npm --prefix frontend run test:solana-arena
+      - name: Commit focused source delta
+        run: |
+          set -euo pipefail
+          git add frontend
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Finish Solana 102 operational authority elimination'
+          git push origin HEAD:agent1/finish-solana-102-elimination-a5cfa696
