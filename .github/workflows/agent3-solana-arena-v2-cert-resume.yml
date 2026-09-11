@@ -1,0 +1,91 @@
+name: Agent 3 ArenaMoneyV2 Candidate Cert Resume
+
+on:
+  push:
+    branches: [agent3/solana-arena-money-v2-reconcile-120401f]
+    paths: [.github/workflows/agent3-solana-arena-v2-cert-resume.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BASE_SHA: 120401fd1fde0dce6e2439fc4156840e029f1ae6
+  EXPECTED_SHA: 156ae2069c4c50acd81d6d26754e4ec12bf6f95dfb1e6dbdf99de46688fdb3e8
+  EXPECTED_SIZE: '1487736'
+  EXPECTED_IDL_SHA: 13eada1464e67e2c4b398a1690ee7d4db476018e644e8403eff8e824b8242fea
+  ANCHOR_VERSION: 0.30.1
+  SOLANA_VERSION: 1.18.26
+  RUST_TOOLCHAIN: 1.79.0
+  IDL_RUST_TOOLCHAIN: nightly-2024-05-09
+  CARGO_NET_RETRY: 10
+  DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/mwz_ci
+
+jobs:
+  resume-cert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 120401fd1fde0dce6e2439fc4156840e029f1ae6
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install pinned toolchains
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$BASE_SHA"
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup toolchain install "$IDL_RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          release_dir="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
+          mkdir -p "$release_dir"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error --output /tmp/solana-release.tar.bz2 "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"
+          ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+      - name: Second independent clean candidate build
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf target
+          rm -f Cargo.lock programs/mwz_rewards_treasury/Cargo.lock
+          anchor build --program-name mwz_rewards_treasury --no-idl 2>&1 | tee /tmp/build2.log | tail -n 220
+          if grep -E 'Stack offset .* exceeded max offset|stack frame.*exceed' /tmp/build2.log; then exit 1; fi
+          actual_sha="$(sha256sum target/deploy/mwz_rewards_treasury.so | awk '{print $1}')"
+          actual_size="$(stat -c %s target/deploy/mwz_rewards_treasury.so)"
+          echo "BUILD2_SHA256=$actual_sha"
+          echo "BUILD2_SIZE=$actual_size"
+          test "$actual_sha" = "$EXPECTED_SHA"
+          test "$actual_size" = "$EXPECTED_SIZE"
+          echo CANDIDATE_REPRODUCIBLE
+          cd programs/mwz_rewards_treasury
+          RUSTUP_TOOLCHAIN="$IDL_RUST_TOOLCHAIN" anchor idl build --out ../../target/idl/mwz_rewards_treasury.json >/tmp/idl2.log 2>&1
+          cd ../..
+          idl_sha="$(sha256sum target/idl/mwz_rewards_treasury.json | awk '{print $1}')"
+          echo "IDL_SHA256=$idl_sha"
+          test "$idl_sha" = "$EXPECTED_IDL_SHA"
+          echo IDL_REPRODUCIBLE
+      - name: Rewards Rust tests
+        run: cargo test -p mwz_rewards_treasury --lib -- --nocapture
+      - name: ArenaMoney and Solana payment runtime tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --no-audit --no-fund
+          npm install --prefix frontend --no-audit --no-fund
+          npx hardhat test test/ArenaMoneyV2.spec.ts test/ArenaWarPoolTreasury.spec.ts
+          node --test frontend/api/lib/solanaArenaMoneyV2Runtime.test.mjs frontend/api/lib/arenaTournamentV2Certification.test.mjs frontend/api/lib/arenaSolanaNormalBoostAuthority.test.mjs frontend/src/lib/arena/solanaArenaPaymentLifecycle.test.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent3-certified-rewards-120401fd-resume
+          path: |
+            target/deploy/mwz_rewards_treasury.so
+            target/idl/mwz_rewards_treasury.json
+          retention-days: 7
+          if-no-files-found: error
