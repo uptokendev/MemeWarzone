@@ -1,0 +1,54 @@
+name: Agent 3 ArenaMoneyV2 Final CI Only
+
+on:
+  push:
+    branches: [agent3/solana-arena-money-v2-reconcile-120401f]
+    paths:
+      - .github/workflows/agent3-arena-money-v2-final-ci-only.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BASE_SHA: a5cfa696be1dd0e7f607eed9931513a2b729e519
+  INTEGRATION_BRANCH: build/cross-chain-stabilization-rh-base
+
+jobs:
+  exact-head-ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.BASE_SHA }}
+          fetch-depth: 0
+      - name: Freeze exact integration authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$BASE_SHA"
+          remote="$(git ls-remote origin refs/heads/$INTEGRATION_BRANCH | awk '{print $1}')"
+          echo "CI_CURRENT_INTEGRATION $remote"
+          test "$remote" = "$BASE_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install exact-head frontend dependencies before JS tests
+        run: npm ci --prefix frontend --no-audit --no-fund
+      - name: Rewards treasury unit/economics tests
+        run: cargo test -p mwz_rewards_treasury --lib
+      - name: Current Solana authority matrix
+        run: node --test frontend/shared/solanaCurrentAuthority.test.mjs frontend/shared/solanaCurrentArenaAuthority.test.mjs
+      - name: Arena Solana payment lifecycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          DATABASE_URL=postgres://127.0.0.1/mwz_test node --test frontend/src/lib/arena/solanaArenaPaymentLifecycle.test.mjs
+          node --test frontend/src/lib/arena/battleBoostSolanaIntegration.test.mjs
+          node --test frontend/src/lib/arena/integratedArenaRuntimeContracts.test.mjs
+          npm --prefix frontend run test:solana-confirm
+          npm --prefix frontend run test:solana-v0
+          node --test frontend/api/lib/arenaTournamentV2Certification.test.mjs
