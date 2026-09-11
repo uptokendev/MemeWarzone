@@ -44,3 +44,45 @@ export async function notifyCampaignCreated(
     console.error("[campaign-lifecycle-notifications] campaign_created failed", error);
   }
 }
+
+export async function notifyCampaignGraduated(
+  db: Pool | PoolClient,
+  input: {
+    chainId: number;
+    campaignAddress: string;
+    name?: string | null;
+    market?: { venue?: string | null; pair?: string | null; quoteAsset?: string | null } | null;
+    graduatedAt?: string | Date | null;
+  },
+): Promise<void> {
+  const address = campaignAddressKey(input.chainId, input.campaignAddress);
+  const chain = normalizeChain(input.chainId);
+  if (!address || !chain) return;
+  try {
+    await emitNotification(db, {
+      eventType: "campaign.graduated",
+      chain,
+      chainId: input.chainId,
+      dedupKey: `graduation:${chain}:${address}`,
+      payload: {
+        campaign: address,
+        name: input.name || null,
+        graduatedAt: input.graduatedAt ? new Date(input.graduatedAt).toISOString() : new Date().toISOString(),
+        market: input.market || null,
+      },
+    });
+  } catch (error) {
+    console.error("[campaign-lifecycle-notifications] campaign_graduated failed", error);
+  }
+}
+
+export function digestWindow(date = new Date()): string {
+  const iso = date.toISOString();
+  return `${iso.slice(0, 10)}T${iso.slice(11, 13)}Z`;
+}
+
+export const NOTIFICATION_CHAIN_GROUPS = [
+  { label: "bnb" as const, ids: [56, 97] },
+  { label: "solana" as const, ids: [101, 102] },
+  { label: "robinhood" as const, ids: [4663, 46630] },
+];

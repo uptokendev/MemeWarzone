@@ -18,6 +18,7 @@ import { getArenaMarketSnapshot } from "./arenaMarketSnapshot.js";
 import { battleSettlementPatch, decorateSettledParticipants } from "./arenaBattleSettle.js";
 import { decideBattlePointsV3Settlement } from "./arenaBattleSettleV3.js";
 import { recordFinishedBattle } from "./arenaLeagueScore.js";
+import { notifyBattleWinnerConfirmed } from "./arenaLifecycleNotifications.js";
 
 const SETTLE_COLUMNS = `id, chain_id, state, source, battle_mode, competition_generation,
   challenger_token, defender_token, tournament_id, participants, started_at, ends_at,
@@ -343,6 +344,7 @@ export async function settleBattlePointsV3ById(battleId, deps = {}) {
       return { settled: false, reason: "settlement_write_lost_race" };
     }
     await client.query("commit");
+    await notifyBattleWinnerConfirmed(db, finished);
     return {
       settled: true,
       reason: "ok",

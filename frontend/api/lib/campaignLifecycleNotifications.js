@@ -71,6 +71,32 @@ export async function notifyDraftCreated(db, {
   }, "draft_created");
 }
 
+export async function notifyCampaignGraduated(db, {
+  chainId,
+  campaignAddress,
+  name,
+  market = null,
+  graduatedAt = null,
+}) {
+  const address = campaignAddressKey(chainId, campaignAddress);
+  if (!db || !address) return false;
+  const chain = normalizeChain(chainId);
+  if (!chain) return false;
+  return safeEnqueue(db, {
+    eventType: "campaign.graduated",
+    chainId,
+    entityType: "campaign",
+    entityId: address,
+    dedupKey: `graduation:${chain}:${address}`,
+    payload: {
+      campaign: address,
+      name: name || null,
+      graduatedAt: graduatedAt ? new Date(graduatedAt).toISOString() : new Date().toISOString(),
+      market,
+    },
+  }, "campaign_graduated");
+}
+
 export async function notifyCampaignCreated(db, {
   chainId,
   campaignAddress,

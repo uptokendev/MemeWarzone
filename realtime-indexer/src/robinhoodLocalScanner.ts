@@ -12,7 +12,7 @@ import {
 import { buildFactoryInventory, type SupportedFactory } from "./factoryInventory.js";
 import { createStaticJsonRpcProvider, parseRpcList } from "./rpcProvider.js";
 import { TIMEFRAMES, bucketStart, type TF } from "./timeframes.js";
-import { notifyCampaignCreated } from "./campaignLifecycleNotifications.js";
+import { notifyCampaignCreated, notifyCampaignGraduated } from "./campaignLifecycleNotifications.js";
 
 const CHAIN_ID = 46630;
 const CURSOR_PREFIX = "robinhood-local";
@@ -381,6 +381,12 @@ async function recordFinalization(campaign: string, token: string | null, log: e
      where chain_id=$1 and campaign_address=$2`,
     [CHAIN_ID, normalized, blockDate, log.blockNumber],
   );
+  await notifyCampaignGraduated(pool, {
+    chainId: CHAIN_ID,
+    campaignAddress: normalized,
+    market: { venue: "v3", pair, quoteAsset: "WETH" },
+    graduatedAt: blockDate,
+  });
 
   if (token) {
     await pool.query(

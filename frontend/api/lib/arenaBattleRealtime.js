@@ -383,6 +383,23 @@ export async function refreshAllLiveBattleMetrics(options = {}) {
       limit $1`,
     [limit],
   );
+  try {
+    const live = await db.query(
+      `select id, chain_id, source, tournament_id, challenger_token, defender_token, started_at, ends_at
+         from public.arena_battles
+        where state = 'live'
+          and ends_at is not null
+          and ends_at > now()
+          and ends_at <= now() + interval '2 hours'`,
+    );
+    const { notifyBattleFinalHours } = await import("./arenaLifecycleNotifications.js");
+    for (const battle of live.rows || []) {
+      await notifyBattleFinalHours(db, battle, "final-2h");
+    }
+  } catch (error) {
+    console.warn("[arena-battle-realtime] final-hours notify failed", error?.message || error);
+  }
+
   const results = [];
   for (const row of rows.rows || []) {
     try {
