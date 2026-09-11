@@ -18,6 +18,20 @@ jobs:
       - name: Checkout exact branch head
         uses: actions/checkout@v4
 
+      - name: Exact tracked-text 102 inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          pattern='(^|[^0-9])102([^0-9]|$)'
+          echo '=== 102 FILES ==='
+          git grep -I -l -E "$pattern" -- . | sort || true
+          echo '=== 102 MATCHING LINES ==='
+          git grep -I -n -E "$pattern" -- . | sort || true
+          occurrence_count="$(git grep -I -h -o -E "$pattern" -- . | wc -l | tr -d ' ')"
+          file_count="$(git grep -I -l -E "$pattern" -- . | wc -l | tr -d ' ')"
+          echo "TOTAL_102_OCCURRENCES=$occurrence_count"
+          echo "TOTAL_102_FILES=$file_count"
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
