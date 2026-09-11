@@ -118,8 +118,8 @@ contract LaunchFactory is Ownable {
     uint8 public constant ROUTE_PROFILE_STANDARD_LINKED = 0;
     uint8 public constant ROUTE_PROFILE_STANDARD_UNLINKED = 1;
     uint8 public constant ROUTE_PROFILE_OG_LINKED = 2;
-    uint32 public constant FACTORY_GENERATION = 3;
-    uint32 public constant CAMPAIGN_GENERATION = 2;
+    uint32 public constant FACTORY_GENERATION = 4;
+    uint32 public constant CAMPAIGN_GENERATION = 3;
     uint256 public constant MIN_SCHEDULE_DELAY = 5 minutes;
     uint256 public constant MAX_SCHEDULE_WINDOW = 30 days;
 
@@ -166,16 +166,7 @@ contract LaunchFactory is Ownable {
     mapping(bytes32 => bool) public usedCreateRouteAuthorizations;
     mapping(address => mapping(uint256 => bool)) public usedAuthorizationNonces;
 
-    event CampaignCreated(
-        uint256 indexed id,
-        address indexed campaign,
-        address indexed token,
-        address creator,
-        string name,
-        string symbol,
-        string logoURI,
-        string metadataURI
-    );
+    event CampaignCreated(uint256 indexed id, address indexed campaign, address indexed token, address creator, string name, string symbol, string logoURI, string metadataURI);
     event ScheduledCampaignCreated(
         uint256 indexed id,
         address indexed campaign,
@@ -218,12 +209,9 @@ contract LaunchFactory is Ownable {
         if (treasuryRouter_ == address(0)) revert RecipientZero();
         if (campaignImplementation_ == address(0)) revert ImplementationZero();
         if (graduationOracle_ == address(0)) revert GraduationOracleZero();
-        if (
-            topazRouter_.code.length == 0 ||
-            treasuryRouter_.code.length == 0 ||
-            campaignImplementation_.code.length == 0 ||
-            graduationOracle_.code.length == 0
-        ) revert ContractCodeMissing();
+        if (topazRouter_.code.length == 0 || treasuryRouter_.code.length == 0 || campaignImplementation_.code.length == 0 || graduationOracle_.code.length == 0) {
+            revert ContractCodeMissing();
+        }
 
         router = topazRouter_;
         leagueReceiver = treasuryRouter_;
@@ -264,11 +252,7 @@ contract LaunchFactory is Ownable {
     receive() external payable {}
 
     function isGraduationTargetAllowedForChain(uint256 chainId, uint256 target) public pure returns (bool) {
-        if (
-            target == FAST_GRADUATION_USD_THRESHOLD ||
-            target == DEFAULT_GRADUATION_USD_THRESHOLD ||
-            target == DEEP_GRADUATION_USD_THRESHOLD
-        ) return true;
+        if (target == FAST_GRADUATION_USD_THRESHOLD || target == DEFAULT_GRADUATION_USD_THRESHOLD || target == DEEP_GRADUATION_USD_THRESHOLD) return true;
         return chainId == 97 && target == TEST_GRADUATION_USD_THRESHOLD;
     }
 
@@ -282,18 +266,12 @@ contract LaunchFactory is Ownable {
         return _createCampaign(req, tradeRouteProfile, finalizeRouteProfile, _immediateSchedule(msg.sender));
     }
 
-    function createCampaignAuthorized(CampaignRequest calldata req, RouteAuthorization calldata routeAuth)
-        external
-        returns (address campaignAddr, address tokenAddr)
-    {
+    function createCampaignAuthorized(CampaignRequest calldata req, RouteAuthorization calldata routeAuth) external returns (address campaignAddr, address tokenAddr) {
         _verifyRouteAuthorization(msg.sender, req, routeAuth);
         return _createCampaign(req, routeAuth.tradeRouteProfile, routeAuth.finalizeRouteProfile, _immediateSchedule(msg.sender));
     }
 
-    function createScheduledCampaignAuthorized(ScheduledCampaignRequest calldata req, RouteAuthorization calldata routeAuth)
-        external
-        returns (address campaignAddr, address tokenAddr)
-    {
+    function createScheduledCampaignAuthorized(ScheduledCampaignRequest calldata req, RouteAuthorization calldata routeAuth) external returns (address campaignAddr, address tokenAddr) {
         _validateScheduledRequest(req);
         _verifyScheduledRouteAuthorization(msg.sender, req, routeAuth);
         if (usedAuthorizationNonces[msg.sender][req.authorizationNonce]) revert RouteAuthorizationReplayed();
@@ -326,12 +304,10 @@ contract LaunchFactory is Ownable {
         });
     }
 
-    function _createCampaign(
-        CampaignRequest calldata req,
-        uint8 campaignTradeRouteProfile,
-        uint8 campaignFinalizeRouteProfile,
-        LaunchCampaign.ScheduleParams memory schedule
-    ) internal returns (address campaignAddr, address tokenAddr) {
+    function _createCampaign(CampaignRequest calldata req, uint8 campaignTradeRouteProfile, uint8 campaignFinalizeRouteProfile, LaunchCampaign.ScheduleParams memory schedule)
+        internal
+        returns (address campaignAddr, address tokenAddr)
+    {
         if (!live) revert NotLive();
         if (globalPaused) revert Paused();
         if (createPaused) revert CreatePaused();
@@ -373,7 +349,8 @@ contract LaunchFactory is Ownable {
             creatorBuyCapWei: creatorBuyCapWei,
             requireAuthorizedTrading: requireAuthorizedTrading,
             tradeRouteProfile: campaignTradeRouteProfile,
-            finalizeRouteProfile: campaignFinalizeRouteProfile
+            finalizeRouteProfile: campaignFinalizeRouteProfile,
+            strictFeeRouting: true
         });
 
         address clone = Clones.clone(campaignImplementation);
@@ -384,27 +361,22 @@ contract LaunchFactory is Ownable {
         string memory metadataURI = "";
 
         if (address(creatorRegistry) != address(0)) {
-            // Immediate and scheduled deployments are both irreversible creator
-            // launch actions. The registry records the current block timestamp,
-            // never the future trading-open timestamp.
             creatorRegistry.recordLaunch(msg.sender);
         }
 
-        _campaigns.push(
-            CampaignInfo({
-                campaign: campaignAddr,
-                token: tokenAddr,
-                creator: msg.sender,
-                name: req.name,
-                symbol: req.symbol,
-                logoURI: req.logoURI,
-                metadataURI: metadataURI,
-                xAccount: req.xAccount,
-                website: req.website,
-                extraLink: req.extraLink,
-                createdAt: uint64(block.timestamp)
-            })
-        );
+        _campaigns.push(CampaignInfo({
+            campaign: campaignAddr,
+            token: tokenAddr,
+            creator: msg.sender,
+            name: req.name,
+            symbol: req.symbol,
+            logoURI: req.logoURI,
+            metadataURI: metadataURI,
+            xAccount: req.xAccount,
+            website: req.website,
+            extraLink: req.extraLink,
+            createdAt: uint64(block.timestamp)
+        }));
 
         uint256 id = _campaigns.length - 1;
         emit CampaignCreated(id, campaignAddr, tokenAddr, msg.sender, req.name, req.symbol, req.logoURI, metadataURI);
@@ -433,15 +405,7 @@ contract LaunchFactory is Ownable {
             address tokenAddr = address(LaunchCampaign(payable(msg.sender)).token());
             address wrappedNative = ITopazRouter02(router).WETH();
             uint256 lockedLpAmount = IERC20(lpToken).balanceOf(address(permanentLpLocker));
-            permanentLpLocker.registerGraduatedPool(
-                msg.sender,
-                campaignCreator,
-                campaignCreator,
-                lpToken,
-                tokenAddr,
-                wrappedNative,
-                lockedLpAmount
-            );
+            permanentLpLocker.registerGraduatedPool(msg.sender, campaignCreator, campaignCreator, lpToken, tokenAddr, wrappedNative, lockedLpAmount);
         }
         if (address(creatorRegistry) != address(0)) {
             creatorRegistry.recordGraduation(campaignCreator);
@@ -549,13 +513,7 @@ contract LaunchFactory is Ownable {
         LaunchCampaign(payable(campaign)).setRequireAuthorizedTrading(required);
     }
 
-    /// @notice Returns whether the creator may perform an irreversible deploy/arm
-    /// action in the current block. launchAt is intentionally not an input.
-    function creatorLaunchEligibility(address creator)
-        public
-        view
-        returns (bool allowed, uint256 cooldownEndsAt, uint256 currentLiveCount, uint256 maxLiveBonding)
-    {
+    function creatorLaunchEligibility(address creator) public view returns (bool allowed, uint256 cooldownEndsAt, uint256 currentLiveCount, uint256 maxLiveBonding) {
         cooldownEndsAt = block.timestamp;
 
         if (address(creatorRegistry) == address(0)) {
@@ -572,11 +530,7 @@ contract LaunchFactory is Ownable {
             if (registryCooldownEnd > cooldownEndsAt) cooldownEndsAt = registryCooldownEnd;
         }
 
-        allowed =
-            !profile.restricted &&
-            !profile.manualReviewRequired &&
-            currentLiveCount < maxLiveBonding &&
-            block.timestamp >= cooldownEndsAt;
+        allowed = !profile.restricted && !profile.manualReviewRequired && currentLiveCount < maxLiveBonding && block.timestamp >= cooldownEndsAt;
     }
 
     function canCreatorLaunch(address creator) external view returns (bool) {
@@ -588,11 +542,7 @@ contract LaunchFactory is Ownable {
         return _campaigns.length;
     }
 
-    function _enforceCreatorEligibility(address creator)
-        internal
-        view
-        returns (uint256 lockDuration, uint256 buyCapWei, uint256 maxClusterWallets)
-    {
+    function _enforceCreatorEligibility(address creator) internal view returns (uint256 lockDuration, uint256 buyCapWei, uint256 maxClusterWallets) {
         if (address(creatorRegistry) == address(0)) return (0, 0, 0);
         (bool allowed,,,) = creatorLaunchEligibility(creator);
         if (!allowed) revert CreatorNotEligible();
@@ -629,11 +579,7 @@ contract LaunchFactory is Ownable {
         usedCreateRouteAuthorizations[digest] = true;
     }
 
-    function _verifyScheduledRouteAuthorization(
-        address creator,
-        ScheduledCampaignRequest calldata req,
-        RouteAuthorization calldata routeAuth
-    ) internal {
+    function _verifyScheduledRouteAuthorization(address creator, ScheduledCampaignRequest calldata req, RouteAuthorization calldata routeAuth) internal {
         address authority = routeAuthority;
         if (authority == address(0)) revert RouteAuthorityZero();
         if (routeAuth.deadline < block.timestamp) revert RouteAuthorizationExpired();
