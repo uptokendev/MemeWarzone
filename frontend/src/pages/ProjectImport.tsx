@@ -16,6 +16,7 @@ import {
   type ProjectImportItem,
 } from "@/lib/projectImports";
 import { projectImportFeedback } from "@/lib/projectImportFeedback.mjs";
+import { signSolanaMessage } from "@/lib/solanaWallet";
 import { signWalletAction } from "@/lib/walletActionAuth";
 
 type ImportChain = "bnb" | "solana" | "robinhood";
@@ -89,6 +90,9 @@ export function ProjectImportPanel({
       walletAddress: connectedWallet,
       chainId,
       walletType: chain === "solana" ? "solana" : "evm",
+      signMessage: chain === "solana"
+        ? async (message) => (await signSolanaMessage(message, connectedWallet)).signature
+        : undefined,
       signer: chain === "solana" ? undefined : wallet.signer,
     });
   };
