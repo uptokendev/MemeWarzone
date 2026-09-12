@@ -76,11 +76,12 @@ function projectError(res, error) {
   });
 }
 
-async function resolveForSigner(identity, signer) {
+async function resolveForSigner(identity, signer, options = {}) {
   const result = await resolveProjectToken({
     chainId: identity.chainId,
     tokenAddress: identity.tokenAddress,
     signedWallet: signer,
+    ...options,
   });
   assertResolverIdentity(identity, result);
   return result;
@@ -196,11 +197,11 @@ async function attachAdminEvidence(row) {
   const evidence = await latestImportEvidence(pool, row);
   return { ...row, import_evidence: evidence?.snapshot || null, import_evidence_id: evidence?.id || null };
 }
-async function buildImportChecks(identity, signer, authPayload, fallback = false) {
+async function buildImportChecks(identity, signer, authPayload, fallback = false, { registrationOnly = false } = {}) {
   let resolved;
-  try { resolved = await resolveForSigner(identity, signer); }
+  try { resolved = await resolveForSigner(identity, signer, { registrationOnly }); }
   catch (error) { if (!fallback || !canFallbackToManual(error)) throw error; resolved = unresolvedEvidence(identity, error); }
-  resolved = await applyVerifiedPumpChallenge(pool, identity, signer, resolved);
+  if (!registrationOnly) resolved = await applyVerifiedPumpChallenge(pool, identity, signer, resolved);
   const security = await scanProjectImportSecurity({ ...identity, market: resolved.market, custody: resolved.custody });
   const proof = authPayload ? importProofReceipt({ ...authPayload, walletAddress: signer }) : null;
   const assessment = assessProjectImport({ resolved, security, claimantWallet: signer, proof });
@@ -366,7 +367,7 @@ export default async function projectImports(req, res) {
       const intentBody = { operation: "create" };
       const auth = await strictAuth(res, body, { identity, action: PROJECT_IMPORT_ACTIONS.create, intentBody });
       if (!auth) return;
-      const {resolved,security,assessment} = await buildImportChecks(identity,auth.walletAddress,body.auth);
+      const {resolved,security,assessment} = await buildImportChecks(identity,auth.walletAddress,body.auth,false,{registrationOnly:true});
       assertNewImportMarket(resolved);
       requireSecurityPass(security);
       const result = await withImportTransaction(pool,async client=>{
