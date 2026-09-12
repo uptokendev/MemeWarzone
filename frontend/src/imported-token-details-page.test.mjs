@@ -64,10 +64,14 @@ test("completed imported page renders project identity, profile and share fields
   assert.match(page, /data-imported-badge="true"/);
 });
 
-test("PROJECT VERIFIED derives only from authoritative project ownership state", () => {
-  assert.match(page, /item\.ownershipStatus==="ownership_verified"/);
-  assert.match(page, /data-owner-verified-badge="true"/);
-  assert.match(page, /PROJECT VERIFIED/);
+test("topbar verification pill derives only from authoritative project ownership state", () => {
+  assert.match(page, /ownerVerified=item\.ownershipStatus==="ownership_verified"/);
+  assert.match(page, /data-owner-status-pill="verified"/);
+  assert.match(page, /> VERIFIED<\/span>/);
+  assert.match(page, /data-owner-status-pill="unverified"/);
+  assert.match(page, />UNVERIFIED<\/span>/);
+  assert.match(page, /border-orange-400\/40 bg-orange-500\/10/);
+  assert.match(page, /border-emerald-400\/40 bg-emerald-500\/10/);
   assert.match(page, /projectOwnerWallet/);
   assert.doesNotMatch(page, /arenaStatus|status.*passed|needs_review|verifiedAt/i);
 });
