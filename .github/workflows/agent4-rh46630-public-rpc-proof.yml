@@ -1,0 +1,29 @@
+name: Agent 4 RH46630 Public RPC Proof
+
+on:
+  push:
+    branches:
+      - agent4/rh46630-operator-freeze-c811cd4
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rpc-proof:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Query Robinhood testnet public RPC without broadcasting
+        shell: bash
+        run: |
+          set -euo pipefail
+          RPC='https://rpc.testnet.chain.robinhood.com'
+          chain_hex=$(curl -fsS -X POST "$RPC" -H 'content-type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')
+          block_hex=$(curl -fsS -X POST "$RPC" -H 'content-type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"eth_blockNumber","params":[]}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')
+          gas_hex=$(curl -fsS -X POST "$RPC" -H 'content-type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"eth_gasPrice","params":[]}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')
+          python3 - "$chain_hex" "$block_hex" "$gas_hex" <<'PY'
+          import sys
+          chain=int(sys.argv[1],16); block=int(sys.argv[2],16); gas=int(sys.argv[3],16)
+          assert chain == 46630, chain
+          print(f'RH46630_PUBLIC_RPC_PROOF=chainId:{chain},block:{block},gasPriceWei:{gas}')
+          PY
