@@ -48,6 +48,14 @@ console.log('curve.data.length', curveInfo?.data?.length);
 try {
   const token2022Metadata = await getTokenMetadata(connection, mint, 'confirmed', TOKEN_2022_PROGRAM_ID);
   console.log('token2022.metadata', token2022Metadata);
+  if (token2022Metadata?.uri) {
+    const response = await fetch(token2022Metadata.uri, { redirect: 'follow', headers: { accept: 'application/json' }, signal: AbortSignal.timeout(7000) });
+    console.log('metadata.http.status', response.status);
+    console.log('metadata.http.finalUrl', response.url);
+    console.log('metadata.http.contentType', response.headers.get('content-type'));
+    const text = await response.text();
+    console.log('metadata.http.bodyPrefix', text.slice(0, 1000));
+  }
 } catch (error) {
   console.log('token2022.error', error?.message || String(error));
 }
