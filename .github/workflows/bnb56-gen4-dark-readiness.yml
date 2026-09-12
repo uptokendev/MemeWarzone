@@ -1,0 +1,39 @@
+name: BNB56 Gen4 Dark Readiness
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "scripts/lib/bnbMainnetTopazAuthority.ts"
+      - "scripts/resolve-bnb-mainnet-topaz-authority.ts"
+      - "scripts/deploy-bnb-mainnet-gen4-dark.ts"
+      - "scripts/verify-bnb-mainnet-gen4-dark.ts"
+      - "scripts/prepare-bnb-mainnet-gen4-canary.ts"
+      - "deployments/bscMainnet/gen4-production-input.freeze.json"
+      - ".github/workflows/bnb56-gen4-dark-readiness.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  read-only-mainnet-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      BSC_MAINNET_RPC: https://bsc-mainnet.public.blastapi.io
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx hardhat compile
+      - name: Live chain-56 Topaz authority proof
+        run: npx hardhat run scripts/resolve-bnb-mainnet-topaz-authority.ts --network bscMainnet
+      - name: Dark deployment preflight only
+        run: npx hardhat run scripts/deploy-bnb-mainnet-gen4-dark.ts --network bscMainnet
+      - name: Assert no broadcast opt-in leaked into CI
+        run: |
+          test -z "${BNB56_EXECUTE_DARK_DEPLOY:-}"
+          echo "PASS: CI is read-only; dark deployment execution is not authorized"
