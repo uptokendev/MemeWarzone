@@ -372,7 +372,9 @@ export default async function projectImports(req, res) {
       requireSecurityPass(security);
       const result = await withImportTransaction(pool,async client=>{
         const result=await createProjectImport(client,{resolverResult:{...resolved,signedWalletMatchesAuthority:false},signedWallet:auth.walletAddress});
-        if(result.created) await appendImportEvidence(client,{project:result.project,assessment,source:"permissionless_import"});
+        // Keep the deployed append-only evidence schema compatible. The source label
+        // denotes an automatic registration event; it does not imply owner verification.
+        if(result.created) await appendImportEvidence(client,{project:result.project,assessment,source:"automatic_import"});
         return result;
       });
       return json(res,result.created?201:200,{...result,project:publicProject(result.project),ownershipEvidence:{...resolved,security,assessment}});
