@@ -49,10 +49,26 @@ function providerPublicKey(provider?: SolanaProvider | null): string {
 }
 
 function alreadyConnectedKey(provider?: SolanaProvider | null): string {
-  const key = providerPublicKey(provider);
-  if (!key) return "";
-  if (provider?.isConnected === false) return "";
-  return key;
+  // Phantom can keep publicKey while reporting isConnected=false. Re-calling
+  // connect({ onlyIfTrusted: false }) then throws JSON-RPC -32603 Unexpected error.
+  return providerPublicKey(provider);
+}
+
+function isInternalWalletSignError(error: unknown) {
+  const value = error as { code?: unknown; error?: { code?: unknown; message?: unknown }; message?: unknown };
+  const code = Number(value?.code ?? value?.error?.code);
+  const message = String(value?.message || value?.error?.message || "");
+  return code === -32603 || code === -32000 || /unexpected error/i.test(message);
+}
+
+function signatureFromSigned(signed: { signature: Uint8Array } | Uint8Array | null | undefined) {
+  const rawSig = signed instanceof Uint8Array ? signed : signed?.signature;
+  if (rawSig instanceof Uint8Array) return rawSig.length ? rawSig : null;
+  if (rawSig?.buffer) {
+    const copied = new Uint8Array(rawSig.buffer, rawSig.byteOffset || 0, rawSig.byteLength || rawSig.length);
+    return copied.length ? copied : null;
+  }
+  return null;
 }
 
 export type DetectedSolanaWallet = {
@@ -374,28 +390,45 @@ async function ensureSolanaProviderSession(input: {
 }
 
 export async function signSolanaMessage(message: string, walletAddress?: string): Promise<{ walletAddress: string; signature: string }> {
-  const { provider, wallet: detectedWallet } = resolveSolanaProviderForAddress(walletAddress);
-  if (!provider?.signMessage) throw new Error("This Solana wallet does not support message signing.");
-
-  const publicKey = await ensureSolanaProviderSession({
-    provider,
-    detectedWallet,
-    expectedWalletAddress: walletAddress,
+  const wanted = normalizePublicKey(walletAddress || "");
+  const wallets = detectSolanaWallets();
+  const withKey = wallets.filter((wallet) => {
+    const key = alreadyConnectedKey(wallet.provider);
+    return Boolean(key) && (!wanted || key === wanted);
   });
+  const candidates = (withKey.length ? withKey : wallets).filter((wallet) => Boolean(wallet.provider?.signMessage));
+  if (!candidates.length) throw new Error("This Solana wallet does not support message signing.");
 
-  const encoded = new TextEncoder().encode(message);
-  const signed = await provider.signMessage(encoded);
-  const rawSig = signed instanceof Uint8Array ? signed : signed?.signature;
-  const signature =
-    rawSig instanceof Uint8Array
-      ? rawSig
-      : rawSig?.buffer
-        ? new Uint8Array(rawSig.buffer, rawSig.byteOffset || 0, rawSig.byteLength || rawSig.length)
-        : null;
-  if (!signature?.length) throw new Error("Solana wallet did not return a signature.");
+  const encoded = Uint8Array.from(new TextEncoder().encode(message));
+  let lastError: unknown;
 
-  notifySolanaWalletChanged(publicKey, detectedWallet);
-  return { walletAddress: publicKey, signature: bytesToBase64(signature) };
+  for (const detectedWallet of candidates) {
+    const provider = detectedWallet.provider;
+    try {
+      const liveKey = alreadyConnectedKey(provider);
+      if (wanted && liveKey && liveKey !== wanted) continue;
+      const signed = await provider.signMessage!(encoded);
+      const signature = signatureFromSigned(signed);
+      if (!signature?.length) throw new Error("Solana wallet did not return a signature.");
+      const publicKey = alreadyConnectedKey(provider) || wanted;
+      if (!publicKey) throw new Error("Solana wallet not connected.");
+      if (wanted && publicKey !== wanted) {
+        throw new Error(
+          `Connected wallet (${detectedWallet.name}) is ${publicKey.slice(0, 4)}…${publicKey.slice(-4)}, ` +
+          `but this action expects ${wanted.slice(0, 4)}…${wanted.slice(-4)}. Reconnect the correct wallet.`,
+        );
+      }
+      notifySolanaWalletChanged(publicKey, detectedWallet);
+      return { walletAddress: publicKey, signature: bytesToBase64(signature) };
+    } catch (error) {
+      lastError = error;
+      const text = error instanceof Error ? error.message : String(error || "");
+      if (/user.*reject|denied|cancel/i.test(text)) throw error instanceof Error ? error : new Error(text);
+      if (!isInternalWalletSignError(error)) throw error instanceof Error ? error : new Error(text || "Solana wallet could not sign.");
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Solana wallet could not sign.");
 }
 
 async function fetchNonce(chainId: number, walletAddress: string) {

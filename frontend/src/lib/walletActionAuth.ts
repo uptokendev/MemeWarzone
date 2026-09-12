@@ -73,7 +73,7 @@ type SignInput = {
   action: WalletApiAction | string;
   walletAddress: string;
   chainId: number;
-  extraLines?: string[];
+  extraLines?: string[] | Promise<string[]>;
   /** EVM: ethers signer.signMessage. Solana: base64 signature producer. */
   signer?: JsonRpcSigner | null;
   signMessage?: (message: string) => Promise<string>;
@@ -93,13 +93,14 @@ export async function signWalletAction(input: SignInput): Promise<WalletActionAu
   const isSolana =
     input.walletType === "solana" || isSolanaChainId(chainId) || isSolanaAddress(walletAddress);
 
-  const nonce = await fetchNonce(chainId, walletAddress);
+  const extraLinesPromise = Promise.resolve(input.extraLines || []);
+  const [nonce, extraLines] = await Promise.all([fetchNonce(chainId, walletAddress), extraLinesPromise]);
   const message = buildWalletActionMessage({
     action: input.action,
     walletAddress,
     chainId,
     nonce,
-    extraLines: input.extraLines,
+    extraLines,
   });
 
   let signature = "";
