@@ -1,34 +1,39 @@
 /**
- * Safely inserts a notification event and an optional marker in a transaction.
- * Resolves silently if the marker or dedup_key already exists.
- * @param {Object} db - The pg client or pool to use. Can be a transaction client.
- * @param {Object} params
- * @param {string} params.eventType - e.g. "campaign.created"
- * @param {string} params.chain - "solana", "bnb", etc.
- * @param {string} params.dedupKey - unique message dedup key
- * @param {Object} params.payload - JSON payload
- * @param {string} [params.markerKey] - optional per-item once-only marker key
+ * Outbox producer. Callers should prefer enqueueNotification() with chainId.
+ * emitNotification() remains for existing jobs; it routes through the V1
+ * contract so Robinhood cannot be labelled BNB.
  */
-export async function emitNotification(db, { eventType, chain, dedupKey, payload, markerKey }) {
+
+import { enqueueNotification } from "./notificationContract.js";
+
+export { enqueueNotification } from "./notificationContract.js";
+
+/**
+ * @param {Object} db
+ * @param {Object} params
+ * @param {string} params.eventType
+ * @param {string} [params.chain]
+ * @param {number|string} [params.chainId]
+ * @param {string} params.dedupKey
+ * @param {Object} params.payload
+ * @param {string} [params.markerKey]
+ * @param {string} [params.entityType]
+ * @param {string} [params.entityId]
+ */
+export async function emitNotification(db, params) {
   try {
-    if (markerKey) {
-      const { rowCount } = await db.query(
-        `INSERT INTO public.notification_markers (marker_key)
-         VALUES ($1) ON CONFLICT DO NOTHING`,
-        [markerKey]
-      );
-      if (rowCount === 0) {
-        // Marker already exists, skip
-        return false;
-      }
-    }
-    
-    await db.query(
-      `INSERT INTO public.notification_outbox (event_type, chain, dedup_key, payload)
-       VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`,
-      [eventType, chain, dedupKey, JSON.stringify(payload)]
-    );
-    return true;
+    return await enqueueNotification(db, {
+      eventType: params.eventType,
+      chain: params.chain,
+      chainId: params.chainId ?? params.payload?.chainId ?? params.payload?.chain_id,
+      environment: params.environment,
+      entityType: params.entityType,
+      entityId: params.entityId,
+      dedupKey: params.dedupKey,
+      payload: params.payload,
+      markerKey: params.markerKey,
+      occurredAt: params.occurredAt,
+    });
   } catch (err) {
     console.error("[api/lib/notifications] emitNotification error:", err);
     throw err;
