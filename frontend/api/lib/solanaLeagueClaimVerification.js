@@ -4,6 +4,7 @@ import {
   deriveLeagueEpochPda,
   deriveRewardsVaults,
 } from "../solanaLeagueMerkle.js";
+import { canonicalSolanaClaimIdentity } from "./solanaClaimEnvironment.js";
 
 const SOLANA_SIGNATURE_RE = /^[1-9A-HJ-NP-Za-km-z]{64,88}$/;
 
@@ -61,16 +62,17 @@ function instructionAccounts(ix, keys) {
   return [];
 }
 
-export function buildExpectedSolanaLeagueClaim({ chainId, period, epochStart, category, rank, recipient, amountRaw }) {
-  const cid = Number(chainId);
-  if (cid !== 101 && cid !== 102) throw new Error("Solana League verification only supports chain IDs 101/102");
+export function buildExpectedSolanaLeagueClaim({ chainId, environment = null, solanaCluster = null, period, epochStart, category, rank, recipient, amountRaw }) {
+  const identity = canonicalSolanaClaimIdentity({ chainId, environment, solanaCluster });
   const epochDate = new Date(epochStart);
   if (Number.isNaN(epochDate.getTime())) throw new Error("Invalid Solana League epochStart");
   const epochStartSec = Math.floor(epochDate.getTime() / 1000);
   const programId = String(process.env.SOLANA_REWARDS_TREASURY_PROGRAM_ID || REWARDS_TREASURY_PROGRAM_ID).trim();
   const vaults = deriveRewardsVaults(programId);
   return {
-    chainId: cid,
+    chainId: identity.chainId,
+    environment: identity.environment,
+    solanaCluster: identity.solanaCluster,
     programId,
     recipient: String(recipient || "").trim(),
     amountRaw: String(amountRaw || "0"),
@@ -84,6 +86,8 @@ export function buildExpectedSolanaLeagueClaim({ chainId, period, epochStart, ca
 
 export async function verifySolanaLeagueClaimTransaction({
   chainId,
+  environment = null,
+  solanaCluster = null,
   period,
   epochStart,
   category,
@@ -94,6 +98,8 @@ export async function verifySolanaLeagueClaimTransaction({
 }) {
   const expected = buildExpectedSolanaLeagueClaim({
     chainId,
+    environment,
+    solanaCluster,
     period,
     epochStart,
     category,
@@ -175,9 +181,6 @@ export async function verifySolanaLeagueClaimTransaction({
     throw error;
   }
 
-  // The winner normally pays transaction fees, so recipient net balance is not
-  // required to rise by exactly amountRaw. Still require the expected winner to
-  // be present in the balance arrays; the exact payout is proven by vault delta.
   if (recipientIndex < 0 || pre[recipientIndex] == null || post[recipientIndex] == null) {
     const error = new Error("Solana League recipient balance evidence is unavailable");
     error.code = "SOLANA_LEAGUE_RECIPIENT_BALANCE_UNAVAILABLE";

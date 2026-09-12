@@ -1,0 +1,166 @@
+name: Agent 5 Claims Closeout
+
+on:
+  push:
+    branches:
+      - agent5/claims-reconciliation-closeout-120401f
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  claims-closeout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: memewarzone_claim_closeout
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d memewarzone_claim_closeout"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Prove exact checked-out head
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          actual="$(git rev-parse HEAD)"
+          echo "Expected head: $EXPECTED_HEAD"
+          echo "Checked out:   $actual"
+          test "$actual" = "$EXPECTED_HEAD"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Compile disposable settlement contracts
+        run: npx hardhat compile --config hardhat.agent5-claim-recovery.config.cjs
+
+      - name: Start disposable BNB-shaped EVM chain 97
+        run: |
+          nohup npx hardhat node --config hardhat.agent5-claim-recovery.config.cjs > /tmp/agent5-closeout-chain.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -fsS -X POST http://127.0.0.1:8545 \
+              -H 'content-type: application/json' \
+              --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
+              | grep -qi '0x61'; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/agent5-closeout-chain.log
+          exit 1
+
+      - name: Syntax checks
+        run: |
+          node --check frontend/api/lib/evmLeagueClaimVerification.js
+          node --check frontend/api/lib/solanaClaimEnvironment.js
+          node --check frontend/api/leagueRouter.js
+          node --check frontend/api/leaguePayouts.js
+          node --check frontend/api/rewards.js
+          node --check frontend/api/dev-fix/reward-claim-closeout-router.js
+
+      - name: Canonical identity and source matrix
+        working-directory: frontend
+        env:
+          SOLANA_REWARD_ENVIRONMENT: staging
+          SOLANA_REWARD_CLUSTER: devnet
+        run: node --test api/lib/agent5ClaimsCloseout.source.test.mjs
+
+      - name: Generic EVM plus League real-chain/PostgreSQL closeout
+        working-directory: frontend
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/memewarzone_claim_closeout
+          PG_DISABLE_SSL: "1"
+          API_AUTH_ENFORCE_USER_WRITES: "1"
+          BSC_RPC_HTTP_97: http://127.0.0.1:8545
+          REWARD_CLAIM_MIN_CONFIRMATIONS_97: "1"
+          LEAGUE_CLAIM_MIN_CONFIRMATIONS_97: "1"
+          EVM_CLAIM_RECONCILE_LOOKBACK_BLOCKS: "10000"
+          EVM_CLAIM_RECONCILE_CHUNK_BLOCKS: "1000"
+          LEAGUE_ADMIN_TOKEN: agent5-test
+        run: |
+          set -o pipefail
+          node --test api/lib/agent5ClaimsCloseout.integration.test.mjs 2>&1 | tee /tmp/agent5-closeout-test.log
+
+      - name: Normal Battle real-chain/PostgreSQL recovery regression
+        working-directory: frontend
+        env:
+          DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/memewarzone_claim_closeout
+          PG_DISABLE_SSL: "1"
+          API_AUTH_ENFORCE_USER_WRITES: "1"
+          BSC_RPC_HTTP_97: http://127.0.0.1:8545
+          REWARD_CLAIM_MIN_CONFIRMATIONS_97: "1"
+          REWARD_CLAIM_RECOVERY_FROM_BLOCK_97: "0"
+          REWARD_DISTRIBUTOR_ADDRESS_97: "0x0000000000000000000000000000000000000001"
+        run: node --test api/lib/bnbBattleClaimRecovery.integration.test.mjs
+
+      - name: Arena identity regressions
+        run: |
+          node --test frontend/api/lib/arenaStagingIdentityCompletion.test.mjs
+          node --test frontend/api/lib/arenaTournamentChainIdentity.test.mjs
+          node --test frontend/api/lib/arenaVoteTournamentChainIdentity.test.mjs
+
+      - name: Final Salvo regression
+        run: node --test frontend/api/lib/arenaFinalSalvoRuntime.test.mjs
+
+      - name: Reject tracked environment files
+        shell: bash
+        run: |
+          tracked_env_files="$(git ls-files | grep -E '(^|/)\.env($|\.)' | grep -Ev '\.example$' || true)"
+          if [ -n "$tracked_env_files" ]; then
+            echo "Tracked environment files are forbidden:"
+            echo "$tracked_env_files"
+            exit 1
+          fi
+
+      - name: Reject server secrets in browser source
+        shell: bash
+        run: |
+          if grep -RInE --exclude-dir=node_modules --exclude-dir=dist \
+            '(import\.meta\.env\.(SUPABASE_SERVICE_ROLE_KEY|DATABASE_URL|PRIVATE_KEY|MNEMONIC|ABLY_API_KEY|DISCORD_BOT_TOKEN|TELEGRAM_BOT_TOKEN)|process\.env\.(SUPABASE_SERVICE_ROLE_KEY|DATABASE_URL|PRIVATE_KEY|MNEMONIC|ABLY_API_KEY|DISCORD_BOT_TOKEN|TELEGRAM_BOT_TOKEN))' \
+            frontend/src 2>/dev/null; then
+            echo "Server-only secret access found in browser source."
+            exit 1
+          fi
+
+      - name: Gitleaks full history
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload closeout logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent5-claims-closeout-logs
+          path: |
+            /tmp/agent5-closeout-test.log
+            /tmp/agent5-closeout-chain.log
+          if-no-files-found: warn
