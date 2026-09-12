@@ -1,7 +1,7 @@
 import { ethers } from "ethers";
 
 import { pool } from "../server/db.js";
-import { badMethod, getQuery, isSolanaAddress, isSolanaChain, json, readJson } from "../server/http.js";
+import { badMethod, getQuery, isSolanaAddress, json, readJson } from "../server/http.js";
 import { getServerReadProvider } from "./lib/getServerReadProvider.js";
 import { resolveArenaVoteToken } from "./lib/arenaEligibility.js";
 import {
@@ -312,7 +312,7 @@ async function handleBnbIngest(req, res) {
 async function handleSolanaIngest(req, res) {
   const body = await readJson(req);
   const chainId = Number(body.chainId || 101);
-  if (!isSolanaChain(chainId)) return json(res, 400, { ok: false, error: "chainId must be Solana (101)." });
+  if (chainId !== 101) return json(res, 400, { ok: false, error: "chainId must be current Solana chain 101." });
   const signature = String(body.signature || body.txHash || "").trim();
   const tokenAddress = String(body.tokenAddress || body.campaignAddress || "").trim();
   const voterAddress = String(body.voterAddress || body.walletAddress || "").trim();

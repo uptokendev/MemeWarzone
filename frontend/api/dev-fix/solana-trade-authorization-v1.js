@@ -16,7 +16,7 @@
 import crypto from "node:crypto";
 
 import { pool } from "../../server/db.js";
-import { badMethod, isSolanaChain, json, readJson, isSolanaAddress } from "../../server/http.js";
+import { badMethod, json, readJson, isSolanaAddress } from "../../server/http.js";
 import {
   resolveCampaignByAddress,
   solanaMetaFromRow,
@@ -768,8 +768,8 @@ export async function solanaTradeAuthorizationV1(req, res) {
 
     const body = await readJson(req);
     const chainId = Number(body.chainId || 101);
-    if (!isSolanaChain(chainId)) {
-      throw new SolanaTradeAuthorizationError("chainId must be a Solana chain (101).", {
+    if (chainId !== 101) {
+      throw new SolanaTradeAuthorizationError("chainId must be current Solana chain 101.", {
         code: "NOT_A_SOLANA_CHAIN",
         httpStatus: 400,
       });

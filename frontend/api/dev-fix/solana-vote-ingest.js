@@ -6,7 +6,7 @@
  * body: { chainId, signature, campaignAddress, voterAddress }
  */
 import { pool } from "../../server/db.js";
-import { badMethod, isSolanaAddress, isSolanaChain, json, readJson } from "../../server/http.js";
+import { badMethod, isSolanaAddress, json, readJson } from "../../server/http.js";
 
 const SYSTEM_PROGRAM = "11111111111111111111111111111111";
 const UPVOTE_USD_TARGET = 3;
@@ -425,8 +425,8 @@ export async function solanaVoteIngest(req, res) {
   try {
     const body = await readJson(req);
     const chainId = Number(body.chainId || 101);
-    if (!isSolanaChain(chainId)) {
-      return json(res, 400, { error: "chainId must be Solana (101).", code: "NOT_A_SOLANA_CHAIN" });
+    if (chainId !== 101) {
+      return json(res, 400, { error: "chainId must be current Solana chain 101.", code: "NOT_A_SOLANA_CHAIN" });
     }
 
     const signature = String(body.signature || body.txHash || "").trim();
