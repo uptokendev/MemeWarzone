@@ -1,0 +1,84 @@
+name: Launch Control Solana Devnet Identity Probe V2
+
+on:
+  push:
+    branches:
+      - launch-control/solana-devnet-identity-probe-11cde9e
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Query current Solana devnet launchpad identity
+        shell: bash
+        env:
+          PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+          EXPECTED_GENESIS: EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG
+          EXPECTED_PROGRAM_BYTES: "1165328"
+          EXPECTED_PROGRAM_SHA256: 27ad65b560dba8a33330bd95f08ae7ca6945f71ebf667a5a3756ae0cb9f7f080
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const crypto = require('node:crypto');
+          const rpc = 'https://api.devnet.solana.com';
+          const programId = process.env.PROGRAM_ID;
+          const expectedGenesis = process.env.EXPECTED_GENESIS;
+          const expectedProgramBytes = Number(process.env.EXPECTED_PROGRAM_BYTES);
+          const expectedSha = process.env.EXPECTED_PROGRAM_SHA256;
+
+          async function call(method, params) {
+            const response = await fetch(rpc, {
+              method: 'POST',
+              headers: {'content-type': 'application/json'},
+              body: JSON.stringify({jsonrpc: '2.0', id: 1, method, params}),
+            });
+            if (!response.ok) throw new Error(`${method} HTTP ${response.status}`);
+            const json = await response.json();
+            if (json.error) throw new Error(`${method}: ${JSON.stringify(json.error)}`);
+            return json.result;
+          }
+
+          function b58(bytes) {
+            const alphabet = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+            let value = 0n;
+            for (const byte of bytes) value = (value << 8n) + BigInt(byte);
+            let out = '';
+            while (value) {
+              out = alphabet[Number(value % 58n)] + out;
+              value /= 58n;
+            }
+            for (const byte of bytes) {
+              if (byte === 0) out = '1' + out;
+              else break;
+            }
+            return out || '1';
+          }
+
+          async function main() {
+            const genesis = await call('getGenesisHash', []);
+            if (genesis !== expectedGenesis) throw new Error(`wrong cluster genesis ${genesis}`);
+            const program = await call('getAccountInfo', [programId, {encoding: 'base64', commitment: 'confirmed'}]);
+            if (!program.value) throw new Error('launchpad program missing');
+            const programRaw = Buffer.from(program.value.data[0], 'base64');
+            if (programRaw.length < 36 || programRaw.readUInt32LE(0) !== 2) throw new Error('unexpected Program account state');
+            const programDataAddress = b58(programRaw.subarray(4, 36));
+            const programData = await call('getAccountInfo', [programDataAddress, {encoding: 'base64', commitment: 'confirmed'}]);
+            if (!programData.value) throw new Error('ProgramData account missing');
+            const raw = Buffer.from(programData.value.data[0], 'base64');
+            if (raw.length < 45 || raw.readUInt32LE(0) !== 3) throw new Error('unexpected ProgramData state');
+            const deploymentSlot = raw.readBigUInt64LE(4).toString();
+            const authorityOption = raw.readUInt8(12);
+            if (authorityOption !== 0 && authorityOption !== 1) throw new Error(`invalid authority option ${authorityOption}`);
+            const upgradeAuthority = authorityOption === 1 ? b58(raw.subarray(13, 45)) : null;
+            const programBytes = raw.subarray(45, 45 + expectedProgramBytes);
+            if (programBytes.length !== expectedProgramBytes) throw new Error(`deployed binary too short ${programBytes.length}`);
+            const deployedProgramSha256 = crypto.createHash('sha256').update(programBytes).digest('hex');
+            if (deployedProgramSha256 !== expectedSha) throw new Error(`deployed program SHA mismatch ${deployedProgramSha256}`);
+            console.log(JSON.stringify({readOnly:true,cluster:'solana-devnet',genesis,programId,programOwner:program.value.owner,programExecutable:program.value.executable,programDataAddress,programDataOwner:programData.value.owner,deploymentSlot,upgradeAuthority,expectedProgramBytes,programDataPayloadCapacityBytes:raw.length-45,deployedProgramSha256}, null, 2));
+          }
+
+          main().catch((error) => { console.error(error?.stack || error); process.exitCode = 1; });
+          NODE
