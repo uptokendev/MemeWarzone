@@ -1,0 +1,16 @@
+{
+  "name": "@memewarzone/robinhood-testnet-infra",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pinned canonical Uniswap V3 artifacts used only to bootstrap Robinhood Testnet chain 46630 infrastructure.",
+  "dependencies": {
+    "@uniswap/swap-router-contracts": "1.3.1",
+    "@uniswap/v3-core": "1.0.1",
+    "@uniswap/v3-periphery": "1.4.4"
+  },
+  "mwzBootstrapSources": {
+    "v3Core": "@uniswap/v3-core@1.0.1",
+    "v3Periphery": "@uniswap/v3-periphery@1.4.4",
+    "swapRouterContracts": "@uniswap/swap-router-contracts@1.3.1"
+  }
+}
