@@ -1,0 +1,74 @@
+name: Agent 4 RH46630 Operator Freeze
+
+on:
+  push:
+    branches:
+      - agent4/rh46630-operator-freeze-c811cd4
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  freeze:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: c811cd4aba902249e465ab2122ed7548f256418b
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund
+      - name: Derive public identities and live 46630 balances only
+        env:
+          PK_RH: ${{ secrets.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY }}
+          PK_DEPLOY: ${{ secrets.PRIVATE_KEY_DEPLOY }}
+          PK_DEPLOYER: ${{ secrets.DEPLOYER_PK }}
+          ADMIN_SECRET: ${{ secrets.ROBINHOOD_TESTNET_ADMIN }}
+          ADMIN_VAR: ${{ vars.ROBINHOOD_TESTNET_ADMIN }}
+          UPDATER_SECRET: ${{ secrets.ROBINHOOD_TESTNET_ORACLE_UPDATER }}
+          UPDATER_VAR: ${{ vars.ROBINHOOD_TESTNET_ORACLE_UPDATER }}
+          RPC_SECRET: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL }}
+          RPC_VAR: ${{ vars.ROBINHOOD_TESTNET_RPC_URL }}
+        run: |
+          node <<'NODE'
+          const { ethers } = require('ethers');
+          const pick = (...xs) => xs.map(x => String(x || '').trim()).find(Boolean) || '';
+          const pk = pick(process.env.PK_RH, process.env.PK_DEPLOY, process.env.PK_DEPLOYER);
+          if (!pk) throw new Error('NO_CONFIGURED_DEPLOYER_KEY');
+          const wallet = new ethers.Wallet(pk.startsWith('0x') ? pk : `0x${pk}`);
+          const deployer = wallet.address;
+          const adminRaw = pick(process.env.ADMIN_SECRET, process.env.ADMIN_VAR);
+          const admin = adminRaw ? ethers.getAddress(adminRaw) : deployer;
+          const updaterRaw = pick(process.env.UPDATER_SECRET, process.env.UPDATER_VAR);
+          if (!updaterRaw) throw new Error('NO_CONFIGURED_ORACLE_UPDATER');
+          const updater = ethers.getAddress(updaterRaw);
+          const rpcUrl = pick(process.env.RPC_SECRET, process.env.RPC_VAR, 'https://rpc.testnet.chain.robinhood.com');
+          const provider = new ethers.JsonRpcProvider(rpcUrl, undefined, { staticNetwork: false });
+          (async () => {
+            const net = await provider.getNetwork();
+            const chainId = Number(net.chainId);
+            if (chainId !== 46630) throw new Error(`WRONG_CHAIN_${chainId}`);
+            const block = await provider.getBlockNumber();
+            const [deployerBal, updaterBal, feeData] = await Promise.all([
+              provider.getBalance(deployer), provider.getBalance(updater), provider.getFeeData()
+            ]);
+            console.log('RH46630_OPERATOR_FREEZE=' + JSON.stringify({
+              sourceSha: 'c811cd4aba902249e465ab2122ed7548f256418b',
+              rpcClass: rpcUrl.includes('rpc.testnet.chain.robinhood.com') ? 'Robinhood public testnet RPC' : 'configured Robinhood testnet RPC',
+              chainId,
+              block,
+              deployer,
+              admin,
+              deployerAdminSame: deployer.toLowerCase() === admin.toLowerCase(),
+              oracleUpdater: updater,
+              deployerBalanceWei: deployerBal.toString(),
+              deployerBalanceEth: ethers.formatEther(deployerBal),
+              updaterBalanceWei: updaterBal.toString(),
+              updaterBalanceEth: ethers.formatEther(updaterBal),
+              gasPriceWei: feeData.gasPrice ? feeData.gasPrice.toString() : null,
+              maxFeePerGasWei: feeData.maxFeePerGas ? feeData.maxFeePerGas.toString() : null
+            }));
+          })().catch(e => { console.error(e.message || e); process.exit(1); });
+          NODE
