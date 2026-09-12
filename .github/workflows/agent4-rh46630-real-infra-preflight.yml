@@ -1,0 +1,93 @@
+name: Agent 4 RH46630 Real Infra Preflight
+
+on:
+  push:
+    branches:
+      - agent4/rh46630-real-infra-preflight-4ba6530
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 4ba6530526b7f646feb051b20052fa7cae94cd36
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --no-audit --no-fund
+      - name: Prove current-authority operator inputs and balances without broadcasting
+        env:
+          RH_RPC_URL_SECRET: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL }}
+          RH_RPC_SECRET: ${{ secrets.ROBINHOOD_TESTNET_RPC }}
+          RH_RPC_URL_VAR: ${{ vars.ROBINHOOD_TESTNET_RPC_URL }}
+          RH_RPC_VAR: ${{ vars.ROBINHOOD_TESTNET_RPC }}
+          RH_PK_PRIMARY: ${{ secrets.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY }}
+          RH_PK_FALLBACK1: ${{ secrets.PRIVATE_KEY_DEPLOY }}
+          RH_PK_FALLBACK2: ${{ secrets.DEPLOYER_PK }}
+          RH_ADMIN_SECRET: ${{ secrets.ROBINHOOD_TESTNET_ADMIN }}
+          RH_ADMIN_VAR: ${{ vars.ROBINHOOD_TESTNET_ADMIN }}
+          RH_UPDATER_SECRET: ${{ secrets.ROBINHOOD_TESTNET_ORACLE_UPDATER }}
+          RH_UPDATER_VAR: ${{ vars.ROBINHOOD_TESTNET_ORACLE_UPDATER }}
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const { ethers } = require('ethers');
+          const pick = (...xs) => xs.map(v => String(v || '').trim()).find(Boolean) || '';
+          const rpcUrl = pick(process.env.RH_RPC_URL_SECRET, process.env.RH_RPC_SECRET, process.env.RH_RPC_URL_VAR, process.env.RH_RPC_VAR, 'https://rpc.testnet.chain.robinhood.com');
+          const pk = pick(process.env.RH_PK_PRIMARY, process.env.RH_PK_FALLBACK1, process.env.RH_PK_FALLBACK2);
+          const adminRaw = pick(process.env.RH_ADMIN_SECRET, process.env.RH_ADMIN_VAR);
+          const updaterRaw = pick(process.env.RH_UPDATER_SECRET, process.env.RH_UPDATER_VAR);
+          const provider = new ethers.JsonRpcProvider(rpcUrl, undefined, { staticNetwork: false });
+          (async () => {
+            const net = await provider.getNetwork();
+            const chainId = Number(net.chainId);
+            const block = await provider.getBlockNumber();
+            const fee = await provider.getFeeData();
+            if (chainId !== 46630) throw new Error(`WRONG_CHAIN_${chainId}`);
+            const deployer = pk ? new ethers.Wallet(pk.startsWith('0x') ? pk : `0x${pk}`).address : null;
+            const admin = adminRaw ? ethers.getAddress(adminRaw) : deployer;
+            const updater = updaterRaw ? ethers.getAddress(updaterRaw) : null;
+            const deployerBalance = deployer ? await provider.getBalance(deployer) : null;
+            const updaterBalance = updater ? await provider.getBalance(updater) : null;
+            const executor = fs.readFileSync('scripts/deploy-robinhood-testnet-infrastructure.ts','utf8');
+            const authority = fs.readFileSync('scripts/robinhoodTestnetInfrastructureAuthority.mjs','utf8');
+            const packageJson = JSON.parse(fs.readFileSync('tools/robinhood-testnet-infra/package.json','utf8'));
+            const manifestExists = fs.existsSync('deployments/robinhood/testnet.infrastructure.json');
+            const historical = ['0x37E402B8081eFcE1D82A09a066512278006e4691','0xFECCB63CD759d768538458Ea56F47eA8004323c1','0xBc82a9aA33ff24FCd56D36a0fB0a2105B193A327','0x1b32F47434a7EF83E97d0675C823E547F9266725','0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73'];
+            const historicalReuse = historical.some(a => executor.toLowerCase().includes(a.toLowerCase()) || authority.toLowerCase().includes(a.toLowerCase()));
+            const generation = {
+              weth: executor.includes('RobinhoodTestnetWETH9'),
+              v3Factory: packageJson.dependencies['@uniswap/v3-core'],
+              positionManager: packageJson.dependencies['@uniswap/v3-periphery'],
+              swapRouter02: packageJson.dependencies['@uniswap/swap-router-contracts'],
+              quoterDeployedByExecutor: /Quoter/i.test(executor),
+              oracle: executor.includes('RobinhoodTestnetEthUsdOracle')
+            };
+            console.log('RH46630_REAL_INFRA_PREFLIGHT=' + JSON.stringify({
+              sourceSha:'4ba6530526b7f646feb051b20052fa7cae94cd36',
+              chainId, block,
+              gasPriceWei: fee.gasPrice ? fee.gasPrice.toString() : null,
+              rpcConfigured: !!pick(process.env.RH_RPC_URL_SECRET, process.env.RH_RPC_SECRET, process.env.RH_RPC_URL_VAR, process.env.RH_RPC_VAR),
+              deployerConfigured: !!pk,
+              deployer,
+              adminConfigured: !!adminRaw,
+              admin,
+              deployerAdminSame: deployer && admin ? deployer.toLowerCase() === admin.toLowerCase() : null,
+              oracleUpdaterConfigured: !!updaterRaw,
+              oracleUpdater: updater,
+              deployerBalanceWei: deployerBalance === null ? null : deployerBalance.toString(),
+              deployerBalanceEth: deployerBalance === null ? null : ethers.formatEther(deployerBalance),
+              updaterBalanceWei: updaterBalance === null ? null : updaterBalance.toString(),
+              updaterBalanceEth: updaterBalance === null ? null : ethers.formatEther(updaterBalance),
+              manifestExists,
+              historicalReuse,
+              generation
+            }));
+          })().catch(e => { console.error(e.stack || e.message || e); process.exit(1); });
+          NODE
