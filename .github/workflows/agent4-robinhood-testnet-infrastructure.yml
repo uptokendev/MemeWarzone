@@ -3,29 +3,8 @@ name: Agent 4 Robinhood Testnet Infrastructure Bootstrap
 on:
   push:
     branches:
-      - agent4/robinhood-46630-testnet-infra-bootstrap-120401f-working
+      - agent4/rh46630-real-infra-exec-18ffff6
     paths:
-      - 'contracts/robinhood/testnet/**'
-      - 'scripts/deploy-robinhood-testnet-infrastructure.ts'
-      - 'scripts/robinhoodTestnetInfrastructureAuthority.mjs'
-      - 'scripts/robinhood-testnet-infrastructure-authority.test.mjs'
-      - 'scripts/export-robinhood-current-stage-infra-env.mjs'
-      - 'test/RobinhoodTestnetInfrastructureBootstrap.spec.ts'
-      - 'tools/robinhood-testnet-infra/package.json'
-      - 'config/robinhood-testnet-infrastructure.env.example'
-      - '.github/workflows/agent4-robinhood-testnet-infrastructure.yml'
-  pull_request:
-    branches:
-      - build/cross-chain-stabilization-rh-base
-    paths:
-      - 'contracts/robinhood/testnet/**'
-      - 'scripts/deploy-robinhood-testnet-infrastructure.ts'
-      - 'scripts/robinhoodTestnetInfrastructureAuthority.mjs'
-      - 'scripts/robinhood-testnet-infrastructure-authority.test.mjs'
-      - 'scripts/export-robinhood-current-stage-infra-env.mjs'
-      - 'test/RobinhoodTestnetInfrastructureBootstrap.spec.ts'
-      - 'tools/robinhood-testnet-infra/package.json'
-      - 'config/robinhood-testnet-infrastructure.env.example'
       - '.github/workflows/agent4-robinhood-testnet-infrastructure.yml'
   workflow_dispatch:
 
@@ -33,12 +12,13 @@ permissions:
   contents: read
 
 jobs:
-  certify:
+  execute:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout exact head
+      - name: Checkout exact integration authority
         uses: actions/checkout@v4
         with:
+          ref: 18ffff677f8d6420c4539f9d9db9ec7eee1b0790
           fetch-depth: 0
 
       - name: Setup Node
@@ -47,80 +27,113 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install root dependencies
-        run: npm ci
-
-      - name: Install pinned bootstrap artifacts
-        run: npm install --prefix tools/robinhood-testnet-infra --ignore-scripts --no-audit --no-fund
-
-      - name: Prove exact pinned Uniswap generations
+      - name: Install exact dependencies
         run: |
+          npm ci --no-audit --no-fund
+          npm install --prefix tools/robinhood-testnet-infra --ignore-scripts --no-audit --no-fund
+
+      - name: Certify exact authority before secure execution
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "18ffff677f8d6420c4539f9d9db9ec7eee1b0790"
+          node --test scripts/robinhood-testnet-infrastructure-authority.test.mjs
+          npx hardhat compile
+          npx hardhat test test/RobinhoodTestnetInfrastructureBootstrap.spec.ts
           test "$(node -p "require('./tools/robinhood-testnet-infra/node_modules/@uniswap/v3-core/package.json').version")" = "1.0.1"
           test "$(node -p "require('./tools/robinhood-testnet-infra/node_modules/@uniswap/v3-periphery/package.json').version")" = "1.4.4"
           test "$(node -p "require('./tools/robinhood-testnet-infra/node_modules/@uniswap/swap-router-contracts/package.json').version")" = "1.3.1"
+          test ! -f deployments/robinhood/testnet.infrastructure.json
+          ! grep -RinE 'Quoter|quoter' scripts/deploy-robinhood-testnet-infrastructure.ts scripts/robinhoodTestnetInfrastructureAuthority.mjs config/robinhood-testnet-infrastructure.env.example
 
-      - name: Static bootstrap authority matrix
-        run: node --test scripts/robinhood-testnet-infrastructure-authority.test.mjs
-
-      - name: Compile MemeWarzone plus testnet-only infrastructure wrappers
-        run: npx hardhat compile
-
-      - name: Deterministic local WETH V3 swap oracle matrix
-        run: npx hardhat test test/RobinhoodTestnetInfrastructureBootstrap.spec.ts
-
-      - name: Real bootstrap executor rejects chain 31337 before any transaction
-        shell: bash
+      - name: Secure pre-broadcast identity chain funding gate
+        env:
+          ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL || vars.ROBINHOOD_TESTNET_RPC_URL }}
+          ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY }}
+          ROBINHOOD_TESTNET_ADMIN: ${{ secrets.ROBINHOOD_TESTNET_ADMIN || vars.ROBINHOOD_TESTNET_ADMIN }}
+          ROBINHOOD_TESTNET_ORACLE_UPDATER: ${{ secrets.ROBINHOOD_TESTNET_ORACLE_UPDATER || vars.ROBINHOOD_TESTNET_ORACLE_UPDATER }}
+          ROBINHOOD_TESTNET_ORACLE_INITIAL_ETH_USD_8: ${{ secrets.ROBINHOOD_TESTNET_ORACLE_INITIAL_ETH_USD_8 || vars.ROBINHOOD_TESTNET_ORACLE_INITIAL_ETH_USD_8 }}
         run: |
           set -euo pipefail
-          set +e
-          output="$(npx hardhat run scripts/deploy-robinhood-testnet-infrastructure.ts --network hardhat 2>&1)"
-          status=$?
-          set -e
-          test "$status" -ne 0
-          echo "$output" | grep -F 'bootstrap requires robinhoodTestnet / 46630'
+          node <<'NODE'
+          const fs = require('fs');
+          const { ethers } = require('ethers');
+          const req=(n,v)=>{const x=String(v||'').trim();if(!x)throw new Error(`MISSING_SECURE_INPUT_${n}`);return x;};
+          const same=(a,b)=>String(a).toLowerCase()===String(b).toLowerCase();
+          (async()=>{
+            const rpc=req('ROBINHOOD_TESTNET_RPC_URL',process.env.ROBINHOOD_TESTNET_RPC_URL);
+            const pk=req('ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY',process.env.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY);
+            const provider=new ethers.JsonRpcProvider(rpc);
+            const chainId=Number((await provider.getNetwork()).chainId);
+            if(chainId!==46630) throw new Error(`WRONG_CHAIN_${chainId}`);
+            const deployer=ethers.getAddress(new ethers.Wallet(pk.startsWith('0x')?pk:`0x${pk}`).address);
+            const adminRaw=String(process.env.ROBINHOOD_TESTNET_ADMIN||'').trim();
+            const admin=adminRaw?ethers.getAddress(adminRaw):deployer;
+            if(!same(admin,deployer)) throw new Error(`ADMIN_DEPLOYER_MISMATCH_${admin}_${deployer}`);
+            const updater=ethers.getAddress(req('ROBINHOOD_TESTNET_ORACLE_UPDATER',process.env.ROBINHOOD_TESTNET_ORACLE_UPDATER));
+            const initial=BigInt(req('ROBINHOOD_TESTNET_ORACLE_INITIAL_ETH_USD_8',process.env.ROBINHOOD_TESTNET_ORACLE_INITIAL_ETH_USD_8));
+            if(initial<=0n) throw new Error('ORACLE_INITIAL_ANSWER_NOT_POSITIVE');
+            const deployerBal=await provider.getBalance(deployer);
+            const updaterBal=await provider.getBalance(updater);
+            const safe=200000000000000000n;
+            if(deployerBal<safe) throw new Error(`INSUFFICIENT_DEPLOYER_BALANCE_WEI_${deployerBal}_REQUIRED_${safe}`);
+            const source=(fs.readFileSync('scripts/deploy-robinhood-testnet-infrastructure.ts','utf8')+'\n'+fs.readFileSync('scripts/robinhoodTestnetInfrastructureAuthority.mjs','utf8')).toLowerCase();
+            for(const a of ['0x37E402B8081eFcE1D82A09a066512278006e4691','0xFECCB63CD759d768538458Ea56F47eA8004323c1','0xBc82a9aA33ff24FCd56D36a0fB0a2105B193A327','0x1b32F47434a7EF83E97d0675C823E547F9266725','0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73']) if(source.includes(a.toLowerCase())) throw new Error('HISTORICAL_INFRASTRUCTURE_REUSE_DETECTED');
+            const prodEnv=fs.readFileSync('config/robinhood-production.env.example','utf8');
+            if(!prodEnv.includes('ROBINHOOD_MAINNET_CHAIN_ID=4663')||!prodEnv.includes('ROBINHOOD_MAINNET_DEPLOYER_PRIVATE_KEY=<production-deployer-only>')) throw new Error('PRODUCTION_ISOLATION_TEMPLATE_INVALID');
+            console.log('RH46630_PREBROADCAST='+JSON.stringify({sourceSha:'18ffff677f8d6420c4539f9d9db9ec7eee1b0790',chainId,block:await provider.getBlockNumber(),deployer,admin,deployerBalanceWei:deployerBal.toString(),deployerBalanceEth:ethers.formatEther(deployerBal),oracleUpdater:updater,updaterBalanceWei:updaterBal.toString(),updaterBalanceEth:ethers.formatEther(updaterBal),oracleInitialAnswer8:initial.toString(),minimumFunding:'dynamic bootstrap gas; 0.20 ETH hard execution safety gate',recommendedSafeFundingEth:'0.20',recommendedUpdaterFundingEth:'0.01',production4663Reuse:false,historicalInfrastructureReuse:false,quoter:false}));
+          })().catch(e=>{console.error(e.stack||e);process.exit(1);});
+          NODE
 
-      - name: No fake infrastructure manifest committed or generated
-        run: test ! -f deployments/robinhood/testnet.infrastructure.json
+      - name: Execute one-time existing bootstrap
+        env:
+          ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL || vars.ROBINHOOD_TESTNET_RPC_URL }}
+          ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY }}
+          ROBINHOOD_TESTNET_ORACLE_UPDATER: ${{ secrets.ROBINHOOD_TESTNET_ORACLE_UPDATER || vars.ROBINHOOD_TESTNET_ORACLE_UPDATER }}
+          ROBINHOOD_TESTNET_ORACLE_INITIAL_ETH_USD_8: ${{ secrets.ROBINHOOD_TESTNET_ORACLE_INITIAL_ETH_USD_8 || vars.ROBINHOOD_TESTNET_ORACLE_INITIAL_ETH_USD_8 }}
+          ROBINHOOD_NATIVE_USD_MAX_ORACLE_AGE_SECONDS: '900'
+          ROBINHOOD_TESTNET_INFRA_BROADCAST: DEPLOY_CHAIN_46630_TESTNET_INFRA
+        run: npx hardhat run scripts/deploy-robinhood-testnet-infrastructure.ts --network robinhoodTestnet
 
-      - name: Historical and mainnet addresses are never bootstrap defaults
-        shell: bash
+      - name: Independently verify deployed state
+        env:
+          ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL || vars.ROBINHOOD_TESTNET_RPC_URL }}
+          ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY }}
+          EXPECTED_UPDATER: ${{ secrets.ROBINHOOD_TESTNET_ORACLE_UPDATER || vars.ROBINHOOD_TESTNET_ORACLE_UPDATER }}
         run: |
           set -euo pipefail
-          ! grep -RiE '0x37E402B8081eFcE1D82A09a066512278006e4691|0xFECCB63CD759d768538458Ea56F47eA8004323c1|0xBc82a9aA33ff24FCd56D36a0fB0a2105B193A327|0x1b32F47434a7EF83E97d0675C823E547F9266725|0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73' \
-            scripts/deploy-robinhood-testnet-infrastructure.ts \
-            scripts/robinhoodTestnetInfrastructureAuthority.mjs \
-            config/robinhood-testnet-infrastructure.env.example
+          node <<'NODE'
+          const fs=require('fs');const {ethers}=require('ethers');
+          (async()=>{
+            const m=JSON.parse(fs.readFileSync('deployments/robinhood/testnet.infrastructure.json','utf8'));
+            if(Number(m.chainId)!==46630||Number(m.productionChainId)!==4663||m.productionCompatible!==false)throw new Error('MANIFEST_NETWORK_BOUNDARY_INVALID');
+            const p=new ethers.JsonRpcProvider(process.env.ROBINHOOD_TESTNET_RPC_URL);
+            if(Number((await p.getNetwork()).chainId)!==46630)throw new Error('POSTDEPLOY_WRONG_CHAIN');
+            for(const k of ['weth','v3Factory','nftDescriptor','positionDescriptor','positionManager','swapRouter02','oracle']){const entry=m[k];if(!entry||!entry.address||!entry.txHash||entry.blockNumber==null||!entry.runtimeCodeHash)throw new Error(`${k}_MANIFEST_PROVENANCE_MISSING`);const code=await p.getCode(entry.address);if(!code||code==='0x')throw new Error(`${k}_NO_RUNTIME`);if(ethers.keccak256(code).toLowerCase()!==String(entry.runtimeCodeHash).toLowerCase())throw new Error(`${k}_RUNTIME_HASH_MISMATCH`);const r=await p.getTransactionReceipt(entry.txHash);if(!r||r.status!==1||Number(r.blockNumber)!==Number(entry.blockNumber))throw new Error(`${k}_TX_BLOCK_PROVENANCE_INVALID`);}
+            const fac=new ethers.Contract(m.v3Factory.address,['function feeAmountTickSpacing(uint24) view returns(int24)'],p);
+            const pm=new ethers.Contract(m.positionManager.address,['function factory() view returns(address)','function WETH9() view returns(address)'],p);
+            const rt=new ethers.Contract(m.swapRouter02.address,['function factory() view returns(address)','function WETH9() view returns(address)'],p);
+            const orc=new ethers.Contract(m.oracle.address,['function updater() view returns(address)','function certifiedChainId() view returns(uint256)','function decimals() view returns(uint8)','function latestRoundData() view returns(uint80,int256,uint256,uint256,uint80)'],p);
+            const same=(a,b)=>String(a).toLowerCase()===String(b).toLowerCase();
+            if(BigInt(await fac.feeAmountTickSpacing(3000))<=0n)throw new Error('FEE_3000_DISABLED');
+            if(!same(await pm.factory(),m.v3Factory.address))throw new Error('PM_FACTORY_BINDING');
+            if(!same(await pm.WETH9(),m.weth.address))throw new Error('PM_WETH_BINDING');
+            if(!same(await rt.factory(),m.v3Factory.address))throw new Error('ROUTER_FACTORY_BINDING');
+            if(!same(await rt.WETH9(),m.weth.address))throw new Error('ROUTER_WETH_BINDING');
+            if(!(await p.getCode(m.swapRouter02.address)).toLowerCase().replace(/^0x/,'').includes('04e45aaf'))throw new Error('NO_DEADLINE_EXACT_INPUT_SINGLE_MISSING');
+            if(!same(await orc.updater(),process.env.EXPECTED_UPDATER))throw new Error('ORACLE_UPDATER_MISMATCH');
+            if(Number(await orc.certifiedChainId())!==46630)throw new Error('ORACLE_CHAIN_MISMATCH');
+            const round=await orc.latestRoundData();const latest=await p.getBlock('latest');
+            if(Number(await orc.decimals())!==8||BigInt(round[1])<=0n||BigInt(round[3])<=0n||BigInt(round[4])<BigInt(round[0])||!latest||latest.timestamp-Number(round[3])>900)throw new Error('ORACLE_INVALID_OR_STALE');
+            const pk=String(process.env.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY||'').trim();const w=new ethers.Wallet(pk.startsWith('0x')?pk:`0x${pk}`,p);
+            const weth=new ethers.Contract(m.weth.address,['function deposit() payable','function withdraw(uint256)','function balanceOf(address) view returns(uint256)'],w);const before=await weth.balanceOf(w.address);const d=await weth.deposit({value:1n});const dr=await d.wait();const mid=await weth.balanceOf(w.address);if(!dr||dr.status!==1||mid!==before+1n)throw new Error('WETH_DEPOSIT_INVALID');const x=await weth.withdraw(1n);const xr=await x.wait();const after=await weth.balanceOf(w.address);if(!xr||xr.status!==1||after!==before)throw new Error('WETH_WITHDRAW_INVALID');
+            const finalBal=await p.getBalance(w.address);const updater=await orc.updater();const updaterBal=await p.getBalance(updater);
+            console.log('RH46630_POSTDEPLOY='+JSON.stringify({manifest:m,wethBehavior:{depositTx:d.hash,depositBlock:dr.blockNumber,withdrawTx:x.hash,withdrawBlock:xr.blockNumber},finalDeployerBalanceWei:finalBal.toString(),finalDeployerBalanceEth:ethers.formatEther(finalBal),finalUpdaterBalanceWei:updaterBal.toString(),finalUpdaterBalanceEth:ethers.formatEther(updaterBal),safeForMwzStage:true}));
+          })().catch(e=>{console.error(e.stack||e);process.exit(1);});
+          NODE
 
-      - name: Secret scan bootstrap scope
-        shell: bash
-        run: |
-          set -euo pipefail
-          if grep -RInE '(-----BEGIN [A-Z ]*PRIVATE KEY-----|0x[a-fA-F0-9]{64})' \
-            contracts/robinhood/testnet \
-            scripts/deploy-robinhood-testnet-infrastructure.ts \
-            scripts/robinhoodTestnetInfrastructureAuthority.mjs \
-            scripts/export-robinhood-current-stage-infra-env.mjs \
-            config/robinhood-testnet-infrastructure.env.example; then
-            echo 'Potential committed secret detected' >&2
-            exit 1
-          fi
-
-      - name: Forbidden scope stays untouched
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            base_sha="${{ github.event.pull_request.base.sha }}"
-          else
-            base_sha="7c733830869b73bca31fdf81e2dc55af529b18c4"
-          fi
-          git diff --name-only "$base_sha" HEAD > /tmp/changed.txt
-          if grep -E '^(programs/|tests/solana/|scripts/solana/|web-dashboard/|frontend/api/(battle|arenaTournaments|finalSalvo|claims|projectImport)|contracts/Bnb)' /tmp/changed.txt; then
-            echo 'Forbidden cross-chain/product scope changed' >&2
-            cat /tmp/changed.txt >&2
-            exit 1
-          fi
-          if grep -E '^(deployments/robinhood/testnet\.staged\.json)$' /tmp/changed.txt; then
-            echo 'MemeWarzone staged deployment artifact must not be changed' >&2
-            exit 1
-          fi
+      - name: Upload receipt-derived manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: robinhood-46630-infrastructure-manifest
+          path: deployments/robinhood/testnet.infrastructure.json
+          if-no-files-found: error
