@@ -171,7 +171,7 @@ async function main() {
     harvestEventCount: eventScan.rows.length,
     assets: assetDiagnostics,
     retryHarvestStatic: retryStatic ? retryStatic.map((v) => v.toString()) : null,
-    retryHarvestStaticError,
+    retryHarvestStaticError: retryStaticError,
   };
 
   console.log(JSON.stringify(output, null, 2));
