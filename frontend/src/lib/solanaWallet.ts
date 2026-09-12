@@ -14,7 +14,6 @@ export type SolanaProvider = {
   connect?: (args?: { onlyIfTrusted?: boolean }) => Promise<{ publicKey?: { toString: () => string } }>;
   disconnect?: () => Promise<void>;
   signMessage?: (message: Uint8Array, encoding?: "utf8") => Promise<{ signature: Uint8Array } | Uint8Array>;
-  request?: (args: { method: string; params?: Record<string, unknown> }) => Promise<unknown>;
   signTransaction?: (transaction: unknown) => Promise<any>;
   signAndSendTransaction?: (transaction: unknown) => Promise<{ signature?: string } | string>;
   on?: (eventName: string, listener: (...args: unknown[]) => void) => void;
@@ -50,51 +49,10 @@ function providerPublicKey(provider?: SolanaProvider | null): string {
 }
 
 function alreadyConnectedKey(provider?: SolanaProvider | null): string {
-  // Phantom can keep publicKey while reporting isConnected=false. Re-calling
-  // connect({ onlyIfTrusted: false }) then throws JSON-RPC -32603 Unexpected error.
-  return providerPublicKey(provider);
-}
-
-function isInternalWalletSignError(error: unknown) {
-  const value = error as { code?: unknown; error?: { code?: unknown; message?: unknown }; message?: unknown };
-  const code = Number(value?.code ?? value?.error?.code);
-  const message = String(value?.message || value?.error?.message || "");
-  return code === -32603 || code === -32000 || /unexpected error/i.test(message);
-}
-
-function signatureFromSigned(signed: { signature: Uint8Array } | Uint8Array | null | undefined) {
-  const rawSig = signed instanceof Uint8Array ? signed : signed?.signature;
-  if (rawSig instanceof Uint8Array) return rawSig.length ? rawSig : null;
-  if (rawSig?.buffer) {
-    const copied = new Uint8Array(rawSig.buffer, rawSig.byteOffset || 0, rawSig.byteLength || rawSig.length);
-    return copied.length ? copied : null;
-  }
-  return null;
-}
-
-async function signBytesWithProvider(provider: SolanaProvider, bytes: Uint8Array) {
-  const attempts: Array<() => Promise<unknown>> = [];
-  if (provider.signMessage) {
-    // Current Phantom docs require the utf8 display flag. Some older builds
-    // throw if it is present, so keep a no-flag retry.
-    attempts.push(() => provider.signMessage!(bytes, "utf8"));
-    attempts.push(() => provider.signMessage!(bytes));
-  }
-  if (typeof provider.request === "function") {
-    attempts.push(() => provider.request({ method: "signMessage", params: { message: bytes, display: "utf8" } }));
-  }
-  let lastError: unknown;
-  for (const attempt of attempts) {
-    try {
-      return await attempt();
-    } catch (error) {
-      lastError = error;
-      const text = error instanceof Error ? error.message : String((error as { message?: unknown })?.message || error || "");
-      if (/user.*reject|denied|cancel/i.test(text)) throw error;
-      if (!isInternalWalletSignError(error) && !/cannot sign|hex string|utf8/i.test(text)) throw error;
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error("Solana wallet could not sign.");
+  const key = providerPublicKey(provider);
+  if (!key) return "";
+  if (provider?.isConnected === false) return "";
+  return key;
 }
 
 export type DetectedSolanaWallet = {
@@ -416,51 +374,30 @@ async function ensureSolanaProviderSession(input: {
 }
 
 export async function signSolanaMessage(message: string, walletAddress?: string): Promise<{ walletAddress: string; signature: string }> {
-  const wanted = normalizePublicKey(walletAddress || "");
-  const wallets = detectSolanaWallets();
-  const withKey = wallets.filter((wallet) => {
-    const key = alreadyConnectedKey(wallet.provider);
-    return Boolean(key) && (!wanted || key === wanted);
+  const storedId = getStoredSolanaWalletId();
+  const detectedWallet = detectSolanaWallets().find((wallet) => wallet.id === storedId) || null;
+  const provider = detectedWallet?.provider || getSolanaProvider(storedId || null);
+  if (!provider?.signMessage) throw new Error("This Solana wallet does not support message signing.");
+
+  const publicKey = await ensureSolanaProviderSession({
+    provider,
+    detectedWallet,
+    expectedWalletAddress: walletAddress,
   });
-  const candidates = (withKey.length ? withKey : wallets).filter((wallet) => Boolean(wallet.provider?.signMessage));
-  if (!candidates.length) throw new Error("This Solana wallet does not support message signing.");
 
-  const phantomNative = getWindowAny()?.phantom?.solana as SolanaProvider | undefined;
-  const ordered = [...candidates].sort((left, right) => {
-    const leftNative = phantomNative && left.provider === phantomNative ? 0 : 1;
-    const rightNative = phantomNative && right.provider === phantomNative ? 0 : 1;
-    return leftNative - rightNative;
-  });
-  const encoded = Uint8Array.from(new TextEncoder().encode(message));
-  let lastError: unknown;
+  const encoded = new TextEncoder().encode(message);
+  const signed = await provider.signMessage(encoded);
+  const rawSig = signed instanceof Uint8Array ? signed : signed?.signature;
+  const signature =
+    rawSig instanceof Uint8Array
+      ? rawSig
+      : rawSig?.buffer
+        ? new Uint8Array(rawSig.buffer, rawSig.byteOffset || 0, rawSig.byteLength || rawSig.length)
+        : null;
+  if (!signature?.length) throw new Error("Solana wallet did not return a signature.");
 
-  for (const detectedWallet of ordered) {
-    const provider = detectedWallet.provider;
-    try {
-      const liveKey = alreadyConnectedKey(provider);
-      if (wanted && liveKey && liveKey !== wanted) continue;
-      const signed = await signBytesWithProvider(provider, encoded);
-      const signature = signatureFromSigned(signed as { signature: Uint8Array } | Uint8Array | null | undefined);
-      if (!signature?.length) throw new Error("Solana wallet did not return a signature.");
-      const publicKey = alreadyConnectedKey(provider) || wanted;
-      if (!publicKey) throw new Error("Solana wallet not connected.");
-      if (wanted && publicKey !== wanted) {
-        throw new Error(
-          `Connected wallet (${detectedWallet.name}) is ${publicKey.slice(0, 4)}…${publicKey.slice(-4)}, ` +
-          `but this action expects ${wanted.slice(0, 4)}…${wanted.slice(-4)}. Reconnect the correct wallet.`,
-        );
-      }
-      notifySolanaWalletChanged(publicKey, detectedWallet);
-      return { walletAddress: publicKey, signature: bytesToBase64(signature) };
-    } catch (error) {
-      lastError = error;
-      const text = error instanceof Error ? error.message : String(error || "");
-      if (/user.*reject|denied|cancel/i.test(text)) throw error instanceof Error ? error : new Error(text);
-      if (!isInternalWalletSignError(error)) throw error instanceof Error ? error : new Error(text || "Solana wallet could not sign.");
-    }
-  }
-
-  throw lastError instanceof Error ? lastError : new Error("Solana wallet could not sign.");
+  notifySolanaWalletChanged(publicKey, detectedWallet);
+  return { walletAddress: publicKey, signature: bytesToBase64(signature) };
 }
 
 async function fetchNonce(chainId: number, walletAddress: string) {
@@ -605,8 +542,9 @@ async function createSignedSolanaDraftAction(input: {
   lines.push(`Nonce: ${nonce}`);
 
   const message = lines.join("\n");
-  const encoded = Uint8Array.from(new TextEncoder().encode(message));
-  const signed = await signBytesWithProvider(provider, encoded);
+  const encoded = new TextEncoder().encode(message);
+  // Phantom: signMessage(Uint8Array) only — a second "utf8" arg can break some extension versions.
+  const signed = await provider.signMessage(encoded);
   const rawSig = signed instanceof Uint8Array ? signed : signed?.signature;
   const signature =
     rawSig instanceof Uint8Array
