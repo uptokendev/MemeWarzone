@@ -374,9 +374,7 @@ async function ensureSolanaProviderSession(input: {
 }
 
 export async function signSolanaMessage(message: string, walletAddress?: string): Promise<{ walletAddress: string; signature: string }> {
-  const storedId = getStoredSolanaWalletId();
-  const detectedWallet = detectSolanaWallets().find((wallet) => wallet.id === storedId) || null;
-  const provider = detectedWallet?.provider || getSolanaProvider(storedId || null);
+  const { provider, wallet: detectedWallet } = resolveSolanaProviderForAddress(walletAddress);
   if (!provider?.signMessage) throw new Error("This Solana wallet does not support message signing.");
 
   const publicKey = await ensureSolanaProviderSession({

@@ -101,7 +101,13 @@ export async function verifyPumpOwnershipChallenge(pool, challenge, connection) 
 
 export async function applyVerifiedPumpChallenge(pool, identity, signer, resolved) {
   if (Number(identity.chainId) !== 101 || resolved?.authoritySource !== "pump_bonding_curve_creator" || !resolved?.currentAuthority || resolved?.signedWalletMatchesAuthority) return resolved;
-  const result = await pool.query(`SELECT * FROM public.project_import_pump_challenges WHERE chain_id=101 AND token_address=$1 AND claimant_wallet=$2 AND creator_wallet=$3 AND verified_at IS NOT NULL AND cancelled_at IS NULL ORDER BY verified_at DESC LIMIT 1`, [identity.tokenAddress, signer, resolved.currentAuthority]);
+  let result;
+  try {
+    result = await pool.query(`SELECT * FROM public.project_import_pump_challenges WHERE chain_id=101 AND token_address=$1 AND claimant_wallet=$2 AND creator_wallet=$3 AND verified_at IS NOT NULL AND cancelled_at IS NULL ORDER BY verified_at DESC LIMIT 1`, [identity.tokenAddress, signer, resolved.currentAuthority]);
+  } catch (error) {
+    if (error?.code === "42P01" || error?.code === "42703") return resolved;
+    throw error;
+  }
   const proof = result.rows[0];
   if (!proof) return resolved;
   return {

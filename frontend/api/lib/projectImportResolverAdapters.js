@@ -37,11 +37,17 @@ function getRobinhoodProvider() {
   robinhoodProvider = new JsonRpcProvider(request, ROBINHOOD_CHAIN_ID, { batchMaxCount: 1 });
   return robinhoodProvider;
 }
+function solanaFetchSignal(init) {
+  const timeout = AbortSignal.timeout(8000);
+  if (!init?.signal) return timeout;
+  if (typeof AbortSignal.any === "function") return AbortSignal.any([init.signal, timeout]);
+  return timeout;
+}
 function getSolanaConnection() {
   if (solanaConnection) return solanaConnection;
   const url = solanaRpcUrl();
   if (!url) throw Object.assign(new Error("Solana project import resolver is not configured"), { code: "PROJECT_IMPORT_RPC_UNAVAILABLE" });
-  solanaConnection = new Connection(url, {commitment:"confirmed",disableRetryOnRateLimit:true,fetch:(input,init)=>fetch(input,{...init,signal:init?.signal?AbortSignal.any([init.signal,AbortSignal.timeout(8000)]):AbortSignal.timeout(8000)})});
+  solanaConnection = new Connection(url, {commitment:"confirmed",disableRetryOnRateLimit:true,fetch:(input,init)=>fetch(input,{...init,signal:solanaFetchSignal(init)})});
   return solanaConnection;
 }
 
@@ -155,27 +161,33 @@ export async function resolveSolanaDisplayMetadata(connection, mint) {
 
 export async function resolveSolanaProjectImport({ chainId, tokenAddress, signedWallet }) {
   if (Number(chainId) !== SOLANA_CHAIN_ID) throw Object.assign(new Error("Solana project import resolver only supports chain 101"), { code: "UNSUPPORTED_CHAIN" });
-  const connection = getSolanaConnection();
-  await assertSolanaImportMainnet(connection);
-  const raw = await resolveProjectOwnershipSolana({ mint: tokenAddress, connectedWallet: signedWallet, connection });
-  if (!raw?.validMint) throw Object.assign(new Error(raw?.reason === "mint_lookup_failed" ? "Solana token lookup is temporarily unavailable." : "No valid Solana token was found. Check the Contract Address and selected chain."), { code: raw?.reason === "mint_lookup_failed" ? "PROJECT_IMPORT_RPC_UNAVAILABLE" : "SOLANA_MINT_INVALID" });
-  const authority = await resolveSolanaProjectAuthority({ connection, mint: raw.mint, mintAuthority: raw.mintAuthority, claimant: new PublicKey(signedWallet).toBase58(), tokenProgram: new PublicKey(raw.tokenProgramId) });
-  const metadata = await resolveSolanaDisplayMetadata(connection, raw.mint);
-  return {
-    chainId: SOLANA_CHAIN_ID,
-    tokenAddress: raw.mint,
-    name: metadata.name,
-    symbol: metadata.symbol,
-    decimals: raw.decimals,
-    totalSupply: raw.totalSupply,
-    metadataSource: metadata.source,
-    metadataType: metadata.type,
-    automaticOwnershipAvailable: Boolean(authority.currentAuthority),
-    ...authority,
-    mintAuthority: raw.mintAuthority ?? null,
-    observedSlot: raw.observedSlot ?? null,
-    signedWalletMatchesAuthority: Boolean(authority.currentAuthority && authority.currentAuthority === new PublicKey(signedWallet).toBase58()),
-  };
+  try {
+    const connection = getSolanaConnection();
+    await assertSolanaImportMainnet(connection);
+    const raw = await resolveProjectOwnershipSolana({ mint: tokenAddress, connectedWallet: signedWallet, connection });
+    if (!raw?.validMint) throw Object.assign(new Error(raw?.reason === "mint_lookup_failed" ? "Solana token lookup is temporarily unavailable." : "No valid Solana token was found. Check the Contract Address and selected chain."), { code: raw?.reason === "mint_lookup_failed" ? "PROJECT_IMPORT_RPC_UNAVAILABLE" : "SOLANA_MINT_INVALID" });
+    const authority = await resolveSolanaProjectAuthority({ connection, mint: raw.mint, mintAuthority: raw.mintAuthority, claimant: new PublicKey(signedWallet).toBase58(), tokenProgram: new PublicKey(raw.tokenProgramId) });
+    const metadata = await resolveSolanaDisplayMetadata(connection, raw.mint);
+    return {
+      chainId: SOLANA_CHAIN_ID,
+      tokenAddress: raw.mint,
+      name: metadata.name,
+      symbol: metadata.symbol,
+      decimals: raw.decimals,
+      totalSupply: raw.totalSupply,
+      metadataSource: metadata.source,
+      metadataType: metadata.type,
+      automaticOwnershipAvailable: Boolean(authority.currentAuthority),
+      ...authority,
+      mintAuthority: raw.mintAuthority ?? null,
+      observedSlot: raw.observedSlot ?? null,
+      signedWalletMatchesAuthority: Boolean(authority.currentAuthority && authority.currentAuthority === new PublicKey(signedWallet).toBase58()),
+    };
+  } catch (error) {
+    const code = String(error?.code || "");
+    if (["UNSUPPORTED_CHAIN", "SOLANA_MINT_INVALID", "PROJECT_IMPORT_CHAIN_MISMATCH", "PROJECT_IMPORT_RPC_UNAVAILABLE"].includes(code)) throw error;
+    throw Object.assign(new Error("Solana token lookup is temporarily unavailable. Please retry."), { code: "PROJECT_IMPORT_RPC_UNAVAILABLE", cause: error });
+  }
 }
 
 export function registerDefaultProjectImportResolvers() {

@@ -31,3 +31,9 @@ test('Phantom JSON-RPC Unexpected error is a wallet sign failure, not an import 
     assert.doesNotMatch(result.message,/Unexpected error/i);
   }
 });
+test('API Unexpected error after a successful sign is not a wallet popup failure',()=>{
+  const result=projectImportFeedback({status:500,code:-32603,message:'Unexpected error'});
+  assert.equal(result.title,'IMPORT CHECK TEMPORARILY UNAVAILABLE');
+  assert.equal(result.retry,true);
+  assert.equal(projectImportFeedback({status:503,code:'PROJECT_IMPORT_RPC_UNAVAILABLE',message:'Unexpected error'}).title,'IMPORT CHECK TEMPORARILY UNAVAILABLE');
+});
