@@ -27,3 +27,7 @@ test("X resolve backfills missing imported image without granting ownership", ()
   assert.match(routeSource, /resolveProjectImportImage/);
   assert.doesNotMatch(routeSource, /ownership_status='ownership_verified'[\s\S]*backfillProjectImage/);
 });
+
+test("RapidLaunch Token-2022 metadata host remains explicitly allowlisted", () => {
+  assert.match(claimSource, /ALLOWED_METADATA_HOSTS = new Set\(\[[\s\S]*"m\.rapidlaunch\.io"[\s\S]*\]\);/);
+});

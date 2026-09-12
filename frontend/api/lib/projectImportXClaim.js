@@ -16,6 +16,7 @@ const ALLOWED_METADATA_HOSTS = new Set([
   "pump.mypinata.cloud",
   "cloudflare-ipfs.com",
   "arweave.net",
+  "m.rapidlaunch.io",
 ]);
 
 function requiredEnv(name) {
