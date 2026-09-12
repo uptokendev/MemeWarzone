@@ -42,6 +42,18 @@ function eq(label: string, actual: unknown, expected: unknown): void {
   }
 }
 
+async function deploymentEvidence(contract: any, label: string) {
+  const tx = contract.deploymentTransaction();
+  if (!tx) throw new Error(`${label} deployment transaction is unavailable`);
+  const receipt = await tx.wait();
+  if (!receipt) throw new Error(`${label} deployment receipt is unavailable`);
+  return {
+    address: await contract.getAddress(),
+    txHash: tx.hash,
+    receiptBlock: receipt.blockNumber,
+  };
+}
+
 async function main() {
   const sourceBaseSha = resolveExactCheckedOutHead(process.cwd());
   const chainId = Number((await ethers.provider.getNetwork()).chainId);
@@ -84,11 +96,12 @@ async function main() {
   }
 
   const liveBefore = await snapshotLiveBnbTestnetFactory(ethers.provider);
-  const deploymentBlock = await ethers.provider.getBlockNumber();
+  const deploymentStartBlock = await ethers.provider.getBlockNumber();
 
   const Adapter = await ethers.getContractFactory("TopazRouterAdapter");
   const adapter = await Adapter.deploy(t.Router);
   await adapter.waitForDeployment();
+  const adapterDeployment = await deploymentEvidence(adapter, "TopazRouterAdapter");
   eq("adapter.topazRouter", await adapter.topazRouter(), t.Router);
   eq("adapter.poolFactory", await adapter.poolFactory(), t.PoolFactory);
   eq("adapter.WETH", await adapter.WETH(), t.WBNB);
@@ -99,6 +112,7 @@ async function main() {
   const PriceFeed = await ethers.getContractFactory("MockUsdPriceFeed");
   const priceFeed = await PriceFeed.deploy(8);
   await priceFeed.waitForDeployment();
+  const priceFeedDeployment = await deploymentEvidence(priceFeed, "MockUsdPriceFeed");
   const latest = await ethers.provider.getBlock("latest");
   const timestamp = BigInt(latest!.timestamp);
   await (await priceFeed.setRoundData(1n, parsedTestPrice, timestamp, timestamp, 1n)).wait();
@@ -106,31 +120,40 @@ async function main() {
   const GraduationOracle = await ethers.getContractFactory("GraduationOracle");
   const graduationOracle = await GraduationOracle.deploy(await priceFeed.getAddress(), 30 * 24 * 60 * 60);
   await graduationOracle.waitForDeployment();
+  const graduationOracleDeployment = await deploymentEvidence(graduationOracle, "GraduationOracle");
 
   const WeeklyVault = await ethers.getContractFactory("TreasuryVaultV2");
   const weeklyLeagueVault = await WeeklyVault.deploy(admin, ethers.ZeroAddress, admin);
   await weeklyLeagueVault.waitForDeployment();
+  const weeklyLeagueVaultDeployment = await deploymentEvidence(weeklyLeagueVault, "WeeklyLeagueVault");
   const Charity = await ethers.getContractFactory("CharityTreasury");
   const charityTreasury = await Charity.deploy(admin);
   await charityTreasury.waitForDeployment();
+  const charityTreasuryDeployment = await deploymentEvidence(charityTreasury, "CharityTreasury");
   const Monthly = await ethers.getContractFactory("MonthlyLeagueTreasury");
   const monthlyLeagueTreasury = await Monthly.deploy(admin, admin, await graduationOracle.getAddress(), await charityTreasury.getAddress(), 1_500_000n * 10n ** 18n);
   await monthlyLeagueTreasury.waitForDeployment();
+  const monthlyLeagueTreasuryDeployment = await deploymentEvidence(monthlyLeagueTreasury, "MonthlyLeagueTreasury");
   const Recruiter = await ethers.getContractFactory("RecruiterRewardsVault");
   const recruiterRewardsVault = await Recruiter.deploy(admin);
   await recruiterRewardsVault.waitForDeployment();
+  const recruiterRewardsVaultDeployment = await deploymentEvidence(recruiterRewardsVault, "RecruiterRewardsVault");
   const Protocol = await ethers.getContractFactory("ProtocolRevenueVault");
   const protocolRevenueVault = await Protocol.deploy(admin);
   await protocolRevenueVault.waitForDeployment();
+  const protocolRevenueVaultDeployment = await deploymentEvidence(protocolRevenueVault, "ProtocolRevenueVault");
   const Treasury = await ethers.getContractFactory("TreasuryRouterV3");
   const treasuryRouter = await Treasury.deploy(admin, await weeklyLeagueVault.getAddress(), await monthlyLeagueTreasury.getAddress(), TREASURY_UPGRADE_DELAY);
   await treasuryRouter.waitForDeployment();
+  const treasuryRouterDeployment = await deploymentEvidence(treasuryRouter, "TreasuryRouterV3");
   const Community = await ethers.getContractFactory("CommunityRewardsVault");
   const communityRewardsVault = await Community.deploy(admin, await treasuryRouter.getAddress());
   await communityRewardsVault.waitForDeployment();
+  const communityRewardsVaultDeployment = await deploymentEvidence(communityRewardsVault, "CommunityRewardsVault");
   const CreatorRewards = await ethers.getContractFactory("CreatorRewardsVault");
   const creatorRewardsVault = await CreatorRewards.deploy(admin, await treasuryRouter.getAddress());
   await creatorRewardsVault.waitForDeployment();
+  const creatorRewardsVaultDeployment = await deploymentEvidence(creatorRewardsVault, "CreatorRewardsVault");
 
   await (await treasuryRouter.setRecruiterRewardsVault(await recruiterRewardsVault.getAddress())).wait();
   await (await treasuryRouter.setCommunityRewardsVault(await communityRewardsVault.getAddress())).wait();
@@ -140,15 +163,19 @@ async function main() {
   const CreatorRegistry = await ethers.getContractFactory("CreatorRegistry");
   const creatorRegistry = await CreatorRegistry.deploy();
   await creatorRegistry.waitForDeployment();
+  const creatorRegistryDeployment = await deploymentEvidence(creatorRegistry, "CreatorRegistry");
   const RiskRegistry = await ethers.getContractFactory("RiskRegistry");
   const riskRegistry = await RiskRegistry.deploy();
   await riskRegistry.waitForDeployment();
+  const riskRegistryDeployment = await deploymentEvidence(riskRegistry, "RiskRegistry");
   const Campaign = await ethers.getContractFactory("LaunchCampaign");
   const campaignImplementation = await Campaign.deploy();
   await campaignImplementation.waitForDeployment();
+  const campaignImplementationDeployment = await deploymentEvidence(campaignImplementation, "LaunchCampaign implementation");
   const LaunchFactory = await ethers.getContractFactory("LaunchFactory");
   const launchFactory = await LaunchFactory.deploy(await adapter.getAddress(), await treasuryRouter.getAddress(), await campaignImplementation.getAddress(), await graduationOracle.getAddress());
   await launchFactory.waitForDeployment();
+  const launchFactoryDeployment = await deploymentEvidence(launchFactory, "LaunchFactory");
   const lockerAddress = await launchFactory.permanentLpLocker();
   const locker = await ethers.getContractAt("PermanentLpLocker", lockerAddress);
 
@@ -230,15 +257,41 @@ async function main() {
   const liveAfter = await snapshotLiveBnbTestnetFactory(ethers.provider);
   if (JSON.stringify(liveBefore) !== JSON.stringify(liveAfter)) throw new Error("live BNB factory changed during real-Topaz staging deploy");
 
+  const deploymentProvenance = {
+    TopazRouterAdapter: adapterDeployment,
+    MockUsdPriceFeed: priceFeedDeployment,
+    GraduationOracle: graduationOracleDeployment,
+    WeeklyLeagueVault: weeklyLeagueVaultDeployment,
+    CharityTreasury: charityTreasuryDeployment,
+    MonthlyLeagueTreasury: monthlyLeagueTreasuryDeployment,
+    RecruiterRewardsVault: recruiterRewardsVaultDeployment,
+    ProtocolRevenueVault: protocolRevenueVaultDeployment,
+    TreasuryRouterV3: treasuryRouterDeployment,
+    CommunityRewardsVault: communityRewardsVaultDeployment,
+    CreatorRewardsVault: creatorRewardsVaultDeployment,
+    CreatorRegistry: creatorRegistryDeployment,
+    RiskRegistry: riskRegistryDeployment,
+    LaunchCampaignImplementation: campaignImplementationDeployment,
+    LaunchFactory: launchFactoryDeployment,
+    PermanentLpLocker: {
+      address: lockerAddress,
+      txHash: null,
+      receiptBlock: launchFactoryDeployment.receiptBlock,
+      provenance: "factory-created/internal",
+      createdBy: contracts.launchFactory,
+    },
+  };
+
   const stage = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: "bnb-real-topaz-testnet-stage",
     targetChainId: 97,
     chainId,
     network: network.name,
     environment: "staging",
     deployedAt: new Date().toISOString(),
-    deploymentBlock,
+    deploymentStartBlock,
+    deploymentBlock: adapterDeployment.receiptBlock,
     sourceBaseSha,
     topazDeploymentAuthority: TOPAZ_DEPLOYMENT_AUTHORITY,
     topazManifest: path.relative(process.cwd(), topazPath).replace(/\\/g, "/"),
@@ -255,6 +308,7 @@ async function main() {
     routeAuthority,
     admin,
     contracts,
+    deploymentProvenance,
     stagingOnly: {
       controlledTopazDex: false,
       realTopazCompatibility: true,
