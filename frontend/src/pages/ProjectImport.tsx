@@ -23,7 +23,9 @@ type ImportChain = "bnb" | "solana" | "robinhood";
 const ROBINHOOD_CHAIN_ID = 4663;
 
 function projectUrl(item: ProjectImportItem) {
-  return `/token/${encodeURIComponent(item.tokenAddress)}?chainId=${item.chainId}`;
+  const params = new URLSearchParams({ chainId: String(item.chainId) });
+  if (item.chainId === SOLANA_CHAIN_ID && item.ownershipStatus === "ownership_pending") params.set("claim", "prompt");
+  return `/token/${encodeURIComponent(item.tokenAddress)}?${params.toString()}`;
 }
 
 function detectImportChain(
