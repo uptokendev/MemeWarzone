@@ -1,0 +1,33 @@
+name: Solana Retry Wrapper Source Gate
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/solana-retry-wrapper-source-gate.yml"
+      - "scripts/solana/network-canary.sh"
+      - "tests/solana/network-canary-101-runner.cjs"
+      - "tools/solana-meteora-graduation/certify-postgrad-101-runner.mjs"
+
+permissions:
+  contents: read
+
+jobs:
+  source-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verify duplicate-aware retry wrappers
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check tests/solana/network-canary-101-runner.cjs
+          node --check tools/solana-meteora-graduation/certify-postgrad-101-runner.mjs
+          bash -n scripts/solana/network-canary.sh
+          grep -Fq 'node tests/solana/network-canary-101-runner.cjs' scripts/solana/network-canary.sh
+          grep -Fq 'node tools/solana-meteora-graduation/certify-postgrad-101-runner.mjs' scripts/solana/network-canary.sh
+          grep -Fq 'already been processed' tests/solana/network-canary-101-runner.cjs
+          grep -Fq 'already been processed' tools/solana-meteora-graduation/certify-postgrad-101-runner.mjs
+          test -z "$(git diff --name-only "${{ github.event.pull_request.base.sha }}"...HEAD -- programs/memewarzone_solana tools/solana-meteora-graduation/graduate-basic-quote.mjs)"

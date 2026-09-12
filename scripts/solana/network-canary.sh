@@ -99,7 +99,7 @@ if psql "$DATABASE_URL" -Atc "select count(*) from public.quote_asset_deployment
 fi
 
 # Fresh same-campaign V0/ALT lifecycle: CREATE -> BUY -> SELL -> close BUY.
-node tests/solana/network-canary-101.cjs
+node tests/solana/network-canary-101-runner.cjs
 campaign="$(node -e 'const r=require(process.env.SOLANA_NETWORK_CANARY_REPORT); process.stdout.write(r.campaign)')"
 mint="$(node -e 'const r=require(process.env.SOLANA_NETWORK_CANARY_REPORT); process.stdout.write(r.mint)')"
 alt="$(node -e 'const r=require(process.env.SOLANA_NETWORK_CANARY_REPORT); process.stdout.write(r.temporaryLaunchpadAlt)')"
@@ -132,7 +132,7 @@ node tools/solana-meteora-graduation/graduate-basic-quote.mjs "$campaign" | tee 
 SOLANA_BASIC_RESULT_REPORT=/tmp/mwz-solana-101-graduation-result.json node tools/solana-meteora-graduation/verify-basic-graduation-result.mjs "$campaign" /tmp/mwz-solana-101-graduation.log So11111111111111111111111111111111111111112
 
 # Same graduated mint: real Meteora post-grad BUY -> SELL with V0, ALT, LVH, retry and reload reconciliation.
-node tools/solana-meteora-graduation/certify-postgrad-101.mjs
+node tools/solana-meteora-graduation/certify-postgrad-101-runner.mjs
 
 node - <<'NODE'
 const fs=require('fs');
