@@ -14,7 +14,7 @@ import { signWalletAction } from "@/lib/walletActionAuth";
 const ROBINHOOD_CHAIN_ID = 4663;
 function maskWallet(value?: string | null) { const v=String(value||""); return v.length>10?`${v.slice(0,6)}...${v.slice(-4)}`:v; }
 
-export default function ProjectXClaimDialog({ item, open, onOpenChange }: { item: ProjectImportItem; open: boolean; onOpenChange: (open: boolean) => void }) {
+export default function ProjectXClaimDialog({ item, open, onOpenChange, onResolvedImage }: { item: ProjectImportItem; open: boolean; onOpenChange: (open: boolean) => void; onResolvedImage?: (imageUrl: string) => void }) {
   const wallet = useWallet();
   const solanaWallet = useSolanaWallet();
   const isSolana = item.chainId === SOLANA_CHAIN_ID;
@@ -34,7 +34,7 @@ export default function ProjectXClaimDialog({ item, open, onOpenChange }: { item
     setLoading(true); setError("");
     const tasks: Promise<void>[] = [];
     if (isEvm) tasks.push(resolveProjectEvmAuthority(item, connectedWallet).then(setAuthority).catch((err:any)=>setError(String(err?.message||"Current owner wallet could not be resolved."))));
-    tasks.push(resolveProjectXIdentity(item).then(setIdentity).catch((err:any)=>{
+    tasks.push(resolveProjectXIdentity(item).then((resolved)=>{ setIdentity(resolved); if(resolved.imageUrl) onResolvedImage?.(resolved.imageUrl); }).catch((err:any)=>{
       const code=String(err?.code||"");
       if(code!=="PROJECT_IMPORT_X_NOT_FOUND") setError((prev)=>prev||String(err?.message||"Official X account could not be resolved."));
       setIdentity(null);

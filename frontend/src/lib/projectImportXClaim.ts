@@ -2,7 +2,7 @@ import { apiFetch } from "@/lib/apiBase";
 import type { ProjectImportItem } from "@/lib/projectImports";
 import type { WalletActionAuthPayload } from "@/lib/walletActionAuth";
 
-export type ProjectXIdentity = { available: true; username: string; xUrl: string; source: string };
+export type ProjectXIdentity = { available: true; username: string; xUrl: string; source: string; imageUrl?: string | null };
 export type ProjectEvmAuthority = { available: boolean; currentAuthority: string | null; matchesConnected: boolean; authoritySource?: string | null };
 
 async function readJson(res: Response) { return res.json().catch(() => ({})) as Promise<any>; }

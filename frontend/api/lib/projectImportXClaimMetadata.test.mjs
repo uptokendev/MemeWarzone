@@ -31,3 +31,13 @@ test("X resolve backfills missing imported image without granting ownership", ()
 test("RapidLaunch Token-2022 metadata host remains explicitly allowlisted", () => {
   assert.match(claimSource, /ALLOWED_METADATA_HOSTS = new Set\(\[[\s\S]*"m\.rapidlaunch\.io"[\s\S]*\]\);/);
 });
+
+
+test("IPFS metadata uses working Pump/Pinata gateways and canonicalizes image URLs", () => {
+  assert.match(claimSource, /IPFS_PRIMARY_GATEWAY = "https:\/\/pump\.mypinata\.cloud\/ipfs\/"/);
+  assert.match(claimSource, /IPFS_FALLBACK_GATEWAY = "https:\/\/gateway\.pinata\.cloud\/ipfs\/"/);
+  assert.match(claimSource, /function ipfsContentPath/);
+  assert.match(claimSource, /function metadataFetchCandidates/);
+  assert.match(claimSource, /for \(const metadataUrl of metadataFetchCandidates\(reference\.metadataUrl\)\)/);
+  assert.match(claimSource, /const path = ipfsContentPath\(value\);[\s\S]*if \(path\) return ipfsGatewayUrl\(path\)/);
+});

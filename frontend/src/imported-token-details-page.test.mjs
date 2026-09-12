@@ -20,7 +20,7 @@ test("public token route intercepts authoritative project imports before live To
   assert.match(entry, /<ImportedProjectDetails/);
   assert.match(entry, /<ProjectXClaimDialog/);
   assert.match(entry, /return <TokenDetailsLiveEntry \/>/);
-  assert.doesNotMatch(entry, /imageUrl/);
+  assert.match(entry, /onResolvedImage=\{\(imageUrl\) => setProject/);
   assert.match(client, /\/api\/project-imports/);
   assert.doesNotMatch(entry, /from .*campaign|from .*LaunchFactory|from .*bonding|from .*graduation|from .*Topaz|from .*Meteora/i);
 });
@@ -131,4 +131,11 @@ test("ordinary token fallback preserves original live Token Details boundary", (
   assert.match(entry, /if \(project\) return <>/);
   assert.match(entry, /<ImportedProjectDetails/);
   assert.match(entry, /return <TokenDetailsLiveEntry \/>/);
+});
+
+
+test("claim image backfill updates the rendered imported project immediately", () => {
+  assert.match(xClient, /imageUrl\?: string \| null/);
+  assert.match(claimDialog, /if\(resolved\.imageUrl\) onResolvedImage\?\.\(resolved\.imageUrl\)/);
+  assert.match(entry, /onResolvedImage=\{\(imageUrl\) => setProject/);
 });

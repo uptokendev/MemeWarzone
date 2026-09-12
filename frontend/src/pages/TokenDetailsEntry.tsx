@@ -53,7 +53,7 @@ export default function TokenDetailsEntry() {
   if (!resolved) return null;
   if (project) return <>
     <ImportedProjectDetails key={`${project.id}:${project.ownershipStatus}:${project.ownershipVerifiedAt || ""}`} item={project} onClaimMemecoin={() => setClaimOpen(true)} />
-    <ProjectXClaimDialog item={project} open={claimOpen} onOpenChange={setClaimOpen} />
+    <ProjectXClaimDialog item={project} open={claimOpen} onOpenChange={setClaimOpen} onResolvedImage={(imageUrl) => setProject((current) => current ? { ...current, imageUrl } : current)} />
   </>;
   return <TokenDetailsLiveEntry />;
 }
