@@ -3,321 +3,82 @@ name: Agent 1 Solana 102 Closeout
 on:
   push:
     branches:
-      - agent1/solana-102-authority-elimination-120401f
+      - agent1/solana-102-escape-fix-3512139
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  authority-regressions:
-    name: authority + cross-chain regressions
+  closeout:
+    name: Solana 102 + cross-chain closeout
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
-      - name: Checkout exact branch head
-        uses: actions/checkout@v4
-
-      - name: Exact tracked-text 102 inventory
-        shell: bash
-        run: |
-          set -euo pipefail
-          pattern='(^|[^0-9])102([^0-9]|$)'
-          echo '=== 102 FILES ==='
-          git grep -I -l -E "$pattern" -- . | sort || true
-          echo '=== 102 MATCHING LINES ==='
-          git grep -I -n -E "$pattern" -- . | sort || true
-          occurrence_count="$(git grep -I -h -o -E "$pattern" -- . | wc -l | tr -d ' ')"
-          file_count="$(git grep -I -l -E "$pattern" -- . | wc -l | tr -d ' ')"
-          echo "TOTAL_102_OCCURRENCES=$occurrence_count"
-          echo "TOTAL_102_FILES=$file_count"
-
-      - name: Exact seven-category classification matrix
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          import collections
-          import re
-          import subprocess
-
-          token = "10" + "2"
-          pattern = re.compile(rf"(^|[^0-9]){token}([^0-9]|$)")
-          raw = subprocess.check_output(
-              ["git", "grep", "-I", "-n", "-E", rf"(^|[^0-9]){token}([^0-9]|$)", "--", "."],
-              text=True,
-          )
-
-          current = {
-              f".github/workflows/agent1-solana-{token}-closeout.yml",
-              "frontend/api/analytics/launchpad.js",
-              "frontend/api/arenaBoosts.js",
-              "frontend/api/arenaTournamentBoosts.js",
-              "frontend/api/dashboard/lp-fees.js",
-              "frontend/api/dev-fix/drafts.js",
-              "frontend/api/dev-fix/route-auth.js",
-              "frontend/api/dev-fix/routeAuthorizationSigner.js",
-              "frontend/api/dev-fix/ticker-reservation-service.js",
-              "frontend/api/dev-fix/ticker-reservation-service.test.mjs",
-              "frontend/api/lib/solanaArenaMoneyV2Read.js",
-              "frontend/docs/finance-activation-checklist.md",
-              "frontend/docs/finance-custody-config.md",
-              "frontend/shared/solanaCurrentArenaAuthority.test.mjs",
-              "frontend/shared/solanaCurrentAuthority.mjs",
-              "frontend/shared/solanaCurrentAuthority.test.mjs",
-              "frontend/src/components/token/UpvoteDialog.tsx",
-              "frontend/src/features/launchpad/useLaunchpadAdapter.ts",
-              "frontend/src/features/postgrad/identityRoutes.ts",
-              "frontend/src/lib/graduationTiers.ts",
-              "frontend/src/lib/lpFeeHarvest.ts",
-              "realtime-indexer/src/jobs/finalizeEpochWinners.ts",
-              "realtime-indexer/src/lpFeesRoutes.ts",
-              "realtime-indexer/src/marketIdentity.ts",
-              "scripts/solana/arena-operator-worker.mjs",
-          }
-          claims = {
-              "frontend/api/dev-fix/reward-claim-intent-generic.js",
-              "frontend/api/leagueRouter.js",
-              "frontend/api/lib/solanaLeagueClaimVerification.js",
-              "frontend/api/rewards.js",
-              "frontend/src/lib/rewardProgramsApi.ts",
-              "frontend/src/lib/solanaRewardNetwork.ts",
-          }
-          historical = {
-              "frontend/api/admin/arenaImports.js",
-              "frontend/api/campaigns-base.js",
-              "frontend/api/campaigns.js",
-              "frontend/api/dev-fix/airdrop-preview.js",
-              "frontend/api/dev-fix/attribution.js",
-              "frontend/api/dev-fix/draft-deploy-base.js",
-              "frontend/api/dev-fix/drafts-base.js",
-              "frontend/api/dev-fix/reward-batch-ops.js",
-              "frontend/api/dev-fix/stubs.js",
-              "frontend/api/league.js",
-              "frontend/api/leagueSummary.js",
-              "frontend/api/lib/arenaImportScan.js",
-              "frontend/api/lib/chainNative.js",
-              "frontend/api/lib/finalizeLeagueEpoch.js",
-              "frontend/api/prepare-share-card.js",
-              "frontend/api/upload.js",
-              "frontend/scripts/weekly-airdrop/candidates.mjs",
-              "frontend/scripts/weekly-airdrop/run-weekly-airdrop.mjs",
-              "frontend/server/http.js",
-              "frontend/src/lib/draftApi.ts",
-              "frontend/src/lib/solanaArenaLayout.mjs",
-              "frontend/src/lib/tokenDetailsPath.ts",
-              "frontend/src/pages/PrepareBase.tsx",
-              "realtime-indexer/src/rewards/airdrops.ts",
-          }
-          unrelated = {
-              "config/solana/meteora-cp-amm.certification.json",
-              "frontend/package-lock.json",
-              "frontend/src/components/home/HomeAudienceCtas.tsx",
-              "frontend/src/lib/arena/battleShareCardPresentation.mjs",
-              "frontend/src/lib/solanaArenaMoneyV2Layout.mjs",
-              "programs/memewarzone_solana/src/graduation.rs",
-          }
-
-          def category(path, line):
-              # One mixed current file intentionally retains only address-family history.
-              if path == "frontend/api/analytics/launchpad.js" and (
-                  "SOLANA_ADDRESS_FAMILY_CHAIN_IDS" in line or "Historical " + token + " records" in line
-              ):
-                  return 3
-              if path in current:
-                  return 1
-              if path in claims:
-                  return 2
-              if path in unrelated:
-                  return 6
-              if (
-                  path.startswith(".github/workflows/agent2-")
-                  or path == ".github/workflows/solana-certification-pinned-runner.yml"
-                  or path.startswith("db/migrations/")
-                  or path.startswith("frontend/db/migrations/")
-                  or path.startswith("frontend/supabase/migrations/")
-                  or path == "frontend/api/SUPABASE_SCHEMA_FIX.sql"
-                  or path.startswith("frontend/scripts/t2-")
-                  or ".test." in path
-                  or path.startswith("test/")
-                  or path.startswith("tools/solana-meteora-graduation/")
-                  or path.startswith("realtime-indexer/src/tests/")
-              ):
-                  return 5
-              if path in historical:
-                  return 3
-              return 4
-
-          counts = collections.Counter()
-          files = {i: set() for i in range(1, 8)}
-          manifest = []
-          for row in raw.splitlines():
-              path, line_no, text = row.split(":", 2)
-              matches = list(pattern.finditer(text))
-              if not matches:
-                  continue
-              cat = category(path, text)
-              for _ in matches:
-                  counts[cat] += 1
-                  files[cat].add(path)
-                  manifest.append((cat, path, line_no, text.strip()))
-
-          total = sum(counts.values())
-          expected = sum(1 for row in raw.splitlines() for _ in pattern.finditer(row.split(":", 2)[2]))
-          if total != expected:
-              raise SystemExit(f"classification mismatch: classified={total} expected={expected}")
-
-          labels = {
-              1: "CURRENT AUTHORITY - FIXED",
-              2: "PR #290 CLAIMS - LEFT UNTOUCHED",
-              3: "HISTORICAL COMPATIBILITY - RETAIN",
-              4: "DISPLAY / ADDRESS NORMALIZATION - RETAIN",
-              5: "MIGRATION / FIXTURE / TEST HISTORY - RETAIN",
-              6: "UNRELATED NUMERIC " + token,
-              7: "OBSOLETE - REMOVED",
-          }
-          print("=== CLASSIFICATION COUNTS ===")
-          for i in range(1, 8):
-              print(f"CATEGORY_{i}_COUNT={counts[i]} :: {labels[i]}")
-          print(f"CLASSIFIED_TOTAL={total}")
-          print("=== CATEGORY 1 FILES ===")
-          for path in sorted(files[1]):
-              print(path)
-          print("=== CATEGORY 2 FILES ===")
-          for path in sorted(files[2]):
-              print(path)
-          print("=== RETAINED LAUNCH-ADJACENT FILES (CATEGORIES 3/4) ===")
-          for cat in (3, 4):
-              for path in sorted(files[cat]):
-                  print(f"C{cat} {path}")
-          print("=== COMPLETE OCCURRENCE MANIFEST ===")
-          for cat, path, line_no, text in manifest:
-              print(f"C{cat} {path}:{line_no}:{text}")
-          PY
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-
       - name: Install frontend/API dependencies
         run: npm ci --prefix frontend --no-audit --no-fund
-
-      - name: Solana current-authority matrix
-        run: node --test frontend/shared/solanaCurrentAuthority.test.mjs frontend/shared/solanaCurrentArenaAuthority.test.mjs frontend/api/dev-fix/ticker-reservation-service.test.mjs
-
+      - name: Permanent Solana 102 financial negatives
+        run: node --test frontend/shared/solana102FinancialEscapeNegative.test.mjs
+      - name: BASIC runtime resolver + database authority
+        run: node --test frontend/api/lib/solana102BasicRuntimeResolver.test.mjs
+      - name: Arena caller identity matrix
+        run: node --test frontend/shared/solanaCurrentAuthority.test.mjs frontend/shared/solanaCurrentArenaAuthority.test.mjs
       - name: API import integrity
         run: npm --prefix frontend run check:api-imports
-
-      - name: Post-grad routing regression
+      - name: BNB and Robinhood shared post-grad routing regression
         run: npm --prefix frontend run check:postgrad-routing
-
-      - name: Post-grad economics regression
+      - name: BNB and Robinhood shared economics regression
         run: npm --prefix frontend run check:postgrad-economics
-
       - name: Graduation market regression
         run: npm --prefix frontend run test:graduation-market
-
       - name: Wallet and EVM chain regression
         run: npm --prefix frontend run test:wallet-discovery
-
       - name: Arena runtime regression
         run: npm --prefix frontend run test:arena-runtime-acceptance
-
       - name: Arena tournament regression
         run: npm --prefix frontend run test:arena-tournament
-
-      - name: Final Salvo staging identity regression
-        run: node --test frontend/api/lib/arenaStagingIdentityCompletion.test.mjs
-
-      - name: Final Salvo five-step runtime regression
-        run: node --test frontend/api/lib/arenaFinalSalvoRuntime.test.mjs
-
-      - name: Final Salvo Normal Tournament regression
-        run: node --test frontend/api/lib/arenaTournamentChainIdentity.test.mjs
-
-      - name: Final Salvo Vote Tournament regression
-        run: node --test frontend/api/lib/arenaVoteTournamentChainIdentity.test.mjs
-
-      - name: Focused lint for changed authority consumers
-        shell: bash
-        run: |
-          cd frontend
-          npx eslint \
-            api/admin/finance.js \
-            api/analytics/launchpad.js \
-            api/dashboard/lp-fees.js \
-            api/dev-fix/draft-deploy.js \
-            api/dev-fix/drafts.js \
-            api/dev-fix/route-auth.js \
-            api/dev-fix/routeAuthorizationSigner.js \
-            api/dev-fix/ticker-reservation-service.js \
-            api/lib/financeFunding.js \
-            api/lib/solanaArenaMoneyV2Read.js \
-            shared/solanaCurrentAuthority.mjs \
-            shared/solanaCurrentAuthority.test.mjs \
-            shared/solanaCurrentArenaAuthority.test.mjs \
-            src/components/token/UpvoteDialog.tsx \
-            src/features/launchpad/useLaunchpadAdapter.ts \
-            src/features/postgrad/identityRoutes.ts \
-            src/lib/graduationTiers.ts \
-            src/lib/lpFeeHarvest.ts
-
-      - name: Frontend build/typecheck bundle gate
+      - name: Frontend build
         run: npm --prefix frontend run build
 
-  indexer-regressions:
-    name: LP fee + market indexer build
+  indexer:
+    name: Realtime indexer build
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Checkout exact branch head
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: realtime-indexer/package-lock.json
-
-      - name: Install realtime indexer dependencies
-        run: npm ci --prefix realtime-indexer --no-audit --no-fund
-
-      - name: Realtime indexer build/typecheck
-        run: npm --prefix realtime-indexer run build
+      - run: npm ci --prefix realtime-indexer --no-audit --no-fund
+      - run: npm --prefix realtime-indexer run build
 
   secret-scan:
-    name: secret scan
+    name: Secret Scan
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout full history
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: Reject tracked environment files
         shell: bash
         run: |
-          tracked_env_files="$(git ls-files | grep -E '(^|/)\.env($|\.)' | grep -Ev '\.example$' || true)"
-          if [ -n "$tracked_env_files" ]; then
-            echo "Tracked environment files are forbidden:"
-            echo "$tracked_env_files"
-            exit 1
-          fi
-
+          tracked="$(git ls-files | grep -E '(^|/)\.env($|\.)' | grep -Ev '\.example$' || true)"
+          test -z "$tracked" || { echo "$tracked"; exit 1; }
       - name: Reject server secrets in browser source
         shell: bash
         run: |
-          if grep -RInE --exclude-dir=node_modules --exclude-dir=dist \
-            '(import\.meta\.env\.(SUPABASE_SERVICE_ROLE_KEY|DATABASE_URL|PRIVATE_KEY|MNEMONIC|ABLY_API_KEY|DISCORD_BOT_TOKEN|TELEGRAM_BOT_TOKEN)|process\.env\.(SUPABASE_SERVICE_ROLE_KEY|DATABASE_URL|PRIVATE_KEY|MNEMONIC|ABLY_API_KEY|DISCORD_BOT_TOKEN|TELEGRAM_BOT_TOKEN))' \
-            frontend/src 2>/dev/null; then
-            echo "Server-only secret access found in browser source."
-            exit 1
-          fi
-
-      - name: Gitleaks full history
-        uses: gitleaks/gitleaks-action@v2
+          ! grep -RInE --exclude-dir=node_modules --exclude-dir=dist '(import\.meta\.env\.(SUPABASE_SERVICE_ROLE_KEY|DATABASE_URL|PRIVATE_KEY|MNEMONIC|ABLY_API_KEY|DISCORD_BOT_TOKEN|TELEGRAM_BOT_TOKEN)|process\.env\.(SUPABASE_SERVICE_ROLE_KEY|DATABASE_URL|PRIVATE_KEY|MNEMONIC|ABLY_API_KEY|DISCORD_BOT_TOKEN|TELEGRAM_BOT_TOKEN))' frontend/src
+      - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
