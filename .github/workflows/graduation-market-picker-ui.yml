@@ -1,0 +1,54 @@
+name: Graduation Market picker UI
+
+on:
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - "frontend/src/components/create/GraduationMarketStep.tsx"
+      - "frontend/src/pages/Create.tsx"
+      - "frontend/src/lib/graduationQuoteCatalog.ts"
+      - "frontend/src/lib/graduationQuotePicker.mjs"
+      - "frontend/src/lib/graduationQuotePicker.test.mjs"
+      - "frontend/src/lib/graduationMarketPresentation.mjs"
+      - "frontend/src/lib/graduationMarketPresentation.test.mjs"
+      - "frontend/src/lib/graduationMarketCreateRegression.test.mjs"
+      - "frontend/api/graduation/quote-assets.js"
+      - "frontend/api/lib/approvedQuoteCatalog.js"
+      - "frontend/api/lib/approvedQuoteCatalog.test.mjs"
+      - "frontend/api/lib/quoteAssetCatalog.js"
+      - "frontend/api/lib/quoteAssetCatalog.test.mjs"
+      - ".github/workflows/graduation-market-picker-ui.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  quote-picker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install locked dependencies
+        run: npm ci --prefix frontend --no-audit --no-fund
+      - name: Graduation Market picker matrix
+        run: npm --prefix frontend run test:graduation-market
+      - name: Existing quote catalog regressions
+        run: |
+          node --test frontend/api/lib/approvedQuoteCatalog.test.mjs
+          node --test frontend/api/lib/quoteAssetCatalog.test.mjs
+      - name: API import graph
+        run: npm --prefix frontend run check:api-imports
+      - name: Production frontend build
+        env:
+          VITE_ENABLE_WAR_ROOM: "true"
+          VITE_ENABLE_UNIFIED_MARKET_CHART: "1"
+        run: npm --prefix frontend run build

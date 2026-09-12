@@ -835,6 +835,23 @@ const Create = () => {
       else if (step === 5) toast.error("Choose a Graduation Market first.");
       return;
     }
+    if (step === 5) {
+      if (!graduationQuoteAsset) {
+        toast.error("Choose a Graduation Market first.");
+        return;
+      }
+      void assertFreshGraduationQuote(graduationQuoteAsset)
+        .then((fresh) => {
+          setGraduationQuoteAsset(fresh);
+          setSlideDir("next");
+          setStep((s) => Math.min(TOTAL_STEPS, s + 1));
+        })
+        .catch((error) => {
+          setGraduationQuoteAsset(null);
+          toast.error(error?.message || "Graduation Market is no longer eligible. Choose another quote asset.");
+        });
+      return;
+    }
     setSlideDir("next");
     setStep((s) => Math.min(TOTAL_STEPS, s + 1));
   };

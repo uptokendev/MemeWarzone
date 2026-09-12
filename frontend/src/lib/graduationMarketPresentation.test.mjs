@@ -169,6 +169,19 @@ test("draft payload stores catalog id, selected state version, and policy versio
   assert.equal(solNative.graduationQuoteProvider, undefined);
 });
 
+test("creator categories include Pre-IPO, Commodities, MemeWarzone and Community only when catalog assets exist", () => {
+  const groups = groupQuoteAssetsByCategory([
+    catalogQuote(),
+    catalogQuote({ id: "pre-ipo", assetClass: "PRE_IPO_RWA", symbol: "OPENAI", identityKind: "EVM_ADDRESS", contractAddressOrMint: "0x00000000000000000000000000000000000000bb" }),
+    catalogQuote({ id: "gold", assetClass: "COMMODITY", symbol: "XAU", identityKind: "EVM_ADDRESS", contractAddressOrMint: "0x00000000000000000000000000000000000000cc" }),
+    catalogQuote({ id: "mwz", assetClass: "MWZ_NATIVE", symbol: "DOGE", identityKind: "EVM_ADDRESS", contractAddressOrMint: "0x00000000000000000000000000000000000000dd" }),
+    catalogQuote({ id: "community", assetClass: "COMMUNITY", symbol: "PEPE", identityKind: "EVM_ADDRESS", contractAddressOrMint: "0x00000000000000000000000000000000000000ee" }),
+  ]);
+  assert.deepEqual(groups.map((group) => group.id), ["POPULAR", "PRE_IPO", "COMMODITIES", "MEMEWARZONE", "COMMUNITY"]);
+  assert.equal(categoryForQuoteAsset(catalogQuote({ assetClass: "MWZ_NATIVE", identityKind: "EVM_ADDRESS", symbol: "DOGE" })), "MEMEWARZONE");
+  assert.equal(categoryForQuoteAsset(catalogQuote({ assetClass: "COMMUNITY", identityKind: "EVM_ADDRESS", symbol: "PEPE" })), "COMMUNITY");
+});
+
 test("disabled catalog assets are omitted from Step 5 groups", () => {
   const live = catalogQuote({ id: "live-bnb", newGraduationEligible: true });
   const disabled = catalogQuote({ id: "dead-bnb", newGraduationEligible: false, symbol: "USDC", assetClass: "STABLECOIN" });
@@ -216,6 +229,8 @@ test("Create flow is 6 steps, catalog-only, and the NATIVE/STOCK_TOKEN picker is
   assert.match(shell, /"Path", "Identity", "Story", "Bond", "Market", "Review"/);
   assert.match(step, /No approved Graduation Markets are available on this chain yet/);
   assert.doesNotMatch(step, /nativeDefaultQuoteAsset/);
+  assert.doesNotMatch(step, /availableItems\[0\]/);
+  assert.match(create, /CreateFullPane/);
   assert.match(catalog, /catalogQuoteAssetsOnly/);
   assert.doesNotMatch(catalog, /mergeCatalogWithNativeDefault/);
   assert.doesNotMatch(catalog, /presentationDefault\) return asset/);
