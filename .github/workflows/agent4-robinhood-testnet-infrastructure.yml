@@ -112,7 +112,7 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             base_sha="${{ github.event.pull_request.base.sha }}"
           else
-            base_sha="120401fd1fde0dce6e2439fc4156840e029f1ae6"
+            base_sha="7c733830869b73bca31fdf81e2dc55af529b18c4"
           fi
           git diff --name-only "$base_sha" HEAD > /tmp/changed.txt
           if grep -E '^(programs/|tests/solana/|scripts/solana/|web-dashboard/|frontend/api/(battle|arenaTournaments|finalSalvo|claims|projectImport)|contracts/Bnb)' /tmp/changed.txt; then
