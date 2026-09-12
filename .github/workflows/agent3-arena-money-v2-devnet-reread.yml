@@ -129,6 +129,32 @@ jobs:
           ! grep -E 'program deploy|anchor deploy|program upgrade' frontend/scripts/arena-money-v2-devnet-acceptance.mjs frontend/scripts/arena-money-v2-devnet-resolve.mjs
           echo 'PASS: acceptance may send financial test transactions but cannot deploy or upgrade the program'
 
+      - name: Fund configured resolver devnet fee reserve
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { Connection, Keypair, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction } from './frontend/node_modules/@solana/web3.js';
+          const evidence=JSON.parse(fs.readFileSync('/tmp/arena-money-v2-live-reread.json','utf8'));
+          const raw=String(process.env.SOLANA_REWARDS_AUTHORITY_SECRET_KEY||'').trim();
+          const bytes=Uint8Array.from(raw.startsWith('[')?JSON.parse(raw):Buffer.from(raw,'base64'));
+          const authority=bytes.length===64?Keypair.fromSecretKey(bytes):Keypair.fromSeed(bytes);
+          const resolver=new PublicKey(evidence.config.resolver);
+          const connection=new Connection(process.env.SOLANA_REWARDS_RPC_URL,'confirmed');
+          const before=await connection.getBalance(resolver,'confirmed');
+          const target=5_000_000;
+          let signature=null;
+          if(before<target){
+            const lamports=target-before;
+            const tx=new Transaction().add(SystemProgram.transfer({fromPubkey:authority.publicKey,toPubkey:resolver,lamports}));
+            signature=await sendAndConfirmTransaction(connection,tx,[authority],{commitment:'confirmed',preflightCommitment:'confirmed'});
+          }
+          const after=await connection.getBalance(resolver,'confirmed');
+          if(after<target) throw new Error(`RESOLVER_FEE_RESERVE_TOO_LOW_${after}`);
+          console.log(JSON.stringify({resolver:resolver.toBase58(),beforeLamports:before,afterLamports:after,fundingSignature:signature}));
+          NODE
+
       - name: Real SOL payment preparation, receipts, replay and sponsorship acceptance
         run: node frontend/scripts/arena-money-v2-devnet-acceptance.mjs
 
