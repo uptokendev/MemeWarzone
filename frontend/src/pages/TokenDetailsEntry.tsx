@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
+import ProjectXClaimDialog from "@/components/imports/ProjectXClaimDialog";
 import { projectImportsEnabled, projectImportRobinhoodEnabled } from "@/features/projectImports/config";
 import { BNB_CHAIN_ID, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
 import { lookupProjectImport, type ProjectImportItem } from "@/lib/projectImports";
@@ -59,9 +60,9 @@ export default function TokenDetailsEntry() {
     };
   }, [importChainId, routeId]);
 
-  // Manual ownership decisions happen in the private operator dashboard while
-  // a claimant may already have this page open. Re-read only pending/manual
-  // imported projects so approval/rejection is reflected without a hard reload.
+  // Ownership decisions may complete while the claimant has this page open.
+  // Re-read pending/manual imported projects so X OAuth or operator decisions
+  // are reflected without requiring a hard reload.
   useEffect(() => {
     if (!projectImportsEnabled || !routeId || !project) return;
     if (project.ownershipStatus !== "ownership_pending" && project.ownershipStatus !== "ownership_manual_review") return;
@@ -90,6 +91,6 @@ export default function TokenDetailsEntry() {
 
   if (!projectImportsEnabled) return <TokenDetailsLiveEntry />;
   if (!resolved) return null;
-  if (project) return <ImportedProjectDetails key={`${project.id}:${project.ownershipStatus}:${project.ownershipVerifiedAt || ""}`} item={project} />;
+  if (project) return <><ImportedProjectDetails key={`${project.id}:${project.ownershipStatus}:${project.ownershipVerifiedAt || ""}`} item={project} /><ProjectXClaimDialog item={project} /></>;
   return <TokenDetailsLiveEntry />;
 }
