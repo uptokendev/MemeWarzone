@@ -4,7 +4,8 @@ import { getTokenMetadata, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { resolveProjectOwnershipBnb } from "./projectOwnershipResolveBnb.js";
 import { resolveProjectOwnershipEvm } from "./projectOwnershipResolveEvm.js";
 import { resolveProjectOwnershipSolana } from "./projectOwnershipResolveSolana.js";
-import { assertSolanaImportMainnet, resolveSolanaProjectAuthority } from "./projectSolanaProjectAuthority.js";
+import { assertSolanaImportMainnet, pumpBondingCurveAddress, resolveSolanaProjectAuthority } from "./projectSolanaProjectAuthority.js";
+import { readPumpImportEvidence } from "./projectImportPumpEvidence.js";
 import { readBnbImportMarket } from "./projectImportBnbMarket.js";
 import { registerProjectImportResolver } from "./projectImportResolvers.js";
 
@@ -57,13 +58,14 @@ export function setProjectImportReadClientsForTest({ bnb = null, solana = null, 
   robinhoodProvider = robinhood;
 }
 
-export async function resolveBnbProjectImport({ chainId, tokenAddress, signedWallet }) {
+export async function resolveBnbProjectImport({ chainId, tokenAddress, signedWallet, registrationOnly = false }) {
   const provider = getBnbProvider();
   const raw = await resolveProjectOwnershipBnb({
     provider,
     chainId,
     contractAddress: tokenAddress,
     signedConnectedWallet: signedWallet,
+    skipOwnership: registrationOnly,
   });
   if (!raw?.ok) throw Object.assign(new Error(raw?.error || "BNB token resolution failed"), { code: raw?.errorCode || "PROJECT_IMPORT_RESOLVE_FAILED" });
   const marketEvidence = await readBnbImportMarket({ provider, tokenAddress: raw.contractAddress });
@@ -77,9 +79,9 @@ export async function resolveBnbProjectImport({ chainId, tokenAddress, signedWal
     totalSupply: raw.token?.totalSupply ?? null,
     metadataSource: "erc20_contract",
     metadataType: "erc20_readonly",
-    automaticOwnershipAvailable: raw.ownership?.automaticOwnershipVerification !== "unavailable" && Boolean(raw.ownership?.currentOwner),
-    currentAuthority: raw.ownership?.currentOwner ?? null,
-    signedWalletMatchesAuthority: Boolean(raw.ownership?.automaticOwnershipVerified),
+    automaticOwnershipAvailable: registrationOnly ? false : raw.ownership?.automaticOwnershipVerification !== "unavailable" && Boolean(raw.ownership?.currentOwner),
+    currentAuthority: registrationOnly ? null : raw.ownership?.currentOwner ?? null,
+    signedWalletMatchesAuthority: registrationOnly ? false : Boolean(raw.ownership?.automaticOwnershipVerified),
   };
 }
 
@@ -159,15 +161,72 @@ export async function resolveSolanaDisplayMetadata(connection, mint) {
   return token2022 || emptySolanaMetadata();
 }
 
-export async function resolveSolanaProjectImport({ chainId, tokenAddress, signedWallet }) {
+async function resolveSolanaRegistrationMarket(connection, raw) {
+  const curve = pumpBondingCurveAddress(raw.mint);
+  let account;
+  try {
+    account = await connection.getAccountInfo(curve, "confirmed");
+  } catch {
+    throw Object.assign(new Error("Solana market-stage lookup is temporarily unavailable. Please retry."), { code: "PROJECT_IMPORT_RPC_UNAVAILABLE" });
+  }
+  if (!account) {
+    return {
+      projectAuthorityEvidence: null,
+      market: { phase: "unknown", verified: false, reason: "launch_platform_unverified" },
+      custody: [],
+    };
+  }
+  try {
+    const evidence = await readPumpImportEvidence({
+      connection,
+      mint: raw.mint,
+      curveAccount: account,
+      claimant: null,
+      tokenProgram: new PublicKey(raw.tokenProgramId),
+    });
+    return {
+      projectAuthorityEvidence: evidence,
+      market: evidence.market,
+      custody: evidence.custody || [],
+    };
+  } catch {
+    throw Object.assign(new Error("Pump.fun market-stage lookup is temporarily unavailable. Please retry."), { code: "PROJECT_IMPORT_RPC_UNAVAILABLE" });
+  }
+}
+
+export async function resolveSolanaProjectImport({ chainId, tokenAddress, signedWallet, registrationOnly = false }) {
   if (Number(chainId) !== SOLANA_CHAIN_ID) throw Object.assign(new Error("Solana project import resolver only supports chain 101"), { code: "UNSUPPORTED_CHAIN" });
   try {
     const connection = getSolanaConnection();
     await assertSolanaImportMainnet(connection);
     const raw = await resolveProjectOwnershipSolana({ mint: tokenAddress, connectedWallet: signedWallet, connection });
     if (!raw?.validMint) throw Object.assign(new Error(raw?.reason === "mint_lookup_failed" ? "Solana token lookup is temporarily unavailable." : "No valid Solana token was found. Check the Contract Address and selected chain."), { code: raw?.reason === "mint_lookup_failed" ? "PROJECT_IMPORT_RPC_UNAVAILABLE" : "SOLANA_MINT_INVALID" });
-    const authority = await resolveSolanaProjectAuthority({ connection, mint: raw.mint, mintAuthority: raw.mintAuthority, claimant: new PublicKey(signedWallet).toBase58(), tokenProgram: new PublicKey(raw.tokenProgramId) });
     const metadata = await resolveSolanaDisplayMetadata(connection, raw.mint);
+
+    if (registrationOnly) {
+      const registration = await resolveSolanaRegistrationMarket(connection, raw);
+      return {
+        chainId: SOLANA_CHAIN_ID,
+        tokenAddress: raw.mint,
+        name: metadata.name,
+        symbol: metadata.symbol,
+        decimals: raw.decimals,
+        totalSupply: raw.totalSupply,
+        metadataSource: metadata.source,
+        metadataType: metadata.type,
+        automaticOwnershipAvailable: false,
+        currentAuthority: null,
+        authoritySource: null,
+        authorityEvidenceAccount: null,
+        ownershipReason: "registration_does_not_resolve_ownership",
+        mintAuthority: raw.mintAuthority ?? null,
+        observedSlot: raw.observedSlot ?? null,
+        signedWalletMatchesAuthority: false,
+        ...registration,
+      };
+    }
+
+    const authority = await resolveSolanaProjectAuthority({ connection, mint: raw.mint, mintAuthority: raw.mintAuthority, claimant: new PublicKey(signedWallet).toBase58(), tokenProgram: new PublicKey(raw.tokenProgramId) });
     return {
       chainId: SOLANA_CHAIN_ID,
       tokenAddress: raw.mint,
