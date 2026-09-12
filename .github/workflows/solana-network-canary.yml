@@ -11,6 +11,7 @@ on:
         type: choice
         options:
           - bsc-testnet-preflight
+          - bsc-testnet-stage-deploy
           - bsc-testnet-full-cycle
           - bsc-mainnet-fork-source-head
           - solana-devnet-meteora
@@ -81,7 +82,18 @@ jobs:
           set -euo pipefail
           case "${{ inputs.network }}" in
             bsc-testnet-preflight)
-              echo "BNB canary preflight: accepted 3/2 bytecode/wiring only. Not the 6C source-head lifecycle."
+              echo "BNB canary preflight: accepted 3/2 bytecode/wiring plus Gen-4 read-only readiness."
+              ;;
+            bsc-testnet-stage-deploy)
+              test -n "${BSC_TESTNET_PRIVATE_KEY:-}" || {
+                echo "BLOCKER: GitHub Environment secret BSC_TESTNET_PRIVATE_KEY is not mapped. Dedicated tBNB-only EOA, no production funds."
+                exit 1
+              }
+              test -n "${BSC_TESTNET_RPC:-}" || {
+                echo "BLOCKER: set GitHub Environment variable or secret BSC_TESTNET_RPC."
+                exit 1
+              }
+              echo "BNB Gen-4 stage deploy: chain 97 only; no CREATE/BUY/SELL/graduation lifecycle."
               ;;
             bsc-testnet-full-cycle)
               test -n "${BSC_TESTNET_PRIVATE_KEY:-}" || {
@@ -211,6 +223,12 @@ jobs:
         shell: bash
         run: node scripts/resolve-bsc-certification-factory.mjs --github-output
 
+      - name: Resolve accepted BSC factory for Gen-4 stage preflight
+        if: ${{ inputs.network == 'bsc-testnet-stage-deploy' }}
+        id: stage_factory
+        shell: bash
+        run: node scripts/resolve-bsc-certification-factory.mjs --github-output
+
       - name: Run BSC Testnet Topaz preflight (accepted 3/2 only)
         if: ${{ inputs.network == 'bsc-testnet-preflight' }}
         env:
@@ -218,6 +236,8 @@ jobs:
           TOPAZ_MANIFEST: ${{ steps.factory.outputs.topaz_manifest }}
           FACTORY_ADDRESS: ${{ steps.factory.outputs.factory }}
           LAUNCH_FACTORY: ${{ steps.factory.outputs.factory }}
+          BNB_TESTNET_ADMIN: 0xEE2c6A7605ED378CF1D26D1d828446d63A3fdeDa
+          BNB_6C_ROUTE_AUTHORITY_ADDRESS: 0x2b72A9E6C4Ea3525d83B8C5E8F2044BDbC1f1Dec
         shell: bash
         run: |
           set -euo pipefail
@@ -230,6 +250,33 @@ jobs:
           echo "mode=preflight"
           npm ci
           npx hardhat run scripts/test-topaz-graduation-flow.ts --network bscTestnet
+
+      - name: Run BSC97 Gen-4 read-only preflight then stage deploy only
+        if: ${{ inputs.network == 'bsc-testnet-stage-deploy' }}
+        env:
+          DEPLOYMENT_FILE: ${{ steps.stage_factory.outputs.deployment_file }}
+          TOPAZ_MANIFEST: ${{ steps.stage_factory.outputs.topaz_manifest }}
+          FACTORY_ADDRESS: ${{ steps.stage_factory.outputs.factory }}
+          LAUNCH_FACTORY: ${{ steps.stage_factory.outputs.factory }}
+          BNB_TESTNET_ADMIN: 0xEE2c6A7605ED378CF1D26D1d828446d63A3fdeDa
+          BNB_6C_ROUTE_AUTHORITY_ADDRESS: 0x2b72A9E6C4Ea3525d83B8C5E8F2044BDbC1f1Dec
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          node scripts/verify-bnb-gen4-stage-dispatch.mjs
+          npx hardhat run scripts/test-topaz-graduation-flow.ts --network bscTestnet
+          npx hardhat run scripts/deploy-bnb-real-topaz-testnet-stage.ts --network bscTestnet
+          test -s reports/bnb-real-topaz-testnet-stage.json
+
+      - name: Upload BSC97 Gen-4 stage manifest
+        if: ${{ inputs.network == 'bsc-testnet-stage-deploy' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: bnb-real-topaz-testnet-stage-${{ github.sha }}
+          path: reports/bnb-real-topaz-testnet-stage.json
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Run BNB 6C source-head full lifecycle on chain 97
         if: ${{ inputs.network == 'bsc-testnet-full-cycle' }}
