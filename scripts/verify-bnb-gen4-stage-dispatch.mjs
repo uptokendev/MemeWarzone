@@ -3,8 +3,8 @@ import { JsonRpcProvider, Wallet, getAddress } from "ethers";
 const EXPECTED_CHAIN_ID = 97;
 const EXPECTED_OPERATOR = getAddress("0xEE2c6A7605ED378CF1D26D1d828446d63A3fdeDa");
 const EXPECTED_ROUTE = getAddress("0x2b72A9E6C4Ea3525d83B8C5E8F2044BDbC1f1Dec");
-const HISTORICAL_OPERATOR = getAddress("0x6404b7ea3156f621ad9616c32214caf1d0780c3");
-const HISTORICAL_ROUTE = getAddress("0xb989a99823ea96552c3e3198a40cdbf682edf1aa");
+const HISTORICAL_OPERATOR = "0x6404b7ea3156f621ad9616c32214caf1d0780c3";
+const HISTORICAL_ROUTE = "0xb989a99823ea96552c3e3198a40cdbf682edf1aa";
 
 function fail(code) {
   throw new Error(`STAGE_DEPLOY_GATE:${code}`);
@@ -26,6 +26,10 @@ function configuredAddress(name) {
   }
 }
 
+function lower(address) {
+  return String(address).toLowerCase();
+}
+
 async function main() {
   const rpc = String(process.env.BSC_TESTNET_RPC || process.env.BSC_TESTNET_RPC_URL || "").trim();
   if (!rpc) fail("RPC_MISSING");
@@ -40,8 +44,9 @@ async function main() {
   if (route === deployer) fail("ROUTE_EQUALS_DEPLOYER");
 
   for (const [label, address] of [["DEPLOYER", deployer], ["ADMIN", admin], ["ROUTE", route]]) {
-    if (address === HISTORICAL_OPERATOR) fail(`${label}_USES_HISTORICAL_OPERATOR`);
-    if (address === HISTORICAL_ROUTE) fail(`${label}_USES_HISTORICAL_ROUTE`);
+    const normalized = lower(address);
+    if (normalized === HISTORICAL_OPERATOR) fail(`${label}_USES_HISTORICAL_OPERATOR`);
+    if (normalized === HISTORICAL_ROUTE) fail(`${label}_USES_HISTORICAL_ROUTE`);
   }
 
   const provider = new JsonRpcProvider(rpc);
