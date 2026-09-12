@@ -1,16 +1,17 @@
 import { pool } from "../db.js";
 import { emitNotification } from "../notifications.js";
+import { digestWindow, NOTIFICATION_CHAIN_GROUPS } from "../campaignLifecycleNotifications.js";
 
 async function main() {
   console.log("[generateLaunchDigest] Starting...");
   try {
-    // Get campaigns created in the last 4 hours
+    const window = digestWindow();
     const res = await pool.query(`
       select chain_id, campaign_address, name, symbol 
       from public.campaigns 
       where created_at >= now() - interval '4 hours'
       order by created_at desc
-      limit 20
+      limit 60
     `);
 
     if (res.rows.length === 0) {
@@ -18,39 +19,25 @@ async function main() {
       process.exit(0);
     }
 
-    const solanaCampaigns = res.rows.filter(r => r.chain_id === 101 || r.chain_id === 102);
-    const bnbCampaigns = res.rows.filter(r => r.chain_id === 56 || r.chain_id === 97);
-
-    const time = new Date().toISOString();
-
-    if (solanaCampaigns.length > 0) {
+    for (const group of NOTIFICATION_CHAIN_GROUPS) {
+      const launches = res.rows.filter((row) => group.ids.includes(Number(row.chain_id)));
+      if (!launches.length) continue;
       await emitNotification(pool, {
         eventType: "campaign.launch_digest_ready",
-        chain: "solana",
-        dedupKey: `launch-digest:solana:${time}`,
+        chain: group.label,
+        dedupKey: `new-launch-digest:${group.label}:${window}`,
         payload: {
-          chain: "solana",
-          count: solanaCampaigns.length,
-          campaigns: solanaCampaigns.map(c => ({ campaign: c.campaign_address, name: c.name, symbol: c.symbol })),
-          generatedAt: time
-        }
+          window,
+          totalCount: launches.length,
+          launches: launches.map((c) => ({
+            campaign: c.campaign_address,
+            name: c.name,
+            ticker: c.symbol,
+          })),
+        },
       });
     }
 
-    if (bnbCampaigns.length > 0) {
-      await emitNotification(pool, {
-        eventType: "campaign.launch_digest_ready",
-        chain: "bnb",
-        dedupKey: `launch-digest:bnb:${time}`,
-        payload: {
-          chain: "bnb",
-          count: bnbCampaigns.length,
-          campaigns: bnbCampaigns.map(c => ({ campaign: c.campaign_address, name: c.name, symbol: c.symbol })),
-          generatedAt: time
-        }
-      });
-    }
-    
     console.log("[generateLaunchDigest] Done.");
     process.exit(0);
   } catch (err) {

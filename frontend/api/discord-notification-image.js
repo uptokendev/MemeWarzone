@@ -158,7 +158,10 @@ function getChainColors(chain) {
   if (c === "SOL" || c === "SOLANA") {
     return { text: "#000000", bg: "url(#solGradient)", stroke: "url(#solGradient)", isGradient: true, glow: "#9945FF" };
   }
-  if (c === "BNB" || c === "BSC") return { text: "#f0b90b", bg: "#292005", stroke: "#f0b90b", glow: "#f0b90b" };
+  if (c === "BNB" || c === "BSC" || c === "BNB CHAIN") return { text: "#f0b90b", bg: "#292005", stroke: "#f0b90b", glow: "#f0b90b" };
+  if (c === "ROBINHOOD" || c === "RH" || c === "ETH") {
+    return { text: "#10f58a", bg: "#132a1e", stroke: "#10f58a", glow: "#10f58a" };
+  }
   return { text: "#10f58a", bg: "#132a1e", stroke: "#10f58a", glow: "#10f58a" };
 }
 
@@ -433,6 +436,20 @@ export default async function handler(req, res) {
         break;
       case "campaign.created":
         svg = await buildCampaignCreated(payload);
+        break;
+      case "campaign.draft_created":
+        svg = await buildCampaignCreated({ ...payload, name: payload.project?.name || payload.name, campaign: payload.draftId || payload.campaign });
+        break;
+      case "battle.created":
+      case "battle.started":
+      case "battle.final_hours":
+      case "battle.winner_confirmed":
+        svg = await getBaseSvg(pixelText(String(type).replace(/\./g, " ").toUpperCase(), 501, 250, { scale: 5, color: "#ffffff", anchor: "middle" }));
+        break;
+      case "tournament.registration_open":
+      case "tournament.started":
+      case "tournament.winners_confirmed":
+        svg = await getBaseSvg(pixelText(String(type).replace(/\./g, " ").toUpperCase(), 501, 250, { scale: 5, color: "#ffffff", anchor: "middle" }));
         break;
       case "user.joined":
         svg = await buildUserJoined(payload);

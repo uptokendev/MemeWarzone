@@ -11,7 +11,7 @@ import { spawn } from "node:child_process";
 import { pool } from "../../server/db.js";
 import { badMethod, isSolanaChain, json, readJson } from "../../server/http.js";
 import { decodeCampaignCurveFields, publicKeyString } from "./solana-v4-primitives.js";
-import { emitNotification } from "../lib/notifications.js";
+import { notifyCampaignGraduated } from "../lib/campaignLifecycleNotifications.js";
 
 class SolanaGraduationHandoffError extends Error {
   constructor(message, { code = "SOLANA_GRADUATION_HANDOFF_ERROR", httpStatus = 409 } = {}) {
@@ -120,15 +120,10 @@ export async function solanaGraduationHandoff(req, res) {
     const kickedOperator = kickOperator(campaignAddress);
     console.log("[solana-handoff] curve closed", { campaignAddress, kickedOperator });
     
-    await emitNotification(pool, {
-      eventType: "campaign.graduated",
-      chain: "solana",
-      dedupKey: `graduation:solana:${campaignAddress}`,
-      payload: {
-        chain: "solana",
-        campaign: campaignAddress,
-        graduatedAt: new Date().toISOString()
-      }
+    await notifyCampaignGraduated(pool, {
+      chainId,
+      campaignAddress,
+      market: { venue: "meteora", quoteAsset: "WSOL" },
     });
 
     return json(res, 200, {

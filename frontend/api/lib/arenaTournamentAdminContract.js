@@ -325,6 +325,13 @@ async function lockedMutation(req, res, id, routeLabel, mutate) {
       return true;
     }
     await client.query("commit");
+    try {
+      const { notifyTournamentEvent, tournamentNotificationForTransition } = await import("./arenaLifecycleNotifications.js");
+      const eventType = tournamentNotificationForTransition(row, update.rows[0]);
+      if (eventType) await notifyTournamentEvent(pool, update.rows[0], eventType);
+    } catch (error) {
+      console.warn("[arena-tournament-admin] notify failed", error?.message || error);
+    }
     json(res, 200, { ok: true, tournament: adminItem(update.rows[0], await countEntries(pool, id)) });
     return true;
   } catch (error) {

@@ -1,6 +1,7 @@
 import { pool } from "../db.js";
 import { ENV } from "../env.js";
 import { emitNotification } from "../notifications.js";
+import { normalizeChain } from "../notificationContract.js";
 import { ensurePublishedAirdropDrawForEpoch, type AirdropDrawProgram } from "../rewards/airdrops.js";
 import { processRewardEligibilityForEpoch } from "../rewards/eligibility.js";
 import { getCurrentWeeklyEpoch } from "../rewards/epochs.js";
@@ -126,16 +127,22 @@ export async function runRewardEpochChain(chainId: number) {
 
     if (published.epoch.status === "published" && published.updatedCount > 0) {
       setRewardEpochStage(`chain:${chainId}:epoch:${epochId}:notify`);
-      await emitNotification(pool, {
-        eventType: "airdrop.claims_open",
-        chain: chainId === 101 ? "solana" : "bnb",
-        dedupKey: `airdrop-claims-open:${chainId}:${epochId}`,
-        payload: {
-          chain: chainId === 101 ? "solana" : "bnb",
-          epochId,
-          claimableCount: published.updatedCount,
-        },
-      });
+      const chain = normalizeChain(chainId);
+      if (chain === "robinhood" && !/^(1|true|yes|on)$/i.test(String(process.env.ENABLE_ROBINHOOD_AIRDROP_NOTIFY || ""))) {
+        console.log("[processRewardEpochBounded] skipping Robinhood airdrop.claims_open until ETH settlement rail is live");
+      } else if (chain) {
+        await emitNotification(pool, {
+          eventType: "airdrop.claims_open",
+          chain,
+          chainId,
+          dedupKey: `airdrop-claims-open:${chain}:${epochId}`,
+          payload: {
+            epoch: epochId,
+            epochId,
+            claimableCount: published.updatedCount,
+          },
+        });
+      }
     }
 
     console.log(`[processRewardEpochBounded] chainId=${chainId} epochId=${epochId} stage=done durationMs=${elapsedMs(epochStartedAt)}`);

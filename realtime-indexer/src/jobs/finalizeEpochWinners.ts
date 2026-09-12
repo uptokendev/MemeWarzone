@@ -9,6 +9,7 @@ try {
 import { pool } from "../db.js";
 import { ENV } from "../env.js";
 import { emitNotification } from "../notifications.js";
+import { normalizeChain } from "../notificationContract.js";
 
 // Finalizes the most recently completed epoch (weekly/monthly), inserts winners,
 // and rolls the pot forward only when there is no eligible leaderboard row.
@@ -574,17 +575,28 @@ async function finalizeEpochFor(
 
       if ((res.rowCount ?? 0) > 0) {
         insertedAny = true;
+        const chain = normalizeChain(chainId);
+        if (!chain) continue;
+        const leagueEvent =
+          period === "weekly" || period === "monthly"
+            ? `league.${period}_winners_confirmed`
+            : period === "mwl"
+              ? "league.mwl_winners_confirmed"
+              : period === "quarterly" || period === "quarterly_championship"
+                ? "league.quarterly_winners_confirmed"
+                : `league.${period}_winners_confirmed`;
         await emitNotification(pool, {
-          eventType: `league.${period}_winners_confirmed`,
-          chain: isSolanaChain(chainId) ? "solana" : "bnb",
-          dedupKey: `winner:${chainId}:${period}:${epochStartIso}:${category}:${rank}`,
+          eventType: leagueEvent,
+          chain,
+          chainId,
+          dedupKey: `winner:${chain}:${period}:${epochStartIso}:${category}:${rank}`,
           payload: {
-            chain: isSolanaChain(chainId) ? "solana" : "bnb",
-            period,
+            leagueType: period,
+            epoch: epochStartIso,
             category,
             rank,
             recipient: row.recipient,
-            amountRaw: amount.toString()
+            amountRaw: amount.toString(),
           }
         });
       }

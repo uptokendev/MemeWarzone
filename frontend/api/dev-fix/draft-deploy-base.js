@@ -438,6 +438,8 @@ export async function draftDeploy(req, res) {
           logoUrl: row.logo_url || draft?.logoUrl,
           deployTxHash: deployTxHash || "already-on-chain",
           factoryAddress: String(body.factoryAddress || "").trim() || null,
+          scheduledLaunchAt: isScheduled ? new Date(scheduledLaunchAt * 1000).toISOString() : null,
+          graduationTargetWei: row.graduation_target_wei || null,
           ...(solanaVaults || {}),
         });
         return { draft, tickerReservation, registry };
@@ -497,6 +499,8 @@ export async function draftDeploy(req, res) {
         logoUrl: row.logo_url || draft?.logoUrl,
         deployTxHash,
         factoryAddress: String(body.factoryAddress || "").trim() || null,
+        scheduledLaunchAt: isScheduled ? new Date(scheduledLaunchAt * 1000).toISOString() : null,
+        graduationTargetWei: row.graduation_target_wei || null,
         ...(solanaVaults || {}),
       });
       return { draft, tickerReservation, registry };

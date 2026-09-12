@@ -36,6 +36,11 @@ import { escrowRequired, readOnchainPool } from "./lib/arenaWarPoolLive.js";
 import { isSolanaWarzoneChainId } from "./lib/solanaArenaPoolRead.js";
 import { nativeSymbolFor } from "./lib/chainNative.js";
 import { handleCancelOpen } from "./lib/arenaAutoDeployCancel.js";
+import {
+  notifyBattleCreated,
+  notifyBattleStarted,
+  notifyBattleWinnerConfirmed,
+} from "./lib/arenaLifecycleNotifications.js";
 
 const LIVE_HOURS = 24;
 const CHALLENGE_HOURS = 24;
@@ -503,7 +508,19 @@ async function insertBattle(fields) {
       Boolean(fields.featured),
     ],
   );
-  return refreshBattle(id);
+  const created = await refreshBattle(id);
+  await notifyBattleCreated(pool, {
+    id,
+    chain_id: fields.chainId,
+    source: fields.source,
+    challenger_token: fields.challengerToken,
+    defender_token: fields.defenderToken,
+    tournament_id: fields.tournamentId || null,
+    started_at: fields.startedAt || null,
+    ends_at: fields.endsAt || null,
+    competition_generation: fields.competitionGeneration || null,
+  });
+  return created;
 }
 
 function battleUpdateValues(id, next) {
@@ -576,6 +593,7 @@ async function updateBattle(id, patch) {
     if (!updated || updated.state !== "live") throw new Error(`Battle ${id} failed live transition write`);
     await captureLiveBaselines(updated, { query: (text, params) => client.query(text, params) });
     await client.query("commit");
+    await notifyBattleStarted(pool, updated);
     return mapBattle(updated);
   } catch (error) {
     await client.query("rollback").catch(() => {});
@@ -895,6 +913,7 @@ async function settleLive(row) {
       return mapBattle(await findBattle(row.id));
     }
     await client.query("commit");
+    await notifyBattleWinnerConfirmed(pool, finished.rows[0]);
 
     try {
       if (finished.rows[0].tournament_id && decision.moneyWinnerToken) {

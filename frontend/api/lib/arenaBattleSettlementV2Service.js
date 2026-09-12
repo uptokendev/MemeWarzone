@@ -120,6 +120,12 @@ export async function settleBattlePointsV2ById(battleId, deps = {}) {
       return { settled: false, reason: "settlement_write_lost_race" };
     }
     await client.query("commit");
+    try {
+      const { notifyBattleWinnerConfirmed } = await import("./arenaLifecycleNotifications.js");
+      await notifyBattleWinnerConfirmed(pool, finished);
+    } catch (error) {
+      console.warn("[arena-battle-settlement-v2] winner notify failed", error?.message || error);
+    }
   } catch (error) {
     await client.query("rollback").catch(() => {});
     throw error;

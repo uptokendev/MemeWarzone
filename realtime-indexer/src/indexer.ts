@@ -11,6 +11,7 @@ import { createStaticJsonRpcProvider, createWorkingProvider, parseRpcList } from
 import { bnbCurveState, parseRawTokenAmount } from "./bnbCurvePricing.js";
 import { campaignScanChunks } from "./campaignScanChunks.js";
 import { checkMilestones } from "./milestones.js";
+import { notifyCampaignCreated, notifyCampaignGraduated } from "./campaignLifecycleNotifications.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -403,6 +404,15 @@ async function upsertCampaign(
     }
   }
 
+  await notifyCampaignCreated(pool, {
+    chainId,
+    campaignAddress: normalizedCampaign,
+    name,
+    ticker: symbol,
+    imageUrl: logoURI,
+    creatorWallet: creator,
+  });
+
   cacheCampaignInfo(chainId, campaign, {
     tokenAddress: token ? token.toLowerCase() : null,
     name: name || null,
@@ -427,6 +437,12 @@ async function setCampaignGraduated(
      where chain_id=$1 and campaign_address=$2`,
     [chainId, campaign.toLowerCase(), graduatedBlock, graduatedAt, txHash.toLowerCase()]
   );
+  await notifyCampaignGraduated(pool, {
+    chainId,
+    campaignAddress: campaign,
+    market: { venue: "topaz", quoteAsset: "WBNB" },
+    graduatedAt,
+  });
 }
 
 async function setCampaignFeeRecipient(

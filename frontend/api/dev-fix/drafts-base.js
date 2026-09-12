@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { badMethod, getQuery, isAddress, isSolanaChain, normalizeAddress as normalizeAddressBase, json, readJson } from "../../server/http.js";
 import { requireDraftActionAuth } from "./draft-auth.js";
+import { notifyDraftCreated } from "../lib/campaignLifecycleNotifications.js";
 import { notifyDraftOwner } from "./prepare-notify.js";
 import {
   TickerReservationError,
@@ -569,6 +570,16 @@ export async function drafts(req, res) {
           popularity: popularityFromMetrics(ZERO),
           tickerReservation,
         };
+      });
+      await notifyDraftCreated(pool, {
+        chainId,
+        draftId: created.draft.id,
+        slug: created.draft.slug,
+        name: created.draft.name,
+        ticker: created.draft.ticker,
+        imageUrl: created.draft.logoUrl,
+        creatorWallet: created.draft.creatorWallet,
+        scheduledFor: created.draft.scheduledLaunchAt || null,
       });
       return json(res, 201, created);
     } catch (error) {

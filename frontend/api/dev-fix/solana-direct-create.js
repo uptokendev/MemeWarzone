@@ -3,7 +3,7 @@ import crypto from "node:crypto";
 import { pool } from "../../server/db.js";
 import { badMethod, isSolanaChain, json, readJson } from "../../server/http.js";
 import { requireWalletActionAuth } from "../lib/walletActionAuth.js";
-import { emitNotification } from "../lib/notifications.js";
+
 import {
   TickerReservationError,
   canonicalClusterForChain,
@@ -628,19 +628,6 @@ async function finalizeDirectDeployment(db, {
       }),
     ],
   );
-
-  await emitNotification(db, {
-    eventType: "campaign.created",
-    chain: "solana",
-    dedupKey: `campaign-created:solana:${accounts.campaign}`,
-    payload: {
-      chain: "solana",
-      campaign: accounts.campaign,
-      chainId: Number(chainId),
-      name: directMetadata.name,
-      createdAt: new Date().toISOString(),
-    }
-  });
 
   return { reservation: updated, registry };
 }

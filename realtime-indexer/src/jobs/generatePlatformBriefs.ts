@@ -1,25 +1,20 @@
 import { pool } from "../db.js";
 import { emitNotification } from "../notifications.js";
+import { digestWindow, NOTIFICATION_CHAIN_GROUPS } from "../campaignLifecycleNotifications.js";
 
 async function main() {
   console.log("[generatePlatformBriefs] Starting...");
   try {
-    const time = new Date().toISOString();
+    const window = digestWindow();
+    for (const group of NOTIFICATION_CHAIN_GROUPS) {
+      await emitNotification(pool, {
+        eventType: "platform.daily_brief_ready",
+        chain: group.label,
+        dedupKey: `daily-war-brief:${group.label}:${window.slice(0, 10)}`,
+        payload: { date: window.slice(0, 10), window },
+      });
+    }
 
-    await emitNotification(pool, {
-      eventType: "platform.daily_brief_ready",
-      chain: "solana",
-      dedupKey: `platform-brief:solana:${time}`,
-      payload: { chain: "solana", generatedAt: time }
-    });
-
-    await emitNotification(pool, {
-      eventType: "platform.daily_brief_ready",
-      chain: "bnb",
-      dedupKey: `platform-brief:bnb:${time}`,
-      payload: { chain: "bnb", generatedAt: time }
-    });
-    
     console.log("[generatePlatformBriefs] Done.");
     process.exit(0);
   } catch (err) {

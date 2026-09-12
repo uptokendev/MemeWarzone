@@ -10,6 +10,7 @@ import {
 } from "./abis.js";
 import { buildFactoryInventory, type SupportedFactory } from "./factoryInventory.js";
 import { createStaticJsonRpcProvider, parseRpcList } from "./rpcProvider.js";
+import { notifyCampaignCreated } from "./campaignLifecycleNotifications.js";
 
 const CURRENT_FACTORY_IFACE = new ethers.Interface(LAUNCH_FACTORY_ABI);
 const LEGACY_FACTORY_IFACE = new ethers.Interface(LEGACY_LAUNCH_FACTORY_ABI);
@@ -199,6 +200,14 @@ async function upsertCampaign(input: {
       input.createdAt || null,
     ],
   );
+  await notifyCampaignCreated(pool, {
+    chainId: input.factory.chainId,
+    campaignAddress: input.campaign,
+    name: input.name,
+    ticker: input.symbol,
+    imageUrl: input.logoURI,
+    creatorWallet: input.creator,
+  });
 }
 
 async function syncRegistry(provider: ethers.JsonRpcProvider, factory: SupportedFactory): Promise<void> {

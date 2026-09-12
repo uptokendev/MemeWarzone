@@ -2,6 +2,7 @@ import { processEndedWeeklyRewardEpochs } from "../rewards/ledger.js";
 import { ENV } from "../env.js";
 import { emitNotification } from "../notifications.js";
 import { pool } from "../db.js";
+import { normalizeChain } from "../notificationContract.js";
 
 function parseChainIds(): number[] {
   const ids = String(process.env.REWARD_CHAIN_ID || process.env.REWARD_CHAINS || process.env.LEAGUE_CHAINS || "56,101")
@@ -36,12 +37,19 @@ async function main() {
   for (const item of results) {
     console.log(`[processRewardEpoch] chainId=${item.chainId} epochId=${item.epochId} status=${item.status} materialized=${item.materializedCount} claimable=${item.claimableCount}`);
     if (item.status === "claimable") {
+      const chain = normalizeChain(item.chainId);
+      if (!chain) continue;
+      if (chain === "robinhood" && !/^(1|true|yes|on)$/i.test(String(process.env.ENABLE_ROBINHOOD_AIRDROP_NOTIFY || ""))) {
+        console.log("[processRewardEpoch] skipping Robinhood airdrop.claims_open until ETH settlement rail is live");
+        continue;
+      }
       await emitNotification(pool, {
         eventType: "airdrop.claims_open",
-        chain: item.chainId === 101 ? "solana" : "bnb",
-        dedupKey: `airdrop-claims-open:${item.chainId}:${item.epochId}`,
+        chain,
+        chainId: item.chainId,
+        dedupKey: `airdrop-claims-open:${chain}:${item.epochId}`,
         payload: {
-          chain: item.chainId === 101 ? "solana" : "bnb",
+          epoch: item.epochId,
           epochId: item.epochId,
           claimableCount: item.claimableCount,
         },
