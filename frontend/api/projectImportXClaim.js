@@ -1,14 +1,12 @@
 import { pool } from "../server/db.js";
 import { json, readJson } from "../server/http.js";
 import { lookupProjectImport, normalizeProjectIdentity } from "./lib/projectImportCore.js";
-import { registerDefaultProjectImportResolvers } from "./lib/projectImportResolverAdapters.js";
-import { resolveProjectToken } from "./lib/projectImportResolvers.js";
+import { resolveProjectImportClaimAuthority } from "./lib/projectImportClaimAuthority.js";
 import { PROJECT_IMPORT_ACTIONS, requireProjectImportWalletAuth } from "./lib/projectImportSecurity.js";
 import { finishProjectXClaim, projectXClaimRedirect, resolveOfficialProjectX, startProjectXClaim } from "./lib/projectImportXClaim.js";
 
 const COOKIE_PATH="/api/project-imports/image/x";
 const EVM_CHAINS=new Set([56,4663]);
-registerDefaultProjectImportResolvers();
 function enabled(){return /^(1|true|yes|on)$/i.test(String(process.env.ENABLE_PROJECT_IMPORTS||"").trim());}
 function routePath(req){const raw=String(req.originalUrl||req.url||"");return new URL(raw,"http://localhost").pathname.replace(/^\/api\/project-imports\/image\/x\/?/,"/");}
 function statusFor(code){if(["INVALID_CHAIN","INVALID_TOKEN","INVALID_WALLET","PROJECT_IMPORT_X_NOT_PUMP","PROJECT_IMPORT_X_NOT_FOUND","PROJECT_IMPORT_X_UNSUPPORTED_CHAIN"].includes(code))return 400;if(["PROJECT_NOT_FOUND","IMPORT_NOT_FOUND","PROJECT_IMPORT_CHAIN_DISABLED"].includes(code))return 404;if(["OWNERSHIP_SUSPENDED","OWNERSHIP_CONFLICT","PROJECT_IMPORT_X_ACCOUNT_MISMATCH","PROJECT_IMPORT_X_ACCOUNT_CHANGED","PROJECT_IMPORT_X_CONFLICT"].includes(code))return 409;if(["PROJECT_IMPORT_X_OAUTH_STATE_INVALID","PROJECT_IMPORT_X_OAUTH_STATE_EXPIRED","PROJECT_IMPORT_X_OAUTH_SESSION_MISSING"].includes(code))return 401;if(["PROJECT_IMPORT_X_METADATA_UNAVAILABLE","PROJECT_IMPORT_RPC_UNAVAILABLE","PROJECT_IMPORT_RESOLVER_UNAVAILABLE","PROJECT_IMPORT_CHAIN_MISMATCH"].includes(code))return 503;return 500;}
@@ -25,9 +23,8 @@ export default async function projectImportXClaim(req,res){
    const body=await readJson(req),identity=normalizeProjectIdentity(body.chainId,body.tokenAddress);
    if(!EVM_CHAINS.has(identity.chainId))throw Object.assign(new Error("Owner-wallet verification is available on BNB and Robinhood only"),{code:"INVALID_CHAIN"});
    const project=await lookupProjectImport(pool,identity);if(!project)throw Object.assign(new Error("Imported project not found"),{code:"PROJECT_NOT_FOUND"});
-   const walletAddress=String(body.walletAddress||"0x0000000000000000000000000000000000000000").trim();
-   const resolved=await resolveProjectToken({chainId:identity.chainId,tokenAddress:identity.tokenAddress,signedWallet:walletAddress});
-   return json(res,200,{available:Boolean(resolved.automaticOwnershipAvailable),currentAuthority:resolved.currentAuthority||null,matchesConnected:Boolean(resolved.signedWalletMatchesAuthority),authoritySource:resolved.authoritySource||null});
+   const resolved=await resolveProjectImportClaimAuthority({chainId:identity.chainId,tokenAddress:identity.tokenAddress,connectedWallet:body.walletAddress});
+   return json(res,200,resolved);
   }
   if(req.method==="POST"&&path==="/resolve"){
    const body=await readJson(req),identity=normalizeProjectIdentity(body.chainId,body.tokenAddress);const project=await lookupProjectImport(pool,identity);if(!project)throw Object.assign(new Error("Imported project not found"),{code:"PROJECT_NOT_FOUND"});const expected=await resolveOfficialProjectX(identity.chainId,identity.tokenAddress);return json(res,200,{available:true,username:expected.username,xUrl:expected.xUrl,source:expected.source});
