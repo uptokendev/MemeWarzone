@@ -1,0 +1,96 @@
+name: Apply Solana metadata v2 hotfix
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/apply-solana-metadata-v2-hotfix.yml
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Apply generalized IPFS metadata and image refresh fix
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          p = Path('frontend/api/lib/projectImportXClaim.js')
+          s = p.read_text()
+          hosts = '''const ALLOWED_METADATA_HOSTS = new Set([\n  "cf-ipfs.com",\n  "ipfs.io",\n  "gateway.pinata.cloud",\n  "pump.mypinata.cloud",\n  "cloudflare-ipfs.com",\n  "arweave.net",\n  "m.rapidlaunch.io",\n]);'''
+          hosts2 = hosts + '''\nconst IPFS_GATEWAY_HOSTS = new Set([\n  "cf-ipfs.com",\n  "ipfs.io",\n  "gateway.pinata.cloud",\n  "pump.mypinata.cloud",\n  "cloudflare-ipfs.com",\n]);\nconst IPFS_PRIMARY_GATEWAY = "https://pump.mypinata.cloud/ipfs/";\nconst IPFS_FALLBACK_GATEWAY = "https://gateway.pinata.cloud/ipfs/";'''
+          if 'const IPFS_GATEWAY_HOSTS' not in s:
+              if hosts not in s: raise SystemExit('host block not found')
+              s = s.replace(hosts, hosts2, 1)
+
+          old = '''function normalizeMetadataUrl(raw) {\n  const value = String(raw || "").trim();\n  if (!value) return null;\n  if (value.startsWith("ipfs://")) {\n    const cidPath = value.slice("ipfs://".length).replace(/^ipfs\\//, "");\n    return `https://cf-ipfs.com/ipfs/${cidPath}`;\n  }\n  let url;\n  try { url = new URL(value); } catch { return null; }\n  if (url.protocol !== "https:" || !ALLOWED_METADATA_HOSTS.has(url.hostname.toLowerCase())) return null;\n  return url.toString();\n}\n\nfunction normalizeImageUrl(raw) {\n  const value = String(raw || "").trim();\n  if (!value) return null;\n  if (value.startsWith("ipfs://")) {\n    const cidPath = value.slice("ipfs://".length).replace(/^ipfs\\//, "");\n    return `https://cf-ipfs.com/ipfs/${cidPath}`;\n  }\n  try {\n    const url = new URL(value);\n    return url.protocol === "https:" ? url.toString() : null;\n  } catch {\n    return null;\n  }\n}'''
+          new = '''function ipfsContentPath(raw) {\n  const value = String(raw || "").trim();\n  if (!value) return null;\n  if (value.startsWith("ipfs://")) return value.slice("ipfs://".length).replace(/^ipfs\\//, "");\n  try {\n    const url = new URL(value);\n    if (url.protocol !== "https:" || !IPFS_GATEWAY_HOSTS.has(url.hostname.toLowerCase())) return null;\n    const match = url.pathname.match(/^\\/ipfs\\/(.+)$/);\n    return match?.[1] || null;\n  } catch { return null; }\n}\n\nfunction ipfsGatewayUrl(path, gateway = IPFS_PRIMARY_GATEWAY) {\n  return `${gateway}${String(path || "").replace(/^\\/+/, "")}`;\n}\n\nfunction metadataFetchCandidates(raw) {\n  const path = ipfsContentPath(raw);\n  if (!path) return [String(raw || "").trim()].filter(Boolean);\n  return [ipfsGatewayUrl(path), ipfsGatewayUrl(path, IPFS_FALLBACK_GATEWAY)];\n}\n\nfunction normalizeMetadataUrl(raw) {\n  const value = String(raw || "").trim();\n  if (!value) return null;\n  const path = ipfsContentPath(value);\n  if (path) return ipfsGatewayUrl(path);\n  let url;\n  try { url = new URL(value); } catch { return null; }\n  if (url.protocol !== "https:" || !ALLOWED_METADATA_HOSTS.has(url.hostname.toLowerCase())) return null;\n  return url.toString();\n}\n\nfunction normalizeImageUrl(raw) {\n  const value = String(raw || "").trim();\n  if (!value) return null;\n  const path = ipfsContentPath(value);\n  if (path) return ipfsGatewayUrl(path);\n  try {\n    const url = new URL(value);\n    return url.protocol === "https:" ? url.toString() : null;\n  } catch {\n    return null;\n  }\n}'''
+          if 'function metadataFetchCandidates' not in s:
+              if old not in s: raise SystemExit('normalizer block not found')
+              s = s.replace(old, new, 1)
+
+          old_fetch = '''  const response = await fetch(reference.metadataUrl, {\n    headers: { accept: "application/json" },\n    signal: AbortSignal.timeout(7000),\n  });\n  if (!response.ok) throw Object.assign(new Error("Pump.fun metadata is temporarily unavailable"), { code: "PROJECT_IMPORT_X_METADATA_UNAVAILABLE" });\n  const json = await response.json().catch(() => null);'''
+          new_fetch = '''  let response = null;\n  for (const metadataUrl of metadataFetchCandidates(reference.metadataUrl)) {\n    try {\n      const candidate = await fetch(metadataUrl, {\n        headers: { accept: "application/json" },\n        signal: AbortSignal.timeout(7000),\n      });\n      if (candidate.ok) { response = candidate; break; }\n    } catch {\n      // Try the next content-addressed gateway.\n    }\n  }\n  if (!response) throw Object.assign(new Error("Pump.fun metadata is temporarily unavailable"), { code: "PROJECT_IMPORT_X_METADATA_UNAVAILABLE" });\n  const json = await response.json().catch(() => null);'''
+          if 'Try the next content-addressed gateway' not in s:
+              if old_fetch not in s: raise SystemExit('metadata fetch block not found')
+              s = s.replace(old_fetch, new_fetch, 1)
+          p.write_text(s)
+
+          p = Path('frontend/src/lib/projectImportXClaim.ts')
+          s = p.read_text()
+          s = s.replace('export type ProjectXIdentity = { available: true; username: string; xUrl: string; source: string };', 'export type ProjectXIdentity = { available: true; username: string; xUrl: string; source: string; imageUrl?: string | null };')
+          p.write_text(s)
+
+          p = Path('frontend/src/components/imports/ProjectXClaimDialog.tsx')
+          s = p.read_text()
+          old_sig = 'export default function ProjectXClaimDialog({ item, open, onOpenChange }: { item: ProjectImportItem; open: boolean; onOpenChange: (open: boolean) => void }) {'
+          new_sig = 'export default function ProjectXClaimDialog({ item, open, onOpenChange, onResolvedImage }: { item: ProjectImportItem; open: boolean; onOpenChange: (open: boolean) => void; onResolvedImage?: (imageUrl: string) => void }) {'
+          if old_sig in s: s = s.replace(old_sig, new_sig, 1)
+          old_then = 'tasks.push(resolveProjectXIdentity(item).then(setIdentity).catch((err:any)=>{'
+          new_then = 'tasks.push(resolveProjectXIdentity(item).then((resolved)=>{ setIdentity(resolved); if(resolved.imageUrl) onResolvedImage?.(resolved.imageUrl); }).catch((err:any)=>{'
+          if old_then in s: s = s.replace(old_then, new_then, 1)
+          p.write_text(s)
+
+          p = Path('frontend/src/pages/TokenDetailsEntry.tsx')
+          s = p.read_text()
+          old_dialog = '<ProjectXClaimDialog item={project} open={claimOpen} onOpenChange={setClaimOpen} />'
+          new_dialog = '<ProjectXClaimDialog item={project} open={claimOpen} onOpenChange={setClaimOpen} onResolvedImage={(imageUrl) => setProject((current) => current ? { ...current, imageUrl } : current)} />'
+          if old_dialog in s: s = s.replace(old_dialog, new_dialog, 1)
+          p.write_text(s)
+
+          p = Path('frontend/api/lib/projectImportXClaimMetadata.test.mjs')
+          s = p.read_text()
+          marker = 'test("IPFS metadata uses working Pump/Pinata gateways and canonicalizes image URLs", () => {'
+          if marker not in s:
+              s += '''\n\ntest("IPFS metadata uses working Pump/Pinata gateways and canonicalizes image URLs", () => {\n  assert.match(claimSource, /IPFS_PRIMARY_GATEWAY = "https:\\/\\/pump\\.mypinata\\.cloud\\/ipfs\\/"/);\n  assert.match(claimSource, /IPFS_FALLBACK_GATEWAY = "https:\\/\\/gateway\\.pinata\\.cloud\\/ipfs\\/"/);\n  assert.match(claimSource, /function ipfsContentPath/);\n  assert.match(claimSource, /function metadataFetchCandidates/);\n  assert.match(claimSource, /for \(const metadataUrl of metadataFetchCandidates\(reference\.metadataUrl\)\)/);\n  assert.match(claimSource, /const path = ipfsContentPath\(value\);[\\s\\S]*if \(path\) return ipfsGatewayUrl\(path\)/);\n});\n'''
+              p.write_text(s)
+
+          p = Path('frontend/src/imported-token-details-page.test.mjs')
+          s = p.read_text()
+          s = s.replace('  assert.doesNotMatch(entry, /imageUrl/);', '  assert.match(entry, /onResolvedImage=\\{\\(imageUrl\\) => setProject/);')
+          marker = 'test("claim image backfill updates the rendered imported project immediately", () => {'
+          if marker not in s:
+              s += '''\n\ntest("claim image backfill updates the rendered imported project immediately", () => {\n  assert.match(xClient, /imageUrl\\?: string \\| null/);\n  assert.match(claimDialog, /if\\(resolved\\.imageUrl\\) onResolvedImage\\?\\.\\(resolved\\.imageUrl\\)/);\n  assert.match(entry, /onResolvedImage=\\{\\(imageUrl\\) => setProject/);\n});\n'''
+              p.write_text(s)
+          PY
+          git diff --check
+          git diff -- frontend/api/lib/projectImportXClaim.js frontend/src/lib/projectImportXClaim.ts frontend/src/components/imports/ProjectXClaimDialog.tsx frontend/src/pages/TokenDetailsEntry.tsx frontend/api/lib/projectImportXClaimMetadata.test.mjs frontend/src/imported-token-details-page.test.mjs
+      - name: Run focused source tests
+        run: |
+          node --test frontend/api/lib/projectImportXClaimMetadata.test.mjs
+          node --test frontend/src/imported-token-details-page.test.mjs
+      - name: Commit hotfix to PR branch
+        run: |
+          git config user.name "uptokendev"
+          git config user.email "uptokendev@gmail.com"
+          git add frontend/api/lib/projectImportXClaim.js frontend/src/lib/projectImportXClaim.ts frontend/src/components/imports/ProjectXClaimDialog.tsx frontend/src/pages/TokenDetailsEntry.tsx frontend/api/lib/projectImportXClaimMetadata.test.mjs frontend/src/imported-token-details-page.test.mjs
+          if git diff --cached --quiet; then
+            echo "hotfix already applied"
+            exit 0
+          fi
+          git commit -m "fix(import): recover IPFS metadata and refresh images"
+          git push origin HEAD:${{ github.head_ref }}
