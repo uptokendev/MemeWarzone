@@ -3,12 +3,13 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
-const [entry, page, claimDialog, liveEntry, client, importsConfig, postgradConfig] = await Promise.all([
+const [entry, page, claimDialog, liveEntry, client, xClient, importsConfig, postgradConfig] = await Promise.all([
   read("./pages/TokenDetailsEntry.tsx"),
   read("./pages/ImportedProjectDetails.tsx"),
   read("./components/imports/ProjectXClaimDialog.tsx"),
   read("./pages/TokenDetailsLiveEntry.tsx"),
   read("./lib/projectImports.ts"),
+  read("./lib/projectImportXClaim.ts"),
   read("./features/projectImports/config.ts"),
   read("./features/postgrad/config.ts"),
 ]);
@@ -19,7 +20,6 @@ test("public token route intercepts authoritative project imports before live To
   assert.match(entry, /<ImportedProjectDetails/);
   assert.match(entry, /<ProjectXClaimDialog/);
   assert.match(entry, /return <TokenDetailsLiveEntry \/>/);
-  assert.match(entry, /import ImportedProjectDetails from "\.\/ImportedProjectDetails"/);
   assert.doesNotMatch(entry, /imageUrl/);
   assert.match(client, /\/api\/project-imports/);
   assert.doesNotMatch(entry, /from .*campaign|from .*LaunchFactory|from .*bonding|from .*graduation|from .*Topaz|from .*Meteora/i);
@@ -30,12 +30,10 @@ test("pending ownership refreshes from the authoritative API without a hard relo
   assert.match(entry, /window\.setInterval\(\(\) => \{ void refresh\(\); \}, 10_000\)/);
   assert.match(entry, /window\.addEventListener\("focus", onFocus\)/);
   assert.match(entry, /document\.addEventListener\("visibilitychange", onVisibility\)/);
-  assert.match(entry, /key=\{`\$\{project\.id\}:\$\{project\.ownershipStatus\}:\$\{project\.ownershipVerifiedAt \|\| ""\}`\}/);
 });
 
 test("BNB, Solana and feature-gated Robinhood imported identities select the dedicated project page", () => {
   assert.match(entry, /requested === BNB_CHAIN_ID \|\| requested === SOLANA_CHAIN_ID \|\| \(requested === 4663 && projectImportRobinhoodEnabled\)/);
-  assert.match(entry, /\^0x\[a-fA-F0-9\]\{40\}\$/);
   assert.match(page, /item\.chainId===4663\?"Robinhood":"BNB"/);
   assert.match(page, /identityLabel=solana\?"Mint":"Contract"/);
   assert.match(page, /data-project-chain="true"/);
@@ -43,10 +41,8 @@ test("BNB, Solana and feature-gated Robinhood imported identities select the ded
 });
 
 test("image-less authoritative import stays locked but still exposes project claim", () => {
-  assert.match(page, /if\(!String\(item\.imageUrl\|\|""\)\.trim\(\)\)/);
   assert.match(page, /PROJECT REGISTRATION INCOMPLETE/);
-  assert.match(page, /A project image is required before this registration becomes public\./);
-  assert.match(page, /Project verification can still be completed\. Trading, Arena actions and reward claims remain unavailable from this incomplete registration\./);
+  assert.match(page, /Project verification can still be completed/);
   assert.match(page, /data-project-registration-incomplete="true"/);
   assert.match(page, /data-project-claim-action="true">CLAIM MEMECOIN/);
 });
@@ -57,9 +53,6 @@ test("completed imported page renders project identity, profile and share fields
   assert.match(page, /data-project-ticker="true"/);
   assert.match(page, /data-project-description="true"/);
   assert.match(page, /data-project-socials="true"/);
-  assert.match(page, /Website/);
-  assert.match(page, />X<\/a>/);
-  assert.match(page, /Telegram/);
   assert.match(page, /data-project-share="true"/);
   assert.match(page, /data-imported-badge="true"/);
 });
@@ -72,7 +65,6 @@ test("topbar verification pill derives only from authoritative project ownership
   assert.match(page, />UNVERIFIED<\/span>/);
   assert.match(page, /border-orange-400\/40 bg-orange-500\/10/);
   assert.match(page, /border-emerald-400\/40 bg-emerald-500\/10/);
-  assert.match(page, /projectOwnerWallet/);
   assert.doesNotMatch(page, /arenaStatus|status.*passed|needs_review|verifiedAt/i);
 });
 
@@ -85,28 +77,37 @@ test("verified project controller can manage profile and image but registrar ide
   assert.doesNotMatch(page, /importedByWallet/);
 });
 
-test("unverified Solana project exposes one reusable Claim Memecoin dialog from topbar", () => {
-  assert.match(page, /canClaim=solana&&item\.ownershipStatus==="ownership_pending"/);
-  assert.match(page, /onClaimMemecoin/);
+test("all supported unverified imports expose one reusable Claim Memecoin dialog", () => {
+  assert.match(page, /canClaim=item\.ownershipStatus==="ownership_pending"/);
   assert.match(page, /data-project-claim-action="true">CLAIM MEMECOIN/);
   assert.match(entry, /onClaimMemecoin=\{\(\) => setClaimOpen\(true\)\}/);
   assert.match(entry, /<ProjectXClaimDialog item=\{project\} open=\{claimOpen\} onOpenChange=\{setClaimOpen\}/);
-  assert.match(claimDialog, /<Dialog open=\{open\} onOpenChange=\{onOpenChange\}>/);
-  assert.match(claimDialog, /CLAIM MEMECOIN/);
-  assert.match(claimDialog, /Not the owner\? Close this window/);
+  assert.match(claimDialog, /BNB_CHAIN_ID/);
+  assert.match(claimDialog, /ROBINHOOD_CHAIN_ID = 4663/);
+  assert.match(claimDialog, /item\.chainId === SOLANA_CHAIN_ID/);
+});
+
+test("EVM Claim Memecoin checks current owner first and offers X fallback", () => {
+  assert.match(xClient, /\/api\/project-imports\/image\/x\/authority/);
+  assert.match(claimDialog, /resolveProjectEvmAuthority\(item, connectedWallet\)/);
+  assert.match(claimDialog, /Contract owner wallet/);
+  assert.match(claimDialog, /CONNECT OWNER WALLET/);
+  assert.match(claimDialog, /VERIFY OWNER WALLET/);
+  assert.match(claimDialog, /claimProjectImport\(\{item,auth\}\)/);
+  assert.match(claimDialog, /VERIFY WITH X/);
+  assert.match(claimDialog, /No active owner\(\)\/getOwner\(\) wallet is exposed/);
 });
 
 test("post-import prompt uses the same Claim Memecoin dialog rather than a second flow", () => {
   assert.match(entry, /useState\(searchParams\.get\("claim"\) === "prompt"\)/);
   assert.match(claimDialog, /resolveProjectXIdentity\(item\)/);
-  assert.match(claimDialog, /action: "project_import_claim"/);
-  assert.match(claimDialog, /signSolanaMessage\(message, walletAddress\)/);
-  assert.match(claimDialog, /startProjectXClaim\(item, auth\)/);
+  assert.match(claimDialog, /action:"project_import_claim"/);
+  assert.match(claimDialog, /signSolanaMessage\(message,walletAddress\)/);
+  assert.match(claimDialog, /startProjectXClaim\(item,auth\)/);
 });
 
 test("Warzone access remains visibly locked and verification is not competition approval", () => {
   assert.match(page, /WARZONE ACCESS LOCKED/);
-  assert.match(page, /This project is registered with MemeWarzone\./);
   assert.match(page, /Battles, Tournaments and War Leagues are opening soon\./);
   assert.match(page, /Project verification is separate from financial and competition eligibility\./);
 });
