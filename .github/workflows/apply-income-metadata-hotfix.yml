@@ -1,0 +1,50 @@
+name: Apply INCOME metadata host hotfix
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/apply-income-metadata-hotfix.yml
+permissions:
+  contents: write
+jobs:
+  apply:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Apply minimal RapidLaunch metadata-host fix
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          source = Path('frontend/api/lib/projectImportXClaim.js')
+          text = source.read_text()
+          needle = '  "arweave.net",\n]);'
+          replacement = '  "arweave.net",\n  "m.rapidlaunch.io",\n]);'
+          if '"m.rapidlaunch.io"' not in text:
+              if needle not in text:
+                  raise SystemExit('metadata host insertion point not found')
+              text = text.replace(needle, replacement, 1)
+              source.write_text(text)
+
+          test = Path('frontend/api/lib/projectImportXClaimMetadata.test.mjs')
+          t = test.read_text()
+          marker = 'test("RapidLaunch Token-2022 metadata host remains allowed", () => {'
+          if marker not in t:
+              t += '\n' + marker + '\n  assert.match(claimSource, /"m\\.rapidlaunch\\.io"/);\n});\n'
+              test.write_text(t)
+          PY
+          git diff --check
+          git diff -- frontend/api/lib/projectImportXClaim.js frontend/api/lib/projectImportXClaimMetadata.test.mjs
+      - name: Commit hotfix to PR branch
+        run: |
+          git config user.name "uptokendev"
+          git config user.email "uptokendev@gmail.com"
+          git add frontend/api/lib/projectImportXClaim.js frontend/api/lib/projectImportXClaimMetadata.test.mjs
+          if git diff --cached --quiet; then
+            echo "hotfix already applied"
+            exit 0
+          fi
+          git commit -m "fix(import): allow RapidLaunch Token-2022 metadata"
+          git push origin HEAD:${{ github.head_ref }}
