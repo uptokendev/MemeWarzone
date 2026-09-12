@@ -6,22 +6,24 @@ on:
       - build/cross-chain-stabilization-rh-base
     paths:
       - '.github/workflows/agent3-arena-money-v2-devnet-reread.yml'
-      - 'frontend/scripts/arena-money-v2-devnet-reread.mjs'
       - 'frontend/scripts/arena-money-v2-devnet-acceptance.mjs'
+      - 'frontend/scripts/arena-money-v2-devnet-reread.mjs'
+      - 'frontend/scripts/arena-money-v2-devnet-resolve.mjs'
   push:
     branches:
       - agent3/arena-money-v2-live-reread-11cde9e
     paths:
       - '.github/workflows/agent3-arena-money-v2-devnet-reread.yml'
-      - 'frontend/scripts/arena-money-v2-devnet-reread.mjs'
       - 'frontend/scripts/arena-money-v2-devnet-acceptance.mjs'
+      - 'frontend/scripts/arena-money-v2-devnet-reread.mjs'
+      - 'frontend/scripts/arena-money-v2-devnet-resolve.mjs'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: agent3-arena-money-v2-reread-${{ github.ref }}
+  group: agent3-arena-money-v2-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -33,8 +35,8 @@ env:
   RUST_TOOLCHAIN: 1.79.0
 
 jobs:
-  reread-and-acceptance:
-    name: Reread then real-money acceptance
+  prepare-payments:
+    name: Reread and prepare real payments
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: airdrop-solana-devnet
@@ -42,12 +44,11 @@ jobs:
       SOLANA_REWARDS_RPC_URL: ${{ secrets.SOLANA_REWARDS_RPC_URL }}
       SOLANA_REWARDS_TREASURY_PROGRAM_ID: ${{ vars.SOLANA_REWARDS_TREASURY_PROGRAM_ID }}
       SOLANA_REWARDS_AUTHORITY_SECRET_KEY: ${{ secrets.SOLANA_REWARDS_AUTHORITY_SECRET_KEY }}
-      SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
       ARENA_MONEY_V2_CANDIDATE_PATH: target/deploy/mwz_rewards_treasury.so
       ARENA_MONEY_V2_REREAD_OUT: /tmp/arena-money-v2-live-reread.json
-      ARENA_MONEY_V2_ACCEPTANCE_OUT: /tmp/arena-money-v2-acceptance.json
+      ARENA_MONEY_V2_PREPARED_OUT: /tmp/arena-money-v2-prepared.json
     steps:
-      - name: Checkout exact acceptance head
+      - name: Checkout exact certification head
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -60,7 +61,7 @@ jobs:
           git merge-base --is-ancestor "$EXPECTED_SOURCE_SHA" HEAD
           changed="$(git diff --name-only "$EXPECTED_SOURCE_SHA"...HEAD)"
           printf '%s\n' "$changed"
-          test "$changed" = $'.github/workflows/agent3-arena-money-v2-devnet-reread.yml\nfrontend/scripts/arena-money-v2-devnet-acceptance.mjs\nfrontend/scripts/arena-money-v2-devnet-reread.mjs'
+          test "$changed" = $'.github/workflows/agent3-arena-money-v2-devnet-reread.yml\nfrontend/scripts/arena-money-v2-devnet-acceptance.mjs\nfrontend/scripts/arena-money-v2-devnet-reread.mjs\nfrontend/scripts/arena-money-v2-devnet-resolve.mjs'
           test -z "$(git diff --name-only "$EXPECTED_SOURCE_SHA"...HEAD -- programs/ frontend/api/ realtime-indexer/)"
 
       - uses: actions/setup-node@v4
@@ -107,43 +108,89 @@ jobs:
           sha256sum target/deploy/mwz_rewards_treasury.so
           wc -c target/deploy/mwz_rewards_treasury.so
 
-      - name: Fresh live devnet reread only
+      - name: Fresh live devnet reread and no-upgrade decision
         shell: bash
         run: |
           set -euo pipefail
-          test -n "${SOLANA_REWARDS_RPC_URL:-}"
-          test -n "${SOLANA_REWARDS_AUTHORITY_SECRET_KEY:-}"
           node frontend/scripts/arena-money-v2-devnet-reread.mjs
           node --input-type=module <<'NODE'
           import fs from 'node:fs';
           const e=JSON.parse(fs.readFileSync('/tmp/arena-money-v2-live-reread.json','utf8'));
           if (!e.arenaMoneyV2InstructionAvailable) throw new Error('LIVE_ARENA_MONEY_V2_INSTRUCTION_MISSING');
           if (!e.configExists || e.config?.generation !== 2 || e.config?.paused) throw new Error('LIVE_ARENA_MONEY_V2_CONFIG_NOT_READY');
-          console.log('PASS: live ArenaMoneyV2 already available; upgrade and config init are forbidden/not required');
+          console.log('PASS: live ArenaMoneyV2 already available; upgrade and config initialization are not required');
           NODE
 
-      - name: Assert no upgrade or deploy path is present
+      - name: Assert no program upgrade or deploy path exists
         shell: bash
         run: |
           set -euo pipefail
           ! grep -E 'sendAndConfirmTransaction|sendRawTransaction|sendTransaction|program deploy|anchor deploy' frontend/scripts/arena-money-v2-devnet-reread.mjs
-          ! grep -E 'program deploy|anchor deploy|program upgrade' frontend/scripts/arena-money-v2-devnet-acceptance.mjs
-          echo 'PASS: no program upgrade/deploy path in Agent 3 transport'
+          ! grep -E 'program deploy|anchor deploy|program upgrade' frontend/scripts/arena-money-v2-devnet-acceptance.mjs frontend/scripts/arena-money-v2-devnet-resolve.mjs
+          echo 'PASS: acceptance may send financial test transactions but cannot deploy or upgrade the program'
 
-      - name: Real SOL ArenaMoneyV2 acceptance
+      - name: Real SOL payment preparation, receipts, replay and sponsorship acceptance
+        run: node frontend/scripts/arena-money-v2-devnet-acceptance.mjs
+
+      - name: Upload prepared public evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: arena-money-v2-prepared-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            /tmp/arena-money-v2-live-reread.json
+            /tmp/arena-money-v2-prepared.json
+          if-no-files-found: error
+          retention-days: 30
+
+  resolve-and-reconcile:
+    name: Resolver settlement and reload reconciliation
+    needs: prepare-payments
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: testnet-certification
+    env:
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || secrets.SOLANA_DEVNET_RPC_URL || vars.SOLANA_DEVNET_RPC }}
+      SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
+      ARENA_MONEY_V2_PREPARED_IN: /tmp/arena-money-v2-prepared/arena-money-v2-prepared.json
+      ARENA_MONEY_V2_ACCEPTANCE_OUT: /tmp/arena-money-v2-acceptance.json
+    steps:
+      - name: Checkout exact certification head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend Solana client dependencies
+        working-directory: frontend
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Download prepared evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: arena-money-v2-prepared-${{ github.event.pull_request.head.sha || github.sha }}
+          path: /tmp/arena-money-v2-prepared
+
+      - name: Prove resolver credential and settle Battle plus Vote Tournament
         shell: bash
         run: |
           set -euo pipefail
+          test -n "${SOLANA_RPC_URL:-}"
           test -n "${SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY:-}"
-          node frontend/scripts/arena-money-v2-devnet-acceptance.mjs
+          node frontend/scripts/arena-money-v2-devnet-resolve.mjs
 
-      - name: Upload ArenaMoneyV2 evidence
-        if: ${{ always() }}
+      - name: Upload final ArenaMoneyV2 acceptance evidence
         uses: actions/upload-artifact@v4
         with:
-          name: arena-money-v2-evidence-${{ github.event.pull_request.head.sha || github.sha }}
+          name: arena-money-v2-final-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
-            /tmp/arena-money-v2-live-reread.json
+            /tmp/arena-money-v2-prepared/arena-money-v2-live-reread.json
+            /tmp/arena-money-v2-prepared/arena-money-v2-prepared.json
             /tmp/arena-money-v2-acceptance.json
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30
