@@ -35,11 +35,13 @@ const manifestByIdentity = new Map(
 );
 
 export function findManifestAsset({ chainId, provider, address }) {
+  if (String(chainId) === "102") return null;
   return manifestByIdentity.get(quoteIdentityKey({ chainId, provider, address })) || null;
 }
 
 export function assertManifestIdentity({ chainId, provider, address, expectedChainId, expectedProvider }) {
   if (String(chainId) !== String(expectedChainId)) throw new Error("WRONG_CHAIN_QUOTE_IDENTITY");
+  if (String(chainId) === "102") throw new Error("LEGACY_SOLANA_CHAIN_NOT_CURRENT_AUTHORITY");
   if (String(provider).toLowerCase() !== String(expectedProvider).toLowerCase()) throw new Error("QUOTE_PROVIDER_MISMATCH");
   const asset = findManifestAsset({ chainId, provider, address });
   if (!asset) throw new Error("QUOTE_IDENTITY_NOT_IN_APPROVED_CATALOG");
@@ -53,7 +55,8 @@ export function evidenceIsFresh(lastVerifiedAt, { now = Date.now(), maxAgeMs = 2
 }
 
 export function candidateCanActivate(candidate, { now = Date.now(), maxAgeMs } = {}) {
-  if (!candidate || candidate.adminState !== "enabled" || candidate.proposedState !== "ACTIVE") return false;
+  if (!candidate || String(candidate.chainId) === "102") return false;
+  if (candidate.adminState !== "enabled" || candidate.proposedState !== "ACTIVE") return false;
   if (candidate.identity !== "VERIFIED" || candidate.transferability !== "VERIFIED" || candidate.security !== "VERIFIED") return false;
   if (candidate.route !== "VERIFIED" || candidate.price !== "VERIFIED" || candidate.lp !== "VERIFIED") return false;
   return evidenceIsFresh(candidate.lastVerifiedAt, { now, maxAgeMs });
@@ -92,7 +95,7 @@ export function filterCreatorGraduationAssets(items, { category, provider, searc
   const normalizedProvider = String(provider || "").trim().toLowerCase();
   const needle = String(search || "").trim().toLowerCase();
   return items
-    .filter((item) => item?.newGraduationEligible === true)
+    .filter((item) => String(item?.chainId) !== "102" && item?.newGraduationEligible === true)
     .map(decorateQuoteAsset)
     .filter((item) => !normalizedCategory || item.category === normalizedCategory)
     .filter((item) => !normalizedProvider || String(item.provider?.key || "").toLowerCase() === normalizedProvider)

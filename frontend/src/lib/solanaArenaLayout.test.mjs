@@ -79,6 +79,8 @@ test("validateCanonicalArenaConfig requires owner, layout, version, unpaused, ge
     owner: REWARDS_TREASURY_PROGRAM_ID,
     genesisHash: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKvcnbdEad4t",
     chainId: 101,
+    environment: "production",
+    cluster: "mainnet-beta",
     PublicKey,
   });
   assert.equal(ok.live, true);
@@ -92,6 +94,8 @@ test("validateCanonicalArenaConfig requires owner, layout, version, unpaused, ge
       owner: REWARDS_TREASURY_PROGRAM_ID,
       genesisHash: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKvcnbdEad4t",
       chainId: 101,
+      environment: "production",
+      cluster: "mainnet-beta",
       PublicKey,
     }).live,
     false,
@@ -103,6 +107,8 @@ test("validateCanonicalArenaConfig requires owner, layout, version, unpaused, ge
       owner: REWARDS_TREASURY_PROGRAM_ID,
       genesisHash: "wrong",
       chainId: 101,
+      environment: "production",
+      cluster: "mainnet-beta",
       PublicKey,
     }).reason,
     "cluster-mismatch",

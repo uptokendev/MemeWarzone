@@ -18,17 +18,21 @@ export const ARENA_POOL_ACCOUNT_SIZE = 8 + 535;
 export const ARENA_BUYIN_DISCRIMINATOR = Uint8Array.from([78, 69, 75, 93, 134, 44, 139, 226]);
 
 export const SOLANA_GENESIS = Object.freeze({
-  101: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKvcnbdEad4t",
-  102: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wavy2uVvL2jH",
+  devnet: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wavy2uVvL2jH",
+  "mainnet-beta": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKvcnbdEad4t",
 });
 
 export function isSolanaWarzoneChainId(chainId) {
-  const id = Number(chainId);
-  return id === 101 || id === 102;
+  return Number(chainId) === 101;
 }
 
-export function expectedGenesisHash(chainId) {
-  return SOLANA_GENESIS[Number(chainId)] || "";
+export function expectedGenesisHash({ chainId, environment, cluster } = {}) {
+  if (Number(chainId) !== 101) return "";
+  const env = String(environment || "").trim().toLowerCase();
+  const network = String(cluster || "").trim().toLowerCase();
+  if (env === "staging" && network === "devnet") return SOLANA_GENESIS.devnet;
+  if (env === "production" && network === "mainnet-beta") return SOLANA_GENESIS["mainnet-beta"];
+  return "";
 }
 
 function bytesToHex(bytes) {
@@ -231,10 +235,11 @@ export function parseArenaPool(data, PublicKey) {
   };
 }
 
-export function validateCanonicalArenaConfig({ account, owner, genesisHash, chainId, PublicKey }) {
+export function validateCanonicalArenaConfig({ account, owner, genesisHash, chainId, environment, cluster, PublicKey }) {
   const expectedOwner = REWARDS_TREASURY_PROGRAM_ID;
-  const expectedGenesis = expectedGenesisHash(chainId);
-  if (expectedGenesis && String(genesisHash || "") !== expectedGenesis) {
+  const expectedGenesis = expectedGenesisHash({ chainId, environment, cluster });
+  if (!expectedGenesis) return { live: false, reason: "authority-mismatch" };
+  if (String(genesisHash || "") !== expectedGenesis) {
     return { live: false, reason: "cluster-mismatch" };
   }
   if (!account?.data) return { live: false, reason: "missing-account" };
