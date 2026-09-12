@@ -102,11 +102,13 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+
       - name: Resolve Solana certification dependencies
         shell: bash
         run: |
@@ -115,6 +117,7 @@ jobs:
           npm install --prefix tests/solana --no-audit --no-fund
           npm ci --prefix frontend --no-audit --no-fund
           npm ci --prefix tools/solana-meteora-graduation --no-audit --no-fund
+
       - name: Build exact-source Solana candidate and IDL
         shell: bash
         env:
@@ -128,7 +131,9 @@ jobs:
           rustup default "$RUST_TOOLCHAIN"
           release_dir="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
           mkdir -p "$release_dir"
-          curl --fail --location --retry 5 --retry-all-errors --silent --show-error --output /tmp/solana-release.tar.bz2 "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error \
+            --output /tmp/solana-release.tar.bz2 \
+            "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
           tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
           mkdir -p "$HOME/.local/share/solana/install"
           ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
@@ -143,6 +148,7 @@ jobs:
           test -s target/idl/memewarzone_solana.json
           sha256sum target/deploy/memewarzone_solana.so
           wc -c target/deploy/memewarzone_solana.so
+
       - name: Solana devnet canonical chain-101 canary
         env:
           SEND_SOLANA_GRADUATION: ${{ inputs.send_solana_graduation }}
@@ -164,6 +170,7 @@ jobs:
         run: |
           set -euo pipefail
           npm run solana:network-canary
+
       - name: Upload Solana 101 certification evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
@@ -215,22 +222,26 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+
       - name: Resolve BSC97 claims acceptance dependencies
         shell: bash
         run: |
           set -euo pipefail
           npm ci
           npm ci --prefix frontend --no-audit --no-fund
+
       - name: Execute real BSC97 claims acceptance
         shell: bash
         run: |
           set -euo pipefail
           node scripts/run-bsc97-live-claims-acceptance.mjs
+
       - name: Upload BSC97 claims evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
@@ -255,21 +266,25 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
+
       - name: Resolve accepted BSC factory for bytecode preflight
         if: ${{ inputs.network == 'bsc-testnet-preflight' }}
         id: factory
         shell: bash
         run: node scripts/resolve-bsc-certification-factory.mjs --github-output
+
       - name: Resolve accepted BSC factory for Gen-4 stage preflight
         if: ${{ inputs.network == 'bsc-testnet-stage-deploy' }}
         id: stage_factory
         shell: bash
         run: node scripts/resolve-bsc-certification-factory.mjs --github-output
+
       - name: Run BSC Testnet Topaz preflight (accepted 3/2 only)
         if: ${{ inputs.network == 'bsc-testnet-preflight' }}
         env:
@@ -283,11 +298,15 @@ jobs:
         run: |
           set -euo pipefail
           test -n "${FACTORY_ADDRESS:-}"
-          test -n "${BSC_TESTNET_RPC:-}" || { echo "BLOCKER: set GitHub Environment variable BSC_TESTNET_RPC."; exit 1; }
+          test -n "${BSC_TESTNET_RPC:-}" || {
+            echo "BLOCKER: set GitHub Environment variable BSC_TESTNET_RPC."
+            exit 1
+          }
           echo "certification_factory=$FACTORY_ADDRESS"
           echo "mode=preflight"
           npm ci
           npx hardhat run scripts/test-topaz-graduation-flow.ts --network bscTestnet
+
       - name: Run BSC97 Gen-4 read-only preflight then stage deploy only
         if: ${{ inputs.network == 'bsc-testnet-stage-deploy' }}
         env:
@@ -306,6 +325,7 @@ jobs:
           npx hardhat run scripts/test-topaz-graduation-flow.ts --network bscTestnet
           npx hardhat run scripts/deploy-bnb-real-topaz-testnet-stage.ts --network bscTestnet
           test -s reports/bnb-real-topaz-testnet-stage.json
+
       - name: Upload BSC97 Gen-4 stage manifest
         if: ${{ inputs.network == 'bsc-testnet-stage-deploy' }}
         uses: actions/upload-artifact@v4
@@ -314,6 +334,7 @@ jobs:
           path: reports/bnb-real-topaz-testnet-stage.json
           if-no-files-found: error
           retention-days: 14
+
       - name: Run BNB 6C controlled-Topaz full lifecycle on chain 97
         if: ${{ inputs.network == 'bsc-testnet-full-cycle' }}
         env:
@@ -323,13 +344,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -n "${BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY:-}" || { echo "BLOCKER: set GitHub Environment secret BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY."; exit 1; }
+          test -n "${BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY:-}" || {
+            echo "BLOCKER: set GitHub Environment secret BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY."
+            exit 1
+          }
           echo "mode=6c-source-head-full-cycle"
           echo "safety=isolated 4/3 stack; live 3/2 factory must remain unchanged"
           npm ci
           npx hardhat run scripts/run-bnb-lifecycle-certification.ts --network bscTestnet
           test -s reports/bnb-6c-testnet-acceptance.json
           node -e 'const r=require("./reports/bnb-6c-testnet-acceptance.json"); if(r.chainId!==97||r.accepted!==true||r.factoryLiveAfter!==true||r.createPausedAfter!==true) process.exit(1); console.log({accepted:r.accepted,factory:r.factory,campaign:r.campaign,pool:r.pool,realTopazCompatibility:r.realTopazCompatibility});'
+
       - name: Upload BNB 6C controlled-Topaz chain-97 evidence
         if: ${{ inputs.network == 'bsc-testnet-full-cycle' && always() }}
         uses: actions/upload-artifact@v4
@@ -340,6 +365,7 @@ jobs:
             reports/bnb-6c-testnet-acceptance.json
           if-no-files-found: warn
           retention-days: 14
+
       - name: Run BSC97 Gen-4 destructive lifecycle against authoritative real Topaz
         if: ${{ inputs.network == 'bsc-testnet-real-topaz-full-cycle' }}
         env:
@@ -352,13 +378,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -n "${BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY:-}" || { echo "BLOCKER: set GitHub Environment secret BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY."; exit 1; }
+          test -n "${BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY:-}" || {
+            echo "BLOCKER: set GitHub Environment secret BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY."
+            exit 1
+          }
           echo "mode=real-topaz-source-head-full-cycle"
           echo "safety=chain97 only; authoritative Topaz; live 3/2 factory must remain unchanged"
           npm ci
           npx hardhat run scripts/run-bnb-real-topaz-certification.ts --network bscTestnet
           test -s reports/bnb-real-topaz-testnet-acceptance.json
           node -e 'const r=require("./reports/bnb-real-topaz-testnet-acceptance.json"); const ok=r.chainId===97&&r.accepted===true&&r.realTopazCompatibility===true&&r.controlledTopazDex===false&&r.permanentLpLock===true&&r.feeHarvest80_20===true&&r.lpPrincipalPreserved===true&&r.factoryLiveAfter===true&&r.createPausedAfter===true&&r.checks?.reloadVerified===true&&r.checks?.immediateHarvestRetryZero===true&&r.transactions?.postGradBuy&&r.transactions?.postGradSell; if(!ok) process.exit(1); console.log({accepted:r.accepted,realTopazCompatibility:r.realTopazCompatibility,factory:r.protocol?.launchFactory,campaign:r.protocol?.campaign,token:r.protocol?.token,pool:r.protocol?.graduatedPool,postGradBuy:r.transactions?.postGradBuy,postGradSell:r.transactions?.postGradSell,reloadVerified:r.checks?.reloadVerified,immediateHarvestRetryZero:r.checks?.immediateHarvestRetryZero});'
+
       - name: Upload BSC97 real Topaz destructive acceptance evidence
         if: ${{ inputs.network == 'bsc-testnet-real-topaz-full-cycle' && always() }}
         uses: actions/upload-artifact@v4
@@ -369,6 +399,7 @@ jobs:
             reports/bnb-real-topaz-testnet-acceptance.json
           if-no-files-found: warn
           retention-days: 14
+
       - name: Diagnose existing BSC97 real Topaz harvest state read-only
         if: ${{ inputs.network == 'bsc-testnet-real-topaz-diagnose' }}
         env:
@@ -376,11 +407,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -n "${BNB_REAL_TOPAZ_DIAGNOSTIC_FACTORY:-}" || { echo "BLOCKER: provide bsc_real_topaz_factory from the failed real-Topaz run."; exit 1; }
+          test -n "${BNB_REAL_TOPAZ_DIAGNOSTIC_FACTORY:-}" || {
+            echo "BLOCKER: provide bsc_real_topaz_factory from the failed real-Topaz run."
+            exit 1
+          }
           echo "mode=real-topaz-read-only-diagnostic"
           echo "broadcast=NONE"
           npm ci
           npx hardhat run scripts/diagnose-bnb-real-topaz-harvest.ts --network bscTestnet
+
       - name: Run BNB 4/3 + V3 source head against real Topaz on a mainnet fork
         if: ${{ inputs.network == 'bsc-mainnet-fork-source-head' }}
         shell: bash
