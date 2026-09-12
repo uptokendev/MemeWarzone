@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "environment": "production",
+  "network": "bscMainnet",
+  "chainId": 56,
+  "sourceAuthorityAtTaskStart": "18ffff677f8d6420c4539f9d9db9ec7eee1b0790",
+  "status": "LIVE_READ_FROZEN_NO_DEPLOYMENT",
+  "liveReadEvidence": {
+    "capturedAt": "2026-09-12T19:46:55.106Z",
+    "blockNumber": 121512326,
+    "workflowRun": 34715035539,
+    "evidenceType": "bnb56-live-topaz-authority"
+  },
+  "generation": {
+    "factory": 4,
+    "campaign": 3,
+    "liquidityKind": 1
+  },
+  "safety": {
+    "dryRunDefault": true,
+    "initialLive": false,
+    "initialCreatePaused": true,
+    "productionStressTestingForbidden": true,
+    "frontendPromotionForbiddenBeforeCanary": true,
+    "indexerPromotionForbiddenBeforeCanary": true,
+    "testGraduationUsd": 6,
+    "testGraduationForbidden": true
+  },
+  "economics": {
+    "volatilePoolFeeBps": 30,
+    "creatorLpFeeBps": 8000,
+    "protocolLpFeeBps": 2000,
+    "allowedGraduationUsd": [15000, 30000, 50000]
+  },
+  "currentHistoricalProduction": {
+    "activeFactory": "0xc378221E57898106079aE4B818a92978e4cd9559",
+    "activeLocker": "0xFcE77642e22ef04B8398fB6dfEE99614CAb32f69",
+    "previousFactory": "0x3068eAE6F8431bFc3c5Faae9c3bBB95F007be59a",
+    "previousLocker": "0x64710A4f87aBa3b5ED5B8B25e8ebA4DaC339C998",
+    "mustRemainUntouched": true,
+    "mustNotBeRelabeled": true
+  },
+  "liveReadAuthority": {
+    "resolver": "scripts/resolve-bnb-mainnet-topaz-authority.ts",
+    "requiredBeforeDeploy": true,
+    "activeFactory": "0xc378221E57898106079aE4B818a92978e4cd9559",
+    "currentFactoryOwner": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+    "currentRouteAuthority": "0xb989A99823eA96552c3E3198A40CdBF682EDf1aA",
+    "currentCampaignImplementation": "0xbe3caF640F77e8436BCAF89730251A00fB01608f",
+    "currentGraduationOracle": "0x9D204406d5ECA0f18e48427fDD983A32FdF57C9B",
+    "currentTreasury": "0xe157a6FDf19CAB61f2ECa048966f137A3240a921",
+    "currentTreasuryAdmin": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+    "currentCreatorRegistry": "0x8194FB3745d027102ce7Da562c7045f28B2f42fD",
+    "currentRiskRegistry": "0x92b1494CF7b80dA379EB96F59EeE4Ae7F8970597",
+    "currentRouterAdapter": "0x5c3135Dfaad519A9114DEa2E546f0Cd051d0D35a"
+  },
+  "topaz": {
+    "status": "LIVE_READ_PROVEN",
+    "router": "0x1E98c8226e7d452e1888e3d3d2F929346321c6c3",
+    "routerCodeHash": "0x56dbf7cf48011f8d418fd33029aa564ae66df739b0b9154264f64e7efe01a81a",
+    "routerCodeBytes": 18589,
+    "poolFactory": "0x65E6cD0eF5D3467030103cf3d433034E570b5784",
+    "poolFactoryCodeHash": "0x2d98e44af9c2f4a17d2522804210413a0e2b2b7f483687a0460f1174033ef2bf",
+    "poolFactoryCodeBytes": 3002,
+    "factoryRegistry": "0x268d1C8a538Ecf6628838C11d581e1EABD13D6A4",
+    "factoryRegistryCodeHash": "0xcd7a09863ed59a04229dd25e07e4a006adfefd0acb80d3d21dcdad59cfc60a96",
+    "factoryRegistryCodeBytes": 2451,
+    "wbnb": "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",
+    "wbnbCodeHash": "0xb7d84205eaaf83ce7b3940c6beaad6d22790255e34a9a2b486aa8cdfff118fe6",
+    "wbnbCodeBytes": 3124,
+    "poolImplementation": "0xdC942D8e37cC20BCf9aD1Fe0111eE6c5908f3678",
+    "poolImplementationCodeHash": "0x60a4478f3d854c40af76129f10fe545902034ba500f7efd3016b814fd5255cef",
+    "poolImplementationCodeBytes": 20434,
+    "volatileFeeBps": 30
+  },
+  "cutover": {
+    "deploymentStartsDark": true,
+    "treasuryLockerAuthorizationRequiredBeforeCanary": true,
+    "creatorRegistryAuthorizationRequiredBeforeCanary": true,
+    "controlledCanarySequence": [
+      "CREATE",
+      "BUY",
+      "SELL",
+      "native graduation",
+      "real Topaz pool",
+      "permanent LP lock",
+      "post-grad BUY",
+      "post-grad SELL",
+      "80/20 harvest",
+      "Treasury"
+    ]
+  }
+}
