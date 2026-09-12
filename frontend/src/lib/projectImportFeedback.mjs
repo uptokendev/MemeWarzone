@@ -1,3 +1,25 @@
+function nestedWalletCode(error) {
+  for (const value of [error?.code, error?.error?.code, error?.info?.error?.code, error?.cause?.code]) {
+    if (value == null || value === '') continue;
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric;
+    return String(value);
+  }
+  return '';
+}
+
+function walletMessage(error) {
+  return String(error?.shortMessage || error?.info?.error?.message || error?.error?.message || error?.message || '');
+}
+
+function isWalletSignFailure(error) {
+  const code = nestedWalletCode(error);
+  const message = walletMessage(error);
+  if (code === -32603 || code === -32000 || code === -32002) return true;
+  if (['UNKNOWN_ERROR', 'INTERNAL_ERROR', 'WALLET_SIGN_FAILED'].includes(String(code))) return true;
+  return /unexpected error|internal (json-?)?rpc error|could not coalesce/i.test(message);
+}
+
 export function projectImportFeedback(error) {
   const code = String(error?.code || '');
   if (error?.currentAuthority) {
@@ -7,8 +29,10 @@ export function projectImportFeedback(error) {
   }
   if (code === "PROJECT_IMPORT_STILL_BONDING") return {title:"STILL BONDING",message:"This token is still bonding on another platform. Return after graduation and market verification.",retry:true};
   if (code === "PROJECT_IMPORT_REVIEW_REQUIRED") return {title:"ADDITIONAL REVIEW REQUIRED",message:"The latest ownership, market or safety checks need review. Run the checks again for the next step.",retry:true};
+  if (code === "PROJECT_IMPORT_SECURITY_REQUIRED") return {title:"TOKEN SECURITY BLOCKED IMPORT",message:String(error?.message || 'Critical token-security findings blocked automatic import.'),retry:false};
   if (error?.importStage === "image") return {title:"IMAGE UPLOAD NOT COMPLETED",message:"Your project registration or review request is saved. Retry the image upload below; you do not need to import again.",retry:false};
-  if (error?.code === 4001 || /user rejected|user denied|request rejected/i.test(String(error?.message || ''))) return { title: 'SIGNATURE CANCELLED', message: 'The wallet signature was cancelled. Press IMPORT to try again.', retry: false };
+  if (error?.code === 4001 || nestedWalletCode(error) === 4001 || /user rejected|user denied|request rejected/i.test(walletMessage(error))) return { title: 'SIGNATURE CANCELLED', message: 'The wallet signature was cancelled. Press IMPORT to try again.', retry: false };
+  if (isWalletSignFailure(error)) return { title: 'WALLET COULD NOT SIGN', message: 'The connected wallet failed to sign. Unlock it, approve the popup, and press IMPORT again.', retry: true };
   if (Number(error?.status) >= 500 || error instanceof TypeError || ['AbortError','TimeoutError'].includes(error?.name) || /failed to fetch|network|timeout/i.test(String(error?.message || ''))) return { title: 'IMPORT CHECK TEMPORARILY UNAVAILABLE', message: 'We could not complete this request. Nothing has been approved by this failed check. Please retry.', retry: true };
   if (['INVALID_TOKEN','SOLANA_MINT_INVALID','NO_DEPLOYED_BYTECODE','IMPORT_IDENTITY_INVALID'].includes(code)) return { title: 'CHECK CONTRACT ADDRESS AND CHAIN', message: 'No valid token was found for this Contract Address on the selected chain. Check both and try again.', retry: false };
   if (code === 'PROJECT_IMPORTS_DISABLED') return { title: 'IMPORTS TEMPORARILY UNAVAILABLE', message: 'The import service is disabled. Please try again later.', retry: true };

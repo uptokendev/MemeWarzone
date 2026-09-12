@@ -13,6 +13,7 @@ test("BNB honeypot and impossible-sell signals block automatic import", () => {
 test("BNB risky admin controls require manual review", () => {
   const result = classifyProjectImportSecurity({ chainId: 56, raw: { is_open_source: "1", transfer_pausable: "1", is_mintable: "1", holders: [], dex: [{}] } });
   assert.equal(result.status, "review");
+  assert.equal(securityAllowsAutomaticImport(result), true);
   assert.ok(result.reviewRisks.some((risk) => risk.code === "transfer_pausable"));
   assert.ok(result.reviewRisks.some((risk) => risk.code === "mintable"));
 });
@@ -46,5 +47,16 @@ test("scanner outage fails closed to manual review", async () => {
     fetchImpl: async () => { throw new Error("network unavailable"); },
   });
   assert.equal(result.status, "review");
+  assert.equal(securityAllowsAutomaticImport(result), true);
   assert.ok(result.reviewRisks.some((risk) => risk.code === "scanner_unavailable"));
+});
+test("PumpSwap virtual quote remains a recorded review risk but does not block automatic import", () => {
+  const result = classifyProjectImportSecurity({
+    chainId: 101,
+    raw: { default_account_state: "1", non_transferable: "0", freezable: { status: "0" }, mintable: { status: "0" }, balance_mutable_authority: { status: "0" }, holders: [], dex: [{}] },
+    market: { verified: true, phase: "postgrad", liquidityAvailable: true, virtualQuoteReserves: "17584506971" },
+  });
+  assert.equal(result.status, "review");
+  assert.ok(result.reviewRisks.some((risk) => risk.code === "virtual_quote_pricing"));
+  assert.equal(securityAllowsAutomaticImport(result), true);
 });

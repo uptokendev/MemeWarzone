@@ -7,6 +7,12 @@ const EVERGLEN = {id:'de2321a6-3314-45e5-8114-48cedbd50213',chainId:101,token:'F
 const error = (message,code) => Object.assign(new Error(message),{code});
 export const maskImportWallet = value => {const s=String(value||'');return s.length>8?`${s.slice(0,4)}...${s.slice(-4)}`:s;};
 function sameAddress(a,b,chainId){return Number(chainId)===101?a===b:String(a).toLowerCase()===String(b).toLowerCase();}
+export function isPumpFunImportToken(resolved) {
+  const source = String(resolved?.authoritySource || "");
+  const platform = String(resolved?.market?.platform || resolved?.projectAuthorityEvidence?.platform || "");
+  const token = String(resolved?.tokenAddress || "");
+  return source === "pump_bonding_curve_creator" || platform === "pumpfun" || /pump$/i.test(token);
+}
 export function isRetainedImportPage(project) {
   return project?.id===EVERGLEN.id && Number(project.chain_id)===EVERGLEN.chainId && project.token_address===EVERGLEN.token && project.ownership_status==='ownership_verified';
 }
@@ -29,7 +35,7 @@ export function assessProjectImport({resolved,security,claimantWallet,proof=null
   // Pump.fun commonly creates a separate embedded creator wallet. A known Pump creator
   // mismatch may enter MANUAL ownership review. A server-verified exact transfer from
   // that creator to the signed claimant is also accepted as cryptographic control proof.
-  const pumpCreatorMismatch=mismatch&&resolved.authoritySource==='pump_bonding_curve_creator';
+  const pumpCreatorMismatch=mismatch&&isPumpFunImportToken(resolved);
   const bonding=market.verified===true&&market.phase==='bonding';
   const postgrad=market.verified===true&&['postgrad','dex_market'].includes(market.phase)&&market.liquidityAvailable===true;
   const robinhoodImportOnly=identity.chainId===4663&&market.verified===true&&market.phase==='import_only';
@@ -39,6 +45,7 @@ export function assessProjectImport({resolved,security,claimantWallet,proof=null
   const marketControlsOk=market.pricingValid!==false && market.buyEnabled!==false && market.sellEnabled!==false;
   const venue=market.venue||'Supported DEX';
   const platform=market.platform==='fourmeme'?'Four.meme':market.platform==='pumpfun'?'Pump.fun':'another launch platform';
+  const blocked=security?.status==='blocked';
   const safe=security?.status==='pass';
   const checks=[
     {key:'identity',status:resolved.resolverError?'unknown':'pass',title:'Token identity',finding:resolved.resolverError?'Token checks could not finish.':`${resolved.name||'Token'} (${resolved.symbol||'symbol unavailable'}) on ${identity.chainId===101?'Solana':identity.chainId===4663?'Robinhood':'BNB'}.`,meaning:'This identifies the token, not its owner or safety.',nextAction:resolved.resolverError?'Retry the technical check.':'Confirm the Contract Address matches the project.'},
@@ -46,15 +53,18 @@ export function assessProjectImport({resolved,security,claimantWallet,proof=null
     {key:'ownership',status:mismatch?'blocked':match?'pass':'review',title:'Project wallet',finding:mismatch?`Connected wallet does not match recorded creator ${maskImportWallet(authority)}.`:transferMatch?'The detected Pump.fun creator wallet sent the exact one-time verification transfer to the signed connected wallet.':match?'The signed wallet matches the detected project authority.':resolved.projectAuthorityEvidence?.authorityType==='fee_sharing'?'Pump.fun uses an automated fee-sharing account.':'Automatic project authority is unavailable.',meaning:'Wallet control, fee entitlement and project-management authority are different.',nextAction:mismatch?'Connect the identified creator wallet or use the Pump.fun verification flow.':match?'Keep this cryptographic proof with the claim.':'Review the recorded relationships and obtain independent project-management authorization.'},
     {key:'security',status:safe?'pass':security?.status==='blocked'?'blocked':'review',title:'Token safety',finding:safe?'Configured safety checks passed.':(security?.criticalRisks||[]).concat(security?.reviewRisks||[]).map(x=>x.label).join('; ')||'Safety data unavailable.',meaning:'No scan guarantees future safety. Ownership approval does not clear token risk.',nextAction:safe?'Keep the dated results; recheck before future competition admission.':'Resolve confirmed restrictions or escalate uncertain evidence. Do not call missing data safe.'},
   ];
-  const automaticImportAllowed=match&&pageMarketEligible&&safe&&!technicalFailure&&!launchReview&&marketControlsOk;
+  // Matching creator/authority is enough ownership proof to auto-import.
+  // Review-level scanner/market flags (virtual PumpSwap quote, GoPlus review, scanner outage)
+  // stay on the snapshot for operators/abuse, but do not force manual review.
+  const automaticImportAllowed=match&&!bonding&&!blocked;
   const manualRequestAllowed=!bonding&&!automaticImportAllowed&&(!mismatch||pumpCreatorMismatch);
-  const decision=bonding?'not_eligible':mismatch&&!pumpCreatorMismatch?'wrong_wallet':technicalFailure||!pageMarketEligible||!marketControlsOk?'technical_review':automaticImportAllowed?'automatic':'manual_review';
+  const decision=bonding?'not_eligible':mismatch&&!pumpCreatorMismatch?'wrong_wallet':automaticImportAllowed?'automatic':!pageMarketEligible||technicalFailure||!marketControlsOk||launchReview?'technical_review':'manual_review';
   return {
     schemaVersion:1,policyVersion:IMPORT_REVIEW_POLICY,checkedAt,...identity,claimantWallet,
     proof,observedSlot:resolved.observedSlot??null,observedBlock:resolved.observedBlock??null,launchEvidence:resolved.launchEvidence??null,
     authority:{status:mismatch?'mismatch':match?'matched':'unresolved',address:authority,source:resolved.authoritySource??null,reason:resolved.ownershipReason??null,evidence:resolved.projectAuthorityEvidence??null,controlProof:transferMatch?{method:'pump_creator_transfer_challenge',txSignature:resolved.ownershipProofTxSignature,creatorWallet:resolved.ownershipProofCreatorWallet,claimantWallet:resolved.ownershipProofClaimantWallet,verifiedAt:resolved.ownershipProofVerifiedAt??null}:null},
     market,security,checks,decision,automaticImportAllowed,manualRequestAllowed,
-    canVerifyOwner:!bonding&&(!mismatch||pumpCreatorMismatch)&&pageMarketEligible&&(!technicalFailure||robinhoodImportOnly)&&marketControlsOk&&['pass','review'].includes(security?.status),
+    canVerifyOwner:!bonding&&(!mismatch||pumpCreatorMismatch)&&!blocked,
     permissions:{battle:'locked',trading:'locked',graduationAsset:'not_approved'},
   };
 }

@@ -33,17 +33,21 @@ test("wrong wallet is fully blocked and shows the masked controlling wallet", ()
   assert.match(importPage, /NOT TOKEN OWNER/); assert.match(importPage, /This token is controlled by wallet/); assert.match(importPage, /Connect that wallet to continue/);
   assert.match(importPage, /slice\(0, 4\)/); assert.match(importPage, /slice\(-4\)/); assert.match(importPage, /Import blocked/);
   assert.match(importPage, /canRequestManual=.*?!wrongAuthorityWallet/);
-  assert.match(importPage, /reviewablePumpMismatch/); assert.match(importPage, /Easy project proof/); assert.match(importPage, /MWZ-/);
-  assert.match(api, /resolved\.automaticOwnershipAvailable && !resolved\.signedWalletMatchesAuthority/);
+  assert.match(importPage, /reviewablePumpMismatch/); assert.match(importPage, /pumpFunToken/); assert.match(importPage, /Easy project proof/); assert.match(importPage, /MWZ-/);
+  assert.match(importPage, /REQUEST MANUAL CHECK/);
+  assert.match(api, /isPumpFunImportToken\(resolved\)/);
   assert.match(api, /Connect that wallet to continue/);
 });
 
 test("automatic import is gated by scam-risk screening", () => {
   assert.match(api, /scanProjectImportSecurity/); assert.match(api, /requireSecurityPass\(security\)/);
+  assert.match(api, /security\?\.status === "blocked"/);
   assert.match(riskCore, /is_honeypot/); assert.match(riskCore, /cannot_sell_all/); assert.match(riskCore, /malicious_address/);
   assert.match(riskCore, /owner_change_balance/); assert.match(riskCore, /selfdestruct/); assert.match(riskCore, /can_take_back_ownership/);
   assert.match(riskCore, /freezable/); assert.match(riskCore, /non_transferable/); assert.match(riskCore, /balance_mutable_authority/); assert.match(riskCore, /transfer_hook/);
-  assert.match(riskCore, /status === "pass"/);
+  assert.match(riskCore, /status === "pass" \|\| security\?\.status === "review"/);
+  assert.match(importPage, /autoCleared&&evidence\?\.signedWalletMatchesAuthority/);
+  assert.doesNotMatch(importPage, /securityPass&&autoCleared/);
 });
 
 test("manual-review cases can attach an image but remain hidden until approval", () => {

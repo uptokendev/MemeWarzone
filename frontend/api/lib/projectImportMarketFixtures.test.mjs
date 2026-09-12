@@ -16,8 +16,8 @@ async function run(map=accounts()){
 test('recorded ASK pool with a nonzero signed virtual-reserve extension verifies as its real canonical market',async()=>{
  const e=await run();assert.equal(e.market.phase,'postgrad');assert.equal(e.market.poolAddress,'5jCCA6YfURQGxdMF4HWevaMyHkyPhFGwMpuo8W2mbDxf');assert.equal(e.market.verified,true);assert.equal(e.market.liquidityAvailable,true);assert.equal(e.market.buyEnabled,true);assert.equal(e.market.sellEnabled,true);assert.notEqual(e.market.virtualQuoteReserves,'0');assert.equal(BigInt(e.market.effectiveQuoteReserves),BigInt(e.market.quoteReserve)+BigInt(e.market.virtualQuoteReserves));assert.equal(e.market.virtualReservesAreLiquidity,false);assert.equal(e.market.executionTested,false);assert.equal(e.custody.length,1);
 });
-test('ASK pool funding does not solve a different creator wallet',async()=>{
- const e=await run();const a=assessProjectImport({resolved:{chainId:101,tokenAddress:mint,market:e.market,currentAuthority:creator,automaticOwnershipAvailable:true,signedWalletMatchesAuthority:false},security:{status:'pass'},claimantWallet:'9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H'});assert.equal(a.decision,'wrong_wallet');assert.equal(a.manualRequestAllowed,false);
+test('ASK pool funding does not auto-import a different creator wallet, but Pump.fun can request manual review',async()=>{
+ const e=await run();const a=assessProjectImport({resolved:{chainId:101,tokenAddress:mint,market:e.market,currentAuthority:creator,automaticOwnershipAvailable:true,signedWalletMatchesAuthority:false},security:{status:'pass'},claimantWallet:'9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H'});assert.equal(a.automaticImportAllowed,false);assert.equal(a.manualRequestAllowed,true);assert.notEqual(a.decision,'wrong_wallet');
 });
 test('real pool data does not exempt disabled global controls or empty quote custody',async()=>{
  const map=accounts();map.get(pumpGlobalAddress().toBase58()).data[56]|=16;

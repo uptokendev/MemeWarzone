@@ -18,3 +18,16 @@ test('invalid address, disabled imports and signature cancellation remain distin
 
 test('saved image failure does not tell the user to register twice',()=>{const r=projectImportFeedback({status:503,importStage:'image'});assert.equal(r.title,'IMAGE UPLOAD NOT COMPLETED');assert.equal(r.retry,false);assert.match(r.message,/request is saved/);});
 test('bonding and new policy failure are explicit',()=>{assert.equal(projectImportFeedback({code:'PROJECT_IMPORT_STILL_BONDING'}).title,'STILL BONDING');assert.equal(projectImportFeedback({code:'PROJECT_IMPORT_REVIEW_REQUIRED'}).title,'ADDITIONAL REVIEW REQUIRED');});
+test('Phantom JSON-RPC Unexpected error is a wallet sign failure, not an import rejection',()=>{
+  for (const error of [
+    {code:-32603,message:'Unexpected error'},
+    new Error('Unexpected error'),
+    {code:'UNKNOWN_ERROR',message:'could not coalesce error (error={ "code": -32603, "message": "Unexpected error" })'},
+    {code:'WALLET_SIGN_FAILED',message:'Unexpected error'},
+  ]) {
+    const result=projectImportFeedback(error);
+    assert.equal(result.title,'WALLET COULD NOT SIGN');
+    assert.equal(result.retry,true);
+    assert.doesNotMatch(result.message,/Unexpected error/i);
+  }
+});

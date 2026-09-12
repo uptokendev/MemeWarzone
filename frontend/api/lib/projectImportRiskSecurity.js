@@ -180,5 +180,5 @@ export async function scanProjectImportSecurity({ chainId, tokenAddress, market 
 }
 
 export function securityAllowsAutomaticImport(security) {
-  return security?.status === "pass";
+  return security?.status === "pass" || security?.status === "review";
 }

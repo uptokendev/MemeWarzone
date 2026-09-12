@@ -15,7 +15,7 @@ import {
 } from "./lib/projectImportCore.js";
 import { registerDefaultProjectImportResolvers } from "./lib/projectImportResolverAdapters.js";
 import { resolveProjectToken } from "./lib/projectImportResolvers.js";
-import { scanProjectImportSecurity, securityAllowsAutomaticImport } from "./lib/projectImportRiskSecurity.js";
+import { scanProjectImportSecurity } from "./lib/projectImportRiskSecurity.js";
 import {
   getProjectOwnershipAudit,
   getProjectOwnershipClaim,
@@ -29,7 +29,7 @@ import {
   sanitizeProjectImportMetadataPatch,
 } from "./lib/projectImportSecurity.js";
 
-import { assessProjectImport, assertAutomaticImport, assertNewImportMarket, importProofReceipt, isRetainedImportPage } from "./lib/projectImportAssessment.js";
+import { assessProjectImport, assertAutomaticImport, assertNewImportMarket, importProofReceipt, isPumpFunImportToken, isRetainedImportPage } from "./lib/projectImportAssessment.js";
 import { withImportTransaction, appendImportEvidence, latestImportEvidence, importEvidenceHistory } from "./lib/projectImportEvidenceStore.js";
 import { applyVerifiedPumpChallenge, createPumpOwnershipChallenge, latestPumpOwnershipChallenge, pumpChallengeConnection, pumpChallengePublic, verifyPumpOwnershipChallenge } from "./lib/projectImportPumpChallenge.js";
 
@@ -117,11 +117,9 @@ function requireResolvedOwner(resolved) {
 }
 
 function requireSecurityPass(security) {
-  if (!securityAllowsAutomaticImport(security)) {
+  if (security?.status === "blocked") {
     const critical = security?.criticalRisks?.map((risk) => risk.label).filter(Boolean) || [];
-    const review = security?.reviewRisks?.map((risk) => risk.label).filter(Boolean) || [];
-    const summary = [...critical, ...review].slice(0, 3).join("; ");
-    throw Object.assign(new Error(summary ? `Token security check requires review: ${summary}` : "Token security check requires manual review"), { code: "PROJECT_IMPORT_SECURITY_REQUIRED" });
+    throw Object.assign(new Error(critical.length ? `Token security check blocked automatic import: ${critical.slice(0, 3).join("; ")}` : "Token security check blocked automatic import"), { code: "PROJECT_IMPORT_SECURITY_REQUIRED" });
   }
 }
 
@@ -419,7 +417,7 @@ export default async function projectImports(req, res) {
       if (!auth) return;
       const {resolved,security,assessment} = await buildImportChecks(identity,auth.walletAddress,body.auth,true);
       assertNewImportMarket(resolved);
-      const pumpCreatorMismatch = resolved.automaticOwnershipAvailable === true && !resolved.signedWalletMatchesAuthority && resolved.authoritySource === "pump_bonding_curve_creator";
+      const pumpCreatorMismatch = resolved.automaticOwnershipAvailable === true && !resolved.signedWalletMatchesAuthority && isPumpFunImportToken(resolved);
       if (resolved.automaticOwnershipAvailable && !resolved.signedWalletMatchesAuthority && !pumpCreatorMismatch) requireResolvedOwner(resolved);
       if (!assessment.manualRequestAllowed && !(existing?.ownership_status === "ownership_manual_review" && existing.manual_claim_wallet === auth.walletAddress)) throw Object.assign(new Error("Use the normal verified import flow"),{code:"MANUAL_CLAIM_NOT_ALLOWED"});
       const project=await withImportTransaction(pool,async client=>{
