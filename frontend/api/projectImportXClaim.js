@@ -3,7 +3,7 @@ import { json, readJson } from "../server/http.js";
 import { lookupProjectImport, normalizeProjectIdentity } from "./lib/projectImportCore.js";
 import { resolveProjectImportClaimAuthority } from "./lib/projectImportClaimAuthority.js";
 import { PROJECT_IMPORT_ACTIONS, requireProjectImportWalletAuth } from "./lib/projectImportSecurity.js";
-import { finishProjectXClaim, projectXClaimRedirect, resolveOfficialProjectX, startProjectXClaim } from "./lib/projectImportXClaim.js";
+import { finishProjectXClaim, projectXClaimRedirect, resolveOfficialProjectX, resolveProjectImportImage, startProjectXClaim } from "./lib/projectImportXClaim.js";
 
 const COOKIE_PATH="/api/project-imports/image/x";
 const EVM_CHAINS=new Set([56,4663]);
@@ -15,6 +15,19 @@ function normalizeCookiePath(res){const raw=res.getHeader("Set-Cookie");if(!raw)
 function clearCookie(res){res.setHeader("Set-Cookie",`mwz_x_claim=; Path=${COOKIE_PATH}; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);}
 function recoverNavigation(state){try{const encoded=String(state||"").split(".")[0];const p=JSON.parse(Buffer.from(encoded,"base64url").toString("utf8"));return{tokenAddress:String(p?.tokenAddress||""),chainId:Number(p?.chainId||101)};}catch{return{tokenAddress:"",chainId:101};}}
 async function requireStartAuth(res,body,identity,project){return requireProjectImportWalletAuth({res,pool,auth:body?.auth,expectedWallet:body?.auth?.walletAddress||"",chainId:identity.chainId,token:identity.tokenAddress,action:PROJECT_IMPORT_ACTIONS.claim,projectId:project.id,body:{operation:"claim"},routeLabel:"project-imports/x/start"});}
+async function backfillProjectImage(project,identity){
+ if(String(project?.image_url||"").trim())return String(project.image_url);
+ try{
+  const resolved=await resolveProjectImportImage(identity.chainId,identity.tokenAddress);
+  const imageUrl=String(resolved?.imageUrl||"").trim();
+  if(!imageUrl)return null;
+  const result=await pool.query(`UPDATE public.arena_token_imports SET image_url=$2,metadata_updated_at=NOW(),updated_at=NOW() WHERE id=$1 AND (image_url IS NULL OR btrim(image_url)='') RETURNING image_url`,[project.id,imageUrl]);
+  return String(result.rows?.[0]?.image_url||imageUrl);
+ }catch(error){
+  console.warn("[api/projectImportXClaim] image metadata backfill failed",{projectId:project?.id,chainId:identity.chainId,tokenAddress:identity.tokenAddress,error:String(error?.message||error)});
+  return null;
+ }
+}
 
 export default async function projectImportXClaim(req,res){
  if(!enabled())return json(res,404,{error:"Project imports are disabled.",code:"PROJECT_IMPORTS_DISABLED"});if(!pool)return json(res,503,{error:"Project imports require DATABASE_URL."});const path=routePath(req);
@@ -27,7 +40,9 @@ export default async function projectImportXClaim(req,res){
    return json(res,200,resolved);
   }
   if(req.method==="POST"&&path==="/resolve"){
-   const body=await readJson(req),identity=normalizeProjectIdentity(body.chainId,body.tokenAddress);const project=await lookupProjectImport(pool,identity);if(!project)throw Object.assign(new Error("Imported project not found"),{code:"PROJECT_NOT_FOUND"});const expected=await resolveOfficialProjectX(identity.chainId,identity.tokenAddress);return json(res,200,{available:true,username:expected.username,xUrl:expected.xUrl,source:expected.source});
+   const body=await readJson(req),identity=normalizeProjectIdentity(body.chainId,body.tokenAddress);const project=await lookupProjectImport(pool,identity);if(!project)throw Object.assign(new Error("Imported project not found"),{code:"PROJECT_NOT_FOUND"});
+   const [expected,imageUrl]=await Promise.all([resolveOfficialProjectX(identity.chainId,identity.tokenAddress),backfillProjectImage(project,identity)]);
+   return json(res,200,{available:true,username:expected.username,xUrl:expected.xUrl,source:expected.source,imageUrl:imageUrl||null});
   }
   if(req.method==="POST"&&path==="/start"){
    const body=await readJson(req),identity=normalizeProjectIdentity(body.chainId,body.tokenAddress);const project=await lookupProjectImport(pool,identity);if(!project)throw Object.assign(new Error("Imported project not found"),{code:"PROJECT_NOT_FOUND"});const auth=await requireStartAuth(res,body,identity,project);if(!auth)return;const started=await startProjectXClaim({req,res,project,walletAddress:auth.walletAddress});normalizeCookiePath(res);return json(res,200,started);
