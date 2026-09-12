@@ -2,7 +2,9 @@ import crypto from "node:crypto";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { pumpBondingCurveAddress, assertSolanaImportMainnet } from "./projectSolanaProjectAuthority.js";
 
+const BNB_CHAIN_ID = 56;
 const SOLANA_CHAIN_ID = 101;
+const ROBINHOOD_CHAIN_ID = 4663;
 const TOKEN_METADATA_PROGRAM_ID = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
 const COOKIE_NAME = "mwz_x_claim";
 const OAUTH_TTL_MS = 10 * 60 * 1000;
@@ -54,6 +56,7 @@ function verifyState(token) {
   try { payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")); }
   catch { throw Object.assign(new Error("Invalid X OAuth state"), { code: "PROJECT_IMPORT_X_OAUTH_STATE_INVALID" }); }
   if (!payload?.exp || Date.now() > Number(payload.exp)) throw Object.assign(new Error("X OAuth request expired"), { code: "PROJECT_IMPORT_X_OAUTH_STATE_EXPIRED" });
+  if (![BNB_CHAIN_ID, SOLANA_CHAIN_ID, ROBINHOOD_CHAIN_ID].includes(Number(payload.chainId))) throw Object.assign(new Error("Unsupported X claim chain"), { code: "INVALID_CHAIN" });
   return payload;
 }
 
@@ -175,23 +178,62 @@ export async function resolvePumpOfficialX(mint) {
   };
 }
 
+function dexScreenerChain(chainId) {
+  if (Number(chainId) === BNB_CHAIN_ID) return String(process.env.DEXSCREENER_BNB_CHAIN_ID || "bsc").trim();
+  if (Number(chainId) === ROBINHOOD_CHAIN_ID) return String(process.env.DEXSCREENER_ROBINHOOD_CHAIN_ID || "robinhood").trim();
+  return "";
+}
+
+export async function resolveDexScreenerOfficialX(chainId, tokenAddress) {
+  const chain = dexScreenerChain(chainId);
+  if (!chain) throw Object.assign(new Error("DexScreener X lookup is unavailable for this chain"), { code: "PROJECT_IMPORT_X_UNSUPPORTED_CHAIN" });
+  const token = String(tokenAddress || "").trim().toLowerCase();
+  const url = `https://api.dexscreener.com/tokens/v1/${encodeURIComponent(chain)}/${encodeURIComponent(tokenAddress)}`;
+  const response = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(7000) });
+  if (!response.ok) throw Object.assign(new Error("DexScreener project metadata is temporarily unavailable"), { code: "PROJECT_IMPORT_X_METADATA_UNAVAILABLE" });
+  const json = await response.json().catch(() => []);
+  const pairs = Array.isArray(json) ? json : [];
+  const matching = pairs.filter((pair) => String(pair?.chainId || "").toLowerCase() === chain.toLowerCase() && String(pair?.baseToken?.address || "").toLowerCase() === token);
+  const usernames = new Set();
+  for (const pair of matching) {
+    for (const social of Array.isArray(pair?.info?.socials) ? pair.info.socials : []) {
+      const platform = String(social?.platform || social?.type || "").toLowerCase();
+      if (platform !== "twitter" && platform !== "x") continue;
+      const username = normalizeXUsername(social?.handle || social?.url || "");
+      if (username) usernames.add(username);
+    }
+  }
+  if (usernames.size === 0) throw Object.assign(new Error("No official X account is attached to this token on DexScreener"), { code: "PROJECT_IMPORT_X_NOT_FOUND" });
+  if (usernames.size > 1) throw Object.assign(new Error("Conflicting X accounts were found for this token on DexScreener"), { code: "PROJECT_IMPORT_X_CONFLICT" });
+  const username = [...usernames][0];
+  return { username, xUrl: `https://x.com/${username}`, source: "dexscreener_token_profile", chain };
+}
+
+export async function resolveOfficialProjectX(chainId, tokenAddress) {
+  const id = Number(chainId);
+  if (id === SOLANA_CHAIN_ID) return resolvePumpOfficialX(tokenAddress);
+  if (id === BNB_CHAIN_ID || id === ROBINHOOD_CHAIN_ID) return resolveDexScreenerOfficialX(id, tokenAddress);
+  throw Object.assign(new Error("X project verification is not supported on this chain"), { code: "INVALID_CHAIN" });
+}
+
 function redirectUri() {
   return requiredEnv("X_OAUTH_REDIRECT_URI");
 }
 
 function publicSiteUrl() {
-  return String(process.env.PUBLIC_SITE_URL || process.env.X_OAUTH_SUCCESS_URL || "https://memewar.zone").replace(/\/$/, "");
+  return String(process.env.PUBLIC_SITE_URL || process.env.X_OAUTH_SUCCESS_URL || "https://app.memewar.zone").replace(/\/$/, "");
 }
 
 export async function startProjectXClaim({ req, res, project, walletAddress }) {
-  if (Number(project?.chain_id) !== SOLANA_CHAIN_ID) throw Object.assign(new Error("X project verification is currently available for Pump.fun Solana projects only"), { code: "INVALID_CHAIN" });
+  const chainId = Number(project?.chain_id);
+  if (![BNB_CHAIN_ID, SOLANA_CHAIN_ID, ROBINHOOD_CHAIN_ID].includes(chainId)) throw Object.assign(new Error("X project verification is not supported on this chain"), { code: "INVALID_CHAIN" });
   if (project?.ownership_status === "ownership_suspended") throw Object.assign(new Error("Project ownership is suspended"), { code: "OWNERSHIP_SUSPENDED" });
   if (project?.ownership_status === "ownership_verified") throw Object.assign(new Error("This project is already verified"), { code: "OWNERSHIP_CONFLICT" });
   if (project?.ownership_status === "ownership_manual_review" && project?.manual_claim_wallet && project.manual_claim_wallet !== walletAddress) {
     throw Object.assign(new Error("Another project claim is already pending"), { code: "OWNERSHIP_CONFLICT" });
   }
 
-  const expected = await resolvePumpOfficialX(project.token_address);
+  const expected = await resolveOfficialProjectX(chainId, project.token_address);
   const verifier = randomUrlSafe(48);
   const challenge = crypto.createHash("sha256").update(verifier).digest("base64url");
   const nonce = randomUrlSafe(20);
@@ -199,7 +241,7 @@ export async function startProjectXClaim({ req, res, project, walletAddress }) {
     v: 1,
     nonce,
     projectId: String(project.id),
-    chainId: SOLANA_CHAIN_ID,
+    chainId,
     tokenAddress: String(project.token_address),
     walletAddress: String(walletAddress),
     expectedUsername: expected.username,
@@ -274,9 +316,9 @@ export async function finishProjectXClaim({ req, res, pool, state, code }) {
     });
   }
 
-  const currentExpected = await resolvePumpOfficialX(payload.tokenAddress);
+  const currentExpected = await resolveOfficialProjectX(payload.chainId, payload.tokenAddress);
   if (currentExpected.username !== expectedUsername) {
-    throw Object.assign(new Error("The official Pump.fun X account changed during verification"), { code: "PROJECT_IMPORT_X_ACCOUNT_CHANGED" });
+    throw Object.assign(new Error("The official project X account changed during verification"), { code: "PROJECT_IMPORT_X_ACCOUNT_CHANGED" });
   }
 
   const result = await pool.query(
@@ -295,12 +337,12 @@ export async function finishProjectXClaim({ req, res, pool, state, code }) {
         AND ownership_status IN ('ownership_pending','ownership_manual_review')
         AND (ownership_status='ownership_pending' OR manual_claim_wallet IS NULL OR manual_claim_wallet=$4)
       RETURNING *`,
-    [payload.projectId, SOLANA_CHAIN_ID, payload.tokenAddress, payload.walletAddress, currentExpected.xUrl],
+    [payload.projectId, Number(payload.chainId), payload.tokenAddress, payload.walletAddress, currentExpected.xUrl],
   );
   if (!result.rows?.[0]) {
     const current = await pool.query("SELECT * FROM public.arena_token_imports WHERE id=$1 LIMIT 1", [payload.projectId]);
     const row = current.rows?.[0];
-    if (row?.ownership_status === "ownership_verified" && row?.project_owner_wallet === payload.walletAddress) return { project: row, xUser };
+    if (row?.ownership_status === "ownership_verified" && String(row?.project_owner_wallet || "").toLowerCase() === String(payload.walletAddress || "").toLowerCase()) return { project: row, xUser };
     throw Object.assign(new Error("Project ownership changed during X verification"), { code: "OWNERSHIP_CONFLICT" });
   }
   return { project: result.rows[0], xUser };
