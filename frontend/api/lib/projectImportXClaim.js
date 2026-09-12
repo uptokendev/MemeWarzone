@@ -18,6 +18,15 @@ const ALLOWED_METADATA_HOSTS = new Set([
   "arweave.net",
   "m.rapidlaunch.io",
 ]);
+const IPFS_GATEWAY_HOSTS = new Set([
+  "cf-ipfs.com",
+  "ipfs.io",
+  "gateway.pinata.cloud",
+  "pump.mypinata.cloud",
+  "cloudflare-ipfs.com",
+]);
+const IPFS_PRIMARY_GATEWAY = "https://pump.mypinata.cloud/ipfs/";
+const IPFS_FALLBACK_GATEWAY = "https://gateway.pinata.cloud/ipfs/";
 
 function requiredEnv(name) {
   const value = String(process.env[name] || "").trim();
@@ -100,13 +109,33 @@ function readMetadataString(data, offset, maxBytes) {
   return { value: data.subarray(start, end).toString("utf8").replace(/\0/g, "").trim(), next: end };
 }
 
+function ipfsContentPath(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return null;
+  if (value.startsWith("ipfs://")) return value.slice("ipfs://".length).replace(/^ipfs\//, "");
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:" || !IPFS_GATEWAY_HOSTS.has(url.hostname.toLowerCase())) return null;
+    const match = url.pathname.match(/^\/ipfs\/(.+)$/);
+    return match?.[1] || null;
+  } catch { return null; }
+}
+
+function ipfsGatewayUrl(path, gateway = IPFS_PRIMARY_GATEWAY) {
+  return `${gateway}${String(path || "").replace(/^\/+/, "")}`;
+}
+
+function metadataFetchCandidates(raw) {
+  const path = ipfsContentPath(raw);
+  if (!path) return [String(raw || "").trim()].filter(Boolean);
+  return [ipfsGatewayUrl(path), ipfsGatewayUrl(path, IPFS_FALLBACK_GATEWAY)];
+}
+
 function normalizeMetadataUrl(raw) {
   const value = String(raw || "").trim();
   if (!value) return null;
-  if (value.startsWith("ipfs://")) {
-    const cidPath = value.slice("ipfs://".length).replace(/^ipfs\//, "");
-    return `https://cf-ipfs.com/ipfs/${cidPath}`;
-  }
+  const path = ipfsContentPath(value);
+  if (path) return ipfsGatewayUrl(path);
   let url;
   try { url = new URL(value); } catch { return null; }
   if (url.protocol !== "https:" || !ALLOWED_METADATA_HOSTS.has(url.hostname.toLowerCase())) return null;
@@ -116,10 +145,8 @@ function normalizeMetadataUrl(raw) {
 function normalizeImageUrl(raw) {
   const value = String(raw || "").trim();
   if (!value) return null;
-  if (value.startsWith("ipfs://")) {
-    const cidPath = value.slice("ipfs://".length).replace(/^ipfs\//, "");
-    return `https://cf-ipfs.com/ipfs/${cidPath}`;
-  }
+  const path = ipfsContentPath(value);
+  if (path) return ipfsGatewayUrl(path);
   try {
     const url = new URL(value);
     return url.protocol === "https:" ? url.toString() : null;
@@ -209,11 +236,19 @@ async function readSolanaMetadataJson(mint, { requirePump = false } = {}) {
   }
   const reference = await readSolanaMetadataReference(connection, mintKey);
   if (!reference) throw Object.assign(new Error("Pump.fun project metadata could not be resolved"), { code: "PROJECT_IMPORT_X_METADATA_UNAVAILABLE" });
-  const response = await fetch(reference.metadataUrl, {
-    headers: { accept: "application/json" },
-    signal: AbortSignal.timeout(7000),
-  });
-  if (!response.ok) throw Object.assign(new Error("Pump.fun metadata is temporarily unavailable"), { code: "PROJECT_IMPORT_X_METADATA_UNAVAILABLE" });
+  let response = null;
+  for (const metadataUrl of metadataFetchCandidates(reference.metadataUrl)) {
+    try {
+      const candidate = await fetch(metadataUrl, {
+        headers: { accept: "application/json" },
+        signal: AbortSignal.timeout(7000),
+      });
+      if (candidate.ok) { response = candidate; break; }
+    } catch {
+      // Try the next content-addressed gateway.
+    }
+  }
+  if (!response) throw Object.assign(new Error("Pump.fun metadata is temporarily unavailable"), { code: "PROJECT_IMPORT_X_METADATA_UNAVAILABLE" });
   const json = await response.json().catch(() => null);
   if (!json || typeof json !== "object") throw Object.assign(new Error("Pump.fun project metadata is invalid"), { code: "PROJECT_IMPORT_X_METADATA_UNAVAILABLE" });
   return {
