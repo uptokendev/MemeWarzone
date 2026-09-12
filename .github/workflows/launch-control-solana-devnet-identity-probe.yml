@@ -55,40 +55,45 @@ jobs:
             return out || '1';
           }
 
-          const genesis = await call('getGenesisHash', []);
-          if (genesis !== expectedGenesis) throw new Error(`wrong cluster genesis ${genesis}`);
+          (async () => {
+            const genesis = await call('getGenesisHash', []);
+            if (genesis !== expectedGenesis) throw new Error(`wrong cluster genesis ${genesis}`);
 
-          const program = await call('getAccountInfo', [programId, {encoding: 'base64', commitment: 'confirmed'}]);
-          if (!program.value) throw new Error('launchpad program missing');
-          const programRaw = Buffer.from(program.value.data[0], 'base64');
-          if (programRaw.length < 36 || programRaw.readUInt32LE(0) !== 2) throw new Error('unexpected Program account state');
-          const programDataAddress = b58(programRaw.subarray(4, 36));
+            const program = await call('getAccountInfo', [programId, {encoding: 'base64', commitment: 'confirmed'}]);
+            if (!program.value) throw new Error('launchpad program missing');
+            const programRaw = Buffer.from(program.value.data[0], 'base64');
+            if (programRaw.length < 36 || programRaw.readUInt32LE(0) !== 2) throw new Error('unexpected Program account state');
+            const programDataAddress = b58(programRaw.subarray(4, 36));
 
-          const programData = await call('getAccountInfo', [programDataAddress, {encoding: 'base64', commitment: 'confirmed'}]);
-          if (!programData.value) throw new Error('ProgramData account missing');
-          const raw = Buffer.from(programData.value.data[0], 'base64');
-          if (raw.length < 45 || raw.readUInt32LE(0) !== 3) throw new Error('unexpected ProgramData state');
-          const deploymentSlot = raw.readBigUInt64LE(4).toString();
-          const authorityOption = raw.readUInt8(12);
-          if (authorityOption !== 0 && authorityOption !== 1) throw new Error(`invalid authority option ${authorityOption}`);
-          const upgradeAuthority = authorityOption === 1 ? b58(raw.subarray(13, 45)) : null;
-          const programBytes = raw.subarray(45, 45 + expectedProgramBytes);
-          if (programBytes.length !== expectedProgramBytes) throw new Error(`deployed binary too short ${programBytes.length}`);
-          const deployedProgramSha256 = crypto.createHash('sha256').update(programBytes).digest('hex');
+            const programData = await call('getAccountInfo', [programDataAddress, {encoding: 'base64', commitment: 'confirmed'}]);
+            if (!programData.value) throw new Error('ProgramData account missing');
+            const raw = Buffer.from(programData.value.data[0], 'base64');
+            if (raw.length < 45 || raw.readUInt32LE(0) !== 3) throw new Error('unexpected ProgramData state');
+            const deploymentSlot = raw.readBigUInt64LE(4).toString();
+            const authorityOption = raw.readUInt8(12);
+            if (authorityOption !== 0 && authorityOption !== 1) throw new Error(`invalid authority option ${authorityOption}`);
+            const upgradeAuthority = authorityOption === 1 ? b58(raw.subarray(13, 45)) : null;
+            const programBytes = raw.subarray(45, 45 + expectedProgramBytes);
+            if (programBytes.length !== expectedProgramBytes) throw new Error(`deployed binary too short ${programBytes.length}`);
+            const deployedProgramSha256 = crypto.createHash('sha256').update(programBytes).digest('hex');
 
-          console.log(JSON.stringify({
-            readOnly: true,
-            cluster: 'solana-devnet',
-            genesis,
-            programId,
-            programOwner: program.value.owner,
-            programExecutable: program.value.executable,
-            programDataAddress,
-            programDataOwner: programData.value.owner,
-            deploymentSlot,
-            upgradeAuthority,
-            expectedProgramBytes,
-            programDataPayloadCapacityBytes: raw.length - 45,
-            deployedProgramSha256,
-          }, null, 2));
+            console.log(JSON.stringify({
+              readOnly: true,
+              cluster: 'solana-devnet',
+              genesis,
+              programId,
+              programOwner: program.value.owner,
+              programExecutable: program.value.executable,
+              programDataAddress,
+              programDataOwner: programData.value.owner,
+              deploymentSlot,
+              upgradeAuthority,
+              expectedProgramBytes,
+              programDataPayloadCapacityBytes: raw.length - 45,
+              deployedProgramSha256,
+            }, null, 2));
+          })().catch((error) => {
+            console.error(error?.stack || error);
+            process.exitCode = 1;
+          });
           NODE
