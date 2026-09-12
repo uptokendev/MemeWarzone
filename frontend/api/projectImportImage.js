@@ -3,6 +3,7 @@ import formidable from "formidable";
 import fs from "fs";
 import crypto from "node:crypto";
 import { pool } from "../server/db.js";
+import projectImportXClaim from "./projectImportXClaim.js";
 import { inspectImageFile, PROJECT_IMPORT_IMAGE_LIMITS } from "./lib/imageFileValidation.js";
 import { PROJECT_IMPORT_ACTIONS, requireProjectImportWalletAuth } from "./lib/projectImportSecurity.js";
 import { bindRegistrationImage, lookupProjectImport, normalizeProjectIdentity, persistProjectImage, publicProject } from "./lib/projectImportCore.js";
@@ -13,6 +14,10 @@ function first(value){return Array.isArray(value)?String(value[0]??""):String(va
 function authFrom(q,fields){return{action:first(fields.action)||String(q.action||""),walletAddress:first(fields.walletAddress)||first(fields.address)||String(q.walletAddress||q.address||""),chainId:Number(first(fields.chainId)||q.chainId),nonce:first(fields.nonce)||String(q.nonce||""),message:(first(fields.message)||String(q.message||"")).replace(/\r\n/g,"\n"),signature:first(fields.signature)||String(q.signature||""),walletType:first(fields.walletType)||String(q.walletType||"")};}
 function fail(res,status,error,code){return res.status(status).json({error,code});}
 export default async function projectImportImage(req,res){
+ const originalPath=String(req.originalUrl||req.url||"").split("?")[0];
+ // X claim is deliberately mounted under the already-isolated project-import
+ // boundary so this release does not broaden the shared API router.
+ if(originalPath.includes("/api/project-imports/image/x/"))return projectImportXClaim(req,res);
  if(req.method!=="POST")return fail(res,405,"Method not allowed","METHOD_NOT_ALLOWED");
  if(!/^(1|true|yes|on)$/i.test(String(process.env.ENABLE_PROJECT_IMPORTS||"").trim()))return fail(res,404,"Project imports are disabled","PROJECT_IMPORTS_DISABLED");
  if(!pool)return fail(res,503,"Project imports require DATABASE_URL","PROJECT_IMPORT_DB_UNAVAILABLE");
