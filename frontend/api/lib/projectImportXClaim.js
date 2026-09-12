@@ -72,11 +72,11 @@ function parseCookies(req) {
 
 function setClaimCookie(res, payload) {
   const value = base64url(JSON.stringify(payload));
-  res.setHeader("Set-Cookie", `${COOKIE_NAME}=${encodeURIComponent(value)}; Path=/api/project-imports/x; HttpOnly; Secure; SameSite=Lax; Max-Age=600`);
+  res.setHeader("Set-Cookie", `${COOKIE_NAME}=${encodeURIComponent(value)}; Path=/api/project-imports/image/x; HttpOnly; Secure; SameSite=Lax; Max-Age=600`);
 }
 
 function clearClaimCookie(res) {
-  res.setHeader("Set-Cookie", `${COOKIE_NAME}=; Path=/api/project-imports/x; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
+  res.setHeader("Set-Cookie", `${COOKIE_NAME}=; Path=/api/project-imports/image/x; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
 }
 
 function readClaimCookie(req) {
@@ -274,8 +274,6 @@ export async function finishProjectXClaim({ req, res, pool, state, code }) {
     });
   }
 
-  // Re-resolve from Pump metadata at callback time so a signed OAuth state cannot
-  // outlive a changed/corrected project identity source.
   const currentExpected = await resolvePumpOfficialX(payload.tokenAddress);
   if (currentExpected.username !== expectedUsername) {
     throw Object.assign(new Error("The official Pump.fun X account changed during verification"), { code: "PROJECT_IMPORT_X_ACCOUNT_CHANGED" });
