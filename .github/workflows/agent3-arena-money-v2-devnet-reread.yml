@@ -1,6 +1,12 @@
 name: Agent3 ArenaMoneyV2 Devnet Reread
 
 on:
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - '.github/workflows/agent3-arena-money-v2-devnet-reread.yml'
+      - 'frontend/scripts/arena-money-v2-devnet-reread.mjs'
   push:
     branches:
       - agent3/arena-money-v2-live-reread-11cde9e
@@ -40,7 +46,7 @@ jobs:
       - name: Checkout exact diagnostic head
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Prove source ancestry and diagnostic-only scope
@@ -115,7 +121,7 @@ jobs:
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: arena-money-v2-reread-${{ github.sha }}
+          name: arena-money-v2-reread-${{ github.event.pull_request.head.sha || github.sha }}
           path: /tmp/arena-money-v2-live-reread.json
           if-no-files-found: warn
           retention-days: 14
