@@ -7,12 +7,14 @@ on:
     paths:
       - '.github/workflows/agent3-arena-money-v2-devnet-reread.yml'
       - 'frontend/scripts/arena-money-v2-devnet-reread.mjs'
+      - 'frontend/scripts/arena-money-v2-devnet-acceptance.mjs'
   push:
     branches:
       - agent3/arena-money-v2-live-reread-11cde9e
     paths:
       - '.github/workflows/agent3-arena-money-v2-devnet-reread.yml'
       - 'frontend/scripts/arena-money-v2-devnet-reread.mjs'
+      - 'frontend/scripts/arena-money-v2-devnet-acceptance.mjs'
   workflow_dispatch:
 
 permissions:
@@ -31,32 +33,35 @@ env:
   RUST_TOOLCHAIN: 1.79.0
 
 jobs:
-  reread:
-    name: Read-only rewards treasury identity
+  reread-and-acceptance:
+    name: Reread then real-money acceptance
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
     environment: airdrop-solana-devnet
     env:
       SOLANA_REWARDS_RPC_URL: ${{ secrets.SOLANA_REWARDS_RPC_URL }}
       SOLANA_REWARDS_TREASURY_PROGRAM_ID: ${{ vars.SOLANA_REWARDS_TREASURY_PROGRAM_ID }}
       SOLANA_REWARDS_AUTHORITY_SECRET_KEY: ${{ secrets.SOLANA_REWARDS_AUTHORITY_SECRET_KEY }}
+      SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
       ARENA_MONEY_V2_CANDIDATE_PATH: target/deploy/mwz_rewards_treasury.so
       ARENA_MONEY_V2_REREAD_OUT: /tmp/arena-money-v2-live-reread.json
+      ARENA_MONEY_V2_ACCEPTANCE_OUT: /tmp/arena-money-v2-acceptance.json
     steps:
-      - name: Checkout exact diagnostic head
+      - name: Checkout exact acceptance head
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
-      - name: Prove source ancestry and diagnostic-only scope
+      - name: Prove source ancestry and certification-only scope
         shell: bash
         run: |
           set -euo pipefail
           git merge-base --is-ancestor "$EXPECTED_SOURCE_SHA" HEAD
           changed="$(git diff --name-only "$EXPECTED_SOURCE_SHA"...HEAD)"
           printf '%s\n' "$changed"
-          test "$changed" = $'.github/workflows/agent3-arena-money-v2-devnet-reread.yml\nfrontend/scripts/arena-money-v2-devnet-reread.mjs'
+          test "$changed" = $'.github/workflows/agent3-arena-money-v2-devnet-reread.yml\nfrontend/scripts/arena-money-v2-devnet-acceptance.mjs\nfrontend/scripts/arena-money-v2-devnet-reread.mjs'
+          test -z "$(git diff --name-only "$EXPECTED_SOURCE_SHA"...HEAD -- programs/ frontend/api/ realtime-indexer/)"
 
       - uses: actions/setup-node@v4
         with:
@@ -109,19 +114,36 @@ jobs:
           test -n "${SOLANA_REWARDS_RPC_URL:-}"
           test -n "${SOLANA_REWARDS_AUTHORITY_SECRET_KEY:-}"
           node frontend/scripts/arena-money-v2-devnet-reread.mjs
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const e=JSON.parse(fs.readFileSync('/tmp/arena-money-v2-live-reread.json','utf8'));
+          if (!e.arenaMoneyV2InstructionAvailable) throw new Error('LIVE_ARENA_MONEY_V2_INSTRUCTION_MISSING');
+          if (!e.configExists || e.config?.generation !== 2 || e.config?.paused) throw new Error('LIVE_ARENA_MONEY_V2_CONFIG_NOT_READY');
+          console.log('PASS: live ArenaMoneyV2 already available; upgrade and config init are forbidden/not required');
+          NODE
 
-      - name: Assert no mutation path exists in diagnostic transport
+      - name: Assert no upgrade or deploy path is present
         shell: bash
         run: |
           set -euo pipefail
           ! grep -E 'sendAndConfirmTransaction|sendRawTransaction|sendTransaction|program deploy|anchor deploy' frontend/scripts/arena-money-v2-devnet-reread.mjs
-          echo 'PASS: diagnostic lane contains no broadcast/deploy call'
+          ! grep -E 'program deploy|anchor deploy|program upgrade' frontend/scripts/arena-money-v2-devnet-acceptance.mjs
+          echo 'PASS: no program upgrade/deploy path in Agent 3 transport'
 
-      - name: Upload reread evidence
+      - name: Real SOL ArenaMoneyV2 acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY:-}"
+          node frontend/scripts/arena-money-v2-devnet-acceptance.mjs
+
+      - name: Upload ArenaMoneyV2 evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: arena-money-v2-reread-${{ github.event.pull_request.head.sha || github.sha }}
-          path: /tmp/arena-money-v2-live-reread.json
+          name: arena-money-v2-evidence-${{ github.event.pull_request.head.sha || github.sha }}
+          path: |
+            /tmp/arena-money-v2-live-reread.json
+            /tmp/arena-money-v2-acceptance.json
           if-no-files-found: warn
-          retention-days: 14
+          retention-days: 30
