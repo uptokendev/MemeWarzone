@@ -98,10 +98,36 @@ test("EVM Claim Memecoin checks current owner first and offers X fallback", () =
   assert.match(claimDialog, /No active owner\(\)\/getOwner\(\) wallet is exposed/);
 });
 
+test("Solana Claim Memecoin offers creator-wallet proof before manual review", () => {
+  assert.match(claimDialog, /Pump\.fun creator wallet/);
+  assert.match(claimDialog, /VERIFY CREATOR WALLET/);
+  assert.match(claimDialog, /verifyPumpCreatorWallet/);
+  assert.match(claimDialog, /project_import_claim/);
+  assert.match(claimDialog, /Recorded creator wallet/);
+});
+
+test("manual review is the final ownership fallback and requires a contact X account", () => {
+  assert.match(claimDialog, /Last resort — manual review/);
+  assert.match(claimDialog, /REQUEST MANUAL REVIEW/);
+  assert.match(claimDialog, /SUBMIT MANUAL REVIEW/);
+  assert.match(claimDialog, /Contact X account/);
+  assert.match(claimDialog, /project_import_manual_claim/);
+  assert.match(claimDialog, /requestProjectManualCheck/);
+  assert.match(claimDialog, /Contact X: \$\{contactX\}/);
+  assert.match(claimDialog, /This does not verify ownership automatically/);
+});
+
+test("failed X OAuth reopens Claim Memecoin and explains account mismatch", () => {
+  assert.match(entry, /claimResult === "prompt" \|\| claimResult === "x_failed"/);
+  assert.match(claimDialog, /PROJECT_IMPORT_X_ACCOUNT_MISMATCH/);
+  assert.match(claimDialog, /does not match the project account attached to this token/);
+  assert.match(entry, /onManualReviewRequested=\{\(next\) => \{ setProject\(next\); setClaimOpen\(false\); \}\}/);
+});
+
 test("post-import prompt uses the same Claim Memecoin dialog rather than a second flow", () => {
-  assert.match(entry, /useState\(searchParams\.get\("claim"\) === "prompt"\)/);
+  assert.match(entry, /claimResult === "prompt"/);
   assert.match(claimDialog, /resolveProjectXIdentity\(item\)/);
-  assert.match(claimDialog, /action:"project_import_claim"/);
+  assert.match(claimDialog, /action, walletAddress/);
   assert.match(claimDialog, /signSolanaMessage\(message,walletAddress\)/);
   assert.match(claimDialog, /startProjectXClaim\(item,auth\)/);
 });
