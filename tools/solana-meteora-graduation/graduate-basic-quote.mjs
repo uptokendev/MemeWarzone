@@ -275,7 +275,11 @@ async function main() {
   assertPk(auth.programId, program.programId, "programId"); assertPk(auth.accounts.campaign, campaignPk, "campaign"); assertPk(auth.accounts.mint, campaign.mint, "mint"); assertPk(auth.accounts.authorityTokenAccount, stagingAta.address, "staging ATA");
   const quoteMint = asPk(auth.quote.mint, "quote mint"); const nativeQuote = Number(auth.quote.profile) === QUOTE_PROFILE_NATIVE;
   let quoteAta = null; let recoveryAccount = null;
-  if (!nativeQuote) {
+  if (nativeQuote) {
+    quoteAta = await getOrCreateAssociatedTokenAccount(connection, operator, quoteMint, operator.publicKey, false, "confirmed", undefined, TOKEN_PROGRAM_ID);
+    const nativeQuoteAccount = await getAccount(connection, quoteAta.address, "confirmed", TOKEN_PROGRAM_ID);
+    if (nativeQuoteAccount.amount !== 0n) fail(`operator native quote ATA must be empty; balance=${nativeQuoteAccount.amount}`);
+  } else {
     quoteAta = await getOrCreateAssociatedTokenAccount(connection, operator, quoteMint, operator.publicKey, false, "confirmed", undefined, TOKEN_PROGRAM_ID);
     const q = await getAccount(connection, quoteAta.address, "confirmed", TOKEN_PROGRAM_ID); if (q.amount !== 0n) fail(`operator quote ATA must be empty; balance=${q.amount}`);
     recoveryAccount = asPk(auth.quote.recoveryAccount, "quote recovery account"); const recovery = await getAccount(connection, recoveryAccount, "confirmed", TOKEN_PROGRAM_ID); if (!recovery.mint.equals(quoteMint)) fail("quote recovery account mint mismatch");
