@@ -69,11 +69,11 @@ async function resolveCurrentOwner(provider, contractAddress, signedConnectedWal
   };
 }
 
-export async function resolveProjectOwnershipBnb({ provider, chainId, contractAddress, signedConnectedWallet }) {
+export async function resolveProjectOwnershipBnb({ provider, chainId, contractAddress, signedConnectedWallet, skipOwnership = false }) {
   if (Number(chainId) !== BNB_PROJECT_OWNERSHIP_CHAIN_ID) throw new TypeError("BNB ownership resolver only supports chain 56.");
   if (!provider || typeof provider.getCode !== "function" || typeof provider.call !== "function") throw new TypeError("A read-only EVM provider is required.");
   const tokenAddress = normalizeAddress(contractAddress, "contract address");
-  const signedWallet = normalizeAddress(signedConnectedWallet, "signed connected wallet");
+  const signedWallet = skipOwnership ? null : normalizeAddress(signedConnectedWallet, "signed connected wallet");
   let bytecode;
   try { bytecode = await provider.getCode(tokenAddress); }
   catch (error) {
@@ -86,7 +86,7 @@ export async function resolveProjectOwnershipBnb({ provider, chainId, contractAd
   if (!symbolRead.readable || !decimalsRead.readable) return { ok: false, chainId: 56, contractAddress: tokenAddress, errorCode: "ERC20_READ_FAILED", error: "Required ERC20 symbol() or decimals() read is unavailable." };
   const decimals = Number(decimalsRead.value);
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 255) return { ok: false, chainId: 56, contractAddress: tokenAddress, errorCode: "ERC20_DECIMALS_INVALID", error: "ERC20 decimals() returned an invalid value." };
-  const ownership = await resolveCurrentOwner(provider, tokenAddress, signedWallet);
+  const ownership = skipOwnership ? unavailableOwnership() : await resolveCurrentOwner(provider, tokenAddress, signedWallet);
   return {
     ok: true,
     chainId: 56,
