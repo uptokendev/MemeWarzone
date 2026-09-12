@@ -14,6 +14,7 @@ export type SolanaProvider = {
   connect?: (args?: { onlyIfTrusted?: boolean }) => Promise<{ publicKey?: { toString: () => string } }>;
   disconnect?: () => Promise<void>;
   signMessage?: (message: Uint8Array, encoding?: "utf8") => Promise<{ signature: Uint8Array } | Uint8Array>;
+  request?: (args: { method: string; params?: Record<string, unknown> }) => Promise<unknown>;
   signTransaction?: (transaction: unknown) => Promise<any>;
   signAndSendTransaction?: (transaction: unknown) => Promise<{ signature?: string } | string>;
   on?: (eventName: string, listener: (...args: unknown[]) => void) => void;
@@ -69,6 +70,31 @@ function signatureFromSigned(signed: { signature: Uint8Array } | Uint8Array | nu
     return copied.length ? copied : null;
   }
   return null;
+}
+
+async function signBytesWithProvider(provider: SolanaProvider, bytes: Uint8Array) {
+  const attempts: Array<() => Promise<unknown>> = [];
+  if (provider.signMessage) {
+    // Current Phantom docs require the utf8 display flag. Some older builds
+    // throw if it is present, so keep a no-flag retry.
+    attempts.push(() => provider.signMessage!(bytes, "utf8"));
+    attempts.push(() => provider.signMessage!(bytes));
+  }
+  if (typeof provider.request === "function") {
+    attempts.push(() => provider.request({ method: "signMessage", params: { message: bytes, display: "utf8" } }));
+  }
+  let lastError: unknown;
+  for (const attempt of attempts) {
+    try {
+      return await attempt();
+    } catch (error) {
+      lastError = error;
+      const text = error instanceof Error ? error.message : String((error as { message?: unknown })?.message || error || "");
+      if (/user.*reject|denied|cancel/i.test(text)) throw error;
+      if (!isInternalWalletSignError(error) && !/cannot sign|hex string|utf8/i.test(text)) throw error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Solana wallet could not sign.");
 }
 
 export type DetectedSolanaWallet = {
@@ -399,16 +425,22 @@ export async function signSolanaMessage(message: string, walletAddress?: string)
   const candidates = (withKey.length ? withKey : wallets).filter((wallet) => Boolean(wallet.provider?.signMessage));
   if (!candidates.length) throw new Error("This Solana wallet does not support message signing.");
 
+  const phantomNative = getWindowAny()?.phantom?.solana as SolanaProvider | undefined;
+  const ordered = [...candidates].sort((left, right) => {
+    const leftNative = phantomNative && left.provider === phantomNative ? 0 : 1;
+    const rightNative = phantomNative && right.provider === phantomNative ? 0 : 1;
+    return leftNative - rightNative;
+  });
   const encoded = Uint8Array.from(new TextEncoder().encode(message));
   let lastError: unknown;
 
-  for (const detectedWallet of candidates) {
+  for (const detectedWallet of ordered) {
     const provider = detectedWallet.provider;
     try {
       const liveKey = alreadyConnectedKey(provider);
       if (wanted && liveKey && liveKey !== wanted) continue;
-      const signed = await provider.signMessage!(encoded);
-      const signature = signatureFromSigned(signed);
+      const signed = await signBytesWithProvider(provider, encoded);
+      const signature = signatureFromSigned(signed as { signature: Uint8Array } | Uint8Array | null | undefined);
       if (!signature?.length) throw new Error("Solana wallet did not return a signature.");
       const publicKey = alreadyConnectedKey(provider) || wanted;
       if (!publicKey) throw new Error("Solana wallet not connected.");
@@ -573,9 +605,8 @@ async function createSignedSolanaDraftAction(input: {
   lines.push(`Nonce: ${nonce}`);
 
   const message = lines.join("\n");
-  const encoded = new TextEncoder().encode(message);
-  // Phantom: signMessage(Uint8Array) only — a second "utf8" arg can break some extension versions.
-  const signed = await provider.signMessage(encoded);
+  const encoded = Uint8Array.from(new TextEncoder().encode(message));
+  const signed = await signBytesWithProvider(provider, encoded);
   const rawSig = signed instanceof Uint8Array ? signed : signed?.signature;
   const signature =
     rawSig instanceof Uint8Array
