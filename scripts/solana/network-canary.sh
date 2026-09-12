@@ -22,6 +22,11 @@ export SOLANA_POSTGRAD_CANARY_REPORT="${SOLANA_POSTGRAD_CANARY_REPORT:-/tmp/mwz-
 export SOLANA_GRADUATION_FIXTURE_OUTPUT="$SOLANA_NETWORK_CANARY_REPORT"
 export SOLANA_GRADUATION_PAUSE_SNAPSHOT="${SOLANA_GRADUATION_PAUSE_SNAPSHOT:-/tmp/mwz-solana-101-pause-snapshot.json}"
 
+# The shared deployment identity verifier uses the canonical runtime names below.
+# Keep workflow-facing EXPECTED_* aliases optional, but never silently drop a configured pin.
+export SOLANA_PROGRAMDATA_ADDRESS="${SOLANA_PROGRAMDATA_ADDRESS:-${SOLANA_EXPECTED_PROGRAMDATA_ADDRESS:-}}"
+export SOLANA_DEPLOYMENT_SLOT="${SOLANA_DEPLOYMENT_SLOT:-${SOLANA_EXPECTED_DEPLOYMENT_SLOT:-}}"
+
 required() {
   local name="$1"
   test -n "${!name:-}" || { echo "BLOCKER: ${name} is required" >&2; exit 1; }
@@ -71,6 +76,7 @@ test "$actual_sha" = "$SOLANA_LAUNCHPAD_PROGRAM_SHA256" || { echo "BLOCKER: cand
 test "$actual_bytes" = "$SOLANA_LAUNCHPAD_PROGRAM_BYTES" || { echo "BLOCKER: candidate SBF byte-size mismatch $actual_bytes" >&2; exit 1; }
 
 # This re-reads Program, ProgramData, upgrade authority and deployed bytes from devnet.
+# If ProgramData/deployment-slot pins are configured, the aliases above make the verifier enforce them.
 npm --prefix tests/solana run devnet:deployment-identity
 
 if [ "${SEND_SOLANA_GRADUATION:-false}" != "true" ]; then
