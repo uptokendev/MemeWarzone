@@ -1,0 +1,67 @@
+name: Agent 2 PR289 existing campaign read-only probe
+
+on:
+  push:
+    branches:
+      - agent2/pr289-final-closeout-probe
+    paths:
+      - .github/workflows/agent2-pr289-existing-campaign-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: testnet-certification
+    env:
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
+      CAMPAIGN: So9RKvmBQAwnCRtY4qBteNiS7gFFic4JvjxjN9hHHLk
+      EXPECTED_MINT: FVEBya7Kz2CYMKLK65PZbsixsCgHjAvpGDLNSoXPm824
+      EXPECTED_PROGRAM: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+      PRODUCT_SHA: af455463352dde2182bea974da234fedad454914
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PRODUCT_SHA }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install read-only Solana dependencies
+        run: npm ci --prefix tools/solana-meteora-graduation --no-audit --no-fund
+      - name: Read exact preserved campaign state
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module - <<'NODE'
+          import { Connection, PublicKey } from './tools/solana-meteora-graduation/node_modules/@solana/web3.js';
+          const rpc = process.env.SOLANA_RPC_URL;
+          const c = new Connection(rpc, 'confirmed');
+          const campaignPk = new PublicKey(process.env.CAMPAIGN);
+          const expectedMint = new PublicKey(process.env.EXPECTED_MINT);
+          const expectedProgram = new PublicKey(process.env.EXPECTED_PROGRAM);
+          const info = await c.getAccountInfo(campaignPk, 'confirmed');
+          if (!info) throw new Error('preserved campaign account is missing');
+          if (!info.owner.equals(expectedProgram)) throw new Error(`campaign owner mismatch ${info.owner.toBase58()}`);
+          const b = Buffer.from(info.data);
+          if (b.length < 719) throw new Error(`campaign account too short: ${b.length}`);
+          const mint = new PublicKey(b.subarray(168,200));
+          if (!mint.equals(expectedMint)) throw new Error(`campaign mint mismatch ${mint.toBase58()}`);
+          const out = {
+            rpcGenesisHash: await c.getGenesisHash(),
+            campaign: campaignPk.toBase58(),
+            mint: mint.toBase58(),
+            accountBytes: b.length,
+            economicsVersion: b.readUInt16LE(417),
+            dexAdapter: b.readUInt8(483),
+            soldTokensRaw: b.readBigUInt64LE(662).toString(),
+            netRaisedLamports: b.readBigUInt64LE(670).toString(),
+            graduated: b.readUInt8(713) === 1,
+            curveClosed: b.readUInt8(714) === 1,
+          };
+          const mintInfo = await c.getAccountInfo(expectedMint, 'confirmed');
+          if (!mintInfo) throw new Error('preserved mint account is missing');
+          out.mintOwner = mintInfo.owner.toBase58();
+          console.log(JSON.stringify(out, null, 2));
+          NODE
