@@ -14,12 +14,19 @@ function asString(value: unknown): string {
 
 async function harvestEvents(locker: any, pool: string) {
   const latest = await ethers.provider.getBlockNumber();
-  for (const span of [5_000, 20_000, 100_000]) {
-    const from = Math.max(0, latest - span);
-    const rows = await locker.queryFilter(locker.filters.FeesHarvested(pool), from, latest);
+  const maxLookbackBlocks = 5_000;
+  const chunkSize = 100;
+  const floor = Math.max(0, latest - maxLookbackBlocks);
+  const filter = locker.filters.FeesHarvested(pool);
+
+  for (let to = latest; to >= floor; to -= chunkSize) {
+    const from = Math.max(floor, to - chunkSize + 1);
+    const rows = await locker.queryFilter(filter, from, to);
     if (rows.length > 0) return { from, latest, rows };
+    if (from === floor) break;
   }
-  return { from: Math.max(0, latest - 100_000), latest, rows: [] as any[] };
+
+  return { from: floor, latest, rows: [] as any[] };
 }
 
 async function main() {
