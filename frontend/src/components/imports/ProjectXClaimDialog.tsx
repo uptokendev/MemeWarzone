@@ -43,6 +43,7 @@ export default function ProjectXClaimDialog({ item, open, onOpenChange, onResolv
   const [error, setError] = useState("");
   const [manualOpen, setManualOpen] = useState(false);
   const [manualX, setManualX] = useState("");
+  const xAccountMismatch = useMemo(() => new URLSearchParams(window.location.search).get("claimError") === "PROJECT_IMPORT_X_ACCOUNT_MISMATCH", []);
 
   const canOwnerVerify = useMemo(() => Boolean(isEvm && authority?.available && authority.matchesConnected && connectedWallet), [isEvm, authority, connectedWallet]);
 
@@ -66,7 +67,6 @@ export default function ProjectXClaimDialog({ item, open, onOpenChange, onResolv
     if(result==="x_failed"){
       if(claimError==="PROJECT_IMPORT_X_ACCOUNT_MISMATCH"){
         toast.error("That X account does not match the project account attached to this token.");
-        setError("The X account you authorized does not match the project X account. Use the correct account, verify the creator wallet, or request manual review below.");
       }else toast.error("X verification was not completed. Please try again.");
     }
   }, []);
@@ -128,6 +128,7 @@ export default function ProjectXClaimDialog({ item, open, onOpenChange, onResolv
     <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-md" data-project-x-claim-dialog="true">
       <DialogHeader><DialogTitle className="font-retro">CLAIM MEMECOIN</DialogTitle><DialogDescription>Are you the project owner? Verify ownership to manage this MemeWarzone project page.</DialogDescription></DialogHeader>
       {loading?<div className="flex items-center gap-2 py-5 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin"/>Checking ownership options…</div>:<div className="space-y-4">
+        {xAccountMismatch?<p className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm font-bold text-red-300" role="alert" data-project-x-mismatch-alert="true">THAT WAS NOT THE CORRECT X ACCOUNT. Sign in with the project X account attached to this token, verify the creator wallet, or request manual review below.</p>:null}
         {isEvm&&authority?.available?<div className="rounded-lg border border-white/10 bg-white/[0.03] p-4" data-project-owner-wallet-option="true">
           <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Contract owner wallet</div>
           <div className="mt-2 font-mono text-sm text-foreground">{maskWallet(authority.currentAuthority)}</div>
