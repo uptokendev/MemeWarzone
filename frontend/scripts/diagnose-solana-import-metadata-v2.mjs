@@ -20,6 +20,16 @@ function readString(data, offset) {
   return { value: data.subarray(start, end).toString('utf8').replace(/\0/g, '').trim(), next: end };
 }
 
+function ipfsPath(raw) {
+  const value = String(raw || '').trim();
+  if (value.startsWith('ipfs://')) return value.slice('ipfs://'.length).replace(/^ipfs\//, '');
+  try {
+    const url = new URL(value);
+    const match = url.pathname.match(/^\/ipfs\/(.+)$/);
+    return match?.[1] || null;
+  } catch { return null; }
+}
+
 async function probeUrl(url) {
   if (!url) return null;
   try {
@@ -76,5 +86,14 @@ for (const [label, mintText] of mints) {
   console.log('token2022', token2022 && { name: token2022.name, symbol: token2022.symbol, uri: token2022.uri, additionalMetadata: token2022.additionalMetadata });
   console.log('token2022.error', token2022Error);
   console.log('chosenUri', chosenUri);
-  console.log('fetch', await probeUrl(chosenUri));
+  console.log('fetch.original', await probeUrl(chosenUri));
+  const path = ipfsPath(chosenUri);
+  if (path) {
+    for (const [gateway, url] of [
+      ['cf-ipfs.com', `https://cf-ipfs.com/ipfs/${path}`],
+      ['cloudflare-ipfs.com', `https://cloudflare-ipfs.com/ipfs/${path}`],
+      ['gateway.pinata.cloud', `https://gateway.pinata.cloud/ipfs/${path}`],
+      ['pump.mypinata.cloud', `https://pump.mypinata.cloud/ipfs/${path}`],
+    ]) console.log(`fetch.${gateway}`, await probeUrl(url));
+  }
 }
