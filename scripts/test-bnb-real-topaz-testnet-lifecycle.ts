@@ -253,13 +253,24 @@ async function main() {
   const expectedProtocolToken = claimedToken - expectedCreatorToken;
   const expectedCreatorWbnb = (claimedWbnb * LP_CREATOR_BPS) / ROUTE_BPS;
   const expectedProtocolWbnb = claimedWbnb - expectedCreatorWbnb;
-  const creatorTokenDelta = (await token.balanceOf(creator.address)) - creatorTokenBefore;
-  const protocolTokenDelta = (await token.balanceOf(c.protocolRevenueVault)) - protocolTokenBefore;
-  const creatorWbnbDelta = (await wbnb.balanceOf(creator.address)) - creatorWbnbBefore;
-  const protocolWbnbDelta = (await wbnb.balanceOf(c.protocolRevenueVault)) - protocolWbnbBefore;
-  if (creatorTokenDelta !== expectedCreatorToken || protocolTokenDelta !== expectedProtocolToken || creatorWbnbDelta !== expectedCreatorWbnb || protocolWbnbDelta !== expectedProtocolWbnb) {
-    throw new Error("real Topaz LP fee distribution is not exact 80/20");
-  }
+  const harvestBalances = await waitForRpcState(
+    "real Topaz 80/20 payout balances",
+    async () => ({
+      creatorToken: await token.balanceOf(creator.address),
+      protocolToken: await token.balanceOf(c.protocolRevenueVault),
+      creatorWbnb: await wbnb.balanceOf(creator.address),
+      protocolWbnb: await wbnb.balanceOf(c.protocolRevenueVault),
+    }),
+    (v) =>
+      v.creatorToken - creatorTokenBefore === expectedCreatorToken &&
+      v.protocolToken - protocolTokenBefore === expectedProtocolToken &&
+      v.creatorWbnb - creatorWbnbBefore === expectedCreatorWbnb &&
+      v.protocolWbnb - protocolWbnbBefore === expectedProtocolWbnb,
+  );
+  const creatorTokenDelta = harvestBalances.creatorToken - creatorTokenBefore;
+  const protocolTokenDelta = harvestBalances.protocolToken - protocolTokenBefore;
+  const creatorWbnbDelta = harvestBalances.creatorWbnb - creatorWbnbBefore;
+  const protocolWbnbDelta = harvestBalances.protocolWbnb - protocolWbnbBefore;
   const lpAfterHarvest = await pool.balanceOf(lockerAddress);
   if (lpAfterHarvest !== lpBeforePostGrad) throw new Error("LP principal changed after harvest");
 
