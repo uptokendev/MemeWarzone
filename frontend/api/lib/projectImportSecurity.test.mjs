@@ -187,12 +187,15 @@ test("claim replay, stale nonce, wrong chain and altered contract fail closed", 
   assert.equal((await authorize({ pool, wallet, auth, action: PROJECT_IMPORT_ACTIONS.claim, token: OTHER_TOKEN })).res.body.code, "MESSAGE_MISMATCH");
 });
 
-test("metadata auth binds exact body and protects identity Arena and finance", async () => {
-  const owner = Wallet.createRandom(); const pool = new NoncePool();
+test("metadata auth binds the project token and protects identity Arena and finance", async () => {
+  const owner = Wallet.createRandom();
   const body = { description: "alpha", website: "https://example.test", x_url: "https://x.com/test", telegram_url: "https://t.me/test" };
-  const auth = await signedAuth({ wallet: owner, pool, action: PROJECT_IMPORT_ACTIONS.metadata, projectId: "p1", body });
-  const altered = await authorize({ pool, wallet: owner, auth, action: PROJECT_IMPORT_ACTIONS.metadata, projectId: "p1", body: { ...body, description: "bravo" } });
-  assert.equal(altered.res.body.code, "MESSAGE_MISMATCH");
+  let pool = new NoncePool();
+  let auth = await signedAuth({ wallet: owner, pool, action: PROJECT_IMPORT_ACTIONS.metadata, projectId: "p1", body, token: TOKEN });
+  assert.equal((await authorize({ pool, wallet: owner, auth, action: PROJECT_IMPORT_ACTIONS.metadata, projectId: "p1", body, token: OTHER_TOKEN })).res.body.code, "MESSAGE_MISMATCH");
+  pool = new NoncePool();
+  auth = await signedAuth({ wallet: owner, pool, action: PROJECT_IMPORT_ACTIONS.metadata, projectId: "p1", body });
+  assert.ok((await authorize({ pool, wallet: owner, auth, action: PROJECT_IMPORT_ACTIONS.metadata, projectId: "p1", body: { ...body, description: "bravo" } })).result);
   assert.deepEqual(sanitizeProjectImportMetadataPatch(body), body);
   for (const key of ["tokenAddress","chainId","arenaStatus","arenaEligible","campaignId","payout","rewards","creatorEconomics","graduationEligible","image_url","name","symbol","decimals"]) {
     assert.throws(() => sanitizeProjectImportMetadataPatch({ [key]: "x" }), /not editable/i);

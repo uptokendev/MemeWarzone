@@ -70,10 +70,8 @@ function stable(value: any): any { if (Array.isArray(value)) return value.map(st
 async function sha256HexBytes(bytes: ArrayBuffer | Uint8Array) { const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes); const digest = await crypto.subtle.digest("SHA-256", data); return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join(""); }
 async function sha256HexText(text: string) { return sha256HexBytes(new TextEncoder().encode(text)); }
 function canonicalToken(chainId: number, token: string) { const raw = String(token || "").trim(); return chainId === 101 ? raw : raw.toLowerCase(); }
-export async function projectImportIntentLines(input: { action: string; chainId: number; token: string; projectId?: string | null; body?: unknown; imageDigest?: string | null }) {
-  const intent = { action: input.action, chainId: Number(input.chainId), token: canonicalToken(input.chainId, input.token), projectId: input.projectId ? String(input.projectId) : null, body: input.body == null ? null : stable(input.body), imageDigest: input.imageDigest ? String(input.imageDigest).toLowerCase() : null };
-  const digest = await sha256HexText(JSON.stringify(stable(intent)));
-  return [`Project token: ${intent.token}`, `Project import intent: ${digest}`];
+export function projectImportIntentLines(input: { action: string; chainId: number; token: string; projectId?: string | null; body?: unknown; imageDigest?: string | null }) {
+  return [`Project token: ${canonicalToken(input.chainId, input.token)}`];
 }
 export async function projectImportImageDigest(file: File) { return sha256HexBytes(await file.arrayBuffer()); }
 

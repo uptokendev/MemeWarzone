@@ -17,8 +17,6 @@ import {
   claimProjectImport,
   commandCenterImportPath,
   createProjectImport,
-  projectImportImageDigest,
-  projectImportIntentLines,
   requestProjectManualCheck,
   startPumpOwnershipChallenge,
   checkPumpOwnershipChallenge,
@@ -97,12 +95,32 @@ export function ProjectImportPanel({
   useEffect(()=>()=>{if(imagePreview)URL.revokeObjectURL(imagePreview);},[imagePreview]);
   useEffect(()=>{if(chainChosenByUser)return;if(!detectedChain||detectedChain===chain)return;setChain(detectedChain);reset();},[detectedChain,chainChosenByUser,chain]);
   const connect=async()=>{try{if(chain==="solana")await solanaWallet.connectSolana();else await wallet.connect();}catch(error:any){showError(error);}};
-  const signAction=async(action:string, projectId:string|null, body:unknown=null, imageDigest:string|null=null)=>{if(!connectedWallet||!current())throw new Error("Wallet changed. Connect the correct wallet and press IMPORT again.");const token=tokenAddress.trim();const extraLines=projectImportIntentLines({action,chainId,token,projectId,body,imageDigest});if(chain==="solana")return signWalletAction({action,walletAddress:connectedWallet,chainId,walletType:"solana",extraLines,signMessage:async(message)=>(await signSolanaMessage(message,connectedWallet)).signature});return signWalletAction({action,walletAddress:connectedWallet,chainId,extraLines,signer:wallet.signer});};
+  const signAction=async(action:string)=>{
+    if(!connectedWallet||!current())throw new Error("Wallet changed. Connect the correct wallet and press IMPORT again.");
+    const extraLines=[`Project token: ${tokenAddress.trim()}`];
+    if(chain==="solana"){
+      return signWalletAction({
+        action,
+        walletAddress: connectedWallet,
+        chainId,
+        extraLines,
+        walletType: "solana",
+        signMessage: async (message) => (await signSolanaMessage(message, connectedWallet)).signature,
+      });
+    }
+    return signWalletAction({
+      action,
+      walletAddress: connectedWallet,
+      chainId,
+      extraLines,
+      signer: wallet.signer,
+    });
+  };
   const chooseImage=(file:File|null)=>{if(!canSelectImage){toast.error(wrongAuthorityWallet?"Connect the token owner wallet before continuing.":"Complete the token checks before uploading an image.");return;}if(!file){setImageFile(null);setImagePreview("");return;}if(file.size>MAX_IMAGE_BYTES){showError(new Error("Image is too large. Maximum size is 5 MB."));return;}if(!ALLOWED_IMAGE_TYPES.has(file.type.toLowerCase())){showError(new Error("Use PNG, JPEG or WEBP."));return;}setImageFile(file);setImagePreview(URL.createObjectURL(file));};
-  const attachRegistrationImage=async(project:ProjectImportItem,file:File)=>{try{const digest=await projectImportImageDigest(file);const auth=await signAction("project_import_registration_image",project.id,null,digest);return await uploadProjectRegistrationImage({item:project,file,auth});}catch(error:any){throw Object.assign(error instanceof Error?error:new Error(String(error)),{importStage:"image"});}};
+  const attachRegistrationImage=async(project:ProjectImportItem,file:File)=>{try{const auth=await signAction("project_import_registration_image");return await uploadProjectRegistrationImage({item:project,file,auth});}catch(error:any){throw Object.assign(error instanceof Error?error:new Error(String(error)),{importStage:"image"});}};
   const resolve=async()=>{
     if(!validAddress||!connected||working)return;setWorking(true);setFeedback(null);
-    try{const auth=await signAction("project_import_resolve",null);if(!current())return;
+    try{const auth=await signAction("project_import_resolve");if(!current())return;
       setItem(null);setEvidence(null);setLookupComplete(false);setPumpChallenge(null);
       const result=await resolveProjectImportWithProject({tokenAddress:tokenAddress.trim(),chainId,auth});if(!current())return;
       setItem(result.project);setEvidence(result.resolved);setResolvedFor(contextKey);setLookupComplete(true);
@@ -112,7 +130,7 @@ export function ProjectImportPanel({
   const register=async()=>{
     if(!lookupComplete||!connected||working||wrongAuthorityWallet||conflictingVerified||suspended||!evidence?.signedWalletMatchesAuthority||!autoCleared||stillBonding||!imageFile)return;
     setWorking(true);setFeedback(null);
-    try{const auth=await signAction("project_import_create",null,{operation:"create"});if(!current())return;
+    try{const auth=await signAction("project_import_create");if(!current())return;
       const result=await createProjectImport({tokenAddress:tokenAddress.trim(),chainId,auth});if(!current())return;remember(result.project);
       if(!result.project.imageUrl)remember(await attachRegistrationImage(result.project,imageFile));
     }catch(error){showError(error);}finally{setWorking(false);}
@@ -120,14 +138,14 @@ export function ProjectImportPanel({
   const claim=async()=>{
     if(!lookupComplete||!item||wrongAuthorityWallet||conflictingVerified||suspended||!evidence?.signedWalletMatchesAuthority||!autoCleared||stillBonding||working)return;
     setWorking(true);setFeedback(null);
-    try{const auth=await signAction("project_import_claim",item.id,{operation:"claim"});if(!current())return;remember(await claimProjectImport({item,auth}));}
+    try{const auth=await signAction("project_import_claim");if(!current())return;remember(await claimProjectImport({item,auth}));}
     catch(error){showError(error);}finally{setWorking(false);}
   };
   const uploadPendingImage=async(project:ProjectImportItem)=>{if(project.imageUrl)return project;if(!current())throw new Error("Wallet or Contract Address changed. Press IMPORT again.");if(!imageFile)throw new Error("Add the project image before requesting manual review.");return attachRegistrationImage(project,imageFile);};
   const manual=async()=>{
     if((!canRequestManual&&!manualReviewMine)||stillBonding||wrongAuthorityWallet||working)return;if(!imageFile&&!item?.imageUrl){showError(new Error("Add the project image before requesting manual review."));return;}
     setWorking(true);setFeedback(null);
-    try{const note=null;const auth=await signAction("project_import_manual_claim",item?.id||null,{note});if(!current())return;
+    try{const note=null;const auth=await signAction("project_import_manual_claim");if(!current())return;
       let next=await requestProjectManualCheck({chainId,tokenAddress:tokenAddress.trim(),auth,note:undefined});if(!current())return;
       // Retain the saved claim BEFORE image upload so a failure is retryable.
       remember(next);next=await uploadPendingImage(next);remember(next);
@@ -141,12 +159,12 @@ export function ProjectImportPanel({
 
   const startPumpChallenge=async()=>{
     if(!reviewablePumpMismatch||!connectedWallet||working)return;setWorking(true);setFeedback(null);
-    try{const auth=await signAction("project_import_pump_challenge_start",null);if(!current())return;const challenge=await startPumpOwnershipChallenge({chainId,tokenAddress:tokenAddress.trim(),auth});if(!current())return;setPumpChallenge(challenge);setPumpNow(Date.now());}
+    try{const auth=await signAction("project_import_pump_challenge_start");if(!current())return;const challenge=await startPumpOwnershipChallenge({chainId,tokenAddress:tokenAddress.trim(),auth});if(!current())return;setPumpChallenge(challenge);setPumpNow(Date.now());}
     catch(error){showError(error);}finally{setWorking(false);}
   };
   const checkPumpChallenge=async()=>{
     if(!pumpChallenge||!connectedWallet||working)return;setWorking(true);setFeedback(null);
-    try{const intentBody={challengeId:pumpChallenge.id};const auth=await signAction("project_import_pump_challenge_check",null,intentBody);if(!current())return;const result=await checkPumpOwnershipChallenge({chainId,tokenAddress:tokenAddress.trim(),challengeId:pumpChallenge.id,auth});if(!current())return;setPumpChallenge(result.challenge);setItem(result.project);setEvidence(result.resolved);setResolvedFor(contextKey);setLookupComplete(true);toast.success("Pump.fun creator wallet verified.");}
+    try{const auth=await signAction("project_import_pump_challenge_check");if(!current())return;const result=await checkPumpOwnershipChallenge({chainId,tokenAddress:tokenAddress.trim(),challengeId:pumpChallenge.id,auth});if(!current())return;setPumpChallenge(result.challenge);setItem(result.project);setEvidence(result.resolved);setResolvedFor(contextKey);setLookupComplete(true);toast.success("Pump.fun creator wallet verified.");}
     catch(error){showError(error);}finally{setWorking(false);}
   };
   const pumpSecondsLeft=pumpChallenge?Math.max(0,Math.ceil((Date.parse(pumpChallenge.expiresAt)-pumpNow)/1000)):0;
