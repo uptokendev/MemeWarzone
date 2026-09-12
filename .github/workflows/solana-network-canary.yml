@@ -13,6 +13,7 @@ on:
           - bsc-testnet-stage-deploy
           - bsc-testnet-full-cycle
           - bsc-testnet-real-topaz-full-cycle
+          - bsc-testnet-real-topaz-diagnose
           - bsc-mainnet-fork-source-head
       send_solana_graduation:
         description: Send Solana graduation transaction
@@ -21,6 +22,11 @@ on:
         type: boolean
       solana_campaign:
         description: Existing Solana campaign address for graduation
+        required: false
+        default: ""
+        type: string
+      bsc_real_topaz_factory:
+        description: Existing failed-run Gen-4 factory for read-only real Topaz diagnosis
         required: false
         default: ""
         type: string
@@ -196,6 +202,22 @@ jobs:
             reports/bnb-real-topaz-testnet-acceptance.json
           if-no-files-found: warn
           retention-days: 14
+
+      - name: Diagnose existing BSC97 real Topaz harvest state read-only
+        if: ${{ inputs.network == 'bsc-testnet-real-topaz-diagnose' }}
+        env:
+          BNB_REAL_TOPAZ_DIAGNOSTIC_FACTORY: ${{ inputs.bsc_real_topaz_factory }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${BNB_REAL_TOPAZ_DIAGNOSTIC_FACTORY:-}" || {
+            echo "BLOCKER: provide bsc_real_topaz_factory from the failed real-Topaz run."
+            exit 1
+          }
+          echo "mode=real-topaz-read-only-diagnostic"
+          echo "broadcast=NONE"
+          npm ci
+          npx hardhat run scripts/diagnose-bnb-real-topaz-harvest.ts --network bscTestnet
 
       - name: Run BNB 4/3 + V3 source head against real Topaz on a mainnet fork
         if: ${{ inputs.network == 'bsc-mainnet-fork-source-head' }}
