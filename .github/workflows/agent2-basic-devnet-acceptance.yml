@@ -1,3 +1,4 @@
+# Agent 2 current-authority read-only live identity probe
 name: Agent 2 BASIC devnet acceptance
 
 on:
@@ -66,19 +67,7 @@ jobs:
             const metadataBytes=authorityOption===1?45:13;
             const authority=authorityOption===1?new PublicKey(pd.data.subarray(13,45)).toBase58():null;
             const binary=pd.data.subarray(metadataBytes);
-            const report={
-              cluster:'solana-devnet',
-              applicationChainId:101,
-              genesisHash:genesis,
-              sourceHead:process.env.EXPECTED_SOURCE_HEAD,
-              programId:programId.toBase58(),
-              programDataAddress:programDataAddress.toBase58(),
-              deploymentSlot:slot,
-              upgradeAuthority:authority,
-              binaryBytes:binary.length,
-              binarySha256:crypto.createHash('sha256').update(binary).digest('hex'),
-              readOnly:true
-            };
+            const report={cluster:'solana-devnet',applicationChainId:101,genesisHash:genesis,sourceHead:process.env.EXPECTED_SOURCE_HEAD,programId:programId.toBase58(),programDataAddress:programDataAddress.toBase58(),deploymentSlot:slot,upgradeAuthority:authority,binaryBytes:binary.length,binarySha256:crypto.createHash('sha256').update(binary).digest('hex'),readOnly:true};
             fs.writeFileSync('/tmp/mwz-agent2-live-program.json',JSON.stringify(report,null,2)+'\n');
             console.log(JSON.stringify(report,null,2));
           })().catch(e=>{console.error(e);process.exit(1)});
