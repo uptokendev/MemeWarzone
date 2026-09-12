@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { Connection, PublicKey } from "@solana/web3.js";
+import { getTokenMetadata, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import { pumpBondingCurveAddress, assertSolanaImportMainnet } from "./projectSolanaProjectAuthority.js";
 
 const BNB_CHAIN_ID = 56;
@@ -111,6 +112,21 @@ function normalizeMetadataUrl(raw) {
   return url.toString();
 }
 
+function normalizeImageUrl(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return null;
+  if (value.startsWith("ipfs://")) {
+    const cidPath = value.slice("ipfs://".length).replace(/^ipfs\//, "");
+    return `https://cf-ipfs.com/ipfs/${cidPath}`;
+  }
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
 function normalizeXUsername(raw) {
   const value = String(raw || "").trim();
   if (!value) return "";
@@ -131,47 +147,100 @@ function solanaRpcUrl() {
   return String(process.env.SOLANA_RPC_URL || process.env.SOLANA_MAINNET_RPC_URL || "").trim();
 }
 
-async function readPumpMetadataUri(mint) {
+function getSolanaConnection() {
   const rpc = solanaRpcUrl();
   if (!rpc) throw Object.assign(new Error("Solana RPC is not configured"), { code: "PROJECT_IMPORT_RPC_UNAVAILABLE" });
-  const connection = new Connection(rpc, "confirmed");
-  await assertSolanaImportMainnet(connection);
-  const mintKey = new PublicKey(mint);
-  const curve = pumpBondingCurveAddress(mintKey);
-  const curveInfo = await connection.getAccountInfo(curve, "confirmed");
-  if (!curveInfo) throw Object.assign(new Error("This token is not recognized as a Pump.fun launch"), { code: "PROJECT_IMPORT_X_NOT_PUMP" });
+  return new Connection(rpc, "confirmed");
+}
+
+async function readSolanaMetadataReference(connection, mintKey) {
   const [metadataAddress] = PublicKey.findProgramAddressSync(
     [Buffer.from("metadata"), TOKEN_METADATA_PROGRAM_ID.toBuffer(), mintKey.toBuffer()],
     TOKEN_METADATA_PROGRAM_ID,
   );
-  const account = await connection.getAccountInfo(metadataAddress, "confirmed");
-  if (!account?.data || !account.owner?.equals?.(TOKEN_METADATA_PROGRAM_ID)) {
-    throw Object.assign(new Error("Pump.fun project metadata could not be resolved"), { code: "PROJECT_IMPORT_X_METADATA_UNAVAILABLE" });
+  try {
+    const account = await connection.getAccountInfo(metadataAddress, "confirmed");
+    if (account?.data && account.owner?.equals?.(TOKEN_METADATA_PROGRAM_ID)) {
+      const data = Buffer.from(account.data);
+      if (data.length >= 65) {
+        const name = readMetadataString(data, 65, 256);
+        const symbol = readMetadataString(data, name.next, 64);
+        const uri = readMetadataString(data, symbol.next, 2048);
+        const metadataUrl = normalizeMetadataUrl(uri.value);
+        if (metadataUrl) {
+          return {
+            metadataUrl,
+            metadataAddress: metadataAddress.toBase58(),
+            metadataSource: "pump_metaplex_metadata",
+          };
+        }
+      }
+    }
+  } catch {
+    // Token-2022 fallback below.
   }
-  const data = Buffer.from(account.data);
-  if (data.length < 65) throw Object.assign(new Error("Pump.fun project metadata is invalid"), { code: "PROJECT_IMPORT_X_METADATA_UNAVAILABLE" });
-  const name = readMetadataString(data, 65, 256);
-  const symbol = readMetadataString(data, name.next, 64);
-  const uri = readMetadataString(data, symbol.next, 2048);
-  const metadataUrl = normalizeMetadataUrl(uri.value);
-  if (!metadataUrl) throw Object.assign(new Error("Pump.fun metadata URL is not supported"), { code: "PROJECT_IMPORT_X_METADATA_UNAVAILABLE" });
-  return { metadataUrl, metadataAddress: metadataAddress.toBase58(), curve: curve.toBase58() };
+
+  try {
+    const mintAccount = await connection.getAccountInfo(mintKey, "confirmed");
+    if (!mintAccount?.owner?.equals?.(TOKEN_2022_PROGRAM_ID)) return null;
+    const metadata = await getTokenMetadata(connection, mintKey, "confirmed", TOKEN_2022_PROGRAM_ID);
+    const metadataUrl = normalizeMetadataUrl(metadata?.uri);
+    if (!metadataUrl) return null;
+    return {
+      metadataUrl,
+      metadataAddress: mintKey.toBase58(),
+      metadataSource: "pump_token2022_metadata",
+    };
+  } catch {
+    return null;
+  }
 }
 
-export async function resolvePumpOfficialX(mint) {
-  const source = await readPumpMetadataUri(mint);
-  const response = await fetch(source.metadataUrl, {
+async function readSolanaMetadataJson(mint, { requirePump = false } = {}) {
+  const connection = getSolanaConnection();
+  await assertSolanaImportMainnet(connection);
+  const mintKey = new PublicKey(mint);
+  let curve = null;
+  if (requirePump) {
+    curve = pumpBondingCurveAddress(mintKey);
+    const curveInfo = await connection.getAccountInfo(curve, "confirmed");
+    if (!curveInfo) throw Object.assign(new Error("This token is not recognized as a Pump.fun launch"), { code: "PROJECT_IMPORT_X_NOT_PUMP" });
+  }
+  const reference = await readSolanaMetadataReference(connection, mintKey);
+  if (!reference) throw Object.assign(new Error("Pump.fun project metadata could not be resolved"), { code: "PROJECT_IMPORT_X_METADATA_UNAVAILABLE" });
+  const response = await fetch(reference.metadataUrl, {
     headers: { accept: "application/json" },
     signal: AbortSignal.timeout(7000),
   });
   if (!response.ok) throw Object.assign(new Error("Pump.fun metadata is temporarily unavailable"), { code: "PROJECT_IMPORT_X_METADATA_UNAVAILABLE" });
   const json = await response.json().catch(() => null);
-  const username = normalizeXUsername(json?.twitter);
+  if (!json || typeof json !== "object") throw Object.assign(new Error("Pump.fun project metadata is invalid"), { code: "PROJECT_IMPORT_X_METADATA_UNAVAILABLE" });
+  return {
+    ...reference,
+    bondingCurve: curve?.toBase58?.() || null,
+    json,
+  };
+}
+
+async function readPumpMetadataUri(mint) {
+  const source = await readSolanaMetadataJson(mint, { requirePump: true });
+  return {
+    metadataUrl: source.metadataUrl,
+    metadataAddress: source.metadataAddress,
+    metadataSource: source.metadataSource,
+    curve: source.bondingCurve,
+    json: source.json,
+  };
+}
+
+export async function resolvePumpOfficialX(mint) {
+  const source = await readPumpMetadataUri(mint);
+  const username = normalizeXUsername(source.json?.twitter);
   if (!username) throw Object.assign(new Error("No official X account is attached to this Pump.fun token"), { code: "PROJECT_IMPORT_X_NOT_FOUND" });
   return {
     username,
     xUrl: `https://x.com/${username}`,
-    source: "pump_metaplex_metadata",
+    source: source.metadataSource,
     metadataUrl: source.metadataUrl,
     metadataAddress: source.metadataAddress,
     bondingCurve: source.curve,
@@ -180,22 +249,36 @@ export async function resolvePumpOfficialX(mint) {
 
 function dexScreenerChain(chainId) {
   if (Number(chainId) === BNB_CHAIN_ID) return String(process.env.DEXSCREENER_BNB_CHAIN_ID || "bsc").trim();
+  if (Number(chainId) === SOLANA_CHAIN_ID) return "solana";
   if (Number(chainId) === ROBINHOOD_CHAIN_ID) return String(process.env.DEXSCREENER_ROBINHOOD_CHAIN_ID || "robinhood").trim();
   return "";
 }
 
-export async function resolveDexScreenerOfficialX(chainId, tokenAddress) {
+function tokenAddressMatches(chainId, left, right) {
+  const a = String(left || "").trim();
+  const b = String(right || "").trim();
+  if (Number(chainId) === SOLANA_CHAIN_ID) return a === b;
+  return a.toLowerCase() === b.toLowerCase();
+}
+
+async function readDexScreenerPairs(chainId, tokenAddress) {
   const chain = dexScreenerChain(chainId);
-  if (!chain) throw Object.assign(new Error("DexScreener X lookup is unavailable for this chain"), { code: "PROJECT_IMPORT_X_UNSUPPORTED_CHAIN" });
-  const token = String(tokenAddress || "").trim().toLowerCase();
+  if (!chain) throw Object.assign(new Error("DexScreener lookup is unavailable for this chain"), { code: "PROJECT_IMPORT_X_UNSUPPORTED_CHAIN" });
   const url = `https://api.dexscreener.com/tokens/v1/${encodeURIComponent(chain)}/${encodeURIComponent(tokenAddress)}`;
   const response = await fetch(url, { headers: { accept: "application/json" }, signal: AbortSignal.timeout(7000) });
   if (!response.ok) throw Object.assign(new Error("DexScreener project metadata is temporarily unavailable"), { code: "PROJECT_IMPORT_X_METADATA_UNAVAILABLE" });
   const json = await response.json().catch(() => []);
   const pairs = Array.isArray(json) ? json : [];
-  const matching = pairs.filter((pair) => String(pair?.chainId || "").toLowerCase() === chain.toLowerCase() && String(pair?.baseToken?.address || "").toLowerCase() === token);
+  return {
+    chain,
+    pairs: pairs.filter((pair) => String(pair?.chainId || "").toLowerCase() === chain.toLowerCase() && tokenAddressMatches(chainId, pair?.baseToken?.address, tokenAddress)),
+  };
+}
+
+export async function resolveDexScreenerOfficialX(chainId, tokenAddress) {
+  const { chain, pairs } = await readDexScreenerPairs(chainId, tokenAddress);
   const usernames = new Set();
-  for (const pair of matching) {
+  for (const pair of pairs) {
     for (const social of Array.isArray(pair?.info?.socials) ? pair.info.socials : []) {
       const platform = String(social?.platform || social?.type || "").toLowerCase();
       if (platform !== "twitter" && platform !== "x") continue;
@@ -207,6 +290,29 @@ export async function resolveDexScreenerOfficialX(chainId, tokenAddress) {
   if (usernames.size > 1) throw Object.assign(new Error("Conflicting X accounts were found for this token on DexScreener"), { code: "PROJECT_IMPORT_X_CONFLICT" });
   const username = [...usernames][0];
   return { username, xUrl: `https://x.com/${username}`, source: "dexscreener_token_profile", chain };
+}
+
+export async function resolveProjectImportImage(chainId, tokenAddress) {
+  try {
+    const { pairs } = await readDexScreenerPairs(chainId, tokenAddress);
+    for (const pair of pairs) {
+      const imageUrl = normalizeImageUrl(pair?.info?.imageUrl);
+      if (imageUrl) return { imageUrl, source: "dexscreener" };
+    }
+  } catch {
+    // Program metadata fallback below for Solana.
+  }
+
+  if (Number(chainId) === SOLANA_CHAIN_ID) {
+    try {
+      const metadata = await readSolanaMetadataJson(tokenAddress);
+      const imageUrl = normalizeImageUrl(metadata?.json?.image);
+      if (imageUrl) return { imageUrl, source: metadata.metadataSource };
+    } catch {
+      // Missing image must not block import or claim.
+    }
+  }
+  return { imageUrl: null, source: null };
 }
 
 export async function resolveOfficialProjectX(chainId, tokenAddress) {
