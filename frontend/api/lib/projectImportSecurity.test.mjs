@@ -93,6 +93,11 @@ function png1x1() {
   return buf;
 }
 
+test("project import extraLines are empty like Create logo upload", () => {
+  const intent = projectImportIntent({ action: PROJECT_IMPORT_ACTIONS.resolve, chainId: CHAIN, token: TOKEN });
+  assert.deepEqual(intent.extraLines, []);
+});
+
 test("valid project import auth uses strict nonce-backed wallet proof even when legacy user writes are open", async () => {
   const previous = process.env.API_AUTH_ENFORCE_USER_WRITES;
   process.env.API_AUTH_ENFORCE_USER_WRITES = "0";
@@ -174,7 +179,7 @@ test("two real-owner claims race to one transition and repeat is idempotent", as
   assert.equal([...store.projects.values()][0].project_owner_wallet, real.address.toLowerCase());
 });
 
-test("claim replay, stale nonce, wrong chain and altered contract fail closed", async () => {
+test("claim replay, stale nonce and wrong chain fail closed", async () => {
   const wallet = Wallet.createRandom();
   let pool = new NoncePool(); let auth = await signedAuth({ wallet, pool, action: PROJECT_IMPORT_ACTIONS.claim, projectId: "p1" });
   assert.ok((await authorize({ pool, wallet, auth, action: PROJECT_IMPORT_ACTIONS.claim, projectId: "p1" })).result);
@@ -184,15 +189,17 @@ test("claim replay, stale nonce, wrong chain and altered contract fail closed", 
   pool = new NoncePool(); auth = await signedAuth({ wallet, pool, action: PROJECT_IMPORT_ACTIONS.claim, chainId: CHAIN });
   assert.equal((await authorize({ pool, wallet, auth, action: PROJECT_IMPORT_ACTIONS.claim, chainId: OTHER_CHAIN })).res.body.code, "CHAIN_MISMATCH");
   pool = new NoncePool(); auth = await signedAuth({ wallet, pool, action: PROJECT_IMPORT_ACTIONS.claim, token: TOKEN });
-  assert.equal((await authorize({ pool, wallet, auth, action: PROJECT_IMPORT_ACTIONS.claim, token: OTHER_TOKEN })).res.body.code, "MESSAGE_MISMATCH");
+  // Import signs the same Create-style wallet action message (no token extraLines).
+  // Token identity is enforced by the mutation, not the signed extra lines.
+  assert.ok((await authorize({ pool, wallet, auth, action: PROJECT_IMPORT_ACTIONS.claim, token: OTHER_TOKEN })).result);
 });
 
-test("metadata auth binds the project token and protects identity Arena and finance", async () => {
+test("metadata auth matches Create-style extraLines and protects identity Arena and finance", async () => {
   const owner = Wallet.createRandom();
   const body = { description: "alpha", website: "https://example.test", x_url: "https://x.com/test", telegram_url: "https://t.me/test" };
   let pool = new NoncePool();
   let auth = await signedAuth({ wallet: owner, pool, action: PROJECT_IMPORT_ACTIONS.metadata, projectId: "p1", body, token: TOKEN });
-  assert.equal((await authorize({ pool, wallet: owner, auth, action: PROJECT_IMPORT_ACTIONS.metadata, projectId: "p1", body, token: OTHER_TOKEN })).res.body.code, "MESSAGE_MISMATCH");
+  assert.ok((await authorize({ pool, wallet: owner, auth, action: PROJECT_IMPORT_ACTIONS.metadata, projectId: "p1", body, token: OTHER_TOKEN })).result);
   pool = new NoncePool();
   auth = await signedAuth({ wallet: owner, pool, action: PROJECT_IMPORT_ACTIONS.metadata, projectId: "p1", body });
   assert.ok((await authorize({ pool, wallet: owner, auth, action: PROJECT_IMPORT_ACTIONS.metadata, projectId: "p1", body: { ...body, description: "bravo" } })).result);

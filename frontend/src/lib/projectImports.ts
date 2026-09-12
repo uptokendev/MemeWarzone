@@ -66,15 +66,6 @@ async function readJson(res: Response) { return res.json().catch(() => ({})) as 
 function importRequestError(res: Response, json: any, fallback: string) {
   return Object.assign(new Error(String(json?.error || fallback)), { status: res.status, code: json?.code || null, currentAuthority: json?.currentAuthority || null });
 }
-function stable(value: any): any { if (Array.isArray(value)) return value.map(stable); if (value && typeof value === "object") return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stable(value[key])])); return value; }
-async function sha256HexBytes(bytes: ArrayBuffer | Uint8Array) { const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes); const digest = await crypto.subtle.digest("SHA-256", data); return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join(""); }
-async function sha256HexText(text: string) { return sha256HexBytes(new TextEncoder().encode(text)); }
-function canonicalToken(chainId: number, token: string) { const raw = String(token || "").trim(); return chainId === 101 ? raw : raw.toLowerCase(); }
-export function projectImportIntentLines(input: { action: string; chainId: number; token: string; projectId?: string | null; body?: unknown; imageDigest?: string | null }) {
-  return [`Project token: ${canonicalToken(input.chainId, input.token)}`];
-}
-export async function projectImportImageDigest(file: File) { return sha256HexBytes(await file.arrayBuffer()); }
-
 export async function lookupProjectImport(tokenAddress: string, chainId: number): Promise<ProjectImportItem | null> {
   const params = new URLSearchParams({ tokenAddress, chainId: String(chainId) });
   const res = await apiFetch(`/api/project-imports?${params.toString()}`, { cache: "no-store" });

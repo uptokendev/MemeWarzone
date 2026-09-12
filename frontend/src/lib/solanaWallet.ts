@@ -373,10 +373,30 @@ async function ensureSolanaProviderSession(input: {
   return publicKey;
 }
 
-export async function signSolanaMessage(message: string, walletAddress?: string): Promise<{ walletAddress: string; signature: string }> {
+function resolveSolanaProviderForAddress(walletAddress?: string): { provider: SolanaProvider; wallet: DetectedSolanaWallet | null } {
+  const wallets = detectSolanaWallets();
+  const wanted = normalizePublicKey(walletAddress || "");
+
+  // Prefer the wallet that already exposes this public key (avoids signing with Backpack while UI shows Phantom).
+  if (wanted) {
+    const byKey = wallets.find((w) => normalizePublicKey(w.provider?.publicKey?.toString?.() || "") === wanted);
+    if (byKey?.provider) return { provider: byKey.provider, wallet: byKey };
+  }
+
   const storedId = getStoredSolanaWalletId();
-  const detectedWallet = detectSolanaWallets().find((wallet) => wallet.id === storedId) || null;
-  const provider = detectedWallet?.provider || getSolanaProvider(storedId || null);
+  const byStored = storedId ? wallets.find((w) => w.id === storedId) : null;
+  if (byStored?.provider) return { provider: byStored.provider, wallet: byStored };
+
+  const fallback = wallets[0] || null;
+  if (!fallback?.provider) throw new Error("No supported Solana wallet detected.");
+  return { provider: fallback.provider, wallet: fallback };
+}
+
+export async function signSolanaMessage(message: string, walletAddress?: string): Promise<{ walletAddress: string; signature: string }> {
+  // Same provider selection as Create/drafts (`signSolanaDraftAction`): the
+  // extension that already exposes this public key. Stored-id lookup can pick
+  // window.solana while the connected key lives on window.phantom.solana.
+  const { provider, wallet: detectedWallet } = resolveSolanaProviderForAddress(walletAddress);
   if (!provider?.signMessage) throw new Error("This Solana wallet does not support message signing.");
 
   const publicKey = await ensureSolanaProviderSession({
@@ -410,25 +430,6 @@ async function fetchNonce(chainId: number, walletAddress: string) {
   }
 
   return String(json.nonce);
-}
-
-function resolveSolanaProviderForAddress(walletAddress?: string): { provider: SolanaProvider; wallet: DetectedSolanaWallet | null } {
-  const wallets = detectSolanaWallets();
-  const wanted = normalizePublicKey(walletAddress || "");
-
-  // Prefer the wallet that already exposes this public key (avoids signing with Backpack while UI shows Phantom).
-  if (wanted) {
-    const byKey = wallets.find((w) => normalizePublicKey(w.provider?.publicKey?.toString?.() || "") === wanted);
-    if (byKey?.provider) return { provider: byKey.provider, wallet: byKey };
-  }
-
-  const storedId = getStoredSolanaWalletId();
-  const byStored = storedId ? wallets.find((w) => w.id === storedId) : null;
-  if (byStored?.provider) return { provider: byStored.provider, wallet: byStored };
-
-  const fallback = wallets[0] || null;
-  if (!fallback?.provider) throw new Error("No supported Solana wallet detected.");
-  return { provider: fallback.provider, wallet: fallback };
 }
 
 const SOLANA_OWNER_SESSION_ACTION: DraftAuthAction = "draft_owner_session";

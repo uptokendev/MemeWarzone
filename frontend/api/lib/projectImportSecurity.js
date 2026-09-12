@@ -85,7 +85,7 @@ export function projectImportIntent({ action, chainId, token, projectId = null, 
   return Object.freeze({
     identity,
     digest,
-    extraLines: [`Project token: ${identity.token}`],
+    extraLines: [],
   });
 }
 

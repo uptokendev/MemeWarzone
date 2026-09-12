@@ -97,13 +97,12 @@ export function ProjectImportPanel({
   const connect=async()=>{try{if(chain==="solana")await solanaWallet.connectSolana();else await wallet.connect();}catch(error:any){showError(error);}};
   const signAction=async(action:string)=>{
     if(!connectedWallet||!current())throw new Error("Wallet changed. Connect the correct wallet and press IMPORT again.");
-    const extraLines=[`Project token: ${tokenAddress.trim()}`];
+    // Same Solana call as Create logo upload: signWalletAction + signSolanaMessage, no extraLines.
     if(chain==="solana"){
       return signWalletAction({
         action,
         walletAddress: connectedWallet,
         chainId,
-        extraLines,
         walletType: "solana",
         signMessage: async (message) => (await signSolanaMessage(message, connectedWallet)).signature,
       });
@@ -112,7 +111,6 @@ export function ProjectImportPanel({
       action,
       walletAddress: connectedWallet,
       chainId,
-      extraLines,
       signer: wallet.signer,
     });
   };
