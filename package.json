@@ -138,6 +138,7 @@
     "bootstrap-solana-devnet": "npm --prefix tests/solana run bootstrap-solana-devnet",
     "bootstrap-solana-devnet:allow-pause-reset": "npm --prefix tests/solana run bootstrap-solana-devnet:allow-pause-reset",
     "verify-solana-devnet": "npm --prefix tests/solana run verify-solana-devnet",
+    "solana:network-canary": "bash scripts/solana/network-canary.sh",
     "test": "hardhat test",
     "coverage": "hardhat coverage",
     "gas": "cross-env REPORT_GAS=true hardhat test",
