@@ -21,10 +21,21 @@ function buildQuery(params: Record<string, string | number | null | undefined>) 
 
 function nativeSymbolForChain(chainId?: number | null, fallback?: string | null): string {
   const chain = Number(chainId || 0);
-  if (chain === 101 || chain === 102) return "SOL";
+  if (chain === 101) return "SOL";
   if (chain === 4663 || chain === 46630) return "ETH";
   if (chain === 56 || chain === 97) return "BNB";
   return String(fallback || "").trim() || "BNB";
+}
+
+function runtimeSolanaClaimIdentity() {
+  const environment = String(import.meta.env.VITE_RUNTIME_ENVIRONMENT || "").trim().toLowerCase();
+  const rawCluster = String(import.meta.env.VITE_SOLANA_CLUSTER || "").trim().toLowerCase();
+  const solanaCluster = rawCluster === "solana-mainnet-beta" || rawCluster === "mainnet"
+    ? "mainnet-beta"
+    : rawCluster === "solana-devnet"
+      ? "devnet"
+      : rawCluster;
+  return { environment: environment || undefined, solanaCluster: solanaCluster || undefined };
 }
 
 export type RewardLedgerItem = {
@@ -236,14 +247,22 @@ export async function reconcileSolanaRewardClaims(params: {
   walletAddress: string;
   chainId: number;
   rewardLedgerIds: string[];
+  environment?: string | null;
+  solanaCluster?: string | null;
 }): Promise<SolanaRewardReconciliationResult> {
+  if (Number(params.chainId) !== 101) {
+    throw new Error("Solana reward reconciliation requires canonical chain 101.");
+  }
+  const identity = runtimeSolanaClaimIdentity();
   const res = await fetch(buildRealtimeApiUrl("/api/rewards"), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       action: "reconcile-solana-claims",
       walletAddress: params.walletAddress,
-      chainId: params.chainId,
+      chainId: 101,
+      environment: params.environment || identity.environment,
+      solanaCluster: params.solanaCluster || identity.solanaCluster,
       rewardLedgerIds: params.rewardLedgerIds,
     }),
   });
@@ -258,7 +277,7 @@ export async function fetchRewardClaims(params: {
 }): Promise<RewardLedgerItem[]> {
   const initial = await fetchRewardClaimsRaw(params);
   const chainId = Number(params.chainId || 0);
-  if (![101, 102].includes(chainId)) return initial;
+  if (chainId !== 101) return initial;
 
   const stale = initial.filter((item) =>
     (item.status === "claim_pending" || item.status === "failed") &&
@@ -267,9 +286,12 @@ export async function fetchRewardClaims(params: {
   if (!stale.length) return initial;
 
   try {
+    const identity = runtimeSolanaClaimIdentity();
     const reconciliation = await reconcileSolanaRewardClaims({
       walletAddress: params.walletAddress,
-      chainId,
+      chainId: 101,
+      environment: identity.environment,
+      solanaCluster: identity.solanaCluster,
       rewardLedgerIds: stale.slice(0, 10).map((item) => item.id),
     });
 
