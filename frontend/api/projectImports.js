@@ -249,7 +249,6 @@ async function handleOwnershipAdmin(req, res, path) {
     if (!claimant) return json(res,409,{error:"No current claimant to recheck",code:"MANUAL_CLAIM_NOT_ALLOWED"});
     const previous = await latestImportEvidence(pool,current);
     const checks = await buildImportChecks(normalizeProjectIdentity(current.chain_id,current.token_address),claimant,null,true);
-    // Rechecking chain data does not create a new wallet signature. Retain the original receipt if present.
     checks.assessment.proof = previous?.snapshot?.proof || null;
     await withImportTransaction(pool,async client=>{
       const locked = await client.query("SELECT *, xmin::text AS state_version FROM public.arena_token_imports WHERE id=$1 FOR UPDATE",[current.id]);
@@ -321,7 +320,6 @@ export default async function projectImports(req, res) {
       return json(res, 200, { items: items.map(publicProject) });
     }
 
-
     if (req.method === "POST" && path === "/pump-challenge") {
       const body = await readJson(req);
       const identity = normalizeProjectIdentity(body.chainId, body.tokenAddress);
@@ -370,12 +368,10 @@ export default async function projectImports(req, res) {
       if (!auth) return;
       const {resolved,security,assessment} = await buildImportChecks(identity,auth.walletAddress,body.auth);
       assertNewImportMarket(resolved);
-      requireResolvedOwner(resolved);
       requireSecurityPass(security);
-      assertAutomaticImport(assessment);
       const result = await withImportTransaction(pool,async client=>{
-        const result=await createProjectImport(client,{resolverResult:resolved,signedWallet:auth.walletAddress});
-        if(result.created) await appendImportEvidence(client,{project:result.project,assessment,source:"automatic_import"});
+        const result=await createProjectImport(client,{resolverResult:{...resolved,signedWalletMatchesAuthority:false},signedWallet:auth.walletAddress});
+        if(result.created) await appendImportEvidence(client,{project:result.project,assessment,source:"permissionless_import"});
         return result;
       });
       return json(res,result.created?201:200,{...result,project:publicProject(result.project),ownershipEvidence:{...resolved,security,assessment}});
@@ -424,7 +420,6 @@ export default async function projectImports(req, res) {
         const created=await createProjectImport(client,{resolverResult:{...resolved,signedWalletMatchesAuthority:false},signedWallet:auth.walletAddress});
         const locked=await client.query("SELECT * FROM public.arena_token_imports WHERE id=$1 FOR UPDATE",[created.project.id]);
         const current=locked.rows[0];
-        // A repeat signed request from the same claimant refreshes evidence without changing the original note/image.
         if(current.ownership_status==='ownership_manual_review'&&current.manual_claim_wallet===auth.walletAddress){
           await appendImportEvidence(client,{project:current,assessment,source:"signed_recheck"});
           await client.query("UPDATE public.arena_token_imports SET updated_at=NOW() WHERE id=$1",[current.id]); return current;
