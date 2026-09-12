@@ -3,8 +3,8 @@ import { JsonRpcProvider, Wallet, getAddress } from "ethers";
 const EXPECTED_CHAIN_ID = 97;
 const EXPECTED_OPERATOR = getAddress("0xEE2c6A7605ED378CF1D26D1d828446d63A3fdeDa");
 const EXPECTED_ROUTE = getAddress("0x2b72A9E6C4Ea3525d83B8C5E8F2044BDbC1f1Dec");
-const HISTORICAL_OPERATOR = getAddress("0x6404b7eA3156F621aD9616C32214CAf1D0780c3");
-const HISTORICAL_ROUTE = getAddress("0xb989A99823eA96552c3E3198A40CdBF682EDf1aA");
+const HISTORICAL_OPERATOR = getAddress("0x6404b7ea3156f621ad9616c32214caf1d0780c3");
+const HISTORICAL_ROUTE = getAddress("0xb989a99823ea96552c3e3198a40cdbf682edf1aa");
 
 function fail(code) {
   throw new Error(`STAGE_DEPLOY_GATE:${code}`);
