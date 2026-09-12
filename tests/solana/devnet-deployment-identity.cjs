@@ -194,7 +194,10 @@ async function main() {
   sameKey(programInfo.owner, BPF_LOADER_UPGRADEABLE_PROGRAM_ID, "program account owner");
 
   const decodedProgram = decodeUpgradeableProgramAccount(programInfo.data);
-  const expectedProgramDataAddress = firstNonEmpty(process.env.SOLANA_PROGRAMDATA_ADDRESS);
+  const expectedProgramDataAddress = firstNonEmpty(
+    process.env.SOLANA_PROGRAMDATA_ADDRESS,
+    process.env.SOLANA_EXPECTED_PROGRAMDATA_ADDRESS,
+  );
   if (expectedProgramDataAddress) {
     sameKey(decodedProgram.programDataAddress, expectedProgramDataAddress, "ProgramData address");
   }
@@ -204,7 +207,10 @@ async function main() {
   sameKey(programDataInfo.owner, BPF_LOADER_UPGRADEABLE_PROGRAM_ID, "ProgramData owner");
 
   const decodedProgramData = decodeUpgradeableProgramDataAccount(programDataInfo.data);
-  const expectedSlot = firstNonEmpty(process.env.SOLANA_DEPLOYMENT_SLOT);
+  const expectedSlot = firstNonEmpty(
+    process.env.SOLANA_DEPLOYMENT_SLOT,
+    process.env.SOLANA_EXPECTED_DEPLOYMENT_SLOT,
+  );
   if (expectedSlot) {
     assert.equal(decodedProgramData.deploymentSlot, BigInt(expectedSlot), "deployment slot mismatch");
   }
