@@ -114,6 +114,7 @@ const config: HardhatUserConfig = {
       url: bscTestnetRpcUrl,
       accounts: deployerPrivateKey ? [deployerPrivateKey.startsWith("0x") ? deployerPrivateKey : `0x${deployerPrivateKey}`] : [],
       chainId: 97,
+      gasPrice: 1_000_000_000,
     },
     bscMainnet: {
       url: bscMainnetRpcUrl,
