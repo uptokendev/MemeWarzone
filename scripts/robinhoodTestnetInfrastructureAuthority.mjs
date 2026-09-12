@@ -3,7 +3,7 @@
 export const ROBINHOOD_TESTNET_CHAIN_ID = 46630;
 export const ROBINHOOD_MAINNET_CHAIN_ID = 4663;
 export const LOCAL_REHEARSAL_CHAIN_ID = 31337;
-export const INFRA_MANIFEST_SCHEMA_VERSION = 1;
+export const INFRA_MANIFEST_SCHEMA_VERSION = 2;
 export const INFRA_MANIFEST_PATH = "deployments/robinhood/testnet.infrastructure.json";
 export const INFRA_BROADCAST_TOKEN = "DEPLOY_CHAIN_46630_TESTNET_INFRA";
 export const V3_FEE_TIER = 3000;
@@ -21,6 +21,8 @@ export const BOOTSTRAP_SOURCE_IDENTITIES = Object.freeze({
 const ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 const HASH_RE = /^0x[a-fA-F0-9]{64}$/;
 const ZERO = "0x0000000000000000000000000000000000000000";
+const CORE_DEPLOYMENT_NAMES = Object.freeze(["weth", "v3Factory", "positionManager", "swapRouter02", "oracle"]);
+const PERIPHERY_DEPENDENCY_NAMES = Object.freeze(["nftDescriptor", "tokenDescriptor"]);
 
 export function sameAddress(a, b) {
   return Boolean(a && b) && String(a).toLowerCase() === String(b).toLowerCase();
@@ -97,8 +99,8 @@ export function buildInfrastructureManifest(input) {
   if (Number(input.chainId) !== ROBINHOOD_TESTNET_CHAIN_ID) throw new Error("manifest chain must be 46630");
   const deployer = requireAddress("deployer", input.deployer);
   const oracleUpdater = requireAddress("oracleUpdater", input.oracleUpdater);
-  const names = ["weth", "v3Factory", "positionManager", "swapRouter02", "oracle"];
-  for (const name of names) requireReceipt(name, input.deployments?.[name]);
+  for (const name of CORE_DEPLOYMENT_NAMES) requireReceipt(name, input.deployments?.[name]);
+  for (const name of PERIPHERY_DEPENDENCY_NAMES) requireReceipt(`peripheryDependencies.${name}`, input.peripheryDependencies?.[name]);
   if (Number(input.feeTier) !== V3_FEE_TIER || BigInt(input.feeTickSpacing) <= 0n) throw new Error("fee 3000 proof missing");
   requireBoundAddress("NPM factory", input.bindings?.npmFactory, input.deployments.v3Factory.address);
   requireBoundAddress("NPM WETH9", input.bindings?.npmWeth9, input.deployments.weth.address);
@@ -114,7 +116,11 @@ export function buildInfrastructureManifest(input) {
     maxAgeSeconds: input.oracle?.maxAgeSeconds,
   });
 
-  const blocks = names.map((name) => Number(input.deployments[name].blockNumber));
+  const allReceipts = [
+    ...CORE_DEPLOYMENT_NAMES.map((name) => input.deployments[name]),
+    ...PERIPHERY_DEPENDENCY_NAMES.map((name) => input.peripheryDependencies[name]),
+  ];
+  const blocks = allReceipts.map((entry) => Number(entry.blockNumber));
   return {
     schemaVersion: INFRA_MANIFEST_SCHEMA_VERSION,
     kind: "robinhood-testnet-46630-infrastructure-bootstrap",
@@ -130,6 +136,10 @@ export function buildInfrastructureManifest(input) {
     deployer,
     weth: input.deployments.weth,
     v3Factory: input.deployments.v3Factory,
+    peripheryDependencies: {
+      nftDescriptor: input.peripheryDependencies.nftDescriptor,
+      tokenDescriptor: input.peripheryDependencies.tokenDescriptor,
+    },
     fee3000: { enabled: true, tickSpacing: Number(input.feeTickSpacing) },
     positionManager: input.deployments.positionManager,
     swapRouter02: input.deployments.swapRouter02,
@@ -149,7 +159,7 @@ export function buildInfrastructureManifest(input) {
       routerFactory: input.bindings.routerFactory,
       routerWeth9: input.bindings.routerWeth9,
     },
-    deploymentTransactions: Object.fromEntries(names.map((name) => [name, {
+    deploymentTransactions: Object.fromEntries(CORE_DEPLOYMENT_NAMES.map((name) => [name, {
       txHash: input.deployments[name].txHash,
       blockNumber: Number(input.deployments[name].blockNumber),
     }])),
@@ -168,7 +178,8 @@ export function validateInfrastructureManifest(manifest) {
   if (manifest.kind !== "robinhood-testnet-46630-infrastructure-bootstrap") throw new Error("wrong infrastructure manifest kind");
   if (manifest.chainId !== ROBINHOOD_TESTNET_CHAIN_ID || manifest.environment !== "testnet-only") throw new Error("wrong infrastructure network identity");
   if (manifest.productionCompatible !== false || manifest.productionChainId !== ROBINHOOD_MAINNET_CHAIN_ID) throw new Error("production isolation marker invalid");
-  for (const name of ["weth", "v3Factory", "positionManager", "swapRouter02", "oracle"]) requireReceipt(name, manifest[name]);
+  for (const name of CORE_DEPLOYMENT_NAMES) requireReceipt(name, manifest[name]);
+  for (const name of PERIPHERY_DEPENDENCY_NAMES) requireReceipt(`peripheryDependencies.${name}`, manifest.peripheryDependencies?.[name]);
   if (manifest.fee3000?.enabled !== true || Number(manifest.fee3000?.tickSpacing) <= 0) throw new Error("fee 3000 proof missing");
   requireBoundAddress("manifest NPM factory", manifest.bindings?.npmFactory, manifest.v3Factory.address);
   requireBoundAddress("manifest NPM WETH9", manifest.bindings?.npmWeth9, manifest.weth.address);
