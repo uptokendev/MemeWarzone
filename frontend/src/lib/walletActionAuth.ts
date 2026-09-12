@@ -80,6 +80,91 @@ type SignInput = {
   walletType?: "evm" | "solana";
 };
 
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+/**
+ * Project-import Solana auth intentionally mirrors the proven draft signer order:
+ * resolve the exact connected provider -> establish/verify the wallet session ->
+ * fetch the nonce -> build the message -> perform exactly one signMessage(Uint8Array).
+ *
+ * Import previously nested signWalletAction -> signSolanaMessage, which fetched the
+ * nonce before provider/session resolution and repeatedly diverged from the working
+ * Solana draft path during the September 12 signer-debug cascade.
+ */
+async function signProjectImportSolanaAction(
+  input: SignInput,
+  walletAddress: string,
+  chainId: number,
+): Promise<WalletActionAuthPayload> {
+  const { detectSolanaWallets, getStoredSolanaWalletId } = await import("@/lib/solanaWallet");
+  const wallets = detectSolanaWallets();
+  const expected = String(walletAddress || "").trim();
+  const storedId = getStoredSolanaWalletId();
+
+  const detectedWallet =
+    wallets.find((wallet) => String(wallet.provider?.publicKey?.toString?.() || "").trim() === expected) ||
+    (storedId ? wallets.find((wallet) => wallet.id === storedId) : null) ||
+    wallets[0] ||
+    null;
+  const provider = detectedWallet?.provider;
+
+  if (!provider?.signMessage) {
+    throw new Error("This Solana wallet does not support message signing.");
+  }
+
+  let publicKey = String(provider.publicKey?.toString?.() || "").trim();
+  if (!publicKey || provider.isConnected === false) {
+    if (!provider.connect) throw new Error("Solana wallet not connected.");
+    const result = await provider.connect({ onlyIfTrusted: false } as any);
+    publicKey = String(result?.publicKey?.toString?.() || provider.publicKey?.toString?.() || "").trim();
+  }
+
+  if (!publicKey) throw new Error("Solana wallet not connected.");
+  if (publicKey !== expected) {
+    throw new Error(
+      `Connected wallet (${detectedWallet?.name || "extension"}) is ${publicKey.slice(0, 4)}…${publicKey.slice(-4)}, ` +
+      `but this action expects ${expected.slice(0, 4)}…${expected.slice(-4)}. Reconnect the correct wallet.`,
+    );
+  }
+
+  // Match createSignedSolanaDraftAction: no parallel work between session resolution
+  // and nonce/signature production.
+  const extraLines = await Promise.resolve(input.extraLines || []);
+  const nonce = await fetchNonce(chainId, walletAddress);
+  const message = buildWalletActionMessage({
+    action: input.action,
+    walletAddress,
+    chainId,
+    nonce,
+    extraLines,
+  });
+
+  const encoded = new TextEncoder().encode(message);
+  const signed = await provider.signMessage(encoded);
+  const rawSignature = signed instanceof Uint8Array ? signed : signed?.signature;
+  const signature =
+    rawSignature instanceof Uint8Array
+      ? rawSignature
+      : rawSignature?.buffer
+        ? new Uint8Array(rawSignature.buffer, rawSignature.byteOffset || 0, rawSignature.byteLength || rawSignature.length)
+        : null;
+  if (!signature?.length) throw new Error("Solana wallet did not return a signature.");
+
+  return {
+    action: input.action,
+    walletAddress,
+    chainId,
+    nonce,
+    message,
+    signature: bytesToBase64(signature),
+    walletType: "solana",
+  };
+}
+
 /**
  * Build a signed wallet action auth payload for API user writes.
  * Prefer passing `signMessage` for Solana; EVM can use `signer.signMessage`.
@@ -92,6 +177,12 @@ export async function signWalletAction(input: SignInput): Promise<WalletActionAu
 
   const isSolana =
     input.walletType === "solana" || isSolanaChainId(chainId) || isSolanaAddress(walletAddress);
+
+  // Keep every established shared signer untouched. Only project-import Solana
+  // actions use the atomic draft-style ordering above.
+  if (isSolana && String(input.action || "").startsWith("project_import_")) {
+    return signProjectImportSolanaAction(input, walletAddress, chainId);
+  }
 
   const extraLinesPromise = Promise.resolve(input.extraLines || []);
   const [nonce, extraLines] = await Promise.all([fetchNonce(chainId, walletAddress), extraLinesPromise]);
