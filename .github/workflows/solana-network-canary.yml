@@ -12,6 +12,7 @@ on:
           - bsc-testnet-preflight
           - bsc-testnet-stage-deploy
           - bsc-testnet-full-cycle
+          - bsc-testnet-real-topaz-full-cycle
           - bsc-mainnet-fork-source-head
       send_solana_graduation:
         description: Send Solana graduation transaction
@@ -131,7 +132,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Run BNB 6C source-head full lifecycle on chain 97
+      - name: Run BNB 6C controlled-Topaz full lifecycle on chain 97
         if: ${{ inputs.network == 'bsc-testnet-full-cycle' }}
         env:
           BNB_TESTNET_ADMIN: "0xEE2c6A7605ED378CF1D26D1d828446d63A3fdeDa"
@@ -151,7 +152,7 @@ jobs:
           test -s reports/bnb-6c-testnet-acceptance.json
           node -e 'const r=require("./reports/bnb-6c-testnet-acceptance.json"); if(r.chainId!==97||r.accepted!==true||r.factoryLiveAfter!==true||r.createPausedAfter!==true) process.exit(1); console.log({accepted:r.accepted,factory:r.factory,campaign:r.campaign,pool:r.pool,realTopazCompatibility:r.realTopazCompatibility});'
 
-      - name: Upload BNB 6C chain-97 evidence
+      - name: Upload BNB 6C controlled-Topaz chain-97 evidence
         if: ${{ inputs.network == 'bsc-testnet-full-cycle' && always() }}
         uses: actions/upload-artifact@v4
         with:
@@ -159,6 +160,40 @@ jobs:
           path: |
             deployments/bnb/testnet.staged.json
             reports/bnb-6c-testnet-acceptance.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Run BSC97 Gen-4 destructive lifecycle against authoritative real Topaz
+        if: ${{ inputs.network == 'bsc-testnet-real-topaz-full-cycle' }}
+        env:
+          BNB_TESTNET_ADMIN: "0xEE2c6A7605ED378CF1D26D1d828446d63A3fdeDa"
+          BNB_6C_ROUTE_AUTHORITY_ADDRESS: "0x2b72A9E6C4Ea3525d83B8C5E8F2044BDbC1f1Dec"
+          BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY: ${{ secrets.BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY }}
+          BNB_REAL_TOPAZ_EXECUTION_AUTHORIZED: "true"
+          MEMEWARZONE_SOURCE_SHA: ${{ github.sha }}
+          TOPAZ_MANIFEST: deployments/bscTestnet/minimal-topaz.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY:-}" || {
+            echo "BLOCKER: set GitHub Environment secret BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY."
+            exit 1
+          }
+          echo "mode=real-topaz-source-head-full-cycle"
+          echo "safety=chain97 only; authoritative Topaz; live 3/2 factory must remain unchanged"
+          npm ci
+          npx hardhat run scripts/run-bnb-real-topaz-certification.ts --network bscTestnet
+          test -s reports/bnb-real-topaz-testnet-acceptance.json
+          node -e 'const r=require("./reports/bnb-real-topaz-testnet-acceptance.json"); const ok=r.chainId===97&&r.accepted===true&&r.realTopazCompatibility===true&&r.controlledTopazDex===false&&r.permanentLpLock===true&&r.feeHarvest80_20===true&&r.lpPrincipalPreserved===true&&r.factoryLiveAfter===true&&r.createPausedAfter===true&&r.checks?.reloadVerified===true&&r.checks?.immediateHarvestRetryZero===true&&r.transactions?.postGradBuy&&r.transactions?.postGradSell; if(!ok) process.exit(1); console.log({accepted:r.accepted,realTopazCompatibility:r.realTopazCompatibility,factory:r.protocol?.launchFactory,campaign:r.protocol?.campaign,token:r.protocol?.token,pool:r.protocol?.graduatedPool,postGradBuy:r.transactions?.postGradBuy,postGradSell:r.transactions?.postGradSell,reloadVerified:r.checks?.reloadVerified,immediateHarvestRetryZero:r.checks?.immediateHarvestRetryZero});'
+
+      - name: Upload BSC97 real Topaz destructive acceptance evidence
+        if: ${{ inputs.network == 'bsc-testnet-real-topaz-full-cycle' && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: bnb-real-topaz-testnet-acceptance-${{ github.sha }}
+          path: |
+            reports/bnb-real-topaz-testnet-stage.json
+            reports/bnb-real-topaz-testnet-acceptance.json
           if-no-files-found: warn
           retention-days: 14
 
