@@ -1,0 +1,121 @@
+name: Agent3 ArenaMoneyV2 Devnet Reread
+
+on:
+  push:
+    branches:
+      - agent3/arena-money-v2-live-reread-11cde9e
+    paths:
+      - '.github/workflows/agent3-arena-money-v2-devnet-reread.yml'
+      - 'frontend/scripts/arena-money-v2-devnet-reread.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent3-arena-money-v2-reread-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  EXPECTED_SOURCE_SHA: 11cde9ef4078b6b163933c7c8209c25d3098994d
+  EXPECTED_PROGRAM_ID: 2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX
+  EXPECTED_CONFIG_PDA: Bio7bTMDLo1rYhKbR26jW98N4YvdeQW3UzUw4cHEv8xX
+  SOLANA_VERSION: 1.18.26
+  ANCHOR_VERSION: 0.30.1
+  RUST_TOOLCHAIN: 1.79.0
+
+jobs:
+  reread:
+    name: Read-only rewards treasury identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: airdrop-solana-devnet
+    env:
+      SOLANA_REWARDS_RPC_URL: ${{ secrets.SOLANA_REWARDS_RPC_URL }}
+      SOLANA_REWARDS_TREASURY_PROGRAM_ID: ${{ vars.SOLANA_REWARDS_TREASURY_PROGRAM_ID }}
+      SOLANA_REWARDS_AUTHORITY_SECRET_KEY: ${{ secrets.SOLANA_REWARDS_AUTHORITY_SECRET_KEY }}
+      ARENA_MONEY_V2_CANDIDATE_PATH: target/deploy/mwz_rewards_treasury.so
+      ARENA_MONEY_V2_REREAD_OUT: /tmp/arena-money-v2-live-reread.json
+    steps:
+      - name: Checkout exact diagnostic head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Prove source ancestry and diagnostic-only scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$EXPECTED_SOURCE_SHA" HEAD
+          changed="$(git diff --name-only "$EXPECTED_SOURCE_SHA"...HEAD)"
+          printf '%s\n' "$changed"
+          test "$changed" = $'.github/workflows/agent3-arena-money-v2-devnet-reread.yml\nfrontend/scripts/arena-money-v2-devnet-reread.mjs'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend Solana client dependencies
+        working-directory: frontend
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Install pinned Solana and Anchor toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          release_dir="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
+          mkdir -p "$release_dir"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error \
+            --output /tmp/solana-release.tar.bz2 \
+            "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"
+          ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+
+      - name: Build exact rewards treasury candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F "declare_id!(\"$EXPECTED_PROGRAM_ID\")" programs/mwz_rewards_treasury/src/lib.rs
+          grep -F 'pub mod arena_money_v2;' programs/mwz_rewards_treasury/src/lib.rs
+          grep -F 'pub fn initialize_arena_money_v2' programs/mwz_rewards_treasury/src/lib.rs
+          rm -f Cargo.lock programs/mwz_rewards_treasury/Cargo.lock
+          anchor build --program-name mwz_rewards_treasury --no-idl 2>&1 | tee /tmp/mwz-rewards-build.log | tail -n 220
+          test -s target/deploy/mwz_rewards_treasury.so
+          if grep -E 'Stack offset .* exceeded max offset|stack frame.*exceed' /tmp/mwz-rewards-build.log; then
+            echo 'SBF stack diagnostic detected' >&2
+            exit 1
+          fi
+          sha256sum target/deploy/mwz_rewards_treasury.so
+          wc -c target/deploy/mwz_rewards_treasury.so
+
+      - name: Fresh live devnet reread only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SOLANA_REWARDS_RPC_URL:-}"
+          test -n "${SOLANA_REWARDS_AUTHORITY_SECRET_KEY:-}"
+          node frontend/scripts/arena-money-v2-devnet-reread.mjs
+
+      - name: Assert no mutation path exists in diagnostic transport
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -E 'sendAndConfirmTransaction|sendRawTransaction|sendTransaction|program deploy|anchor deploy' frontend/scripts/arena-money-v2-devnet-reread.mjs
+          echo 'PASS: diagnostic lane contains no broadcast/deploy call'
+
+      - name: Upload reread evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: arena-money-v2-reread-${{ github.sha }}
+          path: /tmp/arena-money-v2-live-reread.json
+          if-no-files-found: warn
+          retention-days: 14
