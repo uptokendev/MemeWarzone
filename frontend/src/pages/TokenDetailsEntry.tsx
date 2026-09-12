@@ -22,7 +22,8 @@ export default function TokenDetailsEntry() {
 
   const [project, setProject] = useState<ProjectImportItem | null>(null);
   const [resolved, setResolved] = useState(!projectImportsEnabled);
-  const [claimOpen, setClaimOpen] = useState(searchParams.get("claim") === "prompt");
+  const claimResult = searchParams.get("claim");
+  const [claimOpen, setClaimOpen] = useState(claimResult === "prompt" || claimResult === "x_failed");
 
   useEffect(() => {
     if (!projectImportsEnabled || !routeId) { setProject(null); setResolved(true); return; }
@@ -53,7 +54,7 @@ export default function TokenDetailsEntry() {
   if (!resolved) return null;
   if (project) return <>
     <ImportedProjectDetails key={`${project.id}:${project.ownershipStatus}:${project.ownershipVerifiedAt || ""}`} item={project} onClaimMemecoin={() => setClaimOpen(true)} />
-    <ProjectXClaimDialog item={project} open={claimOpen} onOpenChange={setClaimOpen} onResolvedImage={(imageUrl) => setProject((current) => current ? { ...current, imageUrl } : current)} />
+    <ProjectXClaimDialog item={project} open={claimOpen} onOpenChange={setClaimOpen} onResolvedImage={(imageUrl) => setProject((current) => current ? { ...current, imageUrl } : current)} onManualReviewRequested={(next) => { setProject(next); setClaimOpen(false); }} />
   </>;
   return <TokenDetailsLiveEntry />;
 }
