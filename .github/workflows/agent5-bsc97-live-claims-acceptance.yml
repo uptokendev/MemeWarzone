@@ -1,0 +1,191 @@
+name: Agent 5 BSC97 Live Claims Acceptance
+
+on:
+  push:
+    branches:
+      - agent5/bsc97-live-claims
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CI: true
+
+jobs:
+  destructive-chain97:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: testnet-certification
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: memewarzone_claim_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d memewarzone_claim_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      BSC_TESTNET_PRIVATE_KEY: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
+      BSC_RPC_HTTP_97: ${{ vars.BSC_TESTNET_RPC || secrets.BSC_TESTNET_RPC }}
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/memewarzone_claim_test
+      PG_DISABLE_SSL: "1"
+      API_AUTH_ENFORCE_USER_WRITES: "1"
+      REWARD_CLAIM_MIN_CONFIRMATIONS_97: "1"
+      LEAGUE_ADMIN_TOKEN: agent5-live-test
+    steps:
+      - name: Checkout isolated exact-authority branch
+        uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Exact authority and operator boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^)" = "4ba6530526b7f646feb051b20052fa7cae94cd36"
+          test -n "${BSC_TESTNET_PRIVATE_KEY:-}"
+          test -n "${BSC_RPC_HTTP_97:-}"
+          npm ci
+          npm ci --prefix frontend
+          node --input-type=module <<'NODE'
+          import { JsonRpcProvider, Wallet, formatEther } from 'ethers';
+          const p = new JsonRpcProvider(process.env.BSC_RPC_HTTP_97, 97, { staticNetwork: true });
+          const n = await p.getNetwork();
+          if (Number(n.chainId) !== 97) throw new Error(`wrong chain ${n.chainId}`);
+          const w = new Wallet(process.env.BSC_TESTNET_PRIVATE_KEY, p);
+          const expected = '0xEE2c6A7605ED378CF1D26D1d828446d63A3fdeDa'.toLowerCase();
+          if (w.address.toLowerCase() !== expected) throw new Error(`unauthorized operator ${w.address}`);
+          const bal = await p.getBalance(w.address);
+          console.log(JSON.stringify({chainId:97, operator:w.address, balanceBNB:formatEther(bal)}));
+          if (bal < 30000000000000000n) throw new Error('BLOCKED: operator needs at least 0.03 test BNB for claim-rail deployment/acceptance');
+          await p.destroy();
+          NODE
+
+      - name: Compile frozen claim contracts
+        run: npx hardhat compile --config hardhat.agent5-claims-closeout.config.cjs
+
+      - name: Deploy minimum actual BSC97 claim rails
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { ContractFactory, JsonRpcProvider, Wallet, formatEther } from 'ethers';
+          const p = new JsonRpcProvider(process.env.BSC_RPC_HTTP_97, 97, { staticNetwork: true });
+          const owner = new Wallet(process.env.BSC_TESTNET_PRIVATE_KEY, p);
+          const reward = JSON.parse(fs.readFileSync('.agent5-artifacts/contracts/RewardDistributor.sol/RewardDistributor.json','utf8'));
+          const vaultA = JSON.parse(fs.readFileSync('.agent5-artifacts/contracts/TreasuryVaultV2.sol/TreasuryVaultV2.json','utf8'));
+          const before = await p.getBalance(owner.address);
+          const distributor = await new ContractFactory(reward.abi, reward.bytecode, owner).deploy(owner.address);
+          const dReceipt = await distributor.deploymentTransaction().wait();
+          const distributorAddress = await distributor.getAddress();
+          const vault = await new ContractFactory(vaultA.abi, vaultA.bytecode, owner).deploy(owner.address, owner.address, owner.address);
+          const vReceipt = await vault.deploymentTransaction().wait();
+          const vaultAddress = await vault.getAddress();
+          await (await owner.sendTransaction({to:vaultAddress,value:10000000000000000n})).wait();
+          await (await vault.setClaimCaps(10000000000000000n,100000000000000000n)).wait();
+          await (await vault.setClaimsPaused(false)).wait();
+          const dCode = await p.getCode(distributorAddress);
+          const vCode = await p.getCode(vaultAddress);
+          if (dCode === '0x' || vCode === '0x') throw new Error('missing runtime bytecode');
+          const out = {
+            sourceAuthority:'4ba6530526b7f646feb051b20052fa7cae94cd36', chainId:97,
+            operator:owner.address,
+            rewardDistributor:{address:distributorAddress,deploymentTx:dReceipt.hash,deploymentBlock:dReceipt.blockNumber,runtimeBytes:(dCode.length-2)/2},
+            treasuryVaultV2:{address:vaultAddress,deploymentTx:vReceipt.hash,deploymentBlock:vReceipt.blockNumber,runtimeBytes:(vCode.length-2)/2,owner:owner.address,emergencyAdmin:owner.address,rootPoster:owner.address,initialFundingWei:'10000000000000000'},
+            operatorBalanceBeforeBNB:formatEther(before)
+          };
+          fs.mkdirSync('reports',{recursive:true});
+          fs.writeFileSync('reports/agent5-bsc97-claim-rails.json',JSON.stringify(out,null,2));
+          fs.appendFileSync(process.env.GITHUB_ENV,`REWARD_DISTRIBUTOR_ADDRESS_97=${distributorAddress}\nTREASURY_VAULT_V2_ADDRESS_97=${vaultAddress}\nREWARD_CLAIM_RECOVERY_FROM_BLOCK_97=${Math.min(dReceipt.blockNumber,vReceipt.blockNumber)}\n`);
+          console.log(JSON.stringify(out,null,2));
+          await p.destroy();
+          NODE
+
+      - name: Prepare live-network copies of frozen tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp frontend/api/lib/agent5ClaimsCloseout.integration.test.mjs /tmp/claims-live.test.mjs
+          cp frontend/api/lib/bnbBattleClaimRecovery.integration.test.mjs /tmp/battle-live.test.mjs
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          function patchClaims(path) {
+            let s=fs.readFileSync(path,'utf8');
+            s=s.replace('JsonRpcProvider, hexlify, keccak256, randomBytes','JsonRpcProvider, Wallet, Contract, hexlify, keccak256, randomBytes');
+            s=s.replace('owner = await provider.getSigner(0);\n  user = await provider.getSigner(1);\n  other = await provider.getSigner(2);\n  rootPoster = await provider.getSigner(3);','owner = new Wallet(process.env.BSC_TESTNET_PRIVATE_KEY, provider);\n  user = owner;\n  other = Wallet.createRandom().connect(provider);\n  rootPoster = owner;');
+            s=s.replace(/distributor = await new ContractFactory\(rewardArtifact\.abi, rewardArtifact\.bytecode, owner\)\.deploy\(await owner\.getAddress\(\)\);\n  await distributor\.waitForDeployment\(\);\n  distributorAddress = await distributor\.getAddress\(\);/,'distributorAddress = process.env.REWARD_DISTRIBUTOR_ADDRESS_97;\n  distributor = new Contract(distributorAddress, rewardArtifact.abi, owner);');
+            s=s.replace(/vault = await new ContractFactory\(vaultArtifact\.abi, vaultArtifact\.bytecode, owner\)\.deploy\(await owner\.getAddress\(\), await other\.getAddress\(\), await rootPoster\.getAddress\(\)\);\n  await vault\.waitForDeployment\(\);\n  vaultAddress = await vault\.getAddress\(\);/,'vaultAddress = process.env.TREASURY_VAULT_V2_ADDRESS_97;\n  vault = new Contract(vaultAddress, vaultArtifact.abi, owner);');
+            s=s.replace('  await (await owner.sendTransaction({ to: vaultAddress, value: 100000000000000000n })).wait();\n','');
+            fs.writeFileSync(path,s);
+          }
+          function patchBattle(path) {
+            let s=fs.readFileSync(path,'utf8');
+            s=s.replace('JsonRpcProvider,\n  keccak256','JsonRpcProvider,\n  Wallet,\n  keccak256');
+            s=s.replace('owner = await provider.getSigner(0);\n  user = await provider.getSigner(1);\n  other = await provider.getSigner(2);','owner = new Wallet(process.env.BSC_TESTNET_PRIVATE_KEY, provider);\n  user = owner;\n  other = Wallet.createRandom().connect(provider);');
+            s=s.replace(/const factory = new ContractFactory\(artifact\.abi, artifact\.bytecode, owner\);\n  distributor = await factory\.deploy\(await owner\.getAddress\(\)\);\n  await distributor\.waitForDeployment\(\);\n  distributorAddress = await distributor\.getAddress\(\);/,'distributorAddress = process.env.REWARD_DISTRIBUTOR_ADDRESS_97;\n  distributor = new Contract(distributorAddress, artifact.abi, owner);');
+            fs.writeFileSync(path,s);
+          }
+          patchClaims('/tmp/claims-live.test.mjs');
+          patchBattle('/tmp/battle-live.test.mjs');
+          NODE
+          cp /tmp/claims-live.test.mjs frontend/api/lib/agent5ClaimsLive97.integration.test.mjs
+          cp /tmp/battle-live.test.mjs frontend/api/lib/agent5BattleLive97.integration.test.mjs
+
+      - name: Generic reward plus League destructive acceptance on actual BSC97
+        working-directory: frontend
+        run: |
+          set -o pipefail
+          node --test api/lib/agent5ClaimsLive97.integration.test.mjs 2>&1 | tee ../reports/agent5-bsc97-generic-league.log
+          psql "$DATABASE_URL" -Atc "select json_agg(x) from (select reward_type,status,claim_tx_hash,wallet_address,amount::text from reward_ledger order by created_at) x" > ../reports/agent5-bsc97-generic-db.json
+          psql "$DATABASE_URL" -Atc "select json_agg(x) from (select chain_id,period,category,rank,recipient_address,amount_raw::text,tx_hash from league_epoch_payouts order by epoch_start,category,rank) x" > ../reports/agent5-bsc97-league-db.json
+
+      - name: Normal Battle destructive acceptance on actual BSC97
+        working-directory: frontend
+        run: |
+          set -o pipefail
+          node --test api/lib/agent5BattleLive97.integration.test.mjs 2>&1 | tee ../reports/agent5-bsc97-battle.log
+          psql "$DATABASE_URL" -Atc "select json_agg(x) from (select reward_type,status,claim_tx_hash,wallet_address,amount::text,metadata from reward_ledger order by created_at) x" > ../reports/agent5-bsc97-battle-db.json
+
+      - name: Bind chain evidence and balances
+        if: always()
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { Contract, JsonRpcProvider, Wallet, formatEther } from 'ethers';
+          if (!fs.existsSync('reports/agent5-bsc97-claim-rails.json')) process.exit(0);
+          const r=JSON.parse(fs.readFileSync('reports/agent5-bsc97-claim-rails.json','utf8'));
+          const p=new JsonRpcProvider(process.env.BSC_RPC_HTTP_97,97,{staticNetwork:true});
+          const w=new Wallet(process.env.BSC_TESTNET_PRIVATE_KEY,p);
+          const rewardA=JSON.parse(fs.readFileSync('.agent5-artifacts/contracts/RewardDistributor.sol/RewardDistributor.json','utf8'));
+          const vaultA=JSON.parse(fs.readFileSync('.agent5-artifacts/contracts/TreasuryVaultV2.sol/TreasuryVaultV2.json','utf8'));
+          const d=new Contract(r.rewardDistributor.address,rewardA.abi,p);
+          const v=new Contract(r.treasuryVaultV2.address,vaultA.abi,p);
+          const from=Math.min(r.rewardDistributor.deploymentBlock,r.treasuryVaultV2.deploymentBlock);
+          const dEvents=await d.queryFilter(d.filters.Claimed(),from,'latest').catch(()=>[]);
+          const vEvents=await v.queryFilter(v.filters.Claimed(),from,'latest').catch(()=>[]);
+          const evidence={...r,final:{operatorBalanceBNB:formatEther(await p.getBalance(w.address)),rewardDistributorBalanceWei:String(await p.getBalance(r.rewardDistributor.address)),treasuryVaultBalanceWei:String(await p.getBalance(r.treasuryVaultV2.address)),rewardClaimEvents:dEvents.map(e=>({txHash:e.transactionHash,blockNumber:e.blockNumber,args:e.args?.map?.(String)})),leagueClaimEvents:vEvents.map(e=>({txHash:e.transactionHash,blockNumber:e.blockNumber,args:e.args?.map?.(String)}))}};
+          fs.writeFileSync('reports/agent5-bsc97-live-chain-evidence.json',JSON.stringify(evidence,null,2));
+          console.log(JSON.stringify(evidence,null,2));
+          await p.destroy();
+          NODE
+
+      - name: Upload destructive evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent5-bsc97-live-claims-${{ github.sha }}
+          path: reports/agent5-bsc97-*
+          if-no-files-found: warn
+          retention-days: 30
