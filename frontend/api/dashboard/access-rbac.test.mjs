@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 const read = (path) => readFile(new URL(path, import.meta.url), 'utf8')
-const [migration, ownerGuard, auth, access, accessAdmin, accessApi, analytics, apiAuth, proxy, promotors, recruiters, submissionNotes] = await Promise.all([
+const [migration, ownerGuard, auth, access, accessAdmin, accessApi, analytics, apiAuth, proxy, promotors, recruiters, operations, submissionNotes] = await Promise.all([
   read('../../../db/migrations/20260913_000001_dashboard_access_rbac.sql'),
   read('../../../db/migrations/20260913_000002_dashboard_owner_guard.sql'),
   read('./_auth.js'),
@@ -15,6 +15,7 @@ const [migration, ownerGuard, auth, access, accessAdmin, accessApi, analytics, a
   read('../../server/railwayProxy.js'),
   read('./promotors.js'),
   read('./recruiters.js'),
+  read('./operations.js'),
   read('./submissionNotes.js'),
 ])
 
@@ -62,6 +63,13 @@ test('Finance Reader and Manager preserve read/manage separation', () => {
   assert.match(proxy, /finance\.view/)
   assert.match(proxy, /finance\.manage/)
   assert.match(proxy, /authorizeDashboardBearer\(req, res, permission\)/)
+})
+
+test('Operations reads are server-side and require operations.view', () => {
+  assert.match(operations, /requireDashboardPermission\(req, res, "operations\.view"\)/)
+  for (const marker of ['public.submissions', 'public.tickets', 'public.ticket_transcripts']) assert.match(operations, new RegExp(marker.replace('.', '\\.')))
+  assert.match(proxy, /dispatchDashboardOperations/)
+  assert.match(proxy, /\/api\/dashboard\/operations/)
 })
 
 test('Operations and Community endpoints enforce read/manage separation server-side', () => {
