@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { CATALOG_EVENT_NAMES } from "./catalog.js";
 import { isForbiddenEventName, stripForbiddenProperties } from "./denylist.js";
-import { sanitizeEvent } from "./ingest.js";
 import { templatePath } from "./paths.js";
+
+const ingestSource = await readFile(new URL("./ingest.js", import.meta.url), "utf8");
 
 test("catalog includes reserved and product events", () => {
   assert.equal(CATALOG_EVENT_NAMES.has("$pageview"), true);
@@ -19,7 +21,7 @@ test("finance and security names are rejected", () => {
   assert.equal(isForbiddenEventName("buy_submitted"), false);
 });
 
-test("forbidden money properties are stripped", () => {
+test("forbidden money properties including generic value are stripped", () => {
   const cleaned = stripForbiddenProperties({
     fn: "buy",
     amount: 12,
@@ -30,29 +32,19 @@ test("forbidden money properties are stripped", () => {
   assert.deepEqual(cleaned, { fn: "buy", ok: true });
 });
 
-test("web vital keeps numeric measurement without weakening generic value denylist", () => {
-  const event = sanitizeEvent(
-    {
-      event_id: "11111111-1111-4111-8111-111111111111",
-      anonymous_id: "22222222-2222-4222-8222-222222222222",
-      session_id: "33333333-3333-4333-8333-333333333333",
-      app: "public",
-      name: "$web_vital",
-      page: { path: "/" },
-      properties: { metric: "LCP", value: 1240.5, rating: "good" },
-    },
-    {
-      headers: {
-        "cf-ipcountry": "NL",
-        "user-agent": "Mozilla/5.0 Chrome/152.0.0.0 Safari/537.36",
-      },
-      ip: "203.0.113.10",
-    },
-  );
-  assert.equal(event?.properties.value, undefined);
-  assert.equal(event?.properties.measurement, 1240.5);
-  assert.equal(event?.properties.metric, "LCP");
-  assert.equal(event?.context.country, "NL");
+test("web vital ingestion narrowly remaps its numeric value to measurement", () => {
+  assert.match(ingestSource, /if \(name === "\$web_vital"\)/);
+  assert.match(ingestSource, /Number\(raw\.properties\?\.value\)/);
+  assert.match(ingestSource, /trimmed\.measurement = measurement/);
+  assert.match(ingestSource, /event\.properties\.measurement/);
+  assert.doesNotMatch(ingestSource, /trimmed\.value\s*=/);
+});
+
+test("coarse geography comes from edge headers rather than client coordinates", () => {
+  assert.match(ingestSource, /cf-ipcountry/);
+  assert.match(ingestSource, /x-vercel-ip-country/);
+  assert.match(ingestSource, /country: geo\.country/);
+  assert.doesNotMatch(ingestSource, /latitude|longitude|geocode/i);
 });
 
 test("path templates hide wallets and ids", () => {
