@@ -98,14 +98,18 @@ after(async () => {
   await pool.end();
 });
 
-test("manual project ownership queue is driven only by ownership state and claim fields", async () => {
+test("admin ownership feed includes manual-review, verified and unverified imports while keeping review claims first", async () => {
   const id = await insertClaim(501);
-  await pool.query(`INSERT INTO public.arena_token_imports(chain_id,token_address,owner_wallet,ownership_status,status) VALUES(56,$1,'','ownership_pending','review_requested')`, ["0x0000000000000000000000000000000000000502"]);
-  const queue = await listProjectOwnershipClaims(pool);
-  assert.equal(queue.length, 1);
-  assert.equal(String(queue[0].id), String(id));
-  assert.equal(queue[0].ownership_status, "ownership_manual_review");
-  assert.equal(queue[0].status, "scanning");
+  const pendingToken = "0x0000000000000000000000000000000000000502";
+  const verifiedToken = "0x0000000000000000000000000000000000000503";
+  await pool.query(`INSERT INTO public.arena_token_imports(chain_id,token_address,owner_wallet,ownership_status,status) VALUES(56,$1,'','ownership_pending','review_requested')`, [pendingToken]);
+  await pool.query(`INSERT INTO public.arena_token_imports(chain_id,token_address,owner_wallet,project_owner_wallet,ownership_status,ownership_verified_at,status) VALUES(56,$1,'',$2,'ownership_verified',NOW(),'scanning')`, [verifiedToken, CLAIMANT]);
+  const directory = await listProjectOwnershipClaims(pool);
+  assert.equal(directory.length, 3);
+  assert.equal(String(directory[0].id), String(id));
+  assert.equal(directory[0].ownership_status, "ownership_manual_review");
+  assert.ok(directory.some((row) => row.token_address === pendingToken && row.ownership_status === "ownership_pending"));
+  assert.ok(directory.some((row) => row.token_address === verifiedToken && row.ownership_status === "ownership_verified"));
 });
 
 test("VERIFY OWNER succeeds when dashboard admin UUID is absent from wm_users and stores NULL admin_user_id", async () => {

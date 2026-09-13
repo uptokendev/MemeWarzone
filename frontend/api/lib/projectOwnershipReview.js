@@ -21,14 +21,24 @@ export function projectOwnershipClaimItem(row) {
 }
 
 export async function listProjectOwnershipClaims(db) {
+  // Admin ownership endpoint doubles as the read-only import directory.
+  // Keep manual-review claims first so the existing review queue remains easy to derive
+  // client-side, then show every other import newest-first for ownership observability.
   const result = await db.query(`
     SELECT i.*, i.xmin::text AS state_version
       FROM public.arena_token_imports i
-     WHERE i.ownership_status = $1
-       AND i.manual_claim_wallet IS NOT NULL
-       AND btrim(i.manual_claim_wallet) <> ''
-       AND i.manual_claim_requested_at IS NOT NULL
-     ORDER BY i.manual_claim_requested_at ASC, i.created_at ASC
+     ORDER BY
+       CASE
+         WHEN i.ownership_status = $1
+          AND i.manual_claim_wallet IS NOT NULL
+          AND btrim(i.manual_claim_wallet) <> ''
+          AND i.manual_claim_requested_at IS NOT NULL
+         THEN 0 ELSE 1
+       END ASC,
+       i.manual_claim_requested_at ASC NULLS LAST,
+       i.created_at DESC NULLS LAST,
+       i.id DESC
+     LIMIT 500
   `, [MANUAL_REVIEW]);
   return result.rows || [];
 }
