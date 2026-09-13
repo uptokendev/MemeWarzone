@@ -13,7 +13,6 @@ import { requireDashboardAdmin } from "../dashboard/_auth.js";
 function isProductionLike() {
   const nodeEnv = String(process.env.NODE_ENV || "").trim().toLowerCase();
   if (nodeEnv === "production") return true;
-  // Railway always injects these; treat as production-like for enforce defaults.
   if (String(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID || "").trim()) return true;
   return ["1", "true", "yes", "on"].includes(String(process.env.API_AUTH_ENFORCE_DEFAULT || "").trim().toLowerCase());
 }
@@ -27,7 +26,6 @@ function parseBoolEnv(name) {
   return null;
 }
 
-/** @returns {boolean} explicit value, else production-like default ON */
 function enforceFlag(name) {
   const parsed = parseBoolEnv(name);
   if (parsed !== null) return parsed;
@@ -54,7 +52,6 @@ export function isAuthEnforceArenaMutations() {
   return enforceFlag("API_AUTH_ENFORCE_ARENA_MUTATIONS");
 }
 
-/** Snapshot for boot logs / diagnostics. */
 export function getAuthEnforceSnapshot() {
   return {
     productionLike: isProductionLike(),
@@ -99,10 +96,6 @@ export function getExpectedOpsKey() {
   return String(process.env.DASHBOARD_OPS_KEY || process.env.OPS_READ_KEY || "").trim();
 }
 
-/**
- * Internal / service-to-service auth (indexer parity).
- * @returns {boolean} true if request may proceed
- */
 export function requireInternalAuth(req, res, { routeLabel = "internal" } = {}) {
   const expected = getExpectedInternalToken();
   const provided = readInternalToken(req);
@@ -132,16 +125,33 @@ export function requireInternalAuth(req, res, { routeLabel = "internal" } = {}) 
   return false;
 }
 
+function dashboardPrincipalAsAdmin(principal) {
+  return {
+    id: principal.authUserId,
+    email: principal.email,
+    roles: [principal.role].filter(Boolean),
+    isMasterAdmin: Boolean(principal.isOwner || principal.isBreakGlass),
+    dashboardMemberId: principal.memberId,
+    dashboardPermissions: principal.permissions,
+  };
+}
+
 /**
  * Dashboard admin Bearer and/or shared ops key.
  * A route that has already performed capability authorization may place the
- * resulting principal on req.dashboardPrincipal; this avoids reinterpreting
- * a DB-authorized member as a legacy app-metadata admin.
- * @returns {Promise<object|null>} admin context or ops context, or null after response sent
+ * resulting principal on req.dashboardPrincipal. At that point the principal
+ * is exposed as an authenticated admin context so existing strict handlers can
+ * keep their business-level safety checks unchanged. No caller can create this
+ * bridge from HTTP input; it is populated only by server-side capability gates.
  */
 export async function requireAdminOrOps(req, res, { routeLabel = "admin", allowOps = true } = {}) {
   if (req.dashboardPrincipal) {
-    return { mode: "dashboard-permission", principal: req.dashboardPrincipal };
+    return {
+      mode: "admin",
+      admin: dashboardPrincipalAsAdmin(req.dashboardPrincipal),
+      principal: req.dashboardPrincipal,
+      authorizationSource: "dashboard-permission",
+    };
   }
 
   const enforce = isAuthEnforceSecurityMutations();
@@ -155,7 +165,6 @@ export async function requireAdminOrOps(req, res, { routeLabel = "admin", allowO
   const token = readBearerToken(req);
   if (token) {
     const admin = await requireDashboardAdmin(req, res);
-    // requireDashboardAdmin already wrote 401/403 when invalid
     if (admin) return { mode: "admin", admin };
     return null;
   }
@@ -175,9 +184,6 @@ export async function requireAdminOrOps(req, res, { routeLabel = "admin", allowO
   return null;
 }
 
-/**
- * Wrap an Express-style async handler with internal auth.
- */
 export function withInternalAuth(handler, routeLabel) {
   return async function internalAuthWrapped(req, res, next) {
     try {
@@ -191,9 +197,6 @@ export function withInternalAuth(handler, routeLabel) {
   };
 }
 
-/**
- * Wrap handler with admin/ops auth (for security mutations & sensitive admin GETs).
- */
 export function withAdminOrOps(handler, routeLabel, options = {}) {
   return async function adminOrOpsWrapped(req, res, next) {
     try {
