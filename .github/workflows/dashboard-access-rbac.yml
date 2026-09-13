@@ -10,6 +10,7 @@ on:
       - 'frontend/api/dashboard/_accessAdmin.js'
       - 'frontend/api/dashboard/access-rbac.test.mjs'
       - 'frontend/api/dashboard/promotors.js'
+      - 'frontend/api/dashboard/recruiters.js'
       - 'frontend/api/dashboard/submissionNotes.js'
       - 'frontend/api/admin/access.js'
       - 'frontend/api/analytics/admin.js'
@@ -34,6 +35,7 @@ jobs:
           node --check frontend/api/dashboard/_access.js
           node --check frontend/api/dashboard/_accessAdmin.js
           node --check frontend/api/dashboard/promotors.js
+          node --check frontend/api/dashboard/recruiters.js
           node --check frontend/api/dashboard/submissionNotes.js
           node --check frontend/api/admin/access.js
           node --check frontend/api/analytics/admin.js
