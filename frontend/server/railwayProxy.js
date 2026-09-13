@@ -207,7 +207,11 @@ async function dispatchAdminAccess(pathname, req, res) {
 async function dispatchAdminFinance(pathname, req, res) {
   if (!/^\/api\/admin\/finance(?:\/|$)/.test(pathname)) return false;
   const method = String(req.method || "GET").toUpperCase();
-  const permission = method === "GET" || method === "HEAD" ? "finance.view" : "finance.manage";
+  const permission = pathname === "/api/admin/finance/lp-harvest"
+    ? "lp_harvest.manage"
+    : method === "GET" || method === "HEAD"
+      ? "finance.view"
+      : "finance.manage";
   if (!(await authorizeDashboardBearer(req, res, permission))) return true;
 
   const financeAdmin = (await import("../api/admin/finance.js")).default;
