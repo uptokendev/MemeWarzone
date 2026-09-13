@@ -23,6 +23,10 @@ on:
       - 'frontend/api/dashboard/submissionNotes.js'
       - 'frontend/api/admin/access.js'
       - 'frontend/api/analytics/admin.js'
+      - 'frontend/api/analytics/ingest.js'
+      - 'frontend/api/analytics/geography.js'
+      - 'frontend/api/analytics/performance.js'
+      - 'frontend/api/analytics/analytics.test.mjs'
       - 'frontend/api/lib/apiAuth.js'
       - 'frontend/server/railwayProxy.js'
       - '.github/workflows/dashboard-access-rbac.yml'
@@ -51,11 +55,15 @@ jobs:
           node --check frontend/api/dashboard/submissionNotes.js
           node --check frontend/api/admin/access.js
           node --check frontend/api/analytics/admin.js
+          node --check frontend/api/analytics/ingest.js
+          node --check frontend/api/analytics/geography.js
+          node --check frontend/api/analytics/performance.js
           node --check frontend/api/lib/apiAuth.js
           node --check frontend/server/railwayProxy.js
-      - name: Focused RBAC certification
+      - name: Focused RBAC and analytics certification
         run: |
           node --test frontend/api/dashboard/access-rbac.test.mjs
           node --test frontend/api/dashboard/invite-redirect.test.mjs
           node --test frontend/api/dashboard/invite-existing-user.test.mjs
           node --test frontend/api/dashboard/member-delete.test.mjs
+          node --test frontend/api/analytics/analytics.test.mjs

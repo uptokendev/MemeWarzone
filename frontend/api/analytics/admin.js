@@ -2,6 +2,12 @@ import { pool } from "../../server/db.js";
 import { requireDashboardPermission } from "../dashboard/_access.js";
 import launchpadKpis from "./launchpad.js";
 import analyticsFunnels from "./funnels.js";
+import analyticsGeography from "./geography.js";
+import {
+  analyticsPerformanceEnvironment,
+  analyticsPerformancePages,
+  analyticsPerformanceVitals,
+} from "./performance.js";
 
 function isMissingSchema(error) {
   return error?.code === "42P01" || error?.code === "42703";
@@ -97,7 +103,9 @@ async function overview(from, to, app) {
     ),
     pool.query(
       `select properties->>'metric' as metric,
-              percentile_cont(0.75) within group (order by (properties->>'value')::double precision) as p75
+              percentile_cont(0.75) within group (
+                order by coalesce(nullif(properties->>'measurement',''), nullif(properties->>'value',''))::double precision
+              ) filter (where coalesce(nullif(properties->>'measurement',''), nullif(properties->>'value','')) is not null) as p75
          from public.analytics_events
         where name = '$web_vital' and ts >= $1 and ts < $2 ${extra}
           and properties ? 'metric'
@@ -249,33 +257,6 @@ async function functions(from, to, app) {
   };
 }
 
-async function vitals(from, to, app) {
-  const params = [from, to];
-  const extra = appFilter(app, params);
-  const result = await pool.query(
-    `select properties->>'metric' as metric,
-            count(*)::int as n,
-            percentile_cont(0.5) within group (order by (properties->>'value')::double precision) as p50,
-            percentile_cont(0.75) within group (order by (properties->>'value')::double precision) as p75,
-            percentile_cont(0.95) within group (order by (properties->>'value')::double precision) as p95
-       from public.analytics_events
-      where name = '$web_vital' and ts >= $1 and ts < $2 ${extra}
-        and coalesce(properties->>'metric', '') <> ''
-      group by 1
-      order by metric`,
-    params,
-  );
-  return {
-    rows: result.rows.map((row) => ({
-      metric: row.metric,
-      n: row.n,
-      p50: row.p50 == null ? null : Number(row.p50),
-      p75: row.p75 == null ? null : Number(row.p75),
-      p95: row.p95 == null ? null : Number(row.p95),
-    })),
-  };
-}
-
 async function realtime(app) {
   const params = [];
   const extra = appFilter(app, params);
@@ -406,8 +387,11 @@ export async function analyticsAdmin(req, res) {
     if (tail === "pages") return res.status(200).json(await pages(from, to, app));
     if (tail === "events") return res.status(200).json(await events(from, to, app));
     if (tail === "events/details") return res.status(200).json(await eventDetails(from, to, app, name));
+    if (tail === "geography") return res.status(200).json(await analyticsGeography({ pool, from, to, app }));
     if (tail === "performance/functions") return res.status(200).json(await functions(from, to, app));
-    if (tail === "performance/vitals") return res.status(200).json(await vitals(from, to, app));
+    if (tail === "performance/vitals") return res.status(200).json(await analyticsPerformanceVitals({ pool, from, to, app }));
+    if (tail === "performance/pages") return res.status(200).json(await analyticsPerformancePages({ pool, from, to, app }));
+    if (tail === "performance/environment") return res.status(200).json(await analyticsPerformanceEnvironment({ pool, from, to, app }));
     if (tail === "realtime") return res.status(200).json(await realtime(app));
     if (tail === "launchpad") {
       return res.status(200).json(await launchpadKpis({ from, to, chainId: req.query?.chainId }));
@@ -443,6 +427,9 @@ export async function analyticsAdmin(req, res) {
         pages: [],
         recent: [],
         funnels: [],
+        countries: [],
+        regions: [],
+        coverage: { pageviews: 0, locatedPageviews: 0, rate: 0 },
       });
     }
     throw error;
