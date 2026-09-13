@@ -13,6 +13,7 @@ import {
   writeDashboardAccessAudit,
 } from "../dashboard/_accessAdmin.js";
 import { sendDashboardAccessEmail } from "../dashboard/_inviteDelivery.js";
+import { deleteDashboardMember } from "../dashboard/_memberLifecycle.js";
 
 function requestId(req) {
   return String(req.headers?.["x-request-id"] || req.headers?.["x-correlation-id"] || "").trim() || null;
@@ -73,7 +74,8 @@ async function handleMembers(req, res) {
     res.setHeader("Allow", "GET");
     return res.status(405).json({ ok: false, error: "Method not allowed." });
   }
-  return res.status(200).json({ ok: true, members: await listDashboardMembers() });
+  const result = await listDashboardMembers();
+  return res.status(200).json({ ok: true, members: result.filter((member) => member.status !== "deleted") });
 }
 
 async function handleInvitations(req, res) {
@@ -223,6 +225,24 @@ async function handleMemberStatus(req, res, memberId, disabled) {
   return res.status(200).json({ ok: true, member });
 }
 
+async function handleMemberDelete(req, res, memberId) {
+  const principal = await requireAccessManager(req, res);
+  if (!principal) return;
+  if (methodOf(req) !== "POST") {
+    res.setHeader("Allow", "POST");
+    return res.status(405).json({ ok: false, error: "Method not allowed." });
+  }
+  const body = await readJson(req);
+  const result = await deleteDashboardMember({
+    principal,
+    memberId,
+    expectedVersion: body?.expectedVersion,
+    reason: String(body?.reason || "").trim() || "Removed from Command Center",
+    requestId: requestId(req),
+  });
+  return res.status(200).json(result);
+}
+
 async function handleAudit(req, res) {
   const principal = await requireAccessManager(req, res);
   if (!principal) return;
@@ -245,6 +265,9 @@ export default async function dashboardAccess(req, res) {
 
     const invitationMatch = pathname.match(/^\/api\/admin\/access\/invitations\/([0-9a-f-]{36})\/(resend|revoke)$/i);
     if (invitationMatch) return await handleInvitationAction(req, res, invitationMatch[1], invitationMatch[2].toLowerCase());
+
+    const memberDeleteMatch = pathname.match(/^\/api\/admin\/access\/members\/([0-9a-f-]{36})\/delete$/i);
+    if (memberDeleteMatch) return await handleMemberDelete(req, res, memberDeleteMatch[1]);
 
     const memberStatusMatch = pathname.match(/^\/api\/admin\/access\/members\/([0-9a-f-]{36})\/(disable|restore)$/i);
     if (memberStatusMatch) return await handleMemberStatus(req, res, memberStatusMatch[1], memberStatusMatch[2].toLowerCase() === "disable");
