@@ -201,6 +201,13 @@ async function dispatchDashboardRecruiters(pathname, req, res) {
   return true;
 }
 
+async function dispatchDashboardOperations(pathname, req, res) {
+  if (!/^\/api\/dashboard\/operations(?:\/|$)/.test(pathname)) return false;
+  const { dashboardOperations } = await import("../api/dashboard/operations.js");
+  await dashboardOperations(req, res);
+  return true;
+}
+
 async function dispatchDashboardSubmissionNotes(pathname, req, res) {
   if (pathname !== "/api/dashboard/submission-notes") return false;
   const { dashboardSubmissionNotes } = await import("../api/dashboard/submissionNotes.js");
@@ -326,6 +333,7 @@ export function createRailwayProxyMiddleware(options = {}) {
 
     if (await dispatchDashboardPromotors(pathname, req, res)) return;
     if (await dispatchDashboardRecruiters(pathname, req, res)) return;
+    if (await dispatchDashboardOperations(pathname, req, res)) return;
     if (await dispatchDashboardSubmissionNotes(pathname, req, res)) return;
     if (await dispatchDashboardLpFees(pathname, req, res)) return;
     if (await dispatchAdminAccess(pathname, req, res)) return;
