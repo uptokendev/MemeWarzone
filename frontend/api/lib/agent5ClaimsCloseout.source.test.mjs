@@ -1,12 +1,19 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { canonicalSolanaClaimIdentity } from "./solanaClaimEnvironment.js";
 import { EVM_LEAGUE_LOG_QUERY_MAX_BLOCKS, scanEvmLeagueClaimLogsBackwards } from "./evmLeagueClaimVerification.js";
+import {
+  buildBsc97ObservedBalanceProof,
+  captureBsc97LiveBalanceEvidence,
+  loadBsc97LiveBalanceEvidence,
+} from "../../../scripts/agent5-bsc97-live-balance-evidence.mjs";
 
-function read(path) {
-  return fs.readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+function read(pathname) {
+  return fs.readFileSync(new URL(`../${pathname}`, import.meta.url), "utf8");
 }
 
 test("canonical Solana claims retire chain 102 and preserve staging/devnet", () => {
@@ -92,6 +99,68 @@ test("EVM League reconciliation chunks provider log ranges at 5000 blocks with g
   assert.equal(calls[2].toBlock + 1, calls[1].fromBlock);
   assert.deepEqual(logs.map((log) => log.transactionHash), ["0xnewest", "0xnewer", "0xolder"]);
   assert.equal(calls.length, 3, "scan must stop after the first conclusive matching chunk");
+});
+
+test("BSC97 balance evidence uses live pre/post samples when historical getBalance is unsupported", async () => {
+  const calls = [];
+  const balances = new Map([
+    ["0x0000000000000000000000000000000000000001", [10_000n, 10_900n]],
+    ["0x0000000000000000000000000000000000000002", [5_000n, 4_000n]],
+  ]);
+  const indexes = new Map();
+  const provider = {
+    async getBlockNumber() { return calls.length < 2 ? 100 : 101; },
+    async getBalance(address, blockTag) {
+      if (blockTag !== undefined) throw Object.assign(new Error("not supported"), { code: -32000 });
+      calls.push([address, blockTag]);
+      const key = String(address).toLowerCase();
+      const index = indexes.get(key) || 0;
+      indexes.set(key, index + 1);
+      return balances.get(key)[index];
+    },
+  };
+  const file = path.join(os.tmpdir(), `agent5-balance-${Date.now()}-${Math.random()}.jsonl`);
+  try {
+    const { snapshot } = await captureBsc97LiveBalanceEvidence({
+      provider,
+      senderAddress: "0x0000000000000000000000000000000000000001",
+      contractAddress: "0x0000000000000000000000000000000000000002",
+      evidenceFile: file,
+      sendTransaction: async () => ({
+        hash: "0xabc",
+        wait: async () => ({ hash: "0xabc", blockNumber: 101, gasUsed: 100n, gasPrice: 1n }),
+      }),
+    });
+    const loaded = loadBsc97LiveBalanceEvidence(file);
+    assert.equal(loaded.get("0xabc").txHash, "0xabc");
+    assert.ok(calls.every(([, blockTag]) => blockTag === undefined), "historical balance block tags must never be used");
+    const proof = buildBsc97ObservedBalanceProof({
+      snapshot,
+      txHash: "0xabc",
+      blockNumber: 101,
+      contractAddress: "0x0000000000000000000000000000000000000002",
+      recipient: "0x0000000000000000000000000000000000000001",
+      amount: 1_000n,
+    });
+    assert.equal(proof.available, true);
+    assert.equal(proof.recipientNetCreditWei, "1000");
+    assert.equal(proof.contractDebitWei, "1000");
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
+});
+
+test("BSC97 balance evidence marks missing pre-transaction samples unavailable instead of synthesizing latest", () => {
+  const proof = buildBsc97ObservedBalanceProof({
+    snapshot: null,
+    txHash: "0xmissing",
+    blockNumber: 100,
+    contractAddress: "0x0000000000000000000000000000000000000002",
+    recipient: "0x0000000000000000000000000000000000000001",
+    amount: 1n,
+  });
+  assert.equal(proof.available, false);
+  assert.equal(proof.reason, "before_balance_not_sampled_before_transaction");
 });
 
 test("claim entrypoints expose durable EVM reconciliation and immutable transaction guards", () => {
