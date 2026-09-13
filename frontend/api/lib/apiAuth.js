@@ -134,9 +134,16 @@ export function requireInternalAuth(req, res, { routeLabel = "internal" } = {}) 
 
 /**
  * Dashboard admin Bearer and/or shared ops key.
+ * A route that has already performed capability authorization may place the
+ * resulting principal on req.dashboardPrincipal; this avoids reinterpreting
+ * a DB-authorized member as a legacy app-metadata admin.
  * @returns {Promise<object|null>} admin context or ops context, or null after response sent
  */
 export async function requireAdminOrOps(req, res, { routeLabel = "admin", allowOps = true } = {}) {
+  if (req.dashboardPrincipal) {
+    return { mode: "dashboard-permission", principal: req.dashboardPrincipal };
+  }
+
   const enforce = isAuthEnforceSecurityMutations();
   const opsExpected = getExpectedOpsKey();
   const opsProvided = readOpsKey(req);
