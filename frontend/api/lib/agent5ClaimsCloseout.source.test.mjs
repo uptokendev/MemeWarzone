@@ -3,6 +3,7 @@ import fs from "node:fs";
 import test from "node:test";
 
 import { canonicalSolanaClaimIdentity } from "./solanaClaimEnvironment.js";
+import { EVM_LEAGUE_LOG_QUERY_MAX_BLOCKS, scanEvmLeagueClaimLogsBackwards } from "./evmLeagueClaimVerification.js";
 
 function read(path) {
   return fs.readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
@@ -50,6 +51,47 @@ test("canonical Solana claims preserve production/mainnet-beta", () => {
     if (oldEnv == null) delete process.env.SOLANA_REWARD_ENVIRONMENT; else process.env.SOLANA_REWARD_ENVIRONMENT = oldEnv;
     if (oldCluster == null) delete process.env.SOLANA_REWARD_CLUSTER; else process.env.SOLANA_REWARD_CLUSTER = oldCluster;
   }
+});
+
+test("EVM League reconciliation chunks provider log ranges at 5000 blocks with gapless inclusive boundaries", async () => {
+  const calls = [];
+  const address = "0x0000000000000000000000000000000000000097";
+  const topics = ["0xaaa", "0xbbb"];
+  const provider = {
+    async getBlockNumber() { return 12_345; },
+    async getLogs(filter) {
+      calls.push({ ...filter, topics: [...filter.topics] });
+      const width = Number(filter.toBlock) - Number(filter.fromBlock) + 1;
+      assert.ok(width <= EVM_LEAGUE_LOG_QUERY_MAX_BLOCKS, `provider range exceeded cap: ${width}`);
+      if (calls.length < 3) return [];
+      return [
+        { blockNumber: 2_344, index: 1, transactionHash: "0xolder" },
+        { blockNumber: 2_345, index: 0, transactionHash: "0xnewer" },
+        { blockNumber: 2_345, index: 2, transactionHash: "0xnewest" },
+      ];
+    },
+  };
+
+  const logs = await scanEvmLeagueClaimLogsBackwards(provider, {
+    address,
+    topics,
+    lookbackBlocks: 10_002,
+    chunkBlocks: 50_000,
+  });
+
+  assert.deepEqual(calls.map(({ fromBlock, toBlock }) => [fromBlock, toBlock]), [
+    [7_346, 12_345],
+    [2_346, 7_345],
+    [2_344, 2_345],
+  ]);
+  for (const call of calls) {
+    assert.equal(call.address, address);
+    assert.deepEqual(call.topics, topics);
+  }
+  assert.equal(calls[1].toBlock + 1, calls[0].fromBlock);
+  assert.equal(calls[2].toBlock + 1, calls[1].fromBlock);
+  assert.deepEqual(logs.map((log) => log.transactionHash), ["0xnewest", "0xnewer", "0xolder"]);
+  assert.equal(calls.length, 3, "scan must stop after the first conclusive matching chunk");
 });
 
 test("claim entrypoints expose durable EVM reconciliation and immutable transaction guards", () => {
