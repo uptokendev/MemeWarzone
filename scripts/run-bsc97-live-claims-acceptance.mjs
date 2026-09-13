@@ -3,6 +3,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { Contract, ContractFactory, JsonRpcProvider, Wallet, formatEther } from "ethers";
+import {
+  buildBsc97ObservedBalanceProof,
+  loadBsc97LiveBalanceEvidence,
+} from "./agent5-bsc97-live-balance-evidence.mjs";
 
 const CHAIN_ID = 97;
 const EXPECTED_OPERATOR = "0xEE2c6A7605ED378CF1D26D1d828446d63A3fdeDa";
@@ -10,6 +14,7 @@ const SOURCE_BASE = "18ffff677f8d6420c4539f9d9db9ec7eee1b0790";
 const rpc = process.env.BSC_TESTNET_RPC || process.env.BSC_TESTNET_RPC_URL || process.env.BSC_RPC_HTTP_97;
 const privateKey = process.env.BSC_TESTNET_PRIVATE_KEY;
 const databaseUrl = process.env.DATABASE_URL;
+const balanceEvidenceFile = path.resolve("reports/agent5-bsc97-live-balance-snapshots.jsonl");
 
 function required(value, name) {
   if (!value) throw new Error(`BLOCKED: missing ${name}`);
@@ -38,6 +43,10 @@ function patchLiveTests(distributorAddress, vaultAddress) {
   let claims = claimsSource;
   claims = claims.replace("JsonRpcProvider, hexlify, keccak256, randomBytes", "JsonRpcProvider, Wallet, Contract, hexlify, keccak256, randomBytes");
   claims = claims.replace(
+    'import { buildExpectedEvmLeagueClaim, verifyEvmLeagueClaimTransaction } from "./evmLeagueClaimVerification.js";',
+    'import { buildExpectedEvmLeagueClaim, verifyEvmLeagueClaimTransaction } from "./evmLeagueClaimVerification.js";\nimport { captureBsc97LiveBalanceEvidence } from "../../../scripts/agent5-bsc97-live-balance-evidence.mjs";',
+  );
+  claims = claims.replace(
     "owner = await provider.getSigner(0);\n  user = await provider.getSigner(1);\n  other = await provider.getSigner(2);\n  rootPoster = await provider.getSigner(3);",
     "owner = new Wallet(process.env.BSC_TESTNET_PRIVATE_KEY, provider);\n  user = owner;\n  other = Wallet.createRandom().connect(provider);\n  rootPoster = owner;",
   );
@@ -50,9 +59,21 @@ function patchLiveTests(distributorAddress, vaultAddress) {
     `vaultAddress = "${vaultAddress}";\n  vault = new Contract(vaultAddress, vaultArtifact.abi, owner);`,
   );
   claims = claims.replace("  await (await owner.sendTransaction({ to: vaultAddress, value: 100000000000000000n })).wait();\n", "");
+  claims = claims.replace(
+    "async function claimGeneric(batch) {\n  const tx = await distributor.connect(user).claim(batch.batchId, batch.amount, []);\n  await tx.wait();\n  return tx;\n}",
+    "async function claimGeneric(batch) {\n  const senderAddress = await user.getAddress();\n  const { tx } = await captureBsc97LiveBalanceEvidence({ provider, senderAddress, contractAddress: distributorAddress, kind: 'generic', sendTransaction: () => distributor.connect(user).claim(batch.batchId, batch.amount, []) });\n  return tx;\n}",
+  );
+  claims = claims.replace(
+    "  const tx = await vault.connect(user).claim(expected.epochId, expected.categoryHash, expected.rank, recipient, amount, []);\n  await tx.wait();",
+    "  const { tx } = await captureBsc97LiveBalanceEvidence({ provider, senderAddress: recipient, contractAddress: vaultAddress, kind: 'league', sendTransaction: () => vault.connect(user).claim(expected.epochId, expected.categoryHash, expected.rank, recipient, amount, []) });",
+  );
 
   let battle = battleSource;
   battle = battle.replace("JsonRpcProvider,\n  keccak256", "JsonRpcProvider,\n  Wallet,\n  keccak256");
+  battle = battle.replace(
+    'import { verifyEvmRewardClaim } from "./rewardClaimVerification.js";',
+    'import { verifyEvmRewardClaim } from "./rewardClaimVerification.js";\nimport { captureBsc97LiveBalanceEvidence } from "../../../scripts/agent5-bsc97-live-balance-evidence.mjs";',
+  );
   battle = battle.replace(
     "owner = await provider.getSigner(0);\n  user = await provider.getSigner(1);\n  other = await provider.getSigner(2);",
     "owner = new Wallet(process.env.BSC_TESTNET_PRIVATE_KEY, provider);\n  user = owner;\n  other = Wallet.createRandom().connect(provider);",
@@ -61,46 +82,36 @@ function patchLiveTests(distributorAddress, vaultAddress) {
     /const factory = new ContractFactory\(artifact\.abi, artifact\.bytecode, owner\);\n  distributor = await factory\.deploy\(await owner\.getAddress\(\)\);\n  await distributor\.waitForDeployment\(\);\n  distributorAddress = await distributor\.getAddress\(\);/,
     `distributorAddress = "${distributorAddress}";\n  distributor = new Contract(distributorAddress, artifact.abi, owner);`,
   );
+  battle = battle.replace(
+    "async function claimOnChain(batch) {\n  const tx = await distributor.connect(user).claim(batch.contractBatchId, batch.amount, []);\n  const receipt = await tx.wait();\n  return { tx, receipt };\n}",
+    "async function claimOnChain(batch) {\n  const senderAddress = await user.getAddress();\n  const { tx, receipt } = await captureBsc97LiveBalanceEvidence({ provider, senderAddress, contractAddress: distributorAddress, kind: 'battle', sendTransaction: () => distributor.connect(user).claim(batch.contractBatchId, batch.amount, []) });\n  return { tx, receipt };\n}",
+  );
 
   assert.notEqual(claims, claimsSource, "claims live transport patch did not apply");
+  assert.match(claims, /captureBsc97LiveBalanceEvidence/, "claims live balance evidence patch did not apply");
   assert.notEqual(battle, battleSource, "battle live transport patch did not apply");
+  assert.match(battle, /captureBsc97LiveBalanceEvidence/, "battle live balance evidence patch did not apply");
   fs.writeFileSync("frontend/api/lib/.agent5ClaimsLive97.integration.test.mjs", claims);
   fs.writeFileSync("frontend/api/lib/.agent5BattleLive97.integration.test.mjs", battle);
 }
 
-async function balanceProof(event, contractAddress, recipient, amount) {
-  const blockNumber = event.blockNumber;
-  const receipt = await provider.getTransactionReceipt(event.transactionHash);
-  const beforeBlock = Math.max(0, blockNumber - 1);
-  const recipientBefore = await provider.getBalance(recipient, beforeBlock);
-  const recipientAfter = await provider.getBalance(recipient, blockNumber);
-  const contractBefore = await provider.getBalance(contractAddress, beforeBlock);
-  const contractAfter = await provider.getBalance(contractAddress, blockNumber);
-  const gasPrice = receipt?.gasPrice ?? 0n;
-  const gasCost = (receipt?.gasUsed ?? 0n) * gasPrice;
-  const recipientNetCredit = recipientAfter - recipientBefore + gasCost;
-  const contractDebit = contractBefore - contractAfter;
-  assert.equal(recipientNetCredit, amount, `recipient credit mismatch for ${event.transactionHash}`);
-  assert.equal(contractDebit, amount, `vault debit mismatch for ${event.transactionHash}`);
-  return {
+function balanceProof(event, contractAddress, recipient, amount, snapshots) {
+  return buildBsc97ObservedBalanceProof({
+    snapshot: snapshots.get(String(event.transactionHash).toLowerCase()),
     txHash: event.transactionHash,
-    blockNumber,
+    blockNumber: event.blockNumber,
+    contractAddress,
     recipient,
-    amountWei: String(amount),
-    recipientBalanceBeforeWei: String(recipientBefore),
-    recipientBalanceAfterWei: String(recipientAfter),
-    gasCostWei: String(gasCost),
-    recipientNetCreditWei: String(recipientNetCredit),
-    vaultBalanceBeforeWei: String(contractBefore),
-    vaultBalanceAfterWei: String(contractAfter),
-    vaultDebitWei: String(contractDebit),
-  };
+    amount,
+  });
 }
 
 required(rpc, "BSC_TESTNET_RPC");
 required(privateKey, "BSC_TESTNET_PRIVATE_KEY");
 required(databaseUrl, "DATABASE_URL");
 fs.mkdirSync("reports", { recursive: true });
+fs.rmSync(balanceEvidenceFile, { force: true });
+process.env.AGENT5_BSC97_BALANCE_EVIDENCE_FILE = balanceEvidenceFile;
 
 const provider = new JsonRpcProvider(rpc, CHAIN_ID, { staticNetwork: true });
 const network = await provider.getNetwork();
@@ -181,21 +192,23 @@ const leagueClaims = await vault.queryFilter(vault.filters.Claimed(), fromBlock,
 assert.ok(rewardClaims.length > 0, "no actual RewardDistributor payout transactions observed");
 assert.ok(leagueClaims.length > 0, "no actual TreasuryVaultV2 payout transactions observed");
 
+const snapshots = loadBsc97LiveBalanceEvidence(balanceEvidenceFile);
 const rewardPayoutProof = [];
 for (const event of rewardClaims) {
   const recipient = event.args?.account ?? event.args?.[1];
   const amount = BigInt(event.args?.amount ?? event.args?.[2]);
-  rewardPayoutProof.push(await balanceProof(event, distributorAddress, recipient, amount));
+  rewardPayoutProof.push(balanceProof(event, distributorAddress, recipient, amount, snapshots));
 }
 const leaguePayoutProof = [];
 for (const event of leagueClaims) {
   const recipient = event.args?.recipient ?? event.args?.[1];
   const amount = BigInt(event.args?.amount ?? event.args?.[4] ?? event.args?.[2]);
-  leaguePayoutProof.push(await balanceProof(event, vaultAddress, recipient, amount));
+  leaguePayoutProof.push(balanceProof(event, vaultAddress, recipient, amount, snapshots));
 }
 
 const evidence = {
   ...deployment,
+  evidenceMethod: "live_pre_tx_and_post_settlement_samples",
   final: {
     operatorBalanceWei: String(await provider.getBalance(operator.address)),
     rewardDistributorBalanceWei: String(await provider.getBalance(distributorAddress)),
@@ -213,6 +226,8 @@ console.log(JSON.stringify({
   treasuryVaultV2: vaultAddress,
   rewardPayouts: rewardClaims.length,
   leaguePayouts: leagueClaims.length,
+  balanceEvidenceAvailable: [...rewardPayoutProof, ...leaguePayoutProof].filter((item) => item.available).length,
+  balanceEvidenceUnavailable: [...rewardPayoutProof, ...leaguePayoutProof].filter((item) => !item.available).length,
   operatorBalanceAfterBNB: formatEther(await provider.getBalance(operator.address)),
 }, null, 2));
 await provider.destroy();
