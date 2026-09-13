@@ -1,5 +1,5 @@
 import { pool } from "../../server/db.js";
-import { requireDashboardAdmin } from "./_auth.js";
+import { requireDashboardPermission } from "./_access.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VALID_ROLES = new Set(["founder", "team", "ambassador", "kol", "contributor"]);
@@ -107,11 +107,16 @@ async function refreshPromotorById(id) {
   }
 }
 
-export async function dashboardPromotors(req, res) {
-  const admin = await requireDashboardAdmin(req, res);
-  if (!admin) return;
+async function requireCommunity(req, res, manage = false) {
+  return requireDashboardPermission(req, res, manage ? "community.manage" : "community.view");
+}
 
-  if (req.method === "GET") {
+export async function dashboardPromotors(req, res) {
+  const method = String(req.method || "GET").toUpperCase();
+  const principal = await requireCommunity(req, res, method !== "GET" && method !== "HEAD");
+  if (!principal) return;
+
+  if (method === "GET") {
     const result = await pool.query(`
       select id, x_handle, added_by_email, added_at, last_checked_at,
              shadowban_data, metrics_data, is_clean, role, is_paid
@@ -121,7 +126,7 @@ export async function dashboardPromotors(req, res) {
     return res.status(200).json({ ok: true, promotors: result.rows });
   }
 
-  if (req.method === "POST") {
+  if (method === "POST") {
     const handle = normalizeHandle(req.body?.x_handle);
     if (!handle || !/^[a-z0-9_]{1,15}$/.test(handle)) {
       return res.status(400).json({ ok: false, error: "A valid X handle is required." });
@@ -139,7 +144,7 @@ export async function dashboardPromotors(req, res) {
        values ($1, $2, $3, $4)
        returning id, x_handle, added_by_email, added_at, last_checked_at,
                  shadowban_data, metrics_data, is_clean, role, is_paid`,
-      [handle, admin.email, metadata.role ?? null, metadata.is_paid ?? null],
+      [handle, principal.email, metadata.role ?? null, metadata.is_paid ?? null],
     );
     return res.status(201).json({ ok: true, promotor: result.rows[0] });
   }
@@ -147,7 +152,7 @@ export async function dashboardPromotors(req, res) {
   const id = String(req.params?.id || "");
   if (!UUID_RE.test(id)) return res.status(400).json({ ok: false, error: "Invalid promoter id." });
 
-  if (req.method === "PATCH") {
+  if (method === "PATCH") {
     let metadata;
     try {
       metadata = parseMetadata(req.body || {});
@@ -174,7 +179,7 @@ export async function dashboardPromotors(req, res) {
     return res.status(200).json({ ok: true, promotor: result.rows[0] });
   }
 
-  if (req.method === "DELETE") {
+  if (method === "DELETE") {
     const result = await pool.query("delete from public.promotors where id = $1 returning id", [id]);
     if (result.rowCount === 0) return res.status(404).json({ ok: false, error: "Promoter not found." });
     return res.status(200).json({ ok: true, id });
@@ -184,9 +189,9 @@ export async function dashboardPromotors(req, res) {
 }
 
 export async function dashboardPromotorRefresh(req, res) {
-  const admin = await requireDashboardAdmin(req, res);
-  if (!admin) return;
-  if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed." });
+  const principal = await requireCommunity(req, res, true);
+  if (!principal) return;
+  if (String(req.method || "").toUpperCase() !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed." });
 
   const id = String(req.params?.id || "");
   if (!UUID_RE.test(id)) return res.status(400).json({ ok: false, error: "Invalid promoter id." });
@@ -195,9 +200,9 @@ export async function dashboardPromotorRefresh(req, res) {
 }
 
 export async function dashboardPromotorsRefreshAll(req, res) {
-  const admin = await requireDashboardAdmin(req, res);
-  if (!admin) return;
-  if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed." });
+  const principal = await requireCommunity(req, res, true);
+  if (!principal) return;
+  if (String(req.method || "").toUpperCase() !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed." });
 
   const rows = await pool.query("select id from public.promotors order by added_at asc");
   const results = [];
