@@ -1,0 +1,99 @@
+name: Launch Control Solana Devnet WSOL Dust Cleanup
+
+on:
+  push:
+    branches:
+      - launch-control/solana-devnet-wsol-dust-cleanup-b6fed48
+
+permissions:
+  contents: read
+
+env:
+  CI: true
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    environment: testnet-certification
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Solana test dependencies
+        shell: bash
+        run: npm install --prefix tests/solana --no-audit --no-fund
+
+      - name: Normalize frozen operator WSOL dust on devnet only
+        shell: bash
+        env:
+          SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || secrets.SOLANA_DEVNET_RPC_URL || vars.SOLANA_DEVNET_RPC }}
+          SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER || secrets.SOLANA_DEVNET_PRIVATE_KEY }}
+          EXPECTED_OPERATOR: HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9
+          EXPECTED_GENESIS: EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG
+          MAX_DUST_LAMPORTS: "1000"
+        run: |
+          set -euo pipefail
+          operator_file="${RUNNER_TEMP}/mwz-solana-cleanup-operator.json"
+          SOLANA_GRADUATION_OPERATOR_KEYPAIR="$operator_file" node scripts/solana/materialize-devnet-payer.mjs >/dev/null
+          OPERATOR_FILE="$operator_file" node <<'NODE'
+          const fs = require('fs');
+          const {
+            Connection,
+            Keypair,
+            Transaction,
+          } = require('./tests/solana/node_modules/@solana/web3.js');
+          const {
+            NATIVE_MINT,
+            TOKEN_PROGRAM_ID,
+            getAssociatedTokenAddressSync,
+            getAccount,
+            createCloseAccountInstruction,
+          } = require('./tests/solana/node_modules/@solana/spl-token');
+
+          (async () => {
+            const connection = new Connection(process.env.SOLANA_RPC_URL, 'confirmed');
+            const genesis = await connection.getGenesisHash();
+            if (genesis !== process.env.EXPECTED_GENESIS) throw new Error(`wrong genesis ${genesis}`);
+
+            const raw = JSON.parse(fs.readFileSync(process.env.OPERATOR_FILE, 'utf8'));
+            const operator = Keypair.fromSecretKey(Uint8Array.from(raw));
+            const operatorPk = operator.publicKey.toBase58();
+            if (operatorPk !== process.env.EXPECTED_OPERATOR) throw new Error(`operator mismatch ${operatorPk}`);
+
+            const ata = getAssociatedTokenAddressSync(NATIVE_MINT, operator.publicKey, false, TOKEN_PROGRAM_ID);
+            const info = await connection.getAccountInfo(ata, 'confirmed');
+            if (!info) {
+              console.log(JSON.stringify({status:'PASS', action:'NO_ACCOUNT', operator:operatorPk, ata:ata.toBase58(), genesis}, null, 2));
+              return;
+            }
+
+            const state = await getAccount(connection, ata, 'confirmed', TOKEN_PROGRAM_ID);
+            const amount = BigInt(state.amount.toString());
+            const maxDust = BigInt(process.env.MAX_DUST_LAMPORTS || '1000');
+            if (amount === 0n) {
+              console.log(JSON.stringify({status:'PASS', action:'ALREADY_EMPTY', operator:operatorPk, ata:ata.toBase58(), amount:amount.toString(), genesis}, null, 2));
+              return;
+            }
+            if (amount > maxDust) throw new Error(`refusing to close meaningful WSOL balance ${amount} > ${maxDust}`);
+
+            const latest = await connection.getLatestBlockhash('confirmed');
+            const tx = new Transaction({feePayer: operator.publicKey, recentBlockhash: latest.blockhash}).add(
+              createCloseAccountInstruction(ata, operator.publicKey, operator.publicKey, [], TOKEN_PROGRAM_ID),
+            );
+            tx.sign(operator);
+            const signature = await connection.sendRawTransaction(tx.serialize(), {skipPreflight:false, maxRetries:3});
+            const confirmation = await connection.confirmTransaction({signature, ...latest}, 'confirmed');
+            if (confirmation.value.err) throw new Error(`cleanup tx failed ${JSON.stringify(confirmation.value.err)}`);
+
+            const after = await connection.getAccountInfo(ata, 'confirmed');
+            if (after) throw new Error('WSOL ATA still exists after close');
+            console.log(JSON.stringify({status:'PASS', action:'CLOSED_DUST_NATIVE_ATA', operator:operatorPk, ata:ata.toBase58(), amount:amount.toString(), signature, genesis}, null, 2));
+          })().catch((error) => { console.error(error?.stack || error); process.exit(1); });
+          NODE
