@@ -8,11 +8,11 @@ import {
   listDashboardInvitations,
   listDashboardMembers,
   revokeDashboardInvitation,
-  sendSupabaseDashboardInvite,
   setDashboardMemberDisabled,
   updateDashboardMemberAccess,
   writeDashboardAccessAudit,
 } from "../dashboard/_accessAdmin.js";
+import { sendDashboardAccessEmail } from "../dashboard/_inviteDelivery.js";
 
 function requestId(req) {
   return String(req.headers?.["x-request-id"] || req.headers?.["x-correlation-id"] || "").trim() || null;
@@ -98,12 +98,12 @@ async function handleInvitations(req, res) {
     requestId: requestId(req),
   });
 
-  let delivery = { sent: false, error: null };
+  let delivery = { sent: false, error: null, mode: null };
   try {
-    await sendSupabaseDashboardInvite(invitation.email);
-    delivery = { sent: true, error: null };
+    const result = await sendDashboardAccessEmail(invitation.email);
+    delivery = { sent: true, error: null, mode: result.mode };
   } catch (error) {
-    delivery = { sent: false, error: String(error?.message || "Invitation delivery failed.") };
+    delivery = { sent: false, error: String(error?.message || "Invitation delivery failed."), mode: null };
   }
 
   return res.status(delivery.sent ? 201 : 202).json({
@@ -157,7 +157,7 @@ async function handleInvitationAction(req, res, invitationId, action) {
     });
   }
 
-  await sendSupabaseDashboardInvite(invitation.email_normalized);
+  const delivery = await sendDashboardAccessEmail(invitation.email_normalized);
   const actorMemberId = await ensureDashboardActorMember(principal);
   const updated = await pool.query(
     `update public.dashboard_access_invitations
@@ -176,11 +176,11 @@ async function handleInvitationAction(req, res, invitationId, action) {
     subjectEmail: invitation.email_normalized,
     action: "INVITATION_RESENT",
     beforeState: { version: expectedVersion },
-    afterState: { version: Number(updated.rows[0].version), expiresAt: updated.rows[0].expires_at },
+    afterState: { version: Number(updated.rows[0].version), expiresAt: updated.rows[0].expires_at, deliveryMode: delivery.mode },
     reason,
     requestId: requestId(req),
   });
-  return res.status(200).json({ ok: true, version: Number(updated.rows[0].version), expiresAt: updated.rows[0].expires_at });
+  return res.status(200).json({ ok: true, version: Number(updated.rows[0].version), expiresAt: updated.rows[0].expires_at, deliveryMode: delivery.mode });
 }
 
 async function handleMemberUpdate(req, res, memberId) {
