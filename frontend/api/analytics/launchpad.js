@@ -1,9 +1,11 @@
 import { pool } from "../../server/db.js";
 
-const TESTNET_CHAIN_IDS = new Set([97, 102]);
+const TESTNET_CHAIN_IDS = new Set([97, 102, 46630]);
+const CORE_MAINNET_CHAIN_IDS = [56, 101, 4663];
 const CHAIN_META = new Map([
   [56, { label: "BNB", unit: "BNB" }],
   [101, { label: "Solana", unit: "SOL" }],
+  [4663, { label: "Robinhood", unit: "ETH" }],
 ]);
 
 function chainMeta(chainId) {
@@ -30,21 +32,25 @@ async function availableMainnetChains() {
   const result = await pool.query(`
     select distinct chain_id
       from (
+        select unnest($2::int[]) as chain_id
+        union all
         select chain_id from public.campaign_drafts
         union all
         select chain_id from public.campaigns
         union all
         select chain_id from public.curve_trades
+        union all
+        select chain_id from public.arena_token_imports
       ) x
      where chain_id is not null
        and chain_id <> all($1::int[])
      order by chain_id
-  `, [Array.from(TESTNET_CHAIN_IDS)]);
+  `, [Array.from(TESTNET_CHAIN_IDS), CORE_MAINNET_CHAIN_IDS]);
   return result.rows.map((row) => Number(row.chain_id));
 }
 
 async function chainRows(from, to, selectedChain) {
-  const params = [from, to, Array.from(TESTNET_CHAIN_IDS)];
+  const params = [from, to, Array.from(TESTNET_CHAIN_IDS), CORE_MAINNET_CHAIN_IDS];
   let selected = "";
   if (selectedChain != null) {
     params.push(selectedChain);
@@ -55,11 +61,15 @@ async function chainRows(from, to, selectedChain) {
     with chain_ids as (
       select distinct chain_id
         from (
+          select unnest($4::int[]) as chain_id
+          union all
           select chain_id from public.campaign_drafts
           union all
           select chain_id from public.campaigns
           union all
           select chain_id from public.curve_trades
+          union all
+          select chain_id from public.arena_token_imports
         ) s
        where chain_id is not null
          and chain_id <> all($3::int[])
@@ -78,6 +88,7 @@ async function chainRows(from, to, selectedChain) {
     ),
     campaign_counts as (
       select chain_id,
+             count(*)::int as campaigns_total,
              count(*) filter (
                where graduated_at_chain is null
                  and lower(coalesce(market_stage, 'bonding')) not in ('graduated', 'dex')
@@ -94,6 +105,21 @@ async function chainRows(from, to, selectedChain) {
              count(*) filter (where coalesce(created_at_chain, created_at) >= $1 and coalesce(created_at_chain, created_at) < $2)::int as campaigns_created_in_range,
              count(*) filter (where graduated_at_chain >= $1 and graduated_at_chain < $2)::int as graduated_in_range
         from public.campaigns
+       where chain_id <> all($3::int[])
+       group by chain_id
+    ),
+    imports as (
+      select chain_id,
+             count(*)::int as imports_total,
+             count(*) filter (where created_at >= $1 and created_at < $2)::int as imports_in_range,
+             count(*) filter (where ownership_status = 'ownership_verified')::int as verified_imports,
+             count(*) filter (where coalesce(ownership_status, 'ownership_pending') <> 'ownership_verified')::int as unverified_imports,
+             count(*) filter (
+               where ownership_status = 'ownership_verified'
+                 and ownership_verified_at >= $1
+                 and ownership_verified_at < $2
+             )::int as verified_imports_in_range
+        from public.arena_token_imports
        where chain_id <> all($3::int[])
        group by chain_id
     ),
@@ -129,11 +155,17 @@ async function chainRows(from, to, selectedChain) {
     select c.chain_id,
            coalesce(d.drafts_open, 0)::int as drafts_open,
            coalesce(d.drafts_created_in_range, 0)::int as drafts_created_in_range,
+           coalesce(cc.campaigns_total, 0)::int as campaigns_total,
            coalesce(cc.live, 0)::int as live,
            coalesce(cc.ended, 0)::int as ended,
            coalesce(cc.graduated, 0)::int as graduated,
            coalesce(cc.graduated_in_range, 0)::int as graduated_in_range,
            coalesce(cc.campaigns_created_in_range, 0)::int as campaigns_created_in_range,
+           coalesce(i.imports_total, 0)::int as imports_total,
+           coalesce(i.imports_in_range, 0)::int as imports_in_range,
+           coalesce(i.verified_imports, 0)::int as verified_imports,
+           coalesce(i.unverified_imports, 0)::int as unverified_imports,
+           coalesce(i.verified_imports_in_range, 0)::int as verified_imports_in_range,
            coalesce(cr.unique_creators, 0)::int as unique_creators,
            coalesce(t.trades_in_range, 0)::int as trades_in_range,
            coalesce(t.buys_in_range, 0)::int as buys_in_range,
@@ -147,6 +179,7 @@ async function chainRows(from, to, selectedChain) {
       from chain_ids c
       left join drafts d using (chain_id)
       left join campaign_counts cc using (chain_id)
+      left join imports i using (chain_id)
       left join creators cr using (chain_id)
       left join trades t using (chain_id)
      where true ${selected}
@@ -161,11 +194,17 @@ async function chainRows(from, to, selectedChain) {
       unit: meta.unit,
       draftsOpen: n(row.drafts_open),
       draftsCreatedInRange: n(row.drafts_created_in_range),
+      campaignsTotal: n(row.campaigns_total),
       live: n(row.live),
       ended: n(row.ended),
       graduated: n(row.graduated),
       graduatedInRange: n(row.graduated_in_range),
       campaignsCreatedInRange: n(row.campaigns_created_in_range),
+      importsTotal: n(row.imports_total),
+      importsInRange: n(row.imports_in_range),
+      verifiedImports: n(row.verified_imports),
+      unverifiedImports: n(row.unverified_imports),
+      verifiedImportsInRange: n(row.verified_imports_in_range),
       uniqueCreators: n(row.unique_creators),
       tradesInRange: n(row.trades_in_range),
       buysInRange: n(row.buys_in_range),
@@ -233,12 +272,18 @@ export async function launchpadKpis({ from, to, chainId = "all" }) {
   const top = await topCampaigns(from, to, selectedChain);
   const totals = chains.reduce((acc, row) => {
     acc.draftsOpen += row.draftsOpen;
+    acc.draftsCreatedInRange += row.draftsCreatedInRange;
+    acc.campaignsTotal += row.campaignsTotal;
     acc.live += row.live;
     acc.ended += row.ended;
     acc.graduated += row.graduated;
     acc.graduatedInRange += row.graduatedInRange;
     acc.campaignsCreatedInRange += row.campaignsCreatedInRange;
-    acc.draftsCreatedInRange += row.draftsCreatedInRange;
+    acc.importsTotal += row.importsTotal;
+    acc.importsInRange += row.importsInRange;
+    acc.verifiedImports += row.verifiedImports;
+    acc.unverifiedImports += row.unverifiedImports;
+    acc.verifiedImportsInRange += row.verifiedImportsInRange;
     acc.uniqueCreators += row.uniqueCreators;
     acc.tradesInRange += row.tradesInRange;
     acc.uniqueTradersInRange += row.uniqueTradersInRange;
@@ -246,11 +291,17 @@ export async function launchpadKpis({ from, to, chainId = "all" }) {
   }, {
     draftsOpen: 0,
     draftsCreatedInRange: 0,
+    campaignsTotal: 0,
     live: 0,
     ended: 0,
     graduated: 0,
     graduatedInRange: 0,
     campaignsCreatedInRange: 0,
+    importsTotal: 0,
+    importsInRange: 0,
+    verifiedImports: 0,
+    unverifiedImports: 0,
+    verifiedImportsInRange: 0,
     uniqueCreators: 0,
     tradesInRange: 0,
     uniqueTradersInRange: 0,
