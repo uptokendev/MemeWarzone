@@ -1,0 +1,115 @@
+name: Agent 3 Tournament Destructive Retry
+
+on:
+  push:
+    branches:
+      - agent3/tournament-destructive-8eefcc4-retry
+    paths:
+      - '.github/workflows/agent3-tournament-destructive-retry.yml'
+      - 'frontend/scripts/agent3-tournament-only-solana-devnet.mjs'
+
+permissions:
+  contents: read
+
+env:
+  SOURCE_AUTHORITY: 8eefcc4b49d30f70bda64f4e6f3e647c26de24eb
+
+jobs:
+  tournament-runtime-certification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout acceptance branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Prove source authority and harness-only delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$SOURCE_AUTHORITY" HEAD
+          printf 'SOURCE=%s\nHEAD=%s\n' "$SOURCE_AUTHORITY" "$(git rev-parse HEAD)"
+          git diff --name-only "$SOURCE_AUTHORITY"...HEAD | tee /tmp/agent3-delta.txt
+          test "$(grep -Ev '^(\.github/workflows/agent3-tournament-destructive-retry\.yml|frontend/scripts/agent3-tournament-only-solana-devnet\.mjs)$' /tmp/agent3-delta.txt | wc -l)" -eq 0
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Normal Tournament / Vote Tournament / Final Salvo certification
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          node --test api/lib/arenaTournamentV2Certification.test.mjs
+          node --test api/lib/arenaFinalSalvoRuntime.test.mjs
+      - name: Tournament-facing sponsorship authority checks
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import assert from 'node:assert/strict';
+          const api=fs.readFileSync('api/arenaSponsorships.js','utf8');
+          assert.match(api,/eventType === "normal_tournament" \|\| eventType === "vote_tournament"/);
+          assert.match(api,/prizeBps:\s*7000, marketingOpsBps:\s*2000, protocolBps:\s*1000/);
+          assert.doesNotMatch(api,/eventType === "normal_battle"|eventType === "battle"/);
+          assert.match(api,/SPONSORSHIP_CHAIN_NOT_SUPPORTED/);
+          console.log(JSON.stringify({tournamentEventTypes:true,split:'70/20/10',battleSponsorshipAbsent:true,solanaPublicApiCurrentlyRejects:true},null,2));
+          NODE
+      - name: Save runtime evidence
+        shell: bash
+        run: |
+          mkdir -p reports
+          printf '{"sourceAuthority":"%s","harnessHead":"%s","runtimeCertification":true}\n' "$SOURCE_AUTHORITY" "$(git rev-parse HEAD)" > reports/agent3-tournament-runtime.json
+      - name: Upload runtime evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent3-tournament-runtime-certification
+          path: reports/agent3-tournament-runtime.json
+          if-no-files-found: error
+
+  solana-devnet-tournament-money:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: airdrop-solana-devnet
+    env:
+      SOLANA_REWARDS_RPC_URL: ${{ secrets.SOLANA_REWARDS_RPC_URL }}
+      SOLANA_REWARDS_AUTHORITY_SECRET_KEY: ${{ secrets.SOLANA_REWARDS_AUTHORITY_SECRET_KEY }}
+      AGENT3_TOURNAMENT_SOLANA_OUT: reports/agent3-tournament-solana-devnet.json
+    steps:
+      - name: Checkout acceptance branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Prove source authority and harness-only delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$SOURCE_AUTHORITY" HEAD
+          git diff --name-only "$SOURCE_AUTHORITY"...HEAD | tee /tmp/agent3-delta.txt
+          test "$(grep -Ev '^(\.github/workflows/agent3-tournament-destructive-retry\.yml|frontend/scripts/agent3-tournament-only-solana-devnet\.mjs)$' /tmp/agent3-delta.txt | wc -l)" -eq 0
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Execute Tournament-only Solana devnet destructive money acceptance
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          node scripts/agent3-tournament-only-solana-devnet.mjs
+      - name: Upload Solana devnet evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent3-tournament-solana-devnet
+          path: frontend/reports/agent3-tournament-solana-devnet.json
+          if-no-files-found: error
