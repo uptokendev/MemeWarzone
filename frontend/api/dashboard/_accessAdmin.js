@@ -174,14 +174,16 @@ export async function sendSupabaseDashboardInvite(email) {
     throw Object.assign(new Error("DASHBOARD_INVITE_REDIRECT_URL is required."), { code: "DASHBOARD_INVITE_REDIRECT_MISSING" });
   }
 
-  const response = await fetch(`${supabaseUrl}/auth/v1/invite`, {
+  const inviteUrl = new URL(`${supabaseUrl}/auth/v1/invite`);
+  inviteUrl.searchParams.set("redirect_to", redirectTo);
+  const response = await fetch(inviteUrl, {
     method: "POST",
     headers: {
       apikey: serviceRole,
       Authorization: `Bearer ${serviceRole}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ email, redirect_to: redirectTo }),
+    body: JSON.stringify({ email }),
     cache: "no-store",
   });
 
