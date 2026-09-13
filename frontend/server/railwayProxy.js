@@ -105,6 +105,16 @@ function proxyPathname(path) {
   }
 }
 
+async function authorizeDashboardBearer(req, res, permission) {
+  const authorization = String(req.headers?.authorization || "").trim();
+  if (!/^Bearer\s+/i.test(authorization)) return true;
+  const { requireDashboardPermission } = await import("../api/dashboard/_access.js");
+  const principal = await requireDashboardPermission(req, res, permission);
+  if (!principal) return false;
+  req.dashboardPrincipal = principal;
+  return true;
+}
+
 async function dispatchDashboardPromotors(pathname, req, res) {
   if (!/^\/api\/dashboard\/promotors(?:\/|$)/.test(pathname)) return false;
 
@@ -196,18 +206,9 @@ async function dispatchAdminAccess(pathname, req, res) {
 
 async function dispatchAdminFinance(pathname, req, res) {
   if (!/^\/api\/admin\/finance(?:\/|$)/.test(pathname)) return false;
-
-  // Preserve existing service/ops-key callers. Dashboard Bearer sessions are
-  // capability-authorized before the established finance handler executes.
-  const authorization = String(req.headers?.authorization || "").trim();
-  if (/^Bearer\s+/i.test(authorization)) {
-    const { requireDashboardPermission } = await import("../api/dashboard/_access.js");
-    const method = String(req.method || "GET").toUpperCase();
-    const permission = method === "GET" || method === "HEAD" ? "finance.view" : "finance.manage";
-    const principal = await requireDashboardPermission(req, res, permission);
-    if (!principal) return true;
-    req.dashboardPrincipal = principal;
-  }
+  const method = String(req.method || "GET").toUpperCase();
+  const permission = method === "GET" || method === "HEAD" ? "finance.view" : "finance.manage";
+  if (!(await authorizeDashboardBearer(req, res, permission))) return true;
 
   const financeAdmin = (await import("../api/admin/finance.js")).default;
   await financeAdmin(req, res);
@@ -216,6 +217,9 @@ async function dispatchAdminFinance(pathname, req, res) {
 
 async function dispatchAdminSponsorship(pathname, req, res) {
   if (!/^\/api\/admin\/sponsorship(?:\/|$|\?)/.test(pathname)) return false;
+  const method = String(req.method || "GET").toUpperCase();
+  const permission = method === "GET" || method === "HEAD" ? "operations.view" : "operations.manage";
+  if (!(await authorizeDashboardBearer(req, res, permission))) return true;
   const sponsorshipAdmin = (await import("../api/admin/sponsorship.js")).default;
   await sponsorshipAdmin(req, res);
   return true;
@@ -223,6 +227,7 @@ async function dispatchAdminSponsorship(pathname, req, res) {
 
 async function dispatchAdminArenaImports(pathname, req, res) {
   if (!/^\/api\/admin\/arena\/imports(?:\/|$|\?)/.test(pathname)) return false;
+  if (!(await authorizeDashboardBearer(req, res, "arena_imports.manage"))) return true;
   const arenaImportsAdmin = (await import("../api/admin/arenaImports.js")).default;
   await arenaImportsAdmin(req, res);
   return true;
@@ -230,6 +235,7 @@ async function dispatchAdminArenaImports(pathname, req, res) {
 
 async function dispatchAdminArenaTournaments(pathname, req, res) {
   if (!/^\/api\/admin\/arena\/tournaments(?:\/|$|\?)/.test(pathname)) return false;
+  if (!(await authorizeDashboardBearer(req, res, "tournaments.manage"))) return true;
   const arenaTournaments = (await import("../api/arenaTournaments.js")).default;
   await arenaTournaments(req, res);
   return true;
