@@ -3,6 +3,7 @@ name: Dashboard Access RBAC
 on:
   pull_request:
     paths:
+      - '.env.example'
       - 'db/migrations/20260913_000001_dashboard_access_rbac.sql'
       - 'db/migrations/20260913_000002_dashboard_owner_guard.sql'
       - 'frontend/api/dashboard/_auth.js'
