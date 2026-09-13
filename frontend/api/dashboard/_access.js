@@ -108,7 +108,7 @@ function syntheticPrincipal(identity, role, permissions, compatibilitySource) {
   };
 }
 
-async function loadActiveMembership(identity, db = pool) {
+async function loadMembership(identity, db = pool) {
   const email = normalizeEmail(identity.email);
   const result = await db.query(
     `select id,
@@ -125,6 +125,73 @@ async function loadActiveMembership(identity, db = pool) {
     [identity.id, email],
   );
   return result.rows?.[0] || null;
+}
+
+async function activateInvitedMembership(identity, member, db = pool) {
+  const client = await db.connect();
+  try {
+    await client.query("begin");
+    const invitation = await client.query(
+      `select id, status, version, expires_at
+         from public.dashboard_access_invitations
+        where email_normalized = $1
+          and status = 'pending'
+          and (expires_at is null or expires_at > now())
+        order by created_at desc
+        limit 1
+        for update`,
+      [normalizeEmail(identity.email)],
+    );
+    if (!invitation.rowCount) {
+      await client.query("rollback");
+      return null;
+    }
+
+    const activated = await client.query(
+      `update public.dashboard_members
+          set auth_user_id = $2::uuid,
+              status = 'active',
+              activated_at = coalesce(activated_at, now()),
+              last_seen_at = now(),
+              updated_at = now(),
+              permissions_version = permissions_version + 1
+        where id = $1::uuid
+          and status = 'invited'
+          and (auth_user_id is null or auth_user_id = $2::uuid)
+        returning id, auth_user_id, email_normalized, display_name, role, status, permissions_version`,
+      [member.id, identity.id],
+    );
+    if (!activated.rowCount) {
+      await client.query("rollback");
+      return null;
+    }
+
+    const inviteRow = invitation.rows[0];
+    await client.query(
+      `update public.dashboard_access_invitations
+          set status = 'accepted', accepted_at = now(), supabase_user_id = $2::uuid, version = version + 1
+        where id = $1::uuid and status = 'pending'`,
+      [inviteRow.id, identity.id],
+    );
+    await client.query(
+      `insert into public.dashboard_access_audit (
+         actor_member_id, actor_email, subject_member_id, subject_email, action, before_state, after_state
+       ) values ($1::uuid, $2, $1::uuid, $2, 'INVITATION_ACCEPTED', $3::jsonb, $4::jsonb)`,
+      [
+        member.id,
+        normalizeEmail(identity.email),
+        JSON.stringify({ status: "invited", invitationId: String(inviteRow.id) }),
+        JSON.stringify({ status: "active", authUserId: identity.id }),
+      ],
+    );
+    await client.query("commit");
+    return activated.rows[0];
+  } catch (error) {
+    await client.query("rollback").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 async function loadMemberPermissions(memberId, role, db = pool) {
@@ -152,7 +219,7 @@ export async function getDashboardPrincipal(req, res, { db = pool } = {}) {
 
   let member = null;
   try {
-    member = await loadActiveMembership(identity, db);
+    member = await loadMembership(identity, db);
   } catch (error) {
     // During additive rollout, current approved dashboard admins must not be locked out
     // merely because the IAM migration has not yet been applied in an environment.
@@ -176,6 +243,18 @@ export async function getDashboardPrincipal(req, res, { db = pool } = {}) {
     return null;
   }
 
+  if (member.status === "invited") {
+    member = await activateInvitedMembership(identity, member, db);
+    if (!member) {
+      res.status(403).json({
+        ok: false,
+        code: "DASHBOARD_INVITATION_INVALID",
+        error: "This Command Center invitation is no longer valid.",
+      });
+      return null;
+    }
+  }
+
   if (member.status !== "active") {
     res.status(403).json({
       ok: false,
@@ -195,6 +274,11 @@ export async function getDashboardPrincipal(req, res, { db = pool } = {}) {
     });
     return null;
   }
+
+  await db.query(
+    `update public.dashboard_members set last_seen_at = now() where id = $1::uuid`,
+    [member.id],
+  ).catch(() => {});
 
   const permissions = await loadMemberPermissions(member.id, member.role, db);
   return {
