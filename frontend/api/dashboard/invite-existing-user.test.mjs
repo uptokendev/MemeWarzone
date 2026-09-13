@@ -32,7 +32,7 @@ test('existing Supabase user responses are recognized narrowly', () => {
   assert.equal(isExistingSupabaseUserError(422, { message: 'Rate limit exceeded' }), false)
 })
 
-test('new user uses invite endpoint with Command Center redirect', async () => {
+test('new user uses invite endpoint with Set Password redirect', async () => {
   process.env.SUPABASE_URL = 'https://project.supabase.co'
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-role'
   process.env.SUPABASE_ANON_KEY = 'anon-key'
@@ -49,11 +49,11 @@ test('new user uses invite endpoint with Command Center redirect', async () => {
   assert.equal(calls.length, 1)
   const inviteUrl = new URL(calls[0].url)
   assert.equal(inviteUrl.pathname, '/auth/v1/invite')
-  assert.equal(inviteUrl.searchParams.get('redirect_to'), 'https://command-center.memewar.zone')
+  assert.equal(inviteUrl.searchParams.get('redirect_to'), 'https://command-center.memewar.zone/set-password')
   assert.deepEqual(JSON.parse(calls[0].options.body), { email: 'new@example.com' })
 })
 
-test('existing user falls back to magic link without creating a duplicate user', async () => {
+test('existing user falls back to magic link and lands on Set Password', async () => {
   process.env.SUPABASE_URL = 'https://project.supabase.co'
   process.env.SUPABASE_SERVICE_ROLE_KEY = 'service-role'
   process.env.SUPABASE_ANON_KEY = 'anon-key'
@@ -71,9 +71,13 @@ test('existing user falls back to magic link without creating a duplicate user',
   const result = await sendDashboardAccessEmail('existing@example.com')
   assert.equal(result.mode, 'magic_link')
   assert.equal(calls.length, 2)
+
   const otpUrl = new URL(calls[1].url)
   assert.equal(otpUrl.pathname, '/auth/v1/otp')
-  assert.equal(otpUrl.searchParams.get('redirect_to'), 'https://command-center.memewar.zone')
+  assert.equal(otpUrl.searchParams.get('redirect_to'), 'https://command-center.memewar.zone/set-password')
   assert.equal(calls[1].options.headers.apikey, 'anon-key')
-  assert.deepEqual(JSON.parse(calls[1].options.body), { email: 'existing@example.com', create_user: false })
+  assert.deepEqual(JSON.parse(calls[1].options.body), {
+    email: 'existing@example.com',
+    create_user: false,
+  })
 })
