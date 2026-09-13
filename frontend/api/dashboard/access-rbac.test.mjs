@@ -1,0 +1,78 @@
+import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+import test from 'node:test'
+
+const read = (path) => readFile(new URL(path, import.meta.url), 'utf8')
+const [migration, auth, access, accessAdmin, accessApi, analytics, proxy] = await Promise.all([
+  read('../../../db/migrations/20260913_000001_dashboard_access_rbac.sql'),
+  read('./_auth.js'),
+  read('./_access.js'),
+  read('./_accessAdmin.js'),
+  read('../admin/access.js'),
+  read('../analytics/admin.js'),
+  read('../../server/railwayProxy.js'),
+])
+
+test('IAM schema is additive and separate from Abuse RBAC', () => {
+  for (const table of ['dashboard_members', 'dashboard_member_permissions', 'dashboard_access_invitations', 'dashboard_access_audit']) {
+    assert.match(migration, new RegExp(`CREATE TABLE IF NOT EXISTS public\\.${table}`))
+  }
+  assert.doesNotMatch(migration, /alter table public\.employee_permissions|drop table.*employee_permissions|delete from public\.employee_permissions/i)
+  assert.match(migration, /ENABLE ROW LEVEL SECURITY/)
+  assert.match(migration, /REVOKE ALL ON TABLE public\.dashboard_members FROM authenticated/)
+})
+
+test('master/founder break glass stays explicit and server-side', () => {
+  assert.match(auth, /MASTER_ADMIN_ROLES = new Set\(\["master_admin", "founder"\]\)/)
+  assert.match(auth, /DASHBOARD_MASTER_ADMIN_USER_IDS/)
+  assert.match(auth, /DASHBOARD_MASTER_ADMIN_EMAILS/)
+  assert.match(access, /identity\.isMasterAdmin/)
+  assert.match(access, /syntheticPrincipal\(identity, "owner"/)
+})
+
+test('legacy admin compatibility does not acquire Access Management or Abuse grants', () => {
+  for (const permission of ['access.manage', 'abuse.view', 'abuse.reply', 'abuse.manage', 'abuse.admin']) {
+    assert.match(access, new RegExp(`LEGACY_ADMIN_EXCLUSIONS[\\s\\S]*"${permission.replace('.', '\\.')}`))
+  }
+  assert.match(access, /legacy_admin_schema_fallback/)
+  assert.match(access, /legacy_admin/)
+})
+
+test('Metrics Reader is exactly dashboard analytics launchpad at preset level', () => {
+  assert.match(access, /metrics_reader: \["dashboard\.view", "analytics\.view", "launchpad\.view"\]/)
+})
+
+test('valid pending invitation activation is atomic and revoked or expired invites fail closed', () => {
+  assert.match(access, /activateInvitedMembership/)
+  assert.match(access, /status = 'pending'/)
+  assert.match(access, /expires_at is null or expires_at > now\(\)/)
+  assert.match(access, /status = 'accepted'/)
+  assert.match(access, /DASHBOARD_INVITATION_INVALID/)
+})
+
+test('Access API exposes controlled member and invitation actions behind access.manage', () => {
+  assert.match(accessApi, /requireDashboardPermission\(req, res, "access\.manage"\)/)
+  for (const route of ['members', 'invitations', 'audit']) assert.match(accessApi, new RegExp(`/api/admin/access/${route}`))
+  assert.match(accessApi, /\(resend\|revoke\)/)
+  assert.match(accessApi, /\(disable\|restore\)/)
+  assert.match(accessAdmin, /expectedVersion/)
+  assert.match(accessAdmin, /LAST_OWNER_PROTECTION/)
+  assert.match(accessAdmin, /SELF_DISABLE_PROTECTION/)
+})
+
+test('Supabase invitation delivery is service-role server-side and redirect is explicit', () => {
+  assert.match(accessAdmin, /SUPABASE_SERVICE_ROLE_KEY/)
+  assert.match(accessAdmin, /DASHBOARD_INVITE_REDIRECT_URL/)
+  assert.match(accessAdmin, /\/auth\/v1\/invite/)
+  assert.match(accessAdmin, /Authorization: `Bearer \$\{serviceRole\}`/)
+})
+
+test('Analytics and Launchpad backend routes enforce their real capabilities', () => {
+  assert.match(analytics, /tail === "launchpad" \? "launchpad\.view" : "analytics\.view"/)
+  assert.match(analytics, /requireDashboardPermission\(req, res, permission\)/)
+})
+
+test('Access API is dispatched locally without adding market or indexer routing', () => {
+  assert.match(proxy, /dispatchAdminAccess/)
+  assert.match(proxy, /\/api\/admin\/access/)
+})
