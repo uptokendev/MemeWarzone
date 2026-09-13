@@ -3,13 +3,14 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 const read = (path) => readFile(new URL(path, import.meta.url), 'utf8')
-const [migration, auth, access, accessAdmin, accessApi, analytics, proxy] = await Promise.all([
+const [migration, auth, access, accessAdmin, accessApi, analytics, apiAuth, proxy] = await Promise.all([
   read('../../../db/migrations/20260913_000001_dashboard_access_rbac.sql'),
   read('./_auth.js'),
   read('./_access.js'),
   read('./_accessAdmin.js'),
   read('../admin/access.js'),
   read('../analytics/admin.js'),
+  read('../lib/apiAuth.js'),
   read('../../server/railwayProxy.js'),
 ])
 
@@ -70,6 +71,12 @@ test('Supabase invitation delivery is service-role server-side and redirect is e
 test('Analytics and Launchpad backend routes enforce their real capabilities', () => {
   assert.match(analytics, /tail === "launchpad" \? "launchpad\.view" : "analytics\.view"/)
   assert.match(analytics, /requireDashboardPermission\(req, res, permission\)/)
+})
+
+test('shared admin auth accepts only an already-authorized dashboard principal as capability bridge', () => {
+  assert.match(apiAuth, /if \(req\.dashboardPrincipal\)/)
+  assert.match(apiAuth, /mode: "dashboard-permission"/)
+  assert.match(apiAuth, /principal: req\.dashboardPrincipal/)
 })
 
 test('Access API is dispatched locally without adding market or indexer routing', () => {
