@@ -187,6 +187,13 @@ async function dispatchDashboardLpFees(pathname, req, res) {
   return true;
 }
 
+async function dispatchAdminAccess(pathname, req, res) {
+  if (!/^\/api\/admin\/access(?:\/|$)/.test(pathname)) return false;
+  const accessAdmin = (await import("../api/admin/access.js")).default;
+  await accessAdmin(req, res);
+  return true;
+}
+
 async function dispatchAdminFinance(pathname, req, res) {
   if (!/^\/api\/admin\/finance(?:\/|$)/.test(pathname)) return false;
   const financeAdmin = (await import("../api/admin/finance.js")).default;
@@ -280,6 +287,7 @@ export function createRailwayProxyMiddleware(options = {}) {
     if (await dispatchDashboardRecruiters(pathname, req, res)) return;
     if (await dispatchDashboardSubmissionNotes(pathname, req, res)) return;
     if (await dispatchDashboardLpFees(pathname, req, res)) return;
+    if (await dispatchAdminAccess(pathname, req, res)) return;
     if (await dispatchAdminFinance(pathname, req, res)) return;
     if (await dispatchAdminSponsorship(pathname, req, res)) return;
     if (await dispatchAdminArenaImports(pathname, req, res)) return;
