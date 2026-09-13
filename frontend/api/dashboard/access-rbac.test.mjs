@@ -59,7 +59,7 @@ test('Finance Reader and Manager preserve read/manage separation', () => {
   assert.match(access, /finance_reader: \["dashboard\.view", "finance\.view"\]/)
   assert.match(access, /finance_manager: \["dashboard\.view", "finance\.view", "finance\.manage"\]/)
   assert.match(proxy, /method === "GET" \|\| method === "HEAD" \? "finance\.view" : "finance\.manage"/)
-  assert.match(proxy, /req\.dashboardPrincipal = principal/)
+  assert.match(proxy, /authorizeDashboardBearer\(req, res, permission\)/)
 })
 
 test('Operations and Community endpoints enforce read/manage separation server-side', () => {
@@ -70,6 +70,12 @@ test('Operations and Community endpoints enforce read/manage separation server-s
   assert.match(recruiters, /manage \? "community\.manage" : "community\.view"/)
   assert.match(recruiters, /requireDashboardPermission\(req, res/)
   assert.match(recruiters, /dashboardRecruiterMember[\s\S]*requireCommunity\(req, res, true\)/)
+  assert.match(proxy, /dispatchAdminSponsorship[\s\S]*\? "operations\.view" : "operations\.manage"/)
+})
+
+test('Arena review and Tournament admin routes require explicit control capabilities', () => {
+  assert.match(proxy, /dispatchAdminArenaImports[\s\S]*"arena_imports\.manage"/)
+  assert.match(proxy, /dispatchAdminArenaTournaments[\s\S]*"tournaments\.manage"/)
 })
 
 test('valid pending invitation activation is atomic and revoked or expired invites fail closed', () => {
@@ -102,16 +108,20 @@ test('Analytics and Launchpad backend routes enforce their real capabilities', (
   assert.match(analytics, /requireDashboardPermission\(req, res, permission\)/)
 })
 
-test('shared admin auth accepts only an already-authorized dashboard principal as capability bridge', () => {
+test('strict legacy admin handlers receive a facade only after server-side capability authorization', () => {
+  assert.match(proxy, /async function authorizeDashboardBearer/)
+  assert.match(proxy, /requireDashboardPermission\(req, res, permission\)/)
+  assert.match(proxy, /req\.dashboardPrincipal = principal/)
   assert.match(apiAuth, /if \(req\.dashboardPrincipal\)/)
-  assert.match(apiAuth, /mode: "dashboard-permission"/)
-  assert.match(apiAuth, /principal: req\.dashboardPrincipal/)
+  assert.match(apiAuth, /mode: "admin"/)
+  assert.match(apiAuth, /authorizationSource: "dashboard-permission"/)
+  assert.match(apiAuth, /dashboardPrincipalAsAdmin/)
 })
 
 test('existing ops-key Finance callers remain on the established finance authorization path', () => {
-  assert.match(proxy, /Preserve existing service\/ops-key callers/)
-  assert.match(proxy, /if \(\/\^Bearer\\s\+\/i\.test\(authorization\)\)/)
+  assert.match(proxy, /authorizeDashboardBearer\(req, res, permission\)/)
   assert.match(proxy, /const financeAdmin = \(await import\("\.\.\/api\/admin\/finance\.js"\)\)\.default/)
+  assert.match(apiAuth, /if \(allowOps && opsExpected && opsProvided && opsProvided === opsExpected\)/)
 })
 
 test('Access API is dispatched locally without adding market or indexer routing', () => {
