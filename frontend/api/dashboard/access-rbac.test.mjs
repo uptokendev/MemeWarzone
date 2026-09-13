@@ -67,7 +67,10 @@ test('Finance Reader and Manager preserve read/manage separation', () => {
 
 test('Operations reads are server-side and require operations.view', () => {
   assert.match(operations, /requireDashboardPermission\(req, res, "operations\.view"\)/)
-  for (const marker of ['public.submissions', 'public.tickets', 'public.ticket_transcripts']) assert.match(operations, new RegExp(marker.replace('.', '\\.')))
+  for (const marker of ['public.submissions', 'public.tickets', 'public.ticket_transcripts', 'public.member_invites', 'public.leaderboard_data']) {
+    assert.match(operations, new RegExp(marker.replace('.', '\\.')))
+  }
+  for (const route of ['invite-leaderboard', 'league-leaderboard']) assert.match(operations, new RegExp(route))
   assert.match(proxy, /dispatchDashboardOperations/)
   assert.match(proxy, /\/api\/dashboard\/operations/)
 })
