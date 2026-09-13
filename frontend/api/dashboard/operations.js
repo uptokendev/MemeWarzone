@@ -92,6 +92,32 @@ async function ticketTranscript(req, res, ticketId) {
   return res.status(200).json({ ok: true, transcript: result.rows[0] || null });
 }
 
+async function inviteLeaderboard(res) {
+  const [rows, total] = await Promise.all([
+    pool.query(
+      `select inviter_id, count(*)::int as count
+         from public.member_invites
+        group by inviter_id
+        order by count desc, inviter_id asc`,
+    ),
+    pool.query(`select count(*)::int as n from public.member_invites`),
+  ]);
+  return res.status(200).json({
+    ok: true,
+    totalInvites: Number(total.rows[0]?.n || 0),
+    leaderboard: rows.rows.map((row) => ({ inviter_id: row.inviter_id, count: Number(row.count || 0) })),
+  });
+}
+
+async function leagueLeaderboard(res) {
+  const result = await pool.query(
+    `select *
+       from public.leaderboard_data
+      order by score desc`,
+  );
+  return res.status(200).json({ ok: true, entries: result.rows });
+}
+
 export async function dashboardOperations(req, res) {
   const principal = await requireDashboardPermission(req, res, "operations.view");
   if (!principal) return;
@@ -107,6 +133,8 @@ export async function dashboardOperations(req, res) {
     if (pathname === "/api/dashboard/operations/submission-counts") return await submissionCounts(res);
     if (pathname === "/api/dashboard/operations/tickets") return await tickets(req, res);
     if (pathname === "/api/dashboard/operations/ticket-counts") return await ticketCounts(res);
+    if (pathname === "/api/dashboard/operations/invite-leaderboard") return await inviteLeaderboard(res);
+    if (pathname === "/api/dashboard/operations/league-leaderboard") return await leagueLeaderboard(res);
     const transcript = pathname.match(/^\/api\/dashboard\/operations\/tickets\/([0-9a-f-]{36})\/transcript$/i);
     if (transcript) return await ticketTranscript(req, res, transcript[1]);
     return res.status(404).json({ ok: false, error: "Unknown dashboard Operations route." });
