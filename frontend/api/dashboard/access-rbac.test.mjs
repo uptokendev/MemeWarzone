@@ -72,6 +72,15 @@ test('Operations and Community endpoints enforce read/manage separation server-s
   assert.match(recruiters, /requireDashboardPermission\(req, res/)
   assert.match(recruiters, /dashboardRecruiterMember[\s\S]*requireCommunity\(req, res, true\)/)
   assert.match(proxy, /dispatchAdminSponsorship[\s\S]*\? "operations\.view" : "operations\.manage"/)
+  assert.match(proxy, /\/api\/admin\/rewards[\s\S]*\? "community\.view" : "community\.manage"/)
+})
+
+test('Security, diagnostics and payout routes map to explicit capabilities', () => {
+  assert.match(proxy, /pathname === "\/api\/diagnostics"[\s\S]*"diagnostics\.view"/)
+  assert.match(proxy, /security\\\/recruiter-payouts[\s\S]*"recruiter_payouts\.manage"/)
+  assert.match(proxy, /security\\\/(?:solana\|contracts)[\s\S]*"security\.manage"/)
+  assert.match(proxy, /api\\\/security[\s\S]*readOnly \? "security\.view" : "security\.manage"/)
+  assert.match(proxy, /gateDashboardRoute\(pathname, req, res\)/)
 })
 
 test('Arena review and Tournament admin routes require explicit control capabilities', () => {
