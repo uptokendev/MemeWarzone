@@ -115,6 +115,24 @@ async function authorizeDashboardBearer(req, res, permission) {
   return true;
 }
 
+function routeCapability(pathname, req) {
+  const method = String(req.method || "GET").toUpperCase();
+  const readOnly = method === "GET" || method === "HEAD";
+
+  if (pathname === "/api/diagnostics") return "diagnostics.view";
+  if (/^\/api\/security\/recruiter-payouts(?:\/|$)/.test(pathname)) return "recruiter_payouts.manage";
+  if (/^\/api\/security\/(?:solana|contracts)(?:\/|$)/.test(pathname)) return "security.manage";
+  if (/^\/api\/security(?:\/|$)/.test(pathname)) return readOnly ? "security.view" : "security.manage";
+  if (/^\/api\/admin\/rewards(?:\/|$)/.test(pathname)) return readOnly ? "community.view" : "community.manage";
+  return null;
+}
+
+async function gateDashboardRoute(pathname, req, res) {
+  const permission = routeCapability(pathname, req);
+  if (!permission) return true;
+  return authorizeDashboardBearer(req, res, permission);
+}
+
 async function dispatchDashboardPromotors(pathname, req, res) {
   if (!/^\/api\/dashboard\/promotors(?:\/|$)/.test(pathname)) return false;
 
@@ -316,6 +334,7 @@ export function createRailwayProxyMiddleware(options = {}) {
     if (await dispatchAdminArenaImports(pathname, req, res)) return;
     if (await dispatchAdminArenaTournaments(pathname, req, res)) return;
     if (await dispatchAnalytics(pathname, req, res)) return;
+    if (!(await gateDashboardRoute(pathname, req, res))) return;
     if (!railwayProxyEnabled()) return next();
 
     if (!shouldProxyToRailway(path)) return next();
