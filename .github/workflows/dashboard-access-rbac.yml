@@ -6,6 +6,7 @@ on:
       - '.env.example'
       - 'db/migrations/20260913_000001_dashboard_access_rbac.sql'
       - 'db/migrations/20260913_000002_dashboard_owner_guard.sql'
+      - 'db/migrations/20260913_000003_dashboard_owner_guard_fixed_search_path.sql'
       - 'frontend/api/dashboard/_auth.js'
       - 'frontend/api/dashboard/_access.js'
       - 'frontend/api/dashboard/_accessAdmin.js'
