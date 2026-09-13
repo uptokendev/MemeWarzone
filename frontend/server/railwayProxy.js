@@ -124,6 +124,8 @@ function routeCapability(pathname, req) {
   if (/^\/api\/security\/(?:solana|contracts)(?:\/|$)/.test(pathname)) return "security.manage";
   if (/^\/api\/security(?:\/|$)/.test(pathname)) return readOnly ? "security.view" : "security.manage";
   if (/^\/api\/admin\/rewards(?:\/|$)/.test(pathname)) return readOnly ? "community.view" : "community.manage";
+  if (/^\/api\/admin\/arena\/imports(?:\/|$)/.test(pathname)) return "arena_imports.manage";
+  if (/^\/api\/admin\/arena\/tournaments(?:\/|$)/.test(pathname)) return "tournaments.manage";
   return null;
 }
 
