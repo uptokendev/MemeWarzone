@@ -31,6 +31,7 @@ export async function captureBsc97LiveBalanceEvidence({
   const sender = normalizeAddress(senderAddress);
   const contract = normalizeAddress(contractAddress);
 
+  const beforeSampledAt = new Date().toISOString();
   const beforeObservedBlock = Number(await provider.getBlockNumber());
   const [senderBefore, contractBefore] = await Promise.all([
     provider.getBalance(sender),
@@ -40,6 +41,7 @@ export async function captureBsc97LiveBalanceEvidence({
   const tx = await sendTransaction();
   const receipt = await tx.wait();
 
+  const afterSampledAt = new Date().toISOString();
   const afterObservedBlock = Number(await provider.getBlockNumber());
   const [senderAfter, contractAfter] = await Promise.all([
     provider.getBalance(sender),
@@ -55,13 +57,13 @@ export async function captureBsc97LiveBalanceEvidence({
     sender,
     contractAddress: contract,
     before: {
-      sampledAt: new Date().toISOString(),
+      sampledAt: beforeSampledAt,
       observedBlockNumber: beforeObservedBlock,
       senderBalanceWei: String(senderBefore),
       contractBalanceWei: String(contractBefore),
     },
     after: {
-      sampledAt: new Date().toISOString(),
+      sampledAt: afterSampledAt,
       observedBlockNumber: afterObservedBlock,
       settlementBlockNumber: Number(receipt?.blockNumber ?? 0),
       senderBalanceWei: String(senderAfter),
@@ -124,6 +126,8 @@ export function buildBsc97ObservedBalanceProof({ snapshot, txHash, blockNumber, 
     blockNumber: Number(blockNumber ?? snapshot.after?.settlementBlockNumber ?? 0),
     recipient: normalizedRecipient,
     amountWei: String(expectedAmount),
+    beforeSampledAt: snapshot.before?.sampledAt || null,
+    afterSampledAt: snapshot.after?.sampledAt || null,
     beforeObservedBlockNumber: Number(snapshot.before?.observedBlockNumber ?? 0),
     afterObservedBlockNumber: Number(snapshot.after?.observedBlockNumber ?? 0),
     settlementBlockNumber: Number(snapshot.after?.settlementBlockNumber ?? 0),
