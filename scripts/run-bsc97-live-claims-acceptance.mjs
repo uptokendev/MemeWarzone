@@ -110,7 +110,7 @@ assert.equal(operator.address.toLowerCase(), EXPECTED_OPERATOR.toLowerCase(), "u
 const beforeOperator = await provider.getBalance(operator.address);
 if (beforeOperator < 30_000_000_000_000_000n) throw new Error("BLOCKED: operator needs at least 0.03 test BNB");
 
-run("npx", ["hardhat", "compile", "--config", "hardhat.agent5-claims-closeout.config.cjs"]);
+run("npx", ["hardhat", "compile", "--config", "hardhat.agent5-claim-recovery.config.cjs"]);
 const rewardArtifact = JSON.parse(fs.readFileSync(".agent5-artifacts/contracts/RewardDistributor.sol/RewardDistributor.json", "utf8"));
 const vaultArtifact = JSON.parse(fs.readFileSync(".agent5-artifacts/contracts/TreasuryVaultV2.sol/TreasuryVaultV2.json", "utf8"));
 
