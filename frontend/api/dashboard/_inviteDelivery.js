@@ -17,7 +17,8 @@ export function dashboardInviteConfig() {
 
   const redirectUrl = new URL(redirectBase);
   redirectUrl.pathname = "/set-password";
-  redirectUrl.search = "?mode=invite";
+  redirectUrl.search = "";
+  redirectUrl.hash = "";
 
   return {
     supabaseUrl,
