@@ -31,6 +31,13 @@ export const DASHBOARD_PERMISSIONS = Object.freeze([
 ]);
 
 const ALL_PERMISSIONS = new Set(DASHBOARD_PERMISSIONS);
+const LEGACY_ADMIN_EXCLUSIONS = new Set([
+  "access.manage",
+  "abuse.view",
+  "abuse.reply",
+  "abuse.manage",
+  "abuse.admin",
+]);
 
 export const DASHBOARD_ROLE_PRESETS = Object.freeze({
   metrics_reader: ["dashboard.view", "analytics.view", "launchpad.view"],
@@ -50,7 +57,7 @@ export const DASHBOARD_ROLE_PRESETS = Object.freeze({
     "controls.manage",
     "diagnostics.view",
   ],
-  admin: DASHBOARD_PERMISSIONS.filter((permission) => permission !== "access.manage"),
+  admin: DASHBOARD_PERMISSIONS.filter((permission) => !LEGACY_ADMIN_EXCLUSIONS.has(permission)),
   owner: DASHBOARD_PERMISSIONS,
   custom: [],
 });
@@ -157,6 +164,7 @@ export async function getDashboardPrincipal(req, res, { db = pool } = {}) {
 
   if (!member) {
     // Transitional compatibility for existing non-owner dashboard admins.
+    // Abuse remains governed by the existing employee_permissions subsystem.
     if (identity.isApprovedAdmin) {
       return syntheticPrincipal(identity, "admin", DASHBOARD_ROLE_PRESETS.admin, "legacy_admin");
     }
