@@ -2,10 +2,10 @@ import crypto from "node:crypto";
 import { pool } from "../../server/db.js";
 import { ANALYTICS_APPS, CATALOG_EVENT_NAMES, MAX_BATCH, MAX_PROPERTY_KEYS, MAX_STRING } from "./catalog.js";
 import { isForbiddenEventName, stripForbiddenProperties } from "./denylist.js";
+import { resolveGeoContext, trustedGeoContext } from "./geo-resolver.js";
 import { templatePath } from "./paths.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const COUNTRY_RE = /^[A-Z]{2}$/;
 const hitsByIp = new Map();
 
 function clientIp(req) {
@@ -53,29 +53,6 @@ function parseUa(ua) {
   return { browser, os };
 }
 
-function firstHeader(req, names) {
-  for (const name of names) {
-    const value = String(req.headers?.[name] || "").trim();
-    if (value) return value;
-  }
-  return "";
-}
-
-function geoContext(req) {
-  const rawCountry = firstHeader(req, [
-    "cf-ipcountry",
-    "x-vercel-ip-country",
-    "cloudfront-viewer-country",
-    "x-country-code",
-  ]).toUpperCase();
-  const country = COUNTRY_RE.test(rawCountry) && !["XX", "T1"].includes(rawCountry) ? rawCountry : undefined;
-  const region = firstHeader(req, ["x-vercel-ip-country-region", "cf-region", "x-region-code"]);
-  return {
-    country,
-    region: region ? clampString(region) : undefined,
-  };
-}
-
 function hourBucket(date) {
   const d = new Date(date);
   d.setUTCMinutes(0, 0, 0);
@@ -109,9 +86,6 @@ export function sanitizeEvent(raw, req) {
     count += 1;
   }
 
-  // `value` stays forbidden for ordinary product events because it can carry money-like data.
-  // Web Vitals are a reserved system event; preserve only their numeric browser timing/score
-  // under a purpose-specific key so performance percentiles can be calculated safely.
   if (name === "$web_vital") {
     const measurement = Number(raw.properties?.value);
     if (Number.isFinite(measurement)) trimmed.measurement = measurement;
@@ -121,7 +95,7 @@ export function sanitizeEvent(raw, req) {
   const salt = String(process.env.ANALYTICS_IP_SALT || process.env.ANALYTICS_WRITE_KEY || "mw-analytics");
   const ipHash = ip ? crypto.createHash("sha256").update(`${salt}:${ip}`).digest("hex").slice(0, 16) : null;
   const ua = parseUa(req.headers["user-agent"]);
-  const geo = geoContext(req);
+  const geo = trustedGeoContext(req);
   const incomingContext = raw.context && typeof raw.context === "object" ? raw.context : {};
 
   return {
@@ -181,15 +155,7 @@ async function persistEvent(client, event) {
        exit_path = excluded.exit_path,
        pageview_count = public.analytics_sessions.pageview_count + excluded.pageview_count,
        event_count = public.analytics_sessions.event_count + 1`,
-    [
-      event.session_id,
-      event.app,
-      event.anonymous_id,
-      event.user_id,
-      event.ts,
-      event.path_template,
-      isPageview ? 1 : 0,
-    ],
+    [event.session_id, event.app, event.anonymous_id, event.user_id, event.ts, event.path_template, isPageview ? 1 : 0],
   );
 
   const bucket = hourBucket(event.ts);
@@ -204,8 +170,7 @@ async function persistEvent(client, event) {
     await client.query(
       `insert into public.analytics_hourly_pages (bucket, app, path_template, views, duration_ms_sum, duration_n)
        values ($1,$2,$3,1,0,0)
-       on conflict (bucket, app, path_template) do update set
-         views = public.analytics_hourly_pages.views + 1`,
+       on conflict (bucket, app, path_template) do update set views = public.analytics_hourly_pages.views + 1`,
       [bucket, event.app, event.path_template],
     );
   }
@@ -256,19 +221,15 @@ async function persistEvent(client, event) {
 }
 
 export async function analyticsIngest(req, res) {
-  if (req.method !== "POST") {
-    return res.status(405).json({ ok: false, error: "Method not allowed." });
-  }
-  if (!writeKeyOk(req)) {
-    return res.status(401).json({ ok: false, error: "Invalid analytics write key." });
-  }
+  if (req.method !== "POST") return res.status(405).json({ ok: false, error: "Method not allowed." });
+  if (!writeKeyOk(req)) return res.status(401).json({ ok: false, error: "Invalid analytics write key." });
+
   const ip = clientIp(req);
-  if (!rateLimitOk(ip)) {
-    return res.status(429).json({ ok: false, error: "Rate limited." });
-  }
+  if (!rateLimitOk(ip)) return res.status(429).json({ ok: false, error: "Rate limited." });
 
   const incoming = Array.isArray(req.body?.events) ? req.body.events : [];
   if (incoming.length === 0) return res.status(200).json({ ok: true, accepted: 0, dropped: 0 });
+
   const slice = incoming.slice(0, MAX_BATCH);
   const accepted = [];
   let dropped = incoming.length - slice.length;
@@ -277,15 +238,20 @@ export async function analyticsIngest(req, res) {
     if (event) accepted.push(event);
     else dropped += 1;
   }
-
   if (accepted.length === 0) return res.status(200).json({ ok: true, accepted: 0, dropped });
+
+  const resolvedGeo = await resolveGeoContext(req, ip);
+  if (resolvedGeo.country) {
+    for (const event of accepted) {
+      if (!event.context.country) event.context.country = resolvedGeo.country;
+      if (!event.context.region && resolvedGeo.region) event.context.region = resolvedGeo.region;
+    }
+  }
 
   const client = await pool.connect();
   try {
     await client.query("begin");
-    for (const event of accepted) {
-      await persistEvent(client, event);
-    }
+    for (const event of accepted) await persistEvent(client, event);
     await client.query("commit");
   } catch (error) {
     await client.query("rollback");
