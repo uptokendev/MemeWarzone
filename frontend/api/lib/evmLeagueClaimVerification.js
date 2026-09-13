@@ -11,6 +11,7 @@ import {
 } from "ethers";
 
 const EVM_LEAGUE_CHAINS = new Set([56, 97, 4663, 46630]);
+export const EVM_LEAGUE_LOG_QUERY_MAX_BLOCKS = 5_000;
 const EVM_LEAGUE_INTERFACE = new Interface([
   "function claim(uint256 epochId, bytes32 category, uint8 rank, address recipient, uint256 amount, bytes32[] proof)",
   "function epochLeafClaimed(uint256 epochId, bytes32 leaf) view returns (bool)",
@@ -76,17 +77,33 @@ function positiveIntEnv(name, fallback) {
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
-async function scanLogsBackwards(provider, { address, topics, lookbackBlocks, chunkBlocks }) {
+function normalizedLogChunkBlocks(chunkBlocks) {
+  const requested = Number(chunkBlocks);
+  const positiveRequested = Number.isFinite(requested) && requested > 0
+    ? Math.floor(requested)
+    : EVM_LEAGUE_LOG_QUERY_MAX_BLOCKS;
+  return Math.min(positiveRequested, EVM_LEAGUE_LOG_QUERY_MAX_BLOCKS);
+}
+
+export async function scanEvmLeagueClaimLogsBackwards(provider, { address, topics, lookbackBlocks, chunkBlocks }) {
   const latest = await provider.getBlockNumber();
   const floor = Math.max(0, latest - lookbackBlocks + 1);
-  const logs = [];
+  const effectiveChunkBlocks = normalizedLogChunkBlocks(chunkBlocks);
   for (let toBlock = latest; toBlock >= floor;) {
-    const fromBlock = Math.max(floor, toBlock - chunkBlocks + 1);
+    const fromBlock = Math.max(floor, toBlock - effectiveChunkBlocks + 1);
     const chunk = await provider.getLogs({ address, topics, fromBlock, toBlock });
-    if (chunk.length) logs.push(...chunk.reverse());
+    if (chunk.length) {
+      return [...chunk].sort((left, right) => {
+        const blockOrder = Number(right.blockNumber ?? -1) - Number(left.blockNumber ?? -1);
+        if (blockOrder !== 0) return blockOrder;
+        const leftIndex = Number(left.index ?? left.logIndex ?? -1);
+        const rightIndex = Number(right.index ?? right.logIndex ?? -1);
+        return rightIndex - leftIndex;
+      });
+    }
     toBlock = fromBlock - 1;
   }
-  return logs;
+  return [];
 }
 
 export function buildExpectedEvmLeagueClaim({ chainId, period, epochStart, category, rank, recipient, amountRaw }) {
@@ -143,14 +160,14 @@ export async function verifyEvmLeagueClaimTransaction({ chainId, period, epochSt
   return { verified: true, ...expected, epochId: expected.epochId.toString(), txHash: String(receipt.hash || txHash), blockNumber: Number(receipt.blockNumber), confirmations };
 }
 
-export async function discoverEvmLeagueClaimTransaction({ chainId, period, epochStart, category, rank, recipient, amountRaw, minConfirmations = 1, lookbackBlocks = positiveIntEnv("EVM_CLAIM_RECONCILE_LOOKBACK_BLOCKS", 2_000_000), chunkBlocks = positiveIntEnv("EVM_CLAIM_RECONCILE_CHUNK_BLOCKS", 50_000) }) {
+export async function discoverEvmLeagueClaimTransaction({ chainId, period, epochStart, category, rank, recipient, amountRaw, minConfirmations = 1, lookbackBlocks = positiveIntEnv("EVM_CLAIM_RECONCILE_LOOKBACK_BLOCKS", 2_000_000), chunkBlocks = positiveIntEnv("EVM_CLAIM_RECONCILE_CHUNK_BLOCKS", EVM_LEAGUE_LOG_QUERY_MAX_BLOCKS) }) {
   const expected = buildExpectedEvmLeagueClaim({ chainId, period, epochStart, category, rank, recipient, amountRaw });
   const provider = providerForChain(expected.chainId);
   const callData = EVM_LEAGUE_INTERFACE.encodeFunctionData("epochLeafClaimed", [expected.epochId, expected.leaf]);
   const rawClaimed = await provider.call({ to: expected.vaultAddress, data: callData });
   const [claimed] = EVM_LEAGUE_INTERFACE.decodeFunctionResult("epochLeafClaimed", rawClaimed);
   if (!claimed) return null;
-  const logs = await scanLogsBackwards(provider, { address: expected.vaultAddress, topics: evmLeagueClaimEventTopics(expected), lookbackBlocks, chunkBlocks });
+  const logs = await scanEvmLeagueClaimLogsBackwards(provider, { address: expected.vaultAddress, topics: evmLeagueClaimEventTopics(expected), lookbackBlocks, chunkBlocks });
   for (const log of logs) return verifyEvmLeagueClaimTransaction({ chainId: expected.chainId, period, epochStart, category, rank: expected.rank, recipient: expected.recipient, amountRaw: expected.amountRaw, txHash: log.transactionHash, minConfirmations });
   throw new EvmLeagueClaimVerificationError("LEAGUE_EVENT_NOT_DISCOVERED", "TreasuryVaultV2 reports this League leaf claimed, but its exact Claimed event was not found in the configured reconciliation window.", 409);
 }
