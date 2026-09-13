@@ -7,6 +7,12 @@ on:
     paths:
       - '.github/workflows/agent3-tournament-destructive-retry.yml'
       - 'frontend/scripts/agent3-tournament-only-solana-devnet.mjs'
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - '.github/workflows/agent3-tournament-destructive-retry.yml'
+      - 'frontend/scripts/agent3-tournament-only-solana-devnet.mjs'
 
 permissions:
   contents: read
