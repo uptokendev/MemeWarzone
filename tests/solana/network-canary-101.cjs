@@ -89,21 +89,78 @@ async function createTempAlt(connection, operator, globalConfig) {
   fail(`ALT ${address.toBase58()} did not activate`);
 }
 async function loadV0() { const { loadSolanaV0Module } = await import("../../frontend/scripts/load-solana-v0-module.mjs"); return loadSolanaV0Module(); }
+function isBlockheightExpiry(error) {
+  return /block height exceeded|blockhash not found|expired blockhash/i.test(String(error?.message || error || ""));
+}
+function isConfirmedStatus(value) {
+  return value?.confirmationStatus === "confirmed" || value?.confirmationStatus === "finalized";
+}
+async function reconcileSignature(connection, signature) {
+  let pending = null;
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const statuses = await connection.getSignatureStatuses([signature], { searchTransactionHistory: true });
+    const value = statuses.value[0];
+    if (value?.err) return { state: "failed", status: value };
+    if (isConfirmedStatus(value)) return { state: "landed", status: value };
+    if (value) pending = value;
+    const tx = await connection.getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 }).catch(() => null);
+    if (tx) return tx.meta?.err ? { state: "failed", tx } : { state: "landed", tx, status: value };
+    if (attempt < 5) await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return pending ? { state: "pending", status: pending } : { state: "missing" };
+}
+async function compileFreshV0({ v0, connection, payer, ixes, lookupTable, expectation, excludedBlockhash }) {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const compiled = await v0.compileLaunchpadV0WithLatestBlockhash(web3, connection, { payer: payer.publicKey, instructions: ixes, lookupTableAccounts: [lookupTable] }, expectation);
+    const currentHeight = await connection.getBlockHeight("confirmed").catch(() => null);
+    const enoughHeadroom = currentHeight == null || Number(compiled.latest.lastValidBlockHeight) - Number(currentHeight) >= 20;
+    if ((!excludedBlockhash || compiled.latest.blockhash !== excludedBlockhash) && enoughHeadroom) return compiled;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  fail("RPC did not provide a fresh Solana blockhash with safe LVH headroom");
+}
 async function executeV0({ v0, connection, payer, ed25519, programIx, lookupTable, instructions, label }) {
   const ixes = instructions || [ed25519, programIx];
   const expectation = { payer: payer.publicKey, ed25519Instruction: ed25519, programInstruction: programIx, lookupTableAccounts: [lookupTable], allowInstructionPrivilegePromotion: true };
-  const compiled = await v0.compileLaunchpadV0WithLatestBlockhash(web3, connection, { payer: payer.publicKey, instructions: ixes, lookupTableAccounts: [lookupTable] }, expectation);
-  compiled.transaction.sign([payer]);
-  const stats = v0.assertLaunchpadV0Intent(web3, compiled.transaction, expectation);
-  const simulation = await v0.simulateLaunchpadV0OrThrow(connection, compiled.transaction, label);
-  const raw = compiled.transaction.serialize();
-  const signature = await connection.sendRawTransaction(raw, { skipPreflight: false, maxRetries: 3 });
-  const confirmation = await connection.confirmTransaction({ signature, ...compiled.latest }, "confirmed");
-  if (confirmation.value.err) fail(`${label} confirmation failed ${JSON.stringify(confirmation.value.err)}`);
+  const expiredAttempts = [];
+  let finalAttempt = null;
+  let excludedBlockhash = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const compiled = await compileFreshV0({ v0, connection, payer, ixes, lookupTable, expectation, excludedBlockhash });
+    compiled.transaction.sign([payer]);
+    const stats = v0.assertLaunchpadV0Intent(web3, compiled.transaction, expectation);
+    const simulation = await v0.simulateLaunchpadV0OrThrow(connection, compiled.transaction, label);
+    const raw = compiled.transaction.serialize();
+    const signature = await connection.sendRawTransaction(raw, { skipPreflight: false, maxRetries: 3 });
+    let recovery = "not-needed";
+    try {
+      const confirmation = await connection.confirmTransaction({ signature, ...compiled.latest }, "confirmed");
+      if (confirmation.value.err) fail(`${label} confirmation failed ${JSON.stringify(confirmation.value.err)}`);
+    } catch (error) {
+      if (!isBlockheightExpiry(error)) throw error;
+      const reconciled = await reconcileSignature(connection, signature);
+      if (reconciled.state === "landed") {
+        recovery = "landed-after-expiry-reconciliation";
+      } else if (reconciled.state === "failed") {
+        fail(`${label} expired signature landed with an on-chain error`);
+      } else if (reconciled.state === "pending") {
+        fail(`${label} expired signature is still pending; refusing unsafe same-intent rebuild`);
+      } else {
+        expiredAttempts.push({ signature, blockhash: compiled.latest.blockhash, lastValidBlockHeight: compiled.latest.lastValidBlockHeight });
+        excludedBlockhash = compiled.latest.blockhash;
+        if (attempt === 0) continue;
+        fail(`${label} expired twice without landing`);
+      }
+    }
+    finalAttempt = { compiled, stats, simulation, raw, signature, recovery };
+    break;
+  }
+  if (!finalAttempt) fail(`${label} never reached a confirmed V0 attempt`);
+  const { compiled, stats, simulation, raw, signature } = finalAttempt;
   const retrySignature = await connection.sendRawTransaction(raw, { skipPreflight: false, maxRetries: 3 });
   if (retrySignature !== signature) fail(`${label} identical retry signature changed`);
-  const landed = await connection.getSignatureStatuses([signature], { searchTransactionHistory: true });
-  if (landed.value[0]?.err) fail(`${label} reconciliation found transaction error`);
+  const landed = await reconcileSignature(connection, signature);
+  if (landed.state !== "landed") fail(`${label} reconciliation could not prove successful landed transaction`);
   const replay = await v0.compileLaunchpadV0WithLatestBlockhash(web3, connection, { payer: payer.publicKey, instructions: ixes, lookupTableAccounts: [lookupTable] }, expectation);
   replay.transaction.sign([payer]);
   const replaySimulation = await connection.simulateTransaction(replay.transaction, { commitment: "confirmed", sigVerify: false, replaceRecentBlockhash: false });
@@ -117,7 +174,9 @@ async function executeV0({ v0, connection, payer, ed25519, programIx, lookupTabl
     status: "PASS", version: "V0", alt: lookupTable.key.toBase58(), blockhash: compiled.latest.blockhash,
     lastValidBlockHeight: compiled.latest.lastValidBlockHeight, signature, serializedBytes: stats.serializedBytes,
     simulationUnits: simulation.unitsConsumed ?? null, retry: "same-packet-deduped", duplicateReplay: "fresh-blockhash-intent-rejected",
-    expiredBlockhash: "rejected", reconciliation: landed.value[0]?.confirmationStatus || "confirmed",
+    expiredBlockhash: "rejected", reconciliation: landed.status?.confirmationStatus || "confirmed",
+    ambiguousConfirmationRecovery: expiredAttempts.length ? "expired-unlanded-rebuilt-with-fresh-blockhash" : finalAttempt.recovery,
+    expiredAttemptSignatures: expiredAttempts.map((entry) => entry.signature),
   };
 }
 async function setupWallet(program, connection, operator, globalConfig, clusterId, creator) {
