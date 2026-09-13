@@ -11,6 +11,7 @@ on:
       - 'frontend/api/dashboard/_access.js'
       - 'frontend/api/dashboard/_accessAdmin.js'
       - 'frontend/api/dashboard/access-rbac.test.mjs'
+      - 'frontend/api/dashboard/invite-redirect.test.mjs'
       - 'frontend/api/dashboard/operations.js'
       - 'frontend/api/dashboard/promotors.js'
       - 'frontend/api/dashboard/recruiters.js'
@@ -46,4 +47,6 @@ jobs:
           node --check frontend/api/lib/apiAuth.js
           node --check frontend/server/railwayProxy.js
       - name: Focused RBAC certification
-        run: node --test frontend/api/dashboard/access-rbac.test.mjs
+        run: |
+          node --test frontend/api/dashboard/access-rbac.test.mjs
+          node --test frontend/api/dashboard/invite-redirect.test.mjs
