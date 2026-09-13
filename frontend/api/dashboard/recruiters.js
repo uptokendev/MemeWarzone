@@ -1,5 +1,5 @@
 import { pool } from "../../server/db.js";
-import { requireDashboardAdmin } from "./_auth.js";
+import { requireDashboardPermission } from "./_access.js";
 
 const VALID_RECRUITER_STATUSES = new Set(["active", "inactive", "closed", "suspended"]);
 const VALID_MEMBER_ROLES = new Set(["creator", "trader", "member"]);
@@ -34,6 +34,12 @@ function databaseErrorResponse(error) {
   if (error?.code === "23503") return { status: 400, error: "The requested recruiter relationship is invalid." };
   if (error?.code === "23514") return { status: 400, error: "The requested value violates a recruiter data rule." };
   return null;
+}
+
+async function requireCommunity(req, res, manage = false) {
+  const principal = await requireDashboardPermission(req, res, manage ? "community.manage" : "community.view");
+  if (!principal) return null;
+  return { id: principal.authUserId, email: principal.email, principal };
 }
 
 async function writeAudit(client, {
@@ -108,10 +114,11 @@ async function selectRecruiterLink(client, wallet, recruiterId, { forUpdate = fa
 }
 
 export async function dashboardRecruiters(req, res) {
-  const admin = await requireDashboardAdmin(req, res);
+  const method = String(req.method || "GET").toUpperCase();
+  const admin = await requireCommunity(req, res, method !== "GET" && method !== "HEAD");
   if (!admin) return;
 
-  if (req.method === "GET") {
+  if (method === "GET") {
     const [recruiters, memberships, links] = await Promise.all([
       pool.query(`
         select id, wallet_address, code, display_name, is_og, status, closed_at,
@@ -143,7 +150,7 @@ export async function dashboardRecruiters(req, res) {
 
   const id = positiveId(req.params?.id);
   if (!id) return res.status(400).json({ ok: false, error: "Invalid recruiter id." });
-  if (req.method !== "PATCH") return res.status(405).json({ ok: false, error: "Method not allowed." });
+  if (method !== "PATCH") return res.status(405).json({ ok: false, error: "Method not allowed." });
 
   let reason;
   try {
@@ -234,9 +241,9 @@ export async function dashboardRecruiters(req, res) {
 }
 
 export async function dashboardRecruiterMember(req, res) {
-  const admin = await requireDashboardAdmin(req, res);
+  const admin = await requireCommunity(req, res, true);
   if (!admin) return;
-  if (req.method !== "PATCH") return res.status(405).json({ ok: false, error: "Method not allowed." });
+  if (String(req.method || "").toUpperCase() !== "PATCH") return res.status(405).json({ ok: false, error: "Method not allowed." });
 
   const recruiterId = positiveId(req.params?.id);
   if (!recruiterId) return res.status(400).json({ ok: false, error: "Invalid recruiter id." });
