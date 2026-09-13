@@ -58,7 +58,8 @@ test('Metrics Reader is exactly dashboard analytics launchpad at preset level', 
 test('Finance Reader and Manager preserve read/manage separation', () => {
   assert.match(access, /finance_reader: \["dashboard\.view", "finance\.view"\]/)
   assert.match(access, /finance_manager: \["dashboard\.view", "finance\.view", "finance\.manage"\]/)
-  assert.match(proxy, /method === "GET" \|\| method === "HEAD" \? "finance\.view" : "finance\.manage"/)
+  assert.match(proxy, /pathname === "\/api\/admin\/finance\/lp-harvest"[\s\S]*\? "lp_harvest\.manage"/)
+  assert.match(proxy, /method === "GET" \|\| method === "HEAD"[\s\S]*\? "finance\.view"[\s\S]*: "finance\.manage"/)
   assert.match(proxy, /authorizeDashboardBearer\(req, res, permission\)/)
 })
 
