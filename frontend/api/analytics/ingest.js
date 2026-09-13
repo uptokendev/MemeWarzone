@@ -5,6 +5,7 @@ import { isForbiddenEventName, stripForbiddenProperties } from "./denylist.js";
 import { templatePath } from "./paths.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const COUNTRY_RE = /^[A-Z]{2}$/;
 const hitsByIp = new Map();
 
 function clientIp(req) {
@@ -52,13 +53,36 @@ function parseUa(ua) {
   return { browser, os };
 }
 
+function firstHeader(req, names) {
+  for (const name of names) {
+    const value = String(req.headers?.[name] || "").trim();
+    if (value) return value;
+  }
+  return "";
+}
+
+function geoContext(req) {
+  const rawCountry = firstHeader(req, [
+    "cf-ipcountry",
+    "x-vercel-ip-country",
+    "cloudfront-viewer-country",
+    "x-country-code",
+  ]).toUpperCase();
+  const country = COUNTRY_RE.test(rawCountry) && !["XX", "T1"].includes(rawCountry) ? rawCountry : undefined;
+  const region = firstHeader(req, ["x-vercel-ip-country-region", "cf-region", "x-region-code"]);
+  return {
+    country,
+    region: region ? clampString(region) : undefined,
+  };
+}
+
 function hourBucket(date) {
   const d = new Date(date);
   d.setUTCMinutes(0, 0, 0);
   return d.toISOString();
 }
 
-function sanitizeEvent(raw, req) {
+export function sanitizeEvent(raw, req) {
   if (!raw || typeof raw !== "object") return null;
   const name = String(raw.name || "").trim();
   if (!CATALOG_EVENT_NAMES.has(name) || isForbiddenEventName(name)) return null;
@@ -85,10 +109,19 @@ function sanitizeEvent(raw, req) {
     count += 1;
   }
 
+  // `value` stays forbidden for ordinary product events because it can carry money-like data.
+  // Web Vitals are a reserved system event; preserve only their numeric browser timing/score
+  // under a purpose-specific key so performance percentiles can be calculated safely.
+  if (name === "$web_vital") {
+    const measurement = Number(raw.properties?.value);
+    if (Number.isFinite(measurement)) trimmed.measurement = measurement;
+  }
+
   const ip = clientIp(req);
   const salt = String(process.env.ANALYTICS_IP_SALT || process.env.ANALYTICS_WRITE_KEY || "mw-analytics");
   const ipHash = ip ? crypto.createHash("sha256").update(`${salt}:${ip}`).digest("hex").slice(0, 16) : null;
   const ua = parseUa(req.headers["user-agent"]);
+  const geo = geoContext(req);
   const incomingContext = raw.context && typeof raw.context === "object" ? raw.context : {};
 
   return {
@@ -109,6 +142,8 @@ function sanitizeEvent(raw, req) {
       device: incomingContext.device || undefined,
       browser: ua.browser,
       os: ua.os,
+      country: geo.country,
+      region: geo.region,
       ip_hash: ipHash,
     },
   };
@@ -206,15 +241,15 @@ async function persistEvent(client, event) {
 
   if (event.name === "$web_vital") {
     const metric = clampString(event.properties.metric || "");
-    const value = Number(event.properties.value);
-    if (metric && Number.isFinite(value)) {
+    const measurement = Number(event.properties.measurement);
+    if (metric && Number.isFinite(measurement)) {
       await client.query(
         `insert into public.analytics_hourly_vitals (bucket, app, metric, n, value_sum)
          values ($1,$2,$3,1,$4)
          on conflict (bucket, app, metric) do update set
            n = public.analytics_hourly_vitals.n + 1,
            value_sum = public.analytics_hourly_vitals.value_sum + excluded.value_sum`,
-        [bucket, event.app, metric, value],
+        [bucket, event.app, metric, measurement],
       );
     }
   }
