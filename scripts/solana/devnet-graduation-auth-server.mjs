@@ -15,15 +15,20 @@ function required(name) {
 
 required("SOLANA_RPC_URL");
 required("SOLANA_LAUNCHPAD_PROGRAM_ID");
-const routeSignerPublicKey = required("SOLANA_ROUTE_SIGNER_PUBLIC_KEY");
 const routeSignerSecret = required("SOLANA_ROUTE_SIGNER_SECRET_KEY");
 const signer = createEd25519Signer(routeSignerSecret);
+const configuredRouteSignerPublicKey = String(process.env.SOLANA_ROUTE_SIGNER_PUBLIC_KEY || "").trim();
+const routeSignerPublicKey = configuredRouteSignerPublicKey || signer.publicKeyBase58;
 if (signer.publicKeyBase58 !== routeSignerPublicKey) {
   throw new Error(
     `SOLANA_ROUTE_SIGNER_SECRET_KEY derives ${signer.publicKeyBase58}, expected ${routeSignerPublicKey}`,
   );
 }
+console.log(
+  `devnet_graduation_auth_route_signer=${routeSignerPublicKey} source=${configuredRouteSignerPublicKey ? "SOLANA_ROUTE_SIGNER_PUBLIC_KEY" : "derived_from_secret"}`,
+);
 process.env.SOLANA_GRADUATION_AUTH_ENABLED = "true";
+process.env.SOLANA_ROUTE_SIGNER_PUBLIC_KEY = routeSignerPublicKey;
 
 const server = http.createServer(async (req, res) => {
   try {
