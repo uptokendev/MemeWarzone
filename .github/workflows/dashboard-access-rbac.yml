@@ -10,8 +10,10 @@ on:
       - 'frontend/api/dashboard/_auth.js'
       - 'frontend/api/dashboard/_access.js'
       - 'frontend/api/dashboard/_accessAdmin.js'
+      - 'frontend/api/dashboard/_inviteDelivery.js'
       - 'frontend/api/dashboard/access-rbac.test.mjs'
       - 'frontend/api/dashboard/invite-redirect.test.mjs'
+      - 'frontend/api/dashboard/invite-existing-user.test.mjs'
       - 'frontend/api/dashboard/operations.js'
       - 'frontend/api/dashboard/promotors.js'
       - 'frontend/api/dashboard/recruiters.js'
@@ -38,6 +40,7 @@ jobs:
           node --check frontend/api/dashboard/_auth.js
           node --check frontend/api/dashboard/_access.js
           node --check frontend/api/dashboard/_accessAdmin.js
+          node --check frontend/api/dashboard/_inviteDelivery.js
           node --check frontend/api/dashboard/operations.js
           node --check frontend/api/dashboard/promotors.js
           node --check frontend/api/dashboard/recruiters.js
@@ -50,3 +53,4 @@ jobs:
         run: |
           node --test frontend/api/dashboard/access-rbac.test.mjs
           node --test frontend/api/dashboard/invite-redirect.test.mjs
+          node --test frontend/api/dashboard/invite-existing-user.test.mjs
