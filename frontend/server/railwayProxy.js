@@ -105,6 +105,34 @@ function proxyPathname(path) {
   }
 }
 
+async function authorizeDashboardBearer(req, res, permission) {
+  const authorization = String(req.headers?.authorization || "").trim();
+  if (!/^Bearer\s+/i.test(authorization)) return true;
+  const { requireDashboardPermission } = await import("../api/dashboard/_access.js");
+  const principal = await requireDashboardPermission(req, res, permission);
+  if (!principal) return false;
+  req.dashboardPrincipal = principal;
+  return true;
+}
+
+function routeCapability(pathname, req) {
+  const method = String(req.method || "GET").toUpperCase();
+  const readOnly = method === "GET" || method === "HEAD";
+
+  if (pathname === "/api/diagnostics") return "diagnostics.view";
+  if (/^\/api\/security\/recruiter-payouts(?:\/|$)/.test(pathname)) return "recruiter_payouts.manage";
+  if (/^\/api\/security\/(?:solana|contracts)(?:\/|$)/.test(pathname)) return "security.manage";
+  if (/^\/api\/security(?:\/|$)/.test(pathname)) return readOnly ? "security.view" : "security.manage";
+  if (/^\/api\/admin\/rewards(?:\/|$)/.test(pathname)) return readOnly ? "community.view" : "community.manage";
+  return null;
+}
+
+async function gateDashboardRoute(pathname, req, res) {
+  const permission = routeCapability(pathname, req);
+  if (!permission) return true;
+  return authorizeDashboardBearer(req, res, permission);
+}
+
 async function dispatchDashboardPromotors(pathname, req, res) {
   if (!/^\/api\/dashboard\/promotors(?:\/|$)/.test(pathname)) return false;
 
@@ -173,6 +201,13 @@ async function dispatchDashboardRecruiters(pathname, req, res) {
   return true;
 }
 
+async function dispatchDashboardOperations(pathname, req, res) {
+  if (!/^\/api\/dashboard\/operations(?:\/|$)/.test(pathname)) return false;
+  const { dashboardOperations } = await import("../api/dashboard/operations.js");
+  await dashboardOperations(req, res);
+  return true;
+}
+
 async function dispatchDashboardSubmissionNotes(pathname, req, res) {
   if (pathname !== "/api/dashboard/submission-notes") return false;
   const { dashboardSubmissionNotes } = await import("../api/dashboard/submissionNotes.js");
@@ -187,8 +222,23 @@ async function dispatchDashboardLpFees(pathname, req, res) {
   return true;
 }
 
+async function dispatchAdminAccess(pathname, req, res) {
+  if (!/^\/api\/admin\/access(?:\/|$)/.test(pathname)) return false;
+  const accessAdmin = (await import("../api/admin/access.js")).default;
+  await accessAdmin(req, res);
+  return true;
+}
+
 async function dispatchAdminFinance(pathname, req, res) {
   if (!/^\/api\/admin\/finance(?:\/|$)/.test(pathname)) return false;
+  const method = String(req.method || "GET").toUpperCase();
+  const permission = pathname === "/api/admin/finance/lp-harvest"
+    ? "lp_harvest.manage"
+    : method === "GET" || method === "HEAD"
+      ? "finance.view"
+      : "finance.manage";
+  if (!(await authorizeDashboardBearer(req, res, permission))) return true;
+
   const financeAdmin = (await import("../api/admin/finance.js")).default;
   await financeAdmin(req, res);
   return true;
@@ -196,6 +246,9 @@ async function dispatchAdminFinance(pathname, req, res) {
 
 async function dispatchAdminSponsorship(pathname, req, res) {
   if (!/^\/api\/admin\/sponsorship(?:\/|$|\?)/.test(pathname)) return false;
+  const method = String(req.method || "GET").toUpperCase();
+  const permission = method === "GET" || method === "HEAD" ? "operations.view" : "operations.manage";
+  if (!(await authorizeDashboardBearer(req, res, permission))) return true;
   const sponsorshipAdmin = (await import("../api/admin/sponsorship.js")).default;
   await sponsorshipAdmin(req, res);
   return true;
@@ -203,6 +256,7 @@ async function dispatchAdminSponsorship(pathname, req, res) {
 
 async function dispatchAdminArenaImports(pathname, req, res) {
   if (!/^\/api\/admin\/arena\/imports(?:\/|$|\?)/.test(pathname)) return false;
+  if (!(await authorizeDashboardBearer(req, res, "arena_imports.manage"))) return true;
   const arenaImportsAdmin = (await import("../api/admin/arenaImports.js")).default;
   await arenaImportsAdmin(req, res);
   return true;
@@ -210,6 +264,7 @@ async function dispatchAdminArenaImports(pathname, req, res) {
 
 async function dispatchAdminArenaTournaments(pathname, req, res) {
   if (!/^\/api\/admin\/arena\/tournaments(?:\/|$|\?)/.test(pathname)) return false;
+  if (!(await authorizeDashboardBearer(req, res, "tournaments.manage"))) return true;
   const arenaTournaments = (await import("../api/arenaTournaments.js")).default;
   await arenaTournaments(req, res);
   return true;
@@ -278,13 +333,16 @@ export function createRailwayProxyMiddleware(options = {}) {
 
     if (await dispatchDashboardPromotors(pathname, req, res)) return;
     if (await dispatchDashboardRecruiters(pathname, req, res)) return;
+    if (await dispatchDashboardOperations(pathname, req, res)) return;
     if (await dispatchDashboardSubmissionNotes(pathname, req, res)) return;
     if (await dispatchDashboardLpFees(pathname, req, res)) return;
+    if (await dispatchAdminAccess(pathname, req, res)) return;
     if (await dispatchAdminFinance(pathname, req, res)) return;
     if (await dispatchAdminSponsorship(pathname, req, res)) return;
     if (await dispatchAdminArenaImports(pathname, req, res)) return;
     if (await dispatchAdminArenaTournaments(pathname, req, res)) return;
     if (await dispatchAnalytics(pathname, req, res)) return;
+    if (!(await gateDashboardRoute(pathname, req, res))) return;
     if (!railwayProxyEnabled()) return next();
 
     if (!shouldProxyToRailway(path)) return next();

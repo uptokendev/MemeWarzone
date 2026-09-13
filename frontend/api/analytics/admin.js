@@ -1,5 +1,5 @@
 import { pool } from "../../server/db.js";
-import { requireDashboardAdmin } from "../dashboard/_auth.js";
+import { requireDashboardPermission } from "../dashboard/_access.js";
 import launchpadKpis from "./launchpad.js";
 import analyticsFunnels from "./funnels.js";
 
@@ -389,12 +389,13 @@ async function sessionDetail(sessionId) {
 }
 
 export async function analyticsAdmin(req, res) {
-  const admin = await requireDashboardAdmin(req, res);
-  if (!admin) return;
   if (req.method !== "GET") return res.status(405).json({ error: "Method not allowed" });
 
   const { from, to, app } = parseWindow(req);
   const tail = routeTail(req);
+  const permission = tail === "launchpad" ? "launchpad.view" : "analytics.view";
+  const principal = await requireDashboardPermission(req, res, permission);
+  if (!principal) return;
   const q = String(req.query?.q || "").trim();
   const name = String(req.query?.name || "").trim();
 

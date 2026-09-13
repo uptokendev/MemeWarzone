@@ -1,4 +1,5 @@
 const ADMIN_ROLES = new Set(["admin", "dashboard_admin"]);
+const MASTER_ADMIN_ROLES = new Set(["master_admin", "founder"]);
 
 function csvSet(name, { lower = false } = {}) {
   return new Set(
@@ -10,13 +11,13 @@ function csvSet(name, { lower = false } = {}) {
   );
 }
 
-function bearerToken(req) {
+export function dashboardBearerToken(req) {
   const header = String(req.headers?.authorization || "").trim();
   const match = header.match(/^Bearer\s+(.+)$/i);
   return match?.[1]?.trim() || "";
 }
 
-function appMetadataRoles(user) {
+export function dashboardAppMetadataRoles(user) {
   const metadata = user?.app_metadata && typeof user.app_metadata === "object"
     ? user.app_metadata
     : {};
@@ -32,7 +33,7 @@ function appMetadataRoles(user) {
   return roles;
 }
 
-async function fetchSupabaseUser(accessToken) {
+export async function fetchDashboardSupabaseUser(accessToken) {
   const supabaseUrl = String(process.env.SUPABASE_URL || "").replace(/\/+$/, "");
   const anonKey = String(process.env.SUPABASE_ANON_KEY || "").trim();
 
@@ -58,39 +59,72 @@ async function fetchSupabaseUser(accessToken) {
   return await response.json();
 }
 
-function isApprovedAdmin(user) {
+function approvedAdminMatch(user) {
   const approvedIds = csvSet("DASHBOARD_ADMIN_USER_IDS");
   const approvedEmails = csvSet("DASHBOARD_ADMIN_EMAILS", { lower: true });
   const userId = String(user?.id || "").trim();
   const email = String(user?.email || "").trim().toLowerCase();
-  const roles = appMetadataRoles(user);
-
-  if (userId && approvedIds.has(userId)) return true;
-  if (email && approvedEmails.has(email)) return true;
-  return Array.from(roles).some((role) => ADMIN_ROLES.has(role));
+  return Boolean((userId && approvedIds.has(userId)) || (email && approvedEmails.has(email)));
 }
 
-export async function requireDashboardAdmin(req, res) {
-  const token = bearerToken(req);
+export function isApprovedDashboardAdmin(user) {
+  if (approvedAdminMatch(user)) return true;
+  const roles = dashboardAppMetadataRoles(user);
+  return Array.from(roles).some((role) => ADMIN_ROLES.has(role) || MASTER_ADMIN_ROLES.has(role));
+}
+
+export function isDashboardMasterAdmin(user) {
+  const masterIds = csvSet("DASHBOARD_MASTER_ADMIN_USER_IDS");
+  const masterEmails = csvSet("DASHBOARD_MASTER_ADMIN_EMAILS", { lower: true });
+  const userId = String(user?.id || "").trim();
+  const email = String(user?.email || "").trim().toLowerCase();
+  const roles = dashboardAppMetadataRoles(user);
+
+  if (Array.from(roles).some((role) => MASTER_ADMIN_ROLES.has(role))) return true;
+  if ((userId && masterIds.has(userId)) || (email && masterEmails.has(email))) return true;
+
+  // Backwards-compatible owner setup. Once explicit master allowlists are configured,
+  // the generic admin allowlist stops acting as break-glass owner authority.
+  if (masterIds.size === 0 && masterEmails.size === 0) return approvedAdminMatch(user);
+  return false;
+}
+
+export async function getDashboardAuthIdentity(req, res) {
+  const token = dashboardBearerToken(req);
   if (!token) {
     res.status(401).json({ ok: false, error: "Supabase access token required." });
     return null;
   }
 
-  const user = await fetchSupabaseUser(token);
+  const user = await fetchDashboardSupabaseUser(token);
   if (!user) {
     res.status(401).json({ ok: false, error: "Invalid or expired Supabase session." });
     return null;
   }
 
-  if (!isApprovedAdmin(user)) {
+  return {
+    id: String(user.id),
+    email: String(user.email || "").trim().toLowerCase(),
+    roles: Array.from(dashboardAppMetadataRoles(user)),
+    isApprovedAdmin: isApprovedDashboardAdmin(user),
+    isMasterAdmin: isDashboardMasterAdmin(user),
+    rawUser: user,
+  };
+}
+
+export async function requireDashboardAdmin(req, res) {
+  const identity = await getDashboardAuthIdentity(req, res);
+  if (!identity) return null;
+
+  if (!identity.isApprovedAdmin) {
     res.status(403).json({ ok: false, error: "Dashboard administrator access required." });
     return null;
   }
 
   return {
-    id: String(user.id),
-    email: String(user.email || ""),
-    roles: Array.from(appMetadataRoles(user)),
+    id: identity.id,
+    email: identity.email,
+    roles: identity.roles,
+    isMasterAdmin: identity.isMasterAdmin,
   };
 }
