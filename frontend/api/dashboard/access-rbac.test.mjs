@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 const read = (path) => readFile(new URL(path, import.meta.url), 'utf8')
-const [migration, ownerGuard, auth, access, accessAdmin, accessApi, analytics, apiAuth, proxy, promotors, submissionNotes] = await Promise.all([
+const [migration, ownerGuard, auth, access, accessAdmin, accessApi, analytics, apiAuth, proxy, promotors, recruiters, submissionNotes] = await Promise.all([
   read('../../../db/migrations/20260913_000001_dashboard_access_rbac.sql'),
   read('../../../db/migrations/20260913_000002_dashboard_owner_guard.sql'),
   read('./_auth.js'),
@@ -14,6 +14,7 @@ const [migration, ownerGuard, auth, access, accessAdmin, accessApi, analytics, a
   read('../lib/apiAuth.js'),
   read('../../server/railwayProxy.js'),
   read('./promotors.js'),
+  read('./recruiters.js'),
   read('./submissionNotes.js'),
 ])
 
@@ -66,6 +67,9 @@ test('Operations and Community endpoints enforce read/manage separation server-s
   assert.match(submissionNotes, /requireDashboardPermission\(req, res, permission\)/)
   assert.match(promotors, /manage \? "community\.manage" : "community\.view"/)
   assert.match(promotors, /requireDashboardPermission\(req, res/)
+  assert.match(recruiters, /manage \? "community\.manage" : "community\.view"/)
+  assert.match(recruiters, /requireDashboardPermission\(req, res/)
+  assert.match(recruiters, /dashboardRecruiterMember[\s\S]*requireCommunity\(req, res, true\)/)
 })
 
 test('valid pending invitation activation is atomic and revoked or expired invites fail closed', () => {
