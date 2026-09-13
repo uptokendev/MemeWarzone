@@ -2,20 +2,30 @@ export function dashboardInviteConfig() {
   const supabaseUrl = String(process.env.SUPABASE_URL || "").trim().replace(/\/+$/, "");
   const serviceRole = String(process.env.SUPABASE_SERVICE_ROLE_KEY || "").trim();
   const anonKey = String(process.env.SUPABASE_ANON_KEY || "").trim();
-  const redirectTo = String(process.env.DASHBOARD_INVITE_REDIRECT_URL || "").trim();
+  const redirectBase = String(process.env.DASHBOARD_INVITE_REDIRECT_URL || "").trim();
 
   if (!supabaseUrl || !serviceRole) {
     throw Object.assign(new Error("Supabase Admin invitation is not configured."), {
       code: "DASHBOARD_INVITE_NOT_CONFIGURED",
     });
   }
-  if (!redirectTo) {
+  if (!redirectBase) {
     throw Object.assign(new Error("DASHBOARD_INVITE_REDIRECT_URL is required."), {
       code: "DASHBOARD_INVITE_REDIRECT_MISSING",
     });
   }
 
-  return { supabaseUrl, serviceRole, anonKey: anonKey || serviceRole, redirectTo };
+  const redirectUrl = new URL(redirectBase);
+  redirectUrl.pathname = "/set-password";
+  redirectUrl.search = "";
+  redirectUrl.hash = "";
+
+  return {
+    supabaseUrl,
+    serviceRole,
+    anonKey: anonKey || serviceRole,
+    redirectTo: redirectUrl.toString(),
+  };
 }
 
 async function postAuth(url, key, body) {
