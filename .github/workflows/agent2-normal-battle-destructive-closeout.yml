@@ -1,0 +1,209 @@
+name: Agent 2 Normal Battle Destructive Closeout
+
+on:
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - ".github/workflows/agent2-normal-battle-destructive-closeout.yml"
+      - "scripts/agent2-bsc97-normal-battle-evidence.ts"
+      - "scripts/agent2-bsc97-normal-battle-cleanup.ts"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent2-normal-battle-destructive-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+env:
+  CI: true
+
+jobs:
+  current-head-runtime-contract:
+    if: ${{ github.head_ref == 'agent2/normal-battle-destructive-closeout-8eefcc4' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Prove exact requested authority lineage
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=8eefcc4b49d30f70bda64f4e6f3e647c26de24eb
+          git cat-file -e "$BASE^{commit}"
+          git merge-base --is-ancestor "$BASE" HEAD
+          echo "requested_authority=$BASE" | tee reports-agent2-runtime.txt
+          echo "pr_head=$(git rev-parse HEAD)" | tee -a reports-agent2-runtime.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install locked frontend dependencies
+        run: npm ci --prefix frontend --no-audit --no-fund
+      - name: Re-prove current-head Normal Battle contract without changing logic
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            node --test frontend/api/lib/arenaBattleChainIdentity.test.mjs
+            node --test frontend/api/lib/arenaBattlePointsV3.test.mjs
+            npm --prefix frontend run test:arena-battle-v2
+            npm --prefix frontend run test:arena-settlement-v2
+            npm --prefix frontend run test:arena-runtime-acceptance
+            node --test frontend/api/lib/arenaSolanaNormalBoostAuthority.test.mjs
+            node --test frontend/src/lib/arena/battleBoostSolanaIntegration.test.mjs
+          } 2>&1 | tee -a reports-agent2-runtime.txt
+      - name: Upload runtime/finalizer/restart proof log
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent2-normal-battle-runtime-${{ github.event.pull_request.head.sha }}
+          path: reports-agent2-runtime.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  bsc97-real-market:
+    if: ${{ github.head_ref == 'agent2/normal-battle-destructive-closeout-8eefcc4' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: testnet-certification
+    env:
+      BSC_TESTNET_PRIVATE_KEY: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
+      DEPLOYER_PK: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
+      PRIVATE_KEY_DEPLOY: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
+      BSC_TESTNET_RPC: ${{ vars.BSC_TESTNET_RPC || secrets.BSC_TESTNET_RPC }}
+      BSC_TESTNET_RPC_URL: ${{ vars.BSC_TESTNET_RPC || secrets.BSC_TESTNET_RPC }}
+      BNB_TESTNET_ADMIN: "0xEE2c6A7605ED378CF1D26D1d828446d63A3fdeDa"
+      BNB_6C_ROUTE_AUTHORITY_ADDRESS: "0x2b72A9E6C4Ea3525d83B8C5E8F2044BDbC1f1Dec"
+      BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY: ${{ secrets.BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY }}
+      BNB_6C_ALLOW_SOURCE_HEAD_BROADCAST: "true"
+      BNB_6C_ACK_CONTROLLED_TOPAZ: "true"
+      BNB_6C_STAGE_DEPLOYMENT_FILE: deployments/bnb/testnet.staged.json
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install contract dependencies
+        run: npm ci
+      - name: Guard BSC97 secrets and network
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${BSC_TESTNET_RPC:-}"
+          test -n "${BSC_TESTNET_PRIVATE_KEY:-}"
+          test -n "${BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY:-}"
+      - name: Deploy isolated source-head BSC97 staging stack
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat run scripts/deploy-bnb-testnet-stage.ts --network bscTestnet
+          npx hardhat run scripts/verify-bnb-testnet-stage.ts --network bscTestnet
+      - name: Execute fresh BSC97 Normal Battle market evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx hardhat run scripts/agent2-bsc97-normal-battle-evidence.ts --network bscTestnet | tee reports/agent2-bsc97-normal-battle.log
+          test -s reports/agent2-bsc97-normal-battle-market.json
+          node -e 'const r=require("./reports/agent2-bsc97-normal-battle-market.json"); if(r.chainId!==97||!r.checks?.freshCampaigns||!r.checks?.chainDerivedMcapGrowth||!r.checks?.holderGrowth||r.checks?.eligibleRealVolumeTransactions!==6||!r.checks?.crossTokenIsolation) process.exit(1); for(const s of [r.left,r.right]) for(const k of ["create","buyBuyer","buyTrader","sellBuyer"]) if(!/^0x[0-9a-fA-F]{64}$/.test(s.transactions[k].hash)) process.exit(1); console.log(JSON.stringify(r,null,2));'
+      - name: Restore isolated BSC97 create pause
+        if: ${{ always() }}
+        shell: bash
+        run: npx hardhat run scripts/agent2-bsc97-normal-battle-cleanup.ts --network bscTestnet || true
+      - name: Upload BSC97 Normal Battle destructive evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent2-bsc97-normal-battle-${{ github.event.pull_request.head.sha }}
+          path: |
+            deployments/bnb/testnet.staged.json
+            reports/agent2-bsc97-normal-battle-market.json
+            reports/agent2-bsc97-normal-battle.log
+          if-no-files-found: warn
+          retention-days: 30
+
+  solana-devnet-real-market:
+    if: ${{ github.head_ref == 'agent2/normal-battle-destructive-closeout-8eefcc4' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: testnet-certification
+    env:
+      SOLANA_APPLICATION_CHAIN_ID: "101"
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || secrets.SOLANA_DEVNET_RPC_URL || vars.SOLANA_DEVNET_RPC }}
+      SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER || secrets.SOLANA_DEVNET_PRIVATE_KEY }}
+      SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
+      SOLANA_NETWORK_CANARY_REPORT: /tmp/mwz-agent2-solana-normal-battle-market.json
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install Solana certification dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm install --prefix tests/solana --no-audit --no-fund
+          npm ci --prefix frontend --no-audit --no-fund
+      - name: Materialize existing governed devnet identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${SOLANA_RPC_URL:-}"
+          test -n "${SOLANA_DEVNET_PAYER:-}"
+          test -n "${SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY:-}"
+          export SOLANA_GRADUATION_OPERATOR_KEYPAIR="$RUNNER_TEMP/mwz-agent2-solana-operator.json"
+          node scripts/solana/materialize-devnet-payer.mjs >/dev/null
+          node - <<'NODE'
+          const fs=require('fs');
+          const raw=JSON.parse(process.env.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY||'null');
+          if(!Array.isArray(raw)||raw.length!==64) throw new Error('SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY must be 64-byte JSON array');
+          fs.writeFileSync(process.env.RUNNER_TEMP+'/mwz-agent2-solana-route.json',JSON.stringify(raw));
+          NODE
+      - name: Build current IDL for the deployed program interface
+        shell: bash
+        env:
+          ANCHOR_VERSION: "0.30.1"
+          IDL_RUST_TOOLCHAIN: "nightly-2024-05-09"
+        run: |
+          set -euo pipefail
+          npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+          rustup toolchain install "$IDL_RUST_TOOLCHAIN" --profile minimal
+          mkdir -p target/idl
+          (cd programs/memewarzone_solana && RUSTUP_TOOLCHAIN="$IDL_RUST_TOOLCHAIN" anchor idl build --out ../../target/idl/memewarzone_solana.json)
+          test -s target/idl/memewarzone_solana.json
+      - name: Execute fresh Solana devnet chain-101 market lifecycle
+        shell: bash
+        env:
+          SOLANA_OPERATOR_KEYPAIR: ${{ runner.temp }}/mwz-agent2-solana-operator.json
+          SOLANA_NEW_ROUTE_SIGNER_KEYPAIR: ${{ runner.temp }}/mwz-agent2-solana-route.json
+        run: |
+          set -euo pipefail
+          node tests/solana/network-canary-101-runner.cjs | tee /tmp/mwz-agent2-solana-normal-battle.log
+          test -s "$SOLANA_NETWORK_CANARY_REPORT"
+          node -e 'const r=require(process.env.SOLANA_NETWORK_CANARY_REPORT); if(r.applicationChainId!==101||r.cluster!=="devnet"||!r.create?.signature||!r.buy?.signature||!r.sell?.signature) process.exit(1); for(const k of ["create","buy","sell"]) if(r[k].status!=="PASS"||r[k].retry!=="same-packet-deduped") process.exit(1); console.log(JSON.stringify(r,null,2));'
+      - name: Upload Solana devnet Normal Battle market evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent2-solana-devnet-normal-battle-${{ github.event.pull_request.head.sha }}
+          path: |
+            /tmp/mwz-agent2-solana-normal-battle-market.json
+            /tmp/mwz-agent2-solana-normal-battle.log
+          if-no-files-found: warn
+          retention-days: 30
