@@ -3,8 +3,9 @@ import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
 const read = (path) => readFile(new URL(path, import.meta.url), 'utf8')
-const [migration, auth, access, accessAdmin, accessApi, analytics, apiAuth, proxy] = await Promise.all([
+const [migration, ownerGuard, auth, access, accessAdmin, accessApi, analytics, apiAuth, proxy, promotors, submissionNotes] = await Promise.all([
   read('../../../db/migrations/20260913_000001_dashboard_access_rbac.sql'),
+  read('../../../db/migrations/20260913_000002_dashboard_owner_guard.sql'),
   read('./_auth.js'),
   read('./_access.js'),
   read('./_accessAdmin.js'),
@@ -12,6 +13,8 @@ const [migration, auth, access, accessAdmin, accessApi, analytics, apiAuth, prox
   read('../analytics/admin.js'),
   read('../lib/apiAuth.js'),
   read('../../server/railwayProxy.js'),
+  read('./promotors.js'),
+  read('./submissionNotes.js'),
 ])
 
 test('IAM schema is additive and separate from Abuse RBAC', () => {
@@ -21,6 +24,14 @@ test('IAM schema is additive and separate from Abuse RBAC', () => {
   assert.doesNotMatch(migration, /alter table public\.employee_permissions|drop table.*employee_permissions|delete from public\.employee_permissions/i)
   assert.match(migration, /ENABLE ROW LEVEL SECURITY/)
   assert.match(migration, /REVOKE ALL ON TABLE public\.dashboard_members FROM authenticated/)
+})
+
+test('database serializes concurrent last-owner removal attempts', () => {
+  assert.match(ownerGuard, /dashboard_members_preserve_last_owner/)
+  assert.match(ownerGuard, /pg_advisory_xact_lock\(hashtext\('mwz\.dashboard\.active-owner-guard'\)\)/)
+  assert.match(ownerGuard, /remaining_active_owners < 1/)
+  assert.match(ownerGuard, /MWZ_LAST_OWNER_PROTECTION/)
+  assert.match(ownerGuard, /BEFORE UPDATE OF role, status OR DELETE/)
 })
 
 test('master/founder break glass stays explicit and server-side', () => {
@@ -48,6 +59,13 @@ test('Finance Reader and Manager preserve read/manage separation', () => {
   assert.match(access, /finance_manager: \["dashboard\.view", "finance\.view", "finance\.manage"\]/)
   assert.match(proxy, /method === "GET" \|\| method === "HEAD" \? "finance\.view" : "finance\.manage"/)
   assert.match(proxy, /req\.dashboardPrincipal = principal/)
+})
+
+test('Operations and Community endpoints enforce read/manage separation server-side', () => {
+  assert.match(submissionNotes, /\? "operations\.view" : "operations\.manage"/)
+  assert.match(submissionNotes, /requireDashboardPermission\(req, res, permission\)/)
+  assert.match(promotors, /manage \? "community\.manage" : "community\.view"/)
+  assert.match(promotors, /requireDashboardPermission\(req, res/)
 })
 
 test('valid pending invitation activation is atomic and revoked or expired invites fail closed', () => {
