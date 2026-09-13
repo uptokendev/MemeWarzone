@@ -43,6 +43,13 @@ test('Metrics Reader is exactly dashboard analytics launchpad at preset level', 
   assert.match(access, /metrics_reader: \["dashboard\.view", "analytics\.view", "launchpad\.view"\]/)
 })
 
+test('Finance Reader and Manager preserve read/manage separation', () => {
+  assert.match(access, /finance_reader: \["dashboard\.view", "finance\.view"\]/)
+  assert.match(access, /finance_manager: \["dashboard\.view", "finance\.view", "finance\.manage"\]/)
+  assert.match(proxy, /method === "GET" \|\| method === "HEAD" \? "finance\.view" : "finance\.manage"/)
+  assert.match(proxy, /req\.dashboardPrincipal = principal/)
+})
+
 test('valid pending invitation activation is atomic and revoked or expired invites fail closed', () => {
   assert.match(access, /activateInvitedMembership/)
   assert.match(access, /status = 'pending'/)
@@ -77,6 +84,12 @@ test('shared admin auth accepts only an already-authorized dashboard principal a
   assert.match(apiAuth, /if \(req\.dashboardPrincipal\)/)
   assert.match(apiAuth, /mode: "dashboard-permission"/)
   assert.match(apiAuth, /principal: req\.dashboardPrincipal/)
+})
+
+test('existing ops-key Finance callers remain on the established finance authorization path', () => {
+  assert.match(proxy, /Preserve existing service\/ops-key callers/)
+  assert.match(proxy, /if \(\/\^Bearer\\s\+\/i\.test\(authorization\)\)/)
+  assert.match(proxy, /const financeAdmin = \(await import\("\.\.\/api\/admin\/finance\.js"\)\)\.default/)
 })
 
 test('Access API is dispatched locally without adding market or indexer routing', () => {
