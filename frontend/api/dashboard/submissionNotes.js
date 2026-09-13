@@ -1,7 +1,7 @@
 import { pool } from "../../server/db.js";
-import { requireDashboardAdmin } from "./_auth.js";
+import { requireDashboardPermission } from "./_access.js";
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_NOTE_LENGTH = 4000;
 
 function submissionIdFromRequest(req) {
@@ -29,10 +29,12 @@ async function submissionExists(submissionId) {
 }
 
 export async function dashboardSubmissionNotes(req, res) {
-  const admin = await requireDashboardAdmin(req, res);
-  if (!admin) return;
+  const method = String(req.method || "GET").toUpperCase();
+  const permission = method === "GET" || method === "HEAD" ? "operations.view" : "operations.manage";
+  const principal = await requireDashboardPermission(req, res, permission);
+  if (!principal) return;
 
-  if (req.method === "GET") {
+  if (method === "GET") {
     const submissionId = submissionIdFromRequest(req);
     if (!UUID_RE.test(submissionId)) {
       return res.status(400).json({ ok: false, error: "A valid submissionId is required." });
@@ -48,7 +50,7 @@ export async function dashboardSubmissionNotes(req, res) {
     return res.status(200).json({ ok: true, notes: result.rows });
   }
 
-  if (req.method === "POST") {
+  if (method === "POST") {
     const submissionId = String(req.body?.submission_id || req.body?.submissionId || "").trim();
     if (!UUID_RE.test(submissionId)) {
       return res.status(400).json({ ok: false, error: "A valid submission_id is required." });
@@ -69,7 +71,7 @@ export async function dashboardSubmissionNotes(req, res) {
       `insert into public.submission_notes (submission_id, admin_id, admin_email, content)
        values ($1, $2, $3, $4)
        returning id, submission_id, admin_id, admin_email, content, created_at`,
-      [submissionId, admin.id, admin.email, content],
+      [submissionId, principal.authUserId, principal.email, content],
     );
     return res.status(201).json({ ok: true, note: result.rows[0] });
   }

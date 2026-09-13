@@ -1,0 +1,49 @@
+name: Dashboard Access RBAC
+
+on:
+  pull_request:
+    paths:
+      - '.env.example'
+      - 'db/migrations/20260913_000001_dashboard_access_rbac.sql'
+      - 'db/migrations/20260913_000002_dashboard_owner_guard.sql'
+      - 'db/migrations/20260913_000003_dashboard_owner_guard_fixed_search_path.sql'
+      - 'frontend/api/dashboard/_auth.js'
+      - 'frontend/api/dashboard/_access.js'
+      - 'frontend/api/dashboard/_accessAdmin.js'
+      - 'frontend/api/dashboard/access-rbac.test.mjs'
+      - 'frontend/api/dashboard/operations.js'
+      - 'frontend/api/dashboard/promotors.js'
+      - 'frontend/api/dashboard/recruiters.js'
+      - 'frontend/api/dashboard/submissionNotes.js'
+      - 'frontend/api/admin/access.js'
+      - 'frontend/api/analytics/admin.js'
+      - 'frontend/api/lib/apiAuth.js'
+      - 'frontend/server/railwayProxy.js'
+      - '.github/workflows/dashboard-access-rbac.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Syntax checks
+        run: |
+          node --check frontend/api/dashboard/_auth.js
+          node --check frontend/api/dashboard/_access.js
+          node --check frontend/api/dashboard/_accessAdmin.js
+          node --check frontend/api/dashboard/operations.js
+          node --check frontend/api/dashboard/promotors.js
+          node --check frontend/api/dashboard/recruiters.js
+          node --check frontend/api/dashboard/submissionNotes.js
+          node --check frontend/api/admin/access.js
+          node --check frontend/api/analytics/admin.js
+          node --check frontend/api/lib/apiAuth.js
+          node --check frontend/server/railwayProxy.js
+      - name: Focused RBAC certification
+        run: node --test frontend/api/dashboard/access-rbac.test.mjs
