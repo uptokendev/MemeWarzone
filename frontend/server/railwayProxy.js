@@ -196,6 +196,19 @@ async function dispatchAdminAccess(pathname, req, res) {
 
 async function dispatchAdminFinance(pathname, req, res) {
   if (!/^\/api\/admin\/finance(?:\/|$)/.test(pathname)) return false;
+
+  // Preserve existing service/ops-key callers. Dashboard Bearer sessions are
+  // capability-authorized before the established finance handler executes.
+  const authorization = String(req.headers?.authorization || "").trim();
+  if (/^Bearer\s+/i.test(authorization)) {
+    const { requireDashboardPermission } = await import("../api/dashboard/_access.js");
+    const method = String(req.method || "GET").toUpperCase();
+    const permission = method === "GET" || method === "HEAD" ? "finance.view" : "finance.manage";
+    const principal = await requireDashboardPermission(req, res, permission);
+    if (!principal) return true;
+    req.dashboardPrincipal = principal;
+  }
+
   const financeAdmin = (await import("../api/admin/finance.js")).default;
   await financeAdmin(req, res);
   return true;
