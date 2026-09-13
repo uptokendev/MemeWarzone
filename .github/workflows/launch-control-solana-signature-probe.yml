@@ -1,0 +1,39 @@
+name: Launch Control Solana Signature Probe
+
+on:
+  push:
+    branches:
+      - launch-control/solana-signature-probe-ca462d7
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Query devnet transaction status
+        shell: bash
+        env:
+          SIGNATURE: 5VtGmUbbSiivdMXrewtzYoVUD6tUcnsTg71qCgCE2jDkg6CNspdt56dcHRVnK2nBjwNdspUukdZdM9kauNTsHfRZ
+          EXPECTED_GENESIS: EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          (async () => {
+            const rpc = 'https://api.devnet.solana.com';
+            async function call(method, params) {
+              const res = await fetch(rpc, {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({jsonrpc:'2.0',id:1,method,params})});
+              if (!res.ok) throw new Error(`${method} HTTP ${res.status}`);
+              const json = await res.json();
+              if (json.error) throw new Error(`${method}: ${JSON.stringify(json.error)}`);
+              return json.result;
+            }
+            const genesis = await call('getGenesisHash', []);
+            if (genesis !== process.env.EXPECTED_GENESIS) throw new Error(`wrong genesis ${genesis}`);
+            const sig = process.env.SIGNATURE;
+            const statuses = await call('getSignatureStatuses', [[sig], {searchTransactionHistory:true}]);
+            const tx = await call('getTransaction', [sig, {commitment:'confirmed', maxSupportedTransactionVersion:0}]);
+            console.log(JSON.stringify({readOnly:true, genesis, signature:sig, status:statuses?.value?.[0] ?? null, transactionFound:Boolean(tx), slot:tx?.slot ?? null, metaErr:tx?.meta?.err ?? null}, null, 2));
+          })().catch((e)=>{ console.error(e?.stack||e); process.exit(1); });
+          NODE
