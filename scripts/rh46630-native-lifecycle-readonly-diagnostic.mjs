@@ -16,6 +16,7 @@ const req = (name) => {
   return value;
 };
 const same=(a,b)=>String(a).toLowerCase()===String(b).toLowerCase();
+const errText=(e)=>String(e?.shortMessage||e?.reason||e?.message||e);
 const factoryAbi = [
   'function live() view returns(bool)','function createPaused() view returns(bool)','function globalPaused() view returns(bool)','function campaignsCount() view returns(uint256)',
   'function getCampaign(uint256) view returns((address campaign,address token,address creator,string name,string symbol,string logoURI,string metadataURI,string xAccount,string website,string extraLink,uint64 createdAt))',
@@ -32,6 +33,11 @@ const lockerAbi = ['function poolInfo(address) view returns(address campaign,add
 const v3FactoryAbi = ['function getPool(address,address,uint24) view returns(address)'];
 const pmAbi = ['function ownerOf(uint256) view returns(address)','function positions(uint256) view returns(uint96,address,address,address,uint24,int24,int24,uint128,uint256,uint256,uint128,uint128)'];
 
+async function optionalRead(label, fn) {
+  try { return {ok:true,value:await fn()}; }
+  catch(e) { return {ok:false,error:`${label}:${errText(e)}`}; }
+}
+
 async function main(){
   const provider=new ethers.JsonRpcProvider(req('ROBINHOOD_TESTNET_RPC_URL'));
   const network=await provider.getNetwork();
@@ -41,13 +47,6 @@ async function main(){
   const factory=new ethers.Contract(FACTORY,factoryAbi,provider);
   const count=await factory.campaignsCount();
   const iface=new ethers.Interface(factoryAbi);
-  const topics={
-    created: iface.getEvent('CampaignCreated').topicHash,
-    graduated: iface.getEvent('CampaignGraduated').topicHash,
-    live: iface.getEvent('LiveEnabled').topicHash,
-    createPause: iface.getEvent('CreatePauseUpdated').topicHash,
-    globalPause: iface.getEvent('GlobalPauseUpdated').topicHash,
-  };
   const logs=await provider.getLogs({address:FACTORY,fromBlock:DEPLOY_BLOCK,toBlock:latest});
   const decoded=[];
   for(const log of logs){
@@ -63,30 +62,55 @@ async function main(){
   const campaigns=[];
   const start=count>5n?count-5n:0n;
   for(let i=start;i<count;i++){
-    const info=await factory.getCampaign(i);
+    const infoRead=await optionalRead('getCampaign',()=>factory.getCampaign(i));
+    if(!infoRead.ok){ campaigns.push({id:i.toString(),readError:infoRead.error}); continue; }
+    const info=infoRead.value;
     const c=new ethers.Contract(info.campaign,campaignAbi,provider);
-    const launched=await c.launched();
-    const g=await c.graduationState();
-    const pool=g[0];
+    const launchedRead=await optionalRead('launched',()=>c.launched());
+    const raisedRead=await optionalRead('netRaisedWei',()=>c.netRaisedWei());
+    const soldRead=await optionalRead('sold',()=>c.sold());
+    const targetRead=await optionalRead('graduationNativeTarget',()=>c.graduationNativeTarget());
+    const gradRead=await optionalRead('graduationState',()=>c.graduationState());
+    const recordedRead=await optionalRead('campaignGraduationRecorded',()=>factory.campaignGraduationRecorded(info.campaign));
     const row={
       id:i.toString(),campaign:info.campaign,token:info.token,creator:info.creator,name:info.name,symbol:info.symbol,createdAt:info.createdAt.toString(),
-      launched,netRaisedWei:(await c.netRaisedWei()).toString(),sold:(await c.sold()).toString(),graduationNativeTarget:(await c.graduationNativeTarget()).toString(),
-      graduationRecorded:await factory.campaignGraduationRecorded(info.campaign),pool,
-      graduationBalance:g[9].toString(),graduationOvershoot:g[10].toString()
+      launched:launchedRead.ok?launchedRead.value:null,
+      netRaisedWei:raisedRead.ok?raisedRead.value.toString():null,
+      sold:soldRead.ok?soldRead.value.toString():null,
+      graduationNativeTarget:targetRead.ok?targetRead.value.toString():null,
+      graduationTargetReadError:targetRead.ok?null:targetRead.error,
+      graduationRecorded:recordedRead.ok?recordedRead.value:null,
+      graduationRecordedReadError:recordedRead.ok?null:recordedRead.error
     };
+    if(!gradRead.ok){ row.graduationStateReadError=gradRead.error; campaigns.push(row); continue; }
+    const g=gradRead.value;
+    const pool=g[0];
+    row.pool=pool;
+    row.graduationBalance=g[9].toString();
+    row.graduationOvershoot=g[10].toString();
     if(pool!==ethers.ZeroAddress){
       const locker=new ethers.Contract(LOCKER,lockerAbi,provider);
-      const li=await locker.poolInfo(pool);
-      row.locker={registered:li.registered,campaign:li.campaign,creator:li.creator,pool:li.pool,token0:li.token0,token1:li.token1,tokenId:li.tokenId.toString(),lockedLiquidity:li.lockedLiquidity.toString(),feeTier:li.feeTier.toString()};
-      const vf=new ethers.Contract(V3_FACTORY,v3FactoryAbi,provider);
-      row.canonicalPool=await vf.getPool(info.token,WETH,FEE_TIER);
-      if(li.registered && li.tokenId>0n){
-        const pm=new ethers.Contract(POSITION_MANAGER,pmAbi,provider);
-        try{row.positionOwner=await pm.ownerOf(li.tokenId);const pos=await pm.positions(li.tokenId);row.positionLiquidity=pos[7].toString();}catch(e){row.positionReadError=String(e?.shortMessage||e?.message||e);}
-      }
+      const lockerRead=await optionalRead('locker.poolInfo',()=>locker.poolInfo(pool));
+      if(lockerRead.ok){
+        const li=lockerRead.value;
+        row.locker={registered:li.registered,campaign:li.campaign,creator:li.creator,pool:li.pool,token0:li.token0,token1:li.token1,tokenId:li.tokenId.toString(),lockedLiquidity:li.lockedLiquidity.toString(),feeTier:li.feeTier.toString()};
+        const vf=new ethers.Contract(V3_FACTORY,v3FactoryAbi,provider);
+        const canonicalRead=await optionalRead('v3Factory.getPool',()=>vf.getPool(info.token,WETH,FEE_TIER));
+        row.canonicalPool=canonicalRead.ok?canonicalRead.value:null;
+        row.canonicalPoolReadError=canonicalRead.ok?null:canonicalRead.error;
+        if(li.registered && li.tokenId>0n){
+          const pm=new ethers.Contract(POSITION_MANAGER,pmAbi,provider);
+          const ownerRead=await optionalRead('positionManager.ownerOf',()=>pm.ownerOf(li.tokenId));
+          const posRead=await optionalRead('positionManager.positions',()=>pm.positions(li.tokenId));
+          row.positionOwner=ownerRead.ok?ownerRead.value:null;
+          row.positionOwnerReadError=ownerRead.ok?null:ownerRead.error;
+          row.positionLiquidity=posRead.ok?posRead.value[7].toString():null;
+          row.positionReadError=posRead.ok?null:posRead.error;
+        }
+      } else row.lockerReadError=lockerRead.error;
     }
     campaigns.push(row);
   }
   console.log(JSON.stringify({chainId:CHAIN_ID,latestBlock:latest,factory:{live:await factory.live(),createPaused:await factory.createPaused(),globalPaused:await factory.globalPaused(),campaignsCount:count.toString()},recentCampaigns:campaigns,relevantFactoryEvents:decoded.slice(-30)},null,2));
 }
-main().catch((e)=>{console.error(String(e?.shortMessage||e?.message||e));process.exit(1);});
+main().catch((e)=>{console.error(errText(e));process.exit(1);});
