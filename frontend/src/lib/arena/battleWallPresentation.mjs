@@ -37,6 +37,35 @@ export function isPublicWallBattle(battle) {
   return Boolean(battle?.id) && wallTabForBattle(battle) != null;
 }
 
+export function isFocusedChallengeBattle(battle) {
+  return Boolean(battle?.id) && String(battle?.state || "").toLowerCase() === "challenged";
+}
+
+export function collectFeedBattles(feed) {
+  const live = Array.isArray(feed?.liveBattles) ? feed.liveBattles : [];
+  const queue = Array.isArray(feed?.openForBattleQueue) ? feed.openForBattleQueue : [];
+  const archived = Array.isArray(feed?.archivedBattles)
+    ? feed.archivedBattles.map((entry) => entry?.battle).filter(Boolean)
+    : [];
+  return [...live, ...queue, ...archived].filter((battle) => battle?.id);
+}
+
+export function findAnyBattleInFeed(feed, battleId) {
+  const id = String(battleId || "").trim();
+  if (!id) return null;
+  return collectFeedBattles(feed).find((battle) => String(battle?.id) === id) || null;
+}
+
+export function resolveFocusedChallengeBattle(focusedId, inFeed, fetched) {
+  const id = String(focusedId || "").trim();
+  if (!id) return null;
+  if (inFeed && String(inFeed.id) === id && isFocusedChallengeBattle(inFeed)) return inFeed;
+  if (!fetched || String(fetched.battleId) !== id) return null;
+  const battle = fetched.battle;
+  if (!battle || String(battle.id) !== id || !isFocusedChallengeBattle(battle)) return null;
+  return battle;
+}
+
 export function publicWallRejectReason(battle) {
   const state = String(battle?.state || "").toLowerCase();
   if (state === "challenged") return "challenged";
@@ -152,7 +181,16 @@ export function battleWallTypeLabel(type) {
 
 export function presentBattleWallFightBand(presented, options = {}) {
   const tab = String(presented?.tab || "");
-  const stateLabel = tab === "live" ? "LIVE BATTLE" : tab === "upcoming" ? "DEPLOYMENT" : tab === "finished" ? "FINISHED" : "BATTLE";
+  const stateLabel =
+    tab === "live"
+      ? "LIVE BATTLE"
+      : tab === "upcoming" && presented?.type === "manual"
+        ? "SCHEDULED BATTLE"
+        : tab === "upcoming"
+          ? "DEPLOYMENT"
+          : tab === "finished"
+            ? "FINISHED"
+            : "BATTLE";
   const typeLabel =
     presented?.type === "tournament" ? "TOURNAMENT" : presented?.type === "manual" ? "MANUAL" : "AUTO DEPLOY";
   const fightMode = presented?.fightMode || presentTournamentFightMode(options.battle || presented);

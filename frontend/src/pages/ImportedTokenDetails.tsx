@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { CrypticPumpBadge, CrypticPumpListButton, fetchCrypticPumpListing, type CrypticPumpListingData } from "@/components/token/CrypticPumpListing";
 import { ArenaImportImageUpload } from "@/components/arena/ArenaImportImageUpload";
 import { ImportedTradePanel } from "@/components/arena/ImportedTradePanel";
+import { ChallengeThisCoinButton } from "@/components/arena/ChallengeThisCoinButton";
 import { ArenaUpvoteDialog } from "@/components/token/UpvoteDialog";
 import { postGradFlags } from "@/features/postgrad/config";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
@@ -128,6 +129,17 @@ export default function ImportedTokenDetails({ item }: { item: ArenaImportItem }
               {currentItem.verifiedAt ? <TacticalTag label="Owner verified" tone="success" /> : null}
             </div>
             <h1 className="mt-3 font-retro text-2xl text-foreground">{currentItem.symbol || currentItem.name || "Imported token"}</h1>
+            {postGradFlags.arena && currentItem.status === "passed" ? (
+              <div className="mt-3">
+                <ChallengeThisCoinButton
+                  tokenId={currentItem.tokenAddress}
+                  chainId={currentItem.chainId}
+                  symbol={currentItem.symbol}
+                  tokenName={currentItem.name}
+                  eligible
+                />
+              </div>
+            ) : null}
             <p className="mt-2 text-sm text-muted-foreground">{currentItem.name || "Not launched on MemeWarzone"}</p>
             <p className="mt-2 break-all text-xs text-muted-foreground">{currentItem.tokenAddress}</p>
             {currentItem.description ? <p className="mt-3 max-w-3xl text-sm text-white/68">{currentItem.description}</p> : null}

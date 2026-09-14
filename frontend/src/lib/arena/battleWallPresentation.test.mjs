@@ -13,6 +13,7 @@ import {
   collectWallBattles,
   commitFocusedFetch,
   filterWallBattles,
+  findAnyBattleInFeed,
   findBattleInFeed,
   focusedRouteStatus,
   focusedWallFilterReset,
@@ -25,6 +26,7 @@ import {
   presentBattleWallFightBand,
   presentBattleWallModule,
   publicWallRejectReason,
+  resolveFocusedChallengeBattle,
   resolveFocusedWallBattle,
   shouldApplyFocusedWallReset,
   sortWallBattles,
@@ -495,6 +497,19 @@ test("challenged and waiting fetched battles remain rejected for focused routing
   assert.equal(shouldApplyFocusedWallReset("", "ch", challenged.battle), false);
 });
 
+test("focused challenge surface can render a challenged battle without making it a public wall row", () => {
+  const challenged = battle({ id: "ch", state: "challenged", source: "challenge" });
+  const fetched = commitFocusedFetch("ch", challenged);
+  assert.equal(isPublicWallBattle(challenged), false);
+  assert.equal(resolveFocusedWallBattle("ch", null, fetched), null);
+  assert.equal(resolveFocusedChallengeBattle("ch", null, fetched)?.id, "ch");
+  assert.equal(findAnyBattleInFeed({ openForBattleQueue: [challenged] }, "ch")?.id, "ch");
+  const page = readSrc("../../pages/ArenaBattles.tsx");
+  assert.match(page, /FocusedChallengePanel/);
+  assert.match(page, /showFocusedChallenge/);
+  assert.match(page, /isChallengeParticipant/);
+});
+
 test("route-keyed merge still avoids duplicating an in-feed focused battle", () => {
   const live = battle({ id: "in-feed" });
   const merged = mergeFocusedBattleForRoute([live], live, "live", "in-feed");
@@ -527,7 +542,8 @@ test("Battle Wall wiring keeps ArenaMatchRow, reuses wall realtime/effects, and 
   assert.match(page, /Battle unavailable/);
   assert.match(page, /useArenaFeedBattleMetrics/);
   assert.match(page, /selectActiveWallRealtimeIds/);
-  assert.match(page, /CreatorChallengeCarousel/);
+  assert.match(page, /ChallengeInbox/);
+  assert.match(page, /FocusedChallengePanel/);
   assert.doesNotMatch(page, /useAblyBattleChannel/);
   assert.doesNotMatch(page, /BattleCombatEffects/);
   assert.match(app, /path="\/warzone\/battles\/:battleId"/);
@@ -558,7 +574,7 @@ test("Battle Wall polish keeps stacked mobile combat layout and DATA DELAY copy"
   const moduleSrc = readSrc("../../components/arena/BattleWallModule.tsx");
   const vs = readSrc("../../components/arena/BattleWallVs.tsx");
   const combatant = readSrc("../../components/arena/BattleWallCombatant.tsx");
-  const carousel = readSrc("../../components/arena/CreatorChallengeCarousel.tsx");
+  const inbox = readSrc("../../components/arena/ChallengeInbox.tsx");
   const effects = readSrc("../../components/arena/BattleCombatEffects.tsx");
 
   assert.match(moduleSrc, /grid-cols-1/);
@@ -571,8 +587,8 @@ test("Battle Wall polish keeps stacked mobile combat layout and DATA DELAY copy"
   assert.match(page, /role="tablist"/);
   assert.match(page, /data-battle-wall-skeleton/);
   assert.match(page, /wallEmptyCopy/);
-  assert.match(carousel, /overflow-hidden/);
-  assert.match(carousel, /beginChallengePending/);
+  assert.match(inbox, /data-challenge-inbox-indicator/);
+  assert.match(inbox, /ChallengeActionCard/);
   assert.match(effects, /pointer-events-none/);
   assert.doesNotMatch(page, /BOOST|Final Salvo|Vote Tournament/);
   assert.doesNotMatch(moduleSrc, /Battle Boost|Final Salvo/);

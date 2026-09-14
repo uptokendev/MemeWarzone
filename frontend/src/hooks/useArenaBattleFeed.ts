@@ -176,6 +176,14 @@ export function useArenaBattleFeed(creatorAddress?: string | null, chainId?: num
   };
 
   useEffect(() => {
+    if (!normalizedCreatorAddress) return;
+    const timer = window.setInterval(() => {
+      void refreshFeed().catch(() => null);
+    }, 8000);
+    return () => window.clearInterval(timer);
+  }, [normalizedCreatorAddress, normalizedChainId, canLoadCreatorStatuses]);
+
+  useEffect(() => {
     const controller = new AbortController();
     let cancelled = false;
 
