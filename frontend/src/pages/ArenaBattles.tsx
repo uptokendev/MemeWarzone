@@ -309,6 +309,7 @@ export default function ArenaBattles() {
       </section>
 
       <ChallengeInbox
+        autoOpenSingle
         challenges={incomingChallenges}
         statuses={feed.creatorStatuses}
         chainId={feedWallet.chainId}

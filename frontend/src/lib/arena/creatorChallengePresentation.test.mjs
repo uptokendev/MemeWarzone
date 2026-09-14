@@ -184,9 +184,10 @@ test("ACCEPT COUNTER and DECLINE use the existing API paths", () => {
   assert.match(page, /arena_accept_battle/);
   assert.match(page, /arena_decline_battle/);
   assert.match(page, /arena_counter_battle/);
-  assert.match(command, /await acceptPostGradBattle\(battleId, auth\)/);
-  assert.match(command, /await declinePostGradBattle\(battleId, auth\)/);
-  assert.match(command, /await counterPostGradBattle\(battleId, amount, auth, hours\)/);
+  const dialog = readSrc("../../components/command-center/ChallengeInboxDialog.tsx");
+  assert.match(dialog, /await acceptPostGradBattle\(battleId, auth\)/);
+  assert.match(dialog, /await declinePostGradBattle\(battleId, auth\)/);
+  assert.match(dialog, /await counterPostGradBattle\(battleId, amount, auth, hours\)/);
   assert.match(card, />\s*ACCEPT\s*</);
   assert.match(card, />\s*COUNTER\s*</);
   assert.match(card, />\s*DECLINE\s*</);
@@ -233,7 +234,10 @@ test("Battle Wall Phase 1-3, AUTO DEPLOY, and Find Match remain untouched", () =
   assert.match(command, /ENABLE AUTO DEPLOY/);
   assert.match(command, /FindMatchPanel/);
   assert.match(command, /challengePostGradBattle/);
-  assert.match(command, /ChallengeInbox/);
+  const layout = readSrc("../../components/command-center/CommandCenterLayout.tsx");
+  const dialog = readSrc("../../components/command-center/ChallengeInboxDialog.tsx");
+  assert.match(layout, /ChallengeInboxDialog/);
+  assert.match(dialog, /ChallengeInbox/);
   assert.doesNotMatch(card, /calculateBattlePoints|calculateMatchQuality|marketCapWeight/);
   assert.doesNotMatch(wall, /calculateBattlePoints|marketCapWeight|50\/30\/20/);
   assert.doesNotMatch(realtime, /CreatorChallengeCarousel/);
@@ -271,9 +275,11 @@ test("popup appears for one unresolved challenge and closing it does not resolve
   assert.equal(selectAutoPopupChallenge(incoming, "/command"), null);
   assert.equal(collectIncomingCreatorChallenges([row], [status()], "0xcreator").length, 1);
   assert.equal(DURABLE_CHALLENGE_DISMISS_FORBIDDEN, true);
+  const inbox = readSrc("../../components/arena/ChallengeInbox.tsx");
   const dialog = readSrc("../../components/command-center/ChallengeInboxDialog.tsx");
-  assert.match(dialog, /rememberNotNow/);
-  assert.match(dialog, /selectAutoPopupChallenge/);
+  assert.match(inbox, /rememberNotNow/);
+  assert.match(inbox, /selectAutoPopupChallenge/);
+  assert.doesNotMatch(inbox, /localStorage/);
   assert.doesNotMatch(dialog, /localStorage/);
   assert.doesNotMatch(dialog, /mwz\.arena\.challengePopup\.v2/);
   assert.equal(CHALLENGE_POPUP_STORAGE_KEY, "mwz.arena.challengePopup.v2");
@@ -299,8 +305,12 @@ test("multiple challenges produce one inbox count rather than popup spam", () =>
   const inbox = readSrc("../../components/arena/ChallengeInbox.tsx");
   const dialog = readSrc("../../components/command-center/ChallengeInboxDialog.tsx");
   assert.match(inbox, /data-challenge-inbox-indicator/);
-  assert.match(dialog, /incoming\.length/);
-  assert.doesNotMatch(dialog, /unseen\[1\]/);
+  assert.match(inbox, /data-challenge-inbox-list/);
+  assert.match(inbox, /data-challenge-inbox-row/);
+  assert.match(inbox, /data-challenge-popup="true"/);
+  assert.match(inbox, /selectAutoPopupChallenge/);
+  assert.match(dialog, /autoOpenSingle/);
+  assert.doesNotMatch(inbox, /unseen\[1\]/);
 });
 
 test("inbox item identifies challenger, coin, native unit, stake, duration, and counter", () => {
@@ -360,9 +370,9 @@ test("action card uses founder top-card copy and only shows actions to the respo
   assert.match(source, /COUNTER/);
   assert.match(source, /DECLINE/);
   assert.match(source, /data-challenge-popup-banner/);
-  const dialog = readSrc("../../components/command-center/ChallengeInboxDialog.tsx");
-  assert.match(dialog, /data-challenge-popup="true"/);
-  assert.match(dialog, /\[&>button\]:hidden/);
+  const inbox = readSrc("../../components/arena/ChallengeInbox.tsx");
+  assert.match(inbox, /data-challenge-popup="true"/);
+  assert.match(inbox, /\[&>button\]:hidden/);
   assert.equal(formatChallengeCountdown(2 * 3600_000 + 17 * 60_000 + 45_000), "02:17:45");
   assert.equal(
     challengeStartsInLabel({ endsAt: "2026-09-14T12:17:45.000Z" }, Date.parse("2026-09-14T10:00:00.000Z")),

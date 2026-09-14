@@ -218,10 +218,11 @@ test("accept/counter/decline behavior stays on the existing handlers", () => {
   const battles = readSrc("../../pages/command-center/CommandCenterBattles.tsx");
   const card = readSrc("../../components/arena/ChallengeActionCard.tsx");
   const inbox = readSrc("../../components/arena/ChallengeInbox.tsx");
-  assert.match(battles, /await acceptPostGradBattle\(battleId, auth\)/);
-  assert.match(battles, /await declinePostGradBattle\(battleId, auth\)/);
-  assert.match(battles, /await counterPostGradBattle\(battleId, amount, auth, hours\)/);
-  assert.match(battles, /ChallengeInbox/);
+  const dialog = readSrc("../../components/command-center/ChallengeInboxDialog.tsx");
+  assert.match(dialog, /await acceptPostGradBattle\(battleId, auth\)/);
+  assert.match(dialog, /await declinePostGradBattle\(battleId, auth\)/);
+  assert.match(dialog, /await counterPostGradBattle\(battleId, amount, auth, hours\)/);
+  assert.match(dialog, /ChallengeInbox/);
   assert.match(inbox, /ChallengeActionCard/);
   assert.match(card, />\s*ACCEPT\s*</);
   assert.match(card, />\s*DECLINE\s*</);

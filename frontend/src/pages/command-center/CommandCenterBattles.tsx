@@ -4,7 +4,6 @@ import { Swords } from "lucide-react";
 import { toast } from "sonner";
 
 import { ChallengeComposer } from "@/components/arena/ChallengeComposer";
-import { ChallengeInbox } from "@/components/arena/ChallengeInbox";
 import { CommandCenterCard } from "@/components/command-center/CommandCenterCard";
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
 import { FindMatchPanel } from "@/components/command-center/FindMatchPanel";
@@ -13,11 +12,8 @@ import { Button } from "@/components/ui/button";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import {
-  acceptPostGradBattle,
   cancelPostGradBattleOpen,
   challengePostGradBattle,
-  counterPostGradBattle,
-  declinePostGradBattle,
   openPostGradBattle,
 } from "@/features/postgrad/apiClient";
 import { postGradFlags } from "@/features/postgrad/config";
@@ -31,7 +27,6 @@ import { BATTLE_DURATIONS, battleDurationLabel, parseBattleDurationHours } from 
 import { presentAutoDeployStatus } from "@/lib/arena/autoDeployPresentation.mjs";
 import {
   canChallengeAs,
-  collectIncomingCreatorChallenges,
   parseChallengeQuery,
 } from "@/lib/arena/creatorChallengePresentation.mjs";
 import { presentManualOpponentPreview, presentMatchCandidates } from "@/lib/arena/findMatchPresentation.mjs";
@@ -66,10 +61,6 @@ export default function CommandCenterBattles() {
     [feed.creatorStatuses],
   );
   const eligible = qualified.filter((item) => item.eligibility);
-  const incoming = useMemo(
-    () => collectIncomingCreatorChallenges(feed.openForBattleQueue, feed.creatorStatuses, walletAddress),
-    [feed.creatorStatuses, feed.openForBattleQueue, walletAddress],
-  );
   const waitingRivals = useMemo(
     () =>
       feed.openForBattleQueue
@@ -192,53 +183,6 @@ export default function CommandCenterBattles() {
     }
   }
 
-  async function handleCounterOffer(battleId: string, counterStake: string, counterDurationHours: number) {
-    const amount = Number(counterStake);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      toast.error("Enter a counter-offer stake greater than zero.");
-      throw new Error("Enter a counter-offer stake greater than zero.");
-    }
-    setBusy(battleId);
-    try {
-      const hours = parseBattleDurationHours(counterDurationHours, 24);
-      const auth = await signAuth("arena_counter_battle", [`Battle: ${battleId}`, `Stake: ${amount}`, `Duration: ${hours}`]);
-      await counterPostGradBattle(battleId, amount, auth, hours);
-      await feed.refreshFeed();
-      toast.success("Counter-offer sent. They get a popup and email if verified.");
-    } catch (error) {
-      toast.error(String((error as Error)?.message || "Could not send counter-offer."));
-      throw error;
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function handleIncoming(battleId: string, accept: boolean) {
-    setBusy(battleId);
-    try {
-      const action = accept ? "arena_accept_battle" : "arena_decline_battle";
-      const auth = await signAuth(action, [`Battle: ${battleId}`]);
-      if (accept) {
-        const result = await acceptPostGradBattle(battleId, auth);
-        await feed.refreshFeed();
-        toast.success(
-          result?.battle?.state === "matched" || result?.escrowRequired
-            ? "Accepted. Pay your on-chain stake to start the 12-hour fight."
-            : "Challenge accepted. Fight is live.",
-        );
-      } else {
-        await declinePostGradBattle(battleId, auth);
-        await feed.refreshFeed();
-        toast.success("Challenge declined.");
-      }
-    } catch (error) {
-      toast.error(String((error as Error)?.message || "Could not update challenge."));
-      throw error;
-    } finally {
-      setBusy(null);
-    }
-  }
-
   if (!postGradFlags.arena) {
     return (
       <CommandCenterCard title="Battles" description="Warzone fights stay gated until the Warzone flags are on.">
@@ -253,18 +197,6 @@ export default function CommandCenterBattles() {
         <Swords className="h-4 w-4 text-accent" />
         <span className="font-retro text-[10px] uppercase tracking-[0.16em]">Warzone battles</span>
       </div>
-
-      {incoming.length ? (
-        <ChallengeInbox
-          challenges={incoming}
-          statuses={feed.creatorStatuses}
-          chainId={chainId}
-          busyId={busy}
-          onAccept={(battleId) => handleIncoming(battleId, true)}
-          onDecline={(battleId) => handleIncoming(battleId, false)}
-          onCounter={handleCounterOffer}
-        />
-      ) : null}
 
       <CommandCenterCard
         title="AUTO DEPLOY"
