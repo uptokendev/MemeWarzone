@@ -81,9 +81,7 @@ jobs:
   execute-lifecycle:
     name: Destructive RH46630 native lifecycle
     needs: certify-transport
-    if: >-
-      (github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'agent4/rh46630-native-lifecycle-cert') ||
-      (github.event_name == 'workflow_dispatch' && github.event.inputs.confirmation == 'CERTIFY_CHAIN_46630_NATIVE_LIFECYCLE')
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.confirmation == 'CERTIFY_CHAIN_46630_NATIVE_LIFECYCLE'
     runs-on: ubuntu-latest
     environment: testnet-certification
     env:
@@ -94,7 +92,7 @@ jobs:
       ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY }}
       ROBINHOOD_TESTNET_TRADER_B_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_TRADER_B_PRIVATE_KEY }}
       RH46630_LIFECYCLE_EVIDENCE: rh46630-native-lifecycle-evidence.json
-      RH46630_CERT_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      RH46630_CERT_HEAD_SHA: ${{ github.sha }}
     steps:
       - uses: actions/checkout@v4
         with: {fetch-depth: 0}
@@ -104,7 +102,7 @@ jobs:
           set -euo pipefail
           git cat-file -e "${RH46630_AUTHORITY_SHA}^{commit}"
           git merge-base --is-ancestor "$RH46630_AUTHORITY_SHA" HEAD
-          if [ "$GITHUB_EVENT_NAME" = 'workflow_dispatch' ]; then test "${{ github.event.inputs.confirmation }}" = 'CERTIFY_CHAIN_46630_NATIVE_LIFECYCLE'; fi
+          test "${{ github.event.inputs.confirmation }}" = 'CERTIFY_CHAIN_46630_NATIVE_LIFECYCLE'
           if grep -Ev '^(scripts/rh46630-native-lifecycle-certification\.mjs|scripts/rh46630-native-lifecycle-runner\.mjs|scripts/rh46630-native-lifecycle-fault-preflight\.mjs|scripts/rh46630-native-lifecycle-postchecks\.mjs|\.github/workflows/agent4-rh46630-native-lifecycle\.yml)$' < <(git diff --name-only "$RH46630_AUTHORITY_SHA" HEAD); then exit 1; fi
       - uses: actions/setup-node@v4
         with: {node-version: 22, cache: npm}
@@ -128,6 +126,6 @@ jobs:
           ! grep -nE '(-----BEGIN [A-Z ]*PRIVATE KEY-----|https?://[^[:space:]]+:[^[:space:]@]+@)' rh46630-native-lifecycle-evidence.json
       - uses: actions/upload-artifact@v4
         with:
-          name: rh46630-native-lifecycle-${{ github.event.pull_request.head.sha || github.sha }}
+          name: rh46630-native-lifecycle-${{ github.sha }}
           path: rh46630-native-lifecycle-evidence.json
           if-no-files-found: error
