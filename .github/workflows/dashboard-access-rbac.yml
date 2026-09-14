@@ -24,6 +24,8 @@ on:
       - 'frontend/api/admin/access.js'
       - 'frontend/api/analytics/admin.js'
       - 'frontend/api/analytics/ingest.js'
+      - 'frontend/api/analytics/geo-resolver.js'
+      - 'frontend/api/analytics/geo-resolver.test.mjs'
       - 'frontend/api/analytics/geography.js'
       - 'frontend/api/analytics/performance.js'
       - 'frontend/api/analytics/analytics.test.mjs'
@@ -56,6 +58,7 @@ jobs:
           node --check frontend/api/admin/access.js
           node --check frontend/api/analytics/admin.js
           node --check frontend/api/analytics/ingest.js
+          node --check frontend/api/analytics/geo-resolver.js
           node --check frontend/api/analytics/geography.js
           node --check frontend/api/analytics/performance.js
           node --check frontend/api/lib/apiAuth.js
@@ -67,3 +70,4 @@ jobs:
           node --test frontend/api/dashboard/invite-existing-user.test.mjs
           node --test frontend/api/dashboard/member-delete.test.mjs
           node --test frontend/api/analytics/analytics.test.mjs
+          node --test frontend/api/analytics/geo-resolver.test.mjs
