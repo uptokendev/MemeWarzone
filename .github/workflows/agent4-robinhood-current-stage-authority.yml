@@ -7,6 +7,7 @@ on:
     paths:
       - 'scripts/robinhoodCurrentStageAuthority.mjs'
       - 'scripts/deploy-robinhood-current-stage.ts'
+      - 'scripts/verify-robinhood-current-stage-live.ts'
       - 'scripts/robinhood-current-stage-authority.test.mjs'
       - 'config/robinhood-current-stage-deployment.env.example'
       - '.github/workflows/agent4-robinhood-current-stage-authority.yml'
@@ -31,6 +32,7 @@ on:
     paths:
       - 'scripts/robinhoodCurrentStageAuthority.mjs'
       - 'scripts/deploy-robinhood-current-stage.ts'
+      - 'scripts/verify-robinhood-current-stage-live.ts'
       - 'scripts/robinhood-current-stage-authority.test.mjs'
       - 'config/robinhood-current-stage-deployment.env.example'
       - '.github/workflows/agent4-robinhood-current-stage-authority.yml'
@@ -50,6 +52,11 @@ on:
       - 'contracts/CreatorRegistry.sol'
       - 'contracts/RiskRegistry.sol'
   workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type DEPLOY_CHAIN_46630_CURRENT_STAGE to authorize one RH46630 current-stage deployment'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -78,6 +85,9 @@ jobs:
       - name: Compile current EVM contracts
         run: npx hardhat compile
 
+      - name: Type-check live verifier through Hardhat
+        run: npx hardhat run scripts/verify-robinhood-current-stage-live.ts --network hardhat >/tmp/rh-live-verifier-negative.log 2>&1 || grep -F 'verification requires robinhoodTestnet' /tmp/rh-live-verifier-negative.log
+
       - name: Executor rejects non-46630 before operator configuration
         shell: bash
         run: |
@@ -97,6 +107,25 @@ jobs:
         run: |
           set -euo pipefail
           test ! -f deployments/robinhood/testnet.staged.json
+
+      - name: Prove protected broadcast static gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          wf=.github/workflows/agent4-robinhood-current-stage-authority.yml
+          grep -F "github.event_name == 'workflow_dispatch'" "$wf"
+          grep -F "github.event.inputs.confirmation == 'DEPLOY_CHAIN_46630_CURRENT_STAGE'" "$wf"
+          grep -F "github.ref_name == 'build/cross-chain-stabilization-rh-base'" "$wf"
+          grep -F 'environment: testnet-certification' "$wf"
+          grep -F 'ROBINHOOD_TESTNET_BROADCAST: DEPLOY_CHAIN_46630_CURRENT_STAGE' "$wf"
+          grep -F 'npx hardhat run scripts/deploy-robinhood-current-stage.ts --network robinhoodTestnet' "$wf"
+          grep -F 'ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL }}' "$wf"
+          grep -F 'ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY }}' "$wf"
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            test -z "${ROBINHOOD_TESTNET_BROADCAST:-}"
+            test -z "${ROBINHOOD_TESTNET_RPC_URL:-}"
+            test -z "${ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY:-}"
+          fi
 
       - name: Prove production/import boundaries are untouched by this PR
         shell: bash
@@ -119,15 +148,150 @@ jobs:
             echo 'Forbidden Arena/Battle/claim path changed' >&2
             exit 1
           fi
+          if grep -E '^deployments/robinhood/testnet\.staged\.json$' /tmp/changed.txt; then
+            echo 'Generated current-stage manifest must never be committed' >&2
+            exit 1
+          fi
 
       - name: Secret scan changed authority files
         shell: bash
         run: |
           set -euo pipefail
-          if grep -RInE '(PRIVATE KEY-----|[A-Fa-f0-9]{64})' \
+          if grep -RInE '(-----BEGIN [A-Z ]*PRIVATE KEY-----|0x[a-fA-F0-9]{64}|https?://[^[:space:]]+:[^[:space:]@]+@)' \
             scripts/robinhoodCurrentStageAuthority.mjs \
             scripts/deploy-robinhood-current-stage.ts \
-            config/robinhood-current-stage-deployment.env.example; then
+            scripts/verify-robinhood-current-stage-live.ts \
+            config/robinhood-current-stage-deployment.env.example \
+            .github/workflows/agent4-robinhood-current-stage-authority.yml; then
             echo 'Potential committed secret detected' >&2
             exit 1
           fi
+
+  execute-current-stage:
+    name: Manual RH46630 current-stage deployment
+    needs: certify
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.confirmation == 'DEPLOY_CHAIN_46630_CURRENT_STAGE' &&
+      github.ref_name == 'build/cross-chain-stabilization-rh-base'
+    runs-on: ubuntu-latest
+    environment: testnet-certification
+    env:
+      ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL }}
+      ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY }}
+      ROBINHOOD_TESTNET_ADMIN: ${{ vars.ROBINHOOD_TESTNET_ADMIN }}
+      ROBINHOOD_ROUTE_AUTHORITY_ADDRESS: ${{ vars.ROBINHOOD_ROUTE_AUTHORITY_ADDRESS }}
+      ROBINHOOD_WETH_ADDRESS_46630: ${{ vars.ROBINHOOD_WETH_ADDRESS_46630 }}
+      ROBINHOOD_V3_FACTORY_ADDRESS_46630: ${{ vars.ROBINHOOD_V3_FACTORY_ADDRESS_46630 }}
+      ROBINHOOD_V3_POSITION_MANAGER_ADDRESS_46630: ${{ vars.ROBINHOOD_V3_POSITION_MANAGER_ADDRESS_46630 }}
+      ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_46630: ${{ vars.ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_46630 }}
+      ROBINHOOD_NATIVE_USD_ORACLE_ADDRESS_46630: ${{ vars.ROBINHOOD_NATIVE_USD_ORACLE_ADDRESS_46630 }}
+      ROBINHOOD_NATIVE_USD_MAX_ORACLE_AGE_SECONDS: ${{ vars.ROBINHOOD_NATIVE_USD_MAX_ORACLE_AGE_SECONDS }}
+      ROBINHOOD_TESTNET_MIN_DEPLOYER_BALANCE_WEI: '50000000000000000'
+    steps:
+      - name: Checkout exact dispatch source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Prove exact source pin and production isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test "${{ github.ref_name }}" = "build/cross-chain-stabilization-rh-base"
+          test "${{ github.event.inputs.confirmation }}" = "DEPLOY_CHAIN_46630_CURRENT_STAGE"
+          test ! -f deployments/robinhood/testnet.staged.json
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install exact dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Secure pre-broadcast identity infrastructure funding and actor-balance gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs=require('fs'); const {ethers}=require('ethers');
+          const req=(n)=>{const v=String(process.env[n]||'').trim();if(!v)throw new Error(`MISSING_PROTECTED_INPUT_${n}`);return v;};
+          const same=(a,b)=>String(a).toLowerCase()===String(b).toLowerCase();
+          (async()=>{
+            const rpc=req('ROBINHOOD_TESTNET_RPC_URL');
+            const pk=req('ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY');
+            const provider=new ethers.JsonRpcProvider(rpc);
+            const chainId=Number((await provider.getNetwork()).chainId);
+            if(chainId!==46630) throw new Error(`WRONG_CHAIN_${chainId}`);
+            if(chainId===4663) throw new Error('PRODUCTION_4663_FORBIDDEN');
+            const deployer=ethers.getAddress(new ethers.Wallet(pk.startsWith('0x')?pk:`0x${pk}`).address);
+            const admin=ethers.getAddress(req('ROBINHOOD_TESTNET_ADMIN'));
+            if(!same(deployer,admin)) throw new Error('ADMIN_DEPLOYER_MISMATCH');
+            const routeAuthority=ethers.getAddress(req('ROBINHOOD_ROUTE_AUTHORITY_ADDRESS'));
+            if(same(routeAuthority,deployer)) throw new Error('ROUTE_AUTHORITY_MUST_BE_DISTINCT');
+            const expected={
+              ROBINHOOD_WETH_ADDRESS_46630:'0x52A47A33930B8a90a2000b1bA3CB96e879569670',
+              ROBINHOOD_V3_FACTORY_ADDRESS_46630:'0x948463E91d63a7A51cEeC0342735D1B738044aea',
+              ROBINHOOD_V3_POSITION_MANAGER_ADDRESS_46630:'0xfF64Bd6970966dB58F0dd65BA76669D3b8BE9eC4',
+              ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_46630:'0xDfd381ECfA6D4CcD4248e319C6fecD76A6bf3296',
+              ROBINHOOD_NATIVE_USD_ORACLE_ADDRESS_46630:'0x5D2A88b0963Bb5b561B495a5fDCba869C01a8cAb'
+            };
+            for(const [name,address] of Object.entries(expected)){
+              const configured=ethers.getAddress(req(name));
+              if(!same(configured,address)) throw new Error(`ACCEPTED_INFRASTRUCTURE_MISMATCH_${name}`);
+              const code=await provider.getCode(configured);
+              if(!code||code==='0x') throw new Error(`MISSING_RUNTIME_${name}`);
+            }
+            const minimum=BigInt(req('ROBINHOOD_TESTNET_MIN_DEPLOYER_BALANCE_WEI'));
+            const deployerBalance=await provider.getBalance(deployer);
+            if(deployerBalance<minimum) throw new Error(`INSUFFICIENT_DEPLOYER_BALANCE_WEI_${deployerBalance}_REQUIRED_${minimum}`);
+            const historicalSource=(fs.readFileSync('scripts/robinhoodCurrentStageAuthority.mjs','utf8')+'\n'+fs.readFileSync('scripts/robinhoodTestnetFreeze.mjs','utf8')).toLowerCase();
+            for(const address of Object.values(expected)) if(historicalSource.includes(address.toLowerCase())) throw new Error('ACCEPTED_INFRASTRUCTURE_COLLIDES_WITH_HISTORICAL_FREEZE');
+            const actors={
+              creator:'0xf0558484531204645fB6eaF35c5082Fc55d869A6',
+              traderA:'0x38D8054789aB2068C3E6B04382787eFE15617ac7',
+              traderB:'0xeAE58347aA643a228C88Bd62295651388163E1CA',
+              sponsor:'0x429d41a9CE964687703986D588E227979782cB40',
+              claimRecovery:'0x5D743d4bB562a2BA1A07F9e6FA44DbC8f340949C'
+            };
+            const balances={}; for(const [role,address] of Object.entries(actors)) balances[role]={address,balanceEth:ethers.formatEther(await provider.getBalance(address))};
+            console.log(JSON.stringify({sourceSha:process.env.GITHUB_SHA,chainId,deployer,admin,routeAuthority,deployerBalanceEth:ethers.formatEther(deployerBalance),minimumDeployerBalanceEth:ethers.formatEther(minimum),acceptedInfrastructure:expected,actors:balances,production4663:false},null,2));
+          })().catch(e=>{console.error(e.message||e);process.exit(1);});
+          NODE
+
+      - name: Compile exact current EVM contracts
+        run: npx hardhat compile
+
+      - name: Execute current-generation staging deployment
+        env:
+          ROBINHOOD_TESTNET_BROADCAST: DEPLOY_CHAIN_46630_CURRENT_STAGE
+        run: npx hardhat run scripts/deploy-robinhood-current-stage.ts --network robinhoodTestnet
+
+      - name: Independently verify generated manifest receipts runtime and wiring
+        env:
+          ROBINHOOD_CURRENT_STAGE_EVIDENCE_FILE: robinhood-current-stage-deployment-evidence.json
+        run: npx hardhat run scripts/verify-robinhood-current-stage-live.ts --network robinhoodTestnet
+
+      - name: Re-prove generated manifest is staging-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs=require('fs'); const m=JSON.parse(fs.readFileSync('deployments/robinhood/testnet.staged.json','utf8'));
+          if(m.chainId!==46630||m.productionChainId!==4663||m.productionCompatible!==false) throw new Error('STAGING_PRODUCTION_ISOLATION_INVALID');
+          if(m.state?.factoryLive!==false||m.state?.createPaused!==true||m.state?.securityDefaultsLocked!==true) throw new Error('UNSAFE_POST_DEPLOY_STATE');
+          console.log(JSON.stringify({chainId:m.chainId,productionChainId:m.productionChainId,productionCompatible:m.productionCompatible,state:m.state}));
+          NODE
+
+      - name: Upload current-stage manifest and compact evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: robinhood-current-stage-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            deployments/robinhood/testnet.staged.json
+            robinhood-current-stage-deployment-evidence.json
