@@ -1,9 +1,27 @@
 import { normalizeFinanceEvidence, recordFinanceChainEvidence } from "./financeProvenance.js";
 import { normalizeFinanceClassification, recordFinanceEconomicClassification } from "./financeClassification.js";
 
+export class FinancePostingBalanceError extends Error {
+  constructor(message = "Finance classification components must equal the canonical gross amount") {
+    super(message);
+    this.name = "FinancePostingBalanceError";
+    this.code = "FINANCE_POSTING_UNBALANCED";
+  }
+}
+
 function requirePool(pool) {
   if (!pool || typeof pool.connect !== "function") {
     throw new TypeError("pool.connect is required for atomic Finance posting");
+  }
+}
+
+function assertBalancedPosting(evidence, classifications) {
+  const gross = BigInt(evidence.gross_amount_raw);
+  const classified = classifications.reduce((sum, classification) => sum + BigInt(classification.amount_raw), 0n);
+  if (classified !== gross) {
+    throw new FinancePostingBalanceError(
+      `Finance classification components total ${classified} but canonical gross amount is ${gross}`,
+    );
   }
 }
 
@@ -20,6 +38,7 @@ function normalizePostingInput(input = {}) {
     }),
   );
 
+  assertBalancedPosting(evidence, classifications);
   return { evidence, classifications };
 }
 
