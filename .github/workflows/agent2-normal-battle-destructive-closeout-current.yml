@@ -49,8 +49,8 @@ jobs:
       BSC_TESTNET_PRIVATE_KEY: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
       DEPLOYER_PK: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
       PRIVATE_KEY_DEPLOY: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
-      BSC_TESTNET_RPC: ${{ vars.BSC_TESTNET_RPC || secrets.BSC_TESTNET_RPC }}
-      BSC_TESTNET_RPC_URL: ${{ vars.BSC_TESTNET_RPC || secrets.BSC_TESTNET_RPC }}
+      BSC_TESTNET_RPC: ${{ secrets.BSC_TESTNET_RPC }}
+      BSC_TESTNET_RPC_URL: ${{ secrets.BSC_TESTNET_RPC }}
       BNB_TESTNET_ADMIN: "0xEE2c6A7605ED378CF1D26D1d828446d63A3fdeDa"
       BNB_6C_ROUTE_AUTHORITY_ADDRESS: "0x2b72A9E6C4Ea3525d83B8C5E8F2044BDbC1f1Dec"
       BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY: ${{ secrets.BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY }}
@@ -87,6 +87,7 @@ jobs:
           SQL
           for f in \
             db/migrations/20260826_000001_arena_identity_schema.sql \
+            db/migrations/20260827_000003_arena_league_scorecard.sql \
             db/migrations/20260827_000004_arena_battle_counter_offers.sql \
             db/migrations/20260827_000005_arena_battle_matched.sql \
             db/migrations/20260827_000006_arena_battle_duration.sql \
@@ -193,6 +194,7 @@ jobs:
           SQL
           for f in \
             db/migrations/20260826_000001_arena_identity_schema.sql \
+            db/migrations/20260827_000003_arena_league_scorecard.sql \
             db/migrations/20260827_000004_arena_battle_counter_offers.sql \
             db/migrations/20260827_000005_arena_battle_matched.sql \
             db/migrations/20260827_000006_arena_battle_duration.sql \
