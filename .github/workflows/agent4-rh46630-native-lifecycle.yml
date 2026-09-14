@@ -5,6 +5,7 @@ on:
     branches: [build/cross-chain-stabilization-rh-base]
     paths:
       - 'scripts/rh46630-native-lifecycle-certification.mjs'
+      - 'scripts/rh46630-native-lifecycle-runner.mjs'
       - 'scripts/rh46630-native-lifecycle-fault-preflight.mjs'
       - 'scripts/rh46630-native-lifecycle-postchecks.mjs'
       - '.github/workflows/agent4-rh46630-native-lifecycle.yml'
@@ -39,7 +40,7 @@ jobs:
           git cat-file -e "${RH46630_AUTHORITY_SHA}^{commit}"
           git merge-base --is-ancestor "$RH46630_AUTHORITY_SHA" HEAD
           git diff --name-only "$RH46630_AUTHORITY_SHA" HEAD | tee /tmp/rh46630-changed.txt
-          if grep -Ev '^(scripts/rh46630-native-lifecycle-certification\.mjs|scripts/rh46630-native-lifecycle-fault-preflight\.mjs|scripts/rh46630-native-lifecycle-postchecks\.mjs|\.github/workflows/agent4-rh46630-native-lifecycle\.yml)$' /tmp/rh46630-changed.txt; then exit 1; fi
+          if grep -Ev '^(scripts/rh46630-native-lifecycle-certification\.mjs|scripts/rh46630-native-lifecycle-runner\.mjs|scripts/rh46630-native-lifecycle-fault-preflight\.mjs|scripts/rh46630-native-lifecycle-postchecks\.mjs|\.github/workflows/agent4-rh46630-native-lifecycle\.yml)$' /tmp/rh46630-changed.txt; then exit 1; fi
           for f in contracts/LaunchFactory.sol contracts/LaunchCampaign.sol contracts/PermanentV3PositionLocker.sol contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol contracts/TreasuryRouterV3.sol contracts/GraduationOracle.sol; do
             test "$(git show "${RH46630_AUTHORITY_SHA}:$f" | git hash-object --stdin)" = "$(git show "HEAD:$f" | git hash-object --stdin)"
           done
@@ -49,6 +50,7 @@ jobs:
       - name: Syntax check certification helpers
         run: |
           node --check scripts/rh46630-native-lifecycle-certification.mjs
+          node --check scripts/rh46630-native-lifecycle-runner.mjs
           node --check scripts/rh46630-native-lifecycle-fault-preflight.mjs
           node --check scripts/rh46630-native-lifecycle-postchecks.mjs
       - run: npx hardhat compile
@@ -63,6 +65,7 @@ jobs:
           grep -F 'PRODUCTION_4663_FORBIDDEN' scripts/rh46630-native-lifecycle-certification.mjs
           grep -F 'SIGNER_MISMATCH_' scripts/rh46630-native-lifecycle-certification.mjs
           grep -F 'REFRESH_CHAIN_46630_ETH_USD_ORACLE' scripts/rh46630-native-lifecycle-certification.mjs
+          grep -F 'latestRoundData() view returns(uint80 roundId,int256 answer,uint256 startedAt,uint256 updatedAt,uint80 answeredInRound)' scripts/rh46630-native-lifecycle-runner.mjs
           grep -F 'UNAUTHORIZED_ROUTE' scripts/rh46630-native-lifecycle-fault-preflight.mjs
           grep -F 'WRONG_CREATOR_SIGNER' scripts/rh46630-native-lifecycle-fault-preflight.mjs
           grep -F 'REPLAY_HARVEST_DUPLICATED_FINANCIAL_STATE' scripts/rh46630-native-lifecycle-postchecks.mjs
@@ -71,7 +74,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          files='scripts/rh46630-native-lifecycle-certification.mjs scripts/rh46630-native-lifecycle-fault-preflight.mjs scripts/rh46630-native-lifecycle-postchecks.mjs .github/workflows/agent4-rh46630-native-lifecycle.yml'
+          files='scripts/rh46630-native-lifecycle-certification.mjs scripts/rh46630-native-lifecycle-runner.mjs scripts/rh46630-native-lifecycle-fault-preflight.mjs scripts/rh46630-native-lifecycle-postchecks.mjs .github/workflows/agent4-rh46630-native-lifecycle.yml'
           ! grep -nE '(-----BEGIN [A-Z ]*PRIVATE KEY-----|https?://[^[:space:]]+:[^[:space:]@]+@)' $files
           ! grep -nEi '(private.?key|secret)[^\n]{0,40}(0x)?[a-f0-9]{64}' $files
 
@@ -91,6 +94,7 @@ jobs:
       ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY }}
       ROBINHOOD_TESTNET_TRADER_B_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_TRADER_B_PRIVATE_KEY }}
       RH46630_LIFECYCLE_EVIDENCE: rh46630-native-lifecycle-evidence.json
+      RH46630_CERT_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
         with: {fetch-depth: 0}
@@ -101,7 +105,7 @@ jobs:
           git cat-file -e "${RH46630_AUTHORITY_SHA}^{commit}"
           git merge-base --is-ancestor "$RH46630_AUTHORITY_SHA" HEAD
           if [ "$GITHUB_EVENT_NAME" = 'workflow_dispatch' ]; then test "${{ github.event.inputs.confirmation }}" = 'CERTIFY_CHAIN_46630_NATIVE_LIFECYCLE'; fi
-          if grep -Ev '^(scripts/rh46630-native-lifecycle-certification\.mjs|scripts/rh46630-native-lifecycle-fault-preflight\.mjs|scripts/rh46630-native-lifecycle-postchecks\.mjs|\.github/workflows/agent4-rh46630-native-lifecycle\.yml)$' < <(git diff --name-only "$RH46630_AUTHORITY_SHA" HEAD); then exit 1; fi
+          if grep -Ev '^(scripts/rh46630-native-lifecycle-certification\.mjs|scripts/rh46630-native-lifecycle-runner\.mjs|scripts/rh46630-native-lifecycle-fault-preflight\.mjs|scripts/rh46630-native-lifecycle-postchecks\.mjs|\.github/workflows/agent4-rh46630-native-lifecycle\.yml)$' < <(git diff --name-only "$RH46630_AUTHORITY_SHA" HEAD); then exit 1; fi
       - uses: actions/setup-node@v4
         with: {node-version: 22, cache: npm}
       - run: npm ci --no-audit --no-fund
@@ -109,13 +113,13 @@ jobs:
       - name: Execute live RH46630 fault preflight
         run: node scripts/rh46630-native-lifecycle-fault-preflight.mjs
       - name: Execute real RH46630 native lifecycle
-        run: node scripts/rh46630-native-lifecycle-certification.mjs
+        run: node scripts/rh46630-native-lifecycle-runner.mjs
       - name: Restart and reconcile from chain
-        run: node scripts/rh46630-native-lifecycle-certification.mjs --reconcile
+        run: node scripts/rh46630-native-lifecycle-runner.mjs --reconcile
       - name: Prove financial replay no-op and permanent locker
         run: node scripts/rh46630-native-lifecycle-postchecks.mjs
       - name: Reconcile again after replay postchecks
-        run: node scripts/rh46630-native-lifecycle-certification.mjs --reconcile
+        run: node scripts/rh46630-native-lifecycle-runner.mjs --reconcile
       - name: Evidence secret scan
         shell: bash
         run: |
@@ -124,6 +128,6 @@ jobs:
           ! grep -nE '(-----BEGIN [A-Z ]*PRIVATE KEY-----|https?://[^[:space:]]+:[^[:space:]@]+@)' rh46630-native-lifecycle-evidence.json
       - uses: actions/upload-artifact@v4
         with:
-          name: rh46630-native-lifecycle-${{ github.sha }}
+          name: rh46630-native-lifecycle-${{ github.event.pull_request.head.sha || github.sha }}
           path: rh46630-native-lifecycle-evidence.json
           if-no-files-found: error
