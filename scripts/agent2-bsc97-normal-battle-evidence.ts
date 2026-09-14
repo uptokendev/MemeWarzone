@@ -54,14 +54,15 @@ async function tradeAuth(mod: any, campaign: any, actor: ethers.Wallet, routeAut
   return { routeProfileId, deadline, signature };
 }
 
-async function executeSide(label: string, factory: any, mod: any, routeAuthority: ethers.Wallet, deployer: any) {
-  const creator = ethers.Wallet.createRandom().connect(ethers.provider);
-  const buyer = ethers.Wallet.createRandom().connect(ethers.provider);
-  const trader = ethers.Wallet.createRandom().connect(ethers.provider);
-  await fund(deployer, creator, ethers.parseEther("0.01"));
-  await fund(deployer, buyer, ethers.parseEther("0.04"));
-  await fund(deployer, trader, ethers.parseEther("0.03"));
-
+async function executeSide(
+  label: string,
+  factory: any,
+  mod: any,
+  routeAuthority: ethers.Wallet,
+  creator: ethers.Wallet,
+  buyer: ethers.Wallet,
+  trader: ethers.Wallet,
+) {
   const now = Date.now();
   const request = {
     name: `Agent2 ${label} ${now}`,
@@ -80,7 +81,9 @@ async function executeSide(label: string, factory: any, mod: any, routeAuthority
   const campaign = await ethers.getContractAt("LaunchCampaign", info.campaign, buyer);
   const token = await ethers.getContractAt("LaunchToken", info.token, buyer);
 
-  const unit = ethers.parseEther("1");
+  // Tiny token probes keep tBNB use minimal while still producing real chain-derived
+  // holder, price/MCAP and eligible BUY/SELL evidence. Gas is the dominant cost.
+  const unit = 10n ** 15n; // 0.001 token at 18 decimals
   const supply = await token.totalSupply();
   const quoteBefore = await campaign.quoteBuyExactTokens(unit);
   const holdersBefore = {
@@ -125,8 +128,9 @@ async function executeSide(label: string, factory: any, mod: any, routeAuthority
     buyer: buyer.address,
     trader: trader.address,
     totalSupply: supply.toString(),
-    quoteOneTokenBeforeWei: quoteBefore.toString(),
-    quoteOneTokenAfterWei: quoteAfter.toString(),
+    quoteProbeTokenRaw: unit.toString(),
+    quoteProbeBeforeWei: quoteBefore.toString(),
+    quoteProbeAfterWei: quoteAfter.toString(),
     marginalMcapNativeWei: marginalMcapNativeWei.toString(),
     holdersBefore,
     holdersAfter,
@@ -145,22 +149,31 @@ async function main() {
   if (network.name !== "bscTestnet") throw new Error(`refusing network ${network.name}`);
   const net = await ethers.provider.getNetwork();
   if (Number(net.chainId) !== CHAIN_ID) throw new Error(`expected BSC97, got ${net.chainId}`);
-  const manifestPath = path.resolve(process.env.BNB_6C_STAGE_DEPLOYMENT_FILE || "deployments/bnb/testnet.staged.json");
+  const manifestPath = path.resolve(process.env.BNB_6C_STAGE_DEPLOYMENT_FILE || "certification/agent2-bsc97-stage-20260914.json");
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
   if (Number(manifest.chainId) !== CHAIN_ID) throw new Error("staged manifest is not chain 97");
   const routeKey = String(process.env.BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY || "").trim();
   if (!routeKey) throw new Error("BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY required");
   const routeAuthority = new ethers.Wallet(routeKey, ethers.provider);
   if (!sameAddress(routeAuthority.address, manifest.routeAuthority)) throw new Error("route authority mismatch");
-  const [deployer] = await ethers.getSigners();
-  if (!sameAddress(await deployer.getAddress(), manifest.admin)) throw new Error("deployer/admin mismatch");
-  const factory = await ethers.getContractAt("LaunchFactory", manifest.contracts.launchFactory, deployer);
+
+  const deployerKey = String(process.env.BSC_TESTNET_PRIVATE_KEY || "").trim();
+  if (!deployerKey) throw new Error("BSC_TESTNET_PRIVATE_KEY required");
+  const creator = new ethers.Wallet(deployerKey, ethers.provider);
+  if (!sameAddress(creator.address, manifest.admin)) throw new Error("deployer/admin mismatch");
+
+  const factory = await ethers.getContractAt("LaunchFactory", manifest.contracts.launchFactory, creator);
   if (!(await factory.live())) await (await factory.enableLive()).wait();
   if (await factory.createPaused()) await (await factory.setCreatePaused(false)).wait();
-  const mod = await signerPromise;
 
-  const left = await executeSide("L", factory, mod, routeAuthority, deployer);
-  const right = await executeSide("R", factory, mod, routeAuthority, deployer);
+  const buyer = ethers.Wallet.createRandom().connect(ethers.provider);
+  const trader = ethers.Wallet.createRandom().connect(ethers.provider);
+  await fund(creator, buyer, ethers.parseEther("0.002"));
+  await fund(creator, trader, ethers.parseEther("0.002"));
+
+  const mod = await signerPromise;
+  const left = await executeSide("L", factory, mod, routeAuthority, creator, buyer, trader);
+  const right = await executeSide("R", factory, mod, routeAuthority, creator, buyer, trader);
   if (left.token.toLowerCase() === right.token.toLowerCase()) throw new Error("cross-side token collision");
 
   const report = {
@@ -170,6 +183,7 @@ async function main() {
     chainId: CHAIN_ID,
     network: "bsc-testnet",
     factory: await factory.getAddress(),
+    manifestEvidence: manifest.evidenceSource || null,
     left,
     right,
     checks: {
