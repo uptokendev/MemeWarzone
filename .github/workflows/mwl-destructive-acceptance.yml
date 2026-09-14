@@ -22,18 +22,28 @@ on:
         required: true
         default: "12"
         type: string
+  push:
+    branches:
+      - agent4/mwl-destructive-acceptance
+    paths:
+      - '.github/workflows/mwl-destructive-acceptance.yml'
+      - 'frontend/tools/mwl-destructive-acceptance.mjs'
+      - 'frontend/tools/mwl-real-financial-provenance.mjs'
 
 permissions:
   contents: read
 
 env:
-  AUTHORITY_SHA: ${{ inputs.authority_sha }}
-  CERT_YEAR: ${{ inputs.cert_year }}
-  CERT_MONTH: ${{ inputs.cert_month }}
+  AUTHORITY_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.authority_sha || 'df8e9dd32387cfe82f208c372461aa629f14cf84' }}
+  CERT_YEAR: ${{ github.event_name == 'workflow_dispatch' && inputs.cert_year || '2099' }}
+  CERT_MONTH: ${{ github.event_name == 'workflow_dispatch' && inputs.cert_month || '12' }}
   MWL_STAGING_DATABASE_URL: ${{ secrets.MWL_STAGING_DATABASE_URL }}
   BSC97_RPC_URL: ${{ secrets.BSC97_RPC_URL }}
+  BSC_TESTNET_PRIVATE_KEY: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
+  ARENA_WAR_POOL_TREASURY_V2_ADDRESS_97: ${{ secrets.ARENA_WAR_POOL_TREASURY_V2_ADDRESS_97 || vars.ARENA_WAR_POOL_TREASURY_V2_ADDRESS_97 }}
   SOLANA_DEVNET_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC_URL }}
   SOLANA_DEVNET_GENESIS_HASH: ${{ secrets.SOLANA_DEVNET_GENESIS_HASH }}
+  SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
   MONTHLY_LEAGUE_TREASURY_ADDRESS_97: ${{ secrets.MONTHLY_LEAGUE_TREASURY_ADDRESS_97 }}
   MONTHLY_LEAGUE_TREASURY_ADDRESS_101: ${{ secrets.MONTHLY_LEAGUE_TREASURY_ADDRESS_101 }}
 
@@ -41,7 +51,7 @@ jobs:
   destructive-mwl:
     name: BSC97 + Solana101 destructive MWL
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     environment: testnet-certification
     steps:
       - name: Checkout harness head
@@ -53,7 +63,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "${{ inputs.confirm }}" = "MWL_DESTRUCTIVE_BSC97_SOLANA101"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            test "${{ inputs.confirm }}" = "MWL_DESTRUCTIVE_BSC97_SOLANA101"
+          fi
           test "$AUTHORITY_SHA" = "df8e9dd32387cfe82f208c372461aa629f14cf84"
           git cat-file -e "$AUTHORITY_SHA^{commit}"
           git merge-base --is-ancestor "$AUTHORITY_SHA" HEAD
@@ -61,12 +73,12 @@ jobs:
           mapfile -t changed < <(git diff --name-only "$AUTHORITY_SHA"..HEAD)
           for path in "${changed[@]}"; do
             case "$path" in
-              .github/workflows/mwl-destructive-acceptance.yml|frontend/tools/mwl-destructive-acceptance.mjs) ;;
+              .github/workflows/mwl-destructive-acceptance.yml|frontend/tools/mwl-destructive-acceptance.mjs|frontend/tools/mwl-real-financial-provenance.mjs) ;;
               *) echo "Non-certification delta detected: $path" >&2; exit 1 ;;
             esac
           done
 
-          test "${#changed[@]}" -eq 2
+          test "${#changed[@]}" -eq 3
           echo "PRODUCTION_AUTHORITY=$AUTHORITY_SHA"
           echo "HARNESS_HEAD=$(git rev-parse HEAD)"
           echo "CERTIFICATION_ONLY_DELTA=PASS"
@@ -94,6 +106,22 @@ jobs:
 
       - name: Install locked dependencies
         run: npm ci --prefix frontend --no-audit --no-fund
+
+      - name: Prove real Post-Grad League financial provenance
+        shell: bash
+        env:
+          DATABASE_URL: ${{ secrets.MWL_STAGING_DATABASE_URL }}
+        run: |
+          set -uo pipefail
+          mkdir -p artifacts
+          node frontend/tools/mwl-real-financial-provenance.mjs artifacts/mwl-financial-provenance.json
+          status=$?
+          test -s artifacts/mwl-financial-provenance.json
+          if [ "$status" -ne 0 ]; then
+            echo "REAL_FINANCIAL_PROVENANCE_BLOCKED"
+            cat artifacts/mwl-financial-provenance.json
+            exit "$status"
+          fi
 
       - name: Destructive create, intake, score, and first finalization
         shell: bash
