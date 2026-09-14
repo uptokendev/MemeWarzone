@@ -1,0 +1,51 @@
+name: Agent 3 Solana Arena Money V2 Devnet
+
+on:
+  push:
+    branches:
+      - agent3/solana-arena-money-v2-bootstrap-a32c6c
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent3-solana-arena-money-v2-devnet-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Read-only live Arena Money V2 binary preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: testnet-certification
+    env:
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || vars.SOLANA_DEVNET_RPC || 'https://api.devnet.solana.com' }}
+      GITHUB_PUBLIC_VARS_JSON: ${{ toJson(vars) }}
+    steps:
+      - name: Checkout exact Agent 3 head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Freeze exact base ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor a32c6c89087c2f32dc59be0af466b41d5c55a438 HEAD
+          echo "required_base=a32c6c89087c2f32dc59be0af466b41d5c55a438"
+          echo "agent3_head=$(git rev-parse HEAD)"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install locked Solana test dependencies
+        shell: bash
+        run: npm install --prefix tests/solana --no-audit --no-fund
+
+      - name: Probe deployed rewards-treasury binary without mutation
+        shell: bash
+        run: node tests/solana/arena-money-v2-devnet-preflight.cjs
