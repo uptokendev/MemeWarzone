@@ -86,6 +86,8 @@ jobs:
           DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role; END IF; END $$;
           SQL
           for f in \
+            frontend/db/migrations/20260628_security_engine_schema.sql \
+            db/migrations/20260730_000002_creator_funding_indexer.sql \
             db/migrations/20260826_000001_arena_identity_schema.sql \
             db/migrations/20260827_000003_arena_league_scorecard.sql \
             db/migrations/20260827_000004_arena_battle_counter_offers.sql \
@@ -193,6 +195,8 @@ jobs:
           DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role; END IF; END $$;
           SQL
           for f in \
+            frontend/db/migrations/20260628_security_engine_schema.sql \
+            db/migrations/20260730_000002_creator_funding_indexer.sql \
             db/migrations/20260826_000001_arena_identity_schema.sql \
             db/migrations/20260827_000003_arena_league_scorecard.sql \
             db/migrations/20260827_000004_arena_battle_counter_offers.sql \
