@@ -11,6 +11,7 @@ import {
   beginChallengePending,
   canChallengeAs,
   challengeStartsInLabel,
+  collectCreatorStakeGates,
   collectIncomingCreatorChallenges,
   formatChallengeCountdown,
   creatorOwnedIdentityKeys,
@@ -27,9 +28,11 @@ import {
   presentChallengeActionCard,
   presentChallengeInboxItem,
   presentCreatorChallenge,
+  presentStakeGateItem,
   rememberNotNow,
   retainCarouselIndex,
   selectAutoPopupChallenge,
+  selectAutoPopupStake,
   stepCarouselIndex,
   syncChallengeDrafts,
   visibleCarouselIndex,
@@ -402,6 +405,32 @@ test("campaign page CHALLENGE THIS COIN preselects opponent and fight-as stays o
   assert.match(composer, /You can only challenge as a coin this wallet controls/);
   const sidebar = readSrc("../../components/command-center/CommandCenterSidebar.tsx");
   assert.match(sidebar, /battlesNavBadge/);
+});
+
+test("accepted battles become pay-to-start gates on every chain including Robinhood", () => {
+  const matched = challenge({ id: "pay-1", state: "matched", offeredStakeNative: 0.2, nativeSymbol: "SOL", chainId: 101 });
+  const gates = collectCreatorStakeGates([matched], [status()], "0xcreator");
+  assert.equal(gates.length, 1);
+  const presented = presentStakeGateItem(matched, 101);
+  assert.equal(presented.kicker, "CHALLENGE ACCEPTED");
+  assert.match(presented.summary, /PAY TO START/);
+  assert.equal(presented.nativeSymbol, "SOL");
+  const rh = presentStakeGateItem(challenge({ state: "matched", nativeSymbol: "", chainId: 46630, offeredStakeNative: 0.05 }), 46630);
+  assert.equal(rh.nativeSymbol, "ETH");
+  assert.equal(selectAutoPopupStake([matched], "/command")?.id, "pay-1");
+  assert.equal(selectAutoPopupStake([matched, challenge({ id: "pay-2", state: "matched" })], "/command"), null);
+  const inbox = readSrc("../../components/arena/ChallengeInbox.tsx");
+  const gate = readSrc("../../components/arena/ChallengeStakeGate.tsx");
+  const feed = readSrc("../../hooks/useArenaBattleFeed.ts");
+  const begin = readSrc("../../../api/arenaBattles.js");
+  assert.match(inbox, /ChallengeStakeGate/);
+  assert.match(inbox, /navigate\(battleWallHref/);
+  assert.match(gate, /No pay, no battle/);
+  assert.match(gate, /ArenaStakeButton/);
+  assert.match(feed, /8000/);
+  const beginFight = begin.split("async function beginFight")[1]?.split("async function goLiveFromMatched")[0] || "";
+  assert.match(beginFight, /state:\s*["']matched["']/);
+  assert.doesNotMatch(beginFight, /state:\s*requireEscrow \? ["']matched["'] : ["']live["']/);
 });
 
 test("successful action removes matched or declined inbox entries from canonical state", () => {

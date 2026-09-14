@@ -9,7 +9,7 @@ import { acceptPostGradBattle, counterPostGradBattle, declinePostGradBattle } fr
 import { postGradFlags } from "@/features/postgrad/config";
 import { useArenaBattleFeed } from "@/hooks/useArenaBattleFeed";
 import { parseBattleDurationHours } from "@/lib/arena/battleDuration";
-import { collectIncomingCreatorChallenges } from "@/lib/arena/creatorChallengePresentation.mjs";
+import { collectCreatorStakeGates, collectIncomingCreatorChallenges } from "@/lib/arena/creatorChallengePresentation.mjs";
 import { signArenaWalletAction } from "@/lib/arena/signArenaWalletAction";
 
 export function ChallengeInboxDialog() {
@@ -21,6 +21,10 @@ export function ChallengeInboxDialog() {
 
   const incoming = useMemo(
     () => collectIncomingCreatorChallenges(feed.openForBattleQueue, feed.creatorStatuses, walletAddress),
+    [feed.creatorStatuses, feed.openForBattleQueue, walletAddress],
+  );
+  const stakeBattles = useMemo(
+    () => collectCreatorStakeGates(feed.openForBattleQueue, feed.creatorStatuses, walletAddress),
     [feed.creatorStatuses, feed.openForBattleQueue, walletAddress],
   );
 
@@ -43,7 +47,7 @@ export function ChallengeInboxDialog() {
       if (accept) await acceptPostGradBattle(battleId, auth);
       else await declinePostGradBattle(battleId, auth);
       await feed.refreshFeed();
-      toast.success(accept ? "Offer accepted. Pay the on-chain stake if escrow is live." : "Offer declined.");
+      toast.success(accept ? "Challenge accepted. Pay your stake to start the fight." : "Offer declined.");
     } catch (error) {
       toast.error(String((error as Error)?.message || "Could not update challenge."));
       throw error;
@@ -73,12 +77,13 @@ export function ChallengeInboxDialog() {
     }
   }
 
-  if (!postGradFlags.arena || !incoming.length) return null;
+  if (!postGradFlags.arena || (!incoming.length && !stakeBattles.length)) return null;
 
   return (
     <ChallengeInbox
       autoOpenSingle
       challenges={incoming}
+      stakeBattles={stakeBattles}
       statuses={feed.creatorStatuses}
       chainId={chainId}
       busyId={busy}

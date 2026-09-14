@@ -241,6 +241,43 @@ export function selectAutoPopupChallenge(incoming, pathname = "", store = notNow
   return battle;
 }
 
+export function collectCreatorStakeGates(battles, statuses, walletAddress) {
+  if (!String(walletAddress || "").trim()) return [];
+  const owned = creatorOwnedIdentityKeys(statuses);
+  if (!owned.size) return [];
+  return (Array.isArray(battles) ? battles : []).filter((battle) => {
+    return String(battle?.state || "").toLowerCase() === "matched" && isChallengeParticipant(battle, owned);
+  });
+}
+
+export function presentStakeGateItem(battle, fallbackChainId) {
+  const left = battle?.participants?.[0] || {};
+  const right = battle?.participants?.[1] || {};
+  const nativeSymbol = challengeNativeSymbol(battle, fallbackChainId);
+  const stakeNative = Number(battle?.offeredStakeNative ?? battle?.stakeNative ?? 0) || 0;
+  return {
+    battleId: String(battle?.id || ""),
+    kind: "stake",
+    statusLabel: "CHALLENGE ACCEPTED",
+    kicker: "CHALLENGE ACCEPTED",
+    headlineLeft: challengeTicker(left),
+    verb: "VS",
+    headlineRight: challengeTicker(right),
+    nativeSymbol,
+    stakeNative,
+    durationLabel: challengeDurationLabel(battle?.offeredDurationHours || battle?.durationHours),
+    summary: `${challengeTicker(left)} vs ${challengeTicker(right)} · ${stakeNative} ${nativeSymbol} · PAY TO START`,
+  };
+}
+
+export function selectAutoPopupStake(stakes, pathname = "", store = notNowByPath) {
+  const rows = Array.isArray(stakes) ? stakes : [];
+  if (rows.length !== 1) return null;
+  const battle = rows[0];
+  if (isNotNow(battle, pathname, store)) return null;
+  return battle;
+}
+
 export function inboxIndicatorLabel(count) {
   const total = Math.max(0, Number(count) || 0);
   return `⚔ INCOMING CHALLENGES · ${total}`;

@@ -203,6 +203,7 @@ test("imported and native owners use the same cancel path", async () => {
 test("AUTO DEPLOY wiring preserves open/queue matching and the manual challenge path", () => {
   const battles = readSrc("../arenaBattles.js");
   const ui = readSrc("../../src/pages/command-center/CommandCenterBattles.tsx");
+  const inbox = readSrc("../../src/components/command-center/ChallengeInboxDialog.tsx");
   const client = readSrc("../../src/features/postgrad/apiClient.ts");
   const cancel = readSrc("./arenaAutoDeployCancel.js");
   const netlify = readSrc("../../netlify/functions/api.mjs");
@@ -224,9 +225,9 @@ test("AUTO DEPLOY wiring preserves open/queue matching and the manual challenge 
   assert.match(ui, /FindMatchPanel/);
   assert.match(ui, /setChallengeTarget\(tokenId\)/);
   assert.match(ui, /challengePostGradBattle/);
-  assert.match(ui, /acceptPostGradBattle/);
-  assert.match(ui, /counterPostGradBattle/);
-  assert.match(ui, /declinePostGradBattle/);
+  assert.match(inbox, /acceptPostGradBattle/);
+  assert.match(inbox, /counterPostGradBattle/);
+  assert.match(inbox, /declinePostGradBattle/);
   assert.match(ui, /item.origin === "import" \? "imported" : "graduated"/);
   assert.doesNotMatch(ui, /BattleCombatEffects/);
 

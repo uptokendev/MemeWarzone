@@ -176,8 +176,9 @@ test("Phase 12 challenge lifecycle keeps challenge, accept, counter, decline, ex
   assert.match(battles, /offered_stake_native/);
   assert.match(battles, /offered_duration_hours/);
   assert.match(battles, /state:\s*["']challenged["']/);
-  assert.match(beginFight, /const requireEscrow = escrowRequired\(chainId\)/);
-  assert.match(beginFight, /state:\s*requireEscrow \? ["']matched["'] : ["']live["']/);
+  assert.match(beginFight, /escrowRequired\(chainId\)/);
+  assert.match(beginFight, /state:\s*["']matched["']/);
+  assert.match(beginFight, /DEPOSIT_WINDOW_HOURS/);
   assert.match(battles, /state:\s*["']expired["']/);
   assert.match(battles, /readOnchainPool/);
   assert.match(battles, /escrowRequired/);

@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { BattleWallModule } from "@/components/arena/BattleWallModule";
 import { ChallengeInbox } from "@/components/arena/ChallengeInbox";
+import { ChallengeStakeGate } from "@/components/arena/ChallengeStakeGate";
 import { FocusedChallengePanel } from "@/components/arena/FocusedChallengePanel";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { WarzoneContent } from "@/components/warzone/WarzoneContent";
@@ -22,6 +23,7 @@ import { useBattleWallFocus } from "@/hooks/useBattleWallFocus";
 import type { BattleWallViewportReport } from "@/hooks/useBattleWallViewport";
 import { parseBattleDurationHours } from "@/lib/arena/battleDuration";
 import {
+  collectCreatorStakeGates,
   collectIncomingCreatorChallenges,
   creatorOwnedIdentityKeys,
   isChallengeParticipant,
@@ -116,6 +118,11 @@ export default function ArenaBattles() {
   const focusedChallenge = resolveFocusedChallengeBattle(focusedId, inAny, fetched);
   const ownedKeys = useMemo(() => creatorOwnedIdentityKeys(feed.creatorStatuses), [feed.creatorStatuses]);
   const showFocusedChallenge = Boolean(focusedChallenge && isChallengeParticipant(focusedChallenge, ownedKeys));
+  const showFocusedStake = Boolean(
+    focusedBattle &&
+      String(focusedBattle.state).toLowerCase() === "matched" &&
+      isChallengeParticipant(focusedBattle, ownedKeys),
+  );
   const focusStatus = focusedRouteStatus(focusedId, inFeed, fetched);
 
   useEffect(() => {
@@ -181,6 +188,10 @@ export default function ArenaBattles() {
     () => collectIncomingCreatorChallenges(feed.openForBattleQueue, feed.creatorStatuses, feedWallet.address),
     [feed.creatorStatuses, feed.openForBattleQueue, feedWallet.address],
   );
+  const stakeBattles = useMemo(
+    () => collectCreatorStakeGates(feed.openForBattleQueue, feed.creatorStatuses, feedWallet.address),
+    [feed.creatorStatuses, feed.openForBattleQueue, feedWallet.address],
+  );
 
   async function signChallenge(action: string, extraLines: string[]) {
     return signArenaWalletAction({
@@ -195,13 +206,9 @@ export default function ArenaBattles() {
 
   async function handleAcceptChallenge(battleId: string) {
     const auth = await signChallenge("arena_accept_battle", [`Battle: ${battleId}`]);
-    const result = await acceptPostGradBattle(battleId, auth);
+    await acceptPostGradBattle(battleId, auth);
     await feed.refreshFeed();
-    toast.success(
-      result?.battle?.state === "matched" || result?.escrowRequired
-        ? "Accepted. Pay your on-chain stake to start the fight."
-        : "Challenge accepted.",
-    );
+    toast.success("Challenge accepted. Pay your stake to start the fight.");
   }
 
   async function handleDeclineChallenge(battleId: string) {
@@ -311,6 +318,7 @@ export default function ArenaBattles() {
       <ChallengeInbox
         autoOpenSingle
         challenges={incomingChallenges}
+        stakeBattles={stakeBattles}
         statuses={feed.creatorStatuses}
         chainId={feedWallet.chainId}
         onAccept={handleAcceptChallenge}
@@ -328,6 +336,8 @@ export default function ArenaBattles() {
           onCounter={handleCounterChallenge}
         />
       ) : null}
+
+      {showFocusedStake && focusedBattle ? <ChallengeStakeGate battle={focusedBattle} chainId={feedWallet.chainId} /> : null}
 
       {focusedId && focusStatus === "unavailable" && !showFocusedChallenge ? (
         <div className="py-4 text-sm text-muted-foreground" data-battle-unavailable="true" role="status">
