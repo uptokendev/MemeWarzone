@@ -1,0 +1,132 @@
+name: Solana live authority PR gate
+on:
+  pull_request:
+    branches: [build/cross-chain-stabilization-rh-base]
+    paths: [.github/workflows/solana-live-authority-pr-gate.yml]
+permissions:
+  contents: read
+env:
+  PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+  SOLANA_VERSION: 1.18.26
+  ANCHOR_VERSION: 0.30.1
+  RUST_TOOLCHAIN: 1.79.0
+  IDL_RUST_TOOLCHAIN: nightly-2024-05-09
+  ANCHOR_PROVIDER_URL: http://127.0.0.1:8899
+  CARGO_INCREMENTAL: '0'
+jobs:
+  clean_room:
+    name: Clean room ${{ matrix.room }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix: {room: [A, B]}
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: '${{ github.event.pull_request.head.sha }}', fetch-depth: 1}
+      - name: Install frozen build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          d="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"; mkdir -p "$d"
+          curl -fL --retry 5 -sS -o /tmp/s.tar.bz2 "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/s.tar.bz2 -C "$d" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"; ln -sfn "$d" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          npm i -g --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+      - name: Build isolated candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -d target
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/room-${{ matrix.room }}"
+          rm -rf "$HOME/.cargo/registry/src" "$CARGO_TARGET_DIR" || true; mkdir -p "$CARGO_TARGET_DIR"
+          anchor build --program-name memewarzone_solana --no-idl
+          so="$CARGO_TARGET_DIR/deploy/memewarzone_solana.so"; test -s "$so"
+          sha256sum "$so" | tee /tmp/sha.txt; wc -c "$so" | tee /tmp/bytes.txt
+          mkdir -p out; cp "$so" out/memewarzone_solana.so; cp /tmp/sha.txt out/sha.txt; cp /tmp/bytes.txt out/bytes.txt
+      - uses: actions/upload-artifact@v4
+        with: {name: 'room-${{ matrix.room }}', path: out, retention-days: 3}
+  compare:
+    runs-on: ubuntu-latest
+    needs: clean_room
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {name: room-A, path: A}
+      - uses: actions/download-artifact@v4
+        with: {name: room-B, path: B}
+      - name: Compare rooms
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo ROOM_A; cat A/sha.txt A/bytes.txt
+          echo ROOM_B; cat B/sha.txt B/bytes.txt
+          cmp -s A/memewarzone_solana.so B/memewarzone_solana.so
+          echo DUAL_CLEAN_ROOM_MATCH=YES
+  live_and_golden:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: compare
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: '${{ github.event.pull_request.head.sha }}', fetch-depth: 0}
+      - uses: actions/setup-node@v4
+        with: {node-version: 22}
+      - uses: actions/download-artifact@v4
+        with: {name: room-A, path: roomA}
+      - name: Install runtime and IDL tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$IDL_RUST_TOOLCHAIN" --profile minimal
+          d="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"; mkdir -p "$d"
+          curl -fL --retry 5 -sS -o /tmp/s.tar.bz2 "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/s.tar.bz2 -C "$d" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"; ln -sfn "$d" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+          npm i -g --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+          npm install --prefix tests/solana --no-audit --no-fund
+          mkdir -p target/deploy target/idl "$HOME/.config/solana"
+          cp roomA/memewarzone_solana.so target/deploy/memewarzone_solana.so
+          (cd programs/memewarzone_solana && RUSTUP_TOOLCHAIN="$IDL_RUST_TOOLCHAIN" anchor idl build --out ../../target/idl/memewarzone_solana.json)
+          solana-keygen new --no-bip39-passphrase --silent --force --outfile "$HOME/.config/solana/id.json"
+          echo "ANCHOR_WALLET=$HOME/.config/solana/id.json" >> "$GITHUB_ENV"
+      - name: Re-read and dump live mainnet
+        shell: bash
+        run: |
+          set -euo pipefail
+          ok=''
+          for rpc in https://api.mainnet-beta.solana.com https://solana-rpc.publicnode.com https://rpc.ankr.com/solana; do
+            rm -f /tmp/live.json /tmp/live.so
+            if solana program show "$PROGRAM_ID" --url "$rpc" --output json >/tmp/live.json 2>/tmp/e && solana program dump "$PROGRAM_ID" /tmp/live.so --url "$rpc" 2>>/tmp/e && test -s /tmp/live.so; then ok="$rpc"; break; fi
+            cat /tmp/e || true
+          done
+          test -n "$ok"
+          echo LIVE_RPC="$ok"; cat /tmp/live.json
+          echo LIVE_SBF; sha256sum /tmp/live.so; wc -c /tmp/live.so
+          cp /tmp/live.so /tmp/live-mainnet.so
+          pd="$(node -e 'const x=require("/tmp/live.json");process.stdout.write(String(x.programdataAddress||x.programDataAddress||""))')"
+          au="$(node -e 'const x=require("/tmp/live.json");process.stdout.write(String(x.authority||x.upgradeAuthority||""))')"
+          echo LIVE_PROGRAMDATA="$pd"; echo LIVE_UPGRADE_AUTHORITY="$au"
+          echo 'PROVENANCE_SHA_CURRENT_TREE:'; liveSha="$(sha256sum /tmp/live.so|awk '{print $1}')"; git grep -n "$liveSha" HEAD || true
+          echo 'PROVENANCE_SHA_HISTORY:'; git log --all --oneline -S"$liveSha" -- . || true
+          echo 'PROVENANCE_PROGRAMDATA_CURRENT_TREE:'; git grep -n "$pd" HEAD || true
+          echo 'PROVENANCE_PROGRAMDATA_HISTORY:'; git log --all --oneline -S"$pd" -- . || true
+      - name: Candidate CREATE BUY SELL
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_create(){ rm -rf /tmp/c-ledger; solana-test-validator --reset --quiet --ledger /tmp/c-ledger --bpf-program "$PROGRAM_ID" target/deploy/memewarzone_solana.so >/tmp/c.log 2>&1 & p=$!; trap 'kill "$p" 2>/dev/null||true' RETURN; for i in $(seq 1 90); do solana cluster-version --url "$ANCHOR_PROVIDER_URL" >/dev/null 2>&1&&break; sleep 2; done; solana config set --url "$ANCHOR_PROVIDER_URL" --keypair "$ANCHOR_WALLET" >/dev/null; solana airdrop 100 >/dev/null; (cd tests/solana && ANCHOR_PROVIDER_URL="$ANCHOR_PROVIDER_URL" ANCHOR_WALLET="$ANCHOR_WALLET" npx mocha --timeout 1000000 v4-create-acceptance.cjs); kill "$p"||true; wait "$p"||true; trap - RETURN; }
+          run_trade(){ rm -rf /tmp/t-ledger; solana-test-validator --reset --quiet --ledger /tmp/t-ledger --bpf-program "$PROGRAM_ID" target/deploy/memewarzone_solana.so >/tmp/t.log 2>&1 & p=$!; trap 'kill "$p" 2>/dev/null||true' RETURN; for i in $(seq 1 90); do solana cluster-version --url "$ANCHOR_PROVIDER_URL" >/dev/null 2>&1&&break; sleep 2; done; solana config set --url "$ANCHOR_PROVIDER_URL" --keypair "$ANCHOR_WALLET" >/dev/null; solana airdrop 100 >/dev/null; (cd tests/solana && ANCHOR_PROVIDER_URL="$ANCHOR_PROVIDER_URL" ANCHOR_WALLET="$ANCHOR_WALLET" npx mocha --timeout 1000000 v4-lifecycle-acceptance.cjs --grep 'create → buy → buy → sell → buy → sell → close curve on the compiled SBF'); kill "$p"||true; wait "$p"||true; trap - RETURN; }
+          run_create; echo CANDIDATE_CREATE=PASS
+          run_trade; echo CANDIDATE_BUY=PASS; echo CANDIDATE_SELL=PASS
+      - name: Live dumped SBF CREATE BUY SELL
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp /tmp/live-mainnet.so target/deploy/memewarzone_solana.so
+          rm -rf /tmp/lc-ledger; solana-test-validator --reset --quiet --ledger /tmp/lc-ledger --bpf-program "$PROGRAM_ID" target/deploy/memewarzone_solana.so >/tmp/lc.log 2>&1 & p=$!; for i in $(seq 1 90); do solana cluster-version --url "$ANCHOR_PROVIDER_URL" >/dev/null 2>&1&&break; sleep 2; done; solana config set --url "$ANCHOR_PROVIDER_URL" --keypair "$ANCHOR_WALLET" >/dev/null; solana airdrop 100 >/dev/null; (cd tests/solana && ANCHOR_PROVIDER_URL="$ANCHOR_PROVIDER_URL" ANCHOR_WALLET="$ANCHOR_WALLET" npx mocha --timeout 1000000 v4-create-acceptance.cjs); kill "$p"||true; wait "$p"||true; echo LIVE_CREATE=PASS
+          rm -rf /tmp/lt-ledger; solana-test-validator --reset --quiet --ledger /tmp/lt-ledger --bpf-program "$PROGRAM_ID" target/deploy/memewarzone_solana.so >/tmp/lt.log 2>&1 & p=$!; for i in $(seq 1 90); do solana cluster-version --url "$ANCHOR_PROVIDER_URL" >/dev/null 2>&1&&break; sleep 2; done; solana config set --url "$ANCHOR_PROVIDER_URL" --keypair "$ANCHOR_WALLET" >/dev/null; solana airdrop 100 >/dev/null; (cd tests/solana && ANCHOR_PROVIDER_URL="$ANCHOR_PROVIDER_URL" ANCHOR_WALLET="$ANCHOR_WALLET" npx mocha --timeout 1000000 v4-lifecycle-acceptance.cjs --grep 'create → buy → buy → sell → buy → sell → close curve on the compiled SBF'); kill "$p"||true; wait "$p"||true; echo LIVE_BUY=PASS; echo LIVE_SELL=PASS
