@@ -90,8 +90,11 @@ jobs:
             db/migrations/20260827_000004_arena_battle_counter_offers.sql \
             db/migrations/20260827_000005_arena_battle_matched.sql \
             db/migrations/20260827_000006_arena_battle_duration.sql \
+            db/migrations/20260828_000007_arena_tournament_support.sql \
+            db/migrations/20260829_000001_arena_settle_idempotency.sql \
             db/migrations/20260902_000003_arena_battle_metrics.sql \
             db/migrations/20260903_000002_arena_battle_points_v2_settlement.sql \
+            db/migrations/20260903_000103_arena_tournament_battle_modes.sql \
             db/migrations/20260903_000104_arena_vote_boost_sponsorship_v1_foundation.sql \
             db/migrations/20260906_000005_arena_scoring_generation_lock.sql \
             db/migrations/20260906_000006_arena_battle_v3_runtime_activation.sql; do
@@ -193,8 +196,11 @@ jobs:
             db/migrations/20260827_000004_arena_battle_counter_offers.sql \
             db/migrations/20260827_000005_arena_battle_matched.sql \
             db/migrations/20260827_000006_arena_battle_duration.sql \
+            db/migrations/20260828_000007_arena_tournament_support.sql \
+            db/migrations/20260829_000001_arena_settle_idempotency.sql \
             db/migrations/20260902_000003_arena_battle_metrics.sql \
             db/migrations/20260903_000002_arena_battle_points_v2_settlement.sql \
+            db/migrations/20260903_000103_arena_tournament_battle_modes.sql \
             db/migrations/20260903_000104_arena_vote_boost_sponsorship_v1_foundation.sql \
             db/migrations/20260906_000005_arena_scoring_generation_lock.sql \
             db/migrations/20260906_000006_arena_battle_v3_runtime_activation.sql; do
