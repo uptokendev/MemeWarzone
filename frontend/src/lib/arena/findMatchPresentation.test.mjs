@@ -185,20 +185,23 @@ test("Find Match wiring only prefills the existing challenge and leaves stake/du
 
   assert.match(battles, /const \[stake, setStake\]/);
   assert.match(battles, /const \[durationHours, setDurationHours\]/);
-  assert.match(battles, /disabled=\{!canAct \|\| !challengeTarget\.trim\(\)\}/);
-  assert.match(battles, /onClick=\{\(\) => void handleChallenge\(\)\}/);
+  assert.match(battles, /ChallengeComposer/);
+  assert.match(battles, /onSend=\{\(\) => void handleChallenge\(\)\}/);
   assert.match(
     battles,
     /await challengePostGradBattle\(\{ tokenId, targetTokenId, chainId: Number\(chainId\), stakeNative: stakeAmount, durationHours, auth \}\)/,
   );
 
+  const composer = readSrc("../../components/arena/ChallengeComposer.tsx");
+  assert.match(composer, /SEND CHALLENGE/);
+  assert.match(composer, /data-send-challenge/);
   assert.match(preview, /Challenge anyway/);
   assert.match(preview, /Continue with challenge/);
   assert.match(preview, /OPEN_WAR_LABEL/);
   assert.match(preview, /NOT_PREVIEWED_LABEL/);
   assert.match(preview, /data-match-quality="open-war"/);
   assert.match(preview, /data-match-quality="not-previewed"/);
-  assert.match(battles, /onContinueWithChallenge/);
+  assert.match(composer, /MatchQualityPreview/);
   assert.doesNotMatch(preview, /challengePostGradBattle/);
   assert.match(client, /\/api\/arena\/battles\/matches/);
   assert.equal(OPEN_WAR_LABEL, "OPEN WAR — UNRANKED");
@@ -213,14 +216,16 @@ test("Find Match wiring only prefills the existing challenge and leaves stake/du
 
 test("accept/counter/decline behavior stays on the existing handlers", () => {
   const battles = readSrc("../../pages/command-center/CommandCenterBattles.tsx");
-  const carousel = readSrc("../../components/arena/CreatorChallengeCarousel.tsx");
+  const card = readSrc("../../components/arena/ChallengeActionCard.tsx");
+  const inbox = readSrc("../../components/arena/ChallengeInbox.tsx");
   assert.match(battles, /await acceptPostGradBattle\(battleId, auth\)/);
   assert.match(battles, /await declinePostGradBattle\(battleId, auth\)/);
   assert.match(battles, /await counterPostGradBattle\(battleId, amount, auth, hours\)/);
-  assert.match(battles, /CreatorChallengeCarousel/);
-  assert.match(carousel, />\s*ACCEPT\s*</);
-  assert.match(carousel, />\s*DECLINE\s*</);
-  assert.match(carousel, />\s*COUNTER\s*</);
+  assert.match(battles, /ChallengeInbox/);
+  assert.match(inbox, /ChallengeActionCard/);
+  assert.match(card, />\s*ACCEPT\s*</);
+  assert.match(card, />\s*DECLINE\s*</);
+  assert.match(card, />\s*COUNTER\s*</);
 });
 
 test("imported and native eligible tokens share the same Find Match panel", () => {

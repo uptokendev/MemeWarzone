@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { BattleWallModule } from "@/components/arena/BattleWallModule";
-import { CreatorChallengeCarousel } from "@/components/arena/CreatorChallengeCarousel";
+import { ChallengeInbox } from "@/components/arena/ChallengeInbox";
+import { FocusedChallengePanel } from "@/components/arena/FocusedChallengePanel";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { WarzoneContent } from "@/components/warzone/WarzoneContent";
 import { useWallet } from "@/contexts/WalletContext";
@@ -20,17 +21,23 @@ import { useArenaFeedBattleMetrics } from "@/hooks/useArenaFeedBattleMetrics";
 import { useBattleWallFocus } from "@/hooks/useBattleWallFocus";
 import type { BattleWallViewportReport } from "@/hooks/useBattleWallViewport";
 import { parseBattleDurationHours } from "@/lib/arena/battleDuration";
-import { collectIncomingCreatorChallenges } from "@/lib/arena/creatorChallengePresentation.mjs";
+import {
+  collectIncomingCreatorChallenges,
+  creatorOwnedIdentityKeys,
+  isChallengeParticipant,
+} from "@/lib/arena/creatorChallengePresentation.mjs";
 import { signArenaWalletAction } from "@/lib/arena/signArenaWalletAction";
 import {
   collectWallBattles,
   commitFocusedFetch,
   filterWallBattles,
+  findAnyBattleInFeed,
   findBattleInFeed,
   focusedRouteStatus,
   focusedWallFilterReset,
   mergeFocusedBattleForRoute,
   presentBattleWallModule,
+  resolveFocusedChallengeBattle,
   resolveFocusedWallBattle,
   shouldApplyFocusedWallReset,
   sortWallBattles,
@@ -104,7 +111,11 @@ export default function ArenaBattles() {
     setActiveRealtimeIds((current) => (sameIdList(current, next) ? current : next));
   }, [focusedId]);
   const inFeed = useMemo(() => findBattleInFeed(feed, focusedId), [feed, focusedId]);
+  const inAny = useMemo(() => findAnyBattleInFeed(feed, focusedId), [feed, focusedId]);
   const focusedBattle = resolveFocusedWallBattle(focusedId, inFeed, fetched);
+  const focusedChallenge = resolveFocusedChallengeBattle(focusedId, inAny, fetched);
+  const ownedKeys = useMemo(() => creatorOwnedIdentityKeys(feed.creatorStatuses), [feed.creatorStatuses]);
+  const showFocusedChallenge = Boolean(focusedChallenge && isChallengeParticipant(focusedChallenge, ownedKeys));
   const focusStatus = focusedRouteStatus(focusedId, inFeed, fetched);
 
   useEffect(() => {
@@ -115,7 +126,7 @@ export default function ArenaBattles() {
       return;
     }
     setFetched((prev) => (prev && String(prev.battleId) === focusedId ? prev : null));
-    if (inFeed) return;
+    if (inFeed || inAny) return;
     if (feed.loading) return;
     const controller = new AbortController();
     void fetchPostGradBattleDetails(focusedId, controller.signal)
@@ -131,7 +142,7 @@ export default function ArenaBattles() {
         setFetched(commitFocusedFetch(focusedId, null));
       });
     return () => controller.abort();
-  }, [focusedId, inFeed, feed.loading]);
+  }, [focusedId, inFeed, inAny, feed.loading]);
 
   useEffect(() => {
     if (!shouldApplyFocusedWallReset(appliedFocus.current, focusedId, focusedBattle)) return;
@@ -297,15 +308,27 @@ export default function ArenaBattles() {
         </div>
       </section>
 
-      <CreatorChallengeCarousel
+      <ChallengeInbox
         challenges={incomingChallenges}
+        statuses={feed.creatorStatuses}
         chainId={feedWallet.chainId}
         onAccept={handleAcceptChallenge}
         onDecline={handleDeclineChallenge}
         onCounter={handleCounterChallenge}
       />
 
-      {focusedId && focusStatus === "unavailable" ? (
+      {showFocusedChallenge && focusedChallenge ? (
+        <FocusedChallengePanel
+          battle={focusedChallenge}
+          ownedKeys={ownedKeys}
+          chainId={feedWallet.chainId}
+          onAccept={handleAcceptChallenge}
+          onDecline={handleDeclineChallenge}
+          onCounter={handleCounterChallenge}
+        />
+      ) : null}
+
+      {focusedId && focusStatus === "unavailable" && !showFocusedChallenge ? (
         <div className="py-4 text-sm text-muted-foreground" data-battle-unavailable="true" role="status">
           <div className="font-retro text-base text-foreground">Battle unavailable.</div>
           <p className="mt-1">This fight is private, missing, or not a public Battle Wall battle.</p>
