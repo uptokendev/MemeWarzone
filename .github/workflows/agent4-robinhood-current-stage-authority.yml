@@ -1,0 +1,49 @@
+name: Agent 4 Robinhood Current Stage Authority
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type DEPLOY_CHAIN_46630_CURRENT_STAGE to dispatch the approved RH46630 current-stage workflow'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  dispatch-approved-integration-workflow:
+    name: Dispatch approved RH46630 integration workflow
+    if: ${{ github.ref_name == 'main' }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TARGET_BRANCH: build/cross-chain-stabilization-rh-base
+      TARGET_SHA: c237d5a61c4d7b303a48cf09c146490b5b2f4894
+      TARGET_WORKFLOW: agent4-robinhood-current-stage-authority.yml
+      REQUIRED_CONFIRMATION: DEPLOY_CHAIN_46630_CURRENT_STAGE
+    steps:
+      - name: Verify approved integration authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ inputs.confirmation }}" = "$REQUIRED_CONFIRMATION"
+          actual_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${TARGET_BRANCH}" --jq '.object.sha')"
+          if [ "$actual_sha" != "$TARGET_SHA" ]; then
+            echo '::error::Approved integration authority moved; refusing RH46630 dispatch.'
+            exit 1
+          fi
+
+      - name: Dispatch protected integration workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg ref "$TARGET_BRANCH" \
+            --arg confirmation "$REQUIRED_CONFIRMATION" \
+            '{ref:$ref,inputs:{confirmation:$confirmation}}' \
+            | gh api \
+                --method POST \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/${TARGET_WORKFLOW}/dispatches" \
+                --input -
