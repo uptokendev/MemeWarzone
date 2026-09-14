@@ -111,9 +111,10 @@ create table if not exists public.market_stats (
   primary key(chain_id,campaign_address)
 );
 create table if not exists public.solana_fee_escrow_events (
+  id bigserial primary key,
   chain_id integer not null,tx_hash text not null,log_index integer not null,event_kind text not null,campaign_address text,escrow_address text,
-  weekly_raw numeric(78,0) not null default 0,monthly_raw numeric(78,0) not null default 0,recruiter_raw numeric(78,0) not null default 0,airdrop_raw numeric(78,0) not null default 0,squad_raw numeric(78,0) not null default 0,protocol_raw numeric(78,0) not null default 0,total_raw numeric(78,0) not null default 0,created_at timestamptz not null default now(),
-  primary key(chain_id,tx_hash,log_index,event_kind)
+  weekly_lamports numeric(78,0) not null default 0,monthly_lamports numeric(78,0) not null default 0,recruiter_lamports numeric(78,0) not null default 0,airdrop_lamports numeric(78,0) not null default 0,squad_lamports numeric(78,0) not null default 0,protocol_lamports numeric(78,0) not null default 0,total_lamports numeric(78,0) not null default 0,
+  created_at timestamptz not null default now(),unique(chain_id,tx_hash,log_index,event_kind)
 );
 create table if not exists public.solana_fee_escrow_accruals (
   chain_id integer not null,campaign_address text not null,escrow_address text,init_status text,init_signature text,
@@ -121,7 +122,4 @@ create table if not exists public.solana_fee_escrow_accruals (
   weekly_flushed numeric(78,0) not null default 0,monthly_flushed numeric(78,0) not null default 0,recruiter_flushed numeric(78,0) not null default 0,airdrop_flushed numeric(78,0) not null default 0,squad_flushed numeric(78,0) not null default 0,protocol_flushed numeric(78,0) not null default 0,
   first_accrued_at timestamptz,last_accrued_at timestamptz,last_flush_at timestamptz,last_flush_signature text,flush_status text,updated_at timestamptz not null default now(),
   primary key(chain_id,campaign_address)
-);
-create table if not exists public.solana_fee_escrow_init_queue (
-  chain_id integer not null,campaign_address text not null,status text not null default 'queued',attempts integer not null default 0,last_error text,next_attempt_at timestamptz,created_at timestamptz not null default now(),updated_at timestamptz not null default now(),primary key(chain_id,campaign_address)
 );
