@@ -86,15 +86,9 @@ jobs:
           DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role; END IF; END $$;
           SQL
           for f in \
-            db/migrations/002_social.sql \
-            db/migrations/003_indexer.sql \
-            db/migrations/20260129_000001_league.sql \
-            realtime-indexer/SUPABASE_SCHEMA_FIX.sql \
             frontend/db/migrations/20260628_security_engine_schema.sql \
             db/migrations/20260730_000002_creator_funding_indexer.sql \
             db/migrations/20260826_000001_arena_identity_schema.sql \
-            db/migrations/202607290001_war_trade_room_market_continuity_foundation.sql \
-            db/migrations/20260902_000001_robinhood_generic_market_pairs.sql \
             db/migrations/20260827_000003_arena_league_scorecard.sql \
             db/migrations/20260827_000004_arena_battle_counter_offers.sql \
             db/migrations/20260827_000005_arena_battle_matched.sql \
@@ -102,7 +96,6 @@ jobs:
             db/migrations/20260828_000007_arena_tournament_support.sql \
             db/migrations/20260829_000001_arena_settle_idempotency.sql \
             db/migrations/20260902_000003_arena_battle_metrics.sql \
-            db/migrations/20260902_000004_arena_battle_v2_corrections.sql \
             db/migrations/20260903_000002_arena_battle_points_v2_settlement.sql \
             db/migrations/20260903_000103_arena_tournament_battle_modes.sql \
             db/migrations/20260903_000104_arena_vote_boost_sponsorship_v1_foundation.sql \
@@ -111,6 +104,18 @@ jobs:
               echo "apply=$f"
               psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
           done
+          # Current settlement code writes the columns introduced by the production
+          # Battle V2 correction migration. That migration also rebuilds shared
+          # market views and is not clean-room replayable without unrelated WTR
+          # history, so the isolated certification DB projects only its additive
+          # audit columns. Production migrations themselves remain untouched.
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          ALTER TABLE public.arena_battle_volume_audit
+            ADD COLUMN IF NOT EXISTS usd_counted numeric NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS quote_asset_type text,
+            ADD COLUMN IF NOT EXISTS quote_token_address text,
+            ADD COLUMN IF NOT EXISTS valuation_source text;
+          SQL
       - name: Require masked rotated BSC97 RPC secret
         shell: bash
         run: |
@@ -210,15 +215,9 @@ jobs:
           DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='service_role') THEN CREATE ROLE service_role; END IF; END $$;
           SQL
           for f in \
-            db/migrations/002_social.sql \
-            db/migrations/003_indexer.sql \
-            db/migrations/20260129_000001_league.sql \
-            realtime-indexer/SUPABASE_SCHEMA_FIX.sql \
             frontend/db/migrations/20260628_security_engine_schema.sql \
             db/migrations/20260730_000002_creator_funding_indexer.sql \
             db/migrations/20260826_000001_arena_identity_schema.sql \
-            db/migrations/202607290001_war_trade_room_market_continuity_foundation.sql \
-            db/migrations/20260902_000001_robinhood_generic_market_pairs.sql \
             db/migrations/20260827_000003_arena_league_scorecard.sql \
             db/migrations/20260827_000004_arena_battle_counter_offers.sql \
             db/migrations/20260827_000005_arena_battle_matched.sql \
@@ -226,7 +225,6 @@ jobs:
             db/migrations/20260828_000007_arena_tournament_support.sql \
             db/migrations/20260829_000001_arena_settle_idempotency.sql \
             db/migrations/20260902_000003_arena_battle_metrics.sql \
-            db/migrations/20260902_000004_arena_battle_v2_corrections.sql \
             db/migrations/20260903_000002_arena_battle_points_v2_settlement.sql \
             db/migrations/20260903_000103_arena_tournament_battle_modes.sql \
             db/migrations/20260903_000104_arena_vote_boost_sponsorship_v1_foundation.sql \
@@ -235,6 +233,13 @@ jobs:
               echo "apply=$f"
               psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
           done
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 <<'SQL'
+          ALTER TABLE public.arena_battle_volume_audit
+            ADD COLUMN IF NOT EXISTS usd_counted numeric NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS quote_asset_type text,
+            ADD COLUMN IF NOT EXISTS quote_token_address text,
+            ADD COLUMN IF NOT EXISTS valuation_source text;
+          SQL
       - name: Materialize governed devnet identities
         shell: bash
         run: |
