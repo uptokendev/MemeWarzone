@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/agent3-arena-money-v2-devnet-reread.yml'
       - 'frontend/scripts/agent3-tournament-only-solana-devnet.mjs'
+      - 'frontend/scripts/agent3-tournament-only-bsc97.mjs'
   workflow_dispatch:
 
 permissions:
@@ -23,13 +24,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Prove source authority and acceptance-only delta
         shell: bash
         run: |
           set -euo pipefail
           git merge-base --is-ancestor "$SOURCE_AUTHORITY" HEAD
           git diff --name-only "$SOURCE_AUTHORITY"...HEAD | tee /tmp/agent3-delta.txt
-          test "$(grep -Ev '^(\.github/workflows/agent3-tournament-destructive-retry\.yml|\.github/workflows/agent3-arena-money-v2-devnet-reread\.yml|frontend/scripts/agent3-tournament-only-solana-devnet\.mjs)$' /tmp/agent3-delta.txt | wc -l)" -eq 0
+          test "$(grep -Ev '^(\.github/workflows/agent3-tournament-destructive-retry\.yml|\.github/workflows/agent3-arena-money-v2-devnet-reread\.yml|frontend/scripts/agent3-tournament-only-solana-devnet\.mjs|frontend/scripts/agent3-tournament-only-bsc97\.mjs)$' /tmp/agent3-delta.txt | wc -l)" -eq 0
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -68,6 +70,47 @@ jobs:
           path: reports/agent3-tournament-runtime.json
           if-no-files-found: error
 
+  bsc97-tournament-money:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: testnet-certification
+    env:
+      BSC_TESTNET_RPC_URL: ${{ secrets.BSC_TESTNET_RPC_URL }}
+      BSC_TESTNET_PRIVATE_KEY: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
+      EVM_TESTNET_PRIVATE_KEY: ${{ secrets.EVM_TESTNET_PRIVATE_KEY }}
+      AGENT3_TOURNAMENT_BSC97_OUT: reports/agent3-tournament-bsc97.json
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Prove source authority and acceptance-only delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$SOURCE_AUTHORITY" HEAD
+          git diff --name-only "$SOURCE_AUTHORITY"...HEAD | tee /tmp/agent3-delta.txt
+          test "$(grep -Ev '^(\.github/workflows/agent3-tournament-destructive-retry\.yml|\.github/workflows/agent3-arena-money-v2-devnet-reread\.yml|frontend/scripts/agent3-tournament-only-solana-devnet\.mjs|frontend/scripts/agent3-tournament-only-bsc97\.mjs)$' /tmp/agent3-delta.txt | wc -l)" -eq 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Execute Tournament-only BSC97 destructive money acceptance
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          node scripts/agent3-tournament-only-bsc97.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent3-tournament-bsc97
+          path: frontend/reports/agent3-tournament-bsc97.json
+          if-no-files-found: error
+
   solana-devnet-tournament-money:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -80,13 +123,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - name: Prove source authority and acceptance-only delta
         shell: bash
         run: |
           set -euo pipefail
           git merge-base --is-ancestor "$SOURCE_AUTHORITY" HEAD
           git diff --name-only "$SOURCE_AUTHORITY"...HEAD | tee /tmp/agent3-delta.txt
-          test "$(grep -Ev '^(\.github/workflows/agent3-tournament-destructive-retry\.yml|\.github/workflows/agent3-arena-money-v2-devnet-reread\.yml|frontend/scripts/agent3-tournament-only-solana-devnet\.mjs)$' /tmp/agent3-delta.txt | wc -l)" -eq 0
+          test "$(grep -Ev '^(\.github/workflows/agent3-tournament-destructive-retry\.yml|\.github/workflows/agent3-arena-money-v2-devnet-reread\.yml|frontend/scripts/agent3-tournament-only-solana-devnet\.mjs|frontend/scripts/agent3-tournament-only-bsc97\.mjs)$' /tmp/agent3-delta.txt | wc -l)" -eq 0
       - uses: actions/setup-node@v4
         with:
           node-version: 20
