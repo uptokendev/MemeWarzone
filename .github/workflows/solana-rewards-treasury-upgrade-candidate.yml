@@ -1,0 +1,235 @@
+name: Solana Rewards Treasury Upgrade Candidate
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - Anchor.toml
+      - Cargo.toml
+      - Cargo.lock
+      - programs/mwz_rewards_treasury/**
+      - frontend/api/lib/solanaRewardLane.js
+      - realtime-indexer/src/jobs/publishRecruiterSettlementRoot.ts
+      - .github/workflows/solana-rewards-treasury-upgrade-candidate.yml
+  workflow_dispatch:
+
+concurrency:
+  group: solana-rewards-upgrade-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  ANCHOR_VERSION: 0.30.1
+  SOLANA_VERSION: 1.18.26
+  RUST_TOOLCHAIN: 1.79.0
+  IDL_RUST_TOOLCHAIN: nightly-2024-05-09
+  EXPECTED_PROGRAM_ID: 2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX
+  CARGO_NET_RETRY: 10
+
+jobs:
+  rewards-upgrade-candidate:
+    name: Build and certify rewards treasury
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Verify same program ID and final one-sweep source boundary
+        shell: bash
+        run: |
+          grep -F "mwz_rewards_treasury = \"$EXPECTED_PROGRAM_ID\"" Anchor.toml
+          grep -F "declare_id!(\"$EXPECTED_PROGRAM_ID\")" programs/mwz_rewards_treasury/src/lib.rs
+
+          grep -F "pub struct RewardsConfig" programs/mwz_rewards_treasury/src/lib.rs
+          grep -F "pub const SIZE: usize = 32 + 1 + 1 + 1 + 1;" programs/mwz_rewards_treasury/src/lib.rs
+
+          grep -F "pub struct InitializeLanesDeprecated" programs/mwz_rewards_treasury/src/lib.rs
+          grep -F "pub fn initialize_lanes_v2_primary" programs/mwz_rewards_treasury/src/lib.rs
+          grep -F "pub fn initialize_lanes_v2_secondary" programs/mwz_rewards_treasury/src/lib.rs
+          grep -F "pub struct InitializeLanesV2Primary" programs/mwz_rewards_treasury/src/lib.rs
+          grep -F "pub struct InitializeLanesV2Secondary" programs/mwz_rewards_treasury/src/lib.rs
+
+          grep -F "pub mod arena_final;" programs/mwz_rewards_treasury/src/lib.rs
+          grep -F "pub use arena_final::*;" programs/mwz_rewards_treasury/src/lib.rs
+          if grep -Fq "pub use arena::*;" programs/mwz_rewards_treasury/src/lib.rs; then
+            echo "Legacy Arena module is still exported" >&2
+            exit 1
+          fi
+
+          for instruction in set_recruiter_batch_root claim_recruiter set_squad_batch_root claim_squad; do
+            grep -F "pub fn $instruction" programs/mwz_rewards_treasury/src/lib.rs
+          done
+
+          grep -F "DeprecatedInstruction" programs/mwz_rewards_treasury/src/arena_final.rs
+          for instruction in open_battle_pool open_tournament_pool deposit_stake donate_support deposit_buy_in resolve_pool refund_buy_in; do
+            grep -F "pub fn ${instruction}_handler" programs/mwz_rewards_treasury/src/arena_final.rs
+          done
+
+          for instruction in \
+            open_battle_pool_v2 open_tournament_pool_v2 activate_tournament_pool_v2 \
+            deposit_stake_v2 donate_support_v2 close_support_v2 deposit_buy_in_v2 \
+            deposit_prize_boost_v2 resolve_pool_v2 cancel_pool_v2 refund_buy_in_v2 refund_prize_boost_v2; do
+            grep -F "pub fn $instruction" programs/mwz_rewards_treasury/src/lib.rs
+          done
+
+          for instruction in \
+            initialize_arena set_arena_resolver set_arena_receivers set_arena_pause \
+            settle_expired_pool claim_winner claim_protocol claim_mwl claim_charity refund_stake; do
+            grep -F "pub fn $instruction" programs/mwz_rewards_treasury/src/lib.rs
+          done
+
+          for state in ArenaConfig ArenaPool ArenaVault ArenaBuyInReceipt ArenaBoostReceipt ArenaClaimReceipt ArenaRefundReceipt; do
+            grep -F "pub struct $state" programs/mwz_rewards_treasury/src/arena_final.rs
+          done
+
+          for invariant in \
+            ARENA_PROTOCOL_BPS ARENA_MWL_BPS MWZ_ARENA_RESOLVE_V2 MWZ_ARENA_CANCEL_V1 \
+            required_stake_a required_stake_b deposited_stake_a deposited_stake_b \
+            support_deadline support_closed prize_boost_total asset_a asset_b outcome_hash \
+            entry_asset entry_count funding_id validate_tournament_winner_receipt arena_cancel_message_v1; do
+            grep -F "$invariant" programs/mwz_rewards_treasury/src/arena_final.rs
+          done
+          grep -F "require!(pool.entry_count >= 2" programs/mwz_rewards_treasury/src/arena_final.rs
+          grep -F "require!(pool.state == ARENA_STATE_OPEN, ArenaError::InvalidState);" programs/mwz_rewards_treasury/src/arena_final.rs
+
+      - name: Install Rust toolchains
+        shell: bash
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup toolchain install "$IDL_RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+
+      - name: Install Solana CLI
+        shell: bash
+        run: |
+          release_dir="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
+          mkdir -p "$release_dir"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error \
+            --output /tmp/solana-release.tar.bz2 \
+            "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"
+          ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Install Anchor CLI
+        run: npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+
+      - name: Remove local lockfiles
+        run: rm -f Cargo.lock programs/mwz_rewards_treasury/Cargo.lock
+
+      - name: Build exact rewards treasury SBF
+        shell: bash
+        run: anchor build --program-name mwz_rewards_treasury --no-idl 2>&1 | tee /tmp/mwz-rewards-build.log | tail -n 220
+
+      - name: Reject hidden SBF stack overflow diagnostics
+        shell: bash
+        run: |
+          if grep -E "Stack offset .* exceeded max offset|stack frame.*exceed" /tmp/mwz-rewards-build.log; then
+            echo "SBF stack diagnostic detected" >&2
+            exit 1
+          fi
+
+      - name: Generate rewards treasury IDL
+        shell: bash
+        working-directory: programs/mwz_rewards_treasury
+        env:
+          RUSTUP_TOOLCHAIN: ${{ env.IDL_RUST_TOOLCHAIN }}
+        run: |
+          mkdir -p ../../target/idl
+          anchor idl build \
+            --out ../../target/idl/mwz_rewards_treasury.json \
+            2>&1 | tail -n 260
+
+      - name: Verify artifact and final V2 IDL instructions
+        shell: bash
+        run: |
+          test -s target/deploy/mwz_rewards_treasury.so
+          test -s target/idl/mwz_rewards_treasury.json
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const idl = JSON.parse(fs.readFileSync('target/idl/mwz_rewards_treasury.json', 'utf8'));
+          const address = String(idl.address || idl.metadata?.address || '');
+          if (address && address !== process.env.EXPECTED_PROGRAM_ID) {
+            throw new Error(`IDL program ID mismatch: ${address}`);
+          }
+          const names = new Set((idl.instructions || []).map((ix) => String(ix.name)));
+          const required = [
+            ['initialize_lanes_v2_primary','initializeLanesV2Primary'],
+            ['initialize_lanes_v2_secondary','initializeLanesV2Secondary'],
+            ['set_recruiter_batch_root','setRecruiterBatchRoot'],
+            ['claim_recruiter','claimRecruiter'],
+            ['set_squad_batch_root','setSquadBatchRoot'],
+            ['claim_squad','claimSquad'],
+            ['initialize_arena','initializeArena'],
+            ['set_arena_resolver','setArenaResolver'],
+            ['set_arena_receivers','setArenaReceivers'],
+            ['set_arena_pause','setArenaPause'],
+            ['open_battle_pool_v2','openBattlePoolV2'],
+            ['open_tournament_pool_v2','openTournamentPoolV2'],
+            ['activate_tournament_pool_v2','activateTournamentPoolV2'],
+            ['deposit_stake_v2','depositStakeV2'],
+            ['donate_support_v2','donateSupportV2'],
+            ['close_support_v2','closeSupportV2'],
+            ['deposit_buy_in_v2','depositBuyInV2'],
+            ['deposit_prize_boost_v2','depositPrizeBoostV2'],
+            ['resolve_pool_v2','resolvePoolV2'],
+            ['cancel_pool_v2','cancelPoolV2'],
+            ['settle_expired_pool','settleExpiredPool'],
+            ['claim_winner','claimWinner'],
+            ['claim_protocol','claimProtocol'],
+            ['claim_mwl','claimMwl'],
+            ['claim_charity','claimCharity'],
+            ['refund_stake','refundStake'],
+            ['refund_buy_in_v2','refundBuyInV2'],
+            ['refund_prize_boost_v2','refundPrizeBoostV2'],
+          ];
+          for (const alternatives of required) {
+            if (!alternatives.some((name) => names.has(name))) throw new Error(`IDL missing ${alternatives[0]}`);
+          }
+          const accounts = new Set((idl.accounts || []).map((account) => String(account.name)));
+          for (const alternatives of [
+            ['ArenaConfig','arenaConfig'],
+            ['ArenaPool','arenaPool'],
+            ['ArenaVault','arenaVault'],
+            ['ArenaBuyInReceipt','arenaBuyInReceipt'],
+            ['ArenaBoostReceipt','arenaBoostReceipt'],
+            ['ArenaClaimReceipt','arenaClaimReceipt'],
+            ['ArenaRefundReceipt','arenaRefundReceipt'],
+          ]) {
+            if (!alternatives.some((name) => accounts.has(name))) throw new Error(`IDL missing account ${alternatives[0]}`);
+          }
+          console.log('Rewards treasury IDL contains stack-safe rewards bootstrap plus final Arena V2 custody surface.');
+          NODE
+
+      - name: Test rewards treasury and final Arena invariants
+        run: cargo test -p mwz_rewards_treasury --lib
+
+      - name: Record candidate hashes
+        shell: bash
+        run: |
+          sha256sum target/deploy/mwz_rewards_treasury.so target/idl/mwz_rewards_treasury.json | tee rewards-treasury-sha256.txt
+          printf 'program_id=%s\ncommit=%s\n' "$EXPECTED_PROGRAM_ID" "${{ github.event.pull_request.head.sha || github.sha }}" > rewards-treasury-candidate.txt
+
+      - name: Upload upgrade candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: mwz-rewards-treasury-upgrade-${{ github.event.pull_request.head.sha || github.sha }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            target/deploy/mwz_rewards_treasury.so
+            target/idl/mwz_rewards_treasury.json
+            rewards-treasury-sha256.txt
+            rewards-treasury-candidate.txt
