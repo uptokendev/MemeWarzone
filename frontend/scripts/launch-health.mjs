@@ -1,4 +1,5 @@
 import pg from "pg";
+import { pathToFileURL } from "node:url";
 
 const { Pool } = pg;
 const TIMEOUT_MS = Math.max(1000, Number(process.env.LAUNCH_HEALTH_RPC_TIMEOUT_MS || 5000));
@@ -208,7 +209,8 @@ async function main() {
   if (!snapshot.db.ready || !rpcHealthy || snapshot.db.reconciliationErrors === null) process.exitCode = 1;
 }
 
-if (import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : "";
+if (import.meta.url === invokedPath) {
   main().catch(() => {
     process.stdout.write("launch_health=FAILED\n");
     process.exitCode = 1;
