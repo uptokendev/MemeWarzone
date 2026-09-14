@@ -71,7 +71,7 @@ test('retry returns existing identical row and does not duplicate', async () => 
   assert.equal(calls, 2);
 });
 
-test('replay with same tx but different source or amount is rejected', async () => {
+test('replay with same tx but different source is rejected', async () => {
   const db = {
     async query(sql) {
       if (sql.includes('insert into')) return { rows: [] };
@@ -79,4 +79,14 @@ test('replay with same tx but different source or amount is rejected', async () 
     },
   };
   await assert.rejects(() => insertMwlProvenance(db, bsc), /MWL_REPLAY_SOURCE_MISMATCH/);
+});
+
+test('replay with same tx but different amount is rejected', async () => {
+  const db = {
+    async query(sql) {
+      if (sql.includes('insert into')) return { rows: [] };
+      return { rows: [{ source_id: bsc.sourceId, gross_amount_wei: '999', monthly_amount_wei: '599', quarterly_amount_wei: '400' }] };
+    },
+  };
+  await assert.rejects(() => insertMwlProvenance(db, bsc), /MWL_REPLAY_AMOUNT_MISMATCH/);
 });
