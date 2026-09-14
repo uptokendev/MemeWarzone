@@ -94,6 +94,8 @@ jobs:
       - uses: actions/setup-node@v4
         with: {node-version: 22, cache: npm}
       - run: npm ci --no-audit --no-fund
+      - name: Compile authoritative Gen-4 / Gen-3 artifacts
+        run: npx hardhat compile
       - name: Read authoritative RH46630 state only
         run: node scripts/rh46630-native-lifecycle-readonly-diagnostic.mjs
 
