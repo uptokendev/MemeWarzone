@@ -1,0 +1,44 @@
+name: Agent 5 Launch Health Ops
+
+on:
+  pull_request:
+    paths:
+      - "frontend/scripts/launch-health.mjs"
+      - "frontend/scripts/launch-health.test.mjs"
+      - "docs/operations/launch-day-rollback-drill.md"
+      - ".github/workflows/agent5-launch-health-ops.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  launch-health-static:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend --ignore-scripts
+      - name: Syntax check
+        run: node --check frontend/scripts/launch-health.mjs
+      - name: Unit tests
+        run: node --test frontend/scripts/launch-health.test.mjs
+      - name: Secret-output guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -En 'console\.(log|error|warn).*DATABASE_URL|process\.stdout.*DATABASE_URL|console\.(log|error|warn).*RPC_URL|process\.stdout.*RPC_URL|console\.(log|error|warn).*PRIVATE_KEY|process\.stdout.*PRIVATE_KEY' frontend/scripts/launch-health.mjs
+      - name: Rollback drill contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q "Frontend rollback" docs/operations/launch-day-rollback-drill.md
+          grep -q "API rollback" docs/operations/launch-day-rollback-drill.md
+          grep -q "Indexer restart from persisted cursor" docs/operations/launch-day-rollback-drill.md
+          grep -q "reconciliation error count before and after" docs/operations/launch-day-rollback-drill.md
