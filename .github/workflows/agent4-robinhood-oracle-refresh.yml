@@ -1,0 +1,20 @@
+name: Agent 4 Robinhood Testnet Oracle Refresh Registration
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  registration-only:
+    name: Registration-only default-branch stub
+    if: ${{ github.ref_name == 'main' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse direct execution on main
+        shell: bash
+        run: |
+          echo 'This default-branch file exists only so GitHub registers the RH46630 oracle-refresh workflow path.'
+          echo 'Use Agent 4 Robinhood Testnet Oracle Refresh Dispatcher instead.'
+          exit 1
