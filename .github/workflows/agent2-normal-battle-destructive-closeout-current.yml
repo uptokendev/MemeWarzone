@@ -77,10 +77,22 @@ jobs:
           npm ci
           npm ci --prefix frontend --no-audit --no-fund
       - name: Bootstrap authoritative Arena DB schema
+        shell: bash
         run: |
-          node scripts/arenaTournamentModeSchemaGate.mjs
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260906_000005_arena_scoring_generation_lock.sql
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260906_000006_arena_battle_v3_runtime_activation.sql
+          set -euo pipefail
+          for f in \
+            db/migrations/20260826_000001_arena_identity_schema.sql \
+            db/migrations/20260827_000004_arena_battle_counter_offers.sql \
+            db/migrations/20260827_000005_arena_battle_matched.sql \
+            db/migrations/20260827_000006_arena_battle_duration.sql \
+            db/migrations/20260902_000003_arena_battle_metrics.sql \
+            db/migrations/20260903_000002_arena_battle_points_v2_settlement.sql \
+            db/migrations/20260903_000104_arena_vote_boost_sponsorship_v1_foundation.sql \
+            db/migrations/20260906_000005_arena_scoring_generation_lock.sql \
+            db/migrations/20260906_000006_arena_battle_v3_runtime_activation.sql; do
+              echo "apply=$f"
+              psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
+          done
       - name: Execute real BSC97 two-side market exercise
         shell: bash
         run: |
@@ -163,10 +175,22 @@ jobs:
           npm install --prefix tests/solana --no-audit --no-fund
           npm ci --prefix frontend --no-audit --no-fund
       - name: Bootstrap authoritative Arena DB schema
+        shell: bash
         run: |
-          node scripts/arenaTournamentModeSchemaGate.mjs
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260906_000005_arena_scoring_generation_lock.sql
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260906_000006_arena_battle_v3_runtime_activation.sql
+          set -euo pipefail
+          for f in \
+            db/migrations/20260826_000001_arena_identity_schema.sql \
+            db/migrations/20260827_000004_arena_battle_counter_offers.sql \
+            db/migrations/20260827_000005_arena_battle_matched.sql \
+            db/migrations/20260827_000006_arena_battle_duration.sql \
+            db/migrations/20260902_000003_arena_battle_metrics.sql \
+            db/migrations/20260903_000002_arena_battle_points_v2_settlement.sql \
+            db/migrations/20260903_000104_arena_vote_boost_sponsorship_v1_foundation.sql \
+            db/migrations/20260906_000005_arena_scoring_generation_lock.sql \
+            db/migrations/20260906_000006_arena_battle_v3_runtime_activation.sql; do
+              echo "apply=$f"
+              psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
+          done
       - name: Materialize governed devnet identities
         shell: bash
         run: |
