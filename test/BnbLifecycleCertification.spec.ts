@@ -375,8 +375,11 @@ describe("BNB lifecycle certification (Gate D local source-head evidence)", func
     const campaign = await ethers.getContractAt("LaunchCampaign", created.campaign);
     const remaining = (await campaign.curveSupply()) - (await campaign.sold());
     const crossingCost = await campaign.quoteBuyExactTokens(remaining);
-    await expect(
-      campaign.connect(buyer).buyExactTokens(remaining, crossingCost, { value: crossingCost }),
-    ).to.be.revertedWithCustomError(locker, "InvalidTradingFee");
+    await campaign.connect(buyer).buyExactTokens(remaining, crossingCost, { value: crossingCost });
+    expect(await campaign.graduationPending()).to.equal(true);
+    expect(await campaign.launched()).to.equal(false);
+    await expect(campaign.connect(buyer).graduateIfEligible(0, 0)).to.be.revertedWithCustomError(locker, "InvalidTradingFee");
+    expect(await campaign.graduationPending()).to.equal(true);
+    expect(await campaign.launched()).to.equal(false);
   });
 });

@@ -255,9 +255,6 @@ describe("BNB BASIC graduation market", function () {
     const { campaign, token } = await createNativeCampaign(core);
 
     await (await campaign.connect(core.buyer).buyExactBnb(0, { value: ethers.parseEther("0.11") })).wait();
-    expect(await campaign.graduationPending()).to.equal(true);
-    expect(await campaign.launched()).to.equal(false);
-    await (await campaign.connect(core.buyer).graduateIfEligible(0, 0)).wait();
     expect(await campaign.launched()).to.equal(true);
     expect(await campaign.graduationPending()).to.equal(false);
 
