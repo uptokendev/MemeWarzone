@@ -7,7 +7,8 @@ import {
   SystemProgram,
   Transaction,
   TransactionInstruction,
-  sendAndConfirmTransaction,
+  TransactionMessage,
+  VersionedTransaction,
 } from "@solana/web3.js";
 import type { Pool } from "pg";
 
@@ -151,15 +152,44 @@ async function resolvePositionNftAccount(
   return pda;
 }
 
-async function sendClaimTransaction(
+async function sendServerV0Instructions(
   connection: Connection,
-  transaction: Transaction,
+  instructions: TransactionInstruction[],
   operator: Keypair,
+  label: string,
 ): Promise<string> {
+  const compile = async () => {
+    const latest = await connection.getLatestBlockhash("confirmed");
+    const message = new TransactionMessage({
+      payerKey: operator.publicKey,
+      recentBlockhash: latest.blockhash,
+      instructions,
+    }).compileToV0Message();
+    const transaction = new VersionedTransaction(message);
+    transaction.sign([operator]);
+    return { transaction, latest };
+  };
+
   try {
-    return await sendAndConfirmTransaction(connection, transaction as any, [operator], {
+    const simulated = await compile();
+    const simulation = await connection.simulateTransaction(simulated.transaction, {
       commitment: "confirmed",
+      sigVerify: true,
+      replaceRecentBlockhash: false,
     });
+    if (simulation.value.err) {
+      const logs = simulation.value.logs?.slice(-12).join(" | ") || "";
+      throw new Error(`${label} simulation failed: ${JSON.stringify(simulation.value.err)}${logs ? ` | ${logs}` : ""}`);
+    }
+
+    const final = await compile();
+    const signature = await connection.sendRawTransaction(final.transaction.serialize(), {
+      skipPreflight: false,
+      maxRetries: 3,
+    });
+    const confirmation = await connection.confirmTransaction({ signature, ...final.latest }, "confirmed");
+    if (confirmation.value.err) throw new Error(`${label} failed on-chain: ${JSON.stringify(confirmation.value.err)}`);
+    return signature;
   } catch (error: any) {
     let logs = "";
     try {
@@ -173,14 +203,20 @@ async function sendClaimTransaction(
       // ignore log fetch failures
     }
     throw Object.assign(
-      new Error(
-        logs
-          ? `Meteora claim failed: ${String(error?.message || error)} | ${logs}`
-          : `Meteora claim failed: ${String(error?.message || error)}`,
-      ),
+      new Error(logs ? `${label} failed: ${String(error?.message || error)} | ${logs}` : `${label} failed: ${String(error?.message || error)}`),
       { status: 500 },
     );
   }
+}
+
+async function sendClaimTransaction(
+  connection: Connection,
+  transaction: Transaction,
+  operator: Keypair,
+): Promise<string> {
+  const instructions = Array.from(transaction.instructions || []);
+  if (!instructions.length) throw Object.assign(new Error("Meteora claim transaction contained no instructions."), { status: 500 });
+  return sendServerV0Instructions(connection, instructions, operator, "Meteora claim");
 }
 
 function splitAmounts(total: bigint): { creator: bigint; protocol: bigint } {
@@ -333,9 +369,7 @@ export async function listSolanaLpFees(input: {
   ];
   if (input.campaign) {
     params.push(input.campaign);
-    clauses.push(
-      `(c.campaign_address = $${params.length} or c.token_address = $${params.length} or lower(c.campaign_address) = lower($${params.length}))`,
-    );
+    clauses.push(`(c.campaign_address = $${params.length} or c.token_address = $${params.length} or lower(c.campaign_address) = lower($${params.length}))`);
   }
   if (input.creator) {
     params.push(input.creator);
@@ -476,9 +510,7 @@ export async function harvestSolanaLpFees(input: {
   const params: unknown[] = [SOLANA_CHAIN_ID];
   if (input.campaign) {
     params.push(input.campaign);
-    clauses.push(
-      `(c.campaign_address = $${params.length} or c.token_address = $${params.length} or lower(c.campaign_address) = lower($${params.length}))`,
-    );
+    clauses.push(`(c.campaign_address = $${params.length} or c.token_address = $${params.length} or lower(c.campaign_address) = lower($${params.length}))`);
   }
   if (input.pair) {
     params.push(input.pair);
@@ -492,9 +524,7 @@ export async function harvestSolanaLpFees(input: {
     params,
   );
   const row = rows[0];
-  if (!row) {
-    throw Object.assign(new Error("Graduated Solana campaign with a Meteora pool was not found."), { status: 404 });
-  }
+  if (!row) throw Object.assign(new Error("Graduated Solana campaign with a Meteora pool was not found."), { status: 404 });
   const meta = row.meta?.solanaGraduation || {};
   const poolAddress = String(meta.pool || "").trim();
   const positionAddress = String(meta.position || "").trim();
@@ -517,9 +547,7 @@ export async function harvestSolanaLpFees(input: {
   const tokenBProgram = tokenProgramFromFlag((poolState as any).tokenBFlag);
   const positionState = await cpAmm.fetchPositionState(positionPk);
   const positionNftMint = (positionState as any).nftMint || (positionState as any).nft_mint;
-  if (!positionNftMint) {
-    throw Object.assign(new Error("Meteora position is missing its NFT mint."), { status: 400 });
-  }
+  if (!positionNftMint) throw Object.assign(new Error("Meteora position is missing its NFT mint."), { status: 400 });
   const nftMint = positionNftMint instanceof PublicKey ? positionNftMint : new PublicKey(String(positionNftMint));
   const positionNftAccount = await resolvePositionNftAccount(connection, operator.publicKey, nftMint);
 
@@ -544,7 +572,7 @@ export async function harvestSolanaLpFees(input: {
     feePayer: operator.publicKey,
   });
   const claimTransaction = claimTx as unknown as Transaction;
-  if (!claimTransaction || typeof claimTransaction.add !== "function") {
+  if (!claimTransaction || !Array.isArray(claimTransaction.instructions)) {
     throw Object.assign(new Error("Meteora claimPositionFee did not return a transaction."), { status: 500 });
   }
   const claimSignature = await sendClaimTransaction(connection, claimTransaction, operator);
@@ -560,42 +588,26 @@ export async function harvestSolanaLpFees(input: {
 
   const splitIxs: TransactionInstruction[] = [];
   const addSplit = (
-    mint: PublicKey,
+    splitMint: PublicKey,
     sourceAta: PublicKey,
     split: { creator: bigint; protocol: bigint },
     tokenProgram: PublicKey,
   ) => {
-    const native = mint.equals(NATIVE_MINT);
+    const native = splitMint.equals(NATIVE_MINT);
     if (split.creator > 0n && !creatorPk.equals(operator.publicKey)) {
       if (native) {
-        splitIxs.push(
-          SystemProgram.transfer({
-            fromPubkey: operator.publicKey,
-            toPubkey: creatorPk,
-            lamports: split.creator,
-          }),
-        );
+        splitIxs.push(SystemProgram.transfer({ fromPubkey: operator.publicKey, toPubkey: creatorPk, lamports: split.creator }));
       } else {
-        splitIxs.push(createAtaIdempotentIx(operator.publicKey, creatorPk, mint, tokenProgram));
-        splitIxs.push(
-          transferTokenIx(sourceAta, deriveAta(creatorPk, mint, tokenProgram), operator.publicKey, split.creator, tokenProgram),
-        );
+        splitIxs.push(createAtaIdempotentIx(operator.publicKey, creatorPk, splitMint, tokenProgram));
+        splitIxs.push(transferTokenIx(sourceAta, deriveAta(creatorPk, splitMint, tokenProgram), operator.publicKey, split.creator, tokenProgram));
       }
     }
     if (split.protocol > 0n && !treasury.equals(operator.publicKey)) {
       if (native) {
-        splitIxs.push(
-          SystemProgram.transfer({
-            fromPubkey: operator.publicKey,
-            toPubkey: treasury,
-            lamports: split.protocol,
-          }),
-        );
+        splitIxs.push(SystemProgram.transfer({ fromPubkey: operator.publicKey, toPubkey: treasury, lamports: split.protocol }));
       } else {
-        splitIxs.push(createAtaIdempotentIx(operator.publicKey, treasury, mint, tokenProgram));
-        splitIxs.push(
-          transferTokenIx(sourceAta, deriveAta(treasury, mint, tokenProgram), operator.publicKey, split.protocol, tokenProgram),
-        );
+        splitIxs.push(createAtaIdempotentIx(operator.publicKey, treasury, splitMint, tokenProgram));
+        splitIxs.push(transferTokenIx(sourceAta, deriveAta(treasury, splitMint, tokenProgram), operator.publicKey, split.protocol, tokenProgram));
       }
     }
   };
@@ -604,8 +616,7 @@ export async function harvestSolanaLpFees(input: {
 
   let splitSignature = "";
   if (splitIxs.length) {
-    const splitTx = new Transaction().add(...splitIxs);
-    splitSignature = await sendAndConfirmTransaction(connection, splitTx, [operator], { commitment: "confirmed" });
+    splitSignature = await sendServerV0Instructions(connection, splitIxs, operator, "Meteora LP fee split");
   }
 
   const harvestMeta = {

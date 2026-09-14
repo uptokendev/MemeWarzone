@@ -315,24 +315,47 @@ export function mapSolanaTradeError(err: unknown): string {
   return msg;
 }
 
+function deriveTraderAta(web3: Awaited<ReturnType<typeof loadSolanaWeb3>>, mintAddress: string, ownerAddress: string) {
+  const mint = new web3.PublicKey(mintAddress);
+  const owner = new web3.PublicKey(ownerAddress);
+  const [ata] = web3.PublicKey.findProgramAddressSync(
+    [owner.toBuffer(), new web3.PublicKey(TOKEN_PROGRAM).toBuffer(), mint.toBuffer()],
+    new web3.PublicKey(ASSOCIATED_TOKEN_PROGRAM),
+  );
+  return { ata, mint, owner };
+}
+
+function buildCreateTraderAtaIdempotentInstruction(
+  web3: Awaited<ReturnType<typeof loadSolanaWeb3>>,
+  input: { ata: InstanceType<typeof web3.PublicKey>; mint: InstanceType<typeof web3.PublicKey>; owner: InstanceType<typeof web3.PublicKey> },
+) {
+  return new web3.TransactionInstruction({
+    programId: new web3.PublicKey(ASSOCIATED_TOKEN_PROGRAM),
+    keys: [
+      { pubkey: input.owner, isSigner: true, isWritable: true },
+      { pubkey: input.ata, isSigner: false, isWritable: true },
+      { pubkey: input.owner, isSigner: false, isWritable: false },
+      { pubkey: input.mint, isSigner: false, isWritable: false },
+      { pubkey: web3.SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: new web3.PublicKey(TOKEN_PROGRAM), isSigner: false, isWritable: false },
+    ],
+    data: new Uint8Array([1]),
+  });
+}
+
 /** SPL token balance (raw base units) for owner ATA. */
 export async function getSolanaTokenBalanceRaw(input: {
   mint: string;
   owner: string;
 }): Promise<bigint> {
   const web3 = await loadSolanaWeb3();
-  const { Connection, PublicKey } = web3;
+  const { Connection } = web3;
   const rpc =
     String(import.meta.env.VITE_SOLANA_RPC || "").trim() ||
     getPublicRpcUrl(SOLANA_CHAIN_ID) ||
     "https://api.mainnet-beta.solana.com";
   const connection = new Connection(rpc, { commitment: "confirmed", disableRetryOnRateLimit: true });
-  const mint = new PublicKey(input.mint);
-  const owner = new PublicKey(input.owner);
-  const [ata] = PublicKey.findProgramAddressSync(
-    [owner.toBuffer(), new PublicKey(TOKEN_PROGRAM).toBuffer(), mint.toBuffer()],
-    new PublicKey(ASSOCIATED_TOKEN_PROGRAM),
-  );
+  const { ata } = deriveTraderAta(web3, input.mint, input.owner);
   try {
     const bal = await connection.getTokenAccountBalance(ata, "confirmed");
     return BigInt(bal?.value?.amount || "0");
@@ -444,6 +467,19 @@ async function submitSolanaTradeV1Untracked(
   if (!a.feeEscrow) {
     throw new Error("market initializing");
   }
+
+  const canonicalAta = deriveTraderAta(web3, a.mint, traderPk);
+  if (a.traderTokenAccount !== canonicalAta.ata.toBase58()) {
+    throw new Error("Trade authorization traderTokenAccount is not the canonical ATA.");
+  }
+  let createAtaIx: ReturnType<typeof buildCreateTraderAtaIdempotentInstruction> | null = null;
+  if (isBuy) {
+    const existingAta = await connection.getAccountInfo(canonicalAta.ata, "confirmed");
+    if (!existingAta) {
+      createAtaIx = buildCreateTraderAtaIdempotentInstruction(web3, canonicalAta);
+    }
+  }
+
   const tradeIx = buildTradeTokensInstruction(web3, {
     programId: auth.programId,
     side: isBuy ? "buy" : "sell",
@@ -477,6 +513,7 @@ async function submitSolanaTradeV1Untracked(
   const v0Input = {
     payer: traderPk,
     instructions: [
+      ...(createAtaIx ? [createAtaIx] : []),
       ed25519Ix,
       tradeIx,
     ],
@@ -540,50 +577,14 @@ async function submitSolanaTradeV1Untracked(
   return { signature: sig };
 }
 
-/** Ensure trader ATA exists (create if missing). Returns ATA address. */
+/**
+ * Return the canonical trader ATA without sending a wallet transaction.
+ * First-buy ATA creation is folded into submitSolanaTradeV1's single V0 envelope.
+ */
 export async function ensureTraderAta(input: {
   mint: string;
   owner: string;
 }): Promise<string> {
   const web3 = await loadSolanaWeb3();
-  const { Connection, PublicKey, Transaction, SystemProgram, TransactionInstruction } = web3;
-  const rpc =
-    String(import.meta.env.VITE_SOLANA_RPC || "").trim() ||
-    getPublicRpcUrl(SOLANA_CHAIN_ID) ||
-    "https://api.mainnet-beta.solana.com";
-  const connection = new Connection(rpc, "confirmed");
-  const mint = new PublicKey(input.mint);
-  const owner = new PublicKey(input.owner);
-  const [ata] = PublicKey.findProgramAddressSync(
-    [owner.toBuffer(), new PublicKey(TOKEN_PROGRAM).toBuffer(), mint.toBuffer()],
-    new PublicKey(ASSOCIATED_TOKEN_PROGRAM),
-  );
-  const info = await connection.getAccountInfo(ata, "confirmed");
-  if (info) return ata.toBase58();
-
-  const provider = getSolanaProvider();
-  if (!provider?.signTransaction) throw new Error("Connect Solana wallet to create token account.");
-
-  // createIdempotent associated token account instruction
-  const keys = [
-    { pubkey: owner, isSigner: true, isWritable: true },
-    { pubkey: ata, isSigner: false, isWritable: true },
-    { pubkey: owner, isSigner: false, isWritable: false },
-    { pubkey: mint, isSigner: false, isWritable: false },
-    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    { pubkey: new PublicKey(TOKEN_PROGRAM), isSigner: false, isWritable: false },
-  ];
-  const ix = new TransactionInstruction({
-    programId: new PublicKey(ASSOCIATED_TOKEN_PROGRAM),
-    keys,
-    data: new Uint8Array([1]), // CreateIdempotent
-  });
-  const tx = new Transaction().add(ix);
-  const latest = await connection.getLatestBlockhash("confirmed");
-  tx.feePayer = owner;
-  tx.recentBlockhash = latest.blockhash;
-  const signed = await provider.signTransaction(tx);
-  const sig = await connection.sendRawTransaction(signed.serialize());
-  await connection.confirmTransaction({ signature: sig, ...latest }, "confirmed");
-  return ata.toBase58();
+  return deriveTraderAta(web3, input.mint, input.owner).ata.toBase58();
 }

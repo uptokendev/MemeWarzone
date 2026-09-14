@@ -9,10 +9,9 @@ import {
   Keypair,
   PublicKey,
   SystemProgram,
-  Transaction,
   TransactionInstruction,
-  sendAndConfirmTransaction,
 } from "@solana/web3.js";
+import { sendServerV0 } from "./send-server-v0.mjs";
 
 function requiredEnv(name) {
   const value = String(process.env[name] || "").trim();
@@ -24,7 +23,6 @@ const PROGRAM_ID = new PublicKey(requiredEnv("SOLANA_REWARDS_TREASURY_PROGRAM_ID
 const RPC = requiredEnv("SOLANA_RPC");
 const DEFAULT_OPERATOR = requiredEnv("SOLANA_PROTOCOL_OPERATOR");
 const SOL_USD_MICROS = BigInt(requiredEnv("SOL_USD_MICROS"));
-const INIT_LANES_DISC = Buffer.from([0x4d, 0x1c, 0x8b, 0x2e, 0x9a, 0x70, 0x11, 0x5c]); // placeholder, replaced below
 
 function loadKeypair() {
   const file = requiredEnv("SOLANA_PROTOCOL_AUTHORITY_KEYPAIR");
@@ -84,7 +82,7 @@ async function main() {
     ],
     data,
   });
-  const sig = await sendAndConfirmTransaction(connection, new Transaction().add(ix), [payer]);
+  const sig = await sendServerV0(connection, payer, [ix], "Rewards lane initialization");
   console.log("initialize_lanes", sig);
 }
 

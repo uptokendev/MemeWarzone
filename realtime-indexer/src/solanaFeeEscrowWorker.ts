@@ -6,9 +6,9 @@ import {
   Keypair,
   PublicKey,
   SystemProgram,
-  Transaction,
   TransactionInstruction,
-  sendAndConfirmTransaction,
+  TransactionMessage,
+  VersionedTransaction,
 } from "@solana/web3.js";
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
@@ -168,6 +168,50 @@ async function markFlush(
   );
 }
 
+async function sendServerV0(
+  connection: Connection,
+  payer: Keypair,
+  instruction: TransactionInstruction,
+  label: string,
+): Promise<string> {
+  const compile = async () => {
+    const latest = await connection.getLatestBlockhash("confirmed");
+    const message = new TransactionMessage({
+      payerKey: payer.publicKey,
+      recentBlockhash: latest.blockhash,
+      instructions: [instruction],
+    }).compileToV0Message();
+    const transaction = new VersionedTransaction(message);
+    transaction.sign([payer]);
+    return { transaction, latest };
+  };
+
+  const simulated = await compile();
+  const simulation = await connection.simulateTransaction(simulated.transaction, {
+    commitment: "confirmed",
+    sigVerify: true,
+    replaceRecentBlockhash: false,
+  });
+  if (simulation.value.err) {
+    const logs = simulation.value.logs?.slice(-12).join("\n") || "";
+    throw new Error(`${label} simulation failed: ${JSON.stringify(simulation.value.err)}${logs ? `\n${logs}` : ""}`);
+  }
+
+  const final = await compile();
+  const signature = await connection.sendRawTransaction(final.transaction.serialize(), {
+    skipPreflight: false,
+    maxRetries: 3,
+  });
+  const confirmation = await connection.confirmTransaction(
+    { signature, ...final.latest },
+    "confirmed",
+  );
+  if (confirmation.value.err) {
+    throw new Error(`${label} failed on-chain: ${JSON.stringify(confirmation.value.err)}`);
+  }
+  return signature;
+}
+
 async function initializeOne(
   connection: Connection,
   payer: Keypair,
@@ -184,9 +228,7 @@ async function initializeOne(
     ],
     data: INIT_DISC,
   });
-  return sendAndConfirmTransaction(connection, new Transaction().add(ix), [payer], {
-    commitment: "confirmed",
-  });
+  return sendServerV0(connection, payer, ix, `FeeEscrow initialize ${campaign.toBase58()}`);
 }
 
 async function flushOne(
@@ -210,9 +252,7 @@ async function flushOne(
     ],
     data: FLUSH_DISC,
   });
-  return sendAndConfirmTransaction(connection, new Transaction().add(ix), [payer], {
-    commitment: "confirmed",
-  });
+  return sendServerV0(connection, payer, ix, `FeeEscrow flush ${campaign.toBase58()}`);
 }
 
 async function processInits(connection: Connection, payer: Keypair) {
@@ -347,9 +387,7 @@ async function closeExpiredTradeAuth(
     ],
     data,
   });
-  return sendAndConfirmTransaction(connection, new Transaction().add(ix), [payer], {
-    commitment: "confirmed",
-  });
+  return sendServerV0(connection, payer, ix, `Expired trade authorization cleanup ${pda.toBase58()}`);
 }
 
 async function processTradeAuthCleanup(connection: Connection, payer: Keypair) {

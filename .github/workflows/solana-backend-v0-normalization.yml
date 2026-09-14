@@ -1,0 +1,79 @@
+name: Solana Backend V0 Normalization
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - realtime-indexer/src/solanaFeeEscrowWorker.ts
+      - realtime-indexer/src/solanaLpFees.ts
+      - realtime-indexer/src/jobs/publishRecruiterSettlementRoot.ts
+      - frontend/api/lib/solanaRewardLane.js
+      - scripts/solana/send-server-v0.mjs
+      - scripts/solana/backfill-fee-escrow.mjs
+      - scripts/solana/flush-fee-escrow.mjs
+      - scripts/solana/init-rewards-lanes.mjs
+      - scripts/solana/init-rewards-treasury.mjs
+      - tools/solana-meteora-graduation/create-alt.mjs
+      - .github/workflows/solana-backend-v0-normalization.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend-v0:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Check operator script syntax
+        run: |
+          node --check scripts/solana/send-server-v0.mjs
+          node --check scripts/solana/backfill-fee-escrow.mjs
+          node --check scripts/solana/flush-fee-escrow.mjs
+          node --check scripts/solana/init-rewards-lanes.mjs
+          node --check scripts/solana/init-rewards-treasury.mjs
+          node --check tools/solana-meteora-graduation/create-alt.mjs
+          node --check frontend/api/lib/solanaRewardLane.js
+
+      - name: Reject Legacy submission in normalized backend paths
+        shell: bash
+        run: |
+          files=(
+            realtime-indexer/src/solanaFeeEscrowWorker.ts
+            realtime-indexer/src/solanaLpFees.ts
+            realtime-indexer/src/jobs/publishRecruiterSettlementRoot.ts
+            frontend/api/lib/solanaRewardLane.js
+            scripts/solana/backfill-fee-escrow.mjs
+            scripts/solana/flush-fee-escrow.mjs
+            scripts/solana/init-rewards-lanes.mjs
+            scripts/solana/init-rewards-treasury.mjs
+            tools/solana-meteora-graduation/create-alt.mjs
+          )
+          if grep -nE 'new[[:space:]]+Transaction[[:space:]]*\(|sendAndConfirmTransaction[[:space:]]*\(' "${files[@]}"; then
+            echo "Legacy Solana transaction submission remains in a normalized backend path"
+            exit 1
+          fi
+          grep -F 'VersionedTransaction' realtime-indexer/src/solanaFeeEscrowWorker.ts
+          grep -F 'VersionedTransaction' realtime-indexer/src/solanaLpFees.ts
+          grep -F 'VersionedTransaction' realtime-indexer/src/jobs/publishRecruiterSettlementRoot.ts
+          grep -F 'VersionedTransaction' frontend/api/lib/solanaRewardLane.js
+
+      - name: Install realtime indexer dependencies
+        run: npm ci --prefix realtime-indexer --no-audit --no-fund
+
+      - name: Build realtime indexer
+        run: npm --prefix realtime-indexer run build
+
+      - name: Run recruiter settlement tests
+        run: npm --prefix realtime-indexer run test:recruiter-settlement

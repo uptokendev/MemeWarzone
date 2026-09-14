@@ -1,0 +1,138 @@
+name: Solana Rewards Treasury Upgrade Candidate
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - Anchor.toml
+      - Cargo.toml
+      - Cargo.lock
+      - programs/mwz_rewards_treasury/**
+      - frontend/api/lib/solanaRewardLane.js
+      - realtime-indexer/src/jobs/publishRecruiterSettlementRoot.ts
+      - .github/workflows/solana-rewards-treasury-upgrade-candidate.yml
+  workflow_dispatch:
+
+concurrency:
+  group: solana-rewards-upgrade-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  ANCHOR_VERSION: 0.30.1
+  SOLANA_VERSION: 1.18.26
+  RUST_TOOLCHAIN: 1.79.0
+  IDL_RUST_TOOLCHAIN: nightly-2024-05-09
+  EXPECTED_PROGRAM_ID: 2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX
+  CARGO_NET_RETRY: 10
+
+jobs:
+  rewards-upgrade-candidate:
+    name: Build and certify rewards treasury
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Verify same program ID and lane source boundary
+        shell: bash
+        run: |
+          grep -F "mwz_rewards_treasury = \"$EXPECTED_PROGRAM_ID\"" Anchor.toml
+          grep -F "declare_id!(\"$EXPECTED_PROGRAM_ID\")" programs/mwz_rewards_treasury/src/lib.rs
+          for instruction in set_recruiter_batch_root claim_recruiter set_squad_batch_root claim_squad; do
+            grep -F "pub fn $instruction" programs/mwz_rewards_treasury/src/lib.rs
+          done
+
+      - name: Install Rust toolchains
+        shell: bash
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup toolchain install "$IDL_RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+
+      - name: Install Solana CLI
+        shell: bash
+        run: |
+          release_dir="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
+          mkdir -p "$release_dir"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error \
+            --output /tmp/solana-release.tar.bz2 \
+            "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"
+          ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Install Anchor CLI
+        run: npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+
+      - name: Remove local lockfiles
+        run: rm -f Cargo.lock programs/mwz_rewards_treasury/Cargo.lock
+
+      - name: Build exact rewards treasury SBF
+        shell: bash
+        run: anchor build --program-name mwz_rewards_treasury --no-idl 2>&1 | tail -n 160
+
+      - name: Generate rewards treasury IDL
+        shell: bash
+        working-directory: programs/mwz_rewards_treasury
+        env:
+          RUSTUP_TOOLCHAIN: ${{ env.IDL_RUST_TOOLCHAIN }}
+        run: |
+          mkdir -p ../../target/idl
+          anchor idl build \
+            --out ../../target/idl/mwz_rewards_treasury.json \
+            2>&1 | tail -n 220
+
+      - name: Verify artifact and required IDL instructions
+        shell: bash
+        run: |
+          test -s target/deploy/mwz_rewards_treasury.so
+          test -s target/idl/mwz_rewards_treasury.json
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const idl = JSON.parse(fs.readFileSync('target/idl/mwz_rewards_treasury.json', 'utf8'));
+          const address = String(idl.address || idl.metadata?.address || '');
+          if (address && address !== process.env.EXPECTED_PROGRAM_ID) {
+            throw new Error(`IDL program ID mismatch: ${address}`);
+          }
+          const names = new Set((idl.instructions || []).map((ix) => String(ix.name)));
+          const required = ['set_recruiter_batch_root','claim_recruiter','set_squad_batch_root','claim_squad'];
+          const camel = ['setRecruiterBatchRoot','claimRecruiter','setSquadBatchRoot','claimSquad'];
+          for (let i = 0; i < required.length; i += 1) {
+            if (!names.has(required[i]) && !names.has(camel[i])) throw new Error(`IDL missing ${required[i]}`);
+          }
+          console.log('Rewards treasury IDL contains recruiter/squad publish + claim instructions.');
+          NODE
+
+      - name: Test rewards treasury invariants
+        run: cargo test -p mwz_rewards_treasury --lib
+
+      - name: Record candidate hashes
+        shell: bash
+        run: |
+          sha256sum target/deploy/mwz_rewards_treasury.so target/idl/mwz_rewards_treasury.json | tee rewards-treasury-sha256.txt
+          printf 'program_id=%s\ncommit=%s\n' "$EXPECTED_PROGRAM_ID" "${{ github.event.pull_request.head.sha || github.sha }}" > rewards-treasury-candidate.txt
+
+      - name: Upload upgrade candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: mwz-rewards-treasury-upgrade-${{ github.event.pull_request.head.sha || github.sha }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            target/deploy/mwz_rewards_treasury.so
+            target/idl/mwz_rewards_treasury.json
+            rewards-treasury-sha256.txt
+            rewards-treasury-candidate.txt
