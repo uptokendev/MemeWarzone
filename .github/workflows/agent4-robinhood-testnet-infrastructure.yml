@@ -1,0 +1,26 @@
+name: Agent 4 Robinhood Testnet Infrastructure Bootstrap
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type DEPLOY_CHAIN_46630_TESTNET_INFRA to authorize one RH46630 infrastructure bootstrap'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  default-branch-visibility-guard:
+    name: Dispatch visibility guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse execution from production main
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "This default-branch workflow file exists only so GitHub exposes the manual Run workflow control."
+          echo "Select build/cross-chain-stabilization-rh-base in the Run workflow branch selector."
+          echo "The integration branch contains the authoritative RH46630 bootstrap workflow."
+          exit 1
