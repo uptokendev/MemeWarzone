@@ -180,6 +180,9 @@ describe("BNB mainnet fork: corrected locker vs real Topaz", function () {
     if (!(await campaign.launched())) {
       await campaign.graduateIfEligible(0n, 0n);
     }
+    if (!(await campaign.launched()) && (await campaign.graduationPending())) {
+      await campaign.graduateIfEligible(0n, 0n);
+    }
     expect(await campaign.launched()).to.equal(true);
 
     const state = await campaign.getGraduationState();

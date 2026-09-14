@@ -235,6 +235,8 @@ describe("LaunchCampaign Phase 1 router integration", function () {
     const airdropBefore = await communityVault.warzoneAirdropBalance();
     const squadBefore = await communityVault.squadPoolBalance();
 
+    await campaign.connect(alice).graduateIfEligible(0, 0);
+    expect(await campaign.graduationPending()).to.equal(true);
     const tx = await campaign.connect(alice).graduateIfEligible(0, 0);
     const rc = await tx.wait();
 

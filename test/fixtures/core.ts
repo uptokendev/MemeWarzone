@@ -131,3 +131,16 @@ export async function deployCoreFixture(): Promise<CoreFixture> {
     factory,
   };
 }
+
+export async function completeNativeGraduation(campaign: any, signer: any) {
+  if (await campaign.launched()) return null;
+  if (!(await campaign.graduationPending())) {
+    const freeze = await campaign.connect(signer).graduateIfEligible(0, 0);
+    await freeze.wait();
+    if (await campaign.launched()) return freeze;
+  }
+  if (!(await campaign.graduationPending()) || (await campaign.launched())) return null;
+  const complete = await campaign.connect(signer).graduateIfEligible(0, 0);
+  await complete.wait();
+  return complete;
+}
