@@ -6,6 +6,7 @@ import { isForbiddenEventName, stripForbiddenProperties } from "./denylist.js";
 import { templatePath } from "./paths.js";
 
 const ingestSource = await readFile(new URL("./ingest.js", import.meta.url), "utf8");
+const geoResolverSource = await readFile(new URL("./geo-resolver.js", import.meta.url), "utf8");
 
 test("catalog includes reserved and product events", () => {
   assert.equal(CATALOG_EVENT_NAMES.has("$pageview"), true);
@@ -40,10 +41,11 @@ test("web vital ingestion narrowly remaps its numeric value to measurement", () 
   assert.doesNotMatch(ingestSource, /trimmed\.value\s*=/);
 });
 
-test("coarse geography comes from edge headers rather than client coordinates", () => {
-  assert.match(ingestSource, /cf-ipcountry/);
-  assert.match(ingestSource, /x-vercel-ip-country/);
+test("coarse geography prefers trusted edge headers and stores no client coordinates", () => {
+  assert.match(geoResolverSource, /cf-ipcountry/);
+  assert.match(geoResolverSource, /x-vercel-ip-country/);
   assert.match(ingestSource, /country: geo\.country/);
+  assert.match(ingestSource, /resolveGeoContext\(req, ip\)/);
   assert.doesNotMatch(ingestSource, /latitude|longitude|geocode/i);
 });
 
