@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { postFinanceEconomicEvent } from "./financePosting.js";
+import { FinancePostingBalanceError, postFinanceEconomicEvent } from "./financePosting.js";
 
 function postingInput(overrides = {}) {
   return {
@@ -146,4 +146,72 @@ test("postFinanceEconomicEvent validates the whole posting before opening a tran
     /classifications must contain at least one/,
   );
   assert.equal(connected, false);
+});
+
+test("postFinanceEconomicEvent rejects under-classified gross value before opening a transaction", async () => {
+  let connected = false;
+  const pool = { async connect() { connected = true; throw new Error("should not connect"); } };
+  const input = postingInput();
+  input.classifications[2].amountRaw = "4";
+
+  await assert.rejects(
+    postFinanceEconomicEvent(pool, input),
+    (error) => error instanceof FinancePostingBalanceError
+      && error.code === "FINANCE_POSTING_UNBALANCED"
+      && /total 99/.test(error.message)
+      && /gross amount is 100/.test(error.message),
+  );
+  assert.equal(connected, false);
+});
+
+test("postFinanceEconomicEvent rejects over-classified gross value before opening a transaction", async () => {
+  let connected = false;
+  const pool = { async connect() { connected = true; throw new Error("should not connect"); } };
+  const input = postingInput();
+  input.classifications[1].amountRaw = "21";
+
+  await assert.rejects(
+    postFinanceEconomicEvent(pool, input),
+    (error) => error instanceof FinancePostingBalanceError
+      && error.code === "FINANCE_POSTING_UNBALANCED"
+      && /total 101/.test(error.message)
+      && /gross amount is 100/.test(error.message),
+  );
+  assert.equal(connected, false);
+});
+
+test("postFinanceEconomicEvent balances using integer arithmetic for large raw values", async () => {
+  const { client, calls } = makeClient();
+  const pool = { async connect() { return client; } };
+  const input = postingInput({
+    evidence: {
+      ...postingInput().evidence,
+      grossAmountRaw: "900719925474099312345",
+    },
+    classifications: [
+      {
+        classificationVersion: 1,
+        componentKey: "a",
+        economicClass: "liability",
+        economicLane: "a",
+        amountRaw: "900719925474099300000",
+        recognitionStatus: "recognized",
+        reconciliationStatus: "unreconciled",
+        policyVersion: "test-policy-v1",
+      },
+      {
+        classificationVersion: 1,
+        componentKey: "b",
+        economicClass: "protocol_revenue",
+        economicLane: "b",
+        amountRaw: "12345",
+        recognitionStatus: "recognized",
+        reconciliationStatus: "unreconciled",
+        policyVersion: "test-policy-v1",
+      },
+    ],
+  });
+
+  await postFinanceEconomicEvent(pool, input);
+  assert.equal(calls.some((call) => call.sql === "COMMIT"), true);
 });
