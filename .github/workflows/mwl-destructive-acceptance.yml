@@ -1,0 +1,122 @@
+name: MWL Destructive Acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type MWL_DESTRUCTIVE_BSC97_SOLANA101"
+        required: true
+        type: string
+      authority_sha:
+        description: "Production source authority being certified"
+        required: true
+        default: "df8e9dd32387cfe82f208c372461aa629f14cf84"
+        type: string
+      cert_year:
+        description: "Unused future certification year"
+        required: true
+        default: "2099"
+        type: string
+      cert_month:
+        description: "Unused certification month (1-12)"
+        required: true
+        default: "12"
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  AUTHORITY_SHA: ${{ inputs.authority_sha }}
+  CERT_YEAR: ${{ inputs.cert_year }}
+  CERT_MONTH: ${{ inputs.cert_month }}
+  MWL_STAGING_DATABASE_URL: ${{ secrets.MWL_STAGING_DATABASE_URL }}
+  BSC97_RPC_URL: ${{ secrets.BSC97_RPC_URL }}
+  SOLANA_DEVNET_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC_URL }}
+  SOLANA_DEVNET_GENESIS_HASH: ${{ secrets.SOLANA_DEVNET_GENESIS_HASH }}
+  MONTHLY_LEAGUE_TREASURY_ADDRESS_97: ${{ secrets.MONTHLY_LEAGUE_TREASURY_ADDRESS_97 }}
+  MONTHLY_LEAGUE_TREASURY_ADDRESS_101: ${{ secrets.MONTHLY_LEAGUE_TREASURY_ADDRESS_101 }}
+
+jobs:
+  destructive-mwl:
+    name: BSC97 + Solana101 destructive MWL
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: testnet-certification
+    steps:
+      - name: Checkout harness head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fail closed unless exact production authority is preserved
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ inputs.confirm }}" = "MWL_DESTRUCTIVE_BSC97_SOLANA101"
+          test "$AUTHORITY_SHA" = "df8e9dd32387cfe82f208c372461aa629f14cf84"
+          git cat-file -e "$AUTHORITY_SHA^{commit}"
+          git merge-base --is-ancestor "$AUTHORITY_SHA" HEAD
+
+          mapfile -t changed < <(git diff --name-only "$AUTHORITY_SHA"..HEAD)
+          for path in "${changed[@]}"; do
+            case "$path" in
+              .github/workflows/mwl-destructive-acceptance.yml|frontend/tools/mwl-destructive-acceptance.mjs) ;;
+              *) echo "Non-certification delta detected: $path" >&2; exit 1 ;;
+            esac
+          done
+
+          test "${#changed[@]}" -eq 2
+          echo "PRODUCTION_AUTHORITY=$AUTHORITY_SHA"
+          echo "HARNESS_HEAD=$(git rev-parse HEAD)"
+          echo "CERTIFICATION_ONLY_DELTA=PASS"
+
+      - name: Require staging secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in \
+            MWL_STAGING_DATABASE_URL \
+            BSC97_RPC_URL \
+            SOLANA_DEVNET_RPC_URL \
+            SOLANA_DEVNET_GENESIS_HASH \
+            MONTHLY_LEAGUE_TREASURY_ADDRESS_97 \
+            MONTHLY_LEAGUE_TREASURY_ADDRESS_101; do
+            test -n "${!name:-}" || { echo "Missing required secret: $name" >&2; exit 1; }
+          done
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install locked dependencies
+        run: npm ci --prefix frontend --no-audit --no-fund
+
+      - name: Destructive create, intake, score, and first finalization
+        shell: bash
+        env:
+          DATABASE_URL: ${{ secrets.MWL_STAGING_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          node frontend/tools/mwl-destructive-acceptance.mjs destroy artifacts/mwl-destructive-evidence.json
+
+      - name: Restart process and authoritative reload
+        shell: bash
+        env:
+          DATABASE_URL: ${{ secrets.MWL_STAGING_DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          node frontend/tools/mwl-destructive-acceptance.mjs reload artifacts/mwl-destructive-evidence.json
+
+      - name: Upload destructive evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mwl-destructive-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 30
