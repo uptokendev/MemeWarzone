@@ -124,7 +124,7 @@ export function ChallengeInboxDialog() {
       }}
     >
       <DialogContent
-        className="max-w-3xl border-0 bg-transparent p-0 shadow-none"
+        className="max-w-4xl gap-0 overflow-hidden border-0 bg-transparent p-0 shadow-none sm:rounded-none [&>button]:hidden"
         data-challenge-popup="true"
         data-challenge-popup-count={incoming.length}
       >
@@ -146,6 +146,7 @@ export function ChallengeInboxDialog() {
           onAccept={() => handleIncoming(true)}
           onDecline={() => handleIncoming(false)}
           onCounter={handleCounter}
+          showViewLink={false}
         />
       </DialogContent>
     </Dialog>

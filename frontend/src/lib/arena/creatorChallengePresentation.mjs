@@ -377,6 +377,27 @@ export function commandCenterChallengeHref(walletAddress, opponentId, fightAsId)
   return `/profile/${encodeURIComponent(wallet)}/command/battles${query ? `?${query}` : ""}`;
 }
 
+export function formatChallengeCountdown(ms) {
+  const total = Math.max(0, Math.floor(Number(ms) / 1000));
+  if (!Number.isFinite(total)) return "00:00:00";
+  const hours = String(Math.floor(total / 3600)).padStart(2, "0");
+  const minutes = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
+  const seconds = String(total % 60).padStart(2, "0");
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+export function challengeStartsInMs(battle, now = Date.now()) {
+  const target = Date.parse(String(battle?.endsAt || ""));
+  if (!Number.isFinite(target)) return null;
+  return target - now;
+}
+
+export function challengeStartsInLabel(battle, now = Date.now()) {
+  const remaining = challengeStartsInMs(battle, now);
+  if (remaining == null) return null;
+  return formatChallengeCountdown(remaining);
+}
+
 export function sameChainChallenge(challengerChainId, defenderChainId) {
   const left = Number(challengerChainId);
   const right = Number(defenderChainId);

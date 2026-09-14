@@ -10,7 +10,9 @@ import {
   battlesNavBadge,
   beginChallengePending,
   canChallengeAs,
+  challengeStartsInLabel,
   collectIncomingCreatorChallenges,
+  formatChallengeCountdown,
   creatorOwnedIdentityKeys,
   clearNotNow,
   eligibleFightAsCoins,
@@ -352,9 +354,20 @@ test("action card uses founder top-card copy and only shows actions to the respo
   assert.equal(visitor.showActions, false);
   const source = readSrc("../../components/arena/ChallengeActionCard.tsx");
   assert.match(source, /SCHEDULED BATTLE|presented\.kicker/);
+  assert.match(source, /COMMUNITY VS COMMUNITY/);
+  assert.match(source, /BATTLE STARTS IN/);
   assert.match(source, /ACCEPT/);
   assert.match(source, /COUNTER/);
   assert.match(source, /DECLINE/);
+  assert.match(source, /data-challenge-popup-banner/);
+  const dialog = readSrc("../../components/command-center/ChallengeInboxDialog.tsx");
+  assert.match(dialog, /data-challenge-popup="true"/);
+  assert.match(dialog, /\[&>button\]:hidden/);
+  assert.equal(formatChallengeCountdown(2 * 3600_000 + 17 * 60_000 + 45_000), "02:17:45");
+  assert.equal(
+    challengeStartsInLabel({ endsAt: "2026-09-14T12:17:45.000Z" }, Date.parse("2026-09-14T10:00:00.000Z")),
+    "02:17:45",
+  );
 });
 
 test("campaign page CHALLENGE THIS COIN preselects opponent and fight-as stays owned", () => {
