@@ -12,6 +12,50 @@ export function rpcLabels(count) {
   return Array.from({ length: count }, (_, index) => (index === 0 ? "selected" : `fallback#${index}`));
 }
 
+export function launchHealthChainIds(env = process.env) {
+  const bnb = Number(env.LAUNCH_HEALTH_BNB_CHAIN_ID || 56);
+  const solana = Number(env.LAUNCH_HEALTH_SOLANA_CHAIN_ID || 101);
+  const robinhood = Number(env.LAUNCH_HEALTH_ROBINHOOD_CHAIN_ID || 4663);
+  if (![56, 97].includes(bnb)) throw new Error("unsupported BNB launch-health chain id");
+  if (solana !== 101) throw new Error("unsupported Solana application chain id");
+  if (![4663, 46630].includes(robinhood)) throw new Error("unsupported Robinhood launch-health chain id");
+  return { bnb, solana, robinhood };
+}
+
+function bnbRpcCandidates(chainId) {
+  if (chainId === 97) {
+    return csvValues(
+      process.env.BSC_RPC_HTTP_97,
+      process.env.BSC_TESTNET_RPC_URL,
+      process.env.BSC_TESTNET_RPC,
+      process.env.VITE_BSC_TESTNET_RPC,
+      process.env.VITE_PUBLIC_RPC_97,
+    );
+  }
+  return csvValues(
+    process.env.BSC_RPC_HTTP_56,
+    process.env.BSC_MAINNET_RPC_URL,
+    process.env.BSC_MAINNET_RPC,
+    process.env.VITE_PUBLIC_RPC_56,
+  );
+}
+
+function robinhoodRpcCandidates(chainId) {
+  if (chainId === 46630) {
+    return csvValues(
+      process.env.ROBINHOOD_TESTNET_RPC_URL,
+      process.env.ROBINHOOD_RPC_HTTP_46630,
+      process.env.ROBINHOOD_RPC_URL_46630,
+      process.env.VITE_PUBLIC_RPC_46630,
+    );
+  }
+  return csvValues(
+    process.env.ROBINHOOD_RPC_HTTP_4663,
+    process.env.ROBINHOOD_RPC_URL_4663,
+    process.env.VITE_PUBLIC_RPC_4663,
+  );
+}
+
 async function rpcCall(url, method, params = []) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -98,7 +142,7 @@ async function relationExists(client, relation) {
   return Boolean(result.rows[0]?.relation);
 }
 
-async function dbSnapshot(heads) {
+async function dbSnapshot(heads, chainIds) {
   const databaseUrl = String(process.env.DATABASE_URL || "").trim();
   if (!databaseUrl) return { ready: false, cursors: [], reconciliationErrors: null };
   const pool = new Pool(dbConfigFromUrl(databaseUrl));
@@ -106,12 +150,13 @@ async function dbSnapshot(heads) {
     const client = await pool.connect();
     try {
       await client.query("select 1 as ok");
+      const trackedChainIds = [chainIds.bnb, chainIds.solana, chainIds.robinhood];
       const cursorRows = await client.query(`
         select chain_id, cursor, last_indexed_block, updated_at
           from public.indexer_state
          where chain_id = any($1::int[])
          order by chain_id asc, updated_at desc nulls last
-      `, [[56, 101, 4663]]);
+      `, [trackedChainIds]);
 
       const bestByChain = new Map();
       for (const row of cursorRows.rows) {
@@ -119,7 +164,7 @@ async function dbSnapshot(heads) {
         if (!bestByChain.has(chainId)) bestByChain.set(chainId, row);
       }
 
-      const cursors = [56, 101, 4663].map((chainId) => {
+      const cursors = trackedChainIds.map((chainId) => {
         const row = bestByChain.get(chainId);
         const indexed = row ? Number(row.last_indexed_block || 0) : null;
         const head = heads[chainId] ?? null;
@@ -168,24 +213,26 @@ function renderRpcStatuses(results) {
 
 export async function collectLaunchHealth() {
   const serviceSha = String(process.env.SOURCE_COMMIT || process.env.COOLIFY_GIT_COMMIT_SHA || process.env.GIT_SHA || "unset").trim() || "unset";
-  const bnbUrls = csvValues(process.env.BSC_RPC_HTTP_56, process.env.BSC_MAINNET_RPC_URL, process.env.BSC_MAINNET_RPC, process.env.VITE_PUBLIC_RPC_56);
-  const robinhoodUrls = csvValues(process.env.ROBINHOOD_RPC_HTTP_4663, process.env.ROBINHOOD_RPC_URL_4663, process.env.VITE_PUBLIC_RPC_4663);
+  const chainIds = launchHealthChainIds();
+  const bnbUrls = bnbRpcCandidates(chainIds.bnb);
+  const robinhoodUrls = robinhoodRpcCandidates(chainIds.robinhood);
   const solanaUrls = csvValues(process.env.SOLANA_RPC_URL_101, process.env.SOLANA_RPC_HTTP, process.env.SOLANA_RPC_URL, process.env.SOLANA_REWARDS_RPC_URL_101, process.env.SOLANA_REWARDS_RPC_URL);
 
   const [bnb, solana, robinhood] = await Promise.all([
-    checkEvmRpcSet("BNB", 56, bnbUrls),
+    checkEvmRpcSet("BNB", chainIds.bnb, bnbUrls),
     checkSolanaRpcSet(solanaUrls),
-    checkEvmRpcSet("ROBINHOOD", 4663, robinhoodUrls),
+    checkEvmRpcSet("ROBINHOOD", chainIds.robinhood, robinhoodUrls),
   ]);
-  const db = await dbSnapshot({ 56: bnb.head, 101: solana.slot, 4663: robinhood.head });
-  return { serviceSha, bnb, solana, robinhood, db };
+  const db = await dbSnapshot({ [chainIds.bnb]: bnb.head, [chainIds.solana]: solana.slot, [chainIds.robinhood]: robinhood.head }, chainIds);
+  return { serviceSha, chainIds, bnb, solana, robinhood, db };
 }
 
 export function renderLaunchHealth(snapshot) {
+  const chainIds = snapshot.chainIds || { bnb: 56, solana: 101, robinhood: 4663 };
   const cursor = (chainId) => snapshot.db.cursors.find((item) => item.chainId === chainId) || {};
-  const bnbCursor = cursor(56);
-  const solCursor = cursor(101);
-  const rhCursor = cursor(4663);
+  const bnbCursor = cursor(chainIds.bnb);
+  const solCursor = cursor(chainIds.solana);
+  const rhCursor = cursor(chainIds.robinhood);
   return [
     `service_sha=${snapshot.serviceSha}`,
     `db_readiness=${snapshot.db.ready ? "READY" : "NOT_READY"}`,
