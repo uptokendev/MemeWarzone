@@ -1,0 +1,58 @@
+name: Agent 4 Robinhood Testnet Oracle Refresh Dispatcher
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type REFRESH_CHAIN_46630_ETH_USD_ORACLE to dispatch the approved RH46630 oracle refresh workflow'
+        required: true
+        type: string
+      eth_usd_8:
+        description: 'Current honest ETH/USD reference encoded as USD x 1e8'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  dispatch-approved-oracle-refresh:
+    name: Dispatch approved RH46630 oracle refresh workflow
+    if: ${{ github.ref_name == 'main' }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TARGET_BRANCH: build/cross-chain-stabilization-rh-base
+      TARGET_SHA: 8944382619e05f09539614f5690b98521fe244ed
+      TARGET_WORKFLOW: agent4-robinhood-oracle-refresh.yml
+      REQUIRED_CONFIRMATION: REFRESH_CHAIN_46630_ETH_USD_ORACLE
+    steps:
+      - name: Verify approved integration authority and input
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ inputs.confirmation }}" = "$REQUIRED_CONFIRMATION"
+          case "${{ inputs.eth_usd_8 }}" in
+            ''|*[!0-9]*) echo '::error::eth_usd_8 must be a positive integer'; exit 1 ;;
+          esac
+          test "${{ inputs.eth_usd_8 }}" != "0"
+          actual_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${TARGET_BRANCH}" --jq '.object.sha')"
+          if [ "$actual_sha" != "$TARGET_SHA" ]; then
+            echo '::error::Approved integration authority moved; refusing RH46630 oracle refresh dispatch.'
+            exit 1
+          fi
+
+      - name: Dispatch protected integration oracle refresh workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg ref "$TARGET_BRANCH" \
+            --arg confirmation "$REQUIRED_CONFIRMATION" \
+            --arg eth_usd_8 "${{ inputs.eth_usd_8 }}" \
+            '{ref:$ref,inputs:{confirmation:$confirmation,eth_usd_8:$eth_usd_8}}' \
+            | gh api \
+                --method POST \
+                "repos/${GITHUB_REPOSITORY}/actions/workflows/${TARGET_WORKFLOW}/dispatches" \
+                --input -
