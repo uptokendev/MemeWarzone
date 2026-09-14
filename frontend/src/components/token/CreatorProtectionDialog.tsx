@@ -13,6 +13,7 @@ import {
 type CreatorProtectionDetail = {
   code?: string | null;
   creatorWallet?: string | null;
+  campaignAddress?: string | null;
   creatorLinked?: boolean;
   relationship?: "creator" | "confirmed_cluster" | string | null;
   tier?: string | null;
@@ -23,7 +24,44 @@ type CreatorProtectionDetail = {
   requestedWei?: string | null;
   remainingWei?: string | null;
   error?: string | null;
+  force?: boolean;
 };
+
+const SEEN_STORAGE_KEY = "mwz:creatorProtectionSeen:v1";
+
+function protectionSeenKey(detail: CreatorProtectionDetail): string {
+  const campaign = String(detail.campaignAddress || "").trim().toLowerCase();
+  const wallet = String(detail.creatorWallet || "").trim().toLowerCase();
+  const code = String(detail.code || "CREATOR_BUY_LOCKED").trim();
+  return `${campaign || "campaign"}:${wallet || "wallet"}:${code}`;
+}
+
+function readSeenKeys(): Record<string, number> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.sessionStorage.getItem(SEEN_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" ? parsed as Record<string, number> : {};
+  } catch {
+    return {};
+  }
+}
+
+function hasSeenProtection(key: string): boolean {
+  return Boolean(readSeenKeys()[key]);
+}
+
+function markProtectionSeen(key: string): void {
+  if (typeof window === "undefined" || !key) return;
+  try {
+    window.sessionStorage.setItem(SEEN_STORAGE_KEY, JSON.stringify({
+      ...readSeenKeys(),
+      [key]: Date.now(),
+    }));
+  } catch {
+    // Ignore storage failures; worst case the first-view reminder repeats.
+  }
+}
 
 const TIER_RULES = [
   { tier: 1, name: "New", lock: "24 hours", cap: "0.25 BNB" },
@@ -62,7 +100,13 @@ export function CreatorProtectionDialog() {
   useEffect(() => {
     const onBlocked = (event: Event) => {
       const next = (event as CustomEvent<CreatorProtectionDetail>).detail;
-      if (next) setDetail(next);
+      if (!next) return;
+      const key = protectionSeenKey(next);
+      // Passive safety polls fire every few seconds on Token Details.
+      // Show the reminder once, then only reopen on an explicit buy attempt.
+      if (!next.force && hasSeenProtection(key)) return;
+      if (!next.force) markProtectionSeen(key);
+      setDetail(next);
     };
     window.addEventListener("mwz:creatorProtectionBlocked", onBlocked as EventListener);
     return () => window.removeEventListener("mwz:creatorProtectionBlocked", onBlocked as EventListener);

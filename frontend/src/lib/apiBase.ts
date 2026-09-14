@@ -407,10 +407,20 @@ async function notifyCreatorProtectionResponse(res: Response): Promise<void> {
     const protection = preflight?.creatorProtection || null;
     const code = String(preflight?.code || protection?.code || payload?.code || "");
     if (!CREATOR_PROTECTION_DIALOG_CODES.has(code)) return;
+    const campaignAddress = String(
+      protection?.campaignAddress
+      || preflight?.canonicalCampaignAddress
+      || preflight?.submittedCampaignAddress
+      || preflight?.campaign?.address
+      || payload?.campaignAddress
+      || "",
+    ).trim();
     window.dispatchEvent(new CustomEvent("mwz:creatorProtectionBlocked", {
       detail: {
         ...(protection || {}),
+        campaignAddress: campaignAddress || protection?.campaignAddress || null,
         code,
+        force: false,
       },
     }));
   } catch {
