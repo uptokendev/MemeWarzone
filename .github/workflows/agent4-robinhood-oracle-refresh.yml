@@ -1,0 +1,64 @@
+name: Agent 4 Robinhood Testnet Oracle Refresh
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type REFRESH_CHAIN_46630_ETH_USD_ORACLE'
+        required: true
+        type: string
+      eth_usd_8:
+        description: 'Current honest ETH/USD reference encoded as USD x 1e8'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    name: Manual RH46630 oracle refresh
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.event.inputs.confirmation == 'REFRESH_CHAIN_46630_ETH_USD_ORACLE' &&
+      github.ref_name == 'build/cross-chain-stabilization-rh-base'
+    runs-on: ubuntu-latest
+    environment: testnet-certification
+    env:
+      ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL }}
+      ROBINHOOD_TESTNET_ORACLE_UPDATER_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_ORACLE_UPDATER_PRIVATE_KEY }}
+      ROBINHOOD_NATIVE_USD_ORACLE_ADDRESS_46630: '0x5D2A88b0963Bb5b561B495a5fDCba869C01a8cAb'
+      ROBINHOOD_ETH_USD_8: ${{ github.event.inputs.eth_usd_8 }}
+    steps:
+      - name: Checkout exact dispatch source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Prove exact source pin and authorization
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.sha }}"
+          test "${{ github.ref_name }}" = "build/cross-chain-stabilization-rh-base"
+          test "${{ github.event.inputs.confirmation }}" = "REFRESH_CHAIN_46630_ETH_USD_ORACLE"
+          case "${{ github.event.inputs.eth_usd_8 }}" in
+            ''|*[!0-9]*) echo '::error::eth_usd_8 must be a positive integer'; exit 1 ;;
+          esac
+          test "${{ github.event.inputs.eth_usd_8 }}" != "0"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install exact dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Compile exact current EVM contracts
+        run: npx hardhat compile
+
+      - name: Refresh RH46630 ETH/USD oracle
+        run: npx hardhat run scripts/rh46630-oracle-refresh-transport.ts --network robinhoodTestnet
