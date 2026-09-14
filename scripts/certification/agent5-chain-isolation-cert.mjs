@@ -11,8 +11,9 @@ const need = (text, re, label) => { if (!re.test(text)) throw new Error(`ISOLATI
 const social = read("db/migrations/002_social.sql");
 const indexer = read("db/migrations/003_indexer.sql");
 const continuity = read("db/migrations/202607290001_war_trade_room_market_continuity_foundation.sql");
-const rewardsApi = read("frontend/api/rewards.js");
-const chainRegistry = read("frontend/api/lib/chainRegistry.js");
+const claimSchema = read("db/migrations/20260213_000003_claim_expiry_rollover.sql");
+const evmIndexer = read("realtime-indexer/src/indexer.ts");
+const meteoraIndexer = read("realtime-indexer/src/meteoraSwapIndexer.ts");
 
 need(social, /PRIMARY KEY \(chain_id, campaign_address\)/, "campaign identity is not chain-scoped");
 need(indexer, /PRIMARY KEY \(chain_id, cursor\)/, "indexer cursor is not chain-scoped");
@@ -20,9 +21,9 @@ need(indexer, /PRIMARY KEY \(chain_id, tx_hash, log_index\)/, "bonding event ide
 need(continuity, /primary key\(chain_id,campaign_address\)/i, "normalized market identity is not chain-scoped");
 need(continuity, /primary key\(chain_id,pair_address\)/i, "post-grad pool identity is not chain-scoped");
 need(continuity, /primary key\(chain_id,tx_hash,log_index\)/i, "post-grad trade identity is not chain-scoped");
-need(rewardsApi, /c\.chain_id\s*=\s*w\.chain_id|w\.chain_id\s*=\s*c\.chain_id/, "claim entitlement join lacks chain identity");
-need(chainRegistry, /101/, "Solana chain 101 missing from chain registry");
-need(chainRegistry, /97/, "BSC97 missing from chain registry");
+need(claimSchema, /c\.chain_id\s*=\s*w\.chain_id/, "claim entitlement join lacks chain identity");
+need(evmIndexer, /chainId:\s*97|chainId\s*===\s*97|chain\.chainId\s*===\s*97/, "BSC97 is absent from current EVM indexer authority");
+need(meteoraIndexer, /const SOLANA_CHAIN_ID = 101/, "Solana 101 is absent from current market indexer authority");
 
 const databaseUrl = String(process.env.DATABASE_URL || "").trim();
 if (!databaseUrl) throw new Error("DATABASE_URL is required");
@@ -72,6 +73,7 @@ const report = {
     campaigns: "(chain_id,campaign_address)",
     indexerState: "(chain_id,cursor)",
     curveTrades: "(chain_id,tx_hash,log_index)",
+    claimJoin: "league_epoch_claims.chain_id = league_epoch_winners.chain_id",
     marketState: "(chain_id,campaign_address)",
     dexPools: "(chain_id,pair_address)",
     dexTrades: "(chain_id,tx_hash,log_index)",
