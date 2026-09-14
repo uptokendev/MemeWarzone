@@ -6,6 +6,7 @@ on:
       - build/cross-chain-stabilization-rh-base
     paths:
       - 'scripts/rh46630-native-lifecycle-certification.mjs'
+      - 'scripts/rh46630-native-lifecycle-fault-preflight.mjs'
       - '.github/workflows/agent4-rh46630-native-lifecycle.yml'
       - 'contracts/LaunchFactory.sol'
       - 'contracts/LaunchCampaign.sol'
@@ -48,7 +49,7 @@ jobs:
           git merge-base --is-ancestor "$RH46630_AUTHORITY_SHA" HEAD
           git diff --name-only "$RH46630_AUTHORITY_SHA" HEAD | tee /tmp/rh46630-changed.txt
           test -s /tmp/rh46630-changed.txt
-          if grep -Ev '^(scripts/rh46630-native-lifecycle-certification\.mjs|\.github/workflows/agent4-rh46630-native-lifecycle\.yml)$' /tmp/rh46630-changed.txt; then
+          if grep -Ev '^(scripts/rh46630-native-lifecycle-certification\.mjs|scripts/rh46630-native-lifecycle-fault-preflight\.mjs|\.github/workflows/agent4-rh46630-native-lifecycle\.yml)$' /tmp/rh46630-changed.txt; then
             echo 'Non-certification file changed from RH46630 authority' >&2
             exit 1
           fi
@@ -66,8 +67,10 @@ jobs:
       - name: Install exact dependencies
         run: npm ci --no-audit --no-fund
 
-      - name: Syntax check certification helper
-        run: node --check scripts/rh46630-native-lifecycle-certification.mjs
+      - name: Syntax check certification helpers
+        run: |
+          node --check scripts/rh46630-native-lifecycle-certification.mjs
+          node --check scripts/rh46630-native-lifecycle-fault-preflight.mjs
 
       - name: Compile exact authority contracts
         run: npx hardhat compile
@@ -80,6 +83,7 @@ jobs:
         run: |
           set -euo pipefail
           helper=scripts/rh46630-native-lifecycle-certification.mjs
+          preflight=scripts/rh46630-native-lifecycle-fault-preflight.mjs
           workflow=.github/workflows/agent4-rh46630-native-lifecycle.yml
           grep -F 'const CHAIN_ID = 46630;' "$helper"
           grep -F 'const FORBIDDEN_CHAIN_ID = 4663;' "$helper"
@@ -87,6 +91,8 @@ jobs:
           grep -F 'SIGNER_MISMATCH_' "$helper"
           grep -F 'ORACLE_STALE_AGE_SECONDS_' "$helper"
           grep -F 'REFRESH_CHAIN_46630_ETH_USD_ORACLE' "$helper"
+          grep -F 'UNAUTHORIZED_ROUTE' "$preflight"
+          grep -F 'WRONG_CREATOR_SIGNER' "$preflight"
           grep -F 'environment: testnet-certification' "$workflow"
           grep -F "github.event.inputs.confirmation == 'CERTIFY_CHAIN_46630_NATIVE_LIFECYCLE'" "$workflow"
 
@@ -94,12 +100,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          files='scripts/rh46630-native-lifecycle-certification.mjs .github/workflows/agent4-rh46630-native-lifecycle.yml'
+          files='scripts/rh46630-native-lifecycle-certification.mjs scripts/rh46630-native-lifecycle-fault-preflight.mjs .github/workflows/agent4-rh46630-native-lifecycle.yml'
           if grep -nE '(-----BEGIN [A-Z ]*PRIVATE KEY-----|https?://[^[:space:]]+:[^[:space:]@]+@)' $files; then
             echo 'Potential committed private key or authenticated URL detected' >&2
             exit 1
           fi
-          # Public addresses are expected. Reject 64-hex private-key-looking literals only when assigned to secret/key variables.
           if grep -nEi '(private.?key|secret)[^\n]{0,40}(0x)?[a-f0-9]{64}' $files; then
             echo 'Potential committed secret literal detected' >&2
             exit 1
@@ -136,7 +141,7 @@ jobs:
           git cat-file -e "${RH46630_AUTHORITY_SHA}^{commit}"
           git merge-base --is-ancestor "$RH46630_AUTHORITY_SHA" HEAD
           test "${{ github.event.inputs.confirmation }}" = 'CERTIFY_CHAIN_46630_NATIVE_LIFECYCLE'
-          if grep -Ev '^(scripts/rh46630-native-lifecycle-certification\.mjs|\.github/workflows/agent4-rh46630-native-lifecycle\.yml)$' < <(git diff --name-only "$RH46630_AUTHORITY_SHA" HEAD); then
+          if grep -Ev '^(scripts/rh46630-native-lifecycle-certification\.mjs|scripts/rh46630-native-lifecycle-fault-preflight\.mjs|\.github/workflows/agent4-rh46630-native-lifecycle\.yml)$' < <(git diff --name-only "$RH46630_AUTHORITY_SHA" HEAD); then
             echo 'Unexpected delta from authority' >&2
             exit 1
           fi
@@ -152,6 +157,9 @@ jobs:
 
       - name: Compile exact authority contracts
         run: npx hardhat compile
+
+      - name: Execute live RH46630 fault preflight
+        run: node scripts/rh46630-native-lifecycle-fault-preflight.mjs
 
       - name: Execute real RH46630 native lifecycle
         run: node scripts/rh46630-native-lifecycle-certification.mjs
