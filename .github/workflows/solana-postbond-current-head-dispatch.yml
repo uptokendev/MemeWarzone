@@ -1,0 +1,257 @@
+name: Solana Final Post-Bond Closeout Dispatcher
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/solana-postbond-current-head-dispatch.yml']
+  workflow_dispatch:
+    inputs:
+      execute_confirmation:
+        description: 'Exact confirmation: EXECUTE_SOLANA_POSTBOND_CURRENT_HEAD_CLOSEOUT'
+        required: true
+        type: string
+      sol_usd:
+        description: 'Operator-attested current SOL/USD reference for devnet normalization'
+        required: true
+        type: string
+      snapshot_delay_seconds:
+        required: false
+        default: '5'
+        type: string
+      battle_entry_lamports:
+        required: false
+        default: '100000000'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: solana-final-postbond-closeout-6f6cec9
+  cancel-in-progress: false
+
+env:
+  EXPECTED_CERT_SHA: 6f6cec9b8aec936b624760cef5bb05aaadc31bbc
+  EXPECTED_SOURCE_SHA: 8944382619e05f09539614f5690b98521fe244ed
+  EXPECTED_MAIN_BASE_SHA: fb022ee45f2eb7c2a86abe5613fa493725d53a1d
+  FIXTURE_SOURCE_SHA: 992bf9d0e1889d9280c9226a3193b102adbd7c07
+  FIXTURE_ARTIFACT_NAME: solana-owner-bound-fixtures-6f6cec9b8aec936b624760cef5bb05aaadc31bbc
+  FIXTURE_ARTIFACT_ID: '10414835996'
+  FIXTURE_ARTIFACT_SHA256: 93a972f5f837ecfcd9b4bfadde21983b3b9461943ee08da1c4b4030b8a88e4c0
+  SOLANA_APPLICATION_CHAIN_ID: '101'
+  SOLANA_EXPECTED_DEVNET_GENESIS: EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG
+  SOLANA_LAUNCHPAD_PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+  SOLANA_PROGRAMDATA_ADDRESS: 9y6db1TSRHuMk1FK2GdLDYG4frdFH1z1wWtu2d1v5qM6
+  SOLANA_DEPLOYMENT_SLOT: '494582729'
+  SOLANA_UPGRADE_AUTHORITY_PUBLIC_KEY: HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9
+  SOLANA_LAUNCHPAD_PROGRAM_SHA256: 27ad65b560dba8a33330bd95f08ae7ca6945f71ebf667a5a3756ae0cb9f7f080
+  SOLANA_LAUNCHPAD_PROGRAM_BYTES: '1165328'
+  OWNER_A_EXPECTED_PUBLIC: 3fXMySCJvGamBmW1FASoruQN9kqg8ifPpozsnTpfYQ7p
+  OWNER_B_EXPECTED_PUBLIC: 2CT4aDWtLFDa5JkbN7EPvxgqAQV2UaZU3XL8V6cv2X39
+  SOLANA_POSTBOND_LEFT_CAMPAIGN: 8GU46JtXsJwUMQn15aDcPUxKKZBnqhPL6rDvQRLa2z9C
+  SOLANA_POSTBOND_LEFT_MINT: AKYEUYcxRdPKceNfEoxvfgiotNMwoWDYE44XVUcC6Lkg
+  SOLANA_POSTBOND_LEFT_METEORA_POOL: HQZRQBBdU1oyycvYCjEyRktq4bZevjhRUNKvEavirBsb
+  SOLANA_POSTBOND_LEFT_POSTGRAD_PAYER: HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9
+  SOLANA_POSTBOND_LEFT_POSTGRAD_BUY_SIGNATURE: 3aRf1i5XMEXBLPCCeSEbxMKze9kzUrmoiwwd2mXPDFxBaTqu3nBYrfewYubPt2JcaBR14teHoCVQs1fvP3ASt8sM
+  SOLANA_POSTBOND_LEFT_POSTGRAD_SELL_SIGNATURE: 2MhZCWn2doT8i4ytQNr9aD9onDL55u7vBsUJ4wTgzMgmrnqMt6a9CUsAyzQTXTqNx7GCw8yZk9Z9BSFcPeuLyrBs
+  SOLANA_POSTBOND_RIGHT_CAMPAIGN: zE3TmesLT9ajajSTHk8HxSQ5Du5obDpXkQNUvuJAuaJ
+  SOLANA_POSTBOND_RIGHT_MINT: GoX9rEmsrHCk4vMrDpt6JaxLJyDsYZDr8sQhHuKochmN
+  SOLANA_POSTBOND_RIGHT_METEORA_POOL: CiN8vRM5GiCBSoHFfyxpu9KincrC9J6aKdsomGPYabtq
+  SOLANA_POSTBOND_RIGHT_POSTGRAD_PAYER: HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9
+  SOLANA_POSTBOND_RIGHT_POSTGRAD_BUY_SIGNATURE: 5rBdegHq1WYKiadxovBqfjdktVZwsgGvBni4kzGMm7zxrviG3v2CAjZqP1bYPGrZCxT8rKyUxCg7s2Mg5kjiETN2
+  SOLANA_POSTBOND_RIGHT_POSTGRAD_SELL_SIGNATURE: 3ArBsxTmL6t5trgfKnFkyUxVyZ2Qw1wdDDp6gLeAF7vkZfLPTGvkkQ5WsQVagBzpNvQDABqtTDTqYAwxHD3jYVdu
+
+jobs:
+  static-dispatcher-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout dispatcher PR
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - name: Prove exact one-file repin and frozen authorities
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$EXPECTED_CERT_SHA" = '6f6cec9b8aec936b624760cef5bb05aaadc31bbc'
+          test "$EXPECTED_SOURCE_SHA" = '8944382619e05f09539614f5690b98521fe244ed'
+          test "$FIXTURE_SOURCE_SHA" = '992bf9d0e1889d9280c9226a3193b102adbd7c07'
+          test "$FIXTURE_ARTIFACT_ID" = '10414835996'
+          test "$FIXTURE_ARTIFACT_SHA256" = '93a972f5f837ecfcd9b4bfadde21983b3b9461943ee08da1c4b4030b8a88e4c0'
+          test "$SOLANA_APPLICATION_CHAIN_ID" = '101'
+          test "$SOLANA_LAUNCHPAD_PROGRAM_ID" = '3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt'
+          if [ "${{ github.event_name }}" = pull_request ]; then
+            test "${{ github.event.pull_request.base.sha }}" = "$EXPECTED_MAIN_BASE_SHA"
+            git diff --name-only "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" | sort > /tmp/actual
+            printf '%s\n' '.github/workflows/solana-postbond-current-head-dispatch.yml' > /tmp/expected
+            diff -u /tmp/expected /tmp/actual
+          fi
+          ! grep -F 'solana program deploy' .github/workflows/solana-postbond-current-head-dispatch.yml
+      - name: Checkout exact frozen PR 370 head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_CERT_SHA }}
+          fetch-depth: 0
+      - name: Prove source authority, no program delta, and V0/ALT source gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_CERT_SHA"
+          git merge-base --is-ancestor "$EXPECTED_SOURCE_SHA" HEAD
+          test "$(git merge-base "$EXPECTED_SOURCE_SHA" HEAD)" = "$EXPECTED_SOURCE_SHA"
+          git diff --exit-code "$EXPECTED_SOURCE_SHA" HEAD -- programs/memewarzone_solana/
+          node certification/solana-postbond-current-head/source-gate.mjs
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run V0/ALT zero-network regression
+        run: |
+          npm ci --no-audit --no-fund
+          node --test certification/solana-postbond-current-head/chain-evidence.test.mjs
+          node --check certification/solana-postbond-current-head/arena-money-closeout.mjs
+          node --check certification/solana-postbond-current-head/db-runtime-closeout.mjs
+
+  destructive-chain-101-closeout:
+    if: github.event_name == 'workflow_dispatch'
+    needs: static-dispatcher-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: testnet-certification
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: solana_postbond_cert
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd="pg_isready -U postgres -d solana_postbond_cert"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_REWARDS_RPC_URL || secrets.SOLANA_DEVNET_RPC || secrets.SOLANA_DEVNET_RPC_URL || vars.SOLANA_DEVNET_RPC }}
+      SOLANA_REWARDS_RPC_URL: ${{ secrets.SOLANA_REWARDS_RPC_URL || secrets.SOLANA_DEVNET_RPC || secrets.SOLANA_DEVNET_RPC_URL || vars.SOLANA_DEVNET_RPC }}
+      SOLANA_REWARDS_AUTHORITY_SECRET_KEY: ${{ secrets.SOLANA_REWARDS_AUTHORITY_SECRET_KEY }}
+      SOLANA_REWARDS_RESOLVER_SECRET_KEY: ${{ secrets.SOLANA_POSTBOND_RESOLVER_SECRET_KEY }}
+      SOLANA_POSTBOND_OWNER_A_SECRET_KEY: ${{ secrets.SOLANA_POSTBOND_OWNER_A_SECRET_KEY }}
+      SOLANA_POSTBOND_OWNER_B_SECRET_KEY: ${{ secrets.SOLANA_POSTBOND_OWNER_B_SECRET_KEY }}
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/solana_postbond_cert
+      SOLANA_POSTBOND_CHAIN_REPORT: reports/solana-postbond-chain-evidence.json
+      SOLANA_POSTBOND_MONEY_REPORT: reports/solana-postbond-arena-money.json
+      SOLANA_POSTBOND_DB_REPORT: reports/solana-postbond-db-runtime.json
+      SOLANA_POSTBOND_CLOSEOUT_MANIFEST: reports/solana-postbond-closeout-manifest.json
+      SOLANA_CLOSEOUT_SOL_USD: ${{ inputs.sol_usd }}
+      SOLANA_POSTBOND_SNAPSHOT_DELAY_SECONDS: ${{ inputs.snapshot_delay_seconds }}
+      SOLANA_ARENA_BATTLE_ENTRY_LAMPORTS: ${{ inputs.battle_entry_lamports }}
+    steps:
+      - name: Checkout exact frozen PR 370 head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_CERT_SHA }}
+          fetch-depth: 0
+      - name: Hard operator / devnet / source gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ inputs.execute_confirmation }}" = 'EXECUTE_SOLANA_POSTBOND_CURRENT_HEAD_CLOSEOUT'
+          test "$SOLANA_APPLICATION_CHAIN_ID" = '101'
+          test "$(git rev-parse HEAD)" = "$EXPECTED_CERT_SHA"
+          test "$(git merge-base "$EXPECTED_SOURCE_SHA" HEAD)" = "$EXPECTED_SOURCE_SHA"
+          git diff --exit-code "$EXPECTED_SOURCE_SHA" HEAD -- programs/memewarzone_solana/
+          test -n "$SOLANA_RPC_URL"
+          test -n "$SOLANA_REWARDS_AUTHORITY_SECRET_KEY"
+          test -n "$SOLANA_REWARDS_RESOLVER_SECRET_KEY"
+          test -n "$SOLANA_POSTBOND_OWNER_A_SECRET_KEY"
+          test -n "$SOLANA_POSTBOND_OWNER_B_SECRET_KEY"
+          mkdir -p reports
+          node certification/solana-postbond-current-head/source-gate.mjs
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install certification dependencies
+        run: |
+          npm ci --no-audit --no-fund
+          npm install --no-save --no-package-lock pg@8.16.3 @solana/web3.js@1.95.4 @solana/spl-token@0.4.8 bs58@6.0.0
+          npm install --prefix tests/solana --no-audit --no-fund
+      - name: Build exact accepted launch-program candidate and IDL without deployment
+        shell: bash
+        env:
+          SOLANA_VERSION: '1.18.26'
+          ANCHOR_VERSION: '0.30.1'
+          RUST_TOOLCHAIN: '1.79.0'
+          IDL_RUST_TOOLCHAIN: 'nightly-2024-05-09'
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          release_dir="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
+          mkdir -p "$release_dir"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error \
+            --output /tmp/solana-release.tar.bz2 \
+            "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"
+          ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+          npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+          anchor build --program-name memewarzone_solana --no-idl
+          rustup toolchain install "$IDL_RUST_TOOLCHAIN" --profile minimal
+          mkdir -p target/idl
+          (cd programs/memewarzone_solana && RUSTUP_TOOLCHAIN="$IDL_RUST_TOOLCHAIN" anchor idl build --out ../../target/idl/memewarzone_solana.json)
+          test "$(sha256sum target/deploy/memewarzone_solana.so | awk '{print $1}')" = "$SOLANA_LAUNCHPAD_PROGRAM_SHA256"
+          test "$(wc -c < target/deploy/memewarzone_solana.so | tr -d ' ')" = "$SOLANA_LAUNCHPAD_PROGRAM_BYTES"
+      - name: Prove devnet genesis and deployed launch-program binary identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(solana genesis-hash --url "$SOLANA_RPC_URL")" = "$SOLANA_EXPECTED_DEVNET_GENESIS"
+          node tests/solana/devnet-deployment-identity.cjs \
+            --rpc-url "$SOLANA_RPC_URL" \
+            --program-id "$SOLANA_LAUNCHPAD_PROGRAM_ID" \
+            --output reports/solana-devnet-deployment-identity.json
+          test "$(node -e "process.stdout.write(require('./reports/solana-devnet-deployment-identity.json').programDataAddress)")" = "$SOLANA_PROGRAMDATA_ADDRESS"
+          test "$(node -e "process.stdout.write(require('./reports/solana-devnet-deployment-identity.json').deploymentSlot)")" = "$SOLANA_DEPLOYMENT_SLOT"
+          test "$(node -e "process.stdout.write(require('./reports/solana-devnet-deployment-identity.json').deployedProgramSha256)")" = "$SOLANA_LAUNCHPAD_PROGRAM_SHA256"
+      - name: Bind protected owners to certified fixture identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const {Keypair}=require('./tests/solana/node_modules/@solana/web3.js');
+          function key(raw){const s=String(raw||'').trim();if(!s)throw new Error('missing owner secret');const b=s.startsWith('[')?Uint8Array.from(JSON.parse(s)):Uint8Array.from(Buffer.from(s,'base64'));if(b.length!==64)throw new Error('owner secret must decode to 64 bytes');return Keypair.fromSecretKey(b).publicKey.toBase58();}
+          const a=key(process.env.SOLANA_POSTBOND_OWNER_A_SECRET_KEY), b=key(process.env.SOLANA_POSTBOND_OWNER_B_SECRET_KEY);
+          if(a!==process.env.OWNER_A_EXPECTED_PUBLIC)throw new Error('OWNER_A protected signer mismatch');
+          if(b!==process.env.OWNER_B_EXPECTED_PUBLIC)throw new Error('OWNER_B protected signer mismatch');
+          if(a===b)throw new Error('owners must be distinct');
+          NODE
+      - name: Bind certified graduated campaigns to V0/ALT-aware Meteora evidence
+        run: node certification/solana-postbond-current-head/chain-evidence.mjs
+      - name: Plan locked V3 Battle winner
+        shell: bash
+        run: |
+          node certification/solana-postbond-current-head/db-runtime-closeout.mjs --plan-winner > reports/battle-plan.json
+          WINNER=$(node -e "const x=require('./reports/battle-plan.json');process.stdout.write(x.winnerSide)")
+          test "$WINNER" = left -o "$WINNER" = right
+          echo "SOLANA_POSTBOND_BATTLE_WINNER=$WINNER" >> "$GITHUB_ENV"
+      - name: Execute existing Battle / Tournament / Vote settlement and claims closeout
+        run: node certification/solana-postbond-current-head/arena-money-closeout.mjs
+      - name: Execute existing Final Salvo / MWL / Quarterly / worker restart-replay closeout
+        run: node certification/solana-postbond-current-head/db-runtime-closeout.mjs
+      - name: Final reconciliation and immutable-source proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node -e "const x=require('./reports/solana-postbond-closeout-manifest.json');process.stdout.write(x.sourceAuthority)")" = "$EXPECTED_SOURCE_SHA"
+          node -e "const x=require('./reports/solana-postbond-closeout-manifest.json');if(x.applicationChainId!==101||x.deferredPolicies.quarterlyFinalPayoutPercentages!=='DEFERRED_NOT_BLOCKING'||x.deferredPolicies.monthlyPlacementBonus!=='DEFERRED_NOT_BLOCKING')process.exit(1)"
+          git diff --exit-code -- . ':!reports'
+          git diff --exit-code "$EXPECTED_SOURCE_SHA" HEAD -- programs/memewarzone_solana/
+          sha256sum reports/*.json | sort > reports/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: solana-final-postbond-closeout-${{ env.EXPECTED_CERT_SHA }}
+          path: reports/
+          if-no-files-found: error
+          retention-days: 30
