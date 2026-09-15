@@ -48,7 +48,7 @@ env:
   SOLANA_LAUNCHPAD_PROGRAM_BYTES: '1165328'
   OWNER_A_EXPECTED_PUBLIC: 3fXMySCJvGamBmW1FASoruQN9kqg8ifPpozsnTpfYQ7p
   OWNER_B_EXPECTED_PUBLIC: 2CT4aDWtLFDa5JkbN7EPvxgqAQV2UaZU3XL8V6cv2X39
-  ARENA_MONEY_V2_EXPECTED_RESOLVER: 7hKQd798Z1ERmRUhm7shmstB1V13FQNnDLqtYjZJBuJUz
+  ARENA_MONEY_V2_EXPECTED_RESOLVER: 7hKQd798Z1ERmRUhm7shmstB1V13FQNnDLqtYjZBuJUz
   SOLANA_POSTBOND_LEFT_CAMPAIGN: 8GU46JtXsJwUMQn15aDcPUxKKZBnqhPL6rDvQRLa2z9C
   SOLANA_POSTBOND_LEFT_MINT: AKYEUYcxRdPKceNfEoxvfgiotNMwoWDYE44XVUcC6Lkg
   SOLANA_POSTBOND_LEFT_METEORA_POOL: HQZRQBBdU1oyycvYCjEyRktq4bZevjhRUNKvEavirBsb
@@ -83,7 +83,7 @@ jobs:
           test "$FIXTURE_ARTIFACT_SHA256" = '93a972f5f837ecfcd9b4bfadde21983b3b9461943ee08da1c4b4030b8a88e4c0'
           test "$SOLANA_APPLICATION_CHAIN_ID" = '101'
           test "$SOLANA_LAUNCHPAD_PROGRAM_ID" = '3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt'
-          test "$ARENA_MONEY_V2_EXPECTED_RESOLVER" = '7hKQd798Z1ERmRUhm7shmstB1V13FQNnDLqtYjZJBuJUz'
+          test "$ARENA_MONEY_V2_EXPECTED_RESOLVER" = '7hKQd798Z1ERmRUhm7shmstB1V13FQNnDLqtYjZBuJUz'
           if [ "${{ github.event_name }}" = pull_request ]; then
             test "${{ github.event.pull_request.base.sha }}" = "$EXPECTED_MAIN_BASE_SHA"
             git diff --name-only "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" | sort > /tmp/actual
