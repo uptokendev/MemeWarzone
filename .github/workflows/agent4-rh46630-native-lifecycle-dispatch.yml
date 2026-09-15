@@ -10,7 +10,7 @@ on:
       source_sha:
         description: Exact reviewed PR #359 certification source SHA
         required: true
-        default: e280f35de8bd80d632baf6d7c2c2e89c965f566d
+        default: 1249650d03212977c5f5d62d153acfa3317d9d9a
         type: string
 
 permissions:
@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: testnet-certification
     env:
-      EXPECTED_CERT_SHA: e280f35de8bd80d632baf6d7c2c2e89c965f566d
+      EXPECTED_CERT_SHA: 1249650d03212977c5f5d62d153acfa3317d9d9a
       EXPECTED_AUTHORITY_SHA: 8944382619e05f09539614f5690b98521fe244ed
       RH46630_LIFECYCLE_EVIDENCE: rh46630-native-lifecycle-evidence.json
       ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL }}
@@ -70,7 +70,7 @@ jobs:
           git cat-file -e "${EXPECTED_AUTHORITY_SHA}^{commit}"
           git merge-base --is-ancestor "$EXPECTED_AUTHORITY_SHA" HEAD
           git diff --name-only "$EXPECTED_AUTHORITY_SHA" HEAD | tee /tmp/rh46630-changed.txt
-          if grep -Ev '^(scripts/rh46630-native-lifecycle-certification\.mjs|scripts/rh46630-native-lifecycle-runner\.mjs|scripts/rh46630-native-lifecycle-fault-preflight\.mjs|scripts/rh46630-native-lifecycle-postchecks\.mjs|scripts/rh46630-native-lifecycle-readonly-diagnostic\.mjs|\.github/workflows/agent4-rh46630-native-lifecycle\.yml)$' /tmp/rh46630-changed.txt; then
+          if grep -Ev '^(scripts/rh46630-native-lifecycle-certification\.mjs|scripts/rh46630-native-lifecycle-runner\.mjs|scripts/rh46630-native-lifecycle-runner\.test\.mjs|scripts/rh46630-native-lifecycle-fault-preflight\.mjs|scripts/rh46630-native-lifecycle-postchecks\.mjs|scripts/rh46630-native-lifecycle-readonly-diagnostic\.mjs|\.github/workflows/agent4-rh46630-native-lifecycle\.yml)$' /tmp/rh46630-changed.txt; then
             echo 'BLOCKER: certification head contains non-certification changes'
             exit 1
           fi
@@ -100,9 +100,11 @@ jobs:
           set -euo pipefail
           node --check scripts/rh46630-native-lifecycle-certification.mjs
           node --check scripts/rh46630-native-lifecycle-runner.mjs
+          node --check scripts/rh46630-native-lifecycle-runner.test.mjs
           node --check scripts/rh46630-native-lifecycle-fault-preflight.mjs
           node --check scripts/rh46630-native-lifecycle-postchecks.mjs
           node --check scripts/rh46630-native-lifecycle-readonly-diagnostic.mjs
+          node --test scripts/rh46630-native-lifecycle-runner.test.mjs
           npx hardhat compile
           npx hardhat test test/GraduationOracle.spec.ts
           grep -F 'const CHAIN_ID = 46630;' scripts/rh46630-native-lifecycle-certification.mjs
