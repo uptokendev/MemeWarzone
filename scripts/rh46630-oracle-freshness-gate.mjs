@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ethers } from 'ethers';
 
@@ -161,7 +162,7 @@ async function main() {
   console.log(JSON.stringify(result, null, 2));
 }
 
-const invokedAsScript = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+const invokedAsScript = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedAsScript) {
   main().catch((error) => {
     console.error(error instanceof Error ? error.message : String(error));
