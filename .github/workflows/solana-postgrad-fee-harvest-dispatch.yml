@@ -1,4 +1,5 @@
 name: Solana #350 Post-Grad Fee Harvest Dispatcher
+# Registration refresh only; certification behavior and inputs are unchanged.
 
 on:
   workflow_dispatch:
