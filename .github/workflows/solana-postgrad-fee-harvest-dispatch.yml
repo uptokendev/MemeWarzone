@@ -11,7 +11,7 @@ on:
       source_sha:
         description: 'Reviewed PR #350 exact source SHA'
         required: true
-        default: '30066e354f9f8e63dd3a9255e12a58ef2249c407'
+        default: '182c388b973d621d8c6551eee1048c47a6fbf607'
         type: string
 
 permissions:
@@ -19,7 +19,7 @@ permissions:
 
 env:
   CI: true
-  REVIEWED_SOURCE_SHA: 30066e354f9f8e63dd3a9255e12a58ef2249c407
+  REVIEWED_SOURCE_SHA: 182c388b973d621d8c6551eee1048c47a6fbf607
   INTEGRATION_BASE_SHA: 8944382619e05f09539614f5690b98521fe244ed
   REQUIRED_CONFIRMATION: EXECUTE_SOLANA_DEVNET_POSTGRAD_FEE_HARVEST
 
@@ -81,7 +81,7 @@ jobs:
           ref: ${{ inputs.source_sha }}
           fetch-depth: 0
 
-      - name: Verify integration ancestry and exact four-file lane
+      - name: Verify integration ancestry and exact six-file lane
         shell: bash
         run: |
           set -euo pipefail
@@ -97,12 +97,14 @@ jobs:
           printf '%s\n' \
             '.github/workflows/agent5-solana-postgrad-fee-harvest.yml' \
             'realtime-indexer/scripts/certifySolanaPostgradFeeHarvest.ts' \
+            'realtime-indexer/src/solanaLpFeeAccounting.ts' \
             'realtime-indexer/src/solanaLpFees.ts' \
+            'realtime-indexer/src/tests/solanaLpFeeAccounting.test.ts' \
             'realtime-indexer/src/tests/solanaLpFeesTreasury.test.ts' \
             | sort > "$expected"
           git diff --name-only "$INTEGRATION_BASE_SHA"...HEAD | sort > "$actual"
           if ! diff -u "$expected" "$actual"; then
-            echo '::error::PR #350 exact-head scope is not the reviewed four-file lane.'
+            echo '::error::PR #350 exact-head scope is not the reviewed six-file lane.'
             exit 1
           fi
 
