@@ -14,7 +14,7 @@ permissions:
 jobs:
   diagnose:
     runs-on: ubuntu-24.04
-    environment: robinhood-testnet
+    environment: testnet-certification
     timeout-minutes: 15
     env:
       EXPECTED_CERT_SHA: 4b3061cdeec6550e533495451bfd84a51067800e
