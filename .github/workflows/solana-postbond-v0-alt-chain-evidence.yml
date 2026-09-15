@@ -44,7 +44,6 @@ jobs:
         run: node --test certification/solana-postbond-current-head/chain-evidence.test.mjs
 
   current-devnet-readonly:
-    if: github.event_name == 'push'
     needs: zero-network-regression
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -70,7 +69,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
@@ -86,7 +85,7 @@ jobs:
           test -s "$SOLANA_POSTBOND_CHAIN_REPORT"
       - uses: actions/upload-artifact@v4
         with:
-          name: solana-v0-alt-readonly-${{ github.sha }}
+          name: solana-v0-alt-readonly-${{ github.event.pull_request.head.sha || github.sha }}
           path: reports/solana-v0-alt-readonly.json
           if-no-files-found: error
           retention-days: 30
