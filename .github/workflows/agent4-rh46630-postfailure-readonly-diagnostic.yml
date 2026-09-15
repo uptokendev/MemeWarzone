@@ -1,0 +1,80 @@
+name: Agent 4 RH46630 Post-Failure Read-Only Diagnostic
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type DIAGNOSE_CHAIN_46630_READONLY'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    environment: robinhood-testnet
+    timeout-minutes: 15
+    env:
+      EXPECTED_CERT_SHA: 4b3061cdeec6550e533495451bfd84a51067800e
+      ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL }}
+    steps:
+      - name: Validate read-only dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ inputs.confirmation }}" = 'DIAGNOSE_CHAIN_46630_READONLY'
+          test -n "$ROBINHOOD_TESTNET_RPC_URL"
+
+      - name: Checkout exact reviewed RH46630 certification head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_CERT_SHA }}
+          fetch-depth: 0
+
+      - name: Pin exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_CERT_SHA"
+          git diff --exit-code 8944382619e05f09539614f5690b98521fe244ed HEAD -- contracts/
+          echo 'RH46630_READONLY_DIAGNOSTIC_SOURCE_PIN=PASS'
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install and compile exact artifacts
+        run: |
+          npm ci --no-audit --no-fund
+          npx hardhat compile
+
+      - name: Run chain-state diagnostic with zero writes
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/rh46630-native-lifecycle-readonly-diagnostic.mjs | tee rh46630-postfailure-readonly-diagnostic.json
+          echo 'CHAIN_WRITES=0'
+
+      - name: Assert diagnostic did not include secret material
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f rh46630-postfailure-readonly-diagnostic.json ]; then
+            ! grep -nE '(-----BEGIN [A-Z ]*PRIVATE KEY-----|https?://[^[:space:]]+:[^[:space:]@]+@)' rh46630-postfailure-readonly-diagnostic.json
+            ! grep -nEi '(private.?key|secret)[^\n]{0,40}(0x)?[a-f0-9]{64}' rh46630-postfailure-readonly-diagnostic.json
+          fi
+          echo 'diagnostic_secret_scan=ok'
+
+      - name: Upload read-only diagnostic
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rh46630-postfailure-readonly-diagnostic-${{ env.EXPECTED_CERT_SHA }}
+          path: rh46630-postfailure-readonly-diagnostic.json
+          if-no-files-found: error
+          retention-days: 14
