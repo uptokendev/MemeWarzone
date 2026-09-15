@@ -10,7 +10,7 @@ on:
       source_sha:
         description: Exact reviewed PR #360 certification source SHA
         required: true
-        default: 03936a096f5604633fa26490629873080250f117
+        default: a9d88305d8071437c172b545fdbc918abd37216d
         type: string
 
 permissions:
@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: testnet-certification
     env:
-      EXPECTED_CERT_SHA: 03936a096f5604633fa26490629873080250f117
+      EXPECTED_CERT_SHA: a9d88305d8071437c172b545fdbc918abd37216d
       EXPECTED_SOURCE_SHA: 47c1f3f4338638931b8b6b1b2296ae8813d2b7f2
       EXPECTED_INTEGRATION_SHA: 8944382619e05f09539614f5690b98521fe244ed
       BSC_TESTNET_PRIVATE_KEY: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
@@ -45,10 +45,6 @@ jobs:
           test "${{ github.event.inputs.confirmation }}" = "EXECUTE_BSC97_NATIVE_PENDING_GRADUATION_CERT"
           test "${{ github.event.inputs.source_sha }}" = "${EXPECTED_CERT_SHA}" || {
             echo "BLOCKER: source_sha must equal reviewed certification head ${EXPECTED_CERT_SHA}"
-            exit 1
-          }
-          test -n "${BSC_TESTNET_RPC:-}" || {
-            echo "BLOCKER: missing rotated protected secret BSC_TESTNET_RPC"
             exit 1
           }
 
@@ -78,6 +74,34 @@ jobs:
       - name: Install dependencies
         shell: bash
         run: npm ci
+
+      - name: Prepare exact final cert scripts with zero network
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/prepare-bnb97-native-pending-graduation-cert.mjs
+          node scripts/prepare-bnb97-completion-read-reconciliation.mjs
+          node scripts/prepare-bnb97-harvest-accounting.mjs
+
+      - name: Syntax load and transpile exact final executable with zero network
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/validate-bnb97-final-executable.mjs scripts/test-bnb97-native-pending-graduation.ts
+
+      - name: Static certification regressions with zero network
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test scripts/validate-bnb97-final-executable.test.mjs
+          node --test scripts/prove-bnb-6c-rehearsal.test.mjs
+
+      - name: Restore source script for deterministic destructive regeneration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout -- scripts/test-bnb97-native-pending-graduation.ts
+          git diff --exit-code -- scripts/test-bnb97-native-pending-graduation.ts
 
       - name: Pre-broadcast funded-wallet and balance preflight
         shell: bash
