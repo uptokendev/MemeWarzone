@@ -1,0 +1,49 @@
+name: BNB97 final executable zero-network gate
+
+on:
+  pull_request:
+  push:
+    branches:
+      - cert/bnb97-native-pending-graduation-47c1f3f4
+
+permissions:
+  contents: read
+
+jobs:
+  final-executable-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare exact final certification script
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/prepare-bnb97-native-pending-graduation-cert.mjs
+          node scripts/prepare-bnb97-completion-read-reconciliation.mjs
+          node scripts/prepare-bnb97-harvest-accounting.mjs
+
+      - name: Parse transpile and type-load exact final executable
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/validate-bnb97-final-executable.mjs scripts/test-bnb97-native-pending-graduation.ts
+
+      - name: Static regression for duplicate declaration rejection
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test scripts/validate-bnb97-final-executable.test.mjs
+          node --test scripts/prove-bnb-6c-rehearsal.test.mjs
