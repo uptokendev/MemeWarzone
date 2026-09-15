@@ -9,6 +9,9 @@ import { harvestSolanaLpFees, listSolanaLpFees } from "../src/solanaLpFees.ts";
 const CHAIN_ID = 101;
 const EXPECTED_GENESIS = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
 const WSOL = new PublicKey("So11111111111111111111111111111111111111112");
+const TOKEN_PROGRAM_ID = new PublicKey("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+const TOKEN_2022_PROGRAM_ID = new PublicKey("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
+const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 const METEORA_PROGRAM = new PublicKey("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG");
 const CREATOR_BPS = 8000n;
 const BPS = 10000n;
@@ -28,19 +31,46 @@ function loadOperator(file: string): Keypair {
   return Keypair.fromSecretKey(Uint8Array.from(raw));
 }
 
-async function balanceForMint(connection: Connection, owner: PublicKey, mint: PublicKey): Promise<bigint> {
-  if (mint.equals(WSOL)) return BigInt(await connection.getBalance(owner, "confirmed"));
-  const response = await connection.getParsedTokenAccountsByOwner(owner, { mint }, "confirmed");
-  let total = 0n;
-  for (const entry of response.value) {
-    const amount = (entry.account.data as any)?.parsed?.info?.tokenAmount?.amount;
-    if (amount != null) total += BigInt(String(amount));
-  }
-  return total;
+function tokenProgramFromFlag(flag: unknown): PublicKey {
+  return Number(flag ?? 0) === 0 ? TOKEN_PROGRAM_ID : TOKEN_2022_PROGRAM_ID;
 }
 
-async function snapshot(connection: Connection, owner: PublicKey, mintA: PublicKey, mintB: PublicKey) {
-  const [a, b] = await Promise.all([balanceForMint(connection, owner, mintA), balanceForMint(connection, owner, mintB)]);
+function deriveAta(owner: PublicKey, mint: PublicKey, tokenProgram: PublicKey): PublicKey {
+  return PublicKey.findProgramAddressSync(
+    [owner.toBuffer(), tokenProgram.toBuffer(), mint.toBuffer()],
+    ASSOCIATED_TOKEN_PROGRAM_ID,
+  )[0];
+}
+
+async function balanceForMint(
+  connection: Connection,
+  owner: PublicKey,
+  mint: PublicKey,
+  tokenProgram: PublicKey,
+): Promise<bigint> {
+  // Meteora pool assets are SPL token mints. So111... is WSOL in this context,
+  // not the owner's native system-account lamports.
+  const ata = deriveAta(owner, mint, tokenProgram);
+  try {
+    const response = await connection.getTokenAccountBalance(ata, "confirmed");
+    return BigInt(response.value.amount || "0");
+  } catch {
+    return 0n;
+  }
+}
+
+async function snapshot(
+  connection: Connection,
+  owner: PublicKey,
+  mintA: PublicKey,
+  mintB: PublicKey,
+  tokenAProgram: PublicKey,
+  tokenBProgram: PublicKey,
+) {
+  const [a, b] = await Promise.all([
+    balanceForMint(connection, owner, mintA, tokenAProgram),
+    balanceForMint(connection, owner, mintB, tokenBProgram),
+  ]);
   return { a, b };
 }
 
@@ -148,6 +178,10 @@ async function execute() {
 
   const pair = [poolState.tokenAMint.toBase58(), poolState.tokenBMint.toBase58()];
   if (!pair.includes(canonical.mint) || !pair.includes(WSOL.toBase58())) fail("pool is not exact campaign mint/WSOL pair");
+  const mintA = poolState.tokenAMint;
+  const mintB = poolState.tokenBMint;
+  const tokenAProgram = tokenProgramFromFlag((poolState as any).tokenAFlag);
+  const tokenBProgram = tokenProgramFromFlag((poolState as any).tokenBFlag);
   const unclaimed = getUnClaimLpFee(poolState as any, positionState as any);
   const feeA = bi((unclaimed as any).feeTokenA);
   const feeB = bi((unclaimed as any).feeTokenB);
@@ -162,12 +196,17 @@ async function execute() {
   if (!listItemBefore?.fees?.registered) fail("runtime LP fee reader did not register exact campaign position");
 
   const creatorPk = new PublicKey(canonical.creator);
-  const mintA = poolState.tokenAMint;
-  const mintB = poolState.tokenBMint;
+  const creatorAtaA = deriveAta(creatorPk, mintA, tokenAProgram);
+  const creatorAtaB = deriveAta(creatorPk, mintB, tokenBProgram);
+  const treasuryAtaA = deriveAta(treasury, mintA, tokenAProgram);
+  const treasuryAtaB = deriveAta(treasury, mintB, tokenBProgram);
+  const operatorAtaA = deriveAta(operator.publicKey, mintA, tokenAProgram);
+  const operatorAtaB = deriveAta(operator.publicKey, mintB, tokenBProgram);
+
   const [creatorBefore, treasuryBefore, operatorBefore] = await Promise.all([
-    snapshot(connection, creatorPk, mintA, mintB),
-    snapshot(connection, treasury, mintA, mintB),
-    snapshot(connection, operator.publicKey, mintA, mintB),
+    snapshot(connection, creatorPk, mintA, mintB, tokenAProgram, tokenBProgram),
+    snapshot(connection, treasury, mintA, mintB, tokenAProgram, tokenBProgram),
+    snapshot(connection, operator.publicKey, mintA, mintB, tokenAProgram, tokenBProgram),
   ]);
 
   const harvest: any = await harvestSolanaLpFees({ pool: pg, campaign: canonical.campaign, pair: canonical.pool });
@@ -175,13 +214,18 @@ async function execute() {
   if (!harvest?.splitTx) fail("runtime harvest did not return a receiver split signature");
 
   const [creatorAfter, treasuryAfter, operatorAfter] = await Promise.all([
-    snapshot(connection, creatorPk, mintA, mintB),
-    snapshot(connection, treasury, mintA, mintB),
-    snapshot(connection, operator.publicKey, mintA, mintB),
+    snapshot(connection, creatorPk, mintA, mintB, tokenAProgram, tokenBProgram),
+    snapshot(connection, treasury, mintA, mintB, tokenAProgram, tokenBProgram),
+    snapshot(connection, operator.publicKey, mintA, mintB, tokenAProgram, tokenBProgram),
   ]);
   const creatorDelta = delta(creatorAfter, creatorBefore);
   const treasuryDelta = delta(treasuryAfter, treasuryBefore);
   const operatorDelta = delta(operatorAfter, operatorBefore);
+
+  const claimTx = await connection.getTransaction(harvest.claimTx, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
+  const splitTx = await connection.getTransaction(harvest.splitTx, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
+  if (!claimTx || claimTx.meta?.err || !splitTx || splitTx.meta?.err) fail("claim/split transaction is missing or failed on chain");
+
   if (creatorDelta.a !== expectedA.creator || creatorDelta.b !== expectedB.creator) {
     fail(`creator receiver delta mismatch expected=${expectedA.creator}/${expectedB.creator} actual=${creatorDelta.a}/${creatorDelta.b}`);
   }
@@ -194,23 +238,23 @@ async function execute() {
   const dbHarvest = persisted.rows[0]?.harvest;
   if (!dbHarvest || dbHarvest.claimTx !== harvest.claimTx || dbHarvest.splitTx !== harvest.splitTx) fail("DB reconciliation does not bind exact claim/split signatures");
 
-  const claimTx = await connection.getTransaction(harvest.claimTx, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
-  const splitTx = await connection.getTransaction(harvest.splitTx, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
-  if (!claimTx || claimTx.meta?.err || !splitTx || splitTx.meta?.err) fail("claim/split transaction is missing or failed on chain");
-
   const [retryCreatorBefore, retryTreasuryBefore] = await Promise.all([
-    snapshot(connection, creatorPk, mintA, mintB), snapshot(connection, treasury, mintA, mintB),
+    snapshot(connection, creatorPk, mintA, mintB, tokenAProgram, tokenBProgram),
+    snapshot(connection, treasury, mintA, mintB, tokenAProgram, tokenBProgram),
   ]);
   const retry: any = await harvestSolanaLpFees({ pool: pg, campaign: canonical.campaign, pair: canonical.pool });
   const [retryCreatorAfter, retryTreasuryAfter] = await Promise.all([
-    snapshot(connection, creatorPk, mintA, mintB), snapshot(connection, treasury, mintA, mintB),
+    snapshot(connection, creatorPk, mintA, mintB, tokenAProgram, tokenBProgram),
+    snapshot(connection, treasury, mintA, mintB, tokenAProgram, tokenBProgram),
   ]);
   const retryCreatorDelta = delta(retryCreatorAfter, retryCreatorBefore);
   const retryTreasuryDelta = delta(retryTreasuryAfter, retryTreasuryBefore);
   if ([retryCreatorDelta.a,retryCreatorDelta.b,retryTreasuryDelta.a,retryTreasuryDelta.b].some((x) => x !== 0n)) fail("retry caused a duplicate receiver transfer");
+  if (retry?.claimTx || retry?.splitTx || retry?.retryNoop !== true) fail("zero-fee retry sent or reported a second settlement transaction");
+  if (retry?.txHash !== dbHarvest.lastTx) fail("zero-fee retry did not preserve original settlement identity");
 
   const report = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     sourceSha: process.env.GITHUB_SHA || null,
     status: "PASS",
     chainId: CHAIN_ID,
@@ -225,6 +269,20 @@ async function execute() {
     permanentLockedLiquidity: String(grad.permanentLockedLiquidity),
     unlockedLiquidity: String(grad.unlockedLiquidity),
     postgradTradeSignatures: { buy: post.buy?.signature, sell: post.sell?.signature },
+    feeAssets: {
+      tokenA: {
+        mint: mintA.toBase58(), tokenProgram: tokenAProgram.toBase58(), sourceFeeAccount: poolState.tokenAVault.toBase58(),
+        creatorReceiverAccount: creatorAtaA.toBase58(), protocolReceiverAccount: treasuryAtaA.toBase58(), operatorClaimAccount: operatorAtaA.toBase58(),
+        creatorPreBalance: creatorBefore.a.toString(), creatorExpectedEntitlement: expectedA.creator.toString(), creatorPostBalance: creatorAfter.a.toString(), creatorActualDelta: creatorDelta.a.toString(),
+        protocolPreBalance: treasuryBefore.a.toString(), protocolExpectedEntitlement: expectedA.protocol.toString(), protocolPostBalance: treasuryAfter.a.toString(), protocolActualDelta: treasuryDelta.a.toString(),
+      },
+      tokenB: {
+        mint: mintB.toBase58(), tokenProgram: tokenBProgram.toBase58(), sourceFeeAccount: poolState.tokenBVault.toBase58(),
+        creatorReceiverAccount: creatorAtaB.toBase58(), protocolReceiverAccount: treasuryAtaB.toBase58(), operatorClaimAccount: operatorAtaB.toBase58(),
+        creatorPreBalance: creatorBefore.b.toString(), creatorExpectedEntitlement: expectedB.creator.toString(), creatorPostBalance: creatorAfter.b.toString(), creatorActualDelta: creatorDelta.b.toString(),
+        protocolPreBalance: treasuryBefore.b.toString(), protocolExpectedEntitlement: expectedB.protocol.toString(), protocolPostBalance: treasuryAfter.b.toString(), protocolActualDelta: treasuryDelta.b.toString(),
+      },
+    },
     feeBeforeHarvestRaw: { tokenA: feeA.toString(), tokenB: feeB.toString(), tokenAMint: mintA.toBase58(), tokenBMint: mintB.toBase58() },
     expectedReceiversRaw: {
       creator: { address: canonical.creator, tokenA: expectedA.creator.toString(), tokenB: expectedB.creator.toString() },
@@ -236,8 +294,12 @@ async function execute() {
       operator: { address: operator.publicKey.toBase58(), tokenA: operatorDelta.a.toString(), tokenB: operatorDelta.b.toString() },
     },
     transactions: { graduation: grad.signature, claim: harvest.claimTx, split: harvest.splitTx, retryClaim: retry?.claimTx || null, retrySplit: retry?.splitTx || null },
+    transactionPrograms: {
+      claim: "Meteora CP-AMM claimPositionFee -> operator SPL token accounts",
+      split: `SPL token transfers via ${tokenAProgram.toBase58()} / ${tokenBProgram.toBase58()}`,
+    },
     dbReconciliation: { claimTx: dbHarvest.claimTx, splitTx: dbHarvest.splitTx, lastTx: dbHarvest.lastTx, status: "PASS" },
-    retry: { receiverTransferDeltaRaw: { creatorA: retryCreatorDelta.a.toString(), creatorB: retryCreatorDelta.b.toString(), protocolA: retryTreasuryDelta.a.toString(), protocolB: retryTreasuryDelta.b.toString() }, duplicateTransfer: false },
+    retry: { receiverTransferDeltaRaw: { creatorA: retryCreatorDelta.a.toString(), creatorB: retryCreatorDelta.b.toString(), protocolA: retryTreasuryDelta.a.toString(), protocolB: retryTreasuryDelta.b.toString() }, duplicateTransfer: false, retryNoop: true, preservedTxHash: retry.txHash },
     negativeProofs: { wrongChain: "REJECTED", wrongPool: "REJECTED", wrongMint: "REJECTED", wrongRecipient: "REJECTED" },
     noHiddenCustody: true,
     noBnbContamination: true,
