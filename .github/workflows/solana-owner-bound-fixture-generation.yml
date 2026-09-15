@@ -1,0 +1,238 @@
+name: Solana Owner-Bound Devnet Fixture Generation
+
+on:
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - '.github/workflows/solana-owner-bound-fixture-generation.yml'
+      - 'certification/solana-owner-bound-fixtures/**'
+
+permissions:
+  contents: read
+
+env:
+  CI: true
+  EXACT_370_HEAD: d500cc600c62f95d730a3b34dc425ebad30d8429
+  AUTHORITY_SHA: 8944382619e05f09539614f5690b98521fe244ed
+  SOLANA_APPLICATION_CHAIN_ID: '101'
+  SOLANA_LAUNCHPAD_PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+  SOLANA_EXPECTED_DEVNET_GENESIS: EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG
+
+jobs:
+  generate-owner-bound-fixtures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: testnet-certification
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || secrets.SOLANA_DEVNET_RPC_URL || vars.SOLANA_DEVNET_RPC }}
+      SOLANA_REWARDS_RPC_URL: ${{ secrets.SOLANA_REWARDS_RPC_URL || secrets.SOLANA_DEVNET_RPC || secrets.SOLANA_DEVNET_RPC_URL || vars.SOLANA_DEVNET_RPC }}
+      SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER || secrets.SOLANA_DEVNET_PRIVATE_KEY }}
+      SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
+      SOLANA_POSTBOND_OWNER_A_SECRET_KEY: ${{ secrets.SOLANA_POSTBOND_OWNER_A_SECRET_KEY }}
+      SOLANA_POSTBOND_OWNER_B_SECRET_KEY: ${{ secrets.SOLANA_POSTBOND_OWNER_B_SECRET_KEY }}
+      SOLANA_UPGRADE_AUTHORITY_PUBLIC_KEY: ${{ vars.SOLANA_DEVNET_UPGRADE_AUTHORITY_PUBLIC_KEY || secrets.SOLANA_DEVNET_UPGRADE_AUTHORITY_PUBLIC_KEY }}
+      SOLANA_EXPECTED_PROGRAMDATA_ADDRESS: ${{ vars.SOLANA_DEVNET_PROGRAMDATA_ADDRESS }}
+      SOLANA_EXPECTED_DEPLOYMENT_SLOT: ${{ vars.SOLANA_DEVNET_DEPLOYMENT_SLOT }}
+      SOLANA_LAUNCHPAD_PROGRAM_SHA256: 27ad65b560dba8a33330bd95f08ae7ca6945f71ebf667a5a3756ae0cb9f7f080
+      SOLANA_LAUNCHPAD_PROGRAM_BYTES: '1165328'
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      PG_DISABLE_SSL: '1'
+
+    steps:
+      - name: Checkout fixture transport
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Preserve certification-only creator preload
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp certification/solana-owner-bound-fixtures/owner-creator-preload.cjs /tmp/owner-creator-preload.cjs
+          node --check /tmp/owner-creator-preload.cjs
+
+      - name: Checkout frozen PR 370 head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXACT_370_HEAD }}
+          fetch-depth: 0
+
+      - name: Prove exact frozen authority and unchanged launch program
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXACT_370_HEAD"
+          git merge-base --is-ancestor "$AUTHORITY_SHA" HEAD
+          git diff --exit-code "$AUTHORITY_SHA" HEAD -- programs/memewarzone_solana/
+          node certification/solana-postbond-current-head/source-gate.mjs
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Resolve certification dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm install --prefix tests/solana --no-audit --no-fund
+          npm ci --prefix frontend --no-audit --no-fund
+          npm ci --prefix tools/solana-meteora-graduation --no-audit --no-fund
+
+      - name: Build exact accepted launch-program candidate and IDL
+        shell: bash
+        env:
+          SOLANA_VERSION: '1.18.26'
+          ANCHOR_VERSION: '0.30.1'
+          RUST_TOOLCHAIN: '1.79.0'
+          IDL_RUST_TOOLCHAIN: 'nightly-2024-05-09'
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          release_dir="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
+          mkdir -p "$release_dir"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error \
+            --output /tmp/solana-release.tar.bz2 \
+            "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"
+          ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+          npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+          anchor build --program-name memewarzone_solana --no-idl
+          rustup toolchain install "$IDL_RUST_TOOLCHAIN" --profile minimal
+          mkdir -p target/idl
+          (cd programs/memewarzone_solana && RUSTUP_TOOLCHAIN="$IDL_RUST_TOOLCHAIN" anchor idl build --out ../../target/idl/memewarzone_solana.json)
+          test "$(sha256sum target/deploy/memewarzone_solana.so | awk '{print $1}')" = "$SOLANA_LAUNCHPAD_PROGRAM_SHA256"
+          test "$(wc -c < target/deploy/memewarzone_solana.so | tr -d ' ')" = "$SOLANA_LAUNCHPAD_PROGRAM_BYTES"
+          echo "SOLANA_LAUNCHPAD_PROGRAM_PATH=target/deploy/memewarzone_solana.so" >> "$GITHUB_ENV"
+
+      - name: Derive protected owner public addresses only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          node <<'NODE'
+          const fs=require('fs');
+          const {Keypair}=require('./tests/solana/node_modules/@solana/web3.js');
+          function kp(raw){
+            const text=String(raw||'').trim();
+            if(!text) throw new Error('missing owner secret');
+            const bytes=text.startsWith('[')?Uint8Array.from(JSON.parse(text)):Uint8Array.from(Buffer.from(text,'base64'));
+            if(bytes.length!==64) throw new Error('owner secret must decode to 64 bytes');
+            return Keypair.fromSecretKey(bytes);
+          }
+          const a=kp(process.env.SOLANA_POSTBOND_OWNER_A_SECRET_KEY).publicKey.toBase58();
+          const b=kp(process.env.SOLANA_POSTBOND_OWNER_B_SECRET_KEY).publicKey.toBase58();
+          if(a===b) throw new Error('OWNER_A and OWNER_B resolve to same public key');
+          fs.writeFileSync('reports/owner-public-addresses.json', JSON.stringify({ownerA:a,ownerB:b},null,2)+'\n');
+          fs.appendFileSync(process.env.GITHUB_ENV, `OWNER_A_PUBLIC=${a}\nOWNER_B_PUBLIC=${b}\n`);
+          console.log(`OWNER_A_PUBLIC=${a}`);
+          console.log(`OWNER_B_PUBLIC=${b}`);
+          NODE
+
+      - name: Generate OWNER_A fixture through accepted chain-101 lifecycle
+        shell: bash
+        env:
+          SEND_SOLANA_GRADUATION: 'true'
+          SOLANA_FIXTURE_CREATOR_SECRET_KEY: ${{ secrets.SOLANA_POSTBOND_OWNER_A_SECRET_KEY }}
+          NODE_OPTIONS: '--require=/tmp/owner-creator-preload.cjs'
+          SOLANA_NETWORK_CANARY_REPORT: /tmp/owner-a-pregrad.json
+          SOLANA_POSTGRAD_CANARY_REPORT: /tmp/owner-a-postgrad.json
+          SOLANA_GRADUATION_PAUSE_SNAPSHOT: /tmp/owner-a-pause-snapshot.json
+        run: |
+          set -euo pipefail
+          npm run solana:network-canary
+          mkdir -p reports/owner-a
+          cp /tmp/owner-a-pregrad.json reports/owner-a/pregrad.json
+          cp /tmp/owner-a-postgrad.json reports/owner-a/postgrad.json
+          cp /tmp/mwz-solana-101-graduation-result.json reports/owner-a/graduation.json
+          cp /tmp/mwz-solana-101-graduation.log reports/owner-a/graduation.log
+
+      - name: Generate OWNER_B fixture through accepted chain-101 lifecycle
+        shell: bash
+        env:
+          SEND_SOLANA_GRADUATION: 'true'
+          SOLANA_FIXTURE_CREATOR_SECRET_KEY: ${{ secrets.SOLANA_POSTBOND_OWNER_B_SECRET_KEY }}
+          NODE_OPTIONS: '--require=/tmp/owner-creator-preload.cjs'
+          SOLANA_NETWORK_CANARY_REPORT: /tmp/owner-b-pregrad.json
+          SOLANA_POSTGRAD_CANARY_REPORT: /tmp/owner-b-postgrad.json
+          SOLANA_GRADUATION_PAUSE_SNAPSHOT: /tmp/owner-b-pause-snapshot.json
+        run: |
+          set -euo pipefail
+          npm run solana:network-canary
+          mkdir -p reports/owner-b
+          cp /tmp/owner-b-pregrad.json reports/owner-b/pregrad.json
+          cp /tmp/owner-b-postgrad.json reports/owner-b/postgrad.json
+          cp /tmp/mwz-solana-101-graduation-result.json reports/owner-b/graduation.json
+          cp /tmp/mwz-solana-101-graduation.log reports/owner-b/graduation.log
+
+      - name: Current-devnet revalidation using frozen PR 370 chain evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          export SOLANA_POSTBOND_LEFT_CAMPAIGN="$(node -e "process.stdout.write(require('./reports/owner-a/pregrad.json').campaign)")"
+          export SOLANA_POSTBOND_LEFT_MINT="$(node -e "process.stdout.write(require('./reports/owner-a/pregrad.json').mint)")"
+          export SOLANA_POSTBOND_LEFT_METEORA_POOL="$(node -e "process.stdout.write(require('./reports/owner-a/postgrad.json').pool)")"
+          export SOLANA_POSTBOND_LEFT_POSTGRAD_REPORT="$PWD/reports/owner-a/postgrad.json"
+          export SOLANA_POSTBOND_RIGHT_CAMPAIGN="$(node -e "process.stdout.write(require('./reports/owner-b/pregrad.json').campaign)")"
+          export SOLANA_POSTBOND_RIGHT_MINT="$(node -e "process.stdout.write(require('./reports/owner-b/pregrad.json').mint)")"
+          export SOLANA_POSTBOND_RIGHT_METEORA_POOL="$(node -e "process.stdout.write(require('./reports/owner-b/postgrad.json').pool)")"
+          export SOLANA_POSTBOND_RIGHT_POSTGRAD_REPORT="$PWD/reports/owner-b/postgrad.json"
+          export SOLANA_CLOSEOUT_SOL_USD='150'
+          export SOLANA_POSTBOND_SNAPSHOT_DELAY_SECONDS='0'
+          export SOLANA_POSTBOND_CHAIN_REPORT="$PWD/reports/owner-bound-chain-evidence.json"
+          node certification/solana-postbond-current-head/chain-evidence.mjs
+          node <<'NODE'
+          const fs=require('fs');
+          const owners=JSON.parse(fs.readFileSync('reports/owner-public-addresses.json','utf8'));
+          const evidence=JSON.parse(fs.readFileSync('reports/owner-bound-chain-evidence.json','utf8'));
+          if(evidence.left.creator!==owners.ownerA) throw new Error(`OWNER_A creator mismatch ${evidence.left.creator} != ${owners.ownerA}`);
+          if(evidence.right.creator!==owners.ownerB) throw new Error(`OWNER_B creator mismatch ${evidence.right.creator} != ${owners.ownerB}`);
+          if(evidence.left.campaign===evidence.right.campaign||evidence.left.mint===evidence.right.mint||evidence.left.meteoraPool===evidence.right.meteoraPool) throw new Error('fixtures are not distinct');
+          if(!evidence.left.graduated||!evidence.left.curveClosed||!evidence.right.graduated||!evidence.right.curveClosed) throw new Error('fixture not graduated/curve-closed');
+          if(!(evidence.left.immutableLiveBaseline.tokenReserve>0&&evidence.left.immutableLiveBaseline.solReserve>0&&evidence.right.immutableLiveBaseline.tokenReserve>0&&evidence.right.immutableLiveBaseline.solReserve>0)) throw new Error('empty Meteora reserves');
+          const result={
+            status:'READY',
+            left:{owner:owners.ownerA,campaign:evidence.left.campaign,mint:evidence.left.mint,pool:evidence.left.meteoraPool,payer:JSON.parse(fs.readFileSync('reports/owner-a/postgrad.json','utf8')).payer,buy:evidence.left.postGradTransactions.buy.signature,sell:evidence.left.postGradTransactions.sell.signature,creator:evidence.left.creator,graduated:evidence.left.graduated,curveClosed:evidence.left.curveClosed,reserves:evidence.left.immutableLiveBaseline},
+            right:{owner:owners.ownerB,campaign:evidence.right.campaign,mint:evidence.right.mint,pool:evidence.right.meteoraPool,payer:JSON.parse(fs.readFileSync('reports/owner-b/postgrad.json','utf8')).payer,buy:evidence.right.postGradTransactions.buy.signature,sell:evidence.right.postGradTransactions.sell.signature,creator:evidence.right.creator,graduated:evidence.right.graduated,curveClosed:evidence.right.curveClosed,reserves:evidence.right.immutableLiveBaseline}
+          };
+          fs.writeFileSync('reports/fixture-inputs.json',JSON.stringify(result,null,2)+'\n');
+          console.log(JSON.stringify(result,null,2));
+          NODE
+
+      - name: Prove no source/program mutation and hash evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- . ':!reports'
+          git diff --exit-code "$AUTHORITY_SHA" HEAD -- programs/memewarzone_solana/
+          sha256sum reports/*.json reports/owner-a/* reports/owner-b/* | sort > reports/SHA256SUMS.txt
+
+      - name: Upload owner-bound fixture evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: solana-owner-bound-fixtures-${{ env.EXACT_370_HEAD }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 30
