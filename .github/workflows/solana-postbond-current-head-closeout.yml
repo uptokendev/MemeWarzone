@@ -1,6 +1,12 @@
 name: Solana Post-Bond Current-Head Closeout
 
 on:
+  push:
+    branches:
+      - agent/solana-postbond-closeout-894438
+    paths:
+      - '.github/workflows/solana-postbond-current-head-closeout.yml'
+      - 'certification/solana-postbond-current-head/**'
   pull_request:
     branches:
       - build/cross-chain-stabilization-rh-base
