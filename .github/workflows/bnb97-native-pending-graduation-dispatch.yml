@@ -10,7 +10,7 @@ on:
       source_sha:
         description: Exact reviewed PR #360 certification source SHA
         required: true
-        default: 6778be5510974c83159c705de201b4fcbc1ac673
+        default: 3c596e8f4787aaab66c7d379da6683a1c2ffa374
         type: string
 
 permissions:
@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: testnet-certification
     env:
-      EXPECTED_CERT_SHA: 6778be5510974c83159c705de201b4fcbc1ac673
+      EXPECTED_CERT_SHA: 3c596e8f4787aaab66c7d379da6683a1c2ffa374
       EXPECTED_SOURCE_SHA: 47c1f3f4338638931b8b6b1b2296ae8813d2b7f2
       EXPECTED_INTEGRATION_SHA: 8944382619e05f09539614f5690b98521fe244ed
       BSC_TESTNET_PRIVATE_KEY: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
