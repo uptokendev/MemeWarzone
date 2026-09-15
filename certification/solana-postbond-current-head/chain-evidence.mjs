@@ -25,6 +25,7 @@ function req(name) {
 function pub(data, offset) { return new PublicKey(data.subarray(offset, offset + 32)); }
 function absBig(v) { return v < 0n ? -v : v; }
 function sha(value) { return crypto.createHash('sha256').update(value).digest('hex'); }
+function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
 async function landed(connection, signature) {
   const status = (await connection.getSignatureStatuses([signature], { searchTransactionHistory: true })).value[0];
@@ -53,22 +54,51 @@ function payerNativeVolume(tx, payer) {
   return absBig(post - pre + fee);
 }
 
-async function side(connection, cpAmm, prefix, reportPath, solUsd) {
+async function marketSnapshot(connection, mintState, mint, tokenVaultKey, solVaultKey, solUsd, volumeUsd) {
+  const [tokenVault, solVault, holders, slot] = await Promise.all([
+    getAccount(connection, tokenVaultKey, 'confirmed'),
+    getAccount(connection, solVaultKey, 'confirmed'),
+    holderCount(connection, mint),
+    connection.getSlot('confirmed'),
+  ]);
+  if (tokenVault.amount <= 0n || solVault.amount <= 0n) throw new Error('Meteora reserves are empty');
+  const tokenReserve = Number(tokenVault.amount) / 10 ** Number(mintState.decimals);
+  const solReserve = Number(solVault.amount) / 1e9;
+  const supply = Number(mintState.supply) / 10 ** Number(mintState.decimals);
+  const spotSol = tokenReserve > 0 ? solReserve / tokenReserve : 0;
+  const marketCapUsd = spotSol * supply * solUsd;
+  if (!Number.isFinite(marketCapUsd) || marketCapUsd <= 0) throw new Error('market-cap snapshot is invalid');
+  return {
+    marketCapUsd,
+    holders,
+    volumeUsd,
+    solUsd,
+    tokenReserve,
+    solReserve,
+    source: 'meteora-devnet-chain',
+    healthy: true,
+    slot,
+    capturedAt: new Date().toISOString(),
+  };
+}
+
+async function side(connection, cpAmm, prefix, reportPath, solUsd, delayMs) {
   const campaign = new PublicKey(req(`${prefix}_CAMPAIGN`));
   const expectedMint = new PublicKey(req(`${prefix}_MINT`));
   const expectedPool = new PublicKey(req(`${prefix}_METEORA_POOL`));
-  const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+  const reportBytes = fs.readFileSync(reportPath);
+  const report = JSON.parse(reportBytes.toString('utf8'));
   if (Number(report.applicationChainId) !== 101 || report.cluster !== 'devnet') throw new Error(`${prefix} post-grad report is not chain 101 devnet`);
   if (report.mint !== expectedMint.toBase58() || report.pool !== expectedPool.toBase58()) throw new Error(`${prefix} post-grad report identity mismatch`);
   if (report.reload?.status !== 'PASS') throw new Error(`${prefix} post-grad report reload did not pass`);
 
-  const account = await connection.getAccountInfo(campaign, 'confirmed');
-  if (!account || !account.owner.equals(LAUNCH_PROGRAM) || account.data.length < CAMPAIGN_BYTES) throw new Error(`${prefix} campaign is not an accepted launch-program campaign`);
-  const creator = pub(account.data, CREATOR_OFFSET);
-  const mint = pub(account.data, MINT_OFFSET);
+  const campaignAccount = await connection.getAccountInfo(campaign, 'confirmed');
+  if (!campaignAccount || !campaignAccount.owner.equals(LAUNCH_PROGRAM) || campaignAccount.data.length < CAMPAIGN_BYTES) throw new Error(`${prefix} campaign is not an accepted launch-program campaign`);
+  const creator = pub(campaignAccount.data, CREATOR_OFFSET);
+  const mint = pub(campaignAccount.data, MINT_OFFSET);
   if (!mint.equals(expectedMint)) throw new Error(`${prefix} campaign mint mismatch`);
-  if (account.data[GRADUATED_OFFSET] !== 1 || account.data[CURVE_CLOSED_OFFSET] !== 1) throw new Error(`${prefix} campaign is not graduated/curve-closed`);
-  if (account.data[DEX_ADAPTER_OFFSET] !== METEORA_DAMM_V2) throw new Error(`${prefix} campaign did not lock Meteora DAMM v2`);
+  if (campaignAccount.data[GRADUATED_OFFSET] !== 1 || campaignAccount.data[CURVE_CLOSED_OFFSET] !== 1) throw new Error(`${prefix} campaign is not graduated/curve-closed`);
+  if (campaignAccount.data[DEX_ADAPTER_OFFSET] !== METEORA_DAMM_V2) throw new Error(`${prefix} campaign did not lock Meteora DAMM v2`);
 
   const derivedPool = deriveCustomizablePoolAddress(mint, NATIVE_MINT);
   if (!derivedPool.equals(expectedPool)) throw new Error(`${prefix} supplied Meteora pool != canonical customizable pool`);
@@ -79,15 +109,6 @@ async function side(connection, cpAmm, prefix, reportPath, solUsd) {
   const mintState = await getMint(connection, mint, 'confirmed', TOKEN_PROGRAM_ID);
   const tokenVaultKey = poolState.tokenAMint.equals(mint) ? poolState.tokenAVault : poolState.tokenBVault;
   const solVaultKey = poolState.tokenAMint.equals(NATIVE_MINT) ? poolState.tokenAVault : poolState.tokenBVault;
-  const tokenVault = await getAccount(connection, tokenVaultKey, 'confirmed');
-  const solVault = await getAccount(connection, solVaultKey, 'confirmed');
-  if (tokenVault.amount <= 0n || solVault.amount <= 0n) throw new Error(`${prefix} Meteora reserves are empty`);
-  const tokenReserve = Number(tokenVault.amount) / 10 ** Number(mintState.decimals);
-  const solReserve = Number(solVault.amount) / 1e9;
-  const supply = Number(mintState.supply) / 10 ** Number(mintState.decimals);
-  const spotSol = tokenReserve > 0 ? solReserve / tokenReserve : 0;
-  const marketCapUsd = spotSol * supply * solUsd;
-  if (!Number.isFinite(marketCapUsd) || marketCapUsd <= 0) throw new Error(`${prefix} market-cap snapshot is invalid`);
 
   const buy = await landed(connection, report.buy.signature);
   const sell = await landed(connection, report.sell.signature);
@@ -97,7 +118,11 @@ async function side(connection, cpAmm, prefix, reportPath, solUsd) {
   const volumeNative = (buyNativeRaw || 0n) + (sellNativeRaw || 0n);
   if (volumeNative <= 0n) throw new Error(`${prefix} post-grad transactions have no native-value evidence`);
   const volumeUsd = Number(volumeNative) / 1e9 * solUsd;
-  const holders = await holderCount(connection, mint);
+
+  const baseline = await marketSnapshot(connection, mintState, mint, tokenVaultKey, solVaultKey, solUsd, 0);
+  if (delayMs > 0) await sleep(delayMs);
+  const current = await marketSnapshot(connection, mintState, mint, tokenVaultKey, solVaultKey, solUsd, volumeUsd);
+  if (current.slot < baseline.slot) throw new Error(`${prefix} market snapshot slot moved backwards`);
 
   return {
     campaign: campaign.toBase58(),
@@ -108,12 +133,13 @@ async function side(connection, cpAmm, prefix, reportPath, solUsd) {
     dexAdapter: 'meteora_damm_v2',
     meteoraPool: expectedPool.toBase58(),
     poolVaults: { token: tokenVaultKey.toBase58(), wsol: solVaultKey.toBase58() },
-    marketSnapshot: { marketCapUsd, holders, volumeUsd, solUsd, source: 'meteora-devnet-chain', capturedAt: new Date().toISOString() },
+    immutableLiveBaseline: baseline,
+    finalMarketSnapshot: current,
     postGradTransactions: {
       buy: { signature: report.buy.signature, slot: buy.slot, blockTime: buy.blockTime, nativeVolumeRaw: String(buyNativeRaw || 0n) },
       sell: { signature: report.sell.signature, slot: sell.slot, blockTime: sell.blockTime, nativeVolumeRaw: String(sellNativeRaw || 0n) },
     },
-    postGradReportSha256: sha(fs.readFileSync(reportPath)),
+    postGradReportSha256: sha(reportBytes),
   };
 }
 
@@ -121,20 +147,23 @@ async function main() {
   if (req('SOLANA_APPLICATION_CHAIN_ID') !== '101') throw new Error('canonical application chain must be 101');
   const solUsd = Number(req('SOLANA_CLOSEOUT_SOL_USD'));
   if (!Number.isFinite(solUsd) || solUsd <= 0) throw new Error('SOLANA_CLOSEOUT_SOL_USD must be positive');
+  const delaySeconds = Math.max(0, Math.min(120, Number(process.env.SOLANA_POSTBOND_SNAPSHOT_DELAY_SECONDS || '5')));
+  if (!Number.isFinite(delaySeconds)) throw new Error('SOLANA_POSTBOND_SNAPSHOT_DELAY_SECONDS must be numeric');
   const connection = new Connection(req('SOLANA_RPC_URL'), 'confirmed');
   if (await connection.getGenesisHash() !== DEVNET_GENESIS) throw new Error('refusing non-devnet RPC');
   const cpAmm = new CpAmm(connection);
-  const left = await side(connection, cpAmm, 'SOLANA_POSTBOND_LEFT', req('SOLANA_POSTBOND_LEFT_POSTGRAD_REPORT'), solUsd);
-  const right = await side(connection, cpAmm, 'SOLANA_POSTBOND_RIGHT', req('SOLANA_POSTBOND_RIGHT_POSTGRAD_REPORT'), solUsd);
+  const left = await side(connection, cpAmm, 'SOLANA_POSTBOND_LEFT', req('SOLANA_POSTBOND_LEFT_POSTGRAD_REPORT'), solUsd, delaySeconds * 1000);
+  const right = await side(connection, cpAmm, 'SOLANA_POSTBOND_RIGHT', req('SOLANA_POSTBOND_RIGHT_POSTGRAD_REPORT'), solUsd, delaySeconds * 1000);
   if (left.mint === right.mint || left.campaign === right.campaign) throw new Error('Battle campaigns must be distinct');
   if (left.creator === right.creator) throw new Error('ArenaMoneyV2 Battle requires distinct owner wallets; supplied graduated campaigns share a creator');
   const output = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     purpose: 'solana-postbond-current-head-chain-evidence',
     sourceAuthority: SOURCE,
     applicationChainId: 101,
     cluster: 'devnet',
     launchProgram: LAUNCH_PROGRAM.toBase58(),
+    snapshotDelaySeconds: delaySeconds,
     left,
     right,
     checks: {
@@ -142,6 +171,7 @@ async function main() {
       realMeteoraPools: true,
       realPostGradBuySell: true,
       postGradMarketDataOnly: true,
+      immutableLiveBaselineCapturedFromChain: true,
       noBondingTradeEvidence: true,
       noCrossChainIdentity: true,
     },
