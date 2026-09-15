@@ -10,6 +10,7 @@ export const ADAPTER = '0x71F0B8358Ed3BE3584C8cF69664C0e9202d00730';
 export const LOCKER = '0x401B2F703B4756E0BC98dd4BCD92eaa9AaAd70c9';
 export const TREASURY = '0xF8A14d0e91A02DEc487615Ce13286b11dDad7efF';
 export const GRAD_ORACLE = '0x9561899be9E88f2Bb867d50915EAb63Ff651C854';
+export const ETH_USD_ORACLE = '0x5D2A88b0963Bb5b561B495a5fDCba869C01a8cAb';
 export const CREATOR = '0xf0558484531204645fB6eaF35c5082Fc55d869A6';
 export const DEPLOYER = '0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714';
 export const UPDATER = '0xE755A2c52654b2133c7A4fdC5349821C6527A766';
@@ -52,11 +53,148 @@ export function chooseLifecycleAction({ creatorAllowed, existingCampaign }) {
   return { mode: 'CREATE_NEW', resumeExistingCampaign: false, createRequired: true, resumeStep: 'CREATE' };
 }
 
+export function normalizeFeedPrice(answer, decimals) {
+  const a = BigInt(answer);
+  const d = Number(decimals);
+  if (a <= 0n) throw new Error('PRICE_ANSWER_NOT_POSITIVE');
+  if (!Number.isInteger(d) || d < 0 || d > 36) throw new Error('PRICE_DECIMALS_INVALID');
+  if (d === 18) return a;
+  if (d < 18) return a * (10n ** BigInt(18 - d));
+  return a / (10n ** BigInt(d - 18));
+}
+
+export function ceilMulDiv(a, b, denominator) {
+  const x = BigInt(a);
+  const y = BigInt(b);
+  const d = BigInt(denominator);
+  if (d <= 0n) throw new Error('DIVISOR_NOT_POSITIVE');
+  const product = x * y;
+  return product === 0n ? 0n : (product + d - 1n) / d;
+}
+
+export function computeNativeTargetFromUsd(usdAmount, feedAnswer, feedDecimals) {
+  const price18 = normalizeFeedPrice(feedAnswer, feedDecimals);
+  return ceilMulDiv(BigInt(usdAmount), 10n ** 18n, price18);
+}
+
+export function computeFirstBuyValue(nativeTarget) {
+  let value = BigInt(nativeTarget) / 5n;
+  if (value < 10_000_000_000_000n) value = 10_000_000_000_000n;
+  return value;
+}
+
+export function makeTradeDigest(campaign, actor, profile, action, amount, limit, deadline) {
+  const coder = ethers.AbiCoder.defaultAbiCoder();
+  return ethers.keccak256(coder.encode(
+    ['string','uint256','address','address','uint8','uint8','uint256','uint256','uint64'],
+    ['MWZ_ROUTE_TRADE_AUTH', CHAIN_ID, campaign, actor, profile, action, amount, limit, deadline]
+  ));
+}
+
+export function assessLaunchProtection({ blockNumber, endBlock, pendingBlocks, maxBuyWei, maxWalletWei, protectedBuyWei, costNoFee }) {
+  const block = BigInt(blockNumber);
+  const end = BigInt(endBlock);
+  const pending = BigInt(pendingBlocks);
+  const maxBuy = BigInt(maxBuyWei);
+  const maxWallet = BigInt(maxWalletWei);
+  const protectedSoFar = BigInt(protectedBuyWei);
+  const proposedCost = BigInt(costNoFee);
+  const currentlyActive = end !== 0n && block <= end;
+  const willActivateOnNextBuy = pending !== 0n;
+  const appliesToNextBuy = currentlyActive || willActivateOnNextBuy;
+  const effectiveEndBlock = willActivateOnNextBuy ? block + pending : end;
+  const proposedWalletProtectedWei = protectedSoFar + proposedCost;
+  return {
+    currentlyActive,
+    willActivateOnNextBuy,
+    appliesToNextBuy,
+    effectiveEndBlock,
+    proposedCostNoFee: proposedCost,
+    proposedWalletProtectedWei,
+    buyLimitExceeded: appliesToNextBuy && maxBuy > 0n && proposedCost > maxBuy,
+    walletLimitExceeded: appliesToNextBuy && maxWallet > 0n && proposedWalletProtectedWei > maxWallet,
+  };
+}
+
+function findHexData(value, seen = new Set()) {
+  if (typeof value === 'string' && /^0x[0-9a-fA-F]{8,}$/.test(value)) return value;
+  if (!value || typeof value !== 'object' || seen.has(value)) return null;
+  seen.add(value);
+  for (const key of ['data', 'error', 'info', 'revert', 'cause']) {
+    const found = findHexData(value[key], seen);
+    if (found) return found;
+  }
+  for (const nested of Object.values(value)) {
+    const found = findHexData(nested, seen);
+    if (found) return found;
+  }
+  return null;
+}
+
+function decodedArgs(parsed) {
+  if (!parsed?.fragment?.inputs?.length) return [];
+  return parsed.fragment.inputs.map((input, index) => ({
+    name: input.name || String(index),
+    type: input.type,
+    value: typeof parsed.args[index] === 'bigint' ? parsed.args[index].toString() : String(parsed.args[index]),
+  }));
+}
+
+export function decodeRevertData(data, decoders = []) {
+  if (!data || typeof data !== 'string' || !data.startsWith('0x') || data.length < 10) {
+    return { selector: null, decodedErrorName: 'NO_REVERT_DATA', decodedArguments: [] };
+  }
+  const selector = data.slice(0, 10).toLowerCase();
+  try {
+    if (selector === '0x08c379a0') {
+      const [reason] = ethers.AbiCoder.defaultAbiCoder().decode(['string'], `0x${data.slice(10)}`);
+      return { selector, decodedErrorName: 'Error', decodedArguments: [{ name: 'reason', type: 'string', value: reason }] };
+    }
+    if (selector === '0x4e487b71') {
+      const [code] = ethers.AbiCoder.defaultAbiCoder().decode(['uint256'], `0x${data.slice(10)}`);
+      return { selector, decodedErrorName: 'Panic', decodedArguments: [{ name: 'code', type: 'uint256', value: code.toString() }] };
+    }
+  } catch {}
+  for (const decoder of decoders) {
+    try {
+      const parsed = decoder.iface.parseError(data);
+      if (parsed) return { selector, scope: decoder.scope, decodedErrorName: parsed.name, decodedArguments: decodedArgs(parsed) };
+    } catch {}
+  }
+  return { selector, decodedErrorName: 'UNKNOWN_CUSTOM_ERROR', decodedArguments: [] };
+}
+
+export function decodeEthersError(error, decoders = []) {
+  const data = findHexData(error);
+  const decoded = decodeRevertData(data, decoders);
+  return { ...decoded, data, shortMessage: String(error?.shortMessage || error?.reason || error?.message || error) };
+}
+
 function walletAddress(pkName, expected) {
   const raw = req(pkName);
   const wallet = new ethers.Wallet(raw.startsWith('0x') ? raw : `0x${raw}`);
   assert(same(wallet.address, expected), `SIGNER_MISMATCH_${pkName}_${wallet.address}`);
   return wallet.address;
+}
+
+function protectedWallet(pkName, expected, provider = null) {
+  const raw = req(pkName);
+  const wallet = new ethers.Wallet(raw.startsWith('0x') ? raw : `0x${raw}`, provider || undefined);
+  assert(same(wallet.address, expected), `SIGNER_MISMATCH_${pkName}_${wallet.address}`);
+  return wallet;
+}
+
+function printBlocked(nextWrite) {
+  console.log('RH46630_NEXT_WRITE_PREFLIGHT=BLOCKED');
+  console.log(`operation=${nextWrite.operation}`);
+  console.log(`campaign=${nextWrite.campaign}`);
+  console.log(`actor=${nextWrite.actor}`);
+  console.log(`value=${nextWrite.value}`);
+  console.log(`selector=${nextWrite.revertSelector || nextWrite.operationSelector}`);
+  console.log(`decodedErrorName=${nextWrite.decodedErrorName}`);
+  console.log(`decodedArguments=${JSON.stringify(nextWrite.decodedArguments || [])}`);
+  console.log(`relevant_state=${JSON.stringify(nextWrite.relevantState)}`);
+  console.log('CHAIN_WRITES=0');
 }
 
 async function main() {
@@ -69,6 +207,18 @@ async function main() {
   const factoryAbi = loadAbi('artifacts/contracts/LaunchFactory.sol/LaunchFactory.json');
   const campaignAbi = loadAbi('artifacts/contracts/LaunchCampaign.sol/LaunchCampaign.json');
   const registryAbi = loadAbi('artifacts/contracts/CreatorRegistry.sol/CreatorRegistry.json');
+  const riskRegistryAbi = loadAbi('artifacts/contracts/RiskRegistry.sol/RiskRegistry.json');
+  const treasuryAbi = loadAbi('artifacts/contracts/TreasuryRouterV3.sol/TreasuryRouterV3.json');
+  const graduationOracleAbi = loadAbi('artifacts/contracts/GraduationOracle.sol/GraduationOracle.json');
+  const launchTokenAbi = loadAbi('artifacts/contracts/token/LaunchToken.sol/LaunchToken.json');
+  const decoders = [
+    { scope: 'LaunchCampaign', iface: new ethers.Interface(campaignAbi) },
+    { scope: 'RiskRegistry', iface: new ethers.Interface(riskRegistryAbi) },
+    { scope: 'TreasuryRouterV3', iface: new ethers.Interface(treasuryAbi) },
+    { scope: 'GraduationOracle', iface: new ethers.Interface(graduationOracleAbi) },
+    { scope: 'LaunchFactory', iface: new ethers.Interface(factoryAbi) },
+    { scope: 'LaunchToken', iface: new ethers.Interface(launchTokenAbi) },
+  ];
 
   const factory = new ethers.Contract(FACTORY, factoryAbi, provider);
   const runtimeAddresses = {
@@ -231,10 +381,260 @@ async function main() {
     existingCampaign,
     action,
     balances,
+    nextWritePreflight: null,
     chainWrites: 0,
   };
+
+  if (action.mode !== 'RESUME_EXISTING') {
+    fs.writeFileSync(OUT, json(report));
+    throw new Error('EXACT_NEXT_WRITE_PREFLIGHT_REQUIRES_RESUMABLE_EXISTING_CAMPAIGN');
+  }
+
+  const campaign = new ethers.Contract(existingCampaign.campaign, campaignAbi, provider);
+  const campaignState = {
+    launched: await campaign.launched(),
+    graduationPending: await campaign.graduationPending(),
+    paused: await campaign.paused(),
+    buyPaused: await campaign.buyPaused(),
+    sellPaused: await campaign.sellPaused(),
+    graduationPaused: await campaign.graduationPaused(),
+    launchAt: (await campaign.launchAt()).toString(),
+    currentBlockNumber: latestBlock.number.toString(),
+    currentBlockTimestamp: latestBlock.timestamp.toString(),
+  };
+
+  const launchProtectionRaw = {
+    launchProtectionEndBlock: await campaign.launchProtectionEndBlock(),
+    launchProtectionBlocksPending: await campaign.launchProtectionBlocksPending(),
+    launchProtectionMaxBuyWei: await campaign.launchProtectionMaxBuyWei(),
+    launchProtectionMaxWalletWei: await campaign.launchProtectionMaxWalletWei(),
+    protectedBuyWei: await campaign.protectedBuyWei(TRADER_A),
+  };
+
+  const riskRegistryAddress = await campaign.riskRegistry();
+  let riskRegistryState = {
+    address: riskRegistryAddress,
+    walletRiskProfile: null,
+    walletRestricted: false,
+    clusterId: ethers.ZeroHash,
+    clusterProfile: null,
+    clusterRestricted: false,
+    assertWalletCanTrade: { pass: true, decodedErrorName: null, selector: null, decodedArguments: [] },
+  };
+  if (riskRegistryAddress !== ethers.ZeroAddress) {
+    assert((await provider.getCode(riskRegistryAddress)) !== '0x', 'RISK_REGISTRY_CODE_MISSING');
+    const riskRegistry = new ethers.Contract(riskRegistryAddress, riskRegistryAbi, provider);
+    const walletRisk = await riskRegistry.getWalletRisk(TRADER_A);
+    const clusterId = walletRisk.clusterId ?? walletRisk[2];
+    let clusterRisk = null;
+    if (clusterId !== ethers.ZeroHash) clusterRisk = await riskRegistry.getClusterRisk(clusterId);
+    riskRegistryState = {
+      address: riskRegistryAddress,
+      walletRiskProfile: {
+        riskLevel: Number(walletRisk.riskLevel ?? walletRisk[0]),
+        restricted: Boolean(walletRisk.restricted ?? walletRisk[1]),
+        clusterId,
+      },
+      walletRestricted: Boolean(walletRisk.restricted ?? walletRisk[1]),
+      clusterId,
+      clusterProfile: clusterRisk ? {
+        size: (clusterRisk.size ?? clusterRisk[0]).toString(),
+        riskLevel: Number(clusterRisk.riskLevel ?? clusterRisk[1]),
+        restricted: Boolean(clusterRisk.restricted ?? clusterRisk[2]),
+      } : null,
+      clusterRestricted: clusterRisk ? Boolean(clusterRisk.restricted ?? clusterRisk[2]) : false,
+      assertWalletCanTrade: { pass: true, decodedErrorName: null, selector: null, decodedArguments: [] },
+    };
+    try {
+      await riskRegistry.assertWalletCanTrade.staticCall(TRADER_A);
+    } catch (error) {
+      const decoded = decodeEthersError(error, decoders);
+      riskRegistryState.assertWalletCanTrade = { pass: false, ...decoded };
+    }
+  }
+
+  const graduationOracle = new ethers.Contract(runtimeAddresses.graduationOracle, graduationOracleAbi, provider);
+  const priceFeedAddress = await graduationOracle.priceFeed();
+  assert(same(priceFeedAddress, ETH_USD_ORACLE), `GRADUATION_PRICE_FEED_MISMATCH_${priceFeedAddress}`);
+  const maxPriceAge = await graduationOracle.maxPriceAge();
+  const feed = new ethers.Contract(ETH_USD_ORACLE, [
+    'function decimals() view returns(uint8)',
+    'function latestRoundData() view returns(uint80 roundId,int256 answer,uint256 startedAt,uint256 updatedAt,uint80 answeredInRound)',
+  ], provider);
+  const feedDecimals = Number(await feed.decimals());
+  const feedRound = await feed.latestRoundData();
+  assert(feedRound.answer > 0n, 'PRICE_FEED_ANSWER_NOT_POSITIVE');
+  const feedAge = BigInt(latestBlock.timestamp) - BigInt(feedRound.updatedAt);
+  const feedFresh = feedRound.updatedAt > 0n && feedRound.answeredInRound >= feedRound.roundId && feedAge >= 0n && feedAge <= maxPriceAge;
+  const operatorPriceRaw = String(process.env.ROBINHOOD_ETH_USD_8 || '').trim();
+  const operatorPriceValid = /^[0-9]+$/.test(operatorPriceRaw) && BigInt(operatorPriceRaw || '0') > 0n;
+  const sizingFeedAnswer = feedFresh ? feedRound.answer : (operatorPriceValid ? BigInt(operatorPriceRaw) : feedRound.answer);
+  const sizingPriceSource = feedFresh ? 'CURRENT_FRESH_FEED' : (operatorPriceValid ? 'PROSPECTIVE_ORACLE_REFRESH_INPUT' : 'CURRENT_STALE_FEED_DIAGNOSTIC_ONLY');
+  const exactForProspectiveOracleRefresh = feedFresh || operatorPriceValid;
+  const priceState = {
+    feed: ETH_USD_ORACLE,
+    decimals: feedDecimals,
+    roundId: feedRound.roundId.toString(),
+    answer: feedRound.answer.toString(),
+    updatedAt: feedRound.updatedAt.toString(),
+    answeredInRound: feedRound.answeredInRound.toString(),
+    maxPriceAge: maxPriceAge.toString(),
+    ageSeconds: feedAge.toString(),
+    freshNow: feedFresh,
+    sizingFeedAnswer: sizingFeedAnswer.toString(),
+    sizingPriceSource,
+    exactForProspectiveOracleRefresh,
+    sizingRule: 'SAME GraduationOracle.nativeTargetForUsd CEILING FORMULA; if stale, use protected workflow oracle-refresh input',
+  };
+
+  const graduationTargetUsd = await campaign.graduationTarget();
+  const targetForFirstBuy = computeNativeTargetFromUsd(graduationTargetUsd, sizingFeedAnswer, feedDecimals);
+  const firstValue = computeFirstBuyValue(targetForFirstBuy);
+  const quote = await campaign.quoteBuyExactBnb(firstValue);
+  const tokensOut = quote[0];
+  const totalCostWei = quote[1];
+  const feeWei = quote[2];
+  assert(tokensOut > 0n, 'NEXT_BUY_QUOTE_ZERO');
+  const costNoFee = totalCostWei - feeWei;
+  const protectionAssessment = assessLaunchProtection({
+    blockNumber: latestBlock.number,
+    endBlock: launchProtectionRaw.launchProtectionEndBlock,
+    pendingBlocks: launchProtectionRaw.launchProtectionBlocksPending,
+    maxBuyWei: launchProtectionRaw.launchProtectionMaxBuyWei,
+    maxWalletWei: launchProtectionRaw.launchProtectionMaxWalletWei,
+    protectedBuyWei: launchProtectionRaw.protectedBuyWei,
+    costNoFee,
+  });
+  const launchProtection = {
+    launchProtectionEndBlock: launchProtectionRaw.launchProtectionEndBlock.toString(),
+    launchProtectionBlocksPending: launchProtectionRaw.launchProtectionBlocksPending.toString(),
+    launchProtectionMaxBuyWei: launchProtectionRaw.launchProtectionMaxBuyWei.toString(),
+    launchProtectionMaxWalletWei: launchProtectionRaw.launchProtectionMaxWalletWei.toString(),
+    protectedBuyWei: launchProtectionRaw.protectedBuyWei.toString(),
+    currentlyActive: protectionAssessment.currentlyActive,
+    willActivateOnNextBuy: protectionAssessment.willActivateOnNextBuy,
+    protectionActiveForProposedBuy: protectionAssessment.appliesToNextBuy,
+    effectiveEndBlockForProposedBuy: protectionAssessment.effectiveEndBlock.toString(),
+    proposedCostNoFee: protectionAssessment.proposedCostNoFee.toString(),
+    proposedWalletProtectedWei: protectionAssessment.proposedWalletProtectedWei.toString(),
+    buyLimitExceeded: protectionAssessment.buyLimitExceeded,
+    walletLimitExceeded: protectionAssessment.walletLimitExceeded,
+  };
+
+  const routeAuthority = await factory.routeAuthority();
+  const requireAuthorizedTrading = await campaign.requireAuthorizedTrading();
+  const tradeRouteProfile = Number(await campaign.tradeRouteProfile());
+  const minTokensOut = 0n;
+  const deadline = BigInt(latestBlock.timestamp) + 611n;
+  const rawDigest = makeTradeDigest(existingCampaign.campaign, TRADER_A, tradeRouteProfile, 1, firstValue, minTokensOut, deadline);
+  const updater = protectedWallet('ROBINHOOD_TESTNET_ORACLE_UPDATER_PRIVATE_KEY', UPDATER);
+  const routeSignature = await updater.signMessage(ethers.getBytes(rawDigest));
+  const recoveredSigner = ethers.verifyMessage(ethers.getBytes(rawDigest), routeSignature);
+  const eip191Digest = ethers.hashMessage(ethers.getBytes(rawDigest));
+  const operationSelector = campaign.interface.getFunction('buyExactBnbAuthorized').selector;
+  const routeAuthorization = {
+    routeAuthority,
+    requireAuthorizedTrading,
+    tradeRouteProfile,
+    action: 1,
+    actionName: 'BUY_EXACT_BNB',
+    amount: firstValue.toString(),
+    limit: minTokensOut.toString(),
+    rawDigest,
+    eip191Digest,
+    signerAddress: recoveredSigner,
+    signerMatchesRouteAuthority: same(recoveredSigner, routeAuthority),
+    deadline: deadline.toString(),
+    currentBlockTimestamp: latestBlock.timestamp.toString(),
+    expiresInSeconds: (deadline - BigInt(latestBlock.timestamp)).toString(),
+  };
+  assert(routeAuthorization.signerMatchesRouteAuthority, `ROUTE_SIGNER_MISMATCH_${recoveredSigner}_${routeAuthority}`);
+
+  const relevantState = {
+    campaignState,
+    launchProtection,
+    riskRegistry: riskRegistryState,
+    routeAuthorization,
+    priceState,
+    quote: {
+      msgValue: firstValue.toString(),
+      minTokensOut: minTokensOut.toString(),
+      tokensOut: tokensOut.toString(),
+      totalCostWei: totalCostWei.toString(),
+      feeWei: feeWei.toString(),
+      costNoFee: costNoFee.toString(),
+      targetForFirstBuy: targetForFirstBuy.toString(),
+    },
+  };
+
+  let nextWritePreflight;
+  try {
+    const traderA = protectedWallet('ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY', TRADER_A, provider);
+    const connectedCampaign = campaign.connect(traderA);
+    const result = await connectedCampaign.buyExactBnbAuthorized.staticCall(
+      minTokensOut,
+      tradeRouteProfile,
+      deadline,
+      routeSignature,
+      { value: firstValue }
+    );
+    nextWritePreflight = {
+      status: 'PASS',
+      operation: 'BUY_EXACT_BNB_AUTHORIZED',
+      campaign: existingCampaign.campaign,
+      actor: TRADER_A,
+      value: firstValue.toString(),
+      msgValue: firstValue.toString(),
+      minTokensOut: minTokensOut.toString(),
+      tradeRouteProfile,
+      deadline: deadline.toString(),
+      rawDigest,
+      routeSignature,
+      operationSelector,
+      revertSelector: null,
+      decodedErrorName: null,
+      decodedArguments: [],
+      staticCallResult: { tokensOut: result[0].toString(), totalSpent: result[1].toString() },
+      exactForProspectiveOracleRefresh,
+      relevantState,
+      chainWrites: 0,
+    };
+  } catch (error) {
+    const decoded = decodeEthersError(error, decoders);
+    nextWritePreflight = {
+      status: 'BLOCKED',
+      operation: 'BUY_EXACT_BNB_AUTHORIZED',
+      campaign: existingCampaign.campaign,
+      actor: TRADER_A,
+      value: firstValue.toString(),
+      msgValue: firstValue.toString(),
+      minTokensOut: minTokensOut.toString(),
+      tradeRouteProfile,
+      deadline: deadline.toString(),
+      rawDigest,
+      routeSignature,
+      operationSelector,
+      revertSelector: decoded.selector,
+      decodedErrorName: decoded.decodedErrorName,
+      decodedArguments: decoded.decodedArguments,
+      decodedErrorScope: decoded.scope || null,
+      revertData: decoded.data,
+      shortMessage: decoded.shortMessage,
+      exactForProspectiveOracleRefresh,
+      relevantState,
+      chainWrites: 0,
+    };
+  }
+
+  report.nextWritePreflight = nextWritePreflight;
   fs.writeFileSync(OUT, json(report));
+  if (nextWritePreflight.status === 'BLOCKED') {
+    printBlocked(nextWritePreflight);
+    throw new Error(`RH46630_NEXT_WRITE_BLOCKED_${nextWritePreflight.decodedErrorName}`);
+  }
   console.log(json(report));
+  console.log('RH46630_NEXT_WRITE_PREFLIGHT=PASS');
+  console.log('CHAIN_WRITES=0');
 }
 
 const invokedAsScript = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
