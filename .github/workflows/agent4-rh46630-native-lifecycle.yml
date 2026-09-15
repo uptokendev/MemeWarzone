@@ -7,6 +7,8 @@ on:
       - 'scripts/rh46630-native-lifecycle-certification.mjs'
       - 'scripts/rh46630-native-lifecycle-runner.mjs'
       - 'scripts/rh46630-native-lifecycle-runner.test.mjs'
+      - 'scripts/rh46630-zero-write-preflight.mjs'
+      - 'scripts/rh46630-zero-write-preflight.test.mjs'
       - 'scripts/rh46630-oracle-freshness-gate.mjs'
       - 'scripts/rh46630-oracle-freshness-gate.test.mjs'
       - 'scripts/rh46630-native-lifecycle-fault-preflight.mjs'
@@ -48,7 +50,7 @@ jobs:
           git cat-file -e "${RH46630_AUTHORITY_SHA}^{commit}"
           git merge-base --is-ancestor "$RH46630_AUTHORITY_SHA" HEAD
           git diff --name-only "$RH46630_AUTHORITY_SHA" HEAD | tee /tmp/rh46630-changed.txt
-          if grep -Ev '^(scripts/rh46630-native-lifecycle-certification\.mjs|scripts/rh46630-native-lifecycle-runner\.mjs|scripts/rh46630-native-lifecycle-runner\.test\.mjs|scripts/rh46630-oracle-freshness-gate\.mjs|scripts/rh46630-oracle-freshness-gate\.test\.mjs|scripts/rh46630-native-lifecycle-fault-preflight\.mjs|scripts/rh46630-native-lifecycle-postchecks\.mjs|scripts/rh46630-native-lifecycle-readonly-diagnostic\.mjs|\.github/workflows/agent4-rh46630-native-lifecycle\.yml)$' /tmp/rh46630-changed.txt; then exit 1; fi
+          if grep -Ev '^(scripts/rh46630-native-lifecycle-certification\.mjs|scripts/rh46630-native-lifecycle-runner\.mjs|scripts/rh46630-native-lifecycle-runner\.test\.mjs|scripts/rh46630-zero-write-preflight\.mjs|scripts/rh46630-zero-write-preflight\.test\.mjs|scripts/rh46630-oracle-freshness-gate\.mjs|scripts/rh46630-oracle-freshness-gate\.test\.mjs|scripts/rh46630-native-lifecycle-fault-preflight\.mjs|scripts/rh46630-native-lifecycle-postchecks\.mjs|scripts/rh46630-native-lifecycle-readonly-diagnostic\.mjs|\.github/workflows/agent4-rh46630-native-lifecycle\.yml)$' /tmp/rh46630-changed.txt; then exit 1; fi
           for f in contracts/LaunchFactory.sol contracts/LaunchCampaign.sol contracts/PermanentV3PositionLocker.sol contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol contracts/TreasuryRouterV3.sol contracts/GraduationOracle.sol; do
             test "$(git show "${RH46630_AUTHORITY_SHA}:$f" | git hash-object --stdin)" = "$(git show "HEAD:$f" | git hash-object --stdin)"
           done
@@ -60,13 +62,17 @@ jobs:
           node --check scripts/rh46630-native-lifecycle-certification.mjs
           node --check scripts/rh46630-native-lifecycle-runner.mjs
           node --check scripts/rh46630-native-lifecycle-runner.test.mjs
+          node --check scripts/rh46630-zero-write-preflight.mjs
+          node --check scripts/rh46630-zero-write-preflight.test.mjs
           node --check scripts/rh46630-oracle-freshness-gate.mjs
           node --check scripts/rh46630-oracle-freshness-gate.test.mjs
           node --check scripts/rh46630-native-lifecycle-fault-preflight.mjs
           node --check scripts/rh46630-native-lifecycle-postchecks.mjs
           node --check scripts/rh46630-native-lifecycle-readonly-diagnostic.mjs
-      - name: Prove fail-closed prestate transitions
+      - name: Prove fail-closed prestate and resume transitions
         run: node --test scripts/rh46630-native-lifecycle-runner.test.mjs
+      - name: Prove creator eligibility and existing-campaign zero-write preflight
+        run: node --test scripts/rh46630-zero-write-preflight.test.mjs
       - name: Prove atomic oracle/lifecycle freshness gate
         run: node --test scripts/rh46630-oracle-freshness-gate.test.mjs
       - run: npx hardhat compile
@@ -80,8 +86,14 @@ jobs:
           grep -F 'const FORBIDDEN_CHAIN_ID = 4663;' scripts/rh46630-native-lifecycle-certification.mjs
           grep -F 'PRODUCTION_4663_FORBIDDEN' scripts/rh46630-native-lifecycle-certification.mjs
           grep -F 'SIGNER_MISMATCH_' scripts/rh46630-native-lifecycle-certification.mjs
+          grep -F 'creatorLaunchEligibility' scripts/rh46630-zero-write-preflight.mjs
+          grep -F 'getCreatorProfile' scripts/rh46630-zero-write-preflight.mjs
+          grep -F 'getCreatorRules' scripts/rh46630-zero-write-preflight.mjs
+          grep -F "mode: 'RESUME_EXISTING'" scripts/rh46630-zero-write-preflight.mjs
+          grep -F 'chainWrites: 0' scripts/rh46630-zero-write-preflight.mjs
+          grep -F 'PRODUCTION_4663_FORBIDDEN' scripts/rh46630-zero-write-preflight.mjs
+          grep -F 'CREATOR_NOT_ELIGIBLE_' scripts/rh46630-native-lifecycle-runner.mjs
           grep -F 'planCertificationPrestate' scripts/rh46630-native-lifecycle-runner.mjs
-          grep -F 'openGlobalForCertificationCreate' scripts/rh46630-native-lifecycle-runner.mjs
           grep -F "restoreFactoryFailClosed('failureCleanup')" scripts/rh46630-native-lifecycle-runner.mjs
           grep -F 'EXPECTED_CHAIN_ID = 46630' scripts/rh46630-oracle-freshness-gate.mjs
           grep -F 'FORBIDDEN_CHAIN_ID = 4663' scripts/rh46630-oracle-freshness-gate.mjs
@@ -97,18 +109,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          files='scripts/rh46630-native-lifecycle-certification.mjs scripts/rh46630-native-lifecycle-runner.mjs scripts/rh46630-native-lifecycle-runner.test.mjs scripts/rh46630-oracle-freshness-gate.mjs scripts/rh46630-oracle-freshness-gate.test.mjs scripts/rh46630-native-lifecycle-fault-preflight.mjs scripts/rh46630-native-lifecycle-postchecks.mjs scripts/rh46630-native-lifecycle-readonly-diagnostic.mjs .github/workflows/agent4-rh46630-native-lifecycle.yml'
+          files='scripts/rh46630-native-lifecycle-certification.mjs scripts/rh46630-native-lifecycle-runner.mjs scripts/rh46630-native-lifecycle-runner.test.mjs scripts/rh46630-zero-write-preflight.mjs scripts/rh46630-zero-write-preflight.test.mjs scripts/rh46630-oracle-freshness-gate.mjs scripts/rh46630-oracle-freshness-gate.test.mjs scripts/rh46630-native-lifecycle-fault-preflight.mjs scripts/rh46630-native-lifecycle-postchecks.mjs scripts/rh46630-native-lifecycle-readonly-diagnostic.mjs .github/workflows/agent4-rh46630-native-lifecycle.yml'
           ! grep -nE '(-----BEGIN [A-Z ]*PRIVATE KEY-----|https?://[^[:space:]]+:[^[:space:]@]+@)' $files
           ! grep -nEi '(private.?key|secret)[^\n]{0,40}(0x)?[a-f0-9]{64}' $files
 
   diagnose-state:
-    name: Read-only RH46630 partial lifecycle state
+    name: Read-only RH46630 creator/campaign state
     needs: certify-transport
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     environment: testnet-certification
     env:
       ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL }}
+      ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY }}
+      ROBINHOOD_TESTNET_ORACLE_UPDATER_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_ORACLE_UPDATER_PRIVATE_KEY }}
+      ROBINHOOD_TESTNET_CREATOR_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_CREATOR_PRIVATE_KEY }}
+      ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY }}
+      ROBINHOOD_TESTNET_TRADER_B_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_TRADER_B_PRIVATE_KEY }}
+      RH46630_ZERO_WRITE_PREFLIGHT: rh46630-zero-write-preflight.json
+      RH46630_CERT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -116,8 +135,16 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: Compile authoritative Gen-4 / Gen-3 artifacts
         run: npx hardhat compile
+      - name: Zero-write creator eligibility and campaign reconciliation
+        run: node scripts/rh46630-zero-write-preflight.mjs
       - name: Read authoritative RH46630 state only
         run: node scripts/rh46630-native-lifecycle-readonly-diagnostic.mjs
+      - name: Prove zero-write preflight report
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$RH46630_ZERO_WRITE_PREFLIGHT"
+          node -e "const r=require('./rh46630-zero-write-preflight.json'); if(r.chainId!==46630||r.production4663Rejected!==true||r.chainWrites!==0) process.exit(1); console.log(JSON.stringify({creatorEligibility:r.creatorEligibility,existingCampaign:r.existingCampaign,action:r.action,chainWrites:r.chainWrites},null,2));"
 
   execute-lifecycle:
     name: Destructive RH46630 native lifecycle
@@ -133,6 +160,7 @@ jobs:
       ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY }}
       ROBINHOOD_TESTNET_TRADER_B_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_TRADER_B_PRIVATE_KEY }}
       ROBINHOOD_ETH_USD_8: ${{ github.event.inputs.eth_usd_8 }}
+      RH46630_ZERO_WRITE_PREFLIGHT: rh46630-zero-write-preflight.json
       RH46630_LIFECYCLE_EVIDENCE: rh46630-native-lifecycle-evidence.json
       RH46630_CERT_HEAD_SHA: ${{ github.sha }}
     steps:
@@ -149,16 +177,19 @@ jobs:
             ''|*[!0-9]*) echo '::error::eth_usd_8 must be an operator-approved positive integer'; exit 1 ;;
           esac
           test "${{ github.event.inputs.eth_usd_8 }}" != '0'
-          if grep -Ev '^(scripts/rh46630-native-lifecycle-certification\.mjs|scripts/rh46630-native-lifecycle-runner\.mjs|scripts/rh46630-native-lifecycle-runner\.test\.mjs|scripts/rh46630-oracle-freshness-gate\.mjs|scripts/rh46630-oracle-freshness-gate\.test\.mjs|scripts/rh46630-native-lifecycle-fault-preflight\.mjs|scripts/rh46630-native-lifecycle-postchecks\.mjs|scripts/rh46630-native-lifecycle-readonly-diagnostic\.mjs|\.github/workflows/agent4-rh46630-native-lifecycle\.yml)$' < <(git diff --name-only "$RH46630_AUTHORITY_SHA" HEAD); then exit 1; fi
+          if grep -Ev '^(scripts/rh46630-native-lifecycle-certification\.mjs|scripts/rh46630-native-lifecycle-runner\.mjs|scripts/rh46630-native-lifecycle-runner\.test\.mjs|scripts/rh46630-zero-write-preflight\.mjs|scripts/rh46630-zero-write-preflight\.test\.mjs|scripts/rh46630-oracle-freshness-gate\.mjs|scripts/rh46630-oracle-freshness-gate\.test\.mjs|scripts/rh46630-native-lifecycle-fault-preflight\.mjs|scripts/rh46630-native-lifecycle-postchecks\.mjs|scripts/rh46630-native-lifecycle-readonly-diagnostic\.mjs|\.github/workflows/agent4-rh46630-native-lifecycle\.yml)$' < <(git diff --name-only "$RH46630_AUTHORITY_SHA" HEAD); then exit 1; fi
       - uses: actions/setup-node@v4
         with: {node-version: 22, cache: npm}
       - run: npm ci --no-audit --no-fund
       - run: node --test scripts/rh46630-native-lifecycle-runner.test.mjs
+      - run: node --test scripts/rh46630-zero-write-preflight.test.mjs
       - run: node --test scripts/rh46630-oracle-freshness-gate.test.mjs
       - run: npx hardhat compile
+      - name: ZERO-WRITE preflight before every oracle refresh or lifecycle write
+        run: node scripts/rh46630-zero-write-preflight.mjs
       - name: Execute live RH46630 fault preflight
         run: node scripts/rh46630-native-lifecycle-fault-preflight.mjs
-      - name: Atomic RH46630 oracle freshness gate immediately before CREATE lifecycle
+      - name: Atomic RH46630 oracle freshness gate after zero-write preflight
         run: node scripts/rh46630-oracle-freshness-gate.mjs
       - name: Execute real RH46630 native lifecycle
         run: node scripts/rh46630-native-lifecycle-runner.mjs
@@ -169,13 +200,21 @@ jobs:
       - name: Reconcile again after replay postchecks
         run: node scripts/rh46630-native-lifecycle-runner.mjs --reconcile
       - name: Evidence secret scan
+        if: ${{ always() }}
         shell: bash
         run: |
           set -euo pipefail
-          test -s rh46630-native-lifecycle-evidence.json
-          ! grep -nE '(-----BEGIN [A-Z ]*PRIVATE KEY-----|https?://[^[:space:]]+:[^[:space:]@]+@)' rh46630-native-lifecycle-evidence.json
+          for f in rh46630-zero-write-preflight.json rh46630-native-lifecycle-evidence.json; do
+            if [ -f "$f" ]; then
+              ! grep -nE '(-----BEGIN [A-Z ]*PRIVATE KEY-----|https?://[^[:space:]]+:[^[:space:]@]+@)' "$f"
+              ! grep -nEi '(private.?key|secret)[^\n]{0,40}(0x)?[a-f0-9]{64}' "$f"
+            fi
+          done
       - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
         with:
           name: rh46630-native-lifecycle-${{ github.sha }}
-          path: rh46630-native-lifecycle-evidence.json
+          path: |
+            rh46630-zero-write-preflight.json
+            rh46630-native-lifecycle-evidence.json
           if-no-files-found: error
