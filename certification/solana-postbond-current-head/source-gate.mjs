@@ -5,6 +5,7 @@ import fs from 'node:fs';
 const SOURCE = '8944382619e05f09539614f5690b98521fe244ed';
 const allowed = new Set([
   '.github/workflows/solana-postbond-current-head-closeout.yml',
+  '.github/workflows/solana-postbond-v0-alt-chain-evidence.yml',
   'certification/solana-postbond-current-head/source-gate.mjs',
   'certification/solana-postbond-current-head/chain-evidence.mjs',
   'certification/solana-postbond-current-head/chain-evidence.test.mjs',
