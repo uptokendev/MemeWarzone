@@ -7,6 +7,7 @@ const allowed = new Set([
   '.github/workflows/solana-postbond-current-head-closeout.yml',
   'certification/solana-postbond-current-head/source-gate.mjs',
   'certification/solana-postbond-current-head/chain-evidence.mjs',
+  'certification/solana-postbond-current-head/chain-evidence.test.mjs',
   'certification/solana-postbond-current-head/arena-money-closeout.mjs',
   'certification/solana-postbond-current-head/db-runtime-closeout.mjs',
 ]);
@@ -111,6 +112,16 @@ requireText(quarterlyMath, [
   'export const CHAMPIONSHIP_EVENT_TYPE = "quarterly_championship";',
   'return `quarterly-championship-${y}-q${q}-c${chain}`;',
 ], 'Quarterly canonical identity');
+
+const chainEvidence = fs.readFileSync('certification/solana-postbond-current-head/chain-evidence.mjs', 'utf8');
+requireText(chainEvidence, [
+  'maxSupportedTransactionVersion: 0',
+  'meta?.loadedAddresses',
+  'accountKeysFromLookups',
+  'getAddressLookupTable',
+  'balance/account-key alignment mismatch',
+  'index === 0 ? BigInt(tx.meta.fee || 0) : 0n',
+], 'V0/ALT chain evidence');
 
 const certDb = fs.readFileSync('certification/solana-postbond-current-head/db-runtime-closeout.mjs', 'utf8');
 requireText(certDb, [
