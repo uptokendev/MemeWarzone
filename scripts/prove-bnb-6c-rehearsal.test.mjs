@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const require = createRequire(import.meta.url);
+const { reconcileCompletionReadAfterWrite } = require("./lib/bnb97CompletionReadReconciler.cjs");
 
 function read(rel) {
   return fs.readFileSync(path.join(root, rel), "utf8");
@@ -66,4 +69,100 @@ test("native pending cert replaces raw-value crossing with quoted no-fee princip
   assert.match(prepare, /parseEvent\(campaign, pendingReceipt, "CampaignFinalized"\)/);
   assert.match(prepare, /!pendingAfterCrossing \|\| launchedAfterCrossing/);
   assert.match(prepare, /topazFactory\.getPool\(info\.token, await wbnb\.getAddress\(\), false\)\) !== ethers\.ZeroAddress/);
+});
+
+test("completion harness anchors receipt-block state and does not replace canonical checks with sleeps", () => {
+  const prepare = read("scripts/prepare-bnb97-completion-read-reconciliation.mjs");
+  assert.match(prepare, /completeReceipt\.blockNumber/);
+  assert.match(prepare, /completeReceipt\.blockHash/);
+  assert.match(prepare, /CampaignFinalized: finalizedEvidence/);
+  assert.match(prepare, /campaign\.launched\(\{ blockTag \}\)/);
+  assert.match(prepare, /campaign\.graduationPending\(\{ blockTag \}\)/);
+  assert.match(prepare, /campaign\.getGraduationState\(\{ blockTag \}\)/);
+  assert.match(prepare, /factory\.campaignGraduationRecorded\(info\.campaign, \{ blockTag \}\)/);
+  assert.match(prepare, /maxConfirmations: 3/);
+  assert.doesNotMatch(prepare, /setTimeout|sleep\(/);
+});
+
+test("stale latest completion read reconciles only after canonical receipt-block state is finalized", async () => {
+  const finalized = {
+    launched: true,
+    graduationPending: false,
+    dexPair: "0x1111111111111111111111111111111111111111",
+    pool: "0x1111111111111111111111111111111111111111",
+    factoryGraduationRecorded: true,
+    lockerRegistered: true,
+  };
+  const stale = {
+    launched: false,
+    graduationPending: true,
+    dexPair: "0x0000000000000000000000000000000000000000",
+    pool: "0x0000000000000000000000000000000000000000",
+    factoryGraduationRecorded: false,
+    lockerRegistered: false,
+  };
+  const latest = [stale, finalized];
+  const waited = [];
+  const result = await reconcileCompletionReadAfterWrite({
+    receiptBlockNumber: 100,
+    receiptBlockHash: "0xabc",
+    finalizedEvent: { name: "CampaignFinalized" },
+    readAtBlock: async () => finalized,
+    readLatest: async () => latest.shift() ?? finalized,
+    getBlockHash: async () => "0xabc",
+    waitForConfirmations: async (confirmations) => waited.push(confirmations),
+    maxConfirmations: 3,
+  });
+  assert.equal(result.endpointLagObserved, true);
+  assert.equal(result.confirmationsObserved, 2);
+  assert.deepEqual(waited, [2]);
+  assert.equal(result.latestState.launched, true);
+  assert.equal(result.latestState.graduationPending, false);
+});
+
+test("completion reconciliation fails closed when canonical receipt-block state contradicts the event", async () => {
+  await assert.rejects(
+    reconcileCompletionReadAfterWrite({
+      receiptBlockNumber: 100,
+      receiptBlockHash: "0xabc",
+      finalizedEvent: { name: "CampaignFinalized" },
+      readAtBlock: async () => ({
+        launched: false,
+        graduationPending: true,
+        dexPair: "0x0000000000000000000000000000000000000000",
+        pool: "0x0000000000000000000000000000000000000000",
+        factoryGraduationRecorded: false,
+        lockerRegistered: false,
+      }),
+      readLatest: async () => ({}),
+      getBlockHash: async () => "0xabc",
+      waitForConfirmations: async () => {},
+    }),
+    /canonical receipt-block state contradicts CampaignFinalized/,
+  );
+});
+
+test("completion reconciliation fails closed if the receipt block ceases to be canonical", async () => {
+  const finalized = {
+    launched: true,
+    graduationPending: false,
+    dexPair: "0x1111111111111111111111111111111111111111",
+    pool: "0x1111111111111111111111111111111111111111",
+    factoryGraduationRecorded: true,
+    lockerRegistered: true,
+  };
+  let hashRead = 0;
+  await assert.rejects(
+    reconcileCompletionReadAfterWrite({
+      receiptBlockNumber: 100,
+      receiptBlockHash: "0xabc",
+      finalizedEvent: { name: "CampaignFinalized" },
+      readAtBlock: async () => finalized,
+      readLatest: async () => ({ ...finalized, launched: false }),
+      getBlockHash: async () => (++hashRead === 1 ? "0xabc" : "0xdef"),
+      waitForConfirmations: async () => {},
+      maxConfirmations: 2,
+    }),
+    /completion receipt block changed during confirmation reconciliation/,
+  );
 });
