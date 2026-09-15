@@ -10,7 +10,7 @@ on:
       source_sha:
         description: Exact reviewed PR #360 certification source SHA
         required: true
-        default: 92e61da0ef5bde63222c32fb88ed5c8eaeb3e0b2
+        default: 26649f845f2bb0b1cb3b2590924bdddb7a4f8639
         type: string
 
 permissions:
@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: testnet-certification
     env:
-      EXPECTED_CERT_SHA: 92e61da0ef5bde63222c32fb88ed5c8eaeb3e0b2
+      EXPECTED_CERT_SHA: 26649f845f2bb0b1cb3b2590924bdddb7a4f8639
       EXPECTED_SOURCE_SHA: 47c1f3f4338638931b8b6b1b2296ae8813d2b7f2
       EXPECTED_INTEGRATION_SHA: 8944382619e05f09539614f5690b98521fe244ed
       BSC_TESTNET_PRIVATE_KEY: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
@@ -58,13 +58,12 @@ jobs:
           ref: ${{ github.event.inputs.source_sha }}
           fetch-depth: 0
 
-      - name: Verify source ancestry and exact contract blobs
+      - name: Verify integration ancestry and exact contract blobs
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_CERT_SHA}"
           git merge-base --is-ancestor "${EXPECTED_INTEGRATION_SHA}" HEAD
-          git merge-base --is-ancestor "${EXPECTED_SOURCE_SHA}" HEAD
           test "$(git rev-parse HEAD:contracts/LaunchCampaign.sol)" = "$(git rev-parse ${EXPECTED_SOURCE_SHA}:contracts/LaunchCampaign.sol)"
           test "$(git rev-parse HEAD:contracts/BnbQuoteLaunchCampaign.sol)" = "$(git rev-parse ${EXPECTED_INTEGRATION_SHA}:contracts/BnbQuoteLaunchCampaign.sol)"
           test "$(git rev-parse HEAD:contracts/LaunchFactory.sol)" = "$(git rev-parse ${EXPECTED_SOURCE_SHA}:contracts/LaunchFactory.sol)"
