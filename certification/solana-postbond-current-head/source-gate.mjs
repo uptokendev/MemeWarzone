@@ -20,6 +20,12 @@ function fail(message) {
   process.exit(1);
 }
 
+function requireText(text, needles, label) {
+  for (const needle of needles) {
+    if (!text.includes(needle)) fail(`${label} invariant missing: ${needle}`);
+  }
+}
+
 const expected = String(process.env.EXPECTED_SOURCE_SHA || SOURCE).trim();
 if (expected !== SOURCE) fail(`expected source must be ${SOURCE}`);
 try {
@@ -41,6 +47,7 @@ const forbiddenPrefixes = [
   'frontend/api/arenaTournamentVotes.js',
   'frontend/api/arenaFinalSalvo.js',
   'frontend/api/lib/arenaBattleSettlementV3Service.js',
+  'frontend/api/lib/arenaBattlePointsConfig.js',
   'frontend/api/lib/arenaFinalSalvoFinalizer.js',
   'frontend/api/lib/arenaFinalSalvoRuntime.mjs',
   'frontend/api/lib/arenaMwlChainIdentity.mjs',
@@ -53,24 +60,52 @@ for (const path of changed) {
 }
 
 const launchProgram = fs.readFileSync('programs/memewarzone_solana/src/lib.rs', 'utf8');
-if (!launchProgram.includes('declare_id!("3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt")')) {
-  fail('accepted Solana launch program id changed');
-}
+requireText(launchProgram, ['declare_id!("3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt")'], 'accepted Solana launch program');
+
 const competition = fs.readFileSync('programs/mwz_rewards_treasury/src/arena_money_v2/competition.rs', 'utf8');
-for (const needle of [
+requireText(competition, [
   'pub const COMPETITION_PRIZE_BPS: u64 = 7_500;',
   'pub const COMPETITION_LEAGUE_BPS: u64 = 2_000;',
   'pub const COMPETITION_PROTOCOL_BPS: u64 = 500;',
   'pub fn claim_competition_winner_v2_handler',
-]) if (!competition.includes(needle)) fail(`ArenaMoneyV2 invariant missing: ${needle}`);
-const boost = fs.readFileSync('programs/mwz_rewards_treasury/src/arena_money_v2/boost.rs', 'utf8');
-for (const needle of ['BOOST_PRIZE_BPS', 'BOOST_PROTOCOL_BPS']) if (!boost.includes(needle)) fail(`Boost authority missing ${needle}`);
+], 'ArenaMoneyV2 Competition');
 
-const scoring = fs.readFileSync('frontend/api/lib/arenaBattlePointsV3.js', 'utf8');
-for (const needle of ['45', '27', '18', '10', 'boost_hyperbolic_100_v1']) if (!scoring.includes(needle)) fail(`Battle V3 source missing ${needle}`);
+const boost = fs.readFileSync('programs/mwz_rewards_treasury/src/arena_money_v2/boost.rs', 'utf8');
+requireText(boost, [
+  'pub const BOOST_PRIZE_BPS: u64 = 9_000;',
+  'pub const BOOST_PROTOCOL_BPS: u64 = 1_000;',
+  'pub const BOOST_LEAGUE_BPS: u64 = 0;',
+], 'ArenaMoneyV2 Boost');
+
+const scoring = fs.readFileSync('frontend/api/lib/arenaBattlePointsConfig.js', 'utf8');
+requireText(scoring, [
+  'export const BATTLE_POINTS_V3_BOOST_CURVE = "boost_hyperbolic_100_v1";',
+  'mcap: Object.freeze({ weight: 45 })',
+  'holders: Object.freeze({ weight: 27 })',
+  'volume: Object.freeze({ weight: 18 })',
+  'weight: 10,',
+  'maxPoints: 10,',
+  'halfSaturationUnits: 100,',
+  'unitUsdMicros: 1_000_000,',
+], 'Battle Points V3');
+
+const points = fs.readFileSync('frontend/api/lib/arenaBattlePointsV3.js', 'utf8');
+requireText(points, ['calculateBattlePointsV3', 'confirmedBoostUnits'], 'Battle Points V3 runtime');
 
 const finalSalvo = fs.readFileSync('frontend/api/lib/arenaFinalSalvoRuntime.mjs', 'utf8');
-for (const needle of ['FINAL_SALVO_MAX_SHOTS', 'FINAL_SALVO_SHOT_SECONDS']) if (!finalSalvo.includes(needle)) fail(`Final Salvo authority missing ${needle}`);
+requireText(finalSalvo, [
+  'const SHOT_SECONDS = 60;',
+  'const MAX_SALVO_SHOTS = 5;',
+  'reason: "exact-regulation-tie"',
+  'if (left === right) return null;',
+  'state: "sudden_death"',
+], 'Final Salvo');
+
+const mwl = fs.readFileSync('frontend/api/lib/arenaMwlChainIdentity.mjs', 'utf8');
+requireText(mwl, ['mwl-', 'chainId', 'SOL'], 'MWL chain identity');
+
+const quarterly = fs.readFileSync('frontend/api/lib/arenaQuarterlyChampionship.js', 'utf8');
+requireText(quarterly, ['quarterly-championship-', 'quarterly_championship'], 'Quarterly identity');
 
 console.log(JSON.stringify({
   ok: true,
@@ -81,6 +116,8 @@ console.log(JSON.stringify({
     launchProgramUnchanged: true,
     arenaMoneyV2Unchanged: true,
     scoringAuthorityUnchanged: true,
+    boostEconomicsUnchanged: true,
+    tournamentEconomicsUnchanged: true,
     finalSalvoAuthorityUnchanged: true,
     productionFilesChanged: false,
   },
