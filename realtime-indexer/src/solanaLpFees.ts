@@ -132,17 +132,15 @@ async function tokenBalance(connection: Connection, ata: PublicKey): Promise<big
   }
 }
 
-async function nativeLamports(connection: Connection, owner: PublicKey): Promise<bigint> {
-  try {
-    return BigInt(await connection.getBalance(owner, "confirmed"));
-  } catch {
-    return 0n;
-  }
-}
-
-async function ownedAmount(connection: Connection, owner: PublicKey, mint: PublicKey): Promise<bigint> {
-  if (mint.equals(NATIVE_MINT)) return nativeLamports(connection, owner);
-  return tokenBalance(connection, deriveAta(owner, mint));
+async function ownedAmount(
+  connection: Connection,
+  owner: PublicKey,
+  mint: PublicKey,
+  tokenProgram: PublicKey,
+): Promise<bigint> {
+  // So111... is the SPL wrapped-SOL mint in a Meteora pool. A claim credits the
+  // operator's WSOL token account; it does not credit the operator system account.
+  return tokenBalance(connection, deriveAta(owner, mint, tokenProgram));
 }
 
 function unclaimedFees(poolState: unknown, positionState: unknown): { tokenA: bigint; tokenB: bigint } {
@@ -281,7 +279,7 @@ function decodeBase58(raw: string): Uint8Array {
       carry >>= 8;
     }
     while (carry > 0) {
-      bytes.push(carry & 255);
+      bytes.push(carry & 255;
       carry >>= 8;
     }
   }
@@ -631,8 +629,8 @@ export async function harvestSolanaLpFees(input: {
 
   const operatorAtaA = deriveAta(operator.publicKey, tokenAMint, tokenAProgram);
   const operatorAtaB = deriveAta(operator.publicKey, tokenBMint, tokenBProgram);
-  const beforeA = await ownedAmount(connection, operator.publicKey, tokenAMint);
-  const beforeB = await ownedAmount(connection, operator.publicKey, tokenBMint);
+  const beforeA = await ownedAmount(connection, operator.publicKey, tokenAMint, tokenAProgram);
+  const beforeB = await ownedAmount(connection, operator.publicKey, tokenBMint, tokenBProgram);
 
   // Do not pass `receiver`: the SDK then requires tempWSolAccount for WSOL and crashes
   // with owner.toBuffer() undefined. Claim to the operator, then split 80/20 ourselves.
@@ -655,8 +653,8 @@ export async function harvestSolanaLpFees(input: {
   }
   const claimSignature = await sendClaimTransaction(connection, claimTransaction, operator);
 
-  const afterA = await ownedAmount(connection, operator.publicKey, tokenAMint);
-  const afterB = await ownedAmount(connection, operator.publicKey, tokenBMint);
+  const afterA = await ownedAmount(connection, operator.publicKey, tokenAMint, tokenAProgram);
+  const afterB = await ownedAmount(connection, operator.publicKey, tokenBMint, tokenBProgram);
   const deltaA = afterA > beforeA ? afterA - beforeA : 0n;
   const deltaB = afterB > beforeB ? afterB - beforeB : 0n;
   const splitA = splitAmounts(deltaA);
@@ -671,22 +669,15 @@ export async function harvestSolanaLpFees(input: {
     split: { creator: bigint; protocol: bigint },
     tokenProgram: PublicKey,
   ) => {
-    const native = splitMint.equals(NATIVE_MINT);
+    // Meteora pool assets are SPL tokens. So111... is WSOL and must stay in SPL
+    // accounting here; treating it as native SOL loses the claimed WSOL balance.
     if (split.creator > 0n && !creatorPk.equals(operator.publicKey)) {
-      if (native) {
-        splitIxs.push(SystemProgram.transfer({ fromPubkey: operator.publicKey, toPubkey: creatorPk, lamports: split.creator }));
-      } else {
-        splitIxs.push(createAtaIdempotentIx(operator.publicKey, creatorPk, splitMint, tokenProgram));
-        splitIxs.push(transferTokenIx(sourceAta, deriveAta(creatorPk, splitMint, tokenProgram), operator.publicKey, split.creator, tokenProgram));
-      }
+      splitIxs.push(createAtaIdempotentIx(operator.publicKey, creatorPk, splitMint, tokenProgram));
+      splitIxs.push(transferTokenIx(sourceAta, deriveAta(creatorPk, splitMint, tokenProgram), operator.publicKey, split.creator, tokenProgram));
     }
     if (split.protocol > 0n) {
-      if (native) {
-        splitIxs.push(SystemProgram.transfer({ fromPubkey: operator.publicKey, toPubkey: treasury, lamports: split.protocol }));
-      } else {
-        splitIxs.push(createAtaIdempotentIx(operator.publicKey, treasury, splitMint, tokenProgram));
-        splitIxs.push(transferTokenIx(sourceAta, deriveAta(treasury, splitMint, tokenProgram), operator.publicKey, split.protocol, tokenProgram));
-      }
+      splitIxs.push(createAtaIdempotentIx(operator.publicKey, treasury, splitMint, tokenProgram));
+      splitIxs.push(transferTokenIx(sourceAta, deriveAta(treasury, splitMint, tokenProgram), operator.publicKey, split.protocol, tokenProgram));
     }
   };
   addSplit(tokenAMint, operatorAtaA, splitA, tokenAProgram);
