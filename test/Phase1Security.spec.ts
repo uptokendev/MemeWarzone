@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { deployCoreFixture } from "./fixtures/core";
+import { completeNativeGraduation, deployCoreFixture } from "./fixtures/core";
 
 const TRADE_AUTH_BUY_EXACT_BNB = 1;
 
@@ -194,6 +194,7 @@ describe("Phase 1 security layer", function () {
     expect(profile.liveBondingCount).to.eq(1n);
 
     await campaign.connect(alice).buyExactBnb(0n, { value: ethers.parseEther("0.01") });
+    await completeNativeGraduation(campaign, alice);
 
     profile = await creatorRegistry.getCreatorProfile(await creator.getAddress());
     expect(await campaign.launched()).to.eq(true);

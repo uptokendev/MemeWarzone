@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
-import { deployCoreFixture } from "./fixtures/core";
+import { completeNativeGraduation, deployCoreFixture } from "./fixtures/core";
 
 const baseCampaignRequest = (overrides: Record<string, unknown> = {}) => ({
   name: "CloseoutToken",
@@ -239,7 +239,8 @@ describe("LaunchCampaign closeout integration", function () {
     const curveSupply = await campaign.curveSupply();
     const totalBuy = await campaign.quoteBuyExactTokens(curveSupply);
 
-    const tx = campaign.connect(alice).buyExactTokens(curveSupply, totalBuy, { value: totalBuy });
+    await campaign.connect(alice).buyExactTokens(curveSupply, totalBuy, { value: totalBuy });
+    const tx = completeNativeGraduation(campaign, alice);
     await expect(tx).to.emit(campaign, "CampaignFinalized");
     await expect(tx).to.emit(router, "TopazLiquidityAdded");
 
@@ -262,7 +263,8 @@ describe("LaunchCampaign closeout integration", function () {
     const curveSupply = await campaign.curveSupply();
     const totalBuy = await campaign.quoteBuyExactTokens(curveSupply);
 
-    const tx = campaign.connect(alice).buyExactTokens(curveSupply, totalBuy, { value: totalBuy });
+    await campaign.connect(alice).buyExactTokens(curveSupply, totalBuy, { value: totalBuy });
+    const tx = completeNativeGraduation(campaign, alice);
     await expect(tx).to.emit(campaign, "GraduationLiquidityCapped");
     await expect(tx).to.emit(campaign, "CampaignFinalized");
 

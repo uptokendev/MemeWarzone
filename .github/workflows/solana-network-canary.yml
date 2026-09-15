@@ -25,6 +25,7 @@ on:
           - bsc-testnet-real-topaz-diagnose
           - bsc-testnet-live-claims
           - bsc-mainnet-fork-source-head
+          - bsc-testnet-native-pending-graduation
       send_solana_graduation:
         description: Send canonical chain-101 Solana destructive certification
         required: false
@@ -251,8 +252,92 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+  native-pending-graduation:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.network == 'bsc-testnet-native-pending-graduation' }}
+    runs-on: ubuntu-latest
+    environment: testnet-certification
+    env:
+      BSC_TESTNET_PRIVATE_KEY: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
+      DEPLOYER_PK: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
+      PRIVATE_KEY_DEPLOY: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
+      BSC_TESTNET_RPC: ${{ vars.BSC_TESTNET_RPC || secrets.BSC_TESTNET_RPC }}
+      BSC_TESTNET_RPC_URL: ${{ vars.BSC_TESTNET_RPC || secrets.BSC_TESTNET_RPC }}
+      BNB_TESTNET_ADMIN: "0xEE2c6A7605ED378CF1D26D1d828446d63A3fdeDa"
+      BNB_6C_ROUTE_AUTHORITY_ADDRESS: "0x2b72A9E6C4Ea3525d83B8C5E8F2044BDbC1f1Dec"
+      BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY: ${{ secrets.BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY }}
+      EXPECTED_SOURCE_SHA: 47c1f3f4338638931b8b6b1b2296ae8813d2b7f2
+      EXPECTED_INTEGRATION_SHA: 8944382619e05f09539614f5690b98521fe244ed
+    steps:
+      - name: Checkout certification transport
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Pin PR #358 contract blob
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD:contracts/LaunchCampaign.sol)" = "$(git rev-parse 47c1f3f4338638931b8b6b1b2296ae8813d2b7f2:contracts/LaunchCampaign.sol)"
+          test "$(git rev-parse HEAD:contracts/BnbQuoteLaunchCampaign.sol)" = "$(git rev-parse 8944382619e05f09539614f5690b98521fe244ed:contracts/BnbQuoteLaunchCampaign.sol)"
+          echo "contract_blob_pin=ok"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Execute BSC97 native pending-graduation cert
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${BSC_TESTNET_PRIVATE_KEY:-}" || {
+            echo "BLOCKER: set GitHub Environment secret BSC_TESTNET_PRIVATE_KEY on testnet-certification."
+            exit 1
+          }
+          test -n "${BSC_TESTNET_RPC:-}" || {
+            echo "BLOCKER: set GitHub Environment variable or secret BSC_TESTNET_RPC on testnet-certification."
+            exit 1
+          }
+          test -n "${BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY:-}" || {
+            echo "BLOCKER: set GitHub Environment secret BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY on testnet-certification."
+            exit 1
+          }
+          echo "mode=bsc97-native-pending-graduation-cert"
+          echo "safety=isolated 4/3 stack; live 3/2 factory must remain unchanged; chain 56 rejected"
+          npm ci
+          npx hardhat run scripts/run-bnb97-native-pending-graduation-cert.ts --network bscTestnet
+          test -s reports/bnb97-native-pending-graduation.json
+          node -e 'const r=require("./reports/bnb97-native-pending-graduation.json"); if(r.chainId!==97||r.accepted!==true||r.identities?.factoryGeneration!==4||r.identities?.campaignGeneration!==3) process.exit(1); console.log({accepted:r.accepted,factory:r.identities.factory,campaign:r.identities.campaign,pool:r.completion?.pool,harvest:r.harvest?.tx});'
+
+      - name: Evidence secret scan
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f reports/bnb97-native-pending-graduation.json ]; then
+            if grep -Eiq 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|BSC_TESTNET_PRIVATE_KEY|BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY' reports/bnb97-native-pending-graduation.json; then
+              echo "BLOCKER: evidence artifact contains a secret marker"
+              exit 1
+            fi
+          fi
+          echo "evidence_secret_scan=ok"
+
+      - name: Upload BSC97 native pending-graduation evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: bnb97-native-pending-graduation-${{ github.sha }}
+          path: |
+            reports/bnb97-native-pending-graduation.json
+            reports/bnb97-native-pending-graduation.json.sha256
+            deployments/bnb/testnet.staged.json
+          if-no-files-found: warn
+          retention-days: 14
+
   canary:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.network != 'solana-devnet' && inputs.network != 'bsc-testnet-live-claims' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.network != 'solana-devnet' && inputs.network != 'bsc-testnet-live-claims' && inputs.network != 'bsc-testnet-native-pending-graduation' }}
     runs-on: ubuntu-latest
     environment: testnet-certification
     env:
