@@ -135,6 +135,11 @@ requireText(certDb, [
   "monthlyPlacementBonus: 'DEFERRED_NOT_BLOCKING'",
 ], 'certification closeout transport');
 
+if (process.env.GITHUB_JOB === 'static-current-head-gate') {
+  execFileSync('npm', ['ci', '--no-audit', '--no-fund'], { stdio: 'inherit' });
+  execFileSync(process.execPath, ['--test', 'certification/solana-postbond-current-head/chain-evidence.test.mjs'], { stdio: 'inherit' });
+}
+
 console.log(JSON.stringify({
   ok: true,
   sourceAuthority: SOURCE,
