@@ -10,7 +10,7 @@ on:
       source_sha:
         description: Exact reviewed PR #360 certification source SHA
         required: true
-        default: e40b2612a510305daa8a140eb1ef6e08db0bebea
+        default: a63eade92872427423962374aa9f942e371db3f0
         type: string
 
 permissions:
@@ -22,14 +22,14 @@ jobs:
     runs-on: ubuntu-latest
     environment: testnet-certification
     env:
-      EXPECTED_CERT_SHA: e40b2612a510305daa8a140eb1ef6e08db0bebea
+      EXPECTED_CERT_SHA: a63eade92872427423962374aa9f942e371db3f0
       EXPECTED_SOURCE_SHA: 47c1f3f4338638931b8b6b1b2296ae8813d2b7f2
       EXPECTED_INTEGRATION_SHA: 8944382619e05f09539614f5690b98521fe244ed
       BSC_TESTNET_PRIVATE_KEY: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
       DEPLOYER_PK: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
       PRIVATE_KEY_DEPLOY: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
-      BSC_TESTNET_RPC: ${{ vars.BSC_TESTNET_RPC || secrets.BSC_TESTNET_RPC }}
-      BSC_TESTNET_RPC_URL: ${{ vars.BSC_TESTNET_RPC || secrets.BSC_TESTNET_RPC }}
+      BSC_TESTNET_RPC: ${{ secrets.BSC_TESTNET_RPC }}
+      BSC_TESTNET_RPC_URL: ${{ secrets.BSC_TESTNET_RPC }}
       BNB_TESTNET_ADMIN: "0xEE2c6A7605ED378CF1D26D1d828446d63A3fdeDa"
       BNB_6C_TEST_CREATOR_PRIVATE_KEY: ${{ secrets.BNB_6C_TEST_CREATOR_PRIVATE_KEY }}
       BNB_6C_TEST_BUYER_PRIVATE_KEY: ${{ secrets.BNB_6C_TEST_BUYER_PRIVATE_KEY }}
@@ -45,6 +45,10 @@ jobs:
           test "${{ github.event.inputs.confirmation }}" = "EXECUTE_BSC97_NATIVE_PENDING_GRADUATION_CERT"
           test "${{ github.event.inputs.source_sha }}" = "${EXPECTED_CERT_SHA}" || {
             echo "BLOCKER: source_sha must equal reviewed certification head ${EXPECTED_CERT_SHA}"
+            exit 1
+          }
+          test -n "${BSC_TESTNET_RPC:-}" || {
+            echo "BLOCKER: missing rotated protected secret BSC_TESTNET_RPC"
             exit 1
           }
 
@@ -80,16 +84,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -n "${BSC_TESTNET_PRIVATE_KEY:-}" || { echo "BLOCKER: missing BSC_TESTNET_PRIVATE_KEY"; exit 1; }
-          test -n "${BSC_TESTNET_RPC:-}" || { echo "BLOCKER: missing BSC_TESTNET_RPC"; exit 1; }
-          test -n "${BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY:-}" || { echo "BLOCKER: missing BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY"; exit 1; }
-          test -n "${BNB_6C_TEST_CREATOR_PRIVATE_KEY:-}" || { echo "BLOCKER: missing BNB_6C_TEST_CREATOR_PRIVATE_KEY"; exit 1; }
-          test -n "${BNB_6C_TEST_BUYER_PRIVATE_KEY:-}" || { echo "BLOCKER: missing BNB_6C_TEST_BUYER_PRIVATE_KEY"; exit 1; }
-          test -n "${BNB_6C_TEST_TRADER_PRIVATE_KEY:-}" || { echo "BLOCKER: missing BNB_6C_TEST_TRADER_PRIVATE_KEY"; exit 1; }
+          test -n "${BSC_TESTNET_PRIVATE_KEY:-}" || { echo "BLOCKER: missing protected secret BSC_TESTNET_PRIVATE_KEY"; exit 1; }
+          test -n "${BSC_TESTNET_RPC:-}" || { echo "BLOCKER: missing protected secret BSC_TESTNET_RPC"; exit 1; }
+          test -n "${BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY:-}" || { echo "BLOCKER: missing protected secret BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY"; exit 1; }
+          test -n "${BNB_6C_TEST_CREATOR_PRIVATE_KEY:-}" || { echo "BLOCKER: missing protected secret BNB_6C_TEST_CREATOR_PRIVATE_KEY"; exit 1; }
+          test -n "${BNB_6C_TEST_BUYER_PRIVATE_KEY:-}" || { echo "BLOCKER: missing protected secret BNB_6C_TEST_BUYER_PRIVATE_KEY"; exit 1; }
+          test -n "${BNB_6C_TEST_TRADER_PRIVATE_KEY:-}" || { echo "BLOCKER: missing protected secret BNB_6C_TEST_TRADER_PRIVATE_KEY"; exit 1; }
 
           node <<'NODE'
           const { ethers } = require("ethers");
-
           const expectedAddresses = {
             deployer: "0xEE2c6A7605ED378CF1D26D1d828446d63A3fdeDa",
             creator: "0xf0558484531204645fB6eaF35c5082Fc55d869A6",
@@ -130,21 +133,17 @@ jobs:
             const network = await provider.getNetwork();
             if (Number(network.chainId) === 56) throw new Error("BLOCKER: chain 56 production broadcast is forbidden");
             if (Number(network.chainId) !== 97) throw new Error(`BLOCKER: BSC_TESTNET_RPC chainId=${network.chainId}, expected 97`);
-
             const balances = {};
             for (const [label, address] of Object.entries(addresses)) balances[label] = await provider.getBalance(address);
-
             for (const label of ["creator", "buyer", "trader"]) {
               if (balances[label] < minimums[label]) {
                 const need = minimums[label] - balances[label];
                 throw new Error(`BLOCKER: ${label} needs ${ethers.formatEther(need)} additional tBNB before broadcast`);
               }
             }
-
             const feeData = await provider.getFeeData();
             const gasPrice = feeData.gasPrice || ethers.parseUnits("3", "gwei");
-            const conservativeGasUnits = 30000000n;
-            const requiredDeployer = gasPrice * conservativeGasUnits;
+            const requiredDeployer = gasPrice * 30000000n;
             if (balances.deployer < requiredDeployer) {
               const need = requiredDeployer - balances.deployer;
               console.error(`required balance ${ethers.formatEther(requiredDeployer)} tBNB`);
@@ -152,7 +151,6 @@ jobs:
               console.error(`additional tBNB required ${ethers.formatEther(need)}`);
               process.exit(1);
             }
-
             console.log("preflight_identity=ok");
             console.log("preflight_chain_id=97");
             console.log("preflight_deployer_required_tbnb", ethers.formatEther(requiredDeployer));
@@ -178,7 +176,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -f reports/bnb97-native-pending-graduation.json ]; then
-            if grep -Eiq 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|BSC_TESTNET_PRIVATE_KEY|BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY|BNB_6C_TEST_CREATOR_PRIVATE_KEY|BNB_6C_TEST_BUYER_PRIVATE_KEY|BNB_6C_TEST_TRADER_PRIVATE_KEY' reports/bnb97-native-pending-graduation.json; then
+            if grep -Eiq 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|BSC_TESTNET_PRIVATE_KEY|BSC_TESTNET_RPC|BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY|BNB_6C_TEST_CREATOR_PRIVATE_KEY|BNB_6C_TEST_BUYER_PRIVATE_KEY|BNB_6C_TEST_TRADER_PRIVATE_KEY' reports/bnb97-native-pending-graduation.json; then
               echo "BLOCKER: evidence artifact contains a secret marker"
               exit 1
             fi
