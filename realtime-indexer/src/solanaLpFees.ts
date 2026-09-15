@@ -160,7 +160,6 @@ async function resolvePositionNftAccount(
   owner: PublicKey,
   nftMint: PublicKey,
 ): Promise<PublicKey> {
-  // DAMM v2 holds the position NFT in a program PDA, not the operator ATA.
   const pda = derivePositionNftAccount(nftMint);
   const pdaInfo = await connection.getAccountInfo(pda, "confirmed");
   if (pdaInfo) return pda;
@@ -224,7 +223,6 @@ async function sendServerV0Instructions(
         logs = error.logs.join(" | ");
       }
     } catch {
-      // ignore log fetch failures
     }
     throw Object.assign(
       new Error(logs ? `${label} failed: ${String(error?.message || error)} | ${logs}` : `${label} failed: ${String(error?.message || error)}`),
@@ -233,11 +231,7 @@ async function sendServerV0Instructions(
   }
 }
 
-async function sendClaimTransaction(
-  connection: Connection,
-  transaction: Transaction,
-  operator: Keypair,
-): Promise<string> {
+async function sendClaimTransaction(connection: Connection, transaction: Transaction, operator: Keypair): Promise<string> {
   const instructions = Array.from(transaction.instructions || []);
   if (!instructions.length) throw Object.assign(new Error("Meteora claim transaction contained no instructions."), { status: 500 });
   return sendServerV0Instructions(connection, instructions, operator, "Meteora claim");
@@ -262,9 +256,7 @@ function operatorSecretCandidates(): string[] {
     process.env.SOLANA_OPERATOR_SECRET,
     process.env.SOLANA_OPERATOR_KEYPAIR,
     process.env.SOLANA_GRADUATION_OPERATOR_KEYPAIR,
-  ]
-    .map((value) => String(value || "").trim())
-    .filter(Boolean);
+  ].map((value) => String(value || "").trim()).filter(Boolean);
 }
 
 function decodeBase58(raw: string): Uint8Array {
@@ -279,7 +271,7 @@ function decodeBase58(raw: string): Uint8Array {
       carry >>= 8;
     }
     while (carry > 0) {
-      bytes.push(carry & 255;
+      bytes.push(carry & 255);
       carry >>= 8;
     }
   }
@@ -299,21 +291,12 @@ function keypairFromBytes(bytes: Uint8Array): Keypair {
 function parseSecretMaterial(raw: string): Keypair | null {
   const trimmed = String(raw || "").trim();
   if (!trimmed) return null;
-  const looksLikePath =
-    trimmed.startsWith("/") ||
-    trimmed.startsWith("~") ||
-    trimmed.endsWith(".json") ||
-    trimmed.includes("\\");
+  const looksLikePath = trimmed.startsWith("/") || trimmed.startsWith("~") || trimmed.endsWith(".json") || trimmed.includes("\\");
   if (looksLikePath) {
     try {
-      const filePath = trimmed.startsWith("~")
-        ? trimmed.replace(/^~(?=$|[/\\])/, process.env.HOME || "")
-        : trimmed;
-      if (fs.existsSync(filePath)) {
-        return parseSecretMaterial(fs.readFileSync(filePath, "utf8"));
-      }
+      const filePath = trimmed.startsWith("~") ? trimmed.replace(/^~(?=$|[/\\])/, process.env.HOME || "") : trimmed;
+      if (fs.existsSync(filePath)) return parseSecretMaterial(fs.readFileSync(filePath, "utf8"));
     } catch {
-      // fall through to in-place parse
     }
   }
   try {
@@ -322,9 +305,7 @@ function parseSecretMaterial(raw: string): Keypair | null {
       if (!Array.isArray(arr)) return null;
       return keypairFromBytes(Uint8Array.from(arr));
     }
-    if (/^[0-9a-fA-F]+$/.test(trimmed) && trimmed.length % 2 === 0) {
-      return keypairFromBytes(Uint8Array.from(Buffer.from(trimmed, "hex")));
-    }
+    if (/^[0-9a-fA-F]+$/.test(trimmed) && trimmed.length % 2 === 0) return keypairFromBytes(Uint8Array.from(Buffer.from(trimmed, "hex")));
     return keypairFromBytes(decodeBase58(trimmed));
   } catch {
     return null;
@@ -383,18 +364,9 @@ function formatAmount(raw: bigint, decimals: number): string {
   return `${whole}.${fracStr}`;
 }
 
-export async function listSolanaLpFees(input: {
-  pool: Pool;
-  creator?: string | null;
-  campaign?: string | null;
-  limit: number;
-}) {
+export async function listSolanaLpFees(input: { pool: Pool; creator?: string | null; campaign?: string | null; limit: number }) {
   const params: unknown[] = [SOLANA_CHAIN_ID];
-  const clauses = [
-    "c.chain_id = $1",
-    "c.graduated_at_chain is not null",
-    "coalesce(c.meta #>> '{solanaGraduation,pool}','') <> ''",
-  ];
+  const clauses = ["c.chain_id = $1", "c.graduated_at_chain is not null", "coalesce(c.meta #>> '{solanaGraduation,pool}','') <> ''"];
   if (input.campaign) {
     params.push(input.campaign);
     clauses.push(`(c.campaign_address = $${params.length} or c.token_address = $${params.length} or lower(c.campaign_address) = lower($${params.length}))`);
@@ -457,55 +429,32 @@ export async function listSolanaLpFees(input: {
         fees: {
           registered: true,
           pairLabel: "Meteora DAMM v2",
-          token0Meta: { symbol: symA },
-          token1Meta: { symbol: symB },
+          token0Meta: { symbol: symA }, token1Meta: { symbol: symB },
           unharvested: {
-            token0: Number(formatAmount(tokenA, decA)),
-            token1: Number(formatAmount(tokenB, decB)),
-            token0Display: formatAmount(tokenA, decA),
-            token1Display: formatAmount(tokenB, decB),
-            token0Symbol: symA,
-            token1Symbol: symB,
-            creatorShareToken0Display: formatAmount(splitA.creator, decA),
-            creatorShareToken1Display: formatAmount(splitB.creator, decB),
-            protocolShareToken0Display: formatAmount(splitA.protocol, decA),
-            protocolShareToken1Display: formatAmount(splitB.protocol, decB),
+            token0: Number(formatAmount(tokenA, decA)), token1: Number(formatAmount(tokenB, decB)),
+            token0Display: formatAmount(tokenA, decA), token1Display: formatAmount(tokenB, decB),
+            token0Symbol: symA, token1Symbol: symB,
+            creatorShareToken0Display: formatAmount(splitA.creator, decA), creatorShareToken1Display: formatAmount(splitB.creator, decB),
+            protocolShareToken0Display: formatAmount(splitA.protocol, decA), protocolShareToken1Display: formatAmount(splitB.protocol, decB),
             source: "meteora_unclaimed_lp_fee",
             note: "Includes pending + uncheckpointed pool fees. 80% creator / 20% protocol on collect. Principal stays locked.",
           },
-          harvestedLifetime: harvested.lastTx
-            ? {
-                lastTx: harvested.lastTx,
-                lastAt: harvested.lastAt || null,
-                creatorToken0Display: harvested.creatorADisplay || null,
-                creatorToken1Display: harvested.creatorBDisplay || null,
-                protocolToken0Display: harvested.protocolADisplay || null,
-                protocolToken1Display: harvested.protocolBDisplay || null,
-              }
-            : undefined,
+          harvestedLifetime: harvested.lastTx ? {
+            lastTx: harvested.lastTx, lastAt: harvested.lastAt || null,
+            creatorToken0Display: harvested.creatorADisplay || null, creatorToken1Display: harvested.creatorBDisplay || null,
+            protocolToken0Display: harvested.protocolADisplay || null, protocolToken1Display: harvested.protocolBDisplay || null,
+          } : undefined,
         },
       });
     } catch (error: any) {
-      items.push({
-        ...base,
-        fees: {
-          registered: true,
-          pairLabel: "Meteora DAMM v2",
-          error: String(error?.message || error),
-        },
-      });
+      items.push({ ...base, fees: { registered: true, pairLabel: "Meteora DAMM v2", error: String(error?.message || error) } });
     }
   }
   const parsed = parseOperatorKey();
   const treasury = resolveProtocolTreasury(parsed.keypair?.publicKey || null);
   return {
-    ok: true,
-    chainId: SOLANA_CHAIN_ID,
-    service: "realtime-indexer",
-    lockerAddress: null,
-    treasuryRouter: null,
-    protocolTreasuryConfigured: treasury.configured,
-    protocolTreasuryInvalid: treasury.invalid,
+    ok: true, chainId: SOLANA_CHAIN_ID, service: "realtime-indexer", lockerAddress: null, treasuryRouter: null,
+    protocolTreasuryConfigured: treasury.configured, protocolTreasuryInvalid: treasury.invalid,
     protocolTreasury: treasury.address ? treasury.address.toBase58() : null,
     split: { creatorBps: CREATOR_FEE_BPS, protocolBps: PROTOCOL_FEE_BPS },
     notes: [
@@ -513,62 +462,32 @@ export async function listSolanaLpFees(input: {
       "There is no EVM TreasuryRouter. LP protocol revenue requires explicit SOLANA_PROTOCOL_TREASURY_ADDRESS.",
       "Harvest claims fees then splits 80% creator / 20% protocol; harvest fails closed when the explicit protocol treasury is missing, malformed, or equals the signing operator.",
     ],
-    items,
-    updatedAt: new Date().toISOString(),
+    items, updatedAt: new Date().toISOString(),
   };
 }
 
-export function buildZeroFeeRetryResult(input: {
-  campaignAddress: string;
-  pairAddress: string;
-  creatorAddress: string;
-  protocolTreasury: PublicKey;
-  priorHarvest?: Record<string, unknown> | null;
-}) {
+export function buildZeroFeeRetryResult(input: { campaignAddress: string; pairAddress: string; creatorAddress: string; protocolTreasury: PublicKey; priorHarvest?: Record<string, unknown> | null }) {
   const priorHarvest = input.priorHarvest || {};
   return {
-    ok: true,
-    chainId: SOLANA_CHAIN_ID,
-    campaignAddress: input.campaignAddress,
-    pairAddress: input.pairAddress,
-    creatorAddress: input.creatorAddress,
-    protocolTreasury: input.protocolTreasury.toBase58(),
+    ok: true, chainId: SOLANA_CHAIN_ID, campaignAddress: input.campaignAddress, pairAddress: input.pairAddress,
+    creatorAddress: input.creatorAddress, protocolTreasury: input.protocolTreasury.toBase58(),
     split: { creatorBps: CREATOR_FEE_BPS, protocolBps: PROTOCOL_FEE_BPS },
-    claimed: {
-      tokenA: "0",
-      tokenB: "0",
-      creatorA: "0",
-      creatorB: "0",
-      protocolA: "0",
-      protocolB: "0",
-    },
+    claimed: { tokenA: "0", tokenB: "0", creatorA: "0", creatorB: "0", protocolA: "0", protocolB: "0" },
     txHash: typeof priorHarvest.lastTx === "string" ? priorHarvest.lastTx : null,
-    claimTx: null,
-    splitTx: null,
-    retryNoop: true,
+    claimTx: null, splitTx: null, retryNoop: true,
     note: "No unclaimed Meteora fees on this position. Existing settled harvest reconciliation was preserved.",
   };
 }
 
-export async function harvestSolanaLpFees(input: {
-  pool: Pool;
-  campaign?: string | null;
-  pair?: string | null;
-}) {
+export async function harvestSolanaLpFees(input: { pool: Pool; campaign?: string | null; pair?: string | null }) {
   const parsed = parseOperatorKey();
   if (!parsed.keypair) {
-    throw Object.assign(
-      new Error(
-        parsed.invalid
-          ? "Solana harvest operator key is set but could not be parsed. Use a JSON byte array, Phantom base58 secret, hex seed, or a keypair file path in SOLANA_HARVEST_OPERATOR_SECRET / SOLANA_OPERATOR_SECRET / SOLANA_OPERATOR_KEYPAIR on the realtime-indexer — not the web-dashboard. SOLANA_ROUTE_SIGNER_SECRET_KEY is a different wallet and is ignored."
-          : "Solana harvest operator key is not configured on the realtime-indexer. Set SOLANA_HARVEST_OPERATOR_SECRET (or SOLANA_OPERATOR_SECRET / SOLANA_OPERATOR_KEYPAIR) on the indexer service — not the web-dashboard. SOLANA_ROUTE_SIGNER_SECRET_KEY is a different wallet and is ignored.",
-      ),
-      { status: 503 },
-    );
+    throw Object.assign(new Error(parsed.invalid
+      ? "Solana harvest operator key is set but could not be parsed. Use a JSON byte array, Phantom base58 secret, hex seed, or a keypair file path in SOLANA_HARVEST_OPERATOR_SECRET / SOLANA_OPERATOR_SECRET / SOLANA_OPERATOR_KEYPAIR on the realtime-indexer — not the web-dashboard. SOLANA_ROUTE_SIGNER_SECRET_KEY is a different wallet and is ignored."
+      : "Solana harvest operator key is not configured on the realtime-indexer. Set SOLANA_HARVEST_OPERATOR_SECRET (or SOLANA_OPERATOR_SECRET / SOLANA_OPERATOR_KEYPAIR) on the indexer service — not the web-dashboard. SOLANA_ROUTE_SIGNER_SECRET_KEY is a different wallet and is ignored."), { status: 503 });
   }
   const operator = parsed.keypair;
   const treasury = requireProtocolTreasury(operator.publicKey);
-
   const clauses = ["c.chain_id = $1", "c.graduated_at_chain is not null"];
   const params: unknown[] = [SOLANA_CHAIN_ID];
   if (input.campaign) {
@@ -580,11 +499,7 @@ export async function harvestSolanaLpFees(input: {
     clauses.push(`c.meta #>> '{solanaGraduation,pool}' = $${params.length}`);
   }
   const { rows } = await input.pool.query(
-    `select c.campaign_address, c.token_address, c.creator_address, c.meta
-       from public.campaigns c
-      where ${clauses.join(" and ")}
-      limit 1`,
-    params,
+    `select c.campaign_address, c.token_address, c.creator_address, c.meta from public.campaigns c where ${clauses.join(" and ")} limit 1`, params,
   );
   const row = rows[0];
   if (!row) throw Object.assign(new Error("Graduated Solana campaign with a Meteora pool was not found."), { status: 404 });
@@ -593,9 +508,7 @@ export async function harvestSolanaLpFees(input: {
   const positionAddress = String(meta.position || "").trim();
   const mint = String(row.token_address || "").trim();
   const creator = String(row.creator_address || "").trim();
-  if (!poolAddress || !positionAddress || !mint || !creator) {
-    throw Object.assign(new Error("Campaign is missing Meteora pool, position, mint, or creator."), { status: 400 });
-  }
+  if (!poolAddress || !positionAddress || !mint || !creator) throw Object.assign(new Error("Campaign is missing Meteora pool, position, mint, or creator."), { status: 400 });
 
   const connection = new Connection(solanaRpcUrl(), "confirmed");
   const cpAmm = new CpAmm(connection as any);
@@ -613,46 +526,23 @@ export async function harvestSolanaLpFees(input: {
   if (!positionNftMint) throw Object.assign(new Error("Meteora position is missing its NFT mint."), { status: 400 });
   const nftMint = positionNftMint instanceof PublicKey ? positionNftMint : new PublicKey(String(positionNftMint));
   const positionNftAccount = await resolvePositionNftAccount(connection, operator.publicKey, nftMint);
-
-  // A retry after a successful harvest must be a true no-op. In particular, do not
-  // replace the prior settled claim/split reconciliation with a fresh zero-fee claim.
   const pendingBefore = unclaimedFees(poolState, positionState);
   if (pendingBefore.tokenA <= 0n && pendingBefore.tokenB <= 0n) {
-    return buildZeroFeeRetryResult({
-      campaignAddress: String(row.campaign_address),
-      pairAddress: poolAddress,
-      creatorAddress: creator,
-      protocolTreasury: treasury,
-      priorHarvest: meta.harvest || {},
-    });
+    return buildZeroFeeRetryResult({ campaignAddress: String(row.campaign_address), pairAddress: poolAddress, creatorAddress: creator, protocolTreasury: treasury, priorHarvest: meta.harvest || {} });
   }
 
   const operatorAtaA = deriveAta(operator.publicKey, tokenAMint, tokenAProgram);
   const operatorAtaB = deriveAta(operator.publicKey, tokenBMint, tokenBProgram);
   const beforeA = await ownedAmount(connection, operator.publicKey, tokenAMint, tokenAProgram);
   const beforeB = await ownedAmount(connection, operator.publicKey, tokenBMint, tokenBProgram);
-
-  // Do not pass `receiver`: the SDK then requires tempWSolAccount for WSOL and crashes
-  // with owner.toBuffer() undefined. Claim to the operator, then split 80/20 ourselves.
   const claimTx = await cpAmm.claimPositionFee({
-    owner: operator.publicKey,
-    position: positionPk,
-    pool: poolPk,
-    positionNftAccount,
-    tokenAMint,
-    tokenBMint,
-    tokenAVault: poolState.tokenAVault,
-    tokenBVault: poolState.tokenBVault,
-    tokenAProgram,
-    tokenBProgram,
-    feePayer: operator.publicKey,
+    owner: operator.publicKey, position: positionPk, pool: poolPk, positionNftAccount,
+    tokenAMint, tokenBMint, tokenAVault: poolState.tokenAVault, tokenBVault: poolState.tokenBVault,
+    tokenAProgram, tokenBProgram, feePayer: operator.publicKey,
   });
   const claimTransaction = claimTx as unknown as Transaction;
-  if (!claimTransaction || !Array.isArray(claimTransaction.instructions)) {
-    throw Object.assign(new Error("Meteora claimPositionFee did not return a transaction."), { status: 500 });
-  }
+  if (!claimTransaction || !Array.isArray(claimTransaction.instructions)) throw Object.assign(new Error("Meteora claimPositionFee did not return a transaction."), { status: 500 });
   const claimSignature = await sendClaimTransaction(connection, claimTransaction, operator);
-
   const afterA = await ownedAmount(connection, operator.publicKey, tokenAMint, tokenAProgram);
   const afterB = await ownedAmount(connection, operator.publicKey, tokenBMint, tokenBProgram);
   const deltaA = afterA > beforeA ? afterA - beforeA : 0n;
@@ -663,14 +553,7 @@ export async function harvestSolanaLpFees(input: {
   const decB = mintDecimals(tokenBMint, tokenMint, 6);
 
   const splitIxs: TransactionInstruction[] = [];
-  const addSplit = (
-    splitMint: PublicKey,
-    sourceAta: PublicKey,
-    split: { creator: bigint; protocol: bigint },
-    tokenProgram: PublicKey,
-  ) => {
-    // Meteora pool assets are SPL tokens. So111... is WSOL and must stay in SPL
-    // accounting here; treating it as native SOL loses the claimed WSOL balance.
+  const addSplit = (splitMint: PublicKey, sourceAta: PublicKey, split: { creator: bigint; protocol: bigint }, tokenProgram: PublicKey) => {
     if (split.creator > 0n && !creatorPk.equals(operator.publicKey)) {
       splitIxs.push(createAtaIdempotentIx(operator.publicKey, creatorPk, splitMint, tokenProgram));
       splitIxs.push(transferTokenIx(sourceAta, deriveAta(creatorPk, splitMint, tokenProgram), operator.publicKey, split.creator, tokenProgram));
@@ -684,52 +567,25 @@ export async function harvestSolanaLpFees(input: {
   addSplit(tokenBMint, operatorAtaB, splitB, tokenBProgram);
 
   let splitSignature = "";
-  if (splitIxs.length) {
-    splitSignature = await sendServerV0Instructions(connection, splitIxs, operator, "Meteora LP fee split");
-  }
-
+  if (splitIxs.length) splitSignature = await sendServerV0Instructions(connection, splitIxs, operator, "Meteora LP fee split");
   const harvestMeta = {
-    lastTx: splitSignature || claimSignature,
-    claimTx: claimSignature,
-    splitTx: splitSignature || null,
-    lastAt: new Date().toISOString(),
-    creatorADisplay: formatAmount(splitA.creator, decA),
-    creatorBDisplay: formatAmount(splitB.creator, decB),
-    protocolADisplay: formatAmount(splitA.protocol, decA),
-    protocolBDisplay: formatAmount(splitB.protocol, decB),
-    protocolTreasury: treasury.toBase58(),
+    lastTx: splitSignature || claimSignature, claimTx: claimSignature, splitTx: splitSignature || null, lastAt: new Date().toISOString(),
+    creatorADisplay: formatAmount(splitA.creator, decA), creatorBDisplay: formatAmount(splitB.creator, decB),
+    protocolADisplay: formatAmount(splitA.protocol, decA), protocolBDisplay: formatAmount(splitB.protocol, decB), protocolTreasury: treasury.toBase58(),
   };
   await input.pool.query(
-    `update public.campaigns
-        set meta = jsonb_set(coalesce(meta, '{}'::jsonb), '{solanaGraduation,harvest}', $3::jsonb, true)
-      where chain_id = $1 and campaign_address = $2`,
+    `update public.campaigns set meta = jsonb_set(coalesce(meta, '{}'::jsonb), '{solanaGraduation,harvest}', $3::jsonb, true) where chain_id = $1 and campaign_address = $2`,
     [SOLANA_CHAIN_ID, String(row.campaign_address), JSON.stringify(harvestMeta)],
-  ).catch((error) => {
-    console.warn("[solana-lp-fees] harvest meta persist failed", error instanceof Error ? error.message : error);
-  });
+  ).catch((error) => console.warn("[solana-lp-fees] harvest meta persist failed", error instanceof Error ? error.message : error));
 
   return {
-    ok: true,
-    chainId: SOLANA_CHAIN_ID,
-    campaignAddress: String(row.campaign_address),
-    pairAddress: poolAddress,
-    creatorAddress: creator,
-    protocolTreasury: treasury.toBase58(),
-    split: { creatorBps: CREATOR_FEE_BPS, protocolBps: PROTOCOL_FEE_BPS },
+    ok: true, chainId: SOLANA_CHAIN_ID, campaignAddress: String(row.campaign_address), pairAddress: poolAddress,
+    creatorAddress: creator, protocolTreasury: treasury.toBase58(), split: { creatorBps: CREATOR_FEE_BPS, protocolBps: PROTOCOL_FEE_BPS },
     claimed: {
-      tokenA: formatAmount(deltaA, decA),
-      tokenB: formatAmount(deltaB, decB),
-      creatorA: harvestMeta.creatorADisplay,
-      creatorB: harvestMeta.creatorBDisplay,
-      protocolA: harvestMeta.protocolADisplay,
-      protocolB: harvestMeta.protocolBDisplay,
+      tokenA: formatAmount(deltaA, decA), tokenB: formatAmount(deltaB, decB), creatorA: harvestMeta.creatorADisplay,
+      creatorB: harvestMeta.creatorBDisplay, protocolA: harvestMeta.protocolADisplay, protocolB: harvestMeta.protocolBDisplay,
     },
-    txHash: harvestMeta.lastTx,
-    claimTx: claimSignature,
-    splitTx: splitSignature || null,
-    note:
-      deltaA === 0n && deltaB === 0n
-        ? "No unclaimed Meteora fees on this position."
-        : "Claimed locked-position fees and sent 80% to the creator / 20% to the explicit protocol treasury. Principal stays locked.",
+    txHash: harvestMeta.lastTx, claimTx: claimSignature, splitTx: splitSignature || null,
+    note: deltaA === 0n && deltaB === 0n ? "No unclaimed Meteora fees on this position." : "Claimed locked-position fees and sent 80% to the creator / 20% to the explicit protocol treasury. Principal stays locked.",
   };
 }
