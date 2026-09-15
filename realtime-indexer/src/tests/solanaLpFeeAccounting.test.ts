@@ -47,4 +47,5 @@ test("partial or mismatched vault evidence fails closed", () => {
   assert.throws(() => deriveGrossClaimFromVaultMovement({ label: "TOKEN", preVaultAmount: 100n, postVaultAmount: 101n, pendingBefore: 10n }), /increased/);
   assert.throws(() => deriveGrossClaimFromVaultMovement({ label: "TOKEN", preVaultAmount: 100n, postVaultAmount: 100n, pendingBefore: 10n }), /zero authoritative vault movement/);
   assert.throws(() => deriveGrossClaimFromVaultMovement({ label: "TOKEN", preVaultAmount: 100n, postVaultAmount: 95n, pendingBefore: 10n }), /smaller than pre-claim entitlement/);
+  assert.throws(() => deriveGrossClaimFromVaultMovement({ label: "TOKEN", preVaultAmount: 100n, postVaultAmount: 80n, pendingBefore: 10n }), /larger than pre-claim entitlement/);
 });
