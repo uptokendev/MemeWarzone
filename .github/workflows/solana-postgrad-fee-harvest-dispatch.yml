@@ -1,0 +1,275 @@
+name: Solana #350 Post-Grad Fee Harvest Dispatcher
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type EXECUTE_SOLANA_DEVNET_POSTGRAD_FEE_HARVEST to run the reviewed destructive certification'
+        required: true
+        type: string
+      source_sha:
+        description: 'Reviewed PR #350 exact source SHA'
+        required: true
+        default: '30066e354f9f8e63dd3a9255e12a58ef2249c407'
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CI: true
+  REVIEWED_SOURCE_SHA: 30066e354f9f8e63dd3a9255e12a58ef2249c407
+  INTEGRATION_BASE_SHA: 8944382619e05f09539614f5690b98521fe244ed
+  REQUIRED_CONFIRMATION: EXECUTE_SOLANA_DEVNET_POSTGRAD_FEE_HARVEST
+
+jobs:
+  destructive-solana-fee-harvest:
+    name: Destructive Solana #350 exact-head certification
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    environment: testnet-certification
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      SOLANA_APPLICATION_CHAIN_ID: "101"
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || secrets.SOLANA_DEVNET_RPC_URL || vars.SOLANA_DEVNET_RPC }}
+      SOLANA_DEVNET_PAYER: ${{ secrets.SOLANA_DEVNET_PAYER || secrets.SOLANA_DEVNET_PRIVATE_KEY }}
+      SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY: ${{ secrets.SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY }}
+      SOLANA_UPGRADE_AUTHORITY_PUBLIC_KEY: ${{ vars.SOLANA_DEVNET_UPGRADE_AUTHORITY_PUBLIC_KEY || secrets.SOLANA_DEVNET_UPGRADE_AUTHORITY_PUBLIC_KEY }}
+      SOLANA_EXPECTED_PROGRAMDATA_ADDRESS: ${{ vars.SOLANA_DEVNET_PROGRAMDATA_ADDRESS }}
+      SOLANA_EXPECTED_DEPLOYMENT_SLOT: ${{ vars.SOLANA_DEVNET_DEPLOYMENT_SLOT }}
+      SOLANA_PROTOCOL_TREASURY_ADDRESS: ${{ vars.SOLANA_DEVNET_PROTOCOL_TREASURY_ADDRESS || secrets.SOLANA_DEVNET_PROTOCOL_TREASURY_ADDRESS }}
+      SOLANA_LAUNCHPAD_PROGRAM_ID: "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt"
+      SOLANA_EXPECTED_DEVNET_GENESIS: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
+      SOLANA_LAUNCHPAD_PROGRAM_SHA256: "27ad65b560dba8a33330bd95f08ae7ca6945f71ebf667a5a3756ae0cb9f7f080"
+      SOLANA_LAUNCHPAD_PROGRAM_BYTES: "1165328"
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      PG_DISABLE_SSL: "1"
+      SEND_SOLANA_GRADUATION: "true"
+      SOLANA_FEE_HARVEST_REPORT: reports/agent5-solana-postgrad-fee-harvest.json
+
+    steps:
+      - name: Validate Launch Control inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ inputs.confirmation }}" = "$REQUIRED_CONFIRMATION" || {
+            echo '::error::Confirmation did not match the destructive-cert authorization phrase.'
+            exit 1
+          }
+          test "${{ inputs.source_sha }}" = "$REVIEWED_SOURCE_SHA" || {
+            echo '::error::source_sha is not the reviewed PR #350 exact head.'
+            exit 1
+          }
+
+      - name: Checkout reviewed PR #350 exact source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+
+      - name: Verify integration ancestry and exact four-file lane
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$REVIEWED_SOURCE_SHA"
+          git cat-file -e "$INTEGRATION_BASE_SHA^{commit}"
+          git merge-base --is-ancestor "$INTEGRATION_BASE_SHA" HEAD || {
+            echo '::error::Reviewed source is not descended from the approved integration authority.'
+            exit 1
+          }
+
+          expected="$(mktemp)"
+          actual="$(mktemp)"
+          printf '%s\n' \
+            '.github/workflows/agent5-solana-postgrad-fee-harvest.yml' \
+            'realtime-indexer/scripts/certifySolanaPostgradFeeHarvest.ts' \
+            'realtime-indexer/src/solanaLpFees.ts' \
+            'realtime-indexer/src/tests/solanaLpFeesTreasury.test.ts' \
+            | sort > "$expected"
+          git diff --name-only "$INTEGRATION_BASE_SHA"...HEAD | sort > "$actual"
+          if ! diff -u "$expected" "$actual"; then
+            echo '::error::PR #350 exact-head scope is not the reviewed four-file lane.'
+            exit 1
+          fi
+
+          if git diff --quiet "$INTEGRATION_BASE_SHA"...HEAD -- programs/memewarzone_solana; then
+            echo 'Solana program source unchanged from integration authority.'
+          else
+            echo '::error::programs/memewarzone_solana changed; program upgrade is not authorized.'
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Resolve certification dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm ci
+          npm install --prefix tests/solana --no-audit --no-fund
+          npm ci --prefix frontend --no-audit --no-fund
+          npm ci --prefix tools/solana-meteora-graduation --no-audit --no-fund
+          npm ci --prefix realtime-indexer --no-audit --no-fund
+
+      - name: Verify public Solana identities before broadcast
+        shell: bash
+        env:
+          EXPECTED_PAYER: HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9
+          EXPECTED_PROTOCOL_TREASURY: 3z7984gPAmbopC82pd6R5F2jgGSQekQVSM6rmPffVmsj
+        run: |
+          set -euo pipefail
+          test -n "${SOLANA_RPC_URL:-}" || { echo '::error::Solana devnet RPC is not configured.'; exit 1; }
+          test -n "${SOLANA_DEVNET_PAYER:-}" || { echo '::error::Solana devnet payer is not configured.'; exit 1; }
+          test -n "${SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY:-}" || { echo '::error::Solana devnet route signer is not configured.'; exit 1; }
+          test -n "${SOLANA_PROTOCOL_TREASURY_ADDRESS:-}" || { echo '::error::Dedicated Solana devnet protocol Treasury is not configured.'; exit 1; }
+
+          payer_file="$RUNNER_TEMP/mwz-solana-350-payer.json"
+          SOLANA_GRADUATION_OPERATOR_KEYPAIR="$payer_file" node scripts/solana/materialize-devnet-payer.mjs >/dev/null
+          echo "MWZ_SOLANA_350_PAYER_FILE=$payer_file" >> "$GITHUB_ENV"
+
+          PAYER_FILE="$payer_file" node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { Connection, Keypair, PublicKey } from '@solana/web3.js';
+          import {
+            createEd25519Signer,
+            decodeGlobalConfig,
+            findProgramAddressSync,
+          } from './frontend/api/dev-fix/solana-v4-primitives.js';
+
+          const required = (name) => {
+            const value = String(process.env[name] || '').trim();
+            if (!value) throw new Error(`${name} is required`);
+            return value;
+          };
+
+          const payerBytes = JSON.parse(fs.readFileSync(required('PAYER_FILE'), 'utf8'));
+          const payer = Keypair.fromSecretKey(Uint8Array.from(payerBytes)).publicKey.toBase58();
+          const expectedPayer = required('EXPECTED_PAYER');
+          if (payer !== expectedPayer) throw new Error(`payer public key mismatch: ${payer}`);
+
+          const treasury = new PublicKey(required('SOLANA_PROTOCOL_TREASURY_ADDRESS')).toBase58();
+          const expectedTreasury = required('EXPECTED_PROTOCOL_TREASURY');
+          if (treasury !== expectedTreasury) throw new Error(`protocol Treasury mismatch: ${treasury}`);
+          if (treasury === payer) throw new Error('protocol Treasury must be distinct from payer/operator');
+
+          const connection = new Connection(required('SOLANA_RPC_URL'), 'confirmed');
+          const genesis = await connection.getGenesisHash();
+          if (genesis !== required('SOLANA_EXPECTED_DEVNET_GENESIS')) {
+            throw new Error(`wrong Solana genesis: ${genesis}`);
+          }
+
+          const programId = required('SOLANA_LAUNCHPAD_PROGRAM_ID');
+          const globalPda = findProgramAddressSync([Buffer.from('global', 'utf8')], programId).publicKey;
+          const info = await connection.getAccountInfo(new PublicKey(globalPda), 'confirmed');
+          if (!info) throw new Error(`GlobalConfig missing at ${globalPda}`);
+          if (info.owner.toBase58() !== programId) throw new Error('GlobalConfig owner is not the expected launchpad program');
+          const global = decodeGlobalConfig(info.data);
+          const routeSigner = createEd25519Signer(required('SOLANA_DEVNET_ROUTE_SIGNER_SECRET_KEY')).publicKeyBase58;
+          if (routeSigner !== global.routeSigner) {
+            throw new Error(`route signer public key does not match deployed GlobalConfig.routeSigner (${global.routeSigner})`);
+          }
+
+          console.log(`Solana devnet genesis: ${genesis}`);
+          console.log(`Program: ${programId}`);
+          console.log(`Payer/operator: ${payer}`);
+          console.log(`Protocol Treasury: ${treasury}`);
+          console.log(`GlobalConfig: ${globalPda}`);
+          console.log(`Route signer: ${routeSigner}`);
+          NODE
+
+      - name: Prove fail-closed LP protocol Treasury behavior
+        shell: bash
+        run: npx --prefix realtime-indexer tsx --test realtime-indexer/src/tests/solanaLpFeesTreasury.test.ts
+
+      - name: Build realtime indexer after runtime fix
+        shell: bash
+        run: npm --prefix realtime-indexer run build
+
+      - name: Build exact-source accepted Solana candidate and IDL
+        shell: bash
+        env:
+          SOLANA_VERSION: "1.18.26"
+          ANCHOR_VERSION: "0.30.1"
+          RUST_TOOLCHAIN: "1.79.0"
+          IDL_RUST_TOOLCHAIN: "nightly-2024-05-09"
+        run: |
+          set -euo pipefail
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          release_dir="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
+          mkdir -p "$release_dir"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error \
+            --output /tmp/solana-release.tar.bz2 \
+            "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"
+          ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/share/solana/install/active_release/bin:$PATH"
+          npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+          anchor build --program-name memewarzone_solana --no-idl
+          test -s target/deploy/memewarzone_solana.so
+          actual_sha="$(sha256sum target/deploy/memewarzone_solana.so | awk '{print $1}')"
+          actual_bytes="$(wc -c < target/deploy/memewarzone_solana.so | tr -d ' ')"
+          test "$actual_sha" = "$SOLANA_LAUNCHPAD_PROGRAM_SHA256" || { echo '::error::Exact-source Solana candidate SHA256 changed.'; exit 1; }
+          test "$actual_bytes" = "$SOLANA_LAUNCHPAD_PROGRAM_BYTES" || { echo '::error::Exact-source Solana candidate size changed.'; exit 1; }
+          rustup toolchain install "$IDL_RUST_TOOLCHAIN" --profile minimal
+          mkdir -p target/idl
+          (cd programs/memewarzone_solana && RUSTUP_TOOLCHAIN="$IDL_RUST_TOOLCHAIN" anchor idl build --out ../../target/idl/memewarzone_solana.json)
+          test -s target/idl/memewarzone_solana.json
+          echo "Candidate SBF SHA256: $actual_sha"
+          echo "Candidate SBF bytes: $actual_bytes"
+
+      - name: Execute fresh chain-101 lifecycle through real Meteora post-grad BUY and SELL
+        shell: bash
+        env:
+          SOLANA_LAUNCHPAD_PROGRAM_PATH: target/deploy/memewarzone_solana.so
+        run: npm run solana:network-canary
+
+      - name: Materialize harvest operator for current runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          operator_file="$RUNNER_TEMP/mwz-solana-fee-harvest-operator.json"
+          SOLANA_GRADUATION_OPERATOR_KEYPAIR="$operator_file" node scripts/solana/materialize-devnet-payer.mjs >/dev/null
+          echo "SOLANA_OPERATOR_KEYPAIR=$operator_file" >> "$GITHUB_ENV"
+
+      - name: Execute real fee harvest and receiver reconciliation
+        shell: bash
+        run: npx --prefix realtime-indexer tsx realtime-indexer/scripts/certifySolanaPostgradFeeHarvest.ts execute
+
+      - name: Fresh-process reload proof
+        shell: bash
+        run: npx --prefix realtime-indexer tsx realtime-indexer/scripts/certifySolanaPostgradFeeHarvest.ts reload
+
+      - name: Upload Solana #350 destructive evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: solana-350-postgrad-fee-harvest-${{ inputs.source_sha }}
+          path: |
+            reports/agent5-solana-postgrad-fee-harvest.json
+            /tmp/mwz-solana-devnet-deployment-identity.json
+            /tmp/mwz-solana-101-canary.json
+            /tmp/mwz-solana-101-graduation.log
+            /tmp/mwz-solana-101-graduation-result.json
+            /tmp/mwz-solana-101-postgrad.json
+          if-no-files-found: warn
+          retention-days: 30
