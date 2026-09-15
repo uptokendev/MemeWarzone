@@ -88,6 +88,56 @@ jobs:
           npm ci --prefix tools/solana-meteora-graduation --no-audit --no-fund
           npm ci --prefix realtime-indexer --no-audit --no-fund
 
+      - name: Classify high and critical root npm advisories
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm audit --json > /tmp/mwz-root-npm-audit.json || true
+          node <<'NODE'
+          const fs = require('fs');
+          const cp = require('child_process');
+          const audit = JSON.parse(fs.readFileSync('/tmp/mwz-root-npm-audit.json', 'utf8'));
+          const manifest = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          let tree = {};
+          try {
+            tree = JSON.parse(cp.execFileSync('npm', ['ls', '--json', '--all'], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }));
+          } catch (error) {
+            tree = JSON.parse(String(error.stdout || '{}'));
+          }
+          const productionRoots = new Set(Object.keys(manifest.dependencies || {}));
+          const devRoots = new Set(Object.keys(manifest.devDependencies || {}));
+          const vulnerable = Object.entries(audit.vulnerabilities || {})
+            .filter(([, v]) => v && (v.severity === 'critical' || v.severity === 'high'));
+          function rootsFor(target) {
+            const hits = [];
+            function walk(node, root, trail) {
+              for (const [name, dep] of Object.entries(node?.dependencies || {})) {
+                const nextRoot = root || name;
+                const nextTrail = [...trail, name];
+                if (name === target) hits.push({ root: nextRoot, path: nextTrail.join('>') });
+                walk(dep, nextRoot, nextTrail);
+              }
+            }
+            walk(tree, null, []);
+            return hits;
+          }
+          const rows = vulnerable.map(([name, v]) => {
+            const roots = rootsFor(name);
+            const classes = [...new Set(roots.map(({ root }) => productionRoots.has(root) ? 'production-root' : devRoots.has(root) ? 'dev-root' : 'unknown-root'))];
+            return {
+              name,
+              severity: v.severity,
+              isDirect: Boolean(v.isDirect),
+              rootClasses: classes,
+              rootPackages: [...new Set(roots.map(({ root }) => root))].sort(),
+              paths: roots.slice(0, 12).map(({ path }) => path),
+              via: (v.via || []).map((x) => typeof x === 'string' ? x : `${x.name || name}:${x.title || x.url || 'advisory'}`).slice(0, 12),
+            };
+          });
+          console.log('NPM_AUDIT_METADATA=' + JSON.stringify(audit.metadata || {}));
+          console.log('NPM_HIGH_CRITICAL_CLASSIFICATION=' + JSON.stringify(rows));
+          NODE
+
       - name: Prove fail-closed LP protocol treasury behavior
         shell: bash
         run: npx --prefix realtime-indexer tsx --test realtime-indexer/src/tests/solanaLpFeesTreasury.test.ts
@@ -176,6 +226,7 @@ jobs:
           name: agent5-solana-postgrad-fee-harvest-${{ github.event.pull_request.head.sha || github.sha }}
           path: |
             reports/agent5-solana-postgrad-fee-harvest.json
+            /tmp/mwz-root-npm-audit.json
             /tmp/mwz-solana-devnet-deployment-identity.json
             /tmp/mwz-solana-101-canary.json
             /tmp/mwz-solana-101-graduation.log
