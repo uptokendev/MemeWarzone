@@ -146,7 +146,7 @@ jobs:
       - name: Run V0/ALT, keypair-parser, and loader-compat zero-network regressions
         run: |
           npm ci --no-audit --no-fund
-          npm install --no-save --no-package-lock @solana/web3.js@1.95.4 bs58@6.0.0
+          npm install --no-save --no-package-lock @solana/web3.js@1.95.4 @solana/spl-token@0.4.8 bs58@6.0.0
           npm install --prefix tests/solana --no-audit --no-fund
           node --test certification/solana-postbond-current-head/chain-evidence.test.mjs
           node --check certification/solana-postbond-current-head/arena-money-closeout.mjs
