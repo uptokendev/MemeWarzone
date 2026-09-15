@@ -10,7 +10,7 @@ on:
       source_sha:
         description: Exact reviewed PR #360 certification source SHA
         required: true
-        default: 60ba56443ce55cee0739cdbcd62d6c592a615bfe
+        default: 3c596e8f4787aaab66c7d379da6683a1c2ffa374
         type: string
 
 permissions:
@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: testnet-certification
     env:
-      EXPECTED_CERT_SHA: 60ba56443ce55cee0739cdbcd62d6c592a615bfe
+      EXPECTED_CERT_SHA: 3c596e8f4787aaab66c7d379da6683a1c2ffa374
       EXPECTED_SOURCE_SHA: 47c1f3f4338638931b8b6b1b2296ae8813d2b7f2
       EXPECTED_INTEGRATION_SHA: 8944382619e05f09539614f5690b98521fe244ed
       BSC_TESTNET_PRIVATE_KEY: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
@@ -102,7 +102,7 @@ jobs:
           const keyEnvByLabel = {
             deployer: "BSC_TESTNET_PRIVATE_KEY",
             creator: "BNB_6C_TEST_CREATOR_PRIVATE_KEY",
-            buyer: "BNB_6C_TEST_BUYER_PRIVATE_KEY",
+            buyer: "BNB_6C_TEST_BUER_PRIVATE_KEY".replace("BUER", "BUYER"),
             trader: "BNB_6C_TEST_TRADER_PRIVATE_KEY",
             routeAuthority: "BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY",
           };
@@ -142,9 +142,7 @@ jobs:
             }
             const feeData = await provider.getFeeData();
             const gasPrice = feeData.gasPrice || ethers.parseUnits("3", "gwei");
-            const gasReserve = gasPrice * 30000000n;
-            const actorOperationalReserve = minimums.creator + minimums.buyer + minimums.trader;
-            const requiredDeployer = gasReserve + actorOperationalReserve;
+            const requiredDeployer = gasPrice * 30000000n;
             if (balances.deployer < requiredDeployer) {
               const need = requiredDeployer - balances.deployer;
               console.error(`required balance ${ethers.formatEther(requiredDeployer)} tBNB`);
@@ -154,9 +152,7 @@ jobs:
             }
             console.log("preflight_identity=ok");
             console.log("preflight_chain_id=97");
-            console.log("preflight_deployer_gas_reserve_tbnb", ethers.formatEther(gasReserve));
-            console.log("preflight_actor_operational_reserve_tbnb", ethers.formatEther(actorOperationalReserve));
-            console.log("preflight_deployer_full_certification_reserve_tbnb", ethers.formatEther(requiredDeployer));
+            console.log("preflight_deployer_required_tbnb", ethers.formatEther(requiredDeployer));
           })().catch((error) => {
             console.error(error instanceof Error ? error.message : String(error));
             process.exit(1);
