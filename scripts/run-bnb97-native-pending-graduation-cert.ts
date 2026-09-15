@@ -64,6 +64,7 @@ async function main() {
   run("npx", ["hardhat", "run", "scripts/verify-bnb-testnet-stage.ts", "--network", "bscTestnet"], env);
   run("npx", ["hardhat", "run", "scripts/verify-bnb97-controlled-topaz-30bps.ts", "--network", "bscTestnet"], env);
   run("node", ["scripts/prepare-bnb97-native-pending-graduation-cert.mjs"], env);
+  run("node", ["scripts/prepare-bnb97-completion-read-reconciliation.mjs"], env);
   run("npx", ["hardhat", "run", "scripts/test-bnb97-native-pending-graduation.ts", "--network", "bscTestnet"], env);
 
   if (!fs.existsSync(evidence)) throw new Error(`missing evidence ${evidence}`);
