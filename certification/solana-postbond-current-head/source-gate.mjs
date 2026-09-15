@@ -104,8 +104,13 @@ requireText(finalSalvo, [
 const mwl = fs.readFileSync('frontend/api/lib/arenaMwlChainIdentity.mjs', 'utf8');
 requireText(mwl, ['mwl-', 'chainId', 'SOL'], 'MWL chain identity');
 
-const quarterly = fs.readFileSync('frontend/api/lib/arenaQuarterlyChampionship.js', 'utf8');
-requireText(quarterly, ['quarterly-championship-', 'quarterly_championship'], 'Quarterly identity');
+const quarterlyRuntime = fs.readFileSync('frontend/api/lib/arenaQuarterlyChampionship.js', 'utf8');
+requireText(quarterlyRuntime, ['CHAMPIONSHIP_BONUS_POLICY_NOT_CONFIGURED', 'canonicalChampionshipId'], 'Quarterly runtime');
+const quarterlyMath = fs.readFileSync('frontend/api/lib/arenaQuarterlyChampionshipMath.mjs', 'utf8');
+requireText(quarterlyMath, [
+  'export const CHAMPIONSHIP_EVENT_TYPE = "quarterly_championship";',
+  'return `quarterly-championship-${y}-q${q}-c${chain}`;',
+], 'Quarterly canonical identity');
 
 const certDb = fs.readFileSync('certification/solana-postbond-current-head/db-runtime-closeout.mjs', 'utf8');
 requireText(certDb, [
