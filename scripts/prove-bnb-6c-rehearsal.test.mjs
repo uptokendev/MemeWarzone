@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 const { reconcileCompletionReadAfterWrite } = require("./lib/bnb97CompletionReadReconciler.cjs");
+const { acceptedHarvestSplit, validateHarvestAssetRecord } = require("./lib/bnb97HarvestAccounting.cjs");
 
 function read(rel) {
   return fs.readFileSync(path.join(root, rel), "utf8");
@@ -164,5 +165,72 @@ test("completion reconciliation fails closed if the receipt block ceases to be c
       maxConfirmations: 2,
     }),
     /completion receipt block changed during confirmation reconciliation/,
+  );
+});
+
+test("harvest certification anchors claimables and recipient balances to explicit canonical blocks", () => {
+  const prepare = read("scripts/prepare-bnb97-harvest-accounting.mjs");
+  const runner = read("scripts/run-bnb97-native-pending-graduation-cert.ts");
+  assert.match(runner, /prepare-bnb97-harvest-accounting\.mjs/);
+  assert.match(prepare, /harvestPreBlock = postSellReceipt\?\.blockNumber/);
+  assert.match(prepare, /claimable0\(lockerAddr, \{ blockTag: harvestPreBlock \}\)/);
+  assert.match(prepare, /claimable1\(lockerAddr, \{ blockTag: harvestPreBlock \}\)/);
+  assert.match(prepare, /harvestReceipt\.blockNumber/);
+  assert.match(prepare, /harvestReceipt\.blockHash/);
+  assert.match(prepare, /FeesHarvested/);
+  assert.match(prepare, /creatorTokenAfter = await token\.balanceOf\(creator\.address, \{ blockTag: harvestBlock \}\)/);
+  assert.match(prepare, /protocolTokenAfter = await token\.balanceOf\(manifest\.contracts\.protocolRevenueVault, \{ blockTag: harvestBlock \}\)/);
+  assert.match(prepare, /assets: harvestAssetEvidence/);
+  assert.match(prepare, /all integer remainder routes to protocol; no dust tolerance/);
+  assert.doesNotMatch(prepare, /dustTolerance|toleranceWei|Math\.abs/);
+});
+
+test("accepted locker integer split sends the complete remainder to protocol", () => {
+  const split = acceptedHarvestSplit(7n);
+  assert.equal(split.creatorPaid, 5n);
+  assert.equal(split.protocolRouted, 2n);
+  assert.equal(split.creatorPaid + split.protocolRouted, 7n);
+
+  const record = validateHarvestAssetRecord({
+    token: "TOKEN",
+    collected: 7n,
+    creatorPaid: 5n,
+    protocolRouted: 2n,
+    creatorBefore: 10n,
+    creatorAfter: 15n,
+    protocolBefore: 20n,
+    protocolAfter: 22n,
+  });
+  assert.equal(record.creatorDelta, 5n);
+  assert.equal(record.protocolDelta, 2n);
+});
+
+test("harvest accounting rejects floor-floor dust and any non-conserving event", () => {
+  assert.throws(
+    () => validateHarvestAssetRecord({
+      token: "TOKEN",
+      collected: 7n,
+      creatorPaid: 5n,
+      protocolRouted: 1n,
+      creatorBefore: 10n,
+      creatorAfter: 15n,
+      protocolBefore: 20n,
+      protocolAfter: 21n,
+    }),
+    /does not conserve collected amount/,
+  );
+
+  assert.throws(
+    () => validateHarvestAssetRecord({
+      token: "TOKEN",
+      collected: 7n,
+      creatorPaid: 5n,
+      protocolRouted: 2n,
+      creatorBefore: 10n,
+      creatorAfter: 15n,
+      protocolBefore: 20n,
+      protocolAfter: 21n,
+    }),
+    /protocol balance delta does not match/,
   );
 });
