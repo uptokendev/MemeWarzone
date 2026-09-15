@@ -1,0 +1,92 @@
+name: Solana Post-Bond V0 ALT Chain Evidence
+
+on:
+  push:
+    branches:
+      - agent/solana-postbond-closeout-894438
+    paths:
+      - '.github/workflows/solana-postbond-v0-alt-chain-evidence.yml'
+      - 'certification/solana-postbond-current-head/chain-evidence.mjs'
+      - 'certification/solana-postbond-current-head/chain-evidence.test.mjs'
+      - 'certification/solana-postbond-current-head/source-gate.mjs'
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - '.github/workflows/solana-postbond-v0-alt-chain-evidence.yml'
+      - 'certification/solana-postbond-current-head/chain-evidence.mjs'
+      - 'certification/solana-postbond-current-head/chain-evidence.test.mjs'
+      - 'certification/solana-postbond-current-head/source-gate.mjs'
+
+permissions:
+  contents: read
+
+jobs:
+  zero-network-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Prove certification-only source boundary
+        env:
+          EXPECTED_SOURCE_SHA: 8944382619e05f09539614f5690b98521fe244ed
+        run: node certification/solana-postbond-current-head/source-gate.mjs
+      - name: Install locked root dependencies
+        run: npm ci --no-audit --no-fund
+      - name: V0 ALT account-key and native-volume regressions
+        run: node --test certification/solana-postbond-current-head/chain-evidence.test.mjs
+
+  current-devnet-readonly:
+    if: github.event_name == 'push'
+    needs: zero-network-regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: testnet-certification
+    env:
+      SOLANA_APPLICATION_CHAIN_ID: '101'
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_REWARDS_RPC_URL }}
+      SOLANA_CLOSEOUT_SOL_USD: '150'
+      SOLANA_POSTBOND_SNAPSHOT_DELAY_SECONDS: '0'
+      SOLANA_POSTBOND_CHAIN_REPORT: reports/solana-v0-alt-readonly.json
+      SOLANA_POSTBOND_LEFT_CAMPAIGN: 2aqmVu4NTHg9EbcgujM7jFEqdipMbsCnyU1NLmDGkfdi
+      SOLANA_POSTBOND_LEFT_MINT: 6hYpbDvbmv1fYZEkVZHzR3Qjv2mqxSFHn8ySnPr9vNRA
+      SOLANA_POSTBOND_LEFT_METEORA_POOL: 6VEse9mxFtDrGebjyoSA9wxNZP3riYB8MPeb7BZnLKUm
+      SOLANA_POSTBOND_LEFT_POSTGRAD_PAYER: HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9
+      SOLANA_POSTBOND_LEFT_POSTGRAD_BUY_SIGNATURE: 5oXArjSAaduzUndGj1NTXyQS24LzjT16uKrb9UZeasPaHhRan9fLuba5G1JwHJpGi6dHKMNaxYiz1PCYeZLXUv62
+      SOLANA_POSTBOND_LEFT_POSTGRAD_SELL_SIGNATURE: 4D42WQYLgvoAijtFuoJGypoDqJgGA3wjGytCaLRbH77cznHJsgsfJFESHdGoRSMZwCD3wERLQEivSdKsnxYeQREg
+      SOLANA_POSTBOND_RIGHT_CAMPAIGN: AgjhDgLXxkqAPWV5kNQmopnH4m8nvTEB9PrfXp4Gt3mh
+      SOLANA_POSTBOND_RIGHT_MINT: GTyj7AL8ggZCD1WsD32kqyp2PPKGjsHSUtmWq7k8vEwD
+      SOLANA_POSTBOND_RIGHT_METEORA_POOL: 2j3BYNH1pLXx3yGhyp2VZfokoZFuRgVQ7qyVpmfCzcL7
+      SOLANA_POSTBOND_RIGHT_POSTGRAD_PAYER: HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9
+      SOLANA_POSTBOND_RIGHT_POSTGRAD_BUY_SIGNATURE: QrnYYRC2Bx4WdFQuuz19muXyKLqVAvmQwHsZgHNpxyTBsGKfheDDn8vZTspnm9McV8UYugSWfpRQaCUQUeXdaiv
+      SOLANA_POSTBOND_RIGHT_POSTGRAD_SELL_SIGNATURE: 26szMCYRsDYXQ1qbzunxtMgLrjTL2X7p1sAG69BVA88TjwSF2HYtfcHmGAWrScCjNxCWZo3zQiFTJENjzG7277d3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked root dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Revalidate existing OWNER fixtures from current devnet without sending transactions
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          node certification/solana-postbond-current-head/chain-evidence.mjs
+          test -s "$SOLANA_POSTBOND_CHAIN_REPORT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: solana-v0-alt-readonly-${{ github.sha }}
+          path: reports/solana-v0-alt-readonly.json
+          if-no-files-found: error
+          retention-days: 30
