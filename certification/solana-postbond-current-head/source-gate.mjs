@@ -107,6 +107,17 @@ requireText(mwl, ['mwl-', 'chainId', 'SOL'], 'MWL chain identity');
 const quarterly = fs.readFileSync('frontend/api/lib/arenaQuarterlyChampionship.js', 'utf8');
 requireText(quarterly, ['quarterly-championship-', 'quarterly_championship'], 'Quarterly identity');
 
+const certDb = fs.readFileSync('certification/solana-postbond-current-head/db-runtime-closeout.mjs', 'utf8');
+requireText(certDb, [
+  'const FINAL_SALVO_MAX_SHOTS = 5;',
+  'const FINAL_SALVO_SHOT_SECONDS = 60;',
+  "boostCurve: 'boost_hyperbolic_100_v1'",
+  "split: '60/40'",
+  "eventType: 'quarterly_championship'",
+  "quarterlyFinalPayoutPercentages: 'DEFERRED_NOT_BLOCKING'",
+  "monthlyPlacementBonus: 'DEFERRED_NOT_BLOCKING'",
+], 'certification closeout transport');
+
 console.log(JSON.stringify({
   ok: true,
   sourceAuthority: SOURCE,
