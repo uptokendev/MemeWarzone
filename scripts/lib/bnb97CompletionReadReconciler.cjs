@@ -7,7 +7,8 @@ function completionStateIsFinalized(state) {
       state.dexPair !== "0x0000000000000000000000000000000000000000" &&
       state.pool &&
       state.pool !== "0x0000000000000000000000000000000000000000" &&
-      state.factoryGraduationRecorded === true,
+      state.factoryGraduationRecorded === true &&
+      state.lockerRegistered === true,
   );
 }
 
