@@ -53,9 +53,9 @@ test("6A live census and 6B math remain the source of truth", () => {
   assert.equal(census.uniswapV3Rejected, true);
 });
 
-test("native pending cert crosses by quoted no-fee principal and preserves pending-first invariants", () => {
+test("native pending cert replaces raw-value crossing with quoted no-fee principal and preserves pending-first invariants", () => {
   const prepare = read("scripts/prepare-bnb97-native-pending-graduation-cert.mjs");
-  assert.doesNotMatch(prepare, /healthyCrossing = restoredTarget \* 2n/);
+  assert.match(prepare, /source\.replace\(rawCrossingMath, principalAwareCrossing\)/);
   assert.match(prepare, /raisedBeforeCrossing >= restoredTarget/);
   assert.match(prepare, /remainingCurveSupply = curveSupply - soldBeforeCrossing/);
   assert.match(prepare, /quoteBuyExactTokens\(remainingCurveSupply\)/);
