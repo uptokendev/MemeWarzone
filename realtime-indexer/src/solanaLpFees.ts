@@ -21,28 +21,54 @@ const SOLANA_CHAIN_ID = 101;
 const CREATOR_FEE_BPS = 8000;
 const PROTOCOL_FEE_BPS = 2000;
 const BPS = 10_000;
-/** Existing funded operator / test treasury (graduation, votes, harvest 20%). */
-const DEFAULT_SOLANA_OPERATOR = "HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9";
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
 function solanaRpcUrl(): string {
   return String(process.env.SOLANA_RPC_URL || process.env.SOLANA_RPC || "https://api.mainnet-beta.solana.com").trim();
 }
 
-function protocolTreasury(operator: PublicKey): PublicKey {
-  const raw = String(
-    process.env.SOLANA_PROTOCOL_TREASURY_ADDRESS ||
-      process.env.SOLANA_VOTE_TREASURY_ADDRESS ||
-      DEFAULT_SOLANA_OPERATOR,
-  ).trim();
-  if (raw) {
-    try {
-      return new PublicKey(raw);
-    } catch {
-      // fall through to operator
-    }
+export type ProtocolTreasuryResolution = {
+  configured: boolean;
+  invalid: boolean;
+  address: PublicKey | null;
+  reason: "missing" | "malformed" | "same_as_operator" | null;
+};
+
+export function resolveProtocolTreasury(operator: PublicKey | null = null): ProtocolTreasuryResolution {
+  const raw = String(process.env.SOLANA_PROTOCOL_TREASURY_ADDRESS || "").trim();
+  if (!raw) {
+    return { configured: false, invalid: false, address: null, reason: "missing" };
   }
-  return operator;
+  let address: PublicKey;
+  try {
+    address = new PublicKey(raw);
+  } catch {
+    return { configured: true, invalid: true, address: null, reason: "malformed" };
+  }
+  if (operator && address.equals(operator)) {
+    return { configured: true, invalid: true, address: null, reason: "same_as_operator" };
+  }
+  return { configured: true, invalid: false, address, reason: null };
+}
+
+function requireProtocolTreasury(operator: PublicKey): PublicKey {
+  const resolved = resolveProtocolTreasury(operator);
+  if (!resolved.configured) {
+    throw Object.assign(
+      new Error("Solana LP protocol treasury is not configured. Set explicit SOLANA_PROTOCOL_TREASURY_ADDRESS before harvest; Vote Treasury and harvest-operator fallbacks are forbidden."),
+      { status: 503 },
+    );
+  }
+  if (resolved.reason === "malformed") {
+    throw Object.assign(new Error("SOLANA_PROTOCOL_TREASURY_ADDRESS is not a valid Solana public key."), { status: 503 });
+  }
+  if (resolved.reason === "same_as_operator") {
+    throw Object.assign(new Error("SOLANA_PROTOCOL_TREASURY_ADDRESS must be distinct from the Solana harvest signing operator."), { status: 503 });
+  }
+  if (!resolved.address) {
+    throw Object.assign(new Error("Solana LP protocol treasury failed closed."), { status: 503 });
+  }
+  return resolved.address;
 }
 
 function tokenProgramFromFlag(flag: unknown): PublicKey {
@@ -319,19 +345,23 @@ function parseOperatorKey(): { keypair: Keypair | null; configured: boolean; inv
 
 export function solanaHarvestStatus() {
   const parsed = parseOperatorKey();
-  const treasury = protocolTreasury(parsed.keypair?.publicKey || new PublicKey(DEFAULT_SOLANA_OPERATOR));
+  const treasury = resolveProtocolTreasury(parsed.keypair?.publicKey || null);
   return {
     ok: true,
     chainId: SOLANA_CHAIN_ID,
     operatorConfigured: Boolean(parsed.keypair),
     operatorInvalid: parsed.invalid,
     operatorAddress: parsed.keypair ? parsed.keypair.publicKey.toBase58() : null,
-    protocolTreasury: treasury.toBase58(),
+    protocolTreasuryConfigured: treasury.configured,
+    protocolTreasuryInvalid: treasury.invalid,
+    protocolTreasury: treasury.address ? treasury.address.toBase58() : null,
     note: parsed.keypair
-      ? "Indexer can sign Meteora fee claims."
+      ? treasury.invalid || !treasury.configured
+        ? "Indexer signing operator is configured, but LP protocol treasury is not safely configured. Harvest remains fail-closed."
+        : "Indexer can sign Meteora fee claims and an explicit distinct LP protocol treasury is configured."
       : parsed.invalid
         ? "Operator secret is set but could not be parsed."
-        : "Set SOLANA_HARVEST_OPERATOR_SECRET on the indexer (HuKfoF operator), not the web-dashboard.",
+        : "Set SOLANA_HARVEST_OPERATOR_SECRET on the realtime-indexer; protocol revenue separately requires SOLANA_PROTOCOL_TREASURY_ADDRESS.",
   };
 }
 
@@ -468,22 +498,57 @@ export async function listSolanaLpFees(input: {
       });
     }
   }
-  const treasury = protocolTreasury(new PublicKey(DEFAULT_SOLANA_OPERATOR));
+  const parsed = parseOperatorKey();
+  const treasury = resolveProtocolTreasury(parsed.keypair?.publicKey || null);
   return {
     ok: true,
     chainId: SOLANA_CHAIN_ID,
     service: "realtime-indexer",
     lockerAddress: null,
-    treasuryRouter: treasury.toBase58(),
-    protocolTreasury: treasury.toBase58(),
+    treasuryRouter: null,
+    protocolTreasuryConfigured: treasury.configured,
+    protocolTreasuryInvalid: treasury.invalid,
+    protocolTreasury: treasury.address ? treasury.address.toBase58() : null,
     split: { creatorBps: CREATOR_FEE_BPS, protocolBps: PROTOCOL_FEE_BPS },
     notes: [
       "Solana LP fees accrue on the permanently locked DAMM v2 position.",
-      "There is no EVM TreasuryRouter. The 20% protocol share goes to the HuKfoF operator ATA.",
-      "Harvest claims fees then splits 80% creator / 20% protocol.",
+      "There is no EVM TreasuryRouter. LP protocol revenue requires explicit SOLANA_PROTOCOL_TREASURY_ADDRESS.",
+      "Harvest claims fees then splits 80% creator / 20% protocol; harvest fails closed when the explicit protocol treasury is missing, malformed, or equals the signing operator.",
     ],
     items,
     updatedAt: new Date().toISOString(),
+  };
+}
+
+export function buildZeroFeeRetryResult(input: {
+  campaignAddress: string;
+  pairAddress: string;
+  creatorAddress: string;
+  protocolTreasury: PublicKey;
+  priorHarvest?: Record<string, unknown> | null;
+}) {
+  const priorHarvest = input.priorHarvest || {};
+  return {
+    ok: true,
+    chainId: SOLANA_CHAIN_ID,
+    campaignAddress: input.campaignAddress,
+    pairAddress: input.pairAddress,
+    creatorAddress: input.creatorAddress,
+    protocolTreasury: input.protocolTreasury.toBase58(),
+    split: { creatorBps: CREATOR_FEE_BPS, protocolBps: PROTOCOL_FEE_BPS },
+    claimed: {
+      tokenA: "0",
+      tokenB: "0",
+      creatorA: "0",
+      creatorB: "0",
+      protocolA: "0",
+      protocolB: "0",
+    },
+    txHash: typeof priorHarvest.lastTx === "string" ? priorHarvest.lastTx : null,
+    claimTx: null,
+    splitTx: null,
+    retryNoop: true,
+    note: "No unclaimed Meteora fees on this position. Existing settled harvest reconciliation was preserved.",
   };
 }
 
@@ -497,14 +562,14 @@ export async function harvestSolanaLpFees(input: {
     throw Object.assign(
       new Error(
         parsed.invalid
-          ? "Solana harvest operator key is set but could not be parsed. Use a JSON byte array, Phantom base58 secret, hex seed, or a keypair file path in SOLANA_HARVEST_OPERATOR_SECRET / SOLANA_OPERATOR_SECRET / SOLANA_OPERATOR_KEYPAIR on the realtime-indexer — not the web-dashboard. This must be the HuKfoF… operator wallet that owns the Meteora position NFT. SOLANA_ROUTE_SIGNER_SECRET_KEY is a different wallet and is ignored."
+          ? "Solana harvest operator key is set but could not be parsed. Use a JSON byte array, Phantom base58 secret, hex seed, or a keypair file path in SOLANA_HARVEST_OPERATOR_SECRET / SOLANA_OPERATOR_SECRET / SOLANA_OPERATOR_KEYPAIR on the realtime-indexer — not the web-dashboard. SOLANA_ROUTE_SIGNER_SECRET_KEY is a different wallet and is ignored."
           : "Solana harvest operator key is not configured on the realtime-indexer. Set SOLANA_HARVEST_OPERATOR_SECRET (or SOLANA_OPERATOR_SECRET / SOLANA_OPERATOR_KEYPAIR) on the indexer service — not the web-dashboard. SOLANA_ROUTE_SIGNER_SECRET_KEY is a different wallet and is ignored.",
       ),
       { status: 503 },
     );
   }
   const operator = parsed.keypair;
-  const treasury = protocolTreasury(operator.publicKey);
+  const treasury = requireProtocolTreasury(operator.publicKey);
 
   const clauses = ["c.chain_id = $1", "c.graduated_at_chain is not null"];
   const params: unknown[] = [SOLANA_CHAIN_ID];
@@ -550,6 +615,19 @@ export async function harvestSolanaLpFees(input: {
   if (!positionNftMint) throw Object.assign(new Error("Meteora position is missing its NFT mint."), { status: 400 });
   const nftMint = positionNftMint instanceof PublicKey ? positionNftMint : new PublicKey(String(positionNftMint));
   const positionNftAccount = await resolvePositionNftAccount(connection, operator.publicKey, nftMint);
+
+  // A retry after a successful harvest must be a true no-op. In particular, do not
+  // replace the prior settled claim/split reconciliation with a fresh zero-fee claim.
+  const pendingBefore = unclaimedFees(poolState, positionState);
+  if (pendingBefore.tokenA <= 0n && pendingBefore.tokenB <= 0n) {
+    return buildZeroFeeRetryResult({
+      campaignAddress: String(row.campaign_address),
+      pairAddress: poolAddress,
+      creatorAddress: creator,
+      protocolTreasury: treasury,
+      priorHarvest: meta.harvest || {},
+    });
+  }
 
   const operatorAtaA = deriveAta(operator.publicKey, tokenAMint, tokenAProgram);
   const operatorAtaB = deriveAta(operator.publicKey, tokenBMint, tokenBProgram);
@@ -602,7 +680,7 @@ export async function harvestSolanaLpFees(input: {
         splitIxs.push(transferTokenIx(sourceAta, deriveAta(creatorPk, splitMint, tokenProgram), operator.publicKey, split.creator, tokenProgram));
       }
     }
-    if (split.protocol > 0n && !treasury.equals(operator.publicKey)) {
+    if (split.protocol > 0n) {
       if (native) {
         splitIxs.push(SystemProgram.transfer({ fromPubkey: operator.publicKey, toPubkey: treasury, lamports: split.protocol }));
       } else {
@@ -661,6 +739,6 @@ export async function harvestSolanaLpFees(input: {
     note:
       deltaA === 0n && deltaB === 0n
         ? "No unclaimed Meteora fees on this position."
-        : "Claimed locked-position fees and sent 80% to the creator / 20% to the protocol treasury. Principal stays locked.",
+        : "Claimed locked-position fees and sent 80% to the creator / 20% to the explicit protocol treasury. Principal stays locked.",
   };
 }
