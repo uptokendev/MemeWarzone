@@ -44,17 +44,22 @@ test('certification rejects any initial state that is not fail closed', () => {
   );
 });
 
-test('runtime patch opens only the CREATE window and restores both pause gates', () => {
+test('runtime patch consumes zero-write preflight and keeps CREATE conditional', () => {
   const source = fs.readFileSync(new URL('./rh46630-native-lifecycle-certification.mjs', import.meta.url), 'utf8');
   const patched = patchCertificationSource(source);
 
   assert.doesNotMatch(patched, /FACTORY_NOT_INITIAL_FAIL_CLOSED_LIVE_FALSE/);
-  assert.match(patched, /if \(prestatePlan\.enableLive\).*factory\.enableLive\(\)/s);
-  assert.match(patched, /factory\.setCreatePaused\(false\).*openCreateForCertification/s);
-  assert.match(patched, /factory\.setGlobalPaused\(false\).*openGlobalForCertificationCreate/s);
+  assert.doesNotMatch(patched, /assert\(await factory\.canCreatorLaunch\(CREATOR\),'CREATOR_NOT_ELIGIBLE'\)/);
+  assert.match(patched, /RH46630_ZERO_WRITE_PREFLIGHT/);
+  assert.match(patched, /ZERO_WRITE_PREFLIGHT_NOT_ZERO_WRITE/);
+  assert.match(patched, /CREATOR_NOT_ELIGIBLE_\$\{creatorEligibility\.reason\}_\$\{JSON\.stringify\(creatorEligibility\)\}/);
+  assert.match(patched, /if \(zeroWritePreflight\.action\.createRequired\).*factory\.setCreatePaused\(false\)/s);
+  assert.match(patched, /if \(zeroWritePreflight\.action\.createRequired\).*factory\.setGlobalPaused\(false\)/s);
+  assert.match(patched, /zeroWritePreflight\.action\.mode==='RESUME_EXISTING'/);
+  assert.match(patched, /EXISTING_CAMPAIGN_NOT_RESUMABLE/);
+  assert.match(patched, /RESUME_PATH_FACTORY_NOT_FAIL_CLOSED/);
+  assert.match(patched, /NOT_APPLICABLE_RESUMED_EXISTING_CAMPAIGN/);
   assert.match(patched, /createWindowClose=await restoreFactoryFailClosed\('closeAfterCreate'\)/);
-  assert.match(patched, /factory\.setGlobalPaused\(true\)/);
-  assert.match(patched, /factory\.setCreatePaused\(true\)/);
   assert.match(patched, /postState\.factoryLive===true&&postState\.createPaused&&postState\.globalPaused/);
   assert.match(patched, /await restoreFactoryFailClosed\('failureCleanup'\)/);
   assert.match(patched, /PRODUCTION_4663_FORBIDDEN/);
