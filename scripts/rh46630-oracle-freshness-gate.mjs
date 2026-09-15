@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { ethers } from 'ethers';
 
 export const EXPECTED_CHAIN_ID = 46630;
@@ -22,6 +23,15 @@ export function assessFreshness({ latestTimestamp, updatedAt }) {
   const age = latest - updated;
   if (age < 0n) throw new Error(`ORACLE_UPDATED_AT_IN_FUTURE_${age}`);
   return { age, needsRefresh: age >= MAX_ORACLE_AGE_SECONDS };
+}
+
+export function planOracleFreshnessGate({ latestTimestamp, updatedAt }) {
+  const freshness = assessFreshness({ latestTimestamp, updatedAt });
+  return {
+    age: freshness.age,
+    refreshTxCount: freshness.needsRefresh ? 1 : 0,
+    lifecycleMayContinueAfterGate: true,
+  };
 }
 
 export function assertUpdaterIdentity({ signerAddress, onchainUpdater, expectedUpdater = EXPECTED_UPDATER }) {
@@ -142,4 +152,19 @@ export async function ensureRh46630OracleFreshness({
     updatedAt: afterUpdatedAt.toString(),
     age: freshness.age.toString(),
   };
+}
+
+async function main() {
+  const rpc = String(process.env.ROBINHOOD_TESTNET_RPC_URL || '').trim();
+  if (!rpc) throw new Error('MISSING_PROTECTED_INPUT_ROBINHOOD_TESTNET_RPC_URL');
+  const result = await ensureRh46630OracleFreshness({ provider: new ethers.JsonRpcProvider(rpc) });
+  console.log(JSON.stringify(result, null, 2));
+}
+
+const invokedAsScript = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+if (invokedAsScript) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
 }
