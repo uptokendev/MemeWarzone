@@ -1,0 +1,170 @@
+name: BSC97 native pending-graduation cert
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type EXECUTE_BSC97_NATIVE_PENDING_GRADUATION_CERT
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    if: ${{ github.event.inputs.confirmation == 'EXECUTE_BSC97_NATIVE_PENDING_GRADUATION_CERT' }}
+    runs-on: ubuntu-latest
+    environment: testnet-certification
+    env:
+      BSC_TESTNET_PRIVATE_KEY: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
+      DEPLOYER_PK: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
+      PRIVATE_KEY_DEPLOY: ${{ secrets.BSC_TESTNET_PRIVATE_KEY }}
+      BSC_TESTNET_RPC: ${{ secrets.BSC_TESTNET_RPC }}
+      BSC_TESTNET_RPC_URL: ${{ secrets.BSC_TESTNET_RPC }}
+      BNB_TESTNET_ADMIN: "0xEE2c6A7605ED378CF1D26D1d828446d63A3fdeDa"
+      BNB_6C_TEST_CREATOR_PRIVATE_KEY: ${{ secrets.BNB_6C_TEST_CREATOR_PRIVATE_KEY }}
+      BNB_6C_TEST_BUYER_PRIVATE_KEY: ${{ secrets.BNB_6C_TEST_BUYER_PRIVATE_KEY }}
+      BNB_6C_TEST_TRADER_PRIVATE_KEY: ${{ secrets.BNB_6C_TEST_TRADER_PRIVATE_KEY }}
+      BNB_6C_ROUTE_AUTHORITY_ADDRESS: "0x2b72A9E6C4Ea3525d83B8C5E8F2044BDbC1f1Dec"
+      BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY: ${{ secrets.BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY }}
+      EXPECTED_SOURCE_SHA: 47c1f3f4338638931b8b6b1b2296ae8813d2b7f2
+      EXPECTED_INTEGRATION_SHA: 8944382619e05f09539614f5690b98521fe244ed
+    steps:
+      - name: Checkout certification transport
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Pin PR #358 contract blob
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD:contracts/LaunchCampaign.sol)" = "$(git rev-parse 47c1f3f4338638931b8b6b1b2296ae8813d2b7f2:contracts/LaunchCampaign.sol)"
+          test "$(git rev-parse HEAD:contracts/BnbQuoteLaunchCampaign.sol)" = "$(git rev-parse 8944382619e05f09539614f5690b98521fe244ed:contracts/BnbQuoteLaunchCampaign.sol)"
+          test "$(git rev-parse HEAD:contracts/LaunchFactory.sol)" = "$(git rev-parse 47c1f3f4338638931b8b6b1b2296ae8813d2b7f2:contracts/LaunchFactory.sol)"
+          echo "contract_blob_pin=ok"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        shell: bash
+        run: npm ci
+
+      - name: Pre-broadcast funded-wallet and balance preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${BSC_TESTNET_PRIVATE_KEY:-}" || { echo "BLOCKER: missing protected secret BSC_TESTNET_PRIVATE_KEY"; exit 1; }
+          test -n "${BSC_TESTNET_RPC:-}" || { echo "BLOCKER: missing protected secret BSC_TESTNET_RPC"; exit 1; }
+          test -n "${BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY:-}" || { echo "BLOCKER: missing protected secret BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY"; exit 1; }
+          test -n "${BNB_6C_TEST_CREATOR_PRIVATE_KEY:-}" || { echo "BLOCKER: missing protected secret BNB_6C_TEST_CREATOR_PRIVATE_KEY"; exit 1; }
+          test -n "${BNB_6C_TEST_BUYER_PRIVATE_KEY:-}" || { echo "BLOCKER: missing protected secret BNB_6C_TEST_BUYER_PRIVATE_KEY"; exit 1; }
+          test -n "${BNB_6C_TEST_TRADER_PRIVATE_KEY:-}" || { echo "BLOCKER: missing protected secret BNB_6C_TEST_TRADER_PRIVATE_KEY"; exit 1; }
+
+          node <<'NODE'
+          const { ethers } = require("ethers");
+          const expectedAddresses = {
+            deployer: "0xEE2c6A7605ED378CF1D26D1d828446d63A3fdeDa",
+            creator: "0xf0558484531204645fB6eaF35c5082Fc55d869A6",
+            buyer: "0xeAE58347aA643a228C88Bd62295651388163E1CA",
+            trader: "0x38D8054789aB2068C3E6B04382787eFE15617ac7",
+            routeAuthority: "0x2b72A9E6C4Ea3525d83B8C5E8F2044BDbC1f1Dec",
+          };
+          const keyEnvByLabel = {
+            deployer: "BSC_TESTNET_PRIVATE_KEY",
+            creator: "BNB_6C_TEST_CREATOR_PRIVATE_KEY",
+            buyer: "BNB_6C_TEST_BUYER_PRIVATE_KEY",
+            trader: "BNB_6C_TEST_TRADER_PRIVATE_KEY",
+            routeAuthority: "BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY",
+          };
+          for (const [label, want] of Object.entries(expectedAddresses)) {
+            const envName = keyEnvByLabel[label];
+            const got = new ethers.Wallet(String(process.env[envName] || "").trim()).address;
+            if (got.toLowerCase() !== want.toLowerCase()) throw new Error(`BLOCKER: ${envName} resolves to unexpected public address ${got}`);
+          }
+
+          const provider = new ethers.JsonRpcProvider(String(process.env.BSC_TESTNET_RPC || "").trim());
+          const minimums = {
+            creator: ethers.parseEther("0.05"),
+            buyer: ethers.parseEther("0.08"),
+            trader: ethers.parseEther("0.08"),
+          };
+          const addresses = {
+            deployer: expectedAddresses.deployer,
+            creator: expectedAddresses.creator,
+            buyer: expectedAddresses.buyer,
+            trader: expectedAddresses.trader,
+          };
+
+          (async () => {
+            const network = await provider.getNetwork();
+            if (Number(network.chainId) === 56) throw new Error("BLOCKER: chain 56 production broadcast is forbidden");
+            if (Number(network.chainId) !== 97) throw new Error(`BLOCKER: BSC_TESTNET_RPC chainId=${network.chainId}, expected 97`);
+            const balances = {};
+            for (const [label, address] of Object.entries(addresses)) balances[label] = await provider.getBalance(address);
+            for (const label of ["creator", "buyer", "trader"]) {
+              if (balances[label] < minimums[label]) {
+                const need = minimums[label] - balances[label];
+                throw new Error(`BLOCKER: ${label} needs ${ethers.formatEther(need)} additional tBNB before broadcast`);
+              }
+            }
+            const feeData = await provider.getFeeData();
+            const gasPrice = feeData.gasPrice || ethers.parseUnits("3", "gwei");
+            const requiredDeployer = gasPrice * 30000000n;
+            if (balances.deployer < requiredDeployer) {
+              const need = requiredDeployer - balances.deployer;
+              console.error(`required balance ${ethers.formatEther(requiredDeployer)} tBNB`);
+              console.error(`current balance ${ethers.formatEther(balances.deployer)} tBNB`);
+              console.error(`additional tBNB required ${ethers.formatEther(need)}`);
+              process.exit(1);
+            }
+            console.log("preflight_identity=ok");
+            console.log("preflight_chain_id=97");
+            console.log("preflight_deployer_required_tbnb", ethers.formatEther(requiredDeployer));
+          })().catch((error) => {
+            console.error(error instanceof Error ? error.message : String(error));
+            process.exit(1);
+          });
+          NODE
+
+      - name: Execute BSC97 native pending-graduation cert
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ github.event.inputs.confirmation }}" = "EXECUTE_BSC97_NATIVE_PENDING_GRADUATION_CERT"
+          echo "mode=bsc97-native-pending-graduation-cert"
+          echo "safety=isolated 4/3 stack; live 3/2 factory must remain unchanged; chain 56 rejected"
+          npx hardhat run scripts/run-bnb97-native-pending-graduation-cert.ts --network bscTestnet
+          test -s reports/bnb97-native-pending-graduation.json
+          node -e 'const r=require("./reports/bnb97-native-pending-graduation.json"); if(r.chainId!==97||r.accepted!==true||r.identities?.factoryGeneration!==4||r.identities?.campaignGeneration!==3) process.exit(1); console.log({accepted:r.accepted,factory:r.identities.factory,campaign:r.identities.campaign,pool:r.completion?.pool,harvest:r.harvest?.tx});'
+
+      - name: Evidence secret scan
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f reports/bnb97-native-pending-graduation.json ]; then
+            if grep -Eiq 'BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|BSC_TESTNET_PRIVATE_KEY|BSC_TESTNET_RPC|BNB_6C_ROUTE_AUTHORITY_PRIVATE_KEY|BNB_6C_TEST_CREATOR_PRIVATE_KEY|BNB_6C_TEST_BUYER_PRIVATE_KEY|BNB_6C_TEST_TRADER_PRIVATE_KEY' reports/bnb97-native-pending-graduation.json; then
+              echo "BLOCKER: evidence artifact contains a secret marker"
+              exit 1
+            fi
+          fi
+          echo "evidence_secret_scan=ok"
+
+      - name: Upload BSC97 native pending-graduation evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: bnb97-native-pending-graduation-${{ github.sha }}
+          path: |
+            reports/bnb97-native-pending-graduation.json
+            reports/bnb97-native-pending-graduation.json.sha256
+            deployments/bnb/testnet.staged.json
+          if-no-files-found: warn
+          retention-days: 14

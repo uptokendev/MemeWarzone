@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
-import { deployCoreFixture } from "./fixtures/core";
+import { completeNativeGraduation, deployCoreFixture } from "./fixtures/core";
 import { quoteBuyExactTokens, quoteSellExactTokens, currentPrice as priceFn } from "./helpers/math";
 import { getBalance } from "./helpers/balances";
 
@@ -429,12 +429,15 @@ describe("LaunchCampaign", function () {
     const creatorBalBefore = await getBalance(ownerAddr);
 
     const tx = await campaign.connect(alice).buyExactTokens(curveSupply, totalBuy, { value: totalBuy });
-    const receipt = await tx.wait();
+    expect(await campaign.graduationPending()).to.eq(true);
+    expect(await campaign.launched()).to.eq(false);
+    const completeTx = await completeNativeGraduation(campaign, alice);
+    const receipt = await completeTx!.wait();
 
     expect(await campaign.sold()).to.eq(curveSupply);
-    await expect(tx).to.emit(campaign, "CampaignFinalized");
-    await expect(tx).to.emit(router, "LiquidityAdded");
-    await expect(tx).to.emit(router, "LiquidityAdded").withArgs(await token.getAddress(), anyValue, anyValue, "0x000000000000000000000000000000000000dEaD");
+    await expect(completeTx).to.emit(campaign, "CampaignFinalized");
+    await expect(completeTx).to.emit(router, "LiquidityAdded");
+    await expect(completeTx).to.emit(router, "LiquidityAdded").withArgs(await token.getAddress(), anyValue, anyValue, "0x000000000000000000000000000000000000dEaD");
     expect(await campaign.launched()).to.eq(true);
     expect(await token.tradingEnabled()).to.eq(true);
     expect(await getBalance(await campaign.getAddress())).to.eq(0n);
@@ -507,10 +510,14 @@ describe("LaunchCampaign", function () {
     await campaign.connect(alice).buyExactTokens(oneToken, quote, { value: quote });
     await makeGraduationEligibleByOracle(campaign, priceFeed);
 
+    await expect(campaign.connect(alice).graduateIfEligible(0, 0)).to.emit(campaign, "StockGraduationPending");
+    expect(await campaign.graduationPending()).to.eq(true);
     await expect(campaign.connect(alice).graduateIfEligible(0, 0)).to.be.revertedWithCustomError(campaign, "DexPriceDrift");
+    expect(await campaign.graduationPending()).to.eq(true);
+    expect(await campaign.launched()).to.eq(false);
   });
 
-  it("auto-finalize: reaching oracle USD threshold (without selling out) finalizes inside buy", async () => {
+  it("auto-finalize: reaching oracle USD threshold (without selling out) marks pending then finalizes separately", async () => {
     const { campaign, token, alice, router } = await loadFixture(createLowTargetCampaignFixture);
 
     const curveSupply = await campaign.curveSupply();
@@ -518,10 +525,13 @@ describe("LaunchCampaign", function () {
     while (amountOut * 2n < curveSupply) {
       const totalBuy = await campaign.quoteBuyExactTokens(amountOut);
       const txTry = await campaign.connect(alice).buyExactTokens(amountOut, totalBuy, { value: totalBuy });
-      const launched = await campaign.launched();
-      if (launched) {
-        await expect(txTry).to.emit(campaign, "CampaignFinalized");
-        await expect(txTry).to.emit(router, "LiquidityAdded");
+      if (await campaign.graduationPending()) {
+        await expect(txTry).to.emit(campaign, "StockGraduationPending");
+        await expect(txTry).to.not.emit(campaign, "CampaignFinalized");
+        expect(await campaign.launched()).to.eq(false);
+        const completeTx = await completeNativeGraduation(campaign, alice);
+        await expect(completeTx).to.emit(campaign, "CampaignFinalized");
+        await expect(completeTx).to.emit(router, "LiquidityAdded");
         expect(await token.tradingEnabled()).to.eq(true);
         expect(await campaign.sold()).to.eq(amountOut);
         expect(await campaign.sold()).to.be.lt(curveSupply);
@@ -552,6 +562,8 @@ describe("LaunchCampaign", function () {
     const now = await latestTimestamp();
     await priceFeed.setRoundData(2n, bumpedPrice, now, now, 2n);
 
+    await expect(campaign.connect(alice).graduateIfEligible(0, 0)).to.emit(campaign, "StockGraduationPending");
+    expect(await campaign.graduationPending()).to.eq(true);
     await expect(campaign.connect(alice).graduateIfEligible(0, 0)).to.emit(campaign, "CampaignFinalized");
     expect(await campaign.launched()).to.eq(true);
   });
@@ -573,7 +585,9 @@ describe("LaunchCampaign", function () {
 
     const curveSupply = await campaign.curveSupply();
     const totalBuy = await campaign.quoteBuyExactTokens(curveSupply);
-    const tx = await campaign.connect(alice).buyExactTokens(curveSupply, totalBuy, { value: totalBuy });
+    await campaign.connect(alice).buyExactTokens(curveSupply, totalBuy, { value: totalBuy });
+    expect(await campaign.graduationPending()).to.eq(true);
+    const tx = await completeNativeGraduation(campaign, alice);
 
     await expect(tx).to.emit(campaign, "CampaignFinalized");
     await expect(tx).to.emit(router, "LiquidityAdded");
@@ -588,6 +602,7 @@ describe("LaunchCampaign", function () {
     const curveSupply = await campaign.curveSupply();
     const totalBuy = await campaign.quoteBuyExactTokens(curveSupply);
     await campaign.connect(alice).buyExactTokens(curveSupply, totalBuy, { value: totalBuy });
+    await completeNativeGraduation(campaign, alice);
 
     await expect(campaign.connect(alice).buyExactTokens(1n, 0n, { value: 0n })).to.be.revertedWithCustomError(campaign, "Finalized");
     await expect(campaign.connect(alice).sellExactTokens(1n, 0n)).to.be.revertedWithCustomError(campaign, "Finalized");

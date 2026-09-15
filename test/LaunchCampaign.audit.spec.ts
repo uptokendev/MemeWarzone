@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
-import { deployCoreFixture } from "./fixtures/core";
+import { completeNativeGraduation, deployCoreFixture } from "./fixtures/core";
 import { quoteBuyExactTokens } from "./helpers/math";
 
 const baseCampaignRequest = (overrides: Record<string, unknown> = {}) => ({
@@ -66,10 +66,9 @@ describe("LaunchCampaign audit hardening", function () {
 
     const curveSupply = await campaign.curveSupply();
     const totalBuy = await campaign.quoteBuyExactTokens(curveSupply);
-    await expect(campaign.connect(alice).buyExactTokens(curveSupply, totalBuy, { value: totalBuy })).to.emit(
-      campaign,
-      "CampaignFinalized"
-    );
+    await campaign.connect(alice).buyExactTokens(curveSupply, totalBuy, { value: totalBuy });
+    const completeTx = await completeNativeGraduation(campaign, alice);
+    await expect(completeTx).to.emit(campaign, "CampaignFinalized");
 
     expect(await campaign.launched()).to.eq(true);
     expect(await ethers.provider.getBalance(await campaign.getAddress())).to.eq(surplus);

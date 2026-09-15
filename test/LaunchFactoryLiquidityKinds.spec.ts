@@ -158,8 +158,10 @@ describe("LaunchFactory V2/V3 liquidity-kind seam", function () {
 
     const curveSupply = await campaign.curveSupply();
     const totalBuy = await campaign.quoteBuyExactTokens(curveSupply);
-    const buyTx = campaign.connect(buyer).buyExactTokens(curveSupply, totalBuy, { value: totalBuy });
-    await expect(buyTx).to.emit(campaign, "CampaignFinalized");
+    await campaign.connect(buyer).buyExactTokens(curveSupply, totalBuy, { value: totalBuy });
+    expect(await campaign.graduationPending()).to.equal(true);
+    const completeTx = campaign.connect(buyer).graduateIfEligible(0, 0);
+    await expect(completeTx).to.emit(campaign, "CampaignFinalized");
 
     const state = await campaign.getGraduationState();
     const poolAddress = await v3Factory.getPool(await token.getAddress(), await weth.getAddress(), V3_FEE);
