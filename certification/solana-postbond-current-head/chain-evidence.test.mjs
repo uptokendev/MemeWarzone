@@ -1,3 +1,4 @@
+// Exact-head certification regression; this comment intentionally triggers the registered read-only devnet gate.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
