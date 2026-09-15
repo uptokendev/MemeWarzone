@@ -38,6 +38,9 @@ export function deriveGrossClaimFromVaultMovement(input: GrossClaimEvidence): Gr
   if (pendingBefore != null && gross > 0n && gross < pendingBefore) {
     throw new Error(`${label}: authoritative vault movement is smaller than pre-claim entitlement`);
   }
+  if (pendingBefore != null && gross > pendingBefore) {
+    throw new Error(`${label}: authoritative vault movement is larger than pre-claim entitlement`);
+  }
   return splitGrossClaim(gross);
 }
 
@@ -54,9 +57,6 @@ export function verifyClaimAssetEffect(input: {
     return;
   }
   if (native) {
-    // Meteora unwraps WSOL to native SOL. The fee payer can have a negative net
-    // native delta when transaction cost exceeds the harvested WSOL. Add the
-    // transaction fee back before comparing with the authoritative vault debit.
     const feeAdjustedReceipt = operatorAssetDelta + transactionFeeLamports;
     if (feeAdjustedReceipt < gross) {
       throw new Error(`${label}: WSOL unwrap effect does not cover authoritative gross claim`);
