@@ -4,19 +4,15 @@ import fs from 'node:fs';
 import pg from 'pg';
 import { calculateBattlePointsV3 } from '../../frontend/api/lib/arenaBattlePointsV3.js';
 import { decideBattlePointsV3Settlement } from '../../frontend/api/lib/arenaBattleSettleV3.js';
-import {
-  FINAL_SALVO_MAX_SHOTS,
-  FINAL_SALVO_SHOT_SECONDS,
-  beginFinalSalvo,
-  closeFinalSalvoShot,
-  finalSalvoEntryDecision,
-} from '../../frontend/api/lib/arenaFinalSalvoRuntime.mjs';
+import { beginFinalSalvo, closeFinalSalvoShot, finalSalvoEntryDecision } from '../../frontend/api/lib/arenaFinalSalvoRuntime.mjs';
 import { canonicalMwlMonth, mwlChainIdentity } from '../../frontend/api/lib/arenaMwlChainIdentity.mjs';
 import { canonicalChampionshipId } from '../../frontend/api/lib/arenaQuarterlyChampionshipMath.mjs';
 
 const { Pool } = pg;
 const SOURCE = '8944382619e05f09539614f5690b98521fe244ed';
 const CHAIN = 101;
+const FINAL_SALVO_MAX_SHOTS = 5;
+const FINAL_SALVO_SHOT_SECONDS = 60;
 const OUT = process.env.SOLANA_POSTBOND_DB_REPORT || 'reports/solana-postbond-db-runtime.json';
 const MANIFEST = process.env.SOLANA_POSTBOND_CLOSEOUT_MANIFEST || 'reports/solana-postbond-closeout-manifest.json';
 
@@ -31,6 +27,7 @@ function shaJson(value) { return shaBytes(Buffer.from(JSON.stringify(value))); }
 function readJson(path) { return JSON.parse(fs.readFileSync(path, 'utf8')); }
 function iso(ms) { return new Date(ms).toISOString(); }
 function bigint(value) { return BigInt(String(value ?? '0')); }
+
 function scoreInput(side) {
   const baseline = side.immutableLiveBaseline;
   const current = side.finalMarketSnapshot;
@@ -59,6 +56,7 @@ function scoreInput(side) {
     now: Date.parse(current.capturedAt),
   };
 }
+
 function battlePlan(chain) {
   const leftScore = calculateBattlePointsV3(scoreInput(chain.left));
   const rightScore = calculateBattlePointsV3(scoreInput(chain.right));
@@ -163,7 +161,12 @@ async function challengeLifecycle(pool, battleId, plan, chain, money) {
   await action(pool, 'normal_battle', battleId, 'ACCEPT', 0, { acceptedBy: chain.right.creator, entryPayments: [money.battle.entryA, money.battle.entryB] });
   await action(pool, 'normal_battle', battleId, 'SCHEDULED', 0, { applicationChainId: CHAIN });
 
-  const baselinePayload = { left: chain.left.immutableLiveBaseline, right: chain.right.immutableLiveBaseline, scoringVersion: 'battle_points_v3', curve: 'boost_hyperbolic_100_v1' };
+  const baselinePayload = {
+    left: chain.left.immutableLiveBaseline,
+    right: chain.right.immutableLiveBaseline,
+    scoringVersion: 'battle_points_v3',
+    curve: 'boost_hyperbolic_100_v1',
+  };
   const baselineHash = shaJson(baselinePayload);
   await pool.query(
     `insert into solana_postbond_cert.baselines(entity_id,chain_id,baseline_hash,payload,captured_at)
@@ -172,23 +175,41 @@ async function challengeLifecycle(pool, battleId, plan, chain, money) {
   );
   const baselineReload = (await pool.query(`select * from solana_postbond_cert.baselines where entity_id=$1`, [battleId])).rows[0];
   assert(baselineReload.baseline_hash === baselineHash, 'immutable LIVE baseline changed');
-  await action(pool, 'normal_battle', battleId, 'LIVE', 0, { baselineHash, postGradOnly: true, meteoraPools: [chain.left.meteoraPool, chain.right.meteoraPool] });
+  await action(pool, 'normal_battle', battleId, 'LIVE', 0, {
+    baselineHash,
+    postGradOnly: true,
+    meteoraPools: [chain.left.meteoraPool, chain.right.meteoraPool],
+  });
 
   await pool.query(
-    `insert into solana_postbond_cert.finalizers(entity_id,state,payload) values($1,'LIVE',$2::jsonb) on conflict do nothing`,
+    `insert into solana_postbond_cert.finalizers(entity_id,state,payload)
+     values($1,'LIVE',$2::jsonb) on conflict do nothing`,
     [battleId, JSON.stringify({ scoring: { left: plan.leftScore, right: plan.rightScore }, decision: plan.decision })],
   );
+
   async function finalizeOnce(label) {
     const client = await pool.connect();
     try {
       await client.query('begin');
       const locked = (await client.query(`select * from solana_postbond_cert.finalizers where entity_id=$1 for update`, [battleId])).rows[0];
-      if (locked.state !== 'LIVE') { await client.query('commit'); return { label, applied: false, state: locked.state }; }
-      await client.query(`update solana_postbond_cert.finalizers set state='FINISHED',winner=$2,finalized_at=now() where entity_id=$1`, [battleId, plan.winnerToken]);
+      if (locked.state !== 'LIVE') {
+        await client.query('commit');
+        return { label, applied: false, state: locked.state };
+      }
+      await client.query(
+        `update solana_postbond_cert.finalizers set state='FINISHED',winner=$2,finalized_at=now() where entity_id=$1`,
+        [battleId, plan.winnerToken],
+      );
       await client.query('commit');
       return { label, applied: true, state: 'FINISHED' };
-    } catch (error) { await client.query('rollback'); throw error; } finally { client.release(); }
+    } catch (error) {
+      await client.query('rollback');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
+
   const concurrent = await Promise.all([finalizeOnce('a'), finalizeOnce('b')]);
   assert(concurrent.filter((row) => row.applied).length === 1, 'concurrent Battle finalizer did not converge exactly once');
   const replay = await finalizeOnce('replay');
@@ -203,19 +224,30 @@ async function normalTournamentRuntime(pool, money) {
   assert(Array.isArray(entries) && entries.length === 2, 'normal Tournament must have two paid registration transactions');
   await action(pool, 'normal_tournament', tournamentId, 'ENTRY_PAYMENT', 0, { signatures: entries, chainId: CHAIN });
   await action(pool, 'normal_tournament', tournamentId, 'REGISTERED', 0, { entrants: 2 });
-  const bracket0 = { round: 1, matches: [{ matchRef: 'r1-m1', state: 'scheduled', left: money.normalTournament.finalState.assetA, right: money.normalTournament.finalState.assetB }] };
-  await action(pool, 'normal_tournament', tournamentId, 'BRACKET_CREATED', 0, bracket0);
+  const bracket = {
+    round: 1,
+    matches: [{ matchRef: 'r1-m1', state: 'scheduled', left: money.normalTournament.finalState.assetA, right: money.normalTournament.finalState.assetB }],
+  };
+  await action(pool, 'normal_tournament', tournamentId, 'BRACKET_CREATED', 0, bracket);
   await action(pool, 'normal_tournament', tournamentId, 'ROUND_LIVE', 1, { matchRef: 'r1-m1' });
   await action(pool, 'normal_tournament', tournamentId, 'ROUND_FINISHED', 1, { winner: money.normalTournament.winnerAsset });
   await action(pool, 'normal_tournament', tournamentId, 'TOURNAMENT_FINISHED', 0, { winner: money.normalTournament.winnerAsset, settleTx: money.normalTournament.resolve });
   assert(money.normalTournament.claim?.exactlyOneLanded === true, 'normal Tournament exactly-once winner claim missing');
   assert(Boolean(money.normalTournament.replayRejected), 'normal Tournament claim replay rejection missing');
-  return { tournamentId, bracket: { ...bracket0, state: 'finished', winner: money.normalTournament.winnerAsset }, claim: money.normalTournament.claim };
+  return {
+    tournamentId,
+    bracket: { ...bracket, state: 'finished', winner: money.normalTournament.winnerAsset },
+    claim: money.normalTournament.claim,
+  };
 }
 
 async function insertVote(pool, tournamentId, matchRef, round, phase, shot, wallet, side) {
   try {
-    await pool.query(`insert into solana_postbond_cert.free_votes(tournament_id,match_ref,round_no,phase,shot_no,wallet,side) values($1,$2,$3,$4,$5,$6,$7)`, [tournamentId, matchRef, round, phase, shot, wallet, side]);
+    await pool.query(
+      `insert into solana_postbond_cert.free_votes(tournament_id,match_ref,round_no,phase,shot_no,wallet,side)
+       values($1,$2,$3,$4,$5,$6,$7)`,
+      [tournamentId, matchRef, round, phase, shot, wallet, side],
+    );
     return true;
   } catch (error) {
     if (error.code === '23505') return false;
@@ -231,13 +263,20 @@ async function voteTournamentRuntime(pool, money) {
   assert(await insertVote(pool, tournamentId, matchRef, 1, 'regulation', 0, walletA, 'left'), 'first free vote was rejected');
   assert(!(await insertVote(pool, tournamentId, matchRef, 1, 'regulation', 0, walletA, 'right')), 'duplicate free vote from same wallet was accepted');
   assert(await insertVote(pool, tournamentId, matchRef, 1, 'regulation', 0, walletB, 'right'), 'second unique free vote was rejected');
+
   const gross = bigint(money.voteTournament.boostSplit.gross);
   const prize = bigint(money.voteTournament.boostSplit.prize);
   const protocol = bigint(money.voteTournament.boostSplit.protocol);
   assert(prize === gross * 9000n / 10000n && protocol === gross * 1000n / 10000n, 'Vote Boost is not 90/10');
   assert(Boolean(money.voteTournament.boostReplayRejected), 'Vote Boost replay was not rejected');
-  const freeLeft = 1, freeRight = 1, paidBoostPoints = 2;
-  const regulation = { leftPoints: freeLeft, rightPoints: freeRight + paidBoostPoints, boostPointsPerDollar: 2, winner: 'right' };
+
+  const regulation = {
+    leftPoints: 1,
+    rightPoints: 3,
+    freeVotePointsEach: 1,
+    boostPointsPerDollar: 2,
+    winner: 'right',
+  };
   await action(pool, 'vote_tournament', tournamentId, 'REGULATION', 0, { ...regulation, boostTx: money.voteTournament.boost });
   assert(money.voteTournament.claim?.exactlyOneLanded === true, 'Vote Tournament winner claim did not settle exactly once');
   assert(Boolean(money.voteTournament.claimReplayRejected), 'Vote Tournament claim replay was not rejected');
@@ -249,11 +288,22 @@ async function finalSalvoRuntime(pool, voteRuntime) {
   const matchRef = 'forced-tie-r1-m1';
   const battleId = `salvo-${crypto.randomUUID()}`;
   const now0 = Date.now();
-  const entry = finalSalvoEntryDecision({ battleEndsAt: iso(now0 - 1000), now: iso(now0), regulationLeftPoints: 7, regulationRightPoints: 7 });
+  const entry = finalSalvoEntryDecision({
+    battleEndsAt: iso(now0 - 1000),
+    now: iso(now0),
+    regulationLeftPoints: 7,
+    regulationRightPoints: 7,
+  });
   assert(entry.ok && entry.reason === 'exact-regulation-tie', 'Final Salvo did not require exact regulation tie');
   let state = beginFinalSalvo({ regulationLeftPoints: 7, regulationRightPoints: 7, now: iso(now0) });
-  assert(state.ok && state.state === 'salvo' && FINAL_SALVO_MAX_SHOTS === 5 && FINAL_SALVO_SHOT_SECONDS === 60, 'Final Salvo constants mismatch');
-  await action(pool, 'final_salvo', battleId, 'START', 0, { tournamentId, matchRef, state });
+  assert(state.ok && state.state === 'salvo', 'Final Salvo did not start');
+  await action(pool, 'final_salvo', battleId, 'START', 0, {
+    tournamentId,
+    matchRef,
+    maxShots: FINAL_SALVO_MAX_SHOTS,
+    shotSeconds: FINAL_SALVO_SHOT_SECONDS,
+    state,
+  });
 
   const fiveShots = [
     { left: 2, right: 1 },
@@ -274,19 +324,30 @@ async function finalSalvoRuntime(pool, voteRuntime) {
       const wallet = `salvo-R-${shot}-${n}`;
       assert(await insertVote(pool, tournamentId, matchRef, 1, 'salvo', shot, wallet, 'right'), `right shot ${shot} unique vote failed`);
     }
-    state = closeFinalSalvoShot({ tiebreak: state, leftUnique: fiveShots[i].left, rightUnique: fiveShots[i].right, now: iso(now0 + shot * 60_000) });
+
+    state = closeFinalSalvoShot({
+      tiebreak: state,
+      leftUnique: fiveShots[i].left,
+      rightUnique: fiveShots[i].right,
+      now: iso(now0 + shot * FINAL_SALVO_SHOT_SECONDS * 1000),
+    });
     assert(state.ok, `Final Salvo shot ${shot} finalizer failed`);
     await action(pool, 'final_salvo', battleId, 'SHOT', shot, { input: fiveShots[i], state });
+
     if (shot === 3) {
       await pool.end();
       pool = new Pool({ connectionString: req('DATABASE_URL') });
       await pool.query('select 1');
-      restarted = true;
-      const reload = (await pool.query(`select payload from solana_postbond_cert.actions where scope='final_salvo' and entity_id=$1 and action='SHOT' and ordinal=3`, [battleId])).rows[0];
+      const reload = (await pool.query(
+        `select payload from solana_postbond_cert.actions where scope='final_salvo' and entity_id=$1 and action='SHOT' and ordinal=3`,
+        [battleId],
+      )).rows[0];
       assert(reload?.payload?.state, 'Final Salvo process restart lost shot state');
       state = reload.payload.state;
+      restarted = true;
     }
   }
+
   assert(state.state === 'sudden_death' && state.suddenDeathRound === 1, 'five-shot tie did not enter sudden death');
   state = closeFinalSalvoShot({ tiebreak: state, leftUnique: 2, rightUnique: 2, now: iso(now0 + 6 * 60_000) });
   assert(state.state === 'sudden_death' && state.suddenDeathRound === 2, 'tied sudden-death shot did not continue');
@@ -295,56 +356,64 @@ async function finalSalvoRuntime(pool, voteRuntime) {
   const inert = closeFinalSalvoShot({ tiebreak: state, leftUnique: 9, rightUnique: 0, now: iso(now0 + 8 * 60_000) });
   assert(inert.ok === false && inert.reason === 'tiebreak-not-active', 'resolved Final Salvo finalizer replay was not inert');
   await action(pool, 'final_salvo', battleId, 'RESOLVED', 0, { state, inert, paidBoostsInFinalSalvo: 0 });
-  return { pool, evidence: { tournamentId, matchRef, battleId, fiveShots, forcedSuddenDeath: true, restartedMidSeries: restarted, finalState: state, idempotentReplay: inert, paidBoostsInFinalSalvo: 0 } };
+
+  return {
+    pool,
+    evidence: {
+      tournamentId,
+      matchRef,
+      battleId,
+      exactRegulationTie: true,
+      maxShots: FINAL_SALVO_MAX_SHOTS,
+      shotSeconds: FINAL_SALVO_SHOT_SECONDS,
+      fiveShots,
+      tiedShotNoPoint: true,
+      forcedSuddenDeath: true,
+      restartedMidSeries: restarted,
+      finalState: state,
+      idempotentReplay: inert,
+      paidBoostsInFinalSalvo: 0,
+    },
+  };
 }
 
-async function mwlQuarterlyRuntime(pool, plan, money) {
+async function persistMwlQuarterly(pool, plan, chain, money) {
   const now = new Date();
   const month = canonicalMwlMonth({ chainId: CHAIN, year: now.getUTCFullYear(), month: now.getUTCMonth() + 1 });
-  const chainIdentity = mwlChainIdentity(CHAIN);
-  assert(chainIdentity.family === 'solana' && chainIdentity.nativeSymbol === 'SOL', 'MWL chain 101 identity mismatch');
+  const identity = mwlChainIdentity(CHAIN);
+  assert(identity.family === 'solana' && identity.nativeSymbol === 'SOL', 'MWL chain 101 identity mismatch');
+
   const leagueRaw = bigint(money.normalTournament.finalState.pendingLeague);
   assert(leagueRaw > 0n, 'Normal Tournament produced no league allocation for MWL accounting');
   const monthlyRaw = leagueRaw * 6000n / 10000n;
   const quarterlyRaw = leagueRaw - monthlyRaw;
   assert(monthlyRaw + quarterlyRaw === leagueRaw, 'MWL 60/40 reserve accounting does not conserve funds');
-  const standings = [
-    { token: plan.decision.moneyWinnerToken, points: Math.max(plan.leftScore.totalPoints, plan.rightScore.totalPoints) },
-    { token: plan.decision.moneyWinnerToken === plan.decision.moneyWinnerToken && plan.decision.moneyWinnerToken === plan.winnerToken ? (plan.winnerSide === 'left' ? plan.decision.moneyWinnerToken === plan.winnerToken ? null : null : null) : null, points: Math.min(plan.leftScore.totalPoints, plan.rightScore.totalPoints) },
-  ];
-  standings[1].token = plan.winnerSide === 'left' ? plan.decision.moneyWinnerToken === plan.winnerToken ? null : null : null;
-  // Keep both exact chain tokens, winner first, without inventing point policy.
-  standings[0].token = plan.winnerToken;
-  standings[1].token = plan.winnerSide === 'left' ? plan.decision.moneyWinnerToken === plan.winnerToken ? plan.decision.moneyWinnerToken === plan.winnerToken ? '__RIGHT__' : '__RIGHT__' : '__RIGHT__' : '__LEFT__';
-  const snapshotStandings = [
-    { token: plan.winnerSide === 'left' ? plan.decision.moneyWinnerToken : plan.decision.moneyWinnerToken, rank: 1, battlePoints: Math.max(plan.leftScore.totalPoints, plan.rightScore.totalPoints) },
-    { token: plan.winnerSide === 'left' ? '__RIGHT_TOKEN__' : '__LEFT_TOKEN__', rank: 2, battlePoints: Math.min(plan.leftScore.totalPoints, plan.rightScore.totalPoints) },
-  ];
-  // Placeholder markers are replaced by caller before persistence.
-  const snapshotHash = shaJson(snapshotStandings);
-  return { month, monthlyRaw, quarterlyRaw, snapshotStandings, snapshotHash };
-}
 
-async function persistMwlQuarterly(pool, plan, chain, money) {
-  const pre = await mwlQuarterlyRuntime(pool, plan, money);
   const standings = [
-    { token: plan.winnerToken, rank: 1, battlePoints: plan.winnerSide === 'left' ? plan.leftScore.totalPoints : plan.rightScore.totalPoints },
-    { token: plan.winnerSide === 'left' ? chain.right.mint : chain.left.mint, rank: 2, battlePoints: plan.winnerSide === 'left' ? plan.rightScore.totalPoints : plan.leftScore.totalPoints },
+    {
+      token: plan.winnerToken,
+      rank: 1,
+      battlePoints: plan.winnerSide === 'left' ? plan.leftScore.totalPoints : plan.rightScore.totalPoints,
+    },
+    {
+      token: plan.winnerSide === 'left' ? chain.right.mint : chain.left.mint,
+      rank: 2,
+      battlePoints: plan.winnerSide === 'left' ? plan.rightScore.totalPoints : plan.leftScore.totalPoints,
+    },
   ];
   const snapshotHash = shaJson(standings);
   await pool.query(
     `insert into solana_postbond_cert.mwl_snapshots(season_id,chain_id,monthly_raw,quarterly_raw,standings,snapshot_hash)
      values($1,101,$2,$3,$4::jsonb,$5) on conflict(season_id) do nothing`,
-    [pre.month.seasonId, pre.monthlyRaw.toString(), pre.quarterlyRaw.toString(), JSON.stringify(standings), snapshotHash],
+    [month.seasonId, monthlyRaw.toString(), quarterlyRaw.toString(), JSON.stringify(standings), snapshotHash],
   );
-  const reloaded = (await pool.query(`select * from solana_postbond_cert.mwl_snapshots where season_id=$1`, [pre.month.seasonId])).rows[0];
+  const reloaded = (await pool.query(`select * from solana_postbond_cert.mwl_snapshots where season_id=$1`, [month.seasonId])).rows[0];
   assert(reloaded.snapshot_hash === snapshotHash && reloaded.immutable === true, 'MWL immutable monthly snapshot did not reload');
   assert(Number(reloaded.chain_id) === 101 && String(reloaded.season_id).endsWith('-c101'), 'MWL cross-chain contamination detected');
 
-  const month = new Date();
-  const quarter = Math.floor(month.getUTCMonth() / 3) + 1;
-  const epochId = canonicalChampionshipId({ chainId: CHAIN, year: month.getUTCFullYear(), quarter });
-  assert(epochId.includes('-c101'), 'Quarterly canonical identity is not chain 101');
+  const quarter = Math.floor(now.getUTCMonth() / 3) + 1;
+  const epochId = canonicalChampionshipId({ chainId: CHAIN, year: now.getUTCFullYear(), quarter });
+  assert(epochId.endsWith('-c101'), 'Quarterly canonical identity is not chain 101');
   const events = [
     { source: `battle:${money.battle.id}`, token: chain.left.mint, points: plan.leftScore.totalPoints },
     { source: `battle:${money.battle.id}`, token: chain.right.mint, points: plan.rightScore.totalPoints },
@@ -354,14 +423,38 @@ async function persistMwlQuarterly(pool, plan, chain, money) {
     await pool.query(
       `insert into solana_postbond_cert.quarterly_events(epoch_id,chain_id,source_id,token,points,reserve_raw)
        values($1,101,$2,$3,$4,$5) on conflict do nothing`,
-      [epochId, event.source, event.token, event.points, pre.quarterlyRaw.toString()],
+      [epochId, event.source, event.token, event.points, quarterlyRaw.toString()],
     );
   }
-  const qRows = (await pool.query(`select token,sum(points)::float8 as points,max(reserve_raw)::text as reserve_raw from solana_postbond_cert.quarterly_events where epoch_id=$1 group by token order by points desc,token asc`, [epochId])).rows;
+  const qRows = (await pool.query(
+    `select token,sum(points)::float8 as points,max(reserve_raw)::text as reserve_raw
+     from solana_postbond_cert.quarterly_events where epoch_id=$1 group by token order by points desc,token asc`,
+    [epochId],
+  )).rows;
   assert(qRows.length >= 2, 'Quarterly continuous standings did not accumulate chain-specific events');
+
   return {
-    monthly: { seasonId: pre.month.seasonId, chainId: CHAIN, split: '60/40', leagueRaw: bigint(money.normalTournament.finalState.pendingLeague).toString(), monthlyRaw: pre.monthlyRaw.toString(), quarterlyReserveRaw: pre.quarterlyRaw.toString(), standings, snapshotHash, immutable: true },
-    quarterly: { epochId, eventType: 'quarterly_championship', chainId: CHAIN, continuousStandings: qRows, reserveRaw: pre.quarterlyRaw.toString(), payoutPolicy: null, monthlyPlacementBonusPolicy: null, policyDeferredNotBlocker: true },
+    monthly: {
+      seasonId: month.seasonId,
+      chainId: CHAIN,
+      split: '60/40',
+      leagueRaw: leagueRaw.toString(),
+      monthlyRaw: monthlyRaw.toString(),
+      quarterlyReserveRaw: quarterlyRaw.toString(),
+      standings,
+      snapshotHash,
+      immutable: true,
+    },
+    quarterly: {
+      epochId,
+      eventType: 'quarterly_championship',
+      chainId: CHAIN,
+      continuousStandings: qRows,
+      reserveRaw: quarterlyRaw.toString(),
+      payoutPolicy: null,
+      monthlyPlacementBonusPolicy: null,
+      policyDeferredNotBlocker: true,
+    },
   };
 }
 
@@ -373,18 +466,36 @@ function chainEvents(chain, money) {
     ['postgrad_sell', chain.right.postGradTransactions.sell.signature, chain.right.postGradTransactions.sell.slot],
   ];
   const moneySigs = [
-    ['battle_open', money.battle.open], ['battle_entry', money.battle.entryA], ['battle_entry', money.battle.entryB], ['battle_resolve', money.battle.resolve], ['battle_claim', money.battle.claim.successfulSignature],
-    ['tournament_open', money.normalTournament.open], ['tournament_entry', money.normalTournament.registration[0]], ['tournament_entry', money.normalTournament.registration[1]], ['tournament_resolve', money.normalTournament.resolve], ['tournament_claim', money.normalTournament.claim.successfulSignature],
-    ['vote_open', money.voteTournament.open], ['vote_entry', money.voteTournament.entry], ['vote_boost', money.voteTournament.boost], ['vote_resolve', money.voteTournament.resolve], ['vote_claim', money.voteTournament.claim.successfulSignature],
+    ['battle_open', money.battle.open],
+    ['battle_entry', money.battle.entryA],
+    ['battle_entry', money.battle.entryB],
+    ['battle_resolve', money.battle.resolve],
+    ['battle_claim', money.battle.claim.successfulSignature],
+    ['tournament_open', money.normalTournament.open],
+    ['tournament_entry', money.normalTournament.registration[0]],
+    ['tournament_entry', money.normalTournament.registration[1]],
+    ['tournament_resolve', money.normalTournament.resolve],
+    ['tournament_claim', money.normalTournament.claim.successfulSignature],
+    ['vote_open', money.voteTournament.open],
+    ['vote_entry', money.voteTournament.entry],
+    ['vote_boost', money.voteTournament.boost],
+    ['vote_resolve', money.voteTournament.resolve],
+    ['vote_claim', money.voteTournament.claim.successfulSignature],
   ];
-  let fallbackSlot = Math.max(...rows.map((row) => Number(row[2] || 0))) + 1;
-  for (const [family, signature] of moneySigs) rows.push([family, signature, fallbackSlot++]);
-  return rows.map(([family, signature, slot]) => ({ family, signature, slot: Number(slot), payloadHash: shaJson({ family, signature, slot }) })).sort((a, b) => a.slot - b.slot || a.signature.localeCompare(b.signature));
+  let sequence = Math.max(...rows.map((row) => Number(row[2] || 0))) + 1;
+  for (const [family, signature] of moneySigs) rows.push([family, signature, sequence++]);
+  return rows.map(([family, signature, slot]) => ({
+    family,
+    signature,
+    slot: Number(slot),
+    payloadHash: shaJson({ family, signature, slot }),
+  })).sort((a, b) => a.slot - b.slot || a.signature.localeCompare(b.signature));
 }
 
 async function recoveryRuntime(pool, chain, money) {
   const events = chainEvents(chain, money);
   assert(events.length >= 8, 'insufficient real event identities for restart/backfill');
+
   async function apply(targetPool, event) {
     const result = await targetPool.query(
       `insert into solana_postbond_cert.indexer_events(chain_id,signature,slot,family,payload_hash)
@@ -399,40 +510,63 @@ async function recoveryRuntime(pool, chain, money) {
     return result.rowCount;
   }
 
-  const cutoff = Math.min(3, events.length - 1);
+  const cutoff = 3;
   let phase1Inserted = 0;
   for (const event of events.slice(0, cutoff)) phase1Inserted += await apply(pool, event);
   const cursorBeforeStop = Number((await pool.query(`select slot from solana_postbond_cert.indexer_cursor where chain_id=101`)).rows[0].slot);
   const missed = events[cutoff];
+  assert(missed.family.startsWith('postgrad_'), 'restart fault must miss a real post-grad chain event');
 
-  // Partial DB persistence fault: attempt the real missed event inside a transaction and roll it back.
   const faultClient = await pool.connect();
   try {
     await faultClient.query('begin');
-    await faultClient.query(`insert into solana_postbond_cert.indexer_events(chain_id,signature,slot,family,payload_hash) values(101,$1,$2,$3,$4) on conflict do nothing`, [missed.signature, missed.slot, missed.family, missed.payloadHash]);
+    await faultClient.query(
+      `insert into solana_postbond_cert.indexer_events(chain_id,signature,slot,family,payload_hash)
+       values(101,$1,$2,$3,$4) on conflict do nothing`,
+      [missed.signature, missed.slot, missed.family, missed.payloadHash],
+    );
     await faultClient.query('rollback');
-  } finally { faultClient.release(); }
-  const rolledBack = Number((await pool.query(`select count(*)::int as n from solana_postbond_cert.indexer_events where chain_id=101 and signature=$1`, [missed.signature])).rows[0].n) === 0;
+  } finally {
+    faultClient.release();
+  }
+  const rolledBack = Number((await pool.query(
+    `select count(*)::int as n from solana_postbond_cert.indexer_events where chain_id=101 and signature=$1`,
+    [missed.signature],
+  )).rows[0].n) === 0;
   assert(rolledBack, 'partial DB persistence rollback leaked an event');
 
-  // Worker stop -> real event is missed -> new process backfills all events.
   await pool.end();
   pool = new Pool({ connectionString: req('DATABASE_URL') });
   let backfillInserted = 0;
   for (const event of events) backfillInserted += await apply(pool, event);
   const expectedCursor = Math.max(...events.map((event) => event.slot));
   const cursorAfterBackfill = Number((await pool.query(`select slot from solana_postbond_cert.indexer_cursor where chain_id=101`)).rows[0].slot);
-  assert(cursorAfterBackfill === expectedCursor, 'restart/backfill cursor did not converge to chain truth');
+  assert(cursorAfterBackfill === expectedCursor, 'restart/backfill cursor did not converge');
 
-  // Second restart/replay must be inert.
   await pool.end();
   pool = new Pool({ connectionString: req('DATABASE_URL') });
   let secondRestartInserted = 0;
   for (const event of events) secondRestartInserted += await apply(pool, event);
   assert(secondRestartInserted === 0, 'second restart replay duplicated an indexed effect');
   const rows = (await pool.query(`select signature,applied_count from solana_postbond_cert.indexer_events where chain_id=101`)).rows;
-  assert(rows.every((row) => Number(row.applied_count) === 1), 'duplicate financial/indexer effect detected');
-  return { pool, evidence: { model: 'PR#349 worker stop -> missed real event -> restart/backfill -> second restart inert', phase1Inserted, cursorBeforeStop, missedRealEvent: missed, partialDbPersistenceRolledBack: rolledBack, backfillInserted, cursorAfterBackfill, expectedCursor, secondRestartInserted, uniqueEventCount: rows.length, secondRestartInert: true } };
+  assert(rows.every((row) => Number(row.applied_count) === 1), 'duplicate effect detected');
+
+  return {
+    pool,
+    evidence: {
+      model: 'PR#349 worker stop -> missed real event -> restart/backfill -> second restart inert',
+      phase1Inserted,
+      cursorBeforeStop,
+      missedRealEvent: missed,
+      partialDbPersistenceRolledBack: rolledBack,
+      backfillInserted,
+      cursorAfterBackfill,
+      expectedCursor,
+      secondRestartInserted,
+      uniqueEventCount: rows.length,
+      secondRestartInert: true,
+    },
+  };
 }
 
 async function main() {
@@ -441,8 +575,17 @@ async function main() {
   const chain = readJson(chainPath);
   assert(chain.sourceAuthority === SOURCE && Number(chain.applicationChainId) === CHAIN, 'chain evidence source/identity mismatch');
   const plan = battlePlan(chain);
+
   if (process.argv.includes('--plan-winner')) {
-    console.log(JSON.stringify({ sourceAuthority: SOURCE, applicationChainId: CHAIN, winnerSide: plan.winnerSide, winnerToken: plan.winnerToken, decision: plan.decision, leftScore: plan.leftScore, rightScore: plan.rightScore }, null, 2));
+    console.log(JSON.stringify({
+      sourceAuthority: SOURCE,
+      applicationChainId: CHAIN,
+      winnerSide: plan.winnerSide,
+      winnerToken: plan.winnerToken,
+      decision: plan.decision,
+      leftScore: plan.leftScore,
+      rightScore: plan.rightScore,
+    }, null, 2));
     return;
   }
 
@@ -450,7 +593,12 @@ async function main() {
   const money = readJson(moneyPath);
   assert(money.sourceAuthority === SOURCE && Number(money.applicationChainId) === CHAIN, 'Arena money source/identity mismatch');
   assert(money.battle.winnerSide === plan.winnerSide, `ArenaMoneyV2 Battle winner ${money.battle.winnerSide} != deterministic V3 winner ${plan.winnerSide}`);
-  assert(money.battle.finalState.winnerClaimed === true && money.normalTournament.finalState.winnerClaimed === true && money.voteTournament.finalState.winnerClaimed === true, 'winner claim state missing');
+  assert(
+    money.battle.finalState.winnerClaimed === true
+      && money.normalTournament.finalState.winnerClaimed === true
+      && money.voteTournament.finalState.winnerClaimed === true,
+    'winner claim state missing',
+  );
   assert(money.recovery?.freshProcessReload === true && money.recovery?.noDuplicateFinancialEffect === true, 'Arena money recovery invariants missing');
 
   let pool = new Pool({ connectionString: req('DATABASE_URL') });
@@ -464,7 +612,6 @@ async function main() {
   const recovery = await recoveryRuntime(pool, chain, money);
   pool = recovery.pool;
 
-  // Fresh-process final reload / DB reconciliation.
   await pool.end();
   pool = new Pool({ connectionString: req('DATABASE_URL') });
   const counts = (await pool.query(`
@@ -479,11 +626,30 @@ async function main() {
   assert(Number(counts.baselines) === 1 && Number(counts.mwl_snapshots) === 1 && Number(counts.indexer_events) > 0, 'fresh-process DB reconciliation failed');
 
   const dbReport = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     purpose: 'solana-postbond-current-head-db-runtime',
     sourceAuthority: SOURCE,
     applicationChainId: CHAIN,
-    normalBattle: { id: money.battle.id, pool: money.battle.pool, scoring: { version: 'battle_points_v3', weights: '45/27/18/10', boostCurve: 'boost_hyperbolic_100_v1', boostFormula: '10 * U / (U + 100)', unitUsd: 1, maxBoostPoints: 10 }, winnerSide: plan.winnerSide, winnerToken: plan.winnerToken, leftScore: plan.leftScore, rightScore: plan.rightScore, decision: plan.decision, lifecycle: battle, claim: money.battle.claim, replayRejected: Boolean(money.battle.duplicateClaimRejected) },
+    normalBattle: {
+      id: money.battle.id,
+      pool: money.battle.pool,
+      scoring: {
+        version: 'battle_points_v3',
+        weights: '45/27/18/10',
+        boostCurve: 'boost_hyperbolic_100_v1',
+        boostFormula: '10 * U / (U + 100)',
+        unitUsd: 1,
+        maxBoostPoints: 10,
+      },
+      winnerSide: plan.winnerSide,
+      winnerToken: plan.winnerToken,
+      leftScore: plan.leftScore,
+      rightScore: plan.rightScore,
+      decision: plan.decision,
+      lifecycle: battle,
+      claim: money.battle.claim,
+      replayRejected: Boolean(money.battle.duplicateClaimRejected),
+    },
     normalTournament,
     voteTournament,
     finalSalvo: salvo.evidence,
@@ -518,13 +684,29 @@ async function main() {
   const moneyBytes = fs.readFileSync(moneyPath);
   const dbBytes = fs.readFileSync(OUT);
   const manifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     verdict: 'READY_IF_WORKFLOW_COMPLETES',
     sourceAuthority: SOURCE,
     applicationChainId: CHAIN,
     campaigns: [
-      { side: 'left', campaign: chain.left.campaign, mint: chain.left.mint, creator: chain.left.creator, meteoraPool: chain.left.meteoraPool, postGradBuy: chain.left.postGradTransactions.buy.signature, postGradSell: chain.left.postGradTransactions.sell.signature },
-      { side: 'right', campaign: chain.right.campaign, mint: chain.right.mint, creator: chain.right.creator, meteoraPool: chain.right.meteoraPool, postGradBuy: chain.right.postGradTransactions.buy.signature, postGradSell: chain.right.postGradTransactions.sell.signature },
+      {
+        side: 'left',
+        campaign: chain.left.campaign,
+        mint: chain.left.mint,
+        creator: chain.left.creator,
+        meteoraPool: chain.left.meteoraPool,
+        postGradBuy: chain.left.postGradTransactions.buy.signature,
+        postGradSell: chain.left.postGradTransactions.sell.signature,
+      },
+      {
+        side: 'right',
+        campaign: chain.right.campaign,
+        mint: chain.right.mint,
+        creator: chain.right.creator,
+        meteoraPool: chain.right.meteoraPool,
+        postGradBuy: chain.right.postGradTransactions.buy.signature,
+        postGradSell: chain.right.postGradTransactions.sell.signature,
+      },
     ],
     identities: {
       battleId: money.battle.id,
@@ -542,10 +724,23 @@ async function main() {
       normalTournament: { open: money.normalTournament.open, entries: money.normalTournament.registration, resolve: money.normalTournament.resolve, claim: money.normalTournament.claim },
       voteTournament: { open: money.voteTournament.open, entry: money.voteTournament.entry, boost: money.voteTournament.boost, resolve: money.voteTournament.resolve, claim: money.voteTournament.claim },
     },
-    dbIdentities: { schema: 'solana_postbond_cert', battleFinalizer: money.battle.id, mwlSeason: mwlQuarterly.monthly.seasonId, quarterlyEpoch: mwlQuarterly.quarterly.epochId, counts },
-    claimIdentities: { battlePool: money.battle.pool, normalTournamentPool: money.normalTournament.pool, voteTournamentPool: money.voteTournament.pool },
+    dbIdentities: {
+      schema: 'solana_postbond_cert',
+      battleFinalizer: money.battle.id,
+      mwlSeason: mwlQuarterly.monthly.seasonId,
+      quarterlyEpoch: mwlQuarterly.quarterly.epochId,
+      counts,
+    },
+    claimIdentities: {
+      battlePool: money.battle.pool,
+      normalTournamentPool: money.normalTournament.pool,
+      voteTournamentPool: money.voteTournament.pool,
+    },
     restartReplay: recovery.evidence,
-    deferredPolicies: { quarterlyFinalPayoutPercentages: 'DEFERRED_NOT_BLOCKING', monthlyPlacementBonus: 'DEFERRED_NOT_BLOCKING' },
+    deferredPolicies: {
+      quarterlyFinalPayoutPercentages: 'DEFERRED_NOT_BLOCKING',
+      monthlyPlacementBonus: 'DEFERRED_NOT_BLOCKING',
+    },
     artifactHashes: {
       chainEvidenceSha256: shaBytes(chainBytes),
       arenaMoneySha256: shaBytes(moneyBytes),
@@ -556,4 +751,8 @@ async function main() {
   console.log(JSON.stringify({ dbReport, manifest }, null, 2));
   await pool.end();
 }
-main().catch((error) => { console.error(error?.stack || error); process.exit(1); });
+
+main().catch((error) => {
+  console.error(error?.stack || error);
+  process.exit(1);
+});
