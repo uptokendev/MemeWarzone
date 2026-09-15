@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { NATIVE_MINT, TOKEN_PROGRAM_ID, getAccount, getMint } from '@solana/spl-token';
 import { CpAmm, deriveCustomizablePoolAddress } from '@meteora-ag/cp-amm-sdk';
@@ -27,6 +28,10 @@ function pub(data, offset) { return new PublicKey(data.subarray(offset, offset +
 function absBig(v) { return v < 0n ? -v : v; }
 function sha(value) { return crypto.createHash('sha256').update(value).digest('hex'); }
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
+function key(value, label) {
+  try { return value instanceof PublicKey ? value : new PublicKey(value); }
+  catch (error) { throw new Error(`${label} is not a valid public key: ${error?.message || error}`); }
+}
 
 async function landed(connection, signature) {
   const status = (await connection.getSignatureStatuses([signature], { searchTransactionHistory: true })).value[0];
@@ -45,13 +50,108 @@ async function holderCount(connection, mint) {
   return rows.reduce((count, row) => row.account.data.readBigUInt64LE(0) > 0n ? count + 1 : count, 0);
 }
 
-function payerNativeVolume(tx, payer) {
-  const keys = tx.transaction.message.getAccountKeys().staticAccountKeys;
-  const index = keys.findIndex((key) => key.equals(payer));
+function flattenAccountKeys(accountKeys) {
+  if (!accountKeys) throw new Error('transaction account keys were not resolved');
+  if (typeof accountKeys.length === 'number' && typeof accountKeys.get === 'function') {
+    return Array.from({ length: accountKeys.length }, (_, index) => {
+      const value = accountKeys.get(index);
+      if (!value) throw new Error(`resolved account key ${index} is unavailable`);
+      return key(value, `resolved account key ${index}`);
+    });
+  }
+  if (Array.isArray(accountKeys)) return accountKeys.map((value, index) => key(value, `resolved account key ${index}`));
+  if (Array.isArray(accountKeys.staticAccountKeys)) {
+    return [
+      ...accountKeys.staticAccountKeys,
+      ...(accountKeys.accountKeysFromLookups?.writable || []),
+      ...(accountKeys.accountKeysFromLookups?.readonly || []),
+    ].map((value, index) => key(value, `resolved account key ${index}`));
+  }
+  throw new Error('unsupported resolved account-key representation');
+}
+
+function expectedLoadedCounts(message) {
+  return (message.addressTableLookups || []).reduce((totals, lookup) => {
+    totals.writable += lookup.writableIndexes?.length || 0;
+    totals.readonly += lookup.readonlyIndexes?.length || 0;
+    return totals;
+  }, { writable: 0, readonly: 0 });
+}
+
+function normalizeLoadedAddresses(loaded) {
+  if (!loaded || !Array.isArray(loaded.writable) || !Array.isArray(loaded.readonly)) return null;
+  return {
+    writable: loaded.writable.map((value, index) => key(value, `loaded writable address ${index}`)),
+    readonly: loaded.readonly.map((value, index) => key(value, `loaded readonly address ${index}`)),
+  };
+}
+
+async function lookupTablesFromChain(connection, message) {
+  if (!connection || typeof connection.getAddressLookupTable !== 'function') {
+    throw new Error('V0 transaction requires ALT resolution but lookup-capable connection is unavailable');
+  }
+  const tables = [];
+  for (const [lookupIndex, lookup] of message.addressTableLookups.entries()) {
+    const accountKey = key(lookup.accountKey, `ALT ${lookupIndex} account key`);
+    const response = await connection.getAddressLookupTable(accountKey);
+    const table = response?.value;
+    if (!table) throw new Error(`ALT unavailable: ${accountKey.toBase58()}`);
+    if (!table.key || !key(table.key, `ALT ${lookupIndex} returned key`).equals(accountKey)) {
+      throw new Error(`ALT key mismatch: ${accountKey.toBase58()}`);
+    }
+    if (!Array.isArray(table.state?.addresses)) throw new Error(`ALT malformed: ${accountKey.toBase58()}`);
+    for (const [kind, indexes] of [['writable', lookup.writableIndexes || []], ['readonly', lookup.readonlyIndexes || []]]) {
+      for (const rawIndex of indexes) {
+        const index = Number(rawIndex);
+        if (!Number.isInteger(index) || index < 0 || index >= table.state.addresses.length) {
+          throw new Error(`ALT ${accountKey.toBase58()} ${kind} index ${rawIndex} is out of bounds`);
+        }
+        key(table.state.addresses[index], `ALT ${accountKey.toBase58()} address ${index}`);
+      }
+    }
+    tables.push(table);
+  }
+  return tables;
+}
+
+export async function resolveTransactionAccountKeys(connection, tx) {
+  const message = tx?.transaction?.message;
+  if (!message) throw new Error('transaction message is unavailable');
+  if (Array.isArray(message.accountKeys)) return message.accountKeys.map((value, index) => key(value, `legacy account key ${index}`));
+  if (!Array.isArray(message.staticAccountKeys) || typeof message.getAccountKeys !== 'function') {
+    throw new Error('unsupported transaction message representation');
+  }
+
+  const lookups = Array.isArray(message.addressTableLookups) ? message.addressTableLookups : [];
+  if (lookups.length === 0) return flattenAccountKeys(message.getAccountKeys());
+
+  const expected = expectedLoadedCounts(message);
+  const loaded = normalizeLoadedAddresses(tx?.meta?.loadedAddresses);
+  if (loaded) {
+    if (loaded.writable.length !== expected.writable || loaded.readonly.length !== expected.readonly) {
+      throw new Error(`RPC loaded-address count mismatch: expected ${expected.writable}/${expected.readonly}, got ${loaded.writable.length}/${loaded.readonly.length}`);
+    }
+    return flattenAccountKeys(message.getAccountKeys({ accountKeysFromLookups: loaded }));
+  }
+
+  const addressLookupTableAccounts = await lookupTablesFromChain(connection, message);
+  return flattenAccountKeys(message.getAccountKeys({ addressLookupTableAccounts }));
+}
+
+export async function payerNativeVolume(connection, tx, payer) {
+  const keys = await resolveTransactionAccountKeys(connection, tx);
+  const payerKey = key(payer, 'payer');
+  const index = keys.findIndex((candidate) => candidate.equals(payerKey));
   if (index < 0) return null;
-  const pre = BigInt(tx.meta.preBalances[index] || 0);
-  const post = BigInt(tx.meta.postBalances[index] || 0);
-  const fee = BigInt(tx.meta.fee || 0);
+  const preBalances = tx?.meta?.preBalances;
+  const postBalances = tx?.meta?.postBalances;
+  if (!Array.isArray(preBalances) || !Array.isArray(postBalances)) throw new Error('transaction balance arrays are unavailable');
+  if (preBalances.length !== keys.length || postBalances.length !== keys.length) {
+    throw new Error(`balance/account-key alignment mismatch: keys=${keys.length} pre=${preBalances.length} post=${postBalances.length}`);
+  }
+  const pre = BigInt(preBalances[index]);
+  const post = BigInt(postBalances[index]);
+  const fee = index === 0 ? BigInt(tx.meta.fee || 0) : 0n;
   return absBig(post - pre + fee);
 }
 
@@ -132,8 +232,8 @@ async function side(connection, cpAmm, prefix, solUsd, delayMs) {
   const buy = await landed(connection, report.buy.signature);
   const sell = await landed(connection, report.sell.signature);
   const payer = new PublicKey(report.payer);
-  const buyNativeRaw = payerNativeVolume(buy.tx, payer);
-  const sellNativeRaw = payerNativeVolume(sell.tx, payer);
+  const buyNativeRaw = await payerNativeVolume(connection, buy.tx, payer);
+  const sellNativeRaw = await payerNativeVolume(connection, sell.tx, payer);
   const volumeNative = (buyNativeRaw || 0n) + (sellNativeRaw || 0n);
   if (volumeNative <= 0n) throw new Error(`${prefix} post-grad transactions have no native-value evidence`);
   const volumeUsd = Number(volumeNative) / 1e9 * solUsd;
@@ -200,4 +300,7 @@ async function main() {
   fs.writeFileSync(OUT, `${JSON.stringify(output, null, 2)}\n`);
   console.log(JSON.stringify(output, null, 2));
 }
-main().catch((error) => { console.error(error?.stack || error); process.exit(1); });
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === fileURLToPath(new URL(`file://${process.argv[1]}`).href)) {
+  main().catch((error) => { console.error(error?.stack || error); process.exit(1); });
+}
