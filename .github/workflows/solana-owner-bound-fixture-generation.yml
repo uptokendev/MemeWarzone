@@ -18,6 +18,8 @@ env:
   SOLANA_APPLICATION_CHAIN_ID: '101'
   SOLANA_LAUNCHPAD_PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
   SOLANA_EXPECTED_DEVNET_GENESIS: EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG
+  OWNER_A_EXPECTED_PUBLIC: 3fXMySCJvGamBmW1FASoruQN9kqg8ifPpozsnTpfYQ7p
+  OWNER_B_EXPECTED_PUBLIC: 2CT4aDWtLFDa5JkbN7EPvxgqAQV2UaZU3XL8V6cv2X39
 
 jobs:
   generate-owner-bound-fixtures:
@@ -96,6 +98,37 @@ jobs:
           npm ci --prefix frontend --no-audit --no-fund
           npm ci --prefix tools/solana-meteora-graduation --no-audit --no-fund
 
+      - name: Owner preload zero-network runtime gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const {Keypair}=require('./tests/solana/node_modules/@solana/web3.js');
+          function kp(raw){
+            const text=String(raw||'').trim();
+            if(!text) throw new Error('missing owner secret');
+            const bytes=text.startsWith('[')?Uint8Array.from(JSON.parse(text)):Uint8Array.from(Buffer.from(text,'base64'));
+            if(bytes.length!==64) throw new Error('owner secret must decode to 64 bytes');
+            return Keypair.fromSecretKey(bytes);
+          }
+          const a=kp(process.env.SOLANA_POSTBOND_OWNER_A_SECRET_KEY).publicKey.toBase58();
+          const b=kp(process.env.SOLANA_POSTBOND_OWNER_B_SECRET_KEY).publicKey.toBase58();
+          if(a!==process.env.OWNER_A_EXPECTED_PUBLIC) throw new Error('OWNER_A public key mismatch');
+          if(b!==process.env.OWNER_B_EXPECTED_PUBLIC) throw new Error('OWNER_B public key mismatch');
+          if(a===b) throw new Error('OWNER_A and OWNER_B resolve to same public key');
+          console.log('owner-key-parse-ok');
+          NODE
+          test -f "$GITHUB_WORKSPACE/tests/solana/package.json"
+          test -f "$GITHUB_WORKSPACE/tests/solana/node_modules/@solana/web3.js/package.json"
+          SOLANA_FIXTURE_CREATOR_SECRET_KEY="$SOLANA_POSTBOND_OWNER_A_SECRET_KEY" \
+          SOLANA_FIXTURE_PRELOAD_EXPECTED_PUBLIC_KEY="$OWNER_A_EXPECTED_PUBLIC" \
+          NODE_OPTIONS="--require=/tmp/owner-creator-preload.cjs" \
+            node -e 'console.log("owner-preload-runtime-ok")'
+          SOLANA_FIXTURE_CREATOR_SECRET_KEY="$SOLANA_POSTBOND_OWNER_B_SECRET_KEY" \
+          SOLANA_FIXTURE_PRELOAD_EXPECTED_PUBLIC_KEY="$OWNER_B_EXPECTED_PUBLIC" \
+          NODE_OPTIONS="--require=/tmp/owner-creator-preload.cjs" \
+            node -e 'console.log("owner-preload-runtime-ok")'
+
       - name: Build exact accepted launch-program candidate and IDL
         shell: bash
         env:
@@ -143,6 +176,8 @@ jobs:
           }
           const a=kp(process.env.SOLANA_POSTBOND_OWNER_A_SECRET_KEY).publicKey.toBase58();
           const b=kp(process.env.SOLANA_POSTBOND_OWNER_B_SECRET_KEY).publicKey.toBase58();
+          if(a!==process.env.OWNER_A_EXPECTED_PUBLIC) throw new Error('OWNER_A public key mismatch');
+          if(b!==process.env.OWNER_B_EXPECTED_PUBLIC) throw new Error('OWNER_B public key mismatch');
           if(a===b) throw new Error('OWNER_A and OWNER_B resolve to same public key');
           fs.writeFileSync('reports/owner-public-addresses.json', JSON.stringify({ownerA:a,ownerB:b},null,2)+'\n');
           fs.appendFileSync(process.env.GITHUB_ENV, `OWNER_A_PUBLIC=${a}\nOWNER_B_PUBLIC=${b}\n`);
@@ -155,6 +190,7 @@ jobs:
         env:
           SEND_SOLANA_GRADUATION: 'true'
           SOLANA_FIXTURE_CREATOR_SECRET_KEY: ${{ secrets.SOLANA_POSTBOND_OWNER_A_SECRET_KEY }}
+          SOLANA_FIXTURE_PRELOAD_EXPECTED_PUBLIC_KEY: ${{ env.OWNER_A_EXPECTED_PUBLIC }}
           NODE_OPTIONS: '--require=/tmp/owner-creator-preload.cjs'
           SOLANA_NETWORK_CANARY_REPORT: /tmp/owner-a-pregrad.json
           SOLANA_POSTGRAD_CANARY_REPORT: /tmp/owner-a-postgrad.json
@@ -173,6 +209,7 @@ jobs:
         env:
           SEND_SOLANA_GRADUATION: 'true'
           SOLANA_FIXTURE_CREATOR_SECRET_KEY: ${{ secrets.SOLANA_POSTBOND_OWNER_B_SECRET_KEY }}
+          SOLANA_FIXTURE_PRELOAD_EXPECTED_PUBLIC_KEY: ${{ env.OWNER_B_EXPECTED_PUBLIC }}
           NODE_OPTIONS: '--require=/tmp/owner-creator-preload.cjs'
           SOLANA_NETWORK_CANARY_REPORT: /tmp/owner-b-pregrad.json
           SOLANA_POSTGRAD_CANARY_REPORT: /tmp/owner-b-postgrad.json
