@@ -50,7 +50,7 @@ jobs:
     environment: testnet-certification
     env:
       SOLANA_APPLICATION_CHAIN_ID: '101'
-      SOLANA_RPC_URL: ${{ secrets.SOLANA_REWARDS_RPC_URL }}
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_DEVNET_RPC || secrets.SOLANA_DEVNET_RPC_URL || secrets.SOLANA_REWARDS_RPC_URL || vars.SOLANA_DEVNET_RPC }}
       SOLANA_CLOSEOUT_SOL_USD: '150'
       SOLANA_POSTBOND_SNAPSHOT_DELAY_SECONDS: '0'
       SOLANA_POSTBOND_CHAIN_REPORT: reports/solana-v0-alt-readonly.json
