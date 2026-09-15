@@ -17,8 +17,9 @@ const DEX_ADAPTER_OFFSET = 483;
 const METEORA_DAMM_V2 = 1;
 const OUT = process.env.SOLANA_POSTBOND_CHAIN_REPORT || 'reports/solana-postbond-chain-evidence.json';
 
+function optional(name) { return String(process.env[name] || '').trim(); }
 function req(name) {
-  const value = String(process.env[name] || '').trim();
+  const value = optional(name);
   if (!value) throw new Error(`${name} is required`);
   return value;
 }
@@ -82,15 +83,33 @@ async function marketSnapshot(connection, mintState, mint, tokenVaultKey, solVau
   };
 }
 
-async function side(connection, cpAmm, prefix, reportPath, solUsd, delayMs) {
+function loadPostGradEvidence(prefix, expectedMint, expectedPool) {
+  const reportPath = optional(`${prefix}_POSTGRAD_REPORT`);
+  if (reportPath) {
+    const bytes = fs.readFileSync(reportPath);
+    const report = JSON.parse(bytes.toString('utf8'));
+    if (Number(report.applicationChainId) !== 101 || report.cluster !== 'devnet') throw new Error(`${prefix} post-grad report is not chain 101 devnet`);
+    if (report.mint !== expectedMint.toBase58() || report.pool !== expectedPool.toBase58()) throw new Error(`${prefix} post-grad report identity mismatch`);
+    if (report.reload?.status !== 'PASS') throw new Error(`${prefix} post-grad report reload did not pass`);
+    return { report, source: 'accepted-postgrad-report', reportSha256: sha(bytes) };
+  }
+  return {
+    source: 'direct-current-chain-signatures',
+    reportSha256: null,
+    report: {
+      payer: req(`${prefix}_POSTGRAD_PAYER`),
+      buy: { signature: req(`${prefix}_POSTGRAD_BUY_SIGNATURE`) },
+      sell: { signature: req(`${prefix}_POSTGRAD_SELL_SIGNATURE`) },
+    },
+  };
+}
+
+async function side(connection, cpAmm, prefix, solUsd, delayMs) {
   const campaign = new PublicKey(req(`${prefix}_CAMPAIGN`));
   const expectedMint = new PublicKey(req(`${prefix}_MINT`));
   const expectedPool = new PublicKey(req(`${prefix}_METEORA_POOL`));
-  const reportBytes = fs.readFileSync(reportPath);
-  const report = JSON.parse(reportBytes.toString('utf8'));
-  if (Number(report.applicationChainId) !== 101 || report.cluster !== 'devnet') throw new Error(`${prefix} post-grad report is not chain 101 devnet`);
-  if (report.mint !== expectedMint.toBase58() || report.pool !== expectedPool.toBase58()) throw new Error(`${prefix} post-grad report identity mismatch`);
-  if (report.reload?.status !== 'PASS') throw new Error(`${prefix} post-grad report reload did not pass`);
+  const evidence = loadPostGradEvidence(prefix, expectedMint, expectedPool);
+  const report = evidence.report;
 
   const campaignAccount = await connection.getAccountInfo(campaign, 'confirmed');
   if (!campaignAccount || !campaignAccount.owner.equals(LAUNCH_PROGRAM) || campaignAccount.data.length < CAMPAIGN_BYTES) throw new Error(`${prefix} campaign is not an accepted launch-program campaign`);
@@ -139,7 +158,8 @@ async function side(connection, cpAmm, prefix, reportPath, solUsd, delayMs) {
       buy: { signature: report.buy.signature, slot: buy.slot, blockTime: buy.blockTime, nativeVolumeRaw: String(buyNativeRaw || 0n) },
       sell: { signature: report.sell.signature, slot: sell.slot, blockTime: sell.blockTime, nativeVolumeRaw: String(sellNativeRaw || 0n) },
     },
-    postGradReportSha256: sha(reportBytes),
+    postGradEvidenceSource: evidence.source,
+    postGradReportSha256: evidence.reportSha256,
   };
 }
 
@@ -152,12 +172,12 @@ async function main() {
   const connection = new Connection(req('SOLANA_RPC_URL'), 'confirmed');
   if (await connection.getGenesisHash() !== DEVNET_GENESIS) throw new Error('refusing non-devnet RPC');
   const cpAmm = new CpAmm(connection);
-  const left = await side(connection, cpAmm, 'SOLANA_POSTBOND_LEFT', req('SOLANA_POSTBOND_LEFT_POSTGRAD_REPORT'), solUsd, delaySeconds * 1000);
-  const right = await side(connection, cpAmm, 'SOLANA_POSTBOND_RIGHT', req('SOLANA_POSTBOND_RIGHT_POSTGRAD_REPORT'), solUsd, delaySeconds * 1000);
+  const left = await side(connection, cpAmm, 'SOLANA_POSTBOND_LEFT', solUsd, delaySeconds * 1000);
+  const right = await side(connection, cpAmm, 'SOLANA_POSTBOND_RIGHT', solUsd, delaySeconds * 1000);
   if (left.mint === right.mint || left.campaign === right.campaign) throw new Error('Battle campaigns must be distinct');
   if (left.creator === right.creator) throw new Error('ArenaMoneyV2 Battle requires distinct owner wallets; supplied graduated campaigns share a creator');
   const output = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     purpose: 'solana-postbond-current-head-chain-evidence',
     sourceAuthority: SOURCE,
     applicationChainId: 101,
