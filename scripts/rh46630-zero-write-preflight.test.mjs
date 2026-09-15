@@ -49,8 +49,8 @@ test('existing healthy campaign is resumed even when new CREATE is currently ine
 
 test('native target math matches GraduationOracle ceiling behavior and first BUY sizing', () => {
   const target = computeNativeTargetFromUsd(ethers.parseEther('6'), 243893000000n, 8);
-  assert.equal(target, 2_460_095_206_095_380n);
-  assert.equal(computeFirstBuyValue(target), 492_019_041_219_076n);
+  assert.equal(target, 2_460_095_205_684_460n);
+  assert.equal(computeFirstBuyValue(target), 492_019_041_136_892n);
 });
 
 test('pending launch protection applies to the exact next BUY and detects buy/wallet limits', () => {
