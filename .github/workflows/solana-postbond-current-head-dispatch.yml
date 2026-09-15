@@ -88,7 +88,7 @@ jobs:
             printf '%s\n' '.github/workflows/solana-postbond-current-head-dispatch.yml' > /tmp/expected
             diff -u /tmp/expected /tmp/actual
           fi
-          ! grep -F 'solana program deploy' .github/workflows/solana-postbond-current-head-dispatch.yml
+          ! grep -E '^[[:space:]]+solana[[:space:]]+program[[:space:]]+deploy([[:space:]]|$)' .github/workflows/solana-postbond-current-head-dispatch.yml
       - name: Checkout exact frozen PR 370 head
         uses: actions/checkout@v4
         with:
