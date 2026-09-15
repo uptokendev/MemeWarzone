@@ -56,6 +56,34 @@ jobs:
         shell: bash
         run: npm ci
 
+      - name: Prepare exact final cert scripts with zero network
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/prepare-bnb97-native-pending-graduation-cert.mjs
+          node scripts/prepare-bnb97-completion-read-reconciliation.mjs
+          node scripts/prepare-bnb97-harvest-accounting.mjs
+
+      - name: Syntax load and transpile exact final executable with zero network
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/validate-bnb97-final-executable.mjs scripts/test-bnb97-native-pending-graduation.ts
+
+      - name: Static certification regressions with zero network
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test scripts/validate-bnb97-final-executable.test.mjs
+          node --test scripts/prove-bnb-6c-rehearsal.test.mjs
+
+      - name: Restore source script for deterministic destructive regeneration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout -- scripts/test-bnb97-native-pending-graduation.ts
+          git diff --exit-code -- scripts/test-bnb97-native-pending-graduation.ts
+
       - name: Pre-broadcast funded-wallet and balance preflight
         shell: bash
         run: |
