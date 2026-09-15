@@ -33,7 +33,7 @@ concurrency:
 env:
   EXPECTED_CERT_SHA: 6f6cec9b8aec936b624760cef5bb05aaadc31bbc
   EXPECTED_SOURCE_SHA: 8944382619e05f09539614f5690b98521fe244ed
-  EXPECTED_MAIN_BASE_SHA: fb4c1ff63369594959c0d002acd757b8435646d7
+  EXPECTED_MAIN_BASE_SHA: ba9002e3c537b15c28970e414657f747bb7b0abf
   FIXTURE_SOURCE_SHA: 992bf9d0e1889d9280c9226a3193b102adbd7c07
   FIXTURE_ARTIFACT_NAME: solana-owner-bound-fixtures-6f6cec9b8aec936b624760cef5bb05aaadc31bbc
   FIXTURE_ARTIFACT_ID: '10414835996'
@@ -138,12 +138,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Run V0/ALT zero-network regression
+      - name: Run V0/ALT and loader-compat zero-network regressions
         run: |
           npm ci --no-audit --no-fund
+          npm install --prefix tests/solana --no-audit --no-fund
           node --test certification/solana-postbond-current-head/chain-evidence.test.mjs
           node --check certification/solana-postbond-current-head/arena-money-closeout.mjs
           node --check certification/solana-postbond-current-head/db-runtime-closeout.mjs
+          node -r ./tests/solana/web3-loader-compat.cjs - <<'NODE'
+          const web3 = require('./tests/solana/node_modules/@solana/web3.js');
+          if (!web3.BPF_LOADER_UPGRADEABLE_PROGRAM_ID) throw new Error('BPF_LOADER_UPGRADEABLE_PROGRAM_ID unresolved after compat preload');
+          const loader = new web3.PublicKey(web3.BPF_LOADER_UPGRADEABLE_PROGRAM_ID);
+          if (loader.toBase58() !== 'BPFLoaderUpgradeab1e11111111111111111111111') throw new Error(`unexpected loader ${loader.toBase58()}`);
+          console.log(`loader_compat_runtime_smoke=${loader.toBase58()}`);
+          NODE
 
   destructive-chain-101-closeout:
     if: github.event_name == 'workflow_dispatch'
@@ -275,7 +283,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(solana genesis-hash --url "$SOLANA_RPC_URL")" = "$SOLANA_EXPECTED_DEVNET_GENESIS"
-          node tests/solana/devnet-deployment-identity.cjs \
+          node -r ./tests/solana/web3-loader-compat.cjs tests/solana/devnet-deployment-identity.cjs \
             --rpc-url "$SOLANA_RPC_URL" \
             --program-id "$SOLANA_LAUNCHPAD_PROGRAM_ID" \
             --output reports/solana-devnet-deployment-identity.json
