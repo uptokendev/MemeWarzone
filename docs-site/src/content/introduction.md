@@ -1,15 +1,39 @@
 ---
 title: Introduction
-description: Understand MemeWarzone as a full memecoin lifecycle: Prepare, Launch or Import, Trade, Graduate, Compete, Recruit, Earn, Battle, Tournament, League, and Return.
+description: Understand MemeWarzone across BNB, Solana, and Robinhood as a full memecoin lifecycle: Prepare, Launch or Import, Trade, Graduate, Compete, Recruit, Earn, Battle, Tournament, League, and Return.
 ---
 
 MemeWarzone is a competitive on-chain ecosystem for memecoin projects and communities.
 
 It is designed around a simple idea: **graduation is when the real battle starts**.
 
-Instead of treating launch day as the finish line, MemeWarzone connects preparation, launch or existing-token import, trading, graduation, community growth, recurring rewards, and post-graduation competition inside one product.
+Instead of treating launch day as the finish line, MemeWarzone connects preparation, native launch or existing-token Import, trading, graduation, community growth, recurring rewards, and post-graduation competition inside one product.
 
 ![MemeWarzone battlefield overview](/images/docs/introduction-battlefield-overview.png)
+
+## Three first-class chains
+
+MemeWarzone is built around three first-class product chains:
+
+- **BNB Chain**
+- **Solana**
+- **Robinhood Chain**
+
+Robinhood is integrated into the same product lifecycle as BNB and Solana. It is not an Import-only network or a separate side product.
+
+The shared product model includes:
+
+- Draft / Prepare Mode
+- Direct and scheduled native launch behavior
+- native bonding
+- Graduation Market selection
+- graduation into the chain's permanent post-grad venue
+- existing-token Import
+- discovery and community surfaces
+- Recruiter, Squad, Airdrop, League, and Claim identity
+- post-grad Arena, Tournaments, Major War League, and Quarterly identity
+
+The execution underneath differs by chain: BNB uses BNB-native EVM paths and Topaz post-grad markets, Solana remains Solana-native and uses Meteora, and Robinhood uses ETH-native EVM launch execution and chain-local V3 post-grad infrastructure.
 
 ## Two ways to enter MemeWarzone
 
@@ -17,31 +41,41 @@ A project can enter through one of two paths.
 
 ### Launch a new MemeWarzone campaign
 
-Creators can use Draft or Prepare Mode, deploy through a supported chain-specific launch flow, trade through native bonding, and graduate into a permanent post-graduation market.
+Creators can use Draft / Prepare Mode or Direct launch on BNB, Solana, or Robinhood.
+
+Native bonding uses:
+
+- BNB on BNB Chain
+- SOL on Solana
+- ETH on Robinhood Chain
+
+After the campaign reaches its active graduation threshold, the selected Graduation Market is revalidated and the campaign moves into the permanent post-grad venue for that chain.
 
 ### Import an existing token
 
-A project that already exists elsewhere can register the token without relaunching it or creating another ticker.
+A project that already exists elsewhere can register its existing **BNB, Solana, or Robinhood** token without relaunching it or creating another ticker.
 
-Import creates a MemeWarzone project/community identity around the existing token. Project ownership can be verified separately from future Arena eligibility.
+Import creates a MemeWarzone project/community identity around the existing token. Project ownership is verified separately from launch history, Graduation Market eligibility, and Arena competition authority.
 
-Read **[Import an Existing Token](/import)** for the current import flow.
+Read **[Import an Existing Token](/import)**.
 
 ## The MemeWarzone lifecycle
 
-The long-term product loop is:
+The full product loop is:
 
 **Prepare → Launch / Import → Trade → Graduate → Compete → Recruit → Earn → Battle → Tournament → League → Return**
 
-Different features activate at different stages and by chain. A feature being documented does not mean it is currently enabled on production.
+Native launches and Imports enter the ecosystem differently, but both can build a persistent MemeWarzone project identity and community.
 
-## Current production boundary
+## Campaign lifecycle by chain
 
-The public production product currently keeps project onboarding and financial Arena activation separate.
+| Chain | Native bonding | Post-grad venue architecture | Native reward settlement |
+| --- | --- | --- | --- |
+| BNB | BNB | Topaz | BNB |
+| Solana | SOL | Meteora | SOL |
+| Robinhood | ETH | chain-local V3 | ETH |
 
-Existing projects can be imported and can build a public MemeWarzone project identity while Arena financial actions remain independently gated.
-
-That means an imported project can exist publicly without being approved for Battles, Tournaments, Major War League, Quarterly Championship, Boost payments, Arena claims, imported-token trading, or Graduation Market use.
+The chain remains explicit through campaign identity, trading, claims, Battles, Tournaments, Major War League, and Quarterly Championship.
 
 ## The battlefield
 
@@ -51,26 +85,25 @@ MemeWarzone connects several product layers:
 - native campaign launch and bonding
 - existing-token Import
 - discovery, community, and public project pages
+- Graduation Market selection
 - graduation into permanent market venues
 - War Trade Room market continuity
 - Recruiter, Squad, Airdrop, League, and Claim systems
 - post-graduation Arena competition
-- Tournaments, Vote Tournaments, Major War League, and Quarterly Championship
+- Tournaments and Vote Tournaments
+- Final Salvo
+- Major War League and Quarterly Championship
 - sponsorship and recurring community visibility
 
 The goal is not a one-time launch. The goal is to keep projects, communities, and attention active after launch day.
 
-## Supported chains
+## Product support versus operational activation
 
-The strategic first-class chains are:
+A chain can be fully integrated into the product while a particular financial rail is temporarily enabled, paused, or held behind chain-specific operational gates.
 
-- **BNB Chain**
-- **Solana**
-- **Robinhood Chain**
+Creation, graduation, claims, Arena, quote assets, and canary access can be controlled independently without removing the chain from MemeWarzone's supported product model.
 
-Activation is independent by chain and by subsystem. BNB and Solana are the current public launch/import networks. Robinhood remains part of the product architecture, with production creation gated until its staging and canary requirements pass.
-
-Use **[Chain Readiness](/platform/chain-readiness)** for the current public status and chain boundaries.
+Read **[Chain Readiness](/platform/chain-readiness)** and **[Robinhood Operations](/platform/robinhood-operations)** for the three-chain architecture.
 
 ## Who uses MemeWarzone
 
@@ -87,7 +120,7 @@ Use **[Chain Readiness](/platform/chain-readiness)** for the current public stat
 
 Native campaigns use lifecycle states such as **DRAFT**, **PRE**, and **POST**.
 
-Imported projects are different. **IMPORTED** describes how the project entered MemeWarzone, while **OWNER VERIFIED** describes project-page control. Neither label means the token was launched by MemeWarzone or approved for Arena competition.
+Imported projects are different. **IMPORTED** describes how the project entered MemeWarzone, while **OWNER VERIFIED** describes project-page control. Neither label means the token was launched by MemeWarzone or automatically approved for Arena competition.
 
 Always verify the chain, state, wallet, and action before signing a transaction.
 
@@ -95,6 +128,6 @@ Always verify the chain, state, wallet, and action before signing a transaction.
 
 Read **[How MemeWarzone Works](/how-memewarzone-works)** for the ecosystem flow.
 
-Use **[Getting Started](/getting-started)** for creator, trader, recruiter, and squad paths.
+Use **[Getting Started](/getting-started)** for native launch, Import, trader, recruiter, and squad paths.
 
-Use **[Arena Overview](/arena)** for the documented post-graduation Warzone and its current activation boundary.
+Use **[Arena Overview](/arena)** for the post-graduation Warzone.
