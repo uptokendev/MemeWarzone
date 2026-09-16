@@ -36,6 +36,8 @@ interface IRobinhoodV3PositionManager {
         external
         payable
         returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
+
+    function safeTransferFrom(address from, address to, uint256 tokenId) external;
 }
 
 interface IRobinhoodWETH9 is IERC20 {
@@ -140,7 +142,7 @@ contract RobinhoodUniswapV3GraduationAdapter is ITopazRouter02 {
 
         IERC20(token0).forceApprove(positionManager, amount0Desired);
         IERC20(token1).forceApprove(positionManager, amount1Desired);
-        (, uint128 mintedLiquidity, uint256 amount0, uint256 amount1) = manager.mint(
+        (uint256 tokenId, uint128 mintedLiquidity, uint256 amount0, uint256 amount1) = manager.mint(
             IRobinhoodV3PositionManager.MintParams({
                 token0: token0,
                 token1: token1,
@@ -151,13 +153,19 @@ contract RobinhoodUniswapV3GraduationAdapter is ITopazRouter02 {
                 amount1Desired: amount1Desired,
                 amount0Min: amount0Min,
                 amount1Min: amount1Min,
-                recipient: to,
+                recipient: address(this),
                 deadline: deadline
             })
         );
         IERC20(token0).forceApprove(positionManager, 0);
         IERC20(token1).forceApprove(positionManager, 0);
         if (mintedLiquidity == 0 || amount0 == 0 || amount1 == 0) revert ZeroLiquidity();
+
+        // NonfungiblePositionManager.mint uses ERC721 _mint, not _safeMint, so minting directly
+        // to the locker would never invoke onERC721Received and the locker could not record the
+        // pending position before LaunchFactory registration. Mint to this authorized adapter,
+        // then safe-transfer into the locker so its receiver hook proves and records the NFT.
+        manager.safeTransferFrom(address(this), to, tokenId);
 
         amountToken = tokenIs0 ? amount0 : amount1;
         amountETH = tokenIs0 ? amount1 : amount0;
