@@ -267,7 +267,10 @@ async function voteTournamentRuntime(pool, money) {
   const gross = bigint(money.voteTournament.boostSplit.gross);
   const prize = bigint(money.voteTournament.boostSplit.prize);
   const protocol = bigint(money.voteTournament.boostSplit.protocol);
-  assert(prize === gross * 9000n / 10000n && protocol === gross * 1000n / 10000n, 'Vote Boost is not 90/10');
+  const expectedProtocol = gross * 1000n / 10000n;
+  const expectedPrize = gross - expectedProtocol;
+  assert(prize === expectedPrize && protocol === expectedProtocol, 'Vote Boost is not 90/10');
+  assert(prize + protocol === gross, 'Vote Boost does not conserve gross');
   assert(Boolean(money.voteTournament.boostReplayRejected), 'Vote Boost replay was not rejected');
 
   const regulation = {
