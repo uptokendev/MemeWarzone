@@ -216,7 +216,8 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
     {
         address manager_ = positionManager;
         if (manager_ == address(0) || msg.sender != manager_) revert InvalidPositionManager();
-        if (!authorizedIntegrationSource[operator] || from != address(0)) revert InvalidPositionSender();
+        if (!authorizedIntegrationSource[operator]) revert InvalidPositionSender();
+        if (from != address(0) && from != operator) revert InvalidPositionSender();
 
         (address token0_, address token1_, uint24 fee_, uint128 liquidity_) = _positionCore(tokenId);
         if (fee_ != configuredFeeTier) revert InvalidFeeTier();
