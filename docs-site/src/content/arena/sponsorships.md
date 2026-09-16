@@ -1,40 +1,68 @@
 ---
-title: Sponsorship Application
-description: How the public sponsorship intake page works for featured placements and rail scheduling.
+title: Sponsorships
+description: Event Sponsorship rules, allocation, public attribution, and the distinction between competition sponsorship and ordinary featured placement.
 ---
 
-The sponsorship application is the intake route for featured placement requests.
+MemeWarzone has different kinds of paid visibility. **Event Sponsorship** is the competition funding rail documented here; it should not be confused with a normal featured placement or advertising slot.
 
-Projects use this page when they want to request a sponsored slot, a featured rail position, or another paid visibility placement inside the platform.
+> **Production note:** public Arena sponsorship display is subject to Arena/event activation and an authoritative active sponsorship record.
 
-## What to prepare before you apply
+## Event Sponsorship allocation
 
-Have these items ready before you open the form:
+Current Event Sponsorship uses:
 
-- project name
-- contact channel
-- website
-- short public bio
-- creative asset
-- preferred slot or package
-- preferred dates
-- payment reference if requested
+- **70% Event Prize**
+- **20% Marketing**
+- **10% Protocol**
 
-## What happens after submission
+This allocation is specific to Event Sponsorship. Do not reuse Battle entry or Boost percentages for sponsorship accounting.
 
-A submitted form starts a review.
-It does not reserve the slot by itself.
+## Eligible event presentation
 
-The normal flow is:
+Current presentation authority allows:
 
-1. send the request
-2. review the project and creative
-3. confirm placement timing
-4. confirm payment handling
-5. publish the placement after approval
+- Normal Tournament — **Sponsored by PROJECT**
+- Vote Tournament — **Sponsored by PROJECT**
+- Monthly Major War League — **Sponsored by PROJECT**
+- Quarterly Championship — **Presented by PROJECT**
 
-## Good practice
+Individual Normal Battle sponsorship is not part of the current launch authority.
 
-Make sure the bio, logo, and dates are final before you submit. Clean input speeds up review and reduces rework.
+## Public attribution requirements
 
-Read: **[Arena Overview](/arena)**.
+A project name or sponsor mark should appear on an event only when the sponsorship is authoritative for that exact event.
+
+Public display requires, at minimum:
+
+- active sponsorship state
+- confirmed payment
+- approved sponsor profile
+- correct event identity
+- correct chain
+- valid event window
+
+A submitted form, draft agreement, or unpaid request is not enough to create public sponsor attribution.
+
+## Sponsorship does not equal endorsement
+
+Sponsorship is paid event participation/visibility. It does not mean MemeWarzone guarantees the token, project, financial performance, or safety.
+
+Users should still verify chain, project identity, and token details independently.
+
+## Ordinary featured placements
+
+The platform can also have featured rails or visibility placements outside Event Sponsorship.
+
+Those placements are a separate commercial surface. They do not automatically fund an Arena prize, create competition eligibility, or inherit the 70/20/10 Event Sponsorship allocation.
+
+## Chain identity
+
+Event Sponsorship must remain bound to the event's real chain identity. A payment or sponsorship record for one chain/event cannot be silently reused for another.
+
+## Imported projects
+
+Importing and owner-verifying a project does not automatically activate sponsorship rights or Arena eligibility.
+
+An imported project may build its public page and community while the Warzone remains locked.
+
+Read **[Import an Existing Token](/import)**, **[Events and Tournaments](/arena/events)**, and **[Quarterly Championship](/arena/quarterly-championship)**.
