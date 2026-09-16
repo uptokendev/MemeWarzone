@@ -1,0 +1,65 @@
+name: RH46630 V3 locker handoff fix validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths: ['.github/workflows/rh46630-v3-locker-fix-validation.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  validate-product-fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      EXPECTED_MAIN_BASE_SHA: cf393e94bc442ca15e0002de5b18d4070c55dd76
+      EXPECTED_INTEGRATION_SHA: 8944382619e05f09539614f5690b98521fe244ed
+      EXPECTED_FIX_SHA: c686def40a0ff6f47b1c998d2b27f7cacb95153d
+    steps:
+      - name: Checkout validation PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Prove validator is one-file only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ github.event.pull_request.base.sha }}" = "$EXPECTED_MAIN_BASE_SHA"
+          git diff --name-only "${{ github.event.pull_request.base.sha }}...${{ github.event.pull_request.head.sha }}" | sort > /tmp/actual
+          printf '%s\n' '.github/workflows/rh46630-v3-locker-fix-validation.yml' > /tmp/expected
+          diff -u /tmp/expected /tmp/actual
+      - name: Checkout exact RH product fix
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.EXPECTED_FIX_SHA }}
+          fetch-depth: 0
+      - name: Prove exact narrow source delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_FIX_SHA"
+          test "$(git merge-base "$EXPECTED_INTEGRATION_SHA" HEAD)" = "$EXPECTED_INTEGRATION_SHA"
+          git diff --name-only "$EXPECTED_INTEGRATION_SHA...$EXPECTED_FIX_SHA" | sort > /tmp/actual
+          printf '%s\n' \
+            'contracts/PermanentV3PositionLocker.sol' \
+            'contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol' | sort > /tmp/expected
+          diff -u /tmp/expected /tmp/actual
+          git diff --exit-code "$EXPECTED_INTEGRATION_SHA" "$EXPECTED_FIX_SHA" -- contracts/LaunchCampaign.sol contracts/LaunchFactory.sol contracts/GraduationOracle.sol contracts/TreasuryRouterV3.sol programs/memewarzone_solana/
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Compile exact fix
+        run: npx hardhat compile
+      - name: Source regression assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'recipient: address(this)' contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol
+          grep -F 'manager.safeTransferFrom(address(this), to, tokenId);' contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol
+          grep -F 'if (!authorizedIntegrationSource[operator]) revert InvalidPositionSender();' contracts/PermanentV3PositionLocker.sol
+          grep -F 'if (from != address(0) && from != operator) revert InvalidPositionSender();' contracts/PermanentV3PositionLocker.sol
+          ! grep -F 'recipient: to' contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol
