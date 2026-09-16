@@ -1,30 +1,29 @@
 ---
 title: Import an Existing Token
-description: Register an existing BNB or Solana token with MemeWarzone, prove project ownership, and build a public project page without relaunching the token.
+description: Register an existing BNB, Solana, or Robinhood token with MemeWarzone, prove project ownership, and build a public project page without relaunching the token.
 ---
 
 MemeWarzone has two entry paths: **launch a new campaign** or **import a token that already exists**.
 
 Import does not create a second ticker, deploy a new token, move liquidity, or turn an external token into a MemeWarzone launch. It creates a MemeWarzone project identity around the token you already have.
 
-## Current availability
+## Supported chains
 
-The public Import flow currently supports:
+The Import system is built for all three first-class MemeWarzone chains:
 
-- **BNB** existing-token registration
-- **Solana** existing-token registration
+- **BNB Chain**
+- **Solana**
+- **Robinhood Chain**
 
-Robinhood import is implemented behind its own disabled-by-default switch and is not a public production promise until it is explicitly enabled.
-
-Import is independent from Arena activation. A project can be imported while Battles, Tournaments, Major War League, Quarterly, Boost payments, Arena claims, and imported-token trading remain disabled.
+Robinhood Import uses the EVM ownership model just like BNB at the product layer, while keeping its chain identity, RPC, token address, and ownership evidence separate. Import does not depend on Robinhood launch, bonding, graduation, V3 trading, claims, or Arena activation.
 
 ## Import flow
 
 1. Open **Import your memecoin**.
 2. Connect the wallet that controls the project where possible.
-3. Choose the token chain.
+3. Choose **BNB, Solana, or Robinhood**.
 4. Enter the contract address or mint.
-5. MemeWarzone resolves the token identity from the selected chain.
+5. MemeWarzone resolves the token identity on that chain.
 6. Prove project ownership automatically when an authoritative owner is exposed, or request manual review when automatic verification is unavailable.
 7. Add the public project image, description, website, X, Telegram, and other supported profile details.
 8. Publish and share the MemeWarzone project page.
@@ -37,9 +36,11 @@ Ownership verification answers one question:
 
 It does **not** certify the token as safe and it does **not** approve the token for Arena competition.
 
-### BNB and EVM ownership
+### BNB and Robinhood ownership
 
-When the contract exposes a current owner through a supported ownership method, the connected wallet must match that current authority and complete the signed wallet-action flow.
+BNB and Robinhood use the EVM ownership path.
+
+Where the token exposes current ownership through a supported method such as `owner()` or `getOwner()`, the connected wallet must match that current authority and complete the signed wallet-action flow.
 
 MemeWarzone does not trust a wallet address typed into a form, and a historical deployer is not treated as the current owner by itself.
 
@@ -55,15 +56,13 @@ Some tokens are renounced, use authority models that cannot be verified automati
 
 Those projects can request a manual ownership review. A manual review request stays separate from Arena approval and cannot self-approve the project.
 
-Projects waiting for manual ownership review remain hidden until the ownership review is approved under the current public import flow.
-
 ## Imported project page
 
 An imported project page can show:
 
 - project image
 - name and ticker
-- chain
+- BNB, Solana, or Robinhood chain identity
 - contract address or mint
 - description
 - website
@@ -73,30 +72,26 @@ An imported project page can show:
 - owner-only profile editing where enabled
 - sharing and community onboarding surfaces
 
+## Import is not a launch
+
+Import and native launch are deliberately separate.
+
+An imported project does not automatically receive MemeWarzone launch economics, bonding, graduation, a Graduation Market, or post-graduation liquidity simply because the project page exists.
+
+The project may later enter Warzone systems only through the separate eligibility and activation rules for those systems.
+
 ## Warzone access is separate
 
-An imported token does not automatically receive financial or competitive access.
+Project ownership authority and Arena competition authority are different state machines.
 
-Until Arena activation and token-specific eligibility are separately approved, the imported project remains financially inert and displays **WARZONE ACCESS LOCKED**.
+**OWNER VERIFIED** means the project page controller has been verified. It does not mean:
 
-That means Import alone does not enable:
+- launched by MemeWarzone
+- audited or risk-free
+- approved as a Graduation Market asset
+- approved for Battle or Tournament entry
+- financially endorsed by MemeWarzone
 
-- buy or sell actions
-- bonding or graduation
-- MemeWarzone creator economics
-- UpVote payments
-- Battles or AUTO DEPLOY
-- Tournaments or Vote Tournaments
-- Major War League or Quarterly Championship
-- Boost payments
-- Arena claims
-- Graduation Market eligibility
-- competition eligibility
+Where Arena access is not active for an imported project, the page remains financially inert and can show **WARZONE ACCESS LOCKED**.
 
-## What OWNER VERIFIED means
-
-**OWNER VERIFIED** means MemeWarzone has verified control of the project page through the current ownership process.
-
-It does not mean the token was launched by MemeWarzone, has been audited, is risk-free, has been approved for a Graduation Market, or has been admitted to Arena competition.
-
-Read **[Arena Overview](/arena)** to understand the competitive layer and **[Campaign System](/platform/campaign-lifecycle)** if you want to launch a new MemeWarzone campaign instead.
+Read **[Chain Readiness](/platform/chain-readiness)** for the three-chain model, **[Arena Overview](/arena)** for competition, and **[Campaign System](/platform/campaign-lifecycle)** if you want to launch a new MemeWarzone campaign instead.
