@@ -5,6 +5,7 @@ on:
     branches:
       - 'hotfix/solana-*'
       - 'agent/solana-*'
+      - 'agent2/solana-approved-quote-expansion'
   pull_request:
     branches:
       - main
@@ -17,6 +18,7 @@ on:
       - tests/solana/gate-k-meteora.cjs
       - config/solana/meteora-cp-amm.certification.json
       - scripts/solana/fetch-pinned-meteora-cp-amm.mjs
+      - scripts/solana/repair-gate-k-auth-fixture.cjs
       - frontend/src/lib/solanaV4CreateSubmit.ts
       - frontend/src/lib/solanaTradeV1.ts
       - frontend/src/lib/solanaLaunchpadInstructions.ts
@@ -79,6 +81,7 @@ jobs:
           git diff --check HEAD^ HEAD
           node --check scripts/solana/upgrade-mainnet-launchpad.cjs
           node --check frontend/api/dev-fix/solana-trade-authorization-v1.js
+          node --check scripts/solana/repair-gate-k-auth-fixture.cjs
           node --test frontend/api/dev-fix/solana-trade-preflight-final.test.mjs
           node --test tests/solana/graduate-operator-accounts.test.mjs
           node --test tests/solana/fee-escrow-lease.pg.test.mjs
@@ -176,7 +179,6 @@ jobs:
           rebuild_dir="$RUNNER_TEMP/mwz-sbf-rebuild-isolated"
           rm -rf "$rebuild_dir"
           mkdir -p "$rebuild_dir"
-          # Isolated cargo target so this cannot be a hit on the first build's target/deploy.
           CARGO_TARGET_DIR="$rebuild_dir" \
             anchor build --program-name memewarzone_solana --no-idl \
             2>&1 | tee /tmp/mwz-anchor-rebuild.log | tail -n 80
@@ -237,6 +239,16 @@ jobs:
 
       - name: Install acceptance dependencies
         run: npm install --prefix tests/solana --no-audit --no-fund
+
+      - name: Repair Gate K authorization fixture to current schema
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/solana/repair-gate-k-auth-fixture.cjs
+          node --check tests/solana/v4-lifecycle-acceptance.cjs
+          grep -q 'const GRADUATION_AUTH_SCHEMA_VERSION = 4;' tests/solana/v4-lifecycle-acceptance.cjs
+          grep -q 'generationConfig.toBuffer()' tests/solana/v4-lifecycle-acceptance.cjs
+          grep -q 'quoteConfigId: fixed32(NATIVE_QUOTE_CONFIG_ID)' tests/solana/v4-lifecycle-acceptance.cjs
 
       - name: Pin and fetch Meteora DAMM v2 binary
         shell: bash
