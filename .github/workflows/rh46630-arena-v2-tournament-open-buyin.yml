@@ -1,0 +1,65 @@
+name: RH46630 Arena V2 tournament open+buy-in
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type OPEN_BUYIN_CHAIN_46630_ARENA_V2
+        required: true
+        type: string
+      source_sha:
+        description: Exact integration SHA with the tournament runner
+        required: true
+        default: 7c0a428c3f1208cf45135e85c72f7ee2db1a93a8
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  open-buyin:
+    if: ${{ github.event.inputs.confirmation == 'OPEN_BUYIN_CHAIN_46630_ARENA_V2' }}
+    runs-on: ubuntu-latest
+    environment: testnet-certification
+    env:
+      EXPECTED_SOURCE_SHA: 7c0a428c3f1208cf45135e85c72f7ee2db1a93a8
+      ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL }}
+      ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY }}
+      ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY }}
+    steps:
+      - name: Reject wrong confirmation or SHA
+        run: |
+          set -euo pipefail
+          test "${{ github.event.inputs.confirmation }}" = 'OPEN_BUYIN_CHAIN_46630_ARENA_V2'
+          test "${{ github.event.inputs.source_sha }}" = "$EXPECTED_SOURCE_SHA"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.source_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node --test scripts/t2-tournament-open-buyin-evm-real.test.mjs
+      - name: Live open + buy-in + setLive
+        env:
+          T2_TOURNAMENT_OPEN_LIVE: '1'
+          T2_CHAIN_ID: '46630'
+          T2_TOURNAMENT_ID: rh46630-t2-${{ github.run_id }}
+          T2_BUY_IN_WEI: '1000000000000000'
+        run: |
+          set -euo pipefail
+          test -n "${ROBINHOOD_TESTNET_RPC_URL:-}"
+          test -n "${ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY:-}"
+          test -n "${ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY:-}"
+          export T2_TOURNAMENT_CREATOR_PRIVATE_KEY="$ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY"
+          export T2_TOURNAMENT_BUYER_PRIVATE_KEY="$ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY"
+          mkdir -p reports
+          node scripts/t2-tournament-open-buyin-evm-real.mjs | tee reports/rh46630-arena-v2-tournament-open-buyin.json
+          test -s reports/rh46630-arena-v2-tournament-open-buyin.json
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rh46630-arena-v2-tournament-open-buyin
+          path: reports/rh46630-arena-v2-tournament-open-buyin.json
+          if-no-files-found: warn
