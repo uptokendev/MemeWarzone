@@ -404,28 +404,29 @@ async function upsertCampaign(
     ]
   );
 
-  if (!existed.rowCount) {
+  const isNew = !existed.rowCount;
+  if (isNew) {
     try {
       await recordCampaignCreatedActivity(creator, createdAtChain ?? new Date());
     } catch (e) {
       console.warn("[phase2-attribution] campaign activity mark failed", { chainId, campaign: normalizedCampaign, creator }, e);
     }
+    await notifyCampaignCreated(pool, {
+      chainId,
+      campaignAddress: normalizedCampaign,
+      name,
+      ticker: symbol,
+      imageUrl: logoURI,
+      creatorWallet: creator,
+    });
   }
-
-  await notifyCampaignCreated(pool, {
-    chainId,
-    campaignAddress: normalizedCampaign,
-    name,
-    ticker: symbol,
-    imageUrl: logoURI,
-    creatorWallet: creator,
-  });
 
   cacheCampaignInfo(chainId, campaign, {
     tokenAddress: token ? token.toLowerCase() : null,
     name: name || null,
     symbol: symbol || null,
   });
+  return isNew;
 }
 
 async function setCampaignGraduated(
@@ -973,7 +974,7 @@ async function scanFactoryRange(
       const name = String((parsed.args as any).name);
       const symbol = String((parsed.args as any).symbol);
       const blockTime = blockTimes.get(log.blockNumber) || null;
-      await upsertCampaign(
+      const created = await upsertCampaign(
         chain.chainId,
         chain.factoryAddress ?? null,
         campaign,
@@ -987,24 +988,25 @@ async function scanFactoryRange(
       );
 
       // Realtime: announce newly created campaigns so Home "New" can insert instantly.
-      // Keep payload minimal; UI can hydrate logoURI from chain later.
-      try {
-        await publishLeague(chain.chainId, "campaign_created", {
-          type: "campaign_created",
-          chainId: chain.chainId,
-          ts: Math.floor(Date.now() / 1000),
-          item: {
-            campaignAddress: String(campaign).toLowerCase(),
-            tokenAddress: String(token).toLowerCase(),
-            creatorAddress: String(creator).toLowerCase(),
-            name,
-            symbol,
-            createdAtChain: blockTime ? blockTime.toISOString() : null,
-            blockNumber: log.blockNumber,
-          },
-        });
-      } catch {
-        // best-effort
+      if (created) {
+        try {
+          await publishLeague(chain.chainId, "campaign_created", {
+            type: "campaign_created",
+            chainId: chain.chainId,
+            ts: Math.floor(Date.now() / 1000),
+            item: {
+              campaignAddress: String(campaign).toLowerCase(),
+              tokenAddress: String(token).toLowerCase(),
+              creatorAddress: String(creator).toLowerCase(),
+              name,
+              symbol,
+              createdAtChain: blockTime ? blockTime.toISOString() : null,
+              blockNumber: log.blockNumber,
+            },
+          });
+        } catch {
+          // best-effort
+        }
       }
 
       if (log.transactionHash) {

@@ -172,6 +172,10 @@ async function upsertCampaign(input: {
   createdBlock?: number;
   createdAt?: Date | null;
 }): Promise<void> {
+  const existed = await pool.query(
+    `select 1 from public.campaigns where chain_id=$1 and campaign_address=$2 limit 1`,
+    [input.factory.chainId, input.campaign.toLowerCase()],
+  );
   await pool.query(
     `insert into public.campaigns(
        chain_id,factory_address,campaign_address,token_address,creator_address,
@@ -210,14 +214,16 @@ async function upsertCampaign(input: {
       input.createdAt || null,
     ],
   );
-  await notifyCampaignCreated(pool, {
-    chainId: input.factory.chainId,
-    campaignAddress: input.campaign,
-    name: input.name,
-    ticker: input.symbol,
-    imageUrl: input.logoURI,
-    creatorWallet: input.creator,
-  });
+  if (!existed.rowCount) {
+    await notifyCampaignCreated(pool, {
+      chainId: input.factory.chainId,
+      campaignAddress: input.campaign,
+      name: input.name,
+      ticker: input.symbol,
+      imageUrl: input.logoURI,
+      creatorWallet: input.creator,
+    });
+  }
 }
 
 async function syncRegistry(provider: ethers.JsonRpcProvider, factory: SupportedFactory): Promise<void> {

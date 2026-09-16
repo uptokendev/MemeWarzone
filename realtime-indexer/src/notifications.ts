@@ -38,12 +38,12 @@ export async function emitNotification(
       }
     }
 
-    await db.query(
+    const inserted = await db.query(
       `INSERT INTO public.notification_outbox (event_type, chain, dedup_key, payload)
-       VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT DO NOTHING`,
+       VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT DO NOTHING RETURNING id`,
       [envelope.eventType, envelope.chain, envelope.dedupKey, JSON.stringify(envelope)]
     );
-    return true;
+    return (inserted.rowCount || 0) > 0;
   } catch (err) {
     console.error("[realtime-indexer/notifications] emitNotification error:", err);
     throw err;

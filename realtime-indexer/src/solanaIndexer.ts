@@ -844,6 +844,11 @@ function decodeEvents(logMessages: string[] | null | undefined): AnchorEvent[] {
 }
 
 async function upsertCampaign(event: CampaignCreatedEvent, slot: number, blockTime: Date, signature: string, logIndex: number) {
+  const existed = await sql(
+    `select 1 from public.campaigns where chain_id=$1 and campaign_address=$2 limit 1`,
+    [SOLANA_CHAIN_ID, event.campaign],
+  );
+  const isNew = !existed.rowCount;
   await sql(
     `insert into public.campaigns(
        chain_id,factory_address,campaign_address,token_address,creator_address,name,symbol,created_block,created_at_chain,is_active,meta
@@ -877,13 +882,15 @@ async function upsertCampaign(event: CampaignCreatedEvent, slot: number, blockTi
     ],
   );
 
-  await notifyCampaignCreated(pool, {
-    chainId: SOLANA_CHAIN_ID,
-    campaignAddress: event.campaign,
-    name: "Solana Launch",
-    ticker: "SOL",
-    creatorWallet: event.creator,
-  });
+  if (isNew) {
+    await notifyCampaignCreated(pool, {
+      chainId: SOLANA_CHAIN_ID,
+      campaignAddress: event.campaign,
+      name: "Solana Launch",
+      ticker: "SOL",
+      creatorWallet: event.creator,
+    });
+  }
 
   await insertActivityEvent({
     eventType: "CREATE_CAMPAIGN",
@@ -897,8 +904,8 @@ async function upsertCampaign(event: CampaignCreatedEvent, slot: number, blockTi
     meta: { tokenVault: event.tokenVault, solVault: event.solVault },
   });
 
-  // Fire-and-forget: tip lane must not wait on Ably.
-  if (!isDerivedFanoutSuppressed()) {
+  // Fire-and-forget: tip lane must not wait on Ably. Only first insert, or Discord repeats.
+  if (isNew && !isDerivedFanoutSuppressed()) {
     void publishLeague(
       SOLANA_CHAIN_ID,
       "campaign_created",
