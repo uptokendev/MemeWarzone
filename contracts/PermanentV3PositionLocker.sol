@@ -216,7 +216,11 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
     {
         address manager_ = positionManager;
         if (manager_ == address(0) || msg.sender != manager_) revert InvalidPositionManager();
-        if (!authorizedIntegrationSource[operator] || from != address(0)) revert InvalidPositionSender();
+        if (!authorizedIntegrationSource[operator]) revert InvalidPositionSender();
+        // The canonical V3 manager mints with _mint rather than _safeMint. The graduation adapter
+        // therefore mints to itself and safe-transfers the NFT into this locker. Accept either the
+        // original safe-mint shape (from == 0) or that strictly bound adapter self-transfer shape.
+        if (from != address(0) && from != operator) revert InvalidPositionSender();
 
         (address token0_, address token1_, uint24 fee_, uint128 liquidity_) = _positionCore(tokenId);
         if (fee_ != configuredFeeTier) revert InvalidFeeTier();
@@ -306,7 +310,7 @@ contract PermanentV3PositionLocker is IERC721Receiver, ReentrancyGuard {
         address old = creatorPayoutRecipient[msg.sender];
         if (old == address(0)) revert OnlyCreator();
         creatorPayoutRecipient[msg.sender] = newRecipient;
-        emit CreatorPayoutRecipientUpdated(msg.sender, old, newRecipient);
+        emit CreatorPayoutRecipientUpdated(msg.sender, oldRecipient, newRecipient);
     }
 
     function harvest(address pool) external nonReentrant returns (uint256 collected0, uint256 collected1) {
