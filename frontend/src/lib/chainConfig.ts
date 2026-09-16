@@ -488,9 +488,13 @@ export function getArenaVoteTreasuryAddress(chainId: SupportedChainId): string {
 export function getArenaWarPoolTreasuryAddress(chainId: SupportedChainId): string {
   if (isSolanaChainId(chainId)) return "";
 
+  const v2 = (import.meta.env[`VITE_ARENA_WAR_POOL_TREASURY_V2_ADDRESS_${chainId}`] as string | undefined) ?? "";
+  if (v2.trim()) return v2.trim();
+
   const perChain = (import.meta.env[`VITE_ARENA_WAR_POOL_TREASURY_ADDRESS_${chainId}`] as string | undefined) ?? "";
   if (perChain.trim()) return perChain.trim();
 
+  // Backward-compat single var is BNB-only; never let it leak into Robinhood.
   if (chainId === BNB_CHAIN_ID || chainId === BNB_TESTNET_CHAIN_ID) {
     const fallback = (import.meta.env.VITE_ARENA_WAR_POOL_TREASURY_ADDRESS as string | undefined) ?? "";
     return fallback.trim();

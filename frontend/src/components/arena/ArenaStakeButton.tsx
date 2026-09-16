@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Contract } from "ethers";
+import { Contract, getAddress } from "ethers";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,8 @@ import { fetchArenaStakeStatus, postArenaStakeReceipt } from "@/features/postgra
 import { battleDurationLabel } from "@/lib/arena/battleDuration";
 import { isSolanaWarzoneChain, isSolanaWarzoneMoneyLive, SOLANA_WARZONE_ESCROW_NOT_LIVE } from "@/lib/arena/solanaWarzoneEscrow";
 import { signArenaWalletAction } from "@/lib/arena/signArenaWalletAction";
-import { getNativeSymbol } from "@/lib/chainConfig";
+import { getArenaWarPoolTreasuryAddress, getNativeSymbol, type SupportedChainId } from "@/lib/chainConfig";
+import { requestWalletChainSwitch } from "@/lib/launchpadReadiness";
 import { runSolanaArenaUserAction } from "@/lib/solanaArenaClient";
 import {
   arenaPoolIdFromHex,
@@ -47,6 +48,17 @@ type StakeStatus = {
   chainId?: number;
   onchainState?: number;
 };
+
+function configuredWarPoolTreasury(chainId: number): string {
+  const raw = String(getArenaWarPoolTreasuryAddress(chainId as SupportedChainId) || "").trim();
+  return /^0x[a-fA-F0-9]{40}$/.test(raw) ? getAddress(raw) : "";
+}
+
+function resolveEvmWarPoolTreasury(statusTreasury: string | undefined, chainId: number): string {
+  const backend = String(statusTreasury || "").trim();
+  if (/^0x[a-fA-F0-9]{40}$/.test(backend)) return getAddress(backend);
+  return configuredWarPoolTreasury(chainId);
+}
 
 export function ArenaStakeButton({
   battleId,
@@ -110,6 +122,13 @@ export function ArenaStakeButton({
     await refresh();
   }
 
+  async function ensureEvmBattleChain(targetChainId: number) {
+    if (!wallet.provider || !wallet.signer) throw new Error("Connect the owner wallet.");
+    if (Number(wallet.chainId) !== targetChainId) await requestWalletChainSwitch(wallet.provider, targetChainId as any);
+    const connectedChain = Number(BigInt(String(await wallet.provider.send("eth_chainId", []))));
+    if (connectedChain !== targetChainId) throw new Error(`Wallet did not switch to battle chain ${targetChainId}.`);
+  }
+
   async function openPool() {
     if (solanaChain) {
       setBusy("open");
@@ -146,15 +165,18 @@ export function ArenaStakeButton({
       }
       return;
     }
-    if (!wallet.signer) {
+    if (!wallet.signer || !wallet.provider) {
       toast.error("Connect the owner wallet.");
       return;
     }
     setBusy("open");
     try {
       const latest = (await refresh()) || status;
-      if (!latest?.treasury || !latest.poolId) throw new Error("War pool treasury is not deployed on this chain yet.");
-      const contract = new Contract(latest.treasury, latest.abi || [], wallet.signer);
+      const targetChainId = Number(latest?.chainId || id);
+      await ensureEvmBattleChain(targetChainId);
+      const treasury = resolveEvmWarPoolTreasury(latest?.treasury, targetChainId);
+      if (!treasury || !latest?.poolId) throw new Error("War pool treasury is not deployed on this chain yet.");
+      const contract = new Contract(treasury, latest.abi || [], wallet.signer);
       const value = BigInt(latest.stakeWei || "0");
       const tx = await contract.openBattlePool(
         latest.poolId,
@@ -202,18 +224,25 @@ export function ArenaStakeButton({
       }
       return;
     }
-    if (!wallet.signer) {
+    if (!wallet.signer || !wallet.provider) {
       toast.error("Connect the owner wallet to pay this stake.");
       return;
     }
     setBusy("pay");
     try {
       const latest = (await refresh()) || status;
-      if (!latest?.treasury || !latest.poolId || latest.nextMethod !== "depositStake") {
+      if (!latest?.poolId || latest.nextMethod !== "depositStake") {
         toast.error("The agreed pool must be open before anyone deposits.");
         return;
       }
-      const contract = new Contract(latest.treasury, latest.abi || [], wallet.signer);
+      const targetChainId = Number(latest.chainId || id);
+      await ensureEvmBattleChain(targetChainId);
+      const treasury = resolveEvmWarPoolTreasury(latest.treasury, targetChainId);
+      if (!treasury) {
+        toast.error("War pool treasury is not deployed on this chain yet.");
+        return;
+      }
+      const contract = new Contract(treasury, latest.abi || [], wallet.signer);
       const tx = await contract.depositStake(latest.poolId, { value: BigInt(latest.stakeWei || "0") });
       await tx.wait();
       await record(tx.hash);
@@ -255,15 +284,18 @@ export function ArenaStakeButton({
       }
       return;
     }
-    if (!wallet.signer) {
+    if (!wallet.signer || !wallet.provider) {
       toast.error("Connect the owner wallet to refund.");
       return;
     }
     setBusy("refund");
     try {
       const latest = (await refresh()) || status;
-      if (!latest?.treasury || !latest.poolId) throw new Error("Pool not found.");
-      const contract = new Contract(latest.treasury, latest.abi || [], wallet.signer);
+      const targetChainId = Number(latest?.chainId || id);
+      await ensureEvmBattleChain(targetChainId);
+      const treasury = resolveEvmWarPoolTreasury(latest?.treasury, targetChainId);
+      if (!treasury || !latest?.poolId) throw new Error("Pool not found.");
+      const contract = new Contract(treasury, latest.abi || [], wallet.signer);
       const tx = await contract.refundStake(latest.poolId);
       await tx.wait();
       toast.success("Stake refunded. The other owner never deposited in time.");
@@ -277,7 +309,7 @@ export function ArenaStakeButton({
 
   const minePaid = status.myRole === "a" ? status.paidA : status.myRole === "b" ? status.paidB : false;
   const length = battleDurationLabel(status.durationHours);
-  const symbol = status.nativeSymbol || getNativeSymbol(id);
+  const symbol = status.nativeSymbol || getNativeSymbol(Number(status.chainId || id));
 
   return (
     <div className="flex flex-wrap gap-2">

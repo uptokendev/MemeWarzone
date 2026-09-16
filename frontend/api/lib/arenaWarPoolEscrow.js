@@ -1,5 +1,13 @@
 import { ethers } from "ethers";
 
+import {
+  arenaWarPoolTreasuryV2Address,
+  arenaWarPoolTreasuryV2RuntimeHash,
+} from "./arenaTournamentBuyInV2.mjs";
+
+export const WAR_POOL_GENERATION_V1 = "war_pool_v1";
+export const WAR_POOL_GENERATION_V2 = "war_pool_v2";
+
 export const WAR_POOL_ABI = [
   "function openBattlePool(bytes32 poolId,address ownerA,address ownerB,uint96 stakeAmount,uint256 depositDeadline,uint256 resolveDeadline) payable",
   "function openTournamentPool(bytes32 poolId,uint96 buyInAmount,uint256 depositDeadline,uint256 resolveDeadline)",
@@ -14,22 +22,60 @@ export const WAR_POOL_ABI = [
   "function pools(bytes32) view returns (uint8 kind,uint8 state,address ownerA,address ownerB,uint96 stakeAmount,uint96 buyInAmount,uint256 stakeA,uint256 stakeB,uint256 buyInTotal,uint256 supportTotal,address winnerPayout,uint256 pendingWinner,uint256 pendingProtocol,uint256 pendingMwl,uint256 depositDeadline,uint256 resolveDeadline,bool claimedWinner,bool claimedProtocol,bool claimedMwl,bool refundedA,bool refundedB)",
 ];
 
-export function warPoolTreasuryAddress(chainId) {
+export const WAR_POOL_V2_ABI = [
+  "function GENERATION() view returns (uint256)",
+  "function openBattlePool(bytes32 poolId,address ownerA,address ownerB,uint96 stakeAmount,uint256 depositDeadline,uint256 resolveDeadline) payable",
+  "function openTournamentPool(bytes32 poolId,uint96 buyInAmount,uint256 depositDeadline,uint256 resolveDeadline)",
+  "function depositStake(bytes32 poolId) payable",
+  "function depositBuyIn(bytes32 poolId) payable",
+  "function resolve(bytes32 poolId,address winnerPayout,uint256 deadline,bytes signature)",
+  "function claimWinner(bytes32 poolId)",
+  "function claimProtocol(bytes32 poolId)",
+  "function claimLeague(bytes32 poolId)",
+  "function refundStake(bytes32 poolId)",
+  "function pools(bytes32) view returns (uint8 kind,uint8 state,address ownerA,address ownerB,uint96 stakeAmount,uint96 buyInAmount,uint256 stakeA,uint256 stakeB,uint256 buyInTotal,uint256 boostTotal,address winnerPayout,uint256 pendingWinner,uint256 pendingProtocol,uint256 pendingLeague,uint256 depositDeadline,uint256 resolveDeadline,bool claimedWinner,bool claimedProtocol,bool claimedLeague,bool refundedA,bool refundedB)",
+];
+
+function v1TreasuryAddress(chainId, env) {
   const id = Number(chainId);
   const perChain = String(
-    process.env[`ARENA_WAR_POOL_TREASURY_ADDRESS_${id}`] ||
-      process.env[`VITE_ARENA_WAR_POOL_TREASURY_ADDRESS_${id}`] ||
+    env[`ARENA_WAR_POOL_TREASURY_ADDRESS_${id}`] ||
+      env[`VITE_ARENA_WAR_POOL_TREASURY_ADDRESS_${id}`] ||
       "",
   ).trim();
   if (perChain) return perChain;
   if (id === 56 || id === 97) {
-    return String(
-      process.env.ARENA_WAR_POOL_TREASURY_ADDRESS ||
-        process.env.VITE_ARENA_WAR_POOL_TREASURY_ADDRESS ||
-        "",
-    ).trim();
+    return String(env.ARENA_WAR_POOL_TREASURY_ADDRESS || env.VITE_ARENA_WAR_POOL_TREASURY_ADDRESS || "").trim();
   }
   return "";
+}
+
+function resolveWarPoolTreasury(chainId, env = process.env) {
+  const id = Number(chainId);
+  // Robinhood production has no attested V2 Battle treasury and must never inherit BNB V1.
+  if (id === 4663) return { address: "", generation: "" };
+
+  const v2Raw = String(env[`ARENA_WAR_POOL_TREASURY_V2_ADDRESS_${id}`] || "").trim();
+  if (v2Raw) {
+    const address = arenaWarPoolTreasuryV2Address(id, env);
+    arenaWarPoolTreasuryV2RuntimeHash(id, env);
+    return { address, generation: WAR_POOL_GENERATION_V2 };
+  }
+
+  // Robinhood staging battles are V2-only. Missing V2 env fails closed instead of using V1/BNB.
+  if (id === 46630) return { address: "", generation: "" };
+
+  const v1 = v1TreasuryAddress(id, env);
+  if (v1) return { address: v1, generation: WAR_POOL_GENERATION_V1 };
+  return { address: "", generation: "" };
+}
+
+export function warPoolTreasuryAddress(chainId, env = process.env) {
+  return resolveWarPoolTreasury(chainId, env).address;
+}
+
+export function warPoolGeneration(chainId, env = process.env) {
+  return resolveWarPoolTreasury(chainId, env).generation;
 }
 
 export function battlePoolId(battleId) {
@@ -66,6 +112,41 @@ export async function signResolvePool({ treasuryAddress, chainId, poolId, winner
     stakeTotal,
     supportTotal,
     buyInTotal,
+    deadline,
+  });
+  return { signature, domain, types, resolver: wallet.address };
+}
+
+export function warPoolAbiForGeneration(generation) {
+  return generation === WAR_POOL_GENERATION_V2 ? WAR_POOL_V2_ABI : WAR_POOL_ABI;
+}
+
+export async function signResolvePoolV2({ treasuryAddress, chainId, poolId, winnerPayout, stakeTotal, buyInTotal, boostTotal, deadline }) {
+  const key = String(process.env.ARENA_WAR_POOL_RESOLVER_KEY || "").trim();
+  if (!key) return null;
+  const wallet = new ethers.Wallet(key.startsWith("0x") ? key : `0x${key}`);
+  const domain = {
+    name: "ArenaWarPoolTreasury",
+    version: "2",
+    chainId: Number(chainId),
+    verifyingContract: treasuryAddress,
+  };
+  const types = {
+    ResolvePoolV2: [
+      { name: "poolId", type: "bytes32" },
+      { name: "winnerPayout", type: "address" },
+      { name: "stakeTotal", type: "uint256" },
+      { name: "buyInTotal", type: "uint256" },
+      { name: "boostTotal", type: "uint256" },
+      { name: "deadline", type: "uint256" },
+    ],
+  };
+  const signature = await wallet.signTypedData(domain, types, {
+    poolId,
+    winnerPayout,
+    stakeTotal,
+    buyInTotal,
+    boostTotal,
     deadline,
   });
   return { signature, domain, types, resolver: wallet.address };

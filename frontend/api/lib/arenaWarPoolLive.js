@@ -1,20 +1,28 @@
 import { ethers } from "ethers";
 import { getServerReadProvider } from "./getServerReadProvider.js";
-import { WAR_POOL_ABI, battlePoolId, tournamentPoolId, warPoolTreasuryAddress } from "./arenaWarPoolEscrow.js";
-import { readEvmTournamentPoolV2 } from "./arenaTournamentBuyInV2.mjs";
+import {
+  WAR_POOL_ABI,
+  WAR_POOL_GENERATION_V2,
+  WAR_POOL_V2_ABI,
+  battlePoolId,
+  tournamentPoolId,
+  warPoolGeneration,
+  warPoolTreasuryAddress,
+} from "./arenaWarPoolEscrow.js";
+import { arenaWarPoolTreasuryV2RuntimeHash, readEvmTournamentPoolV2 } from "./arenaTournamentBuyInV2.mjs";
 import { isSolanaWarzoneChainId, probeCanonicalArenaLive, readSolanaArenaPool } from "./solanaArenaPoolRead.js";
 
-export function escrowRequired(chainId) {
+export function escrowRequired(chainId, env = process.env) {
   if (isSolanaWarzoneChainId(chainId)) return false;
-  return Boolean(warPoolTreasuryAddress(chainId));
+  return Boolean(warPoolTreasuryAddress(chainId, env));
 }
 
-export async function escrowRequiredAsync(chainId) {
+export async function escrowRequiredAsync(chainId, env = process.env) {
   if (isSolanaWarzoneChainId(chainId)) {
     const probe = await probeCanonicalArenaLive(chainId);
     return Boolean(probe.live);
   }
-  return Boolean(warPoolTreasuryAddress(chainId));
+  return Boolean(warPoolTreasuryAddress(chainId, env));
 }
 
 export function stakeToWei(amount) {
@@ -62,12 +70,26 @@ export async function readOnchainPool(chainId, subjectId, kind = "battle") {
 
   const treasury = warPoolTreasuryAddress(chainId);
   const poolId = battlePoolId(subjectId);
+  const generation = warPoolGeneration(chainId);
+  const abi = generation === WAR_POOL_GENERATION_V2 ? WAR_POOL_V2_ABI : WAR_POOL_ABI;
   if (!treasury) {
-    return { configured: false, treasury: "", poolId, opened: false, bothPaid: false };
+    return { configured: false, treasury: "", poolId, opened: false, bothPaid: false, poolGeneration: generation };
   }
   try {
     const provider = await getServerReadProvider(chainId);
-    const contract = new ethers.Contract(treasury, WAR_POOL_ABI, provider);
+    if (generation === WAR_POOL_GENERATION_V2) {
+      const code = await provider.getCode(treasury);
+      if (!code || code === "0x") throw new Error("ArenaWarPoolTreasuryV2 has no runtime bytecode");
+      const expectedRuntimeHash = arenaWarPoolTreasuryV2RuntimeHash(chainId);
+      const runtimeHash = ethers.keccak256(code).toLowerCase();
+      if (expectedRuntimeHash && runtimeHash !== expectedRuntimeHash) {
+        throw new Error("ArenaWarPoolTreasuryV2 runtime hash mismatch");
+      }
+    }
+    const contract = new ethers.Contract(treasury, abi, provider);
+    if (generation === WAR_POOL_GENERATION_V2 && BigInt(await contract.GENERATION()) !== 2n) {
+      throw new Error("ArenaWarPoolTreasuryV2 generation is not 2");
+    }
     const onchain = await contract.pools(poolId);
     const ownerA = String(onchain.ownerA || "");
     const opened = Boolean(ownerA && ownerA !== ethers.ZeroAddress);
@@ -80,7 +102,8 @@ export async function readOnchainPool(chainId, subjectId, kind = "battle") {
       configured: true,
       treasury,
       poolId,
-      abi: WAR_POOL_ABI,
+      abi,
+      poolGeneration: generation,
       opened,
       ownerA: opened ? ownerA : "",
       ownerB: opened ? String(onchain.ownerB || "") : "",
@@ -101,7 +124,8 @@ export async function readOnchainPool(chainId, subjectId, kind = "battle") {
       configured: true,
       treasury,
       poolId,
-      abi: WAR_POOL_ABI,
+      abi,
+      poolGeneration: generation,
       opened: false,
       bothPaid: false,
       paidA: false,

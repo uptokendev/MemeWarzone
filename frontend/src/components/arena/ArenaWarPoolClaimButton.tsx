@@ -1,15 +1,27 @@
 import { useState } from "react";
-import { Contract } from "ethers";
+import { Contract, getAddress } from "ethers";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { useWallet } from "@/contexts/WalletContext";
 import { apiFetch } from "@/lib/apiBase";
-import { getArenaWarPoolTreasuryAddress, type SupportedChainId } from "@/lib/chainConfig";
 import { isSolanaWarzoneChain, isSolanaWarzoneMoneyLive, SOLANA_WARZONE_ESCROW_NOT_LIVE } from "@/lib/arena/solanaWarzoneEscrow";
+import { getArenaWarPoolTreasuryAddress, getNativeSymbol, type SupportedChainId } from "@/lib/chainConfig";
+import { requestWalletChainSwitch } from "@/lib/launchpadReadiness";
 import { runSolanaArenaUserAction } from "@/lib/solanaArenaClient";
 import { arenaPoolIdFromHex, buildArenaWinnerClaimV0Instruction } from "@/lib/solanaArenaV0";
+
+function configuredWarPoolTreasury(chainId: number): string {
+  const raw = String(getArenaWarPoolTreasuryAddress(chainId as SupportedChainId) || "").trim();
+  return /^0x[a-fA-F0-9]{40}$/.test(raw) ? getAddress(raw) : "";
+}
+
+function resolveEvmWarPoolTreasury(statusTreasury: string | undefined, chainId: number): string {
+  const backend = String(statusTreasury || "").trim();
+  if (/^0x[a-fA-F0-9]{40}$/.test(backend)) return getAddress(backend);
+  return configuredWarPoolTreasury(chainId);
+}
 
 export function ArenaWarPoolClaimButton({
   battleId,
@@ -25,8 +37,9 @@ export function ArenaWarPoolClaimButton({
   const [busy, setBusy] = useState(false);
   const id = Number(chainId || wallet.chainId || 56);
   const solanaChain = isSolanaWarzoneChain(id);
+  const symbol = getNativeSymbol(id);
 
-  if (!solanaChain && !getArenaWarPoolTreasuryAddress(id as SupportedChainId)) return null;
+  if (!solanaChain && !configuredWarPoolTreasury(id)) return null;
 
   async function claim() {
     setBusy(true);
@@ -59,11 +72,18 @@ export function ArenaWarPoolClaimButton({
         return;
       }
 
-      if (!wallet.signer) {
+      if (!wallet.signer || !wallet.provider) {
         toast.error("Connect the winning campaign owner wallet.");
         return;
       }
-      const contract = new Contract(json.treasury, json.abi, wallet.signer);
+      const targetChainId = Number(json.chainId || id);
+      if (Number(wallet.chainId) !== targetChainId) await requestWalletChainSwitch(wallet.provider, targetChainId as any);
+      const connectedChain = Number(BigInt(String(await wallet.provider.send("eth_chainId", []))));
+      if (connectedChain !== targetChainId) throw new Error(`Wallet did not switch to battle chain ${targetChainId}.`);
+      const treasury = resolveEvmWarPoolTreasury(json.treasury, targetChainId);
+      const abi = Array.isArray(json.abi) && json.abi.length ? json.abi : [];
+      if (!treasury || !abi.length) throw new Error("Arena war pool treasury is not deployed on this chain.");
+      const contract = new Contract(treasury, abi, wallet.signer);
       const onchain = await contract.pools(json.poolId);
       if (Number(onchain.state) !== 2) {
         const tx = await contract.resolve(json.poolId, json.resolve.winnerPayout, json.resolve.deadline, json.resolve.signature);
@@ -81,7 +101,7 @@ export function ArenaWarPoolClaimButton({
 
   return (
     <Button className="font-retro" disabled={busy} onClick={() => void claim()}>
-      {busy ? "Claiming..." : label || "Claim battle rewards"}
+      {busy ? "Claiming..." : label || `Claim ${symbol} battle rewards`}
     </Button>
   );
 }

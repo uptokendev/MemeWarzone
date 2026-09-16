@@ -3,10 +3,13 @@ import { badMethod, getQuery, json, normalizeWalletFlexible, readJson } from "..
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { getServerReadProvider } from "./lib/getServerReadProvider.js";
 import {
-  WAR_POOL_ABI,
+  WAR_POOL_GENERATION_V2,
   battlePoolId,
   signResolvePool,
+  signResolvePoolV2,
   tournamentPoolId,
+  warPoolAbiForGeneration,
+  warPoolGeneration,
   warPoolTreasuryAddress,
 } from "./lib/arenaWarPoolEscrow.js";
 import { escrowRequired, readOnchainPool, stakeToWei } from "./lib/arenaWarPoolLive.js";
@@ -548,7 +551,8 @@ async function handleStake(req, res, battleId) {
     configured: Boolean(onchain.configured),
     treasury: onchain.treasury || "",
     poolId: onchain.poolId,
-    abi: WAR_POOL_ABI,
+    abi: onchain.abi || warPoolAbiForGeneration(warPoolGeneration(chainId)),
+    poolGeneration: onchain.poolGeneration || warPoolGeneration(chainId) || null,
     nativeSymbol: row.native_symbol || nativeSymbolFor(chainId),
     stakeNative,
     stakeWei,
@@ -678,24 +682,39 @@ async function signAndReturnClaim({ res, chainId, subjectId, kind, winnerPayout 
   const treasury = warPoolTreasuryAddress(chainId);
   if (!treasury) return json(res, 503, { ok: false, error: "Arena war pool treasury is not deployed on this chain.", code: "WAR_POOL_TREASURY_MISSING" });
   if (!winnerPayout) return json(res, 409, { ok: false, error: "Winning campaign owner is unknown" });
+  const generation = warPoolGeneration(chainId);
+  const abi = warPoolAbiForGeneration(generation);
   const poolId = kind === "tournament" ? tournamentPoolId(subjectId) : battlePoolId(subjectId);
   const provider = await getServerReadProvider(chainId);
-  const contract = new ethers.Contract(treasury, WAR_POOL_ABI, provider);
+  const contract = new ethers.Contract(treasury, abi, provider);
   const onchain = await contract.pools(poolId);
   const stakeTotal = BigInt(onchain.stakeA || 0) + BigInt(onchain.stakeB || 0);
-  const supportTotal = BigInt(onchain.supportTotal || 0);
   const buyInTotal = BigInt(onchain.buyInTotal || 0);
   const deadline = Math.floor(Date.now() / 1000) + 3600;
-  const signed = await signResolvePool({
-    treasuryAddress: treasury,
-    chainId,
-    poolId,
-    winnerPayout,
-    stakeTotal,
-    supportTotal,
-    buyInTotal,
-    deadline,
-  });
+  const v2 = generation === WAR_POOL_GENERATION_V2;
+  const boostTotal = BigInt(onchain.boostTotal || 0);
+  const supportTotal = BigInt(onchain.supportTotal || 0);
+  const signed = v2
+    ? await signResolvePoolV2({
+        treasuryAddress: treasury,
+        chainId,
+        poolId,
+        winnerPayout,
+        stakeTotal,
+        buyInTotal,
+        boostTotal,
+        deadline,
+      })
+    : await signResolvePool({
+        treasuryAddress: treasury,
+        chainId,
+        poolId,
+        winnerPayout,
+        stakeTotal,
+        supportTotal,
+        buyInTotal,
+        deadline,
+      });
   if (!signed) {
     return json(res, 503, { ok: false, error: "Resolver key is not configured (ARENA_WAR_POOL_RESOLVER_KEY).", code: "WAR_POOL_RESOLVER_MISSING" });
   }
@@ -705,18 +724,37 @@ async function signAndReturnClaim({ res, chainId, subjectId, kind, winnerPayout 
     chainId,
     poolId,
     kind,
-    abi: WAR_POOL_ABI,
+    abi,
+    poolGeneration: generation || null,
     winnerPayout,
+    nativeSymbol: nativeSymbolFor(chainId),
     pendingWinner: String(onchain.pendingWinner || 0),
-    resolve: {
-      winnerPayout,
-      deadline,
-      signature: signed.signature,
-      stakeTotal: stakeTotal.toString(),
-      supportTotal: supportTotal.toString(),
-      buyInTotal: buyInTotal.toString(),
-    },
+    pendingProtocol: String(onchain.pendingProtocol || 0),
+    pendingLeague: String(onchain.pendingLeague || onchain.pendingMwl || 0),
+    claimedWinner: Boolean(onchain.claimedWinner),
+    claimedProtocol: Boolean(onchain.claimedProtocol),
+    claimedLeague: Boolean(onchain.claimedLeague || onchain.claimedMwl),
+    resolve: v2
+      ? {
+          winnerPayout,
+          deadline,
+          signature: signed.signature,
+          version: "2",
+          stakeTotal: stakeTotal.toString(),
+          buyInTotal: buyInTotal.toString(),
+          boostTotal: boostTotal.toString(),
+        }
+      : {
+          winnerPayout,
+          deadline,
+          signature: signed.signature,
+          version: "1",
+          stakeTotal: stakeTotal.toString(),
+          supportTotal: supportTotal.toString(),
+          buyInTotal: buyInTotal.toString(),
+        },
     claimMethod: "claimWinner",
+    claimMethods: v2 ? ["claimWinner", "claimProtocol", "claimLeague"] : ["claimWinner", "claimProtocol", "claimMwl"],
   });
 }
 
