@@ -41,8 +41,8 @@ test("buildCampaignCreatedMessage preserves addresses and uses ISO createdAtChai
   assert.equal(msg.item.campaignAddress, SOLANA_CAMPAIGN);
   assert.equal(msg.item.tokenAddress, "So11111111111111111111111111111111111111112");
   assert.equal(msg.item.creatorAddress, "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU");
-  assert.equal(msg.item.name, "Solana Launch");
-  assert.equal(msg.item.symbol, "SOL");
+  assert.equal(msg.item.name, "Solana So11");
+  assert.equal(msg.item.symbol, "So11");
   assert.equal(msg.item.createdAtChain, "2026-08-22T12:34:56.000Z");
   assert.equal(msg.item.blockNumber, 440979634);
   assert.match(msg.item.createdAtChain, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);

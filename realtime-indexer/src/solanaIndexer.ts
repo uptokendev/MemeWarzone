@@ -849,6 +849,8 @@ async function upsertCampaign(event: CampaignCreatedEvent, slot: number, blockTi
     [SOLANA_CHAIN_ID, event.campaign],
   );
   const isNew = !existed.rowCount;
+  const placeholderName = `Solana ${String(event.mint || event.campaign).slice(0, 4)}`;
+  const placeholderSymbol = String(event.mint || event.campaign).slice(0, 4);
   await sql(
     `insert into public.campaigns(
        chain_id,factory_address,campaign_address,token_address,creator_address,name,symbol,created_block,created_at_chain,is_active,meta
@@ -857,6 +859,14 @@ async function upsertCampaign(event: CampaignCreatedEvent, slot: number, blockTi
        factory_address=coalesce(public.campaigns.factory_address, excluded.factory_address),
        token_address=coalesce(excluded.token_address, public.campaigns.token_address),
        creator_address=coalesce(excluded.creator_address, public.campaigns.creator_address),
+       name=case
+         when public.campaigns.name in ('Solana Launch', '') then excluded.name
+         else public.campaigns.name
+       end,
+       symbol=case
+         when public.campaigns.symbol in ('SOL', '') then excluded.symbol
+         else public.campaigns.symbol
+       end,
        created_block=(case
          when public.campaigns.created_block is null or public.campaigns.created_block=0 then excluded.created_block
          else least(public.campaigns.created_block, excluded.created_block)
@@ -871,8 +881,8 @@ async function upsertCampaign(event: CampaignCreatedEvent, slot: number, blockTi
       event.campaign,
       event.mint,
       event.creator,
-      "Solana Launch",
-      "SOL",
+      placeholderName,
+      placeholderSymbol,
       slot,
       blockTime,
       JSON.stringify({
@@ -886,8 +896,8 @@ async function upsertCampaign(event: CampaignCreatedEvent, slot: number, blockTi
     await notifyCampaignCreated(pool, {
       chainId: SOLANA_CHAIN_ID,
       campaignAddress: event.campaign,
-      name: "Solana Launch",
-      ticker: "SOL",
+      name: placeholderName,
+      ticker: placeholderSymbol,
       creatorWallet: event.creator,
     });
   }
@@ -1313,8 +1323,8 @@ async function persistGraduation(
       event.campaign,
       event.mint,
       event.creator,
-      "Solana Launch",
-      "SOL",
+      `Solana ${String(event.mint || event.campaign).slice(0, 4)}`,
+      String(event.mint || event.campaign).slice(0, 4),
       slot,
       graduatedAtChain,
       slot,
