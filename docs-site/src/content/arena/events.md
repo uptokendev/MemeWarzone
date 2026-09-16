@@ -1,34 +1,107 @@
 ---
 title: Events and Tournaments
-description: How live events, scheduled events, tournament brackets, and archived results are presented in Arena.
+description: Normal Tournaments, Vote Tournaments, Final Salvo, event timing, settlement, and chain-specific competition rules.
 ---
 
-Events and Tournaments collects the timed activity around Arena.
+Events and Tournaments are the structured competition layer around Arena.
 
-This page is the calendar view for live events, upcoming windows, and tournament structures.
+> **Production note:** these pages document the current product rules and implementation target. Production financial activation remains independently gated.
 
-## Live events
+## Normal Tournaments
 
-Live events are the items that are active now.
+Normal Tournaments preserve chain identity through:
 
-Check the event card for timing, participants, and the specific format being used.
+- registration and enrolment
+- eligibility
+- entry payment
+- participant state
+- brackets or rounds
+- scoring
+- winner settlement
+- claims
 
-## Upcoming events
+A Tournament record must never silently mix BNB, Solana, and Robinhood participants or settlement state.
 
-Upcoming events show what is scheduled next.
+## Vote Tournaments
 
-Use this lane to see what is approaching, when it opens, and whether you need to watch for a bracket, battle, or featured campaign window.
+Vote Tournament uses a different regulation model from Normal Battle scoring.
 
-## Tournaments
+Current frozen regulation rules are:
 
-Tournament pages group campaigns into a structured competition.
+- regulation lasts **24 hours**
+- one free vote = **1 Vote Point**
+- one free vote per wallet / matchup / round
+- one **$1 paid Boost = 2 Vote Points**
+- paid Boosts are unlimited during regulation
+- market cap does not score during regulation
+- holder growth does not score during regulation
+- trading volume does not score during regulation
 
-If a tournament is live, use the bracket view and the event timing together. If a tournament is only listed as planned, treat it as forward notice until the readiness banner changes.
+The backend remains authoritative for eligibility, vote totals, winner, and advancement.
 
-## Archived results
+## Vote Tournament money rules
 
-Archived results help players review what already closed.
+Current-generation Vote Tournament entry uses:
 
-They are useful for context, standings, and follow up, especially when you want to trace how an event or tournament unfolded over time.
+- 75% Prize
+- 20% Post-Grad League
+- 5% Protocol
 
-Read: **[Arena Overview](/arena)** and **[Sponsorship Application](/arena/sponsorships)**.
+Paid Vote Boost uses:
+
+- 90% Prize
+- 10% Protocol
+- 0% League
+
+These rules are separate from Normal Battle V3 scoring and its hyperbolic Boost curve.
+
+## Final Salvo
+
+Final Salvo activates only when Vote Tournament regulation ends in an exact tie.
+
+The canonical format is:
+
+1. best of five shots
+2. each shot lasts 60 seconds
+3. free vote only
+4. one vote per wallet per shot
+5. tied shots award no series point
+6. mathematical early resolution is allowed
+7. if the series is still tied after five shots, repeated 60-second Sudden Death rounds continue until a winner
+
+Paid Boost is disabled during Final Salvo.
+
+There is no market-metric fallback and no manual/admin winner in the canonical rules.
+
+## Event timing and state
+
+Public event pages should clearly show:
+
+- chain
+- event format
+- registration or enrolment window where applicable
+- start time
+- round timing
+- participant state
+- active/closed status
+- settlement or claim status once complete
+
+## Event Sponsorship
+
+Normal Tournaments, Vote Tournaments, and Monthly Major War League can carry Event Sponsorship where the sponsorship record is valid for the exact event and chain.
+
+Quarterly Championship may use **Presented by PROJECT** under the same active sponsorship authority.
+
+Event Sponsorship is not the same thing as an ordinary featured placement.
+
+Read **[Sponsorships](/arena/sponsorships)** for the allocation and authority rules.
+
+## Claims and recovery
+
+Tournament claims are financial claims and must be exactly-once, replay-safe, and restart-safe.
+
+If on-chain payment succeeds but the client or API loses the response, retry must reconcile the original payment rather than send another one.
+
+## Related docs
+
+Read **[Arena Overview](/arena)**, **[Battle Scoring & Boosts](/arena/scoring-and-boosts)**, and **[Quarterly Championship](/arena/quarterly-championship)**.
