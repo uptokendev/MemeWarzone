@@ -107,7 +107,9 @@ contract MockUniswapV3PositionManager is ERC721 {
             liquidity: liquidity,
             pool: pool
         });
-        _safeMint(params.recipient, tokenId);
+        // Canonical NonfungiblePositionManager.mint uses ERC721 _mint rather than _safeMint.
+        // Keep the staging mock faithful so receiver-hook behavior is exercised by explicit safe transfers only.
+        _mint(params.recipient, tokenId);
     }
 
     function collect(CollectParams calldata params) external payable returns (uint256 amount0, uint256 amount1) {
