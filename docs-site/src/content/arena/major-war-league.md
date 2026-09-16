@@ -1,40 +1,79 @@
 ---
 title: Major War League
-description: How the postgrad Arena ladder, divisions, and movement rules appear in the product.
+description: The monthly chain-specific post-graduation league, its funding relationship, standings, and connection to Quarterly Championship.
 ---
 
-Major War League is the standing table for the Arena ladder.
+Major War League (MWL) is the monthly post-graduation league layer in the Arena model.
 
-It tracks how post graduation campaigns are performing across a season and shows which ones are climbing, holding, or slipping.
+> **Production note:** this page documents the current MWL model. Production Arena activation remains independently gated.
 
-## What you see on the page
+## Monthly competition
 
-- season and week
-- current league state
-- table position
-- movement pressure
-- campaign performance context
+MWL gives graduated campaigns a recurring competition period instead of making launch day the only moment that matters.
 
-## Reading the table
+The standings preserve true chain identity. BNB, Solana, and Robinhood league records, rewards, and claims remain chain-specific.
 
-A higher place in the table means stronger current standing.
-A lower place means the campaign needs better results to recover ground.
+## Post-Grad League funding
 
-The ladder is useful for momentum and placement. Claim timing and reward rules still live in the main rewards manual.
+Current-generation Battle / Competition entry routes:
 
-## Movement states
+- 75% Prize
+- 20% Post-Grad League
+- 5% Protocol
 
-The league can mark a campaign as:
+The Post-Grad League intake is currently reserved:
 
-- promoted
-- safe
-- relegated
+- **60% Monthly Major War League**
+- **40% Quarterly reserve**
 
-Treat those labels as ladder movement, not as a payout notice.
+Normal Battle Boost and Vote Tournament Boost do not add a League share; those Boost rails use 90% Prize / 10% Protocol.
+
+## What standings should show
+
+A public MWL view should make clear:
+
+- chain
+- current monthly period
+- campaign/project identity
+- ranking or standing
+- current competition state
+- settlement/claim state when applicable
+
+Standings are competition context, not proof that a reward has already been paid.
+
+## Relationship with Battles and Tournaments
+
+MWL is not one long Battle bracket.
+
+Normal Battles and Tournaments are discrete events. MWL is the recurring monthly league layer that sits above the post-graduation competition ecosystem.
+
+A campaign can participate in Arena activity while MWL tracks the broader monthly competitive picture according to the current implementation.
+
+## Relationship with Quarterly Championship
+
+Quarterly Championship is a separate continuous chain-specific standing across the quarter.
+
+It is not a knockout extension of MWL and it does not use quarterfinal / semifinal / final stages as the canonical model.
+
+Read **[Quarterly Championship](/arena/quarterly-championship)**.
+
+## Sponsorship
+
+Monthly MWL can show **Sponsored by PROJECT** only when an authoritative Event Sponsorship is active, paid, approved, and bound to the correct event identity, chain, and time window.
+
+Sponsorship does not change the competition result by itself.
+
+## Claims
+
+MWL rewards use the same financial-safety expectations as other MemeWarzone claims:
+
+- correct chain and recipient
+- immutable entitlement identity
+- no duplicate payout on retry or double-click
+- transaction reuse rejection
+- recovery after an API/client interruption
+- authoritative state after reload/restart
 
 ## Where to go next
 
-Use Major War League when you want the season view.
-Use the rewards pages when you need epoch and claim rules.
-
-Read: **[Leagues Overview](/leagues)** and **[Epochs & Claims](/rewards/epochs-and-claims)**.
+Read **[Arena Overview](/arena)** for the full Warzone, **[Live Battles](/arena/live-battles)** for direct matchups, and **[Epochs & Claims](/rewards/epochs-and-claims)** for claim behavior.
