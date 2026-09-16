@@ -55,7 +55,7 @@ const campaignAbi = [
   'function buyExactBnbAuthorized(uint256,uint8,uint64,bytes) payable returns(uint256,uint256)',
   'function sellExactTokensAuthorized(uint256,uint256,uint8,uint64,bytes) returns(uint256)',
   'function graduateIfEligible(uint256,uint256) returns(uint256,uint256)',
-  'function graduationState() view returns(address,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)',
+  'function getGraduationState() view returns(address,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256,uint256)',
   'event TokensPurchased(address indexed buyer,uint256 amountOut,uint256 cost)','event TokensSold(address indexed seller,uint256 amountIn,uint256 payout)',
   'event CampaignFinalized(address indexed caller,address indexed pair,uint256 graduationBalance,uint256 graduationOvershoot,uint256 liquidityTokens,uint256 liquidityBnb,uint256 liquidityLp,uint256 protocolFee,uint256 creatorPayout,uint256 burnedUnsoldTokens,uint256 burnedUnusedLpTokens,uint256 finalCurvePrice,uint256 initialDexPrice,uint256 postBurnTotalSupply)'
 ];
@@ -259,7 +259,7 @@ async function main() {
     }
     assert(await campaign.launched(),'GRADUATION_DID_NOT_COMPLETE'); assert(graduationReceipt,'GRADUATION_RECEIPT_MISSING');
     const gradEvent=parseEvent(graduationReceipt,campaign.interface,'CampaignFinalized'); assert(gradEvent,'CAMPAIGN_FINALIZED_EVENT_MISSING');
-    const g=await campaign.graduationState(); const pool=g[0]; assert(pool && pool!==ethers.ZeroAddress,'POOL_MISSING');
+    const g=await campaign.getGraduationState(); const pool=g[0]; assert(pool && pool!==ethers.ZeroAddress,'POOL_MISSING');
     const vf=new ethers.Contract(V3_FACTORY,v3FactoryAbi,provider); const canonicalPool=await vf.getPool(tokenAddress,WETH,FEE_TIER); assert(same(pool,canonicalPool),'CANONICAL_POOL_MISMATCH');
     const poolInfo=await locker.poolInfo(pool); assert(poolInfo.registered,'LOCKER_NOT_REGISTERED'); assert(same(poolInfo.campaign,campaignAddress),'LOCKER_CAMPAIGN_MISMATCH'); assert(poolInfo.feeTier===3000n,'LOCKER_POOL_FEE_MISMATCH');
     const tokenId=poolInfo.tokenId; const pm=new ethers.Contract(POSITION_MANAGER,pmAbi,provider); assert(same(await pm.ownerOf(tokenId),LOCKER),'POSITION_NOT_OWNED_BY_LOCKER'); const pos=await pm.positions(tokenId); assert(pos[7]===poolInfo.lockedLiquidity,'LOCKED_LIQUIDITY_MISMATCH');

@@ -294,24 +294,27 @@ async function main() {
 
   let existingCampaign = { campaign: EXISTING_CAMPAIGN, token: EXISTING_TOKEN, resumable: false, resumeStep: null };
   const campaignCount = BigInt(await factory.campaignsCount());
-  if (campaignCount > 0n && EXISTING_CAMPAIGN !== ethers.ZeroAddress) {
+  if (campaignCount > 0n) {
     let matched = null;
     for (let i = 0n; i < campaignCount; i++) {
       const info = await factory.getCampaign(i);
-      if (same(info.campaign, EXISTING_CAMPAIGN)) { matched = { id: i, info }; break; }
+      if (same(info.creator, CREATOR)) { matched = { id: i, info }; }
     }
-    assert(matched, 'EXISTING_CAMPAIGN_NOT_REGISTERED_IN_FACTORY');
-    assert(same(matched.info.token, EXISTING_TOKEN), `EXISTING_TOKEN_MISMATCH_${matched.info.token}`);
+    if (!matched) {
+      throw new Error(`CREATOR_CAMPAIGN_NOT_FOUND_${campaignCount}_${JSON.stringify({ factoryState, eligibility })}`);
+    }
+    const discoveredCampaign = matched.info.campaign;
+    const discoveredToken = matched.info.token;
     assert(same(matched.info.creator, CREATOR), `EXISTING_CREATOR_MISMATCH_${matched.info.creator}`);
-    assert(await factory.isCampaign(EXISTING_CAMPAIGN), 'EXISTING_CAMPAIGN_NOT_CANONICAL');
-    assert((await provider.getCode(EXISTING_CAMPAIGN)) !== '0x', 'EXISTING_CAMPAIGN_CODE_MISSING');
-    assert((await provider.getCode(EXISTING_TOKEN)) !== '0x', 'EXISTING_TOKEN_CODE_MISSING');
+    assert(await factory.isCampaign(discoveredCampaign), 'EXISTING_CAMPAIGN_NOT_CANONICAL');
+    assert((await provider.getCode(discoveredCampaign)) !== '0x', 'EXISTING_CAMPAIGN_CODE_MISSING');
+    assert((await provider.getCode(discoveredToken)) !== '0x', 'EXISTING_TOKEN_CODE_MISSING');
 
-    const campaign = new ethers.Contract(EXISTING_CAMPAIGN, campaignAbi, provider);
+    const campaign = new ethers.Contract(discoveredCampaign, campaignAbi, provider);
     const campaignToken = await campaign.token();
     const campaignCreator = await campaign.creator();
     const launched = await campaign.launched();
-    const graduationRecorded = await factory.campaignGraduationRecorded(EXISTING_CAMPAIGN);
+    const graduationRecorded = await factory.campaignGraduationRecorded(discoveredCampaign);
     const pauseState = {
       paused: await campaign.paused(),
       buyPaused: await campaign.buyPaused(),
@@ -327,7 +330,7 @@ async function main() {
     const netRaisedWei = await campaign.netRaisedWei();
     const sold = await campaign.sold();
 
-    const healthyPreGrad = same(campaignToken, EXISTING_TOKEN)
+    const healthyPreGrad = same(campaignToken, discoveredToken)
       && same(campaignCreator, CREATOR)
       && !launched
       && !graduationRecorded
@@ -341,8 +344,8 @@ async function main() {
 
     existingCampaign = {
       id: matched.id.toString(),
-      campaign: EXISTING_CAMPAIGN,
-      token: EXISTING_TOKEN,
+      campaign: discoveredCampaign,
+      token: discoveredToken,
       creator: campaignCreator,
       factoryGeneration: '4',
       campaignGeneration: '3',
@@ -361,7 +364,12 @@ async function main() {
     };
   }
 
-  const action = chooseLifecycleAction({ creatorAllowed: eligibility.allowed, existingCampaign });
+  let action;
+  try {
+    action = chooseLifecycleAction({ creatorAllowed: eligibility.allowed, existingCampaign });
+  } catch (error) {
+    throw new Error(`${error instanceof Error ? error.message : String(error)}_${eligibility.reason}_${JSON.stringify({ eligibility, factoryState, existingCampaign })}`);
+  }
   if (action.createRequired) assert(eligibility.allowed, `CREATOR_NOT_ELIGIBLE_${eligibility.reason}_${JSON.stringify(eligibility)}`);
 
   const balances = {};
@@ -422,23 +430,39 @@ async function main() {
     const deployer = protectedWallet('ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY', DEPLOYER, provider);
     let nextWritePreflight;
     try {
-      await factory.connect(deployer).enableLive.staticCall();
-      nextWritePreflight = {
-        status: 'PASS',
-        operation: 'FACTORY_ENABLE_LIVE',
-        campaign: null,
-        actor: DEPLOYER,
-        value: '0',
-        reason: 'VIRGIN_FACTORY_ENABLE_LIVE_THEN_CREATE',
-        exactForProspectiveOracleRefresh,
-        relevantState: { factoryState, action, priceState },
-        chainWrites: 0,
-      };
+      if (factoryState.live === true) {
+        assert(factoryState.createPaused === true, 'FACTORY_CREATE_WINDOW_ALREADY_OPEN');
+        await factory.connect(deployer).setCreatePaused.staticCall(false);
+        nextWritePreflight = {
+          status: 'PASS',
+          operation: 'FACTORY_OPEN_CREATE',
+          campaign: null,
+          actor: DEPLOYER,
+          value: '0',
+          reason: 'ALREADY_LIVE_OPEN_CREATE_THEN_CREATE',
+          exactForProspectiveOracleRefresh,
+          relevantState: { factoryState, action, priceState },
+          chainWrites: 0,
+        };
+      } else {
+        await factory.connect(deployer).enableLive.staticCall();
+        nextWritePreflight = {
+          status: 'PASS',
+          operation: 'FACTORY_ENABLE_LIVE',
+          campaign: null,
+          actor: DEPLOYER,
+          value: '0',
+          reason: 'VIRGIN_FACTORY_ENABLE_LIVE_THEN_CREATE',
+          exactForProspectiveOracleRefresh,
+          relevantState: { factoryState, action, priceState },
+          chainWrites: 0,
+        };
+      }
     } catch (error) {
       const decoded = decodeEthersError(error, decoders);
       nextWritePreflight = {
         status: 'BLOCKED',
-        operation: 'FACTORY_ENABLE_LIVE',
+        operation: factoryState.live === true ? 'FACTORY_OPEN_CREATE' : 'FACTORY_ENABLE_LIVE',
         campaign: null,
         actor: DEPLOYER,
         value: '0',
