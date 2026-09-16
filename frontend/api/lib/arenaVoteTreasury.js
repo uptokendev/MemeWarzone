@@ -37,12 +37,14 @@ export function launchpadSolanaTreasuries() {
 
 export function arenaEvmTreasury(chainId) {
   const id = Number(chainId);
-  const value = envList(
+  const keys = [
     `ARENA_VOTE_TREASURY_ADDRESS_${id}`,
     `VITE_ARENA_VOTE_TREASURY_ADDRESS_${id}`,
-    "ARENA_VOTE_TREASURY_ADDRESS",
-    "VITE_ARENA_VOTE_TREASURY_ADDRESS",
-  )[0] || "";
+  ];
+  if (id === 56 || id === 97) {
+    keys.push("ARENA_VOTE_TREASURY_ADDRESS", "VITE_ARENA_VOTE_TREASURY_ADDRESS");
+  }
+  const value = envList(...keys)[0] || "";
   return value && isAddress(value) ? value.toLowerCase() : "";
 }
 
@@ -72,7 +74,12 @@ export function arenaSolanaTreasuries() {
 }
 
 export function arenaVotingConfigured() {
-  return Boolean(arenaEvmTreasury(56) || arenaEvmTreasury(97) || arenaSolanaTreasuries()[0]);
+  return Boolean(
+    arenaEvmTreasury(56) ||
+      arenaEvmTreasury(97) ||
+      arenaEvmTreasury(46630) ||
+      arenaSolanaTreasuries()[0],
+  );
 }
 
 export function assertArenaEvmTreasury(chainId) {
