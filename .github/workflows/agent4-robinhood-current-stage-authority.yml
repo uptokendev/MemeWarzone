@@ -20,7 +20,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       TARGET_BRANCH: build/cross-chain-stabilization-rh-base
-      TARGET_SHA: 8944382619e05f09539614f5690b98521fe244ed
+      TARGET_SHA: 7464993ba9066109eccfc7c7d3a14927a5544ecd
       TARGET_WORKFLOW: agent4-robinhood-current-stage-authority.yml
       REQUIRED_CONFIRMATION: DEPLOY_CHAIN_46630_CURRENT_STAGE
     steps:
