@@ -26,10 +26,31 @@ function req(name) {
   if (!value) throw new Error(`${name} is required`);
   return value;
 }
-function kp(raw) {
+function kp(raw, label = 'keypair') {
   const text = String(raw || '').trim();
-  const bytes = Uint8Array.from(text.startsWith('[') ? JSON.parse(text) : Buffer.from(text, 'base64'));
-  if (bytes.length !== 64) throw new Error('keypair must be a 64-byte JSON array or base64 secret key');
+  if (!text) throw new Error(`${label} is missing`);
+  let bytes = null;
+  if (text.startsWith('[')) {
+    let value;
+    try { value = JSON.parse(text); } catch { throw new Error(`${label} JSON keypair is invalid`); }
+    if (!Array.isArray(value) || value.length !== 64 || value.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
+      throw new Error(`${label} JSON keypair must contain exactly 64 byte values`);
+    }
+    bytes = Uint8Array.from(value);
+  } else {
+    try {
+      const decoded = Buffer.from(text, 'base64');
+      const canonical = decoded.toString('base64').replace(/=+$/, '');
+      if (decoded.length === 64 && canonical === text.replace(/=+$/, '')) bytes = Uint8Array.from(decoded);
+    } catch {}
+    if (!bytes) {
+      try {
+        const decoded = Uint8Array.from(bs58.decode(text));
+        if (decoded.length === 64) bytes = decoded;
+      } catch {}
+    }
+  }
+  if (!bytes || bytes.length !== 64) throw new Error(`${label} must be a 64-byte JSON array, base64 secret key, or base58 secret key`);
   return Keypair.fromSecretKey(bytes);
 }
 function disc(name) { return crypto.createHash('sha256').update(`global:${name}`).digest().subarray(0, 8); }
@@ -234,10 +255,10 @@ async function main() {
   const connection = new Connection(req('SOLANA_REWARDS_RPC_URL'), 'confirmed');
   if (await connection.getGenesisHash() !== DEVNET) throw new Error('wrong chain rejected: rewards RPC is not devnet');
 
-  const authority = kp(req('SOLANA_REWARDS_AUTHORITY_SECRET_KEY'));
-  const resolver = kp(req('SOLANA_REWARDS_RESOLVER_SECRET_KEY'));
-  const ownerA = kp(req('SOLANA_POSTBOND_OWNER_A_SECRET_KEY'));
-  const ownerB = kp(req('SOLANA_POSTBOND_OWNER_B_SECRET_KEY'));
+  const authority = kp(req('SOLANA_REWARDS_AUTHORITY_SECRET_KEY'), 'authority');
+  const resolver = kp(req('SOLANA_REWARDS_RESOLVER_SECRET_KEY'), 'resolver');
+  const ownerA = kp(req('SOLANA_POSTBOND_OWNER_A_SECRET_KEY'), 'owner A');
+  const ownerB = kp(req('SOLANA_POSTBOND_OWNER_B_SECRET_KEY'), 'owner B');
   const chainEvidence = JSON.parse(fs.readFileSync(req('SOLANA_POSTBOND_CHAIN_REPORT'), 'utf8'));
   const mintA = new PublicKey(chainEvidence.left.mint);
   const mintB = new PublicKey(chainEvidence.right.mint);
