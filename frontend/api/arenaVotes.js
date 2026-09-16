@@ -28,6 +28,34 @@ const MEMO_PROGRAMS = new Set([
   "Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo",
 ]);
 
+export function evmVoteNativeConfig(chainId) {
+  const id = Number(chainId);
+  if (id === 56 || id === 97) {
+    return {
+      chainId: id,
+      nativeSymbol: "BNB",
+      priceAssetId: "binancecoin",
+      binanceSymbol: "BNBUSDT",
+    };
+  }
+  if (id === 46630) {
+    return {
+      chainId: id,
+      nativeSymbol: "ETH",
+      priceAssetId: "ethereum",
+      binanceSymbol: "ETHUSDT",
+    };
+  }
+
+  const err = new Error(
+    id === 4663
+      ? "Robinhood production chainId 4663 is not allowed for Arena vote ingest."
+      : "Invalid chainId (expected 56, 97, or 46630)",
+  );
+  err.status = 400;
+  throw err;
+}
+
 function ident(value) {
   return String(value || "").trim();
 }
@@ -233,18 +261,29 @@ async function handleFeatured(req, res) {
   });
 }
 
-async function handleBnbIngest(req, res) {
+async function handleEvmIngest(req, res) {
   const body = req.method === "POST" ? await readJson(req) : getQuery(req);
   const chainId = Number(body?.chainId ?? body?.chain_id);
   const txHash = normalizeHex(body?.txHash ?? body?.tx_hash ?? body?.hash);
-  if (chainId !== 56 && chainId !== 97) return json(res, 400, { ok: false, error: "Invalid chainId (expected 56 or 97)" });
+  let native;
+  try {
+    native = evmVoteNativeConfig(chainId);
+  } catch (error) {
+    return json(res, Number(error?.status || 400), { ok: false, error: String(error?.message || "Invalid chainId") });
+  }
   if (!/^0x[a-f0-9]{64}$/.test(txHash)) return json(res, 400, { ok: false, error: "Invalid txHash" });
 
   const configured = assertArenaEvmTreasury(chainId);
   if (!configured.ok) return json(res, 503, configured);
 
-  const usd = await fetchUsd("binancecoin", "BNBUSDT");
-  if (!(usd > 0)) return json(res, 503, { ok: false, error: "BNB/USD oracle is unavailable; cannot confirm the $3 vote.", code: "ARENA_VOTE_ORACLE_UNAVAILABLE" });
+  const usd = await fetchUsd(native.priceAssetId, native.binanceSymbol);
+  if (!(usd > 0)) {
+    return json(res, 503, {
+      ok: false,
+      error: `${native.nativeSymbol}/USD oracle is unavailable; cannot confirm the $3 vote.`,
+      code: "ARENA_VOTE_ORACLE_UNAVAILABLE",
+    });
+  }
   const minWei = minNativeWei(usd, 18);
 
   const provider = await getServerReadProvider(chainId);
@@ -270,7 +309,7 @@ async function handleBnbIngest(req, res) {
     if (amountRaw < minWei) {
       return json(res, 400, {
         ok: false,
-        error: `Arena UpVote must be about $${UPVOTE_USD_TARGET} in BNB.`,
+        error: `Arena UpVote must be about $${UPVOTE_USD_TARGET} in ${native.nativeSymbol}.`,
         code: "ARENA_VOTE_AMOUNT_TOO_SMALL",
       });
     }
@@ -398,7 +437,7 @@ export default async function handler(req, res) {
       return method === "POST" ? handleSolanaIngest(req, res) : badMethod(res);
     }
     if (/\/arena\/votes\/ingest$/.test(path)) {
-      return method === "GET" || method === "POST" ? handleBnbIngest(req, res) : badMethod(res);
+      return method === "GET" || method === "POST" ? handleEvmIngest(req, res) : badMethod(res);
     }
     if (path.includes("/arena/votes")) return badMethod(res);
     return json(res, 404, { error: `Unknown arena votes route: ${path}` });

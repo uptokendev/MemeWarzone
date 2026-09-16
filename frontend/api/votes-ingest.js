@@ -19,6 +19,19 @@ const VOTE_CAST_ABI = [
 const VOTE_IFACE = new ethers.Interface(VOTE_CAST_ABI);
 const VOTE_TOPIC0 = VOTE_IFACE.getEvent("VoteCast").topicHash;
 
+export function assertVoteIngestChain(chainId) {
+  const id = Number(chainId);
+  if (id === 56 || id === 97 || id === 46630) return id;
+
+  const err = new Error(
+    id === 4663
+      ? "Robinhood production chainId 4663 is not allowed for vote ingest."
+      : "Invalid chainId (expected 56, 97, or 46630)",
+  );
+  err.status = 400;
+  throw err;
+}
+
 function normalizeHex(value) {
   const s = String(value || "").trim().toLowerCase();
   return s.startsWith("0x") ? s : s ? `0x${s}` : "";
@@ -50,6 +63,8 @@ const KNOWN_TREASURIES = new Set(
     String(process.env.VITE_VOTE_TREASURY_ADDRESS_97 || "").trim(),
     String(process.env.VOTE_TREASURY_ADDRESS_56 || "").trim(),
     String(process.env.VITE_VOTE_TREASURY_ADDRESS_56 || "").trim(),
+    String(process.env.VOTE_TREASURY_ADDRESS_46630 || "").trim(),
+    String(process.env.VITE_VOTE_TREASURY_ADDRESS_46630 || "").trim(),
     String(process.env.VOTE_TREASURY_ADDRESS || "").trim(),
     String(process.env.VITE_VOTE_TREASURY_ADDRESS || "").trim(),
   ]
@@ -136,11 +151,7 @@ async function ingestTx({ chainId, txHash }) {
     err.status = 503;
     throw err;
   }
-  if (!Number.isFinite(chainId) || (chainId !== 56 && chainId !== 97)) {
-    const err = new Error("Invalid chainId (expected 56 or 97)");
-    err.status = 400;
-    throw err;
-  }
+  chainId = assertVoteIngestChain(chainId);
   const hash = normalizeHex(txHash);
   if (!/^0x[a-f0-9]{64}$/.test(hash)) {
     const err = new Error("Invalid txHash");
