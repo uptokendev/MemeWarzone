@@ -27,13 +27,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: solana-final-postbond-closeout-7fc24fb
+  group: solana-final-postbond-closeout-1f0edd5
   cancel-in-progress: false
 
 env:
-  EXPECTED_CERT_SHA: 7fc24fbfdf1e6ffddf06687f8d99b15e2ea16ccc
+  EXPECTED_CERT_SHA: 1f0edd5edda3d0ca7c5f6bb829feac9eb7779a7e
   EXPECTED_SOURCE_SHA: 8944382619e05f09539614f5690b98521fe244ed
-  EXPECTED_MAIN_BASE_SHA: 1f54a14cc2546ad2961236b3a64c3e668fb3c5db
+  EXPECTED_MAIN_BASE_SHA: 8d074ce39604a68bf2bef01a33fb61ee2e1ade34
   FIXTURE_SOURCE_SHA: 992bf9d0e1889d9280c9226a3193b102adbd7c07
   FIXTURE_ARTIFACT_NAME: solana-owner-bound-fixtures-6f6cec9b8aec936b624760cef5bb05aaadc31bbc
   FIXTURE_ARTIFACT_ID: '10414835996'
@@ -78,9 +78,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$EXPECTED_CERT_SHA" = '7fc24fbfdf1e6ffddf06687f8d99b15e2ea16ccc'
+          test "$EXPECTED_CERT_SHA" = '1f0edd5edda3d0ca7c5f6bb829feac9eb7779a7e'
           test "$EXPECTED_SOURCE_SHA" = '8944382619e05f09539614f5690b98521fe244ed'
-          test "$EXPECTED_MAIN_BASE_SHA" = '1f54a14cc2546ad2961236b3a64c3e668fb3c5db'
+          test "$EXPECTED_MAIN_BASE_SHA" = '8d074ce39604a68bf2bef01a33fb61ee2e1ade34'
           test "$FIXTURE_SOURCE_SHA" = '992bf9d0e1889d9280c9226a3193b102adbd7c07'
           test "$FIXTURE_ARTIFACT_ID" = '10414835996'
           test "$FIXTURE_ARTIFACT_SHA256" = '93a972f5f837ecfcd9b4bfadde21983b3b9461943ee08da1c4b4030b8a88e4c0'
