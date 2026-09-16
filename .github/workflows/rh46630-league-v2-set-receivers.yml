@@ -1,0 +1,44 @@
+name: RH46630 league V2 setReceivers
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type SET_RECEIVERS_LEAGUE_46630_ARENA_V2'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  set-receivers:
+    if: github.event.inputs.confirmation == 'SET_RECEIVERS_LEAGUE_46630_ARENA_V2'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node --test scripts/rh46630-league-v2-set-receivers.test.mjs
+      - name: Live league setReceivers
+        env:
+          RH46630_LEAGUE_SET_RECEIVERS: '1'
+          ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL }}
+          ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${ROBINHOOD_TESTNET_RPC_URL:-}"
+          test -n "${ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY:-}"
+          export RH46630_LEAGUE_OWNER_PRIVATE_KEY="$ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY"
+          mkdir -p reports
+          node scripts/rh46630-league-v2-set-receivers.mjs | tee reports/rh46630-league-v2-receivers.json
+          test -s reports/rh46630-league-v2-receivers.json
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rh46630-league-v2-receivers
+          path: reports/rh46630-league-v2-receivers.json
+          if-no-files-found: warn
