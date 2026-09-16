@@ -97,7 +97,7 @@ test("V2 battle ABI uses boost/league fields and keeps openBattlePool/depositSta
   assert.match(v2, /boostTotal/);
   assert.match(v2, /pendingLeague/);
   assert.match(v2, /claimedLeague/);
-  assert.match(v2, /claimLeague/);
+  assert.match(v2, /claimLeague\(bytes32 poolId,bytes32 monthlyEpoch,bytes32 quarterlyEpoch\)/);
   assert.doesNotMatch(v2, /supportTotal|pendingMwl|claimMwl|donateSupport/);
   assert.match(WAR_POOL_ABI.join("\n"), /supportTotal/);
   assert.match(WAR_POOL_ABI.join("\n"), /claimMwl/);

@@ -755,6 +755,12 @@ async function signAndReturnClaim({ res, chainId, subjectId, kind, winnerPayout 
         },
     claimMethod: "claimWinner",
     claimMethods: v2 ? ["claimWinner", "claimProtocol", "claimLeague"] : ["claimWinner", "claimProtocol", "claimMwl"],
+    leagueEpochs: v2
+      ? {
+          monthlyEpoch: ethers.id(`${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`),
+          quarterlyEpoch: ethers.id(`${new Date().getUTCFullYear()}-Q${Math.floor(new Date().getUTCMonth() / 3) + 1}`),
+        }
+      : null,
   });
 }
 
