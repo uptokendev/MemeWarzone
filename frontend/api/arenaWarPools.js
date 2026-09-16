@@ -133,12 +133,37 @@ async function ensurePool(subjectId, { kind = "battle", cutoffAt } = {}) {
 }
 
 async function listPools(chainId) {
-  const result = await pool.query(
-    `select *
-       from public.arena_war_pools
-      order by coalesce(updated_at, created_at) desc
-      limit 200`,
-  );
+  const id = Number(chainId);
+  let result;
+  if (Number.isInteger(id) && id > 0) {
+    try {
+      result = await pool.query(
+        `select p.*
+           from public.arena_war_pools p
+           left join public.arena_battles b on b.id = p.battle_id
+           left join public.arena_tournaments t on t.id = p.battle_id
+          where b.chain_id = $1 or t.chain_id = $1
+          order by coalesce(p.updated_at, p.created_at) desc
+          limit 200`,
+        [id],
+      );
+    } catch (error) {
+      console.warn("[api/arenaWarPools] chain-filtered list failed", error?.message || error);
+      result = await pool.query(
+        `select *
+           from public.arena_war_pools
+          order by coalesce(updated_at, created_at) desc
+          limit 200`,
+      );
+    }
+  } else {
+    result = await pool.query(
+      `select *
+         from public.arena_war_pools
+        order by coalesce(updated_at, created_at) desc
+        limit 200`,
+    );
+  }
   const pools = [];
   for (const row of result.rows) pools.push(poolPayload(row, await entriesFor(row.battle_id), chainId));
   return pools;
