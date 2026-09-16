@@ -1,0 +1,64 @@
+name: RH46630 Arena V2 tournament resolve+claim
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type RESOLVE_CLAIM_TOURNAMENT_46630_ARENA_V2
+        required: true
+        type: string
+      source_sha:
+        required: true
+        default: 7c0a428c3f1208cf45135e85c72f7ee2db1a93a8
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  resolve-claim:
+    if: ${{ github.event.inputs.confirmation == 'RESOLVE_CLAIM_TOURNAMENT_46630_ARENA_V2' }}
+    runs-on: ubuntu-latest
+    environment: testnet-certification
+    env:
+      EXPECTED_SOURCE_SHA: 7c0a428c3f1208cf45135e85c72f7ee2db1a93a8
+      ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL }}
+      ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY }}
+      ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY }}
+    steps:
+      - name: Reject wrong confirmation or SHA
+        run: |
+          set -euo pipefail
+          test "${{ github.event.inputs.confirmation }}" = 'RESOLVE_CLAIM_TOURNAMENT_46630_ARENA_V2'
+          test "${{ github.event.inputs.source_sha }}" = "$EXPECTED_SOURCE_SHA"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.source_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node --test scripts/t2-battle-resolve-claim-evm-real.test.mjs
+      - name: Live resolve and pull claims
+        env:
+          T2_BATTLE_RESOLVE_LIVE: '1'
+          T2_CHAIN_ID: '46630'
+          T2_BATTLE_POOL_ID: '0x08ffdd2ffb0eba2674684e7f6f8c095a2ee21b8a7bfb6d17cf4a0426adbbf026'
+          T2_WINNER_PAYOUT: '0x38D8054789aB2068C3E6B04382787eFE15617ac7'
+        run: |
+          set -euo pipefail
+          test -n "${ROBINHOOD_TESTNET_RPC_URL:-}"
+          test -n "${ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY:-}"
+          test -n "${ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY:-}"
+          export ARENA_WAR_POOL_RESOLVER_KEY="$ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY"
+          export T2_BATTLE_WINNER_PRIVATE_KEY="$ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY"
+          mkdir -p reports
+          node scripts/t2-battle-resolve-claim-evm-real.mjs | tee reports/rh46630-arena-v2-tournament-resolve-claim.json
+          test -s reports/rh46630-arena-v2-tournament-resolve-claim.json
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rh46630-arena-v2-tournament-resolve-claim
+          path: reports/rh46630-arena-v2-tournament-resolve-claim.json
+          if-no-files-found: warn
