@@ -10,7 +10,7 @@ on:
       source_sha:
         description: Exact reviewed PR #359 certification source SHA
         required: true
-        default: 4fc031b82ee293c42808018bfb392a3fcd35543c
+        default: 817a382054c25d19311b2a49f0cf522d8a82299c
         type: string
       eth_usd_8:
         description: Current honest ETH/USD reference encoded as USD x 1e8
@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: testnet-certification
     env:
-      EXPECTED_CERT_SHA: 4fc031b82ee293c42808018bfb392a3fcd35543c
+      EXPECTED_CERT_SHA: 817a382054c25d19311b2a49f0cf522d8a82299c
       EXPECTED_AUTHORITY_SHA: 7464993ba9066109eccfc7c7d3a14927a5544ecd
       RH46630_ZERO_WRITE_PREFLIGHT: rh46630-zero-write-preflight.json
       RH46630_LIFECYCLE_EVIDENCE: rh46630-native-lifecycle-evidence.json
@@ -138,6 +138,7 @@ jobs:
           grep -F 'REPLAY_HARVEST_DUPLICATED_FINANCIAL_STATE' scripts/rh46630-native-lifecycle-postchecks.mjs
           grep -F "mode: 'CREATE_NEW'" scripts/rh46630-zero-write-preflight.mjs
           grep -F 'FACTORY_ENABLE_LIVE' scripts/rh46630-zero-write-preflight.mjs
+          grep -F 'FACTORY_OPEN_CREATE' scripts/rh46630-zero-write-preflight.mjs
 
       - name: ZERO-WRITE creator/campaign/funding preflight before any oracle or lifecycle write
         shell: bash
