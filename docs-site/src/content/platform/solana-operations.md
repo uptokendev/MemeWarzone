@@ -1,11 +1,11 @@
 ---
 title: Solana Operations
-description: Launch, trade, vote, graduate, and follow campaigns on the Solana side of MemeWarzone.
+description: Launch, trade, graduate, import, and follow campaigns on the Solana side of the three-chain MemeWarzone product.
 ---
 
-Solana is a live MemeWarzone network alongside BNB.
+Solana is one of MemeWarzone's three first-class product chains alongside **BNB Chain and Robinhood Chain**.
 
-The product keeps the campaign flow familiar across both networks while using the wallet, addresses, transaction fees, and market route native to the selected chain.
+The campaign lifecycle stays familiar across all three networks while Solana keeps Solana-native wallet, transaction, mint, program, and market mechanics.
 
 ![Solana campaign flow](/images/docs/solana-campaign-flow.png)
 
@@ -13,7 +13,15 @@ The product keeps the campaign flow familiar across both networks while using th
 
 Choose Solana before starting the campaign form.
 
-Creators can use Direct for a campaign that is ready to launch or Draft when they want to prepare the campaign and promotion page before opening trading.
+Creators can use Direct, Draft / Prepare Mode, and scheduled launch behavior according to the active campaign flow.
+
+Bonding is SOL-native. Graduation moves the campaign into the Solana post-grad venue architecture while keeping the same MemeWarzone campaign identity.
+
+## Import an existing Solana token
+
+Already have a Solana token? Use **[Import an Existing Token](/import)** instead of launching a duplicate ticker.
+
+Import resolves the existing mint, verifies project ownership where possible, and creates the MemeWarzone project identity without fabricating bonding or graduation history.
 
 ## Token Details
 
@@ -35,6 +43,14 @@ Before signing:
 4. confirm the wallet request
 5. wait for the transaction result before submitting another action
 
+## Solana transaction model
+
+Solana remains Solana-native rather than being forced through an EVM abstraction.
+
+The implementation can use Wallet Standard providers, VersionedTransaction/V0, address lookup tables, fresh blockhash/last-valid-height handling, simulation, and Solana-native signer rules where required.
+
+Those execution details do not change the product semantics shared with BNB and Robinhood.
+
 ## UpVotes and discovery
 
 Solana campaigns participate in MemeWarzone discovery through the campaign surfaces available to them, including UpVotes and the War Trade Room.
@@ -53,14 +69,12 @@ Verify which address a wallet, explorer, or product field is asking for before c
 
 ## Graduation and POST
 
-When a Solana campaign completes its launch phase, its state advances and the product exposes the post graduation route available to that campaign.
+Solana campaigns bond in SOL and graduate into the accepted Solana post-grad market architecture, currently based around Meteora for the supported generation.
 
-Use the campaign state and War Trade Room as the source for the next market action.
+The selected Graduation Market remains chain-specific and is revalidated at graduation.
 
-## Wallet discipline
+## Warzone identity
 
-Never approve a transaction because a social post, direct message, or copied link tells you to.
+Solana remains explicit through Battles, Tournaments, Major War League, Quarterly Championship, rewards, and claims. Chain-normalized scoring does not erase chain identity or settlement asset.
 
-Open MemeWarzone through the official site, verify the chain and campaign, then review the wallet request before signing.
-
-Read **[Direct and Draft Launches](/creators/direct-and-draft)**, **[War Trade Room](/traders/war-trade-room)**, and **[Avoid Scams](/security/avoid-scams)**.
+Read **[Chain Readiness](/platform/chain-readiness)**, **[Campaign System](/platform/campaign-lifecycle)**, **[Graduation](/platform/graduation)**, and **[War Trade Room](/traders/war-trade-room)**.
