@@ -44,6 +44,7 @@ export function resolveImageUri(uri?: string | null): string | undefined {
   } else if (raw.startsWith("ipfs://")) {
     let p = raw.slice("ipfs://".length);
     if (p.startsWith("ipfs/")) p = p.slice("ipfs/".length);
+    if (!isLikelyCid(p.split("/")[0] || "")) return undefined;
     addIpfs(p);
   } else if (raw.startsWith("ar://")) {
     const tx = raw.slice("ar://".length);

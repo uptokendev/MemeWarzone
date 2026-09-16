@@ -7,7 +7,7 @@ export function solanaReadRpcUrl(): string {
   return (
     String(import.meta.env.VITE_SOLANA_RPC || "").trim() ||
     getPublicRpcUrl(SOLANA_CHAIN_ID) ||
-    "https://api.mainnet-beta.solana.com"
+    "https://solana-rpc.publicnode.com"
   );
 }
 

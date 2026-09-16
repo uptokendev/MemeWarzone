@@ -313,7 +313,9 @@ export function getPublicRpcUrl(chainId: SupportedChainId): string {
       (import.meta.env.VITE_PUBLIC_RPC_SOLANA as string | undefined) ??
       (import.meta.env.VITE_PUBLIC_RPC_101 as string | undefined);
     const solanaFirst = firstFromCsv(solana);
-    return solanaFirst || "https://api.mainnet-beta.solana.com";
+    // Public mainnet-beta RPC forbids browser Origin; Coolify/staging must set
+    // VITE_SOLANA_RPC. publicnode is the last-resort public fallback.
+    return solanaFirst || "https://solana-rpc.publicnode.com";
   }
 
   const explicit =
@@ -353,7 +355,7 @@ export function getPublicRpcUrls(chainId: SupportedChainId): string[] {
       (import.meta.env.VITE_PUBLIC_RPC_SOLANA as string | undefined) ??
       (import.meta.env.VITE_PUBLIC_RPC_101 as string | undefined);
     const list = fromCsv(solana);
-    return list.length ? list : ["https://api.mainnet-beta.solana.com"];
+    return list.length ? list : ["https://solana-rpc.publicnode.com"];
   }
 
   const explicit =

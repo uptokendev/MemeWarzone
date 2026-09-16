@@ -46,11 +46,10 @@ function resolveAblyApiKey() {
   if (raw && keySecret) return `${raw}:${keySecret}`;
   if (keyName && keySecret) return `${keyName}:${keySecret}`;
 
-  // Local compatibility fallback.
-  // In local Netlify dev, some setups already provide the full Ably key as
-  // VITE_ABLY_CLIENT_KEY in .env while ABLY_API_KEY only contains the key name.
+  // Local / Coolify compatibility: client key name plus server secret.
   const viteClientKey = p(process.env.VITE_ABLY_CLIENT_KEY);
   if (viteClientKey.includes(":")) return viteClientKey;
+  if (viteClientKey && keySecret) return `${viteClientKey}:${keySecret}`;
 
   return raw;
 }

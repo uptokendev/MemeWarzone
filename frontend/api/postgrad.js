@@ -26,6 +26,7 @@ import sponsorshipApplications from "./sponsorship-applications.js";
 import sponsorshipPackages from "./sponsorship-packages.js";
 import sponsorshipSettings from "./sponsorship-settings.js";
 import warRoom from "./warRoom.js";
+import { isPostgradApiFlagEnabled } from "./lib/postgradFlags.js";
 
 const ROUTES = [
   { pattern: /^\/arena\/ops\/health$/, flag: "POSTGRAD_ARENA_OPS_ENABLED", handler: arenaOps },
@@ -72,7 +73,7 @@ function truthy(value) {
 }
 
 function enabled(name) {
-  return truthy(process.env[name]);
+  return isPostgradApiFlagEnabled(name);
 }
 
 function routeEnabled(route) {

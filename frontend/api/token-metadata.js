@@ -1,14 +1,20 @@
 import { pool } from "../server/db.js";
-import { badMethod, getQuery, isAddress, json } from "../server/http.js";
+import { badMethod, getQuery, isSolanaChain, json, normalizeAddress } from "../server/http.js";
 
 function toInt(value, fallback) {
   const n = Number(value);
   return Number.isFinite(n) ? Math.trunc(n) : fallback;
 }
 
-function cleanAddress(value) {
-  const raw = String(value || "").trim().toLowerCase();
-  return isAddress(raw) ? raw : "";
+function cleanAddress(value, chainId) {
+  return normalizeAddress(value, chainId);
+}
+
+function addressMatchSql(chainId) {
+  if (isSolanaChain(chainId)) {
+    return "(campaign_address = $2 or token_address = $2)";
+  }
+  return "(lower(campaign_address) = $2 or lower(token_address) = $2)";
 }
 
 function schemaMissing(error) {
@@ -36,8 +42,12 @@ function campaignUrl(req, chainId, campaignAddress, tokenAddress) {
 function metadataPayload(req, row) {
   const metadata = safeMetadata(row.metadata);
   const chainId = Number(row.chain_id);
-  const campaignAddress = row.campaign_address ? String(row.campaign_address).toLowerCase() : null;
-  const tokenAddress = row.token_address ? String(row.token_address).toLowerCase() : null;
+  const campaignAddress = row.campaign_address
+    ? (isSolanaChain(chainId) ? String(row.campaign_address) : String(row.campaign_address).toLowerCase())
+    : null;
+  const tokenAddress = row.token_address
+    ? (isSolanaChain(chainId) ? String(row.token_address) : String(row.token_address).toLowerCase())
+    : null;
   const logoUri = row.logo_uri || row.image || null;
   const externalUrl = row.external_url || campaignUrl(req, chainId, campaignAddress, tokenAddress);
 
@@ -60,7 +70,9 @@ function metadataPayload(req, row) {
       chainId,
       campaignAddress,
       tokenAddress,
-      creatorAddress: row.creator_address ? String(row.creator_address).toLowerCase() : null,
+      creatorAddress: row.creator_address
+        ? (isSolanaChain(chainId) ? String(row.creator_address) : String(row.creator_address).toLowerCase())
+        : null,
       website: row.website || null,
       x: row.x_account || null,
       telegram: row.telegram || null,
@@ -121,7 +133,7 @@ async function findRegistryMetadata({ chainId, address }) {
               metadata
          from public.token_metadata_registry
         where chain_id = $1
-          and (lower(campaign_address) = $2 or lower(token_address) = $2)
+          and ${addressMatchSql(chainId)}
         limit 1`,
       [chainId, address],
     );
@@ -154,7 +166,7 @@ async function findCampaignMetadata({ chainId, address }) {
               '{}'::jsonb as metadata
          from public.campaigns
         where chain_id = $1
-          and (lower(campaign_address) = $2 or lower(token_address) = $2)
+          and ${addressMatchSql(chainId)}
         limit 1`,
       [chainId, address],
     );
@@ -178,7 +190,7 @@ export default async function handler(req, res) {
   try {
     const q = getQuery(req);
     const chainId = toInt(req.params?.chainId || q.chainId, 97);
-    const address = cleanAddress(req.params?.address || q.address || q.token || q.campaign);
+    const address = cleanAddress(req.params?.address || q.address || q.token || q.campaign, chainId);
 
     if (!address) return json(res, 400, { error: "Invalid or missing token/campaign address" });
 
