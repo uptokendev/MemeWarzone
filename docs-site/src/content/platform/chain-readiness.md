@@ -10,7 +10,7 @@ A chain being part of the product architecture does not mean every subsystem on 
 ## BNB Chain
 
 **Production chain:** 56  
-**Destructive staging:** BSC Testnet 97  
+**Destructive staging:** BNB chain 97 staging  
 **Native asset:** BNB
 
 BNB is the most mature EVM campaign lifecycle.
@@ -22,7 +22,7 @@ BNB existing-token Import is part of the current public onboarding flow.
 ## Solana
 
 **Production:** mainnet-beta  
-**Destructive staging:** devnet  
+**Destructive staging:** Solana staging environment  
 **Native asset:** SOL
 
 Solana remains Solana-native rather than being forced into an EVM-shaped model.
@@ -34,7 +34,7 @@ Solana existing-token Import is part of the current public onboarding flow.
 ## Robinhood Chain
 
 **Production chain:** 4663  
-**Permanent destructive staging:** 46630  
+**Permanent destructive staging:** chain 46630  
 **Native asset:** ETH
 
 Robinhood is a first-class strategic chain, but production creation remains fail-closed until the required staging lifecycle, deployment identity, V3 infrastructure, locker, oracle/route, recovery, claims, Arena, and canary evidence are complete.
