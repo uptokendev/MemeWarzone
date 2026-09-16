@@ -1,0 +1,60 @@
+name: RH46630 UPVoteTreasury deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type DEPLOY_UPVOTE_TREASURY_CHAIN_46630
+        required: true
+        type: string
+      source_sha:
+        required: true
+        default: 02541f2f1fcbb06d70799cad1da480f7e9f3c227
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: ${{ github.event.inputs.confirmation == 'DEPLOY_UPVOTE_TREASURY_CHAIN_46630' }}
+    runs-on: ubuntu-latest
+    environment: testnet-certification
+    env:
+      EXPECTED_SOURCE_SHA: 02541f2f1fcbb06d70799cad1da480f7e9f3c227
+      ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL }}
+      ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY }}
+    steps:
+      - name: Reject wrong confirmation or SHA
+        run: |
+          set -euo pipefail
+          test "${{ github.event.inputs.confirmation }}" = 'DEPLOY_UPVOTE_TREASURY_CHAIN_46630'
+          test "${{ github.event.inputs.source_sha }}" = "$EXPECTED_SOURCE_SHA"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.source_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx hardhat compile
+      - run: node --test scripts/rh46630-upvote-treasury-deploy.test.mjs
+      - name: Live deploy UPVoteTreasury
+        env:
+          RH46630_DEPLOY_UPVOTE_TREASURY: '1'
+        run: |
+          set -euo pipefail
+          test -n "${ROBINHOOD_TESTNET_RPC_URL:-}"
+          test -n "${ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY:-}"
+          export RH46630_UPVOTE_OWNER_PRIVATE_KEY="$ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY"
+          mkdir -p reports
+          node scripts/rh46630-upvote-treasury-deploy.mjs | tee reports/rh46630-upvote-treasury-deploy.json
+          test -s reports/rh46630-upvote-treasury-deploy.json
+          python3 -c 'import json; d=json.load(open("reports/rh46630-upvote-treasury-deploy.json")); assert d.get("sent") is True; assert str(d.get("address","")).startswith("0x")'
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rh46630-upvote-treasury-deploy
+          path: reports/rh46630-upvote-treasury-deploy.json
+          if-no-files-found: warn
