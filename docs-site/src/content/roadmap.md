@@ -29,10 +29,10 @@ The active integration program is closing the evidence required for the broader 
 
 - BNB destructive lifecycle and claim/recovery certification
 - Solana post-bond/Arena lifecycle certification while preserving accepted program behavior
-- Robinhood Testnet 46630 native lifecycle, V3 venue, locker, and recovery proof
+- Robinhood staging chain 46630 native lifecycle, V3 venue, locker, and recovery proof
 - true chain identity through Battles, Tournaments, MWL, Quarterly, and claims
 - exact-head restart/replay/reconciliation proof
-- controlled production canaries after staging gates pass
+- controlled production canaries after staging requirements pass
 
 Production activation follows evidence; it is not inferred from code existing in the repository.
 
