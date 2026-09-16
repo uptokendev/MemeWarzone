@@ -31,7 +31,7 @@ export const WAR_POOL_V2_ABI = [
   "function resolve(bytes32 poolId,address winnerPayout,uint256 deadline,bytes signature)",
   "function claimWinner(bytes32 poolId)",
   "function claimProtocol(bytes32 poolId)",
-  "function claimLeague(bytes32 poolId)",
+  "function claimLeague(bytes32 poolId,bytes32 monthlyEpoch,bytes32 quarterlyEpoch)",
   "function refundStake(bytes32 poolId)",
   "function pools(bytes32) view returns (uint8 kind,uint8 state,address ownerA,address ownerB,uint96 stakeAmount,uint96 buyInAmount,uint256 stakeA,uint256 stakeB,uint256 buyInTotal,uint256 boostTotal,address winnerPayout,uint256 pendingWinner,uint256 pendingProtocol,uint256 pendingLeague,uint256 depositDeadline,uint256 resolveDeadline,bool claimedWinner,bool claimedProtocol,bool claimedLeague,bool refundedA,bool refundedB)",
 ];
