@@ -55,6 +55,10 @@
     "pg": "^8.13.0",
     "typescript": "^5.7.2"
   },
+  "optionalDependencies": {
+    "bufferutil": "^4.0.8",
+    "utf-8-validate": "5.0.10"
+  },
   "overrides": {
     "uuid": "^8.3.2"
   },
