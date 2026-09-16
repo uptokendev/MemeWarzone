@@ -26,19 +26,13 @@ test('matching runtime hash is PRESENT', () => {
   assert.equal(row.hasCode, true);
 });
 
-test('readInventory reports upvote treasury missing even when V3 stack is present', async () => {
-  const codes = Object.fromEntries(
-    Object.entries(IDENTITIES).map(([name, ident]) => [ident.address.toLowerCase(), '0x' + name]),
-  );
+test('readInventory includes UPVoteTreasury identity', async () => {
+  assert.equal(IDENTITIES.upvoteTreasury.address, '0x670256a51020477e4E96d7D7a94ac1783F1B1789');
   const report = await readInventory({
     chainId: 46630,
-    getCode: async (address) => {
-      const code = codes[address.toLowerCase()];
-      return `0x${Buffer.from(code).toString('hex')}`;
-    },
+    getCode: async () => '0x',
   });
-  // hashes will mismatch dummy code → INCOMPLETE is fine; upvote is always MISSING
+  assert.equal(report.upvoteTreasury.address, IDENTITIES.upvoteTreasury.address);
   assert.equal(report.upvoteTreasury.verdict, 'MISSING');
-  assert.equal(report.upvoteTreasury.hasCode, false);
   assert.equal(report.chainId, 46630);
 });

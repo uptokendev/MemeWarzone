@@ -27,6 +27,10 @@ export const IDENTITIES = {
     address: '0x1977178fDeAcE51318cA22B57dfdD246461b9f24',
     runtimeHash: '0x26a988d6510cb54c1e332dd631e6b3c1aad0c7ee931817a8beaa62565371fc29',
   },
+  upvoteTreasury: {
+    address: '0x670256a51020477e4E96d7D7a94ac1783F1B1789',
+    runtimeHash: '0xf2d73cf3f0a3946d2b9b7b7a118ccbe5f097d33a54bbb4bbf34159faf32371ab',
+  },
 };
 
 export function assertChainId(chainId) {
@@ -49,9 +53,9 @@ export function summarizeInventory(results) {
   const allPresent = values.every((row) => row.verdict === 'PRESENT');
   return {
     chainId: RH46630_CHAIN_ID,
-    upvoteTreasury: { address: null, hasCode: false, verdict: 'MISSING', note: 'ProtocolRevenueVault is not UPVoteTreasury; voteWithBNB is not on 0xcDA6e2ca.' },
+    upvoteTreasury: results.upvoteTreasury || { address: null, hasCode: false, verdict: 'MISSING' },
     identities: results,
-    verdict: allPresent ? 'V3_STACK_PRESENT_UPVOTE_TREASURY_MISSING' : 'INCOMPLETE',
+    verdict: allPresent ? 'V3_AND_UPVOTE_TREASURY_PRESENT' : 'INCOMPLETE',
   };
 }
 
