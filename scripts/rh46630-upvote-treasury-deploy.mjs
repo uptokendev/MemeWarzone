@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { ethers } from 'ethers';
@@ -40,13 +41,50 @@ export async function runUpvoteTreasuryDeploy({ env = process.env, plan, sendDep
   return { ...resolved, sent: true, address: deployed?.address || null, txHash: deployed?.txHash || null };
 }
 
+function loadArtifact() {
+  const artifactPath = path.resolve('artifacts/contracts/UPVoteTreasury.sol/UPVoteTreasury.json');
+  if (!fs.existsSync(artifactPath)) throw new Error('MISSING_UPVOTE_TREASURY_ARTIFACT');
+  return JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
+}
+
 async function main() {
   const plan = planUpvoteTreasuryDeploy({}, process.env);
   if (!plan.sendRequired) {
     console.log(JSON.stringify({ ...plan, sent: false }, null, 2));
     return;
   }
-  throw new Error('LIVE_DEPLOY_NOT_ARMED_IN_THIS_SCRIPT');
+  const rpcUrl = String(process.env.ROBINHOOD_TESTNET_RPC_URL || 'https://robinhood-sepolia-rpc.publicnode.com').trim();
+  const key = String(process.env.RH46630_UPVOTE_OWNER_PRIVATE_KEY || process.env.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY || '').trim();
+  if (!key) throw new Error('MISSING_DEPLOYER_KEY');
+  const provider = new ethers.JsonRpcProvider(rpcUrl);
+  assertChainId((await provider.getNetwork()).chainId);
+  const wallet = new ethers.Wallet(key.startsWith('0x') ? key : `0x${key}`, provider);
+  if (wallet.address.toLowerCase() !== OWNER.toLowerCase()) {
+    throw new Error(`DEPLOYER_SIGNER_REQUIRED_${wallet.address}`);
+  }
+  const artifact = loadArtifact();
+  const factory = new ethers.ContractFactory(artifact.abi, artifact.bytecode, wallet);
+  const contract = await factory.deploy(OWNER, FEE_RECEIVER);
+  const receipt = await contract.deploymentTransaction().wait();
+  if (!receipt || receipt.status !== 1) throw new Error('DEPLOY_FAILED');
+  const address = await contract.getAddress();
+  const deployed = new ethers.Contract(address, [
+    'function owner() view returns (address)',
+    'function feeReceiver() view returns (address)',
+  ], provider);
+  const owner = await deployed.owner();
+  const feeReceiver = await deployed.feeReceiver();
+  if (owner.toLowerCase() !== OWNER.toLowerCase()) throw new Error(`OWNER_MISMATCH_${owner}`);
+  if (feeReceiver.toLowerCase() !== FEE_RECEIVER.toLowerCase()) throw new Error(`FEE_RECEIVER_MISMATCH_${feeReceiver}`);
+  console.log(JSON.stringify({
+    ...plan,
+    sent: true,
+    address,
+    txHash: receipt.hash,
+    blockNumber: receipt.blockNumber,
+    owner,
+    feeReceiver,
+  }, null, 2));
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : '';
