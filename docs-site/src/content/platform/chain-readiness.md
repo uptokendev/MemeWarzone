@@ -1,53 +1,96 @@
 ---
-title: BNB and Solana
-description: How BNB and Solana fit into MemeWarzone and what to verify before using either network.
+title: Chain Readiness
+description: How BNB, Solana, and Robinhood fit into MemeWarzone, including the difference between strategic support, staging certification, and production activation.
 ---
 
-MemeWarzone operates on BNB and Solana.
+MemeWarzone's strategic first-class chains are **BNB Chain, Solana, and Robinhood Chain**.
 
-Both networks support the MemeWarzone campaign experience, but wallets, addresses, transaction fees, explorers, and market routes are chain specific.
+A chain being part of the product architecture does not mean every subsystem on that chain is active in production. Creation, graduation, claims, Arena, quote assets, and operational canaries can each be enabled or held independently.
 
-![BNB and Solana network selector](/images/docs/bnb-solana-network-selector.png)
+## BNB Chain
 
-## BNB
+**Production chain:** 56  
+**Destructive staging:** BSC Testnet 97  
+**Native asset:** BNB
 
-Use the BNB network for BNB campaigns and BNB denominated transactions.
+BNB is the most mature EVM campaign lifecycle.
 
-The BNB campaign path covers creation, launch trading, graduation, post graduation activity, leagues, rewards, and the account tools connected to those campaigns.
+The native path includes BNB bonding, graduation, Topaz post-graduation markets, permanent liquidity custody, Treasury routing, creator protections, and historical campaign generations.
+
+BNB existing-token Import is part of the current public onboarding flow.
 
 ## Solana
 
-Use the Solana network for Solana campaigns and Solana transactions.
+**Production:** mainnet-beta  
+**Destructive staging:** devnet  
+**Native asset:** SOL
 
-The Solana path covers campaign creation, Direct and Draft launches, Token Details, trading, UpVotes, graduation, post graduation activity, and the campaign discovery surfaces connected to Solana.
+Solana remains Solana-native rather than being forced into an EVM-shaped model.
 
-## What changes when you switch chains
+The product preserves Wallet Standard support, known-good wallet CREATE, bonding BUY/SELL, V0 transactions where established, ALT handling, fresh blockhash/last-valid-height behavior, signer correctness, simulation, replay safeguards, Meteora graduation, and post-graduation continuity.
 
-When moving between BNB and Solana, verify:
+Solana existing-token Import is part of the current public onboarding flow.
 
-- the selected network
-- the connected wallet
-- the campaign state
-- the campaign or token address
-- the asset used for the transaction
-- the wallet transaction before signing
+## Robinhood Chain
 
-## Shared campaign states
+**Production chain:** 4663  
+**Permanent destructive staging:** 46630  
+**Native asset:** ETH
 
-MemeWarzone uses campaign states to make the current stage clear.
+Robinhood is a first-class strategic chain, but production creation remains fail-closed until the required staging lifecycle, deployment identity, V3 infrastructure, locker, oracle/route, recovery, claims, Arena, and canary evidence are complete.
 
-**DRAFT** is preparation.
+Robinhood Import is a separate concern from Robinhood launch deployment. If enabled, Import uses a narrow read-only token/project-ownership path and must not pull Robinhood launch, graduation, trading, or claim dependencies into onboarding.
 
-**PRE** is launch market trading.
+The public Import UI currently keeps Robinhood behind its own disabled-by-default switch.
 
-**POST** is post graduation activity.
+## Chain activation is independent
 
-The controls shown by the campaign are based on its chain and state.
+Each chain can have a separate state for:
 
-## Before sharing a campaign
+- general support
+- project Import
+- campaign creation
+- bonding/trading
+- graduation
+- claims
+- Arena
+- Graduation Market quote assets
+- canary/operational readiness
 
-Share the MemeWarzone campaign link when possible. It gives the recipient the campaign context, chain, state, and product actions in one place.
+This allows MemeWarzone to keep one feature active while another remains fail-closed.
 
-When sharing an address separately, label whether it is a BNB contract address, Solana mint address, or campaign reference.
+For example, **project Import can be ON while Arena is OFF**, and Robinhood can remain present in the product roadmap while production creation stays disabled.
 
-Read **[Campaign System](/platform/campaign-lifecycle)** and **[Solana Operations](/platform/solana-operations)**.
+## Native bonding and settlement
+
+| Chain | Native bonding asset | Native financial settlement |
+| --- | --- | --- |
+| BNB | BNB | BNB |
+| Solana | SOL | SOL |
+| Robinhood | ETH | ETH |
+
+Rewards and claims stay chain-native. No user should assume that a reward generated on one chain is automatically bridged or swapped into another.
+
+## Post-graduation venue architecture
+
+| Chain | Current venue architecture |
+| --- | --- |
+| BNB | Topaz |
+| Solana | Meteora |
+| Robinhood | chain-local V3 infrastructure |
+
+Graduation changes the liquidity venue, not the intended MemeWarzone user experience. Market identity, chain, pool, route, and generation remain explicit.
+
+## Before signing anything
+
+Always verify:
+
+- selected chain
+- connected wallet
+- contract address or mint
+- campaign or imported-project identity
+- current state
+- asset being spent
+- destination/route shown by the wallet
+
+Read **[Campaign System](/platform/campaign-lifecycle)** for native launches, **[Import an Existing Token](/import)** for external tokens, and **[Arena Overview](/arena)** for the post-graduation Warzone.
