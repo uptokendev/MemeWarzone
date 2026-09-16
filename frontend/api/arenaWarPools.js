@@ -47,8 +47,19 @@ function sum(entries, sideTokenId) {
   return entries.filter((entry) => !sideTokenId || entry.sideTokenId === sideTokenId).reduce((total, entry) => total + Number(entry.amountUsd || 0), 0);
 }
 
-function routing(totalPotUsd) {
-  return { winnersUsd: Math.round(totalPotUsd * 0.85), protocolUsd: Math.round(totalPotUsd * 0.05), featuredUsd: Math.round(totalPotUsd * 0.1) };
+function routing(totalPotUsd, chainId) {
+  const v2 = warPoolGeneration(chainId) === WAR_POOL_GENERATION_V2;
+  if (v2) {
+    return {
+      winnersUsd: Math.round(totalPotUsd * 0.75),
+      prizeUsd: Math.round(totalPotUsd * 0.75),
+      protocolUsd: Math.round(totalPotUsd * 0.05),
+      leagueUsd: Math.round(totalPotUsd * 0.2),
+      featuredUsd: Math.round(totalPotUsd * 0.2),
+      split: "75/20/5",
+    };
+  }
+  return { winnersUsd: Math.round(totalPotUsd * 0.85), protocolUsd: Math.round(totalPotUsd * 0.05), featuredUsd: Math.round(totalPotUsd * 0.1), split: "85/5/10" };
 }
 
 function mapEntry(row) {
@@ -61,7 +72,7 @@ function mapEntry(row) {
   };
 }
 
-function poolPayload(record, entries) {
+function poolPayload(record, entries, extraChainId) {
   const totalPotUsd = sum(entries);
   const kind = String(record.kind || "battle") === "tournament" ? "tournament" : "battle";
   return {
@@ -71,7 +82,7 @@ function poolPayload(record, entries) {
     state: normalizeState(record.state),
     totalPotUsd,
     cutoffAt: record.cutoff_at ? new Date(record.cutoff_at).toISOString() : futureIso(30),
-    routingBreakdown: routing(totalPotUsd),
+    routingBreakdown: routing(totalPotUsd, extraChainId),
     entries,
   };
 }
@@ -121,7 +132,7 @@ async function ensurePool(subjectId, { kind = "battle", cutoffAt } = {}) {
   }
 }
 
-async function listPools() {
+async function listPools(chainId) {
   const result = await pool.query(
     `select *
        from public.arena_war_pools
@@ -129,7 +140,7 @@ async function listPools() {
       limit 200`,
   );
   const pools = [];
-  for (const row of result.rows) pools.push(poolPayload(row, await entriesFor(row.battle_id)));
+  for (const row of result.rows) pools.push(poolPayload(row, await entriesFor(row.battle_id), chainId));
   return pools;
 }
 
@@ -147,7 +158,9 @@ function settlementSummary(poolRecord, extra = {}) {
     settlementStateLabel: poolRecord.state,
     settlementStateBody:
       extra.body ||
-      "Support is a donation, not betting. Supporters are not paid. 85% winning campaign / 5% protocol / 10% Major War League once escrow is live.",
+      (warPoolGeneration(extra.chainId) === WAR_POOL_GENERATION_V2
+        ? "Support is a donation, not betting. Supporters are not paid. 75% prize / 20% league / 5% protocol once escrow is live."
+        : "Support is a donation, not betting. Supporters are not paid. 85% winning campaign / 5% protocol / 10% Major War League once escrow is live."),
     routingBreakdown: poolRecord.routingBreakdown,
   };
 }
@@ -262,9 +275,10 @@ function detailExtras(kind, onchain, chainId, nativeSymbol, sides, extra = {}) {
   };
 }
 
-async function handleSummary(_req, res) {
+async function handleSummary(req, res) {
   try {
-    const pools = await listPools();
+    const chainId = Number(getQuery(req).chainId || 0) || undefined;
+    const pools = await listPools(chainId);
     return json(res, 200, {
       summary: {
         pools,
@@ -303,7 +317,7 @@ async function handleDetail(_req, res, subjectId) {
       await pool.query(`update public.arena_war_pools set state = 'locked', updated_at = now() where battle_id = $1`, [subject.tournament.id]);
       record.state = "locked";
     }
-    const poolRecord = poolPayload(record, await entriesFor(subject.tournament.id));
+    const poolRecord = poolPayload(record, await entriesFor(subject.tournament.id), Number(subject.tournament.chain_id));
     const onchain = await readOnchainPool(Number(subject.tournament.chain_id), subject.tournament.id, "tournament");
     const sides = roster.map((entry) => ({
       tokenId: entry.tokenAddress,
@@ -317,7 +331,10 @@ async function handleDetail(_req, res, subjectId) {
         winnerTokenId,
         winnerLabel: winnerTokenId ? "Champion takes the tournament pot" : "Supporters are not paid",
         winnerSideUsd: winnerTokenId ? sum(poolRecord.entries, winnerTokenId) : 0,
-        body: "Support is a donation to a roster memecoin. The overall champion takes 85% of buy-ins plus Support. 5% protocol / 10% Major War League. Supporters are not paid.",
+        body: Number(subject.tournament.chain_id) === 46630 || warPoolGeneration(Number(subject.tournament.chain_id)) === WAR_POOL_GENERATION_V2
+          ? "Support is a donation to a roster memecoin. The overall champion takes 75% of buy-ins plus Support. 5% protocol / 20% league. Supporters are not paid."
+          : "Support is a donation to a roster memecoin. The overall champion takes 85% of buy-ins plus Support. 5% protocol / 10% Major War League. Supporters are not paid.",
+        chainId: Number(subject.tournament.chain_id),
       }),
       ...detailExtras("tournament", onchain, Number(subject.tournament.chain_id), subject.tournament.native_symbol || nativeSymbolFor(subject.tournament.chain_id), sides, {
         supportOpen: supportOpenForTournament(subject.tournament) && poolRecord.state === "open",
@@ -326,7 +343,7 @@ async function handleDetail(_req, res, subjectId) {
   }
 
   const record = await ensurePool(subject.battle.id, { kind: "battle" });
-  const poolRecord = poolPayload(record, await entriesFor(subject.battle.id));
+  const poolRecord = poolPayload(record, await entriesFor(subject.battle.id), Number(subject.battle.chain_id));
   const onchain = await readOnchainPool(Number(subject.battle.chain_id), subject.battle.id, "battle");
   const parts = Array.isArray(subject.battle.participants) ? subject.battle.participants : [];
   const sides = parts
@@ -340,6 +357,7 @@ async function handleDetail(_req, res, subjectId) {
     pool: poolRecord,
     settlementSummary: settlementSummary(poolRecord, {
       winnerTokenId: ident(subject.battle.winner_token) || null,
+      chainId: Number(subject.battle.chain_id),
     }),
     ...detailExtras("battle", onchain, Number(subject.battle.chain_id), subject.battle.native_symbol || nativeSymbolFor(subject.battle.chain_id), sides, {
       supportOpen: poolRecord.state === "open" && subject.battle.state !== "finished" && subject.battle.state !== "expired",
