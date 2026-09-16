@@ -1,0 +1,54 @@
+name: RH46630 Arena V2 setReceivers
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type SET_RECEIVERS_CHAIN_46630_ARENA_V2 to authorize one 46630 war-pool receiver update'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  set-receivers:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.confirmation == 'SET_RECEIVERS_CHAIN_46630_ARENA_V2'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Unit tests
+        run: node --test scripts/rh46630-arena-v2-set-receivers.test.mjs
+
+      - name: Live setReceivers (owner-gated)
+        env:
+          RH46630_ARENA_SET_RECEIVERS: '1'
+          ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL }}
+          ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${ROBINHOOD_TESTNET_RPC_URL:-}"
+          test -n "${ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY:-}"
+          export RH46630_ARENA_WAR_POOL_OWNER_PRIVATE_KEY="$ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY"
+          node scripts/rh46630-arena-v2-set-receivers.mjs | tee /tmp/rh46630-set-receivers.json
+          test -s reports/rh46630-arena-v2-receivers.json
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rh46630-arena-v2-receivers
+          path: |
+            reports/rh46630-arena-v2-receivers.json
+          if-no-files-found: warn
