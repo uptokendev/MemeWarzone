@@ -286,6 +286,14 @@ const CHAINS: ChainCfg[] = [
     factoryStartBlock: ENV.FACTORY_START_BLOCK_97 || undefined,
     voteTreasuryAddress: ENV.VOTE_TREASURY_ADDRESS_97 || undefined,
     voteTreasuryStartBlock: ENV.VOTE_TREASURY_START_BLOCK_97 || undefined
+  },
+  {
+    chainId: 46630,
+    rpcHttp: ENV.ROBINHOOD_RPC_HTTP_46630,
+    factoryAddress: ENV.FACTORY_ADDRESS_46630 || undefined,
+    factoryStartBlock: ENV.FACTORY_START_BLOCK_46630 || undefined,
+    voteTreasuryAddress: ENV.VOTE_TREASURY_ADDRESS_46630 || undefined,
+    voteTreasuryStartBlock: ENV.VOTE_TREASURY_START_BLOCK_46630 || undefined
   }
 ].filter((chain) => Boolean(chain.rpcHttp));
 
