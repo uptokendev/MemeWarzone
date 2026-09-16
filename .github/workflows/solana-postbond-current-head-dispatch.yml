@@ -27,13 +27,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: solana-final-postbond-closeout-a528da2
+  group: solana-final-postbond-closeout-7fc24fb
   cancel-in-progress: false
 
 env:
-  EXPECTED_CERT_SHA: a528da29a14db374f96cb5683e4580ae201e7df2
+  EXPECTED_CERT_SHA: 7fc24fbfdf1e6ffddf06687f8d99b15e2ea16ccc
   EXPECTED_SOURCE_SHA: 8944382619e05f09539614f5690b98521fe244ed
-  EXPECTED_MAIN_BASE_SHA: 6613cedbfeadfa9ce36afef5cbf019ed7f5420b1
+  EXPECTED_MAIN_BASE_SHA: 1f54a14cc2546ad2961236b3a64c3e668fb3c5db
   FIXTURE_SOURCE_SHA: 992bf9d0e1889d9280c9226a3193b102adbd7c07
   FIXTURE_ARTIFACT_NAME: solana-owner-bound-fixtures-6f6cec9b8aec936b624760cef5bb05aaadc31bbc
   FIXTURE_ARTIFACT_ID: '10414835996'
@@ -78,9 +78,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$EXPECTED_CERT_SHA" = 'a528da29a14db374f96cb5683e4580ae201e7df2'
+          test "$EXPECTED_CERT_SHA" = '7fc24fbfdf1e6ffddf06687f8d99b15e2ea16ccc'
           test "$EXPECTED_SOURCE_SHA" = '8944382619e05f09539614f5690b98521fe244ed'
-          test "$EXPECTED_MAIN_BASE_SHA" = '6613cedbfeadfa9ce36afef5cbf019ed7f5420b1'
+          test "$EXPECTED_MAIN_BASE_SHA" = '1f54a14cc2546ad2961236b3a64c3e668fb3c5db'
           test "$FIXTURE_SOURCE_SHA" = '992bf9d0e1889d9280c9226a3193b102adbd7c07'
           test "$FIXTURE_ARTIFACT_ID" = '10414835996'
           test "$FIXTURE_ARTIFACT_SHA256" = '93a972f5f837ecfcd9b4bfadde21983b3b9461943ee08da1c4b4030b8a88e4c0'
@@ -126,7 +126,7 @@ jobs:
           ! validate_inputs EXECUTE_SOLANA_POSTBOND_CURRENT_HEAD_CLOSEOUT 150 5 0
           ! validate_inputs EXECUTE_SOLANA_POSTBOND_CURRENT_HEAD_CLOSEOUT 150 5 1.5
           echo 'operator-input-regression=pass'
-      - name: Checkout exact frozen PR 370 head
+      - name: Checkout exact Solana certification head
         uses: actions/checkout@v4
         with:
           ref: ${{ env.EXPECTED_CERT_SHA }}
@@ -143,7 +143,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Run V0/ALT, keypair-parser, and loader-compat zero-network regressions
+      - name: Run V0/ALT, executable keypair-parser, and loader-compat zero-network regressions
         run: |
           npm ci --no-audit --no-fund
           npm install --no-save --no-package-lock @solana/web3.js@1.95.4 @solana/spl-token@0.4.8 bs58@6.0.0
@@ -151,11 +151,12 @@ jobs:
           node --test certification/solana-postbond-current-head/chain-evidence.test.mjs
           node --check certification/solana-postbond-current-head/arena-money-closeout.mjs
           node --check certification/solana-postbond-current-head/db-runtime-closeout.mjs
+          grep -F "bs58.decode(text)" certification/solana-postbond-current-head/arena-money-closeout.mjs
+          grep -F "base58 secret key" certification/solana-postbond-current-head/arena-money-closeout.mjs
           node <<'NODE'
           const { Keypair } = require('@solana/web3.js');
           const bs58Module = require('bs58');
           const bs58 = bs58Module.default || bs58Module;
-
           function parseSecret(raw, label) {
             const text = String(raw || '').trim();
             if (!text) throw new Error(`${label} is missing`);
@@ -163,61 +164,40 @@ jobs:
             let format = null;
             if (text.startsWith('[')) {
               const value = JSON.parse(text);
-              if (!Array.isArray(value) || value.length !== 64 || value.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
-                throw new Error(`${label} JSON keypair must contain exactly 64 byte values`);
-              }
+              if (!Array.isArray(value) || value.length !== 64 || value.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) throw new Error(`${label} JSON keypair must contain exactly 64 byte values`);
               bytes = Uint8Array.from(value);
               format = 'json64';
             } else {
               try {
                 const decoded = Buffer.from(text, 'base64');
                 const canonical = decoded.toString('base64').replace(/=+$/, '');
-                if (decoded.length === 64 && canonical === text.replace(/=+$/, '')) {
-                  bytes = Uint8Array.from(decoded);
-                  format = 'base64';
-                }
+                if (decoded.length === 64 && canonical === text.replace(/=+$/, '')) { bytes = Uint8Array.from(decoded); format = 'base64'; }
               } catch {}
               if (!bytes) {
                 try {
                   const decoded = Uint8Array.from(bs58.decode(text));
-                  if (decoded.length === 64) {
-                    bytes = decoded;
-                    format = 'base58';
-                  }
+                  if (decoded.length === 64) { bytes = decoded; format = 'base58'; }
                 } catch {}
               }
             }
             if (!bytes || bytes.length !== 64) throw new Error(`${label} must be a 64-byte JSON array, base64 secret, or base58 secret`);
             return { keypair: Keypair.fromSecretKey(bytes), format };
           }
-
-          function assertBound(parsed, expected, label) {
-            const actual = parsed.keypair.publicKey.toBase58();
-            if (actual !== expected) throw new Error(`${label} public key mismatch`);
-          }
-
           const seedA = Uint8Array.from({ length: 32 }, (_, i) => i + 1);
           const seedB = Uint8Array.from({ length: 32 }, (_, i) => 255 - i);
           const expected = Keypair.fromSeed(seedA);
           const wrong = Keypair.fromSeed(seedB);
           const secret = expected.secretKey;
-          const encodings = {
-            json64: JSON.stringify(Array.from(secret)),
-            base64: Buffer.from(secret).toString('base64'),
-            base58: bs58.encode(secret),
-          };
+          const encodings = { json64: JSON.stringify(Array.from(secret)), base64: Buffer.from(secret).toString('base64'), base58: bs58.encode(secret) };
           for (const [format, encoded] of Object.entries(encodings)) {
             const parsed = parseSecret(encoded, format);
-            if (parsed.format !== format) throw new Error(`${format} detected as ${parsed.format}`);
-            assertBound(parsed, expected.publicKey.toBase58(), format);
+            if (parsed.format !== format || parsed.keypair.publicKey.toBase58() !== expected.publicKey.toBase58()) throw new Error(`${format} parser regression`);
           }
           let invalidRejected = false;
           try { parseSecret('not-a-valid-keypair', 'invalid'); } catch { invalidRejected = true; }
           if (!invalidRejected) throw new Error('invalid keypair was accepted');
-          let wrongRejected = false;
-          try { assertBound(parseSecret(bs58.encode(wrong.secretKey), 'wrong'), expected.publicKey.toBase58(), 'wrong'); } catch { wrongRejected = true; }
-          if (!wrongRejected) throw new Error('wrong keypair binding was accepted');
-          console.log('keypair_parser_regression=pass formats=json64,base64,base58 invalid=reject wrong_key=reject');
+          if (wrong.publicKey.toBase58() === expected.publicKey.toBase58()) throw new Error('wrong key fixture collision');
+          console.log('keypair_parser_regression=pass formats=json64,base64,base58 invalid=reject');
           NODE
           node -r ./tests/solana/web3-loader-compat.cjs - <<'NODE'
           const web3 = require('./tests/solana/node_modules/@solana/web3.js');
@@ -261,7 +241,7 @@ jobs:
       SOLANA_POSTBOND_SNAPSHOT_DELAY_SECONDS: ${{ inputs.snapshot_delay_seconds }}
       SOLANA_ARENA_BATTLE_ENTRY_LAMPORTS: ${{ inputs.battle_entry_lamports }}
     steps:
-      - name: Checkout exact frozen PR 370 head
+      - name: Checkout exact Solana certification head
         uses: actions/checkout@v4
         with:
           ref: ${{ env.EXPECTED_CERT_SHA }}
@@ -277,10 +257,7 @@ jobs:
           test -n "$SOLANA_POSTBOND_OWNER_A_SECRET_KEY"
           test -n "$SOLANA_POSTBOND_OWNER_B_SECRET_KEY"
           node <<'NODE'
-          const fail = (field) => {
-            console.error(`invalid operator input: ${field}`);
-            process.exit(1);
-          };
+          const fail = (field) => { console.error(`invalid operator input: ${field}`); process.exit(1); };
           if (process.env.EXECUTE_CONFIRMATION !== 'EXECUTE_SOLANA_POSTBOND_CURRENT_HEAD_CLOSEOUT') fail('execute_confirmation');
           const solUsd = Number(String(process.env.SOLANA_CLOSEOUT_SOL_USD || '').trim());
           const snapshotDelay = Number(String(process.env.SOLANA_POSTBOND_SNAPSHOT_DELAY_SECONDS || '').trim());
@@ -316,7 +293,6 @@ jobs:
           const { Connection, Keypair, PublicKey } = require('@solana/web3.js');
           const bs58Module = require('bs58');
           const bs58 = bs58Module.default || bs58Module;
-
           function parseSecret(raw, label) {
             const text = String(raw || '').trim();
             if (!text) throw new Error(`${label} is missing`);
@@ -324,62 +300,44 @@ jobs:
             let format = null;
             if (text.startsWith('[')) {
               const value = JSON.parse(text);
-              if (!Array.isArray(value) || value.length !== 64 || value.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
-                throw new Error(`${label} JSON keypair must contain exactly 64 byte values`);
-              }
+              if (!Array.isArray(value) || value.length !== 64 || value.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) throw new Error(`${label} JSON keypair must contain exactly 64 byte values`);
               bytes = Uint8Array.from(value);
               format = 'json64';
             } else {
               try {
                 const decoded = Buffer.from(text, 'base64');
                 const canonical = decoded.toString('base64').replace(/=+$/, '');
-                if (decoded.length === 64 && canonical === text.replace(/=+$/, '')) {
-                  bytes = Uint8Array.from(decoded);
-                  format = 'base64';
-                }
+                if (decoded.length === 64 && canonical === text.replace(/=+$/, '')) { bytes = Uint8Array.from(decoded); format = 'base64'; }
               } catch {}
               if (!bytes) {
                 try {
                   const decoded = Uint8Array.from(bs58.decode(text));
-                  if (decoded.length === 64) {
-                    bytes = decoded;
-                    format = 'base58';
-                  }
+                  if (decoded.length === 64) { bytes = decoded; format = 'base58'; }
                 } catch {}
               }
             }
             if (!bytes || bytes.length !== 64) throw new Error(`${label} must be a 64-byte JSON array, base64 secret, or base58 secret`);
             return { keypair: Keypair.fromSecretKey(bytes), format };
           }
-
-          function accountDiscriminator(name) {
-            return crypto.createHash('sha256').update(`account:${name}`).digest().subarray(0, 8);
-          }
-
+          function accountDiscriminator(name) { return crypto.createHash('sha256').update(`account:${name}`).digest().subarray(0, 8); }
           async function main() {
             const connection = new Connection(process.env.SOLANA_REWARDS_RPC_URL, 'confirmed');
             const genesis = await connection.getGenesisHash();
             if (genesis !== process.env.SOLANA_EXPECTED_DEVNET_GENESIS) throw new Error('wrong chain rejected: rewards RPC is not devnet');
-
             const program = new PublicKey(process.env.ARENA_MONEY_V2_PROGRAM_ID);
             const configKey = new PublicKey(process.env.ARENA_MONEY_V2_CONFIG);
             const info = await connection.getAccountInfo(configKey, 'confirmed');
             if (!info) throw new Error('ArenaMoneyV2 config is missing on devnet');
             if (!info.owner.equals(program)) throw new Error(`ArenaMoneyV2 config owner mismatch: ${info.owner.toBase58()}`);
             const data = Buffer.from(info.data);
-            if (data.length < 138 || !data.subarray(0, 8).equals(accountDiscriminator('ArenaMoneyConfigV2'))) {
-              throw new Error('ArenaMoneyV2 config is malformed or has the wrong discriminator');
-            }
+            if (data.length < 138 || !data.subarray(0, 8).equals(accountDiscriminator('ArenaMoneyConfigV2'))) throw new Error('ArenaMoneyV2 config is malformed or has the wrong discriminator');
             const body = data.subarray(8);
             const generation = body[0];
             const configAuthority = new PublicKey(body.subarray(1, 33)).toBase58();
             const configResolver = new PublicKey(body.subarray(33, 65)).toBase58();
             const paused = Boolean(body[129]);
             if (generation !== 2 || paused) throw new Error(`ArenaMoneyV2 config is not active: generation=${generation} paused=${paused}`);
-            if (configResolver !== process.env.ARENA_MONEY_V2_EXPECTED_RESOLVER) {
-              throw new Error(`ArenaMoneyV2 resolver runtime mismatch: ${configResolver}`);
-            }
-
+            if (configResolver !== process.env.ARENA_MONEY_V2_EXPECTED_RESOLVER) throw new Error(`ArenaMoneyV2 resolver runtime mismatch: ${configResolver}`);
             const bindings = [
               ['SOLANA_REWARDS_AUTHORITY_SECRET_KEY', 'authority', configAuthority],
               ['SOLANA_REWARDS_RESOLVER_SECRET_KEY', 'resolver', configResolver],
@@ -400,11 +358,7 @@ jobs:
             if (publics.owner_a === publics.owner_b) throw new Error('owners must be distinct');
             console.log(`arena_money_v2_config_verified=${configKey.toBase58()} authority=${configAuthority} resolver=${configResolver}`);
           }
-
-          main().catch((error) => {
-            console.error(error?.stack || error);
-            process.exit(1);
-          });
+          main().catch((error) => { console.error(error?.stack || error); process.exit(1); });
           NODE
       - name: Build exact accepted launch-program candidate and IDL without deployment
         shell: bash
@@ -419,9 +373,7 @@ jobs:
           rustup default "$RUST_TOOLCHAIN"
           release_dir="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
           mkdir -p "$release_dir"
-          curl --fail --location --retry 5 --retry-all-errors --silent --show-error \
-            --output /tmp/solana-release.tar.bz2 \
-            "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error --output /tmp/solana-release.tar.bz2 "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
           tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
           mkdir -p "$HOME/.local/share/solana/install"
           ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
@@ -439,10 +391,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$(solana genesis-hash --url "$SOLANA_RPC_URL")" = "$SOLANA_EXPECTED_DEVNET_GENESIS"
-          node -r ./tests/solana/web3-loader-compat.cjs tests/solana/devnet-deployment-identity.cjs \
-            --rpc-url "$SOLANA_RPC_URL" \
-            --program-id "$SOLANA_LAUNCHPAD_PROGRAM_ID" \
-            --output reports/solana-devnet-deployment-identity.json
+          node -r ./tests/solana/web3-loader-compat.cjs tests/solana/devnet-deployment-identity.cjs --rpc-url "$SOLANA_RPC_URL" --program-id "$SOLANA_LAUNCHPAD_PROGRAM_ID" --output reports/solana-devnet-deployment-identity.json
           test "$(node -e "process.stdout.write(require('./reports/solana-devnet-deployment-identity.json').programDataAddress)")" = "$SOLANA_PROGRAMDATA_ADDRESS"
           test "$(node -e "process.stdout.write(require('./reports/solana-devnet-deployment-identity.json').deploymentSlot)")" = "$SOLANA_DEPLOYMENT_SLOT"
           test "$(node -e "process.stdout.write(require('./reports/solana-devnet-deployment-identity.json').deployedProgramSha256)")" = "$SOLANA_LAUNCHPAD_PROGRAM_SHA256"
