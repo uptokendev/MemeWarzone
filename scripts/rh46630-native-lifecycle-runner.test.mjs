@@ -77,6 +77,8 @@ test('runtime patch consumes exact zero-write preflight and keeps CREATE conditi
   assert.match(patched, /POST_GRAD_V3_BUY_SELL_HARVEST/);
   assert.match(patched, /POSTGRAD_EXACT_INPUT_SINGLE/);
   assert.match(patched, /POST_GRAD_CAMPAIGN_FINALIZED_MISSING/);
+  assert.match(patched, /nextWritePreflight\.relevantState\.nativeTarget/);
+  assert.doesNotMatch(patched, /const target=await campaign\.graduationNativeTarget\(\); assert\(target>0n,'NATIVE_TARGET_ZERO'\)/);
   assert.match(patched, /EXISTING_CAMPAIGN_NOT_RESUMABLE/);
   assert.match(patched, /RESUME_PATH_FACTORY_NOT_FAIL_CLOSED/);
   assert.match(patched, /NOT_APPLICABLE_RESUMED_EXISTING_CAMPAIGN/);

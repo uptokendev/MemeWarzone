@@ -63,6 +63,15 @@ test('graduated leftover campaign is resumed through post-grad V3 even during CR
 test('post-grad native buy sizing matches certification V3 first swap', () => {
   assert.equal(computePostGradBuyValue(2_460_095_205_684_460n), 123_004_760_284_223n);
   assert.equal(computePostGradBuyValue(100n), 10_000_000_000_000n);
+  const nativeTarget = computeNativeTargetFromUsd(ethers.parseEther('6'), 238534000000n, 8);
+  assert.equal(computePostGradBuyValue(nativeTarget), nativeTarget / 20n > 10_000_000_000_000n ? nativeTarget / 20n : 10_000_000_000_000n);
+});
+
+test('decoder identifies GraduationOracle StalePrice from leftover post-grad nativeTarget revert', () => {
+  const oracleIface = new ethers.Interface(['error StalePrice()']);
+  const decoded = decodeRevertData(oracleIface.encodeErrorResult('StalePrice'), [{ scope: 'GraduationOracle', iface: oracleIface }]);
+  assert.equal(decoded.decodedErrorName, 'StalePrice');
+  assert.equal(decoded.selector, '0x19abf40e');
 });
 
 test('native target math matches GraduationOracle ceiling behavior and first BUY sizing', () => {

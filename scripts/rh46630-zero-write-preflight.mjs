@@ -554,9 +554,6 @@ async function main() {
     const locker = new ethers.Contract(LOCKER, loadAbi('artifacts/contracts/PermanentV3PositionLocker.sol/PermanentV3PositionLocker.json'), provider);
     assert(await campaign.launched(), 'POST_GRAD_RESUME_NOT_LAUNCHED');
     assert(await factory.campaignGraduationRecorded(existingCampaign.campaign), 'POST_GRAD_RESUME_NOT_RECORDED');
-    const nativeTarget = await campaign.graduationNativeTarget();
-    assert(nativeTarget > 0n, 'POST_GRAD_NATIVE_TARGET_ZERO');
-    const postBuyIn = computePostGradBuyValue(nativeTarget);
     const poolInfo = await locker.poolInfo(existingCampaign.dexPair);
     assert(poolInfo.registered, 'POST_GRAD_LOCKER_NOT_REGISTERED');
     assert(same(poolInfo.campaign, existingCampaign.campaign), 'POST_GRAD_LOCKER_CAMPAIGN_MISMATCH');
@@ -578,6 +575,11 @@ async function main() {
     const operatorPriceRaw = String(process.env.ROBINHOOD_ETH_USD_8 || '').trim();
     const operatorPriceValid = /^[0-9]+$/.test(operatorPriceRaw) && BigInt(operatorPriceRaw || '0') > 0n;
     const exactForProspectiveOracleRefresh = feedFresh || operatorPriceValid;
+    const sizingFeedAnswer = feedFresh ? feedRound.answer : (operatorPriceValid ? BigInt(operatorPriceRaw) : feedRound.answer);
+    const sizingPriceSource = feedFresh ? 'CURRENT_FRESH_FEED' : (operatorPriceValid ? 'PROSPECTIVE_ORACLE_REFRESH_INPUT' : 'CURRENT_STALE_FEED_DIAGNOSTIC_ONLY');
+    const nativeTarget = computeNativeTargetFromUsd(existingCampaign.graduationTarget, sizingFeedAnswer, feedDecimals);
+    assert(nativeTarget > 0n, 'POST_GRAD_NATIVE_TARGET_ZERO');
+    const postBuyIn = computePostGradBuyValue(nativeTarget);
     const priceState = {
       feed: ETH_USD_ORACLE,
       decimals: feedDecimals,
@@ -588,7 +590,8 @@ async function main() {
       maxPriceAge: maxPriceAge.toString(),
       ageSeconds: feedAge.toString(),
       freshNow: feedFresh,
-      sizingPriceSource: feedFresh ? 'CURRENT_FRESH_FEED' : (operatorPriceValid ? 'PROSPECTIVE_ORACLE_REFRESH_INPUT' : 'CURRENT_STALE_FEED_DIAGNOSTIC_ONLY'),
+      sizingFeedAnswer: sizingFeedAnswer.toString(),
+      sizingPriceSource,
       exactForProspectiveOracleRefresh,
     };
     const router = new ethers.Contract(SWAP_ROUTER, [
@@ -902,4 +905,19 @@ async function main() {
 }
 
 const invokedAsScript = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
-if (invokedAsScript) main().catch((error) => { console.error(error instanceof Error ? error.message : String(error)); process.exit(1); });
+if (invokedAsScript) main().catch((error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  try {
+    if (!fs.existsSync(OUT)) {
+      fs.writeFileSync(OUT, json({
+        mode: 'ZERO_WRITE_PREFLIGHT',
+        chainId: CHAIN_ID,
+        production4663Rejected: true,
+        chainWrites: 0,
+        error: message,
+      }));
+    }
+  } catch {}
+  console.error(message);
+  process.exit(1);
+});
