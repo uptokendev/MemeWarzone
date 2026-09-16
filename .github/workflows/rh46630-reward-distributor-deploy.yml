@@ -1,0 +1,46 @@
+name: RH46630 RewardDistributor deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'Type DEPLOY_REWARD_DISTRIBUTOR_CHAIN_46630'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: github.event.inputs.confirmation == 'DEPLOY_REWARD_DISTRIBUTOR_CHAIN_46630'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx hardhat compile
+      - run: node --test scripts/rh46630-reward-distributor-deploy.test.mjs
+      - name: Live deploy RewardDistributor
+        env:
+          RH46630_DEPLOY_REWARD_DISTRIBUTOR: '1'
+          ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL }}
+          ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${ROBINHOOD_TESTNET_RPC_URL:-}"
+          test -n "${ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY:-}"
+          export RH46630_DISTRIBUTOR_OWNER_PRIVATE_KEY="$ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY"
+          mkdir -p reports
+          node scripts/rh46630-reward-distributor-deploy.mjs | tee reports/rh46630-reward-distributor-deploy.json
+          test -s reports/rh46630-reward-distributor-deploy.json
+          python3 -c 'import json; d=json.load(open("reports/rh46630-reward-distributor-deploy.json")); assert d.get("sent") is True; assert str(d.get("address","")).startswith("0x")'
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rh46630-reward-distributor-deploy
+          path: reports/rh46630-reward-distributor-deploy.json
+          if-no-files-found: warn
