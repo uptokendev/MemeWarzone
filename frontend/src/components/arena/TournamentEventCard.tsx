@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { EventSponsorAttribution } from "@/components/arena/EventSponsorAttribution";
 import { TournamentBracketModal } from "@/components/arena/TournamentBracketModal";
 import { TournamentLiveRoundPanel } from "@/components/arena/TournamentLiveRoundBattles";
 import { TournamentProgressionBar } from "@/components/arena/TournamentProgressionBar";
@@ -8,6 +9,7 @@ import { WarzoneTokenMark } from "@/components/warzone/WarzoneTokenMark";
 import { fetchPostGradTournamentDetails } from "@/features/postgrad/apiClient";
 import { postGradFlags } from "@/features/postgrad/config";
 import { getMockTournamentDetails } from "@/features/postgrad/mockTournamentFixtures.mjs";
+import { tournamentSponsorEventType, useEventSponsors } from "@/hooks/useEventSponsors";
 import { presentTournamentCard, presentTournamentChampion, readBracketRounds } from "@/lib/arena/tournamentCommandPresentation.mjs";
 import { cn } from "@/lib/utils";
 
@@ -52,6 +54,12 @@ export function TournamentEventCard({
   const [roundOpen, setRoundOpen] = useState(false);
   const [bracketRounds, setBracketRounds] = useState(() => readBracketRounds(event));
   const [bracketEntries, setBracketEntries] = useState<Entrant[]>(Array.isArray(event.entrants) ? (event.entrants as Entrant[]) : []);
+  const sponsorEventType = tournamentSponsorEventType(source);
+  const sponsors = useEventSponsors({
+    eventType: sponsorEventType,
+    eventReferenceId: event.id,
+    chainId: Number(source.chainId || source.chain_id || 0) || null,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -142,6 +150,7 @@ export function TournamentEventCard({
         {card.chain ? <TacticalTag label={card.chain.label} tone="default" /> : null}
       </div>
       <h2 className="mt-3 font-black text-xl leading-tight text-foreground md:text-2xl">{card.title}</h2>
+      <EventSponsorAttribution sponsors={sponsors} variant="compact" />
 
       {finished && champion ? (
         <div className="mt-3 flex items-center gap-3" data-tournament-champion="true">
@@ -160,12 +169,7 @@ export function TournamentEventCard({
             return (
               <div key={`${entrant.tokenAddress || ticker || index}`} className="w-[4.5rem] min-w-0 text-center">
                 <div className="mx-auto">
-                  <WarzoneTokenMark
-                    imageUrl={entrant.imageUrl || entrant.logoUri}
-                    symbol={entrant.symbol}
-                    name={entrant.tokenName}
-                    size="sm"
-                  />
+                  <WarzoneTokenMark imageUrl={entrant.imageUrl || entrant.logoUri} symbol={entrant.symbol} name={entrant.tokenName} size="sm" />
                 </div>
                 {ticker ? <div className="mt-1 truncate text-[10px] font-black text-foreground">${ticker}</div> : null}
                 {name ? <div className="truncate text-[9px] uppercase tracking-[0.08em] text-white/50">{name}</div> : null}
@@ -190,55 +194,22 @@ export function TournamentEventCard({
 
       <div className="mt-4 flex flex-wrap gap-3">
         {showLiveRound ? (
-          <button
-            type="button"
-            data-tournament-watch-live-round={card.id}
-            aria-expanded={roundOpen}
-            aria-controls={`tournament-live-round-${card.id}`}
-            onClick={() => setRoundOpen((open) => !open)}
-            className="mwz-button inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em]"
-          >
-            {card.liveRoundCta || "Watch live round"}
-            <span className="ml-2 text-[10px]" aria-hidden="true">{roundOpen ? "↑" : "↓"}</span>
+          <button type="button" data-tournament-watch-live-round={card.id} aria-expanded={roundOpen} aria-controls={`tournament-live-round-${card.id}`} onClick={() => setRoundOpen((open) => !open)} className="mwz-button inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em]">
+            {card.liveRoundCta || "Watch live round"}<span className="ml-2 text-[10px]" aria-hidden="true">{roundOpen ? "↑" : "↓"}</span>
           </button>
         ) : embedded ? (
-          <Link
-            to={card.href}
-            data-tournament-enter={card.id}
-            className="mwz-button inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em]"
-          >
-            {card.primaryCta}
-          </Link>
-        ) : (
-          primary
-        )}
-        <button
-          type="button"
-          data-tournament-view-bracket={card.id}
-          onClick={() => void handleViewBracket()}
-          disabled={bracketBusy}
-          className="inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em] text-accent hover:underline disabled:opacity-60"
-        >
+          <Link to={card.href} data-tournament-enter={card.id} className="mwz-button inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em]">{card.primaryCta}</Link>
+        ) : primary}
+        <button type="button" data-tournament-view-bracket={card.id} onClick={() => void handleViewBracket()} disabled={bracketBusy} className="inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em] text-accent hover:underline disabled:opacity-60">
           {bracketBusy ? "Loading bracket" : card.bracketCta}
         </button>
         {showLiveRound ? (
-          <button
-            type="button"
-            data-tournament-enter={card.id}
-            onClick={handlePrimary}
-            className="inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em] text-white/55 underline-offset-4 hover:text-accent hover:underline"
-          >
-            {card.primaryCta}
-          </button>
+          <button type="button" data-tournament-enter={card.id} onClick={handlePrimary} className="inline-flex min-h-11 items-center px-4 text-xs uppercase tracking-[0.16em] text-white/55 underline-offset-4 hover:text-accent hover:underline">{card.primaryCta}</button>
         ) : null}
       </div>
       {showLiveRound && roundOpen ? (
         <div id={`tournament-live-round-${card.id}`} data-tournament-live-round-dropdown={card.id}>
-          <TournamentLiveRoundPanel
-            tournamentId={card.id}
-            statusLabel={card.status.label}
-            stageLabel={card.bracketStage}
-          />
+          <TournamentLiveRoundPanel tournamentId={card.id} statusLabel={card.status.label} stageLabel={card.bracketStage} />
         </div>
       ) : null}
       <TournamentBracketModal
@@ -249,6 +220,7 @@ export function TournamentEventCard({
         stageLabel={card.bracketStage}
         rounds={bracketRounds}
         entries={bracketEntries}
+        sponsors={sponsors}
       />
     </article>
   );
