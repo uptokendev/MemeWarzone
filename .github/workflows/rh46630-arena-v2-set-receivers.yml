@@ -1,0 +1,69 @@
+name: RH46630 Arena V2 setReceivers
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type SET_RECEIVERS_CHAIN_46630_ARENA_V2
+        required: true
+        type: string
+      source_sha:
+        description: Exact integration SHA that contains the setReceivers script
+        required: true
+        default: 25ea161ab602d9fd4a28ce13544668e54f1e3370
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  set-receivers:
+    if: ${{ github.event.inputs.confirmation == 'SET_RECEIVERS_CHAIN_46630_ARENA_V2' }}
+    runs-on: ubuntu-latest
+    environment: testnet-certification
+    env:
+      EXPECTED_SOURCE_SHA: 25ea161ab602d9fd4a28ce13544668e54f1e3370
+      ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL }}
+      ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY }}
+    steps:
+      - name: Reject wrong confirmation or SHA
+        run: |
+          set -euo pipefail
+          test "${{ github.event.inputs.confirmation }}" = 'SET_RECEIVERS_CHAIN_46630_ARENA_V2'
+          test "${{ github.event.inputs.source_sha }}" = "$EXPECTED_SOURCE_SHA"
+
+      - name: Checkout exact integration SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.source_sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Unit tests
+        run: node --test scripts/rh46630-arena-v2-set-receivers.test.mjs
+
+      - name: Live setReceivers (owner-gated)
+        env:
+          RH46630_ARENA_SET_RECEIVERS: '1'
+        run: |
+          set -euo pipefail
+          test -n "${ROBINHOOD_TESTNET_RPC_URL:-}"
+          test -n "${ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY:-}"
+          export RH46630_ARENA_WAR_POOL_OWNER_PRIVATE_KEY="$ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY"
+          node scripts/rh46630-arena-v2-set-receivers.mjs | tee /tmp/rh46630-set-receivers.json
+          test -s reports/rh46630-arena-v2-receivers.json
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rh46630-arena-v2-receivers
+          path: reports/rh46630-arena-v2-receivers.json
+          if-no-files-found: warn
