@@ -1,63 +1,76 @@
 ---
 title: War Trade Room
-description: Find campaigns across BNB and Solana and act according to their current market state.
+description: Find campaigns across BNB, Solana, and Robinhood and act according to their current market state.
 ---
 
-The War Trade Room is the cross chain campaign board for MemeWarzone.
+The War Trade Room is the cross-chain campaign board for MemeWarzone.
 
-It brings Draft, live launchpad, and post graduation campaigns into one view so you can find the market you want without jumping between separate lists.
+It brings Draft, PRE, and POST campaigns from **BNB Chain, Solana, and Robinhood Chain** into one operating view while preserving each campaign's real chain and market route.
 
 ![War Trade Room campaign board](/images/docs/war-trade-room-board.png)
 
 ## Read the state first
 
-Every campaign row carries a state. That state determines the actions available to you.
+Every campaign row carries a chain and a state. Together they determine the actions and underlying venue.
 
 ### DRAFT
 
 DRAFT is the preparation state.
 
-Use the campaign row to inspect the identity, chain, timing, official links, and public campaign information before trading opens.
+Use the campaign row to inspect identity, chain, timing, official links, and public campaign information before trading opens.
 
 ### PRE
 
 PRE is the live launchpad state.
 
-The campaign is trading through its launch market. Open Token Details for the full campaign view and use the active buy, sell, quote, and discovery controls shown for that chain.
+The campaign is trading through native bonding:
+
+- BNB campaign → BNB bonding
+- Solana campaign → SOL bonding
+- Robinhood campaign → ETH bonding
+
+Open Token Details for the full campaign view and use the active buy, sell, quote, and discovery controls shown for that chain.
 
 ### POST
 
-POST is the post graduation state.
+POST is the post-graduation state.
 
-The campaign has completed its launch phase and moved to its post graduation market route. Open the campaign to use the market controls and links shown for its chain.
+The campaign has completed bonding and moved to its permanent market architecture:
+
+- BNB → Topaz
+- Solana → Meteora
+- Robinhood → chain-local V3
+
+The War Trade Room remains the MemeWarzone surface even though the underlying venue has changed.
 
 ## Find a campaign
 
 Use search and filters to narrow the board by:
 
-- BNB or Solana
+- BNB, Solana, or Robinhood
 - campaign state
 - ticker
 - campaign name
 - creator
-- campaign or token address
+- campaign, token contract, or mint address
 
 ![War Trade Room filters](/images/docs/war-trade-room-filters.png)
+
+## Imported projects
+
+Import is a separate onboarding path from a native campaign.
+
+An imported BNB, Solana, or Robinhood project can have a MemeWarzone project identity without fabricating bonding or graduation history. Trading controls only appear when the relevant market/product rail is actually available for that project.
 
 ## Verify before you trade
 
 Before submitting a transaction:
 
-1. confirm the chain
+1. confirm BNB, Solana, or Robinhood
 2. confirm the campaign state
-3. verify the ticker and address
-4. open Token Details when you need the full campaign record
-5. review the wallet transaction before signing
+3. verify ticker and exact address/mint
+4. confirm the asset being spent
+5. open Token Details when you need the full campaign record
+6. review the wallet transaction before signing
 
-## Operating rule
-
-A campaign row confirms that the campaign is on the board.
-
-The chain and state tell you which market you are entering and which actions are available.
-
-Read **[Trading Basics](/traders/trading-basics)** and **[Campaign System](/platform/campaign-lifecycle)** before your first trade.
+Read **[Trading Basics](/traders/trading-basics)**, **[Campaign System](/platform/campaign-lifecycle)**, **[Chain Readiness](/platform/chain-readiness)**, and **[Import an Existing Token](/import)**.
