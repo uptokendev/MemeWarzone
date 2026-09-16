@@ -57,7 +57,7 @@ export default function ProjectXClaimDialog({ item, open, onOpenChange, onResolv
     if (isEvm) tasks.push(resolveProjectEvmAuthority(item, connectedWallet).then(setAuthority).catch((err:any)=>setError(String(err?.message||"Current owner wallet could not be resolved."))));
     tasks.push(resolveProjectXIdentity(item).then((resolved)=>{ setIdentity(resolved); if(resolved.imageUrl) onResolvedImage?.(resolved.imageUrl); }).catch((err:any)=>{
       const code=String(err?.code||"");
-      if(code!=="PROJECT_IMPORT_X_NOT_FOUND") setError((prev)=>prev||String(err?.message||"Official X account could not be resolved."));
+      if(code!=="PROJECT_IMPORT_X_NOT_FOUND" && code!=="PROJECT_IMPORT_X_NOT_PUMP") setError((prev)=>prev||String(err?.message||"Official X account could not be resolved."));
       setIdentity(null);
     }));
     await Promise.allSettled(tasks); setLoading(false);
