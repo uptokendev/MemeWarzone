@@ -349,9 +349,12 @@ async function main() {
   const boostReceipt = pda([BOOST_SEED, voteId, boostFundingId, vote.publicKey.toBuffer()]);
   const voteBoostSig = await send(connection, vote, [boostIx(vote, voteId, votePool, boostFundingId, boostReceipt, oneDollarBoost)], [vote]);
   const voteState = readPool(await account(connection, votePool));
+  const expectedBoostProtocol = oneDollarBoost * 1000n / 10000n;
+  const expectedBoostPrize = oneDollarBoost - expectedBoostProtocol;
   assert(BigInt(voteState.boostGross) === oneDollarBoost, 'Vote Boost gross mismatch');
-  assert(BigInt(voteState.boostPrize) === oneDollarBoost * 9000n / 10000n, 'Vote Boost 90% prize mismatch');
-  assert(BigInt(voteState.boostProtocol) === oneDollarBoost * 1000n / 10000n, 'Vote Boost 10% protocol mismatch');
+  assert(BigInt(voteState.boostPrize) === expectedBoostPrize, 'Vote Boost 90% prize mismatch');
+  assert(BigInt(voteState.boostProtocol) === expectedBoostProtocol, 'Vote Boost 10% protocol mismatch');
+  assert(BigInt(voteState.boostPrize) + BigInt(voteState.boostProtocol) === oneDollarBoost, 'Vote Boost conservation mismatch');
   const boostReplayRejected = await expectReject(connection, vote, [boostIx(vote, voteId, votePool, boostFundingId, boostReceipt, oneDollarBoost)], [vote], 'Vote Boost replay');
   const voteResolve = await send(connection, resolver, [resolveIx(resolver, voteId, votePool, mintB, vote.publicKey, voteEntryReceipt)], [resolver]);
   const voteClaim = await lostResponseClaim(connection, vote, claimIx(vote, voteId, votePool), votePool);
