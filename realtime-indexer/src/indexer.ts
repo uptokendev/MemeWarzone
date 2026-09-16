@@ -295,7 +295,7 @@ const CHAINS: ChainCfg[] = [
     voteTreasuryAddress: ENV.VOTE_TREASURY_ADDRESS_46630 || undefined,
     voteTreasuryStartBlock: ENV.VOTE_TREASURY_START_BLOCK_46630 || undefined
   }
-].filter((chain) => Boolean(chain.rpcHttp));
+].filter((chain) => Boolean(chain.rpcHttp && /^https?:\/\//i.test(String(chain.rpcHttp)) && !/[<>]|YOUR_/i.test(String(chain.rpcHttp))));
 
 // ---------------------------------------------------------------------------
 // DB state

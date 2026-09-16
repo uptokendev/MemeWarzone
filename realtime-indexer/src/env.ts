@@ -26,6 +26,17 @@ function truthy(value: unknown): boolean {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 }
 
+export function isUsableHttpRpc(url?: string | null): boolean {
+  const value = String(url || "").trim();
+  if (!value) return false;
+  if (/[<>]|YOUR_|placeholder|example\.com/i.test(value)) return false;
+  return /^https?:\/\//i.test(value);
+}
+
+function usableRpc(url: string): string {
+  return isUsableHttpRpc(url) ? url.trim() : "";
+}
+
 const runtimeEnvironment = String(process.env.RUNTIME_ENVIRONMENT || process.env.VITE_RUNTIME_ENVIRONMENT || "").trim().toLowerCase();
 const localRuntime = runtimeEnvironment === "local";
 const ablyDisabled = localRuntime && truthy(process.env.LOCAL_DISABLE_ABLY || "1");
@@ -37,8 +48,8 @@ export const ENV = {
 
   BSC_RPC_HTTP_97: process.env.BSC_RPC_HTTP_97 || "",
   BSC_RPC_HTTP_56: process.env.BSC_RPC_HTTP_56 || "",
-  ROBINHOOD_RPC_HTTP_46630: firstEnv("ROBINHOOD_RPC_HTTP_46630", "ROBINHOOD_TESTNET_RPC_URL"),
-  ROBINHOOD_RPC_HTTP_4663: firstEnv("ROBINHOOD_RPC_HTTP_4663", "ROBINHOOD_MAINNET_RPC_URL"),
+  ROBINHOOD_RPC_HTTP_46630: usableRpc(firstEnv("ROBINHOOD_RPC_HTTP_46630", "ROBINHOOD_TESTNET_RPC_URL")),
+  ROBINHOOD_RPC_HTTP_4663: usableRpc(firstEnv("ROBINHOOD_RPC_HTTP_4663", "ROBINHOOD_MAINNET_RPC_URL")),
   ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_46630: firstEnv(
     "ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_46630",
     "VITE_ROBINHOOD_V3_SWAP_ROUTER_ADDRESS_46630",

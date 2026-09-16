@@ -736,14 +736,27 @@ async function getHeadSlot(signal?: AbortSignal): Promise<number> {
 }
 
 let genesisChecked = false;
+const SOLANA_DEVNET_GENESIS = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
+
+function expectedSolanaGenesis(): string {
+  const network = String(ENV.DEPLOYMENT_NETWORK || "").toLowerCase();
+  const cluster = String(process.env.SOLANA_CLUSTER || process.env.VITE_SOLANA_CLUSTER || "").toLowerCase();
+  const rpcUrl = String(process.env.SOLANA_RPC_HTTP || process.env.SOLANA_MAINNET_RPC || "").toLowerCase();
+  if (network === "testnet" || cluster.includes("devnet") || rpcUrl.includes("devnet")) {
+    return SOLANA_DEVNET_GENESIS;
+  }
+  return SOLANA_MAINNET_GENESIS;
+}
+
 async function assertMainnetGenesis(signal?: AbortSignal): Promise<void> {
   if (genesisChecked) {
     throwIfAborted(signal);
     return;
   }
   const genesis = await rpc<string>("getGenesisHash", [], signal);
-  if (genesis !== SOLANA_MAINNET_GENESIS) {
-    throw new Error(`[solana-indexer] refusing non-mainnet genesis ${genesis}`);
+  const expected = expectedSolanaGenesis();
+  if (genesis !== expected) {
+    throw new Error(`[solana-indexer] refusing unexpected genesis ${genesis} (expected ${expected})`);
   }
   genesisChecked = true;
 }
@@ -2333,6 +2346,12 @@ export async function repairKnownSolanaCampaignHistory() {
     };
     if (lastSolanaRepairSummary.failed === 0 && results.length) lastSolanaError = null;
     return results;
+  } catch (error) {
+    console.error(
+      "[solana-indexer] campaign history repair crashed",
+      error instanceof Error ? error.message : String(error),
+    );
+    return [];
   } finally {
     campaignRepairRunning = false;
   }
