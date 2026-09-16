@@ -1,6 +1,6 @@
 ---
 title: Getting Started
-description: A simple first read guide for creators, traders, and recruiters entering MemeWarzone.
+description: A simple first read guide for creators, traders, importers, and recruiters entering MemeWarzone across BNB, Solana, and Robinhood.
 ---
 
 Use this page as your first briefing.
@@ -17,21 +17,33 @@ Start with **[How MemeWarzone Works](/how-memewarzone-works)** so you understand
 
 ## Step 2
 
-Choose your role.
+Choose your entry path
 
-### Creator
+### Launch a new campaign
 
-Creators build and launch campaigns.
+Creators can launch native MemeWarzone campaigns on the three first-class chains: **BNB, Solana, and Robinhood**.
 
 Start here:
 
-- **[Direct and Draft Launches](/creators/direct-and-draft)**
-- **[Promotion and Push Live](/creators/promotion-and-push-live)**
 - **[Create a Campaign](/creators/create-a-campaign)**
+- **[Direct and Draft Launches](/creators/direct-and-draft)**
+- **[Campaign System](/platform/campaign-lifecycle)**
+
+### Import an existing token
+
+Already launched elsewhere? Register the token without relaunching it.
+
+Import supports the same three-chain product model:
+
+- BNB contract
+- Solana mint
+- Robinhood contract
+
+Start with **[Import an Existing Token](/import)**.
 
 ### Trader
 
-Traders follow campaigns, work the PRE market, and track reward opportunities.
+Traders follow campaigns, work the PRE market, track post-grad markets, and follow Warzone activity.
 
 Start here:
 
@@ -53,12 +65,27 @@ Start here:
 
 Confirm your network.
 
-BNB and Solana are both live.
-The wallet prompt, market path, and available controls can differ by chain, so verify the selected network before you sign any transaction.
+MemeWarzone's first-class product chains are:
 
-Read **[Chain Readiness](/platform/chain-readiness)** if you need a quick comparison.
+- **BNB Chain** — native asset BNB
+- **Solana** — native asset SOL
+- **Robinhood Chain** — native asset ETH
+
+Wallet prompts, addresses, transaction construction, and post-grad market venues differ by chain. The MemeWarzone product lifecycle stays consistent.
+
+Read **[Chain Readiness](/platform/chain-readiness)** for the comparison.
 
 ## Step 4
+
+Read the campaign state.
+
+**DRAFT** means preparation.  
+**PRE** means native launchpad trading.  
+**POST** means the campaign has graduated into its chain-specific permanent market.
+
+Imported projects are separate from native campaign state and do not fabricate PRE or graduation history.
+
+## Step 5
 
 Use only official domains.
 
@@ -74,4 +101,4 @@ Docs site:
 https://docs.memewar.zone
 ```
 
-If a link came through a random message, verify it before you connect a wallet.
+If a link came through a random message, verify it before you connect a wallet or sign a transaction.
