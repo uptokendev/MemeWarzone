@@ -33,6 +33,9 @@ export default function ProjectXClaimDialog({ item, open, onOpenChange, onResolv
   const solanaWallet = useSolanaWallet();
   const isSolana = item.chainId === SOLANA_CHAIN_ID;
   const isEvm = item.chainId === BNB_CHAIN_ID || item.chainId === ROBINHOOD_CHAIN_ID;
+  const evmChainLabel = item.chainId === ROBINHOOD_CHAIN_ID ? "Robinhood" : "BNB";
+  const walletChainLabel = isSolana ? "Solana" : evmChainLabel;
+  const ownershipWalletLabel = isSolana ? "Solana project authority wallet" : `${evmChainLabel} project owner wallet`;
   const eligible = (isSolana || isEvm) && item.ownershipStatus === "ownership_pending";
   const connectedWallet = isSolana ? solanaWallet.solanaAccount : wallet.account;
   const [identity, setIdentity] = useState<ProjectXIdentity | null>(null);
@@ -74,7 +77,7 @@ export default function ProjectXClaimDialog({ item, open, onOpenChange, onResolv
 
   const signProjectAction = async (action: string) => {
     const walletAddress=String(connectedWallet||"").trim();
-    if(!walletAddress) throw new Error(`Connect the ${isSolana?"Solana":"EVM"} wallet you want to use as the project controller first.`);
+    if(!walletAddress) throw new Error(`Connect the ${walletChainLabel} wallet you want to use as the project controller first.`);
     return signWalletAction({
       action, walletAddress, chainId:item.chainId, walletType:isSolana?"solana":"evm",
       signMessage:isSolana?async(message)=>(await signSolanaMessage(message,walletAddress)).signature:undefined,
@@ -85,8 +88,8 @@ export default function ProjectXClaimDialog({ item, open, onOpenChange, onResolv
   const verifyOwnerWallet = async () => {
     if (!canOwnerVerify) return;
     setStarting(true);
-    try { const auth=await signProjectAction("project_import_claim"); await claimProjectImport({item,auth}); toast.success("Project verified with the contract owner wallet."); window.location.reload(); }
-    catch(err:any){ toast.error(String(err?.message||"Owner-wallet verification failed.")); setStarting(false); }
+    try { const auth=await signProjectAction("project_import_claim"); await claimProjectImport({item,auth}); toast.success(`Project verified with the ${evmChainLabel} project owner wallet.`); window.location.reload(); }
+    catch(err:any){ toast.error(String(err?.message||`${evmChainLabel} owner-wallet verification failed.`)); setStarting(false); }
   };
 
   const verifyPumpCreatorWallet = async () => {
@@ -103,7 +106,7 @@ export default function ProjectXClaimDialog({ item, open, onOpenChange, onResolv
 
   const connectOwnerWallet = async () => {
     try { await wallet.connect(); await refresh(); }
-    catch(err:any){ toast.error(String(err?.message||"Could not connect the owner wallet.")); }
+    catch(err:any){ toast.error(String(err?.message||`Could not connect the ${evmChainLabel} owner wallet.`)); }
   };
 
   const verifyX = async () => {
@@ -128,15 +131,15 @@ export default function ProjectXClaimDialog({ item, open, onOpenChange, onResolv
     <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-md" data-project-x-claim-dialog="true">
       <DialogHeader><DialogTitle className="font-retro">CLAIM MEMECOIN</DialogTitle><DialogDescription>Are you the project owner? Verify ownership to manage this MemeWarzone project page.</DialogDescription></DialogHeader>
       {loading?<div className="flex items-center gap-2 py-5 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin"/>Checking ownership options…</div>:<div className="space-y-4">
-        {xAccountMismatch?<p className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm font-bold text-red-300" role="alert" data-project-x-mismatch-alert="true">THAT WAS NOT THE CORRECT X ACCOUNT. Sign in with the project X account attached to this token, verify the project authority wallet, or request manual review below.</p>:null}
+        {xAccountMismatch?<p className="rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm font-bold text-red-300" role="alert" data-project-x-mismatch-alert="true">THAT WAS NOT THE CORRECT X ACCOUNT. Sign in with the project X account attached to this token, verify the {ownershipWalletLabel}, or request manual review below.</p>:null}
         {isEvm&&authority?.available?<div className="rounded-lg border border-white/10 bg-white/[0.03] p-4" data-project-owner-wallet-option="true">
-          <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Contract owner wallet</div>
+          <div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">{evmChainLabel} project owner wallet</div>
           <div className="mt-2 font-mono text-sm text-foreground">{maskWallet(authority.currentAuthority)}</div>
-          {authority.matchesConnected?<><p className="mt-2 text-xs text-emerald-200">Your connected wallet matches the current contract owner.</p><Button type="button" className="mt-3 w-full" onClick={()=>void verifyOwnerWallet()} disabled={starting}>{starting?<Loader2 className="mr-2 h-4 w-4 animate-spin"/>:<WalletCards className="mr-2 h-4 w-4"/>}VERIFY OWNER WALLET</Button></>:<><p className="mt-2 text-xs text-muted-foreground">Connect this owner wallet to verify instantly, or use the official X account below.</p><Button type="button" variant="outline" className="mt-3 w-full" onClick={()=>void connectOwnerWallet()} disabled={starting}><WalletCards className="mr-2 h-4 w-4"/>CONNECT OWNER WALLET</Button></>}
+          {authority.matchesConnected?<><p className="mt-2 text-xs text-emerald-200">Your connected {evmChainLabel} wallet matches the current contract owner.</p><Button type="button" className="mt-3 w-full" onClick={()=>void verifyOwnerWallet()} disabled={starting}>{starting?<Loader2 className="mr-2 h-4 w-4 animate-spin"/>:<WalletCards className="mr-2 h-4 w-4"/>}VERIFY {evmChainLabel.toUpperCase()} OWNER WALLET</Button></>:<><p className="mt-2 text-xs text-muted-foreground">Connect this {evmChainLabel} project owner wallet to verify instantly, or use the official X account below.</p><Button type="button" variant="outline" className="mt-3 w-full" onClick={()=>void connectOwnerWallet()} disabled={starting}><WalletCards className="mr-2 h-4 w-4"/>CONNECT {evmChainLabel.toUpperCase()} OWNER WALLET</Button></>}
         </div>:null}
-        {isEvm&&authority&&!authority.available?<div className="rounded-lg border border-orange-400/20 bg-orange-500/[0.04] p-4 text-xs text-orange-100">No active owner()/getOwner() wallet is exposed by this contract. Use the official X account if available, or request manual review below.</div>:null}
+        {isEvm&&authority&&!authority.available?<div className="rounded-lg border border-orange-400/20 bg-orange-500/[0.04] p-4 text-xs text-orange-100">This {evmChainLabel} token contract does not expose an active owner()/getOwner() wallet. Use the official X account if available, or request manual review below.</div>:null}
         {isSolana?<div className="rounded-lg border border-white/10 bg-white/[0.03] p-4" data-pump-creator-wallet-option="true"><div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Solana project authority wallet</div><p className="mt-2 text-xs text-muted-foreground">If you control the current project authority wallet for this token, connect it and verify ownership directly.</p>{creatorAuthority?<p className="mt-2 text-xs text-amber-100">Recorded project authority: <span className="font-mono">{maskWallet(creatorAuthority)}</span></p>:null}<Button type="button" variant="outline" className="mt-3 w-full" onClick={()=>void verifyPumpCreatorWallet()} disabled={starting}>{starting?<Loader2 className="mr-2 h-4 w-4 animate-spin"/>:<WalletCards className="mr-2 h-4 w-4"/>}VERIFY PROJECT AUTHORITY</Button></div>:null}
-        {identity?<div className="rounded-lg border border-white/10 bg-white/[0.03] p-4" data-project-x-option="true"><div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Project X attached to token</div><div className="mt-2 flex items-center gap-2 font-bold text-foreground"><ShieldCheck className="h-4 w-4 text-accent"/>@{identity.username}</div><p className="mt-2 text-xs text-muted-foreground">Sign in to this exact X account to bind the project to your connected MemeWarzone wallet.</p><Button type="button" className="mt-3 w-full" onClick={()=>void verifyX()} disabled={starting}>{starting?<Loader2 className="mr-2 h-4 w-4 animate-spin"/>:null}VERIFY WITH X</Button></div>:<div className="rounded-lg border border-orange-400/20 bg-orange-500/[0.04] p-4 text-xs text-orange-100">No X account is attached to this token metadata. You can still verify the project authority wallet or request manual review.</div>}
+        {identity?<div className="rounded-lg border border-white/10 bg-white/[0.03] p-4" data-project-x-option="true"><div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Project X attached to token</div><div className="mt-2 flex items-center gap-2 font-bold text-foreground"><ShieldCheck className="h-4 w-4 text-accent"/>@{identity.username}</div><p className="mt-2 text-xs text-muted-foreground">Sign in to this exact X account to bind the project to your connected MemeWarzone wallet.</p><Button type="button" className="mt-3 w-full" onClick={()=>void verifyX()} disabled={starting}>{starting?<Loader2 className="mr-2 h-4 w-4 animate-spin"/>:null}VERIFY WITH X</Button></div>:<div className="rounded-lg border border-orange-400/20 bg-orange-500/[0.04] p-4 text-xs text-orange-100">No X account is attached to this token metadata. You can still verify the {ownershipWalletLabel} or request manual review.</div>}
         {error?<p className="text-sm text-amber-100" role="alert">{error}</p>:null}
         <div className="rounded-lg border border-white/10 bg-white/[0.03] p-4" data-project-manual-review-option="true"><div className="text-xs uppercase tracking-[0.14em] text-muted-foreground">Last resort — manual review</div><p className="mt-2 text-xs text-muted-foreground">If you cannot complete the automatic options, request an ownership review. You must give us an X account where the MemeWarzone team can contact you. This does not verify ownership automatically.</p>{manualOpen?<div className="mt-3 space-y-3"><Input value={manualX} onChange={(e)=>setManualX(e.target.value)} placeholder="@yourproject or https://x.com/yourproject" aria-label="Contact X account"/><Button type="button" className="w-full" onClick={()=>void requestManualReview()} disabled={starting}>{starting?<Loader2 className="mr-2 h-4 w-4 animate-spin"/>:null}SUBMIT MANUAL REVIEW</Button></div>:<Button type="button" variant="outline" className="mt-3 w-full" onClick={()=>setManualOpen(true)} disabled={starting}>REQUEST MANUAL REVIEW</Button>}</div>
         <p className="text-center text-xs text-muted-foreground">Not the owner? Close this window. The real owner can claim it later.</p>
