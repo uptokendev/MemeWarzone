@@ -18,6 +18,10 @@ export const TRADER_A = '0x38D8054789aB2068C3E6B04382787eFE15617ac7';
 export const TRADER_B = '0xeAE58347aA643a228C88Bd62295651388163E1CA';
 export const EXISTING_CAMPAIGN = '0x0000000000000000000000000000000000000000';
 export const EXISTING_TOKEN = '0x0000000000000000000000000000000000000000';
+export const WETH = '0x52A47A33930B8a90a2000b1bA3CB96e879569670';
+export const SWAP_ROUTER = '0xDfd381ECfA6D4CcD4248e319C6fecD76A6bf3296';
+export const POSITION_MANAGER = '0xfF64Bd6970966dB58F0dd65BA76669D3b8BE9eC4';
+export const FEE_TIER = 3000;
 export const OUT = process.env.RH46630_ZERO_WRITE_PREFLIGHT || 'rh46630-zero-write-preflight.json';
 
 const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
@@ -81,6 +85,18 @@ export function computeFirstBuyValue(nativeTarget) {
   let value = BigInt(nativeTarget) / 5n;
   if (value < 10_000_000_000_000n) value = 10_000_000_000_000n;
   return value;
+}
+
+export function computePostGradBuyValue(nativeTarget) {
+  let value = BigInt(nativeTarget) / 20n;
+  if (value < 10_000_000_000_000n) value = 10_000_000_000_000n;
+  return value;
+}
+
+export function classifyExistingCampaignResume({ healthyPreGrad, healthyPostGrad }) {
+  if (healthyPostGrad) return { resumable: true, resumeStep: 'POST_GRAD_V3_BUY_SELL_HARVEST' };
+  if (healthyPreGrad) return { resumable: true, resumeStep: 'BUY_SELL_THEN_BOND_TO_GRADUATION' };
+  return { resumable: false, resumeStep: null };
 }
 
 export function makeTradeDigest(campaign, actor, profile, action, amount, limit, deadline) {
@@ -342,6 +358,36 @@ async function main() {
       && requireAuthorizedTrading
       && graduationTarget === ethers.parseEther('6');
 
+    let lockerState = null;
+    let positionOwner = null;
+    if (dexPair && dexPair !== ethers.ZeroAddress) {
+      const locker = new ethers.Contract(LOCKER, loadAbi('artifacts/contracts/PermanentV3PositionLocker.sol/PermanentV3PositionLocker.json'), provider);
+      const poolInfo = await locker.poolInfo(dexPair);
+      lockerState = {
+        registered: Boolean(poolInfo.registered),
+        campaign: poolInfo.campaign,
+        tokenId: poolInfo.tokenId.toString(),
+        lockedLiquidity: poolInfo.lockedLiquidity.toString(),
+        feeTier: poolInfo.feeTier.toString(),
+      };
+      if (poolInfo.registered && poolInfo.tokenId > 0n) {
+        const pm = new ethers.Contract(POSITION_MANAGER, ['function ownerOf(uint256) view returns(address)'], provider);
+        positionOwner = await pm.ownerOf(poolInfo.tokenId);
+      }
+    }
+    const healthyPostGrad = same(campaignToken, discoveredToken)
+      && same(campaignCreator, CREATOR)
+      && launched === true
+      && graduationRecorded === true
+      && dexPair !== ethers.ZeroAddress
+      && lockerState?.registered === true
+      && same(lockerState.campaign, discoveredCampaign)
+      && Number(lockerState.feeTier) === FEE_TIER
+      && same(positionOwner, LOCKER)
+      && requireAuthorizedTrading
+      && graduationTarget === ethers.parseEther('6');
+    const resume = classifyExistingCampaignResume({ healthyPreGrad, healthyPostGrad });
+
     existingCampaign = {
       id: matched.id.toString(),
       campaign: discoveredCampaign,
@@ -359,8 +405,10 @@ async function main() {
       finalizeRouteProfile: finalizeRouteProfile.toString(),
       requireAuthorizedTrading,
       pauseState,
-      resumable: healthyPreGrad,
-      resumeStep: healthyPreGrad ? 'BUY_SELL_THEN_BOND_TO_GRADUATION' : null,
+      lockerState,
+      positionOwner,
+      resumable: resume.resumable,
+      resumeStep: resume.resumeStep,
     };
   }
 
@@ -368,7 +416,21 @@ async function main() {
   try {
     action = chooseLifecycleAction({ creatorAllowed: eligibility.allowed, existingCampaign });
   } catch (error) {
-    throw new Error(`${error instanceof Error ? error.message : String(error)}_${eligibility.reason}_${JSON.stringify({ eligibility, factoryState, existingCampaign })}`);
+    const message = `${error instanceof Error ? error.message : String(error)}_${eligibility.reason}_${JSON.stringify({ eligibility, factoryState, existingCampaign })}`;
+    fs.writeFileSync(OUT, json({
+      mode: 'ZERO_WRITE_PREFLIGHT',
+      chainId,
+      production4663Rejected: true,
+      sourceSha: process.env.RH46630_CERT_HEAD_SHA || process.env.GITHUB_SHA || 'local',
+      factoryState,
+      creatorEligibility: eligibility,
+      existingCampaign,
+      action: null,
+      nextWritePreflight: null,
+      chainWrites: 0,
+      error: message,
+    }));
+    throw new Error(message);
   }
   if (action.createRequired) assert(eligibility.allowed, `CREATOR_NOT_ELIGIBLE_${eligibility.reason}_${JSON.stringify(eligibility)}`);
 
@@ -472,6 +534,111 @@ async function main() {
         shortMessage: decoded.shortMessage,
         exactForProspectiveOracleRefresh,
         relevantState: { factoryState, action, priceState },
+        chainWrites: 0,
+      };
+    }
+    report.nextWritePreflight = nextWritePreflight;
+    fs.writeFileSync(OUT, json(report));
+    if (nextWritePreflight.status === 'BLOCKED') {
+      printBlocked(nextWritePreflight);
+      throw new Error(`RH46630_NEXT_WRITE_BLOCKED_${nextWritePreflight.decodedErrorName}`);
+    }
+    console.log(json(report));
+    console.log('RH46630_NEXT_WRITE_PREFLIGHT=PASS');
+    console.log('CHAIN_WRITES=0');
+    return;
+  }
+
+  if (action.resumeStep === 'POST_GRAD_V3_BUY_SELL_HARVEST') {
+    const campaign = new ethers.Contract(existingCampaign.campaign, campaignAbi, provider);
+    const locker = new ethers.Contract(LOCKER, loadAbi('artifacts/contracts/PermanentV3PositionLocker.sol/PermanentV3PositionLocker.json'), provider);
+    assert(await campaign.launched(), 'POST_GRAD_RESUME_NOT_LAUNCHED');
+    assert(await factory.campaignGraduationRecorded(existingCampaign.campaign), 'POST_GRAD_RESUME_NOT_RECORDED');
+    const nativeTarget = await campaign.graduationNativeTarget();
+    assert(nativeTarget > 0n, 'POST_GRAD_NATIVE_TARGET_ZERO');
+    const postBuyIn = computePostGradBuyValue(nativeTarget);
+    const poolInfo = await locker.poolInfo(existingCampaign.dexPair);
+    assert(poolInfo.registered, 'POST_GRAD_LOCKER_NOT_REGISTERED');
+    assert(same(poolInfo.campaign, existingCampaign.campaign), 'POST_GRAD_LOCKER_CAMPAIGN_MISMATCH');
+    assert(Number(poolInfo.feeTier) === FEE_TIER, 'POST_GRAD_LOCKER_FEE_MISMATCH');
+    assert((await provider.getCode(SWAP_ROUTER)) !== '0x', 'MISSING_RUNTIME_SWAP_ROUTER');
+    const graduationOracle = new ethers.Contract(runtimeAddresses.graduationOracle, graduationOracleAbi, provider);
+    const priceFeedAddress = await graduationOracle.priceFeed();
+    assert(same(priceFeedAddress, ETH_USD_ORACLE), `GRADUATION_PRICE_FEED_MISMATCH_${priceFeedAddress}`);
+    const maxPriceAge = await graduationOracle.maxPriceAge();
+    const feed = new ethers.Contract(ETH_USD_ORACLE, [
+      'function decimals() view returns(uint8)',
+      'function latestRoundData() view returns(uint80 roundId,int256 answer,uint256 startedAt,uint256 updatedAt,uint80 answeredInRound)',
+    ], provider);
+    const feedDecimals = Number(await feed.decimals());
+    const feedRound = await feed.latestRoundData();
+    assert(feedRound.answer > 0n, 'PRICE_FEED_ANSWER_NOT_POSITIVE');
+    const feedAge = BigInt(latestBlock.timestamp) - BigInt(feedRound.updatedAt);
+    const feedFresh = feedRound.updatedAt > 0n && feedRound.answeredInRound >= feedRound.roundId && feedAge >= 0n && feedAge <= maxPriceAge;
+    const operatorPriceRaw = String(process.env.ROBINHOOD_ETH_USD_8 || '').trim();
+    const operatorPriceValid = /^[0-9]+$/.test(operatorPriceRaw) && BigInt(operatorPriceRaw || '0') > 0n;
+    const exactForProspectiveOracleRefresh = feedFresh || operatorPriceValid;
+    const priceState = {
+      feed: ETH_USD_ORACLE,
+      decimals: feedDecimals,
+      roundId: feedRound.roundId.toString(),
+      answer: feedRound.answer.toString(),
+      updatedAt: feedRound.updatedAt.toString(),
+      answeredInRound: feedRound.answeredInRound.toString(),
+      maxPriceAge: maxPriceAge.toString(),
+      ageSeconds: feedAge.toString(),
+      freshNow: feedFresh,
+      sizingPriceSource: feedFresh ? 'CURRENT_FRESH_FEED' : (operatorPriceValid ? 'PROSPECTIVE_ORACLE_REFRESH_INPUT' : 'CURRENT_STALE_FEED_DIAGNOSTIC_ONLY'),
+      exactForProspectiveOracleRefresh,
+    };
+    const router = new ethers.Contract(SWAP_ROUTER, [
+      'function exactInputSingle((address tokenIn,address tokenOut,uint24 fee,address recipient,uint256 amountIn,uint256 amountOutMinimum,uint160 sqrtPriceLimitX96)) payable returns(uint256 amountOut)',
+    ], provider);
+    const swapParams = {
+      tokenIn: WETH,
+      tokenOut: existingCampaign.token,
+      fee: FEE_TIER,
+      recipient: TRADER_A,
+      amountIn: postBuyIn,
+      amountOutMinimum: 0n,
+      sqrtPriceLimitX96: 0n,
+    };
+    let nextWritePreflight;
+    try {
+      const traderA = protectedWallet('ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY', TRADER_A, provider);
+      const amountOut = await router.connect(traderA).exactInputSingle.staticCall(swapParams, { value: postBuyIn });
+      assert(amountOut > 0n, 'POST_GRAD_STATICCALL_ZERO');
+      nextWritePreflight = {
+        status: 'PASS',
+        operation: 'POSTGRAD_EXACT_INPUT_SINGLE',
+        campaign: existingCampaign.campaign,
+        actor: TRADER_A,
+        value: postBuyIn.toString(),
+        reason: 'RESUME_POST_GRAD_V3_BUY_THEN_SELL_HARVEST',
+        tokenIn: WETH,
+        tokenOut: existingCampaign.token,
+        fee: FEE_TIER,
+        recipient: TRADER_A,
+        amountOutMinimum: '0',
+        staticCallResult: { amountOut: amountOut.toString() },
+        exactForProspectiveOracleRefresh,
+        relevantState: { factoryState, action, existingCampaign, lockerState: existingCampaign.lockerState, priceState, nativeTarget: nativeTarget.toString() },
+        chainWrites: 0,
+      };
+    } catch (error) {
+      const decoded = decodeEthersError(error, decoders);
+      nextWritePreflight = {
+        status: 'BLOCKED',
+        operation: 'POSTGRAD_EXACT_INPUT_SINGLE',
+        campaign: existingCampaign.campaign,
+        actor: TRADER_A,
+        value: postBuyIn.toString(),
+        revertSelector: decoded.selector,
+        decodedErrorName: decoded.decodedErrorName,
+        decodedArguments: decoded.decodedArguments,
+        shortMessage: decoded.shortMessage,
+        exactForProspectiveOracleRefresh,
+        relevantState: { factoryState, action, existingCampaign, lockerState: existingCampaign.lockerState, priceState, nativeTarget: nativeTarget.toString() },
         chainWrites: 0,
       };
     }

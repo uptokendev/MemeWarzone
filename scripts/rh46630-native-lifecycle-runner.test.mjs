@@ -74,6 +74,9 @@ test('runtime patch consumes exact zero-write preflight and keeps CREATE conditi
   assert.match(patched, /if \(zeroWritePreflight\.action\.createRequired\).*factory\.setCreatePaused\.staticCall\(false\).*factory\.setCreatePaused\(false\)/s);
   assert.match(patched, /if \(zeroWritePreflight\.action\.createRequired\).*factory\.setGlobalPaused\.staticCall\(false\).*factory\.setGlobalPaused\(false\)/s);
   assert.match(patched, /zeroWritePreflight\.action\.mode==='RESUME_EXISTING'/);
+  assert.match(patched, /POST_GRAD_V3_BUY_SELL_HARVEST/);
+  assert.match(patched, /POSTGRAD_EXACT_INPUT_SINGLE/);
+  assert.match(patched, /POST_GRAD_CAMPAIGN_FINALIZED_MISSING/);
   assert.match(patched, /EXISTING_CAMPAIGN_NOT_RESUMABLE/);
   assert.match(patched, /RESUME_PATH_FACTORY_NOT_FAIL_CLOSED/);
   assert.match(patched, /NOT_APPLICABLE_RESUMED_EXISTING_CAMPAIGN/);

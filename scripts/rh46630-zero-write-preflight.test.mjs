@@ -5,8 +5,10 @@ import {
   assessLaunchProtection,
   chooseLifecycleAction,
   classifyCreatorEligibility,
+  classifyExistingCampaignResume,
   computeFirstBuyValue,
   computeNativeTargetFromUsd,
+  computePostGradBuyValue,
   decodeRevertData,
 } from './rh46630-zero-write-preflight.mjs';
 
@@ -45,6 +47,22 @@ test('existing healthy campaign is resumed even when new CREATE is currently ine
     chooseLifecycleAction({ creatorAllowed: false, existingCampaign: { resumable: true, resumeStep: 'BUY_SELL_THEN_BOND_TO_GRADUATION' } }),
     { mode: 'RESUME_EXISTING', resumeExistingCampaign: true, createRequired: false, resumeStep: 'BUY_SELL_THEN_BOND_TO_GRADUATION' }
   );
+});
+
+test('graduated leftover campaign is resumed through post-grad V3 even during CREATE cooldown', () => {
+  assert.deepEqual(
+    classifyExistingCampaignResume({ healthyPreGrad: false, healthyPostGrad: true }),
+    { resumable: true, resumeStep: 'POST_GRAD_V3_BUY_SELL_HARVEST' }
+  );
+  assert.deepEqual(
+    chooseLifecycleAction({ creatorAllowed: false, existingCampaign: { resumable: true, resumeStep: 'POST_GRAD_V3_BUY_SELL_HARVEST' } }),
+    { mode: 'RESUME_EXISTING', resumeExistingCampaign: true, createRequired: false, resumeStep: 'POST_GRAD_V3_BUY_SELL_HARVEST' }
+  );
+});
+
+test('post-grad native buy sizing matches certification V3 first swap', () => {
+  assert.equal(computePostGradBuyValue(2_460_095_205_684_460n), 123_004_760_284_223n);
+  assert.equal(computePostGradBuyValue(100n), 10_000_000_000_000n);
 });
 
 test('native target math matches GraduationOracle ceiling behavior and first BUY sizing', () => {
