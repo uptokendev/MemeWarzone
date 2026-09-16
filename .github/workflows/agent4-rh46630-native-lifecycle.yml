@@ -10,7 +10,7 @@ on:
       source_sha:
         description: Exact reviewed PR #359 certification source SHA
         required: true
-        default: d6f546fa8a18b8aa3643ce959bc0cf2ee74fd3db
+        default: 9d0ca9e346be0ccf19f4e11190aeb3106c49deb1
         type: string
       eth_usd_8:
         description: Current honest ETH/USD reference encoded as USD x 1e8
@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: testnet-certification
     env:
-      EXPECTED_CERT_SHA: d6f546fa8a18b8aa3643ce959bc0cf2ee74fd3db
+      EXPECTED_CERT_SHA: 9d0ca9e346be0ccf19f4e11190aeb3106c49deb1
       EXPECTED_AUTHORITY_SHA: 7464993ba9066109eccfc7c7d3a14927a5544ecd
       RH46630_ZERO_WRITE_PREFLIGHT: rh46630-zero-write-preflight.json
       RH46630_LIFECYCLE_EVIDENCE: rh46630-native-lifecycle-evidence.json
