@@ -1,40 +1,66 @@
 ---
 title: Roadmap
-description: The current MemeWarzone direction across Import-first production, three-chain launch architecture, Arena closeout, and future Warzone expansion.
+description: The current MemeWarzone direction across three-chain launch and Import, Arena closeout, operational activation, and future Warzone expansion.
 ---
 
 This roadmap reflects the founder-current product direction in September 2026.
 
-It separates **what is already public**, **what is being certified**, and **what remains future work**. A feature being implemented or documented does not make it production-active.
+The core product architecture is already **three-chain**: BNB Chain, Solana, and Robinhood Chain.
 
-## Current public direction
+The remaining distinction is not whether Robinhood belongs in MemeWarzone. It does. The distinction is which financial rails are operationally enabled at a given moment and which are still completing acceptance/canary evidence.
 
-Production remains deliberately conservative around financial activation.
+## Current product direction
 
-The current public product emphasizes:
+MemeWarzone is built around two entry paths across the three first-class chains:
 
-- BNB and Solana campaign flows
-- Draft / Prepare Mode
-- existing-token Import on BNB and Solana
-- project ownership verification and manual review
-- public project pages and community onboarding
-- Command Center/account tooling
-- existing live reward and launchpad surfaces according to their current chain/runtime state
+- native campaign launch
+- existing-token Import
 
-Imported projects can build a MemeWarzone identity while **WARZONE ACCESS LOCKED** keeps Arena financial actions separate.
+The native lifecycle is:
 
-## Immediate engineering direction
+**Prepare → Direct / Scheduled Launch → native bonding → Graduation Market → chain-specific post-grad venue → rewards / claims → Warzone**
 
-The active integration program is closing the evidence required for the broader three-chain release:
+The Import lifecycle is:
 
-- BNB destructive lifecycle and claim/recovery certification
-- Solana post-bond/Arena lifecycle certification while preserving accepted program behavior
-- Robinhood staging chain 46630 native lifecycle, V3 venue, locker, and recovery proof
-- true chain identity through Battles, Tournaments, MWL, Quarterly, and claims
-- exact-head restart/replay/reconciliation proof
-- controlled production canaries after staging requirements pass
+**Connect Wallet → Choose BNB / Solana / Robinhood → Resolve Existing Token → Prove Ownership / Manual Review → Project Page → Community → future eligible Warzone access**
 
-Production activation follows evidence; it is not inferred from code existing in the repository.
+## Three-chain launch architecture
+
+| Chain | Native bonding | Post-grad venue architecture |
+| --- | --- | --- |
+| BNB | BNB | Topaz |
+| Solana | SOL | Meteora |
+| Robinhood | ETH | chain-local V3 infrastructure |
+
+Robinhood is not a future-only chain. It shares the same product contract as BNB and Solana: Draft / Prepare, Direct and scheduled launch behavior, bonding, Graduation Market, post-grad trading, Import, reward identity, claims, and Arena identity.
+
+Read **[Robinhood Operations](/platform/robinhood-operations)** for the full flow.
+
+## Operational closeout
+
+Engineering and Launch Control can still hold individual rails fail-closed while certification finishes.
+
+Current closeout work focuses on evidence such as:
+
+- exact chain/runtime identity
+- real create/buy/sell lifecycle proof
+- graduation and permanent liquidity/position custody
+- post-grad trading
+- fee and Treasury reconciliation
+- claims recovery and exactly-once behavior
+- Arena chain identity
+- restart/replay/reconciliation
+- controlled production canaries where required
+
+That is an operational activation question, not a product-scope question.
+
+## Import
+
+Import is part of the permanent three-chain onboarding model.
+
+BNB, Solana, and Robinhood existing projects can be represented through the same project identity concept while using chain-specific ownership resolution underneath.
+
+Import never fabricates native launch history, bonding, graduation, creator economics, Graduation Market approval, or Arena eligibility.
 
 ## Arena expansion
 
@@ -51,15 +77,7 @@ The documented Warzone includes:
 - Event Sponsorship
 - chain-native financial claims
 
-The public docs describe these systems now so project teams can understand the post-graduation model before the financial Arena is opened broadly.
-
-## Robinhood Chain
-
-Robinhood remains a first-class strategic chain.
-
-Production chain 4663 stays fail-closed until permanent staging on 46630 proves the required create, bond, graduate, V3 trade, custody/locker, fee, claim, Arena, and recovery paths and Launch Control authorizes a controlled canary.
-
-Robinhood Import is intentionally separate from Robinhood launch deployment and can be enabled only when its isolated read-only ownership path is approved.
+The same chain identity model applies to BNB, Solana, and Robinhood.
 
 ## Graduation Market growth
 
@@ -69,7 +87,7 @@ Bonding remains chain-native. Unsafe selected markets must fail closed rather th
 
 ## Future MemeWarzone DEX
 
-A MemeWarzone-owned multichain DEX remains a strategic direction, not a current launch blocker.
+A MemeWarzone-owned multichain DEX remains a strategic direction, not a blocker for the three-chain launch architecture.
 
 Existing generations continue using the venues they were built for:
 
@@ -83,10 +101,12 @@ Any future MWZ DEX needs its own approved implementation, generation, migration,
 
 Additional chains, bridge/routing abstraction, Warzone Markets, deeper distribution, and other ecosystem extensions remain later work unless explicitly moved forward by founder decision.
 
-The current first-class chain program stays focused on BNB, Solana, and Robinhood.
+The current first-class chain program remains BNB, Solana, and Robinhood.
 
 ## Roadmap rule
 
-MemeWarzone does not activate financial functionality because it was merged, documented, or passed static CI.
+MemeWarzone does not confuse **integrated** with **currently enabled**.
 
-The release path is: exact source → exact runtime identity → real transaction/state effect → reconciliation → replay/restart proof → controlled activation.
+A chain or subsystem can be fully implemented and documented while a specific financial rail remains paused behind operational evidence. Conversely, a temporary operational pause does not remove that chain from the product.
+
+The release path for financial rails remains: exact source → exact runtime identity → real transaction/state effect → reconciliation → replay/restart proof → controlled activation.
