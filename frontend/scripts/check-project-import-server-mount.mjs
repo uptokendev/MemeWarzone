@@ -253,7 +253,7 @@ try {
     used_at timestamptz,
     PRIMARY KEY(chain_id,address)
   )`);
-  await pool.query(`TRUNCATE TABLE public.arena_token_imports, public.auth_nonces`);
+  await pool.query(`TRUNCATE TABLE public.project_import_review_evidence, public.project_import_pump_challenges, public.arena_token_imports, public.auth_nonces RESTART IDENTITY`);
   await assertCampaignTableAbsent("before certification");
   await pool.query(
     `INSERT INTO public.arena_token_imports(chain_id,token_address,owner_wallet,name,symbol,ownership_status)
