@@ -1,6 +1,5 @@
 import type { DraftActionAuth, DraftAuthAction } from "@/lib/draftAuth";
 import { apiFetch } from "@/lib/apiBase";
-import { detectWalletStandardSolanaWallets } from "@/lib/solanaWalletStandard";
 
 export const SOLANA_WALLET_STORAGE_KEY = "mwz:solana_wallet";
 export const SOLANA_WALLET_NAME_STORAGE_KEY = "mwz:solana_wallet_name";
@@ -94,45 +93,27 @@ function setSolanaDisconnected(value: boolean) {
   }
 }
 
-function normalizeSolanaWalletName(name: string): string {
-  return String(name || "").trim().toLowerCase().replace(/\s+/g, "");
-}
-
-function addWallet(
-  wallets: DetectedSolanaWallet[],
-  seen: Set<SolanaProvider>,
-  seenNames: Set<string>,
-  wallet: DetectedSolanaWallet | null,
-) {
+function addWallet(wallets: DetectedSolanaWallet[], seen: Set<SolanaProvider>, wallet: DetectedSolanaWallet | null) {
   if (!wallet?.provider || seen.has(wallet.provider)) return;
   if (wallets.some((item) => item.id === wallet.id)) return;
-  const nameKey = normalizeSolanaWalletName(wallet.name);
-  if (nameKey && seenNames.has(nameKey)) return;
   if (typeof wallet.provider.connect !== "function") return;
   wallets.push(wallet);
   seen.add(wallet.provider);
-  if (nameKey) seenNames.add(nameKey);
 }
 
 export function detectSolanaWallets(): DetectedSolanaWallet[] {
   const w = getWindowAny();
   const wallets: DetectedSolanaWallet[] = [];
   const seen = new Set<SolanaProvider>();
-  const seenNames = new Set<string>();
 
-  // Wallet Standard is authoritative for standards-compliant wallets. Legacy
-  // globals remain only as a compatibility fallback for wallets that have not
-  // adopted the standard yet.
-  for (const wallet of detectWalletStandardSolanaWallets()) {
-    addWallet(wallets, seen, seenNames, wallet as DetectedSolanaWallet);
-  }
-
-  addWallet(wallets, seen, seenNames, w.solana?.isPhantom ? { id: "legacy:phantom", name: "Phantom", icon: "👻", provider: w.solana } : null);
-  addWallet(wallets, seen, seenNames, w.phantom?.solana ? { id: "legacy:phantom", name: "Phantom", icon: "👻", provider: w.phantom.solana } : null);
-  addWallet(wallets, seen, seenNames, w.solflare ? { id: "legacy:solflare", name: "Solflare", icon: "☀️", provider: w.solflare } : null);
-  addWallet(wallets, seen, seenNames, w.solana?.isSolflare ? { id: "legacy:solflare", name: "Solflare", icon: "SOL", provider: w.solana } : null);
-  addWallet(wallets, seen, seenNames, w.backpack?.solana ? { id: "legacy:backpack", name: "Backpack", icon: "🎒", provider: w.backpack.solana } : null);
-  addWallet(wallets, seen, seenNames, w.glowSolana ? { id: "legacy:glow", name: "Glow", icon: "✨", provider: w.glowSolana } : null);
+  // Same order as origin/main: window.solana first. Wallet Standard Phantom
+  // connect() silently hangs and blocks the modal with no popup.
+  addWallet(wallets, seen, w.solana?.isPhantom ? { id: "phantom", name: "Phantom", icon: "👻", provider: w.solana } : null);
+  addWallet(wallets, seen, w.phantom?.solana ? { id: "phantom", name: "Phantom", icon: "👻", provider: w.phantom.solana } : null);
+  addWallet(wallets, seen, w.solflare ? { id: "solflare", name: "Solflare", icon: "☀️", provider: w.solflare } : null);
+  addWallet(wallets, seen, w.solana?.isSolflare ? { id: "solflare", name: "Solflare", icon: "SOL", provider: w.solana } : null);
+  addWallet(wallets, seen, w.backpack?.solana ? { id: "backpack", name: "Backpack", icon: "🎒", provider: w.backpack.solana } : null);
+  addWallet(wallets, seen, w.glowSolana ? { id: "glow", name: "Glow", icon: "✨", provider: w.glowSolana } : null);
 
   return wallets;
 }
@@ -263,7 +244,7 @@ export async function connectSolanaWallet(walletId?: string): Promise<{ publicKe
 
   if (!wallet?.provider?.connect) {
     debugLog("Error: No supported Solana wallet detected");
-    throw new Error("No standards-compatible or legacy Solana wallet detected.");
+    throw new Error("No supported Solana wallet detected. Install Phantom, Solflare, Backpack, or Glow.");
   }
 
   const previousId = getStoredSolanaWalletId();

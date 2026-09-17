@@ -8,11 +8,7 @@ const sourceUrl = new URL("./solanaWallet.ts", import.meta.url);
 let source = await readFile(sourceUrl, "utf8");
 source = source
   .replace('import type { DraftActionAuth, DraftAuthAction } from "@/lib/draftAuth";\n', "")
-  .replace('import { apiFetch } from "@/lib/apiBase";\n', "const apiFetch = async () => ({});\n")
-  .replace(
-    'import { detectWalletStandardSolanaWallets } from "@/lib/solanaWalletStandard";\n',
-    "function detectWalletStandardSolanaWallets() {\n  return globalThis.__mwzStandardSolanaWallets || [];\n}\n",
-  );
+  .replace('import { apiFetch } from "@/lib/apiBase";\n', "const apiFetch = async () => ({});\n");
 
 const compiled = await transform(source, {
   format: "esm",
@@ -29,50 +25,36 @@ function connectable(label) {
   };
 }
 
-test("detectSolanaWallets keeps one Phantom and one Solflare when Wallet Standard and legacy globals both register", () => {
-  const standardPhantom = connectable("ws-phantom");
-  const standardSolflare = connectable("ws-solflare");
-  const legacyPhantom = connectable("legacy-phantom");
-  const legacySolflare = connectable("legacy-solflare");
-
-  globalThis.__mwzStandardSolanaWallets = [
-    { id: "wallet-standard:phantom", name: "Phantom", icon: "👻", provider: standardPhantom },
-    { id: "wallet-standard:solflare", name: "Solflare", icon: "☀️", provider: standardSolflare },
-  ];
+test("detectSolanaWallets uses window.solana Phantom first (main behavior)", () => {
+  const windowSolana = Object.assign(connectable("window-solana"), { isPhantom: true });
+  const phantomSolana = connectable("phantom-solana");
+  const solflare = connectable("solflare");
 
   globalThis.window = {
-    solana: Object.assign(legacyPhantom, { isPhantom: true }),
-    phantom: { solana: legacyPhantom },
-    solflare: legacySolflare,
-  };
-
-  const detected = detectSolanaWallets();
-  const names = detected.map((wallet) => wallet.name);
-  const ids = detected.map((wallet) => wallet.id);
-
-  assert.deepEqual(names.filter((name) => name === "Phantom"), ["Phantom"]);
-  assert.deepEqual(names.filter((name) => name === "Solflare"), ["Solflare"]);
-  assert.deepEqual(ids, ["wallet-standard:phantom", "wallet-standard:solflare"]);
-  assert.equal(detected[0].provider, standardPhantom);
-  assert.equal(detected[1].provider, standardSolflare);
-});
-
-test("detectSolanaWallets still surfaces legacy Phantom/Solflare when Wallet Standard is empty", () => {
-  const legacyPhantom = connectable("legacy-phantom");
-  const legacySolflare = connectable("legacy-solflare");
-
-  globalThis.__mwzStandardSolanaWallets = [];
-  globalThis.window = {
-    solana: Object.assign(legacyPhantom, { isPhantom: true }),
-    solflare: legacySolflare,
+    solana: windowSolana,
+    phantom: { solana: phantomSolana },
+    solflare,
   };
 
   const detected = detectSolanaWallets();
   assert.deepEqual(
     detected.map((wallet) => ({ id: wallet.id, name: wallet.name })),
     [
-      { id: "legacy:phantom", name: "Phantom" },
-      { id: "legacy:solflare", name: "Solflare" },
+      { id: "phantom", name: "Phantom" },
+      { id: "solflare", name: "Solflare" },
     ],
   );
+  assert.equal(detected[0].provider, windowSolana);
+});
+
+test("detectSolanaWallets falls back to window.phantom.solana when window.solana is not Phantom", () => {
+  const phantomSolana = connectable("phantom-solana");
+  globalThis.window = {
+    solana: { isPhantom: false },
+    phantom: { solana: phantomSolana },
+  };
+
+  const detected = detectSolanaWallets();
+  assert.deepEqual(detected.map((wallet) => wallet.id), ["phantom"]);
+  assert.equal(detected[0].provider, phantomSolana);
 });
