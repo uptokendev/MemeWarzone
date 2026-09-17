@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { readFile } from "node:fs/promises";
 import {
   FORBIDDEN_STAGED_FACTORY,
   GREEN_FACTORY,
+  TEST_GRADUATION_USD_THRESHOLD,
   assertChainId,
   assertLiveFactory,
   planCreateBuySell,
   runCreateBuySell,
+  waitForRpcState,
 } from "./rh46630-live-factory-create-buy-sell.mjs";
 
 test("46630 dry-run pins live factory, ETH, and create/buy/sell steps", () => {
@@ -18,10 +21,11 @@ test("46630 dry-run pins live factory, ETH, and create/buy/sell steps", () => {
   assert.equal(plan.forbiddenFactory, FORBIDDEN_STAGED_FACTORY);
   assert.deepEqual(plan.steps, [
     "createCampaignAuthorized",
-    "buyExactTokensAuthorized",
+    "buyExactBnbAuthorized",
     "sellExactTokensAuthorized",
   ]);
   assert.equal(plan.sendRequired, false);
+  assert.equal(plan.graduationTargetUsd, "6000000000000000000");
 });
 
 test("production 4663 and staged 0xF170 are forbidden", () => {
@@ -52,4 +56,27 @@ test("missing live flag never sends", async () => {
   });
   assert.equal(result.sent, false);
   assert.equal(sends, 0);
+});
+
+test("live runner follows BNB 6C pre-grad and reuses bonding campaign on creator cooldown", async () => {
+  const source = await readFile(new URL("./rh46630-live-factory-create-buy-sell.mjs", import.meta.url), "utf8");
+  assert.equal(TEST_GRADUATION_USD_THRESHOLD, 6000000000000000000n);
+  assert.match(source, /const index = await factory\.campaignsCount\(\);/);
+  assert.match(source, /createdAddressesFromReceipt/);
+  assert.match(source, /waitForRpcState/);
+  assert.match(source, /findCreatorBondingCampaign/);
+  assert.match(source, /creatorLaunchEligibility/);
+  assert.match(source, /quoteBuyExactBnb/);
+  assert.match(source, /LIVE_BUY_ETH_WEI/);
+  assert.match(source, /CampaignCreated/);
+  assert.match(source, /tuple\(address campaign,address token,address creator/);
+});
+
+test("waitForRpcState resolves when the read becomes accepted", async () => {
+  let n = 0;
+  const value = await waitForRpcState("probe", async () => {
+    n += 1;
+    return n;
+  }, (v) => v >= 2, 5, 1);
+  assert.equal(value, 2);
 });

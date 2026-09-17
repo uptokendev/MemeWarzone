@@ -40,6 +40,10 @@ jobs:
               console.error("poolIndexerEnvEnabled is false. Founder must set ENABLE_ROBINHOOD_V3_POOL_INDEXER=1 on the QA indexer and restart it.");
               process.exit(1);
             }
+            if (!report.pairAddress) {
+              console.error("RH5661 CMS has no pair. Redeploy QA indexer at 9f90ad50+ so heal runs before log scans.");
+              process.exit(1);
+            }
           '
 
       - if: always()

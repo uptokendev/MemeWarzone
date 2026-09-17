@@ -8,6 +8,7 @@ import { createLeagueFeedPublisher } from "./leagueFeed.js";
 import { recordCampaignCreatedActivity, recordTradeActivity } from "./rewards/attribution.js";
 import { upsertRewardEvent } from "./rewards/ingest.js";
 import { createStaticJsonRpcProvider, createWorkingProvider, parseRpcList } from "./rpcProvider.js";
+import { healRobinhoodGraduatedCms } from "./robinhoodCmsHeal.js";
 import { bnbCurveState, parseRawTokenAmount } from "./bnbCurvePricing.js";
 import { campaignScanChunks } from "./campaignScanChunks.js";
 import { checkMilestones } from "./milestones.js";
@@ -463,143 +464,6 @@ async function setCampaignGraduated(
  * dex_pair_address the V3 pool indexer never discovers swaps, so Token Details
  * 24h volume stays empty after bonding prints age out of the window.
  */
-async function healRobinhoodGraduatedCms(
-  provider: ethers.Provider,
-  chainId: number,
-  campaign: string,
-  tokenAddress: string | null,
-): Promise<boolean> {
-  if (chainId !== 46630 && chainId !== 4663) return false;
-  const camp = campaign.toLowerCase();
-  if (!ethers.isAddress(camp)) return false;
-
-  const existing = await pool.query(
-    `select dex_pair_address, market_stage
-       from public.campaign_market_state
-      where chain_id=$1 and campaign_address=$2
-      limit 1`,
-    [chainId, camp],
-  );
-  const row = existing.rows[0];
-  const pairExisting = String(row?.dex_pair_address || "").toLowerCase();
-  const stageExisting = String(row?.market_stage || "").toUpperCase();
-  if (
-    /^0x[a-f0-9]{40}$/.test(pairExisting) &&
-    pairExisting !== ethers.ZeroAddress.toLowerCase() &&
-    stageExisting &&
-    stageExisting !== "BONDING"
-  ) {
-    return false;
-  }
-
-  const c = new ethers.Contract(camp, LAUNCH_CAMPAIGN_ABI, provider) as any;
-  let launched = false;
-  let pair = "";
-  let token = tokenAddress ? tokenAddress.toLowerCase() : "";
-  let liquidityTokens: string | null = null;
-  let liquidityBnb: string | null = null;
-  let liquidityLp: string | null = null;
-  let burnedUnsold: string | null = null;
-  let burnedLp: string | null = null;
-  let postBurnSupply: string | null = null;
-  let finalCurvePrice: string | null = null;
-  let initialDexPrice: string | null = null;
-  try {
-    launched = Boolean(await c.launched());
-    if (!launched) return false;
-    const state = await c.getGraduationState();
-    pair = String(state?.dexPair ?? state?.[0] ?? "").toLowerCase();
-    if (!token) token = String(await c.token()).toLowerCase();
-    liquidityTokens = state?.graduatedLiquidityTokens != null ? String(state.graduatedLiquidityTokens) : state?.[3] != null ? String(state[3]) : null;
-    liquidityBnb = state?.graduatedLiquidityBnb != null ? String(state.graduatedLiquidityBnb) : state?.[4] != null ? String(state[4]) : null;
-    liquidityLp = state?.graduatedLiquidityLp != null ? String(state.graduatedLiquidityLp) : state?.[5] != null ? String(state[5]) : null;
-    burnedUnsold = state?.burnedUnsoldTokens != null ? String(state.burnedUnsoldTokens) : state?.[6] != null ? String(state[6]) : null;
-    burnedLp = state?.burnedUnusedLpTokens != null ? String(state.burnedUnusedLpTokens) : state?.[7] != null ? String(state[7]) : null;
-    postBurnSupply = state?.postBurnTotalSupply != null ? String(state.postBurnTotalSupply) : state?.[8] != null ? String(state[8]) : null;
-    finalCurvePrice = state?.finalCurvePrice != null ? String(state.finalCurvePrice) : state?.[1] != null ? String(state[1]) : null;
-    initialDexPrice = state?.initialDexPrice != null ? String(state.initialDexPrice) : state?.[2] != null ? String(state[2]) : null;
-  } catch (error) {
-    console.warn("[indexer] RH CMS heal read failed", {
-      chainId,
-      campaign: camp,
-      error: String((error as any)?.message || error),
-    });
-    return false;
-  }
-
-  if (!launched) return false;
-  if (!/^0x[a-f0-9]{40}$/.test(pair) || pair === ethers.ZeroAddress.toLowerCase()) return false;
-  if (!/^0x[a-f0-9]{40}$/.test(token)) return false;
-
-  const now = new Date();
-  await pool.query(
-    `insert into public.campaign_market_state(
-       chain_id,campaign_address,token_address,market_stage,
-       graduation_time,dex_pair_address,
-       graduated_liquidity_token_raw,graduated_liquidity_bnb_raw,graduated_lp_raw,
-       burned_unsold_token_raw,burned_unused_lp_token_raw,post_burn_total_supply_raw,
-       final_curve_price_bnb,initial_dex_price_bnb,
-       pool_verified,indexing_enabled,updated_at
-     ) values(
-       $1,$2,$3,'GRADUATING',$4,$5,$6,$7,$8,$9,$10,$11,
-       case when $12::text is null then null else ($12::numeric / 1e18) end,
-       case when $13::text is null then null else ($13::numeric / 1e18) end,
-       false,true,now()
-     )
-     on conflict(chain_id,campaign_address) do update set
-       token_address=excluded.token_address,
-       market_stage=case
-         when public.campaign_market_state.market_stage in ('DEX_ACTIVE','DEX_PENDING','DEX_DEGRADED')
-           then public.campaign_market_state.market_stage
-         else excluded.market_stage
-       end,
-       graduation_time=coalesce(public.campaign_market_state.graduation_time, excluded.graduation_time),
-       dex_pair_address=coalesce(public.campaign_market_state.dex_pair_address, excluded.dex_pair_address),
-       graduated_liquidity_token_raw=coalesce(public.campaign_market_state.graduated_liquidity_token_raw, excluded.graduated_liquidity_token_raw),
-       graduated_liquidity_bnb_raw=coalesce(public.campaign_market_state.graduated_liquidity_bnb_raw, excluded.graduated_liquidity_bnb_raw),
-       graduated_lp_raw=coalesce(public.campaign_market_state.graduated_lp_raw, excluded.graduated_lp_raw),
-       burned_unsold_token_raw=coalesce(public.campaign_market_state.burned_unsold_token_raw, excluded.burned_unsold_token_raw),
-       burned_unused_lp_token_raw=coalesce(public.campaign_market_state.burned_unused_lp_token_raw, excluded.burned_unused_lp_token_raw),
-       post_burn_total_supply_raw=coalesce(public.campaign_market_state.post_burn_total_supply_raw, excluded.post_burn_total_supply_raw),
-       final_curve_price_bnb=coalesce(public.campaign_market_state.final_curve_price_bnb, excluded.final_curve_price_bnb),
-       initial_dex_price_bnb=coalesce(public.campaign_market_state.initial_dex_price_bnb, excluded.initial_dex_price_bnb),
-       indexing_enabled=true,
-       updated_at=now()`,
-    [
-      chainId,
-      camp,
-      token,
-      now,
-      pair,
-      liquidityTokens,
-      liquidityBnb,
-      liquidityLp,
-      burnedUnsold,
-      burnedLp,
-      postBurnSupply,
-      finalCurvePrice,
-      initialDexPrice,
-    ],
-  );
-
-  await pool.query(
-    `update public.campaigns
-        set is_active=false,
-            bonding_active=false,
-            graduated_at_chain=coalesce(graduated_at_chain, $3),
-            market_stage=case
-              when market_stage in ('DEX_ACTIVE','DEX_PENDING','DEX_DEGRADED','GRADUATING') then market_stage
-              else 'GRADUATING'
-            end,
-            updated_at=now()
-      where chain_id=$1 and campaign_address=$2`,
-    [chainId, camp, now],
-  );
-
-  console.log("[indexer] RH CMS heal seeded GRADUATING", { chainId, campaign: camp, pair });
-  return true;
-}
-
 async function setCampaignFeeRecipient(
   chainId: number,
   campaign: string,
@@ -2313,6 +2177,45 @@ async function runIndexerCore(opts: {
       blocksPerPass,
       tipScanBlocks,
     });
+
+    // Cheap on-chain CMS heal before log scans. RH5661 is launched with a V3 pair
+    // but campaign_market_state stayed BONDING because heal only ran at the end of
+    // scanCampaignRange, which 200k empty-history / 7s tip deadlines often skip.
+    if (chain.chainId === 46630 || chain.chainId === 4663) {
+      const healProvider = createStaticJsonRpcProvider(rpcList[0], chain.chainId, {
+        timeoutMs: Math.min(ENV.RPC_REQUEST_TIMEOUT_MS, 15_000),
+      });
+      const healRows = await pool.query(
+        `select campaign_address, token_address
+           from public.campaigns
+          where chain_id=$1`,
+        [chain.chainId],
+      );
+      for (const row of healRows.rows) {
+        const camp = String(row.campaign_address || "");
+        try {
+          const healed = await healRobinhoodGraduatedCms(
+            healProvider,
+            chain.chainId,
+            camp,
+            row.token_address ? String(row.token_address) : null,
+          );
+          if (healed.healed) {
+            await setCampaignGraduated(chain.chainId, camp, target, new Date(), ethers.ZeroHash);
+            console.log("[indexer] RH CMS heal pass seeded", {
+              chainId: chain.chainId,
+              campaign: camp.toLowerCase(),
+            });
+          }
+        } catch (healErr) {
+          console.warn("[indexer] RH CMS heal pass failed", {
+            chainId: chain.chainId,
+            campaign: camp.toLowerCase(),
+            error: String((healErr as any)?.message || healErr),
+          });
+        }
+      }
+    }
 
     // Phase A — tip scan ALL campaigns first so a slow history backfill on AWTT/WIC
     // cannot starve TTA (or any other) live trades for the whole stale window.

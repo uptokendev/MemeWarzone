@@ -684,6 +684,9 @@ const TokenDetails = () => {
     solanaConnected: Boolean(isSolanaConnected && solanaAccount),
     bnbConnected: Boolean(wallet.isConnected && wallet.account),
   });
+  /** No wallet at all is not the same as the wrong wallet family. */
+  const anyWalletConnected =
+    Boolean(isSolanaConnected && solanaAccount) || Boolean(wallet.isConnected && wallet.account);
   const connectTradeWalletLabel = isSolanaPage
     ? "Connect SOL wallet"
     : isRobinhoodPage
@@ -1913,13 +1916,39 @@ const { stats: rtStats } = useTokenStatsRealtime(
     return null;
   }, [contractGraduatedEarly, isSolanaPage, metrics?.currentPrice, rtStats?.lastPriceBnb, solanaLivePrice, topazMarket.priceBnb]);
 
+  /**
+   * Market-cap denominator.
+   *
+   * Bonding uses curve sold(). After graduation the curve is closed, sold() is
+   * frozen and unsold supply has been burned, so post-burn total supply is the
+   * honest denominator. The chart already used it, which is why a graduated
+   * token showed a headline market cap far below its own candles.
+   */
   const pageLiveSupplyWhole = useMemo(() => {
     if (isSolanaPage) return solanaSoldWhole;
+
+    const graduatedSupplyRaw = unifiedMarket.state?.graduation?.postBurnTotalSupplyRaw;
+    if (contractGraduatedEarly && graduatedSupplyRaw && /^\d+$/.test(graduatedSupplyRaw)) {
+      try {
+        const whole = Number(ethers.formatUnits(BigInt(graduatedSupplyRaw), tokenDecimals));
+        if (Number.isFinite(whole) && whole > 0) return whole;
+      } catch {
+        // fall through to the curve basis
+      }
+    }
+
     const sold = metrics?.sold ?? 0n;
     if (sold <= 0n) return null;
     const whole = Number(ethers.formatUnits(sold, tokenDecimals));
     return Number.isFinite(whole) && whole > 0 ? whole : null;
-  }, [isSolanaPage, metrics?.sold, solanaSoldWhole, tokenDecimals]);
+  }, [
+    contractGraduatedEarly,
+    isSolanaPage,
+    metrics?.sold,
+    solanaSoldWhole,
+    tokenDecimals,
+    unifiedMarket.state?.graduation?.postBurnTotalSupplyRaw,
+  ]);
 
   const solanaGraduationMarker = useMemo(() => {
     if (!isSolanaPage || !solanaCurve?.graduated) return null;
@@ -2942,6 +2971,19 @@ const toSeconds = (ts: number): number => {
   }, [isDexStage, curveProgress.targetWei, curveProgress.reserveWei]);
 
   const remainingCurveLabel = useMemo(() => {
+    if (isRobinhoodPage && !isDexStage && (metrics?.graduationTarget ?? 0n) > 0n) {
+      const targetUsd = Number(ethers.formatEther(metrics.graduationTarget));
+      let raisedUsd = 0;
+      try {
+        const reserveEth = Number(ethers.formatEther(curveProgress.reserveWei ?? 0n));
+        if (Number.isFinite(reserveEth) && nativeUsd) raisedUsd = reserveEth * nativeUsd;
+      } catch {
+        raisedUsd = 0;
+      }
+      const left = Math.max(0, (Number.isFinite(targetUsd) ? targetUsd : 0) - raisedUsd);
+      const usdLabel = formatCompactUsd(left);
+      return { primary: usdLabel, secondary: `$${left.toFixed(2)} USD target` };
+    }
     if ((curveProgress.targetWei ?? 0n) <= 0n) {
       return { primary: "—", secondary: "—" };
     }
@@ -2965,7 +3007,18 @@ const toSeconds = (ts: number): number => {
     // Primary follows the denomination toggle; secondary shows the other denomination.
     if (displayDenom === "USD") return { primary: usdLabel, secondary: bnbLabel };
     return { primary: bnbLabel, secondary: usdLabel };
-  }, [curveProgress.targetWei, remainingCurveWei, displayDenom, nativeUsd, nativeUsdLoading, isSolanaPage]);
+  }, [
+    curveProgress.targetWei,
+    curveProgress.reserveWei,
+    remainingCurveWei,
+    displayDenom,
+    nativeUsd,
+    nativeUsdLoading,
+    isSolanaPage,
+    isRobinhoodPage,
+    isDexStage,
+    metrics?.graduationTarget,
+  ]);
 
   const liquidityLabel = isDexStage ? "Liquidity" : "Reserve";
   const liquidityValue = (() => {
@@ -3018,7 +3071,7 @@ const toSeconds = (ts: number): number => {
         ? "Graduating · Solana"
         : "Bonding · Solana"
     : isRobinhoodPage
-      ? isUniswapTradingActive || contractGraduated
+      ? onChainLaunched || contractGraduated
         ? "Graduated · Uniswap"
         : "Bonding · Robinhood"
       : isTopazTradingActive
@@ -5016,11 +5069,13 @@ const toSeconds = (ts: number): number => {
                 </div>
                 {walletMatchesCampaign ? null : (
                   <p className="mt-2 text-[11px] text-amber-300">
-                    {isSolanaPage
-                      ? "Wrong wallet. Connect a SOL wallet to trade this campaign."
-                      : isRobinhoodPage
-                        ? "Wrong wallet. Connect a Robinhood wallet to trade this campaign."
-                        : "Wrong wallet. Connect a BNB wallet to trade this campaign."}
+                    {!anyWalletConnected
+                      ? `${connectTradeWalletLabel} to trade this campaign.`
+                      : isSolanaPage
+                        ? "Wrong wallet. Connect a SOL wallet to trade this campaign."
+                        : isRobinhoodPage
+                          ? "Wrong wallet. Connect a Robinhood wallet to trade this campaign."
+                          : "Wrong wallet. Connect a BNB wallet to trade this campaign."}
                   </p>
                 )}
               </div>

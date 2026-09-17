@@ -141,9 +141,19 @@ function postBurnSupply(state: MarketState | null, tokenDecimals: number): numbe
   }
 }
 
+const GRADUATED_STAGES = new Set([
+  "GRADUATING",
+  "TOPAZ_PENDING",
+  "TOPAZ_ACTIVE",
+  "TOPAZ_DEGRADED",
+  // Robinhood post-grad markets settle in the DEX_* stages, not TOPAZ_*.
+  "DEX_PENDING",
+  "DEX_ACTIVE",
+  "DEX_DEGRADED",
+]);
+
 function isGraduatedStage(state: MarketState | null): boolean {
-  const stage = String(state?.marketStage || "").toUpperCase();
-  return stage === "TOPAZ_ACTIVE" || stage === "TOPAZ_DEGRADED" || stage === "TOPAZ_PENDING" || stage === "GRADUATING";
+  return GRADUATED_STAGES.has(String(state?.marketStage || "").toUpperCase());
 }
 
 function normalizedWallet(chainId: number, value?: string | null) {

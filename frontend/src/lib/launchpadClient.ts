@@ -701,8 +701,10 @@ export function useLaunchpad(): LaunchpadAdapter {
     const graduated = Boolean(launched) || BigInt(finalizedAt || 0n) > 0n;
     const skipNativeTarget =
       graduated || evmReadChainId === ROBINHOOD_CHAIN_ID || evmReadChainId === ROBINHOOD_TESTNET_CHAIN_ID;
+    // RH graduationTarget is USD (18 decimals), not native wei. Copying it into
+    // graduationNativeTarget made Remaining show ~$4.4K (6 ETH × ETH/USD).
     const graduationNativeTarget = skipNativeTarget
-      ? graduationTarget
+      ? 0n
       : await readBig("graduationNativeTarget", graduationTarget);
 
     return { sold, curveSupply, liquiditySupply, creatorReserve, basePrice, priceSlope, graduationTarget, graduationNativeTarget, liquidityBps, protocolFeeBps, currentPrice, launched, finalizedAt };
