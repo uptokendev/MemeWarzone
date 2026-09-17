@@ -17,6 +17,12 @@ const FACTORY_ABI = [
   "function finalizeRouteProfile() view returns (uint8)",
   "function campaignsCount() view returns (uint256)",
   "function getCampaign(uint256) view returns (address campaign, address token)",
+  "function owner() view returns (address)",
+  "function routeAuthority() view returns (address)",
+  "function globalPaused() view returns (bool)",
+  "function createPaused() view returns (bool)",
+  "function setGlobalPaused(bool paused)",
+  "function setCreatePaused(bool paused)",
   "function createCampaignAuthorized((string name,string symbol,string logoURI,string xAccount,string website,string extraLink,uint256 graduationTarget) req,(uint8 tradeRouteProfile,uint8 finalizeRouteProfile,uint64 deadline,bytes signature) auth) returns (address campaignAddr,address tokenAddr)",
 ];
 
@@ -123,6 +129,30 @@ export async function runCreateBuySell({
   );
   const routeAuthority = new ethers.Wallet(String(env.ROBINHOOD_ROUTE_AUTHORITY_PRIVATE_KEY), provider);
   const factory = new ethers.Contract(resolved.factory, FACTORY_ABI, creator);
+  const onChainRoute = ethers.getAddress(await factory.routeAuthority());
+  if (!sameAddress(onChainRoute, routeAuthority.address)) {
+    throw new Error(`ROUTE_AUTHORITY_MISMATCH signer=${routeAuthority.address} onChain=${onChainRoute}`);
+  }
+  const owner = ethers.getAddress(await factory.owner());
+  let globalPaused = Boolean(await factory.globalPaused());
+  let createPaused = Boolean(await factory.createPaused());
+  const unpaused = { globalPaused: false, createPaused: false };
+  if ((globalPaused || createPaused) && sameAddress(owner, creator.address)) {
+    if (globalPaused) {
+      const tx = await factory.setGlobalPaused(false);
+      await tx.wait();
+      unpaused.globalPaused = true;
+      globalPaused = false;
+    }
+    if (createPaused) {
+      const tx = await factory.setCreatePaused(false);
+      await tx.wait();
+      unpaused.createPaused = true;
+      createPaused = false;
+    }
+  }
+  if (globalPaused) throw new Error("FACTORY_GLOBAL_PAUSED");
+  if (createPaused) throw new Error("FACTORY_CREATE_PAUSED");
   const tradeRouteProfile = Number(await factory.tradeRouteProfile());
   const finalizeRouteProfile = Number(await factory.finalizeRouteProfile());
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
@@ -194,6 +224,7 @@ export async function runCreateBuySell({
     buyTx: buyTx?.txHash || null,
     sellTx: sellTx?.txHash || null,
     explorer: `https://explorer.testnet.chain.robinhood.com/address/${campaignAddress}`,
+    unpaused,
   };
 }
 
