@@ -269,11 +269,21 @@ try {
   assert.equal(solLookup.body?.project?.chainId, 101);
   assert.equal(solLookup.body?.project?.tokenAddress, SOLANA_MINT);
 
-  for (const unsupported of [97, 102, 4663, 46630]) {
+  for (const unsupported of [97, 102, 46630]) {
     const result = await jsonFetch(`${baseOn}/api/project-imports?chainId=${unsupported}&tokenAddress=${encodeURIComponent(VERIFIED_TOKEN)}`);
     assert.equal(result.response.status, 400, `unsupported chain ${unsupported} did not fail closed`);
     assert.equal(result.body?.code, "UNSUPPORTED_CHAIN", `unexpected unsupported-chain result for ${unsupported}`);
   }
+
+  const robinhoodDisabled = await jsonFetch(
+    `${baseOn}/api/project-imports?chainId=4663&tokenAddress=${encodeURIComponent(VERIFIED_TOKEN)}`,
+  );
+  assert.equal(robinhoodDisabled.response.status, 404, "disabled Robinhood Project Import did not fail closed");
+  assert.equal(
+    robinhoodDisabled.body?.code,
+    "PROJECT_IMPORT_CHAIN_DISABLED",
+    "disabled Robinhood Project Import returned the wrong gate code",
+  );
 
   const createAuth = await issueAuth({
     wallet: ownerWallet,
