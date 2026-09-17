@@ -1003,7 +1003,11 @@ async function runChain(config: ChainConfig): Promise<void> {
   try {
     const network = await provider.getNetwork();
     if (Number(network.chainId) !== config.chainId) throw new Error(`RPC returned chain ${network.chainId}`);
+    passHealth.lastError = null;
     await discoverPools(provider, config);
+    // discoverPools records per-pool failures; completing the pass must not
+    // erase them or a degraded pool looks like a healthy one.
+    const discoveryError = passHealth.lastError;
     const head = Math.max(0, selected.headBlock - Math.max(0, ENV.CONFIRMATIONS));
     const pools = await listPools(config.chainId);
     let swaps = 0;
@@ -1011,7 +1015,7 @@ async function runChain(config: ChainConfig): Promise<void> {
     passHealth.lastPassAt = new Date().toISOString();
     passHealth.lastPassChainId = config.chainId;
     passHealth.lastPoolCount = pools.length;
-    passHealth.lastError = null;
+    passHealth.lastError = discoveryError;
     if (pools.length || swaps) console.log("[robinhood-v3] pass", { chainId: config.chainId, head, pools: pools.length, swaps, rpc: maskRpcUrl(selected.url) });
   } finally {
     provider.destroy();

@@ -318,7 +318,10 @@ export function registerRobinhoodMarketContinuityRoutes(app: Express): void {
         return res.status(200).json(provisionalRobinhoodMarketState(chainId, campaign));
       }
       let healReason: string | null = null;
-      if (!state.pairAddress) {
+      // A pair alone does not verify: V3 discovery rejects a wrapped-native
+      // market whose CMS row has no canonical wrapped native, so keep healing
+      // until the venue is populated too.
+      if (!state.pairAddress || !state.wrappedNativeAddress) {
         const rpcUrl =
           chainId === 4663
             ? parseRpcList(ENV.ROBINHOOD_RPC_HTTP_4663)[0]
