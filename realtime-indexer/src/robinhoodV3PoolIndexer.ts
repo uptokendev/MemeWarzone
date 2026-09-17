@@ -456,18 +456,35 @@ async function discoverPools(provider: ethers.JsonRpcProvider, config: ChainConf
       }
     } catch (error) {
       const message = String((error as any)?.shortMessage || (error as any)?.message || error);
-      await pool.query(
-        `update public.campaign_market_state
-            set market_stage='DEX_DEGRADED',pool_verified=false,last_error=$3,updated_at=now()
-          where chain_id=$1 and campaign_address=$2`,
-        [config.chainId, campaignAddress, message.slice(0, 1000)],
-      );
-      await pool.query(
-        `update public.campaigns set market_stage='DEX_DEGRADED',updated_at=now()
-          where chain_id=$1 and campaign_address=$2`,
-        [config.chainId, campaignAddress],
-      );
+      // Keep the real reason first. A database that rejects DEX_DEGRADED (an
+      // older stage constraint) otherwise throws out of this handler and
+      // replaces the discovery failure with its own, hiding the actual cause.
+      passHealth.lastError = `discovery:${campaignAddress}:${message}`.slice(0, 300);
       console.warn("[robinhood-v3] pool discovery degraded", { chainId: config.chainId, campaignAddress, error: message });
+      try {
+        await pool.query(
+          `update public.campaign_market_state
+              set market_stage='DEX_DEGRADED',pool_verified=false,last_error=$3,updated_at=now()
+            where chain_id=$1 and campaign_address=$2`,
+          [config.chainId, campaignAddress, message.slice(0, 1000)],
+        );
+        await pool.query(
+          `update public.campaigns set market_stage='DEX_DEGRADED',updated_at=now()
+            where chain_id=$1 and campaign_address=$2`,
+          [config.chainId, campaignAddress],
+        );
+      } catch (markError) {
+        // Still record the discovery failure on the row we can write.
+        const markMessage = String((markError as any)?.message || markError);
+        console.error("[robinhood-v3] could not mark pool degraded", { chainId: config.chainId, campaignAddress, error: markMessage });
+        try {
+          await pool.query(
+            `update public.campaign_market_state set last_error=$3, updated_at=now()
+              where chain_id=$1 and campaign_address=$2`,
+            [config.chainId, campaignAddress, `${message} :: degrade_write_failed:${markMessage}`.slice(0, 1000)],
+          );
+        } catch { /* diagnostics only */ }
+      }
     }
   }
 }
