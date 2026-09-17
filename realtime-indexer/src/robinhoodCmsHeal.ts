@@ -11,6 +11,60 @@ function asPair(value: unknown): string {
 /** Why a heal attempt did or did not write CMS. Surfaced by /health diagnostics. */
 export type RobinhoodCmsHealResult = { healed: boolean; reason: string; pair?: string };
 
+/**
+ * campaign_market_state_graduation_order rejects a graduated row whose
+ * graduation_block/tx are null, so the pair alone is not writable. Recover the
+ * real CampaignFinalized anchor rather than fabricating one: the DB copy first,
+ * then a log lookup scoped to the single campaign address.
+ */
+async function findGraduationAnchor(
+  provider: ethers.Provider,
+  chainId: number,
+  camp: string,
+): Promise<{ block: number; txHash: string; time: Date } | null> {
+  try {
+    const row = await pool.query(
+      `select graduated_block, graduated_at_chain, meta->>'graduatedTx' as graduated_tx, created_block
+         from public.campaigns
+        where chain_id=$1 and lower(campaign_address)=$2
+        limit 1`,
+      [chainId, camp],
+    );
+    const known = row.rows[0];
+    const knownBlock = Number(known?.graduated_block || 0);
+    const knownTx = String(known?.graduated_tx || "").toLowerCase();
+    if (knownBlock > 0 && /^0x[a-f0-9]{64}$/.test(knownTx)) {
+      const when = known?.graduated_at_chain ? new Date(known.graduated_at_chain) : new Date();
+      return { block: knownBlock, txHash: knownTx, time: when };
+    }
+
+    const iface = new ethers.Interface(LAUNCH_CAMPAIGN_ABI);
+    const topic = iface.getEvent("CampaignFinalized")?.topicHash;
+    if (!topic) return null;
+    const logs = await provider.getLogs({
+      address: camp,
+      topics: [topic],
+      fromBlock: Number(known?.created_block || 0),
+      toBlock: "latest",
+    });
+    const finalized = logs[logs.length - 1];
+    if (!finalized) return null;
+    const block = await provider.getBlock(finalized.blockNumber);
+    return {
+      block: finalized.blockNumber,
+      txHash: String(finalized.transactionHash).toLowerCase(),
+      time: new Date(Number(block?.timestamp || 0) * 1000),
+    };
+  } catch (error) {
+    console.warn("[indexer] RH CMS heal graduation anchor lookup failed", {
+      chainId,
+      campaign: camp,
+      error: String((error as any)?.message || error),
+    });
+    return null;
+  }
+}
+
 export async function healRobinhoodGraduatedCms(
   provider: ethers.Provider,
   chainId: number,
@@ -60,7 +114,9 @@ export async function healRobinhoodGraduatedCms(
   if (!/^0x[a-f0-9]{40}$/.test(pair) || pair === ZERO) return { healed: false, reason: "no_dex_pair_onchain" };
   if (!/^0x[a-f0-9]{40}$/.test(token)) return { healed: false, reason: "no_token_address" };
 
-  const now = new Date();
+  const anchor = await findGraduationAnchor(provider, chainId, camp);
+  if (!anchor) return { healed: false, reason: "no_graduation_anchor" };
+  const now = anchor.time;
 
   // campaign_market_state_pair_uidx is unique on (chain_id, dex_pair_address).
   // A stale row holding this pair under a different campaign key makes the
@@ -95,15 +151,15 @@ export async function healRobinhoodGraduatedCms(
     await pool.query(
     `insert into public.campaign_market_state(
        chain_id,campaign_address,token_address,market_stage,
-       graduation_time,dex_pair_address,
+       graduation_time,graduation_block,graduation_tx_hash,dex_pair_address,
        graduated_liquidity_token_raw,graduated_liquidity_bnb_raw,graduated_lp_raw,
        burned_unsold_token_raw,burned_unused_lp_token_raw,post_burn_total_supply_raw,
        final_curve_price_bnb,initial_dex_price_bnb,
        pool_verified,indexing_enabled,updated_at
      ) values(
-       $1,$2,$3,'GRADUATING',$4,$5,$6,$7,$8,$9,$10,$11,
-       case when $12::text is null then null else ($12::numeric / 1e18) end,
-       case when $13::text is null then null else ($13::numeric / 1e18) end,
+       $1,$2,$3,'GRADUATING',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
+       case when $14::text is null then null else ($14::numeric / 1e18) end,
+       case when $15::text is null then null else ($15::numeric / 1e18) end,
        false,true,now()
      )
      on conflict(chain_id,campaign_address) do update set
@@ -114,6 +170,8 @@ export async function healRobinhoodGraduatedCms(
          else excluded.market_stage
        end,
        graduation_time=coalesce(public.campaign_market_state.graduation_time, excluded.graduation_time),
+       graduation_block=coalesce(public.campaign_market_state.graduation_block, excluded.graduation_block),
+       graduation_tx_hash=coalesce(public.campaign_market_state.graduation_tx_hash, excluded.graduation_tx_hash),
        dex_pair_address=case
          when public.campaign_market_state.dex_pair_address is null
            or length(btrim(coalesce(public.campaign_market_state.dex_pair_address,''))) < 42
@@ -131,12 +189,15 @@ export async function healRobinhoodGraduatedCms(
        final_curve_price_bnb=coalesce(public.campaign_market_state.final_curve_price_bnb, excluded.final_curve_price_bnb),
        initial_dex_price_bnb=coalesce(public.campaign_market_state.initial_dex_price_bnb, excluded.initial_dex_price_bnb),
        indexing_enabled=true,
+       last_error=null,
        updated_at=now()`,
     [
       chainId,
       camp,
       token,
       now,
+      anchor.block,
+      anchor.txHash,
       pair,
       liquidityTokens,
       liquidityBnb,
@@ -151,7 +212,22 @@ export async function healRobinhoodGraduatedCms(
   } catch (error) {
     // Surfaced as lastError on /market-state so a failed heal is visible over
     // HTTP instead of only in container logs.
-    const reason = `cms_write_failed:${String((error as any)?.message || error).slice(0, 200)}`;
+    // Report the predicate itself. This table carries staging-only constraints
+    // that are not in db/migrations, so the message alone leaves us guessing.
+    let predicate = "";
+    const violated = String((error as any)?.constraint || "").trim();
+    if (violated) {
+      try {
+        const def = await pool.query(
+          `select pg_get_constraintdef(oid) as def from pg_constraint where conname=$1 limit 1`,
+          [violated],
+        );
+        predicate = String(def.rows[0]?.def || "");
+      } catch { /* diagnostics only */ }
+    }
+    const reason = `cms_write_failed:${String((error as any)?.message || error).slice(0, 200)}${
+      predicate ? ` :: ${violated}=${predicate.slice(0, 300)}` : ""
+    }`;
     console.error("[indexer] RH CMS heal write failed", { chainId, campaign: camp, pair, error: reason });
     try {
       await pool.query(
