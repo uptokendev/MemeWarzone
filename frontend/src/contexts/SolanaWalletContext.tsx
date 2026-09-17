@@ -29,6 +29,7 @@ type SolanaWalletContextType = {
   availableSolanaWallets: DetectedSolanaWallet[];
   connectSolana: (walletId?: string) => Promise<SolanaConnectResult>;
   disconnectSolana: () => Promise<void>;
+  cancelSolanaConnect: () => void;
 };
 
 const SolanaWalletContext = createContext<SolanaWalletContextType | null>(null);
@@ -58,27 +59,39 @@ export function SolanaWalletProvider({ children }: { children: React.ReactNode }
   const connectSolana = useCallback(async (walletId?: string) => {
     const generation = ++connectGenerationRef.current;
     setConnectingSolana(true);
-    const { analytics, analyticsErrorCode } = await import("@/lib/analytics/ProductAnalytics");
-    analytics.track("wallet_connect_started", { wallet_type: walletId || "solana", chain: "solana" });
+    // Do not await analytics (or anything else) before connectSolanaFn.
+    // Phantom only opens a popup when connect() runs in the click turn.
+    void import("@/lib/analytics/ProductAnalytics").then(({ analytics }) => {
+      analytics.track("wallet_connect_started", { wallet_type: walletId || "solana", chain: "solana" });
+    }).catch(() => {});
 
     try {
       const result = await connectSolanaFn(walletId);
       setSolanaAccount(result.publicKey);
       setSolanaWalletName(result.walletName);
       refreshAvailableWallets();
-      analytics.track("wallet_connect_succeeded", { wallet_type: result.walletName || walletId || "solana", chain: "solana" });
+      void import("@/lib/analytics/ProductAnalytics").then(({ analytics }) => {
+        analytics.track("wallet_connect_succeeded", { wallet_type: result.walletName || walletId || "solana", chain: "solana" });
+      }).catch(() => {});
       return result;
     } catch (error) {
-      analytics.track("wallet_connect_failed", {
-        wallet_type: walletId || "solana",
-        chain: "solana",
-        error_code: analyticsErrorCode(error),
-      });
+      void import("@/lib/analytics/ProductAnalytics").then(({ analytics, analyticsErrorCode }) => {
+        analytics.track("wallet_connect_failed", {
+          wallet_type: walletId || "solana",
+          chain: "solana",
+          error_code: analyticsErrorCode(error),
+        });
+      }).catch(() => {});
       throw error;
     } finally {
       if (connectGenerationRef.current === generation) setConnectingSolana(false);
     }
   }, [refreshAvailableWallets]);
+
+  const cancelSolanaConnect = useCallback(() => {
+    connectGenerationRef.current += 1;
+    setConnectingSolana(false);
+  }, []);
 
   const disconnectSolana = useCallback(async () => {
     await disconnectSolanaFn();
@@ -97,22 +110,15 @@ export function SolanaWalletProvider({ children }: { children: React.ReactNode }
 
     const restoreTrusted = window.setTimeout(() => {
       const provider = getSolanaProvider();
-      if (
-        !provider?.connect ||
-        isSolanaWalletDisconnected() ||
-        getStoredSolanaWallet() ||
-        connectGenerationRef.current > 0
-      ) {
-        return;
+      if (!provider || isSolanaWalletDisconnected() || connectGenerationRef.current > 0) return;
+      // Restore from an already-exposed publicKey only. Never call connect()
+      // from this effect: a silent connect on a new origin (Coolify QA) can
+      // lock Phantom's connect mutex so the later click never opens a popup.
+      const key = String(provider.publicKey?.toString?.() || "").trim();
+      if (key) {
+        refreshSolanaWalletFromProvider();
+        setSolanaAccount(key);
       }
-      void provider.connect({ onlyIfTrusted: true } as { onlyIfTrusted?: boolean }).then((result) => {
-        if (isSolanaWalletDisconnected() || connectGenerationRef.current > 0) return;
-        const key = String(result?.publicKey?.toString?.() || provider.publicKey?.toString?.() || "").trim();
-        if (key) {
-          refreshSolanaWalletFromProvider();
-          setSolanaAccount(key);
-        }
-      }).catch(() => {});
     }, 120);
 
     const timers = [80, 250, 800, 1600].map((delay) =>
@@ -221,6 +227,7 @@ export function SolanaWalletProvider({ children }: { children: React.ReactNode }
         availableSolanaWallets,
         connectSolana,
         disconnectSolana,
+        cancelSolanaConnect,
       }}
     >
       {children}

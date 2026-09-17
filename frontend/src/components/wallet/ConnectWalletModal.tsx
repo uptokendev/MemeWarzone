@@ -194,6 +194,7 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
     connectingSolana,
     connectSolana,
     disconnectSolana,
+    cancelSolanaConnect,
   } = useSolanaWallet();
   const [selectedWalletId, setSelectedWalletId] = useState<WalletType | null>(null);
   const [selectedSolanaWalletId, setSelectedSolanaWalletId] = useState<string | null>(null);
@@ -249,11 +250,11 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
   const hiddenWalletCount = Math.max(0, walletOptions.length - visibleWallets.length);
 
   const handleClose = useCallback(() => {
-    if (isBusy) return;
+    cancelSolanaConnect();
     setSelectedWalletId(null);
     setSelectedSolanaWalletId(null);
     onOpenChange(false);
-  }, [isBusy, onOpenChange]);
+  }, [cancelSolanaConnect, onOpenChange]);
 
   const handleRefresh = useCallback(() => {
     detectWallets();
