@@ -22,16 +22,20 @@ function response(){return {statusCode:200,body:null,headersSent:false,headers:{
 function signed(action,body,token=mint){const {privateKey,publicKey}=crypto.generateKeyPairSync('ed25519');const walletAddress=new PublicKey(publicKey.export({format:'der',type:'spki'}).subarray(-32)).toBase58();const nonce=crypto.randomUUID();nonces.add([101,walletAddress,nonce].join(':'));const intent=projectImportIntent({action,chainId:101,token,body});const message=buildWalletActionMessage({action,chainId:101,walletAddress,nonce,extraLines:intent.extraLines});return {action,walletAddress,chainId:101,nonce,message,signature:crypto.sign(null,Buffer.from(message),privateKey).toString('base64'),walletType:'solana'};}
 test('valid but unregistered lookup returns 200 with null project',async()=>{const res=response();await handler({method:'GET',url:`/project-imports?chainId=101&tokenAddress=${mint}`},res);assert.equal(res.statusCode,200);assert.deepEqual(res.body,{found:false,project:null});});
 test('database failure is not disguised as an empty lookup',async()=>{failDb=true;try{const res=response();await handler({method:'GET',url:`/project-imports?chainId=101&tokenAddress=${mint}`},res);assert.ok(res.statusCode>=500);}finally{failDb=false;}});
-test('Pump.fun wrong-wallet create returns review evidence without inserting a project',async()=>{
+test('Pump.fun wrong-wallet create registers the project without granting ownership',async()=>{
   writes=0;const res=response();await handler({method:'POST',url:'/project-imports/',body:{chainId:101,tokenAddress:mint,auth:signed('project_import_create',{operation:'create'})}},res);
   assert.equal(res.statusCode,200,JSON.stringify(res.body));
+  // This unit stub intentionally returns no INSERT row, so the handler reports created:false;
+  // the important boundary is that registration is attempted once while ownership stays unresolved.
   assert.equal(res.body.created,false);
   assert.equal(res.body.project,null);
   assert.equal(res.body.ownershipEvidence.currentAuthority,owner);
   assert.equal(res.body.ownershipEvidence.signedWalletMatchesAuthority,false);
   assert.equal(res.body.ownershipEvidence.assessment.manualRequestAllowed,true);
   assert.equal(res.body.ownershipEvidence.assessment.automaticImportAllowed,false);
-  assert.equal(writes,0);
+  assert.equal(res.body.ownershipEvidence.assessment.permissions.trading,'locked');
+  assert.equal(res.body.ownershipEvidence.assessment.permissions.battle,'locked');
+  assert.equal(writes,1);
 });
 test('known non-Pump wrong wallet cannot use manual-review fallback',async()=>{
   authoritySourceOverride='mint_authority';writes=0;
