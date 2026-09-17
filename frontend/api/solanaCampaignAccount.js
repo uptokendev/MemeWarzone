@@ -1,22 +1,39 @@
 import { badMethod, getQuery, isSolanaAddress, json } from "../server/http.js";
 
-function rpcUrls() {
-  const configured = [
-    process.env.SOLANA_RPC_URL,
-    process.env.SOLANA_RPC_HTTP,
-    process.env.SOLANA_MAINNET_RPC,
-    process.env.VITE_SOLANA_RPC,
-  ]
+function rpcUrls(cluster) {
+  const devnet = cluster === "devnet";
+  const configured = (
+    devnet
+      ? [
+          process.env.SOLANA_DEVNET_RPC_URL,
+          process.env.SOLANA_DEVNET_RPC,
+          process.env.SOLANA_DEVNET_RPC_HTTP,
+          process.env.SOLANA_RPC_HTTP_102,
+          process.env.VITE_SOLANA_DEVNET_RPC,
+        ]
+      : [
+          process.env.SOLANA_RPC_URL,
+          process.env.SOLANA_RPC_HTTP,
+          process.env.SOLANA_MAINNET_RPC,
+          process.env.VITE_SOLANA_MAINNET_RPC,
+          process.env.VITE_SOLANA_RPC,
+        ]
+  )
     .map((value) => String(value || "").trim())
     .filter((value) => /^https?:\/\//i.test(value));
-  return [...new Set([...configured, "https://solana-rpc.publicnode.com", "https://solana.drpc.org"])];
+  const fallbacks = devnet
+    ? ["https://api.devnet.solana.com"]
+    : ["https://solana-rpc.publicnode.com", "https://solana.drpc.org"];
+  return [...new Set([...configured, ...fallbacks])];
 }
 
 export default async function handler(req, res) {
   if (req.method !== "GET") return badMethod(res);
-  const address = String(getQuery(req).address || "").trim();
+  const q = getQuery(req);
+  const address = String(q.address || "").trim();
   if (!isSolanaAddress(address)) return json(res, 400, { error: "Invalid Solana address" });
-  const urls = rpcUrls();
+  const cluster = String(q.cluster || "").trim().toLowerCase() === "devnet" ? "devnet" : "mainnet-beta";
+  const urls = rpcUrls(cluster);
   if (!urls.length) return json(res, 200, { ok: true, found: false });
 
   let lastError = null;
