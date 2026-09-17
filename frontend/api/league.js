@@ -943,9 +943,20 @@ export default async function handler(req, res) {
           : 0;
 
     const epoch = getEpoch(periodNorm, epochOffset);
-    const epochStartIso = epoch?.epochStart ? epoch.epochStart.toISOString() : null;
+    let epochStartIso = epoch?.epochStart ? epoch.epochStart.toISOString() : null;
     const epochEndIso = epoch?.epochEnd ? epoch.epochEnd.toISOString() : null;
-    const rangeEndIso = epoch?.rangeEnd ? epoch.rangeEnd.toISOString() : null;
+    let rangeEndIso = epoch?.rangeEnd ? epoch.rangeEnd.toISOString() : null;
+    const stagingAllTime = (() => {
+      const env = String(process.env.VITE_RUNTIME_ENVIRONMENT || process.env.DEPLOYMENT_NETWORK || "").toLowerCase();
+      return env === "staging" || env === "testnet" || /^(1|true|yes|on)$/i.test(String(process.env.STAGING_LEAGUE_ALLTIME_FALLBACK || ""));
+    })();
+    let stagingStandingsWarning;
+    if (epoch.isLive && stagingAllTime) {
+      // Test campaigns are older than the current UTC week; still show potential winners.
+      epochStartIso = null;
+      rangeEndIso = null;
+      stagingStandingsWarning = "Staging: showing all indexed activity because the live epoch has no rows yet.";
+    }
 
     const limit = clampInt(q.limit ?? 10, 1, 50, 10);
 
@@ -1050,6 +1061,7 @@ export default async function handler(req, res) {
         ...extra,
         warning:
           extra.warning ||
+          stagingStandingsWarning ||
           (!epoch.isLive
             ? "Previous-week standings are estimates until cron:finalize-epoch-winners writes league_epoch_winners."
             : undefined),

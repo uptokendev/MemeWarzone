@@ -355,10 +355,11 @@ const WarRoom = () => {
           ) : filteredCampaigns.length ? (
             filteredCampaigns.map((campaign) => {
               const campaignKey = String(campaign.campaign || "");
+              const rowKey = rankIdentity(Number(campaign.chainId || selectedChainId), campaignKey);
               return (
                 <div
-                  key={campaignKey}
-                  data-live-id={rankIdentity(Number(campaign.chainId || selectedChainId), campaignKey)}
+                  key={rowKey || campaignKey}
+                  data-live-id={rowKey}
                 >
                 <WarRoomCampaignRow
                   campaign={campaign}

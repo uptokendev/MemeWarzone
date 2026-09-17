@@ -154,7 +154,7 @@ async function handleLookup(req, res) {
   sql += ` order by case when status = 'passed' then 0 else 1 end, created_at desc limit 1`;
   const result = await pool.query(sql, params);
   const item = mapImport(result.rows[0]);
-  return item ? json(res, 200, { item }) : json(res, 404, { error: "Import not found" });
+  return item ? json(res, 200, { item }) : json(res, 200, { item: null });
 }
 
 async function handleEligibility(req, res) {

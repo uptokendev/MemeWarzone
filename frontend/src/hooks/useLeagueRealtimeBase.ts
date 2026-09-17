@@ -164,6 +164,8 @@ export function useLeagueRealtime(opts: Opts) {
   // --- list re-rank: soft poll while connected + faster self-heal when disconnected ---
   const timerRef = useRef<any>(null);
   const lastRefreshRef = useRef<number>(0);
+  const refreshRef = useRef(onFallbackRefresh);
+  refreshRef.current = onFallbackRefresh;
 
   useEffect(() => {
     if (timerRef.current) {
@@ -171,7 +173,7 @@ export function useLeagueRealtime(opts: Opts) {
       timerRef.current = null;
     }
 
-    if (!enabled || !onFallbackRefresh) return;
+    if (!enabled || !refreshRef.current) return;
 
     // Connected: soft refresh so showcase/featured ranks can reorder with new entrants.
     // Disconnected: denser fallback so the UI does not freeze without Ably.
@@ -184,29 +186,18 @@ export function useLeagueRealtime(opts: Opts) {
 
     if (!intervalMs) return;
 
-    timerRef.current = setInterval(() => {
+    const fire = () => {
       const now = Date.now();
       if (now - lastRefreshRef.current < intervalMs - 250) return;
       lastRefreshRef.current = now;
       try {
-        onFallbackRefresh();
+        refreshRef.current?.();
       } catch {
         // ignore
       }
-    }, intervalMs);
+    };
 
-    // Immediate re-pull when we drop offline so ranks are not stuck on stale patches.
-    if (!isConnected) {
-      const now = Date.now();
-      if (now - lastRefreshRef.current > 1000) {
-        lastRefreshRef.current = now;
-        try {
-          onFallbackRefresh();
-        } catch {
-          // ignore
-        }
-      }
-    }
+    timerRef.current = setInterval(fire, intervalMs);
 
     return () => {
       if (timerRef.current) {
@@ -214,7 +205,7 @@ export function useLeagueRealtime(opts: Opts) {
         timerRef.current = null;
       }
     };
-  }, [enabled, isConnected, onFallbackRefresh, fallbackMs, softRefreshMs]);
+  }, [enabled, isConnected, fallbackMs, softRefreshMs]);
 
 
   // --- optimistic local activity/vote nudge on confirmed tx ---

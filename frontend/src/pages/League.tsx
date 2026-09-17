@@ -585,17 +585,10 @@ export default function League() {
               </div>
             </div>
             <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-end">
-              {selectedLeagueKey === "recruiter_league" ? (
-                <div className="rounded-md border border-border/60 bg-background/45 px-3 py-2">
-                  <div className="mb-1 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Chain</div>
-                  <div className="rounded px-3 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-foreground">All chains</div>
-                </div>
-              ) : (
-                <div className="rounded-md border border-border/60 bg-background/45 px-3 py-2">
-                  <div className="mb-1 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Chain</div>
-                  <ChainFeedSwitch value={feedChainId} />
-                </div>
-              )}
+              <div className="rounded-md border border-border/60 bg-background/45 px-3 py-2">
+                <div className="mb-1 text-[10px] uppercase tracking-[0.2em] text-muted-foreground">Chain</div>
+                <ChainFeedSwitch value={feedChainId} />
+              </div>
               <TacticalSwitch<Period>
                 label="Epoch"
                 value={period}

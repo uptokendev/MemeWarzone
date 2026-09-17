@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { fetchPostGradWarRoomCampaignFeed, isWarRoomTestnetFeedEnabled } from "@/features/postgrad/apiClient";
 import { useLeagueRealtime, type LeagueCampaignCreated, type LeaguePatch } from "@/hooks/useLeagueRealtime";
 import { apiFetch } from "@/lib/apiBase";
@@ -179,6 +179,17 @@ function normalizeStatus(item: any): "graduated" | "live" | "draft" | "ended" | 
   if (typeof item?.isActive === "boolean") return item.isActive ? "live" : "draft";
   if (typeof item?.is_active === "boolean") return item.is_active ? "live" : "draft";
   return undefined;
+}
+
+/** Inventory identity. Unlike liveCampaignKey this never blanks a row. */
+function warRoomFeedKey(chainId: number, address: string): string {
+  const raw = String(address || "").trim();
+  if (!raw) return "";
+  const cid = Number(chainId) || 0;
+  if (cid === 101 || cid === 102 || (!raw.startsWith("0x") && /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(raw))) {
+    return `${cid}:${raw}`;
+  }
+  return `${cid}:${raw.toLowerCase()}`;
 }
 
 function preserveFeedAddress(value: unknown, chainId?: number): string {
@@ -513,8 +524,8 @@ async function fetchCampaignApiInventory(selectedChainId: number, signal: AbortS
   const byKey = new Map<string, WarRoomCampaign>();
   for (const page of pages) {
     for (const row of page) {
-      const key = `${Number((row as any).chainId || 0)}:${String(row.campaign || "").toLowerCase()}`;
-      if (!row.campaign || byKey.has(key)) continue;
+      const key = warRoomFeedKey(Number((row as any).chainId || 0), String(row.campaign || ""));
+      if (!row.campaign || !key || byKey.has(key)) continue;
       byKey.set(key, row);
     }
   }
@@ -595,6 +606,7 @@ export function useWarRoomCampaignFeed({
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<WarRoomCampaignFeedSource>("empty");
   const [healNonce, setHealNonce] = useState(0);
+  const loadedChainRef = useRef(null);
   const chainId = Number(activeChainId || getDefaultChainId());
   const { patchByCampaign, created } = useLeagueRealtime({
     enabled: true,
@@ -618,7 +630,8 @@ export function useWarRoomCampaignFeed({
       // Prefer market rows (on-chain / API) over draft rows so graduated campaigns are not demoted.
       for (const campaign of [...onChainItems, ...apiItems, ...draftItems]) {
         if (!campaign.campaign) continue;
-        const key = String(campaign.campaign).toLowerCase();
+        const key = warRoomFeedKey(Number((campaign as any).chainId || 0), String(campaign.campaign || ""));
+        if (!key) continue;
         const current = mergedMap.get(key);
         if (!current) {
           mergedMap.set(key, campaign);
@@ -677,9 +690,10 @@ export function useWarRoomCampaignFeed({
 
     const load = async () => {
       try {
-        setLoading(true);
-        setError(null);
         const chainId = Number(activeChainId || getDefaultChainId());
+        const isRefresh = loadedChainRef.current === chainId && inventory.length > 0;
+        if (!isRefresh) setLoading(true);
+        setError(null);
         const nowSec = Math.floor(Date.now() / 1000);
 
         // ── Phase 0: full market inventory once (bonding + graduated) — no search param ──
@@ -706,6 +720,7 @@ export function useWarRoomCampaignFeed({
         }
 
         if (!cancelled && apiItems.length) {
+          loadedChainRef.current = chainId;
           setInventory(apiItems);
           setSource(feedSource);
           setLoading(false);
@@ -849,14 +864,15 @@ export function useWarRoomCampaignFeed({
   const campaigns = useMemo(() => {
     const seen = new Set(
       inventory
-        .map((campaign) => String(campaign.campaign || "").trim().toLowerCase())
+        .map((campaign) => warRoomFeedKey(Number(campaign.chainId || chainId), String(campaign.campaign || "")))
         .filter(Boolean),
     );
     const extras: WarRoomCampaign[] = [];
     for (const item of created) {
       const rawAddr = String(item?.campaignAddress || "").trim();
-      if (!rawAddr || seen.has(rawAddr.toLowerCase())) continue;
-      seen.add(rawAddr.toLowerCase());
+      const key = warRoomFeedKey(chainId, rawAddr);
+      if (!rawAddr || !key || seen.has(key)) continue;
+      seen.add(key);
       extras.push(stubFromCreatedCampaign(item, extras.length, chainId));
     }
 

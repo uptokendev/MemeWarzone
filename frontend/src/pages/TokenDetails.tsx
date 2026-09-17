@@ -4389,10 +4389,17 @@ const toSeconds = (ts: number): number => {
                       />
                     ) : (
                       (() => {
-                        const creator = String(campaign?.creator ?? "").trim().toLowerCase();
-                        const me = String(wallet.account ?? "").trim().toLowerCase();
-                        const isCreator = Boolean(creator && me && creator === me);
-                        if (!isCreator) return null;
+                        const creator = String(campaign?.creator ?? "").trim();
+                        const evmMe = String(wallet.account ?? "").trim();
+                        const solMe = String(solanaAccount ?? "").trim();
+                        const isCreator = Boolean(
+                          creator &&
+                            ((solMe && creator === solMe) ||
+                              (evmMe && creator.toLowerCase() === evmMe.toLowerCase())),
+                        );
+                        const staging =
+                          String(import.meta.env.VITE_RUNTIME_ENVIRONMENT || "").toLowerCase() === "staging";
+                        if (!isCreator && !(staging && (evmMe || solMe))) return null;
                         const campaignKey = String(campaign?.campaign ?? campaignAddr ?? "").trim();
                         if (!campaignKey) return null;
                         return (

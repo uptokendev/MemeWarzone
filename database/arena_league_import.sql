@@ -37,7 +37,7 @@ FOR EACH ROW
 EXECUTE FUNCTION public.set_updated_at();
 
 CREATE UNIQUE INDEX IF NOT EXISTS arena_league_one_active_season_idx
-  ON public.arena_league_seasons (active)
+  ON public.arena_league_seasons (chain_id)
   WHERE active = true;
 
 CREATE TABLE IF NOT EXISTS public.arena_league_entries (

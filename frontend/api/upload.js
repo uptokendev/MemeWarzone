@@ -283,7 +283,7 @@ export default async function handler(req, res) {
       return bad(res, 503, "Uploads are not configured");
     }
 
-    const bucket = process.env.SUPABASE_BUCKET || "memebattles";
+    const bucket = process.env.SUPABASE_BUCKET || "MEMEBATTLES";
     const uuid = (crypto && typeof crypto.randomUUID === "function" && crypto.randomUUID()) || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     let name;
     if (isPublicSponsorKind) {
@@ -296,17 +296,28 @@ export default async function handler(req, res) {
       name = `logos/${chainId}/${uuid}.${ext}`;
     }
 
-    const { error: upErr } = await supabase.storage.from(bucket).upload(name, buf, {
-      contentType,
-      upsert: kind === "arena_import" ? false : true,
-      cacheControl: kind === "avatar" ? "60" : isPublicSponsorKind ? "3600" : "3600",
-    });
+    const buckets = Array.from(new Set([bucket, "MEMEBATTLES", "memebattles"].filter(Boolean)));
+    let upErr = null;
+    let usedBucket = bucket;
+    for (const candidate of buckets) {
+      const attempt = await supabase.storage.from(candidate).upload(name, buf, {
+        contentType,
+        upsert: kind === "arena_import" ? false : true,
+        cacheControl: kind === "avatar" ? "60" : isPublicSponsorKind ? "3600" : "3600",
+      });
+      if (!attempt.error) {
+        upErr = null;
+        usedBucket = candidate;
+        break;
+      }
+      upErr = attempt.error;
+    }
     if (upErr) {
       console.error("[api/upload] supabase", upErr);
       return bad(res, 500, `Supabase upload failed: ${upErr.message}`);
     }
 
-    const { data } = supabase.storage.from(bucket).getPublicUrl(name);
+    const { data } = supabase.storage.from(usedBucket).getPublicUrl(name);
     if (!data?.publicUrl) return bad(res, 500, "Failed to produce public URL");
 
     const persistedDraftLogo = kind === "logo" && draftId
@@ -325,7 +336,7 @@ export default async function handler(req, res) {
         });
         persistedArenaImportImage = true;
       } catch (error) {
-        await supabase.storage.from(bucket).remove([name]).catch(() => {});
+        await supabase.storage.from(usedBucket).remove([name]).catch(() => {});
         console.error("[api/upload] failed to persist imported token image", error);
         return bad(res, 409, "Imported token image could not be attached to this verified owner profile");
       }
