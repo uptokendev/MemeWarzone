@@ -2,7 +2,12 @@ import { useEffect, useState } from "react";
 import { Contract } from "ethers";
 import type { CampaignSummary } from "@/lib/launchpadClient";
 import { formatTimeAgo } from "@/lib/profile/profileFormatters";
-import { getActiveChainId, getFactoryAddress, isSolanaChainId } from "@/lib/chainConfig";
+import {
+  getActiveChainId,
+  getFactoryAddress,
+  isRobinhoodChainId,
+  isSolanaChainId,
+} from "@/lib/chainConfig";
 import { getReadProvider } from "@/lib/readProvider";
 import { isEvmAddress, isSolanaAddress, normalizeAddress } from "@/lib/address";
 import { apiFetch } from "@/lib/apiBase";
@@ -22,7 +27,7 @@ export interface CreatedCampaignCard {
   ticker: string;
   campaignAddress: string;
   tokenAddress?: string;
-  /** Chain id for navigation (101 Solana / 97 BNB testnet / 56 BNB). */
+  /** Chain id for navigation (101 Solana / 56/97 BNB / 4663/46630 Robinhood). */
   chainId?: number;
   marketCap: string;
   timeAgo: string;
@@ -130,6 +135,12 @@ function formatCompactUsd(usd: number): string {
 function nativeAmount(value: unknown): number {
   const n = Number(value);
   return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function normalizeNativeMarketCapLabel(value: unknown, chainId?: number): string {
+  const label = String(value ?? "—").trim() || "—";
+  if (!isRobinhoodChainId(Number(chainId))) return label;
+  return label.replace(/\s+BNB$/i, " ETH");
 }
 
 async function solanaMarketCapLabel(item: any, solUsd: number | null): Promise<string> {
@@ -260,7 +271,7 @@ export function useCreatedCampaigns({
               campaignAddress: s.campaign.campaign,
               tokenAddress: s.campaign.token,
               chainId: Number(chainId) || undefined,
-              marketCap: s.stats.marketCap,
+              marketCap: normalizeNativeMarketCapLabel(s.stats.marketCap, chainId),
               timeAgo: (s.campaign as any).timeAgo || formatTimeAgo(s.campaign.createdAt),
               buyersCount: (s.stats as any)?.buyersCount ?? undefined,
             };
