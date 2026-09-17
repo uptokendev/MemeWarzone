@@ -250,6 +250,7 @@ async function discoverPools(provider: ethers.JsonRpcProvider, config: ChainConf
       order by cms.graduation_block asc nulls last`,
     [config.chainId],
   );
+  passHealth.lastCandidateCount = candidates.rowCount ?? candidates.rows.length;
 
   for (const row of candidates.rows) {
     const campaignAddress = lowerAddress(row.campaign_address);
@@ -946,6 +947,36 @@ async function scanPool(provider: ethers.JsonRpcProvider, indexedPool: IndexedPo
   return inserted;
 }
 
+type RobinhoodV3PassHealth = {
+  loopStarted: boolean;
+  lastPassAt: string | null;
+  lastPassChainId: number | null;
+  lastCandidateCount: number | null;
+  lastPoolCount: number | null;
+  lastError: string | null;
+  swapRouterConfigured: Record<number, boolean>;
+};
+
+const passHealth: RobinhoodV3PassHealth = {
+  loopStarted: false,
+  lastPassAt: null,
+  lastPassChainId: null,
+  lastCandidateCount: null,
+  lastPoolCount: null,
+  lastError: null,
+  swapRouterConfigured: {},
+};
+
+/** Read-only pass state for /health: a silent loop must be tellable from a failing one. */
+export function robinhoodV3PublicHealth(): RobinhoodV3PassHealth {
+  return {
+    ...passHealth,
+    swapRouterConfigured: Object.fromEntries(
+      chainConfigs().map((config) => [config.chainId, Boolean(config.swapRouterAddress)]),
+    ),
+  };
+}
+
 async function runChain(config: ChainConfig): Promise<void> {
   const selected = await createWorkingProvider(config.rpcUrls, config.chainId, {
     timeoutMs: ENV.RPC_REQUEST_TIMEOUT_MS,
@@ -960,6 +991,10 @@ async function runChain(config: ChainConfig): Promise<void> {
     const pools = await listPools(config.chainId);
     let swaps = 0;
     for (const indexedPool of pools) swaps += await scanPool(provider, indexedPool, head);
+    passHealth.lastPassAt = new Date().toISOString();
+    passHealth.lastPassChainId = config.chainId;
+    passHealth.lastPoolCount = pools.length;
+    passHealth.lastError = null;
     if (pools.length || swaps) console.log("[robinhood-v3] pass", { chainId: config.chainId, head, pools: pools.length, swaps, rpc: maskRpcUrl(selected.url) });
   } finally {
     provider.destroy();
@@ -972,7 +1007,12 @@ async function loop(): Promise<void> {
     const configs = chainConfigs();
     for (const config of configs) {
       try { await runChain(config); }
-      catch (error: any) { console.error("[robinhood-v3] pass failed", { chainId: config.chainId, rpcs: config.rpcUrls.map(maskRpcUrl), error: error?.shortMessage || error?.message || String(error) }); }
+      catch (error: any) {
+        passHealth.lastPassAt = new Date().toISOString();
+        passHealth.lastPassChainId = config.chainId;
+        passHealth.lastError = String(error?.shortMessage || error?.message || error).slice(0, 300);
+        console.error("[robinhood-v3] pass failed", { chainId: config.chainId, rpcs: config.rpcUrls.map(maskRpcUrl), error: passHealth.lastError });
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
@@ -982,6 +1022,7 @@ export function startRobinhoodV3PoolIndexerLoop(): void {
   if (!enabled()) return;
   if (globalState[LOOP_SYMBOL]) return;
   globalState[LOOP_SYMBOL] = true;
+  passHealth.loopStarted = true;
   console.log("[robinhood-v3] indexer enabled", { chains: chainConfigs().map((config) => config.chainId) });
   void loop();
 }

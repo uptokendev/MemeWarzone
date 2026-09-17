@@ -65,6 +65,41 @@ async function findGraduationAnchor(
   }
 }
 
+/**
+ * The V3 pool indexer refuses a wrapped-native market whose CMS row has no
+ * canonical wrapped native, and describeRobinhoodQuoteAsset can only classify
+ * WRAPPED_NATIVE when that column is set. Read it from the campaign's own
+ * graduation router, which is the adapter that actually provided the liquidity,
+ * so this can never resolve to a different (staged) V3 surface.
+ */
+async function readGraduationVenue(
+  provider: ethers.Provider,
+  campaign: string,
+): Promise<{ wrappedNative: string; v3Factory: string }> {
+  const empty = { wrappedNative: "", v3Factory: "" };
+  try {
+    const router = String(
+      await new ethers.Contract(campaign, ["function router() view returns (address)"], provider).router(),
+    ).toLowerCase();
+    if (!/^0x[a-f0-9]{40}$/.test(router) || router === ZERO) return empty;
+    const adapter = new ethers.Contract(
+      router,
+      ["function WETH() view returns (address)", "function v3Factory() view returns (address)"],
+      provider,
+    ) as any;
+    const [weth, factory] = await Promise.all([
+      adapter.WETH().then((v: string) => String(v).toLowerCase()).catch(() => ""),
+      adapter.v3Factory().then((v: string) => String(v).toLowerCase()).catch(() => ""),
+    ]);
+    return {
+      wrappedNative: /^0x[a-f0-9]{40}$/.test(weth) && weth !== ZERO ? weth : "",
+      v3Factory: /^0x[a-f0-9]{40}$/.test(factory) && factory !== ZERO ? factory : "",
+    };
+  } catch {
+    return empty;
+  }
+}
+
 export async function healRobinhoodGraduatedCms(
   provider: ethers.Provider,
   chainId: number,
@@ -257,6 +292,26 @@ export async function healRobinhoodGraduatedCms(
     });
   }
 
-  console.log("[indexer] RH CMS heal seeded GRADUATING", { chainId, campaign: camp, pair });
+  const venue = await readGraduationVenue(provider, camp);
+  if (venue.wrappedNative || venue.v3Factory) {
+    try {
+      await pool.query(
+        `update public.campaign_market_state
+            set wrapped_native_address=coalesce(nullif($3,''), wrapped_native_address),
+                dex_factory_address=coalesce(nullif($4,''), dex_factory_address),
+                updated_at=now()
+          where chain_id=$1 and lower(campaign_address)=$2`,
+        [chainId, camp, venue.wrappedNative, venue.v3Factory],
+      );
+    } catch (error) {
+      console.warn("[indexer] RH CMS heal venue write failed", {
+        chainId,
+        campaign: camp,
+        error: String((error as any)?.message || error),
+      });
+    }
+  }
+
+  console.log("[indexer] RH CMS heal seeded GRADUATING", { chainId, campaign: camp, pair, venue });
   return { healed: true, reason: "seeded_graduating", pair };
 }
