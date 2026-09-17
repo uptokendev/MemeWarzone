@@ -2990,6 +2990,8 @@ const toSeconds = (ts: number): number => {
         // ignore
       }
     }
+    // Graduated RH must not fall back to bonding-era $0.000000 / leftover reserve.
+    if (isRobinhoodPage && isDexStage) return "—";
     if (tokenData.liquidity && tokenData.liquidity !== "—") return tokenData.liquidity;
     return "—";
   })();

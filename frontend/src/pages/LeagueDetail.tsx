@@ -3,7 +3,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { ethers } from "ethers";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useWallet } from "@/contexts/WalletContext";
-import { getDefaultChainId, isAllowedChainId, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
+import { getDefaultChainId, isAllowedChainId, isRobinhoodChainId, isSolanaChainId, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
 import { loadLeagueSummary } from "@/lib/leagueApi";
 import { LEAGUES, getLimit, periodLabel, type LeagueKey, type Period } from "@/lib/leagues";
 
@@ -228,6 +228,7 @@ export default function LeagueDetail({ chainId = 56 }: { chainId?: number }) {
   const wallet = useWallet();
   const defaultChain = getDefaultChainId();
   const activeChainId = wallet.isConnected && isAllowedChainId(wallet.chainId) ? Number(wallet.chainId) : Number(chainId ?? defaultChain);
+  const nativeSymbol = isSolanaChainId(activeChainId) ? "SOL" : isRobinhoodChainId(activeChainId) ? "ETH" : "BNB";
 
   const initialPeriod = useMemo<Period>(() => {
     const qp = String(searchParams.get("period") || "").toLowerCase();
@@ -324,7 +325,7 @@ useEffect(() => {
 
         // Soft summary fallback only when this league maps to the indexer and returned nothing.
         // Avoid always calling loadLeagueSummary (it used to trigger a multi-second on-chain scan).
-        if (categoryMap[String(def.key)] && !apiItems.length) {
+        if (categoryMap[String(def.key)] && !apiItems.length && !isRobinhoodChainId(activeChainId) && !isSolanaChainId(activeChainId)) {
           const bnbChainId = activeChainId === 97 ? 97 : 56;
           const fallback = await loadLeagueSummary({ chain: "bnb", chainId: bnbChainId, period: effectivePeriod, epochOffset }).catch(() => null);
           const fallbackCard = fallback?.leagues.find((card) => card.key === def.key);
@@ -483,12 +484,12 @@ useEffect(() => {
                     <div className="text-[11px] text-muted-foreground">
                       {def.key === "perfect_run" ? "Jackpot pool (monthly · league fee only)" : "Prize pool (league fee only)"}
                     </div>
-                    <div className="text-sm font-semibold">{prize ? `${formatBnbFromRaw(prize.potRaw)} BNB` : "—"}</div>
+                    <div className="text-sm font-semibold">{prize ? `${formatBnbFromRaw(prize.potRaw)} ${nativeSymbol}` : "—"}</div>
                   </div>
 
                   {prize ? (
                     <div className="mt-2 text-[10px] text-muted-foreground">
-                      Updated hourly · computed {formatIsoTiny(prize.computedAt)} · total league fees {formatBnbFromRaw(prize.totalLeagueFeeRaw)} BNB
+                      Updated hourly · computed {formatIsoTiny(prize.computedAt)} · total league fees {formatBnbFromRaw(prize.totalLeagueFeeRaw)} {nativeSymbol}
                     </div>
                   ) : (
                     <div className="mt-2 text-[11px] text-muted-foreground">
@@ -573,7 +574,7 @@ useEffect(() => {
                     const r = rowAny as TopEarnerRow;
                     const w = String(r.wallet ?? "");
                     const decimals = Number(activeChainId) === SOLANA_CHAIN_ID ? 9 : 18;
-                    const symbol = Number(activeChainId) === SOLANA_CHAIN_ID ? "SOL" : "BNB";
+                    const symbol = nativeSymbol;
                     let pnlSign = "";
                     let pnlTone = "text-muted-foreground";
                     try {
@@ -611,7 +612,7 @@ useEffect(() => {
                       metricSub = `${Number(rr.unique_buyers ?? 0)} buyers`;
                     } else if (def.key === "biggest_hit") {
                       const rr = row as BiggestHitRow;
-                      metricTop = `${formatBnbFromRaw(rr.bnb_amount_raw)} BNB`;
+                      metricTop = `${formatBnbFromRaw(rr.bnb_amount_raw)} ${nativeSymbol}`;
                       metricSub = `Buyer: ${isAddress(rr.buyer_address) ? shortAddr(rr.buyer_address) : "-"}`;
                     } else if (def.key === "crowd_favorite") {
                       const rr = row as CrowdFavoriteRow;

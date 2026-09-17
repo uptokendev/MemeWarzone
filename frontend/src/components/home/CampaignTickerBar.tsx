@@ -2,12 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Contract } from "ethers";
 import { cn } from "@/lib/utils";
-import { useBnbUsdPrice } from "@/hooks/useBnbUsdPrice";
-import { getFactoryAddress } from "@/lib/chainConfig";
+import { getFactoryAddress, isRobinhoodChainId, isSolanaChainId } from "@/lib/chainConfig";
 import { getTickerFeedChainId } from "@/lib/feedChainConfig";
 import { getReadProvider } from "@/lib/readProvider";
 import { useWallet } from "@/contexts/WalletContext";
 import { apiFetch } from "@/lib/apiBase";
+import { useNativeUsdPrice } from "@/hooks/useNativeUsdPrice";
 
 type CampaignTickerItem = {
   campaignAddress: string;
@@ -56,11 +56,17 @@ function asNumber(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-function formatMc(value: number | null, bnbUsd: number | null) {
+function nativeTickerSymbol(chainId: number) {
+  if (isSolanaChainId(chainId)) return "SOL";
+  if (isRobinhoodChainId(chainId)) return "ETH";
+  return "BNB";
+}
+
+function formatMc(value: number | null, nativeUsd: number | null, chainId: number) {
   if (value == null || !Number.isFinite(value)) return "MC —";
 
-  if (bnbUsd && Number.isFinite(bnbUsd)) {
-    const usd = value * bnbUsd;
+  if (nativeUsd && Number.isFinite(nativeUsd)) {
+    const usd = value * nativeUsd;
     return `MC ${new Intl.NumberFormat(undefined, {
       style: "currency",
       currency: "USD",
@@ -69,7 +75,8 @@ function formatMc(value: number | null, bnbUsd: number | null) {
     }).format(usd)}`;
   }
 
-  return `MC ${value >= 1 ? value.toFixed(2) : value.toFixed(4)} BNB`;
+  const symbol = nativeTickerSymbol(chainId);
+  return `MC ${value >= 1 ? value.toFixed(2) : value.toFixed(4)} ${symbol}`;
 }
 
 async function fetchTokenSummary(chainId: number, campaignAddress: string): Promise<{ marketcapBnb: number | null; votes24h: number }> {
@@ -189,7 +196,7 @@ function buildRepeatedTickerItems(items: CampaignTickerItem[]) {
 export function CampaignTickerBar({ className }: { className?: string }) {
   const wallet = useWallet();
   const chainId = getTickerFeedChainId((wallet as any)?.chainId ?? (wallet as any)?.network?.chainId);
-  const { price: bnbUsd } = useBnbUsdPrice(true);
+  const { price: nativeUsd } = useNativeUsdPrice(chainId);
   const [items, setItems] = useState<CampaignTickerItem[]>([]);
   const [loaded, setLoaded] = useState(false);
 
@@ -239,7 +246,7 @@ export function CampaignTickerBar({ className }: { className?: string }) {
           >
             <span className="font-retro text-success">${item.symbol}</span>
             <span className="hidden max-w-[140px] truncate text-success/45 sm:inline">{item.name}</span>
-            <span className="text-orange-300/90">{formatMc(item.marketcapBnb, bnbUsd)}</span>
+            <span className="text-orange-300/90">{formatMc(item.marketcapBnb, nativeUsd, chainId)}</span>
             <span className="text-success/40">UP {item.votes24h || 0}</span>
           </Link>
         ))}
