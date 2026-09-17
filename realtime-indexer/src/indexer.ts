@@ -446,10 +446,13 @@ async function setCampaignGraduated(
      where chain_id=$1 and campaign_address=$2`,
     [chainId, campaign.toLowerCase(), graduatedBlock, graduatedAt, txHash.toLowerCase()]
   );
+  const robinhood = chainId === 46630 || chainId === 4663;
   await notifyCampaignGraduated(pool, {
     chainId,
     campaignAddress: campaign,
-    market: { venue: "topaz", quoteAsset: "WBNB" },
+    market: robinhood
+      ? { venue: "v3", quoteAsset: "WETH" }
+      : { venue: "topaz", quoteAsset: "WBNB" },
     graduatedAt,
   });
 }
@@ -484,7 +487,7 @@ async function listActiveCampaigns(
          where t.chain_id=c.chain_id and t.campaign_address=c.campaign_address) as trade_count
      from public.campaigns c
      where c.chain_id=$1
-       and c.is_active=true
+       and (c.is_active=true or c.graduated_at_chain is not null)
        and ($2::text = '' or lower(c.factory_address) = $2)
        and ($3::text = '' or lower(c.campaign_address) = $3)
      order by coalesce(c.created_at_chain, c.updated_at, now()) desc`,
@@ -1566,6 +1569,36 @@ async function scanCampaignRange(
 
         // Graduation marker for league categories
         await setCampaignGraduated(chainId, campaign, log.blockNumber, new Date(tsSec * 1000), txHash);
+        if ((chainId === 46630 || chainId === 4663) && tokenAddr) {
+          const pair = String((parsed.args as any).pair || "").toLowerCase();
+          try {
+            await pool.query(
+              `insert into public.campaign_market_state(
+                 chain_id,campaign_address,token_address,market_stage,graduation_tx_hash,
+                 graduation_block,graduation_time,dex_pair_address,indexing_enabled
+               ) values($1,$2,$3,'GRADUATING',$4,$5,$6,$7,true)
+               on conflict(chain_id,campaign_address) do update set
+                 market_stage=excluded.market_stage,
+                 graduation_tx_hash=excluded.graduation_tx_hash,
+                 graduation_block=excluded.graduation_block,
+                 graduation_time=excluded.graduation_time,
+                 dex_pair_address=coalesce(excluded.dex_pair_address, public.campaign_market_state.dex_pair_address),
+                 indexing_enabled=true,
+                 updated_at=now()`,
+              [
+                chainId,
+                campaign.toLowerCase(),
+                String(tokenAddr).toLowerCase(),
+                txHash.toLowerCase(),
+                log.blockNumber,
+                new Date(tsSec * 1000),
+                pair && /^0x[a-f0-9]{40}$/.test(pair) ? pair : null,
+              ],
+            );
+          } catch (cmsErr) {
+            console.warn("[indexer] RH campaign_market_state seed failed", { chainId, campaign, error: String(cmsErr) });
+          }
+        }
         leagueFeed.queueGraduation(chainId, campaign, new Date(tsSec * 1000).toISOString());
       }
     }

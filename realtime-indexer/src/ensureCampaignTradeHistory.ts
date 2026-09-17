@@ -27,6 +27,8 @@ function isAddress(value: string): boolean {
 
 function rpcUrlsFor(chainId: number): string[] {
   if (chainId === 56) return parseRpcList(ENV.BSC_RPC_HTTP_56);
+  if (chainId === 46630) return parseRpcList(ENV.ROBINHOOD_RPC_HTTP_46630);
+  if (chainId === 4663) return parseRpcList(ENV.ROBINHOOD_RPC_HTTP_4663);
   return parseRpcList(ENV.BSC_RPC_HTTP_97);
 }
 

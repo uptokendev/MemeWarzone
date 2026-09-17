@@ -37,7 +37,13 @@ export async function rewindEmptyCampaignTradeCursor(
 
     const createdBlock = Number(row.created_block || 0);
     const factoryStart =
-      chainId === 56 ? Number(ENV.FACTORY_START_BLOCK_56 || 0) : Number(ENV.FACTORY_START_BLOCK_97 || 0);
+      chainId === 56
+        ? Number(ENV.FACTORY_START_BLOCK_56 || 0)
+        : chainId === 46630
+          ? Number(ENV.FACTORY_START_BLOCK_46630 || 0)
+          : chainId === 4663
+            ? Number(ENV.FACTORY_START_BLOCK_4663 || 0)
+            : Number(ENV.FACTORY_START_BLOCK_97 || 0);
 
     const cursor = `campaign:${campaign}`;
     const state = await pool.query(
