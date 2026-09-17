@@ -12,6 +12,7 @@ import {
   type WarRoomCampaign,
   type WarRoomMode,
 } from "@/hooks/useWarRoomCampaignFeed";
+import { getDefaultChainId } from "@/lib/chainConfig";
 import { useLaunchpad } from "@/lib/launchpadClient";
 import { resolveImageUri } from "@/lib/media";
 import { compareLiveCampaigns, type LiveRankRow } from "@/lib/liveCampaignRank";
@@ -116,7 +117,7 @@ const WarRoom = () => {
 
   const { campaigns: rawCampaigns, loading, error, source } = useWarRoomCampaignFeed({
     activeMode,
-    activeChainId: Number(selectedChainId || 97),
+    activeChainId: Number(selectedChainId || getDefaultChainId()),
     bnbUsd: nativeUsd,
   });
 

@@ -8,6 +8,7 @@ import {
   ROBINHOOD_CHAIN_ID,
   ROBINHOOD_TESTNET_CHAIN_ID,
   SOLANA_CHAIN_ID,
+  getDefaultChainId,
 } from "@/lib/chainConfig";
 import { apiFetch } from "@/lib/apiBase";
 import { useLaunchpad, type CampaignInfo } from "@/lib/launchpadClient";
@@ -91,7 +92,7 @@ const TokenDetailsEntry = () => {
   // selected EVM product chain instead of silently becoming BNB testnet.
   const effectiveEvmChainId = isRobinhoodChainId(forcedChainId) || isBnbChainId(forcedChainId)
     ? forcedChainId
-    : selectedEvmChainId || BNB_TESTNET_CHAIN_ID;
+    : selectedEvmChainId || getDefaultChainId();
   const robinhoodRoute = isRobinhoodChainId(effectiveEvmChainId);
   const isSolanaRoute = useMemo(() => {
     // A 0x BNB/Robinhood token is never a Solana route, even if the wallet latch

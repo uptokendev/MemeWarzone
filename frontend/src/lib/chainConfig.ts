@@ -340,7 +340,8 @@ export function getPublicRpcUrl(chainId: SupportedChainId): string {
 
   const v =
     (import.meta.env.VITE_BSC_TESTNET_RPC as string | undefined) ??
-    (import.meta.env.VITE_PUBLIC_RPC_TESTNET as string | undefined);
+    (import.meta.env.VITE_PUBLIC_RPC_TESTNET as string | undefined) ??
+    (import.meta.env.VITE_PUBLIC_RPC_97 as string | undefined);
   const vFirst = firstFromCsv(v);
   if (vFirst) return vFirst;
   return "https://data-seed-prebsc-1-s1.binance.org:8545/";
@@ -379,19 +380,11 @@ export function getPublicRpcUrls(chainId: SupportedChainId): string[] {
 
   const v =
     (import.meta.env.VITE_BSC_TESTNET_RPC as string | undefined) ??
-    (import.meta.env.VITE_PUBLIC_RPC_TESTNET as string | undefined);
+    (import.meta.env.VITE_PUBLIC_RPC_TESTNET as string | undefined) ??
+    (import.meta.env.VITE_PUBLIC_RPC_97 as string | undefined);
   const list = fromCsv(v);
-  const defaults = [
-    "https://bsc-testnet.publicnode.com",
-    "https://data-seed-prebsc-1-s1.binance.org:8545/",
-    "https://data-seed-prebsc-2-s1.binance.org:8545/",
-  ];
-  if (!list.length) return defaults;
-  const seen = new Set(list.map((u) => u.toLowerCase()));
-  for (const url of defaults) {
-    if (!seen.has(url.toLowerCase())) list.push(url);
-  }
-  return list;
+  if (list.length) return list;
+  return ["https://data-seed-prebsc-1-s1.binance.org:8545/"];
 }
 
 export function getFactoryAddress(chainId: SupportedChainId): string {

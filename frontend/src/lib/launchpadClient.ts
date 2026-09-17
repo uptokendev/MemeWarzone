@@ -5,6 +5,9 @@ import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import {
   BNB_CHAIN_ID,
+  BNB_TESTNET_CHAIN_ID,
+  ROBINHOOD_CHAIN_ID,
+  ROBINHOOD_TESTNET_CHAIN_ID,
   getActiveChainId,
   isEvmTokenRoutePath,
   resolveTokenPageChainId,
@@ -547,9 +550,13 @@ export function useLaunchpad(): LaunchpadAdapter {
 
   const evmFallbackChainId = useMemo<SupportedChainId>(() => {
     if (tokenPageReadChain) return tokenPageReadChain;
-    if (walletChainId === 56 || walletChainId === 97) return walletChainId as SupportedChainId;
-    const fallback = getActiveChainId(walletChainId);
-    return isSolanaChainId(fallback) ? BNB_CHAIN_ID : fallback;
+    const productChain = getActiveChainId(walletChainId);
+    if (productChain === ROBINHOOD_CHAIN_ID || productChain === ROBINHOOD_TESTNET_CHAIN_ID) {
+      return productChain;
+    }
+    if (walletChainId === 56) return BNB_CHAIN_ID;
+    if (walletChainId === 97 && productChain === BNB_TESTNET_CHAIN_ID) return BNB_TESTNET_CHAIN_ID;
+    return isSolanaChainId(productChain) ? BNB_CHAIN_ID : productChain;
   }, [tokenPageReadChain, walletChainId]);
   const evmReadChainId = isSolanaChainId(activeChainId) ? evmFallbackChainId : activeChainId;
   const bnbAddresses = useMemo(() => getBnbContractAddresses(evmReadChainId), [evmReadChainId]);

@@ -1823,12 +1823,7 @@ export async function runTipScanOnce() {
   for (const chain of CHAINS) {
     if (Date.now() >= deadlineMs) break;
     const rpcList = parseRpcList(chain.rpcHttp);
-    const tipRpcList = Array.from(
-      new Set([
-        ...(chain.chainId === 97 ? ["https://bsc-testnet.publicnode.com"] : []),
-        ...rpcList,
-      ])
-    );
+    const tipRpcList = rpcList;
     if (!tipRpcList.length) continue;
 
     let head = 0;
@@ -2137,12 +2132,7 @@ async function runIndexerCore(opts: {
     // eth_getLogs while publicnode still serves the last few thousand blocks.
     if (opts.mode === "normal" && tipScanBlocks > 0) {
       const tipFrom = Math.max(0, target - tipScanBlocks);
-      const tipRpcList = Array.from(
-        new Set([
-          ...(chain.chainId === 97 ? ["https://bsc-testnet.publicnode.com"] : []),
-          ...rpcList,
-        ])
-      );
+      const tipRpcList = rpcList;
       for (const c of campaigns) {
         if (pastDeadline()) {
           console.warn("[indexer] pass deadline during tip phase", { chainId: chain.chainId });

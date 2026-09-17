@@ -172,8 +172,6 @@ async function checkRpcHeadBlock() {
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean),
-    // Public Chapel fallbacks so diagnostics is not hard-red when only indexer has BlockPI.
-    "https://bsc-testnet.publicnode.com",
     "https://data-seed-prebsc-1-s1.binance.org:8545/",
   ];
   // de-dupe
