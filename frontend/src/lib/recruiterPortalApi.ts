@@ -37,8 +37,8 @@ export type RecruiterPortalData = {
 export type RecruiterAuthNonceResponse = { nonce: string; message: string };
 
 export type RecruiterPayoutBalance = {
-  chain: "bnb" | "solana";
-  token: "BNB" | "SOL";
+  chain: "bnb" | "solana" | "robinhood";
+  token: "BNB" | "SOL" | "ETH";
   claimableRaw: string;
   pendingRaw: string;
   payoutWallet: string | null;

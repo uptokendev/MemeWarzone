@@ -225,6 +225,12 @@ export function isUnsupportedContractMethod(error: unknown): boolean {
   );
 }
 
+function isStaleOracleError(error: unknown): boolean {
+  const value = error as any;
+  const blob = `${value?.data || ""} ${value?.info?.error?.data || ""} ${value?.shortMessage || ""} ${value?.message || ""}`;
+  return /19abf40e/i.test(blob) || /staleprice/i.test(blob);
+}
+
 function buildMetadataURI(chainId: number, tokenOrCampaignAddress?: string): string {
   const raw = String(tokenOrCampaignAddress || "").trim();
   if (!raw) return "";
@@ -658,7 +664,7 @@ export function useLaunchpad(): LaunchpadAdapter {
         if (typeof fn !== "function") return fallback;
         return (await fn()) as bigint;
       } catch (error) {
-        if (!isUnsupportedContractMethod(error)) {
+        if (!isUnsupportedContractMethod(error) && !isStaleOracleError(error)) {
           console.warn(`[fetchCampaignMetrics] ${method} read failed`, error);
         }
         return fallback;
@@ -688,12 +694,14 @@ export function useLaunchpad(): LaunchpadAdapter {
       readBig("protocolFeeBps"),
       readBig("currentPrice"),
     ]);
-    const graduationNativeTarget = await readBig("graduationNativeTarget", graduationTarget);
-
     const [launched, finalizedAt] = await Promise.all([
       campaign.launched().catch(() => false),
       campaign.finalizedAt().catch(() => 0n),
     ]);
+    const graduated = Boolean(launched) || BigInt(finalizedAt || 0n) > 0n;
+    const graduationNativeTarget = graduated
+      ? graduationTarget
+      : await readBig("graduationNativeTarget", graduationTarget);
 
     return { sold, curveSupply, liquiditySupply, creatorReserve, basePrice, priceSlope, graduationTarget, graduationNativeTarget, liquidityBps, protocolFeeBps, currentPrice, launched, finalizedAt };
   }, [getCampaignRead]);

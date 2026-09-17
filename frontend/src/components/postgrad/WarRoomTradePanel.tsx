@@ -79,11 +79,14 @@ async function fetchEvmCampaignMetrics(campaignAddress: string, chainId: number)
     readBig("protocolFeeBps"),
     readBig("currentPrice"),
   ]);
-  const graduationNativeTarget = await readBig("graduationNativeTarget", graduationTarget);
   const [launched, finalizedAt] = await Promise.all([
     campaign.launched().catch(() => false),
     campaign.finalizedAt().catch(() => 0n),
   ]);
+  const graduated = Boolean(launched) || BigInt(finalizedAt || 0n) > 0n;
+  const graduationNativeTarget = graduated
+    ? graduationTarget
+    : await readBig("graduationNativeTarget", graduationTarget);
   return {
     sold,
     curveSupply,

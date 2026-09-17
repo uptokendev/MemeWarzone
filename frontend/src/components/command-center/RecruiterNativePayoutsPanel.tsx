@@ -20,8 +20,8 @@ import {
 } from "@/lib/recruiterPortalApi";
 import { submitSolanaRewardLaneClaim } from "@/lib/solanaRewardLaneClaim";
 
-type NativeChain = "bnb" | "solana";
-type RecruiterWalletIdentity = { chain: NativeChain; address: string; canSign: boolean };
+type NativeChain = "bnb" | "solana" | "robinhood";
+type RecruiterWalletIdentity = { chain: "bnb" | "solana"; address: string; canSign: boolean };
 
 type BalanceStateCopy = {
   badge: string;
@@ -32,6 +32,7 @@ type BalanceStateCopy = {
 
 const EMPTY_BALANCES: RecruiterPayoutBalance[] = [
   { chain: "bnb", token: "BNB", claimableRaw: "0", pendingRaw: "0", payoutWallet: null, status: "missing_payout_wallet" },
+  { chain: "robinhood", token: "ETH", claimableRaw: "0", pendingRaw: "0", payoutWallet: null, status: "missing_payout_wallet" },
   { chain: "solana", token: "SOL", claimableRaw: "0", pendingRaw: "0", payoutWallet: null, status: "missing_payout_wallet" },
 ];
 
@@ -51,9 +52,19 @@ function formatNative(raw?: string | null, token?: string | null): string {
   }
 }
 
-function chainLabel(chain: NativeChain) { return chain === "bnb" ? "BNB" : "Solana"; }
-function walletPlaceholder(chain: NativeChain) { return chain === "bnb" ? "0x..." : "Solana wallet address"; }
-function balanceSort(balance: RecruiterPayoutBalance) { return balance.chain === "bnb" ? 0 : 1; }
+function chainLabel(chain: NativeChain) {
+  if (chain === "bnb") return "BNB";
+  if (chain === "robinhood") return "Robinhood";
+  return "Solana";
+}
+function walletPlaceholder(chain: NativeChain) {
+  return chain === "solana" ? "Solana wallet address" : "0x...";
+}
+function balanceSort(balance: RecruiterPayoutBalance) {
+  if (balance.chain === "bnb") return 0;
+  if (balance.chain === "robinhood") return 1;
+  return 2;
+}
 function randomNonce() {
   try {
     const bytes = new Uint8Array(12);
@@ -180,7 +191,21 @@ export function RecruiterNativePayoutsPanel() {
   useEffect(() => { if (recruiterWallet.bnbAddress) setBnbWallet((current) => current || recruiterWallet.bnbAddress || ""); }, [recruiterWallet.bnbAddress]);
   useEffect(() => { if (recruiterWallet.solanaAddress) setSolWallet((current) => current || recruiterWallet.solanaAddress || ""); }, [recruiterWallet.solanaAddress]);
 
-  const balances = useMemo(() => [...(state?.balances?.length ? state.balances : EMPTY_BALANCES)].sort((a, b) => balanceSort(a) - balanceSort(b)), [state?.balances]);
+  const balances = useMemo(() => {
+    const raw = [...(state?.balances?.length ? state.balances : EMPTY_BALANCES)];
+    if (!raw.some((item) => item.chain === "robinhood")) {
+      const bnb = raw.find((item) => item.chain === "bnb");
+      raw.push({
+        chain: "robinhood",
+        token: "ETH",
+        claimableRaw: "0",
+        pendingRaw: "0",
+        payoutWallet: bnb?.payoutWallet || null,
+        status: bnb?.payoutWallet ? "idle" : "missing_payout_wallet",
+      });
+    }
+    return raw.sort((a, b) => balanceSort(a) - balanceSort(b));
+  }, [state?.balances]);
 
   const signInRecruiter = async () => {
     if (!activeRecruiterWallet?.canSign) return toast.error("Connect your approved recruiter wallet first.");
@@ -230,6 +255,10 @@ export function RecruiterNativePayoutsPanel() {
 
   const createClaim = async (chain: NativeChain) => {
     if (!activeRecruiterWallet) return;
+    if (chain === "robinhood") {
+      toast.message("Robinhood recruiter claims stay off until the ETH distributor is funded.");
+      return;
+    }
     setPendingAction(`claim-${chain}`); setError(null);
     try {
       const result = await createRecruiterNativeClaim(chain, activeRecruiterWallet.address);
@@ -253,7 +282,7 @@ export function RecruiterNativePayoutsPanel() {
   if (identityLoading || identityError || !isRecruiterWallet) return null;
 
   return (
-    <CommandCenterCard title="Recruiter Rewards" description="Verify your BNB and Solana wallets, then claim available recruiter rewards." action={<WalletCards className="h-5 w-5 text-accent" />}>
+    <CommandCenterCard title="Recruiter Rewards" description="Verify your BNB, Robinhood, and Solana wallets, then claim available recruiter rewards." action={<WalletCards className="h-5 w-5 text-accent" />}>
       {error ? <div className="mb-4 rounded-2xl border border-amber-300/30 bg-amber-300/10 p-4 text-sm text-amber-100">{error}</div> : null}
       {!state?.recruiterId ? (
         <div className="mb-4 rounded-2xl border border-border/50 bg-background/25 p-4">
@@ -263,15 +292,15 @@ export function RecruiterNativePayoutsPanel() {
           </div>
         </div>
       ) : null}
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="grid gap-3 lg:grid-cols-3">
         {balances.map((balance) => {
           const chain = balance.chain as NativeChain;
-          const isBnb = chain === "bnb";
-          const inputValue = isBnb ? bnbWallet : solWallet;
-          const setInputValue = isBnb ? setBnbWallet : setSolWallet;
+          const isSol = chain === "solana";
+          const inputValue = isSol ? solWallet : bnbWallet;
+          const setInputValue = isSol ? setSolWallet : setBnbWallet;
           const canClaim = rewardReady(balance);
           const verified = Boolean(balance.payoutWallet);
-          const verifyPending = pendingAction === (isBnb ? "link-bnb" : "link-solana");
+          const verifyPending = pendingAction === (isSol ? "link-solana" : "link-bnb");
           const claimPending = pendingAction === `claim-${chain}`;
           const stateCopy = balanceStateCopy(balance);
           return (
@@ -286,10 +315,10 @@ export function RecruiterNativePayoutsPanel() {
               <div className="mt-4 flex flex-wrap gap-2">
                 {verified && String(balance.status || "") === "pending_batch_publication" ? (
                   <p className="w-full text-xs text-sky-100">Wallet verified. {formatNative(stateCopy.amountRaw, balance.token)} {balance.token} is earned. Batch awaiting on-chain publication — you cannot claim until the Merkle root is live.</p>
-                ) : isBnb ? (
-                  <Button onClick={linkBnbWallet} disabled={verifyPending} variant="outline" className="font-retro">{verifyPending ? "Waiting..." : verified ? "Update BNB Wallet" : "Verify BNB Wallet"}</Button>
-                ) : (
+                ) : isSol ? (
                   <Button onClick={linkSolanaWallet} disabled={verifyPending || recruiterWallet.connecting} variant="outline" className="font-retro">{verifyPending || recruiterWallet.connecting ? "Waiting..." : verified ? "Update Solana Wallet" : "Verify Solana Wallet"}</Button>
+                ) : (
+                  <Button onClick={linkBnbWallet} disabled={verifyPending} variant="outline" className="font-retro">{verifyPending ? "Waiting..." : verified ? "Update EVM Wallet" : "Verify EVM Wallet"}</Button>
                 )}
                 <Button onClick={() => createClaim(chain)} disabled={!canClaim || claimPending} className="font-retro">{claimPending ? "Claiming..." : `Claim ${balance.token}`}</Button>
               </div>

@@ -378,7 +378,11 @@ export function WarRoomCampaignRow({
                 </div>
               </div>
 
-              {isRobinhoodRow ? <RobinhoodWarRoomTradePanel campaign={campaign} /> : <WarRoomTradePanel campaign={campaign} />}
+              {isRobinhoodRow && metrics.status === "graduated" ? (
+                <RobinhoodWarRoomTradePanel campaign={campaign} />
+              ) : (
+                <WarRoomTradePanel campaign={campaign} />
+              )}
             </div>
           </div>
         )

@@ -242,8 +242,12 @@ export async function resolveRobinhoodV3Route(input: {
   }
 
   const market = await fetchMarketRoute(input.campaignAddress, input.chainId, input.signal, { includeQuotePrice: true });
-  if (market.marketStage !== "DEX_ACTIVE" || market.tradingEnabled === false || market.verified === false) {
-    throw new Error("Robinhood V3 market is not active and verified yet.");
+  const dexReady =
+    market.marketStage === "DEX_ACTIVE" ||
+    market.marketStage === "DEX_PENDING" ||
+    Boolean(market.pair);
+  if (!dexReady || market.tradingEnabled === false) {
+    throw new Error("Robinhood V3 market is not active yet.");
   }
 
   const tokenAddress = normalizeAddress(market.token, "Robinhood token");
