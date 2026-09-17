@@ -1,5 +1,5 @@
 import { apiFetch } from "@/lib/apiBase";
-import { isEvmChainId, isSolanaChainId } from "@/lib/chainConfig";
+import { isSolanaChainId } from "@/lib/chainConfig";
 
 const EVM_TX_RE = /^0x[a-fA-F0-9]{64}$/;
 const SOLANA_TX_RE = /^[1-9A-HJ-NP-Za-km-z]{64,96}$/;
@@ -29,7 +29,7 @@ export function notifyIndexerFills(input: {
     return;
   }
 
-  if (!isEvmChainId(chainId) || !EVM_ADDR_RE.test(campaign)) return;
+  if ((chainId !== 56 && chainId !== 97) || !EVM_ADDR_RE.test(campaign)) return;
   for (const txHash of hashes.filter((value) => EVM_TX_RE.test(value)).slice(0, 12)) {
     void apiFetch(`/api/token/${encodeURIComponent(campaign)}/ingest-tx?chainId=${chainId}`, {
       method: "POST",
