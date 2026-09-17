@@ -1,0 +1,108 @@
+name: RH46630 QA dry-run pack
+
+# Dispatch this from Actions (branch selector = this file's branch).
+# It checkouts the integration SHA and never sends 46630 txs.
+# Do not use workflow "Indexer" (generic DATABASE_URL + cooldown deploy).
+
+on:
+  workflow_dispatch:
+    inputs:
+      integration_ref:
+        description: Integration branch or SHA to test
+        required: true
+        default: build/cross-chain-stabilization-rh-base
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  create-buy-sell-dry-run:
+    name: Create/buy/sell dry-run (no txs)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.integration_ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Pin tests
+        run: node --test scripts/rh46630-live-factory-create-buy-sell.test.mjs
+
+      - name: Dry-run JSON (live=false hardcoded)
+        env:
+          RH46630_CREATE_BUY_SELL: "0"
+          T2_CHAIN_ID: "46630"
+          FACTORY_ADDRESS_46630: "0xd03D1CC03d108B7F9b2195489DC6CFda1FB1a943"
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          node scripts/rh46630-live-factory-create-buy-sell.mjs | tee reports/rh46630-live-factory-create-buy-sell.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open("reports/rh46630-live-factory-create-buy-sell.json"))
+          assert d.get("chainId")==46630
+          assert d.get("native")=="ETH"
+          assert d.get("sent") is False
+          assert str(d.get("factory","")).lower()=="0xd03d1cc03d108b7f9b2195489dc6cfda1fb1a943"
+          assert "f170" not in str(d.get("factory","")).lower()
+          PY
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rh46630-live-factory-create-buy-sell
+          path: reports/rh46630-live-factory-create-buy-sell.json
+          if-no-files-found: warn
+
+  qa-indexer-smoke:
+    name: Coolify QA indexer smoke (no DB secrets)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.integration_ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Pin tests
+        run: node --test scripts/rh46630-qa-indexer-smoke.test.mjs
+
+      - name: Curl QA indexer only
+        env:
+          QA_INDEXER: https://s75mnp6dfpjtv8m8fcefxlay.178.104.232.231.sslip.io
+          CAMPAIGN: "0xB69E19C4387905170aa17E986aAA3b805dAfe440"
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          curl -fsS -m 20 "$QA_INDEXER/health" -o reports/rh46630-qa-indexer-health.json
+          curl -fsS -m 20 "$QA_INDEXER/api/token/$CAMPAIGN/market-state?chainId=46630" -o reports/rh46630-qa-indexer-market-state.json
+          node --input-type=module -e '
+            import fs from "node:fs";
+            import { evaluateMarketState } from "./scripts/rh46630-qa-indexer-smoke.mjs";
+            const body = JSON.parse(fs.readFileSync("reports/rh46630-qa-indexer-market-state.json", "utf8"));
+            const report = evaluateMarketState(body);
+            fs.writeFileSync("reports/rh46630-qa-indexer-smoke.json", JSON.stringify(report, null, 2));
+            console.log(JSON.stringify(report, null, 2));
+            if (!report.poolIndexerEnvEnabled) {
+              console.error("poolIndexerEnvEnabled is false. Set ENABLE_ROBINHOOD_V3_POOL_INDEXER=1 on QA indexer and restart.");
+              process.exit(1);
+            }
+          '
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rh46630-qa-indexer-smoke
+          path: reports/rh46630-qa-indexer-*.json
+          if-no-files-found: warn
