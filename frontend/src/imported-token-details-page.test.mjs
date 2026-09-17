@@ -90,20 +90,20 @@ test("all supported unverified imports expose one reusable Claim Memecoin dialog
 test("EVM Claim Memecoin checks current owner first and offers X fallback", () => {
   assert.match(xClient, /\/api\/project-imports\/image\/x\/authority/);
   assert.match(claimDialog, /resolveProjectEvmAuthority\(item, connectedWallet\)/);
-  assert.match(claimDialog, /Contract owner wallet/);
-  assert.match(claimDialog, /CONNECT OWNER WALLET/);
-  assert.match(claimDialog, /VERIFY OWNER WALLET/);
+  assert.match(claimDialog, /\{evmChainLabel\} project owner wallet/);
+  assert.match(claimDialog, /CONNECT \{evmChainLabel\.toUpperCase\(\)\} OWNER WALLET/);
+  assert.match(claimDialog, /VERIFY \{evmChainLabel\.toUpperCase\(\)\} OWNER WALLET/);
   assert.match(claimDialog, /claimProjectImport\(\{item,auth\}\)/);
   assert.match(claimDialog, /VERIFY WITH X/);
-  assert.match(claimDialog, /No active owner\(\)\/getOwner\(\) wallet is exposed/);
+  assert.match(claimDialog, /does not expose an active owner\(\)\/getOwner\(\) wallet/);
 });
 
-test("Solana Claim Memecoin offers creator-wallet proof before manual review", () => {
-  assert.match(claimDialog, /Pump\.fun creator wallet/);
-  assert.match(claimDialog, /VERIFY CREATOR WALLET/);
+test("Solana Claim Memecoin offers current project-authority proof before manual review", () => {
+  assert.match(claimDialog, /Solana project authority wallet/);
+  assert.match(claimDialog, /VERIFY PROJECT AUTHORITY/);
   assert.match(claimDialog, /verifyPumpCreatorWallet/);
   assert.match(claimDialog, /project_import_claim/);
-  assert.match(claimDialog, /Recorded creator wallet/);
+  assert.match(claimDialog, /Recorded project authority:/);
 });
 
 test("manual review is the final ownership fallback and requires a contact X account", () => {
