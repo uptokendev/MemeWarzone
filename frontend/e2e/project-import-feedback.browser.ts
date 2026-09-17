@@ -67,7 +67,8 @@ test('server outage remains visible and retryable without fabricating approval',
   await expect(error).toContainText('IMPORT CHECK TEMPORARILY UNAVAILABLE');
   await expect(error).toContainText('Nothing has been approved');
   await expect(page.getByRole('button', { name: 'RETRY IMPORT', exact: true })).toBeVisible();
-  await expect(page).toHaveURL(new RegExp('/$'));
+  expect(new URL(page.url()).pathname).toBe('/');
+  expect(new URL(page.url()).searchParams.get('wallet')).toBe(wallet);
 });
 
 test('wallet-auth failure is explicit and does not navigate', async ({ page }) => {
@@ -78,7 +79,8 @@ test('wallet-auth failure is explicit and does not navigate', async ({ page }) =
   await openImport(page);
   await submitSolana(page);
   await expect(page.locator('[data-import-error="true"]')).toContainText('WALLET VERIFICATION REQUIRED');
-  await expect(page).toHaveURL(new RegExp('/$'));
+  expect(new URL(page.url()).pathname).toBe('/');
+  expect(new URL(page.url()).searchParams.get('wallet')).toBe(wallet);
 });
 
 test('wrong-family contract address is explained inline and cannot submit', async ({ page }) => {
