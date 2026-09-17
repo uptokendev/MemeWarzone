@@ -89,7 +89,11 @@ jobs:
       - name: Exact Project Import feedback regressions
         run: node --test frontend/src/lib/projectImportFeedback.test.mjs
       - name: Apply import-only schema
-        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260908_000001_project_import_onboarding.sql
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260908_000001_project_import_onboarding.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260909213428_project_import_review_evidence.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260910175500_project_import_pump_challenges.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20260910194000_project_import_robinhood_chain.sql
       - name: Server mount proof
         run: node frontend/scripts/check-project-import-server-mount.mjs
       - run: npm --prefix frontend run build
