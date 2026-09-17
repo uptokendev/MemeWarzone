@@ -89,13 +89,24 @@ jobs:
           curl -fsS -m 20 "$QA_INDEXER/api/token/$CAMPAIGN/market-state?chainId=46630" -o reports/rh46630-qa-indexer-market-state.json
           node --input-type=module -e '
             import fs from "node:fs";
-            import { evaluateMarketState } from "./scripts/rh46630-qa-indexer-smoke.mjs";
-            const body = JSON.parse(fs.readFileSync("reports/rh46630-qa-indexer-market-state.json", "utf8"));
-            const report = evaluateMarketState(body);
+            import { evaluateHealth, evaluateMarketState } from "./scripts/rh46630-qa-indexer-smoke.mjs";
+            const healthBody = JSON.parse(fs.readFileSync("reports/rh46630-qa-indexer-health.json", "utf8"));
+            const marketBody = JSON.parse(fs.readFileSync("reports/rh46630-qa-indexer-market-state.json", "utf8"));
+            const health = evaluateHealth(healthBody);
+            const market = evaluateMarketState(marketBody);
+            const report = { health, market };
             fs.writeFileSync("reports/rh46630-qa-indexer-smoke.json", JSON.stringify(report, null, 2));
             console.log(JSON.stringify(report, null, 2));
-            if (!report.poolIndexerEnvEnabled) {
-              console.error("poolIndexerEnvEnabled is false. Set ENABLE_ROBINHOOD_V3_POOL_INDEXER=1 on QA indexer and restart.");
+            if (!health.poolIndexerEnvEnabled) {
+              console.error("Robinhood /health says poolIndexerEnabled=false. Set ENABLE_ROBINHOOD_V3_POOL_INDEXER=1 on QA indexer and restart.");
+              process.exit(1);
+            }
+            if (!health.rpc46630Configured) {
+              console.error("Robinhood /health says rpc46630Configured=false. Set ROBINHOOD_RPC_HTTP_46630 on QA indexer and restart.");
+              process.exit(1);
+            }
+            if (!health.chain46630Enabled) {
+              console.error("Robinhood /health omits chain 46630. Set EVM_INDEXER_CHAIN_IDS=56,46630 on QA indexer and restart.");
               process.exit(1);
             }
           '
