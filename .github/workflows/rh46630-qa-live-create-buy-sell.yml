@@ -1,0 +1,74 @@
+name: RH46630 QA live create+buy+sell
+
+# Dispatch from main after this file is on default branch.
+# Sends real 46630 txs on factory 0xd03D. Never 0xF170. Never 4663.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type CREATE_BUY_SELL_CHAIN_46630_LIVE_FACTORY
+        required: true
+        type: string
+      integration_ref:
+        description: Integration branch or SHA
+        required: true
+        default: build/cross-chain-stabilization-rh-base
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  live-create-buy-sell:
+    if: github.event.inputs.confirmation == 'CREATE_BUY_SELL_CHAIN_46630_LIVE_FACTORY'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.integration_ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Pin tests
+        run: node --test scripts/rh46630-live-factory-create-buy-sell.test.mjs
+
+      - name: Send create, buy, sell on live factory 0xd03D
+        env:
+          RH46630_CREATE_BUY_SELL: "1"
+          T2_CHAIN_ID: "46630"
+          FACTORY_ADDRESS_46630: "0xd03D1CC03d108B7F9b2195489DC6CFda1FB1a943"
+          ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL }}
+          ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY }}
+          ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY }}
+          ROBINHOOD_ROUTE_AUTHORITY_PRIVATE_KEY: ${{ secrets.ROBINHOOD_ROUTE_AUTHORITY_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "${ROBINHOOD_TESTNET_RPC_URL:-}"
+          test -n "${ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY:-}"
+          test -n "${ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY:-}"
+          test -n "${ROBINHOOD_ROUTE_AUTHORITY_PRIVATE_KEY:-}"
+          mkdir -p reports
+          node scripts/rh46630-live-factory-create-buy-sell.mjs | tee reports/rh46630-live-factory-create-buy-sell.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open("reports/rh46630-live-factory-create-buy-sell.json"))
+          assert d.get("chainId")==46630
+          assert d.get("native")=="ETH"
+          assert d.get("sent") is True
+          assert str(d.get("factory","")).lower()=="0xd03d1cc03d108b7f9b2195489dc6cfda1fb1a943"
+          assert str(d.get("campaign","")).startswith("0x")
+          PY
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rh46630-live-factory-create-buy-sell
+          path: reports/rh46630-live-factory-create-buy-sell.json
+          if-no-files-found: warn
