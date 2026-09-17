@@ -24,6 +24,12 @@ jobs:
     if: github.event.inputs.confirmation == 'CREATE_BUY_SELL_CHAIN_46630_LIVE_FACTORY'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    environment: testnet-certification
+    env:
+      ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL }}
+      ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY }}
+      ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY }}
+      ROBINHOOD_ROUTE_AUTHORITY_PRIVATE_KEY: ${{ secrets.ROBINHOOD_ROUTE_AUTHORITY_PRIVATE_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,16 +50,16 @@ jobs:
           RH46630_CREATE_BUY_SELL: "1"
           T2_CHAIN_ID: "46630"
           FACTORY_ADDRESS_46630: "0xd03D1CC03d108B7F9b2195489DC6CFda1FB1a943"
-          ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL }}
-          ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY }}
-          ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY }}
-          ROBINHOOD_ROUTE_AUTHORITY_PRIVATE_KEY: ${{ secrets.ROBINHOOD_ROUTE_AUTHORITY_PRIVATE_KEY }}
         run: |
           set -euo pipefail
-          test -n "${ROBINHOOD_TESTNET_RPC_URL:-}"
-          test -n "${ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY:-}"
-          test -n "${ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY:-}"
-          test -n "${ROBINHOOD_ROUTE_AUTHORITY_PRIVATE_KEY:-}"
+          missing=0
+          for name in ROBINHOOD_TESTNET_RPC_URL ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY ROBINHOOD_TESTNET_TRADER_A_PRIVATE_KEY ROBINHOOD_ROUTE_AUTHORITY_PRIVATE_KEY; do
+            if [ -z "${!name:-}" ]; then
+              echo "missing environment secret: $name (must be on GitHub environment testnet-certification)"
+              missing=1
+            fi
+          done
+          test "$missing" = "0"
           mkdir -p reports
           node scripts/rh46630-live-factory-create-buy-sell.mjs | tee reports/rh46630-live-factory-create-buy-sell.json
           python3 - <<'PY'
