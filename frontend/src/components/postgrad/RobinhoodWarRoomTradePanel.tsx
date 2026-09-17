@@ -175,19 +175,23 @@ export function RobinhoodWarRoomTradePanel({ campaign }: { campaign: CampaignInf
       openWalletModal();
       return;
     }
+
+    let tradeProvider = wallet.provider;
+    let tradeSigner = wallet.signer;
+
     if (Number(wallet.chainId) !== chainId) {
       try {
-        if (typeof wallet.switchToChain === "function") {
-          await wallet.switchToChain(chainId);
-        } else {
-          openWalletModal();
-          return;
-        }
-      } catch {
-        openWalletModal();
+        const switched = await wallet.switchToChain(chainId);
+        tradeProvider = switched.provider;
+        tradeSigner = switched.signer;
+      } catch (err) {
+        const message = String((err as Error)?.message || err || `Switch MetaMask to Robinhood chain ${chainId} and try again.`);
+        setError(message);
+        toast({ title: "Robinhood network switch failed", description: message, variant: "destructive" });
         return;
       }
     }
+
     if (!route) {
       setError("Robinhood V3 route is not ready yet.");
       return;
@@ -199,8 +203,8 @@ export function RobinhoodWarRoomTradePanel({ campaign }: { campaign: CampaignInf
       setLoading(true);
       setError(null);
       if (tab === "buy") {
-        const quote = await quoteRobinhoodV3Buy(wallet.provider, route, amountIn, SLIPPAGE_BPS);
-        const tx = await executeRobinhoodV3Buy({ signer: wallet.signer, quote });
+        const quote = await quoteRobinhoodV3Buy(tradeProvider, route, amountIn, SLIPPAGE_BPS);
+        const tx = await executeRobinhoodV3Buy({ signer: tradeSigner, quote });
         await tx.wait();
         toast({
           title: "Robinhood buy confirmed",
@@ -209,9 +213,9 @@ export function RobinhoodWarRoomTradePanel({ campaign }: { campaign: CampaignInf
             : `${formatAmount(amountIn, 18, "ETH")} traded on the Robinhood V3 pool.`,
         });
       } else {
-        const quote = await quoteRobinhoodV3Sell(wallet.provider, route, amountIn, SLIPPAGE_BPS);
-        await ensureRobinhoodV3SellAllowance({ signer: wallet.signer, route, amountInRaw: amountIn });
-        const tx = await executeRobinhoodV3Sell({ signer: wallet.signer, quote });
+        const quote = await quoteRobinhoodV3Sell(tradeProvider, route, amountIn, SLIPPAGE_BPS);
+        await ensureRobinhoodV3SellAllowance({ signer: tradeSigner, route, amountInRaw: amountIn });
+        const tx = await executeRobinhoodV3Sell({ signer: tradeSigner, quote });
         await tx.wait();
         toast({
           title: "Robinhood sell confirmed",
@@ -410,7 +414,7 @@ export function RobinhoodWarRoomTradePanel({ campaign }: { campaign: CampaignInf
         disabled={loading || insufficient || amountIn <= 0n}
         onClick={() => void executeTrade()}
       >
-        {!connectedOnCampaignChain
+        {!wallet.isConnected || !wallet.account
           ? `Connect Robinhood wallet`
           : loading
             ? "Processing..."
