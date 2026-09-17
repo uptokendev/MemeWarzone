@@ -65,10 +65,28 @@ jobs:
           node-version: 22
       - run: git rev-parse HEAD && npm ci --prefix frontend --no-audit --no-fund
       - run: npm --prefix frontend run check:api-imports
-      - name: Exact Project Import regressions
+      - name: Exact Project Import core regressions
         run: |
           set -e
-          for file in frontend/api/lib/projectImport*.test.mjs frontend/api/lib/projectOwnershipResolve*.test.mjs frontend/api/lib/projectSolanaProjectAuthority.test.mjs frontend/api/lib/projectOwnershipReview.test.mjs frontend/src/project-imports-ui.test.mjs frontend/src/project-import-identity-ui.test.mjs frontend/src/imported-token-details-page.test.mjs frontend/src/robinhood-import-gate.test.mjs frontend/src/lib/projectImportFeedback.test.mjs; do node --test "$file"; done
+          for file in frontend/api/lib/projectImport*.test.mjs; do node --test "$file"; done
+      - name: Exact Project Import ownership resolver regressions
+        run: |
+          set -e
+          for file in frontend/api/lib/projectOwnershipResolve*.test.mjs; do node --test "$file"; done
+      - name: Exact Solana project authority regressions
+        run: node --test frontend/api/lib/projectSolanaProjectAuthority.test.mjs
+      - name: Exact Project ownership review regressions
+        run: node --test frontend/api/lib/projectOwnershipReview.test.mjs
+      - name: Exact Project Import UI regressions
+        run: node --test frontend/src/project-imports-ui.test.mjs
+      - name: Exact Project Import identity UI regressions
+        run: node --test frontend/src/project-import-identity-ui.test.mjs
+      - name: Exact imported-token details regressions
+        run: node --test frontend/src/imported-token-details-page.test.mjs
+      - name: Exact Robinhood Import gate regressions
+        run: node --test frontend/src/robinhood-import-gate.test.mjs
+      - name: Exact Project Import feedback regressions
+        run: node --test frontend/src/lib/projectImportFeedback.test.mjs
       - name: Server mount proof
         run: node frontend/scripts/check-project-import-server-mount.mjs
       - run: npm --prefix frontend run build
