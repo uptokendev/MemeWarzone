@@ -2942,6 +2942,19 @@ const toSeconds = (ts: number): number => {
   }, [isDexStage, curveProgress.targetWei, curveProgress.reserveWei]);
 
   const remainingCurveLabel = useMemo(() => {
+    if (isRobinhoodPage && !isDexStage && (metrics?.graduationTarget ?? 0n) > 0n) {
+      const targetUsd = Number(ethers.formatEther(metrics.graduationTarget));
+      let raisedUsd = 0;
+      try {
+        const reserveEth = Number(ethers.formatEther(curveProgress.reserveWei ?? 0n));
+        if (Number.isFinite(reserveEth) && nativeUsd) raisedUsd = reserveEth * nativeUsd;
+      } catch {
+        raisedUsd = 0;
+      }
+      const left = Math.max(0, (Number.isFinite(targetUsd) ? targetUsd : 0) - raisedUsd);
+      const usdLabel = formatCompactUsd(left);
+      return { primary: usdLabel, secondary: `$${left.toFixed(2)} USD target` };
+    }
     if ((curveProgress.targetWei ?? 0n) <= 0n) {
       return { primary: "—", secondary: "—" };
     }
@@ -2965,7 +2978,18 @@ const toSeconds = (ts: number): number => {
     // Primary follows the denomination toggle; secondary shows the other denomination.
     if (displayDenom === "USD") return { primary: usdLabel, secondary: bnbLabel };
     return { primary: bnbLabel, secondary: usdLabel };
-  }, [curveProgress.targetWei, remainingCurveWei, displayDenom, nativeUsd, nativeUsdLoading, isSolanaPage]);
+  }, [
+    curveProgress.targetWei,
+    curveProgress.reserveWei,
+    remainingCurveWei,
+    displayDenom,
+    nativeUsd,
+    nativeUsdLoading,
+    isSolanaPage,
+    isRobinhoodPage,
+    isDexStage,
+    metrics?.graduationTarget,
+  ]);
 
   const liquidityLabel = isDexStage ? "Liquidity" : "Reserve";
   const liquidityValue = (() => {
@@ -3018,7 +3042,7 @@ const toSeconds = (ts: number): number => {
         ? "Graduating · Solana"
         : "Bonding · Solana"
     : isRobinhoodPage
-      ? isUniswapTradingActive || contractGraduated
+      ? onChainLaunched || contractGraduated
         ? "Graduated · Uniswap"
         : "Bonding · Robinhood"
       : isTopazTradingActive

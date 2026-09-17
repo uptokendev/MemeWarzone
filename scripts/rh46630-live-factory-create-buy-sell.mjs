@@ -8,7 +8,9 @@ export const GREEN_FACTORY = "0xd03D1CC03d108B7F9b2195489DC6CFda1FB1a943";
 export const FORBIDDEN_STAGED_FACTORY = "0xF170F31dCeaBd2d0b3D32A14FbB6d22661148242";
 export const DEFAULT_RPC_URL = "https://rpc.testnet.chain.robinhood.com";
 export const TRADE_AUTH_BUY_EXACT_TOKENS = 0;
+export const TRADE_AUTH_BUY_EXACT_NATIVE = 1;
 export const TRADE_AUTH_SELL_EXACT_TOKENS = 2;
+export const LIVE_BUY_ETH_WEI = ethers.parseEther("0.001");
 // LaunchFactory TEST_GRADUATION_USD_THRESHOLD: $6 with 18 decimals (not 6 ETH).
 export const TEST_GRADUATION_USD_THRESHOLD = ethers.parseEther("6");
 
@@ -34,8 +36,10 @@ const CAMPAIGN_ABI = [
   "function launched() view returns (bool)",
   "function tradeRouteProfile() view returns (uint8)",
   "function quoteBuyExactTokens(uint256 amountOut) view returns (uint256)",
+  "function quoteBuyExactBnb(uint256 totalInWei) view returns (uint256 tokensOut,uint256 totalCostWei,uint256 feeWei)",
   "function quoteSellExactTokens(uint256 amountIn) view returns (uint256)",
   "function buyExactTokensAuthorized(uint256 amountOut,uint256 maxCost,uint8 routeProfile,uint64 routeDeadline,bytes routeSignature) payable returns (uint256)",
+  "function buyExactBnbAuthorized(uint256 minTokensOut,uint8 routeProfile,uint64 routeDeadline,bytes routeSignature) payable returns (uint256 tokensOut,uint256 totalSpent)",
   "function sellExactTokensAuthorized(uint256 amountIn,uint256 minPayout,uint8 routeProfile,uint64 routeDeadline,bytes routeSignature) returns (uint256)",
 ];
 
@@ -126,7 +130,7 @@ export function planCreateBuySell(input = {}, env = process.env) {
   const chainId = assertChainId(input.chainId ?? env.T2_CHAIN_ID ?? RH46630_CHAIN_ID);
   const factory = assertLiveFactory(input.factory ?? env.FACTORY_ADDRESS_46630 ?? GREEN_FACTORY);
   const live = liveRequested(env);
-  const buyTokensWei = BigInt(String(input.buyTokensWei || env.RH46630_BUY_TOKENS_WEI || ethers.parseEther("1")));
+  const buyEthWei = BigInt(String(input.buyEthWei || env.RH46630_BUY_ETH_WEI || LIVE_BUY_ETH_WEI));
   const graduationTargetUsd = BigInt(
     String(input.graduationTargetUsd || env.RH46630_GRADUATION_TARGET_USD || TEST_GRADUATION_USD_THRESHOLD),
   );
@@ -142,7 +146,7 @@ export function planCreateBuySell(input = {}, env = process.env) {
     native: "ETH",
     factory,
     forbiddenFactory: FORBIDDEN_STAGED_FACTORY,
-    buyTokensWei: buyTokensWei.toString(),
+    buyEthWei: buyEthWei.toString(),
     graduationTargetUsd: graduationTargetUsd.toString(),
     request: {
       name: `QA Bond ${symbol}`,
@@ -153,7 +157,7 @@ export function planCreateBuySell(input = {}, env = process.env) {
       extraLink: "",
       graduationTarget: graduationTargetUsd.toString(),
     },
-    steps: ["createCampaignAuthorized", "buyExactTokensAuthorized", "sellExactTokensAuthorized"],
+    steps: ["createCampaignAuthorized", "buyExactBnbAuthorized", "sellExactTokensAuthorized"],
     liveRequested: live,
     sendRequired: live,
   };
@@ -257,15 +261,18 @@ export async function runCreateBuySell({
   );
   const campaign = new ethers.Contract(campaignAddress, CAMPAIGN_ABI, buyer);
   const token = new ethers.Contract(tokenAddress, TOKEN_ABI, buyer);
-  const buyAmount = BigInt(resolved.buyTokensWei);
-  const maxCost = await waitForRpcState(
-    "quoteBuyExactTokens",
-    () => campaign.quoteBuyExactTokens(buyAmount),
-    (cost) => BigInt(cost) > 0n,
+  const buyEthWei = BigInt(resolved.buyEthWei);
+  const quoted = await waitForRpcState(
+    "quoteBuyExactBnb",
+    () => campaign.quoteBuyExactBnb(buyEthWei),
+    (q) => BigInt(q.tokensOut ?? q[0] ?? 0) > 0n,
   );
+  const tokensOut = BigInt(quoted.tokensOut ?? quoted[0]);
+  const maxCost = BigInt(quoted.totalCostWei ?? quoted[1] ?? buyEthWei);
+  const minTokensOut = (tokensOut * 99n) / 100n;
   const buyerBal = await provider.getBalance(buyer.address);
-  if (buyerBal < BigInt(maxCost)) {
-    throw new Error(`BUYER_UNDERFUNDED have=${buyerBal} need=${maxCost} buyer=${buyer.address}`);
+  if (buyerBal < buyEthWei) {
+    throw new Error(`BUYER_UNDERFUNDED have=${buyerBal} need=${buyEthWei} buyer=${buyer.address}`);
   }
   const buyAuth = await signerMod.signTradeAuthorization({
     signer: routeAuthority,
@@ -273,13 +280,21 @@ export async function runCreateBuySell({
     campaignAddress,
     actor: buyer.address,
     routeProfileId: Number(await campaign.tradeRouteProfile()),
-    action: TRADE_AUTH_BUY_EXACT_TOKENS,
-    amount: buyAmount,
-    limit: maxCost,
+    action: TRADE_AUTH_BUY_EXACT_NATIVE,
+    amount: buyEthWei,
+    limit: minTokensOut,
     deadline,
   });
-  const buyTx = await sendBuy({ campaign, buyAmount, maxCost, buyAuth, deadline, tradeRouteProfile: Number(await campaign.tradeRouteProfile()) });
-  const sellAmount = buyAmount / 2n;
+  const buyTx = await sendBuy({
+    campaign,
+    buyEthWei,
+    minTokensOut,
+    buyAuth,
+    deadline,
+    tradeRouteProfile: Number(await campaign.tradeRouteProfile()),
+  });
+  const balanceAfter = await token.balanceOf(buyer.address);
+  const sellAmount = balanceAfter / 2n;
   const minPayout = await campaign.quoteSellExactTokens(sellAmount);
   await sendApprove({ token, campaignAddress, sellAmount });
   const sellAuth = await signerMod.signTradeAuthorization({
@@ -334,14 +349,13 @@ async function main() {
       if (!campaign || !token) throw new Error("CREATE_DID_NOT_RETURN_ADDRESSES");
       return { campaign, token, txHash: receipt?.hash || tx.hash, index: index.toString() };
     },
-    sendBuy: async ({ campaign, buyAmount, maxCost, buyAuth, deadline, tradeRouteProfile }) => {
-      const tx = await campaign.buyExactTokensAuthorized(
-        buyAmount,
-        maxCost,
+    sendBuy: async ({ campaign, buyEthWei, minTokensOut, buyAuth, deadline, tradeRouteProfile }) => {
+      const tx = await campaign.buyExactBnbAuthorized(
+        minTokensOut,
         tradeRouteProfile,
         deadline,
         buyAuth,
-        { value: maxCost },
+        { value: buyEthWei },
       );
       const receipt = await tx.wait();
       return { txHash: receipt?.hash || tx.hash };

@@ -21,7 +21,7 @@ test("46630 dry-run pins live factory, ETH, and create/buy/sell steps", () => {
   assert.equal(plan.forbiddenFactory, FORBIDDEN_STAGED_FACTORY);
   assert.deepEqual(plan.steps, [
     "createCampaignAuthorized",
-    "buyExactTokensAuthorized",
+    "buyExactBnbAuthorized",
     "sellExactTokensAuthorized",
   ]);
   assert.equal(plan.sendRequired, false);
@@ -66,7 +66,8 @@ test("live runner follows BNB 6C pre-grad and reuses bonding campaign on creator
   assert.match(source, /waitForRpcState/);
   assert.match(source, /findCreatorBondingCampaign/);
   assert.match(source, /creatorLaunchEligibility/);
-  assert.match(source, /quoteBuyExactTokens/);
+  assert.match(source, /quoteBuyExactBnb/);
+  assert.match(source, /LIVE_BUY_ETH_WEI/);
   assert.match(source, /CampaignCreated/);
   assert.match(source, /tuple\(address campaign,address token,address creator/);
 });
