@@ -1,6 +1,8 @@
 import type { Express, NextFunction, Request, Response } from "express";
 import { pool } from "./db.js";
 import { ENV } from "./env.js";
+import { createStaticJsonRpcProvider, parseRpcList } from "./rpcProvider.js";
+import { healRobinhoodGraduatedCms } from "./robinhoodCmsHeal.js";
 import { isEvmAddress, resolveMarketIdentityOrPassthrough } from "./marketIdentity.js";
 import { readCanonicalRobinhoodMarketRoute, type RobinhoodTradeSide } from "./robinhoodMarketRoutes.js";
 import {
@@ -311,9 +313,36 @@ export function registerRobinhoodMarketContinuityRoutes(app: Express): void {
       const chainId = asNumber(req.query.chainId, 46630);
       const campaign = await campaignFromParam(chainId, req.params.campaign);
       if (!campaign) return res.status(400).json({ error: "Invalid Robinhood campaign or chainId" });
-      const state = await readRobinhoodMarketState(chainId, campaign);
+      let state = await readRobinhoodMarketState(chainId, campaign);
       if (!state) {
         return res.status(200).json(provisionalRobinhoodMarketState(chainId, campaign));
+      }
+      if (!state.pairAddress) {
+        const rpcUrl =
+          chainId === 4663
+            ? parseRpcList(ENV.ROBINHOOD_RPC_HTTP_4663)[0]
+            : parseRpcList(ENV.ROBINHOOD_RPC_HTTP_46630)[0];
+        if (rpcUrl) {
+          try {
+            const provider = createStaticJsonRpcProvider(rpcUrl, chainId, { timeoutMs: 15_000 });
+            const healed = await healRobinhoodGraduatedCms(
+              provider,
+              chainId,
+              campaign,
+              state.tokenAddress,
+            );
+            if (healed) {
+              const refreshed = await readRobinhoodMarketState(chainId, campaign);
+              if (refreshed) state = refreshed;
+            }
+          } catch (healErr) {
+            console.warn("[robinhood-market] CMS heal on market-state failed", {
+              chainId,
+              campaign,
+              error: String((healErr as any)?.message || healErr),
+            });
+          }
+        }
       }
       const includeQuotePrice = truthyQuery(req.query.includeQuotePrice, false);
       return res.json({
