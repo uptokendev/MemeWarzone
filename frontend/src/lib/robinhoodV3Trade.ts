@@ -7,6 +7,10 @@ import {
 } from "@/lib/marketContinuityApi";
 import { ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
 
+const V3_QUOTER_ABI = [
+  "function quoteExactInputSingle(address tokenIn,address tokenOut,uint24 fee,uint256 amountIn) returns (uint256 amountOut)",
+];
+
 const V3_ROUTER_ABI = [
   "function factory() view returns (address)",
   "function WETH9() view returns (address)",
@@ -386,6 +390,40 @@ export async function resolveRobinhoodV3Route(input: {
   };
 }
 
+/**
+ * Exact-input quote for one pool hop.
+ *
+ * The staged mock swap router carried quoteExactInputSingle itself, so quoting
+ * appeared to work there. A real SwapRouter02 exposes no quoting at all and the
+ * call reverts with no data, which is what graduated Robinhood buys hit. Prefer
+ * a dedicated quoter when one is configured and keep the router path for mock
+ * surfaces that still answer it.
+ */
+async function quoteExactInputSingleRaw(
+  provider: ethers.Provider,
+  chainId: number,
+  route: RobinhoodV3ResolvedRoute,
+  tokenIn: string,
+  tokenOut: string,
+  amountInRaw: bigint,
+): Promise<bigint> {
+  const quoterAddress = normalizeOptionalAddress(envAddress("VITE_ROBINHOOD_V3_QUOTER_ADDRESS", chainId));
+  if (quoterAddress) {
+    // Non-view by signature because it simulates a swap, so it must be staticCall'd.
+    const quoter = new Contract(quoterAddress, V3_QUOTER_ABI, provider) as any;
+    return BigInt(await quoter.quoteExactInputSingle.staticCall(tokenIn, tokenOut, route.fee, amountInRaw));
+  }
+
+  const router = new Contract(route.routerAddress, V3_ROUTER_ABI, provider) as any;
+  try {
+    return BigInt(await router.quoteExactInputSingle(tokenIn, tokenOut, route.fee, amountInRaw));
+  } catch {
+    throw new Error(
+      "Robinhood V3 quoting is not configured for this chain. Set VITE_ROBINHOOD_V3_QUOTER_ADDRESS.",
+    );
+  }
+}
+
 async function quoteDirectExactInput(
   provider: ethers.Provider,
   route: RobinhoodV3ResolvedRoute,
@@ -393,10 +431,10 @@ async function quoteDirectExactInput(
   tokenOut: string,
   amountInRaw: bigint,
   slippageBps: number,
+  chainId: number,
 ): Promise<RobinhoodV3Quote> {
   if (amountInRaw <= 0n) throw new Error("Enter an amount greater than zero.");
-  const router = new Contract(route.routerAddress, V3_ROUTER_ABI, provider) as any;
-  const amountOutRaw = BigInt(await router.quoteExactInputSingle(tokenIn, tokenOut, route.fee, amountInRaw));
+  const amountOutRaw = await quoteExactInputSingleRaw(provider, chainId, route, tokenIn, tokenOut, amountInRaw);
   if (amountOutRaw <= 0n) throw new Error("Robinhood V3 quote returned zero output.");
   return {
     amountInRaw,
@@ -457,7 +495,7 @@ export function quoteRobinhoodV3Buy(
 ) {
   return route.routeKind === "STOCK_TWO_HOP"
     ? quoteStockTwoHop(provider, route, nativeInRaw, slippageBps, "buy")
-    : quoteDirectExactInput(provider, route, route.wrappedNativeAddress, route.tokenAddress, nativeInRaw, slippageBps);
+    : quoteDirectExactInput(provider, route, route.wrappedNativeAddress, route.tokenAddress, nativeInRaw, slippageBps, route.chainId);
 }
 
 export function quoteRobinhoodV3Sell(
@@ -468,7 +506,7 @@ export function quoteRobinhoodV3Sell(
 ) {
   return route.routeKind === "STOCK_TWO_HOP"
     ? quoteStockTwoHop(provider, route, tokenInRaw, slippageBps, "sell")
-    : quoteDirectExactInput(provider, route, route.tokenAddress, route.wrappedNativeAddress, tokenInRaw, slippageBps);
+    : quoteDirectExactInput(provider, route, route.tokenAddress, route.wrappedNativeAddress, tokenInRaw, slippageBps, route.chainId);
 }
 
 export async function ensureRobinhoodV3SellAllowance(input: {
