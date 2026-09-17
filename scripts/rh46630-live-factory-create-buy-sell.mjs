@@ -26,10 +26,12 @@ const FACTORY_ABI = [
   "function createPaused() view returns (bool)",
   "function setGlobalPaused(bool paused)",
   "function setCreatePaused(bool paused)",
+  "function creatorLaunchEligibility(address creator) view returns (bool allowed, uint256 cooldownEndsAt, uint256 currentLiveCount, uint256 maxLiveBonding)",
   "function createCampaignAuthorized((string name,string symbol,string logoURI,string xAccount,string website,string extraLink,uint256 graduationTarget) req,(uint8 tradeRouteProfile,uint8 finalizeRouteProfile,uint64 deadline,bytes signature) auth) returns (address campaignAddr,address tokenAddr)",
 ];
 
 const CAMPAIGN_ABI = [
+  "function launched() view returns (bool)",
   "function tradeRouteProfile() view returns (uint8)",
   "function quoteBuyExactTokens(uint256 amountOut) view returns (uint256)",
   "function quoteSellExactTokens(uint256 amountIn) view returns (uint256)",
@@ -80,6 +82,26 @@ export async function waitForRpcState(label, read, accepted, attempts = 20, dela
   }
   const extra = lastError ? String(lastError?.shortMessage || lastError?.message || lastError) : String(lastValue);
   throw new Error(`${label} not visible after ${attempts} RPC reads: ${extra}`);
+}
+
+export async function findCreatorBondingCampaign(factory, provider, creatorAddress) {
+  const count = Number(await factory.campaignsCount());
+  for (let i = count - 1; i >= 0; i -= 1) {
+    const info = await factory.getCampaign(i);
+    if (!sameAddress(info.creator, creatorAddress)) continue;
+    const campaign = new ethers.Contract(info.campaign, CAMPAIGN_ABI, provider);
+    const launched = await campaign.launched().catch(() => true);
+    if (!launched) {
+      return {
+        campaign: ethers.getAddress(info.campaign),
+        token: ethers.getAddress(info.token),
+        name: info.name,
+        symbol: info.symbol,
+        index: String(i),
+      };
+    }
+  }
+  return null;
 }
 
 export function createdAddressesFromReceipt(factory, receipt) {
@@ -191,28 +213,41 @@ export async function runCreateBuySell({
   }
   if (globalPaused) throw new Error("FACTORY_GLOBAL_PAUSED");
   if (createPaused) throw new Error("FACTORY_CREATE_PAUSED");
-  const tradeRouteProfile = Number(await factory.tradeRouteProfile());
-  const finalizeRouteProfile = Number(await factory.finalizeRouteProfile());
+  const existing = await findCreatorBondingCampaign(factory, provider, creator.address);
+  const eligibility = await factory.creatorLaunchEligibility(creator.address);
+  let created = existing;
+  let skippedCreate = Boolean(existing);
+  if (!existing) {
+    if (!eligibility.allowed) {
+      throw new Error(
+        `CreatorNotEligible allowed=${eligibility.allowed} live=${eligibility.currentLiveCount}/${eligibility.maxLiveBonding} cooldownEndsAt=${new Date(Number(eligibility.cooldownEndsAt) * 1000).toISOString()}`,
+      );
+    }
+    const tradeRouteProfile = Number(await factory.tradeRouteProfile());
+    const finalizeRouteProfile = Number(await factory.finalizeRouteProfile());
+    const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
+    const request = {
+      ...resolved.request,
+      graduationTarget: BigInt(resolved.request.graduationTarget),
+    };
+    const createSignature = await signerMod.signCreateAuthorization({
+      signer: routeAuthority,
+      chainId: resolved.chainId,
+      factoryAddress: resolved.factory,
+      creator: creator.address,
+      request,
+      tradeRouteProfileId: tradeRouteProfile,
+      finalizeRouteProfileId: finalizeRouteProfile,
+      deadline,
+    });
+    created = await sendCreate({
+      factory,
+      request,
+      auth: { tradeRouteProfile, finalizeRouteProfile, deadline, signature: createSignature },
+    });
+  }
+  if (!created?.campaign || !created?.token) throw new Error("NO_BONDING_CAMPAIGN");
   const deadline = BigInt(Math.floor(Date.now() / 1000) + 3600);
-  const request = {
-    ...resolved.request,
-    graduationTarget: BigInt(resolved.request.graduationTarget),
-  };
-  const createSignature = await signerMod.signCreateAuthorization({
-    signer: routeAuthority,
-    chainId: resolved.chainId,
-    factoryAddress: resolved.factory,
-    creator: creator.address,
-    request,
-    tradeRouteProfileId: tradeRouteProfile,
-    finalizeRouteProfileId: finalizeRouteProfile,
-    deadline,
-  });
-  const created = await sendCreate({
-    factory,
-    request,
-    auth: { tradeRouteProfile, finalizeRouteProfile, deadline, signature: createSignature },
-  });
   const campaignAddress = ethers.getAddress(created.campaign);
   const tokenAddress = ethers.getAddress(created.token);
   await waitForRpcState(
@@ -269,6 +304,7 @@ export async function runCreateBuySell({
   return {
     ...resolved,
     sent: true,
+    skippedCreate,
     campaign: campaignAddress,
     token: tokenAddress,
     createTx: created.txHash || null,

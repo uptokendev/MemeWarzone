@@ -58,12 +58,14 @@ test("missing live flag never sends", async () => {
   assert.equal(sends, 0);
 });
 
-test("live runner follows BNB 6C pre-grad: $6 USD target, count-before-create, RPC wait, CampaignCreated", async () => {
+test("live runner follows BNB 6C pre-grad and reuses bonding campaign on creator cooldown", async () => {
   const source = await readFile(new URL("./rh46630-live-factory-create-buy-sell.mjs", import.meta.url), "utf8");
   assert.equal(TEST_GRADUATION_USD_THRESHOLD, 6000000000000000000n);
   assert.match(source, /const index = await factory\.campaignsCount\(\);/);
   assert.match(source, /createdAddressesFromReceipt/);
   assert.match(source, /waitForRpcState/);
+  assert.match(source, /findCreatorBondingCampaign/);
+  assert.match(source, /creatorLaunchEligibility/);
   assert.match(source, /quoteBuyExactTokens/);
   assert.match(source, /CampaignCreated/);
   assert.match(source, /tuple\(address campaign,address token,address creator/);
