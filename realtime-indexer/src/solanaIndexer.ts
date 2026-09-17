@@ -36,12 +36,6 @@ import {
 const SOLANA_CHAIN_ID = 101;
 const leagueFeed = createLeagueFeedPublisher({ pool, flushMs: 500 });
 leagueFeed.start();
-const DEFAULT_SOLANA_RPC = "https://api.mainnet-beta.solana.com";
-const FALLBACK_SOLANA_RPCS = [
-  "https://api.mainnet-beta.solana.com",
-  "https://solana-rpc.publicnode.com",
-  "https://solana.drpc.org",
-];
 const DEFAULT_PROGRAM_ID = "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt";
 const LAMPORTS_PER_SOL = 1_000_000_000;
 const TOKEN_DECIMALS = 6;
@@ -502,12 +496,7 @@ export function deriveFeeEscrowAddress(campaign: string, launchpadProgramId = pr
 
 function solanaRpcUrls(): string[] {
   const configured = parseRpcList(String(ENV.SOLANA_RPC_HTTP || process.env.SOLANA_RPC_URL || "").trim());
-  const urls = configured.length ? [...configured] : [];
-  for (const fallback of FALLBACK_SOLANA_RPCS) {
-    if (!urls.includes(fallback)) urls.push(fallback);
-  }
-  if (!urls.length) urls.push(DEFAULT_SOLANA_RPC);
-  return urls;
+  return configured;
 }
 
 function toSol(raw: bigint): number {

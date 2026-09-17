@@ -28,10 +28,10 @@ export function getSolanaRewardRpcUrl(chainId: number): string {
   }
 
   return String(
+    import.meta.env.VITE_SOLANA_RPC ||
     import.meta.env.VITE_SOLANA_MAINNET_RPC ||
     import.meta.env.VITE_PUBLIC_RPC_SOLANA ||
     import.meta.env.VITE_PUBLIC_RPC_101 ||
-    import.meta.env.VITE_SOLANA_RPC ||
-    "https://api.mainnet-beta.solana.com"
+    ""
   ).trim();
 }

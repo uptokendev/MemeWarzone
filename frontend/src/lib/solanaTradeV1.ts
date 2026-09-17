@@ -351,10 +351,8 @@ export async function getSolanaTokenBalanceRaw(input: {
 }): Promise<bigint> {
   const web3 = await loadSolanaWeb3();
   const { Connection } = web3;
-  const rpc =
-    String(import.meta.env.VITE_SOLANA_RPC || "").trim() ||
-    getPublicRpcUrl(SOLANA_CHAIN_ID) ||
-    "https://api.mainnet-beta.solana.com";
+  const rpc = String(import.meta.env.VITE_SOLANA_RPC || "").trim() || getPublicRpcUrl(SOLANA_CHAIN_ID);
+  if (!rpc) throw new Error("Solana RPC is not configured (VITE_SOLANA_RPC).");
   const connection = new Connection(rpc, { commitment: "confirmed", disableRetryOnRateLimit: true });
   const { ata } = deriveTraderAta(web3, input.mint, input.owner);
   try {
@@ -439,10 +437,8 @@ async function submitSolanaTradeV1Untracked(
 
   const web3 = await loadSolanaWeb3();
   const { Connection, PublicKey } = web3;
-  const rpc =
-    String(import.meta.env.VITE_SOLANA_RPC || "").trim() ||
-    getPublicRpcUrl(SOLANA_CHAIN_ID) ||
-    "https://api.mainnet-beta.solana.com";
+  const rpc = String(import.meta.env.VITE_SOLANA_RPC || "").trim() || getPublicRpcUrl(SOLANA_CHAIN_ID);
+  if (!rpc) throw new Error("Solana RPC is not configured (VITE_SOLANA_RPC).");
   const connection = new Connection(rpc, "confirmed");
 
   const digest = base64ToBytes(auth.authorization.digestBase64);

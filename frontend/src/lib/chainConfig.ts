@@ -306,20 +306,24 @@ function robinhoodDefaultRpc(chainId: SupportedChainId): string {
   return "";
 }
 
+function firstSolanaMainnetRpc(): string {
+  // Evaluate each key with firstFromCsv so an empty VITE_SOLANA_MAINNET_RPC
+  // cannot hide a real VITE_SOLANA_RPC via `??`. Never fall back to public
+  // RPCs — browser Origin is forbidden there (publicnode 403).
+  return (
+    firstFromCsv(import.meta.env.VITE_SOLANA_RPC as string | undefined) ||
+    firstFromCsv(import.meta.env.VITE_SOLANA_MAINNET_RPC as string | undefined) ||
+    firstFromCsv(import.meta.env.VITE_PUBLIC_RPC_SOLANA as string | undefined) ||
+    firstFromCsv(import.meta.env.VITE_PUBLIC_RPC_101 as string | undefined)
+  );
+}
+
 export function getPublicRpcUrl(chainId: SupportedChainId): string {
   // NOTE: In Vite, only VITE_* env vars are exposed to the frontend bundle.
   // We support comma-separated lists for redundancy.
 
   if (chainId === SOLANA_CHAIN_ID) {
-    const solana =
-      (import.meta.env.VITE_SOLANA_MAINNET_RPC as string | undefined) ??
-      (import.meta.env.VITE_SOLANA_RPC as string | undefined) ??
-      (import.meta.env.VITE_PUBLIC_RPC_SOLANA as string | undefined) ??
-      (import.meta.env.VITE_PUBLIC_RPC_101 as string | undefined);
-    const solanaFirst = firstFromCsv(solana);
-    // Public mainnet-beta RPC forbids browser Origin; Coolify/staging must set
-    // VITE_SOLANA_RPC. publicnode is the last-resort public fallback.
-    return solanaFirst || "https://solana-rpc.publicnode.com";
+    return firstSolanaMainnetRpc();
   }
 
   const explicit =
@@ -354,13 +358,21 @@ export function getPublicRpcUrl(chainId: SupportedChainId): string {
 // For redundancy: get *all* configured public RPC URLs for a chain.
 export function getPublicRpcUrls(chainId: SupportedChainId): string[] {
   if (chainId === SOLANA_CHAIN_ID) {
-    const solana =
-      (import.meta.env.VITE_SOLANA_MAINNET_RPC as string | undefined) ??
-      (import.meta.env.VITE_SOLANA_RPC as string | undefined) ??
-      (import.meta.env.VITE_PUBLIC_RPC_SOLANA as string | undefined) ??
-      (import.meta.env.VITE_PUBLIC_RPC_101 as string | undefined);
-    const list = fromCsv(solana);
-    return list.length ? list : ["https://solana-rpc.publicnode.com"];
+    const seen = new Set<string>();
+    const list: string[] = [];
+    for (const value of [
+      import.meta.env.VITE_SOLANA_RPC,
+      import.meta.env.VITE_SOLANA_MAINNET_RPC,
+      import.meta.env.VITE_PUBLIC_RPC_SOLANA,
+      import.meta.env.VITE_PUBLIC_RPC_101,
+    ] as Array<string | undefined>) {
+      for (const url of fromCsv(value)) {
+        if (seen.has(url)) continue;
+        seen.add(url);
+        list.push(url);
+      }
+    }
+    return list;
   }
 
   const explicit =

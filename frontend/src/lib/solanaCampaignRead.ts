@@ -279,11 +279,7 @@ export function decodeSolanaCampaignAccount(
 }
 
 function rpcUrl(): string {
-  return (
-    String(import.meta.env.VITE_SOLANA_RPC || "").trim() ||
-    getPublicRpcUrl(SOLANA_CHAIN_ID) ||
-    "https://solana-rpc.publicnode.com"
-  );
+  return String(import.meta.env.VITE_SOLANA_RPC || "").trim() || getPublicRpcUrl(SOLANA_CHAIN_ID);
 }
 
 function decodeAccountBytes(raw: Uint8Array, addr: string): SolanaCampaignCurveState | null {

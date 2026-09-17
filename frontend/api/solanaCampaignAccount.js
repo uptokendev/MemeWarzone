@@ -21,9 +21,7 @@ function rpcUrls(cluster) {
   )
     .map((value) => String(value || "").trim())
     .filter((value) => /^https?:\/\//i.test(value));
-  const fallbacks = devnet
-    ? ["https://api.devnet.solana.com"]
-    : ["https://solana-rpc.publicnode.com", "https://solana.drpc.org"];
+  const fallbacks = devnet ? ["https://api.devnet.solana.com"] : [];
   return [...new Set([...configured, ...fallbacks])];
 }
 
