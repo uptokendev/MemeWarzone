@@ -27,6 +27,27 @@ export function planQaIndexerSmoke(input = {}) {
   };
 }
 
+export function evaluateHealth(body) {
+  const robinhood = body?.robinhood || {};
+  const rawChainIds = robinhood?.evmChainIds;
+  const chainIds = Array.isArray(rawChainIds)
+    ? rawChainIds.map(Number).filter(Number.isFinite)
+    : String(rawChainIds || "")
+        .split(",")
+        .map((value) => Number(value.trim()))
+        .filter(Number.isFinite);
+  return {
+    ok: body?.ok === true,
+    sourceCommit: String(body?.sourceCommit || "unset"),
+    rpc46630Configured: Boolean(robinhood?.rpc46630Configured),
+    poolIndexerEnvEnabled: Boolean(robinhood?.poolIndexerEnabled),
+    chain46630Enabled: chainIds.includes(RH46630_CHAIN_ID),
+    loopStarted: Boolean(robinhood?.v3?.loopStarted),
+    lastPassAt: robinhood?.v3?.lastPassAt ?? null,
+    lastError: robinhood?.v3?.lastError ?? null,
+  };
+}
+
 export function evaluateMarketState(body) {
   const factory = String(body?.factoryAddress || "");
   if (sameAddress(factory, FORBIDDEN_STAGED_FACTORY)) throw new Error("STAGED_F170_FACTORY_FORBIDDEN");
