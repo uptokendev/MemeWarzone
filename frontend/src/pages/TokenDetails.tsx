@@ -2961,6 +2961,15 @@ const toSeconds = (ts: number): number => {
     if (topazMarket.liquidityBnb != null && Number.isFinite(topazMarket.liquidityBnb) && topazMarket.liquidityBnb > 0) {
       return `${formatCompact(topazMarket.liquidityBnb)} ${nativeUnit}`;
     }
+    const unifiedNative = unifiedMarket.state?.reserves?.nativeRaw;
+    if (isRobinhoodPage && unifiedNative) {
+      try {
+        const wei = BigInt(unifiedNative);
+        if (wei > 0n) return `${formatCompact(Number(ethers.formatEther(wei * 2n)))} ${nativeUnit}`;
+      } catch {
+        // ignore
+      }
+    }
     if (tokenData.liquidity && tokenData.liquidity !== "—") return tokenData.liquidity;
     return "—";
   })();
@@ -2971,7 +2980,7 @@ const toSeconds = (ts: number): number => {
     if (displayDenom === "BNB") return bnbLabel;
 
     const liqBnb = parseBnbLabel(bnbLabel);
-    if (liqBnb == null) return "—";
+    if (liqBnb == null || liqBnb <= 0) return "—";
 
     if (!nativeUsd) return nativeUsdLoading ? "…" : "—";
 
@@ -4407,6 +4416,17 @@ const toSeconds = (ts: number): number => {
                         className="flex-shrink-0 self-center"
                       />
                     ) : (
+                      {(() => {
+                        const creator = String(campaign?.creator ?? "").trim();
+                        const evmMe = String(wallet.account ?? "").trim();
+                        const solMe = String(solanaAccount ?? "").trim();
+                        const isCreator = Boolean(
+                          creator &&
+                            ((solMe && creator === solMe) ||
+                              (evmMe && creator.toLowerCase() === evmMe.toLowerCase())),
+                        );
+                        if (!isCreator) return null;
+                        return (
                       <CrypticPumpListButton
                         className="flex-shrink-0 self-center"
                         chainId={Number(chainIdForStorage || (isSolanaPage ? 101 : 56))}
@@ -4419,6 +4439,8 @@ const toSeconds = (ts: number): number => {
                         listing={crypticPumpListing}
                         onListed={setCrypticPumpListing}
                       />
+                        );
+                      })()}
                     )}
                   </>
                 ) : null}

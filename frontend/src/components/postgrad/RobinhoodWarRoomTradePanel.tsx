@@ -17,6 +17,7 @@ import {
   type RobinhoodV3ResolvedRoute,
 } from "@/lib/robinhoodV3Trade";
 import { ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
+import { getReadProvider } from "@/lib/readProvider";
 import LaunchTokenArtifact from "@/abi/LaunchToken.json";
 
 const TOKEN_ABI = LaunchTokenArtifact.abi as ethers.InterfaceAbi;
@@ -81,6 +82,7 @@ export function RobinhoodWarRoomTradePanel({ campaign }: { campaign: CampaignInf
   const chainId = useMemo(() => campaignChainId(campaign), [campaign]);
   const [tab, setTab] = useState<"buy" | "sell">("buy");
   const [amount, setAmount] = useState("0");
+  const [tradeInputDenom, setTradeInputDenom] = useState<"ETH" | "TOKEN">("ETH");
   const [route, setRoute] = useState<RobinhoodV3ResolvedRoute | null>(null);
   const [quoteDetails, setQuoteDetails] = useState<RobinhoodV3Quote | null>(null);
   const [nativeBalance, setNativeBalance] = useState<bigint | null>(null);
@@ -103,13 +105,7 @@ export function RobinhoodWarRoomTradePanel({ campaign }: { campaign: CampaignInf
   const loadRoute = useCallback(async () => {
     try {
       setError(null);
-      const provider = wallet.provider && Number(wallet.chainId) === chainId
-        ? wallet.provider
-        : null;
-      if (!provider) {
-        setRoute(null);
-        return;
-      }
+      const provider = getReadProvider(chainId);
       const next = await resolveRobinhoodV3Route({
         provider,
         campaignAddress: campaign.campaign,
@@ -122,7 +118,7 @@ export function RobinhoodWarRoomTradePanel({ campaign }: { campaign: CampaignInf
       setQuoteDetails(null);
       setError(String((err as Error)?.message || err || "Robinhood V3 route unavailable."));
     }
-  }, [campaign.campaign, campaign.token, chainId, wallet.chainId, wallet.provider]);
+  }, [campaign.campaign, campaign.token, chainId]);
 
   const loadBalances = useCallback(async () => {
     if (!connectedOnCampaignChain || !wallet.provider || !wallet.account) {
@@ -152,15 +148,16 @@ export function RobinhoodWarRoomTradePanel({ campaign }: { campaign: CampaignInf
     let cancelled = false;
     const run = async () => {
       setQuoteDetails(null);
-      if (!route || !wallet.provider) return;
+      if (!route) return;
+      const provider = getReadProvider(chainId);
       const amountIn = parseAmount(amount, TOKEN_DECIMALS);
       if (amountIn <= 0n) return;
       try {
         setLoading(true);
         setError(null);
         const quote = tab === "buy"
-          ? await quoteRobinhoodV3Buy(wallet.provider, route, amountIn, SLIPPAGE_BPS)
-          : await quoteRobinhoodV3Sell(wallet.provider, route, amountIn, SLIPPAGE_BPS);
+          ? await quoteRobinhoodV3Buy(provider, route, amountIn, SLIPPAGE_BPS)
+          : await quoteRobinhoodV3Sell(provider, route, amountIn, SLIPPAGE_BPS);
         if (cancelled) return;
         setQuoteDetails(quote);
       } catch (err) {
@@ -171,7 +168,7 @@ export function RobinhoodWarRoomTradePanel({ campaign }: { campaign: CampaignInf
     };
     void run();
     return () => { cancelled = true; };
-  }, [amount, route, tab, wallet.provider]);
+  }, [amount, chainId, route, tab]);
 
   const executeTrade = async () => {
     if (!connectedOnCampaignChain || !wallet.signer || !wallet.provider || !route) {
@@ -314,13 +311,47 @@ export function RobinhoodWarRoomTradePanel({ campaign }: { campaign: CampaignInf
           <TabsTrigger value="sell" className="border border-orange-400/35 data-[state=active]:bg-orange-500 data-[state=active]:text-white">Sell</TabsTrigger>
         </TabsList>
         <TabsContent value="buy" className="mt-3 space-y-3">
-          <label className="block text-[10px] uppercase tracking-[0.18em] text-white/45">ETH amount</label>
+          <div className="flex items-center justify-between">
+            <label className="block text-[10px] uppercase tracking-[0.18em] text-white/45">
+              {tradeInputDenom === "ETH" ? "ETH amount" : `${campaign.symbol || "Token"} amount`}
+            </label>
+            <button
+              type="button"
+              className="text-[10px] uppercase tracking-[0.16em] text-orange-300"
+              onClick={() => {
+                setTradeInputDenom((value) => (value === "ETH" ? "TOKEN" : "ETH"));
+                setAmount("0");
+                setQuoteDetails(null);
+              }}
+            >
+              Switch to {tradeInputDenom === "ETH" ? campaign.symbol || "TOKEN" : "ETH"}
+            </button>
+          </div>
           <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" className="w-full rounded-lg border border-white/10 bg-black/35 px-3 py-3 text-sm text-white outline-none focus:border-orange-400/60" />
-          <div className="text-xs text-white/55">Estimated receive: {formatAmount(quoteOut, TOKEN_DECIMALS, campaign.symbol || "TOKEN")}</div>
+          <div className="text-xs text-white/55">
+            {tradeInputDenom === "ETH"
+              ? `Estimated receive: ${formatAmount(quoteOut, TOKEN_DECIMALS, campaign.symbol || "TOKEN")}`
+              : `Estimated pay: ${formatAmount(quoteOut, 18, "ETH")}`}
+          </div>
           <div className="text-[10px] text-white/35">Minimum after 1.00% slippage: {formatAmount(minimumOut, TOKEN_DECIMALS, campaign.symbol || "TOKEN")}</div>
         </TabsContent>
         <TabsContent value="sell" className="mt-3 space-y-3">
-          <label className="block text-[10px] uppercase tracking-[0.18em] text-white/45">{campaign.symbol || "Token"} amount</label>
+          <div className="flex items-center justify-between">
+            <label className="block text-[10px] uppercase tracking-[0.18em] text-white/45">
+              {tradeInputDenom === "TOKEN" ? `${campaign.symbol || "Token"} amount` : "ETH amount"}
+            </label>
+            <button
+              type="button"
+              className="text-[10px] uppercase tracking-[0.16em] text-orange-300"
+              onClick={() => {
+                setTradeInputDenom((value) => (value === "ETH" ? "TOKEN" : "ETH"));
+                setAmount("0");
+                setQuoteDetails(null);
+              }}
+            >
+              Switch to {tradeInputDenom === "TOKEN" ? "ETH" : campaign.symbol || "TOKEN"}
+            </button>
+          </div>
           <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" className="w-full rounded-lg border border-white/10 bg-black/35 px-3 py-3 text-sm text-white outline-none focus:border-orange-400/60" />
           <div className="text-xs text-white/55">Estimated receive: {formatAmount(quoteOut, 18, "ETH")}</div>
           <div className="text-[10px] text-white/35">Minimum after 1.00% slippage: {formatAmount(minimumOut, 18, "ETH")}</div>
@@ -359,7 +390,7 @@ export function RobinhoodWarRoomTradePanel({ campaign }: { campaign: CampaignInf
       <Button
         type="button"
         className="mt-3 w-full font-retro"
-        disabled={loading || insufficient || amountIn <= 0n || (connectedOnCampaignChain && !route)}
+        disabled={loading || insufficient || amountIn <= 0n}
         onClick={() => void executeTrade()}
       >
         {!connectedOnCampaignChain

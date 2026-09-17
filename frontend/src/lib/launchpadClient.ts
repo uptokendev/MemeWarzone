@@ -788,6 +788,8 @@ export function useLaunchpad(): LaunchpadAdapter {
         const tokenAddress = normalizeAddress(campaign.token);
         if (tokenAddress) {
           const token = new Contract(tokenAddress, TOKEN_ABI, readProvider) as any;
+          const code = await readProvider.getCode(tokenAddress).catch(() => "0x");
+          if (!code || code === "0x") throw new Error("token_code_missing");
           const totalSupply: bigint = await token.totalSupply();
           const circulating = metrics.launched ? totalSupply : metrics.sold;
           const mcWei = (metrics.currentPrice * circulating) / 10n ** 18n;
@@ -797,7 +799,9 @@ export function useLaunchpad(): LaunchpadAdapter {
         }
       }
     } catch (error) {
-      console.warn("[fetchCampaignSummary] market cap calc failed", error);
+      if (!isUnsupportedContractMethod(error) && !String((error as any)?.message || "").includes("token_code_missing")) {
+        console.warn("[fetchCampaignSummary] market cap calc failed", error);
+      }
     }
 
     return { campaign, metrics, stats: { holders, volume, marketCap, marketCapBnb } };

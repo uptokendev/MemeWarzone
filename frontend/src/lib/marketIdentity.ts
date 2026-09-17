@@ -68,7 +68,11 @@ export async function resolveMarketIdentityAcrossEvm(input: {
   if (!address) return null;
 
   const preferred = getEvmReadChainIdForTokenPage();
-  const order = preferred === 56 ? ([56, 97] as const) : ([97, 56] as const);
+  const order = Array.from(
+    new Set(
+      [preferred, 56, 97, 46630, 4663].filter((id) => Number.isInteger(id) && id > 0),
+    ),
+  ) as SupportedChainId[];
 
   for (const chainId of order) {
     const identity = await resolveMarketIdentity({

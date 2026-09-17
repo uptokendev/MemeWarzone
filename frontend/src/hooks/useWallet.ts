@@ -475,7 +475,15 @@ export function useWallet(): WalletHook {
           resetWalletState(false);
           return;
         }
-        if (chosen.toLowerCase() === accountRef.current.toLowerCase()) return;
+        if (chosen.toLowerCase() === accountRef.current.toLowerCase()) {
+          const live = await new BrowserProvider(selectedProvider).getNetwork().catch(() => null);
+          const cid = live ? Number(live.chainId) : 0;
+          if (cid && isEvmChainId(cid) && isAllowedChainId(cid)) {
+            setChainId(cid);
+            await applyProviderState(selectedProvider, chosen);
+          }
+          return;
+        }
         await ensureSupportedEvmChain(selectedProvider);
         await applyProviderState(selectedProvider, chosen);
       } catch {
@@ -517,8 +525,12 @@ export function useWallet(): WalletHook {
         resetWalletState(false);
         return;
       }
-      setChainId(c);
-      await rebuild();
+      if (c) setChainId(c);
+      try {
+        await applyProviderState(selectedProvider, accountRef.current);
+      } catch {
+        await rebuild();
+      }
     };
 
     selectedProvider.on("accountsChanged", onAccountsChanged);

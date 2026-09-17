@@ -169,9 +169,21 @@ function WalletIcon({ option }: { option: UnifiedWalletOption }) {
   }
 
   if (option.kind === "solana") {
+    const icon = String(option.icon || "");
+    const isImage = /^(data:image\/|https?:\/\/|\/)/.test(icon);
+    if (isImage && !imageFailed) {
+      return (
+        <img
+          src={icon}
+          alt=""
+          className="h-10 w-10 rounded-2xl object-cover shadow-[0_0_26px_-12px_rgba(168,85,247,0.9)]"
+          onError={() => setImageFailed(true)}
+        />
+      );
+    }
     return (
       <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-purple-500/15 text-xl text-purple-300 shadow-[0_0_26px_-12px_rgba(168,85,247,0.9)]">
-        {option.icon || getWalletInitial(option.name)}
+        {getWalletInitial(option.name)}
       </div>
     );
   }
@@ -207,7 +219,11 @@ function WalletRow({
 
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="truncate font-retro text-sm text-foreground">{option.name}</p>
+            <p className="truncate font-retro text-sm text-foreground">
+              {String(option.name || "").length > 32 || /eyJ|A[A-Za-z0-9_-]{20,}\./.test(String(option.name || ""))
+                ? String(option.id || "Wallet")
+                : option.name}
+            </p>
             {option.detected && (
               <span className={`${option.kind === "solana" ? "border-purple-400/30 bg-purple-400/10 text-purple-300" : "border-accent/30 bg-accent/10 text-accent"} rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.16em]`}>
                 detected
@@ -408,9 +424,13 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
 
   useEffect(() => {
     if (!open) return;
+    setSelectedChain(filter === "solana" ? "solana" : (current) => current);
+  }, [filter, open]);
+
+  useEffect(() => {
+    if (!open) return;
 
     setMoreWalletsOpen(false);
-    setSelectedChain(filter === "solana" ? "solana" : null);
     detectWallets();
 
     const timers = WAKE_PROVIDER_DISCOVERY_DELAYS_MS.map((delay) =>

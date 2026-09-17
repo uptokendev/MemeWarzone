@@ -236,6 +236,11 @@ export function resolveTokenPageChainId(input?: {
   if (/^0x[a-fA-F0-9]{40}$/i.test(routeId) || isEvmTokenPath(pathname)) {
     if (isEvmChainId(queryChainId) && isAllowedChainId(queryChainId)) return queryChainId as SupportedChainId;
 
+    // Pinned page chain wins over the feed latch so opening a BNB token while
+    // the War Room feed is Robinhood does not remount the page on 46630.
+    const pinned = readLastEvmChainId();
+    if (pinned && isAllowedChainId(pinned)) return pinned;
+
     const feed = readStoredFeedChainId();
     if (isEvmChainId(feed) && isAllowedChainId(feed)) return feed;
 
