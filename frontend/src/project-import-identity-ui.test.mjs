@@ -3,12 +3,13 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
-const [home, details, commandCenter, coinRow, importPage, resolverAdapters] = await Promise.all([
+const [home, details, commandCenter, coinRow, importPage, claimDialog, resolverAdapters] = await Promise.all([
   read("./components/home/ImportedProjectsOverlay.tsx"),
   read("./pages/ImportedTokenDetailsPage.tsx"),
   read("./pages/command-center/CommandCenterCoins.tsx"),
   read("./components/postgrad/CommandCenterCoinRow.tsx"),
   read("./pages/ProjectImport.tsx"),
+  read("./components/imports/ProjectXClaimDialog.tsx"),
   read("../api/lib/projectImportResolverAdapters.js"),
 ]);
 
@@ -36,43 +37,47 @@ test("generic placeholders are display fallbacks only when resolved identity is 
   assert.match(coinRow, /item\.ticker !== "\?\?\?"/);
 });
 
-test("BNB wrong wallet uses the real resolved current authority and blocks automatic claim", () => {
+test("registration is intentionally ownership-neutral", () => {
+  assert.match(importPage, /Your wallet signs the import request only\. It does not need to own the token\./);
+  assert.match(importPage, /Project ownership can be claimed separately later\./);
+  assert.match(importPage, /createProjectImport/);
+  assert.doesNotMatch(importPage, /resolveProjectEvmAuthority|claimProjectImport|REQUEST MANUAL REVIEW/);
+});
+
+test("BNB and Robinhood claim UI resolves the current EVM owner and only enables instant verification on a wallet match", () => {
+  assert.match(claimDialog, /resolveProjectEvmAuthority\(item, connectedWallet\)/);
+  assert.match(claimDialog, /authority\?\.available && authority\.matchesConnected && connectedWallet/);
+  assert.match(claimDialog, /data-project-owner-wallet-option="true"/);
+  assert.match(claimDialog, /Your connected \{evmChainLabel\} wallet matches the current contract owner\./);
+  assert.match(claimDialog, /CONNECT \{evmChainLabel\.toUpperCase\(\)\} OWNER WALLET/);
+  assert.match(claimDialog, /VERIFY \{evmChainLabel\.toUpperCase\(\)\} OWNER WALLET/);
+});
+
+test("ownerless EVM tokens fall back to X or manual review without inventing ownership", () => {
+  assert.match(claimDialog, /does not expose an active owner\(\)\/getOwner\(\) wallet/);
+  assert.match(claimDialog, /Use the official X account if available, or request manual review below/);
   assert.match(resolverAdapters, /currentAuthority:\s*raw\.ownership\?\.currentOwner \?\? null/);
-  assert.match(resolverAdapters, /signedWalletMatchesAuthority:\s*Boolean\(raw\.ownership\?\.automaticOwnershipVerified\)/);
-  assert.match(importPage, /wrongAuthorityWallet=evidence\?\.automaticOwnershipAvailable===true&&Boolean\(evidence\.currentAuthority\)&&!evidence\.signedWalletMatchesAuthority/);
-  assert.match(importPage, /WRONG WALLET CONNECTED/);
-  assert.match(importPage, /This memecoin is controlled by wallet \{expectedAuthorityShort\}\. Connect that wallet to verify ownership\./);
-  assert.match(importPage, /!ownerVerified&&evidence\?\.signedWalletMatchesAuthority\?<Button[\s\S]*CLAIM CURRENT OWNERSHIP/);
 });
 
-test("Solana wrong wallet uses the real resolved mint authority and blocks automatic claim", () => {
-  assert.match(resolverAdapters, /currentAuthority:\s*raw\.mintAuthority \?\? null/);
-  assert.match(resolverAdapters, /signedWalletMatchesAuthority:\s*Boolean\(raw\.verified\)/);
-  assert.match(importPage, /data-import-wrong-wallet-warning="true"/);
-  assert.match(importPage, /Connected: \{connectedWalletShort\}/);
-  assert.match(importPage, /wrongAuthorityWallet\?"REGISTER MEMECOIN":<>REGISTER &amp; VERIFY MEMECOIN<\/>/);
+test("Solana claim UI verifies current project authority after registration", () => {
+  assert.match(claimDialog, /Solana project authority wallet/);
+  assert.match(claimDialog, /verifyPumpCreatorWallet/);
+  assert.match(claimDialog, /claimProjectImport\(\{item,auth\}\)/);
+  assert.match(claimDialog, /Recorded project authority:/);
+  assert.match(claimDialog, /VERIFY PROJECT AUTHORITY/);
+  assert.match(resolverAdapters, /resolveSolanaProjectAuthority/);
 });
 
-test("expected and connected wallet addresses use first-four last-four shortening", () => {
-  assert.match(importPage, /address\.slice\(0, 4\)/);
-  assert.match(importPage, /address\.slice\(-4\)/);
-  assert.match(importPage, /`\$\{address\.slice\(0, 4\)\}\.\.\.\$\{address\.slice\(-4\)\}`/);
-  assert.match(importPage, /expectedAuthorityShort=wrongAuthorityWallet\?shortenWallet\(evidence\?\.currentAuthority\):""/);
-  assert.match(importPage, /connectedWalletShort=shortenWallet\(connectedWallet\)/);
+test("official X and manual-review ownership fallbacks remain separate from registration", () => {
+  assert.match(claimDialog, /VERIFY WITH X/);
+  assert.match(claimDialog, /REQUEST MANUAL REVIEW/);
+  assert.match(claimDialog, /This does not verify ownership automatically\./);
+  assert.match(claimDialog, /project_import_manual_claim/);
+  assert.match(claimDialog, /Not the owner\? Close this window\. The real owner can claim it later\./);
 });
 
-test("correct authority wallet keeps the normal ownership verification flow", () => {
-  assert.match(importPage, /!ownerVerified&&evidence\?\.signedWalletMatchesAuthority\?<Button[^>]*[\s\S]*CLAIM CURRENT OWNERSHIP/);
-  assert.match(importPage, /wrongAuthorityWallet\?"Reconnect with the current authority wallet shown above before claiming automatic ownership\.":"Current authority exists and this connected wallet matches that authority\."/);
-});
-
-test("automatic ownership unavailable preserves manual review without inventing an expected wallet", () => {
-  assert.match(importPage, /evidence\?\.automaticOwnershipAvailable===false\?"AUTOMATIC OWNERSHIP VERIFICATION UNAVAILABLE"/);
-  assert.match(importPage, /evidence\?\.automaticOwnershipAvailable===false&&!conflictingVerified\?<Button[\s\S]*REQUEST PROJECT CLAIM/);
-  assert.match(importPage, /wrongAuthorityWallet=evidence\?\.automaticOwnershipAvailable===true/);
-});
-
-test("no-wallet import UX remains connect-first", () => {
-  assert.match(importPage, /disabled=\{!validAddress\|\|!connected\|\|working\}/);
-  assert.match(importPage, /Connect a wallet to resolve ownership evidence\./);
+test("no-wallet import UX remains connect-first without resolving ownership evidence", () => {
+  assert.match(importPage, /disabled=\{!validAddress \|\| !connected \|\| working\}/);
+  assert.match(importPage, /Connect a wallet to submit the import\./);
+  assert.match(importPage, /IMPORT MEMECOIN/);
 });
