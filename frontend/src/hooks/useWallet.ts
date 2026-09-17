@@ -76,6 +76,13 @@ export type DetectedWallet = {
   sortScore: number;
 };
 
+export type EvmWalletSession = {
+  provider: BrowserProvider;
+  signer: JsonRpcSigner;
+  account: string;
+  chainId: number;
+};
+
 export type WalletHook = {
   provider: BrowserProvider | null;
   signer: JsonRpcSigner | null;
@@ -86,7 +93,7 @@ export type WalletHook = {
   detectedWallets: DetectedWallet[];
   hasInjectedWallets: boolean;
   connect: (wallet?: WalletType, opts?: { chainId?: number }) => Promise<void>;
-  switchToChain: (chainId: number) => Promise<number>;
+  switchToChain: (chainId: number) => Promise<EvmWalletSession>;
   disconnect: () => Promise<void>;
   detectWallets: () => DetectedWallet[];
   isConnected: boolean;
@@ -364,7 +371,7 @@ async function ensureSupportedEvmChain(provider: Eip1193Provider, preferredChain
   } catch {
     try {
       const raw = await provider.request({ method: "eth_chainId" });
-      cid = parseInt(String(raw), 16);
+      cid = parseChainId(raw);
     } catch {}
   }
 
@@ -393,21 +400,18 @@ async function ensureSupportedEvmChain(provider: Eip1193Provider, preferredChain
         method: "wallet_addEthereumChain",
         params: [buildEvmWalletChainParams(target as 56 | 97 | 4663 | 46630, getPublicRpcUrls(target as any))],
       });
+      // EIP-3085 does not require wallets to stay on the newly added network.
+      // Switch again so a 4902 recovery cannot resolve while MetaMask is still on BNB.
+      await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: targetHex }] });
     } else {
       throw error;
     }
   }
-  const bp2 = new BrowserProvider(provider);
-  const net2 = await bp2.getNetwork();
-  const cid2 = Number(net2.chainId);
-  if (isEvmChainId(cid2) && isAllowedChainId(cid2)) return cid2;
-  const allowedLabel = allowedEvmChains.length ? allowedEvmChains.join(", ") : "none configured";
-  throw new Error(
-    `Your wallet is not on an enabled MemeWarzone EVM chain. ` +
-      `Enabled EVM chain IDs: ${allowedLabel}. ` +
-      `Switch to the chain selected in MemeWarzone and try again. ` +
-      `For Solana use the dedicated Solana wallet row.`
-  );
+
+  const rawChainId = await provider.request({ method: "eth_chainId" });
+  const cid2 = parseChainId(rawChainId);
+  if (cid2 === target && isEvmChainId(cid2) && isAllowedChainId(cid2)) return cid2;
+  throw new Error(`Wallet network switch did not reach chain ${target}. Current chain: ${cid2 ?? "unknown"}.`);
 }
 
 export function useWallet(): WalletHook {
@@ -666,14 +670,25 @@ export function useWallet(): WalletHook {
     }
   }, [applyProviderState, bindListeners]);
 
-  const switchToChain = useCallback(async (chainId: number) => {
-    const provider = eip1193Ref.current;
-    const account = accountRef.current;
-    if (!provider || !account) throw new Error("Connect an EVM wallet first.");
-    const cid = await ensureSupportedEvmChain(provider, chainId);
-    await applyProviderState(provider, account);
-    setChainId(cid);
-    return cid;
+  const switchToChain = useCallback(async (targetChainId: number): Promise<EvmWalletSession> => {
+    const selectedProvider = eip1193Ref.current;
+    const chosen = accountRef.current;
+    if (!selectedProvider || !chosen) throw new Error("Connect an EVM wallet first.");
+
+    const cid = await ensureSupportedEvmChain(selectedProvider, targetChainId);
+    await applyProviderState(selectedProvider, chosen);
+
+    // Return a fresh write session immediately. React state updates above are async,
+    // so callers must not have to wait for a re-render before sending the trade.
+    const freshProvider = new BrowserProvider(selectedProvider);
+    const freshSigner = await freshProvider.getSigner(chosen);
+    const freshNetwork = await freshProvider.getNetwork();
+    const freshChainId = Number(freshNetwork.chainId);
+    if (cid !== targetChainId || freshChainId !== targetChainId) {
+      throw new Error(`Wallet network switch did not reach chain ${targetChainId}.`);
+    }
+    setChainId(freshChainId);
+    return { provider: freshProvider, signer: freshSigner, account: chosen, chainId: freshChainId };
   }, [applyProviderState]);
 
   const disconnect = useCallback(async () => {
