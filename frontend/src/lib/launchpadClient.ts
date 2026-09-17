@@ -940,27 +940,47 @@ export function useLaunchpad(): LaunchpadAdapter {
       work: async () => {
     const submittedAddress = normalizeAddress(campaignAddress);
     if (!submittedAddress) throw new Error("Invalid campaign or token address");
-    if (!signer) throw new Error("Wallet not connected");
-    if (!wallet.account) throw new Error("Wallet not connected");
+
+    let tradeSigner = signer;
+    let tradeAccount = String(wallet.account || "");
+    const targetChainId = Number(activeChainId);
+    const isRobinhoodBuy = targetChainId === ROBINHOOD_CHAIN_ID || targetChainId === ROBINHOOD_TESTNET_CHAIN_ID;
+
+    if (!tradeSigner || !tradeAccount) throw new Error("Wallet not connected");
+
+    // TokenDetails bonding reads are already pinned to the RH campaign chain, but the
+    // connected EVM wallet may still be on BNB. Switch in-place and consume the fresh
+    // EvmWalletSession immediately so the same click never writes through a stale signer.
+    if (isRobinhoodBuy && Number(wallet.chainId) !== targetChainId) {
+      if (typeof wallet.switchToChain !== "function") {
+        throw new Error(`Switch your EVM wallet to Robinhood chain ${targetChainId} and try again.`);
+      }
+      const switched = await wallet.switchToChain(targetChainId);
+      if (Number(switched?.chainId) !== targetChainId || !switched?.signer || !switched?.account) {
+        throw new Error(`Wallet did not switch to Robinhood chain ${targetChainId}.`);
+      }
+      tradeSigner = switched.signer;
+      tradeAccount = switched.account;
+    }
 
     const normalizedCampaign = await resolveCanonicalCampaignAddress(
       submittedAddress,
-      Number(activeChainId),
+      targetChainId,
       readProvider,
     );
-    const campaign = new Contract(normalizedCampaign, CAMPAIGN_ABI, signer) as any;
-    await fetchLaunchpadBuyPreflight(wallet.account, normalizedCampaign, activeChainId);
+    const campaign = new Contract(normalizedCampaign, CAMPAIGN_ABI, tradeSigner) as any;
+    await fetchLaunchpadBuyPreflight(tradeAccount, normalizedCampaign, activeChainId);
     const authResponse = await requestTradeAuthorization({
-      walletAddress: wallet.account,
+      walletAddress: tradeAccount,
       campaignAddress: normalizedCampaign,
-      chainId: Number(activeChainId),
+      chainId: targetChainId,
       action: TRADE_AUTH_BUY_EXACT_TOKENS,
       amount: amountWei,
       limit: maxCostWei,
     });
     const auth = authResponse.authorization;
 
-    const overrides = await legacyGasOverrides(signer, readProvider, { value: maxCostWei });
+    const overrides = await legacyGasOverrides(tradeSigner, readProvider, { value: maxCostWei });
     let tx;
     try {
       tx = await campaign.buyExactTokensAuthorized(
@@ -981,7 +1001,7 @@ export function useLaunchpad(): LaunchpadAdapter {
     if (!trades.length) {
       trades = [{
         side: "buy",
-        wallet: String(wallet.account || "").toLowerCase(),
+        wallet: String(tradeAccount || "").toLowerCase(),
         token_amount: amountWei.toString(),
         bnb_amount: maxCostWei.toString(),
         tx_hash: String(receipt?.hash || tx?.hash || "").toLowerCase(),
@@ -991,11 +1011,11 @@ export function useLaunchpad(): LaunchpadAdapter {
       }];
     }
     emitTxConfirmed({ kind: "buy", chainId: activeChainId, campaignAddress: normalizedCampaign, txHash: receipt?.hash ?? tx?.hash, trades });
-    notifyIndexerTrade({ chainId: Number(activeChainId), campaignAddress: normalizedCampaign, txHash: receipt?.hash ?? tx?.hash });
+    notifyIndexerTrade({ chainId: targetChainId, campaignAddress: normalizedCampaign, txHash: receipt?.hash ?? tx?.hash });
     return receipt;
       },
     });
-  }, [signer, wallet.account, activeChainId, readProvider]);
+  }, [signer, wallet.account, wallet.chainId, wallet.switchToChain, activeChainId, readProvider]);
 
   const sellTokens = useCallback(async (campaignAddress: string, amountWei: bigint, minAmountWei: bigint) => {
     return runCatalogAction({
