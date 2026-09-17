@@ -29,3 +29,15 @@ id = "generic-api-key"
     "3dd137936d8d12f0a7275fd2500a90c6573fc2eb",
   ]
   paths = [ '''^frontend/api/lib/arenaTokenProfile\.test\.mjs$''' ]
+
+  # Everglen is a public Solana mint used by the Project Import retention guard
+  # and its regression test. It is not a credential. Scope this exception to the
+  # exact public mint and the two assessment files only.
+  [[rules.allowlists]]
+  description = "Known false positive: Everglen public Solana mint"
+  condition = "AND"
+  regexes = [ '''FcBb7avR9LgmgwFxRcVJDiroZxZfgvtnUJrRKQ7kpump''' ]
+  paths = [
+    '''^frontend/api/lib/projectImportAssessment\.js$''',
+    '''^frontend/api/lib/projectImportAssessment\.test\.mjs$''',
+  ]

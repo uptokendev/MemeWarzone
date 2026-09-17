@@ -77,6 +77,10 @@ export default function ProfilePage() {
       return <ConnectCommandCenterPrompt onConnect={() => openWalletModal(anyWallet)} />;
     }
 
+    if (searchParams.get("import") === "1") {
+      return <Navigate to={`/profile/${accountWallet}/command/coins?import=1`} replace />;
+    }
+
     return <Navigate to={`/profile/${accountWallet}/command`} replace />;
   }
 

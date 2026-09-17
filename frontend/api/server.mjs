@@ -32,6 +32,8 @@ import profileCabinet from "./profileCabinet.js";
 import profilePortfolio from "./profile/portfolio.js";
 import postgrad from "./postgrad.js";
 import upload from "./upload.js";
+import projectImports from "./projectImports.js";
+import projectImportImage from "./projectImportImage.js";
 import rewards from "./rewards.js";
 import shareCard from "./shareCard.js";
 import prepareShareCard from "./prepare-share-card.js";
@@ -298,6 +300,8 @@ async function recruiterSignupCodeAvailabilityAlias(req, res) {
   }
 }
 
+// Multipart routes must be mounted before any body parser/proxy touches the stream.
+app.use("/api/project-imports/image", wrap(projectImportImage));
 app.use("/api/upload", wrap(upload));
 app.get("/", (_req, res) => res.json({ ok: true, service: "MemeWarzone API", healthz: "/healthz", api: "/api" }));
 app.get("/healthz", (_req, res) => res.status(200).json({ ok: true, service: "frontend-api" }));
@@ -329,6 +333,7 @@ router.all("/activity/trades", wrap(activityTrades));
 router.all("/ably/token", wrap(ablyToken));
 router.get("/price/bnb-usd", wrap(bnbUsdPrice));
 router.all("/auth/nonce", wrap(authNonce));
+router.all(/^\/project-imports(?:\/.*)?$/, wrap(projectImports));
 router.all("/campaigns/upsert", wrap(campaignsUpsert));
 router.all("/campaigns", wrap(campaigns));
 router.all("/dashboard/lp-fees", wrap(dashboardLpFees));

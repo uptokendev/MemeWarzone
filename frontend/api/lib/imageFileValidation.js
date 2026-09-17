@@ -128,8 +128,14 @@ export function inspectImageFile(buffer, options = {}) {
   return detected;
 }
 
-export const ARENA_IMPORT_IMAGE_LIMITS = Object.freeze({
+const SHARED_IMAGE_LIMITS = Object.freeze({
   maxBytes: DEFAULT_MAX_BYTES,
   maxDimension: DEFAULT_MAX_DIMENSION,
   maxPixels: DEFAULT_MAX_PIXELS,
 });
+
+// Arena uploads already consumed this export on integration. Project Import uses
+// the same validated image envelope; keep both names so the forward-port is
+// additive instead of replacing the existing Arena API contract.
+export const ARENA_IMPORT_IMAGE_LIMITS = SHARED_IMAGE_LIMITS;
+export const PROJECT_IMPORT_IMAGE_LIMITS = SHARED_IMAGE_LIMITS;
