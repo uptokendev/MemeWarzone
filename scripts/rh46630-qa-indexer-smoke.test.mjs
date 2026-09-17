@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   FORBIDDEN_STAGED_FACTORY,
   GREEN_FACTORY,
+  evaluateHealth,
   evaluateMarketState,
   planQaIndexerSmoke,
 } from "./rh46630-qa-indexer-smoke.mjs";
@@ -19,6 +20,33 @@ test("QA indexer smoke plan uses Coolify HTTPS and no secrets", () => {
   assert.equal(plan.factory, GREEN_FACTORY);
   assert.match(plan.indexerBase, /^https:\/\//);
   assert.equal(plan.secretsAllowed.length, 0);
+});
+
+test("QA health reports Robinhood indexer env independently from Topaz", () => {
+  const report = evaluateHealth({
+    ok: true,
+    sourceCommit: "abc123",
+    robinhood: {
+      rpc46630Configured: true,
+      poolIndexerEnabled: true,
+      evmChainIds: [56, 46630],
+      v3: { loopStarted: true, lastPassAt: "2026-09-17T23:00:00.000Z", lastError: null },
+    },
+  });
+  assert.equal(report.ok, true);
+  assert.equal(report.rpc46630Configured, true);
+  assert.equal(report.poolIndexerEnvEnabled, true);
+  assert.equal(report.chain46630Enabled, true);
+  assert.equal(report.loopStarted, true);
+});
+
+test("market-state diagnostic selects the Robinhood env on Robinhood chains", () => {
+  const source = fs.readFileSync(
+    path.resolve(here, "../realtime-indexer/src/marketApi.ts"),
+    "utf8",
+  );
+  assert.match(source, /chainId === 4663 \|\| chainId === 46630/);
+  assert.match(source, /\? ENV\.ENABLE_ROBINHOOD_V3_POOL_INDEXER/);
 });
 
 test("staged 0xF170 factory is rejected", () => {
