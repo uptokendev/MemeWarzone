@@ -1,0 +1,103 @@
+name: RH46630 QA deploy native swap adapter
+
+# Dispatch from main; the script is read from the integration branch.
+# Deploys the native ETH<->token V3 adapter for the LIVE 46630 surface.
+# 46630 only. Never 4663. Never the staged 0xF170 V3 surface.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type DEPLOY_NATIVE_SWAP_ADAPTER_CHAIN_46630
+        required: true
+        type: string
+      integration_ref:
+        description: Branch or SHA holding the script
+        required: false
+        default: build/cross-chain-stabilization-rh-base
+        type: string
+      live:
+        description: Actually deploy (false = dry-run, deploys nothing)
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-native-swap-adapter:
+    runs-on: ubuntu-latest
+    environment: testnet-certification
+    steps:
+      - name: Refuse without confirmation
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.confirmation }}" != "DEPLOY_NATIVE_SWAP_ADAPTER_CHAIN_46630" ]; then
+            echo "confirmation string does not match"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.integration_ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci --no-audit --no-fund
+
+      - name: Pin tests
+        run: node --test scripts/rh46630-deploy-native-swap-adapter.test.mjs
+
+      - name: Compile adapter
+        run: npx hardhat compile
+
+      - name: Require live secrets
+        if: ${{ inputs.live }}
+        env:
+          ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL }}
+          ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in ROBINHOOD_TESTNET_RPC_URL ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY; do
+            if [ -z "${!name:-}" ]; then
+              echo "missing environment secret: $name (GitHub environment testnet-certification)"
+              missing=1
+            fi
+          done
+          [ "$missing" = "0" ]
+
+      - name: Deploy adapter bound to the live 46630 V3 surface
+        env:
+          ROBINHOOD_TESTNET_RPC_URL: ${{ secrets.ROBINHOOD_TESTNET_RPC_URL }}
+          ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY: ${{ secrets.ROBINHOOD_TESTNET_DEPLOYER_PRIVATE_KEY }}
+          RH46630_DEPLOY_ADAPTER_LIVE: ${{ inputs.live }}
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          node --input-type=module -e '
+            import fs from "node:fs";
+            import { runAdapterDeploy } from "./scripts/rh46630-deploy-native-swap-adapter.mjs";
+            const result = await runAdapterDeploy({}, process.env);
+            fs.writeFileSync("reports/rh46630-native-swap-adapter.json", JSON.stringify(result, null, 2));
+            console.log(JSON.stringify(result, null, 2));
+            if (result.chainId !== 46630) throw new Error("WRONG_CHAIN");
+            if (result.liveRequested && !result.sent) throw new Error("LIVE_REQUESTED_BUT_NOTHING_DEPLOYED");
+            if (result.sent) {
+              console.log("");
+              console.log("Set on the QA frontend, then rebuild:");
+              console.log(`  VITE_ROBINHOOD_V3_NATIVE_SWAP_ADAPTER_ADDRESS_46630=${result.adapterAddress}`);
+              console.log("Set on the QA API/indexer:");
+              console.log(`  ROBINHOOD_V3_NATIVE_SWAP_ADAPTER_ADDRESS_46630=${result.adapterAddress}`);
+            }
+          '
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rh46630-native-swap-adapter
+          path: reports/rh46630-native-swap-adapter.json
+          if-no-files-found: warn
