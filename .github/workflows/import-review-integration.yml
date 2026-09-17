@@ -24,6 +24,7 @@ on:
       - 'frontend/src/imported-token-details-page.test.mjs'
       - 'frontend/src/robinhood-import-gate.test.mjs'
       - 'frontend/e2e/project-import-feedback.browser.ts'
+      - 'frontend/scripts/check-project-import-server-mount.mjs'
       - 'db/migrations/*project_import*'
       - 'supabase/migrations/*project_import*'
       - '.github/workflows/import-review-integration.yml'
