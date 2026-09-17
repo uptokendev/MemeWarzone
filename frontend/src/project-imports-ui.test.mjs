@@ -116,7 +116,7 @@ test("verified project owner is the only profile and replacement-image edit auth
 });
 
 test("public imported project is financially inert and visibly locked", () => {
-  for (const marker of [/data-imported-badge="true"/, /OWNER VERIFIED/, /data-project-image="true"/, /data-project-name="true"/, /data-project-ticker="true"/, /data-project-description="true"/, /data-project-socials="true"/, /data-project-share="true"/, /WARZONE ACCESS LOCKED/]) assert.match(importedPage, marker);
+  for (const marker of [/data-imported-badge="true"/, /data-owner-status-pill="verified"/, /data-project-image="true"/, /data-project-name="true"/, /data-project-ticker="true"/, /data-project-description="true"/, /data-project-socials="true"/, /data-project-share="true"/, /WARZONE ACCESS LOCKED/]) assert.match(importedPage, marker);
   assert.match(importedPage, /Project verification is separate from financial and competition eligibility/);
   assert.doesNotMatch(importedPage, />\s*BUY\s*</i);
   assert.doesNotMatch(importedPage, />\s*SELL\s*</i);
@@ -165,7 +165,7 @@ test("Pump ownership challenge rails remain available as a server-verified fallb
   assert.match(client, /startPumpOwnershipChallenge/);
   assert.match(client, /checkPumpOwnershipChallenge/);
   assert.match(api, /pump-challenge/);
-  assert.match(api, /project_import_pump_challenge_start/);
-  assert.match(api, /project_import_pump_challenge_check/);
+  assert.match(api, /PROJECT_IMPORT_ACTIONS\.pumpChallengeStart/);
+  assert.match(api, /PROJECT_IMPORT_ACTIONS\.pumpChallengeCheck/);
   assert.doesNotMatch(client, /\/api\/arena\/imports/);
 });
