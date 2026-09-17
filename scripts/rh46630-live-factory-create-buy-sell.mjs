@@ -9,6 +9,8 @@ export const FORBIDDEN_STAGED_FACTORY = "0xF170F31dCeaBd2d0b3D32A14FbB6d22661148
 export const DEFAULT_RPC_URL = "https://rpc.testnet.chain.robinhood.com";
 export const TRADE_AUTH_BUY_EXACT_TOKENS = 0;
 export const TRADE_AUTH_SELL_EXACT_TOKENS = 2;
+// LaunchFactory TEST_GRADUATION_USD_THRESHOLD: $6 with 18 decimals (not 6 ETH).
+export const TEST_GRADUATION_USD_THRESHOLD = ethers.parseEther("6");
 
 const FACTORY_ABI = [
   "function FACTORY_GENERATION() view returns (uint32)",
@@ -67,8 +69,8 @@ export function planCreateBuySell(input = {}, env = process.env) {
   const factory = assertLiveFactory(input.factory ?? env.FACTORY_ADDRESS_46630 ?? GREEN_FACTORY);
   const live = liveRequested(env);
   const buyTokensWei = BigInt(String(input.buyTokensWei || env.RH46630_BUY_TOKENS_WEI || ethers.parseEther("1")));
-  const graduationTargetWei = BigInt(
-    String(input.graduationTargetWei || env.RH46630_GRADUATION_TARGET_WEI || ethers.parseEther("6")),
+  const graduationTargetUsd = BigInt(
+    String(input.graduationTargetUsd || env.RH46630_GRADUATION_TARGET_USD || TEST_GRADUATION_USD_THRESHOLD),
   );
   const runId = String(input.runId || env.GITHUB_RUN_ID || Date.now());
   const symbol = String(input.symbol || `QA${String(runId).slice(-4)}`).slice(0, 8);
@@ -83,7 +85,7 @@ export function planCreateBuySell(input = {}, env = process.env) {
     factory,
     forbiddenFactory: FORBIDDEN_STAGED_FACTORY,
     buyTokensWei: buyTokensWei.toString(),
-    graduationTargetWei: graduationTargetWei.toString(),
+    graduationTargetUsd: graduationTargetUsd.toString(),
     request: {
       name: `QA Bond ${symbol}`,
       symbol,
@@ -91,7 +93,7 @@ export function planCreateBuySell(input = {}, env = process.env) {
       xAccount: "",
       website: "",
       extraLink: "",
-      graduationTarget: graduationTargetWei.toString(),
+      graduationTarget: graduationTargetUsd.toString(),
     },
     steps: ["createCampaignAuthorized", "buyExactTokensAuthorized", "sellExactTokensAuthorized"],
     liveRequested: live,
