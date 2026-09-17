@@ -28,6 +28,13 @@ test("staged 0xF170 factory is rejected", () => {
   );
 });
 
+test("RH5661 without CMS pair fails", () => {
+  assert.throws(
+    () => evaluateMarketState({ factoryAddress: GREEN_FACTORY, pairAddress: null, poolIndexerEnvEnabled: true }),
+    /RH5661_CMS_PAIR_MISSING/,
+  );
+});
+
 test("workflow file must not use DATABASE_URL or generic FACTORY_ADDRESS", () => {
   const source = fs.readFileSync(
     path.resolve(here, "../.github/workflows/rh46630-qa-indexer-smoke.yml"),
