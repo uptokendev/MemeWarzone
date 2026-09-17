@@ -532,6 +532,7 @@ export function UpvoteDialog({
           );
         }
       } catch (ingestErr) {
+        if (String((ingestErr as { message?: string })?.message || "").includes("__UPVOTE_ABORT__")) throw ingestErr;
         console.warn("[UpvoteDialog] vote ingest error", ingestErr);
         if (isArena) {
           fail(

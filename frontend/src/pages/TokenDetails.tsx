@@ -22,6 +22,7 @@ import {
   pinTokenDetailsChainId,
   resolveTokenPageChainId,
   SOLANA_CHAIN_ID,
+  isRobinhoodChainId,
   type SupportedChainId,
 } from "@/lib/chainConfig";
 import { resolveMarketIdentity, resolveMarketIdentityAcrossEvm } from "@/lib/marketIdentity";
@@ -35,6 +36,7 @@ import { UnifiedMarketChart } from "@/components/token/UnifiedMarketChart";
 import { GraduationExplosion } from "@/components/token/GraduationExplosion";
 import { useUnifiedMarket, type MarketResolution } from "@/hooks/useUnifiedMarket";
 import { useTopazMarket } from "@/hooks/useTopazMarket";
+import { RobinhoodWarRoomTradePanel } from "@/components/postgrad/RobinhoodWarRoomTradePanel";
 import { useSolanaMeteoraMarket } from "@/hooks/useSolanaMeteoraMarket";
 import {
   ensureTopazSellAllowance,
@@ -656,6 +658,7 @@ const TokenDetails = () => {
   const isSolanaPage =
     isSolanaChainId(chainIdForStorage) &&
     !/^0x[a-fA-F0-9]{40}$/i.test(String(campaignAddress || campaignAddr || ""));
+  const isRobinhoodPage = isRobinhoodChainId(chainIdForStorage);
 
   useEffect(() => {
     const campaignPda = String(campaign?.campaign || campaignAddr || "").trim();
@@ -670,15 +673,20 @@ const TokenDetails = () => {
       chainId: chainIdForStorage,
     });
   }, [campaign, campaignAddr, campaignAddress, chainIdForStorage]);
-  /** Native unit for bonding quotes/UI: SOL on Solana, BNB on EVM. Never show BNB on Solana pages. */
-  const nativeUnit = isSolanaPage ? "SOL" : "BNB";
+  /** Native unit for bonding quotes/UI: SOL on Solana, ETH on Robinhood, BNB on BNB. */
+  const nativeUnit = isSolanaPage ? "SOL" : isRobinhoodPage ? "ETH" : "BNB";
+  const dexVenueLabel = isSolanaPage ? "Meteora" : isRobinhoodPage ? "Uniswap" : "Topaz";
   const walletMatchesCampaign = campaignWalletMatches({
     isSolanaCampaign: isSolanaPage,
     storedKind: activeWalletKind,
     solanaConnected: Boolean(isSolanaConnected && solanaAccount),
     bnbConnected: Boolean(wallet.isConnected && wallet.account),
   });
-  const connectTradeWalletLabel = isSolanaPage ? "Connect SOL wallet" : "Connect BNB wallet";
+  const connectTradeWalletLabel = isSolanaPage
+    ? "Connect SOL wallet"
+    : isRobinhoodPage
+      ? "Connect Robinhood wallet"
+      : "Connect BNB wallet";
   const openWalletModal = useCallback(() => {
     try { window.dispatchEvent(new CustomEvent("memewarzone:openWalletModal")); } catch { /* ignore */ }
   }, []);
@@ -1633,7 +1641,7 @@ const TokenDetails = () => {
     campaignAddress: hasValidCampaignAddress && !isSolanaPage ? resolvedCampaignAddress : undefined,
     tokenAddress: campaign?.token,
     chainId: chainIdForStorage,
-    enabled: hasValidCampaignAddress && contractGraduatedEarly && !isSolanaPage,
+    enabled: hasValidCampaignAddress && contractGraduatedEarly && !isSolanaPage && !isRobinhoodPage,
     pollMs: 8_000,
   });
 
@@ -2007,7 +2015,8 @@ const toSeconds = (ts: number): number => {
 
   // Token view-model used throughout the page
   const tokenData = useMemo(() => {
-    const ticker = campaign?.symbol ?? "";
+    const rawTicker = String(campaign?.symbol ?? "").trim();
+    const ticker = rawTicker ? (rawTicker.startsWith("$") ? rawTicker : `$${rawTicker}`) : "";
     const name = campaign?.name ?? "Token";
     const stats = summary?.stats;
 
@@ -2797,12 +2806,18 @@ const toSeconds = (ts: number): number => {
       (verifiedMarketStage === "TOPAZ_DEGRADED" && contractGraduated);
   // Allow Topaz when on-chain graduated even if market-state is a soft BONDING skeleton
   // (common after cleanup / CMS lag). Soft BONDING must not block WIC-style trades.
-  const isTopazTradingActive = isSolanaPage
+  const isTopazTradingActive = isSolanaPage || isRobinhoodPage
     ? false
     : onChainLaunched ||
       contractGraduated ||
       (verifiedMarketStage === "TOPAZ_ACTIVE" &&
         (Boolean(unifiedMarket.state?.tradingEnabled) || Boolean(unifiedMarket.state?.pairAddress || onChainPair)));
+  const isUniswapTradingActive =
+    isRobinhoodPage &&
+    (contractGraduated ||
+      verifiedMarketStage === "DEX_ACTIVE" ||
+      verifiedMarketStage === "DEX_PENDING" ||
+      Boolean(unifiedMarket.state?.pairAddress || onChainPair));
   const [solanaGraduationTransitionAt, setSolanaGraduationTransitionAt] = useState<number | null>(null);
   const previousSolanaGraduatedRef = useRef<boolean | null>(null);
   useEffect(() => {
@@ -2971,11 +2986,15 @@ const toSeconds = (ts: number): number => {
       : solanaCurveClosed
         ? "Graduating · Solana"
         : "Bonding · Solana"
-    : isTopazTradingActive
-      ? "Graduated · Topaz"
-      : isDexStage
-        ? "Graduating"
-        : "Bonding";
+    : isRobinhoodPage
+      ? isUniswapTradingActive || contractGraduated
+        ? "Graduated · Uniswap"
+        : "Bonding · Robinhood"
+      : isTopazTradingActive
+        ? "Graduated · Topaz"
+        : isDexStage
+          ? "Graduating"
+          : "Bonding";
 
   // Quote (buy: BNB cost; sell: BNB payout) for the entered token amount
   useEffect(() => {
@@ -4144,7 +4163,7 @@ const toSeconds = (ts: number): number => {
       </div>
       <GraduationExplosion
         campaignAddress={campaign?.campaign}
-        active={isSolanaPage ? false : isTopazTradingActive}
+        active={isSolanaPage ? false : isTopazTradingActive || isUniswapTradingActive}
         transitionAt={
           isSolanaPage
             ? solanaGraduationTransitionAt
@@ -4152,7 +4171,7 @@ const toSeconds = (ts: number): number => {
               ? unifiedMarket.stageTransition.at
               : null
         }
-        venueLabel={isSolanaPage ? "Meteora DAMM v2" : "Topaz"}
+        venueLabel={isSolanaPage ? "Meteora DAMM v2" : isRobinhoodPage ? "Uniswap" : "Topaz"}
       />
       <Card className="overflow-hidden bg-card/30 backdrop-blur-md rounded-2xl border border-border p-0 xl:min-h-[220px] shrink-0">
         <div className="grid grid-cols-1 xl:grid-cols-[220px_minmax(0,1fr)] items-stretch xl:min-h-[220px]">
@@ -4882,7 +4901,7 @@ const toSeconds = (ts: number): number => {
                 {contractGraduated ? (
                   <p className="text-[10px] text-muted-foreground leading-snug mb-2">
                     This token has graduated. Bonding is closed. Trading continues on the same page
-                    {isSolanaPage ? " via Meteora" : " via Topaz"}.
+                    {isSolanaPage ? " via Meteora" : isRobinhoodPage ? " via Uniswap" : " via Topaz"}.
                   </p>
                 ) : (
                   <p className="text-[10px] text-muted-foreground leading-snug mb-2">
@@ -4955,11 +4974,16 @@ const toSeconds = (ts: number): number => {
                   <p className="mt-2 text-[11px] text-amber-300">
                     {isSolanaPage
                       ? "Wrong wallet. Connect a SOL wallet to trade this campaign."
-                      : "Wrong wallet. Connect a BNB wallet to trade this campaign."}
+                      : isRobinhoodPage
+                        ? "Wrong wallet. Connect a Robinhood wallet to trade this campaign."
+                        : "Wrong wallet. Connect a BNB wallet to trade this campaign."}
                   </p>
                 )}
               </div>
 
+              {isRobinhoodPage && (contractGraduated || isUniswapTradingActive) ? (
+                <RobinhoodWarRoomTradePanel campaign={campaign as CampaignInfo} />
+              ) : (
               <Tabs value={tradeTab} onValueChange={handleTradeTabChange}>
                 <TabsList className={ctaTabsListClass}>
                   <TabsTrigger value="buy" className={ctaTabsTriggerClass}>Buy</TabsTrigger>
@@ -5229,6 +5253,7 @@ const toSeconds = (ts: number): number => {
                   </Button>
                 </TabsContent>
               </Tabs>
+              )}
             </div>
           </Card>
 

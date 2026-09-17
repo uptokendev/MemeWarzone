@@ -699,12 +699,14 @@ export function useLaunchpad(): LaunchpadAdapter {
       campaign.finalizedAt().catch(() => 0n),
     ]);
     const graduated = Boolean(launched) || BigInt(finalizedAt || 0n) > 0n;
-    const graduationNativeTarget = graduated
+    const skipNativeTarget =
+      graduated || evmReadChainId === ROBINHOOD_CHAIN_ID || evmReadChainId === ROBINHOOD_TESTNET_CHAIN_ID;
+    const graduationNativeTarget = skipNativeTarget
       ? graduationTarget
       : await readBig("graduationNativeTarget", graduationTarget);
 
     return { sold, curveSupply, liquiditySupply, creatorReserve, basePrice, priceSlope, graduationTarget, graduationNativeTarget, liquidityBps, protocolFeeBps, currentPrice, launched, finalizedAt };
-  }, [getCampaignRead]);
+  }, [evmReadChainId, getCampaignRead]);
 
   const fetchCampaignActivity = useCallback(async (campaignAddress: string): Promise<CampaignActivity | null> => {
     const campaign = getCampaignRead(campaignAddress);

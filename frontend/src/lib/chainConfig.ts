@@ -236,12 +236,11 @@ export function resolveTokenPageChainId(input?: {
   if (/^0x[a-fA-F0-9]{40}$/i.test(routeId) || isEvmTokenPath(pathname)) {
     if (isEvmChainId(queryChainId) && isAllowedChainId(queryChainId)) return queryChainId as SupportedChainId;
 
-    // Keep public query-less 0x links backward-compatible with BNB mainnet.
-    // The isolated Robinhood local profile is the only environment allowed to
-    // use its explicitly selected default EVM chain without a query parameter.
-    const runtime = String(import.meta.env.VITE_RUNTIME_ENVIRONMENT || "").trim().toLowerCase();
+    const feed = readStoredFeedChainId();
+    if (isEvmChainId(feed) && isAllowedChainId(feed)) return feed;
+
     const def = getDefaultChainId();
-    if (runtime === "local" && isEvmChainId(def) && isAllowedChainId(def)) return def;
+    if (isEvmChainId(def) && isAllowedChainId(def)) return def;
     return BNB_CHAIN_ID;
   }
 

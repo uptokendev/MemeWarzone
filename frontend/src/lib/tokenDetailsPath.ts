@@ -98,17 +98,10 @@ export function tokenDetailsPath(
         ? chainId
         : 0;
 
-  // Every known EVM market is ambiguous by address shape alone. Internal links
-  // therefore pin the chain explicitly, including BNB mainnet, so browsing a
-  // campaign never follows whichever EVM network MetaMask currently has active.
-  if (
-    resolvedChain === 56 ||
-    resolvedChain === 97 ||
-    resolvedChain === 102 ||
-    resolvedChain === 4663 ||
-    resolvedChain === 46630
-  ) {
-    params.set("chainId", String(resolvedChain));
+  // Only BNB testnet is query-pinned. BNB mainnet, Robinhood, and Solana share
+  // the query-less /token/:address form and resolve from the selected feed.
+  if (resolvedChain === 97) {
+    params.set("chainId", "97");
   }
 
   const extra = String(options?.search || "").replace(/^\?/, "");

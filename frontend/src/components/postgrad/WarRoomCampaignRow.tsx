@@ -8,7 +8,8 @@ import { ContinuousMarketChartPanel } from "@/components/token/ContinuousMarketC
 import { AthBar } from "@/components/token/AthBar";
 import { WarRoomTradePanel } from "@/components/postgrad/WarRoomTradePanel";
 import { RobinhoodWarRoomTradePanel } from "@/components/postgrad/RobinhoodWarRoomTradePanel";
-import { getPostGradTokenDetailRoute } from "@/features/postgrad/identityRoutes";
+import { setSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
+import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import { getWarRoomCampaignMetrics } from "@/features/postgrad/warRoomMetrics";
 import { isSolanaAddress } from "@/lib/address";
 import { getChainLabel, ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfig";
@@ -100,7 +101,6 @@ export function WarRoomCampaignRow({
     if (!isControlled) setInternalExpanded((value) => !value);
   };
 
-  const tokenRoute = getPostGradTokenDetailRoute(campaign.token || campaign.campaign);
   const websiteHref = resolveExternalHref(campaign.website);
   const xHref = campaign.xAccount ? `https://x.com/${campaign.xAccount.replace(/^@/, "")}` : null;
   const extraHref = resolveExternalHref(campaign.extraLink);
@@ -114,6 +114,10 @@ export function WarRoomCampaignRow({
       ? inferredChainId
       : 56;
   const isRobinhoodRow = rowChainId === ROBINHOOD_CHAIN_ID || rowChainId === ROBINHOOD_TESTNET_CHAIN_ID;
+  const tokenRoute = tokenDetailsPath(
+    { tokenAddress: campaign.token, campaignAddress: campaign.campaign, chainId: rowChainId },
+    { chainId: rowChainId },
+  );
   const isScheduledDraft =
     Boolean(rich.isScheduled) || String(rich.draftStatus || "").toLowerCase() === "scheduled";
   const statusLabel =
@@ -351,9 +355,23 @@ export function WarRoomCampaignRow({
               <div className="rounded-[18px] border border-white/10 bg-white/[0.04] p-3 md:rounded-[20px] md:p-4">
                 <div className="text-[10px] uppercase tracking-[0.24em] text-accent/80">Token details</div>
                 <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 md:mt-4">
-                  {tokenRoute ? (
+                  {tokenRoute && tokenRoute !== "/" ? (
                     <Button asChild size="sm" variant="outline" className="justify-between text-[11px] md:text-sm sm:col-span-2">
-                      <Link to={tokenRoute} onClick={(e) => e.stopPropagation()}>
+                      <Link
+                        to={tokenRoute}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (
+                            rowChainId === 56 ||
+                            rowChainId === 97 ||
+                            rowChainId === ROBINHOOD_CHAIN_ID ||
+                            rowChainId === ROBINHOOD_TESTNET_CHAIN_ID ||
+                            rowChainId === 101
+                          ) {
+                            setSelectedFeedChainId(rowChainId);
+                          }
+                        }}
+                      >
                         Open token details
                         <ShoppingCart className="h-4 w-4" />
                       </Link>

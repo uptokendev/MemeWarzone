@@ -22,6 +22,16 @@ test("BNB testnet keeps ?chainId=97", () => {
   );
 });
 
+test("Robinhood URLs stay query-less like BNB mainnet", () => {
+  assert.equal(
+    tokenDetailsPath(
+      { tokenAddress: "0xB69E19C4387905170aa17E986aAA3b805dAfe440", chainId: 46630 },
+      { chainId: 46630 },
+    ),
+    "/token/0xb69e19c4387905170aa17e986aaa3b805dafe440",
+  );
+});
+
 test("Solana mint URLs stay query-less", () => {
   assert.equal(
     tokenDetailsPath(
