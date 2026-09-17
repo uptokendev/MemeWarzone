@@ -18,7 +18,8 @@ const FACTORY_ABI = [
   "function tradeRouteProfile() view returns (uint8)",
   "function finalizeRouteProfile() view returns (uint8)",
   "function campaignsCount() view returns (uint256)",
-  "function getCampaign(uint256) view returns (address campaign, address token)",
+  "function getCampaign(uint256) view returns (tuple(address campaign,address token,address creator,string name,string symbol,string logoURI,string metadataURI,string xAccount,string website,string extraLink,uint64 createdAt))",
+  "event CampaignCreated(uint256 indexed id,address indexed campaign,address indexed token,address creator,string name,string symbol,string logoURI,string metadataURI)",
   "function owner() view returns (address)",
   "function routeAuthority() view returns (address)",
   "function globalPaused() view returns (bool)",
@@ -62,6 +63,41 @@ export function assertLiveFactory(address) {
 
 export function liveRequested(env = process.env) {
   return String(env.RH46630_CREATE_BUY_SELL || "").trim() === "1";
+}
+
+export async function waitForRpcState(label, read, accepted, attempts = 20, delayMs = 1000) {
+  let lastError;
+  let lastValue;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      lastValue = await read();
+      lastError = undefined;
+      if (accepted(lastValue)) return lastValue;
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  const extra = lastError ? String(lastError?.shortMessage || lastError?.message || lastError) : String(lastValue);
+  throw new Error(`${label} not visible after ${attempts} RPC reads: ${extra}`);
+}
+
+export function createdAddressesFromReceipt(factory, receipt) {
+  for (const log of receipt?.logs || []) {
+    try {
+      const parsed = factory.interface.parseLog(log);
+      if (parsed?.name === "CampaignCreated") {
+        return {
+          campaign: ethers.getAddress(parsed.args.campaign),
+          token: ethers.getAddress(parsed.args.token),
+          id: parsed.args.id,
+        };
+      }
+    } catch {
+      // other contracts in the receipt
+    }
+  }
+  return null;
 }
 
 export function planCreateBuySell(input = {}, env = process.env) {
@@ -179,10 +215,23 @@ export async function runCreateBuySell({
   });
   const campaignAddress = ethers.getAddress(created.campaign);
   const tokenAddress = ethers.getAddress(created.token);
+  await waitForRpcState(
+    "campaign bytecode",
+    () => provider.getCode(campaignAddress),
+    (code) => String(code || "0x").length > 4,
+  );
   const campaign = new ethers.Contract(campaignAddress, CAMPAIGN_ABI, buyer);
   const token = new ethers.Contract(tokenAddress, TOKEN_ABI, buyer);
   const buyAmount = BigInt(resolved.buyTokensWei);
-  const maxCost = await campaign.quoteBuyExactTokens(buyAmount);
+  const maxCost = await waitForRpcState(
+    "quoteBuyExactTokens",
+    () => campaign.quoteBuyExactTokens(buyAmount),
+    (cost) => BigInt(cost) > 0n,
+  );
+  const buyerBal = await provider.getBalance(buyer.address);
+  if (buyerBal < BigInt(maxCost)) {
+    throw new Error(`BUYER_UNDERFUNDED have=${buyerBal} need=${maxCost} buyer=${buyer.address}`);
+  }
   const buyAuth = await signerMod.signTradeAuthorization({
     signer: routeAuthority,
     chainId: resolved.chainId,
@@ -239,11 +288,15 @@ async function main() {
   const report = await runCreateBuySell({
     plan,
     sendCreate: async ({ factory, request, auth }) => {
+      const index = await factory.campaignsCount();
       const tx = await factory.createCampaignAuthorized(request, auth);
       const receipt = await tx.wait();
-      const count = await factory.campaignsCount();
-      const info = await factory.getCampaign(count - 1n);
-      return { campaign: info.campaign, token: info.token, txHash: receipt?.hash || tx.hash };
+      const fromEvent = createdAddressesFromReceipt(factory, receipt);
+      const info = await factory.getCampaign(index);
+      const campaign = fromEvent?.campaign || info.campaign;
+      const token = fromEvent?.token || info.token;
+      if (!campaign || !token) throw new Error("CREATE_DID_NOT_RETURN_ADDRESSES");
+      return { campaign, token, txHash: receipt?.hash || tx.hash, index: index.toString() };
     },
     sendBuy: async ({ campaign, buyAmount, maxCost, buyAuth, deadline, tradeRouteProfile }) => {
       const tx = await campaign.buyExactTokensAuthorized(
