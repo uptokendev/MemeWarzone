@@ -2314,6 +2314,38 @@ async function runIndexerCore(opts: {
       tipScanBlocks,
     });
 
+    // Cheap on-chain CMS heal before log scans. RH5661 is launched with a V3 pair
+    // but campaign_market_state stayed BONDING because heal only ran at the end of
+    // scanCampaignRange, which 200k empty-history / 7s tip deadlines often skip.
+    if (chain.chainId === 46630 || chain.chainId === 4663) {
+      const healProvider = createStaticJsonRpcProvider(rpcList[0], chain.chainId, {
+        timeoutMs: Math.min(ENV.RPC_REQUEST_TIMEOUT_MS, 15_000),
+      });
+      for (const c of campaigns) {
+        try {
+          const healed = await healRobinhoodGraduatedCms(
+            healProvider,
+            chain.chainId,
+            c.campaign,
+            null,
+          );
+          if (healed) {
+            await setCampaignGraduated(chain.chainId, c.campaign, target, new Date(), ethers.ZeroHash);
+            console.log("[indexer] RH CMS heal pass seeded", {
+              chainId: chain.chainId,
+              campaign: c.campaign.toLowerCase(),
+            });
+          }
+        } catch (healErr) {
+          console.warn("[indexer] RH CMS heal pass failed", {
+            chainId: chain.chainId,
+            campaign: c.campaign.toLowerCase(),
+            error: String((healErr as any)?.message || healErr),
+          });
+        }
+      }
+    }
+
     // Phase A — tip scan ALL campaigns first so a slow history backfill on AWTT/WIC
     // cannot starve TTA (or any other) live trades for the whole stale window.
     // Prefer a public recent-log RPC as first tip endpoint: BlockPI often rate-limits
