@@ -56,7 +56,8 @@ test("BNB and Robinhood claim UI resolves the current EVM owner and only enables
 test("ownerless EVM tokens fall back to X or manual review without inventing ownership", () => {
   assert.match(claimDialog, /does not expose an active owner\(\)\/getOwner\(\) wallet/);
   assert.match(claimDialog, /Use the official X account if available, or request manual review below/);
-  assert.match(resolverAdapters, /currentAuthority:\s*raw\.ownership\?\.currentOwner \?\? null/);
+  assert.match(resolverAdapters, /currentAuthority:\s*registrationOnly \? null : raw\.ownership\?\.currentOwner \?\? null/);
+  assert.match(resolverAdapters, /currentAuthority:raw\.ownership\?\.currentOwner\?\?null/);
 });
 
 test("Solana claim UI verifies current project authority after registration", () => {
