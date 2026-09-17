@@ -8,6 +8,7 @@ import {
   isEvmChainId,
 } from "@/lib/chainConfig";
 import { resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";
+import { apiFetch } from "@/lib/apiBase";
 
 const BNB_LOCKER_ABI = PermanentLpLockerArtifact.abi as any;
 const V3_LOCKER_ABI = [
@@ -116,9 +117,6 @@ export async function fetchLpFeePools(input: {
     return { lockerAddress: null, items: [] };
   }
 
-  const base = getTokenIndexerBase();
-  if (!base) throw new Error("Token indexer URL is not configured (VITE_TOKEN_API_BASE / VITE_REALTIME_API_BASE).");
-
   const qs = new URLSearchParams({
     chainId: String(chainId),
     limit: String(input.limit ?? 50),
@@ -132,7 +130,7 @@ export async function fetchLpFeePools(input: {
   }
   if (creator) qs.set("creator", solana ? creator : creator.toLowerCase());
 
-  const res = await fetch(`${base}/api/dashboard/lp-fees?${qs.toString()}`, {
+  const res = await apiFetch(`/api/dashboard/lp-fees?${qs.toString()}`, {
     cache: "no-store",
     headers: { Accept: "application/json" },
   });

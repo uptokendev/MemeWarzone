@@ -396,7 +396,7 @@ export default async function handler(req, res) {
     const pairFilter = toAddr(q.pair || q.pool);
     const campaignFilter = toAddr(q.campaign);
     const lockerAddress = resolveLockerAddress(chainId);
-    if (!lockerAddress) return json(res, 400, { error: "LP locker address not configured for this chain." });
+    if (!lockerAddress) return json(res, 200, { lockerAddress: null, items: [], warning: "LP locker is not configured for this chain." });
 
     const provider = await getServerReadProvider(chainId);
     const robinhood = isRobinhoodChain(chainId);

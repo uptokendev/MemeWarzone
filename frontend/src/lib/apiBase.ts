@@ -87,7 +87,6 @@ const REALTIME_INDEXER_API_PREFIXES = [
   "/api/market/",
   "/api/votes",
   "/api/vote_counts",
-  "/api/dashboard/lp-fees",
 ];
 
 const FRONTEND_API_PREFIXES = [
@@ -117,6 +116,7 @@ const FRONTEND_API_PREFIXES = [
   "/api/featured",
   "/api/campaigns",
   "/api/upload",
+  "/api/dashboard/lp-fees",
   "/api/auth",
   "/api/ably",
   "/api/launchpad",

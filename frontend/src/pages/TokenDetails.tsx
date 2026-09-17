@@ -4388,35 +4388,18 @@ const toSeconds = (ts: number): number => {
                         className="flex-shrink-0 self-center"
                       />
                     ) : (
-                      (() => {
-                        const creator = String(campaign?.creator ?? "").trim();
-                        const evmMe = String(wallet.account ?? "").trim();
-                        const solMe = String(solanaAccount ?? "").trim();
-                        const isCreator = Boolean(
-                          creator &&
-                            ((solMe && creator === solMe) ||
-                              (evmMe && creator.toLowerCase() === evmMe.toLowerCase())),
-                        );
-                        const staging =
-                          String(import.meta.env.VITE_RUNTIME_ENVIRONMENT || "").toLowerCase() === "staging";
-                        if (!isCreator && !(staging && (evmMe || solMe))) return null;
-                        const campaignKey = String(campaign?.campaign ?? campaignAddr ?? "").trim();
-                        if (!campaignKey) return null;
-                        return (
-                          <CrypticPumpListButton
-                            className="flex-shrink-0 self-center"
-                            chainId={Number(chainIdForStorage || 56)}
-                            campaignAddress={campaignKey}
-                            tokenAddress={campaign?.token || null}
-                            name={tokenData.name}
-                            ticker={tokenData.ticker}
-                            website={campaign?.website || null}
-                            creatorWallet={String(wallet.account)}
-                            listing={crypticPumpListing}
-                            onListed={setCrypticPumpListing}
-                          />
-                        );
-                      })()
+                      <CrypticPumpListButton
+                        className="flex-shrink-0 self-center"
+                        chainId={Number(chainIdForStorage || (isSolanaPage ? 101 : 56))}
+                        campaignAddress={campaignAddr}
+                        tokenAddress={campaign?.token || campaignAddr}
+                        name={tokenData.name}
+                        ticker={tokenData.ticker}
+                        website={campaign?.website || null}
+                        creatorWallet={String(solanaAccount || wallet.account || "")}
+                        listing={crypticPumpListing}
+                        onListed={setCrypticPumpListing}
+                      />
                     )}
                   </>
                 ) : null}

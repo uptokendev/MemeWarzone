@@ -290,15 +290,7 @@ const TokenDetailsEntry = () => {
       : isRobinhoodChainId(forcedChainId) || isBnbChainId(forcedChainId)
         ? forcedChainId
         : effectiveEvmChainId;
-    const chainIds = [
-      preferredChainId,
-      effectiveEvmChainId,
-      BNB_CHAIN_ID,
-      BNB_TESTNET_CHAIN_ID,
-      ROBINHOOD_CHAIN_ID,
-      ROBINHOOD_TESTNET_CHAIN_ID,
-      SOLANA_CHAIN_ID,
-    ].filter((value, index, list) => value > 0 && list.indexOf(value) === index);
+    const chainIds = [preferredChainId].filter((value) => Number(value) > 0);
 
     (async () => {
       for (const chainId of chainIds) {

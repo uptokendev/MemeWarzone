@@ -3,6 +3,7 @@
  * Layout mirrors programs/memewarzone_solana Campaign (Anchor account).
  * Does not touch BNB paths.
  */
+import { apiFetch } from "@/lib/apiBase";
 import { getPublicRpcUrl, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
 import { loadSolanaWeb3 } from "@/lib/solanaWeb3";
 
@@ -285,11 +286,29 @@ function rpcUrl(): string {
   );
 }
 
+function decodeAccountBytes(raw: Uint8Array, addr: string): SolanaCampaignCurveState | null {
+  if (raw.length < 200) return null;
+  return decodeSolanaCampaignAccount(raw, addr);
+}
+
 export async function fetchSolanaCampaignCurveState(
   campaignAddress: string,
 ): Promise<SolanaCampaignCurveState | null> {
   const addr = String(campaignAddress || "").trim();
   if (!addr) return null;
+  try {
+    const res = await apiFetch(`/api/solana/campaign-account?address=${encodeURIComponent(addr)}`, {
+      cache: "no-store",
+    });
+    const json = await res.json().catch(() => null);
+    if (json?.found && json?.dataBase64) {
+      const bin = Uint8Array.from(atob(String(json.dataBase64)), (c) => c.charCodeAt(0));
+      const decoded = decodeAccountBytes(bin, addr);
+      if (decoded) return decoded;
+    }
+  } catch (e) {
+    console.warn("[solanaCampaignRead] API read failed", addr, e);
+  }
   try {
     const web3 = await loadSolanaWeb3();
     const connection = new web3.Connection(rpcUrl(), {
@@ -299,11 +318,7 @@ export async function fetchSolanaCampaignCurveState(
     const info = await connection.getAccountInfo(new web3.PublicKey(addr), "confirmed");
     if (!info?.data) return null;
     const data = info.data instanceof Uint8Array ? info.data : new Uint8Array(info.data);
-    // SPL mint account is 82 bytes — never a V4 Campaign PDA (~719 bytes).
-    if (data.length < 200) {
-      return null;
-    }
-    return decodeSolanaCampaignAccount(data, addr);
+    return decodeAccountBytes(data, addr);
   } catch (e) {
     console.warn("[solanaCampaignRead] fetch failed", addr, e);
     return null;

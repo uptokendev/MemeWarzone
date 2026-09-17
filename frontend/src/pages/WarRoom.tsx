@@ -14,7 +14,7 @@ import {
 } from "@/hooks/useWarRoomCampaignFeed";
 import { useLaunchpad } from "@/lib/launchpadClient";
 import { resolveImageUri } from "@/lib/media";
-import { compareLiveCampaigns, rankIdentity, type LiveRankRow } from "@/lib/liveCampaignRank";
+import { compareLiveCampaigns, type LiveRankRow } from "@/lib/liveCampaignRank";
 import { useLiveListMotion } from "@/hooks/useLiveListMotion";
 import { usePrefersReducedMotion } from "@/hooks/usePrefersReducedMotion";
 
@@ -208,8 +208,12 @@ const WarRoom = () => {
 
   const { items: filteredCampaigns, containerRef: listRef } = useLiveListMotion({
     items: liveOrder,
-    identity: (campaign) =>
-      rankIdentity(Number(campaign.chainId || selectedChainId), String(campaign.campaign || "")),
+    identity: (campaign) => {
+      const chainId = Number(campaign.chainId || selectedChainId || 0);
+      const addr = String(campaign.campaign || "").trim();
+      if (!addr) return "";
+      return `${chainId}:${chainId === 101 || chainId === 102 ? addr : addr.toLowerCase()}`;
+    },
     frozen: listFrozen,
     reducedMotion,
     snapToken: `${selectedChainId}|${activeMode}|${search}|${sortKey || ""}|${sortDirection}`,
@@ -353,12 +357,15 @@ const WarRoom = () => {
               <RadarLoader label="Scanning trade radar…" size="md" />
             </div>
           ) : filteredCampaigns.length ? (
-            filteredCampaigns.map((campaign) => {
+            filteredCampaigns.map((campaign, index) => {
               const campaignKey = String(campaign.campaign || "");
-              const rowKey = rankIdentity(Number(campaign.chainId || selectedChainId), campaignKey);
+              const chainId = Number(campaign.chainId || selectedChainId || 0);
+              const rowKey = campaignKey
+                ? `${chainId}:${chainId === 101 || chainId === 102 ? campaignKey : campaignKey.toLowerCase()}`
+                : `row:${chainId}:${index}`;
               return (
                 <div
-                  key={rowKey || campaignKey}
+                  key={rowKey}
                   data-live-id={rowKey}
                 >
                 <WarRoomCampaignRow

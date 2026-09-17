@@ -50,6 +50,7 @@ import robinhoodStockGraduationRegistryAdmin from "./admin/robinhoodStockGraduat
 import { withAdminOrOps, withInternalAuth, getAuthEnforceSnapshot } from "./lib/apiAuth.js";
 import { draftDeploy } from "./dev-fix/draft-deploy.js";
 import { solanaDirectCreateV4 } from "./dev-fix/solana-direct-create.js";
+import solanaCampaignAccount from "./solanaCampaignAccount.js";
 import { solanaTradeAuthorizationV1, solanaTradeStatus } from "./dev-fix/solana-trade-authorization-v1.js";
 import { solanaGraduationAuthorizationV1 } from "./dev-fix/solana-graduation-authorization-v1.js";
 import { solanaGraduationHandoff } from "./dev-fix/solana-graduation-handoff.js";
@@ -387,6 +388,7 @@ router.all("/drafts/:draftId/promotion", wrap(draftPromotion));
 router.all("/drafts/:draftId/ticker-reservation", wrap(tickerReservationManagement));
 router.all("/drafts/:draftId/archive", wrap(draftArchive));
 router.all("/drafts/:draftId/deploy", wrap(draftDeploy));
+router.all("/solana/campaign-account", wrap(solanaCampaignAccount));
 router.all("/solana/direct-create", wrap(solanaDirectCreateV4));
 router.all("/solana/trade-authorize", wrap(solanaTradeAuthorizationV1));
 router.all("/solana/graduation-authorize", wrap(solanaGraduationAuthorizationV1));

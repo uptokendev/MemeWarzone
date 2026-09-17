@@ -15,7 +15,10 @@ export function displayedWhileFrozen<T>(
     if (key) frozenByKey.set(key, item);
   }
   const out: T[] = [];
+  const seen = new Set<string>();
   for (const key of frozenKeys) {
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
     const next = liveByKey.get(key) ?? frozenByKey.get(key);
     if (next) out.push(next);
   }

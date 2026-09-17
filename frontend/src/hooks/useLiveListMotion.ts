@@ -37,7 +37,7 @@ export function useLiveListMotion<T>(input: {
 
     if (frozen) {
       if (!frozenKeysRef.current) {
-        frozenKeysRef.current = displayedRef.current.map(idOf).filter(Boolean);
+        frozenKeysRef.current = [...new Set(displayedRef.current.map(idOf).filter(Boolean))];
         frozenItemsRef.current = displayedRef.current;
       }
       const next = displayedWhileFrozen(frozenKeysRef.current, frozenItemsRef.current, items, idOf);
