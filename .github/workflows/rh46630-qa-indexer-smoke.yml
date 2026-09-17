@@ -1,0 +1,50 @@
+name: RH46630 QA indexer smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Pin tests (no production secrets)
+        run: node --test scripts/rh46630-qa-indexer-smoke.test.mjs
+
+      - name: Read Coolify QA indexer only
+        env:
+          QA_INDEXER: https://s75mnp6dfpjtv8m8fcefxlay.178.104.232.231.sslip.io
+          CAMPAIGN: "0xB69E19C4387905170aa17E986aAA3b805dAfe440"
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          curl -fsS -m 20 "$QA_INDEXER/health" -o reports/rh46630-qa-indexer-health.json
+          curl -fsS -m 20 "$QA_INDEXER/api/token/$CAMPAIGN/market-state?chainId=46630" -o reports/rh46630-qa-indexer-market-state.json
+          node --input-type=module -e '
+            import fs from "node:fs";
+            import { evaluateMarketState } from "./scripts/rh46630-qa-indexer-smoke.mjs";
+            const body = JSON.parse(fs.readFileSync("reports/rh46630-qa-indexer-market-state.json", "utf8"));
+            const report = evaluateMarketState(body);
+            fs.writeFileSync("reports/rh46630-qa-indexer-smoke.json", JSON.stringify(report, null, 2));
+            console.log(JSON.stringify(report, null, 2));
+            if (!report.poolIndexerEnvEnabled) {
+              console.error("poolIndexerEnvEnabled is false. Founder must set ENABLE_ROBINHOOD_V3_POOL_INDEXER=1 on the QA indexer and restart it.");
+              process.exit(1);
+            }
+          '
+
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rh46630-qa-indexer-smoke
+          path: reports/rh46630-qa-indexer-*.json
+          if-no-files-found: warn
