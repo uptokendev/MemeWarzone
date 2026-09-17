@@ -22,7 +22,7 @@ for(const match of [true,false])test(`revoked mintAuthority still resolves authe
     assert.equal(result.mintAuthority,null);assert.equal(result.currentAuthority,creator);assert.equal(result.authoritySource,'pump_bonding_curve_creator');assert.equal(result.authorityEvidenceAccount,curve);assert.equal(result.signedWalletMatchesAuthority,match);assert.equal(result.automaticOwnershipAvailable,true);
   }finally{setProjectImportReadClientsForTest();}
 });
-test('registration-only Pump resolution keeps bonding evidence but never resolves creator ownership',async()=>{
+test('registration-only Pump resolution preserves completed-curve evidence without resolving creator ownership',async()=>{
   setProjectImportReadClientsForTest({solana:connection()});try{
     const result=await resolveSolanaProjectImport({chainId:101,tokenAddress:mint,signedWallet:Keypair.generate().publicKey.toBase58(),registrationOnly:true});
     assert.equal(result.currentAuthority,null);
@@ -30,8 +30,8 @@ test('registration-only Pump resolution keeps bonding evidence but never resolve
     assert.equal(result.signedWalletMatchesAuthority,false);
     assert.equal(result.automaticOwnershipAvailable,false);
     assert.equal(result.ownershipReason,'registration_does_not_resolve_ownership');
-    assert.equal(result.market.phase,'bonding');
-    assert.equal(result.market.verified,true);
+    assert.equal(result.market.phase,'postgrad_unverified');
+    assert.equal(result.market.verified,false);
   }finally{setProjectImportReadClientsForTest();}
 });
 test('forged, malformed, executable, zero and non-signable creator records fail closed',()=>{
