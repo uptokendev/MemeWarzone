@@ -1,6 +1,7 @@
 name: Wallet and chain integration proof
 
 on:
+  workflow_dispatch:
   pull_request:
     branches:
       - build/cross-chain-stabilization-rh-base
