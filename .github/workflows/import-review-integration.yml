@@ -87,6 +87,8 @@ jobs:
         run: node --test frontend/src/robinhood-import-gate.test.mjs
       - name: Exact Project Import feedback regressions
         run: node --test frontend/src/lib/projectImportFeedback.test.mjs
+      - name: Apply import-only schema
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f db/migrations/20260908_000001_project_import_onboarding.sql
       - name: Server mount proof
         run: node frontend/scripts/check-project-import-server-mount.mjs
       - run: npm --prefix frontend run build
