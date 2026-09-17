@@ -1065,8 +1065,8 @@ export function registerMarketContinuityRoutes(app: Express) {
       if (!campaign || !validChainId(chainId)) {
         return res.status(400).json({ error: "Invalid campaign or chainId" });
       }
-      if (!["all", "bonding", "topaz"].includes(stage)) {
-        return res.status(400).json({ error: "marketStage must be all, bonding, or topaz" });
+      if (!["all", "bonding", "topaz", "dex", "robinhood_v3"].includes(stage)) {
+        return res.status(400).json({ error: "marketStage must be all, bonding, topaz, dex, or robinhood_v3" });
       }
 
       let cursorBlock: number | null = null;
@@ -1084,11 +1084,11 @@ export function registerMarketContinuityRoutes(app: Express) {
       const result = await pool.query(
         `select
            "chainId","campaignAddress","tokenAddress","pairAddress","marketStage",source,
-           side,wallet,recipient,"tokenAmountRaw","nativeAmountRaw","priceBnb",
+           side,wallet,recipient,"tokenAmountRaw","nativeAmountRaw","quoteAmountRaw","priceBnb",
            "txHash","logIndex","blockNumber","blockTime",status
          from public.market_trades_v
          where "chainId"=$1 and "campaignAddress"=$2
-           and ($3='all' or source=$3)
+           and ($3='all' or source=$3 or ($3='dex' and source<>'bonding') or ($3='topaz' and source in ('topaz','robinhood_v3')))
            and ($4::bigint is null or "blockNumber" < $4 or ("blockNumber"=$4 and "logIndex" < $5))
          order by "blockNumber" desc,"logIndex" desc
          limit $6`,

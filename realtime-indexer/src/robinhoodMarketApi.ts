@@ -440,7 +440,7 @@ export function registerRobinhoodMarketContinuityRoutes(app: Express): void {
 
       const result = await pool.query(
         `select "chainId","campaignAddress","tokenAddress","pairAddress","marketStage",source,
-                side,wallet,recipient,"tokenAmountRaw","nativeAmountRaw","priceBnb",
+                side,wallet,recipient,"tokenAmountRaw","nativeAmountRaw","quoteAmountRaw","priceBnb",
                 "txHash","logIndex","blockNumber","blockTime",status
            from public.market_trades_v
           where "chainId"=$1 and lower("campaignAddress")=lower($2)
