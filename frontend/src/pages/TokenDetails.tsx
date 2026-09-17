@@ -1879,7 +1879,7 @@ const { stats: rtStats } = useTokenStatsRealtime(
     return null;
   }, [isSolanaPage, lastMarketTradePrice, rtStats?.lastPriceBnb, solanaCurve?.graduated, solanaMeteora.spot?.priceSol]);
 
-  const solanaLivePrice = solanaDexPrice ?? solanaSpotNative;
+  const solanaLivePrice = solanaDexPrice ?? solanaSpotNative ?? lastMarketTradePrice;
 
   const solanaSoldWhole = useMemo(() => {
     if (!isSolanaPage) return null;
@@ -1891,9 +1891,10 @@ const { stats: rtStats } = useTokenStatsRealtime(
       latestSoldFromTrades ??
       0n;
     if (sold <= 0n) return null;
-    const whole = Number(ethers.formatUnits(sold, tokenDecimals));
+    const decimals = Number(solanaCurve?.tokenDecimals || tokenDecimals || 6);
+    const whole = Number(ethers.formatUnits(sold, decimals));
     return Number.isFinite(whole) && whole > 0 ? whole : null;
-  }, [isSolanaPage, latestSoldFromTrades, metrics?.sold, solanaCurve?.soldTokens, tokenDecimals]);
+  }, [isSolanaPage, latestSoldFromTrades, metrics?.sold, solanaCurve?.soldTokens, solanaCurve?.tokenDecimals, tokenDecimals]);
 
   const pageLivePriceNative = useMemo(() => {
     if (isSolanaPage) return solanaLivePrice;
@@ -2040,7 +2041,8 @@ const toSeconds = (ts: number): number => {
           (metrics?.sold && metrics.sold > 0n ? metrics.sold : null) ??
           latestSoldFromTrades ??
           0n;
-        const supplyWhole = Number(ethers.formatUnits(sold, tokenDecimals));
+        const decimals = Number(solanaCurve?.tokenDecimals || tokenDecimals || 6);
+        const supplyWhole = sold > 0n ? Number(ethers.formatUnits(sold, decimals)) : 0;
         const mcapNative = supplyWhole * solanaLivePrice;
         const label = Number.isFinite(mcapNative) && mcapNative > 0
           ? `${formatCompact(mcapNative)} ${nativeUnit}`
@@ -2194,16 +2196,17 @@ const toSeconds = (ts: number): number => {
   ]);
 
   const marketCapDisplay = useMemo(() => {
-    if (displayDenom === "BNB") {
-      if (liveMarketCapNative != null && liveMarketCapNative > 0) {
-        return `${formatCompact(liveMarketCapNative)} ${nativeUnit}`;
-      }
-      return tokenData.marketCap;
-    }
-    if (liveMarketCapNative == null) return "—";
-    if (!nativeUsd) return nativeUsdLoading ? "…" : "—";
+    const nativeLabel =
+      liveMarketCapNative != null && liveMarketCapNative > 0
+        ? `${formatCompact(liveMarketCapNative)} ${nativeUnit}`
+        : tokenData.marketCap && tokenData.marketCap !== "—"
+          ? tokenData.marketCap
+          : null;
+    if (displayDenom === "BNB") return nativeLabel || "—";
+    if (liveMarketCapNative == null || liveMarketCapNative <= 0) return nativeLabel || "—";
+    if (!nativeUsd) return nativeUsdLoading ? "…" : nativeLabel || "—";
     const usd = liveMarketCapNative * nativeUsd;
-    return Number.isFinite(usd) && usd > 0 ? formatCompactUsd(usd) : "—";
+    return Number.isFinite(usd) && usd > 0 ? formatCompactUsd(usd) : nativeLabel || "—";
   }, [displayDenom, liveMarketCapNative, nativeUnit, nativeUsd, nativeUsdLoading, tokenData.marketCap]);
 
   const marketCapUsdLabel = useMemo(() => {
