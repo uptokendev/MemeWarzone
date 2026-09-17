@@ -390,6 +390,7 @@ app.get("/health", async (_req, res) => {
         rpc4663Configured: Boolean(ENV.ROBINHOOD_RPC_HTTP_4663),
         poolIndexerEnabled: ENV.ENABLE_ROBINHOOD_V3_POOL_INDEXER,
         evmChainIds: ENV.EVM_INDEXER_CHAIN_IDS,
+        v3: (await import("./robinhoodV3PoolIndexer.js")).robinhoodV3PublicHealth(),
       },
       solana: solanaIndexerPublicHealth(),
     });

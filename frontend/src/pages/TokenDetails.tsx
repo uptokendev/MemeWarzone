@@ -684,6 +684,9 @@ const TokenDetails = () => {
     solanaConnected: Boolean(isSolanaConnected && solanaAccount),
     bnbConnected: Boolean(wallet.isConnected && wallet.account),
   });
+  /** No wallet at all is not the same as the wrong wallet family. */
+  const anyWalletConnected =
+    Boolean(isSolanaConnected && solanaAccount) || Boolean(wallet.isConnected && wallet.account);
   const connectTradeWalletLabel = isSolanaPage
     ? "Connect SOL wallet"
     : isRobinhoodPage
@@ -5040,11 +5043,13 @@ const toSeconds = (ts: number): number => {
                 </div>
                 {walletMatchesCampaign ? null : (
                   <p className="mt-2 text-[11px] text-amber-300">
-                    {isSolanaPage
-                      ? "Wrong wallet. Connect a SOL wallet to trade this campaign."
-                      : isRobinhoodPage
-                        ? "Wrong wallet. Connect a Robinhood wallet to trade this campaign."
-                        : "Wrong wallet. Connect a BNB wallet to trade this campaign."}
+                    {!anyWalletConnected
+                      ? `${connectTradeWalletLabel} to trade this campaign.`
+                      : isSolanaPage
+                        ? "Wrong wallet. Connect a SOL wallet to trade this campaign."
+                        : isRobinhoodPage
+                          ? "Wrong wallet. Connect a Robinhood wallet to trade this campaign."
+                          : "Wrong wallet. Connect a BNB wallet to trade this campaign."}
                   </p>
                 )}
               </div>

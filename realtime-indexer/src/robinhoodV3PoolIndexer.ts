@@ -250,6 +250,7 @@ async function discoverPools(provider: ethers.JsonRpcProvider, config: ChainConf
       order by cms.graduation_block asc nulls last`,
     [config.chainId],
   );
+  passHealth.lastCandidateCount = candidates.rowCount ?? candidates.rows.length;
 
   for (const row of candidates.rows) {
     const campaignAddress = lowerAddress(row.campaign_address);
@@ -455,18 +456,35 @@ async function discoverPools(provider: ethers.JsonRpcProvider, config: ChainConf
       }
     } catch (error) {
       const message = String((error as any)?.shortMessage || (error as any)?.message || error);
-      await pool.query(
-        `update public.campaign_market_state
-            set market_stage='DEX_DEGRADED',pool_verified=false,last_error=$3,updated_at=now()
-          where chain_id=$1 and campaign_address=$2`,
-        [config.chainId, campaignAddress, message.slice(0, 1000)],
-      );
-      await pool.query(
-        `update public.campaigns set market_stage='DEX_DEGRADED',updated_at=now()
-          where chain_id=$1 and campaign_address=$2`,
-        [config.chainId, campaignAddress],
-      );
+      // Keep the real reason first. A database that rejects DEX_DEGRADED (an
+      // older stage constraint) otherwise throws out of this handler and
+      // replaces the discovery failure with its own, hiding the actual cause.
+      passHealth.lastError = `discovery:${campaignAddress}:${message}`.slice(0, 300);
       console.warn("[robinhood-v3] pool discovery degraded", { chainId: config.chainId, campaignAddress, error: message });
+      try {
+        await pool.query(
+          `update public.campaign_market_state
+              set market_stage='DEX_DEGRADED',pool_verified=false,last_error=$3,updated_at=now()
+            where chain_id=$1 and campaign_address=$2`,
+          [config.chainId, campaignAddress, message.slice(0, 1000)],
+        );
+        await pool.query(
+          `update public.campaigns set market_stage='DEX_DEGRADED',updated_at=now()
+            where chain_id=$1 and campaign_address=$2`,
+          [config.chainId, campaignAddress],
+        );
+      } catch (markError) {
+        // Still record the discovery failure on the row we can write.
+        const markMessage = String((markError as any)?.message || markError);
+        console.error("[robinhood-v3] could not mark pool degraded", { chainId: config.chainId, campaignAddress, error: markMessage });
+        try {
+          await pool.query(
+            `update public.campaign_market_state set last_error=$3, updated_at=now()
+              where chain_id=$1 and campaign_address=$2`,
+            [config.chainId, campaignAddress, `${message} :: degrade_write_failed:${markMessage}`.slice(0, 1000)],
+          );
+        } catch { /* diagnostics only */ }
+      }
     }
   }
 }
@@ -946,6 +964,36 @@ async function scanPool(provider: ethers.JsonRpcProvider, indexedPool: IndexedPo
   return inserted;
 }
 
+type RobinhoodV3PassHealth = {
+  loopStarted: boolean;
+  lastPassAt: string | null;
+  lastPassChainId: number | null;
+  lastCandidateCount: number | null;
+  lastPoolCount: number | null;
+  lastError: string | null;
+  swapRouterConfigured: Record<number, boolean>;
+};
+
+const passHealth: RobinhoodV3PassHealth = {
+  loopStarted: false,
+  lastPassAt: null,
+  lastPassChainId: null,
+  lastCandidateCount: null,
+  lastPoolCount: null,
+  lastError: null,
+  swapRouterConfigured: {},
+};
+
+/** Read-only pass state for /health: a silent loop must be tellable from a failing one. */
+export function robinhoodV3PublicHealth(): RobinhoodV3PassHealth {
+  return {
+    ...passHealth,
+    swapRouterConfigured: Object.fromEntries(
+      chainConfigs().map((config) => [config.chainId, Boolean(config.swapRouterAddress)]),
+    ),
+  };
+}
+
 async function runChain(config: ChainConfig): Promise<void> {
   const selected = await createWorkingProvider(config.rpcUrls, config.chainId, {
     timeoutMs: ENV.RPC_REQUEST_TIMEOUT_MS,
@@ -960,6 +1008,10 @@ async function runChain(config: ChainConfig): Promise<void> {
     const pools = await listPools(config.chainId);
     let swaps = 0;
     for (const indexedPool of pools) swaps += await scanPool(provider, indexedPool, head);
+    passHealth.lastPassAt = new Date().toISOString();
+    passHealth.lastPassChainId = config.chainId;
+    passHealth.lastPoolCount = pools.length;
+    passHealth.lastError = null;
     if (pools.length || swaps) console.log("[robinhood-v3] pass", { chainId: config.chainId, head, pools: pools.length, swaps, rpc: maskRpcUrl(selected.url) });
   } finally {
     provider.destroy();
@@ -972,7 +1024,12 @@ async function loop(): Promise<void> {
     const configs = chainConfigs();
     for (const config of configs) {
       try { await runChain(config); }
-      catch (error: any) { console.error("[robinhood-v3] pass failed", { chainId: config.chainId, rpcs: config.rpcUrls.map(maskRpcUrl), error: error?.shortMessage || error?.message || String(error) }); }
+      catch (error: any) {
+        passHealth.lastPassAt = new Date().toISOString();
+        passHealth.lastPassChainId = config.chainId;
+        passHealth.lastError = String(error?.shortMessage || error?.message || error).slice(0, 300);
+        console.error("[robinhood-v3] pass failed", { chainId: config.chainId, rpcs: config.rpcUrls.map(maskRpcUrl), error: passHealth.lastError });
+      }
     }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
@@ -982,6 +1039,7 @@ export function startRobinhoodV3PoolIndexerLoop(): void {
   if (!enabled()) return;
   if (globalState[LOOP_SYMBOL]) return;
   globalState[LOOP_SYMBOL] = true;
+  passHealth.loopStarted = true;
   console.log("[robinhood-v3] indexer enabled", { chains: chainConfigs().map((config) => config.chainId) });
   void loop();
 }
