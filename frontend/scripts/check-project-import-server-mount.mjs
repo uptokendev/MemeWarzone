@@ -77,6 +77,17 @@ function rpcResult(request) {
   if (method === "eth_chainId") return { jsonrpc: "2.0", id, result: "0x38" };
   if (method === "net_version") return { jsonrpc: "2.0", id, result: "56" };
   if (method === "eth_blockNumber") return { jsonrpc: "2.0", id, result: "0x1" };
+  if (method === "eth_getBlockByNumber") {
+    return {
+      jsonrpc: "2.0",
+      id,
+      result: {
+        number: "0x1",
+        hash: `0x${"11".repeat(32)}`,
+        timestamp: `0x${Math.floor(Date.now() / 1000).toString(16)}`,
+      },
+    };
+  }
   if (method === "eth_getCode") {
     const address = lower(request?.params?.[0]);
     return { jsonrpc: "2.0", id, result: tokenState.has(address) ? "0x60006000" : "0x" };
