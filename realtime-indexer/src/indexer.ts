@@ -2200,7 +2200,7 @@ async function runIndexerCore(opts: {
             camp,
             row.token_address ? String(row.token_address) : null,
           );
-          if (healed) {
+          if (healed.healed) {
             await setCampaignGraduated(chain.chainId, camp, target, new Date(), ethers.ZeroHash);
             console.log("[indexer] RH CMS heal pass seeded", {
               chainId: chain.chainId,
