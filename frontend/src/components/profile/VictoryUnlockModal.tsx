@@ -17,6 +17,12 @@ import {
   trimBnb,
   type LeagueCabinetWin,
 } from "@/lib/leagueCabinet";
+import {
+  getExplorerTxBase,
+  getNativeSymbol,
+  isSupportedChainId,
+  type SupportedChainId,
+} from "@/lib/chainConfig";
 
 function toWin(detail: RewardUnlockDetail): LeagueCabinetWin {
   const reward = detail.reward;
@@ -92,9 +98,15 @@ export function VictoryUnlockModal() {
   const subtitle =
     detail.presentation?.subtitle ??
     "Your reward is secured and your trophy is entering the League Cabinet.";
-  const currency = detail.presentation?.currency ?? "BNB";
+  const currency = detail.presentation?.currency ?? getNativeSymbol(detail.chainId);
   const destinationLabel = detail.presentation?.destinationLabel ?? "View Cabinet";
   const shareText = `Victory unlocked: ${placement} in ${leagueTitle} on MemeWarzone. ${rewardAmount} ${currency} claimed. Compete. Create. Conquer.`;
+  const txExplorerUrl = (() => {
+    if (!detail.txHash) return "";
+    const id = Number(detail.chainId);
+    if (isSupportedChainId(id)) return `${getExplorerTxBase(id as SupportedChainId)}${detail.txHash}`;
+    return `https://bscscan.com/tx/${detail.txHash}`;
+  })();
 
   const handleShare = () => {
     const url = `https://x.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(imageUrl)}`;
@@ -200,9 +212,9 @@ export function VictoryUnlockModal() {
                   </div>
                 </div>
 
-                {detail.txHash ? (
+                {detail.txHash && txExplorerUrl ? (
                   <a
-                    href={`https://bscscan.com/tx/${detail.txHash}`}
+                    href={txExplorerUrl}
                     target="_blank"
                     rel="noreferrer"
                     className="inline-flex items-center gap-2 font-retro text-[11px] text-muted-foreground transition-colors hover:text-foreground"

@@ -94,32 +94,45 @@ function setSolanaDisconnected(value: boolean) {
   }
 }
 
-function addWallet(wallets: DetectedSolanaWallet[], seen: Set<SolanaProvider>, wallet: DetectedSolanaWallet | null) {
+function normalizeSolanaWalletName(name: string): string {
+  return String(name || "").trim().toLowerCase().replace(/\s+/g, "");
+}
+
+function addWallet(
+  wallets: DetectedSolanaWallet[],
+  seen: Set<SolanaProvider>,
+  seenNames: Set<string>,
+  wallet: DetectedSolanaWallet | null,
+) {
   if (!wallet?.provider || seen.has(wallet.provider)) return;
   if (wallets.some((item) => item.id === wallet.id)) return;
+  const nameKey = normalizeSolanaWalletName(wallet.name);
+  if (nameKey && seenNames.has(nameKey)) return;
   if (typeof wallet.provider.connect !== "function") return;
   wallets.push(wallet);
   seen.add(wallet.provider);
+  if (nameKey) seenNames.add(nameKey);
 }
 
 export function detectSolanaWallets(): DetectedSolanaWallet[] {
   const w = getWindowAny();
   const wallets: DetectedSolanaWallet[] = [];
   const seen = new Set<SolanaProvider>();
+  const seenNames = new Set<string>();
 
   // Wallet Standard is authoritative for standards-compliant wallets. Legacy
   // globals remain only as a compatibility fallback for wallets that have not
   // adopted the standard yet.
   for (const wallet of detectWalletStandardSolanaWallets()) {
-    addWallet(wallets, seen, wallet as DetectedSolanaWallet);
+    addWallet(wallets, seen, seenNames, wallet as DetectedSolanaWallet);
   }
 
-  addWallet(wallets, seen, w.solana?.isPhantom ? { id: "legacy:phantom", name: "Phantom", icon: "👻", provider: w.solana } : null);
-  addWallet(wallets, seen, w.phantom?.solana ? { id: "legacy:phantom", name: "Phantom", icon: "👻", provider: w.phantom.solana } : null);
-  addWallet(wallets, seen, w.solflare ? { id: "legacy:solflare", name: "Solflare", icon: "☀️", provider: w.solflare } : null);
-  addWallet(wallets, seen, w.solana?.isSolflare ? { id: "legacy:solflare", name: "Solflare", icon: "SOL", provider: w.solana } : null);
-  addWallet(wallets, seen, w.backpack?.solana ? { id: "legacy:backpack", name: "Backpack", icon: "🎒", provider: w.backpack.solana } : null);
-  addWallet(wallets, seen, w.glowSolana ? { id: "legacy:glow", name: "Glow", icon: "✨", provider: w.glowSolana } : null);
+  addWallet(wallets, seen, seenNames, w.solana?.isPhantom ? { id: "legacy:phantom", name: "Phantom", icon: "👻", provider: w.solana } : null);
+  addWallet(wallets, seen, seenNames, w.phantom?.solana ? { id: "legacy:phantom", name: "Phantom", icon: "👻", provider: w.phantom.solana } : null);
+  addWallet(wallets, seen, seenNames, w.solflare ? { id: "legacy:solflare", name: "Solflare", icon: "☀️", provider: w.solflare } : null);
+  addWallet(wallets, seen, seenNames, w.solana?.isSolflare ? { id: "legacy:solflare", name: "Solflare", icon: "SOL", provider: w.solana } : null);
+  addWallet(wallets, seen, seenNames, w.backpack?.solana ? { id: "legacy:backpack", name: "Backpack", icon: "🎒", provider: w.backpack.solana } : null);
+  addWallet(wallets, seen, seenNames, w.glowSolana ? { id: "legacy:glow", name: "Glow", icon: "✨", provider: w.glowSolana } : null);
 
   return wallets;
 }

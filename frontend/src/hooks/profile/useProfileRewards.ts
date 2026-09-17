@@ -18,6 +18,7 @@ import {
   waitForRewardUnlockFlight,
   type RewardUnlockDetail,
 } from "@/lib/rewardUnlockEvents";
+import { getNativeSymbol } from "@/lib/chainConfig";
 
 interface UseProfileRewardsArgs {
   activeTab: string;
@@ -237,7 +238,7 @@ export function useProfileRewards({
             eyebrow: "Reward secured",
             title: "Victory Unlocked",
             subtitle: "Your reward is secured and your trophy is entering the League Cabinet.",
-            currency: solana ? "SOL" : "BNB",
+            currency: getNativeSymbol(chainId),
             destinationLabel: "View Cabinet",
             destinationPath: `/profile/${account}`,
             destinationHash: "league-cabinet",

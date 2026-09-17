@@ -7,6 +7,7 @@ import {
 } from "@/lib/rewardUnlockEvents";
 import { formatWeiToBnb } from "@/lib/rewardsApi";
 import { getLeagueImage, getLeagueTitle } from "@/lib/leagueCabinet";
+import { getNativeSymbol } from "@/lib/chainConfig";
 
 type FlightPhase = "ready" | "flying" | "impact";
 
@@ -135,7 +136,7 @@ export function RewardUnlockFlight() {
       ? getLeagueTitle(reward.category as Parameters<typeof getLeagueTitle>[0])
       : reward.category);
   const eyebrow = flight.detail.presentation?.eyebrow ?? "Reward secured";
-  const currency = flight.detail.presentation?.currency ?? "BNB";
+  const currency = flight.detail.presentation?.currency ?? getNativeSymbol(flight.detail.chainId);
   const imageUrl =
     flight.detail.presentation?.imageUrl ??
     (isLeague

@@ -329,7 +329,10 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
 
   const connectedSummary = useMemo(() => {
     if (isSolanaConnected && solanaAccount) return { label: "Solana wallet connected", detail: `${solanaWalletName ? `${solanaWalletName} · ` : ""}${shortAddress(solanaAccount)}`, accent: "solana" as const };
-    if (isConnected && account) return { label: "BNB wallet connected", detail: `${chainId ? `Chain ${chainId} · ` : ""}${shortAddress(account)}`, accent: "accent" as const };
+    if (isConnected && account) {
+      const evmLabel = isRobinhoodChainId(chainId) ? "Robinhood wallet connected" : "BNB wallet connected";
+      return { label: evmLabel, detail: `${chainId ? `Chain ${chainId} · ` : ""}${shortAddress(account)}`, accent: "accent" as const };
+    }
     return null;
   }, [account, chainId, isConnected, isSolanaConnected, solanaAccount, solanaWalletName]);
 

@@ -8,7 +8,7 @@ import {
 import { useContinuousMarketTrades } from "@/hooks/useContinuousMarketTrades";
 import { useSolanaMeteoraMarket } from "@/hooks/useSolanaMeteoraMarket";
 import { useNativeUsdPrice } from "@/hooks/useNativeUsdPrice";
-import { isSolanaChainId } from "@/lib/chainConfig";
+import { getNativeSymbol, isSolanaChainId } from "@/lib/chainConfig";
 import {
   fetchSolanaCampaignCurveState,
   solanaMarginalSpotSol,
@@ -58,7 +58,7 @@ export function ContinuousMarketChartPanel({
     onExpandedChange?.(next);
   };
   const solana = isSolanaChainId(chainId);
-  const nativeSymbol = solana ? "SOL" : "BNB";
+  const nativeSymbol = getNativeSymbol(chainId);
   const { price: nativeUsd } = useNativeUsdPrice(chainId);
   const [solanaCurve, setSolanaCurve] = useState<SolanaCampaignCurveState | null>(null);
 

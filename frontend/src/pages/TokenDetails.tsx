@@ -3528,7 +3528,9 @@ const toSeconds = (ts: number): number => {
         title: connectTradeWalletLabel,
         description: isSolanaPage
           ? "This campaign is on Solana. Connect Phantom / Solflare to buy or sell."
-          : "This campaign is on BNB. Connect a BNB wallet to buy or sell.",
+          : isRobinhoodPage
+            ? "This campaign is on Robinhood. Connect a Robinhood wallet to buy or sell."
+            : "This campaign is on BNB. Connect a BNB wallet to buy or sell.",
       });
       openWalletModal();
       return;

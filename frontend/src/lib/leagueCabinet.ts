@@ -1,5 +1,6 @@
 import { ethers } from "ethers";
 import { LEAGUES, type LeagueKey, type Period } from "@/lib/leagues";
+import { getNativeSymbol } from "@/lib/chainConfig";
 
 export type LeagueCabinetWin = {
   id: string;
@@ -85,7 +86,9 @@ export function formatWinPlacement(item: Pick<LeagueCabinetWin, "rank" | "period
   return `${item.period === "weekly" ? "Weekly" : "Monthly"} #${item.rank}`;
 }
 
-export function formatMetric(item: Pick<LeagueCabinetWin, "category" | "meta">) {
+export function formatMetric(item: Pick<LeagueCabinetWin, "category" | "meta" | "chainId">) {
+  const nativeSymbol = getNativeSymbol(item.chainId);
+
   if (item.category === "fastest_finish" || item.category === "perfect_run") {
     const seconds = Number(item.meta?.duration_seconds ?? item.meta?.score ?? 0);
     if (Number.isFinite(seconds) && seconds > 0) return { label: "Time", value: formatDuration(seconds) };
@@ -93,12 +96,12 @@ export function formatMetric(item: Pick<LeagueCabinetWin, "category" | "meta">) 
 
   if (item.category === "biggest_hit") {
     const raw = String(item.meta?.score ?? "0");
-    return { label: "Hit", value: `${trimBnb(raw)} BNB` };
+    return { label: "Hit", value: `${trimBnb(raw)} ${nativeSymbol}` };
   }
 
   if (item.category === "top_earner") {
     const raw = String(item.meta?.pnl_raw ?? item.meta?.score ?? "0");
-    return { label: "PnL", value: `${trimBnb(raw)} BNB` };
+    return { label: "PnL", value: `${trimBnb(raw)} ${nativeSymbol}` };
   }
 
   if (item.category === "crowd_favorite") {

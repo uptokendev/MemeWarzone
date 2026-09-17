@@ -16,7 +16,7 @@ import type { MarketCandle, MarketState } from "@/lib/marketContinuityApi";
 import { buildCandles, type CurveTradePoint as ChartPoint } from "@/lib/chart/buildCandles";
 import { fetchUserProfile } from "@/lib/profileApi";
 import { resolveImageUri } from "@/lib/media";
-import { getDefaultChainId, isSolanaChainId } from "@/lib/chainConfig";
+import { getDefaultChainId, getNativeSymbol, isSolanaChainId } from "@/lib/chainConfig";
 import {
   solanaMarginalSpotSol,
   type SolanaCurvePricingState,
@@ -441,7 +441,7 @@ export function UnifiedMarketChart({
   onExpandedChange,
 }: UnifiedMarketChartProps) {
   const solana = isSolanaChainId(chainId);
-  const nativeSymbol = solana ? "SOL" : "BNB";
+  const nativeSymbol = getNativeSymbol(chainId);
   const tokenDecimals = solana ? Number(solanaCurvePricing?.tokenDecimals ?? 6) : 18;
   const nativeDecimals = solana ? 9 : 18;
   const [metric, setMetric] = useState<UnifiedChartMetric>("marketcap");
