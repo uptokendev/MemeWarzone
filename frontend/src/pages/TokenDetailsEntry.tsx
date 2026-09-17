@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 
 import { useSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
+import { useWallet } from "@/contexts/WalletContext";
 import {
   BNB_CHAIN_ID,
   BNB_TESTNET_CHAIN_ID,
@@ -21,6 +22,7 @@ import { isSolanaTokenRouteId } from "@/lib/tokenDetailsPath";
 import { recordRecentlyViewed } from "@/lib/searchHistory";
 import { analytics } from "@/lib/analytics/ProductAnalytics";
 import { lookupArenaImport, type ArenaImportItem } from "@/lib/arenaImports";
+import { setActiveWalletKind } from "@/lib/activeWalletChain";
 
 import TokenDetails from "./TokenDetails";
 import ImportedTokenDetails from "./ImportedTokenDetails";
@@ -82,6 +84,7 @@ const TokenDetailsEntry = () => {
   const [searchParams] = useSearchParams();
   const [selectedFeedChainId] = useSelectedFeedChainId();
   const { fetchCampaigns } = useLaunchpad();
+  const wallet = useWallet();
 
   const routeId = String(campaignAddress || "").trim();
   const forcedChainId = Number(searchParams.get("chainId") || "");
@@ -100,6 +103,17 @@ const TokenDetailsEntry = () => {
     if (/^0x[a-fA-F0-9]{40}$/i.test(routeId)) return false;
     return forcedChainId === SOLANA_CHAIN_ID || isSolanaTokenRouteId(routeId);
   }, [forcedChainId, routeId]);
+
+  // A Robinhood token page is an EVM write surface. If MetaMask is already connected
+  // (even while still on BNB), select the EVM wallet family instead of sending the Buy
+  // CTA back through the wallet modal. The actual 56 -> 46630 switch happens in the
+  // bonding buy action, which consumes switchToChain()'s fresh EvmWalletSession.
+  useEffect(() => {
+    if (!robinhoodRoute || isSolanaRoute) return;
+    if (!wallet.isConnected || !wallet.account) return;
+    setActiveWalletKind("bnb");
+  }, [isSolanaRoute, robinhoodRoute, wallet.account, wallet.isConnected]);
+
   const initialCache = useMemo(
     () => (isSolanaRoute ? readRouteCache(routeId) : null),
     [isSolanaRoute, routeId],
