@@ -85,7 +85,8 @@ export type WalletHook = {
   connectingWalletId: WalletType | null;
   detectedWallets: DetectedWallet[];
   hasInjectedWallets: boolean;
-  connect: (wallet?: WalletType) => Promise<void>;
+  connect: (wallet?: WalletType, opts?: { chainId?: number }) => Promise<void>;
+  switchToChain: (chainId: number) => Promise<number>;
   disconnect: () => Promise<void>;
   detectWallets: () => DetectedWallet[];
   isConnected: boolean;
@@ -354,7 +355,7 @@ function isRejected(error: unknown) {
   return error.code === 4001 || message.includes("user rejected") || message.includes("user denied");
 }
 
-async function ensureSupportedEvmChain(provider: Eip1193Provider): Promise<number> {
+async function ensureSupportedEvmChain(provider: Eip1193Provider, preferredChainId?: number): Promise<number> {
   let cid: number | undefined;
   try {
     const bp = new BrowserProvider(provider);
@@ -367,31 +368,46 @@ async function ensureSupportedEvmChain(provider: Eip1193Provider): Promise<numbe
     } catch {}
   }
 
-  if (isEvmChainId(cid) && isAllowedChainId(cid)) return cid as number;
+  const allowedEvmChains = getAllowedChainIds().filter((chainId) => isEvmChainId(chainId));
+  const preferred =
+    preferredChainId && isEvmChainId(preferredChainId) && isAllowedChainId(preferredChainId)
+      ? preferredChainId
+      : 0;
+  if (preferred && cid === preferred) return cid as number;
+  if (!preferred && isEvmChainId(cid) && isAllowedChainId(cid)) return cid as number;
 
   const selected = Number(getActiveChainId());
-  const allowedEvmChains = getAllowedChainIds().filter((chainId) => isEvmChainId(chainId));
-  const target = isEvmChainId(selected) && isAllowedChainId(selected)
-    ? selected
-    : Number(allowedEvmChains[0] || 56);
+  const target = preferred
+    || (isEvmChainId(selected) && isAllowedChainId(selected) ? selected : 0)
+    || Number(allowedEvmChains[0] || 56);
   const targetHex = "0x" + target.toString(16);
 
   try {
     await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: targetHex }] });
-    const bp2 = new BrowserProvider(provider);
-    const net2 = await bp2.getNetwork();
-    const cid2 = Number(net2.chainId);
-    if (isEvmChainId(cid2) && isAllowedChainId(cid2)) return cid2;
-    throw new Error("Switch did not land on an allowed MemeWarzone EVM chain.");
-  } catch {
-    const allowedLabel = allowedEvmChains.length ? allowedEvmChains.join(", ") : "none configured";
-    throw new Error(
-      `Your wallet is not on an enabled MemeWarzone EVM chain. ` +
-        `Enabled EVM chain IDs: ${allowedLabel}. ` +
-        `Switch to the chain selected in MemeWarzone and try again. ` +
-        `For Solana use the dedicated Solana wallet row.`
-    );
+  } catch (error: any) {
+    const code = Number(error?.code ?? error?.data?.originalError?.code ?? 0);
+    if (code === 4902) {
+      const { buildEvmWalletChainParams } = await import("@/lib/evmChainAdapter");
+      const { getPublicRpcUrls } = await import("@/lib/chainConfig");
+      await provider.request({
+        method: "wallet_addEthereumChain",
+        params: [buildEvmWalletChainParams(target as 56 | 97 | 4663 | 46630, getPublicRpcUrls(target as any))],
+      });
+    } else {
+      throw error;
+    }
   }
+  const bp2 = new BrowserProvider(provider);
+  const net2 = await bp2.getNetwork();
+  const cid2 = Number(net2.chainId);
+  if (isEvmChainId(cid2) && isAllowedChainId(cid2)) return cid2;
+  const allowedLabel = allowedEvmChains.length ? allowedEvmChains.join(", ") : "none configured";
+  throw new Error(
+    `Your wallet is not on an enabled MemeWarzone EVM chain. ` +
+      `Enabled EVM chain IDs: ${allowedLabel}. ` +
+      `Switch to the chain selected in MemeWarzone and try again. ` +
+      `For Solana use the dedicated Solana wallet row.`
+  );
 }
 
 export function useWallet(): WalletHook {
@@ -603,7 +619,7 @@ export function useWallet(): WalletHook {
     };
   }, [applyProviderState, bindListeners, setDetectedWalletSnapshot]);
 
-  const connect = useCallback(async (wallet?: WalletType) => {
+  const connect = useCallback(async (wallet?: WalletType, opts?: { chainId?: number }) => {
     if (typeof window === "undefined") throw new Error("No browser environment detected.");
     if (!wallet) {
       dispatchOpenWalletModal();
@@ -627,7 +643,7 @@ export function useWallet(): WalletHook {
         throw new Error("Use the Solana wallet row for Phantom/Solana. Select an EVM wallet for BNB or Robinhood Chain.");
       }
 
-      const cid = await ensureSupportedEvmChain(selectedWallet.provider);
+      const cid = await ensureSupportedEvmChain(selectedWallet.provider, opts?.chainId);
       const accounts = normalizeAccounts(await selectedWallet.provider.request({ method: "eth_requestAccounts" }));
       const chosen = await chooseAccount(selectedWallet.provider, accounts);
       if (!chosen) throw new Error("No account returned by wallet.");
@@ -650,6 +666,16 @@ export function useWallet(): WalletHook {
     }
   }, [applyProviderState, bindListeners]);
 
+  const switchToChain = useCallback(async (chainId: number) => {
+    const provider = eip1193Ref.current;
+    const account = accountRef.current;
+    if (!provider || !account) throw new Error("Connect an EVM wallet first.");
+    const cid = await ensureSupportedEvmChain(provider, chainId);
+    await applyProviderState(provider, account);
+    setChainId(cid);
+    return cid;
+  }, [applyProviderState]);
+
   const disconnect = useCallback(async () => {
     resetWalletState(true);
   }, [resetWalletState]);
@@ -664,6 +690,7 @@ export function useWallet(): WalletHook {
     detectedWallets,
     hasInjectedWallets: detectedWallets.length > 0,
     connect,
+    switchToChain,
     disconnect,
     detectWallets,
     isConnected: Boolean(account),

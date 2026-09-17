@@ -426,6 +426,8 @@ function confirmedRowsToCurvePoints(
 function getExplorerBase(chainId?: number): string {
   const id = Number(chainId ?? 0);
   if (id === 101) return "https://explorer.solana.com";
+  if (id === 46630) return "https://explorer.testnet.chain.robinhood.com";
+  if (id === 4663) return "https://explorer.chain.robinhood.com";
   if (id === 56) return "https://bscscan.com";
   if (id === 97) return "https://testnet.bscscan.com";
   return "https://bscscan.com";
@@ -1956,11 +1958,20 @@ const toSeconds = (ts: number): number => {
         : undefined);
 
     const points: Array<{ timestamp: number; pricePerToken: number; nativeWei?: bigint }> =
-      marketTradePoints.map((p: any) => ({
-        timestamp: Number(p.timestamp ?? 0),
-        pricePerToken: typeof p.pricePerToken === "number" ? p.pricePerToken : Number(p.pricePerToken ?? 0),
-        nativeWei: p.nativeWei,
-      }));
+      marketTradePoints.map((p: any) => {
+        const raw = p.timestamp ?? p.blockTime ?? p.time ?? 0;
+        const parsed = typeof raw === "string" && raw.includes("-")
+          ? Math.floor(Date.parse(raw) / 1000)
+          : Number(raw);
+        const timestamp = Number.isFinite(parsed)
+          ? (parsed > 1e11 ? Math.floor(parsed / 1000) : Math.floor(parsed))
+          : 0;
+        return {
+          timestamp,
+          pricePerToken: typeof p.pricePerToken === "number" ? p.pricePerToken : Number(p.pricePerToken ?? 0),
+          nativeWei: p.nativeWei,
+        };
+      });
 
     if (!points.length && liveSpot == null) {
       return {
@@ -1998,7 +2009,13 @@ const toSeconds = (ts: number): number => {
         before?.pricePerToken ??
         (inWindow.length >= 2 ? inWindow[0]?.pricePerToken : undefined);
 
-      const volumeWei = inWindow.reduce((acc, p) => acc + (p.nativeWei ?? 0n), 0n);
+      const latestTs = sorted.length ? tsOf(sorted[sorted.length - 1].timestamp) : 0;
+      const windowPoints = inWindow.length
+        ? inWindow
+        : latestTs > 0 && now - latestTs <= windows[k]
+          ? sorted.slice(-1)
+          : [];
+      const volumeWei = windowPoints.reduce((acc, p) => acc + (p.nativeWei ?? 0n), 0n);
 
       let change: number | null = null;
       if (startPrice != null && startPrice > 0 && end > 0) {
@@ -2008,7 +2025,7 @@ const toSeconds = (ts: number): number => {
         }
       }
       out[k].change = change;
-      out[k].volume = volumeWei > 0n ? formatBnbFromWei(volumeWei) : points.length ? formatBnbFromWei(0n) : "—";
+      out[k].volume = volumeWei > 0n ? formatBnbFromWei(volumeWei) : "—";
     }
 
     return out;

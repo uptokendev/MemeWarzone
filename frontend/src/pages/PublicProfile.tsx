@@ -49,6 +49,9 @@ function shorten(addr?: string | null) {
 }
 
 function getExplorerBase(chainId?: number): string {
+  if (chainId === 101 || chainId === 102) return "https://explorer.solana.com";
+  if (chainId === 46630) return "https://explorer.testnet.chain.robinhood.com";
+  if (chainId === 4663) return "https://explorer.chain.robinhood.com";
   if (chainId === 97) return "https://testnet.bscscan.com";
   if (chainId === 56) return "https://bscscan.com";
   return "https://bscscan.com";

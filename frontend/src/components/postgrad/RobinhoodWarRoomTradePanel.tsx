@@ -171,8 +171,25 @@ export function RobinhoodWarRoomTradePanel({ campaign }: { campaign: CampaignInf
   }, [amount, chainId, route, tab]);
 
   const executeTrade = async () => {
-    if (!connectedOnCampaignChain || !wallet.signer || !wallet.provider || !route) {
+    if (!wallet.account || !wallet.signer || !wallet.provider) {
       openWalletModal();
+      return;
+    }
+    if (Number(wallet.chainId) !== chainId) {
+      try {
+        if (typeof wallet.switchToChain === "function") {
+          await wallet.switchToChain(chainId);
+        } else {
+          openWalletModal();
+          return;
+        }
+      } catch {
+        openWalletModal();
+        return;
+      }
+    }
+    if (!route) {
+      setError("Robinhood V3 route is not ready yet.");
       return;
     }
     const amountIn = parseAmount(amount, TOKEN_DECIMALS);

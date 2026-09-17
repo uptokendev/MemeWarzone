@@ -407,6 +407,8 @@ function explorerTxUrl(chainId: number, txHash: string): string {
     const cluster = Number(chainId) === 102 ? "?cluster=devnet" : "";
     return `https://explorer.solana.com/tx/${encodeURIComponent(txHash)}${cluster}`;
   }
+  if (Number(chainId) === 46630) return `https://explorer.testnet.chain.robinhood.com/tx/${txHash}`;
+  if (Number(chainId) === 4663) return `https://explorer.chain.robinhood.com/tx/${txHash}`;
   const base = Number(chainId) === 56 ? "https://bscscan.com" : "https://testnet.bscscan.com";
   return `${base}/tx/${txHash}`;
 }
