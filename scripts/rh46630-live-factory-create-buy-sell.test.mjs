@@ -22,6 +22,7 @@ test("46630 dry-run pins live factory, ETH, and create/buy/sell steps", () => {
     "sellExactTokensAuthorized",
   ]);
   assert.equal(plan.sendRequired, false);
+  assert.equal(plan.graduationTargetWei, "6000000000000000000");
 });
 
 test("production 4663 and staged 0xF170 are forbidden", () => {

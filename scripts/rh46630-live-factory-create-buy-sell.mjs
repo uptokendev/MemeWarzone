@@ -68,7 +68,7 @@ export function planCreateBuySell(input = {}, env = process.env) {
   const live = liveRequested(env);
   const buyTokensWei = BigInt(String(input.buyTokensWei || env.RH46630_BUY_TOKENS_WEI || ethers.parseEther("1")));
   const graduationTargetWei = BigInt(
-    String(input.graduationTargetWei || env.RH46630_GRADUATION_TARGET_WEI || ethers.parseEther("10")),
+    String(input.graduationTargetWei || env.RH46630_GRADUATION_TARGET_WEI || ethers.parseEther("6")),
   );
   const runId = String(input.runId || env.GITHUB_RUN_ID || Date.now());
   const symbol = String(input.symbol || `QA${String(runId).slice(-4)}`).slice(0, 8);
