@@ -317,11 +317,13 @@ export function registerRobinhoodMarketContinuityRoutes(app: Express): void {
       if (!state) {
         return res.status(200).json(provisionalRobinhoodMarketState(chainId, campaign));
       }
+      let healReason: string | null = null;
       if (!state.pairAddress) {
         const rpcUrl =
           chainId === 4663
             ? parseRpcList(ENV.ROBINHOOD_RPC_HTTP_4663)[0]
             : parseRpcList(ENV.ROBINHOOD_RPC_HTTP_46630)[0];
+        if (!rpcUrl) healReason = "rh_rpc_not_configured";
         if (rpcUrl) {
           try {
             const provider = createStaticJsonRpcProvider(rpcUrl, chainId, { timeoutMs: 15_000 });
@@ -331,11 +333,14 @@ export function registerRobinhoodMarketContinuityRoutes(app: Express): void {
               campaign,
               state.tokenAddress,
             );
-            if (healed) {
+            if (healed.healed) {
               const refreshed = await readRobinhoodMarketState(chainId, campaign);
               if (refreshed) state = refreshed;
+            } else {
+              healReason = healed.reason;
             }
           } catch (healErr) {
+            healReason = `heal_threw:${String((healErr as any)?.message || healErr).slice(0, 120)}`;
             console.warn("[robinhood-market] CMS heal on market-state failed", {
               chainId,
               campaign,
@@ -348,6 +353,7 @@ export function registerRobinhoodMarketContinuityRoutes(app: Express): void {
       return res.json({
         ...state,
         ...(await buildRobinhoodMarketMetadata(state, includeQuotePrice)),
+        ...(healReason ? { cmsHealReason: healReason } : {}),
       });
     } catch (error: any) {
       console.error("[robinhood-market] market-state", error?.message || String(error));

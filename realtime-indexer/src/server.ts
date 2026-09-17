@@ -381,7 +381,16 @@ app.get("/health", async (_req, res) => {
       db: r.rows[0].ok,
       // Bump when shipping indexer loop fixes so deploy can be confirmed from /health.
       indexerBuild: "live-c4-almost-retry-trades-2026-08-24",
+      // Deploy truth. Coolify passes SOURCE_COMMIT as a build ARG; without this
+      // a stale image is indistinguishable from a fresh one over HTTP.
+      sourceCommit: String(process.env.SOURCE_COMMIT || "unset"),
       normalScope: ENV.INDEXER_NORMAL_SCOPE,
+      robinhood: {
+        rpc46630Configured: Boolean(ENV.ROBINHOOD_RPC_HTTP_46630),
+        rpc4663Configured: Boolean(ENV.ROBINHOOD_RPC_HTTP_4663),
+        poolIndexerEnabled: ENV.ENABLE_ROBINHOOD_V3_POOL_INDEXER,
+        evmChainIds: ENV.EVM_INDEXER_CHAIN_IDS,
+      },
       solana: solanaIndexerPublicHealth(),
     });
   } catch (e: any) {

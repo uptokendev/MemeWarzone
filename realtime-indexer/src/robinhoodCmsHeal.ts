@@ -8,15 +8,18 @@ function asPair(value: unknown): string {
   return String(value ?? "").trim().toLowerCase();
 }
 
+/** Why a heal attempt did or did not write CMS. Surfaced by /health diagnostics. */
+export type RobinhoodCmsHealResult = { healed: boolean; reason: string; pair?: string };
+
 export async function healRobinhoodGraduatedCms(
   provider: ethers.Provider,
   chainId: number,
   campaign: string,
   tokenAddress: string | null,
-): Promise<boolean> {
-  if (chainId !== 46630 && chainId !== 4663) return false;
+): Promise<RobinhoodCmsHealResult> {
+  if (chainId !== 46630 && chainId !== 4663) return { healed: false, reason: "not_robinhood_chain" };
   const camp = campaign.toLowerCase();
-  if (!ethers.isAddress(camp)) return false;
+  if (!ethers.isAddress(camp)) return { healed: false, reason: "bad_campaign_address" };
 
   const c = new ethers.Contract(camp, LAUNCH_CAMPAIGN_ABI, provider) as any;
   let launched = false;
@@ -32,7 +35,7 @@ export async function healRobinhoodGraduatedCms(
   let initialDexPrice: string | null = null;
   try {
     launched = Boolean(await c.launched());
-    if (!launched) return false;
+    if (!launched) return { healed: false, reason: "not_launched_onchain" };
     const state = await c.getGraduationState();
     pair = asPair(state?.dexPair ?? state?.[0]);
     if (!token) token = String(await c.token()).toLowerCase();
@@ -50,12 +53,12 @@ export async function healRobinhoodGraduatedCms(
       campaign: camp,
       error: String((error as any)?.message || error),
     });
-    return false;
+    return { healed: false, reason: `rpc_read_failed:${String((error as any)?.shortMessage || (error as any)?.message || error).slice(0, 120)}` };
   }
 
-  if (!launched) return false;
-  if (!/^0x[a-f0-9]{40}$/.test(pair) || pair === ZERO) return false;
-  if (!/^0x[a-f0-9]{40}$/.test(token)) return false;
+  if (!launched) return { healed: false, reason: "not_launched_onchain" };
+  if (!/^0x[a-f0-9]{40}$/.test(pair) || pair === ZERO) return { healed: false, reason: "no_dex_pair_onchain" };
+  if (!/^0x[a-f0-9]{40}$/.test(token)) return { healed: false, reason: "no_token_address" };
 
   const now = new Date();
   await pool.query(
@@ -134,5 +137,5 @@ export async function healRobinhoodGraduatedCms(
   }
 
   console.log("[indexer] RH CMS heal seeded GRADUATING", { chainId, campaign: camp, pair });
-  return true;
+  return { healed: true, reason: "seeded_graduating", pair };
 }
