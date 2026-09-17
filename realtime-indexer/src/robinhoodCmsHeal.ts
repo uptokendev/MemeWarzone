@@ -61,7 +61,38 @@ export async function healRobinhoodGraduatedCms(
   if (!/^0x[a-f0-9]{40}$/.test(token)) return { healed: false, reason: "no_token_address" };
 
   const now = new Date();
-  await pool.query(
+
+  // campaign_market_state_pair_uidx is unique on (chain_id, dex_pair_address).
+  // A stale row holding this pair under a different campaign key makes the
+  // upsert below throw, which the market-state route swallows, so the pair
+  // never lands and nothing says why. Release the pair from any other row first.
+  try {
+    const released = await pool.query(
+      `update public.campaign_market_state
+          set dex_pair_address=null, updated_at=now()
+        where chain_id=$1
+          and lower(coalesce(dex_pair_address,''))=$2
+          and lower(campaign_address)<>$3
+        returning campaign_address`,
+      [chainId, pair, camp],
+    );
+    if ((released.rowCount ?? 0) > 0) {
+      console.warn("[indexer] RH CMS heal released pair from stale rows", {
+        chainId,
+        pair,
+        releasedFrom: released.rows.map((r: any) => String(r.campaign_address)),
+      });
+    }
+  } catch (error) {
+    console.warn("[indexer] RH CMS heal pair release failed", {
+      chainId,
+      campaign: camp,
+      error: String((error as any)?.message || error),
+    });
+  }
+
+  try {
+    await pool.query(
     `insert into public.campaign_market_state(
        chain_id,campaign_address,token_address,market_stage,
        graduation_time,dex_pair_address,
@@ -116,7 +147,21 @@ export async function healRobinhoodGraduatedCms(
       finalCurvePrice,
       initialDexPrice,
     ],
-  );
+    );
+  } catch (error) {
+    // Surfaced as lastError on /market-state so a failed heal is visible over
+    // HTTP instead of only in container logs.
+    const reason = `cms_write_failed:${String((error as any)?.message || error).slice(0, 200)}`;
+    console.error("[indexer] RH CMS heal write failed", { chainId, campaign: camp, pair, error: reason });
+    try {
+      await pool.query(
+        `update public.campaign_market_state set last_error=$3, updated_at=now()
+          where chain_id=$1 and lower(campaign_address)=$2`,
+        [chainId, camp, reason],
+      );
+    } catch { /* diagnostics only */ }
+    return { healed: false, reason };
+  }
 
   try {
     await pool.query(
