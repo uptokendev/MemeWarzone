@@ -1,3 +1,4 @@
+// Agent 2 current-head certification trigger only; production runtime unchanged.
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
