@@ -4418,8 +4418,7 @@ const toSeconds = (ts: number): number => {
                         listingUrl={crypticPumpListing.listingUrl}
                         className="flex-shrink-0 self-center"
                       />
-                    ) : (
-                      {(() => {
+                    ) : (() => {
                         const creator = String(campaign?.creator ?? "").trim();
                         const evmMe = String(wallet.account ?? "").trim();
                         const solMe = String(solanaAccount ?? "").trim();
@@ -4430,21 +4429,20 @@ const toSeconds = (ts: number): number => {
                         );
                         if (!isCreator) return null;
                         return (
-                      <CrypticPumpListButton
-                        className="flex-shrink-0 self-center"
-                        chainId={Number(chainIdForStorage || (isSolanaPage ? 101 : 56))}
-                        campaignAddress={campaignAddr}
-                        tokenAddress={campaign?.token || campaignAddr}
-                        name={tokenData.name}
-                        ticker={tokenData.ticker}
-                        website={campaign?.website || null}
-                        creatorWallet={String(solanaAccount || wallet.account || "")}
-                        listing={crypticPumpListing}
-                        onListed={setCrypticPumpListing}
-                      />
+                          <CrypticPumpListButton
+                            className="flex-shrink-0 self-center"
+                            chainId={Number(chainIdForStorage || (isSolanaPage ? 101 : 56))}
+                            campaignAddress={campaignAddr}
+                            tokenAddress={campaign?.token || campaignAddr}
+                            name={tokenData.name}
+                            ticker={tokenData.ticker}
+                            website={campaign?.website || null}
+                            creatorWallet={String(solanaAccount || wallet.account || "")}
+                            listing={crypticPumpListing}
+                            onListed={setCrypticPumpListing}
+                          />
                         );
                       })()}
-                    )}
                   </>
                 ) : null}
               </div>

@@ -662,7 +662,6 @@ export function CampaignGrid({ className, query }: { className?: string; query: 
         isDexTrading: isDex,
         votes24h,
         chainId: Number(it.chainId || activeChainId),
-        createdAt,
         lastActivityAt: activitySec,
         vol24hBnb: Number.isFinite(vol24hBnb) ? vol24hBnb : 0,
         holderCount: canonicalHolders,
