@@ -209,10 +209,13 @@ async function getLogsChunked(
   filter: Omit<ethers.Filter, "fromBlock" | "toBlock">,
   fromBlock: number,
   toBlock: number,
+  chunkSize?: number,
 ): Promise<ethers.Log[]> {
-  // Free Chapel public nodes reject wide eth_getLogs (coalesce / max range).
-  // 500-block windows match what works without a paid provider.
-  const chunk = Math.max(100, Math.min(ENV.LOG_CHUNK_SIZE || 500, 500));
+  // BSC public nodes need tight windows; Robinhood recovery can safely use the
+  // same 2,500-block window already used by the browser fallback.
+  const chunk = chunkSize != null
+    ? Math.max(100, Math.floor(chunkSize))
+    : Math.max(100, Math.min(ENV.LOG_CHUNK_SIZE || 500, 500));
   const out: ethers.Log[] = [];
   for (let start = fromBlock; start <= toBlock; start += chunk) {
     const end = Math.min(toBlock, start + chunk - 1);
@@ -234,8 +237,8 @@ async function getLogsChunked(
         // Bisect on hard failure (public RPC range limits).
         if (end > start && end - start > 50) {
           const mid = Math.floor((start + end) / 2);
-          const left = await getLogsChunked(provider, filter, start, mid);
-          const right = await getLogsChunked(provider, filter, mid + 1, end);
+          const left = await getLogsChunked(provider, filter, start, mid, chunkSize);
+          const right = await getLogsChunked(provider, filter, mid + 1, end, chunkSize);
           out.push(...left, ...right);
         } else {
           console.warn("[indexer] trade backfill getLogs failed", {
@@ -320,8 +323,14 @@ export async function backfillEmptyCampaignTrades(
             : Math.max(0, latest - 50_000);
 
     // Never try to walk 1M blocks in one API-triggered backfill (hangs /trades).
-    // Scan tip first for live UX, then one bounded historical window from floor.
-    const tipBlocks = Math.max(3_000, Number(ENV.INDEXER_TIP_SCAN_BLOCKS || 5_000));
+    // Robinhood staging advances far faster than BSC; a 5k-block tip window can
+    // miss a perfectly valid trade from the same 24h period. Cover ~200k recent
+    // blocks there, using the same 2,500-block RPC chunks as browser recovery.
+    const isRobinhood = chainId === 46630 || chainId === 4663;
+    const tipBlocks = isRobinhood
+      ? Math.max(200_000, Number(ENV.INDEXER_TIP_SCAN_BLOCKS || 0))
+      : Math.max(3_000, Number(ENV.INDEXER_TIP_SCAN_BLOCKS || 5_000));
+    const logChunkSize = isRobinhood ? 2_500 : undefined;
     const histBlocks = Math.max(
       8_000,
       Math.min(60_000, Number(ENV.REPAIR_LOOKBACK_BLOCKS || 20_000) * 3),
@@ -426,12 +435,14 @@ export async function backfillEmptyCampaignTrades(
         { address: campaign, topics: [buyTopic] },
         win.from,
         win.to,
+        logChunkSize,
       );
       const sellLogs = await getLogsChunked(
         provider,
         { address: campaign, topics: [sellTopic] },
         win.from,
         win.to,
+        logChunkSize,
       );
       const logs = [...buyLogs, ...sellLogs];
       scanned += logs.length;
