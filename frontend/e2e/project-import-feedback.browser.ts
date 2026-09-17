@@ -1,52 +1,100 @@
-import {test,expect,type Page} from '@playwright/test';
-const mint='7AVB9viRcpmr8gRMTCAYSmhP7gbuBMpBR51DMjwcpump',owner='3cG2kAQ4NQfy4zN1g7pTYUUHSiCCMmECenBssYddBrS3',wrong='9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H';
-const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j0N0AAAAASUVORK5CYII=','base64');
-const resolved=(match:boolean)=>({chainId:101,tokenAddress:mint,currentAuthority:owner,automaticOwnershipAvailable:true,signedWalletMatchesAuthority:match,authoritySource:'pump_bonding_curve_creator',market:{phase:'postgrad',verified:true},assessment:{decision:match?'automatic':'manual_review',automaticImportAllowed:match,manualRequestAllowed:!match,checks:[]},security:{status:'pass',criticalRisks:[],reviewRisks:[],provider:'fixture'}});
-async function start(page:Page,wallet=wrong){await page.goto(`/?wallet=${wallet}`);await page.getByLabel('3. Contract Address').fill(mint);await page.getByRole('button',{name:'IMPORT',exact:true}).click();}
-test('Pump creator mismatch offers transfer proof and focuses the active challenge without preliminary GET',async({page})=>{
-  let lookups=0;page.on('request',r=>{if(r.method()==='GET'&&r.url().includes('/api/project-imports'))lookups++;});
-  await page.route('**/api/project-imports/resolve',r=>r.fulfill({json:{resolved:resolved(false),project:null}}));
-  await page.route('**/api/project-imports/pump-challenge',r=>r.fulfill({json:{challenge:{id:'challenge-1',chainId:101,tokenAddress:mint,creatorWallet:owner,claimantWallet:wrong,lamports:'54321',solAmount:'0.000054321',createdAt:new Date().toISOString(),expiresAt:new Date(Date.now()+15*60*1000).toISOString(),status:'pending'}}}));
-  await start(page);
-  const verify=page.locator('[data-pump-wallet-verification]');
-  await expect(verify).toContainText('VERIFY YOUR PUMP.FUN WALLET');await expect(verify).toContainText('3cG2...BrS3');await expect(page.getByRole('button',{name:'START VERIFICATION'})).toBeVisible();await expect(page.getByRole('button',{name:'REGISTER MEMECOIN'})).toHaveCount(0);expect(lookups).toBe(0);
-  await page.getByRole('button',{name:'START VERIFICATION'}).click();
-  await expect(verify).toContainText('0.000054321 SOL');await expect(verify).toContainText(owner);await expect(verify).toContainText(wrong);await expect(page.getByLabel('3. Contract Address')).toHaveCount(0);await expect(page.locator('#project-import-image')).toHaveCount(0);
-});
-test('503 stays visible after a toast would expire and grants no image permission',async({page})=>{
-  await page.route('**/api/project-imports/resolve',r=>r.fulfill({status:503,json:{error:'Service unavailable'}}));await start(page);
-  const error=page.locator('[data-import-error]');await expect(error).toContainText('IMPORT CHECK TEMPORARILY UNAVAILABLE');await page.waitForTimeout(5200);await expect(error).toBeVisible();await expect(page.getByRole('button',{name:'RETRY CHECK'})).toBeVisible();await expect(page.locator('#project-import-image')).toHaveCount(0);
-});
-test('manual image failure keeps saved review and retries image only',async({page})=>{
-  const project={id:'fixture-project',chainId:101,tokenAddress:mint,ownershipStatus:'ownership_manual_review',manualClaimWallet:wrong,imageUrl:null};let requests=0,uploads=0;
-  await page.route('**/api/project-imports/resolve',r=>r.fulfill({json:{resolved:{...resolved(false),currentAuthority:null,automaticOwnershipAvailable:false,assessment:{decision:'manual_review',automaticImportAllowed:false,manualRequestAllowed:true,checks:[]}},project:null}}));
-  await page.route('**/api/project-imports/manual-claim',r=>{requests++;return r.fulfill({json:{project}});});
-  await page.route('**/api/project-imports/image?*',r=>{uploads++;return uploads===1?r.fulfill({status:503,json:{error:'Storage unavailable'}}):r.fulfill({json:{project:{...project,imageUrl:'https://example.test/project.png'}}});});
-  await start(page);await page.locator('#project-import-image').setInputFiles({name:'logo.png',mimeType:'image/png',buffer:png});await page.getByRole('button',{name:'REQUEST MANUAL CHECK'}).click();
-  await expect(page.locator('[data-import-error]')).toBeVisible();await page.getByRole('button',{name:'ATTACH IMAGE TO REVIEW'}).click();await expect.poll(()=>uploads).toBe(2);expect(requests).toBe(1);await expect(page.locator('[data-import-error]')).toHaveCount(0);
-});
-test('wallet swap revokes old creator image permission immediately',async({page})=>{
-  await page.route('**/api/project-imports/resolve',r=>r.fulfill({json:{resolved:resolved(true),project:null}}));await start(page,owner);await expect(page.locator('#project-import-image')).toBeVisible();await page.evaluate(address=>window.dispatchEvent(new CustomEvent('test-wallet-change',{detail:address})),wrong);await expect(page.locator('#project-import-image')).toHaveCount(0);
+import { test, expect, type Page } from '@playwright/test';
+
+const mint = '7AVB9viRcpmr8gRMTCAYSmhP7gbuBMpBR51DMjwcpump';
+const wallet = '9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H';
+
+async function openImport(page: Page) {
+  await page.goto(`/?wallet=${wallet}`);
+  await expect(page.getByText('1. Choose chain')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Solana', exact: true })).toBeVisible();
+}
+
+async function submitSolana(page: Page) {
+  await page.getByLabel('3. Contract Address').fill(mint);
+  await page.getByRole('button', { name: 'IMPORT MEMECOIN', exact: true }).click();
+}
+
+test('registration is generic, ownership-neutral, and Robinhood stays independently gated', async ({ page }) => {
+  await openImport(page);
+  await expect(page.getByText(/Your wallet signs the import request only\. It does not need to own the token\./)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'BNB', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Solana', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Robinhood', exact: true })).toHaveCount(0);
 });
 
-test('bonding token cannot select image or request manual bypass',async({page})=>{
-  await page.route('**/api/project-imports/resolve',r=>r.fulfill({json:{resolved:{...resolved(true),market:{phase:'bonding',verified:true},assessment:{decision:'not_eligible',automaticImportAllowed:false,manualRequestAllowed:false,checks:[]}},project:null}}));
-  await start(page,owner);await expect(page.locator('[data-import-bonding]')).toContainText('STILL BONDING');await expect(page.locator('#project-import-image')).toHaveCount(0);await expect(page.getByRole('button',{name:'REGISTER MEMECOIN'})).toHaveCount(0);await expect(page.getByRole('button',{name:'REQUEST MANUAL CHECK'})).toHaveCount(0);
+test('Solana registration posts one signed Project Import request and pending ownership routes to Claim Memecoin', async ({ page }) => {
+  let posts = 0;
+  let resolves = 0;
+  await page.route('**/api/project-imports/resolve', async route => {
+    resolves += 1;
+    await route.fulfill({ status: 500, json: { error: 'registration should not call client resolve' } });
+  });
+  await page.route('**/api/project-imports', async route => {
+    if (route.request().method() !== 'POST') return route.continue();
+    posts += 1;
+    const body = route.request().postDataJSON();
+    expect(body.chainId).toBe(101);
+    expect(body.tokenAddress).toBe(mint);
+    expect(body.auth.action).toBe('project_import_create');
+    expect(body.auth.walletAddress).toBe(wallet);
+    await route.fulfill({ json: { created: true, project: { id: 'fixture', chainId: 101, tokenAddress: mint, ownershipStatus: 'ownership_pending' } } });
+  });
+  await openImport(page);
+  await submitSolana(page);
+  await expect.poll(() => posts).toBe(1);
+  expect(resolves).toBe(0);
+  await expect(page).toHaveURL(new RegExp(`/token/${mint}\\?chainId=101&claim=prompt`));
 });
-test('Pump help explains fee accounts and never collects a private key',async({page})=>{
-  await page.goto('/');await page.getByRole('button',{name:'Got a Pump.fun token?'}).click();const popup=page.locator('[data-pump-import-help]');await expect(popup).toContainText('It has no private key to import');await page.getByRole('button',{name:'Phantom guide',exact:true}).click();await expect(popup).toContainText('Never paste a private key');await expect(popup.locator('input,textarea')).toHaveCount(0);await expect(popup.getByRole('link',{name:'Official Phantom instructions'})).toHaveAttribute('href',/^https:\/\/help.phantom.com\//);await page.keyboard.press('Escape');await expect(popup).toHaveCount(0);
-});
-test('verified import retries only its failed image',async({page})=>{
- const project={id:'verified-fixture',chainId:101,tokenAddress:mint,ownershipStatus:'ownership_verified',projectOwnerWallet:owner,imageUrl:null};let registrations=0,uploads=0;
- await page.route('**/api/project-imports/resolve',r=>r.fulfill({json:{resolved:resolved(true),project:null}}));await page.route('**/api/project-imports',r=>{registrations++;return r.fulfill({json:{created:true,project}});});await page.route('**/api/project-imports/image?*',r=>{uploads++;return uploads===1?r.fulfill({status:503,json:{error:'Storage unavailable'}}):r.fulfill({json:{project:{...project,imageUrl:'https://example.test/image.png'}}});});
- await start(page,owner);await page.locator('#project-import-image').setInputFiles({name:'logo.png',mimeType:'image/png',buffer:png});await page.getByRole('button',{name:'REGISTER MEMECOIN'}).click();await expect(page.locator('[data-import-error]')).toContainText('IMAGE UPLOAD NOT COMPLETED');await page.getByRole('button',{name:'ATTACH REQUIRED IMAGE'}).click();await expect(page.getByRole('button',{name:'OPEN PROJECT PAGE'})).toBeVisible();expect(registrations).toBe(1);expect(uploads).toBe(2);
-});
-test('wrong-family address remains explained inline',async({page})=>{await page.goto('/');await page.getByLabel('3. Contract Address').fill('0x1111111111111111111111111111111111111111');await expect(page.getByRole('alert')).toContainText('not valid for the selected chain');await expect(page.getByRole('button',{name:'IMPORT',exact:true})).toBeDisabled();});
 
-test('matched wallet and clean scan permit image plus simplified manual launch-history review',async({page})=>{
- await page.route('**/api/project-imports/resolve',r=>r.fulfill({json:{resolved:{...resolved(true),market:{phase:'dex_market',verified:true,requiresLaunchReview:true},assessment:{decision:'manual_review',automaticImportAllowed:false,manualRequestAllowed:true,checks:[]}},project:null}}));await start(page,owner);
- await expect(page.locator('[data-import-manual-summary]')).toContainText('MANUAL CHECK NEEDED');await expect(page.locator('#project-import-image')).toBeVisible();await expect(page.getByRole('button',{name:'REGISTER MEMECOIN'})).toHaveCount(0);await page.locator('#project-import-image').setInputFiles({name:'logo.png',mimeType:'image/png',buffer:png});await expect(page.getByRole('button',{name:'REQUEST MANUAL CHECK'})).toBeEnabled();
+test('verified registration omits the ownership-claim prompt', async ({ page }) => {
+  await page.route('**/api/project-imports', async route => {
+    if (route.request().method() !== 'POST') return route.continue();
+    await route.fulfill({ json: { created: true, project: { id: 'fixture', chainId: 101, tokenAddress: mint, ownershipStatus: 'ownership_verified', projectOwnerWallet: wallet } } });
+  });
+  await openImport(page);
+  await submitSolana(page);
+  await expect(page).toHaveURL(new RegExp(`/token/${mint}\\?chainId=101$`));
 });
-test('Four bonding message does not incorrectly name Pump.fun',async({page})=>{
- await page.route('**/api/project-imports/resolve',r=>r.fulfill({json:{resolved:{...resolved(true),market:{phase:'bonding',verified:true,platform:'fourmeme'},assessment:{decision:'not_eligible',automaticImportAllowed:false,manualRequestAllowed:false,checks:[]}},project:null}}));await start(page,owner);await expect(page.locator('[data-import-bonding]')).toContainText('STILL BONDING ON FOUR.MEME');await expect(page.locator('#project-import-image')).toHaveCount(0);
+
+test('server outage remains visible and retryable without fabricating approval', async ({ page }) => {
+  await page.route('**/api/project-imports', async route => {
+    if (route.request().method() !== 'POST') return route.continue();
+    await route.fulfill({ status: 503, json: { error: 'Service unavailable' } });
+  });
+  await openImport(page);
+  await submitSolana(page);
+  const error = page.locator('[data-import-error="true"]');
+  await expect(error).toContainText('IMPORT CHECK TEMPORARILY UNAVAILABLE');
+  await expect(error).toContainText('Nothing has been approved');
+  await expect(page.getByRole('button', { name: 'RETRY IMPORT', exact: true })).toBeVisible();
+  await expect(page).toHaveURL(new RegExp('/$'));
+});
+
+test('wallet-auth failure is explicit and does not navigate', async ({ page }) => {
+  await page.route('**/api/project-imports', async route => {
+    if (route.request().method() !== 'POST') return route.continue();
+    await route.fulfill({ status: 401, json: { error: 'bad signature' } });
+  });
+  await openImport(page);
+  await submitSolana(page);
+  await expect(page.locator('[data-import-error="true"]')).toContainText('WALLET VERIFICATION REQUIRED');
+  await expect(page).toHaveURL(new RegExp('/$'));
+});
+
+test('wrong-family contract address is explained inline and cannot submit', async ({ page }) => {
+  await openImport(page);
+  await page.getByLabel('3. Contract Address').fill('0x1111111111111111111111111111111111111111');
+  await expect(page.getByRole('alert')).toContainText('not valid for the selected chain');
+  await expect(page.getByRole('button', { name: 'IMPORT MEMECOIN', exact: true })).toBeDisabled();
+});
+
+test('explicit BNB selection requires an EVM wallet instead of silently using Solana', async ({ page }) => {
+  await openImport(page);
+  await page.getByRole('button', { name: 'BNB', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'CONNECT BNB WALLET', exact: true })).toBeVisible();
+  await page.getByLabel('3. Contract Address').fill('0x1111111111111111111111111111111111111111');
+  await expect(page.getByRole('button', { name: 'IMPORT MEMECOIN', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Solana', exact: true }).click();
+  await page.getByLabel('3. Contract Address').fill(mint);
+  await expect(page.getByRole('button', { name: 'IMPORT MEMECOIN', exact: true })).toBeEnabled();
 });
