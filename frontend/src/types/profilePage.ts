@@ -24,4 +24,5 @@ export type ActivityTradeRow = {
   campaignName: string | null;
   campaignSymbol: string | null;
   logoUri: string | null;
+  chainId?: number;
 };

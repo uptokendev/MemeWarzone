@@ -4,7 +4,14 @@ import { Button } from "@/components/ui/button";
 import { useWallet } from "@/contexts/WalletContext";
 import { useLaunchpad } from "@/lib/launchpadClient";
 import type { CampaignSummary } from "@/lib/launchpadClient";
-import { BNB_TESTNET_CHAIN_ID, getActiveChainId, isEvmChainId, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
+import {
+  BNB_TESTNET_CHAIN_ID,
+  getActiveChainId,
+  isEvmChainId,
+  isRobinhoodChainId,
+  isSolanaChainId,
+  SOLANA_CHAIN_ID,
+} from "@/lib/chainConfig";
 import { fetchUserProfile, fetchPublicPortfolioMetrics, type UserProfile } from "@/lib/profileApi";
 import { fetchOwnerCampaignDrafts, fetchPublicCampaignDrafts, type CampaignDraft } from "@/lib/draftApi";
 import { isSolanaAddress } from "@/lib/address";
@@ -36,6 +43,7 @@ type PublicCoin = {
   ticker: string;
   campaignAddress: string;
   tokenAddress?: string | null;
+  chainId?: number;
   marketCap: string;
   progress?: string | null;
   status?: string | null;
@@ -79,9 +87,22 @@ function formatCompactNumber(value?: number | null) {
   return Number(value).toLocaleString(undefined, { maximumFractionDigits: 0 });
 }
 
-function formatBnb(value?: number | null) {
+function nativeSymbol(chainId?: number) {
+  if (isSolanaChainId(Number(chainId))) return "SOL";
+  if (isRobinhoodChainId(Number(chainId))) return "ETH";
+  return "BNB";
+}
+
+function formatNative(value?: number | null, chainId?: number) {
   if (value == null || !Number.isFinite(value)) return "—";
-  return `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 5 })} BNB`;
+  return `${Number(value).toLocaleString(undefined, { maximumFractionDigits: 5 })} ${nativeSymbol(chainId)}`;
+}
+
+function normalizeMarketCapLabel(value: unknown, chainId?: number): string {
+  const label = String(value ?? "—").trim() || "—";
+  if (isRobinhoodChainId(Number(chainId))) return label.replace(/\s+BNB$/i, " ETH");
+  if (isSolanaChainId(Number(chainId))) return label.replace(/\s+BNB$/i, " SOL");
+  return label;
 }
 
 function formatTokenAmount(value?: number | null) {
@@ -94,11 +115,12 @@ function safeRank(profile: UserProfile | null): RankName {
   return raw ? normalizeRank(raw) : "Recruit";
 }
 
-function coinFromSummary(summary: CampaignSummary, index: number): PublicCoin {
+function coinFromSummary(summary: CampaignSummary, index: number, fallbackChainId: number): PublicCoin {
   const stats: any = summary.stats as any;
   const campaign: any = summary.campaign as any;
   const progress = stats?.progressPct ?? stats?.progress ?? campaign?.progressPct ?? null;
   const graduated = Boolean(campaign?.graduated || campaign?.isDexTrading || campaign?.graduatedAt);
+  const chainId = Number(campaign?.chainId ?? fallbackChainId);
 
   return {
     id: typeof summary.campaign.id === "number" ? summary.campaign.id : index + 1,
@@ -107,7 +129,8 @@ function coinFromSummary(summary: CampaignSummary, index: number): PublicCoin {
     ticker: summary.campaign.symbol || "???",
     campaignAddress: summary.campaign.campaign,
     tokenAddress: summary.campaign.token || null,
-    marketCap: summary.stats.marketCap || "—",
+    chainId,
+    marketCap: normalizeMarketCapLabel(summary.stats.marketCap, chainId),
     progress: progress == null ? null : `${Number(progress).toFixed(0)}%`,
     status: graduated ? "graduated" : "live",
     timeAgo: campaign?.timeAgo || formatTimeAgo(summary.campaign.createdAt),
@@ -136,7 +159,7 @@ function walletsEqual(a?: string | null, b?: string | null) {
   return left.toLowerCase() === right.toLowerCase();
 }
 
-function tradeFromApiItem(item: any): ActivityTradeRow {
+function tradeFromApiItem(item: any, fallbackChainId: number): ActivityTradeRow {
   return {
     id: String(item?.id ?? `${item?.txHash ?? ""}:${item?.logIndex ?? 0}`),
     txHash: String(item?.txHash ?? ""),
@@ -153,6 +176,7 @@ function tradeFromApiItem(item: any): ActivityTradeRow {
     campaignName: item?.campaignName ?? null,
     campaignSymbol: item?.campaignSymbol ?? null,
     logoUri: item?.logoUri ?? null,
+    chainId: Number(item?.chainId ?? fallbackChainId) || fallbackChainId,
   };
 }
 
@@ -381,7 +405,7 @@ export default function PublicProfile({
 
         const coins = settled
           .filter((item): item is PromiseFulfilledResult<CampaignSummary> => item.status === "fulfilled")
-          .map((item, index) => coinFromSummary(item.value, index));
+          .map((item, index) => coinFromSummary(item.value, index, activeChainId));
 
         setCreatedCoins(coins);
       } catch (e) {
@@ -396,7 +420,7 @@ export default function PublicProfile({
     return () => {
       cancelled = true;
     };
-  }, [fetchCampaigns, fetchCampaignSummary, profileWallet]);
+  }, [activeChainId, fetchCampaigns, fetchCampaignSummary, profileWallet]);
 
   useEffect(() => {
     let cancelled = false;
@@ -513,7 +537,7 @@ export default function PublicProfile({
         if (cancelled) return;
 
         const items = Array.isArray(json?.items) ? json.items : [];
-        setPublicTrades(items.map(tradeFromApiItem));
+        setPublicTrades(items.map((item: any) => tradeFromApiItem(item, activeChainId)));
       } catch (e: any) {
         if (cancelled || ac.signal.aborted) return;
         console.warn("Failed to load public profile activity", e);
@@ -788,7 +812,7 @@ export default function PublicProfile({
                       tokenDetailsPath({
                         tokenAddress: coin.tokenAddress,
                         campaignAddress: coin.campaignAddress,
-                        chainId: (coin as any).chainId,
+                        chainId: coin.chainId,
                       }),
                     )
                   }
@@ -923,7 +947,7 @@ export default function PublicProfile({
                   </div>
 
                   <div className="shrink-0 text-right text-xs">
-                    <div className="text-foreground">{formatBnb(trade.bnbAmount)}</div>
+                    <div className="text-foreground">{formatNative(trade.bnbAmount, trade.chainId ?? activeChainId)}</div>
                     <div className="text-muted-foreground">{formatTokenAmount(trade.tokenAmount)} tokens</div>
                   </div>
                 </button>
