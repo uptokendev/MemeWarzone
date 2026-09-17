@@ -304,12 +304,28 @@ try {
   });
   const created = await postJson(baseOn, "/api/project-imports", { chainId: 56, tokenAddress: VERIFIED_TOKEN, auth: createAuth });
   assert.equal(created.response.status, 201, `create route did not complete through mounted handler: ${JSON.stringify(created.body)}`);
-  assert.equal(created.body?.project?.ownershipStatus, "ownership_verified");
-  assert.equal(lower(created.body?.project?.projectOwnerWallet), lower(ownerWallet.address));
+  assert.equal(created.body?.project?.ownershipStatus, "ownership_pending");
+  assert.equal(created.body?.project?.projectOwnerWallet, null, "registration must not grant Project ownership");
 
   const bnbLookup = await jsonFetch(`${baseOn}/api/project-imports?chainId=56&tokenAddress=${VERIFIED_TOKEN}`);
   assert.equal(bnbLookup.response.status, 200, `BNB project lookup failed: ${JSON.stringify(bnbLookup.body)}`);
   assert.equal(bnbLookup.body?.project?.id, created.body?.project?.id);
+
+  const ownerClaimAuth = await issueAuth({
+    wallet: ownerWallet,
+    action: PROJECT_IMPORT_ACTIONS.claim,
+    token: VERIFIED_TOKEN,
+    projectId: created.body.project.id,
+    body: { operation: "claim" },
+  });
+  const ownerClaim = await postJson(baseOn, "/api/project-imports/claim", {
+    chainId: 56,
+    tokenAddress: VERIFIED_TOKEN,
+    auth: ownerClaimAuth,
+  });
+  assert.equal(ownerClaim.response.status, 200, `owner claim did not complete through mounted handler: ${JSON.stringify(ownerClaim.body)}`);
+  assert.equal(ownerClaim.body?.project?.ownershipStatus, "ownership_verified");
+  assert.equal(lower(ownerClaim.body?.project?.projectOwnerWallet), lower(ownerWallet.address));
 
   const wrongCreateAuth = await issueAuth({
     wallet: wrongImporterWallet,
