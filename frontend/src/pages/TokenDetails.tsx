@@ -1916,13 +1916,39 @@ const { stats: rtStats } = useTokenStatsRealtime(
     return null;
   }, [contractGraduatedEarly, isSolanaPage, metrics?.currentPrice, rtStats?.lastPriceBnb, solanaLivePrice, topazMarket.priceBnb]);
 
+  /**
+   * Market-cap denominator.
+   *
+   * Bonding uses curve sold(). After graduation the curve is closed, sold() is
+   * frozen and unsold supply has been burned, so post-burn total supply is the
+   * honest denominator. The chart already used it, which is why a graduated
+   * token showed a headline market cap far below its own candles.
+   */
   const pageLiveSupplyWhole = useMemo(() => {
     if (isSolanaPage) return solanaSoldWhole;
+
+    const graduatedSupplyRaw = unifiedMarket.state?.graduation?.postBurnTotalSupplyRaw;
+    if (contractGraduatedEarly && graduatedSupplyRaw && /^\d+$/.test(graduatedSupplyRaw)) {
+      try {
+        const whole = Number(ethers.formatUnits(BigInt(graduatedSupplyRaw), tokenDecimals));
+        if (Number.isFinite(whole) && whole > 0) return whole;
+      } catch {
+        // fall through to the curve basis
+      }
+    }
+
     const sold = metrics?.sold ?? 0n;
     if (sold <= 0n) return null;
     const whole = Number(ethers.formatUnits(sold, tokenDecimals));
     return Number.isFinite(whole) && whole > 0 ? whole : null;
-  }, [isSolanaPage, metrics?.sold, solanaSoldWhole, tokenDecimals]);
+  }, [
+    contractGraduatedEarly,
+    isSolanaPage,
+    metrics?.sold,
+    solanaSoldWhole,
+    tokenDecimals,
+    unifiedMarket.state?.graduation?.postBurnTotalSupplyRaw,
+  ]);
 
   const solanaGraduationMarker = useMemo(() => {
     if (!isSolanaPage || !solanaCurve?.graduated) return null;
