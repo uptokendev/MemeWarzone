@@ -15,16 +15,17 @@ const attest = fs.readFileSync(new URL("./verifyArenaWarPoolTreasuryV2Deployment
 const warPool = fs.readFileSync(new URL("../contracts/ArenaWarPoolTreasuryV2.sol", import.meta.url), "utf8");
 const league = fs.readFileSync(new URL("../contracts/PostGradLeagueTreasuryV2.sol", import.meta.url), "utf8");
 
-test("deployment policy accepts BSC97, Robinhood46630, and preserves BSC56", () => {
-  assert.doesNotThrow(() => assertArenaV2DeploymentTarget(97, "bscTestnet"));
-  assert.doesNotThrow(() => assertArenaV2DeploymentTarget(46630, "robinhoodTestnet"));
+test("deployment policy accepts BSC56/97 and Robinhood 4663/46630", () => {
   assert.doesNotThrow(() => assertArenaV2DeploymentTarget(56, "bscMainnet"));
+  assert.doesNotThrow(() => assertArenaV2DeploymentTarget(97, "bscTestnet"));
+  assert.doesNotThrow(() => assertArenaV2DeploymentTarget(4663, "robinhoodMainnet"));
+  assert.doesNotThrow(() => assertArenaV2DeploymentTarget(46630, "robinhoodTestnet"));
 });
 
-test("deployment policy rejects Robinhood mainnet 4663 and all unknown/wrong network bindings", () => {
-  assert.throws(() => assertArenaV2DeploymentTarget(4663, "robinhoodMainnet"), /not activated/i);
+test("deployment policy rejects unknown and wrong network bindings", () => {
   assert.throws(() => assertArenaV2DeploymentTarget(1, "mainnet"), /restricted/i);
   assert.throws(() => assertArenaV2DeploymentTarget(97, "robinhoodTestnet"), /must use Hardhat network bscTestnet/i);
+  assert.throws(() => assertArenaV2DeploymentTarget(4663, "robinhoodTestnet"), /must use Hardhat network robinhoodMainnet/i);
   assert.throws(() => assertArenaV2DeploymentTarget(46630, "bscTestnet"), /must use Hardhat network robinhoodTestnet/i);
 });
 
@@ -34,7 +35,13 @@ test("local deployment remains explicitly opt-in", () => {
   assert.doesNotThrow(() => assertArenaV2DeploymentTarget(31337, "localhost", { allowLocal: true }));
 });
 
-test("Robinhood 46630 receiver/signing envs are strict and never fall back to generic/BSC inputs", () => {
+test("Robinhood 4663/46630 authority and receiver envs are strict and never fall back to generic/BSC inputs", () => {
+  assert.deepEqual(envNamesFor(4663, "ARENA_V2_OWNER"), ["ARENA_V2_OWNER_4663"]);
+  assert.deepEqual(envNamesFor(4663, "ARENA_V2_RESOLVER"), ["ARENA_V2_RESOLVER_4663"]);
+  assert.deepEqual(envNamesFor(4663, "ARENA_BOOST_QUOTE_SIGNER_ADDRESS"), [
+    "ARENA_BOOST_QUOTE_SIGNER_ADDRESS_4663",
+  ]);
+  assert.deepEqual(envNamesFor(4663, "ARENA_PROTOCOL_RECEIVER"), ["ARENA_PROTOCOL_RECEIVER_4663"]);
   assert.deepEqual(envNamesFor(46630, "ARENA_BOOST_QUOTE_SIGNER_ADDRESS"), [
     "ARENA_BOOST_QUOTE_SIGNER_ADDRESS_46630",
   ]);
@@ -55,6 +62,10 @@ test("Robinhood 46630 receiver/signing envs are strict and never fall back to ge
 
 test("durable deployment paths are chain-specific", () => {
   assert.equal(defaultArenaV2DeploymentFile(97), "deployments/arena/war-pool-treasury-v2.bsc97.json");
+  assert.equal(
+    defaultArenaV2DeploymentFile(4663),
+    "deployments/arena/war-pool-treasury-v2.robinhood4663.json",
+  );
   assert.equal(
     defaultArenaV2DeploymentFile(46630),
     "deployments/arena/war-pool-treasury-v2.robinhood46630.json",
@@ -80,6 +91,13 @@ test("deployment tool uses existing contracts, authorizes League source, and wri
   assert.match(deploy, /configurationTransactions:/);
   assert.match(deploy, /leagueSourceAuthorization:/);
   assert.match(deploy, /leagueOwnershipTransfer:/);
+  assert.match(deploy, /ARENA_V2_OWNER_4663/);
+  assert.match(deploy, /ARENA_LEAGUE_V2_OWNER_4663/);
+  assert.match(deploy, /ARENA_V2_RESOLVER_4663/);
+  assert.match(deploy, /ARENA_BOOST_QUOTE_SIGNER_ADDRESS_4663/);
+  assert.match(deploy, /ARENA_PROTOCOL_RECEIVER_4663/);
+  assert.match(deploy, /refusing to overwrite/);
+  assert.match(deploy, /refuses testnet deployment artifact path/);
   assert.match(deploy, /ARENA_BOOST_QUOTE_SIGNER_ADDRESS_46630/);
   assert.match(deploy, /ARENA_PROTOCOL_RECEIVER_46630/);
   assert.match(deploy, /ARENA_POSTGRAD_LEAGUE_TREASURY_V2_ADDRESS_46630/);
