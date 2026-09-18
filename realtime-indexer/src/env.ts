@@ -197,6 +197,9 @@ export const ENV = {
   ENABLE_ROBINHOOD_V3_POOL_INDEXER: String(process.env.ENABLE_ROBINHOOD_V3_POOL_INDEXER || "0") === "1",
   ROBINHOOD_V3_POOL_INDEXER_INTERVAL_MS: Number(process.env.ROBINHOOD_V3_POOL_INDEXER_INTERVAL_MS || "5000"),
   ROBINHOOD_V3_POOL_INDEXER_MAX_POOLS: Number(process.env.ROBINHOOD_V3_POOL_INDEXER_MAX_POOLS || "100"),
+  // One-shot post-grad candle rebuild. Comma-separated campaign addresses, or
+  // "all" for every Robinhood campaign. Runs once per process start, then stops.
+  ROBINHOOD_V3_CANDLE_REBUILD: String(process.env.ROBINHOOD_V3_CANDLE_REBUILD || "").trim(),
   ENABLE_UNIFIED_MARKET_CHART: String(process.env.ENABLE_UNIFIED_MARKET_CHART || "1") === "1",
   // Quote/trade kill-switches for the market-route API only; wallet still uses on-chain Topaz.
   ENABLE_TOPAZ_QUOTES: String(process.env.ENABLE_TOPAZ_QUOTES || "1") === "1",
