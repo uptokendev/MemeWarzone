@@ -28,6 +28,7 @@ select conrelid::regclass as table_name, conname, pg_get_constraintdef(oid) as d
  where conrelid in (
          'public.campaigns'::regclass,
          'public.campaign_market_state'::regclass,
+         'public.market_stats'::regclass,
          'public.dex_trades'::regclass
        )
    and contype = 'c'
@@ -55,6 +56,23 @@ alter table public.campaign_market_state add constraint campaign_market_state_st
   ]::text[])
 );
 
+-- 2b. market_stats is the third table carrying market_stage, and the one
+--     Token Details reads market cap, liquidity and the 5m/1h/4h/24h tiles from.
+--     Rejecting DEX_ACTIVE leaves the row missing entirely, so the page
+--     recomputes those numbers from raw trades and disagrees between renders:
+--
+--       new row for relation "market_stats"
+--       violates check constraint "market_stats_stage_valid"
+alter table public.market_stats drop constraint if exists market_stats_stage_valid;
+alter table public.market_stats add constraint market_stats_stage_valid check (
+  market_stage = any(array[
+    'BONDING','GRADUATING',
+    'TOPAZ_PENDING','TOPAZ_ACTIVE','TOPAZ_DEGRADED',
+    'DEX_PENDING','DEX_ACTIVE','DEX_DEGRADED',
+    'PAUSED','UNSUPPORTED'
+  ]::text[])
+);
+
 -- 3. robinhood_v3 swaps must be a permitted dex_trades origin, or post-grad
 --    volume cannot be recorded even once the pool verifies.
 alter table public.dex_trades drop constraint if exists dex_trades_origin_valid;
@@ -70,6 +88,7 @@ select conrelid::regclass as table_name, conname, pg_get_constraintdef(oid) as d
  where conname in (
          'campaigns_market_stage_valid',
          'campaign_market_state_stage_valid',
+   'market_stats_stage_valid',
          'dex_trades_origin_valid',
          'campaign_market_state_graduation_order'
        )
