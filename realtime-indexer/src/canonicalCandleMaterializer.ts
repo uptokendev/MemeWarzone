@@ -451,6 +451,10 @@ async function staleCampaigns() {
             coalesce(tc.dex_trade_count,0)=0
             and coalesce(tc.canonical_version,0) < $2
           )
+          -- Curve trades with no bonding candle anywhere. A graduated campaign
+          -- gets canonical_updated_at stamped by the post-grad indexer, which
+          -- made it look fresh while its bonding history had never been built.
+          or coalesce(max(tc.bonding_trade_count),0)=0
       order by max(t.block_time) asc
       limit $1`,
     [campaignBatchSize(), VERSION],

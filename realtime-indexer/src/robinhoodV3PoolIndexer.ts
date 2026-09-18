@@ -1212,25 +1212,33 @@ async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedP
   // because this row is only updated further down.
   const openQuote = await (async () => {
     try {
+      // The close of the newest earlier candle is the spot left by the previous
+      // swap. dex_pools.price_quote cannot be used: a rebuild clears the trades
+      // but leaves that row holding the latest price, so the first re-ingested
+      // swap opened from a price in its own future.
       const previous = await pool.query(
-        `select dp.price_quote, cms.initial_dex_price_bnb
-           from public.dex_pools dp
-           left join public.campaign_market_state cms
-             on cms.chain_id=dp.chain_id and lower(cms.campaign_address)=lower(dp.campaign_address)
-          where dp.chain_id=$1 and dp.pair_address=$2
+        `select c from public.token_candles
+          where chain_id=$1 and campaign_address=$2 and timeframe='1s' and bucket_start < $3
+          order by bucket_start desc
           limit 1`,
-        [indexedPool.chainId, indexedPool.pairAddress],
+        [indexedPool.chainId, indexedPool.campaignAddress, bucketStart(blockTime, "1s")],
       );
-      const row = previous.rows[0] || {};
-      for (const candidate of [row.price_quote, row.initial_dex_price_bnb]) {
-        const value = Number(candidate);
-        if (Number.isFinite(value) && value > 0) return String(candidate);
-      }
+      const priorClose = Number(previous.rows[0]?.c);
+      if (Number.isFinite(priorClose) && priorClose > 0) return String(previous.rows[0].c);
+
+      // No earlier candle: this is the first swap, which opens at the price the
+      // pool was seeded with at graduation.
+      const graduation = await pool.query(
+        `select initial_dex_price_bnb from public.campaign_market_state
+          where chain_id=$1 and campaign_address=$2 limit 1`,
+        [indexedPool.chainId, indexedPool.campaignAddress],
+      );
+      const initial = Number(graduation.rows[0]?.initial_dex_price_bnb);
+      if (Number.isFinite(initial) && initial > 0) return String(graduation.rows[0].initial_dex_price_bnb);
     } catch {
       // fall through to a flat candle
     }
-    // First swap with no prior price: open at the close so the bar is flat rather
-    // than spanning from zero.
+    // Nothing to open from: flat, rather than a bar spanning from zero.
     return spotQuote;
   })();
 
