@@ -13,6 +13,7 @@ const ARENA_V2_CHAINS = Object.freeze({
 const NETWORK_BY_CHAIN = Object.freeze({
   [ARENA_V2_CHAINS.BSC_MAINNET]: "bscMainnet",
   [ARENA_V2_CHAINS.BSC_TESTNET]: "bscTestnet",
+  [ARENA_V2_CHAINS.ROBINHOOD_MAINNET]: "robinhoodMainnet",
   [ARENA_V2_CHAINS.ROBINHOOD_TESTNET]: "robinhoodTestnet",
   [ARENA_V2_CHAINS.LOCAL]: "hardhat",
 });
@@ -20,10 +21,6 @@ const NETWORK_BY_CHAIN = Object.freeze({
 function assertArenaV2DeploymentTarget(chainId, networkName, { allowLocal = false } = {}) {
   const id = Number(chainId);
   const name = String(networkName || "");
-
-  if (id === ARENA_V2_CHAINS.ROBINHOOD_MAINNET) {
-    throw new Error("Arena EVM V2 deployment on Robinhood mainnet 4663 is not activated by T2-PRE");
-  }
 
   if (id === ARENA_V2_CHAINS.LOCAL) {
     if (!allowLocal) {
@@ -37,7 +34,9 @@ function assertArenaV2DeploymentTarget(chainId, networkName, { allowLocal = fals
 
   const expectedNetwork = NETWORK_BY_CHAIN[id];
   if (!expectedNetwork) {
-    throw new Error(`Arena EVM V2 deployment is restricted to BSC 56/97 and Robinhood testnet 46630; got chain ${id}`);
+    throw new Error(
+      `Arena EVM V2 deployment is restricted to BSC 56/97 and Robinhood 4663/46630; got chain ${id}`,
+    );
   }
   if (name !== expectedNetwork) {
     throw new Error(`Arena EVM V2 chain ${id} must use Hardhat network ${expectedNetwork}; got ${name || "<empty>"}`);
@@ -47,7 +46,9 @@ function assertArenaV2DeploymentTarget(chainId, networkName, { allowLocal = fals
 function envNamesFor(chainId, baseNames, { robinhoodStrict = true } = {}) {
   const id = Number(chainId);
   const bases = Array.isArray(baseNames) ? baseNames : [baseNames];
-  if (id === ARENA_V2_CHAINS.ROBINHOOD_TESTNET && robinhoodStrict) {
+  const robinhood =
+    id === ARENA_V2_CHAINS.ROBINHOOD_MAINNET || id === ARENA_V2_CHAINS.ROBINHOOD_TESTNET;
+  if (robinhood && robinhoodStrict) {
     return bases.map((base) => `${base}_${id}`);
   }
   const names = [];
@@ -63,11 +64,13 @@ function defaultArenaV2DeploymentFile(chainId) {
       ? "bsc56"
       : id === ARENA_V2_CHAINS.BSC_TESTNET
         ? "bsc97"
-        : id === ARENA_V2_CHAINS.ROBINHOOD_TESTNET
-          ? "robinhood46630"
-          : id === ARENA_V2_CHAINS.LOCAL
-            ? "local31337"
-            : `chain${id}`;
+        : id === ARENA_V2_CHAINS.ROBINHOOD_MAINNET
+          ? "robinhood4663"
+          : id === ARENA_V2_CHAINS.ROBINHOOD_TESTNET
+            ? "robinhood46630"
+            : id === ARENA_V2_CHAINS.LOCAL
+              ? "local31337"
+              : `chain${id}`;
   return path.join("deployments", "arena", `war-pool-treasury-v2.${suffix}.json`);
 }
 
