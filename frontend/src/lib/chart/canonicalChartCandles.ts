@@ -22,6 +22,13 @@ export function marketCandlesForChart(
   metric: ChartMetric,
   denomination: ChartDenomination,
   nativeUsd: number,
+  /**
+   * Circulating supply for deriving market cap when the server has no canonical
+   * mcap series. Robinhood post-grad candles carry price but no mcap, and the
+   * trade-fill fallback charts slippage rather than the pool price, which put
+   * candles far above the market cap the header reports.
+   */
+  supplyWhole?: number | null,
 ): CanonicalCandleRow[] {
   if (denomination === "USD" && nativeUsd <= 0) return [];
   const denomMul = denomination === "USD" ? nativeUsd : 1;
@@ -41,13 +48,18 @@ export function marketCandlesForChart(
           : [row.price_o, row.price_h, row.price_l, row.price_c];
       const hasCanonical = canonicalValues.every((value) => finiteNonNeg(value) != null);
 
+      const priceValues = [row.o, row.h, row.l, row.c].map((value) => Number(value));
+      const derivableSupply = Number(supplyWhole);
       let values: number[];
       if (hasCanonical) {
         values = canonicalValues.map((value) => Number(value));
       } else if (metric === "marketcap") {
-        return null;
+        // price x supply is the same basis the headline uses, so the two agree.
+        if (!Number.isFinite(derivableSupply) || derivableSupply <= 0) return null;
+        if (!priceValues.every((value) => Number.isFinite(value) && value > 0)) return null;
+        values = priceValues.map((value) => value * derivableSupply);
       } else {
-        values = [row.o, row.h, row.l, row.c].map((value) => Number(value));
+        values = priceValues;
       }
 
       const [open, high, low, close] = values.map((value) => value * denomMul);
@@ -127,9 +139,16 @@ export function assembleMarketCapCandles(input: {
   intervalSeconds: number;
   nowSec?: number;
   fallbackRows?: CanonicalCandleRow[];
+  supplyWhole?: number | null;
 }): CanonicalCandleRow[] {
   if (!input.historyReady) return [];
-  const canonical = marketCandlesForChart(input.marketCandles, "marketcap", input.denomination, input.nativeUsd);
+  const canonical = marketCandlesForChart(
+    input.marketCandles,
+    "marketcap",
+    input.denomination,
+    input.nativeUsd,
+    input.supplyWhole,
+  );
   const rows = canonical.length ? canonical : input.fallbackRows || [];
   if (!rows.length) return [];
   const liveNative = Number(input.liveMcapNative);
