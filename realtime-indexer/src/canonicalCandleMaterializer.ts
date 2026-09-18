@@ -102,7 +102,14 @@ function bigintRatio(value: bigint, denominator: bigint): number {
 }
 
 function bscRpcUrls(chainId: number): string[] {
+  if (chainId === 46630) return parseRpcList(ENV.ROBINHOOD_RPC_HTTP_46630);
+  if (chainId === 4663) return parseRpcList(ENV.ROBINHOOD_RPC_HTTP_4663);
   return parseRpcList(chainId === 56 ? ENV.BSC_RPC_HTTP_56 : ENV.BSC_RPC_HTTP_97);
+}
+
+/** Robinhood campaigns are the same LaunchCampaign shape as BNB, so the curve reads match. */
+function isEvmCurveChain(chainId: number): boolean {
+  return chainId === 56 || chainId === 97 || chainId === 46630 || chainId === 4663;
 }
 
 const bscProviders = new Map<number, ethers.JsonRpcProvider>();
@@ -245,7 +252,7 @@ async function solanaSpotCalculator(campaign: string): Promise<SpotModel> {
 
 async function spotCalculator(chainId: number, campaign: string): Promise<SpotModel> {
   if (chainId === 101) return solanaSpotCalculator(campaign);
-  if (chainId === 56 || chainId === 97) return bnbSpotCalculator(chainId, campaign);
+  if (isEvmCurveChain(chainId)) return bnbSpotCalculator(chainId, campaign);
   throw new Error(`Unsupported canonical candle chain ${chainId}`);
 }
 
@@ -336,7 +343,7 @@ function deriveBuckets(
   // Older BNB campaigns can have valid trades before the durable trade mirror began.
   // Anchor the reconstructed history to the live contract sold() state so the latest
   // canonical close uses the exact same circulating-supply basis as TokenDetails.
-  if ((chainId === 56 || chainId === 97) && currentSoldRaw != null && currentSoldRaw >= 0n) {
+  if (isEvmCurveChain(chainId) && currentSoldRaw != null && currentSoldRaw >= 0n) {
     const inferredOpeningSold = currentSoldRaw - indexedNetSold(trades);
     if (inferredOpeningSold > 0n) reconstructedSold = inferredOpeningSold;
   }
@@ -435,7 +442,7 @@ async function staleCampaigns() {
        from public.curve_trades t
        left join public.token_candles tc
          on tc.chain_id=t.chain_id and tc.campaign_address=t.campaign_address
-      where t.chain_id in (56,97,101)
+      where t.chain_id in (56,97,101,46630,4663)
         and (t.chain_id <> 101 or t.sold_tokens_after_raw is not null)
       group by t.chain_id,t.campaign_address
       having max(tc.canonical_updated_at) is null
