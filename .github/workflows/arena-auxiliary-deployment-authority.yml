@@ -1,0 +1,43 @@
+name: Arena Auxiliary Deployment Authority
+
+on:
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - "contracts/EventPrizeVaultV1.sol"
+      - "contracts/WarzoneSponsorshipRouterV1.sol"
+      - "contracts/UPVoteTreasury.sol"
+      - "scripts/deployArenaAuxiliaryBundle.ts"
+      - "scripts/verifyArenaAuxiliaryBundle.ts"
+      - "scripts/arenaAuxiliaryBundle.test.mjs"
+      - ".github/workflows/arena-auxiliary-deployment-authority.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Auxiliary bundle authority matrix
+        run: node --test scripts/arenaAuxiliaryBundle.test.mjs
+
+      - name: Hardhat compile
+        run: npx hardhat compile
