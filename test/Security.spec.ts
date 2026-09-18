@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 
-import { deployCoreFixture } from "./fixtures/core";
+import { completeNativeGraduation, deployCoreFixture } from "./fixtures/core";
 
 const req = (overrides: Record<string, unknown> = {}) => ({
   name: "T",
@@ -48,7 +48,7 @@ async function expectRouteBalanceDelta(before: any, vaults: any, expected: any) 
 }
 
 describe("Security & invariants", function () {
-  it("auto-finalize cannot be skipped: crossing buy flips launched in same tx", async function () {
+  it("auto-finalize cannot be skipped: crossing buy flips pending then completion launches", async function () {
     const { owner, creator, alice, factory } = await deployCoreFixture();
 
     await factory.connect(owner).setConfig({
@@ -68,11 +68,12 @@ describe("Security & invariants", function () {
 
     const buyValue = await campaign.quoteBuyExactTokens(ethers.parseUnits("1", 18));
     const buyTx = await campaign.connect(alice).buyExactBnb(0, { value: buyValue });
-    const buyRc = await buyTx.wait();
-
-    const finalized = buyRc!.logs.some((l: any) => l.fragment?.name === "CampaignFinalized");
-    expect(finalized).to.equal(true);
+    await expect(buyTx).to.emit(campaign, "StockGraduationPending");
+    expect(await campaign.graduationPending()).to.equal(true);
+    expect(await campaign.launched()).to.equal(false);
+    await completeNativeGraduation(campaign, alice);
     expect(await campaign.launched()).to.equal(true);
+    expect(await campaign.graduationPending()).to.equal(false);
   });
 
   it("finalize fee amounts: protocolFee equals netRaisedWei * protocolFeeBps / 10000", async function () {
@@ -111,6 +112,8 @@ describe("Security & invariants", function () {
     const qBuf = q + 1n;
     await campaign.connect(alice).buyExactTokens(oneToken, qBuf, { value: qBuf });
     await makeGraduationEligibleByOracle(campaign, priceFeed);
+    await campaign.connect(alice).graduateIfEligible(0, 0);
+    expect(await campaign.graduationPending()).to.equal(true);
 
     const graduationPrincipal = await campaign.netRaisedWei();
     const expectedFee = (graduationPrincipal * 200n) / 10_000n;
@@ -162,6 +165,7 @@ describe("Security & invariants", function () {
 
     const curveSupply = await campaign.curveSupply();
     await campaign.connect(alice).buyExactTokens(curveSupply, ethers.MaxUint256, { value: ethers.parseEther("10") });
+    await completeNativeGraduation(campaign, alice);
 
     const reserves = await pool.getReserves();
     expect(reserves[0]).to.be.gt(0);
