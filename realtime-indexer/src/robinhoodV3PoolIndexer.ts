@@ -615,6 +615,36 @@ function valuationError(reference: RobinhoodQuoteUsdReference, valuation: { pric
   return null;
 }
 
+/**
+ * Post-burn total supply for a graduated campaign, cached per campaign.
+ *
+ * Token Details values market cap as spot x post-burn supply. Writing the same
+ * basis onto the candle keeps chart, ATH and header on one number instead of
+ * leaving mcap null and letting the chart fall back to trade fill prices.
+ */
+const postBurnSupplyCache = new Map<string, { supply: number; at: number }>();
+const POST_BURN_SUPPLY_TTL_MS = 5 * 60 * 1000;
+
+async function postBurnSupplyWhole(chainId: number, campaignAddress: string, decimals: number): Promise<number> {
+  const key = `${chainId}:${campaignAddress}`;
+  const cached = postBurnSupplyCache.get(key);
+  if (cached && Date.now() - cached.at < POST_BURN_SUPPLY_TTL_MS) return cached.supply;
+  try {
+    const result = await pool.query(
+      `select post_burn_total_supply_raw from public.campaign_market_state
+        where chain_id=$1 and campaign_address=$2 limit 1`,
+      [chainId, campaignAddress],
+    );
+    const raw = String(result.rows[0]?.post_burn_total_supply_raw || "").trim();
+    const supply = /^\d+$/.test(raw) ? Number(ethers.formatUnits(raw, decimals)) : 0;
+    const safe = Number.isFinite(supply) && supply > 0 ? supply : 0;
+    postBurnSupplyCache.set(key, { supply: safe, at: Date.now() });
+    return safe;
+  } catch {
+    return 0;
+  }
+}
+
 async function upsertCandle(input: {
   indexedPool: IndexedPool;
   blockTime: Date;
@@ -624,6 +654,7 @@ async function upsertCandle(input: {
   quoteAmountRaw: bigint;
   priceUsd: string | null;
   volumeUsd: string | null;
+  mcapNative: string | null;
   reference: RobinhoodQuoteUsdReference;
 }): Promise<void> {
   const quoteVolume = ethers.formatUnits(input.quoteAmountRaw, input.indexedPool.quoteDecimals);
@@ -635,9 +666,11 @@ async function upsertCandle(input: {
          chain_id,campaign_address,timeframe,bucket_start,o,h,l,c,volume_bnb,trades_count,
          source_mask,bonding_trade_count,dex_trade_count,bonding_volume_bnb,dex_volume_bnb,
          last_block_number,last_log_index,quote_token_address,quote_asset_type,volume_quote,dex_volume_quote,
-         o_usd,h_usd,l_usd,c_usd,volume_usd,reference_price_usd,reference_price_updated_at,valuation_source,valuation_healthy,updated_at
+         o_usd,h_usd,l_usd,c_usd,volume_usd,reference_price_usd,reference_price_updated_at,valuation_source,valuation_healthy,
+         price_o,price_h,price_l,price_c,mcap_o,mcap_h,mcap_l,mcap_c,canonical_updated_at,updated_at
        ) values($1,$2,$3,$4,$5,$5,$5,$5,$6,1,2,0,1,0,$6,$7,$8,$9,$10,$11,$11,
-                $12,$12,$12,$12,coalesce($13::numeric,0),$14,$15,$16,$17,now())
+                $12,$12,$12,$12,coalesce($13::numeric,0),$14,$15,$16,$17,
+                $5,$5,$5,$5,$18,$18,$18,$18,now(),now())
        on conflict(chain_id,campaign_address,timeframe,bucket_start) do update set
          h=greatest(public.token_candles.h,excluded.h),l=least(public.token_candles.l,excluded.l),
          c=case when coalesce(public.token_candles.last_block_number,-1) < excluded.last_block_number then excluded.c
@@ -661,6 +694,21 @@ async function upsertCandle(input: {
          reference_price_updated_at=coalesce(excluded.reference_price_updated_at,public.token_candles.reference_price_updated_at),
          valuation_source=coalesce(excluded.valuation_source,public.token_candles.valuation_source),
          valuation_healthy=coalesce(public.token_candles.valuation_healthy,true) and coalesce(excluded.valuation_healthy,false),
+         price_h=case when excluded.price_h is null then public.token_candles.price_h when public.token_candles.price_h is null then excluded.price_h else greatest(public.token_candles.price_h,excluded.price_h) end,
+         price_l=case when excluded.price_l is null then public.token_candles.price_l when public.token_candles.price_l is null then excluded.price_l else least(public.token_candles.price_l,excluded.price_l) end,
+         price_c=case when excluded.price_c is null then public.token_candles.price_c
+                      when coalesce(public.token_candles.last_block_number,-1) < excluded.last_block_number then excluded.price_c
+                      when public.token_candles.last_block_number = excluded.last_block_number and coalesce(public.token_candles.last_log_index,-1) <= excluded.last_log_index then excluded.price_c
+                      else public.token_candles.price_c end,
+         price_o=coalesce(public.token_candles.price_o,excluded.price_o),
+         mcap_h=case when excluded.mcap_h is null then public.token_candles.mcap_h when public.token_candles.mcap_h is null then excluded.mcap_h else greatest(public.token_candles.mcap_h,excluded.mcap_h) end,
+         mcap_l=case when excluded.mcap_l is null then public.token_candles.mcap_l when public.token_candles.mcap_l is null then excluded.mcap_l else least(public.token_candles.mcap_l,excluded.mcap_l) end,
+         mcap_c=case when excluded.mcap_c is null then public.token_candles.mcap_c
+                     when coalesce(public.token_candles.last_block_number,-1) < excluded.last_block_number then excluded.mcap_c
+                     when public.token_candles.last_block_number = excluded.last_block_number and coalesce(public.token_candles.last_log_index,-1) <= excluded.last_log_index then excluded.mcap_c
+                     else public.token_candles.mcap_c end,
+         mcap_o=coalesce(public.token_candles.mcap_o,excluded.mcap_o),
+         canonical_updated_at=now(),
          last_block_number=greatest(coalesce(public.token_candles.last_block_number,-1),excluded.last_block_number),
          last_log_index=case when coalesce(public.token_candles.last_block_number,-1) < excluded.last_block_number then excluded.last_log_index
                              when public.token_candles.last_block_number = excluded.last_block_number then greatest(coalesce(public.token_candles.last_log_index,-1),excluded.last_log_index)
@@ -684,6 +732,7 @@ async function upsertCandle(input: {
         input.reference.updatedAt,
         input.reference.source,
         input.reference.healthy && Boolean(input.priceUsd && input.volumeUsd),
+        input.mcapNative,
       ],
     );
     const row = upserted.rows[0];
@@ -1152,8 +1201,20 @@ async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedP
   );
   if (!inserted.rowCount) return false;
 
+  // Null mcap makes the chart fall back to fills, which on a thin pool sit far
+  // above the market cap the header reports from spot.
+  const supplyWhole = await postBurnSupplyWhole(indexedPool.chainId, indexedPool.campaignAddress, indexedPool.baseDecimals);
+  const mcapNative = (() => {
+    if (!(supplyWhole > 0)) return null;
+    const spot = Number(spotQuote);
+    if (!Number.isFinite(spot) || spot <= 0) return null;
+    const value = spot * supplyWhole;
+    return Number.isFinite(value) && value > 0 ? value.toFixed(18) : null;
+  })();
+
   await upsertCandle({
     indexedPool,
+    mcapNative,
     blockTime,
     blockNumber: log.blockNumber,
     logIndex,
