@@ -5,7 +5,7 @@ import test from "node:test";
 const source = fs.readFileSync(new URL("./upgrade-mainnet-rewards-treasury.cjs", import.meta.url), "utf8");
 
 test("rewards mainnet executor pins the canonical program and mainnet genesis", () => {
-  assert.match(source, /2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgVsfzcCCoZBKX/);
+  assert.match(source, /2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX/);
   assert.match(source, /5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d/);
   assert.match(source, /Refusing non-mainnet genesis/);
   assert.match(source, /refuses devnet\/testnet RPC/);
