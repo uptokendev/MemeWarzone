@@ -74,20 +74,10 @@ test("market-cap candles ignore trade-series reconstruction and skip live-only c
     intervalSeconds: 60,
     nowSec: Date.parse("2026-08-23T20:07:09Z") / 1000,
   });
-  // The series is now gap-filled, so a quiet market still draws a continuous
-  // line instead of two lonely points. The historical bar keeps its own values
-  // and the newest bar carries the live value.
+  assert.equal(assembled.length, 2);
   assert.equal(assembled[0]?.open, 0);
   assert.equal(assembled[0]?.close, 0.0011);
-  assert.equal(assembled[assembled.length - 1]?.close, 0.001216);
-  assert.ok(assembled.length > 2, "sparse history should be filled, not left with holes");
-  for (let index = 1; index < assembled.length; index += 1) {
-    assert.equal(
-      assembled[index]!.time - assembled[index - 1]!.time,
-      60,
-      "filled buckets must be exactly one interval apart",
-    );
-  }
+  assert.equal(assembled[1]?.close, 0.001216);
 
   assert.deepEqual(
     assembleMarketCapCandles({
@@ -244,15 +234,10 @@ test("completed historical last bar is not rewritten to a different live mcap", 
     intervalSeconds: 60,
     nowSec: Date.parse("2026-08-23T21:00:00Z") / 1000,
   });
-  // A completed historical bar must never be rewritten to the live value, even
-  // though the gap between it and now is filled.
+  assert.equal(rows.length, 2);
   assert.equal(rows[0]?.close, 0.0011 * usd);
   assert.equal(rows[0]?.open, 0);
-  assert.equal(rows[rows.length - 1]?.close, headerNative * usd);
-  assert.ok(rows.length > 2, "the gap to now should be filled");
-  for (let index = 1; index < rows.length - 1; index += 1) {
-    assert.equal(rows[index]!.close, rows[0]!.close, "filler bars carry the last close forward");
-  }
+  assert.equal(rows[1]?.close, headerNative * usd);
 });
 
 test("ATH is max of canonical highs and current mcap", () => {

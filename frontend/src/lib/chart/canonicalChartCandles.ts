@@ -97,65 +97,6 @@ function patchLast(rows: CanonicalCandleRow[], liveValue: number): CanonicalCand
  * Live spot×sold may patch the current minute, or open a new current-minute
  * candle after history. Completed historical bars are not rewritten.
  */
-/**
- * Carry the last close across empty buckets so a sparse market still draws a line.
- *
- * A quiet token only produces a candle when it trades. RH5661 has four 1m candles
- * across 2,844 slots, so the series was 99.9% holes and rendered as a blank canvas
- * with a few specks. BNB never showed this because an active token fills nearly
- * every bucket.
- *
- * Filler buckets are flat (open = high = low = close = previous close), which is
- * what actually happened: no trades, so no price movement. Output is capped, and
- * the newest buckets are kept, so a long quiet period cannot allocate unbounded rows.
- */
-export function fillCandleGaps(
-  rows: CanonicalCandleRow[],
-  intervalSeconds: number,
-  nowSec?: number,
-  maxPoints = 3000,
-): CanonicalCandleRow[] {
-  const interval = Math.floor(Number(intervalSeconds));
-  if (!rows.length || !Number.isFinite(interval) || interval <= 0) return rows;
-
-  const sorted = [...rows].sort((a, b) => a.time - b.time);
-  const filled: CanonicalCandleRow[] = [];
-
-  for (const row of sorted) {
-    const previous = filled[filled.length - 1];
-    if (previous) {
-      const missing = Math.floor((row.time - previous.time) / interval) - 1;
-      // Guard against a pathological span producing millions of rows.
-      if (missing > 0 && missing <= maxPoints * 4) {
-        for (let index = 1; index <= missing; index += 1) {
-          const time = previous.time + interval * index;
-          filled.push({ time, open: previous.close, high: previous.close, low: previous.close, close: previous.close });
-        }
-      }
-    }
-    filled.push(row);
-  }
-
-  // Extend to the current bucket so the line reaches the right edge rather than
-  // stopping wherever the last trade happened to land.
-  const now = Number(nowSec);
-  if (Number.isFinite(now) && now > 0) {
-    const currentBucket = Math.floor(now / interval) * interval;
-    const last = filled[filled.length - 1];
-    if (last && currentBucket > last.time) {
-      const missing = Math.floor((currentBucket - last.time) / interval);
-      if (missing > 0 && missing <= maxPoints * 4) {
-        for (let index = 1; index <= missing; index += 1) {
-          const time = last.time + interval * index;
-          filled.push({ time, open: last.close, high: last.close, low: last.close, close: last.close });
-        }
-      }
-    }
-  }
-
-  return filled.length > maxPoints ? filled.slice(filled.length - maxPoints) : filled;
-}
-
 export function patchActiveLatestBucket(
   rows: CanonicalCandleRow[],
   liveValue: number,
@@ -208,15 +149,17 @@ export function assembleMarketCapCandles(input: {
     input.nativeUsd,
     input.supplyWhole,
   );
-  const sparse = canonical.length ? canonical : input.fallbackRows || [];
-  if (!sparse.length) return [];
-  const nowSec = input.nowSec ?? Math.floor(Date.now() / 1000);
-  const rows = fillCandleGaps(sparse, input.intervalSeconds, nowSec);
+  const rows = canonical.length ? canonical : input.fallbackRows || [];
   if (!rows.length) return [];
   const liveNative = Number(input.liveMcapNative);
   if (!Number.isFinite(liveNative) || liveNative <= 0) return rows;
   const liveValue = input.denomination === "USD" && input.nativeUsd > 0 ? liveNative * input.nativeUsd : liveNative;
-  return patchActiveLatestBucket(rows, liveValue, input.intervalSeconds, nowSec);
+  return patchActiveLatestBucket(
+    rows,
+    liveValue,
+    input.intervalSeconds,
+    input.nowSec ?? Math.floor(Date.now() / 1000),
+  );
 }
 
 /** ATH native = max(all canonical mcap_h, current mcap). Never below a visible high. */

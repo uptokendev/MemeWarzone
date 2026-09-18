@@ -650,11 +650,13 @@ async function upsertCandle(input: {
   blockTime: Date;
   blockNumber: number;
   logIndex: number;
+  openQuote: string;
   priceQuote: string;
   quoteAmountRaw: bigint;
   priceUsd: string | null;
   volumeUsd: string | null;
   mcapNative: string | null;
+  openMcapNative: string | null;
   reference: RobinhoodQuoteUsdReference;
 }): Promise<void> {
   const quoteVolume = ethers.formatUnits(input.quoteAmountRaw, input.indexedPool.quoteDecimals);
@@ -668,9 +670,10 @@ async function upsertCandle(input: {
          last_block_number,last_log_index,quote_token_address,quote_asset_type,volume_quote,dex_volume_quote,
          o_usd,h_usd,l_usd,c_usd,volume_usd,reference_price_usd,reference_price_updated_at,valuation_source,valuation_healthy,
          price_o,price_h,price_l,price_c,mcap_o,mcap_h,mcap_l,mcap_c,canonical_updated_at,updated_at
-       ) values($1,$2,$3,$4,$5,$5,$5,$5,$6,1,2,0,1,0,$6,$7,$8,$9,$10,$11,$11,
+       ) values($1,$2,$3,$4,$19,greatest($19::numeric,$5::numeric),least($19::numeric,$5::numeric),$5,$6,1,2,0,1,0,$6,$7,$8,$9,$10,$11,$11,
                 $12,$12,$12,$12,coalesce($13::numeric,0),$14,$15,$16,$17,
-                $5,$5,$5,$5,$18,$18,$18,$18,now(),now())
+                $19,greatest($19::numeric,$5::numeric),least($19::numeric,$5::numeric),$5,
+                $20,greatest($20::numeric,$18::numeric),least($20::numeric,$18::numeric),$18,now(),now())
        on conflict(chain_id,campaign_address,timeframe,bucket_start) do update set
          h=greatest(public.token_candles.h,excluded.h),l=least(public.token_candles.l,excluded.l),
          c=case when coalesce(public.token_candles.last_block_number,-1) < excluded.last_block_number then excluded.c
@@ -733,6 +736,8 @@ async function upsertCandle(input: {
         input.reference.source,
         input.reference.healthy && Boolean(input.priceUsd && input.volumeUsd),
         input.mcapNative,
+        input.openQuote,
+        input.openMcapNative,
       ],
     );
     const row = upserted.rows[0];
@@ -1201,6 +1206,34 @@ async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedP
   );
   if (!inserted.rowCount) return false;
 
+  // Price before this swap, so the candle has a body running from the previous
+  // price to the new one. Writing one price into o/h/l/c drew flat ticks with no
+  // body at all. dex_pools.price_quote still holds the previous swap's spot here,
+  // because this row is only updated further down.
+  const openQuote = await (async () => {
+    try {
+      const previous = await pool.query(
+        `select dp.price_quote, cms.initial_dex_price_bnb
+           from public.dex_pools dp
+           left join public.campaign_market_state cms
+             on cms.chain_id=dp.chain_id and lower(cms.campaign_address)=lower(dp.campaign_address)
+          where dp.chain_id=$1 and dp.pair_address=$2
+          limit 1`,
+        [indexedPool.chainId, indexedPool.pairAddress],
+      );
+      const row = previous.rows[0] || {};
+      for (const candidate of [row.price_quote, row.initial_dex_price_bnb]) {
+        const value = Number(candidate);
+        if (Number.isFinite(value) && value > 0) return String(candidate);
+      }
+    } catch {
+      // fall through to a flat candle
+    }
+    // First swap with no prior price: open at the close so the bar is flat rather
+    // than spanning from zero.
+    return spotQuote;
+  })();
+
   // Null mcap makes the chart fall back to fills, which on a thin pool sit far
   // above the market cap the header reports from spot.
   const supplyWhole = await postBurnSupplyWhole(indexedPool.chainId, indexedPool.campaignAddress, indexedPool.baseDecimals);
@@ -1212,9 +1245,19 @@ async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedP
     return Number.isFinite(value) && value > 0 ? value.toFixed(18) : null;
   })();
 
+  const openMcapNative = (() => {
+    if (!(supplyWhole > 0)) return null;
+    const open = Number(openQuote);
+    if (!Number.isFinite(open) || open <= 0) return null;
+    const value = open * supplyWhole;
+    return Number.isFinite(value) && value > 0 ? value.toFixed(18) : null;
+  })();
+
   await upsertCandle({
     indexedPool,
+    openQuote,
     mcapNative,
+    openMcapNative,
     blockTime,
     blockNumber: log.blockNumber,
     logIndex,
