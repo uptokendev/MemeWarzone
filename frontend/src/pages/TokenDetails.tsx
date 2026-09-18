@@ -3034,11 +3034,26 @@ const toSeconds = (ts: number): number => {
     if (topazMarket.liquidityBnb != null && Number.isFinite(topazMarket.liquidityBnb) && topazMarket.liquidityBnb > 0) {
       return `${formatCompact(topazMarket.liquidityBnb)} ${nativeUnit}`;
     }
+    // Robinhood pools are concentrated-liquidity V3, where the two sides are
+    // deliberately unequal in value, so doubling the quote side overstates TVL.
+    // DexScreener and GeckoTerminal report the sum of both sides, so match them.
     const unifiedNative = unifiedMarket.state?.reserves?.nativeRaw;
+    const unifiedToken = unifiedMarket.state?.reserves?.tokenRaw;
     if (isRobinhoodPage && unifiedNative) {
       try {
-        const wei = BigInt(unifiedNative);
-        if (wei > 0n) return `${formatCompact(Number(ethers.formatEther(wei * 2n)))} ${nativeUnit}`;
+        const nativeWei = BigInt(unifiedNative);
+        if (nativeWei > 0n) {
+          const nativeSide = Number(ethers.formatEther(nativeWei));
+          let tokenSide = 0;
+          if (unifiedToken && pageLivePriceNative != null && pageLivePriceNative > 0) {
+            const tokenWhole = Number(ethers.formatUnits(BigInt(unifiedToken), tokenDecimals));
+            if (Number.isFinite(tokenWhole) && tokenWhole > 0) tokenSide = tokenWhole * pageLivePriceNative;
+          }
+          // Without a price the token side cannot be valued; report the side we
+          // can prove rather than inventing a second one by doubling.
+          const total = nativeSide + tokenSide;
+          if (Number.isFinite(total) && total > 0) return `${formatCompact(total)} ${nativeUnit}`;
+        }
       } catch {
         // ignore
       }

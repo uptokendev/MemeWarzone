@@ -570,6 +570,43 @@ function normalizeCanonicalSwap(indexedPool: IndexedPool, parsed: ethers.LogDesc
   return normalized ? withCompatibility(indexedPool, normalized, sender, recipient) : null;
 }
 
+/**
+ * Pool spot price after the swap, taken from the Swap event's own sqrtPriceX96.
+ *
+ * The execution price is what the trader actually paid, slippage included. On a
+ * thin pool the two diverge by multiples, so charting fills drew candles far
+ * above the market cap the page reports from spot. Fills stay on the trade row;
+ * candles and last-price use spot. Mock pools emit no sqrtPriceX96 and fall back.
+ */
+function spotQuotePerBase(
+  sqrtPriceX96: bigint,
+  token0Address: string,
+  baseTokenAddress: string,
+  baseDecimals: number,
+  quoteDecimals: number,
+): string | null {
+  if (sqrtPriceX96 <= 0n) return null;
+  const Q96 = 1n << 96n;
+  const PRECISION = 10n ** 36n;
+  // token1 per token0, raw units, scaled by PRECISION.
+  const raw1Per0 = (sqrtPriceX96 * sqrtPriceX96 * PRECISION) / (Q96 * Q96);
+  if (raw1Per0 <= 0n) return null;
+
+  const baseIsToken0 = token0Address.toLowerCase() === baseTokenAddress.toLowerCase();
+  // A raw ratio carries the two tokens' decimal difference; undo it.
+  const [fromDecimals, toDecimals] = baseIsToken0
+    ? [baseDecimals, quoteDecimals]
+    : [quoteDecimals, baseDecimals];
+
+  let scaled = (raw1Per0 * 10n ** BigInt(fromDecimals)) / 10n ** BigInt(toDecimals);
+  if (!baseIsToken0) {
+    if (scaled <= 0n) return null;
+    scaled = (PRECISION * PRECISION) / scaled;
+  }
+  if (scaled <= 0n) return null;
+  return ethers.formatUnits(scaled, 36);
+}
+
 function valuationError(reference: RobinhoodQuoteUsdReference, valuation: { priceUsd: string | null; marketCapUsd: string | null; liquidityUsd: string | null }): string | null {
   if (!reference.healthy) return reference.error || "Quote USD reference is unhealthy.";
   if (!valuation.priceUsd) return "Normalized MEME/USD price could not be derived.";
@@ -591,8 +628,9 @@ async function upsertCandle(input: {
 }): Promise<void> {
   const quoteVolume = ethers.formatUnits(input.quoteAmountRaw, input.indexedPool.quoteDecimals);
   const nativeVolume = input.indexedPool.quoteAssetType === "WRAPPED_NATIVE" ? quoteVolume : "0";
+  const written: Array<Record<string, unknown>> = [];
   for (const resolution of Object.keys(RESOLUTION_MS) as CandleResolution[]) {
-    await pool.query(
+    const upserted = await pool.query(
       `insert into public.token_candles(
          chain_id,campaign_address,timeframe,bucket_start,o,h,l,c,volume_bnb,trades_count,
          source_mask,bonding_trade_count,dex_trade_count,bonding_volume_bnb,dex_volume_bnb,
@@ -626,7 +664,8 @@ async function upsertCandle(input: {
          last_block_number=greatest(coalesce(public.token_candles.last_block_number,-1),excluded.last_block_number),
          last_log_index=case when coalesce(public.token_candles.last_block_number,-1) < excluded.last_block_number then excluded.last_log_index
                              when public.token_candles.last_block_number = excluded.last_block_number then greatest(coalesce(public.token_candles.last_log_index,-1),excluded.last_log_index)
-                             else public.token_candles.last_log_index end,updated_at=now()`,
+                             else public.token_candles.last_log_index end,updated_at=now()
+       returning timeframe,bucket_start,o,h,l,c,volume_bnb,trades_count`,
       [
         input.indexedPool.chainId,
         input.indexedPool.campaignAddress,
@@ -647,6 +686,25 @@ async function upsertCandle(input: {
         input.reference.healthy && Boolean(input.priceUsd && input.volumeUsd),
       ],
     );
+    const row = upserted.rows[0];
+    if (row) written.push(row);
+  }
+
+  // The chart listens for market_candle_upsert. Only market_trade was ever
+  // broadcast here, so a graduated Robinhood chart could not move until the
+  // page was reloaded.
+  for (const row of written) {
+    await publishMarketEvent(input.indexedPool, "market_candle_upsert", {
+      resolution: String(row.timeframe),
+      tf: String(row.timeframe),
+      bucket_start: new Date(row.bucket_start as any).toISOString(),
+      open: String(row.o),
+      high: String(row.h),
+      low: String(row.l),
+      close: String(row.c),
+      volume_bnb: String(row.volume_bnb ?? "0"),
+      trades_count: Number(row.trades_count ?? 0),
+    });
   }
 }
 
@@ -654,8 +712,40 @@ async function publishMarketEvent(indexedPool: IndexedPool, name: string, data: 
   try {
     const channel = ablyRest.channels.get(tokenChannel(indexedPool.chainId, indexedPool.campaignAddress));
     await channel.publish(name, { chainId: indexedPool.chainId, campaignAddress: indexedPool.campaignAddress, pairAddress: indexedPool.pairAddress, ...data });
+    passHealth.lastPublishAt = new Date().toISOString();
+    passHealth.lastPublishError = null;
   } catch (error: any) {
+    passHealth.lastPublishError = `${name}:${String(error?.message || error)}`.slice(0, 200);
     console.warn("[robinhood-v3] realtime publish failed", name, error?.message || String(error));
+  }
+}
+
+/** Mirrors the market_stats row the summary endpoint serves, so tiles patch live. */
+async function publishMarketStatsPatch(indexedPool: IndexedPool): Promise<void> {
+  try {
+    const result = await pool.query(
+      `select last_price_bnb,last_price_quote,dex_volume_24h_bnb,volume_24h_bnb,
+              trades_24h,buys_24h,sells_24h,last_trade_at,market_stage
+         from public.market_stats
+        where chain_id=$1 and campaign_address=$2
+        limit 1`,
+      [indexedPool.chainId, indexedPool.campaignAddress],
+    );
+    const row = result.rows[0];
+    if (!row) return;
+    await publishMarketEvent(indexedPool, "market_stats_patch", {
+      last_price_bnb: row.last_price_bnb == null ? null : String(row.last_price_bnb),
+      last_price_quote: row.last_price_quote == null ? null : String(row.last_price_quote),
+      dex_volume_24h_bnb: row.dex_volume_24h_bnb == null ? null : String(row.dex_volume_24h_bnb),
+      vol_24h_bnb: row.volume_24h_bnb == null ? null : String(row.volume_24h_bnb),
+      trades_24h: row.trades_24h == null ? null : Number(row.trades_24h),
+      buys_24h: row.buys_24h == null ? null : Number(row.buys_24h),
+      sells_24h: row.sells_24h == null ? null : Number(row.sells_24h),
+      last_trade_at: row.last_trade_at ? new Date(row.last_trade_at).toISOString() : null,
+      market_stage: row.market_stage == null ? null : String(row.market_stage),
+    });
+  } catch (error: any) {
+    console.warn("[robinhood-v3] stats patch publish failed", error?.message || String(error));
   }
 }
 
@@ -822,13 +912,30 @@ async function refreshNormalizedMarketValuation(provider: ethers.Provider, index
   );
 }
 
-async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedPool,log: ethers.Log,_parsed: ethers.LogDescription,normalized: NormalizedSwap): Promise<boolean> {
+async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedPool,log: ethers.Log,parsed: ethers.LogDescription,normalized: NormalizedSwap): Promise<boolean> {
   if (normalized.baseAmountRaw <= 0n || normalized.quoteAmountRaw <= 0n) return false;
   const descriptor = buildDescriptor(indexedPool);
   const execution = formatPairExecution({
     descriptor,
     swap: { side: normalized.side, baseAmountRaw: normalized.baseAmountRaw, quoteAmountRaw: normalized.quoteAmountRaw },
   });
+  const sqrtPriceX96 = (() => {
+    try {
+      const value = (parsed?.args as any)?.sqrtPriceX96;
+      return value == null ? 0n : BigInt(value);
+    } catch {
+      return 0n;
+    }
+  })();
+  const spotQuote =
+    spotQuotePerBase(
+      sqrtPriceX96,
+      indexedPool.token0Address,
+      indexedPool.baseTokenAddress,
+      indexedPool.baseDecimals,
+      indexedPool.quoteDecimals,
+    ) || execution.priceQuote;
+
   const block = await provider.getBlock(log.blockNumber);
   if (!block?.hash) return false;
   const tx = await provider.getTransaction(log.transactionHash).catch(() => null);
@@ -887,22 +994,23 @@ async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedP
     blockTime,
     blockNumber: log.blockNumber,
     logIndex,
-    priceQuote: execution.priceQuote,
+    priceQuote: spotQuote,
     quoteAmountRaw: normalized.quoteAmountRaw,
     priceUsd: tradeValuationHealthy ? tradeValuation.priceUsd : null,
     volumeUsd: tradeValuationHealthy ? tradeValuation.volumeUsd : null,
     reference,
   });
-  await updateMarketStats(indexedPool, execution.priceQuote, execution.quoteAmount, normalized.side, log.blockNumber, blockTime);
+  await updateMarketStats(indexedPool, spotQuote, execution.quoteAmount, normalized.side, log.blockNumber, blockTime);
   await pool.query(
     `update public.dex_pools
         set price_quote=$3,
             quote_volume_24h=(select coalesce(sum(quote_amount),0) from public.dex_trades where chain_id=$1 and pair_address=$2 and status='confirmed' and block_time>=now()-interval '24 hours'),
             updated_at=now()
       where chain_id=$1 and pair_address=$2`,
-    [indexedPool.chainId,indexedPool.pairAddress,execution.priceQuote],
+    [indexedPool.chainId,indexedPool.pairAddress,spotQuote],
   );
 
+  await publishMarketStatsPatch(indexedPool);
   await publishMarketEvent(indexedPool, "market_trade", {
     eventId:`${indexedPool.chainId}:${txHash}:${logIndex}`,
     source:"robinhood_v3",
@@ -918,6 +1026,8 @@ async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedP
     tokenAmountRaw:normalized.baseAmountRaw.toString(),
     nativeAmountRaw:isNativeQuote ? normalized.quoteAmountRaw.toString() : null,
     priceQuote:execution.priceQuote,
+    spotPriceQuote:spotQuote,
+    spotPriceBnb:isNativeQuote ? spotQuote : null,
     priceBnb:isNativeQuote ? execution.priceQuote : null,
     priceUsd:tradeValuationHealthy ? tradeValuation.priceUsd : null,
     volumeUsd:tradeValuationHealthy ? tradeValuation.volumeUsd : null,
@@ -971,6 +1081,8 @@ type RobinhoodV3PassHealth = {
   lastCandidateCount: number | null;
   lastPoolCount: number | null;
   lastError: string | null;
+  lastPublishAt: string | null;
+  lastPublishError: string | null;
   swapRouterConfigured: Record<number, boolean>;
 };
 
@@ -981,6 +1093,8 @@ const passHealth: RobinhoodV3PassHealth = {
   lastCandidateCount: null,
   lastPoolCount: null,
   lastError: null,
+  lastPublishAt: null,
+  lastPublishError: null,
   swapRouterConfigured: {},
 };
 

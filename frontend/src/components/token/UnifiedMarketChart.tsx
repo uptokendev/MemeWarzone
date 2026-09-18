@@ -590,6 +590,7 @@ export function UnifiedMarketChart({
           liveMcapNative: overlayMcapNative,
           intervalSeconds,
           fallbackRows: tradeFallback,
+          supplyWhole: postBurnSupply(marketState, tokenDecimals) || liveSupplyWhole || null,
         }),
       );
     }
