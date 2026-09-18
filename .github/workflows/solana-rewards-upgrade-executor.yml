@@ -1,0 +1,28 @@
+name: Solana Rewards Upgrade Executor
+
+on:
+  pull_request:
+    paths:
+      - "scripts/solana/upgrade-mainnet-rewards-treasury.cjs"
+      - "scripts/solana/preflight-rewards-treasury-upgrade.sh"
+      - "scripts/solanaRewardsUpgradeExecutor.test.mjs"
+      - "config/solana-rewards-upgrade.env.example"
+      - ".github/workflows/solana-rewards-upgrade-executor.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Syntax
+        run: node --check scripts/solana/upgrade-mainnet-rewards-treasury.cjs
+      - name: Guarded executor matrix
+        run: node --test scripts/solanaRewardsUpgradeExecutor.test.mjs
