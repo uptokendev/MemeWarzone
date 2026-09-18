@@ -411,7 +411,18 @@ async function quoteExactInputSingleRaw(
   if (quoterAddress) {
     // Non-view by signature because it simulates a swap, so it must be staticCall'd.
     const quoter = new Contract(quoterAddress, V3_QUOTER_ABI, provider) as any;
-    return BigInt(await quoter.quoteExactInputSingle.staticCall(tokenIn, tokenOut, route.fee, amountInRaw));
+    // A load-balanced RPC occasionally answers from a node that has not caught up,
+    // which surfaces as a CALL_EXCEPTION carrying no revert data. Retry once
+    // before showing the user a failure; a genuine revert carries data and is
+    // rethrown immediately.
+    try {
+      return BigInt(await quoter.quoteExactInputSingle.staticCall(tokenIn, tokenOut, route.fee, amountInRaw));
+    } catch (error: any) {
+      const emptyRevert = error?.code === "CALL_EXCEPTION" && (error?.data == null || error?.data === "0x");
+      if (!emptyRevert) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      return BigInt(await quoter.quoteExactInputSingle.staticCall(tokenIn, tokenOut, route.fee, amountInRaw));
+    }
   }
 
   const router = new Contract(route.routerAddress, V3_ROUTER_ABI, provider) as any;
