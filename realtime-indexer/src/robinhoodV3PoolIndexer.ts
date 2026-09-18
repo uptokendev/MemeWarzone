@@ -615,36 +615,6 @@ function valuationError(reference: RobinhoodQuoteUsdReference, valuation: { pric
   return null;
 }
 
-/**
- * Post-burn total supply for a graduated campaign, cached per campaign.
- *
- * Token Details values market cap as spot x post-burn supply. Writing the same
- * basis onto the candle keeps chart, ATH and header on one number instead of
- * leaving mcap null and letting the chart fall back to trade fill prices.
- */
-const postBurnSupplyCache = new Map<string, { supply: number; at: number }>();
-const POST_BURN_SUPPLY_TTL_MS = 5 * 60 * 1000;
-
-async function postBurnSupplyWhole(chainId: number, campaignAddress: string, decimals: number): Promise<number> {
-  const key = `${chainId}:${campaignAddress}`;
-  const cached = postBurnSupplyCache.get(key);
-  if (cached && Date.now() - cached.at < POST_BURN_SUPPLY_TTL_MS) return cached.supply;
-  try {
-    const result = await pool.query(
-      `select post_burn_total_supply_raw from public.campaign_market_state
-        where chain_id=$1 and campaign_address=$2 limit 1`,
-      [chainId, campaignAddress],
-    );
-    const raw = String(result.rows[0]?.post_burn_total_supply_raw || "").trim();
-    const supply = /^\d+$/.test(raw) ? Number(ethers.formatUnits(raw, decimals)) : 0;
-    const safe = Number.isFinite(supply) && supply > 0 ? supply : 0;
-    postBurnSupplyCache.set(key, { supply: safe, at: Date.now() });
-    return safe;
-  } catch {
-    return 0;
-  }
-}
-
 async function upsertCandle(input: {
   indexedPool: IndexedPool;
   blockTime: Date;
@@ -654,7 +624,6 @@ async function upsertCandle(input: {
   quoteAmountRaw: bigint;
   priceUsd: string | null;
   volumeUsd: string | null;
-  mcapNative: string | null;
   reference: RobinhoodQuoteUsdReference;
 }): Promise<void> {
   const quoteVolume = ethers.formatUnits(input.quoteAmountRaw, input.indexedPool.quoteDecimals);
@@ -666,11 +635,9 @@ async function upsertCandle(input: {
          chain_id,campaign_address,timeframe,bucket_start,o,h,l,c,volume_bnb,trades_count,
          source_mask,bonding_trade_count,dex_trade_count,bonding_volume_bnb,dex_volume_bnb,
          last_block_number,last_log_index,quote_token_address,quote_asset_type,volume_quote,dex_volume_quote,
-         o_usd,h_usd,l_usd,c_usd,volume_usd,reference_price_usd,reference_price_updated_at,valuation_source,valuation_healthy,
-         price_o,price_h,price_l,price_c,mcap_o,mcap_h,mcap_l,mcap_c,canonical_updated_at,updated_at
+         o_usd,h_usd,l_usd,c_usd,volume_usd,reference_price_usd,reference_price_updated_at,valuation_source,valuation_healthy,updated_at
        ) values($1,$2,$3,$4,$5,$5,$5,$5,$6,1,2,0,1,0,$6,$7,$8,$9,$10,$11,$11,
-                $12,$12,$12,$12,coalesce($13::numeric,0),$14,$15,$16,$17,
-                $5,$5,$5,$5,$18,$18,$18,$18,now(),now())
+                $12,$12,$12,$12,coalesce($13::numeric,0),$14,$15,$16,$17,now())
        on conflict(chain_id,campaign_address,timeframe,bucket_start) do update set
          h=greatest(public.token_candles.h,excluded.h),l=least(public.token_candles.l,excluded.l),
          c=case when coalesce(public.token_candles.last_block_number,-1) < excluded.last_block_number then excluded.c
@@ -694,21 +661,6 @@ async function upsertCandle(input: {
          reference_price_updated_at=coalesce(excluded.reference_price_updated_at,public.token_candles.reference_price_updated_at),
          valuation_source=coalesce(excluded.valuation_source,public.token_candles.valuation_source),
          valuation_healthy=coalesce(public.token_candles.valuation_healthy,true) and coalesce(excluded.valuation_healthy,false),
-         price_h=case when excluded.price_h is null then public.token_candles.price_h when public.token_candles.price_h is null then excluded.price_h else greatest(public.token_candles.price_h,excluded.price_h) end,
-         price_l=case when excluded.price_l is null then public.token_candles.price_l when public.token_candles.price_l is null then excluded.price_l else least(public.token_candles.price_l,excluded.price_l) end,
-         price_c=case when excluded.price_c is null then public.token_candles.price_c
-                      when coalesce(public.token_candles.last_block_number,-1) < excluded.last_block_number then excluded.price_c
-                      when public.token_candles.last_block_number = excluded.last_block_number and coalesce(public.token_candles.last_log_index,-1) <= excluded.last_log_index then excluded.price_c
-                      else public.token_candles.price_c end,
-         price_o=coalesce(public.token_candles.price_o,excluded.price_o),
-         mcap_h=case when excluded.mcap_h is null then public.token_candles.mcap_h when public.token_candles.mcap_h is null then excluded.mcap_h else greatest(public.token_candles.mcap_h,excluded.mcap_h) end,
-         mcap_l=case when excluded.mcap_l is null then public.token_candles.mcap_l when public.token_candles.mcap_l is null then excluded.mcap_l else least(public.token_candles.mcap_l,excluded.mcap_l) end,
-         mcap_c=case when excluded.mcap_c is null then public.token_candles.mcap_c
-                     when coalesce(public.token_candles.last_block_number,-1) < excluded.last_block_number then excluded.mcap_c
-                     when public.token_candles.last_block_number = excluded.last_block_number and coalesce(public.token_candles.last_log_index,-1) <= excluded.last_log_index then excluded.mcap_c
-                     else public.token_candles.mcap_c end,
-         mcap_o=coalesce(public.token_candles.mcap_o,excluded.mcap_o),
-         canonical_updated_at=now(),
          last_block_number=greatest(coalesce(public.token_candles.last_block_number,-1),excluded.last_block_number),
          last_log_index=case when coalesce(public.token_candles.last_block_number,-1) < excluded.last_block_number then excluded.last_log_index
                              when public.token_candles.last_block_number = excluded.last_block_number then greatest(coalesce(public.token_candles.last_log_index,-1),excluded.last_log_index)
@@ -732,7 +684,6 @@ async function upsertCandle(input: {
         input.reference.updatedAt,
         input.reference.source,
         input.reference.healthy && Boolean(input.priceUsd && input.volumeUsd),
-        input.mcapNative,
       ],
     );
     const row = upserted.rows[0];
@@ -770,10 +721,123 @@ async function publishMarketEvent(indexedPool: IndexedPool, name: string, data: 
 }
 
 /** Mirrors the market_stats row the summary endpoint serves, so tiles patch live. */
+/**
+ * Mirrors topazPoolIndexer.refreshMarketStats for Robinhood.
+ *
+ * BNB works because Topaz publishes a complete market_stats row: market cap,
+ * liquidity, the 5m/1h/4h/24h volumes and the supply basis. Robinhood only ever
+ * wrote last price and 24h volume, so Token Details recomputed the rest from
+ * trades and disagreed with itself between renders. Same fields, same basis,
+ * only the venue differs.
+ */
+async function refreshRobinhoodMarketStats(
+  provider: ethers.Provider,
+  indexedPool: IndexedPool,
+): Promise<void> {
+  const aggregates = await pool.query(
+    `select
+       coalesce(sum(case when "blockTime">=now()-interval '5 minutes' then ("nativeAmountRaw"::numeric/1e18) else 0 end),0) as volume_5m_bnb,
+       coalesce(sum(case when "blockTime">=now()-interval '1 hour' then ("nativeAmountRaw"::numeric/1e18) else 0 end),0) as volume_1h_bnb,
+       coalesce(sum(case when "blockTime">=now()-interval '4 hours' then ("nativeAmountRaw"::numeric/1e18) else 0 end),0) as volume_4h_bnb,
+       coalesce(sum(case when "blockTime">=now()-interval '24 hours' then ("nativeAmountRaw"::numeric/1e18) else 0 end),0) as volume_24h_bnb,
+       coalesce(sum(case when source='bonding' and "blockTime">=now()-interval '24 hours' then ("nativeAmountRaw"::numeric/1e18) else 0 end),0) as bonding_volume_24h_bnb,
+       coalesce(sum(case when source='robinhood_v3' and "blockTime">=now()-interval '24 hours' then ("nativeAmountRaw"::numeric/1e18) else 0 end),0) as dex_volume_24h_bnb,
+       coalesce(sum(case when side='buy' and "blockTime">=now()-interval '24 hours' then ("nativeAmountRaw"::numeric/1e18) else 0 end),0) as buy_volume_24h_bnb,
+       coalesce(sum(case when side='sell' and "blockTime">=now()-interval '24 hours' then ("nativeAmountRaw"::numeric/1e18) else 0 end),0) as sell_volume_24h_bnb,
+       count(*) filter(where "blockTime">=now()-interval '24 hours')::int as trades_24h,
+       count(*) filter(where side='buy' and "blockTime">=now()-interval '24 hours')::int as buys_24h,
+       count(*) filter(where side='sell' and "blockTime">=now()-interval '24 hours')::int as sells_24h
+     from public.market_trades_v
+     where "chainId"=$1 and "campaignAddress"=$2 and status='confirmed'`,
+    [indexedPool.chainId, indexedPool.campaignAddress],
+  );
+
+  const latest = await pool.query(
+    `select "priceBnb","blockNumber","blockTime"
+       from public.market_trades_v
+      where "chainId"=$1 and "campaignAddress"=$2 and status='confirmed'
+      order by "blockNumber" desc,"logIndex" desc
+      limit 1`,
+    [indexedPool.chainId, indexedPool.campaignAddress],
+  );
+
+  const marketState = await pool.query(
+    `select post_burn_total_supply_raw
+       from public.campaign_market_state
+      where chain_id=$1 and campaign_address=$2
+      limit 1`,
+    [indexedPool.chainId, indexedPool.campaignAddress],
+  );
+
+  const stats = aggregates.rows[0] || {};
+  const supplyRaw = marketState.rows[0]?.post_burn_total_supply_raw ?? null;
+
+  // last_price_bnb is already the post-swap spot, so market cap matches the
+  // headline rather than a fill.
+  const priceRow = await pool.query(
+    `select last_price_bnb from public.market_stats where chain_id=$1 and campaign_address=$2 limit 1`,
+    [indexedPool.chainId, indexedPool.campaignAddress],
+  );
+  const lastPrice = priceRow.rows[0]?.last_price_bnb ?? latest.rows[0]?.priceBnb ?? null;
+
+  const balances = await readPairBalances({
+    provider,
+    pairAddress: indexedPool.pairAddress,
+    token0Address: indexedPool.token0Address,
+    token1Address: indexedPool.token1Address,
+    baseTokenAddress: indexedPool.baseTokenAddress,
+    quoteTokenAddress: indexedPool.quoteTokenAddress,
+  });
+  const nativeSide = Number(ethers.formatUnits(balances.reserveQuoteRaw, indexedPool.quoteDecimals));
+  const tokenSide = Number(ethers.formatUnits(balances.reserveBaseRaw, indexedPool.baseDecimals));
+  // Concentrated liquidity holds unequal value per side, so sum both rather
+  // than doubling the quote side the way a V2 pool allows.
+  const liquidityBnb =
+    Number.isFinite(nativeSide) && Number.isFinite(tokenSide) && Number(lastPrice) > 0
+      ? nativeSide + tokenSide * Number(lastPrice)
+      : nativeSide;
+
+  await pool.query(
+    `update public.market_stats set
+       market_cap_bnb=case when $3::numeric is null or $4::text is null then market_cap_bnb
+                           else $3::numeric*($4::numeric/1e18) end,
+       liquidity_bnb=$5,
+       volume_5m_bnb=$6,volume_1h_bnb=$7,volume_4h_bnb=$8,volume_24h_bnb=$9,
+       bonding_volume_24h_bnb=$10,dex_volume_24h_bnb=$11,
+       buy_volume_24h_bnb=$12,sell_volume_24h_bnb=$13,
+       trades_24h=$14,buys_24h=$15,sells_24h=$16,
+       post_burn_total_supply_raw=coalesce($4,post_burn_total_supply_raw),
+       supply_basis='post_burn_total_supply',
+       data_lag_seconds=0,
+       updated_at=now()
+     where chain_id=$1 and campaign_address=$2`,
+    [
+      indexedPool.chainId,
+      indexedPool.campaignAddress,
+      lastPrice,
+      supplyRaw,
+      liquidityBnb,
+      stats.volume_5m_bnb ?? 0,
+      stats.volume_1h_bnb ?? 0,
+      stats.volume_4h_bnb ?? 0,
+      stats.volume_24h_bnb ?? 0,
+      stats.bonding_volume_24h_bnb ?? 0,
+      stats.dex_volume_24h_bnb ?? 0,
+      stats.buy_volume_24h_bnb ?? 0,
+      stats.sell_volume_24h_bnb ?? 0,
+      stats.trades_24h ?? 0,
+      stats.buys_24h ?? 0,
+      stats.sells_24h ?? 0,
+    ],
+  );
+}
+
 async function publishMarketStatsPatch(indexedPool: IndexedPool): Promise<void> {
   try {
     const result = await pool.query(
-      `select last_price_bnb,last_price_quote,dex_volume_24h_bnb,volume_24h_bnb,
+      `select last_price_bnb,last_price_quote,market_cap_bnb,liquidity_bnb,
+              volume_5m_bnb,volume_1h_bnb,volume_4h_bnb,
+              dex_volume_24h_bnb,volume_24h_bnb,
               trades_24h,buys_24h,sells_24h,last_trade_at,market_stage
          from public.market_stats
         where chain_id=$1 and campaign_address=$2
@@ -785,6 +849,11 @@ async function publishMarketStatsPatch(indexedPool: IndexedPool): Promise<void> 
     await publishMarketEvent(indexedPool, "market_stats_patch", {
       last_price_bnb: row.last_price_bnb == null ? null : String(row.last_price_bnb),
       last_price_quote: row.last_price_quote == null ? null : String(row.last_price_quote),
+      market_cap_bnb: row.market_cap_bnb == null ? null : String(row.market_cap_bnb),
+      liquidity_bnb: row.liquidity_bnb == null ? null : String(row.liquidity_bnb),
+      volume_5m_bnb: row.volume_5m_bnb == null ? null : String(row.volume_5m_bnb),
+      volume_1h_bnb: row.volume_1h_bnb == null ? null : String(row.volume_1h_bnb),
+      volume_4h_bnb: row.volume_4h_bnb == null ? null : String(row.volume_4h_bnb),
       dex_volume_24h_bnb: row.dex_volume_24h_bnb == null ? null : String(row.dex_volume_24h_bnb),
       vol_24h_bnb: row.volume_24h_bnb == null ? null : String(row.volume_24h_bnb),
       trades_24h: row.trades_24h == null ? null : Number(row.trades_24h),
@@ -1038,20 +1107,8 @@ async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedP
   );
   if (!inserted.rowCount) return false;
 
-  // Null mcap makes the chart fall back to fills, which on a thin pool sit far
-  // above the market cap the header reports from spot.
-  const supplyWhole = await postBurnSupplyWhole(indexedPool.chainId, indexedPool.campaignAddress, indexedPool.baseDecimals);
-  const mcapNative = (() => {
-    if (!(supplyWhole > 0)) return null;
-    const spot = Number(spotQuote);
-    if (!Number.isFinite(spot) || spot <= 0) return null;
-    const value = spot * supplyWhole;
-    return Number.isFinite(value) && value > 0 ? value.toFixed(18) : null;
-  })();
-
   await upsertCandle({
     indexedPool,
-    mcapNative,
     blockTime,
     blockNumber: log.blockNumber,
     logIndex,
@@ -1071,6 +1128,11 @@ async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedP
     [indexedPool.chainId,indexedPool.pairAddress,spotQuote],
   );
 
+  try {
+    await refreshRobinhoodMarketStats(provider, indexedPool);
+  } catch (error: any) {
+    console.warn("[robinhood-v3] market stats refresh failed", error?.message || String(error));
+  }
   await publishMarketStatsPatch(indexedPool);
   await publishMarketEvent(indexedPool, "market_trade", {
     eventId:`${indexedPool.chainId}:${txHash}:${logIndex}`,
