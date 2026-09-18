@@ -7,6 +7,7 @@ on:
       - "scripts/verifyArenaWarPoolTreasuryV2Deployment.ts"
       - "scripts/lib/arenaV2DeploymentPolicy.cjs"
       - "scripts/arenaV2DeploymentAuthority.test.mjs"
+      - "config/robinhood-production.env.example"
       - ".github/workflows/arena-v2-deployment-authority.yml"
   workflow_dispatch:
 
