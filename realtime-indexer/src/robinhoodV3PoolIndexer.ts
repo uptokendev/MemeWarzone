@@ -897,6 +897,19 @@ async function updateMarketStats(indexedPool: IndexedPool, priceQuote: string, q
 }
 
 async function refreshNormalizedMarketValuation(provider: ethers.Provider, indexedPool: IndexedPool, blockTag?: number): Promise<void> {
+  try {
+    await refreshNormalizedMarketValuationInner(provider, indexedPool, blockTag);
+    passHealth.lastStatsError = null;
+    passHealth.lastStatsWriteAt = new Date().toISOString();
+  } catch (error: any) {
+    // This also writes market_stats. Unguarded it aborted the whole pool scan,
+    // so lastPoolCount never advanced and the cause never reached /health.
+    passHealth.lastStatsError = `valuation:${String(error?.message || error)}`.slice(0, 300);
+    console.error("[robinhood-v3] market valuation write failed", { chainId: indexedPool.chainId, campaign: indexedPool.campaignAddress, error: passHealth.lastStatsError });
+  }
+}
+
+async function refreshNormalizedMarketValuationInner(provider: ethers.Provider, indexedPool: IndexedPool, blockTag?: number): Promise<void> {
   const [stats, state, balances, reference, volume] = await Promise.all([
     pool.query(
       `select last_price_quote,last_trade_at
