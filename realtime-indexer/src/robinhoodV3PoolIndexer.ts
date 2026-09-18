@@ -1083,6 +1083,8 @@ type RobinhoodV3PassHealth = {
   lastError: string | null;
   lastPublishAt: string | null;
   lastPublishError: string | null;
+  lastRebuiltCampaign: string | null;
+  lastRebuildError: string | null;
   swapRouterConfigured: Record<number, boolean>;
 };
 
@@ -1095,6 +1097,8 @@ const passHealth: RobinhoodV3PassHealth = {
   lastError: null,
   lastPublishAt: null,
   lastPublishError: null,
+  lastRebuiltCampaign: null,
+  lastRebuildError: null,
   swapRouterConfigured: {},
 };
 
@@ -1106,6 +1110,72 @@ export function robinhoodV3PublicHealth(): RobinhoodV3PassHealth {
       chainConfigs().map((config) => [config.chainId, Boolean(config.swapRouterAddress)]),
     ),
   };
+}
+
+
+/**
+ * One-shot rebuild of post-graduation candles.
+ *
+ * Candles written before the spot-price fix stored each swap's execution price,
+ * which on a thin pool sits far above the pool price, so historical buckets keep
+ * their spikes until the swaps are re-ingested. Clearing the indexed swaps and
+ * rewinding the pool cursor makes the normal pass rewrite them from chain.
+ *
+ * Bonding buckets are left alone: only candles at or after graduation are dropped.
+ */
+async function rebuildPostGradCandles(chainId: number): Promise<void> {
+  const requested = ENV.ROBINHOOD_V3_CANDLE_REBUILD;
+  if (!requested) return;
+  const all = requested.toLowerCase() === "all";
+  const wanted = new Set(
+    requested.split(",").map((value) => value.trim().toLowerCase()).filter((value) => /^0x[a-f0-9]{40}$/.test(value)),
+  );
+  if (!all && wanted.size === 0) return;
+
+  const pools = await pool.query(
+    `select dp.campaign_address, dp.pair_address, dp.graduation_block, cms.graduation_time
+       from public.dex_pools dp
+       left join public.campaign_market_state cms
+         on cms.chain_id=dp.chain_id and lower(cms.campaign_address)=lower(dp.campaign_address)
+      where dp.chain_id=$1`,
+    [chainId],
+  );
+
+  for (const row of pools.rows) {
+    const campaignAddress = lowerAddress(row.campaign_address);
+    if (!campaignAddress) continue;
+    if (!all && !wanted.has(campaignAddress)) continue;
+    try {
+      const client = await pool.connect();
+      try {
+        await client.query("begin");
+        await client.query(`delete from public.dex_trades where chain_id=$1 and campaign_address=$2`, [chainId, campaignAddress]);
+        if (row.graduation_time) {
+          await client.query(
+            `delete from public.token_candles where chain_id=$1 and campaign_address=$2 and bucket_start>=$3`,
+            [chainId, campaignAddress, row.graduation_time],
+          );
+        }
+        const from = Math.max(0, Number(row.graduation_block || 0));
+        await client.query(
+          `update public.dex_pools set last_indexed_block=$3,last_finalized_block=$3,updated_at=now()
+            where chain_id=$1 and pair_address=$2`,
+          [chainId, lowerAddress(row.pair_address), from],
+        );
+        await client.query("commit");
+      } catch (error) {
+        await client.query("rollback");
+        throw error;
+      } finally {
+        client.release();
+      }
+      console.log("[robinhood-v3] candle rebuild armed", { chainId, campaignAddress, fromBlock: Number(row.graduation_block || 0) });
+      passHealth.lastRebuiltCampaign = campaignAddress;
+    } catch (error: any) {
+      console.error("[robinhood-v3] candle rebuild failed", { chainId, campaignAddress, error: error?.message || String(error) });
+      passHealth.lastRebuildError = String(error?.message || error).slice(0, 200);
+    }
+  }
 }
 
 async function runChain(config: ChainConfig): Promise<void> {
@@ -1138,8 +1208,16 @@ async function runChain(config: ChainConfig): Promise<void> {
 
 async function loop(): Promise<void> {
   const intervalMs = Math.max(2_000, ENV.ROBINHOOD_V3_POOL_INDEXER_INTERVAL_MS);
+  let rebuilt = false;
   while (true) {
     const configs = chainConfigs();
+    if (!rebuilt) {
+      rebuilt = true;
+      for (const config of configs) {
+        try { await rebuildPostGradCandles(config.chainId); }
+        catch (error: any) { console.error("[robinhood-v3] rebuild pass failed", { chainId: config.chainId, error: error?.message || String(error) }); }
+      }
+    }
     for (const config of configs) {
       try { await runChain(config); }
       catch (error: any) {
