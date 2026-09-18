@@ -30,6 +30,7 @@ import { recordRecentlyViewed } from "@/lib/searchHistory";
 import { getReadProvider } from "@/lib/readProvider";
 
 import { useBnbUsdPrice } from "@/hooks/useBnbUsdPrice";
+import { useEthUsdPrice } from "@/hooks/useEthUsdPrice";
 import { useSolUsdPrice } from "@/hooks/useSolUsdPrice";
 import { useTokenStatsRealtime } from "@/hooks/useTokenStatsRealtime";
 import { UnifiedMarketChart } from "@/components/token/UnifiedMarketChart";
@@ -2191,11 +2192,15 @@ const toSeconds = (ts: number): number => {
       metrics: timeframeTiles,
     };
   }, [campaign, contractGraduatedEarly, curveReserveWei, isSolanaPage, latestSoldFromTrades, marketTradePoints, metrics, nativeUnit, solanaCurve, solanaLivePrice, solanaMeteora.holders, solanaMeteora.spot, solanaSpotNative, summary, timeframeTiles, tokenDecimals, rtStats, topazMarket.liquidityBnb, topazMarket.marketCapBnb, topazMarket.priceBnb, transferHolders.complete, transferHolders.holders]);
-  // Native/USD reference for TokenDetails conversions: BNB on EVM, SOL on Solana.
-  const { price: bnbUsdPrice, loading: bnbUsdLoading } = useBnbUsdPrice(!isSolanaPage);
+  // Native/USD reference for TokenDetails conversions: BNB on BNB Chain, SOL on
+  // Solana, ETH on Robinhood. Treating every non-Solana chain as BNB priced a
+  // Robinhood page in BNB/USD, so the header read about six times lower than the
+  // chart, which converts with ETH/USD.
+  const { price: bnbUsdPrice, loading: bnbUsdLoading } = useBnbUsdPrice(!isSolanaPage && !isRobinhoodPage);
   const { price: liveSolUsdPrice, loading: solUsdLoading } = useSolUsdPrice(isSolanaPage);
-  const nativeUsdPrice = isSolanaPage ? liveSolUsdPrice : bnbUsdPrice;
-  const nativeUsdLoading = isSolanaPage ? solUsdLoading : bnbUsdLoading;
+  const { price: ethUsdPrice, loading: ethUsdLoading } = useEthUsdPrice(isRobinhoodPage);
+  const nativeUsdPrice = isSolanaPage ? liveSolUsdPrice : isRobinhoodPage ? ethUsdPrice : bnbUsdPrice;
+  const nativeUsdLoading = isSolanaPage ? solUsdLoading : isRobinhoodPage ? ethUsdLoading : bnbUsdLoading;
 
   const nativeUsd = useMemo(() => {
     if (nativeUsdPrice == null) return null;
