@@ -2246,6 +2246,26 @@ const toSeconds = (ts: number): number => {
     tokenData.marketCap,
   ]);
 
+  // TEMPORARY DIAGNOSTIC (remove once the ATH mismatch is pinned). Logs the exact
+  // inputs to the ATH bar. Every server response says the peak market cap is
+  // 0.306349 ETH, yet the bar renders about 6.03x that, so the inflated value has
+  // to enter on the client.
+  useEffect(() => {
+    if (!isRobinhoodPage) return;
+    const rows = unifiedMarket.candles || [];
+    const highs = rows
+      .map((row: any) => Number(row?.mcap_h))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    console.log("[ath-debug]", {
+      candles: rows.length,
+      maxMcapH: highs.length ? Math.max(...highs) : null,
+      liveMarketCapNative,
+      nativeUsd,
+      athNative: canonicalAthNativeFromCandles(unifiedMarket.candles, liveMarketCapNative ?? 0),
+      sampleBuckets: rows.slice(-4).map((row: any) => ({ b: row?.bucket_start, mcap_h: row?.mcap_h, h: row?.h })),
+    });
+  }, [isRobinhoodPage, unifiedMarket.candles, liveMarketCapNative, nativeUsd]);
+
   const marketCapDisplay = useMemo(() => {
     const nativeLabel =
       liveMarketCapNative != null && liveMarketCapNative > 0
