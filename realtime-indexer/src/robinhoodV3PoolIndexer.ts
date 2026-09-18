@@ -1118,7 +1118,23 @@ async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedP
     volumeUsd: tradeValuationHealthy ? tradeValuation.volumeUsd : null,
     reference,
   });
-  await updateMarketStats(indexedPool, spotQuote, execution.quoteAmount, normalized.side, log.blockNumber, blockTime);
+  try {
+    await updateMarketStats(indexedPool, spotQuote, execution.quoteAmount, normalized.side, log.blockNumber, blockTime);
+    passHealth.lastStatsError = null;
+    passHealth.lastStatsWriteAt = new Date().toISOString();
+  } catch (error: any) {
+    // market_stats is what the header, market cap and timeframe tiles read. A
+    // silent failure here leaves the page recomputing everything from trades.
+    passHealth.lastStatsError = `updateMarketStats:${String(error?.message || error)}`.slice(0, 300);
+    console.error("[robinhood-v3] market stats write failed", { chainId: indexedPool.chainId, campaign: indexedPool.campaignAddress, error: passHealth.lastStatsError });
+  }
+  try {
+    const present = await pool.query(
+      `select 1 from public.market_stats where chain_id=$1 and campaign_address=$2 limit 1`,
+      [indexedPool.chainId, indexedPool.campaignAddress],
+    );
+    passHealth.marketStatsRowPresent = (present.rowCount ?? 0) > 0;
+  } catch { /* diagnostics only */ }
   await pool.query(
     `update public.dex_pools
         set price_quote=$3,
@@ -1223,6 +1239,10 @@ type RobinhoodV3PassHealth = {
   lastPublishError: string | null;
   lastRebuiltCampaign: string | null;
   lastRebuildError: string | null;
+  /** Sticky: cleared only by a successful write, never by the next pass. */
+  lastStatsError: string | null;
+  lastStatsWriteAt: string | null;
+  marketStatsRowPresent: boolean | null;
   swapRouterConfigured: Record<number, boolean>;
 };
 
@@ -1237,6 +1257,9 @@ const passHealth: RobinhoodV3PassHealth = {
   lastPublishError: null,
   lastRebuiltCampaign: null,
   lastRebuildError: null,
+  lastStatsError: null,
+  lastStatsWriteAt: null,
+  marketStatsRowPresent: null,
   swapRouterConfigured: {},
 };
 
