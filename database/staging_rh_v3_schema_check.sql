@@ -66,7 +66,18 @@ from (values
     ('market_pairs','reserve_base_raw'),
     ('market_pairs','reserve_quote_raw'),
     ('market_pairs','last_verified_at'),
-    ('market_pairs','updated_at')
+    ('market_pairs','updated_at'),
+    -- canonical series written by the V3 candle upsert; when these are missing
+    -- the chart falls back to trade fill prices instead of pool spot
+    ('token_candles','price_o'),
+    ('token_candles','price_h'),
+    ('token_candles','price_l'),
+    ('token_candles','price_c'),
+    ('token_candles','mcap_o'),
+    ('token_candles','mcap_h'),
+    ('token_candles','mcap_l'),
+    ('token_candles','mcap_c'),
+    ('token_candles','canonical_updated_at')
   ) as required(table_name, column_name)
   left join information_schema.columns c
     on c.table_schema = 'public'
