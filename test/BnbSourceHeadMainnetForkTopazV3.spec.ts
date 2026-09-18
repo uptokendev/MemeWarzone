@@ -184,6 +184,9 @@ describe("BNB source-head 4/3 + V3 fee stack on real Topaz mainnet fork", functi
     const remaining = nativeTarget - (await campaign.netRaisedWei()) + ethers.parseEther("0.001");
     await (await campaign.buyExactBnb(0n, { value: remaining })).wait();
     if (!(await campaign.launched())) await (await campaign.graduateIfEligible(0n, 0n)).wait();
+    if (!(await campaign.launched()) && (await campaign.graduationPending())) {
+      await (await campaign.graduateIfEligible(0n, 0n)).wait();
+    }
     expect(await campaign.launched()).to.equal(true);
 
     const pendingCreatorFee = await creatorVault.pendingCreatorFees(created.campaign);
