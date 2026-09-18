@@ -1466,6 +1466,26 @@ async function rebuildPostGradCandles(chainId: number): Promise<void> {
     if (!campaignAddress) continue;
     if (!all && !wanted.has(campaignAddress)) continue;
     try {
+      // Record that this campaign was rebuilt, so leaving the env var in place
+      // is safe. Without this every restart wiped and re-scanned again, and the
+      // var had to be removed and the service redeployed a second time.
+      const marker = `rh_v3_candle_rebuild:${campaignAddress}`;
+      const claimed = await pool.query(
+        `insert into public.indexer_state(chain_id,cursor,last_indexed_block,updated_at)
+         values($1,$2,1,now())
+         on conflict(chain_id,cursor) do nothing
+         returning cursor`,
+        [chainId, marker],
+      );
+      if ((claimed.rowCount ?? 0) === 0) {
+        console.log("[robinhood-v3] candle rebuild already done, skipping", { chainId, campaignAddress });
+        passHealth.lastRebuiltCampaign = campaignAddress;
+        continue;
+      }
+    } catch (error: any) {
+      console.warn("[robinhood-v3] candle rebuild marker failed", { chainId, campaignAddress, error: error?.message || String(error) });
+    }
+    try {
       const client = await pool.connect();
       try {
         await client.query("begin");
