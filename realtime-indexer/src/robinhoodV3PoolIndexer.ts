@@ -772,13 +772,32 @@ async function refreshRobinhoodMarketStats(
   const stats = aggregates.rows[0] || {};
   const supplyRaw = marketState.rows[0]?.post_burn_total_supply_raw ?? null;
 
-  // last_price_bnb is already the post-swap spot, so market cap matches the
-  // headline rather than a fill.
-  const priceRow = await pool.query(
-    `select last_price_bnb from public.market_stats where chain_id=$1 and campaign_address=$2 limit 1`,
-    [indexedPool.chainId, indexedPool.campaignAddress],
-  );
-  const lastPrice = priceRow.rows[0]?.last_price_bnb ?? latest.rows[0]?.priceBnb ?? null;
+  // Read current pool spot rather than the newest fill. On a thin pool a fill
+  // sits well above spot, and market cap derives from this number.
+  let lastPrice: string | number | null = null;
+  try {
+    const slot0 = await new ethers.Contract(
+      indexedPool.pairAddress,
+      ["function slot0() view returns (uint160 sqrtPriceX96,int24,uint16,uint16,uint16,uint8,bool)"],
+      provider,
+    ).slot0();
+    lastPrice = spotQuotePerBase(
+      BigInt(slot0.sqrtPriceX96 ?? slot0[0]),
+      indexedPool.token0Address,
+      indexedPool.baseTokenAddress,
+      indexedPool.baseDecimals,
+      indexedPool.quoteDecimals,
+    );
+  } catch {
+    lastPrice = null;
+  }
+  if (lastPrice == null) {
+    const priceRow = await pool.query(
+      `select last_price_bnb from public.market_stats where chain_id=$1 and campaign_address=$2 limit 1`,
+      [indexedPool.chainId, indexedPool.campaignAddress],
+    );
+    lastPrice = priceRow.rows[0]?.last_price_bnb ?? latest.rows[0]?.priceBnb ?? null;
+  }
 
   const balances = await readPairBalances({
     provider,
@@ -799,6 +818,7 @@ async function refreshRobinhoodMarketStats(
 
   await pool.query(
     `update public.market_stats set
+       last_price_bnb=coalesce($3::numeric,last_price_bnb),
        market_cap_bnb=case when $3::numeric is null or $4::text is null then market_cap_bnb
                            else $3::numeric*($4::numeric/1e18) end,
        liquidity_bnb=$5,
@@ -894,6 +914,18 @@ async function updateMarketStats(indexedPool: IndexedPool, priceQuote: string, q
       where chain_id=$1 and campaign_address=$2`,
     [indexedPool.chainId,indexedPool.campaignAddress,priceQuote],
   );
+}
+
+async function refreshRobinhoodMarketStatsSafely(provider: ethers.Provider, indexedPool: IndexedPool): Promise<void> {
+  try {
+    await refreshRobinhoodMarketStats(provider, indexedPool);
+    passHealth.lastStatsError = null;
+    passHealth.lastStatsWriteAt = new Date().toISOString();
+    passHealth.marketStatsRowPresent = true;
+  } catch (error: any) {
+    passHealth.lastStatsError = `refreshStats:${String(error?.message || error)}`.slice(0, 300);
+    console.error("[robinhood-v3] market stats refresh failed", { chainId: indexedPool.chainId, campaign: indexedPool.campaignAddress, error: passHealth.lastStatsError });
+  }
 }
 
 async function refreshNormalizedMarketValuation(provider: ethers.Provider, indexedPool: IndexedPool, blockTag?: number): Promise<void> {
@@ -1196,6 +1228,7 @@ async function scanPool(provider: ethers.JsonRpcProvider, indexedPool: IndexedPo
   const from = Math.max(indexedPool.graduationBlock, indexedPool.lastIndexedBlock ?? indexedPool.graduationBlock);
   if (from > head) {
     await refreshNormalizedMarketValuation(provider, indexedPool, head);
+    await refreshRobinhoodMarketStatsSafely(provider, indexedPool);
     return 0;
   }
   let inserted = 0;
@@ -1238,6 +1271,7 @@ async function scanPool(provider: ethers.JsonRpcProvider, indexedPool: IndexedPo
     if (ENV.INDEXER_LOG_CALL_DELAY_MS > 0) await new Promise((resolve) => setTimeout(resolve, ENV.INDEXER_LOG_CALL_DELAY_MS));
   }
   await refreshNormalizedMarketValuation(provider, indexedPool, head);
+  await refreshRobinhoodMarketStatsSafely(provider, indexedPool);
   return inserted;
 }
 
