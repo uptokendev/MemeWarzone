@@ -26,6 +26,7 @@ import { timestampSec } from "@/lib/chart/normalizeTrade";
 import {
   assembleMarketCapCandles,
   marketCandlesForChart,
+  fillCandleGaps,
   patchActiveLatestBucket,
   shouldEstablishChartRange,
 } from "@/lib/chart/canonicalChartCandles";
@@ -595,27 +596,19 @@ export function UnifiedMarketChart({
       );
     }
 
-    const fromServer = toChartRows(marketCandlesForChart(marketCandles, metric, denomination, nativeUsd));
-    const fromTrades = toChartRows(tradeFallback);
-    const authoritative = fromServer.length ? fromServer : fromTrades;
+    const fromServer = marketCandlesForChart(marketCandles, metric, denomination, nativeUsd);
+    const sparse = fromServer.length
+      ? fromServer
+      : tradeFallback.map((row) => ({ time: timeToSec(row.time), open: row.open, high: row.high, low: row.low, close: row.close }));
+    // Same reason as market cap: a quiet market only produces a candle when it
+    // trades, so without filling the line is mostly holes.
+    const nowSec = Math.floor(Date.now() / 1000);
+    const authoritative = fillCandleGaps(sparse, intervalSeconds, nowSec);
     const canPatchLivePrice =
       Number.isFinite(livePrice) && livePrice > 0 && (denomination !== "USD" || nativeUsd > 0);
-    if (!canPatchLivePrice) return authoritative;
+    if (!canPatchLivePrice) return toChartRows(authoritative);
     const liveValue = denomination === "USD" && nativeUsd > 0 ? livePrice * nativeUsd : livePrice;
-    return toChartRows(
-      patchActiveLatestBucket(
-        authoritative.map((row) => ({
-          time: timeToSec(row.time),
-          open: row.open,
-          high: row.high,
-          low: row.low,
-          close: row.close,
-        })),
-        liveValue,
-        intervalSeconds,
-        Math.floor(Date.now() / 1000),
-      ),
-    );
+    return toChartRows(patchActiveLatestBucket(authoritative, liveValue, intervalSeconds, nowSec));
   }, [
     denomination,
     historyReady,
