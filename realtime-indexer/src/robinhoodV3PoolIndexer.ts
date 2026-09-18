@@ -1047,12 +1047,27 @@ async function scanPool(provider: ethers.JsonRpcProvider, indexedPool: IndexedPo
     return 0;
   }
   let inserted = 0;
-  const chunk = Math.max(50, Number(ENV.LOG_CHUNK_SIZE || 500));
+  const maxChunk = Math.max(500, Number(ENV.ROBINHOOD_V3_LOG_CHUNK_SIZE || 50_000));
+  const minChunk = Math.max(50, Number(ENV.LOG_CHUNK_SIZE || 500));
+  let chunk = maxChunk;
   let cursor = from;
   let lastSwapAt: Date | null = null;
   while (cursor <= head) {
-    const to = Math.min(head, cursor + chunk - 1);
-    const logs = await provider.getLogs({ address: indexedPool.pairAddress, topics: [[MOCK_SWAP_TOPIC, CANONICAL_SWAP_TOPIC]], fromBlock: cursor, toBlock: to });
+    let to = Math.min(head, cursor + chunk - 1);
+    let logs: ethers.Log[];
+    // Providers advertise different range limits. Narrow on rejection rather
+    // than crawling every pool at the smallest window that any provider needs.
+    for (;;) {
+      try {
+        logs = await provider.getLogs({ address: indexedPool.pairAddress, topics: [[MOCK_SWAP_TOPIC, CANONICAL_SWAP_TOPIC]], fromBlock: cursor, toBlock: to });
+        break;
+      } catch (error: any) {
+        if (chunk <= minChunk) throw error;
+        chunk = Math.max(minChunk, Math.floor(chunk / 4));
+        to = Math.min(head, cursor + chunk - 1);
+        console.warn("[robinhood-v3] narrowing log window", { chainId: indexedPool.chainId, chunk, error: String(error?.shortMessage || error?.message || error).slice(0, 120) });
+      }
+    }
     for (const log of logs) {
       const topic = String(log.topics[0] || "").toLowerCase();
       let parsed: ethers.LogDescription | null = null;

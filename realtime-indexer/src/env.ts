@@ -200,6 +200,10 @@ export const ENV = {
   // One-shot post-grad candle rebuild. Comma-separated campaign addresses, or
   // "all" for every Robinhood campaign. Runs once per process start, then stops.
   ROBINHOOD_V3_CANDLE_REBUILD: String(process.env.ROBINHOOD_V3_CANDLE_REBUILD || "").trim(),
+  // Robinhood blocks are fast, so a BSC-sized window leaves the pool minutes
+  // behind after any gap. A single pool address carries few logs, so a wide
+  // window is cheap here; the scan narrows itself if a provider rejects it.
+  ROBINHOOD_V3_LOG_CHUNK_SIZE: Number(process.env.ROBINHOOD_V3_LOG_CHUNK_SIZE || "50000"),
   ENABLE_UNIFIED_MARKET_CHART: String(process.env.ENABLE_UNIFIED_MARKET_CHART || "1") === "1",
   // Quote/trade kill-switches for the market-route API only; wallet still uses on-chain Topaz.
   ENABLE_TOPAZ_QUOTES: String(process.env.ENABLE_TOPAZ_QUOTES || "1") === "1",
