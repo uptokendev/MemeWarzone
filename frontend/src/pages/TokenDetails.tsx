@@ -1907,6 +1907,15 @@ const { stats: rtStats } = useTokenStatsRealtime(
     if (contractGraduatedEarly && topazMarket.priceBnb != null && Number.isFinite(topazMarket.priceBnb) && topazMarket.priceBnb > 0) {
       return Number(topazMarket.priceBnb);
     }
+    // A graduated Robinhood market has no Topaz snapshot, so this fell through to
+    // the campaign's currentPrice(), which the bonding curve freezes at the final
+    // curve price on graduation. The header then showed the graduation price while
+    // the chart used pool spot: 2.3195e-9 against 1.3981e-8 on RH5661. Prefer the
+    // indexed DEX price, which is the post-swap pool spot.
+    if (isRobinhoodPage && contractGraduatedEarly) {
+      const indexed = Number(unifiedMarket.summary?.last_price_bnb);
+      if (Number.isFinite(indexed) && indexed > 0) return indexed;
+    }
     if (metrics?.currentPrice != null && metrics.currentPrice > 0n) {
       const n = Number(ethers.formatUnits(metrics.currentPrice, 18));
       return Number.isFinite(n) && n > 0 ? n : null;
@@ -1915,7 +1924,16 @@ const { stats: rtStats } = useTokenStatsRealtime(
       return Number(rtStats.lastPriceBnb);
     }
     return null;
-  }, [contractGraduatedEarly, isSolanaPage, metrics?.currentPrice, rtStats?.lastPriceBnb, solanaLivePrice, topazMarket.priceBnb]);
+  }, [
+    contractGraduatedEarly,
+    isRobinhoodPage,
+    isSolanaPage,
+    metrics?.currentPrice,
+    rtStats?.lastPriceBnb,
+    solanaLivePrice,
+    topazMarket.priceBnb,
+    unifiedMarket.summary?.last_price_bnb,
+  ]);
 
   /**
    * Market-cap denominator.
@@ -2245,26 +2263,6 @@ const toSeconds = (ts: number): number => {
     rtStats?.marketcapBnb,
     tokenData.marketCap,
   ]);
-
-  // TEMPORARY DIAGNOSTIC (remove once the ATH mismatch is pinned). Logs the exact
-  // inputs to the ATH bar. Every server response says the peak market cap is
-  // 0.306349 ETH, yet the bar renders about 6.03x that, so the inflated value has
-  // to enter on the client.
-  useEffect(() => {
-    if (!isRobinhoodPage) return;
-    const rows = unifiedMarket.candles || [];
-    const highs = rows
-      .map((row: any) => Number(row?.mcap_h))
-      .filter((value) => Number.isFinite(value) && value > 0);
-    console.log("[ath-debug]", {
-      candles: rows.length,
-      maxMcapH: highs.length ? Math.max(...highs) : null,
-      liveMarketCapNative,
-      nativeUsd,
-      athNative: canonicalAthNativeFromCandles(unifiedMarket.candles, liveMarketCapNative ?? 0),
-      sampleBuckets: rows.slice(-4).map((row: any) => ({ b: row?.bucket_start, mcap_h: row?.mcap_h, h: row?.h })),
-    });
-  }, [isRobinhoodPage, unifiedMarket.candles, liveMarketCapNative, nativeUsd]);
 
   const marketCapDisplay = useMemo(() => {
     const nativeLabel =
