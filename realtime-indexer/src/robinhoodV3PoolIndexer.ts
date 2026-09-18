@@ -570,6 +570,43 @@ function normalizeCanonicalSwap(indexedPool: IndexedPool, parsed: ethers.LogDesc
   return normalized ? withCompatibility(indexedPool, normalized, sender, recipient) : null;
 }
 
+/**
+ * Pool spot price after the swap, taken from the Swap event's own sqrtPriceX96.
+ *
+ * The execution price is what the trader actually paid, slippage included. On a
+ * thin pool the two diverge by multiples, so charting fills drew candles far
+ * above the market cap the page reports from spot. Fills stay on the trade row;
+ * candles and last-price use spot. Mock pools emit no sqrtPriceX96 and fall back.
+ */
+function spotQuotePerBase(
+  sqrtPriceX96: bigint,
+  token0Address: string,
+  baseTokenAddress: string,
+  baseDecimals: number,
+  quoteDecimals: number,
+): string | null {
+  if (sqrtPriceX96 <= 0n) return null;
+  const Q96 = 1n << 96n;
+  const PRECISION = 10n ** 36n;
+  // token1 per token0, raw units, scaled by PRECISION.
+  const raw1Per0 = (sqrtPriceX96 * sqrtPriceX96 * PRECISION) / (Q96 * Q96);
+  if (raw1Per0 <= 0n) return null;
+
+  const baseIsToken0 = token0Address.toLowerCase() === baseTokenAddress.toLowerCase();
+  // A raw ratio carries the two tokens' decimal difference; undo it.
+  const [fromDecimals, toDecimals] = baseIsToken0
+    ? [baseDecimals, quoteDecimals]
+    : [quoteDecimals, baseDecimals];
+
+  let scaled = (raw1Per0 * 10n ** BigInt(fromDecimals)) / 10n ** BigInt(toDecimals);
+  if (!baseIsToken0) {
+    if (scaled <= 0n) return null;
+    scaled = (PRECISION * PRECISION) / scaled;
+  }
+  if (scaled <= 0n) return null;
+  return ethers.formatUnits(scaled, 36);
+}
+
 function valuationError(reference: RobinhoodQuoteUsdReference, valuation: { priceUsd: string | null; marketCapUsd: string | null; liquidityUsd: string | null }): string | null {
   if (!reference.healthy) return reference.error || "Quote USD reference is unhealthy.";
   if (!valuation.priceUsd) return "Normalized MEME/USD price could not be derived.";
@@ -875,13 +912,30 @@ async function refreshNormalizedMarketValuation(provider: ethers.Provider, index
   );
 }
 
-async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedPool,log: ethers.Log,_parsed: ethers.LogDescription,normalized: NormalizedSwap): Promise<boolean> {
+async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedPool,log: ethers.Log,parsed: ethers.LogDescription,normalized: NormalizedSwap): Promise<boolean> {
   if (normalized.baseAmountRaw <= 0n || normalized.quoteAmountRaw <= 0n) return false;
   const descriptor = buildDescriptor(indexedPool);
   const execution = formatPairExecution({
     descriptor,
     swap: { side: normalized.side, baseAmountRaw: normalized.baseAmountRaw, quoteAmountRaw: normalized.quoteAmountRaw },
   });
+  const sqrtPriceX96 = (() => {
+    try {
+      const value = (parsed?.args as any)?.sqrtPriceX96;
+      return value == null ? 0n : BigInt(value);
+    } catch {
+      return 0n;
+    }
+  })();
+  const spotQuote =
+    spotQuotePerBase(
+      sqrtPriceX96,
+      indexedPool.token0Address,
+      indexedPool.baseTokenAddress,
+      indexedPool.baseDecimals,
+      indexedPool.quoteDecimals,
+    ) || execution.priceQuote;
+
   const block = await provider.getBlock(log.blockNumber);
   if (!block?.hash) return false;
   const tx = await provider.getTransaction(log.transactionHash).catch(() => null);
@@ -940,20 +994,20 @@ async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedP
     blockTime,
     blockNumber: log.blockNumber,
     logIndex,
-    priceQuote: execution.priceQuote,
+    priceQuote: spotQuote,
     quoteAmountRaw: normalized.quoteAmountRaw,
     priceUsd: tradeValuationHealthy ? tradeValuation.priceUsd : null,
     volumeUsd: tradeValuationHealthy ? tradeValuation.volumeUsd : null,
     reference,
   });
-  await updateMarketStats(indexedPool, execution.priceQuote, execution.quoteAmount, normalized.side, log.blockNumber, blockTime);
+  await updateMarketStats(indexedPool, spotQuote, execution.quoteAmount, normalized.side, log.blockNumber, blockTime);
   await pool.query(
     `update public.dex_pools
         set price_quote=$3,
             quote_volume_24h=(select coalesce(sum(quote_amount),0) from public.dex_trades where chain_id=$1 and pair_address=$2 and status='confirmed' and block_time>=now()-interval '24 hours'),
             updated_at=now()
       where chain_id=$1 and pair_address=$2`,
-    [indexedPool.chainId,indexedPool.pairAddress,execution.priceQuote],
+    [indexedPool.chainId,indexedPool.pairAddress,spotQuote],
   );
 
   await publishMarketStatsPatch(indexedPool);
@@ -972,6 +1026,8 @@ async function insertSwap(provider: ethers.JsonRpcProvider,indexedPool: IndexedP
     tokenAmountRaw:normalized.baseAmountRaw.toString(),
     nativeAmountRaw:isNativeQuote ? normalized.quoteAmountRaw.toString() : null,
     priceQuote:execution.priceQuote,
+    spotPriceQuote:spotQuote,
+    spotPriceBnb:isNativeQuote ? spotQuote : null,
     priceBnb:isNativeQuote ? execution.priceQuote : null,
     priceUsd:tradeValuationHealthy ? tradeValuation.priceUsd : null,
     volumeUsd:tradeValuationHealthy ? tradeValuation.volumeUsd : null,
