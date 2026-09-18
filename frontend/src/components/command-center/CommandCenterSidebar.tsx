@@ -5,6 +5,11 @@ import { Coins, Gift, Home, LifeBuoy, Menu, Settings, Shield, Swords, Trophy, Us
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
 import { postGradFlags } from "@/features/postgrad/config";
 import { useArenaBattleFeed } from "@/hooks/useArenaBattleFeed";
+import {
+  battlesNavBadge,
+  collectCreatorStakeGates,
+  collectIncomingCreatorChallenges,
+} from "@/lib/arena/creatorChallengePresentation.mjs";
 
 const menuItems: Array<{
   label: string;
@@ -43,6 +48,9 @@ export function CommandCenterSidebar({ basePath }: CommandCenterSidebarProps) {
   const { attribution, walletAddress, chainId } = useCommandCenterData();
   const battleFeed = useArenaBattleFeed(walletAddress, chainId);
   const hasArenaCoins = battleFeed.creatorStatuses.some((item) => item.eligibility || Boolean(item.battleId));
+  const incomingCount =
+    collectIncomingCreatorChallenges(battleFeed.openForBattleQueue, battleFeed.creatorStatuses, walletAddress).length +
+    collectCreatorStakeGates(battleFeed.openForBattleQueue, battleFeed.creatorStatuses, walletAddress).length;
 
   const visibleMenuItems = useMemo(
     () => menuItems.filter((item) => {
@@ -91,7 +99,7 @@ export function CommandCenterSidebar({ basePath }: CommandCenterSidebarProps) {
               }
             >
               <Icon className="h-4 w-4 shrink-0" />
-              <span>{item.label}</span>
+              <span>{item.path === "battles" ? battlesNavBadge(incomingCount) : item.label}</span>
             </NavLink>
           );
         })}

@@ -166,3 +166,278 @@ export function isChallengeBusy(pending, battleId, externalBusyId) {
   if (String(externalBusyId || "") === id) return true;
   return pendingSet(pending).has(id);
 }
+
+export const CHALLENGE_POPUP_STORAGE_KEY = "mwz.arena.challengePopup.v2";
+export const DURABLE_CHALLENGE_DISMISS_FORBIDDEN = true;
+
+const notNowByPath = new Map();
+
+export function challengeNativeSymbol(battle, fallbackChainId) {
+  const fromBattle = String(battle?.nativeSymbol || "").trim();
+  if (fromBattle) return fromBattle;
+  const chainId = Number(battle?.chainId || fallbackChainId || 0);
+  if (chainId === 101 || chainId === 102) return "SOL";
+  if (chainId === 4663 || chainId === 46630) return "ETH";
+  return "BNB";
+}
+
+export function challengeTicker(participant) {
+  const symbol = String(participant?.symbol || participant?.tokenName || "TBD").replace(/^\$/, "");
+  return `$${symbol}`;
+}
+
+export function participantByIdentity(battle, identity) {
+  const key = String(identity || "").trim().toLowerCase();
+  if (!key) return null;
+  return (Array.isArray(battle?.participants) ? battle.participants : []).find(
+    (participant) => participantIdentityKey(participant) === key,
+  ) || null;
+}
+
+export function isChallengeParticipant(battle, ownedKeys) {
+  const keys = ownedKeys instanceof Set ? ownedKeys : new Set();
+  if (!keys.size) return false;
+  const left = participantIdentityKey(battle?.participants?.[0]);
+  const right = participantIdentityKey(battle?.participants?.[1]);
+  return keys.has(left) || keys.has(right);
+}
+
+export function challengeAgeLabel(value, now = Date.now()) {
+  const stamp = Date.parse(String(value || ""));
+  if (!Number.isFinite(stamp)) return null;
+  const minutes = Math.max(0, Math.round((now - stamp) / 60000));
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+export function notNowKey(battle, pathname = "") {
+  return `${String(pathname || "")}:${String(battle?.id || "").trim()}:${Number(battle?.offerCount || 0)}`;
+}
+
+export function rememberNotNow(battle, pathname = "", store = notNowByPath) {
+  const key = notNowKey(battle, pathname);
+  if (!String(battle?.id || "").trim()) return store;
+  store.set(key, true);
+  return store;
+}
+
+export function isNotNow(battle, pathname = "", store = notNowByPath) {
+  return store.has(notNowKey(battle, pathname));
+}
+
+export function clearNotNow(store = notNowByPath) {
+  store.clear();
+  return store;
+}
+
+export function selectAutoPopupChallenge(incoming, pathname = "", store = notNowByPath) {
+  const rows = Array.isArray(incoming) ? incoming : [];
+  if (rows.length !== 1) return null;
+  const battle = rows[0];
+  if (isNotNow(battle, pathname, store)) return null;
+  return battle;
+}
+
+export function collectCreatorStakeGates(battles, statuses, walletAddress) {
+  if (!String(walletAddress || "").trim()) return [];
+  const owned = creatorOwnedIdentityKeys(statuses);
+  if (!owned.size) return [];
+  return (Array.isArray(battles) ? battles : []).filter((battle) => {
+    return String(battle?.state || "").toLowerCase() === "matched" && isChallengeParticipant(battle, owned);
+  });
+}
+
+export function presentStakeGateItem(battle, fallbackChainId) {
+  const left = battle?.participants?.[0] || {};
+  const right = battle?.participants?.[1] || {};
+  const nativeSymbol = challengeNativeSymbol(battle, fallbackChainId);
+  const stakeNative = Number(battle?.offeredStakeNative ?? battle?.stakeNative ?? 0) || 0;
+  return {
+    battleId: String(battle?.id || ""),
+    kind: "stake",
+    statusLabel: "CHALLENGE ACCEPTED",
+    kicker: "CHALLENGE ACCEPTED",
+    headlineLeft: challengeTicker(left),
+    verb: "VS",
+    headlineRight: challengeTicker(right),
+    nativeSymbol,
+    stakeNative,
+    durationLabel: challengeDurationLabel(battle?.offeredDurationHours || battle?.durationHours),
+    summary: `${challengeTicker(left)} vs ${challengeTicker(right)} · ${stakeNative} ${nativeSymbol} · PAY TO START`,
+  };
+}
+
+export function selectAutoPopupStake(stakes, pathname = "", store = notNowByPath) {
+  const rows = Array.isArray(stakes) ? stakes : [];
+  if (rows.length !== 1) return null;
+  const battle = rows[0];
+  if (isNotNow(battle, pathname, store)) return null;
+  return battle;
+}
+
+export function inboxIndicatorLabel(count) {
+  const total = Math.max(0, Number(count) || 0);
+  return `⚔ INCOMING CHALLENGES · ${total}`;
+}
+
+export function battlesNavBadge(count) {
+  const total = Math.max(0, Number(count) || 0);
+  return total > 0 ? `Battles · ${total}` : "Battles";
+}
+
+export function presentChallengeInboxItem(battle, ownedKeys, fallbackChainId) {
+  const left = battle?.participants?.[0] || {};
+  const right = battle?.participants?.[1] || {};
+  const fromKey = String(battle?.offerFromToken || participantIdentityKey(left)).trim().toLowerCase();
+  const fromPart = participantByIdentity(battle, fromKey) || left;
+  const other = participantIdentityKey(fromPart) === participantIdentityKey(left) ? right : left;
+  const isCounter = Number(battle?.offerCount || 0) > 0;
+  const nativeSymbol = challengeNativeSymbol(battle, fallbackChainId);
+  const stakeNative = Number(battle?.offeredStakeNative ?? battle?.stakeNative ?? 0) || 0;
+  const originalStake = Number(battle?.originalStakeNative ?? battle?.stakeNative ?? stakeNative) || stakeNative;
+  const durationHours = Number(battle?.offeredDurationHours || battle?.durationHours || 24) || 24;
+  const originalDurationHours = Number(battle?.originalDurationHours || battle?.durationHours || durationHours) || durationHours;
+  const fromTicker = challengeTicker(fromPart);
+  const otherTicker = challengeTicker(other);
+  const durationLabel = challengeDurationLabel(durationHours);
+  const summary = isCounter
+    ? `${fromTicker} countered · ${stakeNative} ${nativeSymbol} · ${durationLabel}`
+    : `${fromTicker} challenged ${otherTicker} · ${stakeNative} ${nativeSymbol} · ${durationLabel}`;
+  return {
+    battleId: String(battle?.id || ""),
+    challengerTicker: challengeTicker(left),
+    defenderTicker: challengeTicker(right),
+    fromTicker,
+    challengedTicker: otherTicker,
+    nativeSymbol,
+    chainId: Number(battle?.chainId || fallbackChainId || 0) || null,
+    stakeNative,
+    originalStakeNative: originalStake,
+    durationHours,
+    durationLabel,
+    originalDurationLabel: challengeDurationLabel(originalDurationHours),
+    isCounter,
+    kind: isCounter ? "counter" : "challenge",
+    statusLabel: isCounter ? "COUNTER-OFFER" : "AWAITING RESPONSE",
+    ageLabel: challengeAgeLabel(battle?.updatedAt || battle?.startedAt),
+    summary,
+    mine: isIncomingCreatorChallenge(battle, ownedKeys),
+  };
+}
+
+export function presentChallengeActionCard(battle, ownedKeys, fallbackChainId) {
+  const left = battle?.participants?.[0] || {};
+  const right = battle?.participants?.[1] || {};
+  const state = String(battle?.state || "").toLowerCase();
+  const isCounter = Number(battle?.offerCount || 0) > 0;
+  let phase = "challenged";
+  let kicker = "SCHEDULED BATTLE";
+  if (state === "live") {
+    phase = "live";
+    kicker = "LIVE BATTLE";
+  } else if (state === "matched") {
+    phase = "scheduled";
+    kicker = "SCHEDULED BATTLE";
+  } else if (state === "finished" || state === "completed" || state === "settled") {
+    phase = "finished";
+    kicker = "FINISHED BATTLE";
+  }
+  const nativeSymbol = challengeNativeSymbol(battle, fallbackChainId);
+  const stakeNative = Number(battle?.offeredStakeNative ?? battle?.stakeNative ?? 0) || 0;
+  return {
+    battleId: String(battle?.id || ""),
+    phase,
+    kicker,
+    headlineLeft: challengeTicker(left),
+    verb: "CHALLENGES",
+    headlineRight: challengeTicker(right),
+    showActions: isIncomingCreatorChallenge(battle, ownedKeys),
+    isParticipant: isChallengeParticipant(battle, ownedKeys),
+    isCounter,
+    statusLabel: isCounter ? "COUNTER-OFFER" : state === "challenged" ? "CHALLENGED" : kicker,
+    nativeSymbol,
+    stakeNative,
+    originalStakeNative: Number(battle?.originalStakeNative ?? battle?.stakeNative ?? stakeNative) || stakeNative,
+    durationHours: Number(battle?.offeredDurationHours || battle?.durationHours || 24) || 24,
+    durationLabel: challengeDurationLabel(battle?.offeredDurationHours || battle?.durationHours),
+    originalDurationLabel: challengeDurationLabel(battle?.originalDurationHours || battle?.durationHours),
+  };
+}
+
+export function identityKey(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+export function coinIdentityKey(coin) {
+  return identityKey(coin?.tokenAddress || coin?.tokenId || coin?.campaignAddress);
+}
+
+export function eligibleFightAsCoins(statuses, options = {}) {
+  const exclude = identityKey(options.excludeTokenId || options.opponentId);
+  const chainId = options.chainId == null || options.chainId === "" ? null : Number(options.chainId);
+  return (Array.isArray(statuses) ? statuses : []).filter((status) => {
+    if (!status?.eligibility) return false;
+    const key = coinIdentityKey(status);
+    if (!key) return false;
+    if (exclude && key === exclude) return false;
+    if (Number.isFinite(chainId) && status?.chainId != null && Number(status.chainId) !== chainId) return false;
+    return true;
+  });
+}
+
+export function canChallengeAs(tokenId, statuses, options = {}) {
+  const key = identityKey(tokenId);
+  if (!key) return false;
+  return eligibleFightAsCoins(statuses, options).some((coin) => coinIdentityKey(coin) === key);
+}
+
+export function parseChallengeQuery(search) {
+  const params = search instanceof URLSearchParams ? search : new URLSearchParams(String(search || "").replace(/^\?/, ""));
+  const opponent = String(params.get("challenge") || params.get("opponent") || "").trim();
+  const fightAs = String(params.get("fightAs") || params.get("as") || "").trim();
+  return {
+    opponentId: opponent,
+    fightAsId: fightAs,
+  };
+}
+
+export function commandCenterChallengeHref(walletAddress, opponentId, fightAsId) {
+  const wallet = String(walletAddress || "").trim();
+  if (!wallet) return "/profile";
+  const params = new URLSearchParams();
+  if (opponentId) params.set("challenge", String(opponentId));
+  if (fightAsId) params.set("fightAs", String(fightAsId));
+  const query = params.toString();
+  return `/profile/${encodeURIComponent(wallet)}/command/battles${query ? `?${query}` : ""}`;
+}
+
+export function formatChallengeCountdown(ms) {
+  const total = Math.max(0, Math.floor(Number(ms) / 1000));
+  if (!Number.isFinite(total)) return "00:00:00";
+  const hours = String(Math.floor(total / 3600)).padStart(2, "0");
+  const minutes = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
+  const seconds = String(total % 60).padStart(2, "0");
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+export function challengeStartsInMs(battle, now = Date.now()) {
+  const target = Date.parse(String(battle?.endsAt || ""));
+  if (!Number.isFinite(target)) return null;
+  return target - now;
+}
+
+export function challengeStartsInLabel(battle, now = Date.now()) {
+  const remaining = challengeStartsInMs(battle, now);
+  if (remaining == null) return null;
+  return formatChallengeCountdown(remaining);
+}
+
+export function sameChainChallenge(challengerChainId, defenderChainId) {
+  const left = Number(challengerChainId);
+  const right = Number(defenderChainId);
+  if (!Number.isFinite(left) || !Number.isFinite(right) || !left || !right) return true;
+  return left === right;
+}

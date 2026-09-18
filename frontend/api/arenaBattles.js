@@ -646,9 +646,9 @@ async function beginFight(id, patch, chainId) {
     ...patch,
     duration_hours: hours,
     offered_duration_hours: hours,
-    state: requireEscrow ? "matched" : "live",
-    started_at: requireEscrow ? null : nowIso(),
-    ends_at: requireEscrow ? plusHours(DEPOSIT_WINDOW_HOURS) : plusHours(hours),
+    state: "matched",
+    started_at: null,
+    ends_at: plusHours(DEPOSIT_WINDOW_HOURS),
   });
 }
 

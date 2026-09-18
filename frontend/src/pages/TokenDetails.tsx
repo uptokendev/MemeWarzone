@@ -59,6 +59,7 @@ import { AthBar } from "@/components/token/AthBar";
 import { canonicalAthUsd } from "@/lib/canonicalMarket";
 import { canonicalAthNativeFromCandles } from "@/lib/chart/canonicalChartCandles";
 import { ArenaUpvoteDialog, UpvoteDialog } from "@/components/token/UpvoteDialog";
+import { ChallengeThisCoinButton } from "@/components/arena/ChallengeThisCoinButton";
 import { postGradFlags } from "@/features/postgrad/config";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
@@ -4307,6 +4308,15 @@ const toSeconds = (ts: number): number => {
                 >
                   {stagePill}
                 </span>
+                {postGradFlags.arena && isDexStage ? (
+                  <ChallengeThisCoinButton
+                    tokenId={String(campaign?.token || campaign?.campaign || campaignAddr || "")}
+                    chainId={chainIdForStorage}
+                    symbol={tokenData.ticker}
+                    tokenName={tokenData.name}
+                    eligible
+                  />
+                ) : null}
 
                 {(() => {
                   const creator = String(campaign?.creator ?? "").trim();
