@@ -1443,6 +1443,9 @@ export function robinhoodV3PublicHealth(): RobinhoodV3PassHealth {
  *
  * Bonding buckets are left alone: only candles at or after graduation are dropped.
  */
+/** Bump when candle construction changes, so recorded rebuilds re-run. */
+const REBUILD_VERSION = 2;
+
 async function rebuildPostGradCandles(chainId: number): Promise<void> {
   const requested = ENV.ROBINHOOD_V3_CANDLE_REBUILD;
   if (!requested) return;
@@ -1469,7 +1472,9 @@ async function rebuildPostGradCandles(chainId: number): Promise<void> {
       // Record that this campaign was rebuilt, so leaving the env var in place
       // is safe. Without this every restart wiped and re-scanned again, and the
       // var had to be removed and the service redeployed a second time.
-      const marker = `rh_v3_candle_rebuild:${campaignAddress}`;
+      // Versioned: a rebuild recorded under older, buggy logic must not block the
+      // corrected one. Bump REBUILD_VERSION whenever how a candle is built changes.
+      const marker = `rh_v3_candle_rebuild:v${REBUILD_VERSION}:${campaignAddress}`;
       const claimed = await pool.query(
         `insert into public.indexer_state(chain_id,cursor,last_indexed_block,updated_at)
          values($1,$2,1,now())
