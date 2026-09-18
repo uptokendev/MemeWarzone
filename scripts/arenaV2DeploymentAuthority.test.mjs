@@ -14,18 +14,20 @@ const deploy = fs.readFileSync(new URL("./deployArenaWarPoolTreasuryV2.ts", impo
 const attest = fs.readFileSync(new URL("./verifyArenaWarPoolTreasuryV2Deployment.ts", import.meta.url), "utf8");
 const warPool = fs.readFileSync(new URL("../contracts/ArenaWarPoolTreasuryV2.sol", import.meta.url), "utf8");
 const league = fs.readFileSync(new URL("../contracts/PostGradLeagueTreasuryV2.sol", import.meta.url), "utf8");
+const productionEnv = fs.readFileSync(new URL("../config/robinhood-production.env.example", import.meta.url), "utf8");
 
-test("deployment policy accepts BSC97, Robinhood46630, and preserves BSC56", () => {
+test("deployment policy accepts BSC97, Robinhood46630, Robinhood4663, and preserves BSC56", () => {
   assert.doesNotThrow(() => assertArenaV2DeploymentTarget(97, "bscTestnet"));
   assert.doesNotThrow(() => assertArenaV2DeploymentTarget(46630, "robinhoodTestnet"));
+  assert.doesNotThrow(() => assertArenaV2DeploymentTarget(4663, "robinhoodMainnet"));
   assert.doesNotThrow(() => assertArenaV2DeploymentTarget(56, "bscMainnet"));
 });
 
-test("deployment policy rejects Robinhood mainnet 4663 and all unknown/wrong network bindings", () => {
-  assert.throws(() => assertArenaV2DeploymentTarget(4663, "robinhoodMainnet"), /not activated/i);
+test("deployment policy rejects unknown and wrong network bindings", () => {
   assert.throws(() => assertArenaV2DeploymentTarget(1, "mainnet"), /restricted/i);
   assert.throws(() => assertArenaV2DeploymentTarget(97, "robinhoodTestnet"), /must use Hardhat network bscTestnet/i);
   assert.throws(() => assertArenaV2DeploymentTarget(46630, "bscTestnet"), /must use Hardhat network robinhoodTestnet/i);
+  assert.throws(() => assertArenaV2DeploymentTarget(4663, "robinhoodTestnet"), /must use Hardhat network robinhoodMainnet/i);
 });
 
 test("local deployment remains explicitly opt-in", () => {
@@ -34,7 +36,7 @@ test("local deployment remains explicitly opt-in", () => {
   assert.doesNotThrow(() => assertArenaV2DeploymentTarget(31337, "localhost", { allowLocal: true }));
 });
 
-test("Robinhood 46630 receiver/signing envs are strict and never fall back to generic/BSC inputs", () => {
+test("Robinhood 4663/46630 authority, receiver and signing envs are strict and never fall back to generic/BSC inputs", () => {
   assert.deepEqual(envNamesFor(46630, "ARENA_BOOST_QUOTE_SIGNER_ADDRESS"), [
     "ARENA_BOOST_QUOTE_SIGNER_ADDRESS_46630",
   ]);
@@ -45,6 +47,25 @@ test("Robinhood 46630 receiver/signing envs are strict and never fall back to ge
   assert.deepEqual(envNamesFor(46630, "ARENA_MONTHLY_MWL_RECEIVER"), ["ARENA_MONTHLY_MWL_RECEIVER_46630"]);
   assert.deepEqual(envNamesFor(46630, "ARENA_QUARTERLY_RESERVE_RECEIVER"), [
     "ARENA_QUARTERLY_RESERVE_RECEIVER_46630",
+  ]);
+
+  assert.deepEqual(envNamesFor(4663, "ARENA_V2_OWNER"), ["ARENA_V2_OWNER_4663"]);
+  assert.deepEqual(envNamesFor(4663, "ARENA_LEAGUE_V2_OWNER"), ["ARENA_LEAGUE_V2_OWNER_4663"]);
+  assert.deepEqual(envNamesFor(4663, ["ARENA_V2_RESOLVER", "ARENA_WAR_POOL_RESOLVER", "RESOLVER"]), [
+    "ARENA_V2_RESOLVER_4663",
+    "ARENA_WAR_POOL_RESOLVER_4663",
+    "RESOLVER_4663",
+  ]);
+  assert.deepEqual(envNamesFor(4663, "ARENA_BOOST_QUOTE_SIGNER_ADDRESS"), [
+    "ARENA_BOOST_QUOTE_SIGNER_ADDRESS_4663",
+  ]);
+  assert.deepEqual(envNamesFor(4663, "ARENA_PROTOCOL_RECEIVER"), ["ARENA_PROTOCOL_RECEIVER_4663"]);
+  assert.deepEqual(envNamesFor(4663, "ARENA_POSTGRAD_LEAGUE_TREASURY_V2_ADDRESS"), [
+    "ARENA_POSTGRAD_LEAGUE_TREASURY_V2_ADDRESS_4663",
+  ]);
+  assert.deepEqual(envNamesFor(4663, "ARENA_MONTHLY_MWL_RECEIVER"), ["ARENA_MONTHLY_MWL_RECEIVER_4663"]);
+  assert.deepEqual(envNamesFor(4663, "ARENA_QUARTERLY_RESERVE_RECEIVER"), [
+    "ARENA_QUARTERLY_RESERVE_RECEIVER_4663",
   ]);
 
   assert.deepEqual(envNamesFor(97, "ARENA_PROTOCOL_RECEIVER"), [
@@ -60,6 +81,10 @@ test("durable deployment paths are chain-specific", () => {
     "deployments/arena/war-pool-treasury-v2.robinhood46630.json",
   );
   assert.equal(defaultArenaV2DeploymentFile(56), "deployments/arena/war-pool-treasury-v2.bsc56.json");
+  assert.equal(
+    defaultArenaV2DeploymentFile(4663),
+    "deployments/arena/war-pool-treasury-v2.robinhood4663.json",
+  );
 });
 
 test("contract generations and founder-locked economics are unchanged", () => {
@@ -85,6 +110,34 @@ test("deployment tool uses existing contracts, authorizes League source, and wri
   assert.match(deploy, /ARENA_POSTGRAD_LEAGUE_TREASURY_V2_ADDRESS_46630/);
   assert.match(deploy, /ARENA_MONTHLY_MWL_RECEIVER_46630/);
   assert.match(deploy, /ARENA_QUARTERLY_RESERVE_RECEIVER_46630/);
+  assert.match(deploy, /ARENA_V2_PRODUCTION_CONFIRM/);
+  assert.match(deploy, /DEPLOY_ARENA_V2_ROBINHOOD_4663/);
+  assert.match(deploy, /ROBINHOOD_MAINNET_DEPLOYER_PRIVATE_KEY/);
+  assert.match(deploy, /expectedDeployer\.toLowerCase\(\) !== deployer\.address\.toLowerCase\(\)/);
+  assert.match(deploy, /fs\.existsSync\(outputFile\)/);
+  assert.match(deploy, /path\.resolve\(outputFile\) !== path\.resolve\(defaultOutputFile\)/);
+  assert.match(deploy, /flag: robinhoodMainnet \? "wx" : "w"/);
+});
+
+test("Robinhood production env template contains only dark, suffixed Arena V2 inputs", () => {
+  for (const key of [
+    "ARENA_V2_OWNER_4663=",
+    "ARENA_LEAGUE_V2_OWNER_4663=",
+    "ARENA_V2_RESOLVER_4663=",
+    "ARENA_BOOST_QUOTE_SIGNER_ADDRESS_4663=",
+    "ARENA_PROTOCOL_RECEIVER_4663=",
+    "ARENA_POSTGRAD_LEAGUE_TREASURY_V2_ADDRESS_4663=",
+    "ARENA_MONTHLY_MWL_RECEIVER_4663=",
+    "ARENA_QUARTERLY_RESERVE_RECEIVER_4663=",
+    "ARENA_WAR_POOL_TREASURY_V2_ADDRESS_4663=",
+    "VITE_ARENA_WAR_POOL_TREASURY_V2_ADDRESS_4663=",
+    "ARENA_V2_PRODUCTION_CONFIRM=",
+  ]) {
+    assert.match(productionEnv, new RegExp(`^${key}`, "m"), `missing production template key ${key}`);
+  }
+  assert.match(productionEnv, /^REWARD_CLAIMS_ENABLED=false$/m);
+  assert.match(productionEnv, /^ENABLE_ROBINHOOD_CREATION=false$/m);
+  assert.doesNotMatch(productionEnv, /ARENA_WAR_POOL_TREASURY_V2_ADDRESS_4663=0x[0-9a-fA-F]{40}/);
 });
 
 test("read-only attestation independently checks bytecode, identity, authorization and economics", () => {
