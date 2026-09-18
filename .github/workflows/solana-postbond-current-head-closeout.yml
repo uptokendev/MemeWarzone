@@ -1,0 +1,256 @@
+name: Solana Post-Bond Current-Head Closeout
+
+on:
+  push:
+    branches:
+      - agent/solana-postbond-closeout-894438
+    paths:
+      - '.github/workflows/solana-postbond-current-head-closeout.yml'
+      - 'certification/solana-postbond-current-head/**'
+  pull_request:
+    branches:
+      - build/cross-chain-stabilization-rh-base
+    paths:
+      - '.github/workflows/solana-postbond-current-head-closeout.yml'
+      - 'certification/solana-postbond-current-head/**'
+  workflow_dispatch:
+    inputs:
+      execute_confirmation:
+        description: 'Exact confirmation: EXECUTE_SOLANA_POSTBOND_CURRENT_HEAD_CLOSEOUT'
+        required: true
+        type: string
+      left_campaign:
+        description: 'Already-graduated chain-101 campaign A'
+        required: true
+        type: string
+      left_mint:
+        description: 'Campaign A mint'
+        required: true
+        type: string
+      left_meteora_pool:
+        description: 'Campaign A Meteora DAMM v2 pool'
+        required: true
+        type: string
+      left_postgrad_payer:
+        description: 'Payer wallet used by accepted post-grad BUY/SELL evidence for A'
+        required: true
+        type: string
+      left_postgrad_buy_signature:
+        description: 'Real post-grad Meteora BUY signature for A'
+        required: true
+        type: string
+      left_postgrad_sell_signature:
+        description: 'Real post-grad Meteora SELL signature for A'
+        required: true
+        type: string
+      right_campaign:
+        description: 'Already-graduated chain-101 campaign B'
+        required: true
+        type: string
+      right_mint:
+        description: 'Campaign B mint'
+        required: true
+        type: string
+      right_meteora_pool:
+        description: 'Campaign B Meteora DAMM v2 pool'
+        required: true
+        type: string
+      right_postgrad_payer:
+        description: 'Payer wallet used by accepted post-grad BUY/SELL evidence for B'
+        required: true
+        type: string
+      right_postgrad_buy_signature:
+        description: 'Real post-grad Meteora BUY signature for B'
+        required: true
+        type: string
+      right_postgrad_sell_signature:
+        description: 'Real post-grad Meteora SELL signature for B'
+        required: true
+        type: string
+      sol_usd:
+        description: 'Operator-attested SOL/USD reference used only for current devnet USD normalization'
+        required: true
+        type: string
+      snapshot_delay_seconds:
+        description: 'Delay between immutable LIVE baseline and final Meteora snapshot (0-120)'
+        required: false
+        default: '5'
+        type: string
+      battle_entry_lamports:
+        description: 'ArenaMoneyV2 Battle entry per side; default 0.1 SOL'
+        required: false
+        default: '100000000'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: solana-postbond-current-head-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  static-current-head-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Prove exact source authority and certification-only delta
+        env:
+          EXPECTED_SOURCE_SHA: 8944382619e05f09539614f5690b98521fe244ed
+        run: node certification/solana-postbond-current-head/source-gate.mjs
+
+      - name: Syntax check closeout transport
+        run: |
+          node --check certification/solana-postbond-current-head/source-gate.mjs
+          node --check certification/solana-postbond-current-head/chain-evidence.mjs
+          node --check certification/solana-postbond-current-head/arena-money-closeout.mjs
+          node --check certification/solana-postbond-current-head/db-runtime-closeout.mjs
+
+      - name: Install locked frontend dependencies
+        run: npm ci --prefix frontend --legacy-peer-deps --no-audit --no-fund
+
+      - name: Battle V3 / Tournament / Vote / Final Salvo / MWL regressions
+        run: |
+          node --test frontend/api/lib/arenaTournamentChainIdentity.test.mjs
+          node --test frontend/api/lib/arenaTournamentRoster.test.mjs frontend/api/lib/arenaTournamentBracketReconcile.test.mjs
+          node --test frontend/api/lib/arenaTournamentV2Certification.test.mjs
+          node --test frontend/api/lib/arenaVoteTournamentChainIdentity.test.mjs
+          node --test frontend/api/lib/arenaFinalSalvoRuntime.test.mjs
+          node --test frontend/api/lib/arenaMwlChainIdentity.test.mjs
+
+      - name: Current Quarterly authority syntax and no-invention boundary
+        run: |
+          node --check frontend/api/lib/arenaQuarterlyChampionship.js
+          node --check frontend/api/lib/arenaQuarterlyChampionshipMath.mjs
+          grep -F 'quarterly_championship' frontend/api/lib/arenaQuarterlyChampionshipMath.mjs
+          grep -F 'CHAMPIONSHIP_BONUS_POLICY_NOT_CONFIGURED' frontend/api/lib/arenaQuarterlyChampionship.js
+
+  destructive-chain-101-closeout:
+    if: github.event_name == 'workflow_dispatch'
+    needs: static-current-head-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: testnet-certification
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: solana_postbond_cert
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d solana_postbond_cert"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      EXPECTED_SOURCE_SHA: 8944382619e05f09539614f5690b98521fe244ed
+      SOLANA_APPLICATION_CHAIN_ID: '101'
+      SOLANA_RPC_URL: ${{ secrets.SOLANA_REWARDS_RPC_URL }}
+      SOLANA_REWARDS_RPC_URL: ${{ secrets.SOLANA_REWARDS_RPC_URL }}
+      SOLANA_REWARDS_AUTHORITY_SECRET_KEY: ${{ secrets.SOLANA_REWARDS_AUTHORITY_SECRET_KEY }}
+      SOLANA_REWARDS_RESOLVER_SECRET_KEY: ${{ secrets.SOLANA_POSTBOND_RESOLVER_SECRET_KEY }}
+      SOLANA_POSTBOND_OWNER_A_SECRET_KEY: ${{ secrets.SOLANA_POSTBOND_OWNER_A_SECRET_KEY }}
+      SOLANA_POSTBOND_OWNER_B_SECRET_KEY: ${{ secrets.SOLANA_POSTBOND_OWNER_B_SECRET_KEY }}
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/solana_postbond_cert
+      SOLANA_POSTBOND_CHAIN_REPORT: reports/solana-postbond-chain-evidence.json
+      SOLANA_POSTBOND_MONEY_REPORT: reports/solana-postbond-arena-money.json
+      SOLANA_POSTBOND_DB_REPORT: reports/solana-postbond-db-runtime.json
+      SOLANA_POSTBOND_CLOSEOUT_MANIFEST: reports/solana-postbond-closeout-manifest.json
+      SOLANA_CLOSEOUT_SOL_USD: ${{ inputs.sol_usd }}
+      SOLANA_POSTBOND_SNAPSHOT_DELAY_SECONDS: ${{ inputs.snapshot_delay_seconds }}
+      SOLANA_ARENA_BATTLE_ENTRY_LAMPORTS: ${{ inputs.battle_entry_lamports }}
+      SOLANA_POSTBOND_LEFT_CAMPAIGN: ${{ inputs.left_campaign }}
+      SOLANA_POSTBOND_LEFT_MINT: ${{ inputs.left_mint }}
+      SOLANA_POSTBOND_LEFT_METEORA_POOL: ${{ inputs.left_meteora_pool }}
+      SOLANA_POSTBOND_LEFT_POSTGRAD_PAYER: ${{ inputs.left_postgrad_payer }}
+      SOLANA_POSTBOND_LEFT_POSTGRAD_BUY_SIGNATURE: ${{ inputs.left_postgrad_buy_signature }}
+      SOLANA_POSTBOND_LEFT_POSTGRAD_SELL_SIGNATURE: ${{ inputs.left_postgrad_sell_signature }}
+      SOLANA_POSTBOND_RIGHT_CAMPAIGN: ${{ inputs.right_campaign }}
+      SOLANA_POSTBOND_RIGHT_MINT: ${{ inputs.right_mint }}
+      SOLANA_POSTBOND_RIGHT_METEORA_POOL: ${{ inputs.right_meteora_pool }}
+      SOLANA_POSTBOND_RIGHT_POSTGRAD_PAYER: ${{ inputs.right_postgrad_payer }}
+      SOLANA_POSTBOND_RIGHT_POSTGRAD_BUY_SIGNATURE: ${{ inputs.right_postgrad_buy_signature }}
+      SOLANA_POSTBOND_RIGHT_POSTGRAD_SELL_SIGNATURE: ${{ inputs.right_postgrad_sell_signature }}
+    steps:
+      - name: Checkout exact branch head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Hard operator gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${{ inputs.execute_confirmation }}" = 'EXECUTE_SOLANA_POSTBOND_CURRENT_HEAD_CLOSEOUT'
+          test -n "$SOLANA_RPC_URL"
+          test -n "$SOLANA_REWARDS_AUTHORITY_SECRET_KEY"
+          test -n "$SOLANA_REWARDS_RESOLVER_SECRET_KEY"
+          test -n "$SOLANA_POSTBOND_OWNER_A_SECRET_KEY"
+          test -n "$SOLANA_POSTBOND_OWNER_B_SECRET_KEY"
+          test "$(git merge-base "$EXPECTED_SOURCE_SHA" HEAD)" = "$EXPECTED_SOURCE_SHA"
+          mkdir -p reports
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install certification runtime dependencies without repository changes
+        run: |
+          npm ci --no-audit --no-fund
+          npm install --no-save --no-package-lock pg@8.16.3 @solana/web3.js@1.95.4 @solana/spl-token@0.4.8 bs58@6.0.0
+
+      - name: Re-prove certification-only exact-source boundary
+        run: node certification/solana-postbond-current-head/source-gate.mjs
+
+      - name: Bind two graduated campaigns to real Meteora post-grad evidence
+        run: node certification/solana-postbond-current-head/chain-evidence.mjs
+
+      - name: Compute deterministic locked V3 Battle winner from post-grad market evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          node certification/solana-postbond-current-head/db-runtime-closeout.mjs --plan-winner > reports/battle-plan.json
+          WINNER=$(node -e "const x=require('./reports/battle-plan.json'); process.stdout.write(x.winnerSide)")
+          test "$WINNER" = left -o "$WINNER" = right
+          echo "SOLANA_POSTBOND_BATTLE_WINNER=$WINNER" >> "$GITHUB_ENV"
+
+      - name: Execute ArenaMoneyV2 Battle / Tournament / Vote money and exactly-once claims
+        run: node certification/solana-postbond-current-head/arena-money-closeout.mjs
+
+      - name: Execute DB product binding / Final Salvo / MWL / Quarterly / restart-replay closeout
+        run: node certification/solana-postbond-current-head/db-runtime-closeout.mjs
+
+      - name: Final manifest integrity and artifact hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(node -e "const x=require('./reports/solana-postbond-closeout-manifest.json'); process.stdout.write(x.sourceAuthority)")" = "$EXPECTED_SOURCE_SHA"
+          node -e "const x=require('./reports/solana-postbond-closeout-manifest.json'); if(x.applicationChainId!==101||x.deferredPolicies.quarterlyFinalPayoutPercentages!=='DEFERRED_NOT_BLOCKING'||x.deferredPolicies.monthlyPlacementBonus!=='DEFERRED_NOT_BLOCKING') process.exit(1)"
+          sha256sum reports/*.json | sort > reports/SHA256SUMS.txt
+          git diff --exit-code -- . ':!reports'
+
+      - name: Upload one closeout evidence bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: solana-postbond-current-head-${{ github.sha }}
+          path: reports/
+          if-no-files-found: error
+          retention-days: 30
