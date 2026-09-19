@@ -4,6 +4,13 @@ Written for whoever executes the deploy, working alone, possibly tired. Every
 command is copy-paste. Every step says what "good" looks like, so you never have
 to guess whether it worked.
 
+**Scope**: this upgrades the **launchpad** program
+`3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt` only. The battle and arena system
+lives in a different program, `2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX`,
+and is not touched here. That upgrade needs its own account extension of about
+827,720 bytes, which costs roughly 4.2 SOL permanently, and it has had none of
+the devnet verification this one has.
+
 **What this upgrade delivers**
 
 - Tokens carry Metaplex metadata, so they show a name and image in Phantom,
@@ -40,8 +47,16 @@ Creates are already disabled in production
 You need:
 
 - the upgrade authority keypair for `fk5YYWb4…`
-- about **10 SOL** on that wallet: ~6 for the program buffer, ~0.5 for the
-  lookup table, the rest is headroom
+- **6.5 SOL** on that wallet
+
+  The deploy writes a buffer the size of the program and refunds it afterwards,
+  so the *net* cost is only about 0.006 SOL. But the buffer must be rent-exempt
+  while it exists, and 1,195,864 bytes needs exactly **6.0756 SOL**. A wallet
+  with 6.0 would fail partway with the buffer already paid for. The new lookup
+  table costs a further 0.0034 SOL and that one is permanent.
+
+  This binary is larger than the last upgrade's: the Metaplex CPI, the on-chain
+  base58 encoder and the fee-PDA creation all added to it.
 - `solana --version` reporting 1.18.x
 
 ```bash
