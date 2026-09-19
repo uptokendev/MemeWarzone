@@ -236,12 +236,34 @@ jobs:
           const d=new Contract(r.rewardDistributor.address,rewardA.abi,p);
           const v=new Contract(r.treasuryVaultV2.address,vaultA.abi,p);
           const from=Math.min(r.rewardDistributor.deploymentBlock,r.treasuryVaultV2.deploymentBlock);
-          const dEvents=await d.queryFilter(d.filters.Claimed(),from,'latest').catch(()=>[]);
-          const vEvents=await v.queryFilter(v.filters.Claimed(),from,'latest').catch(()=>[]);
-          const evidence={...r,final:{operatorBalanceBNB:formatEther(await p.getBalance(w.address)),rewardDistributorBalanceWei:String(await p.getBalance(r.rewardDistributor.address)),treasuryVaultBalanceWei:String(await p.getBalance(r.treasuryVaultV2.address)),rewardClaimEvents:dEvents.map(e=>({txHash:e.transactionHash,blockNumber:e.blockNumber,args:e.args?.map?.(String)})),leagueClaimEvents:vEvents.map(e=>({txHash:e.transactionHash,blockNumber:e.blockNumber,args:e.args?.map?.(String)}))}};
+          const latest=await p.getBlockNumber();
+          // Providers cap eth_getLogs spans (BlockPI answers -32602 above 1024
+          // blocks), and queryFilter issues one request for the whole range.
+          // Chunk it, and record a scan failure in the evidence instead of
+          // swallowing it: an empty event list must mean no claims happened,
+          // never that the scan quietly gave up.
+          const CHUNK=Number(process.env.EVIDENCE_LOG_CHUNK_BLOCKS||900);
+          async function collect(contract,eventName){
+            if(typeof contract.filters[eventName]!=='function') return {error:`${eventName} is not an event on this contract`,events:[]};
+            const filter=contract.filters[eventName]();
+            const events=[];
+            for(let start=from;start<=latest;start+=CHUNK){
+              const end=Math.min(latest,start+CHUNK-1);
+              try{ events.push(...await contract.queryFilter(filter,start,end)); }
+              catch(error){ return {error:`scan failed for blocks ${start}-${end}: ${error?.message||error}`,events}; }
+            }
+            return {error:null,events};
+          }
+          // RewardDistributor emits RewardClaimed; Claimed belongs to TreasuryVaultV2.
+          const dScan=await collect(d,'RewardClaimed');
+          const vScan=await collect(v,'Claimed');
+          const dEvents=dScan.events;
+          const vEvents=vScan.events;
+          const evidence={...r,final:{operatorBalanceBNB:formatEther(await p.getBalance(w.address)),rewardDistributorBalanceWei:String(await p.getBalance(r.rewardDistributor.address)),treasuryVaultBalanceWei:String(await p.getBalance(r.treasuryVaultV2.address)),rewardClaimEvents:dEvents.map(e=>({txHash:e.transactionHash,blockNumber:e.blockNumber,args:e.args?.map?.(String)})),rewardClaimScanError:dScan.error,leagueClaimEvents:vEvents.map(e=>({txHash:e.transactionHash,blockNumber:e.blockNumber,args:e.args?.map?.(String)})),leagueClaimScanError:vScan.error,scannedBlocks:{from,latest}}};
           fs.writeFileSync('reports/agent5-bsc97-live-chain-evidence.json',JSON.stringify(evidence,null,2));
           console.log(JSON.stringify(evidence,null,2));
           await p.destroy();
+          if(dScan.error||vScan.error) throw new Error(`claim evidence is incomplete: ${dScan.error||''} ${vScan.error||''}`.trim());
           NODE
 
       - name: Upload destructive evidence
