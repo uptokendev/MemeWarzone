@@ -190,3 +190,37 @@ test("Node Ed25519 signer accepts a Solana seed and signs the raw digest", () =>
   modified[0] ^= 1;
   assert.equal(signer.verify(modified, signature), false);
 });
+
+test("every env name this deployment uses is accepted for the metadata base URL", () => {
+  const names = [
+    "PUBLIC_API_BASE_URL",
+    "API_BASE_URL",
+    "VITE_PUBLIC_API_BASE_URL",
+    "VITE_API_BASE_URL",
+  ];
+  const saved = Object.fromEntries(names.map((n) => [n, process.env[n]]));
+  try {
+    for (const name of names) {
+      for (const n of names) delete process.env[n];
+      process.env[name] = "https://api.memewar.zone";
+      const fields = buildMetaplexFields({ name: "N", symbol: "S", mint: "MINT" });
+      assert.equal(
+        fields.uri,
+        "https://api.memewar.zone/api/token-metadata/101/MINT",
+        `${name} must be honoured`,
+      );
+    }
+  } finally {
+    for (const n of names) {
+      if (saved[n] === undefined) delete process.env[n];
+      else process.env[n] = saved[n];
+    }
+  }
+});
+
+test("a non-absolute or insecure metadata base URL is refused", () => {
+  // The uri is permanent once the mint exists, so these must fail at launch time.
+  assert.throws(() => buildMetaplexFields({ name: "N", symbol: "S", mint: "M", baseUrl: "/api" }), /absolute URL/i);
+  assert.throws(() => buildMetaplexFields({ name: "N", symbol: "S", mint: "M", baseUrl: "http://api.memewar.zone" }), /https/i);
+  assert.doesNotThrow(() => buildMetaplexFields({ name: "N", symbol: "S", mint: "M", baseUrl: "http://localhost:3000" }));
+});
