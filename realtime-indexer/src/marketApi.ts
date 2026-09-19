@@ -868,7 +868,10 @@ async function readMarketState(chainId: number, campaign: string) {
     lastError: row.last_error,
     // Diagnostics: shows whether this request attempted a dex_pools repair.
     dexPoolRepair,
-    poolIndexerEnvEnabled: ENV.ENABLE_TOPAZ_POOL_INDEXER,
+    poolIndexerEnvEnabled:
+      chainId === 4663 || chainId === 46630
+        ? ENV.ENABLE_ROBINHOOD_V3_POOL_INDEXER
+        : ENV.ENABLE_TOPAZ_POOL_INDEXER,
     unifiedMarketApiEnvEnabled: ENV.ENABLE_UNIFIED_MARKET_API,
   };
 }
