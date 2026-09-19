@@ -1326,20 +1326,8 @@ ${text}`);
     return Buffer.compare(a.toBuffer(), b.toBuffer()) > 0 ? [a, b] : [b, a];
   }
 
-  function deriveMeteoraPool(launchMint) {
-    const [first, second] = orderedPubkeys(launchMint, NATIVE_MINT);
-    return PublicKey.findProgramAddressSync(
-      [Buffer.from("cpool"), first.toBuffer(), second.toBuffer()],
-      METEORA_CP_AMM,
-    )[0];
-  }
-
-  function deriveMeteoraPosition(nftMint) {
-    return PublicKey.findProgramAddressSync(
-      [Buffer.from("position"), nftMint.toBuffer()],
-      METEORA_CP_AMM,
-    )[0];
-  }
+  const deriveMeteoraPool = binding.deriveMeteoraPool;
+  const deriveMeteoraPosition = binding.deriveMeteoraPosition;
 
   // The binding lives in scripts/solana/graduation-binding.cjs so the operator
   // and this suite compute the same digest from the same source. One copy living

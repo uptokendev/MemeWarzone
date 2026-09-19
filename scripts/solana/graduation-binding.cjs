@@ -64,7 +64,8 @@ function orderedPubkeys(a, b) {
 function deriveMeteoraPool(launchMint) {
   const [first, second] = orderedPubkeys(launchMint, NATIVE_MINT);
   return PublicKey.findProgramAddressSync(
-    [Buffer.from("pool"), first.toBuffer(), second.toBuffer()],
+    // "cpool", not "pool": the DAMM v2 custom-pool seed.
+    [Buffer.from("cpool"), first.toBuffer(), second.toBuffer()],
     METEORA_CP_AMM,
   )[0];
 }
