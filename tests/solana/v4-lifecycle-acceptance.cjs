@@ -13,6 +13,15 @@
  */
 
 const assert = require("node:assert/strict");
+
+/** Run an initializer only when its account does not exist yet. */
+async function initializeIfMissing(connection, address, run) {
+  const existing = await connection.getAccountInfo(address, "confirmed");
+  if (existing && existing.data.length > 0) return false;
+  await run();
+  return true;
+}
+
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -65,6 +74,7 @@ const BUY_LAMPORTS = 10_000_000n; // 0.01 SOL
 const CLOSE_TARGET_LAMPORTS = 40_000_000n; // 0.04 SOL net-raised close
 const CLOSE_BUY_LAMPORTS = 50_000_000n;
 const METEORA_CP_AMM = new PublicKey("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG");
+const METAPLEX_METADATA_PROGRAM = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
 const NATIVE_MINT = new PublicKey("So11111111111111111111111111111111111111112");
 const GRADUATION_AUTH_DOMAIN = Buffer.from("MEMEWARZONE_SOLANA_GRADUATION_V1", "utf8");
 const GRADUATION_AUTH_SCHEMA_VERSION = 2;
@@ -546,6 +556,8 @@ ${extra}`);
     const now = await chainUnixTimestamp(connection);
     createArgs = {
       campaignId: fixed32(hash32("campaign:lifecycle")),
+      name: "MWZ Lifecycle",
+      symbol: "MWZLIFE",
       metadataHash: fixed32(hash32("metadata:lifecycle")),
       clusterHash: fixed32(hash32("solana-local-validator-devnet-policy")),
       tickerHash: fixed32(hash32("ticker:lifecycle")),
@@ -568,6 +580,14 @@ ${extra}`);
         Buffer.from(createArgs.nonce),
       ),
     };
+    campaignAccounts.tokenMetadata = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("metadata", "utf8"),
+        METAPLEX_METADATA_PROGRAM.toBuffer(),
+        campaignAccounts.mint.toBuffer(),
+      ],
+      METAPLEX_METADATA_PROGRAM,
+    )[0];
     campaignAccounts.feeEscrow = derivePda(
       program.programId,
       "fee-escrow",
@@ -615,6 +635,10 @@ ${extra}`);
         solVault: campaignAccounts.solVault,
         createAuthorization: campaignAccounts.createAuthorization,
         instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
+        feeEscrow: campaignAccounts.feeEscrow,
+        creatorFeeVault: campaignAccounts.creatorFeeVault,
+        tokenMetadata: campaignAccounts.tokenMetadata,
+        tokenMetadataProgram: METAPLEX_METADATA_PROGRAM,
         tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
       })
@@ -796,8 +820,22 @@ ${extra}`);
     assert.equal(afterCreate.curveClosed, false);
     assert.equal(afterCreate.soldTokens.toString(), "0");
     assert.ok(created.logs.some((line) => /Instruction: CreateCampaign/i.test(line)));
+    // Contract changed deliberately: create_campaign now initialises both fee
+    // PDAs so a new campaign is tradeable the moment it exists. Leaving them to
+    // the permissionless initializers meant every launch was rejected at the
+    // trade preflight until an operator ran a backfill by hand.
     const escrowAfterCreate = await connection.getAccountInfo(campaignAccounts.feeEscrow, "confirmed");
-    assert.equal(escrowAfterCreate, null, "CREATE must not initialize FeeEscrow");
+    assert.ok(escrowAfterCreate, "CREATE must initialize FeeEscrow");
+    assert.ok(escrowAfterCreate.data.length > 8, "FeeEscrow must be initialised, not just allocated");
+    const creatorVaultAfterCreate = await connection.getAccountInfo(
+      campaignAccounts.creatorFeeVault,
+      "confirmed",
+    );
+    assert.ok(creatorVaultAfterCreate, "CREATE must initialize CreatorFeeVault");
+    assert.ok(
+      creatorVaultAfterCreate.data.length > 8,
+      "CreatorFeeVault must be initialised, not just allocated",
+    );
 
     async function snapshot() {
       const info = await connection.getAccountInfo(campaignAccounts.campaign, "confirmed");
@@ -908,31 +946,45 @@ ${text}`);
       return afterSnap;
     }
 
-    await expectProgramFail(
-      "buy before fee escrow init",
-      () => sendBuy(BUY_LAMPORTS),
-      /FeeEscrowNotInitialized|AccountNotInitialized|account is not initialized/i,
+    // Previously a buy had to fail here, because create left the fee escrow
+    // uninitialised and a keeper was expected to fill it in. That is exactly what
+    // made every new campaign untradeable. The contract is now the opposite: a
+    // campaign is tradeable the moment it is created, so assert that instead.
+    const firstBuy = await sendBuy(BUY_LAMPORTS);
+    assert.ok(firstBuy, "a freshly created campaign must accept a buy with no keeper step");
+
+    await initializeIfMissing(
+      connection,
+      campaignAccounts.feeEscrow,
+      () =>
+        program.methods
+          .initializeFeeEscrow()
+          .accountsStrict({
+            payer: admin,
+            campaign: campaignAccounts.campaign,
+            feeEscrow: campaignAccounts.feeEscrow,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc({ commitment: "confirmed", preflightCommitment: "confirmed" }),
     );
 
-    await program.methods
-      .initializeFeeEscrow()
-      .accountsStrict({
-        payer: admin,
-        campaign: campaignAccounts.campaign,
-        feeEscrow: campaignAccounts.feeEscrow,
-        systemProgram: SystemProgram.programId,
-      })
-      .rpc({ commitment: "confirmed", preflightCommitment: "confirmed" });
-
-    await program.methods
-      .initializeCreatorFeeVault()
-      .accountsStrict({
-        payer: admin,
-        campaign: campaignAccounts.campaign,
-        creatorFeeVault: campaignAccounts.creatorFeeVault,
-        systemProgram: SystemProgram.programId,
-      })
-      .rpc({ commitment: "confirmed", preflightCommitment: "confirmed" });
+    // create_campaign now creates both fee PDAs itself, so these permissionless
+    // initializers are no-ops for new campaigns and only matter for ones created
+    // before that change. Tolerate "already exists" rather than failing.
+    await initializeIfMissing(
+      connection,
+      campaignAccounts.creatorFeeVault,
+      () =>
+        program.methods
+          .initializeCreatorFeeVault()
+          .accountsStrict({
+            payer: admin,
+            campaign: campaignAccounts.campaign,
+            creatorFeeVault: campaignAccounts.creatorFeeVault,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc({ commitment: "confirmed", preflightCommitment: "confirmed" }),
+    );
 
     const rewardsBefore = {};
     for (const [name, pubkey] of Object.entries(rewardVaultKeys())) {
