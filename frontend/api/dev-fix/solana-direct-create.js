@@ -1047,6 +1047,10 @@ async function handleAuthorize(body, res) {
 
     const createArgs = {
       campaignId: bufferArray(args.campaignId),
+      // Metaplex fields must survive the response: the client encodes them into
+      // the instruction, and the route signature already commits to them.
+      name: args.name,
+      symbol: args.symbol,
       metadataHash: bufferArray(args.metadataHash),
       clusterHash: bufferArray(args.clusterHash),
       tickerHash: bufferArray(args.tickerHash),

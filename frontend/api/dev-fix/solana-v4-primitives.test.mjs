@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -179,4 +180,41 @@ test("empty name or symbol falls back rather than failing the launch", () => {
   const fields = buildMetaplexFields({ name: "", symbol: "" });
   assert.equal(fields.name, "MemeWarzone Token");
   assert.equal(fields.symbol, "MWZ");
+});
+
+test("the create args the client receives carry every field the instruction encodes", () => {
+  // Both create paths build a full args object and then hand-copy a whitelist of
+  // fields into the HTTP response. A field added to CreateCampaignArgs but not to
+  // that whitelist is silently dropped, and the browser fails far away with
+  // "name must not be empty". This pins the response shape to the wire format.
+  const encodedFields = [
+    "campaignId",
+    "name",
+    "symbol",
+    "metadataHash",
+    "clusterHash",
+    "tickerHash",
+    "reservationIdHash",
+    "reservationVersion",
+    "launchAt",
+    "graduationTargetUsdMicros",
+    "deadline",
+    "nonce",
+  ];
+  const sources = [
+    "frontend/api/dev-fix/solana-direct-create.js",
+    "frontend/api/dev-fix/solana-create-authorization-v4.js",
+  ];
+  for (const file of sources) {
+    const source = readFileSync(new URL(`../../../${file}`, import.meta.url), "utf8");
+    const start = source.indexOf("createArgs = {");
+    assert.ok(start > 0, `${file} must build a createArgs response`);
+    const block = source.slice(start, source.indexOf("};", start));
+    for (const field of encodedFields) {
+      assert.ok(
+        new RegExp(`\\b${field}\\s*:`).test(block),
+        `${file} drops ${field} from the create args it returns to the client`,
+      );
+    }
+  }
 });
