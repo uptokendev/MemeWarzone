@@ -1,6 +1,6 @@
 import { Contract, Interface, getAddress, id, keccak256 } from "ethers";
 
-import { isSolanaChainId } from "./chainNative.js";
+import { isSolanaChainId, nativeSymbolFor } from "./chainNative.js";
 
 export const DEFAULT_TOURNAMENT_PRICE_MAX_AGE_SECONDS = 300n;
 export const TOURNAMENT_COMPETITION_GENERATION = "arena_competition_v2";
@@ -39,7 +39,20 @@ function sameAddress(left, right) {
   }
 }
 
+/**
+ * Native decimals for a tournament buy-in.
+ *
+ * Anything that is not a current financial-authority chain is refused rather
+ * than defaulted to 18. Solana chain 102 is the case that matters: it is still
+ * referenced across the frontend as the devnet cluster, but the authority
+ * migration to 101 made it legacy. Defaulting it to 18 quoted a buy-in a
+ * billion times the real one, in the amountRaw the payment is built from.
+ *
+ * nativeSymbolFor already owns the list of current chains and already refuses
+ * 102 by name, so it is reused here to keep the two from drifting apart.
+ */
 export function tournamentNativeDecimals(chainId) {
+  nativeSymbolFor(chainId);
   return isSolanaChainId(Number(chainId)) ? 9 : 18;
 }
 

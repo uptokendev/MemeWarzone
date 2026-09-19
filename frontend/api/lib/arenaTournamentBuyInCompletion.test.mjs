@@ -42,7 +42,11 @@ test("4 tournament pool identity is deterministic and Tournament-bound", () => {
 test("5 exact native buy-in is derived from arena_tournaments.buy_in_native, not USD", () => {
   assert.equal(tournamentBuyInNativeRaw({ chainId: 97, buyInNative: "0.003125" }), 3_125_000_000_000_000n);
   assert.equal(tournamentBuyInNativeRaw({ chainId: 46630, buyInNative: "0.0042" }), 4_200_000_000_000_000n);
-  assert.equal(tournamentBuyInNativeRaw({ chainId: 102, buyInNative: "0.025" }), 25_000_000n);
+  assert.equal(tournamentBuyInNativeRaw({ chainId: 101, buyInNative: "0.025" }), 25_000_000n);
+  // 102 is legacy Solana. It must not quote an 18-decimal EVM amount for a
+  // 9-decimal chain, so it fails closed like every other non-authority chain.
+  assert.throws(() => tournamentBuyInNativeRaw({ chainId: 102, buyInNative: "0.025" }), /not current financial authority/i);
+  assert.throws(() => tournamentBuyInNativeRaw({ chainId: 1, buyInNative: "0.025" }), /Unsupported current application chain/i);
   assert.doesNotMatch(voteSetup, /250_000|buyInUsd:\s*["']0\.25["']|founder-locked \$0\.25/i);
   assert.match(voteSetup, /paymentAuthority:\s*"arena_tournaments\.buy_in_native"/);
 });

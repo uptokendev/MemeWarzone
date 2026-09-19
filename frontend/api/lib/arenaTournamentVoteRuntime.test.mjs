@@ -77,7 +77,7 @@ test("only the latest unresolved round is vote-active", () => {
     bracket: {
       rounds: [
         { round: 1, matches: [{ id: "m1", tokenA, tokenB, battleId: "battle-1", winner: tokenA, bye: false }] },
-        { round: 2, matches: [{ id: "r2-m1", tokenA, tokenC, battleId: "battle-2", winner: null, bye: false }] },
+        { round: 2, matches: [{ id: "r2-m1", tokenA, tokenB: tokenC, battleId: "battle-2", winner: null, bye: false }] },
       ],
     },
   });
