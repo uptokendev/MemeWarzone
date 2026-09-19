@@ -77,7 +77,11 @@ const METEORA_CP_AMM = new PublicKey("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sG
 const METAPLEX_METADATA_PROGRAM = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
 const NATIVE_MINT = new PublicKey("So11111111111111111111111111111111111111112");
 const GRADUATION_AUTH_DOMAIN = Buffer.from("MEMEWARZONE_SOLANA_GRADUATION_V1", "utf8");
-const GRADUATION_AUTH_SCHEMA_VERSION = 2;
+const GRADUATION_AUTH_SCHEMA_VERSION = 4;
+// Native SOL graduation binding. The program requires exactly this shape when
+// quote_mint is the native mint: see validate_quote_binding in graduation.rs.
+const QUOTE_PROFILE_NATIVE = 0;
+const QUOTE_PROVIDER_NATIVE = 0;
 
 function hash32(label) {
   return crypto.createHash("sha256").update(label, "utf8").digest();
@@ -1337,7 +1341,34 @@ ${text}`);
     )[0];
   }
 
+  /**
+   * Native-SOL quote binding for a v4 graduation authorization.
+   *
+   * Every field is covered by the signature, so the digest and the instruction
+   * args must be built from one object or they silently disagree and the program
+   * rejects with InvalidGraduationAuthorization.
+   */
+  function nativeQuoteBinding(oraclePriceUsdMicros) {
+    return {
+      quoteMint: NATIVE_MINT,
+      quoteConfigId: hash32("quote-config:native-sol"), // must be non-zero
+      quotePolicyVersion: 1, // must be > 0
+      quoteProfile: QUOTE_PROFILE_NATIVE,
+      quoteProviderClass: QUOTE_PROVIDER_NATIVE,
+      acquisitionProgram: PublicKey.default, // native path requires default
+      quoteReferenceUsdMicros: oraclePriceUsdMicros, // must equal the oracle price
+      quoteDecimals: 9, // native path requires exactly 9
+      expectedQuoteAmount: 0n,
+      minQuoteAmount: 0n,
+      maxSlippageBps: 0, // native path requires all three to be zero
+      maxImpactBps: 0,
+      maxDeviationBps: 0,
+      quoteRecoveryAccount: PublicKey.default,
+    };
+  }
+
   function graduationDigest(input) {
+    const q = input.quote;
     return crypto
       .createHash("sha256")
       .update(
@@ -1348,6 +1379,7 @@ ${text}`);
           input.campaign.toBuffer(),
           input.mint.toBuffer(),
           input.authority.toBuffer(),
+          input.generationConfig.toBuffer(),
           u64le(input.graduationTargetUsdMicros),
           u64le(input.nativeTargetLamports),
           u64le(input.oraclePriceUsdMicros),
@@ -1357,9 +1389,50 @@ ${text}`);
           i64le(input.deadline),
           input.nonce,
           Buffer.from([input.finalizeRouteProfile ?? ROUTE_PROFILE_UNLINKED]),
+          q.quoteMint.toBuffer(),
+          q.quoteConfigId,
+          u16le(q.quotePolicyVersion),
+          Buffer.from([q.quoteProfile]),
+          Buffer.from([q.quoteProviderClass]),
+          q.acquisitionProgram.toBuffer(),
+          u64le(q.quoteReferenceUsdMicros),
+          Buffer.from([q.quoteDecimals]),
+          u64le(q.expectedQuoteAmount),
+          u64le(q.minQuoteAmount),
+          u16le(q.maxSlippageBps),
+          u16le(q.maxImpactBps),
+          u16le(q.maxDeviationBps),
+          q.quoteRecoveryAccount.toBuffer(),
         ]),
       )
       .digest();
+  }
+
+  /** Instruction args for the same binding the digest covers. */
+  function beginGraduationArgs(input) {
+    const q = input.quote;
+    return {
+      nativeTargetLamports: new BN(input.nativeTargetLamports.toString()),
+      oraclePriceUsdMicros: new BN(input.oraclePriceUsdMicros.toString()),
+      deadline: new BN(input.deadline),
+      nonce: Array.from(input.nonce),
+      positionNftMint: input.nftMint,
+      finalizeRouteProfile: input.finalizeRouteProfile ?? ROUTE_PROFILE_UNLINKED,
+      quoteMint: q.quoteMint,
+      quoteConfigId: Array.from(q.quoteConfigId),
+      quotePolicyVersion: q.quotePolicyVersion,
+      quoteProfile: q.quoteProfile,
+      quoteProviderClass: q.quoteProviderClass,
+      acquisitionProgram: q.acquisitionProgram,
+      quoteReferenceUsdMicros: new BN(q.quoteReferenceUsdMicros.toString()),
+      quoteDecimals: q.quoteDecimals,
+      expectedQuoteAmount: new BN(q.expectedQuoteAmount.toString()),
+      minQuoteAmount: new BN(q.minQuoteAmount.toString()),
+      maxSlippageBps: q.maxSlippageBps,
+      maxImpactBps: q.maxImpactBps,
+      maxDeviationBps: q.maxDeviationBps,
+      quoteRecoveryAccount: q.quoteRecoveryAccount,
+    };
   }
 
 
@@ -1415,7 +1488,10 @@ ${text}`);
     const nativeTarget =
       (campaign.graduationTargetUsdMicros * 1_000_000_000n + oraclePrice - 1n) / oraclePrice;
     assert.equal(nativeTarget, CLOSE_TARGET_LAMPORTS);
+    const quoteBinding = nativeQuoteBinding(oraclePrice);
     const digest = graduationDigest({
+      quote: quoteBinding,
+      generationConfig,
       campaign: campaignAccounts.campaign,
       mint: campaignAccounts.mint,
       authority: admin,
@@ -1435,14 +1511,17 @@ ${text}`);
       message: digest,
     });
     const beginIx = await program.methods
-      .beginGraduation({
-        nativeTargetLamports: new BN(nativeTarget.toString()),
-        oraclePriceUsdMicros: new BN(oraclePrice.toString()),
-        deadline: new BN(deadline),
-        nonce: Array.from(nonce),
-        positionNftMint: nftMint.publicKey,
-        finalizeRouteProfile: ROUTE_PROFILE_UNLINKED,
-      })
+      .beginGraduation(
+        beginGraduationArgs({
+          quote: quoteBinding,
+          nativeTargetLamports: nativeTarget,
+          oraclePriceUsdMicros: oraclePrice,
+          deadline,
+          nonce,
+          nftMint: nftMint.publicKey,
+          finalizeRouteProfile: ROUTE_PROFILE_UNLINKED,
+        }),
+      )
       .accountsStrict({
         authority: admin,
         globalConfig,
@@ -1466,6 +1545,8 @@ ${text}`);
     const badNonce = hash32("graduation:bad-oracle");
     const badNative = 1n;
     const badDigest = graduationDigest({
+      quote: nativeQuoteBinding(oraclePrice),
+      generationConfig,
       campaign: campaignAccounts.campaign,
       mint: campaignAccounts.mint,
       authority: admin,
@@ -1606,7 +1687,10 @@ ${atomic.logs.join("\
       (campaign.graduationTargetUsdMicros * 1_000_000_000n + oraclePrice - 1n) / oraclePrice;
     assert.equal(nativeTarget, CLOSE_TARGET_LAMPORTS);
 
+    const quoteBinding = nativeQuoteBinding(oraclePrice);
     const digest = graduationDigest({
+      quote: quoteBinding,
+      generationConfig,
       campaign: campaignAccounts.campaign,
       mint: campaignAccounts.mint,
       authority: admin,
@@ -1625,14 +1709,17 @@ ${atomic.logs.join("\
       message: digest,
     });
     const beginIx = await program.methods
-      .beginGraduation({
-        nativeTargetLamports: new BN(nativeTarget.toString()),
-        oraclePriceUsdMicros: new BN(oraclePrice.toString()),
-        deadline: new BN(deadline),
-        nonce: Array.from(nonce),
-        positionNftMint: nftMint.publicKey,
-        finalizeRouteProfile: ROUTE_PROFILE_UNLINKED,
-      })
+      .beginGraduation(
+        beginGraduationArgs({
+          quote: quoteBinding,
+          nativeTargetLamports: nativeTarget,
+          oraclePriceUsdMicros: oraclePrice,
+          deadline,
+          nonce,
+          nftMint: nftMint.publicKey,
+          finalizeRouteProfile: ROUTE_PROFILE_UNLINKED,
+        }),
+      )
       .accountsStrict({
         authority: admin,
         globalConfig,
