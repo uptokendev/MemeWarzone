@@ -1,5 +1,5 @@
 import { Contract, Interface, JsonRpcProvider, Network, getAddress } from "ethers";
-import { getLogsWithRetry, isRangeLimitRpcError } from "./evmLogScan.js";
+import { getLogsWithRetry, isRangeLimitRpcError, withRpcRetry } from "./evmRpcResilience.js";
 
 const EVM_REWARD_CHAINS = new Set([56, 97, 4663, 46630]);
 const REWARD_DISTRIBUTOR_INTERFACE = new Interface([
@@ -94,7 +94,7 @@ async function assertProviderChain(provider, chainId, allowProviderChainMismatch
   if (allowProviderChainMismatch) return;
   let network;
   try {
-    network = await provider.getNetwork();
+    network = await withRpcRetry(() => provider.getNetwork());
   } catch (error) {
     throw new RewardClaimVerificationError(
       "CLAIM_RPC_UNAVAILABLE",
@@ -118,7 +118,7 @@ async function blockAtOrBeforeTimestamp(provider, latestBlock, targetTimestamp) 
     const mid = Math.ceil((low + high) / 2);
     let block;
     try {
-      block = await provider.getBlock(mid);
+      block = await withRpcRetry(() => provider.getBlock(mid));
     } catch (error) {
       throw new RewardClaimVerificationError(
         "CLAIM_RECOVERY_HISTORY_UNAVAILABLE",
@@ -239,11 +239,24 @@ export async function verifyEvmRewardClaim({
   const chain = Number(chainId);
   const rpc = provider || providerForChain(chain);
   await assertProviderChain(rpc, chain, allowProviderChainMismatch);
-  const [tx, receipt, latestBlock] = await Promise.all([
-    rpc.getTransaction(txHash),
-    rpc.getTransactionReceipt(txHash),
-    rpc.getBlockNumber(),
-  ]);
+  let tx;
+  let receipt;
+  let latestBlock;
+  try {
+    [tx, receipt, latestBlock] = await Promise.all([
+      withRpcRetry(() => rpc.getTransaction(txHash)),
+      withRpcRetry(() => rpc.getTransactionReceipt(txHash)),
+      withRpcRetry(() => rpc.getBlockNumber()),
+    ]);
+  } catch (error) {
+    // A throttled read is not evidence about the claim. Reporting it as a
+    // verification outcome would reject a transaction that is actually valid.
+    throw new RewardClaimVerificationError(
+      "CLAIM_RPC_UNAVAILABLE",
+      `Could not read the claim transaction from the configured chain: ${error?.message || error}`,
+      503,
+    );
+  }
 
   if (!tx || !receipt) {
     throw new RewardClaimVerificationError(
@@ -361,9 +374,9 @@ export async function recoverEvmRewardClaim({
   let latestBlock;
   try {
     [hasClaimed, batch, latestBlock] = await Promise.all([
-      distributor.hasClaimed(batchId, walletAddress),
-      distributor.batches(batchId),
-      rpc.getBlockNumber(),
+      withRpcRetry(() => distributor.hasClaimed(batchId, walletAddress)),
+      withRpcRetry(() => distributor.batches(batchId)),
+      withRpcRetry(() => rpc.getBlockNumber()),
     ]);
   } catch (error) {
     throw new RewardClaimVerificationError(

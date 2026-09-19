@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { getLogsWithRetry, isRangeLimitRpcError, isTransientRpcError } from "./evmLogScan.js";
+import { getLogsWithRetry, isRangeLimitRpcError, isTransientRpcError, withRpcRetry } from "./evmRpcResilience.js";
 
 // The exact shape ethers v6 produced against BlockPI BSC testnet when claim
 // recovery failed: a rate limit, wrapped, reported as UNKNOWN_ERROR.
@@ -102,4 +102,28 @@ test("backoff grows and stays bounded", async () => {
   assert.ok(delays[0] >= 100 && delays[0] < 200, `first delay ${delays[0]}`);
   assert.ok(delays[1] > delays[0], "delay must grow");
   assert.ok(delays.every((ms) => ms <= 750), `capped, saw ${delays.join(",")}`);
+});
+
+test("a reverted eth_call is answered, not retried", async () => {
+  // provider.call is now wrapped too. A revert is the chain's answer, so
+  // retrying it would delay a verdict the caller already has.
+  let calls = 0;
+  const error = new Error("execution reverted");
+  error.code = "CALL_EXCEPTION";
+  await assert.rejects(
+    withRpcRetry(async () => { calls += 1; throw error; }, { sleep: noSleep }),
+    /execution reverted/,
+  );
+  assert.equal(calls, 1);
+});
+
+test("withRpcRetry returns the operation's value and reports the attempt", async () => {
+  const seen = [];
+  const value = await withRpcRetry(async (attempt) => {
+    seen.push(attempt);
+    if (attempt < 2) throw blockPiLimitExceeded();
+    return { blockNumber: 42 };
+  }, { sleep: noSleep });
+  assert.deepEqual(seen, [1, 2]);
+  assert.deepEqual(value, { blockNumber: 42 });
 });

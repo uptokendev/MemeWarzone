@@ -1,5 +1,5 @@
 /**
- * Shared eth_getLogs resilience for claim recovery.
+ * Shared RPC resilience for claim recovery.
  *
  * Claim recovery reads the chain to decide whether a paid-out entitlement is
  * recoverable. A provider hiccup there does not look like a hiccup to the
@@ -77,12 +77,13 @@ export function isRangeLimitRpcError(error) {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * eth_getLogs with bounded exponential backoff on transient rejections.
+ * Run one RPC read with bounded exponential backoff on transient rejections.
  *
- * Non-transient rejections (a malformed filter, an unsupported method) are
- * rethrown immediately: retrying those only wastes the caller's time budget.
+ * Non-transient rejections (a malformed filter, a reverted call, an unsupported
+ * method) are rethrown immediately: retrying those only wastes the caller's
+ * time budget and delays an answer the provider already gave.
  */
-export async function getLogsWithRetry(provider, filter, options = {}) {
+export async function withRpcRetry(operation, options = {}) {
   const attempts = Math.max(1, Number(options.attempts ?? 5));
   const baseDelayMs = Math.max(1, Number(options.baseDelayMs ?? 400));
   const maxDelayMs = Math.max(baseDelayMs, Number(options.maxDelayMs ?? 8_000));
@@ -91,7 +92,7 @@ export async function getLogsWithRetry(provider, filter, options = {}) {
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      return await provider.getLogs(filter);
+      return await operation(attempt);
     } catch (error) {
       lastError = error;
       if (attempt === attempts) break;
@@ -103,4 +104,9 @@ export async function getLogsWithRetry(provider, filter, options = {}) {
     }
   }
   throw lastError;
+}
+
+/** eth_getLogs under {@link withRpcRetry}. */
+export async function getLogsWithRetry(provider, filter, options = {}) {
+  return withRpcRetry(() => provider.getLogs(filter), options);
 }

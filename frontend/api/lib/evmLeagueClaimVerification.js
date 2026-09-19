@@ -9,7 +9,7 @@ import {
   toUtf8Bytes,
   zeroPadValue,
 } from "ethers";
-import { getLogsWithRetry, isRangeLimitRpcError } from "./evmLogScan.js";
+import { getLogsWithRetry, isRangeLimitRpcError, withRpcRetry } from "./evmRpcResilience.js";
 
 const EVM_LEAGUE_CHAINS = new Set([56, 97, 4663, 46630]);
 export const EVM_LEAGUE_LOG_QUERY_MAX_BLOCKS = 5_000;
@@ -103,7 +103,7 @@ function explicitLeagueRecoveryFromBlock(chainId) {
 }
 
 export async function scanEvmLeagueClaimLogsBackwards(provider, { address, topics, lookbackBlocks, chunkBlocks, fromBlockFloor = null }) {
-  const latest = await provider.getBlockNumber();
+  const latest = await withRpcRetry(() => provider.getBlockNumber());
   const lookbackFloor = Math.max(0, latest - lookbackBlocks + 1);
   const floor = Number.isInteger(fromBlockFloor) && fromBlockFloor >= 0
     ? Math.min(latest, Math.max(lookbackFloor, fromBlockFloor))
@@ -173,7 +173,26 @@ export function evmLeagueClaimEventTopics(expected) {
 export async function verifyEvmLeagueClaimTransaction({ chainId, period, epochStart, category, rank, recipient, amountRaw, txHash, minConfirmations = 1 }) {
   const expected = buildExpectedEvmLeagueClaim({ chainId, period, epochStart, category, rank, recipient, amountRaw });
   const provider = providerForChain(expected.chainId);
-  const [network, tx, receipt, latestBlock] = await Promise.all([provider.getNetwork(), provider.getTransaction(txHash), provider.getTransactionReceipt(txHash), provider.getBlockNumber()]);
+  let network;
+  let tx;
+  let receipt;
+  let latestBlock;
+  try {
+    [network, tx, receipt, latestBlock] = await Promise.all([
+      withRpcRetry(() => provider.getNetwork()),
+      withRpcRetry(() => provider.getTransaction(txHash)),
+      withRpcRetry(() => provider.getTransactionReceipt(txHash)),
+      withRpcRetry(() => provider.getBlockNumber()),
+    ]);
+  } catch (error) {
+    // Distinct from LEAGUE_TX_NOT_FOUND: the chain did not say the transaction
+    // is absent, the provider declined to answer.
+    throw new EvmLeagueClaimVerificationError(
+      "LEAGUE_RPC_UNAVAILABLE",
+      `Could not read the League claim transaction from chain ${expected.chainId}: ${error?.message || error}`,
+      503,
+    );
+  }
   if (Number(network.chainId) !== expected.chainId) throw new EvmLeagueClaimVerificationError("LEAGUE_CHAIN_MISMATCH", `League RPC returned chain ${network.chainId}, expected ${expected.chainId}.`, 503);
   if (!tx || !receipt) throw new EvmLeagueClaimVerificationError("LEAGUE_TX_NOT_FOUND", "League claim transaction is not available yet.");
   if (Number(receipt.status) !== 1) throw new EvmLeagueClaimVerificationError("LEAGUE_TX_REVERTED", "League claim transaction reverted on-chain.");
@@ -205,7 +224,16 @@ export async function discoverEvmLeagueClaimTransaction({ chainId, period, epoch
   const expected = buildExpectedEvmLeagueClaim({ chainId, period, epochStart, category, rank, recipient, amountRaw });
   const provider = providerForChain(expected.chainId);
   const callData = EVM_LEAGUE_INTERFACE.encodeFunctionData("epochLeafClaimed", [expected.epochId, expected.leaf]);
-  const rawClaimed = await provider.call({ to: expected.vaultAddress, data: callData });
+  let rawClaimed;
+  try {
+    rawClaimed = await withRpcRetry(() => provider.call({ to: expected.vaultAddress, data: callData }));
+  } catch (error) {
+    throw new EvmLeagueClaimVerificationError(
+      "LEAGUE_RPC_UNAVAILABLE",
+      `Could not read TreasuryVaultV2 claim state on chain ${expected.chainId}: ${error?.message || error}`,
+      503,
+    );
+  }
   const [claimed] = EVM_LEAGUE_INTERFACE.decodeFunctionResult("epochLeafClaimed", rawClaimed);
   if (!claimed) return null;
   const logs = await scanEvmLeagueClaimLogsBackwards(provider, {
