@@ -62,3 +62,18 @@ test("the offsets match a real graduated mainnet-shaped account", () => {
   assert.equal(flags.graduated, true, "the real graduated campaign must read as graduated");
   assert.equal(flags.curveClosed, true);
 });
+
+test("a campaign from an older program layout is skipped, not misread", () => {
+  // Devnet holds 718-byte campaigns from an earlier layout next to current
+  // 720-byte ones. Their trailing bytes happen to read as curve_closed, so an
+  // end-relative read would try to graduate accounts the program rejects.
+  const legacy = Buffer.alloc(718);
+  Buffer.from([1, 0, 1, 0, 254, 252, 251, 255]).copy(legacy, legacy.length - 8);
+  assert.notEqual(legacy.length, 720, "fixture must not be the current size");
+  assert.equal(
+    readFlags(legacy).curveClosed,
+    true,
+    "the tail does read as closed, which is exactly why size must be checked first",
+  );
+  assert.equal(legacy.length === 720, false, "so the keeper must skip it on size");
+});

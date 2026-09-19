@@ -21,7 +21,16 @@ const SOLANA_CHAIN_ID = 101;
 const LOOP_SYMBOL = Symbol.for("memewarzone.solanaGraduationReconcilerStarted");
 const globalState = globalThis as Record<symbol, unknown>;
 
-/** Campaign account layout: the last eight fields are single bytes. */
+/**
+ * Campaign accounts must be exactly this size to be read.
+ *
+ * Earlier program versions wrote a shorter record: devnet still holds 718-byte
+ * campaigns alongside current 720-byte ones. Reading fields relative to the end
+ * of the buffer silently misreads those, and the current program rejects them
+ * anyway (CAMPAIGN_ACCOUNT_BYTES in campaign_view.rs). Skipping them by size is
+ * both safer and honest about what this keeper can act on.
+ */
+const CAMPAIGN_ACCOUNT_BYTES = 720;
 const GRADUATED_OFFSET_FROM_END = 7;
 const CURVE_CLOSED_OFFSET_FROM_END = 6;
 
@@ -64,7 +73,12 @@ async function readEligibility(campaign: string): Promise<{ eligible: boolean; r
   const encoded = info?.value?.data?.[0];
   if (!encoded) return { eligible: false, reason: "campaign account not found" };
   const data = Buffer.from(String(encoded), "base64");
-  if (data.length < 64) return { eligible: false, reason: "campaign account too small" };
+  if (data.length !== CAMPAIGN_ACCOUNT_BYTES) {
+    return {
+      eligible: false,
+      reason: `campaign account is ${data.length} bytes, not the current ${CAMPAIGN_ACCOUNT_BYTES}`,
+    };
+  }
   const graduated = data[data.length - GRADUATED_OFFSET_FROM_END] === 1;
   const curveClosed = data[data.length - CURVE_CLOSED_OFFSET_FROM_END] === 1;
   if (graduated) return { eligible: false, reason: "already graduated" };
