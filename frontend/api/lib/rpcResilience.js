@@ -1,5 +1,5 @@
 /**
- * Shared RPC resilience for claim recovery.
+ * Shared RPC resilience for claim recovery, on EVM chains and Solana alike.
  *
  * Claim recovery reads the chain to decide whether a paid-out entitlement is
  * recoverable. A provider hiccup there does not look like a hiccup to the
@@ -19,7 +19,7 @@
  * Callers combine both: retry with backoff first, then narrow.
  */
 
-const TRANSIENT_MESSAGE = /limit exceeded|rate.?limit|too many requests|429|request timed out|timeout|etimedout|econnreset|econnrefused|socket hang up|network error|bad gateway|service unavailable|temporarily unavailable|server error|try again/i;
+const TRANSIENT_MESSAGE = /limit exceeded|rate.?limit|too many requests|429|request timed out|timeout|operation was aborted|etimedout|econnreset|econnrefused|socket hang up|network error|bad gateway|service unavailable|temporarily unavailable|server error|try again/i;
 
 const TRANSIENT_JSON_RPC_CODES = new Set([
   -32005, // request/rate limit exceeded (BlockPI, Infura, Alchemy)
@@ -63,6 +63,9 @@ export function isTransientRpcError(error) {
   if (Number.isFinite(status) && (status === 429 || status >= 500)) return true;
   const code = String(error?.code || "");
   if (code === "SERVER_ERROR" || code === "TIMEOUT" || code === "NETWORK_ERROR") return true;
+  // A client-side timeout abort says nothing about the claim, only that this
+  // attempt ran out of patience.
+  if (error?.name === "AbortError" || code === "ABORT_ERR") return true;
   return TRANSIENT_MESSAGE.test(errorText(error));
 }
 

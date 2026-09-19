@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { getLogsWithRetry, isRangeLimitRpcError, isTransientRpcError, withRpcRetry } from "./evmRpcResilience.js";
+import { getLogsWithRetry, isRangeLimitRpcError, isTransientRpcError, withRpcRetry } from "./rpcResilience.js";
 
 // The exact shape ethers v6 produced against BlockPI BSC testnet when claim
 // recovery failed: a rate limit, wrapped, reported as UNKNOWN_ERROR.

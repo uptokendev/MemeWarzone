@@ -3,6 +3,7 @@ import {
   solanaRewardRpcUrl,
   verifySolanaRewardClaim,
 } from "./solanaRewardClaim.js";
+import { withRpcRetry } from "./rpcResilience.js";
 
 function reconciliationError(message, code, status = 409, details = null) {
   const error = new Error(message);
@@ -22,40 +23,38 @@ async function rpc(chainId, method, params) {
     );
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12_000);
+  // The retry runs on the raw failure, before it is normalised below. Every
+  // failure here ends up a 503, and a 503 reads as transient, so normalising
+  // first would make even a malformed request burn the whole retry budget.
   try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-      signal: controller.signal,
+    return await withRpcRetry(async () => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 12_000);
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          const error = new Error(`Solana RPC ${method} returned HTTP ${response.status}`);
+          error.status = response.status;
+          throw error;
+        }
+        const body = await response.json();
+        if (body?.error) throw new Error(body.error.message || JSON.stringify(body.error));
+        return body?.result;
+      } finally {
+        clearTimeout(timer);
+      }
     });
-    if (!response.ok) {
-      throw reconciliationError(
-        `Solana RPC ${method} returned HTTP ${response.status}`,
-        "SOLANA_CLAIM_RECONCILE_RPC_UNAVAILABLE",
-        503,
-      );
-    }
-    const body = await response.json();
-    if (body?.error) {
-      throw reconciliationError(
-        body.error.message || JSON.stringify(body.error),
-        "SOLANA_CLAIM_RECONCILE_RPC_UNAVAILABLE",
-        503,
-      );
-    }
-    return body?.result;
   } catch (error) {
-    if (error?.code === "SOLANA_CLAIM_RECONCILE_RPC_UNAVAILABLE") throw error;
     throw reconciliationError(
       `Solana RPC ${method} failed: ${String(error?.message || error)}`,
       "SOLANA_CLAIM_RECONCILE_RPC_UNAVAILABLE",
       503,
     );
-  } finally {
-    clearTimeout(timer);
   }
 }
 

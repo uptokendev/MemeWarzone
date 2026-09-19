@@ -1,5 +1,5 @@
 import { Contract, Interface, JsonRpcProvider, Network, getAddress } from "ethers";
-import { getLogsWithRetry, isRangeLimitRpcError, withRpcRetry } from "./evmRpcResilience.js";
+import { getLogsWithRetry, isRangeLimitRpcError, withRpcRetry } from "./rpcResilience.js";
 
 const EVM_REWARD_CHAINS = new Set([56, 97, 4663, 46630]);
 const REWARD_DISTRIBUTOR_INTERFACE = new Interface([

@@ -9,7 +9,7 @@ import {
   toUtf8Bytes,
   zeroPadValue,
 } from "ethers";
-import { getLogsWithRetry, isRangeLimitRpcError, withRpcRetry } from "./evmRpcResilience.js";
+import { getLogsWithRetry, isRangeLimitRpcError, withRpcRetry } from "./rpcResilience.js";
 
 const EVM_LEAGUE_CHAINS = new Set([56, 97, 4663, 46630]);
 export const EVM_LEAGUE_LOG_QUERY_MAX_BLOCKS = 5_000;

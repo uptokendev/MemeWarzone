@@ -1,4 +1,5 @@
 import { findProgramAddressSync, publicKeyBytes } from "../dev-fix/solana-v4-primitives.js";
+import { withRpcRetry } from "./rpcResilience.js";
 
 const CONFIG_SEED = Buffer.from("rewards_config");
 const AIRDROP_VAULT_SEED = Buffer.from("airdrop_vault");
@@ -233,22 +234,31 @@ function rpcPayload(method, params) {
 async function rpc(chainId, method, params) {
   const url = solanaRewardRpcUrl(chainId);
   if (!url) throw new Error("Solana reward RPC is not configured");
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12_000);
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: rpcPayload(method, params),
-      signal: controller.signal,
-    });
-    if (!response.ok) throw new Error(`Solana RPC ${method} HTTP ${response.status}`);
-    const body = await response.json();
-    if (body?.error) throw new Error(body.error.message || JSON.stringify(body.error));
-    return body?.result;
-  } finally {
-    clearTimeout(timer);
-  }
+  // Helius answers 429 under load. Without a retry that throttling reads as
+  // "this claim cannot be verified", which is the one answer it must never
+  // produce for a wallet that was genuinely paid.
+  return withRpcRetry(async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12_000);
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: rpcPayload(method, params),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const error = new Error(`Solana RPC ${method} HTTP ${response.status}`);
+        error.status = response.status;
+        throw error;
+      }
+      const body = await response.json();
+      if (body?.error) throw new Error(body.error.message || JSON.stringify(body.error));
+      return body?.result;
+    } finally {
+      clearTimeout(timer);
+    }
+  });
 }
 
 function accountKeyText(item) {

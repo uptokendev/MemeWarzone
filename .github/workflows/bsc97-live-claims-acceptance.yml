@@ -72,6 +72,59 @@ jobs:
           await p.destroy();
           NODE
 
+      - name: Prove the RPC serves eth_getLogs
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Claim recovery is a log scan. An RPC that answers eth_getBlockNumber
+          # but refuses eth_getLogs passes every other check here and then makes
+          # real, paid entitlements look unrecoverable. Find that out in ten
+          # seconds instead of after a contract deployment and six minutes of
+          # acceptance, and say which endpoint did it.
+          node --input-type=module <<'NODE'
+          const url = process.env.BSC_RPC_HTTP_97;
+          const host = (() => { try { return new URL(url).host; } catch { return '<unparseable>'; } })();
+          async function call(method, params) {
+            const response = await fetch(url, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+            });
+            const body = await response.json().catch(() => null);
+            return { httpStatus: response.status, error: body?.error ?? null, result: body?.result ?? null };
+          }
+          const head = await call('eth_getBlockNumber', []);
+          if (head.error || head.result == null) {
+            throw new Error(`BLOCKED: ${host} cannot answer eth_getBlockNumber: ${JSON.stringify(head)}`);
+          }
+          const latest = Number(head.result);
+          // Widest span claim recovery asks for, then the narrowest, so the log
+          // says whether this is a range limit or a flat refusal.
+          const spans = [5000, 1000, 100, 10, 1];
+          const attempts = [];
+          let served = null;
+          for (const span of spans) {
+            const probe = await call('eth_getLogs', [{
+              fromBlock: '0x' + Math.max(0, latest - span + 1).toString(16),
+              toBlock: '0x' + latest.toString(16),
+              topics: ['0x04672052dcb6b5b19a9cc2ec1b8f447f1f5e47b5e24cfa5e4ffb640d63ca2be7'],
+            }]);
+            const ok = !probe.error && Array.isArray(probe.result);
+            attempts.push({ span, ok, httpStatus: probe.httpStatus, error: probe.error });
+            if (ok && served == null) served = span;
+          }
+          console.log(JSON.stringify({ host, latest, largestServedSpan: served, attempts }, null, 2));
+          if (served == null) {
+            throw new Error(
+              `BLOCKED: ${host} refuses eth_getLogs at every span down to a single block, so claim recovery cannot run. ` +
+              `Point BSC_TESTNET_RPC at a BSC testnet endpoint that serves eth_getLogs.`,
+            );
+          }
+          if (served < 5000) {
+            console.log(`::warning::${host} serves eth_getLogs only up to ${served} blocks; set EVM_CLAIM_RECONCILE_CHUNK_BLOCKS and REWARD_CLAIM_RECOVERY_BLOCK_CHUNK at or below that.`);
+          }
+          NODE
+
       - name: Compile frozen claim contracts
         run: npx hardhat compile --config hardhat.agent5-claim-recovery.config.cjs
 

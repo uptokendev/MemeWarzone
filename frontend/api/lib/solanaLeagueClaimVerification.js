@@ -5,6 +5,7 @@ import {
   deriveRewardsVaults,
 } from "../solanaLeagueMerkle.js";
 import { canonicalSolanaClaimIdentity } from "./solanaClaimEnvironment.js";
+import { withRpcRetry } from "./rpcResilience.js";
 
 const SOLANA_SIGNATURE_RE = /^[1-9A-HJ-NP-Za-km-z]{64,88}$/;
 
@@ -27,22 +28,28 @@ async function rpc(chainId, method, params) {
     error.status = 500;
     throw error;
   }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12_000);
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-      signal: controller.signal,
-    });
-    if (!response.ok) throw new Error(`Solana RPC ${method} HTTP ${response.status}`);
-    const body = await response.json();
-    if (body?.error) throw new Error(body.error.message || JSON.stringify(body.error));
-    return body?.result;
-  } finally {
-    clearTimeout(timer);
-  }
+  return withRpcRetry(async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12_000);
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        const error = new Error(`Solana RPC ${method} HTTP ${response.status}`);
+        error.status = response.status;
+        throw error;
+      }
+      const body = await response.json();
+      if (body?.error) throw new Error(body.error.message || JSON.stringify(body.error));
+      return body?.result;
+    } finally {
+      clearTimeout(timer);
+    }
+  });
 }
 
 function accountKeyText(item) {
