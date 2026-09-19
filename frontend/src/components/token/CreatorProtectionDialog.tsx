@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ShieldAlert } from "lucide-react";
+import { getActiveChainId, isRobinhoodChainId, isSolanaChainId } from "@/lib/chainConfig";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -25,18 +26,33 @@ type CreatorProtectionDetail = {
   error?: string | null;
 };
 
+// Tier caps are BNB-chain policy values. Only the unit is chain-dependent here;
+// the numbers are not, so they are shown with the chain that defines them.
 const TIER_RULES = [
   { tier: 1, name: "New", lock: "24 hours", cap: "0.25 BNB" },
   { tier: 2, name: "Trusted", lock: "6 hours", cap: "1 BNB" },
   { tier: 3, name: "Proven", lock: "1 hour", cap: "3 BNB" },
 ] as const;
 
-function formatBnb(raw?: string | null): string {
+/** This dialog is global, so the chain comes from whatever the user is trading. */
+function activeNativeSymbol(): string {
+  try {
+    const chainId = getActiveChainId();
+    if (isSolanaChainId(Number(chainId))) return "SOL";
+    if (isRobinhoodChainId(Number(chainId))) return "ETH";
+  } catch {
+    // fall through to the BNB default
+  }
+  return "BNB";
+}
+
+/** Server-provided amount, rendered in the native unit of the active chain. */
+function formatNativeAmount(raw?: string | null): string {
   try {
     const wei = BigInt(String(raw || "0"));
     const whole = wei / 10n ** 18n;
     const fraction = (wei % 10n ** 18n).toString().padStart(18, "0").replace(/0+$/, "").slice(0, 6);
-    return `${whole.toString()}${fraction ? `.${fraction}` : ""} BNB`;
+    return `${whole.toString()}${fraction ? `.${fraction}` : ""} ${activeNativeSymbol()}`;
   } catch {
     return "—";
   }
@@ -72,14 +88,14 @@ export function CreatorProtectionDialog() {
     const code = String(detail?.code || "");
     const tierNumber = Number(detail?.tierNumber || 1);
     const tierLabel = detail?.tier || `Tier ${tierNumber}`;
-    const cap = formatBnb(detail?.creatorBuyCapWei);
+    const cap = formatNativeAmount(detail?.creatorBuyCapWei);
     const unlock = formatUnlock(detail?.unlockAt);
 
     if (code === "CREATOR_CLUSTER_BUY_CAP_EXCEEDED") {
       return {
         title: "Creator Cluster Buy Cap Reached",
         body: `This buy would exceed the ${cap} combined purchase allowance for the ${tierLabel} creator wallet and its confirmed linked wallets.`,
-        note: detail?.remainingWei != null ? `Remaining creator-cluster allowance: ${formatBnb(detail.remainingWei)}.` : null,
+        note: detail?.remainingWei != null ? `Remaining creator-cluster allowance: ${formatNativeAmount(detail.remainingWei)}.` : null,
       };
     }
 
