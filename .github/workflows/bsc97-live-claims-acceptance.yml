@@ -93,9 +93,9 @@ jobs:
             const body = await response.json().catch(() => null);
             return { httpStatus: response.status, error: body?.error ?? null, result: body?.result ?? null };
           }
-          const head = await call('eth_getBlockNumber', []);
+          const head = await call('eth_blockNumber', []);
           if (head.error || head.result == null) {
-            throw new Error(`BLOCKED: ${host} cannot answer eth_getBlockNumber: ${JSON.stringify(head)}`);
+            throw new Error(`BLOCKED: ${host} cannot answer eth_blockNumber: ${JSON.stringify(head)}`);
           }
           const latest = Number(head.result);
           // Widest span claim recovery asks for, then the narrowest, so the log
