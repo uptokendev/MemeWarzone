@@ -264,3 +264,69 @@ pub fn claim_sponsorship_protocol_v1_handler(ctx: Context<ClaimSponsorshipProtoc
     vault.protocol_claimed_lamports = vault.protocol_claimed_lamports.checked_add(amount).ok_or(ArenaMoneyV2Error::MathOverflow)?;
     debit_program_vault(&vault.to_account_info(), &ctx.accounts.receiver.to_account_info(), amount, EventPrizeVaultV1::SIZE)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A sponsor's payment must arrive somewhere in full. Losing lamports here
+    /// strands a sponsor's money in an event account; inventing them drains the
+    /// program vault for everyone else.
+    #[test]
+    fn split_conserves_every_lamport() {
+        for gross in [
+            1u64, 2, 3, 9, 10, 11, 99, 100, 101, 9_999, 10_000, 10_001,
+            250_000_000, 1_000_000_000, 50_000_000_000,
+            u64::MAX / 10_000,
+        ] {
+            let split = split_sponsorship_v1(gross).expect("split must succeed");
+            assert_eq!(
+                split.prize + split.marketing + split.protocol,
+                gross,
+                "split of {gross} lost or invented lamports",
+            );
+            assert_eq!(split.gross, gross);
+        }
+    }
+
+    /// The declared shares must be the ones applied and must total the whole.
+    #[test]
+    fn declared_bps_match_the_applied_split() {
+        assert_eq!(
+            SPONSORSHIP_PRIZE_BPS + SPONSORSHIP_MARKETING_BPS + SPONSORSHIP_PROTOCOL_BPS,
+            SPONSORSHIP_BPS_DENOMINATOR,
+            "the three sponsorship shares must add up to 100%",
+        );
+        let split = split_sponsorship_v1(1_000_000).unwrap();
+        assert_eq!(split.prize, 700_000, "prize must be 70%");
+        assert_eq!(split.marketing, 200_000, "marketing must be 20%");
+        assert_eq!(split.protocol, 100_000, "protocol must be 10%");
+    }
+
+    /// Truncation must favour the prize pot, not the protocol's cut.
+    #[test]
+    fn rounding_remainder_goes_to_the_prize() {
+        // 9 lamports: marketing 20% = 1.8 -> 1, protocol 10% = 0.9 -> 0.
+        let split = split_sponsorship_v1(9).unwrap();
+        assert_eq!(split.marketing, 1);
+        assert_eq!(split.protocol, 0);
+        assert_eq!(split.prize, 8, "the truncated remainder must go to the prize");
+    }
+
+    /// A sponsorship of nothing must be refused rather than creating an event
+    /// with an unclaimable zero prize.
+    #[test]
+    fn zero_gross_is_refused() {
+        assert!(split_sponsorship_v1(0).is_err());
+    }
+
+    /// Every sponsorship, however small, must leave a prize worth claiming.
+    #[test]
+    fn small_amounts_still_leave_a_prize() {
+        for gross in 1u64..=100 {
+            let split = split_sponsorship_v1(gross).unwrap();
+            assert!(split.prize > 0, "gross {gross} produced a zero prize");
+            assert!(split.prize >= split.marketing, "prize must never be below the marketing cut");
+        }
+    }
+}

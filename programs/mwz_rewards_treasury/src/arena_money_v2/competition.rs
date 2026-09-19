@@ -432,3 +432,129 @@ pub fn claim_competition_protocol_v2_handler(ctx: Context<ClaimCompetitionProtoc
     pool.protocol_claimed = true;
     debit_program_vault(&pool.to_account_info(), &ctx.accounts.receiver.to_account_info(), amount, CompetitionPoolV2::SIZE)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every lamport a competition takes in must leave as prize, league or
+    /// protocol. A split that loses or invents lamports strands real money in a
+    /// pool account nobody can claim.
+    #[test]
+    fn split_conserves_every_lamport() {
+        for gross in [
+            1u64, 2, 3, 7, 9, 10, 99, 100, 101, 999, 1_000, 1_001,
+            10_000, 10_001, 123_456_789, 1_000_000_000,
+            u64::MAX / 10_000, // the largest value mul_bps cannot overflow on
+        ] {
+            let split = split_competition_v2(gross).expect("split must succeed");
+            assert_eq!(
+                split.prize + split.league + split.protocol,
+                gross,
+                "split of {gross} lost or invented lamports",
+            );
+            assert_eq!(split.gross, gross);
+        }
+    }
+
+    /// Rounding must favour the prize, never the protocol. Integer division
+    /// truncates league and protocol, and the remainder has to land somewhere:
+    /// it should be the pot the players compete for.
+    #[test]
+    fn rounding_remainder_goes_to_the_prize() {
+        // 7 lamports: league 20% = 1.4 -> 1, protocol 5% = 0.35 -> 0.
+        let split = split_competition_v2(7).unwrap();
+        assert_eq!(split.league, 1);
+        assert_eq!(split.protocol, 0);
+        assert_eq!(split.prize, 6, "the truncated remainder must go to the prize");
+
+        // A gross that divides exactly leaves no remainder to misplace.
+        let exact = split_competition_v2(10_000).unwrap();
+        assert_eq!(exact.league, 2_000);
+        assert_eq!(exact.protocol, 500);
+        assert_eq!(exact.prize, 7_500);
+    }
+
+    /// The declared basis points must be the ones actually applied, and they
+    /// must total the denominator. A drift here silently reprices every
+    /// competition on the platform.
+    #[test]
+    fn declared_bps_match_the_applied_split() {
+        assert_eq!(
+            COMPETITION_PRIZE_BPS + COMPETITION_LEAGUE_BPS + COMPETITION_PROTOCOL_BPS,
+            BPS_DENOMINATOR,
+            "the three shares must add up to 100%",
+        );
+        let split = split_competition_v2(1_000_000).unwrap();
+        assert_eq!(split.prize, 750_000, "prize must be 75%");
+        assert_eq!(split.league, 200_000, "league must be 20%");
+        assert_eq!(split.protocol, 50_000, "protocol must be 5%");
+    }
+
+    /// A zero-value competition has nothing to split and must be refused rather
+    /// than creating a pool that can never pay out.
+    #[test]
+    fn zero_gross_is_refused() {
+        assert!(split_competition_v2(0).is_err());
+    }
+
+    /// Small amounts must not silently produce a zero prize. If the prize can
+    /// round to nothing the pool is unwinnable, and the entry fee is a
+    /// donation to the protocol.
+    #[test]
+    fn small_amounts_still_leave_a_prize() {
+        for gross in 1u64..=100 {
+            let split = split_competition_v2(gross).unwrap();
+            assert!(
+                split.prize > 0,
+                "gross {gross} produced a zero prize: prize {} league {} protocol {}",
+                split.prize, split.league, split.protocol,
+            );
+            assert!(split.prize >= split.league, "the prize must never be smaller than the league cut");
+        }
+    }
+
+    /// The hand-computed SIZE is used both to allocate the account and to
+    /// compute the rent floor a claim must leave behind. If it were smaller
+    /// than the real layout, a claim could drain the pool below rent exemption
+    /// and the account would be purged with pending claims still recorded.
+    #[test]
+    fn declared_size_covers_the_real_layout() {
+        let actual = 1        // generation
+            + 32             // competition_id
+            + 1 + 1          // kind, state
+            + 32 * 5         // authority, asset_a, asset_b, owner_a, owner_b
+            + 8 + 8          // required_entry_lamports, entry_total_lamports
+            + 4              // entry_count
+            + 8 * 3          // boost gross / prize / protocol
+            + 32 * 2         // winner_asset, winner_wallet
+            + 8 * 3          // pending winner / league / protocol
+            + 1 + 1 + 1      // winner_claimed, league_claimed, protocol_claimed
+            + 8 * 3          // opens_at, closes_at, resolved_at
+            + 1;             // bump
+        assert!(
+            CompetitionPoolV2::SIZE >= actual,
+            "SIZE {} is smaller than the {actual}-byte layout",
+            CompetitionPoolV2::SIZE,
+        );
+    }
+
+    /// The four states are distinct values. Two sharing a number would make a
+    /// cancelled pool indistinguishable from a resolved one, and refunds and
+    /// prize claims guard on exactly this field.
+    #[test]
+    fn competition_states_are_distinct() {
+        let states = [
+            COMPETITION_STATE_OPEN,
+            COMPETITION_STATE_LIVE,
+            COMPETITION_STATE_RESOLVED,
+            COMPETITION_STATE_CANCELLED,
+        ];
+        for (i, a) in states.iter().enumerate() {
+            for b in states.iter().skip(i + 1) {
+                assert_ne!(a, b, "two competition states share a discriminant");
+            }
+        }
+        assert_ne!(COMPETITION_KIND_BATTLE, COMPETITION_KIND_TOURNAMENT);
+    }
+}

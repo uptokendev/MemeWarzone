@@ -197,3 +197,53 @@ pub fn claim_quarterly_league_v2_handler(ctx: Context<ClaimQuarterlyLeagueV2>) -
     treasury.quarterly_claimed_lamports = treasury.quarterly_claimed_lamports.checked_add(amount).ok_or(ArenaMoneyV2Error::MathOverflow)?;
     debit_program_vault(&treasury.to_account_info(), &ctx.accounts.receiver.to_account_info(), amount, PostGradLeagueTreasuryV2::SIZE)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// League routing is a two-way split with no third bucket to absorb a
+    /// rounding error, so conservation here is the whole safety property.
+    #[test]
+    fn split_conserves_every_lamport() {
+        for gross in [
+            1u64, 2, 3, 5, 7, 9, 10, 99, 100, 101, 9_999, 10_000, 10_001,
+            123_456_789, 1_000_000_000,
+            u64::MAX / 10_000,
+        ] {
+            let split = split_postgrad_league_v2(gross).expect("split must succeed");
+            assert_eq!(
+                split.monthly + split.quarterly,
+                gross,
+                "split of {gross} lost or invented lamports",
+            );
+            assert_eq!(split.gross, gross);
+        }
+    }
+
+    #[test]
+    fn declared_bps_match_the_applied_split() {
+        assert_eq!(
+            LEAGUE_MONTHLY_BPS + LEAGUE_QUARTERLY_BPS,
+            LEAGUE_BPS_DENOMINATOR,
+            "monthly and quarterly must add up to 100%",
+        );
+        let split = split_postgrad_league_v2(1_000_000).unwrap();
+        assert_eq!(split.monthly, 600_000, "monthly must be 60%");
+        assert_eq!(split.quarterly, 400_000, "quarterly must be 40%");
+    }
+
+    /// Quarterly is truncated and monthly takes the remainder, so a single
+    /// lamport routed to the league must land in monthly rather than vanish.
+    #[test]
+    fn the_smallest_routing_still_lands_somewhere() {
+        let split = split_postgrad_league_v2(1).unwrap();
+        assert_eq!(split.quarterly, 0);
+        assert_eq!(split.monthly, 1, "a single lamport must not be lost");
+    }
+
+    #[test]
+    fn zero_gross_is_refused() {
+        assert!(split_postgrad_league_v2(0).is_err());
+    }
+}

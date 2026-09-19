@@ -146,3 +146,63 @@ pub fn refund_competition_boost_v2_handler(
         CompetitionPoolV2::SIZE,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A boost is a voluntary top-up of a prize pot. Every lamport must reach
+    /// the prize or the protocol; anything lost is a user's money stranded in
+    /// a pool account.
+    #[test]
+    fn split_conserves_every_lamport() {
+        for gross in [
+            1u64, 2, 5, 9, 10, 11, 99, 100, 101, 9_999, 10_000, 10_001,
+            5_000_000, 1_000_000_000,
+            u64::MAX / 10_000,
+        ] {
+            let split = split_boost_v2(gross).expect("split must succeed");
+            assert_eq!(
+                split.prize + split.protocol,
+                gross,
+                "split of {gross} lost or invented lamports",
+            );
+            assert_eq!(split.gross, gross);
+        }
+    }
+
+    #[test]
+    fn declared_bps_match_the_applied_split() {
+        assert_eq!(
+            BOOST_PRIZE_BPS + BOOST_PROTOCOL_BPS + BOOST_LEAGUE_BPS,
+            BOOST_BPS_DENOMINATOR,
+            "boost shares must add up to 100%",
+        );
+        let split = split_boost_v2(1_000_000).unwrap();
+        assert_eq!(split.prize, 900_000, "prize must be 90%");
+        assert_eq!(split.protocol, 100_000, "protocol must be 10%");
+    }
+
+    /// A boost takes no league cut. If that constant ever becomes non-zero the
+    /// split must be rewritten, because it is not routed anywhere today.
+    #[test]
+    fn boosts_take_no_league_cut() {
+        assert_eq!(BOOST_LEAGUE_BPS, 0, "a non-zero league cut would be silently discarded");
+    }
+
+    /// A boost of a few lamports must still increase the prize, or a user has
+    /// paid the protocol for nothing.
+    #[test]
+    fn small_boosts_still_reach_the_prize() {
+        for gross in 1u64..=100 {
+            let split = split_boost_v2(gross).unwrap();
+            assert!(split.prize > 0, "boost of {gross} produced a zero prize");
+            assert!(split.prize > split.protocol, "the prize must dominate a 90/10 split");
+        }
+    }
+
+    #[test]
+    fn zero_boost_is_refused() {
+        assert!(split_boost_v2(0).is_err());
+    }
+}
