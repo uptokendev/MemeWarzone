@@ -131,7 +131,6 @@ function makeProductionCreateFixture() {
       instructions: planAddress(plan, "instructionsSysvar").toBase58(),
       // Unique per campaign, so it can never be served from the lookup table.
       tokenMetadata: Keypair.generate().publicKey.toBase58(),
-      tokenMetadataProgram: planAddress(plan, "tokenMetadataProgram").toBase58(),
       tokenProgram: planAddress(plan, "tokenProgram").toBase58(),
       systemProgram: planAddress(plan, "systemProgram").toBase58(),
     },
