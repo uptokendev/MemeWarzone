@@ -72,6 +72,11 @@ function recoveryChunkSize() {
   return positiveInteger(process.env.REWARD_CLAIM_RECOVERY_BLOCK_CHUNK, 5_000);
 }
 
+/** Floor for the adaptive scan window; below this a failure is the provider's. */
+function recoveryMinChunkSize() {
+  return positiveInteger(process.env.REWARD_CLAIM_RECOVERY_MIN_BLOCK_CHUNK, 250);
+}
+
 function recoverySafetySeconds() {
   return positiveInteger(process.env.REWARD_CLAIM_RECOVERY_SAFETY_SECONDS, 3_600);
 }
@@ -152,22 +157,35 @@ async function findRewardClaimedLog({ provider, distributorAddress, batchId, wal
   let sawMismatchedAmount = false;
 
   let end = Number(latestBlock);
+  // Providers advertise different eth_getLogs ranges and a fixed window cannot
+  // suit all of them: a 5,000-block scan that one provider serves is rejected by
+  // another with "limit exceeded", which surfaced as an unrecoverable claim
+  // rather than a provider limit. Narrow on rejection instead of giving up.
+  let window = chunk;
+  const minWindow = Math.max(1, Math.min(window, recoveryMinChunkSize()));
   while (end >= Number(fromBlock)) {
-    const start = Math.max(Number(fromBlock), end - chunk + 1);
+    let start = Math.max(Number(fromBlock), end - window + 1);
     let logs;
-    try {
-      logs = await provider.getLogs({
-        address: getAddress(distributorAddress),
-        topics,
-        fromBlock: start,
-        toBlock: end,
-      });
-    } catch (error) {
-      throw new RewardClaimVerificationError(
-        "CLAIM_RECOVERY_LOG_SCAN_UNAVAILABLE",
-        `Could not scan RewardClaimed logs for blocks ${start}-${end}: ${error?.message || error}`,
-        503,
-      );
+    for (;;) {
+      try {
+        logs = await provider.getLogs({
+          address: getAddress(distributorAddress),
+          topics,
+          fromBlock: start,
+          toBlock: end,
+        });
+        break;
+      } catch (error) {
+        if (window <= minWindow) {
+          throw new RewardClaimVerificationError(
+            "CLAIM_RECOVERY_LOG_SCAN_UNAVAILABLE",
+            `Could not scan RewardClaimed logs for blocks ${start}-${end} at the smallest window ${window}: ${error?.message || error}`,
+            503,
+          );
+        }
+        window = Math.max(minWindow, Math.floor(window / 4));
+        start = Math.max(Number(fromBlock), end - window + 1);
+      }
     }
 
     for (let index = logs.length - 1; index >= 0; index -= 1) {
