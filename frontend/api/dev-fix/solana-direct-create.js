@@ -317,7 +317,16 @@ function deriveDirectCampaignAccounts({ reservationIdHash, generationId, program
     ],
     MPL_TOKEN_METADATA_PROGRAM_ID,
   );
-  return { campaignId, campaign, mint, tokenVault, solVault, createAuthorization, tokenMetadata };
+  // Created inside create_campaign so a new campaign is tradeable immediately.
+  const feeEscrow = findProgramAddressSync(
+    [Buffer.from("fee-escrow", "utf8"), publicKeyBytes(campaign.publicKey)],
+    programId,
+  );
+  const creatorFeeVault = findProgramAddressSync(
+    [Buffer.from("creator-fee-vault", "utf8"), publicKeyBytes(campaign.publicKey)],
+    programId,
+  );
+  return { campaignId, campaign, mint, tokenVault, solVault, createAuthorization, tokenMetadata, feeEscrow, creatorFeeVault };
 }
 
 async function rpcCall(rpcUrl, method, params = []) {
@@ -716,6 +725,8 @@ function publicAccounts({ creatorWallet, onchain, pdas }) {
     solVault: pdas.solVault.publicKey,
     createAuthorization: pdas.createAuthorization.publicKey,
     instructions: SYSVAR_INSTRUCTIONS_ID,
+    feeEscrow: pdas.feeEscrow.publicKey,
+    creatorFeeVault: pdas.creatorFeeVault.publicKey,
     tokenMetadata: pdas.tokenMetadata.publicKey,
     tokenMetadataProgram: MPL_TOKEN_METADATA_PROGRAM_ID,
     tokenProgram: TOKEN_PROGRAM_ID,

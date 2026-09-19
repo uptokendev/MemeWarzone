@@ -663,7 +663,16 @@ function deriveCampaignAccounts({ draftId, reservationIdHash, generationId, prog
     ],
     MPL_TOKEN_METADATA_PROGRAM_ID,
   );
-  return { campaignId, campaign, mint, tokenVault, solVault, createAuthorization, tokenMetadata };
+  // Created inside create_campaign so a new campaign is tradeable immediately.
+  const feeEscrow = findProgramAddressSync(
+    [Buffer.from("fee-escrow", "utf8"), publicKeyBytes(campaign.publicKey)],
+    programId,
+  );
+  const creatorFeeVault = findProgramAddressSync(
+    [Buffer.from("creator-fee-vault", "utf8"), publicKeyBytes(campaign.publicKey)],
+    programId,
+  );
+  return { campaignId, campaign, mint, tokenVault, solVault, createAuthorization, tokenMetadata, feeEscrow, creatorFeeVault };
 }
 
 /**
@@ -1242,7 +1251,7 @@ export async function solanaCreateAuthorizationV4(req, res) {
         const tickerHash = nonZeroBytes32(reservation.tickerHash, "tickerHash");
         const metadata = normalizeDraftMetadata(draft, reservation);
         const metadataHash = sha256(Buffer.from(canonicalJson(metadata), "utf8"));
-        const { campaignId, campaign, mint, tokenVault, solVault, createAuthorization, tokenMetadata } = deriveCampaignAccounts({
+        const { campaignId, campaign, mint, tokenVault, solVault, createAuthorization, tokenMetadata, feeEscrow, creatorFeeVault } = deriveCampaignAccounts({
           draftId,
           reservationIdHash,
           generationId: onchain.generation.generationId,
@@ -1293,6 +1302,8 @@ export async function solanaCreateAuthorizationV4(req, res) {
                 solVault: solVault.publicKey,
                 createAuthorization: createAuthorization.publicKey,
                 instructions: SYSVAR_INSTRUCTIONS_ID,
+                feeEscrow: feeEscrow.publicKey,
+                creatorFeeVault: creatorFeeVault.publicKey,
                 tokenMetadata: tokenMetadata.publicKey,
                 tokenMetadataProgram: MPL_TOKEN_METADATA_PROGRAM_ID,
                 tokenProgram: TOKEN_PROGRAM_ID,

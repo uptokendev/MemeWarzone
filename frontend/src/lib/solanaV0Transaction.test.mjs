@@ -129,6 +129,8 @@ function makeProductionCreateFixture() {
       solVault: Keypair.generate().publicKey.toBase58(),
       createAuthorization: Keypair.generate().publicKey.toBase58(),
       instructions: planAddress(plan, "instructionsSysvar").toBase58(),
+      feeEscrow: Keypair.generate().publicKey.toBase58(),
+      creatorFeeVault: Keypair.generate().publicKey.toBase58(),
       // Unique per campaign, so it can never be served from the lookup table.
       tokenMetadata: Keypair.generate().publicKey.toBase58(),
       tokenProgram: planAddress(plan, "tokenProgram").toBase58(),
@@ -228,7 +230,7 @@ test("production CREATE instruction compiles to a one-signer V0 envelope under t
   reportSize("CREATE", legacy, stats);
   // 14 before Metaplex metadata; the metadata PDA and the Metaplex program
   // account bring it to 16. The data grows by the borsh-encoded name and symbol.
-  assert.equal(fixture.programInstruction.keys.length, 16);
+  assert.equal(fixture.programInstruction.keys.length, 18);
   assert.equal(fixture.programInstruction.data.length, 282);
   assert.equal(stats.requiredSigners, 1);
   assert.equal(stats.instructionCount, 2);

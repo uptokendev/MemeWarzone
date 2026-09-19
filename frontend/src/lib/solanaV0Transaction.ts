@@ -9,25 +9,24 @@ import type { SolanaWeb3Module } from "@/lib/solanaWeb3";
 
 export const SOLANA_PACKET_LIMIT_BYTES = 1_232;
 /**
- * Release ceiling for a launchpad V0 transaction, well under Solana's 1232-byte
+ * Release ceiling for a launchpad V0 transaction, under Solana's 1232-byte
  * packet limit.
  *
- * Raised from 1000 when create began writing Metaplex token metadata. That adds
- * the metadata PDA, the Metaplex program and the name/symbol arguments. Worst
- * case, with a 32-character name and 10-character symbol, a create compiles to
- * 1040 bytes, leaving 192 bytes against the protocol limit.
+ * Worst case, with a 32-character name and 10-character symbol, a create
+ * compiles to 1106 bytes. Two changes account for the growth from the original
+ * 1000: Metaplex token metadata (the metadata PDA, the Metaplex program and the
+ * name/symbol arguments), and creating the campaign's FeeEscrow and
+ * CreatorFeeVault in the same instruction so a new campaign is tradeable the
+ * moment it exists.
  *
- * The Metaplex program is NOT in the lookup table, even though it is static
- * across every create. The launchpad ALT was created without an authority, so
- * it can never be extended; moving addresses into it would mean deploying a
- * replacement table. Inlining costs 32 bytes and needs no migration.
+ * 1150 leaves 82 bytes of headroom against the protocol limit and 44 above the
+ * measured worst case. The original 1000 was a round number rather than a
+ * measured constraint, chosen when create was ~927 bytes.
  *
- * The earlier 1000 was a round number rather than a measured constraint, chosen
- * when create was ~927 bytes. Refusing to write metadata costs far more than
- * these bytes: every token launched without it is permanently unnamed in every
- * Solana wallet.
+ * The Metaplex program is deliberately NOT in the lookup table: the launchpad
+ * ALT was created without an authority and can never be extended.
  */
-export const SOLANA_RELEASE_MAX_BYTES = 1_100;
+export const SOLANA_RELEASE_MAX_BYTES = 1_150;
 export const SOLANA_LAUNCHPAD_PROGRAM_ID = "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt";
 export const SOLANA_REWARDS_TREASURY_PROGRAM_ID = "2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX";
 export const SOLANA_INSTRUCTIONS_SYSVAR = "Sysvar1nstructions1111111111111111111111111";

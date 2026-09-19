@@ -51,6 +51,10 @@ export type CreateCampaignInstructionAccounts = {
   tokenVault: string;
   solVault: string;
   createAuthorization: string;
+  /** Per-campaign fee escrow PDA: ["fee-escrow", campaign]. */
+  feeEscrow: string;
+  /** Per-campaign creator fee vault PDA: ["creator-fee-vault", campaign]. */
+  creatorFeeVault: string;
   /** Metaplex metadata PDA: ["metadata", MPL_TOKEN_METADATA_ID, mint]. */
   tokenMetadata: string;
   instructions?: string;
@@ -255,6 +259,8 @@ export function buildCreateCampaignInstruction(
       meta(a.solVault, false, true),
       meta(a.createAuthorization, false, true),
       meta(a.instructions || SOLANA_INSTRUCTIONS_SYSVAR, false, false),
+      meta(a.feeEscrow, false, true),
+      meta(a.creatorFeeVault, false, true),
       meta(a.tokenMetadata, false, true),
       meta(a.tokenMetadataProgram || MPL_TOKEN_METADATA_PROGRAM_ID, false, false),
       meta(a.tokenProgram || SOLANA_TOKEN_PROGRAM_ID, false, false),

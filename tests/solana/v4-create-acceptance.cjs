@@ -162,6 +162,14 @@ describe("MemeWarzone Solana authorization V4 local-validator acceptance", funct
       tokenMetadataProgram: MPL_TOKEN_METADATA_PROGRAM_ID,
     };
     // Metaplex metadata PDA for the mint this create will produce.
+    defaults.feeEscrow = PublicKey.findProgramAddressSync(
+      [Buffer.from("fee-escrow", "utf8"), defaults.campaign.toBuffer()],
+      program.programId,
+    )[0];
+    defaults.creatorFeeVault = PublicKey.findProgramAddressSync(
+      [Buffer.from("creator-fee-vault", "utf8"), defaults.campaign.toBuffer()],
+      program.programId,
+    )[0];
     defaults.tokenMetadata = PublicKey.findProgramAddressSync(
       [
         Buffer.from("metadata", "utf8"),
@@ -345,6 +353,8 @@ describe("MemeWarzone Solana authorization V4 local-validator acceptance", funct
         solVault: accounts.solVault,
         createAuthorization: accounts.createAuthorization,
         instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
+        feeEscrow: accounts.feeEscrow,
+        creatorFeeVault: accounts.creatorFeeVault,
         tokenMetadata: accounts.tokenMetadata,
         tokenMetadataProgram: accounts.tokenMetadataProgram,
         tokenProgram: accounts.tokenProgram,

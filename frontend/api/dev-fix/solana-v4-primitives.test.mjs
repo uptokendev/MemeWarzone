@@ -218,3 +218,32 @@ test("the create args the client receives carry every field the instruction enco
     }
   }
 });
+
+test("the accounts the client receives cover every account the instruction needs", () => {
+  // Same failure mode as the args whitelist: an account added to the program but
+  // not to the response is dropped silently, and the browser fails on an
+  // undefined pubkey far from the cause.
+  const required = [
+    "creator", "globalConfig", "generationConfig", "creatorProfile",
+    "riskProfile", "clusterProfile", "campaign", "mint", "tokenVault",
+    "solVault", "createAuthorization", "instructions",
+    "feeEscrow", "creatorFeeVault", "tokenMetadata",
+    "tokenProgram", "systemProgram",
+  ];
+  const sources = [
+    ["frontend/api/dev-fix/solana-direct-create.js", "function publicAccounts"],
+    ["frontend/api/dev-fix/solana-create-authorization-v4.js", "campaign: campaign.publicKey"],
+  ];
+  for (const [file, marker] of sources) {
+    const source = readFileSync(new URL(`../../../${file}`, import.meta.url), "utf8");
+    const start = source.indexOf(marker);
+    assert.ok(start > 0, `${file} must build a public accounts payload`);
+    const block = source.slice(start, start + 2000);
+    for (const field of required) {
+      assert.ok(
+        new RegExp(`\\b${field}\\s*:`).test(block),
+        `${file} does not send ${field} to the client`,
+      );
+    }
+  }
+});

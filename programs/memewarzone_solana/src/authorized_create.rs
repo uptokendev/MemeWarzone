@@ -94,6 +94,12 @@ pub struct CreateCampaign<'info> {
     /// CHECK: The address constraint pins this account to the Instructions sysvar.
     #[account(address = INSTRUCTIONS_SYSVAR_ID)]
     pub instructions: UncheckedAccount<'info>,
+    /// CHECK: per-campaign fee escrow PDA; created in the handler.
+    #[account(mut, seeds = [crate::FEE_ESCROW_SEED, campaign.key().as_ref()], bump)]
+    pub fee_escrow: UncheckedAccount<'info>,
+    /// CHECK: per-campaign creator fee vault PDA; created in the handler.
+    #[account(mut, seeds = [crate::CREATOR_FEE_VAULT_SEED, campaign.key().as_ref()], bump)]
+    pub creator_fee_vault: UncheckedAccount<'info>,
     /// CHECK: Metaplex metadata PDA; address is derived and verified in the handler.
     #[account(mut)]
     pub token_metadata: UncheckedAccount<'info>,
@@ -624,6 +630,21 @@ pub fn create_campaign_handler(
 
     verify_mint_authority_revoked(&mint_info)?;
     verify_token_metadata_created(&ctx.accounts.token_metadata.to_account_info())?;
+
+    // A campaign that exists but cannot be traded is a broken state, so its fee
+    // PDAs are created here rather than by the permissionless initializers.
+    // Those instructions remain for campaigns created before this change; every
+    // campaign created from now on leaves this instruction ready to trade.
+    initialize_campaign_fee_accounts(
+        &payer_info,
+        &ctx.accounts.fee_escrow.to_account_info(),
+        &ctx.accounts.creator_fee_vault.to_account_info(),
+        &system_info,
+        campaign_key,
+        creator_key,
+        ctx.bumps.fee_escrow,
+        ctx.bumps.creator_fee_vault,
+    )?;
     write_create_authorization(
         &ctx.accounts.create_authorization.to_account_info(),
         creator_key,
@@ -814,6 +835,78 @@ fn prepare_and_verify_create_auth<'info>(
 }
 
 #[inline(never)]
+/// Create and initialise the per-campaign FeeEscrow and CreatorFeeVault PDAs.
+///
+/// These used to be initialised only by the permissionless `initialize_fee_escrow`
+/// and `initialize_creator_fee_vault` instructions. Nothing in the application
+/// called them, so every new campaign was rejected at the trade preflight with
+/// "market initializing" until an operator ran a backfill script by hand.
+fn initialize_campaign_fee_accounts<'info>(
+    payer: &AccountInfo<'info>,
+    fee_escrow: &AccountInfo<'info>,
+    creator_fee_vault: &AccountInfo<'info>,
+    system_program: &AccountInfo<'info>,
+    campaign: Pubkey,
+    creator: Pubkey,
+    fee_escrow_bump: u8,
+    creator_fee_vault_bump: u8,
+) -> Result<()> {
+    let campaign_ref = campaign.as_ref();
+
+    let fee_escrow_bump_seed = [fee_escrow_bump];
+    let fee_escrow_seeds: &[&[u8]] = &[crate::FEE_ESCROW_SEED, campaign_ref, &fee_escrow_bump_seed];
+    create_program_account(
+        payer,
+        fee_escrow,
+        system_program,
+        8 + crate::FeeEscrow::INIT_SPACE,
+        fee_escrow_seeds,
+    )?;
+    {
+        let escrow = crate::FeeEscrow {
+            campaign,
+            weekly_pending: 0,
+            monthly_pending: 0,
+            recruiter_pending: 0,
+            airdrop_pending: 0,
+            squad_pending: 0,
+            protocol_pending: 0,
+            total_received: 0,
+            total_flushed: 0,
+            bump: fee_escrow_bump,
+            version: crate::FEE_ESCROW_VERSION,
+        };
+        let mut data = fee_escrow.try_borrow_mut_data()?;
+        let mut cursor = std::io::Cursor::new(&mut data[..]);
+        escrow.try_serialize(&mut cursor)?;
+    }
+
+    let vault_bump_seed = [creator_fee_vault_bump];
+    let vault_seeds: &[&[u8]] = &[crate::CREATOR_FEE_VAULT_SEED, campaign_ref, &vault_bump_seed];
+    create_program_account(
+        payer,
+        creator_fee_vault,
+        system_program,
+        8 + crate::CreatorFeeVault::INIT_SPACE,
+        vault_seeds,
+    )?;
+    {
+        let vault = crate::CreatorFeeVault {
+            campaign,
+            creator,
+            pending_lamports: 0,
+            total_received: 0,
+            total_claimed: 0,
+            bump: creator_fee_vault_bump,
+            version: crate::CREATOR_FEE_VAULT_VERSION,
+        };
+        let mut data = creator_fee_vault.try_borrow_mut_data()?;
+        let mut cursor = std::io::Cursor::new(&mut data[..]);
+        vault.try_serialize(&mut cursor)?;
+    }
+    Ok(())
+}
+
 /// Refuse to finish a create whose metadata account did not materialise.
 ///
 /// The revocation above is one-way, so "minted but unnamed" is not a state worth
