@@ -15,6 +15,10 @@ const {
   SystemProgram,
   Transaction,
 } = require("@solana/web3.js");
+const MPL_TOKEN_METADATA_PROGRAM_ID = new PublicKey(
+  "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s",
+);
+
 const {
   TOKEN_PROGRAM_ID,
   getAccount,
@@ -155,7 +159,17 @@ describe("MemeWarzone Solana authorization V4 local-validator acceptance", funct
         nonce,
       ),
       tokenProgram: TOKEN_PROGRAM_ID,
+      tokenMetadataProgram: MPL_TOKEN_METADATA_PROGRAM_ID,
     };
+    // Metaplex metadata PDA for the mint this create will produce.
+    defaults.tokenMetadata = PublicKey.findProgramAddressSync(
+      [
+        Buffer.from("metadata", "utf8"),
+        MPL_TOKEN_METADATA_PROGRAM_ID.toBuffer(),
+        defaults.mint.toBuffer(),
+      ],
+      MPL_TOKEN_METADATA_PROGRAM_ID,
+    )[0];
     return { ...defaults, ...overrides };
   }
 
@@ -164,6 +178,10 @@ describe("MemeWarzone Solana authorization V4 local-validator acceptance", funct
     const deadline = options.deadline ?? now + 3_600;
     return {
       campaignId: fixed32(hash32(`campaign:${label}`)),
+      // Metaplex fields written on-chain. Trimmed to the program's caps so a long
+      // label cannot fail the create for the wrong reason.
+      name: options.name ?? `MWZ ${label}`.slice(0, 32),
+      symbol: options.symbol ?? (label.replace(/[^a-zA-Z0-9]/g, "").slice(0, 10).toUpperCase() || "MWZ"),
       metadataHash: fixed32(hash32(`metadata:${label}`)),
       clusterHash: fixed32(declaredClusterHash),
       tickerHash: fixed32(hash32(`ticker:${label}`)),
@@ -327,6 +345,8 @@ describe("MemeWarzone Solana authorization V4 local-validator acceptance", funct
         solVault: accounts.solVault,
         createAuthorization: accounts.createAuthorization,
         instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
+        tokenMetadata: accounts.tokenMetadata,
+        tokenMetadataProgram: accounts.tokenMetadataProgram,
         tokenProgram: accounts.tokenProgram,
         systemProgram: SystemProgram.programId,
       })
@@ -527,7 +547,7 @@ describe("MemeWarzone Solana authorization V4 local-validator acceptance", funct
   }
 
   before(async function () {
-    assert.equal(CREATE_AUTH_SCHEMA_VERSION, 4);
+    assert.equal(CREATE_AUTH_SCHEMA_VERSION, 5);
     await ensureAdminSol();
 
     await program.methods

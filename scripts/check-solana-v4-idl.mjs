@@ -16,12 +16,16 @@ const expectedAccounts = [
   "solVault",
   "createAuthorization",
   "instructions",
+  "tokenMetadata",
+  "tokenMetadataProgram",
   "tokenProgram",
   "systemProgram",
 ];
 
 const expectedFields = [
   "campaignId",
+  "name",
+  "symbol",
   "metadataHash",
   "clusterHash",
   "tickerHash",
@@ -127,8 +131,8 @@ function main() {
 
   const idlSha256 = crypto.createHash("sha256").update(raw).digest("hex");
   const binding = {
-    schemaVersion: 4,
-    domain: "MEMEWARZONE_SOLANA_CREATE_V4",
+    schemaVersion: 5,
+    domain: "MEMEWARZONE_SOLANA_CREATE_V5",
     signedMessageMode: "sha256_canonical_payload",
     signedMessageLengthBytes: 32,
     instructionName: instruction.name,

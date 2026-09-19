@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "status": "protocol_pending",
   "chain": "solana",
   "cluster": {
@@ -134,8 +134,8 @@
   },
   "authorization": {
     "createMode": "detached_ed25519_sha256_v4",
-    "domain": "MEMEWARZONE_SOLANA_CREATE_V4",
-    "schemaVersion": 4,
+    "domain": "MEMEWARZONE_SOLANA_CREATE_V5",
+    "schemaVersion": 5,
     "endpoint": "/api/drafts/:draftId/deploy",
     "operation": "authorize_solana_v4",
     "serverGateEnv": "SOLANA_CREATE_AUTH_ENABLED",

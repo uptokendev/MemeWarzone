@@ -3,8 +3,24 @@
 const crypto = require("node:crypto");
 const { PublicKey } = require("@solana/web3.js");
 
-const CREATE_AUTH_DOMAIN = Buffer.from("MEMEWARZONE_SOLANA_CREATE_V4", "utf8");
-const CREATE_AUTH_SCHEMA_VERSION = 4;
+const CREATE_AUTH_DOMAIN = Buffer.from("MEMEWARZONE_SOLANA_CREATE_V5", "utf8");
+// v5 binds the Metaplex name and symbol into the create authorization. Must stay
+// byte-identical to programs/memewarzone_solana/src/authorized_create.rs and to
+// frontend/api/dev-fix/solana-v4-primitives.js.
+const CREATE_AUTH_SCHEMA_VERSION = 5;
+const METAPLEX_MAX_NAME_BYTES = 32;
+const METAPLEX_MAX_SYMBOL_BYTES = 10;
+
+function borshString(value, maxBytes, label) {
+  const bytes = Buffer.from(String(value ?? ""), "utf8");
+  if (bytes.length === 0) throw new TypeError(`${label} must not be empty`);
+  if (bytes.length > maxBytes) {
+    throw new TypeError(`${label} is ${bytes.length} bytes, over the ${maxBytes}-byte Metaplex limit`);
+  }
+  const length = Buffer.alloc(4);
+  length.writeUInt32LE(bytes.length, 0);
+  return Buffer.concat([length, bytes]);
+}
 
 function toBigInt(value, name) {
   if (typeof value === "bigint") return value;
@@ -174,6 +190,8 @@ function buildCreateAuthorizationPayload(input) {
     pubkey(solVault, "solVault"),
     pubkey(tokenProgram, "tokenProgram"),
     bytes32(args.metadataHash, "args.metadataHash"),
+    borshString(args.name, METAPLEX_MAX_NAME_BYTES, "args.name"),
+    borshString(args.symbol, METAPLEX_MAX_SYMBOL_BYTES, "args.symbol"),
     bytes32(args.tickerHash, "args.tickerHash"),
     bytes32(args.reservationIdHash, "args.reservationIdHash"),
     u64(args.reservationVersion, "args.reservationVersion"),
@@ -197,6 +215,7 @@ function createAuthorizationDigest(input) {
 module.exports = {
   CREATE_AUTH_DOMAIN,
   CREATE_AUTH_SCHEMA_VERSION,
+  borshString,
   buildCreateAuthorizationPayload,
   createAuthorizationDigest,
 };
