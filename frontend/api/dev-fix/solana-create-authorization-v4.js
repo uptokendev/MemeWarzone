@@ -1325,13 +1325,11 @@ export async function solanaCreateAuthorizationV4(req, res) {
         const metaplex = buildMetaplexFields({
           name: metadata.name,
           symbol: metadata.ticker ?? metadata.symbol,
-          mint: mint.publicKey,
         });
         const args = {
           campaignId,
           name: metaplex.name,
           symbol: metaplex.symbol,
-          uri: metaplex.uri,
           metadataHash,
           clusterHash,
           tickerHash,

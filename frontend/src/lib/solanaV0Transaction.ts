@@ -8,7 +8,22 @@ import type {
 import type { SolanaWeb3Module } from "@/lib/solanaWeb3";
 
 export const SOLANA_PACKET_LIMIT_BYTES = 1_232;
-export const SOLANA_RELEASE_MAX_BYTES = 1_000;
+/**
+ * Release ceiling for a launchpad V0 transaction, well under Solana's 1232-byte
+ * packet limit.
+ *
+ * Raised from 1000 when create began writing Metaplex token metadata. That adds
+ * two accounts and the name/symbol arguments: roughly 82 bytes, of which 32 were
+ * recovered by moving the Metaplex program into the lookup table. Worst case,
+ * with a 32-character name and 10-character symbol, a create now compiles to
+ * 1009 bytes.
+ *
+ * 1100 keeps 132 bytes of margin against the protocol limit. The earlier 1000
+ * was a round number rather than a measured constraint, and refusing to write
+ * metadata is far more costly than those bytes: every token launched without it
+ * is permanently unnamed in every Solana wallet.
+ */
+export const SOLANA_RELEASE_MAX_BYTES = 1_100;
 export const SOLANA_LAUNCHPAD_PROGRAM_ID = "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt";
 export const SOLANA_REWARDS_TREASURY_PROGRAM_ID = "2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX";
 export const SOLANA_INSTRUCTIONS_SYSVAR = "Sysvar1nstructions1111111111111111111111111";
@@ -17,6 +32,8 @@ export const SOLANA_COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget111111111111111111
 export const SOLANA_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 export const SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
 export const SOLANA_SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
+/** Metaplex Token Metadata. Declared here so this module stays import-free. */
+const MPL_TOKEN_METADATA_PROGRAM_ID = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
 
 const REWARD_VAULT_SEEDS = [
   ["weeklyLeagueVault", "league_vault"],
@@ -97,6 +114,9 @@ export function buildLaunchpadAltPlan(web3: SolanaWeb3Module): LaunchpadAltPlanE
     { label: "tokenProgram", address: new Web3PublicKey(SOLANA_TOKEN_PROGRAM_ID) },
     { label: "associatedTokenProgram", address: new Web3PublicKey(SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID) },
     { label: "systemProgram", address: new Web3PublicKey(SOLANA_SYSTEM_PROGRAM_ID) },
+    // Static across every create, so it belongs in the lookup table: inline it
+    // costs 32 bytes of a V0 envelope that is already near its ceiling.
+    { label: "tokenMetadataProgram", address: new Web3PublicKey(MPL_TOKEN_METADATA_PROGRAM_ID) },
     { label: "rewardsTreasuryProgram", address: rewardsProgramId },
     ...rewardVaults,
   ];

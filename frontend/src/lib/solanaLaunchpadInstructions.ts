@@ -28,8 +28,6 @@ export type CreateCampaignInstructionArgs = {
   name: string;
   /** Metaplex on-chain symbol, max 10 bytes UTF-8. */
   symbol: string;
-  /** Metaplex off-chain metadata JSON URL, max 200 bytes UTF-8. */
-  uri: string;
   metadataHash: number[];
   clusterHash: number[];
   tickerHash: number[];
@@ -121,7 +119,8 @@ function borshString(value: string, maxBytes: number, label: string): Uint8Array
 
 export const METAPLEX_MAX_NAME_BYTES = 32;
 export const METAPLEX_MAX_SYMBOL_BYTES = 10;
-export const METAPLEX_MAX_URI_BYTES = 200;
+// The uri is derived inside the program from the mint, so it never travels in
+// the instruction. That keeps ~96 bytes out of the V0 envelope.
 
 function concatBytes(parts: Uint8Array[]): Uint8Array {
   let total = 0;
@@ -141,7 +140,6 @@ export function encodeCreateCampaignData(args: CreateCampaignInstructionArgs): U
     Uint8Array.from(args.campaignId),
     borshString(args.name, METAPLEX_MAX_NAME_BYTES, "name"),
     borshString(args.symbol, METAPLEX_MAX_SYMBOL_BYTES, "symbol"),
-    borshString(args.uri, METAPLEX_MAX_URI_BYTES, "uri"),
     Uint8Array.from(args.metadataHash),
     Uint8Array.from(args.clusterHash),
     Uint8Array.from(args.tickerHash),

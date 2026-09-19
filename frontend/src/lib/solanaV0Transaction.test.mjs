@@ -102,6 +102,10 @@ function makeProductionCreateFixture() {
     programId: PROGRAM_ID.toBase58(),
     args: {
       campaignId: bytes32(2),
+      // Worst case on purpose: Metaplex caps are 32 and 10, and the envelope
+      // must fit the largest name a creator can actually choose.
+      name: "A".repeat(32),
+      symbol: "B".repeat(10),
       metadataHash: bytes32(3),
       clusterHash: bytes32(4),
       tickerHash: bytes32(5),
@@ -125,6 +129,9 @@ function makeProductionCreateFixture() {
       solVault: Keypair.generate().publicKey.toBase58(),
       createAuthorization: Keypair.generate().publicKey.toBase58(),
       instructions: planAddress(plan, "instructionsSysvar").toBase58(),
+      // Unique per campaign, so it can never be served from the lookup table.
+      tokenMetadata: Keypair.generate().publicKey.toBase58(),
+      tokenMetadataProgram: planAddress(plan, "tokenMetadataProgram").toBase58(),
       tokenProgram: planAddress(plan, "tokenProgram").toBase58(),
       systemProgram: planAddress(plan, "systemProgram").toBase58(),
     },
@@ -219,8 +226,10 @@ test("production CREATE instruction compiles to a one-signer V0 envelope under t
   );
 
   reportSize("CREATE", legacy, stats);
-  assert.equal(fixture.programInstruction.keys.length, 14);
-  assert.equal(fixture.programInstruction.data.length, 232);
+  // 14 before Metaplex metadata; the metadata PDA and the Metaplex program
+  // account bring it to 16. The data grows by the borsh-encoded name and symbol.
+  assert.equal(fixture.programInstruction.keys.length, 16);
+  assert.equal(fixture.programInstruction.data.length, 282);
   assert.equal(stats.requiredSigners, 1);
   assert.equal(stats.instructionCount, 2);
   assert.ok(stats.lookupReadonlyCount + stats.lookupWritableCount >= 4);

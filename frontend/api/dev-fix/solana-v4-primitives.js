@@ -16,67 +16,25 @@ export const SYSVAR_INSTRUCTIONS_ID = "Sysvar1nstructions11111111111111111111111
 export const MPL_TOKEN_METADATA_PROGRAM_ID = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
 
 /**
- * The name, symbol and metadata URL written into the Metaplex account.
+ * The name and symbol written into the Metaplex account.
  *
  * Trimmed to Metaplex's own caps rather than rejected: a creator should not have
- * a launch fail because their name is 34 characters. The full untruncated values
- * stay in the database and in the metadata JSON the uri points at.
+ * a launch fail because their name is 34 characters. The untrimmed values stay
+ * in the database and in the metadata JSON.
  *
- * The uri must be an absolute URL. It resolves to /api/token-metadata, which
- * already returns Metaplex-shaped JSON (name, symbol, description, image).
+ * The uri is NOT here. The program derives it from the mint, so there is no
+ * environment variable that can misconfigure it and no way for a client to
+ * substitute one.
  */
-export function buildMetaplexFields({ name, symbol, mint, baseUrl }) {
-  // Accept every name this deployment has historically used. The value is baked
-  // into the mint's metadata forever, so an env-name mismatch must not be the
-  // reason a launch writes a URL nobody can read.
-  const configured =
-    baseUrl ||
-    process.env.PUBLIC_API_BASE_URL ||
-    process.env.API_BASE_URL ||
-    process.env.VITE_PUBLIC_API_BASE_URL ||
-    process.env.VITE_API_BASE_URL ||
-    "";
-  const origin = String(configured).trim().replace(/\/+$/, "");
-  if (!origin) {
-    // Server misconfiguration, not a bad request: surface it as 503 so it is not
-    // reported back to a creator as though their input were at fault.
-    const error = new Error(
-      "PUBLIC_API_BASE_URL must be set: Metaplex metadata needs an absolute uri, and a relative path would leave every launched token unreadable in wallets",
-    );
-    error.code = "SOLANA_METADATA_BASE_URL_MISSING";
-    error.httpStatus = 503;
-    throw error;
-  }
-  // This URL is permanent once the mint is created. Reject anything that is not
-  // an absolute http(s) origin rather than discovering it in a wallet later.
-  let parsed;
-  try {
-    parsed = new URL(origin);
-  } catch {
-    const error = new Error(
-      `Metadata base URL must be an absolute URL, got ${JSON.stringify(origin)}`,
-    );
-    error.code = "SOLANA_METADATA_BASE_URL_INVALID";
-    error.httpStatus = 503;
-    throw error;
-  }
-  if (parsed.protocol !== "https:" && parsed.hostname !== "localhost" && parsed.hostname !== "127.0.0.1") {
-    const error = new Error(
-      `Metadata base URL must be https outside local development, got ${parsed.protocol}//`,
-    );
-    error.code = "SOLANA_METADATA_BASE_URL_INSECURE";
-    error.httpStatus = 503;
-    throw error;
-  }
+export function buildMetaplexFields({ name, symbol }) {
   const clip = (value, maxBytes, fallback) => {
     let text = String(value ?? "").trim() || fallback;
     while (Buffer.byteLength(text, "utf8") > maxBytes) text = text.slice(0, -1);
     return text;
   };
   return {
-    name: clip(name, 32, "MemeWarzone Token"),
-    symbol: clip(symbol, 10, "MWZ"),
-    uri: `${origin}/api/token-metadata/101/${mint}`,
+    name: clip(name, METAPLEX_MAX_NAME_BYTES, "MemeWarzone Token"),
+    symbol: clip(symbol, METAPLEX_MAX_SYMBOL_BYTES, "MWZ"),
   };
 }
 
@@ -317,6 +275,7 @@ export function u16(value, label = "u16") {
  * mismatch here does not fail loudly; it produces a signature the program
  * rejects with no indication of which field diverged.
  */
+
 export function borshString(value, maxBytes, label) {
   const bytes = Buffer.from(String(value ?? ""), "utf8");
   if (bytes.length === 0) throw new TypeError(`${label} must not be empty`);
@@ -419,7 +378,6 @@ export function buildCreateAuthorizationPayload(input) {
     bytes32(args.metadataHash, "args.metadataHash"),
     borshString(args.name, METAPLEX_MAX_NAME_BYTES, "args.name"),
     borshString(args.symbol, METAPLEX_MAX_SYMBOL_BYTES, "args.symbol"),
-    borshString(args.uri, METAPLEX_MAX_URI_BYTES, "args.uri"),
     bytes32(args.tickerHash, "args.tickerHash"),
     bytes32(args.reservationIdHash, "args.reservationIdHash"),
     u64(args.reservationVersion, "args.reservationVersion"),

@@ -197,8 +197,6 @@ pub struct CreateCampaignArgs {
     pub name: String,
     /// Metaplex on-chain symbol. Capped at MAX_SYMBOL_LENGTH.
     pub symbol: String,
-    /// Metaplex off-chain metadata JSON. Capped at MAX_URI_LENGTH.
-    pub uri: String,
     pub metadata_hash: [u8; 32],
     pub cluster_hash: [u8; 32],
     pub ticker_hash: [u8; 32],
@@ -595,7 +593,6 @@ pub fn create_campaign_handler(
         campaign_signer,
         &args.name,
         &args.symbol,
-        &args.uri,
     )?;
 
     token::set_authority(
@@ -1131,13 +1128,12 @@ pub fn build_create_authorization_message(
     message.extend_from_slice(token_program.as_ref());
     message.extend_from_slice(args.metadata_hash.as_ref());
     // Length-prefixed so that ("ab","c") and ("a","bc") cannot collide into the
-    // same signed message.
+    // same signed message. Only the 32-byte digest of this message travels in
+    // the transaction, so inlining the fields costs nothing on the wire.
     message.extend_from_slice(&(args.name.len() as u32).to_le_bytes());
     message.extend_from_slice(args.name.as_bytes());
     message.extend_from_slice(&(args.symbol.len() as u32).to_le_bytes());
     message.extend_from_slice(args.symbol.as_bytes());
-    message.extend_from_slice(&(args.uri.len() as u32).to_le_bytes());
-    message.extend_from_slice(args.uri.as_bytes());
     message.extend_from_slice(args.ticker_hash.as_ref());
     message.extend_from_slice(args.reservation_id_hash.as_ref());
     message.extend_from_slice(&args.reservation_version.to_le_bytes());
@@ -1608,7 +1604,6 @@ mod tests {
             campaign_id: [1; 32],
             name: "Kaiju88".to_string(),
             symbol: "K88".to_string(),
-            uri: "https://api.memewar.zone/api/token-metadata/101/mint".to_string(),
             metadata_hash: [2; 32],
             cluster_hash: [3; 32],
             ticker_hash: [4; 32],
@@ -1932,14 +1927,6 @@ mod tests {
             baseline,
             build_test_message(generation_key, &generation, creator, &changed),
             "symbol must be covered by the route signature"
-        );
-
-        changed = args.clone();
-        changed.uri = "https://evil.example/meta.json".to_string();
-        assert_ne!(
-            baseline,
-            build_test_message(generation_key, &generation, creator, &changed),
-            "uri must be covered by the route signature"
         );
 
         // Length prefixes must make ("ab","c") and ("a","bc") distinct messages.
