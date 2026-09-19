@@ -1,11 +1,56 @@
 import crypto from "node:crypto";
 
-export const CREATE_AUTH_DOMAIN = Buffer.from("MEMEWARZONE_SOLANA_CREATE_V4", "utf8");
-export const CREATE_AUTH_SCHEMA_VERSION = 4;
+export const CREATE_AUTH_DOMAIN = Buffer.from("MEMEWARZONE_SOLANA_CREATE_V5", "utf8");
+// v5 adds the Metaplex name/symbol/uri to the signed message so the route
+// signer authorizes the exact on-chain metadata the program writes. The domain
+// changes with it: a v4 signature must never authorize a v5 create.
+export const CREATE_AUTH_SCHEMA_VERSION = 5;
+export const METAPLEX_MAX_NAME_BYTES = 32;
+export const METAPLEX_MAX_SYMBOL_BYTES = 10;
+export const METAPLEX_MAX_URI_BYTES = 200;
 export const PROGRAM_DERIVED_ADDRESS_MARKER = Buffer.from("ProgramDerivedAddress", "utf8");
 export const SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
 export const TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 export const SYSVAR_INSTRUCTIONS_ID = "Sysvar1nstructions1111111111111111111111111";
+
+export const MPL_TOKEN_METADATA_PROGRAM_ID = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
+
+/**
+ * The name, symbol and metadata URL written into the Metaplex account.
+ *
+ * Trimmed to Metaplex's own caps rather than rejected: a creator should not have
+ * a launch fail because their name is 34 characters. The full untruncated values
+ * stay in the database and in the metadata JSON the uri points at.
+ *
+ * The uri must be an absolute URL. It resolves to /api/token-metadata, which
+ * already returns Metaplex-shaped JSON (name, symbol, description, image).
+ */
+export function buildMetaplexFields({ name, symbol, mint, baseUrl }) {
+  const origin = String(
+    baseUrl || process.env.PUBLIC_API_BASE_URL || process.env.VITE_API_BASE_URL || "",
+  ).replace(/\/+$/, "");
+  if (!origin) {
+    // Server misconfiguration, not a bad request: surface it as 503 so it is not
+    // reported back to a creator as though their input were at fault.
+    const error = new Error(
+      "PUBLIC_API_BASE_URL must be set: Metaplex metadata needs an absolute uri, and a relative path would leave every launched token unreadable in wallets",
+    );
+    error.code = "SOLANA_METADATA_BASE_URL_MISSING";
+    error.httpStatus = 503;
+    throw error;
+  }
+  const clip = (value, maxBytes, fallback) => {
+    let text = String(value ?? "").trim() || fallback;
+    while (Buffer.byteLength(text, "utf8") > maxBytes) text = text.slice(0, -1);
+    return text;
+  };
+  return {
+    name: clip(name, 32, "MemeWarzone Token"),
+    symbol: clip(symbol, 10, "MWZ"),
+    uri: `${origin}/api/token-metadata/101/${mint}`,
+  };
+}
+
 
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 const BASE58_INDEX = new Map(Array.from(BASE58_ALPHABET).map((char, index) => [char, index]));
@@ -236,6 +281,24 @@ export function u16(value, label = "u16") {
   return unsigned(value, 16, label);
 }
 
+/**
+ * Borsh string for the signed message: u32 little-endian BYTE length, then UTF-8.
+ *
+ * Must match programs/memewarzone_solana/src/authorized_create.rs exactly. A
+ * mismatch here does not fail loudly; it produces a signature the program
+ * rejects with no indication of which field diverged.
+ */
+export function borshString(value, maxBytes, label) {
+  const bytes = Buffer.from(String(value ?? ""), "utf8");
+  if (bytes.length === 0) throw new TypeError(`${label} must not be empty`);
+  if (bytes.length > maxBytes) {
+    throw new TypeError(`${label} is ${bytes.length} bytes, over the ${maxBytes}-byte Metaplex limit`);
+  }
+  const length = Buffer.alloc(4);
+  length.writeUInt32LE(bytes.length, 0);
+  return Buffer.concat([length, bytes]);
+}
+
 export function u32(value, label = "u32") {
   return unsigned(value, 32, label);
 }
@@ -325,6 +388,9 @@ export function buildCreateAuthorizationPayload(input) {
     publicKeyBytes(solVault, "solVault"),
     publicKeyBytes(tokenProgram, "tokenProgram"),
     bytes32(args.metadataHash, "args.metadataHash"),
+    borshString(args.name, METAPLEX_MAX_NAME_BYTES, "args.name"),
+    borshString(args.symbol, METAPLEX_MAX_SYMBOL_BYTES, "args.symbol"),
+    borshString(args.uri, METAPLEX_MAX_URI_BYTES, "args.uri"),
     bytes32(args.tickerHash, "args.tickerHash"),
     bytes32(args.reservationIdHash, "args.reservationIdHash"),
     u64(args.reservationVersion, "args.reservationVersion"),

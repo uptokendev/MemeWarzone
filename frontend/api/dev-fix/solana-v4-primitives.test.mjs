@@ -6,6 +6,7 @@ import {
   SYSTEM_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
   buildCreateAuthorizationPayload,
+  buildMetaplexFields,
   createAuthorizationDigest,
   createEd25519Signer,
   decodeBase58,
@@ -77,6 +78,9 @@ function fixtureInput() {
     tokenProgram: TOKEN_PROGRAM_ID,
     args: {
       campaignId,
+      name: "Kaiju88",
+      symbol: "K88",
+      uri: "https://api.memewar.zone/api/token-metadata/101/YqiLtW3VSqmigQjbra6h4WKpvQVmNMuoohxUe6igEr9",
       metadataHash: hash32("metadata"),
       clusterHash: hash32("cluster"),
       tickerHash: hash32("ticker"),
@@ -115,7 +119,7 @@ test("PDA derivation is deterministic and produces an off-curve address", () => 
 });
 
 test("V4 serializer is deterministic and binds every mutated field", () => {
-  assert.equal(CREATE_AUTH_SCHEMA_VERSION, 4);
+  assert.equal(CREATE_AUTH_SCHEMA_VERSION, 5);
   const fixture = fixtureInput();
   const payload = buildCreateAuthorizationPayload(fixture);
   const digest = createAuthorizationDigest(fixture);
@@ -128,6 +132,50 @@ test("V4 serializer is deterministic and binds every mutated field", () => {
     args: { ...fixture.args, reservationVersion: fixture.args.reservationVersion + 1n },
   };
   assert.notDeepEqual(digest, createAuthorizationDigest(modified));
+
+  // v5: the Metaplex fields are what wallets actually display, so a client must
+  // not be able to substitute them behind the route signer's back.
+  for (const [field, value] of [
+    ["name", "NotKaiju"],
+    ["symbol", "EVIL"],
+    ["uri", "https://evil.example/meta.json"],
+  ]) {
+    assert.notDeepEqual(
+      digest,
+      createAuthorizationDigest({ ...fixture, args: { ...fixture.args, [field]: value } }),
+      `${field} must be bound into the create authorization digest`,
+    );
+  }
+
+  // Length prefixes must keep field boundaries unambiguous.
+  const ab = createAuthorizationDigest({ ...fixture, args: { ...fixture.args, name: "AB", symbol: "C" } });
+  const a_bc = createAuthorizationDigest({ ...fixture, args: { ...fixture.args, name: "A", symbol: "BC" } });
+  assert.notDeepEqual(ab, a_bc, "length-prefixing must prevent field-boundary collisions");
+});
+
+test("Metaplex fields are clipped to Metaplex limits, not rejected", () => {
+  const fields = buildMetaplexFields({
+    name: "A".repeat(80),
+    symbol: "VERYLONGSYMBOL",
+    mint: "YqiLtW3VSqmigQjbra6h4WKpvQVmNMuoohxUe6igEr9",
+    baseUrl: "https://api.memewar.zone/",
+  });
+  assert.equal(Buffer.byteLength(fields.name, "utf8"), 32);
+  assert.equal(Buffer.byteLength(fields.symbol, "utf8"), 10);
+  assert.equal(
+    fields.uri,
+    "https://api.memewar.zone/api/token-metadata/101/YqiLtW3VSqmigQjbra6h4WKpvQVmNMuoohxUe6igEr9",
+  );
+  assert.ok(Buffer.byteLength(fields.uri, "utf8") <= 200);
+});
+
+test("a relative metadata base URL is refused", () => {
+  // A relative uri would leave every launched token unreadable in wallets, which
+  // is the exact failure this upgrade exists to prevent.
+  assert.throws(
+    () => buildMetaplexFields({ name: "n", symbol: "s", mint: "m", baseUrl: "" }),
+    /absolute uri|PUBLIC_API_BASE_URL/i,
+  );
 });
 
 test("Node Ed25519 signer accepts a Solana seed and signs the raw digest", () => {

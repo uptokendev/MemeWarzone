@@ -22,6 +22,7 @@ import {
   validateGraduationTarget,
 } from "./solana-create-authorization-v4.js";
 import {
+
   CREATE_AUTH_SCHEMA_VERSION,
   SYSVAR_INSTRUCTIONS_ID,
   SYSTEM_PROGRAM_ID,
@@ -39,6 +40,8 @@ import {
   sha256Hex,
   toBigInt,
 } from "./solana-v4-primitives.js";
+import { MPL_TOKEN_METADATA_PROGRAM_ID, buildMetaplexFields } from "./solana-v4-primitives.js";
+
 
 const DIRECT_SESSION_PURPOSE = "MEMEWARZONE_SOLANA_DIRECT_SESSION_V1";
 const DIRECT_FINALIZE_PURPOSE = "MEMEWARZONE_SOLANA_DIRECT_FINALIZE_V1";
@@ -304,7 +307,17 @@ function deriveDirectCampaignAccounts({ reservationIdHash, generationId, program
     [Buffer.from("create-auth", "utf8"), publicKeyBytes(creator), nonce || Buffer.alloc(32)],
     programId,
   );
-  return { campaignId, campaign, mint, tokenVault, solVault, createAuthorization };
+  // Metaplex metadata PDA. Derived from the mint the program will create, so it
+  // is known before the transaction is built.
+  const tokenMetadata = findProgramAddressSync(
+    [
+      Buffer.from("metadata", "utf8"),
+      publicKeyBytes(MPL_TOKEN_METADATA_PROGRAM_ID),
+      publicKeyBytes(mint.publicKey),
+    ],
+    MPL_TOKEN_METADATA_PROGRAM_ID,
+  );
+  return { campaignId, campaign, mint, tokenVault, solVault, createAuthorization, tokenMetadata };
 }
 
 async function rpcCall(rpcUrl, method, params = []) {
@@ -703,6 +716,8 @@ function publicAccounts({ creatorWallet, onchain, pdas }) {
     solVault: pdas.solVault.publicKey,
     createAuthorization: pdas.createAuthorization.publicKey,
     instructions: SYSVAR_INSTRUCTIONS_ID,
+    tokenMetadata: pdas.tokenMetadata.publicKey,
+    tokenMetadataProgram: MPL_TOKEN_METADATA_PROGRAM_ID,
     tokenProgram: TOKEN_PROGRAM_ID,
     systemProgram: SYSTEM_PROGRAM_ID,
   };
@@ -986,9 +1001,17 @@ async function handleAuthorize(body, res) {
     });
     const accounts = publicAccounts({ creatorWallet, onchain: runtime.onchain, pdas });
     const metadataHash = sha256(Buffer.from(canonicalJson(directMetadata), "utf8"));
+    const metaplex = buildMetaplexFields({
+      name: directMetadata.name,
+      symbol: directMetadata.ticker,
+      mint: pdas.mint.publicKey,
+    });
     const tickerHash = nonZeroBytes32(updated.tickerHash, "tickerHash");
     const args = {
       campaignId: pdas.campaignId,
+      name: metaplex.name,
+      symbol: metaplex.symbol,
+      uri: metaplex.uri,
       metadataHash,
       clusterHash,
       tickerHash,

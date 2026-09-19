@@ -37,6 +37,7 @@ import {
   sha256Hex,
   toBigInt,
 } from "./solana-v4-primitives.js";
+import { MPL_TOKEN_METADATA_PROGRAM_ID, buildMetaplexFields } from "./solana-v4-primitives.js";
 
 const MIN_SCHEDULE_SECONDS = 5 * 60;
 const MAX_SCHEDULE_SECONDS = 30 * 24 * 60 * 60;
@@ -653,7 +654,16 @@ function deriveCampaignAccounts({ draftId, reservationIdHash, generationId, prog
     [Buffer.from("create-auth", "utf8"), publicKeyBytes(creator), nonce || Buffer.alloc(32)],
     programId,
   );
-  return { campaignId, campaign, mint, tokenVault, solVault, createAuthorization };
+  // Metaplex metadata PDA for the mint this create will produce.
+  const tokenMetadata = findProgramAddressSync(
+    [
+      Buffer.from("metadata", "utf8"),
+      publicKeyBytes(MPL_TOKEN_METADATA_PROGRAM_ID),
+      publicKeyBytes(mint.publicKey),
+    ],
+    MPL_TOKEN_METADATA_PROGRAM_ID,
+  );
+  return { campaignId, campaign, mint, tokenVault, solVault, createAuthorization, tokenMetadata };
 }
 
 /**
@@ -1232,7 +1242,7 @@ export async function solanaCreateAuthorizationV4(req, res) {
         const tickerHash = nonZeroBytes32(reservation.tickerHash, "tickerHash");
         const metadata = normalizeDraftMetadata(draft, reservation);
         const metadataHash = sha256(Buffer.from(canonicalJson(metadata), "utf8"));
-        const { campaignId, campaign, mint, tokenVault, solVault, createAuthorization } = deriveCampaignAccounts({
+        const { campaignId, campaign, mint, tokenVault, solVault, createAuthorization, tokenMetadata } = deriveCampaignAccounts({
           draftId,
           reservationIdHash,
           generationId: onchain.generation.generationId,
@@ -1283,6 +1293,8 @@ export async function solanaCreateAuthorizationV4(req, res) {
                 solVault: solVault.publicKey,
                 createAuthorization: createAuthorization.publicKey,
                 instructions: SYSVAR_INSTRUCTIONS_ID,
+                tokenMetadata: tokenMetadata.publicKey,
+                tokenMetadataProgram: MPL_TOKEN_METADATA_PROGRAM_ID,
                 tokenProgram: TOKEN_PROGRAM_ID,
                 systemProgram: SYSTEM_PROGRAM_ID,
               },
@@ -1310,8 +1322,16 @@ export async function solanaCreateAuthorizationV4(req, res) {
 
         // Fresh create: enforce cooldown / live-count now that we know PDAs are free.
         enforceCreatorLaunchLimits(onchain.creatorProfile, onchain.chainNow);
+        const metaplex = buildMetaplexFields({
+          name: metadata.name,
+          symbol: metadata.ticker ?? metadata.symbol,
+          mint: mint.publicKey,
+        });
         const args = {
           campaignId,
+          name: metaplex.name,
+          symbol: metaplex.symbol,
+          uri: metaplex.uri,
           metadataHash,
           clusterHash,
           tickerHash,

@@ -11,6 +11,9 @@ export const SOLANA_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ
 export const SOLANA_SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
 
 /** Anchor sha256("global:create_campaign")[0..8] */
+/** Metaplex Token Metadata program. */
+export const MPL_TOKEN_METADATA_PROGRAM_ID = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
+
 export const CREATE_CAMPAIGN_DISCRIMINATOR = new Uint8Array([
   0x6f, 0x83, 0xbb, 0x62, 0xa0, 0xc1, 0x72, 0xf4,
 ]);
@@ -21,6 +24,12 @@ export const SELL_TOKENS_DISCRIMINATOR = new Uint8Array([0x72, 0xf2, 0x19, 0x0c,
 
 export type CreateCampaignInstructionArgs = {
   campaignId: number[];
+  /** Metaplex on-chain name, max 32 bytes UTF-8. */
+  name: string;
+  /** Metaplex on-chain symbol, max 10 bytes UTF-8. */
+  symbol: string;
+  /** Metaplex off-chain metadata JSON URL, max 200 bytes UTF-8. */
+  uri: string;
   metadataHash: number[];
   clusterHash: number[];
   tickerHash: number[];
@@ -44,8 +53,11 @@ export type CreateCampaignInstructionAccounts = {
   tokenVault: string;
   solVault: string;
   createAuthorization: string;
+  /** Metaplex metadata PDA: ["metadata", MPL_TOKEN_METADATA_ID, mint]. */
+  tokenMetadata: string;
   instructions?: string;
   tokenProgram?: string;
+  tokenMetadataProgram?: string;
   systemProgram?: string;
 };
 
@@ -89,6 +101,29 @@ function i64le(value: string | number | bigint): Uint8Array {
   return out;
 }
 
+/**
+ * Borsh string: u32 little-endian byte length, then UTF-8 bytes.
+ *
+ * Length is in BYTES, not characters. A multi-byte name would otherwise encode
+ * a length the program reads differently, and the ed25519 signature check would
+ * fail with nothing to point at.
+ */
+function borshString(value: string, maxBytes: number, label: string): Uint8Array {
+  const bytes = new TextEncoder().encode(value);
+  if (bytes.length === 0) throw new Error(`${label} must not be empty`);
+  if (bytes.length > maxBytes) {
+    throw new Error(`${label} is ${bytes.length} bytes, over the ${maxBytes}-byte Metaplex limit`);
+  }
+  const out = new Uint8Array(4 + bytes.length);
+  new DataView(out.buffer).setUint32(0, bytes.length, true);
+  out.set(bytes, 4);
+  return out;
+}
+
+export const METAPLEX_MAX_NAME_BYTES = 32;
+export const METAPLEX_MAX_SYMBOL_BYTES = 10;
+export const METAPLEX_MAX_URI_BYTES = 200;
+
 function concatBytes(parts: Uint8Array[]): Uint8Array {
   let total = 0;
   for (const part of parts) total += part.length;
@@ -105,6 +140,9 @@ export function encodeCreateCampaignData(args: CreateCampaignInstructionArgs): U
   return concatBytes([
     CREATE_CAMPAIGN_DISCRIMINATOR,
     Uint8Array.from(args.campaignId),
+    borshString(args.name, METAPLEX_MAX_NAME_BYTES, "name"),
+    borshString(args.symbol, METAPLEX_MAX_SYMBOL_BYTES, "symbol"),
+    borshString(args.uri, METAPLEX_MAX_URI_BYTES, "uri"),
     Uint8Array.from(args.metadataHash),
     Uint8Array.from(args.clusterHash),
     Uint8Array.from(args.tickerHash),
@@ -219,6 +257,8 @@ export function buildCreateCampaignInstruction(
       meta(a.solVault, false, true),
       meta(a.createAuthorization, false, true),
       meta(a.instructions || SOLANA_INSTRUCTIONS_SYSVAR, false, false),
+      meta(a.tokenMetadata, false, true),
+      meta(a.tokenMetadataProgram || MPL_TOKEN_METADATA_PROGRAM_ID, false, false),
       meta(a.tokenProgram || SOLANA_TOKEN_PROGRAM_ID, false, false),
       meta(a.systemProgram || SOLANA_SYSTEM_PROGRAM_ID || SystemProgram.programId.toBase58(), false, false),
     ],

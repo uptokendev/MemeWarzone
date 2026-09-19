@@ -1,8 +1,8 @@
 import { apiFetch } from "@/lib/apiBase";
 import type { DraftActionAuth } from "@/lib/draftAuth";
 
-export const SOLANA_CREATE_AUTH_SCHEMA_VERSION = 4 as const;
-export const SOLANA_CREATE_AUTH_DOMAIN = "MEMEWARZONE_SOLANA_CREATE_V4" as const;
+export const SOLANA_CREATE_AUTH_SCHEMA_VERSION = 5 as const;
+export const SOLANA_CREATE_AUTH_DOMAIN = "MEMEWARZONE_SOLANA_CREATE_V5" as const;
 
 export type SolanaCreateMode = "draft_deploy_now" | "countdown" | "direct_create";
 
