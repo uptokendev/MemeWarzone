@@ -1341,99 +1341,15 @@ ${text}`);
     )[0];
   }
 
-  /**
-   * Native-SOL quote binding for a v4 graduation authorization.
-   *
-   * Every field is covered by the signature, so the digest and the instruction
-   * args must be built from one object or they silently disagree and the program
-   * rejects with InvalidGraduationAuthorization.
-   */
-  function nativeQuoteBinding(oraclePriceUsdMicros) {
-    return {
-      quoteMint: NATIVE_MINT,
-      quoteConfigId: hash32("quote-config:native-sol"), // must be non-zero
-      quotePolicyVersion: 1, // must be > 0
-      quoteProfile: QUOTE_PROFILE_NATIVE,
-      quoteProviderClass: QUOTE_PROVIDER_NATIVE,
-      acquisitionProgram: PublicKey.default, // native path requires default
-      quoteReferenceUsdMicros: oraclePriceUsdMicros, // must equal the oracle price
-      quoteDecimals: 9, // native path requires exactly 9
-      expectedQuoteAmount: 0n,
-      minQuoteAmount: 0n,
-      maxSlippageBps: 0, // native path requires all three to be zero
-      maxImpactBps: 0,
-      maxDeviationBps: 0,
-      quoteRecoveryAccount: PublicKey.default,
-    };
-  }
-
-  function graduationDigest(input) {
-    const q = input.quote;
-    return crypto
-      .createHash("sha256")
-      .update(
-        Buffer.concat([
-          GRADUATION_AUTH_DOMAIN,
-          u16le(GRADUATION_AUTH_SCHEMA_VERSION),
-          program.programId.toBuffer(),
-          input.campaign.toBuffer(),
-          input.mint.toBuffer(),
-          input.authority.toBuffer(),
-          input.generationConfig.toBuffer(),
-          u64le(input.graduationTargetUsdMicros),
-          u64le(input.nativeTargetLamports),
-          u64le(input.oraclePriceUsdMicros),
-          input.pool.toBuffer(),
-          input.position.toBuffer(),
-          input.nftMint.toBuffer(),
-          i64le(input.deadline),
-          input.nonce,
-          Buffer.from([input.finalizeRouteProfile ?? ROUTE_PROFILE_UNLINKED]),
-          q.quoteMint.toBuffer(),
-          q.quoteConfigId,
-          u16le(q.quotePolicyVersion),
-          Buffer.from([q.quoteProfile]),
-          Buffer.from([q.quoteProviderClass]),
-          q.acquisitionProgram.toBuffer(),
-          u64le(q.quoteReferenceUsdMicros),
-          Buffer.from([q.quoteDecimals]),
-          u64le(q.expectedQuoteAmount),
-          u64le(q.minQuoteAmount),
-          u16le(q.maxSlippageBps),
-          u16le(q.maxImpactBps),
-          u16le(q.maxDeviationBps),
-          q.quoteRecoveryAccount.toBuffer(),
-        ]),
-      )
-      .digest();
-  }
-
-  /** Instruction args for the same binding the digest covers. */
-  function beginGraduationArgs(input) {
-    const q = input.quote;
-    return {
-      nativeTargetLamports: new BN(input.nativeTargetLamports.toString()),
-      oraclePriceUsdMicros: new BN(input.oraclePriceUsdMicros.toString()),
-      deadline: new BN(input.deadline),
-      nonce: Array.from(input.nonce),
-      positionNftMint: input.nftMint,
-      finalizeRouteProfile: input.finalizeRouteProfile ?? ROUTE_PROFILE_UNLINKED,
-      quoteMint: q.quoteMint,
-      quoteConfigId: Array.from(q.quoteConfigId),
-      quotePolicyVersion: q.quotePolicyVersion,
-      quoteProfile: q.quoteProfile,
-      quoteProviderClass: q.quoteProviderClass,
-      acquisitionProgram: q.acquisitionProgram,
-      quoteReferenceUsdMicros: new BN(q.quoteReferenceUsdMicros.toString()),
-      quoteDecimals: q.quoteDecimals,
-      expectedQuoteAmount: new BN(q.expectedQuoteAmount.toString()),
-      minQuoteAmount: new BN(q.minQuoteAmount.toString()),
-      maxSlippageBps: q.maxSlippageBps,
-      maxImpactBps: q.maxImpactBps,
-      maxDeviationBps: q.maxDeviationBps,
-      quoteRecoveryAccount: q.quoteRecoveryAccount,
-    };
-  }
+  // The binding lives in scripts/solana/graduation-binding.cjs so the operator
+  // and this suite compute the same digest from the same source. One copy living
+  // only in a test is how the program reached schema 4 while its callers stayed
+  // on schema 2 and every graduation was rejected.
+  const binding = require("../../scripts/solana/graduation-binding.cjs");
+  const nativeQuoteBinding = binding.nativeQuoteBinding;
+  const graduationDigest = (input) =>
+    binding.graduationDigest({ ...input, programId: program.programId });
+  const beginGraduationArgs = (input) => binding.beginGraduationArgs(input, BN);
 
 
 
