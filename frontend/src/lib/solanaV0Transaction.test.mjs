@@ -102,6 +102,9 @@ function makeProductionCreateFixture() {
     programId: PROGRAM_ID.toBase58(),
     args: {
       campaignId: bytes32(2),
+      name: "Kaiju88",
+      symbol: "K88",
+      uri: "https://api.memewar.zone/api/token-metadata/101/mint",
       metadataHash: bytes32(3),
       clusterHash: bytes32(4),
       tickerHash: bytes32(5),
@@ -125,6 +128,8 @@ function makeProductionCreateFixture() {
       solVault: Keypair.generate().publicKey.toBase58(),
       createAuthorization: Keypair.generate().publicKey.toBase58(),
       instructions: planAddress(plan, "instructionsSysvar").toBase58(),
+      // Unique per campaign, so it can never be served from the lookup table.
+      tokenMetadata: Keypair.generate().publicKey.toBase58(),
       tokenProgram: planAddress(plan, "tokenProgram").toBase58(),
       systemProgram: planAddress(plan, "systemProgram").toBase58(),
     },
