@@ -12,7 +12,7 @@ import { isPostGradNavEnabled } from "@/features/postgrad/config";
 import { ArenaMobileNav } from "@/components/postgrad/ArenaMobileNav";
 
 const brandMark = "/images/mw.png";
-const primaryPaths = new Set(["/", "/league", "/war-room", "/create"]);
+const primaryPaths = new Set(["/", "/league", "/war-room", "/create", "/import"]);
 
 interface SidebarProps {
   mobileMenuOpen: boolean;

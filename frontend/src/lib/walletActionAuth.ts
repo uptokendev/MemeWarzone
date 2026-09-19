@@ -73,7 +73,7 @@ type SignInput = {
   action: WalletApiAction | string;
   walletAddress: string;
   chainId: number;
-  extraLines?: string[];
+  extraLines?: string[] | Promise<string[]>;
   /** EVM: ethers signer.signMessage. Solana: base64 signature producer. */
   signer?: JsonRpcSigner | null;
   signMessage?: (message: string) => Promise<string>;
@@ -83,6 +83,9 @@ type SignInput = {
 /**
  * Build a signed wallet action auth payload for API user writes.
  * Prefer passing `signMessage` for Solana; EVM can use `signer.signMessage`.
+ *
+ * Important: all features use this same signer path. Project import must not
+ * introduce a provider-specific signing implementation of its own.
  */
 export async function signWalletAction(input: SignInput): Promise<WalletActionAuthPayload> {
   const chainId = Number(input.chainId);
@@ -93,13 +96,14 @@ export async function signWalletAction(input: SignInput): Promise<WalletActionAu
   const isSolana =
     input.walletType === "solana" || isSolanaChainId(chainId) || isSolanaAddress(walletAddress);
 
-  const nonce = await fetchNonce(chainId, walletAddress);
+  const extraLinesPromise = Promise.resolve(input.extraLines || []);
+  const [nonce, extraLines] = await Promise.all([fetchNonce(chainId, walletAddress), extraLinesPromise]);
   const message = buildWalletActionMessage({
     action: input.action,
     walletAddress,
     chainId,
     nonce,
-    extraLines: input.extraLines,
+    extraLines,
   });
 
   let signature = "";
