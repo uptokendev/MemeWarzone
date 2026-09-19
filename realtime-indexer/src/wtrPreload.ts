@@ -2,6 +2,7 @@ import express from "express";
 import { ENV } from "./env.js";
 import { registerCanonicalCandleRoutes } from "./canonicalCandleApi.js";
 import { startGraduationReconcilerLoop } from "./graduationReconciler.js";
+import { startSolanaGraduationReconcilerLoop } from "./solanaGraduationReconciler.js";
 import { registerMarketContinuityRoutes } from "./marketApi.js";
 import { registerRobinhoodMarketContinuityRoutes } from "./robinhoodMarketApi.js";
 import { registerRobinhoodBeatTheMarketRoutes } from "./robinhoodBeatTheMarketApi.js";
@@ -43,5 +44,6 @@ console.log("[wtr] preload boot flags", {
 });
 
 startGraduationReconcilerLoop();
+startSolanaGraduationReconcilerLoop();
 startTopazPoolIndexerLoop();
 startRobinhoodV3PoolIndexerLoop();

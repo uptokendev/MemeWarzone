@@ -180,6 +180,12 @@ export const ENV = {
   ENABLE_GRADUATION_HANDOFF_RECONCILER: String(process.env.ENABLE_GRADUATION_HANDOFF_RECONCILER || "1") === "1",
   // Default 60s (was 30s) — launched() polls are cheap; log scans are not.
   GRADUATION_HANDOFF_INTERVAL_MS: Number(process.env.GRADUATION_HANDOFF_INTERVAL_MS || "60000"),
+  // Solana graduation keeper. Off by default: it needs an operator command and
+  // the treasury operator key, so it must be switched on deliberately.
+  ENABLE_SOLANA_GRADUATION_RECONCILER: String(process.env.ENABLE_SOLANA_GRADUATION_RECONCILER || "0") === "1",
+  SOLANA_GRADUATION_HANDOFF_COMMAND: process.env.SOLANA_GRADUATION_HANDOFF_COMMAND || "",
+  SOLANA_GRADUATION_INTERVAL_MS: Number(process.env.SOLANA_GRADUATION_INTERVAL_MS || "60000"),
+  SOLANA_GRADUATION_RETRY_COOLDOWN_MS: Number(process.env.SOLANA_GRADUATION_RETRY_COOLDOWN_MS || "300000"),
   GRADUATION_HANDOFF_MAX_CAMPAIGNS: Number(process.env.GRADUATION_HANDOFF_MAX_CAMPAIGNS || "25"),
   // Recent tip window for CampaignFinalized eth_getLogs. Do NOT use FACTORY_LOOKBACK (250k).
   // ~20k blocks ≈ half a day on ~3s BSC blocks — enough to catch live graduations.
