@@ -80,6 +80,58 @@ pub fn build_create_metadata_v3_data(name: &str, symbol: &str, uri: &str, is_mut
     data
 }
 
+/// Where the off-chain metadata JSON lives.
+///
+/// Built in the program rather than passed in, for two reasons. It keeps ~96
+/// bytes of URI out of every create transaction, which is what put the V0
+/// envelope over its size ceiling. And it removes the chance that a
+/// misconfigured environment variable writes a URL nobody can read into a mint
+/// that can never be corrected.
+///
+/// Changing this needs a program upgrade. That is the right trade: it is a
+/// stable address, and being wrong here is permanent per token.
+pub const METADATA_URI_BASE: &str = "https://api.memewar.zone/api/token-metadata/101/";
+
+const BASE58_ALPHABET: &[u8; 58] = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+/// Base58 of a 32-byte public key, matching how Solana renders addresses.
+///
+/// Repeated division of the 256-bit value by 58. Leading zero bytes become
+/// leading '1's, which is the part naive implementations drop.
+pub fn base58_encode_pubkey(bytes: &[u8; 32]) -> String {
+    let leading_zeros = bytes.iter().take_while(|b| **b == 0).count();
+
+    let mut digits: Vec<u8> = Vec::with_capacity(44);
+    let mut buffer = *bytes;
+    let mut start = leading_zeros;
+    while start < 32 {
+        let mut remainder: u16 = 0;
+        for byte in buffer.iter_mut().skip(start) {
+            let value = (remainder << 8) | u16::from(*byte);
+            *byte = (value / 58) as u8;
+            remainder = value % 58;
+        }
+        digits.push(BASE58_ALPHABET[remainder as usize]);
+        while start < 32 && buffer[start] == 0 {
+            start += 1;
+        }
+    }
+
+    let mut out = Vec::with_capacity(leading_zeros + digits.len());
+    out.extend(std::iter::repeat(b'1').take(leading_zeros));
+    out.extend(digits.iter().rev());
+    String::from_utf8(out).unwrap_or_default()
+}
+
+/// Off-chain metadata URL for a mint. Always under MAX_URI_LENGTH: the base is
+/// fixed and a base58 pubkey is at most 44 characters.
+pub fn build_metadata_uri(mint: &Pubkey) -> String {
+    let mut uri = String::with_capacity(METADATA_URI_BASE.len() + 44);
+    uri.push_str(METADATA_URI_BASE);
+    uri.push_str(&base58_encode_pubkey(&mint.to_bytes()));
+    uri
+}
+
 pub fn metadata_address(mint: &Pubkey) -> (Pubkey, u8) {
     Pubkey::find_program_address(
         &[METADATA_SEED, MPL_TOKEN_METADATA_ID.as_ref(), mint.as_ref()],
@@ -105,9 +157,9 @@ pub fn create_campaign_metadata<'info>(
     campaign_signer: &[&[&[u8]]],
     name: &str,
     symbol: &str,
-    uri: &str,
 ) -> Result<()> {
-    validate_metadata_fields(name, symbol, uri)?;
+    let uri = build_metadata_uri(&mint.key());
+    validate_metadata_fields(name, symbol, &uri)?;
 
     require_keys_eq!(
         token_metadata_program.key(),
@@ -135,7 +187,7 @@ pub fn create_campaign_metadata<'info>(
             AccountMeta::new_readonly(campaign.key(), false), // update authority
             AccountMeta::new_readonly(system_program.key(), false),
         ],
-        data: build_create_metadata_v3_data(name, symbol, uri, true),
+        data: build_create_metadata_v3_data(name, symbol, &uri, true),
     };
 
     invoke_signed(
@@ -197,6 +249,42 @@ mod tests {
             pda.to_string(),
             "9fQZEUBYgJVLdDuZb5PEBagUNHSdQjQwGuF79DWLKuC9"
         );
+    }
+
+    #[test]
+    fn base58_matches_solana_rendering() {
+        // Round-trip through Pubkey's own Display, which is the reference.
+        for seed in 0u8..16 {
+            let key = Pubkey::new_from_array([seed; 32]);
+            assert_eq!(base58_encode_pubkey(&key.to_bytes()), key.to_string());
+        }
+        let kaiju = "YqiLtW3VSqmigQjbra6h4WKpvQVmNMuoohxUe6igEr9"
+            .parse::<Pubkey>()
+            .unwrap();
+        assert_eq!(base58_encode_pubkey(&kaiju.to_bytes()), kaiju.to_string());
+        // All-zero key: every byte is a leading zero, so the result is 32 '1's.
+        assert_eq!(base58_encode_pubkey(&[0u8; 32]), "1".repeat(32));
+        // A single leading zero byte must survive as exactly one '1'.
+        let mut one_zero = [7u8; 32];
+        one_zero[0] = 0;
+        let expected = Pubkey::new_from_array(one_zero).to_string();
+        assert_eq!(base58_encode_pubkey(&one_zero), expected);
+        assert!(expected.starts_with('1'));
+    }
+
+    #[test]
+    fn derived_uri_is_absolute_and_within_the_metaplex_cap() {
+        let kaiju = "YqiLtW3VSqmigQjbra6h4WKpvQVmNMuoohxUe6igEr9"
+            .parse::<Pubkey>()
+            .unwrap();
+        let uri = build_metadata_uri(&kaiju);
+        assert_eq!(
+            uri,
+            "https://api.memewar.zone/api/token-metadata/101/YqiLtW3VSqmigQjbra6h4WKpvQVmNMuoohxUe6igEr9"
+        );
+        assert!(uri.starts_with("https://"));
+        // Worst case is the longest possible base58 pubkey.
+        assert!(build_metadata_uri(&Pubkey::new_from_array([255u8; 32])).len() <= MAX_URI_LENGTH);
     }
 
     #[test]

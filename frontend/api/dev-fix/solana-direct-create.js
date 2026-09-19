@@ -1004,14 +1004,12 @@ async function handleAuthorize(body, res) {
     const metaplex = buildMetaplexFields({
       name: directMetadata.name,
       symbol: directMetadata.ticker,
-      mint: pdas.mint.publicKey,
     });
     const tickerHash = nonZeroBytes32(updated.tickerHash, "tickerHash");
     const args = {
       campaignId: pdas.campaignId,
       name: metaplex.name,
       symbol: metaplex.symbol,
-      uri: metaplex.uri,
       metadataHash,
       clusterHash,
       tickerHash,
