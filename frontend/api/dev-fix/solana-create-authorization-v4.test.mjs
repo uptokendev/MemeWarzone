@@ -3,6 +3,9 @@ import test from "node:test";
 
 import { solanaCreateAuthorizationV4 } from "./solana-create-authorization-v4.js";
 
+// Metaplex metadata needs an absolute uri, so the create path now requires this.
+process.env.PUBLIC_API_BASE_URL = process.env.PUBLIC_API_BASE_URL || "https://api.memewar.zone";
+
 function responseRecorder() {
   let body = null;
   return {

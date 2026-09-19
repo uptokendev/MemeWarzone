@@ -37,8 +37,8 @@ pub const CAMPAIGN_MINT_SEED: &[u8] = b"campaign-mint";
 pub const TOKEN_VAULT_SEED: &[u8] = b"token-vault";
 pub const SOL_VAULT_SEED: &[u8] = b"sol-vault";
 
-pub const CREATE_AUTH_DOMAIN: &[u8] = b"MEMEWARZONE_SOLANA_CREATE_V4";
-pub const CREATE_AUTH_SCHEMA_VERSION: u16 = 4;
+pub const CREATE_AUTH_DOMAIN: &[u8] = b"MEMEWARZONE_SOLANA_CREATE_V5";
+pub const CREATE_AUTH_SCHEMA_VERSION: u16 = 5;
 pub const ASSET_INITIALIZATION_VERSION: u16 = 1;
 
 pub const MIN_SCHEDULE_SECONDS: i64 = 300;
@@ -94,6 +94,11 @@ pub struct CreateCampaign<'info> {
     /// CHECK: The address constraint pins this account to the Instructions sysvar.
     #[account(address = INSTRUCTIONS_SYSVAR_ID)]
     pub instructions: UncheckedAccount<'info>,
+    /// CHECK: Metaplex metadata PDA; address is derived and verified in the handler.
+    #[account(mut)]
+    pub token_metadata: UncheckedAccount<'info>,
+    /// CHECK: pinned to MPL_TOKEN_METADATA_ID inside create_campaign_metadata.
+    pub token_metadata_program: UncheckedAccount<'info>,
     /// CHECK: SPL Token program.
     pub token_program: UncheckedAccount<'info>,
     /// CHECK: System program.
@@ -185,9 +190,15 @@ pub struct CreateAuthorization {
     pub bump: u8,
 }
 
-#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy)]
+#[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct CreateCampaignArgs {
     pub campaign_id: [u8; 32],
+    /// Metaplex on-chain name. Capped at MAX_NAME_LENGTH.
+    pub name: String,
+    /// Metaplex on-chain symbol. Capped at MAX_SYMBOL_LENGTH.
+    pub symbol: String,
+    /// Metaplex off-chain metadata JSON. Capped at MAX_URI_LENGTH.
+    pub uri: String,
     pub metadata_hash: [u8; 32],
     pub cluster_hash: [u8; 32],
     pub ticker_hash: [u8; 32],
@@ -568,6 +579,25 @@ pub fn create_campaign_handler(
         require_keys_eq!(vault_state.owner, campaign_key, LaunchpadError::InvalidCampaign);
     }
 
+    // Metaplex metadata MUST be created while the campaign PDA is still the mint
+    // authority. CreateMetadataAccountV3 requires that authority to sign, and the
+    // revocation immediately below is irreversible: a mint that leaves this
+    // instruction without metadata can never be given any. Every token launched
+    // before this call existed is permanently unnamed in every Solana wallet and
+    // aggregator. Do not move this below set_authority.
+    crate::token_metadata::create_campaign_metadata(
+        &ctx.accounts.token_metadata.to_account_info(),
+        &mint_info,
+        &campaign_info,
+        &payer_info,
+        &system_info,
+        &ctx.accounts.token_metadata_program.to_account_info(),
+        campaign_signer,
+        &args.name,
+        &args.symbol,
+        &args.uri,
+    )?;
+
     token::set_authority(
         CpiContext::new_with_signer(
             ctx.accounts.token_program.to_account_info(),
@@ -582,6 +612,7 @@ pub fn create_campaign_handler(
     )?;
 
     verify_mint_authority_revoked(&mint_info)?;
+    verify_token_metadata_created(&ctx.accounts.token_metadata.to_account_info())?;
     write_create_authorization(
         &ctx.accounts.create_authorization.to_account_info(),
         creator_key,
@@ -753,6 +784,22 @@ fn prepare_and_verify_create_auth<'info>(
 }
 
 #[inline(never)]
+/// Refuse to finish a create whose metadata account did not materialise.
+///
+/// The revocation above is one-way, so "minted but unnamed" is not a state worth
+/// tolerating: better to fail the transaction and let the creator retry.
+fn verify_token_metadata_created(metadata_info: &AccountInfo<'_>) -> Result<()> {
+    require!(
+        metadata_info.owner == &crate::token_metadata::MPL_TOKEN_METADATA_ID,
+        LaunchpadError::InvalidMetadata
+    );
+    require!(
+        !metadata_info.data_is_empty(),
+        LaunchpadError::InvalidMetadata
+    );
+    Ok(())
+}
+
 fn verify_mint_authority_revoked(mint_info: &AccountInfo<'_>) -> Result<()> {
     let mint_state_after = {
         let data = mint_info.try_borrow_data()?;
@@ -1083,6 +1130,14 @@ pub fn build_create_authorization_message(
     message.extend_from_slice(sol_vault.as_ref());
     message.extend_from_slice(token_program.as_ref());
     message.extend_from_slice(args.metadata_hash.as_ref());
+    // Length-prefixed so that ("ab","c") and ("a","bc") cannot collide into the
+    // same signed message.
+    message.extend_from_slice(&(args.name.len() as u32).to_le_bytes());
+    message.extend_from_slice(args.name.as_bytes());
+    message.extend_from_slice(&(args.symbol.len() as u32).to_le_bytes());
+    message.extend_from_slice(args.symbol.as_bytes());
+    message.extend_from_slice(&(args.uri.len() as u32).to_le_bytes());
+    message.extend_from_slice(args.uri.as_bytes());
     message.extend_from_slice(args.ticker_hash.as_ref());
     message.extend_from_slice(args.reservation_id_hash.as_ref());
     message.extend_from_slice(&args.reservation_version.to_le_bytes());
@@ -1528,9 +1583,32 @@ mod tests {
         }
     }
 
+    /// The bug this upgrade exists to fix: metadata was never created, and the
+    /// mint authority is revoked in the same instruction, so it never could be
+    /// afterwards. If anyone reorders these two calls, every future launch
+    /// silently becomes permanently unnamed again.
+    #[test]
+    fn metadata_is_created_before_the_mint_authority_is_revoked() {
+        let source = include_str!("authorized_create.rs");
+        let create_at = source
+            .find("crate::token_metadata::create_campaign_metadata(")
+            .expect("metadata CPI must exist in create_campaign_handler");
+        let revoke_at = source
+            .find("AuthorityType::MintTokens,")
+            .expect("mint authority revocation must exist");
+        assert!(
+            create_at < revoke_at,
+            "metadata CPI must precede the mint authority revocation: \
+             CreateMetadataAccountV3 needs that authority to sign"
+        );
+    }
+
     fn test_create_args(deadline: i64) -> CreateCampaignArgs {
         CreateCampaignArgs {
             campaign_id: [1; 32],
+            name: "Kaiju88".to_string(),
+            symbol: "K88".to_string(),
+            uri: "https://api.memewar.zone/api/token-metadata/101/mint".to_string(),
             metadata_hash: [2; 32],
             cluster_hash: [3; 32],
             ticker_hash: [4; 32],
@@ -1610,8 +1688,8 @@ mod tests {
     fn create_v3_removes_creator_supplied_mint() {
         let args = test_create_args(200);
         assert_eq!(args.campaign_id, [1; 32]);
-        assert_eq!(CREATE_AUTH_SCHEMA_VERSION, 4);
-        assert_eq!(CREATE_AUTH_DOMAIN, b"MEMEWARZONE_SOLANA_CREATE_V4");
+        assert_eq!(CREATE_AUTH_SCHEMA_VERSION, 5);
+        assert_eq!(CREATE_AUTH_DOMAIN, b"MEMEWARZONE_SOLANA_CREATE_V5");
     }
 
     #[test]
@@ -1819,28 +1897,65 @@ mod tests {
         let args = test_create_args(1_000);
         let baseline = build_test_message(generation_key, &generation, creator, &args);
 
-        let mut changed = args;
+        let mut changed = args.clone();
         changed.ticker_hash = [13; 32];
         assert_ne!(
             baseline,
             build_test_message(generation_key, &generation, creator, &changed)
         );
 
-        changed = args;
+        changed = args.clone();
         changed.reservation_version += 1;
         assert_ne!(
             baseline,
             build_test_message(generation_key, &generation, creator, &changed)
         );
 
-        changed = args;
+        changed = args.clone();
         changed.launch_at = 1_700_000_000;
         assert_ne!(
             baseline,
             build_test_message(generation_key, &generation, creator, &changed)
         );
 
-        changed = args;
+        changed = args.clone();
+        changed.name = "Different".to_string();
+        assert_ne!(
+            baseline,
+            build_test_message(generation_key, &generation, creator, &changed),
+            "name must be covered by the route signature"
+        );
+
+        changed = args.clone();
+        changed.symbol = "XXX".to_string();
+        assert_ne!(
+            baseline,
+            build_test_message(generation_key, &generation, creator, &changed),
+            "symbol must be covered by the route signature"
+        );
+
+        changed = args.clone();
+        changed.uri = "https://evil.example/meta.json".to_string();
+        assert_ne!(
+            baseline,
+            build_test_message(generation_key, &generation, creator, &changed),
+            "uri must be covered by the route signature"
+        );
+
+        // Length prefixes must make ("ab","c") and ("a","bc") distinct messages.
+        let mut shifted = args.clone();
+        shifted.name = "AB".to_string();
+        shifted.symbol = "C".to_string();
+        let mut shifted_other = args.clone();
+        shifted_other.name = "A".to_string();
+        shifted_other.symbol = "BC".to_string();
+        assert_ne!(
+            build_test_message(generation_key, &generation, creator, &shifted),
+            build_test_message(generation_key, &generation, creator, &shifted_other),
+            "length-prefixing must prevent field-boundary collisions"
+        );
+
+        changed = args.clone();
         changed.graduation_target_usd_micros = GRADUATION_TARGET_50K_USD_MICROS;
         assert_ne!(
             baseline,
