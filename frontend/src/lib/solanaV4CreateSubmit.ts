@@ -35,7 +35,11 @@ import {
 const TOKEN_PROGRAM = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 const LAMPORTS_PER_SOL = 1_000_000_000;
 const MIN_CREATE_LAMPORTS = 30_000_000; // conservative balance guard / fallback only
-const CREATE_RENT_ACCOUNT_SIZES = [720, 82, 165, 81, 155] as const;
+// Every account create_campaign pays rent for: campaign, mint, token vault,
+// SOL vault, create authorization, Metaplex metadata, fee escrow and creator fee
+// vault. The last three are easy to forget because they were added after this
+// list; leaving them out understates what a creator actually needs.
+const CREATE_RENT_ACCOUNT_SIZES = [720, 82, 165, 81, 155, 679, 114, 106] as const;
 const CREATOR_PROFILE_ACCOUNT_BYTES = 84;
 
 export type SolanaV4CreateSubmitResult = {
