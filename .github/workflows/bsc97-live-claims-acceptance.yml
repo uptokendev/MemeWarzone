@@ -108,7 +108,7 @@ jobs:
           };
           fs.mkdirSync('reports',{recursive:true});
           fs.writeFileSync('reports/agent5-bsc97-claim-rails.json',JSON.stringify(out,null,2));
-          fs.appendFileSync(process.env.GITHUB_ENV,`REWARD_DISTRIBUTOR_ADDRESS_97=${distributorAddress}\nTREASURY_VAULT_V2_ADDRESS_97=${vaultAddress}\nREWARD_CLAIM_RECOVERY_FROM_BLOCK_97=${Math.min(dReceipt.blockNumber,vReceipt.blockNumber)}\n`);
+          fs.appendFileSync(process.env.GITHUB_ENV,`REWARD_DISTRIBUTOR_ADDRESS_97=${distributorAddress}\nTREASURY_VAULT_V2_ADDRESS_97=${vaultAddress}\nREWARD_CLAIM_RECOVERY_FROM_BLOCK_97=${Math.min(dReceipt.blockNumber,vReceipt.blockNumber)}\nEVM_LEAGUE_RECOVERY_FROM_BLOCK_97=${vReceipt.blockNumber}\n`);
           console.log(JSON.stringify(out,null,2));
           await p.destroy();
           NODE

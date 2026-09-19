@@ -1,4 +1,5 @@
 import { Contract, Interface, JsonRpcProvider, Network, getAddress } from "ethers";
+import { getLogsWithRetry, isRangeLimitRpcError } from "./evmLogScan.js";
 
 const EVM_REWARD_CHAINS = new Set([56, 97, 4663, 46630]);
 const REWARD_DISTRIBUTOR_INTERFACE = new Interface([
@@ -168,7 +169,9 @@ async function findRewardClaimedLog({ provider, distributorAddress, batchId, wal
     let logs;
     for (;;) {
       try {
-        logs = await provider.getLogs({
+        // Retry first: a rate/compute-unit rejection is not about the span, and
+        // narrowing it would only issue more of the requests being throttled.
+        logs = await getLogsWithRetry(provider, {
           address: getAddress(distributorAddress),
           topics,
           fromBlock: start,
@@ -176,15 +179,16 @@ async function findRewardClaimedLog({ provider, distributorAddress, batchId, wal
         });
         break;
       } catch (error) {
-        if (window <= minWindow) {
-          throw new RewardClaimVerificationError(
-            "CLAIM_RECOVERY_LOG_SCAN_UNAVAILABLE",
-            `Could not scan RewardClaimed logs for blocks ${start}-${end} at the smallest window ${window}: ${error?.message || error}`,
-            503,
-          );
+        if (window > minWindow && isRangeLimitRpcError(error)) {
+          window = Math.max(minWindow, Math.floor(window / 4));
+          start = Math.max(Number(fromBlock), end - window + 1);
+          continue;
         }
-        window = Math.max(minWindow, Math.floor(window / 4));
-        start = Math.max(Number(fromBlock), end - window + 1);
+        throw new RewardClaimVerificationError(
+          "CLAIM_RECOVERY_LOG_SCAN_UNAVAILABLE",
+          `Could not scan RewardClaimed logs for blocks ${start}-${end} (window ${window}): ${error?.message || error}`,
+          503,
+        );
       }
     }
 

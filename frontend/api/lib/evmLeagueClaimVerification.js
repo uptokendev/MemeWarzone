@@ -9,6 +9,7 @@ import {
   toUtf8Bytes,
   zeroPadValue,
 } from "ethers";
+import { getLogsWithRetry, isRangeLimitRpcError } from "./evmLogScan.js";
 
 const EVM_LEAGUE_CHAINS = new Set([56, 97, 4663, 46630]);
 export const EVM_LEAGUE_LOG_QUERY_MAX_BLOCKS = 5_000;
@@ -85,13 +86,53 @@ function normalizedLogChunkBlocks(chunkBlocks) {
   return Math.min(positiveRequested, EVM_LEAGUE_LOG_QUERY_MAX_BLOCKS);
 }
 
-export async function scanEvmLeagueClaimLogsBackwards(provider, { address, topics, lookbackBlocks, chunkBlocks }) {
+/**
+ * Lower bound for the League reconciliation scan.
+ *
+ * Without one the scan walks 2,000,000 blocks in 5,000-block steps, which is up
+ * to 400 provider requests for a single claim and trips rate limits on its own.
+ * Operators pin the vault's deployment block per chain instead.
+ */
+function explicitLeagueRecoveryFromBlock(chainId) {
+  const chain = Number(chainId);
+  const raw = process.env[`EVM_LEAGUE_RECOVERY_FROM_BLOCK_${chain}`]
+    || process.env.EVM_LEAGUE_RECOVERY_FROM_BLOCK;
+  if (raw == null || String(raw).trim() === "") return null;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+export async function scanEvmLeagueClaimLogsBackwards(provider, { address, topics, lookbackBlocks, chunkBlocks, fromBlockFloor = null }) {
   const latest = await provider.getBlockNumber();
-  const floor = Math.max(0, latest - lookbackBlocks + 1);
-  const effectiveChunkBlocks = normalizedLogChunkBlocks(chunkBlocks);
+  const lookbackFloor = Math.max(0, latest - lookbackBlocks + 1);
+  const floor = Number.isInteger(fromBlockFloor) && fromBlockFloor >= 0
+    ? Math.min(latest, Math.max(lookbackFloor, fromBlockFloor))
+    : lookbackFloor;
+  let effectiveChunkBlocks = normalizedLogChunkBlocks(chunkBlocks);
+  const minChunkBlocks = Math.max(1, Math.min(effectiveChunkBlocks, positiveIntEnv("EVM_CLAIM_RECONCILE_MIN_CHUNK_BLOCKS", 250)));
   for (let toBlock = latest; toBlock >= floor;) {
-    const fromBlock = Math.max(floor, toBlock - effectiveChunkBlocks + 1);
-    const chunk = await provider.getLogs({ address, topics, fromBlock, toBlock });
+    let fromBlock = Math.max(floor, toBlock - effectiveChunkBlocks + 1);
+    let chunk;
+    for (;;) {
+      try {
+        // Same split as generic claim recovery: wait out throttling, shrink only
+        // for a genuine block-range objection, and never report a provider limit
+        // as "this League payout cannot be reconciled".
+        chunk = await getLogsWithRetry(provider, { address, topics, fromBlock, toBlock });
+        break;
+      } catch (error) {
+        if (effectiveChunkBlocks > minChunkBlocks && isRangeLimitRpcError(error)) {
+          effectiveChunkBlocks = Math.max(minChunkBlocks, Math.floor(effectiveChunkBlocks / 4));
+          fromBlock = Math.max(floor, toBlock - effectiveChunkBlocks + 1);
+          continue;
+        }
+        throw new EvmLeagueClaimVerificationError(
+          "LEAGUE_LOG_SCAN_UNAVAILABLE",
+          `Could not scan TreasuryVaultV2 Claimed logs for blocks ${fromBlock}-${toBlock} (window ${effectiveChunkBlocks}): ${error?.message || error}`,
+          503,
+        );
+      }
+    }
     if (chunk.length) {
       return [...chunk].sort((left, right) => {
         const blockOrder = Number(right.blockNumber ?? -1) - Number(left.blockNumber ?? -1);
@@ -167,7 +208,13 @@ export async function discoverEvmLeagueClaimTransaction({ chainId, period, epoch
   const rawClaimed = await provider.call({ to: expected.vaultAddress, data: callData });
   const [claimed] = EVM_LEAGUE_INTERFACE.decodeFunctionResult("epochLeafClaimed", rawClaimed);
   if (!claimed) return null;
-  const logs = await scanEvmLeagueClaimLogsBackwards(provider, { address: expected.vaultAddress, topics: evmLeagueClaimEventTopics(expected), lookbackBlocks, chunkBlocks });
+  const logs = await scanEvmLeagueClaimLogsBackwards(provider, {
+    address: expected.vaultAddress,
+    topics: evmLeagueClaimEventTopics(expected),
+    lookbackBlocks,
+    chunkBlocks,
+    fromBlockFloor: explicitLeagueRecoveryFromBlock(expected.chainId),
+  });
   for (const log of logs) return verifyEvmLeagueClaimTransaction({ chainId: expected.chainId, period, epochStart, category, rank: expected.rank, recipient: expected.recipient, amountRaw: expected.amountRaw, txHash: log.transactionHash, minConfirmations });
   throw new EvmLeagueClaimVerificationError("LEAGUE_EVENT_NOT_DISCOVERED", "TreasuryVaultV2 reports this League leaf claimed, but its exact Claimed event was not found in the configured reconciliation window.", 409);
 }
