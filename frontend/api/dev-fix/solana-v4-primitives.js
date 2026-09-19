@@ -26,9 +26,17 @@ export const MPL_TOKEN_METADATA_PROGRAM_ID = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a
  * already returns Metaplex-shaped JSON (name, symbol, description, image).
  */
 export function buildMetaplexFields({ name, symbol, mint, baseUrl }) {
-  const origin = String(
-    baseUrl || process.env.PUBLIC_API_BASE_URL || process.env.VITE_API_BASE_URL || "",
-  ).replace(/\/+$/, "");
+  // Accept every name this deployment has historically used. The value is baked
+  // into the mint's metadata forever, so an env-name mismatch must not be the
+  // reason a launch writes a URL nobody can read.
+  const configured =
+    baseUrl ||
+    process.env.PUBLIC_API_BASE_URL ||
+    process.env.API_BASE_URL ||
+    process.env.VITE_PUBLIC_API_BASE_URL ||
+    process.env.VITE_API_BASE_URL ||
+    "";
+  const origin = String(configured).trim().replace(/\/+$/, "");
   if (!origin) {
     // Server misconfiguration, not a bad request: surface it as 503 so it is not
     // reported back to a creator as though their input were at fault.
@@ -36,6 +44,27 @@ export function buildMetaplexFields({ name, symbol, mint, baseUrl }) {
       "PUBLIC_API_BASE_URL must be set: Metaplex metadata needs an absolute uri, and a relative path would leave every launched token unreadable in wallets",
     );
     error.code = "SOLANA_METADATA_BASE_URL_MISSING";
+    error.httpStatus = 503;
+    throw error;
+  }
+  // This URL is permanent once the mint is created. Reject anything that is not
+  // an absolute http(s) origin rather than discovering it in a wallet later.
+  let parsed;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    const error = new Error(
+      `Metadata base URL must be an absolute URL, got ${JSON.stringify(origin)}`,
+    );
+    error.code = "SOLANA_METADATA_BASE_URL_INVALID";
+    error.httpStatus = 503;
+    throw error;
+  }
+  if (parsed.protocol !== "https:" && parsed.hostname !== "localhost" && parsed.hostname !== "127.0.0.1") {
+    const error = new Error(
+      `Metadata base URL must be https outside local development, got ${parsed.protocol}//`,
+    );
+    error.code = "SOLANA_METADATA_BASE_URL_INSECURE";
     error.httpStatus = 503;
     throw error;
   }
