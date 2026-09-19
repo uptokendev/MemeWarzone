@@ -308,7 +308,31 @@ app.get("/healthz", (_req, res) => res.status(200).json({ ok: true, service: "fr
 app.get("/health", async (_req, res) => {
   try {
     const r = await pool.query("select 1 as ok");
-    res.status(200).json({ ok: true, service: "frontend-api", db: r.rows?.[0]?.ok ?? 1 });
+    res.status(200).json({
+      ok: true,
+      service: "frontend-api",
+      db: r.rows?.[0]?.ok ?? 1,
+      // Deploy truth. Without this a stale image is indistinguishable from a
+      // fresh one over HTTP, which has repeatedly been mistaken for a code bug.
+      sourceCommit: String(process.env.SOURCE_COMMIT || "unset"),
+      // Which database this process is actually on, so a suspected
+      // production/staging mixup can be answered instead of inferred.
+      dbHost: (() => {
+        try {
+          const url = new URL(String(process.env.DATABASE_URL || ""));
+          return `${url.hostname}:${url.port || "5432"}`;
+        } catch {
+          return "unparsed";
+        }
+      })(),
+      supabaseProjectRef: (() => {
+        try {
+          return new URL(String(process.env.SUPABASE_URL || "")).hostname.split(".")[0] || "unset";
+        } catch {
+          return "unset";
+        }
+      })(),
+    });
   } catch (err) {
     console.error("[api/server] health db check failed", err);
     res.status(200).json({ ok: true, service: "frontend-api", db: 0, warning: "DB health check failed", error: String(err?.message || err) });
