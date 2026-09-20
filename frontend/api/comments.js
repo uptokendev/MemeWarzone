@@ -4,6 +4,30 @@ import { badMethod, getQuery, isAddress, isSolanaAddress, isSolanaChain, json, r
 import { buildCommentMessage, canonCampaign, canonWallet } from "./lib/commentsCanon.js";
 import { verifySolanaSignature } from "./lib/walletActionAuth.js";
 
+// Solana campaigns and wallets are case-sensitive base58. The BNB-era schema
+// (002_social.sql) enforced lowercase on token_comments, so every Solana
+// comment passed nonce and signature checks and then failed its INSERT with a
+// CHECK violation, surfacing as a 500. Dropped here once per process the way
+// auth/nonce.js drops auth_nonces_address_lowercase, so the fix ships with the
+// API; db/migrations/20260921_000001 records it.
+let commentsSchemaReady = null;
+function ensureCommentsSchema() {
+  if (!commentsSchemaReady) {
+    commentsSchemaReady = pool
+      .query(
+        `ALTER TABLE IF EXISTS public.token_comments
+           DROP CONSTRAINT IF EXISTS token_comments_campaign_lowercase,
+           DROP CONSTRAINT IF EXISTS token_comments_author_lowercase,
+           DROP CONSTRAINT IF EXISTS token_comments_token_lowercase`,
+      )
+      .catch((e) => {
+        commentsSchemaReady = null;
+        throw e;
+      });
+  }
+  return commentsSchemaReady;
+}
+
 async function consumeNonce(chainId, address, nonce) {
   const { rows } = await pool.query(
     `SELECT nonce, expires_at, used_at
@@ -99,6 +123,7 @@ export default async function handler(req, res) {
       if (!nonce) return json(res, 400, { error: "Nonce missing" });
       if (!signature) return json(res, 400, { error: "Signature missing" });
 
+      await ensureCommentsSchema();
       await consumeNonce(chainId, address, nonce);
 
       const msg = buildCommentMessage({ chainId, address, campaignAddress, nonce, body: trimmed });

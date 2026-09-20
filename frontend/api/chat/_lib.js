@@ -224,6 +224,18 @@ await pool.query(`
     ON public.chat_messages(chain_id, campaign_address, wallet_address, client_nonce)
     WHERE client_nonce IS NOT NULL
   `);
+
+  // Solana wallets and campaigns are case-sensitive base58. The BNB-era chat
+  // schema enforced lowercase, so every Solana War Room join (chat_sessions)
+  // and send (chat_messages) failed its INSERT with a CHECK violation and
+  // surfaced as a 500. Dropped here the way auth/nonce.js drops its own, so
+  // the fix ships with the API; db/migrations/20260921_000001 records it.
+  await pool.query(`ALTER TABLE public.chat_sessions DROP CONSTRAINT IF EXISTS chat_sessions_wallet_lowercase`);
+  await pool.query(`
+    ALTER TABLE public.chat_messages
+      DROP CONSTRAINT IF EXISTS chat_messages_campaign_lowercase,
+      DROP CONSTRAINT IF EXISTS chat_messages_wallet_lowercase
+  `);
 }
 
 export async function consumeNonce(chainId, address, nonce) {
@@ -274,7 +286,7 @@ export async function createChatSession({ chainId, campaignAddress, walletAddres
   await pool.query(
     `DELETE FROM public.chat_sessions
      WHERE chain_id = $1 AND campaign_address = $2 AND wallet_address = $3`,
-    [Number(chainId), String(campaignAddress).toLowerCase(), normalizeAddress(walletAddress)]
+    [Number(chainId), normalizeAddress(campaignAddress), normalizeAddress(walletAddress)]
   );
   await pool.query(
     `INSERT INTO public.chat_sessions (
@@ -283,7 +295,10 @@ export async function createChatSession({ chainId, campaignAddress, walletAddres
     [
       tokenHash,
       Number(chainId),
-      String(campaignAddress).toLowerCase(),
+      // join.js, send.js and history.js all key the room by
+      // normalizeAddress(campaign): Solana keeps its case, EVM lowercases.
+      // Lowercasing here stored a room key nothing else ever looked up.
+      normalizeAddress(campaignAddress),
       normalizeAddress(walletAddress),
       displayName || null,
       avatarUrl || null,
@@ -337,7 +352,7 @@ export async function ensureNotMuted({ chainId, campaignAddress, walletAddress }
      WHERE chain_id = $1 AND campaign_address = $2 AND wallet_address = $3
      ORDER BY muted_until DESC
      LIMIT 1`,
-    [Number(chainId), String(campaignAddress).toLowerCase(), normalizeAddress(walletAddress)]
+    [Number(chainId), normalizeAddress(campaignAddress), normalizeAddress(walletAddress)]
   );
   const until = rows[0]?.muted_until ? new Date(rows[0].muted_until).getTime() : 0;
   if (until && until > Date.now()) throw new Error("You are temporarily muted in this War Room");
@@ -351,7 +366,7 @@ export async function enforceRateLimit({ chainId, campaignAddress, walletAddress
        AND campaign_address = $2
        AND wallet_address = $3
        AND created_at > NOW() - INTERVAL '10 seconds'`,
-    [Number(chainId), String(campaignAddress).toLowerCase(), normalizeAddress(walletAddress)]
+    [Number(chainId), normalizeAddress(campaignAddress), normalizeAddress(walletAddress)]
   );
   const count = Number(rows[0]?.count ?? 0);
   if (count >= 5) throw new Error("Slow down a bit before sending another message");

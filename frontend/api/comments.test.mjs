@@ -39,3 +39,23 @@ test("comment message does not lowercase Solana identities", () => {
   assert.equal(msg.includes(SOL_CAMPAIGN.toLowerCase()) && SOL_CAMPAIGN !== SOL_CAMPAIGN.toLowerCase(), false);
   assert.match(msg, /COMMENT_CREATE/);
 });
+
+// Every lowercase CHECK the social schema ever declared on a Solana-facing
+// column must be dropped by both the migration and the API's runtime
+// self-heal, or a Solana INSERT 500s again.
+test("every lowercase CHECK on comments and chat tables is dropped", async () => {
+  const fs = await import("node:fs");
+  const read = (rel) => fs.readFileSync(new URL(rel, import.meta.url), "utf8");
+  const declared = [
+    ...read("../../db/migrations/002_social.sql").matchAll(/CONSTRAINT (token_comments_[a-z_]+_lowercase)/g),
+    ...read("../../db/migrations/20260413_000006_chat.sql").matchAll(/CONSTRAINT (chat_[a-z_]+_lowercase)/g),
+  ].map((m) => m[1]);
+  assert.ok(declared.length >= 6, `expected the historical constraints, found ${declared.length}`);
+
+  const migration = read("../../db/migrations/20260921_000001_social_solana_address_case.sql");
+  const runtime = read("./comments.js") + read("./chat/_lib.js");
+  for (const name of declared) {
+    assert.ok(migration.includes(`DROP CONSTRAINT IF EXISTS ${name}`), `migration must drop ${name}`);
+    assert.ok(runtime.includes(`DROP CONSTRAINT IF EXISTS ${name}`), `API self-heal must drop ${name}`);
+  }
+});
