@@ -4,6 +4,7 @@ import { AlertTriangle, CheckCircle2, Clock, RefreshCw, Route, ShieldAlert, Shie
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
+import { FinishLaunchAction } from "@/components/token/FinishLaunchAction";
 import type { LaunchpadAdapterStatus, LaunchpadTradePreflight, TradeSide } from "@/features/launchpad/adapters";
 import { useLaunchpadAdapter } from "@/features/launchpad/useLaunchpadAdapter";
 
@@ -162,6 +163,18 @@ export function TokenSafetyPanel({ campaignAddress, chainId, compact = false }: 
           <RefreshCw className={`mr-1 h-3 w-3 ${loading ? "animate-spin" : ""}`} />
           Check
         </Button>
+      </div>
+
+      {/* An unfinished launch is the one "blocked" state the creator can fix
+          themselves, so it is offered here rather than only explained. The
+          component decides whether to render by checking the mint authority on
+          chain; it stays invisible for every finished campaign. */}
+      <div className="mt-3">
+        <FinishLaunchAction
+          campaignAddress={campaignAddress}
+          chainId={chainId}
+          onFinished={() => void refreshSafety()}
+        />
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-2">
