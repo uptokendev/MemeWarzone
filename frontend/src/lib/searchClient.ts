@@ -134,6 +134,52 @@ function walletResult(query: string, chainId: number): TokenSearchResult | null 
   };
 }
 
+/**
+ * A published draft is a promotion page, not a tradeable campaign, so it has no
+ * campaign or token address and its route is the slug. Everything the API
+ * returns here has already passed the visibility and status filters, so a
+ * private or unlisted draft cannot reach this point.
+ */
+function mapDraftRow(raw: Record<string, unknown>, fallbackChainId: number): TokenSearchResult | null {
+  const slug = String(raw.slug || "").trim();
+  if (!slug) return null;
+  const chainId = Number(raw.chainId ?? raw.chain_id ?? fallbackChainId) || fallbackChainId;
+  const name = String(raw.name || raw.ticker || "").trim();
+  if (!name) return null;
+  return {
+    kind: "draft",
+    campaignAddress: slug,
+    draftSlug: slug,
+    name,
+    symbol: String(raw.ticker || raw.symbol || "").trim(),
+    status: "unknown",
+    logoURI: String(raw.logoUrl || raw.logo_url || raw.imageUrl || "") || undefined,
+    chainId,
+    marketcapBnb: null,
+    href: `/prepare/${encodeURIComponent(slug)}`,
+  };
+}
+
+async function searchDrafts(
+  chainId: number,
+  q: string,
+  limit: number,
+  signal?: AbortSignal,
+): Promise<TokenSearchResult[]> {
+  const params = new URLSearchParams({ chainId: String(chainId), search: q, limit: String(limit) });
+  const res = await apiFetch(`/api/drafts?${params.toString()}`, {
+    method: "GET",
+    cache: "no-store" as RequestCache,
+    signal,
+  });
+  if (!res.ok) return [];
+  const body = await res.json().catch(() => null);
+  const rows = Array.isArray(body) ? body : Array.isArray(body?.items) ? body.items : [];
+  return rows
+    .map((row: Record<string, unknown>) => mapDraftRow(row, chainId))
+    .filter((row): row is TokenSearchResult => Boolean(row));
+}
+
 export async function searchTokensRemote(
   q: string,
   opts?: { limit?: number; signal?: AbortSignal; chainId?: number },
@@ -142,12 +188,15 @@ export async function searchTokensRemote(
   if (query.length < 2) return [];
   const limit = opts?.limit ?? 12;
   const chainIds = getBnbCampaignFeedChainIds(opts?.chainId);
-  const [tokenPages, profilePages] = await Promise.all([
+  const [tokenPages, profilePages, draftPages] = await Promise.all([
     Promise.all(chainIds.map((id) => searchChain(id, query, limit, opts?.signal).catch(() => []))),
     Promise.all(chainIds.map((id) => searchProfiles(id, query, 8, opts?.signal).catch(() => []))),
+    // Drafts were never queried here, so a published promotion could not be
+    // found by name or ticker even though its page was public.
+    Promise.all(chainIds.map((id) => searchDrafts(id, query, 8, opts?.signal).catch(() => []))),
   ]);
   const merged = new Map<string, TokenSearchResult>();
-  for (const row of [...tokenPages.flat(), ...profilePages.flat()]) {
+  for (const row of [...tokenPages.flat(), ...profilePages.flat(), ...draftPages.flat()]) {
     const key = `${row.kind}:${row.chainId}:${row.tokenAddress || row.campaignAddress}`;
     if (!merged.has(key)) merged.set(key, row);
   }

@@ -1,6 +1,11 @@
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 
-export type SearchHistoryKind = "token" | "wallet";
+/**
+ * Mirrors SearchResultKind. Recent searches are replayed straight back into the
+ * results list, so a kind that is searchable but not storable would be dropped
+ * from history and silently lose its label.
+ */
+export type SearchHistoryKind = "token" | "wallet" | "draft";
 
 export type SearchHistoryItem = {
   kind: SearchHistoryKind;

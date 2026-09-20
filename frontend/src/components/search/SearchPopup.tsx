@@ -150,8 +150,16 @@ export function SearchPopup({
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-3">
                           <span className="truncate font-semibold text-foreground">{row.name}</span>
+                          {/* A draft is a promotion page, not a tradeable token.
+                              Showing it as a bare $TICKER alongside live tokens
+                              would send people to a page with no chart and no
+                              buy button with no warning. */}
                           <span className="shrink-0 font-mono text-[11px] text-orange-200">
-                            {row.kind === "wallet" ? "Profile" : `$${row.symbol}`}
+                            {row.kind === "wallet"
+                              ? "Profile"
+                              : row.kind === "draft"
+                                ? `$${row.symbol} · PRE-LAUNCH`
+                                : `$${row.symbol}`}
                           </span>
                         </div>
                         <div className="truncate font-mono text-[10px] text-muted-foreground">
@@ -220,7 +228,13 @@ function HistoryBlock({
             <div className="min-w-0 flex-1">
               <div className="truncate text-sm text-foreground">{item.name}</div>
               <div className="truncate font-mono text-[10px] text-muted-foreground">
-                {item.kind === "wallet" ? "Wallet" : item.symbol ? `$${item.symbol}` : item.href}
+                {item.kind === "wallet"
+                  ? "Wallet"
+                  : item.kind === "draft"
+                    ? `$${item.symbol} · PRE-LAUNCH`
+                    : item.symbol
+                      ? `$${item.symbol}`
+                      : item.href}
               </div>
             </div>
           </button>

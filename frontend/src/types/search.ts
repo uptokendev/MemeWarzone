@@ -1,8 +1,10 @@
 export type TokenStatus = "bonding" | "graduated" | "unknown";
-export type SearchResultKind = "token" | "wallet";
+export type SearchResultKind = "token" | "wallet" | "draft";
 
 export interface TokenSearchResult {
   kind: SearchResultKind;
+  /** Set on drafts: a pre-launch promotion page, not a tradeable token. */
+  draftSlug?: string;
   campaignAddress: string;
   tokenAddress?: string;
   name: string;

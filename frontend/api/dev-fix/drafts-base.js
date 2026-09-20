@@ -411,6 +411,24 @@ export async function drafts(req, res) {
         where.push(`d.chain_id = $${params.length + 1}`);
         params.push(chainId);
       }
+      // Site search had no way to reach a draft: it queried campaigns and
+      // profiles only, so 46 published promotions were unreachable by name or
+      // ticker even though their pages were public.
+      //
+      // This filter sits on top of the visibility and status predicates above
+      // rather than replacing them, so a private or unlisted draft stays
+      // unreachable no matter what is searched for. The slug is matched too
+      // because it is what the public URL uses.
+      const search = String(q.search || q.q || "").trim();
+      if (search) {
+        const like = `%${search.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+        where.push(
+          `(d.name ilike $${params.length + 1} escape '\\'` +
+            ` or d.ticker ilike $${params.length + 1} escape '\\'` +
+            ` or d.slug ilike $${params.length + 1} escape '\\')`,
+        );
+        params.push(like);
+      }
       // Single query with promotion + metrics so home grid can render without N+1 /api/drafts/:id.
       let rows = [];
       try {
