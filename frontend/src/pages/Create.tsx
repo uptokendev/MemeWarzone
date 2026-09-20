@@ -11,7 +11,7 @@ import { ImageIcon, FileText, Rocket, BookOpen, ChevronDown } from "lucide-react
 import { z } from "zod";
 import { AnimatePresence, motion } from "framer-motion";
 import { useTokenForm } from "@/hooks/useTokenForm";
-import { tokenSchema, TOKEN_VALIDATION_LIMITS } from "@/constants/validation";
+import { tokenSchema, tokenNameByteLength, TOKEN_VALIDATION_LIMITS } from "@/constants/validation";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { LaunchpadSafetyStatus } from "@/components/launchpad/LaunchpadSafetyStatus";
@@ -988,7 +988,18 @@ const Create = () => {
                       <Button type="button" variant="outline" className="font-retro" onClick={() => fileRef.current?.click()}><ImageIcon className="mr-2 h-4 w-4" />{formData.imagePreview ? "Replace image" : "Upload image"}</Button>
                       {formData.imagePreview ? <Button type="button" variant="ghost" size="sm" onClick={handleRemoveImage}>Remove</Button> : null}
                     </div>
-                    <div><label className="mb-1 block font-retro text-sm">Name</label><Input value={formData.name} onChange={(e) => setTokenName(e.target.value)} placeholder="WhatIsThisForACoin" maxLength={TOKEN_VALIDATION_LIMITS.NAME_MAX_LENGTH} className="font-sans normal-case tracking-normal" autoCapitalize="off" autoCorrect="off" spellCheck={false} /></div>
+                    <div>
+                      <label className="mb-1 flex items-baseline justify-between font-retro text-sm">
+                        <span>Name</span>
+                        {/* Metaplex caps the on-chain name at 32 bytes. Showing the
+                            count means a creator sees the limit rather than
+                            discovering it when the field stops accepting input. */}
+                        <span className={`font-sans text-xs ${tokenNameByteLength(formData.name) > TOKEN_VALIDATION_LIMITS.NAME_MAX_LENGTH ? "text-red-400" : "text-muted-foreground"}`}>
+                          {tokenNameByteLength(formData.name)}/{TOKEN_VALIDATION_LIMITS.NAME_MAX_LENGTH}
+                        </span>
+                      </label>
+                      <Input value={formData.name} onChange={(e) => setTokenName(e.target.value)} placeholder="WhatIsThisForACoin" maxLength={TOKEN_VALIDATION_LIMITS.NAME_MAX_LENGTH} className="font-sans normal-case tracking-normal" autoCapitalize="off" autoCorrect="off" spellCheck={false} />
+                    </div>
                     <div>
                       <label className="mb-1 block font-retro text-sm">Ticker</label>
                       <Input value={formData.ticker} onChange={(e) => setTicker(e.target.value)} placeholder="TICKER" maxLength={TOKEN_VALIDATION_LIMITS.TICKER_MAX_LENGTH} className="font-retro uppercase" />

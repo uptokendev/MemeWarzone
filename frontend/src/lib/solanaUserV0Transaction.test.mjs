@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { Keypair, SystemProgram, TransactionInstruction } from "@solana/web3.js";
+import { Keypair, SystemProgram, TransactionInstruction, TransactionMessage, VersionedTransaction } from "@solana/web3.js";
 import * as web3 from "@solana/web3.js";
 import { loadSolanaUserV0Module } from "../../scripts/load-solana-v0-module.mjs";
 
@@ -9,6 +9,7 @@ const {
   assertSolanaUserV0Intent,
   buildSolanaUserV0Transaction,
   compileSolanaUserV0WithLatestBlockhash,
+  SOLANA_WALLET_REWRITE_BUDGET_BYTES,
 } = await loadSolanaUserV0Module();
 
 const BLOCKHASH = Keypair.generate().publicKey.toBase58();
@@ -149,4 +150,111 @@ test("fresh blockhash compilation preserves exact intent", async () => {
   assert.equal(result.latest.blockhash, nextBlockhash);
   assert.equal(result.stats.requiredSigners, 1);
   assert.equal(result.stats.instructionCount, 1);
+});
+test("a transaction that leaves the wallet too little room is refused", () => {
+  // The failure this prevents is not a rejected transaction. Phantom silently
+  // stops simulating and shows "this dApp could be malicious", which looks like
+  // a domain reputation problem and sends you hunting in the wrong place. A
+  // size error names the actual cause.
+  const payer = Keypair.generate().publicKey;
+  const budget = SOLANA_WALLET_REWRITE_BUDGET_BYTES;
+
+  const build = (dataBytes) => {
+    const instruction = new TransactionInstruction({
+      programId: Keypair.generate().publicKey,
+      keys: [{ pubkey: payer, isSigner: true, isWritable: true }],
+      data: Buffer.alloc(dataBytes),
+    });
+    const message = new TransactionMessage({
+      payerKey: payer,
+      recentBlockhash: BLOCKHASH,
+      instructions: [instruction],
+    }).compileToV0Message();
+    return { transaction: new VersionedTransaction(message), instruction };
+  };
+
+  // Comfortably small: passes, and reports how much room the wallet has left.
+  const small = build(64);
+  const stats = assertSolanaUserV0Intent(web3, small.transaction, {
+    payer,
+    instructions: [small.instruction],
+    walletRewriteBudgetBytes: budget,
+  });
+  assert.ok(stats.walletHeadroomBytes > budget);
+  assert.equal(stats.walletHeadroomBytes, 1232 - stats.serializedBytes);
+
+  // Sized to eat into the wallet's share: must be refused.
+  const oversized = build(1232 - budget);
+  assert.throws(
+    () => assertSolanaUserV0Intent(web3, oversized.transaction, {
+      payer,
+      instructions: [oversized.instruction],
+      walletRewriteBudgetBytes: budget,
+    }),
+    /leaving \d+ for the wallet; it needs 257/,
+  );
+
+  // Without the budget the same transaction is allowed, because the Meteora
+  // SDK builds swap instructions whose account count is not ours to bound.
+  assert.doesNotThrow(() =>
+    assertSolanaUserV0Intent(web3, oversized.transaction, {
+      payer,
+      instructions: [oversized.instruction],
+    }),
+  );
+});
+
+// League rewards are claimed with a Merkle proof inlined in the instruction
+// data, 32 bytes per level, and nothing in the encoder bounds its depth. This
+// pins where that runs out of room so the limit is a known number rather than
+// something discovered when a season gets big enough.
+test("a league claim fits a Merkle proof up to 17 levels", () => {
+  const budget = SOLANA_WALLET_REWRITE_BUDGET_BYTES;
+  const payer = Keypair.generate().publicKey;
+  const key = () => Keypair.generate().publicKey;
+
+  // 8 discriminator + 1 period + 8 epoch + 32 category + 1 rank + 8 amount + 4 length
+  const FIXED = 62;
+
+  const sizeAtDepth = (depth) => {
+    const instruction = new TransactionInstruction({
+      programId: key(),
+      keys: [
+        { pubkey: payer, isSigner: true, isWritable: true },
+        { pubkey: key(), isSigner: false, isWritable: false },
+        { pubkey: key(), isSigner: false, isWritable: true },
+        { pubkey: key(), isSigner: false, isWritable: true },
+        { pubkey: key(), isSigner: false, isWritable: true },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      ],
+      data: Buffer.alloc(FIXED + 32 * depth),
+    });
+    const message = new TransactionMessage({
+      payerKey: payer,
+      recentBlockhash: BLOCKHASH,
+      instructions: [instruction],
+    }).compileToV0Message();
+    return new VersionedTransaction(message).serialize().length;
+  };
+
+  assert.ok(1232 - sizeAtDepth(17) >= budget, "depth 17 must still fit");
+  assert.ok(1232 - sizeAtDepth(18) < budget, "depth 18 must not fit");
+
+  // 17 levels is 131,072 leaves. If a season can exceed that the proof has to
+  // move out of the instruction data, not just be allowed to grow.
+  assert.equal(2 ** 17, 131072);
+});
+
+// The launchpad module cannot import this one: its test harness loads it from a
+// data URL where "@/..." does not resolve, so the budget is defined in both.
+// Two copies of a measured constant drift, and the drift would only show up as
+// Phantom blocking one flow and not the other.
+test("the wallet rewrite budget is the same on both sides", async () => {
+  const { loadSolanaV0Module } = await import("../../scripts/load-solana-v0-module.mjs");
+  const launchpad = await loadSolanaV0Module();
+  assert.equal(
+    launchpad.SOLANA_WALLET_REWRITE_BUDGET_BYTES,
+    SOLANA_WALLET_REWRITE_BUDGET_BYTES,
+    "solanaV0Transaction.ts and solanaUserV0Transaction.ts disagree on the wallet budget",
+  );
 });

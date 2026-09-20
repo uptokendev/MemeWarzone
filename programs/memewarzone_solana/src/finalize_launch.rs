@@ -56,8 +56,8 @@ use anchor_spl::token::{self, spl_token::state::Mint as SplMint, SetAuthority};
 use anchor_spl::token::spl_token::instruction::AuthorityType;
 
 use crate::authorized_create::{
-    initialize_campaign_fee_accounts, verify_detached_create_authorization, Campaign,
-    CAMPAIGN_MINT_SEED, CAMPAIGN_SEED,
+    create_program_account, verify_detached_create_authorization, Campaign, CAMPAIGN_MINT_SEED,
+    CAMPAIGN_SEED,
 };
 use crate::fee_escrow::{CREATOR_FEE_VAULT_SEED, FEE_ESCROW_SEED};
 use crate::token_metadata::{MAX_NAME_LENGTH, MAX_SYMBOL_LENGTH, MPL_TOKEN_METADATA_ID};
@@ -209,21 +209,23 @@ pub fn finalize_campaign_launch_handler(
         LaunchpadError::InvalidCampaign
     );
 
-    // Idempotency. Revocation is one-way, so a second finalize could only ever
-    // fail part-way through; refuse it up front rather than half-apply it.
-    require!(
-        !campaign_state.mint_authority_revoked,
-        LaunchpadError::InvalidCampaign
-    );
+    // Idempotency comes from the mint itself, checked below, not from
+    // Campaign.mint_authority_revoked. That field is a cached claim, and it has
+    // already been wrong once: create_campaign wrote it true while the authority
+    // was still held, which would have made every launch unfinishable if this
+    // gate trusted it. The mint either still has an authority to revoke or it
+    // does not, and that answer cannot drift from reality.
     require!(
         ctx.accounts.token_metadata.data_is_empty(),
         LaunchpadError::InvalidMetadata
     );
-    require!(
-        ctx.accounts.fee_escrow.data_is_empty()
-            && ctx.accounts.creator_fee_vault.data_is_empty(),
-        LaunchpadError::InvalidFeeEscrow
-    );
+    // Deliberately NOT requiring these to be empty. initialize_fee_escrow and
+    // initialize_creator_fee_vault are permissionless, and the indexer's fee
+    // escrow worker calls them for any campaign that lacks one. It wins that
+    // race often enough that demanding a clean slate here made finalize
+    // impossible: the escrow already existed, finalize refused, and the token
+    // was left unnamed with no way to fix it. Create what is missing, verify
+    // what is already there.
 
     let expected_message = build_finalize_launch_message(
         &crate::id(),
@@ -276,7 +278,7 @@ pub fn finalize_campaign_launch_handler(
     verify_token_metadata_created(&ctx.accounts.token_metadata.to_account_info())?;
     verify_mint_authority_revoked(&mint_info)?;
 
-    initialize_campaign_fee_accounts(
+    ensure_campaign_fee_accounts(
         &ctx.accounts.payer.to_account_info(),
         &ctx.accounts.fee_escrow.to_account_info(),
         &ctx.accounts.creator_fee_vault.to_account_info(),
@@ -295,6 +297,124 @@ pub fn finalize_campaign_launch_handler(
         updated.try_serialize(&mut cursor)?;
     }
 
+    Ok(())
+}
+
+/// Create whichever fee accounts are missing, and check the ones that are not.
+///
+/// Both are PDAs of this program, so an account that already exists was created
+/// by us — by create_campaign before V6, or by the permissionless initializers
+/// the indexer's worker calls. That makes skipping it safe. The checks below are
+/// not about trust, they are about catching a campaign/creator mismatch that
+/// would otherwise route this campaign's fees to another campaign's escrow.
+fn ensure_campaign_fee_accounts<'info>(
+    payer: &AccountInfo<'info>,
+    fee_escrow: &AccountInfo<'info>,
+    creator_fee_vault: &AccountInfo<'info>,
+    system_program: &AccountInfo<'info>,
+    campaign: Pubkey,
+    creator: Pubkey,
+    fee_escrow_bump: u8,
+    creator_fee_vault_bump: u8,
+) -> Result<()> {
+    if fee_escrow.data_is_empty() {
+        create_fee_escrow(payer, fee_escrow, system_program, campaign, fee_escrow_bump)?;
+    } else {
+        require_keys_eq!(*fee_escrow.owner, crate::id(), LaunchpadError::InvalidFeeEscrow);
+        let data = fee_escrow.try_borrow_data()?;
+        let mut slice: &[u8] = &data;
+        let existing = crate::FeeEscrow::try_deserialize(&mut slice)
+            .map_err(|_| error!(LaunchpadError::InvalidFeeEscrow))?;
+        require_keys_eq!(existing.campaign, campaign, LaunchpadError::InvalidFeeEscrow);
+    }
+
+    if creator_fee_vault.data_is_empty() {
+        create_creator_fee_vault(
+            payer,
+            creator_fee_vault,
+            system_program,
+            campaign,
+            creator,
+            creator_fee_vault_bump,
+        )?;
+    } else {
+        require_keys_eq!(*creator_fee_vault.owner, crate::id(), LaunchpadError::InvalidFeeEscrow);
+        let data = creator_fee_vault.try_borrow_data()?;
+        let mut slice: &[u8] = &data;
+        let existing = crate::CreatorFeeVault::try_deserialize(&mut slice)
+            .map_err(|_| error!(LaunchpadError::InvalidFeeEscrow))?;
+        require_keys_eq!(existing.campaign, campaign, LaunchpadError::InvalidFeeEscrow);
+        require_keys_eq!(existing.creator, creator, LaunchpadError::InvalidFeeEscrow);
+    }
+    Ok(())
+}
+
+fn create_fee_escrow<'info>(
+    payer: &AccountInfo<'info>,
+    fee_escrow: &AccountInfo<'info>,
+    system_program: &AccountInfo<'info>,
+    campaign: Pubkey,
+    bump: u8,
+) -> Result<()> {
+    let campaign_ref = campaign.as_ref();
+    let bump_seed = [bump];
+    let seeds: &[&[u8]] = &[FEE_ESCROW_SEED, campaign_ref, &bump_seed];
+    create_program_account(
+        payer,
+        fee_escrow,
+        system_program,
+        8 + crate::FeeEscrow::INIT_SPACE,
+        seeds,
+    )?;
+    let escrow = crate::FeeEscrow {
+        campaign,
+        weekly_pending: 0,
+        monthly_pending: 0,
+        recruiter_pending: 0,
+        airdrop_pending: 0,
+        squad_pending: 0,
+        protocol_pending: 0,
+        total_received: 0,
+        total_flushed: 0,
+        bump,
+        version: crate::FEE_ESCROW_VERSION,
+    };
+    let mut data = fee_escrow.try_borrow_mut_data()?;
+    let mut cursor = std::io::Cursor::new(&mut data[..]);
+    escrow.try_serialize(&mut cursor)?;
+    Ok(())
+}
+
+fn create_creator_fee_vault<'info>(
+    payer: &AccountInfo<'info>,
+    creator_fee_vault: &AccountInfo<'info>,
+    system_program: &AccountInfo<'info>,
+    campaign: Pubkey,
+    creator: Pubkey,
+    bump: u8,
+) -> Result<()> {
+    let campaign_ref = campaign.as_ref();
+    let bump_seed = [bump];
+    let seeds: &[&[u8]] = &[CREATOR_FEE_VAULT_SEED, campaign_ref, &bump_seed];
+    create_program_account(
+        payer,
+        creator_fee_vault,
+        system_program,
+        8 + crate::CreatorFeeVault::INIT_SPACE,
+        seeds,
+    )?;
+    let vault = crate::CreatorFeeVault {
+        campaign,
+        creator,
+        pending_lamports: 0,
+        total_received: 0,
+        total_claimed: 0,
+        bump,
+        version: crate::CREATOR_FEE_VAULT_VERSION,
+    };
+    let mut data = creator_fee_vault.try_borrow_mut_data()?;
+    let mut cursor = std::io::Cursor::new(&mut data[..]);
+    vault.try_serialize(&mut cursor)?;
     Ok(())
 }
 
@@ -501,6 +621,85 @@ mod tests {
             hex,
             "20f2cb27694797eb37c3131d0f553954110f4bba0b2a0478f57a40305a8a544d",
         );
+    }
+
+    /// create_campaign must leave this false, because finalize refuses a
+    /// campaign already marked revoked and the revocation is what sets it.
+    ///
+    /// It was true for as long as create did the revoking itself, in the same
+    /// atomic transaction. Splitting the two made the flag a lie: no V6 launch
+    /// could be finalized, and anything reading it to mean "supply is fixed"
+    /// was wrong while the campaign PDA could still mint. A grep is the honest
+    /// test here — the value is a literal in a struct this crate builds, not
+    /// something reachable without a running bank.
+    #[test]
+    fn create_campaign_does_not_claim_the_authority_is_revoked() {
+        let source = include_str!("authorized_create.rs");
+        let account_start = source
+            .find("Box::new(Campaign {")
+            .expect("create_campaign must build the Campaign account");
+        let account_end = source[account_start..]
+            .find("\n    });")
+            .expect("unterminated Campaign literal")
+            + account_start;
+        let account = &source[account_start..account_end];
+        assert!(
+            account.contains("mint_authority_revoked: false"),
+            "create_campaign writes the campaign as already revoked; finalize will refuse every launch",
+        );
+        assert!(
+            !account.contains("mint_authority_revoked: true"),
+            "create_campaign still claims the mint authority is revoked",
+        );
+
+        let event_start = source
+            .find("emit!(CampaignCreated {")
+            .expect("create_campaign must emit CampaignCreated");
+        let event_end = source[event_start..]
+            .find("\n    });")
+            .expect("unterminated CampaignCreated literal")
+            + event_start;
+        assert!(
+            source[event_start..event_end].contains("mint_authority_revoked: false"),
+            "the created event disagrees with the account it describes",
+        );
+    }
+
+    /// Finalizing twice must fail, and must fail on chain state rather than on
+    /// the cached flag. A campaign whose flag says revoked but whose mint still
+    /// has an authority is exactly the state V6 shipped, and it has to remain
+    /// finishable.
+    #[test]
+    fn idempotency_is_gated_on_the_mint_not_the_cached_flag() {
+        let source = include_str!("finalize_launch.rs");
+        let handler_start = source
+            .find("pub fn finalize_campaign_launch_handler")
+            .expect("handler must exist");
+        let handler = &source[handler_start..];
+        let body_end = handler.find("\nfn ").unwrap_or(handler.len());
+        let body = &handler[..body_end];
+        assert!(
+            !body.contains("!campaign_state.mint_authority_revoked"),
+            "finalize gates on the cached flag; a campaign created with it wrongly set can never be finished",
+        );
+        assert!(
+            body.contains("verify_mint_authority_is_campaign"),
+            "finalize must check the mint still has an authority to revoke",
+        );
+    }
+
+    /// The only place that may set it true is finalize, and only after the
+    /// revocation it verifies.
+    #[test]
+    fn finalize_sets_the_flag_only_after_revoking() {
+        let source = include_str!("finalize_launch.rs");
+        let revoke = source
+            .find("verify_mint_authority_revoked(&mint_info)?")
+            .expect("finalize must verify the revocation");
+        let set = source
+            .find("updated.mint_authority_revoked = true")
+            .expect("finalize must record the revocation");
+        assert!(revoke < set, "the flag is recorded before the revocation is verified");
     }
 
     #[test]

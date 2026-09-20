@@ -37,6 +37,7 @@ import {
 
 import {
   FINALIZE_LAUNCH_SCHEMA_VERSION,
+  buildMetaplexFields,
   SYSVAR_INSTRUCTIONS_ID,
   SYSTEM_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
@@ -221,7 +222,13 @@ export function issueFinalizeLaunchAuthorization({
   ttlSeconds = DEFAULT_FINALIZE_TTL_SECONDS,
 }) {
   const now = Number.isFinite(chainNow) ? Number(chainNow) : Math.floor(Date.now() / 1000);
-  const args = { name, symbol, deadline: now + ttlSeconds };
+  // Clip to the Metaplex limits rather than refusing. A creator whose name is
+  // 40 characters has already paid for the create transaction; failing here
+  // would leave their token permanently unnamed over a display detail. This is
+  // the same clipping create_campaign applied before the metadata call moved
+  // out of it, and dropping it is how a 40-character name turned into a 500.
+  const metaplex = buildMetaplexFields({ name, symbol });
+  const args = { name: metaplex.name, symbol: metaplex.symbol, deadline: now + ttlSeconds };
   const signer = createEd25519Signer(routeSignerSecret);
   const digest = finalizeLaunchDigest({ programId, campaign, mint, creator, campaignId, args });
   const signature = signer.sign(digest);
@@ -282,7 +289,8 @@ export async function sendFinalizeCampaignLaunch({
   const payerKeypair = loadPayerKeypair(payerSecret);
 
   const now = Number.isFinite(chainNow) ? Number(chainNow) : Math.floor(Date.now() / 1000);
-  const args = { name, symbol, deadline: now + ttlSeconds };
+  const metaplex = buildMetaplexFields({ name, symbol });
+  const args = { name: metaplex.name, symbol: metaplex.symbol, deadline: now + ttlSeconds };
 
   const { ed25519Instruction, programInstruction } = buildFinalizeLaunchInstructions({
     programId,

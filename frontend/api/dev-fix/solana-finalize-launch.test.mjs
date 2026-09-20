@@ -10,6 +10,7 @@ import {
   buildFinalizeCampaignLaunchInstruction,
   buildFinalizeLaunchInstructions,
   encodeFinalizeCampaignLaunchData,
+  issueFinalizeLaunchAuthorization,
 } from "./solana-finalize-launch.js";
 
 const PROGRAM_ID = "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt";
@@ -174,4 +175,51 @@ test("the signature window is bounded", () => {
   // Long enough to survive a retry, short enough that a leaked signature for a
   // campaign that failed to finalize cannot be used days later.
   assert.ok(DEFAULT_FINALIZE_TTL_SECONDS <= 3600);
+});
+
+// Metaplex caps a name at 32 bytes and a symbol at 10. Our own draft fields are
+// not bounded by those, so a 40-character name reached the encoder and threw,
+// which surfaced as a 500 on finalize and a token left permanently unnamed. The
+// create path had always clipped; the clipping was lost when the metadata call
+// moved out of create_campaign.
+test("an over-long name is clipped rather than refused", () => {
+  const long = "All about graduation and getting it done"; // 40 bytes
+  assert.ok(long.length > 32);
+
+  const authorization = issueFinalizeLaunchAuthorization({
+    programId: PROGRAM_ID,
+    routeSignerSecret: ROUTE_SIGNER_SECRET,
+    campaign: ACCOUNTS.campaign,
+    mint: ACCOUNTS.mint,
+    creator: "3SyuXsZfQB3JCjGFTpzioswp8ZkVuf7QGVEYwF6k8nG2",
+    campaignId: Buffer.alloc(32, 5),
+    name: long,
+    symbol: "ABGAGID",
+    chainNow: 1_789_900_000,
+  });
+
+  assert.equal(authorization.args.name, long.slice(0, 32));
+  assert.equal(Buffer.byteLength(authorization.args.name, "utf8"), 32);
+  assert.equal(authorization.args.symbol, "ABGAGID");
+
+  // And the clipped value is what the signature covers, so the program writes
+  // exactly what was authorized.
+  assert.equal(authorization.signatureHex.length, 128);
+  assert.doesNotThrow(() => encodeFinalizeCampaignLaunchData(authorization.args));
+});
+
+test("an empty name falls back rather than producing an unnamed token", () => {
+  const authorization = issueFinalizeLaunchAuthorization({
+    programId: PROGRAM_ID,
+    routeSignerSecret: ROUTE_SIGNER_SECRET,
+    campaign: ACCOUNTS.campaign,
+    mint: ACCOUNTS.mint,
+    creator: "3SyuXsZfQB3JCjGFTpzioswp8ZkVuf7QGVEYwF6k8nG2",
+    campaignId: Buffer.alloc(32, 5),
+    name: "   ",
+    symbol: "",
+    chainNow: 1_789_900_000,
+  });
+  assert.equal(authorization.args.name, "MemeWarzone Token");
+  assert.equal(authorization.args.symbol, "MWZ");
 });

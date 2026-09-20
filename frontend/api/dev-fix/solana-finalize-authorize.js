@@ -141,10 +141,13 @@ export async function solanaFinalizeAuthorize(req, res) {
       authorization,
     });
   } catch (error) {
-    console.error("[solana/finalize-authorize]", error?.message || error);
+    console.error("[solana/finalize-authorize]", error?.stack || error?.message || error);
+    // The reason travels with the response. A launch that cannot be finalized
+    // leaves a token nameless and untradeable, and the person who has to fix it
+    // is looking at a browser console, not at server logs.
     return json(res, 500, {
       ok: false,
-      error: "Could not issue a finalize authorization.",
+      error: `Could not issue a finalize authorization: ${error?.message || error}`,
       code: "SOLANA_FINALIZE_AUTHORIZE_FAILED",
     });
   }

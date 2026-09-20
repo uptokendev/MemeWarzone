@@ -3,6 +3,22 @@ import type { SolanaWeb3Module } from "@/lib/solanaWeb3";
 
 export const SOLANA_USER_V0_PACKET_LIMIT_BYTES = 1_232;
 
+/**
+ * How much of the packet limit a wallet keeps for itself.
+ *
+ * Phantom rewrites a transaction before signing: ComputeBudget instructions
+ * plus one Lighthouse assertion per account written. When its rewritten version
+ * will not fit it cannot simulate, and it blocks the request with "this dApp
+ * could be malicious" — which reads as a reputation problem and sends you
+ * looking in the wrong place entirely.
+ *
+ * Measured on mainnet by reconstructing the unsigned transaction from what
+ * landed on chain: 257 bytes for a launchpad create writing six accounts, 182
+ * for a buy writing two. The cost tracks accounts written rather than size, so
+ * 257 is the number to budget against.
+ */
+export const SOLANA_WALLET_REWRITE_BUDGET_BYTES = 257;
+
 export type SolanaUserV0BuildInput = {
   payer: string | PublicKey;
   recentBlockhash: string;

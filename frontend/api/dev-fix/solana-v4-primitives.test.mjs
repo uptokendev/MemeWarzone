@@ -19,6 +19,8 @@ import {
   sha256,
   u16,
   u64,
+  METAPLEX_MAX_NAME_BYTES,
+  METAPLEX_MAX_SYMBOL_BYTES,
   buildFinalizeLaunchPayload,
   finalizeLaunchDigest,
 } from "./solana-v4-primitives.js";
@@ -302,4 +304,36 @@ test("the accounts the client receives cover every account the instruction needs
       );
     }
   }
+});
+
+// The create form and the on-chain encoder have to agree on how long a name may
+// be. They drifted: the form allowed 100 characters while Metaplex accepts 32,
+// so a 40-character name was accepted, then clipped on chain, and the site and
+// every wallet showed different names. Worse, before the clipping was restored
+// it threw and left the token unnamed entirely.
+test("the create form's name and ticker limits match the Metaplex limits", () => {
+  const source = readFileSync(
+    new URL("../../src/constants/validation.ts", import.meta.url),
+    "utf8",
+  );
+  const limit = (field) => {
+    const match = source.match(new RegExp(`${field}:\\s*(\\d+)`));
+    assert.ok(match, `${field} must be declared in the form limits`);
+    return Number(match[1]);
+  };
+
+  assert.equal(
+    limit("NAME_MAX_LENGTH"),
+    METAPLEX_MAX_NAME_BYTES,
+    "the form accepts a longer name than the chain can store",
+  );
+  assert.equal(
+    limit("TICKER_MAX_LENGTH"),
+    METAPLEX_MAX_SYMBOL_BYTES,
+    "the form accepts a longer ticker than the chain can store",
+  );
+
+  // The form measures bytes, not characters, because an emoji passes a
+  // character count and still overflows the chain limit.
+  assert.match(source, /TextEncoder/);
 });

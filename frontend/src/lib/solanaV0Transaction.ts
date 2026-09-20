@@ -46,20 +46,20 @@ export const SOLANA_PACKET_LIMIT_BYTES = 1_232;
  * How much of the packet limit a wallet keeps for itself.
  *
  * Phantom rewrites a transaction before signing: ComputeBudget instructions
- * plus one Lighthouse assertion per account written. If its rewritten version
- * would not fit in 1232 bytes it cannot simulate, and it blocks the request
- * with "this dApp could be malicious".
+ * plus one Lighthouse assertion per account written. When its rewritten version
+ * will not fit it cannot simulate, and it blocks the request with "this dApp
+ * could be malicious" — which reads as a reputation problem and sends you
+ * looking in the wrong place entirely.
  *
  * Measured on mainnet by reconstructing the unsigned transaction from what
- * landed on chain:
+ * landed on chain: 257 bytes for a create writing six accounts, 182 for a buy
+ * writing two. The cost tracks accounts written rather than size, so 257 is the
+ * number to budget against.
  *
- *   create  924 unsigned -> 1181 on chain   257 bytes, 8 assertions
- *   buy     764 unsigned ->  946 on chain   182 bytes, 2 assertions
- *
- * The cost tracks accounts written, not transaction size, so create is the
- * expensive case and 257 is the number to budget against. Checking a
- * transaction against 1232 alone is what let create reach 1087 bytes and put
- * the warning in front of every creator.
+ * Duplicated in solanaUserV0Transaction.ts, which the Arena and reward-claim
+ * paths use. This module has to stay import-free of other app modules because
+ * the test harness loads it from a data URL, where "@/..." cannot resolve. A
+ * test asserts the two stay equal.
  */
 export const SOLANA_WALLET_REWRITE_BUDGET_BYTES = 257;
 

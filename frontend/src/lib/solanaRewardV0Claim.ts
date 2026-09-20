@@ -5,6 +5,7 @@ import {
   assertSolanaUserV0Intent,
   compileSolanaUserV0WithLatestBlockhash,
   simulateSolanaUserV0OrThrow,
+  SOLANA_WALLET_REWRITE_BUDGET_BYTES,
 } from "@/lib/solanaUserV0Transaction";
 import { getSolanaProvider } from "@/lib/solanaWallet";
 import type { SolanaWeb3Module } from "@/lib/solanaWeb3";
@@ -155,7 +156,16 @@ export async function submitSolanaRewardV0Claim(input: {
     throw new Error("This Solana reward is already claimed on-chain. Refresh rewards before retrying.");
   }
 
-  const intent = { payer: connected, instructions: [input.instruction] };
+  // League claims carry a Merkle proof, 32 bytes per level, and nothing in the
+  // encoder bounds its depth. Measured, a six-account claim fits a proof of 17
+  // levels (131,072 leaves); at 18 it runs out of room for the wallet's own
+  // instructions. Without this the first oversized claim would surface as
+  // Phantom calling the site malicious rather than as a size error.
+  const intent = {
+    payer: connected,
+    instructions: [input.instruction],
+    walletRewriteBudgetBytes: SOLANA_WALLET_REWRITE_BUDGET_BYTES,
+  };
   const simulated = await compileSolanaUserV0WithLatestBlockhash(input.web3, connection, intent);
   await simulateSolanaUserV0OrThrow(connection, simulated.transaction, input.label);
 

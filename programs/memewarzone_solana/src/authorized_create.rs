@@ -786,79 +786,6 @@ fn prepare_and_verify_create_auth<'info>(
 }
 
 #[inline(never)]
-/// Create and initialise the per-campaign FeeEscrow and CreatorFeeVault PDAs.
-///
-/// These used to be initialised only by the permissionless `initialize_fee_escrow`
-/// and `initialize_creator_fee_vault` instructions. Nothing in the application
-/// called them, so every new campaign was rejected at the trade preflight with
-/// "market initializing" until an operator ran a backfill script by hand.
-pub(crate) fn initialize_campaign_fee_accounts<'info>(
-    payer: &AccountInfo<'info>,
-    fee_escrow: &AccountInfo<'info>,
-    creator_fee_vault: &AccountInfo<'info>,
-    system_program: &AccountInfo<'info>,
-    campaign: Pubkey,
-    creator: Pubkey,
-    fee_escrow_bump: u8,
-    creator_fee_vault_bump: u8,
-) -> Result<()> {
-    let campaign_ref = campaign.as_ref();
-
-    let fee_escrow_bump_seed = [fee_escrow_bump];
-    let fee_escrow_seeds: &[&[u8]] = &[crate::FEE_ESCROW_SEED, campaign_ref, &fee_escrow_bump_seed];
-    create_program_account(
-        payer,
-        fee_escrow,
-        system_program,
-        8 + crate::FeeEscrow::INIT_SPACE,
-        fee_escrow_seeds,
-    )?;
-    {
-        let escrow = crate::FeeEscrow {
-            campaign,
-            weekly_pending: 0,
-            monthly_pending: 0,
-            recruiter_pending: 0,
-            airdrop_pending: 0,
-            squad_pending: 0,
-            protocol_pending: 0,
-            total_received: 0,
-            total_flushed: 0,
-            bump: fee_escrow_bump,
-            version: crate::FEE_ESCROW_VERSION,
-        };
-        let mut data = fee_escrow.try_borrow_mut_data()?;
-        let mut cursor = std::io::Cursor::new(&mut data[..]);
-        escrow.try_serialize(&mut cursor)?;
-    }
-
-    let vault_bump_seed = [creator_fee_vault_bump];
-    let vault_seeds: &[&[u8]] = &[crate::CREATOR_FEE_VAULT_SEED, campaign_ref, &vault_bump_seed];
-    create_program_account(
-        payer,
-        creator_fee_vault,
-        system_program,
-        8 + crate::CreatorFeeVault::INIT_SPACE,
-        vault_seeds,
-    )?;
-    {
-        let vault = crate::CreatorFeeVault {
-            campaign,
-            creator,
-            pending_lamports: 0,
-            total_received: 0,
-            total_claimed: 0,
-            bump: creator_fee_vault_bump,
-            version: crate::CREATOR_FEE_VAULT_VERSION,
-        };
-        let mut data = creator_fee_vault.try_borrow_mut_data()?;
-        let mut cursor = std::io::Cursor::new(&mut data[..]);
-        vault.try_serialize(&mut cursor)?;
-    }
-    Ok(())
-}
-
-#[inline(never)]
 fn write_create_authorization(
     account: &AccountInfo<'_>,
     creator: Pubkey,
@@ -976,9 +903,15 @@ fn assemble_campaign(
         buyer_count: 0,
         creator_bought_tokens: 0,
         asset_initialization_version: ASSET_INITIALIZATION_VERSION,
-        // Written true up front: mint authority is revoked later in this same atomic tx.
-        // Re-deserializing Campaign in the parent frame overflowed BPF stack frame 9.
-        mint_authority_revoked: true,
+        // False, and it must stay false here. Until V6 this said true because the
+        // revocation happened later in the same atomic transaction, so the flag was
+        // accurate by the time anyone could read it. V6 moved the revocation into
+        // finalize_campaign_launch, a separate transaction, which left this claiming
+        // a revoked authority the campaign PDA still held. Two things broke: finalize
+        // refuses a campaign already marked revoked, so no V6 launch could ever be
+        // finished, and every consumer that trusts this flag to mean "supply is
+        // fixed" was being told so while the PDA could still mint.
+        mint_authority_revoked: false,
         graduated: false,
         curve_closed: false,
         paused: false,
@@ -1092,7 +1025,9 @@ fn emit_campaign_created_body(
         curve_token_supply: prep.allocation.curve_tokens,
         liquidity_token_supply: prep.allocation.liquidity_tokens,
         reserve_token_supply: prep.allocation.reserve_tokens,
-        mint_authority_revoked: true,
+        // Matches the account: the mint authority is still held at this point and
+        // is only revoked by finalize_campaign_launch.
+        mint_authority_revoked: false,
         ticker_hash: args.ticker_hash,
         reservation_id_hash: args.reservation_id_hash,
         reservation_version: args.reservation_version,

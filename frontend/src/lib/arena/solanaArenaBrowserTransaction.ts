@@ -11,6 +11,7 @@ import {
   assertSolanaUserV0Intent,
   compileSolanaUserV0WithLatestBlockhash,
   simulateSolanaUserV0OrThrow,
+  SOLANA_WALLET_REWRITE_BUDGET_BYTES,
 } from "@/lib/solanaUserV0Transaction";
 import {
   registerArenaPaymentBeforeBroadcast,
@@ -248,7 +249,15 @@ export async function sendSolanaArenaInstruction<T>(input: {
       keys: envelope.accounts.map((account) => ({ pubkey: new web3.PublicKey(account.pubkey), isSigner: account.isSigner === true, isWritable: account.isWritable === true })),
       data: decodeBase64(envelope.dataBase64),
     });
-    const intent = { payer: connected, instructions: [instruction] };
+    // Leave the wallet room to rewrite this before signing. Measured, every
+    // Arena instruction sits between 244 and 609 bytes, so this has headroom to
+    // spare — it is here so a future instruction that grows past it fails the
+    // send with a size error instead of a Phantom "malicious dApp" warning.
+    const intent = {
+      payer: connected,
+      instructions: [instruction],
+      walletRewriteBudgetBytes: SOLANA_WALLET_REWRITE_BUDGET_BYTES,
+    };
     const simulated = await compileSolanaUserV0WithLatestBlockhash(web3, connection, intent);
     assertSolanaUserV0Intent(web3, simulated.transaction, intent);
     await simulateSolanaUserV0OrThrow(connection, simulated.transaction, input.label);

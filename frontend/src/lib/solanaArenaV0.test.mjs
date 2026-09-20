@@ -60,3 +60,75 @@ test("buy-in receipt endpoint verifies the authoritative PDA, not existence", ()
   assert.match(reader, /verifyAuthoritativeBuyInReceipt/);
   assert.doesNotMatch(handler, /getAccountInfo/);
 });
+
+// Every Arena action is a single instruction the creator signs in a wallet, so
+// each one has to leave Phantom room to rewrite it. Measured rather than
+// asserted from the source: a regex cannot tell you how large a transaction
+// compiles to, which is exactly how the launchpad's create grew to 1087 bytes
+// and started being blocked as a malicious dApp.
+test("every Arena transaction leaves the wallet room to rewrite it", async () => {
+  const web3 = await import("@solana/web3.js");
+  const { build } = await import("esbuild");
+  const os = await import("node:os");
+
+  const bundlePath = path.join(os.tmpdir(), `arena-size-${process.pid}.mjs`);
+  await build({
+    entryPoints: [path.join(root, "solanaArenaV0.ts")],
+    bundle: true,
+    format: "esm",
+    platform: "node",
+    target: "es2022",
+    outfile: bundlePath,
+    external: ["@solana/web3.js"],
+    alias: { "@": path.join(root, "..") },
+    define: {
+      "import.meta.env.VITE_FRONTEND_API_BASE": '""',
+      "import.meta.env": "globalThis.__VITE_ENV__",
+    },
+    logLevel: "silent",
+  });
+  globalThis.__VITE_ENV__ = {};
+
+  try {
+    const A = await import(`file://${bundlePath}`);
+    const { SOLANA_WALLET_REWRITE_BUDGET_BYTES: BUDGET, SOLANA_USER_V0_PACKET_LIMIT_BYTES: PACKET } =
+      await (await import("../../scripts/load-solana-v0-module.mjs")).loadSolanaUserV0Module();
+
+    const key = () => web3.Keypair.generate().publicKey.toBase58();
+    const poolId = Uint8Array.from({ length: 32 }, (_, i) => (i + 1) & 0xff);
+    const fundingId = Uint8Array.from({ length: 32 }, (_, i) => (i + 91) & 0xff);
+    const payer = web3.Keypair.generate().publicKey;
+    const blockhash = web3.Keypair.generate().publicKey.toBase58();
+    const owner = key();
+    const common = { web3, poolId };
+
+    const cases = [
+      ["open_battle_pool_v2", () => A.buildArenaOpenBattleV0Instruction({ ...common, opener: owner, assetA: key(), assetB: key(), ownerA: owner, ownerB: key(), requiredStakeA: 1_000_000_000n, requiredStakeB: 1_000_000_000n, supportDeadline: 1800000000n, depositDeadline: 1800000001n, resolveDeadline: 1800000002n })],
+      ["deposit_stake_v2", () => A.buildArenaDepositStakeV0Instruction({ ...common, staker: key() })],
+      ["support_v2", () => A.buildArenaSupportV0Instruction({ ...common, donor: key(), amountLamports: 500_000_000n })],
+      ["buy_in_v2", () => A.buildArenaBuyInV0Instruction({ ...common, entryAsset: key(), entrant: key(), amountLamports: 500_000_000n })],
+      ["prize_boost_v2", () => A.buildArenaPrizeBoostV0Instruction({ ...common, fundingId, funder: key(), amountLamports: 500_000_000n })],
+      ["claim_winner", () => A.buildArenaWinnerClaimV0Instruction({ ...common, winner: key() })],
+      ["stake_refund_v2", () => A.buildArenaStakeRefundV0Instruction({ ...common, staker: key() })],
+      ["buy_in_refund_v2", () => A.buildArenaBuyInRefundV0Instruction({ ...common, entryAsset: key(), entrant: key() })],
+      ["prize_boost_refund_v2", () => A.buildArenaPrizeBoostRefundV0Instruction({ ...common, fundingId, funder: key() })],
+      ["settle_expired_v2", () => A.buildArenaSettleExpiredV0Instruction({ ...common, caller: key() })],
+    ];
+
+    for (const [name, make] of cases) {
+      const { instruction } = await make();
+      const message = new web3.TransactionMessage({
+        payerKey: payer,
+        recentBlockhash: blockhash,
+        instructions: [instruction],
+      }).compileToV0Message();
+      const bytes = new web3.VersionedTransaction(message).serialize().length;
+      assert.ok(
+        PACKET - bytes >= BUDGET,
+        `${name} is ${bytes} bytes, leaving ${PACKET - bytes} for the wallet; it needs ${BUDGET}`,
+      );
+    }
+  } finally {
+    fs.rmSync(bundlePath, { force: true });
+  }
+});

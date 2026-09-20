@@ -21,6 +21,10 @@ if grep -q '^version = 4' Cargo.lock 2>/dev/null; then
 fi
 
 anchor build --no-idl
+# Delete the previous IDL first. The fallback below only wrote the file when it
+# was missing or empty, so a stale IDL from an earlier build survived every
+# rebuild and silently described the wrong program.
+rm -f target/idl/memewarzone_solana.json
 anchor idl build -p memewarzone_solana >/tmp/mwz-idl-build.log 2>&1 || true
 # If anchor did not write files, extract JSON from log (fallback)
 if [ ! -s target/idl/memewarzone_solana.json ]; then
