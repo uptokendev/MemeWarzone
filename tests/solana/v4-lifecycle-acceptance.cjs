@@ -305,6 +305,22 @@ ${source}`,
       credited.includes(feeEscrow),
       `${label}: the fee escrow received nothing; the fee must still be collected`,
     );
+    const deltas = credited
+      .map((k) => {
+        const i = keys.indexOf(k);
+        const lamports = tx.meta.postBalances[i] - tx.meta.preBalances[i];
+        const name =
+          k === feeEscrow
+            ? "feeEscrow"
+            : k === campaignAccounts.solVault.toBase58()
+              ? "solVault"
+              : k === creatorVault
+                ? "creatorFeeVault"
+                : "other";
+        return `${name}+${lamports}`;
+      })
+      .join(" ");
+    console.log(`      [fee-route] ${label}: ${credited.length} credited -> ${deltas}`);
   }
 
   async function sendLegacy(payer, ixs, label) {
