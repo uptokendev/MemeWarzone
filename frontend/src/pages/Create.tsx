@@ -27,6 +27,7 @@ import {
   finalizeSolanaDirectCreate,
   preflightSolanaDirectCreate,
 } from "@/lib/solanaDirectCreate";
+import { finalizeSolanaLaunch } from "@/lib/solanaFinalizeLaunchSubmit";
 import { submitSolanaV4CreateFromAuthorization } from "@/lib/solanaV4CreateSubmit";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import { apiFetch } from "@/lib/apiBase";
@@ -638,6 +639,18 @@ const Create = () => {
         const finalized = await finalizeSolanaDirectCreate({
           finalizeToken: authorization.finalizeToken,
           deployTxHash: created.signature,
+        });
+
+        // Second transaction: Metaplex metadata, mint authority revocation and
+        // the fee accounts. Split out of create because carrying them there left
+        // Phantom too little room to simulate, and it warned on every launch.
+        // Skipping it leaves a nameless, untradeable token, so a failure here is
+        // surfaced rather than swallowed — but the campaign itself is already
+        // safely on chain and can be finished later.
+        toast.message("Naming your token and opening trading…");
+        await finalizeSolanaLaunch({
+          campaignAddress: finalized.campaignAddress || created.campaignAddress,
+          programId: created.programId,
         });
 
         analytics.track("token_create_succeeded", { surface: "launchpad", chain: "solana" });

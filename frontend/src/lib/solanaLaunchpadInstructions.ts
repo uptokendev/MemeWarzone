@@ -24,10 +24,13 @@ export const SELL_TOKENS_DISCRIMINATOR = new Uint8Array([0x72, 0xf2, 0x19, 0x0c,
 
 export type CreateCampaignInstructionArgs = {
   campaignId: number[];
-  /** Metaplex on-chain name, max 32 bytes UTF-8. */
-  name: string;
-  /** Metaplex on-chain symbol, max 10 bytes UTF-8. */
-  symbol: string;
+  /**
+   * Metaplex fields. Optional here because create no longer encodes them — the
+   * API still returns them in the same payload, and finalize_campaign_launch
+   * consumes them.
+   */
+  name?: string;
+  symbol?: string;
   metadataHash: number[];
   clusterHash: number[];
   tickerHash: number[];
@@ -51,12 +54,13 @@ export type CreateCampaignInstructionAccounts = {
   tokenVault: string;
   solVault: string;
   createAuthorization: string;
-  /** Per-campaign fee escrow PDA: ["fee-escrow", campaign]. */
-  feeEscrow: string;
-  /** Per-campaign creator fee vault PDA: ["creator-fee-vault", campaign]. */
-  creatorFeeVault: string;
-  /** Metaplex metadata PDA: ["metadata", MPL_TOKEN_METADATA_ID, mint]. */
-  tokenMetadata: string;
+  /**
+   * finalize_campaign_launch's accounts, not create's. Still delivered in the
+   * same API payload, so they stay on the type, but create does not send them.
+   */
+  feeEscrow?: string;
+  creatorFeeVault?: string;
+  tokenMetadata?: string;
   instructions?: string;
   tokenProgram?: string;
   tokenMetadataProgram?: string;
@@ -143,8 +147,6 @@ export function encodeCreateCampaignData(args: CreateCampaignInstructionArgs): U
   return concatBytes([
     CREATE_CAMPAIGN_DISCRIMINATOR,
     Uint8Array.from(args.campaignId),
-    borshString(args.name, METAPLEX_MAX_NAME_BYTES, "name"),
-    borshString(args.symbol, METAPLEX_MAX_SYMBOL_BYTES, "symbol"),
     Uint8Array.from(args.metadataHash),
     Uint8Array.from(args.clusterHash),
     Uint8Array.from(args.tickerHash),
@@ -259,10 +261,10 @@ export function buildCreateCampaignInstruction(
       meta(a.solVault, false, true),
       meta(a.createAuthorization, false, true),
       meta(a.instructions || SOLANA_INSTRUCTIONS_SYSVAR, false, false),
-      meta(a.feeEscrow, false, true),
-      meta(a.creatorFeeVault, false, true),
-      meta(a.tokenMetadata, false, true),
-      meta(a.tokenMetadataProgram || MPL_TOKEN_METADATA_PROGRAM_ID, false, false),
+      // feeEscrow, creatorFeeVault, tokenMetadata and tokenMetadataProgram are
+      // finalize_campaign_launch's accounts now, not create's. Four extra keys
+      // here left Phantom too little room for its Lighthouse assertions and it
+      // refused to simulate; see SOLANA_RELEASE_MAX_BYTES.
       meta(a.tokenProgram || SOLANA_TOKEN_PROGRAM_ID, false, false),
       meta(a.systemProgram || SOLANA_SYSTEM_PROGRAM_ID || SystemProgram.programId.toBase58(), false, false),
     ],
@@ -306,5 +308,88 @@ export function buildTradeTokensInstruction(
       { pubkey: new PublicKey(a.creatorFeeVault), isSigner: false, isWritable: true },
     ],
     data: encodeTradeTokensData(input),
+  });
+}
+export type FinalizeLaunchInstructionArgs = {
+  name: string;
+  symbol: string;
+  deadline: string;
+};
+
+export type FinalizeLaunchInstructionAccounts = {
+  payer: string;
+  globalConfig: string;
+  campaign: string;
+  mint: string;
+  tokenMetadata: string;
+  feeEscrow: string;
+  creatorFeeVault: string;
+  instructions?: string;
+  tokenProgram?: string;
+  systemProgram?: string;
+};
+
+/**
+ * Anchor discriminator for `finalize_campaign_launch`: sha256 of
+ * "global:finalize_campaign_launch", first eight bytes. Pinned rather than
+ * computed because the browser has no sync sha256, and asserted against the
+ * derived value in the server test that owns the same constant.
+ */
+export const FINALIZE_CAMPAIGN_LAUNCH_DISCRIMINATOR = new Uint8Array([
+  0xd5, 0x71, 0xa3, 0x7d, 0xd7, 0x2b, 0x8d, 0x96,
+]);
+
+export function encodeFinalizeCampaignLaunchData(args: FinalizeLaunchInstructionArgs): Uint8Array {
+  return concatBytes([
+    FINALIZE_CAMPAIGN_LAUNCH_DISCRIMINATOR,
+    borshString(args.name, METAPLEX_MAX_NAME_BYTES, "name"),
+    borshString(args.symbol, METAPLEX_MAX_SYMBOL_BYTES, "symbol"),
+    i64le(args.deadline),
+  ]);
+}
+
+/**
+ * The second half of a launch: Metaplex metadata, mint authority revocation and
+ * the per-campaign fee accounts.
+ *
+ * The creator signs and pays for this, which is why it is built in the browser
+ * rather than sent by a backend wallet. It is small — well under half the packet
+ * limit — so the wallet has ample room for its own instructions, unlike the
+ * create it was split out of.
+ *
+ * Account order is positional in Anchor and must match FinalizeCampaignLaunch in
+ * programs/memewarzone_solana/src/finalize_launch.rs.
+ */
+export function buildFinalizeCampaignLaunchInstruction(
+  web3: SolanaWeb3Module,
+  input: {
+    programId: string;
+    args: FinalizeLaunchInstructionArgs;
+    accounts: FinalizeLaunchInstructionAccounts;
+  },
+): TransactionInstruction {
+  const { PublicKey, TransactionInstruction } = web3;
+  const a = input.accounts;
+  const meta = (pubkey: string, isSigner: boolean, isWritable: boolean) => ({
+    pubkey: new PublicKey(pubkey),
+    isSigner,
+    isWritable,
+  });
+  return new TransactionInstruction({
+    programId: new PublicKey(input.programId),
+    keys: [
+      meta(a.payer, true, true),
+      meta(a.globalConfig, false, false),
+      meta(a.campaign, false, true),
+      meta(a.mint, false, true),
+      meta(a.tokenMetadata, false, true),
+      meta(MPL_TOKEN_METADATA_PROGRAM_ID, false, false),
+      meta(a.feeEscrow, false, true),
+      meta(a.creatorFeeVault, false, true),
+      meta(a.instructions || SOLANA_INSTRUCTIONS_SYSVAR, false, false),
+      meta(a.tokenProgram || SOLANA_TOKEN_PROGRAM_ID, false, false),
+      meta(a.systemProgram || SOLANA_SYSTEM_PROGRAM_ID, false, false),
+    ],
+    data: encodeFinalizeCampaignLaunchData(input.args),
   });
 }

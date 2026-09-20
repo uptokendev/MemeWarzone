@@ -17,10 +17,9 @@ use anchor_spl::token::{
     self,
     spl_token::{
         self,
-        instruction::AuthorityType,
         state::{Account as SplTokenAccount, Mint as SplMint},
     },
-    MintTo, SetAuthority,
+    MintTo,
 };
 
 use crate::{
@@ -37,8 +36,8 @@ pub const CAMPAIGN_MINT_SEED: &[u8] = b"campaign-mint";
 pub const TOKEN_VAULT_SEED: &[u8] = b"token-vault";
 pub const SOL_VAULT_SEED: &[u8] = b"sol-vault";
 
-pub const CREATE_AUTH_DOMAIN: &[u8] = b"MEMEWARZONE_SOLANA_CREATE_V5";
-pub const CREATE_AUTH_SCHEMA_VERSION: u16 = 5;
+pub const CREATE_AUTH_DOMAIN: &[u8] = b"MEMEWARZONE_SOLANA_CREATE_V6";
+pub const CREATE_AUTH_SCHEMA_VERSION: u16 = 6;
 pub const ASSET_INITIALIZATION_VERSION: u16 = 1;
 
 pub const MIN_SCHEDULE_SECONDS: i64 = 300;
@@ -94,17 +93,6 @@ pub struct CreateCampaign<'info> {
     /// CHECK: The address constraint pins this account to the Instructions sysvar.
     #[account(address = INSTRUCTIONS_SYSVAR_ID)]
     pub instructions: UncheckedAccount<'info>,
-    /// CHECK: per-campaign fee escrow PDA; created in the handler.
-    #[account(mut, seeds = [crate::FEE_ESCROW_SEED, campaign.key().as_ref()], bump)]
-    pub fee_escrow: UncheckedAccount<'info>,
-    /// CHECK: per-campaign creator fee vault PDA; created in the handler.
-    #[account(mut, seeds = [crate::CREATOR_FEE_VAULT_SEED, campaign.key().as_ref()], bump)]
-    pub creator_fee_vault: UncheckedAccount<'info>,
-    /// CHECK: Metaplex metadata PDA; address is derived and verified in the handler.
-    #[account(mut)]
-    pub token_metadata: UncheckedAccount<'info>,
-    /// CHECK: pinned to MPL_TOKEN_METADATA_ID inside create_campaign_metadata.
-    pub token_metadata_program: UncheckedAccount<'info>,
     /// CHECK: SPL Token program.
     pub token_program: UncheckedAccount<'info>,
     /// CHECK: System program.
@@ -199,10 +187,10 @@ pub struct CreateAuthorization {
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct CreateCampaignArgs {
     pub campaign_id: [u8; 32],
-    /// Metaplex on-chain name. Capped at MAX_NAME_LENGTH.
-    pub name: String,
-    /// Metaplex on-chain symbol. Capped at MAX_SYMBOL_LENGTH.
-    pub symbol: String,
+    /// The Metaplex name and symbol are NOT here. They are arguments to
+    /// finalize_campaign_launch instead, which is what actually writes the
+    /// metadata account. Keeping them here cost 31 bytes of a transaction that
+    /// had none to spare; see crate::finalize_launch.
     pub metadata_hash: [u8; 32],
     pub cluster_hash: [u8; 32],
     pub ticker_hash: [u8; 32],
@@ -284,7 +272,7 @@ fn create_token_program_account<'info>(
     Ok(())
 }
 
-fn create_program_account<'info>(
+pub(crate) fn create_program_account<'info>(
     payer: &AccountInfo<'info>,
     account: &AccountInfo<'info>,
     system_program: &AccountInfo<'info>,
@@ -597,54 +585,17 @@ pub fn create_campaign_handler(
         );
     }
 
-    // Metaplex metadata MUST be created while the campaign PDA is still the mint
-    // authority. CreateMetadataAccountV3 requires that authority to sign, and the
-    // revocation immediately below is irreversible: a mint that leaves this
-    // instruction without metadata can never be given any. Every token launched
-    // before this call existed is permanently unnamed in every Solana wallet and
-    // aggregator. Do not move this below set_authority.
-    crate::token_metadata::create_campaign_metadata(
-        &ctx.accounts.token_metadata.to_account_info(),
-        &mint_info,
-        &campaign_info,
-        &payer_info,
-        &system_info,
-        &ctx.accounts.token_metadata_program.to_account_info(),
-        campaign_signer,
-        &args.name,
-        &args.symbol,
-    )?;
-
-    token::set_authority(
-        CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            SetAuthority {
-                account_or_mint: mint_info.clone(),
-                current_authority: campaign_info.clone(),
-            },
-            campaign_signer,
-        ),
-        AuthorityType::MintTokens,
-        None,
-    )?;
-
-    verify_mint_authority_revoked(&mint_info)?;
-    verify_token_metadata_created(&ctx.accounts.token_metadata.to_account_info())?;
-
-    // A campaign that exists but cannot be traded is a broken state, so its fee
-    // PDAs are created here rather than by the permissionless initializers.
-    // Those instructions remain for campaigns created before this change; every
-    // campaign created from now on leaves this instruction ready to trade.
-    initialize_campaign_fee_accounts(
-        &payer_info,
-        &ctx.accounts.fee_escrow.to_account_info(),
-        &ctx.accounts.creator_fee_vault.to_account_info(),
-        &system_info,
-        campaign_key,
-        creator_key,
-        ctx.bumps.fee_escrow,
-        ctx.bumps.creator_fee_vault,
-    )?;
+    // Metadata, revocation and the fee PDAs deliberately do NOT happen here.
+    // They live in finalize_campaign_launch, which the keeper sends immediately
+    // afterwards. Putting them in this instruction added four accounts and left
+    // Phantom too little room to insert its Lighthouse assertions, so it refused
+    // to simulate and warned every creator that the site might be malicious.
+    // See the module docs on crate::finalize_launch for the measurements.
+    //
+    // The campaign is intentionally not tradeable until that call lands: the fee
+    // escrow does not exist yet, and every trade path already requires it.
+    // `mint_authority_revoked` stays false until finalize sets it, which is what
+    // the keeper scans for.
     write_create_authorization(
         &ctx.accounts.create_authorization.to_account_info(),
         creator_key,
@@ -841,7 +792,7 @@ fn prepare_and_verify_create_auth<'info>(
 /// and `initialize_creator_fee_vault` instructions. Nothing in the application
 /// called them, so every new campaign was rejected at the trade preflight with
 /// "market initializing" until an operator ran a backfill script by hand.
-fn initialize_campaign_fee_accounts<'info>(
+pub(crate) fn initialize_campaign_fee_accounts<'info>(
     payer: &AccountInfo<'info>,
     fee_escrow: &AccountInfo<'info>,
     creator_fee_vault: &AccountInfo<'info>,
@@ -904,38 +855,6 @@ fn initialize_campaign_fee_accounts<'info>(
         let mut cursor = std::io::Cursor::new(&mut data[..]);
         vault.try_serialize(&mut cursor)?;
     }
-    Ok(())
-}
-
-/// Refuse to finish a create whose metadata account did not materialise.
-///
-/// The revocation above is one-way, so "minted but unnamed" is not a state worth
-/// tolerating: better to fail the transaction and let the creator retry.
-fn verify_token_metadata_created(metadata_info: &AccountInfo<'_>) -> Result<()> {
-    require!(
-        metadata_info.owner == &crate::token_metadata::MPL_TOKEN_METADATA_ID,
-        LaunchpadError::InvalidMetadata
-    );
-    require!(
-        !metadata_info.data_is_empty(),
-        LaunchpadError::InvalidMetadata
-    );
-    Ok(())
-}
-
-fn verify_mint_authority_revoked(mint_info: &AccountInfo<'_>) -> Result<()> {
-    let mint_state_after = {
-        let data = mint_info.try_borrow_data()?;
-        SplMint::unpack(&data)?
-    };
-    require!(
-        mint_state_after.mint_authority == COption::None,
-        LaunchpadError::InvalidCampaign
-    );
-    require!(
-        mint_state_after.freeze_authority == COption::None,
-        LaunchpadError::InvalidCampaign
-    );
     Ok(())
 }
 
@@ -1253,13 +1172,6 @@ pub fn build_create_authorization_message(
     message.extend_from_slice(sol_vault.as_ref());
     message.extend_from_slice(token_program.as_ref());
     message.extend_from_slice(args.metadata_hash.as_ref());
-    // Length-prefixed so that ("ab","c") and ("a","bc") cannot collide into the
-    // same signed message. Only the 32-byte digest of this message travels in
-    // the transaction, so inlining the fields costs nothing on the wire.
-    message.extend_from_slice(&(args.name.len() as u32).to_le_bytes());
-    message.extend_from_slice(args.name.as_bytes());
-    message.extend_from_slice(&(args.symbol.len() as u32).to_le_bytes());
-    message.extend_from_slice(args.symbol.as_bytes());
     message.extend_from_slice(args.ticker_hash.as_ref());
     message.extend_from_slice(args.reservation_id_hash.as_ref());
     message.extend_from_slice(&args.reservation_version.to_le_bytes());
@@ -1728,8 +1640,6 @@ mod tests {
     fn test_create_args(deadline: i64) -> CreateCampaignArgs {
         CreateCampaignArgs {
             campaign_id: [1; 32],
-            name: "Kaiju88".to_string(),
-            symbol: "K88".to_string(),
             metadata_hash: [2; 32],
             cluster_hash: [3; 32],
             ticker_hash: [4; 32],
@@ -1805,12 +1715,16 @@ mod tests {
         }
     }
 
+    /// The domain and schema move together with the shape of the signed
+    /// message. V6 dropped name and symbol from it, so a V5 signature must not
+    /// verify against a V6 program: an operator running an old backend would
+    /// otherwise be authorizing a message the program reads differently.
     #[test]
     fn create_v3_removes_creator_supplied_mint() {
         let args = test_create_args(200);
         assert_eq!(args.campaign_id, [1; 32]);
-        assert_eq!(CREATE_AUTH_SCHEMA_VERSION, 5);
-        assert_eq!(CREATE_AUTH_DOMAIN, b"MEMEWARZONE_SOLANA_CREATE_V5");
+        assert_eq!(CREATE_AUTH_SCHEMA_VERSION, 6);
+        assert_eq!(CREATE_AUTH_DOMAIN, b"MEMEWARZONE_SOLANA_CREATE_V6");
     }
 
     #[test]
@@ -2039,34 +1953,9 @@ mod tests {
             build_test_message(generation_key, &generation, creator, &changed)
         );
 
-        changed = args.clone();
-        changed.name = "Different".to_string();
-        assert_ne!(
-            baseline,
-            build_test_message(generation_key, &generation, creator, &changed),
-            "name must be covered by the route signature"
-        );
-
-        changed = args.clone();
-        changed.symbol = "XXX".to_string();
-        assert_ne!(
-            baseline,
-            build_test_message(generation_key, &generation, creator, &changed),
-            "symbol must be covered by the route signature"
-        );
-
-        // Length prefixes must make ("ab","c") and ("a","bc") distinct messages.
-        let mut shifted = args.clone();
-        shifted.name = "AB".to_string();
-        shifted.symbol = "C".to_string();
-        let mut shifted_other = args.clone();
-        shifted_other.name = "A".to_string();
-        shifted_other.symbol = "BC".to_string();
-        assert_ne!(
-            build_test_message(generation_key, &generation, creator, &shifted),
-            build_test_message(generation_key, &generation, creator, &shifted_other),
-            "length-prefixing must prevent field-boundary collisions"
-        );
+        // Name and symbol are no longer bound here because they are no longer
+        // arguments to create. crate::finalize_launch carries them, and its
+        // tests cover the same collision cases against that message.
 
         changed = args.clone();
         changed.graduation_target_usd_micros = GRADUATION_TARGET_50K_USD_MICROS;

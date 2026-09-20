@@ -33,6 +33,7 @@ import {
 import { getScheduledFactoryAddress } from "@/lib/scheduledFactoryConfig";
 import { requestSolanaCreateAuthorizationV4 } from "@/lib/solanaCreateAuthorizationV4";
 import { submitSolanaV4CreateFromAuthorization } from "@/lib/solanaV4CreateSubmit";
+import { finalizeSolanaLaunch } from "@/lib/solanaFinalizeLaunchSubmit";
 import { signSolanaDraftAction } from "@/lib/solanaWallet";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 
@@ -360,6 +361,17 @@ export default function PushDraftLive() {
       if (created.recovered) {
         toast.message("Existing Solana campaign found for this draft — finalizing without a new create.");
       }
+
+      // Second transaction: Metaplex metadata, mint authority revocation and the
+      // fee accounts. Draft and scheduled launches go through the same create as
+      // Direct Deploy, so they need the same finishing step; without it the token
+      // has no name in any wallet and cannot trade. A scheduled launch still
+      // finalizes now — launch_at gates trading, not naming.
+      toast.message("Naming your token and opening trading…");
+      await finalizeSolanaLaunch({
+        campaignAddress: created.campaignAddress,
+        programId: created.programId,
+      });
 
       const createVaults = {
         tokenVault: authorization.accounts?.tokenVault || null,

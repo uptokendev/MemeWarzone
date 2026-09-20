@@ -18,6 +18,7 @@ import {
 
 const {
   SOLANA_RELEASE_MAX_BYTES,
+  SOLANA_WALLET_REWRITE_BUDGET_BYTES,
   assertLaunchpadV0Intent,
   assertLookupTableContains,
   buildLaunchpadAltPlan,
@@ -30,8 +31,11 @@ const {
 } = await loadSolanaV0Module();
 const {
   buildCreateCampaignInstruction,
+  buildFinalizeCampaignLaunchInstruction,
   buildLaunchpadEd25519Instruction,
   buildTradeTokensInstruction,
+  encodeFinalizeCampaignLaunchData,
+  FINALIZE_CAMPAIGN_LAUNCH_DISCRIMINATOR,
 } = await loadSolanaLaunchpadInstructions();
 
 const PROGRAM_ID = new PublicKey("3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt");
@@ -92,7 +96,12 @@ function planAddress(plan, label) {
 function makeProductionCreateFixture() {
   const payer = Keypair.generate().publicKey;
   const plan = buildLaunchpadAltPlan(web3);
-  const lookupTable = makeLookupTable(plan.map((entry) => entry.address));
+  // The active generation PDA is derived from GlobalConfig.activeGenerationId,
+  // so it cannot be computed without an RPC read and is not part of the static
+  // plan. scripts/solana/create-launchpad-alt.mjs still puts it in the table,
+  // which is what lets it compress here.
+  const generationConfig = Keypair.generate().publicKey;
+  const lookupTable = makeLookupTable([...plan.map((entry) => entry.address), generationConfig]);
   const ed25519Instruction = buildLaunchpadEd25519Instruction(web3, {
     publicKey: Keypair.generate().publicKey.toBase58(),
     message: Uint8Array.from(bytes32(1)),
@@ -102,10 +111,6 @@ function makeProductionCreateFixture() {
     programId: PROGRAM_ID.toBase58(),
     args: {
       campaignId: bytes32(2),
-      // Worst case on purpose: Metaplex caps are 32 and 10, and the envelope
-      // must fit the largest name a creator can actually choose.
-      name: "A".repeat(32),
-      symbol: "B".repeat(10),
       metadataHash: bytes32(3),
       clusterHash: bytes32(4),
       tickerHash: bytes32(5),
@@ -119,20 +124,16 @@ function makeProductionCreateFixture() {
     accounts: {
       creator: payer.toBase58(),
       globalConfig: planAddress(plan, "globalConfig").toBase58(),
-      generationConfig: Keypair.generate().publicKey.toBase58(),
+      generationConfig: generationConfig.toBase58(),
       creatorProfile: Keypair.generate().publicKey.toBase58(),
       riskProfile: Keypair.generate().publicKey.toBase58(),
-      clusterProfile: Keypair.generate().publicKey.toBase58(),
+      clusterProfile: planAddress(plan, "clusterProfile").toBase58(),
       campaign: Keypair.generate().publicKey.toBase58(),
       mint: Keypair.generate().publicKey.toBase58(),
       tokenVault: Keypair.generate().publicKey.toBase58(),
       solVault: Keypair.generate().publicKey.toBase58(),
       createAuthorization: Keypair.generate().publicKey.toBase58(),
       instructions: planAddress(plan, "instructionsSysvar").toBase58(),
-      feeEscrow: Keypair.generate().publicKey.toBase58(),
-      creatorFeeVault: Keypair.generate().publicKey.toBase58(),
-      // Unique per campaign, so it can never be served from the lookup table.
-      tokenMetadata: Keypair.generate().publicKey.toBase58(),
       tokenProgram: planAddress(plan, "tokenProgram").toBase58(),
       systemProgram: planAddress(plan, "systemProgram").toBase58(),
     },
@@ -228,10 +229,12 @@ test("production CREATE instruction compiles to a one-signer V0 envelope under t
   );
 
   reportSize("CREATE", legacy, stats);
-  // 14 before Metaplex metadata; the metadata PDA and the Metaplex program
-  // account bring it to 16. The data grows by the borsh-encoded name and symbol.
-  assert.equal(fixture.programInstruction.keys.length, 18);
-  assert.equal(fixture.programInstruction.data.length, 282);
+  // Back to 14. V5 briefly took this to 18 by creating the metadata account,
+  // the fee escrow and the creator fee vault inline; that is finalize's work
+  // now. Phantom guards each written account with a Lighthouse assertion, so
+  // account count is a size cost twice over and this number is load-bearing.
+  assert.equal(fixture.programInstruction.keys.length, 14);
+  assert.equal(fixture.programInstruction.data.length, 232);
   assert.equal(stats.requiredSigners, 1);
   assert.equal(stats.instructionCount, 2);
   assert.ok(stats.lookupReadonlyCount + stats.lookupWritableCount >= 4);
@@ -518,6 +521,93 @@ test("CREATE and BUY/SELL V0 compile through the same helper used by graduation"
   );
   assert.equal(createCompiled.stats.requiredSigners, 1);
   assert.equal(tradeCompiled.stats.requiredSigners, 1);
-  assert.ok(createCompiled.stats.serializedBytes <= SOLANA_RELEASE_MAX_BYTES);
+  // Exact, not a bound: the ceiling is the measured worst case, so any growth
+  // here has to be paid for rather than absorbed. See SOLANA_RELEASE_MAX_BYTES.
+  assert.equal(
+    createCompiled.stats.serializedBytes,
+    SOLANA_RELEASE_MAX_BYTES,
+    "create changed size; it must stay at the measured ceiling",
+  );
   assert.ok(tradeCompiled.stats.serializedBytes <= SOLANA_RELEASE_MAX_BYTES);
+});
+
+test("FINALIZE compiles to a small one-signer V0 envelope with ample wallet headroom", () => {
+  const payer = Keypair.generate().publicKey;
+  const plan = buildLaunchpadAltPlan(web3);
+  const lookupTable = makeLookupTable(plan.map((entry) => entry.address));
+
+  const ed25519Instruction = buildLaunchpadEd25519Instruction(web3, {
+    publicKey: Keypair.generate().publicKey.toBase58(),
+    message: Uint8Array.from(bytes32(21)),
+    signature: Uint8Array.from({ length: 64 }, (_, index) => (index + 31) & 0xff),
+  });
+  const programInstruction = buildFinalizeCampaignLaunchInstruction(web3, {
+    programId: PROGRAM_ID.toBase58(),
+    // Worst case on purpose: Metaplex caps are 32 and 10.
+    args: { name: "A".repeat(32), symbol: "B".repeat(10), deadline: "1800000000" },
+    accounts: {
+      payer: payer.toBase58(),
+      globalConfig: planAddress(plan, "globalConfig").toBase58(),
+      campaign: Keypair.generate().publicKey.toBase58(),
+      mint: Keypair.generate().publicKey.toBase58(),
+      tokenMetadata: Keypair.generate().publicKey.toBase58(),
+      feeEscrow: Keypair.generate().publicKey.toBase58(),
+      creatorFeeVault: Keypair.generate().publicKey.toBase58(),
+    },
+  });
+
+  const { stats } = compileAndAssertLaunchpadV0(
+    web3,
+    {
+      payer,
+      recentBlockhash: BLOCKHASH,
+      instructions: [ed25519Instruction, programInstruction],
+      lookupTableAccounts: [lookupTable],
+    },
+    { payer, ed25519Instruction, programInstruction },
+  );
+
+  assert.equal(programInstruction.keys.length, 11);
+  assert.equal(stats.requiredSigners, 1);
+  assert.equal(stats.instructionCount, 2);
+
+  // The point of splitting create in two was to give Phantom room. Phantom
+  // needed 257 bytes for a create of comparable shape, so anything under about
+  // 900 here is comfortable; this asserts a real margin rather than merely
+  // fitting inside the 1232-byte packet limit.
+  assert.ok(
+    stats.serializedBytes <= 700,
+    `finalize is ${stats.serializedBytes} bytes; it must leave the wallet room to rewrite it`,
+  );
+  reportSize("FINALIZE", legacyBytes(payer, [ed25519Instruction, programInstruction]), stats);
+
+  // The browser pins this discriminator because it has no sync sha256. If the
+  // instruction is ever renamed, this is the constant that goes stale.
+  assert.deepEqual(
+    Buffer.from(FINALIZE_CAMPAIGN_LAUNCH_DISCRIMINATOR),
+    Buffer.from("d571a37dd72b8d96", "hex"),
+  );
+  assert.equal(
+    encodeFinalizeCampaignLaunchData({ name: "Kaiju88", symbol: "K88", deadline: "1800000000" }).length,
+    8 + 4 + 7 + 4 + 3 + 8,
+  );
+});
+
+test("every wallet-signed launchpad transaction leaves the wallet room to rewrite it", () => {
+  // The failure this guards against is not a rejected transaction. Phantom
+  // silently stops simulating and shows "this dApp could be malicious", which
+  // looks like a reputation problem and sends you hunting in the wrong place.
+  const budget = SOLANA_WALLET_REWRITE_BUDGET_BYTES;
+  const cases = [
+    ["CREATE", SOLANA_RELEASE_MAX_BYTES],
+    ["BUY", 797],
+    ["SELL", 789],
+    ["FINALIZE", 627],
+  ];
+  for (const [label, bytes] of cases) {
+    assert.ok(
+      bytes + budget <= 1232,
+      `${label} at ${bytes} bytes leaves ${1232 - bytes}, under the ${budget} a wallet needs`,
+    );
+  }
 });

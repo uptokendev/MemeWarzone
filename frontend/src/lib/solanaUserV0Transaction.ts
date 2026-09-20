@@ -15,6 +15,19 @@ export type SolanaUserV0Intent = {
   maxRequiredSigners?: number;
   hardMaxBytes?: number;
   /**
+   * How many bytes to leave the wallet for its own rewriting. Phantom prepends
+   * ComputeBudget instructions and one Lighthouse assertion per account
+   * written; measured on mainnet it took 257 bytes for a create and 182 for a
+   * buy. When it cannot fit them it stops simulating and blocks the request as
+   * "this dApp could be malicious", which reads as a reputation problem rather
+   * than a size one.
+   *
+   * Left unset the check is skipped, because the Meteora SDK builds its own
+   * swap instructions and we do not control their account count. Set it on any
+   * path whose size we do control.
+   */
+  walletRewriteBudgetBytes?: number;
+  /**
    * Wallets such as Phantom may append safety / priority instructions after signing.
    * When enabled, the exact expected instruction sequence must still exist contiguously
    * and unchanged, but additional wallet instructions may appear before or after it.
@@ -24,6 +37,8 @@ export type SolanaUserV0Intent = {
 
 export type SolanaUserV0Stats = {
   serializedBytes: number;
+  /** Bytes left for the wallet to add its own instructions before signing. */
+  walletHeadroomBytes: number;
   requiredSigners: number;
   instructionCount: number;
 };
@@ -103,6 +118,12 @@ export function assertSolanaUserV0Intent(
   if (serializedBytes > hardMaxBytes) {
     throw new Error(`Solana V0 transaction is ${serializedBytes} bytes; hard max is ${hardMaxBytes}`);
   }
+  const walletBudget = expectation.walletRewriteBudgetBytes ?? 0;
+  if (walletBudget > 0 && serializedBytes + walletBudget > SOLANA_USER_V0_PACKET_LIMIT_BYTES) {
+    throw new Error(
+      `Solana V0 transaction is ${serializedBytes} bytes, leaving ${SOLANA_USER_V0_PACKET_LIMIT_BYTES - serializedBytes} for the wallet; it needs ${walletBudget}`,
+    );
+  }
 
   const payer = transaction.message.staticAccountKeys[0];
   if (!payer || payer.toBase58() !== keyString(expectation.payer)) {
@@ -125,6 +146,7 @@ export function assertSolanaUserV0Intent(
 
   return {
     serializedBytes,
+    walletHeadroomBytes: SOLANA_USER_V0_PACKET_LIMIT_BYTES - serializedBytes,
     requiredSigners,
     instructionCount: decompiled.instructions.length,
   };

@@ -9,24 +9,61 @@ import type { SolanaWeb3Module } from "@/lib/solanaWeb3";
 
 export const SOLANA_PACKET_LIMIT_BYTES = 1_232;
 /**
- * Release ceiling for a launchpad V0 transaction, under Solana's 1232-byte
- * packet limit.
+ * Release ceiling for a launchpad V0 transaction, measured rather than chosen.
  *
- * Worst case, with a 32-character name and 10-character symbol, a create
- * compiles to 1106 bytes. Two changes account for the growth from the original
- * 1000: Metaplex token metadata (the metadata PDA, the Metaplex program and the
- * name/symbol arguments), and creating the campaign's FeeEscrow and
- * CreatorFeeVault in the same instruction so a new campaign is tradeable the
- * moment it exists.
+ * The binding constraint is not Solana's 1232-byte packet limit, it is how much
+ * of that limit Phantom needs for itself. Phantom rewrites a transaction before
+ * signing: it prepends ComputeBudget instructions and inserts Lighthouse
+ * assertions guarding each account written. If the rewritten transaction would
+ * not fit, Phantom cannot simulate it and blocks the request with "this dApp
+ * could be malicious" — a full-screen warning on every launch.
  *
- * 1150 leaves 82 bytes of headroom against the protocol limit and 44 above the
- * measured worst case. The original 1000 was a round number rather than a
- * measured constraint, chosen when create was ~927 bytes.
+ * Measured on mainnet, reconstructing each unsigned transaction from what
+ * landed on chain:
  *
- * The Metaplex program is deliberately NOT in the lookup table: the launchpad
- * ALT was created without an authority and can never be extended.
+ *   Kaiju88 create, 14 accounts   924 unsigned + 257 Phantom = 1181  accepted
+ *   V5 create, 18 accounts       1087 unsigned, 145 free            blocked
+ *   V5 create, extended ALT       998 unsigned, 234 free            blocked
+ *   V6 create, 14 accounts        862 unsigned, 370 free
+ *
+ * 257 bytes is what Phantom took for a create writing this same set of
+ * accounts, so 370 is real headroom rather than a hopeful margin. V5 failed
+ * because it added three written accounts — the metadata PDA, the fee escrow
+ * and the creator fee vault — which both enlarged the transaction and obliged
+ * Phantom to guard more accounts. V6 moves all three into
+ * finalize_campaign_launch, a transaction the keeper sends that never goes near
+ * a wallet.
+ *
+ * Create is now a fixed size: the name and symbol travel with finalize, so a
+ * 32-character name costs no more on the wire than a 3-character one.
+ *
+ * The ceiling is the exact measured size, so there is no slack and any growth
+ * fails the build rather than being absorbed. That is deliberate. Raising it
+ * from 1000 to 1150 to fit the V5 instruction is precisely how create reached
+ * 1087 bytes without anyone noticing.
  */
-export const SOLANA_RELEASE_MAX_BYTES = 1_150;
+/**
+ * How much of the packet limit a wallet keeps for itself.
+ *
+ * Phantom rewrites a transaction before signing: ComputeBudget instructions
+ * plus one Lighthouse assertion per account written. If its rewritten version
+ * would not fit in 1232 bytes it cannot simulate, and it blocks the request
+ * with "this dApp could be malicious".
+ *
+ * Measured on mainnet by reconstructing the unsigned transaction from what
+ * landed on chain:
+ *
+ *   create  924 unsigned -> 1181 on chain   257 bytes, 8 assertions
+ *   buy     764 unsigned ->  946 on chain   182 bytes, 2 assertions
+ *
+ * The cost tracks accounts written, not transaction size, so create is the
+ * expensive case and 257 is the number to budget against. Checking a
+ * transaction against 1232 alone is what let create reach 1087 bytes and put
+ * the warning in front of every creator.
+ */
+export const SOLANA_WALLET_REWRITE_BUDGET_BYTES = 257;
+
+export const SOLANA_RELEASE_MAX_BYTES = 862;
 export const SOLANA_LAUNCHPAD_PROGRAM_ID = "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt";
 export const SOLANA_REWARDS_TREASURY_PROGRAM_ID = "2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX";
 export const SOLANA_INSTRUCTIONS_SYSVAR = "Sysvar1nstructions1111111111111111111111111";
@@ -35,6 +72,7 @@ export const SOLANA_COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget111111111111111111
 export const SOLANA_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
 export const SOLANA_ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
 export const SOLANA_SYSTEM_PROGRAM_ID = "11111111111111111111111111111111";
+export const SOLANA_TOKEN_METADATA_PROGRAM_ID = "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s";
 
 const REWARD_VAULT_SEEDS = [
   ["weeklyLeagueVault", "league_vault"],
@@ -103,6 +141,12 @@ export function buildLaunchpadAltPlan(web3: SolanaWeb3Module): LaunchpadAltPlanE
   const programId = new Web3PublicKey(SOLANA_LAUNCHPAD_PROGRAM_ID);
   const rewardsProgramId = new Web3PublicKey(SOLANA_REWARDS_TREASURY_PROGRAM_ID);
   const [globalConfig] = Web3PublicKey.findProgramAddressSync([Buffer.from("global")], programId);
+  // Risk cluster 0 is the default every campaign lands in, so it is shared
+  // across campaigns and belongs in the table.
+  const [clusterProfile] = Web3PublicKey.findProgramAddressSync(
+    [Buffer.from("cluster"), Buffer.alloc(32)],
+    programId,
+  );
   const rewardVaults = REWARD_VAULT_SEEDS.map(([label, seed]) => {
     const [address] = Web3PublicKey.findProgramAddressSync([Buffer.from(seed)], rewardsProgramId);
     return { label, address };
@@ -118,6 +162,10 @@ export function buildLaunchpadAltPlan(web3: SolanaWeb3Module): LaunchpadAltPlanE
     { label: "systemProgram", address: new Web3PublicKey(SOLANA_SYSTEM_PROGRAM_ID) },
     { label: "rewardsTreasuryProgram", address: rewardsProgramId },
     ...rewardVaults,
+    // The static keys CREATE gained in the V5 upgrade. Each one absent from the
+    // table costs 32 bytes in the transaction instead of 1.
+    { label: "tokenMetadataProgram", address: new Web3PublicKey(SOLANA_TOKEN_METADATA_PROGRAM_ID) },
+    { label: "clusterProfile", address: clusterProfile },
   ];
   const extraRaw = typeof process !== "undefined"
     ? String(process.env?.SOLANA_LAUNCHPAD_ALT_EXTRA_ADDRESSES || "").trim()

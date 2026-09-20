@@ -83,6 +83,9 @@ pub mod authorized_create;
 pub use authorized_create::*;
 
 pub mod token_metadata;
+
+pub mod finalize_launch;
+pub use finalize_launch::*;
 pub use token_metadata::*;
 
 pub mod campaign_view;
@@ -317,6 +320,18 @@ pub mod memewarzone_solana {
         args: CreateCampaignArgs,
     ) -> Result<()> {
         authorized_create::create_campaign_handler(&mut ctx, &args)
+    }
+
+    /// Second half of a launch: Metaplex metadata, mint authority revocation and
+    /// the per-campaign fee accounts. Route-authorized, so only a signature from
+    /// GlobalConfig.route_signer can decide the token's name. The keeper sends
+    /// this immediately after create; until it lands the campaign has no fee
+    /// escrow and therefore cannot trade.
+    pub fn finalize_campaign_launch(
+        ctx: Context<FinalizeCampaignLaunch>,
+        args: FinalizeCampaignLaunchArgs,
+    ) -> Result<()> {
+        finalize_launch::finalize_campaign_launch_handler(ctx, args)
     }
 
     pub fn sync_creator_profile(

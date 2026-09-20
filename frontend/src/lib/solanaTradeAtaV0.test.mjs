@@ -15,6 +15,7 @@ const {
   assertLaunchpadV0Intent,
   buildLaunchpadV0Transaction,
   inspectLaunchpadV0Envelope,
+  SOLANA_WALLET_REWRITE_BUDGET_BYTES,
 } = await loadSolanaV0Module();
 
 const PROGRAM_ID = new PublicKey("3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt");
@@ -100,7 +101,13 @@ test("first BUY may prefix idempotent ATA creation while preserving Ed25519 -> t
   const stats = inspectLaunchpadV0Envelope(web3, transaction, [fixture.lookupTable]);
   assert.equal(stats.requiredSigners, 1);
   assert.equal(stats.instructionCount, 3);
-  assert.ok(stats.serializedBytes <= 1232);
+  // Not 1232: the wallet needs a share of that for its own instructions, and
+  // checking against the raw packet limit is what let create grow until Phantom
+  // refused to simulate it. See SOLANA_WALLET_REWRITE_BUDGET_BYTES.
+  assert.ok(
+    stats.serializedBytes <= 1232 - SOLANA_WALLET_REWRITE_BUDGET_BYTES,
+    `first buy is ${stats.serializedBytes} bytes; it must leave the wallet ${SOLANA_WALLET_REWRITE_BUDGET_BYTES}`,
+  );
 });
 
 test("ATA creation inserted between Ed25519 and trade is rejected", () => {

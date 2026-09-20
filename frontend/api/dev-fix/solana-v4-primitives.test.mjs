@@ -19,6 +19,8 @@ import {
   sha256,
   u16,
   u64,
+  buildFinalizeLaunchPayload,
+  finalizeLaunchDigest,
 } from "./solana-v4-primitives.js";
 
 function hash32(label) {
@@ -119,7 +121,7 @@ test("PDA derivation is deterministic and produces an off-curve address", () => 
 });
 
 test("V4 serializer is deterministic and binds every mutated field", () => {
-  assert.equal(CREATE_AUTH_SCHEMA_VERSION, 5);
+  assert.equal(CREATE_AUTH_SCHEMA_VERSION, 6);
   const fixture = fixtureInput();
   const payload = buildCreateAuthorizationPayload(fixture);
   const digest = createAuthorizationDigest(fixture);
@@ -133,22 +135,69 @@ test("V4 serializer is deterministic and binds every mutated field", () => {
   };
   assert.notDeepEqual(digest, createAuthorizationDigest(modified));
 
-  // v5: the Metaplex fields are what wallets actually display, so a client must
-  // not be able to substitute them behind the route signer's back.
+  // v6: the Metaplex fields are NOT bound here any more, because create no
+  // longer receives them. They are bound by the finalize authorization below.
+  // If this ever starts failing, name and symbol have leaked back into create
+  // and the transaction has grown by 31 bytes it cannot afford.
   for (const [field, value] of [
     ["name", "NotKaiju"],
     ["symbol", "EVIL"],
   ]) {
-    assert.notDeepEqual(
+    assert.deepEqual(
       digest,
       createAuthorizationDigest({ ...fixture, args: { ...fixture.args, [field]: value } }),
-      `${field} must be bound into the create authorization digest`,
+      `${field} must not be part of the create authorization digest in v6`,
+    );
+  }
+});
+
+test("finalize authorization binds the Metaplex fields the program will write", () => {
+  const key = (byte) => Buffer.alloc(32, byte);
+  const base = {
+    programId: key(1),
+    campaign: key(2),
+    mint: key(3),
+    creator: key(4),
+    campaignId: key(5),
+    args: { name: "Kaiju88", symbol: "K88", deadline: 1_800_000_000 },
+  };
+
+  // Same vector the program pins in finalize_launch.rs. The program rebuilds
+  // this message from chain state and compares; a drift on either side strands
+  // every new launch unnamed, so both sides assert the identical digest.
+  assert.equal(buildFinalizeLaunchPayload(base).length, 225);
+  assert.equal(
+    Buffer.from(finalizeLaunchDigest(base)).toString("hex"),
+    "20f2cb27694797eb37c3131d0f553954110f4bba0b2a0478f57a40305a8a544d",
+  );
+
+  const digest = finalizeLaunchDigest(base);
+  // Whoever picks the name picks it permanently: finalize revokes the mint
+  // authority straight after writing it. A signature over one name must not
+  // authorize another.
+  for (const [field, value] of [
+    ["name", "NotKaiju"],
+    ["symbol", "EVIL"],
+    ["deadline", 1_800_000_001],
+  ]) {
+    assert.notDeepEqual(
+      digest,
+      finalizeLaunchDigest({ ...base, args: { ...base.args, [field]: value } }),
+      `${field} must be bound into the finalize authorization digest`,
+    );
+  }
+
+  for (const field of ["programId", "campaign", "mint", "creator", "campaignId"]) {
+    assert.notDeepEqual(
+      digest,
+      finalizeLaunchDigest({ ...base, [field]: key(9) }),
+      `${field} must be bound into the finalize authorization digest`,
     );
   }
 
   // Length prefixes must keep field boundaries unambiguous.
-  const ab = createAuthorizationDigest({ ...fixture, args: { ...fixture.args, name: "AB", symbol: "C" } });
-  const a_bc = createAuthorizationDigest({ ...fixture, args: { ...fixture.args, name: "A", symbol: "BC" } });
+  const ab = finalizeLaunchDigest({ ...base, args: { ...base.args, name: "AB", symbol: "C" } });
+  const a_bc = finalizeLaunchDigest({ ...base, args: { ...base.args, name: "A", symbol: "BC" } });
   assert.notDeepEqual(ab, a_bc, "length-prefixing must prevent field-boundary collisions");
 });
 
@@ -187,6 +236,10 @@ test("the create args the client receives carry every field the instruction enco
   // fields into the HTTP response. A field added to CreateCampaignArgs but not to
   // that whitelist is silently dropped, and the browser fails far away with
   // "name must not be empty". This pins the response shape to the wire format.
+  // name and symbol are still in this list even though create no longer encodes
+  // them: the client needs them for finalize_campaign_launch, which is where
+  // they went. Dropping them from the response would strand every launch
+  // unnamed, which is the exact failure this test exists to prevent.
   const encodedFields = [
     "campaignId",
     "name",
@@ -227,6 +280,9 @@ test("the accounts the client receives cover every account the instruction needs
     "creator", "globalConfig", "generationConfig", "creatorProfile",
     "riskProfile", "clusterProfile", "campaign", "mint", "tokenVault",
     "solVault", "createAuthorization", "instructions",
+    // The last three belong to finalize_campaign_launch rather than create, but
+    // the client still receives them in the same response and still needs every
+    // one of them to finish a launch.
     "feeEscrow", "creatorFeeVault", "tokenMetadata",
     "tokenProgram", "systemProgram",
   ];
