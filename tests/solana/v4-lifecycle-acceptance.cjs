@@ -507,6 +507,9 @@ ${extra}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 2500));
     lookupTableAccount = await v0Helpers.fetchAndVerifyLaunchpadLookupTable(web3, connection, {
+      // Built seconds ago on a throwaway validator; production tables must be
+      // frozen and the helper enforces that by default.
+      allowMutableTable: true,
       address: lookupTable.toBase58(),
       requiredAddresses: plan.map((entry) => entry.address),
       expectedAuthority: payer.publicKey,

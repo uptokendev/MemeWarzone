@@ -317,6 +317,12 @@ export async function fetchAndVerifyLaunchpadLookupTable(
     address: string;
     requiredAddresses?: Array<string | PublicKey>;
     expectedAuthority?: string | PublicKey;
+    /**
+     * Throwaway tables built inside a test against a local validator cannot be
+     * frozen in the same breath they are created, so those callers opt out.
+     * Nothing that touches mainnet may.
+     */
+    allowMutableTable?: boolean;
   },
 ): Promise<AddressLookupTableAccount> {
   const address = new web3.PublicKey(input.address);
@@ -325,6 +331,26 @@ export async function fetchAndVerifyLaunchpadLookupTable(
   if (!table) throw new Error(`Solana launchpad ALT not found: ${input.address}`);
   if (typeof table.isActive === "function" && !table.isActive()) {
     throw new Error(`Solana launchpad ALT is deactivated: ${input.address}`);
+  }
+  // A lookup table whose authority is still live is not a fixed list of
+  // addresses — it is a list its authority can rewrite. v0 transactions store
+  // ALT entries as indexes and resolve them at EXECUTION, not at signing, so
+  // between a user signing and the transaction landing the authority can extend
+  // or alter the table and change which accounts the transaction actually
+  // touches. For a trade that moves the user's SOL, that is a drain vector.
+  //
+  // This is not hypothetical. The table created to make create_campaign fit
+  // (BdSPkZWk...) shipped with its authority retained so it could be extended,
+  // and because create and trade resolve the SAME table, every buy and sell
+  // silently moved onto it. Buys that had worked for weeks on the frozen table
+  // started coming back "This dApp could be malicious" from the wallet, with
+  // nothing in the trade code changed to explain it.
+  if (!input.allowMutableTable && table.state.authority) {
+    throw new Error(
+      `Solana launchpad ALT ${input.address} is not frozen (authority ${table.state.authority.toBase58()}). ` +
+        "A mutable table can be rewritten between signing and execution. Freeze it with " +
+        "`solana address-lookup-table freeze <address>` before using it for user funds.",
+    );
   }
   if (input.expectedAuthority) {
     const actualAuthority = table.state.authority?.toBase58?.() || "";

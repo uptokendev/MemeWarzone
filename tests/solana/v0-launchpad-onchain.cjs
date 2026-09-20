@@ -73,6 +73,9 @@ describe("shared V0/ALT launchpad helper on local validator", function () {
     await new Promise((resolve) => setTimeout(resolve, 1500));
 
     const table = await v0.fetchAndVerifyLaunchpadLookupTable(web3, connection, {
+      // Built seconds ago on a throwaway validator; production tables must be
+      // frozen and the helper enforces that by default.
+      allowMutableTable: true,
       address: lookupTable.toBase58(),
       requiredAddresses: plan.map((entry) => entry.address),
       expectedAuthority: payer.publicKey,
