@@ -1,5 +1,5 @@
 import { pool } from "../server/db.js";
-import { badMethod, getQuery, isSolanaChain, json, normalizeAddress } from "../server/http.js";
+import { badMethod, getQuery, isSolanaChain, json, normalizeAddress, defaultPublicChainId} from "../server/http.js";
 
 function toInt(value, fallback) {
   const n = Number(value);
@@ -189,7 +189,7 @@ export default async function handler(req, res) {
 
   try {
     const q = getQuery(req);
-    const chainId = toInt(req.params?.chainId || q.chainId, 97);
+    const chainId = toInt(req.params?.chainId || q.chainId, defaultPublicChainId());
     const address = cleanAddress(req.params?.address || q.address || q.token || q.campaign, chainId);
 
     if (!address) return json(res, 400, { error: "Invalid or missing token/campaign address" });

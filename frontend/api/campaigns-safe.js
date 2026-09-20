@@ -1,5 +1,5 @@
 import { pool } from "../server/db.js";
-import { badMethod, getQuery, json } from "../server/http.js";
+import { badMethod, getQuery, json, defaultPublicChainId} from "../server/http.js";
 
 function toInt(value, fallback) {
   const n = Number(value);
@@ -99,7 +99,7 @@ export default async function handler(req, res) {
 
   try {
     const q = getQuery(req);
-    const chainId = toInt(q.chainId, 97);
+    const chainId = toInt(q.chainId, defaultPublicChainId());
     const limit = clamp(toInt(q.limit, 24), 1, 50);
     const cursor = clamp(toInt(q.cursor, 0), 0, 1_000_000);
     const status = String(q.status || "all").toLowerCase();

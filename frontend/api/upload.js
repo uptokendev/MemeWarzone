@@ -41,6 +41,8 @@ function pickExt(mimetype) {
       return "jpg";
     case "image/webp":
       return "webp";
+    case "image/gif":
+      return "gif";
     default:
       return null;
   }
@@ -228,7 +230,12 @@ export default async function handler(req, res) {
 
     const filepath = f.filepath || f.path;
     const mimetype = String(f.mimetype || "");
-    if (!/^image\/(png|jpeg|jpg|webp)$/.test(mimetype)) return bad(res, 400, "Unsupported image type. Use png/jpg/webp.");
+    // GIF is here for animated token logos. Nothing in this handler re-encodes
+    // the upload — the buffer is stored exactly as received — so the animation
+    // survives, and wallets and Explore render it like any other image.
+    if (!/^image\/(png|jpeg|jpg|webp|gif)$/.test(mimetype)) {
+      return bad(res, 400, "Unsupported image type. Use png, jpg, webp or gif.");
+    }
 
     const buf = fs.readFileSync(filepath);
     try {

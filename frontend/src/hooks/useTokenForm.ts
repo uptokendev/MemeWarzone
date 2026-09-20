@@ -6,6 +6,18 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { TokenCategory, TokenFormData } from "@/types/token";
 
+/** Mirrors the accepted types in frontend/api/upload.js. */
+const TOKEN_IMAGE_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/jpg",
+  "image/webp",
+  "image/gif",
+]);
+/** Mirrors maxBytes in frontend/api/upload.js. */
+const TOKEN_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+
+
 const initialFormData: TokenFormData = {
   name: "",
   ticker: "",
@@ -67,6 +79,23 @@ export const useTokenForm = () => {
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
+
+      // The accept attribute is a hint a file picker can ignore, and nothing
+      // else checked this before the upload reached the server, so a creator
+      // got a bare 400 with no idea which rule they broke. Animated GIFs are
+      // the common case for going over the size cap.
+      if (!TOKEN_IMAGE_TYPES.has(file.type)) {
+        toast.error("Use a PNG, JPG, WEBP or GIF image.");
+        e.target.value = "";
+        return;
+      }
+      if (file.size > TOKEN_IMAGE_MAX_BYTES) {
+        const mb = (file.size / (1024 * 1024)).toFixed(1);
+        toast.error(`That image is ${mb} MB. The limit is 5 MB — try a shorter or smaller GIF.`);
+        e.target.value = "";
+        return;
+      }
+
       setFormData((prev) => ({ ...prev, image: file }));
       
       const reader = new FileReader();

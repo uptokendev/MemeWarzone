@@ -1,5 +1,5 @@
 import { pool } from "../server/db.js";
-import { badMethod, getQuery, json } from "../server/http.js";
+import { badMethod, getQuery, json, defaultPublicChainId} from "../server/http.js";
 
 /**
  * Sponsored placements feed.
@@ -294,7 +294,7 @@ export default async function handler(req, res) {
   if (req.method !== "GET") return badMethod(res);
 
   const q = getQuery(req);
-  const chainId = toInt(q.chainId, 97);
+  const chainId = toInt(q.chainId, defaultPublicChainId());
   const limit = clamp(toInt(q.limit, 8), 1, 24);
   const slotFilter = normSlot(q.slot || q.slotCode || q.slot_code);
   const selectOne = ["1", "true", "yes", "one"].includes(String(q.select || "").trim().toLowerCase());

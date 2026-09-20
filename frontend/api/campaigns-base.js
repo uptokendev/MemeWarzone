@@ -1,5 +1,5 @@
 import { pool } from "../server/db.js";
-import { badMethod, getQuery, json } from "../server/http.js";
+import { badMethod, getQuery, json, defaultPublicChainId} from "../server/http.js";
 
 // LaunchFactory default graduation target is 50 BNB (see contracts/LaunchFactory.sol).
 // Campaigns can override this, but until we persist per-campaign targets in DB,
@@ -278,7 +278,7 @@ export default async function handler(req, res) {
 
   const q = getQuery(req);
 
-  const chainId = toInt(q.chainId, 97);
+  const chainId = toInt(q.chainId, defaultPublicChainId());
   // TokenDetails intentionally requests a large enough page to locate a token by address.
   // Keep this capped, but do not silently crush limit=500 down to 50.
   const limit = clamp(toInt(q.limit, 24), 1, 500);

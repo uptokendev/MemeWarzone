@@ -111,3 +111,29 @@ export function normalizeWalletFlexible(value) {
   if (isSolanaAddress(raw)) return raw;
   return "";
 }
+
+/**
+ * Default chain for a request that does not name one.
+ *
+ * This used to be the literal 97, BSC testnet, in four separate handlers. The
+ * browser always sends an explicit chainId so it never showed there, but any
+ * other caller — a curl, an integration, a webhook — silently got testnet data
+ * from the production API.
+ *
+ * PUBLIC_DEFAULT_CHAIN_ID overrides it. The fallback is 56, BNB mainnet, and a
+ * testnet value is refused outright when RUNTIME_ENVIRONMENT says production:
+ * a misconfigured env should not be able to serve testnet campaigns to real
+ * visitors.
+ */
+export const TESTNET_CHAIN_IDS = new Set([97, 102, 46630]);
+
+export function defaultPublicChainId() {
+  const raw = Number(String(process.env.PUBLIC_DEFAULT_CHAIN_ID || "").trim());
+  if (!Number.isFinite(raw) || raw <= 0) return 56;
+  const isProduction = String(process.env.RUNTIME_ENVIRONMENT || "").trim().toLowerCase() === "production";
+  if (isProduction && TESTNET_CHAIN_IDS.has(raw)) {
+    console.warn(`[http] PUBLIC_DEFAULT_CHAIN_ID=${raw} is a testnet; refusing it in production and using 56`);
+    return 56;
+  }
+  return raw;
+}

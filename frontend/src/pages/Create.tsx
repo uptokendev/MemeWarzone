@@ -983,7 +983,7 @@ const Create = () => {
                 right={
                   <div className="flex h-full min-h-0 flex-col gap-3">
                     <div><label className="font-retro text-sm text-foreground">Token image</label><p className="mt-0.5 text-xs text-muted-foreground">PNG / JPG / WebP · max 5 MB</p></div>
-                    <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/jpg,image/webp" className="hidden" onChange={handleImageChange} />
+                    <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/jpg,image/webp,image/gif" className="hidden" onChange={handleImageChange} />
                     <div className="flex flex-wrap items-center gap-2">
                       <Button type="button" variant="outline" className="font-retro" onClick={() => fileRef.current?.click()}><ImageIcon className="mr-2 h-4 w-4" />{formData.imagePreview ? "Replace image" : "Upload image"}</Button>
                       {formData.imagePreview ? <Button type="button" variant="ghost" size="sm" onClick={handleRemoveImage}>Remove</Button> : null}
