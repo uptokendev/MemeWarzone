@@ -1683,33 +1683,51 @@ fn verify_detached_trade_authorization(
     expected_route_signer: Pubkey,
     expected_message: &[u8; 32],
 ) -> Result<()> {
+    // Scan the transaction for the authorization; do not demand it sit at
+    // current_index - 1.
+    //
+    // Requiring adjacency made a trade impossible to guard. Wallets bracket the
+    // instruction they are protecting, and Phantom inserts Lighthouse assertions
+    // around it -- so the moment one landed between the ed25519 instruction and
+    // this one, the trade failed with InvalidTradeAuthorization. Phantom's
+    // guarded simulation failed, it stripped every assertion, and it showed
+    // "This dApp could be malicious" with no balance preview at all. Measured on
+    // mainnet: identical transaction, guard before the pair OK, guard after the
+    // pair OK, guard between them Custom 6049. create survived only because
+    // Phantom happened to place its nine assertions outside the pair.
+    //
+    // Position was never the security boundary. The digest is: it binds the
+    // program id, campaign, trader, amounts, nonce and deadline, so an ed25519
+    // instruction that verifies here authorizes exactly this trade and nothing
+    // else. Solana verifies precompiles for the whole transaction before any
+    // instruction runs, so a match anywhere is a match that has been checked.
+    // Replay across transactions is still blocked by the nonce-seeded trade
+    // authorization PDA.
     let current_index = load_current_index_checked(instructions_sysvar)
         .map_err(|_| error!(LaunchpadError::InvalidTradeAuthorization))?;
-    require!(current_index > 0, LaunchpadError::InvalidTradeAuthorization);
-    let ed25519_index = current_index
-        .checked_sub(1)
-        .ok_or(LaunchpadError::InvalidTradeAuthorization)?;
-    let instruction = load_instruction_at_checked(usize::from(ed25519_index), instructions_sysvar)
-        .map_err(|_| error!(LaunchpadError::InvalidTradeAuthorization))?;
-    require_keys_eq!(
-        instruction.program_id,
-        ed25519_program::ID,
-        LaunchpadError::InvalidTradeAuthorization
-    );
-    require!(
-        instruction.accounts.is_empty(),
-        LaunchpadError::InvalidTradeAuthorization
-    );
-    let parsed = parse_single_ed25519_instruction(&instruction.data)?;
-    require!(
-        parsed.public_key == expected_route_signer.as_ref(),
-        LaunchpadError::InvalidTradeAuthorization
-    );
-    require!(
-        parsed.message == expected_message,
-        LaunchpadError::InvalidTradeAuthorization
-    );
-    Ok(())
+
+    let mut index: u16 = 0;
+    while let Ok(instruction) =
+        load_instruction_at_checked(usize::from(index), instructions_sysvar)
+    {
+        if index != current_index
+            && instruction.program_id == ed25519_program::ID
+            && instruction.accounts.is_empty()
+        {
+            if let Ok(parsed) = parse_single_ed25519_instruction(&instruction.data) {
+                if parsed.public_key == expected_route_signer.as_ref()
+                    && parsed.message == expected_message
+                {
+                    return Ok(());
+                }
+            }
+        }
+        index = index
+            .checked_add(1)
+            .ok_or(LaunchpadError::InvalidTradeAuthorization)?;
+    }
+
+    Err(error!(LaunchpadError::InvalidTradeAuthorization))
 }
 
 struct ParsedEd25519Instruction<'a> {

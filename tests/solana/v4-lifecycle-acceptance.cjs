@@ -335,14 +335,15 @@ ${source}`,
     return signature;
   }
 
-  async function sendProductionTrade({ label, signer, ed25519, programIx, recoverAccount }) {
+  async function sendProductionTrade({ label, signer, ed25519, programIx, recoverAccount, guardBetween }) {
     assert.ok(v0Helpers && lookupTableAccount, "production V0/ALT envelope is not initialized");
     const compiled = await v0Helpers.compileLaunchpadV0WithLatestBlockhash(
       web3,
       connection,
       {
         payer: signer.publicKey,
-        instructions: [ed25519, programIx],
+        // Same guard placement as above, recompiled on a fresh blockhash.
+        instructions: guardBetween ? [ed25519, guardBetween, programIx] : [ed25519, programIx],
         lookupTableAccounts: [lookupTableAccount],
       },
       {
@@ -385,7 +386,8 @@ ${extra}`);
       connection,
       {
         payer: signer.publicKey,
-        instructions: [ed25519, programIx],
+        // Same guard placement as above, recompiled on a fresh blockhash.
+        instructions: guardBetween ? [ed25519, guardBetween, programIx] : [ed25519, programIx],
         lookupTableAccounts: [lookupTableAccount],
       },
       {
@@ -783,6 +785,7 @@ ${extra}`);
       });
     const buyIx = await builder.instruction();
     const sent = await sendProductionTrade({
+      guardBetween: opts.guardBetween,
       label: `buy_tokens ${lamportsIn}`,
       signer: buyer.keypair,
       ed25519,
@@ -852,6 +855,7 @@ ${extra}`);
       });
     const sellIx = await builder.instruction();
     const sent = await sendProductionTrade({
+      guardBetween: opts.guardBetween,
       label: `sell_tokens ${tokensIn}`,
       signer: buyer.keypair,
       ed25519,
@@ -1032,6 +1036,27 @@ ${text}`);
     const firstBuy = await sendBuy(BUY_LAMPORTS);
     assert.ok(firstBuy, "a freshly created campaign must accept a buy with no keeper step");
     await assertTradePaysOneFeeDestination(firstBuy.signature, "first buy");
+
+    // A wallet must be able to guard this trade.
+    //
+    // Phantom brackets the instruction it protects with Lighthouse assertions.
+    // While the program demanded the ed25519 instruction sit at
+    // current_index - 1, an assertion landing between the two failed the trade
+    // with InvalidTradeAuthorization -- so Phantom's guarded simulation failed,
+    // it stripped every assertion, and it blocked the request as potentially
+    // malicious with no balance preview. Measured on mainnet: guard before the
+    // pair fine, guard after fine, guard between it Custom 6049 every time.
+    // create escaped only because Phantom happened to place its nine
+    // assertions outside the pair.
+    const guardedBuy = await sendBuy(BUY_LAMPORTS, 0n, {
+      guardBetween: SystemProgram.transfer({
+        fromPubkey: buyer.keypair.publicKey,
+        toPubkey: buyer.keypair.publicKey,
+        lamports: 0,
+      }),
+    });
+    assert.ok(guardedBuy, "a trade must survive a wallet inserting a guard before it");
+    await assertTradePaysOneFeeDestination(guardedBuy.signature, "guarded buy");
 
     await initializeIfMissing(
       connection,

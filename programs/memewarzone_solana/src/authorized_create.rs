@@ -1253,12 +1253,24 @@ pub(crate) fn verify_detached_create_authorization(
     expected_route_signer: Pubkey,
     expected_message: &[u8],
 ) -> Result<()> {
+    // Scan the transaction for the authorization; do not demand it sit at
+    // current_index - 1. See verify_detached_trade_authorization for the full
+    // story -- the short version is that adjacency made a transaction
+    // impossible for a wallet to guard, because wallets bracket the instruction
+    // they are protecting and an assertion landing between the ed25519
+    // instruction and this one failed the whole thing.
+    //
+    // create survived that only by luck: Phantom happened to put its nine
+    // Lighthouse assertions before the pair rather than inside it. The same
+    // placement on a buy produced Custom 6049 and a blocked request. Luck is
+    // not a property worth shipping.
+    //
+    // Position was never the security boundary. The digest binds the program
+    // id, campaign, mint, vaults, creator, name, symbol and deadline, and
+    // Solana verifies precompiles for the whole transaction before any
+    // instruction runs, so a match anywhere has already been checked.
     let current_index = load_current_index_checked(instructions_account)
         .map_err(|_| error!(LaunchpadError::InvalidCreateAuthorization))?;
-    require!(
-        current_index > 0,
-        LaunchpadError::InvalidCreateAuthorization
-    );
 
     let current_instruction =
         load_instruction_at_checked(usize::from(current_index), instructions_account)
@@ -1269,15 +1281,22 @@ pub(crate) fn verify_detached_create_authorization(
         LaunchpadError::InvalidCreateAuthorization
     );
 
-    let verification_instruction =
-        load_instruction_at_checked(usize::from(current_index - 1), instructions_account)
-            .map_err(|_| error!(LaunchpadError::InvalidCreateAuthorization))?;
+    let mut index: u16 = 0;
+    while let Ok(instruction) =
+        load_instruction_at_checked(usize::from(index), instructions_account)
+    {
+        if index != current_index
+            && validate_ed25519_instruction(&instruction, expected_route_signer, expected_message)
+                .is_ok()
+        {
+            return Ok(());
+        }
+        index = index
+            .checked_add(1)
+            .ok_or(LaunchpadError::InvalidCreateAuthorization)?;
+    }
 
-    validate_ed25519_instruction(
-        &verification_instruction,
-        expected_route_signer,
-        expected_message,
-    )
+    Err(error!(LaunchpadError::InvalidCreateAuthorization))
 }
 
 pub(crate) fn validate_ed25519_instruction(

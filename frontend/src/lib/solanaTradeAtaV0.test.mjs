@@ -110,7 +110,18 @@ test("first BUY may prefix idempotent ATA creation while preserving Ed25519 -> t
   );
 });
 
-test("ATA creation inserted between Ed25519 and trade is rejected", () => {
+test("an instruction inserted between Ed25519 and the trade is accepted", () => {
+  // This used to be asserted the other way round, and that was the bug.
+  //
+  // Wallets bracket the instruction they are guarding. Phantom inserts
+  // Lighthouse assertions around the instruction it protects, so one landing
+  // between the ed25519 instruction and the trade is normal wallet behaviour,
+  // not tampering. Rejecting it meant we threw on a transaction the wallet had
+  // just signed correctly -- and on chain the program did the same, failing
+  // with Custom 6049, which made Phantom strip every assertion and block the
+  // request as potentially malicious.
+  //
+  // What must still hold is that the authorization is present and unaltered.
   const fixture = makeFixture();
   const transaction = buildLaunchpadV0Transaction(web3, {
     payer: fixture.payer,
@@ -119,11 +130,44 @@ test("ATA creation inserted between Ed25519 and trade is rejected", () => {
     lookupTableAccounts: [fixture.lookupTable],
   });
 
-  assert.throws(() => assertLaunchpadV0Intent(web3, transaction, {
+  assert.doesNotThrow(() => assertLaunchpadV0Intent(web3, transaction, {
     payer: fixture.payer,
     ed25519Instruction: fixture.ed25519Instruction,
     programInstruction: fixture.tradeInstruction,
     lookupTableAccounts: [fixture.lookupTable],
     releaseMaxBytes: null,
-  }), /immediately before MemeWarzone/i);
+  }));
+});
+
+test("a missing or altered Ed25519 authorization is still rejected", () => {
+  const fixture = makeFixture();
+  const withoutAuth = buildLaunchpadV0Transaction(web3, {
+    payer: fixture.payer,
+    recentBlockhash: BLOCKHASH,
+    instructions: [fixture.ataInstruction, fixture.tradeInstruction],
+    lookupTableAccounts: [fixture.lookupTable],
+  });
+  assert.throws(() => assertLaunchpadV0Intent(web3, withoutAuth, {
+    payer: fixture.payer,
+    ed25519Instruction: fixture.ed25519Instruction,
+    programInstruction: fixture.tradeInstruction,
+    lookupTableAccounts: [fixture.lookupTable],
+    releaseMaxBytes: null,
+  }), /missing or was altered/i);
+
+  // A wallet that swaps in a different signer's authorization must not pass.
+  const tampered = makeFixture().ed25519Instruction;
+  const swapped = buildLaunchpadV0Transaction(web3, {
+    payer: fixture.payer,
+    recentBlockhash: BLOCKHASH,
+    instructions: [tampered, fixture.tradeInstruction],
+    lookupTableAccounts: [fixture.lookupTable],
+  });
+  assert.throws(() => assertLaunchpadV0Intent(web3, swapped, {
+    payer: fixture.payer,
+    ed25519Instruction: fixture.ed25519Instruction,
+    programInstruction: fixture.tradeInstruction,
+    lookupTableAccounts: [fixture.lookupTable],
+    releaseMaxBytes: null,
+  }), /missing or was altered/i);
 });

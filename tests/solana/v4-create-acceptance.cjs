@@ -851,22 +851,39 @@ describe("MemeWarzone Solana authorization V4 local-validator acceptance", funct
     await assertCampaignMissing(accounts.campaign);
   });
 
-  it("requires the Ed25519 verification instruction immediately before create", async function () {
+  it("accepts the Ed25519 verification instruction even when it is not adjacent", async function () {
+    // Asserted the other way round until it cost a night.
+    //
+    // Wallets bracket the instruction they are guarding. Phantom inserts
+    // Lighthouse assertions around the instruction it protects, so one landing
+    // between the ed25519 instruction and ours is ordinary behaviour. Demanding
+    // adjacency meant the guarded transaction failed with
+    // InvalidCreateAuthorization; Phantom's simulation failed, it stripped every
+    // assertion and blocked the request as potentially malicious, showing no
+    // balance preview at all. create survived only because Phantom happened to
+    // place its nine assertions before the pair rather than inside it -- the
+    // same placement on a buy produced Custom 6049 every time.
+    //
+    // Position was never the security boundary. The digest is, and the tests
+    // below still prove a wrong signer, a mutated payload and an expired
+    // deadline are all rejected.
     const creatorState = await setupCreator("non-adjacent-ed25519");
     const now = await chainUnixTimestamp(connection);
     const args = createArgs("non-adjacent-ed25519", now);
-    const accounts = campaignAccounts(creatorState.creator, args);
 
-    await expectFailure(
-      () =>
-        sendAuthorizedCreate({
-          creatorState,
-          instructionArgs: args,
-          separateEd25519FromCreate: true,
-        }),
-      "non-adjacent Ed25519 instruction",
-    );
-    await assertCampaignMissing(accounts.campaign);
+    const result = await sendAuthorizedCreate({
+      creatorState,
+      instructionArgs: args,
+      separateEd25519FromCreate: true,
+    });
+    assert.ok(result, "a non-adjacent authorization must still be accepted");
+    // Immediate launch, so launch_at is resolved to created_at.
+    await verifySuccessfulCreate({
+      creatorState,
+      args,
+      result,
+      expectedScheduledLaunch: null,
+    });
   });
 
   it("rejects an alternate mint even when that address is digest-bound", async function () {

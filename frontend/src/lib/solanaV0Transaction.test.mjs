@@ -326,7 +326,19 @@ test("fresh blockhash rebuild keeps the same production CREATE intent and envelo
   assert.equal(rebuilt.stats.instructionCount, first.stats.instructionCount);
 });
 
-test("wallet assertions may be appended but cannot break Ed25519 -> MemeWarzone adjacency", () => {
+test("wallet assertions may sit anywhere, including between Ed25519 and MemeWarzone", () => {
+  // This test used to require the opposite, and that requirement was the bug.
+  //
+  // Wallets bracket the instruction they are guarding. Phantom inserts
+  // Lighthouse assertions around the instruction it protects, so one landing
+  // between the authorization and ours is ordinary behaviour -- not tampering.
+  // Rejecting it meant throwing on a transaction the wallet had just signed
+  // correctly, and the program rejected the same shape on chain with Custom
+  // 6049, which made Phantom strip every assertion and block the request with
+  // no balance preview at all.
+  //
+  // What must still hold is integrity: the authorization is present and
+  // byte-identical to the one we built. Position is the wallet's business.
   const fixture = makeTradeFixture();
   const walletAssertion = new TransactionInstruction({
     programId: Keypair.generate().publicKey,
@@ -334,41 +346,39 @@ test("wallet assertions may be appended but cannot break Ed25519 -> MemeWarzone 
     data: Buffer.from([1, 2, 3, 4]),
   });
 
-  const safe = buildLaunchpadV0Transaction(web3, {
-    payer: fixture.payer,
-    recentBlockhash: BLOCKHASH,
-    instructions: [
-      fixture.computeInstruction,
-      fixture.ed25519Instruction,
-      fixture.programInstruction,
-      walletAssertion,
-    ],
-    lookupTableAccounts: [fixture.lookupTable],
-  });
-  assert.doesNotThrow(() => assertLaunchpadV0Intent(web3, safe, {
-    payer: fixture.payer,
-    ed25519Instruction: fixture.ed25519Instruction,
-    programInstruction: fixture.programInstruction,
-    lookupTableAccounts: [fixture.lookupTable],
-  }));
+  const placements = [
+    ["appended after ours", [fixture.computeInstruction, fixture.ed25519Instruction, fixture.programInstruction, walletAssertion]],
+    ["between ed25519 and ours", [fixture.computeInstruction, fixture.ed25519Instruction, walletAssertion, fixture.programInstruction]],
+    ["before ed25519", [fixture.computeInstruction, walletAssertion, fixture.ed25519Instruction, fixture.programInstruction]],
+  ];
+  for (const [label, instructions] of placements) {
+    const transaction = buildLaunchpadV0Transaction(web3, {
+      payer: fixture.payer,
+      recentBlockhash: BLOCKHASH,
+      instructions,
+      lookupTableAccounts: [fixture.lookupTable],
+    });
+    assert.doesNotThrow(() => assertLaunchpadV0Intent(web3, transaction, {
+      payer: fixture.payer,
+      ed25519Instruction: fixture.ed25519Instruction,
+      programInstruction: fixture.programInstruction,
+      lookupTableAccounts: [fixture.lookupTable],
+    }), `a wallet guard ${label} must be accepted`);
+  }
 
-  const unsafe = buildLaunchpadV0Transaction(web3, {
+  // Integrity still enforced: drop the authorization entirely and it fails.
+  const stripped = buildLaunchpadV0Transaction(web3, {
     payer: fixture.payer,
     recentBlockhash: BLOCKHASH,
-    instructions: [
-      fixture.computeInstruction,
-      fixture.ed25519Instruction,
-      walletAssertion,
-      fixture.programInstruction,
-    ],
+    instructions: [fixture.computeInstruction, walletAssertion, fixture.programInstruction],
     lookupTableAccounts: [fixture.lookupTable],
   });
-  assert.throws(() => assertLaunchpadV0Intent(web3, unsafe, {
+  assert.throws(() => assertLaunchpadV0Intent(web3, stripped, {
     payer: fixture.payer,
     ed25519Instruction: fixture.ed25519Instruction,
     programInstruction: fixture.programInstruction,
     lookupTableAccounts: [fixture.lookupTable],
-  }), /immediately before MemeWarzone/i);
+  }), /missing or was altered/i);
 });
 
 test("graduation-style V0 bundles tolerate compiler privilege promotion only when explicitly allowed", () => {

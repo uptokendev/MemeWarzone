@@ -424,12 +424,30 @@ export function assertLaunchpadV0Intent(
   if (programIndex < 0) {
     throw new Error("MemeWarzone instruction intent changed before signing/submission");
   }
-  if (programIndex === 0) {
-    throw new Error("Detached Ed25519 authorization is missing before MemeWarzone instruction");
+  // The authorization must survive the wallet unmodified. It does NOT have to
+  // stay adjacent.
+  //
+  // This used to require it at programIndex - 1, which is the same mistake the
+  // program made and it breaks for the same reason: wallets bracket the
+  // instruction they are guarding. Phantom inserts Lighthouse assertions around
+  // the instruction it protects, so an assertion landing between the ed25519
+  // instruction and ours failed this check on a transaction the wallet had just
+  // signed correctly. Measured on mainnet: guard before the pair fine, guard
+  // after the pair fine, guard between them rejected here and rejected on chain
+  // with Custom 6049.
+  //
+  // What matters is that the ed25519 instruction is still present and still
+  // byte-identical to the one we built -- a wallet that swapped it for another
+  // signer's, or altered the digest, is caught by instructionEqual. Where it
+  // sits is the wallet's business.
+  const ed25519Index = decompiled.instructions.findIndex((instruction) =>
+    instructionEqual(instruction, expectation.ed25519Instruction),
+  );
+  if (ed25519Index < 0) {
+    throw new Error("Detached Ed25519 authorization is missing or was altered before submission");
   }
-  const previousInstruction = decompiled.instructions[programIndex - 1];
-  if (!instructionEqual(previousInstruction, expectation.ed25519Instruction)) {
-    throw new Error("Detached Ed25519 authorization must remain immediately before MemeWarzone instruction");
+  if (ed25519Index === programIndex) {
+    throw new Error("Detached Ed25519 authorization collided with the MemeWarzone instruction");
   }
   return stats;
 }
