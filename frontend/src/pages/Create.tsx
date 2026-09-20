@@ -616,6 +616,27 @@ const Create = () => {
         });
 
         if (authorization.alreadyOnChain && authorization.tokenPath) {
+          // A campaign reaches this branch when its create landed but the flow
+          // did not finish. Returning here without finalizing is what made that
+          // state permanent: every retry recovered, navigated, and returned, so
+          // the UI could never write the metadata or open trading. Finish it.
+          const recoveredCampaign = authorization.accounts?.campaign || "";
+          if (recoveredCampaign) {
+            try {
+              toast.message("Finishing a launch that was left incomplete…");
+              await finalizeSolanaLaunch({
+                campaignAddress: recoveredCampaign,
+                programId: authorization.programId,
+              });
+            } catch (finalizeErr: any) {
+              // Surfaced, not swallowed: the campaign is safe on chain but the
+              // token stays unnamed and untradeable until this succeeds.
+              toast.error(
+                `Campaign recovered, but naming it failed: ${String(finalizeErr?.message || finalizeErr)}`,
+                { duration: 12_000 },
+              );
+            }
+          }
           toast.success("Existing Direct campaign recovered.");
           navigate(authorization.tokenPath);
           return;

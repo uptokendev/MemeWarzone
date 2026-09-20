@@ -340,6 +340,24 @@ export default function PushDraftLive() {
         } else {
           toast.success(`Solana campaign is live. Opening token page (${(mintAddress || campaignAddress).slice(0, 8)}…).`, { duration: 12_000 });
         }
+        // Same hole as the Direct path had: this branch is reached precisely
+        // when a create landed without finishing, so returning without
+        // finalizing makes that state permanent on every retry. A scheduled
+        // launch finalizes too — launch_at gates trading, not naming.
+        if (campaignAddress) {
+          try {
+            toast.message("Finishing a launch that was left incomplete…");
+            await finalizeSolanaLaunch({
+              campaignAddress,
+              programId: authorization.programId,
+            });
+          } catch (finalizeErr: any) {
+            toast.error(
+              `Campaign recovered, but naming it failed: ${String(finalizeErr?.message || finalizeErr)}`,
+              { duration: 12_000 },
+            );
+          }
+        }
         if (mode === "scheduled") {
           toast.success("Solana campaign is linked. Trading stays closed until the scheduled open time.");
           navigate(`/prepare/${draft.slug}`);

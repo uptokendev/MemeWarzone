@@ -53,6 +53,7 @@ import { withAdminOrOps, withInternalAuth, getAuthEnforceSnapshot } from "./lib/
 import { draftDeploy } from "./dev-fix/draft-deploy.js";
 import { solanaDirectCreateV4 } from "./dev-fix/solana-direct-create.js";
 import { solanaFinalizeAuthorize } from "./dev-fix/solana-finalize-authorize.js";
+import { solanaFinalizeSweep } from "./dev-fix/solana-finalize-sweep-route.js";
 import solanaCampaignAccount from "./solanaCampaignAccount.js";
 import { solanaTradeAuthorizationV1, solanaTradeStatus } from "./dev-fix/solana-trade-authorization-v1.js";
 import { solanaGraduationAuthorizationV1 } from "./dev-fix/solana-graduation-authorization-v1.js";
@@ -422,6 +423,8 @@ router.all("/solana/campaign-account", wrap(solanaCampaignAccount));
 router.all("/solana/direct-create", wrap(solanaDirectCreateV4));
 // Every create path (Direct, Draft/Push Live, scheduled) finishes here.
 router.all("/solana/finalize-authorize", wrap(solanaFinalizeAuthorize));
+// Operator sweep: finishes launches the browser never completed.
+router.all("/solana/finalize-sweep", wrap(solanaFinalizeSweep));
 router.all("/solana/trade-authorize", wrap(solanaTradeAuthorizationV1));
 router.all("/solana/graduation-authorize", wrap(solanaGraduationAuthorizationV1));
 router.all("/solana/graduation-handoff", wrap(solanaGraduationHandoff));
