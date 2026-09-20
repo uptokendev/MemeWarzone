@@ -163,6 +163,14 @@ pub struct ClaimCreatorFees<'info> {
         bump
     )]
     pub creator_fee_vault: UncheckedAccount<'info>,
+    /// CHECK: fee escrow PDA; the creator's accrued lamports live here now.
+    ///
+    /// Trades stopped moving the creator's slice into the vault because paying
+    /// two fee destinations inside the trader's transaction is what made wallets
+    /// flag every buy. The vault keeps the counter; the lamports are paid out
+    /// from here on claim.
+    #[account(mut, seeds = [FEE_ESCROW_SEED, campaign.key().as_ref()], bump)]
+    pub fee_escrow: UncheckedAccount<'info>,
 }
 
 #[derive(Accounts)]
@@ -295,25 +303,65 @@ pub fn claim_creator_fees_handler(ctx: Context<ClaimCreatorFees>) -> Result<()> 
         return Ok(());
     }
 
-    let rent_min = Rent::get()?.minimum_balance(8 + CreatorFeeVault::INIT_SPACE);
-    let spendable = ctx
-        .accounts
-        .creator_fee_vault
-        .to_account_info()
-        .lamports()
-        .saturating_sub(rent_min);
-    require!(
-        spendable >= amount,
-        LaunchpadError::FeeEscrowBalanceMismatch
-    );
+    // Pay the vault's own surplus first, then the escrow.
+    //
+    // Campaigns that traded before this change already hold real lamports in
+    // the vault, because trades used to move the creator slice there. Draining
+    // that first means those balances are still claimable and nothing is
+    // stranded; everything accrued since is paid from the escrow.
+    require_fee_escrow(
+        &ctx.accounts.fee_escrow.to_account_info(),
+        ctx.accounts.campaign.key(),
+        ctx.bumps.fee_escrow,
+    )?;
+
+    let vault_rent = Rent::get()?.minimum_balance(8 + CreatorFeeVault::INIT_SPACE);
+    let vault_info = ctx.accounts.creator_fee_vault.to_account_info();
+    let from_vault = vault_info.lamports().saturating_sub(vault_rent).min(amount);
+    let from_escrow = amount.saturating_sub(from_vault);
+
+    if from_escrow > 0 {
+        // Only the surplus above what the escrow still owes its own six slices
+        // is the creator's. flush_campaign_fees spends pending_sum(); taking
+        // from below that line would steal the league/protocol/airdrop shares.
+        let escrow_info = ctx.accounts.fee_escrow.to_account_info();
+        let escrow_rent = Rent::get()?.minimum_balance(8 + FeeEscrow::INIT_SPACE);
+        let reserved = {
+            let data = escrow_info.try_borrow_data()?;
+            let mut slice: &[u8] = &data;
+            let escrow = Box::new(FeeEscrow::try_deserialize(&mut slice)?);
+            require_keys_eq!(
+                escrow.campaign,
+                ctx.accounts.campaign.key(),
+                LaunchpadError::InvalidFeeEscrow
+            );
+            pending_sum(&escrow)?
+        };
+        let escrow_spendable = escrow_info
+            .lamports()
+            .saturating_sub(escrow_rent)
+            .saturating_sub(reserved);
+        require!(
+            escrow_spendable >= from_escrow,
+            LaunchpadError::FeeEscrowBalanceMismatch
+        );
+    }
 
     {
-        let vault_info = ctx.accounts.creator_fee_vault.to_account_info();
         let creator_info = ctx.accounts.creator.to_account_info();
-        **vault_info.try_borrow_mut_lamports()? = vault_info
-            .lamports()
-            .checked_sub(amount)
-            .ok_or(LaunchpadError::FeeEscrowBalanceMismatch)?;
+        if from_vault > 0 {
+            **vault_info.try_borrow_mut_lamports()? = vault_info
+                .lamports()
+                .checked_sub(from_vault)
+                .ok_or(LaunchpadError::FeeEscrowBalanceMismatch)?;
+        }
+        if from_escrow > 0 {
+            let escrow_info = ctx.accounts.fee_escrow.to_account_info();
+            **escrow_info.try_borrow_mut_lamports()? = escrow_info
+                .lamports()
+                .checked_sub(from_escrow)
+                .ok_or(LaunchpadError::FeeEscrowBalanceMismatch)?;
+        }
         **creator_info.try_borrow_mut_lamports()? = creator_info
             .lamports()
             .checked_add(amount)
@@ -553,6 +601,20 @@ pub fn accrue_fee_escrow(
     }
 
     if fee_lamports > 0 && amounts.creator > 0 {
+        // Counter only. The lamports deliberately STAY in the fee escrow until
+        // the creator claims them.
+        //
+        // Moving them here used to credit creator_fee_vault inside the trader's
+        // own transaction, which meant a buy paid out to two separate fee
+        // destinations -- the second one usually dust, 980 lamports on a 0.001
+        // SOL buy. Wallets read that fan-out as a drain pattern: Phantom stopped
+        // attaching any Lighthouse assertions to trades and returned "This dApp
+        // could be malicious" on every buy and sell, while the same wallet
+        // signed create without complaint, because create distributes no fees.
+        //
+        // A trade now credits exactly two program accounts, sol_vault and this
+        // escrow, which is the shape wallets accepted for months before the
+        // creator vault was added to the trade instruction.
         accrue_creator_fee_vault(
             creator_fee_vault,
             campaign,
@@ -561,7 +623,6 @@ pub fn accrue_fee_escrow(
             route_profile,
             amounts.creator,
         )?;
-        move_creator_fee_lamports(info, creator_fee_vault, amounts.creator)?;
     }
 
     let mut data = info.try_borrow_mut_data()?;
@@ -664,26 +725,6 @@ fn accrue_creator_fee_vault(
 }
 
 #[inline(never)]
-fn move_creator_fee_lamports(
-    escrow_info: &AccountInfo,
-    creator_fee_vault: &AccountInfo,
-    amount_lamports: u64,
-) -> Result<()> {
-    if amount_lamports == 0 {
-        return Ok(());
-    }
-    {
-        let mut escrow_lamports = escrow_info.try_borrow_mut_lamports()?;
-        **escrow_lamports = escrow_lamports
-            .checked_sub(amount_lamports)
-            .ok_or(LaunchpadError::FeeEscrowBalanceMismatch)?;
-    }
-    let mut creator_vault_lamports = creator_fee_vault.try_borrow_mut_lamports()?;
-    **creator_vault_lamports = creator_vault_lamports
-        .checked_add(amount_lamports)
-        .ok_or(LaunchpadError::MathOverflow)?;
-    Ok(())
-}
 
 #[inline(never)]
 fn flush_escrow_lamports(
@@ -785,6 +826,86 @@ fn pending_sum(escrow: &FeeEscrow) -> Result<u64> {
 
 #[cfg(test)]
 mod tests {
+
+    /// A trade must credit exactly two program accounts: sol_vault and the fee
+    /// escrow.
+    ///
+    /// It briefly credited a third. accrue_fee_escrow moved the creator's 5%
+    /// slice out of the escrow and into creator_fee_vault inside the trader's
+    /// own transaction, so every buy paid out to two separate fee destinations,
+    /// the second one usually dust -- 980 lamports on a 0.001 SOL buy. Wallets
+    /// read that fan-out as a drain: Phantom stopped attaching any Lighthouse
+    /// assertions to trades and returned "This dApp could be malicious" on
+    /// every buy and sell, while signing create from the same wallet without
+    /// complaint, because create distributes no fees.
+    ///
+    /// The counter still moves at trade time; only the lamports wait for the
+    /// claim. A grep is the honest test -- the alternative needs a running bank
+    /// and a wallet to tell you it has stopped trusting you.
+    #[test]
+    fn a_trade_moves_no_lamports_into_the_creator_fee_vault() {
+        let source = include_str!("fee_escrow.rs");
+        // Balanced braces, not "the next pub fn": accrue_fee_escrow is the last
+        // pub fn in the file, so a naive scan runs to EOF and swallows this
+        // module -- including the very strings being searched for.
+        let start = source
+            .find("pub fn accrue_fee_escrow(")
+            .expect("accrue_fee_escrow must exist");
+        let bytes = source.as_bytes();
+        let open = start + source[start..].find('{').expect("function body");
+        let mut depth = 0usize;
+        let mut end = source.len();
+        for i in open..source.len() {
+            match bytes[i] {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end = i + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let body = &source[start..end];
+
+        assert!(
+            body.contains("accrue_creator_fee_vault("),
+            "the creator's slice must still be accrued as a counter",
+        );
+        for forbidden in [
+            "move_creator_fee_lamports",
+            "try_borrow_mut_lamports",
+            "system_instruction::transfer",
+        ] {
+            assert!(
+                !body.contains(forbidden),
+                "accrue_fee_escrow calls `{forbidden}`; a trade must not move lamports to a second \
+                 fee destination, that is what made wallets flag every buy",
+            );
+        }
+    }
+
+    /// The claim is where the creator's lamports actually move, so it has to be
+    /// able to reach the escrow they now sit in.
+    #[test]
+    fn the_claim_can_reach_the_escrow_the_lamports_sit_in() {
+        let source = include_str!("fee_escrow.rs");
+        let start = source
+            .find("pub struct ClaimCreatorFees<'info> {")
+            .expect("ClaimCreatorFees must exist");
+        let accounts = &source[start..start + source[start..].find("\n}\n").unwrap()];
+        assert!(
+            accounts.contains("pub fee_escrow: UncheckedAccount<'info>"),
+            "ClaimCreatorFees must take the fee escrow; without it the creator cannot be paid",
+        );
+        assert!(
+            accounts.contains("seeds = [FEE_ESCROW_SEED, campaign.key().as_ref()]"),
+            "the escrow must be pinned by seeds so a look-alike account cannot be substituted",
+        );
+    }
+
     use super::*;
     use crate::{ROUTE_PROFILE_LINKED, ROUTE_PROFILE_OG, ROUTE_PROFILE_UNLINKED};
 

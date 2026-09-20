@@ -264,6 +264,49 @@ ${source}`,
     return { signature, logs: simulated.logs };
   }
 
+
+  /// A trade may credit exactly one fee destination: the fee escrow.
+  ///
+  /// accrue_fee_escrow briefly moved the creator's 5% slice out of the escrow
+  /// and into creator_fee_vault inside the trader's own transaction, so a buy
+  /// paid two separate fee accounts, the second usually dust -- 980 lamports on
+  /// a 0.001 SOL buy. Wallets read that fan-out as a drain: Phantom stopped
+  /// attaching Lighthouse assertions to trades entirely and returned "This dApp
+  /// could be malicious" on every buy and sell, while signing create from the
+  /// same wallet without complaint, because create distributes no fees.
+  ///
+  /// Nothing in the trade code changed to cause it and nothing in the trade
+  /// code would have caught it. This reads the lamport deltas the chain
+  /// actually recorded.
+  async function assertTradePaysOneFeeDestination(signature, label) {
+    const tx = await connection.getTransaction(signature, {
+      commitment: "confirmed",
+      maxSupportedTransactionVersion: 0,
+    });
+    assert.ok(tx, `${label}: transaction ${signature} not found`);
+    const keys = tx.transaction.message
+      .getAccountKeys({ accountKeysFromLookups: tx.meta.loadedAddresses })
+      .keySegments()
+      .flat()
+      .map((k) => k.toBase58());
+    const credited = [];
+    keys.forEach((k, i) => {
+      if (tx.meta.postBalances[i] - tx.meta.preBalances[i] > 0) credited.push(k);
+    });
+    const creatorVault = campaignAccounts.creatorFeeVault.toBase58();
+    assert.ok(
+      !credited.includes(creatorVault),
+      `${label}: creator_fee_vault was credited by the trade. The creator's slice must accrue as a ` +
+        "counter and move only on claim; paying a second fee destination inside the trade is what " +
+        "made wallets flag every buy.",
+    );
+    const feeEscrow = campaignAccounts.feeEscrow.toBase58();
+    assert.ok(
+      credited.includes(feeEscrow),
+      `${label}: the fee escrow received nothing; the fee must still be collected`,
+    );
+  }
+
   async function sendLegacy(payer, ixs, label) {
     const latest = await connection.getLatestBlockhash("confirmed");
     const tx = new Transaction({ feePayer: payer.publicKey, recentBlockhash: latest.blockhash }).add(...ixs);
@@ -841,12 +884,23 @@ ${extra}`);
       const vault = await connection.getBalance(campaignAccounts.solVault, "confirmed");
       const escrow = await connection.getBalance(campaignAccounts.feeEscrow, "confirmed");
       const creatorFeeVault = await connection.getBalance(campaignAccounts.creatorFeeVault, "confirmed");
+      // The creator's entitlement is a counter on the vault, not its balance.
+      // A trade must not move lamports into a second fee destination, so the
+      // lamports stay in the escrow until claim_creator_fees pays them out.
+      const creatorVaultInfo = await connection.getAccountInfo(
+        campaignAccounts.creatorFeeVault,
+        "confirmed",
+      );
+      const creatorPending = creatorVaultInfo
+        ? creatorVaultInfo.data.readBigUInt64LE(8 + 32 + 32)
+        : 0n;
       return {
         campaign,
         tokenAmount: token ? BigInt(token.amount.toString()) : 0n,
         vault,
         escrow,
         creatorFeeVault,
+        creatorPending,
       };
     }
 
@@ -896,6 +950,9 @@ ${text}`);
       );
       const vaultsBefore = await rewardVaultSnapshot();
       const sold = await sendSell(tokensIn);
+      // Sells route through the same accrue_fee_escrow, so they carry the same
+      // risk of paying a second fee destination.
+      await assertTradePaysOneFeeDestination(sold.signature, "sell");
       const afterSnap = await snapshot();
       const sellerAfter = BigInt(
         await connection.getBalance(buyer.keypair.publicKey, "confirmed"),
@@ -911,6 +968,17 @@ ${text}`);
         BigInt(afterSnap.campaign.netRaisedLamports.toString());
       const escrowFee = BigInt(afterSnap.escrow) - BigInt(beforeSnap.escrow);
       const creatorFee = BigInt(afterSnap.creatorFeeVault) - BigInt(beforeSnap.creatorFeeVault);
+      // Same contract as the buy: one fee destination. The sum below would still
+      // balance if the creator slice moved, so pin it explicitly.
+      assert.equal(
+        creatorFee,
+        0n,
+        `${label}: a sell must not move lamports into CreatorFeeVault; the creator is paid on claim`,
+      );
+      assert.ok(
+        afterSnap.creatorPending > beforeSnap.creatorPending,
+        `${label}: the creator's slice must still be recorded as pending`,
+      );
       const fee = escrowFee + creatorFee;
       const net = gross - fee;
       assert.ok(gross > 0n, `${label}: gross must be > 0`);
@@ -947,6 +1015,7 @@ ${text}`);
     // campaign is tradeable the moment it is created, so assert that instead.
     const firstBuy = await sendBuy(BUY_LAMPORTS);
     assert.ok(firstBuy, "a freshly created campaign must accept a buy with no keeper step");
+    await assertTradePaysOneFeeDestination(firstBuy.signature, "first buy");
 
     await initializeIfMissing(
       connection,
@@ -997,13 +1066,26 @@ ${text}`);
     assert.equal(spent1, net1, "buy net must stay in the campaign SOL vault");
     const expectedFee = (net1 * BigInt(BUY_FEE_BPS)) / 10000n;
     const escrowFee1 = BigInt(after.escrow) - BigInt(before.escrow);
-    const creatorFee1 = BigInt(after.creatorFeeVault) - BigInt(before.creatorFeeVault);
+    const creatorFeeLamports1 = BigInt(after.creatorFeeVault) - BigInt(before.creatorFeeVault);
+    const creatorAccrued1 = after.creatorPending - before.creatorPending;
+    // The WHOLE fee goes to one collector. It used to be split here, with the
+    // creator's slice moved into a second account inside the trader's own
+    // transaction -- usually dust, 980 lamports on a 0.001 SOL buy. Wallets read
+    // that fan-out as a drain and stopped guarding trades entirely.
     assert.equal(
-      escrowFee1 + creatorFee1,
+      escrowFee1,
       expectedFee,
-      "buy fee must split between FeeEscrow and CreatorFeeVault",
+      "the whole buy fee must land in the fee escrow, the single collector",
     );
-    assert.ok(creatorFee1 > 0n, "buy creator fee must accrue in CreatorFeeVault");
+    assert.equal(
+      creatorFeeLamports1,
+      0n,
+      "a buy must not move lamports into CreatorFeeVault; the creator is paid on claim",
+    );
+    assert.ok(
+      creatorAccrued1 > 0n,
+      "the creator's slice must still be recorded as pending on CreatorFeeVault",
+    );
     let routed = 0n;
     for (const [name, pubkey] of Object.entries(rewardVaultKeys())) {
       const nowBal = BigInt(await connection.getBalance(pubkey, "confirmed"));
