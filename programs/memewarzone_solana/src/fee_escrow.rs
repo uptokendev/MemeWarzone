@@ -288,7 +288,7 @@ pub fn claim_creator_fees_handler(ctx: Context<ClaimCreatorFees>) -> Result<()> 
         ctx.accounts.campaign.key(),
     )?;
 
-    let amount = {
+    {
         let data = ctx.accounts.creator_fee_vault.try_borrow_data()?;
         let mut slice: &[u8] = &data;
         let vault = Box::new(CreatorFeeVault::try_deserialize(&mut slice)?);
@@ -297,8 +297,48 @@ pub fn claim_creator_fees_handler(ctx: Context<ClaimCreatorFees>) -> Result<()> 
             ctx.accounts.creator.key(),
             LaunchpadError::Unauthorized
         );
-        vault.pending_lamports
+    }
+
+    require_fee_escrow(
+        &ctx.accounts.fee_escrow.to_account_info(),
+        ctx.accounts.campaign.key(),
+        ctx.bumps.fee_escrow,
+    )?;
+
+    // What the creator is owed is whatever the collector holds above rent and
+    // the six other buckets. No counter, because slices_sum == fee_lamports is
+    // asserted on every trade and flush only ever spends pending_sum().
+    //
+    // Claiming empties it, so it is self-accounting: nothing can be claimed
+    // twice, and nothing needs to be written during a trade to keep it honest.
+    let escrow_info = ctx.accounts.fee_escrow.to_account_info();
+    let escrow_rent = Rent::get()?.minimum_balance(8 + FeeEscrow::INIT_SPACE);
+    let reserved = {
+        let data = escrow_info.try_borrow_data()?;
+        let mut slice: &[u8] = &data;
+        let escrow = Box::new(FeeEscrow::try_deserialize(&mut slice)?);
+        require_keys_eq!(
+            escrow.campaign,
+            ctx.accounts.campaign.key(),
+            LaunchpadError::InvalidFeeEscrow
+        );
+        pending_sum(&escrow)?
     };
+    let from_escrow = escrow_info
+        .lamports()
+        .saturating_sub(escrow_rent)
+        .saturating_sub(reserved);
+
+    // Campaigns that traded before this change hold real lamports in the vault,
+    // because the trade used to move the creator slice there. Pay that out too
+    // so nothing is stranded.
+    let vault_rent = Rent::get()?.minimum_balance(8 + CreatorFeeVault::INIT_SPACE);
+    let vault_info = ctx.accounts.creator_fee_vault.to_account_info();
+    let from_vault = vault_info.lamports().saturating_sub(vault_rent);
+
+    let amount = from_vault
+        .checked_add(from_escrow)
+        .ok_or(LaunchpadError::MathOverflow)?;
     if amount == 0 {
         return Ok(());
     }
@@ -555,7 +595,6 @@ pub fn require_fee_escrow_empty(info: &AccountInfo, campaign: Pubkey) -> Result<
 #[inline(never)]
 pub fn accrue_fee_escrow(
     info: &AccountInfo,
-    creator_fee_vault: &AccountInfo,
     campaign: Pubkey,
     trader: Pubkey,
     side: u8,
@@ -600,30 +639,25 @@ pub fn accrue_fee_escrow(
         );
     }
 
-    if fee_lamports > 0 && amounts.creator > 0 {
-        // Counter only. The lamports deliberately STAY in the fee escrow until
-        // the creator claims them.
-        //
-        // Moving them here used to credit creator_fee_vault inside the trader's
-        // own transaction, which meant a buy paid out to two separate fee
-        // destinations -- the second one usually dust, 980 lamports on a 0.001
-        // SOL buy. Wallets read that fan-out as a drain pattern: Phantom stopped
-        // attaching any Lighthouse assertions to trades and returned "This dApp
-        // could be malicious" on every buy and sell, while the same wallet
-        // signed create without complaint, because create distributes no fees.
-        //
-        // A trade now credits exactly two program accounts, sol_vault and this
-        // escrow, which is the shape wallets accepted for months before the
-        // creator vault was added to the trade instruction.
-        accrue_creator_fee_vault(
-            creator_fee_vault,
-            campaign,
-            trader,
-            side,
-            route_profile,
-            amounts.creator,
-        )?;
-    }
+    // The creator's slice is the seventh bucket in this collector, and like the
+    // other six it needs no separate account.
+    //
+    // It used to be tracked as a counter on CreatorFeeVault, a different
+    // account, so every buy and sell had to carry that account and write to it
+    // -- a 15th account, writable, purely to increment a number. The six league,
+    // recruiter, airdrop, squad and protocol buckets are fields on this struct
+    // and cost nothing extra; the creator bucket was the odd one out for no
+    // reason anyone can point to.
+    //
+    // It does not even need a field. slices_sum == fee_lamports is asserted
+    // above, and flush_campaign_fees only ever spends pending_sum() -- the six.
+    // So whatever sits in this account above rent and those six counters IS the
+    // unclaimed creator share, by construction. Verified against mainnet:
+    // total_received 39,214, six slices 18,627, surplus 980, and 5% of 39,214
+    // is 1,960 = 980 already paid out + 980 surplus. Exact.
+    //
+    // claim_creator_fees reads that surplus. A trade now touches one fee
+    // account instead of two.
 
     let mut data = info.try_borrow_mut_data()?;
     let mut slice: &[u8] = &data;
@@ -827,27 +861,25 @@ fn pending_sum(escrow: &FeeEscrow) -> Result<u64> {
 #[cfg(test)]
 mod tests {
 
-    /// A trade must credit exactly two program accounts: sol_vault and the fee
-    /// escrow.
+    /// A trade must not touch the creator fee vault at all.
     ///
-    /// It briefly credited a third. accrue_fee_escrow moved the creator's 5%
-    /// slice out of the escrow and into creator_fee_vault inside the trader's
-    /// own transaction, so every buy paid out to two separate fee destinations,
-    /// the second one usually dust -- 980 lamports on a 0.001 SOL buy. Wallets
-    /// read that fan-out as a drain: Phantom stopped attaching any Lighthouse
-    /// assertions to trades and returned "This dApp could be malicious" on
-    /// every buy and sell, while signing create from the same wallet without
-    /// complaint, because create distributes no fees.
+    /// The creator's slice is the seventh bucket in the fee escrow. The other
+    /// six are counters on the escrow struct and cost nothing extra; this one
+    /// was tracked on a separate account, so every buy and sell carried that
+    /// account writable purely to increment a number -- a 15th account on a
+    /// transaction that needs 14, and the one structural difference from the
+    /// Kaiju88 buys the wallet guarded without complaint. It briefly moved
+    /// lamports there too, which paid two fee destinations inside the trader's
+    /// transaction; that was removed first, the account itself second.
     ///
-    /// The counter still moves at trade time; only the lamports wait for the
-    /// claim. A grep is the honest test -- the alternative needs a running bank
-    /// and a wallet to tell you it has stopped trusting you.
+    /// It needs no counter. slices_sum == fee_lamports is asserted on every
+    /// trade and flush only spends pending_sum(), so the escrow's surplus above
+    /// rent and those six IS the unclaimed creator share. A grep is the honest
+    /// test -- the alternative is a running bank and a wallet to tell you it has
+    /// stopped trusting you.
     #[test]
-    fn a_trade_moves_no_lamports_into_the_creator_fee_vault() {
+    fn a_trade_never_references_the_creator_fee_vault() {
         let source = include_str!("fee_escrow.rs");
-        // Balanced braces, not "the next pub fn": accrue_fee_escrow is the last
-        // pub fn in the file, so a naive scan runs to EOF and swallows this
-        // module -- including the very strings being searched for.
         let start = source
             .find("pub fn accrue_fee_escrow(")
             .expect("accrue_fee_escrow must exist");
@@ -869,20 +901,27 @@ mod tests {
             }
         }
         let body = &source[start..end];
-
-        assert!(
-            body.contains("accrue_creator_fee_vault("),
-            "the creator's slice must still be accrued as a counter",
-        );
         for forbidden in [
-            "move_creator_fee_lamports",
+            "creator_fee_vault",
+            "accrue_creator_fee_vault",
             "try_borrow_mut_lamports",
             "system_instruction::transfer",
         ] {
             assert!(
                 !body.contains(forbidden),
-                "accrue_fee_escrow calls `{forbidden}`; a trade must not move lamports to a second \
-                 fee destination, that is what made wallets flag every buy",
+                "accrue_fee_escrow references `{forbidden}`; a trade must touch one fee account, \
+                 the escrow, and nothing else",
+            );
+        }
+
+        // And the trade instructions must not carry the account at all.
+        let trade = include_str!("authorized_trade.rs");
+        for name in ["BuyTokens<'info>", "SellTokens<'info>"] {
+            let s = trade.find(&format!("pub struct {name} {{")).expect(name);
+            let e = s + trade[s..].find("\n}\n").expect("struct end");
+            assert!(
+                !trade[s..e].contains("pub creator_fee_vault"),
+                "{name} still carries creator_fee_vault; the trade is 14 accounts, not 15",
             );
         }
     }

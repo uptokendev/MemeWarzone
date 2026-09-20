@@ -276,7 +276,15 @@ test("production BUY and SELL instructions compile to one-signer V0 envelopes un
     );
 
     reportSize(side === "buy" ? "BUY" : "SELL", legacy, stats);
-    assert.equal(fixture.programInstruction.keys.length, 15);
+    // 14, not 15. The creator fee vault was the 15th account and the one
+    // structural difference from every buy a wallet ever guarded; the creator's
+    // slice is the escrow's seventh bucket and needs no account on a trade.
+    assert.equal(fixture.programInstruction.keys.length, 14);
+    assert.equal(fixture.programInstruction.keys.filter((key) => key.isWritable).length, 7);
+    assert.ok(
+      !fixture.programInstruction.keys.some((key) => key.pubkey.toBase58() === fixture.accounts?.creatorFeeVault),
+      "a trade must not carry creatorFeeVault",
+    );
     assert.equal(fixture.programInstruction.data.length, side === "buy" ? 73 : 65);
     assert.equal(stats.requiredSigners, 1);
     assert.equal(stats.instructionCount, 2);

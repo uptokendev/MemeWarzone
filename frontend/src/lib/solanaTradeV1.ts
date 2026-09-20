@@ -461,7 +461,7 @@ async function submitSolanaTradeV1Untracked(
   if (!a.tokenVault || !a.solVault) {
     throw new Error("Trade authorization is missing tokenVault/solVault.");
   }
-  if (!a.feeEscrow || !a.creatorFeeVault) {
+  if (!a.feeEscrow) {
     throw new Error("market initializing");
   }
 

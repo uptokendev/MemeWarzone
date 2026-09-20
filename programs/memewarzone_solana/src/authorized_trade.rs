@@ -562,13 +562,18 @@ pub struct BuyTokens<'info> {
         bump
     )]
     pub fee_escrow: UncheckedAccount<'info>,
-    /// CHECK: campaign-bound creator custody PDA required by the fee freeze.
-    #[account(
-        mut,
-        seeds = [crate::fee_escrow::CREATOR_FEE_VAULT_SEED, campaign.key().as_ref()],
-        bump
-    )]
-    pub creator_fee_vault: UncheckedAccount<'info>,
+    // creator_fee_vault is deliberately NOT here.
+    //
+    // The creator's slice is the seventh bucket in the fee escrow, exactly like
+    // the six league, recruiter, airdrop, squad and protocol buckets, and those
+    // cost no extra account because they are counters on the escrow itself. The
+    // creator bucket used to be a counter on a separate account, so every trade
+    // carried that account writable purely to increment a number -- a 15th
+    // account on a transaction that needs 14.
+    //
+    // It does not need a counter at all: whatever the escrow holds above rent
+    // and pending_sum() IS the unclaimed creator share, and claim_creator_fees
+    // reads it there.
 }
 
 #[derive(Accounts)]
@@ -619,13 +624,18 @@ pub struct SellTokens<'info> {
         bump
     )]
     pub fee_escrow: UncheckedAccount<'info>,
-    /// CHECK: campaign-bound creator custody PDA required by the fee freeze.
-    #[account(
-        mut,
-        seeds = [crate::fee_escrow::CREATOR_FEE_VAULT_SEED, campaign.key().as_ref()],
-        bump
-    )]
-    pub creator_fee_vault: UncheckedAccount<'info>,
+    // creator_fee_vault is deliberately NOT here.
+    //
+    // The creator's slice is the seventh bucket in the fee escrow, exactly like
+    // the six league, recruiter, airdrop, squad and protocol buckets, and those
+    // cost no extra account because they are counters on the escrow itself. The
+    // creator bucket used to be a counter on a separate account, so every trade
+    // carried that account writable purely to increment a number -- a 15th
+    // account on a transaction that needs 14.
+    //
+    // It does not need a counter at all: whatever the escrow holds above rent
+    // and pending_sum() IS the unclaimed creator share, and claim_creator_fees
+    // reads it there.
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug)]
@@ -751,10 +761,6 @@ pub fn buy_tokens_handler(ctx: Context<BuyTokens>, args: BuyTokensArgs) -> Resul
         campaign_key,
         ctx.bumps.fee_escrow,
     )?;
-    crate::fee_escrow::require_creator_fee_vault(
-        &ctx.accounts.creator_fee_vault.to_account_info(),
-        campaign_key,
-    )?;
     crate::fee_escrow::transfer_buy_net_and_fee(
         &ctx.accounts.trader.to_account_info(),
         &ctx.accounts.sol_vault.to_account_info(),
@@ -766,7 +772,6 @@ pub fn buy_tokens_handler(ctx: Context<BuyTokens>, args: BuyTokensArgs) -> Resul
     )?;
     crate::fee_escrow::accrue_fee_escrow(
         &ctx.accounts.fee_escrow.to_account_info(),
-        &ctx.accounts.creator_fee_vault.to_account_info(),
         campaign_key,
         trader,
         TRADE_SIDE_BUY,
@@ -898,10 +903,6 @@ pub fn sell_tokens_handler(ctx: Context<SellTokens>, args: SellTokensArgs) -> Re
         campaign_key,
         ctx.bumps.fee_escrow,
     )?;
-    crate::fee_escrow::require_creator_fee_vault(
-        &ctx.accounts.creator_fee_vault.to_account_info(),
-        campaign_key,
-    )?;
     crate::fee_escrow::credit_sell_net_and_fee(
         &ctx.accounts.sol_vault.to_account_info(),
         &ctx.accounts.trader.to_account_info(),
@@ -912,7 +913,6 @@ pub fn sell_tokens_handler(ctx: Context<SellTokens>, args: SellTokensArgs) -> Re
     )?;
     crate::fee_escrow::accrue_fee_escrow(
         &ctx.accounts.fee_escrow.to_account_info(),
-        &ctx.accounts.creator_fee_vault.to_account_info(),
         campaign_key,
         trader,
         TRADE_SIDE_SELL,

@@ -182,7 +182,11 @@ describe("shared V0/ALT launchpad helper on local validator", function () {
     assert.equal(createInstruction.keys.length, 17);
     assert.equal(createInstruction.keys.filter((key) => key.isWritable).length, 9);
     assert.equal(createInstruction.keys[1].isWritable, false, "globalConfig must be read-only");
-    assert.equal(tradeInstruction.keys.length, 15);
+    // 14, not 15: the creator fee vault is the escrow's seventh bucket and rides
+    // on no trade. This was the one structural difference from every buy a
+    // wallet ever guarded.
+    assert.equal(tradeInstruction.keys.length, 14);
+    assert.equal(tradeInstruction.keys.filter((key) => key.isWritable).length, 7);
     assert.equal(createV0.stats.requiredSigners, 1);
     assert.equal(tradeV0.stats.requiredSigners, 1);
     assert.ok(createV0.stats.serializedBytes <= v0.SOLANA_RELEASE_MAX_BYTES);

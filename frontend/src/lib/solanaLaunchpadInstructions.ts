@@ -268,6 +268,7 @@ export function buildCreateCampaignInstruction(
       meta(a.tokenMetadata, false, true),
       meta(a.tokenMetadataProgram || MPL_TOKEN_METADATA_PROGRAM_ID, false, false),
       meta(a.feeEscrow, false, true),
+      // create still creates the vault; it is a TRADE that must not carry it.
       meta(a.creatorFeeVault, false, true),
       meta(a.instructions || SOLANA_INSTRUCTIONS_SYSVAR, false, false),
       meta(a.tokenProgram || SOLANA_TOKEN_PROGRAM_ID, false, false),
@@ -310,7 +311,10 @@ export function buildTradeTokensInstruction(
       { pubkey: new PublicKey(a.tokenProgram || SOLANA_TOKEN_PROGRAM_ID), isSigner: false, isWritable: false },
       { pubkey: new PublicKey(a.systemProgram || SOLANA_SYSTEM_PROGRAM_ID), isSigner: false, isWritable: false },
       { pubkey: new PublicKey(a.feeEscrow), isSigner: false, isWritable: true },
-      { pubkey: new PublicKey(a.creatorFeeVault), isSigner: false, isWritable: true },
+      // creatorFeeVault is deliberately NOT here. The creator's slice is the
+      // seventh bucket in the fee escrow and, like the other six, needs no
+      // separate account on a trade; carrying it made the buy 15 accounts
+      // against the 14 that every wallet-guarded buy ever had.
     ],
     data: encodeTradeTokensData(input),
   });

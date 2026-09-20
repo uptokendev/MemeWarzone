@@ -693,6 +693,7 @@ ${extra}`);
         tokenMetadata: campaignAccounts.tokenMetadata,
         tokenMetadataProgram: METAPLEX_METADATA_PROGRAM,
         feeEscrow: campaignAccounts.feeEscrow,
+        // create still creates the vault (17 accounts); only a TRADE drops it.
         creatorFeeVault: campaignAccounts.creatorFeeVault,
         instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
         tokenProgram: TOKEN_PROGRAM_ID,
@@ -781,7 +782,6 @@ ${extra}`);
         tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
         feeEscrow: campaignAccounts.feeEscrow,
-        creatorFeeVault: campaignAccounts.creatorFeeVault,
       });
     const buyIx = await builder.instruction();
     const sent = await sendProductionTrade({
@@ -851,7 +851,6 @@ ${extra}`);
         tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
         feeEscrow: campaignAccounts.feeEscrow,
-        creatorFeeVault: campaignAccounts.creatorFeeVault,
       });
     const sellIx = await builder.instruction();
     const sent = await sendProductionTrade({
@@ -995,9 +994,10 @@ ${text}`);
         0n,
         `${label}: a sell must not move lamports into CreatorFeeVault; the creator is paid on claim`,
       );
-      assert.ok(
-        afterSnap.creatorPending > beforeSnap.creatorPending,
-        `${label}: the creator's slice must still be recorded as pending`,
+      assert.equal(
+        afterSnap.creatorPending,
+        beforeSnap.creatorPending,
+        `${label}: a sell must not touch CreatorFeeVault; the creator's slice is the escrow surplus`,
       );
       const fee = escrowFee + creatorFee;
       const net = gross - fee;
@@ -1123,9 +1123,10 @@ ${text}`);
       0n,
       "a buy must not move lamports into CreatorFeeVault; the creator is paid on claim",
     );
-    assert.ok(
-      creatorAccrued1 > 0n,
-      "the creator's slice must still be recorded as pending on CreatorFeeVault",
+    assert.equal(
+      creatorAccrued1,
+      0n,
+      "a buy must not touch CreatorFeeVault at all; the creator's slice is the escrow surplus",
     );
     let routed = 0n;
     for (const [name, pubkey] of Object.entries(rewardVaultKeys())) {
