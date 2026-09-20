@@ -3,11 +3,19 @@
 const crypto = require("node:crypto");
 const { PublicKey } = require("@solana/web3.js");
 
-const CREATE_AUTH_DOMAIN = Buffer.from("MEMEWARZONE_SOLANA_CREATE_V5", "utf8");
-// v5 binds the Metaplex name and symbol into the create authorization. Must stay
+const CREATE_AUTH_DOMAIN = Buffer.from("MEMEWARZONE_SOLANA_CREATE_V7", "utf8");
+// v7 binds the Metaplex name and symbol into the create authorization, because
+// create_campaign writes the metadata itself and revocation is irreversible.
+//
+// This is the THIRD implementation of this message -- the other two are
+// build_create_authorization_message in authorized_create.rs and
+// buildCreateAuthorizationPayload in frontend/api/dev-fix/solana-v4-primitives.js.
+// They drifted: this copy sat at v5 while the program shipped v6, which is why
+// the local validator gate had not run since v5. Any change here must land in
+// all three, and the gate below is what proves they agree. Must stay
 // byte-identical to programs/memewarzone_solana/src/authorized_create.rs and to
 // frontend/api/dev-fix/solana-v4-primitives.js.
-const CREATE_AUTH_SCHEMA_VERSION = 5;
+const CREATE_AUTH_SCHEMA_VERSION = 7;
 const METAPLEX_MAX_NAME_BYTES = 32;
 const METAPLEX_MAX_SYMBOL_BYTES = 10;
 
@@ -129,7 +137,6 @@ function buildCreateAuthorizationPayload(input) {
     CREATE_AUTH_DOMAIN,
     u16(CREATE_AUTH_SCHEMA_VERSION, "schemaVersion"),
     pubkey(programId, "programId"),
-    bytes32(args.clusterHash, "args.clusterHash"),
 
     bytes32(generation.generationId, "generation.generationId"),
     pubkey(generationConfigKey, "generationConfigKey"),
@@ -192,15 +199,11 @@ function buildCreateAuthorizationPayload(input) {
     bytes32(args.metadataHash, "args.metadataHash"),
     borshString(args.name, METAPLEX_MAX_NAME_BYTES, "args.name"),
     borshString(args.symbol, METAPLEX_MAX_SYMBOL_BYTES, "args.symbol"),
-    bytes32(args.tickerHash, "args.tickerHash"),
-    bytes32(args.reservationIdHash, "args.reservationIdHash"),
-    u64(args.reservationVersion, "args.reservationVersion"),
     i64(args.launchAt, "args.launchAt"),
     u64(
       args.graduationTargetUsdMicros,
       "args.graduationTargetUsdMicros",
     ),
-    bytes32(args.nonce, "args.nonce"),
     i64(args.deadline, "args.deadline"),
   ]);
 }

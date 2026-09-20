@@ -11,6 +11,14 @@ cd "$ROOT"
 
 PROGRAM_ID="3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt"
 SO="$ROOT/target/deploy/memewarzone_solana.so"
+
+# create_campaign CPIs into Metaplex to write the token metadata, so the
+# validator needs the real program. Without it every successful-create test dies
+# with "Account metaqbxx... is not executable" -- which looks like a program bug
+# and is not one. Cached after the first fetch; delete the file to refresh.
+MPL_PROGRAM_ID="metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+MPL_SO="$ROOT/target/deploy/mpl_token_metadata.so"
+MPL_SOURCE_URL="${MWZ_MPL_SOURCE_URL:-https://api.mainnet-beta.solana.com}"
 WALLET="${ANCHOR_WALLET:-$HOME/.config/solana/id.json}"
 
 if ! command -v anchor >/dev/null 2>&1; then
@@ -28,6 +36,16 @@ if [[ ! -f "$SO" ]]; then
   echo "missing $SO" >&2
   exit 1
 fi
+
+if [[ ! -s "$MPL_SO" ]]; then
+  echo "==> fetching Metaplex token metadata program from $MPL_SOURCE_URL"
+  if ! solana program dump "$MPL_PROGRAM_ID" "$MPL_SO" --url "$MPL_SOURCE_URL"; then
+    echo "could not fetch $MPL_PROGRAM_ID; the create tests cannot write metadata without it" >&2
+    rm -f "$MPL_SO"
+    exit 1
+  fi
+fi
+echo "==> Metaplex artifact $(wc -c < "$MPL_SO" | tr -d ' ') bytes"
 
 HASH="$(sha256sum "$SO" | awk '{print $1}')"
 BYTES="$(wc -c < "$SO" | tr -d ' ')"
@@ -62,6 +80,7 @@ start_validator() {
     --bind-address 127.0.0.1 \
     --rpc-port 8899 \
     --bpf-program "$PROGRAM_ID" "$SO" \
+    --bpf-program "$MPL_PROGRAM_ID" "$MPL_SO" \
     --quiet \
     >/tmp/mwz-local-validator.log 2>&1 &
   VALIDATOR_PID=$!

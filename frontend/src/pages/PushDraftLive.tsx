@@ -33,7 +33,6 @@ import {
 import { getScheduledFactoryAddress } from "@/lib/scheduledFactoryConfig";
 import { requestSolanaCreateAuthorizationV4 } from "@/lib/solanaCreateAuthorizationV4";
 import { submitSolanaV4CreateFromAuthorization } from "@/lib/solanaV4CreateSubmit";
-import { finalizeSolanaLaunch } from "@/lib/solanaFinalizeLaunchSubmit";
 import { signSolanaDraftAction } from "@/lib/solanaWallet";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 
@@ -340,24 +339,9 @@ export default function PushDraftLive() {
         } else {
           toast.success(`Solana campaign is live. Opening token page (${(mintAddress || campaignAddress).slice(0, 8)}…).`, { duration: 12_000 });
         }
-        // Same hole as the Direct path had: this branch is reached precisely
-        // when a create landed without finishing, so returning without
-        // finalizing makes that state permanent on every retry. A scheduled
-        // launch finalizes too — launch_at gates trading, not naming.
-        if (campaignAddress) {
-          try {
-            toast.message("Finishing a launch that was left incomplete…");
-            await finalizeSolanaLaunch({
-              campaignAddress,
-              programId: authorization.programId,
-            });
-          } catch (finalizeErr: any) {
-            toast.error(
-              `Campaign recovered, but naming it failed: ${String(finalizeErr?.message || finalizeErr)}`,
-              { duration: 12_000 },
-            );
-          }
-        }
+        // Under v7 a landed create is a finished launch: the same instruction
+        // writes the metadata, revokes the mint authority and creates the fee
+        // accounts. There is no half-finished state left to detect.
         if (mode === "scheduled") {
           toast.success("Solana campaign is linked. Trading stays closed until the scheduled open time.");
           navigate(`/prepare/${draft.slug}`);
@@ -380,17 +364,10 @@ export default function PushDraftLive() {
         toast.message("Existing Solana campaign found for this draft — finalizing without a new create.");
       }
 
-      // Second transaction: Metaplex metadata, mint authority revocation and the
-      // fee accounts. Draft and scheduled launches go through the same create as
-      // Direct Deploy, so they need the same finishing step; without it the token
-      // has no name in any wallet and cannot trade. A scheduled launch still
-      // finalizes now — launch_at gates trading, not naming.
-      toast.message("Naming your token and opening trading…");
-      await finalizeSolanaLaunch({
-        campaignAddress: created.campaignAddress,
-        programId: created.programId,
-      });
-
+      // No second transaction. Draft and scheduled launches go through the same
+      // create as Direct Deploy, and under v7 that one instruction names the
+      // token, revokes the mint authority and creates the fee accounts.
+      // launch_at still gates trading; it never gated naming.
       const createVaults = {
         tokenVault: authorization.accounts?.tokenVault || null,
         solVault: authorization.accounts?.solVault || null,

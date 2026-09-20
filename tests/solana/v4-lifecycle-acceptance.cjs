@@ -563,26 +563,15 @@ ${extra}`);
       name: "MWZ Lifecycle",
       symbol: "MWZLIFE",
       metadataHash: fixed32(hash32("metadata:lifecycle")),
-      clusterHash: fixed32(hash32("solana-local-validator-devnet-policy")),
-      tickerHash: fixed32(hash32("ticker:lifecycle")),
-      reservationIdHash: fixed32(hash32("reservation:lifecycle")),
-      reservationVersion: new BN(1),
       launchAt: new BN(0),
       graduationTargetUsdMicros: new BN(GRADUATION_TARGET_6_USD_MICROS.toString()),
       deadline: new BN(now + 3_600),
-      nonce: fixed32(hash32("nonce:lifecycle")),
     };
     campaignAccounts = {
       campaign: derivePda(program.programId, "campaign", Buffer.from(createArgs.campaignId)),
       mint: derivePda(program.programId, "campaign-mint", Buffer.from(createArgs.campaignId)),
       tokenVault: derivePda(program.programId, "token-vault", Buffer.from(createArgs.campaignId)),
       solVault: derivePda(program.programId, "sol-vault", Buffer.from(createArgs.campaignId)),
-      createAuthorization: derivePda(
-        program.programId,
-        "create-auth",
-        creator.keypair.publicKey.toBuffer(),
-        Buffer.from(createArgs.nonce),
-      ),
     };
     campaignAccounts.tokenMetadata = PublicKey.findProgramAddressSync(
       [
@@ -637,12 +626,11 @@ ${extra}`);
         mint: campaignAccounts.mint,
         tokenVault: campaignAccounts.tokenVault,
         solVault: campaignAccounts.solVault,
-        createAuthorization: campaignAccounts.createAuthorization,
-        instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
-        feeEscrow: campaignAccounts.feeEscrow,
-        creatorFeeVault: campaignAccounts.creatorFeeVault,
         tokenMetadata: campaignAccounts.tokenMetadata,
         tokenMetadataProgram: METAPLEX_METADATA_PROGRAM,
+        feeEscrow: campaignAccounts.feeEscrow,
+        creatorFeeVault: campaignAccounts.creatorFeeVault,
+        instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
         tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
       })
@@ -1326,14 +1314,19 @@ ${text}`);
     return Buffer.compare(a.toBuffer(), b.toBuffer()) > 0 ? [a, b] : [b, a];
   }
 
-  const deriveMeteoraPool = binding.deriveMeteoraPool;
-  const deriveMeteoraPosition = binding.deriveMeteoraPosition;
-
   // The binding lives in scripts/solana/graduation-binding.cjs so the operator
   // and this suite compute the same digest from the same source. One copy living
   // only in a test is how the program reached schema 4 while its callers stayed
   // on schema 2 and every graduation was rejected.
+  //
+  // Declared before it is used: the two derive* aliases below used to sit above
+  // this line, which put them in the temporal dead zone and threw
+  // "Cannot access 'binding' before initialization" at load time. The whole file
+  // failed to parse, so the bonding-lifecycle half of the local gate silently
+  // stopped running.
   const binding = require("../../scripts/solana/graduation-binding.cjs");
+  const deriveMeteoraPool = binding.deriveMeteoraPool;
+  const deriveMeteoraPosition = binding.deriveMeteoraPosition;
   const nativeQuoteBinding = binding.nativeQuoteBinding;
   const graduationDigest = (input) =>
     binding.graduationDigest({ ...input, programId: program.programId });

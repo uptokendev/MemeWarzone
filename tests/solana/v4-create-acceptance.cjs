@@ -32,7 +32,6 @@ const {
 } = require("./authorization-v4.cjs");
 const {
   decodeCampaign,
-  decodeCreateAuthorization,
   decodeCampaignSolVault,
 } = require("./decode-campaign.cjs");
 
@@ -146,18 +145,11 @@ describe("MemeWarzone Solana authorization V4 local-validator acceptance", funct
 
   function campaignAccounts(creator, args, overrides = {}) {
     const campaignId = Buffer.from(args.campaignId);
-    const nonce = Buffer.from(args.nonce);
     const defaults = {
       campaign: derivePda(program.programId, "campaign", campaignId),
       mint: derivePda(program.programId, "campaign-mint", campaignId),
       tokenVault: derivePda(program.programId, "token-vault", campaignId),
       solVault: derivePda(program.programId, "sol-vault", campaignId),
-      createAuthorization: derivePda(
-        program.programId,
-        "create-auth",
-        creator.publicKey.toBuffer(),
-        nonce,
-      ),
       tokenProgram: TOKEN_PROGRAM_ID,
       tokenMetadataProgram: MPL_TOKEN_METADATA_PROGRAM_ID,
     };
@@ -191,16 +183,16 @@ describe("MemeWarzone Solana authorization V4 local-validator acceptance", funct
       name: options.name ?? `MWZ ${label}`.slice(0, 32),
       symbol: options.symbol ?? (label.replace(/[^a-zA-Z0-9]/g, "").slice(0, 10).toUpperCase() || "MWZ"),
       metadataHash: fixed32(hash32(`metadata:${label}`)),
-      clusterHash: fixed32(declaredClusterHash),
-      tickerHash: fixed32(hash32(`ticker:${label}`)),
-      reservationIdHash: fixed32(hash32(`reservation:${label}`)),
-      reservationVersion: new BN(options.reservationVersion ?? 1),
+      // v7 dropped clusterHash, tickerHash, reservationIdHash,
+      // reservationVersion and nonce. Each was 32 bytes of a transaction with
+      // none to spare and none was ever read back on chain. The program now
+      // derives clusterHash from its own schema domain and tickerHash from the
+      // symbol it actually writes into the Metaplex metadata.
       launchAt: new BN(launchAt),
       graduationTargetUsdMicros: new BN(
         GRADUATION_TARGET_6_USD_MICROS.toString(),
       ),
       deadline: new BN(deadline),
-      nonce: fixed32(options.nonce ?? hash32(`nonce:${label}`)),
     };
   }
 
@@ -351,7 +343,6 @@ describe("MemeWarzone Solana authorization V4 local-validator acceptance", funct
         mint: accounts.mint,
         tokenVault: accounts.tokenVault,
         solVault: accounts.solVault,
-        createAuthorization: accounts.createAuthorization,
         instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
         feeEscrow: accounts.feeEscrow,
         creatorFeeVault: accounts.creatorFeeVault,
@@ -404,6 +395,26 @@ describe("MemeWarzone Solana authorization V4 local-validator acceptance", funct
       throw new Error(`create simulation failed: ${simSource}`);
     }
 
+    // v7 does the whole launch in one instruction -- a Metaplex CPI, a mint, a
+    // token account, and three program accounts -- so compute is worth pinning.
+    // Measured here at 181k-194k.
+    //
+    // 250k is a drift alarm, not the cliff. The implicit budget is
+    // min(200k * instruction_count, 1.4M) and a create transaction carries the
+    // ed25519 instruction too, so the floor is 400k; Phantom then replaces that
+    // with an explicit SetComputeUnitLimit sized from its own simulation.
+    //
+    // The alarm sat at 200k and a measured run came in at 196,668 -- 1.7% clear,
+    // which is a flaky test rather than a useful signal. 250k still catches any
+    // real regression (this instruction has never exceeded 197k) without
+    // tripping on ordinary variation between creators and name lengths.
+    const unitsConsumed = simulated.value.unitsConsumed ?? 0;
+    assert.ok(
+      unitsConsumed > 0 && unitsConsumed < 250_000,
+      `create consumed ${unitsConsumed} CU; investigate before it approaches the 400k floor`,
+    );
+    console.log(`      [create] ${unsignedBytes.length} bytes, ${unitsConsumed} CU`);
+
     transaction.sign(creatorState.creator);
     const rawTransaction = transaction.serialize();
     const signature = await connection.sendRawTransaction(rawTransaction, {
@@ -441,18 +452,36 @@ describe("MemeWarzone Solana authorization V4 local-validator acceptance", funct
     result,
     expectedScheduledLaunch,
   }) {
-    // Campaign / CreateAuthorization / CampaignSolVault are UncheckedAccount in
-    // the program, so they are not in the IDL `accounts` map.
-    const [campaignInfo, authInfo, solVaultAccount] = await Promise.all([
-      connection.getAccountInfo(result.accounts.campaign, "confirmed"),
-      connection.getAccountInfo(result.accounts.createAuthorization, "confirmed"),
-      connection.getAccountInfo(result.accounts.solVault, "confirmed"),
-    ]);
+    // Campaign / CampaignSolVault are UncheckedAccount in the program, so they
+    // are not in the IDL `accounts` map. v7 creates no CreateAuthorization
+    // account at all: replay is prevented by the campaign PDA, which cannot be
+    // created twice for the same campaign_id.
+    const [campaignInfo, solVaultAccount, metadataInfo, feeEscrowInfo, creatorVaultInfo, mintInfo] =
+      await Promise.all([
+        connection.getAccountInfo(result.accounts.campaign, "confirmed"),
+        connection.getAccountInfo(result.accounts.solVault, "confirmed"),
+        connection.getAccountInfo(result.accounts.tokenMetadata, "confirmed"),
+        connection.getAccountInfo(result.accounts.feeEscrow, "confirmed"),
+        connection.getAccountInfo(result.accounts.creatorFeeVault, "confirmed"),
+        connection.getAccountInfo(result.accounts.mint, "confirmed"),
+      ]);
     assert.ok(campaignInfo, "campaign account missing after create");
-    assert.ok(authInfo, "createAuthorization account missing after create");
     assert.ok(solVaultAccount, "sol vault account missing after create");
+
+    // The whole point of v7: one transaction leaves nothing to finish. A token
+    // that is minted but unnamed, or has no fee escrow, is the exact state that
+    // stranded launches on mainnet under v6.
+    assert.ok(metadataInfo, "Metaplex metadata missing: create did not name the token");
+    assert.ok(feeEscrowInfo, "fee escrow missing: the campaign cannot trade");
+    assert.ok(creatorVaultInfo, "creator fee vault missing: the campaign cannot trade");
+    assert.ok(mintInfo, "mint missing after create");
+    assert.equal(
+      mintInfo.data.readUInt32LE(0),
+      0,
+      "mint authority is still live: create did not revoke it",
+    );
+
     const campaign = decodeCampaign(campaignInfo.data);
-    const authorization = decodeCreateAuthorization(authInfo.data);
     const solVaultState = decodeCampaignSolVault(solVaultAccount.data);
     const mint = await getMint(
       connection,
@@ -481,9 +510,16 @@ describe("MemeWarzone Solana authorization V4 local-validator acceptance", funct
     assertPublicKeyEqual(campaign.solVault, result.accounts.solVault);
     assertPublicKeyEqual(campaign.generationConfig, generationConfig);
     assertBytesEqual(campaign.campaignId, args.campaignId);
-    assertBytesEqual(campaign.tickerHash, args.tickerHash);
-    assertBytesEqual(campaign.reservationIdHash, args.reservationIdHash);
-    assertBigIntEqual(campaign.reservationVersion, 1n);
+    // Derived in-program now, not carried. tickerHash binds the symbol that was
+    // actually written into the Metaplex metadata, which the old 32-byte
+    // argument could contradict.
+    assertBytesEqual(campaign.tickerHash, hash32(args.symbol));
+    assert.ok(
+      Buffer.from(campaign.clusterHash).some((byte) => byte !== 0),
+      "clusterHash must be a non-zero program constant",
+    );
+    assertBytesEqual(campaign.reservationIdHash, Buffer.alloc(32));
+    assertBigIntEqual(campaign.reservationVersion, 0n);
     assertBigIntEqual(
       campaign.graduationTargetUsdMicros,
       GRADUATION_TARGET_6_USD_MICROS,
@@ -533,11 +569,6 @@ describe("MemeWarzone Solana authorization V4 local-validator acceptance", funct
     assertPublicKeyEqual(solVaultState.campaign, result.accounts.campaign);
     assertBytesEqual(solVaultState.generationId, generationId);
 
-    assert.equal(authorization.schemaVersion, CREATE_AUTH_SCHEMA_VERSION);
-    assertPublicKeyEqual(authorization.creator, creatorState.creator.publicKey);
-    assertPublicKeyEqual(authorization.routeSigner, routeSigner.publicKey);
-    assertBytesEqual(authorization.nonce, args.nonce);
-    assertBytesEqual(authorization.messageHash, result.digest);
   }
 
   async function assertCampaignMissing(campaign) {
@@ -557,7 +588,9 @@ describe("MemeWarzone Solana authorization V4 local-validator acceptance", funct
   }
 
   before(async function () {
-    assert.equal(CREATE_AUTH_SCHEMA_VERSION, 5);
+    // This gate was last run against v5; v6 shipped without it, and v6 shipped
+    // three defects that a local validator would have caught in minutes.
+    assert.equal(CREATE_AUTH_SCHEMA_VERSION, 7);
     await ensureAdminSol();
 
     await program.methods
@@ -782,9 +815,12 @@ describe("MemeWarzone Solana authorization V4 local-validator acceptance", funct
     const creatorState = await setupCreator("modified-payload");
     const now = await chainUnixTimestamp(connection);
     const signedArgs = createArgs("modified-payload", now);
+    // The name is the field an attacker actually wants: revocation is
+    // irreversible, so whatever create writes is what every wallet shows
+    // forever. It is bound into the digest precisely so this fails.
     const instructionArgs = {
       ...signedArgs,
-      tickerHash: fixed32(hash32("ticker:modified-after-signing")),
+      name: "Renamed After Signing",
     };
     const accounts = campaignAccounts(creatorState.creator, instructionArgs);
 
@@ -874,23 +910,34 @@ describe("MemeWarzone Solana authorization V4 local-validator acceptance", funct
     await assertCampaignMissing(accounts.campaign);
   });
 
-  it("rejects replay of a consumed creator-and-nonce authorization PDA", async function () {
+  it("rejects replay of an authorization whose campaign already exists", async function () {
     assert.ok(directScenario, "Direct Create scenario must run before replay test");
     const { creatorState, args: originalArgs } = directScenario;
-    const now = await chainUnixTimestamp(connection);
-    const replayArgs = createArgs("replayed-authorization", now, {
-      nonce: Buffer.from(originalArgs.nonce),
-    });
-    const replayAccounts = campaignAccounts(creatorState.creator, replayArgs);
+
+    // v7 creates no create_authorization PDA, so replay protection is no longer
+    // a dedicated account -- it is the campaign PDA itself, which is seeded by
+    // campaign_id and cannot be created twice. Re-sending a create that already
+    // landed must fail on the account, not on a nonce.
+    const replayAccounts = campaignAccounts(creatorState.creator, originalArgs);
+    const existing = await connection.getAccountInfo(replayAccounts.campaign, "confirmed");
+    assert.ok(existing, "the original campaign must still exist for this to test replay");
 
     await expectFailure(
       () =>
         sendAuthorizedCreate({
           creatorState,
-          instructionArgs: replayArgs,
+          instructionArgs: originalArgs,
         }),
-      "replayed creator-and-nonce authorization",
+      "replayed authorization",
     );
-    await assertCampaignMissing(replayAccounts.campaign);
+
+    // The original campaign must survive the rejected replay untouched.
+    const after = await connection.getAccountInfo(replayAccounts.campaign, "confirmed");
+    assert.ok(after, "replay must not destroy the campaign it collided with");
+    assert.deepEqual(
+      Buffer.from(after.data),
+      Buffer.from(existing.data),
+      "a rejected replay must leave the existing campaign byte-identical",
+    );
   });
 });

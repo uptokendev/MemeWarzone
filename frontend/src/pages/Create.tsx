@@ -27,7 +27,6 @@ import {
   finalizeSolanaDirectCreate,
   preflightSolanaDirectCreate,
 } from "@/lib/solanaDirectCreate";
-import { finalizeSolanaLaunch } from "@/lib/solanaFinalizeLaunchSubmit";
 import { submitSolanaV4CreateFromAuthorization } from "@/lib/solanaV4CreateSubmit";
 import { tokenDetailsPath } from "@/lib/tokenDetailsPath";
 import { apiFetch } from "@/lib/apiBase";
@@ -616,27 +615,11 @@ const Create = () => {
         });
 
         if (authorization.alreadyOnChain && authorization.tokenPath) {
-          // A campaign reaches this branch when its create landed but the flow
-          // did not finish. Returning here without finalizing is what made that
-          // state permanent: every retry recovered, navigated, and returned, so
-          // the UI could never write the metadata or open trading. Finish it.
-          const recoveredCampaign = authorization.accounts?.campaign || "";
-          if (recoveredCampaign) {
-            try {
-              toast.message("Finishing a launch that was left incomplete…");
-              await finalizeSolanaLaunch({
-                campaignAddress: recoveredCampaign,
-                programId: authorization.programId,
-              });
-            } catch (finalizeErr: any) {
-              // Surfaced, not swallowed: the campaign is safe on chain but the
-              // token stays unnamed and untradeable until this succeeds.
-              toast.error(
-                `Campaign recovered, but naming it failed: ${String(finalizeErr?.message || finalizeErr)}`,
-                { duration: 12_000 },
-              );
-            }
-          }
+          // A campaign reaches this branch when its create already landed, and
+          // under v7 that means the launch is complete: create_campaign writes
+          // the metadata, revokes the mint authority and creates the fee
+          // accounts in the same transaction that mints the supply. There is no
+          // half-finished state left to detect or repair.
           toast.success("Existing Direct campaign recovered.");
           navigate(authorization.tokenPath);
           return;
@@ -662,18 +645,13 @@ const Create = () => {
           deployTxHash: created.signature,
         });
 
-        // Second transaction: Metaplex metadata, mint authority revocation and
-        // the fee accounts. Split out of create because carrying them there left
-        // Phantom too little room to simulate, and it warned on every launch.
-        // Skipping it leaves a nameless, untradeable token, so a failure here is
-        // surfaced rather than swallowed — but the campaign itself is already
-        // safely on chain and can be finished later.
-        toast.message("Naming your token and opening trading…");
-        await finalizeSolanaLaunch({
-          campaignAddress: finalized.campaignAddress || created.campaignAddress,
-          programId: created.programId,
-        });
-
+        // No second transaction. v7's create_campaign writes the Metaplex
+        // metadata, revokes the mint authority and creates both fee accounts in
+        // the same instruction that mints the supply, so the token is named and
+        // tradeable the moment this returns. The v6 split existed only because
+        // create could not afford the bytes; removing five arguments that were
+        // never read back bought enough room to put it back, and with it the
+        // entire class of half-finished launch.
         analytics.track("token_create_succeeded", { surface: "launchpad", chain: "solana" });
         toast.success("Solana token deployed.");
         navigate(

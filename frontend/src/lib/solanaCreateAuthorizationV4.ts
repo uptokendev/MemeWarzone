@@ -1,22 +1,26 @@
 import { apiFetch } from "@/lib/apiBase";
 import type { DraftActionAuth } from "@/lib/draftAuth";
 
-export const SOLANA_CREATE_AUTH_SCHEMA_VERSION = 6 as const;
-export const SOLANA_CREATE_AUTH_DOMAIN = "MEMEWARZONE_SOLANA_CREATE_V6" as const;
+export const SOLANA_CREATE_AUTH_SCHEMA_VERSION = 7 as const;
+export const SOLANA_CREATE_AUTH_DOMAIN = "MEMEWARZONE_SOLANA_CREATE_V7" as const;
 
 export type SolanaCreateMode = "draft_deploy_now" | "countdown" | "direct_create";
 
 export type SolanaV4CreateArgs = {
   campaignId: number[];
   metadataHash: number[];
-  clusterHash: number[];
-  tickerHash: number[];
-  reservationIdHash: number[];
-  reservationVersion: string;
+  /** v7: create_campaign writes the Metaplex metadata, so these travel again. */
+  name: string;
+  symbol: string;
   launchAt: string;
   graduationTargetUsdMicros: string;
   deadline: string;
-  nonce: number[];
+  /** v7 no longer encodes these. Tolerated on the payload, never sent on chain. */
+  clusterHash?: number[];
+  tickerHash?: number[];
+  reservationIdHash?: number[];
+  reservationVersion?: string;
+  nonce?: number[];
 };
 
 export type SolanaV4CreateAccounts = {
@@ -30,10 +34,16 @@ export type SolanaV4CreateAccounts = {
   mint: string;
   tokenVault: string;
   solVault: string;
-  createAuthorization: string;
+  /** v7: written inside create_campaign. */
+  tokenMetadata: string;
+  feeEscrow: string;
+  creatorFeeVault: string;
   instructions: string;
   tokenProgram: string;
+  tokenMetadataProgram: string;
   systemProgram: string;
+  /** v7 does not create this account; the API may still derive it. */
+  createAuthorization?: string;
 };
 
 export type SolanaV4Generation = {
@@ -188,10 +198,17 @@ export function assertSolanaV4AuthorizationResponse(value: unknown): asserts val
   if (!args) throw new Error("Solana V4 create arguments are missing.");
   byteArray(args.campaignId, "createArgs.campaignId", 32);
   byteArray(args.metadataHash, "createArgs.metadataHash", 32);
-  byteArray(args.clusterHash, "createArgs.clusterHash", 32);
-  byteArray(args.tickerHash, "createArgs.tickerHash", 32);
-  byteArray(args.reservationIdHash, "createArgs.reservationIdHash", 32);
-  byteArray(args.nonce, "createArgs.nonce", 32);
+  // v7 binds the name and symbol into the signed digest and writes them on
+  // chain, so an empty or oversized one has to fail here rather than at the
+  // Metaplex CPI, by which point the launch has already paid for the mint.
+  const nameBytes = new TextEncoder().encode(String(args.name ?? ""));
+  if (nameBytes.length < 1 || nameBytes.length > 32) {
+    throw new Error("Solana V4 createArgs.name must be 1-32 bytes of UTF-8.");
+  }
+  const symbolBytes = new TextEncoder().encode(String(args.symbol ?? ""));
+  if (symbolBytes.length < 1 || symbolBytes.length > 10) {
+    throw new Error("Solana V4 createArgs.symbol must be 1-10 bytes of UTF-8.");
+  }
 
   const accounts = response.accounts;
   if (!accounts) throw new Error("Solana V4 account map is missing.");

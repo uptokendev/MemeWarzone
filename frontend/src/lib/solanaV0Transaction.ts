@@ -51,10 +51,32 @@ export const SOLANA_PACKET_LIMIT_BYTES = 1_232;
  * could be malicious" — which reads as a reputation problem and sends you
  * looking in the wrong place entirely.
  *
- * Measured on mainnet by reconstructing the unsigned transaction from what
- * landed on chain: 257 bytes for a create writing six accounts, 182 for a buy
- * writing two. The cost tracks accounts written rather than size, so 257 is the
- * number to budget against.
+ * Measured on mainnet by decoding what actually landed on chain. The cost
+ * tracks accounts WRITTEN, not transaction size:
+ *
+ *   GCSY     8 writable  173B assertions + 84B fixed = 257B
+ *   ABGAGID  8 writable  197B assertions + 84B fixed = 281B
+ *   Kaiju88  8 writable  173B assertions + 84B fixed = 257B
+ *
+ * The 24-byte spread between GCSY and ABGAGID is one account: a returning
+ * creator has a populated creator_profile, which draws a 41-byte data assertion
+ * instead of the 17 bytes a fresh account draws.
+ *
+ * This stays at 257, the eight-writable figure, because the trade and arena
+ * paths budget against it too and they write two accounts, not eight. Create
+ * writes nine under v7 and needs 274; that is folded into
+ * SOLANA_RELEASE_MAX_BYTES rather than tightening every other path by 17 bytes.
+ *
+ * TRMWZ is the reason this constant exists. At 1087 own bytes it left Phantom
+ * 145 of the 281 it needed, so Phantom dropped ALL EIGHT assertions and signed
+ * the transaction unguarded — and warned the creator the dApp could be
+ * malicious. The failure is not "too big to send", it is "too big for the
+ * wallet to protect", and it happens well below the packet limit.
+ *
+ * Duplicated in solanaUserV0Transaction.ts, which the Arena and reward-claim
+ * paths use. This module has to stay import-free of other app modules because
+ * the test harness loads it from a data URL, where "@/..." cannot resolve. A
+ * test asserts the two stay equal.
  *
  * Duplicated in solanaUserV0Transaction.ts, which the Arena and reward-claim
  * paths use. This module has to stay import-free of other app modules because
@@ -63,7 +85,20 @@ export const SOLANA_PACKET_LIMIT_BYTES = 1_232;
  */
 export const SOLANA_WALLET_REWRITE_BUDGET_BYTES = 257;
 
-export const SOLANA_RELEASE_MAX_BYTES = 862;
+/**
+ * Ceiling for our own bytes in a create, before the wallet adds anything.
+ *
+ * v7 = 844, measured by building the instruction with a 32-byte name and a
+ * 10-byte symbol, the largest Metaplex accepts. 844 + 274 = 1118, which leaves
+ * 114 bytes of the 1232-byte packet spare — more slack than v6's two-transaction
+ * flow had at 1143, and v7 finishes the whole launch in one transaction.
+ *
+ * v6 was 862 with four fewer accounts and no metadata. The extra room came from
+ * dropping five arguments that were never read back (clusterHash, tickerHash,
+ * reservationIdHash, reservationVersion, nonce), removing the
+ * create_authorization account, and making global_config read-only.
+ */
+export const SOLANA_RELEASE_MAX_BYTES = 844;
 export const SOLANA_LAUNCHPAD_PROGRAM_ID = "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt";
 export const SOLANA_REWARDS_TREASURY_PROGRAM_ID = "2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX";
 export const SOLANA_INSTRUCTIONS_SYSVAR = "Sysvar1nstructions1111111111111111111111111";

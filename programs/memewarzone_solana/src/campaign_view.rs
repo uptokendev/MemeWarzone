@@ -41,7 +41,7 @@ pub const CAMPAIGN_BUY_VOLUME_OFFSET: usize = 678;
 pub const CAMPAIGN_SELL_VOLUME_OFFSET: usize = 686;
 pub const CAMPAIGN_BUYER_COUNT_OFFSET: usize = 694;
 pub const CAMPAIGN_CREATOR_BOUGHT_OFFSET: usize = 702;
-/// Written by finalize_campaign_launch once the revocation it performs has been
+/// Written by create_campaign once the revocation it performs has been
 /// verified. Never read as a gate: it is a cached claim about the mint, and
 /// create_campaign shipped it set while the authority was still held.
 pub const CAMPAIGN_MINT_AUTHORITY_REVOKED_OFFSET: usize = 712;

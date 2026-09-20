@@ -21,8 +21,6 @@ import {
   u64,
   METAPLEX_MAX_NAME_BYTES,
   METAPLEX_MAX_SYMBOL_BYTES,
-  buildFinalizeLaunchPayload,
-  finalizeLaunchDigest,
 } from "./solana-v4-primitives.js";
 
 function hash32(label) {
@@ -123,7 +121,7 @@ test("PDA derivation is deterministic and produces an off-curve address", () => 
 });
 
 test("V4 serializer is deterministic and binds every mutated field", () => {
-  assert.equal(CREATE_AUTH_SCHEMA_VERSION, 6);
+  assert.equal(CREATE_AUTH_SCHEMA_VERSION, 7);
   const fixture = fixtureInput();
   const payload = buildCreateAuthorizationPayload(fixture);
   const digest = createAuthorizationDigest(fixture);
@@ -133,75 +131,48 @@ test("V4 serializer is deterministic and binds every mutated field", () => {
 
   const modified = {
     ...fixture,
-    args: { ...fixture.args, reservationVersion: fixture.args.reservationVersion + 1n },
+    args: { ...fixture.args, launchAt: fixture.args.launchAt + 1n },
   };
   assert.notDeepEqual(digest, createAuthorizationDigest(modified));
 
-  // v6: the Metaplex fields are NOT bound here any more, because create no
-  // longer receives them. They are bound by the finalize authorization below.
-  // If this ever starts failing, name and symbol have leaked back into create
-  // and the transaction has grown by 31 bytes it cannot afford.
+  // v7: the Metaplex fields ARE bound here again, because create_campaign
+  // writes the metadata itself. This is the whole security story for the
+  // token's name: revocation is irreversible, so whatever create writes is what
+  // every wallet and aggregator shows forever. If these stop moving the digest,
+  // anyone who can reach the instruction can rename someone else's token.
   for (const [field, value] of [
     ["name", "NotKaiju"],
     ["symbol", "EVIL"],
+  ]) {
+    assert.notDeepEqual(
+      digest,
+      createAuthorizationDigest({ ...fixture, args: { ...fixture.args, [field]: value } }),
+      `${field} must be bound into the create authorization digest in v7`,
+    );
+  }
+
+  // Length-prefixed, so a shift between the two cannot collide.
+  assert.notDeepEqual(
+    createAuthorizationDigest({ ...fixture, args: { ...fixture.args, name: "ab", symbol: "c" } }),
+    createAuthorizationDigest({ ...fixture, args: { ...fixture.args, name: "a", symbol: "bc" } }),
+  );
+
+  // v7 dropped these from the wire entirely. Changing them must NOT move the
+  // digest, because the program never sees them.
+  for (const [field, value] of [
+    ["clusterHash", Buffer.alloc(32, 9)],
+    ["tickerHash", Buffer.alloc(32, 9)],
+    ["reservationIdHash", Buffer.alloc(32, 9)],
+    ["nonce", Buffer.alloc(32, 9)],
   ]) {
     assert.deepEqual(
       digest,
       createAuthorizationDigest({ ...fixture, args: { ...fixture.args, [field]: value } }),
-      `${field} must not be part of the create authorization digest in v6`,
+      `${field} is no longer sent on chain and must not be in the v7 digest`,
     );
   }
 });
 
-test("finalize authorization binds the Metaplex fields the program will write", () => {
-  const key = (byte) => Buffer.alloc(32, byte);
-  const base = {
-    programId: key(1),
-    campaign: key(2),
-    mint: key(3),
-    creator: key(4),
-    campaignId: key(5),
-    args: { name: "Kaiju88", symbol: "K88", deadline: 1_800_000_000 },
-  };
-
-  // Same vector the program pins in finalize_launch.rs. The program rebuilds
-  // this message from chain state and compares; a drift on either side strands
-  // every new launch unnamed, so both sides assert the identical digest.
-  assert.equal(buildFinalizeLaunchPayload(base).length, 225);
-  assert.equal(
-    Buffer.from(finalizeLaunchDigest(base)).toString("hex"),
-    "20f2cb27694797eb37c3131d0f553954110f4bba0b2a0478f57a40305a8a544d",
-  );
-
-  const digest = finalizeLaunchDigest(base);
-  // Whoever picks the name picks it permanently: finalize revokes the mint
-  // authority straight after writing it. A signature over one name must not
-  // authorize another.
-  for (const [field, value] of [
-    ["name", "NotKaiju"],
-    ["symbol", "EVIL"],
-    ["deadline", 1_800_000_001],
-  ]) {
-    assert.notDeepEqual(
-      digest,
-      finalizeLaunchDigest({ ...base, args: { ...base.args, [field]: value } }),
-      `${field} must be bound into the finalize authorization digest`,
-    );
-  }
-
-  for (const field of ["programId", "campaign", "mint", "creator", "campaignId"]) {
-    assert.notDeepEqual(
-      digest,
-      finalizeLaunchDigest({ ...base, [field]: key(9) }),
-      `${field} must be bound into the finalize authorization digest`,
-    );
-  }
-
-  // Length prefixes must keep field boundaries unambiguous.
-  const ab = finalizeLaunchDigest({ ...base, args: { ...base.args, name: "AB", symbol: "C" } });
-  const a_bc = finalizeLaunchDigest({ ...base, args: { ...base.args, name: "A", symbol: "BC" } });
-  assert.notDeepEqual(ab, a_bc, "length-prefixing must prevent field-boundary collisions");
-});
 
 
 
@@ -238,10 +209,10 @@ test("the create args the client receives carry every field the instruction enco
   // fields into the HTTP response. A field added to CreateCampaignArgs but not to
   // that whitelist is silently dropped, and the browser fails far away with
   // "name must not be empty". This pins the response shape to the wire format.
-  // name and symbol are still in this list even though create no longer encodes
-  // them: the client needs them for finalize_campaign_launch, which is where
-  // they went. Dropping them from the response would strand every launch
-  // unnamed, which is the exact failure this test exists to prevent.
+  // name and symbol are in this list because v7's create_campaign encodes them
+  // and writes the Metaplex metadata itself. Dropping them from the response
+  // would strand every launch unnamed, which is the exact failure this test
+  // exists to prevent.
   const encodedFields = [
     "campaignId",
     "name",
@@ -281,11 +252,10 @@ test("the accounts the client receives cover every account the instruction needs
   const required = [
     "creator", "globalConfig", "generationConfig", "creatorProfile",
     "riskProfile", "clusterProfile", "campaign", "mint", "tokenVault",
-    "solVault", "createAuthorization", "instructions",
-    // The last three belong to finalize_campaign_launch rather than create, but
-    // the client still receives them in the same response and still needs every
-    // one of them to finish a launch.
-    "feeEscrow", "creatorFeeVault", "tokenMetadata",
+    "solVault", "instructions",
+    // v7 writes the metadata and both fee accounts inside create_campaign, so
+    // every one of these is part of the single launch transaction.
+    "tokenMetadata", "tokenMetadataProgram", "feeEscrow", "creatorFeeVault",
     "tokenProgram", "systemProgram",
   ];
   const sources = [

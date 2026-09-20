@@ -276,22 +276,25 @@ async function main() {
     const args = {
       campaignId: fixed32(campaignId),
       metadataHash: fixed32(hash32(`metadata:${unique}`)),
-      clusterHash: fixed32(clusterId),
-      tickerHash: fixed32(hash32(`ticker:${unique}`)),
-      reservationIdHash: fixed32(hash32(`reservation:${unique}`)),
-      reservationVersion: new BN(1),
+      // v7: create_campaign writes the Metaplex metadata itself.
+      name: `MWZ Devnet ${unique}`.slice(0, 32),
+      symbol: "MWZDEV",
       launchAt: new BN(0),
       graduationTargetUsdMicros: new BN(GRADUATION_TARGET_USD_MICROS.toString()),
       deadline: new BN(now + 3600),
-      nonce: fixed32(nonce),
     };
     const campaign = derivePda(PROGRAM_ID, "campaign", campaignId);
     const mint = derivePda(PROGRAM_ID, "campaign-mint", campaignId);
     const tokenVault = derivePda(PROGRAM_ID, "token-vault", campaignId);
     const solVault = derivePda(PROGRAM_ID, "sol-vault", campaignId);
-    const createAuthorization = derivePda(PROGRAM_ID, "create-auth", creator.publicKey.toBuffer(), nonce);
     const feeEscrow = derivePda(PROGRAM_ID, "fee-escrow", campaign.toBuffer());
     const creatorFeeVault = derivePda(PROGRAM_ID, "creator-fee-vault", campaign.toBuffer());
+    // v7 writes the Metaplex metadata inside create_campaign.
+    const MPL_TOKEN_METADATA = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
+    const tokenMetadata = PublicKey.findProgramAddressSync(
+      [Buffer.from("metadata", "utf8"), MPL_TOKEN_METADATA.toBuffer(), mint.toBuffer()],
+      MPL_TOKEN_METADATA,
+    )[0];
 
     const profile = await program.account.creatorProfile.fetch(creatorProfile);
     const createDigest = createAuthorizationDigest({
@@ -323,7 +326,10 @@ async function main() {
         mint,
         tokenVault,
         solVault,
-        createAuthorization,
+        tokenMetadata,
+        tokenMetadataProgram: MPL_TOKEN_METADATA,
+        feeEscrow,
+        creatorFeeVault,
         instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
         tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,

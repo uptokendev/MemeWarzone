@@ -650,10 +650,6 @@ function deriveCampaignAccounts({ draftId, reservationIdHash, generationId, prog
   const mint = findProgramAddressSync([Buffer.from("campaign-mint", "utf8"), campaignId], programId);
   const tokenVault = findProgramAddressSync([Buffer.from("token-vault", "utf8"), campaignId], programId);
   const solVault = findProgramAddressSync([Buffer.from("sol-vault", "utf8"), campaignId], programId);
-  const createAuthorization = findProgramAddressSync(
-    [Buffer.from("create-auth", "utf8"), publicKeyBytes(creator), nonce || Buffer.alloc(32)],
-    programId,
-  );
   // Metaplex metadata PDA for the mint this create will produce.
   const tokenMetadata = findProgramAddressSync(
     [
@@ -672,7 +668,7 @@ function deriveCampaignAccounts({ draftId, reservationIdHash, generationId, prog
     [Buffer.from("creator-fee-vault", "utf8"), publicKeyBytes(campaign.publicKey)],
     programId,
   );
-  return { campaignId, campaign, mint, tokenVault, solVault, createAuthorization, tokenMetadata, feeEscrow, creatorFeeVault };
+  return { campaignId, campaign, mint, tokenVault, solVault, tokenMetadata, feeEscrow, creatorFeeVault };
 }
 
 /**
@@ -807,7 +803,6 @@ async function finalizeExistingOnChainDeployment({
     mint: mintAddress,
     tokenVault: resolvedTokenVault || campaignAddress,
     solVault: resolvedSolVault || campaignAddress,
-    createAuthorization: onchain.accounts.creatorProfile,
     instructions: SYSVAR_INSTRUCTIONS_ID,
     tokenProgram: TOKEN_PROGRAM_ID,
     systemProgram: SYSTEM_PROGRAM_ID,
@@ -825,7 +820,6 @@ async function finalizeExistingOnChainDeployment({
       });
       accounts.tokenVault = pdas.tokenVault.publicKey;
       accounts.solVault = pdas.solVault.publicKey;
-      accounts.createAuthorization = pdas.createAuthorization.publicKey;
       accounts.campaign = pdas.campaign.publicKey;
       accounts.mint = mintAddress || pdas.mint.publicKey;
       if (!resolvedCampaignId) resolvedCampaignId = Buffer.from(pdas.campaignId);
@@ -1251,7 +1245,7 @@ export async function solanaCreateAuthorizationV4(req, res) {
         const tickerHash = nonZeroBytes32(reservation.tickerHash, "tickerHash");
         const metadata = normalizeDraftMetadata(draft, reservation);
         const metadataHash = sha256(Buffer.from(canonicalJson(metadata), "utf8"));
-        const { campaignId, campaign, mint, tokenVault, solVault, createAuthorization, tokenMetadata, feeEscrow, creatorFeeVault } = deriveCampaignAccounts({
+        const { campaignId, campaign, mint, tokenVault, solVault, tokenMetadata, feeEscrow, creatorFeeVault } = deriveCampaignAccounts({
           draftId,
           reservationIdHash,
           generationId: onchain.generation.generationId,
@@ -1300,7 +1294,6 @@ export async function solanaCreateAuthorizationV4(req, res) {
                 mint: mintAddress,
                 tokenVault: tokenVault.publicKey,
                 solVault: solVault.publicKey,
-                createAuthorization: createAuthorization.publicKey,
                 instructions: SYSVAR_INSTRUCTIONS_ID,
                 feeEscrow: feeEscrow.publicKey,
                 creatorFeeVault: creatorFeeVault.publicKey,
@@ -1387,7 +1380,13 @@ export async function solanaCreateAuthorizationV4(req, res) {
           mint: mint.publicKey,
           tokenVault: tokenVault.publicKey,
           solVault: solVault.publicKey,
-          createAuthorization: createAuthorization.publicKey,
+          // v7 writes the Metaplex metadata and both fee accounts inside
+          // create_campaign, so a launch is one transaction and there is no
+          // window where a token is minted but unnamed and untradeable.
+          tokenMetadata: tokenMetadata.publicKey,
+          tokenMetadataProgram: publicKeyString(MPL_TOKEN_METADATA_PROGRAM_ID),
+          feeEscrow: feeEscrow.publicKey,
+          creatorFeeVault: creatorFeeVault.publicKey,
           instructions: SYSVAR_INSTRUCTIONS_ID,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SYSTEM_PROGRAM_ID,

@@ -44,6 +44,15 @@ describe("shared V0/ALT launchpad helper on local validator", function () {
       assert.ok(entry, `missing ALT plan address: ${label}`);
       return entry.address.toBase58();
     };
+    // The active generation PDA is derived from GlobalConfig.activeGenerationId,
+    // so it is not part of the static plan -- but the production table built by
+    // scripts/solana/create-launchpad-alt.mjs contains it, and so does mainnet's
+    // (BdSPkZWk..., index 16). Compiling without it makes this envelope 31 bytes
+    // larger than the one creators actually sign, which is not a ceiling worth
+    // measuring against.
+    const generationConfig = Keypair.generate().publicKey;
+    const altAddresses = [...plan.map((entry) => entry.address), generationConfig];
+
     const slot = await connection.getSlot("confirmed");
     const [createIx, lookupTable] = AddressLookupTableProgram.createLookupTable({
       authority: payer.publicKey,
@@ -51,13 +60,13 @@ describe("shared V0/ALT launchpad helper on local validator", function () {
       recentSlot: Math.max(0, slot - 1),
     });
     await sendLegacy(connection, payer, [createIx]);
-    for (let i = 0; i < plan.length; i += 20) {
+    for (let i = 0; i < altAddresses.length; i += 20) {
       await sendLegacy(connection, payer, [
         AddressLookupTableProgram.extendLookupTable({
           payer: payer.publicKey,
           authority: payer.publicKey,
           lookupTable,
-          addresses: plan.slice(i, i + 20).map((entry) => entry.address),
+          addresses: altAddresses.slice(i, i + 20),
         }),
       ]);
     }
@@ -80,27 +89,30 @@ describe("shared V0/ALT launchpad helper on local validator", function () {
       args: {
         campaignId: bytes32(2),
         metadataHash: bytes32(3),
-        clusterHash: bytes32(4),
-        tickerHash: bytes32(5),
-        reservationIdHash: bytes32(6),
-        reservationVersion: "1",
+        // Largest strings Metaplex accepts, so the envelope this compiles is the
+        // worst case a creator can actually submit.
+        name: "x".repeat(32),
+        symbol: "y".repeat(10),
         launchAt: "0",
         graduationTargetUsdMicros: "6000000",
         deadline: "1770000000",
-        nonce: bytes32(7),
       },
       accounts: {
         creator: payer.publicKey.toBase58(),
         globalConfig: planAddress("globalConfig"),
-        generationConfig: Keypair.generate().publicKey.toBase58(),
+        generationConfig: generationConfig.toBase58(),
         creatorProfile: Keypair.generate().publicKey.toBase58(),
         riskProfile: Keypair.generate().publicKey.toBase58(),
-        clusterProfile: Keypair.generate().publicKey.toBase58(),
+        // In the ALT on mainnet (index 17), like generationConfig above.
+        clusterProfile: planAddress("clusterProfile"),
         campaign: Keypair.generate().publicKey.toBase58(),
         mint: Keypair.generate().publicKey.toBase58(),
         tokenVault: Keypair.generate().publicKey.toBase58(),
         solVault: Keypair.generate().publicKey.toBase58(),
-        createAuthorization: Keypair.generate().publicKey.toBase58(),
+        tokenMetadata: Keypair.generate().publicKey.toBase58(),
+        tokenMetadataProgram: planAddress("tokenMetadataProgram"),
+        feeEscrow: Keypair.generate().publicKey.toBase58(),
+        creatorFeeVault: Keypair.generate().publicKey.toBase58(),
         instructions: planAddress("instructionsSysvar"),
         tokenProgram: planAddress("tokenProgram"),
         systemProgram: planAddress("systemProgram"),
@@ -161,7 +173,12 @@ describe("shared V0/ALT launchpad helper on local validator", function () {
 
     console.info("[v0-onchain] CREATE", createV0.stats);
     console.info("[v0-onchain] BUY", tradeV0.stats);
-    assert.equal(createInstruction.keys.length, 14);
+    // v7: 17 accounts, 9 of them writable. Both numbers are load-bearing --
+    // Phantom guards every written account with a Lighthouse assertion, so a
+    // writable account costs 32 bytes of key AND 17-41 bytes of wallet rewrite.
+    assert.equal(createInstruction.keys.length, 17);
+    assert.equal(createInstruction.keys.filter((key) => key.isWritable).length, 9);
+    assert.equal(createInstruction.keys[1].isWritable, false, "globalConfig must be read-only");
     assert.equal(tradeInstruction.keys.length, 15);
     assert.equal(createV0.stats.requiredSigners, 1);
     assert.equal(tradeV0.stats.requiredSigners, 1);

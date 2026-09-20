@@ -5,7 +5,7 @@ declare_id!("3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt");
 pub const GLOBAL_CONFIG_SEED: &[u8] = b"global";
 /// Fixed Borsh offsets into GlobalConfig, for the same reason campaign_view.rs
 /// exists: deserializing the whole 314-byte account onto the SBF stack costs
-/// frame space that finalize_campaign_launch does not have. Asserted against the
+/// frame space that create_campaign does not have. Asserted against the
 /// struct in the test below, so a reordered field fails the build rather than
 /// silently reading the wrong bytes on mainnet.
 pub const GLOBAL_CONFIG_ROUTE_SIGNER_OFFSET: usize = 136;
@@ -91,8 +91,6 @@ pub use authorized_create::*;
 
 pub mod token_metadata;
 
-pub mod finalize_launch;
-pub use finalize_launch::*;
 pub use token_metadata::*;
 
 pub mod campaign_view;
@@ -327,18 +325,6 @@ pub mod memewarzone_solana {
         args: CreateCampaignArgs,
     ) -> Result<()> {
         authorized_create::create_campaign_handler(&mut ctx, &args)
-    }
-
-    /// Second half of a launch: Metaplex metadata, mint authority revocation and
-    /// the per-campaign fee accounts. Route-authorized, so only a signature from
-    /// GlobalConfig.route_signer can decide the token's name. The keeper sends
-    /// this immediately after create; until it lands the campaign has no fee
-    /// escrow and therefore cannot trade.
-    pub fn finalize_campaign_launch(
-        ctx: Context<FinalizeCampaignLaunch>,
-        args: FinalizeCampaignLaunchArgs,
-    ) -> Result<()> {
-        finalize_launch::finalize_campaign_launch_handler(ctx, args)
     }
 
     pub fn sync_creator_profile(
@@ -1280,7 +1266,7 @@ pub(crate) fn generation_allows_graduation_target(
 mod tests {
 
     /// The offsets above are read straight out of account data, so a field
-    /// inserted before them would make finalize_campaign_launch verify a
+    /// inserted before them would make create_campaign verify a
     /// signature against whatever happened to land at byte 136. Recompute them
     /// from the declaration rather than trusting the constants.
     #[test]

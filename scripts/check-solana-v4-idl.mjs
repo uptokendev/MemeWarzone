@@ -3,6 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
+// v7 create_campaign, in program order. Anchor matches accounts positionally,
+// so order is part of the contract, not just membership.
 const expectedAccounts = [
   "creator",
   "globalConfig",
@@ -14,27 +16,38 @@ const expectedAccounts = [
   "mint",
   "tokenVault",
   "solVault",
-  "createAuthorization",
-  "instructions",
   "tokenMetadata",
   "tokenMetadataProgram",
+  "feeEscrow",
+  "creatorFeeVault",
+  "instructions",
+  "tokenProgram",
+  "systemProgram",
+];
+
+// Accounts the wallet must NOT be asked to write. globalConfig is read-only
+// because the program only reads route_signer from it, and marking it writable
+// made Phantom attach a 41-byte Lighthouse assertion -- the single most
+// expensive item in a transaction that had 20 bytes to spare.
+const expectedReadonly = [
+  "globalConfig",
+  "generationConfig",
+  "riskProfile",
+  "clusterProfile",
+  "tokenMetadataProgram",
+  "instructions",
   "tokenProgram",
   "systemProgram",
 ];
 
 const expectedFields = [
   "campaignId",
+  "metadataHash",
   "name",
   "symbol",
-  "metadataHash",
-  "clusterHash",
-  "tickerHash",
-  "reservationIdHash",
-  "reservationVersion",
   "launchAt",
   "graduationTargetUsdMicros",
   "deadline",
-  "nonce",
 ];
 
 function normalize(value) {
@@ -73,9 +86,36 @@ function validateCreateInstruction(idl) {
   if (!instruction) fail("createCampaign instruction is missing");
 
   const accounts = flattenAccounts(instruction.accounts);
-  const accountNames = new Set(accounts.map((account) => normalize(account?.name)));
+  const accountNames = accounts.map((account) => normalize(account?.name));
   for (const account of expectedAccounts) {
-    if (!accountNames.has(normalize(account))) fail(`createCampaign account ${account} is missing`);
+    if (!accountNames.includes(normalize(account))) fail(`createCampaign account ${account} is missing`);
+  }
+  // Exact, and in order. An extra account is not harmless: every account costs
+  // 32 bytes of key, and every WRITABLE one costs another 17-41 bytes of wallet
+  // rewrite on top. v5 carried 18 and Phantom warned on every launch.
+  if (accountNames.length !== expectedAccounts.length) {
+    fail(
+      `createCampaign has ${accountNames.length} accounts; expected ${expectedAccounts.length} ` +
+        `(extra: ${accountNames.filter((n) => !expectedAccounts.map(normalize).includes(n)).join(", ") || "none"})`,
+    );
+  }
+  expectedAccounts.forEach((expected, index) => {
+    if (accountNames[index] !== normalize(expected)) {
+      fail(
+        `createCampaign account ${index} is ${accountNames[index]}; expected ${normalize(expected)} ` +
+          "(Anchor matches accounts positionally)",
+      );
+    }
+  });
+  for (const name of expectedReadonly) {
+    const account = accounts.find((item) => normalize(item?.name) === normalize(name));
+    if (account?.writable || account?.isMut) {
+      fail(`createCampaign account ${name} is writable; it must be read-only`);
+    }
+  }
+  const writableCount = accounts.filter((account) => account?.writable || account?.isMut).length;
+  if (writableCount !== 9) {
+    fail(`createCampaign writes ${writableCount} accounts; expected 9`);
   }
 
   const args = instruction.args || [];
@@ -131,8 +171,8 @@ function main() {
 
   const idlSha256 = crypto.createHash("sha256").update(raw).digest("hex");
   const binding = {
-    schemaVersion: 5,
-    domain: "MEMEWARZONE_SOLANA_CREATE_V5",
+    schemaVersion: 7,
+    domain: "MEMEWARZONE_SOLANA_CREATE_V7",
     signedMessageMode: "sha256_canonical_payload",
     signedMessageLengthBytes: 32,
     instructionName: instruction.name,

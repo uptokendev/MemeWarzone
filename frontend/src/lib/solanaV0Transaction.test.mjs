@@ -31,11 +31,8 @@ const {
 } = await loadSolanaV0Module();
 const {
   buildCreateCampaignInstruction,
-  buildFinalizeCampaignLaunchInstruction,
   buildLaunchpadEd25519Instruction,
   buildTradeTokensInstruction,
-  encodeFinalizeCampaignLaunchData,
-  FINALIZE_CAMPAIGN_LAUNCH_DISCRIMINATOR,
 } = await loadSolanaLaunchpadInstructions();
 
 const PROGRAM_ID = new PublicKey("3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt");
@@ -112,14 +109,13 @@ function makeProductionCreateFixture() {
     args: {
       campaignId: bytes32(2),
       metadataHash: bytes32(3),
-      clusterHash: bytes32(4),
-      tickerHash: bytes32(5),
-      reservationIdHash: bytes32(6),
-      reservationVersion: "1",
+      // The largest strings Metaplex accepts. The ceiling has to hold for the
+      // worst case a creator can actually submit, not a convenient short name.
+      name: "x".repeat(32),
+      symbol: "y".repeat(10),
       launchAt: "0",
       graduationTargetUsdMicros: "6000000",
       deadline: "1770000000",
-      nonce: bytes32(7),
     },
     accounts: {
       creator: payer.toBase58(),
@@ -132,7 +128,11 @@ function makeProductionCreateFixture() {
       mint: Keypair.generate().publicKey.toBase58(),
       tokenVault: Keypair.generate().publicKey.toBase58(),
       solVault: Keypair.generate().publicKey.toBase58(),
-      createAuthorization: Keypair.generate().publicKey.toBase58(),
+      // v7 writes metadata and both fee accounts inside create_campaign.
+      tokenMetadata: Keypair.generate().publicKey.toBase58(),
+      tokenMetadataProgram: planAddress(plan, "tokenMetadataProgram").toBase58(),
+      feeEscrow: Keypair.generate().publicKey.toBase58(),
+      creatorFeeVault: Keypair.generate().publicKey.toBase58(),
       instructions: planAddress(plan, "instructionsSysvar").toBase58(),
       tokenProgram: planAddress(plan, "tokenProgram").toBase58(),
       systemProgram: planAddress(plan, "systemProgram").toBase58(),
@@ -229,12 +229,22 @@ test("production CREATE instruction compiles to a one-signer V0 envelope under t
   );
 
   reportSize("CREATE", legacy, stats);
-  // Back to 14. V5 briefly took this to 18 by creating the metadata account,
-  // the fee escrow and the creator fee vault inline; that is finalize's work
-  // now. Phantom guards each written account with a Lighthouse assertion, so
-  // account count is a size cost twice over and this number is load-bearing.
-  assert.equal(fixture.programInstruction.keys.length, 14);
-  assert.equal(fixture.programInstruction.data.length, 232);
+  // 17 accounts, and 9 of them writable. Both numbers are load-bearing:
+  // Phantom guards every written account with a Lighthouse assertion, so a
+  // writable account costs 32 bytes for its key AND 17-41 bytes of wallet
+  // overhead. The history is worth keeping straight -- v6 was 14 accounts and
+  // 232 bytes of data but only did half a launch, and v5's 18 accounts blew the
+  // budget so badly that Phantom dropped all its assertions and warned users the
+  // site might be malicious. v7 does the whole launch in 17.
+  assert.equal(fixture.programInstruction.keys.length, 17);
+  assert.equal(fixture.programInstruction.keys.filter((key) => key.isWritable).length, 9);
+  // 8 discriminator + 32 campaignId + 32 metadataHash + (4+32) name
+  // + (4+10) symbol + 8 launchAt + 8 graduationTarget + 8 deadline
+  assert.equal(fixture.programInstruction.data.length, 146);
+  // globalConfig is read-only: the program only reads route_signer from it, and
+  // marking it writable cost 41 bytes of Lighthouse assertion for nothing.
+  const globalConfigKey = fixture.programInstruction.keys[1];
+  assert.equal(globalConfigKey.isWritable, false, "globalConfig must not be writable");
   assert.equal(stats.requiredSigners, 1);
   assert.equal(stats.instructionCount, 2);
   assert.ok(stats.lookupReadonlyCount + stats.lookupWritableCount >= 4);
@@ -531,67 +541,6 @@ test("CREATE and BUY/SELL V0 compile through the same helper used by graduation"
   assert.ok(tradeCompiled.stats.serializedBytes <= SOLANA_RELEASE_MAX_BYTES);
 });
 
-test("FINALIZE compiles to a small one-signer V0 envelope with ample wallet headroom", () => {
-  const payer = Keypair.generate().publicKey;
-  const plan = buildLaunchpadAltPlan(web3);
-  const lookupTable = makeLookupTable(plan.map((entry) => entry.address));
-
-  const ed25519Instruction = buildLaunchpadEd25519Instruction(web3, {
-    publicKey: Keypair.generate().publicKey.toBase58(),
-    message: Uint8Array.from(bytes32(21)),
-    signature: Uint8Array.from({ length: 64 }, (_, index) => (index + 31) & 0xff),
-  });
-  const programInstruction = buildFinalizeCampaignLaunchInstruction(web3, {
-    programId: PROGRAM_ID.toBase58(),
-    // Worst case on purpose: Metaplex caps are 32 and 10.
-    args: { name: "A".repeat(32), symbol: "B".repeat(10), deadline: "1800000000" },
-    accounts: {
-      payer: payer.toBase58(),
-      globalConfig: planAddress(plan, "globalConfig").toBase58(),
-      campaign: Keypair.generate().publicKey.toBase58(),
-      mint: Keypair.generate().publicKey.toBase58(),
-      tokenMetadata: Keypair.generate().publicKey.toBase58(),
-      feeEscrow: Keypair.generate().publicKey.toBase58(),
-      creatorFeeVault: Keypair.generate().publicKey.toBase58(),
-    },
-  });
-
-  const { stats } = compileAndAssertLaunchpadV0(
-    web3,
-    {
-      payer,
-      recentBlockhash: BLOCKHASH,
-      instructions: [ed25519Instruction, programInstruction],
-      lookupTableAccounts: [lookupTable],
-    },
-    { payer, ed25519Instruction, programInstruction },
-  );
-
-  assert.equal(programInstruction.keys.length, 11);
-  assert.equal(stats.requiredSigners, 1);
-  assert.equal(stats.instructionCount, 2);
-
-  // The point of splitting create in two was to give Phantom room. Phantom
-  // needed 257 bytes for a create of comparable shape, so anything under about
-  // 900 here is comfortable; this asserts a real margin rather than merely
-  // fitting inside the 1232-byte packet limit.
-  assert.ok(
-    stats.serializedBytes <= 700,
-    `finalize is ${stats.serializedBytes} bytes; it must leave the wallet room to rewrite it`,
-  );
-  reportSize("FINALIZE", legacyBytes(payer, [ed25519Instruction, programInstruction]), stats);
-
-  // The browser pins this discriminator because it has no sync sha256. If the
-  // instruction is ever renamed, this is the constant that goes stale.
-  assert.deepEqual(
-    Buffer.from(FINALIZE_CAMPAIGN_LAUNCH_DISCRIMINATOR),
-    Buffer.from("d571a37dd72b8d96", "hex"),
-  );
-  assert.equal(
-    encodeFinalizeCampaignLaunchData({ name: "Kaiju88", symbol: "K88", deadline: "1800000000" }).length,
-    8 + 4 + 7 + 4 + 3 + 8,
-  );
-});
 
 test("every wallet-signed launchpad transaction leaves the wallet room to rewrite it", () => {
   // The failure this guards against is not a rejected transaction. Phantom
@@ -602,7 +551,6 @@ test("every wallet-signed launchpad transaction leaves the wallet room to rewrit
     ["CREATE", SOLANA_RELEASE_MAX_BYTES],
     ["BUY", 797],
     ["SELL", 789],
-    ["FINALIZE", 627],
   ];
   for (const [label, bytes] of cases) {
     assert.ok(

@@ -303,10 +303,6 @@ function deriveDirectCampaignAccounts({ reservationIdHash, generationId, program
   const mint = findProgramAddressSync([Buffer.from("campaign-mint", "utf8"), campaignId], programId);
   const tokenVault = findProgramAddressSync([Buffer.from("token-vault", "utf8"), campaignId], programId);
   const solVault = findProgramAddressSync([Buffer.from("sol-vault", "utf8"), campaignId], programId);
-  const createAuthorization = findProgramAddressSync(
-    [Buffer.from("create-auth", "utf8"), publicKeyBytes(creator), nonce || Buffer.alloc(32)],
-    programId,
-  );
   // Metaplex metadata PDA. Derived from the mint the program will create, so it
   // is known before the transaction is built.
   const tokenMetadata = findProgramAddressSync(
@@ -326,7 +322,7 @@ function deriveDirectCampaignAccounts({ reservationIdHash, generationId, program
     [Buffer.from("creator-fee-vault", "utf8"), publicKeyBytes(campaign.publicKey)],
     programId,
   );
-  return { campaignId, campaign, mint, tokenVault, solVault, createAuthorization, tokenMetadata, feeEscrow, creatorFeeVault };
+  return { campaignId, campaign, mint, tokenVault, solVault, tokenMetadata, feeEscrow, creatorFeeVault };
 }
 
 async function rpcCall(rpcUrl, method, params = []) {
@@ -723,7 +719,6 @@ function publicAccounts({ creatorWallet, onchain, pdas }) {
     mint: pdas.mint.publicKey,
     tokenVault: pdas.tokenVault.publicKey,
     solVault: pdas.solVault.publicKey,
-    createAuthorization: pdas.createAuthorization.publicKey,
     instructions: SYSVAR_INSTRUCTIONS_ID,
     feeEscrow: pdas.feeEscrow.publicKey,
     creatorFeeVault: pdas.creatorFeeVault.publicKey,

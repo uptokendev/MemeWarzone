@@ -228,18 +228,23 @@ async function main() {
     const campaignId = hash32(`campaign:${unique}`);
     const createNonce = hash32(`create:${unique}`);
     const now = await chainUnixTimestamp(connection);
-    const args = { campaignId: fixed32(campaignId), metadataHash: fixed32(hash32(`metadata:${unique}`)), clusterHash: fixed32(clusterId), tickerHash: fixed32(hash32(`ticker:${unique}`)), reservationIdHash: fixed32(hash32(`reservation:${unique}`)), reservationVersion: new BN(1), launchAt: new BN(0), graduationTargetUsdMicros: new BN(GRADUATION_TARGET_USD_MICROS.toString()), deadline: new BN(now + 3600), nonce: fixed32(createNonce) };
+    const args = { campaignId: fixed32(campaignId), metadataHash: fixed32(hash32(`metadata:${unique}`)), name: `MWZ Canary ${unique}`.slice(0, 32), symbol: "MWZCAN", launchAt: new BN(0), graduationTargetUsdMicros: new BN(GRADUATION_TARGET_USD_MICROS.toString()), deadline: new BN(now + 3600) };
     const campaign = derivePda(PROGRAM_ID, "campaign", campaignId);
     const mint = derivePda(PROGRAM_ID, "campaign-mint", campaignId);
     const tokenVault = derivePda(PROGRAM_ID, "token-vault", campaignId);
     const solVault = derivePda(PROGRAM_ID, "sol-vault", campaignId);
-    const createAuthorization = derivePda(PROGRAM_ID, "create-auth", creator.keypair.publicKey.toBuffer(), createNonce);
     const feeEscrow = derivePda(PROGRAM_ID, "fee-escrow", campaign.toBuffer());
     const creatorFeeVault = derivePda(PROGRAM_ID, "creator-fee-vault", campaign.toBuffer());
+    // v7 writes the Metaplex metadata inside create_campaign.
+    const MPL_TOKEN_METADATA = new PublicKey("metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s");
+    const tokenMetadata = PublicKey.findProgramAddressSync(
+      [Buffer.from("metadata", "utf8"), MPL_TOKEN_METADATA.toBuffer(), mint.toBuffer()],
+      MPL_TOKEN_METADATA,
+    )[0];
     const profile = await program.account.creatorProfile.fetch(creator.creatorProfile);
     const createDigest = createAuthorizationDigest({ programId: PROGRAM_ID, generationConfigKey: generationConfig, generation, creator: creator.keypair.publicKey, riskClusterId: clusterId, creatorBuyLockSeconds: profile.creatorBuyLockSeconds, creatorBuyCapBps: profile.creatorBuyCapBps, campaign, mint, tokenVault, solVault, tokenProgram: TOKEN_PROGRAM_ID, args });
     const edCreate = Ed25519Program.createInstructionWithPrivateKey({ privateKey: routeSigner.secretKey, message: createDigest });
-    const createIx = await program.methods.createCampaign(args).accountsStrict({ creator: creator.keypair.publicKey, globalConfig, generationConfig, creatorProfile: creator.creatorProfile, riskProfile: creator.riskProfile, clusterProfile, campaign, mint, tokenVault, solVault, createAuthorization, instructions: SYSVAR_INSTRUCTIONS_PUBKEY, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId }).instruction();
+    const createIx = await program.methods.createCampaign(args).accountsStrict({ creator: creator.keypair.publicKey, globalConfig, generationConfig, creatorProfile: creator.creatorProfile, riskProfile: creator.riskProfile, clusterProfile, campaign, mint, tokenVault, solVault, tokenMetadata, tokenMetadataProgram: MPL_TOKEN_METADATA, feeEscrow, creatorFeeVault, instructions: SYSVAR_INSTRUCTIONS_PUBKEY, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId }).instruction();
     const alt = await createTempAlt(connection, operator, globalConfig);
     const v0 = await loadV0();
     const create = await executeV0({ v0, connection, payer: creator.keypair, ed25519: edCreate, programIx: createIx, lookupTable: alt, instructions: [ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }), edCreate, createIx], label: "CREATE" });

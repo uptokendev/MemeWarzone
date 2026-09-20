@@ -1,13 +1,13 @@
 import crypto from "node:crypto";
 
-export const CREATE_AUTH_DOMAIN = Buffer.from("MEMEWARZONE_SOLANA_CREATE_V6", "utf8");
+export const CREATE_AUTH_DOMAIN = Buffer.from("MEMEWARZONE_SOLANA_CREATE_V7", "utf8");
 // v6 takes the Metaplex name and symbol back out of this message: they moved to
 // finalize_campaign_launch along with the metadata account itself, so create no
 // longer receives them. The domain changes with the message shape, so a v5
 // signature can never authorize a v6 create — an operator still running a v5
 // backend fails closed rather than signing a message the program reads
 // differently.
-export const CREATE_AUTH_SCHEMA_VERSION = 6;
+export const CREATE_AUTH_SCHEMA_VERSION = 7;
 export const METAPLEX_MAX_NAME_BYTES = 32;
 export const METAPLEX_MAX_SYMBOL_BYTES = 10;
 export const METAPLEX_MAX_URI_BYTES = 200;
@@ -336,7 +336,6 @@ export function buildCreateAuthorizationPayload(input) {
     CREATE_AUTH_DOMAIN,
     u16(CREATE_AUTH_SCHEMA_VERSION, "schemaVersion"),
     publicKeyBytes(programId, "programId"),
-    bytes32(args.clusterHash, "args.clusterHash"),
 
     bytes32(generation.generationId, "generation.generationId"),
     publicKeyBytes(generationConfigKey, "generationConfigKey"),
@@ -379,53 +378,22 @@ export function buildCreateAuthorizationPayload(input) {
     publicKeyBytes(solVault, "solVault"),
     publicKeyBytes(tokenProgram, "tokenProgram"),
     bytes32(args.metadataHash, "args.metadataHash"),
-    // v6 removed the Metaplex name and symbol from this message. They are bound
-    // by the separate finalize authorization instead, because they are no
-    // longer arguments to create_campaign.
-    bytes32(args.tickerHash, "args.tickerHash"),
-    bytes32(args.reservationIdHash, "args.reservationIdHash"),
-    u64(args.reservationVersion, "args.reservationVersion"),
-    i64(args.launchAt, "args.launchAt"),
-    u64(args.graduationTargetUsdMicros, "args.graduationTargetUsdMicros"),
-    bytes32(args.nonce, "args.nonce"),
-    i64(args.deadline, "args.deadline"),
-  ]);
-}
-
-export const FINALIZE_LAUNCH_DOMAIN = Buffer.from("MEMEWARZONE_SOLANA_FINALIZE_LAUNCH_V1", "utf8");
-export const FINALIZE_LAUNCH_SCHEMA_VERSION = 1;
-
-/**
- * The message the route signer signs to authorize finalize_campaign_launch.
- *
- * Must match build_finalize_launch_message in
- * programs/memewarzone_solana/src/finalize_launch.rs byte for byte. The program
- * rebuilds this from on-chain state plus the instruction arguments and compares
- * it to what the ed25519 instruction carries, so any divergence here is a
- * launch that cannot be finalized rather than a silent weakening.
- *
- * Binding the name and symbol is the point of the exercise: finalize writes the
- * Metaplex account and then revokes the mint authority, so whoever chooses the
- * name chooses it permanently. Without a signature over these fields anyone
- * watching the chain could finalize a fresh campaign with a name of their own.
- */
-export function buildFinalizeLaunchPayload({ programId, campaign, mint, creator, campaignId, args }) {
-  return Buffer.concat([
-    FINALIZE_LAUNCH_DOMAIN,
-    u16(FINALIZE_LAUNCH_SCHEMA_VERSION, "finalizeSchemaVersion"),
-    publicKeyBytes(programId, "programId"),
-    publicKeyBytes(campaign, "campaign"),
-    publicKeyBytes(mint, "mint"),
-    publicKeyBytes(creator, "creator"),
-    bytes32(campaignId, "campaignId"),
+    // v7 put the Metaplex name and symbol back, because create_campaign writes
+    // the metadata again. They are length-prefixed so ("ab","c") and ("a","bc")
+    // cannot produce the same message. Only the 32-byte digest travels in the
+    // transaction, so binding them here is free on the wire -- and it is what
+    // stops anyone but the route signer choosing what a token is called.
+    //
+    // clusterHash, tickerHash, reservationIdHash, reservationVersion and nonce
+    // were dropped: each was 32 bytes of a transaction with none to spare, and
+    // none of them was ever read back. The program derives tickerHash from the
+    // symbol and clusterHash from its own schema domain.
     borshString(args.name, METAPLEX_MAX_NAME_BYTES, "args.name"),
     borshString(args.symbol, METAPLEX_MAX_SYMBOL_BYTES, "args.symbol"),
+    i64(args.launchAt, "args.launchAt"),
+    u64(args.graduationTargetUsdMicros, "args.graduationTargetUsdMicros"),
     i64(args.deadline, "args.deadline"),
   ]);
-}
-
-export function finalizeLaunchDigest(input) {
-  return sha256(buildFinalizeLaunchPayload(input));
 }
 
 export function createAuthorizationDigest(input) {

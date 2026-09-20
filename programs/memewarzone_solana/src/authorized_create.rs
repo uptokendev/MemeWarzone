@@ -17,9 +17,10 @@ use anchor_spl::token::{
     self,
     spl_token::{
         self,
+        instruction::AuthorityType,
         state::{Account as SplTokenAccount, Mint as SplMint},
     },
-    MintTo,
+    MintTo, SetAuthority,
 };
 
 use crate::{
@@ -36,8 +37,18 @@ pub const CAMPAIGN_MINT_SEED: &[u8] = b"campaign-mint";
 pub const TOKEN_VAULT_SEED: &[u8] = b"token-vault";
 pub const SOL_VAULT_SEED: &[u8] = b"sol-vault";
 
-pub const CREATE_AUTH_DOMAIN: &[u8] = b"MEMEWARZONE_SOLANA_CREATE_V6";
-pub const CREATE_AUTH_SCHEMA_VERSION: u16 = 6;
+pub const CREATE_AUTH_DOMAIN: &[u8] = b"MEMEWARZONE_SOLANA_CREATE_V7";
+pub const CREATE_AUTH_SCHEMA_VERSION: u16 = 7;
+
+/// Written into `Campaign.cluster_hash`, which used to arrive as a 32-byte
+/// argument on every launch. It was only ever an env constant
+/// (`SOLANA_CLUSTER_HASH_HEX`) that the program checked was non-zero and then
+/// stored; nothing on chain or off it ever read the value back. Deriving it from
+/// the create domain keeps the field non-zero and makes it say something true --
+/// which create schema produced this campaign -- for 0 bytes of transaction.
+pub fn cluster_hash_constant() -> [u8; 32] {
+    hash(CREATE_AUTH_DOMAIN).to_bytes()
+}
 pub const ASSET_INITIALIZATION_VERSION: u16 = 1;
 
 pub const MIN_SCHEDULE_SECONDS: i64 = 300;
@@ -58,7 +69,14 @@ pub struct CreateCampaign<'info> {
     #[account(mut)]
     pub creator: Signer<'info>,
     /// CHECK: global config PDA; owner/data checked when typed in handler.
-    #[account(mut, seeds = [GLOBAL_CONFIG_SEED], bump)]
+    ///
+    /// Read-only. The handler borrows it immutably, deserializes it, and reads
+    /// `route_signer`; it has never written a byte. Marking it `mut` cost
+    /// nothing in key bytes -- it lives in the launch lookup table -- but it
+    /// made Phantom insert a Lighthouse assertion over a 314-byte account, and
+    /// that assertion was the single most expensive thing in the transaction at
+    /// 41 bytes. Measured on GCSY and ABGAGID on mainnet.
+    #[account(seeds = [GLOBAL_CONFIG_SEED], bump)]
     pub global_config: UncheckedAccount<'info>,
     /// CHECK: generation config; seeds + typed load in handler.
     pub generation_config: UncheckedAccount<'info>,
@@ -83,13 +101,22 @@ pub struct CreateCampaign<'info> {
     /// CHECK: SOL vault PDA; created in handler.
     #[account(mut, seeds = [SOL_VAULT_SEED, args.campaign_id.as_ref()], bump)]
     pub sol_vault: UncheckedAccount<'info>,
-    /// CHECK: create-auth PDA; created in handler.
+    /// CHECK: Metaplex metadata PDA; address derived and verified in
+    /// token_metadata::create_campaign_metadata.
+    #[account(mut)]
+    pub token_metadata: UncheckedAccount<'info>,
+    /// CHECK: pinned to MPL_TOKEN_METADATA_ID inside create_campaign_metadata.
+    pub token_metadata_program: UncheckedAccount<'info>,
+    /// CHECK: fee escrow PDA; created here, seeds bound to the campaign.
+    #[account(mut, seeds = [crate::fee_escrow::FEE_ESCROW_SEED, campaign.key().as_ref()], bump)]
+    pub fee_escrow: UncheckedAccount<'info>,
+    /// CHECK: creator fee vault PDA; created here, seeds bound to the campaign.
     #[account(
         mut,
-        seeds = [CREATE_AUTH_SEED, creator.key().as_ref(), args.nonce.as_ref()],
+        seeds = [crate::fee_escrow::CREATOR_FEE_VAULT_SEED, campaign.key().as_ref()],
         bump
     )]
-    pub create_authorization: UncheckedAccount<'info>,
+    pub creator_fee_vault: UncheckedAccount<'info>,
     /// CHECK: The address constraint pins this account to the Instructions sysvar.
     #[account(address = INSTRUCTIONS_SYSVAR_ID)]
     pub instructions: UncheckedAccount<'info>,
@@ -187,21 +214,37 @@ pub struct CreateAuthorization {
 #[derive(AnchorSerialize, AnchorDeserialize, Clone)]
 pub struct CreateCampaignArgs {
     pub campaign_id: [u8; 32],
-    /// The Metaplex name and symbol are NOT here. They are arguments to
-    /// finalize_campaign_launch instead, which is what actually writes the
-    /// metadata account. Keeping them here cost 31 bytes of a transaction that
-    /// had none to spare; see crate::finalize_launch.
+    /// Commitment to the off-chain metadata JSON (draft id, description, URLs).
+    /// The only one of the original five hashes that is worth its 32 bytes.
     pub metadata_hash: [u8; 32],
-    pub cluster_hash: [u8; 32],
-    pub ticker_hash: [u8; 32],
-    pub reservation_id_hash: [u8; 32],
-    pub reservation_version: u64,
+    /// Metaplex on-chain name, written by this instruction. Capped at
+    /// MAX_NAME_LENGTH.
+    pub name: String,
+    /// Metaplex on-chain symbol, written by this instruction. Capped at
+    /// MAX_SYMBOL_LENGTH. `Campaign.ticker_hash` is derived from it.
+    pub symbol: String,
     /// Zero means immediate launch. A non-zero value is an immutable scheduled launch time.
     pub launch_at: i64,
     pub graduation_target_usd_micros: u64,
     pub deadline: i64,
-    pub nonce: [u8; 32],
 }
+
+// Removed in V7, and why -- each was 32 bytes on a transaction that had none to
+// spare, and each was write-only state:
+//
+//   cluster_hash          an env constant; now cluster_hash_constant()
+//   ticker_hash           never read; now hash(symbol), which is strictly more
+//                         truthful because it binds the symbol actually minted
+//   reservation_id_hash   never read, and campaign_id is already derived from it
+//                         off chain, so it was carried twice
+//   reservation_version   never read
+//   nonce                 seeded create_authorization, which V7 does not create
+//
+// The fields stay on `Campaign` deliberately. campaign_view.rs reads that
+// account at 35 hardcoded offsets and deleting 136 bytes from the middle would
+// shift 30 of them; keeping the layout fixed gets the whole saving -- which
+// comes from not transmitting the values, not from not storing them -- at no
+// risk. Removing them from the struct is a separate, self-contained change.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TokenAllocation {
@@ -423,7 +466,6 @@ pub fn create_campaign_handler(
     let mint_bump_seed = [ctx.bumps.mint];
     let token_vault_bump_seed = [ctx.bumps.token_vault];
     let sol_vault_bump_seed = [ctx.bumps.sol_vault];
-    let create_auth_bump_seed = [ctx.bumps.create_authorization];
     let campaign_seeds: &[&[u8]] = &[
         CAMPAIGN_SEED,
         args.campaign_id.as_ref(),
@@ -443,12 +485,6 @@ pub fn create_campaign_handler(
         SOL_VAULT_SEED,
         args.campaign_id.as_ref(),
         &sol_vault_bump_seed,
-    ];
-    let create_auth_seeds: &[&[u8]] = &[
-        CREATE_AUTH_SEED,
-        creator_key.as_ref(),
-        args.nonce.as_ref(),
-        &create_auth_bump_seed,
     ];
 
     let payer_info = ctx.accounts.creator.to_account_info();
@@ -511,13 +547,6 @@ pub fn create_campaign_handler(
         &system_info,
         8 + CampaignSolVault::INIT_SPACE,
         sol_vault_seeds,
-    )?;
-    create_program_account(
-        &payer_info,
-        &ctx.accounts.create_authorization.to_account_info(),
-        &system_info,
-        8 + CreateAuthorization::INIT_SPACE,
-        create_auth_seeds,
     )?;
 
     // Write campaign body in isolated frame (GenerationConfig + Campaign are large).
@@ -585,27 +614,20 @@ pub fn create_campaign_handler(
         );
     }
 
-    // Metadata, revocation and the fee PDAs deliberately do NOT happen here.
-    // They live in finalize_campaign_launch, which the keeper sends immediately
-    // afterwards. Putting them in this instruction added four accounts and left
-    // Phantom too little room to insert its Lighthouse assertions, so it refused
-    // to simulate and warned every creator that the site might be malicious.
-    // See the module docs on crate::finalize_launch for the measurements.
+    // Metadata, revocation and the fee accounts happen HERE, in the same
+    // instruction that mints the supply. V6 split them into
+    // finalize_campaign_launch because create could not afford the bytes; V7 can,
+    // because the arguments that paid for nothing were removed and global_config
+    // stopped being writable. A launch is now one transaction that either
+    // completes or does not exist -- there is no state in which a token is
+    // minted but unnamed and untradeable, which is the class of bug that
+    // stranded launches on mainnet all week.
     //
-    // The campaign is intentionally not tradeable until that call lands: the fee
-    // escrow does not exist yet, and every trade path already requires it.
-    // `mint_authority_revoked` stays false until finalize sets it, which is what
-    // the keeper scans for.
-    write_create_authorization(
-        &ctx.accounts.create_authorization.to_account_info(),
-        creator_key,
-        args.nonce,
-        args.deadline,
-        now,
-        prep.route_signer,
-        prep.authorization_hash,
-        ctx.bumps.create_authorization,
-    )?;
+    // Ordering is forced: CreateMetadataAccountV3 needs the mint authority to
+    // sign, and revoking that authority is irreversible. Metadata first,
+    // revocation second, and both in the same instruction as each other.
+    finish_launch(ctx, args, campaign_seeds, creator_key)?;
+
     bump_creator_launch_stats(&ctx.accounts.creator_profile.to_account_info(), now)?;
 
     emit_campaign_created(
@@ -785,30 +807,80 @@ fn prepare_and_verify_create_auth<'info>(
     })
 }
 
+/// The three steps that used to be `finalize_campaign_launch`: Metaplex
+/// metadata, mint authority revocation, fee accounts.
+///
+/// `#[inline(never)]` for the same reason every other large step in this file
+/// has it. The BPF stack frame is 4KB and `Campaign` alone is 720 bytes; the
+/// first V6 finalize deserialized it inline and died with "Access violation in
+/// stack frame 9" on every simulation, before reaching any of its own checks.
+/// Keeping this in its own frame is not tidiness.
+///
+/// No idempotency gate here, unlike finalize. Finalize could be called on a
+/// campaign that already existed, so it had to ask the mint whether there was
+/// still an authority to revoke. This runs in the same instruction that creates
+/// the mint, so the answer cannot be anything but yes -- and if any of it fails,
+/// transaction atomicity means the campaign never existed either.
 #[inline(never)]
-fn write_create_authorization(
-    account: &AccountInfo<'_>,
-    creator: Pubkey,
-    nonce: [u8; 32],
-    deadline: i64,
-    used_at: i64,
-    route_signer: Pubkey,
-    message_hash: [u8; 32],
-    bump: u8,
+fn finish_launch<'info>(
+    ctx: &Context<CreateCampaign<'info>>,
+    args: &CreateCampaignArgs,
+    campaign_seeds: &[&[u8]],
+    creator_key: Pubkey,
 ) -> Result<()> {
-    let create_authorization = CreateAuthorization {
-        creator,
-        nonce,
-        deadline,
-        used_at,
-        route_signer,
-        message_hash,
-        schema_version: CREATE_AUTH_SCHEMA_VERSION,
-        bump,
-    };
-    let mut data = account.try_borrow_mut_data()?;
-    let mut cursor = std::io::Cursor::new(&mut data[..]);
-    create_authorization.try_serialize(&mut cursor)?;
+    let campaign_info = ctx.accounts.campaign.to_account_info();
+    let mint_info = ctx.accounts.mint.to_account_info();
+    let campaign_signer: &[&[&[u8]]] = &[campaign_seeds];
+
+    crate::token_metadata::create_campaign_metadata(
+        &ctx.accounts.token_metadata.to_account_info(),
+        &mint_info,
+        &campaign_info,
+        &ctx.accounts.creator.to_account_info(),
+        &ctx.accounts.system_program.to_account_info(),
+        &ctx.accounts.token_metadata_program.to_account_info(),
+        campaign_signer,
+        &args.name,
+        &args.symbol,
+    )?;
+
+    token::set_authority(
+        CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            SetAuthority {
+                account_or_mint: mint_info.clone(),
+                current_authority: campaign_info.clone(),
+            },
+            campaign_signer,
+        ),
+        AuthorityType::MintTokens,
+        None,
+    )?;
+
+    // Assert the outcome rather than trusting the CPIs returned Ok. A token that
+    // reaches a wallet unnamed, or one that keeps a live mint authority, is not
+    // recoverable after the fact.
+    verify_token_metadata_created(&ctx.accounts.token_metadata.to_account_info())?;
+    verify_mint_authority_revoked(&mint_info)?;
+
+    ensure_campaign_fee_accounts(
+        &ctx.accounts.creator.to_account_info(),
+        &ctx.accounts.fee_escrow.to_account_info(),
+        &ctx.accounts.creator_fee_vault.to_account_info(),
+        &ctx.accounts.system_program.to_account_info(),
+        campaign_info.key(),
+        creator_key,
+        ctx.bumps.fee_escrow,
+        ctx.bumps.creator_fee_vault,
+    )?;
+
+    // One byte, in place, and only now that the mint has been inspected.
+    // Re-serialising Campaign would mean a second 720-byte copy on the stack,
+    // which is what overflowed the frame in V6.
+    {
+        let mut data = campaign_info.try_borrow_mut_data()?;
+        data[crate::campaign_view::CAMPAIGN_MINT_AUTHORITY_REVOKED_OFFSET] = 1;
+    }
     Ok(())
 }
 
@@ -864,10 +936,14 @@ fn assemble_campaign(
         token_vault: token_vault_key,
         sol_vault: sol_vault_key,
         metadata_hash: args.metadata_hash,
-        cluster_hash: args.cluster_hash,
-        ticker_hash: args.ticker_hash,
-        reservation_id_hash: args.reservation_id_hash,
-        reservation_version: args.reservation_version,
+        // These four stopped being arguments in V7. The layout is unchanged --
+        // campaign_view.rs reads this account at fixed offsets -- but the values
+        // no longer cost 104 bytes of every launch transaction. See the note on
+        // CreateCampaignArgs.
+        cluster_hash: cluster_hash_constant(),
+        ticker_hash: hash(args.symbol.as_bytes()).to_bytes(),
+        reservation_id_hash: [0; 32],
+        reservation_version: 0,
         launch_at: prep.launch_at,
         graduation_target_usd_micros: args.graduation_target_usd_micros,
         cluster_kind: generation.cluster_kind,
@@ -911,6 +987,12 @@ fn assemble_campaign(
         // refuses a campaign already marked revoked, so no V6 launch could ever be
         // finished, and every consumer that trusts this flag to mean "supply is
         // fixed" was being told so while the PDA could still mint.
+        //
+        // V7 revokes in this same instruction, but this still starts false and is
+        // flipped by finish_launch only after verify_mint_authority_revoked has
+        // actually looked at the mint. Writing it optimistically here is precisely
+        // the shape of the V6 bug, and it costs nothing to keep the flag behind
+        // the check that proves it.
         mint_authority_revoked: false,
         graduated: false,
         curve_closed: false,
@@ -1025,12 +1107,14 @@ fn emit_campaign_created_body(
         curve_token_supply: prep.allocation.curve_tokens,
         liquidity_token_supply: prep.allocation.liquidity_tokens,
         reserve_token_supply: prep.allocation.reserve_tokens,
-        // Matches the account: the mint authority is still held at this point and
-        // is only revoked by finalize_campaign_launch.
-        mint_authority_revoked: false,
-        ticker_hash: args.ticker_hash,
-        reservation_id_hash: args.reservation_id_hash,
-        reservation_version: args.reservation_version,
+        // Matches the account. V7 revokes in this instruction, so by the time
+        // this event is emitted the authority is genuinely gone. V6 shipped this
+        // as `true` while the authority was still held, which made every launch
+        // unfinishable; the value must keep tracking what actually happened.
+        mint_authority_revoked: true,
+        ticker_hash: hash(args.symbol.as_bytes()).to_bytes(),
+        reservation_id_hash: [0; 32],
+        reservation_version: 0,
         launch_at: prep.launch_at,
         graduation_target_usd_micros: args.graduation_target_usd_micros,
         cluster_kind: generation.cluster_kind,
@@ -1064,7 +1148,6 @@ pub fn build_create_authorization_message(
     message.extend_from_slice(CREATE_AUTH_DOMAIN);
     message.extend_from_slice(&CREATE_AUTH_SCHEMA_VERSION.to_le_bytes());
     message.extend_from_slice(program_id.as_ref());
-    message.extend_from_slice(args.cluster_hash.as_ref());
 
     message.extend_from_slice(generation.generation_id.as_ref());
     message.extend_from_slice(generation_config_key.as_ref());
@@ -1107,12 +1190,16 @@ pub fn build_create_authorization_message(
     message.extend_from_slice(sol_vault.as_ref());
     message.extend_from_slice(token_program.as_ref());
     message.extend_from_slice(args.metadata_hash.as_ref());
-    message.extend_from_slice(args.ticker_hash.as_ref());
-    message.extend_from_slice(args.reservation_id_hash.as_ref());
-    message.extend_from_slice(&args.reservation_version.to_le_bytes());
+    // Length-prefixed so ("ab", "c") and ("a", "bc") cannot collide. Only the
+    // 32-byte digest of this message travels in the transaction, so binding the
+    // name and symbol here costs nothing on the wire -- and it is what stops
+    // anyone but the route signer deciding what a token is called.
+    message.extend_from_slice(&(args.name.len() as u32).to_le_bytes());
+    message.extend_from_slice(args.name.as_bytes());
+    message.extend_from_slice(&(args.symbol.len() as u32).to_le_bytes());
+    message.extend_from_slice(args.symbol.as_bytes());
     message.extend_from_slice(&args.launch_at.to_le_bytes());
     message.extend_from_slice(&args.graduation_target_usd_micros.to_le_bytes());
-    message.extend_from_slice(args.nonce.as_ref());
     message.extend_from_slice(&args.deadline.to_le_bytes());
     message
 }
@@ -1299,20 +1386,17 @@ pub(crate) fn validate_create_args(args: &CreateCampaignArgs, now: i64) -> Resul
         args.metadata_hash != [0; 32],
         LaunchpadError::InvalidMetadata
     );
+    // Checked here as well as inside create_campaign_metadata, because these two
+    // are the only arguments whose length can move the transaction size, and a
+    // launch that fails at the Metaplex CPI has already paid for the mint.
     require!(
-        args.cluster_hash != [0; 32],
-        LaunchpadError::InvalidCampaign
-    );
-    require!(args.ticker_hash != [0; 32], LaunchpadError::InvalidCampaign);
-    require!(
-        args.reservation_id_hash != [0; 32],
-        LaunchpadError::InvalidCampaign
+        !args.name.is_empty() && args.name.len() <= crate::token_metadata::MAX_NAME_LENGTH,
+        LaunchpadError::InvalidMetadata
     );
     require!(
-        args.reservation_version > 0,
-        LaunchpadError::InvalidCampaign
+        !args.symbol.is_empty() && args.symbol.len() <= crate::token_metadata::MAX_SYMBOL_LENGTH,
+        LaunchpadError::InvalidMetadata
     );
-    require!(args.nonce != [0; 32], LaunchpadError::InvalidNonce);
     require!(
         args.deadline >= now,
         LaunchpadError::CreateAuthorizationExpired
@@ -1429,6 +1513,169 @@ pub(crate) fn validate_create_risk_profiles(
     require!(
         !cluster_profile.restricted,
         LaunchpadError::ClusterRestricted
+    );
+    Ok(())
+}
+
+
+// ---------------------------------------------------------------------------
+// Finishing a launch.
+//
+// These lived in finalize_launch.rs, the second instruction a v6 launch needed.
+// v7 does the work inside create_campaign, so the instruction is gone and its
+// helpers moved here rather than disappearing. The comments about racing the
+// fee-escrow worker still apply: initialize_fee_escrow and
+// initialize_creator_fee_vault remain permissionless, so an account that
+// already exists is verified rather than demanded to be absent.
+// ---------------------------------------------------------------------------
+
+
+/// Create whichever fee accounts are missing, and check the ones that are not.
+///
+/// Both are PDAs of this program, so an account that already exists was created
+/// by us — by create_campaign before V6, or by the permissionless initializers
+/// the indexer's worker calls. That makes skipping it safe. The checks below are
+/// not about trust, they are about catching a campaign/creator mismatch that
+/// would otherwise route this campaign's fees to another campaign's escrow.
+fn ensure_campaign_fee_accounts<'info>(
+    payer: &AccountInfo<'info>,
+    fee_escrow: &AccountInfo<'info>,
+    creator_fee_vault: &AccountInfo<'info>,
+    system_program: &AccountInfo<'info>,
+    campaign: Pubkey,
+    creator: Pubkey,
+    fee_escrow_bump: u8,
+    creator_fee_vault_bump: u8,
+) -> Result<()> {
+    if fee_escrow.data_is_empty() {
+        create_fee_escrow(payer, fee_escrow, system_program, campaign, fee_escrow_bump)?;
+    } else {
+        require_keys_eq!(*fee_escrow.owner, crate::id(), LaunchpadError::InvalidFeeEscrow);
+        let data = fee_escrow.try_borrow_data()?;
+        let mut slice: &[u8] = &data;
+        let existing = crate::FeeEscrow::try_deserialize(&mut slice)
+            .map_err(|_| error!(LaunchpadError::InvalidFeeEscrow))?;
+        require_keys_eq!(existing.campaign, campaign, LaunchpadError::InvalidFeeEscrow);
+    }
+
+    if creator_fee_vault.data_is_empty() {
+        create_creator_fee_vault(
+            payer,
+            creator_fee_vault,
+            system_program,
+            campaign,
+            creator,
+            creator_fee_vault_bump,
+        )?;
+    } else {
+        require_keys_eq!(*creator_fee_vault.owner, crate::id(), LaunchpadError::InvalidFeeEscrow);
+        let data = creator_fee_vault.try_borrow_data()?;
+        let mut slice: &[u8] = &data;
+        let existing = crate::CreatorFeeVault::try_deserialize(&mut slice)
+            .map_err(|_| error!(LaunchpadError::InvalidFeeEscrow))?;
+        require_keys_eq!(existing.campaign, campaign, LaunchpadError::InvalidFeeEscrow);
+        require_keys_eq!(existing.creator, creator, LaunchpadError::InvalidFeeEscrow);
+    }
+    Ok(())
+}
+
+
+fn create_fee_escrow<'info>(
+    payer: &AccountInfo<'info>,
+    fee_escrow: &AccountInfo<'info>,
+    system_program: &AccountInfo<'info>,
+    campaign: Pubkey,
+    bump: u8,
+) -> Result<()> {
+    let campaign_ref = campaign.as_ref();
+    let bump_seed = [bump];
+    let seeds: &[&[u8]] = &[crate::fee_escrow::FEE_ESCROW_SEED, campaign_ref, &bump_seed];
+    create_program_account(
+        payer,
+        fee_escrow,
+        system_program,
+        8 + crate::FeeEscrow::INIT_SPACE,
+        seeds,
+    )?;
+    let escrow = crate::FeeEscrow {
+        campaign,
+        weekly_pending: 0,
+        monthly_pending: 0,
+        recruiter_pending: 0,
+        airdrop_pending: 0,
+        squad_pending: 0,
+        protocol_pending: 0,
+        total_received: 0,
+        total_flushed: 0,
+        bump,
+        version: crate::FEE_ESCROW_VERSION,
+    };
+    let mut data = fee_escrow.try_borrow_mut_data()?;
+    let mut cursor = std::io::Cursor::new(&mut data[..]);
+    escrow.try_serialize(&mut cursor)?;
+    Ok(())
+}
+
+
+fn create_creator_fee_vault<'info>(
+    payer: &AccountInfo<'info>,
+    creator_fee_vault: &AccountInfo<'info>,
+    system_program: &AccountInfo<'info>,
+    campaign: Pubkey,
+    creator: Pubkey,
+    bump: u8,
+) -> Result<()> {
+    let campaign_ref = campaign.as_ref();
+    let bump_seed = [bump];
+    let seeds: &[&[u8]] = &[crate::fee_escrow::CREATOR_FEE_VAULT_SEED, campaign_ref, &bump_seed];
+    create_program_account(
+        payer,
+        creator_fee_vault,
+        system_program,
+        8 + crate::CreatorFeeVault::INIT_SPACE,
+        seeds,
+    )?;
+    let vault = crate::CreatorFeeVault {
+        campaign,
+        creator,
+        pending_lamports: 0,
+        total_received: 0,
+        total_claimed: 0,
+        bump,
+        version: crate::CREATOR_FEE_VAULT_VERSION,
+    };
+    let mut data = creator_fee_vault.try_borrow_mut_data()?;
+    let mut cursor = std::io::Cursor::new(&mut data[..]);
+    vault.try_serialize(&mut cursor)?;
+    Ok(())
+}
+
+
+fn verify_token_metadata_created(metadata_info: &AccountInfo<'_>) -> Result<()> {
+    require!(
+        metadata_info.owner == &crate::token_metadata::MPL_TOKEN_METADATA_ID,
+        LaunchpadError::InvalidMetadata
+    );
+    require!(
+        !metadata_info.data_is_empty(),
+        LaunchpadError::InvalidMetadata
+    );
+    Ok(())
+}
+
+
+fn verify_mint_authority_revoked(mint_info: &AccountInfo<'_>) -> Result<()> {
+    let state = {
+        let data = mint_info.try_borrow_data()?;
+        SplMint::unpack(&data)?
+    };
+    require!(
+        state.mint_authority == COption::None,
+        LaunchpadError::InvalidCampaign
+    );
+    require!(
+        state.freeze_authority == COption::None,
+        LaunchpadError::InvalidCampaign
     );
     Ok(())
 }
@@ -1576,14 +1823,11 @@ mod tests {
         CreateCampaignArgs {
             campaign_id: [1; 32],
             metadata_hash: [2; 32],
-            cluster_hash: [3; 32],
-            ticker_hash: [4; 32],
-            reservation_id_hash: [5; 32],
-            reservation_version: 7,
+            name: "Test Campaign".to_string(),
+            symbol: "TEST".to_string(),
             launch_at: 0,
             graduation_target_usd_micros: GRADUATION_TARGET_30K_USD_MICROS,
             deadline,
-            nonce: [11; 32],
         }
     }
 
@@ -1655,11 +1899,124 @@ mod tests {
     /// verify against a V6 program: an operator running an old backend would
     /// otherwise be authorizing a message the program reads differently.
     #[test]
+    fn create_campaign_does_not_claim_the_authority_is_revoked() {
+        let source = include_str!("authorized_create.rs");
+
+        /// Take the balanced-brace block that starts at `opener`.
+        ///
+        /// The earlier version of this guard looked for the literal `"\n    });"`
+        /// to close the block. `Box::new(Campaign { .. })` does not end that way,
+        /// so the slice ran 3,900 bytes past the struct and swept up the
+        /// CampaignCreated event as well. It passed only because both values
+        /// happened to read `false`; the moment they legitimately differed it
+        /// reported the wrong one. Count braces instead.
+        fn block<'a>(source: &'a str, opener: &str) -> &'a str {
+            let start = source
+                .find(opener)
+                .unwrap_or_else(|| panic!("create_campaign must contain `{opener}`"));
+            let mut depth = 0usize;
+            let bytes = source.as_bytes();
+            for i in start..source.len() {
+                match bytes[i] {
+                    b'{' => depth += 1,
+                    b'}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            return &source[start..=i];
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            panic!("unterminated block for `{opener}`");
+        }
+
+        // The account literal is written before the revocation happens, so it
+        // must not claim otherwise.
+        let account = block(source, "Box::new(Campaign {");
+        assert!(
+            account.contains("mint_authority_revoked: false"),
+            "create_campaign writes the campaign as already revoked",
+        );
+        assert!(
+            !account.contains("mint_authority_revoked: true"),
+            "create_campaign still claims the mint authority is revoked",
+        );
+
+        // The event is emitted at the end of create_campaign, after the mint has
+        // been revoked and inspected, so here it legitimately reports true.
+        let event = block(source, "emit!(CampaignCreated {");
+        assert!(
+            event.contains("mint_authority_revoked: true"),
+            "the created event must report the revocation create_campaign performed",
+        );
+
+        // ...and that is only honest because the flag is written behind the
+        // check. If the byte is ever set before verify_mint_authority_revoked,
+        // this is V6 again with a different line number.
+        let verify_at = source
+            .find("verify_mint_authority_revoked(&mint_info)")
+            .expect("create_campaign must verify the revocation it claims");
+        let flag_at = source
+            .find("CAMPAIGN_MINT_AUTHORITY_REVOKED_OFFSET] = 1")
+            .expect("create_campaign must flip the flag after revoking");
+        assert!(
+            verify_at < flag_at,
+            "create_campaign marks the authority revoked before checking the mint",
+        );
+
+        // Metadata needs the authority that revocation destroys, so the order of
+        // those two can never be swapped either.
+        let metadata_at = source
+            .find("create_campaign_metadata(")
+            .expect("create_campaign must write the Metaplex metadata");
+        assert!(
+            metadata_at < verify_at,
+            "metadata must be written while the mint authority still exists",
+        );
+    }
+
+    /// The ed25519 instruction carries a 32-byte digest, not the message, so the
+    /// handler has to hash its rebuilt message before comparing. Passing the raw
+    /// message reads perfectly naturally and fails every signature check on
+    /// chain with InvalidCreateAuthorization; it cost a full deploy cycle to
+    /// find once already.
+    #[test]
+    fn the_verifier_is_given_a_digest_not_the_message() {
+        let source = include_str!("authorized_create.rs");
+        let hashed = source
+            .find("let authorization_hash = hash(&authorization_message).to_bytes();")
+            .expect("the message must be hashed before it is compared");
+        let call = source
+            .find("verify_detached_create_authorization(")
+            .expect("create must verify the route authorization");
+        assert!(
+            hashed < call,
+            "create passes something other than a digest to the verifier",
+        );
+    }
+
+    /// Metaplex rejects anything longer, and create_campaign now writes the
+    /// metadata itself, so these are the caps a launch is validated against
+    /// before it spends anything.
+    #[test]
+    fn metaplex_limits_are_what_create_enforces() {
+        assert_eq!(crate::token_metadata::MAX_NAME_LENGTH, 32);
+        assert_eq!(crate::token_metadata::MAX_SYMBOL_LENGTH, 10);
+        let mut args = test_create_args(200);
+        args.name = "A".repeat(crate::token_metadata::MAX_NAME_LENGTH);
+        args.symbol = "B".repeat(crate::token_metadata::MAX_SYMBOL_LENGTH);
+        assert!(validate_create_args(&args, 100).is_ok(), "the caps must be accepted");
+        args.name.push('A');
+        assert!(validate_create_args(&args, 100).is_err(), "one byte over must not be");
+    }
+
+    #[test]
     fn create_v3_removes_creator_supplied_mint() {
         let args = test_create_args(200);
         assert_eq!(args.campaign_id, [1; 32]);
-        assert_eq!(CREATE_AUTH_SCHEMA_VERSION, 6);
-        assert_eq!(CREATE_AUTH_DOMAIN, b"MEMEWARZONE_SOLANA_CREATE_V6");
+        assert_eq!(CREATE_AUTH_SCHEMA_VERSION, 7);
+        assert_eq!(CREATE_AUTH_DOMAIN, b"MEMEWARZONE_SOLANA_CREATE_V7");
     }
 
     #[test]
@@ -1737,10 +2094,47 @@ mod tests {
     }
 
     #[test]
-    fn create_args_reject_empty_nonce() {
-        let mut args = test_create_args(200);
-        args.nonce = [0; 32];
-        assert!(validate_create_args(&args, 100).is_err());
+    fn create_args_reject_unusable_metadata_strings() {
+        // These two are the only arguments whose length can change the size of
+        // the transaction, and a launch that fails at the Metaplex CPI has
+        // already paid to create the mint. Reject before spending anything.
+        for (name, symbol) in [
+            ("", "TEST"),
+            ("Test Campaign", ""),
+            (
+                "this name is thirty three bytes!!",
+                "TEST",
+            ),
+            ("Test Campaign", "ELEVENCHARS"),
+        ] {
+            let mut args = test_create_args(200);
+            args.name = name.to_string();
+            args.symbol = symbol.to_string();
+            assert!(
+                validate_create_args(&args, 100).is_err(),
+                "expected reject for name={name:?} symbol={symbol:?}"
+            );
+        }
+        assert!(validate_create_args(&test_create_args(200), 100).is_ok());
+    }
+
+    #[test]
+    fn campaign_ticker_hash_follows_the_symbol_actually_minted() {
+        // V7 derives this instead of carrying it. The point of the derivation is
+        // that it cannot disagree with the symbol written into the Metaplex
+        // metadata, which the old 32-byte argument could.
+        let args = test_create_args(200);
+        assert_eq!(
+            hash(args.symbol.as_bytes()).to_bytes(),
+            hash(b"TEST").to_bytes()
+        );
+        assert_ne!(hash(args.symbol.as_bytes()).to_bytes(), [0u8; 32]);
+    }
+
+    #[test]
+    fn cluster_hash_constant_is_non_zero_and_tracks_the_schema() {
+        assert_ne!(cluster_hash_constant(), [0u8; 32]);
+        assert_eq!(cluster_hash_constant(), hash(CREATE_AUTH_DOMAIN).to_bytes());
     }
 
     #[test]
@@ -1867,18 +2261,33 @@ mod tests {
         let args = test_create_args(1_000);
         let baseline = build_test_message(generation_key, &generation, creator, &args);
 
+        // The name and symbol are what an attacker would want to change: they
+        // are what every wallet and aggregator shows, and revocation makes them
+        // permanent. They must move the signed message.
         let mut changed = args.clone();
-        changed.ticker_hash = [13; 32];
+        changed.name = "Not The Real Name".to_string();
         assert_ne!(
             baseline,
             build_test_message(generation_key, &generation, creator, &changed)
         );
 
         changed = args.clone();
-        changed.reservation_version += 1;
+        changed.symbol = "EVIL".to_string();
         assert_ne!(
             baseline,
             build_test_message(generation_key, &generation, creator, &changed)
+        );
+
+        // Length prefixes: ("ab","c") and ("a","bc") must not collide.
+        let mut a = args.clone();
+        a.name = "ab".to_string();
+        a.symbol = "c".to_string();
+        let mut b = args.clone();
+        b.name = "a".to_string();
+        b.symbol = "bc".to_string();
+        assert_ne!(
+            build_test_message(generation_key, &generation, creator, &a),
+            build_test_message(generation_key, &generation, creator, &b)
         );
 
         changed = args.clone();
