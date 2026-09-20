@@ -48,6 +48,7 @@
 
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::{
+    hash::hash,
     program_option::COption,
     program_pack::Pack,
     sysvar::instructions::ID as INSTRUCTIONS_SYSVAR_ID,
@@ -56,12 +57,18 @@ use anchor_spl::token::{self, spl_token::state::Mint as SplMint, SetAuthority};
 use anchor_spl::token::spl_token::instruction::AuthorityType;
 
 use crate::authorized_create::{
-    create_program_account, verify_detached_create_authorization, Campaign, CAMPAIGN_MINT_SEED,
-    CAMPAIGN_SEED,
+    create_program_account, verify_detached_create_authorization, CAMPAIGN_MINT_SEED, CAMPAIGN_SEED,
+};
+use crate::campaign_view::{
+    CAMPAIGN_ACCOUNT_BYTES, CAMPAIGN_BUMP_OFFSET, CAMPAIGN_CREATOR_OFFSET, CAMPAIGN_ID_OFFSET,
+    CAMPAIGN_MINT_AUTHORITY_REVOKED_OFFSET, CAMPAIGN_MINT_OFFSET,
 };
 use crate::fee_escrow::{CREATOR_FEE_VAULT_SEED, FEE_ESCROW_SEED};
 use crate::token_metadata::{MAX_NAME_LENGTH, MAX_SYMBOL_LENGTH, MPL_TOKEN_METADATA_ID};
-use crate::{GlobalConfig, LaunchpadError, GLOBAL_CONFIG_SEED};
+use crate::{
+    LaunchpadError, GLOBAL_CONFIG_PAUSED_OFFSET, GLOBAL_CONFIG_ROUTE_SIGNER_OFFSET,
+    GLOBAL_CONFIG_SEED,
+};
 
 /// Distinct from `CREATE_AUTH_DOMAIN` so a create signature can never be
 /// replayed as a finalize signature, or the reverse.
@@ -164,47 +171,71 @@ pub fn finalize_campaign_launch_handler(
         LaunchpadError::CreateAuthorizationExpired
     );
 
-    let global_config = {
+    // Everything below reads fixed Borsh offsets instead of deserializing the
+    // accounts. Campaign is 720 bytes and GlobalConfig 314; materialising either
+    // on the stack blows the effective 4KB SBF frame on mainnet Agave, where
+    // account-data direct mapping is off. The first V6 finalize did exactly that
+    // and every simulation died with "Access violation in stack frame 9" before
+    // reaching a single one of its own checks. campaign_view.rs exists for this
+    // reason and already carries the offsets, cross-checked against the struct.
+    require!(
+        ctx.accounts.global_config.data_len() >= GLOBAL_CONFIG_PAUSED_OFFSET + 1,
+        LaunchpadError::Unauthorized
+    );
+    let (route_signer, config_paused) = {
         let data = ctx.accounts.global_config.try_borrow_data()?;
-        let mut slice: &[u8] = &data;
-        GlobalConfig::try_deserialize(&mut slice)?
+        let mut signer = [0u8; 32];
+        signer.copy_from_slice(
+            &data[GLOBAL_CONFIG_ROUTE_SIGNER_OFFSET..GLOBAL_CONFIG_ROUTE_SIGNER_OFFSET + 32],
+        );
+        (Pubkey::new_from_array(signer), data[GLOBAL_CONFIG_PAUSED_OFFSET] == 1)
     };
-    require!(!global_config.paused, LaunchpadError::LaunchpadPaused);
+    require!(!config_paused, LaunchpadError::LaunchpadPaused);
 
     let campaign_info = ctx.accounts.campaign.to_account_info();
-    let campaign_state = {
-        let data = campaign_info.try_borrow_data()?;
-        let mut slice: &[u8] = &data;
-        Campaign::try_deserialize(&mut slice)?
-    };
     require_keys_eq!(
         *campaign_info.owner,
         crate::id(),
         LaunchpadError::InvalidCampaign
     );
+    require!(
+        campaign_info.data_len() == CAMPAIGN_ACCOUNT_BYTES,
+        LaunchpadError::InvalidCampaign
+    );
+    let (campaign_id, campaign_creator, campaign_mint, campaign_bump_byte) = {
+        let data = campaign_info.try_borrow_data()?;
+        let mut id = [0u8; 32];
+        id.copy_from_slice(&data[CAMPAIGN_ID_OFFSET..CAMPAIGN_ID_OFFSET + 32]);
+        let mut creator = [0u8; 32];
+        creator.copy_from_slice(&data[CAMPAIGN_CREATOR_OFFSET..CAMPAIGN_CREATOR_OFFSET + 32]);
+        let mut mint = [0u8; 32];
+        mint.copy_from_slice(&data[CAMPAIGN_MINT_OFFSET..CAMPAIGN_MINT_OFFSET + 32]);
+        (
+            id,
+            Pubkey::new_from_array(creator),
+            Pubkey::new_from_array(mint),
+            data[CAMPAIGN_BUMP_OFFSET],
+        )
+    };
 
     // Seeds, not just the stored pubkeys: an attacker supplying a look-alike
     // campaign account would otherwise get to pick the mint this writes to.
-    let (expected_campaign, _) = Pubkey::find_program_address(
-        &[CAMPAIGN_SEED, campaign_state.campaign_id.as_ref()],
-        &crate::id(),
-    );
+    let (expected_campaign, _) =
+        Pubkey::find_program_address(&[CAMPAIGN_SEED, campaign_id.as_ref()], &crate::id());
     require_keys_eq!(
         expected_campaign,
         campaign_info.key(),
         LaunchpadError::InvalidCampaign
     );
-    let (expected_mint, _) = Pubkey::find_program_address(
-        &[CAMPAIGN_MINT_SEED, campaign_state.campaign_id.as_ref()],
-        &crate::id(),
-    );
+    let (expected_mint, _) =
+        Pubkey::find_program_address(&[CAMPAIGN_MINT_SEED, campaign_id.as_ref()], &crate::id());
     require_keys_eq!(
         expected_mint,
         ctx.accounts.mint.key(),
         LaunchpadError::InvalidCampaign
     );
     require_keys_eq!(
-        campaign_state.mint,
+        campaign_mint,
         ctx.accounts.mint.key(),
         LaunchpadError::InvalidCampaign
     );
@@ -227,26 +258,30 @@ pub fn finalize_campaign_launch_handler(
     // was left unnamed with no way to fix it. Create what is missing, verify
     // what is already there.
 
-    let expected_message = build_finalize_launch_message(
+    // The ed25519 instruction carries the 32-byte digest, not the message, so
+    // hash before comparing. create_campaign does the same thing; passing the
+    // raw message here failed every signature check with InvalidCreateAuthorization
+    // while looking entirely correct at the call site.
+    let expected_digest = hash(&build_finalize_launch_message(
         &crate::id(),
         &campaign_info.key(),
         &ctx.accounts.mint.key(),
-        &campaign_state.creator,
-        &campaign_state.campaign_id,
+        &campaign_creator,
+        &campaign_id,
         &args,
-    );
+    ))
+    .to_bytes();
     verify_detached_create_authorization(
         &ctx.accounts.instructions.to_account_info(),
-        global_config.route_signer,
-        &expected_message,
+        route_signer,
+        &expected_digest,
     )?;
 
     let mint_info = ctx.accounts.mint.to_account_info();
     verify_mint_authority_is_campaign(&mint_info, &campaign_info.key())?;
 
-    let campaign_bump = [campaign_state.bump];
-    let campaign_id_ref = campaign_state.campaign_id;
-    let campaign_seeds: &[&[u8]] = &[CAMPAIGN_SEED, campaign_id_ref.as_ref(), &campaign_bump];
+    let campaign_bump = [campaign_bump_byte];
+    let campaign_seeds: &[&[u8]] = &[CAMPAIGN_SEED, campaign_id.as_ref(), &campaign_bump];
     let campaign_signer: &[&[&[u8]]] = &[campaign_seeds];
 
     // Metadata first: it needs the mint authority that the next call destroys.
@@ -284,17 +319,16 @@ pub fn finalize_campaign_launch_handler(
         &ctx.accounts.creator_fee_vault.to_account_info(),
         &ctx.accounts.system_program.to_account_info(),
         campaign_info.key(),
-        campaign_state.creator,
+        campaign_creator,
         ctx.bumps.fee_escrow,
         ctx.bumps.creator_fee_vault,
     )?;
 
+    // One byte, in place. Re-serialising the whole Campaign would mean holding a
+    // second 720-byte copy on the stack, which is what overflowed the frame.
     {
-        let mut updated = campaign_state;
-        updated.mint_authority_revoked = true;
         let mut data = campaign_info.try_borrow_mut_data()?;
-        let mut cursor = std::io::Cursor::new(&mut data[..]);
-        updated.try_serialize(&mut cursor)?;
+        data[CAMPAIGN_MINT_AUTHORITY_REVOKED_OFFSET] = 1;
     }
 
     Ok(())
@@ -663,6 +697,26 @@ mod tests {
             source[event_start..event_end].contains("mint_authority_revoked: false"),
             "the created event disagrees with the account it describes",
         );
+    }
+
+    /// The ed25519 instruction carries a 32-byte digest, so the handler has to
+    /// hash its rebuilt message before comparing. Passing the raw message reads
+    /// naturally and fails every signature check on chain.
+    #[test]
+    fn the_verifier_is_given_a_digest_not_the_message() {
+        let source = include_str!("finalize_launch.rs");
+        let call = source
+            .find("verify_detached_create_authorization(\n        &ctx.accounts.instructions")
+            .expect("finalize must verify the route authorization");
+        let window = &source[call..call + 220];
+        assert!(
+            window.contains("expected_digest"),
+            "finalize passes something other than a digest to the verifier",
+        );
+        let digest_decl = source
+            .find("let expected_digest = hash(&build_finalize_launch_message(")
+            .expect("the message must be hashed before it is compared");
+        assert!(digest_decl < call, "the digest must be built before the check");
     }
 
     /// Finalizing twice must fail, and must fail on chain state rather than on

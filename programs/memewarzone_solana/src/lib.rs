@@ -3,6 +3,13 @@ use anchor_lang::prelude::*;
 declare_id!("3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt");
 
 pub const GLOBAL_CONFIG_SEED: &[u8] = b"global";
+/// Fixed Borsh offsets into GlobalConfig, for the same reason campaign_view.rs
+/// exists: deserializing the whole 314-byte account onto the SBF stack costs
+/// frame space that finalize_campaign_launch does not have. Asserted against the
+/// struct in the test below, so a reordered field fails the build rather than
+/// silently reading the wrong bytes on mainnet.
+pub const GLOBAL_CONFIG_ROUTE_SIGNER_OFFSET: usize = 136;
+pub const GLOBAL_CONFIG_PAUSED_OFFSET: usize = 304;
 pub const GENERATION_CONFIG_SEED: &[u8] = b"generation";
 pub const CREATOR_PROFILE_SEED: &[u8] = b"creator";
 pub const RISK_PROFILE_SEED: &[u8] = b"risk";
@@ -1271,6 +1278,48 @@ pub(crate) fn generation_allows_graduation_target(
 
 #[cfg(test)]
 mod tests {
+
+    /// The offsets above are read straight out of account data, so a field
+    /// inserted before them would make finalize_campaign_launch verify a
+    /// signature against whatever happened to land at byte 136. Recompute them
+    /// from the declaration rather than trusting the constants.
+    #[test]
+    fn global_config_offsets_match_the_struct() {
+        let source = include_str!("lib.rs");
+        let start = source
+            .find("pub struct GlobalConfig {")
+            .expect("GlobalConfig must exist");
+        let body = &source[start..source[start..].find("\n}").unwrap() + start];
+
+        let mut offset = 8usize; // anchor discriminator
+        let mut route_signer = None;
+        let mut paused = None;
+        for line in body.lines() {
+            let line = line.trim();
+            let Some(rest) = line.strip_prefix("pub ") else { continue };
+            let Some((name, ty)) = rest.split_once(": ") else { continue };
+            let ty = ty.trim_end_matches(',');
+            let size = match ty {
+                "u8" | "i8" | "bool" => 1,
+                "u16" | "i16" => 2,
+                "u32" | "i32" => 4,
+                "u64" | "i64" => 8,
+                "Pubkey" => 32,
+                "[u8; 32]" => 32,
+                other => panic!("unhandled GlobalConfig field type {other}"),
+            };
+            if name == "route_signer" {
+                route_signer = Some(offset);
+            }
+            if name == "paused" {
+                paused = Some(offset);
+            }
+            offset += size;
+        }
+        assert_eq!(route_signer, Some(GLOBAL_CONFIG_ROUTE_SIGNER_OFFSET));
+        assert_eq!(paused, Some(GLOBAL_CONFIG_PAUSED_OFFSET));
+    }
+
     use super::*;
 
     fn test_global_config() -> GlobalConfig {
