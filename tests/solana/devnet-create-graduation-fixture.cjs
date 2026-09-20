@@ -385,7 +385,6 @@ async function main() {
         tokenProgram: TOKEN_PROGRAM_ID,
         systemProgram: SystemProgram.programId,
         feeEscrow,
-        creatorFeeVault,
       })
       .instruction();
 
