@@ -665,3 +665,129 @@ describe("Warzone sponsorship money path V1", function () {
     }
   });
 });
+
+async function signResolvePlacesV2(
+  treasury: any,
+  resolver: any,
+  poolId: string,
+  payouts: string[],
+  bps: number[],
+  stakeTotal: bigint,
+  buyInTotal: bigint,
+  boostTotal: bigint,
+  deadline: number,
+) {
+  const network = await ethers.provider.getNetwork();
+  const placesHash = ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["address[]", "uint16[]"], [payouts, bps]));
+  return resolver.signTypedData(
+    { name: "ArenaWarPoolTreasury", version: "2", chainId: network.chainId, verifyingContract: await treasury.getAddress() },
+    {
+      ResolvePoolPlacesV2: [
+        { name: "poolId", type: "bytes32" },
+        { name: "placesHash", type: "bytes32" },
+        { name: "stakeTotal", type: "uint256" },
+        { name: "buyInTotal", type: "uint256" },
+        { name: "boostTotal", type: "uint256" },
+        { name: "deadline", type: "uint256" },
+      ],
+    },
+    { poolId, placesHash, stakeTotal, buyInTotal, boostTotal, deadline },
+  );
+}
+
+describe("Arena money-path V2: places and capped operator", function () {
+  it("pays three tournament places 60/30/10 with the remainder on first, each claimable once by its own wallet", async () => {
+    const { treasury, resolver, owner, alice, bob, booster, stranger } = await deployArena();
+    const poolId = ethers.id("tournament-places");
+    const now = (await ethers.provider.getBlock("latest"))!.timestamp;
+    await treasury.openTournamentPool(poolId, ONE, now + 3600, now + 7200);
+    const entrants = [alice, bob, booster, stranger];
+    for (const entrant of entrants) await treasury.connect(entrant).depositBuyIn(poolId, { value: ONE });
+    await treasury.setTournamentLive(poolId);
+
+    const buyInTotal = ONE * 4n;
+    const league = (buyInTotal * 2_000n) / 10_000n;
+    const protocol = (buyInTotal * 500n) / 10_000n;
+    const prize = buyInTotal - league - protocol;
+    const payouts = [alice.address, bob.address, booster.address];
+    const bps = [6_000, 3_000, 1_000];
+    const deadline = now + 10_000;
+
+    // Wrong sum, duplicate wallet and a non-entrant are refused before any money moves.
+    const badSum = await signResolvePlacesV2(treasury, resolver, poolId, payouts, [5_000, 3_000, 1_000], 0n, buyInTotal, 0n, deadline);
+    await expect(treasury.resolvePlaces(poolId, payouts, [5_000, 3_000, 1_000], deadline, badSum)).to.be.revertedWithCustomError(treasury, "InvalidPlaces");
+    const dup = [alice.address, alice.address];
+    const dupSig = await signResolvePlacesV2(treasury, resolver, poolId, dup, [7_000, 3_000], 0n, buyInTotal, 0n, deadline);
+    await expect(treasury.resolvePlaces(poolId, dup, [7_000, 3_000], deadline, dupSig)).to.be.revertedWithCustomError(treasury, "InvalidPlaces");
+    const outsider = [alice.address, owner.address];
+    const outsiderSig = await signResolvePlacesV2(treasury, resolver, poolId, outsider, [7_000, 3_000], 0n, buyInTotal, 0n, deadline);
+    await expect(treasury.resolvePlaces(poolId, outsider, [7_000, 3_000], deadline, outsiderSig)).to.be.revertedWithCustomError(treasury, "InvalidPlaces");
+    // A signature over a different list does not authorize this one.
+    const foreign = await signResolvePlacesV2(treasury, resolver, poolId, [bob.address, alice.address, booster.address], bps, 0n, buyInTotal, 0n, deadline);
+    await expect(treasury.resolvePlaces(poolId, payouts, bps, deadline, foreign)).to.be.revertedWithCustomError(treasury, "BadSignature");
+
+    const sig = await signResolvePlacesV2(treasury, resolver, poolId, payouts, bps, 0n, buyInTotal, 0n, deadline);
+    await treasury.resolvePlaces(poolId, payouts, bps, deadline, sig);
+
+    const second = (prize * 3_000n) / 10_000n;
+    const third = (prize * 1_000n) / 10_000n;
+    const first = prize - second - third;
+    expect(await treasury.placeCount(poolId)).to.equal(3);
+    expect((await treasury.placeOf(poolId, 1)).pending).to.equal(first);
+    expect((await treasury.placeOf(poolId, 2)).pending).to.equal(second);
+    expect((await treasury.placeOf(poolId, 3)).pending).to.equal(third);
+    const settled = await treasury.pools(poolId);
+    expect(settled.pendingWinner).to.equal(first);
+    expect(first + second + third + settled.pendingProtocol + settled.pendingLeague).to.equal(buyInTotal);
+
+    for (const [place, signer, expected] of [[2, bob, second], [3, booster, third], [1, alice, first]] as const) {
+      const before = await ethers.provider.getBalance(signer.address);
+      const tx = await treasury.connect(signer).claimPlace(poolId, place);
+      const receipt = await tx.wait();
+      const gas = receipt!.gasUsed * receipt!.gasPrice;
+      expect((await ethers.provider.getBalance(signer.address)) - before + gas).to.equal(expected);
+      await expect(treasury.connect(signer).claimPlace(poolId, place)).to.be.revertedWithCustomError(treasury, "NothingToClaim");
+    }
+    await expect(treasury.connect(alice).claimWinner(poolId)).to.be.revertedWithCustomError(treasury, "NothingToClaim");
+    await expect(treasury.connect(stranger).claimPlace(poolId, 2)).to.be.revertedWithCustomError(treasury, "NotOwner");
+    await expect(treasury.connect(stranger).claimPlace(poolId, 4)).to.be.revertedWithCustomError(treasury, "InvalidPlace");
+  });
+
+  it("fills the operator wallet up to its USD cap on protocol claims and sends everything above it to the protocol receiver", async () => {
+    const { treasury, resolver, protocol, alice, bob, stranger: operator } = await deployArena();
+    // $100 per native unit, cap $1 -> the operator can receive 0.01 native in total.
+    await treasury.setOperatorFill(operator.address, 1_000_000n, 100_000_000n);
+
+    const open = async (label: string) => {
+      const poolId = ethers.id(label);
+      const now = (await ethers.provider.getBlock("latest"))!.timestamp;
+      await treasury.openBattlePool(poolId, alice.address, bob.address, ONE, now + 3600, now + 7200);
+      await treasury.connect(alice).depositStake(poolId, { value: ONE });
+      await treasury.connect(bob).depositStake(poolId, { value: ONE });
+      const deadline = now + 10_000;
+      const sig = await signResolveV2(treasury, resolver, poolId, alice.address, ONE * 2n, 0n, 0n, deadline);
+      await treasury.resolve(poolId, alice.address, deadline, sig);
+      return poolId;
+    };
+
+    // Pool 1: protocol share is 5% of 2 native = 0.1 native = $10; only $1 fits under the cap.
+    const first = await open("cap-1");
+    const protocolShare = (ONE * 2n * 500n) / 10_000n;
+    const operatorBefore = await ethers.provider.getBalance(operator.address);
+    const protocolBefore = await ethers.provider.getBalance(protocol.address);
+    await treasury.claimProtocol(first);
+    const toOperator = ethers.parseEther("0.01");
+    expect((await ethers.provider.getBalance(operator.address)) - operatorBefore).to.equal(toOperator);
+    expect((await ethers.provider.getBalance(protocol.address)) - protocolBefore).to.equal(protocolShare - toOperator);
+    expect(await treasury.operatorFilledUsdMicros()).to.equal(1_000_000n);
+
+    // Pool 2: the cap is full, the whole protocol share goes to the receiver.
+    const second = await open("cap-2");
+    const operatorMid = await ethers.provider.getBalance(operator.address);
+    const protocolMid = await ethers.provider.getBalance(protocol.address);
+    await treasury.claimProtocol(second);
+    expect((await ethers.provider.getBalance(operator.address)) - operatorMid).to.equal(0n);
+    expect((await ethers.provider.getBalance(protocol.address)) - protocolMid).to.equal(protocolShare);
+    await expect(treasury.claimProtocol(second)).to.be.revertedWithCustomError(treasury, "NothingToClaim");
+  });
+});

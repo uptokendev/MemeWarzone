@@ -66,6 +66,9 @@ contract ArenaWarPoolTreasuryV2 is ReentrancyGuard, Ownable, EIP712 {
     bytes32 public constant RESOLVE_TYPEHASH = keccak256(
         "ResolvePoolV2(bytes32 poolId,address winnerPayout,uint256 stakeTotal,uint256 buyInTotal,uint256 boostTotal,uint256 deadline)"
     );
+    bytes32 public constant RESOLVE_PLACES_TYPEHASH = keccak256(
+        "ResolvePoolPlacesV2(bytes32 poolId,bytes32 placesHash,uint256 stakeTotal,uint256 buyInTotal,uint256 boostTotal,uint256 deadline)"
+    );
     bytes32 public constant BOOST_QUOTE_TYPEHASH = keccak256(
         "BoostQuote(bytes32 poolId,bytes32 matchId,uint256 roundNumber,address booster,address sideToken,uint256 boostUnits,uint256 unitPriceNativeRaw,uint256 grossNativeRaw,uint256 pricingVersion,uint256 oracleTimestamp,uint256 nonce,uint256 deadline)"
     );
@@ -75,6 +78,25 @@ contract ArenaWarPoolTreasuryV2 is ReentrancyGuard, Ownable, EIP712 {
     uint256 public constant ENTRY_PROTOCOL_BPS = 500;
     uint256 public constant BOOST_PROTOCOL_BPS = 1_000;
     uint256 public constant BPS_DENOM = 10_000;
+    /// Tournament places: 1st, 2nd, runner-up.
+    uint8 public constant MAX_PLACES = 3;
+    uint256 public constant USD_MICROS_PER_NATIVE_DENOM = 1e18;
+
+    struct Places {
+        uint8 count;
+        address[3] payouts;
+        uint256[3] pending;
+        bool[3] claimed;
+    }
+    mapping(bytes32 => Places) internal placesByPool;
+
+    /// Protocol fees fill the operator wallet up to a USD cap; everything
+    /// above the cap goes to protocolReceiver (the multisig). Same rule as the
+    /// Solana treasury's route_state. nativeUsdMicros = USD per 1 native * 1e6.
+    address public operatorReceiver;
+    uint256 public operatorCapUsdMicros;
+    uint256 public operatorFilledUsdMicros;
+    uint256 public nativeUsdMicros;
 
     mapping(bytes32 => Pool) public pools;
     mapping(bytes32 => mapping(address => uint256)) public buyIns;
@@ -131,6 +153,9 @@ contract ArenaWarPoolTreasuryV2 is ReentrancyGuard, Ownable, EIP712 {
         uint256 boostGross
     );
     event PoolCancelled(bytes32 indexed poolId);
+    event PlacesResolved(bytes32 indexed poolId, address[] payouts, uint256[] amounts, uint256 pendingProtocol, uint256 pendingLeague);
+    event OperatorFillUpdated(address indexed operator, uint256 capUsdMicros, uint256 nativeUsdMicros);
+    event OperatorFilled(bytes32 indexed poolId, uint256 toOperator, uint256 toProtocol, uint256 filledUsdMicros);
     event Claimed(bytes32 indexed poolId, bytes32 bucket, address indexed to, uint256 amount);
     event StakeRefunded(bytes32 indexed poolId, address indexed owner, uint256 amount);
     event BuyInRefunded(bytes32 indexed poolId, address indexed owner, uint256 amount);
@@ -153,6 +178,8 @@ contract ArenaWarPoolTreasuryV2 is ReentrancyGuard, Ownable, EIP712 {
     error InvalidReference();
     error Replay();
     error InvalidBoostQuote();
+    error InvalidPlaces();
+    error InvalidPlace();
 
     modifier onlyCreator() {
         if (!authorizedCreators[msg.sender] && msg.sender != owner()) revert Unauthorized();
@@ -211,6 +238,14 @@ contract ArenaWarPoolTreasuryV2 is ReentrancyGuard, Ownable, EIP712 {
         protocolReceiver = protocolReceiver_;
         postGradLeagueTreasury = IPostGradLeagueTreasuryV2(postGradLeagueTreasury_);
         emit ReceiversUpdated(protocolReceiver_, postGradLeagueTreasury_);
+    }
+
+    /// operator_ may be zero to send every protocol lamport to protocolReceiver.
+    function setOperatorFill(address operator_, uint256 capUsdMicros, uint256 nativeUsdMicros_) external onlyOwner {
+        operatorReceiver = operator_;
+        operatorCapUsdMicros = capUsdMicros;
+        nativeUsdMicros = nativeUsdMicros_;
+        emit OperatorFillUpdated(operator_, capUsdMicros, nativeUsdMicros_);
     }
 
     function setDepositsPaused(bool paused) external onlyOwner {
@@ -476,6 +511,10 @@ contract ArenaWarPoolTreasuryV2 is ReentrancyGuard, Ownable, EIP712 {
     }
 
     function claimWinner(bytes32 poolId) external nonReentrant {
+        _claimFirstPlace(poolId);
+    }
+
+    function _claimFirstPlace(bytes32 poolId) internal {
         Pool storage pool = pools[poolId];
         if (pool.state != State.Resolved) revert InvalidState();
         if (msg.sender != pool.winnerPayout) revert NotOwner();
@@ -483,8 +522,120 @@ contract ArenaWarPoolTreasuryV2 is ReentrancyGuard, Ownable, EIP712 {
         if (amount == 0 || pool.claimedWinner) revert NothingToClaim();
         pool.claimedWinner = true;
         pool.pendingWinner = 0;
+        Places storage places = placesByPool[poolId];
+        places.claimed[0] = true;
+        places.pending[0] = 0;
         _pay(msg.sender, amount);
         emit Claimed(poolId, "winner", msg.sender, amount);
+    }
+
+    /// Places 1-3 (1-based). Place 1 is the same payout claimWinner pays.
+    function claimPlace(bytes32 poolId, uint8 place) external nonReentrant {
+        if (place == 1) {
+            _claimFirstPlace(poolId);
+            return;
+        }
+        Pool storage pool = pools[poolId];
+        if (pool.state != State.Resolved) revert InvalidState();
+        Places storage places = placesByPool[poolId];
+        if (place == 0 || place > places.count) revert InvalidPlace();
+        uint256 idx = place - 1;
+        if (msg.sender != places.payouts[idx]) revert NotOwner();
+        uint256 amount = places.pending[idx];
+        if (amount == 0 || places.claimed[idx]) revert NothingToClaim();
+        places.claimed[idx] = true;
+        places.pending[idx] = 0;
+        _pay(msg.sender, amount);
+        emit Claimed(poolId, bytes32(uint256(0x706c616365) << 8 | place), msg.sender, amount);
+    }
+
+    function placeOf(bytes32 poolId, uint8 place) external view returns (address payout, uint256 pending, bool claimed) {
+        Places storage places = placesByPool[poolId];
+        if (place == 0 || place > places.count) revert InvalidPlace();
+        uint256 idx = place - 1;
+        if (idx == 0) {
+            Pool storage pool = pools[poolId];
+            return (pool.winnerPayout, pool.pendingWinner, pool.claimedWinner);
+        }
+        return (places.payouts[idx], places.pending[idx], places.claimed[idx]);
+    }
+
+    function placeCount(bytes32 poolId) external view returns (uint8) {
+        return placesByPool[poolId].count;
+    }
+
+    /// Tournament resolution with 1-3 paid places. The resolver signs the
+    /// place list (placesHash = keccak256(abi.encode(payouts, bps))); the
+    /// prize (entries + boosts after the fixed league/protocol shares) is split
+    /// by bps with the rounding remainder on first place, so nothing strands.
+    function resolvePlaces(
+        bytes32 poolId,
+        address[] calldata payouts,
+        uint16[] calldata bps,
+        uint256 deadline,
+        bytes calldata signature
+    ) external {
+        Pool storage pool = pools[poolId];
+        if (pool.ownerA == address(0)) revert UnknownPool();
+        if (pool.kind != Kind.Tournament || pool.state != State.Live) revert InvalidState();
+        if (block.timestamp > deadline) revert SignatureExpired();
+        uint256 count = payouts.length;
+        if (count == 0 || count > MAX_PLACES || bps.length != count) revert InvalidPlaces();
+        uint256 bpsTotal;
+        for (uint256 i = 0; i < count; i++) {
+            if (payouts[i] == address(0) || bps[i] == 0) revert InvalidPlaces();
+            if (buyIns[poolId][payouts[i]] == 0) revert InvalidPlaces();
+            for (uint256 j = 0; j < i; j++) {
+                if (payouts[j] == payouts[i]) revert InvalidPlaces();
+            }
+            bpsTotal += bps[i];
+        }
+        if (bpsTotal != BPS_DENOM) revert InvalidPlaces();
+
+        uint256 stakeTotal = pool.stakeA + pool.stakeB;
+        bytes32 digest = _hashTypedDataV4(
+            keccak256(
+                abi.encode(
+                    RESOLVE_PLACES_TYPEHASH,
+                    poolId,
+                    keccak256(abi.encode(payouts, bps)),
+                    stakeTotal,
+                    pool.buyInTotal,
+                    pool.boostTotal,
+                    deadline
+                )
+            )
+        );
+        if (digest.recover(signature) != resolver) revert BadSignature();
+
+        uint256 entryGross = stakeTotal + pool.buyInTotal;
+        uint256 entryLeague = (entryGross * ENTRY_LEAGUE_BPS) / BPS_DENOM;
+        uint256 entryProtocol = (entryGross * ENTRY_PROTOCOL_BPS) / BPS_DENOM;
+        uint256 boostProtocol = (pool.boostTotal * BOOST_PROTOCOL_BPS) / BPS_DENOM;
+        uint256 prize = (entryGross - entryLeague - entryProtocol) + (pool.boostTotal - boostProtocol);
+
+        uint256[] memory amounts = new uint256[](count);
+        uint256 others;
+        for (uint256 i = 1; i < count; i++) {
+            amounts[i] = (prize * bps[i]) / BPS_DENOM;
+            others += amounts[i];
+        }
+        amounts[0] = prize - others;
+
+        pool.state = State.Resolved;
+        pool.winnerPayout = payouts[0];
+        pool.pendingWinner = amounts[0];
+        pool.pendingProtocol = entryProtocol + boostProtocol;
+        pool.pendingLeague = entryLeague;
+        Places storage places = placesByPool[poolId];
+        places.count = uint8(count);
+        for (uint256 i = 0; i < count; i++) {
+            places.payouts[i] = payouts[i];
+            places.pending[i] = amounts[i];
+            places.claimed[i] = false;
+        }
+        emit PoolResolved(poolId, payouts[0], amounts[0], pool.pendingProtocol, pool.pendingLeague, entryGross, pool.boostTotal);
+        emit PlacesResolved(poolId, payouts, amounts, pool.pendingProtocol, pool.pendingLeague);
     }
 
     function claimProtocol(bytes32 poolId) external nonReentrant {
@@ -494,8 +645,31 @@ contract ArenaWarPoolTreasuryV2 is ReentrancyGuard, Ownable, EIP712 {
         if (amount == 0 || pool.claimedProtocol) revert NothingToClaim();
         pool.claimedProtocol = true;
         pool.pendingProtocol = 0;
-        _pay(protocolReceiver, amount);
-        emit Claimed(poolId, "protocol", protocolReceiver, amount);
+        (uint256 toOperator, uint256 toProtocol) = _splitOperatorFill(amount);
+        if (toOperator > 0) {
+            _pay(operatorReceiver, toOperator);
+            emit Claimed(poolId, "operator", operatorReceiver, toOperator);
+        }
+        if (toProtocol > 0) {
+            _pay(protocolReceiver, toProtocol);
+            emit Claimed(poolId, "protocol", protocolReceiver, toProtocol);
+        }
+        emit OperatorFilled(poolId, toOperator, toProtocol, operatorFilledUsdMicros);
+    }
+
+    /// Mirrors the Solana treasury's split_operator_fill: the operator takes
+    /// the share that fits under its remaining USD cap, the rest goes on.
+    function _splitOperatorFill(uint256 amount) internal returns (uint256 toOperator, uint256 toProtocol) {
+        if (operatorReceiver == address(0) || nativeUsdMicros == 0 || operatorFilledUsdMicros >= operatorCapUsdMicros) {
+            return (0, amount);
+        }
+        uint256 amountUsd = (amount * nativeUsdMicros) / USD_MICROS_PER_NATIVE_DENOM;
+        if (amountUsd == 0) return (0, amount);
+        uint256 remainingUsd = operatorCapUsdMicros - operatorFilledUsdMicros;
+        uint256 takeUsd = amountUsd < remainingUsd ? amountUsd : remainingUsd;
+        toOperator = (amount * takeUsd) / amountUsd;
+        toProtocol = amount - toOperator;
+        operatorFilledUsdMicros += takeUsd;
     }
 
     function claimLeague(bytes32 poolId, bytes32 monthlyEpoch, bytes32 quarterlyEpoch) external nonReentrant {
