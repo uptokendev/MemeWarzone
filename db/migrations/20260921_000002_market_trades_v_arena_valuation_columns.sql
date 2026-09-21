@@ -1,11 +1,21 @@
--- market_trades_v: keep the live shape restored by 20260917_000002 (Robinhood
--- V3 identity, quoteTokenAddress/quoteAmountRaw) and append the valuation
--- columns arenaBattleMetrics.js selects for battle volume scoring
--- (quoteAssetType, volumeUsd, referencePriceUsd, referencePriceUpdatedAt).
--- Columns are appended only, so CREATE OR REPLACE keeps every existing reader
--- (realtime-indexer marketApi / robinhoodMarketApi) working unchanged.
+-- PRODUCTION PORT ONLY. Staging (vrnsbguutnwgtekcexls, the live database)
+-- already has this exact view; do not run it there.
+--
+-- market_trades_v on the production project still has the 20260917_000002
+-- shape (…, status, quoteTokenAddress, quoteAmountRaw). arenaBattleMetrics.js
+-- selects quoteAssetType / volumeUsd / referencePriceUsd /
+-- referencePriceUpdatedAt from it for battle volume scoring, and the staging
+-- view carries them in a different column order, so CREATE OR REPLACE cannot
+-- bring production in line (Postgres refuses to rename a view column). The
+-- view is dropped and recreated with the staging definition verbatim
+-- (pg_get_viewdef on staging, 2026-09-21). Nothing depends on the view
+-- (pg_depend: no dependents on either project). Readers select columns by
+-- name: realtime-indexer marketApi / robinhoodMarketApi and the arena volume
+-- query keep working.
 
-create or replace view public.market_trades_v
+drop view if exists public.market_trades_v;
+
+create view public.market_trades_v
 with (security_invoker=true)
 as
 select
@@ -26,15 +36,15 @@ select
   t.block_number as "blockNumber",
   t.block_time as "blockTime",
   'confirmed'::text as status,
-  null::text as "quoteTokenAddress",
   t.bnb_amount_raw::text as "quoteAmountRaw",
   'WRAPPED_NATIVE'::text as "quoteAssetType",
+  null::text as "quoteTokenAddress",
   null::numeric as "volumeUsd",
   null::numeric as "referencePriceUsd",
   null::timestamptz as "referencePriceUpdatedAt"
 from public.curve_trades t
 left join public.campaigns c
-  on c.chain_id=t.chain_id and c.campaign_address=t.campaign_address
+  on c.chain_id = t.chain_id and c.campaign_address = t.campaign_address
 union all
 select
   t.chain_id,
@@ -51,7 +61,7 @@ select
     else 'topaz'
   end::text,
   t.side,
-  coalesce(t.transaction_from,t.sender_address,t.recipient_address,''),
+  coalesce(t.transaction_from, t.sender_address, t.recipient_address, ''),
   t.recipient_address,
   t.token_amount_raw::text,
   t.native_amount_raw::text,
@@ -61,11 +71,14 @@ select
   t.block_number,
   t.block_time,
   t.status,
+  coalesce(t.quote_amount_raw, t.native_amount_raw)::text,
+  coalesce(t.quote_asset_type, 'WRAPPED_NATIVE')::text,
   t.quote_token_address,
-  coalesce(t.quote_amount_raw,t.native_amount_raw)::text,
-  coalesce(t.quote_asset_type,'WRAPPED_NATIVE')::text,
   t.volume_usd,
   t.reference_price_usd,
   t.reference_price_updated_at
-from public.dex_trades t
-where t.status='confirmed';
+from public.dex_trades t;
+
+-- Production keeps its grants (postgres owner + service_role); the API runs
+-- as the postgres role there.
+grant select on public.market_trades_v to service_role;

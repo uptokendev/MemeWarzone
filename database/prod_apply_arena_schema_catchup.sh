@@ -41,16 +41,19 @@ case "$MODE" in dryrun|apply) ;; *) echo "usage: $0 [dryrun|apply]" >&2; exit 1;
 WORK="$(mktemp -d)"
 
 GROUP_A=(
+  db/migrations/20260704_000002_solana_reward_payout_rails.sql
+  db/migrations/20260704_000003_solana_launchpad_ops.sql
   db/migrations/20260816_000001_token_holder_balances.sql
   db/migrations/20260902_000002_robinhood_quote_native_compatibility.sql
   db/migrations/20260903_000101_robinhood_shared_market_valuation.sql
+  # 20260902_000004 revokes on arena_battle_volume_audit, which 20260902_000003 creates.
+  db/migrations/20260902_000003_arena_battle_metrics.sql
   db/migrations/20260902_000004_arena_battle_v2_corrections.sql
   db/migrations/20260921_000002_market_trades_v_arena_valuation_columns.sql
 )
 GROUP_B=(
   db/migrations/20260827_000001_arena_vote_ingest.sql
   db/migrations/20260829_000001_arena_settle_idempotency.sql
-  db/migrations/20260902_000003_arena_battle_metrics.sql
   db/migrations/20260903_000002_arena_battle_points_v2_settlement.sql
   db/migrations/20260903_000103_arena_tournament_battle_modes.sql
   db/migrations/20260903_000104_arena_vote_boost_sponsorship_v1_foundation.sql
@@ -69,12 +72,12 @@ GROUP_B=(
   db/migrations/20260910_000001_arena_tournament_exact_bracket_control.sql
   db/migrations/20260910_000002_arena_tournament_admin_contract.sql
   db/migrations/20260921_000003_arena_vote_battles.sql
+  db/migrations/20260921_000004_championship_mirror_missing_entry_names.sql
+  db/migrations/20260921_000005_arena_league_entries_token_address_identity.sql
 )
 
 # One transaction per group. Files carry their own begin/commit; those lines are
-# dropped so the group is atomic. 20260902_000004 (group A) alters
-# arena_battle_volume_audit only `if exists`, so running it before
-# 20260902_000003 (group B) is safe; 20260902_000003 re-adds nothing it needs.
+# dropped so the group is atomic.
 bundle() {
   local out="$1"; shift
   {
@@ -117,12 +120,31 @@ check() {
    order by 1;"
 }
 
+run_sql() {
+  # psql's exit status decides; NOTICE lines are hidden from the report.
+  if ! psql "$DB" -X -q -v ON_ERROR_STOP=1 -f "$1" > "$WORK/out.txt" 2>&1; then
+    grep -v NOTICE "$WORK/out.txt" || true
+    echo "FAILED: $1 (transaction rolled back)" >&2
+    rm -rf "$WORK"
+    exit 1
+  fi
+  grep -v NOTICE "$WORK/out.txt" || true
+}
+
 echo "=== before ==="; check MISSING
-bundle "$WORK/group-a.sql" "${GROUP_A[@]}"
-bundle "$WORK/group-b.sql" "${GROUP_B[@]}"
-echo; echo "--- group A ($MODE): ${#GROUP_A[@]} files ---"
-psql "$DB" -X -q -v ON_ERROR_STOP=1 -f "$WORK/group-a.sql" 2>&1 | grep -v NOTICE || true
-echo "--- group B ($MODE): ${#GROUP_B[@]} files ---"
-psql "$DB" -X -q -v ON_ERROR_STOP=1 -f "$WORK/group-b.sql" 2>&1 | grep -v NOTICE || true
+if [ "$MODE" = "dryrun" ]; then
+  # A rehearsal cannot commit group A, so group B would not see its tables;
+  # rehearse both groups as one rolled-back transaction instead.
+  bundle "$WORK/all.sql" "${GROUP_A[@]}" "${GROUP_B[@]}"
+  echo; echo "--- groups A+B (dryrun, one transaction): $((${#GROUP_A[@]} + ${#GROUP_B[@]})) files ---"
+  run_sql "$WORK/all.sql"
+else
+  bundle "$WORK/group-a.sql" "${GROUP_A[@]}"
+  bundle "$WORK/group-b.sql" "${GROUP_B[@]}"
+  echo; echo "--- group A (apply): ${#GROUP_A[@]} files ---"
+  run_sql "$WORK/group-a.sql"
+  echo "--- group B (apply): ${#GROUP_B[@]} files ---"
+  run_sql "$WORK/group-b.sql"
+fi
 echo; echo "=== after (every row must read present when MODE=apply) ==="; check "STILL MISSING"
 rm -rf "$WORK"
