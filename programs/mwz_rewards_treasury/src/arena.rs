@@ -274,7 +274,9 @@ pub fn deposit_prize_boost_v2_handler(
     require!(funding_id != [0u8; 32] && amount_lamports > 0, ArenaError::InvalidAmount);
     let pool = &mut ctx.accounts.pool;
     require!(pool.pool_id == pool_id && (pool.state == ARENA_STATE_OPEN || pool.state == ARENA_STATE_LIVE), ArenaError::InvalidState);
-    require!(now <= pool.deposit_deadline, ArenaError::DeadlinePassed);
+    // Boosts are bought during the fight, which for tournaments starts after
+    // the deposit deadline; they stay open until resolution is possible.
+    require!(now < pool.resolve_deadline, ArenaError::DeadlinePassed);
     transfer_into_vault(
         &ctx.accounts.funder.to_account_info(), &ctx.accounts.vault.to_account_info(),
         &ctx.accounts.system_program.to_account_info(), amount_lamports,

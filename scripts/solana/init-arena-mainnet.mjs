@@ -4,7 +4,7 @@
  *
  * The reward side (rewards_config, route_state, six vaults) already exists on
  * mainnet; the upgrade adds the arena instruction set but creates no accounts.
- * This creates the three arena configs, all born PAUSED, signed by the
+ * This creates the two arena configs, both PAUSED, signed by the
  * treasury authority (the deployer key). Idempotent: existing PDAs are left
  * alone. Dry-run by default; pass --execute to send. Every transaction is
  * simulated before it is sent.
@@ -17,8 +17,7 @@
  *
  * Defaults (only when the env is unset): resolver = authority; protocol
  * receiver = protocol_vault PDA; MWL / monthly receiver = monthly_league_vault
- * PDA; marketing receiver = route_state.overflow_treasury; quarterly receiver
- * = monthly_league_vault PDA. Change them with set_arena_receivers /
+ * PDA; marketing receiver = route_state.overflow_treasury. Change them with set_arena_receivers /
  * set_arena_money_v2_receivers later; nothing here is final.
  */
 import fs from "node:fs";
@@ -62,7 +61,6 @@ async function main() {
   const monthlyLeagueVault = pda("monthly_league_vault");
   const arenaConfig = pda("arena_config");
   const arenaMoneyConfig = pda("arena_money_config_v2");
-  const postgradTreasury = pda("postgrad_league_v2");
 
   const config = await program.account.rewardsConfig.fetch(rewardsConfig);
   if (!config.authority.equals(authority.publicKey)) {
@@ -75,13 +73,10 @@ async function main() {
   const protocolReceiver = pk("ARENA_PROTOCOL_RECEIVER", protocolVault);
   const mwlReceiver = pk("ARENA_MWL_RECEIVER", monthlyLeagueVault);
   const marketingReceiver = pk("ARENA_MARKETING_RECEIVER", route.overflowTreasury);
-  const monthlyReceiver = pk("POSTGRAD_MONTHLY_RECEIVER", monthlyLeagueVault);
-  const quarterlyReceiver = pk("POSTGRAD_QUARTERLY_RECEIVER", monthlyLeagueVault);
 
   console.log(`[init-arena] program=${PROGRAM_ID.toBase58()} authority=${authority.publicKey.toBase58()} mode=${execute ? "EXECUTE" : "dry-run"}`);
   console.log(`[init-arena] resolver=${resolver.toBase58()}`);
   console.log(`[init-arena] protocol=${protocolReceiver.toBase58()} mwl=${mwlReceiver.toBase58()} marketing=${marketingReceiver.toBase58()}`);
-  console.log(`[init-arena] postgrad monthly=${monthlyReceiver.toBase58()} quarterly=${quarterlyReceiver.toBase58()}`);
 
   const steps = [
     {
@@ -91,20 +86,10 @@ async function main() {
         .accountsStrict({ authority: authority.publicKey, rewardsConfig, arenaConfig, systemProgram: SystemProgram.programId }),
     },
     {
-      name: "initialize_arena_money_v2 (competition/boost/sponsorship, born paused)",
+      name: "initialize_arena_money_v2 (sponsorship config, born paused)",
       pda: arenaMoneyConfig,
       build: () => program.methods.initializeArenaMoneyV2(resolver, protocolReceiver, marketingReceiver)
         .accountsStrict({ authority: authority.publicKey, config: arenaMoneyConfig, systemProgram: SystemProgram.programId }),
-    },
-    {
-      // Its `config` is the ArenaMoneyConfigV2, not RewardsConfig -- caught on
-      // a local validator as AccountDiscriminatorMismatch before it could
-      // fail on mainnet.
-      name: "initialize_postgrad_league_treasury_v2",
-      pda: postgradTreasury,
-      after: arenaMoneyConfig,
-      build: () => program.methods.initializePostgradLeagueTreasuryV2(monthlyReceiver, quarterlyReceiver)
-        .accountsStrict({ authority: authority.publicKey, config: arenaMoneyConfig, treasury: postgradTreasury, systemProgram: SystemProgram.programId }),
     },
   ];
 

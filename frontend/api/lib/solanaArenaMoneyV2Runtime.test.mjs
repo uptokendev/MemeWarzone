@@ -17,7 +17,6 @@ import {
   verifySponsorshipReceiptV1,
 } from "../../src/lib/solanaArenaMoneyV2Layout.mjs";
 import {
-  buildSolanaBoostInstructionRequirements,
   buildSolanaSponsorshipInstructionRequirements,
   sponsorshipVaultLifetimeTotals,
   splitSolanaBoost,
@@ -61,14 +60,7 @@ function account(data) { return { data: Uint8Array.from(data) }; }
   assert.equal(s.prize + s.marketing + s.protocol, 101n);
 }
 
-{
-  const req = buildSolanaBoostInstructionRequirements({ competitionId: COMP, fundingId: FUND, wallet: PK_B.toBase58(), grossLamports: 100n });
-  assert.equal(req.programId, ARENA_MONEY_V2_PROGRAM_ID);
-  assert.equal(req.instruction, "deposit_competition_boost_v2");
-  assert.equal(req.accounts.length, 5);
-  assert.equal(req.receiptPda, deriveBoostReceiptV2Pda(COMP, FUND, PK_B).toBase58());
-  assert.equal(Buffer.from(req.dataBase64, "base64").length, 8 + 32 + 32 + 8);
-}
+// Boost requirements moved to the war pool generation: see solanaArenaWarPoolRuntime.test.mjs.
 
 {
   const req = buildSolanaSponsorshipInstructionRequirements({ eventId: EVENT, paymentId: PAYMENT, sponsor: PK_B.toBase58(), grossLamports: 100n });

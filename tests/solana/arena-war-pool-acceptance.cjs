@@ -267,11 +267,6 @@ describe("arena war pool local-validator acceptance (battles, tournaments, place
       const paid = await creditedAccounts(sig);
       assert.deepEqual(paid.credited.sort(), [vault.toBase58(), receipt.toBase58()].sort(), "a buy-in credits the vault and its own receipt only");
     }
-    const fundingId = hash32(`tboost:${Date.now()}`);
-    await program.methods.depositPrizeBoostV2(Array.from(poolId), Array.from(fundingId), new BN(boost.toString()))
-      .accountsStrict({ funder: funder.publicKey, arenaConfig, pool, vault, boostReceipt: pda("arena_boost", poolId, fundingId, funder.publicKey.toBuffer()), systemProgram: SystemProgram.programId })
-      .signers([funder]).rpc({ commitment: "confirmed" });
-
     await expectFail(
       program.methods.activateTournamentPoolV2(Array.from(poolId)).accountsStrict({ authority, arenaConfig, pool }).rpc({ commitment: "confirmed" }),
       /InvalidDeadline|custom program error/i, "activation before the deposit deadline",
@@ -281,6 +276,20 @@ describe("arena war pool local-validator acceptance (battles, tournaments, place
     let state = await program.account.arenaPool.fetch(pool);
     assert.equal(state.state, 1, "LIVE after activation");
     assert.equal(state.entryCount, 4);
+
+    // Boosts are bought during the rounds, i.e. after the deposit deadline.
+    const fundingId = hash32(`tboost:${Date.now()}`);
+    const boostSig = await program.methods.depositPrizeBoostV2(Array.from(poolId), Array.from(fundingId), new BN(boost.toString()))
+      .accountsStrict({ funder: funder.publicKey, arenaConfig, pool, vault, boostReceipt: pda("arena_boost", poolId, fundingId, funder.publicKey.toBuffer()), systemProgram: SystemProgram.programId })
+      .signers([funder]).rpc({ commitment: "confirmed" });
+    const boosted = await creditedAccounts(boostSig);
+    assert.deepEqual(boosted.credited.sort(), [vault.toBase58(), pda("arena_boost", poolId, fundingId, funder.publicKey.toBuffer()).toBase58()].sort(), "a tournament boost after activation credits the vault and its receipt only");
+    await expectFail(
+      program.methods.depositBuyInV2(Array.from(poolId), Keypair.generate().publicKey)
+        .accountsStrict({ entrant: funder.publicKey, arenaConfig, pool, vault, buyInReceipt: pda("arena_buyin", poolId, Keypair.generate().publicKey.toBuffer(), funder.publicKey.toBuffer()), systemProgram: SystemProgram.programId })
+        .signers([funder]).rpc({ commitment: "confirmed" }),
+      /InvalidState|DeadlinePassed|custom program error/i, "a buy-in after activation",
+    );
 
     const buyInTotal = buyIn * 4n;
     const outcomeHash = hash32("tournament-outcome");

@@ -11,14 +11,18 @@ import {
   normalBattleRegulationOpen,
   validateHistoricalNormalPaymentIdentity,
 } from "./lib/arenaSolanaNormalBoostAuthority.mjs";
-import { connectionForArenaMoneyV2, readCompetitionPoolV2 } from "./lib/solanaArenaMoneyV2Read.js";
+import { connectionForArenaMoneyV2 } from "./lib/solanaArenaMoneyV2Read.js";
+import { assertSolanaPubkey, quoteSolanaBoost, randomMoneyId32 } from "./lib/solanaArenaMoneyV2Runtime.mjs";
+// Boosts ride the war pool (deposit_prize_boost_v2), the generation battles and
+// tournaments are opened in -- not the competition pools, which never existed
+// for them on-chain.
 import {
-  assertSolanaPubkey,
+  ARENA_KIND_BATTLE,
+  ARENA_KIND_TOURNAMENT,
   buildSolanaBoostInstructionRequirements,
-  quoteSolanaBoost,
-  randomMoneyId32,
+  readArenaWarPool,
   verifySolanaBoostPayment,
-} from "./lib/solanaArenaMoneyV2Runtime.mjs";
+} from "./lib/solanaArenaWarPoolRuntime.mjs";
 
 const QUOTE_TTL_SECONDS = 300;
 const UNRESOLVED = new Set(["pending", "submitted", "confirming", "recovering", "verifying"]);
@@ -65,8 +69,8 @@ async function normalContext(route, targetToken) {
   const v3 = await loadNormalBattleV3SaleAuthority({ battle, db: pool });
   if (!v3.active) return { error: "Battle Boost scoring is not active for this Battle generation", status: 409, code: "BATTLE_BOOST_V3_INACTIVE", scoringReason: v3.reason };
   const competitionId = battlePoolId(route.battleId);
-  const onchain = await readCompetitionPoolV2(chainId, competitionId);
-  if (!onchain.live || !onchain.opened || ![0, 1].includes(Number(onchain.pool?.state)) || Number(onchain.pool?.kind) !== 0) return { error: "Solana CompetitionPoolV2 is not active", status: 503, code: "SOLANA_COMPETITION_POOL_NOT_ACTIVE" };
+  const onchain = await readArenaWarPool(chainId, competitionId);
+  if (!onchain.live || !onchain.opened || ![0, 1].includes(Number(onchain.pool?.state)) || Number(onchain.pool?.kind) !== ARENA_KIND_BATTLE) return { error: "Solana war pool is not active", status: 503, code: "SOLANA_COMPETITION_POOL_NOT_ACTIVE" };
   if (onchain.pool.assetA !== token && onchain.pool.assetB !== token) return { error: "On-chain competition does not contain the selected combatant", status: 409 };
   return { battle, chainId, targetToken: token, side, competitionId, onchain, pointsPerBoost: 1, v3 };
 }
@@ -89,8 +93,8 @@ async function tournamentContext(route, targetToken) {
   const side = tournamentVoteTokensEqual(token, match.tokenA) ? "left" : tournamentVoteTokensEqual(token, match.tokenB) ? "right" : null;
   if (!side) return { error: "Boost target is not in this matchup", status: 409 };
   const competitionId = tournamentPoolIdV2(route.tournamentId);
-  const onchain = await readCompetitionPoolV2(chainId, competitionId);
-  if (!onchain.live || !onchain.opened || ![0, 1].includes(Number(onchain.pool?.state)) || Number(onchain.pool?.kind) !== 1) return { error: "Solana Tournament CompetitionPoolV2 is not active", status: 503, code: "SOLANA_COMPETITION_POOL_NOT_ACTIVE" };
+  const onchain = await readArenaWarPool(chainId, competitionId);
+  if (!onchain.live || !onchain.opened || ![0, 1].includes(Number(onchain.pool?.state)) || Number(onchain.pool?.kind) !== ARENA_KIND_TOURNAMENT) return { error: "Solana tournament war poolnPoolV2 is not active", status: 503, code: "SOLANA_COMPETITION_POOL_NOT_ACTIVE" };
   return { tournament, battle, match, chainId, targetToken: token, side, competitionId, onchain, pointsPerBoost: 2 };
 }
 
