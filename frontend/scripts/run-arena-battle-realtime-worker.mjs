@@ -25,7 +25,10 @@ let voteScanRunning = false;
 
 async function publishVoteTournamentWinner(result) {
   if (!result?.battle || !result?.winnerToken) return;
-  await advanceTournamentFromBattle(result.battle).catch((error) => console.warn("[arena-battle-realtime-worker] Vote Tournament bracket advance failed", result.battle.id, error?.message || error));
+  // A standalone Vote Battle (queue / challenge) has no bracket to advance.
+  if (String(result.battle.source || "") === "tournament") {
+    await advanceTournamentFromBattle(result.battle).catch((error) => console.warn("[arena-battle-realtime-worker] Vote Tournament bracket advance failed", result.battle.id, error?.message || error));
+  }
   const published = await publishBattleFinished(result.battle, null).catch((error) => {
     console.warn("[arena-battle-realtime-worker] Vote Tournament finished publish failed", result.battle.id, error?.message || error);
     return { published: false };
@@ -40,7 +43,7 @@ async function processVoteTournamentRuntime() {
     const dueRegulation = await pool.query(
       `select b.id from public.arena_battles b
        left join public.arena_vote_tiebreaks t on t.battle_id=b.id
-       where b.state='live' and b.source='tournament' and b.battle_mode='vote'
+       where b.state='live' and b.battle_mode='vote'
          and b.ends_at is not null and b.ends_at<=now() and t.battle_id is null
        order by b.ends_at asc limit 50`,
     );

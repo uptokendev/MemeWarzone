@@ -187,9 +187,11 @@ test("Find Match wiring only prefills the existing challenge and leaves stake/du
   assert.match(battles, /const \[durationHours, setDurationHours\]/);
   assert.match(battles, /disabled=\{!canAct \|\| !challengeTarget\.trim\(\)\}/);
   assert.match(battles, /onClick=\{\(\) => void handleChallenge\(\)\}/);
+  // The creator's stake, fight length and battle type (metrics / vote) come
+  // from this page's own state; Find Match only prefilled the target.
   assert.match(
     battles,
-    /await challengePostGradBattle\(\{ tokenId, targetTokenId, chainId: Number\(chainId\), stakeNative: stakeAmount, durationHours, auth \}\)/,
+    /await challengePostGradBattle\(\{ tokenId, targetTokenId, chainId: Number\(chainId\), stakeNative: stakeAmount, durationHours, battleMode, auth \}\)/,
   );
 
   assert.match(preview, /Challenge anyway/);

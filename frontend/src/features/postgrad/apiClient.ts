@@ -46,6 +46,8 @@ export type OpenPostGradBattleInput = {
   stakeNative?: number;
   initialPotBnb?: number;
   durationHours?: number;
+  /** "vote" opens a Vote Battle (free votes + boosts, 1-24h); default is the metrics battle. */
+  battleMode?: "normal" | "vote";
   auth?: JsonObject;
 };
 
@@ -55,6 +57,7 @@ export type ChallengePostGradBattleInput = {
   chainId?: number | null;
   stakeNative: number;
   durationHours?: number;
+  battleMode?: "normal" | "vote";
   auth?: JsonObject;
 };
 
@@ -171,6 +174,7 @@ export async function openPostGradBattle(input: OpenPostGradBattleInput) {
   const stake = input.stakeNative ?? input.initialPotBnb;
   if (typeof stake === "number" && stake > 0) payload.stakeNative = stake;
   if (input.durationHours) payload.durationHours = input.durationHours;
+  if (input.battleMode === "vote") payload.battleMode = "vote";
 
   await mutateBattle("/api/arena/battles/open", payload);
   return true;
@@ -183,6 +187,7 @@ export async function challengePostGradBattle(input: ChallengePostGradBattleInpu
     chainId: input.chainId || undefined,
     stakeNative: input.stakeNative,
     durationHours: input.durationHours,
+    ...(input.battleMode === "vote" ? { battleMode: "vote" } : {}),
     auth: input.auth,
   });
   return true;

@@ -1,6 +1,29 @@
 import { beginFinalSalvo, closeFinalSalvoShot } from "./arenaFinalSalvoRuntime.mjs";
 import { advanceVoteTournamentBracket } from "./arenaVoteTournamentBracketService.js";
 import { resolveTournamentVoteMatch } from "./arenaTournamentVoteRuntime.mjs";
+import { VOTE_BATTLE_ROUND_NUMBER, isStandaloneVoteBattle } from "./arenaBattleMode.js";
+import { decideVoteBattleSettlement, settleVoteBattle } from "./arenaVoteBattleSettlement.js";
+
+/**
+ * A standalone Vote Battle (queue / challenge) is its own matchup: match id =
+ * battle id, round 1, tokens straight from the battle row. Same shape the
+ * tournament resolver returns, so the regulation / Final Salvo code below is
+ * shared.
+ */
+function standaloneVoteMatchup(battle) {
+  const tokenA = String(battle?.challenger_token || "").trim();
+  const tokenB = String(battle?.defender_token || "").trim();
+  if (!tokenA || !tokenB) return { ok: false, reason: "matchup-missing-tokens" };
+  return {
+    ok: true,
+    reason: "ok",
+    roundNumber: VOTE_BATTLE_ROUND_NUMBER,
+    matchId: String(battle.id),
+    battleId: String(battle.id),
+    tokenA,
+    tokenB,
+  };
+}
 
 function asNumber(value) {
   const n = Number(value);
@@ -186,7 +209,8 @@ export async function finalizeDueVoteTournamentBattle(pool, battleId, now = new 
       await client.query("rollback");
       return { settled: true, idempotent: true, battle };
     }
-    if (battle.state !== "live" || battle.source !== "tournament" || !authoritativeVoteGeneration(battle)) {
+    const standalone = isStandaloneVoteBattle(battle);
+    if (battle.state !== "live" || (battle.source !== "tournament" && !standalone) || !authoritativeVoteGeneration(battle)) {
       await client.query("rollback");
       return { settled: false, reason: "not-live-v2-vote-tournament-battle" };
     }
@@ -205,27 +229,61 @@ export async function finalizeDueVoteTournamentBattle(pool, battleId, now = new 
       return { settled: false, reason: "final-salvo-active", tiebreak: existing.rows[0] };
     }
 
-    const tournament = await loadTournament(client, battle.tournament_id);
-    if (
-      !tournament ||
-      tournament.status !== "live" ||
-      Number(tournament.round_duration_hours) !== 24 ||
-      !authoritativeVoteGeneration(tournament)
-    ) {
-      await client.query("rollback");
-      return { settled: false, reason: "tournament-not-authoritative" };
-    }
+    let matchup;
+    if (standalone) {
+      matchup = standaloneVoteMatchup(battle);
+      if (!matchup.ok) {
+        await client.query("rollback");
+        return { settled: false, reason: matchup.reason };
+      }
+    } else {
+      const tournament = await loadTournament(client, battle.tournament_id);
+      if (
+        !tournament ||
+        tournament.status !== "live" ||
+        Number(tournament.round_duration_hours) !== 24 ||
+        !authoritativeVoteGeneration(tournament)
+      ) {
+        await client.query("rollback");
+        return { settled: false, reason: "tournament-not-authoritative" };
+      }
 
-    const matchup = resolveTournamentVoteMatch({ tournament, matchRef: battleId });
-    if (!matchup.ok || matchup.battleId !== battleId) {
-      await client.query("rollback");
-      return { settled: false, reason: `matchup-${matchup.reason || "unresolved"}` };
+      matchup = resolveTournamentVoteMatch({ tournament, matchRef: battleId });
+      if (!matchup.ok || matchup.battleId !== battleId) {
+        await client.query("rollback");
+        return { settled: false, reason: `matchup-${matchup.reason || "unresolved"}` };
+      }
     }
 
     const score = await regulationPoints(client, battleId, matchup.roundNumber);
     if (score.left !== score.right) {
       const winnerSide = score.left > score.right ? "left" : "right";
       const winnerToken = winnerSide === "left" ? matchup.tokenA : matchup.tokenB;
+      if (standalone) {
+        const decision = decideVoteBattleSettlement({
+          leftToken: matchup.tokenA,
+          rightToken: matchup.tokenB,
+          leftPoints: score.left,
+          rightPoints: score.right,
+          winnerSide,
+        });
+        const finished = await settleVoteBattle(client, battle, decision, nowIso);
+        if (!finished) {
+          await client.query("rollback");
+          return { settled: false, reason: "settlement-write-lost-race" };
+        }
+        await client.query("commit");
+        return {
+          settled: true,
+          standalone: true,
+          phase: "regulation",
+          winnerSide,
+          winnerToken,
+          regulation: score,
+          bracketAdvance: null,
+          battle: finished,
+        };
+      }
       const finished = await finishVoteBattle(client, battle, winnerToken, nowIso);
       const bracketAdvance = await advanceVoteTournamentBracket({
         client,
@@ -259,8 +317,9 @@ export async function finalizeDueVoteTournamentBattle(pool, battleId, now = new 
          current_salvo_index, left_salvo_points, right_salvo_points,
          shot_started_at, shot_ends_at, shot_history,
          left_current_unique_votes, right_current_unique_votes,
-         sudden_death_round, winner_side, resolved_at
-       ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,0,0,$13,$14,$15)
+         sudden_death_round, winner_side, resolved_at,
+         chain_id, match_id
+       ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,0,0,$13,$14,$15,$16,$17)
        on conflict (battle_id) do nothing
        returning *`,
       [
@@ -279,6 +338,8 @@ export async function finalizeDueVoteTournamentBattle(pool, battleId, now = new 
         initial.suddenDeathRound,
         initial.winnerSide,
         initial.resolvedAt,
+        Number(battle.chain_id),
+        matchup.matchId,
       ],
     );
     const tiebreak = inserted.rows[0] || (await client.query(
@@ -365,7 +426,21 @@ export async function advanceDueFinalSalvo(pool, battleId, now = new Date()) {
     let finishedBattle = null;
     let winnerToken = null;
     let bracketAdvance = null;
-    if (next.state === "resolved") {
+    if (next.state === "resolved" && isStandaloneVoteBattle(battle)) {
+      const matchup = standaloneVoteMatchup(battle);
+      if (!matchup.ok) throw new Error("final-salvo-standalone-matchup-unavailable-at-resolution");
+      winnerToken = next.winnerSide === "left" ? matchup.tokenA : matchup.tokenB;
+      const decision = decideVoteBattleSettlement({
+        leftToken: matchup.tokenA,
+        rightToken: matchup.tokenB,
+        leftPoints: asNumber(row.regulation_left_points),
+        rightPoints: asNumber(row.regulation_right_points),
+        winnerSide: next.winnerSide,
+        tieBreakUsed: true,
+      });
+      finishedBattle = await settleVoteBattle(client, battle, decision, next.resolvedAt || nowIso);
+      if (!finishedBattle) throw new Error("final-salvo-standalone-settlement-lost-race");
+    } else if (next.state === "resolved") {
       const tournament = await loadTournament(client, battle.tournament_id);
       if (!tournament || !authoritativeVoteGeneration(tournament)) {
         throw new Error("final-salvo-tournament-generation-unavailable-at-resolution");

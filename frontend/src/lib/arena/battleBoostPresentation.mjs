@@ -20,7 +20,9 @@ export function battleBoostAvailability(battle = {}) {
   );
 
   if (state !== "live") return { available: false, reason: "not_live", competitionGeneration, tokenIds };
-  if (source === "tournament" || mode !== "normal") {
+  // Standalone Vote Battles (queue / challenge) take boosts on the same route
+  // as normal battles; tournament rounds boost through the tournament page.
+  if (source === "tournament" || (mode !== "normal" && mode !== "vote")) {
     return { available: false, reason: "not_normal_battle", competitionGeneration, tokenIds };
   }
   if (competitionGeneration !== "arena_competition_v2") {

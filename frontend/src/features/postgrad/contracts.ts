@@ -101,6 +101,7 @@ export const battleSchema = z.object({
   featured: z.boolean().default(false),
   arenaLane: z.enum(["live_battles", "open_for_battle", "events_and_leagues"]),
   scoreBasis: z.string().optional(),
+  battleMode: z.enum(["normal", "vote"]).optional(),
   leaderSide: z.enum(["left", "right", "tied"]).nullable().optional(),
   updatedAt: z.string().optional(),
   participants: z.array(battleParticipantSchema).min(2),

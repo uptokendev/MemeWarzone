@@ -23,6 +23,7 @@ import {
   readArenaWarPool,
   verifySolanaBoostPayment,
 } from "./lib/solanaArenaWarPoolRuntime.mjs";
+import { VOTE_BATTLE_BOOST_POINTS_PER_UNIT, isStandaloneVoteBattle, voteBattleRegulationOpen } from "./lib/arenaBattleMode.js";
 
 const QUOTE_TTL_SECONDS = 300;
 const UNRESOLVED = new Set(["pending", "submitted", "confirming", "recovering", "verifying"]);
@@ -54,11 +55,33 @@ async function loadTournament(id, db = pool) {
   return (await db.query(`select id,chain_id,status,bracket,battle_mode,round_duration_hours,competition_generation from public.arena_tournaments where id=$1 limit 1`, [id])).rows[0] || null;
 }
 
+// Standalone Vote Battle: same war pool and the same deposit_prize_boost_v2
+// transaction as a normal battle, scored like a Vote Tournament round
+// (2 pts per unit in arena_contest_actions, no Battle Points V3 projection).
+async function voteBattleContext(route, battle, targetToken) {
+  const chainId = Number(battle.chain_id);
+  if (battle.state !== "live") return { error: "Vote Battle is not live", status: 409 };
+  if (battle.competition_generation !== "arena_competition_v2") return { error: "Battle is not Arena competition V2", status: 409 };
+  if (!voteBattleRegulationOpen(battle)) return { error: "Vote Battle regulation has ended", status: 409, code: "VOTE_BATTLE_REGULATION_ENDED" };
+  const salvo = (await pool.query(`select battle_id from public.arena_vote_tiebreaks where battle_id=$1 limit 1`, [battle.id])).rows[0];
+  if (salvo) return { error: "Boost is disabled during Final Salvo", status: 409, code: "FINAL_SALVO_BOOST_DISABLED" };
+  let token;
+  try { token = assertSolanaPubkey(targetToken, "targetToken"); } catch (error) { return { error: error.message, status: 400 }; }
+  const side = exactSolanaSide(battle.participants, token);
+  if (!side) return { error: "Boost target is not a Battle combatant", status: 409 };
+  const competitionId = battlePoolId(route.battleId);
+  const onchain = await readArenaWarPool(chainId, competitionId);
+  if (!onchain.live || !onchain.opened || ![0, 1].includes(Number(onchain.pool?.state)) || Number(onchain.pool?.kind) !== ARENA_KIND_BATTLE) return { error: "Solana war pool is not active", status: 503, code: "SOLANA_COMPETITION_POOL_NOT_ACTIVE" };
+  if (onchain.pool.assetA !== token && onchain.pool.assetB !== token) return { error: "On-chain competition does not contain the selected combatant", status: 409 };
+  return { battle, chainId, targetToken: token, side, competitionId, onchain, pointsPerBoost: VOTE_BATTLE_BOOST_POINTS_PER_UNIT, voteBattle: true, v3: null };
+}
+
 async function normalContext(route, targetToken) {
   const battle = await loadBattle(route.battleId);
   if (!battle) return { error: "Battle not found", status: 404 };
   const chainId = Number(battle.chain_id);
   if (!validateSolanaChain(chainId)) return { error: "Battle is not on a Solana Arena chain", status: 409 };
+  if (isStandaloneVoteBattle(battle)) return voteBattleContext(route, battle, targetToken);
   if (battle.state !== "live" || String(battle.battle_mode || "normal") !== "normal" || battle.source === "tournament") return { error: "Normal Battle Boost is not live", status: 409 };
   if (battle.competition_generation !== "arena_competition_v2") return { error: "Battle is not Arena competition V2", status: 409 };
   if (!normalBattleRegulationOpen(battle)) return { error: "Normal Battle regulation has ended", status: 409, code: "NORMAL_BATTLE_BOOST_REGULATION_ENDED" };
@@ -136,6 +159,16 @@ async function normalPaymentContext(route, quote) {
   try { token = assertSolanaPubkey(quote.target_token, "targetToken"); } catch (error) { return { error: error.message, status: 409, code: "SOLANA_BOOST_STATE_CHANGED" }; }
   const side = exactSolanaSide(battle.participants, token);
   const competitionId = battlePoolId(route.battleId);
+  if (isStandaloneVoteBattle(battle)) {
+    const bound = quote.product_kind === "normal_battle"
+      && String(quote.battle_id) === String(battle.id)
+      && Number(quote.chain_id) === chainId
+      && String(quote.target_token) === token
+      && String(quote.side) === String(side)
+      && String(quote.competition_id || "").toLowerCase() === competitionId.toLowerCase();
+    if (!bound) return { error: "Stored Vote Battle Boost identity changed", status: 409, code: "SOLANA_BOOST_STATE_CHANGED" };
+    return { battle, chainId, targetToken: token, side, competitionId, pointsPerBoost: VOTE_BATTLE_BOOST_POINTS_PER_UNIT, voteBattle: true };
+  }
   const identity = validateHistoricalNormalPaymentIdentity({ route, quote, battle, targetToken: token, side, competitionId });
   if (!identity.ok) return { error: `Stored Normal Battle Boost identity changed: ${identity.reason}`, status: 409, code: "SOLANA_BOOST_STATE_CHANGED" };
   return { battle, chainId, targetToken: token, side, competitionId, pointsPerBoost: 1, historicalRecovery: true };
@@ -205,7 +238,8 @@ async function persistVerifiedBoost(client, quote, route, proof) {
   const context = await paymentContext(route, quote);
   if (context.error || String(context.battle.id) !== String(quote.battle_id) || context.side !== quote.side || context.competitionId.toLowerCase() !== String(quote.competition_id).toLowerCase()) return (await client.query(`update public.arena_solana_boost_quotes set payment_status='failed',status_reason='operation_identity_changed_landed',updated_at=now() where id=$1 returning *`, [quote.id])).rows[0];
   if (!context.battle.ends_at || receiptMs >= new Date(context.battle.ends_at).getTime()) return (await client.query(`update public.arena_solana_boost_quotes set payment_status='failed',status_reason='outside_regulation_landed',updated_at=now() where id=$1 returning *`, [quote.id])).rows[0];
-  const points = route.product === "vote_tournament" ? BigInt(quote.boost_units) * 2n : 0n;
+  const pointsPerUnit = route.product === "vote_tournament" || context.voteBattle ? BigInt(VOTE_BATTLE_BOOST_POINTS_PER_UNIT) : 0n;
+  const points = BigInt(quote.boost_units) * pointsPerUnit;
   const inserted = (await client.query(
     `insert into public.arena_contest_actions (chain_id,tournament_id,battle_id,match_id,round_number,phase,salvo_index,side,wallet,action_type,boost_units,points,gross_native_raw,pool_native_raw,protocol_native_raw,tx_hash,log_index,signature_reference,confirmed_at)
      values ($1,$2,$3,$4,$5,'regulation',null,$6,$7,'boost',$8,$9,$10,$11,$12,$13,0,$13,to_timestamp($14))
@@ -217,7 +251,7 @@ async function persistVerifiedBoost(client, quote, route, proof) {
     const same = existing && String(existing.battle_id) === String(quote.battle_id) && String(existing.wallet) === String(quote.wallet) && String(existing.side) === String(quote.side) && String(existing.boost_units) === String(quote.boost_units);
     if (!same) return (await client.query(`update public.arena_solana_boost_quotes set payment_status='failed',status_reason='signature_conflict_landed',updated_at=now() where id=$1 returning *`, [quote.id])).rows[0];
   }
-  if (inserted && route.product === "normal_battle") {
+  if (inserted && route.product === "normal_battle" && !context.voteBattle) {
     const scoring = await applyConfirmedNormalBattleBoostV3(client, quote);
     if (!scoring.updated && scoring.reason !== "historical_scoring_generation") throw new Error(`Normal Battle V3 projection update refused: ${scoring.reason}`);
   }
@@ -300,7 +334,7 @@ async function createQuote(req, res, route) {
     [context.chainId, route.product, context.battle.id, route.tournamentId || null, context.match?.matchId || null, context.match?.roundNumber || 0, context.competitionId, fundingId, wallet, context.targetToken, context.side, units.toString(), context.pointsPerBoost, money.gross.toString(), money.prize.toString(), money.protocol.toString(), money.nativeUsdMicros.toString(), money.pricingVersion.toString(), money.oracleTimestamp.toString(), requirements.receiptPda, expiresAt],
   )).rows[0];
   res.setHeader("cache-control", "no-store");
-  return json(res, 201, { ok: true, quoteId: inserted.id, product: route.product, chainId: context.chainId, battleId: context.battle.id, tournamentId: route.tournamentId || null, matchId: context.match?.matchId || null, roundNumber: context.match?.roundNumber || 0, side: context.side, targetToken: context.targetToken, boostUnits: units.toString(), pointsPerBoost: context.pointsPerBoost, usdPerBoostMicros: "1000000", grossLamports: money.gross.toString(), prizeLamports: money.prize.toString(), protocolLamports: money.protocol.toString(), split: { prizeBps: 9000, protocolBps: 1000, leagueBps: 0 }, competitionId: context.competitionId, fundingId, transaction: requirements, expiresAt, newPaymentAllowed: false, battlePointsV3: { scoringVersion: context.v3?.lock?.scoring_version || null, boostCurveVersion: context.v3?.lock?.boost_curve_version || "boost_hyperbolic_100_v1", scoringActive: route.product === "normal_battle" ? true : false, boostPoints: null } });
+  return json(res, 201, { ok: true, quoteId: inserted.id, product: route.product, chainId: context.chainId, battleId: context.battle.id, tournamentId: route.tournamentId || null, matchId: context.match?.matchId || null, roundNumber: context.match?.roundNumber || 0, side: context.side, targetToken: context.targetToken, boostUnits: units.toString(), pointsPerBoost: context.pointsPerBoost, usdPerBoostMicros: "1000000", grossLamports: money.gross.toString(), prizeLamports: money.prize.toString(), protocolLamports: money.protocol.toString(), split: { prizeBps: 9000, protocolBps: 1000, leagueBps: 0 }, competitionId: context.competitionId, fundingId, transaction: requirements, expiresAt, newPaymentAllowed: false, voteBattle: Boolean(context.voteBattle), battlePointsV3: { scoringVersion: context.voteBattle ? "vote_tournament_v1" : context.v3?.lock?.scoring_version || null, boostCurveVersion: context.voteBattle ? null : context.v3?.lock?.boost_curve_version || "boost_hyperbolic_100_v1", scoringActive: route.product === "normal_battle" && !context.voteBattle, boostPoints: null } });
 }
 
 async function handleSubmission(req, res, route) {

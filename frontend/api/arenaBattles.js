@@ -41,6 +41,13 @@ import {
   notifyBattleStarted,
   notifyBattleWinnerConfirmed,
 } from "./lib/arenaLifecycleNotifications.js";
+import {
+  BATTLE_MODE_VOTE,
+  battleScoreBasis,
+  parseBattleDurationHoursForMode,
+  parseBattleMode,
+  voteBattleScoringColumns,
+} from "./lib/arenaBattleMode.js";
 
 const LIVE_HOURS = 24;
 const CHALLENGE_HOURS = 24;
@@ -222,11 +229,15 @@ function mapBattle(row) {
   const participants = Array.isArray(row.participants) ? [...row.participants] : [];
   while (participants.length < 2) participants.push(placeholder());
   const match = matchSummaryFromParticipants(participants);
+  const mode = parseBattleMode(row.battle_mode);
   return {
     id: String(row.id),
     chainId: Number(row.chain_id),
     state,
     source: String(row.source || "queue"),
+    battleMode: mode,
+    ...(row.contest_scoring_version ? { contestScoringVersion: String(row.contest_scoring_version) } : {}),
+    ...(row.competition_generation ? { competitionGeneration: String(row.competition_generation) } : {}),
     tournamentId: row.tournament_id || null,
     format: "duel",
     stakeNative: toNumber(row.offered_stake_native ?? row.stake_native),
@@ -234,16 +245,16 @@ function mapBattle(row) {
     offeredStakeNative: toNumber(row.offered_stake_native ?? row.stake_native),
     offerFromToken: row.offer_from_token ? ident(row.offer_from_token, row.chain_id) : ident(row.challenger_token, row.chain_id),
     offerCount: Math.max(0, Number(row.offer_count || 0)),
-    durationHours: parseDurationHours(row.offered_duration_hours ?? row.duration_hours, 24),
-    originalDurationHours: parseDurationHours(row.duration_hours, 24),
-    offeredDurationHours: parseDurationHours(row.offered_duration_hours ?? row.duration_hours, 24),
+    durationHours: parseBattleDurationHoursForMode(mode, row.offered_duration_hours ?? row.duration_hours, 24),
+    originalDurationHours: parseBattleDurationHoursForMode(mode, row.duration_hours, 24),
+    offeredDurationHours: parseBattleDurationHoursForMode(mode, row.offered_duration_hours ?? row.duration_hours, 24),
     nativeSymbol: String(row.native_symbol || nativeSymbolFor(row.chain_id)),
     startedAt: row.started_at || row.created_at || nowIso(),
     endsAt: row.ends_at || null,
     settlementAt: row.settled_at || row.finished_at || null,
     featured: Boolean(row.featured),
     arenaLane: publicLane(state),
-    scoreBasis: "mcap_pct_change",
+    scoreBasis: battleScoreBasis(mode),
     leaderSide: row.mwl_winner_token
       ? ident(row.mwl_winner_token, row.chain_id) === ident(row.challenger_token, row.chain_id)
         ? "left"
@@ -284,7 +295,8 @@ const BATTLE_COLUMNS = `id, chain_id, state, source, stake_native, offered_stake
         participants, challenger_start_mcap_usd, defender_start_mcap_usd, challenger_end_mcap_usd, defender_end_mcap_usd,
         challenger_pct_change, defender_pct_change, winner_token, money_winner_token, money_tie_break, mwl_result, mwl_draw,
         mwl_winner_token, settlement_version, settled_at, started_at, ends_at, finished_at,
-        creator_address, featured, created_at, updated_at`;
+        creator_address, featured, created_at, updated_at,
+        battle_mode, contest_scoring_version, competition_generation`;
 
 async function listBattles() {
   const result = await pool.query(
@@ -476,12 +488,19 @@ async function statusFor(coin) {
 
 async function insertBattle(fields) {
   const id = fields.id || `arena-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;
+  const mode = parseBattleMode(fields.battleMode ?? fields.battle_mode);
+  // Normal battles keep the historical column list: the database trigger
+  // fills their scoring generation. A Vote Battle states its mode and scoring
+  // columns explicitly because that trigger only covers normal mode.
+  const modeColumns = mode === BATTLE_MODE_VOTE ? voteBattleScoringColumns() : {};
+  const modeNames = Object.keys(modeColumns).map((name) => `, ${name}`).join("");
+  const modeParams = Object.keys(modeColumns).map((_, index) => `,$${24 + index}`).join("");
   await pool.query(
     `insert into public.arena_battles (
         id, chain_id, state, source, stake_native, offered_stake_native, offer_from_token, offer_count, duration_hours, offered_duration_hours, native_symbol, challenger_token, defender_token, tournament_id,
         participants, challenger_start_mcap_usd, defender_start_mcap_usd, winner_token, started_at, ends_at, finished_at,
-        creator_address, featured
-      ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
+        creator_address, featured${modeNames}
+      ) values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::jsonb,$15,$16,$17,$18,$19,$20,$21,$22,$23${modeParams})`,
     [
       id,
       fields.chainId,
@@ -491,8 +510,8 @@ async function insertBattle(fields) {
       fields.offeredStakeNative ?? fields.stakeNative,
       fields.offerFromToken || fields.challengerToken || null,
       Number(fields.offerCount || 0),
-      parseDurationHours(fields.durationHours ?? fields.duration_hours, 24),
-      parseDurationHours(fields.offeredDurationHours ?? fields.offered_duration_hours ?? fields.durationHours ?? fields.duration_hours, 24),
+      parseBattleDurationHoursForMode(mode, fields.durationHours ?? fields.duration_hours, 24),
+      parseBattleDurationHoursForMode(mode, fields.offeredDurationHours ?? fields.offered_duration_hours ?? fields.durationHours ?? fields.duration_hours, 24),
       fields.nativeSymbol,
       fields.challengerToken || null,
       fields.defenderToken || null,
@@ -506,6 +525,7 @@ async function insertBattle(fields) {
       fields.finishedAt || null,
       fields.creatorAddress || null,
       Boolean(fields.featured),
+      ...Object.values(modeColumns),
     ],
   );
   const created = await refreshBattle(id);
@@ -524,6 +544,7 @@ async function insertBattle(fields) {
 }
 
 function battleUpdateValues(id, next) {
+  const mode = parseBattleMode(next.battle_mode ?? next.battleMode);
   return [
     id,
     next.state,
@@ -532,8 +553,8 @@ function battleUpdateValues(id, next) {
     next.offered_stake_native ?? next.stake_native,
     next.offer_from_token || next.challenger_token || null,
     Math.max(0, Number(next.offer_count || 0)),
-    parseDurationHours(next.duration_hours ?? next.durationHours, 24),
-    parseDurationHours(next.offered_duration_hours ?? next.offeredDurationHours ?? next.duration_hours, 24),
+    parseBattleDurationHoursForMode(mode, next.duration_hours ?? next.durationHours, 24),
+    parseBattleDurationHoursForMode(mode, next.offered_duration_hours ?? next.offeredDurationHours ?? next.duration_hours, 24),
     next.native_symbol,
     next.challenger_token,
     next.defender_token,
@@ -603,7 +624,7 @@ async function updateBattle(id, patch) {
   }
 }
 
-async function waitingCandidates(chainId, excludeId, stakeNative, durationHours) {
+async function waitingCandidates(chainId, excludeId, stakeNative, durationHours, battleMode) {
   const result = await pool.query(
     `select ${BATTLE_COLUMNS}
        from public.arena_battles
@@ -612,8 +633,12 @@ async function waitingCandidates(chainId, excludeId, stakeNative, durationHours)
       limit 50`,
     [chainId, excludeId],
   );
-  const hours = parseDurationHours(durationHours, 24);
-  return result.rows.filter((row) => stakeCompatible(stakeNative, row.stake_native) && parseDurationHours(row.offered_duration_hours ?? row.duration_hours, 24) === hours);
+  const mode = parseBattleMode(battleMode);
+  const hours = parseBattleDurationHoursForMode(mode, durationHours, 24);
+  return result.rows.filter((row) =>
+    stakeCompatible(stakeNative, row.stake_native)
+    && parseBattleMode(row.battle_mode) === mode
+    && parseBattleDurationHoursForMode(mode, row.offered_duration_hours ?? row.duration_hours, 24) === hours);
 }
 
 function coinMcap(coin) {
@@ -621,7 +646,7 @@ function coinMcap(coin) {
 }
 
 async function beginFight(id, patch, chainId) {
-  const hours = parseDurationHours(patch.duration_hours ?? patch.offered_duration_hours, LIVE_HOURS);
+  const hours = parseBattleDurationHoursForMode(parseBattleMode(patch.battle_mode), patch.duration_hours ?? patch.offered_duration_hours, LIVE_HOURS);
   if (isSolanaWarzoneChainId(chainId)) {
     const onchain = await readOnchainPool(chainId, id);
     const transition = solanaLiveTransition({
@@ -660,7 +685,7 @@ async function goLiveFromMatched(row) {
   }
   const leftNow = await currentMcap(chainId, row.challenger_token);
   const rightNow = await currentMcap(chainId, row.defender_token);
-  const hours = parseDurationHours(row.duration_hours ?? row.offered_duration_hours, LIVE_HOURS);
+  const hours = parseBattleDurationHoursForMode(parseBattleMode(row.battle_mode), row.duration_hours ?? row.offered_duration_hours, LIVE_HOURS);
   return updateBattle(row.id, {
     state: "live",
     duration_hours: hours,
@@ -769,7 +794,7 @@ async function eligibleRecommendationCoins(chainId, limit = 120) {
 
 async function tryAutoMatch(openBattle, openerCoin) {
   const chainId = Number(openBattle.chainId);
-  const candidates = await waitingCandidates(chainId, openBattle.id, openBattle.stakeNative, openBattle.durationHours);
+  const candidates = await waitingCandidates(chainId, openBattle.id, openBattle.stakeNative, openBattle.durationHours, openBattle.battleMode);
   if (!candidates.length) return openBattle;
 
   const hydratedOpener = await hydrateMatchCoin(openerCoin);
@@ -800,8 +825,14 @@ async function tryAutoMatch(openBattle, openerCoin) {
       };
   if (!rival?.tokenId) return openBattle;
 
+  // Candidates were matched on the opener's agreed length and mode; carry both
+  // into the fight so the clock runs for the agreed hours (a 6-hour Vote
+  // Battle must not become a 24-hour one here).
   const live = await beginFight(openBattle.id, {
     source: "queue",
+    battle_mode: openBattle.battleMode,
+    duration_hours: openBattle.durationHours,
+    offered_duration_hours: openBattle.durationHours,
     defender_token: rivalRow.challenger_token,
     participants: [participant(hydratedOpener), rival],
     challenger_start_mcap_usd: coinMcap(hydratedOpener),
@@ -1027,7 +1058,8 @@ async function handleOpen(req, res) {
   const chainId = Number(body?.chainId) || 56;
   const identity = String(body?.tokenId || body?.campaignAddress || body?.identity || "");
   const stakeNative = parseStake(body?.stakeNative ?? body?.initialPotBnb);
-  const durationHours = parseDurationHours(body?.durationHours ?? body?.duration_hours, 24);
+  const battleMode = parseBattleMode(body?.battleMode ?? body?.battle_mode);
+  const durationHours = parseBattleDurationHoursForMode(battleMode, body?.durationHours ?? body?.duration_hours, 24);
   if (!identity) return json(res, 400, { ok: false, error: "tokenId is required" });
   if (stakeNative == null) return json(res, 400, { ok: false, error: "stakeNative must be a positive number" });
 
@@ -1044,7 +1076,12 @@ async function handleOpen(req, res) {
     chainId,
     action: "arena_open_battle",
     routeLabel: "arena/battles/open",
-    extraLines: [`Token: ${ident(coin.token_address || coin.campaign_address, chainId)}`, `Stake: ${stakeNative}`, `Duration: ${durationHours}`],
+    extraLines: [
+      `Token: ${ident(coin.token_address || coin.campaign_address, chainId)}`,
+      `Stake: ${stakeNative}`,
+      `Duration: ${durationHours}`,
+      ...(battleMode === BATTLE_MODE_VOTE ? [`Mode: ${battleMode}`] : []),
+    ],
   });
   if (!verified) return;
 
@@ -1054,6 +1091,7 @@ async function handleOpen(req, res) {
     chainId,
     state: "waiting",
     source: "queue",
+    battleMode,
     stakeNative,
     durationHours,
     offeredDurationHours: durationHours,
@@ -1075,7 +1113,8 @@ async function handleChallenge(req, res) {
   const tokenId = String(body?.tokenId || "");
   const targetTokenId = String(body?.targetTokenId || body?.defenderTokenId || "");
   const stakeNative = parseStake(body?.stakeNative ?? body?.initialPotBnb);
-  const durationHours = parseDurationHours(body?.durationHours ?? body?.duration_hours, 24);
+  const battleMode = parseBattleMode(body?.battleMode ?? body?.battle_mode);
+  const durationHours = parseBattleDurationHoursForMode(battleMode, body?.durationHours ?? body?.duration_hours, 24);
   if (!tokenId || !targetTokenId) return json(res, 400, { ok: false, error: "tokenId and targetTokenId are required" });
   if (ident(tokenId, chainId) === ident(targetTokenId, chainId)) {
     return json(res, 400, { ok: false, error: "Cannot challenge the same coin" });
@@ -1098,7 +1137,13 @@ async function handleChallenge(req, res) {
     chainId,
     action: "arena_challenge_battle",
     routeLabel: "arena/battles/challenge",
-    extraLines: [`Challenger: ${challengerStatus.tokenId}`, `Defender: ${defenderStatus.tokenId}`, `Stake: ${stakeNative}`, `Duration: ${durationHours}`],
+    extraLines: [
+      `Challenger: ${challengerStatus.tokenId}`,
+      `Defender: ${defenderStatus.tokenId}`,
+      `Stake: ${stakeNative}`,
+      `Duration: ${durationHours}`,
+      ...(battleMode === BATTLE_MODE_VOTE ? [`Mode: ${battleMode}`] : []),
+    ],
   });
   if (!verified) return;
 
@@ -1108,6 +1153,7 @@ async function handleChallenge(req, res) {
     chainId,
     state: "challenged",
     source: "challenge",
+    battleMode,
     stakeNative,
     offeredStakeNative: stakeNative,
     offerFromToken: challengerStatus.tokenId,
@@ -1176,8 +1222,9 @@ async function handleAccept(req, res, battleId) {
   const hydratedChallenger = challengerCoin ? await hydrateMatchCoin(challengerCoin) : null;
   const hydratedDefender = defenderCoin ? await hydrateMatchCoin(defenderCoin) : null;
   const agreedStake = toNumber(row.offered_stake_native ?? row.stake_native);
-  const agreedDuration = parseDurationHours(row.offered_duration_hours ?? row.duration_hours, 24);
+  const agreedDuration = parseBattleDurationHoursForMode(parseBattleMode(row.battle_mode), row.offered_duration_hours ?? row.duration_hours, 24);
   const live = await beginFight(battleId, {
+    battle_mode: row.battle_mode,
     stake_native: agreedStake,
     offered_stake_native: agreedStake,
     duration_hours: agreedDuration,
@@ -1222,9 +1269,10 @@ async function handleCounter(req, res, battleId) {
   }
   const stakeNative = parseStake(body?.stakeNative ?? body?.offeredStakeNative);
   if (stakeNative == null) return json(res, 400, { ok: false, error: "stakeNative must be a positive number" });
-  const durationHours = parseDurationHours(body?.durationHours ?? body?.duration_hours, row.offered_duration_hours ?? row.duration_hours);
+  const counterMode = parseBattleMode(row.battle_mode);
+  const durationHours = parseBattleDurationHoursForMode(counterMode, body?.durationHours ?? body?.duration_hours, row.offered_duration_hours ?? row.duration_hours);
   const currentOffer = toNumber(row.offered_stake_native ?? row.stake_native);
-  const currentDuration = parseDurationHours(row.offered_duration_hours ?? row.duration_hours, 24);
+  const currentDuration = parseBattleDurationHoursForMode(counterMode, row.offered_duration_hours ?? row.duration_hours, 24);
   if (stakeNative === currentOffer && durationHours === currentDuration) {
     return json(res, 400, { ok: false, error: "Counter-offer must change the stake or the fight length." });
   }

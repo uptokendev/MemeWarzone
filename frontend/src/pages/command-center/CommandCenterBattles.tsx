@@ -27,7 +27,14 @@ import { getNativeSymbol, isSolanaChainId } from "@/lib/chainConfig";
 import { signWalletAction } from "@/lib/walletActionAuth";
 import { signSolanaMessage } from "@/lib/solanaWallet";
 import { ArenaStakeButton } from "@/components/arena/ArenaStakeButton";
-import { BATTLE_DURATIONS, battleDurationLabel, parseBattleDurationHours } from "@/lib/arena/battleDuration";
+import {
+  battleDurationLabel,
+  battleDurationOptions,
+  parseBattleDurationHours,
+  parseBattleDurationHoursForMode,
+  parseBattleMode,
+  type BattleMode,
+} from "@/lib/arena/battleDuration";
 import { presentAutoDeployStatus } from "@/lib/arena/autoDeployPresentation.mjs";
 import { collectIncomingCreatorChallenges } from "@/lib/arena/creatorChallengePresentation.mjs";
 import { presentManualOpponentPreview, presentMatchCandidates } from "@/lib/arena/findMatchPresentation.mjs";
@@ -51,6 +58,10 @@ export default function CommandCenterBattles() {
   const [stake, setStake] = useState("");
   const [challengeTarget, setChallengeTarget] = useState("");
   const [durationHours, setDurationHours] = useState(24);
+  const [battleMode, setBattleMode] = useState<BattleMode>("normal");
+  // The API signs "Mode: vote" only for Vote Battles; a metrics battle keeps
+  // the historical message so nothing changes for existing flows.
+  const modeSignatureLines = battleMode === "vote" ? [`Mode: ${battleMode}`] : [];
   const [busy, setBusy] = useState<string | null>(null);
   const [matchCandidates, setMatchCandidates] = useState<ReturnType<typeof presentMatchCandidates>>([]);
 
@@ -113,10 +124,14 @@ export default function CommandCenterBattles() {
     const tokenId = tokenKey(selected);
     setBusy("open");
     try {
-      const auth = await signAuth("arena_open_battle", [`Token: ${tokenId}`, `Stake: ${stakeAmount}`, `Duration: ${durationHours}`]);
-      await openPostGradBattle({ tokenId, chainId: Number(chainId), stakeNative: stakeAmount, durationHours, auth });
+      const auth = await signAuth("arena_open_battle", [`Token: ${tokenId}`, `Stake: ${stakeAmount}`, `Duration: ${durationHours}`, ...modeSignatureLines]);
+      await openPostGradBattle({ tokenId, chainId: Number(chainId), stakeNative: stakeAmount, durationHours, battleMode, auth });
       await feed.refreshFeed();
-      toast.success("AUTO DEPLOY is on. Compatible opponents can be paired automatically. If escrow is required, both owners still fund on-chain.");
+      toast.success(
+        battleMode === "vote"
+          ? "AUTO DEPLOY is on for a Vote Battle. A compatible Vote Battle opponent can be paired automatically. If escrow is required, both owners still fund on-chain."
+          : "AUTO DEPLOY is on. Compatible opponents can be paired automatically. If escrow is required, both owners still fund on-chain.",
+      );
     } catch (error) {
       toast.error(String((error as Error)?.message || "Could not enable AUTO DEPLOY."));
     } finally {
@@ -150,8 +165,9 @@ export default function CommandCenterBattles() {
         `Defender: ${targetTokenId}`,
         `Stake: ${stakeAmount}`,
         `Duration: ${durationHours}`,
+        ...modeSignatureLines,
       ]);
-      await challengePostGradBattle({ tokenId, targetTokenId, chainId: Number(chainId), stakeNative: stakeAmount, durationHours, auth });
+      await challengePostGradBattle({ tokenId, targetTokenId, chainId: Number(chainId), stakeNative: stakeAmount, durationHours, battleMode, auth });
       await feed.refreshFeed();
       toast.success("Challenge sent. Email goes out if they verified an address and Resend is configured.");
     } catch (error) {
@@ -301,13 +317,29 @@ export default function CommandCenterBattles() {
             ) : (
               <>
                 <label className="block text-xs uppercase tracking-[0.14em] text-muted-foreground">
+                  Battle type
+                  <select
+                    data-battle-mode-select="true"
+                    className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
+                    value={battleMode}
+                    onChange={(event) => {
+                      const nextMode = parseBattleMode(event.target.value);
+                      setBattleMode(nextMode);
+                      setDurationHours(parseBattleDurationHoursForMode(nextMode, durationHours, 24));
+                    }}
+                  >
+                    <option value="normal">Metrics battle (market cap, holders, volume, boosts)</option>
+                    <option value="vote">Vote Battle (free votes + boosts, 1 to 24 hours)</option>
+                  </select>
+                </label>
+                <label className="block text-xs uppercase tracking-[0.14em] text-muted-foreground">
                   Fight length
                   <select
                     className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
                     value={durationHours}
-                    onChange={(event) => setDurationHours(parseBattleDurationHours(event.target.value, 24))}
+                    onChange={(event) => setDurationHours(parseBattleDurationHoursForMode(battleMode, event.target.value, 24))}
                   >
-                    {BATTLE_DURATIONS.map((item) => (
+                    {battleDurationOptions(battleMode).map((item) => (
                       <option key={item.hours} value={item.hours}>
                         {item.label}
                       </option>

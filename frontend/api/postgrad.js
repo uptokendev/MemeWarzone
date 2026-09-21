@@ -1,4 +1,5 @@
 import arenaBattles from "./arenaBattlesRuntime.js";
+import arenaBattleVotes from "./arenaBattleVotes.js";
 import arenaBattleMetrics from "./arenaBattleMetrics.js";
 import arenaBattlePointsV3Admin from "./arenaBattlePointsV3Admin.js";
 import arenaBoosts from "./arenaBoosts.js";
@@ -34,6 +35,8 @@ const ROUTES = [
   { pattern: /^\/arena\/boosts\/[^/]+\/(?:solana-quote|solana-payment)$/, flag: "ARENA_BATTLE_BOOSTS", handler: arenaSolanaBoosts },
   { pattern: /^\/arena\/boosts(?:\/.*)?$/, flag: "ARENA_BATTLE_BOOSTS", handler: arenaBoosts },
   { pattern: /^\/arena\/battles\/[^/]+\/v3-scoring-lock$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaBattlePointsV3Admin },
+  // Standalone Vote Battle free votes (same rules as the Vote Tournament round votes).
+  { pattern: /^\/arena\/battles\/[^/]+\/votes$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaBattleVotes },
   { pattern: /^\/arena\/battles(?:\/.*)?$/, flag: "POSTGRAD_BATTLES_ENABLED", handler: arenaBattles },
   { pattern: /^\/arena\/imports(?:\/.*)?$/, flag: "POSTGRAD_ARENA_IMPORTS_ENABLED", handler: arenaImports },
   // Payment confirmation/recovery is quote-bound and remains recoverable after wall-clock quote expiry.

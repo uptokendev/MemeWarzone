@@ -9,6 +9,7 @@ import { verifyBattleBoostPayment } from "./lib/arenaBoostChainVerification.mjs"
 import { BATTLE_POINTS_V3_CONFIG } from "./lib/arenaBattlePointsConfig.js";
 import { calculateBattlePointsV3Boost } from "./lib/arenaBattlePointsV3.js";
 import { battlePoolId } from "./lib/arenaWarPoolEscrow.js";
+import { VOTE_BATTLE_BOOST_POINTS_PER_UNIT, isStandaloneVoteBattle, voteBattleRegulationOpen } from "./lib/arenaBattleMode.js";
 import {
   DEFAULT_QUOTE_TTL_SECONDS,
   randomBoostNonce,
@@ -107,7 +108,7 @@ function chainProofShape(proof) {
 
 async function battleForBoost(battleId) {
   const result = await pool.query(
-    `select id, chain_id, state, battle_mode, source, tournament_id, competition_generation, contest_scoring_version, participants
+    `select id, chain_id, state, battle_mode, source, tournament_id, competition_generation, contest_scoring_version, participants, ends_at
        from public.arena_battles
       where id = $1
       limit 1`,
@@ -116,11 +117,15 @@ async function battleForBoost(battleId) {
   return result.rows[0] || null;
 }
 
+// Normal battles and standalone Vote Battles share this route: same pool,
+// same on-chain boost, different scoring (Vote Battles: 2 pts per unit in
+// arena_contest_actions, no Battle Points V3 projection).
 function validateNormalV2Battle(battle, chainId, targetToken) {
   if (!battle) return { status: 404, error: "Battle not found" };
   if (Number(battle.chain_id) !== chainId) return { status: 409, error: "Boost chain does not match battle chain" };
   if (String(battle.state) !== "live") return { status: 409, error: "Boost is only available for a live Battle" };
-  if (String(battle.battle_mode || "normal") !== "normal" || String(battle.source || "") === "tournament") {
+  const voteBattle = isStandaloneVoteBattle(battle);
+  if (!voteBattle && (String(battle.battle_mode || "normal") !== "normal" || String(battle.source || "") === "tournament")) {
     return { status: 409, error: "This endpoint only supports Normal Battle Boosts" };
   }
   if (String(battle.competition_generation || "") !== "arena_competition_v2") {
@@ -128,7 +133,16 @@ function validateNormalV2Battle(battle, chainId, targetToken) {
   }
   const side = resolveBattleSide(battle.participants, targetToken);
   if (!side) return { status: 409, error: "Boost target is not a Battle combatant" };
-  return { side };
+  return { side, voteBattle };
+}
+
+async function voteBattleBoostWindow(battle) {
+  if (!voteBattleRegulationOpen(battle)) {
+    return { status: 409, error: "Vote Battle regulation has ended", code: "VOTE_BATTLE_REGULATION_ENDED" };
+  }
+  const salvo = (await pool.query(`select battle_id from public.arena_vote_tiebreaks where battle_id = $1 limit 1`, [String(battle.id)])).rows[0];
+  if (salvo) return { status: 409, error: "Boost is disabled during Final Salvo", code: "FINAL_SALVO_BOOST_DISABLED" };
+  return null;
 }
 
 function weightsShape() {
@@ -289,14 +303,20 @@ async function createBattleBoostQuote(req, res) {
   const battleCheck = validateNormalV2Battle(battle, chainId, targetToken);
   if (battleCheck.error) return json(res, battleCheck.status, { ok: false, error: battleCheck.error });
 
-  const runtime = await loadBattlePointsV3Runtime(battle);
-  if (!runtime.saleStatus.active) {
-    return json(res, 409, {
-      ok: false,
-      error: "Battle Boost scoring is not active for this Battle generation",
-      code: "BATTLE_BOOST_V3_INACTIVE",
-      scoringReason: runtime.saleStatus.reason,
-    });
+  let runtime = null;
+  if (battleCheck.voteBattle) {
+    const closed = await voteBattleBoostWindow(battle);
+    if (closed) return json(res, closed.status, { ok: false, error: closed.error, code: closed.code });
+  } else {
+    runtime = await loadBattlePointsV3Runtime(battle);
+    if (!runtime.saleStatus.active) {
+      return json(res, 409, {
+        ok: false,
+        error: "Battle Boost scoring is not active for this Battle generation",
+        code: "BATTLE_BOOST_V3_INACTIVE",
+        scoringReason: runtime.saleStatus.reason,
+      });
+    }
   }
 
   const auth = await requireWalletActionAuth({
@@ -345,8 +365,10 @@ async function createBattleBoostQuote(req, res) {
       battleId,
       side: battleCheck.side,
       usdPerBoostMicros: "1000000",
-      scoringVersion: runtime.lock.scoring_version,
-      boostCurveVersion: runtime.lock.boost_curve_version,
+      scoringVersion: runtime ? runtime.lock.scoring_version : String(battle.contest_scoring_version || "vote_tournament_v1"),
+      boostCurveVersion: runtime ? runtime.lock.boost_curve_version : null,
+      voteBattle: Boolean(battleCheck.voteBattle),
+      pointsPerBoost: battleCheck.voteBattle ? VOTE_BATTLE_BOOST_POINTS_PER_UNIT : null,
       quote: serializeSignedBoostQuote(signed),
       expiresAt: new Date(deadline * 1000).toISOString(),
     });
@@ -440,7 +462,7 @@ async function confirmBattleBoost(req, res) {
          chain_id, tournament_id, battle_id, match_id, round_number, phase, salvo_index, side, wallet,
          action_type, boost_units, points, gross_native_raw, pool_native_raw, protocol_native_raw,
          tx_hash, log_index, signature_reference, confirmed_at
-       ) values ($1, null, $2, null, 1, 'regulation', null, $3, $4, 'boost', $5, 0, $6, $7, $8, $9, $10, null, $11)
+       ) values ($1, null, $2, null, 1, 'regulation', null, $3, $4, 'boost', $5, $12, $6, $7, $8, $9, $10, null, $11)
        on conflict (chain_id, tx_hash, log_index) where tx_hash is not null and log_index is not null
        do nothing
        returning *`,
@@ -456,6 +478,9 @@ async function confirmBattleBoost(req, res) {
         txHash,
         logIndex,
         confirmedAt,
+        // Vote Battles score boosts directly (2 pts per unit); normal battles
+        // score through the Battle Points V3 projection below.
+        battleCheck.voteBattle ? (split.boostUnits * BigInt(VOTE_BATTLE_BOOST_POINTS_PER_UNIT)).toString() : 0,
       ],
     );
 
