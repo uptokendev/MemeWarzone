@@ -4,6 +4,7 @@ import { ENV } from "./env.js";
 import { LAUNCH_FACTORY_ABI, LAUNCH_CAMPAIGN_ABI, TREASURY_ROUTER_ABI, UP_VOTE_TREASURY_ABI } from "./abis.js";
 import { TIMEFRAMES, bucketStart, TF } from "./timeframes.js";
 import { publishTrade, publishCandle, publishStats, publishLeague } from "./ably.js";
+import { candleUpsertPayload } from "./candlePublish.js";
 import { createLeagueFeedPublisher } from "./leagueFeed.js";
 import { recordCampaignCreatedActivity, recordTradeActivity } from "./rewards/attribution.js";
 import { upsertRewardEvent } from "./rewards/ingest.js";
@@ -740,7 +741,7 @@ async function upsertCandle(
 ) {
   const bucketTs = new Date(bucketSec * 1000);
 
-  await pool.query(
+  const written = await pool.query(
     `insert into public.token_candles(
         chain_id,campaign_address,timeframe,bucket_start,o,h,l,c,volume_bnb,trades_count,
         last_block_number,last_log_index
@@ -768,18 +769,16 @@ async function upsertCandle(
            end,
        volume_bnb = public.token_candles.volume_bnb + excluded.volume_bnb,
        trades_count = public.token_candles.trades_count + 1,
-       updated_at = now()`,
+       updated_at = now()
+     returning o,h,l,c,volume_bnb,trades_count`,
     [chainId, campaign.toLowerCase(), tf, bucketTs, price, volBnb, blockNumber, logIndex]
   );
 
-  // Lightweight realtime patch (authoritative values come from REST)
-  await publishCandle(chainId, campaign, {
-    type: "candle_upsert",
-    tf,
-    bucket: bucketSec,
-    c: String(price),
-    v: String(volBnb)
-  });
+  // Full OHLCV patch: the chart applies it directly, so every viewer's chart
+  // moves on the trade, not only the wallet that traded. (A close-only
+  // `{c, v}` patch is rejected by the frontend and only triggers a refetch.)
+  const row = written.rows[0] || { o: price, h: price, l: price, c: price, volume_bnb: volBnb, trades_count: 1 };
+  await publishCandle(chainId, campaign, candleUpsertPayload(tf, bucketSec, row));
 }
 
 const BNB_CURVE_PARAM_ABI = [

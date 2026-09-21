@@ -463,7 +463,9 @@ export default async function handler(req, res) {
           w.rank,
           w.amount_raw AS "amountRaw",
           w.payload,
-          w.computed_at AS "computedAt"
+          w.computed_at AS "computedAt",
+          r.published_at AS "rootPublishedAt",
+          r.tx_hash AS "rootTxHash"
         FROM league_epoch_winners w
         LEFT JOIN league_epoch_claims c
           ON c.chain_id = w.chain_id
@@ -471,6 +473,10 @@ export default async function handler(req, res) {
          AND c.epoch_start = w.epoch_start
          AND c.category = w.category
          AND c.rank = w.rank
+        LEFT JOIN league_epoch_roots r
+          ON r.chain_id = w.chain_id
+         AND r.period = w.period
+         AND r.epoch_start = w.epoch_start
         WHERE w.chain_id = $1
           AND ${recipientClause}
           AND c.claimed_at IS NULL
@@ -479,6 +485,11 @@ export default async function handler(req, res) {
       [chainId, address],
     );
 
+    // A Solana league prize is claimable only once the operator sealed the
+    // epoch's Merkle root on-chain (league_epoch_roots); before that
+    // claim_league fails with EpochNotSealed. EVM epochs seal through the
+    // admin root poster and keep the historical behaviour.
+    const solana = isSolanaAddress(address);
     return json(res, 200, {
       address,
       chainId,
@@ -492,6 +503,9 @@ export default async function handler(req, res) {
         amountRaw: r.amountRaw,
         payload: r.payload,
         computedAt: r.computedAt,
+        rootPublishedAt: r.rootPublishedAt || null,
+        rootTxHash: r.rootTxHash || null,
+        claimable: solana ? Boolean(r.rootPublishedAt) : true,
       })),
     });
   } catch (e) {

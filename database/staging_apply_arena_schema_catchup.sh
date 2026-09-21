@@ -60,6 +60,7 @@ FILES=(
   db/migrations/20260921_000003_arena_vote_battles.sql
   db/migrations/20260921_000004_championship_mirror_missing_entry_names.sql
   db/migrations/20260921_000005_arena_league_entries_token_address_identity.sql
+  db/migrations/20260921_000006_league_epoch_roots.sql
 )
 
 bundle() {
@@ -91,7 +92,7 @@ check() {
   select t.name, case when to_regclass('public.'||t.name) is null then '$1' else 'present' end
     from (values ('token_holder_balances'),('token_holder_sync'),('arena_solana_boost_quotes'),('arena_battle_scoring_locks'),
                  ('event_sponsorship_applications'),('event_sponsorship_audit_log'),('solana_reward_payout_intents'),
-                 ('solana_wallet_verifications'),('solana_launchpad_admin_actions')) t(name)
+                 ('solana_wallet_verifications'),('solana_launchpad_admin_actions'),('league_epoch_roots')) t(name)
    union all
   select 'sponsorship_payment_quotes.solana_payment_status', case when exists (select 1 from information_schema.columns where table_schema='public' and table_name='sponsorship_payment_quotes' and column_name='solana_payment_status') then 'present' else '$1' end
    union all

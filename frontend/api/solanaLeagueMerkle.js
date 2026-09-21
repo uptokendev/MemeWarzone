@@ -7,11 +7,23 @@ export const REWARDS_TREASURY_PROGRAM_ID = String(
 export const LEAGUE_LEAF_PREFIX = Buffer.from("MWZ_LEAGUE_LEAF", "utf8");
 export const PERIOD_WEEKLY = 0;
 export const PERIOD_MONTHLY = 1;
+/** Quarterly finals share the league root + claim rail (program PERIOD_QUARTERLY). */
+export const PERIOD_QUARTERLY = 2;
 
 const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
 
+/**
+ * Program period code for a league period. Fails closed: an unknown period
+ * must never silently derive the weekly epoch PDA (that would sign leaves and
+ * derive receipts for the wrong epoch).
+ */
 export function periodCode(period) {
-  return String(period || "").toLowerCase() === "monthly" ? PERIOD_MONTHLY : PERIOD_WEEKLY;
+  if (period === PERIOD_WEEKLY || period === PERIOD_MONTHLY || period === PERIOD_QUARTERLY) return period;
+  const key = String(period ?? "").trim().toLowerCase();
+  if (key === "weekly" || key === "0") return PERIOD_WEEKLY;
+  if (key === "monthly" || key === "1") return PERIOD_MONTHLY;
+  if (key === "quarterly" || key === "2") return PERIOD_QUARTERLY;
+  throw new Error(`Unknown league period: ${String(period)}`);
 }
 
 export function categoryHashBytes(category) {

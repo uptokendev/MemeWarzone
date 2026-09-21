@@ -53,6 +53,8 @@ type LeagueRewardMetadata = {
 };
 
 type LeagueRewardRow = {
+  // Quarterly finals claim through the same rail once the client supports
+  // period code 2 (solanaRewardV0Claim.ts); the API only lists weekly/monthly today.
   period: "weekly" | "monthly";
   epochStart: string;
   epochEnd?: string | null;
@@ -62,6 +64,10 @@ type LeagueRewardRow = {
   amountRaw: string;
   payload?: Record<string, unknown>;
   computedAt?: string | null;
+  /** Solana: false until the operator sealed the epoch root on-chain. */
+  claimable?: boolean;
+  rootPublishedAt?: string | null;
+  rootTxHash?: string | null;
 };
 
 type PreparedSolanaLeagueClaim = {
@@ -319,10 +325,12 @@ async function fetchLeagueRewardItems(walletAddress?: string | null, chainId?: n
       tokenSymbol: rewardNativeSymbol(id),
       amount: String(reward.amountRaw || "0"),
       amountUsd: null,
-      status: "claimable",
+      // The API says whether the epoch root is sealed on-chain; a prize whose
+      // root is still pending shows as "Pending" and cannot be claimed yet.
+      status: reward.claimable === false ? "claim_pending" : "claimable",
       claimBatchId: null,
       claimTxHash: null,
-      claimError: null,
+      claimError: reward.claimable === false ? "Epoch root not published on-chain yet." : null,
       metadata,
       createdAt: metadata.computedAt || metadata.epochEnd || metadata.epochStart,
       updatedAt: metadata.computedAt || metadata.epochEnd || metadata.epochStart,

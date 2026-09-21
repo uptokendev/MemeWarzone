@@ -184,7 +184,9 @@ async function main() {
     const epochId = String(row.epoch_id);
     const url = rpcUrl(chainId);
     if (!url) throw new Error(`Solana RPC is not configured for chain ${chainId}`);
-    const connection = new Connection(url, "confirmed");
+    // confirmTransaction must give up on a slow RPC instead of hanging until
+    // the scheduler kills the job with no diagnostics.
+    const connection = new Connection(url, { commitment: "confirmed", confirmTransactionInitialTimeout: 60_000 });
     const [configAddress] = PublicKey.findProgramAddressSync([Buffer.from("rewards_config")], pid);
     const [vaultAddress] = PublicKey.findProgramAddressSync([Buffer.from("recruiter_vault")], pid);
     const [batchAddress] = PublicKey.findProgramAddressSync([BATCH_SEED, i64le(epochId)], pid);
@@ -298,9 +300,22 @@ async function main() {
   console.log(JSON.stringify({ ok: true, published: reports.length, batches: reports }, null, 2));
 }
 
+// Watchdog: a hung RPC or database call exits loudly instead of being killed
+// silently by the scheduler. Root publication itself is idempotent (the
+// on-chain batch is re-read before anything is marked claim_open).
+const diagnosticTimeoutMs = Math.max(60_000, Number(process.env.PUBLISH_RECRUITER_ROOT_TIMEOUT_MS || 180_000) || 180_000);
+const watchdog = setTimeout(() => {
+  console.error(`[publishRecruiterSettlementRoot] diagnostic timeout after ${diagnosticTimeoutMs}ms`);
+  process.exit(1);
+}, diagnosticTimeoutMs);
+
 main()
-  .then(() => process.exit(0))
+  .then(() => {
+    clearTimeout(watchdog);
+    process.exit(0);
+  })
   .catch((error) => {
+    clearTimeout(watchdog);
     console.error("[publishRecruiterSettlementRoot] failed", error);
     process.exit(1);
   });

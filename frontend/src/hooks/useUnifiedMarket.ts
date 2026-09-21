@@ -256,7 +256,9 @@ export function useUnifiedMarket(input: { campaignAddress?: string; chainId: num
   useEffect(() => {
     const channel = realtime.channel;
     if (!apiEnabled || !channel) return;
-    const revealLiveTradeFallback = () => scheduleRefresh(2_500);
+    // A legacy `trade` event carries no candle; refetch quickly so every viewer
+    // sees the trade list and summary move, not only the wallet that traded.
+    const revealLiveTradeFallback = () => scheduleRefresh(250);
     const onStage = (message: any) => {
       const data = message?.data || {};
       const nextStage = String(data.marketStage || data.to || "");
@@ -284,6 +286,10 @@ export function useUnifiedMarket(input: { campaignAddress?: string; chainId: num
     channel.subscribe("trade", onLegacyTrade);
     channel.subscribe("market_stage_changed", onStage);
     channel.subscribe("market_trade", onTrade);
+    // Bonding-curve indexers (Solana, BNB) publish the full OHLCV candle as
+    // `candle_upsert` after every stored trade; the post-graduation pool
+    // indexers publish `market_candle_upsert`. Both feed the same chart.
+    channel.subscribe("candle_upsert", onCandle);
     channel.subscribe("market_candle_upsert", onCandle);
     channel.subscribe("market_stats_patch", onStats);
     channel.subscribe("market_health_changed", onHealth);
@@ -293,6 +299,7 @@ export function useUnifiedMarket(input: { campaignAddress?: string; chainId: num
       try { channel.unsubscribe("trade", onLegacyTrade); } catch {}
       try { channel.unsubscribe("market_stage_changed", onStage); } catch {}
       try { channel.unsubscribe("market_trade", onTrade); } catch {}
+      try { channel.unsubscribe("candle_upsert", onCandle); } catch {}
       try { channel.unsubscribe("market_candle_upsert", onCandle); } catch {}
       try { channel.unsubscribe("market_stats_patch", onStats); } catch {}
       try { channel.unsubscribe("market_health_changed", onHealth); } catch {}
