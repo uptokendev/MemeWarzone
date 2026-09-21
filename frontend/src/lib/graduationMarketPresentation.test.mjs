@@ -20,6 +20,7 @@ import {
   robinhoodLegacyMarketKind,
   selectedMarketSummary,
 } from "./graduationMarketPresentation.mjs";
+import * as presentation from "./graduationMarketPresentation.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -266,4 +267,53 @@ test("BNB launch-day native choice stays on native create/draft semantics and hi
   assert.match(step, /catalogItems\.filter\(\(item\) => !isNativeQuote\(item\)\)/);
   assert.match(step, /isBnbNativeLaunchQuote\(selected\) \? ""/);
   assert.match(helper, /contractAddressOrMint \|\| ""\) === "native:56"/);
+});
+
+test("catalog categories map onto the stonk-style tabs: pre-IPO, commodities, leverage, collectibles, community", () => {
+  const base = { chainId: "101", identityKind: "SOLANA_MINT", newGraduationEligible: true, provider: { key: "xstocks" } };
+  assert.equal(categoryForQuoteAsset({ ...base, assetClass: "PUBLIC_RWA", category: "STOCKS", symbol: "NVDAx" }), "STOCKS_ETFS");
+  assert.equal(categoryForQuoteAsset({ ...base, assetClass: "PUBLIC_RWA", category: "ETFS", symbol: "SPYx" }), "STOCKS_ETFS");
+  assert.equal(categoryForQuoteAsset({ ...base, assetClass: "PRE_IPO_RWA", category: "STOCKS", symbol: "OPENAI" }), "PRE_IPO");
+  assert.equal(categoryForQuoteAsset({ ...base, assetClass: "COMMODITY", category: "RWA_COMMODITIES", symbol: "GLDx" }), "COMMODITIES");
+  assert.equal(categoryForQuoteAsset({ ...base, assetClass: "CRYPTO", category: "ECOSYSTEM", symbol: "JUP" }), "CRYPTO");
+  assert.equal(categoryForQuoteAsset({ ...base, assetClass: "LEVERAGED_OR_YIELD", symbol: "xSOL" }), "LEVERAGE");
+  assert.equal(categoryForQuoteAsset({ ...base, assetClass: "COLLECTIBLE", symbol: "SV151" }), "COLLECTIBLES");
+  assert.equal(categoryForQuoteAsset({ ...base, assetClass: "COMMUNITY", category: "COMMUNITY", symbol: "BONK" }), "COMMUNITY");
+  assert.equal(categoryForQuoteAsset({ ...base, assetClass: "STABLECOIN", category: "STABLES_CURRENCIES", symbol: "EURC" }), "STABLECOINS");
+  assert.equal(categoryForQuoteAsset({ ...base, assetClass: "OTHER", symbol: "???" }), "OTHER_APPROVED");
+  const groups = groupQuoteAssetsByCategory([
+    catalogQuote({ id: "sol", chainId: "101", identityKind: "NATIVE", symbol: "SOL" }),
+    { ...base, id: "openai", assetClass: "PRE_IPO_RWA", symbol: "OPENAI" },
+    { ...base, id: "gld", assetClass: "COMMODITY", symbol: "GLDx" },
+  ]);
+  assert.deepEqual(groups.map((group) => group.id), ["POPULAR", "PRE_IPO", "COMMODITIES"]);
+});
+
+test("popular row: catalog POPULAR tag first, then native, stables and the best-known stocks; never disabled assets", () => {
+  const { popularQuoteAssets } = presentation;
+  const sol = catalogQuote({ id: "sol", chainId: "101", identityKind: "NATIVE", assetClass: "NATIVE", symbol: "SOL" });
+  const usdc = catalogQuote({ id: "usdc", chainId: "101", identityKind: "SOLANA_MINT", assetClass: "STABLECOIN", symbol: "USDC" });
+  const usdt = catalogQuote({ id: "usdt", chainId: "101", identityKind: "SOLANA_MINT", assetClass: "STABLECOIN", symbol: "USDT" });
+  const nvda = catalogQuote({ id: "nvda", chainId: "101", identityKind: "SOLANA_MINT", assetClass: "PUBLIC_RWA", category: "STOCKS", symbol: "NVDAx", provider: { key: "xstocks" } });
+  const spy = catalogQuote({ id: "spy", chainId: "101", identityKind: "SOLANA_MINT", assetClass: "PUBLIC_RWA", category: "ETFS", symbol: "SPYx", provider: { key: "xstocks" } });
+  const jup = catalogQuote({ id: "jup", chainId: "101", identityKind: "SOLANA_MINT", assetClass: "CRYPTO", symbol: "JUP", tags: ["POPULAR"] });
+  const dead = catalogQuote({ id: "dead", chainId: "101", identityKind: "SOLANA_MINT", assetClass: "STABLECOIN", symbol: "PYUSD", newGraduationEligible: false });
+  const obscure = catalogQuote({ id: "obscure", chainId: "101", identityKind: "SOLANA_MINT", assetClass: "CRYPTO", symbol: "ZZZ" });
+  assert.deepEqual(popularQuoteAssets([obscure, nvda, usdt, dead, spy, usdc, sol, jup]).map((a) => a.id), ["jup", "sol", "usdc", "usdt", "spy", "nvda"]);
+  assert.deepEqual(popularQuoteAssets([obscure, nvda, usdt, spy, usdc, sol, jup], { limit: 3 }).map((a) => a.id), ["jup", "sol", "usdc"]);
+  assert.deepEqual(popularQuoteAssets([]), []);
+});
+
+test("provider facets and search text expose provider, category and tags", () => {
+  const { providerFacets, quoteAssetSearchText } = presentation;
+  const nvda = catalogQuote({ id: "nvda", chainId: "101", identityKind: "SOLANA_MINT", assetClass: "PUBLIC_RWA", category: "STOCKS", symbol: "NVDAx", displayName: "NVIDIA xStock", provider: { key: "xstocks", displayName: "xStocks (Backed)" }, providerAssetId: "NVDAx", tags: ["STOCK"] });
+  const spy = catalogQuote({ id: "spy", chainId: "101", identityKind: "SOLANA_MINT", assetClass: "PUBLIC_RWA", category: "ETFS", symbol: "SPYx", provider: { key: "xstocks" } });
+  const crm = catalogQuote({ id: "rh-stock:crm", chainId: "4663", identityKind: "EVM_ADDRESS", assetClass: "PROVIDER_RWA", symbol: "CRM", provider: { key: "robinhood-stock-token", displayName: "Robinhood Stock Token Registry" } });
+  assert.deepEqual(providerFacets([nvda, spy, crm]), [
+    { key: "xstocks", label: "xStocks", count: 2 },
+    { key: "robinhood-stock-token", label: "Robinhood", count: 1 },
+  ]);
+  const text = quoteAssetSearchText(nvda);
+  for (const needle of ["nvdax", "nvidia", "xstocks", "stocks", "stock"]) assert.ok(text.includes(needle), needle);
+  assert.equal(providerLabel(nvda), "xStocks");
 });

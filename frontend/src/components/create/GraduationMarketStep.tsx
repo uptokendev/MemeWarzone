@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Search, TriangleAlert } from "lucide-react";
+import { BadgeCheck, Search, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
@@ -10,6 +10,10 @@ import {
   isMovingQuoteAsset,
   isNativeQuote,
   MOVING_QUOTE_NOTICE,
+  popularQuoteAssets,
+  providerFacets,
+  providerLabel,
+  quoteAssetSearchText,
   selectedMarketSummary,
 } from "@/lib/graduationMarketPresentation.mjs";
 import {
@@ -28,6 +32,63 @@ export type GraduationMarketStepProps = {
   canNext: boolean;
 };
 
+const ALL_PROVIDERS = "__all__";
+
+function QuoteAssetCard({
+  asset,
+  ticker,
+  selected,
+  onSelect,
+  compact = false,
+}: {
+  asset: GraduationQuoteAsset;
+  ticker: string;
+  selected: boolean;
+  onSelect: (asset: GraduationQuoteAsset) => void;
+  compact?: boolean;
+}) {
+  const symbol = displayQuoteSymbol(asset);
+  const provider = providerLabel(asset);
+  const verified = asset.identityStatus === "verified" || isNativeQuote(asset);
+  return (
+    <button
+      type="button"
+      data-testid={`quote-asset-${symbol}`}
+      data-quote-provider={String(asset.provider?.key || "")}
+      onClick={() => onSelect(asset)}
+      className={cn(
+        "rounded-lg border text-left transition",
+        compact ? "min-w-[9.5rem] shrink-0 p-2" : "p-2.5",
+        selected
+          ? "border-orange-300 bg-orange-400/15"
+          : "border-border/70 bg-background/30 hover:border-orange-400/40",
+      )}
+    >
+      <div className="flex items-start gap-2">
+        {asset.logoUrl ? (
+          <img src={asset.logoUrl} alt="" className="h-7 w-7 shrink-0 rounded-sm object-cover" />
+        ) : (
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border border-border/60 bg-background/40 font-retro text-[10px] text-muted-foreground">
+            {symbol.slice(0, 2)}
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1">
+            <span className="truncate font-retro text-sm text-foreground">{symbol}</span>
+            {verified ? <BadgeCheck className="h-3.5 w-3.5 shrink-0 text-emerald-300/80" aria-label="Canonical asset" /> : null}
+          </div>
+          <div className="truncate text-[11px] text-muted-foreground">
+            {asset.displayName && asset.displayName !== symbol ? asset.displayName : `${ticker ? `$${ticker}` : "$TOKEN"} / ${symbol}`}
+          </div>
+          {!compact ? (
+            <div className="mt-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground/80">{provider}</div>
+          ) : null}
+        </div>
+      </div>
+    </button>
+  );
+}
+
 export function GraduationMarketStep({
   chainId,
   ticker,
@@ -39,6 +100,7 @@ export function GraduationMarketStep({
   const [items, setItems] = useState<GraduationQuoteAsset[]>([]);
   const [search, setSearch] = useState("");
   const [activeCategory, setActiveCategory] = useState("POPULAR");
+  const [activeProvider, setActiveProvider] = useState(ALL_PROVIDERS);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -81,16 +143,13 @@ export function GraduationMarketStep({
     rememberGraduationQuoteAssetId(chainId, isBnbNativeLaunchQuote(selected) ? "" : selected?.id || "");
   }, [chainId, selected?.id, selected?.presentationDefault]);
 
-  const categories = useMemo(() => {
-    const needle = search.trim().toLowerCase();
-    const filtered = needle
-      ? items.filter((item) =>
-          [item.symbol, item.displayName, displayQuoteSymbol(item)]
-            .some((value) => String(value || "").toLowerCase().includes(needle)),
-        )
-      : items;
-    return groupQuoteAssetsByCategory(filtered);
-  }, [items, search]);
+  const needle = search.trim().toLowerCase();
+  const searched = useMemo(
+    () => (needle ? items.filter((item) => quoteAssetSearchText(item).includes(needle)) : items),
+    [items, needle],
+  );
+  const categories = useMemo(() => groupQuoteAssetsByCategory(searched), [searched]);
+  const popular = useMemo(() => popularQuoteAssets(items), [items]);
 
   useEffect(() => {
     if (!categories.length) return;
@@ -99,9 +158,23 @@ export function GraduationMarketStep({
     }
   }, [activeCategory, categories]);
 
+  const activeItems = categories.find((category) => category.id === activeCategory)?.items || [];
+  const facets = useMemo(() => providerFacets(activeItems), [activeItems]);
+
+  useEffect(() => {
+    if (activeProvider !== ALL_PROVIDERS && !facets.some((facet) => facet.key === activeProvider)) {
+      setActiveProvider(ALL_PROVIDERS);
+    }
+  }, [activeProvider, facets]);
+
+  const visibleAssets =
+    activeProvider === ALL_PROVIDERS
+      ? activeItems
+      : activeItems.filter((item) => String(item.provider?.key || "").toLowerCase() === activeProvider);
+
   const copy = chainGraduationCopy(chainId);
   const summary = selected ? selectedMarketSummary({ ticker, asset: selected, chainId }) : null;
-  const visibleAssets = categories.find((category) => category.id === activeCategory)?.items || [];
+  const showPopularRow = !needle && popular.length > 1;
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-testid="graduation-market-step">
@@ -146,7 +219,7 @@ export function GraduationMarketStep({
             <Input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search quote assets"
+              placeholder={`Search ${items.length ? `${items.length} ` : ""}quote assets by symbol, name or provider`}
               className="pl-9 font-sans normal-case"
               aria-label="Search graduation quote assets"
             />
@@ -157,6 +230,17 @@ export function GraduationMarketStep({
             <div className="flex items-start gap-2 rounded-lg border border-orange-400/25 bg-orange-500/10 p-2.5 text-xs text-orange-100">
               <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
               <span>{error}</span>
+            </div>
+          ) : null}
+
+          {showPopularRow ? (
+            <div className="space-y-1.5" data-testid="graduation-market-popular">
+              <div className="font-retro text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Popular</div>
+              <div className="flex gap-1.5 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">
+                {popular.map((asset) => (
+                  <QuoteAssetCard key={`popular-${asset.id}`} asset={asset} ticker={ticker} selected={selected?.id === asset.id} onSelect={onSelectedChange} compact />
+                ))}
+              </div>
             </div>
           ) : null}
 
@@ -176,6 +260,7 @@ export function GraduationMarketStep({
                   )}
                 >
                   {category.label}
+                  <span className="ml-1 text-muted-foreground/70">{category.items.length}</span>
                 </button>
               ))}
             </div>
@@ -189,37 +274,31 @@ export function GraduationMarketStep({
             </div>
           )}
 
-          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-            {visibleAssets.map((asset) => {
-              const symbol = displayQuoteSymbol(asset);
-              const isSelected = selected?.id === asset.id;
-              return (
+          {facets.length > 1 ? (
+            <div className="flex flex-wrap gap-1" data-testid="graduation-market-providers">
+              {[{ key: ALL_PROVIDERS, label: "All providers", count: activeItems.length }, ...facets].map((facet) => (
                 <button
-                  key={asset.id}
+                  key={facet.key}
                   type="button"
-                  data-testid={`quote-asset-${symbol}`}
-                  onClick={() => onSelectedChange(asset)}
+                  data-testid={`graduation-provider-${facet.key}`}
+                  onClick={() => setActiveProvider(facet.key)}
                   className={cn(
-                    "rounded-lg border p-2.5 text-left transition",
-                    isSelected
-                      ? "border-orange-300 bg-orange-400/15"
-                      : "border-border/70 bg-background/30 hover:border-orange-400/40",
+                    "rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em] transition",
+                    activeProvider === facet.key
+                      ? "border-orange-300/70 bg-orange-400/10 text-orange-100"
+                      : "border-border/60 text-muted-foreground hover:border-orange-400/40",
                   )}
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="font-retro text-sm text-foreground">{symbol}</div>
-                      <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
-                        {asset.displayName && asset.displayName !== symbol ? asset.displayName : `${ticker ? `$${ticker}` : "$TOKEN"} / ${symbol}`}
-                      </div>
-                    </div>
-                    {asset.logoUrl ? (
-                      <img src={asset.logoUrl} alt="" className="h-7 w-7 rounded-sm object-cover" />
-                    ) : null}
-                  </div>
+                  {facet.label} <span className="text-muted-foreground/70">{facet.count}</span>
                 </button>
-              );
-            })}
+              ))}
+            </div>
+          ) : null}
+
+          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
+            {visibleAssets.map((asset) => (
+              <QuoteAssetCard key={asset.id} asset={asset} ticker={ticker} selected={selected?.id === asset.id} onSelect={onSelectedChange} />
+            ))}
           </div>
         </div>
       </div>

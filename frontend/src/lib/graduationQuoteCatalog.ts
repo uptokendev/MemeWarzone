@@ -41,6 +41,13 @@ export type GraduationQuoteAsset = {
   };
   lastVerifiedAt?: string | null;
   presentationDefault?: boolean;
+  /** Catalog decoration from the approved manifest (see api/lib/approvedQuoteCatalog.js). */
+  category?: string;
+  tags?: string[];
+  providerAssetId?: string | null;
+  catalogState?: string;
+  chainFamily?: string | null;
+  decimals?: number | null;
 };
 
 async function readJson<T>(response: Response): Promise<T> {
