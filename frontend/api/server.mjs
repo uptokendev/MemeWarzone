@@ -331,6 +331,12 @@ app.get("/health", async (_req, res) => {
       // Auth project Command Center sessions are validated against (may differ
       // from supabaseProjectRef on a test deployment; see dashboard/_auth.js).
       dashboardAuthProjectRef: dashboardAuthProjectRef(),
+      // Whether a key to validate dashboard sessions is present, and under
+      // which variable name it was found (names only, never the value).
+      dashboardAuthKeyConfigured: Boolean(String(process.env.DASHBOARD_AUTH_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || "").trim()),
+      dashboardAuthKeySource: String(process.env.DASHBOARD_AUTH_SUPABASE_ANON_KEY || "").trim()
+        ? "DASHBOARD_AUTH_SUPABASE_ANON_KEY"
+        : (["SUPABASE_ANON_KEY", "SUPABASE_PUBLISHABLE_KEY", "SUPABASE_ANON_PUBLIC_KEY", "VITE_SUPABASE_ANON_KEY", "VITE_SUPABASE_PUBLISHABLE_KEY", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY"].find((name) => String(process.env[name] || "").trim()) || "none"),
       supabaseProjectRef: (() => {
         try {
           return new URL(String(process.env.SUPABASE_URL || "")).hostname.split(".")[0] || "unset";

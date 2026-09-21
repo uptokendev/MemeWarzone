@@ -28,6 +28,19 @@ const SUPABASE_SERVICE_ROLE_KEY_ALIASES = [
   "SUPABASE_SECRET_KEY",
 ];
 
+// The public key used to validate Command Center sessions. Supabase now calls
+// it the publishable key and frontends carry it under VITE_/NEXT_PUBLIC_ names;
+// a service whose env was cloned from a frontend must still find it.
+const SUPABASE_ANON_KEY_ALIASES = [
+  "SUPABASE_ANON_KEY",
+  "SUPABASE_PUBLISHABLE_KEY",
+  "SUPABASE_ANON_PUBLIC_KEY",
+  "VITE_SUPABASE_ANON_KEY",
+  "VITE_SUPABASE_PUBLISHABLE_KEY",
+  "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+  "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY",
+];
+
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 
 function truthy(value) {
@@ -155,6 +168,8 @@ if (loaded.length) {
 aliasEnv("DATABASE_URL", DATABASE_URL_ALIASES);
 aliasEnv("SUPABASE_URL", SUPABASE_URL_ALIASES);
 aliasEnv("SUPABASE_SERVICE_ROLE_KEY", SUPABASE_SERVICE_ROLE_KEY_ALIASES);
+aliasEnv("SUPABASE_ANON_KEY", SUPABASE_ANON_KEY_ALIASES);
+export const SUPABASE_ANON_KEY_ENV_NAMES = SUPABASE_ANON_KEY_ALIASES;
 disableRemoteSupabaseForIsolatedLocalRuntime();
 autoConfigureLocalPgSsl();
 
