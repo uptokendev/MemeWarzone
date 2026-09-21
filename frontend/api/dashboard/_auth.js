@@ -33,12 +33,25 @@ export function dashboardAppMetadataRoles(user) {
   return roles;
 }
 
+/**
+ * Which Supabase Auth issues Command Center sessions. Normally the service's
+ * own project (SUPABASE_URL). A test deployment whose data lives on the
+ * staging project can still accept sessions from production Auth (where the
+ * dashboard users exist) by setting DASHBOARD_AUTH_SUPABASE_URL and
+ * DASHBOARD_AUTH_SUPABASE_ANON_KEY; only session validation uses them, every
+ * data and storage call keeps SUPABASE_URL.
+ */
+export function dashboardAuthProject() {
+  const supabaseUrl = String(process.env.DASHBOARD_AUTH_SUPABASE_URL || process.env.SUPABASE_URL || "").replace(/\/+$/, "");
+  const anonKey = String(process.env.DASHBOARD_AUTH_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || "").trim();
+  return { supabaseUrl, anonKey };
+}
+
 export async function fetchDashboardSupabaseUser(accessToken) {
-  const supabaseUrl = String(process.env.SUPABASE_URL || "").replace(/\/+$/, "");
-  const anonKey = String(process.env.SUPABASE_ANON_KEY || "").trim();
+  const { supabaseUrl, anonKey } = dashboardAuthProject();
 
   if (!supabaseUrl || !anonKey) {
-    throw new Error("SUPABASE_URL and SUPABASE_ANON_KEY are required for dashboard authorization.");
+    throw new Error("SUPABASE_URL and SUPABASE_ANON_KEY (or DASHBOARD_AUTH_SUPABASE_URL / DASHBOARD_AUTH_SUPABASE_ANON_KEY) are required for dashboard authorization.");
   }
 
   const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
