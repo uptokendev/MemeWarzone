@@ -75,6 +75,7 @@ GROUP_B=(
   db/migrations/20260921_000004_championship_mirror_missing_entry_names.sql
   db/migrations/20260921_000005_arena_league_entries_token_address_identity.sql
   db/migrations/20260921_000006_league_epoch_roots.sql
+  db/migrations/20260921_000007_campaign_graduation_quote_bindings.sql
 )
 
 # One transaction per group. Files carry their own begin/commit; those lines are

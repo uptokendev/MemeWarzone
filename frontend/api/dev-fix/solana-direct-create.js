@@ -14,6 +14,9 @@ import {
   withTickerReservationTransaction,
 } from "./ticker-reservation-service.js";
 import { upsertCampaignFromDraft } from "./campaign-registry.js";
+import { getGraduationQuoteAssetDetail } from "../lib/quoteAssetCatalog.js";
+import { catalogQuoteSelectionReference } from "../lib/draftGraduationQuoteSelection.js";
+import { recordSolanaCampaignGraduationQuote } from "../lib/solanaCampaignGraduationQuote.js";
 import {
   enforceCreatorLaunchLimits,
   loadOnchainPolicy,
@@ -284,6 +287,37 @@ function normalizeDirectMetadata(body, { creatorWallet, chainId, cluster, ticker
     telegramUrl: String(body.telegramUrl || "").trim(),
     discordUrl: String(body.discordUrl || "").trim(),
     otherUrl: String(body.otherUrl || "").trim(),
+  };
+}
+
+/**
+ * The Graduation Market a Direct deploy chose, validated against the catalog
+ * the same way a draft selection is (eligible, same chain, catalog reference
+ * only). Absent means the creator took the native default.
+ */
+async function resolveDirectGraduationQuote(body, chainId) {
+  const quoteAssetId = String(body.graduationQuoteAssetId || "").trim();
+  if (!quoteAssetId) return null;
+  const detail = await getGraduationQuoteAssetDetail(quoteAssetId);
+  if (!detail?.item) {
+    throw new SolanaDirectCreateError("Graduation Market quote asset is not in the catalog.", {
+      code: "SOLANA_DIRECT_GRADUATION_QUOTE_NOT_APPROVED",
+      httpStatus: 409,
+    });
+  }
+  let reference;
+  try {
+    reference = catalogQuoteSelectionReference(detail.item, chainId);
+  } catch (error) {
+    throw new SolanaDirectCreateError(String(error?.message || "Graduation Market is not eligible."), {
+      code: "SOLANA_DIRECT_GRADUATION_QUOTE_NOT_APPROVED",
+      httpStatus: 409,
+    });
+  }
+  return {
+    quoteAssetId: reference.quoteAssetId,
+    selectedStateVersion: reference.selectedStateVersion,
+    policyVersion: reference.policyVersion,
   };
 }
 
@@ -627,6 +661,22 @@ async function finalizeDirectDeployment(db, {
     );
   }
 
+  // Bind the Graduation Market chosen at authorize time to the campaign, so
+  // the graduation keeper and authorization API graduate against it. A failure
+  // here fails the finalize (the transaction rolls back) rather than leaving
+  // the campaign to graduate against SOL by default.
+  const graduationQuote = directMetadata?.graduationQuote;
+  if (graduationQuote?.quoteAssetId) {
+    await recordSolanaCampaignGraduationQuote(db, {
+      chainId: Number(chainId),
+      campaignAddress: accounts.campaign,
+      quoteAssetId: graduationQuote.quoteAssetId,
+      selectedStateVersion: graduationQuote.selectedStateVersion,
+      policyVersion: graduationQuote.policyVersion,
+      source: "direct",
+    });
+  }
+
   await db.query(
     `insert into public.ticker_reservation_events
        (reservation_id, event_type, from_status, to_status, actor_type, actor_wallet, reason, metadata)
@@ -888,6 +938,11 @@ async function handleAuthorize(body, res) {
     cluster: runtime.cluster,
     ticker,
   });
+  // The chosen Graduation Market travels inside the authorized metadata (and
+  // so inside its hash) to the finalize step, which binds it to the campaign.
+  // Only added when the creator chose one, so native creates hash as before.
+  const graduationQuote = await resolveDirectGraduationQuote(body, chainId);
+  if (graduationQuote) directMetadata.graduationQuote = graduationQuote;
   const ttlSeconds = parsePositiveInteger(
     process.env.SOLANA_CREATE_AUTH_TTL_SECONDS,
     DEFAULT_AUTH_TTL_SECONDS,

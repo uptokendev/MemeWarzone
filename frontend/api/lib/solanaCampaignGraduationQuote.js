@@ -17,10 +17,38 @@
 
 export const NATIVE_SOL_MINT = "So11111111111111111111111111111111111111112";
 
-/** Latest selection for a campaign, with the catalog deployment it points at (if it still exists). */
+/**
+ * The binding written at finalize (draft and direct creates alike), with the
+ * catalog deployment it points at (if it still exists).
+ */
+export const SOLANA_CAMPAIGN_QUOTE_BINDING_SQL = `
+select
+  b.draft_id::text as draft_id,
+  b.source as binding_source,
+  b.quote_asset_id,
+  b.policy_version,
+  b.selected_state_version,
+  q.id::text as deployment_id,
+  q.identity_kind,
+  q.contract_address_or_mint,
+  q.decimals,
+  q.catalog_state,
+  a.symbol,
+  a.asset_class
+from public.campaign_graduation_quote_bindings b
+left join public.quote_asset_deployments q on q.id::text = lower(trim(b.quote_asset_id))
+left join public.quote_assets a on a.id = q.quote_asset_id
+where b.chain_id = $1 and b.campaign_address = $2
+limit 1`;
+
+/**
+ * Fallback for campaigns finalized before campaign_graduation_quote_bindings
+ * existed: the draft's selection, reached through the draft's campaign link.
+ */
 export const SOLANA_CAMPAIGN_QUOTE_SELECTION_SQL = `
 select
   d.id::text as draft_id,
+  'draft'::text as binding_source,
   s.quote_asset_id,
   s.policy_version,
   s.selected_state_version,
@@ -39,6 +67,19 @@ where d.chain_id = $1 and d.campaign_address = $2
 order by s.updated_at desc
 limit 1`;
 
+export const SOLANA_CAMPAIGN_QUOTE_BINDING_UPSERT_SQL = `
+insert into public.campaign_graduation_quote_bindings(
+  chain_id, campaign_address, quote_asset_id, selected_state_version, policy_version, source, draft_id, updated_at
+) values ($1, $2, $3, $4, $5, $6, $7::uuid, now())
+on conflict (chain_id, campaign_address) do update set
+  quote_asset_id = excluded.quote_asset_id,
+  selected_state_version = excluded.selected_state_version,
+  policy_version = excluded.policy_version,
+  source = excluded.source,
+  draft_id = coalesce(excluded.draft_id, public.campaign_graduation_quote_bindings.draft_id),
+  updated_at = now()
+returning chain_id, campaign_address, quote_asset_id, selected_state_version, policy_version, source, draft_id::text as draft_id`;
+
 export class SolanaGraduationQuoteBindingError extends Error {
   constructor(message, { code = "SOLANA_GRADUATION_QUOTE_BINDING_INVALID", httpStatus = 409 } = {}) {
     super(message);
@@ -48,11 +89,49 @@ export class SolanaGraduationQuoteBindingError extends Error {
   }
 }
 
+/** Binding first (draft and direct creates), then the legacy draft selection. */
 export async function loadSolanaCampaignQuoteSelection(db, { chainId, campaignAddress }) {
   const chain = Number(chainId);
   const campaign = String(campaignAddress || "").trim();
   if (!Number.isInteger(chain) || !campaign) return null;
+  const bound = await db.query(SOLANA_CAMPAIGN_QUOTE_BINDING_SQL, [chain, campaign]);
+  if (bound?.rows?.[0]) return bound.rows[0];
   const result = await db.query(SOLANA_CAMPAIGN_QUOTE_SELECTION_SQL, [chain, campaign]);
+  return result?.rows?.[0] || null;
+}
+
+/**
+ * Bind a campaign to its Graduation Market at finalize. `source` says which
+ * create path wrote it. The value is a catalog reference (deployment id, state
+ * version, policy version), never a mint: the catalog stays the authority for
+ * what that id means.
+ */
+export async function recordSolanaCampaignGraduationQuote(db, {
+  chainId,
+  campaignAddress,
+  quoteAssetId,
+  selectedStateVersion = 0,
+  policyVersion,
+  source,
+  draftId = null,
+}) {
+  const chain = Number(chainId);
+  const campaign = String(campaignAddress || "").trim();
+  const quote = String(quoteAssetId || "").trim().toLowerCase();
+  const policy = String(policyVersion ?? "").trim();
+  if (!Number.isInteger(chain) || !campaign) throw new SolanaGraduationQuoteBindingError("chainId and campaignAddress are required to bind a Graduation Market.", { httpStatus: 400 });
+  if (!quote) throw new SolanaGraduationQuoteBindingError("quoteAssetId is required to bind a Graduation Market.", { httpStatus: 400 });
+  if (!policy) throw new SolanaGraduationQuoteBindingError("policyVersion is required to bind a Graduation Market.", { httpStatus: 400 });
+  if (!["draft", "direct", "operator"].includes(String(source))) throw new SolanaGraduationQuoteBindingError(`Unknown binding source ${source}.`, { httpStatus: 400 });
+  const result = await db.query(SOLANA_CAMPAIGN_QUOTE_BINDING_UPSERT_SQL, [
+    chain,
+    campaign,
+    quote,
+    Number.isFinite(Number(selectedStateVersion)) ? Math.max(0, Math.trunc(Number(selectedStateVersion))) : 0,
+    policy,
+    String(source),
+    draftId ? String(draftId) : null,
+  ]);
   return result?.rows?.[0] || null;
 }
 
@@ -67,6 +146,7 @@ export function describeSolanaGraduationQuoteBinding({ selection, nativeQuoteCon
   if (!selection) {
     return {
       source: "native_default",
+      bindingSource: null,
       quoteConfigId: nativeDefault,
       native: true,
       resolved: true,
@@ -88,6 +168,7 @@ export function describeSolanaGraduationQuoteBinding({ selection, nativeQuoteCon
   const mint = String(selection.contract_address_or_mint || "").trim();
   return {
     source: "draft_selection",
+    bindingSource: selection.binding_source ? String(selection.binding_source) : "draft",
     quoteConfigId,
     native,
     resolved,

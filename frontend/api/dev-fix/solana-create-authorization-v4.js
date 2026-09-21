@@ -12,6 +12,7 @@ import {
   withTickerReservationTransaction,
 } from "./ticker-reservation-service.js";
 import { upsertCampaignFromDraft } from "./campaign-registry.js";
+import { recordSolanaCampaignGraduationQuote } from "../lib/solanaCampaignGraduationQuote.js";
 import { getSolanaChainUnixTime } from "./solana-chain-unix-time.js";
 import {
   CREATE_AUTH_SCHEMA_VERSION,
@@ -784,6 +785,27 @@ async function finalizeExistingOnChainDeployment({
     });
     if (!registry?.ok) {
       console.error("[solana-v4-create] campaigns registry upsert failed during recovery", registry);
+    }
+    // Carry the draft's Graduation Market onto the campaign itself, so
+    // graduation binds to it without depending on the draft link. A failure
+    // here rolls the finalize back rather than defaulting the campaign to SOL.
+    const chosen = await db.query(
+      `select quote_asset_id, selected_state_version, policy_version
+         from public.campaign_draft_graduation_quote_selection
+        where draft_id = $1::uuid
+        limit 1`,
+      [draftId],
+    );
+    if (chosen.rows[0]?.quote_asset_id) {
+      await recordSolanaCampaignGraduationQuote(db, {
+        chainId: Number(draft.chain_id),
+        campaignAddress,
+        quoteAssetId: chosen.rows[0].quote_asset_id,
+        selectedStateVersion: chosen.rows[0].selected_state_version,
+        policyVersion: chosen.rows[0].policy_version,
+        source: "draft",
+        draftId,
+      });
     }
     return {
       draftRow: updated.rows[0] || null,

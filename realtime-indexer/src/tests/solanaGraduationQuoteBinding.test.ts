@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   NATIVE_SOL_MINT,
+  SOLANA_CAMPAIGN_QUOTE_BINDING_SQL,
   SOLANA_CAMPAIGN_QUOTE_SELECTION_SQL,
   describeSolanaGraduationQuoteBinding,
   loadSolanaCampaignQuoteSelection,
@@ -35,10 +36,15 @@ function usdcSelection(overrides: Record<string, unknown> = {}) {
 
 test("keeper SQL is byte-identical to the API copy", () => {
   const api = fs.readFileSync(path.resolve(here, "../../../frontend/api/lib/solanaCampaignGraduationQuote.js"), "utf8");
-  const start = api.indexOf("export const SOLANA_CAMPAIGN_QUOTE_SELECTION_SQL = `");
-  const end = api.indexOf("`;", start);
-  const apiSql = api.slice(start + "export const SOLANA_CAMPAIGN_QUOTE_SELECTION_SQL = `".length, end);
-  assert.equal(SOLANA_CAMPAIGN_QUOTE_SELECTION_SQL, apiSql);
+  const extract = (name: string) => {
+    const marker = `export const ${name} = \``;
+    const start = api.indexOf(marker);
+    assert.ok(start >= 0, `${name} present in the API copy`);
+    const end = api.indexOf("`;", start);
+    return api.slice(start + marker.length, end);
+  };
+  assert.equal(SOLANA_CAMPAIGN_QUOTE_BINDING_SQL, extract("SOLANA_CAMPAIGN_QUOTE_BINDING_SQL"));
+  assert.equal(SOLANA_CAMPAIGN_QUOTE_SELECTION_SQL, extract("SOLANA_CAMPAIGN_QUOTE_SELECTION_SQL"));
 });
 
 test("no selection is a native campaign; a USDC selection is bound and non-native", () => {
@@ -80,11 +86,17 @@ test("dispatch: native -> native command, quote -> quote command, missing quote 
   assert.equal(selectSolanaGraduationOperatorCommand({ binding: unresolved, nativeCommand: "node native.mjs", quoteCommand: "node quote.mjs" }).command, null);
 });
 
-test("loader passes chain id and trimmed campaign address", async () => {
-  const calls: unknown[][] = [];
-  const db = { query: async (_sql: string, params: unknown[]) => { calls.push(params); return { rows: [usdcSelection()] }; } };
+test("loader reads the finalize binding first and falls back to the draft selection", async () => {
+  const seen: string[] = [];
+  const db = { query: async (sql: string, params: unknown[]) => { seen.push(sql); assert.deepEqual(params, [101, "Camp"]); return { rows: [usdcSelection({ binding_source: "direct" })] }; } };
   const row = await loadSolanaCampaignQuoteSelection(db, { chainId: 101, campaignAddress: " Camp " });
-  assert.deepEqual(calls, [[101, "Camp"]]);
+  assert.deepEqual(seen, [SOLANA_CAMPAIGN_QUOTE_BINDING_SQL]);
   assert.equal(row?.symbol, "USDC");
+  assert.equal(row?.binding_source, "direct");
+  seen.length = 0;
+  const legacy = { query: async (sql: string) => { seen.push(sql); return sql === SOLANA_CAMPAIGN_QUOTE_SELECTION_SQL ? { rows: [usdcSelection()] } : { rows: [] }; } };
+  const fromDraft = await loadSolanaCampaignQuoteSelection(legacy, { chainId: 101, campaignAddress: "Camp" });
+  assert.deepEqual(seen, [SOLANA_CAMPAIGN_QUOTE_BINDING_SQL, SOLANA_CAMPAIGN_QUOTE_SELECTION_SQL]);
+  assert.equal(fromDraft?.symbol, "USDC");
   assert.equal(await loadSolanaCampaignQuoteSelection(db, { chainId: 101, campaignAddress: "" }), null);
 });

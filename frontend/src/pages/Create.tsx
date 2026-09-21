@@ -528,8 +528,10 @@ const Create = () => {
         toast.error("Connect your Solana wallet first.");
         return;
       }
-      if (directDeployBindPath(graduationQuoteAsset) !== "native") {
-        toast.error("Direct Deploy for this Graduation Market is not available until server quote binding is integrated. Save a Draft instead.");
+      // Solana binds any catalog Graduation Market server-side at finalize
+      // (campaign_graduation_quote_bindings); only unknown paths are refused.
+      if (!["native", "solana-quote"].includes(String(directDeployBindPath(graduationQuoteAsset)))) {
+        toast.error("This Graduation Market cannot be bound on Solana Direct Deploy. Save a Draft instead.");
         return;
       }
       setIsDeploying(true);
@@ -612,6 +614,9 @@ const Create = () => {
           discordUrl: formData.discord || null,
           otherUrl: formData.otherLink || null,
           graduationTargetUsdMicros,
+          // The chosen Graduation Market; the server validates it against the
+          // catalog and binds it to the campaign when the create is finalized.
+          graduationQuoteAssetId: graduationQuoteAsset.presentationDefault ? null : graduationQuoteAsset.id,
         });
 
         if (authorization.alreadyOnChain && authorization.tokenPath) {

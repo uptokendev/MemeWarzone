@@ -12,9 +12,32 @@
 
 export const NATIVE_SOL_MINT = "So11111111111111111111111111111111111111112";
 
+/** The binding written at finalize (draft and direct creates alike). */
+export const SOLANA_CAMPAIGN_QUOTE_BINDING_SQL = `
+select
+  b.draft_id::text as draft_id,
+  b.source as binding_source,
+  b.quote_asset_id,
+  b.policy_version,
+  b.selected_state_version,
+  q.id::text as deployment_id,
+  q.identity_kind,
+  q.contract_address_or_mint,
+  q.decimals,
+  q.catalog_state,
+  a.symbol,
+  a.asset_class
+from public.campaign_graduation_quote_bindings b
+left join public.quote_asset_deployments q on q.id::text = lower(trim(b.quote_asset_id))
+left join public.quote_assets a on a.id = q.quote_asset_id
+where b.chain_id = $1 and b.campaign_address = $2
+limit 1`;
+
+/** Fallback for campaigns finalized before the binding table existed. */
 export const SOLANA_CAMPAIGN_QUOTE_SELECTION_SQL = `
 select
   d.id::text as draft_id,
+  'draft'::text as binding_source,
   s.quote_asset_id,
   s.policy_version,
   s.selected_state_version,
@@ -35,6 +58,7 @@ limit 1`;
 
 export type SolanaQuoteSelectionRow = {
   draft_id?: string | null;
+  binding_source?: string | null;
   quote_asset_id?: string | null;
   policy_version?: string | null;
   selected_state_version?: string | number | null;
@@ -68,6 +92,8 @@ export async function loadSolanaCampaignQuoteSelection(
 ): Promise<SolanaQuoteSelectionRow | null> {
   const campaign = String(input.campaignAddress || "").trim();
   if (!Number.isInteger(input.chainId) || !campaign) return null;
+  const bound = await db.query(SOLANA_CAMPAIGN_QUOTE_BINDING_SQL, [input.chainId, campaign]);
+  if (bound.rows[0]) return bound.rows[0] as SolanaQuoteSelectionRow;
   const result = await db.query(SOLANA_CAMPAIGN_QUOTE_SELECTION_SQL, [input.chainId, campaign]);
   return (result.rows[0] as SolanaQuoteSelectionRow | undefined) || null;
 }

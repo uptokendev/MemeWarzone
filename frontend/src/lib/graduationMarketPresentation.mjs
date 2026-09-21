@@ -282,6 +282,9 @@ export function directDeployBindPath(asset) {
   // remembered opaque catalog deployment id and switches to createBasicQuoteCampaignAuthorized
   // only after the server returns a signed BNB_BASIC_QUOTE binding.
   if (Number(asset?.chainId) === 56) return "native";
+  // Solana: the direct-create authorization carries the catalog id and the
+  // finalize step binds it to the campaign (campaign_graduation_quote_bindings).
+  if (Number(asset?.chainId) === 101) return "solana-quote";
   return null;
 }
 

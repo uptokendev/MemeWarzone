@@ -118,6 +118,8 @@ export async function authorizeSolanaDirectCreate(input: {
   discordUrl?: string | null;
   otherUrl?: string | null;
   graduationTargetUsdMicros: string | number | bigint;
+  /** Catalog deployment id of the chosen Graduation Market; the server validates and binds it to the campaign. */
+  graduationQuoteAssetId?: string | null;
 }): Promise<SolanaDirectAuthorizationResponse | (SolanaDirectBeginResponse & { alreadyOnChain: true })> {
   return postDirect({
     operation: "authorize",
@@ -133,6 +135,7 @@ export async function authorizeSolanaDirectCreate(input: {
     discordUrl: input.discordUrl || null,
     otherUrl: input.otherUrl || null,
     graduationTargetUsdMicros: String(input.graduationTargetUsdMicros),
+    ...(String(input.graduationQuoteAssetId || "").trim() ? { graduationQuoteAssetId: String(input.graduationQuoteAssetId).trim() } : {}),
   }) as Promise<SolanaDirectAuthorizationResponse | (SolanaDirectBeginResponse & { alreadyOnChain: true })>;
 }
 

@@ -25,10 +25,11 @@ test("BNB native Direct Deploy still uses launchpad.createCampaign after fresh c
   assert.match(create, /directDeployBindPath/);
 });
 
-test("Solana native Direct Deploy still uses the existing direct-create session path", () => {
+test("Solana Direct Deploy uses the direct-create session path and binds the chosen Graduation Market server-side", () => {
   assert.match(create, /preflightSolanaDirectCreate/);
   assert.match(create, /beginSolanaDirectCreate/);
-  assert.match(create, /directDeployBindPath\(graduationQuoteAsset\) !== "native"/);
+  assert.match(create, /\["native", "solana-quote"\]\.includes\(String\(directDeployBindPath\(graduationQuoteAsset\)\)\)/);
+  assert.match(create, /graduationQuoteAssetId: graduationQuoteAsset\.presentationDefault \? null : graduationQuoteAsset\.id/);
 });
 
 test("generic non-native Direct Deploy remains fail-closed", () => {

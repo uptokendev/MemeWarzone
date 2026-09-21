@@ -200,6 +200,13 @@ test("BNB catalog Direct Deploy uses the signed shared create surface; unrelated
     symbol: "USDC",
     chainId: "1",
   })), null);
+  assert.equal(directDeployBindPath(catalogQuote({
+    id: "a2100000-0000-4000-8000-000000000202",
+    identityKind: "SOLANA_MINT",
+    assetClass: "STABLECOIN",
+    symbol: "USDC",
+    chainId: "101",
+  })), "solana-quote");
   assert.equal(directDeployBindPath(catalogQuote({ newGraduationEligible: false })), null);
 });
 

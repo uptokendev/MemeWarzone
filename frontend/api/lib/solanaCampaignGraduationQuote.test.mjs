@@ -3,7 +3,10 @@ import test from "node:test";
 
 import {
   NATIVE_SOL_MINT,
+  SOLANA_CAMPAIGN_QUOTE_BINDING_SQL,
+  SOLANA_CAMPAIGN_QUOTE_BINDING_UPSERT_SQL,
   SOLANA_CAMPAIGN_QUOTE_SELECTION_SQL,
+  recordSolanaCampaignGraduationQuote,
   SolanaGraduationQuoteBindingError,
   decideSolanaGraduationQuoteConfigId,
   describeSolanaGraduationQuoteBinding,
@@ -113,17 +116,39 @@ test("operator dispatch: native campaigns use the native command, quote campaign
   assert.deepEqual(solanaGraduationOperatorEnv(describeSolanaGraduationQuoteBinding({ selection: null })), { SOLANA_GRADUATION_QUOTE_PROFILE: "native", SOLANA_GRADUATION_QUOTE_SYMBOL: "SOL", SOLANA_GRADUATION_QUOTE_MINT: NATIVE_SOL_MINT });
 });
 
-test("resolver queries by chain and campaign address and reads the newest selection", async () => {
+test("resolver reads the finalize binding first, then the legacy draft selection, then native", async () => {
   const calls = [];
-  const db = { query: async (sql, params) => { calls.push({ sql, params }); return { rows: [usdcSelection()] }; } };
-  const binding = await resolveSolanaCampaignGraduationQuote(db, { chainId: "101", campaignAddress: " CampaignPda ", nativeQuoteConfigId: SOL_ID });
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].sql, SOLANA_CAMPAIGN_QUOTE_SELECTION_SQL);
+  const direct = { query: async (sql, params) => { calls.push({ sql, params }); return { rows: [usdcSelection({ binding_source: "direct", draft_id: null })] }; } };
+  const bound = await resolveSolanaCampaignGraduationQuote(direct, { chainId: "101", campaignAddress: " CampaignPda ", nativeQuoteConfigId: SOL_ID });
+  assert.equal(calls.length, 1, "binding hit needs no draft query");
+  assert.equal(calls[0].sql, SOLANA_CAMPAIGN_QUOTE_BINDING_SQL);
   assert.deepEqual(calls[0].params, [101, "CampaignPda"]);
-  assert.match(calls[0].sql, /order by s\.updated_at desc\s+limit 1/);
-  assert.equal(binding.quoteConfigId, USDC_ID);
+  assert.equal(bound.quoteConfigId, USDC_ID);
+  assert.equal(bound.bindingSource, "direct");
+  assert.equal(bound.draftId, null);
+
+  calls.length = 0;
+  const legacy = { query: async (sql, params) => { calls.push({ sql, params }); return sql === SOLANA_CAMPAIGN_QUOTE_SELECTION_SQL ? { rows: [usdcSelection()] } : { rows: [] }; } };
+  const fromDraft = await resolveSolanaCampaignGraduationQuote(legacy, { chainId: 101, campaignAddress: "CampaignPda", nativeQuoteConfigId: SOL_ID });
+  assert.deepEqual(calls.map((c) => c.sql), [SOLANA_CAMPAIGN_QUOTE_BINDING_SQL, SOLANA_CAMPAIGN_QUOTE_SELECTION_SQL]);
+  assert.match(calls[1].sql, /order by s\.updated_at desc\s+limit 1/);
+  assert.equal(fromDraft.quoteConfigId, USDC_ID);
+  assert.equal(fromDraft.bindingSource, "draft");
+
   const empty = await resolveSolanaCampaignGraduationQuote({ query: async () => ({ rows: [] }) }, { chainId: 101, campaignAddress: "x", nativeQuoteConfigId: SOL_ID });
   assert.equal(empty.source, "native_default");
   const skipped = await resolveSolanaCampaignGraduationQuote({ query: async () => { throw new Error("must not query"); } }, { chainId: 101, campaignAddress: "", nativeQuoteConfigId: SOL_ID });
   assert.equal(skipped.source, "native_default");
+});
+
+test("recording a binding upserts a catalog reference keyed by chain and campaign", async () => {
+  const calls = [];
+  const db = { query: async (sql, params) => { calls.push({ sql, params }); return { rows: [{ ok: true }] }; } };
+  await recordSolanaCampaignGraduationQuote(db, { chainId: "101", campaignAddress: " Camp ", quoteAssetId: USDC_ID.toUpperCase(), selectedStateVersion: "3", policyVersion: 1, source: "direct" });
+  assert.equal(calls[0].sql, SOLANA_CAMPAIGN_QUOTE_BINDING_UPSERT_SQL);
+  assert.deepEqual(calls[0].params, [101, "Camp", USDC_ID, 3, "1", "direct", null]);
+  await recordSolanaCampaignGraduationQuote(db, { chainId: 101, campaignAddress: "Camp", quoteAssetId: SOL_ID, policyVersion: "solana-basic-sol-v1", source: "draft", draftId: "draft-1" });
+  assert.deepEqual(calls[1].params, [101, "Camp", SOL_ID, 0, "solana-basic-sol-v1", "draft", "draft-1"]);
+  await assert.rejects(() => recordSolanaCampaignGraduationQuote(db, { chainId: 101, campaignAddress: "Camp", quoteAssetId: "", policyVersion: "1", source: "direct" }), (error) => error instanceof SolanaGraduationQuoteBindingError);
+  await assert.rejects(() => recordSolanaCampaignGraduationQuote(db, { chainId: 101, campaignAddress: "Camp", quoteAssetId: USDC_ID, policyVersion: "1", source: "browser" }), (error) => error instanceof SolanaGraduationQuoteBindingError);
 });
