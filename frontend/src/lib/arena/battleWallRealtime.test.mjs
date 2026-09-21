@@ -399,8 +399,13 @@ test("Battle Wall Phase 3 wiring reuses existing realtime and effects without a 
   assert.match(wrapper, /useArenaBattleRealtimeDetails/);
   assert.doesNotMatch(wrapper, /BattleWallRealtimeV2/);
   assert.match(viewport, /IntersectionObserver/);
-  assert.match(details, /<BattleCombatEffects/);
-  assert.match(details, /useArenaBattleRealtimeDetails/);
+  // BattleDetails is a compatibility redirect since the Battle Wall focused
+  // route became the single canonical surface; the effects and realtime
+  // live in BattleWallModule, which /warzone/battles/:battleId mounts.
+  assert.match(details, /<Navigate/);
+  assert.match(details, /\/warzone\/battles\//);
+  assert.doesNotMatch(details, /BattleCombatEffects|useArenaBattleRealtimeDetails/);
+  assert.match(readSrc("../../App.tsx"), /path="\/warzone\/battles\/:battleId"/);
   assert.doesNotMatch(row, /BattleCombatEffects/);
   assert.doesNotMatch(row, /useAblyBattleChannel/);
   assert.doesNotMatch(wall, /calculateBattlePoints|marketCapWeight|50\/30\/20/);
