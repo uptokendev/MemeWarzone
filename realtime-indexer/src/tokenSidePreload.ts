@@ -326,7 +326,12 @@ const patchedTokenSummary = wrap(async (req, res) => {
          c.meta,
          coalesce(cms.market_stage, c.market_stage) as market_stage,
          coalesce(cms.dex_pair_address, c.meta->'solanaGraduation'->>'pool') as dex_pool,
-         c.meta->'solanaGraduation'->>'position' as dex_position
+         c.meta->'solanaGraduation'->>'position' as dex_position,
+         c.meta->'solanaGraduation'->>'quoteMint' as dex_quote_mint,
+         c.meta->'solanaGraduation'->>'quoteSymbol' as dex_quote_symbol,
+         nullif(c.meta->'solanaGraduation'->>'quoteDecimals', '')::int as dex_quote_decimals,
+         c.meta->'solanaGraduation'->>'quoteAssetType' as dex_quote_asset_type,
+         nullif(c.meta->'solanaGraduation'->>'quoteReferenceUsd', '')::numeric as dex_quote_reference_usd
        from public.campaigns c
        left join public.campaign_market_state cms
          on cms.chain_id = c.chain_id and cms.campaign_address = c.campaign_address
@@ -387,6 +392,11 @@ const patchedTokenSummary = wrap(async (req, res) => {
        campaign_state.market_stage,
        campaign_state.dex_pool,
        campaign_state.dex_position,
+       campaign_state.dex_quote_mint,
+       campaign_state.dex_quote_symbol,
+       campaign_state.dex_quote_decimals,
+       campaign_state.dex_quote_asset_type,
+       campaign_state.dex_quote_reference_usd,
        case
          when campaign_state.meta->'solanaGraduation'->>'liquidityLamports' is not null then
            (campaign_state.meta->'solanaGraduation'->>'liquidityLamports')::numeric / 1000000000::numeric

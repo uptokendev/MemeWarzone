@@ -28,6 +28,7 @@ import { publishCandle, publishLeague, publishStats, publishTrade } from "./ably
 import { createLeagueFeedPublisher } from "./leagueFeed.js";
 import { buildCampaignCreatedMessage } from "./solanaLeaguePublish.js";
 import { candleUpsertPayload } from "./candlePublish.js";
+import { loadSolanaQuoteAssetMeta } from "./solanaQuoteAssetMeta.js";
 import { TIMEFRAMES, bucketStart, type TF } from "./timeframes.js";
 import {
   SOLANA_MAINNET_GENESIS,
@@ -978,12 +979,22 @@ async function persistGraduation(
       ? new Date(Number(event.graduatedAt) * 1000)
       : blockTime;
 
+  // The quote side is whatever the creator chose at graduation; readers
+  // (swap indexer, token summary, trade page) take it from here, never from a
+  // WSOL assumption.
+  const quoteMeta = await loadSolanaQuoteAssetMeta(pool, { chainId: SOLANA_CHAIN_ID, quoteMint: event.quoteMint });
   const graduationMeta = {
     dex: "meteora-damm-v2",
     pool: event.meteoraPool,
     position: event.meteoraPosition,
     quoteMint: event.quoteMint,
     quoteConfigId: event.quoteConfigId,
+    quoteSymbol: quoteMeta.quoteSymbol,
+    quoteDecimals: quoteMeta.quoteDecimals,
+    quoteAssetClass: quoteMeta.quoteAssetClass,
+    quoteAssetType: quoteMeta.quoteAssetType,
+    quoteDeploymentId: quoteMeta.quoteDeploymentId,
+    quoteReferenceUsd: quoteMeta.quoteReferenceUsd,
     liquidityTokensRaw: event.liquidityTokens.toString(),
     liquidityLamports: event.liquidityLamports.toString(),
     liquidityQuoteRaw: event.liquidityQuoteRaw.toString(),
@@ -1050,6 +1061,11 @@ async function persistGraduation(
     dex: "meteora-damm-v2",
     dexPool: event.meteoraPool,
     dexPosition: event.meteoraPosition,
+    dexQuoteMint: quoteMeta.quoteMint,
+    dexQuoteSymbol: quoteMeta.quoteSymbol,
+    dexQuoteDecimals: quoteMeta.quoteDecimals,
+    dexQuoteAssetType: quoteMeta.quoteAssetType,
+    dexQuoteReferenceUsd: quoteMeta.quoteReferenceUsd,
     graduationLiquiditySol: toSol(event.liquidityLamports),
     graduationLiquidityTokensRaw: event.liquidityTokens.toString(),
     graduatedAt: graduatedAtChain.toISOString(),

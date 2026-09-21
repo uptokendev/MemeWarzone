@@ -16,6 +16,10 @@ export function useSolanaMeteoraMarket(input: {
   mint?: string;
   tokenDecimals: number;
   campaignTokenVault?: string | null;
+  /** Quote side of the pool (creator's Graduation Market). Omitted: derived from poolAddress, else WSOL. */
+  quoteMint?: string | null;
+  quoteDecimals?: number | null;
+  poolAddress?: string | null;
   enabled: boolean;
   /** Optional: bump after a confirmed trade to refresh spot only — never holders. */
   refreshToken?: number;
@@ -40,6 +44,9 @@ export function useSolanaMeteoraMarket(input: {
         const nextSpot = await fetchSolanaMeteoraPoolSnapshot({
           mint,
           tokenDecimals: input.tokenDecimals,
+          quoteMint: input.quoteMint ?? null,
+          quoteDecimals: input.quoteDecimals ?? null,
+          poolAddress: input.poolAddress ?? null,
         });
         if (cancelled) return null;
         vaultRef.current = nextSpot.tokenVault;
@@ -77,7 +84,7 @@ export function useSolanaMeteoraMarket(input: {
       window.clearInterval(spotTimer);
       window.clearInterval(holderTimer);
     };
-  }, [input.campaignTokenVault, input.enabled, input.mint, input.tokenDecimals]);
+  }, [input.campaignTokenVault, input.enabled, input.mint, input.poolAddress, input.quoteDecimals, input.quoteMint, input.tokenDecimals]);
 
   return { spot, holders };
 }

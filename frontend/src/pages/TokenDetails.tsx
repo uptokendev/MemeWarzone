@@ -33,6 +33,7 @@ import { useBnbUsdPrice } from "@/hooks/useBnbUsdPrice";
 import { useEthUsdPrice } from "@/hooks/useEthUsdPrice";
 import { useSolUsdPrice } from "@/hooks/useSolUsdPrice";
 import { useTokenStatsRealtime } from "@/hooks/useTokenStatsRealtime";
+import { solanaPoolQuoteFromStats } from "@/lib/solanaPoolQuote.mjs";
 import { UnifiedMarketChart } from "@/components/token/UnifiedMarketChart";
 import { GraduationExplosion } from "@/components/token/GraduationExplosion";
 import { useUnifiedMarket, type MarketResolution } from "@/hooks/useUnifiedMarket";
@@ -676,8 +677,40 @@ const TokenDetails = () => {
       chainId: chainIdForStorage,
     });
   }, [campaign, campaignAddr, campaignAddress, chainIdForStorage]);
-  /** Native unit for bonding quotes/UI: SOL on Solana, ETH on Robinhood, BNB on BNB. */
-  const nativeUnit = isSolanaPage ? "SOL" : isRobinhoodPage ? "ETH" : "BNB";
+  const resolvedCampaignAddress = useMemo(() => {
+    if (isSolanaPage) {
+      const pda = String(campaign?.campaign || "").trim();
+      const route = String(campaignAddr || campaignAddress || "").trim();
+      const mint = String(campaign?.token || "").trim();
+      if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(pda)) return pda;
+      if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(route) && route !== mint) return route;
+      return "";
+    }
+    const raw = String(campaign?.campaign || campaignAddr || "").trim();
+    const value = raw.toLowerCase();
+    return /^0x[a-f0-9]{40}$/.test(value) ? value : "";
+  }, [campaign?.campaign, campaign?.token, campaignAddr, campaignAddress, isSolanaPage]);
+
+  const hasValidCampaignAddress = Boolean(resolvedCampaignAddress);
+
+  // Realtime stats from Railway (price/marketcap/24h vol), patched via Ably.
+  const { stats: rtStats } = useTokenStatsRealtime(
+    hasValidCampaignAddress ? resolvedCampaignAddress : undefined,
+    chainIdForStorage,
+    hasValidCampaignAddress,
+  );
+  /**
+   * Quote side of a graduated Solana pool: the creator's Graduation Market
+   * (USDC etc.), recorded by the indexer at graduation. SOL while bonding and
+   * for every campaign graduated before Graduation Markets existed.
+   */
+  const solanaQuote = useMemo(
+    () => solanaPoolQuoteFromStats(rtStats),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rtStats?.dexQuoteMint, rtStats?.dexQuoteSymbol, rtStats?.dexQuoteDecimals, rtStats?.dexQuoteReferenceUsd],
+  );
+  /** Native unit for quotes/UI: SOL on Solana (the pool quote once graduated), ETH on Robinhood, BNB on BNB. */
+  const nativeUnit = isSolanaPage ? solanaQuote.symbol : isRobinhoodPage ? "ETH" : "BNB";
   const dexVenueLabel = isSolanaPage ? "Meteora" : isRobinhoodPage ? "Uniswap" : "Topaz";
   const walletMatchesCampaign = campaignWalletMatches({
     isSolanaCampaign: isSolanaPage,
@@ -846,6 +879,9 @@ const TokenDetails = () => {
     mint: isSolanaPage ? String(solanaCurve?.mint || campaign?.token || "") : "",
     tokenDecimals,
     campaignTokenVault: solanaCurve?.tokenVault ?? null,
+    quoteMint: solanaQuote.native ? null : solanaQuote.mint,
+    quoteDecimals: solanaQuote.native ? null : solanaQuote.decimals,
+    poolAddress: rtStats?.dexPool ?? null,
     enabled: isSolanaPage && Boolean(solanaCurve?.graduated),
   });
   const transferHolders = useTokenTransferHolders({
@@ -1268,7 +1304,7 @@ const TokenDetails = () => {
       // Solana uses 9-dec lamports; EVM bonding uses 18-dec wei. Prefer unit label over fake precision on Solana shell.
       if (isSolanaPage) {
         if (wei === 0n) return `0 ${nativeUnit}`;
-        const raw = ethers.formatUnits(wei, 9);
+        const raw = ethers.formatUnits(wei, solanaQuote.decimals);
         const n = Number(raw);
         if (!Number.isFinite(n)) return `${raw} ${nativeUnit}`;
         if (n >= 1) return `${n.toFixed(4)} ${nativeUnit}`;
@@ -1300,7 +1336,7 @@ const TokenDetails = () => {
     try {
       if (isSolanaPage) {
         if (wei === 0n) return `0 ${nativeUnit}`;
-        const raw = ethers.formatUnits(wei, 9);
+        const raw = ethers.formatUnits(wei, solanaQuote.decimals);
         const n = Number(raw);
         if (!Number.isFinite(n)) return `${raw} ${nativeUnit}`;
         if (n > 0 && n < 1e-9) return `<0.000000001 ${nativeUnit}`;
@@ -1475,21 +1511,6 @@ const TokenDetails = () => {
   };
 
   // Read curve trades for transactions + analytics (BNB + Solana).
-  const resolvedCampaignAddress = useMemo(() => {
-    if (isSolanaPage) {
-      const pda = String(campaign?.campaign || "").trim();
-      const route = String(campaignAddr || campaignAddress || "").trim();
-      const mint = String(campaign?.token || "").trim();
-      if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(pda)) return pda;
-      if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(route) && route !== mint) return route;
-      return "";
-    }
-    const raw = String(campaign?.campaign || campaignAddr || "").trim();
-    const value = raw.toLowerCase();
-    return /^0x[a-f0-9]{40}$/.test(value) ? value : "";
-  }, [campaign?.campaign, campaign?.token, campaignAddr, campaignAddress, isSolanaPage]);
-
-  const hasValidCampaignAddress = Boolean(resolvedCampaignAddress);
   const localTradeStorageAddress = useMemo(
     () =>
       isSolanaPage
@@ -1871,12 +1892,6 @@ const TokenDetails = () => {
     return Number.isFinite(spotSol) && spotSol > 0 ? spotSol : null;
   }, [isSolanaPage, solanaCurve]);
 
-  // Realtime stats from Railway (price/marketcap/24h vol), patched via Ably.
-const { stats: rtStats } = useTokenStatsRealtime(
-  hasValidCampaignAddress ? resolvedCampaignAddress : undefined,
-  chainIdForStorage,
-  hasValidCampaignAddress,
-);
 
   const latestSoldFromTrades = useMemo(() => {
     const points = Array.isArray(marketTradePoints) ? marketTradePoints : [];
@@ -2756,14 +2771,18 @@ const toSeconds = (ts: number): number => {
               String(import.meta.env.VITE_SOLANA_RPC || "").trim() || getPublicRpcUrl(SOLANA_CHAIN_ID),
               { commitment: "confirmed", disableRetryOnRateLimit: true },
             );
-            const lamports = BigInt(await connection.getBalance(new web3.PublicKey(pubkey)));
+            // The buy side spends the pool quote: SOL while bonding, the
+            // Graduation Market asset (USDC etc.) once graduated.
+            const spendRaw = solanaQuote.native
+              ? BigInt(await connection.getBalance(new web3.PublicKey(pubkey)))
+              : await getSolanaTokenBalanceRaw({ mint: solanaQuote.mint, owner: pubkey });
             const mint = String(campaign?.token || campaign?.campaign || "").trim();
             let tokenRaw = 0n;
             if (mint) {
               tokenRaw = await getSolanaTokenBalanceRaw({ mint, owner: pubkey });
             }
             if (!cancelled) {
-              setBnbBalanceWei(lamports);
+              setBnbBalanceWei(spendRaw);
               setTokenBalanceWei(tokenRaw);
             }
           } catch (e) {
@@ -2813,7 +2832,7 @@ const toSeconds = (ts: number): number => {
     return () => {
       cancelled = true;
     };
-  }, [readProvider, wallet.account, campaign?.token, campaign?.campaign, isSolanaPage, solanaBalanceTick, walletMatchesCampaign]);
+  }, [readProvider, wallet.account, campaign?.token, campaign?.campaign, isSolanaPage, solanaBalanceTick, solanaQuote.mint, solanaQuote.native, walletMatchesCampaign]);
 
   // Build transactions table rows from continuous market trade stream.
   useEffect(() => {
@@ -3174,9 +3193,11 @@ const toSeconds = (ts: number): number => {
               setQuoteLoading(true);
               const { quoteSolanaMeteoraExactIn } = await import("@/lib/solanaMeteoraTrade");
               const dec = Number(solanaCurve?.tokenDecimals ?? 6);
+              // Buy input is the pool quote: SOL, or the Graduation Market asset once graduated.
+              const quoteDec = contractGraduated ? solanaQuote.decimals : 9;
               const parseSol = (s: string) => {
                 const parts = s.split(".");
-                return BigInt(parts[0] || "0") * 1_000_000_000n + BigInt((parts[1] || "").slice(0, 9).padEnd(9, "0") || "0");
+                return BigInt(parts[0] || "0") * 10n ** BigInt(quoteDec) + BigInt((parts[1] || "").slice(0, quoteDec).padEnd(quoteDec, "0") || "0");
               };
               const parseTok = (s: string) => {
                 const parts = s.split(".");
@@ -3201,6 +3222,9 @@ const toSeconds = (ts: number): number => {
                 tokenDecimals: dec,
                 amountInRaw,
                 slippagePct: SLIPPAGE_PCT,
+                poolAddress: rtStats?.dexPool ?? null,
+                quoteMint: solanaQuote.native ? null : solanaQuote.mint,
+                quoteDecimals: solanaQuote.native ? null : solanaQuote.decimals,
               });
               if (cancelled) return;
               if (tradeTab === "buy") {
@@ -3698,23 +3722,26 @@ const toSeconds = (ts: number): number => {
         // Sell: tradeAmount is tokens.
         let amountIn: bigint;
         let minOut: bigint;
+        // Buy input is the pool quote: SOL while bonding, the Graduation Market asset once graduated.
+        const quoteDec = contractGraduated ? solanaQuote.decimals : 9;
+        const quoteUnit = contractGraduated ? solanaQuote.symbol : "SOL";
         if (tradeTab === "buy") {
           const solStr = String(tradeAmount || "0").trim();
           if (tradeInputDenom === "BNB") {
             const solParts = solStr.split(".");
             const whole = BigInt(solParts[0] || "0");
-            const frac = (solParts[1] || "").slice(0, 9).padEnd(9, "0");
-            amountIn = whole * 1_000_000_000n + BigInt(frac || "0");
+            const frac = (solParts[1] || "").slice(0, quoteDec).padEnd(quoteDec, "0");
+            amountIn = whole * 10n ** BigInt(quoteDec) + BigInt(frac || "0");
           } else {
             // Token-exact buy: use inverted quote as amountIn (SOL).
             amountIn = effectiveBnbWei > 0n ? effectiveBnbWei : 0n;
           }
-          if (amountIn <= 0n) throw new Error("Enter a SOL amount to buy.");
+          if (amountIn <= 0n) throw new Error(`Enter a ${quoteUnit} amount to buy.`);
           const estTokens = effectiveTokenWei > 0n ? effectiveTokenWei : 0n;
           minOut = applySlippageMinOut(estTokens, SLIPPAGE_PCT);
           toast({
             title: "Submitting Solana buy",
-            description: `Exact ${ethers.formatUnits(amountIn, 9)} SOL in → min ${formatTokenFromWei(minOut)} tokens.`,
+            description: `Exact ${ethers.formatUnits(amountIn, quoteDec)} ${quoteUnit} in → min ${formatTokenFromWei(minOut)} tokens.`,
           });
         } else {
           if (tradeInputDenom === "BNB") {
@@ -3762,6 +3789,9 @@ const toSeconds = (ts: number): number => {
               tokenDecimals: decimals,
               amountInRaw: amountIn,
               slippagePct: SLIPPAGE_PCT,
+              poolAddress: rtStats?.dexPool ?? null,
+              quoteMint: solanaQuote.native ? null : solanaQuote.mint,
+              quoteDecimals: solanaQuote.native ? null : solanaQuote.decimals,
             });
             const result = await executeSolanaMeteoraSwap({
               quote,

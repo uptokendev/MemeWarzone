@@ -14,6 +14,12 @@ export type TokenStatsRealtime = {
   dex?: string | null;
   dexPool?: string | null;
   dexPosition?: string | null;
+  /** Quote side of the graduated Solana pool (creator's Graduation Market); absent means SOL. */
+  dexQuoteMint?: string | null;
+  dexQuoteSymbol?: string | null;
+  dexQuoteDecimals?: number | null;
+  dexQuoteAssetType?: string | null;
+  dexQuoteReferenceUsd?: number | null;
   graduationLiquidityNative?: number | null;
   graduatedAt?: string | null;
   updatedAt?: string;
@@ -84,6 +90,11 @@ function statsFromSummaryRow(row: any): TokenStatsRealtime {
     dex: str(row?.dex),
     dexPool: str(row?.dexPool ?? row?.dex_pool),
     dexPosition: str(row?.dexPosition ?? row?.dex_position),
+    dexQuoteMint: str(row?.dexQuoteMint ?? row?.dex_quote_mint),
+    dexQuoteSymbol: str(row?.dexQuoteSymbol ?? row?.dex_quote_symbol),
+    dexQuoteDecimals: num(row?.dexQuoteDecimals ?? row?.dex_quote_decimals),
+    dexQuoteAssetType: str(row?.dexQuoteAssetType ?? row?.dex_quote_asset_type),
+    dexQuoteReferenceUsd: num(row?.dexQuoteReferenceUsd ?? row?.dex_quote_reference_usd),
     graduationLiquidityNative: num(
       row?.graduationLiquiditySol ?? row?.graduation_liquidity_sol ?? row?.graduationLiquidityNative,
     ),
@@ -123,6 +134,11 @@ function mergeRestStats(prev: TokenStatsRealtime | null, incoming: TokenStatsRea
     dex: incoming.dex ?? prev.dex ?? null,
     dexPool: incoming.dexPool ?? prev.dexPool ?? null,
     dexPosition: incoming.dexPosition ?? prev.dexPosition ?? null,
+    dexQuoteMint: incoming.dexQuoteMint ?? prev.dexQuoteMint ?? null,
+    dexQuoteSymbol: incoming.dexQuoteSymbol ?? prev.dexQuoteSymbol ?? null,
+    dexQuoteDecimals: incoming.dexQuoteDecimals ?? prev.dexQuoteDecimals ?? null,
+    dexQuoteAssetType: incoming.dexQuoteAssetType ?? prev.dexQuoteAssetType ?? null,
+    dexQuoteReferenceUsd: incoming.dexQuoteReferenceUsd ?? prev.dexQuoteReferenceUsd ?? null,
     graduationLiquidityNative: incoming.graduationLiquidityNative ?? prev.graduationLiquidityNative ?? null,
     graduatedAt: incoming.graduatedAt ?? prev.graduatedAt ?? null,
     updatedAt: incoming.updatedAt || prev.updatedAt || "",
@@ -220,6 +236,11 @@ export function useTokenStatsRealtime(campaignAddress?: string, chainId?: number
           dex: data.dex != null ? String(data.dex) : prev?.dex ?? null,
           dexPool: data.dexPool != null ? String(data.dexPool) : prev?.dexPool ?? null,
           dexPosition: data.dexPosition != null ? String(data.dexPosition) : prev?.dexPosition ?? null,
+          dexQuoteMint: str(data.dexQuoteMint) ?? prev?.dexQuoteMint ?? null,
+          dexQuoteSymbol: str(data.dexQuoteSymbol) ?? prev?.dexQuoteSymbol ?? null,
+          dexQuoteDecimals: num(data.dexQuoteDecimals) ?? prev?.dexQuoteDecimals ?? null,
+          dexQuoteAssetType: str(data.dexQuoteAssetType) ?? prev?.dexQuoteAssetType ?? null,
+          dexQuoteReferenceUsd: num(data.dexQuoteReferenceUsd) ?? prev?.dexQuoteReferenceUsd ?? null,
           graduationLiquidityNative:
             num(data.graduationLiquiditySol) ?? prev?.graduationLiquidityNative ?? null,
           graduatedAt:

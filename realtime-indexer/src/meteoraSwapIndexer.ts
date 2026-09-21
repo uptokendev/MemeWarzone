@@ -30,6 +30,11 @@ type GraduatedMarket = {
   token: string;
   pool: string;
   graduationSlot: number;
+  /** Quote side recorded at graduation (campaigns.meta.solanaGraduation); WSOL for pre-catalog campaigns. */
+  quoteMint: string;
+  quoteSymbol: string | null;
+  /** USD per whole quote unit from the catalog policy (stablecoins), else null. */
+  quoteReferenceUsd: number | null;
 };
 
 type RpcSignature = {
@@ -59,7 +64,7 @@ type MeteoraSwap = {
   currentTimestamp: bigint;
 };
 
-type PoolPair = { tokenA: string; tokenB: string; tokenDecimals: number };
+type PoolPair = { tokenA: string; tokenB: string; tokenDecimals: number; quoteMint: string; quoteDecimals: number };
 
 function parseRpcList(value: string): string[] {
   return String(value || "")
@@ -159,7 +164,10 @@ async function loadGraduatedMarkets(): Promise<GraduatedMarket[]> {
        campaign_address,
        token_address,
        meta #>> '{solanaGraduation,pool}' as pool_address,
-       coalesce(nullif(meta #>> '{solanaGraduation,slot}','')::bigint,0) as graduation_slot
+       coalesce(nullif(meta #>> '{solanaGraduation,slot}','')::bigint,0) as graduation_slot,
+       meta #>> '{solanaGraduation,quoteMint}' as quote_mint,
+       meta #>> '{solanaGraduation,quoteSymbol}' as quote_symbol,
+       meta #>> '{solanaGraduation,quoteReferenceUsd}' as quote_reference_usd
      from public.campaigns
      where chain_id=$1
        and meta #>> '{solanaGraduation,dex}' = 'meteora-damm-v2'
@@ -169,12 +177,18 @@ async function loadGraduatedMarkets(): Promise<GraduatedMarket[]> {
      limit $2`,
     [SOLANA_CHAIN_ID, limit],
   );
-  return result.rows.map((row) => ({
-    campaign: String(row.campaign_address),
-    token: String(row.token_address),
-    pool: String(row.pool_address),
-    graduationSlot: Number(row.graduation_slot || 0),
-  }));
+  return result.rows.map((row) => {
+    const reference = Number(row.quote_reference_usd);
+    return {
+      campaign: String(row.campaign_address),
+      token: String(row.token_address),
+      pool: String(row.pool_address),
+      graduationSlot: Number(row.graduation_slot || 0),
+      quoteMint: String(row.quote_mint || "").trim() || NATIVE_MINT,
+      quoteSymbol: String(row.quote_symbol || "").trim() || null,
+      quoteReferenceUsd: Number.isFinite(reference) && reference > 0 ? reference : null,
+    };
+  });
 }
 
 function cursorFor(poolAddress: string): string {
@@ -243,19 +257,37 @@ async function getAccountData(address: string): Promise<Buffer> {
   return Buffer.from(encoded, "base64");
 }
 
+/**
+ * The pool's two mints, with the launch token on one side. The chain says
+ * which asset sits on the other side; the recorded quote mint is compared to
+ * it and a mismatch is logged, because a campaign indexed before the
+ * CampaignGraduated decoder fix carries a garbage quote mint in its meta.
+ */
 async function loadPoolPair(market: GraduatedMarket): Promise<PoolPair> {
   const data = await getAccountData(market.pool);
   if (data.length < METEORA_POOL_MIN_LEN) throw new Error(`Meteora pool ${market.pool} is too short`);
   const tokenA = new PublicKey(data.subarray(METEORA_POOL_TOKEN_A_MINT_OFFSET, METEORA_POOL_TOKEN_A_MINT_OFFSET + 32)).toBase58();
   const tokenB = new PublicKey(data.subarray(METEORA_POOL_TOKEN_B_MINT_OFFSET, METEORA_POOL_TOKEN_B_MINT_OFFSET + 32)).toBase58();
-  const pairOk =
-    (tokenA === market.token && tokenB === NATIVE_MINT) ||
-    (tokenB === market.token && tokenA === NATIVE_MINT);
-  if (!pairOk) throw new Error(`Meteora pool ${market.pool} does not contain ${market.token}/WSOL`);
+  const quoteMint = tokenA === market.token ? tokenB : tokenB === market.token ? tokenA : null;
+  if (!quoteMint) throw new Error(`Meteora pool ${market.pool} does not contain ${market.token}`);
+  if (quoteMint !== market.quoteMint) {
+    console.warn("[meteora-indexer] recorded quote mint differs from the pool; using the pool's", {
+      campaign: market.campaign,
+      pool: market.pool,
+      recorded: market.quoteMint,
+      onChain: quoteMint,
+    });
+  }
 
   const mintData = await getAccountData(market.token);
   if (mintData.length <= 44) throw new Error(`launch mint ${market.token} is too short`);
-  return { tokenA, tokenB, tokenDecimals: mintData[44] };
+  let quoteDecimals = 9;
+  if (quoteMint !== NATIVE_MINT) {
+    const quoteMintData = await getAccountData(quoteMint);
+    if (quoteMintData.length <= 44) throw new Error(`quote mint ${quoteMint} is too short`);
+    quoteDecimals = quoteMintData[44];
+  }
+  return { tokenA, tokenB, tokenDecimals: mintData[44], quoteMint, quoteDecimals };
 }
 
 async function fixedBondingSupplyWhole(campaign: string, tokenDecimals: number): Promise<number> {
@@ -472,7 +504,7 @@ async function patchStats(campaign: string) {
   });
 }
 
-async function insertSwap(input: {
+type SwapInput = {
   market: GraduatedMarket;
   pair: PoolPair;
   fixedSupplyWhole: number;
@@ -482,12 +514,278 @@ async function insertSwap(input: {
   eventIndex: number;
   slot: number;
   blockTime: Date;
+};
+
+/**
+ * A swap on a pool whose quote is not SOL (USDC and the other catalog quotes).
+ *
+ * curve_trades and token_stats are SOL-denominated by definition, so these
+ * fills are not written there. They go to dex_trades with the generic quote
+ * columns the Robinhood quote pairs already use (quote amount, price in quote,
+ * USD from the catalog reference), plus quote-denominated candles, so
+ * market_trades_v, arena valuation and the chart all see them. The SOL stats
+ * row is left untouched rather than overwritten with quote numbers.
+ */
+async function insertQuoteSwap(input: SwapInput, isBuy: boolean) {
+  const quoteMint = input.pair.quoteMint;
+  const tokenRaw = isBuy ? input.swap.amountOutRaw : input.swap.amountInRaw;
+  const quoteRaw = isBuy ? input.swap.amountInRaw : input.swap.amountOutRaw;
+  if (tokenRaw <= 0n || quoteRaw <= 0n) return;
+  const tokenAmount = Number(tokenRaw) / 10 ** input.pair.tokenDecimals;
+  const quoteAmount = Number(quoteRaw) / 10 ** input.pair.quoteDecimals;
+  const priceQuote = tokenAmount > 0 ? quoteAmount / tokenAmount : 0;
+  if (!(priceQuote > 0)) return;
+  const logIndex = 20_000 + input.eventIndex;
+  const reference = input.market.quoteReferenceUsd;
+  const volumeUsd = reference != null ? quoteAmount * reference : null;
+  const priceUsd = reference != null ? priceQuote * reference : null;
+  const valuationHealthy = volumeUsd != null && priceUsd != null;
+
+  const inserted = await pool.query(
+    `insert into public.dex_trades(
+       chain_id,campaign_address,token_address,pair_address,tx_hash,log_index,block_number,block_hash,block_time,status,side,
+       sender_address,recipient_address,transaction_from,token_amount_raw,native_amount_raw,token_amount,native_amount,price_bnb,
+       base_amount_raw,quote_amount_raw,base_amount,quote_amount,price_quote,quote_asset_type,quote_token_address,
+       volume_usd,reference_price_usd,reference_price_updated_at,valuation_source,valuation_healthy,valuation_error,
+       execution_source,origin,created_at,updated_at
+     ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,'confirmed',$10,
+              $11,$11,$11,$12,null,$13,null,null,
+              $12,$14,$13,$15,$16,'OTHER',$17,
+              $18,$19,case when $19::numeric is null then null else $9::timestamptz end,$20,$21,$22,
+              'meteora_damm_v2','unknown',now(),now())
+     on conflict (chain_id,tx_hash,log_index) do nothing returning tx_hash`,
+    [
+      SOLANA_CHAIN_ID,
+      input.market.campaign,
+      input.market.token,
+      input.market.pool,
+      input.signature,
+      logIndex,
+      input.slot,
+      // Solana exposes no block hash here; the column is only read by EVM reorg handling.
+      `slot:${input.slot}`,
+      input.blockTime,
+      isBuy ? "buy" : "sell",
+      input.wallet,
+      tokenRaw.toString(),
+      tokenAmount,
+      quoteRaw.toString(),
+      quoteAmount,
+      priceQuote,
+      quoteMint,
+      volumeUsd,
+      reference,
+      reference != null ? "catalog_reference" : null,
+      valuationHealthy,
+      valuationHealthy ? null : "Quote asset has no catalog USD reference.",
+    ],
+  );
+  if ((inserted.rowCount ?? 0) === 0) return;
+
+  const feeRaw =
+    input.swap.protocolFeeRaw +
+    input.swap.claimingFeeRaw +
+    input.swap.compoundingFeeRaw +
+    input.swap.referralFeeRaw;
+  await touchCampaignActivity(input.market.campaign, input.blockTime);
+  await insertActivityEvent({
+    eventType: isBuy ? "BUY" : "SELL",
+    txHash: input.signature,
+    logIndex,
+    blockNumber: input.slot,
+    blockTime: input.blockTime,
+    actor: input.wallet,
+    campaign: input.market.campaign,
+    token: input.market.token,
+    tokenRaw,
+    nativeRaw: quoteRaw,
+    meta: {
+      venue: "meteora-damm-v2",
+      pool: input.market.pool,
+      tradeDirection: input.swap.tradeDirection,
+      quoteMint,
+      quoteSymbol: input.market.quoteSymbol,
+      quoteDecimals: input.pair.quoteDecimals,
+      priceQuote,
+      meteoraFeeRaw: feeRaw.toString(),
+      protocolFeeRaw: input.swap.protocolFeeRaw.toString(),
+      claimingFeeRaw: input.swap.claimingFeeRaw.toString(),
+      compoundingFeeRaw: input.swap.compoundingFeeRaw.toString(),
+      referralFeeRaw: input.swap.referralFeeRaw.toString(),
+      eventTimestamp: input.swap.currentTimestamp.toString(),
+    },
+  });
+
+  void publishTrade(SOLANA_CHAIN_ID, input.market.campaign, {
+    tx_hash: input.signature,
+    log_index: logIndex,
+    block_number: input.slot,
+    block_time: input.blockTime.toISOString(),
+    side: isBuy ? "buy" : "sell",
+    wallet: input.wallet,
+    token_amount_raw: tokenRaw.toString(),
+    bnb_amount_raw: null,
+    token_amount: tokenAmount,
+    bnb_amount: null,
+    price_bnb: null,
+    quote_amount_raw: quoteRaw.toString(),
+    quote_amount: quoteAmount,
+    price_quote: priceQuote,
+    quote_token_address: quoteMint,
+    quote_symbol: input.market.quoteSymbol,
+    quote_decimals: input.pair.quoteDecimals,
+    price_usd: priceUsd,
+    volume_usd: volumeUsd,
+    venue: "meteora-damm-v2",
+  }).catch(() => undefined);
+  leagueFeed.queueActivity(SOLANA_CHAIN_ID, input.market.campaign, Math.floor(input.blockTime.getTime() / 1000));
+
+  const tsSec = Math.floor(input.blockTime.getTime() / 1000);
+  for (const tf of TIMEFRAMES) {
+    await upsertQuoteCandle({
+      campaign: input.market.campaign,
+      tf,
+      bucketSec: bucketStart(tsSec, tf),
+      priceQuote,
+      volumeQuote: quoteAmount,
+      fixedSupplyWhole: input.fixedSupplyWhole,
+      blockNumber: input.slot,
+      logIndex,
+      quoteMint,
+      priceUsd,
+      volumeUsd,
+      referenceUsd: reference,
+    });
+  }
+  void publishStats(SOLANA_CHAIN_ID, input.market.campaign, {
+    type: "stats_patch",
+    graduated: true,
+    dex: "meteora-damm-v2",
+    dexPool: input.market.pool,
+    dexQuoteMint: quoteMint,
+    dexQuoteSymbol: input.market.quoteSymbol,
+    dexQuoteDecimals: input.pair.quoteDecimals,
+    dexQuoteAssetType: "OTHER",
+    dexQuoteReferenceUsd: reference,
+    lastPriceQuote: String(priceQuote),
+    lastPriceUsd: priceUsd != null ? String(priceUsd) : null,
+    updatedAt: new Date().toISOString(),
+  }).catch(() => undefined);
+}
+
+async function upsertQuoteCandle(input: {
+  campaign: string;
+  tf: TF;
+  bucketSec: number;
+  priceQuote: number;
+  volumeQuote: number;
+  fixedSupplyWhole: number;
+  blockNumber: number;
+  logIndex: number;
+  quoteMint: string;
+  priceUsd: number | null;
+  volumeUsd: number | null;
+  referenceUsd: number | null;
 }) {
+  const mcapQuote = Number.isFinite(input.fixedSupplyWhole) && input.fixedSupplyWhole > 0
+    ? input.priceQuote * input.fixedSupplyWhole
+    : null;
+  const written = await pool.query(
+    `insert into public.token_candles(
+       chain_id,campaign_address,timeframe,bucket_start,o,h,l,c,volume_bnb,trades_count,
+       source_mask,bonding_trade_count,dex_trade_count,bonding_volume_bnb,dex_volume_bnb,
+       last_block_number,last_log_index,
+       price_o,price_h,price_l,price_c,mcap_o,mcap_h,mcap_l,mcap_c,
+       quote_token_address,quote_asset_type,volume_quote,dex_volume_quote,
+       o_usd,h_usd,l_usd,c_usd,volume_usd,reference_price_usd,reference_price_updated_at,valuation_source,valuation_healthy,
+       canonical_version,canonical_updated_at
+     ) values(
+       $1,$2,$3,$4,$5,$5,$5,$5,0,1,
+       2,0,1,0,0,
+       $6,$7,
+       $5,$5,$5,$5,$8,$8,$8,$8,
+       $9,'OTHER',$10,$10,
+       $11,$11,$11,$11,coalesce($12::numeric,0),$13,case when $13::numeric is null then null else now() end,$14,$15,
+       3,now()
+     )
+     on conflict (chain_id,campaign_address,timeframe,bucket_start) do update set
+       h=greatest(public.token_candles.h,excluded.h),
+       l=least(public.token_candles.l,excluded.l),
+       c=excluded.c,
+       trades_count=public.token_candles.trades_count+1,
+       source_mask=((coalesce(public.token_candles.source_mask,0)::int | 2)::smallint),
+       bonding_trade_count=coalesce(public.token_candles.bonding_trade_count,0),
+       dex_trade_count=coalesce(public.token_candles.dex_trade_count,0)+1,
+       last_block_number=excluded.last_block_number,
+       last_log_index=excluded.last_log_index,
+       price_o=coalesce(public.token_candles.price_o,excluded.price_o),
+       price_h=greatest(coalesce(public.token_candles.price_h,excluded.price_h),excluded.price_h),
+       price_l=least(coalesce(public.token_candles.price_l,excluded.price_l),excluded.price_l),
+       price_c=excluded.price_c,
+       mcap_o=coalesce(public.token_candles.mcap_o,excluded.mcap_o),
+       mcap_h=case
+         when excluded.mcap_h is null then public.token_candles.mcap_h
+         else greatest(coalesce(public.token_candles.mcap_h,excluded.mcap_h),excluded.mcap_h)
+       end,
+       mcap_l=case
+         when excluded.mcap_l is null then public.token_candles.mcap_l
+         else least(coalesce(public.token_candles.mcap_l,excluded.mcap_l),excluded.mcap_l)
+       end,
+       mcap_c=coalesce(excluded.mcap_c,public.token_candles.mcap_c),
+       quote_token_address=excluded.quote_token_address,
+       quote_asset_type=excluded.quote_asset_type,
+       volume_quote=coalesce(public.token_candles.volume_quote,0)+excluded.volume_quote,
+       dex_volume_quote=coalesce(public.token_candles.dex_volume_quote,0)+excluded.dex_volume_quote,
+       o_usd=coalesce(public.token_candles.o_usd,excluded.o_usd),
+       h_usd=case when excluded.h_usd is null then public.token_candles.h_usd when public.token_candles.h_usd is null then excluded.h_usd else greatest(public.token_candles.h_usd,excluded.h_usd) end,
+       l_usd=case when excluded.l_usd is null then public.token_candles.l_usd when public.token_candles.l_usd is null then excluded.l_usd else least(public.token_candles.l_usd,excluded.l_usd) end,
+       c_usd=coalesce(excluded.c_usd,public.token_candles.c_usd),
+       volume_usd=coalesce(public.token_candles.volume_usd,0)+excluded.volume_usd,
+       reference_price_usd=coalesce(excluded.reference_price_usd,public.token_candles.reference_price_usd),
+       reference_price_updated_at=coalesce(excluded.reference_price_updated_at,public.token_candles.reference_price_updated_at),
+       valuation_source=coalesce(excluded.valuation_source,public.token_candles.valuation_source),
+       valuation_healthy=coalesce(public.token_candles.valuation_healthy,true) and coalesce(excluded.valuation_healthy,false),
+       canonical_version=greatest(coalesce(public.token_candles.canonical_version,0),excluded.canonical_version),
+       canonical_updated_at=now(),
+       updated_at=now()
+     returning o,h,l,c,volume_quote,trades_count`,
+    [
+      SOLANA_CHAIN_ID,
+      input.campaign,
+      input.tf,
+      new Date(input.bucketSec * 1000),
+      input.priceQuote,
+      input.blockNumber,
+      input.logIndex,
+      mcapQuote,
+      input.quoteMint,
+      input.volumeQuote,
+      input.priceUsd,
+      input.volumeUsd,
+      input.referenceUsd,
+      input.referenceUsd != null ? "catalog_reference" : null,
+      input.priceUsd != null,
+    ],
+  );
+  const row = written.rows[0] || { o: input.priceQuote, h: input.priceQuote, l: input.priceQuote, c: input.priceQuote, volume_quote: input.volumeQuote, trades_count: 1 };
+  void publishCandle(
+    SOLANA_CHAIN_ID,
+    input.campaign,
+    candleUpsertPayload(input.tf, input.bucketSec, { ...row, volume_bnb: row.volume_quote }),
+  ).catch(() => undefined);
+}
+
+async function insertSwap(input: SwapInput) {
   const inputMint = input.swap.tradeDirection === 0 ? input.pair.tokenA : input.pair.tokenB;
   const outputMint = input.swap.tradeDirection === 0 ? input.pair.tokenB : input.pair.tokenA;
-  const isBuy = inputMint === NATIVE_MINT && outputMint === input.market.token;
-  const isSell = inputMint === input.market.token && outputMint === NATIVE_MINT;
+  const quoteMint = input.pair.quoteMint;
+  const isBuy = inputMint === quoteMint && outputMint === input.market.token;
+  const isSell = inputMint === input.market.token && outputMint === quoteMint;
   if (!isBuy && !isSell) return;
+  if (quoteMint !== NATIVE_MINT) {
+    await insertQuoteSwap(input, isBuy);
+    return;
+  }
 
   const tokenRaw = isBuy ? input.swap.amountOutRaw : input.swap.amountInRaw;
   const nativeRaw = isBuy ? input.swap.amountInRaw : input.swap.amountOutRaw;

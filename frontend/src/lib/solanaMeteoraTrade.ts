@@ -47,6 +47,9 @@ export type SolanaMeteoraQuote = {
   pool: string;
   inputMint: string;
   outputMint: string;
+  /** Quote side of the pool: WSOL, or the creator's Graduation Market asset. */
+  quoteMint: string;
+  quoteDecimals: number;
   amountInRaw: bigint;
   amountOutRaw: bigint;
   minimumAmountOutRaw: bigint;
@@ -59,6 +62,8 @@ type LoadedMarket = {
   cpAmm: CpAmm;
   pool: PublicKey;
   mint: PublicKey;
+  quoteMint: PublicKey;
+  quoteDecimals: number;
   poolState: Awaited<ReturnType<CpAmm["fetchPoolState"]>>;
   tokenADecimals: number;
   tokenBDecimals: number;
@@ -78,39 +83,79 @@ function assertPositiveRaw(value: bigint, label: string) {
   if (value > 18_446_744_073_709_551_615n) throw new Error(`${label} exceeds u64.`);
 }
 
-function tokenDecimalsForMint(mint: PublicKey, launchMint: PublicKey, launchDecimals: number): number {
-  if (mint.equals(launchMint)) return launchDecimals;
-  if (mint.equals(NATIVE_MINT)) return 9;
-  throw new Error(`Unexpected Meteora pool mint ${mint.toBase58()}.`);
+async function readMintDecimals(connection: Connection, mint: PublicKey): Promise<number> {
+  const info = await connection.getParsedAccountInfo(mint, "confirmed");
+  const data = info.value?.data as { parsed?: { info?: { decimals?: unknown } } } | Buffer | null | undefined;
+  const decimals = Number((data && !Buffer.isBuffer(data) ? data.parsed?.info?.decimals : undefined) ?? NaN);
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 18) {
+    throw new Error(`Could not read the decimals of quote mint ${mint.toBase58()}.`);
+  }
+  return decimals;
 }
 
+/**
+ * Resolve and verify the campaign's DAMM v2 market.
+ *
+ * The quote is the asset the creator chose as Graduation Market: `quoteMint`
+ * when the caller knows it, otherwise the other mint of the indexed pool when
+ * a pool address is given, otherwise WSOL (every campaign graduated before
+ * Graduation Markets existed). Whatever the source, the pool must be the
+ * deterministic pool for (launch mint, quote mint); anything else is refused.
+ */
 async function loadVerifiedMarket(input: {
   mint: string;
   tokenDecimals: number;
   poolAddress?: string | null;
+  quoteMint?: string | null;
+  quoteDecimals?: number | null;
 }): Promise<LoadedMarket> {
   const connection = getSolanaReadConnection();
-  const mint = new PublicKey(input.mint);
-  const expectedPool = deriveCustomizablePoolAddress(mint, NATIVE_MINT);
-  if (input.poolAddress && !new PublicKey(input.poolAddress).equals(expectedPool)) {
-    throw new Error("Indexed Meteora pool does not match the deterministic launch-token/SOL pool.");
-  }
-
   const cpAmm = new CpAmm(connection);
-  const poolState = await cpAmm.fetchPoolState(expectedPool);
+  const mint = new PublicKey(input.mint);
+  const requestedPool = String(input.poolAddress || "").trim() ? new PublicKey(String(input.poolAddress).trim()) : null;
+
+  let quoteMint: PublicKey;
+  let poolState: LoadedMarket["poolState"] | null = null;
+  if (String(input.quoteMint || "").trim()) {
+    quoteMint = new PublicKey(String(input.quoteMint).trim());
+  } else if (requestedPool) {
+    poolState = await cpAmm.fetchPoolState(requestedPool);
+    if (poolState.tokenAMint.equals(mint)) quoteMint = poolState.tokenBMint;
+    else if (poolState.tokenBMint.equals(mint)) quoteMint = poolState.tokenAMint;
+    else throw new Error("Meteora pool token pair does not match this campaign.");
+  } else {
+    quoteMint = NATIVE_MINT;
+  }
+  if (quoteMint.equals(mint)) throw new Error("Meteora quote mint cannot be the launch mint.");
+
+  const expectedPool = deriveCustomizablePoolAddress(mint, quoteMint);
+  if (requestedPool && !requestedPool.equals(expectedPool)) {
+    throw new Error("Indexed Meteora pool does not match the deterministic launch-token/quote pool.");
+  }
+  if (!poolState) poolState = await cpAmm.fetchPoolState(expectedPool);
   const pairOk =
-    (poolState.tokenAMint.equals(mint) && poolState.tokenBMint.equals(NATIVE_MINT)) ||
-    (poolState.tokenBMint.equals(mint) && poolState.tokenAMint.equals(NATIVE_MINT));
+    (poolState.tokenAMint.equals(mint) && poolState.tokenBMint.equals(quoteMint)) ||
+    (poolState.tokenBMint.equals(mint) && poolState.tokenAMint.equals(quoteMint));
   if (!pairOk) throw new Error("Meteora pool token pair does not match this campaign.");
+
+  const givenQuoteDecimals = Number(input.quoteDecimals);
+  const quoteDecimals = quoteMint.equals(NATIVE_MINT)
+    ? 9
+    : Number.isInteger(givenQuoteDecimals) && givenQuoteDecimals >= 0
+      ? givenQuoteDecimals
+      : await readMintDecimals(connection, quoteMint);
+  const decimalsFor = (candidate: PublicKey) => (candidate.equals(mint) ? input.tokenDecimals : quoteDecimals);
 
   return {
     connection,
     cpAmm,
     pool: expectedPool,
     mint,
+    quoteMint,
+    quoteDecimals,
     poolState,
-    tokenADecimals: tokenDecimalsForMint(poolState.tokenAMint, mint, input.tokenDecimals),
-    tokenBDecimals: tokenDecimalsForMint(poolState.tokenBMint, mint, input.tokenDecimals),
+    tokenADecimals: decimalsFor(poolState.tokenAMint),
+    tokenBDecimals: decimalsFor(poolState.tokenBMint),
   };
 }
 
@@ -121,8 +166,8 @@ async function exactInQuote(
   slippagePct: number,
 ): Promise<SolanaMeteoraQuote> {
   assertPositiveRaw(amountInRaw, "Swap input");
-  const inputMint = side === "buy" ? NATIVE_MINT : market.mint;
-  const outputMint = side === "buy" ? market.mint : NATIVE_MINT;
+  const inputMint = side === "buy" ? market.quoteMint : market.mint;
+  const outputMint = side === "buy" ? market.mint : market.quoteMint;
   const currentSlot = await market.connection.getSlot("confirmed");
   const blockTime = (await market.connection.getBlockTime(currentSlot)) ?? Math.floor(Date.now() / 1000);
   const quote = await market.cpAmm.getQuote({
@@ -141,6 +186,8 @@ async function exactInQuote(
     pool: market.pool.toBase58(),
     inputMint: inputMint.toBase58(),
     outputMint: outputMint.toBase58(),
+    quoteMint: market.quoteMint.toBase58(),
+    quoteDecimals: market.quoteDecimals,
     amountInRaw,
     amountOutRaw: toBigInt(quote.swapOutAmount),
     minimumAmountOutRaw: toBigInt(quote.minSwapOutAmount),
@@ -152,18 +199,26 @@ async function exactInQuote(
 export type SolanaMeteoraPoolSnapshot = {
   pool: string;
   tokenVault: string;
+  /** Quote-side vault. Named for the SOL pools this started with; it is the quote vault on every pool. */
   nativeVault: string;
   tokenReserveRaw: bigint;
   nativeReserveRaw: bigint;
+  /** Spot price and 2x quote-side liquidity in quote units (SOL on SOL pools). */
   priceSol: number;
   liquiditySol: number;
+  quoteMint: string;
+  quoteDecimals: number;
+  priceQuote: number;
+  liquidityQuote: number;
 };
 
-/** Live DAMM v2 reserves → spot SOL/token and 2× SOL-side liquidity. */
+/** Live DAMM v2 reserves → spot quote/token and 2× quote-side liquidity. */
 export async function fetchSolanaMeteoraPoolSnapshot(input: {
   mint: string;
   tokenDecimals: number;
   poolAddress?: string | null;
+  quoteMint?: string | null;
+  quoteDecimals?: number | null;
 }): Promise<SolanaMeteoraPoolSnapshot> {
   const market = await loadVerifiedMarket(input);
   const tokenIsA = market.poolState.tokenAMint.equals(market.mint);
@@ -178,14 +233,20 @@ export async function fetchSolanaMeteoraPoolSnapshot(input: {
   const tokenWhole = Number(tokenBal.value.uiAmount ?? 0);
   const nativeWhole = Number(nativeBal.value.uiAmount ?? 0);
   const priceSol = tokenWhole > 0 ? nativeWhole / tokenWhole : 0;
+  const priceQuote = Number.isFinite(priceSol) && priceSol > 0 ? priceSol : 0;
+  const liquidityQuote = Number.isFinite(nativeWhole) && nativeWhole > 0 ? nativeWhole * 2 : 0;
   return {
     pool: market.pool.toBase58(),
     tokenVault: tokenVault.toBase58(),
     nativeVault: nativeVault.toBase58(),
     tokenReserveRaw,
     nativeReserveRaw,
-    priceSol: Number.isFinite(priceSol) && priceSol > 0 ? priceSol : 0,
-    liquiditySol: Number.isFinite(nativeWhole) && nativeWhole > 0 ? nativeWhole * 2 : 0,
+    priceSol: priceQuote,
+    liquiditySol: liquidityQuote,
+    quoteMint: market.quoteMint.toBase58(),
+    quoteDecimals: market.quoteDecimals,
+    priceQuote,
+    liquidityQuote,
   };
 }
 
@@ -200,6 +261,8 @@ export async function quoteSolanaMeteoraExactIn(input: {
   amountInRaw: bigint;
   slippagePct: number;
   poolAddress?: string | null;
+  quoteMint?: string | null;
+  quoteDecimals?: number | null;
 }): Promise<SolanaMeteoraQuote> {
   const market = await loadVerifiedMarket(input);
   return exactInQuote(market, input.side, input.amountInRaw, input.slippagePct);
@@ -217,6 +280,8 @@ export async function quoteSolanaMeteoraForDesiredOutput(input: {
   desiredOutputRaw: bigint;
   slippagePct: number;
   poolAddress?: string | null;
+  quoteMint?: string | null;
+  quoteDecimals?: number | null;
 }): Promise<SolanaMeteoraQuote> {
   assertPositiveRaw(input.desiredOutputRaw, "Desired output");
   const market = await loadVerifiedMarket(input);
@@ -365,11 +430,13 @@ export async function executeSolanaMeteoraSwap(input: {
     mint: input.mint,
     tokenDecimals: input.tokenDecimals,
     poolAddress: input.poolAddress || input.quote.pool,
+    quoteMint: input.quote.quoteMint,
+    quoteDecimals: input.quote.quoteDecimals,
   });
   if (market.pool.toBase58() !== input.quote.pool) throw new Error("Meteora quote pool changed.");
 
-  const expectedInputMint = input.quote.side === "buy" ? NATIVE_MINT : market.mint;
-  const expectedOutputMint = input.quote.side === "buy" ? market.mint : NATIVE_MINT;
+  const expectedInputMint = input.quote.side === "buy" ? market.quoteMint : market.mint;
+  const expectedOutputMint = input.quote.side === "buy" ? market.mint : market.quoteMint;
   if (input.quote.inputMint !== expectedInputMint.toBase58()) throw new Error("Meteora quote input mint changed.");
   if (input.quote.outputMint !== expectedOutputMint.toBase58()) throw new Error("Meteora quote output mint changed.");
   assertPositiveRaw(input.quote.amountInRaw, "Swap input");
