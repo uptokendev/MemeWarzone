@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# Apply the arena schema catch-up to production (2026-09-21).
+# Port the arena schema to the PRODUCTION Supabase project (2026-09-21).
 #
-# Production (ellkfgoxnzykxqybajtn) never received the arena migrations from
-# 20260827 onward: arena_battles lacks battle_mode / money_winner_token /
-# settled_at / contest_scoring_version, and arena_contest_actions,
-# arena_vote_tiebreaks, arena_battle_metrics, arena_battle_points_v3,
-# arena_solana_boost_quotes, arena_battle_scoring_locks, the championship and
-# MWL tables and token_holder_balances do not exist. The API code on the live
-# branch selects all of them; the feature flags being off is the only reason
-# nothing 500s today.
+# The live branch runs against the staging project (vrnsbguutnwgtekcexls);
+# the production project (ellkfgoxnzykxqybajtn) never received the arena
+# migrations from 20260827 onward: arena_battles lacks battle_mode /
+# money_winner_token / settled_at / contest_scoring_version, and
+# arena_contest_actions, arena_vote_tiebreaks, arena_battle_metrics,
+# arena_battle_points_v3, arena_solana_boost_quotes,
+# arena_battle_scoring_locks, the championship and MWL tables and
+# token_holder_balances do not exist. This is the port bundle for the day
+# the app is moved to production. Re-diff staging first: whatever staging
+# carries beyond these files (SQL-editor changes) must be added here.
 #
 # Audited before writing this:
 #   - no drop table / truncate / delete / drop column in any file
