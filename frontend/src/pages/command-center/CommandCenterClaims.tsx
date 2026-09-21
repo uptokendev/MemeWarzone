@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { CommandCenterCard } from "@/components/command-center/CommandCenterCard";
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
+import { CreatorFeesPanel } from "@/components/command-center/CreatorFeesPanel";
 import { RecruiterNativePayoutsPanel } from "@/components/command-center/RecruiterNativePayoutsPanel";
 import { ArenaWarPoolClaimButton } from "@/components/arena/ArenaWarPoolClaimButton";
 import { useWallet } from "@/contexts/WalletContext";
@@ -779,6 +780,7 @@ export default function CommandCenterClaims() {
       ) : null}
 
       {showRecruiterRewards ? <RecruiterNativePayoutsPanel /> : null}
+      <CreatorFeesPanel />
     </div>
   );
 }
