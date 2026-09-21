@@ -14,6 +14,12 @@ import { pool } from "./db.js";
 import { ENV } from "./env.js";
 import { deriveFeeEscrowAddress } from "./solanaIndexer.js";
 import { ACQUIRE_LEASE_SQL, CLAIM_FLUSH_SQL, CLAIM_INIT_SQL } from "./solanaFeeEscrowClaimSql.js";
+import {
+  TRADE_AUTHORIZATION_BYTES,
+  chunk,
+  decodeTradeAuthorization,
+  selectExpiredAuthorizations,
+} from "./solanaTradeAuthSweep.js";
 
 const SOLANA_CHAIN_ID = 101;
 const DEFAULT_PROGRAM_ID = "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt";
@@ -26,10 +32,19 @@ const DEFAULT_FLUSH_THRESHOLD_LAMPORTS = 10_000_000n;
 const LEASE_TTL_SECONDS = 60;
 const OWNER_ID = `${os.hostname()}:${process.pid}:${randomUUID()}`;
 const INIT_BACKOFF_SECONDS = [15, 30, 60, 120, 300];
+// A campaign with no account on-chain will not grow one; retry once a week,
+// not every five minutes. Fourteen "hidden-*" placeholders were burning a
+// failed simulation each on every backoff.
+const ABANDON_RETRY_SECONDS = 7 * 24 * 3600;
+// Chain sweep of expired TradeAuthorization PDAs: how often, how many per tx.
+const TRADE_AUTH_SWEEP_GRACE_SECONDS = 30;
+const TRADE_AUTH_CLOSES_PER_TX = 6;
+const TRADE_AUTH_MAX_TXS_PER_SWEEP = 5;
 
 let workerStarted = false;
 let tickRunning = false;
 let tickCount = 0;
+let lastTradeAuthSweepMs = 0;
 
 const INIT_DISC = createHash("sha256").update("global:initialize_fee_escrow").digest().subarray(0, 8);
 const INIT_CREATOR_VAULT_DISC = createHash("sha256")
@@ -91,6 +106,10 @@ async function acquireLease(): Promise<boolean> {
 
 function flushMaxAgeMs(): number {
   return Math.max(1_000, Number(process.env.SOLANA_FEE_ESCROW_FLUSH_MAX_AGE_MS || 120_000));
+}
+
+function tradeAuthSweepIntervalMs(): number {
+  return Math.max(60_000, Number(process.env.SOLANA_TRADE_AUTH_SWEEP_INTERVAL_MS || 300_000));
 }
 
 function loadPayer(): Keypair | null {
@@ -155,6 +174,39 @@ async function markInit(
       attempts,
       status === "failed" ? initBackoffSeconds(attempts) : 0,
     ],
+  );
+}
+
+// The campaign account does not exist on-chain: nothing to initialize and
+// nothing to flush. Park the row for a week instead of retrying on the
+// five-minute backoff; the status stays 'failed' so the table's CHECK holds.
+async function markAbandoned(campaign: string, reason: string) {
+  await pool.query(
+    `update public.solana_fee_escrow_accruals
+        set init_status='failed',
+            flush_status='idle',
+            last_error=$3,
+            last_init_attempt_at = now(),
+            next_init_attempt_at = now() + make_interval(secs => $4),
+            updated_at=now()
+      where chain_id=$1 and campaign_address=$2`,
+    [SOLANA_CHAIN_ID, campaign, reason, ABANDON_RETRY_SECONDS],
+  );
+}
+
+// The campaign exists but its escrow does not (never initialized, or the
+// row was marked initialized by mistake). Send it back through init instead
+// of failing every flush with FeeEscrowNotInitialized.
+async function requeueInit(campaign: string, reason: string) {
+  await pool.query(
+    `update public.solana_fee_escrow_accruals
+        set init_status='pending',
+            flush_status='idle',
+            last_error=$3,
+            next_init_attempt_at = null,
+            updated_at=now()
+      where chain_id=$1 and campaign_address=$2`,
+    [SOLANA_CHAIN_ID, campaign, reason],
   );
 }
 
@@ -308,8 +360,8 @@ async function processInits(connection: Connection, payer: Keypair) {
     const creatorVaultPk = creatorFeeVaultPda(campaign);
     const nextAttempts = Number(claimedRow.init_attempts || 0);
     try {
-      const [existingEscrow, existingCreatorVault] = await connection.getMultipleAccountsInfo(
-        [escrowPk, creatorVaultPk],
+      const [existingEscrow, existingCreatorVault, existingCampaign] = await connection.getMultipleAccountsInfo(
+        [escrowPk, creatorVaultPk, campaign],
         "confirmed",
       );
       if (
@@ -317,6 +369,11 @@ async function processInits(connection: Connection, payer: Keypair) {
         existingCreatorVault && existingCreatorVault.owner.equals(programId()) && existingCreatorVault.data.length >= 8
       ) {
         await markInit(campaign.toBase58(), "initialized", undefined, undefined, nextAttempts);
+        continue;
+      }
+      if (!existingCampaign || !existingCampaign.owner.equals(programId())) {
+        await markAbandoned(campaign.toBase58(), "campaign account missing on-chain; retry in 7 days");
+        console.warn("[solana-fee-escrow] init skipped, campaign account missing on-chain", campaign.toBase58());
         continue;
       }
       const sig = await initializeOne(connection, payer, campaign);
@@ -375,6 +432,17 @@ async function processFlushes(connection: Connection, payer: Keypair, reconcilin
         [escrow, campaign],
         "confirmed",
       );
+      if (!escrowInfo || !escrowInfo.owner.equals(programId())) {
+        // The flush instruction would fail with FeeEscrowNotInitialized;
+        // the row's 'initialized' status is stale.
+        if (!campaignInfo || !campaignInfo.owner.equals(programId())) {
+          await markAbandoned(campaign.toBase58(), "campaign and escrow missing on-chain; retry in 7 days");
+        } else {
+          await requeueInit(campaign.toBase58(), "escrow missing on-chain; re-initializing");
+        }
+        console.warn("[solana-fee-escrow] flush skipped, escrow missing on-chain", campaign.toBase58());
+        continue;
+      }
       const onChainPending = escrowInfo?.data ? pendingFromEscrowData(Buffer.from(escrowInfo.data)) : 0n;
       const closed = campaignInfo?.data ? campaignCurveClosed(Buffer.from(campaignInfo.data)) : false;
       const dbPending = BigInt(String(row.pending_total || "0"));
@@ -482,6 +550,90 @@ async function processTradeAuthCleanup(connection: Connection, payer: Keypair) {
   }
 }
 
+function closeTradeAuthInstruction(payer: Keypair, trader: PublicKey, nonce: Buffer, pda: PublicKey) {
+  return new TransactionInstruction({
+    programId: programId(),
+    keys: [
+      { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+      { pubkey: trader, isSigner: false, isWritable: true },
+      { pubkey: pda, isSigner: false, isWritable: true },
+    ],
+    data: Buffer.concat([CLOSE_TRADE_AUTH_DISC, nonce]),
+  });
+}
+
+/**
+ * Sweep expired TradeAuthorization PDAs from chain state, whether or not a
+ * bookkeeping row exists. processTradeAuthCleanup only knows the rows the
+ * API wrote; eight expired PDAs sat on mainnet without one. The rent always
+ * returns to the trader; we pay the transaction fee.
+ */
+async function processTradeAuthChainSweep(connection: Connection, payer: Keypair) {
+  const now = Date.now();
+  if (now - lastTradeAuthSweepMs < tradeAuthSweepIntervalMs()) return;
+  lastTradeAuthSweepMs = now;
+
+  const accounts = await connection.getProgramAccounts(programId(), {
+    commitment: "confirmed",
+    filters: [{ dataSize: TRADE_AUTHORIZATION_BYTES }],
+  });
+  const decoded = accounts
+    .map((entry) => decodeTradeAuthorization(entry.pubkey.toBase58(), Buffer.from(entry.account.data), entry.account.lamports))
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+  const expired = selectExpiredAuthorizations(decoded, Math.floor(now / 1000), TRADE_AUTH_SWEEP_GRACE_SECONDS);
+  if (!expired.length) return;
+  console.info("[solana-fee-escrow] trade-auth sweep", { total: decoded.length, expired: expired.length });
+
+  const batches = chunk(expired, TRADE_AUTH_CLOSES_PER_TX).slice(0, TRADE_AUTH_MAX_TXS_PER_SWEEP);
+  for (const batch of batches) {
+    if (!(await acquireLease())) return;
+    const instructions = batch.map((item) =>
+      closeTradeAuthInstruction(payer, new PublicKey(item.traderBytes), item.nonce, new PublicKey(item.address)),
+    );
+    const pdas = batch.map((item) => item.address);
+    const refund = batch.reduce((sum, item) => sum + item.lamports, 0);
+    try {
+      const sig = await sendServerV0(connection, payer, instructions, `Expired trade authorization sweep x${batch.length}`);
+      await pool.query(
+        `update public.solana_trade_authorizations
+            set cleanup_status='closed', cleanup_signature=$2, last_error=null, updated_at=now()
+          where chain_id=$1 and trade_auth_pda = any($3::text[]) and cleanup_status <> 'closed'`,
+        [SOLANA_CHAIN_ID, sig, pdas],
+      );
+      console.info("[solana-fee-escrow] swept trade-auth", { closed: batch.length, refundLamports: refund, sig });
+    } catch (error) {
+      // One PDA closed between scan and send fails the whole batch; retry
+      // singly so the rest still go, and let processTradeAuthCleanup /
+      // the next sweep pick up any that still fail.
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn("[solana-fee-escrow] trade-auth sweep batch failed, retrying singly", message.slice(0, 200));
+      for (const item of batch) {
+        try {
+          const sig = await sendServerV0(
+            connection,
+            payer,
+            closeTradeAuthInstruction(payer, new PublicKey(item.traderBytes), item.nonce, new PublicKey(item.address)),
+            `Expired trade authorization cleanup ${item.address}`,
+          );
+          await pool.query(
+            `update public.solana_trade_authorizations
+                set cleanup_status='closed', cleanup_signature=$3, last_error=null, updated_at=now()
+              where chain_id=$1 and trade_auth_pda=$2 and cleanup_status <> 'closed'`,
+            [SOLANA_CHAIN_ID, item.address, sig],
+          );
+          console.info("[solana-fee-escrow] swept trade-auth", { closed: 1, refundLamports: item.lamports, sig });
+        } catch (single) {
+          console.warn(
+            "[solana-fee-escrow] trade-auth sweep failed",
+            item.address,
+            (single instanceof Error ? single.message : String(single)).slice(0, 200),
+          );
+        }
+      }
+    }
+  }
+}
+
 async function runTick(connection: Connection, payer: Keypair): Promise<void> {
   if (tickRunning) return;
   tickRunning = true;
@@ -497,6 +649,8 @@ async function runTick(connection: Connection, payer: Keypair): Promise<void> {
     await processFlushes(connection, payer, tickCount % 10 === 0);
     if (!(await acquireLease())) return;
     await processTradeAuthCleanup(connection, payer);
+    if (!(await acquireLease())) return;
+    await processTradeAuthChainSweep(connection, payer);
     await acquireLease();
   } finally {
     tickRunning = false;
