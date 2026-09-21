@@ -16,6 +16,7 @@ import {
   ROBINHOOD_CHAIN_ID,
   ROBINHOOD_TESTNET_CHAIN_ID,
   SOLANA_CHAIN_ID,
+  isAllowedChainId,
   type SupportedChainId,
 } from "@/lib/chainConfig";
 import {
@@ -440,14 +441,17 @@ function leagueNativeSymbol(chain: LeagueChain) {
   return "BNB";
 }
 
+// A testnet league only exists when that testnet is an allowed chain
+// (VITE_ALLOWED_CHAIN_IDS). Otherwise the feed selection folds to mainnet, so
+// testnet campaigns never reach the public standings.
 function normalizedLeagueChainId(feedChainId: SupportedChainId, chain: LeagueChain): SupportedChainId {
   if (chain === "solana") return SOLANA_CHAIN_ID;
   if (chain === "robinhood") {
-    return feedChainId === ROBINHOOD_CHAIN_ID || feedChainId === ROBINHOOD_TESTNET_CHAIN_ID
-      ? feedChainId
-      : ROBINHOOD_CHAIN_ID;
+    if (feedChainId === ROBINHOOD_TESTNET_CHAIN_ID && isAllowedChainId(ROBINHOOD_TESTNET_CHAIN_ID)) return feedChainId;
+    return ROBINHOOD_CHAIN_ID;
   }
-  return feedChainId === BNB_TESTNET_CHAIN_ID ? BNB_TESTNET_CHAIN_ID : BNB_CHAIN_ID;
+  if (feedChainId === BNB_TESTNET_CHAIN_ID && isAllowedChainId(BNB_TESTNET_CHAIN_ID)) return BNB_TESTNET_CHAIN_ID;
+  return BNB_CHAIN_ID;
 }
 
 export default function League() {

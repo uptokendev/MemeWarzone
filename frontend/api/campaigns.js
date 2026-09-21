@@ -2,6 +2,7 @@ import baseHandler from "./campaigns-base.js";
 
 import { pool } from "../server/db.js";
 import { getQuery } from "../server/http.js";
+import { loadPublicHiddenCampaignKeys } from "./lib/publicHiddenCampaigns.js";
 import { runJsonTransform } from "./dev-fix/json-transform.js";
 import { reconcileScheduledDraftLifecycle } from "./dev-fix/scheduled-lifecycle.js";
 
@@ -90,20 +91,6 @@ function itemFromDraft(row) {
     progressPct: 0,
     etaSec: null,
   };
-}
-
-async function loadPublicHiddenCampaignKeys(chainId) {
-  const result = await pool.query(
-    `select campaign_address
-       from public.campaigns
-      where chain_id = $1
-        and campaign_address is not null
-        and lower(coalesce(meta->>'publicHidden', 'false')) in ('true', '1', 'yes', 'on')`,
-    [Number(chainId)],
-  );
-  return new Set(
-    (result.rows || []).map((row) => lifecycleKey(chainId, row.campaign_address)),
-  );
 }
 
 async function loadLifecycleRows(chainId, campaignAddresses, { includeUnindexedSolanaDrafts = false } = {}) {

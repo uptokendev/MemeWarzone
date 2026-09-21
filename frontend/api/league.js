@@ -3,6 +3,7 @@ import { ethers } from "ethers";
 import { pool } from "../server/db.js";
 import { badMethod, getQuery, isAddress, isSolanaAddress, json, readJson } from "../server/http.js";
 import { persistFinalizedCategory, readFinalizedCategory } from "./lib/finalizeLeagueEpoch.js";
+import { loadPublicHiddenCampaignKeys, publicHiddenWhere, withoutPublicHidden } from "./lib/publicHiddenCampaigns.js";
 import {
   buildMerkleProof as buildSolanaMerkleProof,
   buildMerkleRoot as buildSolanaMerkleRoot,
@@ -222,6 +223,7 @@ async function getEpochStats(chainId, periodNorm, epochStartIso, rangeEndIso) {
     `select count(*)::bigint as n
        from public.campaigns c
       where c.chain_id = $1
+        and not ${publicHiddenWhere("c")}
         and ($2::timestamptz is null or c.created_at_chain >= $2::timestamptz)
         and ($3::timestamptz is null or c.created_at_chain < $3::timestamptz)`,
     [chainId, epochStartIso ?? null, rangeEndIso ?? null]
@@ -1017,6 +1019,9 @@ export default async function handler(req, res) {
     }
 
     const finishStandings = async (items, extra = {}) => {
+      // Every campaign league passes through here, so this is where hidden
+      // campaigns leave the standings -- before they are frozen as winners.
+      items = withoutPublicHidden(items, chainId, await loadPublicHiddenCampaignKeys(chainId));
       const allowPageWrite = String(process.env.LEAGUE_PAGE_WRITE_WINNERS || "").trim() === "1";
       if (!epoch.isLive && epochStartIso && allowPageWrite) {
         const persistPrize = {
@@ -1091,6 +1096,7 @@ export default async function handler(req, res) {
            from public.campaigns c
           where c.chain_id = $1
             and c.campaign_address is not null
+            and not ${publicHiddenWhere("c")}
             and (
               $2::timestamptz is null
               or c.created_at_chain >= $2::timestamptz
