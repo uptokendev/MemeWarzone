@@ -44,6 +44,13 @@ const ONE_SOL_LAMPORTS = 1_000_000_000n;
 const NANO_LAMPORT_SCALE = 1_000_000_000n;
 const PRICE_CACHE_MS = 30_000;
 
+/**
+ * On-chain quote profile slots (graduation.rs QUOTE_PROFILE_*). The program
+ * range-checks 1..4 for non-native quotes and commits the slot to the signed
+ * digest; it does not tie a slot to an asset class. Catalog asset classes map
+ * onto the five slots here: ecosystem crypto shares the COMMUNITY slot, every
+ * real-world-asset class shares PROVIDER_RWA.
+ */
 const QUOTE_PROFILE = Object.freeze({
   NATIVE: 0,
   STABLECOIN: 1,
@@ -51,6 +58,18 @@ const QUOTE_PROFILE = Object.freeze({
   MWZ_NATIVE: 3,
   COMMUNITY: 4,
 });
+const ASSET_CLASS_PROFILE = Object.freeze({
+  NATIVE: QUOTE_PROFILE.NATIVE,
+  STABLECOIN: QUOTE_PROFILE.STABLECOIN,
+  PROVIDER_RWA: QUOTE_PROFILE.PROVIDER_RWA,
+  PUBLIC_RWA: QUOTE_PROFILE.PROVIDER_RWA,
+  PRE_IPO_RWA: QUOTE_PROFILE.PROVIDER_RWA,
+  COMMODITY: QUOTE_PROFILE.PROVIDER_RWA,
+  MWZ_NATIVE: QUOTE_PROFILE.MWZ_NATIVE,
+  COMMUNITY: QUOTE_PROFILE.COMMUNITY,
+  CRYPTO: QUOTE_PROFILE.COMMUNITY,
+});
+const QUOTE_PROFILE_NAMES = Object.freeze(Object.fromEntries(Object.entries(QUOTE_PROFILE).map(([name, code]) => [code, name])));
 
 let solPriceCache = { priceUsdMicros: 0n, at: 0 };
 const quotePriceCache = new Map();
@@ -112,6 +131,7 @@ function configHash(configId) {
   return crypto.createHash("sha256").update(String(configId), "utf8").digest();
 }
 
+/** On-chain provider class codes; catalog provider classes map onto them (generic-policy providers are BASIC). */
 const PROVIDER_CLASS = Object.freeze({
   NATIVE: 0,
   BASIC: 1,
@@ -119,17 +139,45 @@ const PROVIDER_CLASS = Object.freeze({
   MWZ_NATIVE: 3,
   COMMUNITY: 4,
 });
+const PROVIDER_CLASS_CODES = Object.freeze({
+  NATIVE: PROVIDER_CLASS.NATIVE,
+  BASIC: PROVIDER_CLASS.BASIC,
+  STABLECOIN: PROVIDER_CLASS.BASIC,
+  ECOSYSTEM: PROVIDER_CLASS.BASIC,
+  PROVIDER_RWA: PROVIDER_CLASS.PROVIDER_RWA,
+  MWZ_NATIVE: PROVIDER_CLASS.MWZ_NATIVE,
+  COMMUNITY: PROVIDER_CLASS.COMMUNITY,
+});
 
-function profileForAssetClass(assetClass) {
-  const value = QUOTE_PROFILE[String(assetClass || "").trim().toUpperCase()];
+export function profileForAssetClass(assetClass) {
+  const value = ASSET_CLASS_PROFILE[String(assetClass || "").trim().toUpperCase()];
   if (!Number.isInteger(value)) throw new SolanaGraduationAuthorizationError(`Unsupported quote asset class ${assetClass}.`, { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });
   return value;
 }
 
-function providerClassCode(providerClass) {
-  const value = PROVIDER_CLASS[String(providerClass || "").trim().toUpperCase()];
+export function providerClassCode(providerClass) {
+  const value = PROVIDER_CLASS_CODES[String(providerClass || "").trim().toUpperCase()];
   if (!Number.isInteger(value)) throw new SolanaGraduationAuthorizationError(`Unsupported quote provider class ${providerClass}.`, { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });
   return value;
+}
+
+/**
+ * Which quote profiles this deployment may graduate against.
+ * SOLANA_GRADUATION_ALLOWED_QUOTE_PROFILES lists profile names explicitly
+ * (e.g. "NATIVE,STABLECOIN,COMMUNITY,PROVIDER_RWA"); when absent, the older
+ * SOLANA_GRADUATION_BASIC_RELEASE_ONLY switch (default on) allows native SOL
+ * and stablecoins only.
+ */
+export function allowedQuoteProfiles(env = process.env) {
+  const explicit = String(env.SOLANA_GRADUATION_ALLOWED_QUOTE_PROFILES || "").trim();
+  if (explicit) {
+    const names = explicit.split(",").map((name) => name.trim().toUpperCase()).filter(Boolean);
+    const codes = names.map((name) => QUOTE_PROFILE[name]).filter((code) => Number.isInteger(code));
+    if (codes.length !== names.length) throw new SolanaGraduationAuthorizationError(`SOLANA_GRADUATION_ALLOWED_QUOTE_PROFILES names an unknown profile (${explicit}).`, { code: "SOLANA_GRADUATION_CONFIGURATION_INVALID", httpStatus: 503 });
+    return new Set(codes);
+  }
+  if (isTruthy(env.SOLANA_GRADUATION_BASIC_RELEASE_ONLY, true)) return new Set([QUOTE_PROFILE.NATIVE, QUOTE_PROFILE.STABLECOIN]);
+  return new Set(Object.values(QUOTE_PROFILE));
 }
 
 function catalogBindingHash(item) {
@@ -151,7 +199,7 @@ async function resolveCatalogQuoteConfig({ chainId, quoteConfigId, solanaAuthori
   if (String(item.chainId) !== String(chainId) || item.newGraduationEligible !== true) throw new SolanaGraduationAuthorizationError("Requested quote configuration is not approved for new graduation.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });
   if (item.policy?.authority !== "generic" || item.policy?.active !== true || item.policy?.basicApproved !== true) throw new SolanaGraduationAuthorizationError("Requested quote policy is not an active BASIC generic policy.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });
   const profile = profileForAssetClass(item.assetClass);
-  if (isTruthy(process.env.SOLANA_GRADUATION_BASIC_RELEASE_ONLY, true) && ![QUOTE_PROFILE.NATIVE, QUOTE_PROFILE.STABLECOIN].includes(profile)) throw new SolanaGraduationAuthorizationError("BASIC release permits only native SOL and one approved canonical stablecoin.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });
+  if (!allowedQuoteProfiles().has(profile)) throw new SolanaGraduationAuthorizationError(`This deployment does not graduate against ${QUOTE_PROFILE_NAMES[profile] || profile} quotes yet (SOLANA_GRADUATION_ALLOWED_QUOTE_PROFILES / SOLANA_GRADUATION_BASIC_RELEASE_ONLY).`, { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 409 });
   const rootRoute = item.policy?.config?.solanaGraduation || {};
   const route = rootRoute.chains?.[String(chainId)] || rootRoute;
   const quoteMint = publicKeyString(route.quoteMint || (item.identityKind === "SOLANA_MINT" ? item.contractAddressOrMint : NATIVE_MINT), "authoritative quote mint");

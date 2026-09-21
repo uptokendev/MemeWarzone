@@ -307,6 +307,12 @@ are never graduated against SOL. `SOLANA_GRADUATION_NATIVE_QUOTE_CONFIG_ID`
 is the catalog deployment id of native SOL on chain 101 (the API reads the
 same name). The quote operator also needs `SOLANA_GRADUATION_AUTH_URL`,
 `SOLANA_GRADUATION_OPERATOR_KEYPAIR` and `SOLANA_GRADUATION_JUPITER_API_BASE`.
+Which quote kinds the authorization signs for is a list:
+`SOLANA_GRADUATION_ALLOWED_QUOTE_PROFILES=NATIVE,STABLECOIN` (production
+today); add `COMMUNITY` (ecosystem crypto such as JUP/JTO/ORCA/PYTH),
+`PROVIDER_RWA` and `MWZ_NATIVE` where those quotes are meant to graduate.
+When the list is absent the older `SOLANA_GRADUATION_BASIC_RELEASE_ONLY`
+switch (default on) allows native SOL and stablecoins only.
 Both commands must exist inside the container that runs them: the indexer
 image is built from `realtime-indexer/` alone, which contains neither
 `scripts/solana/` nor `tools/solana-meteora-graduation/`, so check the
