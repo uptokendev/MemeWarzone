@@ -28,6 +28,7 @@
     "test:market-normalization": "tsx --test src/tests/normalizedMarketAuthority.test.ts",
     "test:league-merkle-parity": "tsx --test src/tests/solanaLeagueMerkleParity.test.ts",
     "test:solana-graduation-decode": "tsx --test src/tests/solanaGraduationEventDecode.test.ts",
+    "test:solana-graduation-binding": "tsx --test src/tests/solanaGraduationQuoteBinding.test.ts",
     "job:reconcile-graduations-once": "node --enable-source-maps dist/jobs/reconcileGraduationsOnce.js",
     "job:reconcile-graduations-once:dev": "tsx src/jobs/reconcileGraduationsOnce.ts",
     "job:cleanup-keep-factory:dry": "tsx scripts/cleanupKeepFactory.ts --dry-run",

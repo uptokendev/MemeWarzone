@@ -95,7 +95,7 @@ async function fetchGraduationAuthorization({ campaign, authority, positionNftMi
   if (!url) fail("SOLANA_GRADUATION_AUTH_URL is required");
   const response = await fetch(url, {
     method: "POST", headers: { "content-type": "application/json", accept: "application/json" },
-    body: JSON.stringify({ chainId, campaignAddress: campaign.toBase58(), authorityAddress: authority.toBase58(), positionNftMint: positionNftMint.toBase58(), quoteConfigId }),
+    body: JSON.stringify({ chainId, campaignAddress: campaign.toBase58(), authorityAddress: authority.toBase58(), positionNftMint: positionNftMint.toBase58(), ...(quoteConfigId ? { quoteConfigId } : {}) }),
   });
   const text = await response.text(); let body = null; try { body = text ? JSON.parse(text) : null; } catch {}
   if (!response.ok) fail(`authorization failed ${response.status}: ${body?.code || ""} ${body?.error || text}`);
@@ -255,7 +255,10 @@ async function main() {
   const campaignPk = asPk(campaignArg, "campaign");
   const chainId = Number(process.env.SOLANA_GRADUATION_CHAIN_ID || "101");
   if (!Number.isInteger(chainId)) fail("SOLANA_GRADUATION_CHAIN_ID must be an integer Solana chain id");
-  const quoteConfigId = String(process.env.SOLANA_GRADUATION_QUOTE_CONFIG_ID || "").trim(); if (!quoteConfigId) fail("SOLANA_GRADUATION_QUOTE_CONFIG_ID is required and must be an authoritative Quote Asset Catalog deployment id");
+  // Per campaign, not global: the authorization API resolves the creator's
+  // Graduation Market selection for this campaign. An id given here (the keeper
+  // passes the binding it resolved) is only cross-checked against it.
+  const requestedQuoteConfigId = String(process.env.SOLANA_GRADUATION_QUOTE_CONFIG_ID || "").trim() || null;
   const rpcUrl = process.env.SOLANA_RPC_URL || DEFAULT_RPC;
   const operator = loadKeypair(process.env.SOLANA_GRADUATION_OPERATOR_KEYPAIR || DEFAULT_OPERATOR);
   const connection = new Connection(rpcUrl, "confirmed"); operator.connection = connection;
@@ -271,7 +274,10 @@ async function main() {
   const stagingState = await getAccount(connection, stagingAta.address, "confirmed", TOKEN_PROGRAM_ID); if (stagingState.amount !== 0n) fail(`operator staging ATA must be empty; balance=${stagingState.amount}`);
   const creatorAta = await getOrCreateAssociatedTokenAccount(connection, operator, campaign.mint, campaign.creator, false, "confirmed", undefined, TOKEN_PROGRAM_ID);
   const positionNft = Keypair.generate();
-  const auth = await fetchGraduationAuthorization({ campaign: campaignPk, authority: operator.publicKey, positionNftMint: positionNft.publicKey, quoteConfigId, chainId });
+  const auth = await fetchGraduationAuthorization({ campaign: campaignPk, authority: operator.publicKey, positionNftMint: positionNft.publicKey, quoteConfigId: requestedQuoteConfigId, chainId });
+  const quoteConfigId = String(auth.quote?.configId || "").trim(); if (!quoteConfigId) fail("authorization did not name the quote config id it signed for");
+  if (requestedQuoteConfigId && requestedQuoteConfigId.toLowerCase() !== quoteConfigId.toLowerCase()) fail(`authorization signed for quote ${quoteConfigId} but this run expected ${requestedQuoteConfigId}`);
+  console.log("GRADUATION QUOTE BINDING", JSON.stringify(auth.quote?.binding || null), "quoteConfigId", quoteConfigId, "quote", auth.quote?.mint);
   assertPk(auth.programId, program.programId, "programId"); assertPk(auth.accounts.campaign, campaignPk, "campaign"); assertPk(auth.accounts.mint, campaign.mint, "mint"); assertPk(auth.accounts.authorityTokenAccount, stagingAta.address, "staging ATA");
   const quoteMint = asPk(auth.quote.mint, "quote mint"); const nativeQuote = Number(auth.quote.profile) === QUOTE_PROFILE_NATIVE;
   let quoteAta = null; let recoveryAccount = null;

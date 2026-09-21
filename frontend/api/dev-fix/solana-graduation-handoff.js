@@ -12,6 +12,10 @@ import { pool } from "../../server/db.js";
 import { badMethod, isSolanaChain, json, readJson } from "../../server/http.js";
 import { decodeCampaignCurveFields, publicKeyString } from "./solana-v4-primitives.js";
 import { notifyCampaignGraduated } from "../lib/campaignLifecycleNotifications.js";
+import {
+  resolveSolanaCampaignGraduationQuote,
+  selectSolanaGraduationOperatorCommand,
+} from "../lib/solanaCampaignGraduationQuote.js";
 
 class SolanaGraduationHandoffError extends Error {
   constructor(message, { code = "SOLANA_GRADUATION_HANDOFF_ERROR", httpStatus = 409 } = {}) {
@@ -51,19 +55,30 @@ async function rpcCall(rpcUrl, method, params) {
   return payload.result;
 }
 
-function kickOperator(campaignAddress) {
+/**
+ * Spawn the operator for this campaign's bound quote. A campaign bound to a
+ * non-native quote (USDC etc.) needs the quote-aware operator; if only the
+ * native command is configured the campaign waits for the keeper rather than
+ * graduating against SOL.
+ */
+function kickOperator(campaignAddress, binding) {
   const now = Date.now();
   const last = kicked.get(campaignAddress) || 0;
-  if (now - last < KICK_TTL_MS) return false;
+  if (now - last < KICK_TTL_MS) return { kicked: false, reason: "operator kicked moments ago" };
   kicked.set(campaignAddress, now);
 
-  const command = requiredEnv("SOLANA_GRADUATION_HANDOFF_COMMAND");
-  if (!command) return false;
+  const selected = selectSolanaGraduationOperatorCommand({
+    binding,
+    nativeCommand: requiredEnv("SOLANA_GRADUATION_HANDOFF_COMMAND"),
+    quoteCommand: requiredEnv("SOLANA_GRADUATION_QUOTE_HANDOFF_COMMAND"),
+  });
+  if (!selected.command) return { kicked: false, reason: selected.reason };
 
-  const parts = command.split(" ").map((part) => part.trim()).filter(Boolean);
-  if (!parts.length) return false;
+  const parts = selected.command.split(" ").map((part) => part.trim()).filter(Boolean);
+  if (!parts.length) return { kicked: false, reason: "operator command is empty" };
   const env = {
     ...process.env,
+    ...selected.env,
     SOLANA_GRADUATION_SEND: "true",
     SOLANA_GRADUATION_CAMPAIGN: campaignAddress,
   };
@@ -73,7 +88,7 @@ function kickOperator(campaignAddress) {
     stdio: "ignore",
   });
   child.unref();
-  return true;
+  return { kicked: true };
 }
 
 export async function solanaGraduationHandoff(req, res) {
@@ -117,20 +132,35 @@ export async function solanaGraduationHandoff(req, res) {
       return json(res, 200, { ok: true, status: "bonding", campaignAddress });
     }
 
-    const kickedOperator = kickOperator(campaignAddress);
-    console.log("[solana-handoff] curve closed", { campaignAddress, kickedOperator });
-    
+    const binding = await resolveSolanaCampaignGraduationQuote(pool, { chainId, campaignAddress });
+    const kick = kickOperator(campaignAddress, binding);
+    console.log("[solana-handoff] curve closed", {
+      campaignAddress,
+      kickedOperator: kick.kicked,
+      reason: kick.reason || null,
+      quote: binding.symbol,
+      quoteConfigId: binding.quoteConfigId,
+      bindingSource: binding.source,
+    });
+
     await notifyCampaignGraduated(pool, {
       chainId,
       campaignAddress,
-      market: { venue: "meteora", quoteAsset: "WSOL" },
+      market: {
+        venue: "meteora",
+        quoteAsset: binding.native ? "WSOL" : binding.symbol || binding.quoteMint || "QUOTE",
+        quoteMint: binding.quoteMint,
+        quoteConfigId: binding.quoteConfigId,
+      },
     });
 
     return json(res, 200, {
       ok: true,
       status: "handoff",
       campaignAddress,
-      kickedOperator,
+      kickedOperator: kick.kicked,
+      ...(kick.reason ? { operatorReason: kick.reason } : {}),
+      graduationQuote: { source: binding.source, quoteConfigId: binding.quoteConfigId, symbol: binding.symbol, native: binding.native },
     });
   } catch (error) {
     if (error instanceof SolanaGraduationHandoffError) {

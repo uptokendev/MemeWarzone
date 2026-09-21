@@ -94,6 +94,16 @@ function readGlobalRoles(data) {
 
 async function main() {
   const rpcUrl = requiredEnv("SOLANA_RPC_URL");
+  // The keeper passes the quote the campaign is bound to. This operator signs
+  // a native-SOL binding only; a campaign whose creator chose USDC (or any
+  // other Graduation Market) must go through the quote-aware operator.
+  const boundProfile = String(process.env.SOLANA_GRADUATION_QUOTE_PROFILE || "native").trim().toLowerCase();
+  if (boundProfile !== "native") {
+    throw new Error(
+      `campaign is bound to a ${process.env.SOLANA_GRADUATION_QUOTE_SYMBOL || boundProfile} quote `
+      + `(${process.env.SOLANA_GRADUATION_QUOTE_CONFIG_ID || "?"}); use the quote-aware operator (SOLANA_GRADUATION_QUOTE_HANDOFF_COMMAND)`,
+    );
+  }
   const programId = new PublicKey(requiredEnv("SOLANA_LAUNCHPAD_PROGRAM_ID"));
   const campaignAddress = new PublicKey(
     process.argv[2] || requiredEnv("SOLANA_GRADUATION_CAMPAIGN"),

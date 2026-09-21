@@ -16,6 +16,12 @@ import { spawn } from "node:child_process";
 
 import { ENV } from "./env.js";
 import { pool } from "./db.js";
+import {
+  describeSolanaGraduationQuoteBinding,
+  loadSolanaCampaignQuoteSelection,
+  selectSolanaGraduationOperatorCommand,
+  type SolanaGraduationQuoteBinding,
+} from "./solanaGraduationQuoteBinding.js";
 
 const SOLANA_CHAIN_ID = 101;
 const LOOP_SYMBOL = Symbol.for("memewarzone.solanaGraduationReconcilerStarted");
@@ -86,36 +92,46 @@ async function readEligibility(campaign: string): Promise<{ eligible: boolean; r
   return { eligible: true, reason: "curve closed and not graduated" };
 }
 
-function runOperator(campaign: string): Promise<{ ok: boolean; detail: string }> {
-  const command = String(ENV.SOLANA_GRADUATION_HANDOFF_COMMAND || "").trim();
-  if (!command) return Promise.resolve({ ok: false, detail: "SOLANA_GRADUATION_HANDOFF_COMMAND is not configured" });
+/**
+ * Run the operator that matches the campaign's bound quote. `ran` is false
+ * when no suitable command is configured: the campaign then stays eligible
+ * and is reported as blocked rather than as an operator failure.
+ */
+function runOperator(campaign: string, binding: SolanaGraduationQuoteBinding): Promise<{ ok: boolean; ran: boolean; detail: string }> {
+  const selected = selectSolanaGraduationOperatorCommand({
+    binding,
+    nativeCommand: ENV.SOLANA_GRADUATION_HANDOFF_COMMAND,
+    quoteCommand: ENV.SOLANA_GRADUATION_QUOTE_HANDOFF_COMMAND,
+  });
+  if (!selected.command) return Promise.resolve({ ok: false, ran: false, detail: selected.reason || "no operator command" });
 
-  const parts = command.split(" ").map((part) => part.trim()).filter(Boolean);
+  const parts = selected.command.split(" ").map((part) => part.trim()).filter(Boolean);
   return new Promise((resolve) => {
     const child = spawn(parts[0], [...parts.slice(1), campaign], {
-      env: { ...process.env, SOLANA_GRADUATION_SEND: "true", SOLANA_GRADUATION_CAMPAIGN: campaign },
+      env: { ...process.env, ...selected.env, SOLANA_GRADUATION_SEND: "true", SOLANA_GRADUATION_CAMPAIGN: campaign },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let out = "";
     let err = "";
     child.stdout?.on("data", (chunk) => { out += String(chunk); });
     child.stderr?.on("data", (chunk) => { err += String(chunk); });
-    child.on("error", (error) => resolve({ ok: false, detail: String(error?.message || error) }));
+    child.on("error", (error) => resolve({ ok: false, ran: true, detail: String(error?.message || error) }));
     child.on("close", (code) => {
       const detail = (err || out).split("\n").filter(Boolean).slice(-3).join(" | ");
-      resolve({ ok: code === 0, detail: detail || `exit ${code}` });
+      resolve({ ok: code === 0, ran: true, detail: detail || `exit ${code}` });
     });
   });
 }
 
 export async function runSolanaGraduationReconcilerOnce() {
   if (!ENV.ENABLE_SOLANA_GRADUATION_RECONCILER) {
-    return { enabled: false, scanned: 0, graduated: 0, skipped: 0, errors: 0 };
+    return { enabled: false, scanned: 0, graduated: 0, skipped: 0, blocked: 0, errors: 0 };
   }
 
   let scanned = 0;
   let graduated = 0;
   let skipped = 0;
+  let blocked = 0;
   let errors = 0;
 
   // The database narrows the candidates; the chain decides. A campaign the
@@ -142,13 +158,19 @@ export async function runSolanaGraduationReconcilerOnce() {
       if (!eligibility.eligible) { skipped += 1; continue; }
 
       attemptedAt.set(campaign, Date.now());
-      const result = await runOperator(campaign);
+      // The creator's Graduation Market selection decides which operator runs.
+      const selection = await loadSolanaCampaignQuoteSelection(pool, { chainId: SOLANA_CHAIN_ID, campaignAddress: campaign });
+      const binding = describeSolanaGraduationQuoteBinding({ selection, nativeQuoteConfigId: ENV.SOLANA_GRADUATION_NATIVE_QUOTE_CONFIG_ID });
+      const result = await runOperator(campaign, binding);
       if (result.ok) {
         graduated += 1;
-        console.log(`[solana-graduation] graduated ${campaign}: ${result.detail}`);
+        console.log(`[solana-graduation] graduated ${campaign} against ${binding.symbol || binding.quoteConfigId || "SOL"} (${binding.source}): ${result.detail}`);
+      } else if (!result.ran) {
+        blocked += 1;
+        console.error(`[solana-graduation] ${campaign} not dispatched (quote ${binding.symbol || binding.quoteConfigId || "SOL"}): ${result.detail}`);
       } else {
         errors += 1;
-        console.error(`[solana-graduation] ${campaign} failed: ${result.detail}`);
+        console.error(`[solana-graduation] ${campaign} failed (quote ${binding.symbol || binding.quoteConfigId || "SOL"}): ${result.detail}`);
       }
     } catch (error: any) {
       errors += 1;
@@ -156,7 +178,7 @@ export async function runSolanaGraduationReconcilerOnce() {
     }
   }
 
-  return { enabled: true, scanned, graduated, skipped, errors };
+  return { enabled: true, scanned, graduated, skipped, blocked, errors };
 }
 
 export function startSolanaGraduationReconcilerLoop() {
@@ -169,7 +191,7 @@ export function startSolanaGraduationReconcilerLoop() {
     running = true;
     try {
       const result = await runSolanaGraduationReconcilerOnce();
-      if (result.graduated || result.errors) {
+      if (result.graduated || result.errors || result.blocked) {
         console.log("[solana-graduation] pass", result);
       }
     } catch (error: any) {

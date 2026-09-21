@@ -285,11 +285,32 @@ It prints a plan and stops. Add `SOLANA_GRADUATION_SEND=true` to actually send.
 To enable the keeper on the indexer:
 
 ```
-ENABLE_SOLANA_GRADUATION_RECONCILER = 1
-SOLANA_GRADUATION_HANDOFF_COMMAND   = node scripts/solana/graduate-campaign.mjs
+ENABLE_SOLANA_GRADUATION_RECONCILER       = 1
+SOLANA_GRADUATION_HANDOFF_COMMAND         = node scripts/solana/graduate-campaign.mjs
+SOLANA_GRADUATION_QUOTE_HANDOFF_COMMAND   = node tools/solana-meteora-graduation/graduate-basic-quote.mjs
+SOLANA_GRADUATION_NATIVE_QUOTE_CONFIG_ID  = a2100000-0000-4000-8000-000000000201
 ```
 
 plus the same keypair and ALT variables above.
+
+The keeper and the `/api/solana/graduation-handoff` route resolve the quote a
+campaign is bound to before they spawn anything: the creator's Graduation
+Market selection (`campaign_draft_graduation_quote_selection`, reached through
+`campaign_drafts.campaign_address`). Campaigns without a selection are native
+SOL campaigns and run the native command. Campaigns bound to USDC or another
+catalog quote run the quote command, which asks
+`/api/solana/graduation-authorization-v2` for its signature; that route
+re-resolves the same binding and refuses any other `quoteConfigId`
+(`SOLANA_GRADUATION_QUOTE_BINDING_MISMATCH`). If the quote command is not
+configured, bound campaigns wait and the keeper logs them as `blocked`; they
+are never graduated against SOL. `SOLANA_GRADUATION_NATIVE_QUOTE_CONFIG_ID`
+is the catalog deployment id of native SOL on chain 101 (the API reads the
+same name). The quote operator also needs `SOLANA_GRADUATION_AUTH_URL`,
+`SOLANA_GRADUATION_OPERATOR_KEYPAIR` and `SOLANA_GRADUATION_JUPITER_API_BASE`.
+Both commands must exist inside the container that runs them: the indexer
+image is built from `realtime-indexer/` alone, which contains neither
+`scripts/solana/` nor `tools/solana-meteora-graduation/`, so check the
+container before enabling the keeper.
 
 > **Before running the keeper unattended**, split `treasury_operator` from the
 > upgrade authority. Today both are `fk5YYWb4…`, so a keeper running around the

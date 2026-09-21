@@ -184,6 +184,13 @@ export const ENV = {
   // the treasury operator key, so it must be switched on deliberately.
   ENABLE_SOLANA_GRADUATION_RECONCILER: String(process.env.ENABLE_SOLANA_GRADUATION_RECONCILER || "0") === "1",
   SOLANA_GRADUATION_HANDOFF_COMMAND: process.env.SOLANA_GRADUATION_HANDOFF_COMMAND || "",
+  // Quote-aware operator for campaigns whose creator chose a non-SOL Graduation
+  // Market (tools/solana-meteora-graduation/graduate-basic-quote.mjs). Without it
+  // those campaigns wait; they are never sent to the native operator.
+  SOLANA_GRADUATION_QUOTE_HANDOFF_COMMAND: process.env.SOLANA_GRADUATION_QUOTE_HANDOFF_COMMAND || "",
+  // Catalog deployment id of native SOL on chain 101; passed to the operator for
+  // campaigns without a draft selection.
+  SOLANA_GRADUATION_NATIVE_QUOTE_CONFIG_ID: process.env.SOLANA_GRADUATION_NATIVE_QUOTE_CONFIG_ID || "",
   SOLANA_GRADUATION_INTERVAL_MS: Number(process.env.SOLANA_GRADUATION_INTERVAL_MS || "60000"),
   SOLANA_GRADUATION_RETRY_COOLDOWN_MS: Number(process.env.SOLANA_GRADUATION_RETRY_COOLDOWN_MS || "300000"),
   GRADUATION_HANDOFF_MAX_CAMPAIGNS: Number(process.env.GRADUATION_HANDOFF_MAX_CAMPAIGNS || "25"),

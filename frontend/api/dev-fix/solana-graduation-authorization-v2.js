@@ -20,6 +20,12 @@ import {
 } from "./solana-v4-primitives.js";
 import { getSolanaChainUnixTime } from "./solana-chain-unix-time.js";
 import { getGraduationQuoteAssetDetail } from "../lib/quoteAssetCatalog.js";
+import { pool } from "../../server/db.js";
+import {
+  SolanaGraduationQuoteBindingError,
+  decideSolanaGraduationQuoteConfigId,
+  resolveSolanaCampaignGraduationQuote,
+} from "../lib/solanaCampaignGraduationQuote.js";
 import { quoteOrcaWhirlpoolDevnet } from "../lib/solanaOrcaGraduationQuote.js";
 import { GRADUATION_AUTH_SCHEMA_VERSION, buildGraduationDigest } from "./solana-graduation-auth-bytes.js";
 
@@ -375,11 +381,16 @@ export async function solanaGraduationAuthorizationV2(req, res) {
     if (!solanaAuthority) throw new SolanaGraduationAuthorizationError("Solana graduation authorization requires chain 101 with explicit staging/devnet or production/mainnet-beta identity.", { code: "SOLANA_CURRENT_AUTHORITY_INVALID", httpStatus: 400 });
     if (body.quoteMint) throw new SolanaGraduationAuthorizationError("quoteMint is not accepted from clients; select an approved quoteConfigId.", { code: "SOLANA_GRADUATION_ARBITRARY_QUOTE_REJECTED", httpStatus: 400 });
 
-    const requestedConfigId = String(body.quoteConfigId || process.env.SOLANA_GRADUATION_NATIVE_QUOTE_CONFIG_ID || "").trim();
-    if (!requestedConfigId) throw new SolanaGraduationAuthorizationError("quoteConfigId is required and must be an authoritative Quote Asset Catalog deployment id.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED", httpStatus: 400 });
-    const quoteConfig = await resolveCatalogQuoteConfig({ chainId, quoteConfigId: requestedConfigId, solanaAuthority });
-
     const campaignAddress = publicKeyString(body.campaignAddress, "campaignAddress");
+    // The creator's Graduation Market selection (draft -> campaign) is the
+    // authority for the quote. The executor's quoteConfigId is a cross-check:
+    // a bound campaign never graduates against anything else.
+    const quoteBinding = await resolveSolanaCampaignGraduationQuote(pool, { chainId, campaignAddress });
+    const requestedConfigId = decideSolanaGraduationQuoteConfigId({ requestedConfigId: body.quoteConfigId, binding: quoteBinding });
+    const quoteConfig = await resolveCatalogQuoteConfig({ chainId, quoteConfigId: requestedConfigId, solanaAuthority });
+    if (quoteBinding.source === "native_default" && quoteConfig.profile !== QUOTE_PROFILE.NATIVE && !isTruthy(process.env.SOLANA_GRADUATION_ALLOW_UNBOUND_QUOTE)) {
+      throw new SolanaGraduationAuthorizationError("Campaign has no Graduation Market selection and may only graduate against native SOL (SOLANA_GRADUATION_ALLOW_UNBOUND_QUOTE=true lifts this for certification runs).", { code: "SOLANA_GRADUATION_QUOTE_BINDING_MISMATCH", httpStatus: 409 });
+    }
     const authorityAddress = publicKeyString(body.authorityAddress, "authorityAddress");
     const positionNftMint = publicKeyString(body.positionNftMint, "positionNftMint");
     const rpcUrl = requiredEnv("SOLANA_RPC_URL");
@@ -457,7 +468,7 @@ export async function solanaGraduationAuthorizationV2(req, res) {
       campaign: { address: campaignAddress, mint: campaign.mint, creator: campaign.creator, generationConfig: campaign.generationConfig, graduationTargetUsdMicros: campaign.graduationTargetUsdMicros.toString(), soldTokens: campaign.soldTokens.toString(), curveTokenSupply: campaign.curveTokenSupply.toString(), netRaisedLamports: campaign.netRaisedLamports.toString() },
       oracle: { solUsdMicros: oraclePriceUsdMicros.toString(), nativeTargetLamports: nativeTargetLamports.toString(), quoteUsdMicros: quoteReferenceUsdMicros.toString() },
       graduationLiquidity: { maxLiquidityLamports: liquidity.maxLiquidityLamports.toString(), maxLiquidityTokens: liquidity.maxLiquidityTokens.toString(), finalizeFeeLamports: liquidity.finalizeFeeLamports.toString(), creatorPayoutLamports: liquidity.creatorPayoutLamports.toString(), finalSpotNanoLamports: liquidity.spotNano.toString() },
-      quote: { configId: quoteConfig.id, assetId: quoteConfig.assetId, providerId: quoteConfig.providerId, providerKey: quoteConfig.providerKey, providerClassName: quoteConfig.providerClassName, policyId: quoteConfig.policyId, policyKey: quoteConfig.policyKey, stateVersion: quoteConfig.stateVersion, configHashHex: quoteConfigHash.toString("hex"), mint: quoteConfig.mint, policyVersion: quoteConfig.policyVersion, profile: quoteConfig.profile, providerClass: quoteConfig.providerClass, decimals: quoteConfig.decimals, acquisitionAdapter: quoteConfig.acquisitionAdapter, acquisitionProgram: quoteConfig.acquisitionProgram, orcaPool: quoteConfig.orcaPool || null, orcaWhirlpoolsConfig: quoteConfig.orcaWhirlpoolsConfig || null, recoveryAccount: quoteConfig.recoveryAccount, expectedQuoteAmount: expectedQuoteAmount.toString(), minQuoteAmount: minQuoteAmount.toString(), maxSlippageBps, maxImpactBps, maxDeviationBps, acquisitionQuote: acquisition?.quote || null },
+      quote: { configId: quoteConfig.id, binding: { source: quoteBinding.source, draftId: quoteBinding.draftId, native: quoteBinding.native, symbol: quoteBinding.symbol }, assetId: quoteConfig.assetId, providerId: quoteConfig.providerId, providerKey: quoteConfig.providerKey, providerClassName: quoteConfig.providerClassName, policyId: quoteConfig.policyId, policyKey: quoteConfig.policyKey, stateVersion: quoteConfig.stateVersion, configHashHex: quoteConfigHash.toString("hex"), mint: quoteConfig.mint, policyVersion: quoteConfig.policyVersion, profile: quoteConfig.profile, providerClass: quoteConfig.providerClass, decimals: quoteConfig.decimals, acquisitionAdapter: quoteConfig.acquisitionAdapter, acquisitionProgram: quoteConfig.acquisitionProgram, orcaPool: quoteConfig.orcaPool || null, orcaWhirlpoolsConfig: quoteConfig.orcaWhirlpoolsConfig || null, recoveryAccount: quoteConfig.recoveryAccount, expectedQuoteAmount: expectedQuoteAmount.toString(), minQuoteAmount: minQuoteAmount.toString(), maxSlippageBps, maxImpactBps, maxDeviationBps, acquisitionQuote: acquisition?.quote || null },
       createArgs: { nativeTargetLamports: nativeTargetLamports.toString(), oraclePriceUsdMicros: oraclePriceUsdMicros.toString(), deadline: deadline.toString(), nonce: Array.from(nonce), positionNftMint, finalizeRouteProfile, quoteMint: quoteConfig.mint, quoteConfigId: Array.from(quoteConfigHash), quotePolicyVersion: quoteConfig.policyVersion, quoteProfile: quoteConfig.profile, quoteProviderClass: quoteConfig.providerClass, acquisitionProgram: quoteConfig.acquisitionProgram, quoteReferenceUsdMicros: quoteReferenceUsdMicros.toString(), quoteDecimals: quoteConfig.decimals, expectedQuoteAmount: expectedQuoteAmount.toString(), minQuoteAmount: minQuoteAmount.toString(), maxSlippageBps, maxImpactBps, maxDeviationBps, quoteRecoveryAccount: quoteConfig.recoveryAccount },
       accounts: { authority: authorityAddress, globalConfig, generationConfig: campaign.generationConfig, campaign: campaignAddress, mint: campaign.mint, tokenVault: campaign.tokenVault, solVault: campaign.solVault, authorityTokenAccount: deriveAta(authorityAddress, campaign.mint), authorityQuoteAccount: quoteConfig.profile === QUOTE_PROFILE.NATIVE ? null : deriveAta(authorityAddress, quoteConfig.mint), quoteRecoveryAccount: quoteConfig.recoveryAccount, creator: campaign.creator, creatorTokenAccount: deriveAta(campaign.creator, campaign.mint), creatorProfile: findProgramAddressSync([Buffer.from("creator"), publicKeyBytes(campaign.creator)], programId).publicKey, graduationState: findProgramAddressSync([Buffer.from("graduation"), publicKeyBytes(campaignAddress)], programId).publicKey, meteoraProgram: METEORA_CP_AMM_PROGRAM_ID, meteoraPool, meteoraPosition, meteoraTokenVault: deriveMeteoraVault(campaign.mint, meteoraPool), meteoraNativeVault: deriveMeteoraVault(quoteConfig.mint, meteoraPool), positionNftMint, instructions: SYSVAR_INSTRUCTIONS_ID, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SYSTEM_PROGRAM_ID },
       authorization: { digestHex: digest.toString("hex"), digestBase64: digest.toString("base64"), signatureBase64: signature.toString("base64"), routeSigner: signer.publicKeyBase58, deadline: deadline.toString(), validUntil: new Date(Number(deadline) * 1000).toISOString(), ed25519InstructionMustImmediatelyPrecedeBeginGraduation: true },
@@ -466,7 +477,7 @@ export async function solanaGraduationAuthorizationV2(req, res) {
         : "One transaction only: Ed25519 verify -> begin_graduation -> approved exact-in WSOL/QUOTE acquisition -> Meteora MEME/QUOTE create+permanent-lock -> confirm_graduation; simulate the complete V0 transaction before submission.",
     });
   } catch (error) {
-    if (error instanceof SolanaGraduationAuthorizationError) return json(res, error.httpStatus || 409, { error: error.message, code: error.code });
+    if (error instanceof SolanaGraduationAuthorizationError || error instanceof SolanaGraduationQuoteBindingError) return json(res, error.httpStatus || 409, { error: error.message, code: error.code });
     console.error("[solana-graduation-v2] authorization failed", error);
     return json(res, 500, { error: "Solana graduation authorization failed.", code: "SOLANA_GRADUATION_AUTHORIZATION_INTERNAL_ERROR" });
   }
