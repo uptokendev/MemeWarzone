@@ -50,6 +50,7 @@ import robinhoodStockTokens from "./robinhood/stock-tokens.js";
 import graduationQuoteAssets from "./graduation/quote-assets.js";
 import robinhoodStockGraduationRegistryAdmin from "./admin/robinhoodStockGraduationRegistry.js";
 import quoteAssetCatalogAdmin from "./admin/quoteAssetCatalog.js";
+import { dashboardAuthProjectRef } from "./dashboard/_auth.js";
 import { withAdminOrOps, withInternalAuth, getAuthEnforceSnapshot } from "./lib/apiAuth.js";
 import { draftDeploy } from "./dev-fix/draft-deploy.js";
 import { solanaDirectCreateV4 } from "./dev-fix/solana-direct-create.js";
@@ -327,6 +328,9 @@ app.get("/health", async (_req, res) => {
           return "unparsed";
         }
       })(),
+      // Auth project Command Center sessions are validated against (may differ
+      // from supabaseProjectRef on a test deployment; see dashboard/_auth.js).
+      dashboardAuthProjectRef: dashboardAuthProjectRef(),
       supabaseProjectRef: (() => {
         try {
           return new URL(String(process.env.SUPABASE_URL || "")).hostname.split(".")[0] || "unset";

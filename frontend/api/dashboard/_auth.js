@@ -47,26 +47,63 @@ export function dashboardAuthProject() {
   return { supabaseUrl, anonKey };
 }
 
+function authFailure(message, code, status = 502) {
+  const error = new Error(message);
+  error.code = code;
+  error.status = status;
+  return error;
+}
+
+/** Project ref of the Auth the dashboard sessions are validated against; for /health. */
+export function dashboardAuthProjectRef() {
+  try {
+    return new URL(dashboardAuthProject().supabaseUrl).hostname.split(".")[0] || "unset";
+  } catch {
+    return "unparsed";
+  }
+}
+
 export async function fetchDashboardSupabaseUser(accessToken) {
   const { supabaseUrl, anonKey } = dashboardAuthProject();
 
   if (!supabaseUrl || !anonKey) {
-    throw new Error("SUPABASE_URL and SUPABASE_ANON_KEY (or DASHBOARD_AUTH_SUPABASE_URL / DASHBOARD_AUTH_SUPABASE_ANON_KEY) are required for dashboard authorization.");
+    throw authFailure(
+      "SUPABASE_URL and SUPABASE_ANON_KEY (or DASHBOARD_AUTH_SUPABASE_URL / DASHBOARD_AUTH_SUPABASE_ANON_KEY) are required for dashboard authorization.",
+      "DASHBOARD_AUTH_NOT_CONFIGURED",
+      500,
+    );
+  }
+  let host;
+  try {
+    host = new URL(supabaseUrl).host;
+  } catch {
+    throw authFailure(
+      `Dashboard auth Supabase URL is not a valid URL (${supabaseUrl.slice(0, 60)}); set DASHBOARD_AUTH_SUPABASE_URL or SUPABASE_URL to https://<project-ref>.supabase.co.`,
+      "DASHBOARD_AUTH_URL_INVALID",
+      500,
+    );
   }
 
-  const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
-    method: "GET",
-    headers: {
-      apikey: anonKey,
-      Authorization: `Bearer ${accessToken}`,
-    },
-    cache: "no-store",
-  });
+  let response;
+  try {
+    response = await fetch(`${supabaseUrl}/auth/v1/user`, {
+      method: "GET",
+      headers: {
+        apikey: anonKey,
+        Authorization: `Bearer ${accessToken}`,
+      },
+      cache: "no-store",
+    });
+  } catch (error) {
+    console.error("[dashboard-auth] Supabase Auth unreachable", { host, error: String(error?.message || error) });
+    throw authFailure(`Supabase Auth at ${host} is unreachable from the API: ${String(error?.message || error).slice(0, 160)}`, "DASHBOARD_AUTH_UPSTREAM_UNREACHABLE");
+  }
 
   if (response.status === 401 || response.status === 403) return null;
   if (!response.ok) {
     const body = await response.text().catch(() => "");
-    throw new Error(`Supabase user validation failed (${response.status}): ${body.slice(0, 200)}`);
+    console.error("[dashboard-auth] Supabase Auth rejected the validation call", { host, status: response.status, body: body.slice(0, 200) });
+    throw authFailure(`Supabase user validation failed (${response.status}) at ${host}: ${body.slice(0, 200)}`, "DASHBOARD_AUTH_UPSTREAM_FAILED");
   }
 
   return await response.json();
