@@ -416,6 +416,8 @@ router.all(/^\/(?:arena\/ops\/health|arena\/battles(?:\/.*)?|arena\/boosts(?:\/.
 router.all(/^\/admin\/arena\/imports(?:\/.*)?$/, wrap(adminArenaImports));
 router.all(/^\/admin\/arena\/tournaments(?:\/.*)?$/, wrap(arenaTournaments));
 router.all("/admin/quote-catalog/chains", wrap(quoteAssetCatalogAdmin));
+router.all("/admin/quote-catalog/verify", wrap(quoteAssetCatalogAdmin));
+router.all("/admin/quote-catalog/:id/verify", wrap(quoteAssetCatalogAdmin));
 router.all("/admin/quote-catalog/:id/approve", wrap(quoteAssetCatalogAdmin));
 router.all("/admin/quote-catalog/:id/suspend", wrap(quoteAssetCatalogAdmin));
 router.all("/admin/quote-catalog/:id/reject", wrap(quoteAssetCatalogAdmin));

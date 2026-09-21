@@ -89,6 +89,8 @@ select
   d.last_lp_verified_at,
   d.created_at as deployment_created_at,
   d.updated_at as deployment_updated_at,
+  d.verification,
+  d.verified_at,
   a.asset_key,
   a.asset_class,
   a.symbol,
@@ -214,6 +216,8 @@ export function mapAdminRow(row) {
     },
     createdAt: row.deployment_created_at,
     updatedAt: row.deployment_updated_at,
+    verification: row.verification && typeof row.verification === "object" ? row.verification : null,
+    verifiedAt: row.verified_at || null,
     actionPolicy: actionPolicyFor({ catalog_state: row.catalog_state, eligible: authority.newGraduationEligible }),
   };
 }
@@ -506,7 +510,13 @@ export async function decideQuoteCatalogDeployment({ id, action, expectedVersion
         [id, row.provider_id, nextVersion, JSON.stringify({ reason: why, evidence: evidenceList }), actorIdentity],
       );
       await retireActivePolicies(client, { assetId: row.quote_asset_id, deploymentId: id });
-      const config = buildApprovedPolicyConfig(before, policyOverrides);
+      // No operator overrides: use what the automated verification proposed,
+      // so a one-click approval carries verified ids and addresses.
+      const givenOverrides = policyOverrides && typeof policyOverrides === "object"
+        ? Object.fromEntries(Object.entries(policyOverrides).filter(([, value]) => value != null && value !== "" && !(typeof value === "object" && !Object.keys(value).length)))
+        : {};
+      const effectiveOverrides = Object.keys(givenOverrides).length ? givenOverrides : (before?.verification?.proposal || {});
+      const config = buildApprovedPolicyConfig(before, effectiveOverrides);
       const previous = (await client.query(
         `select policy_key, max(version)::int as version from public.quote_asset_policy_versions
           where quote_asset_id = $1::uuid and (deployment_id = $2::uuid or deployment_id is null) group by policy_key order by max(created_at) desc limit 1`,
@@ -538,7 +548,7 @@ export async function decideQuoteCatalogDeployment({ id, action, expectedVersion
     await client.query(
       `insert into public.quote_asset_decision_history (deployment_id, provider_id, policy_version_id, state_version, decision, reason, decision_snapshot, actor_identity)
        values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)`,
-      [id, row.provider_id, policyVersionId, nextVersion, decision, why, JSON.stringify({ action, before: { catalogState: before?.catalogState, eligible: before?.newGraduationEligible, stateVersion: version }, after: { catalogState: after?.catalogState, eligible: after?.newGraduationEligible, stateVersion: nextVersion }, policyOverrides }), actorIdentity],
+      [id, row.provider_id, policyVersionId, nextVersion, decision, why, JSON.stringify({ action, before: { catalogState: before?.catalogState, eligible: before?.newGraduationEligible, stateVersion: version }, after: { catalogState: after?.catalogState, eligible: after?.newGraduationEligible, stateVersion: nextVersion }, policyOverrides, verificationState: before?.verification?.state || null }), actorIdentity],
     );
     await client.query("commit");
     return await getQuoteCatalogAdminDetail(id, { db });

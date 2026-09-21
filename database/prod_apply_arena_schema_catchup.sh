@@ -78,6 +78,7 @@ GROUP_B=(
   db/migrations/20260921_000007_campaign_graduation_quote_bindings.sql
   db/migrations/20260921_000008_quote_catalog_admin_columns.sql
   db/migrations/20260921_000009_quote_policy_one_active_per_deployment.sql
+  db/migrations/20260921_000010_quote_asset_deployments_verification.sql
 )
 
 # One transaction per group. Files carry their own begin/commit; those lines are
