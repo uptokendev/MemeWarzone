@@ -9,9 +9,11 @@ import {
   ARENA_CLAIM_PROTOCOL,
   ARENA_KIND_BATTLE,
   ARENA_KIND_TOURNAMENT,
+  ARENA_MAX_PLACES,
   ARENA_PROGRAM_ID,
   buildArenaOperatorClaimInstruction,
   buildArenaResolveInstructions,
+  buildArenaResolvePlacesInstructions,
   deriveArenaBuyInReceipt,
   sendArenaOperatorV0,
 } from "./arena-operator-v0.mjs";
@@ -123,6 +125,139 @@ export function tournamentOutcomeHash(tournament) {
     .update(ident(tournament.winner_wallet || tournament.winnerWallet))
     .update(String(tournament.settlement_version ?? tournament.settlementVersion ?? 1))
     .digest();
+}
+
+export const OUTCOME_HASH_PLACES_DOMAIN = "MWZ_ARENA_OUTCOME_PLACES_V1";
+export const RESOLVE_POOL_PLACES_V2_DISCRIMINATOR = createHash("sha256")
+  .update("global:resolve_pool_places_v2", "utf8")
+  .digest()
+  .subarray(0, 8);
+
+/** Outcome commitment for a places resolution: tournament id + every place (asset, wallet, bps) in order. */
+export function tournamentPlacesOutcomeHash({ id, tournamentId, places, settlement_version, settlementVersion } = {}) {
+  const hash = createHash("sha256").update(OUTCOME_HASH_PLACES_DOMAIN).update(ident(id || tournamentId));
+  for (const place of Array.isArray(places) ? places : []) {
+    hash.update(ident(place.asset)).update(ident(place.wallet)).update(String(Number(place.bps)));
+  }
+  return hash.update(String(settlement_version ?? settlementVersion ?? 1)).digest();
+}
+
+/**
+ * Plan resolve_pool_places_v2 for a finished tournament. `places` is the
+ * ranked list from the places policy (frontend/api/lib/arenaTournamentPlaces.js:
+ * 1-3 entries, bps summing to 10000, first place = bracket champion).
+ * `receiptAccounts` are the on-chain buy-in receipt accounts, one per place in
+ * place order, each { pubkey, owner, data }. Nothing is inferred: a place
+ * without its own paid receipt blocks the plan, exactly like the program.
+ */
+export function planTournamentPlacesResolve({ tournament, pool, places, receiptAccounts, nowSec = Math.floor(Date.now() / 1000) } = {}) {
+  if (Number(pool?.kind) !== ARENA_KIND_TOURNAMENT_CODE) return fail("not-tournament");
+  const tournamentId = ident(tournament?.id || tournament?.tournamentId);
+  if (!tournamentId) return fail("missing-tournament-id");
+  const expectedPoolId = canonicalTournamentPoolIdBytes(tournamentId);
+  const actualPoolId = poolIdBytes(pool?.poolId || pool?.pool_id);
+  if (!actualPoolId) return fail("missing-pool-id");
+  if (!actualPoolId.equals(expectedPoolId)) return fail("pool-id-mismatch");
+  if (ident(tournament?.status) !== "finished") return fail("tournament-not-finished");
+
+  const list = Array.isArray(places) ? places : [];
+  if (!list.length || list.length > ARENA_MAX_PLACES) return fail("invalid-place-count");
+  if (Number(pool.entryCount ?? pool.entry_count ?? 0) < list.length) return fail("more-places-than-entries");
+  let bpsTotal = 0;
+  const seenWallets = new Set();
+  const seenAssets = new Set();
+  for (const place of list) {
+    const asset = ident(place?.asset);
+    const wallet = ident(place?.wallet);
+    const bps = Number(place?.bps);
+    if (!asset || isDefaultPubkey(asset)) return fail("default-place-asset");
+    if (!wallet || isDefaultPubkey(wallet)) return fail("default-place-wallet");
+    if (!Number.isInteger(bps) || bps <= 0) return fail("invalid-place-bps");
+    if (seenWallets.has(wallet) || seenAssets.has(asset)) return fail("duplicate-place");
+    seenWallets.add(wallet);
+    seenAssets.add(asset);
+    bpsTotal += bps;
+  }
+  if (bpsTotal !== 10_000) return fail("place-bps-not-10000");
+
+  const persistedWinner = ident(tournament?.winner_token || tournament?.money_winner_token || tournament?.moneyWinnerToken);
+  if (!persistedWinner) return fail("missing-money-winner");
+  const bracketWinner = finalTournamentBracketWinner(tournament?.bracket);
+  if (!bracketWinner) return fail("missing-bracket-winner");
+  if (!walletsEqual(bracketWinner, persistedWinner)) return fail("winner-bracket-mismatch");
+  if (!walletsEqual(ident(list[0].asset), persistedWinner)) return fail("first-place-not-champion");
+
+  const receipts = Array.isArray(receiptAccounts) ? receiptAccounts : [];
+  if (receipts.length !== list.length) return fail("receipt-count-mismatch");
+  const buyInLamports = BigInt(pool.buyInLamports ?? pool.buy_in_lamports ?? 0);
+  const receiptPdas = [];
+  for (let i = 0; i < list.length; i += 1) {
+    const place = list[i];
+    let expectedPda;
+    try {
+      expectedPda = deriveArenaBuyInReceipt(expectedPoolId, ident(place.asset), ident(place.wallet));
+    } catch {
+      return fail("invalid-place-pubkey");
+    }
+    const account = receipts[i];
+    const verified = verifyAuthoritativeBuyInReceipt({
+      account,
+      owner: account?.owner?.toBase58?.() || String(account?.owner || ""),
+      expectedPoolId: expectedPoolId.toString("hex"),
+      expectedEntryAsset: ident(place.asset),
+      expectedEntrant: ident(place.wallet),
+      expectedAmountLamports: buyInLamports,
+      PublicKey,
+    });
+    if (!verified.ok) return fail(`place-${i + 1}-receipt-${verified.reason || "invalid"}`);
+    const suppliedPda = ident(account?.pubkey?.toBase58?.() || account?.pubkey || account?.address);
+    if (suppliedPda !== expectedPda.toBase58()) return fail(`place-${i + 1}-receipt-pda-mismatch`);
+    receiptPdas.push(expectedPda);
+  }
+
+  const normalized = list.map((place) => ({ asset: ident(place.asset), wallet: ident(place.wallet), bps: Number(place.bps) }));
+  const state = Number(pool.state);
+  if (state === ARENA_STATE_RESOLVED) {
+    const onchainCount = Number(pool.placeCount ?? pool.place_count ?? 0);
+    const onchainWallets = pool.placeWallets || pool.place_wallets || [];
+    const onchainAssets = pool.placeAssets || pool.place_assets || [];
+    if (onchainCount !== normalized.length) return fail("resolved-place-count-mismatch");
+    for (let i = 0; i < normalized.length; i += 1) {
+      if (!walletsEqual(ident(onchainAssets[i]), normalized[i].asset)) return fail(`resolved-place-${i + 1}-asset-mismatch`);
+      if (!walletsEqual(ident(onchainWallets[i]), normalized[i].wallet)) return fail(`resolved-place-${i + 1}-wallet-mismatch`);
+    }
+    if (!walletsEqual(ident(pool.winnerAsset || pool.winner_asset), normalized[0].asset)) return fail("resolved-winner-mismatch");
+    return { ok: true, action: "skip", reason: "already-resolved", places: normalized, winnerAsset: normalized[0].asset, winnerWallet: normalized[0].wallet };
+  }
+  if (state !== ARENA_STATE_LIVE) return fail("pool-not-live");
+
+  const resolveDeadline = Number(pool.resolveDeadline ?? pool.resolve_deadline ?? 0);
+  if (!Number.isFinite(resolveDeadline) || resolveDeadline <= nowSec) return fail("resolve-deadline-passed");
+
+  return {
+    ok: true,
+    action: "resolve-places",
+    reason: "ok",
+    kind: ARENA_KIND_TOURNAMENT,
+    poolId: expectedPoolId,
+    version: 2,
+    places: normalized,
+    receipts: receiptPdas,
+    winnerAsset: normalized[0].asset,
+    winnerWallet: normalized[0].wallet,
+    stakeA: BigInt(pool.depositedStakeA ?? pool.deposited_stake_a ?? 0),
+    stakeB: BigInt(pool.depositedStakeB ?? pool.deposited_stake_b ?? 0),
+    supportTotal: BigInt(pool.supportTotal ?? pool.support_total ?? 0),
+    prizeBoostTotal: BigInt(pool.prizeBoostTotal ?? pool.prize_boost_total ?? 0),
+    buyInTotal: BigInt(pool.buyInTotal ?? pool.buy_in_total ?? 0),
+    outcomeHash: tournamentPlacesOutcomeHash({
+      id: tournamentId,
+      places: normalized,
+      settlement_version: tournament?.settlement_version ?? tournament?.settlementVersion ?? 1,
+    }),
+    deadline: BigInt(resolveDeadline),
+    nonce: BigInt(pool.actionNonce ?? pool.action_nonce ?? 0),
+  };
 }
 
 /** Terminal finished bracket: last round is a single match whose winner is tokenA or tokenB. */
@@ -404,6 +539,50 @@ export function buildPlannedResolveInstructions(plan, resolver) {
     message: built.message,
     pool: built.pool,
   };
+}
+
+/** Same adjacency rule as resolve_pool_v2: Ed25519 verify first, resolve_pool_places_v2 immediately after. */
+export function assertEd25519PlacesAdjacency(instructions) {
+  if (!Array.isArray(instructions) || instructions.length < 2) {
+    throw new Error("resolve-places requires Ed25519 immediately followed by resolve_pool_places_v2");
+  }
+  if (instructions[0].programId.toBase58() !== ED25519_PROGRAM_ID) {
+    throw new Error("Ed25519 verify must be first");
+  }
+  if (!instructions[1].programId.equals(ARENA_PROGRAM_ID)) {
+    throw new Error("resolve_pool_places_v2 must immediately follow Ed25519");
+  }
+  const disc = instructionData(instructions[1]).subarray(0, 8);
+  if (!disc.equals(Buffer.from(RESOLVE_POOL_PLACES_V2_DISCRIMINATOR))) {
+    throw new Error("instruction 1 must be resolve_pool_places_v2");
+  }
+}
+
+export function buildPlannedPlacesResolveInstructions(plan, resolver) {
+  if (!plan?.ok || plan.action !== "resolve-places") throw new Error(plan?.reason || "resolve-places is not actionable");
+  const built = buildArenaResolvePlacesInstructions({ ...plan, resolver });
+  const instructions = [built.verifyIx, built.resolveIx];
+  assertEd25519PlacesAdjacency(instructions);
+  // The receipts the instruction carries must be exactly the ones the plan verified, in place order.
+  const carried = built.receipts.map((key) => key.toBase58());
+  const planned = (plan.receipts || []).map((key) => key.toBase58?.() || String(key));
+  if (carried.length !== planned.length || carried.some((key, i) => key !== planned[i])) {
+    throw new Error("resolve_pool_places_v2 receipt accounts do not match the verified plan");
+  }
+  return {
+    instructions,
+    verifyIx: built.verifyIx,
+    resolveIx: built.resolveIx,
+    message: built.message,
+    pool: built.pool,
+    receipts: built.receipts,
+  };
+}
+
+export async function sendPlannedPlacesResolve(connection, payer, plan, resolver) {
+  const built = buildPlannedPlacesResolveInstructions(plan, resolver);
+  assertEd25519PlacesAdjacency(built.instructions);
+  return sendArenaOperatorV0(connection, payer, built.instructions, "Arena resolve_pool_places_v2");
 }
 
 function configReceiver(config, bucket) {

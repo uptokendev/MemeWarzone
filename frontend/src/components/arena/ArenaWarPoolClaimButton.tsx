@@ -10,7 +10,20 @@ import { isSolanaWarzoneChain, isSolanaWarzoneMoneyLive, SOLANA_WARZONE_ESCROW_N
 import { getArenaWarPoolTreasuryAddress, getNativeSymbol, type SupportedChainId } from "@/lib/chainConfig";
 import { requestWalletChainSwitch } from "@/lib/launchpadReadiness";
 import { runSolanaArenaUserAction } from "@/lib/solanaArenaClient";
-import { arenaPoolIdFromHex, buildArenaWinnerClaimV0Instruction } from "@/lib/solanaArenaV0";
+import { arenaPoolIdFromHex, buildArenaPlaceClaimV0Instruction, buildArenaWinnerClaimV0Instruction } from "@/lib/solanaArenaV0";
+
+type ClaimPlace = { place: number; payout?: string; wallet?: string; asset?: string; bps?: number; claimed?: boolean; lamports?: string };
+
+function placeHeldBy(places: unknown, wallet: string, evm: boolean): ClaimPlace | null {
+  if (!Array.isArray(places) || !wallet) return null;
+  const mine = String(wallet).trim();
+  const same = (value?: string) => {
+    const other = String(value || "").trim();
+    if (!other) return false;
+    return evm ? other.toLowerCase() === mine.toLowerCase() : other === mine;
+  };
+  return (places as ClaimPlace[]).find((place) => same(place.wallet) || same(place.payout)) || null;
+}
 
 function configuredWarPoolTreasury(chainId: number): string {
   const raw = String(getArenaWarPoolTreasuryAddress(chainId as SupportedChainId) || "").trim();
@@ -55,6 +68,25 @@ export function ArenaWarPoolClaimButton({
         if (!json.resolved) throw new Error("Waiting for Warzone resolution. Resolve stays operator-side.");
         const walletAddress = String(solanaAccount || "").trim();
         if (!walletAddress) throw new Error("Connect the winning campaign owner wallet.");
+        if (json.claimMethod === "claimPlace") {
+          // Tournament places: each paid place claims its own share (claim_place_v2).
+          const place = placeHeldBy(json.places, walletAddress, false);
+          if (!place) throw new Error("Connect a wallet that holds a paid place in this tournament.");
+          if (place.claimed) throw new Error("This place was already claimed.");
+          await runSolanaArenaUserAction({
+            walletAddress,
+            label: `claim tournament place ${place.place}`,
+            build: (web3) =>
+              buildArenaPlaceClaimV0Instruction({
+                web3,
+                poolId: arenaPoolIdFromHex(json.poolId),
+                winner: walletAddress,
+                place: place.place,
+              }),
+          });
+          toast.success(`Place ${place.place} claimed. Protocol stays out of the send loop.`);
+          return;
+        }
         if (json.winnerWallet && json.winnerWallet !== walletAddress) {
           throw new Error("Connect the winning campaign owner wallet.");
         }
@@ -85,6 +117,19 @@ export function ArenaWarPoolClaimButton({
       if (!treasury || !abi.length) throw new Error("Arena war pool treasury is not deployed on this chain.");
       const contract = new Contract(treasury, abi, wallet.signer);
       const onchain = await contract.pools(json.poolId);
+      if (json.claimMethod === "claimPlace" && json.resolve?.version === "2-places") {
+        // Tournament places on ArenaWarPoolTreasuryV2: resolvePlaces once (signed list), then each place claims its share.
+        const place = placeHeldBy(json.places, String(wallet.account || ""), true);
+        if (!place) throw new Error("Connect a wallet that holds a paid place in this tournament.");
+        if (Number(onchain.state) !== 2) {
+          const tx = await contract.resolvePlaces(json.poolId, json.resolve.payouts, json.resolve.bps, json.resolve.deadline, json.resolve.signature);
+          await tx.wait();
+        }
+        const claimTx = await contract.claimPlace(json.poolId, place.place);
+        await claimTx.wait();
+        toast.success(`Place ${place.place} claimed. Protocol stays out of the send loop.`);
+        return;
+      }
       if (Number(onchain.state) !== 2) {
         const tx = await contract.resolve(json.poolId, json.resolve.winnerPayout, json.resolve.deadline, json.resolve.signature);
         await tx.wait();

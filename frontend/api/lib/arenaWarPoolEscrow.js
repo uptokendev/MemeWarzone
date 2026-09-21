@@ -33,6 +33,10 @@ export const WAR_POOL_V2_ABI = [
   "function claimProtocol(bytes32 poolId)",
   "function claimLeague(bytes32 poolId,bytes32 monthlyEpoch,bytes32 quarterlyEpoch)",
   "function refundStake(bytes32 poolId)",
+  "function resolvePlaces(bytes32 poolId,address[] payouts,uint16[] bps,uint256 deadline,bytes signature)",
+  "function claimPlace(bytes32 poolId,uint8 place)",
+  "function placeOf(bytes32 poolId,uint8 place) view returns (address payout,uint256 pending,bool claimed)",
+  "function placeCount(bytes32 poolId) view returns (uint8)",
   "function pools(bytes32) view returns (uint8 kind,uint8 state,address ownerA,address ownerB,uint96 stakeAmount,uint96 buyInAmount,uint256 stakeA,uint256 stakeB,uint256 buyInTotal,uint256 boostTotal,address winnerPayout,uint256 pendingWinner,uint256 pendingProtocol,uint256 pendingLeague,uint256 depositDeadline,uint256 resolveDeadline,bool claimedWinner,bool claimedProtocol,bool claimedLeague,bool refundedA,bool refundedB)",
 ];
 
@@ -150,4 +154,49 @@ export async function signResolvePoolV2({ treasuryAddress, chainId, poolId, winn
     deadline,
   });
   return { signature, domain, types, resolver: wallet.address };
+}
+
+/** keccak256(abi.encode(address[] payouts, uint16[] bps)), the placesHash ArenaWarPoolTreasuryV2.resolvePlaces verifies. */
+export function resolvePlacesHash(payouts, bps) {
+  return ethers.keccak256(ethers.AbiCoder.defaultAbiCoder().encode(["address[]", "uint16[]"], [payouts, bps]));
+}
+
+/**
+ * Tournament places resolution (1-3 paid places) on ArenaWarPoolTreasuryV2:
+ * EIP-712 ResolvePoolPlacesV2 over the place list hash and the pool totals.
+ */
+export async function signResolvePlacesV2({ treasuryAddress, chainId, poolId, payouts, bps, stakeTotal, buyInTotal, boostTotal, deadline }) {
+  const key = String(process.env.ARENA_WAR_POOL_RESOLVER_KEY || "").trim();
+  if (!key) return null;
+  if (!Array.isArray(payouts) || !Array.isArray(bps) || !payouts.length || payouts.length > 3 || payouts.length !== bps.length) {
+    throw new Error("resolvePlaces needs 1-3 payouts with matching bps");
+  }
+  if (bps.reduce((sum, value) => sum + Number(value), 0) !== 10_000) throw new Error("resolvePlaces bps must sum to 10000");
+  const wallet = new ethers.Wallet(key.startsWith("0x") ? key : `0x${key}`);
+  const domain = {
+    name: "ArenaWarPoolTreasury",
+    version: "2",
+    chainId: Number(chainId),
+    verifyingContract: treasuryAddress,
+  };
+  const types = {
+    ResolvePoolPlacesV2: [
+      { name: "poolId", type: "bytes32" },
+      { name: "placesHash", type: "bytes32" },
+      { name: "stakeTotal", type: "uint256" },
+      { name: "buyInTotal", type: "uint256" },
+      { name: "boostTotal", type: "uint256" },
+      { name: "deadline", type: "uint256" },
+    ],
+  };
+  const placesHash = resolvePlacesHash(payouts, bps);
+  const signature = await wallet.signTypedData(domain, types, {
+    poolId,
+    placesHash,
+    stakeTotal,
+    buyInTotal,
+    boostTotal,
+    deadline,
+  });
+  return { signature, domain, types, placesHash, resolver: wallet.address };
 }

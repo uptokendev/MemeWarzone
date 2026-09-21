@@ -194,6 +194,15 @@ export async function readSolanaArenaPool(chainId, subjectId, kind = "battle") {
       claimedWinner: parsed.claimedWinner,
       kind: parsed.kind,
       buyInLamports: parsed.buyInLamports.toString(),
+      placeCount: Number(parsed.placeCount || 0),
+      // Tournament places as the program holds them; place 1 shares its payout with claim_winner.
+      places: Array.from({ length: Number(parsed.placeCount || 0) }, (_, index) => ({
+        place: index + 1,
+        asset: parsed.placeAssets?.[index] || "",
+        wallet: parsed.placeWallets?.[index] || "",
+        lamports: String(parsed.placeLamports?.[index] ?? 0n),
+        claimed: index === 0 ? Boolean(parsed.claimedWinner || parsed.placeClaimed?.[0]) : Boolean(parsed.placeClaimed?.[index]),
+      })),
     };
   } catch (error) {
     return {

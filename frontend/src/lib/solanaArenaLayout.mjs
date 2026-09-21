@@ -15,6 +15,9 @@ export const ARENA_CONFIG_DISCRIMINATOR = Uint8Array.from([9, 186, 181, 145, 197
 export const ARENA_POOL_DISCRIMINATOR = Uint8Array.from([199, 155, 111, 90, 242, 136, 105, 8]);
 /** Anchor 8-byte disc + ArenaPool::SIZE. */
 export const ARENA_POOL_ACCOUNT_SIZE = 8 + 535;
+export const ARENA_MAX_PLACES = 3;
+/** Size with the appended tournament places (place_count + 3 assets + 3 wallets + 3 amounts + 3 flags). */
+export const ARENA_POOL_ACCOUNT_SIZE_WITH_PLACES = ARENA_POOL_ACCOUNT_SIZE + 1 + 32 * 3 * 2 + 8 * 3 + 3;
 export const ARENA_BUYIN_DISCRIMINATOR = Uint8Array.from([78, 69, 75, 93, 134, 44, 139, 226]);
 
 export const SOLANA_GENESIS = Object.freeze({
@@ -195,7 +198,28 @@ export function parseArenaPool(data, PublicKey) {
   const bump = readU8(data, o); o += 1;
   const vaultBump = readU8(data, o); o += 1;
   const actionNonce = readU64le(data, o); o += 8;
+  // Tournament places (1-3), appended by the places-aware program:
+  // place_count u8, place_assets [Pubkey;3], place_wallets [Pubkey;3],
+  // place_lamports [u64;3], place_claimed [bool;3]. Absent on accounts
+  // created before that layout; then there are no places.
+  let placeCount = 0;
+  const placeAssets = [];
+  const placeWallets = [];
+  const placeLamports = [];
+  const placeClaimed = [];
+  if (data.length >= o + 1 + 32 * ARENA_MAX_PLACES * 2 + 8 * ARENA_MAX_PLACES + ARENA_MAX_PLACES) {
+    placeCount = Math.min(readU8(data, o), ARENA_MAX_PLACES); o += 1;
+    for (let i = 0; i < ARENA_MAX_PLACES; i += 1) { placeAssets.push(readPubkeyBase58(PublicKey, data, o)); o += 32; }
+    for (let i = 0; i < ARENA_MAX_PLACES; i += 1) { placeWallets.push(readPubkeyBase58(PublicKey, data, o)); o += 32; }
+    for (let i = 0; i < ARENA_MAX_PLACES; i += 1) { placeLamports.push(readU64le(data, o)); o += 8; }
+    for (let i = 0; i < ARENA_MAX_PLACES; i += 1) { placeClaimed.push(readU8(data, o) !== 0); o += 1; }
+  }
   return {
+    placeCount,
+    placeAssets,
+    placeWallets,
+    placeLamports,
+    placeClaimed,
     poolId,
     kind,
     state,

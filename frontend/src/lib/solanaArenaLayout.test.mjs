@@ -263,3 +263,34 @@ test("verifyAuthoritativeBuyInReceipt requires owner, layout, pool, asset, entra
     "bad-layout",
   );
 });
+
+test("parseArenaPool reads the appended tournament places and tolerates the older layout", async () => {
+  const { ARENA_POOL_ACCOUNT_SIZE_WITH_PLACES } = await import("./solanaArenaLayout.mjs");
+  const data = new Uint8Array(ARENA_POOL_ACCOUNT_SIZE_WITH_PLACES);
+  data.set(ARENA_POOL_DISCRIMINATOR, 0);
+  writeU64le(data, 393, 9n);
+  const first = Keypair.generate().publicKey;
+  const second = Keypair.generate().publicKey;
+  const wallet1 = Keypair.generate().publicKey;
+  const wallet2 = Keypair.generate().publicKey;
+  // Borsh lays the places out right after action_nonce (offset 393 + 8);
+  // ARENA_POOL_ACCOUNT_SIZE is the allocated space, not the serialized length.
+  let o = 393 + 8;
+  data[o] = 2; o += 1;
+  data.set(first.toBytes(), o); data.set(second.toBytes(), o + 32); o += 96;
+  data.set(wallet1.toBytes(), o); data.set(wallet2.toBytes(), o + 32); o += 96;
+  writeU64le(data, o, 700n); writeU64le(data, o + 8, 300n); o += 24;
+  data[o + 1] = 1;
+  const parsed = parseArenaPool(data, PublicKey);
+  assert.equal(parsed.actionNonce, 9n);
+  assert.equal(parsed.placeCount, 2);
+  assert.deepEqual(parsed.placeAssets, [first.toBase58(), second.toBase58(), ""]);
+  assert.deepEqual(parsed.placeWallets, [wallet1.toBase58(), wallet2.toBase58(), ""]);
+  assert.deepEqual(parsed.placeLamports, [700n, 300n, 0n]);
+  assert.deepEqual(parsed.placeClaimed, [false, true, false]);
+
+  const older = parseArenaPool(data.subarray(0, ARENA_POOL_ACCOUNT_SIZE), PublicKey);
+  assert.equal(older.actionNonce, 9n);
+  assert.equal(older.placeCount, 0);
+  assert.deepEqual(older.placeAssets, []);
+});

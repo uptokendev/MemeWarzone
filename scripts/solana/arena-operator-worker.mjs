@@ -11,16 +11,21 @@ import {
 import {
   ARENA_CLAIM_MWL,
   ARENA_CLAIM_PROTOCOL,
+  deriveArenaBuyInReceipt,
   deriveArenaOperatorPdas,
 } from "./arena-operator-v0.mjs";
 import {
   assertEd25519Adjacency,
   canonicalBattlePoolIdBytes,
+  canonicalTournamentPoolIdBytes,
   planBattleResolve,
   planOperatorClaim,
+  planTournamentPlacesResolve,
   sendPlannedClaim,
+  sendPlannedPlacesResolve,
   sendPlannedResolve,
 } from "./arena-operator-resolve.mjs";
+import { buildTournamentPlaces } from "../../frontend/api/lib/arenaTournamentPlaces.js";
 
 function ident(value) {
   return String(value || "").trim();
@@ -47,21 +52,110 @@ export function settlementFromBattleRow(row) {
   };
 }
 
-export async function runOperatorJob({
+const COMMANDS = ["resolve", "resolve-tournament", "claim-protocol", "claim-mwl"];
+
+function resolverMatchesConfig(config, resolver) {
+  const expectedResolver = ident(config?.resolver);
+  if (!expectedResolver) return fail("config-unreadable");
+  const actualResolver = ident(resolver?.publicKey?.toBase58?.() || resolver?.publicKey);
+  if (!actualResolver) return fail("missing-resolver");
+  if (actualResolver !== expectedResolver) return fail("resolver-config-mismatch");
+  return { ok: true };
+}
+
+/**
+ * Tournament jobs: resolve_pool_places_v2 from the places policy (1st / 2nd /
+ * 3rd by entrant count, first place = bracket champion) and the operator
+ * claims on the tournament pot. `loadTournament(id)` returns
+ * { tournament, entries } with the paid entries (token_address, owner_wallet).
+ */
+async function runTournamentJob({
   command,
-  battleId,
+  tournamentId,
   send = false,
-  loadSettlement,
+  loadTournament,
   loadPool,
   loadConfig,
-  sendResolve,
+  loadReceipts,
+  sendResolvePlaces,
   sendClaim,
   resolver,
   payer,
 } = {}) {
+  const id = ident(tournamentId);
+  if (!id) return fail("missing-tournament-id");
+  if (typeof loadTournament !== "function") return fail("tournament-loader-missing");
+  const loaded = await loadTournament(id);
+  const tournament = loaded?.tournament || null;
+  if (!ident(tournament?.id)) return fail("tournament-not-found");
+  if (Number(tournament.chain_id) !== 101) {
+    return fail(Number(tournament.chain_id) === 102 ? "legacy-solana-chain-not-authorized" : "not-solana");
+  }
+  if (ident(tournament.status) !== "finished") return fail("tournament-not-finished");
+
+  const pool = await loadPool(id, tournament);
+  if (!pool) return fail("pool-unreadable");
+  const config = typeof loadConfig === "function" ? await loadConfig() : null;
+  if (!config) return fail("config-unreadable");
+
+  if (command === "resolve-tournament") {
+    const resolverCheck = resolverMatchesConfig(config, resolver);
+    if (!resolverCheck.ok) return resolverCheck;
+    const entries = (Array.isArray(loaded.entries) ? loaded.entries : []).filter((entry) => entry?.buy_in_paid !== false && entry?.buyInPaid !== false);
+    const policy = buildTournamentPlaces({ bracket: tournament.bracket, entries, entrantCount: entries.length });
+    if (!policy.ok) return fail(`places-${policy.reason}`);
+    const receiptAccounts = typeof loadReceipts === "function" ? await loadReceipts(policy.places, tournament) : [];
+    const plan = planTournamentPlacesResolve({ tournament, pool, places: policy.places, receiptAccounts });
+    if (!plan.ok) return plan;
+    if (plan.action === "skip") return { ...plan, sent: false };
+    if (!send) return { ...plan, sent: false };
+    if (typeof sendResolvePlaces !== "function") return fail("send-not-configured");
+    const signature = await sendResolvePlaces(plan, resolver, payer);
+    const poolAfter = await loadPool(id, tournament);
+    const after = planTournamentPlacesResolve({ tournament, pool: poolAfter, places: policy.places, receiptAccounts });
+    if (!after.ok) return { ok: false, action: "block", reason: "post-send-inconsistent", signature, after };
+    if (after.action !== "skip") return { ok: false, action: "block", reason: "post-send-not-resolved", signature, after };
+    return { ok: true, action: "sent", reason: "resolved-places", signature, after };
+  }
+
+  const bucket = command === "claim-mwl" ? ARENA_CLAIM_MWL : ARENA_CLAIM_PROTOCOL;
+  const plan = planOperatorClaim({ pool, config, bucket });
+  if (!plan.ok) return plan;
+  if (plan.action === "skip") return { ...plan, sent: false };
+  if (!send) return { ...plan, sent: false };
+  if (typeof sendClaim !== "function") return fail("send-not-configured");
+  const signature = await sendClaim(plan, payer);
+  const poolAfter = await loadPool(id, tournament);
+  const after = planOperatorClaim({ pool: poolAfter, config, bucket });
+  if (!after.ok) return { ok: false, action: "block", reason: "post-send-inconsistent", signature, after };
+  if (after.action !== "skip") return { ok: false, action: "block", reason: "post-send-not-claimed", signature, after };
+  return { ok: true, action: "sent", reason: "claimed", signature, after };
+}
+
+export async function runOperatorJob({
+  command,
+  battleId,
+  tournamentId,
+  send = false,
+  loadSettlement,
+  loadTournament,
+  loadPool,
+  loadConfig,
+  loadReceipts,
+  sendResolve,
+  sendResolvePlaces,
+  sendClaim,
+  resolver,
+  payer,
+} = {}) {
+  if (!COMMANDS.includes(command)) return fail("unsupported-command");
+  if (command === "resolve-tournament" || (ident(tournamentId) && !ident(battleId))) {
+    return runTournamentJob({
+      command, tournamentId, send, loadTournament, loadPool, loadConfig, loadReceipts, sendResolvePlaces, sendClaim, resolver, payer,
+    });
+  }
   const id = ident(battleId);
   if (!id) return fail("missing-battle-id");
-  if (!["resolve", "claim-protocol", "claim-mwl"].includes(command)) return fail("unsupported-command");
 
   const settlement = settlementFromBattleRow(await loadSettlement(id));
   if (!settlement?.id) return fail("battle-not-found");
@@ -76,11 +170,8 @@ export async function runOperatorJob({
   if (command === "resolve") {
     const config = typeof loadConfig === "function" ? await loadConfig() : null;
     if (!config) return fail("config-unreadable");
-    const expectedResolver = ident(config.resolver);
-    if (!expectedResolver) return fail("config-unreadable");
-    const actualResolver = ident(resolver?.publicKey?.toBase58?.() || resolver?.publicKey);
-    if (!actualResolver) return fail("missing-resolver");
-    if (actualResolver !== expectedResolver) return fail("resolver-config-mismatch");
+    const resolverCheck = resolverMatchesConfig(config, resolver);
+    if (!resolverCheck.ok) return resolverCheck;
     const plan = planBattleResolve({ settlement, pool });
     if (!plan.ok) return plan;
     if (plan.action === "skip") return { ...plan, sent: false };
@@ -172,12 +263,33 @@ function rpcUrl() {
   );
 }
 
-async function defaultChainReaders(settlement) {
+async function defaultLoadTournament(tournamentId) {
+  const { default: pg } = await import("pg");
+  const pool = new pg.Pool({ connectionString: requiredEnv("DATABASE_URL") });
+  try {
+    const tournament = (await pool.query(
+      `select id, chain_id, status, bracket, winner_token
+         from public.arena_tournaments where id = $1 limit 1`,
+      [tournamentId],
+    )).rows[0] || null;
+    if (!tournament) return { tournament: null, entries: [] };
+    const entries = (await pool.query(
+      `select token_address, owner_wallet, buy_in_paid
+         from public.arena_tournament_entries
+        where tournament_id = $1 and buy_in_paid = true
+        order by created_at asc`,
+      [tournamentId],
+    )).rows;
+    return { tournament, entries };
+  } finally {
+    await pool.end();
+  }
+}
+
+async function defaultChainReaders({ chainId, poolId }) {
   const url = rpcUrl();
   if (!url) throw new Error("SOLANA_RPC_URL is required");
   const connection = new Connection(url, "confirmed");
-  const chainId = Number(settlement.chain_id);
-  const poolId = canonicalBattlePoolIdBytes(settlement.id);
   const pdas = deriveArenaOperatorPdas(poolId);
   const loadPool = async () => {
     const info = await connection.getAccountInfo(pdas.pool, "confirmed");
@@ -188,9 +300,15 @@ async function defaultChainReaders(settlement) {
       connection.getAccountInfo(pdas.config, "confirmed"),
       connection.getGenesisHash(),
     ]);
-    return configAccountToPlanner(info, genesisHash, chainId);
+    return configAccountToPlanner(info, genesisHash, Number(chainId));
   };
-  return { connection, loadPool, loadConfig, pdas };
+  // One buy-in receipt per place, in place order, as the program reads them.
+  const loadReceipts = async (places) => Promise.all((places || []).map(async (place) => {
+    const pubkey = deriveArenaBuyInReceipt(poolId, place.asset, place.wallet);
+    const info = await connection.getAccountInfo(pubkey, "confirmed");
+    return info ? { pubkey, owner: info.owner, data: info.data } : null;
+  }));
+  return { connection, loadPool, loadConfig, loadReceipts, pdas };
 }
 
 function runningAsCli() {
@@ -206,18 +324,25 @@ function printUsage() {
 
 Usage:
   node scripts/solana/arena-operator-worker.mjs resolve --battle-id <id>
-  node scripts/solana/arena-operator-worker.mjs claim-protocol --battle-id <id>
-  node scripts/solana/arena-operator-worker.mjs claim-mwl --battle-id <id>
+  node scripts/solana/arena-operator-worker.mjs claim-protocol --battle-id <id> | --tournament-id <id>
+  node scripts/solana/arena-operator-worker.mjs claim-mwl --battle-id <id> | --tournament-id <id>
+  node scripts/solana/arena-operator-worker.mjs resolve-tournament --tournament-id <id>
   Add --send to submit after a successful plan and simulation.
 `);
+}
+
+function argValue(argv, flag) {
+  return argv.includes(flag) ? String(argv[argv.indexOf(flag) + 1] || "") : "";
 }
 
 if (runningAsCli()) {
   const argv = process.argv.slice(2);
   const command = argv[0];
-  const battleId = argv.includes("--battle-id") ? argv[argv.indexOf("--battle-id") + 1] : "";
+  const battleId = argValue(argv, "--battle-id");
+  const tournamentId = argValue(argv, "--tournament-id");
   const send = argv.includes("--send");
-  if (!["resolve", "claim-protocol", "claim-mwl"].includes(command) || !battleId) {
+  const tournamentScoped = command === "resolve-tournament" || (Boolean(tournamentId) && !battleId);
+  if (!COMMANDS.includes(command) || (tournamentScoped ? !tournamentId : !battleId)) {
     printUsage();
     process.exit(2);
   }
@@ -225,24 +350,51 @@ if (runningAsCli()) {
   const payer = process.env.ARENA_OPERATOR_PAYER_KEYPAIR
     ? loadKeypair("ARENA_OPERATOR_PAYER_KEYPAIR")
     : resolver;
-  defaultLoadSettlement(battleId)
-    .then(async (row) => {
-      const settlement = settlementFromBattleRow(row);
-      if (!settlement?.id) return fail("battle-not-found");
-      const { connection, loadPool, loadConfig } = await defaultChainReaders(settlement);
-      const result = await runOperatorJob({
-        command,
-        battleId,
-        send,
-        loadSettlement: async () => row,
-        loadPool,
-        loadConfig,
-        resolver,
-        payer,
-        sendResolve: async (plan, resolverKey, payerKey) =>
-          sendPlannedResolve(connection, payerKey, plan, resolverKey),
-        sendClaim: async (plan, payerKey) => sendPlannedClaim(connection, payerKey, plan, payerKey.publicKey),
+  const job = tournamentScoped
+    ? defaultLoadTournament(tournamentId).then(async (loaded) => {
+        if (!loaded?.tournament) return fail("tournament-not-found");
+        const { connection, loadPool, loadConfig, loadReceipts } = await defaultChainReaders({
+          chainId: loaded.tournament.chain_id,
+          poolId: canonicalTournamentPoolIdBytes(tournamentId),
+        });
+        return runOperatorJob({
+          command,
+          tournamentId,
+          send,
+          loadTournament: async () => loaded,
+          loadPool,
+          loadConfig,
+          loadReceipts,
+          resolver,
+          payer,
+          sendResolvePlaces: async (plan, resolverKey, payerKey) =>
+            sendPlannedPlacesResolve(connection, payerKey, plan, resolverKey),
+          sendClaim: async (plan, payerKey) => sendPlannedClaim(connection, payerKey, plan, payerKey.publicKey),
+        });
+      })
+    : defaultLoadSettlement(battleId).then(async (row) => {
+        const settlement = settlementFromBattleRow(row);
+        if (!settlement?.id) return fail("battle-not-found");
+        const { connection, loadPool, loadConfig } = await defaultChainReaders({
+          chainId: settlement.chain_id,
+          poolId: canonicalBattlePoolIdBytes(settlement.id),
+        });
+        return runOperatorJob({
+          command,
+          battleId,
+          send,
+          loadSettlement: async () => row,
+          loadPool,
+          loadConfig,
+          resolver,
+          payer,
+          sendResolve: async (plan, resolverKey, payerKey) =>
+            sendPlannedResolve(connection, payerKey, plan, resolverKey),
+          sendClaim: async (plan, payerKey) => sendPlannedClaim(connection, payerKey, plan, payerKey.publicKey),
+        });
       });
+  job
+    .then((result) => {
       console.log(JSON.stringify(result, (_key, value) => (typeof value === "bigint" ? value.toString() : value), 2));
       process.exit(result.ok ? 0 : 1);
     })

@@ -352,6 +352,37 @@ export async function buildArenaWinnerClaimV0Instruction(input: {
   };
 }
 
+/** claim_place_v2 receipts live in buckets 10 + place (1-3); place 1 shares its payout with claim_winner. */
+export const ARENA_CLAIM_PLACE_BASE = 10;
+
+export async function buildArenaPlaceClaimV0Instruction(input: {
+  web3: SolanaWeb3Module;
+  poolId: Uint8Array;
+  winner: string;
+  place: number;
+}): Promise<ArenaInstructionBuild> {
+  const place = Number(input.place);
+  if (!Number.isInteger(place) || place < 1 || place > 3) throw new Error("Arena place must be 1, 2 or 3.");
+  const poolId = assertPoolId(input.poolId);
+  const pdas = deriveArenaPdas(input.web3, poolId);
+  const receipt = deriveArenaClaimReceipt(input.web3, poolId, ARENA_CLAIM_PLACE_BASE + place);
+  return {
+    pdas,
+    receipt,
+    instruction: new input.web3.TransactionInstruction({
+      programId: new input.web3.PublicKey(pdas.programId),
+      keys: [
+        { pubkey: new input.web3.PublicKey(input.winner), isSigner: true, isWritable: true },
+        { pubkey: new input.web3.PublicKey(pdas.pool), isSigner: false, isWritable: true },
+        { pubkey: new input.web3.PublicKey(pdas.vault), isSigner: false, isWritable: true },
+        { pubkey: new input.web3.PublicKey(receipt), isSigner: false, isWritable: true },
+        { pubkey: input.web3.SystemProgram.programId, isSigner: false, isWritable: false },
+      ],
+      data: concat(await anchorDiscriminator("claim_place_v2"), poolId, Uint8Array.from([place])) as unknown as Buffer,
+    }),
+  };
+}
+
 export async function buildArenaStakeRefundV0Instruction(input: {
   web3: SolanaWeb3Module;
   poolId: Uint8Array;

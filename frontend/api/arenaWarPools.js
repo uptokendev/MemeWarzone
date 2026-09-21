@@ -5,6 +5,7 @@ import { getServerReadProvider } from "./lib/getServerReadProvider.js";
 import {
   WAR_POOL_GENERATION_V2,
   battlePoolId,
+  signResolvePlacesV2,
   signResolvePool,
   signResolvePoolV2,
   tournamentPoolId,
@@ -12,6 +13,7 @@ import {
   warPoolGeneration,
   warPoolTreasuryAddress,
 } from "./lib/arenaWarPoolEscrow.js";
+import { buildTournamentPlaces } from "./lib/arenaTournamentPlaces.js";
 import { escrowRequired, readOnchainPool, stakeToWei } from "./lib/arenaWarPoolLive.js";
 import { isSolanaWarzoneChainId, stakeToLamports, walletsEqual } from "./lib/solanaArenaPoolRead.js";
 import { promoteMatchedIfFunded } from "./arenaBattles.js";
@@ -268,6 +270,29 @@ async function ownerOfTournamentWinner(tournament) {
     [tournament.id, winner],
   );
   return ident(result.rows[0]?.owner_wallet || "");
+}
+
+/**
+ * Paid places of a finished tournament (1st / 2nd / 3rd by entrant count,
+ * first place = bracket champion), joined to the paid entries' owner wallets.
+ * { ok, places: [{ asset, wallet, bps }] } or { ok: false, reason }.
+ */
+async function tournamentPlacesFor(tournament) {
+  const result = await pool.query(
+    `select token_address, owner_wallet, buy_in_paid
+       from public.arena_tournament_entries
+      where tournament_id = $1 and buy_in_paid = true
+      order by created_at asc`,
+    [tournament.id],
+  );
+  const entries = result.rows.map((row) => ({ token_address: ident(row.token_address), owner_wallet: ident(row.owner_wallet) }));
+  const built = buildTournamentPlaces({ bracket: tournament.bracket, entries, entrantCount: entries.length });
+  if (!built.ok) return built;
+  return { ok: true, places: built.places.map((place, index) => ({ place: index + 1, asset: place.asset, wallet: place.wallet, bps: place.bps })) };
+}
+
+function placeForWallet(places, wallet, chainId) {
+  return (places || []).find((place) => sameWallet(place.wallet ?? place.payout, wallet, chainId)) || null;
 }
 
 function supportOpenForTournament(row) {
@@ -680,7 +705,8 @@ async function handleStakeReceipt(req, res, battleId) {
   return json(res, 200, { ok: true, bothPaid: Boolean(latest.bothPaid), battle, onchain: latest });
 }
 
-async function signAndReturnClaim({ res, chainId, subjectId, kind, winnerPayout }) {
+async function signAndReturnClaim({ res, chainId, subjectId, kind, winnerPayout, places = null }) {
+  const plannedPlaces = places?.ok ? places.places : null;
   if (isSolanaWarzoneChainId(chainId)) {
     const onchain = await readOnchainPool(chainId, subjectId, kind);
     if (onchain.configured !== true || onchain.live !== true) {
@@ -704,8 +730,14 @@ async function signAndReturnClaim({ res, chainId, subjectId, kind, winnerPayout 
         programId: onchain.programId,
         poolId: onchain.poolId,
         winnerWallet: onchain.winnerWallet || winnerPayout,
+        places: plannedPlaces,
       });
     }
+    // A tournament resolved with places pays each place through claim_place_v2
+    // (place 1 is the same payout claim_winner would pay). The program's own
+    // place list is authoritative here, never the database.
+    const onchainPlaces = Array.isArray(onchain.places) ? onchain.places : [];
+    const placesResolved = kind === "tournament" && onchainPlaces.length > 0;
     return json(res, 200, {
       ok: true,
       chain: "solana",
@@ -719,7 +751,8 @@ async function signAndReturnClaim({ res, chainId, subjectId, kind, winnerPayout 
       winnerWallet: onchain.winnerWallet || winnerPayout,
       claimedWinner: Boolean(onchain.claimedWinner),
       pendingWinner: String(onchain.pendingWinner || "0"),
-      claimMethod: "claimWinner",
+      claimMethod: placesResolved ? "claimPlace" : "claimWinner",
+      places: placesResolved ? onchainPlaces : null,
     });
   }
   const treasury = warPoolTreasuryAddress(chainId);
@@ -737,6 +770,51 @@ async function signAndReturnClaim({ res, chainId, subjectId, kind, winnerPayout 
   const v2 = generation === WAR_POOL_GENERATION_V2;
   const boostTotal = BigInt(onchain.boostTotal || 0);
   const supportTotal = BigInt(onchain.supportTotal || 0);
+  if (kind === "tournament" && v2 && plannedPlaces) {
+    // ArenaWarPoolTreasuryV2.resolvePlaces: 1-3 paid places, signed as one list.
+    const payouts = plannedPlaces.map((place) => ethers.getAddress(place.wallet));
+    const bps = plannedPlaces.map((place) => Number(place.bps));
+    const signedPlaces = await signResolvePlacesV2({ treasuryAddress: treasury, chainId, poolId, payouts, bps, stakeTotal, buyInTotal, boostTotal, deadline });
+    if (!signedPlaces) {
+      return json(res, 503, { ok: false, error: "Resolver key is not configured (ARENA_WAR_POOL_RESOLVER_KEY).", code: "WAR_POOL_RESOLVER_MISSING" });
+    }
+    return json(res, 200, {
+      ok: true,
+      treasury,
+      chainId,
+      poolId,
+      kind,
+      abi,
+      poolGeneration: generation || null,
+      winnerPayout: payouts[0],
+      nativeSymbol: nativeSymbolFor(chainId),
+      pendingWinner: String(onchain.pendingWinner || 0),
+      pendingProtocol: String(onchain.pendingProtocol || 0),
+      pendingLeague: String(onchain.pendingLeague || onchain.pendingMwl || 0),
+      claimedWinner: Boolean(onchain.claimedWinner),
+      claimedProtocol: Boolean(onchain.claimedProtocol),
+      claimedLeague: Boolean(onchain.claimedLeague || onchain.claimedMwl),
+      resolved: Number(onchain.state) === 2,
+      resolve: {
+        version: "2-places",
+        payouts,
+        bps,
+        deadline,
+        signature: signedPlaces.signature,
+        placesHash: signedPlaces.placesHash,
+        stakeTotal: stakeTotal.toString(),
+        buyInTotal: buyInTotal.toString(),
+        boostTotal: boostTotal.toString(),
+      },
+      places: plannedPlaces.map((place, index) => ({ place: index + 1, payout: payouts[index], wallet: payouts[index], asset: place.asset, bps: bps[index] })),
+      claimMethod: "claimPlace",
+      claimMethods: ["claimPlace", "claimProtocol", "claimLeague"],
+      leagueEpochs: {
+        monthlyEpoch: ethers.id(`${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`),
+        quarterlyEpoch: ethers.id(`${new Date().getUTCFullYear()}-Q${Math.floor(new Date().getUTCMonth() / 3) + 1}`),
+      },
+    });
+  }
   const signed = v2
     ? await signResolvePoolV2({
         treasuryAddress: treasury,
@@ -813,12 +891,17 @@ async function handleClaimIntent(req, res, subjectId) {
   if (subject.kind === "tournament") {
     if (subject.tournament.status !== "finished") return json(res, 409, { ok: false, error: "Tournament is not finished" });
     const winnerPayout = await ownerOfTournamentWinner(subject.tournament);
+    const places = await tournamentPlacesFor(subject.tournament);
+    if (!places.ok) {
+      return json(res, 409, { ok: false, error: "Tournament places cannot be determined from the bracket and paid entries.", code: "TOURNAMENT_PLACES_UNRESOLVED", reason: places.reason });
+    }
     return signAndReturnClaim({
       res,
       chainId: Number(subject.tournament.chain_id),
       subjectId: subject.tournament.id,
       kind: "tournament",
       winnerPayout,
+      places,
     });
   }
   if (String(subject.battle.source || "") === "tournament") {
@@ -858,15 +941,23 @@ async function handleClaimable(req, res) {
     });
   }
   const tournaments = await pool.query(
-    `select id, chain_id, winner_token, native_symbol
+    `select id, chain_id, winner_token, native_symbol, bracket
        from public.arena_tournaments
       where status = 'finished' and winner_token is not null
       order by ends_at desc nulls last
       limit 50`,
   );
   for (const row of tournaments.rows) {
-    const owner = await ownerOfTournamentWinner(row);
-    if (!owner || !sameWallet(owner, wallet, row.chain_id)) continue;
+    // Every paid place (1st / 2nd / 3rd) has something to claim, not only the champion.
+    const places = await tournamentPlacesFor(row);
+    let place = null;
+    if (places.ok) {
+      place = placeForWallet(places.places, wallet, row.chain_id);
+      if (!place) continue;
+    } else {
+      const owner = await ownerOfTournamentWinner(row);
+      if (!owner || !sameWallet(owner, wallet, row.chain_id)) continue;
+    }
     items.push({
       battleId: row.id,
       kind: "tournament",
@@ -874,6 +965,8 @@ async function handleClaimable(req, res) {
       poolId: tournamentPoolId(row.id),
       nativeSymbol: row.native_symbol || nativeSymbolFor(row.chain_id),
       treasury: warPoolTreasuryAddress(row.chain_id) || null,
+      place: place ? place.place : 1,
+      placeBps: place ? place.bps : 10_000,
     });
   }
   return json(res, 200, { ok: true, items });
