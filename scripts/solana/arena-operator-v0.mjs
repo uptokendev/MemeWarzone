@@ -267,3 +267,95 @@ export async function sendArenaOperatorV0(connection, payer, instructions, label
   }
   return sendServerV0(connection, payer, instructions, label);
 }
+
+// ---------------------------------------------------------------------------
+// Tournament places (1st / 2nd / runner-up) -- resolve_pool_places_v2.
+// The resolver signs the whole place list; buy-in receipts follow the fixed
+// accounts as remaining accounts, one per place, in order.
+// ---------------------------------------------------------------------------
+
+export const ARENA_PLACES_RESOLUTION_DOMAIN = Buffer.from("MWZ_ARENA_RESOLVE_PLACES_V3", "utf8");
+export const ARENA_CLAIM_PLACE_BASE = 10;
+export const ARENA_MAX_PLACES = 3;
+
+function u16le(value) { const out = Buffer.alloc(2); out.writeUInt16LE(Number(value)); return out; }
+function u32le(value) { const out = Buffer.alloc(4); out.writeUInt32LE(Number(value)); return out; }
+
+export function normalizeArenaPlaces(places) {
+  if (!Array.isArray(places) || !places.length || places.length > ARENA_MAX_PLACES) throw new Error("Arena places must have 1-3 entries");
+  const out = places.map((place) => ({
+    asset: new PublicKey(place.asset),
+    wallet: new PublicKey(place.wallet),
+    bps: Number(place.bps),
+  }));
+  const total = out.reduce((sum, place) => sum + place.bps, 0);
+  if (total !== 10_000 || out.some((p) => !Number.isInteger(p.bps) || p.bps <= 0)) throw new Error("Arena place bps must be positive and sum to 10000");
+  return out;
+}
+
+export function buildArenaPlacesResolutionMessage(input) {
+  const id = assertPoolId(input.poolId);
+  const outcomeHash = assert32(input.outcomeHash, "Arena outcome hash");
+  const places = normalizeArenaPlaces(input.places);
+  return Buffer.concat([
+    ARENA_PLACES_RESOLUTION_DOMAIN, ARENA_PROGRAM_ID.toBuffer(), Buffer.from([input.version]), id,
+    new PublicKey(input.pool).toBuffer(), Buffer.from([ARENA_KIND_TOURNAMENT_CODE]),
+    u64le(input.stakeA ?? 0), u64le(input.stakeB ?? 0), u64le(input.supportTotal), u64le(input.prizeBoostTotal), u64le(input.buyInTotal),
+    Buffer.from([places.length]),
+    ...places.map((place) => Buffer.concat([place.asset.toBuffer(), place.wallet.toBuffer(), u16le(place.bps)])),
+    outcomeHash, i64le(input.deadline), u64le(input.nonce),
+  ]);
+}
+
+export function buildArenaResolvePlacesInstructions(input) {
+  if (!input.resolver?.secretKey || !input.resolver?.publicKey) throw new Error("Arena resolver keypair is required");
+  const id = assertPoolId(input.poolId);
+  const { config, pool } = deriveArenaOperatorPdas(id);
+  const places = normalizeArenaPlaces(input.places);
+  const receipts = places.map((place) => deriveArenaBuyInReceipt(id, place.asset, place.wallet));
+  const message = buildArenaPlacesResolutionMessage({ ...input, pool, places });
+  return {
+    verifyIx: Ed25519Program.createInstructionWithPrivateKey({ privateKey: input.resolver.secretKey, message }),
+    resolveIx: new TransactionInstruction({
+      programId: ARENA_PROGRAM_ID,
+      keys: [
+        { pubkey: config, isSigner: false, isWritable: false },
+        { pubkey: pool, isSigner: false, isWritable: true },
+        { pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
+        ...receipts.map((receipt) => ({ pubkey: receipt, isSigner: false, isWritable: false })),
+      ],
+      data: Buffer.concat([
+        discriminator("resolve_pool_places_v2"), id,
+        u32le(places.length),
+        ...places.map((place) => Buffer.concat([place.asset.toBuffer(), place.wallet.toBuffer(), u16le(place.bps)])),
+        assert32(input.outcomeHash, "Arena outcome hash"), i64le(input.deadline), u64le(input.nonce),
+      ]),
+    }),
+    message, pool, config, receipts, places,
+  };
+}
+
+export function deriveArenaPlaceClaimReceipt(poolId, place) {
+  if (!Number.isInteger(place) || place < 1 || place > ARENA_MAX_PLACES) throw new Error("Arena place must be 1-3");
+  return deriveArenaClaimReceipt(poolId, ARENA_CLAIM_PLACE_BASE + place);
+}
+
+export function buildArenaClaimPlaceInstruction({ winner, poolId, place }) {
+  const id = assertPoolId(poolId);
+  const { pool, vault } = deriveArenaOperatorPdas(id);
+  const claimReceipt = deriveArenaPlaceClaimReceipt(id, place);
+  return {
+    claimReceipt,
+    instruction: new TransactionInstruction({
+      programId: ARENA_PROGRAM_ID,
+      keys: [
+        { pubkey: new PublicKey(winner), isSigner: true, isWritable: true },
+        { pubkey: pool, isSigner: false, isWritable: true },
+        { pubkey: vault, isSigner: false, isWritable: true },
+        { pubkey: claimReceipt, isSigner: false, isWritable: true },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      ],
+      data: Buffer.concat([discriminator("claim_place_v2"), id, Buffer.from([place])]),
+    }),
+  };
+}

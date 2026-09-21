@@ -36,6 +36,15 @@ pub const ARENA_CLAIM_MWL: u8 = 2;
 pub const ARENA_PROTOCOL_BPS: u64 = 500;
 pub const ARENA_MWL_BPS: u64 = 1_000;
 pub const ARENA_BPS_DENOM: u64 = 10_000;
+/// Boosts: 90% to the prize, 10% to protocol (locked product rule). Applied
+/// at resolve, so the funder's own transaction still credits one vault.
+pub const ARENA_BOOST_PROTOCOL_BPS: u64 = 1_000;
+/// Tournament places: 1st, 2nd, runner-up. Battles always resolve to one.
+pub const ARENA_MAX_PLACES: usize = 3;
+/// Claim receipt bucket for place n (1-based) is ARENA_CLAIM_PLACE_BASE + n,
+/// disjoint from the winner/protocol/mwl buckets.
+pub const ARENA_CLAIM_PLACE_BASE: u8 = 10;
+pub const ARENA_PLACES_RESOLUTION_DOMAIN: &[u8] = b"MWZ_ARENA_RESOLVE_PLACES_V3";
 
 pub fn initialize_arena_handler(
     ctx: Context<InitializeArena>,
@@ -81,24 +90,11 @@ pub fn set_arena_pause_handler(ctx: Context<SetArenaConfig>, paused: bool) -> Re
     Ok(())
 }
 
-// Legacy Arena financial entrypoints remain in the IDL only as fail-closed tombstones.
-// The final one-sweep client must use the *_v2 entrypoints below.
-pub fn open_battle_pool_handler(
-    _ctx: Context<OpenBattlePool>, _pool_id: [u8; 32], _owner_a: Pubkey, _owner_b: Pubkey,
-    _stake_lamports: u64, _deposit_deadline: i64, _resolve_deadline: i64,
-) -> Result<()> { err!(ArenaError::DeprecatedInstruction) }
-pub fn open_tournament_pool_handler(
-    _ctx: Context<OpenTournamentPool>, _pool_id: [u8; 32], _buy_in_lamports: u64,
-    _deposit_deadline: i64, _resolve_deadline: i64,
-) -> Result<()> { err!(ArenaError::DeprecatedInstruction) }
-pub fn deposit_stake_handler(_ctx: Context<DepositStake>, _pool_id: [u8; 32]) -> Result<()> { err!(ArenaError::DeprecatedInstruction) }
-pub fn donate_support_handler(_ctx: Context<DonateSupport>, _pool_id: [u8; 32], _amount: u64) -> Result<()> { err!(ArenaError::DeprecatedInstruction) }
-pub fn deposit_buy_in_handler(_ctx: Context<DepositBuyIn>, _pool_id: [u8; 32]) -> Result<()> { err!(ArenaError::DeprecatedInstruction) }
-pub fn resolve_pool_handler(
-    _ctx: Context<ResolveArenaPool>, _pool_id: [u8; 32], _result_type: u8, _winner: Pubkey,
-    _deadline: i64, _nonce: u64,
-) -> Result<()> { err!(ArenaError::DeprecatedInstruction) }
-pub fn refund_buy_in_handler(_ctx: Context<RefundArenaBuyIn>, _pool_id: [u8; 32]) -> Result<()> { err!(ArenaError::DeprecatedInstruction) }
+// The V1 arena entrypoints (open_battle_pool, deposit_stake, donate_support,
+// open_tournament_pool, deposit_buy_in, resolve_pool, refund_buy_in) were
+// fail-closed tombstones for months; nothing calls them. Removed with the same
+// reasoning as the launchpad: every instruction that is not needed is bytes a
+// wallet has to reason about.
 
 pub fn open_battle_pool_v2_handler(
     ctx: Context<OpenBattlePoolV2>,
@@ -349,14 +345,152 @@ pub fn resolve_pool_v2_handler(
         .and_then(|v| v.checked_add(pool.buy_in_total))
         .ok_or(ArenaError::MathOverflow)?;
     let (winner_normal, protocol_amount, mwl_amount) = split_arena_prize(normal_base)?;
-    pool.pending_winner = winner_normal.checked_add(pool.prize_boost_total).ok_or(ArenaError::MathOverflow)?;
-    pool.pending_protocol = protocol_amount;
+    let (boost_prize, boost_protocol) = split_arena_boost(pool.prize_boost_total)?;
+    pool.pending_winner = winner_normal.checked_add(boost_prize).ok_or(ArenaError::MathOverflow)?;
+    pool.pending_protocol = protocol_amount.checked_add(boost_protocol).ok_or(ArenaError::MathOverflow)?;
     pool.pending_mwl = mwl_amount;
+    pool.place_count = 1;
+    pool.place_assets = [winner_asset, Pubkey::default(), Pubkey::default()];
+    pool.place_wallets = [winner_wallet, Pubkey::default(), Pubkey::default()];
+    pool.place_lamports = [pool.pending_winner, 0, 0];
+    pool.place_claimed = [false; ARENA_MAX_PLACES];
+    // Owed (places + protocol + MWL) must equal taken (stakes + support + boosts).
+    assert_pool_conserved(pool)?;
     emit!(ArenaPoolResolvedV2 {
         pool_id, result_type, winner_side, winner_asset, winner_wallet, outcome_hash,
-        pending_winner: pool.pending_winner, pending_protocol: protocol_amount,
+        pending_winner: pool.pending_winner, pending_protocol: pool.pending_protocol,
         pending_mwl: mwl_amount,
     });
+    Ok(())
+}
+
+/// Tournament resolution with up to three paid places. The resolver signs the
+/// full place list; the prize (85% of entries and support, plus 90% of boosts)
+/// is split by bps with any rounding remainder going to first place, so the
+/// pool is conserved to the lamport. Battles keep resolve_pool_v2.
+pub fn resolve_pool_places_v2_handler<'info>(
+    ctx: Context<'_, '_, 'info, 'info, ResolveArenaPoolPlacesV2<'info>>,
+    pool_id: [u8; 32], places: Vec<ArenaPlaceV2>, outcome_hash: [u8; 32],
+    deadline: i64, nonce: u64,
+) -> Result<()> {
+    let now = Clock::get()?.unix_timestamp;
+    let pool_key = ctx.accounts.pool.key();
+    let config_version = ctx.accounts.arena_config.version;
+    let resolver = ctx.accounts.arena_config.resolver;
+    let pool = &mut ctx.accounts.pool;
+    require!(pool.pool_id == pool_id && pool.state == ARENA_STATE_LIVE, ArenaError::InvalidState);
+    require!(pool.kind == ARENA_KIND_TOURNAMENT, ArenaError::InvalidKind);
+    require!(now <= pool.resolve_deadline && now <= deadline && deadline <= pool.resolve_deadline, ArenaError::ResolutionSignatureExpired);
+    require!(nonce == pool.action_nonce, ArenaError::InvalidResolutionNonce);
+    require!(outcome_hash != [0u8; 32], ArenaError::InvalidOutcomeHash);
+    validate_places(&places)?;
+    require!((pool.entry_count as usize) >= places.len(), ArenaError::InvalidPlaces);
+    require!(ctx.remaining_accounts.len() == places.len(), ArenaError::InvalidWinnerReceipt);
+    for (place, receipt) in places.iter().zip(ctx.remaining_accounts.iter()) {
+        validate_tournament_winner_receipt(receipt, pool_id, place.asset, place.wallet, pool.buy_in_lamports)?;
+    }
+
+    let message = arena_places_resolution_message_v3(
+        config_version, pool_id, pool_key, pool.deposited_stake_a, pool.deposited_stake_b,
+        pool.support_total, pool.prize_boost_total, pool.buy_in_total, &places,
+        outcome_hash, deadline, nonce,
+    );
+    verify_preceding_ed25519(&ctx.accounts.instructions.to_account_info(), &resolver, &message)?;
+
+    let normal_base = pool.deposited_stake_a
+        .checked_add(pool.deposited_stake_b)
+        .and_then(|v| v.checked_add(pool.support_total))
+        .and_then(|v| v.checked_add(pool.buy_in_total))
+        .ok_or(ArenaError::MathOverflow)?;
+    let (winner_normal, protocol_amount, mwl_amount) = split_arena_prize(normal_base)?;
+    let (boost_prize, boost_protocol) = split_arena_boost(pool.prize_boost_total)?;
+    let prize_total = winner_normal.checked_add(boost_prize).ok_or(ArenaError::MathOverflow)?;
+    let bps: Vec<u16> = places.iter().map(|p| p.bps).collect();
+    let amounts = split_places(prize_total, &bps)?;
+
+    pool.state = ARENA_STATE_RESOLVED;
+    pool.result_type = ARENA_RESULT_WINNER;
+    pool.winner_side = ARENA_SIDE_NONE;
+    pool.winner_asset = places[0].asset;
+    pool.winner_wallet = places[0].wallet;
+    pool.outcome_hash = outcome_hash;
+    pool.support_closed = true;
+    pool.action_nonce = pool.action_nonce.checked_add(1).ok_or(ArenaError::MathOverflow)?;
+    pool.pending_winner = amounts[0];
+    pool.pending_protocol = protocol_amount.checked_add(boost_protocol).ok_or(ArenaError::MathOverflow)?;
+    pool.pending_mwl = mwl_amount;
+    pool.place_count = places.len() as u8;
+    pool.place_assets = [Pubkey::default(); ARENA_MAX_PLACES];
+    pool.place_wallets = [Pubkey::default(); ARENA_MAX_PLACES];
+    pool.place_lamports = [0; ARENA_MAX_PLACES];
+    pool.place_claimed = [false; ARENA_MAX_PLACES];
+    for (i, place) in places.iter().enumerate() {
+        pool.place_assets[i] = place.asset;
+        pool.place_wallets[i] = place.wallet;
+        pool.place_lamports[i] = amounts[i];
+    }
+    assert_pool_conserved(pool)?;
+    emit!(ArenaPoolResolvedPlacesV3 {
+        pool_id, outcome_hash, place_count: pool.place_count,
+        place_wallets: pool.place_wallets, place_lamports: pool.place_lamports,
+        pending_protocol: pool.pending_protocol, pending_mwl: mwl_amount,
+    });
+    Ok(())
+}
+
+fn validate_places(places: &[ArenaPlaceV2]) -> Result<()> {
+    require!(!places.is_empty() && places.len() <= ARENA_MAX_PLACES, ArenaError::InvalidPlaces);
+    let mut total: u32 = 0;
+    for (i, place) in places.iter().enumerate() {
+        require!(place.asset != Pubkey::default() && place.wallet != Pubkey::default(), ArenaError::InvalidWinner);
+        require!(place.bps > 0, ArenaError::InvalidPlaces);
+        total = total.checked_add(u32::from(place.bps)).ok_or(ArenaError::MathOverflow)?;
+        for earlier in &places[..i] {
+            require!(earlier.wallet != place.wallet && earlier.asset != place.asset, ArenaError::InvalidPlaces);
+        }
+    }
+    require!(total == ARENA_BPS_DENOM as u32, ArenaError::InvalidPlaces);
+    Ok(())
+}
+
+/// Everything a resolved pool owes must equal everything it took in.
+fn assert_pool_conserved(pool: &ArenaPool) -> Result<()> {
+    let owed_places = pool.place_lamports.iter().try_fold(0u64, |acc, v| acc.checked_add(*v)).ok_or(ArenaError::MathOverflow)?;
+    let owed = owed_places
+        .checked_add(pool.pending_protocol)
+        .and_then(|v| v.checked_add(pool.pending_mwl))
+        .ok_or(ArenaError::MathOverflow)?;
+    let taken = pool.deposited_stake_a
+        .checked_add(pool.deposited_stake_b)
+        .and_then(|v| v.checked_add(pool.support_total))
+        .and_then(|v| v.checked_add(pool.buy_in_total))
+        .and_then(|v| v.checked_add(pool.prize_boost_total))
+        .ok_or(ArenaError::MathOverflow)?;
+    require!(owed == taken, ArenaError::MathOverflow);
+    Ok(())
+}
+
+pub fn claim_place_v2_handler(ctx: Context<ClaimArenaPlaceV2>, pool_id: [u8; 32], place: u8) -> Result<()> {
+    let pool = &mut ctx.accounts.pool;
+    require!(pool.pool_id == pool_id && pool.state == ARENA_STATE_RESOLVED && pool.result_type == ARENA_RESULT_WINNER, ArenaError::InvalidState);
+    require!(place >= 1 && usize::from(place) <= usize::from(pool.place_count), ArenaError::InvalidPlace);
+    let idx = usize::from(place) - 1;
+    require!(pool.place_wallets[idx] == ctx.accounts.winner.key(), ArenaError::InvalidWinner);
+    let amount = if idx == 0 {
+        // First place shares its state with claim_winner: one payout, either path.
+        require!(!pool.claimed_winner && !pool.place_claimed[0] && pool.pending_winner > 0, ArenaError::NothingToClaim);
+        let v = pool.pending_winner;
+        pool.pending_winner = 0;
+        pool.claimed_winner = true;
+        v
+    } else {
+        require!(!pool.place_claimed[idx] && pool.place_lamports[idx] > 0, ArenaError::NothingToClaim);
+        pool.place_lamports[idx]
+    };
+    pool.place_claimed[idx] = true;
+    pool.place_lamports[idx] = 0;
+    debit_vault(&ctx.accounts.vault.to_account_info(), &ctx.accounts.winner.to_account_info(), amount)?;
+    initialize_claim_receipt(&mut ctx.accounts.claim_receipt, pool_id, ARENA_CLAIM_PLACE_BASE + place, ctx.accounts.winner.key(), amount, ctx.bumps.claim_receipt);
     Ok(())
 }
 
@@ -405,10 +539,12 @@ pub fn claim_winner_handler(ctx: Context<ClaimArenaWinner>, pool_id: [u8; 32]) -
     let pool = &mut ctx.accounts.pool;
     require!(pool.pool_id == pool_id && pool.state == ARENA_STATE_RESOLVED && pool.result_type == ARENA_RESULT_WINNER, ArenaError::InvalidState);
     require!(pool.winner_wallet == ctx.accounts.winner.key(), ArenaError::InvalidWinner);
-    require!(!pool.claimed_winner && pool.pending_winner > 0, ArenaError::NothingToClaim);
+    require!(!pool.claimed_winner && !pool.place_claimed[0] && pool.pending_winner > 0, ArenaError::NothingToClaim);
     let amount = pool.pending_winner;
     pool.pending_winner = 0;
     pool.claimed_winner = true;
+    pool.place_claimed[0] = true;
+    pool.place_lamports[0] = 0;
     debit_vault(&ctx.accounts.vault.to_account_info(), &ctx.accounts.winner.to_account_info(), amount)?;
     initialize_claim_receipt(&mut ctx.accounts.claim_receipt, pool_id, ARENA_CLAIM_WINNER, ctx.accounts.winner.key(), amount, ctx.bumps.claim_receipt);
     Ok(())
@@ -504,6 +640,8 @@ fn initialize_pool_common(
     pool.cancellation_reason = 0; pool.pending_winner = 0; pool.pending_protocol = 0; pool.pending_mwl = 0;
     pool.claimed_winner = false; pool.claimed_protocol = false; pool.claimed_mwl = false;
     pool.refunded_a = false; pool.refunded_b = false; pool.bump = bump; pool.vault_bump = vault_bump; pool.action_nonce = 0;
+    pool.place_count = 0; pool.place_assets = [Pubkey::default(); ARENA_MAX_PLACES]; pool.place_wallets = [Pubkey::default(); ARENA_MAX_PLACES];
+    pool.place_lamports = [0; ARENA_MAX_PLACES]; pool.place_claimed = [false; ARENA_MAX_PLACES];
 }
 
 fn initialize_claim_receipt(receipt: &mut Account<ArenaClaimReceipt>, pool_id: [u8; 32], bucket: u8, recipient: Pubkey, amount: u64, bump: u8) {
@@ -523,6 +661,30 @@ fn debit_vault(vault: &AccountInfo, receiver: &AccountInfo, lamports: u64) -> Re
     **vault.try_borrow_mut_lamports()? = vault.lamports().checked_sub(lamports).ok_or(ArenaError::InsufficientVaultBalance)?;
     **receiver.try_borrow_mut_lamports()? = receiver.lamports().checked_add(lamports).ok_or(ArenaError::MathOverflow)?;
     Ok(())
+}
+
+/// Boosts split 90/10 at resolve: (to prize, to protocol).
+pub fn split_arena_boost(boost_total: u64) -> Result<(u64, u64)> {
+    let protocol = boost_total.checked_mul(ARENA_BOOST_PROTOCOL_BPS).ok_or(ArenaError::MathOverflow)? / ARENA_BPS_DENOM;
+    let prize = boost_total.checked_sub(protocol).ok_or(ArenaError::MathOverflow)?;
+    Ok((prize, protocol))
+}
+
+/// Splits a prize over places by bps; the rounding remainder goes to first
+/// place so the amounts always sum to the prize exactly.
+pub fn split_places(prize_total: u64, bps: &[u16]) -> Result<[u64; ARENA_MAX_PLACES]> {
+    require!(!bps.is_empty() && bps.len() <= ARENA_MAX_PLACES, ArenaError::InvalidPlaces);
+    let mut out = [0u64; ARENA_MAX_PLACES];
+    let mut others: u64 = 0;
+    for (i, share) in bps.iter().enumerate().skip(1) {
+        let amount = u64::try_from(
+            u128::from(prize_total) * u128::from(*share) / u128::from(ARENA_BPS_DENOM),
+        ).map_err(|_| error!(ArenaError::MathOverflow))?;
+        out[i] = amount;
+        others = others.checked_add(amount).ok_or(ArenaError::MathOverflow)?;
+    }
+    out[0] = prize_total.checked_sub(others).ok_or(ArenaError::MathOverflow)?;
+    Ok(out)
 }
 
 pub fn split_arena_prize(prize: u64) -> Result<(u64, u64, u64)> {
@@ -547,6 +709,24 @@ pub fn arena_resolution_message_v2(
     bytes.extend_from_slice(&stake_a.to_le_bytes()); bytes.extend_from_slice(&stake_b.to_le_bytes()); bytes.extend_from_slice(&support_total.to_le_bytes()); bytes.extend_from_slice(&prize_boost_total.to_le_bytes()); bytes.extend_from_slice(&buy_in_total.to_le_bytes());
     bytes.push(winner_side); bytes.extend_from_slice(winner_asset.as_ref()); bytes.extend_from_slice(winner_wallet.as_ref()); bytes.push(result_type); bytes.extend_from_slice(&outcome_hash);
     bytes.extend_from_slice(&deadline.to_le_bytes()); bytes.extend_from_slice(&nonce.to_le_bytes()); bytes
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn arena_places_resolution_message_v3(
+    version: u8, pool_id: [u8; 32], pool: Pubkey,
+    stake_a: u64, stake_b: u64, support_total: u64, prize_boost_total: u64, buy_in_total: u64,
+    places: &[ArenaPlaceV2], outcome_hash: [u8; 32], deadline: i64, nonce: u64,
+) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(400);
+    bytes.extend_from_slice(ARENA_PLACES_RESOLUTION_DOMAIN); bytes.extend_from_slice(crate::ID.as_ref()); bytes.push(version);
+    bytes.extend_from_slice(&pool_id); bytes.extend_from_slice(pool.as_ref()); bytes.push(ARENA_KIND_TOURNAMENT);
+    bytes.extend_from_slice(&stake_a.to_le_bytes()); bytes.extend_from_slice(&stake_b.to_le_bytes()); bytes.extend_from_slice(&support_total.to_le_bytes());
+    bytes.extend_from_slice(&prize_boost_total.to_le_bytes()); bytes.extend_from_slice(&buy_in_total.to_le_bytes());
+    bytes.push(places.len() as u8);
+    for place in places {
+        bytes.extend_from_slice(place.asset.as_ref()); bytes.extend_from_slice(place.wallet.as_ref()); bytes.extend_from_slice(&place.bps.to_le_bytes());
+    }
+    bytes.extend_from_slice(&outcome_hash); bytes.extend_from_slice(&deadline.to_le_bytes()); bytes.extend_from_slice(&nonce.to_le_bytes()); bytes
 }
 
 pub fn arena_cancel_message_v1(
@@ -602,9 +782,6 @@ pub struct SetArenaConfig<'info> {
     #[account(seeds = [REWARDS_CONFIG_SEED], bump = rewards_config.bump, has_one = authority)] pub rewards_config: Account<'info, RewardsConfig>,
     #[account(mut, seeds = [ARENA_CONFIG_SEED], bump = arena_config.bump, constraint = arena_config.authority == authority.key() @ ArenaError::Unauthorized)] pub arena_config: Account<'info, ArenaConfig>,
 }
-
-macro_rules! deprecated_accounts { ($name:ident) => { #[derive(Accounts)] pub struct $name<'info> { pub caller: Signer<'info> } }; }
-deprecated_accounts!(OpenBattlePool); deprecated_accounts!(OpenTournamentPool); deprecated_accounts!(DepositStake); deprecated_accounts!(DonateSupport); deprecated_accounts!(DepositBuyIn); deprecated_accounts!(ResolveArenaPool); deprecated_accounts!(RefundArenaBuyIn);
 
 #[derive(Accounts)]
 #[instruction(pool_id: [u8; 32])]
@@ -686,6 +863,24 @@ pub struct ResolveArenaPoolV2<'info> {
     pub winner_buy_in_receipt: UncheckedAccount<'info>,
     /// CHECK: canonical instructions sysvar.
     #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)] pub instructions: UncheckedAccount<'info>,
+}
+#[derive(Accounts)]
+#[instruction(pool_id: [u8; 32])]
+pub struct ResolveArenaPoolPlacesV2<'info> {
+    #[account(seeds = [ARENA_CONFIG_SEED], bump = arena_config.bump)] pub arena_config: Account<'info, ArenaConfig>,
+    #[account(mut, seeds = [ARENA_POOL_SEED, pool_id.as_ref()], bump = pool.bump)] pub pool: Account<'info, ArenaPool>,
+    /// CHECK: canonical instructions sysvar.
+    #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)] pub instructions: UncheckedAccount<'info>,
+    // remaining_accounts: one buy-in receipt per place, in place order.
+}
+#[derive(Accounts)]
+#[instruction(pool_id: [u8; 32], place: u8)]
+pub struct ClaimArenaPlaceV2<'info> {
+    #[account(mut)] pub winner: Signer<'info>,
+    #[account(mut, seeds = [ARENA_POOL_SEED, pool_id.as_ref()], bump = pool.bump)] pub pool: Account<'info, ArenaPool>,
+    #[account(mut, seeds = [ARENA_VAULT_SEED, pool_id.as_ref()], bump = pool.vault_bump)] pub vault: Account<'info, ArenaVault>,
+    #[account(init, payer = winner, space = 8 + ArenaClaimReceipt::SIZE, seeds = [ARENA_CLAIM_SEED, pool_id.as_ref(), &[ARENA_CLAIM_PLACE_BASE.saturating_add(place)]], bump)] pub claim_receipt: Account<'info, ArenaClaimReceipt>,
+    pub system_program: Program<'info, System>,
 }
 #[derive(Accounts)]
 #[instruction(pool_id: [u8; 32])]
@@ -780,8 +975,20 @@ pub struct ArenaPool {
     pub pending_winner: u64, pub pending_protocol: u64, pub pending_mwl: u64,
     pub claimed_winner: bool, pub claimed_protocol: bool, pub claimed_mwl: bool,
     pub refunded_a: bool, pub refunded_b: bool, pub bump: u8, pub vault_bump: u8, pub action_nonce: u64,
+    // Tournament places (1st, 2nd, runner-up). Place 1 mirrors winner_* /
+    // pending_winner so claim_winner keeps working; places 2-3 claim via
+    // claim_place_v2. Appended after every V2 field; no mainnet pool existed
+    // before this layout.
+    pub place_count: u8,
+    pub place_assets: [Pubkey; ARENA_MAX_PLACES],
+    pub place_wallets: [Pubkey; ARENA_MAX_PLACES],
+    pub place_lamports: [u64; ARENA_MAX_PLACES],
+    pub place_claimed: [bool; ARENA_MAX_PLACES],
 }
-impl ArenaPool { pub const SIZE: usize = 535; }
+impl ArenaPool { pub const SIZE: usize = 535 + 1 + 32 * 3 + 32 * 3 + 8 * 3 + 3; }
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ArenaPlaceV2 { pub asset: Pubkey, pub wallet: Pubkey, pub bps: u16 }
 #[account] pub struct ArenaVault { pub kind: u8 }
 impl ArenaVault { pub const SIZE: usize = 1; }
 #[account]
@@ -807,6 +1014,7 @@ pub struct ArenaPoolOpenedV2 { pub pool_id: [u8; 32], pub kind: u8, pub asset_a:
 #[event] pub struct ArenaPrizeBoostDeposited { pub pool_id: [u8; 32], pub funding_id: [u8; 32], pub funder: Pubkey, pub amount_lamports: u64 }
 #[event] pub struct ArenaPoolResolvedV2 { pub pool_id: [u8; 32], pub result_type: u8, pub winner_side: u8, pub winner_asset: Pubkey, pub winner_wallet: Pubkey, pub outcome_hash: [u8; 32], pub pending_winner: u64, pub pending_protocol: u64, pub pending_mwl: u64 }
 #[event] pub struct ArenaPoolCancelledV2 { pub pool_id: [u8; 32], pub reason_code: u8 }
+#[event] pub struct ArenaPoolResolvedPlacesV3 { pub pool_id: [u8; 32], pub outcome_hash: [u8; 32], pub place_count: u8, pub place_wallets: [Pubkey; ARENA_MAX_PLACES], pub place_lamports: [u64; ARENA_MAX_PLACES], pub pending_protocol: u64, pub pending_mwl: u64 }
 
 #[error_code]
 pub enum ArenaError {
@@ -841,17 +1049,57 @@ pub enum ArenaError {
     #[msg("Arena refund is unavailable.")] RefundUnavailable,
     #[msg("Arena funds were already refunded.")] AlreadyRefunded,
     #[msg("Arena pool cannot be expired yet.")] ExpiryUnavailable,
-    #[msg("Legacy Arena financial instruction is disabled; use the V2 instruction.")] DeprecatedInstruction,
+    #[msg("Arena tournament places are invalid: 1-3 places, distinct, bps summing to 10000, entrants >= places.")] InvalidPlaces,
+    #[msg("Arena place is out of range for this pool.")] InvalidPlace,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
-    fn normal_base_is_85_5_10_and_boost_is_not_resplit() {
+    fn normal_base_is_85_5_10_and_boost_is_90_10() {
         let (winner, protocol, mwl) = split_arena_prize(10_000).unwrap();
         assert_eq!((winner, protocol, mwl), (8_500, 500, 1_000));
-        assert_eq!(winner + 7_000, 15_500);
+        let (boost_prize, boost_protocol) = split_arena_boost(7_000).unwrap();
+        assert_eq!((boost_prize, boost_protocol), (6_300, 700));
+        assert_eq!(boost_prize + boost_protocol, 7_000);
+    }
+    #[test]
+    fn places_split_conserves_the_prize_and_gives_the_remainder_to_first() {
+        for prize in [1u64, 2, 3, 7, 99, 100, 101, 999, 1_000, 123_456_789, 1_000_000_000] {
+            for bps in [vec![10_000u16], vec![7_000, 3_000], vec![6_000, 3_000, 1_000], vec![3_334, 3_333, 3_333]] {
+                let out = split_places(prize, &bps).unwrap();
+                assert_eq!(out.iter().sum::<u64>(), prize, "prize {prize} bps {bps:?}");
+                for i in 1..bps.len() { assert_eq!(out[i], prize * u64::from(bps[i]) / 10_000); }
+                assert!(out[0] >= prize * u64::from(bps[0]) / 10_000);
+            }
+        }
+        assert!(split_places(10, &[]).is_err());
+        assert!(split_places(10, &[1, 2, 3, 4]).is_err());
+    }
+    #[test]
+    fn places_validation_rejects_bad_lists() {
+        let a = Pubkey::new_unique(); let b = Pubkey::new_unique(); let wa = Pubkey::new_unique(); let wb = Pubkey::new_unique();
+        let ok = vec![ArenaPlaceV2 { asset: a, wallet: wa, bps: 7_000 }, ArenaPlaceV2 { asset: b, wallet: wb, bps: 3_000 }];
+        assert!(validate_places(&ok).is_ok());
+        assert!(validate_places(&[]).is_err());
+        assert!(validate_places(&[ArenaPlaceV2 { asset: a, wallet: wa, bps: 9_999 }]).is_err());
+        assert!(validate_places(&[ArenaPlaceV2 { asset: a, wallet: wa, bps: 5_000 }, ArenaPlaceV2 { asset: b, wallet: wa, bps: 5_000 }]).is_err());
+        assert!(validate_places(&[ArenaPlaceV2 { asset: a, wallet: wa, bps: 5_000 }, ArenaPlaceV2 { asset: a, wallet: wb, bps: 5_000 }]).is_err());
+        assert!(validate_places(&[ArenaPlaceV2 { asset: a, wallet: wa, bps: 10_000 }, ArenaPlaceV2 { asset: b, wallet: wb, bps: 0 }]).is_err());
+    }
+    #[test]
+    fn places_message_binds_every_place_and_share() {
+        let p = Pubkey::new_unique(); let a = Pubkey::new_unique(); let b = Pubkey::new_unique(); let wa = Pubkey::new_unique(); let wb = Pubkey::new_unique();
+        let one = vec![ArenaPlaceV2 { asset: a, wallet: wa, bps: 7_000 }, ArenaPlaceV2 { asset: b, wallet: wb, bps: 3_000 }];
+        let two = vec![ArenaPlaceV2 { asset: a, wallet: wa, bps: 6_000 }, ArenaPlaceV2 { asset: b, wallet: wb, bps: 4_000 }];
+        let three = vec![ArenaPlaceV2 { asset: b, wallet: wb, bps: 7_000 }, ArenaPlaceV2 { asset: a, wallet: wa, bps: 3_000 }];
+        let x = arena_places_resolution_message_v3(2, [7u8; 32], p, 0, 0, 5, 7, 20, &one, [1u8; 32], 99, 0);
+        let y = arena_places_resolution_message_v3(2, [7u8; 32], p, 0, 0, 5, 7, 20, &two, [1u8; 32], 99, 0);
+        let z = arena_places_resolution_message_v3(2, [7u8; 32], p, 0, 0, 5, 7, 20, &three, [1u8; 32], 99, 0);
+        let w = arena_places_resolution_message_v3(2, [7u8; 32], p, 0, 0, 5, 8, 20, &one, [1u8; 32], 99, 0);
+        assert_ne!(x, y); assert_ne!(x, z); assert_ne!(x, w);
+        assert_ne!(x, arena_resolution_message_v2(2, [7u8; 32], p, ARENA_KIND_TOURNAMENT, Pubkey::default(), Pubkey::default(), p, Pubkey::default(), 0, 0, 5, 7, 20, ARENA_SIDE_NONE, a, wa, ARENA_RESULT_WINNER, [1u8; 32], 99, 0));
     }
     #[test]
     fn tournament_requires_two_registered_entries_before_activation() {

@@ -31,6 +31,9 @@ pub use arena_money_v2::*;
 
 pub const PERIOD_WEEKLY: u8 = 0;
 pub const PERIOD_MONTHLY: u8 = 1;
+/// Quarterly Finals of the Major War League pay from the same vault with the
+/// same root/claim rail; only the period code differs.
+pub const PERIOD_QUARTERLY: u8 = 2;
 
 pub const LEAGUE_LEAF_PREFIX: &[u8] = b"MWZ_LEAGUE_LEAF";
 pub const AIRDROP_LEAF_PREFIX: &[u8] = b"MWZ_AIRDROP_LEAF";
@@ -229,14 +232,6 @@ pub mod mwz_rewards_treasury {
         Ok(())
     }
 
-    pub fn initialize_lanes(
-        _ctx: Context<InitializeLanesDeprecated>,
-        _operator: Pubkey,
-        _native_usd_micros: u64,
-    ) -> Result<()> {
-        err!(TreasuryError::DeprecatedInstruction)
-    }
-
     pub fn initialize_lanes_v2_primary(
         ctx: Context<InitializeLanesV2Primary>,
         operator: Pubkey,
@@ -270,26 +265,46 @@ pub mod mwz_rewards_treasury {
         }
         let state = &mut ctx.accounts.route_state;
         require_keys_eq!(ctx.accounts.operator.key(), state.operator, TreasuryError::InvalidOperator);
-        let (to_operator, _to_vault, new_filled) = split_operator_fill(
+        let (to_operator, to_overflow, new_filled) = split_operator_fill(
             available,
             state.native_usd_micros,
             state.operator_filled_usd_micros,
             state.operator_fill_cap_usd_micros,
         )?;
-        if to_operator == 0 {
+        require!(
+            to_operator.checked_add(to_overflow) == Some(available),
+            TreasuryError::MathOverflow
+        );
+        // The operator wallet is filled up to its USD cap; everything above
+        // the cap leaves the program to the overflow treasury (the multisig).
+        // Until set_route_params points overflow_treasury away from the
+        // protocol vault itself, the remainder simply stays in the vault.
+        let overflow_is_vault =
+            ctx.accounts.overflow_treasury.key() == ctx.accounts.protocol_vault.key();
+        let leaving = if overflow_is_vault { to_operator } else { available };
+        if leaving == 0 {
             return Ok(());
         }
         {
             let vault_info = ctx.accounts.protocol_vault.to_account_info();
-            let operator_info = ctx.accounts.operator.to_account_info();
             **vault_info.try_borrow_mut_lamports()? = vault_info
                 .lamports()
-                .checked_sub(to_operator)
+                .checked_sub(leaving)
                 .ok_or(TreasuryError::InsufficientVaultBalance)?;
-            **operator_info.try_borrow_mut_lamports()? = operator_info
-                .lamports()
-                .checked_add(to_operator)
-                .ok_or(TreasuryError::MathOverflow)?;
+            if to_operator > 0 {
+                let operator_info = ctx.accounts.operator.to_account_info();
+                **operator_info.try_borrow_mut_lamports()? = operator_info
+                    .lamports()
+                    .checked_add(to_operator)
+                    .ok_or(TreasuryError::MathOverflow)?;
+            }
+            if !overflow_is_vault && to_overflow > 0 {
+                let overflow_info = ctx.accounts.overflow_treasury.to_account_info();
+                **overflow_info.try_borrow_mut_lamports()? = overflow_info
+                    .lamports()
+                    .checked_add(to_overflow)
+                    .ok_or(TreasuryError::MathOverflow)?;
+            }
         }
         state.operator_filled_usd_micros = new_filled;
         Ok(())
@@ -353,7 +368,7 @@ pub mod mwz_rewards_treasury {
         total_lamports: u64,
     ) -> Result<()> {
         require!(
-            period == PERIOD_WEEKLY || period == PERIOD_MONTHLY,
+            period == PERIOD_WEEKLY || period == PERIOD_MONTHLY || period == PERIOD_QUARTERLY,
             TreasuryError::InvalidPeriod
         );
         require!(root != [0u8; 32], TreasuryError::InvalidRoot);
@@ -396,7 +411,7 @@ pub mod mwz_rewards_treasury {
     ) -> Result<()> {
         require!(ctx.accounts.config.claims_enabled, TreasuryError::ClaimsDisabled);
         require!(
-            period == PERIOD_WEEKLY || period == PERIOD_MONTHLY,
+            period == PERIOD_WEEKLY || period == PERIOD_MONTHLY || period == PERIOD_QUARTERLY,
             TreasuryError::InvalidPeriod
         );
         require!(rank >= 1 && rank <= 5, TreasuryError::InvalidRank);
@@ -676,63 +691,6 @@ pub mod mwz_rewards_treasury {
         set_arena_pause_handler(ctx, paused)
     }
 
-    pub fn open_battle_pool(
-        ctx: Context<OpenBattlePool>,
-        pool_id: [u8; 32],
-        owner_a: Pubkey,
-        owner_b: Pubkey,
-        stake_lamports: u64,
-        deposit_deadline: i64,
-        resolve_deadline: i64,
-    ) -> Result<()> {
-        open_battle_pool_handler(
-            ctx,
-            pool_id,
-            owner_a,
-            owner_b,
-            stake_lamports,
-            deposit_deadline,
-            resolve_deadline,
-        )
-    }
-
-    pub fn open_tournament_pool(
-        ctx: Context<OpenTournamentPool>,
-        pool_id: [u8; 32],
-        buy_in_lamports: u64,
-        deposit_deadline: i64,
-        resolve_deadline: i64,
-    ) -> Result<()> {
-        open_tournament_pool_handler(ctx, pool_id, buy_in_lamports, deposit_deadline, resolve_deadline)
-    }
-
-    pub fn deposit_stake(ctx: Context<DepositStake>, pool_id: [u8; 32]) -> Result<()> {
-        deposit_stake_handler(ctx, pool_id)
-    }
-
-    pub fn donate_support(
-        ctx: Context<DonateSupport>,
-        pool_id: [u8; 32],
-        amount_lamports: u64,
-    ) -> Result<()> {
-        donate_support_handler(ctx, pool_id, amount_lamports)
-    }
-
-    pub fn deposit_buy_in(ctx: Context<DepositBuyIn>, pool_id: [u8; 32]) -> Result<()> {
-        deposit_buy_in_handler(ctx, pool_id)
-    }
-
-    pub fn resolve_pool(
-        ctx: Context<ResolveArenaPool>,
-        pool_id: [u8; 32],
-        result_type: u8,
-        winner: Pubkey,
-        deadline: i64,
-        nonce: u64,
-    ) -> Result<()> {
-        resolve_pool_handler(ctx, pool_id, result_type, winner, deadline, nonce)
-    }
-
     pub fn open_battle_pool_v2(
         ctx: Context<OpenBattlePoolV2>,
         pool_id: [u8; 32],
@@ -863,15 +821,25 @@ pub mod mwz_rewards_treasury {
         refund_stake_handler(ctx, pool_id)
     }
 
-    pub fn refund_buy_in(ctx: Context<RefundArenaBuyIn>, pool_id: [u8; 32]) -> Result<()> {
-        refund_buy_in_handler(ctx, pool_id)
+    /// Tournament resolution with 1-3 paid places; buy-in receipts follow as
+    /// remaining accounts, one per place, in order.
+    pub fn resolve_pool_places_v2<'info>(
+        ctx: Context<'_, '_, 'info, 'info, ResolveArenaPoolPlacesV2<'info>>,
+        pool_id: [u8; 32],
+        places: Vec<ArenaPlaceV2>,
+        outcome_hash: [u8; 32],
+        deadline: i64,
+        nonce: u64,
+    ) -> Result<()> {
+        resolve_pool_places_v2_handler(ctx, pool_id, places, outcome_hash, deadline, nonce)
+    }
+
+    pub fn claim_place_v2(ctx: Context<ClaimArenaPlaceV2>, pool_id: [u8; 32], place: u8) -> Result<()> {
+        claim_place_v2_handler(ctx, pool_id, place)
     }
 }
 
-#[derive(Accounts)]
-pub struct InitializeLanesDeprecated<'info> {
-    pub authority: Signer<'info>,
-}
+
 
 #[derive(Accounts)]
 pub struct InitializeLanesV2Primary<'info> {
@@ -953,6 +921,9 @@ pub struct FlushOperatorFill<'info> {
     pub route_state: Account<'info, RouteState>,
     #[account(mut, seeds = [PROTOCOL_VAULT_SEED], bump)]
     pub protocol_vault: Account<'info, VaultState>,
+    /// CHECK: pinned to route_state.overflow_treasury; receives everything above the operator cap.
+    #[account(mut, address = route_state.overflow_treasury @ TreasuryError::InvalidOverflowTreasury)]
+    pub overflow_treasury: UncheckedAccount<'info>,
 }
 
 #[derive(Accounts)]
@@ -1452,6 +1423,8 @@ pub enum TreasuryError {
     InvalidOperator,
     #[msg("Legacy rewards lane initializer is disabled; use initialize_lanes_v2_primary/secondary.")]
     DeprecatedInstruction,
+    #[msg("overflow_treasury must equal route_state.overflow_treasury.")]
+    InvalidOverflowTreasury,
 }
 
 pub fn league_leaf(

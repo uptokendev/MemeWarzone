@@ -192,12 +192,16 @@ describe("rewards treasury local-validator acceptance (roots + claims)", functio
     for (const winner of winners) await fund(winner.publicKey, 1);
   });
 
-  it("rejects the deprecated initialize_lanes so nobody re-runs the old bootstrap", async function () {
-    await expectFail(
-      program.methods.initializeLanes(authority, new BN(1)).accountsStrict({ authority }).rpc({ commitment: "confirmed" }),
-      /DeprecatedInstruction|custom program error/i,
-      "initialize_lanes",
-    );
+  it("no longer carries the retired V1 arena and lane instructions", function () {
+    // Anchor's client camel-cases instruction names; compare on snake_case.
+    const snake = (name) => String(name).replace(/([A-Z])/g, (m) => `_${m.toLowerCase()}`).replace(/^_/, "");
+    const names = new Set(program.idl.instructions.map((ix) => snake(ix.name)));
+    for (const retired of ["initialize_lanes", "open_battle_pool", "open_tournament_pool", "deposit_stake", "donate_support", "deposit_buy_in", "resolve_pool", "refund_buy_in"]) {
+      assert.ok(!names.has(retired), `${retired} must be gone from the IDL`);
+    }
+    for (const live of ["open_battle_pool_v2", "deposit_stake_v2", "resolve_pool_v2", "resolve_pool_places_v2", "claim_place_v2", "flush_operator_fill"]) {
+      assert.ok(names.has(live), `${live} must be in the IDL`);
+    }
   });
 
   it("league: publishes a root, pays a proven winner exactly once, refuses forged and disabled claims", async function () {
@@ -384,8 +388,10 @@ describe("rewards treasury local-validator acceptance (roots + claims)", functio
     await transferTo(pdas.protocolVault, LAMPORTS_PER_SOL);
     const vaultBefore = await lamports(pdas.protocolVault);
     const operatorBefore = await lamports(authority);
+    // overflow_treasury still points at the vault itself (mainnet's state until
+    // set_route_params): the remainder above the cap stays put.
     const sig = await program.methods.flushOperatorFill()
-      .accountsStrict({ operator: authority, routeState: pdas.routeState, protocolVault: pdas.protocolVault })
+      .accountsStrict({ operator: authority, routeState: pdas.routeState, protocolVault: pdas.protocolVault, overflowTreasury: pdas.protocolVault })
       .rpc({ commitment: "confirmed" });
     const tx = await connection.getTransaction(sig, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
     const vaultAfter = await lamports(pdas.protocolVault);
@@ -395,5 +401,67 @@ describe("rewards treasury local-validator acceptance (roots + claims)", functio
     assert.equal(operatorAfter - operatorBefore + BigInt(tx.meta.fee), moved, "every lamport leaving the vault reached the operator");
     const rentMin = BigInt(await connection.getMinimumBalanceForRentExemption(8 + 1));
     assert.ok(vaultAfter >= rentMin, "the vault keeps its rent");
+  });
+
+  it("operator fill: above the USD cap everything leaves to the overflow treasury (the multisig)", async function () {
+    const overflow = Keypair.generate();
+    await fund(overflow.publicKey, 1);
+    const route = await program.account.routeState.fetch(pdas.routeState);
+    // Cap at what is already filled: nothing more to the operator, all to overflow.
+    await program.methods.setRouteParams(authority, overflow.publicKey, route.operatorFilledUsdMicros.isZero() ? new BN(1) : route.operatorFilledUsdMicros, route.nativeUsdMicros)
+      .accountsStrict({ authority, config: pdas.config, routeState: pdas.routeState })
+      .rpc({ commitment: "confirmed" });
+    await transferTo(pdas.protocolVault, LAMPORTS_PER_SOL);
+    const rentMin = BigInt(await connection.getMinimumBalanceForRentExemption(8 + 1));
+    const vaultBefore = await lamports(pdas.protocolVault);
+    const operatorBefore = await lamports(authority);
+    const overflowBefore = await lamports(overflow.publicKey);
+    await expectFail(
+      program.methods.flushOperatorFill()
+        .accountsStrict({ operator: authority, routeState: pdas.routeState, protocolVault: pdas.protocolVault, overflowTreasury: pdas.protocolVault })
+        .rpc({ commitment: "confirmed" }),
+      /InvalidOverflowTreasury|ConstraintAddress|custom program error|0x7d1/i, "flush with the wrong overflow account",
+    );
+    const sig = await program.methods.flushOperatorFill()
+      .accountsStrict({ operator: authority, routeState: pdas.routeState, protocolVault: pdas.protocolVault, overflowTreasury: overflow.publicKey })
+      .rpc({ commitment: "confirmed" });
+    const tx = await connection.getTransaction(sig, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
+    const vaultAfter = await lamports(pdas.protocolVault);
+    assert.equal(vaultAfter, rentMin, "the vault is drained to its rent");
+    assert.equal((await lamports(overflow.publicKey)) - overflowBefore, vaultBefore - rentMin, "the overflow treasury received everything above rent");
+    assert.equal((await lamports(authority)) - operatorBefore, -BigInt(tx.meta.fee), "the capped operator received nothing more");
+  });
+
+  it("league: quarterly finals use the same root and claim rail with period 2", async function () {
+    const PERIOD_QUARTERLY = 2;
+    const epochStart = Math.floor(Date.now() / 1000) - 90 * 24 * 3600;
+    const categoryHash = keccak(Buffer.from("quarterly_finals", "utf8"));
+    const prize = 100_000_000n;
+    const leaves = [leagueLeaf({ epochStart, period: PERIOD_QUARTERLY, categoryHash, rank: 1, winner: winners[1].publicKey, amount: prize })];
+    const root = buildRoot(leaves);
+    await program.methods.depositLeague(new BN(prize.toString()))
+      .accountsStrict({ payer: authority, leagueVault: pdas.leagueVault, systemProgram: SystemProgram.programId })
+      .rpc({ commitment: "confirmed" });
+    const leagueEpoch = pda("league_epoch", Buffer.from([PERIOD_QUARTERLY]), i64le(epochStart));
+    await program.methods.setLeagueEpochRoot(PERIOD_QUARTERLY, new BN(epochStart), arr32(root), new BN(prize.toString()))
+      .accountsStrict({ authority, config: pdas.config, leagueVault: pdas.leagueVault, leagueEpoch, systemProgram: SystemProgram.programId })
+      .rpc({ commitment: "confirmed" });
+    const vaultBefore = await lamports(pdas.leagueVault);
+    await program.methods
+      .claimLeague(PERIOD_QUARTERLY, new BN(epochStart), arr32(categoryHash), 1, new BN(prize.toString()), proofArg(buildProof(leaves, 0)))
+      .accountsStrict({
+        winner: winners[1].publicKey, config: pdas.config, leagueVault: pdas.leagueVault, leagueEpoch,
+        claimReceipt: pda("league_claim", Buffer.from([PERIOD_QUARTERLY]), i64le(epochStart), categoryHash, Buffer.from([1])),
+        systemProgram: SystemProgram.programId,
+      })
+      .signers([winners[1]])
+      .rpc({ commitment: "confirmed" });
+    assert.equal(vaultBefore - (await lamports(pdas.leagueVault)), prize, "the quarterly prize is paid from the league vault");
+    await expectFail(
+      program.methods.setLeagueEpochRoot(3, new BN(epochStart), arr32(root), new BN(prize.toString()))
+        .accountsStrict({ authority, config: pdas.config, leagueVault: pdas.leagueVault, leagueEpoch: pda("league_epoch", Buffer.from([3]), i64le(epochStart)), systemProgram: SystemProgram.programId })
+        .rpc({ commitment: "confirmed" }),
+      /InvalidPeriod|custom program error/i, "period 3",
+    );
   });
 });

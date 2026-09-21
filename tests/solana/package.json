@@ -8,7 +8,7 @@
     "test:gate-k": "mocha --timeout 1000000 gate-k-meteora.cjs",
     "test:sbf-gate": "mocha --timeout 1000000 v4-create-acceptance.cjs v4-lifecycle-acceptance.cjs v0-launchpad-onchain.cjs gate-k-meteora.cjs",
     "test:railway": "mocha --timeout 120000 railway-v4-conformance.cjs",
-    "test:treasury": "mocha --timeout 1000000 arena-money-v2-acceptance.cjs rewards-claims-acceptance.cjs",
+    "test:treasury": "mocha --timeout 1000000 arena-war-pool-acceptance.cjs arena-money-v2-acceptance.cjs rewards-claims-acceptance.cjs",
     "bootstrap-solana-devnet": "node -r ./web3-loader-compat.cjs devnet-protocol-state.cjs bootstrap",
     "bootstrap-solana-devnet:allow-pause-reset": "node -r ./web3-loader-compat.cjs devnet-protocol-state.cjs bootstrap --allow-pause-reset",
     "verify-solana-devnet": "node devnet-backend-artifact-health.cjs && node verify-solana-devnet.cjs",

@@ -162,6 +162,31 @@ async function main() {
     }
   }
 
+  // Protocol fees above the operator's USD cap must leave to the multisig.
+  // Mainnet's route_state still has overflow_treasury = the protocol vault
+  // itself (the pre-upgrade layout), which the program treats as "keep".
+  const overflowTreasury = pk("ROUTE_OVERFLOW_TREASURY", new PublicKey("fk5YYWb4ppwbFqME8YRugirMSaNfhGgPP3GjfMbbfGv"));
+  if (route.overflowTreasury.equals(overflowTreasury)) {
+    console.log(`[init-arena] skip set_route_params: overflow already ${overflowTreasury.toBase58()}`);
+  } else {
+    const tx = await program.methods.setRouteParams(route.operator, overflowTreasury, route.operatorFillCapUsdMicros, route.nativeUsdMicros)
+      .accountsStrict({ authority: authority.publicKey, config: rewardsConfig, routeState })
+      .transaction();
+    tx.feePayer = authority.publicKey;
+    tx.recentBlockhash = (await connection.getLatestBlockhash("confirmed")).blockhash;
+    tx.sign(authority);
+    const sim = await connection.simulateTransaction(tx);
+    if (sim.value.err) throw new Error(`set_route_params simulation failed: ${JSON.stringify(sim.value.err)}`);
+    console.log(`[init-arena] set_route_params(operator=${route.operator.toBase58()}, overflow=${overflowTreasury.toBase58()}, cap=$${Number(route.operatorFillCapUsdMicros) / 1e6}, sol=$${Number(route.nativeUsdMicros) / 1e6}): simulation ok`);
+    if (execute) {
+      const sig = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false });
+      const latest = await connection.getLatestBlockhash("confirmed");
+      const conf = await connection.confirmTransaction({ signature: sig, ...latest }, "confirmed");
+      if (conf.value.err) throw new Error(`set_route_params failed on-chain: ${JSON.stringify(conf.value.err)}`);
+      console.log(`[init-arena] set_route_params: sent ${sig}`);
+    }
+  }
+
   console.log(execute ? "[init-arena] done" : "[init-arena] dry-run complete; re-run with --execute to send");
 }
 
