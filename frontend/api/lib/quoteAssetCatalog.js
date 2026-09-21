@@ -23,6 +23,16 @@ function normalizeEnum(value, fallback) {
   return normalized || fallback;
 }
 
+/** 'devnet' or 'mainnet-beta'; anything else (mainnet, empty) is mainnet-beta. */
+export function normalizeSolanaCluster(value) {
+  return String(value || "").trim().toLowerCase() === "devnet" ? "devnet" : "mainnet-beta";
+}
+
+/** The Solana cluster this API serves: catalog rows on chain 101 tagged for another cluster are invisible here. */
+export function runtimeSolanaCluster() {
+  return normalizeSolanaCluster(process.env.SOLANA_CLUSTER || process.env.VITE_SOLANA_CLUSTER || "mainnet-beta");
+}
+
 export function normalizeQuoteIdentity({ chainId, identityKind, contractAddressOrMint }) {
   const chain = String(chainId ?? "").trim();
   if (!chain) throw new Error("Quote asset chainId is required");
@@ -148,12 +158,19 @@ function mapGenericRow(row) {
       providerClass: row.provider_class,
     },
     chainId: String(row.chain_id),
+    solanaCluster: row.chain_id === "101" || row.chain_family === "SOLANA" ? String(row.network_cluster || "mainnet-beta") : null,
     identityKind: row.identity_kind,
     contractAddressOrMint: row.contract_address_or_mint,
     assetClass: row.asset_class,
     symbol: row.symbol,
     displayName: row.display_name,
     logoUrl: row.logo_url,
+    category: row.category || null,
+    tags: Array.isArray(row.tags) ? row.tags : [],
+    providerAssetId: row.provider_asset_id || null,
+    decimals: row.decimals == null ? null : Number(row.decimals),
+    catalogState: row.catalog_state || null,
+    chainFamily: row.chain_family || null,
     stateVersion: Number(row.deployment_state_version),
     identityStatus: authority.identityStatus,
     securityStatus: authority.securityStatus,
@@ -186,6 +203,8 @@ select
   d.chain_id,
   d.identity_kind,
   d.contract_address_or_mint,
+  d.chain_family,
+  d.network_cluster,
   d.identity_status,
   d.security_status,
   d.market_health_status,
@@ -197,6 +216,11 @@ select
   a.symbol,
   a.display_name,
   a.logo_url,
+  a.category,
+  a.tags,
+  a.provider_asset_id,
+  d.decimals,
+  d.catalog_state,
   a.admin_state as asset_admin_state,
   p.provider_key,
   p.display_name as provider_display_name,
@@ -216,18 +240,30 @@ select
 from public.quote_asset_deployments d
 join public.quote_assets a on a.id = d.quote_asset_id
 join public.quote_asset_providers p on p.id = d.provider_id and p.id = a.provider_id
-left join public.quote_asset_policy_versions pv on pv.quote_asset_id = a.id and pv.policy_status = 'active'
+left join public.quote_asset_policy_versions pv
+  on pv.quote_asset_id = a.id
+ and pv.policy_status = 'active'
+ and (pv.deployment_id = d.id or pv.deployment_id is null)
 `;
+
+/** Chain-101 rows belong to one Solana cluster; only the runtime's cluster is authoritative here. */
+const CLUSTER_WHERE = `(d.chain_id <> '101' or coalesce(d.network_cluster, 'mainnet-beta') = $CLUSTER)`;
 
 export async function listGenericQuoteAssets({ chainId }) {
   const chain = String(chainId ?? "").trim();
   if (!chain) throw new Error("chainId is required");
-  const result = await pool.query(`${GENERIC_SELECT} where d.chain_id = $1 order by a.asset_class, a.symbol nulls last, a.display_name`, [chain]);
+  const result = await pool.query(
+    `${GENERIC_SELECT} where d.chain_id = $1 and ${CLUSTER_WHERE.replace("$CLUSTER", "$2")} order by a.asset_class, a.symbol nulls last, a.display_name`,
+    [chain, runtimeSolanaCluster()],
+  );
   return result.rows.map(mapGenericRow).filter((item) => item.policy.basicApproved && (item.newGraduationEligible || item.existingMarketSupport));
 }
 
 export async function getGenericQuoteAssetDetail(id) {
-  const result = await pool.query(`${GENERIC_SELECT} where d.id = $1::uuid limit 1`, [id]);
+  const result = await pool.query(
+    `${GENERIC_SELECT} where d.id = $1::uuid and ${CLUSTER_WHERE.replace("$CLUSTER", "$2")} limit 1`,
+    [id, runtimeSolanaCluster()],
+  );
   if (!result.rows[0]) return null;
   const item = mapGenericRow(result.rows[0]);
   const [scans, decisions] = await Promise.all([

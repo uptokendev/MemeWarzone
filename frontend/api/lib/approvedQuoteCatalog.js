@@ -78,14 +78,16 @@ export function decorateQuoteAsset(item) {
     provider: item.provider?.key,
     address: item.contractAddressOrMint,
   });
+  // The database row is the runtime authority (the manifest is a snapshot of
+  // it); assets added from the Command Center have no manifest entry at all.
   return {
     ...item,
-    category: manifest?.category || inferredCategory(item),
-    tags: manifest?.tags || [],
-    providerAssetId: manifest?.providerAssetId || null,
-    catalogState: manifest?.proposedState || (item.newGraduationEligible ? "ACTIVE" : "CANDIDATE"),
-    chainFamily: APPROVED_QUOTE_CATALOG.chains[String(item.chainId)]?.family || null,
-    decimals: manifest?.decimals ?? null,
+    category: manifest?.category || item.category || inferredCategory(item),
+    tags: manifest?.tags || (Array.isArray(item.tags) ? item.tags : []),
+    providerAssetId: manifest?.providerAssetId || item.providerAssetId || null,
+    catalogState: manifest?.proposedState || item.catalogState || (item.newGraduationEligible ? "ACTIVE" : "CANDIDATE"),
+    chainFamily: APPROVED_QUOTE_CATALOG.chains[String(item.chainId)]?.family || item.chainFamily || null,
+    decimals: manifest?.decimals ?? item.decimals ?? null,
     evidence: manifest?.evidence || [],
   };
 }

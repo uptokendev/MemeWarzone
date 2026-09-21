@@ -76,6 +76,8 @@ GROUP_B=(
   db/migrations/20260921_000005_arena_league_entries_token_address_identity.sql
   db/migrations/20260921_000006_league_epoch_roots.sql
   db/migrations/20260921_000007_campaign_graduation_quote_bindings.sql
+  db/migrations/20260921_000008_quote_catalog_admin_columns.sql
+  db/migrations/20260921_000009_quote_policy_one_active_per_deployment.sql
 )
 
 # One transaction per group. Files carry their own begin/commit; those lines are
