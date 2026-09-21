@@ -745,6 +745,32 @@ const TokenDetails = () => {
   const [activity, setActivity] = useState<CampaignActivity | null>(null);
   const [confirmedCurvePoints, setConfirmedCurvePoints] = useState<CurveTradePoint[]>([]);
   const [activityTab, setActivityTab] = useState<"overview" | "comments" | "trades">(() => readStoredString("mwz:token:workspace-tab", "overview"));
+  // The description a creator writes at deploy lives in token_metadata_registry
+  // and is served by /api/token-metadata for every chain. It left the feed
+  // cards on purpose; the Overview tab is where it belongs.
+  const [campaignDescription, setCampaignDescription] = useState("");
+  useEffect(() => {
+    const address = String(campaign?.token || campaign?.campaign || campaignAddr || "").trim();
+    if (!address) {
+      setCampaignDescription("");
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await apiFetch(`/api/token-metadata/${chainIdForStorage}/${encodeURIComponent(address)}`, { cache: "no-store" });
+        const metadata = res.ok ? await res.json().catch(() => null) : null;
+        const text = String(metadata?.description ?? "").trim();
+        // The endpoint substitutes a generic line when nothing was written.
+        if (!cancelled) setCampaignDescription(text && text !== "Launched on MemeWarzone." ? text : "");
+      } catch {
+        if (!cancelled) setCampaignDescription("");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [campaign?.token, campaign?.campaign, campaignAddr, chainIdForStorage]);
   const [communityTab, setCommunityTab] = useState<"comments" | "updates">(() => {
     const stored = readStoredString("mwz:token:community-tab", "comments" as "comments" | "updates" | "chat");
     return stored === "updates" ? "updates" : "comments";
@@ -4729,6 +4755,12 @@ const toSeconds = (ts: number): number => {
               </TabsList>
 
               <TabsContent value="overview" className="mt-0">
+                {campaignDescription ? (
+                  <div className="mb-3 rounded-2xl border border-border bg-muted/10 px-4 py-4">
+                    <p className="text-xs text-muted-foreground">About {tokenData.name || tokenData.ticker || "this token"}</p>
+                    <p className="mt-2 whitespace-pre-line break-words text-sm leading-relaxed text-foreground">{campaignDescription}</p>
+                  </div>
+                ) : null}
                 <Accordion
                   type="multiple"
                   value={intelSections}
