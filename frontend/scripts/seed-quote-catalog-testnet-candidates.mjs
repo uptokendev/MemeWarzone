@@ -41,6 +41,10 @@ if (!url || !url.includes("vrnsbguutnwgtekcexls")) { console.error("STAGING_DATA
 process.env.DATABASE_URL = url;
 process.env.PG_SSL_ALLOW_SELF_SIGNED = process.env.PG_SSL_ALLOW_SELF_SIGNED || "1";
 
+// Same env loader the API server uses: aliases (VITE_* names), .env files when
+// present, and the Postgres TLS setting for the Supabase pooler. Without it
+// a container run rejects the pooler certificate.
+await import("../api/load-local-env.mjs");
 const { pool } = await import("../server/db.js");
 const { createQuoteCatalogCandidate, decideQuoteCatalogDeployment, listQuoteCatalogAdmin } = await import("../api/lib/quoteAssetCatalogAdmin.js");
 
