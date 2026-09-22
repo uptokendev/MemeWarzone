@@ -160,6 +160,51 @@ Check: `Last Deployed In Slot` advanced, `Authority` is still `fk5YYWb…`, and
 the deployed bytes match the candidate with zero padding. `Data Length` stays at
 the allocation, not the binary size — that is expected, not a failure.
 
+### 5b. Stand up the arena accounts (treasury only)
+
+The upgrade adds the arena instruction set but creates no accounts. `arena_config`
+and `arena_money_config_v2` do not exist on mainnet, so until this runs the arena
+cannot take a lamport — and `init-arena-mainnet.mjs` will refuse before the
+upgrade lands, naming the reason rather than showing a raw simulation failure.
+
+Read the state first; it needs no key and sends nothing:
+
+```
+SOLANA_RPC_URL=<rpc> node scripts/solana/init-arena-mainnet.mjs --status
+```
+
+Then create the configs. Everything lands **closed** — war pool v1 is paused as
+the last step and money v2 is born paused — so a half-finished run is inert
+rather than quietly taking money:
+
+```
+SOLANA_RPC_URL=<rpc> SOLANA_TREASURY_AUTHORITY_KEYPAIR=<deployer> \
+  node scripts/solana/init-arena-mainnet.mjs            # dry run, simulates everything
+SOLANA_RPC_URL=<rpc> SOLANA_TREASURY_AUTHORITY_KEYPAIR=<deployer> \
+  node scripts/solana/init-arena-mainnet.mjs --execute
+```
+
+Opening is a separate, deliberate act, after the canary:
+
+```
+SOLANA_RPC_URL=<rpc> SOLANA_TREASURY_AUTHORITY_KEYPAIR=<deployer> \
+  node scripts/solana/init-arena-mainnet.mjs --open --execute
+```
+
+Defaults worth knowing. The resolver is the deployer; the protocol receiver and
+the **marketing receiver** are both the `protocol_vault` PDA, so marketing leaves
+through the same capped route as everything else — `flush_operator_fill` pays the
+operator up to the USD cap and sends the excess to the overflow treasury. Pointing
+marketing straight at the multisig would bypass the cap. The MWL receiver is
+`monthly_league_vault`. `set_route_params` moves `route_state.overflow_treasury`
+from the protocol vault (its pre-upgrade value, which the program reads as
+"keep") to the multisig.
+
+The script refuses any cluster but mainnet-beta, decided by the genesis hash the
+RPC reports. It is rehearsed end to end against the candidate binary on a
+throwaway validator by `scripts/solana/rehearse-mainnet-arena-init.sh` — init,
+open, and a re-run that must change nothing.
+
 ### 6. Move the API env in the same change
 
 Two variables, on the **live** API service (`api.memewar.zone`):
