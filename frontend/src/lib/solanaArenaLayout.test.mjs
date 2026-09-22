@@ -77,7 +77,7 @@ test("validateCanonicalArenaConfig requires owner, layout, version, unpaused, ge
   const ok = validateCanonicalArenaConfig({
     account: { data },
     owner: REWARDS_TREASURY_PROGRAM_ID,
-    genesisHash: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKvcnbdEad4t",
+    genesisHash: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
     chainId: 101,
     environment: "production",
     cluster: "mainnet-beta",
@@ -92,7 +92,7 @@ test("validateCanonicalArenaConfig requires owner, layout, version, unpaused, ge
     validateCanonicalArenaConfig({
       account: { data: paused },
       owner: REWARDS_TREASURY_PROGRAM_ID,
-      genesisHash: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKvcnbdEad4t",
+      genesisHash: "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
       chainId: 101,
       environment: "production",
       cluster: "mainnet-beta",

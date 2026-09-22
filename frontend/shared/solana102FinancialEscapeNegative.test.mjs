@@ -60,6 +60,12 @@ test("Arena identity is 101+staging+devnet or 101+production+mainnet-beta only",
   assert.equal(isSolanaWarzoneChainId(101), true);
   assert.equal(isSolanaWarzoneChainId(102), false);
 
+  // Pinned to the literal cluster genesis hashes: comparing the table against
+  // itself would accept a mistyped constant, which silently rejects the real
+  // cluster wherever the table gates an RPC.
+  assert.equal(SOLANA_GENESIS.devnet, "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG");
+  assert.equal(SOLANA_GENESIS["mainnet-beta"], "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d");
+
   assert.equal(
     expectedGenesisHash({ chainId: 101, environment: "staging", cluster: "devnet" }),
     SOLANA_GENESIS.devnet,

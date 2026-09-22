@@ -21,8 +21,8 @@ export const ARENA_POOL_ACCOUNT_SIZE_WITH_PLACES = ARENA_POOL_ACCOUNT_SIZE + 1 +
 export const ARENA_BUYIN_DISCRIMINATOR = Uint8Array.from([78, 69, 75, 93, 134, 44, 139, 226]);
 
 export const SOLANA_GENESIS = Object.freeze({
-  devnet: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wavy2uVvL2jH",
-  "mainnet-beta": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKvcnbdEad4t",
+  devnet: "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG",
+  "mainnet-beta": "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d",
 });
 
 export function isSolanaWarzoneChainId(chainId) {
