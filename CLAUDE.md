@@ -213,6 +213,33 @@ mwz_rewards_treasury --lib`, builds the SBF and records candidate hashes.
 Run it locally with:
 `ANCHOR_WALLET=<keypair> bash scripts/solana/run-local-sbf-gate.sh`
 
+### Token-2022 quotes are reachable (2026-09-22)
+
+The program accepting Token-2022 was not enough — three layers each refused
+them before a request reached it, so the upgrade alone turned nothing on:
+
+- **Authorization API** asserted the quote mint was classic-owned (rejecting
+  every Token-2022 mint), and `deriveAta` hardcoded the classic program in the
+  ATA seeds. It now reads the owning program off the authorized mint and names
+  it in the plan as `accounts.quoteTokenProgram`.
+- **Quote operator** (`tools/solana-meteora-graduation/graduate-basic-quote.mjs`)
+  drove every quote-side account through the classic program and fixed
+  `tokenBProgram` to it. It now follows the program the authorization names and
+  appends it after the classic 3-account prefix.
+- **Catalog verifier** blocked Token-2022 on identity and marked LP
+  `UNAVAILABLE`. It now judges the mint's *extensions*, mirroring
+  `quote_extension_allowed` in graduation.rs. **The two allowlists must agree** —
+  a mint activated in the catalog that the program refuses would fail at
+  graduation, after the campaign has already closed.
+
+Proven on a local validator (in the gate, fails if pending): the allowlist read
+off mints spl-token-2022 actually wrote; the derived Token-2022 ATA is the
+account that exists while the classic derivation points at **nothing**; and a
+real DAMM v2 pool whose quote side is Token-2022, liquidity locked, quote vault
+owned by Token-2022.
+
+Gate: create 10, lifecycle 4 (incl. graduation), Token-2022 5.
+
 ### Still open on the launchpad change
 
 - **No Token-2022 client path.** `deriveAta` at `frontend/api/dev-fix/solana-graduation-authorization-v2.js:325`
