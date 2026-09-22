@@ -276,11 +276,14 @@ cloning the Orca program and its config/fee-tier accounts on demand like the
 Meteora fixtures. Gate: create 10, lifecycle 5 (native **and** bound),
 Token-2022 5.
 
-**Two bytes of headroom.** The bound envelope is 1230 bytes against a 1232 hard
-limit, and the program requires the acquisition before Meteora in the *same*
-transaction, so it cannot be split. It only fits because the swap's account
-setup is sent separately and only the Orca instruction is packed. Anything that
-adds an account to that transaction breaks it.
+**54 bytes of headroom, measured.** The bound envelope sends 1178 bytes against
+a 1232 hard limit, and Gate B prints a byte budget every run. An earlier 1230
+reading was the test packing ATA creates the production operator already sends
+separately; splitting them recovered 52 bytes. The program requires the
+acquisition before Meteora in the *same* transaction, so it cannot be split
+further. Levers if a longer route eats the margin: payouts to a claim model
+saves 14B, and `begin_graduation` carries 128B of pubkeys naming accounts the
+transaction already has (a v4→v5 digest schema change).
 
 Other things only running it revealed: the fee escrow must be flushed before
 `begin_graduation`; the acquisition pool price must agree with the binding's

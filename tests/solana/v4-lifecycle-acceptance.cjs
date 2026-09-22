@@ -2015,6 +2015,7 @@ ${(simulation.value.logs || []).join("\
 
   it("Gate B: graduates a second campaign bound to a Token-2022 quote", async function () {
     const ORCA_WHIRLPOOL = new PublicKey("whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc");
+    const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
     const RPC_URL = connection.rpcEndpoint;
     const orca = await connection.getAccountInfo(ORCA_WHIRLPOOL, "confirmed");
     const meteora = await connection.getAccountInfo(METEORA_CP_AMM, "confirmed");
@@ -2308,6 +2309,18 @@ ${(simulation.value.logs || []).join("\
       console.log(`[gate-b] acquisition setup sent separately (${acquisitionSetup.length} ix)`);
     }
 
+    // createCustomPool bundles ATA creation with the pool instructions. Those
+    // ATAs do not have to share the transaction with anything, and each one
+    // costs an instruction header plus six account references inside an
+    // envelope with almost no room. The operator already pre-creates them; this
+    // does the same so the measured size is the one production sends.
+    const meteoraSetup = meteoraTx.instructions.filter((ix) => ix.programId.equals(ASSOCIATED_TOKEN_PROGRAM_ID));
+    const meteoraPacked = meteoraTx.instructions.filter((ix) => !ix.programId.equals(ASSOCIATED_TOKEN_PROGRAM_ID));
+    if (meteoraSetup.length) {
+      await sendLegacy(adminKeypair, meteoraSetup, "gateBMeteoraAtas");
+      console.log(`[gate-b] meteora ATA setup sent separately (${meteoraSetup.length} ix)`);
+    }
+
     // The acquisition must land before Meteora sees the quote, and the Ed25519
     // verification immediately before begin_graduation.
     const instructions = [
@@ -2315,7 +2328,7 @@ ${(simulation.value.logs || []).join("\
       ed25519,
       beginIx,
       ...acquisitionSwap,
-      ...meteoraTx.instructions,
+      ...meteoraPacked,
       confirmIx,
     ];
 
@@ -2347,7 +2360,58 @@ ${(simulation.value.logs || []).join("\
       lookupTableAccounts: [lookupTableAccount],
     });
     const stats = v0Helpers.inspectLaunchpadV0Envelope(web3, versioned, [lookupTableAccount]);
+    // This envelope sits two bytes under the hard limit, so anything that grows
+    // it breaks graduation with a size error rather than a program error. Print
+    // where the bytes actually go, so the next person tuning it is not guessing.
+    const breakdown = instructions.map((ix) => ({
+      program: ix.programId.toBase58().slice(0, 8),
+      dataBytes: ix.data.length,
+      accounts: (ix.keys || []).length,
+    }));
+    const dataTotal = breakdown.reduce((sum, item) => sum + item.dataBytes, 0);
+    const accountRefs = breakdown.reduce((sum, item) => sum + item.accounts, 0);
     console.log(`[gate-b] bound graduation bytes=${stats.serializedBytes} signers=${stats.requiredSigners}`);
+    console.log(`[gate-b] budget: ${stats.serializedBytes} total = ${stats.requiredSigners} sigs (${stats.requiredSigners * 64}B)` +
+      ` + ${dataTotal}B instruction data + ${accountRefs} account refs + envelope`);
+    for (const item of breakdown) {
+      console.log(`[gate-b]   ${item.program}… data=${String(item.dataBytes).padStart(4)}B accounts=${String(item.accounts).padStart(3)}`);
+    }
+    // The payout accounts: 6 reward vaults on confirm plus the creator. Measured
+    // so a decision to move them to a claim model is made on a real number.
+    const rewardVaultSet = new Set(Object.values(rewardVaultKeys()).map((k) => k.toBase58()));
+    const payoutRefs = confirmIx.keys.filter(
+      (k) => rewardVaultSet.has(k.pubkey.toBase58()) || k.pubkey.equals(creator.keypair.publicKey),
+    ).length;
+    console.log(`[gate-b]   payout accounts on confirm: ${payoutRefs} (6 reward vaults + creator)`);
+
+    // Measure, do not guess, what moving the payouts to a claim model would buy.
+    // Built and sized only -- this variant is never sent, since the program
+    // needs those accounts today.
+    const confirmWithoutPayouts = new TransactionInstruction({
+      programId: confirmIx.programId,
+      data: confirmIx.data,
+      keys: confirmIx.keys.filter(
+        (k) => !rewardVaultSet.has(k.pubkey.toBase58()) && !k.pubkey.equals(creator.keypair.publicKey),
+      ),
+    });
+    const leanEnvelope = v0Helpers.buildLaunchpadV0Transaction(web3, {
+      payer: admin, recentBlockhash: latest.blockhash,
+      instructions: [...instructions.slice(0, -1), confirmWithoutPayouts],
+      lookupTableAccounts: [lookupTableAccount],
+    });
+    const leanStats = v0Helpers.inspectLaunchpadV0Envelope(web3, leanEnvelope, [lookupTableAccount]);
+    console.log(
+      `[gate-b]   if payouts moved to a claim model: ${leanStats.serializedBytes}B ` +
+      `(saves ${stats.serializedBytes - leanStats.serializedBytes}B, headroom ${1232 - leanStats.serializedBytes}B)`,
+    );
+
+    // And what the signed args cost: four of begin_graduation's pubkeys name
+    // accounts the transaction already carries, so a schema that read them from
+    // accounts would trade 32 bytes of data for one account reference each.
+    console.log(
+      `[gate-b]   begin_graduation args=${beginIx.data.length}B of which 4 pubkeys (positionNftMint, ` +
+      `quoteMint, acquisitionProgram, quoteRecoveryAccount) = 128B duplicate accounts already present`,
+    );
     assert.ok(stats.serializedBytes <= 1232, `bound graduation is ${stats.serializedBytes} bytes; hard max is 1232`);
 
     versioned.sign([adminKeypair, nftMint]);

@@ -1,3 +1,27 @@
+- **Watch the bound graduation envelope.** Gate B drives a campaign from a
+  closed curve to a bound Token-2022 pool in the production transaction shape
+  and prints a byte budget every run. It currently sends **1178 bytes against a
+  1232 hard limit — 54 bytes of headroom.** The program requires the acquisition
+  program before Meteora in the same transaction, so it cannot be split to make
+  room, and the failure would be a size error at assembly rather than anything
+  the program can report.
+
+  Where the bytes go, measured: 128B signatures, 260B `begin_graduation` args,
+  144B Ed25519, 107B+24B Meteora, 49B the Orca swap, 8B `confirm_graduation`,
+  87 account references.
+
+  Two levers if a longer route ever eats the margin, both measured rather than
+  estimated:
+  - Moving the 2% fee and the 20% creator payout to a claim model removes 7
+    accounts from `confirm_graduation` and saves **14 bytes**. Small; do it for
+    product reasons, not for bytes.
+  - `begin_graduation` carries **128 bytes of pubkeys that name accounts the
+    transaction already has** — `positionNftMint`, `quoteMint`,
+    `acquisitionProgram`, `quoteRecoveryAccount`. Reading them from accounts
+    instead trades 32 bytes of signed data for one account reference each. This
+    is the real lever, and it is a digest schema change (v4 to v5) with matching
+    client changes.
+
 # Solana mainnet upgrades through Squads — runbook
 
 **Written for:** the founder and whoever operates the Squads multisig.
