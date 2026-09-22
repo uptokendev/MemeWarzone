@@ -14,6 +14,7 @@ import {
   walletsEqual,
 } from "../../src/lib/solanaArenaLayout.mjs";
 import { battlePoolId, tournamentPoolId } from "./arenaWarPoolEscrow.js";
+import { arenaEnvironmentIdentity } from "./arenaChainEnvironment.js";
 
 const liveCache = new Map();
 const LIVE_TTL_MS = 15_000;
@@ -41,6 +42,24 @@ function connectionFor(chainId) {
   const url = rpcUrl(chainId);
   if (!url) return null;
   return new Connection(url, "confirmed");
+}
+
+/**
+ * validateCanonicalArenaConfig decides the expected genesis hash from the
+ * environment/cluster pair, so the probe has to supply it. The cluster comes
+ * from the deployment env and is paired with its environment by
+ * arenaEnvironmentIdentity, which is the single place that knows
+ * staging<->devnet and production<->mainnet-beta belong together.
+ */
+function arenaIdentityFor(chainId) {
+  const cluster = env(`SOLANA_CLUSTER_${Number(chainId)}`) || env("SOLANA_CLUSTER", "VITE_SOLANA_CLUSTER");
+  if (!cluster) return null;
+  try {
+    const identity = arenaEnvironmentIdentity(chainId, { solanaCluster: cluster });
+    return identity.environment && identity.solanaCluster ? identity : null;
+  } catch {
+    return null;
+  }
 }
 
 function programId() {
@@ -86,6 +105,15 @@ export async function probeCanonicalArenaLive(chainId) {
     liveCache.set(id, { at: Date.now(), value });
     return value;
   }
+  const identity = arenaIdentityFor(id);
+  if (!identity) {
+    // Without a cluster the validator cannot pick a genesis hash, and it
+    // reports that as "authority-mismatch" -- which reads like a key problem
+    // and is not one. Name the real cause instead.
+    const value = { live: false, reason: "cluster-unconfigured" };
+    liveCache.set(id, { at: Date.now(), value });
+    return value;
+  }
   try {
     const configPda = deriveArenaConfigPda();
     const [account, genesisHash] = await Promise.all([
@@ -97,6 +125,8 @@ export async function probeCanonicalArenaLive(chainId) {
       owner: account?.owner?.toBase58?.() || "",
       genesisHash,
       chainId: id,
+      environment: identity.environment,
+      cluster: identity.solanaCluster,
       PublicKey,
     });
     liveCache.set(id, { at: Date.now(), value });
