@@ -21,6 +21,15 @@ MPL_SO="$ROOT/target/deploy/mpl_token_metadata.so"
 MPL_SOURCE_URL="${MWZ_MPL_SOURCE_URL:-https://api.mainnet-beta.solana.com}"
 WALLET="${ANCHOR_WALLET:-$HOME/.config/solana/id.json}"
 
+# The lifecycle suite's "Gate K: graduate closed campaign into pinned DAMM v2"
+# test asks the validator whether the Meteora program is executable and calls
+# this.skip() when it is not. Without the pinned binary that test reported as
+# pending, so the gate passed while the graduation path -- the whole point of
+# the campaign closing -- was never executed. Load it and the test runs.
+METEORA_PROGRAM_ID="cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG"
+METEORA_SO="$ROOT/third_party/meteora/cp_amm.so"
+METEORA_ACCOUNTS="$ROOT/third_party/meteora/accounts"
+
 if ! command -v anchor >/dev/null 2>&1; then
   echo "anchor CLI is required (run inside WSL with the Solana toolchain)" >&2
   exit 1
@@ -46,6 +55,19 @@ if [[ ! -s "$MPL_SO" ]]; then
   fi
 fi
 echo "==> Metaplex artifact $(wc -c < "$MPL_SO" | tr -d ' ') bytes"
+
+# Pinned by config/solana/meteora-cp-amm.certification.json (sha256, byte count
+# and git blob); the fetcher verifies all three, so a moved upstream artifact
+# fails here rather than silently changing what the gate proves.
+if [[ ! -s "$METEORA_SO" || ! -d "$METEORA_ACCOUNTS" ]]; then
+  echo "==> fetching pinned Meteora DAMM v2 artifacts"
+  node "$ROOT/scripts/solana/fetch-pinned-meteora-cp-amm.mjs" --with-accounts
+fi
+if [[ ! -s "$METEORA_SO" ]]; then
+  echo "missing $METEORA_SO; graduation into DAMM v2 cannot be proven" >&2
+  exit 1
+fi
+echo "==> Meteora artifact $(wc -c < "$METEORA_SO" | tr -d ' ') bytes, $(ls -1 "$METEORA_ACCOUNTS" | wc -l | tr -d ' ') pinned accounts"
 
 HASH="$(sha256sum "$SO" | awk '{print $1}')"
 BYTES="$(wc -c < "$SO" | tr -d ' ')"
@@ -81,6 +103,8 @@ start_validator() {
     --rpc-port 8899 \
     --bpf-program "$PROGRAM_ID" "$SO" \
     --bpf-program "$MPL_PROGRAM_ID" "$MPL_SO" \
+    --bpf-program "$METEORA_PROGRAM_ID" "$METEORA_SO" \
+    --account-dir "$METEORA_ACCOUNTS" \
     --quiet \
     >/tmp/mwz-local-validator.log 2>&1 &
   VALIDATOR_PID=$!
@@ -122,7 +146,12 @@ start_validator
 fund_payer
 
 echo "==> bonding lifecycle (simulate then send; includes cluster/routing/pause negatives)"
-npm --prefix tests/solana run test:lifecycle
+npm --prefix tests/solana run test:lifecycle 2>&1 | tee /tmp/mwz-lifecycle.log
+if grep -qE "^\s+- Gate K: graduate closed campaign" /tmp/mwz-lifecycle.log; then
+  echo "Gate K graduation test reported pending: Meteora was not executable on the validator." >&2
+  echo "The gate must not pass while the graduation path is skipped." >&2
+  exit 1
+fi
 
 echo "==> GATE PASS"
 echo "    sha256=$HASH"

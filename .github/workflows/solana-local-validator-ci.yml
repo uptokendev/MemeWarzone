@@ -4,12 +4,16 @@ on:
   pull_request:
     branches:
       - devpostgrad
+      - main
     paths:
       - Anchor.toml
       - Cargo.toml
       - Cargo.lock
       - programs/memewarzone_solana/**
       - tests/solana/**
+      - scripts/solana/run-local-sbf-gate.sh
+      - scripts/solana/fetch-pinned-meteora-cp-amm.mjs
+      - config/solana/meteora-cp-amm.certification.json
       - .github/workflows/solana-local-validator-ci.yml
   workflow_dispatch:
 
@@ -30,7 +34,7 @@ env:
 
 jobs:
   local-validator-acceptance:
-    name: V4 create and asset acceptance
+    name: V4 create, bonding lifecycle and DAMM v2 graduation
     runs-on: ubuntu-latest
     timeout-minutes: 50
     steps:
@@ -75,7 +79,7 @@ jobs:
           node --version
           npm --version
 
-      - name: Create ephemeral validator identities
+      - name: Create ephemeral validator identity
         shell: bash
         run: |
           mkdir -p "$HOME/.config/solana" target/deploy
@@ -84,77 +88,39 @@ jobs:
             --silent \
             --force \
             --outfile "$HOME/.config/solana/id.json"
-          solana-keygen new \
-            --no-bip39-passphrase \
-            --silent \
-            --force \
-            --outfile target/deploy/memewarzone_solana-keypair.json
           echo "ANCHOR_WALLET=$HOME/.config/solana/id.json" >> "$GITHUB_ENV"
-          anchor keys sync
           anchor keys list
 
-      - name: Build program and generated IDL
+      - name: Install acceptance-test dependencies
+        run: npm install --prefix tests/solana --no-audit --no-fund
+
+      # The same script developers run locally, so CI and a local run prove the
+      # same thing. It builds the SBF, loads Metaplex and the pinned Meteora
+      # DAMM v2 binary, restarts the validator between the create and lifecycle
+      # suites, and fails if the graduation test reports pending instead of
+      # running -- which is how it silently skipped before.
+      - name: Local SBF gate (create + lifecycle + DAMM v2 graduation)
         shell: bash
         run: |
           set -o pipefail
-          rm -f Cargo.lock programs/memewarzone_solana/Cargo.lock
-          anchor build --no-idl 2>&1 | tee /tmp/solana-validator-build.log | tail -n 160
+          ANCHOR_WALLET="$ANCHOR_WALLET" \
+          MWZ_LOCAL_LEDGER=/tmp/mwz-sbf-ledger \
+            bash scripts/solana/run-local-sbf-gate.sh 2>&1 | tee /tmp/solana-validator-acceptance.log
+
+      - name: Generated IDL still builds
+        shell: bash
+        run: |
+          set -o pipefail
           mkdir -p target/idl
           (
             cd programs/memewarzone_solana
             RUSTUP_TOOLCHAIN="$IDL_RUST_TOOLCHAIN" anchor idl build \
               --out ../../target/idl/memewarzone_solana.json
           ) 2>&1 | tee /tmp/solana-validator-idl.log | tail -n 240
-          test -s target/deploy/memewarzone_solana.so
           test -s target/idl/memewarzone_solana.json
 
-      - name: Start local validator
-        shell: bash
-        run: |
-          rm -rf /tmp/memewarzone-solana-ledger
-          solana-test-validator \
-            --reset \
-            --quiet \
-            --ledger /tmp/memewarzone-solana-ledger \
-            > /tmp/solana-test-validator.log 2>&1 &
-          echo $! > /tmp/solana-test-validator.pid
-
-          for attempt in $(seq 1 90); do
-            if solana cluster-version --url "$ANCHOR_PROVIDER_URL" >/dev/null 2>&1; then
-              exit 0
-            fi
-            sleep 2
-          done
-
-          echo "Local validator did not become ready" >&2
-          tail -n 200 /tmp/solana-test-validator.log >&2
-          exit 1
-
-      - name: Fund deployer and deploy program
-        shell: bash
-        run: |
-          set -o pipefail
-          solana config set \
-            --url "$ANCHOR_PROVIDER_URL" \
-            --keypair "$ANCHOR_WALLET"
-          solana airdrop 100
-          solana balance
-          anchor deploy \
-            --provider.cluster localnet \
-            --provider.wallet "$ANCHOR_WALLET" \
-            2>&1 | tee /tmp/solana-validator-deploy.log | tail -n 200
-
-      - name: Install acceptance-test dependencies
-        run: npm install --prefix tests/solana --no-audit --no-fund
-
-      - name: Run V4 local-validator acceptance
-        shell: bash
-        run: |
-          set -o pipefail
-          ANCHOR_PROVIDER_URL="$ANCHOR_PROVIDER_URL" \
-          ANCHOR_WALLET="$ANCHOR_WALLET" \
-          npm --prefix tests/solana test \
-            2>&1 | tee /tmp/solana-validator-acceptance.log
+      - name: Program unit tests
+        run: cargo test -p memewarzone_solana --lib
 
       - name: Upload validator diagnostics
         if: always()
@@ -164,19 +130,10 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
           path: |
-            /tmp/solana-validator-build.log
             /tmp/solana-validator-idl.log
-            /tmp/solana-test-validator.log
-            /tmp/solana-validator-deploy.log
+            /tmp/mwz-local-validator.log
+            /tmp/mwz-lifecycle.log
             /tmp/solana-validator-acceptance.log
-
-      - name: Stop local validator
-        if: always()
-        shell: bash
-        run: |
-          if test -s /tmp/solana-test-validator.pid; then
-            kill "$(cat /tmp/solana-test-validator.pid)" || true
-          fi
 
   validator-failure-diagnostic:
     name: Focused validator failure diagnostic
