@@ -34,14 +34,22 @@ case "$TARGET" in
     BUFFER_KEYPAIR="${MWZ_BUFFER_KEYPAIR:-$HOME/.config/memewarzone/mwz-launchpad-mainnet-buffer-e6ed7df3.json}"
     ;;
   treasury)
-    # Held deliberately. The treasury allocation is 660016 bytes against a
-    # 1276472-byte binary, so it needs `solana program extend` first, and that
-    # top-up is permanent rent rather than something the upgrade refunds.
-    echo "The treasury upgrade is ON HOLD. Release it explicitly before staging its buffer." >&2
-    exit 1
+    # Unlike the launchpad, this one cannot be staged as-is: the allocation is
+    # 660016 bytes against a 1276472-byte binary, so it needs `solana program
+    # extend` first, and that top-up is permanent rent the upgrade never
+    # refunds. Both facts are enforced below rather than left to memory.
+    PROGRAM_ID="2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX"
+    CANDIDATE="$ROOT/target/deploy/mwz_rewards_treasury.so"
+    EXPECT_SHA="5638c9923d2a3025197243ab6f62e565c832b6fa69d3ce4265abecc90594cdfc"
+    BUFFER_KEYPAIR="${MWZ_BUFFER_KEYPAIR:-$HOME/.config/memewarzone/mwz-treasury-mainnet-buffer-5638c992.json}"
+    if [[ "${MWZ_TREASURY_RELEASE:-}" != "1" ]]; then
+      echo "The treasury upgrade is held: \"No go, we need to fix everything first.\"" >&2
+      echo "Release it with MWZ_TREASURY_RELEASE=1 once that is no longer true." >&2
+      exit 1
+    fi
     ;;
   *)
-    echo "usage: $0 launchpad" >&2
+    echo "usage: $0 launchpad|treasury" >&2
     exit 2
     ;;
 esac
@@ -56,7 +64,12 @@ fi
 
 [[ -s "$CANDIDATE" ]] || { echo "missing $CANDIDATE -- run the gate first" >&2; exit 1; }
 [[ -f "$DEPLOYER" ]] || { echo "deployer keypair not found: $DEPLOYER" >&2; exit 1; }
-[[ -f "$BUFFER_KEYPAIR" ]] || { echo "buffer keypair not found: $BUFFER_KEYPAIR" >&2; exit 1; }
+if [[ ! -f "$BUFFER_KEYPAIR" ]]; then
+  echo "buffer keypair not found: $BUFFER_KEYPAIR" >&2
+  echo "generate it first, so the address is known before a lamport is spent:" >&2
+  echo "  solana-keygen new --no-bip39-passphrase -o $BUFFER_KEYPAIR" >&2
+  exit 1
+fi
 
 ACTUAL_SHA="$(sha256sum "$CANDIDATE" | cut -d' ' -f1)"
 if [[ "$ACTUAL_SHA" != "$EXPECT_SHA" ]]; then

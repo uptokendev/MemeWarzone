@@ -192,6 +192,41 @@ describe("shared V0/ALT launchpad helper on local validator", function () {
     assert.ok(createV0.stats.serializedBytes <= v0.SOLANA_RELEASE_MAX_BYTES);
     assert.ok(tradeV0.stats.serializedBytes <= v0.SOLANA_RELEASE_MAX_BYTES);
 
+    // Never change the CREATE/BUY/SELL transaction flow. That is a standing
+    // rule, and a ceiling does not enforce it -- the shape can drift all the
+    // way to 1232 bytes without a single assertion firing, and by the time a
+    // wallet notices, the campaign is already on chain.
+    //
+    // So pin the envelope itself. The name and symbol above are fixed-length
+    // worst cases on purpose, so these byte counts are deterministic rather
+    // than incidental; the structural counts hold whatever the strings are.
+    // Anything that adds an instruction, drops the lookup table or moves an
+    // account between the table and the message fails here and says so.
+    // Graduation is the one path with its own flow, and it is measured
+    // separately in v4-lifecycle-acceptance.cjs.
+    assert.deepEqual(
+      {
+        bytes: createV0.stats.serializedBytes,
+        instructions: createV0.stats.instructionCount,
+        tables: createV0.stats.lookupTableCount,
+        writable: createV0.stats.lookupWritableCount,
+        readonly: createV0.stats.lookupReadonlyCount,
+      },
+      { bytes: 844, instructions: 2, tables: 1, writable: 0, readonly: 7 },
+      "CREATE transaction flow changed",
+    );
+    assert.deepEqual(
+      {
+        bytes: tradeV0.stats.serializedBytes,
+        instructions: tradeV0.stats.instructionCount,
+        tables: tradeV0.stats.lookupTableCount,
+        writable: tradeV0.stats.lookupWritableCount,
+        readonly: tradeV0.stats.lookupReadonlyCount,
+      },
+      { bytes: 764, instructions: 2, tables: 1, writable: 0, readonly: 4 },
+      "BUY transaction flow changed",
+    );
+
     const createSim = await v0.simulateLaunchpadV0Transaction(connection, createV0.transaction);
     const tradeSim = await v0.simulateLaunchpadV0Transaction(connection, tradeV0.transaction);
     const createLogs = (createSim.value.logs || []).join("\n");

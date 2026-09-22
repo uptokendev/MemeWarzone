@@ -8,6 +8,7 @@ Everything below is verified fact unless marked **open**. Read the rules before 
 - **Do not change unrelated logic.** "Constantly check yourself you don't change any other logic."
 - **Facts over theories.** Diff against the last known-good commit/tx before theorizing about a cause.
 - **Every Solana transaction is proven on a local validator before any program upgrade.** No exceptions.
+- **Never change the CREATE / BUY / SELL transaction setup or flow.** Every transaction path runs the same way as those three. **Graduation is the only exception** — it is a different path by design and is measured on its own. The create/buy/sell shape was built to stop Phantom flagging us (fee router, account layout, writable count, one ALT, one signer), so a change there is not a refactor, it is a relapse. It is pinned in `tests/solana/v0-launchpad-onchain.cjs`: CREATE 844 bytes / 2 ix / 1 table / 17 accounts, 9 writable; BUY 764 bytes / 2 ix / 1 table / 14 accounts, 7 writable. If a change makes those assertions fail, the change is wrong — do not repin them to make the gate pass.
 - **Deployer `9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H` must never hold user money.** Protocol wallet stays capped; the rest goes to multisig `fk5YYWb4ppwbFqME8YRugirMSaNfhGgPP3GjfMbbfGv`.
 - **Mainnet treasury `solana program extend` / buffer / Squads upgrade is ON HOLD** — "No go, we need to fix everything first." Do not run it.
 - **Never send devnet transactions with founder keys without saying so first. Never touch mainnet.**
