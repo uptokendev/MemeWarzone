@@ -53,3 +53,39 @@ test("one bad extension among good ones still refuses, and only names the bad", 
   const data = mintWithExtensions([[18, 64], [1, 108], [19, 32]]);
   assert.deepEqual(disallowedToken2022Extensions(data), ["TransferFeeConfig"]);
 });
+
+test("the xStocks carry six extensions the allowlist refuses", () => {
+  // Observed 2026-09-22 on the real mainnet mints named in the catalog
+  // (NVDAx, AAPLx, COINx, METAx all carry the identical set):
+  //   18 MetadataPointer, 12 PermanentDelegate, 6 DefaultAccountState,
+  //   25 ScaledUiAmount, 26 Pausable, 4 ConfidentialTransferMint,
+  //   14 TransferHook, 19 TokenMetadata
+  //
+  // This is a regulated-RWA profile, and every refused member is refused for a
+  // reason that applies directly to a permanently-locked LP: a permanent
+  // delegate can move the pool's quote out, a default-frozen account state can
+  // freeze the recovery account, a transfer hook runs third-party code inside
+  // the sweep, and a pausable mint can halt a graduation mid-flight.
+  //
+  // 25 and 26 also postdate the pinned spl-token-2022 3.0.5, so the program
+  // cannot parse them either and refuses the mint on its own.
+  const xStock = [
+    [18, 64], [12, 32], [6, 1], [25, 16], [26, 1], [4, 97], [14, 64], [19, 128],
+  ];
+  const data = Buffer.concat([
+    Buffer.alloc(165), Buffer.from([1]),
+    ...xStock.flatMap(([type, length]) => {
+      const head = Buffer.alloc(4);
+      head.writeUInt16LE(type, 0);
+      head.writeUInt16LE(length, 2);
+      return [head, Buffer.alloc(length)];
+    }),
+  ]);
+  const disallowed = disallowedToken2022Extensions(data);
+  assert.deepEqual(disallowed, [
+    "PermanentDelegate", "DefaultAccountState", "Unknown(25)", "Unknown(26)",
+    "ConfidentialTransferMint", "TransferHook",
+  ]);
+  // Accepting xStocks as quote assets is a deliberate risk decision, not an
+  // oversight. If that decision is taken, this test is the place it changes.
+});
