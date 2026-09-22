@@ -11,7 +11,6 @@ import { sendServerV0 } from "./send-server-v0.mjs";
 
 export const ARENA_PROGRAM_ID = new PublicKey("2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX");
 export const ARENA_RESOLUTION_DOMAIN = Buffer.from("MWZ_ARENA_RESOLVE_V2", "utf8");
-export const ARENA_CANCEL_DOMAIN = Buffer.from("MWZ_ARENA_CANCEL_V1", "utf8");
 
 const SEEDS = Object.freeze({
   config: Buffer.from("arena_config"),
@@ -201,35 +200,11 @@ export function buildArenaResolveInstructions(input) {
   };
 }
 
-export function buildArenaCancelMessage(input) {
-  const id = assertPoolId(input.poolId);
-  return Buffer.concat([
-    ARENA_CANCEL_DOMAIN, ARENA_PROGRAM_ID.toBuffer(), Buffer.from([input.version]), id,
-    new PublicKey(input.pool).toBuffer(), Buffer.from([input.reasonCode]),
-    u64le(input.stakeA), u64le(input.stakeB), u64le(input.supportTotal), u64le(input.buyInTotal),
-    u64le(input.prizeBoostTotal), i64le(input.deadline), u64le(input.nonce),
-  ]);
-}
 
-export function buildArenaCancelInstructions(input) {
-  if (!input.resolver?.secretKey || !input.resolver?.publicKey) throw new Error("Arena resolver keypair is required");
-  const id = assertPoolId(input.poolId);
-  const { config, pool } = deriveArenaOperatorPdas(id);
-  const message = buildArenaCancelMessage({ ...input, pool });
-  return {
-    verifyIx: Ed25519Program.createInstructionWithPrivateKey({ privateKey: input.resolver.secretKey, message }),
-    cancelIx: new TransactionInstruction({
-      programId: ARENA_PROGRAM_ID,
-      keys: [
-        { pubkey: config, isSigner: false, isWritable: false },
-        { pubkey: pool, isSigner: false, isWritable: true },
-        { pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false },
-      ],
-      data: Buffer.concat([discriminator("cancel_pool_v2"), id, Buffer.from([input.reasonCode]), i64le(input.deadline), u64le(input.nonce)]),
-    }),
-    message, pool, config,
-  };
-}
+// buildArenaCancelInstructions is gone with cancel_pool_v2. No operator can end
+// a battle or a tournament that has started; the only way a pool ends without a
+// winner is settle_expired_pool, which needs no signature because it only fires
+// on a deadline that has already passed.
 
 function claimBucketInstructionName(bucket) {
   if (bucket === ARENA_CLAIM_PROTOCOL) return "claim_protocol";

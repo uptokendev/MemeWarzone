@@ -661,14 +661,20 @@ pub mod mwz_rewards_treasury {
         resolve_pool_v2_handler(ctx, pool_id, result_type, winner_side, winner_asset, winner_wallet, outcome_hash, deadline, nonce)
     }
 
-    pub fn cancel_pool_v2(
-        ctx: Context<CancelArenaPoolV2>,
+    // cancel_pool_v2 is deliberately gone. Once both sides are in, a battle or a
+    // tournament runs to a winner -- no operator, resolver or multisig can end
+    // one early, and removing the instruction is what makes that a property of
+    // the program rather than a promise about who we are. The only way a pool
+    // ends without a winner is settle_expired_pool: the opponent never showed
+    // by the deposit deadline, or we failed to sign a result by the resolve
+    // deadline. Both are our failure or a no-show, never a decision, and both
+    // are permissionless so nobody can hold the money by doing nothing.
+
+    pub fn refund_support_v2(
+        ctx: Context<RefundSupportV2>,
         pool_id: [u8; 32],
-        reason_code: u8,
-        deadline: i64,
-        nonce: u64,
     ) -> Result<()> {
-        cancel_pool_v2_handler(ctx, pool_id, reason_code, deadline, nonce)
+        refund_support_v2_handler(ctx, pool_id)
     }
 
     pub fn refund_buy_in_v2(

@@ -19,6 +19,7 @@ export const ARENA_BUYIN_SEED = "arena_buyin";
 export const ARENA_BOOST_SEED = "arena_boost";
 export const ARENA_CLAIM_SEED = "arena_claim";
 export const ARENA_REFUND_SEED = "arena_refund";
+export const ARENA_SUPPORT_SEED = "arena_support";
 export const ARENA_CLAIM_WINNER = 0;
 export const ARENA_KIND_BATTLE = 0;
 export const ARENA_KIND_TOURNAMENT = 1;
@@ -124,6 +125,26 @@ export function deriveArenaPdas(web3: SolanaWeb3Module, poolId: Uint8Array): Are
     pool: derivePda(web3, programId, [utf8(ARENA_POOL_SEED), canonicalPoolId]).toBase58(),
     vault: derivePda(web3, programId, [utf8(ARENA_VAULT_SEED), canonicalPoolId]).toBase58(),
   };
+}
+
+/**
+ * Where a supporter's contribution is recorded, and therefore where their
+ * refund comes from if the pool ends without a winner.
+ *
+ * One per donor per pool, so a second donation adds to the first rather than
+ * creating a second account to claim.
+ */
+export function deriveArenaSupportReceipt(
+  web3: SolanaWeb3Module,
+  poolId: Uint8Array,
+  donor: string,
+): string {
+  const programId = new web3.PublicKey(canonicalProgramId());
+  return derivePda(web3, programId, [
+    utf8(ARENA_SUPPORT_SEED),
+    assertPoolId(poolId),
+    new web3.PublicKey(donor).toBytes(),
+  ]).toBase58();
 }
 
 export function deriveArenaBuyInReceipt(
@@ -260,6 +281,7 @@ export async function buildArenaSupportV0Instruction(input: {
         { pubkey: new input.web3.PublicKey(pdas.config), isSigner: false, isWritable: false },
         { pubkey: new input.web3.PublicKey(pdas.pool), isSigner: false, isWritable: true },
         { pubkey: new input.web3.PublicKey(pdas.vault), isSigner: false, isWritable: true },
+        { pubkey: new input.web3.PublicKey(deriveArenaSupportReceipt(input.web3, poolId, input.donor)), isSigner: false, isWritable: true },
         { pubkey: input.web3.SystemProgram.programId, isSigner: false, isWritable: false },
       ],
       data: concat(await anchorDiscriminator("donate_support_v2"), poolId, u64le(input.amountLamports)),

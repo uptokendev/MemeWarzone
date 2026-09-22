@@ -3,15 +3,12 @@ import test from "node:test";
 import { Keypair, PublicKey } from "@solana/web3.js";
 
 import {
-  ARENA_CANCEL_DOMAIN,
   ARENA_CLAIM_MWL,
   ARENA_CLAIM_PROTOCOL,
   ARENA_KIND_BATTLE,
   ARENA_KIND_TOURNAMENT,
   ARENA_PROGRAM_ID,
   ARENA_RESOLUTION_DOMAIN,
-  buildArenaCancelInstructions,
-  buildArenaCancelMessage,
   buildArenaOperatorClaimInstruction,
   buildArenaResolveInstructions,
   buildArenaResolutionMessage,
@@ -54,22 +51,6 @@ function resolution(overrides = {}) {
   };
 }
 
-function cancellation(overrides = {}) {
-  return {
-    resolver,
-    poolId,
-    version: 2,
-    reasonCode: 2,
-    stakeA: 1_000_000_000n,
-    stakeB: 0n,
-    supportTotal: 0n,
-    buyInTotal: 0n,
-    prizeBoostTotal: 700_000_000n,
-    deadline: 1_800_000_000n,
-    nonce: 1n,
-    ...overrides,
-  };
-}
 
 test("V2 resolution message is domain-separated and binds outcome/boost/nonce", () => {
   const { pool } = deriveArenaOperatorPdas(poolId);
@@ -127,18 +108,14 @@ test("tournament winner receipt is bound to winner asset and wallet", () => {
   })), /canonical asset\+wallet PDA/);
 });
 
-test("cancellation domain binds custody totals and nonce", () => {
-  const { pool } = deriveArenaOperatorPdas(poolId);
-  const base = buildArenaCancelMessage({ ...cancellation(), pool });
-  const changedBoost = buildArenaCancelMessage({ ...cancellation({ prizeBoostTotal: 1n }), pool });
-  const changedNonce = buildArenaCancelMessage({ ...cancellation({ nonce: 2n }), pool });
-  assert.deepEqual(base.subarray(0, ARENA_CANCEL_DOMAIN.length), ARENA_CANCEL_DOMAIN);
-  assert.notDeepEqual(base, changedBoost);
-  assert.notDeepEqual(base, changedNonce);
-  const built = buildArenaCancelInstructions(cancellation());
-  assert.equal(built.verifyIx.programId.toBase58(), "Ed25519SigVerify111111111111111111111111111");
-  assert.ok(built.cancelIx.programId.equals(ARENA_PROGRAM_ID));
-  assert.deepEqual(built.verifyIx.data.subarray(-built.message.length), built.message);
+test("the operator cannot end a battle or a tournament", async () => {
+  // Once both sides are in, a pool runs to a winner. There is no cancel
+  // instruction to build and no resolver signature that could authorise one --
+  // a pool only ends without a winner when a deadline it already carries has
+  // passed, through the permissionless settle_expired_pool.
+  const operator = await import("./arena-operator-v0.mjs");
+  assert.equal(operator.buildArenaCancelInstructions, undefined, "no cancel builder may exist");
+  assert.equal(operator.buildArenaCancelMessage, undefined, "no cancel message may exist");
 });
 
 test("claim receipt namespace isolates protocol and MWL", () => {

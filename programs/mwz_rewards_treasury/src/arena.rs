@@ -15,8 +15,8 @@ pub const ARENA_BUYIN_SEED: &[u8] = b"arena_buyin";
 pub const ARENA_BOOST_SEED: &[u8] = b"arena_boost";
 pub const ARENA_CLAIM_SEED: &[u8] = b"arena_claim";
 pub const ARENA_REFUND_SEED: &[u8] = b"arena_refund";
+pub const ARENA_SUPPORT_SEED: &[u8] = b"arena_support";
 pub const ARENA_RESOLUTION_DOMAIN: &[u8] = b"MWZ_ARENA_RESOLVE_V2";
-pub const ARENA_CANCEL_DOMAIN: &[u8] = b"MWZ_ARENA_CANCEL_V1";
 
 pub const ARENA_KIND_BATTLE: u8 = 0;
 pub const ARENA_KIND_TOURNAMENT: u8 = 1;
@@ -223,6 +223,14 @@ pub fn donate_support_v2_handler(ctx: Context<DonateSupportV2>, pool_id: [u8; 32
         &ctx.accounts.system_program.to_account_info(), amount_lamports,
     )?;
     pool.support_total = pool.support_total.checked_add(amount_lamports).ok_or(ArenaError::MathOverflow)?;
+    let receipt = &mut ctx.accounts.support_receipt;
+    // A second donation to the same pool must add to the first, never replace
+    // it, and must never land on a receipt already refunded.
+    require!(!receipt.refunded, ArenaError::AlreadyRefunded);
+    receipt.pool_id = pool_id;
+    receipt.donor = ctx.accounts.donor.key();
+    receipt.amount_lamports = receipt.amount_lamports.checked_add(amount_lamports).ok_or(ArenaError::MathOverflow)?;
+    receipt.bump = ctx.bumps.support_receipt;
     emit!(ArenaSupportDonated { pool_id, donor: ctx.accounts.donor.key(), amount_lamports });
     Ok(())
 }
@@ -496,32 +504,6 @@ pub fn claim_place_v2_handler(ctx: Context<ClaimArenaPlaceV2>, pool_id: [u8; 32]
     Ok(())
 }
 
-pub fn cancel_pool_v2_handler(
-    ctx: Context<CancelArenaPoolV2>, pool_id: [u8; 32], reason_code: u8, deadline: i64, nonce: u64,
-) -> Result<()> {
-    let now = Clock::get()?.unix_timestamp;
-    let pool_key = ctx.accounts.pool.key();
-    let config_version = ctx.accounts.arena_config.version;
-    let resolver = ctx.accounts.arena_config.resolver;
-    let pool = &mut ctx.accounts.pool;
-    require!(pool.pool_id == pool_id && (pool.state == ARENA_STATE_OPEN || pool.state == ARENA_STATE_LIVE), ArenaError::InvalidState);
-    require!(now <= deadline, ArenaError::ResolutionSignatureExpired);
-    require!(nonce == pool.action_nonce, ArenaError::InvalidResolutionNonce);
-    let message = arena_cancel_message_v1(
-        config_version, pool_id, pool_key, reason_code, pool.deposited_stake_a,
-        pool.deposited_stake_b, pool.support_total, pool.buy_in_total,
-        pool.prize_boost_total, deadline, nonce,
-    );
-    verify_preceding_ed25519(&ctx.accounts.instructions.to_account_info(), &resolver, &message)?;
-    pool.state = ARENA_STATE_CANCELLED;
-    pool.result_type = ARENA_RESULT_NONE;
-    pool.cancellation_reason = reason_code;
-    pool.support_closed = true;
-    pool.action_nonce = pool.action_nonce.checked_add(1).ok_or(ArenaError::MathOverflow)?;
-    emit!(ArenaPoolCancelledV2 { pool_id, reason_code });
-    Ok(())
-}
-
 pub fn settle_expired_pool_handler(ctx: Context<SettleExpiredArenaPool>, pool_id: [u8; 32]) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
     let pool = &mut ctx.accounts.pool;
@@ -605,6 +587,26 @@ pub fn refund_buy_in_v2_handler(ctx: Context<RefundArenaBuyInV2>, pool_id: [u8; 
     debit_vault(&ctx.accounts.vault.to_account_info(), &ctx.accounts.entrant.to_account_info(), amount)?;
     let receipt = &mut ctx.accounts.refund_receipt;
     receipt.pool_id = pool_id; receipt.wallet = ctx.accounts.entrant.key(); receipt.identity = entry_asset; receipt.amount_lamports = amount; receipt.kind = ARENA_KIND_TOURNAMENT; receipt.bump = ctx.bumps.refund_receipt;
+    Ok(())
+}
+
+/// Give a supporter their money back when a pool ended without a winner.
+///
+/// Same shape as the boost refund and for the same reason: the supporter signs
+/// and pulls their own lamports out of the vault. Nothing is ever pushed, so a
+/// pool with hundreds of contributors costs us nothing to unwind.
+pub fn refund_support_v2_handler(ctx: Context<RefundSupportV2>, pool_id: [u8; 32]) -> Result<()> {
+    let pool = &mut ctx.accounts.pool;
+    require!(pool.pool_id == pool_id && pool.state == ARENA_STATE_CANCELLED, ArenaError::RefundUnavailable);
+    let support = &mut ctx.accounts.support_receipt;
+    require!(support.pool_id == pool_id && support.donor == ctx.accounts.donor.key(), ArenaError::PoolMismatch);
+    require!(!support.refunded && support.amount_lamports > 0, ArenaError::AlreadyRefunded);
+    let amount = support.amount_lamports;
+    support.refunded = true;
+    pool.support_total = pool.support_total.checked_sub(amount).ok_or(ArenaError::MathOverflow)?;
+    debit_vault(&ctx.accounts.vault.to_account_info(), &ctx.accounts.donor.to_account_info(), amount)?;
+    let receipt = &mut ctx.accounts.refund_receipt;
+    receipt.pool_id = pool_id; receipt.wallet = ctx.accounts.donor.key(); receipt.identity = Pubkey::default(); receipt.amount_lamports = amount; receipt.kind = 3; receipt.bump = ctx.bumps.refund_receipt;
     Ok(())
 }
 
@@ -731,17 +733,6 @@ pub fn arena_places_resolution_message_v3(
     bytes.extend_from_slice(&outcome_hash); bytes.extend_from_slice(&deadline.to_le_bytes()); bytes.extend_from_slice(&nonce.to_le_bytes()); bytes
 }
 
-pub fn arena_cancel_message_v1(
-    version: u8, pool_id: [u8; 32], pool: Pubkey, reason_code: u8,
-    stake_a: u64, stake_b: u64, support_total: u64, buy_in_total: u64, prize_boost_total: u64,
-    deadline: i64, nonce: u64,
-) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(220);
-    bytes.extend_from_slice(ARENA_CANCEL_DOMAIN); bytes.extend_from_slice(crate::ID.as_ref()); bytes.push(version);
-    bytes.extend_from_slice(&pool_id); bytes.extend_from_slice(pool.as_ref()); bytes.push(reason_code);
-    bytes.extend_from_slice(&stake_a.to_le_bytes()); bytes.extend_from_slice(&stake_b.to_le_bytes()); bytes.extend_from_slice(&support_total.to_le_bytes()); bytes.extend_from_slice(&buy_in_total.to_le_bytes()); bytes.extend_from_slice(&prize_boost_total.to_le_bytes());
-    bytes.extend_from_slice(&deadline.to_le_bytes()); bytes.extend_from_slice(&nonce.to_le_bytes()); bytes
-}
 
 fn validate_tournament_winner_receipt(receipt_info: &AccountInfo, pool_id: [u8; 32], entry_asset: Pubkey, winner: Pubkey, required_buy_in: u64) -> Result<()> {
     let (expected, _) = Pubkey::find_program_address(&[ARENA_BUYIN_SEED, pool_id.as_ref(), entry_asset.as_ref(), winner.as_ref()], &crate::ID);
@@ -827,6 +818,9 @@ pub struct DonateSupportV2<'info> {
     #[account(seeds = [ARENA_CONFIG_SEED], bump = arena_config.bump)] pub arena_config: Account<'info, ArenaConfig>,
     #[account(mut, seeds = [ARENA_POOL_SEED, pool_id.as_ref()], bump = pool.bump)] pub pool: Account<'info, ArenaPool>,
     #[account(mut, seeds = [ARENA_VAULT_SEED, pool_id.as_ref()], bump = pool.vault_bump)] pub vault: Account<'info, ArenaVault>,
+    // init_if_needed, because a supporter may back the same pool more than
+    // once and both amounts must come back to them.
+    #[account(init_if_needed, payer = donor, space = 8 + ArenaSupportReceipt::SIZE, seeds = [ARENA_SUPPORT_SEED, pool_id.as_ref(), donor.key().as_ref()], bump)] pub support_receipt: Account<'info, ArenaSupportReceipt>,
     pub system_program: Program<'info, System>,
 }
 #[derive(Accounts)]
@@ -886,14 +880,6 @@ pub struct ClaimArenaPlaceV2<'info> {
 }
 #[derive(Accounts)]
 #[instruction(pool_id: [u8; 32])]
-pub struct CancelArenaPoolV2<'info> {
-    #[account(seeds = [ARENA_CONFIG_SEED], bump = arena_config.bump)] pub arena_config: Account<'info, ArenaConfig>,
-    #[account(mut, seeds = [ARENA_POOL_SEED, pool_id.as_ref()], bump = pool.bump)] pub pool: Account<'info, ArenaPool>,
-    /// CHECK: canonical instructions sysvar.
-    #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)] pub instructions: UncheckedAccount<'info>,
-}
-#[derive(Accounts)]
-#[instruction(pool_id: [u8; 32])]
 pub struct SettleExpiredArenaPool<'info> { #[account(mut, seeds = [ARENA_POOL_SEED, pool_id.as_ref()], bump = pool.bump)] pub pool: Account<'info, ArenaPool> }
 #[derive(Accounts)]
 #[instruction(pool_id: [u8; 32])]
@@ -943,6 +929,16 @@ pub struct RefundArenaBuyInV2<'info> {
     #[account(mut, seeds = [ARENA_VAULT_SEED, pool_id.as_ref()], bump = pool.vault_bump)] pub vault: Account<'info, ArenaVault>,
     #[account(mut, seeds = [ARENA_BUYIN_SEED, pool_id.as_ref(), entry_asset.as_ref(), entrant.key().as_ref()], bump = buy_in_receipt.bump)] pub buy_in_receipt: Account<'info, ArenaBuyInReceipt>,
     #[account(init, payer = entrant, space = 8 + ArenaRefundReceipt::SIZE, seeds = [ARENA_REFUND_SEED, pool_id.as_ref(), entrant.key().as_ref(), entry_asset.as_ref()], bump)] pub refund_receipt: Account<'info, ArenaRefundReceipt>,
+    pub system_program: Program<'info, System>,
+}
+#[derive(Accounts)]
+#[instruction(pool_id: [u8; 32])]
+pub struct RefundSupportV2<'info> {
+    #[account(mut)] pub donor: Signer<'info>,
+    #[account(mut, seeds = [ARENA_POOL_SEED, pool_id.as_ref()], bump = pool.bump)] pub pool: Account<'info, ArenaPool>,
+    #[account(mut, seeds = [ARENA_VAULT_SEED, pool_id.as_ref()], bump = pool.vault_bump)] pub vault: Account<'info, ArenaVault>,
+    #[account(mut, seeds = [ARENA_SUPPORT_SEED, pool_id.as_ref(), donor.key().as_ref()], bump = support_receipt.bump)] pub support_receipt: Account<'info, ArenaSupportReceipt>,
+    #[account(init, payer = donor, space = 8 + ArenaRefundReceipt::SIZE, seeds = [ARENA_REFUND_SEED, pool_id.as_ref(), donor.key().as_ref(), ARENA_SUPPORT_SEED], bump)] pub refund_receipt: Account<'info, ArenaRefundReceipt>,
     pub system_program: Program<'info, System>,
 }
 #[derive(Accounts)]
@@ -999,6 +995,18 @@ impl ArenaBuyInReceipt { pub const SIZE: usize = 32 + 32 + 32 + 8 + 1 + 1; }
 #[account]
 pub struct ArenaBoostReceipt { pub pool_id: [u8; 32], pub funding_id: [u8; 32], pub funder: Pubkey, pub amount_lamports: u64, pub refunded: bool, pub bump: u8 }
 impl ArenaBoostReceipt { pub const SIZE: usize = 32 + 32 + 32 + 8 + 1 + 1; }
+#[account]
+/// What a supporter put into a pool, so it can be given back.
+///
+/// Support used to be an aggregate on the pool and nothing else: the lamports
+/// went into the vault, `support_total` went up, and the donor survived only in
+/// an event. Every other contributor -- both stakers, every tournament entrant,
+/// every prize booster -- has a receipt and therefore a refund. Supporters had
+/// neither, so a pool that expired without a result left their money in a vault
+/// no instruction could open. One receipt per donor per pool, accumulating, is
+/// what makes them refundable like everyone else.
+pub struct ArenaSupportReceipt { pub pool_id: [u8; 32], pub donor: Pubkey, pub amount_lamports: u64, pub refunded: bool, pub bump: u8 }
+impl ArenaSupportReceipt { pub const SIZE: usize = 32 + 32 + 8 + 1 + 1; }
 #[account]
 pub struct ArenaClaimReceipt { pub pool_id: [u8; 32], pub bucket: u8, pub recipient: Pubkey, pub amount_lamports: u64, pub bump: u8 }
 impl ArenaClaimReceipt { pub const SIZE: usize = 32 + 1 + 32 + 8 + 1; }
@@ -1137,6 +1145,19 @@ mod tests {
         assert!(2u32 >= 2);
     }
     #[test]
+    fn a_support_receipt_accumulates_and_refunds_the_whole_amount() {
+        // The receipt is what makes a supporter refundable at all, so the two
+        // properties that matter are that a second donation adds to the first
+        // and that a refund takes the total, not the last deposit.
+        let mut receipt = ArenaSupportReceipt { pool_id: [3u8; 32], donor: Pubkey::new_unique(), amount_lamports: 0, refunded: false, bump: 1 };
+        for amount in [250_000_000u64, 125_000_000, 1] {
+            receipt.amount_lamports = receipt.amount_lamports.checked_add(amount).unwrap();
+        }
+        assert_eq!(receipt.amount_lamports, 375_000_001);
+        assert!(!receipt.refunded);
+    }
+
+    #[test]
     fn free_entry_receipt_amount_is_exactly_zero() {
         assert_eq!(0u64, 0);
     }
@@ -1148,13 +1169,5 @@ mod tests {
         let y = arena_resolution_message_v2(2,id,p,ARENA_KIND_BATTLE,a,b,oa,ob,10,12,2,8,0,ARENA_SIDE_A,a,w,ARENA_RESULT_WINNER,[1u8;32],99,0);
         let z = arena_resolution_message_v2(2,id,p,ARENA_KIND_BATTLE,a,b,oa,ob,10,12,2,7,0,ARENA_SIDE_A,a,w,ARENA_RESULT_WINNER,[2u8;32],99,0);
         assert_ne!(x,y); assert_ne!(x,z);
-    }
-    #[test]
-    fn cancellation_message_binds_current_totals_and_nonce() {
-        let p = Pubkey::new_unique(); let id = [9u8;32];
-        let a = arena_cancel_message_v1(2,id,p,1,10,12,2,0,7,99,0);
-        let b = arena_cancel_message_v1(2,id,p,1,10,12,2,0,8,99,0);
-        let c = arena_cancel_message_v1(2,id,p,1,10,12,2,0,7,99,1);
-        assert_ne!(a,b); assert_ne!(a,c);
     }
 }

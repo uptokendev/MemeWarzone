@@ -54,6 +54,7 @@ function i64le(value) {
 }
 
 const keccak = (bytes) => Buffer.from(keccak_256(bytes));
+const hash32 = (label) => require("node:crypto").createHash("sha256").update(label, "utf8").digest();
 
 function leagueLeaf({ epochStart, period, categoryHash, rank, winner, amount }) {
   return keccak(Buffer.concat([
@@ -109,7 +110,7 @@ async function expectFail(promise, pattern, label) {
   } catch (error) {
     failed = true;
     const text = `${error?.message || ""} ${JSON.stringify(error?.logs || error?.transactionLogs || [])}`;
-    assert.match(text, pattern, `${label}: failed for the wrong reason`);
+    assert.match(text, pattern, `${label}: failed for the wrong reason -- got: ${text.slice(0, 400)}`);
   }
   assert.ok(failed, `${label}: must fail`);
 }
@@ -463,5 +464,128 @@ describe("rewards treasury local-validator acceptance (roots + claims)", functio
         .rpc({ commitment: "confirmed" }),
       /InvalidPeriod|custom program error/i, "period 3",
     );
+  });
+
+  it("sponsorship: a paid event splits 70/20/10 and each of the three buckets is claimed by exactly the right wallet", async function () {
+    // The whole sponsorship rail had never executed -- eight instructions with
+    // nothing but unit tests of the arithmetic behind them. It is also the one
+    // subsystem that is entirely self-contained: arena.rs never reads the money
+    // v2 config, so battles cannot be affected by anything proven here.
+    const marketingReceiver = Keypair.generate();
+    const protocolReceiver = Keypair.generate();
+    const eventReceiver = Keypair.generate();
+    const sponsor = Keypair.generate();
+    await fund(sponsor.publicKey, 5);
+    await fund(eventReceiver.publicKey, 1);
+    for (const k of [marketingReceiver, protocolReceiver]) await transferTo(k.publicKey, 2_000_000n);
+
+    const config = pda("arena_money_config_v2");
+    if (!(await connection.getAccountInfo(config, "confirmed"))) {
+      await program.methods.initializeArenaMoneyV2(authority, protocolReceiver.publicKey, marketingReceiver.publicKey)
+        .accountsStrict({ authority, config, systemProgram: SystemProgram.programId })
+        .rpc({ commitment: "confirmed" });
+    } else {
+      await program.methods.setArenaMoneyV2Receivers(authority, protocolReceiver.publicKey, marketingReceiver.publicKey)
+        .accountsStrict({ authority, config }).rpc({ commitment: "confirmed" });
+    }
+
+    const eventId = hash32(`sponsorship:${Date.now()}`);
+    const event = pda("arena_sponsor_event_v1", eventId);
+    const vault = pda("arena_event_prize_v1", eventId);
+    const minimum = 100_000_000n;
+    await program.methods.initializeSponsorshipEventV1(Array.from(eventId), eventReceiver.publicKey, new BN(minimum.toString()))
+      .accountsStrict({ authority, config, event, vault, systemProgram: SystemProgram.programId })
+      .rpc({ commitment: "confirmed" });
+
+    // The rail is born paused -- initialize_arena_money_v2 sets paused = true --
+    // so standing it up on a cluster takes money nowhere until someone
+    // deliberately opens it. Pin that: it is the difference between a
+    // half-finished deployment being inert and it quietly accepting funds.
+    const tooSmall = hash32(`payment-small:${Date.now()}`);
+    assert.equal((await program.account.arenaMoneyConfigV2.fetch(config)).paused, true, "money v2 is born paused");
+    await expectFail(
+      program.methods.paySponsorshipV1(Array.from(eventId), Array.from(tooSmall), new BN("1000000000"))
+        .accountsStrict({ sponsor: sponsor.publicKey, config, event, vault, receipt: pda("arena_sponsor_receipt_v1", eventId, tooSmall, sponsor.publicKey.toBuffer()), systemProgram: SystemProgram.programId })
+        .signers([sponsor]).rpc({ commitment: "confirmed" }),
+      /Paused/i, "a payment before the rail is opened",
+    );
+    await program.methods.setArenaMoneyV2Pause(false).accountsStrict({ authority, config }).rpc({ commitment: "confirmed" });
+
+    // A payment under the event's floor is refused, so an event cannot be
+    // cluttered with dust that still costs a receipt account.
+    await expectFail(
+      program.methods.paySponsorshipV1(Array.from(eventId), Array.from(tooSmall), new BN((minimum - 1n).toString()))
+        .accountsStrict({ sponsor: sponsor.publicKey, config, event, vault, receipt: pda("arena_sponsor_receipt_v1", eventId, tooSmall, sponsor.publicKey.toBuffer()), systemProgram: SystemProgram.programId })
+        .signers([sponsor]).rpc({ commitment: "confirmed" }),
+      /SponsorshipBelowMinimum/i, "a payment under the event minimum",
+    );
+
+    const gross = 1_000_000_000n;
+    const paymentId = hash32(`payment:${Date.now()}`);
+    const receipt = pda("arena_sponsor_receipt_v1", eventId, paymentId, sponsor.publicKey.toBuffer());
+    await program.methods.paySponsorshipV1(Array.from(eventId), Array.from(paymentId), new BN(gross.toString()))
+      .accountsStrict({ sponsor: sponsor.publicKey, config, event, vault, receipt, systemProgram: SystemProgram.programId })
+      .signers([sponsor]).rpc({ commitment: "confirmed" });
+
+    const prize = (gross * 7_000n) / 10_000n;
+    const marketing = (gross * 2_000n) / 10_000n;
+    const protocol = gross - prize - marketing;
+    const vaultState = await program.account.eventPrizeVaultV1.fetch(vault);
+    assert.equal(BigInt(vaultState.prizeLamports.toString()), prize, "70% is held for the event prize");
+    assert.equal(BigInt(vaultState.marketingLamports.toString()), marketing, "20% is held for marketing");
+    assert.equal(BigInt(vaultState.protocolLamports.toString()), protocol, "the remainder, 10%, is the protocol's");
+    assert.equal(prize + marketing + protocol, gross, "the split conserves every lamport of the payment");
+
+    // Each bucket is bound to one wallet. A stranger cannot redirect any of
+    // them, and the two operator buckets are address-constrained to the config.
+    const stranger = Keypair.generate();
+    await fund(stranger.publicKey, 1);
+    await expectFail(
+      program.methods.claimEventPrizeV1(Array.from(eventId))
+        .accountsStrict({ receiver: stranger.publicKey, event, vault }).signers([stranger]).rpc({ commitment: "confirmed" }),
+      /Unauthorized/i, "a stranger claiming the event prize",
+    );
+    await expectFail(
+      program.methods.claimSponsorshipMarketingV1(Array.from(eventId))
+        .accountsStrict({ caller: authority, config, receiver: stranger.publicKey, vault }).rpc({ commitment: "confirmed" }),
+      /ConstraintAddress|Unauthorized|custom program error/i, "marketing paid to the wrong wallet",
+    );
+
+    for (const [label, expected, wallet, build] of [
+      ["event prize", prize, eventReceiver.publicKey, () => program.methods.claimEventPrizeV1(Array.from(eventId))
+        .accountsStrict({ receiver: eventReceiver.publicKey, event, vault }).signers([eventReceiver])],
+      ["marketing", marketing, marketingReceiver.publicKey, () => program.methods.claimSponsorshipMarketingV1(Array.from(eventId))
+        .accountsStrict({ caller: authority, config, receiver: marketingReceiver.publicKey, vault })],
+      ["protocol", protocol, protocolReceiver.publicKey, () => program.methods.claimSponsorshipProtocolV1(Array.from(eventId))
+        .accountsStrict({ caller: authority, config, receiver: protocolReceiver.publicKey, vault })],
+    ]) {
+      const before = await lamports(wallet);
+      await build().rpc({ commitment: "confirmed" });
+      const delta = (await lamports(wallet)) - before;
+      // The event receiver signs its own claim and therefore pays the fee.
+      assert.ok(delta === expected || (expected - delta) < 20_000n, `${label}: pays its receiver ${expected}, saw ${delta}`);
+      await expectFail(build().rpc({ commitment: "confirmed" }), /NothingToClaim/i, `${label}: second claim`);
+    }
+
+    const drained = await program.account.eventPrizeVaultV1.fetch(vault);
+    assert.equal(BigInt(drained.prizeLamports.toString()), 0n);
+    assert.equal(BigInt(drained.marketingLamports.toString()), 0n);
+    assert.equal(BigInt(drained.protocolLamports.toString()), 0n);
+    assert.equal(
+      BigInt(drained.prizeClaimedLamports.toString()) + BigInt(drained.marketingClaimedLamports.toString()) + BigInt(drained.protocolClaimedLamports.toString()),
+      gross,
+      "everything the sponsor paid has been claimed by someone",
+    );
+
+    // Paused, the rail takes no more money.
+    await program.methods.setArenaMoneyV2Pause(true).accountsStrict({ authority, config }).rpc({ commitment: "confirmed" });
+    const afterPause = hash32(`payment-paused:${Date.now()}`);
+    await expectFail(
+      program.methods.paySponsorshipV1(Array.from(eventId), Array.from(afterPause), new BN(gross.toString()))
+        .accountsStrict({ sponsor: sponsor.publicKey, config, event, vault, receipt: pda("arena_sponsor_receipt_v1", eventId, afterPause, sponsor.publicKey.toBuffer()), systemProgram: SystemProgram.programId })
+        .signers([sponsor]).rpc({ commitment: "confirmed" }),
+      /Paused/i, "a payment while the rail is paused",
+    );
+    await program.methods.setArenaMoneyV2Pause(false).accountsStrict({ authority, config }).rpc({ commitment: "confirmed" });
   });
 });

@@ -37,7 +37,7 @@ async function expectFail(promise, pattern, label) {
   } catch (error) {
     failed = true;
     const text = `${error?.message || ""} ${JSON.stringify(error?.logs || error?.transactionLogs || [])}`;
-    assert.match(text, pattern, `${label}: failed for the wrong reason`);
+    assert.match(text, pattern, `${label}: failed for the wrong reason -- got: ${text.slice(0, 400)}`);
   }
   assert.ok(failed, `${label}: must fail`);
 }
@@ -56,6 +56,23 @@ describe("arena war pool local-validator acceptance (battles, tournaments, place
   const mwlReceiver = Keypair.generate();
 
   const pda = (seed, ...extra) => PublicKey.findProgramAddressSync([Buffer.from(seed, "utf8"), ...extra], TREASURY_PROGRAM)[0];
+
+  /**
+   * Wait until the cluster's own clock is past a deadline.
+   *
+   * Sleeping for a wall-clock interval races the validator: its clock drifts
+   * from real time as a suite runs, so a fixed sleep that works early can
+   * expire too early later and the program refuses with ExpiryUnavailable.
+   */
+  async function waitPastChainTime(unixSeconds) {
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+      const slot = await connection.getSlot("confirmed");
+      const chainNow = await connection.getBlockTime(slot);
+      if (chainNow !== null && chainNow > unixSeconds) return chainNow;
+      await sleep(1_000);
+    }
+    throw new Error(`cluster clock never passed ${unixSeconds}`);
+  }
   const lamports = async (pk) => BigInt(await connection.getBalance(pk, "confirmed"));
 
   async function fund(pubkey, sol = 5) {
@@ -159,7 +176,7 @@ describe("arena war pool local-validator acceptance (battles, tournaments, place
     assert.equal(state.state, 1, "both stakes in -> LIVE");
 
     await program.methods.donateSupportV2(Array.from(poolId), new BN(support.toString()))
-      .accountsStrict({ donor: donor.publicKey, arenaConfig, pool, vault, systemProgram: SystemProgram.programId })
+      .accountsStrict({ donor: donor.publicKey, arenaConfig, pool, vault, supportReceipt: pda("arena_support", poolId, donor.publicKey.toBuffer()), systemProgram: SystemProgram.programId })
       .signers([donor]).rpc({ commitment: "confirmed" });
 
     const fundingId = hash32(`boost:${Date.now()}`);
@@ -372,6 +389,171 @@ describe("arena war pool local-validator acceptance (battles, tournaments, place
     );
     state = await program.account.arenaPool.fetch(pool);
     assert.deepEqual(state.placeClaimed, [true, true, true]);
+  });
+
+  it("a pool that ends without a winner returns every lamport: stakes, support and boosts, and the vault empties", async function () {
+    // The refund side of the arena was the half nobody had ever run. Both
+    // stakers, the supporter and the booster each pull their own money back --
+    // nothing is pushed, so a pool with hundreds of contributors costs us
+    // nothing to unwind -- and the vault is then asserted down to its rent
+    // reserve. That last assertion is the point: it is what proves no
+    // contributor's money is left behind in an account no instruction can open.
+    const ownerA = Keypair.generate();
+    const ownerB = Keypair.generate();
+    const donor = Keypair.generate();
+    const funder = Keypair.generate();
+    for (const k of [ownerA, ownerB, donor, funder]) await fund(k.publicKey);
+    const poolId = hash32(`refund-all:${Date.now()}`);
+    const pool = pda("arena_pool", poolId);
+    const vault = pda("arena_vault", poolId);
+    const stake = 400_000_000n;
+    const support = 150_000_000n;
+    const boost = 90_000_000n;
+    const now = Math.floor(Date.now() / 1000);
+
+    await program.methods.openBattlePoolV2(
+      Array.from(poolId), Keypair.generate().publicKey, Keypair.generate().publicKey, ownerA.publicKey, ownerB.publicKey,
+      new BN(stake.toString()), new BN(stake.toString()), new BN(now + 10), new BN(now + 10), new BN(now + 12),
+    ).accountsStrict({ opener: ownerA.publicKey, arenaConfig, pool, vault, systemProgram: SystemProgram.programId })
+      .signers([ownerA]).rpc({ commitment: "confirmed" });
+    await program.methods.depositStakeV2(Array.from(poolId))
+      .accountsStrict({ staker: ownerB.publicKey, arenaConfig, pool, vault, systemProgram: SystemProgram.programId })
+      .signers([ownerB]).rpc({ commitment: "confirmed" });
+
+    const supportReceipt = pda("arena_support", poolId, donor.publicKey.toBuffer());
+    // Two donations from the same wallet, because the receipt has to accumulate
+    // rather than overwrite -- otherwise the first one is silently lost.
+    for (const part of [support / 2n, support - support / 2n]) {
+      await program.methods.donateSupportV2(Array.from(poolId), new BN(part.toString()))
+        .accountsStrict({ donor: donor.publicKey, arenaConfig, pool, vault, supportReceipt, systemProgram: SystemProgram.programId })
+        .signers([donor]).rpc({ commitment: "confirmed" });
+    }
+    assert.equal(BigInt((await program.account.arenaSupportReceipt.fetch(supportReceipt)).amountLamports.toString()), support, "both donations are on one receipt");
+
+    const fundingId = hash32(`refund-boost:${Date.now()}`);
+    const boostReceipt = pda("arena_boost", poolId, fundingId, funder.publicKey.toBuffer());
+    await program.methods.depositPrizeBoostV2(Array.from(poolId), Array.from(fundingId), new BN(boost.toString()))
+      .accountsStrict({ funder: funder.publicKey, arenaConfig, pool, vault, boostReceipt, systemProgram: SystemProgram.programId })
+      .signers([funder]).rpc({ commitment: "confirmed" });
+
+    // A refund before the pool has ended must be refused, or the vault could be
+    // drained out from under a battle that is still running.
+    await expectFail(
+      program.methods.refundSupportV2(Array.from(poolId))
+        .accountsStrict({ donor: donor.publicKey, pool, vault, supportReceipt, refundReceipt: pda("arena_refund", poolId, donor.publicKey.toBuffer(), Buffer.from("arena_support", "utf8")), systemProgram: SystemProgram.programId })
+        .signers([donor]).rpc({ commitment: "confirmed" }),
+      /RefundUnavailable/i, "support refund while the pool is live",
+    );
+
+    await waitPastChainTime(now + 12);
+    // Permissionless: nobody has to be online for the money to be releasable.
+    await program.methods.settleExpiredPool(Array.from(poolId)).accountsStrict({ pool }).rpc({ commitment: "confirmed" });
+
+    const claims = [
+      ["stake A", ownerA, stake, () => program.methods.refundStake(Array.from(poolId))
+        .accountsStrict({ staker: ownerA.publicKey, pool, vault, refundReceipt: pda("arena_refund", poolId, ownerA.publicKey.toBuffer(), Buffer.from([0])), systemProgram: SystemProgram.programId }).signers([ownerA])],
+      ["stake B", ownerB, stake, () => program.methods.refundStake(Array.from(poolId))
+        .accountsStrict({ staker: ownerB.publicKey, pool, vault, refundReceipt: pda("arena_refund", poolId, ownerB.publicKey.toBuffer(), Buffer.from([0])), systemProgram: SystemProgram.programId }).signers([ownerB])],
+      ["support", donor, support, () => program.methods.refundSupportV2(Array.from(poolId))
+        .accountsStrict({ donor: donor.publicKey, pool, vault, supportReceipt, refundReceipt: pda("arena_refund", poolId, donor.publicKey.toBuffer(), Buffer.from("arena_support", "utf8")), systemProgram: SystemProgram.programId }).signers([donor])],
+      ["boost", funder, boost, () => program.methods.refundPrizeBoostV2(Array.from(poolId), Array.from(fundingId))
+        .accountsStrict({ funder: funder.publicKey, pool, vault, boostReceipt, refundReceipt: pda("arena_refund", poolId, funder.publicKey.toBuffer(), fundingId), systemProgram: SystemProgram.programId }).signers([funder])],
+    ];
+    for (const [label, wallet, expected, build] of claims) {
+      const vaultBefore = await lamports(vault);
+      await build().rpc({ commitment: "confirmed" });
+      assert.equal(vaultBefore - (await lamports(vault)), expected, `${label}: the vault pays exactly what was put in`);
+      await expectFail(build().rpc({ commitment: "confirmed" }), /already in use|AlreadyRefunded|custom program error|0x0\b/i, `${label}: second refund`);
+    }
+
+    const vaultInfo = await connection.getAccountInfo(vault, "confirmed");
+    const rentReserve = BigInt(await connection.getMinimumBalanceForRentExemption(vaultInfo.data.length));
+    assert.equal(BigInt(vaultInfo.lamports), rentReserve, "the vault is empty: every contributor's lamport left with its owner");
+    const state = await program.account.arenaPool.fetch(pool);
+    assert.equal(BigInt(state.supportTotal.toString()), 0n, "support is fully unwound");
+    assert.equal(BigInt(state.prizeBoostTotal.toString()), 0n, "boosts are fully unwound");
+  });
+
+  it("a tournament that never resolves refunds every entry fee and closes its support window", async function () {
+    // A tournament holds the entry fees of everyone who signed up, so the case
+    // that matters is the one where it never produces a result: every entrant
+    // must be able to take their own money back, and the vault must end empty.
+    const entrants = [0, 1, 2].map(() => Keypair.generate());
+    const assets = entrants.map(() => Keypair.generate().publicKey);
+    const donor = Keypair.generate();
+    for (const k of [...entrants, donor]) await fund(k.publicKey);
+    const poolId = hash32(`tourney-refund:${Date.now()}`);
+    const pool = pda("arena_pool", poolId);
+    const vault = pda("arena_vault", poolId);
+    const buyIn = 300_000_000n;
+    const support = 70_000_000n;
+    const now = Math.floor(Date.now() / 1000);
+
+    // support_deadline comes first and the program requires it to be at or
+    // after the deposit deadline and before the resolve deadline.
+    const depositDeadline = now + 12;
+    const supportDeadline = now + 15;
+    const resolveDeadline = now + 21;
+    await program.methods.openTournamentPoolV2(Array.from(poolId), new BN(buyIn.toString()), new BN(supportDeadline), new BN(depositDeadline), new BN(resolveDeadline))
+      .accountsStrict({ authority, arenaConfig, pool, vault, systemProgram: SystemProgram.programId })
+      .rpc({ commitment: "confirmed" });
+
+    const supportReceipt = pda("arena_support", poolId, donor.publicKey.toBuffer());
+    await program.methods.donateSupportV2(Array.from(poolId), new BN(support.toString()))
+      .accountsStrict({ donor: donor.publicKey, arenaConfig, pool, vault, supportReceipt, systemProgram: SystemProgram.programId })
+      .signers([donor]).rpc({ commitment: "confirmed" });
+
+    const buyInReceipts = [];
+    for (let i = 0; i < entrants.length; i += 1) {
+      const receipt = pda("arena_buyin", poolId, assets[i].toBuffer(), entrants[i].publicKey.toBuffer());
+      buyInReceipts.push(receipt);
+      await program.methods.depositBuyInV2(Array.from(poolId), assets[i])
+        .accountsStrict({ entrant: entrants[i].publicKey, arenaConfig, pool, vault, buyInReceipt: receipt, systemProgram: SystemProgram.programId })
+        .signers([entrants[i]]).rpc({ commitment: "confirmed" });
+    }
+
+    // The support window shuts on its own deadline, and only then.
+    await expectFail(
+      program.methods.closeSupportV2(Array.from(poolId)).accountsStrict({ caller: authority, arenaConfig, pool }).rpc({ commitment: "confirmed" }),
+      /SupportStillOpen/i, "closing support before its deadline",
+    );
+    await waitPastChainTime(supportDeadline);
+    await program.methods.closeSupportV2(Array.from(poolId)).accountsStrict({ caller: authority, arenaConfig, pool }).rpc({ commitment: "confirmed" });
+    assert.equal((await program.account.arenaPool.fetch(pool)).supportClosed, true, "support is closed once its deadline passes");
+    await expectFail(
+      program.methods.donateSupportV2(Array.from(poolId), new BN("1"))
+        .accountsStrict({ donor: donor.publicKey, arenaConfig, pool, vault, supportReceipt, systemProgram: SystemProgram.programId })
+        .signers([donor]).rpc({ commitment: "confirmed" }),
+      /SupportClosed/i, "donating after the window shut",
+    );
+
+    await waitPastChainTime(resolveDeadline);
+    await program.methods.settleExpiredPool(Array.from(poolId)).accountsStrict({ pool }).rpc({ commitment: "confirmed" });
+
+    for (let i = 0; i < entrants.length; i += 1) {
+      const vaultBefore = await lamports(vault);
+      const build = () => program.methods.refundBuyInV2(Array.from(poolId), assets[i])
+        .accountsStrict({
+          entrant: entrants[i].publicKey, pool, vault, buyInReceipt: buyInReceipts[i],
+          refundReceipt: pda("arena_refund", poolId, entrants[i].publicKey.toBuffer(), assets[i].toBuffer()),
+          systemProgram: SystemProgram.programId,
+        }).signers([entrants[i]]);
+      await build().rpc({ commitment: "confirmed" });
+      assert.equal(vaultBefore - (await lamports(vault)), buyIn, `entrant ${i}: the vault pays back exactly the entry fee`);
+      await expectFail(build().rpc({ commitment: "confirmed" }), /already in use|AlreadyRefunded|custom program error|0x0\b/i, `entrant ${i}: second refund`);
+    }
+    await program.methods.refundSupportV2(Array.from(poolId))
+      .accountsStrict({ donor: donor.publicKey, pool, vault, supportReceipt, refundReceipt: pda("arena_refund", poolId, donor.publicKey.toBuffer(), Buffer.from("arena_support", "utf8")), systemProgram: SystemProgram.programId })
+      .signers([donor]).rpc({ commitment: "confirmed" });
+
+    const vaultInfo = await connection.getAccountInfo(vault, "confirmed");
+    assert.equal(
+      BigInt(vaultInfo.lamports),
+      BigInt(await connection.getMinimumBalanceForRentExemption(vaultInfo.data.length)),
+      "the vault is empty: no entrant's fee is left behind",
+    );
+    const state = await program.account.arenaPool.fetch(pool);
+    assert.equal(BigInt(state.buyInTotal.toString()), 0n, "entry fees are fully unwound");
   });
 
   it("unmatched battle: expires after the deposit deadline and refunds the opener's stake", async function () {
