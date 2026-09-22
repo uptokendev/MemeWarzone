@@ -169,6 +169,58 @@ Needs: `DATABASE_URL`, `SOLANA_RPC_URL`, `ARENA_RESOLVER_KEYPAIR`, `ARENA_OPERAT
 3. E2E devnet battle, SOL-quoted vs USDC-quoted — needs a USDC-bound devnet graduation via the Orca
    devnet route (devnet USDC `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU`).
 
+## 4b. Program changes — done and proven on a local validator (2026-09-22)
+
+Both program changes are committed, built to SBF and proven. **Neither is deployed
+anywhere**: no devnet upgrade, no mainnet (that remains ON HOLD).
+
+- **Launchpad accepts Token-2022 quote assets.** `programs/memewarzone_solana/src/graduation.rs`.
+  The quote side takes either token program; the launch token is minted by this program and stays
+  classic SPL, so the staging account, the Meteora launch vault and the creator account are
+  untouched. Which program owns the quote is read off the mint — the route signer already
+  authorizes `quote_mint` in the digest, so `GRADUATION_AUTH_SCHEMA_VERSION` stays 4 and the
+  signing contract is unchanged. Extensions are an **allowlist** (metadata, grouping,
+  ImmutableOwner); transfer fees, transfer hooks, permanent delegates and confidential transfers
+  are refused with `UnsupportedQuoteTokenExtension` (IDL error 6074). A classic-SPL graduation
+  keeps its exact account list; a Token-2022 quote appends its program after the 3-account prefix.
+- **Competition V2 is 75/20/5 on Solana.** `ARENA_MWL_BPS` 1000 → 2000, taken from
+  `ArenaWarPoolTreasuryV2.ENTRY_LEAGUE_BPS` so Solana and EVM agree by construction. The signed
+  resolution message binds totals and outcome, never the split, so no pending authorization broke.
+  Note the raised factor halves the `split_arena_prize` overflow ceiling (~18.4M → ~9.2M SOL); it
+  fails closed with `MathOverflow` and a test pins that boundary.
+- **App alignment:** `isCompetitionV2Chain` in `frontend/api/arenaWarPools.js`. `warPoolGeneration`
+  only recognises an EVM treasury address, so chain 101 fell through to the V1 branch and the UI
+  would have quoted 85/5/10 while the program paid 75/20/5.
+
+### The gate was passing while graduation skipped
+
+`tests/solana/v4-lifecycle-acceptance.cjs` has always held "Gate K: graduate closed campaign into
+pinned DAMM v2 and swap", and it calls `this.skip()` when the Meteora program is not executable on
+the validator. `run-local-sbf-gate.sh` never loaded Meteora, so that test reported **pending** on
+every run and the gate printed GATE PASS anyway. It now loads the pinned DAMM v2 binary plus its
+account fixtures (fetching them if absent) and **fails if that test reports pending**.
+
+With Meteora loaded the proof actually runs — verified 2026-09-22 against the modified program:
+create 10 passing, lifecycle 4 passing including a real graduation into a pool plus a swap,
+`sha256=9ee52111ccd5e9f22f32cd6314e864405388f22490efece264129b921b04cb4a` (stable across runs; the
+`cfg(test)` additions do not change the artifact). 106 launchpad unit tests, 22 treasury.
+
+`solana-local-validator-ci.yml` now calls that same script instead of keeping its own validator
+choreography that only ran the create suite, and triggers on PRs into `main` too. The treasury has
+its own path: `solana-rewards-treasury-upgrade-candidate.yml` runs `cargo test -p
+mwz_rewards_treasury --lib`, builds the SBF and records candidate hashes.
+
+Run it locally with:
+`ANCHOR_WALLET=<keypair> bash scripts/solana/run-local-sbf-gate.sh`
+
+### Still open on the launchpad change
+
+- **No Token-2022 client path.** `deriveAta` at `frontend/api/dev-fix/solana-graduation-authorization-v2.js:325`
+  hardcodes `TOKEN_PROGRAM_ID` in the ATA seeds, so it derives the **wrong** account for a
+  Token-2022 mint, and nothing appends the 4th remaining account yet.
+- The local-validator proof covers a **native** graduation. No end-to-end Token-2022 graduation
+  exists; the Token-2022 paths are proven at byte level in Rust, not through a pool.
+
 ## 5. After step 1 (founder go required for each)
 
 2. Local-validator graduation harness → Token-2022 program change in `programs/memewarzone_solana/src/graduation.rs`, with proofs, then devnet upgrade via `scripts/solana/upgrade-devnet-launchpad.cjs`.
