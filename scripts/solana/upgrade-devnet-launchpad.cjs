@@ -87,6 +87,31 @@ function showProgram(rpc, keypairPath) {
   };
 }
 
+/**
+ * A deployed program occupies the whole ProgramData allocation, which is only
+ * as large as the binary when the two happen to match exactly. Normally the
+ * allocation is larger and `solana program dump` returns the binary followed by
+ * zero padding, so comparing the dump to the candidate byte-for-byte reports a
+ * mismatch on a perfectly good upgrade.
+ *
+ * The real invariant is: the allocation starts with the candidate and every
+ * remaining byte is zero. Anything else -- a short allocation, different code,
+ * or non-zero bytes past the binary -- is a genuine failure.
+ */
+function deployedMatchesCandidate(deployed, candidate) {
+  if (deployed.length < candidate.length) {
+    return { ok: false, reason: "allocation-smaller-than-candidate" };
+  }
+  if (!deployed.subarray(0, candidate.length).equals(candidate)) {
+    return { ok: false, reason: "candidate-bytes-differ" };
+  }
+  const padding = deployed.subarray(candidate.length);
+  if (padding.length && !padding.every((byte) => byte === 0)) {
+    return { ok: false, reason: "trailing-bytes-not-zero" };
+  }
+  return { ok: true, reason: "byte-identical-with-zero-padding", paddingBytes: padding.length };
+}
+
 function dumpProgram(rpc, destination, keypairPath) {
   execFileSync(
     "solana",
@@ -166,7 +191,7 @@ async function main() {
     try { fs.unlinkSync(liveDumpPath); } catch { /* ignore cleanup */ }
   }
   const liveSha = sha256(liveBytes);
-  const alreadyCurrent = liveBytes.equals(candidate);
+  const alreadyCurrent = deployedMatchesCandidate(liveBytes, candidate).ok;
 
   const allocatedProgramBytesBefore = Number(liveBefore.dataLen);
   const extensionBytes = Math.max(0, candidate.length - allocatedProgramBytesBefore);
@@ -300,12 +325,12 @@ async function main() {
     try { fs.unlinkSync(deployedDumpPath); } catch { /* ignore cleanup */ }
   }
   const deployedSha = sha256(deployed);
-  const byteIdentical = deployed.equals(candidate);
+  const match = deployedMatchesCandidate(deployed, candidate);
   const liveAfter = showProgram(rpc, operatorPath);
 
-  if (!byteIdentical || deployedSha !== candidateSha) {
+  if (!match.ok) {
     throw new Error(
-      `DEPLOYMENT VERIFICATION FAILED: candidate ${candidateSha}/${candidate.length}; ` +
+      `DEPLOYMENT VERIFICATION FAILED (${match.reason}): candidate ${candidateSha}/${candidate.length}; ` +
       `deployed ${deployedSha}/${deployed.length}`,
     );
   }
