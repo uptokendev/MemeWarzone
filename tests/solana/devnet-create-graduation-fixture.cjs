@@ -41,7 +41,10 @@ const TRADE_AUTH_SCHEMA_VERSION = 3;
 const TRADE_SIDE_BUY = 1;
 const ROUTE_PROFILE_UNLINKED = 1;
 const GRADUATION_TARGET_USD_MICROS = 6_000_000n;
-const CLOSE_BUY_LAMPORTS = 50_000_000n;
+// The graduation threshold is a USD target converted at the live SOL price, so
+// a buy sized for one price stops clearing it when SOL falls. Overridable so a
+// fixture can be sized for today's price instead of fudging the oracle.
+const CLOSE_BUY_LAMPORTS = BigInt(String(process.env.SOLANA_FIXTURE_CLOSE_BUY_LAMPORTS || "50000000").trim());
 const CLOSE_TARGET_LAMPORTS = 40_000_000n;
 const OUTPUT = process.env.SOLANA_GRADUATION_FIXTURE_OUTPUT || "/tmp/mwz-solana-devnet-graduation-fixture.json";
 
@@ -242,7 +245,9 @@ async function main() {
       .rpc({ commitment: "confirmed", preflightCommitment: "confirmed" });
 
     await fund(connection, operator, creator.publicKey, 200_000_000);
-    await fund(connection, operator, buyer.publicKey, 120_000_000);
+    // The buyer must cover the close buy plus fees and rent, so fund it from the
+    // buy size rather than a constant that only suited the original 0.05 SOL.
+    await fund(connection, operator, buyer.publicKey, Number(CLOSE_BUY_LAMPORTS) + 80_000_000);
 
     const creatorProfile = derivePda(PROGRAM_ID, "creator", creator.publicKey.toBuffer());
     const creatorRisk = derivePda(PROGRAM_ID, "risk", creator.publicKey.toBuffer());
@@ -341,8 +346,16 @@ async function main() {
       createIx,
     ]);
 
-    await program.methods.initializeFeeEscrow().accountsStrict({ payer: operator.publicKey, campaign, feeEscrow, systemProgram: SystemProgram.programId }).rpc({ commitment: "confirmed" });
-    await program.methods.initializeCreatorFeeVault().accountsStrict({ payer: operator.publicKey, campaign, creatorFeeVault, systemProgram: SystemProgram.programId }).rpc({ commitment: "confirmed" });
+    // create_campaign now allocates these itself, so initializing them again
+    // fails with "already in use" and takes the whole fixture down. Create only
+    // what the create did not.
+    const alreadyAllocated = async (address) => Boolean(await connection.getAccountInfo(address, "confirmed"));
+    if (!(await alreadyAllocated(feeEscrow))) {
+      await program.methods.initializeFeeEscrow().accountsStrict({ payer: operator.publicKey, campaign, feeEscrow, systemProgram: SystemProgram.programId }).rpc({ commitment: "confirmed" });
+    }
+    if (!(await alreadyAllocated(creatorFeeVault))) {
+      await program.methods.initializeCreatorFeeVault().accountsStrict({ payer: operator.publicKey, campaign, creatorFeeVault, systemProgram: SystemProgram.programId }).rpc({ commitment: "confirmed" });
+    }
 
     const buyerAta = getAssociatedTokenAddressSync(mint, buyer.publicKey);
     await sendLegacy(connection, buyer, [createAssociatedTokenAccountInstruction(buyer.publicKey, buyerAta, buyer.publicKey, mint)]);
