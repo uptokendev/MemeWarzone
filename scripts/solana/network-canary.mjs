@@ -10,8 +10,8 @@ const EXPECTED_PROGRAM_ID = "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt";
 // deployed 2026-09-22. SOLANA_LAUNCHPAD_PROGRAM_SHA256 on the API must carry
 // this same value: the canary and the create/trade authorization paths read
 // the same variable, so a stale pin here and a correct API env cannot coexist.
-const EXPECTED_SBF_SHA256 = "9ee52111ccd5e9f22f32cd6314e864405388f22490efece264129b921b04cb4a";
-const EXPECTED_SBF_BYTES = 1222896;
+const EXPECTED_SBF_SHA256 = "e6ed7df37dfe3bf8ec7914f7bcae9ebd50b21b0844cff80c2a851c64bfafdcb2";
+const EXPECTED_SBF_BYTES = 1218568;
 
 function required(name) {
   const value = String(process.env[name] || "").trim();

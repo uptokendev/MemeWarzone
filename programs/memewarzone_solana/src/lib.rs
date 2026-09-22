@@ -1765,6 +1765,4 @@ pub enum LaunchpadError {
     FeeEscrowPendingNonzero,
     #[msg("Campaign fee escrow cannot cover its pending liabilities.")]
     FeeEscrowBalanceMismatch,
-    #[msg("Quote token carries a Token-2022 extension this program does not accept.")]
-    UnsupportedQuoteTokenExtension,
 }

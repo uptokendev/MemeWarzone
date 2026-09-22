@@ -3,13 +3,16 @@
 /**
  * Token-2022 quote acceptance against mints the real token program produced.
  *
- * The extension allowlist is implemented twice -- `quote_extension_allowed` in
- * the graduation program and `disallowedToken2022Extensions` in the catalog
+ * The extension classification is implemented twice -- `quote_extension_allowed`
+ * in the graduation program and `disallowedToken2022Extensions` in the catalog
  * verifier -- and both were tested against buffers the tests themselves built.
  * That proves the two agree with each other's idea of the layout, not with the
  * chain's. This creates the mints with spl-token-2022 on a local validator and
  * reads their bytes back, so the layout under test is the one Token-2022
  * actually writes.
+ *
+ * The classification no longer gates graduation: the creator chooses the
+ * binding and is warned. It decides what that warning says.
  *
  * It also checks the associated-token address for a Token-2022 mint exists on
  * chain where the authorization API derives it. The token program is part of
@@ -107,11 +110,16 @@ describe("Token-2022 quote acceptance on real mints", function () {
     assert.deepEqual(verifier.disallowedToken2022Extensions(info.data), []);
   });
 
-  it("refuses a transfer fee, because the sweep would not receive what it read", async () => {
+  it("classifies a transfer fee as an issuer power, which the creator is warned about", async () => {
     const mint = await createToken2022Mint(connection, payer, [ExtensionType.TransferFeeConfig]);
     const info = await connection.getAccountInfo(mint, "confirmed");
     assert.deepEqual(verifier.token2022MintExtensions(info.data), [ExtensionType.TransferFeeConfig]);
+    // Not a refusal any more: graduation accepts the binding and the creator is
+    // told the sweep receives less than it sends. The classification is what
+    // the confirmation dialog is built from.
     assert.deepEqual(verifier.disallowedToken2022Extensions(info.data), ["TransferFeeConfig"]);
+    const risks = verifier.token2022BindingRisks(info.data);
+    assert.ok(risks.some((risk) => risk.code === "TRANSFER_FEE" && risk.armed));
   });
 
   it("the authorization API derives the Token-2022 ATA that actually exists on chain", async () => {

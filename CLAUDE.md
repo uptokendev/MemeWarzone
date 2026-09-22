@@ -213,40 +213,68 @@ mwz_rewards_treasury --lib`, builds the SBF and records candidate hashes.
 Run it locally with:
 `ANCHOR_WALLET=<keypair> bash scripts/solana/run-local-sbf-gate.sh`
 
-### Token-2022 quotes are reachable (2026-09-22)
+### Binding tokens: allow the full list, warn the creator (2026-09-22)
 
-The program accepting Token-2022 was not enough — three layers each refused
-them before a request reached it, so the upgrade alone turned nothing on:
+Which asset a campaign graduates against is the **creator's** decision, so the
+extension allowlist is no longer a gate. Refusing removed the asset from the
+list rather than explaining the trade-off, and a refusal reached at graduation
+would strand a campaign that had already closed.
 
-- **Authorization API** asserted the quote mint was classic-owned (rejecting
-  every Token-2022 mint), and `deriveAta` hardcoded the classic program in the
-  ATA seeds. It now reads the owning program off the authorized mint and names
-  it in the plan as `accounts.quoteTokenProgram`.
-- **Quote operator** (`tools/solana-meteora-graduation/graduate-basic-quote.mjs`)
-  drove every quote-side account through the classic program and fixed
-  `tokenBProgram` to it. It now follows the program the authorization names and
-  appends it after the classic 3-account prefix.
-- **Catalog verifier** blocked Token-2022 on identity and marked LP
-  `UNAVAILABLE`. It now judges the mint's *extensions*, mirroring
-  `quote_extension_allowed` in graduation.rs. **The two allowlists must agree** —
-  a mint activated in the catalog that the program refuses would fail at
-  graduation, after the campaign has already closed.
+- **Program** accepts any mint owned by either token program and reads only the
+  base layout. That also removed an accidental cliff: `spl-token-2022` 3.0.5
+  cannot *enumerate* extensions it postdates (ScaledUiAmount, Pausable — both on
+  every xStock) while unpacking the base mint still succeeds. Enumerating would
+  have refused those assets purely for being newer than the dependency. **No
+  dependency upgrade needed.**
+- **Catalog** returns `metrics.bindingRisks` — one entry per issuer power with
+  `code`, `armed`, `severity`, `title`, `detail`, for the "Are you sure?" dialog.
+  `armed` is real: on live NVDAx the permanent delegate, pausable and
+  transfer-hook authorities are all set; no transfer fee is charged. Freeze
+  authority is reported too, noting USDC has one as well.
+- **`quote_extension_allowed` stays** as a classification the catalog reads.
 
-Proven on a local validator (in the gate, fails if pending): the allowlist read
-off mints spl-token-2022 actually wrote; the derived Token-2022 ATA is the
-account that exists while the classic derivation points at **nothing**; and a
-real DAMM v2 pool whose quote side is Token-2022, liquidity locked, quote vault
-owned by Token-2022.
+**The check runs once, at graduation, and the pool is then locked forever.** An
+authority armed afterwards cannot be caught — the dialog copy must say so.
 
-Gate: create 10, lifecycle 4 (incl. graduation), Token-2022 5.
+### LP fee economics survive a Token-2022 binding
 
-### Still open on the launchpad change
+Proven on a validator: a swap against a Token-2022 quote accrues an LP fee and
+claiming pays the position **in full — owed 181818182, claimed 181818182,
+nothing skimmed**. A permanently locked position accrues and pays identically to
+an unlocked one, so the lock is not what would break it. The xStocks charge no
+transfer fee, the one extension that would have skimmed the creator/protocol cut.
 
-- **No Token-2022 client path.** `deriveAta` at `frontend/api/dev-fix/solana-graduation-authorization-v2.js:325`
-  hardcodes `TOKEN_PROGRAM_ID` in the ATA seeds, so it derives the **wrong** account for a
-  Token-2022 mint, and nothing appends the 4th remaining account yet.
-- The local-validator proof covers a **native** graduation. No end-to-end Token-2022 graduation
-  exists; the Token-2022 paths are proven at byte level in Rust, not through a pool.
+### Devnet state (both programs upgraded and byte-verified)
+
+| | sha256 | bytes | slot |
+|---|---|---|---|
+| Launchpad `3JSGNiFst…` | `e6ed7df37dfe3bf8ec7914f7bcae9ebd50b21b0844cff80c2a851c64bfafdcb2` | 1218568 | 502512217+ |
+| Treasury `2Nzth…` | `5638c9923d2a3025197243ab6f62e565c832b6fa69d3ce4265abecc90594cdfc` | 1276472 | 502458587 |
+
+IDL sha256 `6ad692989c7445ff079aecf185b23ebf54ceb2bfe21f3e9df06802c6b40b8a16`.
+`SOLANA_LAUNCHPAD_PROGRAM_SHA256` / `_IDL_SHA256` / `_PROGRAM_BYTES` must move
+with any upgrade — the create and trade authorization paths read them, and
+`network-canary.mjs` pins the same program hash.
+
+Gate (`bash scripts/solana/run-local-sbf-gate.sh`): create 10, lifecycle 4
+(incl. graduation into pinned DAMM v2), Token-2022 5. Fails if any reports
+pending. Treasury gate: 11.
+
+Mainnet runbook with the Squads ceremony: `docs/solana-mainnet-squads-upgrade-runbook.md`.
+
+### Still open
+
+- **The binding confirmation dialog is not built.** `metrics.bindingRisks` is
+  returned and tested; nothing renders it. Until it does, a creator can bind to
+  an asset whose issuer can claw back, pause or freeze the locked pool without
+  being told.
+- **No single end-to-end Token-2022 graduation.** Every layer is proven on a
+  validator — classification against real mints, the ATA against the account
+  that exists, a real DAMM v2 pool with a Token-2022 quote, LP fees claimed in
+  full. Nothing has driven one campaign from close to bound pool in one run;
+  that needs Orca loaded alongside Meteora.
+- **Orphaned devnet buffer** `HbmmrEjPJL7hvrk7DJrvwFSqqFoNz9yiyzoFxAmEzZZv`
+  holds 7.55857772 SOL on the devnet deployer. Predates this work.
 
 ## 5. After step 1 (founder go required for each)
 

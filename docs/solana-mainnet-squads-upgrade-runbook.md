@@ -20,7 +20,7 @@ running on devnet and byte-verified there.
 
 | | Program | Candidate sha256 | Bytes |
 |---|---|---|---|
-| Launchpad | `3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt` | `9ee52111ccd5e9f22f32cd6314e864405388f22490efece264129b921b04cb4a` | 1222896 |
+| Launchpad | `3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt` | `e6ed7df37dfe3bf8ec7914f7bcae9ebd50b21b0844cff80c2a851c64bfafdcb2` | 1218568 |
 | Treasury | `2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX` | `5638c9923d2a3025197243ab6f62e565c832b6fa69d3ce4265abecc90594cdfc` | 1276472 |
 
 Launchpad change: Token-2022 quote assets accepted at graduation, on the quote
@@ -31,7 +31,7 @@ matching `ArenaWarPoolTreasuryV2` on EVM.
 
 | | Allocated on mainnet | Candidate | Verdict |
 |---|---|---|---|
-| Launchpad | 1310936 bytes | 1222896 | **Fits.** 88040 bytes spare. No extend. |
+| Launchpad | 1310936 bytes | 1218568 | **Fits.** 92368 bytes spare. No extend. |
 | Treasury | 660016 bytes | 1276472 | **Too small by 616456 bytes.** Must extend first. |
 
 The launchpad can go straight to buffer + Squads upgrade. The treasury cannot:
@@ -142,9 +142,9 @@ the create and trade authorization paths, so an upgrade that lands without them
 leaves those paths quoting evidence for a binary that is no longer deployed.
 
 ```
-SOLANA_LAUNCHPAD_PROGRAM_SHA256=9ee52111ccd5e9f22f32cd6314e864405388f22490efece264129b921b04cb4a
-SOLANA_LAUNCHPAD_IDL_SHA256=0f21550f5ac8a0279418a7ed74b66e21fd8c2f724d9a9e8ee4ab1a8ec8e26f40
-SOLANA_LAUNCHPAD_PROGRAM_BYTES=1222896
+SOLANA_LAUNCHPAD_PROGRAM_SHA256=e6ed7df37dfe3bf8ec7914f7bcae9ebd50b21b0844cff80c2a851c64bfafdcb2
+SOLANA_LAUNCHPAD_IDL_SHA256=6ad692989c7445ff079aecf185b23ebf54ceb2bfe21f3e9df06802c6b40b8a16
+SOLANA_LAUNCHPAD_PROGRAM_BYTES=1218568
 ```
 
 `scripts/solana/network-canary.mjs` pins the same program hash and will fail
@@ -152,15 +152,19 @@ until it agrees.
 
 ## Outstanding before the treasury goes
 
-- **The client cannot drive a Token-2022 quote yet.** `deriveAta` in
-  `frontend/api/dev-fix/solana-graduation-authorization-v2.js` hardcodes the
-  classic token program in the ATA seeds, so it derives the wrong account for a
-  Token-2022 mint, and nothing appends the token program to the account list.
-  The program accepts these assets; nothing can yet ask it to. This does not
-  block the launchpad upgrade — classic-SPL graduations are unchanged — but the
-  feature is not reachable until the client lands.
-- **No end-to-end Token-2022 graduation exists.** Those paths are proven at byte
-  level in Rust and by the allowlist tests, not through a pool.
+- **The UI must show the binding confirmation before this is useful.** Graduation
+  now accepts any approved quote and the catalog returns `metrics.bindingRisks`
+  — one entry per issuer power, each with `armed`, `severity`, `title` and
+  `detail`. Nothing renders it yet. Until it does, a creator can bind to an asset
+  whose issuer can claw back, pause or freeze the locked pool without being told.
+  The copy should say the check happens once, at graduation, and the pool then
+  stays locked — an authority armed afterwards cannot be caught.
+- **No single end-to-end Token-2022 graduation.** Every layer is proven on a
+  validator: the classification against mints the token program wrote, the ATA
+  against the account that exists, a real DAMM v2 pool with a Token-2022 quote,
+  and LP fees accruing and claiming in full (owed 181818182, claimed 181818182).
+  Nothing has yet driven one campaign from close to bound pool in a single run;
+  that needs an acquisition route (Orca) loaded alongside Meteora.
 - **A pre-existing orphaned buffer sits on devnet**,
   `HbmmrEjPJL7hvrk7DJrvwFSqqFoNz9yiyzoFxAmEzZZv`, holding 7.55857772 SOL on the
   devnet deployer's authority. It predates this work. Reclaim with
