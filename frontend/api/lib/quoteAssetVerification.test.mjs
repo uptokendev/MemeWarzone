@@ -105,7 +105,7 @@ test("thin liquidity, low volume, wrong decimals and depegs are flagged, never a
   assert.ok(!sourceDown.flags.some((flag) => flag.code === "NO_PRICE_SOURCE"));
 });
 
-test("Solana mainnet ecosystem token with a Jupiter route passes; a clean Token-2022 quote passes, a fee-bearing one does not", () => {
+test("Solana mainnet ecosystem token with a Jupiter route passes; Token-2022 quotes pass and carry their risks", () => {
   const ok = evaluateVerification(solItem(), {
     token: { exists: true, tokenProgram: "spl-token", decimals: 6, supply: "1", mintAuthorityPresent: false, freezeAuthorityPresent: false },
     market: { id: "jupiter-exchange-solana", priceUsd: 0.8, volume24hUsd: 60_000_000, marketCapUsd: 2_000_000_000 },
@@ -135,13 +135,19 @@ test("Solana mainnet ecosystem token with a Jupiter route passes; a clean Token-
   assert.equal(t22.metrics.lpVenue, "meteora-damm-v2");
   assert.ok(!t22.flags.some((flag) => flag.code === "TOKEN_2022_UNSUPPORTED"));
 
-  // The catalog must refuse exactly what graduation refuses: a mint activated
-  // here that the program rejects would fail after the campaign has closed.
-  const t22Fee = xStock({ exists: true, tokenProgram: "token-2022", decimals: 8, disallowedExtensions: ["TransferFeeConfig"] });
-  assert.equal(t22Fee.gates.identity, "REJECTED");
-  assert.notEqual(t22Fee.state, "passed");
-  assert.ok(t22Fee.flags.some((flag) => flag.code === "TOKEN_2022_EXTENSION_UNSUPPORTED"));
+  // Issuer powers are surfaced, not refused: which asset a campaign graduates
+  // against is the creator's decision, and removing the asset from the list
+  // would hide the trade-off rather than explain it. The flag is non-blocking
+  // and the risks ride along for the confirmation dialog.
+  const t22Fee = xStock({
+    exists: true, tokenProgram: "token-2022", decimals: 8,
+    disallowedExtensions: ["TransferFeeConfig"],
+    bindingRisks: [{ code: "TRANSFER_FEE", armed: true, severity: "high", title: "Every transfer is taxed by the issuer", detail: "..." }],
+  });
+  assert.equal(t22Fee.gates.identity, "VERIFIED");
+  assert.ok(t22Fee.flags.some((flag) => flag.code === "TOKEN_2022_ISSUER_POWERS"));
   assert.ok(t22Fee.flags.some((flag) => String(flag.detail || flag.message || "").includes("TransferFeeConfig")));
+  assert.deepEqual(t22Fee.metrics.bindingRisks.map((r) => r.code), ["TRANSFER_FEE"]);
 
   const impact = evaluateVerification(solItem(), {
     token: { exists: true, tokenProgram: "spl-token", decimals: 6 },

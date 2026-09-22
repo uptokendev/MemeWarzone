@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 
 process.env.DATABASE_URL = process.env.DATABASE_URL || "postgres://test:test@127.0.0.1:5432/test";
 
-const { token2022MintExtensions, disallowedToken2022Extensions } = await import("./quoteAssetVerification.js");
+const { token2022MintExtensions, disallowedToken2022Extensions, token2022BindingRisks } = await import("./quoteAssetVerification.js");
 
 /** A Token-2022 mint: 82-byte base, account type at 165, then TLV entries. */
 function mintWithExtensions(entries) {
@@ -88,4 +88,62 @@ test("the xStocks carry six extensions the allowlist refuses", () => {
   ]);
   // Accepting xStocks as quote assets is a deliberate risk decision, not an
   // oversight. If that decision is taken, this test is the place it changes.
+});
+
+
+/** Builds a mint whose TLV values are filled, so authorities read as armed. */
+function mintWithArmedExtensions(entries) {
+  const tlv = [];
+  for (const [type, length] of entries) {
+    const head = Buffer.alloc(4);
+    head.writeUInt16LE(type, 0);
+    head.writeUInt16LE(length, 2);
+    tlv.push(head, Buffer.alloc(length, 7)); // non-zero => authority set
+  }
+  return Buffer.concat([Buffer.alloc(165), Buffer.from([1]), ...tlv]);
+}
+
+test("the xStock shape produces the risks a creator has to accept", () => {
+  const data = mintWithArmedExtensions([
+    [18, 64], [12, 32], [6, 1], [25, 56], [26, 33], [4, 65], [14, 64], [19, 166],
+  ]);
+  const risks = token2022BindingRisks(data);
+  const byCode = Object.fromEntries(risks.map((r) => [r.code, r]));
+
+  // The three that can reach into a permanently locked pool.
+  assert.equal(byCode.PERMANENT_DELEGATE.armed, true);
+  assert.equal(byCode.PERMANENT_DELEGATE.severity, "high");
+  assert.equal(byCode.TRANSFER_HOOK.armed, true);
+  assert.equal(byCode.PAUSABLE.armed, true);
+
+  // Present but not a threat to the pool.
+  assert.equal(byCode.CONFIDENTIAL_TRANSFER.armed, false);
+  assert.equal(byCode.SCALED_UI_AMOUNT.severity, "high");
+  assert.ok(!("TRANSFER_FEE" in byCode), "the xStocks charge no transfer fee");
+
+  for (const risk of risks) {
+    assert.ok(risk.title && risk.detail, `${risk.code} must be explainable to a creator`);
+  }
+});
+
+test("an inert extension reads as not armed, so the dialog can rank it", () => {
+  // Same extensions, all-zero values: a null delegate is a different risk from
+  // an armed one, and the creator should not be shown both the same way.
+  const inert = Buffer.concat([
+    Buffer.alloc(165), Buffer.from([1]),
+    ...[[12, 32], [14, 64], [26, 33]].flatMap(([type, length]) => {
+      const head = Buffer.alloc(4);
+      head.writeUInt16LE(type, 0);
+      head.writeUInt16LE(length, 2);
+      return [head, Buffer.alloc(length)];
+    }),
+  ]);
+  for (const risk of token2022BindingRisks(inert)) {
+    assert.equal(risk.armed, false, `${risk.code} has no authority set`);
+    assert.equal(risk.severity, "info");
+  }
+});
+
+test("a mint with no extensions asks the creator to accept nothing", () => {
+  assert.deepEqual(token2022BindingRisks(Buffer.alloc(165)), []);
 });

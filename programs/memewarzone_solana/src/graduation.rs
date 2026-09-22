@@ -1468,22 +1468,18 @@ pub struct QuoteTokenAccount {
     pub amount: u64,
 }
 
-/// Token-2022 extensions this program is willing to hold as a quote asset.
+/// Token-2022 extensions that carry no balance or transfer semantics.
 ///
-/// This is an allowlist, not a denylist, because the extension set grows with
-/// every Token-2022 release: an unknown extension must fail the graduation
-/// rather than be waved through. Everything permitted here is metadata or
-/// grouping that cannot change a balance, plus ImmutableOwner, which only makes
-/// an account's owner harder to change.
+/// This is no longer a gate. Which asset a campaign graduates against is the
+/// creator's choice, made in the UI with the risks spelled out, so the program
+/// does not second-guess it -- an extension it refused would strand a campaign
+/// that had already closed. The classification stays because the catalog uses
+/// it to decide what to warn about before the creator commits.
 ///
-/// Deliberately excluded, each because it can silently break the sweep or the
-/// pool accounting this program depends on: TransferFeeConfig/TransferFeeAmount
-/// (the recipient receives less than was sent), TransferHook/TransferHookAccount
-/// (third-party code runs inside the transfer), PermanentDelegate (the issuer
-/// can move funds out of any account), ConfidentialTransfer* (balances are not
-/// readable), NonTransferable*, MemoTransfer, DefaultAccountState (can default
-/// to frozen), CpiGuard (can refuse the CPI), InterestBearingConfig and
-/// MintCloseAuthority.
+/// Extensions outside this set are accepted but are not inert: a permanent
+/// delegate can move the quote out of the locked pool, a pausable mint can
+/// halt transfers, a transfer hook runs third-party code inside the sweep, and
+/// a transfer fee means the recovery account receives less than was sent.
 pub fn quote_extension_allowed(extension: ExtensionType) -> bool {
     matches!(
         extension,
@@ -1498,22 +1494,17 @@ pub fn quote_extension_allowed(extension: ExtensionType) -> bool {
     )
 }
 
-fn require_allowed_quote_extensions(extensions: &[ExtensionType]) -> Result<()> {
-    for extension in extensions {
-        require!(
-            quote_extension_allowed(*extension),
-            LaunchpadError::UnsupportedQuoteTokenExtension
-        );
-    }
-    Ok(())
-}
-
-/// Resolves which token program owns a quote mint, and refuses any Token-2022
-/// mint carrying an extension outside the allowlist.
+/// Resolves which token program owns a quote mint.
 ///
 /// The route signer already authorized this exact quote mint in the graduation
-/// digest, so the program can read the owner off the authorized mint instead of
+/// digest, so the program reads the owner off the authorized mint rather than
 /// taking the token program as a signed argument -- the schema stays unchanged.
+///
+/// Extensions are deliberately not enumerated here. spl-token-2022 3.0.5 fails
+/// to enumerate extensions it postdates (ScaledUiAmount, Pausable), while
+/// unpacking the base mint still succeeds, so enumerating would refuse assets
+/// purely for being newer than this dependency. The base layout is all this
+/// program needs.
 fn quote_token_program_for_mint(info: &AccountInfo) -> Result<Pubkey> {
     if *info.owner == token::ID {
         return Ok(token::ID);
@@ -1524,12 +1515,8 @@ fn quote_token_program_for_mint(info: &AccountInfo) -> Result<Pubkey> {
         LaunchpadError::InvalidGraduationAuthorization
     );
     let data = info.try_borrow_data()?;
-    let mint = StateWithExtensions::<Token2022Mint>::unpack(&data)
+    StateWithExtensions::<Token2022Mint>::unpack(&data)
         .map_err(|_| error!(LaunchpadError::InvalidGraduationAuthorization))?;
-    let extensions = mint
-        .get_extension_types()
-        .map_err(|_| error!(LaunchpadError::InvalidGraduationAuthorization))?;
-    require_allowed_quote_extensions(&extensions)?;
     Ok(spl_token_2022::ID)
 }
 
@@ -1555,16 +1542,13 @@ fn unpack_quote_account(info: &AccountInfo) -> Result<QuoteTokenAccount> {
     let data = info.try_borrow_data()?;
     let account = StateWithExtensions::<Token2022Account>::unpack(&data)
         .map_err(|_| error!(LaunchpadError::InvalidCampaign))?;
-    let extensions = account
-        .get_extension_types()
-        .map_err(|_| error!(LaunchpadError::InvalidCampaign))?;
-    require_allowed_quote_extensions(&extensions)?;
     Ok(QuoteTokenAccount {
         mint: account.base.mint,
         owner: account.base.owner,
         amount: account.base.amount,
     })
 }
+
 fn update_creator_profile_after_graduation(info: &AccountInfo, creator: Pubkey) -> Result<()> {
     let (expected, _) =
         Pubkey::find_program_address(&[CREATOR_PROFILE_SEED, creator.as_ref()], &crate::ID);
@@ -1724,6 +1708,20 @@ mod tests {
         AccountInfo::new(key, false, false, lamports, data, owner, false, 0)
     }
 
+    /// Builds a Token-2022 mint carrying a raw TLV entry, including types this
+    /// pinned spl-token-2022 does not know.
+    fn mint_with_raw_extension(ext_type: u16, len: u16) -> Vec<u8> {
+        let mut buffer = vec![0u8; 165];
+        buffer.push(1); // account type = Mint
+        buffer.extend_from_slice(&ext_type.to_le_bytes());
+        buffer.extend_from_slice(&len.to_le_bytes());
+        buffer.extend_from_slice(&vec![0u8; len as usize]);
+        // base mint: initialized, 6 decimals
+        buffer[44] = 6;
+        buffer[45] = 1;
+        buffer
+    }
+
     #[test]
     fn a_plain_token_2022_mint_resolves_to_the_token_2022_program() {
         let key = Pubkey::new_unique();
@@ -1745,15 +1743,35 @@ mod tests {
     }
 
     #[test]
-    fn a_token_2022_mint_charging_a_transfer_fee_is_refused() {
-        // The sweep moves the exact amount it read; a transfer fee would make
-        // the recovery account receive less and silently break that accounting.
+    fn a_token_2022_mint_charging_a_transfer_fee_is_accepted() {
+        // Refusing it here would strand a campaign that had already closed. The
+        // creator was told a transfer fee means the sweep receives less than it
+        // sent, and chose the binding anyway.
         let key = Pubkey::new_unique();
         let owner = spl_token_2022::ID;
         let mut lamports = 0u64;
         let mut data = token_2022_mint_bytes(&[ExtensionType::TransferFeeConfig]);
         let account = info(&key, &owner, &mut lamports, &mut data);
-        assert!(quote_token_program_for_mint(&account).is_err());
+        assert_eq!(quote_token_program_for_mint(&account).unwrap(), spl_token_2022::ID);
+    }
+
+    #[test]
+    fn an_extension_newer_than_this_dependency_is_accepted() {
+        // spl-token-2022 3.0.5 cannot enumerate ScaledUiAmount or Pausable, but
+        // unpacking the base mint still works. Enumerating would have refused
+        // every xStock purely for being newer than this crate.
+        for ext_type in [25u16, 26u16] {
+            let key = Pubkey::new_unique();
+            let owner = spl_token_2022::ID;
+            let mut lamports = 0u64;
+            let mut data = mint_with_raw_extension(ext_type, 16);
+            let account = info(&key, &owner, &mut lamports, &mut data);
+            assert_eq!(
+                quote_token_program_for_mint(&account).unwrap(),
+                spl_token_2022::ID,
+                "extension {ext_type} must not block the binding",
+            );
+        }
     }
 
     #[test]
@@ -1828,10 +1846,7 @@ mod tests {
     }
 
     #[test]
-    fn quote_extension_allowlist_refuses_everything_that_can_move_or_hide_a_balance() {
-        // Each of these breaks an invariant the graduation sweep depends on:
-        // the amount read is the amount that arrives, balances are readable,
-        // and nobody else can move the funds or refuse the transfer.
+    fn the_classification_marks_every_balance_affecting_extension() {
         for extension in [
             ExtensionType::TransferFeeConfig,
             ExtensionType::TransferFeeAmount,
@@ -1840,36 +1855,27 @@ mod tests {
             ExtensionType::PermanentDelegate,
             ExtensionType::ConfidentialTransferMint,
             ExtensionType::ConfidentialTransferAccount,
-            ExtensionType::ConfidentialTransferFeeConfig,
-            ExtensionType::ConfidentialTransferFeeAmount,
             ExtensionType::NonTransferable,
-            ExtensionType::NonTransferableAccount,
             ExtensionType::MemoTransfer,
             ExtensionType::DefaultAccountState,
             ExtensionType::CpiGuard,
             ExtensionType::InterestBearingConfig,
             ExtensionType::MintCloseAuthority,
         ] {
-            assert!(
-                !quote_extension_allowed(extension),
-                "{extension:?} must not be accepted as a quote asset",
-            );
+            assert!(!quote_extension_allowed(extension), "{extension:?} is not inert");
         }
     }
 
     #[test]
-    fn a_single_forbidden_extension_fails_the_whole_set() {
-        assert!(require_allowed_quote_extensions(&[
-            ExtensionType::MetadataPointer,
-            ExtensionType::ImmutableOwner,
-        ])
-        .is_ok());
-        assert!(require_allowed_quote_extensions(&[
-            ExtensionType::MetadataPointer,
-            ExtensionType::TransferFeeConfig,
-        ])
-        .is_err());
-        assert!(require_allowed_quote_extensions(&[]).is_ok());
+    fn the_classification_still_names_what_is_inert_and_what_is_not() {
+        // It no longer gates graduation -- the creator picks the binding -- but
+        // the catalog reads it to decide what to warn about, so the split must
+        // stay honest about which extensions can move or hide a balance.
+        assert!(quote_extension_allowed(ExtensionType::MetadataPointer));
+        assert!(quote_extension_allowed(ExtensionType::ImmutableOwner));
+        assert!(!quote_extension_allowed(ExtensionType::PermanentDelegate));
+        assert!(!quote_extension_allowed(ExtensionType::TransferHook));
+        assert!(!quote_extension_allowed(ExtensionType::TransferFeeConfig));
     }
 
     #[test]

@@ -208,6 +208,84 @@ export function disallowedToken2022Extensions(data) {
     .map((type) => TOKEN_2022_EXTENSION_NAMES[type] || `Unknown(${type})`);
 }
 
+/** Reads a TLV entry's value bytes, or null when the extension is absent. */
+function token2022ExtensionValue(data, wanted) {
+  if (!data || data.length <= 166) return null;
+  let offset = 166;
+  while (offset + 4 <= data.length) {
+    const type = data.readUInt16LE(offset);
+    const length = data.readUInt16LE(offset + 2);
+    if (type === 0 && length === 0) return null;
+    if (type === wanted) return data.subarray(offset + 4, offset + 4 + length);
+    offset += 4 + length;
+  }
+  return null;
+}
+
+const isZero = (bytes) => !bytes || bytes.every((byte) => byte === 0);
+
+/**
+ * What a creator is actually taking on by binding to this quote.
+ *
+ * Graduation no longer refuses these -- which asset a campaign graduates
+ * against is the creator's decision -- so this exists to put the consequence in
+ * front of them before they commit, and it reports what each extension is
+ * actually configured to. An extension present with a null authority is a
+ * different risk from one that is armed, and the xStocks arm several.
+ *
+ * The liquidity this binds is locked permanently and these are checked once, at
+ * graduation, so an authority that is armed later cannot be caught: `armed`
+ * describes today, not the life of the pool.
+ */
+export function token2022BindingRisks(data) {
+  if (!data || data.length <= 166) return [];
+  const risks = [];
+  const add = (code, armed, title, detail) => risks.push({ code, armed, severity: armed ? "high" : "info", title, detail });
+
+  const delegate = token2022ExtensionValue(data, 12);
+  if (delegate) {
+    add("PERMANENT_DELEGATE", !isZero(delegate.subarray(0, 32)),
+      "The issuer can move this token out of the pool",
+      "A permanent delegate lets the issuer transfer this token from any account, including the liquidity pool your graduation locks permanently.");
+  }
+  const hook = token2022ExtensionValue(data, 14);
+  if (hook) {
+    add("TRANSFER_HOOK", !isZero(hook.subarray(32, 64)),
+      "Transfers can run the issuer's own code",
+      "A transfer hook runs a third-party program on every transfer. No hook program is set today if this shows as not armed, but the issuer can set one later and the pool stays locked.");
+  }
+  const pausable = token2022ExtensionValue(data, 26);
+  if (pausable) {
+    add("PAUSABLE", !isZero(pausable.subarray(0, 32)),
+      "The issuer can halt all transfers",
+      "A pausable mint can be frozen globally by its authority, which would stop trading in your pool until it is unpaused.");
+  }
+  const fee = token2022ExtensionValue(data, 1);
+  if (fee) {
+    add("TRANSFER_FEE", true,
+      "Every transfer is taxed by the issuer",
+      "A transfer fee means the amount that arrives is less than the amount sent, including the residual swept back after graduation.");
+  }
+  const defaultState = token2022ExtensionValue(data, 6);
+  if (defaultState) {
+    add("DEFAULT_ACCOUNT_STATE", defaultState[0] === 2,
+      "New accounts may start frozen",
+      "This mint sets a default state for new token accounts. When that default is frozen, accounts cannot transact until the issuer unfreezes them.");
+  }
+  const scaled = token2022ExtensionValue(data, 25);
+  if (scaled) {
+    add("SCALED_UI_AMOUNT", !isZero(scaled.subarray(0, 32)),
+      "The issuer can re-denominate the displayed balance",
+      "A scaled UI amount changes how balances are displayed, for example on a stock split. Raw amounts and pool maths are unaffected, but quoted prices shift.");
+  }
+  if (token2022ExtensionValue(data, 4)) {
+    add("CONFIDENTIAL_TRANSFER", false,
+      "The mint supports confidential balances",
+      "Confidential transfers hide balances for accounts that opt in. The pool's own accounts do not opt in, so this does not affect your liquidity.");
+  }
+  return risks;
+}
+
 async function solanaMintSource(item, { fetchImpl = fetch } = {}) {
   if (item.identityKind === "NATIVE") return { exists: true, native: true, decimals: 9, tokenProgram: "native" };
   const url = solanaRpcUrlFor(item);
@@ -224,7 +302,18 @@ async function solanaMintSource(item, { fetchImpl = fetch } = {}) {
   const initialized = data.readUInt8(45) === 1;
   const freezeAuthorityPresent = data.readUInt32LE(46) === 1;
   const disallowedExtensions = tokenProgram === "token-2022" ? disallowedToken2022Extensions(data) : [];
-  return { exists: true, tokenProgram, decimals, supply, initialized, mintAuthorityPresent, freezeAuthorityPresent, disallowedExtensions };
+  const bindingRisks = tokenProgram === "token-2022" ? token2022BindingRisks(data) : [];
+  // A freeze authority is not Token-2022-specific -- USDC has one too -- but a
+  // creator binding away from SOL should still be told the issuer can freeze
+  // the pool's account.
+  if (freezeAuthorityPresent) {
+    bindingRisks.push({
+      code: "FREEZE_AUTHORITY", armed: true, severity: "medium",
+      title: "The issuer can freeze accounts holding this token",
+      detail: "A freeze authority can freeze any account, including your pool's. Most regulated stablecoins including USDC have one.",
+    });
+  }
+  return { exists: true, tokenProgram, decimals, supply, initialized, mintAuthorityPresent, freezeAuthorityPresent, disallowedExtensions, bindingRisks };
 }
 
 function coinGeckoHeaders(env = process.env) {
@@ -410,12 +499,12 @@ export function evaluateVerification(item, facts, thresholds = verificationThres
       flag("SYMBOL_MISMATCH", `On-chain symbol ${token.symbol} differs from catalog ${item.symbol}.`, false);
     }
     if (family === "SOLANA" && token.tokenProgram === "token-2022") {
-      // The program accepts Token-2022 quotes, but only within its extension
-      // allowlist, so the catalog refuses exactly what graduation would refuse.
+      // Graduation accepts these; the creator chooses the binding. Surface what
+      // they are taking on instead of refusing on their behalf -- a refusal
+      // here would remove the asset from the list rather than explain it.
       const disallowed = token.disallowedExtensions || [];
       if (disallowed.length) {
-        ok = false;
-        flag("TOKEN_2022_EXTENSION_UNSUPPORTED", `Token-2022 mint carries ${disallowed.join(", ")}, which graduation refuses.`);
+        flag("TOKEN_2022_ISSUER_POWERS", `Token-2022 mint carries ${disallowed.join(", ")}; the creator is warned before binding.`, false);
       }
     } else if (family === "SOLANA" && token.tokenProgram === "unknown") {
       ok = false;
@@ -423,6 +512,9 @@ export function evaluateVerification(item, facts, thresholds = verificationThres
     }
     gates.identity = ok ? "VERIFIED" : "REJECTED";
     metrics.onChain = { symbol: token.symbol ?? null, name: token.name ?? null, decimals: token.decimals ?? null, supply: token.totalSupply ?? token.supply ?? null, tokenProgram: token.tokenProgram ?? null };
+    // Rendered in the confirmation the creator sees when they bind to anything
+    // other than the chain's native asset.
+    metrics.bindingRisks = token.bindingRisks || [];
   }
 
   // transferability + security: attested for known provider classes; community tokens need a human

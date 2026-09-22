@@ -150,5 +150,92 @@ describe("Meteora DAMM v2 with a Token-2022 quote", function () {
     );
 
     console.log(`[token-2022-pool] pool=${pool.toBase58()} quoteVault owner=Token-2022 signature=${signature}`);
+
+    // The graduation locks this liquidity permanently, so the LP fee stream is
+    // the only thing that ever comes back out of it -- the creator's share and
+    // the protocol's. If a Token-2022 quote broke fee accrual or claiming, the
+    // pool would still create fine and the economics would quietly be gone.
+    const { PublicKey } = require("@solana/web3.js");
+    const meteoraPk = new PublicKey(METEORA);
+    const vaultFor = (mint) => PublicKey.findProgramAddressSync(
+      [Buffer.from("token_vault"), mint.toBuffer(), pool.toBuffer()], meteoraPk,
+    )[0];
+
+    const swapper = Keypair.generate();
+    const air = await connection.requestAirdrop(swapper.publicKey, 2_000_000_000);
+    const airLatest = await connection.getLatestBlockhash("confirmed");
+    await connection.confirmTransaction({ signature: air, ...airLatest }, "confirmed");
+    const swapperQuoteAta = getAssociatedTokenAddressSync(quoteMint.publicKey, swapper.publicKey, false, TOKEN_2022_PROGRAM_ID);
+    const swapperTokenAta = getAssociatedTokenAddressSync(tokenAMint, swapper.publicKey, false, TOKEN_PROGRAM_ID);
+    await sendAndConfirmTransaction(connection, new Transaction().add(
+      createAssociatedTokenAccountInstruction(swapper.publicKey, swapperQuoteAta, swapper.publicKey, quoteMint.publicKey, TOKEN_2022_PROGRAM_ID),
+      createAssociatedTokenAccountInstruction(swapper.publicKey, swapperTokenAta, swapper.publicKey, tokenAMint, TOKEN_PROGRAM_ID),
+    ), [swapper], { commitment: "confirmed" });
+    const swapInRaw = 50n * 10n ** BigInt(QUOTE_DECIMALS);
+    await mintTo(connection, payer, quoteMint.publicKey, swapperQuoteAta, payer, swapInRaw, [], { commitment: "confirmed" }, TOKEN_2022_PROGRAM_ID);
+
+    // Buy the launch token with the Token-2022 quote: fees accrue in both.
+    const swapTx = await cpAmm.swap({
+      payer: swapper.publicKey,
+      pool,
+      inputTokenMint: quoteMint.publicKey,
+      outputTokenMint: tokenAMint,
+      amountIn: new BN(swapInRaw.toString()),
+      minimumAmountOut: new BN(0),
+      tokenAMint,
+      tokenBMint: quoteMint.publicKey,
+      tokenAVault: vaultFor(tokenAMint),
+      tokenBVault: vaultFor(quoteMint.publicKey),
+      tokenAProgram: TOKEN_PROGRAM_ID,
+      tokenBProgram: TOKEN_2022_PROGRAM_ID,
+      referralTokenAccount: null,
+    });
+    const swapSig = await sendAndConfirmTransaction(connection, swapTx, [swapper], { commitment: "confirmed" });
+    assert.ok(swapSig, "a swap against a Token-2022 quote must land");
+
+    // Meteora derives the position NFT account itself; deriving it as an ATA
+    // gives an address that is not the one the program checks.
+    // Which side the fee lands on depends on the swap direction, so read what
+    // the pool says is owed rather than assuming, then prove the claim delivers
+    // exactly that. Verified separately: a permanently locked position accrues
+    // and pays fees identically to an unlocked one, so the lock is not what
+    // would break this.
+    const positionNftAccount = sdk.derivePositionNftAccount(positionNft.publicKey);
+    const poolState = await cpAmm.fetchPoolState(pool);
+    const positionState = await cpAmm.fetchPositionState(position);
+    const owed = sdk.getUnClaimLpFee(poolState, positionState);
+    const owedA = BigInt(owed.feeTokenA.toString());
+    const owedB = BigInt(owed.feeTokenB.toString());
+    assert.ok(owedA + owedB > 0n, "a swap against a Token-2022 quote must accrue an LP fee");
+
+    const ownerQuoteAta = getAssociatedTokenAddressSync(quoteMint.publicKey, payer.publicKey, false, TOKEN_2022_PROGRAM_ID);
+    const balance = async (ata) => BigInt((await connection.getTokenAccountBalance(ata, "confirmed")).value.amount);
+    const beforeA = await balance(ataA);
+    const beforeQuote = await balance(ownerQuoteAta);
+
+    const claimTx = await cpAmm.claimPositionFee({
+      owner: payer.publicKey,
+      position,
+      pool,
+      positionNftAccount,
+      tokenAMint,
+      tokenBMint: quoteMint.publicKey,
+      tokenAVault: vaultFor(tokenAMint),
+      tokenBVault: vaultFor(quoteMint.publicKey),
+      tokenAProgram: TOKEN_PROGRAM_ID,
+      tokenBProgram: TOKEN_2022_PROGRAM_ID,
+    });
+    const claimSig = await sendAndConfirmTransaction(connection, claimTx, [payer], { commitment: "confirmed" });
+    assert.ok(claimSig, "claiming LP fees on a Token-2022 quote must land");
+
+    const gainedA = (await balance(ataA)) - beforeA;
+    const gainedQuote = (await balance(ownerQuoteAta)) - beforeQuote;
+    assert.ok(gainedA + gainedQuote > 0n, "the LP fee must actually arrive");
+    // Nothing skimmed in between: this quote carries no transfer fee, so what
+    // the pool owed is what the position received.
+    assert.equal(gainedA, owedA, "token-A fee must arrive in full");
+    assert.equal(gainedQuote, owedB, "Token-2022 quote fee must arrive in full");
+
+    console.log(`[token-2022-pool] swap=${swapSig} owed A=${owedA} B=${owedB} claimed A=${gainedA} quote=${gainedQuote}`);
   });
 });
