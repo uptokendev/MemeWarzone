@@ -38,6 +38,7 @@ const {
   SYSVAR_INSTRUCTIONS_PUBKEY,
   SystemProgram,
   Transaction,
+  TransactionInstruction,
 } = web3;
 const {
   TOKEN_PROGRAM_ID,
@@ -321,6 +322,20 @@ ${source}`,
       })
       .join(" ");
     console.log(`      [fee-route] ${label}: ${credited.length} credited -> ${deltas}`);
+  }
+
+  /** Orca's kit-shaped instruction -> the web3 shape the V0 builder expects. */
+  function toLegacyInstruction(ix) {
+    if (ix instanceof TransactionInstruction) return ix;
+    return new TransactionInstruction({
+      programId: new PublicKey(String(ix.programAddress ?? ix.programId)),
+      keys: (ix.accounts || ix.keys || []).map((meta) => ({
+        pubkey: new PublicKey(String(meta.address ?? meta.pubkey)),
+        isSigner: Boolean(meta.isSigner ?? ((meta.role ?? 0) & 2)),
+        isWritable: Boolean(meta.isWritable ?? ((meta.role ?? 0) & 1)),
+      })),
+      data: Buffer.from(ix.data || []),
+    });
   }
 
   async function sendLegacy(payer, ixs, label) {
@@ -620,13 +635,16 @@ ${extra}`);
     return { keypair, creatorProfile, riskProfile, label };
   }
 
-  async function sendCreate() {
+  // The campaign id seeds every campaign PDA, so a second campaign in the same
+  // validator needs a different label or it collides with the first and the
+  // program rejects the create for an account that is not empty.
+  async function sendCreate(label = "lifecycle") {
     const now = await chainUnixTimestamp(connection);
     createArgs = {
-      campaignId: fixed32(hash32("campaign:lifecycle")),
+      campaignId: fixed32(hash32(`campaign:${label}`)),
       name: "MWZ Lifecycle",
-      symbol: "MWZLIFE",
-      metadataHash: fixed32(hash32("metadata:lifecycle")),
+      symbol: label === "lifecycle" ? "MWZLIFE" : "MWZBND",
+      metadataHash: fixed32(hash32(`metadata:${label}`)),
       launchAt: new BN(0),
       graduationTargetUsdMicros: new BN(GRADUATION_TARGET_6_USD_MICROS.toString()),
       deadline: new BN(now + 3_600),
@@ -1993,5 +2011,369 @@ ${(simulation.value.logs || []).join("\
     );
     assert.equal(stillGraduated.graduated, true);
     console.log(`[gate-k] GRADUATED ${signature} pool=${pool.toBase58()} swap=${swapSig}`);
+  });
+
+  it("Gate B: graduates a second campaign bound to a Token-2022 quote", async function () {
+    const ORCA_WHIRLPOOL = new PublicKey("whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc");
+    const RPC_URL = connection.rpcEndpoint;
+    const orca = await connection.getAccountInfo(ORCA_WHIRLPOOL, "confirmed");
+    const meteora = await connection.getAccountInfo(METEORA_CP_AMM, "confirmed");
+    if (!orca?.executable || !meteora?.executable) this.skip();
+
+    const spl = require("@solana/spl-token");
+    const orcaSdk = await import("@orca-so/whirlpools");
+    const kit = await import("@solana/kit");
+    const sdk = await import("@meteora-ag/cp-amm-sdk");
+    const {
+      ActivationType, BaseFeeMode, CollectFeeMode, CpAmm,
+      getBaseFeeParams, getSqrtPriceFromPrice, MAX_SQRT_PRICE, MIN_SQRT_PRICE,
+    } = sdk;
+
+    const adminKeypair = provider.wallet.payer;
+    assert.ok(adminKeypair?.secretKey, "Anchor wallet must expose a local Keypair payer");
+
+    // A Token-2022 quote carrying only a metadata pointer: nothing that can
+    // move a balance, so the binding is about the token program, not policy.
+    const quoteMint = Keypair.generate();
+    const quoteDecimals = 6;
+    const mintSpace = spl.getMintLen([spl.ExtensionType.MetadataPointer]);
+    const mintRent = await connection.getMinimumBalanceForRentExemption(mintSpace);
+    // sendLegacy signs with the payer only, and the new mint account must sign
+    // its own creation, so this one goes out directly.
+    await (async () => {
+      const latest = await connection.getLatestBlockhash("confirmed");
+      const tx = new Transaction({ feePayer: adminKeypair.publicKey, recentBlockhash: latest.blockhash }).add(
+      SystemProgram.createAccount({
+        fromPubkey: adminKeypair.publicKey, newAccountPubkey: quoteMint.publicKey,
+        space: mintSpace, lamports: mintRent, programId: spl.TOKEN_2022_PROGRAM_ID,
+      }),
+      spl.createInitializeMetadataPointerInstruction(quoteMint.publicKey, adminKeypair.publicKey, quoteMint.publicKey, spl.TOKEN_2022_PROGRAM_ID),
+      spl.createInitializeMintInstruction(quoteMint.publicKey, quoteDecimals, adminKeypair.publicKey, null, spl.TOKEN_2022_PROGRAM_ID),
+      );
+      tx.sign(adminKeypair, quoteMint);
+      const sig = await connection.sendRawTransaction(tx.serialize(), { skipPreflight: false });
+      const conf = await connection.confirmTransaction({ signature: sig, ...latest }, "confirmed");
+      if (conf.value.err) throw new Error(`gateBQuoteMint failed: ${JSON.stringify(conf.value.err)}`);
+    })();
+
+    const quoteUnits = 4_000_000n * 10n ** BigInt(quoteDecimals);
+    const adminQuoteAta = spl.getAssociatedTokenAddressSync(quoteMint.publicKey, adminKeypair.publicKey, false, spl.TOKEN_2022_PROGRAM_ID);
+    await sendLegacy(adminKeypair, [
+      spl.createAssociatedTokenAccountInstruction(adminKeypair.publicKey, adminQuoteAta, adminKeypair.publicKey, quoteMint.publicKey, spl.TOKEN_2022_PROGRAM_ID),
+      spl.createMintToInstruction(quoteMint.publicKey, adminQuoteAta, adminKeypair.publicKey, quoteUnits, [], spl.TOKEN_2022_PROGRAM_ID),
+    ], "gateBQuoteSupply");
+
+    // Wrap SOL for the pool's other side.
+    const poolSol = 40n * 1_000_000_000n;
+    const wsolAta = spl.getAssociatedTokenAddressSync(NATIVE_MINT, adminKeypair.publicKey, false, TOKEN_PROGRAM_ID);
+    const wsolIxs = [];
+    if (!(await connection.getAccountInfo(wsolAta, "confirmed"))) {
+      wsolIxs.push(spl.createAssociatedTokenAccountInstruction(adminKeypair.publicKey, wsolAta, adminKeypair.publicKey, NATIVE_MINT, TOKEN_PROGRAM_ID));
+    }
+    wsolIxs.push(
+      SystemProgram.transfer({ fromPubkey: adminKeypair.publicKey, toPubkey: wsolAta, lamports: Number(poolSol) }),
+      spl.createSyncNativeInstruction(wsolAta, TOKEN_PROGRAM_ID),
+    );
+    await sendLegacy(adminKeypair, wsolIxs, "gateBWrapSol");
+
+    await orcaSdk.setRpc(RPC_URL);
+    const orcaFunder = await orcaSdk.setPayerFromBytes(adminKeypair.secretKey);
+    orcaSdk.setNativeMintWrappingStrategy("ata");
+    const [oMintA, oMintB] = orcaSdk.orderMints(kit.address(NATIVE_MINT.toBase58()), kit.address(quoteMint.publicKey.toBase58()));
+    const wsolIsA = String(oMintA) === NATIVE_MINT.toBase58();
+    // The binding declares $150/SOL and a $1 quote, so the pool must trade at
+    // 150 quote units per SOL. Seeding it anywhere else makes the program's
+    // deviation check reject the pool the graduation just created.
+    const seedPrice = 150;
+    const orcaPool = await orcaSdk.createConcentratedLiquidityPool(oMintA, oMintB, 64, {
+      initialPrice: wsolIsA ? seedPrice : 1 / seedPrice,
+      funder: orcaFunder,
+      whirlpoolDeployment: orcaSdk.WhirlpoolDeployment.devnet,
+    });
+    await orcaPool.callback();
+    const orcaPosition = await orcaSdk.openFullRangePosition(
+      orcaPool.poolAddress,
+      wsolIsA ? { tokenMaxA: poolSol, tokenMaxB: quoteUnits / 2n } : { tokenMaxA: quoteUnits / 2n, tokenMaxB: poolSol },
+      { funder: orcaFunder, whirlpoolDeployment: orcaSdk.WhirlpoolDeployment.devnet },
+    );
+    await orcaPosition.callback();
+    console.log(`[gate-b] orca pool ${String(orcaPool.poolAddress)} seeded`);
+
+    // A fresh campaign: the first was consumed by the native graduation.
+    creator = await setupWallet("creatorBound");
+    buyer = await setupWallet("buyerBound");
+    await sendCreate("bound-token2022");
+    await sendBuy(CLOSE_BUY_LAMPORTS, CLOSE_TARGET_LAMPORTS);
+    const closed = decodeCampaign((await connection.getAccountInfo(campaignAccounts.campaign, "confirmed")).data);
+    assert.equal(closed.curveClosed, true, "second campaign must close its curve");
+    assert.equal(closed.graduated, false);
+
+    // begin_graduation refuses a campaign whose fee escrow still holds unflushed
+    // fees, so the escrow is drained to the reward vaults first, exactly as the
+    // operator does before a real graduation.
+    const gateBVaults = rewardVaultKeys();
+    await program.methods
+      .flushCampaignFees()
+      .accountsStrict({
+        caller: admin,
+        campaign: campaignAccounts.campaign,
+        feeEscrow: campaignAccounts.feeEscrow,
+        weeklyLeagueVault: gateBVaults.league,
+        airdropVault: gateBVaults.airdrop,
+        monthlyLeagueVault: gateBVaults.monthly,
+        recruiterVault: gateBVaults.recruiter,
+        squadVault: gateBVaults.squad,
+        protocolVault: gateBVaults.protocol,
+      })
+      .rpc({ commitment: "confirmed", preflightCommitment: "confirmed" });
+
+    // Same $150/SOL the rest of the suite uses: the close buy is sized for the
+    // native target that price implies, so a different price misses the threshold.
+    const oraclePrice = 150_000_000n;
+    const quote = graduationQuote(closed);
+    const swapLamports = BigInt(quote.maxLiquidityLamports);
+
+    // Quote the acquisition leg, then bind to exactly what it promised.
+    const swapBuilt = await orcaSdk.swapInstructions(
+      kit.createSolanaRpc(RPC_URL),
+      { inputAmount: swapLamports, mint: kit.address(NATIVE_MINT.toBase58()) },
+      orcaPool.poolAddress,
+      { signer: orcaFunder, slippageToleranceBps: 300, whirlpoolDeployment: orcaSdk.WhirlpoolDeployment.devnet },
+    );
+    const expectedQuoteAmount = BigInt(swapBuilt.quote?.tokenEstOut ?? 0);
+    const minQuoteAmount = BigInt(swapBuilt.quote?.tokenMinOut ?? 0);
+    assert.ok(expectedQuoteAmount > 0n, "the Orca pool must quote the acquisition leg");
+    console.log(`[gate-b] acquisition ${swapLamports} lamports -> ${expectedQuoteAmount} quote units`);
+
+    const recoveryAta = spl.getAssociatedTokenAddressSync(quoteMint.publicKey, adminKeypair.publicKey, false, spl.TOKEN_2022_PROGRAM_ID);
+    // Staging and creator accounts for the launch token, and the operator's
+    // quote account the acquisition pays into.
+    const adminStagingAta = spl.getAssociatedTokenAddressSync(campaignAccounts.mint, adminKeypair.publicKey, false, TOKEN_PROGRAM_ID);
+    const creatorAta = spl.getAssociatedTokenAddressSync(campaignAccounts.mint, creator.keypair.publicKey, false, TOKEN_PROGRAM_ID);
+    for (const [ata, owner] of [[adminStagingAta, adminKeypair.publicKey], [creatorAta, creator.keypair.publicKey]]) {
+      if (!(await connection.getAccountInfo(ata, "confirmed"))) {
+        await sendLegacy(adminKeypair, [
+          spl.createAssociatedTokenAccountInstruction(adminKeypair.publicKey, ata, owner, campaignAccounts.mint, TOKEN_PROGRAM_ID),
+        ], "gateBLaunchAtas");
+      }
+    }
+    const quoteBinding = binding.boundQuoteBinding({
+      quoteMint: quoteMint.publicKey,
+      quoteDecimals,
+      acquisitionProgram: ORCA_WHIRLPOOL,
+      quoteRecoveryAccount: recoveryAta,
+      expectedQuoteAmount,
+      minQuoteAmount,
+      quoteReferenceUsdMicros: 1_000_000n,
+    });
+
+    const nftMint = Keypair.generate();
+    const pool = binding.deriveMeteoraPoolForQuote(campaignAccounts.mint, quoteMint.publicKey);
+    const position = deriveMeteoraPosition(nftMint.publicKey);
+    const nonce = crypto.randomBytes(32);
+    const deadline = (await chainUnixTimestamp(connection)) + 600;
+    const digestInput = {
+      campaign: campaignAccounts.campaign, mint: campaignAccounts.mint, authority: admin,
+      generationConfig,
+      graduationTargetUsdMicros: closed.graduationTargetUsdMicros,
+      nativeTargetLamports: binding.nativeTargetLamports(closed.graduationTargetUsdMicros, oraclePrice),
+      oraclePriceUsdMicros: oraclePrice, pool, position, nftMint: nftMint.publicKey,
+      deadline, nonce, finalizeRouteProfile: ROUTE_PROFILE_UNLINKED, quote: quoteBinding,
+    };
+    const digest = graduationDigest(digestInput);
+    const ed25519 = Ed25519Program.createInstructionWithPrivateKey({
+      privateKey: routeSigner.secretKey, message: digest,
+    });
+
+    const beginIx = await program.methods
+      .beginGraduation(beginGraduationArgs(digestInput))
+      .accountsStrict({
+        authority: admin,
+        globalConfig,
+        generationConfig,
+        campaign: campaignAccounts.campaign,
+        mint: campaignAccounts.mint,
+        tokenVault: campaignAccounts.tokenVault,
+        solVault: campaignAccounts.solVault,
+        feeEscrow: campaignAccounts.feeEscrow,
+        authorityTokenAccount: adminStagingAta,
+        meteoraPool: pool,
+        meteoraPosition: position,
+        positionNftMint: nftMint.publicKey,
+        graduationState: derivePda(program.programId, "graduation", campaignAccounts.campaign.toBuffer()),
+        instructions: SYSVAR_INSTRUCTIONS_PUBKEY,
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      })
+      .instruction();
+
+    // Meteora's quote side runs on Token-2022 here; tokenAProgram stays classic
+    // because the launch token is minted by the launchpad.
+    const cpAmm = new CpAmm(connection);
+    const maxTokens = BigInt(quote.maxLiquidityTokens);
+    // Whole quote units per whole launch token: a raw ratio ignores decimals and
+    // lands the pool at a price the drift check refuses.
+    const tokenDecimals = Number(closed.tokenDecimals ?? 6);
+    const wholeQuote = Number(expectedQuoteAmount) / 10 ** quoteDecimals;
+    const wholeTokens = Number(maxTokens) / 10 ** tokenDecimals;
+    const initialPrice = wholeQuote / wholeTokens;
+    const initSqrtPrice = getSqrtPriceFromPrice(initialPrice.toFixed(18), tokenDecimals, quoteDecimals);
+    const tokenAAmount = new BN(maxTokens.toString());
+    const tokenBAmount = new BN(expectedQuoteAmount.toString());
+    const liquidityDelta = cpAmm.getLiquidityDelta({
+      maxAmountTokenA: tokenAAmount, maxAmountTokenB: tokenBAmount,
+      sqrtPrice: initSqrtPrice, sqrtMinPrice: MIN_SQRT_PRICE, sqrtMaxPrice: MAX_SQRT_PRICE,
+      collectFeeMode: CollectFeeMode.BothToken,
+    });
+    const { tx: meteoraTx, pool: sdkPool } = await cpAmm.createCustomPool({
+      payer: admin, creator: admin, positionNft: nftMint.publicKey,
+      tokenAMint: campaignAccounts.mint, tokenBMint: quoteMint.publicKey,
+      tokenAAmount, tokenBAmount, sqrtMinPrice: MIN_SQRT_PRICE, sqrtMaxPrice: MAX_SQRT_PRICE,
+      liquidityDelta, initSqrtPrice,
+      poolFees: {
+        baseFee: getBaseFeeParams(
+          { baseFeeMode: BaseFeeMode.FeeTimeSchedulerLinear, feeTimeSchedulerParam: { startingFeeBps: 25, endingFeeBps: 25, numberOfPeriod: 0, totalDuration: 0 } },
+          quoteDecimals, ActivationType.Timestamp,
+        ),
+        compoundingFeeBps: 0, padding: 0, dynamicFee: null,
+      },
+      hasAlphaVault: false, activationType: ActivationType.Timestamp,
+      collectFeeMode: CollectFeeMode.BothToken, activationPoint: null,
+      tokenAProgram: TOKEN_PROGRAM_ID, tokenBProgram: spl.TOKEN_2022_PROGRAM_ID,
+      isLockLiquidity: true,
+    });
+    assert.equal(sdkPool.toBase58(), pool.toBase58(), "SDK pool must match the derived bound pool");
+
+    const vaultFor = (mint) => PublicKey.findProgramAddressSync(
+      [Buffer.from("token_vault"), mint.toBuffer(), pool.toBuffer()], METEORA_CP_AMM,
+    )[0];
+
+    // The quote prefix the program reads, then its token program because this
+    // quote is Token-2022, then the reward vaults.
+    const confirmIx = await program.methods
+      .confirmGraduation()
+      .accountsStrict({
+        authority: admin,
+        globalConfig,
+        campaign: campaignAccounts.campaign,
+        mint: campaignAccounts.mint,
+        tokenVault: campaignAccounts.tokenVault,
+        solVault: campaignAccounts.solVault,
+        authorityTokenAccount: adminStagingAta,
+        creator: creator.keypair.publicKey,
+        creatorTokenAccount: creatorAta,
+        creatorProfile: derivePda(program.programId, "creator", creator.keypair.publicKey.toBuffer()),
+        graduationState: derivePda(program.programId, "graduation", campaignAccounts.campaign.toBuffer()),
+        meteoraPool: pool,
+        meteoraPosition: position,
+        meteoraTokenVault: vaultFor(campaignAccounts.mint),
+        meteoraNativeVault: vaultFor(quoteMint.publicKey),
+        tokenProgram: TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+      })
+      .remainingAccounts([
+        { pubkey: quoteMint.publicKey, isWritable: false, isSigner: false },
+        { pubkey: adminQuoteAta, isWritable: true, isSigner: false },
+        { pubkey: recoveryAta, isWritable: true, isSigner: false },
+        { pubkey: spl.TOKEN_2022_PROGRAM_ID, isWritable: false, isSigner: false },
+        ...remainingRewardAccounts(),
+      ])
+      .instruction();
+
+    console.log(
+      `[gate-b] assembled: begin + ${swapBuilt.instructions.length} acquisition (setup split out) + ` +
+      `${meteoraTx.instructions.length} meteora + confirm, quote=${quoteMint.publicKey.toBase58()}`,
+    );
+    assert.ok(swapBuilt.instructions.length > 0, "the acquisition leg must contribute instructions");
+    assert.equal(
+      confirmIx.keys.filter((k) => k.pubkey.equals(spl.TOKEN_2022_PROGRAM_ID)).length,
+      1,
+      "confirm_graduation must carry the Token-2022 program in the quote prefix",
+    );
+    assert.ok(
+      confirmIx.keys.some((k) => k.pubkey.equals(vaultFor(quoteMint.publicKey))),
+      "the Meteora quote vault must be the Token-2022 one",
+    );
+    // swapInstructions bundles account setup with the swap itself. Only the
+    // Orca instruction has to share the transaction with Meteora -- the program
+    // requires the signed acquisition program to appear before Meteora in the
+    // same transaction -- so the setup goes out first and buys back the bytes
+    // that otherwise push this envelope past the 1232-byte ceiling.
+    const acquisitionAll = swapBuilt.instructions.map(toLegacyInstruction);
+    const acquisitionSwap = acquisitionAll.filter((ix) => ix.programId.equals(ORCA_WHIRLPOOL));
+    const acquisitionSetup = acquisitionAll.filter((ix) => !ix.programId.equals(ORCA_WHIRLPOOL));
+    assert.ok(acquisitionSwap.length > 0, "the acquisition must contribute an Orca instruction");
+    if (acquisitionSetup.length) {
+      await sendLegacy(adminKeypair, acquisitionSetup, "gateBAcquisitionSetup");
+      console.log(`[gate-b] acquisition setup sent separately (${acquisitionSetup.length} ix)`);
+    }
+
+    // The acquisition must land before Meteora sees the quote, and the Ed25519
+    // verification immediately before begin_graduation.
+    const instructions = [
+      ComputeBudgetProgram.setComputeUnitLimit({ units: 1_400_000 }),
+      ed25519,
+      beginIx,
+      ...acquisitionSwap,
+      ...meteoraTx.instructions,
+      confirmIx,
+    ];
+
+    const present = new Set(lookupTableAccount.state.addresses.map((item) => item.toBase58()));
+    const missing = [];
+    for (const ix of instructions) {
+      for (const key of [ix.programId, ...(ix.keys || []).map((meta) => meta.pubkey)]) {
+        if (present.has(key.toBase58()) || missing.some((item) => item.equals(key))) continue;
+        missing.push(key);
+      }
+    }
+    for (let i = 0; i < missing.length; i += 20) {
+      await sendLegacy(adminKeypair, [
+        AddressLookupTableProgram.extendLookupTable({
+          payer: adminKeypair.publicKey, authority: adminKeypair.publicKey,
+          lookupTable: lookupTableAccount.key, addresses: missing.slice(i, i + 20),
+        }),
+      ], "gateBExtendAlt");
+    }
+    if (missing.length) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      lookupTableAccount = (await connection.getAddressLookupTable(lookupTableAccount.key)).value;
+      assert.ok(lookupTableAccount, "ALT disappeared after Gate B extend");
+    }
+
+    const latest = await connection.getLatestBlockhash("confirmed");
+    const versioned = v0Helpers.buildLaunchpadV0Transaction(web3, {
+      payer: admin, recentBlockhash: latest.blockhash, instructions,
+      lookupTableAccounts: [lookupTableAccount],
+    });
+    const stats = v0Helpers.inspectLaunchpadV0Envelope(web3, versioned, [lookupTableAccount]);
+    console.log(`[gate-b] bound graduation bytes=${stats.serializedBytes} signers=${stats.requiredSigners}`);
+    assert.ok(stats.serializedBytes <= 1232, `bound graduation is ${stats.serializedBytes} bytes; hard max is 1232`);
+
+    versioned.sign([adminKeypair, nftMint]);
+    const simulation = await v0Helpers.simulateLaunchpadV0Transaction(connection, versioned);
+    if (simulation.value.err) {
+      throw new Error(
+        `Gate B bound graduation simulation failed: ${JSON.stringify(simulation.value.err)}\n` +
+        (simulation.value.logs || []).slice(-25).join("\n"),
+      );
+    }
+    const signature = await connection.sendRawTransaction(versioned.serialize(), { skipPreflight: false });
+    const confirmation = await connection.confirmTransaction({ signature, ...latest }, "confirmed");
+    if (confirmation.value.err) {
+      throw new Error(`Gate B bound graduation failed: ${JSON.stringify(confirmation.value.err)}`);
+    }
+
+    const graduated = decodeCampaign((await connection.getAccountInfo(campaignAccounts.campaign, "confirmed")).data);
+    assert.equal(graduated.graduated, true, "the campaign must be graduated");
+
+    // The pool it graduated into must actually hold the Token-2022 quote.
+    const quoteVault = await connection.getAccountInfo(vaultFor(quoteMint.publicKey), "confirmed");
+    assert.ok(quoteVault, "the bound pool must have a quote vault");
+    assert.equal(
+      quoteVault.owner.toBase58(), spl.TOKEN_2022_PROGRAM_ID.toBase58(),
+      "the bound pool's quote vault must be owned by Token-2022",
+    );
+    console.log(`[gate-b] BOUND GRADUATED ${signature} pool=${pool.toBase58()} quote=${quoteMint.publicKey.toBase58()}`);
   });
 });

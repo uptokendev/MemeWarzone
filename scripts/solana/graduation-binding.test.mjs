@@ -79,3 +79,29 @@ test("graduation quote conserves the raised SOL", () => {
   );
   assert.ok(q.maxLiquidityTokens <= campaign.liquidityTokenSupply, "LP tokens cannot exceed the reserve");
 });
+
+test("a bound quote binding refuses the shapes the program would reject on chain", () => {
+  const mint = new PublicKey("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
+  const orca = new PublicKey("whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc");
+  const recovery = new PublicKey("HuKfoFUuWxC5qFZXzr5dbaX4S7w4vJUW8AHV9LD4C2J9");
+  const base = {
+    quoteMint: mint, quoteDecimals: 6, acquisitionProgram: orca, quoteRecoveryAccount: recovery,
+    expectedQuoteAmount: 10_000_000n, minQuoteAmount: 9_700_000n, quoteReferenceUsdMicros: 1_000_000n,
+  };
+
+  const ok = b.boundQuoteBinding(base);
+  assert.equal(ok.quoteMint.toBase58(), mint.toBase58());
+  assert.equal(ok.quoteProfile, 1, "stablecoin profile");
+  assert.notEqual(ok.quoteProviderClass, 0, "provider class must not be native");
+
+  // Each of these fails on chain after the campaign has already closed, so the
+  // builder refuses them up front instead.
+  assert.throws(() => b.boundQuoteBinding({ ...base, quoteMint: b.NATIVE_MINT }), /cannot be WSOL/);
+  assert.throws(() => b.boundQuoteBinding({ ...base, acquisitionProgram: b.METEORA_CP_AMM }), /not Meteora/);
+  assert.throws(() => b.boundQuoteBinding({ ...base, acquisitionProgram: PublicKey.default }), /not Meteora/);
+  assert.throws(() => b.boundQuoteBinding({ ...base, quoteRecoveryAccount: PublicKey.default }), /recovery account/);
+  assert.throws(() => b.boundQuoteBinding({ ...base, quoteProfile: 0 }), /profile must be/);
+  assert.throws(() => b.boundQuoteBinding({ ...base, quoteProviderClass: 0 }), /non-native provider/);
+  assert.throws(() => b.boundQuoteBinding({ ...base, minQuoteAmount: 20_000_000n }), /cannot exceed/);
+  assert.throws(() => b.boundQuoteBinding({ ...base, expectedQuoteAmount: 0n }), /must be positive/);
+});

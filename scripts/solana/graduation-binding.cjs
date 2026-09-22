@@ -15,7 +15,10 @@ const METEORA_CP_AMM = new PublicKey("cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sG
 const GRADUATION_AUTH_DOMAIN = Buffer.from("MEMEWARZONE_SOLANA_GRADUATION_V1", "utf8");
 const GRADUATION_AUTH_SCHEMA_VERSION = 4;
 const QUOTE_PROFILE_NATIVE = 0;
+const QUOTE_PROFILE_STABLECOIN = 1;
+const QUOTE_PROFILE_COMMUNITY = 4;
 const QUOTE_PROVIDER_NATIVE = 0;
+const QUOTE_PROVIDER_BASIC = 1;
 
 const u16le = (v) => { const b = Buffer.alloc(2); b.writeUInt16LE(Number(v)); return b; };
 const u64le = (v) => { const b = Buffer.alloc(8); b.writeBigUInt64LE(BigInt(v)); return b; };
@@ -70,6 +73,15 @@ function deriveMeteoraPool(launchMint) {
   )[0];
 }
 
+/** The DAMM v2 custom pool for a launch token against an arbitrary quote. */
+function deriveMeteoraPoolForQuote(launchMint, quoteMint) {
+  const [first, second] = orderedPubkeys(launchMint, quoteMint);
+  return PublicKey.findProgramAddressSync(
+    [Buffer.from("cpool"), first.toBuffer(), second.toBuffer()],
+    METEORA_CP_AMM,
+  )[0];
+}
+
 function deriveMeteoraPosition(positionNftMint) {
   return PublicKey.findProgramAddressSync(
     [Buffer.from("position"), positionNftMint.toBuffer()],
@@ -100,6 +112,64 @@ function nativeQuoteBinding(oraclePriceUsdMicros) {
     maxImpactBps: 0,
     maxDeviationBps: 0,
     quoteRecoveryAccount: PublicKey.default,
+  };
+}
+
+/**
+ * A bound (non-SOL) quote binding.
+ *
+ * The program checks these together, not field by field: a non-native profile
+ * needs a provider class that is not native, an acquisition program that is
+ * neither Meteora nor the launchpad itself, a recovery account, a positive
+ * expected and minimum amount with the minimum no larger, and slippage, impact
+ * and deviation inside their caps. Building it in one place keeps a caller from
+ * satisfying some of that and failing the rest on chain, after the campaign has
+ * already closed.
+ */
+function boundQuoteBinding({
+  quoteMint,
+  quoteDecimals,
+  acquisitionProgram,
+  quoteRecoveryAccount,
+  expectedQuoteAmount,
+  minQuoteAmount,
+  quoteReferenceUsdMicros,
+  quoteProfile = QUOTE_PROFILE_STABLECOIN,
+  quoteProviderClass = QUOTE_PROVIDER_BASIC,
+  quoteConfigId = hash32("quote-config:local-bound-test"),
+  quotePolicyVersion = 1,
+  maxSlippageBps = 300,
+  maxImpactBps = 300,
+  maxDeviationBps = 150,
+}) {
+  if (!quoteMint || quoteMint.equals(NATIVE_MINT)) throw new Error("bound quote cannot be WSOL");
+  if (quoteProfile < QUOTE_PROFILE_STABLECOIN || quoteProfile > QUOTE_PROFILE_COMMUNITY) {
+    throw new Error(`bound quote profile must be ${QUOTE_PROFILE_STABLECOIN}..${QUOTE_PROFILE_COMMUNITY}`);
+  }
+  if (quoteProviderClass === QUOTE_PROVIDER_NATIVE) throw new Error("bound quote needs a non-native provider class");
+  if (!acquisitionProgram || acquisitionProgram.equals(PublicKey.default) || acquisitionProgram.equals(METEORA_CP_AMM)) {
+    throw new Error("bound quote needs an acquisition program that is not Meteora");
+  }
+  if (!quoteRecoveryAccount || quoteRecoveryAccount.equals(PublicKey.default)) {
+    throw new Error("bound quote needs a recovery account for the residual sweep");
+  }
+  if (BigInt(expectedQuoteAmount) <= 0n || BigInt(minQuoteAmount) <= 0n) throw new Error("bound quote amounts must be positive");
+  if (BigInt(minQuoteAmount) > BigInt(expectedQuoteAmount)) throw new Error("minimum quote cannot exceed the expected quote");
+  return {
+    quoteMint,
+    quoteConfigId,
+    quotePolicyVersion,
+    quoteProfile,
+    quoteProviderClass,
+    acquisitionProgram,
+    quoteReferenceUsdMicros: BigInt(quoteReferenceUsdMicros),
+    quoteDecimals,
+    expectedQuoteAmount: BigInt(expectedQuoteAmount),
+    minQuoteAmount: BigInt(minQuoteAmount),
+    maxSlippageBps,
+    maxImpactBps,
+    maxDeviationBps,
+    quoteRecoveryAccount,
   };
 }
 
@@ -179,10 +249,12 @@ module.exports = {
   GRADUATION_AUTH_SCHEMA_VERSION,
   beginGraduationArgs,
   deriveMeteoraPool,
+  deriveMeteoraPoolForQuote,
   deriveMeteoraPosition,
   graduationDigest,
   graduationQuote,
   hash32,
+  boundQuoteBinding,
   nativeQuoteBinding,
   nativeTargetLamports,
 };

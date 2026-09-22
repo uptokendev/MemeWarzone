@@ -30,6 +30,20 @@ METEORA_PROGRAM_ID="cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG"
 METEORA_SO="$ROOT/third_party/meteora/cp_amm.so"
 METEORA_ACCOUNTS="$ROOT/third_party/meteora/accounts"
 
+# Orca is the acquisition leg: a bound graduation swaps the raised SOL into the
+# quote before Meteora sees it. Without it the bound test has no route and skips,
+# which is how the native graduation went unproven for so long.
+ORCA_PROGRAM_ID="whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc"
+ORCA_SO="$ROOT/third_party/orca/whirlpool.so"
+ORCA_ACCOUNTS="$ROOT/third_party/orca/accounts"
+ORCA_SOURCE_URL="${MWZ_ORCA_SOURCE_URL:-https://api.devnet.solana.com}"
+ORCA_CLONE_ACCOUNTS=(
+  "FcrweFY1G9HJAHG5inkGB6pKg1HZ6x9UC2WioAfWrGkR"
+  "CtfHwxDmdYtoWyeSyh3NUWk43FnehVhhtwuYdWwZcVyt"
+  "nhg1SS1hNFnJKZrJ9FBf3L6SxTjwEnkehN7dmAbg25t"
+  "G319n1BPjeXjAfheDxYe8KWZM7FQhQCJerWRK2nZYtiJ"
+)
+
 if ! command -v anchor >/dev/null 2>&1; then
   echo "anchor CLI is required (run inside WSL with the Solana toolchain)" >&2
   exit 1
@@ -69,6 +83,20 @@ if [[ ! -s "$METEORA_SO" ]]; then
 fi
 echo "==> Meteora artifact $(wc -c < "$METEORA_SO" | tr -d ' ') bytes, $(ls -1 "$METEORA_ACCOUNTS" | wc -l | tr -d ' ') pinned accounts"
 
+if [[ ! -s "$ORCA_SO" ]]; then
+  echo "==> cloning Orca Whirlpool program"
+  mkdir -p "$(dirname "$ORCA_SO")"
+  solana program dump "$ORCA_PROGRAM_ID" "$ORCA_SO" --url "$ORCA_SOURCE_URL" >/dev/null \
+    || { echo "could not clone the Orca program" >&2; rm -f "$ORCA_SO"; exit 1; }
+fi
+mkdir -p "$ORCA_ACCOUNTS"
+for acct in "${ORCA_CLONE_ACCOUNTS[@]}"; do
+  [[ -s "$ORCA_ACCOUNTS/$acct.json" ]] && continue
+  solana account "$acct" --url "$ORCA_SOURCE_URL" --output json --output-file "$ORCA_ACCOUNTS/$acct.json" >/dev/null \
+    || { echo "could not clone Orca account $acct" >&2; rm -f "$ORCA_ACCOUNTS/$acct.json"; exit 1; }
+done
+echo "==> Orca artifact $(wc -c < "$ORCA_SO" | tr -d ' ') bytes, $(ls -1 "$ORCA_ACCOUNTS" | wc -l | tr -d ' ') cloned accounts"
+
 HASH="$(sha256sum "$SO" | awk '{print $1}')"
 BYTES="$(wc -c < "$SO" | tr -d ' ')"
 echo "==> SBF artifact"
@@ -104,7 +132,9 @@ start_validator() {
     --bpf-program "$PROGRAM_ID" "$SO" \
     --bpf-program "$MPL_PROGRAM_ID" "$MPL_SO" \
     --bpf-program "$METEORA_PROGRAM_ID" "$METEORA_SO" \
+    --bpf-program "$ORCA_PROGRAM_ID" "$ORCA_SO" \
     --account-dir "$METEORA_ACCOUNTS" \
+    --account-dir "$ORCA_ACCOUNTS" \
     --quiet \
     >/tmp/mwz-local-validator.log 2>&1 &
   VALIDATOR_PID=$!
