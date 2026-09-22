@@ -1,0 +1,201 @@
+name: Solana Launchpad Upgrade Candidate
+
+# Produces the artifact a devnet or mainnet launchpad upgrade is allowed to use,
+# and the two hashes the API must be set to at the same moment.
+#
+# SOLANA_LAUNCHPAD_PROGRAM_SHA256 and SOLANA_LAUNCHPAD_IDL_SHA256 are read by
+# the create and trade authorization paths, so they are not documentation: an
+# upgrade that lands without updating them leaves create/trade quoting evidence
+# for a binary that is no longer deployed. Both hashes are printed in the job
+# summary so the upgrade and the env change can be done from one source.
+#
+# The candidate is only certified if the local SBF gate passes, which now means
+# create, the bonding lifecycle, and a real graduation into pinned Meteora
+# DAMM v2 -- not a build that merely compiles.
+
+on:
+  pull_request:
+    branches:
+      - devpostgrad
+      - main
+    paths:
+      - Anchor.toml
+      - Cargo.toml
+      - Cargo.lock
+      - programs/memewarzone_solana/**
+      - scripts/solana/run-local-sbf-gate.sh
+      - .github/workflows/solana-launchpad-upgrade-candidate.yml
+  workflow_dispatch:
+
+concurrency:
+  group: launchpad-candidate-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  ANCHOR_VERSION: 0.30.1
+  SOLANA_VERSION: 1.18.26
+  RUST_TOOLCHAIN: 1.79.0
+  IDL_RUST_TOOLCHAIN: nightly-2024-05-09
+  CARGO_NET_RETRY: 10
+  EXPECTED_PROGRAM_ID: 3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt
+  ANCHOR_PROVIDER_URL: http://127.0.0.1:8899
+
+jobs:
+  launchpad-upgrade-candidate:
+    name: Certified launchpad SBF and deployment hashes
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Verify the candidate still targets the deployed program ID
+        shell: bash
+        run: |
+          # An upgrade writes over whatever lives at this address, so a declared
+          # ID that drifted from the deployed one must stop the build here.
+          for manifest in Anchor.toml programs/memewarzone_solana/src/lib.rs; do
+            if ! grep -q "$EXPECTED_PROGRAM_ID" "$manifest"; then
+              echo "$manifest does not declare $EXPECTED_PROGRAM_ID" >&2
+              exit 1
+            fi
+          done
+          echo "program id confirmed in Anchor.toml and lib.rs"
+
+      - name: Install Rust toolchains
+        shell: bash
+        run: |
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup toolchain install "$IDL_RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+
+      - name: Install Solana CLI
+        shell: bash
+        run: |
+          release_dir="$HOME/.local/share/solana/install/releases/v${SOLANA_VERSION}"
+          mkdir -p "$release_dir"
+          curl --fail --location --retry 5 --retry-all-errors --silent --show-error \
+            --output /tmp/solana-release.tar.bz2 \
+            "https://github.com/solana-labs/solana/releases/download/v${SOLANA_VERSION}/solana-release-x86_64-unknown-linux-gnu.tar.bz2"
+          tar -xjf /tmp/solana-release.tar.bz2 -C "$release_dir" --strip-components=1
+          mkdir -p "$HOME/.local/share/solana/install"
+          ln -sfn "$release_dir" "$HOME/.local/share/solana/install/active_release"
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      - name: Install Anchor CLI
+        run: npm install --global --silent "@coral-xyz/anchor-cli@${ANCHOR_VERSION}"
+
+      - name: Show pinned toolchain
+        shell: bash
+        run: |
+          anchor --version
+          solana --version
+          rustc --version
+          rustup run "$IDL_RUST_TOOLCHAIN" rustc --version
+
+      - name: Program unit tests
+        run: cargo test -p memewarzone_solana --lib
+
+      - name: Create ephemeral validator identity
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.config/solana" target/deploy
+          solana-keygen new --no-bip39-passphrase --silent --force \
+            --outfile "$HOME/.config/solana/id.json"
+          echo "ANCHOR_WALLET=$HOME/.config/solana/id.json" >> "$GITHUB_ENV"
+
+      - name: Install acceptance-test dependencies
+        run: npm install --prefix tests/solana --no-audit --no-fund
+
+      # The gate builds the SBF itself, so the artifact uploaded below is the
+      # exact file that passed create, lifecycle and DAMM v2 graduation.
+      - name: Certify by local SBF gate (create + lifecycle + graduation)
+        shell: bash
+        run: |
+          set -o pipefail
+          ANCHOR_WALLET="$ANCHOR_WALLET" \
+          MWZ_LOCAL_LEDGER=/tmp/mwz-sbf-ledger \
+            bash scripts/solana/run-local-sbf-gate.sh 2>&1 | tee /tmp/launchpad-gate.log
+
+      - name: Reject hidden SBF stack overflow diagnostics
+        shell: bash
+        run: |
+          # A stack-overflow warning still produces a loadable .so, so it would
+          # otherwise ship as a certified candidate.
+          if grep -qiE "stack offset of [0-9]+ exceeded|Error: Function .* Stack offset" /tmp/launchpad-gate.log; then
+            echo "SBF stack overflow diagnostics present in the build" >&2
+            grep -iE "stack offset" /tmp/launchpad-gate.log >&2 || true
+            exit 1
+          fi
+          echo "no stack overflow diagnostics"
+
+      - name: Generate IDL with the pinned toolchain
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p target/idl
+          (
+            cd programs/memewarzone_solana
+            RUSTUP_TOOLCHAIN="$IDL_RUST_TOOLCHAIN" anchor idl build \
+              --out ../../target/idl/memewarzone_solana.json
+          ) 2>&1 | tail -n 200
+          test -s target/idl/memewarzone_solana.json
+
+      - name: Record candidate hashes
+        shell: bash
+        run: |
+          sha256sum target/deploy/memewarzone_solana.so target/idl/memewarzone_solana.json \
+            | tee launchpad-sha256.txt
+          PROGRAM_SHA="$(sha256sum target/deploy/memewarzone_solana.so | cut -d' ' -f1)"
+          IDL_SHA="$(sha256sum target/idl/memewarzone_solana.json | cut -d' ' -f1)"
+          BYTES="$(stat -c %s target/deploy/memewarzone_solana.so)"
+          COMMIT="${{ github.event.pull_request.head.sha || github.sha }}"
+          printf 'program_id=%s\ncommit=%s\nbytes=%s\nprogram_sha256=%s\nidl_sha256=%s\n' \
+            "$EXPECTED_PROGRAM_ID" "$COMMIT" "$BYTES" "$PROGRAM_SHA" "$IDL_SHA" \
+            > launchpad-candidate.txt
+          {
+            echo "### Launchpad upgrade candidate"
+            echo
+            echo "| field | value |"
+            echo "| --- | --- |"
+            echo "| program_id | \`$EXPECTED_PROGRAM_ID\` |"
+            echo "| commit | \`$COMMIT\` |"
+            echo "| bytes | $BYTES |"
+            echo "| program sha256 | \`$PROGRAM_SHA\` |"
+            echo "| IDL sha256 | \`$IDL_SHA\` |"
+            echo
+            echo "Set on the API in the same change as the upgrade:"
+            echo '```'
+            echo "SOLANA_LAUNCHPAD_PROGRAM_SHA256=$PROGRAM_SHA"
+            echo "SOLANA_LAUNCHPAD_IDL_SHA256=$IDL_SHA"
+            echo '```'
+            echo
+            echo "Devnet upgrade (dry-run first, drop --execute to compare only):"
+            echo '```'
+            echo "SOLANA_RPC_URL=https://api.devnet.solana.com \\"
+            echo "SOLANA_OPERATOR_KEYPAIR=<devnet deployer keypair> \\"
+            echo "SOLANA_DEVNET_CANDIDATE_SHA256=$PROGRAM_SHA \\"
+            echo "  node scripts/solana/upgrade-devnet-launchpad.cjs --execute"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload upgrade candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: memewarzone-launchpad-upgrade-${{ github.event.pull_request.head.sha || github.sha }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            target/deploy/memewarzone_solana.so
+            target/idl/memewarzone_solana.json
+            launchpad-sha256.txt
+            launchpad-candidate.txt
+            /tmp/launchpad-gate.log
