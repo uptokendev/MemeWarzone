@@ -250,7 +250,7 @@ transfer fee, the one extension that would have skimmed the creator/protocol cut
 | | sha256 | bytes | slot |
 |---|---|---|---|
 | Launchpad `3JSGNiFst…` | `e6ed7df37dfe3bf8ec7914f7bcae9ebd50b21b0844cff80c2a851c64bfafdcb2` | 1218568 | 502512217+ |
-| Treasury `2Nzth…` | `5638c9923d2a3025197243ab6f62e565c832b6fa69d3ce4265abecc90594cdfc` | 1276472 | 502458587 |
+| Treasury `2Nzth…` | devnet runs `5638c992…` (1276472); the **candidate is now `1028f6f8a52037f1aea8ab2e6ae86f9e2c1224eed7e1e7b71675cdfca2508a95`, 1306640 bytes** | | 502458587 |
 
 IDL sha256 `6ad692989c7445ff079aecf185b23ebf54ceb2bfe21f3e9df06802c6b40b8a16`.
 **The certified binary is named in exactly one place:**
@@ -355,6 +355,45 @@ The buffer keypair already exists so the address is known before any spend:
 buffer rent is 6.19116364 SOL and comes back to the spill account when the
 upgrade executes; the launchpad needs no `extend`, so nothing about it is a
 permanent spend. Deployer holds 13.238843275 SOL.
+
+### The treasury audit (2026-09-22)
+
+Asked before spending rent: is the whole battle system actually ready? The gate
+was green on **31 of 47** instructions and silent on the rest. Auditing the
+silence found one real hole and several facts worth keeping.
+
+- **Cancelled pools stranded their supporters' money.** `donate_support_v2` kept
+  only an aggregate `support_total` and no per-donor receipt, so there was
+  nothing to refund against and no `refund_support` to call. Fixed:
+  `ArenaSupportReceipt` (accumulating, one per donor per pool) plus
+  `refund_support_v2`. All refunds are **pull-claims** — the contributor signs
+  and takes their own lamports; nothing is ever pushed, so a pool with hundreds
+  of contributors costs nothing to unwind.
+- **`cancel_pool_v2` is removed.** Founder rule: once a battle or tournament
+  starts it runs to a winner. Deleting the instruction makes that structural
+  rather than a promise about who holds the resolver key. The only way a pool
+  ends without a winner is `settle_expired_pool` — no-show past the deposit
+  deadline, or we missed our own resolve deadline — and it is permissionless, so
+  nobody can hold the money by doing nothing.
+- **Money V2 is born paused.** `initialize_arena_money_v2` sets `paused = true`.
+  Standing the sponsorship rail up on mainnet takes no money until an explicit
+  `set_arena_money_v2_pause(false)`. Same shape as `init-arena-mainnet.mjs`
+  pausing war pool v1 with no unpause.
+- **Nothing on the checklist was missing from the program.** Vote vs metrics,
+  both tournament types and final-salvo tie-breaks need no on-chain support:
+  `result_type` is only WINNER/NONE and the resolver signs an `outcome_hash`.
+  Tournament place splits are resolver-supplied bps (distinct, non-zero, summing
+  to 10000), so 60/30/10 can change without a program upgrade. Quarterly finals
+  ride the league root and claim rail with period 2. Split parity with EVM is
+  exact: `ENTRY_LEAGUE_BPS 2000 / ENTRY_PROTOCOL_BPS 500 / BOOST_PROTOCOL_BPS 1000`.
+- **47 of 47 instructions now execute** against the compiled .so. Treasury gate
+  14 tests, Rust 22.
+
+**Static analysis could not answer "what is untested" here** — it lost to
+dynamic dispatch three separate times (operator helpers building instructions
+under computed names, table-driven `program.methods[row.claim]`, and
+continuation-line calls). Count coverage by tokenising the whole test file,
+including string literals, or by watching execution. Do not trust a grep.
 
 ### Still open
 

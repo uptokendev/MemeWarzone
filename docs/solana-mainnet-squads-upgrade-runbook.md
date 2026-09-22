@@ -25,7 +25,7 @@ running on devnet and byte-verified there.
 | | Program | Candidate sha256 | Bytes |
 |---|---|---|---|
 | Launchpad | `3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt` | `e6ed7df37dfe3bf8ec7914f7bcae9ebd50b21b0844cff80c2a851c64bfafdcb2` | 1218568 |
-| Treasury | `2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX` | `5638c9923d2a3025197243ab6f62e565c832b6fa69d3ce4265abecc90594cdfc` | 1276472 |
+| Treasury | `2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX` | `1028f6f8a52037f1aea8ab2e6ae86f9e2c1224eed7e1e7b71675cdfca2508a95` | 1306640 |
 
 Launchpad change: Token-2022 quote assets accepted at graduation, on the quote
 side only. Treasury change: the Competition V2 entry split becomes 75/20/5,
@@ -36,7 +36,7 @@ matching `ArenaWarPoolTreasuryV2` on EVM.
 | | Allocated on mainnet | Candidate | Verdict |
 |---|---|---|---|
 | Launchpad | 1310936 bytes | 1218568 | **Fits.** 92368 bytes spare. No extend. |
-| Treasury | 660016 bytes | 1276472 | **Too small by 616456 bytes.** Must extend first. |
+| Treasury | 660016 bytes | 1306640 | **Too small by 646624 bytes.** Must extend first. |
 
 The launchpad can go straight to buffer + Squads upgrade. The treasury cannot:
 an upgrade into an allocation that cannot hold the binary fails, so the extend
@@ -50,12 +50,18 @@ Read from mainnet with `solana rent` on 2026-09-22. A buffer account is
 | Item | SOL | Recovered? |
 |---|---|---|
 | Launchpad buffer (37 + 1218568 B) | 6.19116364 | Yes — refunded to the spill account when the upgrade consumes it |
-| Treasury buffer (37 + 1276472 B) | 6.48531596 | Yes — same |
-| Treasury extend top-up | ~1.89044116 | **No — permanent rent** |
+| Treasury buffer (37 + 1306640 B) | 6.63856940 | Yes — same |
+| Treasury extend top-up | ~2.04369460 | **No — permanent rent** |
 
 The treasury's ProgramData currently holds 4.59491544 SOL and would need
-6.4853566 to be rent-exempt at the larger size, hence the top-up. The launchpad
+6.63861004 to be rent-exempt at the larger size, hence the top-up. The launchpad
 needs no extend and therefore no permanent spend at all — its buffer comes back.
+
+**The two cannot be staged at the same time.** Together they need 14.87342764
+SOL against the deployer's 13.238843275 — short by 1.63458436. Sequential fits
+with room: stage the launchpad, let Squads execute it, and its 6.19116364 returns
+to the spill account before the treasury's extend and buffer are paid. Peak
+requirement that way is 8.68226400 SOL.
 
 The deployer `9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H` holds
 13.238843275 SOL, which covers either program's buffer plus the extend. The
@@ -84,11 +90,11 @@ does not, the tree is not what was verified and the upgrade stops here.
 Permissionless — the deployer pays, the multisig is not involved:
 
 ```
-solana program extend 2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX 616456 \
+solana program extend 2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX 646624 \
   --url <mainnet-rpc> --keypair <deployer>
 ```
 
-Confirm `Data Length` is at least 1276472 before continuing.
+Confirm `Data Length` is at least 1306640 before continuing.
 
 ### 3. Write the buffer and hand it to the multisig
 
