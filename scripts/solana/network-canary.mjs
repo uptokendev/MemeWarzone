@@ -5,13 +5,17 @@ import crypto from "node:crypto";
 const EXPECTED_CHAIN_ID = "101";
 const EXPECTED_GENESIS = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
 const EXPECTED_PROGRAM_ID = "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt";
-// Pinned to the binary devnet actually runs, certified by the local SBF gate
-// (create + bonding lifecycle + graduation into pinned Meteora DAMM v2) and
-// deployed 2026-09-22. SOLANA_LAUNCHPAD_PROGRAM_SHA256 on the API must carry
-// this same value: the canary and the create/trade authorization paths read
-// the same variable, so a stale pin here and a correct API env cannot coexist.
-const EXPECTED_SBF_SHA256 = "e6ed7df37dfe3bf8ec7914f7bcae9ebd50b21b0844cff80c2a851c64bfafdcb2";
-const EXPECTED_SBF_BYTES = 1218568;
+// Read, not repeated. This file, its shell wrapper and the CI workflow each
+// used to carry their own literal, and after the 2026-09-22 devnet upgrade two
+// of the three were stale -- so the canary failed against its own pin.
+// SOLANA_LAUNCHPAD_PROGRAM_SHA256 on the API must carry this same value: the
+// canary and the create/trade authorization paths read the same variable, so a
+// stale pin here and a correct API env cannot coexist.
+const certification = JSON.parse(
+  fs.readFileSync(new URL("../../config/solana/launchpad-binary.certification.json", import.meta.url), "utf8"),
+);
+const EXPECTED_SBF_SHA256 = certification.artifact.sha256;
+const EXPECTED_SBF_BYTES = certification.artifact.bytes;
 
 function required(name) {
   const value = String(process.env[name] || "").trim();

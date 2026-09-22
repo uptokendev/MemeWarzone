@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "purpose": "The one place the certified launchpad binary is named. The canary runner, its shell wrapper and the CI workflow each carried their own copy and two of them went stale after the 2026-09-22 devnet upgrade, which left the canary failing against its own pin.",
+  "program": {
+    "id": "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt",
+    "label": "MemeWarzone launchpad"
+  },
+  "certifiedBy": {
+    "gate": "scripts/solana/run-local-sbf-gate.sh",
+    "covers": "create, bonding lifecycle, native graduation into pinned Meteora DAMM v2, a bound Token-2022 graduation, Token-2022 quote acceptance",
+    "date": "2026-09-22"
+  },
+  "artifact": {
+    "sha256": "e6ed7df37dfe3bf8ec7914f7bcae9ebd50b21b0844cff80c2a851c64bfafdcb2",
+    "bytes": 1218568,
+    "idlSha256": "6ad692989c7445ff079aecf185b23ebf54ceb2bfe21f3e9df06802c6b40b8a16",
+    "localPath": "target/deploy/memewarzone_solana.so"
+  },
+  "deployed": {
+    "devnet": "2026-09-22, byte-verified",
+    "mainnet": "not yet — staged for Squads, see docs/solana-mainnet-squads-upgrade-runbook.md"
+  },
+  "consumers": {
+    "SOLANA_LAUNCHPAD_PROGRAM_SHA256": "API deployment evidence (audit trail on every create authorization) and the canary",
+    "SOLANA_LAUNCHPAD_IDL_SHA256": "same",
+    "SOLANA_LAUNCHPAD_PROGRAM_BYTES": "canary only — not read by the API"
+  }
+}

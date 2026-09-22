@@ -156,18 +156,34 @@ the allocation, not the binary size — that is expected, not a failure.
 
 ### 6. Move the API env in the same change
 
-`SOLANA_LAUNCHPAD_PROGRAM_SHA256` and `SOLANA_LAUNCHPAD_IDL_SHA256` are read by
-the create and trade authorization paths, so an upgrade that lands without them
-leaves those paths quoting evidence for a binary that is no longer deployed.
+Two variables, on the **live** API service (`api.memewar.zone`):
 
 ```
 SOLANA_LAUNCHPAD_PROGRAM_SHA256=e6ed7df37dfe3bf8ec7914f7bcae9ebd50b21b0844cff80c2a851c64bfafdcb2
 SOLANA_LAUNCHPAD_IDL_SHA256=6ad692989c7445ff079aecf185b23ebf54ceb2bfe21f3e9df06802c6b40b8a16
-SOLANA_LAUNCHPAD_PROGRAM_BYTES=1218568
 ```
 
-`scripts/solana/network-canary.mjs` pins the same program hash and will fail
-until it agrees.
+Be clear about what these do, so the urgency is judged correctly. Neither is
+compared against the chain and neither enters the signed digest. `hashEnv` in
+`solana-create-authorization-v4.js` checks they are present and 64 hex
+characters — a missing or malformed value is a 503, a *wrong* value is accepted
+— and they are then attached to every create authorization as
+`auditMetadata.programBinarySha256` / `idlSha256`, and listed in the trade
+readiness report. Of the env pins only `SOLANA_GENERATION_MANIFEST_HASH` is
+checked against on-chain state.
+
+So a stale hash does not break create, buy or sell. What it breaks is the audit
+trail: every authorization would attest to a binary that is no longer deployed.
+Move them with the upgrade, not after.
+
+`SOLANA_LAUNCHPAD_PROGRAM_BYTES` is **not** an API variable — only
+`scripts/solana/network-canary.mjs` reads it. It and the program hash both
+default from `config/solana/launchpad-binary.certification.json`, which is the
+single source for the certified binary; the canary runner, its shell wrapper and
+the CI workflow each used to hold their own literal and two went stale behind the
+devnet upgrade, leaving the canary rejecting the binary that was actually
+deployed. Update that file when the certified binary changes and all three
+follow.
 
 ## What a bound graduation needs, learned by running one
 

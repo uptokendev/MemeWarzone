@@ -252,9 +252,20 @@ transfer fee, the one extension that would have skimmed the creator/protocol cut
 | Treasury `2Nzth…` | `5638c9923d2a3025197243ab6f62e565c832b6fa69d3ce4265abecc90594cdfc` | 1276472 | 502458587 |
 
 IDL sha256 `6ad692989c7445ff079aecf185b23ebf54ceb2bfe21f3e9df06802c6b40b8a16`.
-`SOLANA_LAUNCHPAD_PROGRAM_SHA256` / `_IDL_SHA256` / `_PROGRAM_BYTES` must move
-with any upgrade — the create and trade authorization paths read them, and
-`network-canary.mjs` pins the same program hash.
+**The certified binary is named in exactly one place:**
+`config/solana/launchpad-binary.certification.json`. `network-canary.mjs`, its
+shell wrapper and the CI workflow all default from it. They each held their own
+literal until 2026-09-22, and two stayed on `27ad65b5…`/1165328 after the devnet
+upgrade, so `solana-network-canary.yml` was failing against the runner's own pin
+with a binary that was in fact the deployed one. Change the file, not the copies.
+
+`SOLANA_LAUNCHPAD_PROGRAM_SHA256` / `_IDL_SHA256` go on the API and must move
+with any upgrade. Know what they are: `hashEnv` checks presence and 64-hex form
+(missing → 503, **wrong → accepted**), neither is compared against the chain,
+neither enters the signed digest, and both are attached to every create
+authorization as `auditMetadata`. A stale hash breaks the audit trail, not
+create/buy/sell. Only `SOLANA_GENERATION_MANIFEST_HASH` is checked on-chain.
+`_PROGRAM_BYTES` is canary-only and is **not** read by the API.
 
 Gate (`bash scripts/solana/run-local-sbf-gate.sh`): create 10, lifecycle 4
 (incl. graduation into pinned DAMM v2), Token-2022 5. Fails if any reports
@@ -361,7 +372,7 @@ Then: Robinhood (step 2 of the earlier plan) and BNB (step 3) fully ready → pr
 - Chart panel / WarRoom / Imported trade panels still assume WSOL.
 - `market_trades_v` labels Solana `dex_trades` as TOPAZ.
 - No Solana arena e2e test — the vote-battle one runs on chain 97.
-- Untracked and expected: `database/staging_rls_grants_fix.sql`, `frontend/.mwz-feed-isolation-*/` (scratch dirs, safe to delete), the handoff file itself.
+- Untracked and expected: `database/staging_rls_grants_fix.sql` and the handoff file itself. `frontend/.mwz-feed-isolation-*/` are now gitignored — `feedChainIsolation.test.mjs` mkdtemps them there and never cleans up.
 
 ## 7. Memory files to trust
 

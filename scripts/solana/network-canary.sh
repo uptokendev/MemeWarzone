@@ -4,8 +4,12 @@ set -euo pipefail
 export SOLANA_APPLICATION_CHAIN_ID="${SOLANA_APPLICATION_CHAIN_ID:-101}"
 export SOLANA_LAUNCHPAD_PROGRAM_ID="${SOLANA_LAUNCHPAD_PROGRAM_ID:-3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt}"
 export SOLANA_EXPECTED_DEVNET_GENESIS="${SOLANA_EXPECTED_DEVNET_GENESIS:-EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG}"
-export SOLANA_LAUNCHPAD_PROGRAM_SHA256="${SOLANA_LAUNCHPAD_PROGRAM_SHA256:-27ad65b560dba8a33330bd95f08ae7ca6945f71ebf667a5a3756ae0cb9f7f080}"
-export SOLANA_LAUNCHPAD_PROGRAM_BYTES="${SOLANA_LAUNCHPAD_PROGRAM_BYTES:-1165328}"
+# Defaulted from the certification file rather than a literal. These two were
+# literals until 2026-09-22 and went stale behind the devnet upgrade, so the
+# canary refused a binary that was in fact the deployed one.
+CERT_FILE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/config/solana/launchpad-binary.certification.json"
+export SOLANA_LAUNCHPAD_PROGRAM_SHA256="${SOLANA_LAUNCHPAD_PROGRAM_SHA256:-$(node -p "require('$CERT_FILE').artifact.sha256")}"
+export SOLANA_LAUNCHPAD_PROGRAM_BYTES="${SOLANA_LAUNCHPAD_PROGRAM_BYTES:-$(node -p "require('$CERT_FILE').artifact.bytes")}"
 export SOLANA_DEVNET_PAYER="${SOLANA_DEVNET_PAYER:-${SOLANA_PRIVATE_KEY:-}}"
 export RUNTIME_ENVIRONMENT="staging"
 export SOLANA_ENVIRONMENT="staging"
