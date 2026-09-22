@@ -8,6 +8,7 @@ import { ENV } from "./env.js";
 import { createLeagueFeedPublisher } from "./leagueFeed.js";
 import { candleUpsertPayload } from "./candlePublish.js";
 import { TIMEFRAMES, bucketStart, type TF } from "./timeframes.js";
+import { refreshSolanaMarketStats } from "./solanaMarketStats.js";
 
 const SOLANA_CHAIN_ID = 101;
 const leagueFeed = createLeagueFeedPublisher({ pool, flushMs: 500 });
@@ -671,6 +672,10 @@ async function insertQuoteSwap(input: SwapInput, isBuy: boolean) {
     lastPriceUsd: priceUsd != null ? String(priceUsd) : null,
     updatedAt: new Date().toISOString(),
   }).catch(() => undefined);
+  // The normalized row Arena, Warzone Markets and Beat the Market read.
+  void refreshSolanaMarketStats(input.market.campaign).catch((error) =>
+    console.warn("[meteora-indexer] market stats refresh failed", { campaign: input.market.campaign, error: error instanceof Error ? error.message : String(error) }),
+  );
 }
 
 async function upsertQuoteCandle(input: {
@@ -883,6 +888,9 @@ async function insertSwap(input: SwapInput) {
     }
   }
   await patchStats(input.market.campaign);
+  void refreshSolanaMarketStats(input.market.campaign).catch((error) =>
+    console.warn("[meteora-indexer] market stats refresh failed", { campaign: input.market.campaign, error: error instanceof Error ? error.message : String(error) }),
+  );
 }
 
 async function indexMarket(market: GraduatedMarket, head: number) {

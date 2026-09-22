@@ -58,11 +58,14 @@ export async function computeRobinhoodBeatTheMarket(input: {
 }, deps: { query?: QueryFn } = {}) {
   const query: QueryFn = deps.query || ((text, params) => pool.query(text, params as any[]));
   const chainId = Number(input.chainId);
-  if (chainId !== 4663 && chainId !== 46630) {
-    return { window: normalizeWindow(input.window), metric: unhealthy("Beat the Market is Robinhood-only.") };
+  // Robinhood stock quotes and Solana catalog quotes share the normalized
+  // MEME/USD and QUOTE/USD evidence in market_stats; the metric is the same.
+  if (chainId !== 4663 && chainId !== 46630 && chainId !== 101) {
+    return { window: normalizeWindow(input.window), metric: unhealthy("Beat the Market needs a Robinhood or Solana campaign.") };
   }
 
-  const campaignAddress = String(input.campaignAddress || "").trim().toLowerCase();
+  // Solana addresses are case-sensitive base58; EVM ones are stored lowercase.
+  const campaignAddress = chainId === 101 ? String(input.campaignAddress || "").trim() : String(input.campaignAddress || "").trim().toLowerCase();
   if (!campaignAddress) {
     return { window: normalizeWindow(input.window), metric: unhealthy("Campaign address is required.") };
   }
@@ -81,8 +84,10 @@ export async function computeRobinhoodBeatTheMarket(input: {
   );
   const current = currentResult.rows[0];
   if (!current) return { window, metric: unhealthy("Normalized Robinhood market stats are unavailable.") };
-  if (String(current.quote_asset_type || "").toUpperCase() !== "STOCK_TOKEN") {
-    return { window, metric: unhealthy("Beat the Market requires a canonical Stock Battlefield quote asset.") };
+  const quoteType = String(current.quote_asset_type || "").toUpperCase();
+  const quoteAccepted = chainId === 101 ? quoteType === "OTHER" : quoteType === "STOCK_TOKEN";
+  if (!quoteAccepted) {
+    return { window, metric: unhealthy(chainId === 101 ? "Beat the Market needs a non-SOL Graduation Market (the token's performance against its quote asset)." : "Beat the Market requires a canonical Stock Battlefield quote asset.") };
   }
   if (!current.valuation_healthy || !current.last_price_usd || !current.reference_price_usd) {
     return { window, metric: unhealthy("Current normalized MEME/USD or Stock Token/USD valuation is unhealthy.") };
