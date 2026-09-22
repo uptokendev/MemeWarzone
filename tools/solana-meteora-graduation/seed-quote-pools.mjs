@@ -25,8 +25,9 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  createSplashPool,
+  createConcentratedLiquidityPool,
   openFullRangePosition,
+  setNativeMintWrappingStrategy,
   orderMints,
   setPayerFromBytes,
   setRpc,
@@ -108,13 +109,19 @@ async function wrapSol(connection, payer, lamports) {
 async function main() {
   const rpcUrl = required("SOLANA_RPC_URL");
   const connection = new Connection(rpcUrl, "confirmed");
+  // Devnet, or a local validator carrying a cloned Orca. A local validator has
+  // a fresh genesis every reset, so it is identified by its endpoint instead --
+  // and only a loopback endpoint qualifies, so no remote cluster can slip in.
+  const isLocal = /^(https?:\/\/)?(127\.0\.0\.1|localhost)(:|$|\/)/.test(rpcUrl);
   const genesis = await connection.getGenesisHash();
-  if (genesis !== DEVNET_GENESIS) {
-    throw new Error(`Refusing non-devnet genesis ${genesis}; this script only ever runs on devnet.`);
+  if (!isLocal && genesis !== DEVNET_GENESIS) {
+    throw new Error(`Refusing genesis ${genesis}; this script runs on devnet or a local validator only.`);
   }
+  console.log(`[seed] cluster ${isLocal ? "local validator" : "devnet"} genesis ${genesis}`);
 
   const payer = loadKeypair(required("SOLANA_GRADUATION_OPERATOR_KEYPAIR"));
   const poolSol = Number(process.env.SEED_POOL_SOL || "2");
+  const tickSpacing = Number(process.env.SEED_TICK_SPACING || "64");
   const priceUsd = Number(process.env.SEED_PRICE_USD || "117");
   const poolLamports = BigInt(Math.round(poolSol * 1_000_000_000));
   // Enough of our own token to match the SOL side at the seeded price, twice
@@ -124,7 +131,7 @@ async function main() {
   const balance = await connection.getBalance(payer.publicKey, "confirmed");
   console.log(`[seed] payer ${payer.publicKey.toBase58()} balance ${balance / 1e9} SOL`);
   console.log(`[seed] per pool: ${poolSol} SOL + ${quoteUnits / 10n ** BigInt(DECIMALS)} test units at $${priceUsd}/SOL`);
-  console.log(`[seed] two pools => about ${(poolSol * 2 + 0.1).toFixed(2)} SOL committed, plus rent`);
+  console.log(`[seed] two pools => about ${(poolSol * 2 + 0.1).toFixed(2)} SOL committed, tickSpacing ${tickSpacing}`);
   if (!execute) {
     console.log("[seed] dry run; re-run with --execute to mint and seed");
     return;
@@ -136,6 +143,8 @@ async function main() {
   await setRpc(rpcUrl);
   // The pool and position builders need an explicit funder signer.
   const funder = await setPayerFromBytes(payer.secretKey);
+  // Use the WSOL ATA this script funds rather than an ephemeral keypair account.
+  setNativeMintWrappingStrategy("ata");
   const rpc = createSolanaRpc(devnet(rpcUrl));
 
   const results = {};
@@ -158,16 +167,23 @@ async function main() {
 
     // These builders return the instructions plus a callback that signs and
     // sends; without calling it nothing reaches the chain.
-    const pool = await createSplashPool(mintA, mintB, { initialPrice, funder, whirlpoolDeployment: WhirlpoolDeployment.devnet });
+    // Splash pools need a 32768 fee tier, which this Orca deployment does not
+    // have, so use a concentrated pool on a tier that exists.
+    const pool = await createConcentratedLiquidityPool(mintA, mintB, tickSpacing, { initialPrice, funder, whirlpoolDeployment: WhirlpoolDeployment.devnet });
     const poolAddress = pool.poolAddress;
     const poolSignature = await pool.callback();
     console.log(`[seed] ${variant} pool ${String(poolAddress)} ${poolSignature}`);
 
     // Fund the side WSOL is on, so the pool holds the SOL a graduation swaps in
     // and our token on the other side.
+    // Both sides are caps, not amounts: the SDK works out the split for a
+    // full-range position and takes up to these.
+    const tokenSide = quoteUnits / 2n;
     const position = await openFullRangePosition(
       poolAddress,
-      wsolIsA ? { tokenA: poolLamports } : { tokenB: poolLamports },
+      wsolIsA
+        ? { tokenMaxA: poolLamports, tokenMaxB: tokenSide }
+        : { tokenMaxA: tokenSide, tokenMaxB: poolLamports },
       { funder, whirlpoolDeployment: WhirlpoolDeployment.devnet },
     );
     const positionSignature = await position.callback();
@@ -179,7 +195,7 @@ async function main() {
   }
 
   const report = process.env.SEED_REPORT || "/tmp/mwz-devnet-quote-pools.json";
-  fs.writeFileSync(report, JSON.stringify({ createdAt: new Date().toISOString(), cluster: "devnet", priceUsd, poolSol, ...results }, null, 2));
+  fs.writeFileSync(report, JSON.stringify({ createdAt: new Date().toISOString(), cluster: isLocal ? "local-validator" : "devnet", priceUsd, poolSol, tickSpacing, ...results }, null, 2));
   console.log(`[seed] report=${report}`);
   console.log(JSON.stringify(results, null, 2));
 }
