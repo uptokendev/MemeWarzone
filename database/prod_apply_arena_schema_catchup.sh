@@ -23,6 +23,22 @@
 #   - the whole bundle was rehearsed against production inside one
 #     transaction that ended in ROLLBACK: 25 files, exit 0, ~16 s
 #
+# 2026-09-22: two frontend/supabase migrations were added (see GROUP_B). They
+# had never been in this bundle, and production is missing all 19 catalog
+# columns they add, so the ported Graduation Market would have queried columns
+# that do not exist. The bundle is now 38 files, not 25; re-rehearse before
+# applying. Every `add constraint` in every bundled file is now preceded by a
+# generated `drop constraint if exists` (55 of them), because Postgres has no
+# `add constraint if not exists` and the expansion migration added six without
+# one -- so a second run would have aborted where the first left off.
+#
+# ONE OF THEM WRITES DATA. 20260908043000 sets enabled_for_graduation=false and
+# route_enabled=false on every robinhood_stock_token_registry row whose
+# health_certification_version is not 'runtime-parity-v1'. That is the intended
+# fail-closed behaviour and staging already carries it, but on production it
+# turns off Robinhood graduations until each row is re-certified. Existing
+# market support is untouched. Know this before typing `apply`.
+#
 # Group A (market tables the indexer writes) runs first in its own short
 # transaction; group B (arena-only tables, dark behind flags) follows.
 # lock_timeout makes a blocked statement fail instead of stalling the indexer.
@@ -75,6 +91,12 @@ GROUP_B=(
   db/migrations/20260921_000004_championship_mirror_missing_entry_names.sql
   db/migrations/20260921_000005_arena_league_entries_token_address_identity.sql
   db/migrations/20260921_000006_league_epoch_roots.sql
+  # Probed against production 2026-09-22: it has the base quote catalog tables
+  # and campaign_draft_graduation_quote_selection, but none of the 19 columns
+  # the creator-facing catalog selects. Without these two the Graduation Market
+  # step 503s on a column that does not exist.
+  frontend/supabase/migrations/20260907235000_approved_quote_catalog_expansion.sql
+  frontend/supabase/migrations/20260908043000_robinhood_full_quote_runtime_certification.sql
   db/migrations/20260921_000007_campaign_graduation_quote_bindings.sql
   db/migrations/20260921_000008_quote_catalog_admin_columns.sql
   db/migrations/20260921_000009_quote_policy_one_active_per_deployment.sql
@@ -99,6 +121,14 @@ bundle() {
         const fs = require("fs");
         let sql = fs.readFileSync(process.argv[1], "utf8");
         sql = sql.replace(/^\s*(begin|commit)\s*;\s*$/gim, "");
+        // "Re-running is harmless" is what this bundle promises, and Postgres has no
+        // `add constraint if not exists`. The quote-catalog expansion adds six
+        // constraints without dropping them first, so a second run would abort on
+        // "constraint already exists" -- which on a half-applied production is the
+        // worst possible moment to discover it. Emit the drop the file omitted.
+        sql = sql.replace(/^([ \t]*)alter table\s+(if exists\s+)?([\w."]+)\s+add constraint\s+([\w"]+)/gim,
+          (match, indent, ifExists, table, name) =>
+            `${indent}alter table ${ifExists || ""}${table} drop constraint if exists ${name};\n${match}`);
         if (!/20260921_000002_market_trades_v/.test(process.argv[1])) {
           sql = sql.replace(/create or replace view public\.market_trades_v[\s\S]*?from public\.dex_trades t[^;]*;/gi,
             "-- [bundle] market_trades_v redefinition removed; live view shape kept (see 20260921_000002)\n");
