@@ -7,7 +7,7 @@
  * expiry and refunds) on the exact .so that will be deployed.
  *
  * Money rules proven here, to the lamport:
- *   entries + support  -> 85% prize / 10% Major War League / 5% protocol
+ *   entries + support  -> 75% prize / 20% Major War League / 5% protocol
  *   boosts             -> 90% prize / 10% protocol
  *   tournament places  -> prize split by bps, rounding remainder to first
  * Every user transaction credits one program vault (plus its own receipt's
@@ -119,7 +119,7 @@ describe("arena war pool local-validator acceptance (battles, tournaments, place
     await fund(mwlReceiver.publicKey, 1);
   });
 
-  it("battle: stakes and support pay 85/10/5, boosts 90/10, every user tx credits one vault, claims pay exactly once", async function () {
+  it("battle: stakes and support pay 75/20/5, boosts 90/10, every user tx credits one vault, claims pay exactly once", async function () {
     const ownerA = Keypair.generate();
     const ownerB = Keypair.generate();
     const donor = Keypair.generate();
@@ -190,13 +190,13 @@ describe("arena war pool local-validator acceptance (battles, tournaments, place
     state = await program.account.arenaPool.fetch(pool);
     const normalBase = stakeA + stakeB + support;
     const protocolNormal = bpsOf(normalBase, 500);
-    const mwl = bpsOf(normalBase, 1_000);
+    const mwl = bpsOf(normalBase, 2_000);
     const winnerNormal = normalBase - protocolNormal - mwl;
     const boostProtocol = bpsOf(boost, 1_000);
     const boostPrize = boost - boostProtocol;
-    assert.equal(BigInt(state.pendingWinner.toString()), winnerNormal + boostPrize, "winner: 85% of entries+support plus 90% of boosts");
+    assert.equal(BigInt(state.pendingWinner.toString()), winnerNormal + boostPrize, "winner: 75% of entries+support plus 90% of boosts");
     assert.equal(BigInt(state.pendingProtocol.toString()), protocolNormal + boostProtocol, "protocol: 5% of entries+support plus 10% of boosts");
-    assert.equal(BigInt(state.pendingMwl.toString()), mwl, "MWL: 10% of entries+support");
+    assert.equal(BigInt(state.pendingMwl.toString()), mwl, "MWL: 20% of entries+support");
     assert.equal(
       BigInt(state.pendingWinner.toString()) + BigInt(state.pendingProtocol.toString()) + BigInt(state.pendingMwl.toString()),
       normalBase + boost,
@@ -336,7 +336,7 @@ describe("arena war pool local-validator acceptance (battles, tournaments, place
     assert.equal(state.state, 2, "RESOLVED");
     const normalBase = buyInTotal;
     const protocolNormal = bpsOf(normalBase, 500);
-    const mwl = bpsOf(normalBase, 1_000);
+    const mwl = bpsOf(normalBase, 2_000);
     const boostProtocol = bpsOf(boost, 1_000);
     const prizeTotal = normalBase - protocolNormal - mwl + (boost - boostProtocol);
     const second = bpsOf(prizeTotal, 3_000);

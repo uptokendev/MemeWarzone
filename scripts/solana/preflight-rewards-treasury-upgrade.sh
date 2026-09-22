@@ -87,8 +87,23 @@ note "programdata=$PROGRAMDATA"
 note "candidate_sha256=$CANDIDATE_SHA"
 note "deployed_sha256=$LIVE_SHA"
 
-if [[ "$CANDIDATE_SHA" == "$LIVE_SHA" ]]; then
-  note "candidate is already deployed; no program upgrade is required"
+# `solana program dump` returns the whole ProgramData allocation: the binary
+# followed by zero padding. Comparing those hashes directly calls an already
+# deployed candidate "different", so compare the bytes the binary occupies and
+# require the remainder to be zero.
+ALREADY_DEPLOYED="$(CANDIDATE_SO="$CANDIDATE_SO" LIVE_SO="$LIVE_SO" node --input-type=module <<'NODE'
+import fs from 'node:fs';
+const candidate = fs.readFileSync(process.env.CANDIDATE_SO);
+const live = fs.readFileSync(process.env.LIVE_SO);
+const sameCode = live.length >= candidate.length
+  && live.subarray(0, candidate.length).equals(candidate)
+  && live.subarray(candidate.length).every((byte) => byte === 0);
+console.log(sameCode ? 'yes' : 'no');
+NODE
+)"
+
+if [[ "$ALREADY_DEPLOYED" == "yes" ]]; then
+  note "candidate is already deployed (byte-identical, remainder zero padding); no program upgrade is required"
 else
   note "candidate differs from deployed binary; same-ID upgrade is required after test acceptance"
 fi
