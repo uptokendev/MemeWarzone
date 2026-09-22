@@ -5,8 +5,13 @@ import crypto from "node:crypto";
 const EXPECTED_CHAIN_ID = "101";
 const EXPECTED_GENESIS = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG";
 const EXPECTED_PROGRAM_ID = "3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt";
-const EXPECTED_SBF_SHA256 = "27ad65b560dba8a33330bd95f08ae7ca6945f71ebf667a5a3756ae0cb9f7f080";
-const EXPECTED_SBF_BYTES = 1165328;
+// Pinned to the binary devnet actually runs, certified by the local SBF gate
+// (create + bonding lifecycle + graduation into pinned Meteora DAMM v2) and
+// deployed 2026-09-22. SOLANA_LAUNCHPAD_PROGRAM_SHA256 on the API must carry
+// this same value: the canary and the create/trade authorization paths read
+// the same variable, so a stale pin here and a correct API env cannot coexist.
+const EXPECTED_SBF_SHA256 = "9ee52111ccd5e9f22f32cd6314e864405388f22490efece264129b921b04cb4a";
+const EXPECTED_SBF_BYTES = 1222896;
 
 function required(name) {
   const value = String(process.env[name] || "").trim();
