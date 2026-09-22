@@ -49,8 +49,20 @@ function sum(entries, sideTokenId) {
   return entries.filter((entry) => !sideTokenId || entry.sideTokenId === sideTokenId).reduce((total, entry) => total + Number(entry.amountUsd || 0), 0);
 }
 
+/**
+ * Solana's arena is the Competition V2 generation -- arena_config is version 2
+ * and the program resolves through resolve_pool_v2 with the 75/20/5 entry split
+ * -- but warPoolGeneration only recognises an EVM treasury address, and Solana
+ * escrow is a program PDA probed on chain instead. Without this the UI would
+ * quote chain 101 the old V1 numbers while the program pays the V2 ones.
+ */
+export function isCompetitionV2Chain(chainId, env = process.env) {
+  if (Number(chainId) === 101) return true;
+  return warPoolGeneration(chainId, env) === WAR_POOL_GENERATION_V2;
+}
+
 function routing(totalPotUsd, chainId) {
-  const v2 = warPoolGeneration(chainId) === WAR_POOL_GENERATION_V2;
+  const v2 = isCompetitionV2Chain(chainId);
   if (v2) {
     return {
       winnersUsd: Math.round(totalPotUsd * 0.75),
@@ -185,7 +197,7 @@ function settlementSummary(poolRecord, extra = {}) {
     settlementStateLabel: poolRecord.state,
     settlementStateBody:
       extra.body ||
-      (warPoolGeneration(extra.chainId) === WAR_POOL_GENERATION_V2
+      (isCompetitionV2Chain(extra.chainId)
         ? "Support is a donation, not betting. Supporters are not paid. 75% prize / 20% league / 5% protocol once escrow is live."
         : "Support is a donation, not betting. Supporters are not paid. 85% winning campaign / 5% protocol / 10% Major War League once escrow is live."),
     routingBreakdown: poolRecord.routingBreakdown,
@@ -381,7 +393,7 @@ async function handleDetail(_req, res, subjectId) {
         winnerTokenId,
         winnerLabel: winnerTokenId ? "Champion takes the tournament pot" : "Supporters are not paid",
         winnerSideUsd: winnerTokenId ? sum(poolRecord.entries, winnerTokenId) : 0,
-        body: Number(subject.tournament.chain_id) === 46630 || warPoolGeneration(Number(subject.tournament.chain_id)) === WAR_POOL_GENERATION_V2
+        body: Number(subject.tournament.chain_id) === 46630 || isCompetitionV2Chain(Number(subject.tournament.chain_id))
           ? "Support is a donation to a roster memecoin. The overall champion takes 75% of buy-ins plus Support. 5% protocol / 20% league. Supporters are not paid."
           : "Support is a donation to a roster memecoin. The overall champion takes 85% of buy-ins plus Support. 5% protocol / 10% Major War League. Supporters are not paid.",
         chainId: Number(subject.tournament.chain_id),

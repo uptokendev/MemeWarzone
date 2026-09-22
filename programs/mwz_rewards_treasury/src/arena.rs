@@ -34,7 +34,7 @@ pub const ARENA_CLAIM_WINNER: u8 = 0;
 pub const ARENA_CLAIM_PROTOCOL: u8 = 1;
 pub const ARENA_CLAIM_MWL: u8 = 2;
 pub const ARENA_PROTOCOL_BPS: u64 = 500;
-pub const ARENA_MWL_BPS: u64 = 1_000;
+pub const ARENA_MWL_BPS: u64 = 2_000;
 pub const ARENA_BPS_DENOM: u64 = 10_000;
 /// Boosts: 90% to the prize, 10% to protocol (locked product rule). Applied
 /// at resolve, so the funder's own transaction still credits one vault.
@@ -367,7 +367,7 @@ pub fn resolve_pool_v2_handler(
 }
 
 /// Tournament resolution with up to three paid places. The resolver signs the
-/// full place list; the prize (85% of entries and support, plus 90% of boosts)
+/// full place list; the prize (75% of entries and support, plus 90% of boosts)
 /// is split by bps with any rounding remainder going to first place, so the
 /// pool is conserved to the lamport. Battles keep resolve_pool_v2.
 pub fn resolve_pool_places_v2_handler<'info>(
@@ -1059,12 +1059,40 @@ pub enum ArenaError {
 mod tests {
     use super::*;
     #[test]
-    fn normal_base_is_85_5_10_and_boost_is_90_10() {
+    fn normal_base_is_75_20_5_and_boost_is_90_10() {
+        // Competition V2 entry split, the same numbers ArenaWarPoolTreasuryV2
+        // applies on EVM: ENTRY_LEAGUE_BPS 2000, ENTRY_PROTOCOL_BPS 500, and
+        // the winner takes the remainder.
         let (winner, protocol, mwl) = split_arena_prize(10_000).unwrap();
-        assert_eq!((winner, protocol, mwl), (8_500, 500, 1_000));
+        assert_eq!((winner, protocol, mwl), (7_500, 500, 2_000));
+        assert_eq!(winner + protocol + mwl, 10_000);
         let (boost_prize, boost_protocol) = split_arena_boost(7_000).unwrap();
         assert_eq!((boost_prize, boost_protocol), (6_300, 700));
         assert_eq!(boost_prize + boost_protocol, 7_000);
+    }
+
+    #[test]
+    fn the_prize_split_conserves_every_lamport() {
+        // The winner share is the remainder, so rounding can never mint or
+        // burn a lamport however the base divides.
+        for base in [0u64, 1, 2, 3, 7, 19, 99, 100, 101, 9_999, 10_001, 123_456_789, 1_000_000_000_000] {
+            let (winner, protocol, mwl) = split_arena_prize(base).unwrap();
+            assert_eq!(winner + protocol + mwl, base, "base {base}");
+            assert_eq!(protocol, base / 20, "protocol is 5% of {base}");
+            assert_eq!(mwl, base / 5, "MWL is 20% of {base}");
+        }
+    }
+
+    #[test]
+    fn an_absurd_prize_fails_closed_instead_of_wrapping() {
+        // split_arena_prize multiplies before dividing, so the bps factor caps
+        // the base it can take: u64::MAX / ARENA_MWL_BPS, about 9.2e15 lamports
+        // (~9.2M SOL). Raising the MWL share to 20% halved that ceiling, so pin
+        // it -- above the line the call must error, never silently wrap.
+        let ceiling = u64::MAX / ARENA_MWL_BPS;
+        assert!(split_arena_prize(ceiling).is_ok());
+        assert!(split_arena_prize(ceiling + 1).is_err());
+        assert!(split_arena_prize(u64::MAX).is_err());
     }
     #[test]
     fn places_split_conserves_the_prize_and_gives_the_remainder_to_first() {
