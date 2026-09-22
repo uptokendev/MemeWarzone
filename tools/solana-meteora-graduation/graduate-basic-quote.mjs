@@ -22,6 +22,7 @@ import {
   getOrCreateAssociatedTokenAccount,
   NATIVE_MINT,
   TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
 } from "@solana/spl-token";
 import {
   ActivationType,
@@ -280,15 +281,23 @@ async function main() {
   console.log("GRADUATION QUOTE BINDING", JSON.stringify(auth.quote?.binding || null), "quoteConfigId", quoteConfigId, "quote", auth.quote?.mint);
   assertPk(auth.programId, program.programId, "programId"); assertPk(auth.accounts.campaign, campaignPk, "campaign"); assertPk(auth.accounts.mint, campaign.mint, "mint"); assertPk(auth.accounts.authorityTokenAccount, stagingAta.address, "staging ATA");
   const quoteMint = asPk(auth.quote.mint, "quote mint"); const nativeQuote = Number(auth.quote.profile) === QUOTE_PROFILE_NATIVE;
-  let quoteAta = null; let recoveryAccount = null;
+  let quoteAta = null; let recoveryAccount = null; let quoteTokenProgram = TOKEN_PROGRAM_ID;
   if (nativeQuote) {
     quoteAta = await getOrCreateAssociatedTokenAccount(connection, operator, quoteMint, operator.publicKey, false, "confirmed", undefined, TOKEN_PROGRAM_ID);
     const nativeQuoteAccount = await getAccount(connection, quoteAta.address, "confirmed", TOKEN_PROGRAM_ID);
     if (nativeQuoteAccount.amount !== 0n) fail(`operator native quote ATA must be empty; balance=${nativeQuoteAccount.amount}`);
   } else {
-    quoteAta = await getOrCreateAssociatedTokenAccount(connection, operator, quoteMint, operator.publicKey, false, "confirmed", undefined, TOKEN_PROGRAM_ID);
-    const q = await getAccount(connection, quoteAta.address, "confirmed", TOKEN_PROGRAM_ID); if (q.amount !== 0n) fail(`operator quote ATA must be empty; balance=${q.amount}`);
-    recoveryAccount = asPk(auth.quote.recoveryAccount, "quote recovery account"); const recovery = await getAccount(connection, recoveryAccount, "confirmed", TOKEN_PROGRAM_ID); if (!recovery.mint.equals(quoteMint)) fail("quote recovery account mint mismatch");
+    // The authorization names the program that owns the quote mint. It decides
+    // the ATA addresses (the token program is part of the ATA seeds) and which
+    // program the account reads and the pool must use, so a Token-2022 quote
+    // cannot be driven through the classic program.
+    quoteTokenProgram = asPk(auth.accounts.quoteTokenProgram || TOKEN_PROGRAM_ID.toBase58(), "quote token program");
+    if (!quoteTokenProgram.equals(TOKEN_PROGRAM_ID) && !quoteTokenProgram.equals(TOKEN_2022_PROGRAM_ID)) {
+      fail(`authorization named quote token program ${quoteTokenProgram} which is neither token program`);
+    }
+    quoteAta = await getOrCreateAssociatedTokenAccount(connection, operator, quoteMint, operator.publicKey, false, "confirmed", undefined, quoteTokenProgram);
+    const q = await getAccount(connection, quoteAta.address, "confirmed", quoteTokenProgram); if (q.amount !== 0n) fail(`operator quote ATA must be empty; balance=${q.amount}`);
+    recoveryAccount = asPk(auth.quote.recoveryAccount, "quote recovery account"); const recovery = await getAccount(connection, recoveryAccount, "confirmed", quoteTokenProgram); if (!recovery.mint.equals(quoteMint)) fail("quote recovery account mint mismatch");
     assertPk(auth.accounts.authorityQuoteAccount, quoteAta.address, "authority quote ATA");
   }
   const ed25519Ix = Ed25519Program.createInstructionWithPublicKey({ publicKey: asPk(auth.authorization.routeSigner, "route signer").toBytes(), message: Buffer.from(auth.authorization.digestBase64, "base64"), signature: Buffer.from(auth.authorization.signatureBase64, "base64") });
@@ -308,10 +317,18 @@ async function main() {
   const tokenAAmount = new BN(maxTokens.toString()); const tokenBAmount = new BN(quoteRaw.toString());
   const liquidityDelta = cpAmm.getLiquidityDelta({ maxAmountTokenA: tokenAAmount, maxAmountTokenB: tokenBAmount, sqrtPrice: initSqrtPrice, sqrtMinPrice: MIN_SQRT_PRICE, sqrtMaxPrice: MAX_SQRT_PRICE, collectFeeMode: CollectFeeMode.BothToken });
   const poolFees = { baseFee: getBaseFeeParams({ baseFeeMode: BaseFeeMode.FeeTimeSchedulerLinear, feeTimeSchedulerParam: { startingFeeBps: 25, endingFeeBps: 25, numberOfPeriod: 0, totalDuration: 0 } }, quoteDecimals, ActivationType.Timestamp), compoundingFeeBps: 0, padding: 0, dynamicFee: null };
-  const { tx: meteoraTx, pool, position } = await cpAmm.createCustomPool({ payer: operator.publicKey, creator: operator.publicKey, positionNft: positionNft.publicKey, tokenAMint: campaign.mint, tokenBMint: quoteMint, tokenAAmount, tokenBAmount, sqrtMinPrice: MIN_SQRT_PRICE, sqrtMaxPrice: MAX_SQRT_PRICE, liquidityDelta, initSqrtPrice, poolFees, hasAlphaVault: false, activationType: ActivationType.Timestamp, collectFeeMode: CollectFeeMode.BothToken, activationPoint: null, tokenAProgram: TOKEN_PROGRAM_ID, tokenBProgram: TOKEN_PROGRAM_ID, isLockLiquidity: true });
+  const { tx: meteoraTx, pool, position } = await cpAmm.createCustomPool({ payer: operator.publicKey, creator: operator.publicKey, positionNft: positionNft.publicKey, tokenAMint: campaign.mint, tokenBMint: quoteMint, tokenAAmount, tokenBAmount, sqrtMinPrice: MIN_SQRT_PRICE, sqrtMaxPrice: MAX_SQRT_PRICE, liquidityDelta, initSqrtPrice, poolFees, hasAlphaVault: false, activationType: ActivationType.Timestamp, collectFeeMode: CollectFeeMode.BothToken, activationPoint: null, tokenAProgram: TOKEN_PROGRAM_ID, tokenBProgram: quoteTokenProgram, isLockLiquidity: true });
   assertPk(auth.accounts.meteoraPool, pool, "Meteora pool"); assertPk(auth.accounts.meteoraPosition, position, "Meteora position");
   const rewardRemaining = Object.values(rewardVaults).map((pubkey) => ({ pubkey, isWritable: true, isSigner: false }));
-  const quoteRemaining = nativeQuote ? [] : [{ pubkey: quoteMint, isWritable: false, isSigner: false }, { pubkey: quoteAta.address, isWritable: true, isSigner: false }, { pubkey: recoveryAccount, isWritable: true, isSigner: false }];
+  // The program reads the quote prefix as [mint, authority ATA, recovery], and
+  // a Token-2022 quote appends the token program it must CPI into. A classic
+  // quote keeps the exact three-account list it always had.
+  const quoteRemaining = nativeQuote ? [] : [
+    { pubkey: quoteMint, isWritable: false, isSigner: false },
+    { pubkey: quoteAta.address, isWritable: true, isSigner: false },
+    { pubkey: recoveryAccount, isWritable: true, isSigner: false },
+    ...(quoteTokenProgram.equals(TOKEN_2022_PROGRAM_ID) ? [{ pubkey: quoteTokenProgram, isWritable: false, isSigner: false }] : []),
+  ];
   const confirmIx = await program.methods.confirmGraduation().accountsStrict({ authority: operator.publicKey, globalConfig: asPk(auth.accounts.globalConfig, "globalConfig"), campaign: campaignPk, mint: campaign.mint, tokenVault: campaign.tokenVault, solVault: campaign.solVault, authorityTokenAccount: stagingAta.address, creator: campaign.creator, creatorTokenAccount: creatorAta.address, creatorProfile: asPk(auth.accounts.creatorProfile, "creatorProfile"), graduationState: asPk(auth.accounts.graduationState, "graduationState"), meteoraPool: pool, meteoraPosition: position, meteoraTokenVault: asPk(auth.accounts.meteoraTokenVault, "meteoraTokenVault"), meteoraNativeVault: asPk(auth.accounts.meteoraNativeVault, "meteora quote vault"), tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId }).remainingAccounts([...quoteRemaining, ...rewardRemaining]).instruction();
   const acquisition = await buildAcquisitionInstructions(auth, { publicKey: operator.publicKey, secretKey: operator.secretKey, connection });
 

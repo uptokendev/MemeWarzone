@@ -6,7 +6,8 @@
  * module asks the chain and the market-data sources instead:
  *
  *   identity        contract / mint exists, symbol and decimals match the catalog,
- *                   Solana token program (Token-2022 cannot graduate yet)
+ *                   Solana token program (Token-2022 allowed, but only within
+ *                   the extension allowlist graduation enforces)
  *   price           stablecoin -> fixed $1 with a deviation check; native -> the
  *                   chain coin; otherwise CoinGecko by contract address
  *   route           BNB: a volatile Topaz WBNB/quote pool with reserves and a
@@ -161,6 +162,52 @@ async function solanaRpc(url, method, params, fetchImpl = fetch) {
   return body?.result;
 }
 
+/**
+ * Token-2022 extension discriminants, and the set the graduation program will
+ * hold as a quote asset.
+ *
+ * This mirrors `quote_extension_allowed` in programs/memewarzone_solana/src/
+ * graduation.rs. It is an allowlist in both places for the same reason: the
+ * extension set grows with every Token-2022 release, and an unknown extension
+ * must fail rather than be waved through. The two lists must agree -- a mint
+ * activated here that the program refuses would fail at graduation, after the
+ * campaign has already closed.
+ */
+const TOKEN_2022_EXTENSION_NAMES = Object.freeze({
+  0: "Uninitialized", 1: "TransferFeeConfig", 2: "TransferFeeAmount", 3: "MintCloseAuthority",
+  4: "ConfidentialTransferMint", 5: "ConfidentialTransferAccount", 6: "DefaultAccountState",
+  7: "ImmutableOwner", 8: "MemoTransfer", 9: "NonTransferable", 10: "InterestBearingConfig",
+  11: "CpiGuard", 12: "PermanentDelegate", 13: "NonTransferableAccount", 14: "TransferHook",
+  15: "TransferHookAccount", 16: "ConfidentialTransferFeeConfig", 17: "ConfidentialTransferFeeAmount",
+  18: "MetadataPointer", 19: "TokenMetadata", 20: "GroupPointer", 21: "TokenGroup",
+  22: "GroupMemberPointer", 23: "TokenGroupMember",
+});
+const TOKEN_2022_MINT_EXTENSIONS_ALLOWED = Object.freeze(new Set([0, 18, 19, 20, 21, 22, 23]));
+
+/**
+ * A Token-2022 mint is the classic 82-byte layout, a one-byte account type at
+ * offset 165, then TLV entries of [u16 type, u16 length, value].
+ */
+export function token2022MintExtensions(data) {
+  if (!data || data.length <= 166) return [];
+  const types = [];
+  let offset = 166;
+  while (offset + 4 <= data.length) {
+    const type = data.readUInt16LE(offset);
+    const length = data.readUInt16LE(offset + 2);
+    if (type === 0 && length === 0) break;
+    types.push(type);
+    offset += 4 + length;
+  }
+  return types;
+}
+
+export function disallowedToken2022Extensions(data) {
+  return token2022MintExtensions(data)
+    .filter((type) => !TOKEN_2022_MINT_EXTENSIONS_ALLOWED.has(type))
+    .map((type) => TOKEN_2022_EXTENSION_NAMES[type] || `Unknown(${type})`);
+}
+
 async function solanaMintSource(item, { fetchImpl = fetch } = {}) {
   if (item.identityKind === "NATIVE") return { exists: true, native: true, decimals: 9, tokenProgram: "native" };
   const url = solanaRpcUrlFor(item);
@@ -176,7 +223,8 @@ async function solanaMintSource(item, { fetchImpl = fetch } = {}) {
   const decimals = data.readUInt8(44);
   const initialized = data.readUInt8(45) === 1;
   const freezeAuthorityPresent = data.readUInt32LE(46) === 1;
-  return { exists: true, tokenProgram, decimals, supply, initialized, mintAuthorityPresent, freezeAuthorityPresent };
+  const disallowedExtensions = tokenProgram === "token-2022" ? disallowedToken2022Extensions(data) : [];
+  return { exists: true, tokenProgram, decimals, supply, initialized, mintAuthorityPresent, freezeAuthorityPresent, disallowedExtensions };
 }
 
 function coinGeckoHeaders(env = process.env) {
@@ -362,7 +410,13 @@ export function evaluateVerification(item, facts, thresholds = verificationThres
       flag("SYMBOL_MISMATCH", `On-chain symbol ${token.symbol} differs from catalog ${item.symbol}.`, false);
     }
     if (family === "SOLANA" && token.tokenProgram === "token-2022") {
-      flag("TOKEN_2022_UNSUPPORTED", "Token-2022 mint: the graduation program cannot pair against it until the Token-2022 upgrade ships.");
+      // The program accepts Token-2022 quotes, but only within its extension
+      // allowlist, so the catalog refuses exactly what graduation would refuse.
+      const disallowed = token.disallowedExtensions || [];
+      if (disallowed.length) {
+        ok = false;
+        flag("TOKEN_2022_EXTENSION_UNSUPPORTED", `Token-2022 mint carries ${disallowed.join(", ")}, which graduation refuses.`);
+      }
     } else if (family === "SOLANA" && token.tokenProgram === "unknown") {
       ok = false;
       flag("NOT_A_TOKEN_MINT", "Account is not owned by the SPL Token program.");
@@ -436,9 +490,10 @@ export function evaluateVerification(item, facts, thresholds = verificationThres
   if (family === "SOLANA") {
     proposal.acquisitionAdapter = native ? "NATIVE" : item.solanaCluster === "devnet" ? "ORCA_WHIRLPOOL_DEVNET" : "JUPITER";
     proposal.acquisitionProgram = native ? SYSTEM_PROGRAM : item.solanaCluster === "devnet" ? (facts.existingPolicy?.acquisitionProgram || null) : JUPITER_V6_PROGRAM;
-    if (token.tokenProgram === "token-2022") {
-      gates.lp = "UNAVAILABLE";
-    } else if (gates.identity === "VERIFIED") {
+    // Meteora DAMM v2 takes a Token-2022 mint on either side of a pool -- its
+    // SDK takes tokenAProgram and tokenBProgram separately -- so an accepted
+    // Token-2022 quote has an LP venue like any other.
+    if (gates.identity === "VERIFIED") {
       gates.lp = "VERIFIED";
       metrics.lpVenue = "meteora-damm-v2";
     }

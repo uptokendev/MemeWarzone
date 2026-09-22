@@ -105,7 +105,7 @@ test("thin liquidity, low volume, wrong decimals and depegs are flagged, never a
   assert.ok(!sourceDown.flags.some((flag) => flag.code === "NO_PRICE_SOURCE"));
 });
 
-test("Solana mainnet ecosystem token with a Jupiter route passes; Token-2022 and high impact do not", () => {
+test("Solana mainnet ecosystem token with a Jupiter route passes; a clean Token-2022 quote passes, a fee-bearing one does not", () => {
   const ok = evaluateVerification(solItem(), {
     token: { exists: true, tokenProgram: "spl-token", decimals: 6, supply: "1", mintAuthorityPresent: false, freezeAuthorityPresent: false },
     market: { id: "jupiter-exchange-solana", priceUsd: 0.8, volume24hUsd: 60_000_000, marketCapUsd: 2_000_000_000 },
@@ -119,15 +119,29 @@ test("Solana mainnet ecosystem token with a Jupiter route passes; Token-2022 and
   assert.equal(ok.proposal.coinGeckoId, "jupiter-exchange-solana");
   assert.equal(ok.metrics.lpVenue, "meteora-damm-v2");
 
-  const t22 = evaluateVerification(solItem({ symbol: "NVDAx", assetClass: "PUBLIC_RWA", provider: { key: "xstocks", providerClass: "PROVIDER_RWA", authorityMode: "GENERIC_POLICY" }, decimals: 8 }), {
-    token: { exists: true, tokenProgram: "token-2022", decimals: 8 },
+  // Token-2022 quotes are accepted now that graduation pairs against them and
+  // Meteora DAMM v2 takes either token program on a pool. An xStock with no
+  // balance-affecting extension is an ordinary candidate.
+  const xStock = (token) => evaluateVerification(solItem({ symbol: "NVDAx", assetClass: "PUBLIC_RWA", provider: { key: "xstocks", providerClass: "PROVIDER_RWA", authorityMode: "GENERIC_POLICY" }, decimals: 8 }), {
+    token,
     market: { id: "nvidia-xstock", priceUsd: 180, volume24hUsd: 5_000_000, marketCapUsd: 50_000_000 },
     nativeMarket: { priceUsd: 150 },
     jupiterRoute: { available: true, priceImpactBps: 30, hops: 1 },
   }, THRESHOLDS);
-  assert.equal(t22.state, "review");
-  assert.equal(t22.gates.lp, "UNAVAILABLE");
-  assert.ok(t22.flags.some((flag) => flag.code === "TOKEN_2022_UNSUPPORTED"));
+
+  const t22 = xStock({ exists: true, tokenProgram: "token-2022", decimals: 8, disallowedExtensions: [] });
+  assert.equal(t22.state, "passed");
+  assert.equal(t22.gates.lp, "VERIFIED");
+  assert.equal(t22.metrics.lpVenue, "meteora-damm-v2");
+  assert.ok(!t22.flags.some((flag) => flag.code === "TOKEN_2022_UNSUPPORTED"));
+
+  // The catalog must refuse exactly what graduation refuses: a mint activated
+  // here that the program rejects would fail after the campaign has closed.
+  const t22Fee = xStock({ exists: true, tokenProgram: "token-2022", decimals: 8, disallowedExtensions: ["TransferFeeConfig"] });
+  assert.equal(t22Fee.gates.identity, "REJECTED");
+  assert.notEqual(t22Fee.state, "passed");
+  assert.ok(t22Fee.flags.some((flag) => flag.code === "TOKEN_2022_EXTENSION_UNSUPPORTED"));
+  assert.ok(t22Fee.flags.some((flag) => String(flag.detail || flag.message || "").includes("TransferFeeConfig")));
 
   const impact = evaluateVerification(solItem(), {
     token: { exists: true, tokenProgram: "spl-token", decimals: 6 },

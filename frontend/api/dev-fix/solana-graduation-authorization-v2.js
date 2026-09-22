@@ -33,6 +33,7 @@ const ROUTE_PROFILE_UNLINKED = 1;
 const METEORA_CP_AMM_PROGRAM_ID = "cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG";
 const NATIVE_MINT = "So11111111111111111111111111111111111111112";
 const ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL";
+export const TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb";
 const DEFAULT_AUTH_TTL_SECONDS = 5 * 60;
 const MAX_AUTH_TTL_SECONDS = 15 * 60;
 const DEFAULT_SLIPPAGE_BPS = 50;
@@ -259,6 +260,13 @@ async function rpcCall(rpcUrl, method, params = []) {
   }
 }
 
+async function getAccountInfoWithOwner(rpcUrl, address, label) {
+  const result = await rpcCall(rpcUrl, "getAccountInfo", [address, { commitment: "confirmed", encoding: "base64" }]);
+  const value = result?.value;
+  if (!value?.data?.[0]) throw new SolanaGraduationAuthorizationError(`${label} account is missing.`, { code: "SOLANA_GRADUATION_ACCOUNT_MISSING" });
+  return { owner: String(value.owner || ""), data: Buffer.from(value.data[0], "base64") };
+}
+
 async function getAccountData(rpcUrl, address, expectedOwner, label) {
   const result = await rpcCall(rpcUrl, "getAccountInfo", [address, { commitment: "confirmed", encoding: "base64" }]);
   const value = result?.value;
@@ -322,7 +330,10 @@ function deriveMeteoraPool(mint, quoteMint) {
 }
 function deriveMeteoraPosition(positionNftMint) { return findProgramAddressSync([Buffer.from("position"), publicKeyBytes(positionNftMint)], METEORA_CP_AMM_PROGRAM_ID).publicKey; }
 function deriveMeteoraVault(mint, pool) { return findProgramAddressSync([Buffer.from("token_vault"), publicKeyBytes(mint), publicKeyBytes(pool)], METEORA_CP_AMM_PROGRAM_ID).publicKey; }
-function deriveAta(owner, mint) { return findProgramAddressSync([publicKeyBytes(owner), publicKeyBytes(TOKEN_PROGRAM_ID), publicKeyBytes(mint)], ASSOCIATED_TOKEN_PROGRAM_ID).publicKey; }
+// The token program is part of the ATA seeds, so a Token-2022 mint derives a
+// different address than the classic one. Hardcoding the classic program here
+// silently produced the wrong account for every Token-2022 quote.
+export function deriveAta(owner, mint, tokenProgram = TOKEN_PROGRAM_ID) { return findProgramAddressSync([publicKeyBytes(owner), publicKeyBytes(tokenProgram), publicKeyBytes(mint)], ASSOCIATED_TOKEN_PROGRAM_ID).publicKey; }
 
 async function fetchJson(url, options = {}) {
   const controller = new AbortController();
@@ -460,8 +471,17 @@ export async function solanaGraduationAuthorizationV2(req, res) {
     if (samePublicKey(campaign.mint, quoteConfig.mint)) throw new SolanaGraduationAuthorizationError("Campaign mint cannot be its own quote asset.", { code: "SOLANA_GRADUATION_QUOTE_NOT_APPROVED" });
 
     if (quoteConfig.profile !== QUOTE_PROFILE.NATIVE) {
-    quoteConfig.recoveryAccount = deriveAta(authorityAddress, quoteConfig.mint);
-    const mintData = await getAccountData(rpcUrl, quoteConfig.mint, TOKEN_PROGRAM_ID, "Quote mint");
+    // Which token program owns the quote is a property of the authorized mint,
+    // read from chain rather than assumed, and it decides the ATA addresses.
+    const quoteMintAccount = await getAccountInfoWithOwner(rpcUrl, quoteConfig.mint, "Quote mint");
+    if (!samePublicKey(quoteMintAccount.owner, TOKEN_PROGRAM_ID) && !samePublicKey(quoteMintAccount.owner, TOKEN_2022_PROGRAM_ID)) {
+      failUnsafe(`Quote mint is owned by ${quoteMintAccount.owner}, which is neither token program.`);
+    }
+    quoteConfig.tokenProgram = samePublicKey(quoteMintAccount.owner, TOKEN_2022_PROGRAM_ID) ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
+    quoteConfig.recoveryAccount = deriveAta(authorityAddress, quoteConfig.mint, quoteConfig.tokenProgram);
+    const mintData = quoteMintAccount.data;
+    // Token-2022's base mint layout matches the classic one; extensions live
+    // past it, so the decimals byte is at the same offset for both.
     if (mintData.length < 45) failUnsafe("Quote mint account is too short.");
     const chainDecimals = mintData.readUInt8(44);
     if (quoteConfig.decimals && quoteConfig.decimals !== chainDecimals) failUnsafe("Catalog quote decimals do not match the mint account.");
@@ -518,7 +538,7 @@ export async function solanaGraduationAuthorizationV2(req, res) {
       graduationLiquidity: { maxLiquidityLamports: liquidity.maxLiquidityLamports.toString(), maxLiquidityTokens: liquidity.maxLiquidityTokens.toString(), finalizeFeeLamports: liquidity.finalizeFeeLamports.toString(), creatorPayoutLamports: liquidity.creatorPayoutLamports.toString(), finalSpotNanoLamports: liquidity.spotNano.toString() },
       quote: { configId: quoteConfig.id, binding: { source: quoteBinding.source, draftId: quoteBinding.draftId, native: quoteBinding.native, symbol: quoteBinding.symbol }, assetId: quoteConfig.assetId, providerId: quoteConfig.providerId, providerKey: quoteConfig.providerKey, providerClassName: quoteConfig.providerClassName, policyId: quoteConfig.policyId, policyKey: quoteConfig.policyKey, stateVersion: quoteConfig.stateVersion, configHashHex: quoteConfigHash.toString("hex"), mint: quoteConfig.mint, policyVersion: quoteConfig.policyVersion, profile: quoteConfig.profile, providerClass: quoteConfig.providerClass, decimals: quoteConfig.decimals, acquisitionAdapter: quoteConfig.acquisitionAdapter, acquisitionProgram: quoteConfig.acquisitionProgram, orcaPool: quoteConfig.orcaPool || null, orcaWhirlpoolsConfig: quoteConfig.orcaWhirlpoolsConfig || null, recoveryAccount: quoteConfig.recoveryAccount, expectedQuoteAmount: expectedQuoteAmount.toString(), minQuoteAmount: minQuoteAmount.toString(), maxSlippageBps, maxImpactBps, maxDeviationBps, acquisitionQuote: acquisition?.quote || null },
       createArgs: { nativeTargetLamports: nativeTargetLamports.toString(), oraclePriceUsdMicros: oraclePriceUsdMicros.toString(), deadline: deadline.toString(), nonce: Array.from(nonce), positionNftMint, finalizeRouteProfile, quoteMint: quoteConfig.mint, quoteConfigId: Array.from(quoteConfigHash), quotePolicyVersion: quoteConfig.policyVersion, quoteProfile: quoteConfig.profile, quoteProviderClass: quoteConfig.providerClass, acquisitionProgram: quoteConfig.acquisitionProgram, quoteReferenceUsdMicros: quoteReferenceUsdMicros.toString(), quoteDecimals: quoteConfig.decimals, expectedQuoteAmount: expectedQuoteAmount.toString(), minQuoteAmount: minQuoteAmount.toString(), maxSlippageBps, maxImpactBps, maxDeviationBps, quoteRecoveryAccount: quoteConfig.recoveryAccount },
-      accounts: { authority: authorityAddress, globalConfig, generationConfig: campaign.generationConfig, campaign: campaignAddress, mint: campaign.mint, tokenVault: campaign.tokenVault, solVault: campaign.solVault, authorityTokenAccount: deriveAta(authorityAddress, campaign.mint), authorityQuoteAccount: quoteConfig.profile === QUOTE_PROFILE.NATIVE ? null : deriveAta(authorityAddress, quoteConfig.mint), quoteRecoveryAccount: quoteConfig.recoveryAccount, creator: campaign.creator, creatorTokenAccount: deriveAta(campaign.creator, campaign.mint), creatorProfile: findProgramAddressSync([Buffer.from("creator"), publicKeyBytes(campaign.creator)], programId).publicKey, graduationState: findProgramAddressSync([Buffer.from("graduation"), publicKeyBytes(campaignAddress)], programId).publicKey, meteoraProgram: METEORA_CP_AMM_PROGRAM_ID, meteoraPool, meteoraPosition, meteoraTokenVault: deriveMeteoraVault(campaign.mint, meteoraPool), meteoraNativeVault: deriveMeteoraVault(quoteConfig.mint, meteoraPool), positionNftMint, instructions: SYSVAR_INSTRUCTIONS_ID, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SYSTEM_PROGRAM_ID },
+      accounts: { authority: authorityAddress, globalConfig, generationConfig: campaign.generationConfig, campaign: campaignAddress, mint: campaign.mint, tokenVault: campaign.tokenVault, solVault: campaign.solVault, authorityTokenAccount: deriveAta(authorityAddress, campaign.mint), authorityQuoteAccount: quoteConfig.profile === QUOTE_PROFILE.NATIVE ? null : deriveAta(authorityAddress, quoteConfig.mint, quoteConfig.tokenProgram || TOKEN_PROGRAM_ID), quoteTokenProgram: quoteConfig.tokenProgram || TOKEN_PROGRAM_ID, quoteRecoveryAccount: quoteConfig.recoveryAccount, creator: campaign.creator, creatorTokenAccount: deriveAta(campaign.creator, campaign.mint), creatorProfile: findProgramAddressSync([Buffer.from("creator"), publicKeyBytes(campaign.creator)], programId).publicKey, graduationState: findProgramAddressSync([Buffer.from("graduation"), publicKeyBytes(campaignAddress)], programId).publicKey, meteoraProgram: METEORA_CP_AMM_PROGRAM_ID, meteoraPool, meteoraPosition, meteoraTokenVault: deriveMeteoraVault(campaign.mint, meteoraPool), meteoraNativeVault: deriveMeteoraVault(quoteConfig.mint, meteoraPool), positionNftMint, instructions: SYSVAR_INSTRUCTIONS_ID, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SYSTEM_PROGRAM_ID },
       authorization: { digestHex: digest.toString("hex"), digestBase64: digest.toString("base64"), signatureBase64: signature.toString("base64"), routeSigner: signer.publicKeyBase58, deadline: deadline.toString(), validUntil: new Date(Number(deadline) * 1000).toISOString(), ed25519InstructionMustImmediatelyPrecedeBeginGraduation: true },
       transactionPolicy: quoteConfig.profile === QUOTE_PROFILE.NATIVE
         ? "One transaction only: Ed25519 verify -> begin_graduation -> Meteora MEME/WSOL create+permanent-lock -> confirm_graduation."
