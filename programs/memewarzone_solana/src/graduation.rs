@@ -1655,6 +1655,159 @@ fn checked_slice(data: &[u8], offset: u16, len: usize) -> Result<&[u8]> {
 mod tests {
     use super::*;
 
+    use anchor_spl::token_2022::spl_token_2022::{
+        extension::{
+            immutable_owner::ImmutableOwner, metadata_pointer::MetadataPointer,
+            transfer_fee::TransferFeeConfig, BaseStateWithExtensionsMut, StateWithExtensionsMut,
+        },
+        state::{Account as T22Account, AccountState as T22AccountState, Mint as T22Mint},
+    };
+
+    /// Real Token-2022 mint bytes, built by the token program's own packer so
+    /// the TLV layout under test is the one the chain produces.
+    fn token_2022_mint_bytes(extensions: &[ExtensionType]) -> Vec<u8> {
+        let len = ExtensionType::try_calculate_account_len::<T22Mint>(extensions).unwrap();
+        let mut buffer = vec![0u8; len];
+        {
+            let mut state =
+                StateWithExtensionsMut::<T22Mint>::unpack_uninitialized(&mut buffer).unwrap();
+            for extension in extensions {
+                match extension {
+                    ExtensionType::TransferFeeConfig => {
+                        state.init_extension::<TransferFeeConfig>(true).unwrap();
+                    }
+                    ExtensionType::MetadataPointer => {
+                        state.init_extension::<MetadataPointer>(true).unwrap();
+                    }
+                    other => panic!("unhandled mint extension {other:?}"),
+                }
+            }
+            state.base = T22Mint {
+                decimals: 6,
+                is_initialized: true,
+                ..Default::default()
+            };
+            state.pack_base();
+            state.init_account_type().unwrap();
+        }
+        buffer
+    }
+
+    fn token_2022_account_bytes(mint: Pubkey, owner: Pubkey, amount: u64, extensions: &[ExtensionType]) -> Vec<u8> {
+        let len = ExtensionType::try_calculate_account_len::<T22Account>(extensions).unwrap();
+        let mut buffer = vec![0u8; len];
+        {
+            let mut state =
+                StateWithExtensionsMut::<T22Account>::unpack_uninitialized(&mut buffer).unwrap();
+            for extension in extensions {
+                match extension {
+                    ExtensionType::ImmutableOwner => {
+                        state.init_extension::<ImmutableOwner>(true).unwrap();
+                    }
+                    other => panic!("unhandled account extension {other:?}"),
+                }
+            }
+            state.base = T22Account {
+                mint,
+                owner,
+                amount,
+                state: T22AccountState::Initialized,
+                ..Default::default()
+            };
+            state.pack_base();
+            state.init_account_type().unwrap();
+        }
+        buffer
+    }
+
+    fn info<'a>(key: &'a Pubkey, owner: &'a Pubkey, lamports: &'a mut u64, data: &'a mut [u8]) -> AccountInfo<'a> {
+        AccountInfo::new(key, false, false, lamports, data, owner, false, 0)
+    }
+
+    #[test]
+    fn a_plain_token_2022_mint_resolves_to_the_token_2022_program() {
+        let key = Pubkey::new_unique();
+        let owner = spl_token_2022::ID;
+        let mut lamports = 0u64;
+        let mut data = token_2022_mint_bytes(&[]);
+        let account = info(&key, &owner, &mut lamports, &mut data);
+        assert_eq!(quote_token_program_for_mint(&account).unwrap(), spl_token_2022::ID);
+    }
+
+    #[test]
+    fn a_token_2022_mint_with_a_metadata_pointer_is_accepted() {
+        let key = Pubkey::new_unique();
+        let owner = spl_token_2022::ID;
+        let mut lamports = 0u64;
+        let mut data = token_2022_mint_bytes(&[ExtensionType::MetadataPointer]);
+        let account = info(&key, &owner, &mut lamports, &mut data);
+        assert_eq!(quote_token_program_for_mint(&account).unwrap(), spl_token_2022::ID);
+    }
+
+    #[test]
+    fn a_token_2022_mint_charging_a_transfer_fee_is_refused() {
+        // The sweep moves the exact amount it read; a transfer fee would make
+        // the recovery account receive less and silently break that accounting.
+        let key = Pubkey::new_unique();
+        let owner = spl_token_2022::ID;
+        let mut lamports = 0u64;
+        let mut data = token_2022_mint_bytes(&[ExtensionType::TransferFeeConfig]);
+        let account = info(&key, &owner, &mut lamports, &mut data);
+        assert!(quote_token_program_for_mint(&account).is_err());
+    }
+
+    #[test]
+    fn a_mint_owned_by_neither_token_program_is_refused() {
+        let key = Pubkey::new_unique();
+        let owner = Pubkey::new_unique();
+        let mut lamports = 0u64;
+        let mut data = token_2022_mint_bytes(&[]);
+        let account = info(&key, &owner, &mut lamports, &mut data);
+        assert!(quote_token_program_for_mint(&account).is_err());
+    }
+
+    #[test]
+    fn an_extended_token_2022_account_unpacks_where_the_classic_unpack_cannot() {
+        // This is the bug the change fixes: spl_token's unpack demands exactly
+        // 165 bytes, so every Token-2022 account carrying an extension was
+        // rejected before it could ever be read.
+        let mint = Pubkey::new_unique();
+        let holder = Pubkey::new_unique();
+        let key = Pubkey::new_unique();
+        let owner = spl_token_2022::ID;
+        let mut lamports = 0u64;
+        let mut data = token_2022_account_bytes(mint, holder, 4_242, &[ExtensionType::ImmutableOwner]);
+        assert!(data.len() > SplTokenAccount::LEN, "fixture must carry an extension");
+        assert!(SplTokenAccount::unpack(&data).is_err(), "classic unpack must reject an extended account");
+
+        let account = info(&key, &owner, &mut lamports, &mut data);
+        let parsed = unpack_quote_account(&account).unwrap();
+        assert_eq!(parsed.mint, mint);
+        assert_eq!(parsed.owner, holder);
+        assert_eq!(parsed.amount, 4_242);
+    }
+
+    #[test]
+    fn a_classic_spl_quote_account_reads_exactly_as_before() {
+        let mint = Pubkey::new_unique();
+        let holder = Pubkey::new_unique();
+        let key = Pubkey::new_unique();
+        let owner = token::ID;
+        let mut lamports = 0u64;
+        let mut data = vec![0u8; SplTokenAccount::LEN];
+        let source = SplTokenAccount {
+            mint,
+            owner: holder,
+            amount: 7_777,
+            state: spl_token::state::AccountState::Initialized,
+            ..Default::default()
+        };
+        SplTokenAccount::pack(source, &mut data).unwrap();
+        let account = info(&key, &owner, &mut lamports, &mut data);
+        let parsed = unpack_quote_account(&account).unwrap();
+        assert_eq!((parsed.mint, parsed.owner, parsed.amount), (mint, holder, 7_777));
+    }
+
     #[test]
     fn quote_extension_allowlist_admits_only_inert_extensions() {
         for extension in [
