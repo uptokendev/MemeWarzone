@@ -1,27 +1,3 @@
-- **Watch the bound graduation envelope.** Gate B drives a campaign from a
-  closed curve to a bound Token-2022 pool in the production transaction shape
-  and prints a byte budget every run. It currently sends **1178 bytes against a
-  1232 hard limit — 54 bytes of headroom.** The program requires the acquisition
-  program before Meteora in the same transaction, so it cannot be split to make
-  room, and the failure would be a size error at assembly rather than anything
-  the program can report.
-
-  Where the bytes go, measured: 128B signatures, 260B `begin_graduation` args,
-  144B Ed25519, 107B+24B Meteora, 49B the Orca swap, 8B `confirm_graduation`,
-  87 account references.
-
-  Two levers if a longer route ever eats the margin, both measured rather than
-  estimated:
-  - Moving the 2% fee and the 20% creator payout to a claim model removes 7
-    accounts from `confirm_graduation` and saves **14 bytes**. Small; do it for
-    product reasons, not for bytes.
-  - `begin_graduation` carries **128 bytes of pubkeys that name accounts the
-    transaction already has** — `positionNftMint`, `quoteMint`,
-    `acquisitionProgram`, `quoteRecoveryAccount`. Reading them from accounts
-    instead trades 32 bytes of signed data for one account reference each. This
-    is the real lever, and it is a digest schema change (v4 to v5) with matching
-    client changes.
-
 # Solana mainnet upgrades through Squads — runbook
 
 **Written for:** the founder and whoever operates the Squads multisig.
@@ -29,6 +5,10 @@
 **Status: nothing in this document has been executed.** Every figure below was read
 from mainnet on 2026-09-22; no mainnet transaction has been sent. The treasury
 upgrade remains on hold until explicitly released.
+
+Both gates were re-run on 2026-09-22 against the tree being shipped and the
+launchpad certified the same `e6ed7df3…` in the table below, so step 1 is
+already satisfied for this commit.
 
 Both mainnet programs are owned by the Squads multisig
 `fk5YYWb4ppwbFqME8YRugirMSaNfhGgPP3GjfMbbfGv`, so the upgrade instruction itself
@@ -64,17 +44,22 @@ is a prerequisite, not a cleanup step.
 
 ## Cost, and which part is permanent
 
-Current treasury ProgramData holds 4.59491544 SOL against a 3.35353152 SOL
-requirement, so part of the extension is already funded.
+Read from mainnet with `solana rent` on 2026-09-22. A buffer account is
+37 bytes of header plus the binary; a ProgramData account is 45 plus.
 
 | Item | SOL | Recovered? |
 |---|---|---|
-| Treasury extend top-up (to 6.485128 rent minimum) | ~1.890 | No — permanent rent |
-| Buffer for the upload (per program) | 6.485128 | Yes — refunded when the upgrade consumes it |
+| Launchpad buffer (37 + 1218568 B) | 6.19116364 | Yes — refunded to the spill account when the upgrade consumes it |
+| Treasury buffer (37 + 1276472 B) | 6.48531596 | Yes — same |
+| Treasury extend top-up | ~1.89044116 | **No — permanent rent** |
 
-The deployer `9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H` holds 13.24 SOL,
-which covers either program's buffer plus the extend. The multisig itself holds
-0.001 SOL and pays for none of this.
+The treasury's ProgramData currently holds 4.59491544 SOL and would need
+6.4853566 to be rent-exempt at the larger size, hence the top-up. The launchpad
+needs no extend and therefore no permanent spend at all — its buffer comes back.
+
+The deployer `9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H` holds
+13.238843275 SOL, which covers either program's buffer plus the extend. The
+multisig itself holds 0.001 SOL and pays for none of this.
 
 Note the standing rule: the deployer must never hold user money. It is the fee
 payer here and nothing more.
@@ -107,42 +92,52 @@ Confirm `Data Length` is at least 1276472 before continuing.
 
 ### 3. Write the buffer and hand it to the multisig
 
-```
-solana program write-buffer <candidate.so> \
-  --url <mainnet-rpc> --keypair <deployer> \
-  --with-compute-unit-price 10000 --max-sign-attempts 60 \
-  --buffer <named-buffer-keypair>
-solana program set-buffer-authority <BUFFER> \
-  --new-buffer-authority fk5YYWb4ppwbFqME8YRugirMSaNfhGgPP3GjfMbbfGv \
-  --url <mainnet-rpc> --keypair <deployer>
-```
-
-Use a **named** buffer keypair. A 1.2MB upload is hundreds of write
-transactions and a public RPC will drop enough of them to abort the deploy —
-this happened on devnet, stranding a funded buffer whose only handle was a seed
-phrase printed once. With a named keypair the buffer is recoverable by address,
-resumable, and closable with `solana program close <BUFFER> --recipient <deployer>`.
-
-Verify the buffer before proposing:
+One command does the whole staging — sha check, allocation check, upload,
+byte-verify, authority transfer — and prints the Squads values at the end:
 
 ```
-solana program dump <BUFFER> /tmp/buffer-check.so --url <mainnet-rpc>
-sha256sum /tmp/buffer-check.so
+SOLANA_MAINNET_RPC_URL=<paid rpc> \
+  bash scripts/solana/prepare-mainnet-squads-buffer.sh launchpad
 ```
 
-A dumped buffer may carry trailing zero padding. The bytes the binary occupies
-must equal the candidate and the remainder must be zero — the same check
-`scripts/solana/program-upgrade-verify.cjs` applies. A plain hash comparison
-will disagree with a perfectly good buffer.
+It refuses the public `api.mainnet-beta.solana.com`. A 1.2MB upload is several
+hundred write transactions, and when enough are dropped the deploy aborts with
+the rent already spent — this happened on devnet and stranded 6.49 SOL. Use a
+paid endpoint (Helius, QuickNode, Triton). `MWZ_ALLOW_PUBLIC_RPC=1` overrides,
+but there is no good reason to.
+
+The buffer keypair is **generated ahead of time and named**, so the address is
+known before a lamport is spent, the upload resumes into the same account if it
+aborts, and the rent is always recoverable:
+
+| | |
+|---|---|
+| Buffer address | `EdmGZHL5fNGQuT8b8wRz5JbT4uhUwHyptuoSoBjLkJbg` |
+| Keypair | `~/.config/memewarzone/mwz-launchpad-mainnet-buffer-e6ed7df3.json` |
+| Recover | `solana program close EdmGZHL5… --recipient 9YN7WY8s… --url <rpc> --keypair <deployer>` |
+
+The script verifies the uploaded bytes before transferring authority, using the
+same check as `scripts/solana/program-upgrade-verify.cjs`: a dumped buffer may
+carry trailing zero padding, so the bytes the binary occupies must equal the
+candidate and the remainder must be zero. A plain `sha256sum` comparison will
+disagree with a perfectly good buffer.
+
+The treasury target is held in the script itself and exits 1 — it needs the
+extend in step 2 and an explicit release first.
 
 ### 4. Propose in Squads
 
 Propose a `BPFLoaderUpgradeable::Upgrade` with:
 
-- program: the program id from the table
-- buffer: the address from step 3, authority already transferred to the multisig
-- spill: the deployer (receives the buffer's reclaimed rent)
-- authority: the multisig `fk5YYWb…`
+| Field | Value |
+|---|---|
+| Program | `3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt` |
+| Buffer | `EdmGZHL5fNGQuT8b8wRz5JbT4uhUwHyptuoSoBjLkJbg` |
+| Spill (refund to) | `9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H` |
+| Upgrade authority | `fk5YYWb4ppwbFqME8YRugirMSaNfhGgPP3GjfMbbfGv` |
+
+The spill account receives the buffer's 6.19116364 SOL back when the upgrade
+executes.
 
 Confirm with signers that the buffer address in the proposal is the one whose
 hash was verified in step 3. That address is the entire payload of this
@@ -193,23 +188,39 @@ certified binary. Four things it will refuse:
 
 ## Outstanding before the treasury goes
 
-- **The UI must show the binding confirmation before this is useful.** Graduation
-  now accepts any approved quote and the catalog returns `metrics.bindingRisks`
-  — one entry per issuer power, each with `armed`, `severity`, `title` and
-  `detail`. Nothing renders it yet. Until it does, a creator can bind to an asset
-  whose issuer can claw back, pause or freeze the locked pool without being told.
-  The copy should say the check happens once, at graduation, and the pool then
-  stays locked — an authority armed afterwards cannot be caught.
-- **A bound graduation has two bytes of headroom.** Gate B drives a campaign
-  from a closed curve to a bound Token-2022 pool in the production transaction
-  shape, and the envelope is **1230 bytes against a 1232-byte hard limit**. The
-  program requires the acquisition program to appear before Meteora in the same
-  transaction, so it cannot be split to make room. It only fits because the
-  swap's account setup is sent separately and just the Orca instruction is
-  packed. Anything that adds an account to that transaction — a longer route, an
-  extra reward vault, a quote needing more tick arrays — breaks it, and the
-  failure is a hard size error at assembly rather than something the program can
-  report. Watch this number.
+- ~~The UI must show the binding confirmation before this is useful.~~ **Done.**
+  `/api/graduation/quote-assets` now returns `bindingRisks` on every asset,
+  read from the verification snapshot, and `GraduationMarketStep` refuses to
+  select a non-native quote without an explicit confirmation listing them. The
+  dialog also carries the three consequences that hold for any binding whether
+  or not a scan has run: the liquidity is locked forever, the price follows the
+  quote, and the check happens once at graduation.
+- **A bound graduation has 54 bytes of headroom.** Gate B drives a campaign from
+  a closed curve to a bound Token-2022 pool in the production transaction shape,
+  and the envelope is **1178 bytes against a 1232-byte hard limit**. It started
+  at 1314 — over the limit — and reached 1178 by sending the acquisition setup
+  and the Meteora ATA creates as their own transactions. The program requires
+  the acquisition program to appear before Meteora in the same transaction, so
+  the remainder cannot be split further. Anything that adds an account to that
+  transaction — a longer route, an extra reward vault, a quote needing more tick
+  arrays — eats into 54 bytes, and the failure is a hard size error at assembly
+  rather than something the program can report. Watch this number.
+
+  Where the bytes go, measured: 128B signatures, 260B `begin_graduation` args,
+  144B Ed25519, 107B + 24B Meteora, 49B the Orca swap, 5B compute budget, 8B
+  `confirm_graduation`, 87 account references.
+
+  Two levers if a longer route ever eats the margin, both measured rather than
+  estimated:
+  - Moving the 2% fee and the 20% creator payout to a claim model removes 7
+    accounts from `confirm_graduation` and saves **14 bytes** (1164B, 68B
+    headroom). Small; do it for product reasons, not for bytes.
+  - `begin_graduation` carries **128 bytes of pubkeys naming accounts the
+    transaction already has** — `positionNftMint`, `quoteMint`,
+    `acquisitionProgram`, `quoteRecoveryAccount`. Reading them from accounts
+    instead trades 32 bytes of signed data for one account reference each. This
+    is the real lever, and it is a digest schema change (v4 to v5) with matching
+    client changes.
 - **A pre-existing orphaned buffer sits on devnet**,
   `HbmmrEjPJL7hvrk7DJrvwFSqqFoNz9yiyzoFxAmEzZZv`, holding 7.55857772 SOL on the
   devnet deployer's authority. It predates this work. Reclaim with

@@ -292,12 +292,60 @@ rejects the pool the graduation just built); the Meteora initial price is whole
 units per whole token, not a raw ratio; and `sendCreate` needed a label because
 the campaign id seeds every campaign PDA.
 
+### The binding confirmation dialog (2026-09-22)
+
+The risk of binding to a non-SOL quote is the creator's to take, so the product
+moves it to them explicitly instead of the program refusing assets.
+
+- `quote_asset_deployments.verification` is now read by the creator-facing
+  catalog: `GENERIC_SELECT` selects `d.verification` and `mapGenericRow` maps
+  `metrics.bindingRisks` onto every asset as `bindingRisks`. Both the list and
+  the detail path go through it, and `decorateQuoteAsset` spreads it through.
+  The snapshot is read back, never recomputed — the scan is what the gate saw.
+- `frontend/src/lib/graduationBindingRisks.mjs` merges those issuer powers with
+  three structural risks true of any non-native binding (liquidity locked
+  forever, price follows the quote, checked once at graduation), so an unscanned
+  quote never yields an empty dialog. A power that exists but is **not armed** is
+  demoted to `info` — a permanent delegate with nobody set is not a delegate
+  that is set, and flattening the two makes every Token-2022 asset look equally
+  dangerous.
+- `GraduationMarketStep` routes every card through `requestSelect`. Native goes
+  straight through; anything else opens `BindingRiskDialog` and the selection is
+  only committed on confirm, remembered per asset for the session. The auto-select
+  on load now picks **only** a native quote — a non-native default would be a
+  binding nobody agreed to, and with nothing selected `canGoNext(5)` already
+  blocks Next with a clear toast.
+
+Tests: `npm run test:graduation-market` (42) covers the risk merge, the severity
+demotion, the headline and the catalog mapping, plus a guard that
+`GENERIC_SELECT` still carries `d.verification` — drop that column and every
+asset silently reports no issuer powers.
+
+### Mainnet is staged, not sent (2026-09-22)
+
+Both gates were re-run against this tree and certify the hashes the runbook
+pins: launchpad `e6ed7df3…` (1218568 B), treasury `5638c992…` (1276472 B).
+
+`scripts/solana/prepare-mainnet-squads-buffer.sh launchpad` does the whole
+permissionless half in one command — sha check, allocation check, upload,
+byte-verify, authority transfer to `fk5YYWb…` — and prints the four Squads
+values. **It has not been run.** It refuses to start without
+`SOLANA_MAINNET_RPC_URL`, refuses the public endpoint (a 1.2MB upload is
+hundreds of writes; the devnet abort stranded 6.49 SOL), and refuses `treasury`
+outright while that upgrade is on hold.
+
+No Solana mainnet RPC is configured in any local env file, so the paid endpoint
+has to be supplied when the buffer is actually written.
+
+The buffer keypair already exists so the address is known before any spend:
+`EdmGZHL5fNGQuT8b8wRz5JbT4uhUwHyptuoSoBjLkJbg`, keypair at
+`~/.config/memewarzone/mwz-launchpad-mainnet-buffer-e6ed7df3.json`. Launchpad
+buffer rent is 6.19116364 SOL and comes back to the spill account when the
+upgrade executes; the launchpad needs no `extend`, so nothing about it is a
+permanent spend. Deployer holds 13.238843275 SOL.
+
 ### Still open
 
-- **The binding confirmation dialog is not built.** `metrics.bindingRisks` is
-  returned and tested; nothing renders it. Until it does, a creator can bind to
-  an asset whose issuer can claw back, pause or freeze the locked pool without
-  being told.
 - **Orphaned devnet buffer** `HbmmrEjPJL7hvrk7DJrvwFSqqFoNz9yiyzoFxAmEzZZv`
   holds 7.55857772 SOL on the devnet deployer. Predates this work.
 
