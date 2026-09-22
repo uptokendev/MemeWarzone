@@ -26,6 +26,12 @@ import {
   sendPlannedResolve,
 } from "./arena-operator-resolve.mjs";
 import { buildTournamentPlaces } from "../../frontend/api/lib/arenaTournamentPlaces.js";
+import {
+  DEFAULT_INTERVAL_MS,
+  buildDueResolveQuery,
+  runResolveDuePass,
+  runResolveDueWatch,
+} from "./arena-operator-scan.mjs";
 
 function ident(value) {
   return String(value || "").trim();
@@ -311,6 +317,60 @@ async function defaultChainReaders({ chainId, poolId }) {
   return { connection, loadPool, loadConfig, loadReceipts, pdas };
 }
 
+/**
+ * Wires the injectable scan to the real database and RPC. One pg pool is shared
+ * across every pass -- the single-id path opens a pool per call, which is fine
+ * for one shot and wrong for a loop.
+ */
+async function runResolveDueCli({ send, watch, intervalMs, lookbackDays, limit, resolver, payer }) {
+  const { default: pg } = await import("pg");
+  const pool = new pg.Pool({ connectionString: requiredEnv("DATABASE_URL") });
+  const loadDueRows = async () => {
+    const { text, params } = buildDueResolveQuery({ lookbackDays, limit });
+    const result = await pool.query(text, params);
+    return result.rows || [];
+  };
+  const resolveBattle = async (row) => {
+    const settlement = settlementFromBattleRow(row);
+    const { connection, loadPool, loadConfig } = await defaultChainReaders({
+      chainId: settlement.chain_id,
+      poolId: canonicalBattlePoolIdBytes(settlement.id),
+    });
+    return runOperatorJob({
+      command: "resolve",
+      battleId: settlement.id,
+      send,
+      loadSettlement: async () => row,
+      loadPool,
+      loadConfig,
+      resolver,
+      payer,
+      sendResolve: async (plan, resolverKey, payerKey) =>
+        sendPlannedResolve(connection, payerKey, plan, resolverKey),
+    });
+  };
+  console.log(`[arena-operator-scan] resolve-due ${send ? "SEND" : "dry-run"}${watch ? ` watch every ${intervalMs}ms` : " single pass"}`);
+  try {
+    let stopping = false;
+    if (watch) {
+      for (const signal of ["SIGINT", "SIGTERM"]) {
+        process.on(signal, () => {
+          console.log(`[arena-operator-scan] ${signal} received; finishing the current pass`);
+          stopping = true;
+        });
+      }
+      const totals = await runResolveDueWatch({
+        loadDueRows, resolveBattle, intervalMs, stop: () => stopping,
+      });
+      return { ok: true, action: "watch-complete", ...totals };
+    }
+    const summary = await runResolveDuePass({ loadDueRows, resolveBattle });
+    return { ok: summary.blocked === 0, action: "scan-complete", ...summary };
+  } finally {
+    await pool.end();
+  }
+}
+
 function runningAsCli() {
   try {
     return Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]).href;
@@ -327,7 +387,13 @@ Usage:
   node scripts/solana/arena-operator-worker.mjs claim-protocol --battle-id <id> | --tournament-id <id>
   node scripts/solana/arena-operator-worker.mjs claim-mwl --battle-id <id> | --tournament-id <id>
   node scripts/solana/arena-operator-worker.mjs resolve-tournament --tournament-id <id>
+  node scripts/solana/arena-operator-worker.mjs resolve-due [--watch] [--interval-ms <ms>]
+                                                            [--lookback-days <n>] [--limit <n>]
   Add --send to submit after a successful plan and simulation.
+
+resolve-due scans the database for settled chain-101 battles whose arena pool
+is still unresolved and runs the resolve above for each one. Without --watch it
+makes a single pass and exits, which is the shape a scheduled task wants.
 `);
 }
 
@@ -342,7 +408,8 @@ if (runningAsCli()) {
   const tournamentId = argValue(argv, "--tournament-id");
   const send = argv.includes("--send");
   const tournamentScoped = command === "resolve-tournament" || (Boolean(tournamentId) && !battleId);
-  if (!COMMANDS.includes(command) || (tournamentScoped ? !tournamentId : !battleId)) {
+  const scanScoped = command === "resolve-due";
+  if (!scanScoped && (!COMMANDS.includes(command) || (tournamentScoped ? !tournamentId : !battleId))) {
     printUsage();
     process.exit(2);
   }
@@ -350,7 +417,17 @@ if (runningAsCli()) {
   const payer = process.env.ARENA_OPERATOR_PAYER_KEYPAIR
     ? loadKeypair("ARENA_OPERATOR_PAYER_KEYPAIR")
     : resolver;
-  const job = tournamentScoped
+  const job = scanScoped
+    ? runResolveDueCli({
+        send,
+        watch: argv.includes("--watch"),
+        intervalMs: Number(argValue(argv, "--interval-ms")) || DEFAULT_INTERVAL_MS,
+        lookbackDays: Number(argValue(argv, "--lookback-days")) || undefined,
+        limit: Number(argValue(argv, "--limit")) || undefined,
+        resolver,
+        payer,
+      })
+    : tournamentScoped
     ? defaultLoadTournament(tournamentId).then(async (loaded) => {
         if (!loaded?.tournament) return fail("tournament-not-found");
         const { connection, loadPool, loadConfig, loadReceipts } = await defaultChainReaders({

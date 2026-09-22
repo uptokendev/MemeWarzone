@@ -168,6 +168,7 @@
   },
   "dependencies": {
     "@meteora-ag/cp-amm-sdk": "1.4.5",
-    "@openzeppelin/contracts": "^5.0.2"
+    "@openzeppelin/contracts": "^5.0.2",
+    "pg": "^8.23.0"
   }
 }
