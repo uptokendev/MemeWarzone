@@ -150,6 +150,23 @@ SOLANA_LAUNCHPAD_PROGRAM_BYTES=1218568
 `scripts/solana/network-canary.mjs` pins the same program hash and will fail
 until it agrees.
 
+## What a bound graduation needs, learned by running one
+
+Gate B (`bash scripts/solana/run-local-sbf-gate.sh`) executes this against the
+certified binary. Four things it will refuse:
+
+- **The fee escrow must be flushed first.** `begin_graduation` rejects a
+  campaign whose escrow still holds unflushed fees.
+- **The acquisition pool price must agree with the binding.** The program checks
+  the pool's implied price against the declared oracle and quote reference
+  within `max_deviation_bps`. A pool seeded at $100/SOL while the binding
+  declares $150 and a $1 quote is a 33% disagreement against a 1.5% cap, and the
+  pool the graduation just created is rejected.
+- **The initial Meteora price is whole units per whole token.** A raw
+  quote-to-token ratio ignores decimals and drifts past tolerance.
+- **Only the acquisition instruction is packed.** Its account setup goes out in
+  its own transaction; see the headroom note above.
+
 ## Outstanding before the treasury goes
 
 - **The UI must show the binding confirmation before this is useful.** Graduation
@@ -159,12 +176,16 @@ until it agrees.
   whose issuer can claw back, pause or freeze the locked pool without being told.
   The copy should say the check happens once, at graduation, and the pool then
   stays locked — an authority armed afterwards cannot be caught.
-- **No single end-to-end Token-2022 graduation.** Every layer is proven on a
-  validator: the classification against mints the token program wrote, the ATA
-  against the account that exists, a real DAMM v2 pool with a Token-2022 quote,
-  and LP fees accruing and claiming in full (owed 181818182, claimed 181818182).
-  Nothing has yet driven one campaign from close to bound pool in a single run;
-  that needs an acquisition route (Orca) loaded alongside Meteora.
+- **A bound graduation has two bytes of headroom.** Gate B drives a campaign
+  from a closed curve to a bound Token-2022 pool in the production transaction
+  shape, and the envelope is **1230 bytes against a 1232-byte hard limit**. The
+  program requires the acquisition program to appear before Meteora in the same
+  transaction, so it cannot be split to make room. It only fits because the
+  swap's account setup is sent separately and just the Orca instruction is
+  packed. Anything that adds an account to that transaction — a longer route, an
+  extra reward vault, a quote needing more tick arrays — breaks it, and the
+  failure is a hard size error at assembly rather than something the program can
+  report. Watch this number.
 - **A pre-existing orphaned buffer sits on devnet**,
   `HbmmrEjPJL7hvrk7DJrvwFSqqFoNz9yiyzoFxAmEzZZv`, holding 7.55857772 SOL on the
   devnet deployer's authority. It predates this work. Reclaim with

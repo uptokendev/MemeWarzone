@@ -262,17 +262,39 @@ pending. Treasury gate: 11.
 
 Mainnet runbook with the Squads ceremony: `docs/solana-mainnet-squads-upgrade-runbook.md`.
 
+### The bound graduation runs end to end (2026-09-22)
+
+Gate B in `v4-lifecycle-acceptance.cjs` drives a campaign from a closed curve to
+a bound Token-2022 pool in the production transaction shape: Ed25519,
+begin_graduation, the Orca acquisition that turns raised SOL into the quote,
+Meteora creating the MEME/quote pool, then confirm_graduation with the
+Token-2022 program appended to the quote prefix. Campaign ends `graduated:true`
+and the pool's quote vault is owned by Token-2022.
+
+The main gate now loads four programs — launchpad, Metaplex, Meteora, Orca —
+cloning the Orca program and its config/fee-tier accounts on demand like the
+Meteora fixtures. Gate: create 10, lifecycle 5 (native **and** bound),
+Token-2022 5.
+
+**Two bytes of headroom.** The bound envelope is 1230 bytes against a 1232 hard
+limit, and the program requires the acquisition before Meteora in the *same*
+transaction, so it cannot be split. It only fits because the swap's account
+setup is sent separately and only the Orca instruction is packed. Anything that
+adds an account to that transaction breaks it.
+
+Other things only running it revealed: the fee escrow must be flushed before
+`begin_graduation`; the acquisition pool price must agree with the binding's
+declared oracle and quote reference (a 33% disagreement against a 1.5% cap
+rejects the pool the graduation just built); the Meteora initial price is whole
+units per whole token, not a raw ratio; and `sendCreate` needed a label because
+the campaign id seeds every campaign PDA.
+
 ### Still open
 
 - **The binding confirmation dialog is not built.** `metrics.bindingRisks` is
   returned and tested; nothing renders it. Until it does, a creator can bind to
   an asset whose issuer can claw back, pause or freeze the locked pool without
   being told.
-- **No single end-to-end Token-2022 graduation.** Every layer is proven on a
-  validator — classification against real mints, the ATA against the account
-  that exists, a real DAMM v2 pool with a Token-2022 quote, LP fees claimed in
-  full. Nothing has driven one campaign from close to bound pool in one run;
-  that needs Orca loaded alongside Meteora.
 - **Orphaned devnet buffer** `HbmmrEjPJL7hvrk7DJrvwFSqqFoNz9yiyzoFxAmEzZZv`
   holds 7.55857772 SOL on the devnet deployer. Predates this work.
 
