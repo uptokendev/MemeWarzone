@@ -192,10 +192,26 @@ function mapGenericRow(row) {
       config: row.policy_config || {},
     },
     lastVerifiedAt: row.last_scan_at,
+    bindingRisks: bindingRisksFromVerification(row.verification),
   };
 }
 
-const GENERIC_SELECT = `
+/**
+ * The issuer powers the verifier found on this mint, for the creator-facing
+ * catalog.
+ *
+ * Graduation accepts every asset the catalog approves, whatever its issuer can
+ * do, so the only place those powers can still change a decision is in front of
+ * the person making it. They are read back out of the verification snapshot
+ * rather than recomputed: the scan is what the gate saw, and showing anything
+ * else would be showing a different fact than the one on file.
+ */
+export function bindingRisksFromVerification(verification) {
+  const risks = verification?.metrics?.bindingRisks;
+  return Array.isArray(risks) ? risks : [];
+}
+
+export const GENERIC_SELECT = `
 select
   d.id as deployment_id,
   d.quote_asset_id,
@@ -212,6 +228,7 @@ select
   d.admin_state as deployment_admin_state,
   d.state_version as deployment_state_version,
   d.last_scan_at,
+  d.verification,
   a.asset_class,
   a.symbol,
   a.display_name,

@@ -4,7 +4,9 @@ import test from "node:test";
 process.env.DATABASE_URL ||= "postgresql://test:test@127.0.0.1:5432/test";
 
 const {
+  bindingRisksFromVerification,
   deriveGenericQuoteAuthority,
+  GENERIC_SELECT,
   mapRobinhoodStockToQuoteAsset,
   normalizeQuoteIdentity,
   ROBINHOOD_BASIC_PROVIDER_KEY,
@@ -108,4 +110,25 @@ test("Robinhood Stock Token compatibility is a pure projection of existing autho
 
 test("Robinhood BASIC provider is distinct from Stock Token provider", () => {
   assert.notEqual(ROBINHOOD_BASIC_PROVIDER_KEY, ROBINHOOD_STOCK_PROVIDER_KEY);
+});
+
+test("binding risks reach the creator catalog from the verification snapshot", () => {
+  // The verifier no longer refuses an asset over these powers, so the catalog
+  // is the only thing that can carry them to the person choosing the quote.
+  const risks = [{ code: "PERMANENT_DELEGATE", armed: true, severity: "high", title: "The issuer can move your tokens" }];
+  assert.deepEqual(bindingRisksFromVerification({ metrics: { bindingRisks: risks } }), risks);
+
+  // An unscanned or half-written snapshot must read as "nothing known", never
+  // as an error and never as "nothing to worry about" -- the client adds the
+  // structural risks that hold regardless.
+  assert.deepEqual(bindingRisksFromVerification(null), []);
+  assert.deepEqual(bindingRisksFromVerification({}), []);
+  assert.deepEqual(bindingRisksFromVerification({ metrics: {} }), []);
+  assert.deepEqual(bindingRisksFromVerification({ metrics: { bindingRisks: "PERMANENT_DELEGATE" } }), []);
+});
+
+test("the creator-facing select reads the verification column the mapper maps", () => {
+  // mapGenericRow reads row.verification. If the column ever drops out of the
+  // select, every asset silently reports no issuer powers at all.
+  assert.match(GENERIC_SELECT, /\bd\.verification\b/);
 });

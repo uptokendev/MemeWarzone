@@ -38,3 +38,6 @@ AGENTS.md
 
 # Entire .grok directory (contains custom skills, personas, architect feed, etc.)
 .grok/
+
+# feedChainIsolation.test.mjs mkdtemps here and does not clean up
+.mwz-feed-isolation-*/

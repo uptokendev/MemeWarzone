@@ -18,8 +18,14 @@ import {
 } from "@/lib/graduationMarketPresentation.mjs";
 import {
   fetchGraduationQuoteAssets,
+  type GraduationBindingRisk,
   type GraduationQuoteAsset,
 } from "@/lib/graduationQuoteCatalog";
+import {
+  bindingNeedsConfirmation,
+  bindingRiskHeadline,
+  bindingRisksForAsset,
+} from "@/lib/graduationBindingRisks.mjs";
 import { bnbNativeLaunchQuote, isBnbNativeLaunchQuote } from "@/lib/bnbNativeLaunchQuote";
 import { rememberGraduationQuoteAssetId } from "@/lib/graduationQuoteSelectionSession";
 
@@ -33,6 +39,115 @@ export type GraduationMarketStepProps = {
 };
 
 const ALL_PROVIDERS = "__all__";
+
+/**
+ * Shown before a launch is bound to anything other than the chain's own coin.
+ *
+ * Graduation no longer refuses assets over the powers their issuer holds --
+ * which quote to graduate against is the creator's call -- so this is where
+ * that call is made knowingly. It lists what the issuer of this particular
+ * asset can actually do, then the consequences that hold for any non-native
+ * binding, and it will not close on a stray click: the creator has to say yes.
+ */
+function BindingRiskDialog({
+  asset,
+  ticker,
+  risks,
+  onConfirm,
+  onCancel,
+}: {
+  asset: GraduationQuoteAsset;
+  ticker: string;
+  risks: GraduationBindingRisk[];
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const symbol = displayQuoteSymbol(asset);
+  const headline = bindingRiskHeadline(asset, risks);
+  const armedCount = risks.filter((risk) => risk.armed === true).length;
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="binding-risk-title"
+      data-testid="binding-risk-dialog"
+    >
+      <div className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-lg border border-orange-400/40 bg-background p-5 shadow-xl">
+        <div className="flex items-start gap-3">
+          <TriangleAlert className="mt-0.5 h-5 w-5 shrink-0 text-orange-300" aria-hidden />
+          <div className="min-w-0">
+            <h2 id="binding-risk-title" className="font-retro text-base text-foreground">
+              Graduate {ticker ? `$${ticker}` : "your token"} against {symbol}?
+            </h2>
+            <p className="mt-1 text-[13px] text-muted-foreground">{headline}</p>
+          </div>
+        </div>
+
+        <ul className="mt-4 space-y-2.5">
+          {risks.map((risk) => (
+            <li
+              key={risk.code}
+              data-testid={`binding-risk-${risk.code}`}
+              className={cn(
+                "rounded-md border p-2.5",
+                risk.severity === "high"
+                  ? "border-orange-400/40 bg-orange-400/10"
+                  : "border-border/60 bg-background/40",
+              )}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-[13px] text-foreground">{risk.title}</span>
+                {risk.armed === false ? (
+                  <span className="rounded-sm border border-border/60 px-1 text-[9px] uppercase tracking-wider text-muted-foreground">
+                    not currently set
+                  </span>
+                ) : null}
+              </div>
+              {risk.detail ? (
+                <p className="mt-1 text-[11.5px] leading-relaxed text-muted-foreground">{risk.detail}</p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+
+        <p className="mt-4 text-[11.5px] leading-relaxed text-muted-foreground">
+          {armedCount > 0
+            ? "These are powers the issuer holds today. Choosing this asset accepts them."
+            : "Choosing this asset accepts these terms for the life of the pool."}
+        </p>
+
+        <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            onClick={onCancel}
+            data-testid="binding-risk-cancel"
+            className="rounded-md border border-border/70 px-3 py-2 text-[13px] text-muted-foreground transition hover:border-border"
+          >
+            Pick another asset
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            data-testid="binding-risk-confirm"
+            className="rounded-md border border-orange-300 bg-orange-400/20 px-3 py-2 text-[13px] text-foreground transition hover:bg-orange-400/30"
+          >
+            I understand, use {symbol}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function QuoteAssetCard({
   asset,
@@ -103,6 +218,27 @@ export function GraduationMarketStep({
   const [activeProvider, setActiveProvider] = useState(ALL_PROVIDERS);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState<GraduationQuoteAsset | null>(null);
+  const [acknowledged, setAcknowledged] = useState<string[]>([]);
+
+  // Binding to anything but the chain's own coin is the creator's decision to
+  // make, so it is not made by a single click on a card. Native quotes and
+  // assets already acknowledged in this session go straight through.
+  const requestSelect = (asset: GraduationQuoteAsset) => {
+    const native = isNativeQuote(asset);
+    if (!bindingNeedsConfirmation(asset, { isNative: native }) || acknowledged.includes(asset.id)) {
+      onSelectedChange(asset);
+      return;
+    }
+    setPending(asset);
+  };
+
+  const confirmPending = () => {
+    if (!pending) return;
+    setAcknowledged((prev) => (prev.includes(pending.id) ? prev : [...prev, pending.id]));
+    onSelectedChange(pending);
+    setPending(null);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -119,8 +255,11 @@ export function GraduationMarketStep({
         setItems(availableItems);
         const stillSelected = availableItems.some((item) => item.id === selected?.id);
         if (!stillSelected) {
-          const native = availableItems.find((item) => isNativeQuote(item)) || availableItems[0] || null;
-          onSelectedChange(native);
+          // Only the chain's own coin is chosen for the creator. A non-native
+          // default would be a binding nobody agreed to, so if there is no
+          // native quote the step opens with nothing picked and Next stays shut
+          // until one is chosen -- and confirmed.
+          onSelectedChange(availableItems.find((item) => isNativeQuote(item)) || null);
         }
       })
       .catch((err) => {
@@ -238,7 +377,7 @@ export function GraduationMarketStep({
               <div className="font-retro text-[10px] uppercase tracking-[0.18em] text-muted-foreground">Popular</div>
               <div className="flex gap-1.5 overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]">
                 {popular.map((asset) => (
-                  <QuoteAssetCard key={`popular-${asset.id}`} asset={asset} ticker={ticker} selected={selected?.id === asset.id} onSelect={onSelectedChange} compact />
+                  <QuoteAssetCard key={`popular-${asset.id}`} asset={asset} ticker={ticker} selected={selected?.id === asset.id} onSelect={requestSelect} compact />
                 ))}
               </div>
             </div>
@@ -297,11 +436,20 @@ export function GraduationMarketStep({
 
           <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2 lg:grid-cols-3">
             {visibleAssets.map((asset) => (
-              <QuoteAssetCard key={asset.id} asset={asset} ticker={ticker} selected={selected?.id === asset.id} onSelect={onSelectedChange} />
+              <QuoteAssetCard key={asset.id} asset={asset} ticker={ticker} selected={selected?.id === asset.id} onSelect={requestSelect} />
             ))}
           </div>
         </div>
       </div>
+      {pending ? (
+        <BindingRiskDialog
+          asset={pending}
+          ticker={ticker}
+          risks={bindingRisksForAsset(pending, { isNative: isNativeQuote(pending) })}
+          onConfirm={confirmPending}
+          onCancel={() => setPending(null)}
+        />
+      ) : null}
       <div className="hidden shrink-0 border-t border-border/50 p-2.5 sm:block sm:p-3">
         <Button type="button" className="mwz-button mwz-button-orange h-11 w-full font-retro" disabled={!canNext} onClick={onNext}>
           Next

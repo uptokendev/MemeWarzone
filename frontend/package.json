@@ -41,7 +41,7 @@
     "test:wallet-discovery": "node --test src/lib/injectedProviderDiscovery.test.mjs",
     "test:feed-isolation": "node --test src/lib/feedChainIsolation.test.mjs",
     "verify:quote-catalog": "node scripts/verify-quote-catalog.mjs",
-    "test:graduation-market": "node --test src/lib/graduationMarketPresentation.test.mjs src/lib/graduationMarketCreateRegression.test.mjs api/lib/draftGraduationQuoteSelection.test.mjs",
+    "test:graduation-market": "node --test src/lib/graduationMarketPresentation.test.mjs src/lib/graduationMarketCreateRegression.test.mjs src/lib/graduationBindingRisks.test.mjs api/lib/quoteAssetCatalog.test.mjs api/lib/draftGraduationQuoteSelection.test.mjs",
     "test:e2e:isolation": "playwright test -c playwright.config.ts",
     "test:solana-v0": "node --test src/lib/solanaV0Transaction.test.mjs",
     "test:solana-arena": "node --test src/lib/solanaArenaLayout.test.mjs src/lib/solanaArenaV0.test.mjs",

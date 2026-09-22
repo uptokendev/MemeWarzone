@@ -48,6 +48,17 @@ export type GraduationQuoteAsset = {
   catalogState?: string;
   chainFamily?: string | null;
   decimals?: number | null;
+  /** Issuer powers the verifier read off this mint (see api/lib/quoteAssetVerification.js). */
+  bindingRisks?: GraduationBindingRisk[] | null;
+};
+
+/** One power an issuer holds over an asset a launch can be bound to. */
+export type GraduationBindingRisk = {
+  code: string;
+  title: string;
+  detail?: string;
+  severity?: "high" | "medium" | "info" | string;
+  armed?: boolean | null;
 };
 
 async function readJson<T>(response: Response): Promise<T> {
