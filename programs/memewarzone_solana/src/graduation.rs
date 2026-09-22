@@ -25,6 +25,15 @@ use anchor_spl::token::{
     spl_token::{self, state::Account as SplTokenAccount},
     Burn, Token, Transfer,
 };
+use anchor_spl::token_2022::{
+    self,
+    spl_token_2022::{
+        self,
+        extension::{BaseStateWithExtensions, ExtensionType, StateWithExtensions},
+        state::{Account as Token2022Account, Mint as Token2022Mint},
+    },
+    TransferChecked,
+};
 
 use crate::{
     authorized_create::{CAMPAIGN_SEED, SOL_VAULT_SEED, TOKEN_VAULT_SEED},
@@ -63,6 +72,8 @@ const ED25519_PUBLIC_KEY_SIZE: usize = 32;
 const ED25519_CURRENT_INSTRUCTION: u16 = u16::MAX;
 const MAX_ATOMIC_SCAN_INSTRUCTIONS: usize = 64;
 const NON_NATIVE_REMAINING_PREFIX: usize = 3;
+/// A Token-2022 quote appends its token program to the classic prefix.
+const TOKEN_2022_REMAINING_PREFIX: usize = NON_NATIVE_REMAINING_PREFIX + 1;
 
 const METEORA_POOL_TOKEN_A_MINT_OFFSET: usize = 168;
 const METEORA_POOL_TOKEN_B_MINT_OFFSET: usize = 200;
@@ -542,7 +553,7 @@ pub fn confirm_graduation_handler<'info>(
         state.position_nft_mint,
     )?;
     let pool_token = unpack_spl_account(&ctx.accounts.meteora_token_vault.to_account_info())?;
-    let pool_quote = unpack_spl_account(&ctx.accounts.meteora_native_vault.to_account_info())?;
+    let pool_quote = unpack_quote_account(&ctx.accounts.meteora_native_vault.to_account_info())?;
     require_keys_eq!(
         pool_token.mint,
         campaign.mint,
@@ -634,13 +645,33 @@ pub fn confirm_graduation_handler<'info>(
             state.quote_mint,
             LaunchpadError::InvalidGraduationAuthorization
         );
-        require_keys_eq!(
-            *quote_mint_info.owner,
-            token::ID,
+        // The authorized quote mint decides its own token program. A Token-2022
+        // quote carries the program account after the classic prefix, so a
+        // classic-SPL graduation keeps the exact account list it always had.
+        let quote_token_program = quote_token_program_for_mint(quote_mint_info)?;
+        let quote_is_token_2022 = quote_token_program == spl_token_2022::ID;
+        let quote_prefix = if quote_is_token_2022 {
+            TOKEN_2022_REMAINING_PREFIX
+        } else {
+            NON_NATIVE_REMAINING_PREFIX
+        };
+        require!(
+            ctx.remaining_accounts.len() >= quote_prefix,
             LaunchpadError::InvalidGraduationAuthorization
         );
-        let authority_quote = unpack_spl_account(authority_quote_info)?;
-        let recovery = unpack_spl_account(recovery_info)?;
+        let quote_token_program_info = if quote_is_token_2022 {
+            let info = &ctx.remaining_accounts[NON_NATIVE_REMAINING_PREFIX];
+            require_keys_eq!(
+                *info.key,
+                spl_token_2022::ID,
+                LaunchpadError::InvalidGraduationAuthorization
+            );
+            info.clone()
+        } else {
+            ctx.accounts.token_program.to_account_info()
+        };
+        let authority_quote = unpack_quote_account(authority_quote_info)?;
+        let recovery = unpack_quote_account(recovery_info)?;
         require_keys_eq!(
             authority_quote.mint,
             state.quote_mint,
@@ -662,19 +693,37 @@ pub fn confirm_graduation_handler<'info>(
             LaunchpadError::InvalidGraduationAuthorization
         );
         if authority_quote.amount > 0 {
-            token::transfer(
-                CpiContext::new(
-                    ctx.accounts.token_program.to_account_info(),
-                    Transfer {
-                        from: authority_quote_info.clone(),
-                        to: recovery_info.clone(),
-                        authority: ctx.accounts.authority.to_account_info(),
-                    },
-                ),
-                authority_quote.amount,
-            )?;
+            if quote_is_token_2022 {
+                // Token-2022 deprecates bare transfer; transfer_checked also
+                // re-verifies the mint and decimals the route signer authorized.
+                token_2022::transfer_checked(
+                    CpiContext::new(
+                        quote_token_program_info.clone(),
+                        TransferChecked {
+                            from: authority_quote_info.clone(),
+                            mint: quote_mint_info.clone(),
+                            to: recovery_info.clone(),
+                            authority: ctx.accounts.authority.to_account_info(),
+                        },
+                    ),
+                    authority_quote.amount,
+                    state.quote_decimals,
+                )?;
+            } else {
+                token::transfer(
+                    CpiContext::new(
+                        quote_token_program_info.clone(),
+                        Transfer {
+                            from: authority_quote_info.clone(),
+                            to: recovery_info.clone(),
+                            authority: ctx.accounts.authority.to_account_info(),
+                        },
+                    ),
+                    authority_quote.amount,
+                )?;
+            }
         }
-        &ctx.remaining_accounts[NON_NATIVE_REMAINING_PREFIX..]
+        &ctx.remaining_accounts[quote_prefix..]
     };
     let unused_native = if native_quote {
         state
@@ -1408,6 +1457,114 @@ fn unpack_spl_account(info: &AccountInfo) -> Result<SplTokenAccount> {
     SplTokenAccount::unpack(&info.try_borrow_data()?)
         .map_err(|_| error!(LaunchpadError::InvalidCampaign))
 }
+
+/// The fields this program reads from a quote-side token account, whichever
+/// token program owns it. The launch token is minted by this program and stays
+/// on the classic SPL Token program; only the quote side may be Token-2022.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QuoteTokenAccount {
+    pub mint: Pubkey,
+    pub owner: Pubkey,
+    pub amount: u64,
+}
+
+/// Token-2022 extensions this program is willing to hold as a quote asset.
+///
+/// This is an allowlist, not a denylist, because the extension set grows with
+/// every Token-2022 release: an unknown extension must fail the graduation
+/// rather than be waved through. Everything permitted here is metadata or
+/// grouping that cannot change a balance, plus ImmutableOwner, which only makes
+/// an account's owner harder to change.
+///
+/// Deliberately excluded, each because it can silently break the sweep or the
+/// pool accounting this program depends on: TransferFeeConfig/TransferFeeAmount
+/// (the recipient receives less than was sent), TransferHook/TransferHookAccount
+/// (third-party code runs inside the transfer), PermanentDelegate (the issuer
+/// can move funds out of any account), ConfidentialTransfer* (balances are not
+/// readable), NonTransferable*, MemoTransfer, DefaultAccountState (can default
+/// to frozen), CpiGuard (can refuse the CPI), InterestBearingConfig and
+/// MintCloseAuthority.
+pub fn quote_extension_allowed(extension: ExtensionType) -> bool {
+    matches!(
+        extension,
+        ExtensionType::Uninitialized
+            | ExtensionType::ImmutableOwner
+            | ExtensionType::MetadataPointer
+            | ExtensionType::TokenMetadata
+            | ExtensionType::GroupPointer
+            | ExtensionType::TokenGroup
+            | ExtensionType::GroupMemberPointer
+            | ExtensionType::TokenGroupMember
+    )
+}
+
+fn require_allowed_quote_extensions(extensions: &[ExtensionType]) -> Result<()> {
+    for extension in extensions {
+        require!(
+            quote_extension_allowed(*extension),
+            LaunchpadError::UnsupportedQuoteTokenExtension
+        );
+    }
+    Ok(())
+}
+
+/// Resolves which token program owns a quote mint, and refuses any Token-2022
+/// mint carrying an extension outside the allowlist.
+///
+/// The route signer already authorized this exact quote mint in the graduation
+/// digest, so the program can read the owner off the authorized mint instead of
+/// taking the token program as a signed argument -- the schema stays unchanged.
+fn quote_token_program_for_mint(info: &AccountInfo) -> Result<Pubkey> {
+    if *info.owner == token::ID {
+        return Ok(token::ID);
+    }
+    require_keys_eq!(
+        *info.owner,
+        spl_token_2022::ID,
+        LaunchpadError::InvalidGraduationAuthorization
+    );
+    let data = info.try_borrow_data()?;
+    let mint = StateWithExtensions::<Token2022Mint>::unpack(&data)
+        .map_err(|_| error!(LaunchpadError::InvalidGraduationAuthorization))?;
+    let extensions = mint
+        .get_extension_types()
+        .map_err(|_| error!(LaunchpadError::InvalidGraduationAuthorization))?;
+    require_allowed_quote_extensions(&extensions)?;
+    Ok(spl_token_2022::ID)
+}
+
+/// Unpacks a quote-side token account owned by either token program.
+///
+/// spl_token's own unpack requires exactly 165 bytes, so it rejects every
+/// Token-2022 account that carries an extension; StateWithExtensions reads the
+/// base account out of both layouts.
+fn unpack_quote_account(info: &AccountInfo) -> Result<QuoteTokenAccount> {
+    if *info.owner == token::ID {
+        let account = unpack_spl_account(info)?;
+        return Ok(QuoteTokenAccount {
+            mint: account.mint,
+            owner: account.owner,
+            amount: account.amount,
+        });
+    }
+    require_keys_eq!(
+        *info.owner,
+        spl_token_2022::ID,
+        LaunchpadError::InvalidCampaign
+    );
+    let data = info.try_borrow_data()?;
+    let account = StateWithExtensions::<Token2022Account>::unpack(&data)
+        .map_err(|_| error!(LaunchpadError::InvalidCampaign))?;
+    let extensions = account
+        .get_extension_types()
+        .map_err(|_| error!(LaunchpadError::InvalidCampaign))?;
+    require_allowed_quote_extensions(&extensions)?;
+    Ok(QuoteTokenAccount {
+        mint: account.base.mint,
+        owner: account.base.owner,
+        amount: account.base.amount,
+    })
+}
 fn update_creator_profile_after_graduation(info: &AccountInfo, creator: Pubkey) -> Result<()> {
     let (expected, _) =
         Pubkey::find_program_address(&[CREATOR_PROFILE_SEED, creator.as_ref()], &crate::ID);
@@ -1497,6 +1654,87 @@ fn checked_slice(data: &[u8], offset: u16, len: usize) -> Result<&[u8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quote_extension_allowlist_admits_only_inert_extensions() {
+        for extension in [
+            ExtensionType::Uninitialized,
+            ExtensionType::ImmutableOwner,
+            ExtensionType::MetadataPointer,
+            ExtensionType::TokenMetadata,
+            ExtensionType::GroupPointer,
+            ExtensionType::TokenGroup,
+            ExtensionType::GroupMemberPointer,
+            ExtensionType::TokenGroupMember,
+        ] {
+            assert!(
+                quote_extension_allowed(extension),
+                "{extension:?} carries no balance or transfer semantics and must be admitted",
+            );
+        }
+    }
+
+    #[test]
+    fn quote_extension_allowlist_refuses_everything_that_can_move_or_hide_a_balance() {
+        // Each of these breaks an invariant the graduation sweep depends on:
+        // the amount read is the amount that arrives, balances are readable,
+        // and nobody else can move the funds or refuse the transfer.
+        for extension in [
+            ExtensionType::TransferFeeConfig,
+            ExtensionType::TransferFeeAmount,
+            ExtensionType::TransferHook,
+            ExtensionType::TransferHookAccount,
+            ExtensionType::PermanentDelegate,
+            ExtensionType::ConfidentialTransferMint,
+            ExtensionType::ConfidentialTransferAccount,
+            ExtensionType::ConfidentialTransferFeeConfig,
+            ExtensionType::ConfidentialTransferFeeAmount,
+            ExtensionType::NonTransferable,
+            ExtensionType::NonTransferableAccount,
+            ExtensionType::MemoTransfer,
+            ExtensionType::DefaultAccountState,
+            ExtensionType::CpiGuard,
+            ExtensionType::InterestBearingConfig,
+            ExtensionType::MintCloseAuthority,
+        ] {
+            assert!(
+                !quote_extension_allowed(extension),
+                "{extension:?} must not be accepted as a quote asset",
+            );
+        }
+    }
+
+    #[test]
+    fn a_single_forbidden_extension_fails_the_whole_set() {
+        assert!(require_allowed_quote_extensions(&[
+            ExtensionType::MetadataPointer,
+            ExtensionType::ImmutableOwner,
+        ])
+        .is_ok());
+        assert!(require_allowed_quote_extensions(&[
+            ExtensionType::MetadataPointer,
+            ExtensionType::TransferFeeConfig,
+        ])
+        .is_err());
+        assert!(require_allowed_quote_extensions(&[]).is_ok());
+    }
+
+    #[test]
+    fn a_token_2022_quote_appends_exactly_one_account_to_the_classic_prefix() {
+        // A classic-SPL graduation must keep the account list it already had,
+        // so existing clients are unaffected by Token-2022 support.
+        assert_eq!(NON_NATIVE_REMAINING_PREFIX, 3);
+        assert_eq!(TOKEN_2022_REMAINING_PREFIX, 4);
+    }
+
+    #[test]
+    fn the_two_token_programs_are_distinct_and_native_sol_stays_classic() {
+        assert_ne!(token::ID, spl_token_2022::ID);
+        // WSOL is a classic SPL mint, so native graduation never takes the
+        // Token-2022 path and its account list is unchanged.
+        assert!(is_native_quote(spl_token::native_mint::ID));
+        assert_ne!(spl_token::native_mint::ID, spl_token_2022::ID);
+    }
     fn campaign_for_quote() -> Campaign {
         Campaign {
             campaign_id: [1; 32],
