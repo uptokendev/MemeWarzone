@@ -153,6 +153,17 @@ if grep -qE "^\s+- Gate K: graduate closed campaign" /tmp/mwz-lifecycle.log; the
   exit 1
 fi
 
+# Token-2022 quote acceptance: the extension allowlist read off mints the token
+# program actually wrote, the ATA the authorization derives proven to be the
+# account that exists, and a real DAMM v2 pool whose quote side is Token-2022.
+# The launchpad accepts these assets; without this nothing showed they work.
+echo "==> Token-2022 quote acceptance (real mints + DAMM v2 pool)"
+npm --prefix tests/solana run test:token-2022 2>&1 | tee /tmp/mwz-token-2022.log
+if grep -qE "^\s+- (initializes a pool whose quote side|reads no extensions)" /tmp/mwz-token-2022.log; then
+  echo "Token-2022 acceptance reported pending instead of running." >&2
+  exit 1
+fi
+
 echo "==> GATE PASS"
 echo "    sha256=$HASH"
 echo "    Deploy this exact file: $SO"

@@ -26,7 +26,8 @@
     "devnet:trade-ops": "node devnet-trade-ops.cjs",
     "devnet:trade-status": "node devnet-trade-ops.cjs status",
     "devnet:trade-checklist": "node devnet-trade-ops.cjs checklist",
-    "print:railway-create-auth": "node print-railway-create-auth-env.cjs"
+    "print:railway-create-auth": "node print-railway-create-auth-env.cjs",
+    "test:token-2022": "mocha --timeout 300000 token-2022-quote-acceptance.cjs token-2022-meteora-pool.cjs"
   },
   "dependencies": {
     "@coral-xyz/anchor": "0.30.1",
