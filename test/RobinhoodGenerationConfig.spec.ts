@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 
-import { configFor, graduationTargetFor } from "../scripts/deploy-robinhood-quote-generation";
+import { assertFeedWithinMaxAge, configFor, graduationTargetFor, maxOracleAgeFor } from "../scripts/deploy-robinhood-quote-generation";
 
 /**
  * The factory's default graduation target has to be one the factory allows on
@@ -57,5 +57,28 @@ describe("Robinhood generation config", function () {
     // The $6 target must never be accepted on a mainnet chain.
     expect(await factory.isGraduationTargetAllowedForChain(4663n, ethers.parseEther("6"))).to.equal(false);
     expect(await factory.isGraduationTargetAllowedForChain(56n, ethers.parseEther("6"))).to.equal(false);
+  });
+
+  describe("oracle max age", function () {
+    it("mainnet covers Chainlink's 86,400 s heartbeat on Robinhood; testnet stays tight", function () {
+      expect(maxOracleAgeFor(4663n)).to.be.greaterThanOrEqual(86_400);
+      expect(maxOracleAgeFor(46630n)).to.equal(3600);
+    });
+
+    it("refuses a max age the live feed already exceeds", async function () {
+      const feed = await (await ethers.getContractFactory("MockUsdPriceFeed")).deploy(8);
+      await feed.waitForDeployment();
+      const now = (await ethers.provider.getBlock("latest"))!.timestamp;
+      // A price updated two hours ago, the age the real feed showed when checked.
+      await (await (feed as any).setRoundData(1n, ethers.parseUnits("2663", 8), now - 7200, now - 7200, 1n)).wait();
+      let rejection = "";
+      try {
+        await assertFeedWithinMaxAge(await feed.getAddress(), 3600, "test");
+      } catch (error: any) {
+        rejection = String(error?.message || error);
+      }
+      expect(rejection).to.match(/is 72\d\ds old .* above the 3600s/);
+      await assertFeedWithinMaxAge(await feed.getAddress(), 90_000, "test");
+    });
   });
 });

@@ -795,6 +795,68 @@ superseded `0xF170a2C9` record stays archived beside it. The freeze again
 forbids lifecycle runs on 46630 — that is the point; the next generation cut
 moves the pin the same way.
 
+### Mainnet inputs, verified on chain (2026-09-23)
+
+**Deployer `0x77F96A7d…` funded:** 0.1716 BNB on 56, 0.1030 ETH on 4663.
+Measured gas (real bytecode): BNB 28.39M units deployer-paid, Robinhood
+31.56M. Both chains report ~0.05 gwei; hardhat pins no gasPrice, so deploys
+pay what the node reports. The Safe `0x1edcEdf5…` has code on both chains.
+
+**BNB mainnet** — every reused input checked: Topaz adapter `0x5c3135Df…`
+(`poolFactory()`) and Topaz router `0x1E98c822…` (`defaultFactory()`/`weth()`)
+agree on pool factory `0x65E6cD0e…` and WBNB; volatile fee **30 bps**;
+`GraduationOracle 0x9D204406…` reads Chainlink BNB/USD `0x0567F232…` (8 dec,
+updates every ~33 s, so its 3600 s max age is fine); `CreatorRegistry
+0x8194FB37…` and `RiskRegistry 0x92b1494C…` are Safe-owned; the four existing
+vaults (weekly `0xC9286EE3…`, monthly `0xF62A09de…`, recruiter `0x40ac5cD7…`,
+protocol `0xc2d4E6f8…`) all accept plain value (`receive()`), so a new
+`TreasuryRouterV3` can pay them — strict routing would otherwise revert every
+trade. Route authority is `0xb989A998…` (production `ROUTE_AUTHORITY_PRIVATE_KEY`
+derives to it; matches the profile pin).
+
+**Robinhood mainnet** — nothing of ours exists (`contracts: {}`). The canonical
+Uniswap addresses (`0x1F98431c…` etc.) hold a 2109-byte placeholder that
+answers every call with empty data — **not V3**. The real deployment, from
+developers.uniswap.org and verified on chain (NPM and router both report the
+factory and the same WETH9; fee tier 3000 → spacing 60):
+
+| | |
+|---|---|
+| UniswapV3Factory | `0x1f7d7550B1b028f7571E69A784071F0205FD2EfA` |
+| NonfungiblePositionManager | `0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3` |
+| SwapRouter02 | `0xCaf681a66D020601342297493863E78C959E5cb2` |
+| QuoterV2 | `0x33e885eD0Ec9bF04EcfB19341582aADCb4c8A9E7` |
+| WETH9 | `0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73` |
+| Chainlink ETH/USD proxy | `0x78F3556b67E17Df817D51Ef5a990cDaF09E8d3A9` (8 dec, aggregator `0x6091E64e…`) |
+
+**The ETH/USD feed has an 86,400 s heartbeat** and was 121 minutes old when
+read. `GraduationOracle.maxPriceAge` and the stock adapter's
+`maxOracleAgeSeconds` are both **immutable**, and both were 3600 — on this
+feed every price read would revert stale for most of the day. The Robinhood
+scripts now default to 90,000 s on 4663 (`RH_MAX_ORACLE_AGE_SECONDS` to
+override) and refuse a value the live feed already exceeds, before anything
+immutable is written.
+
+**Prerequisites are their own step:** `scripts/deploy-robinhood-prerequisites.ts`
+deploys the oracle, weekly `TreasuryVaultV2`, `CharityTreasury`,
+`MonthlyLeagueTreasury` (cap **30000**, mirroring BNB mainnet; rootPoster and
+weekly operator left zero for the Safe, also mirroring BNB), recruiter and
+protocol vaults, and `RobinhoodUniswapV3GraduationAdapter`, then prints the
+exact env for the router and generation steps. Rehearsed in
+`RobinhoodPrerequisitesDeploy.spec.ts`.
+
+**Arena signers:** the API reads `ARENA_WAR_POOL_RESOLVER_KEY` and
+`ARENA_BOOST_QUOTE_SIGNER_PRIVATE_KEY` (+ `_ADDRESS`); **neither is set in any
+env**. Both roles have `onlyOwner` setters on the war pool, so they do not block
+the deploy — deploy with a placeholder and let the Safe `setResolver` /
+`setBoostQuoteSigner` once the key exists. `protocolReceiver` has no setter and
+defaults to the Safe.
+
+**Robinhood's config default graduation target was 10** — allowed on no chain.
+Fixed per chain (30,000 mainnet / 6 testnet), checked against the factory's
+own view before it is set. The accepted testnet factory still carries 10; the
+app passes a per-campaign target so it is not on the app path.
+
 ### Still to do
 
 - Configure a quote route per approved quote token on each adapter (BNB

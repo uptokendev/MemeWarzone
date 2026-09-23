@@ -56,7 +56,41 @@ const TESTNET_REUSE = {
 };
 
 const MEME_POOL_FEE_TIER = 3000;
-const MAX_ORACLE_AGE_SECONDS = 3600;
+/**
+ * How stale a price the stock adapter will still act on. Immutable in the
+ * adapter, so it has to be right at deploy.
+ *
+ * Chainlink's ETH / USD on Robinhood mainnet (0x78F3556b…) is a "low" category
+ * feed with an 86,400 s heartbeat: it can legitimately go a day between
+ * updates, and was 121 minutes old when checked. The 3600 s the testnet uses
+ * (against a mock feed the harness refreshes) would report OracleStale for
+ * most of every day there. Mainnet gets 90,000 s -- the heartbeat plus an
+ * hour of slack -- and the run refuses a value the live feed already exceeds.
+ */
+export function maxOracleAgeFor(chainId: bigint): number {
+  const override = Number(String(process.env.RH_MAX_ORACLE_AGE_SECONDS || "").trim());
+  if (Number.isInteger(override) && override > 0) return override;
+  return chainId === 46630n ? 3600 : 90_000;
+}
+
+/** Refuse a max age the feed already fails, before it is burned into an immutable. */
+export async function assertFeedWithinMaxAge(feedAddress: string, maxAgeSeconds: number, label: string) {
+  const feed = await ethers.getContractAt(
+    ["function decimals() view returns (uint8)", "function latestRoundData() view returns (uint80,int256,uint256,uint256,uint80)"],
+    feedAddress,
+  );
+  const [, answer, , updatedAt] = await (feed as any).latestRoundData();
+  const now = BigInt((await ethers.provider.getBlock("latest"))!.timestamp);
+  const age = now - BigInt(updatedAt);
+  if (answer <= 0n) throw new Error(`${label}: feed ${feedAddress} reports a non-positive answer`);
+  if (age > BigInt(maxAgeSeconds)) {
+    throw new Error(
+      `${label}: feed ${feedAddress} is ${age}s old right now, above the ${maxAgeSeconds}s max age about to be made immutable. ` +
+        `Every price read would revert stale. Raise RH_MAX_ORACLE_AGE_SECONDS above the feed's heartbeat.`,
+    );
+  }
+  console.log(`[rh] ok ${label}: feed age ${age}s within max ${maxAgeSeconds}s (decimals ${await (feed as any).decimals()})`);
+}
 const PROTOCOL_FEE_BPS = 200n;
 /**
  * The factory's default graduation target, per chain.
@@ -171,6 +205,8 @@ async function main() {
     await requireCode(label, address);
   }
   await assertRouterCanServeStrictRouting(treasuryRouter);
+  const MAX_ORACLE_AGE_SECONDS = maxOracleAgeFor(net.chainId);
+  await assertFeedWithinMaxAge(nativeUsdFeed, MAX_ORACLE_AGE_SECONDS, "stock adapter oracle age");
 
   // --- redeploy ------------------------------------------------------------
   const campaignImpl = await (await ethers.getContractFactory("LaunchCampaign")).deploy();
