@@ -406,7 +406,7 @@ account, and the rent is always recoverable with
 |---|---|---|
 | Launchpad buffer | `EdmGZHL5fNGQuT8b8wRz5JbT4uhUwHyptuoSoBjLkJbg` | **staged on mainnet 2026-09-23**, 6.19120428 SOL, bytes verified, authority `fk5YYWb…` |
 | | `~/.config/memewarzone/mwz-launchpad-mainnet-buffer-e6ed7df3.json` | |
-| Treasury buffer | `~/.config/memewarzone/mwz-treasury-mainnet-buffer-1028f6f8.json` | **not generated** — `solana-keygen new --no-bip39-passphrase -o <that path>` |
+| Treasury buffer | `GQC9eHQsDgUgydstAYxks9JFpDVhRGrPZ7vAMXygWc9y` | generated 2026-09-24 at `~/.config/memewarzone/mwz-treasury-mainnet-buffer-1028f6f8.json`; **not yet staged** — dry run refuses until `solana program extend 2NzthKEZ… 646624` |
 
 The launchpad buffer exists and is in the multisig's hands. The program itself
 is untouched (`Last Deployed In Slot` still 448871337), so nothing has been
