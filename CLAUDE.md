@@ -899,6 +899,10 @@ Always read the chain, never match an address by eye.
 
 ### Still to do
 
+- **Go-live runbook** with every env name and address, the two code changes
+  that gate Robinhood battles and the staging pins, the merge order and the
+  dashboard switch: `docs/build_plans/go-live-runbook.md` (gitignored dir, on
+  disk — `git add -f` if it should travel).
 - **Robinhood mainnet**: R1 prerequisites → R2 router (+4 Safe setters) →
   R3 generation (+2 Safe locker calls) → R4 handover. Runbook in
   `docs/build_plans/mainnet-deploy-runbook.md` (gitignored dir, on disk).
