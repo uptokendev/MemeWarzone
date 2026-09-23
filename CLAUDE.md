@@ -857,8 +857,51 @@ Fixed per chain (30,000 mainnet / 6 testnet), checked against the factory's
 own view before it is set. The accepted testnet factory still carries 10; the
 app passes a per-campaign target so it is not on the app path.
 
+### BNB mainnet — DEPLOYED (2026-09-23)
+
+Every step ran from the founder's terminal (the auto-mode classifier refuses
+mainnet sends from the agent, correctly); every state below was read back from
+chain independently of the script that wrote it. 21 deployer transactions,
+0.00144 BNB. All closed: `createPaused` true, `live` false, war pool deposits
+paused. **Everything is owned by the Safe** `0x1edcEdf5…`; the deployer keeps
+only the quote adapter's `admin` (immutable, no transfer), which is what
+configures quote routes.
+
+| | |
+|---|---|
+| TreasuryRouterV3 | `0xe635AA43fE5707561c8c3C655225da5C3e4C2239` (admin Safe) |
+| CommunityRewardsVault | `0xB6ccAc81f84F125Ecdc8dFaB2e019c42EAc5486e` |
+| CreatorRewardsVault | `0x72A963682B261195EB43F8f75e0515ab279EbD14` |
+| BnbBasicLaunchFactory | `0x632061cA786f7B585Bbd46A792FDA92B02f70671` |
+| PermanentLpLocker | `0xdd41E0d13c637657A28b60F860205048221F325A` |
+| LaunchCampaign impl | `0xE72A281b4A728AFb5fa836f593B56C8f74Fd4238` |
+| BnbQuoteLaunchCampaign impl | `0xBd7EB35d62B0AB69B1BB1d756BbDBcC6D31D86C7` |
+| BnbQuoteGraduationAdapter | `0xfdF80819CCaE7103165c2EAd9057BA7Eb2fa8aee` (admin deployer) |
+| PostGradLeagueTreasuryV2 | `0xD9E381408A4e361C66D8b1e657583bdE6c52402d` |
+| ArenaWarPoolTreasuryV2 | `0xe69a6a41363a48179beaB9b1E6122885bbFe8C65` |
+
+Reused: Topaz adapter `0x5c3135Df…`, Topaz router `0x1E98c822…`, oracle
+`0x9D204406…`, BNB/USD feed `0x0567F232…`, CreatorRegistry `0x8194FB37…`,
+RiskRegistry `0x92b1494C…`, the four existing vaults, route authority
+`0xb989A998…`. Arena resolver `0x2b72A9E6…`, boost signer `0xFCA7DF58…` (both
+EOAs, **unfunded** — the resolver pays gas for `resolve`).
+
+Safe batches (in `deployments/bnb/`, generated from the ABI by
+`scripts/make-safe-batch.ts`): B2 vault setters, safeTx `0x12f50c4e…`,
+executed `0xf16be625…`; B4 launch recorder + locker authorization + primary,
+safeTx `0x443fa345…`. **Several of these addresses coincide with Robinhood
+testnet addresses** (`0x632061cA…` was RH testnet WETH, `0xfdF80819…` its V3
+factory, `0xe69a6a41…` its graduation router) — same deployer, same nonces.
+Always read the chain, never match an address by eye.
+
+`anyLpLockerAuthorized` is now true on this router: the next locker on it
+(any future generation) needs propose → 3600 s → accept.
+
 ### Still to do
 
+- **Robinhood mainnet**: R1 prerequisites → R2 router (+4 Safe setters) →
+  R3 generation (+2 Safe locker calls) → R4 handover. Runbook in
+  `docs/build_plans/mainnet-deploy-runbook.md` (gitignored dir, on disk).
 - Configure a quote route per approved quote token on each adapter (BNB
   `BnbQuoteGraduationAdapter`, Robinhood stock adapter).
 - Then mainnet, as one release with the two Solana upgrades — BNB step 1 is
