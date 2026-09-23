@@ -13,10 +13,14 @@
 # time, which makes the buffer addressable, resumable and closable; a priority
 # fee; and a high sign-attempt count.
 #
-#   SOLANA_MAINNET_RPC_URL=<paid rpc> bash scripts/solana/prepare-mainnet-squads-buffer.sh launchpad
+#   bash scripts/solana/prepare-mainnet-squads-buffer.sh launchpad                    # dry run
+#   MWZ_STAGE_SEND=1 bash scripts/solana/prepare-mainnet-squads-buffer.sh launchpad   # sends
 #
-# Re-running after a failed upload resumes into the same buffer rather than
-# funding a second one.
+# It reads and verifies without MWZ_STAGE_SEND=1, because every other check here
+# is free and the upload is not: once buffer authority moves to the multisig the
+# rent is recoverable only by the multisig, so an accidental run costs a Squads
+# transaction to undo. Re-running after a failed upload resumes into the same
+# buffer rather than funding a second one.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -54,13 +58,39 @@ case "$TARGET" in
     ;;
 esac
 
+# The build already carries a paid mainnet endpoint. Prefer an explicit
+# SOLANA_MAINNET_RPC_URL, otherwise read SOLANA_RPC_URL out of
+# frontend/.env.local rather than making the operator paste a keyed URL.
 RPC="${SOLANA_MAINNET_RPC_URL:-}"
-[[ -n "$RPC" ]] || { echo "SOLANA_MAINNET_RPC_URL is required (a paid endpoint -- see the header)" >&2; exit 1; }
+RPC_SOURCE="SOLANA_MAINNET_RPC_URL"
+if [[ -z "$RPC" && -f "$ROOT/frontend/.env.local" ]]; then
+  RPC="$(node -e '
+    const fs = require("fs");
+    const line = fs.readFileSync(process.argv[1], "utf8").split("\n")
+      .find((l) => /^\s*(export\s+)?SOLANA_RPC_URL\s*=/.test(l));
+    if (!line) process.exit(0);
+    process.stdout.write(line.slice(line.indexOf("=") + 1).trim().replace(/^["\x27]|["\x27]$/g, ""));
+  ' "$ROOT/frontend/.env.local")"
+  RPC_SOURCE="frontend/.env.local SOLANA_RPC_URL"
+fi
+[[ -n "$RPC" ]] || { echo "no mainnet RPC: set SOLANA_MAINNET_RPC_URL, or put SOLANA_RPC_URL in frontend/.env.local" >&2; exit 1; }
+
 if [[ "$RPC" == *"api.mainnet-beta.solana.com"* && "${MWZ_ALLOW_PUBLIC_RPC:-}" != "1" ]]; then
   echo "Refusing to upload $(wc -c < "$CANDIDATE") bytes over the public RPC; it rate-limits and the abort costs rent." >&2
   echo "Set MWZ_ALLOW_PUBLIC_RPC=1 to override." >&2
   exit 1
 fi
+
+# Ask the chain which cluster this is. A URL cannot be trusted to say -- the
+# endpoint above is read from the staging env file, and pointing 6 SOL of buffer
+# at devnet because someone flipped one line is not a failure worth having.
+MAINNET_GENESIS="5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
+ACTUAL_GENESIS="$(solana genesis-hash --url "$RPC" 2>/dev/null || true)"
+if [[ "$ACTUAL_GENESIS" != "$MAINNET_GENESIS" ]]; then
+  echo "refusing: $RPC_SOURCE reports genesis ${ACTUAL_GENESIS:-<unreachable>}, not mainnet-beta $MAINNET_GENESIS" >&2
+  exit 1
+fi
+echo "==> RPC from $RPC_SOURCE, verified mainnet-beta by genesis"
 
 [[ -s "$CANDIDATE" ]] || { echo "missing $CANDIDATE -- run the gate first" >&2; exit 1; }
 [[ -f "$DEPLOYER" ]] || { echo "deployer keypair not found: $DEPLOYER" >&2; exit 1; }
@@ -95,6 +125,22 @@ echo "    allocated $ALLOCATED bytes"
 if (( ALLOCATED < BYTES )); then
   echo "allocation $ALLOCATED is smaller than the binary $BYTES -- run 'solana program extend' first" >&2
   exit 1
+fi
+
+if [[ "${MWZ_STAGE_SEND:-}" != "1" ]]; then
+  cat <<PLAN
+
+==> DRY RUN. Nothing has been sent.
+
+Everything above was read from the chain. Sending would:
+  - upload $BYTES bytes into $BUFFER
+  - spend $(solana rent $((BYTES + 37)) --url "$RPC" | awk '{print $3}') SOL of rent, recoverable only by
+    the multisig once buffer authority is transferred to it
+  - hand that buffer to $SQUADS
+
+Re-run with MWZ_STAGE_SEND=1 to do it.
+PLAN
+  exit 0
 fi
 
 echo "==> writing the buffer (resumes into $BUFFER if a previous run aborted)"

@@ -10,7 +10,7 @@ Everything below is verified fact unless marked **open**. Read the rules before 
 - **Every Solana transaction is proven on a local validator before any program upgrade.** No exceptions.
 - **Never change the CREATE / BUY / SELL transaction setup or flow.** Every transaction path runs the same way as those three. **Graduation is the only exception** — it is a different path by design and is measured on its own. The create/buy/sell shape was built to stop Phantom flagging us (fee router, account layout, writable count, one ALT, one signer), so a change there is not a refactor, it is a relapse. It is pinned in `tests/solana/v0-launchpad-onchain.cjs`: CREATE 844 bytes / 2 ix / 1 table / 17 accounts, 9 writable; BUY 764 bytes / 2 ix / 1 table / 14 accounts, 7 writable. If a change makes those assertions fail, the change is wrong — do not repin them to make the gate pass.
 - **Deployer `9YN7WY8svWoeNgegS2oq7uNDyrdcfg9UDUQR7tWpeF8H` must never hold user money.** Protocol wallet stays capped; the rest goes to multisig `fk5YYWb4ppwbFqME8YRugirMSaNfhGgPP3GjfMbbfGv`.
-- **Mainnet treasury `solana program extend` / buffer / Squads upgrade is ON HOLD** — "No go, we need to fix everything first." Do not run it.
+- **No Solana mainnet upgrade until BNB and Robinhood are ready.** One combined release: new launchpad contracts on BNB and Robinhood, both Solana programs upgraded, tested together, then live. Both Solana candidates are finished and staged; nothing goes up on its own. The treasury additionally needs `MWZ_TREASURY_RELEASE=1` to lift its own hold. See §5.
 - **Never send devnet transactions with founder keys without saying so first. Never touch mainnet.**
 - **Auto-mode classifier blocks production DB writes, auth-row copies and permission grants.** Hand the founder the SQL to run in the Supabase SQL editor instead of running it.
 - **Each step after step 1 needs an explicit founder go.** Don't roll forward on your own.
@@ -333,28 +333,145 @@ demotion, the headline and the catalog mapping, plus a guard that
 `GENERIC_SELECT` still carries `d.verification` — drop that column and every
 asset silently reports no issuer powers.
 
-### Mainnet is staged, not sent (2026-09-22)
+### The mainnet upgrade, end to end (2026-09-23)
 
-Both gates were re-run against this tree and certify the hashes the runbook
-pins: launchpad `e6ed7df3…` (1218568 B), treasury `5638c992…` (1276472 B).
+**Nothing is upgraded until BNB and Robinhood are ready.** Founder decision
+2026-09-23: the new launchpad contracts and the battle system go out as one
+release — BNB and Robinhood deployed, both Solana programs upgraded, then tested
+together and put live. Both Solana candidates are finished and staged; they wait.
 
-`scripts/solana/prepare-mainnet-squads-buffer.sh launchpad` does the whole
-permissionless half in one command — sha check, allocation check, upload,
-byte-verify, authority transfer to `fk5YYWb…` — and prints the four Squads
-values. **It has not been run.** It refuses to start without
-`SOLANA_MAINNET_RPC_URL`, refuses the public endpoint (a 1.2MB upload is
-hundreds of writes; the devnet abort stranded 6.49 SOL), and refuses `treasury`
-outright while that upgrade is on hold.
+Both are certified by their gates and byte-verified on devnet:
 
-No Solana mainnet RPC is configured in any local env file, so the paid endpoint
-has to be supplied when the buffer is actually written.
+| | Program | Candidate sha256 | Bytes | Allocation |
+|---|---|---|---|---|
+| Launchpad | `3JSGNiFstsSQEd98GUJduBnceXNg8kh2qWg7zEeZfmBt` | `e6ed7df37dfe3bf8ec7914f7bcae9ebd50b21b0844cff80c2a851c64bfafdcb2` | 1218568 | 1310936 — **fits** |
+| Treasury | `2NzthKEZHtbnqXxT4eeEnEQRHkQsdqgqVsfzcCCoZBKX` | `1028f6f8a52037f1aea8ab2e6ae86f9e2c1224eed7e1e7b71675cdfca2508a95` | 1306640 | 660016 — **must extend 646624 B first** |
 
-The buffer keypair already exists so the address is known before any spend:
-`EdmGZHL5fNGQuT8b8wRz5JbT4uhUwHyptuoSoBjLkJbg`, keypair at
-`~/.config/memewarzone/mwz-launchpad-mainnet-buffer-e6ed7df3.json`. Launchpad
-buffer rent is 6.19116364 SOL and comes back to the spill account when the
-upgrade executes; the launchpad needs no `extend`, so nothing about it is a
-permanent spend. Deployer holds 13.238843275 SOL.
+#### The half we do, and the half Squads does
+
+The multisig `fk5YYWb4ppwbFqME8YRugirMSaNfhGgPP3GjfMbbfGv` owns both programs, so
+only it can execute the upgrade. Everything before that — uploading the binary
+into a buffer, extending an allocation — is permissionless and paid by the
+deployer. We do that half and hand over four values.
+
+```
+bash scripts/solana/prepare-mainnet-squads-buffer.sh launchpad                    # reads only
+MWZ_STAGE_SEND=1 bash scripts/solana/prepare-mainnet-squads-buffer.sh launchpad   # sends
+```
+
+It verifies the .so against the certified sha, checks the allocation can hold
+it, uploads, dumps the buffer and byte-verifies it, transfers buffer authority
+to the multisig, then prints the Squads proposal values. For the treasury add
+`MWZ_TREASURY_RELEASE=1`, and run `solana program extend` first.
+
+**It does nothing without `MWZ_STAGE_SEND=1`.** Every other check is free and
+the upload is not: once buffer authority moves to the multisig the rent is
+recoverable only by the multisig, so an accidental run costs a Squads
+transaction to undo. That guard exists because the script was run without it on
+2026-09-23 and staged the launchpad buffer for real.
+
+**The mainnet RPC is already in the build** — `SOLANA_RPC_URL` in
+`frontend/.env.local`, a paid Helius mainnet endpoint. The script prefers an
+explicit `SOLANA_MAINNET_RPC_URL` and otherwise reads that one, then asks the
+chain for its genesis hash and refuses anything that is not mainnet-beta. A URL
+cannot be trusted to say which cluster it is, and that file is the staging env.
+
+The proposal is a `BPFLoaderUpgradeable::Upgrade` with four fields — program,
+buffer, spill (the deployer, which receives the reclaimed rent), authority (the
+multisig). **The buffer address is the entire payload; everything else is
+fixed.** Confirm with signers that it is the address whose hash was verified.
+
+#### What the script refuses, and why each one cost something to learn
+
+- **No `SOLANA_MAINNET_RPC_URL`** → stops. No Solana mainnet RPC is in any local
+  env file; the paid endpoint is supplied at run time.
+- **The public `api.mainnet-beta.solana.com`** → refused. A 1.2MB binary is
+  several hundred write transactions and the public endpoint drops enough to
+  abort the deploy with the rent already spent. On devnet that stranded 6.49 SOL
+  in a buffer whose only handle was a seed phrase printed once.
+- **A candidate whose sha does not match** → stops. The tree is then not what
+  the gate certified.
+- **An allocation smaller than the binary** → stops, naming the extend. An
+  upgrade into an allocation that cannot hold the binary fails *on execution*,
+  which is the worst place to discover it.
+- **`treasury` without `MWZ_TREASURY_RELEASE=1`** → refused while held.
+
+Buffer keypairs are **generated ahead of time and named**, so the address is
+known before a lamport is spent, an aborted upload resumes into the same
+account, and the rent is always recoverable with
+`solana program close <BUFFER> --recipient <deployer>`.
+
+| | Address / path | State |
+|---|---|---|
+| Launchpad buffer | `EdmGZHL5fNGQuT8b8wRz5JbT4uhUwHyptuoSoBjLkJbg` | **staged on mainnet 2026-09-23**, 6.19120428 SOL, bytes verified, authority `fk5YYWb…` |
+| | `~/.config/memewarzone/mwz-launchpad-mainnet-buffer-e6ed7df3.json` | |
+| Treasury buffer | `~/.config/memewarzone/mwz-treasury-mainnet-buffer-1028f6f8.json` | **not generated** — `solana-keygen new --no-bip39-passphrase -o <that path>` |
+
+The launchpad buffer exists and is in the multisig's hands. The program itself
+is untouched (`Last Deployed In Slot` still 448871337), so nothing has been
+upgraded — the proposal simply has its payload waiting. Its 6.19120428 SOL
+returns to the spill account when Squads executes, or the multisig can close the
+buffer to reclaim it. **The deployer cannot close it; authority has moved.**
+
+#### Money, and why the two cannot be staged together
+
+| Item | SOL | Comes back? |
+|---|---|---|
+| Launchpad buffer | 6.19116364 | yes, to the spill account on execution |
+| Treasury buffer | 6.63856940 | yes, same |
+| Treasury extend top-up | 2.04369460 | **no — permanent rent** |
+
+The launchpad buffer is already paid, so the deployer now holds **7.038237636**
+against the treasury's 8.68226400 — **short 1.64402764**. The treasury therefore
+cannot be staged until either Squads executes the launchpad upgrade (returning
+6.19120428 to the spill account) or the deployer is topped up by ~1.7 SOL.
+
+#### After the launchpad executes
+
+One env var moves, on the API **and** the indexer, then redeploy both:
+
+```
+SOLANA_LAUNCHPAD_PROGRAM_SHA256=e6ed7df37dfe3bf8ec7914f7bcae9ebd50b21b0844cff80c2a851c64bfafdcb2
+```
+
+`SOLANA_LAUNCHPAD_IDL_SHA256` does **not** move: the candidate IDL is
+byte-identical to what is deployed (`6ad69298…`), because the Token-2022 change
+added no instruction, account or error. Clients need no regeneration.
+
+Know what these are before treating a mismatch as an outage: `hashEnv` checks
+presence and 64-hex form — missing is a 503, **wrong is accepted** — and the
+values are attached to every create authorization as `auditMetadata`. Neither is
+compared against the chain. A stale hash breaks the audit trail, not
+create/buy/sell. Only `SOLANA_GENERATION_MANIFEST_HASH` is checked on-chain.
+`_PROGRAM_BYTES` is canary-only and not read by the API.
+
+#### After the treasury executes
+
+The upgrade adds the arena instruction set but **creates no accounts**.
+`arena_config` and `arena_money_config_v2` do not exist on mainnet, so until the
+initializer runs the arena cannot take a lamport.
+
+```
+SOLANA_RPC_URL=<rpc> node scripts/solana/init-arena-mainnet.mjs --status   # keyless, sends nothing
+SOLANA_RPC_URL=<rpc> SOLANA_TREASURY_AUTHORITY_KEYPAIR=<deployer> \
+  node scripts/solana/init-arena-mainnet.mjs            # dry run
+  ... --execute                                         # creates both configs, CLOSED
+  ... --open --execute                                  # after the canary: unpauses both
+```
+
+Everything lands closed — war pool v1 paused as the last step, money v2 born
+paused — so a half-finished run is inert. Opening is a separate deliberate act.
+The script refuses any cluster but mainnet-beta by genesis hash, and is
+rehearsed end to end against the candidate by
+`scripts/solana/rehearse-mainnet-arena-init.sh`.
+
+Verify after either upgrade: `Last Deployed In Slot` advanced, `Authority` is
+still `fk5YYWb…`, and the deployed bytes equal the candidate followed by zeros.
+`Data Length` stays at the allocation, not the binary size — expected, not a
+failure. A plain `sha256sum` of a dump disagrees with a perfectly good buffer;
+use `scripts/solana/program-upgrade-verify.cjs`.
+
+Full runbook: `docs/solana-mainnet-squads-upgrade-runbook.md`.
 
 ### The treasury audit (2026-09-22)
 
@@ -400,12 +517,37 @@ including string literals, or by watching execution. Do not trust a grep.
 - **Orphaned devnet buffer** `HbmmrEjPJL7hvrk7DJrvwFSqqFoNz9yiyzoFxAmEzZZv`
   holds 7.55857772 SOL on the devnet deployer. Predates this work.
 
-## 5. After step 1 (founder go required for each)
+## 5. One combined release (founder decision, 2026-09-23)
 
-2. Local-validator graduation harness → Token-2022 program change in `programs/memewarzone_solana/src/graduation.rs`, with proofs, then devnet upgrade via `scripts/solana/upgrade-devnet-launchpad.cjs`.
-3. Arena competition V2 (75/20/5) program change in `programs/mwz_rewards_treasury/src/arena.rs`.
+**Solana does not go up on its own.** Both programs are finished, certified and
+staged, and they wait for BNB and Robinhood. The release is a single event: the
+new launchpad contracts deployed on BNB and Robinhood, both Solana programs
+upgraded through Squads, everything tested together, then put live.
 
-Then: Robinhood (step 2 of the earlier plan) and BNB (step 3) fully ready → production port bundle → merge the expansion branch into the live branch → dashboard back to production.
+The reason is that a launchpad that accepts binding tokens and a battle system
+that pays 75/20/5 are the same product change across three chains. Shipping
+Solana early means running two economics for however long the others take, and
+proving the combination only afterwards.
+
+Done and waiting:
+
+1. ~~Solana launchpad: Token-2022 quote assets at graduation.~~ Certified
+   `e6ed7df3…`, devnet byte-verified, 20-test gate, bound graduation proven end
+   to end at 1178/1232 bytes, creator confirmation dialog live in production.
+2. ~~Solana treasury: competition V2 at 75/20/5.~~ Certified `1028f6f8…`, 14-test
+   gate, 47/47 instructions executed, support refunds fixed, cancellation
+   removed, mainnet initializer rehearsed.
+
+Remaining before the release:
+
+3. **BNB** — factory/launchpad contracts for binding tokens and the battle system.
+4. **Robinhood** — the same, on its own chain.
+5. Then: stage both Solana buffers → Squads executes both → `init-arena-mainnet.mjs`
+   → canary → `--open` → test the whole thing across all three chains → live.
+
+The production port bundle and the live-branch fast-forward are already done
+(2026-09-22): `api.memewar.zone` and the indexer both run the expansion tree on
+the production database.
 
 ## 6. Known loose ends
 

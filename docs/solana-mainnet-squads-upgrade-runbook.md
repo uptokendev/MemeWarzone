@@ -3,8 +3,14 @@
 **Written for:** the founder and whoever operates the Squads multisig.
 
 **Status: nothing in this document has been executed.** Every figure below was read
-from mainnet on 2026-09-22; no mainnet transaction has been sent. The treasury
-upgrade remains on hold until explicitly released.
+from mainnet on 2026-09-22; no mainnet transaction has been sent.
+
+**Neither program goes up on its own.** Founder decision 2026-09-23: this is one
+combined release — the new launchpad contracts deployed on BNB and Robinhood,
+both Solana programs upgraded through Squads, everything tested together, then
+put live. Both Solana candidates are finished and staged; they wait for the other
+two chains. The treasury additionally needs its own hold lifted with
+`MWZ_TREASURY_RELEASE=1`.
 
 Both gates were re-run on 2026-09-22 against the tree being shipped and the
 launchpad certified the same `e6ed7df3…` in the table below, so step 1 is
