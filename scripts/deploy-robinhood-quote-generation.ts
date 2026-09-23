@@ -58,15 +58,32 @@ const TESTNET_REUSE = {
 const MEME_POOL_FEE_TIER = 3000;
 const MAX_ORACLE_AGE_SECONDS = 3600;
 const PROTOCOL_FEE_BPS = 200n;
-const CONFIG = {
-  totalSupply: ethers.parseEther("1000000000"),
-  curveBps: 8400n,
-  liquidityTokenBps: 1400n,
-  basePrice: 1_000_000_000n,
-  priceSlope: 850n,
-  graduationTarget: ethers.parseEther("10"),
-  liquidityBps: 3300n,
-};
+/**
+ * The factory's default graduation target, per chain.
+ *
+ * LaunchFactory.isGraduationTargetAllowedForChain permits exactly two values
+ * on mainnet (DEFAULT 30,000 and DEEP 50,000 USD) and adds TEST (6 USD) on the
+ * testnets. The previous default of 10 was allowed nowhere: the acceptance
+ * harness never noticed because it passes its own $6 target on every campaign,
+ * but a create that leaves the target to the factory reverts
+ * UnsupportedGraduationTarget. Verified through the factory's own pure view in
+ * test/RobinhoodGenerationConfig.spec.ts, which is where this number is pinned.
+ */
+export function graduationTargetFor(chainId: bigint): bigint {
+  return chainId === 46630n ? ethers.parseEther("6") : ethers.parseEther("30000");
+}
+
+export function configFor(chainId: bigint) {
+  return {
+    totalSupply: ethers.parseEther("1000000000"),
+    curveBps: 8400n,
+    liquidityTokenBps: 1400n,
+    basePrice: 1_000_000_000n,
+    priceSlope: 850n,
+    graduationTarget: graduationTargetFor(chainId),
+    liquidityBps: 3300n,
+  };
+}
 
 function pick(envName: string, fallback: string): string {
   const raw = String(process.env[envName] || "").trim() || fallback;
@@ -214,6 +231,10 @@ async function main() {
   await waitTx((league as any).setSource(await warPool.getAddress(), true), "league.setSource(warPool)");
   await waitTx((warPool as any).setDepositsPaused(true), "warPool.setDepositsPaused(true)");
   await waitTx((factory as any).setStockGraduationAdapter(await stockAdapter.getAddress()), "factory.setStockGraduationAdapter");
+  const CONFIG = configFor(net.chainId);
+  if (!(await (factory as any).isGraduationTargetAllowedForChain(net.chainId, CONFIG.graduationTarget))) {
+    throw new Error(`config graduationTarget ${CONFIG.graduationTarget} is not an allowed target on chain ${net.chainId}; every default create would revert`);
+  }
   await waitTx((factory as any).setConfig(CONFIG), "factory.setConfig");
   await waitTx((factory as any).setProtocolFee(PROTOCOL_FEE_BPS), "factory.setProtocolFee");
   await waitTx((factory as any).setRouteAuthority(routeAuthority), "factory.setRouteAuthority");
@@ -295,7 +316,9 @@ async function main() {
   console.log("[rh] STOP. Everything is paused and nothing is live.");
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}
