@@ -897,15 +897,16 @@ Always read the chain, never match an address by eye.
 `anyLpLockerAuthorized` is now true on this router: the next locker on it
 (any future generation) needs propose → 3600 s → accept.
 
-### Robinhood mainnet — DEPLOYED (2026-09-24), R3b pending the Safe
+### Robinhood mainnet — DEPLOYED, WIRED, SAFE-OWNED, CLOSED (2026-09-24)
 
 Same discipline as BNB: founder's terminal, every state read back from chain.
 34 deployer transactions, ~0.0009 ETH. All closed. Everything Ownable is the
 Safe's (R4 verified: factory, league, war pool, both registries); the deployer
-keeps the stock adapter's immutable `admin`. **Still owed by the Safe: R3b**
-(`setAuthorizedLpLocker` + `setPrimaryLpLocker` on the router, batch
-`deployments/robinhood/mainnet.R3b-locker-authorization.safe-batch.json`) —
-until it executes every LP harvest strands the protocol share.
+keeps the stock adapter's immutable `admin`. R3b executed (batch
+`deployments/robinhood/mainnet.R3b-locker-authorization.safe-batch.json`):
+the V3 locker is authorized and primary on the router, read back from chain.
+`anyLpLockerAuthorized` is now true here too — the next locker on this router
+needs propose → 3600 s → accept.
 
 | | |
 |---|---|
