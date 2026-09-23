@@ -20,10 +20,10 @@ import path from "node:path";
 import { ethers, network } from "hardhat";
 
 const PROFILES: Record<string, { chainId: bigint; confirm: string; file: string }> = {
-  bscTestnet: { chainId: 97n, confirm: "I_UNDERSTAND_TESTNET", file: "bscTestnet.treasury-router-v3.json" },
-  bscMainnet: { chainId: 56n, confirm: "I_UNDERSTAND_MAINNET", file: "bscMainnet.treasury-router-v3.json" },
-  robinhoodTestnet: { chainId: 46630n, confirm: "I_UNDERSTAND_TESTNET", file: "robinhoodTestnet.treasury-router-v3.json" },
-  robinhoodMainnet: { chainId: 4663n, confirm: "I_UNDERSTAND_MAINNET", file: "robinhoodMainnet.treasury-router-v3.json" },
+  bscTestnet: { chainId: 97n, confirm: "I_UNDERSTAND_TESTNET", file: "bnb/testnet.treasury-router-v3.json" },
+  bscMainnet: { chainId: 56n, confirm: "I_UNDERSTAND_MAINNET", file: "bnb/mainnet.treasury-router-v3.json" },
+  robinhoodTestnet: { chainId: 46630n, confirm: "I_UNDERSTAND_TESTNET", file: "robinhood/testnet.treasury-router-v3.json" },
+  robinhoodMainnet: { chainId: 4663n, confirm: "I_UNDERSTAND_MAINNET", file: "robinhood/mainnet.treasury-router-v3.json" },
 };
 
 const UPGRADE_DELAY_SECONDS = 3600;
