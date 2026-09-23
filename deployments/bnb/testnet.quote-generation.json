@@ -1,0 +1,65 @@
+{
+  "network": "bscTestnet",
+  "chainId": 97,
+  "deployedAt": "2026-09-23T00:00:00.000Z",
+  "deployer": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "owner": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "ownerNote": "The deployer owns everything: there is no Safe on chain 97, and the canary needs a key that can sign. Mainnet passes BNB_OWNER_SAFE instead.",
+  "status": "deployed-paused",
+  "verifiedOnChain": "2026-09-23, every field below read back from the chain independently of the deploy script",
+  "runNote": "The deploy script aborted after creatorRegistry.setLaunchRecorder because a lagging BSC RPC node still reported false on the read-back; the transaction had status 1. setRouteAuthority and setCreatePaused(true) were sent separately afterwards. The script now retries such reads.",
+  "inputs": {
+    "topazRouter": "0xC49895Ee36Ad19aa5Cb1405761f6272aD7be6357",
+    "topazQuoteRouter": "0xe559d93643631E9E8Cc7d10ADFA581Be4b5399C8",
+    "topazPoolFactory": "0xE34346710cca352a3b69A080067d176C8ACA97D9",
+    "wbnb": "0x4E7aF54D355684EF206DAb0b5Dca8695D1e75dA2",
+    "treasuryRouter": "0x529C0c4AC803325F9D7a736eF2067D1C0e1C0ed4",
+    "graduationOracle": "0xc9Ee6b5bAA4c7b6C5fA0995FE29D358C59bC52Cb",
+    "riskRegistry": "0xb37bFEDb889E33a31Fe23A4CF2e2329C436bcE39",
+    "routeAuthority": "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0",
+    "nativeUsdFeed": "0x2514895c72f50D8bd4B4F9b1110F0D6bD2c97526"
+  },
+  "reused": {
+    "topazRouter": "the TopazRouterAdapter from the previous generation; answers poolFactory(), which LaunchFactory's constructor calls",
+    "topazQuoteRouter": "Topaz's own router; answers defaultFactory() and weth(), which BnbQuoteGraduationAdapter's constructor calls",
+    "graduationOracle": "reads Chainlink BNB/USD 0x2514895c…, maxPriceAge 3600s, reporting $778.23 when checked",
+    "riskRegistry": "the factory only reads canCreatorLaunch from it, so its owner does not matter",
+    "treasuryRouter": "TreasuryRouterV3 deployed earlier in this same effort, all four vaults wired"
+  },
+  "contracts": {
+    "BnbBasicLaunchFactory": "0xD4De372F1856eD1156d44e7C6eE60ab8Dc924075",
+    "PermanentLpLocker": "0x84daD045b699199d03366C0D3e041C5dCF2bbC31",
+    "LaunchCampaignImplementation": "0x26B08A5bbeB3807AEAB3d65501f3230DFDF0CF4d",
+    "BnbQuoteLaunchCampaign": "0x3E32ecA7b66BEd702B00b59fc4Ee3298d9bF162d",
+    "BnbQuoteGraduationAdapter": "0x5A83d1d8F2E625A36aB9f108E959567d156AF62f",
+    "PostGradLeagueTreasuryV2": "0x1356279be468271699572D994d24E1ec8a1Ce447",
+    "ArenaWarPoolTreasuryV2": "0x1a9F268CD3b57D8e5F6f66746E0bA0F255277525",
+    "CreatorRegistry": "0xAF0dFfc5390D7384bfd9bc822e5746a41AE519Ff"
+  },
+  "creatorRegistryNote": "Deployed fresh. The previous generation's registry 0x4B8dc245… is owned by 0x13AD7976…, a key nobody here holds, so its setLaunchRecorder could never be called and every createCampaign would have reverted NotLaunchRecorder.",
+  "config": {
+    "totalSupply": "1000000000000000000000000000",
+    "curveBps": "8400",
+    "liquidityTokenBps": "1400",
+    "basePrice": "1000000000",
+    "priceSlope": "850",
+    "graduationTarget": "30000000000000000000000",
+    "liquidityBps": "3300"
+  },
+  "protocolFeeBps": "200",
+  "launchRecorderWired": true,
+  "pendingOwnerActions": [],
+  "orphaned": {
+    "BnbBasicLaunchFactory": "0x2DC94d658263BC72c3f573749Bd4c875adD95223",
+    "PermanentLpLocker": "0x86ecE3EA03EE6572f4Bd9Fb96F6165202fF0E8d3",
+    "LaunchCampaignImplementation": "0xb146Dbac35341CD046241f1Ed4f946663035EF59",
+    "BnbQuoteLaunchCampaign": "0xB9bF2091D20018837De4150acd83c1fD1546946b",
+    "CreatorRegistry": "0xbD23Ad6bb1D79f1e61A5BB8f8a386f35Af6FC151",
+    "why": "From the first attempt, which reverted deploying BnbQuoteGraduationAdapter against the wrong Topaz router. Never configured, never live, holds nothing. Do not use."
+  },
+  "next": [
+    "configureQuoteRoute on the adapter for each approved quote token",
+    "canary: create, buy, sell, graduate, then a battle",
+    "enableLive + setCreatePaused(false) + setDepositsPaused(false) only after the canary"
+  ]
+}

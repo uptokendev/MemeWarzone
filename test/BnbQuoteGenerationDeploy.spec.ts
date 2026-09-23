@@ -2,6 +2,7 @@ import { expect } from "chai";
 import { ethers, network } from "hardhat";
 
 import { deployConfiguredTreasuryRouterV3 } from "./helpers/deployRouting";
+import { assertTopazRoutersFit } from "../scripts/deploy-bnb-quote-generation";
 
 /**
  * Rehearsal for scripts/deploy-bnb-quote-generation.ts.
@@ -159,6 +160,168 @@ describe("BNB quote generation deployment", function () {
         initialBuyBnbWei: 0n,
       }),
     ).to.be.reverted;
+  });
+
+  /**
+   * The gap the first three tests could not see.
+   *
+   * They deploy the registries and then never hand them to the factory, so two
+   * defects in the deployment script survived: it called setCreatorRegistry and
+   * setRiskRegistry, neither of which exists on LaunchFactory (the real setter
+   * is setRegistries, taking both), and it never registered the factory as a
+   * launch recorder. createCampaign calls creatorRegistry.recordLaunch behind
+   * onlyLaunchRecorder, so an unregistered factory cannot create one campaign --
+   * on any chain, mainnet included. This drives a real create, which is the only
+   * thing that shows either.
+   */
+  it("wires the registries through the one setter that exists, and cannot create until it is a launch recorder", async function () {
+    const fx = await deployPrerequisites();
+    const [, , , creator] = await ethers.getSigners();
+
+    const nativeImpl = await (await ethers.getContractFactory("LaunchCampaign")).deploy();
+    await nativeImpl.waitForDeployment();
+    const quoteImpl = await (await ethers.getContractFactory("BnbQuoteLaunchCampaign")).deploy();
+    await quoteImpl.waitForDeployment();
+
+    const factory = await (await ethers.getContractFactory("BnbBasicLaunchFactory")).deploy(
+      await fx.topazRouter.getAddress(),
+      await fx.routing.treasuryRouter.getAddress(),
+      await nativeImpl.getAddress(),
+      await fx.graduationOracle.getAddress(),
+      await quoteImpl.getAddress(),
+    );
+    await factory.waitForDeployment();
+    const factoryAddress = await factory.getAddress();
+
+    // There is no setCreatorRegistry and no setRiskRegistry. The script called
+    // both, and the ABI has neither, so the call could only ever have failed.
+    expect((factory as any).interface.getFunction("setCreatorRegistry")).to.equal(null);
+    expect((factory as any).interface.getFunction("setRiskRegistry")).to.equal(null);
+    expect((factory as any).setCreatorRegistry).to.equal(undefined);
+    expect((factory as any).setRiskRegistry).to.equal(undefined);
+
+    await (await (factory as any).setRegistries(
+      await fx.creatorRegistry.getAddress(),
+      await fx.riskRegistry.getAddress(),
+    )).wait();
+    expect(await (factory as any).creatorRegistry()).to.equal(await fx.creatorRegistry.getAddress());
+    expect(await (factory as any).riskRegistry()).to.equal(await fx.riskRegistry.getAddress());
+
+    await (await (factory as any).setConfig({
+      totalSupply: ethers.parseEther("1000000000"),
+      curveBps: 8400n,
+      liquidityTokenBps: 1400n,
+      basePrice: 1_000_000_000n,
+      priceSlope: 850n,
+      graduationTarget: ethers.parseEther("30000"),
+      liquidityBps: 3300n,
+    })).wait();
+    await (await (factory as any).setProtocolFee(200n)).wait();
+
+    // Open every other gate, so the only thing left standing is the recorder.
+    await (await (factory as any).setRequireRouteAuthorization(false)).wait();
+    await (await (factory as any).enableLive()).wait();
+    await (await (factory as any).setCreatePaused(false)).wait();
+
+    const request = {
+      name: "Recorder",
+      symbol: "REC",
+      logoURI: "ipfs://x",
+      xAccount: "x",
+      website: "https://memewar.zone",
+      extraLink: "https://docs.memewar.zone",
+      basePrice: 0n,
+      priceSlope: 0n,
+      graduationTarget: 0n,
+      lpReceiver: ethers.ZeroAddress,
+      initialBuyBnbWei: 0n,
+    };
+
+    expect(await (fx.creatorRegistry as any).launchRecorder(factoryAddress)).to.equal(false);
+    await expect(
+      (factory as any).connect(creator).createCampaign(request),
+    ).to.be.revertedWithCustomError(fx.creatorRegistry, "NotLaunchRecorder");
+
+    // The one call the script was missing.
+    await (await (fx.creatorRegistry as any).setLaunchRecorder(factoryAddress, true)).wait();
+    expect(await (fx.creatorRegistry as any).launchRecorder(factoryAddress)).to.equal(true);
+
+    await expect((factory as any).connect(creator).createCampaign(request)).to.not.be.reverted;
+
+    // And the launch actually landed on the creator's profile, which is the
+    // whole reason the registry is in the path.
+    const profile = await (fx.creatorRegistry as any).getCreatorProfile(await creator.getAddress());
+    expect(profile.liveBondingCount).to.equal(1n);
+  });
+
+  /**
+   * Two Topaz addresses, not one, and they are not interchangeable.
+   *
+   * LaunchFactory's constructor calls poolFactory(); BnbQuoteGraduationAdapter's
+   * calls defaultFactory() and weth(). On BNB mainnet the adapter answers only
+   * the first and Topaz's router only the second -- so the profile that pinned a
+   * single address for both would have reverted a constructor on the real chain.
+   * The script now checks before it spends, and this proves the check fires.
+   */
+  describe("the two Topaz routers", function () {
+    async function topazPair() {
+      const factory = await (await ethers.getContractFactory("MockTopazFactory")).deploy();
+      await factory.waitForDeployment();
+      const wbnb = await (await ethers.getContractFactory("MockWBNB")).deploy();
+      await wbnb.waitForDeployment();
+      // Answers all four, so it can stand in for either side.
+      const full = await (await ethers.getContractFactory("MockTopazRouter")).deploy(
+        await factory.getAddress(),
+        await wbnb.getAddress(),
+      );
+      await full.waitForDeployment();
+      // Answers only the factory side.
+      const adapterOnly = await (await ethers.getContractFactory("MockTopazAdapterOnly")).deploy(
+        await factory.getAddress(),
+        await wbnb.getAddress(),
+      );
+      await adapterOnly.waitForDeployment();
+      return { factory, wbnb, full, adapterOnly };
+    }
+
+    it("accepts a pair that agrees on the pool factory and the wrapped native", async function () {
+      const { full } = await topazPair();
+      await assertTopazRoutersFit(await full.getAddress(), await full.getAddress());
+    });
+
+    it("refuses the adapter where the quote adapter's router belongs", async function () {
+      const { adapterOnly } = await topazPair();
+      // This is the swap that reverts BnbQuoteGraduationAdapter's constructor.
+      await expect(
+        assertTopazRoutersFit(await adapterOnly.getAddress(), await adapterOnly.getAddress()),
+      ).to.be.rejectedWith(/no defaultFactory\(\)\/weth\(\)/);
+    });
+
+    it("refuses a router that cannot answer poolFactory where the factory belongs", async function () {
+      const { full, wbnb } = await topazPair();
+      // MockWBNB has code but none of the router surface, standing in for
+      // Topaz's own router, which reverts poolFactory() on both real chains.
+      await expect(
+        assertTopazRoutersFit(await wbnb.getAddress(), await full.getAddress()),
+      ).to.be.rejectedWith(/no poolFactory\(\)/);
+    });
+
+    it("refuses two routers pointing at different Topaz deployments", async function () {
+      const { full, wbnb } = await topazPair();
+      const otherFactory = await (await ethers.getContractFactory("MockTopazFactory")).deploy();
+      await otherFactory.waitForDeployment();
+      const strayAdapter = await (await ethers.getContractFactory("MockTopazAdapterOnly")).deploy(
+        await otherFactory.getAddress(),
+        await wbnb.getAddress(),
+      );
+      await strayAdapter.waitForDeployment();
+
+      // The quiet failure: both constructors succeed, and the graduation builds
+      // its pool on a Topaz the campaign never trades against.
+      await expect(
+        assertTopazRoutersFit(await strayAdapter.getAddress(), await full.getAddress()),
+      ).to.be.rejectedWith(/disagree on the pool factory/);
+    });
   });
 
   it("refuses a treasury router that cannot serve strict routing", async function () {

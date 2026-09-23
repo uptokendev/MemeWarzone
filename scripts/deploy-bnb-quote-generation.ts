@@ -50,6 +50,7 @@ type ChainProfile = {
   confirm: string;
   safe: string;
   topazRouter: string;
+  topazQuoteRouter: string;
   graduationOracle: string;
   creatorRegistry: string;
   riskRegistry: string;
@@ -62,23 +63,37 @@ const PROFILES: Record<string, ChainProfile> = {
     chainId: 56n,
     confirm: "I_UNDERSTAND_MAINNET",
     safe: "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
-    topazRouter: "0x1E98c8226e7d452e1888e3d3d2F929346321c6c3",
+    // The factory calls poolFactory(); only the adapter answers it. Passing
+    // Topaz's own router here reverts the factory constructor.
+    topazRouter: "0x5c3135Dfaad519A9114DEa2E546f0Cd051d0D35a",
+    // The quote adapter calls defaultFactory() and weth(); only Topaz's own
+    // router answers those. Both resolve to pool factory
+    // 0x65E6cD0e… and WBNB 0xbb4CdB9C…, verified on chain.
+    topazQuoteRouter: "0x1E98c8226e7d452e1888e3d3d2F929346321c6c3",
     graduationOracle: "0x9D204406d5ECA0f18e48427fDD983A32FdF57C9B",
     creatorRegistry: "0x8194FB3745d027102ce7Da562c7045f28B2f42fD",
     riskRegistry: "0x92b1494CF7b80dA379EB96F59EeE4Ae7F8970597",
     routeAuthority: "0xb989A99823eA96552c3E3198A40CdBF682EDf1aA",
-    deploymentFile: "bscMainnet.quote-generation.json",
+    deploymentFile: "bnb/mainnet.quote-generation.json",
   },
+  // The BSC testnet stack that already exists and was re-verified on chain
+  // before being pinned here. topazRouter is the Topaz V2 adapter, not Topaz's
+  // own router: the factory reads poolFactory() off whatever it is given, and
+  // only the adapter answers it. creatorRegistry is deliberately empty -- the
+  // one from the previous generation is owned by a key we do not hold, so its
+  // setLaunchRecorder can never be called and every create would revert. A
+  // fresh one is deployed instead (see supplyOrDeployRegistry).
   bscTestnet: {
     chainId: 97n,
     confirm: "I_UNDERSTAND_TESTNET",
     safe: "",
-    topazRouter: "",
-    graduationOracle: "",
+    topazRouter: "0xC49895Ee36Ad19aa5Cb1405761f6272aD7be6357",
+    topazQuoteRouter: "0xe559d93643631E9E8Cc7d10ADFA581Be4b5399C8",
+    graduationOracle: "0xc9Ee6b5bAA4c7b6C5fA0995FE29D358C59bC52Cb",
     creatorRegistry: "",
-    riskRegistry: "",
-    routeAuthority: "",
-    deploymentFile: "bscTestnet.quote-generation.json",
+    riskRegistry: "0xb37bFEDb889E33a31Fe23A4CF2e2329C436bcE39",
+    routeAuthority: "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0",
+    deploymentFile: "bnb/testnet.quote-generation.json",
   },
   // A throwaway in-process chain, so the script itself can be proven before it
   // runs anywhere real. 31337 is neither BNB chain, so this profile can never
@@ -88,11 +103,12 @@ const PROFILES: Record<string, ChainProfile> = {
     confirm: "I_UNDERSTAND_REHEARSAL",
     safe: "",
     topazRouter: "",
+    topazQuoteRouter: "",
     graduationOracle: "",
     creatorRegistry: "",
     riskRegistry: "",
     routeAuthority: "",
-    deploymentFile: "hardhat.quote-generation.rehearsal.json",
+    deploymentFile: "bnb/hardhat.quote-generation.rehearsal.json",
   },
 };
 
@@ -126,6 +142,27 @@ async function waitTx(txPromise: Promise<any> | any, label: string) {
   const receipt = await tx.wait(1);
   if (!receipt || receipt.status !== 1) throw new Error(`${label} failed`);
   return receipt;
+}
+
+/**
+ * Read a value back after a transaction, tolerating a node that is behind.
+ *
+ * BSC's public endpoints load-balance across nodes, so a read issued straight
+ * after a confirmed transaction can land on one that has not seen its block
+ * yet. That happened on the BSC testnet run: setLaunchRecorder confirmed with
+ * status 1 and the very next call still reported false. Treating that as a
+ * failure aborts a deployment that in fact succeeded, after all the gas is
+ * spent -- much worse than waiting a few seconds.
+ */
+async function readBack<T>(read: () => Promise<T>, expected: T, label: string, attempts = 8): Promise<T> {
+  let value = await read();
+  for (let i = 1; i < attempts && String(value).toLowerCase() !== String(expected).toLowerCase(); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    console.log(`[quote-gen] ${label} still ${value}; the node may be behind, re-reading (${i}/${attempts - 1})`);
+    value = await read();
+  }
+  eq(label, value, expected);
+  return value;
 }
 
 function eq(label: string, actual: unknown, expected: unknown) {
@@ -189,6 +226,148 @@ async function assertRouterCanServeStrictRouting(routerAddress: string) {
   }
 }
 
+/**
+ * A registry address, or a fresh registry when the network has none to reuse.
+ *
+ * Mainnet profiles pin both registries, so this never deploys there; the
+ * explicit guard makes that a rule rather than a coincidence. On a testnet the
+ * previous generation's CreatorRegistry is owned by a key nobody here holds,
+ * and the factory must be registered on it as a launch recorder or every
+ * createCampaign reverts NotLaunchRecorder -- so reusing it is not an option
+ * and a fresh one is the only working choice.
+ */
+async function supplyOrDeployRegistry(
+  contractName: "CreatorRegistry" | "RiskRegistry",
+  envName: string,
+  fallback: string,
+  isMainnet: boolean,
+): Promise<string> {
+  const supplied = String(process.env[envName] || "").trim() || fallback;
+  if (supplied) {
+    const address = ethers.getAddress(supplied);
+    await requireCode(contractName, address);
+    console.log(`[quote-gen] ${contractName} = ${address} (reused)`);
+    return address;
+  }
+  if (isMainnet) {
+    throw new Error(`${envName} is required on mainnet; this script never deploys a registry there`);
+  }
+  const deployed = await (await ethers.getContractFactory(contractName)).deploy();
+  await deployed.waitForDeployment();
+  const address = ethers.getAddress(await deployed.getAddress());
+  console.log(`[quote-gen] ${contractName} = ${address} (deployed fresh)`);
+  return address;
+}
+
+/**
+ * Register the factory as a launch recorder, or say who must.
+ *
+ * LaunchFactory.createCampaign calls creatorRegistry.recordLaunch and
+ * graduation calls recordGraduation; both sit behind onlyLaunchRecorder. A
+ * factory that is not registered cannot create a single campaign. The registry
+ * owner is the Safe on mainnet, so there the call has to come from it and this
+ * prints the transaction instead of pretending it is done.
+ */
+async function wireLaunchRecorder(
+  creatorRegistry: string,
+  factoryAddress: string,
+  deployerAddress: string,
+): Promise<{ wired: boolean; ownerAction?: { to: string; data: string } }> {
+  const registry = await ethers.getContractAt(
+    [
+      "function owner() view returns (address)",
+      "function launchRecorder(address) view returns (bool)",
+      "function setLaunchRecorder(address recorder, bool allowed)",
+    ],
+    creatorRegistry,
+  );
+
+  if (await (registry as any).launchRecorder(factoryAddress)) {
+    console.log("[quote-gen] ok creatorRegistry.launchRecorder[factory]=true (already set)");
+    return { wired: true };
+  }
+
+  const owner = ethers.getAddress(await (registry as any).owner());
+  if (owner.toLowerCase() !== deployerAddress.toLowerCase()) {
+    const data = (registry as any).interface.encodeFunctionData("setLaunchRecorder", [factoryAddress, true]);
+    console.log(`\n[quote-gen] creatorRegistry owner is ${owner}, not the deployer.`);
+    console.log("[quote-gen] CREATE WILL REVERT NotLaunchRecorder until the owner sends:");
+    console.log(`  to=${creatorRegistry}`);
+    console.log(`  data=${data}   # setLaunchRecorder(${factoryAddress}, true)\n`);
+    return { wired: false, ownerAction: { to: creatorRegistry, data } };
+  }
+
+  await waitTx((registry as any).setLaunchRecorder(factoryAddress, true), "creatorRegistry.setLaunchRecorder(factory)");
+  await readBack(() => (registry as any).launchRecorder(factoryAddress), true, "creatorRegistry.launchRecorder[factory]");
+  return { wired: true };
+}
+
+/**
+ * Prove each Topaz address answers what its own consumer will call.
+ *
+ * There are two, and they are not interchangeable. LaunchFactory's constructor
+ * calls poolFactory() on the router it is given, and only the TopazRouterAdapter
+ * answers that. BnbQuoteGraduationAdapter's constructor calls defaultFactory()
+ * and weth(), and only Topaz's own router answers those. Verified on chain: on
+ * BNB mainnet the adapter 0x5c3135Df… reverts defaultFactory() and the router
+ * 0x1E98c822… reverts poolFactory(); BSC testnet is the same shape.
+ *
+ * Swapping them reverts a constructor, which is a wasted deployment rather than
+ * a disaster -- but they must also agree on the pool factory and the wrapped
+ * native, and that failure is the quiet one: the graduation would build its
+ * pool on a different Topaz than the one the campaign trades against.
+ */
+export async function assertTopazRoutersFit(topazRouter: string, topazQuoteRouter: string) {
+  const factorySide = await ethers.getContractAt(
+    ["function poolFactory() view returns (address)", "function WETH() view returns (address)"],
+    topazRouter,
+  );
+  const quoteSide = await ethers.getContractAt(
+    ["function defaultFactory() view returns (address)", "function weth() view returns (address)"],
+    topazQuoteRouter,
+  );
+
+  let poolFactory: string;
+  try {
+    poolFactory = await (factorySide as any).poolFactory();
+  } catch {
+    throw new Error(
+      `BNB_TOPAZ_ROUTER ${topazRouter} has no poolFactory(). LaunchFactory's constructor calls it, so the ` +
+        `factory deployment would revert. Pass the TopazRouterAdapter, not Topaz's own router.`,
+    );
+  }
+
+  let defaultFactory: string;
+  let wrapped: string;
+  try {
+    defaultFactory = await (quoteSide as any).defaultFactory();
+    wrapped = await (quoteSide as any).weth();
+  } catch {
+    throw new Error(
+      `BNB_TOPAZ_QUOTE_ROUTER ${topazQuoteRouter} has no defaultFactory()/weth(). ` +
+        `BnbQuoteGraduationAdapter's constructor calls both, so the adapter deployment would revert. ` +
+        `Pass Topaz's own router, not the TopazRouterAdapter.`,
+    );
+  }
+
+  if (poolFactory.toLowerCase() !== defaultFactory.toLowerCase()) {
+    throw new Error(
+      `the two Topaz routers disagree on the pool factory: ${topazRouter} says ${poolFactory}, ` +
+        `${topazQuoteRouter} says ${defaultFactory}. A graduation would build its pool on a different ` +
+        `Topaz than the campaign trades against.`,
+    );
+  }
+  await requireCode("topazPoolFactory", poolFactory);
+
+  const factoryWrapped = await (factorySide as any).WETH();
+  if (factoryWrapped.toLowerCase() !== wrapped.toLowerCase()) {
+    throw new Error(
+      `the two Topaz routers disagree on the wrapped native: ${factoryWrapped} vs ${wrapped}`,
+    );
+  }
+  console.log(`[quote-gen] ok topaz poolFactory=${poolFactory} wrapped=${wrapped} (both routers agree)`);
+}
+
 async function main() {
   const profile = PROFILES[network.name];
   if (!profile) {
@@ -206,35 +385,46 @@ async function main() {
   }
 
   const topazRouter = envAddress("BNB_TOPAZ_ROUTER", profile.topazRouter);
+  const topazQuoteRouter = envAddress("BNB_TOPAZ_QUOTE_ROUTER", profile.topazQuoteRouter);
   const graduationOracle = envAddress("BNB_GRADUATION_ORACLE", profile.graduationOracle);
-  const creatorRegistry = envAddress("BNB_CREATOR_REGISTRY", profile.creatorRegistry);
-  const riskRegistry = envAddress("BNB_RISK_REGISTRY", profile.riskRegistry);
   const routeAuthority = envAddress("BNB_ROUTE_AUTHORITY", profile.routeAuthority);
   const treasuryRouter = envAddress("BNB_TREASURY_ROUTER", "");
   const nativeUsdFeed = envAddress("BNB_NATIVE_USD_FEED", "");
-  const safe = envAddress("BNB_OWNER_SAFE", profile.safe);
+  // On mainnet the owner is the Safe and must be supplied. On a testnet there is
+  // no Safe to be owner of -- the Robinhood testnet generation deployed with the
+  // deployer as owner for exactly this reason, and the canary needs a key that
+  // can actually sign. So the testnet default is the deployer, and the guard
+  // below that forbids it stays where it belongs: on mainnet.
 
   const [deployer] = await ethers.getSigners();
   if (!deployer) throw new Error("No deployer signer. Set DEPLOYER_PK or PRIVATE_KEY_DEPLOY.");
   const deployerAddress = ethers.getAddress(await deployer.getAddress());
-  if (deployerAddress.toLowerCase() === safe.toLowerCase()) {
+  const isMainnetChain = profile.confirm === "I_UNDERSTAND_MAINNET";
+  const safe = envAddress("BNB_OWNER_SAFE", profile.safe || (isMainnetChain ? "" : deployerAddress));
+  if (isMainnetChain && deployerAddress.toLowerCase() === safe.toLowerCase()) {
     throw new Error("Deployer resolved to the owner Safe; deploy from the EOA.");
   }
+  console.log(`[quote-gen] owner=${safe}${safe.toLowerCase() === deployerAddress.toLowerCase() ? " (the deployer: testnet only)" : ""}`);
 
   console.log(`[quote-gen] network=${network.name} chainId=${net.chainId}`);
   console.log(`[quote-gen] deployer=${deployerAddress} balance=${ethers.formatEther(await ethers.provider.getBalance(deployerAddress))} BNB`);
 
   for (const [label, address] of [
     ["topazRouter", topazRouter],
+    ["topazQuoteRouter", topazQuoteRouter],
     ["graduationOracle", graduationOracle],
-    ["creatorRegistry", creatorRegistry],
-    ["riskRegistry", riskRegistry],
     ["treasuryRouter", treasuryRouter],
     ["nativeUsdFeed", nativeUsdFeed],
   ] as const) {
     await requireCode(label, address);
   }
+  await assertTopazRoutersFit(topazRouter, topazQuoteRouter);
   await assertRouterCanServeStrictRouting(treasuryRouter);
+
+  // After the read-only guards, so a rejected router never costs a deployment.
+  const creatorRegistry = await supplyOrDeployRegistry("CreatorRegistry", "BNB_CREATOR_REGISTRY", profile.creatorRegistry, isMainnetChain);
+  const riskRegistry = await supplyOrDeployRegistry("RiskRegistry", "BNB_RISK_REGISTRY", profile.riskRegistry, isMainnetChain);
+
 
   // --- implementations -----------------------------------------------------
   const nativeImpl = await (await ethers.getContractFactory("LaunchCampaign")).deploy();
@@ -269,7 +459,7 @@ async function main() {
 
   // --- quote graduation adapter, which needs the factory's locker ----------
   const adapter = await (await ethers.getContractFactory("BnbQuoteGraduationAdapter")).deploy(
-    topazRouter,
+    topazQuoteRouter,
     lockerAddress,
     nativeUsdFeed,
     MAX_ORACLE_AGE_SECONDS,
@@ -309,14 +499,19 @@ async function main() {
   // --- factory configuration, all while CREATE stays closed ----------------
   await waitTx((factory as any).setConfig(CONFIG), "factory.setConfig");
   await waitTx((factory as any).setProtocolFee(PROTOCOL_FEE_BPS), "factory.setProtocolFee");
-  await waitTx((factory as any).setCreatorRegistry(creatorRegistry), "factory.setCreatorRegistry");
-  await waitTx((factory as any).setRiskRegistry(riskRegistry), "factory.setRiskRegistry");
+  // One setter takes both. There is no setCreatorRegistry/setRiskRegistry pair.
+  await waitTx((factory as any).setRegistries(creatorRegistry, riskRegistry), "factory.setRegistries");
+  await readBack(() => (factory as any).creatorRegistry(), creatorRegistry, "factory.creatorRegistry");
+  await readBack(() => (factory as any).riskRegistry(), riskRegistry, "factory.riskRegistry");
+
+  // Without this the factory can create nothing at all.
+  const recorder = await wireLaunchRecorder(creatorRegistry, factoryAddress, deployerAddress);
   await waitTx((factory as any).setRouteAuthority(routeAuthority), "factory.setRouteAuthority");
   await waitTx((factory as any).setCreatePaused(true), "factory.setCreatePaused(true)");
 
-  eq("factory.createPaused", await (factory as any).createPaused(), true);
+  await readBack(() => (factory as any).createPaused(), true, "factory.createPaused");
   eq("factory.live", await (factory as any).live(), false);
-  eq("warPool.depositsPaused", await (warPool as any).depositsPaused(), true);
+  await readBack(() => (warPool as any).depositsPaused(), true, "warPool.depositsPaused");
 
   const artifact = {
     network: network.name,
@@ -325,7 +520,7 @@ async function main() {
     deployer: deployerAddress,
     owner: safe,
     status: "deployed-paused",
-    inputs: { topazRouter, treasuryRouter, graduationOracle, creatorRegistry, riskRegistry, routeAuthority, nativeUsdFeed },
+    inputs: { topazRouter, topazQuoteRouter, treasuryRouter, graduationOracle, creatorRegistry, riskRegistry, routeAuthority, nativeUsdFeed },
     contracts: {
       BnbBasicLaunchFactory: factoryAddress,
       PermanentLpLocker: lockerAddress,
@@ -337,7 +532,10 @@ async function main() {
     },
     config: Object.fromEntries(Object.entries(CONFIG).map(([k, v]) => [k, v.toString()])),
     protocolFeeBps: PROTOCOL_FEE_BPS.toString(),
+    launchRecorderWired: recorder.wired,
+    pendingOwnerActions: recorder.ownerAction ? [{ ...recorder.ownerAction, why: "setLaunchRecorder(factory, true); CREATE reverts NotLaunchRecorder without it" }] : [],
     next: [
+      ...(recorder.wired ? [] : ["creatorRegistry.setLaunchRecorder(factory, true) from the registry owner -- CREATE is dead until this lands"]),
       "configureQuoteRoute on the adapter for each approved quote token",
       "transfer factory, locker, league and war pool ownership to the Safe",
       "run the canary, then enableLive + setCreatePaused(false) + setDepositsPaused(false) from the Safe",
@@ -349,10 +547,17 @@ async function main() {
   fs.writeFileSync(out, `${JSON.stringify(artifact, null, 2)}\n`);
   console.log(`[quote-gen] wrote ${out}`);
   console.log("[quote-gen] STOP. Everything is paused and nothing is live.");
+  if (!recorder.wired) {
+    console.log("[quote-gen] WARNING: the factory is not a launch recorder. CREATE reverts until the owner call above executes.");
+  }
   console.log("[quote-gen] Quote routes, ownership transfer and going live are separate deliberate steps.");
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});
+// Only when run as a script. The guards above are imported by
+// test/BnbQuoteGenerationDeploy.spec.ts, and importing must not deploy anything.
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
+}

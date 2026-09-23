@@ -138,6 +138,13 @@ async function deploySourceHead() {
 describe("BNB source-head 4/3 + V3 fee stack on real Topaz mainnet fork", function () {
   it("creates, routes creator fees, graduates to real 30-bps Topaz, trades, harvests 80/20, and preserves LP", async function () {
     if (!forkEnabled()) this.skip();
+    // Mine one local block before touching the chain. Straight after forking,
+    // "latest" is still the remote fork block, and EDR refuses to execute on a
+    // historical block of a chain it has no hardfork history for -- which is
+    // what made both fork specs unrunnable, not anything about the contracts.
+    // One local block moves every later call onto local state.
+    await network.provider.send("evm_mine", []);
+
     this.timeout(600_000);
 
     expect(Number((await ethers.provider.getNetwork()).chainId)).to.equal(56);

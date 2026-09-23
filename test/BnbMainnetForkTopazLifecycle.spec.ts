@@ -79,7 +79,17 @@ async function impersonatedSend(from: string, to: string, data: string) {
 describe("BNB mainnet fork: corrected locker vs real Topaz", function () {
   it("create → bond → graduate into 30-bps Topaz → 80/20 harvest → LP principal unchanged", async function () {
     if (!forkEnabled()) this.skip();
-    this.timeout(600_000);
+    // Bonding a campaign all the way to graduation is many transactions, and
+    // every one of them pulls state through the fork's upstream RPC. On a public
+    // endpoint ten minutes is not enough; this is slow, not stuck.
+    this.timeout(2_400_000);
+
+    // Mine one local block before touching the chain. Straight after forking,
+    // "latest" is still the remote fork block, and EDR refuses to execute on a
+    // historical block of a chain it has no hardfork history for -- which is
+    // what made both fork specs unrunnable, not anything about the contracts.
+    // One local block moves every later call onto local state.
+    await network.provider.send("evm_mine", []);
 
     expect(Number((await ethers.provider.getNetwork()).chainId)).to.equal(56);
 

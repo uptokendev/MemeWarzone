@@ -75,7 +75,10 @@ const config: HardhatUserConfig = {
   networks: {
     hardhat: {
       chainId: forkMainnet ? 56 : 31337,
-      accounts: forkMainnet ? { count: 2, accountsBalance: "10000000000000000000000" } : undefined,
+      // Three, because the fork lifecycle tests use owner, creator and buyer.
+      // With two, the buyer came back undefined and the test died on a
+      // getAddress of nothing rather than on anything it was meant to check.
+      accounts: forkMainnet ? { count: 3, accountsBalance: "10000000000000000000000" } : undefined,
       chains: forkMainnet
         ? {
             56: {
