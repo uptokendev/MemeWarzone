@@ -1,0 +1,50 @@
+{
+  "network": "robinhoodMainnet",
+  "chainId": 4663,
+  "deployedAt": "2026-09-23T22:15:48.295Z",
+  "deployer": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "owner": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+  "status": "deployed-paused",
+  "reused": {
+    "treasuryRouter": "0xda0a9Ed9e68D2B468257aBD66465fdD94F4338bb",
+    "weth": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+    "v3Factory": "0x1f7d7550B1b028f7571E69A784071F0205FD2EfA",
+    "positionManager": "0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3",
+    "swapRouter": "0xCaf681a66D020601342297493863E78C959E5cb2",
+    "nativeUsdFeed": "0x78F3556b67E17Df817D51Ef5a990cDaF09E8d3A9",
+    "graduationOracle": "0xe635AA43fE5707561c8c3C655225da5C3e4C2239",
+    "v3GraduationRouter": "0xfdF80819CCaE7103165c2EAd9057BA7Eb2fa8aee"
+  },
+  "registries": {
+    "creatorRegistry": "0xDc77CAACDEB6affA0a5791f62BBB958D99Edc58B",
+    "riskRegistry": "0xe10e9c26D7CA80390831884CA17919E22fF44938",
+    "launchRecorderWired": true
+  },
+  "lpLockerAuthorized": false,
+  "pendingOwnerActions": [
+    {
+      "to": "0xda0a9Ed9e68D2B468257aBD66465fdD94F4338bb",
+      "data": "0xacb9fef6000000000000000000000000e2b3449491e4d5be73e7e73a4df9498ed9f3064c0000000000000000000000000000000000000000000000000000000000000001",
+      "why": "first locker on this router, so one call is enough"
+    },
+    {
+      "to": "0xda0a9Ed9e68D2B468257aBD66465fdD94F4338bb",
+      "data": "0x86afb2f6000000000000000000000000e2b3449491e4d5be73e7e73a4df9498ed9f3064c",
+      "why": "point the router's primary locker at this generation"
+    }
+  ],
+  "deployed": {
+    "LaunchFactory": "0x35E93D0b0F4A2809264Fa8D9922e2d0D1609C9BA",
+    "LaunchCampaignImplementation": "0x107231eBDe5DF14Ec0ec419b677d4ac0016DD70d",
+    "PermanentV3PositionLocker": "0xe2B3449491E4d5BE73E7E73A4DF9498eD9f3064C",
+    "RobinhoodStockTokenGraduationAdapter": "0xa48723e35061380Feb6D269f7c26D6E426F83efc",
+    "RobinhoodV3NativeSwapAdapter": "0xffF3aFBC7853d4B20F523d69c146169Ef4C3c1DF",
+    "PostGradLeagueTreasuryV2": "0x5D5CC19B5BE86BA28b8164f85883F17843B69810",
+    "ArenaWarPoolTreasuryV2": "0xD3E00E476b72e49Ec4587df58b23Ea5BAd1F151C"
+  },
+  "next": [
+    "register stock tokens and routes on the adapter",
+    "transfer ownership to the Safe (mainnet)",
+    "canary, then enableLive + setCreatePaused(false) + setDepositsPaused(false)"
+  ]
+}
