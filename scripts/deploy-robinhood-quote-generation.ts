@@ -31,6 +31,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { ethers, network } from "hardhat";
+import { wireLpLocker } from "./lib/evmLpLockerWiring";
 
 const PROFILES: Record<string, { chainId: bigint; confirm: string; file: string }> = {
   robinhoodTestnet: { chainId: 46630n, confirm: "I_UNDERSTAND_TESTNET", file: "robinhood/testnet.quote-generation.json" },
@@ -244,6 +245,17 @@ async function main() {
     throw new Error("the factory is not a launch recorder; every createCampaign would revert");
   }
 
+  // Without this every LP harvest pays the creator and silently strands the
+  // protocol's share in the locker. The Robinhood router already served a
+  // previous generation, so this is the timelocked path: propose now, accept
+  // after upgradeDelay.
+  const lpLocker = await wireLpLocker({
+    treasuryRouter,
+    lockerAddress,
+    senderAddress: deployerAddress,
+    log: (message) => console.log(`[rh]${message}`),
+  });
+
   await waitTx((factory as any).setCreatePaused(true), "factory.setCreatePaused(true)");
 
   if ((await (factory as any).createPaused()) !== true) throw new Error("createPaused did not stick");
@@ -259,6 +271,8 @@ async function main() {
     status: "deployed-paused",
     reused: { treasuryRouter, weth, v3Factory, positionManager, swapRouter, nativeUsdFeed, graduationOracle, v3GraduationRouter },
     registries: { creatorRegistry: creatorRegistryAddress, riskRegistry: riskRegistryAddress, launchRecorderWired: true },
+    lpLockerAuthorized: lpLocker.wired,
+    pendingOwnerActions: lpLocker.ownerActions,
     deployed: {
       LaunchFactory: factoryAddress,
       LaunchCampaignImplementation: await campaignImpl.getAddress(),

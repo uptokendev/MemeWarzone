@@ -45,6 +45,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { ethers, network } from "hardhat";
 
+import { wireLpLocker } from "./lib/evmLpLockerWiring";
+
 type ChainProfile = {
   chainId: bigint;
   confirm: string;
@@ -405,92 +407,6 @@ export async function assertTopazRoutersFit(topazRouter: string, topazQuoteRoute
   console.log(`[quote-gen] ok topaz volatile fee = ${volatileFeeBps} bps (the locker requires ${REQUIRED_POOL_FEE_BPS})`);
 }
 
-/**
- * Authorize the locker on the treasury router, or say who must.
- *
- * PermanentLpLocker sends the protocol's 20% of every LP fee harvest through
- * TreasuryRouterV3.routeLpToken, which is gated by authorizedLpLocker. The
- * locker wraps that call in try/catch: a rejected route does not revert the
- * harvest, it parks the money in pendingProtocolToken and emits
- * HarvestPaymentPending. So an unauthorized locker loses no money and reports
- * no error -- the creator is paid, the protocol share silently accumulates, and
- * nothing on the happy path ever says so.
- *
- * That is exactly what the first BSC testnet canary did: it graduated into real
- * Topaz, harvested, paid the creator, and left 38.22 tokens and 0.000006 WBNB
- * stranded. It is recoverable with retryPendingProtocolToken once this is set,
- * which is why the fix is wiring rather than a redeploy -- but it has to be
- * wired before anyone graduates, not after.
- *
- * The first locker on a fresh router goes in with one call. Once any locker is
- * authorized the router demands propose/accept with upgradeDelay in between, so
- * re-pointing an existing router at a new generation is a two-step timelocked
- * change and the script says so rather than failing on a bare require string.
- */
-async function wireLpLocker(
-  treasuryRouter: string,
-  lockerAddress: string,
-  deployerAddress: string,
-): Promise<{ wired: boolean; ownerActions: Array<{ to: string; data: string; why: string }> }> {
-  const router = await ethers.getContractAt(
-    [
-      "function admin() view returns (address)",
-      "function authorizedLpLocker(address) view returns (bool)",
-      "function anyLpLockerAuthorized() view returns (bool)",
-      "function permanentLpLocker() view returns (address)",
-      "function setAuthorizedLpLocker(address locker, bool allowed)",
-      "function proposeAuthorizedLpLocker(address locker)",
-      "function acceptAuthorizedLpLocker()",
-      "function setPrimaryLpLocker(address newLocker)",
-    ],
-    treasuryRouter,
-  );
-
-  if (await (router as any).authorizedLpLocker(lockerAddress)) {
-    console.log("[quote-gen] ok router.authorizedLpLocker[locker]=true (already set)");
-    return { wired: true, ownerActions: [] };
-  }
-
-  const iface = (router as any).interface;
-  const timelocked = await (router as any).anyLpLockerAuthorized();
-  const admin = ethers.getAddress(await (router as any).admin());
-  const adminIsDeployer = admin.toLowerCase() === deployerAddress.toLowerCase();
-
-  const actions: Array<{ to: string; data: string; why: string }> = timelocked
-    ? [
-        { to: treasuryRouter, data: iface.encodeFunctionData("proposeAuthorizedLpLocker", [lockerAddress]), why: "another locker is already authorized, so this is a timelocked change: propose first" },
-        { to: treasuryRouter, data: iface.encodeFunctionData("acceptAuthorizedLpLocker", []), why: "then accept, once upgradeDelay has passed" },
-        { to: treasuryRouter, data: iface.encodeFunctionData("setPrimaryLpLocker", [lockerAddress]), why: "point the router's primary locker at this generation" },
-      ]
-    : [
-        { to: treasuryRouter, data: iface.encodeFunctionData("setAuthorizedLpLocker", [lockerAddress, true]), why: "first locker on this router, so one call is enough" },
-        { to: treasuryRouter, data: iface.encodeFunctionData("setPrimaryLpLocker", [lockerAddress]), why: "point the router's primary locker at this generation" },
-      ];
-
-  if (!adminIsDeployer) {
-    console.log(`\n[quote-gen] treasury router admin is ${admin}, not the deployer.`);
-    console.log("[quote-gen] THE PROTOCOL SHARE OF EVERY LP HARVEST WILL STRAND until it sends:");
-    for (const action of actions) {
-      console.log(`  to=${action.to}`);
-      console.log(`  data=${action.data}   # ${action.why}`);
-    }
-    console.log("");
-    return { wired: false, ownerActions: actions };
-  }
-
-  if (timelocked) {
-    await waitTx((router as any).proposeAuthorizedLpLocker(lockerAddress), "router.proposeAuthorizedLpLocker");
-    console.log("[quote-gen] proposed. acceptAuthorizedLpLocker must be sent after upgradeDelay; the harvest strands until then.");
-    return { wired: false, ownerActions: actions.slice(1) };
-  }
-
-  await waitTx((router as any).setAuthorizedLpLocker(lockerAddress, true), "router.setAuthorizedLpLocker(locker)");
-  await readBack(() => (router as any).authorizedLpLocker(lockerAddress), true, "router.authorizedLpLocker[locker]");
-  await waitTx((router as any).setPrimaryLpLocker(lockerAddress), "router.setPrimaryLpLocker(locker)");
-  await readBack(() => (router as any).permanentLpLocker(), lockerAddress, "router.permanentLpLocker");
-  return { wired: true, ownerActions: [] };
-}
-
 async function main() {
   const profile = PROFILES[network.name];
   if (!profile) {
@@ -631,7 +547,12 @@ async function main() {
   const recorder = await wireLaunchRecorder(creatorRegistry, factoryAddress, deployerAddress);
 
   // Without this every LP harvest silently strands the protocol's 20%.
-  const lpLocker = await wireLpLocker(treasuryRouter, lockerAddress, deployerAddress);
+  const lpLocker = await wireLpLocker({
+    treasuryRouter,
+    lockerAddress,
+    senderAddress: deployerAddress,
+    log: (message) => console.log(`[quote-gen]${message}`),
+  });
   await waitTx((factory as any).setRouteAuthority(routeAuthority), "factory.setRouteAuthority");
   await waitTx((factory as any).setCreatePaused(true), "factory.setCreatePaused(true)");
 
