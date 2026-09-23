@@ -196,7 +196,14 @@ contract LaunchFactory is Ownable {
     uint256 public launchProtectionMaxBuyWei;
     uint256 public launchProtectionMaxWalletWei;
 
-    address public immutable leagueReceiver;
+    /// @dev Must stay equal to feeRecipient. LaunchCampaign only takes the
+    /// unified routing path when feeRecipient == leagueReceiver, and it creates
+    /// every campaign with strictFeeRouting: true -- so if these two ever
+    /// diverge, each campaign minted afterwards reverts FeeRoutingFailed on any
+    /// fee-bearing call. This was immutable while feeRecipient was not, which
+    /// meant one setCoreRouting to a new treasury router bricked trading on
+    /// every campaign created from then on.
+    address public leagueReceiver;
     address public immutable campaignImplementation;
     IPermanentLiquidityLocker public immutable permanentLpLocker;
     uint8 public immutable liquidityKind;
@@ -243,6 +250,7 @@ contract LaunchFactory is Ownable {
     event StockCampaignConfigured(address indexed campaign, address indexed token, address indexed stockToken, address adapter);
     event ConfigUpdated(LaunchConfig newConfig);
     event FeeRecipientUpdated(address indexed newRecipient);
+    event LeagueReceiverUpdated(address indexed newReceiver);
     event RouterUpdated(address indexed newRouter);
     event GraduationOracleUpdated(address indexed newOracle);
     event ProtocolFeeUpdated(uint256 newFeeBps);
@@ -569,11 +577,13 @@ contract LaunchFactory is Ownable {
 
         router = newRouter;
         feeRecipient = newTreasuryRouter;
+        leagueReceiver = newTreasuryRouter;
         permanentLpLocker.configureRevenue(newTreasuryRouter, lockerIntegrationSource);
         if (stockAdapter != address(0)) permanentLpLocker.setIntegrationSourceAuthorized(stockAdapter, true);
 
         emit RouterUpdated(newRouter);
         emit FeeRecipientUpdated(newTreasuryRouter);
+        emit LeagueReceiverUpdated(newTreasuryRouter);
     }
 
     function setStockGraduationAdapter(address newAdapter) external onlyOwner whenMutable {

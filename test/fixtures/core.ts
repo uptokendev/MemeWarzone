@@ -52,11 +52,21 @@ export async function deployCoreFixture(): Promise<CoreFixture> {
   const treasuryVault = await TreasuryVault.deploy(await feeRecipient.getAddress(), ethers.ZeroAddress, ethers.ZeroAddress);
   await treasuryVault.waitForDeployment();
 
-  const TreasuryRouter = await ethers.getContractFactory("TreasuryRouter");
+  // TreasuryRouterV3, not V1. LaunchFactory creates every campaign with
+  // strictFeeRouting: true and points both feeRecipient and leagueReceiver at
+  // this router, so the campaign takes the unified path and calls routeTrade /
+  // routeFinalize. Only V3 has them; against V1 the call reverts with no reason
+  // and every fee-bearing test in this fixture fails without saying why.
+  const AcceptingReceiver = await ethers.getContractFactory("AcceptingReceiver");
+  const monthlyLeagueReceiver = await AcceptingReceiver.deploy();
+  await monthlyLeagueReceiver.waitForDeployment();
+
+  const TreasuryRouter = await ethers.getContractFactory("TreasuryRouterV3");
   const treasuryRouter = await TreasuryRouter.deploy(
     await owner.getAddress(),
     await treasuryVault.getAddress(),
-    24 * 60 * 60
+    await monthlyLeagueReceiver.getAddress(),
+    60 * 60
   );
   await treasuryRouter.waitForDeployment();
 
@@ -72,9 +82,16 @@ export async function deployCoreFixture(): Promise<CoreFixture> {
   const protocolVault = await ProtocolVault.deploy(await owner.getAddress());
   await protocolVault.waitForDeployment();
 
+  // _routeTrade calls accrueTradeFee(campaign) on the creator vault, so it has
+  // to be the real contract rather than something that merely accepts value.
+  const CreatorVault = await ethers.getContractFactory("CreatorRewardsVault");
+  const creatorVault = await CreatorVault.deploy(await owner.getAddress(), await treasuryRouter.getAddress());
+  await creatorVault.waitForDeployment();
+
   await treasuryRouter.connect(owner).setRecruiterRewardsVault(await recruiterVault.getAddress());
   await treasuryRouter.connect(owner).setCommunityRewardsVault(await communityVault.getAddress());
   await treasuryRouter.connect(owner).setProtocolRevenueVault(await protocolVault.getAddress());
+  await treasuryRouter.connect(owner).setCreatorRewardsVault(await creatorVault.getAddress());
 
   const Campaign = await ethers.getContractFactory("LaunchCampaign");
   const campaignImplementation = await Campaign.deploy();
@@ -124,6 +141,8 @@ export async function deployCoreFixture(): Promise<CoreFixture> {
     permanentLpLocker,
     treasuryVault,
     treasuryRouter,
+    creatorVault,
+    monthlyLeagueReceiver,
     recruiterVault,
     communityVault,
     protocolVault,

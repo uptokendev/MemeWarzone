@@ -454,13 +454,20 @@ contract ArenaWarPoolTreasuryV2 is ReentrancyGuard, Ownable, EIP712 {
         );
     }
 
+    /// @notice Release a pool nobody ever joined, once its deposit window closed.
+    /// @dev Permissionless and deadline-gated, with no discretionary override.
+    /// It used to let pool.ownerA or the owner cancel before the deadline, which
+    /// on a tournament meant its creator could close a pool already holding other
+    /// people's entry fees whenever they liked. Refunds meant nothing could be
+    /// stolen, but the power itself is the thing: an opponent who is still within
+    /// the window should not be cancellable, and no key should be able to end a
+    /// contest early. The only exits are now this and settleExpiredPool, both
+    /// acting on deadlines fixed when the pool opened.
     function cancelOpenPool(bytes32 poolId) external {
         Pool storage pool = pools[poolId];
         if (pool.ownerA == address(0)) revert UnknownPool();
         if (pool.state != State.Open) revert InvalidState();
-        bool expired = block.timestamp > pool.depositDeadline;
-        bool authorized = msg.sender == pool.ownerA || msg.sender == owner();
-        if (!expired && !authorized) revert Unauthorized();
+        if (block.timestamp <= pool.depositDeadline) revert DeadlineNotPassed();
         pool.state = State.Cancelled;
         emit PoolCancelled(poolId);
     }

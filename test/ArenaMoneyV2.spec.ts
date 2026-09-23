@@ -496,14 +496,28 @@ describe("Arena money-path V2", function () {
     await treasury.connect(alice).depositStake(battleId, { value: ONE });
     const quote = makeBoostQuote({ poolId: battleId, booster: booster.address, sideToken: alice.address, now });
     await expect(payBattleBoost(treasury, booster, boostQuoteSigner, quote)).to.be.revertedWithCustomError(treasury, "InvalidState");
-    await treasury.connect(alice).cancelOpenPool(battleId);
+
+    // No key can close a pool while its deposit window is still open -- an
+    // opponent who can still arrive must be allowed to.
+    await expect(treasury.connect(alice).cancelOpenPool(battleId)).to.be.revertedWithCustomError(treasury, "DeadlineNotPassed");
+    await ethers.provider.send("evm_setNextBlockTimestamp", [now + 3601]);
+    await ethers.provider.send("evm_mine", []);
+    // Permissionless once the window has closed: a stranger can release it.
+    await treasury.connect(booster).cancelOpenPool(battleId);
     await treasury.connect(alice).refundStake(battleId);
 
+    // Deadlines are relative to the clock now, which the battle above advanced.
+    const afterBattle = (await ethers.provider.getBlock("latest"))!.timestamp;
     const tournamentId = ethers.id("cancel-tournament-v2");
-    await treasury.openTournamentPool(tournamentId, ONE, now + 3600, now + 7200);
+    await treasury.openTournamentPool(tournamentId, ONE, afterBattle + 3600, afterBattle + 7200);
     await treasury.connect(alice).depositBuyIn(tournamentId, { value: ONE });
     await treasury.connect(bob).depositBuyIn(tournamentId, { value: ONE });
-    await treasury.cancelOpenPool(tournamentId);
+    // Same for a tournament, which matters more: its creator is ownerA and used
+    // to be able to close a pool already holding other people's entry fees.
+    await expect(treasury.cancelOpenPool(tournamentId)).to.be.revertedWithCustomError(treasury, "DeadlineNotPassed");
+    await ethers.provider.send("evm_setNextBlockTimestamp", [afterBattle + 3601]);
+    await ethers.provider.send("evm_mine", []);
+    await treasury.connect(booster).cancelOpenPool(tournamentId);
     await treasury.connect(alice).refundBuyIn(tournamentId);
     await treasury.connect(bob).refundBuyIn(tournamentId);
     expect(await ethers.provider.getBalance(await treasury.getAddress())).to.equal(0n);

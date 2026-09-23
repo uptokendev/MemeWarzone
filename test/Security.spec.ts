@@ -28,9 +28,15 @@ async function makeGraduationEligibleByOracle(campaign: any, priceFeed: any) {
   expect(await campaign.netRaisedWei()).to.be.gte(await campaign.graduationNativeTarget());
 }
 
+// TreasuryRouterV3 splits league into weekly and monthly and pays a creator
+// share, so every destination has to be read or a correctly routed fee looks
+// like a shortfall. See the same helper in LaunchCampaign.spec.ts.
 async function captureRouteBalances(vaults: any) {
   return {
-    league: await ethers.provider.getBalance(await vaults.treasuryVault.getAddress()),
+    league:
+      (await ethers.provider.getBalance(await vaults.treasuryVault.getAddress())) +
+      (await ethers.provider.getBalance(await vaults.monthlyLeagueReceiver.getAddress())),
+    creator: await ethers.provider.getBalance(await vaults.creatorVault.getAddress()),
     recruiter: await ethers.provider.getBalance(await vaults.recruiterVault.getAddress()),
     airdrop: await vaults.communityVault.warzoneAirdropBalance(),
     squad: await vaults.communityVault.squadPoolBalance(),
@@ -41,6 +47,7 @@ async function captureRouteBalances(vaults: any) {
 async function expectRouteBalanceDelta(before: any, vaults: any, expected: any) {
   const after = await captureRouteBalances(vaults);
   expect(after.league - before.league).to.eq(expected.league);
+  expect(after.creator - before.creator).to.eq(expected.creator);
   expect(after.recruiter - before.recruiter).to.eq(expected.recruiter);
   expect(after.airdrop - before.airdrop).to.eq(expected.airdrop);
   expect(after.squad - before.squad).to.eq(expected.squad);
@@ -86,6 +93,8 @@ describe("Security & invariants", function () {
       recruiterVault,
       communityVault,
       protocolVault,
+      monthlyLeagueReceiver,
+      creatorVault,
       priceFeed,
     } = await deployCoreFixture();
 
@@ -114,7 +123,7 @@ describe("Security & invariants", function () {
 
     const graduationPrincipal = await campaign.netRaisedWei();
     const expectedFee = (graduationPrincipal * 200n) / 10_000n;
-    const routeVaults = { treasuryVault, recruiterVault, communityVault, protocolVault };
+    const routeVaults = { treasuryVault, monthlyLeagueReceiver, creatorVault, recruiterVault, communityVault, protocolVault };
     const routeBefore = await captureRouteBalances(routeVaults);
 
     const finTx = await campaign.connect(alice).graduateIfEligible(0, 0);
@@ -171,7 +180,12 @@ describe("Security & invariants", function () {
     expect(state[0]).to.equal(await pool.getAddress());
   });
 
-  it("reentrancy defense: feeRecipient cannot re-enter claimPendingNative during buy", async function () {
+  it("reentrancy defense: a fee recipient that cannot route takes nothing and re-enters nothing", async function () {
+    // Under strict fee routing the defense is stronger than escrow-and-continue.
+    // LaunchFactory creates every campaign with strictFeeRouting: true, so a fee
+    // recipient that cannot service routeTrade does not get to keep the value
+    // and try again from inside a callback -- the whole buy reverts atomically,
+    // and there is no partial state for a reentrant call to sit on.
     const { owner, creator, alice, factory, router } = await deployCoreFixture();
 
     await factory.connect(owner).setConfig({
@@ -192,24 +206,26 @@ describe("Security & invariants", function () {
     const count = await factory.campaignsCount();
     const info = await factory.getCampaign(count - 1n);
     const campaign = await ethers.getContractAt("LaunchCampaign", info.campaign);
+    const token = await ethers.getContractAt("LaunchToken", await campaign.token());
     await reenter.setTarget(info.campaign);
 
     const oneToken = ethers.parseUnits("1", 18);
-    const q1 = await campaign.quoteBuyExactTokens(oneToken);
-    const q1Buf = q1 + 1n;
-    await reenter.setMode(0);
-    await campaign.connect(alice).buyExactTokens(oneToken, q1Buf, { value: q1Buf });
-    const pending1 = await campaign.pendingNative(await reenter.getAddress());
-    expect(pending1).to.be.gt(0);
+    const quote = await campaign.quoteBuyExactTokens(oneToken);
+    const withBuffer = quote + 1n;
 
-    const q2 = await campaign.quoteBuyExactTokens(oneToken);
-    const q2Buf = q2 + 1n;
-    await reenter.setMode(1);
-    await campaign.connect(alice).buyExactTokens(oneToken, q2Buf, { value: q2Buf });
+    for (const mode of [0, 1]) {
+      await reenter.setMode(mode);
+      const soldBefore = await campaign.sold();
+      const attackerBefore = await ethers.provider.getBalance(await reenter.getAddress());
 
-    expect(await reenter.lastReenterOk()).to.equal(false);
-    const pending2 = await campaign.pendingNative(await reenter.getAddress());
-    expect(pending2).to.be.gt(0);
+      await expect(campaign.connect(alice).buyExactTokens(oneToken, withBuffer, { value: withBuffer })).to.be.reverted;
+
+      expect(await campaign.sold()).to.eq(soldBefore);
+      expect(await token.balanceOf(await alice.getAddress())).to.eq(0n);
+      expect(await ethers.provider.getBalance(await reenter.getAddress())).to.eq(attackerBefore);
+      expect(await campaign.pendingNative(await reenter.getAddress())).to.eq(0n);
+      expect(await reenter.lastReenterOk()).to.eq(false);
+    }
   });
 
   it("LP lock cannot be bypassed: factory ignores user lpReceiver and liquidity LP is minted to locker", async function () {

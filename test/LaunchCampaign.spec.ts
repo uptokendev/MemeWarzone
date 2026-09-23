@@ -146,9 +146,17 @@ async function deployDirectCampaign(params: any) {
   return campaign;
 }
 
+// Every destination a routed fee can reach. TreasuryRouterV3 splits the league
+// share again into weekly and monthly, and pays a creator share that V1 had no
+// concept of, so reading the weekly vault alone accounts for 30% of the league
+// and none of the creator's -- which is what made these assertions look like
+// lost money when the fee was routed correctly all along.
 async function captureRouteBalances(vaults: any) {
   return {
-    league: await getBalance(await vaults.treasuryVault.getAddress()),
+    league:
+      (await getBalance(await vaults.treasuryVault.getAddress())) +
+      (await getBalance(await vaults.monthlyLeagueReceiver.getAddress())),
+    creator: await getBalance(await vaults.creatorVault.getAddress()),
     recruiter: await getBalance(await vaults.recruiterVault.getAddress()),
     airdrop: await vaults.communityVault.warzoneAirdropBalance(),
     squad: await vaults.communityVault.squadPoolBalance(),
@@ -159,6 +167,7 @@ async function captureRouteBalances(vaults: any) {
 function addRouteAmounts(a: any, b: any) {
   return {
     league: a.league + b.league,
+    creator: a.creator + b.creator,
     recruiter: a.recruiter + b.recruiter,
     airdrop: a.airdrop + b.airdrop,
     squad: a.squad + b.squad,
@@ -169,6 +178,7 @@ function addRouteAmounts(a: any, b: any) {
 async function expectRouteBalanceDelta(before: any, vaults: any, expected: any) {
   const after = await captureRouteBalances(vaults);
   expect(after.league - before.league).to.eq(expected.league);
+  expect(after.creator - before.creator).to.eq(expected.creator);
   expect(after.recruiter - before.recruiter).to.eq(expected.recruiter);
   expect(after.airdrop - before.airdrop).to.eq(expected.airdrop);
   expect(after.squad - before.squad).to.eq(expected.squad);
@@ -209,7 +219,7 @@ describe("LaunchCampaign", function () {
   });
 
   it("buyExactTokens: transfers tokens, updates sold & counters, emits, sends fee, refunds overpay", async () => {
-    const { campaign, token, alice, treasuryRouter, treasuryVault, recruiterVault, communityVault, protocolVault } = await loadFixture(createCampaignFixture);
+    const { campaign, token, alice, treasuryRouter, treasuryVault, monthlyLeagueReceiver, creatorVault, recruiterVault, communityVault, protocolVault } = await loadFixture(createCampaignFixture);
 
     const base = await campaign.basePrice();
     const slope = await campaign.priceSlope();
@@ -218,7 +228,7 @@ describe("LaunchCampaign", function () {
     const sold0 = await campaign.sold();
     const { costNoFee, fee, total } = quoteBuyExactTokens(BigInt(sold0), BigInt(amountOut), BigInt(base), BigInt(slope), BigInt(feeBps));
 
-    const routeVaults = { treasuryVault, recruiterVault, communityVault, protocolVault };
+    const routeVaults = { treasuryVault, monthlyLeagueReceiver, creatorVault, recruiterVault, communityVault, protocolVault };
     const routeBefore = await captureRouteBalances(routeVaults);
     const expectedRoute = await treasuryRouter.previewRoute(fee, 0, await campaign.tradeRouteProfile());
     const buyerBefore = await getBalance(await alice.getAddress());
@@ -253,7 +263,7 @@ describe("LaunchCampaign", function () {
   });
 
   it("sellExactTokens: transfers tokens back, pays out, updates sold & counters, emits, takes fee", async () => {
-    const { campaign, token, alice, treasuryRouter, treasuryVault, recruiterVault, communityVault, protocolVault } = await loadFixture(createCampaignFixture);
+    const { campaign, token, alice, treasuryRouter, treasuryVault, monthlyLeagueReceiver, creatorVault, recruiterVault, communityVault, protocolVault } = await loadFixture(createCampaignFixture);
 
     const base = await campaign.basePrice();
     const slope = await campaign.priceSlope();
@@ -269,7 +279,7 @@ describe("LaunchCampaign", function () {
     const soldBefore = await campaign.sold();
     const { gross, fee, payout } = quoteSellExactTokens(BigInt(soldBefore), BigInt(amountIn), BigInt(base), BigInt(slope), BigInt(feeBps));
 
-    const routeVaults = { treasuryVault, recruiterVault, communityVault, protocolVault };
+    const routeVaults = { treasuryVault, monthlyLeagueReceiver, creatorVault, recruiterVault, communityVault, protocolVault };
     const routeBefore = await captureRouteBalances(routeVaults);
     const expectedRoute = await treasuryRouter.previewRoute(fee, 0, await campaign.tradeRouteProfile());
     const campBefore = await getBalance(await campaign.getAddress());
@@ -415,7 +425,7 @@ describe("LaunchCampaign", function () {
   });
 
   it("auto-finalize: completion buy triggers graduation; adds liquidity; burns unsold; transfers creatorReserve; pays creator; enables trading", async () => {
-    const { campaign, token, creator, alice, router, treasuryRouter, treasuryVault, recruiterVault, communityVault, protocolVault } = await loadFixture(createLowTargetCampaignFixture);
+    const { campaign, token, creator, alice, router, treasuryRouter, treasuryVault, monthlyLeagueReceiver, creatorVault, recruiterVault, communityVault, protocolVault } = await loadFixture(createLowTargetCampaignFixture);
 
     const curveSupply = await campaign.curveSupply();
     const totalBuy = await campaign.quoteBuyExactTokens(curveSupply);
@@ -429,7 +439,7 @@ describe("LaunchCampaign", function () {
       BigInt(slope),
       BigInt(feeBps)
     );
-    const routeVaults = { treasuryVault, recruiterVault, communityVault, protocolVault };
+    const routeVaults = { treasuryVault, monthlyLeagueReceiver, creatorVault, recruiterVault, communityVault, protocolVault };
     const routeBefore = await captureRouteBalances(routeVaults);
     const tradeRoute = await treasuryRouter.previewRoute(tradeFee, 0, await campaign.tradeRouteProfile());
     const ownerAddr = await creator.getAddress();
