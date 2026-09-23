@@ -66,6 +66,9 @@ const directInitParams = async (values: {
   requireAuthorizedTrading: false,
   tradeRouteProfile: 1,
   finalizeRouteProfile: 1,
+  // These campaigns are initialized directly with an EOA fee recipient, which
+  // is the legacy path; LaunchFactory sets this true for real campaigns.
+  strictFeeRouting: false,
 });
 
 async function deployDirectCampaign(params: any) {

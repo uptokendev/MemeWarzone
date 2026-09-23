@@ -116,9 +116,11 @@ describe("Phase 6 route authorization alignment", function () {
     expect(await factory.ROUTE_PROFILE_STANDARD_UNLINKED()).to.equal(STANDARD_UNLINKED);
     expect(await factory.ROUTE_PROFILE_OG_LINKED()).to.equal(OG_LINKED);
 
-    expect(await treasury.previewRoute(10_000n, 0, STANDARD_LINKED)).to.deep.equal([3750n, 1250n, 0n, 250n, 4750n]);
-    expect(await treasury.previewRoute(10_000n, 0, STANDARD_UNLINKED)).to.deep.equal([3750n, 0n, 1500n, 0n, 4750n]);
-    expect(await treasury.previewRoute(10_000n, 0, OG_LINKED)).to.deep.equal([3750n, 1500n, 0n, 250n, 4500n]);
+    // [league, creator, recruiter, airdrop, squad, protocol] -- the creator share
+    // is 5% of a trade fee on TreasuryRouterV3, taken from the protocol's.
+    expect(await treasury.previewRoute(10_000n, 0, STANDARD_LINKED)).to.deep.equal([3750n, 500n, 1250n, 0n, 250n, 4250n]);
+    expect(await treasury.previewRoute(10_000n, 0, STANDARD_UNLINKED)).to.deep.equal([3750n, 500n, 0n, 1500n, 0n, 4250n]);
+    expect(await treasury.previewRoute(10_000n, 0, OG_LINKED)).to.deep.equal([3750n, 500n, 1500n, 0n, 250n, 4000n]);
   });
 
   for (const [label, tradeProfile, finalizeProfile] of [
@@ -216,8 +218,10 @@ describe("Phase 6 route authorization alignment", function () {
       .withArgs(
         0,
         OG_LINKED,
+        await campaign.getAddress(),
         feeAmount,
         routeAmounts.league,
+        routeAmounts.creator,
         routeAmounts.recruiter,
         routeAmounts.airdrop,
         routeAmounts.squad,

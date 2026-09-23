@@ -22,7 +22,10 @@ describe("project hardhat config", function () {
   it("defines hardhat and bscTestnet networks", async () => {
     const networks = config.networks as any;
 
-    expect(networks.hardhat).to.deep.eq({});
+    // The in-process network is no longer empty: it carries a chainId, and the
+    // BNB_FORK path swaps in mainnet's chainId plus funded accounts and a
+    // hardfork history. Assert what it means rather than that it is unset.
+    expect(networks.hardhat.chainId).to.eq(process.env.BNB_FORK ? 56 : 31337);
     expect(networks.bscTestnet.chainId).to.eq(97);
     expect(networks.bscTestnet.url).to.be.a("string");
     expect(networks.bscTestnet.accounts).to.be.an("array");

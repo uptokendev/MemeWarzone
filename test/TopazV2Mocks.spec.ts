@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { deployLaunchFactory } from "./helpers/deployFactory";
-import { deployConfiguredTreasuryRouter } from "./helpers/deployRouting";
+import { deployConfiguredTreasuryRouterV3 } from "./helpers/deployRouting";
 
 const { anyValue } = require("@nomicfoundation/hardhat-chai-matchers/withArgs");
 
@@ -52,7 +52,8 @@ describe("Topaz v2 mocks", function () {
   it("graduates through a Topaz volatile pool and stores the pool address", async () => {
     const [owner, creator, trader] = await ethers.getSigners();
     const { topazFactory, topazRouter } = await deployTopazDex(await owner.getAddress());
-    const routing = await deployConfiguredTreasuryRouter(await owner.getAddress());
+    // V3: campaigns from this factory are strict and call routeTrade.
+    const routing = await deployConfiguredTreasuryRouterV3(await owner.getAddress());
     const { factory } = await deployLaunchFactory(await topazRouter.getAddress(), await routing.treasuryRouter.getAddress());
 
     await factory.connect(owner).setRequireRouteAuthorization(false);

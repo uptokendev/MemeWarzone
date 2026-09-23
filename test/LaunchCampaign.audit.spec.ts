@@ -75,7 +75,15 @@ describe("LaunchCampaign audit hardening", function () {
     expect(await ethers.provider.getBalance(await campaign.getAddress())).to.eq(surplus);
   });
 
-  it("escrows unified router failures instead of blocking buys", async () => {
+  it("a paused treasury router halts trading rather than escrowing the fee in the campaign", async () => {
+    // Under strictFeeRouting -- which LaunchFactory sets on every campaign -- a
+    // fee that cannot be routed reverts the whole trade. It used to be escrowed
+    // into pendingNative and the buy allowed to continue, which left fees sitting
+    // in the campaign waiting for someone to claim them.
+    //
+    // Operationally this means pausing the treasury router stops every buy and
+    // sell across the launchpad. That is the intended trade: no fee ever sits in
+    // limbo, and no trade completes whose fee did not reach its destinations.
     const { campaign, token, alice, treasuryRouter, owner } = await loadFixture(createCampaign);
 
     await treasuryRouter.connect(owner).setForwardingPaused(true);
@@ -85,7 +93,7 @@ describe("LaunchCampaign audit hardening", function () {
     const slope = await campaign.priceSlope();
     const feeBps = await campaign.protocolFeeBps();
     const sold0 = await campaign.sold();
-    const { costNoFee, fee, total } = quoteBuyExactTokens(
+    const { total } = quoteBuyExactTokens(
       BigInt(sold0),
       BigInt(amountOut),
       BigInt(base),
@@ -93,13 +101,19 @@ describe("LaunchCampaign audit hardening", function () {
       BigInt(feeBps)
     );
 
-    const tx = await campaign.connect(alice).buyExactTokens(amountOut, total, { value: total });
+    await expect(campaign.connect(alice).buyExactTokens(amountOut, total, { value: total })).to.be.reverted;
 
+    expect(await token.balanceOf(await alice.getAddress())).to.eq(0n);
+    expect(await campaign.sold()).to.eq(sold0);
+    expect(await campaign.netRaisedWei()).to.eq(0n);
+    expect(await campaign.pendingNative(await treasuryRouter.getAddress())).to.eq(0n);
+    expect(await campaign.pendingNativeTotal()).to.eq(0n);
+    expect(await ethers.provider.getBalance(await campaign.getAddress())).to.eq(0n);
+
+    // Unpause and the same buy goes through, so the halt is the pause and
+    // nothing else.
+    await treasuryRouter.connect(owner).setForwardingPaused(false);
+    await campaign.connect(alice).buyExactTokens(amountOut, total, { value: total });
     expect(await token.balanceOf(await alice.getAddress())).to.eq(amountOut);
-    expect(await campaign.netRaisedWei()).to.eq(costNoFee);
-    await expect(tx).to.emit(campaign, "NativeEscrowed").withArgs(await treasuryRouter.getAddress(), fee);
-    expect(await campaign.pendingNative(await treasuryRouter.getAddress())).to.eq(fee);
-    expect(await campaign.pendingNativeTotal()).to.eq(fee);
-    expect(await ethers.provider.getBalance(await campaign.getAddress())).to.eq(costNoFee + fee);
   });
 });
