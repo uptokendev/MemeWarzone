@@ -216,6 +216,34 @@ async function main() {
   await waitTx((factory as any).setConfig(CONFIG), "factory.setConfig");
   await waitTx((factory as any).setProtocolFee(PROTOCOL_FEE_BPS), "factory.setProtocolFee");
   await waitTx((factory as any).setRouteAuthority(routeAuthority), "factory.setRouteAuthority");
+
+  // The creator gating BNB has and Robinhood did not.
+  //
+  // LaunchFactory enforces creator cooldown, tier, live-campaign count and
+  // wallet-cluster risk through these two registries, and skips all of it when
+  // either is the zero address. The first Robinhood generation left both unset,
+  // so the same contract that rate-limits creators on BNB let anyone launch
+  // anything here. Both chains now gate a create identically.
+  //
+  // recordLaunch and recordGraduation sit behind onlyLaunchRecorder, so the
+  // factory has to be registered or every createCampaign reverts
+  // NotLaunchRecorder. Deployed fresh rather than reused: the registry must be
+  // owned by a key that can register this factory.
+  const creatorRegistry = await (await ethers.getContractFactory("CreatorRegistry")).deploy();
+  await creatorRegistry.waitForDeployment();
+  const creatorRegistryAddress = ethers.getAddress(await creatorRegistry.getAddress());
+  const riskRegistry = await (await ethers.getContractFactory("RiskRegistry")).deploy();
+  await riskRegistry.waitForDeployment();
+  const riskRegistryAddress = ethers.getAddress(await riskRegistry.getAddress());
+  console.log(`[rh] CreatorRegistry = ${creatorRegistryAddress}`);
+  console.log(`[rh] RiskRegistry = ${riskRegistryAddress}`);
+
+  await waitTx((factory as any).setRegistries(creatorRegistryAddress, riskRegistryAddress), "factory.setRegistries");
+  await waitTx((creatorRegistry as any).setLaunchRecorder(factoryAddress, true), "creatorRegistry.setLaunchRecorder(factory)");
+  if ((await (creatorRegistry as any).launchRecorder(factoryAddress)) !== true) {
+    throw new Error("the factory is not a launch recorder; every createCampaign would revert");
+  }
+
   await waitTx((factory as any).setCreatePaused(true), "factory.setCreatePaused(true)");
 
   if ((await (factory as any).createPaused()) !== true) throw new Error("createPaused did not stick");
@@ -230,6 +258,7 @@ async function main() {
     owner,
     status: "deployed-paused",
     reused: { treasuryRouter, weth, v3Factory, positionManager, swapRouter, nativeUsdFeed, graduationOracle, v3GraduationRouter },
+    registries: { creatorRegistry: creatorRegistryAddress, riskRegistry: riskRegistryAddress, launchRecorderWired: true },
     deployed: {
       LaunchFactory: factoryAddress,
       LaunchCampaignImplementation: await campaignImpl.getAddress(),
