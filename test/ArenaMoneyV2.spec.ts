@@ -509,6 +509,68 @@ describe("Arena money-path V2", function () {
     expect(await ethers.provider.getBalance(await treasury.getAddress())).to.equal(0n);
   });
 
+  it("a Live pool that is never resolved expires, and returns stakes, buy-ins and Boosts to the last wei", async () => {
+    // The resolveDeadline was stored and never read: the only exits from Live
+    // were resolve and resolvePlaces, both needing a signed outcome. If our own
+    // resolver never signed, everything in the pool stayed here forever. This is
+    // the other failure -- not a cancelled fight, a fight we failed to score --
+    // and the money has to come back.
+    const { treasury, boostQuoteSigner, alice, bob, booster } = await deployArena();
+    const now = (await ethers.provider.getBlock("latest"))!.timestamp;
+
+    const battleId = ethers.id("expire-live-battle-v2");
+    await treasury.openBattlePool(battleId, alice.address, bob.address, ONE, now + 3600, now + 7200);
+    await treasury.connect(alice).depositStake(battleId, { value: ONE });
+    await treasury.connect(bob).depositStake(battleId, { value: ONE });
+    const quote = makeBoostQuote({ poolId: battleId, booster: booster.address, sideToken: alice.address, now });
+    await payBattleBoost(treasury, booster, boostQuoteSigner, quote);
+    const boostRecorded = await treasury.boosts(battleId, booster.address);
+    expect(boostRecorded).to.be.greaterThan(0n);
+    expect((await treasury.pools(battleId)).boostTotal).to.equal(boostRecorded);
+
+    // Not a second before the deadline it has carried since it opened.
+    await expect(treasury.settleExpiredPool(battleId)).to.be.revertedWithCustomError(treasury, "DeadlineNotPassed");
+
+    await ethers.provider.send("evm_setNextBlockTimestamp", [now + 7201]);
+    await ethers.provider.send("evm_mine", []);
+
+    // Permissionless: the booster is not the owner, the resolver or the operator.
+    await expect(treasury.connect(booster).settleExpiredPool(battleId))
+      .to.emit(treasury, "PoolExpired");
+
+    await treasury.connect(alice).refundStake(battleId);
+    await treasury.connect(bob).refundStake(battleId);
+    const boosterBefore = await ethers.provider.getBalance(booster.address);
+    const refundTx = await treasury.connect(booster).refundBoost(battleId);
+    const receipt = await refundTx.wait();
+    const gasPaid = receipt!.gasUsed * receipt!.gasPrice;
+    expect((await ethers.provider.getBalance(booster.address)) - boosterBefore + gasPaid).to.equal(boostRecorded);
+    await expect(treasury.connect(booster).refundBoost(battleId)).to.be.revertedWithCustomError(treasury, "NothingToClaim");
+
+    const drained = await treasury.pools(battleId);
+    expect(drained.boostTotal).to.equal(0n);
+    expect(await ethers.provider.getBalance(await treasury.getAddress())).to.equal(0n);
+
+    // A tournament holds entry fees instead of stakes; same requirement.
+    const tournamentId = ethers.id("expire-live-tournament-v2");
+    await treasury.openTournamentPool(tournamentId, ONE, now + 10_000, now + 20_000);
+    await treasury.connect(alice).depositBuyIn(tournamentId, { value: ONE });
+    await treasury.connect(bob).depositBuyIn(tournamentId, { value: ONE });
+    await treasury.setTournamentLive(tournamentId);
+    await ethers.provider.send("evm_setNextBlockTimestamp", [now + 20_001]);
+    await ethers.provider.send("evm_mine", []);
+    await treasury.settleExpiredPool(tournamentId);
+    await treasury.connect(alice).refundBuyIn(tournamentId);
+    await treasury.connect(bob).refundBuyIn(tournamentId);
+    expect(await ethers.provider.getBalance(await treasury.getAddress())).to.equal(0n);
+
+    // An Open pool is still not expirable -- cancelOpenPool owns that case.
+    const openId = ethers.id("still-open-v2");
+    const later = (await ethers.provider.getBlock("latest"))!.timestamp;
+    await treasury.openBattlePool(openId, alice.address, bob.address, ONE, later + 3600, later + 7200);
+    await expect(treasury.settleExpiredPool(openId)).to.be.revertedWithCustomError(treasury, "InvalidState");
+  });
+
   it("keeps all allocation rounding exact and blocks duplicate League credits", async () => {
     for (const gross of [1n, 2n, 3n, 9n, 10n, 99n, 101n, 999n, 10_001n, 999_999n]) {
       const league = (gross * 2_000n) / 10_000n;

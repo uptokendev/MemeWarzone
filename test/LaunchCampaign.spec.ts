@@ -60,6 +60,7 @@ const directInitParams = async (values: {
   leagueFeeBps?: bigint | number;
   basePrice?: bigint;
   priceSlope?: bigint;
+  strictFeeRouting?: boolean;
 }) => ({
   name: values.name ?? "T",
   symbol: values.symbol ?? "T",
@@ -86,6 +87,12 @@ const directInitParams = async (values: {
   requireAuthorizedTrading: false,
   tradeRouteProfile: 1,
   finalizeRouteProfile: 1,
+  // LaunchFactory creates every real campaign with strictFeeRouting: true, so a
+  // fee that cannot be routed reverts instead of being quietly escrowed. These
+  // direct-init campaigns hand feeRecipient an EOA rather than a
+  // TreasuryRouterV3, which is the legacy path -- strict there would revert
+  // every fee-bearing call. Tests that want production's behaviour opt in.
+  strictFeeRouting: values.strictFeeRouting ?? false,
 });
 
 async function createCampaignFixture() {

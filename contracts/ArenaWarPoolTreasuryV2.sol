@@ -100,6 +100,9 @@ contract ArenaWarPoolTreasuryV2 is ReentrancyGuard, Ownable, EIP712 {
 
     mapping(bytes32 => Pool) public pools;
     mapping(bytes32 => mapping(address => uint256)) public buyIns;
+    /// Who funded a Boost and how much, so an expired pool can return it.
+    /// boostTotal alone is an aggregate; it cannot tell you who to pay.
+    mapping(bytes32 => mapping(address => uint256)) public boosts;
     mapping(bytes32 => mapping(address => uint256)) public tournamentRefunds;
     mapping(address => bool) public authorizedCreators;
     mapping(address => mapping(uint256 => bool)) public usedBoostNonces;
@@ -153,6 +156,8 @@ contract ArenaWarPoolTreasuryV2 is ReentrancyGuard, Ownable, EIP712 {
         uint256 boostGross
     );
     event PoolCancelled(bytes32 indexed poolId);
+    event PoolExpired(bytes32 indexed poolId, uint256 resolveDeadline);
+    event BoostRefunded(bytes32 indexed poolId, address indexed funder, uint256 amount);
     event PlacesResolved(bytes32 indexed poolId, address[] payouts, uint256[] amounts, uint256 pendingProtocol, uint256 pendingLeague);
     event OperatorFillUpdated(address indexed operator, uint256 capUsdMicros, uint256 nativeUsdMicros);
     event OperatorFilled(bytes32 indexed poolId, uint256 toOperator, uint256 toProtocol, uint256 filledUsdMicros);
@@ -165,6 +170,7 @@ contract ArenaWarPoolTreasuryV2 is ReentrancyGuard, Ownable, EIP712 {
     error InvalidState();
     error InvalidAmount();
     error DeadlinePassed();
+    error DeadlineNotPassed();
     error AlreadyDeposited();
     error NotOwner();
     error SignatureExpired();
@@ -385,6 +391,7 @@ contract ArenaWarPoolTreasuryV2 is ReentrancyGuard, Ownable, EIP712 {
             signature
         );
         pool.boostTotal += grossNativeRaw;
+        boosts[poolId][msg.sender] += grossNativeRaw;
         emit BattleBoosted(
             poolId,
             msg.sender,
@@ -431,6 +438,7 @@ contract ArenaWarPoolTreasuryV2 is ReentrancyGuard, Ownable, EIP712 {
             signature
         );
         pool.boostTotal += grossNativeRaw;
+        boosts[poolId][msg.sender] += grossNativeRaw;
         emit TournamentBoosted(
             poolId,
             matchId,
@@ -714,6 +722,40 @@ contract ArenaWarPoolTreasuryV2 is ReentrancyGuard, Ownable, EIP712 {
         pool.buyInTotal -= amount;
         _pay(msg.sender, amount);
         emit BuyInRefunded(poolId, msg.sender, amount);
+    }
+
+    /// @notice Release a pool that went Live and was never resolved.
+    /// @dev Permissionless and time-gated: the only thing it can do is act on a
+    /// resolveDeadline the pool has carried since it opened. Once both sides are
+    /// in, a battle or a tournament runs to a winner -- no owner, resolver or
+    /// operator can end one early, and cancelOpenPool still only touches Open.
+    /// This exists for the other failure: our own resolver never signing. Without
+    /// it, stakes, buy-ins and Boosts would sit here permanently, and being
+    /// permissionless means nobody can hold them by doing nothing either.
+    function settleExpiredPool(bytes32 poolId) external {
+        Pool storage pool = pools[poolId];
+        if (pool.ownerA == address(0)) revert UnknownPool();
+        if (pool.state != State.Live) revert InvalidState();
+        if (block.timestamp <= pool.resolveDeadline) revert DeadlineNotPassed();
+        pool.state = State.Cancelled;
+        emit PoolExpired(poolId, pool.resolveDeadline);
+        emit PoolCancelled(poolId);
+    }
+
+    /// @notice Take back a Boost from a pool that ended without a winner.
+    /// @dev Boosts can only be funded while Live, and until settleExpiredPool
+    /// existed a Live pool could only ever resolve -- so there was nothing to
+    /// refund and no record of who to refund. Both halves arrive together: the
+    /// per-wallet record above, and this.
+    function refundBoost(bytes32 poolId) external nonReentrant {
+        Pool storage pool = pools[poolId];
+        if (pool.state != State.Cancelled) revert InvalidState();
+        uint256 amount = boosts[poolId][msg.sender];
+        if (amount == 0) revert NothingToClaim();
+        boosts[poolId][msg.sender] = 0;
+        pool.boostTotal -= amount;
+        _pay(msg.sender, amount);
+        emit BoostRefunded(poolId, msg.sender, amount);
     }
 
     function _consumeBoostQuote(
