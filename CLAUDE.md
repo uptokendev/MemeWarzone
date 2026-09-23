@@ -956,6 +956,23 @@ oracle here is the router there. Chain-pair every address.
   transactions they cannot send (vault wiring, launch recorder, locker
   authorization). Robinhood mainnet the same way with its own script.
 
+### Solana launchpad — UPGRADED ON MAINNET (2026-09-24)
+
+Last full check before the ceremony, all re-executed: launchpad rebuilt from
+HEAD → identical `e6ed7df3…`; gate PASS (10/5/5); IDL identical; 107 unit
+tests; staged buffer byte-identical; treasury rebuilt → identical `1028f6f8…`,
+gate PASS 14/14, 22 unit tests, mainnet preflight PASS. Squads executed
+`BPFLoaderUpgradeable::Upgrade` (sig `5KsJbc24…`, source commit `72a6e91a`):
+**slot 448871337 → 449849762**, authority still `fk5YYWb…`, ProgramData
+verified as the candidate followed by 92,368 zero bytes, buffer `EdmGZHL5…`
+closed, 6.19 SOL returned to the deployer (9.724 SOL). Now due on API and
+indexer: `SOLANA_LAUNCHPAD_PROGRAM_SHA256=e6ed7df3…` (IDL sha unchanged).
+
+Treasury next, in this order, from the founder's terminal: `solana program
+extend 2NzthKEZ… 646624` (~2.044 SOL top-up) → generate the buffer keypair →
+`MWZ_TREASURY_RELEASE=1 MWZ_STAGE_SEND=1 prepare-mainnet-squads-buffer.sh
+treasury` → Squads → `init-arena-mainnet.mjs`.
+
 ## 5. One combined release (founder decision, 2026-09-23)
 
 **Solana does not go up on its own.** Both programs are finished, certified and

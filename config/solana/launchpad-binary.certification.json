@@ -18,11 +18,11 @@
   },
   "deployed": {
     "devnet": "2026-09-22, byte-verified",
-    "mainnet": "not yet — staged for Squads, see docs/solana-mainnet-squads-upgrade-runbook.md"
+    "mainnet": "2026-09-24, Squads upgrade executed (sig 5KsJbc247DJNHLoqkR1b8MZW9kdt54yLxjjZxMAdbLUA49mDE5ZrtFafoU32Uj4LFcVDFpTNKwTA5Ps8qpVHNhbp), slot 449849762, ProgramData byte-verified: candidate + zero padding"
   },
   "consumers": {
     "SOLANA_LAUNCHPAD_PROGRAM_SHA256": "API deployment evidence (audit trail on every create authorization) and the canary",
     "SOLANA_LAUNCHPAD_IDL_SHA256": "same",
-    "SOLANA_LAUNCHPAD_PROGRAM_BYTES": "canary only — not read by the API"
+    "SOLANA_LAUNCHPAD_PROGRAM_BYTES": "canary only \u2014 not read by the API"
   }
 }
