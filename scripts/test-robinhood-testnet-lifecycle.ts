@@ -691,8 +691,12 @@ async function main() {
   const quotedBuy = await swapRouter.quoteExactInputSingle(manifest.contracts.mockWeth9, info.token, V3_FEE_TIER, nativeBuyIn);
   if (quotedBuy <= 0n) throw new Error("Post-grad native buy quote returned zero output.");
   const traderTokenBefore = await token.balanceOf(await trader.getAddress());
+  // The adapter gained a deadline in the audit (a swap with no deadline can be
+  // held by a sequencer and executed at a worse price). Without it the
+  // overrides object lands in the deadline slot and ethers refuses to encode.
+  const swapDeadline = BigInt((await ethers.provider.getBlock("latest"))!.timestamp) + 3600n;
   await (
-    await nativeAdapter.connect(trader).buyExactNativeIn(info.token, V3_FEE_TIER, quotedBuy, await trader.getAddress(), { value: nativeBuyIn })
+    await nativeAdapter.connect(trader).buyExactNativeIn(info.token, V3_FEE_TIER, quotedBuy, await trader.getAddress(), swapDeadline, { value: nativeBuyIn })
   ).wait();
   const traderTokenAfterBuy = await token.balanceOf(await trader.getAddress());
   const nativeBought = traderTokenAfterBuy - traderTokenBefore;
@@ -709,6 +713,7 @@ async function main() {
     nativeSellIn,
     quotedSell,
     await trader.getAddress(),
+    swapDeadline,
   );
   const sellRc = await sellTx.wait();
   const gasUsed = (sellRc?.gasUsed || 0n) * (sellRc?.gasPrice || sellTx.gasPrice || 0n);
