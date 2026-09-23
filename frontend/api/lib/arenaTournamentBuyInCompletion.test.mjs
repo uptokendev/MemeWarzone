@@ -21,12 +21,12 @@ const RH = STAGING_ARENA_V2_AUTHORITY[46630];
 
 test("1 BSC97 authoritative ArenaWarPoolTreasuryV2 identity is exact", () => {
   assert.equal(arenaWarPoolTreasuryV2Address(97, { ARENA_WAR_POOL_TREASURY_V2_ADDRESS_97: BSC.treasury }), BSC.treasury);
-  assert.equal(BSC.treasury, "0xAb8cb6d117b79dd7502898e50C900360924fDa85");
+  assert.equal(BSC.treasury, "0x014816B8063ae091d5EFEFcA181ca2aF53A16813");
 });
 
 test("2 Robinhood46630 authoritative ArenaWarPoolTreasuryV2 identity is exact", () => {
   assert.equal(arenaWarPoolTreasuryV2Address(46630, { ARENA_WAR_POOL_TREASURY_V2_ADDRESS_46630: RH.treasury }), RH.treasury);
-  assert.equal(RH.treasury, "0x1eDd34933E5395c82F14CE2A220b81adF35C52B7");
+  assert.equal(RH.treasury, "0xE6Dd149E7E447dAfB1527784252f1A1873c64B74");
 });
 
 test("3 wrong staging Treasury fails closed", () => {

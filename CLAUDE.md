@@ -899,8 +899,12 @@ Always read the chain, never match an address by eye.
 
 ### Still to do
 
-- **Go-live runbook** with every env name and address, the two code changes
-  that gate Robinhood battles and the staging pins, the merge order and the
+- **Robinhood mainnet battles are no longer gated in code.** `arenaWarPoolEscrow.js`
+  used to refuse 4663 outright; it now takes `ARENA_WAR_POOL_TREASURY_V2_ADDRESS_4663`
+  like every other chain, V2-only, runtime hash enforced. The staging authority map
+  (`arenaTournamentBuyInV2.mjs`) points at today's testnet war pools, and
+  `frontend/.env.example` names the V2 and signer variables. Arena test set 515, 0 failing.
+- **Go-live runbook** with every env name and address, the merge order and the
   dashboard switch: `docs/build_plans/go-live-runbook.md` (gitignored dir, on
   disk — `git add -f` if it should travel).
 - **Robinhood mainnet**: R1 prerequisites → R2 router (+4 Safe setters) →

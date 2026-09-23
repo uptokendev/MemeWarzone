@@ -6,16 +6,23 @@ export const DEFAULT_TOURNAMENT_PRICE_MAX_AGE_SECONDS = 300n;
 export const TOURNAMENT_COMPETITION_GENERATION = "arena_competition_v2";
 
 export const STAGING_ARENA_V2_AUTHORITY = Object.freeze({
+  // Binding-token generation on BSC testnet, deployed and driven end to end
+  // 2026-09-23 (create, buy, sell, graduation into 30 bps Topaz, 80/20
+  // harvest; one full battle at 75/20/5). Hashes are keccak256 of the deployed
+  // runtime code, read from chain. The previous pin (0xAb8cb6d1…) was the
+  // generation before it.
   97: Object.freeze({
-    treasury: "0xAb8cb6d117b79dd7502898e50C900360924fDa85",
-    runtimeHash: "0xfec2ed674329f7145f202948cfae00abd0fd6fc4a8cdbdb129e8fd2c9c493422",
-    leagueTreasury: "0x34f2C55c0d8cd7998afDa18ED7369f2E6be9619b",
+    treasury: "0x014816B8063ae091d5EFEFcA181ca2aF53A16813",
+    runtimeHash: "0xc51b2ee9017e43aece81d0ed37a1633da4595a48c7e9ac8c55201439f8d7df4c",
+    leagueTreasury: "0x8A8aCCAe4E2dA530A7A1AB7CA3fDD5014DaDE401",
     leagueRuntimeHash: "0xaa3da82375f44bccd4d3007b039f7cb97316e7518a9a393415ad78417927d2d4",
   }),
+  // Same generation on Robinhood testnet, accepted 2026-09-23 (freeze
+  // deployments/robinhood/testnet.accepted.json). Previous pin: 0x1eDd3493….
   46630: Object.freeze({
-    treasury: "0x1eDd34933E5395c82F14CE2A220b81adF35C52B7",
-    runtimeHash: "0x79979c3684c328e866c2b5b03d276cda7072a4c39d7f5b55c42672f9cb82958d",
-    leagueTreasury: "0x794Cbd0912A71394f25B81C32f3994cC737A4B13",
+    treasury: "0xE6Dd149E7E447dAfB1527784252f1A1873c64B74",
+    runtimeHash: "0x47f7b829e8c41f4ca33406f672961126d69c0e54a77e802e670d754413ba81fc",
+    leagueTreasury: "0x4Ce88dCd64631AFb7E321Ff1f49DC1b4F423fE74",
     leagueRuntimeHash: "0xaa3da82375f44bccd4d3007b039f7cb97316e7518a9a393415ad78417927d2d4",
   }),
 });

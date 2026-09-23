@@ -56,8 +56,6 @@ function v1TreasuryAddress(chainId, env) {
 
 function resolveWarPoolTreasury(chainId, env = process.env) {
   const id = Number(chainId);
-  // Robinhood production has no attested V2 Battle treasury and must never inherit BNB V1.
-  if (id === 4663) return { address: "", generation: "" };
 
   const v2Raw = String(env[`ARENA_WAR_POOL_TREASURY_V2_ADDRESS_${id}`] || "").trim();
   if (v2Raw) {
@@ -66,8 +64,13 @@ function resolveWarPoolTreasury(chainId, env = process.env) {
     return { address, generation: WAR_POOL_GENERATION_V2 };
   }
 
-  // Robinhood staging battles are V2-only. Missing V2 env fails closed instead of using V1/BNB.
-  if (id === 46630) return { address: "", generation: "" };
+  // Robinhood, staging and production alike, is V2-only: a missing V2 env
+  // fails closed instead of inheriting BNB's V1 treasury. Production (4663)
+  // used to be refused outright, from before a Robinhood V2 treasury existed;
+  // it is now enabled the same way as every other chain -- by its own
+  // ARENA_WAR_POOL_TREASURY_V2_ADDRESS_4663, with the runtime hash enforced
+  // against the deployed bytecode when configured.
+  if (id === 46630 || id === 4663) return { address: "", generation: "" };
 
   const v1 = v1TreasuryAddress(id, env);
   if (v1) return { address: v1, generation: WAR_POOL_GENERATION_V1 };

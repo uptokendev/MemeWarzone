@@ -58,14 +58,17 @@ test("46630 wrong runtime hash fails closed", () => {
   );
 });
 
-test("4663 war-pool treasury is empty and never inherits BNB fallback", () => {
+test("4663 takes its own V2 treasury and never the V1 one, even when both are set", () => {
+  // Used to pin an outright refusal of 4663, from before a Robinhood V2
+  // treasury existed. Production is now enabled like every other chain, by
+  // its own V2 env; the V1 address beside it must still count for nothing.
   const env = {
     ...BNB_FALLBACK_ENV,
     ARENA_WAR_POOL_TREASURY_V2_ADDRESS_4663: RH.treasury,
     ARENA_WAR_POOL_TREASURY_ADDRESS_4663: V1_BNB,
   };
-  assert.equal(warPoolTreasuryAddress(4663, env), "");
-  assert.equal(warPoolGeneration(4663, env), "");
+  assert.equal(warPoolTreasuryAddress(4663, env).toLowerCase(), RH.treasury.toLowerCase());
+  assert.equal(warPoolGeneration(4663, env), WAR_POOL_GENERATION_V2);
 });
 
 test("97 attested V2 treasury is accepted and preferred over V1", () => {
@@ -179,3 +182,33 @@ test("places resolution typed data hashes the (payouts, bps) list exactly as the
     else process.env.ARENA_WAR_POOL_RESOLVER_KEY = previous;
   }
 });
+
+// Robinhood production. There is no staging authority entry for 4663, so the
+// address is whatever the env says and the runtime hash is enforced against
+// the deployed bytecode at read time (arenaWarPoolLive), not against a pin.
+const RH_MAINNET_V2 = "0x000000000000000000000000000000000000d0d0";
+const RH_MAINNET_HASH = "0x" + "ab".repeat(32);
+
+test("4663 uses its own V2 treasury when configured", () => {
+  const env = {
+    ARENA_WAR_POOL_TREASURY_V2_ADDRESS_4663: RH_MAINNET_V2,
+    ARENA_WAR_POOL_TREASURY_V2_RUNTIME_HASH_4663: RH_MAINNET_HASH,
+    ...BNB_FALLBACK_ENV,
+  };
+  assert.equal(warPoolTreasuryAddress(4663, env).toLowerCase(), RH_MAINNET_V2.toLowerCase());
+  assert.equal(warPoolGeneration(4663, env), WAR_POOL_GENERATION_V2);
+});
+
+test("4663 without a V2 treasury fails closed and never inherits BNB V1", () => {
+  assert.equal(warPoolTreasuryAddress(4663, BNB_FALLBACK_ENV), "");
+  assert.equal(warPoolGeneration(4663, BNB_FALLBACK_ENV), "");
+  assert.equal(warPoolTreasuryAddress(4663, { ...BNB_FALLBACK_ENV, ARENA_WAR_POOL_TREASURY_ADDRESS_4663: WRONG }), "");
+});
+
+test("4663 malformed V2 address or runtime hash throws instead of degrading", () => {
+  assert.throws(() => warPoolTreasuryAddress(4663, { ARENA_WAR_POOL_TREASURY_V2_ADDRESS_4663: "not-an-address" }));
+  assert.throws(() =>
+    warPoolTreasuryAddress(4663, { ARENA_WAR_POOL_TREASURY_V2_ADDRESS_4663: RH_MAINNET_V2, ARENA_WAR_POOL_TREASURY_V2_RUNTIME_HASH_4663: "0x1234" }),
+  );
+});
+
