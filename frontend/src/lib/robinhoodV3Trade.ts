@@ -20,8 +20,8 @@ const V3_ROUTER_ABI = [
 const NATIVE_SWAP_ADAPTER_ABI = [
   "function swapRouter() view returns (address)",
   "function wrappedNative() view returns (address)",
-  "function buyExactNativeIn(address tokenOut,uint24 fee,uint256 amountOutMinimum,address recipient) payable returns (uint256 amountOut)",
-  "function sellExactTokenIn(address tokenIn,uint24 fee,uint256 amountIn,uint256 amountOutMinimum,address recipient) returns (uint256 amountOut)",
+  "function buyExactNativeIn(address tokenOut,uint24 fee,uint256 amountOutMinimum,address recipient,uint256 deadline) payable returns (uint256 amountOut)",
+  "function sellExactTokenIn(address tokenIn,uint24 fee,uint256 amountIn,uint256 amountOutMinimum,address recipient,uint256 deadline) returns (uint256 amountOut)",
 ] as const;
 
 const MULTI_HOP_SWAP_ADAPTER_ABI = [
@@ -571,6 +571,7 @@ export async function executeRobinhoodV3Buy(input: {
     input.quote.route.fee,
     input.quote.minimumOutRaw,
     recipient,
+    await executionDeadline(input.signer),
     { value: input.quote.amountInRaw },
   );
 }
@@ -607,6 +608,7 @@ export async function executeRobinhoodV3Sell(input: {
     input.quote.amountInRaw,
     input.quote.minimumOutRaw,
     recipient,
+    await executionDeadline(input.signer),
   );
 }
 

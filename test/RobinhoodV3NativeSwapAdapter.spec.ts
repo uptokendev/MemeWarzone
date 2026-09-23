@@ -63,6 +63,9 @@ async function deployFixture() {
   return { owner, trader, weth, factory, positionManager, swapRouter, token, adapter };
 }
 
+// Any far-future timestamp: these tests are about swap mechanics, not expiry.
+const FAR_FUTURE = 4_000_000_000n;
+
 describe("RobinhoodV3NativeSwapAdapter", function () {
   it("buys a Robinhood V3 token with native ETH in one swap call", async () => {
     const { trader, swapRouter, token, weth, adapter } = await deployFixture();
@@ -80,6 +83,7 @@ describe("RobinhoodV3NativeSwapAdapter", function () {
         FEE,
         quoted,
         await trader.getAddress(),
+        FAR_FUTURE,
         { value: nativeIn },
       ),
     ).to.emit(adapter, "NativeBuy");
@@ -104,6 +108,7 @@ describe("RobinhoodV3NativeSwapAdapter", function () {
       FEE,
       1n,
       await trader.getAddress(),
+      FAR_FUTURE,
       { value: nativeIn },
     );
 
@@ -122,6 +127,7 @@ describe("RobinhoodV3NativeSwapAdapter", function () {
         tokenOut,
         nativeOut,
         await trader.getAddress(),
+        FAR_FUTURE,
       ),
     ).to.emit(adapter, "NativeSell");
 
@@ -136,10 +142,53 @@ describe("RobinhoodV3NativeSwapAdapter", function () {
       adapter.connect(trader).buyExactNativeIn(
         await weth.getAddress(),
         FEE,
-        0n,
+        1n,
         await trader.getAddress(),
+        FAR_FUTURE,
         { value: 1n },
       ),
     ).to.be.revertedWith("invalid token");
+  });
+
+  it("refuses an expired swap and one with no slippage bound at all", async () => {
+    // Slippage bounds the price a trader accepts; the deadline bounds when they
+    // accept it, so a transaction left in the mempool cannot land much later
+    // against a book that has moved. The multi-hop adapter has always enforced
+    // both; this one enforced neither.
+    const { trader, token, adapter } = await deployFixture();
+    const past = BigInt((await ethers.provider.getBlock("latest"))!.timestamp - 1);
+
+    await expect(
+      adapter.connect(trader).buyExactNativeIn(
+        await token.getAddress(),
+        FEE,
+        1n,
+        await trader.getAddress(),
+        past,
+        { value: ethers.parseEther("1") },
+      ),
+    ).to.be.revertedWith("deadline");
+
+    await expect(
+      adapter.connect(trader).buyExactNativeIn(
+        await token.getAddress(),
+        FEE,
+        0n,
+        await trader.getAddress(),
+        FAR_FUTURE,
+        { value: ethers.parseEther("1") },
+      ),
+    ).to.be.revertedWith("zero minimum out");
+
+    await expect(
+      adapter.connect(trader).sellExactTokenIn(
+        await token.getAddress(),
+        FEE,
+        1n,
+        0n,
+        await trader.getAddress(),
+        FAR_FUTURE,
+      ),
+    ).to.be.revertedWith("zero minimum out");
   });
 });

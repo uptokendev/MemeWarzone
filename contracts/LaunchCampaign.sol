@@ -886,6 +886,12 @@ contract LaunchCampaign is ReentrancyGuard, Ownable {
         uint256 linear = Math.mulDiv(x, basePrice, WAD);
         uint256 square;
         unchecked {
+            // x is bounded by totalSupply, which LaunchFactory caps at
+            // MAX_TOTAL_SUPPLY (1e27), so x * x is at most 1e54 and cannot wrap
+            // a uint256. The cap is NOT re-checked here: this contract sits at
+            // the EIP-170 limit with single-digit bytes to spare, and the check
+            // costs ~32 of them. Any campaign not created by LaunchFactory must
+            // therefore bound its own supply -- see the size note in CLAUDE.md.
             square = x * x;
         }
         uint256 slopeTerm = Math.mulDiv(priceSlope, square, 2 * WAD * WAD);

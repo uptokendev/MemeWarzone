@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+
 interface ILaunchCampaignCreatorView {
     function creator() external view returns (address);
 }
 
 /// @title CreatorRewardsVault
 /// @notice Custodies campaign-scoped creator trade fees for later creator claims.
-contract CreatorRewardsVault {
+contract CreatorRewardsVault is ReentrancyGuard {
     address public immutable admin;
     address public router;
 
@@ -77,7 +79,14 @@ contract CreatorRewardsVault {
         );
     }
 
-    function claimCreatorFees(address campaign) external returns (uint256 amount) {
+    /// @dev nonReentrant even though the effects precede the payment, because
+    /// _campaignCreator calls creator() on an arbitrary campaign address before
+    /// the pending balance is read, and anyone can accrue a balance to a
+    /// contract they control by calling routeTrade on the router with value.
+    /// Today the reentrancy cannot profit -- the outer frame reads amount after
+    /// that call and reverts on zero, unwinding the inner payment -- but that is
+    /// an argument about statement order, and this is a claim function.
+    function claimCreatorFees(address campaign) external nonReentrant returns (uint256 amount) {
         address creator = _campaignCreator(campaign);
         require(msg.sender == creator, "not creator");
 

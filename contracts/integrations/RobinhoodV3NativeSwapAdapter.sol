@@ -63,13 +63,20 @@ contract RobinhoodV3NativeSwapAdapter is ReentrancyGuard {
         require(msg.sender == address(wrappedNative), "native only from WETH");
     }
 
+    /// @param deadline Latest timestamp this swap may execute at. Slippage alone
+    /// bounds the price but not the moment: without a deadline a transaction can
+    /// sit in the mempool and land much later against a book that has moved.
+    /// RobinhoodV3MultiHopSwapAdapter has always enforced one; this did not.
     function buyExactNativeIn(
         address tokenOut,
         uint24 fee,
         uint256 amountOutMinimum,
-        address recipient
+        address recipient,
+        uint256 deadline
     ) external payable nonReentrant returns (uint256 amountOut) {
+        require(block.timestamp <= deadline, "deadline");
         require(msg.value > 0, "zero input");
+        require(amountOutMinimum > 0, "zero minimum out");
         require(tokenOut != address(0) && tokenOut != address(wrappedNative), "invalid token");
         require(recipient != address(0), "zero recipient");
         require(fee > 0, "zero fee");
@@ -95,14 +102,18 @@ contract RobinhoodV3NativeSwapAdapter is ReentrancyGuard {
         emit NativeBuy(msg.sender, tokenOut, fee, msg.value, amountOut, recipient);
     }
 
+    /// @param deadline See buyExactNativeIn.
     function sellExactTokenIn(
         address tokenIn,
         uint24 fee,
         uint256 amountIn,
         uint256 amountOutMinimum,
-        address recipient
+        address recipient,
+        uint256 deadline
     ) external nonReentrant returns (uint256 amountOut) {
+        require(block.timestamp <= deadline, "deadline");
         require(amountIn > 0, "zero input");
+        require(amountOutMinimum > 0, "zero minimum out");
         require(tokenIn != address(0) && tokenIn != address(wrappedNative), "invalid token");
         require(recipient != address(0), "zero recipient");
         require(fee > 0, "zero fee");
