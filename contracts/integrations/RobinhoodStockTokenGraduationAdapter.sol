@@ -54,6 +54,8 @@ interface IRobinhoodStockV3PositionManager {
         external
         payable
         returns (uint256 tokenId, uint128 liquidity, uint256 amount0, uint256 amount1);
+
+    function safeTransferFrom(address from, address to, uint256 tokenId) external;
 }
 
 interface IRobinhoodStockWETH is IERC20 {
@@ -406,13 +408,23 @@ contract RobinhoodStockTokenGraduationAdapter is ReentrancyGuard {
                 amount1Desired: amount1Desired,
                 amount0Min: amount0Min,
                 amount1Min: amount1Min,
-                recipient: permanentPositionLocker,
+                recipient: address(this),
                 deadline: request.deadline
             })
         );
         IERC20(token0).forceApprove(positionManager, 0);
         IERC20(token1).forceApprove(positionManager, 0);
         if (result.positionTokenId == 0 || mintedLiquidity == 0 || amount0 == 0 || amount1 == 0) revert PositionMintFailed();
+
+        // NonfungiblePositionManager.mint uses ERC721 _mint, not _safeMint, so a
+        // position minted straight to the locker never invokes onERC721Received
+        // and the locker -- which has no other way to record one -- cannot know
+        // it holds the NFT. LaunchFactory registration then reverts
+        // PositionMissing and the graduation can never complete. Mint to this
+        // authorized adapter and safe-transfer in, so the receiver hook proves
+        // and records the position. RobinhoodUniswapV3GraduationAdapter already
+        // does exactly this; this adapter did not.
+        manager.safeTransferFrom(address(this), permanentPositionLocker, result.positionTokenId);
 
         result.memeTokenUsed = memeIs0 ? amount0 : amount1;
         result.stockTokenUsed = memeIs0 ? amount1 : amount0;
