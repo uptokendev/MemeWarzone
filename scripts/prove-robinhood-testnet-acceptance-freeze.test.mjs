@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   ACCEPTED_5B_SHA,
+  ACCEPTED_FACTORY_START_BLOCK,
   assertRobinhoodTestnetMutationForbidden,
   loadRobinhoodTestnetFreeze,
   parseRobinhoodTestnetFreeze,
@@ -14,12 +15,16 @@ function validFreeze(overrides = {}) {
     kind: "robinhood-testnet-acceptance-freeze",
     accepted5BSha: ACCEPTED_5B_SHA,
     chainId: 46630,
-    factory: "0xF170a2C97953754c2C1105E2AcC522Bc8e764D75",
+    factory: "0xde9f7055f768A6A1AFBCD5263be64961241927a4",
     routeAuthority: "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0",
     admin: "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
     factoryGeneration: 4,
     campaignGeneration: 3,
-    factoryStartBlock: 110723466,
+    // Taken from the module, not restated: the start-block check runs before
+    // expectedLive / expectedCreatePaused / productionCompatible, so a stale
+    // value here would make those cases throw the wrong error and pass for
+    // the wrong reason.
+    factoryStartBlock: ACCEPTED_FACTORY_START_BLOCK,
     expectedLive: true,
     expectedCreatePaused: true,
     productionCompatible: false,

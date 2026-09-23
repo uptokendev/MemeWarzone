@@ -6,7 +6,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 export const ROBINHOOD_TESTNET_CHAIN_ID = 46630;
 export const ROBINHOOD_MAINNET_CHAIN_ID = 4663;
 export const LOCAL_HARDHAT_CHAIN_ID = 31337;
-export const ACCEPTED_5B_SHA = "d1783b4d31133bfcb107d1d32e04047c9e827fbf";
+// The tree that produced the accepted run. Moves only when a new generation is
+// cut and accepted; the previous record is archived beside the freeze, never
+// deleted.
+export const ACCEPTED_5B_SHA = "8832ad77bf88a1aff4c3b96ec4969c33106dbf04";
+export const ACCEPTED_FACTORY_START_BLOCK = 123211064;
 export const FREEZE_KIND = "robinhood-testnet-acceptance-freeze";
 
 function repoRoot() {
@@ -44,8 +48,8 @@ export function parseRobinhoodTestnetFreeze(raw) {
   if (Number(raw.factoryGeneration) !== 4 || Number(raw.campaignGeneration) !== 3) {
     throw new Error("Robinhood freeze generations must be factory 4 / campaign 3");
   }
-  if (Number(raw.factoryStartBlock) !== 110723466) {
-    throw new Error("Robinhood freeze factoryStartBlock must be 110723466");
+  if (Number(raw.factoryStartBlock) !== ACCEPTED_FACTORY_START_BLOCK) {
+    throw new Error(`Robinhood freeze factoryStartBlock must be ${ACCEPTED_FACTORY_START_BLOCK}`);
   }
   if (raw.expectedLive !== true) throw new Error("Robinhood freeze expectedLive must be true");
   if (raw.expectedCreatePaused !== true) throw new Error("Robinhood freeze expectedCreatePaused must be true");

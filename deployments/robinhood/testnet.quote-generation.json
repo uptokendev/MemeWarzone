@@ -4,7 +4,7 @@
   "deployedAt": "2026-09-23T13:21:20.477Z",
   "deployer": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
   "owner": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
-  "status": "deployed-paused",
+  "status": "deployed-paused, accepted on testnet",
   "reused": {
     "treasuryRouter": "0xEf6572863967623605D866BeaAB6890FF7521278",
     "weth": "0x632061cA786f7B585Bbd46A792FDA92B02f70671",
@@ -25,7 +25,7 @@
     "ArenaWarPoolTreasuryV2": "0xE6Dd149E7E447dAfB1527784252f1A1873c64B74"
   },
   "next": [
-    "creator gating is live: a first launch passes, a second inside 24h is refused (cooldown), max 3 live campaigns on the default tier",
+    "issue the new acceptance freeze pinned to the accepted tree (replaces the archived 0xF170a2C9 record)",
     "register stock tokens and routes on the adapter",
     "transfer ownership to the Safe (mainnet)",
     "canary, then enableLive + setCreatePaused(false) + setDepositsPaused(false)"
@@ -38,5 +38,49 @@
     "addedAt": "2026-09-23",
     "txSetRegistries": "0x82c72bc6827515f2679b708e5ead923aec079c8de87d541492c152914bacfd45",
     "txSetLaunchRecorder": "0x5168082ad98ed232e65d68395da2d64ca610813024389f9a5e69af877dfee8fa"
+  },
+  "lpLocker": {
+    "authorizedOnTreasuryRouter": true,
+    "primaryOnTreasuryRouter": true,
+    "how": "timelocked: the router already authorized the previous generation's locker 0x9523d856, so propose -> upgradeDelay (3600s) -> accept",
+    "txPropose": "0x864f22198852f581375a2cd90df139bb916afd504616dfa20dd33241f7f29192",
+    "txAccept": "0x11a68b957067009f70f5c3d771ab0fe70a7d841f633a608fe895e9b4b30bf84f",
+    "txSetPrimary": "0x3de8a69a2400862100d29a8b5765ac6d6dfc84e6a7e0f6c8c4429eadcdd5ad6a",
+    "why": "PermanentV3PositionLocker routes the protocol's 20% of every LP harvest through routeLpToken behind authorizedLpLocker and parks it silently on refusal. Unauthorized, the first graduation would have paid the creator and stranded the protocol share, as BSC testnet did."
+  },
+  "acceptance": {
+    "acceptedAt": "2026-09-23",
+    "harness": "scripts/test-robinhood-testnet-lifecycle.ts",
+    "manifest": "deployments/robinhood/testnet.staged.new-generation.json",
+    "result": "accepted: true",
+    "campaign": "0x3698AfA0e6482cEEbC312Feeb9BD373745b0De6E",
+    "scheduledCampaign": "0x0C1B3Adf9bfEA3f9Cb2D60512a8742876c45a984",
+    "token": "0x399cf0C96092dC5615F6dE89e2b22497Bd942fbb",
+    "pool": "0x3dC5648d1482023556c7dBd1270a4edaD6Ea31a3",
+    "positionTokenId": "3",
+    "lockedLiquidity": "1268235455817681",
+    "stages": [
+      "create",
+      "scheduledCreate",
+      "preLaunchRejected",
+      "postLaunchScheduledTrade",
+      "preGradBuy",
+      "preGradSell",
+      "creatorClaim",
+      "graduation ($6 test target)",
+      "permanentV3Lock",
+      "nativePostGradBuySell (with deadline)",
+      "feeHarvest80_20",
+      "createPausedAfter",
+      "continuity (indexer, no 56 alias)"
+    ],
+    "harvest": {
+      "creatorDelta": "240000000000",
+      "protocolDelta": "60000000000",
+      "split": "exactly 80/20 into the protocol vault on the harvest itself"
+    },
+    "firstRunNote": "The first run passed through graduation and the V3 lock, then died in the harness: RobinhoodV3NativeSwapAdapter gained a deadline argument in the audit and the harness still passed the old 5-arg shape. The chain was fine; the harness was fixed and re-run.",
+    "creatorsNote": "Re-run used two throwaway creator wallets funded with 0.01 from the testnet deployer (0x9Da9D84F\u2026 and 0xcc887fE6\u2026), because the first run's creators had just launched and the registry's 24h cooldown -- now enforced on this chain -- would have refused them. Keys live only in the session scratchpad.",
+    "battleCanary": "scripts/canary-arena-war-pool.ts ARENA CANARY PASS on 46630: 75/20/5 entry, 90/10 boost, against moved balances"
   }
 }

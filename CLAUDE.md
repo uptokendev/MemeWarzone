@@ -764,19 +764,46 @@ rehearsal at all: only a real graduation and a real harvest show them.
   launches need several wallets. `CreatorGatingChainParity` pins the EVM tiers
   to Solana's `TIER_COOLDOWN_SECONDS 86_400` and 3/5/10.
 
+### Robinhood: accepted (2026-09-23)
+
+The locker's timelocked authorization was accepted after `upgradeDelay`
+(`acceptAuthorizedLpLocker` `0x11a68b95…`, `setPrimaryLpLocker` `0x3de8a69a…`),
+and `scripts/test-robinhood-testnet-lifecycle.ts` ran against the new
+generation with `deployments/robinhood/testnet.staged.new-generation.json`:
+**`accepted: true`.** Create, scheduled create, pre-launch rejection,
+post-launch scheduled trade, pre-grad buy/sell, creator claim, $6 graduation,
+permanent V3 lock (position 3, pool `0x3dC5648d…`), native post-grad buy/sell,
+80/20 harvest (creator 240000000000 / protocol 60000000000 — the proof the
+locker authorization took), create paused after, indexer continuity.
+
+Two things only running it showed:
+
+- **The harness itself had drifted.** `RobinhoodV3NativeSwapAdapter` gained a
+  `deadline` argument in the audit and the harness kept the old shape; the
+  first run died *after* graduation with the chain in perfect health. A
+  harness the freeze forbids from running cannot drift visibly.
+- **Creator cooldown is real now.** A re-run with the same creator wallets
+  would have been refused (`CreatorCooldown`, 24h), so the second run used two
+  throwaway creators funded 0.01 each from the testnet deployer. Plan wallets
+  for any canary that launches more than once a day.
+
+The acceptance freeze is re-issued for the new generation:
+`deployments/robinhood/testnet.accepted.json` pins factory `0xde9f7055…`, tree
+`8832ad77…`, start block 123211064 (`ACCEPTED_5B_SHA` /
+`ACCEPTED_FACTORY_START_BLOCK` in `scripts/robinhoodTestnetFreeze.mjs`). The
+superseded `0xF170a2C9` record stays archived beside it. The freeze again
+forbids lifecycle runs on 46630 — that is the point; the next generation cut
+moves the pin the same way.
+
 ### Still to do
 
-- Robinhood: accept the proposed locker authorization once `upgradeDelay`
-  elapses, then run the launchpad lifecycle against the new generation
-  (`deployments/robinhood/testnet.staged.new-generation.json`).
-- The Robinhood acceptance freeze is **mid-cut**: the superseded record is
-  archived at `deployments/robinhood/testnet.accepted.superseded-0xF170a2C9.json`
-  and no freeze is in place, so `prove-robinhood-testnet-acceptance-freeze.test.mjs`
-  fails by design until the new generation passes and a new freeze is issued
-  (which also moves `ACCEPTED_5B_SHA` and `factoryStartBlock` — the new factory's
-  first block is 123211064).
-- Configure a quote route per approved quote token on each adapter.
-- Then mainnet, as one release with the two Solana upgrades.
+- Configure a quote route per approved quote token on each adapter (BNB
+  `BnbQuoteGraduationAdapter`, Robinhood stock adapter).
+- Then mainnet, as one release with the two Solana upgrades — BNB step 1 is
+  `deploy-evm-treasury-router-v3.ts` with the real league vaults supplied and
+  the Safe as admin, then `deploy-bnb-quote-generation.ts`; both print the Safe
+  transactions they cannot send (vault wiring, launch recorder, locker
+  authorization). Robinhood mainnet the same way with its own script.
 
 ## 5. One combined release (founder decision, 2026-09-23)
 

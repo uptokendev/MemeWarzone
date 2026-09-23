@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "kind": "robinhood-testnet-acceptance-freeze",
+  "accepted5BSha": "8832ad77bf88a1aff4c3b96ec4969c33106dbf04",
+  "chainId": 46630,
+  "chainKey": "robinhood-testnet",
+  "factory": "0xde9f7055f768A6A1AFBCD5263be64961241927a4",
+  "routeAuthority": "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0",
+  "admin": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "factoryGeneration": 4,
+  "campaignGeneration": 3,
+  "liquidityKind": 2,
+  "factoryStartBlock": 123211064,
+  "expectedLive": true,
+  "expectedCreatePaused": true,
+  "productionCompatible": false,
+  "productionCreationEnabled": false,
+  "acceptedAt": "2026-09-23",
+  "supersedes": "deployments/robinhood/testnet.accepted.superseded-0xF170a2C9.json",
+  "acceptanceEvidence": {
+    "harness": "scripts/test-robinhood-testnet-lifecycle.ts",
+    "manifest": "deployments/robinhood/testnet.staged.new-generation.json",
+    "campaign": "0x3698AfA0e6482cEEbC312Feeb9BD373745b0De6E",
+    "scheduledCampaign": "0x0C1B3Adf9bfEA3f9Cb2D60512a8742876c45a984",
+    "pool": "0x3dC5648d1482023556c7dBd1270a4edaD6Ea31a3",
+    "positionTokenId": "3",
+    "feeHarvest80_20": { "creatorDelta": "240000000000", "protocolDelta": "60000000000" },
+    "battleCanary": "scripts/canary-arena-war-pool.ts ARENA CANARY PASS"
+  },
+  "contracts": {
+    "launchFactory": "0xde9f7055f768A6A1AFBCD5263be64961241927a4",
+    "launchCampaignImplementation": "0xC1271D0A2cAEf68b70B5ae649865B144Ea8445C3",
+    "permanentV3PositionLocker": "0x387E178ac36d386ed648E282F377Cb9Ce2B9F8A9",
+    "treasuryRouterV3": "0xEf6572863967623605D866BeaAB6890FF7521278",
+    "graduationAdapter": "0xe69a6a41363a48179beaB9b1E6122885bbFe8C65",
+    "stockGraduationAdapter": "0x52e45372C7a191814039D0089ba79808f435b2d3",
+    "v3NativeSwapAdapter": "0x1295966E4C250f612F7347fd42196ADd0673D7F0",
+    "creatorRegistry": "0x77ca02849c0AcdC8BDFF81E2BcC0062411846D78",
+    "riskRegistry": "0x3D79cFeF21eF34eD7e499d702C2D77A5d8dAaa34",
+    "postGradLeagueTreasuryV2": "0x4Ce88dCd64631AFb7E321Ff1f49DC1b4F423fE74",
+    "arenaWarPoolTreasuryV2": "0xE6Dd149E7E447dAfB1527784252f1A1873c64B74"
+  }
+}
