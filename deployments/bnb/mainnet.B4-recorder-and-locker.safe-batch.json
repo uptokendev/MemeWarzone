@@ -1,0 +1,81 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 1790195563944,
+  "meta": {
+    "name": "MWZ BNB mainnet B4: launch recorder + LP locker authorization",
+    "description": "Register factory 0x632061cA as launch recorder on CreatorRegistry 0x8194FB37; authorize locker 0xdd41E0d1 on TreasuryRouterV3 0xe635AA43 and set it primary. Until executed: create reverts NotLaunchRecorder and every LP harvest strands the protocol share.",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0x8194FB3745d027102ce7Da562c7045f28B2f42fD",
+      "value": "0",
+      "data": "0x422b76f5000000000000000000000000632061ca786f7b585bbd46a792fda92b02f706710000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "recorder",
+            "type": "address"
+          },
+          {
+            "internalType": "bool",
+            "name": "allowed",
+            "type": "bool"
+          }
+        ],
+        "name": "setLaunchRecorder",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "recorder": "0x632061cA786f7B585Bbd46A792FDA92B02f70671",
+        "allowed": "true"
+      }
+    },
+    {
+      "to": "0xe635AA43fE5707561c8c3C655225da5C3e4C2239",
+      "value": "0",
+      "data": "0xacb9fef6000000000000000000000000dd41e0d13c637657a28b60f860205048221f325a0000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "locker",
+            "type": "address"
+          },
+          {
+            "internalType": "bool",
+            "name": "allowed",
+            "type": "bool"
+          }
+        ],
+        "name": "setAuthorizedLpLocker",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "locker": "0xdd41E0d13c637657A28b60F860205048221F325A",
+        "allowed": "true"
+      }
+    },
+    {
+      "to": "0xe635AA43fE5707561c8c3C655225da5C3e4C2239",
+      "value": "0",
+      "data": "0x86afb2f6000000000000000000000000dd41e0d13c637657a28b60f860205048221f325a",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newLocker",
+            "type": "address"
+          }
+        ],
+        "name": "setPrimaryLpLocker",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newLocker": "0xdd41E0d13c637657A28b60F860205048221F325A"
+      }
+    }
+  ]
+}
