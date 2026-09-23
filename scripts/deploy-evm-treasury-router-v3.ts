@@ -166,7 +166,11 @@ async function main() {
   fs.mkdirSync(path.dirname(out), { recursive: true });
   fs.writeFileSync(out, `${JSON.stringify(artifact, null, 2)}\n`);
   console.log(`[router] wrote ${out}`);
-  console.log(`[router] next: BNB_TREASURY_ROUTER=${routerAddress} npx hardhat run scripts/deploy-bnb-quote-generation.ts --network ${network.name}`);
+  // Which generation script follows depends on the chain, not on this script.
+  const generation = network.name.startsWith("robinhood")
+    ? `RH_TREASURY_ROUTER=${routerAddress} npx hardhat run scripts/deploy-robinhood-quote-generation.ts --network ${network.name}`
+    : `BNB_TREASURY_ROUTER=${routerAddress} npx hardhat run scripts/deploy-bnb-quote-generation.ts --network ${network.name}`;
+  console.log(`[router] next (after the admin has set all four vaults): ${generation}`);
 }
 
 main().catch((error) => {

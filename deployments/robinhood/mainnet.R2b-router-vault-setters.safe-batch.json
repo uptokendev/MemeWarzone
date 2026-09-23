@@ -1,0 +1,88 @@
+{
+  "version": "1.0",
+  "chainId": "4663",
+  "createdAt": 1790200917564,
+  "meta": {
+    "name": "MWZ Robinhood mainnet R2b: TreasuryRouterV3 vault setters",
+    "description": "Wire the four vaults on TreasuryRouterV3 0xda0a9Ed9 on Robinhood Chain 4663. Import in Safe Transaction Builder with the Safe switched to Robinhood Chain (Safe 0x1edcEdf5). The generation refuses to run until all four are set.",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0xda0a9Ed9e68D2B468257aBD66465fdD94F4338bb",
+      "value": "0",
+      "data": "0x4d6a75af000000000000000000000000bd7eb35d62b0ab69b1bb1d756bbdbcc6d31d86c7",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newVault",
+            "type": "address"
+          }
+        ],
+        "name": "setRecruiterRewardsVault",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newVault": "0xBd7EB35d62B0AB69B1BB1d756BbDBcC6D31D86C7"
+      }
+    },
+    {
+      "to": "0xda0a9Ed9e68D2B468257aBD66465fdD94F4338bb",
+      "value": "0",
+      "data": "0x1ab904b2000000000000000000000000de9ec7c679fd260d76a390eec00fa8ab1e621d2a",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newVault",
+            "type": "address"
+          }
+        ],
+        "name": "setCommunityRewardsVault",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newVault": "0xdE9Ec7c679FD260D76A390eEC00FA8ab1E621D2a"
+      }
+    },
+    {
+      "to": "0xda0a9Ed9e68D2B468257aBD66465fdD94F4338bb",
+      "value": "0",
+      "data": "0x33485e22000000000000000000000000632061ca786f7b585bbd46a792fda92b02f70671",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newVault",
+            "type": "address"
+          }
+        ],
+        "name": "setProtocolRevenueVault",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newVault": "0x632061cA786f7B585Bbd46A792FDA92B02f70671"
+      }
+    },
+    {
+      "to": "0xda0a9Ed9e68D2B468257aBD66465fdD94F4338bb",
+      "value": "0",
+      "data": "0xc5a2064b000000000000000000000000d9e381408a4e361c66d8b1e657583bde6c52402d",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newVault",
+            "type": "address"
+          }
+        ],
+        "name": "setCreatorRewardsVault",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newVault": "0xD9E381408A4e361C66D8b1e657583bdE6c52402d"
+      }
+    }
+  ]
+}
