@@ -1,0 +1,32 @@
+{
+  "network": "robinhoodTestnet",
+  "chainId": 46630,
+  "deployedAt": "2026-09-23T13:21:20.477Z",
+  "deployer": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "owner": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "status": "deployed-paused",
+  "reused": {
+    "treasuryRouter": "0xEf6572863967623605D866BeaAB6890FF7521278",
+    "weth": "0x632061cA786f7B585Bbd46A792FDA92B02f70671",
+    "v3Factory": "0xfdF80819CCaE7103165c2EAd9057BA7Eb2fa8aee",
+    "positionManager": "0xda0a9Ed9e68D2B468257aBD66465fdD94F4338bb",
+    "swapRouter": "0xdE9Ec7c679FD260D76A390eEC00FA8ab1E621D2a",
+    "nativeUsdFeed": "0x896C55A66FD6e310f0e923ea682cBAA06bDf9bc4",
+    "graduationOracle": "0x35E93D0b0F4A2809264Fa8D9922e2d0D1609C9BA",
+    "v3GraduationRouter": "0xe69a6a41363a48179beaB9b1E6122885bbFe8C65"
+  },
+  "deployed": {
+    "LaunchFactory": "0xde9f7055f768A6A1AFBCD5263be64961241927a4",
+    "LaunchCampaignImplementation": "0xC1271D0A2cAEf68b70B5ae649865B144Ea8445C3",
+    "PermanentV3PositionLocker": "0x387E178ac36d386ed648E282F377Cb9Ce2B9F8A9",
+    "RobinhoodStockTokenGraduationAdapter": "0x52e45372C7a191814039D0089ba79808f435b2d3",
+    "RobinhoodV3NativeSwapAdapter": "0x1295966E4C250f612F7347fd42196ADd0673D7F0",
+    "PostGradLeagueTreasuryV2": "0x4Ce88dCd64631AFb7E321Ff1f49DC1b4F423fE74",
+    "ArenaWarPoolTreasuryV2": "0xE6Dd149E7E447dAfB1527784252f1A1873c64B74"
+  },
+  "next": [
+    "register stock tokens and routes on the adapter",
+    "transfer ownership to the Safe (mainnet)",
+    "canary, then enableLive + setCreatePaused(false) + setDepositsPaused(false)"
+  ]
+}
