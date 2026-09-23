@@ -897,6 +897,43 @@ Always read the chain, never match an address by eye.
 `anyLpLockerAuthorized` is now true on this router: the next locker on it
 (any future generation) needs propose → 3600 s → accept.
 
+### Robinhood mainnet — DEPLOYED (2026-09-24), R3b pending the Safe
+
+Same discipline as BNB: founder's terminal, every state read back from chain.
+34 deployer transactions, ~0.0009 ETH. All closed. Everything Ownable is the
+Safe's (R4 verified: factory, league, war pool, both registries); the deployer
+keeps the stock adapter's immutable `admin`. **Still owed by the Safe: R3b**
+(`setAuthorizedLpLocker` + `setPrimaryLpLocker` on the router, batch
+`deployments/robinhood/mainnet.R3b-locker-authorization.safe-batch.json`) —
+until it executes every LP harvest strands the protocol share.
+
+| | |
+|---|---|
+| GraduationOracle (maxPriceAge 90000) | `0xe635AA43fE5707561c8c3C655225da5C3e4C2239` |
+| TreasuryVaultV2 (weekly) | `0xB6ccAc81f84F125Ecdc8dFaB2e019c42EAc5486e` |
+| CharityTreasury | `0x72A963682B261195EB43F8f75e0515ab279EbD14` |
+| MonthlyLeagueTreasury (cap 30000) | `0xE72A281b4A728AFb5fa836f593B56C8f74Fd4238` |
+| RecruiterRewardsVault | `0xBd7EB35d62B0AB69B1BB1d756BbDBcC6D31D86C7` |
+| ProtocolRevenueVault | `0x632061cA786f7B585Bbd46A792FDA92B02f70671` |
+| RobinhoodUniswapV3GraduationAdapter | `0xfdF80819CCaE7103165c2EAd9057BA7Eb2fa8aee` |
+| TreasuryRouterV3 (admin Safe) | `0xda0a9Ed9e68D2B468257aBD66465fdD94F4338bb` |
+| CommunityRewardsVault | `0xdE9Ec7c679FD260D76A390eEC00FA8ab1E621D2a` |
+| CreatorRewardsVault | `0xD9E381408A4e361C66D8b1e657583bdE6c52402d` |
+| LaunchFactory | `0x35E93D0b0F4A2809264Fa8D9922e2d0D1609C9BA` (start block 70863388) |
+| LaunchCampaign impl | `0x107231eBDe5DF14Ec0ec419b677d4ac0016DD70d` |
+| PermanentV3PositionLocker | `0xe2B3449491E4d5BE73E7E73A4DF9498eD9f3064C` |
+| RobinhoodStockTokenGraduationAdapter (maxOracleAge 90000) | `0xa48723e35061380Feb6D269f7c26D6E426F83efc` |
+| RobinhoodV3NativeSwapAdapter | `0xffF3aFBC7853d4B20F523d69c146169Ef4C3c1DF` |
+| PostGradLeagueTreasuryV2 | `0x5D5CC19B5BE86BA28b8164f85883F17843B69810` |
+| ArenaWarPoolTreasuryV2 (runtime `0xa902d91e…`) | `0xD3E00E476b72e49Ec4587df58b23Ea5BAd1F151C` |
+| CreatorRegistry / RiskRegistry | `0xDc77CAACDEB6affA0a5791f62BBB958D99Edc58B` / `0xe10e9c26D7CA80390831884CA17919E22fF44938` |
+
+Reused: Uniswap V3 factory `0x1f7d7550…`, position manager `0x73991a25…`,
+SwapRouter02 `0xCaf681a6…`, WETH9 `0x0Bd7D308…`, Chainlink ETH/USD
+`0x78F3556b…`. Route authority `0xb989A998…` (production). **The first seven
+addresses collide with BNB mainnet's** (same deployer, nonces 0–6): the
+oracle here is the router there. Chain-pair every address.
+
 ### Still to do
 
 - **Robinhood mainnet battles are no longer gated in code.** `arenaWarPoolEscrow.js`
