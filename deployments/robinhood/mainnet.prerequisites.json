@@ -1,0 +1,27 @@
+{
+  "network": "robinhoodMainnet",
+  "chainId": 4663,
+  "deployedAt": "2026-09-23T21:55:50.313Z",
+  "deployer": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "safe": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+  "inputs": {
+    "chainId": 4663,
+    "safe": "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+    "nativeUsdFeed": "0x78F3556b67E17Df817D51Ef5a990cDaF09E8d3A9",
+    "v3Factory": "0x1f7d7550B1b028f7571E69A784071F0205FD2EfA",
+    "positionManager": "0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3",
+    "weth": "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+    "maxOracleAgeSeconds": 90000,
+    "monthlyCapUsd": "30000"
+  },
+  "contracts": {
+    "GraduationOracle": "0xe635AA43fE5707561c8c3C655225da5C3e4C2239",
+    "WeeklyLeagueVault": "0xB6ccAc81f84F125Ecdc8dFaB2e019c42EAc5486e",
+    "CharityTreasury": "0x72A963682B261195EB43F8f75e0515ab279EbD14",
+    "MonthlyLeagueTreasury": "0xE72A281b4A728AFb5fa836f593B56C8f74Fd4238",
+    "RecruiterRewardsVault": "0xBd7EB35d62B0AB69B1BB1d756BbDBcC6D31D86C7",
+    "ProtocolRevenueVault": "0x632061cA786f7B585Bbd46A792FDA92B02f70671",
+    "RobinhoodUniswapV3GraduationAdapter": "0xfdF80819CCaE7103165c2EAd9057BA7Eb2fa8aee"
+  },
+  "unset": "weekly operator, weekly/monthly rootPoster: left zero like BNB mainnet, for the Safe to set"
+}
