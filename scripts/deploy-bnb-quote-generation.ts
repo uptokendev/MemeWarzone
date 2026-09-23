@@ -22,6 +22,15 @@
  * FeeRoutingFailed on every campaign it ever creates. BNB mainnet's current
  * router (0xe157a6FD…) has no creatorRewardsVault and would do exactly that.
  *
+ * Where the treasury router comes from, and a trap to avoid:
+ * scripts/deploy-bnb-mainnet-v3-cutover.ts deploys TreasuryRouterV3 with its
+ * vaults and emits the Safe transactions that wire them, because the router's
+ * admin is the Safe and an EOA cannot call its setters. Run that first and pass
+ * the resulting router here. That script ALSO deploys a plain LaunchFactory,
+ * which this generation supersedes -- BnbBasicLaunchFactory extends it and adds
+ * the quote path. Do not put both factories in front of users; only one can be
+ * the active factory.
+ *
  *   BSC testnet first, against real Topaz:
  *     CONFIRM_BNB_QUOTE_GENERATION=I_UNDERSTAND_TESTNET \
  *     BNB_TREASURY_ROUTER=0x… BNB_NATIVE_USD_FEED=0x… \

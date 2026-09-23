@@ -587,16 +587,42 @@ money. `deployConfiguredTreasuryRouter` stays on V1 because the V1 router specs
 are its subject; campaign and factory fixtures use `…V3`. Switching the shared
 one silently stopped testing V1 and cost five passing tests before I caught it.
 
+### The BNB deployment, in order
+
+Two scripts, and they are not interchangeable. Running both factories would put
+two active factories in front of users.
+
+1. **`scripts/deploy-bnb-mainnet-v3-cutover.ts`** — `TreasuryRouterV3` plus its
+   vaults. The router's admin is the Safe, so the vault wiring comes back as
+   Safe transactions rather than EOA calls. **Never run** (no
+   `deployments/bnb/v3-cutover/`). It also deploys a plain `LaunchFactory` that
+   the quote generation supersedes; `prove-bnb-mainnet-v3-cutover.test.mjs` pins
+   that shape, so it was left alone rather than edited.
+2. **`scripts/deploy-bnb-quote-generation.ts`** — everything from the factory up:
+   `LaunchCampaign` impl, `BnbQuoteLaunchCampaign` impl, `BnbBasicLaunchFactory`
+   (which deploys its own locker), `BnbQuoteGraduationAdapter` (needs that
+   locker, so it cannot come earlier), `PostGradLeagueTreasuryV2`,
+   `ArenaWarPoolTreasuryV2`. Takes the router from step 1 as input.
+
+Everything lands closed: `createPaused` true, `live` false, war pool deposits
+paused, and the script never calls `enableLive`. Quote routes, ownership
+transfer to the Safe, and going live are separate deliberate steps.
+
+**The script refuses a router that cannot serve strict routing.** It probes
+`creatorRewardsVault()` and the other five vaults and refuses with the
+consequence named. BNB mainnet's current router fails that check — which is the
+point, since pointing the new factory at it would brick the generation on day
+one. A paused router is refused for the same reason.
+
+Rehearsed on a throwaway chain by `test/BnbQuoteGenerationDeploy.spec.ts`, which
+drives the same wiring in the same order, asserts the end state including that
+`createCampaign` is rejected, and proves both refusals fire.
+
 ### Still to do on BNB
 
-- Deploy: `TreasuryRouterV3`, `BnbQuoteGraduationAdapter`,
-  `BnbQuoteLaunchCampaign`, `BnbBasicLaunchFactory`, `ArenaWarPoolTreasuryV2`,
-  `PostGradLeagueTreasuryV2`. None of the quote contracts has ever been deployed
-  anywhere -- no deployment record mentions them.
-- `deployArenaWarPoolTreasuryV2.ts` and its verifier exist; **there is no deploy
-  script for `BnbBasicLaunchFactory`**.
-- BSC testnet against real Topaz before mainnet.
-- Create is paused in env only; both factories report `createPaused=false`
+- Run step 1, then step 2, on **BSC testnet against real Topaz** before mainnet.
+- Configure a quote route per approved quote token on the adapter.
+- Create is paused in env only; both live factories report `createPaused=false`
   on chain, so direct calls still work.
 
 ## 5. One combined release (founder decision, 2026-09-23)
