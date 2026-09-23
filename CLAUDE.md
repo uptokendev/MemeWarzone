@@ -518,6 +518,87 @@ including string literals, or by watching execution. Do not trust a grep.
 - **Orphaned devnet buffer** `HbmmrEjPJL7hvrk7DJrvwFSqqFoNz9yiyzoFxAmEzZZv`
   holds 7.55857772 SOL on the devnet deployer. Predates this work.
 
+## 4c. BNB and Robinhood contracts — audit before deployment (2026-09-23)
+
+Mandate: BNB and Robinhood behave exactly as Solana, EVM-adapted. Contracts are
+immutable once deployed, so the audit is a precondition, not a review.
+
+**EVM suite: 683 passing, 0 failing.** It was 618 passing / 67 failing.
+
+### Four contract bugs, all found before deployment
+
+1. **`setCoreRouting` bricked the launchpad.** `LaunchFactory.leagueReceiver` was
+   `immutable` while `feeRecipient` was not. `LaunchCampaign` only takes the
+   unified routing path when they are equal, and the factory stamps every
+   campaign `strictFeeRouting: true` -- so the first treasury-router migration
+   left them permanently apart and every campaign created afterwards reverted
+   `FeeRoutingFailed` on every buy and sell. Reachable by a routine admin action.
+   They now move together in one transaction.
+2. **A Live war pool that was never resolved locked every wei.**
+   `ArenaWarPoolTreasuryV2` stored `resolveDeadline` and never read it; the only
+   exits from Live needed a signed outcome. `settleExpiredPool` is permissionless
+   and deadline-gated. Boosts were a pool aggregate with funders only in events,
+   so the per-wallet `boosts` mapping and `refundBoost` had to land in the same
+   change or expiry would have stranded them.
+3. **`cancelOpenPool` had a discretionary branch.** `pool.ownerA` or the owner
+   could close a pool before its deadline, and `openTournamentPool` sets `ownerA`
+   to the creator -- so a tournament creator could close a pool already holding
+   other people's entry fees. Removed, matching the Solana rule. Both remaining
+   exits are permissionless and gated on deadlines fixed at open time.
+4. **Robinhood stock graduation could never complete.**
+   `RobinhoodStockTokenGraduationAdapter` minted the LP position straight to the
+   locker, but `NonfungiblePositionManager.mint` uses `_mint`, not `_safeMint`,
+   so `onERC721Received` -- the locker's only way to record a position -- never
+   fired. Every graduation reverted `PositionMissing`, on every retry.
+   `RobinhoodUniswapV3GraduationAdapter` already documented the trap and minted
+   to itself before safe-transferring in; the stock adapter now does the same.
+   Those are the only two position mints in the codebase.
+
+**Three of the four were invisible behind the broken test suite.** The suites
+that would have caught them were failing for unrelated reasons, so nobody could
+see them. That is the argument for fixing tests before an audit, not after.
+
+### Two facts that change the BNB deployment
+
+- **The existing treasury router cannot serve the new contracts.**
+  `0xe157a6FDf19CAB61f2ECa048966f137A3240a921` has no `creatorRewardsVault()`,
+  and `TreasuryRouterV3._routeTrade` requires it. A new `TreasuryRouterV3` is a
+  mandatory part of the deployment set. Production is fine today only because the
+  deployed campaign implementation `0xbe3caF64…` predates `strictFeeRouting`.
+- **Pausing the treasury router halts all trading.** Under strict routing a fee
+  that cannot route reverts the trade instead of escrowing into `pendingNative`.
+  No fee limbo, but it is an operational property worth knowing.
+
+### The V3 fee model, now pinned
+
+A trade fee pays the creator **5%**, taken from what was the protocol's: on a
+2 BNB fee, protocol takes 0.85 where the old model took 0.95. League is 37.5%,
+split weekly/monthly. Finalize fees carry no creator or league share.
+Conservation is asserted across all six destinations for every profile.
+
+### Why the suite was broken
+
+Fixtures deployed `TreasuryRouter` V1 where the factory demands V3's
+`routeTrade`/`routeFinalize`; against V1 the call reverts with no reason at all,
+which was 54 of the 67. Then `RouteAmounts` gained a `creator` field and league
+split weekly/monthly, so balance helpers reading only the weekly vault saw 30% of
+the league and none of the creator -- a correctly routed fee looked like lost
+money. `deployConfiguredTreasuryRouter` stays on V1 because the V1 router specs
+are its subject; campaign and factory fixtures use `…V3`. Switching the shared
+one silently stopped testing V1 and cost five passing tests before I caught it.
+
+### Still to do on BNB
+
+- Deploy: `TreasuryRouterV3`, `BnbQuoteGraduationAdapter`,
+  `BnbQuoteLaunchCampaign`, `BnbBasicLaunchFactory`, `ArenaWarPoolTreasuryV2`,
+  `PostGradLeagueTreasuryV2`. None of the quote contracts has ever been deployed
+  anywhere -- no deployment record mentions them.
+- `deployArenaWarPoolTreasuryV2.ts` and its verifier exist; **there is no deploy
+  script for `BnbBasicLaunchFactory`**.
+- BSC testnet against real Topaz before mainnet.
+- Create is paused in env only; both factories report `createPaused=false`
+  on chain, so direct calls still work.
+
 ## 5. One combined release (founder decision, 2026-09-23)
 
 **Solana does not go up on its own.** Both programs are finished, certified and
