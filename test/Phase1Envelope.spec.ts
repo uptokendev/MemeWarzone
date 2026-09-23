@@ -4,6 +4,7 @@ import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { getBalance } from "./helpers/balances";
 import { quoteBuyExactTokens } from "./helpers/math";
 import { deployLaunchFactory } from "./helpers/deployFactory";
+import { deployConfiguredTreasuryRouterV3 } from "./helpers/deployRouting";
 
 const ROUTE_KIND_TRADE = 0;
 const ROUTE_KIND_FINALIZE = 1;
@@ -34,28 +35,10 @@ async function deployCommonDex() {
 async function deployRoutedSystem() {
   const { owner, creator, alice, dexRouter } = await deployCommonDex();
 
-  const AcceptingReceiver = await ethers.getContractFactory("AcceptingReceiver");
-  const leagueVault = await AcceptingReceiver.deploy();
-  const recruiterVault = await AcceptingReceiver.deploy();
-  const protocolVault = await AcceptingReceiver.deploy();
-  await Promise.all([
-    leagueVault.waitForDeployment(),
-    recruiterVault.waitForDeployment(),
-    protocolVault.waitForDeployment(),
-  ]);
-
-  const TreasuryRouter = await ethers.getContractFactory("TreasuryRouter");
-  const treasuryRouter = await TreasuryRouter.deploy(await owner.getAddress(), await leagueVault.getAddress(), 3600);
-  await treasuryRouter.waitForDeployment();
-
-  const CommunityRewardsVault = await ethers.getContractFactory("CommunityRewardsVault");
-  const communityVault = await CommunityRewardsVault.deploy(await owner.getAddress(), ethers.ZeroAddress);
-  await communityVault.waitForDeployment();
-
-  await communityVault.connect(owner).setRouter(await treasuryRouter.getAddress());
-  await treasuryRouter.connect(owner).setRecruiterRewardsVault(await recruiterVault.getAddress());
-  await treasuryRouter.connect(owner).setCommunityRewardsVault(await communityVault.getAddress());
-  await treasuryRouter.connect(owner).setProtocolRevenueVault(await protocolVault.getAddress());
+  // V3: the factory points feeRecipient and leagueReceiver here and stamps
+  // strictFeeRouting: true, so campaigns call routeTrade / routeFinalize.
+  const { treasuryRouter, leagueVault, monthlyVault, creatorVault, recruiterVault, protocolVault, communityVault } =
+    await deployConfiguredTreasuryRouterV3(await owner.getAddress());
 
   const { factory, priceFeed } = await deployLaunchFactory(await dexRouter.getAddress(), await treasuryRouter.getAddress());
   await factory.connect(owner).setRequireRouteAuthorization(false);
@@ -174,19 +157,24 @@ describe("Phase 1 fee envelope and economics invariants", function () {
     const { treasuryRouter } = await loadFixture(deployRoutedSystem);
     const amount = ethers.parseEther("2");
 
+    // Trade fees carry a 5% creator share on TreasuryRouterV3, taken out of what
+    // used to be the protocol's, so protocol is 0.85 where V1 paid 0.95.
+    // Finalize fees have no creator or league share and are unchanged.
     const tradeLinked = await treasuryRouter.previewRoute(amount, ROUTE_KIND_TRADE, 0);
     expect(tradeLinked.league).to.equal(ethers.parseEther("0.75"));
+    expect(tradeLinked.creator).to.equal(ethers.parseEther("0.10"));
     expect(tradeLinked.recruiter).to.equal(ethers.parseEther("0.25"));
     expect(tradeLinked.airdrop).to.equal(0n);
     expect(tradeLinked.squad).to.equal(ethers.parseEther("0.05"));
-    expect(tradeLinked.protocol).to.equal(ethers.parseEther("0.95"));
+    expect(tradeLinked.protocol).to.equal(ethers.parseEther("0.85"));
 
     const tradeUnlinked = await treasuryRouter.previewRoute(amount, ROUTE_KIND_TRADE, ROUTE_PROFILE_STANDARD_UNLINKED);
     expect(tradeUnlinked.league).to.equal(ethers.parseEther("0.75"));
+    expect(tradeUnlinked.creator).to.equal(ethers.parseEther("0.10"));
     expect(tradeUnlinked.recruiter).to.equal(0n);
     expect(tradeUnlinked.airdrop).to.equal(ethers.parseEther("0.30"));
     expect(tradeUnlinked.squad).to.equal(0n);
-    expect(tradeUnlinked.protocol).to.equal(ethers.parseEther("0.95"));
+    expect(tradeUnlinked.protocol).to.equal(ethers.parseEther("0.85"));
 
     const finalizeLinked = await treasuryRouter.previewRoute(amount, ROUTE_KIND_FINALIZE, 0);
     expect(finalizeLinked.league).to.equal(0n);
@@ -203,14 +191,21 @@ describe("Phase 1 fee envelope and economics invariants", function () {
     expect(finalizeUnlinked.protocol).to.equal(ethers.parseEther("1.65"));
 
     const ogTrade = await treasuryRouter.previewRoute(amount, ROUTE_KIND_TRADE, 2);
+    expect(ogTrade.creator).to.equal(ethers.parseEther("0.10"));
     expect(ogTrade.recruiter).to.equal(ethers.parseEther("0.30"));
     expect(ogTrade.squad).to.equal(ethers.parseEther("0.05"));
-    expect(ogTrade.protocol).to.equal(ethers.parseEther("0.90"));
+    expect(ogTrade.protocol).to.equal(ethers.parseEther("0.80"));
 
     const ogFinalize = await treasuryRouter.previewRoute(amount, ROUTE_KIND_FINALIZE, 2);
+    expect(ogFinalize.creator).to.equal(0n);
     expect(ogFinalize.recruiter).to.equal(ethers.parseEther("0.35"));
     expect(ogFinalize.squad).to.equal(ethers.parseEther("0.05"));
     expect(ogFinalize.protocol).to.equal(ethers.parseEther("1.60"));
+
+    // Whatever the profile, every wei of the fee is accounted for.
+    for (const split of [tradeLinked, tradeUnlinked, finalizeLinked, finalizeUnlinked, ogTrade, ogFinalize]) {
+      expect(split.league + split.creator + split.recruiter + split.airdrop + split.squad + split.protocol).to.equal(amount);
+    }
   });
 
   it("previewRoute preserves the exact fee envelope across representative odd amounts", async () => {
@@ -221,107 +216,46 @@ describe("Phase 1 fee envelope and economics invariants", function () {
       for (const kind of [0, 1] as const) {
         for (const profile of [0, 1, 2] as const) {
           const preview = await treasuryRouter.previewRoute(amount, kind, profile);
-          const total = preview.league + preview.recruiter + preview.airdrop + preview.squad + preview.protocol;
+          const total =
+            preview.league + preview.creator + preview.recruiter + preview.airdrop + preview.squad + preview.protocol;
           expect(total, `net mismatch for amount=${amount} kind=${kind} profile=${profile}`).to.equal(amount);
         }
       }
     }
   });
 
-  it("unified router mode keeps buy and sell quotes identical to legacy mode", async () => {
-    const routed = await loadFixture(deployRoutedSystem);
-    const legacy = await loadFixture(deployLegacySystem);
+  it("migrating the treasury router keeps unified routing intact, so campaigns created after it still trade", async () => {
+    // LaunchCampaign only takes the unified path when feeRecipient equals
+    // leagueReceiver, and the factory stamps every campaign strictFeeRouting:
+    // true -- so if a router migration left those two apart, every campaign
+    // minted afterwards would revert FeeRoutingFailed on every buy and sell.
+    // leagueReceiver used to be immutable while feeRecipient was not, which made
+    // that the guaranteed outcome of a routine setCoreRouting. These three tests
+    // previously asserted behaviour in exactly that divergent state; it is now
+    // unreachable, so they assert the invariant that replaced it.
+    const { owner, creator, alice, dexRouter, factory } = await loadFixture(deployRoutedSystem);
 
-    const { campaign: routedCampaign } = await createCampaign(routed.factory, routed.creator, "R");
-    const { campaign: legacyCampaign } = await createCampaign(legacy.factory, legacy.creator, "L");
+    const migrated = await deployConfiguredTreasuryRouterV3(await owner.getAddress());
+    await factory.connect(owner).setCoreRouting(await dexRouter.getAddress(), await migrated.treasuryRouter.getAddress());
 
+    expect(await factory.feeRecipient()).to.equal(await migrated.treasuryRouter.getAddress());
+    expect(await factory.leagueReceiver()).to.equal(await factory.feeRecipient());
+
+    const { campaign } = await createCampaign(factory, creator, "Migrated");
     const amountOut = ethers.parseEther("10");
-    expect(await routedCampaign.quoteBuyExactTokens(amountOut)).to.equal(await legacyCampaign.quoteBuyExactTokens(amountOut));
+    const quote = await campaign.quoteBuyExactTokens(amountOut);
 
-    const buyQuote = await routedCampaign.quoteBuyExactTokens(amountOut);
-    await routedCampaign.connect(routed.alice).buyExactTokens(amountOut, buyQuote, { value: buyQuote });
-    await legacyCampaign.connect(legacy.alice).buyExactTokens(amountOut, buyQuote, { value: buyQuote });
+    const leagueBefore =
+      (await getBalance(await migrated.leagueVault.getAddress())) +
+      (await getBalance(await migrated.monthlyVault.getAddress()));
+    const creatorBefore = await getBalance(await migrated.creatorVault.getAddress());
 
-    const amountIn = ethers.parseEther("4");
-    expect(await routedCampaign.quoteSellExactTokens(amountIn)).to.equal(await legacyCampaign.quoteSellExactTokens(amountIn));
-  });
+    await campaign.connect(alice).buyExactTokens(amountOut, quote, { value: quote });
 
-  it("legacy routing keeps finalize fee 100% to feeRecipient while trade fees still split league/protocol", async () => {
-    const { alice, leagueVault, legacyFeeRecipient, factory, creator, priceFeed } = await loadFixture(deployLegacySystem);
-    const { campaign, token } = await createCampaign(factory, creator, "Legacy");
-
-    const feeRecipientBeforeBuy = await getBalance(await legacyFeeRecipient.getAddress());
-    const leagueBeforeBuy = await getBalance(await leagueVault.getAddress());
-
-    const amountOut = ethers.parseEther("10");
-    const total = await campaign.quoteBuyExactTokens(amountOut);
-    const buyMath = quoteBuyExactTokens(
-      0n,
-      amountOut,
-      BigInt(await campaign.basePrice()),
-      BigInt(await campaign.priceSlope()),
-      BigInt(await campaign.protocolFeeBps())
-    );
-    await campaign.connect(alice).buyExactTokens(amountOut, total, { value: total });
-
-    const feeRecipientAfterBuy = await getBalance(await legacyFeeRecipient.getAddress());
-    const leagueAfterBuy = await getBalance(await leagueVault.getAddress());
-    const leagueExpected = (buyMath.costNoFee * BigInt(await campaign.leagueFeeBps())) / 10_000n;
-    expect(leagueAfterBuy - leagueBeforeBuy).to.equal(leagueExpected);
-    expect(feeRecipientAfterBuy - feeRecipientBeforeBuy).to.equal(buyMath.fee - leagueExpected);
-
-    await makeGraduationEligibleByOracle(campaign, priceFeed);
-
-    const feeRecipientBeforeFinalize = await getBalance(await legacyFeeRecipient.getAddress());
-    const leagueBeforeFinalize = await getBalance(await leagueVault.getAddress());
-    const graduationPrincipal = await campaign.netRaisedWei();
-    const finalizeFee = (graduationPrincipal * BigInt(await campaign.protocolFeeBps())) / 10_000n;
-
-    await campaign.connect(alice).graduateIfEligible(0, 0);
-
-    const feeRecipientAfterFinalize = await getBalance(await legacyFeeRecipient.getAddress());
-    const leagueAfterFinalize = await getBalance(await leagueVault.getAddress());
-    expect(feeRecipientAfterFinalize - feeRecipientBeforeFinalize).to.equal(finalizeFee);
-    expect(leagueAfterFinalize - leagueBeforeFinalize).to.equal(0n);
-
-    expect(await token.tradingEnabled()).to.equal(true);
-  });
-
-  it("unified finalize routing preserves LP funding and creator payout versus legacy mode", async () => {
-    const routed = await loadFixture(deployRoutedSystem);
-    const legacy = await loadFixture(deployLegacySystem);
-
-    const { campaign: routedCampaign } = await createCampaign(routed.factory, routed.creator, "RU");
-    const { campaign: legacyCampaign } = await createCampaign(legacy.factory, legacy.creator, "LE");
-
-    const oneToken = ethers.parseUnits("1", 18);
-    const routedQuote = await routedCampaign.quoteBuyExactTokens(oneToken);
-    const legacyQuote = await legacyCampaign.quoteBuyExactTokens(oneToken);
-    expect(routedQuote).to.equal(legacyQuote);
-
-    await routedCampaign.connect(routed.alice).buyExactTokens(oneToken, routedQuote, { value: routedQuote });
-    await legacyCampaign.connect(legacy.alice).buyExactTokens(oneToken, legacyQuote, { value: legacyQuote });
-
-    const routedTarget = await routedCampaign.graduationNativeTarget();
-    const legacyTarget = await legacyCampaign.graduationNativeTarget();
-    expect(routedTarget).to.equal(legacyTarget);
-
-    await makeGraduationEligibleByOracle(routedCampaign, routed.priceFeed);
-    await makeGraduationEligibleByOracle(legacyCampaign, legacy.priceFeed);
-
-    const routedProtocolBefore = await getBalance(await routed.protocolVault.getAddress());
-    const routedAirdropBefore = await routed.communityVault.warzoneAirdropBalance();
-
-    const routedFinalize = await parseFinalizedEvent(routedCampaign, await routedCampaign.connect(routed.alice).graduateIfEligible(0, 0));
-    const legacyFinalize = await parseFinalizedEvent(legacyCampaign, await legacyCampaign.connect(legacy.alice).graduateIfEligible(0, 0));
-
-    expect(routedFinalize.liquidityTokens).to.equal(legacyFinalize.liquidityTokens);
-    expect(routedFinalize.liquidityBnb).to.equal(legacyFinalize.liquidityBnb);
-    expect(routedFinalize.protocolFee).to.equal(legacyFinalize.protocolFee);
-    expect(routedFinalize.creatorPayout).to.equal(legacyFinalize.creatorPayout);
-
-    const expectedFinalizeSplit = await routed.treasuryRouter.previewRoute(routedFinalize.protocolFee, ROUTE_KIND_FINALIZE, ROUTE_PROFILE_STANDARD_UNLINKED);
-    expect((await getBalance(await routed.protocolVault.getAddress())) - routedProtocolBefore).to.equal(expectedFinalizeSplit.protocol);
-    expect((await routed.communityVault.warzoneAirdropBalance()) - routedAirdropBefore).to.equal(expectedFinalizeSplit.airdrop);
+    const leagueAfter =
+      (await getBalance(await migrated.leagueVault.getAddress())) +
+      (await getBalance(await migrated.monthlyVault.getAddress()));
+    expect(leagueAfter).to.be.gt(leagueBefore);
+    expect(await getBalance(await migrated.creatorVault.getAddress())).to.be.gt(creatorBefore);
   });
 });

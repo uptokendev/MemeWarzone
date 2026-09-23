@@ -4,6 +4,7 @@ import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { quoteBuyExactTokens, quoteSellExactTokens } from "./helpers/math";
 import { getBalance } from "./helpers/balances";
 import { deployLaunchFactory } from "./helpers/deployFactory";
+import { deployConfiguredTreasuryRouterV3 } from "./helpers/deployRouting";
 
 const TRADE_AUTH_BUY_EXACT_TOKENS = 0;
 
@@ -21,21 +22,11 @@ async function deployPhase1RoutingFixture() {
   const DexRouter = await ethers.getContractFactory("MockRouter");
   const dexRouter = await DexRouter.deploy(await topazFactory.getAddress(), await owner.getAddress());
 
-  const AcceptingReceiver = await ethers.getContractFactory("AcceptingReceiver");
-  const leagueVault = await AcceptingReceiver.deploy();
-  const recruiterVault = await AcceptingReceiver.deploy();
-  const protocolVault = await AcceptingReceiver.deploy();
-
-  const TreasuryRouter = await ethers.getContractFactory("TreasuryRouter");
-  const treasuryRouter = await TreasuryRouter.deploy(await owner.getAddress(), await leagueVault.getAddress(), 3600);
-
-  const CommunityRewardsVault = await ethers.getContractFactory("CommunityRewardsVault");
-  const communityVault = await CommunityRewardsVault.deploy(await owner.getAddress(), ethers.ZeroAddress);
-  await communityVault.connect(owner).setRouter(await treasuryRouter.getAddress());
-
-  await treasuryRouter.connect(owner).setRecruiterRewardsVault(await recruiterVault.getAddress());
-  await treasuryRouter.connect(owner).setCommunityRewardsVault(await communityVault.getAddress());
-  await treasuryRouter.connect(owner).setProtocolRevenueVault(await protocolVault.getAddress());
+  // V3, because LaunchFactory points feeRecipient and leagueReceiver at this
+  // router and stamps strictFeeRouting: true, so the campaign calls routeTrade /
+  // routeFinalize. V1 has neither and reverts with no reason.
+  const { treasuryRouter, leagueVault, monthlyVault, creatorVault, recruiterVault, protocolVault, communityVault } =
+    await deployConfiguredTreasuryRouterV3(await owner.getAddress());
 
   const { factory, priceFeed } = await deployLaunchFactory(await dexRouter.getAddress(), await treasuryRouter.getAddress());
   await factory.connect(owner).setRequireRouteAuthorization(false);
@@ -59,6 +50,8 @@ async function deployPhase1RoutingFixture() {
     bob,
     dexRouter,
     leagueVault,
+    monthlyVault,
+    creatorVault,
     recruiterVault,
     protocolVault,
     treasuryRouter,
@@ -139,7 +132,7 @@ async function makeGraduationEligibleByOracle(campaign: any, priceFeed: any) {
 
 describe("LaunchCampaign Phase 1 router integration", function () {
   it("routes buy fees through TreasuryRouter using StandardUnlinked trade splits", async () => {
-    const { campaign, token, alice, treasuryRouter, leagueVault, recruiterVault, protocolVault, communityVault } =
+    const { campaign, token, alice, treasuryRouter, leagueVault, monthlyVault, creatorVault, recruiterVault, protocolVault, communityVault } =
       await loadFixture(createCampaignViaPhase1RouterFixture);
 
     const base = await campaign.basePrice();
@@ -156,7 +149,11 @@ describe("LaunchCampaign Phase 1 router integration", function () {
     );
 
     const expected = await treasuryRouter.previewRoute(fee, 0, 1);
-    const leagueBefore = await getBalance(await leagueVault.getAddress());
+    // TreasuryRouterV3 splits league into weekly and monthly, so reading the
+    // weekly vault alone sees 30% of it. Capture both, and the creator share.
+    const leagueBefore =
+      (await getBalance(await leagueVault.getAddress())) + (await getBalance(await monthlyVault.getAddress()));
+    const creatorBefore = await getBalance(await creatorVault.getAddress());
     const recruiterBefore = await getBalance(await recruiterVault.getAddress());
     const protocolBefore = await getBalance(await protocolVault.getAddress());
     const airdropBefore = await communityVault.warzoneAirdropBalance();
@@ -166,7 +163,12 @@ describe("LaunchCampaign Phase 1 router integration", function () {
     await campaign.connect(alice).buyExactTokens(amountOut, total, { value: total });
 
     expect(await token.balanceOf(await alice.getAddress())).to.equal(amountOut);
-    expect((await getBalance(await leagueVault.getAddress())) - leagueBefore).to.equal(expected.league);
+    expect(
+      (await getBalance(await leagueVault.getAddress())) +
+        (await getBalance(await monthlyVault.getAddress())) -
+        leagueBefore,
+    ).to.equal(expected.league);
+    expect((await getBalance(await creatorVault.getAddress())) - creatorBefore).to.equal(expected.creator);
     expect((await getBalance(await recruiterVault.getAddress())) - recruiterBefore).to.equal(expected.recruiter);
     expect((await getBalance(await protocolVault.getAddress())) - protocolBefore).to.equal(expected.protocol);
     expect((await communityVault.warzoneAirdropBalance()) - airdropBefore).to.equal(expected.airdrop);
@@ -175,7 +177,7 @@ describe("LaunchCampaign Phase 1 router integration", function () {
   });
 
   it("routes sell fees through TreasuryRouter using StandardUnlinked trade splits", async () => {
-    const { campaign, token, alice, treasuryRouter, leagueVault, recruiterVault, protocolVault, communityVault } =
+    const { campaign, token, alice, treasuryRouter, leagueVault, monthlyVault, creatorVault, recruiterVault, protocolVault, communityVault } =
       await loadFixture(createCampaignViaPhase1RouterFixture);
 
     const amountOut = ethers.parseEther("10");
@@ -198,7 +200,11 @@ describe("LaunchCampaign Phase 1 router integration", function () {
     );
 
     const expected = await treasuryRouter.previewRoute(fee, 0, 1);
-    const leagueBefore = await getBalance(await leagueVault.getAddress());
+    // TreasuryRouterV3 splits league into weekly and monthly, so reading the
+    // weekly vault alone sees 30% of it. Capture both, and the creator share.
+    const leagueBefore =
+      (await getBalance(await leagueVault.getAddress())) + (await getBalance(await monthlyVault.getAddress()));
+    const creatorBefore = await getBalance(await creatorVault.getAddress());
     const recruiterBefore = await getBalance(await recruiterVault.getAddress());
     const protocolBefore = await getBalance(await protocolVault.getAddress());
     const airdropBefore = await communityVault.warzoneAirdropBalance();
@@ -207,7 +213,12 @@ describe("LaunchCampaign Phase 1 router integration", function () {
 
     await campaign.connect(alice).sellExactTokens(amountIn, payout);
 
-    expect((await getBalance(await leagueVault.getAddress())) - leagueBefore).to.equal(expected.league);
+    expect(
+      (await getBalance(await leagueVault.getAddress())) +
+        (await getBalance(await monthlyVault.getAddress())) -
+        leagueBefore,
+    ).to.equal(expected.league);
+    expect((await getBalance(await creatorVault.getAddress())) - creatorBefore).to.equal(expected.creator);
     expect((await getBalance(await recruiterVault.getAddress())) - recruiterBefore).to.equal(expected.recruiter);
     expect((await getBalance(await protocolVault.getAddress())) - protocolBefore).to.equal(expected.protocol);
     expect((await communityVault.warzoneAirdropBalance()) - airdropBefore).to.equal(expected.airdrop);
@@ -216,7 +227,7 @@ describe("LaunchCampaign Phase 1 router integration", function () {
   });
 
   it("routes finalize fees through TreasuryRouter using StandardUnlinked finalize splits without breaking launch", async () => {
-    const { campaign, alice, treasuryRouter, leagueVault, recruiterVault, protocolVault, communityVault, priceFeed } =
+    const { campaign, alice, treasuryRouter, leagueVault, monthlyVault, creatorVault, recruiterVault, protocolVault, communityVault, priceFeed } =
       await loadFixture(createCampaignViaPhase1RouterFixture);
 
     const oneToken = ethers.parseUnits("1", 18);
@@ -229,7 +240,11 @@ describe("LaunchCampaign Phase 1 router integration", function () {
     const protocolFee = (graduationPrincipal * protocolFeeBps) / 10_000n;
     const expected = await treasuryRouter.previewRoute(protocolFee, 1, 1);
 
-    const leagueBefore = await getBalance(await leagueVault.getAddress());
+    // TreasuryRouterV3 splits league into weekly and monthly, so reading the
+    // weekly vault alone sees 30% of it. Capture both, and the creator share.
+    const leagueBefore =
+      (await getBalance(await leagueVault.getAddress())) + (await getBalance(await monthlyVault.getAddress()));
+    const creatorBefore = await getBalance(await creatorVault.getAddress());
     const recruiterBefore = await getBalance(await recruiterVault.getAddress());
     const protocolBefore = await getBalance(await protocolVault.getAddress());
     const airdropBefore = await communityVault.warzoneAirdropBalance();
@@ -239,7 +254,12 @@ describe("LaunchCampaign Phase 1 router integration", function () {
     const rc = await tx.wait();
 
     expect(await campaign.launched()).to.equal(true);
-    expect((await getBalance(await leagueVault.getAddress())) - leagueBefore).to.equal(expected.league);
+    expect(
+      (await getBalance(await leagueVault.getAddress())) +
+        (await getBalance(await monthlyVault.getAddress())) -
+        leagueBefore,
+    ).to.equal(expected.league);
+    expect((await getBalance(await creatorVault.getAddress())) - creatorBefore).to.equal(expected.creator);
     expect((await getBalance(await recruiterVault.getAddress())) - recruiterBefore).to.equal(expected.recruiter);
     expect((await getBalance(await protocolVault.getAddress())) - protocolBefore).to.equal(expected.protocol);
     expect((await communityVault.warzoneAirdropBalance()) - airdropBefore).to.equal(expected.airdrop);
