@@ -183,10 +183,30 @@ Propose a BPFLoaderUpgradeable::Upgrade with exactly these values:
 The buffer is the whole payload -- everything else in the proposal is fixed.
 Its bytes were verified above against $ACTUAL_SHA.
 
+REPORT
+
+# The two programs have different consumers: the API pins the launchpad's
+# hash as deployment evidence and reads no treasury hash at all. This block
+# once printed the launchpad variable names for both targets, and a treasury
+# ceremony was one paste away from overwriting the launchpad's pin.
+if [[ "$TARGET" == "launchpad" ]]; then
+  cat <<AFTER
 After execution, verify and move the API env in the same change:
   solana program show $PROGRAM_ID --url <rpc>
   SOLANA_LAUNCHPAD_PROGRAM_SHA256=$ACTUAL_SHA
-  SOLANA_LAUNCHPAD_PROGRAM_BYTES=$BYTES
+  SOLANA_LAUNCHPAD_PROGRAM_BYTES=$BYTES   (canary only; the API does not read it)
+AFTER
+else
+  cat <<AFTER
+After execution, verify:
+  solana program show $PROGRAM_ID --url <rpc>
+No env moves for the treasury: the API and indexer read no treasury program hash.
+Do NOT put $ACTUAL_SHA into SOLANA_LAUNCHPAD_PROGRAM_SHA256 -- that is the launchpad's pin.
+Next: init-arena-mainnet.mjs --status, then a dry run, then --execute (both arena configs land CLOSED).
+AFTER
+fi
+
+cat <<REPORT
 
 If the upload aborted instead, the buffer is still yours and still funded:
   solana program close $BUFFER --recipient $PAYER --url <rpc> --keypair $DEPLOYER
