@@ -1,0 +1,56 @@
+{
+  "version": "1.0",
+  "chainId": "4663",
+  "createdAt": 1790201902330,
+  "meta": {
+    "name": "MWZ Robinhood mainnet R3b: LP locker authorization",
+    "description": "Authorize PermanentV3PositionLocker 0xe2B34494 on TreasuryRouterV3 0xda0a9Ed9 and set it primary (Robinhood Chain 4663, Safe 0x1edcEdf5). Order matters: authorize before primary. Until executed every LP harvest strands the protocol share.",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0xda0a9Ed9e68D2B468257aBD66465fdD94F4338bb",
+      "value": "0",
+      "data": "0xacb9fef6000000000000000000000000e2b3449491e4d5be73e7e73a4df9498ed9f3064c0000000000000000000000000000000000000000000000000000000000000001",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "locker",
+            "type": "address"
+          },
+          {
+            "internalType": "bool",
+            "name": "allowed",
+            "type": "bool"
+          }
+        ],
+        "name": "setAuthorizedLpLocker",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "locker": "0xe2B3449491E4d5BE73E7E73A4DF9498eD9f3064C",
+        "allowed": "true"
+      }
+    },
+    {
+      "to": "0xda0a9Ed9e68D2B468257aBD66465fdD94F4338bb",
+      "value": "0",
+      "data": "0x86afb2f6000000000000000000000000e2b3449491e4d5be73e7e73a4df9498ed9f3064c",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newLocker",
+            "type": "address"
+          }
+        ],
+        "name": "setPrimaryLpLocker",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newLocker": "0xe2B3449491E4d5BE73E7E73A4DF9498eD9f3064C"
+      }
+    }
+  ]
+}
