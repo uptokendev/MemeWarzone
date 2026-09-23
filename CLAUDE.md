@@ -592,12 +592,19 @@ one silently stopped testing V1 and cost five passing tests before I caught it.
 Two scripts, and they are not interchangeable. Running both factories would put
 two active factories in front of users.
 
-1. **`scripts/deploy-bnb-mainnet-v3-cutover.ts`** — `TreasuryRouterV3` plus its
-   vaults. The router's admin is the Safe, so the vault wiring comes back as
-   Safe transactions rather than EOA calls. **Never run** (no
-   `deployments/bnb/v3-cutover/`). It also deploys a plain `LaunchFactory` that
-   the quote generation supersedes; `prove-bnb-mainnet-v3-cutover.test.mjs` pins
-   that shape, so it was left alone rather than edited.
+1. **`scripts/deploy-evm-treasury-router-v3.ts`** — `TreasuryRouterV3` plus its
+   vaults, and nothing else. This is the one proven on BSC testnet (router
+   `0x529C0c4A…`, all four vaults wired and read back). The router's admin is
+   the Safe on mainnet, so the four vault-wiring calls come back as Safe
+   transactions rather than EOA calls. It refuses to invent placeholder vaults
+   on a mainnet profile: a placeholder is an `AcceptingReceiver`, which takes
+   league fees and can never pay them out, and nothing about that fails loudly.
+
+   **Not `scripts/deploy-bnb-mainnet-v3-cutover.ts`.** It deploys the same
+   router and vaults *plus* a plain `LaunchFactory` and campaign implementation
+   that the quote generation supersedes — a second factory in front of users and
+   wasted mainnet gas. It has never been run and stays for
+   `prove-bnb-mainnet-v3-cutover.test.mjs`, which pins its shape.
 2. **`scripts/deploy-bnb-quote-generation.ts`** — everything from the factory up:
    `LaunchCampaign` impl, `BnbQuoteLaunchCampaign` impl, `BnbBasicLaunchFactory`
    (which deploys its own locker), `BnbQuoteGraduationAdapter` (needs that

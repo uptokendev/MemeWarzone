@@ -62,6 +62,13 @@ async function main() {
 
   // League destinations. Overridable so a real vault can be used where one
   // exists; otherwise a plain receiver, which is all a testnet needs.
+  //
+  // Never on mainnet. A placeholder here is an AcceptingReceiver: it takes the
+  // money and has no way to pay anyone out of it, so a mainnet router wired to
+  // one would route real league fees into a contract nobody can spend from.
+  // Nothing about that fails loudly, which is exactly why it is refused rather
+  // than warned about.
+  const isMainnet = profile.confirm === "I_UNDERSTAND_MAINNET";
   const Receiver = await ethers.getContractFactory("AcceptingReceiver");
   async function destination(envName: string, label: string): Promise<string> {
     const supplied = String(process.env[envName] || "").trim();
@@ -72,10 +79,16 @@ async function main() {
       console.log(`[router] ${label} = ${address} (supplied)`);
       return address;
     }
+    if (isMainnet) {
+      throw new Error(
+        `${envName} is required on ${network.name}. This script only deploys a placeholder receiver, ` +
+          `which accepts ${label} fees and can never pay them out. Supply the real vault.`,
+      );
+    }
     const deployed = await Receiver.deploy();
     await deployed.waitForDeployment();
     const address = ethers.getAddress(await deployed.getAddress());
-    console.log(`[router] ${label} = ${address} (deployed placeholder)`);
+    console.log(`[router] ${label} = ${address} (deployed placeholder -- testnet only)`);
     return address;
   }
 
