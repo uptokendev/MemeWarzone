@@ -1,0 +1,82 @@
+{
+  "schemaVersion": 3,
+  "chainKey": "robinhood-testnet",
+  "targetChainId": 46630,
+  "chainId": 46630,
+  "network": "robinhoodTestnet",
+  "environment": "staging",
+  "deployedAt": "2026-09-23T13:21:20.000Z",
+  "deploymentBlock": 123211064,
+  "factoryGeneration": 4,
+  "campaignGeneration": 3,
+  "liquidityKind": 2,
+  "graduationTargetUsd": "6000000000000000000",
+  "testNativeUsdPrice": "3000",
+  "v3FeeTier": 3000,
+  "supportEnabled": false,
+  "creationEnabled": false,
+  "factoryLive": false,
+  "securityDefaultsLocked": true,
+  "routeAuthority": "0x2501cdC18Cf3f4EfA8d08F18ab27e4862212Bde0",
+  "admin": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+  "contracts": {
+    "mockWeth9": "0x632061cA786f7B585Bbd46A792FDA92B02f70671",
+    "mockV3Factory": "0xfdF80819CCaE7103165c2EAd9057BA7Eb2fa8aee",
+    "mockNonfungiblePositionManager": "0xda0a9Ed9e68D2B468257aBD66465fdD94F4338bb",
+    "mockSwapRouter02": "0xdE9Ec7c679FD260D76A390eEC00FA8ab1E621D2a",
+    "graduationAdapter": "0xe69a6a41363a48179beaB9b1E6122885bbFe8C65",
+    "mockNativeUsdPriceFeed": "0x896C55A66FD6e310f0e923ea682cBAA06bDf9bc4",
+    "graduationOracle": "0x35E93D0b0F4A2809264Fa8D9922e2d0D1609C9BA",
+    "weeklyLeagueVault": "0xa48723e35061380Feb6D269f7c26D6E426F83efc",
+    "charityTreasury": "0xffF3aFBC7853d4B20F523d69c146169Ef4C3c1DF",
+    "monthlyLeagueTreasury": "0x5D5CC19B5BE86BA28b8164f85883F17843B69810",
+    "recruiterRewardsVault": "0xD3E00E476b72e49Ec4587df58b23Ea5BAd1F151C",
+    "protocolRevenueVault": "0xf14dbfC92BCF313362668bD9fea42F9a23f0712b",
+    "treasuryRouterV3": "0xEf6572863967623605D866BeaAB6890FF7521278",
+    "communityRewardsVault": "0xE6C243D41acbF8E25F06d6C54E7486423d83733e",
+    "creatorRewardsVault": "0x56ee8a96d9760199429cd1D8516B1aD98a3a22e7",
+    "creatorRegistry": "0x77ca02849c0AcdC8BDFF81E2BcC0062411846D78",
+    "riskRegistry": "0x3D79cFeF21eF34eD7e499d702C2D77A5d8dAaa34",
+    "launchCampaignImplementation": "0xC1271D0A2cAEf68b70B5ae649865B144Ea8445C3",
+    "launchFactory": "0xde9f7055f768A6A1AFBCD5263be64961241927a4",
+    "permanentV3PositionLocker": "0x387E178ac36d386ed648E282F377Cb9Ce2B9F8A9",
+    "upVoteTreasury": "0xEEEfa12B14ea922B21bAf05Ad4aa79B2643c8eA6",
+    "v3NativeSwapAdapter": "0x1295966E4C250f612F7347fd42196ADd0673D7F0",
+    "stockGraduationAdapter": "0x52e45372C7a191814039D0089ba79808f435b2d3",
+    "postGradLeagueTreasuryV2": "0x4Ce88dCd64631AFb7E321Ff1f49DC1b4F423fE74",
+    "arenaWarPoolTreasuryV2": "0xE6Dd149E7E447dAfB1527784252f1A1873c64B74"
+  },
+  "stagingOnly": {
+    "controlledV3Dex": true,
+    "mockNativeUsdPriceFeed": true,
+    "productionCompatible": false,
+    "correctedFeeModel": true
+  },
+  "activationPrerequisites": [
+    "verify all contract bytecode and immutable wiring",
+    "fund test wallets with Robinhood testnet ETH",
+    "configure frontend/API route-authority signer for factory 4 / campaign 3 on chain 46630",
+    "prove treasury router v3 Standard, OG and Unlinked parity previews",
+    "run scheduled-create, launchAt, native V3 buy/sell, $6 graduation, locked NFT, 80/20 harvest",
+    "run creator fee claim proof against the corrected fee model",
+    "only then call LaunchFactory.enableLive() and setCreatePaused(false) for testnet acceptance",
+    "pause creation again with setCreatePaused(true) after the acceptance run"
+  ],
+  "note": "The binding-token generation on Robinhood testnet. Supersedes factory 0xF170a2C9, whose acceptance record is archived as testnet.accepted.superseded-0xF170a2C9.json. Reuses the mock V3 DEX, the graduation oracle and the treasury router; everything from the factory up is new.",
+  "auxiliaryFeatures": {
+    "upVoteTreasury": {
+      "enabled": true,
+      "owner": "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+      "feeReceiver": "0xf14dbfC92BCF313362668bD9fea42F9a23f0712b",
+      "nativeAssetEnabled": true,
+      "testnetOnly": true
+    },
+    "v3NativeSwapAdapter": {
+      "enabled": true,
+      "swapRouter": "0xdE9Ec7c679FD260D76A390eEC00FA8ab1E621D2a",
+      "wrappedNative": "0x632061cA786f7B585Bbd46A792FDA92B02f70671",
+      "nativeAsset": "ETH",
+      "testnetOnly": true
+    }
+  }
+}

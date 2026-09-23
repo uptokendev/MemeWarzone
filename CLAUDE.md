@@ -620,10 +620,156 @@ drives the same wiring in the same order, asserts the end state including that
 
 ### Still to do on BNB
 
-- Run step 1, then step 2, on **BSC testnet against real Topaz** before mainnet.
-- Configure a quote route per approved quote token on the adapter.
-- Create is paused in env only; both live factories report `createPaused=false`
-  on chain, so direct calls still work.
+Superseded by §4d: both steps have now run on BSC testnet against real Topaz,
+and the launchpad and battle system are proven there end to end. What remains
+is in §4d's "Still to do".
+
+## 4d. Both testnets deployed and driven end to end (2026-09-23)
+
+Founder: "There is no launch on BNB or Robinhood so we need to do whatever it
+takes to get it right and deploy on mainnet when ready." Nothing live means
+nothing to protect, so the acceptance records pinned to the previous
+generations are superseded rather than sacred.
+
+### What is deployed, closed, and proven
+
+**BSC testnet (97)** — bound to the *authoritative* 30 bps Topaz.
+
+| | |
+|---|---|
+| BnbBasicLaunchFactory | `0xFb8159f46BAB4e214F658c2c8f5CfF76C102E848` |
+| PermanentLpLocker | `0xdb3E9A2aa097c95e65ED67bfB9ACc58Dd2c776d1` |
+| LaunchCampaign impl | `0xE0e3b38e2F9EE0CCb416f81FD6E19e6aF2B56975` |
+| BnbQuoteLaunchCampaign | `0x6132b87fd2648ef2818831501d6AB6dA4ec2A435` |
+| BnbQuoteGraduationAdapter | `0xc6FcfAaceF6A64998af523eb8124877de4Cce782` |
+| PostGradLeagueTreasuryV2 | `0x8A8aCCAe4E2dA530A7A1AB7CA3fDD5014DaDE401` |
+| ArenaWarPoolTreasuryV2 | `0x014816B8063ae091d5EFEFcA181ca2aF53A16813` |
+| CreatorRegistry | `0x13D803b58E3Dd43650f53Bd7BBe4f430E850859f` |
+| TopazRouterAdapter (30 bps) | `0x13537C6273dF312067cE775AAf9635c217A931fd` |
+| TreasuryRouterV3 | `0x529C0c4AC803325F9D7a736eF2067D1C0e1C0ed4` |
+
+**Robinhood testnet (46630)** — factory `0xde9f7055f768A6A1AFBCD5263be64961241927a4`,
+locker `0x387E178ac36d386ed648E282F377Cb9Ce2B9F8A9`, war pool
+`0xE6Dd149E7E447dAfB1527784252f1A1873c64B74`, league
+`0x4Ce88dCd64631AFb7E321Ff1f49DC1b4F423fE74`, stock adapter
+`0x52e45372C7a191814039D0089ba79808f435b2d3`, native swap adapter
+`0x1295966E4C250f612F7347fd42196ADd0673D7F0`, CreatorRegistry
+`0x77ca02849c0AcdC8BDFF81E2BcC0062411846D78`, RiskRegistry
+`0x3D79cFeF21eF34eD7e499d702C2D77A5d8dAaa34`.
+
+Both end closed: `createPaused` true, war pool deposits paused. `enableLive`
+has no inverse, so a factory that has been live stays `live=true` and **create
+is the only gate** — do not read `live` as "open".
+
+### The launchpad runs end to end on BSC testnet against real Topaz
+
+Authorized create → buy → sell → creator fee claim → graduation into the real
+30 bps Topaz → post-graduation buy and sell on that pool → LP principal
+unchanged → harvest. Proven by transfer logs, not by events: the pool paid the
+locker 11999999999949 WBNB, the locker paid the creator 9599999999959 and the
+protocol vault 2399999999990. Exactly 80/20, nothing parked, second harvest
+collects nothing.
+
+Harness: `scripts/test-bnb-real-topaz-testnet-lifecycle.ts` with
+`reports/bnb-real-topaz-testnet-stage.json`.
+
+### The battle system runs end to end on **both** chains
+
+`scripts/canary-arena-war-pool.ts` — one real battle: open, both sides stake,
+a boost priced by a signed `BoostQuote`, resolution by the resolver's EIP-712
+signature, then all three claims. Identical results on 97 and 46630:
+
+```
+entry 0.004 -> league 0.0008 (20%)  protocol 0.0002 (5%)  prize 0.003 (75%)
+boost 0.001 -> protocol 0.0001 (10%)  prize 0.0009 (90%)
+```
+
+Checked against balances that moved, not against the event. `claimWinner` is
+callable only by `winnerPayout` and pays `msg.sender`, so the winner's gas has
+to be added back; `claimProtocol`/`claimLeague` are permissionless and are sent
+by a third party so the recipient's balance moves by the payout alone;
+`claimLeague` rejects a zero epoch. Deposits are closed again unconditionally.
+
+### Five deployment bugs, every one of them mainnet-reaching
+
+1. **Two Topaz addresses, not one.** `LaunchFactory`'s constructor calls
+   `poolFactory()`; `BnbQuoteGraduationAdapter`'s calls `defaultFactory()` and
+   `weth()`. On BNB mainnet the adapter `0x5c3135Df…` answers only the first
+   and Topaz's router `0x1E98c822…` only the second. The profile pinned one
+   address for both, so the factory constructor would have reverted on mainnet.
+2. **`setCreatorRegistry` / `setRiskRegistry` do not exist.** The setter is
+   `setRegistries(creator, risk)`.
+3. **Nothing registered the factory as a launch recorder.** `createCampaign`
+   calls `creatorRegistry.recordLaunch` behind `onlyLaunchRecorder`, so an
+   unregistered factory cannot create one campaign.
+4. **The testnet Topaz we first reused charges 100 bps.**
+   `PermanentLpLocker.REQUIRED_POOL_FEE_BPS` is 30 and `lockPosition` reverts on
+   anything else, so that generation would have graduated nothing — failing
+   *after* a campaign had already sold out. BSC testnet has two Topaz
+   deployments and nothing in the addresses says which is which. **The
+   authoritative one is `deployments/bscTestnet/minimal-topaz.json`**: router
+   `0xa241AEd1…`, pool factory `0xb9F2b64D…`, WBNB `0xcd2c3492…`, 30 bps. The
+   100 bps one is router `0xe559d936…` / pool factory `0xE3434671…`.
+5. **The locker was never authorized on the treasury router, and that fails
+   silently.** Both lockers route the protocol's share of every LP harvest
+   through `TreasuryRouterV3.routeLpToken` behind `authorizedLpLocker`, and both
+   wrap it in try/catch on purpose — a treasury that refuses money must not be
+   able to brick a harvest. So an unauthorized locker does not revert: it pays
+   the creator in full, parks the protocol share in `pendingProtocolToken`,
+   emits `HarvestPaymentPending`, and reports success. Every surface a
+   deployment looks at reads healthy; only the protocol vault, which nobody
+   watches, stays at zero. On BSC testnet it stranded 38.223939265110348711
+   tokens and 0.000005999999999996 WBNB. `retryPendingProtocolToken` is
+   permissionless, so it is recoverable — after authorizing, every parked unit
+   landed in the vault to the last digit.
+
+The wiring lives in **one** place, `scripts/lib/evmLpLockerWiring.ts`, and both
+deploy scripts call it. It handles all three real cases: a fresh router takes
+one call; a router that has served a previous generation needs
+propose → `upgradeDelay` → accept and the script says how long; a router whose
+admin is not the deployer — **which is what mainnet is** — gets its transactions
+printed with the consequence named.
+
+Bugs 1–3 were invisible because the rehearsal deployed the registries and never
+handed them to the factory or drove a create. 4 and 5 are invisible to any
+rehearsal at all: only a real graduation and a real harvest show them.
+
+### Things that will waste time if forgotten
+
+- **BSC RPCs load-balance and lag.** A read straight after a confirmed
+  transaction can land on a node a block behind. It aborted one deployment with
+  all the gas spent. `readBack` in the deploy script retries; do the same in any
+  new script rather than treating the first read as truth.
+- **Robinhood's V3 side has no equivalent fee trap** — its locker reads
+  `feeTier` off the adapter instead of pinning one. Deployed stack agrees at
+  3000 with tick spacing 60.
+- **The mainnet-fork proofs had never once executed.** Both reported *pending*
+  on every run. One needed three signers where the fork config made two; both
+  died on the first read because straight after forking `"latest"` is still the
+  remote block and EDR will not execute on a historical block of a chain it has
+  no hardfork history for. Mine one local block first. The V3 fee-stack proof
+  now passes against real 30 bps Topaz on a mainnet fork. The older lifecycle
+  fork proof needs an external anvil (`--network bscMainnetFork`) and a fast
+  archive RPC; on a public endpoint it exceeds 40 minutes and it certifies the
+  *old* production factory, not this generation.
+- **Creator gating now applies on all three chains.** One wallet, one launch per
+  24h, three live campaigns on the default tier. Canary runs that need several
+  launches need several wallets. `CreatorGatingChainParity` pins the EVM tiers
+  to Solana's `TIER_COOLDOWN_SECONDS 86_400` and 3/5/10.
+
+### Still to do
+
+- Robinhood: accept the proposed locker authorization once `upgradeDelay`
+  elapses, then run the launchpad lifecycle against the new generation
+  (`deployments/robinhood/testnet.staged.new-generation.json`).
+- The Robinhood acceptance freeze is **mid-cut**: the superseded record is
+  archived at `deployments/robinhood/testnet.accepted.superseded-0xF170a2C9.json`
+  and no freeze is in place, so `prove-robinhood-testnet-acceptance-freeze.test.mjs`
+  fails by design until the new generation passes and a new freeze is issued
+  (which also moves `ACCEPTED_5B_SHA` and `factoryStartBlock` — the new factory's
+  first block is 123211064).
+- Configure a quote route per approved quote token on each adapter.
+- Then mainnet, as one release with the two Solana upgrades.
 
 ## 5. One combined release (founder decision, 2026-09-23)
 
