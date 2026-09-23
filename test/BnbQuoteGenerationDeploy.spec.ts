@@ -306,6 +306,32 @@ describe("BNB quote generation deployment", function () {
       ).to.be.rejectedWith(/no poolFactory\(\)/);
     });
 
+    it("refuses a Topaz on any fee tier but the one the locker requires", async function () {
+      const { factory, full } = await topazPair();
+
+      // BSC testnet has two Topaz deployments. The one the older deployment
+      // records point at charges 100 bps; the authoritative manifest's charges
+      // 30, like BNB mainnet. Nothing in the addresses says which is which, and
+      // the whole generation was deployed against the 100 bps one before this
+      // check existed. PermanentLpLocker.REQUIRED_POOL_FEE_BPS is 30 and
+      // lockPosition reverts on anything else, so the failure would have landed
+      // at graduation, after a campaign had already sold out.
+      await (await (factory as any).setFeeBps(100n)).wait();
+      await expect(
+        assertTopazRoutersFit(await full.getAddress(), await full.getAddress()),
+      ).to.be.rejectedWith(/charges 100 bps[\s\S]*REQUIRED_POOL_FEE_BPS is 30/);
+
+      await (await (factory as any).setFeeBps(30n)).wait();
+      await assertTopazRoutersFit(await full.getAddress(), await full.getAddress());
+    });
+
+    it("takes its 30 from the locker, so the guard cannot drift from the contract", async function () {
+      const [owner] = await ethers.getSigners();
+      const locker = await (await ethers.getContractFactory("PermanentLpLocker")).deploy(await owner.getAddress());
+      await locker.waitForDeployment();
+      expect(await (locker as any).REQUIRED_POOL_FEE_BPS()).to.equal(30n);
+    });
+
     it("refuses two routers pointing at different Topaz deployments", async function () {
       const { full, wbnb } = await topazPair();
       const otherFactory = await (await ethers.getContractFactory("MockTopazFactory")).deploy();

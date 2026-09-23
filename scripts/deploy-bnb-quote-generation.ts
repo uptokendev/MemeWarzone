@@ -87,8 +87,13 @@ const PROFILES: Record<string, ChainProfile> = {
     chainId: 97n,
     confirm: "I_UNDERSTAND_TESTNET",
     safe: "",
-    topazRouter: "0xC49895Ee36Ad19aa5Cb1405761f6272aD7be6357",
-    topazQuoteRouter: "0xe559d93643631E9E8Cc7d10ADFA581Be4b5399C8",
+    // The authoritative BSC testnet Topaz -- deployments/bscTestnet/minimal-topaz.json,
+    // 30 bps like mainnet. The other testnet Topaz (router 0xe559d936, pool
+    // factory 0xE3434671) charges 100 and cannot graduate. topazRouter is the
+    // adapter deployed against this router, because only an adapter answers
+    // poolFactory().
+    topazRouter: "0x13537C6273dF312067cE775AAf9635c217A931fd",
+    topazQuoteRouter: "0xa241AEd1cfE4eC2892d6Cb2274B4BeB6EcD07EaF",
     graduationOracle: "0xc9Ee6b5bAA4c7b6C5fA0995FE29D358C59bC52Cb",
     creatorRegistry: "",
     riskRegistry: "0xb37bFEDb889E33a31Fe23A4CF2e2329C436bcE39",
@@ -124,6 +129,8 @@ const CONFIG = {
 };
 const PROTOCOL_FEE_BPS = 200n;
 const MAX_ORACLE_AGE_SECONDS = 3600;
+/** PermanentLpLocker.REQUIRED_POOL_FEE_BPS. Graduation reverts against any other tier. */
+const REQUIRED_POOL_FEE_BPS = 30;
 
 function envAddress(name: string, fallback: string): string {
   const raw = String(process.env[name] || "").trim() || fallback;
@@ -366,6 +373,36 @@ export async function assertTopazRoutersFit(topazRouter: string, topazQuoteRoute
     );
   }
   console.log(`[quote-gen] ok topaz poolFactory=${poolFactory} wrapped=${wrapped} (both routers agree)`);
+
+  // The fee the locker will not bend on.
+  //
+  // PermanentLpLocker.REQUIRED_POOL_FEE_BPS is 30 and lockPosition reverts when
+  // the configured factory reports anything else, so a Topaz on any other fee
+  // tier gives a generation that creates and trades perfectly well and then
+  // fails closed at graduation -- after a campaign has already sold out, which
+  // is the worst moment to find out.
+  //
+  // BSC testnet has two Topaz deployments and they are not the same: the one
+  // the older records point at charges 100 bps, and the authoritative manifest's
+  // charges 30, like BNB mainnet. Nothing distinguished them by address.
+  const feeProbe = await ethers.getContractAt(
+    ["function getFee(address,bool) view returns (uint256)"],
+    poolFactory,
+  );
+  let volatileFeeBps: bigint;
+  try {
+    volatileFeeBps = await (feeProbe as any).getFee(ethers.ZeroAddress, false);
+  } catch {
+    throw new Error(`topaz pool factory ${poolFactory} has no getFee(address,bool); the locker reads it on every graduation`);
+  }
+  if (volatileFeeBps !== BigInt(REQUIRED_POOL_FEE_BPS)) {
+    throw new Error(
+      `topaz pool factory ${poolFactory} charges ${volatileFeeBps} bps on volatile pools, but ` +
+        `PermanentLpLocker.REQUIRED_POOL_FEE_BPS is ${REQUIRED_POOL_FEE_BPS}. Every graduation would revert ` +
+        `once the campaign had already closed. Point BNB_TOPAZ_ROUTER and BNB_TOPAZ_QUOTE_ROUTER at a ${REQUIRED_POOL_FEE_BPS} bps Topaz.`,
+    );
+  }
+  console.log(`[quote-gen] ok topaz volatile fee = ${volatileFeeBps} bps (the locker requires ${REQUIRED_POOL_FEE_BPS})`);
 }
 
 async function main() {
