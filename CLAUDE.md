@@ -973,6 +973,29 @@ extend 2NzthKEZ… 646624` (~2.044 SOL top-up) → generate the buffer keypair �
 `MWZ_TREASURY_RELEASE=1 MWZ_STAGE_SEND=1 prepare-mainnet-squads-buffer.sh
 treasury` → Squads → `init-arena-mainnet.mjs`.
 
+### INCIDENT 2026-09-24 — the treasury proposal upgraded the LAUNCHPAD
+
+Squads executed `2DpPu4N3…` as `BPFLoaderUpgradeable::Upgrade` with
+`programAccount = 3JSGNiFst…` (the launchpad) and the **treasury** buffer
+`GQC9eHQs…`. The loader does not check that a buffer belongs to a program.
+Result, verified on chain: launchpad ProgramData = the treasury binary
+`1028f6f8…`, slot 449859880; treasury program **unchanged** (`7e159b69…`,
+slot 449850861); buffer rent 6.6386 SOL returned to the deployer. No funds
+moved. **The mainnet Solana launchpad was down for create/buy/sell from slot
+449859880** until re-upgraded with `e6ed7df3…`.
+
+Cause: the proposal's Program field kept the previous (launchpad) value; only
+the buffer was updated. The loader `Upgrade` succeeded because the launchpad
+allocation (1,310,936) fits the treasury binary.
+
+Rule from this: **a Squads proposal is decoded from chain and checked
+field-by-field before anyone signs** — `scripts/solana/decode-squads-proposal.mjs`.
+The Squads UI's own review was not enough.
+
+Recovery: re-stage `e6ed7df3…` into `EdmGZHL5…` (6.19 SOL; deployer held
+7.668), Squads Upgrade with program `3JSG…` → verify → then re-stage the
+treasury buffer and propose with program `2NzthKEZ…`.
+
 ## 5. One combined release (founder decision, 2026-09-23)
 
 **Solana does not go up on its own.** Both programs are finished, certified and
