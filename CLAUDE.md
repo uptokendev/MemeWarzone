@@ -1222,6 +1222,18 @@ on production. Also: with a Solana wallet connected and no EVM wallet, the
 create page used to stay a Solana launch whatever chain was chosen; it now
 follows the chosen chain.
 
+### Robinhood factory: stock campaign implementation was never set (2026-09-24)
+
+Running the stock registry sync in the API container surfaced it: every candidate stops at
+"Stock campaign implementation is not configured", and `LaunchFactory 0x35E93D0b…` answers
+`stockCampaignImplementation() == 0x0`. The generation deploy never deployed
+`RobinhoodStockLaunchCampaign` nor called `setStockCampaignImplementation`; the hardhat specs
+did both, so nothing caught it. **The setter is `whenMutable` (zero campaigns) — it must land
+before create is unpaused on Robinhood (R5 before H) or stock bindings are dead for this
+factory generation.** Script: `scripts/deploy-robinhood-stock-campaign-implementation.ts`
+(+ Safe batch, + rehearsal spec). Lesson: a deploy rehearsal that copies the spec fixture
+instead of the deploy script proves the fixture, not the deployment.
+
 ## 5. One combined release (founder decision, 2026-09-23)
 
 **Solana does not go up on its own.** Both programs are finished, certified and
