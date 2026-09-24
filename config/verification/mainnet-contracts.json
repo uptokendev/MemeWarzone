@@ -7,46 +7,339 @@
       "network": "bscMainnet",
       "provider": "etherscan",
       "contracts": [
-        { "name": "TreasuryRouterV3", "address": "0xe635AA43fE5707561c8c3C655225da5C3e4C2239", "contract": "contracts/TreasuryRouterV3.sol:TreasuryRouterV3", "args": ["0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7", "0xC9286EE3390A4dC642340bd703396E6B7b2521d5", "0xF62A09dea232bc8311D13bAEa89d79F48Cf7eCB8", "3600"] },
-        { "name": "CommunityRewardsVault", "address": "0xB6ccAc81f84F125Ecdc8dFaB2e019c42EAc5486e", "contract": "contracts/CommunityRewardsVault.sol:CommunityRewardsVault", "args": ["0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7", "0xe635AA43fE5707561c8c3C655225da5C3e4C2239"] },
-        { "name": "CreatorRewardsVault", "address": "0x72A963682B261195EB43F8f75e0515ab279EbD14", "contract": "contracts/CreatorRewardsVault.sol:CreatorRewardsVault", "args": ["0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7", "0xe635AA43fE5707561c8c3C655225da5C3e4C2239"] },
-        { "name": "LaunchCampaign (native impl)", "address": "0xE72A281b4A728AFb5fa836f593B56C8f74Fd4238", "contract": "contracts/LaunchCampaign.sol:LaunchCampaign", "args": [] },
-        { "name": "BnbQuoteLaunchCampaign (quote impl)", "address": "0xBd7EB35d62B0AB69B1BB1d756BbDBcC6D31D86C7", "contract": "contracts/BnbQuoteLaunchCampaign.sol:BnbQuoteLaunchCampaign", "args": [] },
-        { "name": "BnbBasicLaunchFactory", "address": "0x632061cA786f7B585Bbd46A792FDA92B02f70671", "contract": "contracts/BnbBasicLaunchFactory.sol:BnbBasicLaunchFactory", "args": ["0x5c3135Dfaad519A9114DEa2E546f0Cd051d0D35a", "0xe635AA43fE5707561c8c3C655225da5C3e4C2239", "0xE72A281b4A728AFb5fa836f593B56C8f74Fd4238", "0x9D204406d5ECA0f18e48427fDD983A32FdF57C9B", "0xBd7EB35d62B0AB69B1BB1d756BbDBcC6D31D86C7"] },
-        { "name": "PermanentLpLocker (created by the factory)", "address": "0xdd41E0d13c637657A28b60F860205048221F325A", "contract": "contracts/PermanentLpLocker.sol:PermanentLpLocker", "args": ["0x632061cA786f7B585Bbd46A792FDA92B02f70671"] },
-        { "name": "BnbQuoteGraduationAdapter", "address": "0xfdF80819CCaE7103165c2EAd9057BA7Eb2fa8aee", "contract": "contracts/integrations/BnbQuoteGraduationAdapter.sol:BnbQuoteGraduationAdapter", "args": ["0x1E98c8226e7d452e1888e3d3d2F929346321c6c3", "0xdd41E0d13c637657A28b60F860205048221F325A", "0x0567F2323251f0Aab15c8dFb1967E4e8A7D42aeE", "3600"] },
-        { "name": "PostGradLeagueTreasuryV2", "address": "0xD9E381408A4e361C66D8b1e657583bdE6c52402d", "contract": "contracts/PostGradLeagueTreasuryV2.sol:PostGradLeagueTreasuryV2", "args": ["0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714", "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7", "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7"] },
-        { "name": "ArenaWarPoolTreasuryV2", "address": "0xe69a6a41363a48179beaB9b1E6122885bbFe8C65", "contract": "contracts/ArenaWarPoolTreasuryV2.sol:ArenaWarPoolTreasuryV2", "args": ["0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714", "0x2b72A9E6C4Ea3525d83B8C5E8F2044BDbC1f1Dec", "0xFCA7DF580eae01bfA7D3abc96c5075317742D421", "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7", "0xD9E381408A4e361C66D8b1e657583bdE6c52402d"] },
-        { "name": "EventPrizeVaultV1", "address": "0xDc77CAACDEB6affA0a5791f62BBB958D99Edc58B", "contract": "contracts/EventPrizeVaultV1.sol:EventPrizeVaultV1", "args": ["0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714"] },
-        { "name": "WarzoneSponsorshipRouterV1", "address": "0xe10e9c26D7CA80390831884CA17919E22fF44938", "contract": "contracts/WarzoneSponsorshipRouterV1.sol:WarzoneSponsorshipRouterV1", "args": ["0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714", "0xFCA7DF580eae01bfA7D3abc96c5075317742D421", "0xDc77CAACDEB6affA0a5791f62BBB958D99Edc58B", "0xc2d4E6f846446f3921a34A34e007295dbc19Bc4c", "0xc2d4E6f846446f3921a34A34e007295dbc19Bc4c"] }
+        {
+          "name": "TreasuryRouterV3",
+          "address": "0xe635AA43fE5707561c8c3C655225da5C3e4C2239",
+          "contract": "contracts/TreasuryRouterV3.sol:TreasuryRouterV3",
+          "args": [
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+            "0xC9286EE3390A4dC642340bd703396E6B7b2521d5",
+            "0xF62A09dea232bc8311D13bAEa89d79F48Cf7eCB8",
+            "3600"
+          ]
+        },
+        {
+          "name": "CommunityRewardsVault",
+          "address": "0xB6ccAc81f84F125Ecdc8dFaB2e019c42EAc5486e",
+          "contract": "contracts/CommunityRewardsVault.sol:CommunityRewardsVault",
+          "args": [
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+            "0xe635AA43fE5707561c8c3C655225da5C3e4C2239"
+          ]
+        },
+        {
+          "name": "CreatorRewardsVault",
+          "address": "0x72A963682B261195EB43F8f75e0515ab279EbD14",
+          "contract": "contracts/CreatorRewardsVault.sol:CreatorRewardsVault",
+          "args": [
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+            "0xe635AA43fE5707561c8c3C655225da5C3e4C2239"
+          ]
+        },
+        {
+          "name": "LaunchCampaign (native impl)",
+          "address": "0xE72A281b4A728AFb5fa836f593B56C8f74Fd4238",
+          "contract": "contracts/LaunchCampaign.sol:LaunchCampaign",
+          "args": []
+        },
+        {
+          "name": "BnbQuoteLaunchCampaign (quote impl)",
+          "address": "0xBd7EB35d62B0AB69B1BB1d756BbDBcC6D31D86C7",
+          "contract": "contracts/BnbQuoteLaunchCampaign.sol:BnbQuoteLaunchCampaign",
+          "args": []
+        },
+        {
+          "name": "BnbBasicLaunchFactory",
+          "address": "0x632061cA786f7B585Bbd46A792FDA92B02f70671",
+          "contract": "contracts/BnbBasicLaunchFactory.sol:BnbBasicLaunchFactory",
+          "args": [
+            "0x5c3135Dfaad519A9114DEa2E546f0Cd051d0D35a",
+            "0xe635AA43fE5707561c8c3C655225da5C3e4C2239",
+            "0xE72A281b4A728AFb5fa836f593B56C8f74Fd4238",
+            "0x9D204406d5ECA0f18e48427fDD983A32FdF57C9B",
+            "0xBd7EB35d62B0AB69B1BB1d756BbDBcC6D31D86C7"
+          ]
+        },
+        {
+          "name": "PermanentLpLocker (created by the factory)",
+          "address": "0xdd41E0d13c637657A28b60F860205048221F325A",
+          "contract": "contracts/PermanentLpLocker.sol:PermanentLpLocker",
+          "args": [
+            "0x632061cA786f7B585Bbd46A792FDA92B02f70671"
+          ]
+        },
+        {
+          "name": "BnbQuoteGraduationAdapter",
+          "address": "0xfdF80819CCaE7103165c2EAd9057BA7Eb2fa8aee",
+          "contract": "contracts/integrations/BnbQuoteGraduationAdapter.sol:BnbQuoteGraduationAdapter",
+          "args": [
+            "0x1E98c8226e7d452e1888e3d3d2F929346321c6c3",
+            "0xdd41E0d13c637657A28b60F860205048221F325A",
+            "0x0567F2323251f0Aab15c8dFb1967E4e8A7D42aeE",
+            "3600"
+          ]
+        },
+        {
+          "name": "PostGradLeagueTreasuryV2",
+          "address": "0xD9E381408A4e361C66D8b1e657583bdE6c52402d",
+          "contract": "contracts/PostGradLeagueTreasuryV2.sol:PostGradLeagueTreasuryV2",
+          "args": [
+            "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7"
+          ]
+        },
+        {
+          "name": "ArenaWarPoolTreasuryV2",
+          "address": "0xe69a6a41363a48179beaB9b1E6122885bbFe8C65",
+          "contract": "contracts/ArenaWarPoolTreasuryV2.sol:ArenaWarPoolTreasuryV2",
+          "args": [
+            "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+            "0x2b72A9E6C4Ea3525d83B8C5E8F2044BDbC1f1Dec",
+            "0xFCA7DF580eae01bfA7D3abc96c5075317742D421",
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+            "0xD9E381408A4e361C66D8b1e657583bdE6c52402d"
+          ]
+        },
+        {
+          "name": "EventPrizeVaultV1",
+          "address": "0xDc77CAACDEB6affA0a5791f62BBB958D99Edc58B",
+          "contract": "contracts/EventPrizeVaultV1.sol:EventPrizeVaultV1",
+          "args": [
+            "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714"
+          ]
+        },
+        {
+          "name": "WarzoneSponsorshipRouterV1",
+          "address": "0xe10e9c26D7CA80390831884CA17919E22fF44938",
+          "contract": "contracts/WarzoneSponsorshipRouterV1.sol:WarzoneSponsorshipRouterV1",
+          "args": [
+            "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+            "0xFCA7DF580eae01bfA7D3abc96c5075317742D421",
+            "0xDc77CAACDEB6affA0a5791f62BBB958D99Edc58B",
+            "0xc2d4E6f846446f3921a34A34e007295dbc19Bc4c",
+            "0xc2d4E6f846446f3921a34A34e007295dbc19Bc4c"
+          ]
+        }
       ]
     },
     "4663": {
       "network": "robinhoodMainnet",
       "provider": "sourcify",
       "contracts": [
-        { "name": "GraduationOracle", "address": "0xe635AA43fE5707561c8c3C655225da5C3e4C2239", "contract": "contracts/GraduationOracle.sol:GraduationOracle", "args": ["0x78F3556b67E17Df817D51Ef5a990cDaF09E8d3A9", "90000"] },
-        { "name": "TreasuryVaultV2 (weekly)", "address": "0xB6ccAc81f84F125Ecdc8dFaB2e019c42EAc5486e", "contract": "contracts/TreasuryVaultV2.sol:TreasuryVaultV2", "args": ["0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7", "0x0000000000000000000000000000000000000000", "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7"] },
-        { "name": "CharityTreasury", "address": "0x72A963682B261195EB43F8f75e0515ab279EbD14", "contract": "contracts/CharityTreasury.sol:CharityTreasury", "args": ["0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7"] },
-        { "name": "MonthlyLeagueTreasury", "address": "0xE72A281b4A728AFb5fa836f593B56C8f74Fd4238", "contract": "contracts/MonthlyLeagueTreasury.sol:MonthlyLeagueTreasury", "args": ["0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7", "0x0000000000000000000000000000000000000000", "0xe635AA43fE5707561c8c3C655225da5C3e4C2239", "0x72A963682B261195EB43F8f75e0515ab279EbD14", "30000"] },
-        { "name": "RecruiterRewardsVault", "address": "0xBd7EB35d62B0AB69B1BB1d756BbDBcC6D31D86C7", "contract": "contracts/RecruiterRewardsVault.sol:RecruiterRewardsVault", "args": ["0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7"] },
-        { "name": "ProtocolRevenueVault", "address": "0x632061cA786f7B585Bbd46A792FDA92B02f70671", "contract": "contracts/ProtocolRevenueVault.sol:ProtocolRevenueVault", "args": ["0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7"] },
-        { "name": "RobinhoodUniswapV3GraduationAdapter", "address": "0xfdF80819CCaE7103165c2EAd9057BA7Eb2fa8aee", "contract": "contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol:RobinhoodUniswapV3GraduationAdapter", "args": ["0x1f7d7550B1b028f7571E69A784071F0205FD2EfA", "0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3", "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73", "3000"] },
-        { "name": "TreasuryRouterV3", "address": "0xda0a9Ed9e68D2B468257aBD66465fdD94F4338bb", "contract": "contracts/TreasuryRouterV3.sol:TreasuryRouterV3", "args": ["0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7", "0xB6ccAc81f84F125Ecdc8dFaB2e019c42EAc5486e", "0xE72A281b4A728AFb5fa836f593B56C8f74Fd4238", "3600"] },
-        { "name": "CommunityRewardsVault", "address": "0xdE9Ec7c679FD260D76A390eEC00FA8ab1E621D2a", "contract": "contracts/CommunityRewardsVault.sol:CommunityRewardsVault", "args": ["0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7", "0xda0a9Ed9e68D2B468257aBD66465fdD94F4338bb"] },
-        { "name": "CreatorRewardsVault", "address": "0xD9E381408A4e361C66D8b1e657583bdE6c52402d", "contract": "contracts/CreatorRewardsVault.sol:CreatorRewardsVault", "args": ["0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7", "0xda0a9Ed9e68D2B468257aBD66465fdD94F4338bb"] },
-        { "name": "LaunchCampaign (impl)", "address": "0x107231eBDe5DF14Ec0ec419b677d4ac0016DD70d", "contract": "contracts/LaunchCampaign.sol:LaunchCampaign", "args": [] },
-        { "name": "LaunchFactory", "address": "0x35E93D0b0F4A2809264Fa8D9922e2d0D1609C9BA", "contract": "contracts/LaunchFactory.sol:LaunchFactory", "args": ["0xfdF80819CCaE7103165c2EAd9057BA7Eb2fa8aee", "0xda0a9Ed9e68D2B468257aBD66465fdD94F4338bb", "0x107231eBDe5DF14Ec0ec419b677d4ac0016DD70d", "0xe635AA43fE5707561c8c3C655225da5C3e4C2239"] },
-        { "name": "PermanentV3PositionLocker (created by the factory)", "address": "0xe2B3449491E4d5BE73E7E73A4DF9498eD9f3064C", "contract": "contracts/PermanentV3PositionLocker.sol:PermanentV3PositionLocker", "args": ["0x35E93D0b0F4A2809264Fa8D9922e2d0D1609C9BA"] },
-        { "name": "RobinhoodStockTokenGraduationAdapter", "address": "0xa48723e35061380Feb6D269f7c26D6E426F83efc", "contract": "contracts/integrations/RobinhoodStockTokenGraduationAdapter.sol:RobinhoodStockTokenGraduationAdapter", "args": ["0x1f7d7550B1b028f7571E69A784071F0205FD2EfA", "0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3", "0xCaf681a66D020601342297493863E78C959E5cb2", "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73", "0xe2B3449491E4d5BE73E7E73A4DF9498eD9f3064C", "0x78F3556b67E17Df817D51Ef5a990cDaF09E8d3A9", "3000", "90000"] },
-        { "name": "RobinhoodV3NativeSwapAdapter", "address": "0xffF3aFBC7853d4B20F523d69c146169Ef4C3c1DF", "contract": "contracts/integrations/RobinhoodV3NativeSwapAdapter.sol:RobinhoodV3NativeSwapAdapter", "args": ["0xCaf681a66D020601342297493863E78C959E5cb2", "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73"] },
-        { "name": "PostGradLeagueTreasuryV2", "address": "0x5D5CC19B5BE86BA28b8164f85883F17843B69810", "contract": "contracts/PostGradLeagueTreasuryV2.sol:PostGradLeagueTreasuryV2", "args": ["0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714", "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7", "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7"] },
-        { "name": "ArenaWarPoolTreasuryV2", "address": "0xD3E00E476b72e49Ec4587df58b23Ea5BAd1F151C", "contract": "contracts/ArenaWarPoolTreasuryV2.sol:ArenaWarPoolTreasuryV2", "args": ["0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714", "0x2b72A9E6C4Ea3525d83B8C5E8F2044BDbC1f1Dec", "0xFCA7DF580eae01bfA7D3abc96c5075317742D421", "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7", "0x5D5CC19B5BE86BA28b8164f85883F17843B69810"] },
-        { "name": "CreatorRegistry", "address": "0xDc77CAACDEB6affA0a5791f62BBB958D99Edc58B", "contract": "contracts/CreatorRegistry.sol:CreatorRegistry", "args": [] },
-        { "name": "RiskRegistry", "address": "0xe10e9c26D7CA80390831884CA17919E22fF44938", "contract": "contracts/RiskRegistry.sol:RiskRegistry", "args": [] },
-        { "name": "UPVoteTreasury", "address": "0x8C8141B84cDb4634829cF1936f1e8cc14C61CEaa", "contract": "contracts/UPVoteTreasury.sol:UPVoteTreasury", "args": ["0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7", "0x632061cA786f7B585Bbd46A792FDA92B02f70671"] },
-        { "name": "EventPrizeVaultV1", "address": "0x2DFF1259Eb7fD905D15E30234b5F6fF2Eb77A898", "contract": "contracts/EventPrizeVaultV1.sol:EventPrizeVaultV1", "args": ["0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714"] },
-        { "name": "WarzoneSponsorshipRouterV1", "address": "0xcF7a0603B2C27B79D858A183330FF3bcfE34C381", "contract": "contracts/WarzoneSponsorshipRouterV1.sol:WarzoneSponsorshipRouterV1", "args": ["0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714", "0xFCA7DF580eae01bfA7D3abc96c5075317742D421", "0x2DFF1259Eb7fD905D15E30234b5F6fF2Eb77A898", "0x632061cA786f7B585Bbd46A792FDA92B02f70671", "0x632061cA786f7B585Bbd46A792FDA92B02f70671"] }
+        {
+          "name": "GraduationOracle",
+          "address": "0xe635AA43fE5707561c8c3C655225da5C3e4C2239",
+          "contract": "contracts/GraduationOracle.sol:GraduationOracle",
+          "args": [
+            "0x78F3556b67E17Df817D51Ef5a990cDaF09E8d3A9",
+            "90000"
+          ]
+        },
+        {
+          "name": "TreasuryVaultV2 (weekly)",
+          "address": "0xB6ccAc81f84F125Ecdc8dFaB2e019c42EAc5486e",
+          "contract": "contracts/TreasuryVaultV2.sol:TreasuryVaultV2",
+          "args": [
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+            "0x0000000000000000000000000000000000000000",
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7"
+          ]
+        },
+        {
+          "name": "CharityTreasury",
+          "address": "0x72A963682B261195EB43F8f75e0515ab279EbD14",
+          "contract": "contracts/CharityTreasury.sol:CharityTreasury",
+          "args": [
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7"
+          ]
+        },
+        {
+          "name": "MonthlyLeagueTreasury",
+          "address": "0xE72A281b4A728AFb5fa836f593B56C8f74Fd4238",
+          "contract": "contracts/MonthlyLeagueTreasury.sol:MonthlyLeagueTreasury",
+          "args": [
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+            "0x0000000000000000000000000000000000000000",
+            "0xe635AA43fE5707561c8c3C655225da5C3e4C2239",
+            "0x72A963682B261195EB43F8f75e0515ab279EbD14",
+            "30000"
+          ]
+        },
+        {
+          "name": "RecruiterRewardsVault",
+          "address": "0xBd7EB35d62B0AB69B1BB1d756BbDBcC6D31D86C7",
+          "contract": "contracts/RecruiterRewardsVault.sol:RecruiterRewardsVault",
+          "args": [
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7"
+          ]
+        },
+        {
+          "name": "ProtocolRevenueVault",
+          "address": "0x632061cA786f7B585Bbd46A792FDA92B02f70671",
+          "contract": "contracts/ProtocolRevenueVault.sol:ProtocolRevenueVault",
+          "args": [
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7"
+          ]
+        },
+        {
+          "name": "RobinhoodUniswapV3GraduationAdapter",
+          "address": "0xfdF80819CCaE7103165c2EAd9057BA7Eb2fa8aee",
+          "contract": "contracts/integrations/RobinhoodUniswapV3GraduationAdapter.sol:RobinhoodUniswapV3GraduationAdapter",
+          "args": [
+            "0x1f7d7550B1b028f7571E69A784071F0205FD2EfA",
+            "0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3",
+            "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+            "3000"
+          ]
+        },
+        {
+          "name": "TreasuryRouterV3",
+          "address": "0xda0a9Ed9e68D2B468257aBD66465fdD94F4338bb",
+          "contract": "contracts/TreasuryRouterV3.sol:TreasuryRouterV3",
+          "args": [
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+            "0xB6ccAc81f84F125Ecdc8dFaB2e019c42EAc5486e",
+            "0xE72A281b4A728AFb5fa836f593B56C8f74Fd4238",
+            "3600"
+          ]
+        },
+        {
+          "name": "CommunityRewardsVault",
+          "address": "0xdE9Ec7c679FD260D76A390eEC00FA8ab1E621D2a",
+          "contract": "contracts/CommunityRewardsVault.sol:CommunityRewardsVault",
+          "args": [
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+            "0xda0a9Ed9e68D2B468257aBD66465fdD94F4338bb"
+          ]
+        },
+        {
+          "name": "CreatorRewardsVault",
+          "address": "0xD9E381408A4e361C66D8b1e657583bdE6c52402d",
+          "contract": "contracts/CreatorRewardsVault.sol:CreatorRewardsVault",
+          "args": [
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+            "0xda0a9Ed9e68D2B468257aBD66465fdD94F4338bb"
+          ]
+        },
+        {
+          "name": "LaunchCampaign (impl)",
+          "address": "0x107231eBDe5DF14Ec0ec419b677d4ac0016DD70d",
+          "contract": "contracts/LaunchCampaign.sol:LaunchCampaign",
+          "args": []
+        },
+        {
+          "name": "LaunchFactory",
+          "address": "0x35E93D0b0F4A2809264Fa8D9922e2d0D1609C9BA",
+          "contract": "contracts/LaunchFactory.sol:LaunchFactory",
+          "args": [
+            "0xfdF80819CCaE7103165c2EAd9057BA7Eb2fa8aee",
+            "0xda0a9Ed9e68D2B468257aBD66465fdD94F4338bb",
+            "0x107231eBDe5DF14Ec0ec419b677d4ac0016DD70d",
+            "0xe635AA43fE5707561c8c3C655225da5C3e4C2239"
+          ]
+        },
+        {
+          "name": "PermanentV3PositionLocker (created by the factory)",
+          "address": "0xe2B3449491E4d5BE73E7E73A4DF9498eD9f3064C",
+          "contract": "contracts/PermanentV3PositionLocker.sol:PermanentV3PositionLocker",
+          "args": [
+            "0x35E93D0b0F4A2809264Fa8D9922e2d0D1609C9BA"
+          ]
+        },
+        {
+          "name": "RobinhoodStockTokenGraduationAdapter",
+          "address": "0xa48723e35061380Feb6D269f7c26D6E426F83efc",
+          "contract": "contracts/integrations/RobinhoodStockTokenGraduationAdapter.sol:RobinhoodStockTokenGraduationAdapter",
+          "args": [
+            "0x1f7d7550B1b028f7571E69A784071F0205FD2EfA",
+            "0x73991a25C818Bf1f1128dEAaB1492D45638DE0D3",
+            "0xCaf681a66D020601342297493863E78C959E5cb2",
+            "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73",
+            "0xe2B3449491E4d5BE73E7E73A4DF9498eD9f3064C",
+            "0x78F3556b67E17Df817D51Ef5a990cDaF09E8d3A9",
+            "3000",
+            "90000"
+          ]
+        },
+        {
+          "name": "RobinhoodV3NativeSwapAdapter",
+          "address": "0xffF3aFBC7853d4B20F523d69c146169Ef4C3c1DF",
+          "contract": "contracts/integrations/RobinhoodV3NativeSwapAdapter.sol:RobinhoodV3NativeSwapAdapter",
+          "args": [
+            "0xCaf681a66D020601342297493863E78C959E5cb2",
+            "0x0Bd7D308f8E1639FAb988df18A8011f41EAcAD73"
+          ]
+        },
+        {
+          "name": "PostGradLeagueTreasuryV2",
+          "address": "0x5D5CC19B5BE86BA28b8164f85883F17843B69810",
+          "contract": "contracts/PostGradLeagueTreasuryV2.sol:PostGradLeagueTreasuryV2",
+          "args": [
+            "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7"
+          ]
+        },
+        {
+          "name": "ArenaWarPoolTreasuryV2",
+          "address": "0xD3E00E476b72e49Ec4587df58b23Ea5BAd1F151C",
+          "contract": "contracts/ArenaWarPoolTreasuryV2.sol:ArenaWarPoolTreasuryV2",
+          "args": [
+            "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+            "0x2b72A9E6C4Ea3525d83B8C5E8F2044BDbC1f1Dec",
+            "0xFCA7DF580eae01bfA7D3abc96c5075317742D421",
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+            "0x5D5CC19B5BE86BA28b8164f85883F17843B69810"
+          ]
+        },
+        {
+          "name": "CreatorRegistry",
+          "address": "0xDc77CAACDEB6affA0a5791f62BBB958D99Edc58B",
+          "contract": "contracts/CreatorRegistry.sol:CreatorRegistry",
+          "args": []
+        },
+        {
+          "name": "RiskRegistry",
+          "address": "0xe10e9c26D7CA80390831884CA17919E22fF44938",
+          "contract": "contracts/RiskRegistry.sol:RiskRegistry",
+          "args": []
+        },
+        {
+          "name": "UPVoteTreasury",
+          "address": "0x8C8141B84cDb4634829cF1936f1e8cc14C61CEaa",
+          "contract": "contracts/UPVoteTreasury.sol:UPVoteTreasury",
+          "args": [
+            "0x1edcEdf5E5D9C2FAd5F9F6B964077dD74020A7A7",
+            "0x632061cA786f7B585Bbd46A792FDA92B02f70671"
+          ]
+        },
+        {
+          "name": "EventPrizeVaultV1",
+          "address": "0x2DFF1259Eb7fD905D15E30234b5F6fF2Eb77A898",
+          "contract": "contracts/EventPrizeVaultV1.sol:EventPrizeVaultV1",
+          "args": [
+            "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714"
+          ]
+        },
+        {
+          "name": "WarzoneSponsorshipRouterV1",
+          "address": "0xcF7a0603B2C27B79D858A183330FF3bcfE34C381",
+          "contract": "contracts/WarzoneSponsorshipRouterV1.sol:WarzoneSponsorshipRouterV1",
+          "args": [
+            "0x77F96A7d3bEA7a090aacbd00A50002D2b9AE0714",
+            "0xFCA7DF580eae01bfA7D3abc96c5075317742D421",
+            "0x2DFF1259Eb7fD905D15E30234b5F6fF2Eb77A898",
+            "0x632061cA786f7B585Bbd46A792FDA92B02f70671",
+            "0x632061cA786f7B585Bbd46A792FDA92B02f70671"
+          ]
+        },
+        {
+          "name": "RobinhoodStockLaunchCampaign",
+          "address": "0xC46D33FCce7030627254278716d4AEb536Cf46FF",
+          "contract": "contracts/RobinhoodStockLaunchCampaign.sol:RobinhoodStockLaunchCampaign",
+          "args": []
+        }
       ]
     }
   }

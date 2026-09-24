@@ -1,0 +1,31 @@
+{
+  "version": "1.0",
+  "chainId": "4663",
+  "createdAt": 1790276482253,
+  "meta": {
+    "name": "R5 Robinhood stock campaign implementation",
+    "description": "Bind RobinhoodStockLaunchCampaign 0xC46D33FCce7030627254278716d4AEb536Cf46FF to LaunchFactory 0x35E93D0b0F4A2809264Fa8D9922e2d0D1609C9BA. Must execute BEFORE the step-H setCreatePaused(false): the setter is whenMutable and locks at the first campaign.",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0x35E93D0b0F4A2809264Fa8D9922e2d0D1609C9BA",
+      "value": "0",
+      "data": "0x9b15d35b000000000000000000000000c46d33fcce7030627254278716d4aeb536cf46ff",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newImplementation",
+            "type": "address"
+          }
+        ],
+        "name": "setStockCampaignImplementation",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newImplementation": "0xC46D33FCce7030627254278716d4AEb536Cf46FF"
+      }
+    }
+  ]
+}
