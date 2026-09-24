@@ -31,6 +31,7 @@ import {
 
 import { assessProjectImport, assertAutomaticImport, assertNewImportMarket, importProofReceipt, isPumpFunImportToken, isRetainedImportPage } from "./lib/projectImportAssessment.js";
 import { withImportTransaction, appendImportEvidence, latestImportEvidence, importEvidenceHistory } from "./lib/projectImportEvidenceStore.js";
+import { runAdmissionScanForProject } from "./lib/arenaImportAdmission.js";
 import { applyVerifiedPumpChallenge, createPumpOwnershipChallenge, latestPumpOwnershipChallenge, pumpChallengeConnection, pumpChallengePublic, verifyPumpOwnershipChallenge } from "./lib/projectImportPumpChallenge.js";
 
 registerDefaultProjectImportResolvers();
@@ -375,6 +376,9 @@ export default async function projectImports(req, res) {
         // Keep the deployed append-only evidence schema compatible. The source label
         // denotes an automatic registration event; it does not imply owner verification.
         if(result.created) await appendImportEvidence(client,{project:result.project,assessment,source:"automatic_import"});
+        if(result.project && (result.created || result.project.status === "scanning")) {
+          result.project = await runAdmissionScanForProject((text, params) => client.query(text, params), result.project);
+        }
         return result;
       });
       return json(res,result.created?201:200,{...result,project:publicProject(result.project),ownershipEvidence:{...resolved,security,assessment}});

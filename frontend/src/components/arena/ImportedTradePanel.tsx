@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
-import { isSolanaChainId } from "@/lib/chainConfig";
+import { getNativeSymbol, isRobinhoodChainId, isSolanaChainId } from "@/lib/chainConfig";
 import {
   executeTopazBuy,
   executeTopazSell,
@@ -14,6 +14,14 @@ import {
   quoteTopazSell,
   resolveImportedTopazRoute,
 } from "@/lib/arenaImportedTopaz";
+import {
+  executeRobinhoodV3Buy,
+  executeRobinhoodV3Sell,
+  ensureRobinhoodV3SellAllowance,
+  quoteRobinhoodV3Buy,
+  quoteRobinhoodV3Sell,
+  resolveImportedRobinhoodV3Route,
+} from "@/lib/arenaImportedRobinhood";
 import {
   executeSolanaMeteoraSwap,
   fetchSolanaMeteoraPoolSnapshot,
@@ -25,6 +33,8 @@ export function ImportedTradePanel({ item }: { item: ArenaImportItem }) {
   const wallet = useWallet();
   const { solanaAccount } = useSolanaWallet();
   const solana = isSolanaChainId(item.chainId);
+  const robinhood = isRobinhoodChainId(item.chainId);
+  const native = getNativeSymbol(item.chainId);
   const decimals = Number((item.scan as { decimals?: number } | undefined)?.decimals ?? (solana ? 9 : 18));
   const [poolLabel, setPoolLabel] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -44,6 +54,15 @@ export function ImportedTradePanel({ item }: { item: ArenaImportItem }) {
           if (!cancelled) setPoolLabel(null);
           return;
         }
+        if (robinhood) {
+          const route = await resolveImportedRobinhoodV3Route({
+            provider: wallet.provider,
+            tokenAddress: item.tokenAddress,
+            chainId: item.chainId,
+          });
+          if (!cancelled) setPoolLabel(route ? `Uniswap V3 ${route.poolAddress.slice(0, 10)}…` : "");
+          return;
+        }
         const route = await resolveImportedTopazRoute({
           provider: wallet.provider,
           tokenAddress: item.tokenAddress,
@@ -57,12 +76,19 @@ export function ImportedTradePanel({ item }: { item: ArenaImportItem }) {
     return () => {
       cancelled = true;
     };
-  }, [decimals, item.chainId, item.tokenAddress, solana, wallet.provider]);
+  }, [decimals, item.chainId, item.tokenAddress, robinhood, solana, wallet.provider]);
 
+  if (robinhood && poolLabel === "") {
+    return (
+      <p className="text-sm text-muted-foreground" data-robinhood-import-trade-pending="true">
+        Trading on Robinhood imports arrives next
+      </p>
+    );
+  }
   if (!poolLabel) {
     return (
       <p className="text-sm text-muted-foreground">
-        In-app swaps for imported tokens are only enabled when a Topaz or Meteora pool is resolved. Uniswap V3 is detected in review only. This token is view-only until a supported pool is found.
+        In-app swaps for imported tokens are only enabled when a Topaz or Meteora pool is resolved. This token is view-only until a supported pool is found.
       </p>
     );
   }
@@ -94,7 +120,28 @@ export function ImportedTradePanel({ item }: { item: ArenaImportItem }) {
         toast.success("Swap submitted.");
         return;
       }
-      if (!wallet.provider || !wallet.signer || !wallet.account) throw new Error("Connect the BNB wallet first.");
+      if (!wallet.provider || !wallet.signer || !wallet.account) throw new Error(`Connect the ${native} wallet first.`);
+      if (robinhood) {
+        const route = await resolveImportedRobinhoodV3Route({
+          provider: wallet.provider,
+          tokenAddress: item.tokenAddress,
+          chainId: item.chainId,
+        });
+        if (!route) throw new Error("Robinhood V3 pool is not available.");
+        if (side === "buy") {
+          const quote = await quoteRobinhoodV3Buy(wallet.provider, route, ethers.parseEther(String(raw)), 100);
+          const tx = await executeRobinhoodV3Buy({ signer: wallet.signer, quote, recipient: wallet.account });
+          await tx.wait();
+        } else {
+          const tokenAmount = ethers.parseUnits(String(raw), decimals);
+          await ensureRobinhoodV3SellAllowance({ signer: wallet.signer, route, amountInRaw: tokenAmount });
+          const quote = await quoteRobinhoodV3Sell(wallet.provider, route, tokenAmount, 100);
+          const tx = await executeRobinhoodV3Sell({ signer: wallet.signer, quote, recipient: wallet.account });
+          await tx.wait();
+        }
+        toast.success("Swap submitted.");
+        return;
+      }
       const route = await resolveImportedTopazRoute({
         provider: wallet.provider,
         tokenAddress: item.tokenAddress,

@@ -6,7 +6,7 @@ import { projectImportsEnabled, projectImportRobinhoodEnabled } from "@/features
 import { BNB_CHAIN_ID, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
 import { lookupProjectImport, type ProjectImportItem } from "@/lib/projectImports";
 
-import ImportedProjectDetails from "./ImportedProjectDetails";
+import ImportedTokenPage from "./ImportedTokenPage";
 import TokenDetailsLiveEntry from "./TokenDetailsLiveEntry";
 
 export default function TokenDetailsEntry() {
@@ -53,7 +53,7 @@ export default function TokenDetailsEntry() {
   if (!projectImportsEnabled) return <TokenDetailsLiveEntry />;
   if (!resolved) return null;
   if (project) return <>
-    <ImportedProjectDetails key={`${project.id}:${project.ownershipStatus}:${project.ownershipVerifiedAt || ""}`} item={project} onClaimMemecoin={() => setClaimOpen(true)} />
+    <ImportedTokenPage key={`${project.id}:${project.ownershipStatus}:${project.ownershipVerifiedAt || ""}`} item={project} onClaimMemecoin={() => setClaimOpen(true)} />
     <ProjectXClaimDialog item={project} open={claimOpen} onOpenChange={setClaimOpen} onResolvedImage={(imageUrl) => setProject((current) => current ? { ...current, imageUrl } : current)} onManualReviewRequested={(next) => { setProject(next); setClaimOpen(false); }} />
   </>;
   return <TokenDetailsLiveEntry />;

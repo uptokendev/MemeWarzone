@@ -5,7 +5,7 @@ import test from "node:test";
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 const [home, details, commandCenter, coinRow, importPage, claimDialog, resolverAdapters] = await Promise.all([
   read("./components/home/ImportedProjectsOverlay.tsx"),
-  read("./pages/ImportedTokenDetailsPage.tsx"),
+  read("./pages/ImportedTokenPage.tsx"),
   read("./pages/command-center/CommandCenterCoins.tsx"),
   read("./components/postgrad/CommandCenterCoinRow.tsx"),
   read("./pages/ProjectImport.tsx"),

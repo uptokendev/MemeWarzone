@@ -31,6 +31,12 @@ export type ProjectImportItem = {
   manualClaimRequestedAt?: string | null;
   metadataUpdatedAt?: string | null;
   arenaStatus?: string | null;
+  ownerWallet?: string | null;
+  scan?: Record<string, unknown>;
+  scanVersion?: string | null;
+  scannedAt?: string | null;
+  reviewRequestedAt?: string | null;
+  reviewReason?: string | null;
   createdAt?: string | null;
 };
 export type ImportAssessment = {

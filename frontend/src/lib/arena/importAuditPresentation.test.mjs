@@ -13,7 +13,7 @@ import {
 } from "./importAuditPresentation.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const detailsSource = fs.readFileSync(path.join(here, "../../pages/ImportedTokenDetails.tsx"), "utf8");
+const detailsSource = fs.readFileSync(path.join(here, "../../pages/ImportedTokenPage.tsx"), "utf8");
 const clientSource = fs.readFileSync(path.join(here, "../arenaImports.ts"), "utf8");
 const helperSource = fs.readFileSync(path.join(here, "./importAuditPresentation.mjs"), "utf8");
 
@@ -111,13 +111,13 @@ test("only the stored import owner can request review", () => {
 });
 
 test("successful review request wiring shows returned timestamp and note", () => {
-  assert.match(detailsSource, /action: "arena_import_request_review"/);
-  assert.match(detailsSource, /extraLines: \[`Import: \$\{currentItem\.id\}`\]/);
-  assert.match(detailsSource, /requestArenaImportReview\(currentItem\.id, auth, reviewReason\.trim\(\) \|\| undefined\)/);
-  assert.match(detailsSource, /setCurrentItem\(next\)/);
+  assert.match(detailsSource, /signAction\("arena_import_request_review", \[`Import: \$\{item\.id\}`\]\)/);
+  assert.match(detailsSource, /requestArenaImportReview\(item\.id, auth, reviewReason\.trim\(\) \|\| undefined\)/);
+  assert.match(detailsSource, /reviewRequestedAt: next\.reviewRequestedAt/);
+  assert.match(detailsSource, /reviewReason: next\.reviewReason/);
   assert.match(detailsSource, /MANUAL REVIEW REQUESTED/);
-  assert.match(detailsSource, /formatReviewTimestamp\(currentItem\.reviewRequestedAt\)/);
-  assert.match(detailsSource, /currentItem\.reviewReason/);
+  assert.match(detailsSource, /formatReviewTimestamp\(arenaItem\.reviewRequestedAt\)/);
+  assert.match(detailsSource, /arenaItem\.reviewReason/);
   assert.match(detailsSource, /maxLength=\{500\}/);
 });
 
@@ -144,16 +144,14 @@ test("new competition authority never relies on persisted status passed alone", 
   const stalePassed = item({ status: "passed", eligibility: eligibility("stale", false) });
   assert.equal(presentImportCompetitionEligibility(stalePassed).eligible, false);
   assert.match(detailsSource, /data-import-competition-eligibility/);
-  assert.match(detailsSource, /presentImportCompetitionEligibility\(currentItem\)/);
-  const passedGates = detailsSource.match(/currentItem\.status === "passed"/g) || [];
-  assert.equal(passedGates.length, 3);
-  assert.match(detailsSource, /<ArenaUpvoteDialog/);
-  assert.match(detailsSource, /<ImportedTradePanel item=\{currentItem\}/);
+  assert.match(detailsSource, /presentImportCompetitionEligibility\(arenaItem\)/);
+  assert.match(detailsSource, /<ImportedTradePanel item=\{arenaItem\}/);
+  assert.match(detailsSource, /data-import-arena-strip="true"/);
   assert.doesNotMatch(detailsSource, /competition[^\n]{0,120}currentItem\.status === "passed"/i);
 });
 
 test("native MemeWarzone campaign architecture is unaffected", () => {
   assert.doesNotMatch(detailsSource, /fetchCampaign|campaigns\/|nativeExists|graduation/i);
   assert.doesNotMatch(helperSource, /campaign|graduation|creatorEconomics/i);
-  assert.match(detailsSource, /ImportedTokenDetails/);
+  assert.match(detailsSource, /ImportedTokenPage/);
 });

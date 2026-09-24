@@ -4,7 +4,7 @@ import test from "node:test";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 const [app, config, importPage, importedPage, tokenEntry, liveTokenEntry, client, coinsPage, navigation, leftSidebar, mobileSidebar, claimDialog, api, core, resolverAdapters, reviewCore, imageApi, riskCore] = await Promise.all([
-  read("./App.tsx"), read("./features/projectImports/config.ts"), read("./pages/ProjectImport.tsx"), read("./pages/ImportedProjectDetails.tsx"),
+  read("./App.tsx"), read("./features/projectImports/config.ts"), read("./pages/ProjectImport.tsx"), read("./pages/ImportedTokenPage.tsx"),
   read("./pages/TokenDetailsEntry.tsx"), read("./pages/TokenDetailsLiveEntry.tsx"), read("./lib/projectImports.ts"), read("./pages/command-center/CommandCenterCoins.tsx"),
   read("./constants/navigation.ts"), read("./components/LeftBattleSidebar.tsx"), read("./components/Sidebar.tsx"), read("./components/imports/ProjectXClaimDialog.tsx"), read("../api/projectImports.js"),
   read("../api/lib/projectImportCore.js"), read("../api/lib/projectImportResolverAdapters.js"), read("../api/lib/projectOwnershipReview.js"),
@@ -97,17 +97,17 @@ test("clear Import navigation is available on desktop and mobile without replaci
 
 test("imported project route mounts owner-manageable surface and refreshes manual approval before live token runtime", () => {
   assert.match(tokenEntry, /lookupProjectImport\(routeId, importChainId\)/);
-  assert.match(tokenEntry, /import ImportedProjectDetails from "\.\/ImportedProjectDetails"/);
+  assert.match(tokenEntry, /import ImportedTokenPage from "\.\/ImportedTokenPage"/);
   assert.match(tokenEntry, /if \(project\) return <>/);
-  assert.match(tokenEntry, /<ImportedProjectDetails/);
+  assert.match(tokenEntry, /<ImportedTokenPage/);
   assert.match(tokenEntry, /window\.setInterval\(\(\) => \{ void refresh\(\); \}, 10_000\)/);
   assert.match(liveTokenEntry, /import TokenDetails from "\.\/TokenDetails"/);
 });
 
 test("verified project owner is the only profile and replacement-image edit authority", () => {
-  assert.match(importedPage, /item\.ownershipStatus==="ownership_verified"/);
+  assert.match(importedPage, /item.ownershipStatus === "ownership_verified"/);
   assert.match(importedPage, /ownerConnected/);
-  assert.match(importedPage, /canEdit=ownerVerified&&ownerConnected/);
+  assert.match(importedPage, /canEdit = ownerVerified && ownerConnected/);
   assert.match(importedPage, /data-owner-edit-controls="true"/);
   assert.match(importedPage, /data-owner-image-edit="true"/);
   assert.match(importedPage, /data-owner-profile-editor="true"/);
@@ -115,13 +115,11 @@ test("verified project owner is the only profile and replacement-image edit auth
   assert.doesNotMatch(core.match(/export async function patchProjectMetadata[\s\S]+?export async function persistProjectImage/)?.[0] || "", /imported_by_wallet/);
 });
 
-test("public imported project is financially inert and visibly locked", () => {
-  for (const marker of [/data-imported-badge="true"/, /data-owner-status-pill="verified"/, /data-project-image="true"/, /data-project-name="true"/, /data-project-ticker="true"/, /data-project-description="true"/, /data-project-socials="true"/, /data-project-share="true"/, /WARZONE ACCESS LOCKED/]) assert.match(importedPage, marker);
+test("public imported project uses the official token layout with trading and arena status", () => {
+  for (const marker of [/data-imported-badge="true"/, /data-owner-status-pill="verified"/, /data-project-image="true"/, /data-project-name="true"/, /data-project-ticker="true"/, /data-project-description="true"/, /data-project-socials="true"/, /data-project-share="true"/, /ImportedTradePanel/, /data-import-arena-strip="true"/]) assert.match(importedPage, marker);
   assert.match(importedPage, /Project verification is separate from financial and competition eligibility/);
-  assert.doesNotMatch(importedPage, />\s*BUY\s*</i);
-  assert.doesNotMatch(importedPage, />\s*SELL\s*</i);
-  assert.doesNotMatch(importedPage, /AUTO DEPLOY|Boost|UpVote|Quarterly/i);
-  assert.doesNotMatch(importedPage, /from .*TokenDetails|from .*launchpad|from .*chart|from .*trading|from .*swap|from .*bonding|from .*graduation|from .*Topaz|from .*Meteora/i);
+  assert.match(coinsPage, /ProjectImportPanel/);
+  assert.doesNotMatch(coinsPage, /title="Imported coins"/);
 });
 
 test("Solana display metadata stays separate from authenticated project-wallet evidence", () => {

@@ -3,21 +3,22 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
-const [entry, page, claimDialog, liveEntry, client, xClient, importsConfig, postgradConfig] = await Promise.all([
+const [entry, page, claimDialog, liveEntry, client, xClient, importsConfig, postgradConfig, tradePanel] = await Promise.all([
   read("./pages/TokenDetailsEntry.tsx"),
-  read("./pages/ImportedProjectDetails.tsx"),
+  read("./pages/ImportedTokenPage.tsx"),
   read("./components/imports/ProjectXClaimDialog.tsx"),
   read("./pages/TokenDetailsLiveEntry.tsx"),
   read("./lib/projectImports.ts"),
   read("./lib/projectImportXClaim.ts"),
   read("./features/projectImports/config.ts"),
   read("./features/postgrad/config.ts"),
+  read("./components/arena/ImportedTradePanel.tsx"),
 ]);
 
 test("public token route intercepts authoritative project imports before live Token Details", () => {
   assert.match(entry, /lookupProjectImport\(routeId, importChainId\)/);
   assert.match(entry, /if \(project\) return <>/);
-  assert.match(entry, /<ImportedProjectDetails/);
+  assert.match(entry, /<ImportedTokenPage/);
   assert.match(entry, /<ProjectXClaimDialog/);
   assert.match(entry, /return <TokenDetailsLiveEntry \/>/);
   assert.match(entry, /onResolvedImage=\{\(imageUrl\) => setProject/);
@@ -34,16 +35,14 @@ test("pending ownership refreshes from the authoritative API without a hard relo
 
 test("BNB, Solana and feature-gated Robinhood imported identities select the dedicated project page", () => {
   assert.match(entry, /requested === BNB_CHAIN_ID \|\| requested === SOLANA_CHAIN_ID \|\| \(requested === 4663 && projectImportRobinhoodEnabled\)/);
-  assert.match(page, /item\.chainId===4663\?"Robinhood":"BNB"/);
-  assert.match(page, /identityLabel=solana\?"Mint":"Contract"/);
+  assert.match(page, /item\.chainId === 4663 \? "Robinhood" : "BNB"/);
+  assert.match(page, /identityLabel = solana \? "Mint" : "Contract"/);
   assert.match(page, /data-project-chain="true"/);
   assert.match(page, /data-project-address="true"/);
 });
 
-test("image-less authoritative import stays locked but still exposes project claim", () => {
-  assert.match(page, /PROJECT REGISTRATION INCOMPLETE/);
-  assert.match(page, /Project verification can still be completed/);
-  assert.match(page, /data-project-registration-incomplete="true"/);
+test("image-less authoritative import stays public and still exposes project claim", () => {
+  assert.match(page, /Add a project image from the owner tools/);
   assert.match(page, /data-project-claim-action="true">CLAIM MEMECOIN/);
 });
 
@@ -58,19 +57,19 @@ test("completed imported page renders project identity, profile and share fields
 });
 
 test("topbar verification pill derives only from authoritative project ownership state", () => {
-  assert.match(page, /ownerVerified=item\.ownershipStatus==="ownership_verified"/);
+  assert.match(page, /ownerVerified = item.ownershipStatus === "ownership_verified"/);
   assert.match(page, /data-owner-status-pill="verified"/);
   assert.match(page, /> VERIFIED<\/span>/);
   assert.match(page, /data-owner-status-pill="unverified"/);
   assert.match(page, />UNVERIFIED<\/span>/);
   assert.match(page, /border-orange-400\/40 bg-orange-500\/10/);
   assert.match(page, /border-emerald-400\/40 bg-emerald-500\/10/);
-  assert.doesNotMatch(page, /arenaStatus|status.*passed|needs_review|verifiedAt/i);
+  assert.match(page, /admissionPill\(item\.arenaStatus\)/);
 });
 
 test("verified project controller can manage profile and image but registrar identity is not edit authority", () => {
   assert.match(page, /ownerConnected/);
-  assert.match(page, /canEdit=ownerVerified&&ownerConnected/);
+  assert.match(page, /canEdit = ownerVerified && ownerConnected/);
   assert.match(page, /data-owner-edit-controls="true"/);
   assert.match(page, /data-owner-image-edit="true"/);
   assert.match(page, /data-owner-profile-editor="true"/);
@@ -78,7 +77,7 @@ test("verified project controller can manage profile and image but registrar ide
 });
 
 test("all supported unverified imports expose one reusable Claim Memecoin dialog", () => {
-  assert.match(page, /canClaim=item\.ownershipStatus==="ownership_pending"/);
+  assert.match(page, /canClaim = item.ownershipStatus === "ownership_pending" \|\| item.ownershipStatus === "ownership_manual_review"/);
   assert.match(page, /data-project-claim-action="true">CLAIM MEMECOIN/);
   assert.match(entry, /onClaimMemecoin=\{\(\) => setClaimOpen\(true\)\}/);
   assert.match(entry, /<ProjectXClaimDialog item=\{project\} open=\{claimOpen\} onOpenChange=\{setClaimOpen\}/);
@@ -135,16 +134,14 @@ test("post-import prompt uses the same Claim Memecoin dialog rather than a secon
   assert.match(claimDialog, /startProjectXClaim\(item,auth\)/);
 });
 
-test("Warzone access remains visibly locked and verification is not competition approval", () => {
-  assert.match(page, /WARZONE ACCESS LOCKED/);
-  assert.match(page, /Battles, Tournaments and War Leagues are opening soon\./);
-  assert.match(page, /Project verification is separate from financial and competition eligibility\./);
-});
-
-test("imported page mounts no trading, Arena, paid discovery or campaign implementation", () => {
-  assert.doesNotMatch(page, /from .*TokenDetails|from .*launchpad|from .*chart|from .*trading|from .*swap|from .*bonding|from .*graduation|from .*Topaz|from .*Meteora/i);
-  assert.doesNotMatch(page, /\bBUY\b|\bSELL\b|AUTO DEPLOY|UpVote|Boost|Arena admission|BATTLE READY|ARENA APPROVED|VERIFIED SAFE|LAUNCHED BY MEMEWARZONE|APPROVED FOR TRADING|GRADUATION MARKET APPROVED/i);
-  assert.doesNotMatch(page, /\/api\/arena|\/api\/campaign|candles|lightweight-charts|TradingView|swapRouter|bondingCurve|graduationMarket/i);
+test("imported official page mounts trading, claim banner and arena strip", () => {
+  assert.match(page, /ImportedTradePanel/);
+  assert.match(page, /UnifiedMarketChart/);
+  assert.match(page, /data-import-claim-banner="true"/);
+  assert.match(page, /Is this your project\? Claim it/);
+  assert.match(page, /data-import-arena-strip="true"/);
+  assert.match(page, /Project verification is separate from financial and competition eligibility/);
+  assert.match(page, /REQUEST MANUAL CHECK/);
 });
 
 test("imports remain independent from post-grad Arena flags", () => {
@@ -156,10 +153,18 @@ test("imports remain independent from post-grad Arena flags", () => {
 
 test("ordinary token fallback preserves original live Token Details boundary", () => {
   assert.match(liveEntry, /import TokenDetails from "\.\/TokenDetails"/);
+  assert.doesNotMatch(liveEntry, /lookupArenaImport/);
+  assert.doesNotMatch(liveEntry, /ImportedTokenDetails/);
   assert.match(entry, /if \(!projectImportsEnabled\) return <TokenDetailsLiveEntry \/>/);
   assert.match(entry, /if \(project\) return <>/);
-  assert.match(entry, /<ImportedProjectDetails/);
+  assert.match(entry, /<ImportedTokenPage/);
   assert.match(entry, /return <TokenDetailsLiveEntry \/>/);
+});
+
+test("Robinhood imported trades resolve a V3 pool or hide the panel with a clear note", () => {
+  assert.match(tradePanel, /resolveImportedRobinhoodV3Route/);
+  assert.match(tradePanel, /Trading on Robinhood imports arrives next/);
+  assert.match(tradePanel, /data-robinhood-import-trade-pending="true"/);
 });
 
 

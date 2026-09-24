@@ -10,7 +10,6 @@ import {
   readJson,
 } from "../server/http.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
-import { scanEvm, scanSolana } from "./lib/arenaImportScan.js";
 import { evaluateImportedCompetitionEligibility, loadImportedCompetitionEligibility } from "./lib/arenaImportEligibility.js";
 import { getArenaTokenProfile } from "./lib/arenaTokenProfile.js";
 
@@ -18,18 +17,6 @@ function ident(value, chainId) {
   const raw = String(value || "").trim();
   if (isSolanaChain(chainId) || isSolanaAddress(raw)) return raw;
   return isAddress(raw) ? raw.toLowerCase() : "";
-}
-
-function sameWallet(left, right, chainId) {
-  const a = String(left || "").trim();
-  const b = String(right || "").trim();
-  if (!a || !b) return false;
-  return isSolanaChain(chainId) ? a === b : a.toLowerCase() === b.toLowerCase();
-}
-
-function scanProvesOwnership(chainId, ownerWallet, scan) {
-  const evidence = isSolanaChain(chainId) ? scan?.scan?.mintAuthority : scan?.scan?.owner;
-  return sameWallet(ownerWallet, evidence, chainId);
 }
 
 function mapImport(row) {
@@ -64,58 +51,9 @@ function mapImport(row) {
   };
 }
 
-async function nativeExists(chainId, token) {
-  const tokenPredicate = isSolanaChain(chainId)
-    ? `(token_address::text = $2 or campaign_address::text = $2)`
-    : `(lower(token_address::text) = lower($2) or lower(campaign_address::text) = lower($2))`;
-  const result = await pool.query(
-    `select campaign_address from public.campaigns
-      where chain_id = $1 and ${tokenPredicate}
-      limit 1`,
-    [chainId, token],
-  );
-  return Boolean(result.rows[0]);
-}
-
-async function scanToken(chainId, token) {
-  return isSolanaChain(chainId) ? scanSolana(chainId, token) : scanEvm(chainId, token);
-}
-
 async function findById(id) {
   const result = await pool.query(`select * from public.arena_token_imports where id = $1::uuid limit 1`, [id]);
   return result.rows[0] || null;
-}
-
-async function loadTrustedProfile(chainId, token) {
-  try {
-    const tokenPredicate = isSolanaChain(chainId)
-      ? `token_address = $2`
-      : `lower(token_address) = lower($2)`;
-    const result = await pool.query(
-      `select logo_uri, description, website, external_url, x_account, telegram, updated_at
-         from public.token_metadata_registry
-        where chain_id = $1
-          and token_address is not null
-          and ${tokenPredicate}
-        order by updated_at desc
-        limit 1`,
-      [chainId, token],
-    );
-    const row = result.rows[0];
-    if (!row) return null;
-    const imageUrl = String(row.logo_uri || "").trim();
-    return {
-      imageUrl: imageUrl && !/^data:/i.test(imageUrl) ? imageUrl : null,
-      description: String(row.description || "").trim() || null,
-      website: String(row.website || row.external_url || "").trim() || null,
-      xUrl: String(row.x_account || "").trim() || null,
-      telegramUrl: String(row.telegram || "").trim() || null,
-      metadataUpdatedAt: row.updated_at || null,
-    };
-  } catch (error) {
-    console.warn("[api/arenaImports] trusted metadata prefill unavailable", error?.message || error);
-    return null;
-  }
 }
 
 async function handleList(req, res) {
@@ -182,77 +120,6 @@ async function handleProfile(req, res) {
     : json(res, 404, { error: "Arena token profile not found" });
 }
 
-async function handleCreate(req, res) {
-  const body = await readJson(req);
-  const chainId = Number(body.chainId || 56);
-  const token = ident(body.tokenAddress || body.tokenId || body.token, chainId);
-  const owner = normalizeWalletFlexible(body.walletAddress || body.auth?.walletAddress || body.auth?.address || "");
-  if (!token) return json(res, 400, { ok: false, error: "tokenAddress is required" });
-  if (!owner) return json(res, 400, { ok: false, error: "wallet is required" });
-
-  const verified = await requireWalletActionAuth({
-    res,
-    pool,
-    auth: body.auth || body,
-    expectedWallet: owner,
-    chainId,
-    action: "arena_import_token",
-    routeLabel: "arena/imports",
-    extraLines: [`Token: ${token}`],
-  });
-  if (!verified) return;
-
-  if (await nativeExists(chainId, token)) {
-    return json(res, 409, { ok: false, error: "This token already launched on MemeWarzone.", reason: "already_native" });
-  }
-
-  const existingPredicate = isSolanaChain(chainId) ? `token_address = $2` : `lower(token_address) = lower($2)`;
-  const existing = await pool.query(
-    `select * from public.arena_token_imports where chain_id = $1 and ${existingPredicate} limit 1`,
-    [chainId, token],
-  );
-  if (existing.rows[0]) {
-    return json(res, 200, { ok: true, item: mapImport(existing.rows[0]), existing: true });
-  }
-
-  const [scan, trusted] = await Promise.all([
-    scanToken(chainId, token),
-    loadTrustedProfile(chainId, token),
-  ]);
-  const ownershipVerified = scanProvesOwnership(chainId, owner, scan);
-  const inserted = await pool.query(
-    `insert into public.arena_token_imports (
-       chain_id, token_address, owner_wallet, name, symbol, status, scan_json,
-       scan_version, scanned_at,
-       image_url, description, website, x_url, telegram_url, verified_at, metadata_updated_at
-     ) values ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9::timestamptz,$10,$11,$12,$13,$14,$15::timestamptz,coalesce($16::timestamptz, now()))
-     returning *`,
-    [
-      chainId,
-      token,
-      owner,
-      scan.name,
-      scan.symbol,
-      scan.status,
-      JSON.stringify(scan.scan || {}),
-      scan.scanVersion || null,
-      scan.scannedAt || null,
-      trusted?.imageUrl || null,
-      trusted?.description || null,
-      trusted?.website || null,
-      trusted?.xUrl || null,
-      trusted?.telegramUrl || null,
-      ownershipVerified ? new Date().toISOString() : null,
-      trusted?.metadataUpdatedAt || null,
-    ],
-  );
-  return json(res, 200, {
-    ok: true,
-    item: mapImport(inserted.rows[0]),
-    ownershipVerified,
-  });
-}
-
 async function handleRequestReview(req, res, id) {
   const body = await readJson(req);
   const row = await findById(id);
@@ -290,7 +157,6 @@ export default async function handler(req, res) {
     if (method === "GET" && path === "/arena/imports/lookup") return handleLookup(req, res);
     if (method === "GET" && path === "/arena/imports/eligibility") return handleEligibility(req, res);
     if (method === "GET" && path === "/arena/imports/profile") return handleProfile(req, res);
-    if (method === "POST" && path === "/arena/imports") return handleCreate(req, res);
     const review = path.match(/^\/arena\/imports\/([^/]+)\/request-review$/);
     if (review) return method === "POST" ? handleRequestReview(req, res, decodeURIComponent(review[1])) : badMethod(res);
     return json(res, 404, { error: `Unknown arena imports route: ${path}` });

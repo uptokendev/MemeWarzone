@@ -102,22 +102,6 @@ export async function fetchArenaTokenProfile(tokenAddress: string, chainId: numb
   return json?.profile || null;
 }
 
-export async function submitArenaImport(input: {
-  tokenAddress: string;
-  chainId: number;
-  walletAddress: string;
-  auth: WalletActionAuthPayload;
-}): Promise<ArenaImportItem> {
-  const res = await apiFetch("/api/arena/imports", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(input),
-  });
-  const json = await readJson(res);
-  if (!res.ok || json?.ok === false) throw new Error(String(json?.error || json?.reason || `Import failed (${res.status})`));
-  return json.item;
-}
-
 export async function uploadArenaImportImage(input: {
   item: ArenaImportItem;
   file: File;

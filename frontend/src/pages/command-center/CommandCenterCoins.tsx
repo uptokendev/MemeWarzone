@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { CommandCenterCard } from "@/components/command-center/CommandCenterCard";
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
 import { CommandCenterCoinRow } from "@/components/postgrad/CommandCenterCoinRow";
-import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
+
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { projectImportsEnabled, projectImportRobinhoodEnabled } from "@/features/projectImports/config";
 import { fetchOwnerCampaignDrafts, type CampaignDraft } from "@/lib/draftApi";
@@ -33,16 +33,7 @@ import {
   SOLANA_CHAIN_ID,
   isSolanaChainId,
 } from "@/lib/chainConfig";
-import { postGradFlags } from "@/features/postgrad/config";
-import {
-  fetchArenaImports,
-  requestArenaImportReview,
-  submitArenaImport,
-  type ArenaImportItem,
-} from "@/lib/arenaImports";
 import { isSolanaAddress } from "@/lib/address";
-import { signSolanaMessage } from "@/lib/solanaWallet";
-import { signWalletAction } from "@/lib/walletActionAuth";
 
 const BATTLE_FEATURES_ENABLED = false;
 
@@ -148,9 +139,6 @@ export default function CommandCenterCoins() {
   const activeChainId = Number(chainId || 97);
   const robinhood = isRobinhoodChainId(activeChainId);
   const [searchParams, setSearchParams] = useSearchParams();
-  const [imports, setImports] = useState<ArenaImportItem[]>([]);
-  const [importToken, setImportToken] = useState("");
-  const [importBusy, setImportBusy] = useState(false);
   const [drafts, setDrafts] = useState<CampaignDraft[]>([]);
   const [loadingDrafts, setLoadingDrafts] = useState(false);
   const [draftsError, setDraftsError] = useState<string | null>(null);
@@ -190,22 +178,6 @@ export default function CommandCenterCoins() {
   useEffect(() => {
     void refreshLpFees();
   }, [refreshLpFees]);
-
-  const refreshImports = useCallback(async () => {
-    if (!walletAddress || !postGradFlags.arena) {
-      setImports([]);
-      return;
-    }
-    try {
-      setImports(await fetchArenaImports(walletAddress, activeChainId));
-    } catch {
-      setImports([]);
-    }
-  }, [activeChainId, walletAddress]);
-
-  useEffect(() => {
-    void refreshImports();
-  }, [refreshImports]);
 
   useEffect(() => {
     if (importRequested) setImportOpen(true);
@@ -498,114 +470,6 @@ export default function CommandCenterCoins() {
             </CollapsibleContent>
           </section>
         </Collapsible>
-      ) : null}
-
-      {postGradFlags.arena ? (
-        <CommandCenterCard title="Imported coins" description="Arena admission is separate from Project Import ownership. Paste a token to scan it for Arena eligibility.">
-          <div className="mb-4 flex flex-col gap-2 sm:flex-row">
-            <input
-              value={importToken}
-              onChange={(event) => setImportToken(event.target.value)}
-              placeholder="Token address"
-              className="w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
-            />
-            <Button
-              className="font-retro"
-              disabled={importBusy || !importToken.trim()}
-              onClick={async () => {
-                setImportBusy(true);
-                try {
-                  const solana = isSolanaChainId(activeChainId) || isSolanaAddress(walletAddress);
-                  const auth = await signWalletAction({
-                    action: "arena_import_token",
-                    walletAddress,
-                    chainId: activeChainId,
-                    extraLines: [`Token: ${importToken.trim()}`],
-                    walletType: solana ? "solana" : "evm",
-                    signer: solana ? undefined : wallet.signer,
-                    signMessage: solana
-                      ? async (message) => (await signSolanaMessage(message, walletAddress)).signature
-                      : undefined,
-                  });
-                  const item = await submitArenaImport({
-                    tokenAddress: importToken.trim(),
-                    chainId: activeChainId,
-                    walletAddress,
-                    auth,
-                  });
-                  toast.success(`Arena import ${item.status.replaceAll("_", " ")}`);
-                  setImportToken("");
-                  await refreshImports();
-                } catch (error) {
-                  toast.error(String((error as Error)?.message || "Arena import failed"));
-                } finally {
-                  setImportBusy(false);
-                }
-              }}
-            >
-              {importBusy ? "Scanning..." : "Scan for Arena"}
-            </Button>
-          </div>
-          {imports.length ? (
-            <div className="space-y-2">
-              {imports.map((item) => (
-                <div key={item.id} className="mwz-hud-frame flex flex-wrap items-center justify-between gap-2 p-3">
-                  <div>
-                    <div className="font-retro text-sm text-foreground">{item.symbol || item.name || item.tokenAddress.slice(0, 10)}</div>
-                    <TacticalTag label={item.status.replaceAll("_", " ")} tone={item.status === "passed" ? "success" : "default"} />
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {item.status === "passed" ? (
-                      <Button asChild size="sm" variant="outline" className="font-retro">
-                        <Link
-                          to={tokenDetailsPath({
-                            tokenAddress: item.tokenAddress,
-                            campaignAddress: item.tokenAddress,
-                            chainId: Number(item.chainId) || undefined,
-                          })}
-                        >
-                          Open
-                        </Link>
-                      </Button>
-                    ) : null}
-                    {(item.status === "declined" || item.status === "needs_review") && !item.reviewRequestedAt ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="font-retro"
-                        onClick={async () => {
-                          try {
-                            const solana = isSolanaChainId(activeChainId) || isSolanaAddress(walletAddress);
-                            const auth = await signWalletAction({
-                              action: "arena_import_request_review",
-                              walletAddress,
-                              chainId: activeChainId,
-                              extraLines: [`Import: ${item.id}`],
-                              walletType: solana ? "solana" : "evm",
-                              signer: solana ? undefined : wallet.signer,
-                              signMessage: solana
-                                ? async (message) => (await signSolanaMessage(message, walletAddress)).signature
-                                : undefined,
-                            });
-                            await requestArenaImportReview(item.id, auth);
-                            toast.success("Sent to manual review");
-                            await refreshImports();
-                          } catch (error) {
-                            toast.error(String((error as Error)?.message || "Could not request review"));
-                          }
-                        }}
-                      >
-                        Send to Manual Review
-                      </Button>
-                    ) : null}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">No Arena imports yet.</p>
-          )}
-        </CommandCenterCard>
       ) : null}
 
       <CommandCenterCard
