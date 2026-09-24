@@ -116,7 +116,13 @@ test("create authorization uses DB exact chain + contract lookup and ENV JSON is
 
 test("canonical candidate selection no longer trusts symbol-only release seeds", () => {
   const registry = fs.readFileSync(path.join(root, "api/lib/robinhoodStockGraduationRegistry.js"), "utf8");
-  assert.match(registry, /isExactRobinhoodReleaseCandidate/);
+  // Founder policy 2026-09-24: canonical Robinhood tokens are all candidates; the certification decides.
+  assert.match(registry, /const exactCandidate = true;/);
+  assert.doesNotMatch(registry, /is not an approved Robinhood release candidate/);
+  const certification = fs.readFileSync(path.join(root, "api/lib/robinhoodStockRuntimeCertification.js"), "utf8");
+  assert.doesNotMatch(certification, /is not in the approved Robinhood manifest/);
+  assert.match(certification, /manifestAsset && String\(manifestAsset\.symbol\)/);
+  assert.match(certification, /manifestAsset && tokenDecimals !== Number\(manifestAsset\.decimals\)/);
   assert.doesNotMatch(registry, /select upper\(symbol\) as symbol from public\.robinhood_stock_token_release_candidates/i);
   assert.match(registry, /chainId: asset\.chainId/);
   assert.match(registry, /contractAddress: asset\.contractAddress/);

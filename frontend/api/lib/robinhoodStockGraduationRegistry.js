@@ -3,7 +3,6 @@ import { pool } from "../../server/db.js";
 import { getServerReadProvider } from "./getServerReadProvider.js";
 import {
   certifyRobinhoodStockRuntime,
-  isExactRobinhoodReleaseCandidate,
 } from "./robinhoodStockRuntimeCertification.js";
 
 export const ROBINHOOD_MAINNET_CHAIN_ID = 4663;
@@ -209,9 +208,6 @@ export async function evaluateRobinhoodStockHealth(row) {
   if (!row?.canonical) return { status: "unhealthy", reason: "noncanonical Robinhood deployment", route: null, evidence: null };
   if (!robinhoodAssetIsActive(row.robinhood_status)) return { status: "unhealthy", reason: "Robinhood asset is inactive", route: null, evidence: null };
   if (row.trading_halted === true) return { status: "unhealthy", reason: "Robinhood asset trading is halted", route: null, evidence: null };
-  if (!isExactRobinhoodReleaseCandidate({ chainId: row.chain_id, contractAddress: row.contract_address })) {
-    return { status: "unhealthy", reason: "exact chain + provider + contract identity is not an approved Robinhood release candidate", route: null, evidence: null };
-  }
 
   try {
     const chainId = Number(row.chain_id);
@@ -313,10 +309,10 @@ export async function syncCanonicalRobinhoodStockTokens({ fetchImpl = fetch, ope
   try {
     await client.query("begin");
     for (const asset of canonicalRows) {
-      const exactCandidate = isExactRobinhoodReleaseCandidate({
-        chainId: asset.chainId,
-        contractAddress: asset.contractAddress,
-      });
+      // Founder policy 2026-09-24: every token on Robinhood's canonical list is a release
+      // candidate (Stonk and the Robinhood launchpads allow them all). What makes one
+      // bindable is the runtime certification below, not a hand-kept manifest.
+      const exactCandidate = true;
       await client.query(
         `insert into public.robinhood_stock_token_registry (
            chain_id, robinhood_asset_uid, contract_address, symbol, display_name, underlying_symbol,

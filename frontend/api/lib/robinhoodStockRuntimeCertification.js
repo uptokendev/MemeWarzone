@@ -174,9 +174,10 @@ export function certificationProbeNativeWei() {
 export async function certifyRobinhoodStockRuntime({ row, provider, factoryAddress, now = Date.now(), probeNativeWei = certificationProbeNativeWei() }) {
   const chainId = Number(row?.chain_id ?? row?.chainId);
   const tokenAddress = normalizeRuntimeAddress(row?.contract_address ?? row?.contractAddress);
-  const manifestAsset = findExactRobinhoodManifestCandidate({ chainId, contractAddress: tokenAddress });
-  if (!manifestAsset) throw new Error("exact chain + provider + contract identity is not in the approved Robinhood manifest");
-  if (String(manifestAsset.symbol).toUpperCase() !== String(row?.symbol || manifestAsset.symbol).toUpperCase()) throw new Error("provider symbol does not match exact approved manifest identity");
+  // The approved manifest is metadata, not a gate (founder policy 2026-09-24): a canonical
+  // Robinhood token certifies on what the chain says. When a manifest entry exists it must agree.
+  const manifestAsset = findExactRobinhoodManifestCandidate({ chainId, contractAddress: tokenAddress }) || null;
+  if (manifestAsset && String(manifestAsset.symbol).toUpperCase() !== String(row?.symbol || manifestAsset.symbol).toUpperCase()) throw new Error("provider symbol does not match exact approved manifest identity");
   if (probeNativeWei <= 0n) throw new Error("ROBINHOOD_STOCK_CERT_PROBE_NATIVE_WEI is required for launch-size route certification");
 
   const normalizedFactory = await requireCode(provider, factoryAddress, "Stock factory");
@@ -226,7 +227,8 @@ export async function certifyRobinhoodStockRuntime({ row, provider, factoryAddre
   const token = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
   const [tokenDecimalsRaw, poolStockBalance] = await Promise.all([token.decimals(), token.balanceOf(acquisitionPool)]);
   const tokenDecimals = Number(tokenDecimalsRaw);
-  if (tokenDecimals !== Number(manifestAsset.decimals)) throw new Error(`token decimals mismatch: manifest=${manifestAsset.decimals} runtime=${tokenDecimals}`);
+  if (manifestAsset && tokenDecimals !== Number(manifestAsset.decimals)) throw new Error(`token decimals mismatch: manifest=${manifestAsset.decimals} runtime=${tokenDecimals}`);
+  if (!Number.isInteger(tokenDecimals) || tokenDecimals < 0 || tokenDecimals > 36) throw new Error(`token decimals unsupported: ${tokenDecimals}`);
 
   const maxOracleAgeSeconds = Number(maxOracleAgeRaw);
   if (!Number.isInteger(maxOracleAgeSeconds) || maxOracleAgeSeconds <= 0) throw new Error("adapter oracle freshness policy invalid");
@@ -262,7 +264,7 @@ export async function certifyRobinhoodStockRuntime({ row, provider, factoryAddre
   return {
     provider: ROBINHOOD_STOCK_PROVIDER_AUTHORITY,
     providerKey: ROBINHOOD_STOCK_PROVIDER,
-    manifestAssetId: manifestAsset.providerAssetId,
+    manifestAssetId: manifestAsset?.providerAssetId ?? String(row?.symbol || ""),
     tokenAddress,
     implementationAddress,
     adapterAddress,

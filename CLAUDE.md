@@ -1236,6 +1236,18 @@ factory generation.** Script: `scripts/deploy-robinhood-stock-campaign-implement
 `0x7ae7abbf…` at block 71636126, read back from chain; factory still 0 campaigns, create paused. Lesson: a deploy rehearsal that copies the spec fixture
 instead of the deploy script proves the fixture, not the deployment.
 
+### Robinhood stocks: every canonical token is a candidate; the chain decides (2026-09-24)
+
+Founder policy ("Stonk and the Robinhood launchpads allow them all"). The registry sync marks
+every token on Robinhood's canonical list a release candidate; the hand-kept manifest entries
+are metadata that must agree when present, never a gate. What makes a stock bindable is the
+runtime certification alone: route configured on the stock adapter, fresh Chainlink price,
+stock-side pool liquidity ≥ $50k, launch-size impact ≤ 500 bps (probe
+`ROBINHOOD_STOCK_CERT_PROBE_NATIVE_WEI`, quotes through QuoterV2
+`VITE_ROBINHOOD_V3_QUOTER_ADDRESS_4663`). A healthy stock is enabled automatically; the
+dashboard's ENABLE is only an override among healthy ones and stays grey for a stock that
+fails certification, by design.
+
 ## 5. One combined release (founder decision, 2026-09-23)
 
 **Solana does not go up on its own.** Both programs are finished, certified and
