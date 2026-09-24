@@ -9,6 +9,13 @@
  *   node scripts/sync-robinhood-stock-registry.mjs --rescan-only   # skip the canonical pull, rescan health
  *   node scripts/sync-robinhood-stock-registry.mjs --rescan-only --symbols SPY,NVDA,AAPL   # only these
  *   node scripts/sync-robinhood-stock-registry.mjs --rescan-only --concurrency 4 --limit 50
+ *   node scripts/sync-robinhood-stock-registry.mjs --rescan-only --routed-only   # the scheduled task
+ *
+ * A certification counts for ROBINHOOD_STOCK_HEALTH_MAX_AGE_SECONDS (default 900 s), and a stock is
+ * offered to creators only while it is fresh. So a Coolify scheduled task must re-certify the routed
+ * stocks more often than that (every 10 minutes): --routed-only skips rows whose last reason is
+ * "route disabled" or "not an approved candidate" (~15 rows instead of 195, seconds not minutes).
+ * An hourly full --rescan-only picks up stocks that gain a route.
  *
  * Prints one line per token as it finishes. Every canonical token is a candidate since
  * 2026-09-24, so a full rescan certifies all 195 against the Robinhood RPC (~20 reads each);
@@ -31,6 +38,7 @@ const rescanOnly = argv.includes("--rescan-only");
 const symbols = arg("--symbols").split(",").map((v) => v.trim().toUpperCase()).filter(Boolean);
 const concurrency = Math.max(1, Math.min(8, Number(arg("--concurrency", "4")) || 4));
 const limit = Math.max(0, Number(arg("--limit", "0")) || 0);
+const routedOnly = argv.includes("--routed-only");
 
 if (arg("--db") === "staging") {
   const envLocal = fs.readFileSync(path.resolve(here, "../.env.local"), "utf8");
@@ -52,11 +60,14 @@ try {
     const sync = await syncCanonicalRobinhoodStockTokens({ operatorIdentity: "terminal:sync-robinhood-stock-registry" });
     console.log("canonical sync:", JSON.stringify(sync));
   }
-  const where = symbols.length ? "and upper(symbol) = any($2)" : "";
-  const params = symbols.length ? [4663, symbols] : [4663];
+  const clauses = [];
+  const params = [4663];
+  if (symbols.length) { params.push(symbols); clauses.push(`upper(symbol) = any($${params.length})`); }
+  if (routedOnly) clauses.push("coalesce(automated_health_reason, '') not ilike '%route disabled%' and coalesce(automated_health_reason, '') not ilike '%not an approved%'");
+  const where = clauses.length ? `and ${clauses.join(" and ")}` : "";
   const rows = (await pool.query(`select id, symbol from public.robinhood_stock_token_registry where chain_id = $1 ${where} order by symbol asc`, params)).rows;
   const todo = limit ? rows.slice(0, limit) : rows;
-  console.log(`rescanning ${todo.length} entries, ${concurrency} at a time${symbols.length ? ` (symbols: ${symbols.join(",")})` : ""}`);
+  console.log(`rescanning ${todo.length} entries, ${concurrency} at a time${symbols.length ? ` (symbols: ${symbols.join(",")})` : ""}${routedOnly ? " (routed only)" : ""}`);
   const items = [];
   let index = 0;
   let done = 0;
