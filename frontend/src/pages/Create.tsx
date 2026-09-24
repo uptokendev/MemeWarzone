@@ -74,6 +74,7 @@ import { normalizeSocialUrl } from "@/lib/socialLinks";
 import { CreateDraftCardPreview, CreateLiveCardPreview } from "@/components/create/CreateCardPreviews";
 import { CreateFullPane, CreateSplitPane, CreateWizardShell } from "@/components/create/CreateWizardShell";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { ChainFeedSwitch, useSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
 import { cn } from "@/lib/utils";
 import { analytics, analyticsErrorCode } from "@/lib/analytics/ProductAnalytics";
 
@@ -163,13 +164,17 @@ const Create = () => {
   const graduationTouchedRef = useRef(false);
 
   const normalizedTicker = useMemo(() => normalizeTicker(formData.ticker), [formData.ticker]);
+  // Re-render when the feed chain changes (the header switch below, or the wallet latch),
+  // so the chain this page builds for is never a stale read of localStorage.
+  const [feedChainId] = useSelectedFeedChainId();
+  const noWalletConnected = !wallet.isConnected && !solanaWallet.isSolanaConnected;
   const isSolanaCreator = Boolean(
     solanaWallet.isSolanaConnected &&
       solanaWallet.solanaAccount &&
       (getActiveChainId(wallet.chainId) === SOLANA_CHAIN_ID || !wallet.isConnected),
   );
   const creatorWallet = isSolanaCreator ? solanaWallet.solanaAccount : wallet.account || "";
-  const chainId = isSolanaCreator ? SOLANA_CHAIN_ID : getActiveChainId(wallet.chainId);
+  const chainId = isSolanaCreator ? SOLANA_CHAIN_ID : getActiveChainId(wallet.chainId ?? feedChainId);
   const graduationOptions: GraduationTier[] = useMemo(() => getGraduationTiers(chainId), [chainId]);
   const configuredEvmChainId = useMemo(
     () => (isEvmChainId(chainId) ? chainId : BNB_CHAIN_ID),
@@ -910,11 +915,15 @@ const Create = () => {
   return (
     <ContentContainer className="flex flex-col px-1 pb-3 pt-2 sm:px-2 md:px-3">
       <div className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-2 px-1">
-        <div className="text-xs text-muted-foreground">
-          Wallet{" "}
-          <span className="text-foreground">{creatorWallet ? `${creatorWallet.slice(0, 4)}…${creatorWallet.slice(-4)}` : "not connected"}</span>
-          {" · "}
-          {isSolanaCreator ? "Solana" : getChainLabel(chainId)}
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span>
+            Wallet{" "}
+            <span className="text-foreground">{creatorWallet ? `${creatorWallet.slice(0, 4)}…${creatorWallet.slice(-4)}` : "not connected"}</span>
+            {" · "}
+            {isSolanaCreator ? "Solana" : getChainLabel(chainId)}
+          </span>
+          {/* No wallet yet: the chain is a choice, so show it as one. Connected: the wallet's network is the chain. */}
+          {noWalletConnected ? <ChainFeedSwitch /> : null}
         </div>
         <Button asChild size="sm" variant="outline" className="font-retro text-xs">
           <Link to="/playbook"><BookOpen className="mr-1.5 h-3.5 w-3.5" />Playbook</Link>

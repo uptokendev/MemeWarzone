@@ -30,3 +30,11 @@ test("the connect modal no longer forces Robinhood because it is allowed: it use
   assert.match(modal, /await connect\(detectedWallet\.id, targetChainId \? \{ chainId: targetChainId \} : undefined\)/);
   assert.match(modal, /if \(targetChainId\) setSelectedFeedChainId\(targetChainId/);
 });
+
+test("the create page offers the chain switch while no wallet is connected and re-renders on feed changes", () => {
+  const create = fs.readFileSync(path.join(here, "../pages/Create.tsx"), "utf8");
+  assert.match(create, /const \[feedChainId\] = useSelectedFeedChainId\(\);/);
+  assert.match(create, /const noWalletConnected = !wallet\.isConnected && !solanaWallet\.isSolanaConnected;/);
+  assert.match(create, /getActiveChainId\(wallet\.chainId \?\? feedChainId\)/);
+  assert.match(create, /\{noWalletConnected \? <ChainFeedSwitch \/> : null\}/);
+});
