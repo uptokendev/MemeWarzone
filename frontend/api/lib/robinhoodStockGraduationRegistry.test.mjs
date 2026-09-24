@@ -124,8 +124,9 @@ test("canonical candidate selection no longer trusts symbol-only release seeds",
   assert.match(certification, /manifestAsset && String\(manifestAsset\.symbol\)/);
   assert.match(certification, /manifestAsset && tokenDecimals !== Number\(manifestAsset\.decimals\)/);
   assert.doesNotMatch(registry, /select upper\(symbol\) as symbol from public\.robinhood_stock_token_release_candidates/i);
-  assert.match(registry, /chainId: asset\.chainId/);
-  assert.match(registry, /contractAddress: asset\.contractAddress/);
+  // Rows still come from Robinhood's canonical list, exact address per deployment -- never a symbol seed.
+  assert.match(registry, /parseCanonicalRobinhoodDeployments\(await response\.json\(\)\)/);
+  assert.match(registry, /\[asset\.chainId, asset\.robinhoodAssetUid, asset\.contractAddress, asset\.symbol/);
 });
 
 test("runtime certification mirrors acquisition, oracle, execution-price, slippage, and locker requirements", () => {
