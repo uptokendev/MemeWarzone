@@ -1,0 +1,20 @@
+# Solana arena resolve-due worker (Coolify resource "arena-resolve-due", Build Pack: Dockerfile,
+# Base Directory: /, Dockerfile Location: /Dockerfile.resolve-due).
+#
+# Why a Dockerfile and not Nixpacks: the repo root also carries Cargo.toml and Anchor.toml, so
+# Nixpacks can pick a Rust build for "/" and the Node worker then cannot start (restart loop,
+# 2026-09-25). This pins Node 22 and copies only the worker's module graph:
+# scripts/solana, frontend/src/lib, frontend/api/lib (7 files) + @solana/web3.js, @noble/hashes, pg
+# (production deps of the root lockfile; ethers is only a fallback and is not needed).
+FROM node:22-slim
+WORKDIR /app
+ENV NODE_ENV=production
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+COPY scripts/solana ./scripts/solana
+COPY frontend/src/lib ./frontend/src/lib
+COPY frontend/api/lib ./frontend/api/lib
+# frontend/package.json declares "type": "module"; without it Node < 22.7 refuses the ESM files above.
+COPY frontend/package.json ./frontend/package.json
+# Needs DATABASE_URL, SOLANA_RPC_URL, PG_SSL_ALLOW_SELF_SIGNED=1, ARENA_RESOLVER_KEYPAIR (JSON array).
+CMD ["node", "scripts/solana/arena-operator-worker.mjs", "resolve-due", "--watch", "--send"]
