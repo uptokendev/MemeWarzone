@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 import { Contract, Interface, Wallet, getAddress, id } from "ethers";
 
+import { hasPinnedNativeUsd, readLiveNativeUsd, withLiveSnapshot } from "./arenaNativeUsdFeed.mjs";
+
 const EVENT_BPS = 7_000n;
 const MARKETING_BPS = 2_000n;
 const PROTOCOL_BPS = 1_000n;
@@ -95,6 +97,30 @@ export function readSponsorshipPricingConfig(chainId, env = process.env, nowSeco
   ).trim();
   if (configuredSigner && getAddress(configuredSigner) !== signer.address) throw new Error("Sponsorship quote signer key/address mismatch");
   return { chainId: chain, nativeUsdMicros, pricingVersion, oracleTimestamp, routerAddress, signer };
+}
+
+/**
+ * Sponsorship pricing for signing: pinned env snapshot (sponsorship keys, then
+ * the boost keys it already falls back to) through readSponsorshipPricingConfig
+ * unchanged, otherwise the live feed stamped with its observation time and
+ * validated by that same reader (max age, router address, signer key/address).
+ */
+export async function resolveSponsorshipPricingConfig(chainId, { env = process.env, nowSeconds = Math.floor(Date.now() / 1000), readLive = readLiveNativeUsd } = {}) {
+  const chain = Number(chainId);
+  if (!Number.isInteger(chain) || chain <= 0) throw new Error("chainId is invalid");
+  const pinnedKeys = [
+    `ARENA_SPONSORSHIP_NATIVE_USD_MICROS_${chain}`, "ARENA_SPONSORSHIP_NATIVE_USD_MICROS",
+    `ARENA_BOOST_NATIVE_USD_MICROS_${chain}`, "ARENA_BOOST_NATIVE_USD_MICROS",
+  ];
+  if (hasPinnedNativeUsd(env, pinnedKeys)) return { ...readSponsorshipPricingConfig(chain, env, nowSeconds), priceSource: "env" };
+  const live = await readLive(chain);
+  const snapshot = withLiveSnapshot(env, {
+    microsKey: `ARENA_SPONSORSHIP_NATIVE_USD_MICROS_${chain}`,
+    updatedAtKey: `ARENA_SPONSORSHIP_NATIVE_USD_UPDATED_AT_${chain}`,
+    versionKey: `ARENA_SPONSORSHIP_PRICING_VERSION_${chain}`,
+    versionFallbackKeys: ["ARENA_SPONSORSHIP_PRICING_VERSION", `ARENA_BOOST_PRICING_VERSION_${chain}`, "ARENA_BOOST_PRICING_VERSION"],
+  }, live);
+  return { ...readSponsorshipPricingConfig(chain, snapshot, nowSeconds), priceSource: live.source };
 }
 
 export async function verifySponsorshipEventConfiguration({ provider, chainId, eventUuid, env = process.env }) {

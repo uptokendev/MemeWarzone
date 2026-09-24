@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import test from "node:test";
 import { PublicKey } from "@solana/web3.js";
 
 import {
@@ -18,6 +19,8 @@ import {
 } from "../../src/lib/solanaArenaMoneyV2Layout.mjs";
 import {
   buildSolanaSponsorshipInstructionRequirements,
+  readSolanaNativeUsdPricing,
+  resolveSolanaNativeUsdPricing,
   sponsorshipVaultLifetimeTotals,
   splitSolanaBoost,
   splitSolanaSponsorship,
@@ -143,3 +146,39 @@ function account(data) { return { data: Uint8Array.from(data) }; }
 }
 
 console.log("Solana Arena Money V2 runtime certification tests passed");
+
+test("resolveSolanaNativeUsdPricing: chain 101 only; pinned snapshot wins; live SOL observation is stamped, validated and used by the quote helpers", async () => {
+  const now = 1_800_000_000;
+  let liveCalls = 0;
+  const readLive = async (chainId) => { liveCalls += 1; return { chainId, asset: "SOL", nativeUsdMicros: 116_120_000n, observedAtSeconds: now - 15, source: "spot", cached: false }; };
+
+  await assert.rejects(() => resolveSolanaNativeUsdPricing(56, "BOOST", { env: {}, nowSeconds: now, readLive }), /requires chain 101/);
+  assert.equal(liveCalls, 0);
+
+  const pinned = await resolveSolanaNativeUsdPricing(101, "BOOST", { env: { ARENA_BOOST_NATIVE_USD_MICROS_101: "100000000", ARENA_BOOST_PRICING_VERSION_101: "4", ARENA_BOOST_NATIVE_USD_UPDATED_AT_101: String(now - 5) }, nowSeconds: now, readLive });
+  assert.equal(liveCalls, 0);
+  assert.deepEqual({ ...pinned }, { chainId: 101, nativeUsdMicros: 100_000_000n, pricingVersion: 4n, oracleTimestamp: BigInt(now - 5), nativeDecimals: 9, priceSource: "env" });
+
+  const boost = await resolveSolanaNativeUsdPricing(101, "BOOST", { env: {}, nowSeconds: now, readLive });
+  assert.equal(liveCalls, 1);
+  assert.deepEqual({ ...boost }, { chainId: 101, nativeUsdMicros: 116_120_000n, pricingVersion: 1n, oracleTimestamp: BigInt(now - 15), nativeDecimals: 9, priceSource: "spot" });
+  const sponsorship = await resolveSolanaNativeUsdPricing(101, "SPONSORSHIP", { env: { ARENA_SPONSORSHIP_PRICING_VERSION: "2" }, nowSeconds: now, readLive });
+  assert.equal(sponsorship.pricingVersion, 2n);
+  assert.equal(sponsorship.nativeUsdMicros, 116_120_000n);
+
+  // the quote helpers accept it as `pricing` (what the routes now pass) and the sync reader stays the default
+  const { quoteSolanaBoost, quoteSolanaSponsorship } = await import("./solanaArenaMoneyV2Runtime.mjs");
+  const q = quoteSolanaBoost({ chainId: 101, boostUnits: 2, pricing: boost });
+  assert.equal(q.unitPriceLamports, 8_611_781n, "one USD at 116.12 USD/SOL, ceiling-rounded lamports");
+  assert.equal(q.gross, 17_223_562n);
+  const s = quoteSolanaSponsorship({ chainId: 101, requestedUsdMicros: 49_000_000n, pricing: sponsorship });
+  assert.equal(s.gross, 421_977_265n);
+  assert.throws(() => readSolanaNativeUsdPricing(101, "BOOST", {}, now), /not configured/);
+
+  // stale observation refused, widened window honoured, no feed -> no quote
+  const stale = async () => ({ nativeUsdMicros: 116_120_000n, observedAtSeconds: now - 301, source: "spot" });
+  await assert.rejects(() => resolveSolanaNativeUsdPricing(101, "BOOST", { env: {}, nowSeconds: now, readLive: stale }), /price is stale/);
+  const widened = await resolveSolanaNativeUsdPricing(101, "BOOST", { env: { ARENA_BOOST_PRICE_MAX_AGE_SECONDS_101: "900" }, nowSeconds: now, readLive: stale });
+  assert.equal(widened.nativeUsdMicros, 116_120_000n);
+  await assert.rejects(() => resolveSolanaNativeUsdPricing(101, "BOOST", { env: {}, nowSeconds: now, readLive: async () => { throw new Error("SOL/USD price is unavailable"); } }), /unavailable/);
+});

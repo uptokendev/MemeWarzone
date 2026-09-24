@@ -6,7 +6,7 @@ import { isSolanaChainId } from "./lib/chainNative.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { verifySponsorshipDeployment } from "./lib/arenaSponsorshipDeploymentVerification.mjs";
 import {
-  readSponsorshipPricingConfig,
+  resolveSponsorshipPricingConfig,
   serializeSponsorshipQuote,
   signSponsorshipQuote,
   sponsorshipSplit,
@@ -182,7 +182,7 @@ async function handleQuote(req, res) {
   let deployment;
   let signed;
   try {
-    config = readSponsorshipPricingConfig(event.chain_id);
+    config = await resolveSponsorshipPricingConfig(event.chain_id);
     const provider = await getServerReadProvider(Number(event.chain_id));
     deployment = await verifySponsorshipDeployment({
       provider,

@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 import { Wallet } from "ethers";
 
+import { hasPinnedNativeUsd, readLiveNativeUsd, withLiveSnapshot } from "./arenaNativeUsdFeed.mjs";
+
 export const BOOST_USD_MICROS = 1_000_000n;
 export const EVM_NATIVE_DECIMALS = 18;
 export const DEFAULT_QUOTE_TTL_SECONDS = 300;
@@ -62,6 +64,30 @@ export function readBoostPricingConfig(chainId, env = process.env, nowSeconds = 
     throw new Error("Battle Boost quote signer key/address mismatch");
   }
   return { chainId: chain, nativeUsdMicros, pricingVersion, priceUpdatedAt, maxAgeSeconds, treasuryAddress, signer };
+}
+
+/**
+ * Boost pricing for signing. A pinned env snapshot, when the operator set one,
+ * goes through readBoostPricingConfig unchanged (timestamp required, max age
+ * enforced). Otherwise the live feed is read and stamped with the time the
+ * price was observed, and the SAME reader validates it, so the max-age rule,
+ * the treasury address and the signer key/address checks run exactly once, in
+ * one place, for both sources. Nothing is signed without a price.
+ */
+export async function resolveBoostPricingConfig(chainId, { env = process.env, nowSeconds = Math.floor(Date.now() / 1000), readLive = readLiveNativeUsd } = {}) {
+  const chain = Number(chainId);
+  if (!Number.isInteger(chain) || chain <= 0) throw new Error("chainId is invalid");
+  if (hasPinnedNativeUsd(env, [`ARENA_BOOST_NATIVE_USD_MICROS_${chain}`, "ARENA_BOOST_NATIVE_USD_MICROS"])) {
+    return { ...readBoostPricingConfig(chain, env, nowSeconds), priceSource: "env" };
+  }
+  const live = await readLive(chain);
+  const snapshot = withLiveSnapshot(env, {
+    microsKey: `ARENA_BOOST_NATIVE_USD_MICROS_${chain}`,
+    updatedAtKey: `ARENA_BOOST_NATIVE_USD_UPDATED_AT_${chain}`,
+    versionKey: `ARENA_BOOST_PRICING_VERSION_${chain}`,
+    versionFallbackKeys: ["ARENA_BOOST_PRICING_VERSION"],
+  }, live);
+  return { ...readBoostPricingConfig(chain, snapshot, nowSeconds), priceSource: live.source };
 }
 
 export function buildBoostQuote({

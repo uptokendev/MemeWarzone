@@ -43,30 +43,34 @@ async function fetchSpotBnbUsd() {
 }
 
 /**
- * @returns {Promise<{ price: number, source: 'env'|'spot'|'none', cached: boolean }>}
+ * @returns {Promise<{ price: number, source: 'env'|'spot'|'none', cached: boolean, at: number }>}
+ * `at` is the ms timestamp the price was observed (env read, spot fetch or the cache entry
+ * being returned). Since 2026-09-24 boost and sponsorship quotes are signed off this
+ * price (arenaNativeUsdFeed.mjs) and refuse an observation older than their max age,
+ * so the stale-cache fallback below is a display convenience, never a signed price.
  */
 export async function resolveBnbUsdPrice() {
   const fromEnv = envPrice();
   if (fromEnv > 0) {
     cache = { price: fromEnv, at: Date.now(), source: "env" };
-    return { price: fromEnv, source: "env", cached: false };
+    return { price: fromEnv, source: "env", cached: false, at: cache.at };
   }
 
   const now = Date.now();
   if (cache.price > 0 && now - cache.at < CACHE_TTL_MS) {
-    return { price: cache.price, source: cache.source || "spot", cached: true };
+    return { price: cache.price, source: cache.source || "spot", cached: true, at: cache.at };
   }
 
   const spot = await fetchSpotBnbUsd();
   if (spot > 0) {
     cache = { price: spot, at: now, source: "spot" };
-    return { price: spot, source: "spot", cached: false };
+    return { price: spot, source: "spot", cached: false, at: now };
   }
 
   if (cache.price > 0) {
-    return { price: cache.price, source: cache.source || "spot", cached: true };
+    return { price: cache.price, source: cache.source || "spot", cached: true, at: cache.at };
   }
-  return { price: 0, source: "none", cached: false };
+  return { price: 0, source: "none", cached: false, at: 0 };
 }
 
 /** Sync read of last resolved price (env or cache). Prefer resolveBnbUsdPrice in handlers. */

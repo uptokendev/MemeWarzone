@@ -12,7 +12,7 @@ import {
   validateHistoricalNormalPaymentIdentity,
 } from "./lib/arenaSolanaNormalBoostAuthority.mjs";
 import { connectionForArenaMoneyV2 } from "./lib/solanaArenaMoneyV2Read.js";
-import { assertSolanaPubkey, quoteSolanaBoost, randomMoneyId32 } from "./lib/solanaArenaMoneyV2Runtime.mjs";
+import { assertSolanaPubkey, quoteSolanaBoost, randomMoneyId32, resolveSolanaNativeUsdPricing } from "./lib/solanaArenaMoneyV2Runtime.mjs";
 // Boosts ride the war pool (deposit_prize_boost_v2), the generation battles and
 // tournaments are opened in -- not the competition pools, which never existed
 // for them on-chain.
@@ -323,7 +323,7 @@ async function createQuote(req, res, route) {
   });
   if (!auth || auth.legacy) return auth?.legacy ? json(res, 401, { ok: false, error: "Signed wallet authentication is required" }) : undefined;
   let money;
-  try { money = quoteSolanaBoost({ chainId: context.chainId, boostUnits: units }); }
+  try { money = quoteSolanaBoost({ chainId: context.chainId, boostUnits: units, pricing: await resolveSolanaNativeUsdPricing(context.chainId, "BOOST") }); }
   catch (error) { return json(res, 503, { ok: false, error: "SOL Boost pricing is unavailable", detail: String(error?.message || error) }); }
   const fundingId = randomMoneyId32();
   const requirements = buildSolanaBoostInstructionRequirements({ competitionId: context.competitionId, fundingId, wallet, grossLamports: money.gross });

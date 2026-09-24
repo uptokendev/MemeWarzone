@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { PublicKey, SystemProgram } from "@solana/web3.js";
 
 import { unitPriceNativeRawFromUsdMicros } from "./arenaBoostQuote.mjs";
+import { hasPinnedNativeUsd, readLiveNativeUsd, withLiveSnapshot } from "./arenaNativeUsdFeed.mjs";
 import {
   connectionForArenaMoneyV2,
   deriveArenaMoneyConfigV2Pda,
@@ -171,6 +172,28 @@ export function readSolanaNativeUsdPricing(chainId, product = "BOOST", env = pro
   const now = BigInt(nowSeconds);
   if (oracleTimestamp > now || now - oracleTimestamp > maxAgeSeconds) throw new Error(`${product} SOL/USD price is stale`);
   return { chainId: chain, nativeUsdMicros, pricingVersion, oracleTimestamp, nativeDecimals: SOLANA_NATIVE_DECIMALS };
+}
+
+/**
+ * SOL/USD pricing for signing a boost or sponsorship quote on chain 101:
+ * pinned env snapshot through readSolanaNativeUsdPricing unchanged, otherwise
+ * the live SOL feed stamped with its observation time and validated by that
+ * same reader (chain check, max age). Callers pass the result as `pricing`.
+ */
+export async function resolveSolanaNativeUsdPricing(chainId, product = "BOOST", { env = process.env, nowSeconds = Math.floor(Date.now() / 1000), readLive = readLiveNativeUsd } = {}) {
+  const chain = Number(chainId);
+  if (chain !== 101) throw new Error("Solana Arena Money V2 current authority requires chain 101");
+  const prefix = product === "SPONSORSHIP" ? "ARENA_SPONSORSHIP" : "ARENA_BOOST";
+  const pinnedKeys = [`${prefix}_NATIVE_USD_MICROS_${chain}`, `${prefix}_NATIVE_USD_MICROS`, `ARENA_BOOST_NATIVE_USD_MICROS_${chain}`, "ARENA_BOOST_NATIVE_USD_MICROS"];
+  if (hasPinnedNativeUsd(env, pinnedKeys)) return { ...readSolanaNativeUsdPricing(chain, product, env, nowSeconds), priceSource: "env" };
+  const live = await readLive(chain);
+  const snapshot = withLiveSnapshot(env, {
+    microsKey: `${prefix}_NATIVE_USD_MICROS_${chain}`,
+    updatedAtKey: `${prefix}_NATIVE_USD_UPDATED_AT_${chain}`,
+    versionKey: `${prefix}_PRICING_VERSION_${chain}`,
+    versionFallbackKeys: [`${prefix}_PRICING_VERSION`, `ARENA_BOOST_PRICING_VERSION_${chain}`, "ARENA_BOOST_PRICING_VERSION"],
+  }, live);
+  return { ...readSolanaNativeUsdPricing(chain, product, snapshot, nowSeconds), priceSource: live.source };
 }
 
 export function quoteSolanaBoost({ chainId, boostUnits, pricing = readSolanaNativeUsdPricing(chainId, "BOOST") }) {

@@ -1129,6 +1129,21 @@ own `UPVoteTreasury` `0x8C8141B8…`; the sponsorship rail
 (`EventPrizeVaultV1` + `WarzoneSponsorshipRouterV1`) is deployed Safe-owned on
 both chains with the boost signer as quote signer, no event enabled yet.
 
+### Boost + sponsorship pricing is live-fed (2026-09-24, founder: option A)
+
+The API is the only price oracle for boost and sponsorship quotes on all three
+chains (the contracts verify signature + deadline, never the price). Until this
+change the three pricing readers took **only** a static env snapshot with a
+300 s max age and nothing refreshed it — on live every boost quote was 503.
+`frontend/api/lib/arenaNativeUsdFeed.mjs` now prices from the existing Binance
+spot readers (56 BNB, 4663 ETH, 101 SOL; the readers gained an `at` observation
+time) through `resolveBoostPricingConfig` / `resolveSponsorshipPricingConfig` /
+`resolveSolanaNativeUsdPricing`, which stamp the **observation** time and hand it
+to the unchanged sync reader, so max age, treasury/router address and signer
+checks run once, in one place. A pinned `*_NATIVE_USD_MICROS` env still wins and
+is refused when stale, never replaced by the feed. No pricing env is needed on
+the API. Audit note in `docs/build_plans/go-live-runbook.md` §P.
+
 ### Binding tokens on EVM — facts read 2026-09-24 (launch requirement)
 
 - **Robinhood stock adapter `0xa48723e3…` had no campaign factory bound**

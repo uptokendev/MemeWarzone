@@ -9,6 +9,7 @@ import {
   assertSponsorshipPaidMatches,
   decodeSponsorshipPaidLog,
   readSponsorshipPricingConfig,
+  resolveSponsorshipPricingConfig,
   signSponsorshipQuote,
   sponsorshipEventId,
   sponsorshipPricingTierId,
@@ -148,4 +149,39 @@ test("sponsorship API derives price server-side, preflights deployment and uses 
   assert.match(deployment, /router\.quoteSigner\(\)/);
   assert.match(deployment, /router\.enabledEvents\(eventId\)/);
   assert.match(deployment, /vault\.eventReceivers\(eventId\)/);
+});
+
+test("resolveSponsorshipPricingConfig: pinned snapshot (sponsorship or boost keys) wins; otherwise the live observation is stamped and validated", async () => {
+  const signer = new Wallet(PRIVATE_KEY);
+  const now = 1_800_000_000;
+  const base = {
+    WARZONE_SPONSORSHIP_ROUTER_V1_ADDRESS_56: ROUTER,
+    ARENA_SPONSORSHIP_QUOTE_SIGNER_PRIVATE_KEY: PRIVATE_KEY,
+    ARENA_SPONSORSHIP_QUOTE_SIGNER_ADDRESS_56: signer.address,
+  };
+  let liveCalls = 0;
+  const readLive = async (chainId) => { liveCalls += 1; return { chainId, asset: "BNB", nativeUsdMicros: 781_750_000n, observedAtSeconds: now - 20, source: "spot", cached: false }; };
+
+  // pinned through the boost keys the sync reader already falls back to
+  const pinned = await resolveSponsorshipPricingConfig(56, { env: { ...base, ARENA_BOOST_NATIVE_USD_MICROS_56: "600000000", ARENA_BOOST_PRICING_VERSION_56: "7", ARENA_BOOST_NATIVE_USD_UPDATED_AT_56: String(now - 10) }, nowSeconds: now, readLive });
+  assert.equal(liveCalls, 0);
+  assert.equal(pinned.priceSource, "env");
+  assert.equal(pinned.nativeUsdMicros, 600_000_000n);
+  assert.equal(pinned.pricingVersion, 7n);
+
+  // live
+  const live = await resolveSponsorshipPricingConfig(56, { env: base, nowSeconds: now, readLive });
+  assert.equal(liveCalls, 1);
+  assert.equal(live.priceSource, "spot");
+  assert.equal(live.nativeUsdMicros, 781_750_000n);
+  assert.equal(live.oracleTimestamp, BigInt(now - 20));
+  assert.equal(live.pricingVersion, 1n);
+  assert.equal(live.routerAddress, ROUTER);
+  assert.equal(live.signer.address, signer.address);
+
+  // stale observation refused; router still required; signer mismatch still refused
+  await assert.rejects(() => resolveSponsorshipPricingConfig(56, { env: base, nowSeconds: now, readLive: async () => ({ nativeUsdMicros: 1n, observedAtSeconds: now - 301, source: "spot" }) }), /price is stale/);
+  await assert.rejects(() => resolveSponsorshipPricingConfig(56, { env: { ...base, WARZONE_SPONSORSHIP_ROUTER_V1_ADDRESS_56: "" }, nowSeconds: now, readLive }), /router/i);
+  await assert.rejects(() => resolveSponsorshipPricingConfig(56, { env: { ...base, ARENA_SPONSORSHIP_QUOTE_SIGNER_ADDRESS_56: "0x2222222222222222222222222222222222222222" }, nowSeconds: now, readLive }), /mismatch/);
+  await assert.rejects(() => resolveSponsorshipPricingConfig(56, { env: base, nowSeconds: now, readLive: async () => { throw new Error("BNB/USD price is unavailable"); } }), /unavailable/);
 });

@@ -44,24 +44,24 @@ export async function resolveEthUsdPrice() {
   const fromEnv = envPrice();
   if (fromEnv > 0) {
     cache = { price: fromEnv, at: Date.now(), source: "env" };
-    return { price: fromEnv, source: "env", cached: false };
+    return { price: fromEnv, source: "env", cached: false, at: cache.at };
   }
 
   const now = Date.now();
   if (cache.price > 0 && now - cache.at < CACHE_TTL_MS) {
-    return { price: cache.price, source: cache.source || "spot", cached: true };
+    return { price: cache.price, source: cache.source || "spot", cached: true, at: cache.at };
   }
 
   const spot = await fetchSpotEthUsd();
   if (spot > 0) {
     cache = { price: spot, at: now, source: "spot" };
-    return { price: spot, source: "spot", cached: false };
+    return { price: spot, source: "spot", cached: false, at: now };
   }
 
   if (cache.price > 0) {
-    return { price: cache.price, source: cache.source || "spot", cached: true };
+    return { price: cache.price, source: cache.source || "spot", cached: true, at: cache.at };
   }
-  return { price: 0, source: "none", cached: false };
+  return { price: 0, source: "none", cached: false, at: 0 };
 }
 
 export function readEthUsdPriceSync() {

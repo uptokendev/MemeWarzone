@@ -8,6 +8,7 @@ import {
   assertSolanaPubkey,
   buildSolanaSponsorshipInstructionRequirements,
   quoteSolanaSponsorship,
+  resolveSolanaNativeUsdPricing,
   randomMoneyId32,
   verifySolanaSponsorshipPayment,
 } from "./lib/solanaArenaMoneyV2Runtime.mjs";
@@ -285,7 +286,11 @@ async function handleSolanaQuote(req, res) {
   const [onchainEvent, vault] = await Promise.all([readSponsorshipEventV1(event.chain_id, eventId), readEventPrizeVaultV1(event.chain_id, eventId)]);
   if (!onchainEvent.ok || !onchainEvent.event?.enabled || !vault.ok) return json(res, 503, { ok: false, error: "Solana sponsorship event/vault is not active", code: "SOLANA_SPONSORSHIP_NOT_ACTIVE", reason: onchainEvent.reason || vault.reason });
   let money, minimumMoney;
-  try { money = quoteSolanaSponsorship({ chainId: event.chain_id, requestedUsdMicros: centsToMicros(requestedCents) }); minimumMoney = quoteSolanaSponsorship({ chainId: event.chain_id, requestedUsdMicros: centsToMicros(minimumCents) }); }
+  try {
+    const pricing = await resolveSolanaNativeUsdPricing(event.chain_id, "SPONSORSHIP");
+    money = quoteSolanaSponsorship({ chainId: event.chain_id, requestedUsdMicros: centsToMicros(requestedCents), pricing });
+    minimumMoney = quoteSolanaSponsorship({ chainId: event.chain_id, requestedUsdMicros: centsToMicros(minimumCents), pricing });
+  }
   catch (error) { return json(res, 503, { ok: false, error: "SOL sponsorship pricing is unavailable", detail: String(error?.message || error) }); }
   if (money.gross < onchainEvent.event.minimumLamports || minimumMoney.gross < onchainEvent.event.minimumLamports) return json(res, 409, { ok: false, error: "On-chain sponsorship minimum exceeds authoritative USD minimum", code: "SOLANA_SPONSORSHIP_MINIMUM_MISMATCH" });
   const paymentId = randomMoneyId32();

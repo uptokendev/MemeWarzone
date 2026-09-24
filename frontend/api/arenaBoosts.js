@@ -13,7 +13,7 @@ import { VOTE_BATTLE_BOOST_POINTS_PER_UNIT, isStandaloneVoteBattle, voteBattleRe
 import {
   DEFAULT_QUOTE_TTL_SECONDS,
   randomBoostNonce,
-  readBoostPricingConfig,
+  resolveBoostPricingConfig,
   serializeSignedBoostQuote,
   signBoostQuote,
 } from "./lib/arenaBoostQuote.mjs";
@@ -340,7 +340,7 @@ async function createBattleBoostQuote(req, res) {
 
   let config;
   try {
-    config = readBoostPricingConfig(chainId);
+    config = await resolveBoostPricingConfig(chainId);
   } catch (error) {
     console.error("[api/arenaBoosts] quote pricing unavailable", error?.message || error);
     return json(res, 503, { ok: false, error: "Battle Boost pricing is unavailable" });

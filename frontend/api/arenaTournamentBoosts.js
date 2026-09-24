@@ -7,7 +7,7 @@ import { battleBoostTreasuryV2Address } from "./lib/arenaBoostChainVerification.
 import {
   DEFAULT_QUOTE_TTL_SECONDS,
   randomBoostNonce,
-  readBoostPricingConfig,
+  resolveBoostPricingConfig,
   serializeSignedBoostQuote,
   signBoostQuote,
 } from "./lib/arenaBoostQuote.mjs";
@@ -193,7 +193,7 @@ async function createQuote(req, res, route, tournament) {
   }
 
   try {
-    const config = readBoostPricingConfig(chainId);
+    const config = await resolveBoostPricingConfig(chainId);
     const now = Math.floor(Date.now() / 1000);
     const deadline = now + quoteTtlSeconds();
     const signed = await signBoostQuote(config, {
