@@ -55,7 +55,7 @@ export function BuyInPopup({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md border-accent/40 bg-background/95 p-0">
+      <DialogContent className="mwz-portal-shell max-w-md border-accent/40 bg-background/95 p-0">
         <div className="mwz-hud-frame space-y-4 border-0 p-5">
           <DialogTitle className="font-retro text-[10px] uppercase tracking-[0.22em] text-accent">Scheduled battle</DialogTitle>
           <h2 className="font-retro text-lg text-foreground">{live ? "Battle is live" : waitingOther ? "Waiting for the other side" : "Accepted — pay your buy-in"}</h2>

@@ -134,7 +134,7 @@ export function ChallengeResponsePopup({
   return (
     <>
       <Dialog open={open && !buyInOpen} onOpenChange={(next) => { if (!next) onClose(); }}>
-        <DialogContent className="max-w-md border-accent/40 bg-background/95 p-0">
+        <DialogContent className="mwz-portal-shell max-w-md border-accent/40 bg-background/95 p-0">
           <div className="mwz-hud-frame space-y-4 border-0 p-5">
             <DialogTitle className="font-retro text-[10px] uppercase tracking-[0.22em] text-accent">{view.kicker}</DialogTitle>
             <h2 className="font-retro text-xl text-foreground">{view.headline}</h2>

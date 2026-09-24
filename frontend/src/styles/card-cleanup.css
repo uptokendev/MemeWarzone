@@ -22,14 +22,25 @@
   --mwz-selected-glow: 0 0 28px rgba(var(--mwz-orange-rgb), 0.24);
 }
 
-/* ---------- Flat frame defaults (no hover side-effects) ---------- */
+/* ---------- Flat frame defaults (no hover side-effects) ----------
+   `.mwz-portal-shell` is the same scope for content rendered through a portal
+   (Radix Dialog mounts on <body>, outside .mwz-app-shell): without it the legacy
+   9-slice .mwz-card frame came back on the Challenge a coin popup (2026-09-24). */
+.mwz-portal-shell .mwz-hud-frame,
 .mwz-app-shell .mwz-hud-frame,
+.mwz-portal-shell .mwz-panel,
 .mwz-app-shell .mwz-panel,
+.mwz-portal-shell .mwz-card,
 .mwz-app-shell .mwz-card,
+.mwz-portal-shell .mwz-flat-card,
 .mwz-app-shell .mwz-flat-card,
+.mwz-portal-shell .mwz-command-card,
 .mwz-app-shell .mwz-command-card,
+.mwz-portal-shell .mwz-command-header,
 .mwz-app-shell .mwz-command-header,
+.mwz-portal-shell .mwz-command-metric,
 .mwz-app-shell .mwz-command-metric,
+.mwz-portal-shell .holo-card,
 .mwz-app-shell .holo-card {
   position: relative;
   isolation: isolate;
@@ -48,46 +59,78 @@
   transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease !important;
 }
 
+.mwz-portal-shell .mwz-hud-frame::before,
 .mwz-app-shell .mwz-hud-frame::before,
+.mwz-portal-shell .mwz-panel::before,
 .mwz-app-shell .mwz-panel::before,
+.mwz-portal-shell .mwz-card::before,
 .mwz-app-shell .mwz-card::before,
+.mwz-portal-shell .mwz-flat-card::before,
 .mwz-app-shell .mwz-flat-card::before,
+.mwz-portal-shell .mwz-command-card::before,
 .mwz-app-shell .mwz-command-card::before,
+.mwz-portal-shell .mwz-command-header::before,
 .mwz-app-shell .mwz-command-header::before,
+.mwz-portal-shell .mwz-command-metric::before,
 .mwz-app-shell .mwz-command-metric::before,
+.mwz-portal-shell .holo-card::before,
 .mwz-app-shell .holo-card::before,
+.mwz-portal-shell .mwz-hud-frame::after,
 .mwz-app-shell .mwz-hud-frame::after,
+.mwz-portal-shell .mwz-panel::after,
 .mwz-app-shell .mwz-panel::after,
+.mwz-portal-shell .mwz-card::after,
 .mwz-app-shell .mwz-card::after,
+.mwz-portal-shell .mwz-flat-card::after,
 .mwz-app-shell .mwz-flat-card::after,
+.mwz-portal-shell .mwz-command-card::after,
 .mwz-app-shell .mwz-command-card::after,
+.mwz-portal-shell .mwz-command-header::after,
 .mwz-app-shell .mwz-command-header::after,
+.mwz-portal-shell .mwz-command-metric::after,
 .mwz-app-shell .mwz-command-metric::after,
+.mwz-portal-shell .holo-card::after,
 .mwz-app-shell .holo-card::after {
   content: none !important;
   display: none !important;
 }
 
+.mwz-portal-shell .mwz-hud-frame > *,
 .mwz-app-shell .mwz-hud-frame > *,
+.mwz-portal-shell .mwz-panel > *,
 .mwz-app-shell .mwz-panel > *,
+.mwz-portal-shell .mwz-card > *,
 .mwz-app-shell .mwz-card > *,
+.mwz-portal-shell .mwz-flat-card > *,
 .mwz-app-shell .mwz-flat-card > *,
+.mwz-portal-shell .mwz-command-card > *,
 .mwz-app-shell .mwz-command-card > *,
+.mwz-portal-shell .mwz-command-header > *,
 .mwz-app-shell .mwz-command-header > *,
+.mwz-portal-shell .mwz-command-metric > *,
 .mwz-app-shell .mwz-command-metric > *,
+.mwz-portal-shell .holo-card > *,
 .mwz-app-shell .holo-card > * {
   position: relative;
   z-index: 1;
 }
 
 /* Explicit decorative layers stay out of card flow. Do not weaken the rule above. */
+.mwz-portal-shell .mwz-hud-frame > [data-mwz-decorative-layer],
 .mwz-app-shell .mwz-hud-frame > [data-mwz-decorative-layer],
+.mwz-portal-shell .mwz-panel > [data-mwz-decorative-layer],
 .mwz-app-shell .mwz-panel > [data-mwz-decorative-layer],
+.mwz-portal-shell .mwz-card > [data-mwz-decorative-layer],
 .mwz-app-shell .mwz-card > [data-mwz-decorative-layer],
+.mwz-portal-shell .mwz-flat-card > [data-mwz-decorative-layer],
 .mwz-app-shell .mwz-flat-card > [data-mwz-decorative-layer],
+.mwz-portal-shell .mwz-command-card > [data-mwz-decorative-layer],
 .mwz-app-shell .mwz-command-card > [data-mwz-decorative-layer],
+.mwz-portal-shell .mwz-command-header > [data-mwz-decorative-layer],
 .mwz-app-shell .mwz-command-header > [data-mwz-decorative-layer],
+.mwz-portal-shell .mwz-command-metric > [data-mwz-decorative-layer],
 .mwz-app-shell .mwz-command-metric > [data-mwz-decorative-layer],
+.mwz-portal-shell .holo-card > [data-mwz-decorative-layer],
 .mwz-app-shell .holo-card > [data-mwz-decorative-layer] {
   position: absolute !important;
   inset: 0;
@@ -96,13 +139,21 @@
 }
 
 /* Explicit freeze for non-control frames — higher specificity than utility hovers */
+.mwz-portal-shell main .mwz-hud-frame:not(a):not(button):not([role="button"]):not(.cursor-pointer):not(.mwz-button):hover,
 .mwz-app-shell main .mwz-hud-frame:not(a):not(button):not([role="button"]):not(.cursor-pointer):not(.mwz-button):hover,
+.mwz-portal-shell main .mwz-panel:not(a):not(button):not([role="button"]):not(.cursor-pointer):not(.mwz-button):hover,
 .mwz-app-shell main .mwz-panel:not(a):not(button):not([role="button"]):not(.cursor-pointer):not(.mwz-button):hover,
+.mwz-portal-shell main .mwz-card:not(a):not(button):not([role="button"]):not(.cursor-pointer):not(.mwz-button):hover,
 .mwz-app-shell main .mwz-card:not(a):not(button):not([role="button"]):not(.cursor-pointer):not(.mwz-button):hover,
+.mwz-portal-shell main .mwz-flat-card:not(a):not(button):not([role="button"]):not(.cursor-pointer):not(.mwz-button):hover,
 .mwz-app-shell main .mwz-flat-card:not(a):not(button):not([role="button"]):not(.cursor-pointer):not(.mwz-button):hover,
+.mwz-portal-shell main .mwz-command-card:not(a):not(button):not([role="button"]):not(.cursor-pointer):not(.mwz-button):hover,
 .mwz-app-shell main .mwz-command-card:not(a):not(button):not([role="button"]):not(.cursor-pointer):not(.mwz-button):hover,
+.mwz-portal-shell main .mwz-command-header:not(a):not(button):not([role="button"]):not(.cursor-pointer):not(.mwz-button):hover,
 .mwz-app-shell main .mwz-command-header:not(a):not(button):not([role="button"]):not(.cursor-pointer):not(.mwz-button):hover,
+.mwz-portal-shell main .mwz-command-metric:not(a):not(button):not([role="button"]):not(.cursor-pointer):not(.mwz-button):hover,
 .mwz-app-shell main .mwz-command-metric:not(a):not(button):not([role="button"]):not(.cursor-pointer):not(.mwz-button):hover,
+.mwz-portal-shell main .holo-card:not(a):not(button):not([role="button"]):not(.cursor-pointer):not(.mwz-button):hover,
 .mwz-app-shell main .holo-card:not(a):not(button):not([role="button"]):not(.cursor-pointer):not(.mwz-button):hover {
   border-color: var(--mwz-flat-card-border) !important;
   background:
@@ -129,34 +180,63 @@
 }
 
 /* ---------- Interactive orange hover (controls only) ---------- */
+.mwz-portal-shell main a.mwz-hud-frame:hover,
 .mwz-app-shell main a.mwz-hud-frame:hover,
+.mwz-portal-shell main a.mwz-panel:hover,
 .mwz-app-shell main a.mwz-panel:hover,
+.mwz-portal-shell main a.mwz-card:hover,
 .mwz-app-shell main a.mwz-card:hover,
+.mwz-portal-shell main a.mwz-flat-card:hover,
 .mwz-app-shell main a.mwz-flat-card:hover,
+.mwz-portal-shell main a.holo-card:hover,
 .mwz-app-shell main a.holo-card:hover,
+.mwz-portal-shell main button.mwz-hud-frame:hover,
 .mwz-app-shell main button.mwz-hud-frame:hover,
+.mwz-portal-shell main button.mwz-panel:hover,
 .mwz-app-shell main button.mwz-panel:hover,
+.mwz-portal-shell main button.mwz-card:hover,
 .mwz-app-shell main button.mwz-card:hover,
+.mwz-portal-shell main button.mwz-flat-card:hover,
 .mwz-app-shell main button.mwz-flat-card:hover,
+.mwz-portal-shell main button.holo-card:hover,
 .mwz-app-shell main button.holo-card:hover,
+.mwz-portal-shell main [role="button"].mwz-hud-frame:hover,
 .mwz-app-shell main [role="button"].mwz-hud-frame:hover,
+.mwz-portal-shell main [role="button"].mwz-panel:hover,
 .mwz-app-shell main [role="button"].mwz-panel:hover,
+.mwz-portal-shell main [role="button"].mwz-card:hover,
 .mwz-app-shell main [role="button"].mwz-card:hover,
+.mwz-portal-shell main .cursor-pointer.mwz-hud-frame:hover,
 .mwz-app-shell main .cursor-pointer.mwz-hud-frame:hover,
+.mwz-portal-shell main .cursor-pointer.mwz-panel:hover,
 .mwz-app-shell main .cursor-pointer.mwz-panel:hover,
+.mwz-portal-shell main .cursor-pointer.mwz-card:hover,
 .mwz-app-shell main .cursor-pointer.mwz-card:hover,
+.mwz-portal-shell main a.campaign-card:hover,
 .mwz-app-shell main a.campaign-card:hover,
+.mwz-portal-shell main a.draft-card:hover,
 .mwz-app-shell main a.draft-card:hover,
+.mwz-portal-shell main button.campaign-card:hover,
 .mwz-app-shell main button.campaign-card:hover,
+.mwz-portal-shell main button.draft-card:hover,
 .mwz-app-shell main button.draft-card:hover,
+.mwz-portal-shell main [data-card-kind="campaign"]:hover,
 .mwz-app-shell main [data-card-kind="campaign"]:hover,
+.mwz-portal-shell main [data-card-kind="draft"]:hover,
 .mwz-app-shell main [data-card-kind="draft"]:hover,
+.mwz-portal-shell main a[class*="border-border"]:hover,
 .mwz-app-shell main a[class*="border-border"]:hover,
+.mwz-portal-shell main button[class*="border-border"]:hover,
 .mwz-app-shell main button[class*="border-border"]:hover,
+.mwz-portal-shell main [role="button"][class*="border-border"]:hover,
 .mwz-app-shell main [role="button"][class*="border-border"]:hover,
+.mwz-portal-shell main .cursor-pointer[class*="border-border"]:hover,
 .mwz-app-shell main .cursor-pointer[class*="border-border"]:hover,
+.mwz-portal-shell main a[class*="border-accent"]:hover,
 .mwz-app-shell main a[class*="border-accent"]:hover,
+.mwz-portal-shell main button[class*="border-accent"]:hover,
 .mwz-app-shell main button[class*="border-accent"]:hover,
+.mwz-portal-shell main .cursor-pointer[class*="border-accent"]:hover,
 .mwz-app-shell main .cursor-pointer[class*="border-accent"]:hover {
   border-color: var(--mwz-interactive-border) !important;
   background:
@@ -171,15 +251,25 @@
 /* mwz-button / chip already have their own orange hover in tactical CSS — leave them. */
 
 /* ---------- Selected state (must beat base flat + hover) ---------- */
+.mwz-portal-shell main [data-selected="true"],
 .mwz-app-shell main [data-selected="true"],
+.mwz-portal-shell main .is-selected,
 .mwz-app-shell main .is-selected,
+.mwz-portal-shell main button[data-selected="true"],
 .mwz-app-shell main button[data-selected="true"],
+.mwz-portal-shell main button.is-selected,
 .mwz-app-shell main button.is-selected,
+.mwz-portal-shell main a[data-selected="true"],
 .mwz-app-shell main a[data-selected="true"],
+.mwz-portal-shell main a.is-selected,
 .mwz-app-shell main a.is-selected,
+.mwz-portal-shell main .mwz-hud-frame[data-selected="true"],
 .mwz-app-shell main .mwz-hud-frame[data-selected="true"],
+.mwz-portal-shell main .mwz-hud-frame.is-selected,
 .mwz-app-shell main .mwz-hud-frame.is-selected,
+.mwz-portal-shell main .mwz-card[data-selected="true"],
 .mwz-app-shell main .mwz-card[data-selected="true"],
+.mwz-portal-shell main .mwz-card.is-selected,
 .mwz-app-shell main .mwz-card.is-selected {
   border-width: 2px !important;
   border-style: solid !important;
@@ -193,9 +283,13 @@
   transform: none !important;
 }
 
+.mwz-portal-shell main [data-selected="true"]:hover,
 .mwz-app-shell main [data-selected="true"]:hover,
+.mwz-portal-shell main .is-selected:hover,
 .mwz-app-shell main .is-selected:hover,
+.mwz-portal-shell main button[data-selected="true"]:hover,
 .mwz-app-shell main button[data-selected="true"]:hover,
+.mwz-portal-shell main button.is-selected:hover,
 .mwz-app-shell main button.is-selected:hover {
   border-color: var(--mwz-selected-border) !important;
   background:
@@ -273,39 +367,57 @@
   box-shadow: none !important;
 }
 
+.mwz-portal-shell main :where(input, textarea, select, img),
 .mwz-app-shell main :where(input, textarea, select, img) {
   box-shadow: none !important;
 }
 
 /* Kill leftover diagonal cut-edge frames */
+.mwz-portal-shell .mwz-hud-frame,
 .mwz-app-shell .mwz-hud-frame,
+.mwz-portal-shell .mwz-panel,
 .mwz-app-shell .mwz-panel,
+.mwz-portal-shell .mwz-card,
 .mwz-app-shell .mwz-card,
+.mwz-portal-shell .mwz-flat-card,
 .mwz-app-shell .mwz-flat-card,
+.mwz-portal-shell .mwz-button,
 .mwz-app-shell .mwz-button,
+.mwz-portal-shell .mwz-chip,
 .mwz-app-shell .mwz-chip,
+.mwz-portal-shell .mwz-nav-link,
 .mwz-app-shell .mwz-nav-link,
+.mwz-portal-shell .holo-card,
 .mwz-app-shell .holo-card {
   clip-path: none !important;
   border-radius: 0 !important;
 }
 
 /* Campaign / status pills: square — keep radar scopes circular */
+.mwz-portal-shell main .rounded-full:not(img):not(input):not(textarea):not(.mwz-radar),
 .mwz-app-shell main .rounded-full:not(img):not(input):not(textarea):not(.mwz-radar),
+.mwz-portal-shell main .rounded-2xl:not(img):not(input):not(textarea):not(.mwz-radar),
 .mwz-app-shell main .rounded-2xl:not(img):not(input):not(textarea):not(.mwz-radar),
+.mwz-portal-shell main .rounded-xl:not(img):not(input):not(textarea):not(.mwz-radar),
 .mwz-app-shell main .rounded-xl:not(img):not(input):not(textarea):not(.mwz-radar),
+.mwz-portal-shell main .rounded-lg:not(img):not(input):not(textarea):not(.mwz-radar),
 .mwz-app-shell main .rounded-lg:not(img):not(input):not(textarea):not(.mwz-radar) {
   border-radius: 0 !important;
 }
 
+.mwz-portal-shell .mwz-radar,
 .mwz-app-shell .mwz-radar,
+.mwz-portal-shell .mwz-radar *,
 .mwz-app-shell .mwz-radar * {
   border-radius: 9999px !important;
 }
 
 /* No hover zoom on card media */
+.mwz-portal-shell main .group:hover img,
 .mwz-app-shell main .group:hover img,
+.mwz-portal-shell main .mwz-card:hover img,
 .mwz-app-shell main .mwz-card:hover img,
+.mwz-portal-shell main .mwz-hud-frame:hover img,
 .mwz-app-shell main .mwz-hud-frame:hover img {
   transform: none !important;
 }

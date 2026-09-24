@@ -158,7 +158,7 @@ export function ChallengeCoinModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[920px] w-[min(920px,calc(100vw-1rem))] border-0 bg-transparent p-0 shadow-none gap-0 overflow-visible [&>button]:hidden">
+      <DialogContent className="mwz-portal-shell max-w-[920px] w-[min(920px,calc(100vw-1rem))] border-0 bg-transparent p-0 shadow-none gap-0 overflow-visible [&>button]:hidden">
         <DialogTitle className="sr-only">Challenge a coin</DialogTitle>
         <CreateWizardShell
           step={step}
