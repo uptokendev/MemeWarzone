@@ -404,9 +404,9 @@ account, and the rent is always recoverable with
 
 | | Address / path | State |
 |---|---|---|
-| Launchpad buffer | `EdmGZHL5fNGQuT8b8wRz5JbT4uhUwHyptuoSoBjLkJbg` | **staged on mainnet 2026-09-23**, 6.19120428 SOL, bytes verified, authority `fk5YYWb…` |
+| Launchpad buffer | `EdmGZHL5fNGQuT8b8wRz5JbT4uhUwHyptuoSoBjLkJbg` | consumed by upgrade #15, re-staged after the incident, **consumed by upgrade #17 (2026-09-24, sig `5xeTMQ8K…`, slot 449877289)**. Closed; 6.19 SOL back on the deployer (7.6566 SOL). |
 | | `~/.config/memewarzone/mwz-launchpad-mainnet-buffer-e6ed7df3.json` | |
-| Treasury buffer | `GQC9eHQsDgUgydstAYxks9JFpDVhRGrPZ7vAMXygWc9y` | **staged on mainnet 2026-09-24**, 6.63861004 SOL, byte-verified against `1028f6f8…` independently of the staging script, authority `fk5YYWb…`. Allocation extended to 1306640 first (extend left the deployed bytes untouched: old `7e159b69…` + zero padding, verified). Deployer 1.035 SOL; the buffer rent returns to it on execution. |
+| Treasury buffer | `GQC9eHQsDgUgydstAYxks9JFpDVhRGrPZ7vAMXygWc9y` | staged 2026-09-24, consumed by the wrong proposal #16 (see INCIDENT), re-staged, **consumed by upgrade #18 (2026-09-24, sig `3tpjQoiC…`, slot 449990075)**. Closed; deployer 7.6445 SOL. |
 
 The launchpad buffer exists and is in the multisig's hands. The program itself
 is untouched (`Last Deployed In Slot` still 448871337), so nothing has been
@@ -937,6 +937,25 @@ oracle here is the router there. Chain-pair every address.
 
 ### Still to do
 
+- ~~Two code gaps found 2026-09-24 that defeated the release silently~~ **fixed
+  2026-09-24, not yet on the live branch** (details and the corrected per-service
+  env in `docs/build_plans/go-live-runbook.md` §C2/§D): (1) the create-authorization
+  gate expected campaign generation 2 on 56 and 4/2 on 4663 while both new mainnet
+  factories report **4/3** on chain (old BNB 3/2) — the rule is now a per-chain
+  list of allowed factory/campaign *pairs* (`isSupportedGenerationPair`; BNB
+  3/2, 4/2, 4/3; Robinhood 4/3), so legacy scheduled factories keep working;
+  (2) the indexer's `CHAINS`/`factoryDiscovery` gained 4663 mirroring 46630;
+  (3) launchpad UP-vote ingest accepts 4663 (`votes-ingest.js`,
+  `arenaVoteTreasury.js`) for the Robinhood `UPVoteTreasury` still to deploy;
+  (4) the `resolve-due` worker accepts an inline keypair JSON. Also:
+  `memewar.zone` is a Netlify landing page; the app is `app.memewar.zone` on
+  Coolify, so `VITE_*` live on the **app service**.
+- **UP votes → capped protocol wallet (founder decision 2026-09-24).** On BNB the
+  `UPVoteTreasury` `0xF6AA6eD3…` forwards to the Safe, not the vault: one Safe tx
+  `setFeeReceiver(0xc2d4E6f8…)`. Robinhood gets its own `UPVoteTreasury(owner =
+  Safe, feeReceiver = 0x632061cA…)`. **Both `ProtocolRevenueVault`s have the $10k
+  cap but no operator and no overflow set** — `setOperatorFill` from the Safe on
+  both chains is required before the doors open (operator address: founder).
 - **Robinhood mainnet battles are no longer gated in code.** `arenaWarPoolEscrow.js`
   used to refuse 4663 outright; it now takes `ARENA_WAR_POOL_TREASURY_V2_ADDRESS_4663`
   like every other chain, V2-only, runtime hash enforced. The staging authority map
@@ -992,9 +1011,94 @@ Rule from this: **a Squads proposal is decoded from chain and checked
 field-by-field before anyone signs** — `scripts/solana/decode-squads-proposal.mjs`.
 The Squads UI's own review was not enough.
 
-Recovery: re-stage `e6ed7df3…` into `EdmGZHL5…` (6.19 SOL; deployer held
-7.668), Squads Upgrade with program `3JSG…` → verify → then re-stage the
-treasury buffer and propose with program `2NzthKEZ…`.
+Recovery, **done 2026-09-24**: `e6ed7df3…` re-staged into `EdmGZHL5…`; the
+Squads web app refused the re-used buffer address, so proposal #17 was created
+from the terminal with `propose-squads-upgrade.mjs` (see Recovery tooling),
+decoded twice (`PROPOSAL MATCHES`), approved by `9YN7…` + `EGHZ…`, executed
+as `5xeTMQ8KNzFNqkrXeSqR8ThyLN3hRyaCToW4vkENP6BWxfnyc1sj2ajhf7esDqiqVNNM39kwtivfYqyaLrwqdYw`
+(slot 449877289). Verified: ProgramData = `e6ed7df3…` + zeros, authority
+`fk5Y…`, buffer closed, 6.19 SOL returned. **Launchpad down from slot
+449859880 to 449877289.**
+
+### Solana treasury — UPGRADED ON MAINNET (2026-09-24)
+
+Same path, same checks: `GQC9eHQs…` re-staged (6.6386 SOL, byte-verified
+`1028f6f8…` independently), proposal #18 created from the terminal (the
+script printed `certified MemeWarzone rewards treasury`), decoded twice
+(`PROPOSAL MATCHES`), the Squads UI's own execute message decoded to the same
+seven accounts and `03000000`, approved by `9YN7…` + `EGHZ…`, executed as
+`3tpjQoiCdaNEfsnxQySULCcR1RpArTBgxgag1NZ8boxJs2RUJFxD8PPXmzTQWe6E6CCY9buCQvCAHgbfnRCjaKnf`:
+**slot 449850861 → 449990075**, authority `fk5Y…`, ProgramData == candidate
+(allocation equals the binary, no padding), buffer closed, 6.64 SOL back
+(deployer 7.6445 SOL). Launchpad untouched (still slot 449877289).
+
+**Both Solana programs now run their certified binaries on mainnet.** No env
+moves for the treasury.
+
+### Solana arena — INITIALIZED ON MAINNET, CLOSED (2026-09-24)
+
+`init-arena-mainnet.mjs --execute` with the deployer as `rewards_config`
+authority and `ARENA_RESOLVER=8rEczXrZZMzpp3MAUbs8TWftaZcJxctydwnkHLsdWaRv`
+(a dedicated resolver wallet, founder-held; not the deployer, not a multisig
+member). Four transactions, all `err: null`, slots 449992906–449992911:
+`initialize_arena` `PA6sobcD…`, `initialize_arena_money_v2` `3nXosYgD…`,
+`set_arena_pause(true)` `5w1P3qKh…`, `set_route_params` `47j9Mfyo…`.
+
+Finalized state, read back independently: `arena_config` `95NfXZY5…`
+resolver `8rEczXrZ…`, protocol receiver `BvQHb…` (protocol vault), MWL
+receiver `68FNN…` (monthly league vault), **deposits PAUSED**;
+`arena_money_config_v2` `Bio7bTMD…` protocol + marketing receiver `BvQHb…`,
+**sponsorship PAUSED**; `route_state.overflow` moved from the protocol vault
+(`BvQHb…`, "keep") to the multisig `fk5Y…` — operator `2AMfRaxS…`, cap
+$10,000 and the stored SOL price unchanged. The arena exists and takes
+nothing until `--open --execute`, which comes after the canary.
+
+Note: the script's closing state report printed the *old* overflow right
+after sending. Not a failed transaction and not RPC lag: `report()` printed
+the `route_state` read taken at the start of the run. Fixed (fresh fetch in
+`report()`); `--status` was already correct.
+
+### Recovery tooling (2026-09-24) — proposal from the terminal, decoded, rehearsed
+
+**The Squads web app refuses a re-used buffer address** ("This buffer is
+already in this squad"). It keeps its own off-chain list of upgrades keyed by
+buffer address; #15 used `EdmGZHL5…`, so the re-staged buffer at the same
+address (the staging script's named keypair, by design) is rejected by the form.
+Nothing on chain is affected: the multisig's `transaction_index` did not move
+and the buffer sits there with the vault as authority. It is bookkeeping, not
+a warning about the funds.
+
+**Multisig facts, read from chain:** `C43Ddmgt3iC9PTeHLyiQvtUtFAXC7U2v3d7KyzdF5YzY`,
+threshold 2 of 3, members `9YN7…` (the deployer), `E8BPQi8V…`, `EGHZWuxM…`,
+all with full permissions (mask 7); vault 0 = `fk5YYWb…`; `transaction_index`
+16 after the incident. The deployer being a member is what makes the fallback
+possible without anyone's browser wallet key.
+
+- **`scripts/solana/propose-squads-upgrade.mjs`** creates the VaultTransaction +
+  Proposal from the terminal (creator = the deployer). It reads every fact from
+  chain first and refuses on any mismatch: cluster by genesis, creator not a
+  member with Initiate, vault ≠ the program's upgrade authority, vault ≠ the
+  buffer's authority, **buffer bytes ≠ the binary certified for that program id**
+  (`config/solana/launchpad-binary.certification.json`,
+  `config/solana/treasury-binary.certification.json` — the check nothing had
+  on 2026-09-24; a program without a certification file is refused outright),
+  buffer ≠ `--candidate`, allocation too small, proposal index already taken.
+  Dry-run by default (reads + simulation); `--send` sends and then runs
+  `decode-squads-proposal.mjs` on the new account. **It never approves.**
+  Approvals happen in the app, after the decoder has said MATCHES.
+- **`scripts/solana/rehearse-squads-upgrade-proposal.sh`** proved it end to end
+  (2026-09-24, ~3 min): Squads v4 cloned from mainnet, the launchpad's real
+  program + ProgramData dumped from mainnet (authority re-homed to a fresh
+  2-of-3 multisig's vault, slot zeroed), propose → decoder MATCHES → three
+  refusals including the incident shape → 2 approvals → execute → deployed ==
+  candidate, buffer closed, spill paid. Run it before any change to the propose
+  script.
+- **Validator artefact:** `--upgradeable-program` at genesis flags ProgramData
+  `executable: true`; mainnet's is `false`. A CPI `Upgrade` into such an account
+  fails `ExecutableDataModified`. Load `--account` dumps instead.
+- `@sqds/multisig@2.1.4` is in `tests/solana`; the scripts resolve modules
+  through `tests/solana/package.json`, so they run from the repo root.
+- The Squads v4 program itself is immutable (ProgramData has no authority).
 
 ## 5. One combined release (founder decision, 2026-09-23)
 

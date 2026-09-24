@@ -8,6 +8,7 @@ import {
   expectedCampaignGeneration,
   generationRule,
   hashCampaignRequest,
+  isSupportedGenerationPair,
 } from "./routeAuthorizationSigner.js";
 
 const OBSOLETE_FACTORY = "0xe0FbBa4533513110Cec7e78aa3e48EC45301B5E6";
@@ -205,35 +206,38 @@ test("Robinhood testnet refuses factory generation 3 and requires 4/3", () => {
   assert.equal(digest, expected);
 });
 
-test("BNB and Robinhood production still reject campaign generation 3", () => {
-  assert.equal(expectedCampaignGeneration(56), 2);
-  assert.equal(expectedCampaignGeneration(97), 2);
-  assert.equal(generationRule(56), "3-or-4/2");
-  assert.equal(generationRule(97), "3-or-4/2");
-  assert.equal(expectedCampaignGeneration(4663), 2);
-  assert.equal(generationRule(4663), "4/2");
-  assert.throws(
-    () => buildScheduledCreateAuthorizationDigest(scheduledInput({ chainId: 56, campaignGeneration: 3, factoryGeneration: 4 })),
-    /chain 56 requires 3-or-4\/2/,
+test("BNB and Robinhood production sign for the deployed 4/3 generation; legacy BNB pairs stay; other pairs are refused", () => {
+  // Read from chain 2026-09-24: 0x632061cA... (56) and 0x35E93D0b... (4663) report 4/3; the old BNB factory 0xc378221E... reports 3/2.
+  assert.equal(expectedCampaignGeneration(56), 3);
+  assert.equal(expectedCampaignGeneration(97), 3);
+  assert.equal(expectedCampaignGeneration(4663), 3);
+  assert.equal(generationRule(56), "3/2-or-4/2-or-4/3");
+  assert.equal(generationRule(97), "3/2-or-4/2-or-4/3");
+  assert.equal(generationRule(4663), "4/3");
+  for (const [chainId, factoryGeneration, campaignGeneration, ok] of [
+    [56, 4, 3, true], [56, 3, 2, true], [56, 4, 2, true], [56, 3, 3, false], [56, 5, 4, false],
+    [97, 4, 3, true], [4663, 4, 3, true], [4663, 4, 2, false], [4663, 3, 2, false], [1, 4, 3, false],
+  ]) {
+    assert.equal(isSupportedGenerationPair(chainId, factoryGeneration, campaignGeneration), ok, `${chainId} ${factoryGeneration}/${campaignGeneration}`);
+  }
+  assert.match(
+    buildScheduledCreateAuthorizationDigest(scheduledInput({ chainId: 56, factoryGeneration: 4, campaignGeneration: 3 })),
+    /^0x[0-9a-f]{64}$/i,
+  );
+  assert.match(
+    buildScheduledCreateAuthorizationDigest(scheduledInput({ chainId: 4663, factoryAddress: ROBINHOOD_FACTORY, factoryGeneration: 4, campaignGeneration: 3 })),
+    /^0x[0-9a-f]{64}$/i,
   );
   assert.throws(
-    () => buildScheduledCreateAuthorizationDigest(scheduledInput({ campaignGeneration: 3 })),
-    /chain 97 requires 3-or-4\/2/,
+    () => buildScheduledCreateAuthorizationDigest(scheduledInput({ chainId: 56, factoryGeneration: 3, campaignGeneration: 3 })),
+    /chain 56 requires 3\/2-or-4\/2-or-4\/3/,
   );
   assert.throws(
-    () => buildScheduledCreateAuthorizationDigest(scheduledInput({
-      chainId: 4663,
-      factoryAddress: ROBINHOOD_FACTORY,
-      factoryGeneration: 4,
-      campaignGeneration: 3,
-    })),
-    /chain 4663 requires 4\/2/,
+    () => buildScheduledCreateAuthorizationDigest(scheduledInput({ chainId: 4663, factoryAddress: ROBINHOOD_FACTORY, factoryGeneration: 4, campaignGeneration: 2 })),
+    /chain 4663 requires 4\/3/,
   );
-  const productionDigest = buildScheduledCreateAuthorizationDigest(scheduledInput({
-    chainId: 4663,
-    factoryAddress: ROBINHOOD_FACTORY,
-    factoryGeneration: 4,
-    campaignGeneration: 2,
-  }));
-  assert.match(productionDigest, /^0x[0-9a-f]{64}$/i);
+  assert.throws(
+    () => buildScheduledCreateAuthorizationDigest(scheduledInput({ chainId: 4663, factoryAddress: ROBINHOOD_FACTORY, factoryGeneration: 3, campaignGeneration: 3 })),
+    /Robinhood scheduled authorization requires factory generation 4/,
+  );
 });

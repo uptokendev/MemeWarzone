@@ -21,13 +21,10 @@ const VOTE_TOPIC0 = VOTE_IFACE.getEvent("VoteCast").topicHash;
 
 export function assertVoteIngestChain(chainId) {
   const id = Number(chainId);
-  if (id === 56 || id === 97 || id === 46630) return id;
+  // 4663 joined 2026-09-24 with the Robinhood mainnet UPVoteTreasury (fee receiver = its ProtocolRevenueVault).
+  if (id === 56 || id === 97 || id === 4663 || id === 46630) return id;
 
-  const err = new Error(
-    id === 4663
-      ? "Robinhood production chainId 4663 is not allowed for vote ingest."
-      : "Invalid chainId (expected 56, 97, or 46630)",
-  );
+  const err = new Error("Invalid chainId (expected 56, 97, 4663, or 46630)");
   err.status = 400;
   throw err;
 }
@@ -65,6 +62,8 @@ const KNOWN_TREASURIES = new Set(
     String(process.env.VITE_VOTE_TREASURY_ADDRESS_56 || "").trim(),
     String(process.env.VOTE_TREASURY_ADDRESS_46630 || "").trim(),
     String(process.env.VITE_VOTE_TREASURY_ADDRESS_46630 || "").trim(),
+    String(process.env.VOTE_TREASURY_ADDRESS_4663 || "").trim(),
+    String(process.env.VITE_VOTE_TREASURY_ADDRESS_4663 || "").trim(),
     String(process.env.VOTE_TREASURY_ADDRESS || "").trim(),
     String(process.env.VITE_VOTE_TREASURY_ADDRESS || "").trim(),
   ]

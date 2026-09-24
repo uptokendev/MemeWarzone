@@ -15,9 +15,8 @@ import {
   ROUTE_PROFILE_OG_LINKED,
 } from "./route-decision.js";
 import {
-  expectedCampaignGeneration,
   generationRule,
-  isSupportedFactoryGeneration,
+  isSupportedGenerationPair,
   signCreateAuthorization,
   signTradeAuthorization,
 } from "./routeAuthorizationSigner.js";
@@ -245,7 +244,7 @@ async function readOnchainCreationPreflight({ chainId, factoryAddress, walletAdd
 
     const factoryGeneration = Number(factoryGenerationRaw);
     const campaignGeneration = Number(campaignGenerationRaw);
-    if (!isSupportedFactoryGeneration(chainId, factoryGeneration) || campaignGeneration !== expectedCampaignGeneration(chainId)) {
+    if (!isSupportedGenerationPair(chainId, factoryGeneration, campaignGeneration)) {
       return {
         ok: false,
         status: 409,

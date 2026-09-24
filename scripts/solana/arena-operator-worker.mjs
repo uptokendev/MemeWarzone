@@ -242,8 +242,10 @@ function requiredEnv(name) {
 }
 
 function loadKeypair(envName) {
-  const file = requiredEnv(envName);
-  const raw = JSON.parse(fs.readFileSync(file, "utf8"));
+  // A path to a keypair file, or the keypair JSON itself: a Coolify secret is
+  // an env value, and writing it to disk at startup would be a second copy.
+  const value = requiredEnv(envName).trim();
+  const raw = value.startsWith("[") ? JSON.parse(value) : JSON.parse(fs.readFileSync(value, "utf8"));
   return Keypair.fromSecretKey(Uint8Array.from(raw));
 }
 

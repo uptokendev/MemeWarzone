@@ -83,6 +83,16 @@ function inventories(): SupportedFactory[] {
           supportedFactoryStartBlocks: ENV.SUPPORTED_FACTORY_START_BLOCKS_46630,
         })
       : []),
+    ...(ENV.ROBINHOOD_RPC_HTTP_4663
+      ? buildFactoryInventory({
+          chainId: 4663,
+          rpcHttp: ENV.ROBINHOOD_RPC_HTTP_4663,
+          activeFactoryAddress: ENV.FACTORY_ADDRESS_4663,
+          activeFactoryStartBlock: ENV.FACTORY_START_BLOCK_4663,
+          supportedFactoryAddresses: ENV.SUPPORTED_FACTORY_ADDRESSES_4663,
+          supportedFactoryStartBlocks: ENV.SUPPORTED_FACTORY_START_BLOCKS_4663,
+        })
+      : []),
   ];
 }
 

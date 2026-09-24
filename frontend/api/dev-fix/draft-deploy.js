@@ -4,9 +4,8 @@ import { getRpcUrls, getServerReadProvider } from "../lib/getServerReadProvider.
 import { draftDeploy as baseDraftDeploy } from "./draft-deploy-base.js";
 import { solanaCreateAuthorizationV4 } from "./solana-create-authorization-v4.js";
 import {
-  expectedCampaignGeneration,
   generationRule,
-  isSupportedFactoryGeneration,
+  isSupportedGenerationPair,
 } from "./routeAuthorizationSigner.js";
 import { resolveCurrentSolanaAuthority } from "../../shared/solanaCurrentAuthority.mjs";
 
@@ -105,7 +104,7 @@ async function verifyCurrentScheduledArmEligibility({ chainId, factoryAddress, w
 
     const factoryGeneration = Number(factoryGenerationRaw);
     const campaignGeneration = Number(campaignGenerationRaw);
-    if (!isSupportedFactoryGeneration(chainId, factoryGeneration) || campaignGeneration !== expectedCampaignGeneration(chainId)) {
+    if (!isSupportedGenerationPair(chainId, factoryGeneration, campaignGeneration)) {
       return {
         ok: false,
         status: 409,

@@ -105,36 +105,68 @@ function assertCreationFactoryAllowed(chainId, factory) {
   return { normalizedChainId, normalizedFactory };
 }
 
-/** Campaign generation 3 is enabled only for Robinhood testnet 46630 (and local Hardhat rehearsal of that factory). */
+/**
+ * Factory/campaign generation pairs the route authority signs for, per chain.
+ *
+ * BNB (56, 97) keeps its legacy pairs -- 3/2 was production until the
+ * 2026-09-23 cutover and 4/2 exists on testnet -- so a scheduled factory that
+ * is still configured keeps working, and gains 4/3: the BnbBasicLaunchFactory
+ * generation on mainnet (0x632061cA..., read from chain 2026-09-24) inherits
+ * LaunchFactory's FACTORY_GENERATION 4 / CAMPAIGN_GENERATION 3 for native
+ * creates. Its quote path is checked separately, against BASIC_*, by
+ * bnbBasicQuoteCreatePolicy.js.
+ *
+ * Robinhood mainnet (4663) has only ever had 4/3 (0x35E93D0b..., 2026-09-24).
+ * The previous per-chain rule expected campaign generation 2 there and on BNB:
+ * a pre-deployment placeholder that would have answered every create on both
+ * new mainnet factories with CREATE_FACTORY_GENERATION_MISMATCH.
+ */
+const ALLOWED_GENERATION_PAIRS = new Map([
+  [56n, [[3, 2], [4, 2], [4, 3]]],
+  [97n, [[3, 2], [4, 2], [4, 3]]],
+  [ROBINHOOD_MAINNET_CHAIN_ID, [[4, 3]]],
+  [ROBINHOOD_TESTNET_CHAIN_ID, [[4, 3]]],
+  [LOCAL_HARDHAT_CHAIN_ID, [[4, 3]]],
+]);
+
+export function supportedGenerationPairs(chainId) {
+  return ALLOWED_GENERATION_PAIRS.get(toBigInt(chainId, "chainId")) || [];
+}
+
+export function isSupportedGenerationPair(chainId, factoryGeneration, campaignGeneration) {
+  try {
+    const factoryGen = positiveGeneration(factoryGeneration, "factoryGeneration");
+    const campaignGen = positiveGeneration(campaignGeneration, "campaignGeneration");
+    return supportedGenerationPairs(chainId).some(([f, c]) => f === factoryGen && c === campaignGen);
+  } catch {
+    return false;
+  }
+}
+
+/** Campaign generation of the newest supported pair on this chain (3 everywhere since 2026-09-24). */
 export function expectedCampaignGeneration(chainId) {
-  const id = toBigInt(chainId, "chainId");
-  if (id === ROBINHOOD_TESTNET_CHAIN_ID || id === LOCAL_HARDHAT_CHAIN_ID) return 3;
-  return 2;
+  const pairs = supportedGenerationPairs(chainId);
+  return pairs.length ? pairs[pairs.length - 1][1] : 3;
 }
 
 export function isSupportedFactoryGeneration(chainId, factoryGeneration) {
   try {
-    const id = toBigInt(chainId, "chainId");
     const factoryGen = positiveGeneration(factoryGeneration, "factoryGeneration");
-    if (ROBINHOOD_CHAIN_IDS.has(id)) return factoryGen === 4;
-    return factoryGen === 3 || factoryGen === 4;
+    return supportedGenerationPairs(chainId).some(([f]) => f === factoryGen);
   } catch {
     return false;
   }
 }
 
 export function generationRule(chainId) {
-  const id = toBigInt(chainId, "chainId");
-  if (id === ROBINHOOD_TESTNET_CHAIN_ID || id === LOCAL_HARDHAT_CHAIN_ID) return "4/3";
-  if (ROBINHOOD_CHAIN_IDS.has(id)) return "4/2";
-  return "3-or-4/2";
+  const pairs = supportedGenerationPairs(chainId);
+  return pairs.length ? pairs.map(([f, c]) => `${f}/${c}`).join("-or-") : "unsupported chain";
 }
 
 export function assertSupportedGenerations(chainId, factoryGeneration, campaignGeneration) {
   const factoryGen = positiveGeneration(factoryGeneration, "factoryGeneration");
   const campaignGen = positiveGeneration(campaignGeneration, "campaignGeneration");
-  const expectedCampaign = expectedCampaignGeneration(chainId);
-  if (!isSupportedFactoryGeneration(chainId, factoryGen) || campaignGen !== expectedCampaign) {
+  if (!isSupportedGenerationPair(chainId, factoryGen, campaignGen)) {
     const id = toBigInt(chainId, "chainId");
     if (ROBINHOOD_CHAIN_IDS.has(id) && factoryGen !== 4) {
       throw new Error(`Robinhood scheduled authorization requires factory generation 4; got ${factoryGen}`);

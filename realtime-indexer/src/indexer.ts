@@ -296,6 +296,16 @@ const CHAINS: ChainCfg[] = [
     factoryStartBlock: ENV.FACTORY_START_BLOCK_46630 || undefined,
     voteTreasuryAddress: ENV.VOTE_TREASURY_ADDRESS_46630 || undefined,
     voteTreasuryStartBlock: ENV.VOTE_TREASURY_START_BLOCK_46630 || undefined
+  },
+  {
+    // Robinhood mainnet (factory 0x35E93D0b..., deployed 2026-09-24). Same shape
+    // as 46630 and gated the same way: present only when its RPC is configured.
+    chainId: 4663,
+    rpcHttp: ENV.ROBINHOOD_RPC_HTTP_4663,
+    factoryAddress: ENV.FACTORY_ADDRESS_4663 || undefined,
+    factoryStartBlock: ENV.FACTORY_START_BLOCK_4663 || undefined,
+    voteTreasuryAddress: ENV.VOTE_TREASURY_ADDRESS_4663 || undefined,
+    voteTreasuryStartBlock: ENV.VOTE_TREASURY_START_BLOCK_4663 || undefined
   }
 ].filter((chain) => Boolean(chain.rpcHttp && /^https?:\/\//i.test(String(chain.rpcHttp)) && !/[<>]|YOUR_/i.test(String(chain.rpcHttp))));
 

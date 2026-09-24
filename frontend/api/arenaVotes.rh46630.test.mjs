@@ -18,9 +18,9 @@ test("Robinhood staging 46630 is accepted and prices the $3 vote in ETH/USD", ()
   assert.equal(assertVoteIngestChain(46630), 46630);
 });
 
-test("Robinhood production 4663 is rejected by both EVM vote ingest paths", () => {
+test("Robinhood production 4663: Arena UpVotes stay refused (no arena treasury there); launchpad UP-vote ingest is open since 2026-09-24", () => {
   assert.throws(() => evmVoteNativeConfig(4663), /4663.*not allowed/i);
-  assert.throws(() => assertVoteIngestChain(4663), /4663.*not allowed/i);
+  assert.equal(assertVoteIngestChain(4663), 4663);
 });
 
 test("BNB chains 56 and 97 remain BNB/USD", () => {
