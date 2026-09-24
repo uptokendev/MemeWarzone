@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useMemo, useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 import { Swords } from "lucide-react";
 import { toast } from "sonner";
 
@@ -51,6 +51,7 @@ function tokenKey(status: CreatorBattleStatus) {
 
 export default function CommandCenterBattles() {
   const { walletAddress, chainId } = useCommandCenterData();
+  const location = useLocation();
   const wallet = useWallet();
   const { solanaAccount } = useSolanaWallet();
   const feed = useArenaBattleFeed(walletAddress, chainId);
@@ -95,6 +96,14 @@ export default function CommandCenterBattles() {
   const stakeAmount = Number(stake);
   const canAct = Boolean(selected?.eligibility && Number.isFinite(stakeAmount) && stakeAmount > 0 && !busy);
   const matchPreview = presentManualOpponentPreview(challengeTarget, matchCandidates);
+
+  useEffect(() => {
+    if (location.hash !== "#command-center-challenge") return;
+    const timer = window.setTimeout(() => {
+      document.getElementById("command-center-challenge")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+    return () => window.clearTimeout(timer);
+  }, [location.hash]);
 
   async function signAuth(action: string, extraLines: string[]) {
     const solana = isSolanaChainId(Number(chainId)) || isSolanaAddress(walletAddress);
@@ -381,8 +390,9 @@ export default function CommandCenterBattles() {
         />
       ) : null}
 
-      <CommandCenterCard title="Challenge a coin" description="Pick a waiting rival or paste a token address. They must accept before the fight goes live.">
-        <div className="space-y-3" id="command-center-challenge">
+      <div id="command-center-challenge">
+        <CommandCenterCard title="Challenge a coin" description="Pick a waiting rival or paste a token address. They must accept before the fight goes live.">
+          <div className="space-y-3">
           <label className="block text-xs uppercase tracking-[0.14em] text-muted-foreground">
             Target token
             <input
@@ -424,8 +434,9 @@ export default function CommandCenterBattles() {
           <Button className="font-retro" disabled={!canAct || !challengeTarget.trim()} onClick={() => void handleChallenge()}>
             {busy === "challenge" ? "Sending..." : "Send challenge"}
           </Button>
-        </div>
-      </CommandCenterCard>
+          </div>
+        </CommandCenterCard>
+      </div>
 
       <CommandCenterCard title="Your match status" description="Live, waiting, and finished fights for coins you own.">
         {qualified.length ? (

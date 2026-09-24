@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
+import { Swords } from "lucide-react";
 import { toast } from "sonner";
 import { BattleWallModule } from "@/components/arena/BattleWallModule";
 import { CreatorChallengeCarousel } from "@/components/arena/CreatorChallengeCarousel";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
+import { Button } from "@/components/ui/button";
 import { WarzoneContent } from "@/components/warzone/WarzoneContent";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
@@ -234,9 +236,17 @@ export default function ArenaBattles() {
     <WarzoneContent className="space-y-4">
       <section className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b pb-3" style={{ borderColor: "var(--mwz-flat-card-border)" }}>
-          <div>
-            <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Warzone</div>
-            <h1 className="font-retro text-xl text-foreground md:text-2xl">Battles</h1>
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.22em] text-accent/80">Warzone</div>
+              <h1 className="font-retro text-xl text-foreground md:text-2xl">Battles</h1>
+            </div>
+            <Button asChild size="sm" className="mwz-button mb-0.5 h-8 font-retro text-[10px] uppercase tracking-[0.14em]">
+              <Link to="/command/battles#command-center-challenge" data-challenge-coin-cta="true">
+                <Swords className="h-3.5 w-3.5" />
+                Challenge a coin
+              </Link>
+            </Button>
           </div>
           <TacticalTag label={feed.source === "api" ? "Live data" : feed.source === "empty" ? "Feed unavailable" : "Awaiting data"} tone={feed.source === "api" ? "success" : "default"} />
         </div>

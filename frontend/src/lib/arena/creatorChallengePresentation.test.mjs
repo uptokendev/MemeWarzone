@@ -200,6 +200,17 @@ test("leaving challenged removes the card and matched/live never appear", () => 
   );
 });
 
+test("Battle Wall header opens Command Center Challenge a coin", () => {
+  const page = readSrc("../../pages/ArenaBattles.tsx");
+  const command = readSrc("../../pages/command-center/CommandCenterBattles.tsx");
+  assert.match(page, /data-challenge-coin-cta="true"/);
+  assert.match(page, /Challenge a coin/);
+  assert.match(page, /\/command\/battles#command-center-challenge/);
+  assert.match(command, /id="command-center-challenge"/);
+  assert.match(command, /title="Challenge a coin"/);
+  assert.match(command, /location\.hash !== "#command-center-challenge"/);
+});
+
 test("Battle Wall Phase 1-3, AUTO DEPLOY, and Find Match remain untouched", () => {
   const page = readSrc("../../pages/ArenaBattles.tsx");
   const moduleSrc = readSrc("../../components/arena/BattleWallModule.tsx");
