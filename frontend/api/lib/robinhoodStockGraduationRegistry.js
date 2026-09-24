@@ -90,11 +90,15 @@ export function deriveEffectiveAuthority(row, { healthFresh = isHealthFresh(row)
     normalizeStockAddress(row?.acquisition_pool_address)
   );
   const adminState = String(row?.admin_state || "default");
-  const adminEligible = adminState === "force_enabled" || (adminState === "default" && row?.candidate === true);
+  // Founder policy 2026-09-24: every canonical Robinhood token is a candidate. Read it that
+  // way too, so rows synced under the old manifest rule are not hidden until the next sync
+  // (which would also reset their health to stale and force a full 195-token rescan).
+  const candidate = row?.candidate === true || row?.canonical === true;
+  const adminEligible = adminState === "force_enabled" || (adminState === "default" && candidate);
   return {
     hardSafe,
     enabledForGraduation: hardSafe && adminEligible && adminState !== "force_disabled",
-    enabledForDiscovery: Boolean(row?.canonical === true && (row?.candidate === true || adminState === "force_enabled") && adminState !== "force_disabled"),
+    enabledForDiscovery: Boolean(row?.canonical === true && (candidate || adminState === "force_enabled") && adminState !== "force_disabled"),
     enabledForTrading: Boolean(row?.existing_market_support === true),
   };
 }
@@ -112,7 +116,7 @@ function rowToAsset(row) {
     canonical: row.canonical === true,
     robinhoodStatus: row.robinhood_status,
     tradingHalted: row.trading_halted,
-    candidate: row.candidate === true,
+    candidate: row.candidate === true || row.canonical === true,
     adminState: row.admin_state,
     automatedHealthStatus: row.automated_health_status,
     automatedHealthReason: row.automated_health_reason,
