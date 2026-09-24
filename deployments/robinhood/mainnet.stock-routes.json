@@ -1,0 +1,199 @@
+{
+  "network": "robinhoodMainnet",
+  "chainId": 4663,
+  "at": "2026-09-24T13:17:57.917Z",
+  "adapter": "0xa48723e35061380Feb6D269f7c26D6E426F83efc",
+  "factory": "0x35E93D0b0F4A2809264Fa8D9922e2d0D1609C9BA",
+  "campaignFactory": {
+    "action": "bound",
+    "tx": "0x0a366fdc88a8bf8fa7cbcb2950190e0b7d10b9e073e5738f12f29576440abdd1"
+  },
+  "policy": {
+    "minimumRouteLiquidityUsd": "50000",
+    "maxSwapSlippageBps": 300,
+    "maxOracleDeviationBps": 500,
+    "maxPriceImpactBps": 500
+  },
+  "routes": [
+    {
+      "symbol": "SPY",
+      "token": "0x117cc2133c37B721F49dE2A7a74833232B3B4C0C",
+      "pool": "0xDDCBBa3666f578E3F09516f21Ff85BFee859AB5e",
+      "feeTier": 500,
+      "feed": "0x319724394D3A0e3669269846abE664Cd621f9f6A",
+      "feedPrice": 766.69992468,
+      "feedAgeSeconds": 33184,
+      "poolUsd": 889237,
+      "action": "configured",
+      "tx": "0xb4e2b696065241f92b63fc8cf5e4519f2feb38d21f1a4df6a5129877f44cfdb7"
+    },
+    {
+      "symbol": "NVDA",
+      "token": "0xd0601CE157Db5bdC3162BbaC2a2C8aF5320D9EEC",
+      "pool": "0x62AB521f71431f78ac374CdbadC6cda3c8916b6C",
+      "feeTier": 500,
+      "feed": "0x379EC4f7C378F34a1B47E4F3cbeBCbAC3E8E9F15",
+      "feedPrice": 223.19802998,
+      "feedAgeSeconds": 17769,
+      "poolUsd": 823917,
+      "action": "configured",
+      "tx": "0x4f4b47b41479b3d0edfca7f4cb55bd0a8c425a63ac7a110affc3d3f03450b8cf"
+    },
+    {
+      "symbol": "MSTR",
+      "token": "0xec262a75e413fAfD0dF80480274532C79D42da09",
+      "pool": "0x70504a6FafdbfB75fE971FAA4dD716e79aC5624c",
+      "feeTier": 10000,
+      "feed": "0x396118bdFB181e6240E74D243F266B061c0edc3D",
+      "feedPrice": 159.92905,
+      "feedAgeSeconds": 715,
+      "poolUsd": 799640,
+      "action": "configured",
+      "tx": "0x5a7944c1fcceef27b5a7b68aed63ad0e86402768808139baaa7944e0de60e2c1"
+    },
+    {
+      "symbol": "META",
+      "token": "0xc0D6457C16Cc70d6790Dd43521C899C87ce02f35",
+      "pool": "0xa4BdB396a69617eb7F70E2cc1EF526f7340b1B0d",
+      "feeTier": 3000,
+      "feed": "0x7C38C00C30BEe9378381E7B6135d7283356D71b1",
+      "feedPrice": 734.66542658,
+      "feedAgeSeconds": 1362,
+      "poolUsd": 730117,
+      "action": "configured",
+      "tx": "0xcb4e78c3b8a2770beea316e960133ffe6fb3c37fb4d7bd57cbcd4b00500047bf"
+    },
+    {
+      "symbol": "COIN",
+      "token": "0x6330D8C3178a418788dF01a47479c0ce7CCF450b",
+      "pool": "0x6707aeAc7D0e519B083219d27BB427364363183A",
+      "feeTier": 3000,
+      "feed": "0xA3a468A452940B7D6b69991207B508c609a98Ef2",
+      "feedPrice": 195.8986,
+      "feedAgeSeconds": 3516,
+      "poolUsd": 595239,
+      "action": "configured",
+      "tx": "0x616521b1223bb6f551430fb896c42b42f2f653da6879b234c81a9cfc271e0d97"
+    },
+    {
+      "symbol": "SPCX",
+      "token": "0x4a0E65A3EcceC6dBe60AE065F2e7bb85Fae35eEa",
+      "pool": "0xC3c9F0171490Ef0F4536fe493F3b0EbB5ee0CB5e",
+      "feeTier": 500,
+      "feed": "0xB265810950ba6c5C0Ff821c9963014a56fD8Bffb",
+      "feedPrice": 148.825,
+      "feedAgeSeconds": 2729,
+      "poolUsd": 481701,
+      "action": "configured",
+      "tx": "0x25de00ea5371428c4485d7e3853c8c7d3bee23aca6b505dbfc2b33c1b84783a0"
+    },
+    {
+      "symbol": "MU",
+      "token": "0xfF080c8ce2E5feadaCa0Da81314Ae59D232d4afD",
+      "pool": "0x301F48EC369BB3bfA0bC04d44A79037aa0EE2340",
+      "feeTier": 10000,
+      "feed": "0x425EEFdCf05ed6526C3cE61Af99429A228a6d596",
+      "feedPrice": 1047.49772128,
+      "feedAgeSeconds": 2424,
+      "poolUsd": 531987,
+      "action": "configured",
+      "tx": "0x9c1fee8e2aeb840cd55da8a377586b1efab32cd6aa309cabd100de7bff11b7e6"
+    },
+    {
+      "symbol": "GLD",
+      "token": "0xC9a981FEE1F9DEc688bb123ccDeCc63D0deBFC4e",
+      "pool": "0x98996e833EA35EC17c3645Ca7b6Dd40d188564C4",
+      "feeTier": 10000,
+      "feed": "0x470A51258068043bd43dC0a56245625C9fE86eB0",
+      "feedPrice": 392.38046273,
+      "feedAgeSeconds": 1439,
+      "poolUsd": 318692,
+      "action": "configured",
+      "tx": "0xbf8b07ff57c8926955b260a56e687d7da23ea028cbf8cd577d0ec72c67373f66"
+    },
+    {
+      "symbol": "TSLA",
+      "token": "0x322F0929c4625eD5bAd873c95208D54E1c003b2d",
+      "pool": "0xA953CA88ff430e9487c60cA34d757414f4efdA07",
+      "feeTier": 3000,
+      "feed": "0x4A1166a659A55625345e9515b32adECea5547C38",
+      "feedPrice": 375.8057,
+      "feedAgeSeconds": 16757,
+      "poolUsd": 299513,
+      "action": "configured",
+      "tx": "0xcc11d549ef2c49f07f5e1cdb3c14fa34a6ac64cc73887b517edd49d16c4e6465"
+    },
+    {
+      "symbol": "QQQ",
+      "token": "0xD5f3879160bc7c32ebb4dC785F8a4F505888de68",
+      "pool": "0xA40D00a55d43bA2d188039DCF88bD68f4F133E78",
+      "feeTier": 3000,
+      "feed": "0x80901d846d5D7B030F26B480776EE3b29374C2ae",
+      "feedPrice": 733.99886975,
+      "feedAgeSeconds": 16903,
+      "poolUsd": 232870,
+      "action": "configured",
+      "tx": "0x7d94c11e1b2df5f24bcfb18d5d323a922d6978d27bee39f0e1c4a2f49e1ff9ec"
+    },
+    {
+      "symbol": "AAPL",
+      "token": "0xaF3D76f1834A1d425780943C99Ea8A608f8a93f9",
+      "pool": "0x8bb3514e2204E1cDF3Ac149EFEe7Ff04D91B719f",
+      "feeTier": 500,
+      "feed": "0x6B22A786bAa607d76728168703a39Ea9C99f2cD0",
+      "feedPrice": 336.05912874,
+      "feedAgeSeconds": 62681,
+      "poolUsd": 190747,
+      "action": "configured",
+      "tx": "0x2179018188a4ad1e5ba09dd45b2be52e2460665c7cae3425f51a69ae6a4ea3d0"
+    },
+    {
+      "symbol": "SGOV",
+      "token": "0x92FD66527192E3e61d4DDd13322Aa222DE86F9B5",
+      "pool": "0x7F310e3D05E575Bd449E4484eF5Da15863ea43B1",
+      "feeTier": 10000,
+      "feed": "0xa0DF4ee0fFf975306345875E3548Fcc519577A11",
+      "feedPrice": 101.13835594,
+      "feedAgeSeconds": 47766,
+      "poolUsd": 105934,
+      "action": "configured",
+      "tx": "0x7814af8b2b2d059d3efd1a68db27d1706bf70b82c878521747d979c1c0f5e355"
+    },
+    {
+      "symbol": "GME",
+      "token": "0x1b0E319c6A659F002271B69dB8A7df2F911c153E",
+      "pool": "0xc6BCC95043DC48C204bB2D57fb264a10Efe0a607",
+      "feeTier": 500,
+      "feed": "0x27C71df6A64fB476468EdF256CF72c038baB5B67",
+      "feedPrice": 24.07275,
+      "feedAgeSeconds": 398,
+      "poolUsd": 91957,
+      "action": "configured",
+      "tx": "0xe4068fe21f73e85f6bc39cfd786a96a9821e3b10af886a3b2f1f518582ff18a7"
+    },
+    {
+      "symbol": "CRCL",
+      "token": "0xdF0992E440dD0be65BD8439b609d6D4366bf1CB5",
+      "pool": "0x754DdD4bF8E8635B4301a7f4Af2Ea7A82AB6cEA7",
+      "feeTier": 10000,
+      "feed": "0x6652eDf64bA3731C4F2D3ce821A0Fb1f1f6b482a",
+      "feedPrice": 91.05,
+      "feedAgeSeconds": 6250,
+      "poolUsd": 51058,
+      "action": "configured",
+      "tx": "0x50d705778057557357fa7b7e045d49a5c8d19624cc8159824605b453be97cb7e"
+    },
+    {
+      "symbol": "USDG",
+      "token": "0x5fc5360D0400a0Fd4f2af552ADD042D716F1d168",
+      "pool": "0x52e65B17fB6E5BA00Ed806f37Afcd2DaA50271Ca",
+      "feeTier": 100,
+      "feed": "0x61B7e5650328764B076A108EFF5fa7282a1B9aD2",
+      "feedPrice": 1.00009,
+      "feedAgeSeconds": 78009,
+      "poolUsd": 18729062,
+      "action": "configured",
+      "tx": "0xfd0f3439be08ff933c1e95d61cbeaacd744b6c2bc041bd4f618a8224edd20dc8"
+    }
+  ]
+}
