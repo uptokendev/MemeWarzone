@@ -14,8 +14,9 @@ import { createPortal } from "react-dom";
 import { toast } from "sonner";
 
 import { useWallet } from "@/contexts/WalletContext";
-import { resolveBnbFeedChainId, resolveRobinhoodFeedChainId, setSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
-import { getEvmReadChainIdForTokenPage, isRobinhoodChainId, SOLANA_CHAIN_ID } from "@/lib/chainConfig";
+import { setSelectedFeedChainId } from "@/components/common/ChainFeedSwitch";
+import { getEvmReadChainIdForTokenPage, isAllowedChainId, isEvmChainId, isEvmTokenPath, isRobinhoodChainId, SOLANA_CHAIN_ID, type SupportedChainId } from "@/lib/chainConfig";
+import { evmConnectTargetChainId } from "@/lib/walletConnectTarget.mjs";
 import { WAKE_PROVIDER_DISCOVERY_DELAYS_MS } from "@/lib/injectedProviderDiscovery";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 
@@ -266,15 +267,15 @@ export function ConnectWalletModal({ open, onOpenChange, filter }: ConnectWallet
       setSelectedWalletId(detectedWallet.id);
 
       try {
-        const pageChain = getEvmReadChainIdForTokenPage();
-        const rhChain = resolveRobinhoodFeedChainId();
-        const targetChainId = isRobinhoodChainId(pageChain)
-          ? pageChain
-          : rhChain && isRobinhoodChainId(rhChain)
-            ? rhChain
-            : resolveBnbFeedChainId();
-        await connect(detectedWallet.id, { chainId: targetChainId });
-        setSelectedFeedChainId(targetChainId);
+        // Only a token page pins the chain; otherwise the wallet's own network
+        // wins and useLatchFeedChainToWallet follows it after the connect.
+        const targetChainId = evmConnectTargetChainId({
+          onEvmTokenPage: typeof window !== "undefined" && isEvmTokenPath(window.location.pathname),
+          pageChainId: getEvmReadChainIdForTokenPage(),
+          isAllowedEvmChain: (chainId: number) => isEvmChainId(chainId) && isAllowedChainId(chainId),
+        });
+        await connect(detectedWallet.id, targetChainId ? { chainId: targetChainId } : undefined);
+        if (targetChainId) setSelectedFeedChainId(targetChainId as SupportedChainId);
         toast.success(`Connected ${detectedWallet.name}`);
         onOpenChange(false);
       } catch (error) {

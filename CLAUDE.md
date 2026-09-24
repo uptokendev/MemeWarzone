@@ -1194,6 +1194,20 @@ on the API; both were missing from the go-live env until 2026-09-24.
   `return await`, pinned by `solana-direct-create-dispatch.test.mjs`. Grep any
   new route for the same shape before trusting its catch.
 
+### Wallet connect forced Robinhood the moment it was allowed (2026-09-24)
+
+`ConnectWalletModal` chose the EVM connect target with
+`resolveRobinhoodFeedChainId()`, which answers 4663 whenever Robinhood is
+merely **allowed** (`VITE_ALLOWED_CHAIN_IDS`), not selected. So with Robinhood
+enabled, every MetaMask connect force-switched to Robinhood and latched the
+feed there — "I selected BNB in MetaMask but the frontend reads Robinhood",
+and the reverse. Rule now (`frontend/src/lib/walletConnectTarget.mjs`): only an
+EVM **token page** pins the chain (you trade a token on its chain); everywhere
+else the wallet's own network is respected and `useLatchFeedChainToWallet`
+follows it. The chain-first modal the founder remembered was `eda32af9`
+(2026-08-28), replaced on purpose by `0983464c` (2026-09-17, "switch RH
+in-place"); both are on live. Test pins the helper and the modal's call shape.
+
 ## 5. One combined release (founder decision, 2026-09-23)
 
 **Solana does not go up on its own.** Both programs are finished, certified and

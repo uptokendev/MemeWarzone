@@ -82,7 +82,7 @@ export function getNativeSymbol(chainId?: number | null): string {
   return "BNB";
 }
 
-function isEvmTokenPath(pathname: string): boolean {
+export function isEvmTokenPath(pathname: string): boolean {
   return /^\/token\/0x[a-fA-F0-9]{40}/i.test(pathname);
 }
 
