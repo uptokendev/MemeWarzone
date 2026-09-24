@@ -193,6 +193,29 @@ export async function challengePostGradBattle(input: ChallengePostGradBattleInpu
   return true;
 }
 
+export type ArenaBattleOpponent = {
+  token: { tokenId?: string; tokenAddress?: string; campaignAddress?: string; tokenName?: string; symbol?: string; marketCapUsd?: number };
+  imageUrl?: string | null;
+  origin: "import" | "native";
+  marketDataHealthy: boolean;
+  metricsAllowed: boolean;
+  matchQuality: number | null;
+  classification: string;
+  ranked: boolean;
+};
+
+export async function fetchArenaBattleOpponents(
+  tokenId: string,
+  chainId: number,
+  mode: "normal" | "vote",
+  signal?: AbortSignal,
+): Promise<ArenaBattleOpponent[]> {
+  const params = new URLSearchParams({ chainId: String(chainId), mode, limit: "40" });
+  if (tokenId) params.set("tokenId", tokenId);
+  const json = await fetchJson(`/api/arena/battles/opponents?${params.toString()}`, { cache: "no-store", signal });
+  return Array.isArray(json?.items) ? (json.items as ArenaBattleOpponent[]) : [];
+}
+
 export async function acceptPostGradBattle(battleId: string, auth?: JsonObject) {
   return mutateBattle(`/api/arena/battles/${encodeURIComponent(battleId)}/accept`, { auth });
 }

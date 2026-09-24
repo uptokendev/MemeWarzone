@@ -73,3 +73,12 @@ test("the decline message reaches only the challenger: never part of the public 
   assert.match(source, /notifyDeclined\(\{[\s\S]*?message,/, "the email carries it");
 });
 
+test("the server refuses a metrics Battle when either coin has no live market data (before signing), and lists every opponent per battle type", async () => {
+  const fs = await import("node:fs");
+  const source = fs.readFileSync(new URL("../arenaBattles.js", import.meta.url), "utf8");
+  assert.match(source, /code: "METRICS_MARKET_DATA_UNAVAILABLE"/);
+  assert.ok(source.indexOf('code: "METRICS_MARKET_DATA_UNAVAILABLE"') < source.indexOf('action: "arena_challenge_battle"'), "checked before the wallet signature is verified");
+  assert.match(source, /battleMode !== BATTLE_MODE_VOTE && \(hydratedChallenger\?\.marketDataHealthy !== true \|\| hydratedDefender\?\.marketDataHealthy !== true\)/);
+  assert.match(source, /path === "\/arena\/battles\/opponents"\) return handleOpponents\(req, res\)/);
+});
+

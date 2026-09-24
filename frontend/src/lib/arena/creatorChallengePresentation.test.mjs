@@ -271,3 +271,17 @@ test("Challenge popup: chain is a step-1 choice on the Battle Wall (defaults to 
   assert.match(modal, /fetchRecentArenaImports\(Number\(chainId\), 12\)/);
   assert.match(modal, /const walletAddress = isSolanaChainId\(chainId\)/);
 });
+
+test("Challenge popup: battle type is step 1; the opponent step lists every coin (vote: anyone, metrics: ranked / open war / no market data) and continue advances", () => {
+  const modal = readSrc("../../components/arena/ChallengeCoinModal.tsx");
+  assert.match(modal, /const STEPS = \["Battle type", "Pick opponent", "Terms", "Review"\] as const;/);
+  assert.match(modal, /totalSteps=\{4\}/);
+  assert.match(modal, /data-challenge-step="battle-type"/);
+  assert.ok(modal.indexOf('data-battle-mode="normal"') < modal.indexOf('data-challenge-step="opponent"'), "battle type comes before the opponent");
+  assert.match(modal, /fetchArenaBattleOpponents\(tokenId, Number\(chainId\), battleMode, controller\.signal\)/);
+  assert.match(modal, /data-challenge-opponents="true"/);
+  assert.match(modal, /const targetBlockedForMetrics = battleMode !== "vote" && targetOpponent !== null && targetOpponent\.metricsAllowed === false;/);
+  assert.match(modal, /onContinueWithChallenge=\{\(\) => \{\s*if \(canNext\) goNext\(\);/);
+  assert.match(modal, /flex h-full min-h-0 flex-col gap-3 overflow-y-auto pr-1" data-challenge-step="opponent"/);
+});
+

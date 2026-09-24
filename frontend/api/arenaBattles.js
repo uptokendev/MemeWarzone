@@ -73,7 +73,7 @@ const ADMIN_TRANSITIONS = {
   expired: [],
 };
 
-const NATIVE_COIN_SELECT = `c.chain_id, c.campaign_address, c.token_address, c.creator_address, c.name, c.symbol,
+const NATIVE_COIN_SELECT = `c.chain_id, c.campaign_address, c.token_address, c.creator_address, c.name, c.symbol, c.logo_uri,
         c.is_active, c.support_enabled, c.graduated_at_chain, c.created_at,
         ms.market_stage, ms.market_cap_usd, ms.liquidity_usd, ms.volume_24h_usd,
         ms.market_cap_bnb, ms.liquidity_bnb, ms.volume_24h_bnb, ms.holders,
@@ -82,7 +82,7 @@ const NATIVE_COIN_SELECT = `c.chain_id, c.campaign_address, c.token_address, c.c
 const NATIVE_COIN_FROM = `from public.campaigns c
        left join public.market_stats ms on ms.chain_id = c.chain_id and ms.campaign_address = c.campaign_address
        left join public.token_stats ts on ts.chain_id = c.chain_id and ts.campaign_address = c.campaign_address`;
-const IMPORT_COIN_SELECT = `chain_id, token_address, owner_wallet as creator_address, name, symbol, status, scan_json,
+const IMPORT_COIN_SELECT = `chain_id, token_address, owner_wallet as creator_address, name, symbol, image_url, status, scan_json,
         scan_version, scanned_at, evidence_version, state_version, created_at, updated_at`;
 
 function nowIso() {
@@ -442,6 +442,7 @@ async function statusFor(coin) {
     tokenName: String(coin.name || coin.symbol || "Unknown token"),
     symbol: String(coin.symbol || ""),
     origin: coin.origin || "native",
+    imageUrl: coin.logo_uri || coin.image_url || null,
   };
   const battle = await activeBattleForToken(chainId, token);
   if (battle) {
@@ -1060,6 +1061,56 @@ async function handleMatches(req, res) {
   });
 }
 
+/**
+ * Every coin a challenger may pick on this chain, not just the top recommendations.
+ * Vote battles: anyone vs anyone, no market data needed. Metrics battles: coins with live market
+ * data carry their match quality (ranked or open war -- both may be challenged; the server
+ * classifies); coins without market data are listed but flagged, because a metrics battle
+ * cannot be scored for them (handleChallenge refuses it).
+ */
+async function handleOpponents(req, res) {
+  const query = getQuery(req);
+  const chainId = Number(query.chainId) || 56;
+  const identity = String(query.tokenId || "").trim();
+  const mode = parseBattleMode(query.mode ?? query.battleMode);
+  const limit = Math.max(1, Math.min(60, Number(query.limit) || 40));
+  const own = identity ? ident(identity, chainId) : "";
+  const activeTokens = await activeBattleTokenSet(chainId);
+  const rows = (await eligibleRecommendationCoins(chainId, Math.max(60, limit * 2))).filter((candidate) => {
+    const tokenId = ident(candidate.token_address || candidate.campaign_address, chainId);
+    return Boolean(tokenId) && tokenId !== own && !activeTokens.has(tokenId);
+  }).slice(0, limit);
+  const hydrated = (await Promise.all(rows.map(hydrateMatchCoin))).filter(Boolean);
+  let referenceProfile = null;
+  if (mode !== BATTLE_MODE_VOTE && identity) {
+    const reference = await coinByIdentity(chainId, identity);
+    const hydratedReference = reference ? await hydrateMatchCoin(reference) : null;
+    if (hydratedReference?.marketDataHealthy === true) referenceProfile = arenaMatchProfileFromCoin(coinMatchProfile(hydratedReference));
+  }
+  const items = hydrated.map((coin) => {
+    const marketDataHealthy = coin.marketDataHealthy === true;
+    let evaluation = null;
+    if (mode !== BATTLE_MODE_VOTE && referenceProfile && marketDataHealthy) {
+      evaluation = calculateMatchQuality(referenceProfile, arenaMatchProfileFromCoin(coinMatchProfile(coin)));
+    }
+    return {
+      token: participant(coin),
+      imageUrl: coin.logo_uri || coin.image_url || null,
+      origin: coin.origin === "import" ? "import" : "native",
+      marketDataHealthy,
+      metricsAllowed: marketDataHealthy,
+      matchQuality: evaluation ? evaluation.matchScore : null,
+      classification: mode === BATTLE_MODE_VOTE ? "vote" : evaluation ? evaluation.classification : marketDataHealthy ? "open_war" : "no_market_data",
+      ranked: evaluation ? evaluation.rankedEligible : false,
+    };
+  });
+  if (mode !== BATTLE_MODE_VOTE) {
+    const rank = (item) => (item.ranked ? 0 : item.metricsAllowed ? 1 : 2);
+    items.sort((a, b) => rank(a) - rank(b) || (b.matchQuality ?? 0) - (a.matchQuality ?? 0));
+  }
+  return json(res, 200, { chainId, mode, items, updatedAt: nowIso() });
+}
+
 async function handleOpen(req, res) {
   const body = await readJson(req);
   const chainId = Number(body?.chainId) || 56;
@@ -1136,6 +1187,20 @@ async function handleChallenge(req, res) {
   if (!challengerStatus.eligibility) return json(res, 409, { ok: false, reason: challengerStatus.unavailableReason, status: challengerStatus });
   if (!defenderStatus.eligibility) return json(res, 409, { ok: false, reason: defenderStatus.unavailableReason || "target_unavailable", status: defenderStatus });
 
+  // A metrics battle is scored from both coins' live market data (market cap, holders,
+  // liquidity). Without it settlement never finds a winner and the pool only refunds after
+  // its deadline, so refuse it up front. Vote battles do not use market data.
+  const hydratedChallenger = await hydrateMatchCoin(challenger);
+  const hydratedDefender = await hydrateMatchCoin(defender);
+  if (battleMode !== BATTLE_MODE_VOTE && (hydratedChallenger?.marketDataHealthy !== true || hydratedDefender?.marketDataHealthy !== true)) {
+    const missing = [hydratedChallenger?.marketDataHealthy !== true ? challengerStatus.symbol || "your coin" : null, hydratedDefender?.marketDataHealthy !== true ? defenderStatus.symbol || "the opponent" : null].filter(Boolean);
+    return json(res, 409, {
+      ok: false,
+      code: "METRICS_MARKET_DATA_UNAVAILABLE",
+      error: `A metrics Battle needs live market data for both coins, and ${missing.join(" and ")} has none yet. Choose a Vote Battle instead.`,
+    });
+  }
+
   const verified = await requireWalletActionAuth({
     res,
     pool,
@@ -1154,8 +1219,6 @@ async function handleChallenge(req, res) {
   });
   if (!verified) return;
 
-  const hydratedChallenger = await hydrateMatchCoin(challenger);
-  const hydratedDefender = await hydrateMatchCoin(defender);
   const battle = await insertBattle({
     chainId,
     state: "challenged",
@@ -1407,6 +1470,7 @@ export default async function handler(req, res) {
     if (method === "GET" && path === "/arena/battles") return handleList(req, res);
     if (method === "GET" && path === "/arena/battles/creator-status") return handleCreatorStatus(req, res);
     if (method === "GET" && path === "/arena/battles/matches") return handleMatches(req, res);
+    if (method === "GET" && path === "/arena/battles/opponents") return handleOpponents(req, res);
     if (method === "POST" && path === "/arena/battles/open") return handleOpen(req, res);
     if (method === "POST" && path === "/arena/battles/challenge") return handleChallenge(req, res);
 

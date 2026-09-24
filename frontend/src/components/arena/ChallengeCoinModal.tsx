@@ -8,7 +8,7 @@ import { SearchPopup } from "@/components/search/SearchPopup";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { challengePostGradBattle, fetchArenaBattleMatches, fetchPostGradCreatorBattleStatuses } from "@/features/postgrad/apiClient";
+import { challengePostGradBattle, fetchArenaBattleMatches, fetchArenaBattleOpponents, fetchPostGradCreatorBattleStatuses, type ArenaBattleOpponent } from "@/features/postgrad/apiClient";
 import { fetchRecentArenaImports, type RecentArenaImport } from "@/lib/arenaImports";
 import { useArenaWalletAction } from "@/hooks/useArenaWalletAction";
 import type { CreatorBattleStatus } from "@/hooks/useArenaBattleFeed";
@@ -23,11 +23,22 @@ import { isEvmAddress, isSolanaAddress } from "@/lib/address";
 import { useWallet } from "@/contexts/WalletContext";
 import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import { cn } from "@/lib/utils";
+import { resolveImageUri } from "@/lib/media";
 import type { TokenSearchResult } from "@/types/search";
 
-const STEPS = ["Pick opponent", "Terms", "Review"] as const;
+const STEPS = ["Battle type", "Pick opponent", "Terms", "Review"] as const;
 const selectedClass = "border-orange-400/70 bg-orange-500/10 shadow-lg shadow-orange-500/10";
 const idleClass = "border-border bg-background/40 hover:border-orange-400/40";
+
+function CoinAvatar({ src, label, size = "h-9 w-9" }: { src?: string | null; label: string; size?: string }) {
+  const url = resolveImageUri(src);
+  const initial = (label.replace(/^\$/, "").trim()[0] || "?").toUpperCase();
+  return url ? (
+    <img src={url} alt="" loading="lazy" className={cn(size, "shrink-0 rounded-full border border-border/60 bg-black/40 object-cover")} onError={(event) => { (event.currentTarget as HTMLImageElement).style.visibility = "hidden"; }} />
+  ) : (
+    <div className={cn(size, "flex shrink-0 items-center justify-center rounded-full border border-border/60 bg-black/40 font-retro text-xs text-muted-foreground")}>{initial}</div>
+  );
+}
 
 function tokenKey(status: CreatorBattleStatus) {
   return String(status.tokenAddress || status.tokenId || status.campaignAddress || "");
@@ -83,6 +94,7 @@ export function ChallengeCoinModal({
   const [busy, setBusy] = useState(false);
   const [candidates, setCandidates] = useState<ReturnType<typeof presentMatchCandidates>>([]);
   const [recentImports, setRecentImports] = useState<RecentArenaImport[]>([]);
+  const [opponents, setOpponents] = useState<ArenaBattleOpponent[]>([]);
 
   const native = getNativeSymbol(Number(chainId || 0));
   const selected = eligible.find((item) => tokenKey(item) === selectedToken) || eligible[0] || null;
@@ -151,12 +163,33 @@ export function ChallengeCoinModal({
     return () => controller.abort();
   }, [open, selected, chainId]);
 
+  useEffect(() => {
+    if (!open || !chainId) return;
+    const controller = new AbortController();
+    const tokenId = tokenKey(selected || ({} as CreatorBattleStatus));
+    void fetchArenaBattleOpponents(tokenId, Number(chainId), battleMode, controller.signal)
+      .then((items) => {
+        if (!controller.signal.aborted) setOpponents(items);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setOpponents([]);
+      });
+    return () => controller.abort();
+  }, [open, selected, chainId, battleMode]);
+
+  const opponentKey = (row: ArenaBattleOpponent) => String(row.token?.tokenAddress || row.token?.tokenId || row.token?.campaignAddress || "");
+  const targetOpponent = opponents.find((row) => opponentKey(row).toLowerCase() === targetTokenId.trim().toLowerCase()) || null;
+  // A metrics Battle is scored from both coins' market data; the server refuses one without it.
+  const targetBlockedForMetrics = battleMode !== "vote" && targetOpponent !== null && targetOpponent.metricsAllowed === false;
+
   const canNext =
     step === 1
-      ? Boolean(selected?.eligibility && targetTokenId.trim())
+      ? true
       : step === 2
-        ? Boolean(Number.isFinite(stakeAmount) && stakeAmount > 0)
-        : !busy;
+        ? Boolean(selected?.eligibility && targetTokenId.trim() && !targetBlockedForMetrics)
+        : step === 3
+          ? Boolean(Number.isFinite(stakeAmount) && stakeAmount > 0)
+          : !busy;
 
   function pickSearch(row: TokenSearchResult) {
     if (Number(row.chainId) && Number(chainId) && Number(row.chainId) !== Number(chainId)) {
@@ -203,8 +236,13 @@ export function ChallengeCoinModal({
   }
 
   function goNext() {
-    if (step < 3) setStep((current) => current + 1);
+    if (step < 4) setStep((current) => current + 1);
     else void confirm();
+  }
+
+  function pickMode(mode: BattleMode) {
+    setBattleMode(mode);
+    setDurationHours(parseBattleDurationHoursForMode(mode, durationHours, 24));
   }
 
   return (
@@ -213,16 +251,42 @@ export function ChallengeCoinModal({
         <DialogTitle className="sr-only">Challenge a coin</DialogTitle>
         <CreateWizardShell
           step={step}
-          totalSteps={3}
+          totalSteps={4}
           canBack={step > 1}
           canNext={canNext}
           onBack={() => setStep((current) => Math.max(1, current - 1))}
           onNext={goNext}
           eyebrow="Warzone"
           stepLabels={STEPS}
-          nextLabel={step === 3 ? (busy ? "Sending..." : "Confirm") : "Next"}
+          nextLabel={step === 4 ? (busy ? "Sending..." : "Confirm") : "Next"}
         >
           {step === 1 ? (
+            <CreateSplitPane
+              left={
+                <div className="max-w-md space-y-3 text-sm leading-relaxed text-muted-foreground">
+                  <p className="font-retro text-xs uppercase tracking-[0.2em] text-orange-300">// Battle type</p>
+                  <h2 className="font-retro text-xl text-foreground sm:text-2xl">How do you want to fight?</h2>
+                  <p><span className="font-semibold text-orange-200">Battle</span> is scored from market data, so both coins need live market data and fair matchups are ranked.</p>
+                  <p><span className="font-semibold text-orange-200">Vote Battle</span> is decided by the community. Any coin can challenge any coin.</p>
+                </div>
+              }
+              right={
+                <div className="flex h-full min-h-0 flex-col gap-3" data-challenge-step="battle-type">
+                  <button type="button" data-battle-mode="normal" onClick={() => pickMode("normal")} className={cn("rounded-xl border p-4 text-left transition", battleMode === "normal" ? selectedClass : idleClass)}>
+                    <div className="font-retro text-lg text-foreground">Battle</div>
+                    <p className="mt-2 text-xs leading-relaxed text-muted-foreground">Metrics fight: market cap, holders, volume, boosts. Both coins need live market data.</p>
+                  </button>
+                  <button type="button" data-battle-mode="vote" onClick={() => pickMode("vote")} className={cn("rounded-xl border p-4 text-left transition", battleMode === "vote" ? selectedClass : idleClass)}>
+                    <div className="font-retro text-lg text-foreground">Vote Battle</div>
+                    <p className="mt-2 text-xs leading-relaxed text-muted-foreground">Free votes + boosts, 1 to 24 hours. Any coin can challenge any coin.</p>
+                  </button>
+                  <Button type="button" className="mwz-button mwz-button-orange mt-auto h-11 font-retro" onClick={goNext}>Next</Button>
+                </div>
+              }
+            />
+          ) : null}
+
+          {step === 2 ? (
             <CreateSplitPane
               left={
                 <div className="max-w-md space-y-3 text-sm leading-relaxed text-muted-foreground">
@@ -233,7 +297,7 @@ export function ChallengeCoinModal({
                 </div>
               }
               right={
-                <div className="flex h-full min-h-0 flex-col gap-3">
+                <div className="flex h-full min-h-0 flex-col gap-3 overflow-y-auto pr-1" data-challenge-step="opponent">
                   {chainLocked ? (
                     <p className="text-xs text-muted-foreground" data-challenge-chain="locked">Chain: <span className="text-foreground">{getChainLabel(chainId)}</span></p>
                   ) : chainOptions.length > 1 ? (
@@ -266,8 +330,13 @@ export function ChallengeCoinModal({
                             onClick={() => setSelectedToken(id)}
                             className={cn("w-full rounded-xl border p-4 text-left transition", active ? selectedClass : idleClass)}
                           >
-                            <div className="font-retro text-lg text-foreground">{item.symbol ? `$${item.symbol}` : item.tokenName}</div>
-                            <p className="mt-1 text-xs text-muted-foreground">{item.origin === "import" ? "imported" : "graduated"}{item.tokenName && item.symbol ? ` · ${item.tokenName}` : ""}</p>
+                            <div className="flex items-center gap-3">
+                              <CoinAvatar src={(item as { imageUrl?: string | null }).imageUrl} label={item.symbol || item.tokenName || "?"} size="h-10 w-10" />
+                              <div className="min-w-0">
+                                <div className="font-retro text-lg text-foreground">{item.symbol ? `$${item.symbol}` : item.tokenName}</div>
+                                <p className="mt-1 truncate text-xs text-muted-foreground">{item.origin === "import" ? "imported" : "graduated"}{item.tokenName && item.symbol ? ` · ${item.tokenName}` : ""}</p>
+                              </div>
+                            </div>
                           </button>
                         );
                       })}
@@ -309,8 +378,13 @@ export function ChallengeCoinModal({
                                 }}
                                 className={cn("rounded-xl border p-3 text-left transition", active ? selectedClass : idleClass)}
                               >
-                                <div className="font-retro text-sm text-foreground">{row.symbol ? `$${row.symbol}` : row.name || "Import"}</div>
-                                <p className="mt-1 truncate text-[10px] text-muted-foreground">{row.name || row.tokenAddress}</p>
+                                <div className="flex items-center gap-2">
+                                  <CoinAvatar src={row.imageUrl} label={row.symbol || row.name || "?"} />
+                                  <div className="min-w-0">
+                                    <div className="truncate font-retro text-sm text-foreground">{row.symbol ? `$${row.symbol}` : row.name || "Import"}</div>
+                                    <p className="mt-0.5 truncate text-[10px] text-muted-foreground">{row.name || row.tokenAddress}</p>
+                                  </div>
+                                </div>
                               </button>
                             );
                           })}
@@ -319,18 +393,60 @@ export function ChallengeCoinModal({
                       <p className="text-sm text-muted-foreground">No imported coins on this chain yet</p>
                     )}
                   </div>
-                  <MatchQualityPreview
-                    preview={preview}
-                    onChallengeAnyway={() => toast.message("Open War can still proceed. Set terms on the next step.")}
-                    onContinueWithChallenge={() => toast.message("You can still send this challenge. Set terms on the next step.")}
-                  />
-                  <Button type="button" className="mwz-button mwz-button-orange mt-auto h-11 font-retro" disabled={!canNext} onClick={goNext}>Next</Button>
+                  <div data-challenge-opponents="true">
+                    <div className="mb-1 font-retro text-sm text-foreground">{battleMode === "vote" ? "All coins" : "Opponents"}</div>
+                    {opponents.length ? (
+                      <div className="grid grid-cols-2 gap-1.5">
+                        {opponents.map((row) => {
+                          const key = opponentKey(row);
+                          const active = key.toLowerCase() === targetTokenId.trim().toLowerCase();
+                          const tag = battleMode === "vote" ? (row.origin === "import" ? "imported" : "graduated") : row.ranked ? "ranked" : row.metricsAllowed ? "open war" : "no market data";
+                          return (
+                            <button
+                              key={key}
+                              type="button"
+                              onClick={() => {
+                                setTargetTokenId(key);
+                                setTargetLabel(row.token?.symbol ? `$${row.token.symbol}` : row.token?.tokenName || key);
+                              }}
+                              className={cn("rounded-xl border p-3 text-left transition", active ? selectedClass : idleClass, battleMode !== "vote" && !row.metricsAllowed && "opacity-60")}
+                            >
+                              <div className="flex items-center gap-2">
+                                <CoinAvatar src={row.imageUrl} label={row.token?.symbol || row.token?.tokenName || "?"} />
+                                <div className="min-w-0">
+                                  <div className="truncate font-retro text-sm text-foreground">{row.token?.symbol ? `$${row.token.symbol}` : row.token?.tokenName || "Coin"}</div>
+                                  <p className="mt-0.5 truncate text-[10px] uppercase tracking-[0.12em] text-muted-foreground">{tag}</p>
+                                </div>
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">No other coins on this chain yet</p>
+                    )}
+                  </div>
+                  {targetBlockedForMetrics ? (
+                    <p className="text-sm text-orange-200" data-challenge-metrics-blocked="true">This coin has no live market data yet, so a metrics Battle cannot be scored. Go back and pick Vote Battle, or choose another opponent.</p>
+                  ) : null}
+                  {battleMode !== "vote" ? (
+                    <MatchQualityPreview
+                      preview={preview}
+                      onChallengeAnyway={() => {
+                        if (canNext) goNext();
+                      }}
+                      onContinueWithChallenge={() => {
+                        if (canNext) goNext();
+                      }}
+                    />
+                  ) : null}
+                  <Button type="button" className="mwz-button mwz-button-orange mt-auto h-11 shrink-0 font-retro" disabled={!canNext} onClick={goNext}>Next</Button>
                 </div>
               }
             />
           ) : null}
 
-          {step === 2 ? (
+          {step === 3 ? (
             <CreateSplitPane
               left={
                 <div className="max-w-md space-y-3 text-sm leading-relaxed text-muted-foreground">
@@ -341,14 +457,6 @@ export function ChallengeCoinModal({
               }
               right={
                 <div className="flex h-full min-h-0 flex-col gap-3">
-                  <button type="button" data-battle-mode="normal" onClick={() => { setBattleMode("normal"); setDurationHours(parseBattleDurationHoursForMode("normal", durationHours, 24)); }} className={cn("rounded-xl border p-4 text-left transition", battleMode === "normal" ? selectedClass : idleClass)}>
-                    <div className="font-retro text-lg text-foreground">Battle</div>
-                    <p className="mt-2 text-xs leading-relaxed text-muted-foreground">Metrics fight: market cap, holders, volume, boosts.</p>
-                  </button>
-                  <button type="button" data-battle-mode="vote" onClick={() => { setBattleMode("vote"); setDurationHours(parseBattleDurationHoursForMode("vote", durationHours, 24)); }} className={cn("rounded-xl border p-4 text-left transition", battleMode === "vote" ? selectedClass : idleClass)}>
-                    <div className="font-retro text-lg text-foreground">Vote Battle</div>
-                    <p className="mt-2 text-xs leading-relaxed text-muted-foreground">Free votes + boosts, 1 to 24 hours.</p>
-                  </button>
                   <div>
                     <div className="mb-1 font-retro text-sm text-foreground">Fight length</div>
                     <div className="grid grid-cols-2 gap-1.5">
@@ -382,7 +490,7 @@ export function ChallengeCoinModal({
             />
           ) : null}
 
-          {step === 3 ? (
+          {step === 4 ? (
             <CreateSplitPane
               left={
                 <div className="max-w-md space-y-3 text-sm leading-relaxed text-muted-foreground">
