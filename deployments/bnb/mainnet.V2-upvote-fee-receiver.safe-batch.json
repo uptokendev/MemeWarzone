@@ -1,0 +1,31 @@
+{
+  "version": "1.0",
+  "chainId": "56",
+  "createdAt": 1790248254732,
+  "meta": {
+    "name": "MWZ BNB mainnet V2: UP votes into the capped protocol vault",
+    "description": "UPVoteTreasury 0xF6AA6eD3 currently forwards every $3 UP vote to the Safe; point feeReceiver at ProtocolRevenueVault 0xc2d4E6f8 so UP-vote revenue enters the capped vault like every other protocol fee. Owner-only setter, no upgrade. Import in Safe Transaction Builder on BNB (Safe 0x1edcEdf5).",
+    "txBuilderVersion": "1.16.5"
+  },
+  "transactions": [
+    {
+      "to": "0xF6AA6eD33030F1179B57658f45dd48E31a60E70f",
+      "value": "0",
+      "data": "0xefdcd974000000000000000000000000c2d4e6f846446f3921a34a34e007295dbc19bc4c",
+      "contractMethod": {
+        "inputs": [
+          {
+            "internalType": "address",
+            "name": "newFeeReceiver",
+            "type": "address"
+          }
+        ],
+        "name": "setFeeReceiver",
+        "payable": false
+      },
+      "contractInputsValues": {
+        "newFeeReceiver": "0xc2d4E6f846446f3921a34A34e007295dbc19Bc4c"
+      }
+    }
+  ]
+}
