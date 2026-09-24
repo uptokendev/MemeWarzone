@@ -91,7 +91,16 @@ function defaultConfig() {
     competitiveMinimum: envNumber("ARENA_MATCH_V2_COMPETITIVE_MINIMUM", 70),
     strongMinimum: envNumber("ARENA_MATCH_V2_STRONG_MINIMUM", 80),
     perfectMinimum: envNumber("ARENA_MATCH_V2_PERFECT_MINIMUM", 90),
-    hardMcapRatio: envNumber("ARENA_MATCH_V2_HARD_MCAP_RATIO", 8),
+    // Founder policy 2026-09-25: both coins under the micro floor are always a fair ranked match;
+    // above it, market caps within hardMcapRatio (4x) are. The similarity score only sorts
+    // recommendations (scoreGatesRanked=false); holder/liquidity ratios are replaced by absolute
+    // anti-manipulation floors (minLiquidityUsd, minHolders). Battle points are relative
+    // (% change, turnover), so size differences do not skew scoring -- the floors guard cost-to-pump.
+    microFloorUsd: envNumber("ARENA_MATCH_MICRO_FLOOR_USD", 150_000),
+    minLiquidityUsd: envNumber("ARENA_MATCH_MIN_LIQUIDITY_USD", 2_500),
+    minHolders: envNumber("ARENA_MATCH_MIN_HOLDERS", 25),
+    scoreGatesRanked: envFlag("ARENA_MATCH_SCORE_GATES_RANKED", false),
+    hardMcapRatio: envNumber("ARENA_MATCH_V2_HARD_MCAP_RATIO", 4),
     hardHolderRatio: envNumber("ARENA_MATCH_V2_HARD_HOLDER_RATIO", 8),
     hardLiquidityRatio: envNumber("ARENA_MATCH_V2_HARD_LIQUIDITY_RATIO", 8),
     excludeSameOwnerRanked: envFlag("ARENA_MATCH_V2_EXCLUDE_SAME_OWNER", true),
@@ -191,9 +200,17 @@ export function calculateMatchQuality(leftInput, rightInput, options = {}) {
   if (config.excludeSameOwnerRanked && left.ownerWallet && right.ownerWallet && left.ownerWallet === right.ownerWallet) {
     reasons.add("same_owner");
   }
-  if (mcapBounds && mcapBounds.high > toNumber(config.hardMcapRatio, 8)) reasons.add("hard_mcap_ratio");
-  if (holderBounds && holderBounds.high > toNumber(config.hardHolderRatio, 8)) reasons.add("hard_holder_ratio");
-  if (liquidityBounds && liquidityBounds.high > toNumber(config.hardLiquidityRatio, 8)) reasons.add("hard_liquidity_ratio");
+  if (left.liquidityUsd > 0 && right.liquidityUsd > 0 && Math.min(left.liquidityUsd, right.liquidityUsd) < toNumber(config.minLiquidityUsd, 2_500)) {
+    reasons.add("below_min_liquidity");
+  }
+  if (left.holderCount > 0 && right.holderCount > 0 && Math.min(left.holderCount, right.holderCount) < toNumber(config.minHolders, 25)) {
+    reasons.add("below_min_holders");
+  }
+  const microFloor = toNumber(config.microFloorUsd, 150_000);
+  const bothMicro = left.marketCapUsd > 0 && right.marketCapUsd > 0 && left.marketCapUsd <= microFloor && right.marketCapUsd <= microFloor;
+  if (!bothMicro && mcapBounds && mcapBounds.high > toNumber(config.hardMcapRatio, 4)) reasons.add("hard_mcap_ratio");
+  void holderBounds;
+  void liquidityBounds;
 
   const components = {
     marketCap: round1(logRatioScore(left.marketCapUsd, right.marketCapUsd, { bothMissingScore: 0, oneMissingScore: 0 })),
@@ -204,7 +221,7 @@ export function calculateMatchQuality(leftInput, rightInput, options = {}) {
   };
 
   const matchScore = round1(weightedScore(components, config));
-  if (matchScore < toNumber(config.competitiveMinimum, 70)) reasons.add("below_ranked_minimum");
+  if (config.scoreGatesRanked && matchScore < toNumber(config.competitiveMinimum, 70)) reasons.add("below_ranked_minimum");
   const rankedEligible = reasons.size === 0;
 
   return {

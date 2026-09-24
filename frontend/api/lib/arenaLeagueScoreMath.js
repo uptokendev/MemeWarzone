@@ -190,8 +190,10 @@ export function mwlLedgerPlan({
   frozen = false,
   isQuarterFinals = false,
   isTournament = false,
+  pointsMultiplier = 1,
 } = {}) {
   return battlePointPlan({
+    pointsMultiplier,
     winner: mwlDraw ? null : mwlWinnerToken,
     left: leftToken,
     right: rightToken,
@@ -304,7 +306,10 @@ export function battlePointPlan({
   frozen = false,
   isQuarterFinals = false,
   isTournament = false,
+  pointsMultiplier = 1,
 } = {}) {
+  const multiplier = Number.isFinite(Number(pointsMultiplier)) && Number(pointsMultiplier) >= 0 ? Math.min(1, Number(pointsMultiplier)) : 1;
+  const scaled = (points) => Math.round(points * multiplier * 100) / 100;
   const empty = {
     skipPoints: true,
     countFight: !frozen && !isQuarterFinals,
@@ -315,20 +320,22 @@ export function battlePointPlan({
   if (pairAlreadyScored) return empty;
 
   const winPoints = WIN_POINTS + (isTournament ? TOURNAMENT_WIN_BONUS : 0);
+  const scaledWinPoints = scaled(winPoints);
+  const lossPoints = scaled(LOSS_POINTS);
   if (winner && winner === left) {
     return {
       skipPoints: false,
       countFight: true,
-      left: { points: winPoints, wins: 1, losses: 0, kind: "battle_win" },
-      right: { points: LOSS_POINTS, wins: 0, losses: 1, kind: "battle_loss" },
+      left: { points: scaledWinPoints, wins: 1, losses: 0, kind: "battle_win" },
+      right: { points: lossPoints, wins: 0, losses: 1, kind: "battle_loss" },
     };
   }
   if (winner && winner === right) {
     return {
       skipPoints: false,
       countFight: true,
-      left: { points: LOSS_POINTS, wins: 0, losses: 1, kind: "battle_loss" },
-      right: { points: winPoints, wins: 1, losses: 0, kind: "battle_win" },
+      left: { points: lossPoints, wins: 0, losses: 1, kind: "battle_loss" },
+      right: { points: scaledWinPoints, wins: 1, losses: 0, kind: "battle_win" },
     };
   }
   return {

@@ -185,6 +185,7 @@ export async function recordFinishedBattle(row, db = pool) {
     frozen,
     isQuarterFinals,
     isTournament: Boolean(row.tournament_id) && !isQuarterFinals,
+    pointsMultiplier: row.leaguePointsMultiplier ?? 1,
   });
 
   if (!plan.countFight && plan.skipPoints) return { scored: false, reason: "frozen-or-qf" };

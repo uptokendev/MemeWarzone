@@ -84,12 +84,12 @@ function pointInput(overrides = {}) {
   };
 }
 
-test("Phase 12 matchmaking matrix rejects isolated MCAP, holder, and liquidity mismatches", () => {
+test("Phase 12 matchmaking matrix (policy 2026-09-25): an MCAP gap above the micro floor beyond 4x, and liquidity / holders under the absolute floors, are not ranked", () => {
   const left = profile();
   const cases = [
     ["hard_mcap_ratio", rival({ marketCapUsd: 900_000 })],
-    ["hard_holder_ratio", rival({ holderCount: 9_000 })],
-    ["hard_liquidity_ratio", rival({ liquidityUsd: 225_000 })],
+    ["below_min_holders", rival({ holderCount: 10 })],
+    ["below_min_liquidity", rival({ liquidityUsd: 1_000 })],
   ];
   for (const [reason, right] of cases) {
     const result = calculateMatchQuality(left, right, { nowMs: NOW_MS });
@@ -115,20 +115,20 @@ test("Phase 12 ranked threshold is inclusive at the exact computed boundary and 
   const right = rival({ marketCapUsd: 180_000, holderCount: 1_700, liquidityUsd: 40_000, volumeUsd: 17_000 });
   const unconstrained = calculateMatchQuality(left, right, {
     nowMs: NOW_MS,
-    config: { competitiveMinimum: 0 },
+    config: { competitiveMinimum: 0, scoreGatesRanked: true },
   });
   assert.ok(unconstrained.matchScore > 0);
 
   const exact = calculateMatchQuality(left, right, {
     nowMs: NOW_MS,
-    config: { competitiveMinimum: unconstrained.matchScore },
+    config: { competitiveMinimum: unconstrained.matchScore, scoreGatesRanked: true },
   });
   assert.equal(exact.rankedEligible, true);
   assert.notEqual(exact.classification, "open_war");
 
   const below = calculateMatchQuality(left, right, {
     nowMs: NOW_MS,
-    config: { competitiveMinimum: unconstrained.matchScore + 0.1 },
+    config: { competitiveMinimum: unconstrained.matchScore + 0.1, scoreGatesRanked: true },
   });
   assert.equal(below.rankedEligible, false);
   assert.equal(below.classification, "open_war");
@@ -139,8 +139,8 @@ test("Phase 12 ranked recommendations never return Open War and cleanly return n
   const left = profile();
   const weak = [
     rival({ tokenId: "0x3333333333333333333333333333333333333333", marketCapUsd: 10_000_000 }),
-    rival({ tokenId: "0x4444444444444444444444444444444444444444", holderCount: 20_000 }),
-    rival({ tokenId: "0x5555555555555555555555555555555555555555", liquidityUsd: 1_000_000 }),
+    rival({ tokenId: "0x4444444444444444444444444444444444444444", holderCount: 10 }),
+    rival({ tokenId: "0x5555555555555555555555555555555555555555", liquidityUsd: 1_000 }),
     rival({ tokenId: "0x6666666666666666666666666666666666666666", marketDataHealthy: false }),
   ];
   assert.deepEqual(recommendMatchCandidates(left, weak, { nowMs: NOW_MS }), []);
@@ -308,3 +308,17 @@ test("Phase 12 settlement UI preserves V1 history while exposing V2/V3 generatio
   assert.match(legacySettle, /decideBattleSettlement/);
   assert.doesNotMatch(legacySettle, /calculateBattlePoints/);
 });
+
+test("policy 2026-09-25: both coins under $150k are always a ranked match; above it, within 4x is ranked; the score no longer gates", () => {
+  const micro = calculateMatchQuality(profile({ marketCapUsd: 58_000 }), rival({ marketCapUsd: 5_800 }), { nowMs: NOW_MS });
+  assert.equal(micro.rankedEligible, true, "10x apart but both micro");
+  assert.ok(!micro.reasons.includes("below_ranked_minimum"));
+  const within = calculateMatchQuality(profile({ marketCapUsd: 200_000 }), rival({ marketCapUsd: 700_000 }), { nowMs: NOW_MS });
+  assert.equal(within.rankedEligible, true, "3.5x above the floor");
+  const beyond = calculateMatchQuality(profile({ marketCapUsd: 200_000 }), rival({ marketCapUsd: 900_000 }), { nowMs: NOW_MS });
+  assert.equal(beyond.rankedEligible, false);
+  assert.ok(beyond.reasons.includes("hard_mcap_ratio"));
+  const straddle = calculateMatchQuality(profile({ marketCapUsd: 140_000 }), rival({ marketCapUsd: 700_000 }), { nowMs: NOW_MS });
+  assert.equal(straddle.rankedEligible, false, "only one coin micro: the 4x rule applies (5x here)");
+});
+

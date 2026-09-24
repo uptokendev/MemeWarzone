@@ -290,8 +290,8 @@ export async function settleBattlePointsV3ById(battleId, deps = {}) {
 
     const participants = decorateSettledParticipants(current.participants, decision);
     const league = battleLeagueEligibility({ ...current, participants });
-    if (league.eligible) {
-      await recordFinishedBattle({
+    if (league.eligible || league.pointsMultiplier > 0) {
+      await recordFinishedBattle({ leaguePointsMultiplier: league.pointsMultiplier ?? 1,
         ...current,
         mwlDraw: decision.mwlDraw,
         mwlWinnerToken: decision.mwlWinnerToken,

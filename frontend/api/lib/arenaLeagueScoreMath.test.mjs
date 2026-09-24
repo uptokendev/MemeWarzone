@@ -340,3 +340,14 @@ test("MWL score math cannot mint points from UpVotes", () => {
   assert.doesNotMatch(writer, /arena_votes/);
   assert.match(writer, /mwlLedgerPlan/);
 });
+
+test("Open War league points are scaled by the multiplier (half: win 1.5, loss 0.5); a draw stays 0", async () => {
+  const { battlePointPlan } = await import("./arenaLeagueScoreMath.js");
+  const half = battlePointPlan({ winner: "a", left: "a", right: "b", pointsMultiplier: 0.5 });
+  assert.equal(half.left.points, 1.5);
+  assert.equal(half.right.points, 0.5);
+  const full = battlePointPlan({ winner: "b", left: "a", right: "b" });
+  assert.equal(full.right.points, 3);
+  assert.equal(full.left.points, 1);
+});
+

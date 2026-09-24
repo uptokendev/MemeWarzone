@@ -45,14 +45,14 @@ const NOW_MS = Date.parse("2026-09-03T00:00:00.000Z");
 test("ranked queue battles are league-eligible without re-running matchmaking", () => {
   assert.deepEqual(
     battleLeagueEligibility({ source: "queue", participants: [LEFT, CLOSE] }, { nowMs: NOW_MS }),
-    { eligible: true, reason: "ranked_queue" },
+    { eligible: true, reason: "ranked_queue", pointsMultiplier: 1 },
   );
 });
 
 test("tournament battles remain league-eligible through the existing tournament path", () => {
   assert.deepEqual(
     battleLeagueEligibility({ source: "tournament", tournament_id: "t-1", participants: [LEFT, CLOSE] }, { nowMs: NOW_MS }),
-    { eligible: true, reason: "tournament" },
+    { eligible: true, reason: "tournament", pointsMultiplier: 1 },
   );
 });
 
@@ -98,6 +98,20 @@ test("same-owner manual challenge cannot score official league points", () => {
 test("manual challenge without both stored profiles is unranked rather than guessed", () => {
   assert.deepEqual(
     battleLeagueEligibility({ source: "challenge", participants: [LEFT] }, { nowMs: NOW_MS }),
-    { eligible: false, reason: "match_profile_missing" },
+    { eligible: false, reason: "match_profile_missing", pointsMultiplier: 0 },
   );
 });
+
+test("a Vote Battle challenge always counts in full, whatever the market data (founder policy 2026-09-25)", () => {
+  const result = battleLeagueEligibility({ source: "challenge", battle_mode: "vote", participants: [LEFT] }, { nowMs: NOW_MS });
+  assert.deepEqual(result, { eligible: true, reason: "vote_battle", pointsMultiplier: 1 });
+});
+
+test("an unranked metrics challenge is Open War at half league points; the multiplier is env-tunable and bounded", async () => {
+  const { openWarPointsMultiplier } = await import("./arenaBattleCompetition.js");
+  assert.equal(openWarPointsMultiplier({}), 0.5);
+  assert.equal(openWarPointsMultiplier({ ARENA_OPEN_WAR_POINTS_MULTIPLIER: "0" }), 0);
+  assert.equal(openWarPointsMultiplier({ ARENA_OPEN_WAR_POINTS_MULTIPLIER: "1" }), 1);
+  assert.equal(openWarPointsMultiplier({ ARENA_OPEN_WAR_POINTS_MULTIPLIER: "7" }), 0.5, "out of range falls back");
+});
+

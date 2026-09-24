@@ -120,9 +120,9 @@ export async function settleVoteBattle(client, battle, decision, nowIso, deps = 
   if (!finished) return null;
 
   const league = (deps.battleLeagueEligibility || battleLeagueEligibility)({ ...finished, participants });
-  if (league.eligible) {
+  if (league.eligible || league.pointsMultiplier > 0) {
     const recordFinishedBattle = await leagueRecorder(deps);
-    await recordFinishedBattle({
+    await recordFinishedBattle({ leaguePointsMultiplier: league.pointsMultiplier ?? 1,
       ...finished,
       mwlDraw: false,
       mwlWinnerToken: decision.mwlWinnerToken,
