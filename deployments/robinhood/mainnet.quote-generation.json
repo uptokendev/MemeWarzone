@@ -46,5 +46,10 @@
     "register stock tokens and routes on the adapter",
     "transfer ownership to the Safe (mainnet)",
     "canary, then enableLive + setCreatePaused(false) + setDepositsPaused(false)"
-  ]
+  ],
+  "factoryStartBlock": 70863388,
+  "factoryCreation": {
+    "block": 70863388,
+    "provenBy": "getCode: none at 70863387, code at 70863388, read 2026-09-24"
+  }
 }

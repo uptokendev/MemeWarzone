@@ -59,5 +59,11 @@
     "configureQuoteRoute on the adapter for each approved quote token",
     "transfer factory, locker, league and war pool ownership to the Safe",
     "run the canary, then enableLive + setCreatePaused(false) + setDepositsPaused(false) from the Safe"
-  ]
+  ],
+  "factoryStartBlock": 123629203,
+  "factoryCreation": {
+    "tx": "0xc313726678044c35c4e392c83c1cd5d1be7f9c04f0b8afdb35e0bc81ed5b4425",
+    "block": 123629203,
+    "provenBy": "OwnershipTransferred(0x0 -> deployer) log, read 2026-09-24"
+  }
 }
