@@ -223,7 +223,8 @@ test("AUTO DEPLOY wiring preserves open/queue matching and the manual challenge 
   assert.match(ui, /const \[durationHours, setDurationHours\]/);
   assert.match(ui, /FindMatchPanel/);
   assert.match(ui, /setChallengeTarget\(tokenId\)/);
-  assert.match(ui, /challengePostGradBattle/);
+  assert.match(ui, /ChallengeCoinModal/);
+  assert.match(readSrc("../../src/components/arena/ChallengeCoinModal.tsx"), /challengePostGradBattle/);
   assert.match(ui, /acceptPostGradBattle/);
   assert.match(ui, /counterPostGradBattle/);
   assert.match(ui, /declinePostGradBattle/);

@@ -13,7 +13,13 @@ import {
 } from "../server/http.js";
 import { requireWalletActionAuth } from "./lib/walletActionAuth.js";
 import { requireAdminOrOps, isAuthEnforceArenaMutations } from "./lib/apiAuth.js";
-import { notifyChallenge, notifyCounterOffer } from "./lib/arenaNotify.js";
+import { notifyChallenge, notifyCounterOffer, notifyDeclined } from "./lib/arenaNotify.js";
+import {
+  creatorChallengePayload,
+  isStrictlyHigherStake,
+  sanitizeDeclineMessage,
+} from "./lib/arenaChallengeOffer.js";
+import { publishArenaCreatorEvent } from "./lib/arenaCreatorAblyPublish.js";
 import { recordFinishedBattle } from "./lib/arenaLeagueScore.js";
 import {
   battleSettlementPatch,
@@ -295,7 +301,7 @@ const BATTLE_COLUMNS = `id, chain_id, state, source, stake_native, offered_stake
         participants, challenger_start_mcap_usd, defender_start_mcap_usd, challenger_end_mcap_usd, defender_end_mcap_usd,
         challenger_pct_change, defender_pct_change, winner_token, money_winner_token, money_tie_break, mwl_result, mwl_draw,
         mwl_winner_token, settlement_version, settled_at, started_at, ends_at, finished_at,
-        creator_address, featured, created_at, updated_at,
+        creator_address, featured, created_at, updated_at, decline_message,
         battle_mode, contest_scoring_version, competition_generation`;
 
 async function listBattles() {
@@ -566,6 +572,7 @@ function battleUpdateValues(id, next) {
     next.ends_at,
     next.finished_at,
     Boolean(next.featured),
+    next.decline_message ?? null,
   ];
 }
 
@@ -576,7 +583,7 @@ async function writeBattle(query, id, next) {
         duration_hours = $8, offered_duration_hours = $9,
         native_symbol = $10, challenger_token = $11, defender_token = $12,
         participants = $13::jsonb, challenger_start_mcap_usd = $14, defender_start_mcap_usd = $15, winner_token = $16,
-        started_at = $17, ends_at = $18, finished_at = $19, featured = $20, updated_at = now()
+        started_at = $17, ends_at = $18, finished_at = $19, featured = $20, decline_message = $21, updated_at = now()
       where id = $1
       returning ${BATTLE_COLUMNS}`,
     battleUpdateValues(id, next),
@@ -1175,6 +1182,12 @@ async function handleChallenge(req, res) {
     defenderSymbol: defenderStatus.symbol || defender.name,
     battleId: battle?.id,
   });
+  await publishArenaCreatorEvent(
+    chainId,
+    ident(defender.creator_address, chainId) || defender.creator_address,
+    "challenge_received",
+    creatorChallengePayload(battle),
+  );
   return json(res, 200, {
     ok: true,
     battle,
@@ -1232,6 +1245,13 @@ async function handleAccept(req, res, battleId) {
     challenger_start_mcap_usd: row.challenger_start_mcap_usd ?? (hydratedChallenger ? coinMcap(hydratedChallenger) : 0),
     defender_start_mcap_usd: row.defender_start_mcap_usd ?? (hydratedDefender ? coinMcap(hydratedDefender) : 0),
   }, Number(row.chain_id));
+  const offerer = await coinByIdentity(row.chain_id, offerFromToken(row));
+  await publishArenaCreatorEvent(
+    row.chain_id,
+    ident(offerer?.creator_address, row.chain_id) || offerer?.creator_address,
+    "challenge_accepted",
+    creatorChallengePayload(live, { escrowRequired: live?.state === "matched" }),
+  );
   return json(res, 200, { ok: true, battle: live, escrowRequired: live?.state === "matched" });
 }
 
@@ -1253,7 +1273,23 @@ async function handleDecline(req, res, battleId) {
     extraLines: [`Battle: ${battleId}`],
   });
   if (!verified) return;
-  const expired = await updateBattle(battleId, { state: "expired", finished_at: nowIso() });
+  const message = sanitizeDeclineMessage(body?.message);
+  const expired = await updateBattle(battleId, { state: "expired", finished_at: nowIso(), decline_message: message });
+  const offerer = await coinByIdentity(row.chain_id, offerFromToken(row));
+  const responderPart = participant(responder);
+  await notifyDeclined({
+    toWallet: ident(offerer?.creator_address, row.chain_id) || offerer?.creator_address,
+    fromSymbol: responderPart.symbol,
+    toSymbol: offerer?.symbol || offerer?.name,
+    battleId,
+    message,
+  });
+  await publishArenaCreatorEvent(
+    row.chain_id,
+    ident(offerer?.creator_address, row.chain_id) || offerer?.creator_address,
+    "challenge_declined",
+    creatorChallengePayload(expired, { message }),
+  );
   return json(res, 200, { ok: true, battle: expired });
 }
 
@@ -1273,8 +1309,8 @@ async function handleCounter(req, res, battleId) {
   const durationHours = parseBattleDurationHoursForMode(counterMode, body?.durationHours ?? body?.duration_hours, row.offered_duration_hours ?? row.duration_hours);
   const currentOffer = toNumber(row.offered_stake_native ?? row.stake_native);
   const currentDuration = parseBattleDurationHoursForMode(counterMode, row.offered_duration_hours ?? row.duration_hours, 24);
-  if (stakeNative === currentOffer && durationHours === currentDuration) {
-    return json(res, 400, { ok: false, error: "Counter-offer must change the stake or the fight length." });
+  if (!isStrictlyHigherStake(stakeNative, currentOffer)) {
+    return json(res, 400, { ok: false, error: "Counter-offer stake must be higher than the current offer." });
   }
   const responder = await coinByIdentity(row.chain_id, responderToken(row));
   const offerer = await coinByIdentity(row.chain_id, offerFromToken(row));
@@ -1310,6 +1346,12 @@ async function handleCounter(req, res, battleId) {
     previousDurationHours: currentDuration,
     battleId,
   });
+  await publishArenaCreatorEvent(
+    row.chain_id,
+    ident(offerer.creator_address, row.chain_id) || offerer.creator_address,
+    "counter_received",
+    creatorChallengePayload(updated),
+  );
   return json(res, 200, {
     ok: true,
     battle: updated,

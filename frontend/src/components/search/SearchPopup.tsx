@@ -25,9 +25,11 @@ const HINTS = [
 export function SearchPopup({
   open,
   onOpenChange,
+  onSelectToken,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onSelectToken?: (row: TokenSearchResult) => void;
 }) {
   const navigate = useNavigate();
   const [chainId] = useSelectedFeedChainId();
@@ -60,6 +62,23 @@ export function SearchPopup({
   };
 
   const selectToken = (row: TokenSearchResult) => {
+    if (onSelectToken) {
+      if (row.kind !== "token") return;
+      remember({
+        kind: row.kind,
+        name: row.name,
+        symbol: row.symbol,
+        logoURI: row.logoURI,
+        tokenAddress: row.tokenAddress,
+        campaignAddress: row.campaignAddress,
+        chainId: row.chainId,
+        href: row.href,
+        at: Date.now(),
+      });
+      onOpenChange(false);
+      onSelectToken(row);
+      return;
+    }
     go(row.href, {
       kind: row.kind,
       name: row.name,
@@ -74,6 +93,7 @@ export function SearchPopup({
   };
 
   const selectRail = (token: SearchRailToken) => {
+    if (onSelectToken) return;
     go(token.href, {
       kind: "token",
       name: token.name,

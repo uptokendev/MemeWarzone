@@ -208,8 +208,10 @@ export async function postArenaStakeReceipt(battleId: string, body: JsonObject) 
   return mutateBattle(`/api/arena/war-pools/${encodeURIComponent(battleId)}/stake-receipt`, body);
 }
 
-export async function declinePostGradBattle(battleId: string, auth?: JsonObject) {
-  await mutateBattle(`/api/arena/battles/${encodeURIComponent(battleId)}/decline`, { auth });
+export async function declinePostGradBattle(battleId: string, auth?: JsonObject, message?: string) {
+  const payload: JsonObject = { auth };
+  if (typeof message === "string" && message.trim()) payload.message = message.trim();
+  await mutateBattle(`/api/arena/battles/${encodeURIComponent(battleId)}/decline`, payload);
   return true;
 }
 

@@ -203,12 +203,17 @@ test("leaving challenged removes the card and matched/live never appear", () => 
 test("Battle Wall header opens Command Center Challenge a coin", () => {
   const page = readSrc("../../pages/ArenaBattles.tsx");
   const command = readSrc("../../pages/command-center/CommandCenterBattles.tsx");
+  const modal = readSrc("../../components/arena/ChallengeCoinModal.tsx");
   assert.match(page, /data-challenge-coin-cta="true"/);
   assert.match(page, /Challenge a coin/);
-  assert.match(page, /\/command\/battles#command-center-challenge/);
+  assert.match(page, /ChallengeCoinModal/);
+  assert.doesNotMatch(page, /\/command\/battles#command-center-challenge/);
   assert.match(command, /id="command-center-challenge"/);
   assert.match(command, /title="Challenge a coin"/);
+  assert.match(command, /ChallengeCoinModal/);
   assert.match(command, /location\.hash !== "#command-center-challenge"/);
+  assert.match(modal, /challengePostGradBattle/);
+  assert.match(modal, /They must accept before the fight goes live/);
 });
 
 test("Battle Wall Phase 1-3, AUTO DEPLOY, and Find Match remain untouched", () => {
@@ -228,7 +233,7 @@ test("Battle Wall Phase 1-3, AUTO DEPLOY, and Find Match remain untouched", () =
   assert.equal(WALL_REALTIME_CAP, 2);
   assert.match(command, /ENABLE AUTO DEPLOY/);
   assert.match(command, /FindMatchPanel/);
-  assert.match(command, /challengePostGradBattle/);
+  assert.match(command, /ChallengeCoinModal/);
   assert.match(command, /CreatorChallengeCarousel/);
   assert.doesNotMatch(carousel, /calculateBattlePoints|calculateMatchQuality|marketCapWeight/);
   assert.doesNotMatch(wall, /calculateBattlePoints|marketCapWeight|50\/30\/20/);

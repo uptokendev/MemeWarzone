@@ -547,7 +547,7 @@ test("Battle Wall wiring keeps ArenaMatchRow, reuses wall realtime/effects, and 
   assert.doesNotMatch(home, /ArenaMatchRow/);
   assert.match(command, /FindMatchPanel/);
   assert.match(command, /ENABLE AUTO DEPLOY/);
-  assert.match(command, /challengePostGradBattle/);
+  assert.match(command, /ChallengeCoinModal/);
   assert.doesNotMatch(wall, /calculateBattlePoints|marketCapWeight|50\/30\/20/);
   assert.equal(typeof presentArenaMatchRow, "function");
   assert.match(presentBattleWallModule(battle(), metrics(), { requested: true, loaded: true }).href, /\/warzone\/battles\/wall-1/);

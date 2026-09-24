@@ -3,11 +3,11 @@ import { Link, useLocation } from "react-router-dom";
 import { Swords } from "lucide-react";
 import { toast } from "sonner";
 
+import { ChallengeCoinModal } from "@/components/arena/ChallengeCoinModal";
 import { CreatorChallengeCarousel } from "@/components/arena/CreatorChallengeCarousel";
 import { CommandCenterCard } from "@/components/command-center/CommandCenterCard";
 import { useCommandCenterData } from "@/components/command-center/CommandCenterContext";
 import { FindMatchPanel } from "@/components/command-center/FindMatchPanel";
-import { MatchQualityPreview } from "@/components/command-center/MatchQualityPreview";
 import { TacticalTag } from "@/components/postgrad/PostGradPrimitives";
 import { Button } from "@/components/ui/button";
 import { useWallet } from "@/contexts/WalletContext";
@@ -15,7 +15,6 @@ import { useSolanaWallet } from "@/contexts/SolanaWalletContext";
 import {
   acceptPostGradBattle,
   cancelPostGradBattleOpen,
-  challengePostGradBattle,
   counterPostGradBattle,
   declinePostGradBattle,
   openPostGradBattle,
@@ -37,8 +36,7 @@ import {
 } from "@/lib/arena/battleDuration";
 import { presentAutoDeployStatus } from "@/lib/arena/autoDeployPresentation.mjs";
 import { collectIncomingCreatorChallenges } from "@/lib/arena/creatorChallengePresentation.mjs";
-import { presentManualOpponentPreview, presentMatchCandidates } from "@/lib/arena/findMatchPresentation.mjs";
-import { publicBattleLabel, publicBattleLane } from "@/lib/arena/publicBattleState";
+import { presentMatchCandidates } from "@/lib/arena/findMatchPresentation.mjs";
 
 function nativeLabel(chainId?: number, fallback?: string) {
   if (fallback) return fallback;
@@ -64,7 +62,8 @@ export default function CommandCenterBattles() {
   // the historical message so nothing changes for existing flows.
   const modeSignatureLines = battleMode === "vote" ? [`Mode: ${battleMode}`] : [];
   const [busy, setBusy] = useState<string | null>(null);
-  const [matchCandidates, setMatchCandidates] = useState<ReturnType<typeof presentMatchCandidates>>([]);
+  const [challengeOpen, setChallengeOpen] = useState(false);
+  const [, setMatchCandidates] = useState<ReturnType<typeof presentMatchCandidates>>([]);
 
   const qualified = useMemo(
     () => feed.creatorStatuses.filter((item) => item.eligibility || Boolean(item.battleId)),
@@ -75,19 +74,6 @@ export default function CommandCenterBattles() {
     () => collectIncomingCreatorChallenges(feed.openForBattleQueue, feed.creatorStatuses, walletAddress),
     [feed.creatorStatuses, feed.openForBattleQueue, walletAddress],
   );
-  const waitingRivals = useMemo(
-    () =>
-      feed.openForBattleQueue.filter((battle) => {
-        if (publicBattleLane(battle.state) !== "waiting") return false;
-        const opener = battle.participants?.[0];
-        const mine = qualified.some((item) => {
-          const key = tokenKey(item).toLowerCase();
-          return key && [opener?.tokenId, opener?.tokenAddress, opener?.campaignAddress].some((value) => String(value || "").toLowerCase() === key);
-        });
-        return !mine;
-      }),
-    [feed.openForBattleQueue, qualified],
-  );
 
   const selected = qualified.find((item) => tokenKey(item) === selectedToken) || qualified[0] || eligible[0];
   const selectedBattle =
@@ -95,10 +81,10 @@ export default function CommandCenterBattles() {
   const autoDeployMode = presentAutoDeployStatus(selected, selectedBattle);
   const stakeAmount = Number(stake);
   const canAct = Boolean(selected?.eligibility && Number.isFinite(stakeAmount) && stakeAmount > 0 && !busy);
-  const matchPreview = presentManualOpponentPreview(challengeTarget, matchCandidates);
 
   useEffect(() => {
     if (location.hash !== "#command-center-challenge") return;
+    setChallengeOpen(true);
     const timer = window.setTimeout(() => {
       document.getElementById("command-center-challenge")?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 50);
@@ -158,29 +144,6 @@ export default function CommandCenterBattles() {
       toast.success("AUTO DEPLOY disabled. This coin left the matchmaking queue.");
     } catch (error) {
       toast.error(String((error as Error)?.message || "Could not disable AUTO DEPLOY."));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  async function handleChallenge() {
-    if (!selected || !canAct || !challengeTarget.trim()) return;
-    const tokenId = tokenKey(selected);
-    const targetTokenId = challengeTarget.trim();
-    setBusy("challenge");
-    try {
-      const auth = await signAuth("arena_challenge_battle", [
-        `Challenger: ${tokenId}`,
-        `Defender: ${targetTokenId}`,
-        `Stake: ${stakeAmount}`,
-        `Duration: ${durationHours}`,
-        ...modeSignatureLines,
-      ]);
-      await challengePostGradBattle({ tokenId, targetTokenId, chainId: Number(chainId), stakeNative: stakeAmount, durationHours, battleMode, auth });
-      await feed.refreshFeed();
-      toast.success("Challenge sent. Email goes out if they verified an address and Resend is configured.");
-    } catch (error) {
-      toast.error(String((error as Error)?.message || "Could not send challenge."));
     } finally {
       setBusy(null);
     }
@@ -384,6 +347,7 @@ export default function CommandCenterBattles() {
           onCandidatesChange={setMatchCandidates}
           onSelectTarget={(tokenId) => {
             setChallengeTarget(tokenId);
+            setChallengeOpen(true);
             document.getElementById("command-center-challenge")?.scrollIntoView({ behavior: "smooth", block: "start" });
             toast.message("Rival selected. Set stake and duration, then send the challenge.");
           }}
@@ -392,51 +356,21 @@ export default function CommandCenterBattles() {
 
       <div id="command-center-challenge">
         <CommandCenterCard title="Challenge a coin" description="Pick a waiting rival or paste a token address. They must accept before the fight goes live.">
-          <div className="space-y-3">
-          <label className="block text-xs uppercase tracking-[0.14em] text-muted-foreground">
-            Target token
-            <input
-              value={challengeTarget}
-              onChange={(event) => setChallengeTarget(event.target.value)}
-              className="mt-1 w-full rounded-md border border-border/60 bg-background px-3 py-2 text-sm text-foreground"
-              placeholder="Token address"
-            />
-          </label>
-          <MatchQualityPreview
-            preview={matchPreview}
-            onChallengeAnyway={() => {
-              toast.message("Open War can still proceed. Set stake and duration, then send the challenge.");
-            }}
-            onContinueWithChallenge={() => {
-              toast.message("You can still send this challenge. Set stake and duration, then send it.");
-            }}
-          />
-          {waitingRivals.length ? (
-            <div className="space-y-2">
-              <div className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Waiting now</div>
-              {waitingRivals.slice(0, 8).map((battle) => {
-                const opener = battle.participants?.[0];
-                const target = String(opener?.tokenAddress || opener?.tokenId || "");
-                return (
-                  <button
-                    key={battle.id}
-                    type="button"
-                    className="mwz-hud-frame flex w-full items-center justify-between p-3 text-left text-sm"
-                    onClick={() => setChallengeTarget(target)}
-                  >
-                    <span className="font-retro text-foreground">{opener?.symbol || opener?.tokenName || "Unknown"}</span>
-                    <span className="text-xs text-muted-foreground">{publicBattleLabel("waiting")}</span>
-                  </button>
-                );
-              })}
-            </div>
-          ) : null}
-          <Button className="font-retro" disabled={!canAct || !challengeTarget.trim()} onClick={() => void handleChallenge()}>
-            {busy === "challenge" ? "Sending..." : "Send challenge"}
+          <Button className="font-retro" onClick={() => setChallengeOpen(true)}>
+            <Swords className="h-4 w-4" />
+            Challenge a coin
           </Button>
-          </div>
         </CommandCenterCard>
       </div>
+      <ChallengeCoinModal
+        open={challengeOpen}
+        onOpenChange={setChallengeOpen}
+        walletAddress={walletAddress}
+        chainId={chainId}
+        initialTokenId={selected ? tokenKey(selected) : ""}
+        initialTargetId={challengeTarget}
+        onSent={() => void feed.refreshFeed()}
+      />
 
       <CommandCenterCard title="Your match status" description="Live, waiting, and finished fights for coins you own.">
         {qualified.length ? (

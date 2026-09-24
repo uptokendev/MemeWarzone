@@ -16,6 +16,9 @@ export function CreateWizardShell({
   onBack,
   onNext,
   children,
+  eyebrow = "Create Coin",
+  stepLabels = STEP_LABELS,
+  nextLabel = "Next",
 }: {
   step: number;
   totalSteps: number;
@@ -24,6 +27,9 @@ export function CreateWizardShell({
   onBack: () => void;
   onNext: () => void;
   children: ReactNode;
+  eyebrow?: string;
+  stepLabels?: readonly string[];
+  nextLabel?: string;
 }) {
   return (
     <div className="relative mx-auto flex w-full max-w-[880px] items-stretch gap-1.5 px-1 sm:gap-2 sm:px-2">
@@ -50,9 +56,9 @@ export function CreateWizardShell({
       >
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border/50 px-3 py-1.5 sm:px-3.5">
           <div>
-            <p className="font-retro text-[10px] uppercase tracking-[0.22em] text-accent">Create Coin</p>
+            <p className="font-retro text-[10px] uppercase tracking-[0.22em] text-accent">{eyebrow}</p>
             <h1 className="font-retro text-base tracking-tight text-foreground sm:text-lg">
-              {STEP_LABELS[step - 1] || "Create"}
+              {stepLabels[step - 1] || eyebrow}
               <span className="ml-2 text-xs text-muted-foreground">
                 {step}/{totalSteps}
               </span>
@@ -94,7 +100,7 @@ export function CreateWizardShell({
               !canNext && "pointer-events-none opacity-35",
             )}
           >
-            Next <ChevronRight className="ml-1 h-4 w-4" />
+            {nextLabel} <ChevronRight className="ml-1 h-4 w-4" />
           </button>
         </div>
       </div>

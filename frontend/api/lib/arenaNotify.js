@@ -61,6 +61,34 @@ export async function sendVerifyEmail({ email, token, wallet }) {
   return sendEmailNotification({ to: email, subject, text });
 }
 
+export async function notifyDeclined({ toWallet, fromSymbol, toSymbol, battleId, message }) {
+  const to = await verifiedEmailForWallet(toWallet);
+  if (!to) return { ok: true, skipped: true, reason: "no_verified_email" };
+  const origin = siteOrigin();
+  const walletPath = walletKey(toWallet);
+  const battlesUrl = `${origin}/profile/${encodeURIComponent(walletPath)}/command/battles`;
+  const battleUrl = `${origin}/battle/${encodeURIComponent(battleId)}`;
+  const note = String(message || "").trim();
+  const subject = `Warzone challenge declined: ${fromSymbol || "A rival"} declined ${toSymbol || "the challenge"}`;
+  const text = [
+    "A Warzone challenge was declined.",
+    "",
+    `${fromSymbol || "A rival"} declined the challenge against ${toSymbol || "your coin"}.`,
+    note ? `Message: ${note}` : "No message was included.",
+    "",
+    `Command Center: ${battlesUrl}`,
+    `Battle: ${battleUrl}`,
+    "",
+    "MemeWarzone",
+  ].join("\n");
+  try {
+    return await sendEmailNotification({ to, subject, text });
+  } catch (error) {
+    console.warn("[arenaNotify] decline email failed", error?.message || error);
+    return { ok: false, skipped: false, error: String(error?.message || error) };
+  }
+}
+
 export async function notifyCounterOffer({ toWallet, fromSymbol, toSymbol, amount, nativeSymbol, previousAmount, durationHours, previousDurationHours, battleId }) {
   const to = await verifiedEmailForWallet(toWallet);
   if (!to) return { ok: true, skipped: true, reason: "no_verified_email" };

@@ -145,6 +145,14 @@ export default async function handler(req, res) {
       if (!Number.isFinite(chainId))
         return json(res, 400, { error: "Invalid chainId" });
       capability[`league:${chainId}`] = ["subscribe"];
+    } else if (scope === "arena-creator") {
+      if (!Number.isFinite(chainId))
+        return json(res, 400, { error: "Invalid chainId" });
+      const walletRaw = p(q.wallet || q.address);
+      const walletOk = isSolanaAddress(walletRaw) || isAddress(walletRaw);
+      if (!walletOk) return json(res, 400, { error: "Invalid wallet" });
+      const wallet = isAddress(walletRaw) ? walletRaw.toLowerCase() : walletRaw;
+      capability[`arena:creator:${chainId}:${wallet}`] = ["subscribe"];
     } else if (scope === "battle") {
       if (!/^[A-Za-z0-9._:-]{1,160}$/.test(battleId)) {
         return json(res, 400, { error: "Invalid Arena battle id" });

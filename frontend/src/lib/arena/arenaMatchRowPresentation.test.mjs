@@ -232,7 +232,8 @@ test("feed wiring keeps /battle links and does not mount combat HUD/effects", ()
   assert.match(hook, /fetchArenaBattleMetrics/);
   assert.doesNotMatch(hook, /useAblyBattleChannel/);
   assert.match(command, /FindMatchPanel/);
-  assert.match(command, /challengePostGradBattle/);
+  assert.match(command, /ChallengeCoinModal/);
+  assert.match(readSrc("../../components/arena/ChallengeCoinModal.tsx"), /challengePostGradBattle/);
   assert.match(command, /acceptPostGradBattle/);
   assert.match(command, /counterPostGradBattle/);
   assert.match(command, /declinePostGradBattle/);

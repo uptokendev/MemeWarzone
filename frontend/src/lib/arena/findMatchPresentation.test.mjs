@@ -178,6 +178,7 @@ test("Find Match wiring only prefills the existing challenge and leaves stake/du
   assert.doesNotMatch(panel, /stakeNative/);
 
   assert.match(mount, /setChallengeTarget\(tokenId\)/);
+  assert.match(mount, /setChallengeOpen\(true\)/);
   assert.doesNotMatch(mount, /challengePostGradBattle/);
   assert.doesNotMatch(mount, /handleChallenge\(/);
   assert.doesNotMatch(mount, /setStake/);
@@ -185,14 +186,14 @@ test("Find Match wiring only prefills the existing challenge and leaves stake/du
 
   assert.match(battles, /const \[stake, setStake\]/);
   assert.match(battles, /const \[durationHours, setDurationHours\]/);
-  assert.match(battles, /disabled=\{!canAct \|\| !challengeTarget\.trim\(\)\}/);
-  assert.match(battles, /onClick=\{\(\) => void handleChallenge\(\)\}/);
   // The creator's stake, fight length and battle type (metrics / vote) come
-  // from this page's own state; Find Match only prefilled the target.
+  // from the challenge wizard; Find Match only prefilled the target.
+  const modal = readSrc("../../components/arena/ChallengeCoinModal.tsx");
   assert.match(
-    battles,
-    /await challengePostGradBattle\(\{ tokenId, targetTokenId, chainId: Number\(chainId\), stakeNative: stakeAmount, durationHours, battleMode, auth \}\)/,
+    modal,
+    /await challengePostGradBattle\(\{\s*tokenId,\s*targetTokenId: target,\s*chainId: Number\(chainId\),\s*stakeNative: stakeAmount,\s*durationHours,\s*battleMode,\s*auth,\s*\}\)/,
   );
+  assert.match(modal, /onContinueWithChallenge/);
 
   assert.match(preview, /Challenge anyway/);
   assert.match(preview, /Continue with challenge/);
@@ -200,7 +201,6 @@ test("Find Match wiring only prefills the existing challenge and leaves stake/du
   assert.match(preview, /NOT_PREVIEWED_LABEL/);
   assert.match(preview, /data-match-quality="open-war"/);
   assert.match(preview, /data-match-quality="not-previewed"/);
-  assert.match(battles, /onContinueWithChallenge/);
   assert.doesNotMatch(preview, /challengePostGradBattle/);
   assert.match(client, /\/api\/arena\/battles\/matches/);
   assert.equal(OPEN_WAR_LABEL, "OPEN WAR — UNRANKED");
