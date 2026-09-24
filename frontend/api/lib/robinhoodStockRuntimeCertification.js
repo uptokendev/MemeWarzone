@@ -33,6 +33,50 @@ const V3_FACTORY_ABI = [
 const ROUTER_ABI = [
   "function quoteExactInputSingle(address tokenIn,address tokenOut,uint24 fee,uint256 amountIn) view returns (uint256 amountOut)",
 ];
+// Uniswap QuoterV2 (Robinhood mainnet 0x33e885eD…): struct input, non-view, must be staticCall'd.
+const QUOTER_V2_ABI = [
+  "function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96) params) returns (uint256 amountOut,uint160 sqrtPriceX96After,uint32 initializedTicksCrossed,uint256 gasEstimate)",
+];
+// Uniswap Quoter (v1) shape, also what the staged mock router answers.
+const QUOTER_V1_ABI = [
+  "function quoteExactInputSingle(address tokenIn,address tokenOut,uint24 fee,uint256 amountIn,uint160 sqrtPriceLimitX96) returns (uint256 amountOut)",
+];
+
+/**
+ * Where launch-size quotes come from. The staged mock swap router answered
+ * quoteExactInputSingle itself, so certification "worked" on testnet; a real
+ * SwapRouter02 exposes no quoting and reverts with no data, which is what every
+ * routed stock hit on Robinhood mainnet (2026-09-24). A configured quoter
+ * (ROBINHOOD_V3_QUOTER_ADDRESS_<chainId>, or the app's VITE_ name) wins; the
+ * router path stays for mock surfaces that still answer it.
+ */
+export function resolveStockQuoterAddress(chainId, env = process.env) {
+  const id = Number(chainId);
+  for (const name of [`ROBINHOOD_V3_QUOTER_ADDRESS_${id}`, `VITE_ROBINHOOD_V3_QUOTER_ADDRESS_${id}`]) {
+    const raw = String(env[name] || "").trim();
+    if (/^0x[a-fA-F0-9]{40}$/.test(raw)) return ethers.getAddress(raw);
+  }
+  return "";
+}
+
+async function quoteExactInputSingleOut({ provider, quoterAddress, swapRouter, tokenIn, tokenOut, fee, amountIn }) {
+  if (quoterAddress) {
+    const v2 = new ethers.Contract(quoterAddress, QUOTER_V2_ABI, provider);
+    try {
+      const [amountOut] = await v2.quoteExactInputSingle.staticCall({ tokenIn, tokenOut, amountIn, fee, sqrtPriceLimitX96: 0n });
+      return BigInt(amountOut);
+    } catch (error) {
+      const v1 = new ethers.Contract(quoterAddress, QUOTER_V1_ABI, provider);
+      try {
+        return BigInt(await v1.quoteExactInputSingle.staticCall(tokenIn, tokenOut, fee, amountIn, 0n));
+      } catch {
+        throw error;
+      }
+    }
+  }
+  const router = new ethers.Contract(swapRouter, ROUTER_ABI, provider);
+  return BigInt(await router.quoteExactInputSingle(tokenIn, tokenOut, fee, amountIn));
+}
 const ORACLE_ABI = [
   "function latestRoundData() view returns (uint80 roundId,int256 answer,uint256 startedAt,uint256 updatedAt,uint80 answeredInRound)",
   "function decimals() view returns (uint8)",
@@ -191,9 +235,10 @@ export async function certifyRobinhoodStockRuntime({ row, provider, factoryAddre
   const poolStockUsdWad = (BigInt(poolStockBalance) * stockOracle.priceWad) / pow10(tokenDecimals);
   if (poolStockUsdWad < minimumRouteLiquidityUsdWad) throw new Error(`acquisition pool liquidity below route minimum (${poolStockUsdWad} < ${minimumRouteLiquidityUsdWad})`);
 
-  const router = new ethers.Contract(swapRouter, ROUTER_ABI, provider);
+  const quoterAddress = resolveStockQuoterAddress(chainId);
   const probeIn = probeNativeWei / 100n > 0n ? probeNativeWei / 100n : 1n;
-  const [quotedOutRaw, probeOutRaw] = await Promise.all([router.quoteExactInputSingle(weth, tokenAddress, acquisitionFeeTier, probeNativeWei), router.quoteExactInputSingle(weth, tokenAddress, acquisitionFeeTier, probeIn)]);
+  const quoteArgs = { provider, quoterAddress, swapRouter, tokenIn: weth, tokenOut: tokenAddress, fee: acquisitionFeeTier };
+  const [quotedOutRaw, probeOutRaw] = await Promise.all([quoteExactInputSingleOut({ ...quoteArgs, amountIn: probeNativeWei }), quoteExactInputSingleOut({ ...quoteArgs, amountIn: probeIn })]);
   const quotedOut = BigInt(quotedOutRaw);
   const probeOut = BigInt(probeOutRaw);
   if (quotedOut <= 0n || probeOut <= 0n) throw new Error("launch-size acquisition quote returned zero");

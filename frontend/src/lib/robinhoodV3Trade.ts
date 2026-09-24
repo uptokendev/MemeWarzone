@@ -10,6 +10,10 @@ import { ROBINHOOD_CHAIN_ID, ROBINHOOD_TESTNET_CHAIN_ID } from "@/lib/chainConfi
 const V3_QUOTER_ABI = [
   "function quoteExactInputSingle(address tokenIn,address tokenOut,uint24 fee,uint256 amountIn) returns (uint256 amountOut)",
 ];
+// Uniswap QuoterV2 (Robinhood mainnet 0x33e885eD…) takes a struct and returns four values.
+const V3_QUOTER_V2_ABI = [
+  "function quoteExactInputSingle((address tokenIn,address tokenOut,uint256 amountIn,uint24 fee,uint160 sqrtPriceLimitX96) params) returns (uint256 amountOut,uint160 sqrtPriceX96After,uint32 initializedTicksCrossed,uint256 gasEstimate)",
+];
 
 const V3_ROUTER_ABI = [
   "function factory() view returns (address)",
@@ -410,6 +414,14 @@ async function quoteExactInputSingleRaw(
   const quoterAddress = normalizeOptionalAddress(envAddress("VITE_ROBINHOOD_V3_QUOTER_ADDRESS", chainId));
   if (quoterAddress) {
     // Non-view by signature because it simulates a swap, so it must be staticCall'd.
+    // QuoterV2 first (the deployed Robinhood quoter), then the v1 shape some quoters and mocks answer.
+    const quoterV2 = new Contract(quoterAddress, V3_QUOTER_V2_ABI, provider) as any;
+    try {
+      const [amountOut] = await quoterV2.quoteExactInputSingle.staticCall({ tokenIn, tokenOut, amountIn: amountInRaw, fee: route.fee, sqrtPriceLimitX96: 0n });
+      return BigInt(amountOut);
+    } catch {
+      // fall through to the v1 shape
+    }
     const quoter = new Contract(quoterAddress, V3_QUOTER_ABI, provider) as any;
     // A load-balanced RPC occasionally answers from a node that has not caught up,
     // which surfaces as a CALL_EXCEPTION carrying no revert data. Retry once
